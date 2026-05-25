@@ -1,0 +1,20 @@
+[package]
+name = "cknerv-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "axum HTTP/WS server + Adapter trait for cknerv visualization"
+
+[dependencies]
+cknerv-core = { path = "../cknerv-core" }
+anyhow.workspace = true
+async-trait.workspace = true
+axum.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+reqwest = { version = "0.12", default-features = false, features = ["json"] }
+tower = "0.5"

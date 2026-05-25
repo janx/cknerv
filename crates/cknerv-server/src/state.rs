@@ -1,0 +1,508 @@
+//! Server state: chain-generic EntityStore + revision counter + mutation
+//! pipeline + projection registry.
+//!
+//! Lifted from `simulator/src/dashboard/state.rs`. cknerv-server keeps only
+//! the chain-side reducer arms (`BlockMined`, `TxLanded`,
+//! `ChainMempoolUpdated`, `ChainInfoUpdated`); RCG entity arms stay in
+//! simulator's `SimulatorAdapter` post-extraction. The simulator
+//! re-attaches its RCG state to the server snapshot via a parallel
+//! channel (out of scope for this crate).
+//!
+//! Lock discipline matches the simulator:
+//!   * One coord write lock around (entity-store mutate + revision bump +
+//!     ring push + broadcast) so `snapshot()` readers see (state, revision)
+//!     atomically.
+//!   * Projection registry write happens under its own internal lock,
+//!     released before the per-projection broadcast send. We never hold a
+//!     sync lock across an `.await`.
+
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, RwLock};
+
+use tokio::sync::{broadcast, mpsc, watch};
+use tokio::sync::broadcast::error::RecvError;
+
+use cknerv_core::{Chain, ChainNode, MempoolStats, Mutation, RecentBlock, RecentTx, Ring, RevisionedMutation};
+
+use crate::projection_registry::Registry;
+
+/// Capacity of the structural mutation ring. Sized to cover dozens of
+/// minutes of real activity so a reconnecting client at a stale revision
+/// can still catch up via deltas instead of pulling a full snapshot.
+/// Matches simulator's `MUTATION_RING_CAP`.
+const MUTATION_RING_CAP: usize = 50_000;
+
+/// Capacity of the broadcast channel for live mutation fan-out. Slow
+/// consumers exceeding this lag get a `Lagged(n)` error and resync.
+/// Matches simulator's `MUTATION_CHANNEL_CAPACITY`.
+const MUTATION_CHANNEL_CAPACITY: usize = 4096;
+
+/// Bound on `Chain.recent_blocks`. Matches simulator's `RECENT_BLOCKS_CAP`.
+const RECENT_BLOCKS_CAP: usize = 50;
+
+/// Bound on `Chain.recent_tx_hashes`. Matches simulator's `RECENT_TX_CAP`.
+const RECENT_TX_CAP: usize = 50;
+
+/// Chain-generic entity store. cknerv-server owns the [`Chain`] singleton
+/// (block tip / mempool / recent rings) and the list of observed chain
+/// nodes (1 for single-node mainnet RPC, N for mesh / multi-node).
+pub struct EntityStore {
+    pub chain: Chain,
+    pub chain_nodes: Vec<ChainNode>,
+}
+
+impl EntityStore {
+    fn new() -> Self {
+        Self {
+            chain: Chain::default(),
+            chain_nodes: Vec::new(),
+        }
+    }
+}
+
+/// Server state. Wrapped in `Arc` for shared access by adapters, the
+/// reducer task, and HTTP/WS routes. Public fields are exposed for the
+/// route handlers + ws module; private fields are guarded behind helpers.
+pub struct ServerState {
+    pub(crate) entity_store: RwLock<EntityStore>,
+    pub(crate) revision: AtomicU64,
+    pub(crate) mutation_tx: broadcast::Sender<RevisionedMutation>,
+    pub(crate) mutation_ring: Ring<RevisionedMutation>,
+    pub(crate) projections: RwLock<Registry>,
+    /// Coordination lock making (state, revision) snapshot-atomic. The
+    /// reducer takes the write side around its full apply sequence
+    /// (mutate + revision bump + broadcast); `snapshot()` takes the
+    /// read side so it observes a state matching the revision it
+    /// returns.
+    pub(crate) coord: RwLock<()>,
+}
+
+impl ServerState {
+    pub fn new() -> Self {
+        let (mutation_tx, _) = broadcast::channel(MUTATION_CHANNEL_CAPACITY);
+        Self {
+            entity_store: RwLock::new(EntityStore::new()),
+            revision: AtomicU64::new(0),
+            mutation_tx,
+            mutation_ring: Ring::with_capacity(MUTATION_RING_CAP),
+            projections: RwLock::new(Registry::new()),
+            coord: RwLock::new(()),
+        }
+    }
+
+    /// Subscribe to the live mutation broadcast.
+    pub fn subscribe_mutations(&self) -> broadcast::Receiver<RevisionedMutation> {
+        self.mutation_tx.subscribe()
+    }
+
+    /// Snapshot of the mutation ring contents (oldest → newest revision).
+    /// Cheap clone — the ring's lock is held only for the iteration.
+    pub fn mutation_ring_snapshot(&self) -> Vec<RevisionedMutation> {
+        self.mutation_ring.snapshot()
+    }
+
+    /// Coordinated read: returns the current Chain entity + chain_nodes
+    /// + revision atomically.
+    pub fn snapshot(&self) -> serde_json::Value {
+        let _coord = self.coord.read().unwrap();
+        let revision = self.revision.load(Ordering::Relaxed);
+        let store = self.entity_store.read().unwrap();
+        serde_json::json!({
+            "revision": revision,
+            "chain": store.chain,
+            "chain_nodes": store.chain_nodes,
+        })
+    }
+
+    /// Apply a mutation. Holds the coord write lock for the full sequence
+    /// (entity-store update + revision bump + ring push + broadcast +
+    /// projection fan-out) so concurrent `snapshot()` readers observe
+    /// (state, revision) atomically. Returns the assigned revision.
+    pub fn apply_mutation(&self, m: Mutation) -> u64 {
+        // 1. Apply the mutation to the entity store (chain-side arms
+        //    only; `CellTagged` is projection-only). Done under the
+        //    coord write lock so the snapshot read side sees a
+        //    consistent (state, revision) pair.
+        let _coord = self.coord.write().unwrap();
+        {
+            let mut store = self.entity_store.write().unwrap();
+            apply_chain_mutation(&mut store.chain, &m);
+        }
+        let revision = self.revision.fetch_add(1, Ordering::Relaxed) + 1;
+        let rev = RevisionedMutation {
+            revision,
+            mutation: m,
+        };
+        self.mutation_ring.push(rev.clone());
+
+        // 2. Fan into projections. Each projection takes its own
+        //    internal lock; the registry's read lock is released before
+        //    the projection broadcasts (the broadcast itself is sync
+        //    inside tokio's lock-free MPMC, so no `.await` involved).
+        {
+            let registry = self.projections.read().unwrap();
+            for writer in registry.writers() {
+                writer.apply(&rev);
+            }
+        }
+
+        // 3. Broadcast the structural mutation. A broadcast with zero
+        //    subscribers errors — ignore it, the ring still holds the
+        //    record for catch-up.
+        let _ = self.mutation_tx.send(rev);
+
+        revision
+    }
+
+    /// Serialize the Chain entity + chain_nodes + revision into a JSON
+    /// blob suitable for cross-run persistence. Captured atomically
+    /// under the coord write lock so the revision counter and entity
+    /// store agree.
+    pub fn save_entities(&self) -> serde_json::Value {
+        let _coord = self.coord.write().unwrap();
+        let revision = self.revision.load(Ordering::Relaxed);
+        let store = self.entity_store.read().unwrap();
+        serde_json::json!({
+            "revision": revision,
+            "chain": &store.chain,
+            "chain_nodes": &store.chain_nodes,
+        })
+    }
+
+    /// Restore the Chain entity + chain_nodes + revision from a
+    /// previously saved blob. Held under the coord write lock so
+    /// concurrent `snapshot()` callers don't observe a half-restored
+    /// state. Returns an error and leaves the state untouched if the
+    /// input shape is wrong.
+    pub fn load_entities(&self, v: serde_json::Value) -> Result<(), String> {
+        let parsed: EntitiesPersisted = serde_json::from_value(v)
+            .map_err(|e| format!("entities persisted-state decode: {e}"))?;
+        let _coord = self.coord.write().unwrap();
+        self.revision.store(parsed.revision, Ordering::Relaxed);
+        let mut store = self.entity_store.write().unwrap();
+        store.chain = parsed.chain;
+        store.chain_nodes = parsed.chain_nodes;
+        Ok(())
+    }
+
+    /// Spawn the reducer task. Drains mutations from `mutation_rx` and
+    /// applies each via `apply_mutation`. Exits when `mutation_rx`
+    /// closes (all adapters dropped their senders) or when `shutdown`
+    /// flips to `true`.
+    pub fn spawn_reducer(
+        self: Arc<Self>,
+        mut mutation_rx: mpsc::Receiver<Mutation>,
+        mut shutdown: watch::Receiver<bool>,
+    ) -> tokio::task::JoinHandle<()> {
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = shutdown.changed() => {
+                        if *shutdown.borrow() {
+                            break;
+                        }
+                    }
+                    maybe = mutation_rx.recv() => match maybe {
+                        Some(m) => { self.apply_mutation(m); }
+                        // All adapters dropped their sender — nothing
+                        // more will arrive. Exit cleanly.
+                        None => break,
+                    }
+                }
+            }
+        })
+    }
+
+    /// Spawn a parallel projection runtime task subscribed to the
+    /// mutation broadcast. Not used in the default wiring (`spawn_reducer`
+    /// fans projections inline), but provided for adapters that want a
+    /// separate task for back-pressure isolation. On `Lagged` it flips
+    /// `shutdown` to `true` — a desynced projection's derived state is
+    /// structurally wrong (matches simulator's `spawn_runtime` policy).
+    pub fn spawn_projection_runtime(
+        self: Arc<Self>,
+        shutdown_tx: watch::Sender<bool>,
+    ) -> tokio::task::JoinHandle<()> {
+        let mut rx = self.subscribe_mutations();
+        tokio::spawn(async move {
+            loop {
+                match rx.recv().await {
+                    Ok(rm) => {
+                        let writers = {
+                            let registry = self.projections.read().unwrap();
+                            registry.writers()
+                        };
+                        for w in &writers {
+                            w.apply(&rm);
+                        }
+                    }
+                    Err(RecvError::Closed) => break,
+                    Err(RecvError::Lagged(n)) => {
+                        tracing::error!(
+                            target: "cknerv-server",
+                            "projection runtime lagged {n} mutations — derived \
+                             state has desynced; signalling shutdown"
+                        );
+                        let _ = shutdown_tx.send(true);
+                        break;
+                    }
+                }
+            }
+        })
+    }
+}
+
+impl Default for ServerState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct EntitiesPersisted {
+    #[serde(default)]
+    revision: u64,
+    #[serde(default)]
+    chain: Chain,
+    #[serde(default)]
+    chain_nodes: Vec<ChainNode>,
+}
+
+/// Apply a chain-side mutation to the [`Chain`] entity. Lifted verbatim
+/// from `simulator/src/dashboard/state.rs::apply_chain_mutation` (post
+/// Phase A `ChainMutation` arms), adapted to cknerv-core's flat
+/// [`Mutation`] enum.
+///
+/// `CellTagged` is projection-only: the cell-galaxy projection consumes
+/// it via its own `apply_mutation` to set `Cell.tag`. The entity store
+/// has no equivalent field to update — entity-side is a no-op.
+fn apply_chain_mutation(chain: &mut Chain, m: &Mutation) {
+    use cknerv_core::entity::RECENT_INTERVAL_CAP;
+
+    match m {
+        Mutation::BlockMined {
+            number,
+            hash,
+            tx_count,
+            at,
+        } => {
+            if *number > chain.tip {
+                chain.tip = *number;
+            }
+            let exact_dup = chain
+                .recent_blocks
+                .iter()
+                .any(|b| b.number == *number && b.hash == *hash);
+            let reorg = !exact_dup
+                && chain
+                    .recent_blocks
+                    .iter()
+                    .any(|b| b.number == *number && b.hash != *hash);
+            if !exact_dup {
+                chain.total_blocks = chain.total_blocks.checked_add(1).expect(
+                    "chain.total_blocks overflowed u64 — the server has \
+                     observed 18 quintillion distinct blocks, which is \
+                     structurally impossible on any real chain",
+                );
+                if reorg {
+                    chain.reorgs = chain.reorgs.checked_add(1).expect(
+                        "chain.reorgs overflowed u64 — see total_blocks comment",
+                    );
+                }
+                if let Some(prev_ts) = chain.last_block_ts_ms {
+                    if *at >= prev_ts {
+                        chain.recent_block_intervals_ms.push(*at - prev_ts);
+                        while chain.recent_block_intervals_ms.len() > RECENT_INTERVAL_CAP {
+                            chain.recent_block_intervals_ms.remove(0);
+                        }
+                    }
+                }
+                chain.last_block_ts_ms = Some(*at);
+                chain.recent_block_tx_counts.push(*tx_count);
+                while chain.recent_block_tx_counts.len() > RECENT_INTERVAL_CAP {
+                    chain.recent_block_tx_counts.remove(0);
+                }
+            }
+            chain.recent_blocks.push(RecentBlock {
+                number: *number,
+                hash: hash.clone(),
+            });
+            while chain.recent_blocks.len() > RECENT_BLOCKS_CAP {
+                chain.recent_blocks.remove(0);
+            }
+        }
+        Mutation::TxLanded { tx_hash, block, .. } => {
+            chain.total_txs = chain.total_txs.checked_add(1).expect(
+                "chain.total_txs overflowed u64 — see total_blocks comment",
+            );
+            chain.recent_tx_hashes.push(RecentTx {
+                tx_hash: tx_hash.clone(),
+                block: *block,
+            });
+            while chain.recent_tx_hashes.len() > RECENT_TX_CAP {
+                chain.recent_tx_hashes.remove(0);
+            }
+        }
+        Mutation::ChainMempoolUpdated {
+            pending,
+            proposed,
+            orphan,
+            total_tx_size,
+            total_tx_cycles,
+            min_fee_rate,
+        } => {
+            chain.mempool = MempoolStats {
+                pending: *pending,
+                proposed: *proposed,
+                orphan: *orphan,
+                total_tx_size: *total_tx_size,
+                total_tx_cycles: *total_tx_cycles,
+                min_fee_rate: *min_fee_rate,
+            };
+        }
+        Mutation::ChainInfoUpdated {
+            epoch,
+            median_time_ms,
+            difficulty,
+            chain_name,
+        } => {
+            chain.epoch = epoch.clone();
+            chain.median_time_ms = *median_time_ms;
+            chain.difficulty = difficulty.clone();
+            chain.chain_name = chain_name.clone();
+        }
+        Mutation::CellTagged { .. } => {
+            // Projection-only: cell-galaxy consumes via its own
+            // `apply_mutation`. Entity-store is a no-op.
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn block_mined_updates_tip_and_recent() {
+        let s = ServerState::new();
+        let rev = s.apply_mutation(Mutation::BlockMined {
+            number: 5,
+            hash: "0x5".into(),
+            tx_count: 2,
+            at: 1_000,
+        });
+        assert_eq!(rev, 1);
+        let snap = s.snapshot();
+        assert_eq!(snap["chain"]["tip"], 5);
+        assert_eq!(snap["chain"]["total_blocks"], 1);
+        assert_eq!(snap["chain"]["recent_blocks"][0]["number"], 5);
+        assert_eq!(snap["chain"]["recent_blocks"][0]["hash"], "0x5");
+    }
+
+    #[test]
+    fn duplicate_block_does_not_double_count() {
+        let s = ServerState::new();
+        s.apply_mutation(Mutation::BlockMined {
+            number: 3,
+            hash: "0xa".into(),
+            tx_count: 0,
+            at: 100,
+        });
+        s.apply_mutation(Mutation::BlockMined {
+            number: 3,
+            hash: "0xa".into(),
+            tx_count: 0,
+            at: 200,
+        });
+        let snap = s.snapshot();
+        assert_eq!(snap["chain"]["total_blocks"], 1);
+    }
+
+    #[test]
+    fn reorg_increments_counter() {
+        let s = ServerState::new();
+        s.apply_mutation(Mutation::BlockMined {
+            number: 3,
+            hash: "0xa".into(),
+            tx_count: 0,
+            at: 100,
+        });
+        s.apply_mutation(Mutation::BlockMined {
+            number: 3,
+            hash: "0xb".into(),
+            tx_count: 0,
+            at: 200,
+        });
+        let snap = s.snapshot();
+        assert_eq!(snap["chain"]["reorgs"], 1);
+        assert_eq!(snap["chain"]["total_blocks"], 2);
+    }
+
+    #[test]
+    fn tx_landed_updates_recent_tx_hashes() {
+        let s = ServerState::new();
+        s.apply_mutation(Mutation::TxLanded {
+            tx_hash: "0xtx".into(),
+            block: 7,
+            at: 100,
+            inputs: vec![],
+            outputs: vec![],
+        });
+        let snap = s.snapshot();
+        assert_eq!(snap["chain"]["total_txs"], 1);
+        assert_eq!(snap["chain"]["recent_tx_hashes"][0]["tx_hash"], "0xtx");
+        assert_eq!(snap["chain"]["recent_tx_hashes"][0]["block"], 7);
+    }
+
+    #[test]
+    fn revision_is_monotonic() {
+        let s = ServerState::new();
+        for i in 0..10 {
+            let rev = s.apply_mutation(Mutation::BlockMined {
+                number: i,
+                hash: format!("0x{i}"),
+                tx_count: 0,
+                at: i * 10,
+            });
+            assert_eq!(rev, i + 1);
+        }
+    }
+
+    #[test]
+    fn cell_tagged_is_no_op_for_entity_store() {
+        use cknerv_core::OutPoint;
+        let s = ServerState::new();
+        let baseline = s.snapshot();
+        s.apply_mutation(Mutation::CellTagged {
+            out_point: OutPoint {
+                tx_hash: "0xtx".into(),
+                index: 0,
+            },
+            tag: "foo".into(),
+            at: 100,
+        });
+        let after = s.snapshot();
+        // chain entity is unchanged; only revision moves.
+        assert_eq!(baseline["chain"], after["chain"]);
+        assert_eq!(after["revision"], 1);
+    }
+
+    #[test]
+    fn save_load_round_trips_chain() {
+        let s = ServerState::new();
+        s.apply_mutation(Mutation::BlockMined {
+            number: 99,
+            hash: "0xblk99".into(),
+            tx_count: 4,
+            at: 1_000,
+        });
+        let saved = s.save_entities();
+
+        let s2 = ServerState::new();
+        s2.load_entities(saved).expect("load");
+        let snap = s2.snapshot();
+        assert_eq!(snap["chain"]["tip"], 99);
+        assert_eq!(snap["chain"]["total_blocks"], 1);
+        assert_eq!(snap["revision"], 1);
+    }
+}
