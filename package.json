@@ -1,0 +1,17 @@
+{
+  "name": "cknerv-workspace",
+  "private": true,
+  "version": "0.1.0",
+  "license": "GPL-3.0",
+  "scripts": {
+    "test": "pnpm -r test",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck"
+  },
+  "devDependencies": {
+    "typescript": "^5.4",
+    "vitest": "^2.0",
+    "@types/node": "^20.0.0"
+  },
+  "packageManager": "pnpm@9.0.0"
+}

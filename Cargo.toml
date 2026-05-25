@@ -1,0 +1,32 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/cknerv-core",
+    "crates/cknerv-server",
+    "crates/cknerv-adapter-ckb",
+    "crates/cknerv-adapter-ckbadger",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0"
+authors = ["jan@cryptape.com"]
+
+[workspace.dependencies]
+# Versions are pinned to match ckb-rcg/simulator's manifest (see B1.3 in
+# the Phase B extraction plan). When simulator switches to consuming
+# cknerv via [patch.crates-io] in B7, any drift here would trigger
+# resolver conflicts — keep them in lockstep.
+anyhow = "1"
+async-trait = "0.1"
+axum = { version = "0.7", features = ["ws"] }
+ckb-types = "1.1"
+ckb-hash = "1.1"
+ckb-jsonrpc-types = "1.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+tokio-tungstenite = { version = "0.23", default-features = false, features = ["connect"] }
+tracing = "0.1"
+url = "2"
