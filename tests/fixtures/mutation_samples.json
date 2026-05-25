@@ -1,0 +1,47 @@
+{
+  "BlockMined": {
+    "type": "block_mined",
+    "number": 1,
+    "hash": "0xabc",
+    "tx_count": 2,
+    "at": 1000
+  },
+  "TxLanded": {
+    "type": "tx_landed",
+    "tx_hash": "0xdef",
+    "block": 1,
+    "at": 1100,
+    "inputs": [
+      { "tx_hash": "0xparent", "index": 0 }
+    ],
+    "outputs": [
+      {
+        "capacity": 100,
+        "data_hex": "0x",
+        "content_hash": "0x0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    ]
+  },
+  "ChainMempoolUpdated": {
+    "type": "chain_mempool_updated",
+    "pending": 0,
+    "proposed": 0,
+    "orphan": 0,
+    "total_tx_size": 0,
+    "total_tx_cycles": 0,
+    "min_fee_rate": 1000
+  },
+  "ChainInfoUpdated": {
+    "type": "chain_info_updated",
+    "epoch": { "number": 0, "index": 0, "length": 1000 },
+    "median_time_ms": 0,
+    "difficulty": "0x0",
+    "chain_name": "ckb_dev"
+  },
+  "CellTagged": {
+    "type": "cell_tagged",
+    "out_point": { "tx_hash": "0xdef", "index": 0 },
+    "tag": "dex",
+    "at": 1200
+  }
+}

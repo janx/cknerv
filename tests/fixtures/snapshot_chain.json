@@ -1,0 +1,28 @@
+{
+  "tip": 100,
+  "chain_name": "ckb_dev",
+  "epoch": { "number": 5, "index": 50, "length": 1000 },
+  "mempool": {
+    "pending": 0,
+    "proposed": 0,
+    "orphan": 0,
+    "total_tx_size": 0,
+    "total_tx_cycles": 0,
+    "min_fee_rate": 1000
+  },
+  "recent_blocks": [
+    { "number": 99, "hash": "0x99" },
+    { "number": 100, "hash": "0x100" }
+  ],
+  "recent_tx_hashes": [
+    { "tx_hash": "0xtx1", "block": 100 }
+  ],
+  "total_blocks": 100,
+  "total_txs": 1,
+  "median_time_ms": 1234567890000,
+  "difficulty": "0x100",
+  "reorgs": 0,
+  "recent_block_intervals_ms": [10000, 11000],
+  "recent_block_tx_counts": [1, 1],
+  "last_block_ts_ms": 1234567890000
+}
