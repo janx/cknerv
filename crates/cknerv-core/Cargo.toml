@@ -1,0 +1,13 @@
+[package]
+name = "cknerv-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Chain-generic types and projections for cknerv: Mutation enum, Projection trait, helix_seed (CKB cell-galaxy positioning)"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
