@@ -1,0 +1,9 @@
+target/
+node_modules/
+dist/
+*.tsbuildinfo
+.DS_Store
+.vscode/
+.idea/
+.claude/
+.aux/
