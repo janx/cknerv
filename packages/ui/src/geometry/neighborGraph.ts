@@ -1,0 +1,240 @@
+// Spatial k-NN neighbour graph over the cells field. Pure module —
+// the renderer + pulse router both consume the result.
+//
+// Rule: an edge exists between two cells iff one is among the other's
+// k spatial-nearest cells (or vice-versa, since the relation is
+// asymmetric). k-NN candidates longer than MAX_EDGE_LENGTH are
+// dropped, which leaves halo outliers with no edges at all. A second
+// lifeline pass guarantees every cell ends with ≥1 edge: each
+// remaining isolated cell gets exactly one extra edge to its
+// globally nearest other cell, ignoring the length cap. The result
+// is "axon projection" geometry (one slim fibre reaching from rim
+// toward the disc per outlier) rather than the dense bridge cluster
+// an MST stitch would build.
+
+import type { Cell } from '@cknerv/types';
+
+/** Default k for the nearest-neighbour query. k=4 gives the main
+ *  galaxy disc generous local connectivity while still feeling
+ *  sparse — every interior cell ends up with ~6-8 unique edges
+ *  after symmetry merging. */
+export const DEFAULT_K = 4;
+
+/** Maximum chord length (world units) for a k-NN edge to be kept.
+ *  Edges longer than this are dropped — they're almost always halo
+ *  outliers, and rendering them as long curves crossing the empty
+ *  rim of the disc makes the graph look like cables in space rather
+ *  than neural tissue. A few peripheral cells stay isolated; pulses
+ *  routed to them simply don't fire. */
+const MAX_EDGE_LENGTH = 25;
+
+/** Side length (world units) of one cell in the spatial-hash grid
+ *  used to accelerate the k-NN search. */
+const BUCKET_SIZE = 6;
+
+/** Edge between two cell ids. Canonical order: from < to. */
+export interface NeighborEdge {
+  from: number;
+  to: number;
+  /** Euclidean distance (xz primary, y is small Gaussian). */
+  d: number;
+}
+
+export interface NeighborGraph {
+  /** Cell id → set of neighbour cell ids. Symmetric. */
+  adjacency: Map<number, Set<number>>;
+  /** Deduplicated edge list, canonical (from < to). */
+  edges: NeighborEdge[];
+}
+
+export function emptyNeighborGraph(): NeighborGraph {
+  return { adjacency: new Map(), edges: [] };
+}
+
+function distSq(a: Cell, b: Cell): number {
+  const dx = a.pos_seed[0] - b.pos_seed[0];
+  const dy = a.pos_seed[1] - b.pos_seed[1];
+  const dz = a.pos_seed[2] - b.pos_seed[2];
+  return dx * dx + dy * dy + dz * dz;
+}
+
+/** Pack two integer bucket coords (after bucket-size division) into one
+ *  number for use as a Map key. The previous string-key formulation
+ *  (`${bx}\x00${bz}`) showed up as a hot allocation in profiling
+ *  (~13k strings per buildNeighborGraph at N≈1500 due to the 9-bucket
+ *  scan inside the per-cell loop). The pack assumes |bucket coord| <
+ *  16384, which holds for any plausible galaxy size. */
+function bucketKeyNum(bx: number, bz: number): number {
+  return ((bx + 16384) << 16) | (bz + 16384);
+}
+
+/**
+ * Build the spatial neighbour graph over a snapshot of cells.
+ *
+ *  1. For each cell, find the `k` nearest other cells (Euclidean).
+ *  2. Add each pair as an undirected edge (deduplicated via the
+ *     adjacency Set; no separate edgeMap needed).
+ *
+ * O(N²) per call worst case; in practice the spatial-hash bucket scan
+ * keeps it close to O(N · k). Callers should rebuild only when the
+ * cell SET (membership) actually changes — pulse / link / death / tag
+ * deltas leave the graph identical.
+ */
+export function buildNeighborGraph(
+  cells: ReadonlyMap<number, Cell>,
+  k: number = DEFAULT_K,
+): NeighborGraph {
+  const n = cells.size;
+  if (n === 0) return emptyNeighborGraph();
+  if (n === 1) {
+    const [id] = [...cells.keys()];
+    return { adjacency: new Map([[id, new Set()]]), edges: [] };
+  }
+
+  const cellArr = [...cells.values()];
+
+  // Pre-allocated parallel scratch buffers for top-k. Avoids the
+  // per-iteration object alloc that the previous implementation hit
+  // ~N²/k times.
+  const SCRATCH_CAP = Math.max(64, k * 16);
+  const scratchId = new Int32Array(SCRATCH_CAP);
+  const scratchDSq = new Float32Array(SCRATCH_CAP);
+
+  // 2D spatial-hash bucketing cells by xz coords. k-NN scans only the
+  // 9-bucket neighbourhood per cell. Numeric key avoids per-cell and
+  // per-bucket-scan string allocations.
+  const buckets = new Map<number, Cell[]>();
+  for (const c of cellArr) {
+    const bx = Math.floor(c.pos_seed[0] / BUCKET_SIZE);
+    const bz = Math.floor(c.pos_seed[2] / BUCKET_SIZE);
+    const key = bucketKeyNum(bx, bz);
+    let arr = buckets.get(key);
+    if (!arr) { arr = []; buckets.set(key, arr); }
+    arr.push(c);
+  }
+
+  // 1. k-NN per cell against bucket neighbourhood, widening radius
+  // when local density is too low. Adjacency is created lazily —
+  // pre-populating an empty Set per cell would alloc N×Set objects
+  // upfront, most of which the typical k-NN loop fills anyway, so we
+  // get them via getOrInit at first use.
+  const adjacency = new Map<number, Set<number>>();
+  const edges: NeighborEdge[] = [];
+
+  function adjOf(id: number): Set<number> {
+    let s = adjacency.get(id);
+    if (s === undefined) { s = new Set(); adjacency.set(id, s); }
+    return s;
+  }
+
+  for (let i = 0; i < cellArr.length; i++) {
+    const a = cellArr[i];
+    const bx = Math.floor(a.pos_seed[0] / BUCKET_SIZE);
+    const bz = Math.floor(a.pos_seed[2] / BUCKET_SIZE);
+
+    // Collect candidates from bucket + neighbours, expanding radius
+    // if we don't see enough yet.
+    let candidateCount = 0;
+    let radius = 1;
+    while (candidateCount < k + 1 && radius <= 16) {
+      candidateCount = 0;
+      for (let dx = -radius; dx <= radius; dx++) {
+        for (let dz = -radius; dz <= radius; dz++) {
+          const arr = buckets.get(bucketKeyNum(bx + dx, bz + dz));
+          if (!arr) continue;
+          for (const c of arr) {
+            if (c.id === a.id) continue;
+            if (candidateCount >= SCRATCH_CAP) {
+              candidateCount = SCRATCH_CAP;
+              break;
+            }
+            scratchId[candidateCount] = c.id;
+            scratchDSq[candidateCount] = distSq(a, c);
+            candidateCount += 1;
+          }
+        }
+      }
+      if (candidateCount >= k + 1) break;
+      radius += 1;
+    }
+    if (candidateCount === 0) {
+      // Isolated cell still needs an entry so consumers can reason
+      // about "this cell exists but has no neighbours."
+      adjOf(a.id);
+      continue;
+    }
+
+    // Partial selection sort: pull the k smallest dSq's to the front.
+    // For k=3 and ~30 candidates this is faster than a full sort.
+    const take = Math.min(k, candidateCount);
+    const aAdj = adjOf(a.id);
+    for (let m = 0; m < take; m++) {
+      let bestIdx = m;
+      let bestDSq = scratchDSq[m];
+      for (let j = m + 1; j < candidateCount; j++) {
+        if (scratchDSq[j] < bestDSq) {
+          bestDSq = scratchDSq[j];
+          bestIdx = j;
+        }
+      }
+      if (bestIdx !== m) {
+        const tmpId = scratchId[m];
+        const tmpD = scratchDSq[m];
+        scratchId[m] = scratchId[bestIdx];
+        scratchDSq[m] = scratchDSq[bestIdx];
+        scratchId[bestIdx] = tmpId;
+        scratchDSq[bestIdx] = tmpD;
+      }
+      const otherId = scratchId[m];
+      // Drop edges longer than the cap — these are halo outliers
+      // that would render as long curves through the empty rim.
+      const d = Math.sqrt(scratchDSq[m]);
+      if (d > MAX_EDGE_LENGTH) continue;
+      // Adjacency Set is the dedup oracle — no separate edgeMap. The
+      // only way `aAdj` already contains `otherId` is if `otherId`
+      // saw `a.id` in an earlier iteration and added the symmetric
+      // edge (we always add both directions on first add).
+      if (aAdj.has(otherId)) continue;
+      const lo = a.id < otherId ? a.id : otherId;
+      const hi = a.id < otherId ? otherId : a.id;
+      edges.push({ from: lo, to: hi, d });
+      aAdj.add(otherId);
+      adjOf(otherId).add(a.id);
+    }
+  }
+
+  // 2. Lifeline pass. After k-NN any cell whose every candidate
+  // exceeded MAX_EDGE_LENGTH (halo outliers, the rim of the field)
+  // still has empty adjacency. Give each such cell exactly one edge
+  // to its globally nearest other cell, ignoring the length cap.
+  // This is NOT an MST stitch — we never group components with bridge
+  // clusters in empty space; each isolated cell gets one slim
+  // projection toward whatever's closest, even if that's another
+  // isolated cell. Linear scan over cellArr per outlier is cheap
+  // because outliers are a few percent of the field and the outer
+  // O(N²) factor matches the k-NN bucket scan itself.
+  for (let i = 0; i < cellArr.length; i++) {
+    const a = cellArr[i];
+    const aAdj = adjOf(a.id);
+    if (aAdj.size > 0) continue;
+    let bestId = -1;
+    let bestDSq = Infinity;
+    for (let j = 0; j < cellArr.length; j++) {
+      if (j === i) continue;
+      const dSq = distSq(a, cellArr[j]);
+      if (dSq < bestDSq) {
+        bestDSq = dSq;
+        bestId = cellArr[j].id;
+      }
+    }
+    if (bestId < 0) continue;
+    const d = Math.sqrt(bestDSq);
+    const lo = a.id < bestId ? a.id : bestId;
+    const hi = a.id < bestId ? bestId : a.id;
+    edges.push({ from: lo, to: hi, d });
+    aAdj.add(bestId);
+    adjOf(bestId).add(a.id);
+  }
+
+  return { adjacency, edges };
+}
