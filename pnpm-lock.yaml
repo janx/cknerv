@@ -58,7 +58,7 @@ importers:
         specifier: ^0.9
         version: 0.9.36(@types/react@18.3.29)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
       react:
-        specifier: ^18.3
+        specifier: '>=18'
         version: 18.3.1
       three:
         specifier: ^0.169

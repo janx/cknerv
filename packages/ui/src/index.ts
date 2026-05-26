@@ -66,17 +66,51 @@ export {
 
 // ── Components ─────────────────────────────────────────────────────
 export { default as BlockBeam } from './components/BlockBeam';
-export { default as CellCanopyVeil } from './components/CellCanopyVeil';
-export { default as CellDetailHud } from './components/CellDetailHud';
+export {
+  default as CellCanopyVeil,
+  CANOPY_VEIL_WIDTH,
+  CANOPY_VEIL_DEPTH,
+} from './components/CellCanopyVeil';
+export {
+  default as CellDetailHud,
+  formatCellKind,
+  formatCkb,
+  formatDataHex,
+  formatOutpoint,
+  midTruncate,
+} from './components/CellDetailHud';
 export { default as CellDetailHudOverlay } from './components/CellDetailHudOverlay';
-export { default as CellGalaxy } from './components/CellGalaxy';
+export {
+  default as CellGalaxy,
+  writeCellBuffers,
+  writeFlashSlots,
+  BLOCK_HIGHLIGHT_DELAY_S,
+} from './components/CellGalaxy';
+export type { BlockEventTrigger, CellBufferTargets } from './components/CellGalaxy';
 export { default as CellLifeAvatar } from './components/CellLifeAvatar';
 export { default as CellLifeDetail3D } from './components/CellLifeDetail3D';
 export { default as CellShell } from './components/CellShell';
-export { default as CellsHud } from './components/CellsHud';
+export {
+  default as CellsHud,
+  formatCommonKnowledgeBytes,
+} from './components/CellsHud';
 export { default as CkbNetworkHud } from './components/CkbNetworkHud';
-export { default as EdgeEnvelopeLayer } from './components/EdgeEnvelopeLayer';
-export type { EdgeEnvelope } from './components/EdgeEnvelopeLayer';
+export {
+  default as EdgeEnvelopeLayer,
+  buildTrajectories,
+  colorForOriginIdx,
+} from './components/EdgeEnvelopeLayer';
+export type { EdgeEnvelope, Trajectory } from './components/EdgeEnvelopeLayer';
 export { default as EventStreamHud } from './components/EventStreamHud';
-export { default as GlowNode } from './components/GlowNode';
+export type {
+  RenderedLine,
+  EventStreamHudProps,
+} from './components/EventStreamHud';
+export {
+  default as GlowNode,
+  makeHaloMaterial,
+  phaseFor,
+  rateFor,
+} from './components/GlowNode';
+export type { Palette, Shape } from './components/GlowNode';
 export { default as StatsHud } from './components/StatsHud';
