@@ -15,12 +15,12 @@
   },
   "dependencies": {
     "@cknerv/cache": "workspace:*",
-    "@cknerv/types": "workspace:*",
-    "leva": "^0.9"
+    "@cknerv/types": "workspace:*"
   },
   "peerDependencies": {
     "@react-three/drei": "^9.114",
     "@react-three/fiber": "^8.17",
+    "leva": "^0.9",
     "react": ">=18",
     "three": "^0.169"
   },
