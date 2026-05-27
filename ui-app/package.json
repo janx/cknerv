@@ -1,0 +1,30 @@
+{
+  "name": "cknerv-ui-app",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -b && vite build",
+    "dev": "vite",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@cknerv/cache": "workspace:*",
+    "@cknerv/types": "workspace:*",
+    "@cknerv/ui": "workspace:*",
+    "@react-three/drei": "^9.114",
+    "@react-three/fiber": "^8.17",
+    "leva": "^0.9",
+    "react": "^18.3",
+    "react-dom": "^18.3",
+    "three": "^0.169"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3",
+    "@types/react-dom": "^18.3",
+    "@types/three": "^0.169",
+    "@vitejs/plugin-react": "^4.3",
+    "typescript": "^5.4",
+    "vite": "^5.4"
+  }
+}

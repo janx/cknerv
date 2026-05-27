@@ -1,0 +1,28 @@
+[package]
+name = "cknerv-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Standalone CLI that visualizes a local CKB chain via cknerv"
+
+[[bin]]
+name = "cknerv"
+path = "src/main.rs"
+
+[dependencies]
+cknerv-core = { path = "../cknerv-core" }
+cknerv-server = { path = "../cknerv-server" }
+cknerv-adapter-ckb = { path = "../cknerv-adapter-ckb" }
+anyhow.workspace = true
+axum.workspace = true
+clap = { version = "4", features = ["derive"] }
+mime_guess = "2"
+rust-embed = "8"
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+url.workspace = true
+webbrowser = "1"
+
+[build-dependencies]
+anyhow = "1"
