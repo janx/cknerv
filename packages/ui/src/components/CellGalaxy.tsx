@@ -33,7 +33,6 @@ const CHAIN_ANCHOR_PALETTE = { edge: '#7df9ff', halo: '#22d3ee', fill: '#0e7490'
 import CellShell, { GENERIC_SHELL_SIZE, TAGGED_SHELL_SIZE } from './CellShell';
 import CellLifeAvatar from './CellLifeAvatar';
 import BlockBeam from './BlockBeam';
-import CellCanopyVeil from './CellCanopyVeil';
 
 // ---------------------------------------------------------------------------
 // Block trigger — written by CellGalaxy on every block, consumed by:
@@ -987,7 +986,6 @@ export default function CellGalaxy({ ckbNodeIds, minerCkbNodeIds, universeSeed, 
           lives in world space (below) so it can span chain → cells
           planes. */}
       <group ref={groupRef} position={[0, CELLS_Y, 0]}>
-        <CellCanopyVeil />
         <points
           geometry={cellGeometry}
           material={hybridMaterial}

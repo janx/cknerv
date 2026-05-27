@@ -36,7 +36,6 @@ export * from './ui/scanState';
 // ── Materials (THREE.ShaderMaterials + GLSL chunks) ─────────────────
 export * from './materials/blockBeamMaterial';
 export * from './materials/blockBeamPhase';
-export * from './materials/cellCanopyVeilMaterial';
 export * from './materials/cellEnvelope.glsl';
 export * from './materials/cellHybridMaterial';
 export * from './materials/cellLifeAvatarMaterial';
@@ -66,11 +65,6 @@ export {
 
 // ── Components ─────────────────────────────────────────────────────
 export { default as BlockBeam } from './components/BlockBeam';
-export {
-  default as CellCanopyVeil,
-  CANOPY_VEIL_WIDTH,
-  CANOPY_VEIL_DEPTH,
-} from './components/CellCanopyVeil';
 export {
   default as CellDetailHud,
   formatCellKind,
