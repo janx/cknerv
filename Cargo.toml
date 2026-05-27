@@ -3,10 +3,10 @@ resolver = "2"
 members = [
     "crates/cknerv-core",
     "crates/cknerv-server",
-    # cknerv-adapter-ckb and cknerv-adapter-ckbadger are Phase C
-    # placeholders. Workspace members are added when their Cargo.toml
-    # lands, not before — a member entry with no manifest fails
-    # workspace resolution.
+    "crates/cknerv-adapter-ckb",
+    # cknerv-adapter-ckbadger is a Phase C placeholder. Workspace
+    # members are added when their Cargo.toml lands, not before — a
+    # member entry with no manifest fails workspace resolution.
 ]
 
 [workspace.package]
