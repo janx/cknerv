@@ -5,7 +5,6 @@ import { render } from '@testing-library/react';
 import { Canvas } from '@react-three/fiber';
 import CellGalaxy from '../../src/components/CellGalaxy';
 import { writeFlashSlots, writeCellBuffers } from '../../src/components/CellGalaxy';
-import { CANOPY_VEIL_DEPTH, CANOPY_VEIL_WIDTH } from '../../src/components/CellCanopyVeil';
 import { CellGalaxyProvider } from '../../src/hooks/cellGalaxyContext';
 import { emptyCellsCache } from '@cknerv/cache';
 import type { Cell } from '@cknerv/types';
@@ -52,15 +51,10 @@ describe('CellGalaxy', () => {
     expect(source).not.toContain('makeNebulaGas');
   });
 
-  it('mounts the breathing canopy veil inside the cell galaxy layer', () => {
+  it('does not mount the retired breathing canopy veil', () => {
     const source = readFileSync(CELL_GALAXY_SOURCE, 'utf8');
 
-    expect(source).toContain('CellCanopyVeil');
-  });
-
-  it('sizes the canopy veil large enough to cover the cell galaxy rim', () => {
-    expect(CANOPY_VEIL_WIDTH).toBeGreaterThanOrEqual(190);
-    expect(CANOPY_VEIL_DEPTH).toBeGreaterThanOrEqual(150);
+    expect(source).not.toContain('CellCanopyVeil');
   });
 });
 
