@@ -49,7 +49,11 @@ function cloneChain(c: ChainEntry): ChainEntry {
 }
 
 /** True iff this mutation needs a chain-table change. `cell_tagged` is
- *  projection-only and produces no entity-table side effect. */
+ *  projection-only and produces no entity-table side effect.
+ *  `chain_node_registered` updates `EntityStore.chain_nodes` (a separate
+ *  slice from `ChainEntry`); this reducer is `ChainEntry`-only so it
+ *  reports false here. Consumers maintaining the chain-nodes list
+ *  handle the variant in a sibling reducer. */
 function touchesChain(m: Mutation): boolean {
   switch (m.type) {
     case 'block_mined':
@@ -58,6 +62,7 @@ function touchesChain(m: Mutation): boolean {
     case 'chain_info_updated':
       return true;
     case 'cell_tagged':
+    case 'chain_node_registered':
       return false;
     default: {
       const _exhaustive: never = m;
@@ -126,6 +131,12 @@ function applyToChain(chain: ChainEntry, m: Mutation): void {
     }
     case 'cell_tagged': {
       // projection-only; no chain-table update
+      return;
+    }
+    case 'chain_node_registered': {
+      // chain-nodes list lives on EntityStore (a separate slice from
+      // ChainEntry); this reducer is ChainEntry-only and treats it as
+      // a no-op.
       return;
     }
     default: {

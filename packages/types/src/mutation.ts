@@ -52,6 +52,17 @@ export type Mutation =
       out_point: OutPoint;
       tag: string;
       at: number;
+    }
+  /** Register a chain node into the server's `chain_nodes` list.
+   *  Idempotent: re-registering the same `id` updates `label` and
+   *  `is_miner` if changed, otherwise no-op. Single-node adapters emit
+   *  this once at startup; multi-node profiles emit once per node. */
+  | {
+      type: 'chain_node_registered';
+      id: string;
+      label: string;
+      is_miner: boolean;
+      at: number;
     };
 
 /** Mutation paired with the EntityStore revision that produced it. Matches

@@ -126,7 +126,7 @@ impl ServerState {
         let _coord = self.coord.write().unwrap();
         {
             let mut store = self.entity_store.write().unwrap();
-            apply_chain_mutation(&mut store.chain, &m);
+            apply_entity_mutation(&mut store, &m);
         }
         let revision = self.revision.fetch_add(1, Ordering::Relaxed) + 1;
         let rev = RevisionedMutation {
@@ -268,6 +268,29 @@ struct EntitiesPersisted {
     chain_nodes: Vec<ChainNode>,
 }
 
+/// Apply a mutation to the [`EntityStore`]. Dispatches:
+///   * `Chain`-touching variants to [`apply_chain_mutation`].
+///   * `ChainNodeRegistered` to an idempotent upsert against
+///     `EntityStore.chain_nodes`.
+///   * `CellTagged` is projection-only — no entity-store update.
+fn apply_entity_mutation(store: &mut EntityStore, m: &Mutation) {
+    match m {
+        Mutation::ChainNodeRegistered { id, label, is_miner, .. } => {
+            if let Some(existing) = store.chain_nodes.iter_mut().find(|n| n.id == *id) {
+                existing.label = label.clone();
+                existing.is_miner = *is_miner;
+            } else {
+                store.chain_nodes.push(ChainNode {
+                    id: id.clone(),
+                    label: label.clone(),
+                    is_miner: *is_miner,
+                });
+            }
+        }
+        _ => apply_chain_mutation(&mut store.chain, m),
+    }
+}
+
 /// Apply a chain-side mutation to the [`Chain`] entity. Lifted verbatim
 /// from `simulator/src/dashboard/state.rs::apply_chain_mutation` (post
 /// Phase A `ChainMutation` arms), adapted to cknerv-core's flat
@@ -374,6 +397,11 @@ fn apply_chain_mutation(chain: &mut Chain, m: &Mutation) {
         Mutation::CellTagged { .. } => {
             // Projection-only: cell-galaxy consumes via its own
             // `apply_mutation`. Entity-store is a no-op.
+        }
+        Mutation::ChainNodeRegistered { .. } => {
+            // Handled by the outer dispatcher (`apply_entity_mutation`)
+            // against `EntityStore.chain_nodes`. The `Chain` entity has
+            // no field to update for node registration.
         }
     }
 }
@@ -485,6 +513,58 @@ mod tests {
         // chain entity is unchanged; only revision moves.
         assert_eq!(baseline["chain"], after["chain"]);
         assert_eq!(after["revision"], 1);
+    }
+
+    #[test]
+    fn chain_node_registered_appends_and_updates() {
+        let state = ServerState::new();
+
+        // First registration: appends to chain_nodes
+        state.apply_mutation(Mutation::ChainNodeRegistered {
+            id: "ckb:mainnet".into(),
+            label: "ckb-mainnet".into(),
+            is_miner: false,
+            at: 1000,
+        });
+        {
+            let nodes = &state.entity_store.read().unwrap().chain_nodes;
+            assert_eq!(nodes.len(), 1);
+            assert_eq!(nodes[0].id, "ckb:mainnet");
+            assert_eq!(nodes[0].label, "ckb-mainnet");
+            assert_eq!(nodes[0].is_miner, false);
+        }
+
+        // Re-register with updated label + is_miner: in-place mutation,
+        // no row added.
+        state.apply_mutation(Mutation::ChainNodeRegistered {
+            id: "ckb:mainnet".into(),
+            label: "ckb-mainnet-renamed".into(),
+            is_miner: true,
+            at: 2000,
+        });
+        {
+            let nodes = &state.entity_store.read().unwrap().chain_nodes;
+            assert_eq!(nodes.len(), 1, "no duplicate row");
+            assert_eq!(nodes[0].label, "ckb-mainnet-renamed");
+            assert_eq!(nodes[0].is_miner, true);
+        }
+
+        // Different id: appends as separate row.
+        state.apply_mutation(Mutation::ChainNodeRegistered {
+            id: "ckb:secondary".into(),
+            label: "ckb-secondary".into(),
+            is_miner: false,
+            at: 3000,
+        });
+        {
+            let nodes = &state.entity_store.read().unwrap().chain_nodes;
+            assert_eq!(nodes.len(), 2);
+        }
+
+        // Chain entity is untouched by node registration.
+        let snap = state.snapshot();
+        assert_eq!(snap["chain"]["tip"], 0);
+        assert_eq!(snap["chain_nodes"].as_array().unwrap().len(), 2);
     }
 
     #[test]

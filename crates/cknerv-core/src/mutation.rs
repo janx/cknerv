@@ -69,6 +69,18 @@ pub enum Mutation {
         tag: String,
         at: u64,
     },
+
+    /// Register a chain node into the cknerv-server's `chain_nodes`
+    /// list. Idempotent: re-registering the same `id` updates `label`
+    /// and `is_miner` if changed, otherwise no-op. Single-node adapters
+    /// (CkbDirectAdapter) emit this once at startup; multi-node profiles
+    /// (mesh) emit once per node.
+    ChainNodeRegistered {
+        id: String,
+        label: String,
+        is_miner: bool,
+        at: u64,
+    },
 }
 
 /// Mutation paired with the EntityStore revision that produced it.
