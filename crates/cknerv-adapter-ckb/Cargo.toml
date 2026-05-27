@@ -1,0 +1,27 @@
+[package]
+name = "cknerv-adapter-ckb"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "cknerv Adapter for local CKB nodes via JSON-RPC + (optional) WS"
+
+[dependencies]
+cknerv-core = { path = "../cknerv-core" }
+cknerv-server = { path = "../cknerv-server" }
+anyhow.workspace = true
+async-trait.workspace = true
+ckb-types.workspace = true
+ckb-hash.workspace = true
+ckb-jsonrpc-types.workspace = true
+hex = "0.4"
+reqwest = { version = "0.12", features = ["json"] }
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util", "macros", "rt-multi-thread"] }
+axum.workspace = true
+ckb-types.workspace = true
