@@ -57,12 +57,12 @@ describe('makeCellHybridMaterial', () => {
     expect(m.fragmentShader).toContain('uShockwaveTrailBoost');
   });
 
-  it('uses further-dampened core shockwave boosts', () => {
+  it('uses mid-range core shockwave boosts (visible spreading front on sparse cells)', () => {
     const m = makeCellHybridMaterial();
 
-    expect(m.uniforms.uShockwaveColorBoost.value).toBeCloseTo(3.5);
-    expect(m.uniforms.uShockwaveAlphaBoost.value).toBeCloseTo(2.0);
-    expect(m.uniforms.uShockwaveSizeBoost.value).toBeCloseTo(0.095);
-    expect(m.uniforms.uShockwaveTrailBoost.value).toBeCloseTo(0.055);
+    expect(m.uniforms.uShockwaveColorBoost.value).toBeCloseTo(9.0);
+    expect(m.uniforms.uShockwaveAlphaBoost.value).toBeCloseTo(5.5);
+    expect(m.uniforms.uShockwaveSizeBoost.value).toBeCloseTo(0.5);
+    expect(m.uniforms.uShockwaveTrailBoost.value).toBeCloseTo(0.18);
   });
 });
