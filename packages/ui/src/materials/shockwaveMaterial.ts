@@ -19,12 +19,23 @@
  * NervePulses-bearing block trigger fires".
  */
 export const SHOCKWAVE_SLOTS = 8;
-export const SHOCKWAVE_BAND_BASE = 3.2;
-export const SHOCKWAVE_BAND_GROW = 1.25;
-export const SHOCKWAVE_COLOR_BOOST = 3.5;
-export const SHOCKWAVE_ALPHA_BOOST = 2.0;
-export const SHOCKWAVE_SIZE_BOOST = 0.095;
-export const SHOCKWAVE_TRAIL_BOOST = 0.055;
+
+// Block-shockwave intensities. The wave renders only on the actual cell
+// cores + shells now — the dense "nebula gas" surface it used to paint was
+// removed, and on sparse point-sprites the original gas-era boosts
+// (color 22 / alpha 14) blew out, so they were dampened. But they were
+// dampened so far (color 3.5 / alpha 2.0 / size 0.095) that the spreading
+// wave became imperceptible. These mid-range values restore a clearly
+// visible, coherent expanding front without white-blobbing the lit cells.
+// A wider band lights more cells at once, so the ring reads as a spreading
+// front rather than isolated twinkles. Tune here; both cellHybridMaterial
+// and cellShellMaterial read these via makeShockwaveUniforms().
+export const SHOCKWAVE_BAND_BASE = 5.5;
+export const SHOCKWAVE_BAND_GROW = 1.5;
+export const SHOCKWAVE_COLOR_BOOST = 9.0;
+export const SHOCKWAVE_ALPHA_BOOST = 5.5;
+export const SHOCKWAVE_SIZE_BOOST = 0.5;
+export const SHOCKWAVE_TRAIL_BOOST = 0.18;
 
 export function makeShockwaveAtArray(): Float32Array {
   const a = new Float32Array(SHOCKWAVE_SLOTS);
