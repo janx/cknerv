@@ -43,5 +43,12 @@
     "out_point": { "tx_hash": "0xdef", "index": 0 },
     "tag": "dex",
     "at": 1200
+  },
+  "ChainNodeRegistered": {
+    "type": "chain_node_registered",
+    "id": "ckb:mainnet",
+    "label": "ckb-mainnet",
+    "is_miner": false,
+    "at": 1700000000000
   }
 }
