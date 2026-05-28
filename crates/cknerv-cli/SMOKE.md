@@ -139,12 +139,10 @@ Open `http://localhost:7001` (or whatever `--port` you used):
 | Pudge testnet | (your pudge node) | Real tx traffic; ~10s/block |
 | Mainnet | (your mainnet node) | Real production traffic |
 
-## Known limitations (Phase C MVP)
+## Known limitations
 
-- SPA renders from initial snapshots; live WebSocket stream subscription is
-  a future polish item (cells/chain update on page reload, not yet live).
-- Detail HUDs (CellLifeDetail3D, CellDetailHud) deferred from C2 — cell
-  selection state is wired but the detail panels aren't mounted yet.
+- The 3D cell-life avatar (`CellLifeDetail3D`) is not mounted in the
+  standalone SPA; clicking a cell shows the `CellDetailHud` panel only.
 - No persist-on-exit; state rehydrates from the live chain on each boot.
 
 ## Observed run (2026-05-27)
