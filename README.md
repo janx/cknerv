@@ -105,8 +105,6 @@ non-API path) on a single port.
 
 ## Known limitations (v0.1)
 
-- The 3D cell-life avatar (`CellLifeDetail3D`) is not mounted in `ui-app/`;
-  clicking a cell shows the `CellDetailHud` text panel only.
 - No persist-on-exit — state rehydrates from the live chain each boot.
 - ckbadger adapter deferred until ckbadger publishes its WS feed schema.
 
