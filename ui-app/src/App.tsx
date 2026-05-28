@@ -12,12 +12,15 @@ import { Hud, OrbitControls, OrthographicCamera, Stars } from '@react-three/drei
 import {
   aggregateCellsStats,
   CellDetailHud,
+  CellDetailHudOverlay,
   CellGalaxy,
   CellGalaxyProvider,
+  CellLifeDetail3D,
   CellsHud,
   CkbNetworkHud,
   DendriticBurst,
   NeuralNetwork,
+  type ScanStateRef,
 } from '@cknerv/ui';
 import {
   connectCellsStream,
@@ -111,6 +114,10 @@ export default function App({
   const burstArrivalRef = useRef<
     Map<number, { firedAt: number; color: [number, number, number] }>
   >(new Map());
+  // The 3D cell-life scan sub-scene (CellLifeDetail3D) writes its GoL grid +
+  // generation here each frame; CellDetailHudOverlay polls it (~10 Hz) to
+  // draw the scan readout without forcing React re-renders.
+  const scanStateRef = useRef<ScanStateRef | null>(null);
 
   // ckb node ids drive the icosahedra scatter inside the cell canopy. The
   // CkbDirectAdapter registers `ckb:local` on boot; fall back to a single
@@ -156,7 +163,13 @@ export default function App({
   const cellsX = HUD_VIEWPORT_W / 2 - CELLS_PANEL_W - 20;
   const cellsY = HUD_VIEWPORT_H / 2 - 20;
   const detailX = -HUD_VIEWPORT_W / 2 + 20;
-  const detailY = -HUD_VIEWPORT_H / 2 + 240;
+  const detailY = -HUD_VIEWPORT_H / 2 + 210;
+  // 3D cell-life scan viewport — stacked just above the cell detail text
+  // panel in the lower-left column, clear of the network panel above it.
+  const SCAN_VIEWPORT_W = DETAIL_PANEL_W;
+  const SCAN_VIEWPORT_H = 200;
+  const DETAIL_GAP = 14;
+  const scanViewportY = detailY + SCAN_VIEWPORT_H + DETAIL_GAP;
 
   return (
     <>
@@ -241,6 +254,28 @@ export default function App({
                 y={detailY}
                 width={DETAIL_PANEL_W}
               />
+            ) : null}
+            {selectedCell ? (
+              <>
+                {/* Floating 3D cell-life scan: a Game-of-Life automaton
+                    seeded from the cell's content_hash, with a bracket/text
+                    overlay polling the shared scanStateRef. */}
+                <CellLifeDetail3D
+                  cell={selectedCell}
+                  x={detailX}
+                  y={scanViewportY}
+                  width={SCAN_VIEWPORT_W}
+                  height={SCAN_VIEWPORT_H}
+                  scanStateRef={scanStateRef}
+                />
+                <CellDetailHudOverlay
+                  scanStateRef={scanStateRef}
+                  x={detailX}
+                  y={scanViewportY}
+                  width={SCAN_VIEWPORT_W}
+                  height={SCAN_VIEWPORT_H}
+                />
+              </>
             ) : null}
             {selectedNode ? (
               <ChainNodeDetailHud

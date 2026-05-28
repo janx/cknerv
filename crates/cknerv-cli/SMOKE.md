@@ -141,8 +141,6 @@ Open `http://localhost:7001` (or whatever `--port` you used):
 
 ## Known limitations
 
-- The 3D cell-life avatar (`CellLifeDetail3D`) is not mounted in the
-  standalone SPA; clicking a cell shows the `CellDetailHud` panel only.
 - No persist-on-exit; state rehydrates from the live chain on each boot.
 
 ## Observed run (2026-05-27)
