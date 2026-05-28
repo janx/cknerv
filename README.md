@@ -11,7 +11,9 @@ both the RCG simulator (via the simulator's `SimulatorAdapter`) and any
 real CKB node (via this repo's `cknerv` CLI + `CkbDirectAdapter`).
 
 **Status:** v0.1 — working standalone CLI. Boots against a local CKB
-node, polls its JSON-RPC, and serves a self-contained dashboard SPA.
+node, polls its JSON-RPC, and serves a self-contained dashboard SPA that
+streams the chain live as a 3D cell galaxy — cells, block pulses, and
+cell→cell nerve pulses, with click-to-inspect cell/node detail panels.
 Verified end-to-end against a live mainnet node (see
 `crates/cknerv-cli/SMOKE.md`).
 
@@ -103,10 +105,8 @@ non-API path) on a single port.
 
 ## Known limitations (v0.1)
 
-- SPA renders from the initial snapshot fetch; live WebSocket stream
-  subscription in `ui-app/` is a follow-up (data updates on reload).
-- Detail HUDs (`CellLifeDetail3D`, `CellDetailHud`) are exported by
-  `@cknerv/ui` and wired for selection, but not yet mounted in `ui-app/`.
+- The 3D cell-life avatar (`CellLifeDetail3D`) is not mounted in `ui-app/`;
+  clicking a cell shows the `CellDetailHud` text panel only.
 - No persist-on-exit — state rehydrates from the live chain each boot.
 - ckbadger adapter deferred until ckbadger publishes its WS feed schema.
 
