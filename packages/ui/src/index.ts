@@ -108,3 +108,9 @@ export {
 } from './components/GlowNode';
 export type { Palette, Shape } from './components/GlowNode';
 export { default as StatsHud } from './components/StatsHud';
+
+// ── Nerve overlay (cell→cell dendritic pulses; pass as CellGalaxy `overlay`) ──
+export { default as NeuralNetwork } from './nerve/NeuralNetwork';
+export { default as DendriticBurst } from './nerve/DendriticBurst';
+export type { DendriticBurstProps } from './nerve/DendriticBurst';
+export { planPulses, type Pulse } from './nerve/pulseRunner';

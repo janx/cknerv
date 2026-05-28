@@ -16,6 +16,8 @@ import {
   CellGalaxyProvider,
   CellsHud,
   CkbNetworkHud,
+  DendriticBurst,
+  NeuralNetwork,
 } from '@cknerv/ui';
 import {
   connectCellsStream,
@@ -101,11 +103,14 @@ export default function App({
   const chain = chainCache.chain;
   const chainNodes = chainCache.chainNodes;
 
-  // CellGalaxy expects shared per-cell flash buffers owned by the consumer
-  // (so overlay layers could write into the same Float32Array CellShell
-  // reads). This MVP has no overlay, but the refs are still required props.
+  // Shared per-cell flash buffers, owned here so the NeuralNetwork overlay
+  // can write cell→cell pulse arrivals into the same Float32Array CellShell
+  // reads. burstArrivalRef carries terminal arrivals to DendriticBurst.
   const cellFlashRef = useRef<Map<number, number>>(new Map());
   const flashDirtyRef = useRef<boolean>(false);
+  const burstArrivalRef = useRef<
+    Map<number, { firedAt: number; color: [number, number, number] }>
+  >(new Map());
 
   // ckb node ids drive the icosahedra scatter inside the cell canopy. The
   // CkbDirectAdapter registers `ckb:local` on boot; fall back to a single
@@ -181,6 +186,20 @@ export default function App({
             onSelect={setSelectedId}
             cellFlashRef={cellFlashRef}
             flashDirtyRef={flashDirtyRef}
+            overlay={
+              <>
+                {/* Cell→cell nerve pulses: each landed tx routes a bead
+                    from its input cells to its outputs through the neighbour
+                    graph, flashing cells en route and bursting at the
+                    terminal. Ported from ckb-rcg's NeuralNetwork. */}
+                <NeuralNetwork
+                  cellFlashRef={cellFlashRef}
+                  flashDirtyRef={flashDirtyRef}
+                  burstArrivalRef={burstArrivalRef}
+                />
+                <DendriticBurst arrivalRef={burstArrivalRef} />
+              </>
+            }
           />
 
           <OrbitControls
