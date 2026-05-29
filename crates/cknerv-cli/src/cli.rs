@@ -1,6 +1,6 @@
 //! `clap`-derived CLI for the `cknerv` binary.
 //!
-//! Four flags only — keeps the MVP weather-station ergonomics tight.
+//! Five flags only — keeps the MVP weather-station ergonomics tight.
 //! Resolution of optional flags (rpc / workdir) lives on the [`Cli`]
 //! struct so [`crate::server`] reads a single canonical value rather
 //! than re-deriving defaults in two places.
