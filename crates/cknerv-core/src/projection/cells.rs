@@ -53,6 +53,14 @@ pub struct Cell {
     pub content_hash: String,
 }
 
+/// Transient boot-time backfill progress. `None` when not backfilling.
+/// Not persisted (a restart re-seeds from the chain).
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BackfillState {
+    pub done: u64,
+    pub total: u64,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CellGalaxySnapshot {
     pub cells: Vec<Cell>,
@@ -75,6 +83,11 @@ pub struct CellGalaxySnapshot {
     /// because the in-memory cap is exceeded.
     #[serde(default)]
     pub total_deaths: u64,
+    /// Boot-time backfill progress; present only while seeding. Omitted
+    /// from the wire when `None` so existing snapshot fixtures are
+    /// unaffected.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backfill: Option<BackfillState>,
 }
 
 /// Persistent record of one tx's causal edge. Carries everything the
@@ -132,6 +145,15 @@ pub enum CellDelta {
     Stats {
         total_births: u64,
         total_deaths: u64,
+    },
+    /// Boot-time backfill progress passthrough. `active` true while
+    /// seeding, false on completion. The SPA shows a progress HUD and
+    /// (because pulse/link deltas are suppressed while active) renders
+    /// the streamed births statically.
+    Backfill {
+        done: u64,
+        total: u64,
+        active: bool,
     },
     /// Causal edge for one tx: the input cells (now dead) it consumed
     /// and the output cells (now alive) it produced. Front-end fans
@@ -203,6 +225,10 @@ pub struct CellGalaxy {
     /// Bounded upstream by the reducer's 5-min pairing TTL, so even
     /// pathological out-of-order cases stay finite.
     pending_births_tag: std::collections::HashMap<OutPoint, String>,
+    /// `Some` while a boot-time backfill is in progress. Gates pulse/link
+    /// emission (see `handle_block_mined` / `handle_tx_landed`) and is
+    /// surfaced in the snapshot for clients connecting mid-backfill.
+    backfill: Option<BackfillState>,
 }
 
 /// Persisted form of [`CellGalaxy`]. Written under preserved-workdir
@@ -258,6 +284,7 @@ impl CellGalaxy {
             total_births: 0,
             total_deaths: 0,
             pending_births_tag: std::collections::HashMap::new(),
+            backfill: None,
         }
     }
 
@@ -785,6 +812,7 @@ impl Projection for CellGalaxy {
             recent_links: self.recent_links.clone(),
             total_births: self.total_births,
             total_deaths: self.total_deaths,
+            backfill: self.backfill,
         }
     }
 
@@ -804,6 +832,17 @@ impl Projection for CellGalaxy {
                 outputs,
             } => self.handle_tx_landed(tx_hash, *block, *at, inputs, outputs),
             Mutation::CellTagged { out_point, tag, .. } => self.apply_cell_tagged(out_point, tag),
+            Mutation::BackfillProgress { done, total, active } => {
+                self.backfill = active.then_some(BackfillState {
+                    done: *done,
+                    total: *total,
+                });
+                vec![CellDelta::Backfill {
+                    done: *done,
+                    total: *total,
+                    active: *active,
+                }]
+            }
             _ => Vec::new(),
         }
     }
@@ -845,6 +884,49 @@ mod tests {
             // field to be present and distinguishable.
             content_hash: format!("0x{:064x}", (cap as u128) ^ data.len() as u128),
         }
+    }
+
+    #[test]
+    fn backfill_progress_sets_then_clears_state_and_emits_delta() {
+        let mut g = make_galaxy();
+        // active:true → snapshot reports it, delta emitted.
+        let d1 = g.apply_mutation(&Mutation::BackfillProgress {
+            done: 25,
+            total: 100,
+            active: true,
+        });
+        assert!(
+            matches!(
+                d1.as_slice(),
+                [CellDelta::Backfill { done: 25, total: 100, active: true }]
+            ),
+            "expected a single active Backfill delta; got {d1:?}"
+        );
+        assert_eq!(
+            g.snapshot().backfill,
+            Some(BackfillState { done: 25, total: 100 })
+        );
+        // active:false → snapshot clears.
+        let d2 = g.apply_mutation(&Mutation::BackfillProgress {
+            done: 100,
+            total: 100,
+            active: false,
+        });
+        assert!(matches!(
+            d2.as_slice(),
+            [CellDelta::Backfill { active: false, .. }]
+        ));
+        assert_eq!(g.snapshot().backfill, None);
+    }
+
+    #[test]
+    fn backfill_delta_wire_shape_is_snake_case() {
+        let d = CellDelta::Backfill { done: 1, total: 2, active: true };
+        let v = serde_json::to_value(&d).expect("serialize");
+        assert_eq!(v["type"], "backfill");
+        assert_eq!(v["done"], 1);
+        assert_eq!(v["total"], 2);
+        assert_eq!(v["active"], true);
     }
 
     #[test]
