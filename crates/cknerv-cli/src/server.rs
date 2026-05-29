@@ -39,7 +39,8 @@ pub async fn boot(cli: Cli) -> Result<()> {
     // "no prior state" instead of an IO error on a missing dir.
     std::fs::create_dir_all(&workdir)?;
 
-    let adapter = CkbDirectAdapter::new(rpc_url.clone());
+    let adapter = CkbDirectAdapter::new(rpc_url.clone())
+        .with_backfill_blocks(cli.backfill_blocks);
 
     let (cknerv_router, handle) = ServerBuilder::new()
         .add_adapter(adapter)

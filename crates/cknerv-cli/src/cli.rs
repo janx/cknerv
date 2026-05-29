@@ -31,6 +31,11 @@ pub struct Cli {
     /// Workdir for persisted state. Default: ~/.cknerv.
     #[arg(long, value_name = "PATH")]
     pub workdir: Option<PathBuf>,
+
+    /// Recent blocks to replay at boot to seed the live-cell galaxy.
+    /// 0 disables (galaxy fills only from new blocks). Default: 1000.
+    #[arg(long, value_name = "N", default_value_t = 1000)]
+    pub backfill_blocks: u64,
 }
 
 impl Cli {
@@ -54,5 +59,23 @@ impl Cli {
             let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
             PathBuf::from(home).join(".cknerv")
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn backfill_blocks_defaults_to_1000_and_parses_override() {
+        let def = Cli::parse_from(["cknerv"]);
+        assert_eq!(def.backfill_blocks, 1000);
+
+        let zero = Cli::parse_from(["cknerv", "--backfill-blocks", "0"]);
+        assert_eq!(zero.backfill_blocks, 0);
+
+        let n = Cli::parse_from(["cknerv", "--backfill-blocks", "300"]);
+        assert_eq!(n.backfill_blocks, 300);
     }
 }
