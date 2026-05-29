@@ -398,6 +398,10 @@ fn apply_chain_mutation(chain: &mut Chain, m: &Mutation) {
             // Projection-only: cell-galaxy consumes via its own
             // `apply_mutation`. Entity-store is a no-op.
         }
+        Mutation::BackfillProgress { .. } => {
+            // Projection-only: the cell-galaxy projection consumes it.
+            // The Chain entity has no field to update.
+        }
         Mutation::ChainNodeRegistered { .. } => {
             // Handled by the outer dispatcher (`apply_entity_mutation`)
             // against `EntityStore.chain_nodes`. The `Chain` entity has
