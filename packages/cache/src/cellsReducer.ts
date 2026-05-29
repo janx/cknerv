@@ -36,6 +36,9 @@ export interface CellGalaxyCache {
    *  reality rather than what's currently rendered in the galaxy. */
   totalBirths: number;
   totalDeaths: number;
+  /** Boot-time backfill progress, or null when not seeding. Drives the
+   *  BackfillHud and (server-side) the suppression of pulse/link effects. */
+  backfill: { done: number; total: number } | null;
 }
 
 export function emptyCellsCache(): CellGalaxyCache {
@@ -47,6 +50,7 @@ export function emptyCellsCache(): CellGalaxyCache {
     linksSeq: 0,
     totalBirths: 0,
     totalDeaths: 0,
+    backfill: null,
   };
 }
 
@@ -80,6 +84,7 @@ export function fromCellsSnapshot(
     linksSeq: recentLinks.length,
     totalBirths: snap.total_births ?? 0,
     totalDeaths: snap.total_deaths ?? 0,
+    backfill: snap.backfill ?? null,
   };
 }
 
@@ -140,6 +145,12 @@ export function applyCellDelta(
           ? [...prev.recentLinks.slice(1), link]
           : [...prev.recentLinks, link];
       return { ...prev, recentLinks, linksSeq: nextSeq };
+    }
+    case 'backfill': {
+      return {
+        ...prev,
+        backfill: d.active ? { done: d.done, total: d.total } : null,
+      };
     }
     default: {
       const _exhaustive: never = d;
