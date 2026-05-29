@@ -176,6 +176,14 @@ fn truncate_hex(s: &str, byte_cap: usize) -> String {
     }
 }
 
+/// Parse the block header's `timestamp` (CKB ships it as a hex-encoded
+/// ms-since-epoch string). Returns `None` when absent or unparseable so
+/// callers can fall back to wall-clock time.
+pub fn header_timestamp_ms(block: &Value) -> Option<u64> {
+    let s = block["header"]["timestamp"].as_str()?;
+    u64::from_str_radix(s.trim_start_matches("0x"), 16).ok()
+}
+
 fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -262,6 +270,17 @@ mod tests {
             }
             other => panic!("expected TxLanded second, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn header_timestamp_ms_parses_hex_and_handles_missing() {
+        let block = serde_json::json!({
+            "header": { "hash": "0xh", "timestamp": "0x18d6f1c2c00" }
+        });
+        assert_eq!(header_timestamp_ms(&block), Some(0x18d6f1c2c00));
+
+        let no_ts = serde_json::json!({ "header": { "hash": "0xh" } });
+        assert_eq!(header_timestamp_ms(&no_ts), None);
     }
 
     #[test]

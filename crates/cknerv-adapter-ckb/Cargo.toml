@@ -13,6 +13,7 @@ async-trait.workspace = true
 ckb-types.workspace = true
 ckb-hash.workspace = true
 ckb-jsonrpc-types.workspace = true
+futures = "0.3"
 hex = "0.4"
 reqwest = { version = "0.12", features = ["json"] }
 serde.workspace = true
