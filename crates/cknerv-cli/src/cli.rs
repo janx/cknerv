@@ -1,12 +1,9 @@
-//! `clap`-derived CLI for the `cknerv` binary.
-//!
-//! Five flags only — keeps the MVP weather-station ergonomics tight.
-//! Resolution of optional flags (rpc / workdir) lives on the [`Cli`]
-//! struct so [`crate::server`] reads a single canonical value rather
-//! than re-deriving defaults in two places.
+//! `clap`-derived CLI for the `cknerv` binary: a global `-C/--workdir`
+//! plus `run` / `init` / `prune` subcommands. Bare `cknerv` ⇒ `run`.
 
-use clap::Parser;
 use std::path::PathBuf;
+
+use clap::{Parser, Subcommand};
 use url::Url;
 
 #[derive(Parser, Debug)]
@@ -16,49 +13,57 @@ use url::Url;
     about = "CKB chain visualization weather station"
 )]
 pub struct Cli {
-    /// CKB JSON-RPC endpoint. Default: http://localhost:8114.
+    /// Work directory (holds cknerv.toml + data/). Default: current directory.
+    #[arg(short = 'C', long, value_name = "PATH", global = true)]
+    pub workdir: Option<PathBuf>,
+
+    #[command(subcommand)]
+    pub command: Option<Command>,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum Command {
+    /// Start the dashboard server (default).
+    Run(RunArgs),
+    /// Scaffold the work directory (cknerv.toml + data/).
+    Init,
+    /// Delete derived data (data/), keep cknerv.toml.
+    Prune(PruneArgs),
+}
+
+#[derive(clap::Args, Debug, Default)]
+pub struct RunArgs {
+    /// CKB JSON-RPC endpoint. Overrides cknerv.toml. Default: http://localhost:8114.
     #[arg(long, value_name = "URL")]
     pub rpc: Option<Url>,
 
-    /// HTTP/WS port for the dashboard SPA. Default: 7001.
-    #[arg(long, default_value_t = 7001)]
-    pub port: u16,
+    /// HTTP/WS port for the dashboard SPA. Overrides cknerv.toml. Default: 7001.
+    #[arg(long, value_name = "N")]
+    pub port: Option<u16>,
 
     /// Suppress the auto-open-browser behavior.
     #[arg(long)]
     pub no_open: bool,
 
-    /// Workdir for persisted state. Default: ~/.cknerv.
-    #[arg(long, value_name = "PATH")]
-    pub workdir: Option<PathBuf>,
+    /// Recent blocks to replay at boot to seed the live-cell galaxy. 0 disables.
+    /// Overrides cknerv.toml. Default: 1000.
+    #[arg(long, value_name = "N")]
+    pub backfill_blocks: Option<u64>,
+}
 
-    /// Recent blocks to replay at boot to seed the live-cell galaxy.
-    /// 0 disables (galaxy fills only from new blocks). Default: 1000.
-    #[arg(long, value_name = "N", default_value_t = 1000)]
-    pub backfill_blocks: u64,
+#[derive(clap::Args, Debug)]
+pub struct PruneArgs {
+    /// Confirm the destructive delete of data/.
+    #[arg(long)]
+    pub confirm: bool,
 }
 
 impl Cli {
-    /// Resolved RPC URL — flag value if present, otherwise the local
-    /// CKB convention `http://localhost:8114`.
-    pub fn rpc_url(&self) -> Url {
-        self.rpc.clone().unwrap_or_else(|| {
-            // The default URL is a compile-time constant; parse failure
-            // is structurally impossible. Express the invariant via
-            // `expect` so a future edit that breaks the string surfaces
-            // immediately rather than via a generic Result chain.
-            Url::parse("http://localhost:8114").expect("static URL")
-        })
-    }
-
-    /// Resolved workdir — flag value if present, otherwise `~/.cknerv`.
-    /// Falls through to `/tmp/.cknerv` only when `$HOME` is unset, which
-    /// would only happen on a misconfigured environment.
+    /// Resolved workdir — flag value if present, else the current directory.
     pub fn workdir_path(&self) -> PathBuf {
-        self.workdir.clone().unwrap_or_else(|| {
-            let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-            PathBuf::from(home).join(".cknerv")
-        })
+        self.workdir
+            .clone()
+            .unwrap_or_else(|| std::env::current_dir().expect("cannot determine current directory"))
     }
 }
 
@@ -68,14 +73,50 @@ mod tests {
     use clap::Parser;
 
     #[test]
-    fn backfill_blocks_defaults_to_1000_and_parses_override() {
-        let def = Cli::parse_from(["cknerv"]);
-        assert_eq!(def.backfill_blocks, 1000);
+    fn bare_invocation_has_no_subcommand_and_defaults_workdir_to_cwd() {
+        let cli = Cli::parse_from(["cknerv"]);
+        assert!(cli.command.is_none());
+        assert_eq!(cli.workdir_path(), std::env::current_dir().unwrap());
+    }
 
-        let zero = Cli::parse_from(["cknerv", "--backfill-blocks", "0"]);
-        assert_eq!(zero.backfill_blocks, 0);
+    #[test]
+    fn run_parses_overrides() {
+        let cli = Cli::parse_from([
+            "cknerv", "run", "--rpc", "http://x:1", "--port", "9", "--no-open",
+            "--backfill-blocks", "5",
+        ]);
+        match cli.command {
+            Some(Command::Run(a)) => {
+                assert_eq!(a.rpc.unwrap().as_str(), "http://x:1/");
+                assert_eq!(a.port, Some(9));
+                assert!(a.no_open);
+                assert_eq!(a.backfill_blocks, Some(5));
+            }
+            other => panic!("expected Run, got {other:?}"),
+        }
+    }
 
-        let n = Cli::parse_from(["cknerv", "--backfill-blocks", "300"]);
-        assert_eq!(n.backfill_blocks, 300);
+    #[test]
+    fn prune_confirm_flag() {
+        let no = Cli::parse_from(["cknerv", "prune"]);
+        assert!(matches!(
+            no.command,
+            Some(Command::Prune(PruneArgs { confirm: false }))
+        ));
+        let yes = Cli::parse_from(["cknerv", "prune", "--confirm"]);
+        assert!(matches!(
+            yes.command,
+            Some(Command::Prune(PruneArgs { confirm: true }))
+        ));
+    }
+
+    #[test]
+    fn global_workdir_accepted_before_and_after_subcommand() {
+        let before = Cli::parse_from(["cknerv", "-C", "/tmp/wd", "init"]);
+        assert_eq!(before.workdir, Some(PathBuf::from("/tmp/wd")));
+        assert!(matches!(before.command, Some(Command::Init)));
+
+        let after = Cli::parse_from(["cknerv", "run", "--workdir", "/tmp/wd2"]);
+        assert_eq!(after.workdir, Some(PathBuf::from("/tmp/wd2")));
     }
 }
