@@ -51,6 +51,9 @@ export interface CellGalaxySnapshot {
   /** Cumulative count of real chain deaths (input cells consumed by a
    *  landed tx). Excludes `CELL_CAP` evictions. */
   total_deaths?: number;
+  /** Boot-time backfill progress; present only while the server is
+   *  seeding the recent live-cell set. */
+  backfill?: { done: number; total: number } | null;
 }
 
 /** Causal-edge entry kept in the live cache after `applyCellDelta`. */
@@ -74,6 +77,7 @@ export type CellDelta =
   | { type: 'gc'; ids: number[] }
   | { type: 'pulse'; at_ms: number }
   | { type: 'stats'; total_births: number; total_deaths: number }
+  | { type: 'backfill'; done: number; total: number; active: boolean }
   | {
       type: 'link';
       tx_hash: string;
