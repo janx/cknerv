@@ -44,6 +44,7 @@ async fn adapter_registers_node_and_polls_chain_info() {
 
     let adapter = CkbDirectAdapter::new(rpc_url)
         .with_node("ckb:test", "ckb-test")
+        .with_backfill_blocks(0)
         .with_poll_interval(Duration::from_millis(40));
 
     let emitted = drive_for(adapter, Duration::from_millis(300), Duration::from_millis(60)).await;
@@ -77,7 +78,9 @@ async fn adapter_emits_block_on_tip_advance() {
     canned.blocks.insert(1, mock_rpc::simple_block(1, "0xblock1"));
     let (rpc_url, _handle) = mock_rpc::start(canned).await;
 
-    let adapter = CkbDirectAdapter::new(rpc_url).with_poll_interval(Duration::from_millis(30));
+    let adapter = CkbDirectAdapter::new(rpc_url)
+        .with_backfill_blocks(0)
+        .with_poll_interval(Duration::from_millis(30));
 
     let emitted = drive_for(adapter, Duration::from_millis(300), Duration::from_millis(60)).await;
 
@@ -99,7 +102,9 @@ async fn adapter_emits_block_on_tip_advance() {
 async fn adapter_respects_shutdown() {
     let (rpc_url, _handle) = mock_rpc::start(mock_rpc::CannedResponses::default()).await;
 
-    let adapter = CkbDirectAdapter::new(rpc_url).with_poll_interval(Duration::from_millis(20));
+    let adapter = CkbDirectAdapter::new(rpc_url)
+        .with_backfill_blocks(0)
+        .with_poll_interval(Duration::from_millis(20));
 
     let (tx, _rx) = mpsc::channel::<Mutation>(64);
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
