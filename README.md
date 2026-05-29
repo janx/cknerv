@@ -23,21 +23,23 @@ Verified end-to-end against a live mainnet node (see
 # Build the CLI (build.rs invokes `pnpm -F cknerv-ui-app build` + rust-embeds the SPA)
 cargo build --release -p cknerv-cli
 
-# Point it at a local CKB node (auto-detects http://localhost:8114) and
-# auto-open the dashboard at http://localhost:7001:
+# Scaffold a work directory (writes cknerv.toml + data/), then run from it:
+./target/release/cknerv init -C myviz
+./target/release/cknerv run -C myviz
+
+# Or just run in the current directory (bare `cknerv` defaults to `run`):
 ./target/release/cknerv
 
-# Explicit RPC + port, no auto-open:
-./target/release/cknerv --rpc http://localhost:8114 --port 7001 --no-open
+# Wipe derived state (forces a fresh backfill next run); keeps cknerv.toml:
+./target/release/cknerv prune -C myviz --confirm
 ```
 
-Flags: `--rpc <URL>` (default `http://localhost:8114`), `--port <N>`
-(default `7001`), `--no-open`, `--workdir <PATH>` (default `~/.cknerv`),
-`--backfill-blocks <N>` (default `1000`).
-`Ctrl-C` shuts down cleanly. cknerv only issues **read** RPCs
-(`get_tip_block_number`, `get_block_by_number`, `get_blockchain_info`,
-`tx_pool_info`, `local_node_info`) — it never writes to or controls the
-node.
+Global `-C/--workdir <PATH>` selects the work directory (default: current
+directory), which holds `cknerv.toml` (config) and `data/` (derived chain +
+cell state). Config priority: **CLI args > cknerv.toml > defaults**.
+`run` overrides: `--rpc <URL>`, `--port <N>`, `--no-open`, `--backfill-blocks <N>`.
+The node read-RPCs are unchanged (`get_tip_block_number`, `get_block_by_number`,
+`get_blockchain_info`, `tx_pool_info`, `local_node_info`) — cknerv never writes to the node.
 
 ## Architecture
 
