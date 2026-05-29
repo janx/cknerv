@@ -81,6 +81,18 @@ pub enum Mutation {
         is_miner: bool,
         at: u64,
     },
+
+    /// Boot-time backfill progress. Projection-only: the cell-galaxy
+    /// projection surfaces it as a `CellDelta::Backfill` progress HUD and
+    /// suppresses pulse/link effects while `active`; the `Chain` entity
+    /// no-ops it. `active` is true for in-progress updates, false on the
+    /// terminal "done" signal. Intentionally absent from the TS chain
+    /// `Mutation` union — the SPA consumes it via the cells stream.
+    BackfillProgress {
+        done: u64,
+        total: u64,
+        active: bool,
+    },
 }
 
 /// Mutation paired with the EntityStore revision that produced it.
@@ -89,4 +101,26 @@ pub enum Mutation {
 pub struct RevisionedMutation {
     pub revision: u64,
     pub mutation: Mutation,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn backfill_progress_wire_shape_is_snake_case() {
+        let m = Mutation::BackfillProgress {
+            done: 250,
+            total: 1000,
+            active: true,
+        };
+        let v = serde_json::to_value(&m).expect("serialize");
+        assert_eq!(v["type"], "backfill_progress");
+        assert_eq!(v["done"], 250);
+        assert_eq!(v["total"], 1000);
+        assert_eq!(v["active"], true);
+        // Round-trips back to the same variant.
+        let back: Mutation = serde_json::from_value(v).expect("deserialize");
+        assert_eq!(back, m);
+    }
 }
