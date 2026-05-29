@@ -11,6 +11,7 @@ import { Canvas } from '@react-three/fiber';
 import { Hud, OrbitControls, OrthographicCamera, Stars } from '@react-three/drei';
 import {
   aggregateCellsStats,
+  BackfillHud,
   CellDetailHud,
   CellDetailHudOverlay,
   CellGalaxy,
@@ -246,6 +247,7 @@ export default function App({
               width={CELLS_PANEL_W}
               stats={cellsStats}
             />
+            <BackfillHud x={0} y={HUD_VIEWPORT_H / 2 - 60} width={260} />
             {selectedCell ? (
               <CellDetailHud
                 cell={selectedCell}
