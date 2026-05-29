@@ -6,6 +6,7 @@
 
 mod assets;
 mod cli;
+mod commands;
 mod config;
 mod open_browser;
 mod server;
