@@ -64,6 +64,7 @@ export {
 } from './hooks/cellGalaxyContext';
 
 // ── Components ─────────────────────────────────────────────────────
+export { default as BackfillHud } from './components/BackfillHud';
 export { default as BlockBeam } from './components/BlockBeam';
 export {
   default as CellDetailHud,
