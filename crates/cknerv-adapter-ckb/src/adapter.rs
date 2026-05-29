@@ -23,6 +23,7 @@ pub struct CkbDirectAdapter {
     poll_interval: Duration,
     node_id: String,
     node_label: String,
+    backfill_blocks: u64,
 }
 
 impl CkbDirectAdapter {
@@ -32,6 +33,7 @@ impl CkbDirectAdapter {
             poll_interval: Duration::from_secs(2),
             node_id: "ckb:local".into(),
             node_label: "ckb-local".into(),
+            backfill_blocks: 1000,
         }
     }
 
@@ -43,6 +45,14 @@ impl CkbDirectAdapter {
 
     pub fn with_poll_interval(mut self, d: Duration) -> Self {
         self.poll_interval = d;
+        self
+    }
+
+    /// Number of recent blocks to replay at boot to seed the cell galaxy
+    /// with the recent live-cell set. `0` disables backfill (legacy
+    /// tip-only behavior).
+    pub fn with_backfill_blocks(mut self, n: u64) -> Self {
+        self.backfill_blocks = n;
         self
     }
 }
@@ -73,6 +83,20 @@ impl Adapter for CkbDirectAdapter {
         //    the next interval rather than burst-firing missed cycles.
         let rpc = RpcClient::new(self.rpc_url.clone());
         let mut state = PollState::default();
+
+        // Boot backfill: seed the recent live-cell set, then resume the
+        // forward poll from the anchor tip. On failure, fall through to
+        // the legacy tip-1 anchor (poll loop handles last_tip == None).
+        if self.backfill_blocks > 0 {
+            match crate::backfill::run_backfill(&rpc, self.backfill_blocks, &out).await {
+                Ok(tip0) => state.last_tip = Some(tip0),
+                Err(e) => tracing::warn!(
+                    target: "cknerv-adapter-ckb",
+                    "backfill failed: {e}; starting live-only"
+                ),
+            }
+        }
+
         let mut interval = tokio::time::interval(self.poll_interval);
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 

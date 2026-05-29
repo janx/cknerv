@@ -13,6 +13,7 @@
 //! for the parity-tested algorithm.
 
 pub mod adapter;
+mod backfill;
 pub mod block_fetch;
 pub mod content_hash;
 pub mod poll;
