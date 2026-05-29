@@ -32,7 +32,8 @@ cargo build --release -p cknerv-cli
 ```
 
 Flags: `--rpc <URL>` (default `http://localhost:8114`), `--port <N>`
-(default `7001`), `--no-open`, `--workdir <PATH>` (default `~/.cknerv`).
+(default `7001`), `--no-open`, `--workdir <PATH>` (default `~/.cknerv`),
+`--backfill-blocks <N>` (default `1000`).
 `Ctrl-C` shuts down cleanly. cknerv only issues **read** RPCs
 (`get_tip_block_number`, `get_block_by_number`, `get_blockchain_info`,
 `tx_pool_info`, `local_node_info`) — it never writes to or controls the
@@ -105,7 +106,14 @@ non-API path) on a single port.
 
 ## Known limitations (v0.1)
 
-- No persist-on-exit — state rehydrates from the live chain each boot.
+- The galaxy shows **recent live cells**, not the full live-cell set: at
+  boot it replays the last `--backfill-blocks` blocks (default 1000) and
+  shows the cells they created that are still unspent. Cells created
+  before that window and never spent are not shown (querying the full
+  live set would require the CKB indexer). Tune depth with
+  `--backfill-blocks <N>` (`0` disables).
+- No persist-on-exit — state rehydrates from the live chain each boot
+  (the boot backfill makes this a non-issue for the galaxy).
 - ckbadger adapter deferred until ckbadger publishes its WS feed schema.
 
 ## License
