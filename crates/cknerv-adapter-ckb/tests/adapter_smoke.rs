@@ -119,3 +119,43 @@ async fn adapter_respects_shutdown() {
         "adapter did not exit within 1s of shutdown signal"
     );
 }
+
+#[tokio::test]
+async fn adapter_backfills_recent_blocks_in_ascending_order() {
+    let mut canned = mock_rpc::CannedResponses::default();
+    canned.tip = 5;
+    for n in 1..=5 {
+        canned.blocks.insert(n, mock_rpc::simple_block(n, &format!("0xblock{n}")));
+    }
+    let (rpc_url, _handle) = mock_rpc::start(canned).await;
+
+    let adapter = CkbDirectAdapter::new(rpc_url)
+        .with_backfill_blocks(5)
+        .with_poll_interval(Duration::from_millis(50));
+
+    let emitted = drive_for(adapter, Duration::from_millis(400), Duration::from_millis(90)).await;
+
+    // Progress envelope opens active and closes inactive at done==total.
+    assert!(
+        emitted.iter().any(|m| matches!(m, Mutation::BackfillProgress { active: true, .. })),
+        "expected an active BackfillProgress; emitted: {emitted:#?}"
+    );
+    assert!(
+        emitted.iter().any(|m| matches!(
+            m,
+            Mutation::BackfillProgress { done: 5, total: 5, active: false }
+        )),
+        "expected a terminal BackfillProgress; emitted: {emitted:#?}"
+    );
+
+    // tip0 = 5, blocks = 5 → lo = 1; blocks 1..=5 emitted once each, ascending.
+    // last_tip is seeded to 5, so the forward poll does not re-emit block 5.
+    let nums: Vec<u64> = emitted
+        .iter()
+        .filter_map(|m| match m {
+            Mutation::BlockMined { number, .. } => Some(*number),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(nums, vec![1, 2, 3, 4, 5], "backfill emits ascending, once each; got {nums:?}");
+}
