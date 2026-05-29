@@ -42,7 +42,8 @@ pub fn simple_block(number: u64, hash: &str) -> Value {
     json!({
         "header": {
             "hash": hash,
-            "number": format!("0x{:x}", number)
+            "number": format!("0x{:x}", number),
+            "timestamp": format!("0x{:x}", 1_700_000_000_000u64 + number * 8_000)
         },
         "transactions": [
             {
