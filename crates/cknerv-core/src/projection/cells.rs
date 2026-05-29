@@ -567,8 +567,11 @@ impl CellGalaxy {
             deltas.push(CellDelta::Death { id, at_ms });
         }
 
-        // Pulse throttle.
-        if at_ms.saturating_sub(self.last_pulse_at_ms) >= PULSE_THROTTLE_MS {
+        // Pulse throttle. Suppressed during backfill so the boot replay
+        // doesn't fire a shockwave per replayed block.
+        if self.backfill.is_none()
+            && at_ms.saturating_sub(self.last_pulse_at_ms) >= PULSE_THROTTLE_MS
+        {
             self.last_pulse_at_ms = at_ms;
             deltas.push(CellDelta::Pulse { at_ms });
         }
@@ -692,7 +695,7 @@ impl CellGalaxy {
         //    parents so the frontend tx DAG still gets a node for the
         //    cellbase reward cell. Parents are derived from the input
         //    outpoints (post-cellbase-filter), de-duplicated.
-        if !birthed_ids.is_empty() {
+        if self.backfill.is_none() && !birthed_ids.is_empty() {
             let mut parent_seen: std::collections::HashSet<&str> =
                 std::collections::HashSet::new();
             let mut parents: Vec<String> = Vec::new();
@@ -927,6 +930,39 @@ mod tests {
         assert_eq!(v["done"], 1);
         assert_eq!(v["total"], 2);
         assert_eq!(v["active"], true);
+    }
+
+    #[test]
+    fn pulse_and_link_suppressed_while_backfilling_but_births_emit() {
+        let mut g = make_galaxy();
+        g.apply_mutation(&Mutation::BackfillProgress { done: 0, total: 10, active: true });
+
+        // A landed tx during backfill: births emit, but no Link delta and
+        // recent_links does not grow.
+        let tx = g.handle_tx_landed("0xbf", 1, 1_000, &[], &[out(100, "0x"), out(200, "0x")]);
+        assert!(
+            tx.iter().any(|d| matches!(d, CellDelta::Birth { .. })),
+            "births must still stream during backfill"
+        );
+        assert!(
+            !tx.iter().any(|d| matches!(d, CellDelta::Link { .. })),
+            "Link deltas must be suppressed during backfill"
+        );
+        assert!(g.recent_links.is_empty(), "recent_links must not grow during backfill");
+
+        // A block during backfill: no Pulse delta.
+        let blk = g.handle_block_mined(1, "0xh1", 1, 1_000);
+        assert!(
+            !blk.iter().any(|d| matches!(d, CellDelta::Pulse { .. })),
+            "Pulse deltas must be suppressed during backfill"
+        );
+
+        // After backfill ends, pulse + link resume.
+        g.apply_mutation(&Mutation::BackfillProgress { done: 10, total: 10, active: false });
+        let tx2 = g.handle_tx_landed("0xlive", 2, 5_000, &[], &[out(100, "0x")]);
+        assert!(tx2.iter().any(|d| matches!(d, CellDelta::Link { .. })), "Link resumes post-backfill");
+        let blk2 = g.handle_block_mined(2, "0xh2", 1, 5_000);
+        assert!(blk2.iter().any(|d| matches!(d, CellDelta::Pulse { .. })), "Pulse resumes post-backfill");
     }
 
     #[test]
