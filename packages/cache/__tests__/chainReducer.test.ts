@@ -174,6 +174,15 @@ describe('applyChainMutation', () => {
     expect(after).toBe(before); // referentially identical — no clone
   });
 
+  it('ignores projection-only mutations (e.g. backfill_progress) without throwing', () => {
+    const prev = emptyChainCache();
+    // backfill_progress rides the chain broadcast but is intentionally not in
+    // the chain Mutation union; the reducer must treat it as a no-op.
+    const m = { type: 'backfill_progress', done: 1, total: 2, active: true } as unknown as Mutation;
+    const next = applyChainMutation(prev, m);
+    expect(next).toBe(prev);
+  });
+
   it('returns a new reference on a chain-affecting mutation (purity)', () => {
     const before = emptyChainCache();
     const after = applyChainMutation(before, {

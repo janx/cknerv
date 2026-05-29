@@ -85,7 +85,7 @@ pub(crate) async fn run_backfill(
             ),
         }
         done += 1;
-        if done % PROGRESS_EVERY == 0 {
+        if done % PROGRESS_EVERY == 0 && done != total {
             let _ = out
                 .send(Mutation::BackfillProgress { done, total, active: true })
                 .await;
