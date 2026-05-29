@@ -87,7 +87,10 @@ pub enum Mutation {
     /// suppresses pulse/link effects while `active`; the `Chain` entity
     /// no-ops it. `active` is true for in-progress updates, false on the
     /// terminal "done" signal. Intentionally absent from the TS chain
-    /// `Mutation` union — the SPA consumes it via the cells stream.
+    /// `Mutation` union — the SPA consumes it via the cells stream. It still
+    /// rides the chain mutation broadcast like any mutation, but both the
+    /// server `Chain` reducer and the SPA chain reducer ignore it; the SPA
+    /// acts on it only via the cells projection stream (`CellDelta::Backfill`).
     BackfillProgress {
         done: u64,
         total: u64,

@@ -65,6 +65,10 @@ function touchesChain(m: Mutation): boolean {
     case 'chain_node_registered':
       return false;
     default: {
+      // Projection-only mutations (e.g. `backfill_progress`) ride the chain
+      // mutation broadcast but are intentionally absent from the TS chain
+      // `Mutation` union. This arm must stay a safe no-op (never throw) so
+      // such frames are ignored at runtime rather than crashing boot.
       const _exhaustive: never = m;
       void _exhaustive;
       return false;
