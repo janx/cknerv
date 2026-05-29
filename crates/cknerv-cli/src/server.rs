@@ -39,13 +39,22 @@ pub async fn boot(cli: Cli) -> Result<()> {
     // "no prior state" instead of an IO error on a missing dir.
     std::fs::create_dir_all(&workdir)?;
 
+    // If persisted state exists, skip the boot backfill and resume the
+    // forward poll from the saved tip — the poll loop catches up the
+    // downtime gap block-by-block (and ServerBuilder::build hydrates the
+    // restored galaxy from the same file), so we don't re-replay.
+    let resume_tip = cknerv_server::peek_restored_tip(&workdir);
+    if let Some(tip) = resume_tip {
+        tracing::info!("restored state found (tip {tip}); skipping backfill, resuming forward poll");
+    }
     let adapter = CkbDirectAdapter::new(rpc_url.clone())
-        .with_backfill_blocks(cli.backfill_blocks);
+        .with_backfill_blocks(cli.backfill_blocks)
+        .with_resume_from(resume_tip);
 
     let (cknerv_router, handle) = ServerBuilder::new()
         .add_adapter(adapter)
         .add_projection(CellGalaxy::new())
-        .workdir(workdir)
+        .workdir(workdir.clone())
         .build()?;
 
     // Compose: cknerv-server's API routes + SPA fallback. Anything not
@@ -73,6 +82,14 @@ pub async fn boot(cli: Cli) -> Result<()> {
     // signals exit.
     tokio::signal::ctrl_c().await?;
     tracing::info!("Ctrl-C received, shutting down...");
+
+    // Persist BEFORE shutdown: `save` borrows `&self`, but `shutdown`
+    // consumes `self`. On next boot, peek_restored_tip sees this tip and
+    // resumes the forward poll instead of re-backfilling.
+    match handle.save() {
+        Ok(()) => tracing::info!("state persisted to {}", workdir.display()),
+        Err(e) => tracing::warn!("failed to persist state on exit: {e}"),
+    }
 
     handle.shutdown().await;
     server_task.abort();
