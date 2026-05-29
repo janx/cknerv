@@ -138,6 +138,19 @@ pub fn load(state: Arc<ServerState>, workdir: &Path) -> LoadOutcome {
     }
 }
 
+/// Lightweight read of the persisted chain tip without mutating any
+/// server state. Returns `None` if the file is absent, unparseable, or
+/// the schema mismatches. The CLI uses this to decide whether to skip
+/// the boot backfill and resume the forward poll from the saved tip.
+pub fn peek_restored_tip(workdir: &Path) -> Option<u64> {
+    let bytes = std::fs::read(persisted_path(workdir)).ok()?;
+    let file: PersistedFile = serde_json::from_slice(&bytes).ok()?;
+    if file.schema_version != SCHEMA_VERSION {
+        return None;
+    }
+    file.entities.get("chain")?.get("tip")?.as_u64()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -173,6 +186,24 @@ mod tests {
 
         let snap = s2.snapshot();
         assert_eq!(snap["chain"]["tip"], 42);
+
+        let _ = std::fs::remove_dir_all(&workdir);
+    }
+
+    #[test]
+    fn peek_restored_tip_reads_saved_tip() {
+        let workdir = tmpdir();
+        assert_eq!(peek_restored_tip(&workdir), None, "no file yet");
+
+        let s = Arc::new(ServerState::new());
+        s.apply_mutation(Mutation::BlockMined {
+            number: 12345,
+            hash: "0xblk".into(),
+            tx_count: 0,
+            at: 1_000,
+        });
+        save(&s, &workdir).expect("save");
+        assert_eq!(peek_restored_tip(&workdir), Some(12345));
 
         let _ = std::fs::remove_dir_all(&workdir);
     }

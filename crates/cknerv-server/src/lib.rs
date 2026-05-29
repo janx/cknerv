@@ -30,5 +30,6 @@ pub mod state;
 pub mod ws;
 
 pub use adapter::Adapter;
+pub use persistence::peek_restored_tip;
 pub use server::{ServerBuilder, ServerHandle};
 pub use state::ServerState;

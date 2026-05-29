@@ -159,3 +159,36 @@ async fn adapter_backfills_recent_blocks_in_ascending_order() {
         .collect();
     assert_eq!(nums, vec![1, 2, 3, 4, 5], "backfill emits ascending, once each; got {nums:?}");
 }
+
+#[tokio::test]
+async fn adapter_resume_skips_backfill_and_resumes_from_saved_tip() {
+    let mut canned = mock_rpc::CannedResponses::default();
+    canned.tip = 10;
+    // Only the gap blocks (saved_tip+1 ..= tip) should be polled forward.
+    for n in 8..=10 {
+        canned.blocks.insert(n, mock_rpc::simple_block(n, &format!("0xblock{n}")));
+    }
+    let (rpc_url, _handle) = mock_rpc::start(canned).await;
+
+    let adapter = CkbDirectAdapter::new(rpc_url)
+        .with_backfill_blocks(1000) // would normally backfill, but resume wins
+        .with_resume_from(Some(8))
+        .with_poll_interval(Duration::from_millis(40));
+
+    let emitted = drive_for(adapter, Duration::from_millis(300), Duration::from_millis(70)).await;
+
+    // No backfill envelopes when resuming.
+    assert!(
+        !emitted.iter().any(|m| matches!(m, Mutation::BackfillProgress { .. })),
+        "resume must skip backfill; emitted: {emitted:#?}"
+    );
+    // Forward poll resumes from saved tip 8 → processes 9 and 10 only.
+    let nums: Vec<u64> = emitted
+        .iter()
+        .filter_map(|m| match m {
+            Mutation::BlockMined { number, .. } => Some(*number),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(nums, vec![9, 10], "resume polls forward from saved tip; got {nums:?}");
+}

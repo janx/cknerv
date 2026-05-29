@@ -24,6 +24,7 @@ pub struct CkbDirectAdapter {
     node_id: String,
     node_label: String,
     backfill_blocks: u64,
+    resume_from: Option<u64>,
 }
 
 impl CkbDirectAdapter {
@@ -34,6 +35,7 @@ impl CkbDirectAdapter {
             node_id: "ckb:local".into(),
             node_label: "ckb-local".into(),
             backfill_blocks: 1000,
+            resume_from: None,
         }
     }
 
@@ -53,6 +55,15 @@ impl CkbDirectAdapter {
     /// tip-only behavior).
     pub fn with_backfill_blocks(mut self, n: u64) -> Self {
         self.backfill_blocks = n;
+        self
+    }
+
+    /// If `Some(tip)`, the adapter resumes the forward poll from `tip`
+    /// (skipping the boot backfill) — used when persisted state has been
+    /// restored, so the downtime gap is caught up by the normal poll
+    /// rather than re-replayed.
+    pub fn with_resume_from(mut self, tip: Option<u64>) -> Self {
+        self.resume_from = tip;
         self
     }
 }
@@ -87,7 +98,12 @@ impl Adapter for CkbDirectAdapter {
         // Boot backfill: seed the recent live-cell set, then resume the
         // forward poll from the anchor tip. On failure, fall through to
         // the legacy tip-1 anchor (poll loop handles last_tip == None).
-        if self.backfill_blocks > 0 {
+        if let Some(resume_tip) = self.resume_from {
+            // Restored from persisted state: resume the forward poll from
+            // the saved tip; the poll catches up the downtime gap. Skip
+            // backfill so we don't re-replay (and duplicate) recent blocks.
+            state.last_tip = Some(resume_tip);
+        } else if self.backfill_blocks > 0 {
             match crate::backfill::run_backfill(&rpc, self.backfill_blocks, &out).await {
                 Ok(tip0) => state.last_tip = Some(tip0),
                 Err(e) => tracing::warn!(
