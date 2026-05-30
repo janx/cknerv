@@ -4,13 +4,10 @@
 // Rule: an edge exists between two cells iff one is among the other's
 // k spatial-nearest cells (or vice-versa, since the relation is
 // asymmetric). k-NN candidates longer than MAX_EDGE_LENGTH are
-// dropped, which leaves halo outliers with no edges at all. A second
-// lifeline pass guarantees every cell ends with ≥1 edge: each
-// remaining isolated cell gets exactly one extra edge to its
-// globally nearest other cell, ignoring the length cap. The result
-// is "axon projection" geometry (one slim fibre reaching from rim
-// toward the disc per outlier) rather than the dense bridge cluster
-// an MST stitch would build.
+// dropped, which leaves halo outliers with no edges at all. A
+// lifeline pass guarantees every cell ends with ≥1 edge, then a
+// component-stitch pass adds the minimum extra long fibres needed to
+// make the whole field one connected neural network.
 
 import type { Cell } from '@cknerv/types';
 
@@ -24,8 +21,8 @@ export const DEFAULT_K = 4;
  *  Edges longer than this are dropped — they're almost always halo
  *  outliers, and rendering them as long curves crossing the empty
  *  rim of the disc makes the graph look like cables in space rather
- *  than neural tissue. A few peripheral cells stay isolated; pulses
- *  routed to them simply don't fire. */
+ *  than neural tissue. Long lifeline/component-stitch edges are added
+ *  later as sparse exceptions so every cell remains reachable. */
 const MAX_EDGE_LENGTH = 25;
 
 /** Side length (world units) of one cell in the spatial-hash grid
@@ -58,6 +55,14 @@ function distSq(a: Cell, b: Cell): number {
   return dx * dx + dy * dy + dz * dz;
 }
 
+function minId(ids: number[]): number {
+  let min = Infinity;
+  for (const id of ids) {
+    if (id < min) min = id;
+  }
+  return min;
+}
+
 /** Pack two integer bucket coords (after bucket-size division) into one
  *  number for use as a Map key. The previous string-key formulation
  *  (`${bx}\x00${bz}`) showed up as a hot allocation in profiling
@@ -74,6 +79,8 @@ function bucketKeyNum(bx: number, bz: number): number {
  *  1. For each cell, find the `k` nearest other cells (Euclidean).
  *  2. Add each pair as an undirected edge (deduplicated via the
  *     adjacency Set; no separate edgeMap needed).
+ *  3. Add sparse long lifeline/component-stitch edges so all cells form
+ *     one connected graph.
  *
  * O(N²) per call worst case; in practice the spatial-hash bucket scan
  * keeps it close to O(N · k). Callers should rebuild only when the
@@ -120,11 +127,33 @@ export function buildNeighborGraph(
   // get them via getOrInit at first use.
   const adjacency = new Map<number, Set<number>>();
   const edges: NeighborEdge[] = [];
+  // Edges required for connectivity are returned before dense local
+  // k-NN edges. NeuralFabric has a hard segment cap, so priority
+  // ordering keeps the essential skeleton visible when a large init
+  // snapshot would otherwise overflow the baseline fabric buffer.
+  const priorityEdges: NeighborEdge[] = [];
 
   function adjOf(id: number): Set<number> {
     let s = adjacency.get(id);
     if (s === undefined) { s = new Set(); adjacency.set(id, s); }
     return s;
+  }
+
+  function addEdge(
+    fromId: number,
+    toId: number,
+    d: number,
+    target: NeighborEdge[] = edges,
+  ): boolean {
+    if (fromId === toId) return false;
+    const fromAdj = adjOf(fromId);
+    if (fromAdj.has(toId)) return false;
+    const lo = fromId < toId ? fromId : toId;
+    const hi = fromId < toId ? toId : fromId;
+    target.push({ from: lo, to: hi, d });
+    fromAdj.add(toId);
+    adjOf(toId).add(fromId);
+    return true;
   }
 
   for (let i = 0; i < cellArr.length; i++) {
@@ -190,16 +219,7 @@ export function buildNeighborGraph(
       // that would render as long curves through the empty rim.
       const d = Math.sqrt(scratchDSq[m]);
       if (d > MAX_EDGE_LENGTH) continue;
-      // Adjacency Set is the dedup oracle — no separate edgeMap. The
-      // only way `aAdj` already contains `otherId` is if `otherId`
-      // saw `a.id` in an earlier iteration and added the symmetric
-      // edge (we always add both directions on first add).
-      if (aAdj.has(otherId)) continue;
-      const lo = a.id < otherId ? a.id : otherId;
-      const hi = a.id < otherId ? otherId : a.id;
-      edges.push({ from: lo, to: hi, d });
-      aAdj.add(otherId);
-      adjOf(otherId).add(a.id);
+      addEdge(a.id, otherId, d);
     }
   }
 
@@ -207,12 +227,9 @@ export function buildNeighborGraph(
   // exceeded MAX_EDGE_LENGTH (halo outliers, the rim of the field)
   // still has empty adjacency. Give each such cell exactly one edge
   // to its globally nearest other cell, ignoring the length cap.
-  // This is NOT an MST stitch — we never group components with bridge
-  // clusters in empty space; each isolated cell gets one slim
-  // projection toward whatever's closest, even if that's another
-  // isolated cell. Linear scan over cellArr per outlier is cheap
-  // because outliers are a few percent of the field and the outer
-  // O(N²) factor matches the k-NN bucket scan itself.
+  // Linear scan over cellArr per outlier is cheap because outliers are
+  // a few percent of the field and the outer O(N²) factor matches the
+  // k-NN bucket scan itself.
   for (let i = 0; i < cellArr.length; i++) {
     const a = cellArr[i];
     const aAdj = adjOf(a.id);
@@ -229,12 +246,58 @@ export function buildNeighborGraph(
     }
     if (bestId < 0) continue;
     const d = Math.sqrt(bestDSq);
-    const lo = a.id < bestId ? a.id : bestId;
-    const hi = a.id < bestId ? bestId : a.id;
-    edges.push({ from: lo, to: hi, d });
-    aAdj.add(bestId);
-    adjOf(bestId).add(a.id);
+    addEdge(a.id, bestId, d, priorityEdges);
   }
 
-  return { adjacency, edges };
+  // 3. Component stitch. Degree≥1 is not enough for the init view:
+  // two dense but far-apart clusters can both look locally healthy
+  // while the whole field is still disconnected. Add one nearest-pair
+  // bridge from each remaining component into the connected set.
+  const unvisited = new Set<number>(cellArr.map((c) => c.id));
+  const components: number[][] = [];
+  while (unvisited.size > 0) {
+    const start = unvisited.values().next().value as number;
+    const component: number[] = [];
+    const queue = [start];
+    unvisited.delete(start);
+    while (queue.length > 0) {
+      const id = queue.shift()!;
+      component.push(id);
+      for (const nb of adjacency.get(id) ?? []) {
+        if (!unvisited.has(nb)) continue;
+        unvisited.delete(nb);
+        queue.push(nb);
+      }
+    }
+    components.push(component);
+  }
+
+  if (components.length > 1) {
+    const byId = new Map<number, Cell>(cellArr.map((c) => [c.id, c]));
+    components.sort((a, b) => b.length - a.length || minId(a) - minId(b));
+    const stitched = new Set<number>(components[0]);
+    for (const component of components.slice(1)) {
+      let bestFrom = -1;
+      let bestTo = -1;
+      let bestDSq = Infinity;
+      for (const fromId of stitched) {
+        const from = byId.get(fromId)!;
+        for (const toId of component) {
+          const to = byId.get(toId)!;
+          const dSq = distSq(from, to);
+          if (dSq < bestDSq) {
+            bestDSq = dSq;
+            bestFrom = fromId;
+            bestTo = toId;
+          }
+        }
+      }
+      if (bestFrom >= 0 && bestTo >= 0) {
+        addEdge(bestFrom, bestTo, Math.sqrt(bestDSq), priorityEdges);
+      }
+      for (const id of component) stitched.add(id);
+    }
+  }
+
+  return { adjacency, edges: [...priorityEdges, ...edges] };
 }
