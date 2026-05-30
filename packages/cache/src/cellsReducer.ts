@@ -37,7 +37,8 @@ export interface CellGalaxyCache {
   totalBirths: number;
   totalDeaths: number;
   /** Boot-time backfill progress, or null when not seeding. Drives the
-   *  BackfillHud and (server-side) the suppression of pulse/link effects. */
+   *  BackfillHud and (server-side) block-pulse suppression. Tx links still
+   *  stream during backfill so nerves refill with cells. */
   backfill: { done: number; total: number } | null;
 }
 
