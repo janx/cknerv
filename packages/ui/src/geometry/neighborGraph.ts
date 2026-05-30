@@ -63,6 +63,24 @@ function minId(ids: number[]): number {
   return min;
 }
 
+function edgeKey(a: number, b: number): string {
+  const lo = a < b ? a : b;
+  const hi = a < b ? b : a;
+  return `${lo}:${hi}`;
+}
+
+function edgeFromIds(
+  aId: number,
+  bId: number,
+  byId: ReadonlyMap<number, Cell>,
+): NeighborEdge {
+  const a = byId.get(aId)!;
+  const b = byId.get(bId)!;
+  const lo = aId < bId ? aId : bId;
+  const hi = aId < bId ? bId : aId;
+  return { from: lo, to: hi, d: Math.sqrt(distSq(a, b)) };
+}
+
 /** Pack two integer bucket coords (after bucket-size division) into one
  *  number for use as a Map key. The previous string-key formulation
  *  (`${bx}\x00${bz}`) showed up as a hot allocation in profiling
@@ -99,6 +117,7 @@ export function buildNeighborGraph(
   }
 
   const cellArr = [...cells.values()];
+  const byId = new Map<number, Cell>(cellArr.map((c) => [c.id, c]));
 
   // Pre-allocated parallel scratch buffers for top-k. Avoids the
   // per-iteration object alloc that the previous implementation hit
@@ -127,11 +146,6 @@ export function buildNeighborGraph(
   // get them via getOrInit at first use.
   const adjacency = new Map<number, Set<number>>();
   const edges: NeighborEdge[] = [];
-  // Edges required for connectivity are returned before dense local
-  // k-NN edges. NeuralFabric has a hard segment cap, so priority
-  // ordering keeps the essential skeleton visible when a large init
-  // snapshot would otherwise overflow the baseline fabric buffer.
-  const priorityEdges: NeighborEdge[] = [];
 
   function adjOf(id: number): Set<number> {
     let s = adjacency.get(id);
@@ -143,14 +157,13 @@ export function buildNeighborGraph(
     fromId: number,
     toId: number,
     d: number,
-    target: NeighborEdge[] = edges,
   ): boolean {
     if (fromId === toId) return false;
     const fromAdj = adjOf(fromId);
     if (fromAdj.has(toId)) return false;
     const lo = fromId < toId ? fromId : toId;
     const hi = fromId < toId ? toId : fromId;
-    target.push({ from: lo, to: hi, d });
+    edges.push({ from: lo, to: hi, d });
     fromAdj.add(toId);
     adjOf(toId).add(fromId);
     return true;
@@ -196,7 +209,6 @@ export function buildNeighborGraph(
     // Partial selection sort: pull the k smallest dSq's to the front.
     // For k=3 and ~30 candidates this is faster than a full sort.
     const take = Math.min(k, candidateCount);
-    const aAdj = adjOf(a.id);
     for (let m = 0; m < take; m++) {
       let bestIdx = m;
       let bestDSq = scratchDSq[m];
@@ -246,7 +258,7 @@ export function buildNeighborGraph(
     }
     if (bestId < 0) continue;
     const d = Math.sqrt(bestDSq);
-    addEdge(a.id, bestId, d, priorityEdges);
+    addEdge(a.id, bestId, d);
   }
 
   // 3. Component stitch. Degree≥1 is not enough for the init view:
@@ -273,7 +285,6 @@ export function buildNeighborGraph(
   }
 
   if (components.length > 1) {
-    const byId = new Map<number, Cell>(cellArr.map((c) => [c.id, c]));
     components.sort((a, b) => b.length - a.length || minId(a) - minId(b));
     const stitched = new Set<number>(components[0]);
     for (const component of components.slice(1)) {
@@ -293,11 +304,47 @@ export function buildNeighborGraph(
         }
       }
       if (bestFrom >= 0 && bestTo >= 0) {
-        addEdge(bestFrom, bestTo, Math.sqrt(bestDSq), priorityEdges);
+        addEdge(bestFrom, bestTo, Math.sqrt(bestDSq));
       }
       for (const id of component) stitched.add(id);
     }
   }
 
-  return { adjacency, edges: [...priorityEdges, ...edges] };
+  // 4. Render-priority skeleton. NeuralFabric has a fixed segment cap,
+  // so a large graph cannot rely on dense k-NN insertion order: if the
+  // renderer only has room for a prefix, that prefix must still touch
+  // every cell. Derive a spanning tree from the final adjacency and put
+  // it before the dense local extras.
+  const skeletonEdges: NeighborEdge[] = [];
+  const skeletonKeys = new Set<string>();
+  const visited = new Set<number>();
+  const queue: number[] = [];
+  for (const c of cellArr) {
+    if (visited.has(c.id)) continue;
+    visited.add(c.id);
+    queue.length = 0;
+    queue.push(c.id);
+    for (let q = 0; q < queue.length; q++) {
+      const id = queue[q];
+      const origin = byId.get(id)!;
+      const neighbours = [...(adjacency.get(id) ?? [])]
+        .filter((nb) => !visited.has(nb))
+        .sort((a, b) => {
+          const da = distSq(origin, byId.get(a)!);
+          const db = distSq(origin, byId.get(b)!);
+          return da - db || a - b;
+        });
+      for (const nb of neighbours) {
+        if (visited.has(nb)) continue;
+        visited.add(nb);
+        queue.push(nb);
+        const key = edgeKey(id, nb);
+        skeletonKeys.add(key);
+        skeletonEdges.push(edgeFromIds(id, nb, byId));
+      }
+    }
+  }
+
+  const denseEdges = edges.filter((e) => !skeletonKeys.has(edgeKey(e.from, e.to)));
+  return { adjacency, edges: [...skeletonEdges, ...denseEdges] };
 }

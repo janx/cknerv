@@ -25,6 +25,7 @@ import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 import type { Cell } from '@cknerv/types';
 import type { NeighborGraph } from '../geometry/neighborGraph';
 import { bezierAtInto, bezierControlInto, fabricEdgeSeed } from '../geometry/edgeBezier';
+import { fabricEdgeKey, orderFabricStateKeys } from './fabricOrder';
 
 /** Fabric baseline alpha. Higher than the original 0.20 because the
  *  per-vertex taper now multiplies it by ~0.53 on average (parabolic
@@ -151,17 +152,6 @@ interface EdgeState {
    *  the network has a fixed hierarchy of bright "trunks" and dim
    *  "branches" rather than uniform mesh. */
   brightnessMul: number;
-}
-
-/** Canonical edge map key. We use a string rather than a packed
- *  numeric key because cell ids in long-running sessions can
- *  exceed the 2^16 bit width a comfy pack would need, and the
- *  ~3k entries × few-hundred-millis-per-rebuild domain makes
- *  string Map performance a non-issue. */
-function edgeKey(a: number, b: number): string {
-  const lo = a < b ? a : b;
-  const hi = a < b ? b : a;
-  return `${lo}|${hi}`;
 }
 
 /** Floor brightness at the midpoint of a fabric edge, as a fraction of
@@ -291,6 +281,7 @@ export default function NeuralFabric({ onReady }: NeuralFabricProps) {
    *  growth/decay and its appearance changes per frame. Flipped
    *  off after a final emit settles everything into stable state. */
   const emitDirtyRef = useRef<boolean>(false);
+  const renderOrderRef = useRef<string[]>([]);
 
   useEffect(() => {
     fabric.material.resolution.set(size.width, size.height);
@@ -315,13 +306,13 @@ export default function NeuralFabric({ onReady }: NeuralFabricProps) {
     const handles: NeuralFabricHandles = {
       setFabric(graph, cells, now) {
         const states = edgeStatesRef.current;
+        const { order, liveKeys } = orderFabricStateKeys(graph.edges, states.keys());
+        renderOrderRef.current = order;
         // Two-pass diff. Pass 1: walk new edges, add fresh ones in
         // growing phase, revive any that were dying. Track seen keys
         // so pass 2 can flag the removed ones.
-        const seen = new Set<string>();
         for (const e of graph.edges) {
-          const key = edgeKey(e.from, e.to);
-          seen.add(key);
+          const key = fabricEdgeKey(e.from, e.to);
           const existing = states.get(key);
           if (existing) {
             // Stable edge: leave alone. Revival of a dying edge:
@@ -362,7 +353,7 @@ export default function NeuralFabric({ onReady }: NeuralFabricProps) {
         // dyingAt, so the decay clock doesn't reset on repeated
         // setFabric calls during the same death window).
         for (const [key, st] of states) {
-          if (seen.has(key)) continue;
+          if (liveKeys.has(key)) continue;
           if (st.dyingAt === null) st.dyingAt = now;
         }
         emitDirtyRef.current = true;
@@ -375,7 +366,9 @@ export default function NeuralFabric({ onReady }: NeuralFabricProps) {
         // Reap list deferred so we don't mutate the map mid-iteration.
         let toReap: string[] | null = null;
 
-        for (const [key, st] of states) {
+        for (const key of renderOrderRef.current) {
+          const st = states.get(key);
+          if (!st) continue;
           let alphaMul = 1;
           let lengthFront = 1;
 
@@ -449,7 +442,11 @@ export default function NeuralFabric({ onReady }: NeuralFabricProps) {
           }
         }
 
-        if (toReap) for (const key of toReap) states.delete(key);
+        if (toReap) {
+          const reapSet = new Set(toReap);
+          for (const key of toReap) states.delete(key);
+          renderOrderRef.current = renderOrderRef.current.filter((key) => !reapSet.has(key));
+        }
 
         commitLayer(fabric);
         // Continue emitting next frame while any edge is animating.
