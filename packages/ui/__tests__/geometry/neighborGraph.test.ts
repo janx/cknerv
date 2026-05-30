@@ -12,6 +12,24 @@ function mkCell(id: number, x: number, y: number, z: number): Cell {
   };
 }
 
+function reachableIdsFrom(
+  start: number,
+  graph: ReturnType<typeof buildNeighborGraph>,
+): Set<number> {
+  const visited = new Set<number>([start]);
+  const queue = [start];
+  while (queue.length > 0) {
+    const id = queue.shift()!;
+    for (const nb of graph.adjacency.get(id) ?? []) {
+      if (!visited.has(nb)) {
+        visited.add(nb);
+        queue.push(nb);
+      }
+    }
+  }
+  return visited;
+}
+
 describe('buildNeighborGraph', () => {
   it('returns empty for an empty cell map', () => {
     const g = buildNeighborGraph(new Map());
@@ -76,12 +94,11 @@ describe('buildNeighborGraph', () => {
     }
   });
 
-  it('does NOT bridge internally-connected far-apart components', () => {
+  it('bridges internally-connected far-apart components into one graph', () => {
     // Two clusters far apart (>25 world-units, the MAX_EDGE_LENGTH).
-    // Both clusters are internally dense, so every cell already has
-    // ≥1 edge after the k-NN pass; the lifeline pass is a no-op for
-    // them and the clusters stay disjoint. Lifeline only fires for
-    // cells with EMPTY adjacency — it isn't an MST stitch.
+    // Both clusters are internally dense, so degree-only lifelines are
+    // insufficient: a neural-network refill must still stitch the
+    // components into one connected graph.
     const cells = new Map<number, Cell>([
       [1, mkCell(1, 0, 0, 0)],
       [2, mkCell(2, 1, 0, 0)],
@@ -91,19 +108,9 @@ describe('buildNeighborGraph', () => {
       [12, mkCell(12, 102, 0, 0)],
     ]);
     const g = buildNeighborGraph(cells, 2);
-    const visited = new Set<number>([1]);
-    const queue = [1];
-    while (queue.length > 0) {
-      const id = queue.shift()!;
-      for (const nb of g.adjacency.get(id) ?? []) {
-        if (!visited.has(nb)) {
-          visited.add(nb);
-          queue.push(nb);
-        }
-      }
-    }
-    expect(visited.has(12)).toBe(false);
-    expect(visited.size).toBe(3);
+    const visited = reachableIdsFrom(1, g);
+    expect(visited.size).toBe(cells.size);
+    expect(visited.has(12)).toBe(true);
   });
 
   it('lifeline: two cells past MAX_EDGE_LENGTH still get one edge', () => {
@@ -157,6 +164,18 @@ describe('buildNeighborGraph', () => {
       const adj = g.adjacency.get(id);
       expect(adj).toBeDefined();
       expect(adj!.size).toBeGreaterThanOrEqual(1);
+    }
+  });
+
+  it('all cells are reachable from any cell when ≥2 cells exist', () => {
+    const cells = new Map<number, Cell>();
+    for (let i = 1; i <= 6; i++) cells.set(i, mkCell(i, i, 0, 0));
+    cells.set(50, mkCell(50, 60, 0, 0));
+    cells.set(51, mkCell(51, 90, 0, 30));
+    cells.set(52, mkCell(52, -70, 0, -40));
+    const g = buildNeighborGraph(cells, 2);
+    for (const id of cells.keys()) {
+      expect(reachableIdsFrom(id, g).size).toBe(cells.size);
     }
   });
 });
