@@ -3,6 +3,8 @@
 //! [`config`] for cknerv.toml, [`commands`] for init/prune, [`server`] for run.
 
 mod assets;
+#[cfg(test)]
+mod build_version_format;
 mod cli;
 mod commands;
 mod config;
