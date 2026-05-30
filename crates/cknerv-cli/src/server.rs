@@ -15,6 +15,8 @@ use cknerv_adapter_ckb::CkbDirectAdapter;
 use cknerv_core::CellGalaxy;
 use cknerv_server::ServerBuilder;
 
+use axum::routing::get;
+
 use crate::assets::serve_spa;
 use crate::config::ResolvedConfig;
 
@@ -53,7 +55,9 @@ pub async fn run(workdir: PathBuf, cfg: ResolvedConfig) -> Result<()> {
         .workdir(state_dir.clone())
         .build()?;
 
-    let app = cknerv_router.fallback(serve_spa);
+    let app = cknerv_router
+        .route("/runtime-config.js", get(crate::assets::serve_runtime_config))
+        .fallback(serve_spa);
 
     let addr = SocketAddr::from(([127, 0, 0, 1], cfg.port));
     let listener = tokio::net::TcpListener::bind(addr).await?;

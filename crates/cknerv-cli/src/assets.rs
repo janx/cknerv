@@ -22,6 +22,40 @@ use rust_embed::RustEmbed;
 #[folder = "../../ui-app/dist/"]
 struct Assets;
 
+pub const BUILD_VERSION: &str = env!("CKNERV_BUILD_VERSION");
+
+pub fn runtime_config_body(build_version: &str) -> String {
+    let build_version = serde_json::to_string(build_version)
+        .expect("failed to serialize cknerv build version for runtime config");
+    format!(
+        r#"(() => {{
+  window.__CKNERV_RUNTIME_CONFIG__ = {{
+    buildVersion: {build_version},
+  }};
+}})();
+"#
+    )
+}
+
+pub fn runtime_config_response(build_version: &str) -> Response {
+    (
+        StatusCode::OK,
+        [
+            (
+                header::CONTENT_TYPE,
+                "application/javascript; charset=utf-8",
+            ),
+            (header::CACHE_CONTROL, "no-cache"),
+        ],
+        runtime_config_body(build_version),
+    )
+        .into_response()
+}
+
+pub async fn serve_runtime_config() -> Response {
+    runtime_config_response(BUILD_VERSION)
+}
+
 pub async fn serve_spa(uri: Uri) -> Response {
     let raw_path = uri.path().trim_start_matches('/');
     // SPA fallback — extension-less paths serve index.html so client-side
@@ -40,5 +74,51 @@ pub async fn serve_spa(uri: Uri) -> Response {
                 .expect("response build")
         }
         None => (StatusCode::NOT_FOUND, "not found").into_response(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{runtime_config_body, runtime_config_response};
+    use axum::http::header;
+
+    #[test]
+    fn runtime_config_body_assigns_build_version() {
+        let body = runtime_config_body("0.1.0+feature/foo@abcdef123456");
+
+        assert!(body.contains("window.__CKNERV_RUNTIME_CONFIG__"));
+        assert!(body.contains("buildVersion: \"0.1.0+feature/foo@abcdef123456\""));
+    }
+
+    #[test]
+    fn runtime_config_body_json_escapes_build_version() {
+        let body = runtime_config_body("0.1.0+quote\"branch@abcdef123456");
+
+        assert!(body.contains("buildVersion: \"0.1.0+quote\\\"branch@abcdef123456\""));
+    }
+
+    #[test]
+    fn runtime_config_response_sets_javascript_headers() {
+        let response = runtime_config_response("0.1.0@abcdef123456");
+
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+        assert_eq!(
+            response
+                .headers()
+                .get(header::CONTENT_TYPE)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "application/javascript; charset=utf-8"
+        );
+        assert_eq!(
+            response
+                .headers()
+                .get(header::CACHE_CONTROL)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "no-cache"
+        );
     }
 }
