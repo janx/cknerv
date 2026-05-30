@@ -18,10 +18,10 @@ to `cknerv-adapter-ckb`, `cknerv-server`, or the SPA.
 ./target/release/cknerv
 
 # Against an explicit RPC + port:
-./target/release/cknerv --rpc http://localhost:8114 --port 7001
+./target/release/cknerv run --rpc http://localhost:8114 --port 7001
 
 # Headless (no browser auto-open):
-./target/release/cknerv --no-open
+./target/release/cknerv run --no-open
 ```
 
 ## Endpoint shapes
@@ -78,7 +78,7 @@ chain entity advances and cells accumulate. Note the `chain.tip` JSON path
 (`tip` is nested under `chain`) and the `snapshot.cells` array path.
 
 ```bash
-./target/release/cknerv --no-open --port 17001 > /tmp/cknerv_smoke.log 2>&1 &
+./target/release/cknerv run --no-open --port 17001 > /tmp/cknerv_smoke.log 2>&1 &
 CKNERV_PID=$!
 sleep 5
 
@@ -150,7 +150,7 @@ Programmatic smoke executed against the user's live local CKB node
 a non-default port to avoid collisions:
 
 ```bash
-./target/release/cknerv --no-open --port 17031 > /tmp/cknerv_smoke.log 2>&1 &
+./target/release/cknerv run --no-open --port 17031 > /tmp/cknerv_smoke.log 2>&1 &
 ```
 
 Live node was reachable and actively producing blocks throughout. cknerv
