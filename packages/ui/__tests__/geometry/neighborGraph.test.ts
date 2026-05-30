@@ -16,11 +16,35 @@ function reachableIdsFrom(
   start: number,
   graph: ReturnType<typeof buildNeighborGraph>,
 ): Set<number> {
+  return reachableIdsFromEdges(start, graph.edges);
+}
+
+function reachableIdsFromEdges(
+  start: number,
+  edges: ReadonlyArray<{ from: number; to: number }>,
+): Set<number> {
+  const adjacency = new Map<number, Set<number>>();
+  for (const edge of edges) {
+    let fromAdj = adjacency.get(edge.from);
+    if (!fromAdj) {
+      fromAdj = new Set();
+      adjacency.set(edge.from, fromAdj);
+    }
+    fromAdj.add(edge.to);
+
+    let toAdj = adjacency.get(edge.to);
+    if (!toAdj) {
+      toAdj = new Set();
+      adjacency.set(edge.to, toAdj);
+    }
+    toAdj.add(edge.from);
+  }
+
   const visited = new Set<number>([start]);
   const queue = [start];
   while (queue.length > 0) {
     const id = queue.shift()!;
-    for (const nb of graph.adjacency.get(id) ?? []) {
+    for (const nb of adjacency.get(id) ?? []) {
       if (!visited.has(nb)) {
         visited.add(nb);
         queue.push(nb);
@@ -177,5 +201,16 @@ describe('buildNeighborGraph', () => {
     for (const id of cells.keys()) {
       expect(reachableIdsFrom(id, g).size).toBe(cells.size);
     }
+  });
+
+  it('orders a connected skeleton before dense local edges', () => {
+    // NeuralFabric can only render a fixed prefix of the logical edge
+    // list. The first N-1 edges must therefore be enough to touch every
+    // cell; dense k-NN extras can follow after that skeleton.
+    const cells = new Map<number, Cell>();
+    for (let i = 1; i <= 8; i++) cells.set(i, mkCell(i, i, 0, 0));
+    const g = buildNeighborGraph(cells, 2);
+    const visiblePrefix = g.edges.slice(0, cells.size - 1);
+    expect(reachableIdsFromEdges(1, visiblePrefix).size).toBe(cells.size);
   });
 });
