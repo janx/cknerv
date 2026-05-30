@@ -34,7 +34,7 @@ impl CkbDirectAdapter {
             poll_interval: Duration::from_secs(2),
             node_id: "ckb:local".into(),
             node_label: "ckb-local".into(),
-            backfill_blocks: 1000,
+            backfill_blocks: 5000,
             resume_from: None,
         }
     }
@@ -144,4 +144,16 @@ fn now_ms() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_defaults_to_5000_backfill_blocks() {
+        let adapter = CkbDirectAdapter::new(Url::parse("http://localhost:8114").unwrap());
+
+        assert_eq!(adapter.backfill_blocks, 5000);
+    }
 }

@@ -46,7 +46,7 @@ pub struct RunArgs {
     pub no_open: bool,
 
     /// Recent blocks to replay at boot to seed the live-cell galaxy. 0 disables.
-    /// Overrides cknerv.toml. Default: 1000.
+    /// Overrides cknerv.toml. Default: 5000.
     #[arg(long, value_name = "N")]
     pub backfill_blocks: Option<u64>,
 }
