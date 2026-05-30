@@ -36,6 +36,7 @@ import type {
   ChainNode,
 } from '@cknerv/types';
 import Tweaks from './Tweaks';
+import VersionMarker from './VersionMarker';
 import ChainNodeDetailHud from './ChainNodeDetailHud';
 
 /** CellGalaxy emits `cell:<id>` for a clicked cell and the bare node id
@@ -176,6 +177,7 @@ export default function App({
     <>
       {/* Leva knobs panel (DOM overlay) — hidden by default, backtick toggles. */}
       <Tweaks />
+      <VersionMarker />
 
       <CellGalaxyProvider value={cellsCache}>
         <Canvas
