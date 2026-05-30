@@ -109,7 +109,7 @@ non-API path) on a single port.
 ## Known limitations (v0.1)
 
 - The galaxy shows **recent live cells**, not the full live-cell set: at
-  boot it replays the last `--backfill-blocks` blocks (default 1000) and
+  boot it replays the last `--backfill-blocks` blocks (default 5000) and
   shows the cells they created that are still unspent. Cells created
   before that window and never spent are not shown (querying the full
   live set would require the CKB indexer). Tune depth with

@@ -45,7 +45,7 @@ pub struct ResolvedConfig {
 
 const DEFAULT_RPC: &str = "http://localhost:8114";
 const DEFAULT_PORT: u16 = 7001;
-const DEFAULT_BACKFILL: u64 = 1000;
+const DEFAULT_BACKFILL: u64 = 5000;
 
 /// Load `<workdir>/cknerv.toml`. Absent file → empty (all-default) config.
 /// Present but unparseable → error.
@@ -110,7 +110,7 @@ open = true
 
 [backfill]
 # Recent blocks to replay at boot to seed the live-cell galaxy. 0 disables.
-blocks = 1000
+blocks = 5000
 "#;
 
 #[cfg(test)]
@@ -136,7 +136,7 @@ mod tests {
         assert_eq!(r.rpc_url.as_str(), "http://localhost:8114/");
         assert_eq!(r.port, 7001);
         assert!(r.open);
-        assert_eq!(r.backfill_blocks, 1000);
+        assert_eq!(r.backfill_blocks, 5000);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -177,7 +177,7 @@ mod tests {
         assert_eq!(r.rpc_url.as_str(), "http://localhost:8114/");
         assert_eq!(r.port, 7001);
         assert!(r.open);
-        assert_eq!(r.backfill_blocks, 1000);
+        assert_eq!(r.backfill_blocks, 5000);
     }
 
     #[test]
