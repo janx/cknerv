@@ -148,8 +148,9 @@ pub enum CellDelta {
     },
     /// Boot-time backfill progress passthrough. `active` true while
     /// seeding, false on completion. The SPA shows a progress HUD and
-    /// (because pulse/link deltas are suppressed while active) renders
-    /// the streamed births statically.
+    /// the projection suppresses block pulse deltas while active so the
+    /// boot replay does not fire one shockwave per historical block.
+    /// Tx link deltas still stream so nerves refill with cells.
     Backfill {
         done: u64,
         total: u64,
@@ -225,9 +226,10 @@ pub struct CellGalaxy {
     /// Bounded upstream by the reducer's 5-min pairing TTL, so even
     /// pathological out-of-order cases stay finite.
     pending_births_tag: std::collections::HashMap<OutPoint, String>,
-    /// `Some` while a boot-time backfill is in progress. Gates pulse/link
-    /// emission (see `handle_block_mined` / `handle_tx_landed`) and is
-    /// surfaced in the snapshot for clients connecting mid-backfill.
+    /// `Some` while a boot-time backfill is in progress. Gates block pulse
+    /// emission (see `handle_block_mined`) and is surfaced in the snapshot
+    /// for clients connecting mid-backfill. Tx links still emit during
+    /// backfill so the neural fabric refills along with cells.
     backfill: Option<BackfillState>,
 }
 
@@ -433,11 +435,8 @@ impl CellGalaxy {
         // if descendant link D has parents=[A], we keep A around so
         // D's frontend tx-DAG-build can wire the parent edge correctly.
         if !self.recent_links.is_empty() {
-            let alive_ids: std::collections::HashSet<u64> = self
-                .cells
-                .iter()
-                .map(|c| c.id)
-                .collect();
+            let alive_ids: std::collections::HashSet<u64> =
+                self.cells.iter().map(|c| c.id).collect();
             let mut keep: std::collections::HashSet<String> = self
                 .recent_links
                 .iter()
@@ -462,7 +461,8 @@ impl CellGalaxy {
                     break;
                 }
             }
-            self.recent_links.retain(|link| keep.contains(&link.tx_hash));
+            self.recent_links
+                .retain(|link| keep.contains(&link.tx_hash));
         }
 
         removed_ids
@@ -481,7 +481,8 @@ impl CellGalaxy {
         // Drop any link records whose block was rolled back — those
         // txs don't exist in the canonical chain anymore.
         let height_set: std::collections::HashSet<u64> = heights.iter().copied().collect();
-        self.recent_links.retain(|link| !height_set.contains(&link.block));
+        self.recent_links
+            .retain(|link| !height_set.contains(&link.block));
 
         let mut deltas = Vec::new();
         let mut counters_touched = false;
@@ -695,9 +696,8 @@ impl CellGalaxy {
         //    parents so the frontend tx DAG still gets a node for the
         //    cellbase reward cell. Parents are derived from the input
         //    outpoints (post-cellbase-filter), de-duplicated.
-        if self.backfill.is_none() && !birthed_ids.is_empty() {
-            let mut parent_seen: std::collections::HashSet<&str> =
-                std::collections::HashSet::new();
+        if !birthed_ids.is_empty() {
+            let mut parent_seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
             let mut parents: Vec<String> = Vec::new();
             for inp in inputs {
                 if is_cellbase_input(inp) {
@@ -835,7 +835,11 @@ impl Projection for CellGalaxy {
                 outputs,
             } => self.handle_tx_landed(tx_hash, *block, *at, inputs, outputs),
             Mutation::CellTagged { out_point, tag, .. } => self.apply_cell_tagged(out_point, tag),
-            Mutation::BackfillProgress { done, total, active } => {
+            Mutation::BackfillProgress {
+                done,
+                total,
+                active,
+            } => {
                 self.backfill = active.then_some(BackfillState {
                     done: *done,
                     total: *total,
@@ -901,13 +905,20 @@ mod tests {
         assert!(
             matches!(
                 d1.as_slice(),
-                [CellDelta::Backfill { done: 25, total: 100, active: true }]
+                [CellDelta::Backfill {
+                    done: 25,
+                    total: 100,
+                    active: true
+                }]
             ),
             "expected a single active Backfill delta; got {d1:?}"
         );
         assert_eq!(
             g.snapshot().backfill,
-            Some(BackfillState { done: 25, total: 100 })
+            Some(BackfillState {
+                done: 25,
+                total: 100
+            })
         );
         // active:false → snapshot clears.
         let d2 = g.apply_mutation(&Mutation::BackfillProgress {
@@ -924,7 +935,11 @@ mod tests {
 
     #[test]
     fn backfill_delta_wire_shape_is_snake_case() {
-        let d = CellDelta::Backfill { done: 1, total: 2, active: true };
+        let d = CellDelta::Backfill {
+            done: 1,
+            total: 2,
+            active: true,
+        };
         let v = serde_json::to_value(&d).expect("serialize");
         assert_eq!(v["type"], "backfill");
         assert_eq!(v["done"], 1);
@@ -933,22 +948,35 @@ mod tests {
     }
 
     #[test]
-    fn pulse_and_link_suppressed_while_backfilling_but_births_emit() {
+    fn pulse_suppressed_while_backfilling_but_links_and_births_refill() {
         let mut g = make_galaxy();
-        g.apply_mutation(&Mutation::BackfillProgress { done: 0, total: 10, active: true });
+        g.apply_mutation(&Mutation::BackfillProgress {
+            done: 0,
+            total: 10,
+            active: true,
+        });
 
-        // A landed tx during backfill: births emit, but no Link delta and
-        // recent_links does not grow.
+        // A landed tx during backfill: births and causal links both emit so
+        // a fresh UI can refill the neural fabric along with the cells.
         let tx = g.handle_tx_landed("0xbf", 1, 1_000, &[], &[out(100, "0x"), out(200, "0x")]);
         assert!(
             tx.iter().any(|d| matches!(d, CellDelta::Birth { .. })),
             "births must still stream during backfill"
         );
         assert!(
-            !tx.iter().any(|d| matches!(d, CellDelta::Link { .. })),
-            "Link deltas must be suppressed during backfill"
+            tx.iter().any(|d| matches!(d, CellDelta::Link { .. })),
+            "Link deltas must refill nerves during backfill"
         );
-        assert!(g.recent_links.is_empty(), "recent_links must not grow during backfill");
+        assert_eq!(
+            g.recent_links.len(),
+            1,
+            "recent_links must grow during backfill"
+        );
+        assert_eq!(
+            g.snapshot().recent_links.len(),
+            1,
+            "snapshot must carry backfilled links"
+        );
 
         // A block during backfill: no Pulse delta.
         let blk = g.handle_block_mined(1, "0xh1", 1, 1_000);
@@ -958,11 +986,21 @@ mod tests {
         );
 
         // After backfill ends, pulse + link resume.
-        g.apply_mutation(&Mutation::BackfillProgress { done: 10, total: 10, active: false });
+        g.apply_mutation(&Mutation::BackfillProgress {
+            done: 10,
+            total: 10,
+            active: false,
+        });
         let tx2 = g.handle_tx_landed("0xlive", 2, 5_000, &[], &[out(100, "0x")]);
-        assert!(tx2.iter().any(|d| matches!(d, CellDelta::Link { .. })), "Link resumes post-backfill");
+        assert!(
+            tx2.iter().any(|d| matches!(d, CellDelta::Link { .. })),
+            "Link continues post-backfill"
+        );
         let blk2 = g.handle_block_mined(2, "0xh2", 1, 5_000);
-        assert!(blk2.iter().any(|d| matches!(d, CellDelta::Pulse { .. })), "Pulse resumes post-backfill");
+        assert!(
+            blk2.iter().any(|d| matches!(d, CellDelta::Pulse { .. })),
+            "Pulse resumes post-backfill"
+        );
     }
 
     #[test]
@@ -1450,8 +1488,7 @@ mod tests {
         assert_eq!(g.total_deaths, 0);
 
         // Two outputs → +2 births, 0 deaths.
-        let deltas =
-            g.handle_tx_landed("0xtx1", 1, 1_000, &[], &[out(100, "0x"), out(200, "0x")]);
+        let deltas = g.handle_tx_landed("0xtx1", 1, 1_000, &[], &[out(100, "0x"), out(200, "0x")]);
         assert_eq!(g.total_births, 2);
         assert_eq!(g.total_deaths, 0);
         // Stats delta is emitted at most once per tx, after the per-cell deltas.
@@ -1470,13 +1507,7 @@ mod tests {
         ));
 
         // Spend one of those + emit a third → +1 birth, +1 death.
-        g.handle_tx_landed(
-            "0xtx2",
-            2,
-            1_100,
-            &[op("0xtx1", 0)],
-            &[out(300, "0x")],
-        );
+        g.handle_tx_landed("0xtx2", 2, 1_100, &[op("0xtx1", 0)], &[out(300, "0x")]);
         assert_eq!(g.total_births, 3);
         assert_eq!(g.total_deaths, 1);
     }
@@ -1486,9 +1517,7 @@ mod tests {
         let mut g = make_galaxy();
         // No inputs, no outputs → no Birth, no Death, no Stats.
         let deltas = g.handle_tx_landed("0xnoop", 1, 1_000, &[], &[]);
-        assert!(deltas
-            .iter()
-            .all(|d| !matches!(d, CellDelta::Stats { .. })));
+        assert!(deltas.iter().all(|d| !matches!(d, CellDelta::Stats { .. })));
         assert_eq!(g.total_births, 0);
         assert_eq!(g.total_deaths, 0);
     }
@@ -1518,9 +1547,7 @@ mod tests {
         assert!(evicted >= 1, "expected at least one cap-eviction Death");
         assert_eq!(g.total_deaths, 0, "cap evictions must not count as deaths");
         // And no Stats delta should ride along with cap evictions either.
-        assert!(deltas
-            .iter()
-            .all(|d| !matches!(d, CellDelta::Stats { .. })));
+        assert!(deltas.iter().all(|d| !matches!(d, CellDelta::Stats { .. })));
     }
 
     #[test]
