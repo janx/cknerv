@@ -8,6 +8,5 @@ dist/
 .claude/
 .aux/
 docs/superpowers/
-/cknerv.toml
-/data/
+.superpowers/
 temp/
