@@ -44,6 +44,11 @@ export interface NeighborGraph {
   edges: NeighborEdge[];
 }
 
+export interface NeighborGraphOptions {
+  k?: number;
+  maxEdgeLength?: number;
+}
+
 export function emptyNeighborGraph(): NeighborGraph {
   return { adjacency: new Map(), edges: [] };
 }
@@ -107,8 +112,16 @@ function bucketKeyNum(bx: number, bz: number): number {
  */
 export function buildNeighborGraph(
   cells: ReadonlyMap<number, Cell>,
-  k: number = DEFAULT_K,
+  optionsOrK: NeighborGraphOptions | number = DEFAULT_K,
 ): NeighborGraph {
+  const k =
+    typeof optionsOrK === 'number'
+      ? optionsOrK
+      : optionsOrK.k ?? DEFAULT_K;
+  const maxEdgeLength =
+    typeof optionsOrK === 'number'
+      ? MAX_EDGE_LENGTH
+      : optionsOrK.maxEdgeLength ?? MAX_EDGE_LENGTH;
   const n = cells.size;
   if (n === 0) return emptyNeighborGraph();
   if (n === 1) {
@@ -230,7 +243,7 @@ export function buildNeighborGraph(
       // Drop edges longer than the cap — these are halo outliers
       // that would render as long curves through the empty rim.
       const d = Math.sqrt(scratchDSq[m]);
-      if (d > MAX_EDGE_LENGTH) continue;
+      if (d > maxEdgeLength) continue;
       addEdge(a.id, otherId, d);
     }
   }

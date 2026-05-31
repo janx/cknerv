@@ -16,7 +16,15 @@ import type {
 
 /** FIFO retention for nerve-pulse causal edges. Pulses live ~0.8 s on
  *  the GPU, so 128 entries is plenty even at burst rates of ~150 tx/s. */
-const LINK_RING_CAPACITY = 128;
+export const DEFAULT_LINK_RING_CAPACITY = 128;
+
+export interface CellsReducerOptions {
+  linkRingCapacity?: number;
+}
+
+function linkRingCapacity(opts?: CellsReducerOptions): number {
+  return Math.max(0, opts?.linkRingCapacity ?? DEFAULT_LINK_RING_CAPACITY);
+}
 
 export interface CellGalaxyCache {
   revision: number;
@@ -58,6 +66,7 @@ export function emptyCellsCache(): CellGalaxyCache {
 export function fromCellsSnapshot(
   rev: number,
   snap: CellGalaxySnapshot,
+  opts: CellsReducerOptions = {},
 ): CellGalaxyCache {
   const cells = new Map<number, Cell>();
   for (const c of snap.cells) cells.set(c.id, c);
@@ -67,7 +76,9 @@ export function fromCellsSnapshot(
   // on first paint without orphaning cells alive at page load.
   const records: CellLinkRecord[] = snap.recent_links ?? [];
   const sorted = [...records].sort((a, b) => a.at_ms - b.at_ms);
-  const recentLinks: CellLink[] = sorted.map((r, i) => ({
+  const cap = linkRingCapacity(opts);
+  const capped = cap === 0 ? [] : sorted.slice(-cap);
+  const recentLinks: CellLink[] = capped.map((r, i) => ({
     seq: i + 1,
     tx_hash: r.tx_hash,
     block: r.block,
@@ -93,6 +104,7 @@ export function fromCellsSnapshot(
 export function applyCellDelta(
   prev: CellGalaxyCache,
   d: CellDelta,
+  opts: CellsReducerOptions = {},
 ): CellGalaxyCache {
   switch (d.type) {
     case 'birth': {
@@ -141,10 +153,13 @@ export function applyCellDelta(
         tag: d.tag,
         at_ms: d.at_ms,
       };
+      const cap = linkRingCapacity(opts);
       const recentLinks =
-        prev.recentLinks.length >= LINK_RING_CAPACITY
-          ? [...prev.recentLinks.slice(1), link]
-          : [...prev.recentLinks, link];
+        cap === 0
+          ? []
+          : prev.recentLinks.length >= cap
+            ? [...prev.recentLinks.slice(1), link]
+            : [...prev.recentLinks, link];
       return { ...prev, recentLinks, linksSeq: nextSeq };
     }
     case 'backfill': {
@@ -164,11 +179,12 @@ export function applyCellDelta(
 export function applyRevisionedCellDeltas(
   prev: CellGalaxyCache,
   deltas: RevisionedCellDelta[],
+  opts: CellsReducerOptions = {},
 ): CellGalaxyCache {
   let next = prev;
   let maxRev = prev.revision;
   for (const rd of deltas) {
-    next = applyCellDelta(next, rd.delta);
+    next = applyCellDelta(next, rd.delta, opts);
     if (rd.revision > maxRev) maxRev = rd.revision;
   }
   if (maxRev !== prev.revision) {

@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import {
   DEFAULT_BUILD_VERSION,
+  DEFAULT_GALAXY_CONFIG,
+  resolveGalaxyConfig,
   resolveBuildVersion,
 } from '../src/runtime-config';
 
@@ -20,5 +22,34 @@ describe('resolveBuildVersion', () => {
     expect(resolveBuildVersion({ buildVersion: '   ' })).toBe(
       DEFAULT_BUILD_VERSION,
     );
+  });
+});
+
+describe('resolveGalaxyConfig', () => {
+  it('returns configured galaxy topology and pulse values', () => {
+    const resolved = resolveGalaxyConfig({
+      galaxy: {
+        profile: 'devnet',
+        cellCap: 2000,
+        recentLinksCap: 1024,
+        topology: { neighborK: 5, maxEdgeLength: 36, maxHops: 50 },
+        pulses: {
+          linkRingCapacity: 64,
+          maxPulsesPerLink: 4,
+          maxSourcesPerParent: 2,
+          maxActivePulses: 128,
+        },
+      },
+    });
+
+    expect(resolved.profile).toBe('devnet');
+    expect(resolved.topology.neighborK).toBe(5);
+    expect(resolved.topology.maxEdgeLength).toBe(36);
+    expect(resolved.pulses.maxPulsesPerLink).toBe(4);
+    expect(resolved.pulses.maxActivePulses).toBe(128);
+  });
+
+  it('falls back to bundled defaults when galaxy config is missing', () => {
+    expect(resolveGalaxyConfig({})).toEqual(DEFAULT_GALAXY_CONFIG);
   });
 });

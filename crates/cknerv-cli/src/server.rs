@@ -17,7 +17,7 @@ use cknerv_server::ServerBuilder;
 
 use axum::routing::get;
 
-use crate::assets::serve_spa;
+use crate::assets::{runtime_config_response, serve_spa, BUILD_VERSION};
 use crate::config::ResolvedConfig;
 
 pub async fn run(workdir: PathBuf, cfg: ResolvedConfig) -> Result<()> {
@@ -43,20 +43,31 @@ pub async fn run(workdir: PathBuf, cfg: ResolvedConfig) -> Result<()> {
     // restored galaxy from the same file).
     let resume_tip = cknerv_server::peek_restored_tip(&state_dir);
     if let Some(tip) = resume_tip {
-        tracing::info!("restored state found (tip {tip}); skipping backfill, resuming forward poll");
+        tracing::info!(
+            "restored state found (tip {tip}); skipping backfill, resuming forward poll"
+        );
     }
     let adapter = CkbDirectAdapter::new(cfg.rpc_url.clone())
         .with_backfill_blocks(cfg.backfill_blocks)
         .with_resume_from(resume_tip);
+    let galaxy_config = cknerv_core::projection::cells::CellGalaxyConfig {
+        cell_cap: cfg.galaxy.cell_cap,
+        recent_links_cap: cfg.galaxy.recent_links_cap,
+    };
+    let runtime_galaxy = cfg.galaxy.clone();
 
     let (cknerv_router, handle) = ServerBuilder::new()
         .add_adapter(adapter)
-        .add_projection(CellGalaxy::new())
+        .add_projection(CellGalaxy::with_config(galaxy_config))
         .workdir(state_dir.clone())
         .build()?;
 
+    let runtime_config_route = get(move || {
+        let runtime_galaxy = runtime_galaxy.clone();
+        async move { runtime_config_response(BUILD_VERSION, runtime_galaxy) }
+    });
     let app = cknerv_router
-        .route("/runtime-config.js", get(crate::assets::serve_runtime_config))
+        .route("/runtime-config.js", runtime_config_route)
         .fallback(serve_spa);
 
     let addr = SocketAddr::from(([127, 0, 0, 1], cfg.port));

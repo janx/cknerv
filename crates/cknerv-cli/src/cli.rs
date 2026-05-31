@@ -46,7 +46,7 @@ pub struct RunArgs {
     pub no_open: bool,
 
     /// Recent blocks to replay at boot to seed the live-cell galaxy. 0 disables.
-    /// Overrides cknerv.toml. Default: 5000.
+    /// Overrides cknerv.toml. Default: 2000.
     #[arg(long, value_name = "N")]
     pub backfill_blocks: Option<u64>,
 }
@@ -82,8 +82,15 @@ mod tests {
     #[test]
     fn run_parses_overrides() {
         let cli = Cli::parse_from([
-            "cknerv", "run", "--rpc", "http://x:1", "--port", "9", "--no-open",
-            "--backfill-blocks", "5",
+            "cknerv",
+            "run",
+            "--rpc",
+            "http://x:1",
+            "--port",
+            "9",
+            "--no-open",
+            "--backfill-blocks",
+            "5",
         ]);
         match cli.command {
             Some(Command::Run(a)) => {

@@ -28,8 +28,24 @@ use crate::projection::Projection;
 
 // ── visual / behavior constants — mirror cellGalaxy.ts ───────────────
 pub const CELL_CAP: usize = 5000;
+pub const DEFAULT_RECENT_LINKS_CAP: usize = 2048;
 const PULSE_THROTTLE_MS: u64 = 800;
 const DEATH_DURATION_MS: u64 = 600;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CellGalaxyConfig {
+    pub cell_cap: usize,
+    pub recent_links_cap: usize,
+}
+
+impl Default for CellGalaxyConfig {
+    fn default() -> Self {
+        Self {
+            cell_cap: CELL_CAP,
+            recent_links_cap: DEFAULT_RECENT_LINKS_CAP,
+        }
+    }
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Cell {
@@ -112,12 +128,6 @@ pub struct CellLinkRecord {
     pub at_ms: u64,
 }
 
-/// Soft cap on persisted link history. The active sweep in `gc()`
-/// drops links whose outputs are all dead, so under typical load this
-/// stays well below the cap. If exceeded the oldest entries are
-/// trimmed FIFO-style.
-const RECENT_LINKS_CAP: usize = 2048;
-
 #[derive(Clone, Debug, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum CellDelta {
@@ -182,6 +192,7 @@ pub enum CellDelta {
 /// `RwLock<Self>` makes it safe to mutate from the runtime task while
 /// snapshot reads are happening.
 pub struct CellGalaxy {
+    config: CellGalaxyConfig,
     cells: Vec<Cell>,
     next_id: u64,
     /// Maps `tx_hash#index` (the outpoint we want to spend) to the cell
@@ -274,7 +285,12 @@ impl Default for CellGalaxy {
 
 impl CellGalaxy {
     pub fn new() -> Self {
+        Self::with_config(CellGalaxyConfig::default())
+    }
+
+    pub fn with_config(config: CellGalaxyConfig) -> Self {
         Self {
+            config,
             cells: Vec::new(),
             next_id: 0,
             outpoint_index: std::collections::HashMap::new(),
@@ -376,10 +392,10 @@ impl CellGalaxy {
             .iter()
             .filter(|c| c.death_at_ms.is_none())
             .count();
-        if alive <= CELL_CAP {
+        if alive <= self.config.cell_cap {
             return Vec::new();
         }
-        let mut overflow = alive - CELL_CAP;
+        let mut overflow = alive - self.config.cell_cap;
         let mut killed = Vec::new();
         let mut to_remove: Vec<OutPoint> = Vec::new();
         for cell in self.cells.iter_mut() {
@@ -726,8 +742,8 @@ impl CellGalaxy {
             self.recent_links.push(record);
             // Trim FIFO if past the soft cap. The gc sweep usually keeps
             // us well under, this is a safety net for pathological loads.
-            if self.recent_links.len() > RECENT_LINKS_CAP {
-                let overflow = self.recent_links.len() - RECENT_LINKS_CAP;
+            if self.recent_links.len() > self.config.recent_links_cap {
+                let overflow = self.recent_links.len() - self.config.recent_links_cap;
                 self.recent_links.drain(0..overflow);
             }
             deltas.push(CellDelta::Link {
@@ -931,6 +947,76 @@ mod tests {
             [CellDelta::Backfill { active: false, .. }]
         ));
         assert_eq!(g.snapshot().backfill, None);
+    }
+
+    #[test]
+    fn configurable_cell_cap_evicts_above_custom_limit() {
+        let mut g = CellGalaxy::with_config(CellGalaxyConfig {
+            cell_cap: 2,
+            recent_links_cap: DEFAULT_RECENT_LINKS_CAP,
+        });
+        let births = g.apply_mutation(&Mutation::TxLanded {
+            tx_hash: "0xmint".into(),
+            block: 1,
+            at: 1_000,
+            inputs: vec![],
+            outputs: vec![out(1, "a"), out(2, "b"), out(3, "c")],
+        });
+        assert_eq!(
+            births
+                .iter()
+                .filter(|d| matches!(d, CellDelta::Birth { .. }))
+                .count(),
+            3
+        );
+
+        let deltas = g.apply_mutation(&Mutation::BlockMined {
+            number: 1,
+            hash: "0xblock".into(),
+            tx_count: 1,
+            at: 2_000,
+        });
+
+        assert_eq!(
+            deltas
+                .iter()
+                .filter(|d| matches!(d, CellDelta::Death { .. }))
+                .count(),
+            1
+        );
+        assert_eq!(
+            g.snapshot()
+                .cells
+                .iter()
+                .filter(|c| c.death_at_ms.is_none())
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn configurable_recent_link_cap_trims_fifo() {
+        let mut g = CellGalaxy::with_config(CellGalaxyConfig {
+            cell_cap: CELL_CAP,
+            recent_links_cap: 2,
+        });
+        for n in 0..3 {
+            g.apply_mutation(&Mutation::TxLanded {
+                tx_hash: format!("0xtx{n}"),
+                block: n + 1,
+                at: 1_000 + n,
+                inputs: vec![],
+                outputs: vec![out(n + 1, "x")],
+            });
+        }
+
+        let links: Vec<String> = g
+            .snapshot()
+            .recent_links
+            .iter()
+            .map(|link| link.tx_hash.clone())
+            .collect();
+        assert_eq!(links, vec!["0xtx1".to_string(), "0xtx2".to_string()]);
     }
 
     #[test]

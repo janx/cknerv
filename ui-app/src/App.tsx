@@ -38,6 +38,7 @@ import type {
 import Tweaks from './Tweaks';
 import VersionMarker from './VersionMarker';
 import ChainNodeDetailHud from './ChainNodeDetailHud';
+import { resolveGalaxyConfig } from './runtime-config';
 
 /** CellGalaxy emits `cell:<id>` for a clicked cell and the bare node id
  *  for a clicked CKB icosahedron. The prefix discriminates the two. */
@@ -65,6 +66,7 @@ export default function App({
   initialCells,
   initialCellsRevision,
 }: AppProps) {
+  const galaxyConfig = resolveGalaxyConfig();
   // Live caches, seeded from the bootstrap snapshots so the first paint is
   // already populated, then updated in place by the WS streams below. A
   // fresh cache object on every delta re-renders the tree; CellGalaxy reads
@@ -75,7 +77,9 @@ export default function App({
     chainNodes: initialChainNodes,
   }));
   const [cellsCache, setCellsCache] = useState<CellGalaxyCache>(() =>
-    fromCellsSnapshot(initialCellsRevision, initialCells),
+    fromCellsSnapshot(initialCellsRevision, initialCells, {
+      linkRingCapacity: galaxyConfig.pulses.linkRingCapacity,
+    }),
   );
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
@@ -94,8 +98,11 @@ export default function App({
     );
     const cells = connectCellsStream(
       '/api/projections/cells/stream',
-      fromCellsSnapshot(initialCellsRevision, initialCells),
+      fromCellsSnapshot(initialCellsRevision, initialCells, {
+        linkRingCapacity: galaxyConfig.pulses.linkRingCapacity,
+      }),
       setCellsCache,
+      { linkRingCapacity: galaxyConfig.pulses.linkRingCapacity },
     );
     return () => {
       entity.disconnect();
@@ -212,6 +219,8 @@ export default function App({
                   cellFlashRef={cellFlashRef}
                   flashDirtyRef={flashDirtyRef}
                   burstArrivalRef={burstArrivalRef}
+                  topology={galaxyConfig.topology}
+                  pulses={galaxyConfig.pulses}
                 />
                 <DendriticBurst arrivalRef={burstArrivalRef} />
               </>
