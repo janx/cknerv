@@ -95,6 +95,20 @@ describe('buildNeighborGraph', () => {
     expect(g.adjacency.get(3)?.has(4)).toBe(true);
   });
 
+  it('uses configured max edge length for k-NN edge retention', () => {
+    const cells = new Map<number, Cell>([
+      [1, mkCell(1, 0, 0, 0)],
+      [2, mkCell(2, 10, 0, 0)],
+      [3, mkCell(3, 20, 0, 0)],
+    ]);
+
+    const g = buildNeighborGraph(cells, { k: 2, maxEdgeLength: 12 });
+
+    expect(g.edges.some((e) => e.from === 1 && e.to === 3)).toBe(false);
+    expect(g.edges.some((e) => e.from === 1 && e.to === 2)).toBe(true);
+    expect(g.edges.some((e) => e.from === 2 && e.to === 3)).toBe(true);
+  });
+
   it('graph is undirected (symmetric adjacency)', () => {
     const cells = new Map<number, Cell>();
     for (let i = 1; i <= 8; i++) cells.set(i, mkCell(i, Math.cos(i), 0, Math.sin(i)));

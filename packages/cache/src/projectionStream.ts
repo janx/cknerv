@@ -32,6 +32,7 @@ function resolveWsUrl(url: string): string {
 
 export interface ProjectionStreamOptions {
   reconnectMs?: number;
+  linkRingCapacity?: number;
 }
 
 export interface ProjectionStreamHandle {
@@ -160,9 +161,9 @@ export function connectCellsStream(
     streamUrl,
     initial ?? emptyCellsCache(),
     {
-      fromSnapshot: fromCellsSnapshot,
+      fromSnapshot: (rev, payload) => fromCellsSnapshot(rev, payload, opts),
       applyDeltas: (prev, deltas) =>
-        applyRevisionedCellDeltas(prev, deltas as RevisionedCellDelta[]),
+        applyRevisionedCellDeltas(prev, deltas as RevisionedCellDelta[], opts),
       getRevision: (c) => c.revision,
       markLagged: (c) => ({ ...c, revision: 0 }),
     },

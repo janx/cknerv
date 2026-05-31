@@ -57,6 +57,12 @@ export interface Pulse {
   hopMs: number;
 }
 
+export interface PulsePlanningOptions {
+  maxHops?: number;
+  maxPulsesPerLink?: number;
+  maxSourcesPerParent?: number;
+}
+
 /** Derive pulse start delay + hop duration from a deterministic seed
  *  (so replays produce the same animation). The hashed string mixes
  *  tx_hash + source/target ids so siblings differ. */
@@ -89,9 +95,21 @@ export function planPulses(
   link: CellLink,
   cells: ReadonlyMap<number, Cell>,
   graph: NeighborGraph,
-  maxHops: number = DEFAULT_MAX_HOPS,
+  optionsOrMaxHops: PulsePlanningOptions | number = DEFAULT_MAX_HOPS,
   nowMs: number = link.at_ms,
 ): Pulse[] {
+  const maxHops =
+    typeof optionsOrMaxHops === 'number'
+      ? optionsOrMaxHops
+      : optionsOrMaxHops.maxHops ?? DEFAULT_MAX_HOPS;
+  const maxPulsesPerLink =
+    typeof optionsOrMaxHops === 'number'
+      ? MAX_PULSES_PER_LINK
+      : optionsOrMaxHops.maxPulsesPerLink ?? MAX_PULSES_PER_LINK;
+  const maxSourcesPerParent =
+    typeof optionsOrMaxHops === 'number'
+      ? MAX_SOURCES_PER_PARENT
+      : optionsOrMaxHops.maxSourcesPerParent ?? MAX_SOURCES_PER_PARENT;
   if (link.to_ids.length === 0) return [];
 
   const color: [number, number, number] =
@@ -109,7 +127,7 @@ export function planPulses(
       const tx = cell.out_point.tx_hash;
       if (!parentSet.has(tx)) continue;
       const used = perParent.get(tx) ?? 0;
-      if (used >= MAX_SOURCES_PER_PARENT) continue;
+      if (used >= maxSourcesPerParent) continue;
       sources.push(id);
       perParent.set(tx, used + 1);
     }
@@ -119,7 +137,7 @@ export function planPulses(
   const pulses: Pulse[] = [];
   outer: for (const src of sources) {
     for (const dst of link.to_ids) {
-      if (pulses.length >= MAX_PULSES_PER_LINK) break outer;
+      if (pulses.length >= maxPulsesPerLink) break outer;
       if (src === dst) continue;
       const path = shortestPath(graph, src, dst, maxHops);
       if (!path || path.length < 2) continue;

@@ -16,7 +16,7 @@ import { useCellGalaxy } from '../hooks/cellGalaxyContext';
 import { useSimFrame } from '../tweaks/useSimFrame';
 import { simClock } from '../tweaks/simClock';
 import { buildNeighborGraph, emptyNeighborGraph, type NeighborGraph } from '../geometry/neighborGraph';
-import { planPulses, type Pulse } from './pulseRunner';
+import { planPulses, type Pulse, type PulsePlanningOptions } from './pulseRunner';
 import NeuralFabric, { type NeuralFabricHandles } from './NeuralFabric';
 import { bezierAt, bezierControl, fabricEdgeSeed } from '../geometry/edgeBezier';
 import { SpikePool } from './spikePool';
@@ -57,13 +57,27 @@ interface NeuralNetworkProps {
   cellFlashRef?: React.RefObject<Map<number, number>>;
   flashDirtyRef?: React.MutableRefObject<boolean>;
   burstArrivalRef?: React.RefObject<Map<number, { firedAt: number; color: Vec3 }>>;
+  topology?: {
+    neighborK?: number;
+    maxEdgeLength?: number;
+    maxHops?: number;
+  };
+  pulses?: PulsePlanningOptions & {
+    maxActivePulses?: number;
+  };
 }
 
 interface ActivePulse extends Pulse {
   startSec: number;
 }
 
-export default function NeuralNetwork({ cellFlashRef, flashDirtyRef, burstArrivalRef }: NeuralNetworkProps = {}) {
+export default function NeuralNetwork({
+  cellFlashRef,
+  flashDirtyRef,
+  burstArrivalRef,
+  topology,
+  pulses,
+}: NeuralNetworkProps = {}) {
   const cellsCache = useCellGalaxy();
 
   // Neighbour graph rebuilds only when cell *membership* (the set of
@@ -96,7 +110,10 @@ export default function NeuralNetwork({ cellFlashRef, flashDirtyRef, burstArriva
 
     function doRebuild() {
       pendingRebuildRef.current = null;
-      graphRef.current = buildNeighborGraph(cellsCache.cells);
+      graphRef.current = buildNeighborGraph(cellsCache.cells, {
+        k: topology?.neighborK,
+        maxEdgeLength: topology?.maxEdgeLength,
+      });
       fabricHandlesRef.current?.setFabric(
         graphRef.current,
         cellsCache.cells,
@@ -124,7 +141,7 @@ export default function NeuralNetwork({ cellFlashRef, flashDirtyRef, burstArriva
         pendingRebuildRef.current = null;
       }
     };
-  }, [cellsCache.revision, cellsCache.cells]);
+  }, [cellsCache.revision, cellsCache.cells, topology?.neighborK, topology?.maxEdgeLength]);
 
   // Pulse queue. Pulses are removed when their head reaches the
   // terminal cell (or after a generous fallback lifetime).
@@ -134,7 +151,11 @@ export default function NeuralNetwork({ cellFlashRef, flashDirtyRef, burstArriva
     for (const link of cellsCache.recentLinks) {
       if (link.seq <= lastLinksSeqRef.current) continue;
       lastLinksSeqRef.current = link.seq;
-      const planned = planPulses(link, cellsCache.cells, graphRef.current);
+      const planned = planPulses(link, cellsCache.cells, graphRef.current, {
+        maxHops: topology?.maxHops,
+        maxPulsesPerLink: pulses?.maxPulsesPerLink,
+        maxSourcesPerParent: pulses?.maxSourcesPerParent,
+      });
       if (planned.length === 0) continue;
       const startSec = simClock.elapsedSec;
       for (const p of planned) {
@@ -142,11 +163,19 @@ export default function NeuralNetwork({ cellFlashRef, flashDirtyRef, burstArriva
       }
     }
     // Soft cap — drop oldest if we're way over.
-    if (pulsesRef.current.length > MAX_ACTIVE_PULSES) {
-      const overflow = pulsesRef.current.length - MAX_ACTIVE_PULSES;
+    const maxActivePulses = pulses?.maxActivePulses ?? MAX_ACTIVE_PULSES;
+    if (pulsesRef.current.length > maxActivePulses) {
+      const overflow = pulsesRef.current.length - maxActivePulses;
       pulsesRef.current.splice(0, overflow);
     }
-  }, [cellsCache.recentLinks, cellsCache.cells]);
+  }, [
+    cellsCache.recentLinks,
+    cellsCache.cells,
+    topology?.maxHops,
+    pulses?.maxPulsesPerLink,
+    pulses?.maxSourcesPerParent,
+    pulses?.maxActivePulses,
+  ]);
 
   // SpikePool sprites for the moving Na+ heads.
   const spikePool = useMemo(() => new SpikePool(SPIKE_POOL_CAPACITY), []);

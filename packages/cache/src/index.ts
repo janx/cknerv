@@ -9,7 +9,9 @@ export {
   fromCellsSnapshot,
   applyCellDelta,
   applyRevisionedCellDeltas,
+  DEFAULT_LINK_RING_CAPACITY,
   type CellGalaxyCache,
+  type CellsReducerOptions,
 } from './cellsReducer';
 
 export {

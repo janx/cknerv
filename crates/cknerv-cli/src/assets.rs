@@ -18,26 +18,36 @@ use axum::{
 };
 use rust_embed::RustEmbed;
 
+use crate::config::ResolvedGalaxyConfig;
+
 #[derive(RustEmbed)]
 #[folder = "../../ui-app/dist/"]
 struct Assets;
 
 pub const BUILD_VERSION: &str = env!("CKNERV_BUILD_VERSION");
 
-pub fn runtime_config_body(build_version: &str) -> String {
-    let build_version = serde_json::to_string(build_version)
-        .expect("failed to serialize cknerv build version for runtime config");
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RuntimeConfigPayload<'a> {
+    build_version: &'a str,
+    galaxy: &'a ResolvedGalaxyConfig,
+}
+
+pub fn runtime_config_body(build_version: &str, galaxy: &ResolvedGalaxyConfig) -> String {
+    let payload = serde_json::to_string(&RuntimeConfigPayload {
+        build_version,
+        galaxy,
+    })
+    .expect("failed to serialize cknerv runtime config");
     format!(
         r#"(() => {{
-  window.__CKNERV_RUNTIME_CONFIG__ = {{
-    buildVersion: {build_version},
-  }};
+  window.__CKNERV_RUNTIME_CONFIG__ = {payload};
 }})();
 "#
     )
 }
 
-pub fn runtime_config_response(build_version: &str) -> Response {
+pub fn runtime_config_response(build_version: &str, galaxy: ResolvedGalaxyConfig) -> Response {
     (
         StatusCode::OK,
         [
@@ -47,13 +57,9 @@ pub fn runtime_config_response(build_version: &str) -> Response {
             ),
             (header::CACHE_CONTROL, "no-cache"),
         ],
-        runtime_config_body(build_version),
+        runtime_config_body(build_version, &galaxy),
     )
         .into_response()
-}
-
-pub async fn serve_runtime_config() -> Response {
-    runtime_config_response(BUILD_VERSION)
 }
 
 pub async fn serve_spa(uri: Uri) -> Response {
@@ -84,22 +90,33 @@ mod tests {
 
     #[test]
     fn runtime_config_body_assigns_build_version() {
-        let body = runtime_config_body("0.1.0+feature/foo@abcdef123456");
+        let body = runtime_config_body(
+            "0.1.0+feature/foo@abcdef123456",
+            &crate::config::ResolvedGalaxyConfig::for_profile(crate::config::GalaxyProfile::Devnet),
+        );
 
         assert!(body.contains("window.__CKNERV_RUNTIME_CONFIG__"));
-        assert!(body.contains("buildVersion: \"0.1.0+feature/foo@abcdef123456\""));
+        assert!(body.contains("\"buildVersion\":\"0.1.0+feature/foo@abcdef123456\""));
+        assert!(body.contains("\"profile\":\"devnet\""));
+        assert!(body.contains("\"neighborK\":5"));
     }
 
     #[test]
     fn runtime_config_body_json_escapes_build_version() {
-        let body = runtime_config_body("0.1.0+quote\"branch@abcdef123456");
+        let body = runtime_config_body(
+            "0.1.0+quote\"branch@abcdef123456",
+            &crate::config::ResolvedGalaxyConfig::for_profile(crate::config::GalaxyProfile::Auto),
+        );
 
-        assert!(body.contains("buildVersion: \"0.1.0+quote\\\"branch@abcdef123456\""));
+        assert!(body.contains("\"buildVersion\":\"0.1.0+quote\\\"branch@abcdef123456\""));
     }
 
     #[test]
     fn runtime_config_response_sets_javascript_headers() {
-        let response = runtime_config_response("0.1.0@abcdef123456");
+        let response = runtime_config_response(
+            "0.1.0@abcdef123456",
+            crate::config::ResolvedGalaxyConfig::for_profile(crate::config::GalaxyProfile::Auto),
+        );
 
         assert_eq!(response.status(), axum::http::StatusCode::OK);
         assert_eq!(

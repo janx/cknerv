@@ -110,6 +110,29 @@ describe('applyCellDelta', () => {
     expect(c.recentLinks[0].tx_hash).toBe('0xtx');
   });
 
+  it('link retention respects a configured ring capacity', () => {
+    let c = emptyCellsCache();
+    for (let i = 0; i < 3; i++) {
+      c = applyCellDelta(
+        c,
+        {
+          type: 'link',
+          tx_hash: `0xtx${i}`,
+          block: i,
+          from_ids: [],
+          to_ids: [i],
+          parents: [],
+          tag: null,
+          at_ms: 1000 + i,
+        },
+        { linkRingCapacity: 2 },
+      );
+    }
+
+    expect(c.recentLinks.map((l) => l.tx_hash)).toEqual(['0xtx1', '0xtx2']);
+    expect(c.linksSeq).toBe(3);
+  });
+
   it('returns a new reference on a birth (purity)', () => {
     const before = emptyCellsCache();
     const after = applyCellDelta(before, { type: 'birth', cell: cell(1) });
@@ -161,6 +184,27 @@ describe('fromCellsSnapshot', () => {
     expect(c.recentLinks[0].seq).toBe(1);
     expect(c.linksSeq).toBe(1);
     expect(c.lastPulseAtMs).toBe(1234);
+  });
+
+  it('trims hydrated recent_links with a configured ring capacity', () => {
+    const snap: CellGalaxySnapshot = {
+      cells: [],
+      last_pulse_at_ms: 0,
+      recent_links: [0, 1, 2].map((i) => ({
+        tx_hash: `0xtx${i}`,
+        block: i,
+        from_ids: [],
+        to_ids: [i],
+        parents: [],
+        tag: null,
+        at_ms: 1000 + i,
+      })),
+    };
+
+    const c = fromCellsSnapshot(7, snap, { linkRingCapacity: 2 });
+
+    expect(c.recentLinks.map((l) => l.tx_hash)).toEqual(['0xtx1', '0xtx2']);
+    expect(c.linksSeq).toBe(2);
   });
 });
 

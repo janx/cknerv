@@ -106,10 +106,39 @@ Cross-language parity (`helix_seed`, wire shapes) is enforced by
 The `cknerv` CLI mounts these alongside the embedded SPA (served on any
 non-API path) on a single port.
 
+## Galaxy tuning
+
+`cknerv init` writes configurable galaxy defaults into `cknerv.toml`.
+Use `profile = "devnet" | "testnet" | "mainnet" | "custom"` under
+`[galaxy]` as the starting point, then override individual knobs:
+
+```toml
+[galaxy]
+profile = "testnet"
+cell_cap = 5000
+recent_links_cap = 2048
+
+[galaxy.topology]
+neighbor_k = 4
+max_edge_length = 28.0
+max_hops = 40
+
+[galaxy.pulses]
+link_ring_capacity = 128
+max_pulses_per_link = 6
+max_sources_per_parent = 2
+max_active_pulses = 256
+```
+
+`devnet` keeps fewer cells but uses denser/longer links for small local
+chains. `testnet` uses balanced defaults. `mainnet` keeps the same cell
+window with shorter, sparser edges and lower pulse caps to reduce visual
+noise under sustained transaction volume.
+
 ## Known limitations (v0.1)
 
 - The galaxy shows **recent live cells**, not the full live-cell set: at
-  boot it replays the last `--backfill-blocks` blocks (default 5000) and
+  boot it replays the last `--backfill-blocks` blocks (default 2000) and
   shows the cells they created that are still unspent. Cells created
   before that window and never spent are not shown (querying the full
   live set would require the CKB indexer). Tune depth with
