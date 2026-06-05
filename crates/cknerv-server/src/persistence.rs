@@ -13,6 +13,7 @@
 //!   "schema_version": 1,
 //!   "entities":   { "revision": N, "chain": {...}, "chain_nodes": [...] },
 //!   "projections": { "<projection-name>": <save-blob>, ... }
+//!   // NOTE: live `peers` are ephemeral and intentionally NOT persisted.
 //! }
 //! ```
 //!
@@ -30,7 +31,7 @@ use crate::state::ServerState;
 
 /// Bumped when the on-disk shape changes incompatibly. Older files are
 /// ignored on load.
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
 
 /// Filename inside `<workdir>/`. Atomic write goes to `<name>.tmp` and
 /// renames over it. Per spec §6.
@@ -235,6 +236,31 @@ mod tests {
         let outcome = load(s, &workdir);
         assert!(!outcome.restored);
         assert!(!path.exists(), "file should have been deleted");
+        let _ = std::fs::remove_dir_all(&workdir);
+    }
+
+    #[test]
+    fn peers_are_not_persisted() {
+        use cknerv_core::{Peer, PeerDirection};
+        let workdir = tmpdir();
+        let s1 = Arc::new(ServerState::new());
+        s1.apply_mutation(Mutation::PeersUpdated {
+            peers: vec![Peer {
+                node_id: "QmA".into(),
+                addr: "1.2.3.4:8115".into(),
+                direction: PeerDirection::Outbound,
+                version: "0.116.1".into(),
+                latency_ms: Some(20),
+                best_known: Some(50),
+                connected_ms: 1000,
+            }],
+        });
+        save(&s1, &workdir).expect("save");
+
+        let s2 = Arc::new(ServerState::new());
+        load(s2.clone(), &workdir);
+        // peers were ephemeral: restored state has none.
+        assert_eq!(s2.snapshot()["peers"].as_array().unwrap().len(), 0);
         let _ = std::fs::remove_dir_all(&workdir);
     }
 
