@@ -121,6 +121,8 @@ pub async fn handle_chain_stream(
                     "chain": snap.get("chain").cloned().unwrap_or(serde_json::Value::Null),
                     "chain_nodes": snap.get("chain_nodes").cloned()
                         .unwrap_or(serde_json::Value::Array(vec![])),
+                    "peers": snap.get("peers").cloned()
+                        .unwrap_or(serde_json::Value::Array(vec![])),
                 },
             });
             last_sent_revision = revision;
@@ -298,6 +300,38 @@ pub async fn handle_projection_stream(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cknerv_core::{Mutation, Peer, PeerDirection};
+    use std::sync::Arc;
+
+    #[test]
+    fn snapshot_frame_includes_peers() {
+        let state = Arc::new(crate::state::ServerState::new());
+        state.apply_mutation(Mutation::PeersUpdated {
+            peers: vec![Peer {
+                node_id: "QmA".into(),
+                addr: "1.2.3.4:8115".into(),
+                direction: PeerDirection::Outbound,
+                version: "0.116.1".into(),
+                latency_ms: Some(20),
+                best_known: Some(50),
+                connected_ms: 1000,
+            }],
+        });
+        // Reproduce the FullSnapshot frame body the handler builds.
+        let snap = state.snapshot();
+        let frame = serde_json::json!({
+            "kind": "snapshot",
+            "revision": snap.get("revision").and_then(|v| v.as_u64()).unwrap_or(0),
+            "entities": {
+                "chain": snap.get("chain").cloned().unwrap_or(serde_json::Value::Null),
+                "chain_nodes": snap.get("chain_nodes").cloned()
+                    .unwrap_or(serde_json::Value::Array(vec![])),
+                "peers": snap.get("peers").cloned()
+                    .unwrap_or(serde_json::Value::Array(vec![])),
+            },
+        });
+        assert_eq!(frame["entities"]["peers"][0]["node_id"], "QmA");
+    }
 
     #[test]
     fn decide_action_empty_ring_fresh_client() {
