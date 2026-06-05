@@ -7,6 +7,8 @@ use tokio::sync::mpsc;
 
 use cknerv_core::{Mutation, Peer, PeerDirection};
 
+use crate::rpc::RpcClient;
+
 /// Parse a hex-or-decimal JSON string/number into u64; None if absent.
 fn opt_u64(v: &Value) -> Option<u64> {
     match v {
@@ -121,8 +123,6 @@ pub(crate) fn network_mutations(
         },
     ])
 }
-
-use crate::rpc::RpcClient;
 
 /// Run one network poll: fetch peers / sync / local-node-info and emit
 /// the corresponding mutations. Individual sub-fetch failures are
