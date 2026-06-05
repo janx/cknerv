@@ -21,7 +21,9 @@ pub mod projection;
 pub mod ring;
 pub mod rng;
 
-pub use entity::{Chain, ChainNode, EpochInfo, MempoolStats, RecentBlock, RecentTx};
+pub use entity::{
+    Chain, ChainNode, EpochInfo, MempoolStats, Peer, PeerDirection, RecentBlock, RecentTx,
+};
 pub use helix::{helix_seed_f64, helix_seed_for};
 pub use mutation::{Mutation, RevisionedMutation};
 pub use outpoint::{is_cellbase_input, CellOutput, OutPoint, TxOutputInfo};

@@ -62,6 +62,37 @@ pub struct ChainNode {
     pub is_miner: bool,
 }
 
+/// Direction of a P2P connection relative to the observed local node.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PeerDirection {
+    Inbound,
+    Outbound,
+}
+
+/// One real P2P peer the observed node is connected to (chain-generic).
+/// Populated by the CKB adapter from `get_peers`; rendered as a node in
+/// the peer constellation. `latency_ms` and `best_known` are optional
+/// because a freshly-connected peer may have no ping sample or reported
+/// sync header yet.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Peer {
+    /// Stable peer identity; drives the deterministic angular position.
+    pub node_id: String,
+    /// Display address, best-scored "ip:port" when resolvable.
+    pub addr: String,
+    pub direction: PeerDirection,
+    pub version: String,
+    /// Round-trip latency (ms) from the node's last ping, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latency_ms: Option<u64>,
+    /// Peer's best-known header height, if reported.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub best_known: Option<u64>,
+    /// How long (ms) the connection has been established.
+    pub connected_ms: u64,
+}
+
 /// Cap on the rolling block-interval / tx-count rings used to derive the
 /// `TPS (60s)` and `INTERVAL avg` HUD readings. ~6s blocks × 60 entries
 /// covers a ~6 minute window — wide enough to absorb mesh jitter without
@@ -116,4 +147,47 @@ pub struct Chain {
     /// block lands.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_block_ts_ms: Option<u64>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn peer_round_trips_snake_case_direction() {
+        let p = Peer {
+            node_id: "QmPeer".into(),
+            addr: "1.2.3.4:8115".into(),
+            direction: PeerDirection::Outbound,
+            version: "0.116.1".into(),
+            latency_ms: Some(42),
+            best_known: Some(13_402_118),
+            connected_ms: 250_000,
+        };
+        let v = serde_json::to_value(&p).expect("serialize");
+        assert_eq!(v["direction"], "outbound");
+        assert_eq!(v["latency_ms"], 42);
+        let back: Peer = serde_json::from_value(v).expect("deserialize");
+        assert_eq!(back, p);
+    }
+
+    #[test]
+    fn peer_omits_none_optionals() {
+        let p = Peer {
+            node_id: "QmPeer".into(),
+            addr: "1.2.3.4:8115".into(),
+            direction: PeerDirection::Inbound,
+            version: "0.116.1".into(),
+            latency_ms: None,
+            best_known: None,
+            connected_ms: 0,
+        };
+        let v = serde_json::to_value(&p).expect("serialize");
+        assert_eq!(v["direction"], "inbound");
+        assert!(
+            v.get("latency_ms").is_none(),
+            "None latency must be omitted"
+        );
+        assert!(v.get("best_known").is_none());
+    }
 }
