@@ -15,12 +15,14 @@ use url::Url;
 use cknerv_core::Mutation;
 use cknerv_server::Adapter;
 
+use crate::network::poll_network_once;
 use crate::poll::{poll_once, PollState};
 use crate::rpc::RpcClient;
 
 pub struct CkbDirectAdapter {
     rpc_url: Url,
     poll_interval: Duration,
+    network_poll_interval: Duration,
     node_id: String,
     node_label: String,
     backfill_blocks: u64,
@@ -32,6 +34,7 @@ impl CkbDirectAdapter {
         Self {
             rpc_url,
             poll_interval: Duration::from_secs(2),
+            network_poll_interval: Duration::from_secs(4),
             node_id: "ckb:local".into(),
             node_label: "ckb-local".into(),
             backfill_blocks: 2000,
@@ -47,6 +50,11 @@ impl CkbDirectAdapter {
 
     pub fn with_poll_interval(mut self, d: Duration) -> Self {
         self.poll_interval = d;
+        self
+    }
+
+    pub fn with_network_poll_interval(mut self, d: Duration) -> Self {
+        self.network_poll_interval = d;
         self
     }
 
@@ -116,6 +124,9 @@ impl Adapter for CkbDirectAdapter {
         let mut interval = tokio::time::interval(self.poll_interval);
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
+        let mut net_interval = tokio::time::interval(self.network_poll_interval);
+        net_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
         loop {
             tokio::select! {
                 _ = shutdown.changed() => {
@@ -131,6 +142,14 @@ impl Adapter for CkbDirectAdapter {
                         );
                         // Stay in the loop; transient errors should
                         // not crash the adapter.
+                    }
+                }
+                _ = net_interval.tick() => {
+                    if let Err(e) = poll_network_once(&rpc, &self.node_id, &out).await {
+                        tracing::warn!(
+                            target: "cknerv-adapter-ckb",
+                            "CKB network poll error: {e}"
+                        );
                     }
                 }
             }

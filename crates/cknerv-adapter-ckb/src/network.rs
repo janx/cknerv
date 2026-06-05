@@ -96,6 +96,51 @@ pub(crate) fn parse_local_node_info(result: &Value) -> (String, u64) {
     (version, connections)
 }
 
+/// Build the mutation set for one network poll from already-fetched
+/// JSON. Split out from `poll_network_once` so it is unit-testable
+/// without an RPC transport.
+pub(crate) fn network_mutations(
+    peers_json: &Value,
+    sync_json: &Value,
+    lni_json: &Value,
+    node_id: &str,
+) -> Result<Vec<Mutation>> {
+    let peers = parse_peers(peers_json)?;
+    let (ibd, best_known_block) = parse_sync_state(sync_json);
+    let (version, connections) = parse_local_node_info(lni_json);
+    Ok(vec![
+        Mutation::PeersUpdated { peers },
+        Mutation::ChainSyncUpdated {
+            ibd,
+            best_known_block,
+        },
+        Mutation::ChainNodeInfoUpdated {
+            id: node_id.to_string(),
+            version,
+            connections,
+        },
+    ])
+}
+
+use crate::rpc::RpcClient;
+
+/// Run one network poll: fetch peers / sync / local-node-info and emit
+/// the corresponding mutations. Individual sub-fetch failures are
+/// surfaced as an error for the caller to log; the adapter keeps looping.
+pub(crate) async fn poll_network_once(
+    rpc: &RpcClient,
+    node_id: &str,
+    out: &mpsc::Sender<Mutation>,
+) -> Result<()> {
+    let peers_json = rpc.get_peers().await?;
+    let sync_json = rpc.sync_state().await?;
+    let lni_json = rpc.local_node_info().await?;
+    for m in network_mutations(&peers_json, &sync_json, &lni_json, node_id)? {
+        let _ = out.send(m).await;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -154,5 +199,34 @@ mod tests {
     fn parse_local_node_info_reads_version_connections() {
         let v = serde_json::json!({ "version": "0.116.1", "connections": "0x18" });
         assert_eq!(parse_local_node_info(&v), ("0.116.1".to_string(), 24));
+    }
+
+    #[test]
+    fn network_mutations_emits_three() {
+        let peers = serde_json::json!([]);
+        let sync = serde_json::json!({ "ibd": false, "best_known_block_number": "0x5" });
+        let lni = serde_json::json!({ "version": "0.116.1", "connections": "0x2" });
+        let muts = network_mutations(&peers, &sync, &lni, "ckb:local").expect("ok");
+        assert_eq!(muts.len(), 3);
+        assert!(matches!(muts[0], Mutation::PeersUpdated { .. }));
+        assert!(matches!(
+            muts[1],
+            Mutation::ChainSyncUpdated {
+                best_known_block: 5,
+                ..
+            }
+        ));
+        match &muts[2] {
+            Mutation::ChainNodeInfoUpdated {
+                id,
+                version,
+                connections,
+            } => {
+                assert_eq!(id, "ckb:local");
+                assert_eq!(version, "0.116.1");
+                assert_eq!(*connections, 2);
+            }
+            _ => panic!("expected ChainNodeInfoUpdated"),
+        }
     }
 }
