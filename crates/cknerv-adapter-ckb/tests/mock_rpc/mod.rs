@@ -20,6 +20,15 @@ pub struct CannedResponses {
     /// `cknerv_adapter_ckb::poll::parse_epoch_packed`).
     pub epoch_packed: u64,
     pub mempool_pending: u64,
+    /// Raw `get_peers` result (array of RemoteNode). Defaults to empty so
+    /// existing tests still get a valid (empty) peer snapshot.
+    pub peers: Value,
+    /// Raw `sync_state` result.
+    pub sync_state: Value,
+    /// `local_node_info.version` reported to the network poll.
+    pub node_version: String,
+    /// `local_node_info.connections` (decimal; serialized as hex).
+    pub node_connections: u64,
 }
 
 impl Default for CannedResponses {
@@ -30,6 +39,10 @@ impl Default for CannedResponses {
             // length=1800, index=0, number=1
             epoch_packed: (1800u64 << 40) | (0u64 << 24) | 1u64,
             mempool_pending: 0,
+            peers: json!([]),
+            sync_state: json!({ "ibd": false, "best_known_block_number": "0x0" }),
+            node_version: "0.117.0".to_string(),
+            node_connections: 0,
         }
     }
 }
@@ -136,11 +149,13 @@ async fn handle(
         "local_node_info" => json!({
             "active": true,
             "addresses": [],
-            "connections": "0x0",
+            "connections": format!("0x{:x}", canned.node_connections),
             "node_id": "QmTest",
             "protocols": [],
-            "version": "0.117.0"
+            "version": canned.node_version
         }),
+        "get_peers" => canned.peers.clone(),
+        "sync_state" => canned.sync_state.clone(),
         _ => {
             return Json(json!({
                 "jsonrpc": "2.0",
