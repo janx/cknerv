@@ -222,7 +222,7 @@ mod tests {
     fn chain_sync_fields_default_and_serialize() {
         // Defaults present (serde default) when absent on input...
         let c: Chain = serde_json::from_value(serde_json::json!({})).expect("default");
-        assert_eq!(c.ibd, false);
+        assert!(!c.ibd);
         assert_eq!(c.best_known_block, 0);
         // ...and always emitted on output.
         let v = serde_json::to_value(&c).expect("serialize");
