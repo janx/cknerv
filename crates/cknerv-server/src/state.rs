@@ -19,10 +19,12 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 
-use tokio::sync::{broadcast, mpsc, watch};
 use tokio::sync::broadcast::error::RecvError;
+use tokio::sync::{broadcast, mpsc, watch};
 
-use cknerv_core::{Chain, ChainNode, MempoolStats, Mutation, RecentBlock, RecentTx, Ring, RevisionedMutation};
+use cknerv_core::{
+    Chain, ChainNode, MempoolStats, Mutation, Peer, RecentBlock, RecentTx, RevisionedMutation, Ring,
+};
 
 use crate::projection_registry::Registry;
 
@@ -49,6 +51,8 @@ const RECENT_TX_CAP: usize = 50;
 pub struct EntityStore {
     pub chain: Chain,
     pub chain_nodes: Vec<ChainNode>,
+    /// Latest observed P2P peers. Ephemeral — never persisted.
+    pub peers: Vec<Peer>,
 }
 
 impl EntityStore {
@@ -56,6 +60,7 @@ impl EntityStore {
         Self {
             chain: Chain::default(),
             chain_nodes: Vec::new(),
+            peers: Vec::new(),
         }
     }
 }
@@ -111,6 +116,7 @@ impl ServerState {
             "revision": revision,
             "chain": store.chain,
             "chain_nodes": store.chain_nodes,
+            "peers": store.peers,
         })
     }
 
@@ -275,7 +281,12 @@ struct EntitiesPersisted {
 ///   * `CellTagged` is projection-only — no entity-store update.
 fn apply_entity_mutation(store: &mut EntityStore, m: &Mutation) {
     match m {
-        Mutation::ChainNodeRegistered { id, label, is_miner, .. } => {
+        Mutation::ChainNodeRegistered {
+            id,
+            label,
+            is_miner,
+            ..
+        } => {
             if let Some(existing) = store.chain_nodes.iter_mut().find(|n| n.id == *id) {
                 existing.label = label.clone();
                 existing.is_miner = *is_miner;
@@ -284,8 +295,23 @@ fn apply_entity_mutation(store: &mut EntityStore, m: &Mutation) {
                     id: id.clone(),
                     label: label.clone(),
                     is_miner: *is_miner,
+                    version: String::new(),
+                    connections: 0,
                 });
             }
+        }
+        Mutation::ChainNodeInfoUpdated {
+            id,
+            version,
+            connections,
+        } => {
+            if let Some(existing) = store.chain_nodes.iter_mut().find(|n| n.id == *id) {
+                existing.version = version.clone();
+                existing.connections = *connections;
+            }
+        }
+        Mutation::PeersUpdated { peers } => {
+            store.peers = peers.clone();
         }
         _ => apply_chain_mutation(&mut store.chain, m),
     }
@@ -328,9 +354,10 @@ fn apply_chain_mutation(chain: &mut Chain, m: &Mutation) {
                      structurally impossible on any real chain",
                 );
                 if reorg {
-                    chain.reorgs = chain.reorgs.checked_add(1).expect(
-                        "chain.reorgs overflowed u64 — see total_blocks comment",
-                    );
+                    chain.reorgs = chain
+                        .reorgs
+                        .checked_add(1)
+                        .expect("chain.reorgs overflowed u64 — see total_blocks comment");
                 }
                 if let Some(prev_ts) = chain.last_block_ts_ms {
                     if *at >= prev_ts {
@@ -355,9 +382,10 @@ fn apply_chain_mutation(chain: &mut Chain, m: &Mutation) {
             }
         }
         Mutation::TxLanded { tx_hash, block, .. } => {
-            chain.total_txs = chain.total_txs.checked_add(1).expect(
-                "chain.total_txs overflowed u64 — see total_blocks comment",
-            );
+            chain.total_txs = chain
+                .total_txs
+                .checked_add(1)
+                .expect("chain.total_txs overflowed u64 — see total_blocks comment");
             chain.recent_tx_hashes.push(RecentTx {
                 tx_hash: tx_hash.clone(),
                 block: *block,
@@ -406,6 +434,18 @@ fn apply_chain_mutation(chain: &mut Chain, m: &Mutation) {
             // Handled by the outer dispatcher (`apply_entity_mutation`)
             // against `EntityStore.chain_nodes`. The `Chain` entity has
             // no field to update for node registration.
+        }
+        Mutation::ChainSyncUpdated {
+            ibd,
+            best_known_block,
+        } => {
+            chain.ibd = *ibd;
+            chain.best_known_block = *best_known_block;
+        }
+        Mutation::PeersUpdated { .. } | Mutation::ChainNodeInfoUpdated { .. } => {
+            // Handled by the outer `apply_entity_mutation` against
+            // EntityStore.peers / chain_nodes. The Chain entity has no
+            // field to update here.
         }
     }
 }
@@ -517,6 +557,61 @@ mod tests {
         // chain entity is unchanged; only revision moves.
         assert_eq!(baseline["chain"], after["chain"]);
         assert_eq!(after["revision"], 1);
+    }
+
+    #[test]
+    fn peers_updated_replaces_peer_list() {
+        use cknerv_core::{Peer, PeerDirection};
+        let s = ServerState::new();
+        s.apply_mutation(Mutation::PeersUpdated {
+            peers: vec![Peer {
+                node_id: "QmA".into(),
+                addr: "1.2.3.4:8115".into(),
+                direction: PeerDirection::Outbound,
+                version: "0.116.1".into(),
+                latency_ms: Some(20),
+                best_known: Some(50),
+                connected_ms: 1000,
+            }],
+        });
+        let snap = s.snapshot();
+        assert_eq!(snap["peers"].as_array().unwrap().len(), 1);
+        assert_eq!(snap["peers"][0]["node_id"], "QmA");
+
+        // A second snapshot replaces (does not append).
+        s.apply_mutation(Mutation::PeersUpdated { peers: vec![] });
+        assert_eq!(s.snapshot()["peers"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn chain_sync_updated_sets_fields() {
+        let s = ServerState::new();
+        s.apply_mutation(Mutation::ChainSyncUpdated {
+            ibd: true,
+            best_known_block: 777,
+        });
+        let snap = s.snapshot();
+        assert_eq!(snap["chain"]["ibd"], true);
+        assert_eq!(snap["chain"]["best_known_block"], 777);
+    }
+
+    #[test]
+    fn chain_node_info_updated_enriches_registered_node() {
+        let s = ServerState::new();
+        s.apply_mutation(Mutation::ChainNodeRegistered {
+            id: "ckb:local".into(),
+            label: "ckb-local".into(),
+            is_miner: false,
+            at: 1,
+        });
+        s.apply_mutation(Mutation::ChainNodeInfoUpdated {
+            id: "ckb:local".into(),
+            version: "0.116.1".into(),
+            connections: 24,
+        });
+        let nodes = &s.entity_store.read().unwrap().chain_nodes;
+        assert_eq!(nodes[0].version, "0.116.1");
+        assert_eq!(nodes[0].connections, 24);
     }
 
     #[test]
