@@ -50,5 +50,37 @@
     "label": "ckb-mainnet",
     "is_miner": false,
     "at": 1700000000000
+  },
+  "PeersUpdated": {
+    "type": "peers_updated",
+    "peers": [
+      {
+        "node_id": "QmPeerA",
+        "addr": "203.0.113.9:8115",
+        "direction": "outbound",
+        "version": "0.116.1",
+        "latency_ms": 31,
+        "best_known": 100,
+        "connected_ms": 250000
+      },
+      {
+        "node_id": "QmPeerB",
+        "addr": "198.51.100.7:8115",
+        "direction": "inbound",
+        "version": "0.115.0",
+        "connected_ms": 5000
+      }
+    ]
+  },
+  "ChainSyncUpdated": {
+    "type": "chain_sync_updated",
+    "ibd": false,
+    "best_known_block": 100
+  },
+  "ChainNodeInfoUpdated": {
+    "type": "chain_node_info_updated",
+    "id": "ckb:local",
+    "version": "0.116.1",
+    "connections": 24
   }
 }

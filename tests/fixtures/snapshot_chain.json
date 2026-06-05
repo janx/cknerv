@@ -24,5 +24,7 @@
   "reorgs": 0,
   "recent_block_intervals_ms": [10000, 11000],
   "recent_block_tx_counts": [1, 1],
-  "last_block_ts_ms": 1234567890000
+  "last_block_ts_ms": 1234567890000,
+  "ibd": false,
+  "best_known_block": 100
 }
