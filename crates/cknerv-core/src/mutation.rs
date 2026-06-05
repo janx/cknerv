@@ -14,7 +14,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::entity::EpochInfo;
+use crate::entity::{EpochInfo, Peer};
 use crate::outpoint::{OutPoint, TxOutputInfo};
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -93,6 +93,23 @@ pub enum Mutation {
     /// the SPA chain reducer ignore it; the SPA acts on it only via the cells
     /// projection stream (`CellDelta::Backfill`).
     BackfillProgress { done: u64, total: u64, active: bool },
+
+    /// Full snapshot of the observed node's current P2P peers. Replaces
+    /// the server's `peers` list wholesale; consumers diff successive
+    /// snapshots for join/drop animation.
+    PeersUpdated { peers: Vec<Peer> },
+
+    /// Local node sync status from `sync_state`.
+    ChainSyncUpdated { ibd: bool, best_known_block: u64 },
+
+    /// Identity refresh for an already-registered chain node, from
+    /// `local_node_info`. Separate from `ChainNodeRegistered` because
+    /// registration happens at boot before identity is first polled.
+    ChainNodeInfoUpdated {
+        id: String,
+        version: String,
+        connections: u64,
+    },
 }
 
 /// Mutation paired with the EntityStore revision that produced it.
@@ -122,5 +139,47 @@ mod tests {
         // Round-trips back to the same variant.
         let back: Mutation = serde_json::from_value(v).expect("deserialize");
         assert_eq!(back, m);
+    }
+
+    #[test]
+    fn peers_updated_wire_shape() {
+        use crate::entity::{Peer, PeerDirection};
+        let m = Mutation::PeersUpdated {
+            peers: vec![Peer {
+                node_id: "QmA".into(),
+                addr: "1.2.3.4:8115".into(),
+                direction: PeerDirection::Outbound,
+                version: "0.116.1".into(),
+                latency_ms: Some(31),
+                best_known: Some(100),
+                connected_ms: 1000,
+            }],
+        };
+        let v = serde_json::to_value(&m).expect("serialize");
+        assert_eq!(v["type"], "peers_updated");
+        assert_eq!(v["peers"][0]["node_id"], "QmA");
+        let back: Mutation = serde_json::from_value(v).expect("deserialize");
+        assert_eq!(back, m);
+    }
+
+    #[test]
+    fn chain_sync_and_node_info_wire_shape() {
+        let s = Mutation::ChainSyncUpdated {
+            ibd: true,
+            best_known_block: 42,
+        };
+        let sv = serde_json::to_value(&s).expect("ser");
+        assert_eq!(sv["type"], "chain_sync_updated");
+        assert_eq!(sv["ibd"], true);
+        assert_eq!(serde_json::from_value::<Mutation>(sv).unwrap(), s);
+
+        let n = Mutation::ChainNodeInfoUpdated {
+            id: "ckb:local".into(),
+            version: "0.116.1".into(),
+            connections: 24,
+        };
+        let nv = serde_json::to_value(&n).expect("ser");
+        assert_eq!(nv["type"], "chain_node_info_updated");
+        assert_eq!(serde_json::from_value::<Mutation>(nv).unwrap(), n);
     }
 }
