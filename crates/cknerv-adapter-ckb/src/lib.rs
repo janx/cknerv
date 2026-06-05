@@ -16,6 +16,7 @@ pub mod adapter;
 mod backfill;
 pub mod block_fetch;
 pub mod content_hash;
+mod network;
 pub mod poll;
 pub mod rpc;
 
