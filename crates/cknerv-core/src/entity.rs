@@ -60,6 +60,12 @@ pub struct ChainNode {
     pub id: String,
     pub label: String,
     pub is_miner: bool,
+    /// Client version of the observed node (`local_node_info.version`).
+    #[serde(default)]
+    pub version: String,
+    /// Active peer connection count (`local_node_info.connections`).
+    #[serde(default)]
+    pub connections: u64,
 }
 
 /// Direction of a P2P connection relative to the observed local node.
@@ -108,6 +114,7 @@ pub const RECENT_INTERVAL_CAP: usize = 60;
 /// `tests/fixtures/snapshot_chain.json` for the canonical form).
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Chain {
+    #[serde(default)]
     pub tip: u64,
     #[serde(default)]
     pub chain_name: String,
@@ -147,6 +154,12 @@ pub struct Chain {
     /// block lands.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_block_ts_ms: Option<u64>,
+    /// Whether the node is in initial-block-download (`sync_state.ibd`).
+    #[serde(default)]
+    pub ibd: bool,
+    /// Network best-known block height (`sync_state.best_known_block_number`).
+    #[serde(default)]
+    pub best_known_block: u64,
 }
 
 #[cfg(test)]
@@ -189,5 +202,31 @@ mod tests {
             "None latency must be omitted"
         );
         assert!(v.get("best_known").is_none());
+    }
+
+    #[test]
+    fn chain_node_carries_identity_fields() {
+        let n = ChainNode {
+            id: "ckb:local".into(),
+            label: "ckb-local".into(),
+            is_miner: false,
+            version: "0.116.1".into(),
+            connections: 24,
+        };
+        let v = serde_json::to_value(&n).expect("serialize");
+        assert_eq!(v["version"], "0.116.1");
+        assert_eq!(v["connections"], 24);
+    }
+
+    #[test]
+    fn chain_sync_fields_default_and_serialize() {
+        // Defaults present (serde default) when absent on input...
+        let c: Chain = serde_json::from_value(serde_json::json!({})).expect("default");
+        assert_eq!(c.ibd, false);
+        assert_eq!(c.best_known_block, 0);
+        // ...and always emitted on output.
+        let v = serde_json::to_value(&c).expect("serialize");
+        assert!(v.get("ibd").is_some());
+        assert!(v.get("best_known_block").is_some());
     }
 }
