@@ -112,4 +112,12 @@ impl RpcClient {
     pub async fn local_node_info(&self) -> Result<Value> {
         self.call("local_node_info", Value::Array(vec![])).await
     }
+
+    pub async fn get_peers(&self) -> Result<Value> {
+        self.call("get_peers", Value::Array(vec![])).await
+    }
+
+    pub async fn sync_state(&self) -> Result<Value> {
+        self.call("sync_state", Value::Array(vec![])).await
+    }
 }
