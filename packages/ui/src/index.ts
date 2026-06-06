@@ -109,6 +109,7 @@ export {
   rateFor,
 } from './components/GlowNode';
 export type { Palette, Shape } from './components/GlowNode';
+export { default as PeerConstellation, PEER_RENDER_CAP } from './components/PeerConstellation';
 export { default as StatsHud } from './components/StatsHud';
 
 // ── Nerve overlay (cell→cell dendritic pulses; pass as CellGalaxy `overlay`) ──
