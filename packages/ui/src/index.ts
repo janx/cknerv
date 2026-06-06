@@ -55,6 +55,7 @@ export * from './geometry/truncatedOctahedron';
 export * from './derives/cellShell.derive';
 export * from './derives/cellsStats.derive';
 export * from './derives/eventStreamLines';
+export * from './derives/peers.derive';
 
 // ── Hooks ──────────────────────────────────────────────────────────
 export {
