@@ -26,6 +26,7 @@ export * from './tweaks/simClock';
 export * from './tweaks/useSimFrame';
 export * from './tweaks/qualityPresets';
 export * from './tweaks/cameraPresets';
+export { default as SimClockTicker } from './tweaks/SimClockTicker';
 
 // ── UI chrome (fonts, HUD layout, topology constants, scan state) ───
 export * from './ui/fonts';
