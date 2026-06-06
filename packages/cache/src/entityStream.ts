@@ -3,7 +3,7 @@
 //
 // Frame protocol (matches cknerv-server `ws::handle_chain_stream`):
 //   `{"kind":"snapshot", "revision":N, "entities":{"chain":<ChainEntry>,
-//                                                 "chain_nodes":[...]}}`
+//                                  "chain_nodes":[...], "peers":[...]}}`
 //   `{"kind":"delta", "revision":N, "mutations":[RevisionedMutation, ...]}`
 //   `{"kind":"lagged", "skipped":N, "revision":lastSent}`
 //
@@ -14,6 +14,7 @@ import type {
   ChainEntry,
   ChainNode,
   Mutation,
+  Peer,
   RevisionedMutation,
 } from '@cknerv/types';
 
@@ -29,6 +30,7 @@ export interface ChainCache {
   revision: number;
   chain: ChainEntry;
   chainNodes: ChainNode[];
+  peers: Peer[];
 }
 
 export function emptyChainEntityCache(): ChainCache {
@@ -36,12 +38,14 @@ export function emptyChainEntityCache(): ChainCache {
     revision: 0,
     chain: emptyChainCache(),
     chainNodes: [],
+    peers: [],
   };
 }
 
 interface EntitiesPayload {
   chain: ChainEntry;
   chain_nodes?: ChainNode[];
+  peers?: Peer[];
 }
 
 type EntitiesFrame =
@@ -49,29 +53,62 @@ type EntitiesFrame =
   | { kind: 'delta'; revision: number; mutations: RevisionedMutation[] }
   | { kind: 'lagged'; skipped: number; revision?: number };
 
-function fromEntitiesPayload(rev: number, p: EntitiesPayload): ChainCache {
+export function fromEntitiesSnapshot(rev: number, p: EntitiesPayload): ChainCache {
   return {
     revision: rev,
     chain: p.chain,
     chainNodes: p.chain_nodes ?? [],
+    peers: p.peers ?? [],
   };
 }
 
-function applyDeltaToCache(
+/** Fold node/peer-targeting mutations (not handled by the ChainEntry
+ *  reducer) into the chainNodes + peers slices. Returns the same arrays
+ *  when nothing changed so referential equality is preserved. */
+function applyNodePeerDeltas(
+  chainNodes: ChainNode[],
+  peers: Peer[],
+  rms: RevisionedMutation[],
+): { chainNodes: ChainNode[]; peers: Peer[] } {
+  let nodes = chainNodes;
+  let nextPeers = peers;
+  for (const { mutation: m } of rms) {
+    if (m.type === 'peers_updated') {
+      nextPeers = m.peers;
+    } else if (m.type === 'chain_node_registered') {
+      const i = nodes.findIndex((n) => n.id === m.id);
+      const row: ChainNode = {
+        id: m.id,
+        label: m.label,
+        is_miner: m.is_miner,
+        version: i >= 0 ? nodes[i].version : '',
+        connections: i >= 0 ? nodes[i].connections : 0,
+      };
+      nodes = i >= 0
+        ? nodes.map((n, j) => (j === i ? row : n))
+        : [...nodes, row];
+    } else if (m.type === 'chain_node_info_updated') {
+      const i = nodes.findIndex((n) => n.id === m.id);
+      if (i >= 0) {
+        nodes = nodes.map((n, j) =>
+          j === i ? { ...n, version: m.version, connections: m.connections } : n,
+        );
+      }
+    }
+  }
+  return { chainNodes: nodes, peers: nextPeers };
+}
+
+export function applyEntityDelta(
   prev: ChainCache,
   rms: RevisionedMutation[],
 ): ChainCache {
   if (rms.length === 0) return prev;
   const nextChain = applyRevisionedChainMutations(prev.chain, rms);
+  const { chainNodes, peers } = applyNodePeerDeltas(prev.chainNodes, prev.peers, rms);
   let maxRev = prev.revision;
-  for (const rm of rms) {
-    if (rm.revision > maxRev) maxRev = rm.revision;
-  }
-  return {
-    revision: maxRev,
-    chain: nextChain,
-    chainNodes: prev.chainNodes,
-  };
+  for (const rm of rms) if (rm.revision > maxRev) maxRev = rm.revision;
+  return { revision: maxRev, chain: nextChain, chainNodes, peers };
 }
 
 /**
@@ -142,10 +179,10 @@ export function connectEntityStream(
       }
       if (!frame || typeof frame !== 'object') return;
       if (frame.kind === 'snapshot') {
-        cache = fromEntitiesPayload(frame.revision, frame.entities);
+        cache = fromEntitiesSnapshot(frame.revision, frame.entities);
         onChange(cache);
       } else if (frame.kind === 'delta') {
-        cache = applyDeltaToCache(cache, frame.mutations);
+        cache = applyEntityDelta(cache, frame.mutations);
         onChange(cache);
       } else if (frame.kind === 'lagged') {
         // Stream lost mutations; force a re-snapshot on reconnect by
