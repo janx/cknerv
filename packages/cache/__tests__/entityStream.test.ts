@@ -50,4 +50,23 @@ describe('entity stream peer handling', () => {
     expect(cache.chainNodes[0].version).toBe('0.116.1');
     expect(cache.chainNodes[0].connections).toBe(24);
   });
+
+  it('preserves chainNodes/peers references when a batch touches neither', () => {
+    const cache = fromEntitiesSnapshot(1, {
+      chain: emptyChainEntityCache().chain,
+      chain_nodes: [
+        { id: 'ckb:local', label: 'ckb-local', is_miner: false, version: '', connections: 0 },
+      ],
+      peers: [peerA],
+    });
+    // A chain-only delta must not churn the node/peer slice identities —
+    // React selectors reading those slices should not re-render.
+    const next = applyEntityDelta(cache, [
+      { revision: 2, mutation: { type: 'chain_sync_updated', ibd: false, best_known_block: 5 } },
+    ]);
+    expect(next.chainNodes).toBe(cache.chainNodes);
+    expect(next.peers).toBe(cache.peers);
+    expect(next.chain.best_known_block).toBe(5); // chain slice did update
+    expect(next.revision).toBe(2);
+  });
 });
