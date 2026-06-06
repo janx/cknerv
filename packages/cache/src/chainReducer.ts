@@ -32,6 +32,8 @@ export function emptyChainCache(): ChainEntry {
     recent_block_intervals_ms: [],
     recent_block_tx_counts: [],
     last_block_ts_ms: null,
+    ibd: false,
+    best_known_block: 0,
   };
 }
 
@@ -60,9 +62,12 @@ function touchesChain(m: Mutation): boolean {
     case 'tx_landed':
     case 'chain_mempool_updated':
     case 'chain_info_updated':
+    case 'chain_sync_updated':
       return true;
     case 'cell_tagged':
     case 'chain_node_registered':
+    case 'peers_updated':
+    case 'chain_node_info_updated':
       return false;
     default: {
       // Projection-only mutations (e.g. `backfill_progress`) ride the chain
@@ -141,6 +146,17 @@ function applyToChain(chain: ChainEntry, m: Mutation): void {
       // chain-nodes list lives on EntityStore (a separate slice from
       // ChainEntry); this reducer is ChainEntry-only and treats it as
       // a no-op.
+      return;
+    }
+    case 'chain_sync_updated': {
+      chain.ibd = m.ibd;
+      chain.best_known_block = m.best_known_block;
+      return;
+    }
+    case 'peers_updated':
+    case 'chain_node_info_updated': {
+      // chain-nodes / peers live on ChainCache (entityStream), not on
+      // ChainEntry; no-op here.
       return;
     }
     default: {

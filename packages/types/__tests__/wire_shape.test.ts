@@ -33,7 +33,7 @@ describe('wire-shape parity (TS twin of cknerv-core)', () => {
       const m = sample as { type: string };
       expect(m.type, `sample ${name} missing 'type' discriminant`).toBeTruthy();
       expect(m.type).toMatch(
-        /^(block_mined|tx_landed|chain_mempool_updated|chain_info_updated|cell_tagged|chain_node_registered)$/,
+        /^(block_mined|tx_landed|chain_mempool_updated|chain_info_updated|cell_tagged|chain_node_registered|peers_updated|chain_sync_updated|chain_node_info_updated)$/,
       );
       variantTypes.add(m.type);
     }
@@ -48,6 +48,9 @@ describe('wire-shape parity (TS twin of cknerv-core)', () => {
         'chain_info_updated',
         'cell_tagged',
         'chain_node_registered',
+        'peers_updated',
+        'chain_sync_updated',
+        'chain_node_info_updated',
       ]),
     );
   });

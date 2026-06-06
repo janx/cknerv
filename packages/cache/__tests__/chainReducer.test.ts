@@ -195,6 +195,32 @@ describe('applyChainMutation', () => {
     expect(after).not.toBe(before);
     expect(before.tip).toBe(0); // unchanged
   });
+
+  it('chain_sync_updated sets ibd + best_known_block', () => {
+    const prev = emptyChainCache();
+    const next = applyChainMutation(prev, {
+      type: 'chain_sync_updated',
+      ibd: true,
+      best_known_block: 777,
+    });
+    expect(next.ibd).toBe(true);
+    expect(next.best_known_block).toBe(777);
+    // purity
+    expect(prev.ibd).toBe(false);
+  });
+
+  it('peers_updated / chain_node_info_updated are chain no-ops', () => {
+    const prev = emptyChainCache();
+    const a = applyChainMutation(prev, { type: 'peers_updated', peers: [] });
+    const b = applyChainMutation(prev, {
+      type: 'chain_node_info_updated',
+      id: 'ckb:local',
+      version: '0.116.1',
+      connections: 2,
+    });
+    expect(a).toBe(prev);
+    expect(b).toBe(prev);
+  });
 });
 
 describe('applyRevisionedChainMutations', () => {
