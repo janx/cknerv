@@ -26,6 +26,8 @@ function makeChain(overrides: Partial<ChainEntry> = {}): ChainEntry {
     recent_block_intervals_ms: [],
     recent_block_tx_counts: [],
     last_block_ts_ms: null,
+    ibd: false,
+    best_known_block: 0,
     ...overrides,
   };
 }
