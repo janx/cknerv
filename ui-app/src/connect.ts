@@ -7,6 +7,7 @@ import type {
   CellGalaxySnapshot,
   ChainEntry,
   ChainNode,
+  Peer,
 } from '@cknerv/types';
 
 const API_BASE = '';
@@ -18,6 +19,7 @@ export interface ChainSnapshotResponse {
   revision: number;
   chain: ChainEntry;
   chain_nodes?: ChainNode[];
+  peers?: Peer[];
 }
 
 /** Wire shape of `/api/projections/:name/snapshot`. Projection endpoints
