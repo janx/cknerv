@@ -54,6 +54,10 @@ export interface ChainEntry {
   recent_block_tx_counts: number[];
   /** Wall-clock ms of the latest BlockMined envelope (omitted until first block). */
   last_block_ts_ms?: number | null;
+  /** True while the node is in initial-block-download (`sync_state.ibd`). */
+  ibd: boolean;
+  /** Network best-known block height (`sync_state.best_known_block_number`). */
+  best_known_block: number;
 }
 
 /** One chain endpoint cknerv is observing. 0..N: mainnet single RPC = 1,
@@ -63,4 +67,23 @@ export interface ChainNode {
   id: string;
   label: string;
   is_miner: boolean;
+  /** Client version of the observed node. */
+  version: string;
+  /** Active peer connection count. */
+  connections: number;
+}
+
+export type PeerDirection = 'inbound' | 'outbound';
+
+/** One real P2P peer of the observed node — TS twin of `cknerv-core::Peer`. */
+export interface Peer {
+  node_id: string;
+  addr: string;
+  direction: PeerDirection;
+  version: string;
+  /** Last-ping round-trip latency (ms); omitted until first ping. */
+  latency_ms?: number | null;
+  /** Peer best-known header height; omitted if unknown. */
+  best_known?: number | null;
+  connected_ms: number;
 }
