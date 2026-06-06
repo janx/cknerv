@@ -6,7 +6,7 @@
 // in `tests/fixtures/mutation_samples.json` pins each variant on both
 // sides.
 
-import type { EpochInfo } from './entity';
+import type { EpochInfo, Peer } from './entity';
 import type { OutPoint, TxOutputInfo } from './outpoint';
 
 export type Mutation =
@@ -63,6 +63,21 @@ export type Mutation =
       label: string;
       is_miner: boolean;
       at: number;
+    }
+  | {
+      type: 'peers_updated';
+      peers: Peer[];
+    }
+  | {
+      type: 'chain_sync_updated';
+      ibd: boolean;
+      best_known_block: number;
+    }
+  | {
+      type: 'chain_node_info_updated';
+      id: string;
+      version: string;
+      connections: number;
     };
 
 /** Mutation paired with the EntityStore revision that produced it. Matches
