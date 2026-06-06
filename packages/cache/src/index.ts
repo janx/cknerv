@@ -22,6 +22,8 @@ export {
 
 export {
   emptyChainEntityCache,
+  fromEntitiesSnapshot,
+  applyEntityDelta,
   connectEntityStream,
   type ChainCache,
   type EntityStreamHandle,
