@@ -75,6 +75,9 @@ export default function App({
     revision: initialChainRevision,
     chain: initialChain,
     chainNodes: initialChainNodes,
+    // Peers are ephemeral (never bootstrapped); the WS stream's first
+    // snapshot / peers_updated delta fills this in.
+    peers: [],
   }));
   const [cellsCache, setCellsCache] = useState<CellGalaxyCache>(() =>
     fromCellsSnapshot(initialCellsRevision, initialCells, {
@@ -93,6 +96,7 @@ export default function App({
         revision: initialChainRevision,
         chain: initialChain,
         chainNodes: initialChainNodes,
+        peers: [],
       },
       setChainCache,
     );
