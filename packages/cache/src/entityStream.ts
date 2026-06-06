@@ -74,6 +74,10 @@ function applyNodePeerDeltas(
   let nextPeers = peers;
   for (const { mutation: m } of rms) {
     if (m.type === 'peers_updated') {
+      // Intentional alias: the WS frame is freshly parsed and discarded
+      // after reduction, so we adopt its array rather than copying. Do not
+      // "fix" this into a defensive copy — the same-reference-when-unchanged
+      // contract above (and its regression test) depends on minimal churn.
       nextPeers = m.peers;
     } else if (m.type === 'chain_node_registered') {
       const i = nodes.findIndex((n) => n.id === m.id);
