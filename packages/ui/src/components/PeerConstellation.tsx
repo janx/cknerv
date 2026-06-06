@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
-import { Billboard } from '@react-three/drei';
+import { Billboard, Text } from '@react-three/drei';
 import { useSimFrame } from '../tweaks/useSimFrame';
 import { simClock } from '../tweaks/simClock';
 import { CHAIN_Y } from '../layout';
+import { FONT_MONO } from '../ui/fonts';
 import type { Peer } from '@cknerv/types';
 import {
   peerWorldPosition,
@@ -11,6 +12,7 @@ import {
   peerColorKind,
   peerChurnDiff,
   PEER_COLORS,
+  PEER_OUTER_RADIUS,
 } from '../derives/peers.derive';
 
 /** Max peers rendered; the rest are summarized in the NETWORK HUD. */
@@ -71,9 +73,16 @@ export default function PeerConstellation({
     // Upsert live peers (revive any that were fading out).
     for (const p of ranked) {
       const existing = map.get(p.node_id);
+      // Position depends only on node_id + latency_ms; reuse the prior
+      // `pos` reference when latency is unchanged so the child's
+      // edgeGeom memo stays stable across no-op polls (no churn/realloc).
+      const pos =
+        existing && existing.peer.latency_ms === p.latency_ms
+          ? existing.pos
+          : peerWorldPosition(p);
       map.set(p.node_id, {
         peer: p,
-        pos: peerWorldPosition(p),
+        pos,
         bornAt: existing && existing.deadAt === null ? existing.bornAt : now,
         deadAt: null,
       });
@@ -96,6 +105,19 @@ export default function PeerConstellation({
     }
   }, [blockPulseAtMs]);
 
+  // When a dropped peer finishes fading, drop it from the retain map and
+  // re-render so its PeerNode unmounts promptly (firing edgeGeom dispose)
+  // instead of lingering until the next ~4s [peers] snapshot.
+  const onExpire = (nodeId: string) => {
+    if (retainRef.current.delete(nodeId)) {
+      setRender(Array.from(retainRef.current.values()));
+    }
+  };
+
+  // Peers hidden by the render cap; surfaced as a faint rim marker so the
+  // scene hints that the constellation is summarized (spec §6).
+  const hiddenCount = peers.length - render.length;
+
   return (
     <group>
       {render.map((rp) => (
@@ -107,9 +129,22 @@ export default function PeerConstellation({
           selected={selectedId === `peer:${rp.peer.node_id}`}
           onSelect={onSelect}
           pulseRef={pulseRef}
-          retainRef={retainRef}
+          onExpire={onExpire}
         />
       ))}
+      {hiddenCount > 0 && (
+        <Billboard position={[0, CHAIN_Y, PEER_OUTER_RADIUS * 0.9]}>
+          <Text
+            font={FONT_MONO}
+            fontSize={3}
+            color="#5b6b86"
+            anchorX="center"
+            anchorY="middle"
+          >
+            {`+${hiddenCount} more`}
+          </Text>
+        </Billboard>
+      )}
     </group>
   );
 }
@@ -121,7 +156,7 @@ function PeerNode({
   selected,
   onSelect,
   pulseRef,
-  retainRef,
+  onExpire,
 }: {
   rp: RenderPeer;
   tip: number;
@@ -129,9 +164,8 @@ function PeerNode({
   selected: boolean;
   onSelect: (id: string | null) => void;
   pulseRef: React.MutableRefObject<{ at: number } | null>;
-  retainRef: React.MutableRefObject<Map<string, RenderPeer>>;
+  onExpire: (nodeId: string) => void;
 }) {
-  const groupRef = useRef<THREE.Group>(null);
   const dotRef = useRef<THREE.Mesh>(null);
   const beadRef = useRef<THREE.Mesh>(null);
   const matRef = useRef<THREE.MeshBasicMaterial>(null);
@@ -152,14 +186,20 @@ function PeerNode({
   const sync = syncProximity(rp.peer.best_known, tip);
   const baseScale = 0.55 + sync * 1.1;
 
-  useSimFrame((_, dt) => {
+  // Fire onExpire exactly once, at the single frame a fade-out hits alpha 0.
+  const expiredRef = useRef(false);
+
+  useSimFrame(() => {
     const now = simClock.elapsedSec;
     // Fade in (bornAt) / out (deadAt); purge when fully faded.
     let alpha = Math.min(1, (now - rp.bornAt) / FADE_S);
     if (rp.deadAt !== null) {
       alpha = Math.max(0, 1 - (now - rp.deadAt) / FADE_S);
       if (alpha <= 0) {
-        retainRef.current.delete(rp.peer.node_id);
+        if (!expiredRef.current) {
+          expiredRef.current = true;
+          onExpire(rp.peer.node_id);
+        }
         return;
       }
     }
@@ -190,7 +230,7 @@ function PeerNode({
   });
 
   return (
-    <group ref={groupRef}>
+    <group>
       <lineSegments geometry={edgeGeom}>
         <lineBasicMaterial
           color={color}
