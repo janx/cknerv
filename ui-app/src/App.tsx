@@ -20,7 +20,10 @@ import {
   CellsHud,
   CkbNetworkHud,
   DendriticBurst,
+  NetworkHud,
   NeuralNetwork,
+  PeerConstellation,
+  SimClockTicker,
   type ScanStateRef,
 } from '@cknerv/ui';
 import {
@@ -34,10 +37,12 @@ import type {
   CellGalaxySnapshot,
   ChainEntry,
   ChainNode,
+  Peer,
 } from '@cknerv/types';
 import Tweaks from './Tweaks';
 import VersionMarker from './VersionMarker';
 import ChainNodeDetailHud from './ChainNodeDetailHud';
+import PeerDetailHud from './PeerDetailHud';
 import { resolveGalaxyConfig } from './runtime-config';
 
 /** CellGalaxy emits `cell:<id>` for a clicked cell and the bare node id
@@ -49,6 +54,8 @@ interface AppProps {
   initialChain: ChainEntry;
   /** Initial chain-node registry (one entry per RPC the adapter observes). */
   initialChainNodes: ChainNode[];
+  /** Initial peer list from `/api/entities/chain/snapshot`. */
+  initialPeers: Peer[];
   /** Revision attached to the chain snapshot — the WS stream resumes from
    *  here with `?since=` so there's no gap between bootstrap and live. */
   initialChainRevision: number;
@@ -62,6 +69,7 @@ interface AppProps {
 export default function App({
   initialChain,
   initialChainNodes,
+  initialPeers,
   initialChainRevision,
   initialCells,
   initialCellsRevision,
@@ -75,9 +83,9 @@ export default function App({
     revision: initialChainRevision,
     chain: initialChain,
     chainNodes: initialChainNodes,
-    // Peers are ephemeral (never bootstrapped); the WS stream's first
-    // snapshot / peers_updated delta fills this in.
-    peers: [],
+    // Seeded from the bootstrap snapshot; the WS stream's first snapshot /
+    // peers_updated delta keeps this live thereafter.
+    peers: initialPeers,
   }));
   const [cellsCache, setCellsCache] = useState<CellGalaxyCache>(() =>
     fromCellsSnapshot(initialCellsRevision, initialCells, {
@@ -96,7 +104,7 @@ export default function App({
         revision: initialChainRevision,
         chain: initialChain,
         chainNodes: initialChainNodes,
-        peers: [],
+        peers: initialPeers,
       },
       setChainCache,
     );
@@ -118,6 +126,11 @@ export default function App({
 
   const chain = chainCache.chain;
   const chainNodes = chainCache.chainNodes;
+  const peers = chainCache.peers;
+  // The observed local node anchors the constellation + supplies the
+  // version used for peer version-mismatch coloring. The adapter registers
+  // `ckb:local` first, so the first entry is the local node.
+  const localNode = chainNodes[0];
 
   // Shared per-cell flash buffers, owned here so the NeuralNetwork overlay
   // can write cell→cell pulse arrivals into the same Float32Array CellShell
@@ -157,9 +170,19 @@ export default function App({
     return Number.isFinite(id) ? cellsCache.cells.get(id) ?? null : null;
   }, [selectedId, cellsCache.cells]);
   const selectedNode = useMemo(() => {
-    if (!selectedId || selectedId.startsWith(CELL_SELECT_PREFIX)) return null;
+    if (
+      !selectedId ||
+      selectedId.startsWith(CELL_SELECT_PREFIX) ||
+      selectedId.startsWith('peer:')
+    )
+      return null;
     return chainNodes.find((n) => n.id === selectedId) ?? null;
   }, [selectedId, chainNodes]);
+  const selectedPeer = useMemo(() => {
+    if (!selectedId || !selectedId.startsWith('peer:')) return null;
+    const id = selectedId.slice('peer:'.length);
+    return peers.find((p) => p.node_id === id) ?? null;
+  }, [selectedId, peers]);
 
   // HUD layout — left column hosts the network panel, right column hosts
   // the cells stats, and the selection detail panel sits lower-left (clear
@@ -167,6 +190,7 @@ export default function App({
   // so the HUD copy fits without truncation.
   const NETWORK_PANEL_W = 240;
   const NETWORK_PANEL_H = 256;
+  const NETWORK2_PANEL_W = 240;
   const CELLS_PANEL_W = 220;
   const DETAIL_PANEL_W = 250;
   const HUD_VIEWPORT_W = 1280;
@@ -197,6 +221,12 @@ export default function App({
           style={{ background: '#02030a' }}
           onPointerMissed={() => setSelectedId(null)}
         >
+          {/* Advances the module-level simClock once per frame so every
+              useSimFrame animation (CellGalaxy, BlockBeam, GlowNode,
+              NeuralNetwork, PeerConstellation) actually plays. Must live
+              under the r3f context; mount exactly once. */}
+          <SimClockTicker />
+
           <Stars
             radius={400}
             depth={120}
@@ -231,6 +261,18 @@ export default function App({
             }
           />
 
+          {/* Real P2P peers ringing the local hub: radius = latency,
+              color = direction / version-mismatch, with churn fade and a
+              per-block inward convergence pulse. */}
+          <PeerConstellation
+            peers={peers}
+            tip={chain.tip}
+            localVersion={localNode?.version ?? ''}
+            selectedId={selectedId}
+            onSelect={setSelectedId}
+            blockPulseAtMs={cellsCache.lastPulseAtMs}
+          />
+
           <OrbitControls
             enableDamping
             dampingFactor={0.08}
@@ -255,6 +297,14 @@ export default function App({
               width={NETWORK_PANEL_W}
               height={NETWORK_PANEL_H}
               chain={chain}
+            />
+            <NetworkHud
+              x={networkX}
+              y={networkY - NETWORK_PANEL_H - 16}
+              width={NETWORK2_PANEL_W}
+              peers={peers}
+              chain={chain}
+              localNode={localNode}
             />
             <CellsHud
               x={cellsX}
@@ -297,6 +347,15 @@ export default function App({
             {selectedNode ? (
               <ChainNodeDetailHud
                 node={selectedNode}
+                chain={chain}
+                x={detailX}
+                y={detailY}
+                width={DETAIL_PANEL_W}
+              />
+            ) : null}
+            {selectedPeer ? (
+              <PeerDetailHud
+                peer={selectedPeer}
                 chain={chain}
                 x={detailX}
                 y={detailY}

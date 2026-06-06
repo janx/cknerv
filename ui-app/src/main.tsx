@@ -19,6 +19,7 @@ async function bootstrap() {
       <App
         initialChain={chainResp.chain}
         initialChainNodes={chainResp.chain_nodes ?? []}
+        initialPeers={chainResp.peers ?? []}
         initialChainRevision={chainResp.revision}
         initialCells={cellsResp.snapshot}
         initialCellsRevision={cellsResp.revision}
