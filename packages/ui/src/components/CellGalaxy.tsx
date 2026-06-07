@@ -344,7 +344,7 @@ function CkbNodeAnchor({
  * plane. Mirrors the look of GlowNode's SelectionReticle so the two
  * node kinds feel consistent when picked.
  */
-function CkbSelectionReticle({ size }: { size: number }) {
+export function CkbSelectionReticle({ size }: { size: number }) {
   const ref = useRef<THREE.Group>(null);
   useSimFrame((_, dt) => {
     if (ref.current) ref.current.rotation.z += dt * 0.6;
