@@ -128,9 +128,11 @@ export default function App({
   const chainNodes = chainCache.chainNodes;
   const peers = chainCache.peers;
   // The observed local node anchors the constellation + supplies the
-  // version used for peer version-mismatch coloring. The adapter registers
-  // `ckb:local` first, so the first entry is the local node.
-  const localNode = chainNodes[0];
+  // version used for peer version-mismatch coloring. Prefer an explicit id
+  // lookup over positional [0] so a registry reorder can't silently anchor
+  // the wrong node; fall back to the first entry.
+  const localNode =
+    chainNodes.find((n) => n.id === 'ckb:local') ?? chainNodes[0];
 
   // Shared per-cell flash buffers, owned here so the NeuralNetwork overlay
   // can write cell→cell pulse arrivals into the same Float32Array CellShell
@@ -190,7 +192,6 @@ export default function App({
   // so the HUD copy fits without truncation.
   const NETWORK_PANEL_W = 240;
   const NETWORK_PANEL_H = 256;
-  const NETWORK2_PANEL_W = 240;
   const CELLS_PANEL_W = 220;
   const DETAIL_PANEL_W = 250;
   const HUD_VIEWPORT_W = 1280;
@@ -301,7 +302,7 @@ export default function App({
             <NetworkHud
               x={networkX}
               y={networkY - NETWORK_PANEL_H - 16}
-              width={NETWORK2_PANEL_W}
+              width={NETWORK_PANEL_W}
               peers={peers}
               chain={chain}
               localNode={localNode}
