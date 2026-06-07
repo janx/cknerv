@@ -7,6 +7,8 @@ import {
   peerColorKind,
   peerChurnDiff,
   summarizeNetwork,
+  peerCrystalSize,
+  peerCrystalBrightness,
   PEER_INNER_RADIUS,
   PEER_OUTER_RADIUS,
 } from '../src/derives/peers.derive';
@@ -50,6 +52,17 @@ describe('peers.derive', () => {
     expect(syncProximity(null, 100)).toBe(0.5);
     expect(syncProximity(0, 2000)).toBe(0); // 2000 behind => floor
     expect(syncProximity(1000, 2000)).toBeCloseTo(0.5, 5);
+  });
+
+  it('peerCrystalSize grows with sync proximity within bounds', () => {
+    expect(peerCrystalSize(0)).toBeCloseTo(0.55, 5);
+    expect(peerCrystalSize(0.5)).toBeCloseTo(1.1, 5);
+    expect(peerCrystalSize(1)).toBeCloseTo(1.65, 5);
+  });
+
+  it('peerCrystalBrightness grows with sync proximity', () => {
+    expect(peerCrystalBrightness(0)).toBeCloseTo(0.45, 5);
+    expect(peerCrystalBrightness(1)).toBeCloseTo(0.95, 5);
   });
 
   it('peerColorKind reflects version mismatch then direction', () => {

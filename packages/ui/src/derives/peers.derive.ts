@@ -44,6 +44,18 @@ export function syncProximity(bestKnown: number | null | undefined, tip: number)
   return Math.max(0, 1 - lag / PEER_SYNC_LAG_FLOOR);
 }
 
+/** Crystal radius from sync proximity [0,1]: in-sync peers render larger.
+ *  Range ≈ 0.55 (lagging) .. 1.65 (at tip) — well under the LOCAL node's 2.5. */
+export function peerCrystalSize(sync: number): number {
+  return 0.55 + sync * 1.1;
+}
+
+/** Pre-fade brightness multiplier from sync proximity [0,1]: in-sync peers
+ *  glow brighter. Multiplied by the churn fade alpha at render time. */
+export function peerCrystalBrightness(sync: number): number {
+  return 0.45 + sync * 0.5;
+}
+
 export type PeerColorKind = PeerDirection | 'version';
 
 /** Color class: version-mismatch wins, else direction. */
