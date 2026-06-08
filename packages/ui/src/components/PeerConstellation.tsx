@@ -5,7 +5,7 @@ import { useSimFrame } from '../tweaks/useSimFrame';
 import { simClock } from '../tweaks/simClock';
 import { CHAIN_Y } from '../layout';
 import { FONT_MONO } from '../ui/fonts';
-import { fnv1a } from '../geometry/edgeBezier';
+import { fnv1a, bezierControl, bezierAt } from '../geometry/edgeBezier';
 import { phaseFor } from './GlowNode';
 import type { Peer } from '@cknerv/types';
 import type { Vec3 } from '../types';
@@ -17,6 +17,7 @@ import {
   peerCrystalSize,
   peerCrystalBrightness,
   peerFlowSurge,
+  blockPropagationPhase,
   PEER_COLORS,
   PEER_OUTER_RADIUS,
 } from '../derives/peers.derive';
@@ -75,6 +76,22 @@ function rankPeers(peers: Peer[]): Peer[] {
     .slice(0, PEER_RENDER_CAP);
 }
 
+/** The peer most plausibly relaying us a new block: the alive peer with the
+ *  lowest latency. Drives the inbound "receive" packet. null if no peers. */
+function pickPropagationSource(map: Map<string, RenderPeer>): string | null {
+  let bestId: string | null = null;
+  let bestLatency = Infinity;
+  for (const rp of map.values()) {
+    if (rp.deadAt !== null) continue;
+    const lat = rp.peer.latency_ms ?? Infinity;
+    if (bestId === null || lat < bestLatency) {
+      bestId = rp.peer.node_id;
+      bestLatency = lat;
+    }
+  }
+  return bestId;
+}
+
 export default function PeerConstellation({
   peers,
   tip,
@@ -120,13 +137,18 @@ export default function PeerConstellation({
     setRender(Array.from(map.values()));
   }, [peers]);
 
-  // Per-block convergence pulse: a 0→1 progress that the frame loop reads.
-  const pulseRef = useRef<{ at: number } | null>(null);
+  // Per-block propagation pulse: the frame loop reads `at` (when it fired) and
+  // `sourceId` (which peer relayed us the block) to choreograph the
+  // receive→relay packets.
+  const pulseRef = useRef<{ at: number; sourceId: string | null } | null>(null);
   const lastPulseRef = useRef(blockPulseAtMs);
   useEffect(() => {
     if (blockPulseAtMs > lastPulseRef.current) {
       lastPulseRef.current = blockPulseAtMs;
-      pulseRef.current = { at: simClock.elapsedSec };
+      pulseRef.current = {
+        at: simClock.elapsedSec,
+        sourceId: pickPropagationSource(retainRef.current),
+      };
     }
   }, [blockPulseAtMs]);
 
@@ -189,7 +211,7 @@ function PeerNode({
   localVersion: string;
   selected: boolean;
   onSelect: (id: string | null) => void;
-  pulseRef: React.MutableRefObject<{ at: number } | null>;
+  pulseRef: React.MutableRefObject<{ at: number; sourceId: string | null } | null>;
   onExpire: (nodeId: string) => void;
 }) {
   // Crystal intensity (churn fade × sync brightness) and flow-belt intensity
@@ -206,6 +228,19 @@ function PeerNode({
   // Deterministic per-peer Bezier seed + twinkle phase.
   const seed = useMemo(() => fnv1a(rp.peer.node_id), [rp.peer.node_id]);
   const phase = useMemo(() => phaseFor(rp.peer.node_id), [rp.peer.node_id]);
+
+  // The same Bezier curve the belt rides, so propagation packets sit on the
+  // line rather than cutting a straight chord.
+  const ctrl = useMemo(
+    () =>
+      bezierControl(
+        HUB_POS[0], HUB_POS[1], HUB_POS[2],
+        rp.pos[0], rp.pos[1], rp.pos[2],
+        seed,
+      ),
+    [rp.pos, seed],
+  );
+  const packetRef = useRef<THREE.Mesh>(null);
 
   const sync = syncProximity(rp.peer.best_known, tip);
   const size = peerCrystalSize(sync);
@@ -234,6 +269,36 @@ function PeerNode({
     const pulse = pulseRef.current;
     const surge = pulse ? peerFlowSurge(now - pulse.at) : 0;
     flowIntensityRef.current = alpha * brightness * (1 + surge);
+
+    // Block propagation packet: on a new block the source peer's packet rides
+    // peer→hub (we receive it), then every peer's packet rides hub→peer (we
+    // relay it onward). Both ride the same Bezier curve as the belt.
+    const packet = packetRef.current;
+    if (packet) {
+      const ev = blockPropagationPhase(pulse ? now - pulse.at : -1);
+      const isSource = pulse?.sourceId === rp.peer.node_id;
+      let show = false;
+      let param = 0;
+      if (ev.phase === 'relay') {
+        show = true;
+        param = ev.t; // hub → peer
+      } else if (ev.phase === 'receive' && isSource) {
+        show = true;
+        param = 1 - ev.t; // peer → hub
+      }
+      packet.visible = show;
+      if (show) {
+        const [px, py, pz] = bezierAt(
+          HUB_POS[0], HUB_POS[1], HUB_POS[2],
+          ctrl[0], ctrl[1], ctrl[2],
+          rp.pos[0], rp.pos[1], rp.pos[2],
+          param,
+        );
+        packet.position.set(px, py, pz);
+        (packet.material as THREE.MeshBasicMaterial).opacity =
+          Math.sin(Math.PI * ev.t) * alpha;
+      }
+    }
   });
 
   return (
@@ -262,6 +327,18 @@ function PeerNode({
           }}
         />
       </group>
+      {/* Block-propagation packet (receive peer→hub, then relay hub→peer). */}
+      <mesh ref={packetRef} visible={false}>
+        <sphereGeometry args={[1.5, 12, 12]} />
+        <meshBasicMaterial
+          color="#eaffff"
+          transparent
+          opacity={0}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          toneMapped={false}
+        />
+      </mesh>
     </group>
   );
 }
