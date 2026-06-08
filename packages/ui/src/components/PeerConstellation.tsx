@@ -11,15 +11,23 @@ import {
   syncProximity,
   peerColorKind,
   peerChurnDiff,
+  peerCrystalSize,
+  peerCrystalBrightness,
   PEER_COLORS,
   PEER_OUTER_RADIUS,
 } from '../derives/peers.derive';
+import CrystalGlow from './CrystalGlow';
 
 /** Max peers rendered; the rest are summarized in the NETWORK HUD. */
 export const PEER_RENDER_CAP = 80;
 /** Fade-in / fade-out duration for peer churn (seconds). */
 const FADE_S = 0.6;
 const HUB = new THREE.Vector3(0, CHAIN_Y, 0);
+
+/** One unit-radius octahedron shared by every peer crystal (CrystalGlow
+ *  scales it per-peer). Simpler/smaller than the LOCAL icosahedron so
+ *  "peer vs local" reads at a glance. */
+const PEER_GEOM = new THREE.OctahedronGeometry(1, 0);
 
 interface RenderPeer {
   peer: Peer;
@@ -166,10 +174,11 @@ function PeerNode({
   pulseRef: React.MutableRefObject<{ at: number } | null>;
   onExpire: (nodeId: string) => void;
 }) {
-  const dotRef = useRef<THREE.Mesh>(null);
   const beadRef = useRef<THREE.Mesh>(null);
-  const matRef = useRef<THREE.MeshBasicMaterial>(null);
-  const haloRef = useRef<THREE.MeshBasicMaterial>(null);
+  const edgeMatRef = useRef<THREE.LineBasicMaterial>(null);
+  // Overall crystal intensity (churn fade × sync brightness), read each frame
+  // by CrystalGlow via the ref so fades don't trigger React re-renders.
+  const intensityRef = useRef(1);
 
   const color = useMemo(() => {
     const [r, g, b] = PEER_COLORS[peerColorKind(rp.peer, localVersion)];
@@ -184,7 +193,9 @@ function PeerNode({
   useEffect(() => () => edgeGeom.dispose(), [edgeGeom]);
 
   const sync = syncProximity(rp.peer.best_known, tip);
-  const baseScale = 0.55 + sync * 1.1;
+  const size = peerCrystalSize(sync);
+  const brightness = peerCrystalBrightness(sync);
+  const baseEdgeOpacity = rp.peer.direction === 'outbound' ? 0.45 : 0.28;
 
   // Fire onExpire exactly once, at the single frame a fade-out hits alpha 0.
   const expiredRef = useRef(false);
@@ -203,13 +214,8 @@ function PeerNode({
         return;
       }
     }
-    const breathe = 0.82 + 0.18 * Math.sin(now * 1.4 + rp.pos[0]);
-    if (matRef.current) matRef.current.opacity = (0.45 + sync * 0.5) * alpha;
-    if (haloRef.current) haloRef.current.opacity = 0.14 * alpha * breathe;
-    if (dotRef.current) {
-      const s = baseScale * (selected ? 1.5 : 1) * (0.5 + 0.5 * alpha);
-      dotRef.current.scale.setScalar(s);
-    }
+    intensityRef.current = alpha * brightness;
+    if (edgeMatRef.current) edgeMatRef.current.opacity = baseEdgeOpacity * alpha;
     // Block convergence bead: travels peer → hub once per pulse.
     const pulse = pulseRef.current;
     if (beadRef.current && pulse) {
@@ -233,45 +239,28 @@ function PeerNode({
     <group>
       <lineSegments geometry={edgeGeom}>
         <lineBasicMaterial
+          ref={edgeMatRef}
           color={color}
           transparent
-          opacity={rp.peer.direction === 'outbound' ? 0.45 : 0.28}
+          opacity={baseEdgeOpacity}
           blending={THREE.AdditiveBlending}
           depthWrite={false}
           toneMapped={false}
         />
       </lineSegments>
       <group position={rp.pos}>
-        <Billboard>
-          <mesh>
-            <planeGeometry args={[5, 5]} />
-            <meshBasicMaterial
-              ref={haloRef}
-              color={color}
-              transparent
-              opacity={0.14}
-              blending={THREE.AdditiveBlending}
-              depthWrite={false}
-              toneMapped={false}
-            />
-          </mesh>
-        </Billboard>
-        <mesh
-          ref={dotRef}
+        <CrystalGlow
+          geom={PEER_GEOM}
+          size={size}
+          color={color}
+          intensityRef={intensityRef}
+          seed={rp.peer.node_id}
+          selected={selected}
           onClick={(e) => {
             e.stopPropagation();
             onSelect(`peer:${rp.peer.node_id}`);
           }}
-        >
-          <sphereGeometry args={[0.9, 12, 12]} />
-          <meshBasicMaterial
-            ref={matRef}
-            color={color}
-            transparent
-            opacity={0.8}
-            toneMapped={false}
-          />
-        </mesh>
+        />
       </group>
       <mesh ref={beadRef} visible={false}>
         <sphereGeometry args={[0.5, 8, 8]} />
