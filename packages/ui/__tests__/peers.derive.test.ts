@@ -10,6 +10,7 @@ import {
   peerCrystalSize,
   peerCrystalBrightness,
   peerFlowSurge,
+  blockPropagationPhase,
   PEER_INNER_RADIUS,
   PEER_OUTER_RADIUS,
 } from '../src/derives/peers.derive';
@@ -75,6 +76,19 @@ describe('peers.derive', () => {
   it('peerFlowSurge is zero outside the surge window', () => {
     expect(peerFlowSurge(1)).toBe(0);
     expect(peerFlowSurge(-0.1)).toBe(0);
+  });
+
+  it('blockPropagationPhase runs receive → relay → idle', () => {
+    expect(blockPropagationPhase(-0.1).phase).toBe('idle');
+    expect(blockPropagationPhase(0)).toEqual({ phase: 'receive', t: 0 });
+    const r = blockPropagationPhase(0.15);
+    expect(r.phase).toBe('receive');
+    expect(r.t).toBeCloseTo(0.5, 5); // 0.15 / 0.3
+    expect(blockPropagationPhase(0.3)).toEqual({ phase: 'relay', t: 0 });
+    const y = blockPropagationPhase(0.6);
+    expect(y.phase).toBe('relay');
+    expect(y.t).toBeCloseTo(0.5, 5); // (0.6 - 0.3) / 0.6
+    expect(blockPropagationPhase(0.9).phase).toBe('idle');
   });
 
   it('peerColorKind reflects version mismatch then direction', () => {
