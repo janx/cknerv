@@ -5,7 +5,10 @@ import { useSimFrame } from '../tweaks/useSimFrame';
 import { simClock } from '../tweaks/simClock';
 import { CHAIN_Y } from '../layout';
 import { FONT_MONO } from '../ui/fonts';
+import { fnv1a } from '../geometry/edgeBezier';
+import { phaseFor } from './GlowNode';
 import type { Peer } from '@cknerv/types';
+import type { Vec3 } from '../types';
 import {
   peerWorldPosition,
   syncProximity,
@@ -13,16 +16,29 @@ import {
   peerChurnDiff,
   peerCrystalSize,
   peerCrystalBrightness,
+  peerFlowSurge,
   PEER_COLORS,
   PEER_OUTER_RADIUS,
 } from '../derives/peers.derive';
 import CrystalGlow from './CrystalGlow';
+import FlowBeam, { type FlowStyle } from './FlowBeam';
 
 /** Max peers rendered; the rest are summarized in the NETWORK HUD. */
 export const PEER_RENDER_CAP = 80;
 /** Fade-in / fade-out duration for peer churn (seconds). */
 const FADE_S = 0.6;
-const HUB = new THREE.Vector3(0, CHAIN_Y, 0);
+/** World position of the local hub — peer belts flow to/from here. */
+const HUB_POS: Vec3 = [0, CHAIN_Y, 0];
+/** Forward (hub→peer) particle color = the LOCAL node's cyan. Shared. */
+const LOCAL_FLOW_COLOR = new THREE.Color('#7df9ff');
+/** Visual character of a peer's particle belt (tuned in the visual pass). */
+const PEER_FLOW_STYLE: FlowStyle = {
+  particleSize: 0.7,
+  count: 48,
+  speed: 0.08,
+  jitter: 0.6,
+  intensity: 1.3,
+};
 
 /** One unit-radius octahedron shared by every peer crystal (CrystalGlow
  *  scales it per-peer). Simpler/smaller than the LOCAL icosahedron so
@@ -82,8 +98,9 @@ export default function PeerConstellation({
     for (const p of ranked) {
       const existing = map.get(p.node_id);
       // Position depends only on node_id + latency_ms; reuse the prior
-      // `pos` reference when latency is unchanged so the child's
-      // edgeGeom memo stays stable across no-op polls (no churn/realloc).
+      // `pos` reference when latency is unchanged so the child FlowBeam's
+      // Bezier-control memo (and its per-frame curve reads) stay stable
+      // across no-op polls (no churn/realloc).
       const pos =
         existing && existing.peer.latency_ms === p.latency_ms
           ? existing.pos
@@ -114,8 +131,9 @@ export default function PeerConstellation({
   }, [blockPulseAtMs]);
 
   // When a dropped peer finishes fading, drop it from the retain map and
-  // re-render so its PeerNode unmounts promptly (firing edgeGeom dispose)
-  // instead of lingering until the next ~4s [peers] snapshot.
+  // re-render so its PeerNode unmounts promptly (firing FlowBeam's
+  // geometry/material dispose) instead of lingering until the next ~4s
+  // [peers] snapshot.
   const onExpire = (nodeId: string) => {
     if (retainRef.current.delete(nodeId)) {
       setRender(Array.from(retainRef.current.values()));
@@ -174,28 +192,24 @@ function PeerNode({
   pulseRef: React.MutableRefObject<{ at: number } | null>;
   onExpire: (nodeId: string) => void;
 }) {
-  const beadRef = useRef<THREE.Mesh>(null);
-  const edgeMatRef = useRef<THREE.LineBasicMaterial>(null);
-  // Overall crystal intensity (churn fade × sync brightness), read each frame
-  // by CrystalGlow via the ref so fades don't trigger React re-renders.
+  // Crystal intensity (churn fade × sync brightness) and flow-belt intensity
+  // (× block surge), each read every frame by its child via the ref so fades
+  // don't trigger React re-renders.
   const intensityRef = useRef(1);
+  const flowIntensityRef = useRef(1);
 
   const color = useMemo(() => {
     const [r, g, b] = PEER_COLORS[peerColorKind(rp.peer, localVersion)];
     return new THREE.Color(r, g, b);
   }, [rp.peer, localVersion]);
 
-  const edgeGeom = useMemo(() => {
-    const g = new THREE.BufferGeometry();
-    g.setFromPoints([HUB, new THREE.Vector3(...rp.pos)]);
-    return g;
-  }, [rp.pos]);
-  useEffect(() => () => edgeGeom.dispose(), [edgeGeom]);
+  // Deterministic per-peer Bezier seed + twinkle phase.
+  const seed = useMemo(() => fnv1a(rp.peer.node_id), [rp.peer.node_id]);
+  const phase = useMemo(() => phaseFor(rp.peer.node_id), [rp.peer.node_id]);
 
   const sync = syncProximity(rp.peer.best_known, tip);
   const size = peerCrystalSize(sync);
   const brightness = peerCrystalBrightness(sync);
-  const baseEdgeOpacity = rp.peer.direction === 'outbound' ? 0.45 : 0.28;
 
   // Fire onExpire exactly once, at the single frame a fade-out hits alpha 0.
   const expiredRef = useRef(false);
@@ -215,39 +229,25 @@ function PeerNode({
       }
     }
     intensityRef.current = alpha * brightness;
-    if (edgeMatRef.current) edgeMatRef.current.opacity = baseEdgeOpacity * alpha;
-    // Block convergence bead: travels peer → hub once per pulse.
+    // Belt brightens briefly on each new block (synchronized surge across all
+    // peers), then settles back to the ambient exchange level.
     const pulse = pulseRef.current;
-    if (beadRef.current && pulse) {
-      const u = (now - pulse.at) / 0.7;
-      if (u >= 0 && u <= 1) {
-        beadRef.current.visible = true;
-        beadRef.current.position.set(
-          rp.pos[0] + (HUB.x - rp.pos[0]) * u,
-          rp.pos[1] + (HUB.y - rp.pos[1]) * u,
-          rp.pos[2] + (HUB.z - rp.pos[2]) * u,
-        );
-        const bm = beadRef.current.material as THREE.MeshBasicMaterial;
-        bm.opacity = Math.sin(u * Math.PI) * alpha;
-      } else {
-        beadRef.current.visible = false;
-      }
-    }
+    const surge = pulse ? peerFlowSurge(now - pulse.at) : 0;
+    flowIntensityRef.current = alpha * brightness * (1 + surge);
   });
 
   return (
     <group>
-      <lineSegments geometry={edgeGeom}>
-        <lineBasicMaterial
-          ref={edgeMatRef}
-          color={color}
-          transparent
-          opacity={baseEdgeOpacity}
-          blending={THREE.AdditiveBlending}
-          depthWrite={false}
-          toneMapped={false}
-        />
-      </lineSegments>
+      <FlowBeam
+        from={HUB_POS}
+        to={rp.pos}
+        colorSource={LOCAL_FLOW_COLOR}
+        colorTarget={color}
+        style={PEER_FLOW_STYLE}
+        seed={seed}
+        phase={phase}
+        intensityRef={flowIntensityRef}
+      />
       <group position={rp.pos}>
         <CrystalGlow
           geom={PEER_GEOM}
@@ -262,17 +262,6 @@ function PeerNode({
           }}
         />
       </group>
-      <mesh ref={beadRef} visible={false}>
-        <sphereGeometry args={[0.5, 8, 8]} />
-        <meshBasicMaterial
-          color="#eaffff"
-          transparent
-          opacity={0}
-          blending={THREE.AdditiveBlending}
-          depthWrite={false}
-          toneMapped={false}
-        />
-      </mesh>
     </group>
   );
 }
