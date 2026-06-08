@@ -110,6 +110,7 @@ export {
   rateFor,
 } from './components/GlowNode';
 export type { Palette, Shape } from './components/GlowNode';
+export { default as CrystalGlow } from './components/CrystalGlow';
 export { default as NetworkHud } from './components/NetworkHud';
 export { default as PeerConstellation, PEER_RENDER_CAP } from './components/PeerConstellation';
 export { default as StatsHud } from './components/StatsHud';
