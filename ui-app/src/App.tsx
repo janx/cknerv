@@ -279,6 +279,10 @@ export default function App({
             dampingFactor={0.08}
             minDistance={4}
             maxDistance={400}
+            // Aim at the content's vertical center (chain plane y=22, cell
+            // canopy y=38) instead of the world origin, so the scene sits
+            // centered rather than pushed to the top. Matches CAMERA_PRESETS.default.
+            target={[0, 18, 0]}
           />
 
           <Hud renderPriority={1}>
