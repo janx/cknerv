@@ -56,30 +56,10 @@ export function peerCrystalBrightness(sync: number): number {
   return 0.45 + sync * 0.5;
 }
 
-/** Duration (sec) of the inbound "receive" packet (source peer → hub). */
+/** Inbound "receive" leg duration (source peer → hub), seconds. */
 export const BLOCK_RECEIVE_S = 0.3;
-/** Duration (sec) of the outbound "relay" broadcast (hub → every peer). */
+/** Each courier's outbound "relay" leg duration (hub → peer), seconds. */
 export const BLOCK_RELAY_S = 0.6;
-
-export interface BlockPropagationPhase {
-  /** 'receive' = one packet rides source-peer→hub; 'relay' = packets ride
-   *  hub→every peer; 'idle' = no packet in flight. */
-  phase: 'receive' | 'relay' | 'idle';
-  /** Progress [0,1] within the current phase (0 when idle). */
-  t: number;
-}
-
-/** Two-phase block-propagation choreography from the age (sec) of the last
- *  block pulse: first a "receive" packet (the source peer relaying the block
- *  to us, peer→hub), then a "relay" broadcast (us forwarding it, hub→all
- *  peers). Idle before the pulse and after both phases complete. */
-export function blockPropagationPhase(ageSec: number): BlockPropagationPhase {
-  if (ageSec < 0) return { phase: 'idle', t: 0 };
-  if (ageSec < BLOCK_RECEIVE_S) return { phase: 'receive', t: ageSec / BLOCK_RECEIVE_S };
-  const relayAge = ageSec - BLOCK_RECEIVE_S;
-  if (relayAge < BLOCK_RELAY_S) return { phase: 'relay', t: relayAge / BLOCK_RELAY_S };
-  return { phase: 'idle', t: 0 };
-}
 
 /** Max spread of relay-courier departures across peers, seconds (fan-out). */
 export const BLOCK_STAGGER_S = 0.35;

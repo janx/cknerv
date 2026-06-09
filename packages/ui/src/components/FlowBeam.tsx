@@ -5,10 +5,6 @@ import { simClock } from '../tweaks/simClock';
 import { bezierControl } from '../geometry/edgeBezier';
 import type { Vec3 } from '../types';
 
-/** Gaussian half-spread of the block-propagation wave band along the path,
- *  in normalized [0,1] path units. Wider ⇒ a softer, fatter light band. */
-const WAVE_WIDTH = 0.2;
-
 export interface FlowStyle {
   /** World-space size of each particle sprite. */
   particleSize: number;
@@ -37,10 +33,6 @@ interface FlowBeamProps {
   /** Per-frame overall intensity multiplier (churn fade + block surge). Read
    *  every frame so the parent animates without React re-renders. Default 1. */
   intensityRef?: React.MutableRefObject<number>;
-  /** Optional traveling brightness wave: particles near `pos` (path position,
-   *  0 = `from`/hub .. 1 = `to`/peer) are boosted by `gain`. Read every frame;
-   *  null = no wave. Drives block-propagation pulses. */
-  waveRef?: React.MutableRefObject<{ pos: number; gain: number } | null>;
 }
 
 /** Soft radial sprite shared by every belt; built lazily so importing this
@@ -85,7 +77,6 @@ export default function FlowBeam({
   seed,
   phase = 0,
   intensityRef,
-  waveRef,
 }: FlowBeamProps) {
   const pointsRef = useRef<THREE.Points>(null);
   const fallbackIntensity = useRef(1);
@@ -152,7 +143,6 @@ export default function FlowBeam({
     const points = pointsRef.current;
     if (!points) return;
     const k = (intensityRef ?? fallbackIntensity).current;
-    const wave = waveRef?.current ?? null;
     const t = simClock.elapsedSec;
     const drift = t * style.speed;
     const posAttr = geometry.attributes.position.array as Float32Array;
@@ -176,11 +166,7 @@ export default function FlowBeam({
       // Twinkle: squared sin amplifies bright peaks / dim valleys.
       const s = Math.sin(t * 1.6 + shimmerPhases[i] + phase);
       const shimmer = s * s * 0.85 + 0.15;
-      let a = baseAlphas[i] * shimmer * style.intensity * k;
-      if (wave) {
-        const d = (local - wave.pos) / WAVE_WIDTH;
-        a *= 1 + wave.gain * Math.exp(-d * d);
-      }
+      const a = baseAlphas[i] * shimmer * style.intensity * k;
       const c = dirSigns[i] === 1 ? colorSource : colorTarget;
       colAttr[i * 3 + 0] = c.r * a;
       colAttr[i * 3 + 1] = c.g * a;
