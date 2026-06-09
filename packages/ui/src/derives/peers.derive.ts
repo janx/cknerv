@@ -56,20 +56,6 @@ export function peerCrystalBrightness(sync: number): number {
   return 0.45 + sync * 0.5;
 }
 
-/** Seconds a block surge takes to decay back to ambient flow. */
-export const PEER_FLOW_SURGE_S = 0.7;
-/** Peak extra intensity multiplier at the instant a block arrives. */
-export const PEER_FLOW_SURGE_PEAK = 2.0;
-
-/** Block-arrival surge factor from the age (sec) of the last block pulse:
- *  PEAK at age 0, linearly → 0 at PEER_FLOW_SURGE_S, 0 outside the window.
- *  A peer belt's intensity is multiplied by (1 + peerFlowSurge(age)) so the
- *  whole belt briefly brightens when a block arrives, then settles. */
-export function peerFlowSurge(ageSec: number): number {
-  if (ageSec < 0 || ageSec > PEER_FLOW_SURGE_S) return 0;
-  return PEER_FLOW_SURGE_PEAK * (1 - ageSec / PEER_FLOW_SURGE_S);
-}
-
 /** Duration (sec) of the inbound "receive" packet (source peer → hub). */
 export const BLOCK_RECEIVE_S = 0.3;
 /** Duration (sec) of the outbound "relay" broadcast (hub → every peer). */

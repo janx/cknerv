@@ -9,7 +9,6 @@ import {
   summarizeNetwork,
   peerCrystalSize,
   peerCrystalBrightness,
-  peerFlowSurge,
   blockPropagationPhase,
   PEER_INNER_RADIUS,
   PEER_OUTER_RADIUS,
@@ -65,17 +64,6 @@ describe('peers.derive', () => {
   it('peerCrystalBrightness grows with sync proximity', () => {
     expect(peerCrystalBrightness(0)).toBeCloseTo(0.45, 5);
     expect(peerCrystalBrightness(1)).toBeCloseTo(0.95, 5);
-  });
-
-  it('peerFlowSurge peaks at block arrival and decays to zero', () => {
-    expect(peerFlowSurge(0)).toBeCloseTo(2.0, 5);
-    expect(peerFlowSurge(0.35)).toBeCloseTo(1.0, 5);
-    expect(peerFlowSurge(0.7)).toBeCloseTo(0, 5);
-  });
-
-  it('peerFlowSurge is zero outside the surge window', () => {
-    expect(peerFlowSurge(1)).toBe(0);
-    expect(peerFlowSurge(-0.1)).toBe(0);
   });
 
   it('blockPropagationPhase runs receive → relay → idle', () => {
