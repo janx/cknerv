@@ -48,6 +48,25 @@ describe('FlowBeam mount', () => {
       ),
     ).not.toThrow();
   });
+
+  it('mounts with a wave ref', () => {
+    const waveRef = { current: { pos: 0.5, gain: 2.5 } };
+    expect(() =>
+      render(
+        <Canvas>
+          <FlowBeam
+            from={[0, 22, 0]}
+            to={[25, 22, -10]}
+            colorSource={new THREE.Color('#7df9ff')}
+            colorTarget={new THREE.Color('#5fbecb')}
+            style={STYLE}
+            seed={555}
+            waveRef={waveRef}
+          />
+        </Canvas>,
+      ),
+    ).not.toThrow();
+  });
 });
 
 describe('FlowBeam module shape', () => {
