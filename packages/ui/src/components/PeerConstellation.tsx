@@ -83,7 +83,7 @@ function rankPeers(peers: Peer[]): Peer[] {
 }
 
 /** The peer most plausibly relaying us a new block: the alive peer with the
- *  lowest latency. Drives the inbound "receive" wave. null if no peers. */
+ *  lowest latency. Drives the inbound "receive" courier. null if no peers. */
 function pickPropagationSource(map: Map<string, RenderPeer>): string | null {
   let bestId: string | null = null;
   let bestLatency = Infinity;
@@ -145,7 +145,7 @@ export default function PeerConstellation({
 
   // Per-block propagation pulse: the frame loop reads `at` (when it fired) and
   // `sourceId` (which peer relayed us the block) to choreograph the
-  // receive→relay wave bands.
+  // receive→relay courier cubes.
   const pulseRef = useRef<{ at: number; sourceId: string | null } | null>(null);
   const lastPulseRef = useRef(blockPulseAtMs);
   useEffect(() => {
