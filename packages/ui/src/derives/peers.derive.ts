@@ -81,6 +81,37 @@ export function blockPropagationPhase(ageSec: number): BlockPropagationPhase {
   return { phase: 'idle', t: 0 };
 }
 
+/** Max spread of relay-courier departures across peers, seconds (fan-out). */
+export const BLOCK_STAGGER_S = 0.35;
+
+export interface BlockCourier {
+  /** 'receive' = source→hub leg; 'relay' = hub→peer leg; 'idle' = no courier. */
+  phase: 'receive' | 'relay' | 'idle';
+  /** Position along the path: 0 = hub, 1 = peer. */
+  pos: number;
+}
+
+/** Courier state for one peer at `ageSec` since the block pulse, given the peer's
+ *  relay-departure `stagger` (0..BLOCK_STAGGER_S) and whether it is the source:
+ *  - source, age < BLOCK_RECEIVE_S → 'receive', pos 1→0 (peer→hub)
+ *  - any peer, after BLOCK_RECEIVE_S + stagger → 'relay', pos 0→1 (hub→peer)
+ *  - otherwise 'idle'. */
+export function blockCourierState(
+  ageSec: number,
+  stagger: number,
+  isSource: boolean,
+): BlockCourier {
+  if (ageSec < 0) return { phase: 'idle', pos: 0 };
+  if (isSource && ageSec < BLOCK_RECEIVE_S) {
+    return { phase: 'receive', pos: 1 - ageSec / BLOCK_RECEIVE_S };
+  }
+  const relayStart = BLOCK_RECEIVE_S + stagger;
+  if (ageSec >= relayStart && ageSec < relayStart + BLOCK_RELAY_S) {
+    return { phase: 'relay', pos: (ageSec - relayStart) / BLOCK_RELAY_S };
+  }
+  return { phase: 'idle', pos: 0 };
+}
+
 export type PeerColorKind = PeerDirection | 'version';
 
 /** Color class: version-mismatch wins, else direction. */
