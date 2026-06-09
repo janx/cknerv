@@ -5,7 +5,7 @@ import { useSimFrame } from '../tweaks/useSimFrame';
 import { simClock } from '../tweaks/simClock';
 import { CHAIN_Y } from '../layout';
 import { FONT_MONO } from '../ui/fonts';
-import { fnv1a, bezierControl, bezierAt } from '../geometry/edgeBezier';
+import { fnv1a } from '../geometry/edgeBezier';
 import { phaseFor } from './GlowNode';
 import type { Peer } from '@cknerv/types';
 import type { Vec3 } from '../types';
@@ -16,7 +16,6 @@ import {
   peerChurnDiff,
   peerCrystalSize,
   peerCrystalBrightness,
-  peerFlowSurge,
   blockPropagationPhase,
   PEER_COLORS,
   PEER_OUTER_RADIUS,
@@ -40,6 +39,8 @@ const PEER_FLOW_STYLE: FlowStyle = {
   jitter: 0.6,
   intensity: 1.3,
 };
+/** Peak extra brightness of the block-propagation wave band on a belt. */
+const WAVE_GAIN = 2.5;
 
 /** One unit-radius octahedron shared by every peer crystal (CrystalGlow
  *  scales it per-peer). Simpler/smaller than the LOCAL icosahedron so
@@ -214,9 +215,9 @@ function PeerNode({
   pulseRef: React.MutableRefObject<{ at: number; sourceId: string | null } | null>;
   onExpire: (nodeId: string) => void;
 }) {
-  // Crystal intensity (churn fade × sync brightness) and flow-belt intensity
-  // (× block surge), each read every frame by its child via the ref so fades
-  // don't trigger React re-renders.
+  // Crystal + ambient-flow intensity (churn fade × sync brightness), each read
+  // every frame by its child via the ref so fades don't trigger React
+  // re-renders. The block pulse is carried by `waveRef`, not these.
   const intensityRef = useRef(1);
   const flowIntensityRef = useRef(1);
 
@@ -229,18 +230,8 @@ function PeerNode({
   const seed = useMemo(() => fnv1a(rp.peer.node_id), [rp.peer.node_id]);
   const phase = useMemo(() => phaseFor(rp.peer.node_id), [rp.peer.node_id]);
 
-  // The same Bezier curve the belt rides, so propagation packets sit on the
-  // line rather than cutting a straight chord.
-  const ctrl = useMemo(
-    () =>
-      bezierControl(
-        HUB_POS[0], HUB_POS[1], HUB_POS[2],
-        rp.pos[0], rp.pos[1], rp.pos[2],
-        seed,
-      ),
-    [rp.pos, seed],
-  );
-  const packetRef = useRef<THREE.Mesh>(null);
+  // Traveling block-propagation wave along the belt (null = no wave).
+  const waveRef = useRef<{ pos: number; gain: number } | null>(null);
 
   const sync = syncProximity(rp.peer.best_known, tip);
   const size = peerCrystalSize(sync);
@@ -264,40 +255,20 @@ function PeerNode({
       }
     }
     intensityRef.current = alpha * brightness;
-    // Belt brightens briefly on each new block (synchronized surge across all
-    // peers), then settles back to the ambient exchange level.
-    const pulse = pulseRef.current;
-    const surge = pulse ? peerFlowSurge(now - pulse.at) : 0;
-    flowIntensityRef.current = alpha * brightness * (1 + surge);
+    flowIntensityRef.current = alpha * brightness; // ambient flow (no surge)
 
-    // Block propagation packet: on a new block the source peer's packet rides
-    // peer→hub (we receive it), then every peer's packet rides hub→peer (we
-    // relay it onward). Both ride the same Bezier curve as the belt.
-    const packet = packetRef.current;
-    if (packet) {
-      const ev = blockPropagationPhase(pulse ? now - pulse.at : -1);
-      const isSource = pulse?.sourceId === rp.peer.node_id;
-      let show = false;
-      let param = 0;
-      if (ev.phase === 'relay') {
-        show = true;
-        param = ev.t; // hub → peer
-      } else if (ev.phase === 'receive' && isSource) {
-        show = true;
-        param = 1 - ev.t; // peer → hub
-      }
-      packet.visible = show;
-      if (show) {
-        const [px, py, pz] = bezierAt(
-          HUB_POS[0], HUB_POS[1], HUB_POS[2],
-          ctrl[0], ctrl[1], ctrl[2],
-          rp.pos[0], rp.pos[1], rp.pos[2],
-          param,
-        );
-        packet.position.set(px, py, pz);
-        (packet.material as THREE.MeshBasicMaterial).opacity =
-          Math.sin(Math.PI * ev.t) * alpha;
-      }
+    // Block propagation as a traveling light band along the belt: it sweeps
+    // source-peer→hub (we receive the block), then hub→peer on every belt (we
+    // relay it). FlowBeam brightens its particles near `pos`.
+    const pulse = pulseRef.current;
+    const ev = blockPropagationPhase(pulse ? now - pulse.at : -1);
+    const isSource = pulse?.sourceId === rp.peer.node_id;
+    if (ev.phase === 'relay') {
+      waveRef.current = { pos: ev.t, gain: WAVE_GAIN * alpha }; // hub → peer
+    } else if (ev.phase === 'receive' && isSource) {
+      waveRef.current = { pos: 1 - ev.t, gain: WAVE_GAIN * alpha }; // peer → hub
+    } else {
+      waveRef.current = null;
     }
   });
 
@@ -312,6 +283,7 @@ function PeerNode({
         seed={seed}
         phase={phase}
         intensityRef={flowIntensityRef}
+        waveRef={waveRef}
       />
       <group position={rp.pos}>
         <CrystalGlow
@@ -327,18 +299,6 @@ function PeerNode({
           }}
         />
       </group>
-      {/* Block-propagation packet (receive peer→hub, then relay hub→peer). */}
-      <mesh ref={packetRef} visible={false}>
-        <sphereGeometry args={[1.5, 12, 12]} />
-        <meshBasicMaterial
-          color="#eaffff"
-          transparent
-          opacity={0}
-          blending={THREE.AdditiveBlending}
-          depthWrite={false}
-          toneMapped={false}
-        />
-      </mesh>
     </group>
   );
 }
