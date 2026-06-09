@@ -10,6 +10,7 @@ import {
   peerCrystalSize,
   peerCrystalBrightness,
   blockPropagationPhase,
+  blockCourierState,
   PEER_INNER_RADIUS,
   PEER_OUTER_RADIUS,
 } from '../src/derives/peers.derive';
@@ -77,6 +78,32 @@ describe('peers.derive', () => {
     expect(y.phase).toBe('relay');
     expect(y.t).toBeCloseTo(0.5, 5); // (0.6 - 0.3) / 0.6
     expect(blockPropagationPhase(0.9).phase).toBe('idle');
+  });
+
+  it('blockCourierState: source rides peer→hub during receive', () => {
+    expect(blockCourierState(-0.1, 0, true)).toEqual({ phase: 'idle', pos: 0 });
+    expect(blockCourierState(0, 0, true)).toEqual({ phase: 'receive', pos: 1 });
+    const r = blockCourierState(0.15, 0, true);
+    expect(r.phase).toBe('receive');
+    expect(r.pos).toBeCloseTo(0.5, 5); // 1 - 0.15/0.3
+  });
+
+  it('blockCourierState: non-source waits, then relays hub→peer', () => {
+    expect(blockCourierState(0.15, 0, false).phase).toBe('idle'); // before relayStart
+    expect(blockCourierState(0.3, 0, false)).toEqual({ phase: 'relay', pos: 0 });
+    const y = blockCourierState(0.6, 0, false);
+    expect(y.phase).toBe('relay');
+    expect(y.pos).toBeCloseTo(0.5, 5); // (0.6 - 0.3) / 0.6
+    expect(blockCourierState(0.9, 0, false).phase).toBe('idle'); // after relay window
+  });
+
+  it('blockCourierState: stagger delays the relay departure', () => {
+    expect(blockCourierState(0.4, 0.2, false).phase).toBe('idle'); // relayStart = 0.5
+    // Source is intentionally idle between receive-end and its staggered relay.
+    expect(blockCourierState(0.4, 0.2, true).phase).toBe('idle');
+    const z = blockCourierState(0.6, 0.2, false);
+    expect(z.phase).toBe('relay');
+    expect(z.pos).toBeCloseTo(0.1667, 3); // (0.6 - 0.5) / 0.6
   });
 
   it('peerColorKind reflects version mismatch then direction', () => {
