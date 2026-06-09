@@ -7,7 +7,7 @@ import type { Vec3 } from '../types';
 
 /** Gaussian half-spread of the block-propagation wave band along the path,
  *  in normalized [0,1] path units. Wider ⇒ a softer, fatter light band. */
-const WAVE_WIDTH = 0.12;
+const WAVE_WIDTH = 0.2;
 
 export interface FlowStyle {
   /** World-space size of each particle sprite. */
