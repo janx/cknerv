@@ -34,13 +34,13 @@ const LOCAL_FLOW_COLOR = new THREE.Color('#7df9ff');
 /** Visual character of a peer's particle belt (tuned in the visual pass). */
 const PEER_FLOW_STYLE: FlowStyle = {
   particleSize: 0.7,
-  count: 48,
+  count: 84,
   speed: 0.08,
   jitter: 0.6,
   intensity: 1.3,
 };
 /** Peak extra brightness of the block-propagation wave band on a belt. */
-const WAVE_GAIN = 2.5;
+const WAVE_GAIN = 7;
 
 /** One unit-radius octahedron shared by every peer crystal (CrystalGlow
  *  scales it per-peer). Simpler/smaller than the LOCAL icosahedron so
@@ -78,7 +78,7 @@ function rankPeers(peers: Peer[]): Peer[] {
 }
 
 /** The peer most plausibly relaying us a new block: the alive peer with the
- *  lowest latency. Drives the inbound "receive" packet. null if no peers. */
+ *  lowest latency. Drives the inbound "receive" wave. null if no peers. */
 function pickPropagationSource(map: Map<string, RenderPeer>): string | null {
   let bestId: string | null = null;
   let bestLatency = Infinity;
@@ -140,7 +140,7 @@ export default function PeerConstellation({
 
   // Per-block propagation pulse: the frame loop reads `at` (when it fired) and
   // `sourceId` (which peer relayed us the block) to choreograph the
-  // receive→relay packets.
+  // receive→relay wave bands.
   const pulseRef = useRef<{ at: number; sourceId: string | null } | null>(null);
   const lastPulseRef = useRef(blockPulseAtMs);
   useEffect(() => {
