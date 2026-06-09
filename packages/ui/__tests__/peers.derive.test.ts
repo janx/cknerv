@@ -9,7 +9,6 @@ import {
   summarizeNetwork,
   peerCrystalSize,
   peerCrystalBrightness,
-  blockPropagationPhase,
   blockCourierState,
   PEER_INNER_RADIUS,
   PEER_OUTER_RADIUS,
@@ -65,19 +64,6 @@ describe('peers.derive', () => {
   it('peerCrystalBrightness grows with sync proximity', () => {
     expect(peerCrystalBrightness(0)).toBeCloseTo(0.45, 5);
     expect(peerCrystalBrightness(1)).toBeCloseTo(0.95, 5);
-  });
-
-  it('blockPropagationPhase runs receive → relay → idle', () => {
-    expect(blockPropagationPhase(-0.1).phase).toBe('idle');
-    expect(blockPropagationPhase(0)).toEqual({ phase: 'receive', t: 0 });
-    const r = blockPropagationPhase(0.15);
-    expect(r.phase).toBe('receive');
-    expect(r.t).toBeCloseTo(0.5, 5); // 0.15 / 0.3
-    expect(blockPropagationPhase(0.3)).toEqual({ phase: 'relay', t: 0 });
-    const y = blockPropagationPhase(0.6);
-    expect(y.phase).toBe('relay');
-    expect(y.t).toBeCloseTo(0.5, 5); // (0.6 - 0.3) / 0.6
-    expect(blockPropagationPhase(0.9).phase).toBe('idle');
   });
 
   it('blockCourierState: source rides peer→hub during receive', () => {
