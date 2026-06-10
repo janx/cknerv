@@ -240,6 +240,7 @@ export default function App({
 
           <CellGalaxy
             ckbNodeIds={ckbNodeIds}
+            receivesFromPeer={peers.length > 0}
             selectedId={selectedId}
             onSelect={setSelectedId}
             cellFlashRef={cellFlashRef}
