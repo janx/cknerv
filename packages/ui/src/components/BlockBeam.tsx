@@ -17,47 +17,66 @@ import {
 } from '../ui/topologyConstants';
 
 export interface BlockBeamProps {
-  /** Miner icosahedron world coords. The cylinder's base anchors here;
-   *  its top grows toward (originWorld.x, targetY, originWorld.z). */
+  /** Anchor world coords. The cylinders' base sits here; tops grow toward
+   *  (originWorld.x, targetY, originWorld.z). */
   originWorld: [number, number, number];
-  /** Cylinder top y in world coords. Fixed at CELLS_Y by the caller. */
+  /** Cylinder top y in world coords (CELLS_Y by the caller). */
   targetY: number;
-  /** Per-miner fire trigger. CellGalaxy writes `{ firedAt:
-   *  simClock.elapsedSec }` on each block originating from this miner;
-   *  BlockBeam reads it every frame and nulls it out when the animation
-   *  expires. Same shape as `chainNodeFlashRefs`. */
+  /** Per-node fire trigger. The parent writes `{ firedAt }` when the node
+   *  receives the block; BlockBeam reads it every frame and nulls it on
+   *  expiry. A future `firedAt` sits idle until it arrives. */
   fireRef: React.MutableRefObject<{ firedAt: number } | null>;
+  /** Inner-core cylinder radius (world units). Default = hero CORE_RADIUS_W. */
+  coreRadius?: number;
+  /** Mid-halo cylinder radius (world units). Default = hero HALO_RADIUS_W. */
+  haloRadius?: number;
+  /** Render the broad outer-glow cylinder. Peers pass false (one fewer
+   *  material + draw, lighter silhouette). Default true (hero). */
+  showOuterGlow?: boolean;
+  /** Peak strike-splash diameter (world units). Default STRIKE_SPRITE_PEAK_SIZE. */
+  splashPeakSize?: number;
 }
 
 /** Inner-core cylinder radius — the bright white-to-cyan filament. */
 const CORE_RADIUS_W = 0.22;
-/** Mid-halo cylinder radius — the soft cyan plasma sheath. ~3.6× the
- *  core. */
+/** Mid-halo cylinder radius — the soft cyan plasma sheath. ~3.6× the core. */
 const HALO_RADIUS_W = 0.80;
-/** Outer-glow cylinder radius — the broad atmospheric bleed. ~5.7×
- *  the core. Provides the "pushing into space" volumetric feel that
- *  the halo alone cannot deliver. */
+/** Outer-glow cylinder radius — the broad atmospheric bleed. ~5.7× the core. */
 const OUTER_GLOW_RADIUS_W = 1.25;
 
-/**
- * Per-miner energy column. One Mesh (cylinder) + one Sprite (strike
- * splash) co-driven by a single phase computation. Both objects live
- * in world space — the parent must NOT mount BlockBeam inside the
- * rotating cells group, or the column will rotate away from its
- * miner anchor.
- *
- * Visibility and uniform writes happen entirely inside `useSimFrame`.
- * When idle (`fireRef.current === null`), the meshes are hidden and
- * the body returns early. When expired (age ≥ grow + strike), the
- * body nulls `fireRef.current` so the next idle frame is a no-op.
- */
 const PHASE_CFG = {
   growDur: BEAM_GROW_DUR_S,
   holdDur: BEAM_HOLD_DUR_S,
   strikeDur: BEAM_STRIKE_DUR_S,
 };
 
-export default function BlockBeam({ originWorld, targetY, fireRef }: BlockBeamProps) {
+// One splash texture shared by every BlockBeam (hero + all peer tributaries):
+// a soft white→cyan radial gradient, immutable. Built lazily on first use so
+// ~80 peer beams don't each allocate a 256² canvas; lives for the app's
+// lifetime and is intentionally never disposed.
+let sharedSplashTexture: THREE.Texture | null = null;
+function getSplashTexture(): THREE.Texture {
+  if (!sharedSplashTexture) sharedSplashTexture = makeStrikeSplashSpriteTexture();
+  return sharedSplashTexture;
+}
+
+/**
+ * Per-node energy column. Cylinders (core/halo, optional outer-glow) + a
+ * strike-splash sprite, co-driven by one phase computation. All objects live
+ * in world space — the parent must NOT mount BlockBeam inside a rotating
+ * group, or the column rotates away from its anchor. Visibility + uniform
+ * writes happen entirely inside useSimFrame; idle (`fireRef.current === null`)
+ * hides everything and returns early.
+ */
+export default function BlockBeam({
+  originWorld,
+  targetY,
+  fireRef,
+  coreRadius = CORE_RADIUS_W,
+  haloRadius = HALO_RADIUS_W,
+  showOuterGlow = true,
+  splashPeakSize = STRIKE_SPRITE_PEAK_SIZE,
+}: BlockBeamProps) {
   const coreMeshRef = useRef<THREE.Mesh>(null);
   const haloMeshRef = useRef<THREE.Mesh>(null);
   const outerGlowMeshRef = useRef<THREE.Mesh>(null);
@@ -76,17 +95,15 @@ export default function BlockBeam({ originWorld, targetY, fireRef }: BlockBeamPr
   }, [targetY, originWorld]);
 
   const outerGlowMaterial = useMemo(() => {
+    if (!showOuterGlow) return null;
     const m = makeBlockBeamOuterGlowMaterial();
     m.uniforms.uTotalHeight.value = targetY - originWorld[1];
     return m;
-  }, [targetY, originWorld]);
+  }, [targetY, originWorld, showOuterGlow]);
 
-  // Soft white→cyan radial-gradient texture for the strike-splash
-  // sprite at the impact point.
-  const splashTexture = useMemo(makeStrikeSplashSpriteTexture, []);
   const splashMaterial = useMemo(() => {
     return new THREE.SpriteMaterial({
-      map: splashTexture,
+      map: getSplashTexture(),
       color: 0xffffff,
       transparent: true,
       depthWrite: false,
@@ -95,32 +112,32 @@ export default function BlockBeam({ originWorld, targetY, fireRef }: BlockBeamPr
       toneMapped: false,
       opacity: 0,
     });
-  }, [splashTexture]);
+  }, []);
 
   useEffect(() => () => {
     coreMaterial.dispose();
     haloMaterial.dispose();
-    outerGlowMaterial.dispose();
-    splashTexture.dispose();
+    outerGlowMaterial?.dispose();
     splashMaterial.dispose();
-  }, [coreMaterial, haloMaterial, outerGlowMaterial, splashTexture, splashMaterial]);
+    // sharedSplashTexture is a module singleton — intentionally not disposed.
+  }, [coreMaterial, haloMaterial, outerGlowMaterial, splashMaterial]);
 
   useSimFrame(() => {
     const coreMesh = coreMeshRef.current;
     const haloMesh = haloMeshRef.current;
-    const outerGlowMesh = outerGlowMeshRef.current;
+    const outerGlowMesh = outerGlowMeshRef.current; // null when showOuterGlow=false
     const splash = splashSpriteRef.current;
-    if (!coreMesh || !haloMesh || !outerGlowMesh || !splash) return;
+    if (!coreMesh || !haloMesh || !splash) return;
 
     const trigger = fireRef.current;
     if (!trigger) {
       coreMesh.visible = false;
       haloMesh.visible = false;
-      outerGlowMesh.visible = false;
+      if (outerGlowMesh) outerGlowMesh.visible = false;
       splash.visible = false;
       coreMaterial.uniforms.uAge.value = -1;
       haloMaterial.uniforms.uAge.value = -1;
-      outerGlowMaterial.uniforms.uAge.value = -1;
+      if (outerGlowMaterial) outerGlowMaterial.uniforms.uAge.value = -1;
       return;
     }
 
@@ -131,24 +148,26 @@ export default function BlockBeam({ originWorld, targetY, fireRef }: BlockBeamPr
       fireRef.current = null;
       coreMesh.visible = false;
       haloMesh.visible = false;
-      outerGlowMesh.visible = false;
+      if (outerGlowMesh) outerGlowMesh.visible = false;
       splash.visible = false;
       coreMaterial.uniforms.uAge.value = -1;
       haloMaterial.uniforms.uAge.value = -1;
-      outerGlowMaterial.uniforms.uAge.value = -1;
+      if (outerGlowMaterial) outerGlowMaterial.uniforms.uAge.value = -1;
       return;
     }
 
     coreMesh.visible = phase.visible;
     haloMesh.visible = phase.visible;
-    outerGlowMesh.visible = phase.visible;
     coreMaterial.uniforms.uAge.value = age;
     haloMaterial.uniforms.uAge.value = age;
-    outerGlowMaterial.uniforms.uAge.value = age;
+    if (outerGlowMesh && outerGlowMaterial) {
+      outerGlowMesh.visible = phase.visible;
+      outerGlowMaterial.uniforms.uAge.value = age;
+    }
 
     splash.visible = phase.spriteVisible;
     if (phase.spriteVisible) {
-      const sizeWorld = phase.spriteSize * STRIKE_SPRITE_PEAK_SIZE;
+      const sizeWorld = phase.spriteSize * splashPeakSize;
       splash.scale.set(sizeWorld, sizeWorld, 1);
       splashMaterial.opacity = phase.spriteAlpha;
     }
@@ -156,25 +175,25 @@ export default function BlockBeam({ originWorld, targetY, fireRef }: BlockBeamPr
 
   return (
     <>
-      {/* Outermost glow — broad atmospheric bleed, very faint, pure
-          cyan. Renders first (lowest renderOrder). */}
-      <mesh
-        ref={outerGlowMeshRef}
-        position={originWorld}
-        scale={[OUTER_GLOW_RADIUS_W, 1, OUTER_GLOW_RADIUS_W]}
-        material={outerGlowMaterial}
-        frustumCulled={false}
-        renderOrder={-3}
-        visible={false}
-      >
-        <cylinderGeometry args={[1, 1, 1, 16, 12, true]} />
-      </mesh>
-      {/* Mid halo — soft cyan plasma sheath. Fades to nothing at the
-          silhouette so the cylinder edge isn't a hard boundary. */}
+      {/* Outermost glow — broad atmospheric bleed (hero only). */}
+      {showOuterGlow && outerGlowMaterial ? (
+        <mesh
+          ref={outerGlowMeshRef}
+          position={originWorld}
+          scale={[OUTER_GLOW_RADIUS_W, 1, OUTER_GLOW_RADIUS_W]}
+          material={outerGlowMaterial}
+          frustumCulled={false}
+          renderOrder={-3}
+          visible={false}
+        >
+          <cylinderGeometry args={[1, 1, 1, 16, 12, true]} />
+        </mesh>
+      ) : null}
+      {/* Mid halo — soft cyan plasma sheath. */}
       <mesh
         ref={haloMeshRef}
         position={originWorld}
-        scale={[HALO_RADIUS_W, 1, HALO_RADIUS_W]}
+        scale={[haloRadius, 1, haloRadius]}
         material={haloMaterial}
         frustumCulled={false}
         renderOrder={-2}
@@ -186,7 +205,7 @@ export default function BlockBeam({ originWorld, targetY, fireRef }: BlockBeamPr
       <mesh
         ref={coreMeshRef}
         position={originWorld}
-        scale={[CORE_RADIUS_W, 1, CORE_RADIUS_W]}
+        scale={[coreRadius, 1, coreRadius]}
         material={coreMaterial}
         frustumCulled={false}
         renderOrder={-1}
@@ -194,8 +213,7 @@ export default function BlockBeam({ originWorld, targetY, fireRef }: BlockBeamPr
       >
         <cylinderGeometry args={[1, 1, 1, 16, 12, true]} />
       </mesh>
-      {/* Strike splash — blooms at the impact point on the cell plane
-          when the beam arrives. */}
+      {/* Strike splash — blooms at the impact point when the beam arrives. */}
       <sprite
         ref={splashSpriteRef}
         position={[originWorld[0], targetY, originWorld[2]]}
