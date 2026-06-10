@@ -41,4 +41,25 @@ describe('PeerConstellation mount', () => {
       ),
     ).not.toThrow();
   });
+
+  it('mounts with a fired block pulse (tributary beams) without throwing', () => {
+    const peers = [
+      peer({ node_id: 'A', direction: 'outbound', latency_ms: 20, best_known: 100 }),
+      peer({ node_id: 'B', direction: 'inbound', latency_ms: 120, best_known: 98 }),
+    ];
+    expect(() =>
+      render(
+        <Canvas>
+          <PeerConstellation
+            peers={peers}
+            tip={100}
+            localVersion="0.116.1"
+            selectedId={null}
+            onSelect={() => {}}
+            blockPulseAtMs={1234}
+          />
+        </Canvas>,
+      ),
+    ).not.toThrow();
+  });
 });

@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { Billboard, Text } from '@react-three/drei';
 import { useSimFrame } from '../tweaks/useSimFrame';
 import { simClock } from '../tweaks/simClock';
-import { CHAIN_Y } from '../layout';
+import { CHAIN_Y, CELLS_Y } from '../layout';
 import { FONT_MONO } from '../ui/fonts';
 import { fnv1a, bezierControl, bezierAt } from '../geometry/edgeBezier';
 import { phaseFor } from './GlowNode';
@@ -17,12 +17,14 @@ import {
   peerCrystalSize,
   peerCrystalBrightness,
   blockCourierState,
+  peerBeamFiredAge,
   BLOCK_STAGGER_S,
   PEER_COLORS,
   PEER_OUTER_RADIUS,
 } from '../derives/peers.derive';
 import CrystalGlow from './CrystalGlow';
 import FlowBeam, { type FlowStyle } from './FlowBeam';
+import BlockBeam from './BlockBeam';
 
 /** Max peers rendered; the rest are summarized in the NETWORK HUD. */
 export const PEER_RENDER_CAP = 80;
@@ -248,6 +250,10 @@ function PeerNode({
   );
   const courierRef = useRef<THREE.Group>(null);
   const courierIntensityRef = useRef(0);
+  // Tributary beam: fired when this peer's relay courier lands (it received
+  // the block); a future-dated firedAt sits idle until then.
+  const peerBeamFireRef = useRef<{ firedAt: number } | null>(null);
+  const lastBeamPulseRef = useRef(-1);
   // Per-peer relay-departure stagger so couriers fan out instead of piling.
   const stagger = useMemo(() => ((seed % 1000) / 1000) * BLOCK_STAGGER_S, [seed]);
 
@@ -278,6 +284,13 @@ function PeerNode({
     // Block courier cube: the source peer's cube rides peer→hub (we receive the
     // block), then every peer's cube rides hub→peer staggered (we relay it).
     const pulse = pulseRef.current;
+    // When a new block pulse arrives, schedule this peer's tributary beam to
+    // fire the moment its relay courier lands — receive leg + this peer's
+    // stagger + relay leg (peerBeamFiredAge).
+    if (pulse && pulse.at !== lastBeamPulseRef.current) {
+      lastBeamPulseRef.current = pulse.at;
+      peerBeamFireRef.current = { firedAt: pulse.at + peerBeamFiredAge(stagger) };
+    }
     const ev = blockCourierState(
       pulse ? now - pulse.at : -1,
       stagger,
@@ -339,6 +352,20 @@ function PeerNode({
           seed={rp.peer.node_id}
         />
       </group>
+      {/* Light "tributary" beam: when this peer receives the relayed block it
+          fires a thin column up into the shared cells canopy — every node
+          confirms the block, not just the local hero beam. No charge, no
+          outer-glow, smaller splash; drives no canopy shockwave (the one
+          canonical ripple is the local node's). */}
+      <BlockBeam
+        originWorld={rp.pos}
+        targetY={CELLS_Y}
+        fireRef={peerBeamFireRef}
+        coreRadius={0.1}
+        haloRadius={0.38}
+        showOuterGlow={false}
+        splashPeakSize={1.6}
+      />
     </group>
   );
 }
