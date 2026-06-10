@@ -1,7 +1,6 @@
 import * as THREE from 'three';
 import { CELLS_Y, CHAIN_Y } from '../layout';
 import {
-  BEAM_CHARGE_DUR_S,
   BEAM_GROW_DUR_S,
   BEAM_HOLD_DUR_S,
   BEAM_STRIKE_DUR_S,
@@ -32,7 +31,6 @@ export function makeBlockBeamMaterial(): THREE.ShaderMaterial {
     uniforms: {
       // -1 sentinel = idle (CPU writes a non-negative age when fireRef is set).
       uAge:         { value: -1 },
-      uChargeDur:   { value: BEAM_CHARGE_DUR_S },
       uGrowDur:     { value: BEAM_GROW_DUR_S },
       uHoldDur:     { value: BEAM_HOLD_DUR_S },
       uStrikeDur:   { value: BEAM_STRIKE_DUR_S },
@@ -52,7 +50,6 @@ export function makeBlockBeamMaterial(): THREE.ShaderMaterial {
     toneMapped: false,
     vertexShader: /* glsl */ `
       uniform float uAge;
-      uniform float uChargeDur;
       uniform float uGrowDur;
       uniform float uHoldDur;
       uniform float uStrikeDur;
@@ -65,14 +62,11 @@ export function makeBlockBeamMaterial(): THREE.ShaderMaterial {
       varying float vH;
 
       void main() {
-        // Burst phase (charge → grow): the beam stays invisible during
-        // [0, uChargeDur] while a charging light point gathers at the
-        // miner. From uChargeDur onward the tip bursts upward to the
-        // cell plane over the remaining (uGrowDur - uChargeDur)
-        // window with a sharp ease-out so the launch reads as sudden
-        // release rather than gradual extension.
-        float burstWindow = max(uGrowDur - uChargeDur, 0.0001);
-        float burstT      = clamp((uAge - uChargeDur) / burstWindow, 0.0, 1.0);
+        // Burst phase: the tip bursts upward from the anchor to the
+        // cell plane over the uGrowDur window (from age 0 — no charge
+        // pre-roll) with a sharp ease-out so the launch reads as a
+        // sudden release rather than gradual extension.
+        float burstT      = clamp(uAge / max(uGrowDur, 0.0001), 0.0, 1.0);
         // Ease-out cubic: 1 - (1 - t)³ — fast initial velocity, decel
         // to a clean landing at the tip.
         float topT        = 1.0 - pow(1.0 - burstT, 3.0);
@@ -204,7 +198,6 @@ export function makeBlockBeamHaloMaterial(): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
     uniforms: {
       uAge:         { value: -1 },
-      uChargeDur:   { value: BEAM_CHARGE_DUR_S },
       uGrowDur:     { value: BEAM_GROW_DUR_S },
       uHoldDur:     { value: BEAM_HOLD_DUR_S },
       uStrikeDur:   { value: BEAM_STRIKE_DUR_S },
@@ -218,7 +211,6 @@ export function makeBlockBeamHaloMaterial(): THREE.ShaderMaterial {
     toneMapped: false,
     vertexShader: /* glsl */ `
       uniform float uAge;
-      uniform float uChargeDur;
       uniform float uGrowDur;
       uniform float uHoldDur;
       uniform float uStrikeDur;
@@ -230,11 +222,9 @@ export function makeBlockBeamHaloMaterial(): THREE.ShaderMaterial {
       varying float vH;
 
       void main() {
-        // Same charge / burst / hold / retract phases as the core
-        // material so the halo stays in lockstep through the whole
-        // animation.
-        float burstWindow = max(uGrowDur - uChargeDur, 0.0001);
-        float burstT      = clamp((uAge - uChargeDur) / burstWindow, 0.0, 1.0);
+        // Same burst / hold / retract phases as the core material so
+        // the halo stays in lockstep through the whole animation.
+        float burstT      = clamp(uAge / max(uGrowDur, 0.0001), 0.0, 1.0);
         float topT        = 1.0 - pow(1.0 - burstT, 3.0);
 
         float retractWindow = max(uStrikeDur - uHoldDur, 0.0001);
@@ -301,7 +291,6 @@ export function makeBlockBeamOuterGlowMaterial(): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
     uniforms: {
       uAge:         { value: -1 },
-      uChargeDur:   { value: BEAM_CHARGE_DUR_S },
       uGrowDur:     { value: BEAM_GROW_DUR_S },
       uHoldDur:     { value: BEAM_HOLD_DUR_S },
       uStrikeDur:   { value: BEAM_STRIKE_DUR_S },
@@ -315,7 +304,6 @@ export function makeBlockBeamOuterGlowMaterial(): THREE.ShaderMaterial {
     toneMapped: false,
     vertexShader: /* glsl */ `
       uniform float uAge;
-      uniform float uChargeDur;
       uniform float uGrowDur;
       uniform float uHoldDur;
       uniform float uStrikeDur;
@@ -329,8 +317,7 @@ export function makeBlockBeamOuterGlowMaterial(): THREE.ShaderMaterial {
       void main() {
         // Identical phase math to core + halo so all three layers
         // grow / hold / retract in lockstep.
-        float burstWindow = max(uGrowDur - uChargeDur, 0.0001);
-        float burstT      = clamp((uAge - uChargeDur) / burstWindow, 0.0, 1.0);
+        float burstT      = clamp(uAge / max(uGrowDur, 0.0001), 0.0, 1.0);
         float topT        = 1.0 - pow(1.0 - burstT, 3.0);
 
         float retractWindow = max(uStrikeDur - uHoldDur, 0.0001);
