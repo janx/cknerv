@@ -2,36 +2,23 @@
 // Previously housed in nervePulseScheduler.ts alongside the old NervePulses
 // machinery; extracted here so CellGalaxy does not depend on deleted modules.
 
-/** New-block animation breaks into four sub-phases, two inside the
- *  grow window and two inside the strike window:
+/** New-block animation breaks into three sub-phases:
  *
- *    t = 0                              block trigger; miner
- *                                       icosahedron flashes; a
- *                                       charging "light point" begins
- *                                       gathering energy at the miner.
- *    t = BEAM_CHARGE_DUR_S              charge complete; the beam
- *                                       bursts (rapid ease-out) from
- *                                       the miner toward the galaxy.
+ *    t = 0                              the receiving node's beam launches
+ *                                       from its anchor toward the galaxy
+ *                                       (no charge pre-roll — the node is
+ *                                       applying a block it received, not
+ *                                       mining one).
  *    t = BEAM_GROW_DUR_S                column reaches the cell plane;
- *                                       strike-splash sprite blooms at
- *                                       the impact point; column holds
- *                                       at full extension.
+ *                                       strike-splash sprite blooms at the
+ *                                       impact point; column holds.
  *    t = BEAM_GROW_DUR_S + BEAM_HOLD_DUR_S
- *                                       hold ends; column begins to
- *                                       gradually retract — tip stays
- *                                       anchored at the impact while
- *                                       the base drains upward.
+ *                                       hold ends; the column retracts —
+ *                                       tip anchored, base draining upward.
  *    t = SHOCKWAVE_FIRE_DELAY_S
  *      = BEAM_GROW_DUR_S + BEAM_STRIKE_DUR_S
- *                                       beam animation completes; the
- *                                       canopy brightness shockwave
- *                                       departs from (miner.x,
- *                                       miner.z). Per-cell highlight
- *                                       timestamps were scheduled at
- *                                       block-trigger time to ignite
- *                                       as the wavefront sweeps each
- *                                       cell. */
-export const BEAM_CHARGE_DUR_S = 0.80;
+ *                                       beam completes; the canopy
+ *                                       brightness shockwave departs. */
 export const BEAM_GROW_DUR_S = 1.00;
 export const BEAM_HOLD_DUR_S = 0.90;
 export const BEAM_STRIKE_DUR_S = 1.20;
