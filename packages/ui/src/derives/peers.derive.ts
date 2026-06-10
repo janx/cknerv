@@ -92,6 +92,14 @@ export function blockCourierState(
   return { phase: 'idle', pos: 0 };
 }
 
+/** Age (since the block pulse) at which a peer with relay `stagger` receives the
+ *  relayed block — i.e. its hub→peer courier lands and its tributary beam fires.
+ *  Mirrors blockCourierState's relay-arrival edge: relayStart + BLOCK_RELAY_S
+ *  where relayStart = BLOCK_RECEIVE_S + stagger. */
+export function peerBeamFiredAge(stagger: number): number {
+  return BLOCK_RECEIVE_S + stagger + BLOCK_RELAY_S;
+}
+
 export type PeerColorKind = PeerDirection | 'version';
 
 /** Color class: version-mismatch wins, else direction. */
