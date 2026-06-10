@@ -24,6 +24,25 @@ describe('BlockBeam mount', () => {
       ),
     ).not.toThrow();
   });
+
+  it('mounts as a light tributary variant (no outer glow) without throwing', () => {
+    const fireRef = { current: null };
+    expect(() =>
+      render(
+        <Canvas>
+          <BlockBeam
+            originWorld={[40, 22, 10]}
+            targetY={CELLS_Y}
+            fireRef={fireRef}
+            coreRadius={0.1}
+            haloRadius={0.38}
+            showOuterGlow={false}
+            splashPeakSize={1.6}
+          />
+        </Canvas>,
+      ),
+    ).not.toThrow();
+  });
 });
 
 describe('BlockBeam module shape', () => {
