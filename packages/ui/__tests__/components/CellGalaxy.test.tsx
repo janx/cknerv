@@ -56,6 +56,27 @@ describe('CellGalaxy', () => {
 
     expect(source).not.toContain('CellCanopyVeil');
   });
+
+  it('mounts with receivesFromPeer (receive-delayed reaction) without throwing', () => {
+    const cellFlashRef = { current: new Map<number, number>() };
+    const flashDirtyRef = { current: false };
+    expect(() =>
+      render(
+        <CellGalaxyProvider value={emptyCellsCache()}>
+          <Canvas>
+            <CellGalaxy
+              ckbNodeIds={['ckb:local']}
+              selectedId={null}
+              onSelect={() => {}}
+              cellFlashRef={cellFlashRef}
+              flashDirtyRef={flashDirtyRef}
+              receivesFromPeer
+            />
+          </Canvas>
+        </CellGalaxyProvider>,
+      ),
+    ).not.toThrow();
+  });
 });
 
 describe('CellGalaxy click', () => {

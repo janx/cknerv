@@ -22,6 +22,7 @@ import {
   CELLS_Y,
   chainNodeWorldPosition,
 } from '../layout';
+import { BLOCK_RECEIVE_S } from '../derives/peers.derive';
 
 /** Cyan palette for the structural chain anchor (CKB icosahedron).
  *  The chain anchor reads as "structural backbone / chain truth" and
@@ -101,6 +102,11 @@ interface CellGalaxyProps {
    *  animations (e.g. RCG's NeuralNetwork + DendriticBurst) atop the
    *  cell field without coupling CellGalaxy to non-generic components. */
   overlay?: ReactNode;
+  /** True when the local node has peers, i.e. a block actually arrives FROM a
+   *  peer. CellGalaxy then delays its whole block reaction by BLOCK_RECEIVE_S
+   *  (the receive leg) so the canopy lights up when the local node RECEIVES
+   *  the block, not at the raw pulse instant. False (no peers) → fire at t=0. */
+  receivesFromPeer?: boolean;
 }
 
 /** Per-tag palette. The cell-galaxy projection ships opaque tag strings
@@ -574,7 +580,7 @@ function CellPicker({ cellsListRef, onSelect }: CellPickerProps) {
  * CellShell wireframe. Block shockwaves brighten/expand that existing
  * core and shell; no separate drifted halo Points layer is mounted.
  */
-export default function CellGalaxy({ ckbNodeIds, minerCkbNodeIds, universeSeed, selectedId, onSelect, cellFlashRef, flashDirtyRef, overlay }: CellGalaxyProps) {
+export default function CellGalaxy({ ckbNodeIds, minerCkbNodeIds, universeSeed, selectedId, onSelect, cellFlashRef, flashDirtyRef, overlay, receivesFromPeer = false }: CellGalaxyProps) {
   const groupRef = useRef<THREE.Group>(null);
   // Server-driven cell list. The component is now a pure visual layer:
   // it reads cells from the cache and writes their xyz / born / death
@@ -636,8 +642,8 @@ export default function CellGalaxy({ ckbNodeIds, minerCkbNodeIds, universeSeed, 
       ({ current: null as { firedAt: number } | null }),
     );
   }, [ckbNodeIds]);
-  /** Per-miner BlockBeam trigger — same shape as chainNodeFlashRefs.
-   *  CellGalaxy writes on each block originating from this miner;
+  /** Per-node BlockBeam trigger — same shape as chainNodeFlashRefs.
+   *  CellGalaxy writes when the local node applies the received block;
    *  BlockBeam drains. Indexed by `ckbNodeIds.indexOf(sourceId)`. */
   const chainNodeBeamRefs = useMemo(() => {
     return ckbNodeIds.map(() =>
@@ -856,20 +862,27 @@ export default function CellGalaxy({ ckbNodeIds, minerCkbNodeIds, universeSeed, 
           universeSeed,
         );
 
-        // Block trigger: anchored at the miner icosahedron. Used by
-        // NervePulses' shockwave-delay pathway and by the
-        // icosahedron's own halo flash envelope.
+        // The local node is not a miner: it APPLIES a block it received from a
+        // peer. Delay the whole ledger reaction by the receive leg so the
+        // canopy lights up when we receive (the courier reaches the hub), not
+        // at the raw pulse instant. Zero when we have no peer to receive from.
+        const receiveDelayS = receivesFromPeer ? BLOCK_RECEIVE_S : 0;
+        const blockTriggerSceneS = simClock.elapsedSec + receiveDelayS;
+
+        // Block trigger: anchored at the local node icosahedron (it applies
+        // the received block). Used by NervePulses' shockwave-delay pathway
+        // and by the icosahedron's own halo flash envelope.
         blockEventRef.current = {
-          firedAt: simClock.elapsedSec,
+          firedAt: blockTriggerSceneS,
           origin: worldOrigin,
         };
         const flashSlot = chainNodeFlashRefs[safeIdx];
         if (flashSlot) {
-          flashSlot.current = { firedAt: simClock.elapsedSec };
+          flashSlot.current = { firedAt: blockTriggerSceneS };
         }
         const beamSlot = chainNodeBeamRefs[safeIdx];
         if (beamSlot) {
-          beamSlot.current = { firedAt: simClock.elapsedSec };
+          beamSlot.current = { firedAt: blockTriggerSceneS };
         }
 
         // Fire the canopy brightness shockwave: a fragment-shader ring
@@ -880,7 +893,6 @@ export default function CellGalaxy({ ckbNodeIds, minerCkbNodeIds, universeSeed, 
         // departs after the column has fully completed instead of competing
         // with the beam body. The shader's `if (age < 0.0) return 0.0;`
         // keeps the ring invisible until that moment.
-        const blockTriggerSceneS = simClock.elapsedSec;
         const fireT = blockTriggerSceneS + SHOCKWAVE_FIRE_DELAY_S;
         // Round-robin into the shader ring buffer so a new wave doesn't
         // cancel any still in flight from earlier blocks. In-place
@@ -1034,12 +1046,12 @@ export default function CellGalaxy({ ckbNodeIds, minerCkbNodeIds, universeSeed, 
           flashRef={chainNodeFlashRefs[idx]}
         />
       ))}
-      {/* Per-miner energy column — fires when a block originates from this
-          miner, grows from the icosahedron up to the cell plane, then a
-          strike-splash blooms at the impact point right before the canopy
-          shockwave departs from the same point. Mounted in world space
+      {/* Per-node energy column — fires when the local node applies a
+          received block, growing from the icosahedron up to the cell plane,
+          then a strike-splash blooms at the impact point right before the
+          canopy shockwave departs from the same point. Mounted in world space
           (outside the rotating cells group) so the column stays anchored
-          to the miner regardless of canopy rotation. */}
+          to its node icosahedron regardless of canopy rotation. */}
       {ckbNodeIds.map((id, idx) => (
         <BlockBeam
           key={`beam:${id}`}
