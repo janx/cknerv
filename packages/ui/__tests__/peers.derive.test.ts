@@ -10,6 +10,10 @@ import {
   peerCrystalSize,
   peerCrystalBrightness,
   blockCourierState,
+  peerBeamFiredAge,
+  BLOCK_RECEIVE_S,
+  BLOCK_RELAY_S,
+  BLOCK_STAGGER_S,
   PEER_INNER_RADIUS,
   PEER_OUTER_RADIUS,
 } from '../src/derives/peers.derive';
@@ -90,6 +94,16 @@ describe('peers.derive', () => {
     const z = blockCourierState(0.6, 0.2, false);
     expect(z.phase).toBe('relay');
     expect(z.pos).toBeCloseTo(0.1667, 3); // (0.6 - 0.5) / 0.6
+  });
+
+  it('peerBeamFiredAge: relay arrival = receive + stagger + relay', () => {
+    expect(peerBeamFiredAge(0)).toBeCloseTo(BLOCK_RECEIVE_S + BLOCK_RELAY_S, 6);
+    expect(peerBeamFiredAge(BLOCK_STAGGER_S)).toBeCloseTo(
+      BLOCK_RECEIVE_S + BLOCK_STAGGER_S + BLOCK_RELAY_S,
+      6,
+    );
+    // Strictly increasing in stagger.
+    expect(peerBeamFiredAge(0.1)).toBeLessThan(peerBeamFiredAge(0.2));
   });
 
   it('peerColorKind reflects version mismatch then direction', () => {
