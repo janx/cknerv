@@ -12,6 +12,7 @@ import {
   blockCourierState,
   peerBeamFiredAge,
   peerArrivalAge,
+  beamShapeJitter,
   blockArrivalSchedule,
   rankPeers,
   PEER_RENDER_CAP,
@@ -24,6 +25,7 @@ import {
   PEER_INNER_RADIUS,
   PEER_OUTER_RADIUS,
 } from '../src/derives/peers.derive';
+import { BEAM_HOLD_DUR_S, BEAM_STRIKE_DUR_S } from '../src/ui/topologyConstants';
 import { CHAIN_Y } from '../src/layout';
 import { emptyChainCache } from '@cknerv/cache';
 import type { Peer, ChainNode } from '@cknerv/types';
@@ -140,6 +142,35 @@ describe('peers.derive', () => {
   it('peerArrivalAge: a new block nonce shifts the time', () => {
     const p = peer({ node_id: 'A', latency_ms: 50 });
     expect(peerArrivalAge(p, 1)).not.toBe(peerArrivalAge(p, 2));
+  });
+
+  it('beamShapeJitter: deterministic per (node, nonce)', () => {
+    expect(beamShapeJitter('A', 3)).toEqual(beamShapeJitter('A', 3));
+  });
+
+  it('beamShapeJitter: multipliers within their amplitude bands', () => {
+    for (const nonce of [0, 1, 7, 50]) {
+      const j = beamShapeJitter('node-x', nonce);
+      expect(j.growMul).toBeGreaterThanOrEqual(0.8);   expect(j.growMul).toBeLessThanOrEqual(1.2);
+      expect(j.tailMul).toBeGreaterThanOrEqual(0.8);   expect(j.tailMul).toBeLessThanOrEqual(1.2);
+      expect(j.flowMul).toBeGreaterThanOrEqual(0.75);  expect(j.flowMul).toBeLessThanOrEqual(1.25);
+      expect(j.splashMul).toBeGreaterThanOrEqual(0.85); expect(j.splashMul).toBeLessThanOrEqual(1.15);
+      expect(j.coreMul).toBeGreaterThanOrEqual(0.85);  expect(j.coreMul).toBeLessThanOrEqual(1.15);
+    }
+  });
+
+  it('beamShapeJitter: tailMul keeps the retract window positive', () => {
+    const j = beamShapeJitter('p', 11);
+    expect(j.tailMul).toBeGreaterThan(0);
+    // one factor drives both phases, so the retract window keeps its sign
+    const hold = BEAM_HOLD_DUR_S * j.tailMul;
+    const strike = BEAM_STRIKE_DUR_S * j.tailMul;
+    expect(strike - hold).toBeCloseTo((BEAM_STRIKE_DUR_S - BEAM_HOLD_DUR_S) * j.tailMul, 9);
+    expect(strike).toBeGreaterThan(hold);
+  });
+
+  it('beamShapeJitter: differs by node at the same block', () => {
+    expect(beamShapeJitter('A', 5)).not.toEqual(beamShapeJitter('B', 5));
   });
 
   it('rankPeers: outbound first, then ascending latency', () => {

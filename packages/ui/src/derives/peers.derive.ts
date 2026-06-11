@@ -140,6 +140,32 @@ export function blockArrivalSchedule(peers: Peer[], nonce: number): BlockArrival
   };
 }
 
+export interface BeamShapeJitter {
+  growMul: number;   // ×BEAM_GROW_DUR_S  (grow speed)
+  tailMul: number;   // ×BEAM_HOLD_DUR_S AND ×BEAM_STRIKE_DUR_S together (tail tempo)
+  flowMul: number;   // ×uFlowSpeed (core streaks)
+  splashMul: number; // ×splashPeakSize
+  coreMul: number;   // ×coreRadius
+}
+
+/** Deterministic per-(node, block) beam-shape multipliers so no two peer beams
+ *  move in lockstep. Draws from the SAME re-seeded stream as peerArrivalAge,
+ *  consuming the arrival draw first so the two stay mutually consistent. tailMul
+ *  scales hold AND strike by one factor so the retract window (strike − hold)
+ *  stays positive — independent jitter could invert it. */
+export function beamShapeJitter(nodeId: string, nonce: number): BeamShapeJitter {
+  const r = peerBlockRng(nodeId, nonce);
+  r(); // consume the arrival-jitter draw (keeps this in step with peerArrivalAge)
+  const j = (amp: number) => 1 + (r() - 0.5) * 2 * amp;
+  return {
+    growMul: j(0.2),
+    tailMul: j(0.2),
+    flowMul: j(0.25),
+    splashMul: j(0.15),
+    coreMul: j(0.15),
+  };
+}
+
 /** Inbound "receive" leg duration (source peer → hub), seconds. */
 export const BLOCK_RECEIVE_S = 0.3;
 /** Each courier's outbound "relay" leg duration (hub → peer), seconds. */
