@@ -13,6 +13,7 @@ import {
   peerBeamFiredAge,
   peerArrivalAge,
   beamShapeJitter,
+  entryCourierState,
   blockArrivalSchedule,
   rankPeers,
   PEER_RENDER_CAP,
@@ -171,6 +172,21 @@ describe('peers.derive', () => {
 
   it('beamShapeJitter: differs by node at the same block', () => {
     expect(beamShapeJitter('A', 5)).not.toEqual(beamShapeJitter('B', 5));
+  });
+
+  it('entryCourierState: hidden before the peer hears the block', () => {
+    expect(entryCourierState(0.2, 0.1)).toEqual({ visible: false, pos: 0 });
+  });
+
+  it('entryCourierState: rides peer→local across the relay hop', () => {
+    expect(entryCourierState(0.2, 0.2)).toEqual({ visible: true, pos: 1 }); // at the peer
+    const mid = entryCourierState(0.2, 0.2 + BLOCK_RELAY_HOP_S / 2);
+    expect(mid.visible).toBe(true);
+    expect(mid.pos).toBeCloseTo(0.5, 6);
+  });
+
+  it('entryCourierState: hidden once it lands at local', () => {
+    expect(entryCourierState(0.2, 0.2 + BLOCK_RELAY_HOP_S).visible).toBe(false);
   });
 
   it('rankPeers: outbound first, then ascending latency', () => {
