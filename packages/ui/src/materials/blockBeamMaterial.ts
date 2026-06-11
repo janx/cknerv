@@ -6,6 +6,9 @@ import {
   BEAM_STRIKE_DUR_S,
 } from '../ui/topologyConstants';
 
+/** Default scrolling-flow speed for the core beam streaks (world units/sec). */
+export const BEAM_FLOW_SPEED = 30;
+
 /**
  * Cylinder ShaderMaterial for the new-block energy column. Renders a
  * cool-white core fading to cool-cyan at the silhouette via fresnel
@@ -40,7 +43,7 @@ export function makeBlockBeamMaterial(): THREE.ShaderMaterial {
       // base→tip traversal in ~0.3 s, so 1–2 streaks visibly cross during
       // the grow window — reads as "energy is flowing through this
       // conduit" rather than "this is a static glowing tube".
-      uFlowSpeed:   { value: 30 },
+      uFlowSpeed:   { value: BEAM_FLOW_SPEED },
     },
     transparent: true,
     depthWrite: false,

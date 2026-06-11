@@ -9,6 +9,7 @@ import {
   makeBlockBeamOuterGlowMaterial,
   makeStrikeSplashSpriteTexture,
   STRIKE_SPRITE_PEAK_SIZE,
+  BEAM_FLOW_SPEED,
 } from '../materials/blockBeamMaterial';
 import {
   BEAM_GROW_DUR_S,
@@ -35,6 +36,14 @@ export interface BlockBeamProps {
   showOuterGlow?: boolean;
   /** Peak strike-splash diameter (world units). Default STRIKE_SPRITE_PEAK_SIZE. */
   splashPeakSize?: number;
+  /** Grow-window duration (s). Default BEAM_GROW_DUR_S. Peers jitter this. */
+  growDur?: number;
+  /** Hold duration (s). Default BEAM_HOLD_DUR_S. */
+  holdDur?: number;
+  /** Strike-window duration (s). Default BEAM_STRIKE_DUR_S. Keep > holdDur. */
+  strikeDur?: number;
+  /** Core scrolling-flow speed (wu/s). Default BEAM_FLOW_SPEED. */
+  flowSpeed?: number;
 }
 
 /** Inner-core cylinder radius — the bright white-to-cyan filament. */
@@ -43,12 +52,6 @@ const CORE_RADIUS_W = 0.22;
 const HALO_RADIUS_W = 0.80;
 /** Outer-glow cylinder radius — the broad atmospheric bleed. ~5.7× the core. */
 const OUTER_GLOW_RADIUS_W = 1.25;
-
-const PHASE_CFG = {
-  growDur: BEAM_GROW_DUR_S,
-  holdDur: BEAM_HOLD_DUR_S,
-  strikeDur: BEAM_STRIKE_DUR_S,
-};
 
 // One splash texture shared by every BlockBeam (hero + all peer tributaries):
 // a soft white→cyan radial gradient, immutable. Built lazily on first use so
@@ -76,6 +79,10 @@ export default function BlockBeam({
   haloRadius = HALO_RADIUS_W,
   showOuterGlow = true,
   splashPeakSize = STRIKE_SPRITE_PEAK_SIZE,
+  growDur = BEAM_GROW_DUR_S,
+  holdDur = BEAM_HOLD_DUR_S,
+  strikeDur = BEAM_STRIKE_DUR_S,
+  flowSpeed = BEAM_FLOW_SPEED,
 }: BlockBeamProps) {
   const coreMeshRef = useRef<THREE.Mesh>(null);
   const haloMeshRef = useRef<THREE.Mesh>(null);
@@ -141,8 +148,23 @@ export default function BlockBeam({
       return;
     }
 
+    // Per-instance shape, applied every frame (cheap uniform writes) so the parent
+    // can vary the beam's tempo/flow per block without rebuilding materials.
+    coreMaterial.uniforms.uGrowDur.value = growDur;
+    coreMaterial.uniforms.uHoldDur.value = holdDur;
+    coreMaterial.uniforms.uStrikeDur.value = strikeDur;
+    coreMaterial.uniforms.uFlowSpeed.value = flowSpeed;
+    haloMaterial.uniforms.uGrowDur.value = growDur;
+    haloMaterial.uniforms.uHoldDur.value = holdDur;
+    haloMaterial.uniforms.uStrikeDur.value = strikeDur;
+    if (outerGlowMaterial) {
+      outerGlowMaterial.uniforms.uGrowDur.value = growDur;
+      outerGlowMaterial.uniforms.uHoldDur.value = holdDur;
+      outerGlowMaterial.uniforms.uStrikeDur.value = strikeDur;
+    }
+
     const age = simClock.elapsedSec - trigger.firedAt;
-    const phase = computeBeamPhase(age, PHASE_CFG);
+    const phase = computeBeamPhase(age, { growDur, holdDur, strikeDur });
 
     if (phase.expired) {
       fireRef.current = null;

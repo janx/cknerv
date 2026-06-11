@@ -43,6 +43,29 @@ describe('BlockBeam mount', () => {
       ),
     ).not.toThrow();
   });
+
+  it('mounts with explicit shape overrides (jittered durations + flow) without throwing', () => {
+    const fireRef = { current: null };
+    expect(() =>
+      render(
+        <Canvas>
+          <BlockBeam
+            originWorld={[12, 22, -8]}
+            targetY={CELLS_Y}
+            fireRef={fireRef}
+            coreRadius={0.11}
+            haloRadius={0.38}
+            showOuterGlow={false}
+            splashPeakSize={1.7}
+            growDur={1.18}
+            holdDur={0.74}
+            strikeDur={0.99}
+            flowSpeed={36}
+          />
+        </Canvas>,
+      ),
+    ).not.toThrow();
+  });
 });
 
 describe('BlockBeam module shape', () => {
