@@ -16,13 +16,15 @@ import {
   peerChurnDiff,
   peerCrystalSize,
   peerCrystalBrightness,
-  blockCourierState,
-  peerBeamFiredAge,
-  rankPeers,
-  BLOCK_STAGGER_S,
+  peerArrivalAge,
+  entryCourierState,
+  beamShapeJitter,
   PEER_COLORS,
   PEER_OUTER_RADIUS,
+  rankPeers,
 } from '../derives/peers.derive';
+import { BEAM_GROW_DUR_S, BEAM_HOLD_DUR_S, BEAM_STRIKE_DUR_S } from '../ui/topologyConstants';
+import { BEAM_FLOW_SPEED } from '../materials/blockBeamMaterial';
 import CrystalGlow from './CrystalGlow';
 import FlowBeam, { type FlowStyle } from './FlowBeam';
 import BlockBeam from './BlockBeam';
@@ -70,22 +72,9 @@ interface PeerConstellationProps {
   onSelect: (id: string | null) => void;
   /** Increments on each new block; triggers the inward convergence pulse. */
   blockPulseAtMs?: number;
-}
-
-/** The peer most plausibly relaying us a new block: the alive peer with the
- *  lowest latency. Drives the inbound "receive" courier. null if no peers. */
-function pickPropagationSource(map: Map<string, RenderPeer>): string | null {
-  let bestId: string | null = null;
-  let bestLatency = Infinity;
-  for (const rp of map.values()) {
-    if (rp.deadAt !== null) continue;
-    const lat = rp.peer.latency_ms ?? Infinity;
-    if (bestId === null || lat < bestLatency) {
-      bestId = rp.peer.node_id;
-      bestLatency = lat;
-    }
-  }
-  return bestId;
+  /** node_id of the peer that relays us this block (from blockArrivalSchedule). The
+   *  entry peer animates the receive courier; null = none / no peers. */
+  entryPeerId?: string | null;
 }
 
 export default function PeerConstellation({
@@ -95,6 +84,7 @@ export default function PeerConstellation({
   selectedId,
   onSelect,
   blockPulseAtMs = 0,
+  entryPeerId = null,
 }: PeerConstellationProps) {
   // Retain recently-dropped peers briefly so they can fade out.
   const retainRef = useRef<Map<string, RenderPeer>>(new Map());
@@ -133,19 +123,22 @@ export default function PeerConstellation({
     setRender(Array.from(map.values()));
   }, [peers]);
 
-  // Per-block propagation pulse: the frame loop reads `at` (when it fired) and
-  // `sourceId` (which peer relayed us the block) to choreograph the
-  // receive→relay courier cubes.
-  const pulseRef = useRef<{ at: number; sourceId: string | null } | null>(null);
+  // Per-block pulse: the frame loop reads `at` (when it fired), `nonce` (the block
+  // id, for seeding arrival + shape), and `entryId` (which peer relays us the block).
+  const pulseRef = useRef<{ at: number; nonce: number; entryId: string | null } | null>(null);
   const lastPulseRef = useRef(blockPulseAtMs);
   useEffect(() => {
     if (blockPulseAtMs > lastPulseRef.current) {
       lastPulseRef.current = blockPulseAtMs;
       pulseRef.current = {
         at: simClock.elapsedSec,
-        sourceId: pickPropagationSource(retainRef.current),
+        nonce: blockPulseAtMs,
+        entryId: entryPeerId ?? null,
       };
     }
+    // entryPeerId is read from the latest closure when blockPulseAtMs advances (App
+    // updates both from the same cells-cache render), so [blockPulseAtMs] suffices.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [blockPulseAtMs]);
 
   // When a dropped peer finishes fading, drop it from the retain map and
@@ -173,6 +166,7 @@ export default function PeerConstellation({
           selected={selectedId === `peer:${rp.peer.node_id}`}
           onSelect={onSelect}
           pulseRef={pulseRef}
+          blockPulseAtMs={blockPulseAtMs}
           onExpire={onExpire}
         />
       ))}
@@ -200,6 +194,7 @@ function PeerNode({
   selected,
   onSelect,
   pulseRef,
+  blockPulseAtMs,
   onExpire,
 }: {
   rp: RenderPeer;
@@ -207,7 +202,8 @@ function PeerNode({
   localVersion: string;
   selected: boolean;
   onSelect: (id: string | null) => void;
-  pulseRef: React.MutableRefObject<{ at: number; sourceId: string | null } | null>;
+  pulseRef: React.MutableRefObject<{ at: number; nonce: number; entryId: string | null } | null>;
+  blockPulseAtMs: number;
   onExpire: (nodeId: string) => void;
 }) {
   // Crystal + ambient-flow intensity (churn fade × sync brightness), each read
@@ -238,12 +234,18 @@ function PeerNode({
   );
   const courierRef = useRef<THREE.Group>(null);
   const courierIntensityRef = useRef(0);
-  // Tributary beam: fired when this peer's relay courier lands (it received
-  // the block); a future-dated firedAt sits idle until then.
+  // Tributary beam: fired when this peer hears the block (latency-derived
+  // arrival); a future-dated firedAt sits idle until then.
   const peerBeamFireRef = useRef<{ firedAt: number } | null>(null);
   const lastBeamPulseRef = useRef(-1);
-  // Per-peer relay-departure stagger so couriers fan out instead of piling.
-  const stagger = useMemo(() => ((seed % 1000) / 1000) * BLOCK_STAGGER_S, [seed]);
+  // This peer's arrival age for the current block (set on each pulse), reused by the
+  // entry courier each frame.
+  const arrivalAgeRef = useRef(0);
+
+  const jit = useMemo(
+    () => beamShapeJitter(rp.peer.node_id, blockPulseAtMs),
+    [rp.peer.node_id, blockPulseAtMs],
+  );
 
   const sync = syncProximity(rp.peer.best_known, tip);
   const size = peerCrystalSize(sync);
@@ -269,24 +271,22 @@ function PeerNode({
     intensityRef.current = alpha * brightness;
     flowIntensityRef.current = alpha * brightness; // ambient flow (no surge)
 
-    // Block courier cube: the source peer's cube rides peer→hub (we receive the
-    // block), then every peer's cube rides hub→peer staggered (we relay it).
+    // New-block arrival: schedule this peer's tributary beam to fire when it hears
+    // the block (latency-derived arrival), and — if it is the entry peer — animate a
+    // receive courier riding peer → local over the relay hop.
     const pulse = pulseRef.current;
-    // When a new block pulse arrives, schedule this peer's tributary beam to
-    // fire the moment its relay courier lands — receive leg + this peer's
-    // stagger + relay leg (peerBeamFiredAge).
     if (pulse && pulse.at !== lastBeamPulseRef.current) {
       lastBeamPulseRef.current = pulse.at;
-      peerBeamFireRef.current = { firedAt: pulse.at + peerBeamFiredAge(stagger) };
+      arrivalAgeRef.current = peerArrivalAge(rp.peer, pulse.nonce);
+      peerBeamFireRef.current = { firedAt: pulse.at + arrivalAgeRef.current };
     }
-    const ev = blockCourierState(
-      pulse ? now - pulse.at : -1,
-      stagger,
-      pulse?.sourceId === rp.peer.node_id,
-    );
     const courier = courierRef.current;
     if (courier) {
-      if (ev.phase === 'idle') {
+      const isEntry = pulse?.entryId === rp.peer.node_id;
+      const ev = pulse && isEntry
+        ? entryCourierState(arrivalAgeRef.current, now - pulse.at)
+        : { visible: false, pos: 0 };
+      if (!ev.visible) {
         courier.visible = false;
         courierIntensityRef.current = 0;
       } else {
@@ -298,9 +298,8 @@ function PeerNode({
         );
         courier.visible = true;
         courier.position.set(cx, cy, cz);
-        // Progress within the active leg → fade in on departure, out on arrival.
-        const prog = ev.phase === 'relay' ? ev.pos : 1 - ev.pos;
-        courierIntensityRef.current = Math.sin(Math.PI * prog) * alpha;
+        // Fade in on departure (pos→1), out on arrival (pos→0); peak mid-flight.
+        courierIntensityRef.current = Math.sin(Math.PI * (1 - ev.pos)) * alpha;
       }
     }
   });
@@ -340,7 +339,7 @@ function PeerNode({
           seed={rp.peer.node_id}
         />
       </group>
-      {/* Light "tributary" beam: when this peer receives the relayed block it
+      {/* Light "tributary" beam: when this peer hears the block it
           fires a thin column up into the shared cells canopy — every node
           confirms the block, not just the local hero beam. No charge, no
           outer-glow, smaller splash; drives no canopy shockwave (the one
@@ -349,10 +348,14 @@ function PeerNode({
         originWorld={rp.pos}
         targetY={CELLS_Y}
         fireRef={peerBeamFireRef}
-        coreRadius={0.1}
+        coreRadius={0.1 * jit.coreMul}
         haloRadius={0.38}
         showOuterGlow={false}
-        splashPeakSize={1.6}
+        splashPeakSize={1.6 * jit.splashMul}
+        growDur={BEAM_GROW_DUR_S * jit.growMul}
+        holdDur={BEAM_HOLD_DUR_S * jit.tailMul}
+        strikeDur={BEAM_STRIKE_DUR_S * jit.tailMul}
+        flowSpeed={BEAM_FLOW_SPEED * jit.flowMul}
       />
     </group>
   );
