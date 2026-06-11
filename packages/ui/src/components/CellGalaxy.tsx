@@ -22,7 +22,6 @@ import {
   CELLS_Y,
   chainNodeWorldPosition,
 } from '../layout';
-import { BLOCK_RECEIVE_S } from '../derives/peers.derive';
 
 /** Cyan palette for the structural chain anchor (CKB icosahedron).
  *  The chain anchor reads as "structural backbone / chain truth" and
@@ -102,11 +101,11 @@ interface CellGalaxyProps {
    *  animations (e.g. RCG's NeuralNetwork + DendriticBurst) atop the
    *  cell field without coupling CellGalaxy to non-generic components. */
   overlay?: ReactNode;
-  /** True when the local node has peers, i.e. a block actually arrives FROM a
-   *  peer. CellGalaxy then delays its whole block reaction by BLOCK_RECEIVE_S
-   *  (the receive leg) so the canopy lights up when the local node RECEIVES
-   *  the block, not at the raw pulse instant. False (no peers) → fire at t=0. */
-  receivesFromPeer?: boolean;
+  /** Seconds after the block pulse at which the LOCAL node applies the block —
+   *  i.e. when it hears it from a peer (blockArrivalSchedule.localReceiveDelayS).
+   *  The whole ledger reaction is delayed by this, so the canonical ripple never
+   *  fires at t=0 / never before the peers. 0 = no peers (degenerate). */
+  localReceiveDelayS?: number;
 }
 
 /** Per-tag palette. The cell-galaxy projection ships opaque tag strings
@@ -580,7 +579,7 @@ function CellPicker({ cellsListRef, onSelect }: CellPickerProps) {
  * CellShell wireframe. Block shockwaves brighten/expand that existing
  * core and shell; no separate drifted halo Points layer is mounted.
  */
-export default function CellGalaxy({ ckbNodeIds, minerCkbNodeIds, universeSeed, selectedId, onSelect, cellFlashRef, flashDirtyRef, overlay, receivesFromPeer = false }: CellGalaxyProps) {
+export default function CellGalaxy({ ckbNodeIds, minerCkbNodeIds, universeSeed, selectedId, onSelect, cellFlashRef, flashDirtyRef, overlay, localReceiveDelayS = 0 }: CellGalaxyProps) {
   const groupRef = useRef<THREE.Group>(null);
   // Server-driven cell list. The component is now a pure visual layer:
   // it reads cells from the cache and writes their xyz / born / death
@@ -863,10 +862,11 @@ export default function CellGalaxy({ ckbNodeIds, minerCkbNodeIds, universeSeed, 
         );
 
         // The local node is not a miner: it APPLIES a block it received from a
-        // peer. Delay the whole ledger reaction by the receive leg so the
-        // canopy lights up when we receive (the courier reaches the hub), not
-        // at the raw pulse instant. Zero when we have no peer to receive from.
-        const receiveDelayS = receivesFromPeer ? BLOCK_RECEIVE_S : 0;
+        // peer. Delay the whole ledger reaction by localReceiveDelayS (the entry
+        // peer's latency-derived arrival + relay hop) so the canopy lights up when
+        // we receive the block — the courier reaches the hub — not at the raw
+        // pulse instant. Zero when we have no peer to receive from.
+        const receiveDelayS = localReceiveDelayS;
         const blockTriggerSceneS = simClock.elapsedSec + receiveDelayS;
 
         // Block trigger: anchored at the local node icosahedron (it applies

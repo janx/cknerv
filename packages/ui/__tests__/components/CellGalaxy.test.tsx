@@ -57,7 +57,7 @@ describe('CellGalaxy', () => {
     expect(source).not.toContain('CellCanopyVeil');
   });
 
-  it('mounts with receivesFromPeer (receive-delayed reaction) without throwing', () => {
+  it('mounts with localReceiveDelayS (receive-delayed reaction) without throwing', () => {
     const cellFlashRef = { current: new Map<number, number>() };
     const flashDirtyRef = { current: false };
     expect(() =>
@@ -70,7 +70,7 @@ describe('CellGalaxy', () => {
               onSelect={() => {}}
               cellFlashRef={cellFlashRef}
               flashDirtyRef={flashDirtyRef}
-              receivesFromPeer
+              localReceiveDelayS={0.3}
             />
           </Canvas>
         </CellGalaxyProvider>,
