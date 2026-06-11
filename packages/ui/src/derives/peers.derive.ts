@@ -166,6 +166,21 @@ export function beamShapeJitter(nodeId: string, nonce: number): BeamShapeJitter 
   };
 }
 
+export interface EntryCourier {
+  visible: boolean;
+  /** Position along peer→local: 1 = at the peer, 0 = arrived at local. */
+  pos: number;
+}
+
+/** The entry peer's receive courier: rides peer→local over BLOCK_RELAY_HOP_S,
+ *  starting when the peer hears the block (ageSec = arrivalAge). Hidden before it
+ *  departs and after it lands. */
+export function entryCourierState(arrivalAge: number, ageSec: number): EntryCourier {
+  const t = (ageSec - arrivalAge) / BLOCK_RELAY_HOP_S; // 0 at depart, 1 at land
+  if (t < 0 || t >= 1) return { visible: false, pos: 0 };
+  return { visible: true, pos: 1 - t };
+}
+
 /** Inbound "receive" leg duration (source peer → hub), seconds. */
 export const BLOCK_RECEIVE_S = 0.3;
 /** Each courier's outbound "relay" leg duration (hub → peer), seconds. */
