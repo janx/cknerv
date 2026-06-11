@@ -12,6 +12,9 @@ import {
   blockCourierState,
   peerBeamFiredAge,
   peerArrivalAge,
+  blockArrivalSchedule,
+  rankPeers,
+  PEER_RENDER_CAP,
   BLOCK_RECEIVE_S,
   BLOCK_RELAY_S,
   BLOCK_STAGGER_S,
@@ -137,6 +140,60 @@ describe('peers.derive', () => {
   it('peerArrivalAge: a new block nonce shifts the time', () => {
     const p = peer({ node_id: 'A', latency_ms: 50 });
     expect(peerArrivalAge(p, 1)).not.toBe(peerArrivalAge(p, 2));
+  });
+
+  it('rankPeers: outbound first, then ascending latency', () => {
+    const ranked = rankPeers([
+      peer({ node_id: 'in-fast', direction: 'inbound', latency_ms: 5 }),
+      peer({ node_id: 'out-slow', direction: 'outbound', latency_ms: 300 }),
+      peer({ node_id: 'out-fast', direction: 'outbound', latency_ms: 10 }),
+    ]);
+    expect(ranked.map((p) => p.node_id)).toEqual(['out-fast', 'out-slow', 'in-fast']);
+  });
+
+  it('rankPeers: caps at PEER_RENDER_CAP', () => {
+    const many = Array.from({ length: PEER_RENDER_CAP + 20 }, (_, i) =>
+      peer({ node_id: `n${i}`, latency_ms: i }));
+    expect(rankPeers(many)).toHaveLength(PEER_RENDER_CAP);
+  });
+
+  it('blockArrivalSchedule: empty peers → no entry, zero delay', () => {
+    expect(blockArrivalSchedule([], 1)).toEqual({ entryId: null, localReceiveDelayS: 0 });
+  });
+
+  it('blockArrivalSchedule: entry = earliest arrival; local trails by the relay hop', () => {
+    const peers = [
+      peer({ node_id: 'far', latency_ms: 400 }),
+      peer({ node_id: 'near', latency_ms: 0 }),
+    ];
+    const s = blockArrivalSchedule(peers, 5);
+    expect(s.entryId).toBe('near'); // lowest latency → earliest arrival
+    expect(s.localReceiveDelayS).toBeCloseTo(
+      peerArrivalAge(peers[1], 5) + BLOCK_RELAY_HOP_S,
+      9,
+    );
+  });
+
+  it('blockArrivalSchedule: local is never first (delay > entry arrival)', () => {
+    const peers = [
+      peer({ node_id: 'A', latency_ms: 10 }),
+      peer({ node_id: 'B', latency_ms: 250 }),
+    ];
+    const s = blockArrivalSchedule(peers, 9);
+    const entryAge = Math.min(peerArrivalAge(peers[0], 9), peerArrivalAge(peers[1], 9));
+    expect(s.localReceiveDelayS).toBeGreaterThan(entryAge);
+  });
+
+  it('blockArrivalSchedule: entry peer changes with the block nonce', () => {
+    // Equal latency → per-block jitter decides the winner.
+    const peers = [
+      peer({ node_id: 'A', latency_ms: 100 }),
+      peer({ node_id: 'B', latency_ms: 100 }),
+    ];
+    const winners = new Set(
+      [1, 2, 3, 4, 5, 6, 7, 8].map((n) => blockArrivalSchedule(peers, n).entryId),
+    );
+    expect(winners.size).toBeGreaterThan(1);
   });
 
   it('peerColorKind reflects version mismatch then direction', () => {

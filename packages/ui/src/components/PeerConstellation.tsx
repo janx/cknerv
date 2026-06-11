@@ -18,6 +18,7 @@ import {
   peerCrystalBrightness,
   blockCourierState,
   peerBeamFiredAge,
+  rankPeers,
   BLOCK_STAGGER_S,
   PEER_COLORS,
   PEER_OUTER_RADIUS,
@@ -26,8 +27,6 @@ import CrystalGlow from './CrystalGlow';
 import FlowBeam, { type FlowStyle } from './FlowBeam';
 import BlockBeam from './BlockBeam';
 
-/** Max peers rendered; the rest are summarized in the NETWORK HUD. */
-export const PEER_RENDER_CAP = 80;
 /** Fade-in / fade-out duration for peer churn (seconds). */
 const FADE_S = 0.6;
 /** World position of the local hub — peer belts flow to/from here. */
@@ -71,17 +70,6 @@ interface PeerConstellationProps {
   onSelect: (id: string | null) => void;
   /** Increments on each new block; triggers the inward convergence pulse. */
   blockPulseAtMs?: number;
-}
-
-/** Order peers deterministically (outbound first, then lowest latency) and
- *  cap the count so a high-degree node stays legible. */
-function rankPeers(peers: Peer[]): Peer[] {
-  return [...peers]
-    .sort((a, b) => {
-      if (a.direction !== b.direction) return a.direction === 'outbound' ? -1 : 1;
-      return (a.latency_ms ?? 1e9) - (b.latency_ms ?? 1e9);
-    })
-    .slice(0, PEER_RENDER_CAP);
 }
 
 /** The peer most plausibly relaying us a new block: the alive peer with the
