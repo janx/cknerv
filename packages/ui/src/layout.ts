@@ -28,7 +28,7 @@ const CHAIN_ELLIPSE_X = 1.25;
 const CHAIN_ELLIPSE_Z = 0.85;
 
 /** Small deterministic PRNG keyed by integer (mulberry32). */
-function mulberry32(seed: number): () => number {
+export function mulberry32(seed: number): () => number {
   let s = seed >>> 0;
   return () => {
     s = (s + 0x6d2b79f5) >>> 0;

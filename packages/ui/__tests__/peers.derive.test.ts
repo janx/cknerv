@@ -11,9 +11,13 @@ import {
   peerCrystalBrightness,
   blockCourierState,
   peerBeamFiredAge,
+  peerArrivalAge,
   BLOCK_RECEIVE_S,
   BLOCK_RELAY_S,
   BLOCK_STAGGER_S,
+  BLOCK_ARRIVAL_SPREAD_S,
+  BLOCK_ARRIVAL_JITTER_S,
+  BLOCK_RELAY_HOP_S,
   PEER_INNER_RADIUS,
   PEER_OUTER_RADIUS,
 } from '../src/derives/peers.derive';
@@ -104,6 +108,35 @@ describe('peers.derive', () => {
     );
     // Strictly increasing in stagger.
     expect(peerBeamFiredAge(0.1)).toBeLessThan(peerBeamFiredAge(0.2));
+  });
+
+  it('peerArrivalAge: deterministic per (peer, nonce)', () => {
+    const p = peer({ node_id: 'A', latency_ms: 50 });
+    expect(peerArrivalAge(p, 7)).toBe(peerArrivalAge(p, 7));
+  });
+
+  it('peerArrivalAge: higher latency arrives later (base dominates jitter)', () => {
+    const lo = peer({ node_id: 'A', latency_ms: 0 });
+    const hi = peer({ node_id: 'A', latency_ms: 400 });
+    // base gap = SPREAD*0.85 ≈ 0.68 >> 2*jitter = 0.30, so this holds at any nonce
+    for (const nonce of [1, 2, 3, 99]) {
+      expect(peerArrivalAge(hi, nonce)).toBeGreaterThan(peerArrivalAge(lo, nonce));
+    }
+  });
+
+  it('peerArrivalAge: within the jitter band of the latency base and >= 0', () => {
+    const p = peer({ node_id: 'Z', latency_ms: 200 }); // latencyToRadius01 = 0.5
+    const base = BLOCK_ARRIVAL_SPREAD_S * (0.15 + 0.85 * 0.5);
+    for (const nonce of [0, 5, 42, 1000]) {
+      const a = peerArrivalAge(p, nonce);
+      expect(a).toBeGreaterThanOrEqual(0);
+      expect(Math.abs(a - base)).toBeLessThanOrEqual(BLOCK_ARRIVAL_JITTER_S + 1e-9);
+    }
+  });
+
+  it('peerArrivalAge: a new block nonce shifts the time', () => {
+    const p = peer({ node_id: 'A', latency_ms: 50 });
+    expect(peerArrivalAge(p, 1)).not.toBe(peerArrivalAge(p, 2));
   });
 
   it('peerColorKind reflects version mismatch then direction', () => {
