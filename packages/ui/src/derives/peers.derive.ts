@@ -2,7 +2,8 @@
 // no three.js — unit-tested directly.
 
 import type { ChainEntry, ChainNode, Peer, PeerDirection } from '@cknerv/types';
-import { CHAIN_Y } from '../layout';
+import { CHAIN_Y, mulberry32 } from '../layout';
+import { fnv1a } from '../geometry/edgeBezier';
 
 /** Latency at/above this (ms) maps to the outer rim. */
 export const PEER_LATENCY_CAP_MS = 400;
@@ -54,6 +55,45 @@ export function peerCrystalSize(sync: number): number {
  *  glow brighter. Multiplied by the churn fade alpha at render time. */
 export function peerCrystalBrightness(sync: number): number {
   return 0.45 + sync * 0.5;
+}
+
+// ─── New-block propagation: latency-based arrival (no hub) ───────────────
+// A block is mined elsewhere and reaches each node at a time derived from real
+// network latency (latency-to-local, the only signal we have) plus per-block
+// jitter, so the ordering reshuffles every block. Seeded by fnv1a(node_id) ⊕
+// nonce (the block's lastPulseAtMs) — per-block-varying yet reproducible.
+
+/** Total spread of block-arrival times across peers, seconds: the most
+ *  network-distant peer hears a block ~this long after the nearest. */
+export const BLOCK_ARRIVAL_SPREAD_S = 0.8;
+/** Per-block jitter amplitude (±, seconds) layered on each peer's arrival so the
+ *  order reshuffles block-to-block instead of being a rigid latency sort. */
+export const BLOCK_ARRIVAL_JITTER_S = 0.15;
+/** Visible courier flight time entry-peer → local; also the margin by which the
+ *  local node trails the first peer to relay it the block (so local is never first). */
+export const BLOCK_RELAY_HOP_S = 0.27;
+/** Floor on a peer's latency fraction so even the lowest-latency peer has a small
+ *  non-zero base delay (the block still had to reach our neighbourhood). */
+const ARRIVAL_BASE_FRAC = 0.15;
+
+/** Deterministic generator for one peer × one block: fold the node-id hash with
+ *  the per-block nonce so the same (node, block) always yields the same stream,
+ *  and a new block reshuffles. Floors the (ms-timestamp) nonce to a uint first. */
+function peerBlockRng(nodeId: string, nonce: number): () => number {
+  return mulberry32((fnv1a(nodeId) ^ (Math.floor(nonce) >>> 0)) >>> 0);
+}
+
+/** Age (seconds since the block pulse) at which `peer` hears the block: a
+ *  latency-proportional base + per-block jitter. Lower latency → earlier on
+ *  average; `nonce` reshuffles each block. Clamped ≥ 0. The jitter draw is the
+ *  FIRST value of peerBlockRng so beamShapeJitter can take subsequent draws from
+ *  the same (re-seeded) stream without colliding. */
+export function peerArrivalAge(peer: Peer, nonce: number): number {
+  const lat01 = latencyToRadius01(peer.latency_ms);
+  const base =
+    BLOCK_ARRIVAL_SPREAD_S * (ARRIVAL_BASE_FRAC + (1 - ARRIVAL_BASE_FRAC) * lat01);
+  const jit = (peerBlockRng(peer.node_id, nonce)() - 0.5) * 2 * BLOCK_ARRIVAL_JITTER_S;
+  return Math.max(0, base + jit);
 }
 
 /** Inbound "receive" leg duration (source peer → hub), seconds. */
