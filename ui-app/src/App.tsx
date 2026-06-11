@@ -11,6 +11,8 @@ import { Canvas } from '@react-three/fiber';
 import { Hud, OrbitControls, OrthographicCamera, Stars } from '@react-three/drei';
 import {
   aggregateCellsStats,
+  blockArrivalSchedule,
+  rankPeers,
   BackfillHud,
   CellDetailHud,
   CellDetailHudOverlay,
@@ -127,6 +129,14 @@ export default function App({
   const chain = chainCache.chain;
   const chainNodes = chainCache.chainNodes;
   const peers = chainCache.peers;
+  // Per-block propagation schedule, recomputed when a new block pulse lands. Drives
+  // the local node's apply-delay (CellGalaxy) and the entry peer (PeerConstellation)
+  // from one source so both layers agree. Computed over the same ranked + capped set
+  // PeerConstellation renders, so entryId always references an on-screen peer.
+  const blockSchedule = useMemo(
+    () => blockArrivalSchedule(rankPeers(peers), cellsCache.lastPulseAtMs),
+    [peers, cellsCache.lastPulseAtMs],
+  );
   // The observed local node anchors the constellation + supplies the
   // version used for peer version-mismatch coloring. Prefer an explicit id
   // lookup over positional [0] so a registry reorder can't silently anchor
@@ -240,7 +250,7 @@ export default function App({
 
           <CellGalaxy
             ckbNodeIds={ckbNodeIds}
-            receivesFromPeer={peers.length > 0}
+            localReceiveDelayS={blockSchedule.localReceiveDelayS}
             selectedId={selectedId}
             onSelect={setSelectedId}
             cellFlashRef={cellFlashRef}
@@ -273,6 +283,7 @@ export default function App({
             selectedId={selectedId}
             onSelect={setSelectedId}
             blockPulseAtMs={cellsCache.lastPulseAtMs}
+            entryPeerId={blockSchedule.entryId}
           />
 
           <OrbitControls
