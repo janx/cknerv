@@ -96,6 +96,50 @@ export function peerArrivalAge(peer: Peer, nonce: number): number {
   return Math.max(0, base + jit);
 }
 
+/** Max peers rendered; the rest are summarized in the NETWORK HUD. */
+export const PEER_RENDER_CAP = 80;
+
+/** Order peers deterministically (outbound first, then lowest latency) and cap
+ *  the count so a high-degree node stays legible. Shared by PeerConstellation
+ *  (what it renders) and App (what the schedule is computed over) so both agree. */
+export function rankPeers(peers: Peer[]): Peer[] {
+  return [...peers]
+    .sort((a, b) => {
+      if (a.direction !== b.direction) return a.direction === 'outbound' ? -1 : 1;
+      return (a.latency_ms ?? 1e9) - (b.latency_ms ?? 1e9);
+    })
+    .slice(0, PEER_RENDER_CAP);
+}
+
+export interface BlockArrivalSchedule {
+  /** node_id of the earliest-arriving peer this block (the one we hear it from);
+   *  null when there are no peers. */
+  entryId: string | null;
+  /** Age (s since pulse) at which the LOCAL node applies the block = entry peer's
+   *  arrival + BLOCK_RELAY_HOP_S. 0 when there are no peers (degenerate: nothing to
+   *  receive from → hero fires at t=0). */
+  localReceiveDelayS: number;
+}
+
+/** Per-block schedule shared by both layers. `peers` is the ranked + capped set
+ *  PeerConstellation actually renders (so entryId is always on-screen). entryId =
+ *  argmin peerArrivalAge; ties broken by lexicographically-lowest node_id. */
+export function blockArrivalSchedule(peers: Peer[], nonce: number): BlockArrivalSchedule {
+  let entryId: string | null = null;
+  let bestAge = Infinity;
+  for (const p of peers) {
+    const age = peerArrivalAge(p, nonce);
+    if (age < bestAge || (age === bestAge && entryId !== null && p.node_id < entryId)) {
+      bestAge = age;
+      entryId = p.node_id;
+    }
+  }
+  return {
+    entryId,
+    localReceiveDelayS: entryId === null ? 0 : bestAge + BLOCK_RELAY_HOP_S,
+  };
+}
+
 /** Inbound "receive" leg duration (source peer → hub), seconds. */
 export const BLOCK_RECEIVE_S = 0.3;
 /** Each courier's outbound "relay" leg duration (hub → peer), seconds. */
