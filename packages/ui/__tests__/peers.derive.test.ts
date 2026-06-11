@@ -9,17 +9,12 @@ import {
   summarizeNetwork,
   peerCrystalSize,
   peerCrystalBrightness,
-  blockCourierState,
-  peerBeamFiredAge,
   peerArrivalAge,
   beamShapeJitter,
   entryCourierState,
   blockArrivalSchedule,
   rankPeers,
   PEER_RENDER_CAP,
-  BLOCK_RECEIVE_S,
-  BLOCK_RELAY_S,
-  BLOCK_STAGGER_S,
   BLOCK_ARRIVAL_SPREAD_S,
   BLOCK_ARRIVAL_JITTER_S,
   BLOCK_RELAY_HOP_S,
@@ -78,42 +73,6 @@ describe('peers.derive', () => {
   it('peerCrystalBrightness grows with sync proximity', () => {
     expect(peerCrystalBrightness(0)).toBeCloseTo(0.45, 5);
     expect(peerCrystalBrightness(1)).toBeCloseTo(0.95, 5);
-  });
-
-  it('blockCourierState: source rides peer→hub during receive', () => {
-    expect(blockCourierState(-0.1, 0, true)).toEqual({ phase: 'idle', pos: 0 });
-    expect(blockCourierState(0, 0, true)).toEqual({ phase: 'receive', pos: 1 });
-    const r = blockCourierState(0.15, 0, true);
-    expect(r.phase).toBe('receive');
-    expect(r.pos).toBeCloseTo(0.5, 5); // 1 - 0.15/0.3
-  });
-
-  it('blockCourierState: non-source waits, then relays hub→peer', () => {
-    expect(blockCourierState(0.15, 0, false).phase).toBe('idle'); // before relayStart
-    expect(blockCourierState(0.3, 0, false)).toEqual({ phase: 'relay', pos: 0 });
-    const y = blockCourierState(0.6, 0, false);
-    expect(y.phase).toBe('relay');
-    expect(y.pos).toBeCloseTo(0.5, 5); // (0.6 - 0.3) / 0.6
-    expect(blockCourierState(0.9, 0, false).phase).toBe('idle'); // after relay window
-  });
-
-  it('blockCourierState: stagger delays the relay departure', () => {
-    expect(blockCourierState(0.4, 0.2, false).phase).toBe('idle'); // relayStart = 0.5
-    // Source is intentionally idle between receive-end and its staggered relay.
-    expect(blockCourierState(0.4, 0.2, true).phase).toBe('idle');
-    const z = blockCourierState(0.6, 0.2, false);
-    expect(z.phase).toBe('relay');
-    expect(z.pos).toBeCloseTo(0.1667, 3); // (0.6 - 0.5) / 0.6
-  });
-
-  it('peerBeamFiredAge: relay arrival = receive + stagger + relay', () => {
-    expect(peerBeamFiredAge(0)).toBeCloseTo(BLOCK_RECEIVE_S + BLOCK_RELAY_S, 6);
-    expect(peerBeamFiredAge(BLOCK_STAGGER_S)).toBeCloseTo(
-      BLOCK_RECEIVE_S + BLOCK_STAGGER_S + BLOCK_RELAY_S,
-      6,
-    );
-    // Strictly increasing in stagger.
-    expect(peerBeamFiredAge(0.1)).toBeLessThan(peerBeamFiredAge(0.2));
   });
 
   it('peerArrivalAge: deterministic per (peer, nonce)', () => {
