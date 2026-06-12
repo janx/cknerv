@@ -34,27 +34,28 @@ fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
-/// Run the boot backfill. Returns the anchor tip (`tip0`) observed at the
-/// start so the caller seeds `PollState.last_tip` and the forward poll
-/// resumes at `tip0 + 1`. `blocks == 0` is a no-op that still returns the
-/// current tip.
-pub(crate) async fn run_backfill(
+/// Replay blocks `lo..=hi` (inclusive) through the same `translate_block`
+/// path the live poll uses, wrapped in a `BackfillProgress` envelope so the
+/// projection suppresses block pulses and the SPA shows progress. Blocks are
+/// fetched concurrently but applied in strict ascending order (a death must
+/// find its in-window birth). `lo > hi` is a no-op. Used by both the boot
+/// backfill ([`run_backfill`]) and the live poll's catch-up branch.
+pub(crate) async fn replay_window(
     rpc: &RpcClient,
-    blocks: u64,
+    lo: u64,
+    hi: u64,
     out: &mpsc::Sender<Mutation>,
-) -> Result<u64> {
-    let tip0 = rpc.get_tip_block_number().await?;
-    if blocks == 0 {
-        return Ok(tip0);
+) -> Result<()> {
+    if lo > hi {
+        return Ok(());
     }
-    let lo = tip0.saturating_sub(blocks - 1);
-    let total = tip0 - lo + 1;
+    let total = hi - lo + 1;
 
     let _ = out
         .send(Mutation::BackfillProgress { done: 0, total, active: true })
         .await;
 
-    let mut stream = stream::iter(lo..=tip0)
+    let mut stream = stream::iter(lo..=hi)
         .map(|n| async move { (n, rpc.get_block_by_number(n).await) })
         .buffered(FETCH_CONCURRENCY);
 
@@ -95,5 +96,23 @@ pub(crate) async fn run_backfill(
     let _ = out
         .send(Mutation::BackfillProgress { done: total, total, active: false })
         .await;
+    Ok(())
+}
+
+/// Run the boot backfill: replay the most recent `blocks` blocks. Returns the
+/// anchor tip (`tip0`) observed at the start so the caller seeds
+/// `PollState.last_tip` and the forward poll resumes at `tip0 + 1`.
+/// `blocks == 0` is a no-op that still returns the current tip.
+pub(crate) async fn run_backfill(
+    rpc: &RpcClient,
+    blocks: u64,
+    out: &mpsc::Sender<Mutation>,
+) -> Result<u64> {
+    let tip0 = rpc.get_tip_block_number().await?;
+    if blocks == 0 {
+        return Ok(tip0);
+    }
+    let lo = tip0.saturating_sub(blocks - 1);
+    replay_window(rpc, lo, tip0, out).await?;
     Ok(tip0)
 }
