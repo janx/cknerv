@@ -9,12 +9,12 @@ import {
   summarizeNetwork,
   peerCrystalSize,
   peerCrystalBrightness,
-  peerArrivalAge,
   beamShapeJitter,
   entryCourierState,
   blockArrivalSchedule,
   rankPeers,
   PEER_RENDER_CAP,
+  BLOCK_ARRIVAL_BASE_S,
   BLOCK_ARRIVAL_SPREAD_S,
   BLOCK_ARRIVAL_JITTER_S,
   BLOCK_RELAY_HOP_S,
@@ -73,35 +73,6 @@ describe('peers.derive', () => {
   it('peerCrystalBrightness grows with sync proximity', () => {
     expect(peerCrystalBrightness(0)).toBeCloseTo(0.45, 5);
     expect(peerCrystalBrightness(1)).toBeCloseTo(0.95, 5);
-  });
-
-  it('peerArrivalAge: deterministic per (peer, nonce)', () => {
-    const p = peer({ node_id: 'A', latency_ms: 50 });
-    expect(peerArrivalAge(p, 7)).toBe(peerArrivalAge(p, 7));
-  });
-
-  it('peerArrivalAge: higher latency arrives later (base dominates jitter)', () => {
-    const lo = peer({ node_id: 'A', latency_ms: 0 });
-    const hi = peer({ node_id: 'A', latency_ms: 400 });
-    // base gap = SPREAD*0.85 ≈ 0.68 >> 2*jitter = 0.30, so this holds at any nonce
-    for (const nonce of [1, 2, 3, 99]) {
-      expect(peerArrivalAge(hi, nonce)).toBeGreaterThan(peerArrivalAge(lo, nonce));
-    }
-  });
-
-  it('peerArrivalAge: within the jitter band of the latency base and >= 0', () => {
-    const p = peer({ node_id: 'Z', latency_ms: 200 }); // latencyToRadius01 = 0.5
-    const base = BLOCK_ARRIVAL_SPREAD_S * (0.15 + 0.85 * 0.5);
-    for (const nonce of [0, 5, 42, 1000]) {
-      const a = peerArrivalAge(p, nonce);
-      expect(a).toBeGreaterThanOrEqual(0);
-      expect(Math.abs(a - base)).toBeLessThanOrEqual(BLOCK_ARRIVAL_JITTER_S + 1e-9);
-    }
-  });
-
-  it('peerArrivalAge: a new block nonce shifts the time', () => {
-    const p = peer({ node_id: 'A', latency_ms: 50 });
-    expect(peerArrivalAge(p, 1)).not.toBe(peerArrivalAge(p, 2));
   });
 
   it('beamShapeJitter: deterministic per (node, nonce)', () => {
@@ -163,31 +134,68 @@ describe('peers.derive', () => {
     expect(rankPeers(many)).toHaveLength(PEER_RENDER_CAP);
   });
 
-  it('blockArrivalSchedule: empty peers → no entry, zero delay', () => {
-    expect(blockArrivalSchedule([], 1)).toEqual({ entryId: null, localReceiveDelayS: 0 });
+  it('blockArrivalSchedule: empty peers → no entry, zero delay, no arrivals', () => {
+    expect(blockArrivalSchedule([], 1)).toEqual({
+      entryId: null,
+      localReceiveDelayS: 0,
+      arrivals: {},
+    });
   });
 
-  it('blockArrivalSchedule: entry = earliest arrival; local trails by the relay hop', () => {
+  it('blockArrivalSchedule: arrivals cover every peer, low→high latency, within the window', () => {
+    const peers = [
+      peer({ node_id: 'near', latency_ms: 10 }),
+      peer({ node_id: 'mid', latency_ms: 120 }),
+      peer({ node_id: 'far', latency_ms: 380 }),
+    ];
+    const s = blockArrivalSchedule(peers, 5);
+    expect(Object.keys(s.arrivals).sort()).toEqual(['far', 'mid', 'near']);
+    // Well-separated latencies → arrival order tracks latency order (gaps >> jitter).
+    expect(s.arrivals.near).toBeLessThan(s.arrivals.mid);
+    expect(s.arrivals.mid).toBeLessThan(s.arrivals.far);
+    const ceil = BLOCK_ARRIVAL_BASE_S + BLOCK_ARRIVAL_SPREAD_S + BLOCK_ARRIVAL_JITTER_S + 1e-9;
+    for (const a of Object.values(s.arrivals)) {
+      expect(a).toBeGreaterThanOrEqual(0);
+      expect(a).toBeLessThanOrEqual(ceil);
+    }
+  });
+
+  it('blockArrivalSchedule: entry = earliest arrival; local trails it by the relay hop', () => {
     const peers = [
       peer({ node_id: 'far', latency_ms: 400 }),
       peer({ node_id: 'near', latency_ms: 0 }),
     ];
     const s = blockArrivalSchedule(peers, 5);
     expect(s.entryId).toBe('near'); // lowest latency → earliest arrival
-    expect(s.localReceiveDelayS).toBeCloseTo(
-      peerArrivalAge(peers[1], 5) + BLOCK_RELAY_HOP_S,
-      9,
-    );
+    const minArrival = Math.min(...Object.values(s.arrivals));
+    expect(s.arrivals.near).toBeCloseTo(minArrival, 9);
+    expect(s.localReceiveDelayS).toBeCloseTo(minArrival + BLOCK_RELAY_HOP_S, 9);
   });
 
-  it('blockArrivalSchedule: local is never first (delay > entry arrival)', () => {
+  it('blockArrivalSchedule: local is never first (delay > the earliest peer arrival)', () => {
     const peers = [
       peer({ node_id: 'A', latency_ms: 10 }),
       peer({ node_id: 'B', latency_ms: 250 }),
     ];
     const s = blockArrivalSchedule(peers, 9);
-    const entryAge = Math.min(peerArrivalAge(peers[0], 9), peerArrivalAge(peers[1], 9));
-    expect(s.localReceiveDelayS).toBeGreaterThan(entryAge);
+    const minArrival = Math.min(...Object.values(s.arrivals));
+    expect(s.localReceiveDelayS).toBeGreaterThan(minArrival);
+  });
+
+  it('blockArrivalSchedule: clustered latencies still spread out (the fix — not simultaneous)', () => {
+    // Worst case: 4 peers bunched at 30ms + 1 outlier at 50ms — pure latency-proportional
+    // timing would pile the 4 together. Rank-even spacing must still spread them so the
+    // sweep reads. (Old absolute model gave only ~0.1s of total spread here.)
+    const peers = [
+      peer({ node_id: 'a', latency_ms: 30 }),
+      peer({ node_id: 'b', latency_ms: 30 }),
+      peer({ node_id: 'c', latency_ms: 30 }),
+      peer({ node_id: 'd', latency_ms: 30 }),
+      peer({ node_id: 'e', latency_ms: 50 }),
+    ];
+    const ages = Object.values(blockArrivalSchedule(peers, 7).arrivals);
+    const span = Math.max(...ages) - Math.min(...ages);
+    expect(span).toBeGreaterThan(1.0);
   });
 
   it('blockArrivalSchedule: entry peer changes with the block nonce', () => {

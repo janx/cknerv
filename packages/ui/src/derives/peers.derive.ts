@@ -58,42 +58,40 @@ export function peerCrystalBrightness(sync: number): number {
 }
 
 // ─── New-block propagation: latency-based arrival (no hub) ───────────────
-// A block is mined elsewhere and reaches each node at a time derived from real
-// network latency (latency-to-local, the only signal we have) plus per-block
-// jitter, so the ordering reshuffles every block. Seeded by fnv1a(node_id) ⊕
-// nonce (the block's lastPulseAtMs) — per-block-varying yet reproducible.
+// A block is mined elsewhere and reaches each node at a time positioned across the
+// rendered peer set by latency — inner/low-latency first, outer last — so the beam
+// ignitions read as an outward sweep. A peer's position blends rank-even spacing
+// (so clustered real latencies still separate, not all at once) with latency
+// magnitude (so genuinely large gaps stretch), then jitter per block (seeded by
+// fnv1a(node_id) ⊕ lastPulseAtMs) reshuffles the fine order every block.
 
-/** Total spread of block-arrival times across peers, seconds: the most
- *  network-distant peer hears a block ~this long after the nearest. */
-export const BLOCK_ARRIVAL_SPREAD_S = 0.8;
-/** Per-block jitter amplitude (±, seconds) layered on each peer's arrival so the
- *  order reshuffles block-to-block instead of being a rigid latency sort. */
-export const BLOCK_ARRIVAL_JITTER_S = 0.15;
+/** Earliest peer's base delay after the pulse (s): even the nearest node takes a
+ *  beat to hear the block. */
+export const BLOCK_ARRIVAL_BASE_S = 0.12;
+/** Total spread of arrival times across the rendered peer set (s): the farthest
+ *  peer hears the block ~this long after the nearest. Kept well above the beam
+ *  lifetime (~2.2s) so ignitions sweep outward instead of flashing together. */
+export const BLOCK_ARRIVAL_SPREAD_S = 2.4;
+/** Blend of rank-even spacing (→1) vs latency-magnitude spacing (→0) for a peer's
+ *  position in the spread. Rank guarantees a readable gap even when latencies
+ *  cluster; magnitude lets large latency gaps stretch the pause. */
+export const BLOCK_ARRIVAL_RANK_MIX = 0.6;
+/** Per-block jitter on the arrival ORDER, in latency-fraction (latency01) units, so
+ *  near-equal-latency peers reshuffle which fires first each block (no identical
+ *  sweep). Peers within ~2× this in latency01 can swap; beyond that order is stable. */
+export const BLOCK_ARRIVAL_ORDER_JITTER = 0.1;
+/** Per-block jitter amplitude (±, s) on each peer's arrival TIME so arrivals don't
+ *  snap to exact rank positions. Small vs the spread so the latency sweep dominates. */
+export const BLOCK_ARRIVAL_JITTER_S = 0.12;
 /** Visible courier flight time entry-peer → local; also the margin by which the
- *  local node trails the first peer to relay it the block (so local is never first). */
+ *  local node trails the first peer (so local is never first). */
 export const BLOCK_RELAY_HOP_S = 0.27;
-/** Floor on a peer's latency fraction so even the lowest-latency peer has a small
- *  non-zero base delay (the block still had to reach our neighbourhood). */
-const ARRIVAL_BASE_FRAC = 0.15;
 
 /** Deterministic generator for one peer × one block: fold the node-id hash with
  *  the per-block nonce so the same (node, block) always yields the same stream,
  *  and a new block reshuffles. Floors the (ms-timestamp) nonce to a uint first. */
 function peerBlockRng(nodeId: string, nonce: number): () => number {
   return mulberry32((fnv1a(nodeId) ^ (Math.floor(nonce) >>> 0)) >>> 0);
-}
-
-/** Age (seconds since the block pulse) at which `peer` hears the block: a
- *  latency-proportional base + per-block jitter. Lower latency → earlier on
- *  average; `nonce` reshuffles each block. Clamped ≥ 0. The jitter draw is the
- *  FIRST value of peerBlockRng so beamShapeJitter can take subsequent draws from
- *  the same (re-seeded) stream without colliding. */
-export function peerArrivalAge(peer: Peer, nonce: number): number {
-  const lat01 = latencyToRadius01(peer.latency_ms);
-  const base =
-    BLOCK_ARRIVAL_SPREAD_S * (ARRIVAL_BASE_FRAC + (1 - ARRIVAL_BASE_FRAC) * lat01);
-  const jit = (peerBlockRng(peer.node_id, nonce)() - 0.5) * 2 * BLOCK_ARRIVAL_JITTER_S;
-  return Math.max(0, base + jit);
 }
 
 /** Max peers rendered; the rest are summarized in the NETWORK HUD. */
@@ -116,28 +114,65 @@ export interface BlockArrivalSchedule {
    *  null when there are no peers. */
   entryId: string | null;
   /** Age (s since pulse) at which the LOCAL node applies the block = entry peer's
-   *  arrival + BLOCK_RELAY_HOP_S. 0 when there are no peers (degenerate: nothing to
-   *  receive from → hero fires at t=0). */
+   *  arrival + BLOCK_RELAY_HOP_S. 0 when there are no peers (hero fires at t=0). */
   localReceiveDelayS: number;
+  /** Per-peer arrival age (s since pulse), keyed by node_id — when each peer's
+   *  tributary beam fires. Computed set-relative so clustered latencies still sweep. */
+  arrivals: Record<string, number>;
 }
 
-/** Per-block schedule shared by both layers. `peers` is the ranked + capped set
- *  PeerConstellation actually renders (so entryId is always on-screen). entryId =
- *  argmin peerArrivalAge; ties broken by lexicographically-lowest node_id. */
+/** Per-block schedule over the ranked + capped peer set (so entryId is always
+ *  on-screen). Each peer is positioned across [BASE, BASE+SPREAD] by a blend of its
+ *  latency RANK (even spacing — a readable sweep even when latencies cluster) and
+ *  latency MAGNITUDE (large gaps stretch), then jittered per block. entryId = argmin
+ *  arrival; the local node applies one relay-hop later (never first). */
 export function blockArrivalSchedule(peers: Peer[], nonce: number): BlockArrivalSchedule {
+  const arrivals: Record<string, number> = {};
+  if (peers.length === 0) return { entryId: null, localReceiveDelayS: 0, arrivals };
+
+  // One jitter draw per peer (draw #1 of its stream) perturbs BOTH the arrival order
+  // and the time, so near-equal-latency peers reshuffle every block (no identical
+  // sweep). beamShapeJitter re-seeds the same stream and skips this first draw.
+  const items = peers.map((p) => ({
+    p,
+    l01: latencyToRadius01(p.latency_ms),
+    j: (peerBlockRng(p.node_id, nonce)() - 0.5) * 2, // [-1, 1]
+  }));
+  let l01min = Infinity;
+  let l01max = -Infinity;
+  for (const it of items) {
+    if (it.l01 < l01min) l01min = it.l01;
+    if (it.l01 > l01max) l01max = it.l01;
+  }
+  const span01 = l01max - l01min;
+
+  // Inner / low-latency first, with per-block order jitter so near-equal peers swap;
+  // stable node_id tiebreak keeps it deterministic.
+  items.sort((a, b) => {
+    const ka = a.l01 + BLOCK_ARRIVAL_ORDER_JITTER * a.j;
+    const kb = b.l01 + BLOCK_ARRIVAL_ORDER_JITTER * b.j;
+    return ka !== kb ? ka - kb : a.p.node_id < b.p.node_id ? -1 : 1;
+  });
+
+  const n = items.length;
   let entryId: string | null = null;
   let bestAge = Infinity;
-  for (const p of peers) {
-    const age = peerArrivalAge(p, nonce);
-    if (age < bestAge || (age === bestAge && entryId !== null && p.node_id < entryId)) {
+  for (let i = 0; i < n; i += 1) {
+    const { p, l01, j } = items[i];
+    const rankFrac = n === 1 ? 0 : i / (n - 1);
+    const magFrac = span01 > 1e-6 ? (l01 - l01min) / span01 : rankFrac;
+    const pos = BLOCK_ARRIVAL_RANK_MIX * rankFrac + (1 - BLOCK_ARRIVAL_RANK_MIX) * magFrac;
+    const age = Math.max(
+      0,
+      BLOCK_ARRIVAL_BASE_S + BLOCK_ARRIVAL_SPREAD_S * pos + BLOCK_ARRIVAL_JITTER_S * j,
+    );
+    arrivals[p.node_id] = age;
+    if (age < bestAge) {
       bestAge = age;
       entryId = p.node_id;
     }
   }
-  return {
-    entryId,
-    localReceiveDelayS: entryId === null ? 0 : bestAge + BLOCK_RELAY_HOP_S,
-  };
+  return { entryId, localReceiveDelayS: bestAge + BLOCK_RELAY_HOP_S, arrivals };
 }
 
 export interface BeamShapeJitter {
@@ -149,13 +184,13 @@ export interface BeamShapeJitter {
 }
 
 /** Deterministic per-(node, block) beam-shape multipliers so no two peer beams
- *  move in lockstep. Draws from the SAME re-seeded stream as peerArrivalAge,
- *  consuming the arrival draw first so the two stay mutually consistent. tailMul
- *  scales hold AND strike by one factor so the retract window (strike − hold)
- *  stays positive — independent jitter could invert it. */
+ *  move in lockstep. Draws from the SAME re-seeded stream blockArrivalSchedule uses
+ *  for that peer's arrival jitter, consuming that first draw so the two stay
+ *  consistent. tailMul scales hold AND strike by one factor so the retract window
+ *  (strike − hold) stays positive — independent jitter could invert it. */
 export function beamShapeJitter(nodeId: string, nonce: number): BeamShapeJitter {
   const r = peerBlockRng(nodeId, nonce);
-  r(); // consume the arrival-jitter draw (keeps this in step with peerArrivalAge)
+  r(); // consume the arrival-jitter draw (keeps this in step with blockArrivalSchedule)
   const j = (amp: number) => 1 + (r() - 0.5) * 2 * amp;
   return {
     growMul: j(0.2),
