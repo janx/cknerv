@@ -284,6 +284,7 @@ export default function App({
             onSelect={setSelectedId}
             blockPulseAtMs={cellsCache.lastPulseAtMs}
             entryPeerId={blockSchedule.entryId}
+            arrivals={blockSchedule.arrivals}
           />
 
           <OrbitControls

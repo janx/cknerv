@@ -16,7 +16,6 @@ import {
   peerChurnDiff,
   peerCrystalSize,
   peerCrystalBrightness,
-  peerArrivalAge,
   entryCourierState,
   beamShapeJitter,
   PEER_COLORS,
@@ -75,6 +74,10 @@ interface PeerConstellationProps {
   /** node_id of the peer that relays us this block (from blockArrivalSchedule). The
    *  entry peer animates the receive courier; null = none / no peers. */
   entryPeerId?: string | null;
+  /** Per-peer arrival age (s since pulse) keyed by node_id (blockArrivalSchedule).
+   *  Each peer fires its tributary beam at pulse + its arrival; spread wide so the
+   *  ignitions read as an outward sweep, not one flash. */
+  arrivals?: Record<string, number>;
 }
 
 export default function PeerConstellation({
@@ -85,6 +88,7 @@ export default function PeerConstellation({
   onSelect,
   blockPulseAtMs = 0,
   entryPeerId = null,
+  arrivals = {},
 }: PeerConstellationProps) {
   // Retain recently-dropped peers briefly so they can fade out.
   const retainRef = useRef<Map<string, RenderPeer>>(new Map());
@@ -123,16 +127,15 @@ export default function PeerConstellation({
     setRender(Array.from(map.values()));
   }, [peers]);
 
-  // Per-block pulse: the frame loop reads `at` (when it fired), `nonce` (the block
-  // id, for seeding arrival + shape), and `entryId` (which peer relays us the block).
-  const pulseRef = useRef<{ at: number; nonce: number; entryId: string | null } | null>(null);
+  // Per-block pulse: the frame loop reads `at` (when it fired) and `entryId` (which
+  // peer relays us the block). Per-peer arrival times come from the `arrivals` prop.
+  const pulseRef = useRef<{ at: number; entryId: string | null } | null>(null);
   const lastPulseRef = useRef(blockPulseAtMs);
   useEffect(() => {
     if (blockPulseAtMs > lastPulseRef.current) {
       lastPulseRef.current = blockPulseAtMs;
       pulseRef.current = {
         at: simClock.elapsedSec,
-        nonce: blockPulseAtMs,
         entryId: entryPeerId ?? null,
       };
     }
@@ -167,6 +170,7 @@ export default function PeerConstellation({
           onSelect={onSelect}
           pulseRef={pulseRef}
           blockPulseAtMs={blockPulseAtMs}
+          arrivalAge={arrivals[rp.peer.node_id] ?? 0}
           onExpire={onExpire}
         />
       ))}
@@ -195,6 +199,7 @@ function PeerNode({
   onSelect,
   pulseRef,
   blockPulseAtMs,
+  arrivalAge,
   onExpire,
 }: {
   rp: RenderPeer;
@@ -202,8 +207,9 @@ function PeerNode({
   localVersion: string;
   selected: boolean;
   onSelect: (id: string | null) => void;
-  pulseRef: React.MutableRefObject<{ at: number; nonce: number; entryId: string | null } | null>;
+  pulseRef: React.MutableRefObject<{ at: number; entryId: string | null } | null>;
   blockPulseAtMs: number;
+  arrivalAge: number;
   onExpire: (nodeId: string) => void;
 }) {
   // Crystal + ambient-flow intensity (churn fade × sync brightness), each read
@@ -277,8 +283,8 @@ function PeerNode({
     const pulse = pulseRef.current;
     if (pulse && pulse.at !== lastBeamPulseRef.current) {
       lastBeamPulseRef.current = pulse.at;
-      arrivalAgeRef.current = peerArrivalAge(rp.peer, pulse.nonce);
-      peerBeamFireRef.current = { firedAt: pulse.at + arrivalAgeRef.current };
+      arrivalAgeRef.current = arrivalAge;
+      peerBeamFireRef.current = { firedAt: pulse.at + arrivalAge };
     }
     const courier = courierRef.current;
     if (courier) {
