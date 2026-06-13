@@ -27,6 +27,12 @@ pub struct CkbDirectAdapter {
     node_label: String,
     backfill_blocks: u64,
     resume_from: Option<u64>,
+    /// Forward-gap (blocks) above which the poll treats an advance as a
+    /// catch-up — replaying a bounded recent window through the backfill
+    /// envelope (pulses suppressed, progress HUD) instead of animating every
+    /// block live. A normal poll advances 1–2 blocks, so this sits well above
+    /// that but below any real downtime gap.
+    catchup_threshold: u64,
 }
 
 impl CkbDirectAdapter {
@@ -39,6 +45,7 @@ impl CkbDirectAdapter {
             node_label: "ckb-local".into(),
             backfill_blocks: 2000,
             resume_from: None,
+            catchup_threshold: 25,
         }
     }
 
@@ -74,6 +81,12 @@ impl CkbDirectAdapter {
         self.resume_from = tip;
         self
     }
+
+    /// Override the catch-up gap threshold (blocks). Default 25.
+    pub fn with_catchup_threshold(mut self, n: u64) -> Self {
+        self.catchup_threshold = n;
+        self
+    }
 }
 
 #[async_trait]
@@ -107,9 +120,11 @@ impl Adapter for CkbDirectAdapter {
         // forward poll from the anchor tip. On failure, fall through to
         // the legacy tip-1 anchor (poll loop handles last_tip == None).
         if let Some(resume_tip) = self.resume_from {
-            // Restored from persisted state: resume the forward poll from
-            // the saved tip; the poll catches up the downtime gap. Skip
-            // backfill so we don't re-replay (and duplicate) recent blocks.
+            // Restored from persisted state: resume the forward poll from the
+            // saved tip. A small gap replays live; a large one is caught up
+            // calmly by poll_once's catch-up branch (bounded backfill window,
+            // pulses suppressed). Skip the boot backfill either way so we don't
+            // re-replay (and duplicate) blocks at/below the saved tip.
             state.last_tip = Some(resume_tip);
         } else if self.backfill_blocks > 0 {
             match crate::backfill::run_backfill(&rpc, self.backfill_blocks, &out).await {
@@ -135,7 +150,13 @@ impl Adapter for CkbDirectAdapter {
                     }
                 }
                 _ = interval.tick() => {
-                    if let Err(e) = poll_once(&rpc, &mut state, &out).await {
+                    if let Err(e) = poll_once(
+                        &rpc,
+                        &mut state,
+                        &out,
+                        self.catchup_threshold,
+                        self.backfill_blocks,
+                    ).await {
                         tracing::warn!(
                             target: "cknerv-adapter-ckb",
                             "CKB poll error: {e}"

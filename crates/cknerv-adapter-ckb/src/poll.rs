@@ -34,11 +34,23 @@ pub async fn poll_once(
     rpc: &RpcClient,
     state: &mut PollState,
     out: &mpsc::Sender<Mutation>,
+    catchup_threshold: u64,
+    catchup_cap: u64,
 ) -> Result<()> {
     // 1. Tip + block walk
     let tip = rpc.get_tip_block_number().await?;
     let prev = state.last_tip.unwrap_or_else(|| tip.saturating_sub(1));
-    if tip > prev {
+    if catchup_cap > 0 && tip.saturating_sub(prev) > catchup_threshold {
+        // Catch-up: a large forward gap (downtime, or the node IBD'ing while
+        // we watch). Replay only the most recent `catchup_cap` blocks of the
+        // gap through the backfill envelope (pulses suppressed, progress HUD,
+        // nerves quieted on the SPA) and jump to tip — never animate the whole
+        // gap block-by-block. Forward-only, so it can't double-birth a
+        // persisted cell. Older blocks beyond the cap are skipped.
+        let lo = (prev + 1).max(tip.saturating_sub(catchup_cap.saturating_sub(1)));
+        crate::backfill::replay_window(rpc, lo, tip, out).await?;
+        state.last_tip = Some(tip);
+    } else if tip > prev {
         for n in (prev + 1)..=tip {
             let muts = fetch_and_translate(rpc, n).await?;
             if muts.is_empty() {
