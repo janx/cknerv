@@ -285,6 +285,7 @@ export default function App({
             blockPulseAtMs={cellsCache.lastPulseAtMs}
             entryPeerId={blockSchedule.entryId}
             arrivals={blockSchedule.arrivals}
+            senders={blockSchedule.senders}
           />
 
           <OrbitControls

@@ -10,7 +10,7 @@ import {
   peerCrystalSize,
   peerCrystalBrightness,
   beamShapeJitter,
-  entryCourierState,
+  courierLeg,
   blockArrivalSchedule,
   rankPeers,
   PEER_RENDER_CAP,
@@ -104,19 +104,20 @@ describe('peers.derive', () => {
     expect(beamShapeJitter('A', 5)).not.toEqual(beamShapeJitter('B', 5));
   });
 
-  it('entryCourierState: hidden before the peer hears the block', () => {
-    expect(entryCourierState(0.2, 0.1)).toEqual({ visible: false, pos: 0 });
+  it('courierLeg: hidden before it departs', () => {
+    expect(courierLeg(0.5, 1.0, 0.4)).toEqual({ visible: false, t: 0 });
   });
 
-  it('entryCourierState: rides peer→local across the relay hop', () => {
-    expect(entryCourierState(0.2, 0.2)).toEqual({ visible: true, pos: 1 }); // at the peer
-    const mid = entryCourierState(0.2, 0.2 + BLOCK_RELAY_HOP_S / 2);
+  it('courierLeg: t ramps 0→1 across the flight window', () => {
+    expect(courierLeg(0.5, 1.0, 0.5)).toEqual({ visible: true, t: 0 }); // at the start node
+    const mid = courierLeg(0.5, 1.0, 1.0);
     expect(mid.visible).toBe(true);
-    expect(mid.pos).toBeCloseTo(0.5, 6);
+    expect(mid.t).toBeCloseTo(0.5, 6);
   });
 
-  it('entryCourierState: hidden once it lands at local', () => {
-    expect(entryCourierState(0.2, 0.2 + BLOCK_RELAY_HOP_S).visible).toBe(false);
+  it('courierLeg: hidden once it lands; a zero-length leg never shows', () => {
+    expect(courierLeg(0.5, 1.0, 1.5).visible).toBe(false); // landed
+    expect(courierLeg(0.5, 0, 0.5).visible).toBe(false); // dur 0
   });
 
   it('rankPeers: outbound first, then ascending latency', () => {
@@ -134,12 +135,35 @@ describe('peers.derive', () => {
     expect(rankPeers(many)).toHaveLength(PEER_RENDER_CAP);
   });
 
-  it('blockArrivalSchedule: empty peers → no entry, zero delay, no arrivals', () => {
+  it('blockArrivalSchedule: empty peers → no entry, zero delay, no arrivals/senders', () => {
     expect(blockArrivalSchedule([], 1)).toEqual({
       entryId: null,
       localReceiveDelayS: 0,
       arrivals: {},
+      senders: {},
     });
+  });
+
+  it('blockArrivalSchedule: senders form a broadcast cascade (source → null, rest earlier)', () => {
+    const peers = [
+      peer({ node_id: 'a', latency_ms: 20 }),
+      peer({ node_id: 'b', latency_ms: 45 }),
+      peer({ node_id: 'c', latency_ms: 80 }),
+      peer({ node_id: 'd', latency_ms: 130 }),
+      peer({ node_id: 'e', latency_ms: 200 }),
+    ];
+    const s = blockArrivalSchedule(peers, 3);
+    // the entry (earliest arrival) is the source — no inbound courier
+    expect(s.entryId).not.toBeNull();
+    expect(s.senders[s.entryId as string]).toBeNull();
+    // every other peer's courier comes from a node that received no later than it
+    // (couriers flow forward through the arrival order)
+    for (const id of Object.keys(s.arrivals)) {
+      if (id === s.entryId) continue;
+      const from = s.senders[id];
+      expect(from).not.toBeNull();
+      expect(s.arrivals[from as string]).toBeLessThanOrEqual(s.arrivals[id]);
+    }
   });
 
   it('blockArrivalSchedule: arrivals cover every peer, low→high latency, within the window', () => {
