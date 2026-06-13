@@ -1,0 +1,29 @@
+// Pure cursor over the cells cache's `recentLinks` ring: decides which new
+// links should fire nerve pulses, and how far to advance the consumed-seq
+// cursor. While a backfill/catch-up is active, links are consumed (cursor
+// advances) but none fire — suppressing the storm AND preventing the whole
+// window from replaying the instant the flag clears.
+
+import type { CellLink } from '@cknerv/types';
+
+export interface LinkCursorResult {
+  /** Links to plan pulses for. Empty while `backfillActive`. */
+  toFire: CellLink[];
+  /** The advanced cursor — the max seq seen, never below `lastSeq`. */
+  nextSeq: number;
+}
+
+export function advanceLinkCursor(
+  recentLinks: CellLink[],
+  lastSeq: number,
+  backfillActive: boolean,
+): LinkCursorResult {
+  let nextSeq = lastSeq;
+  const toFire: CellLink[] = [];
+  for (const link of recentLinks) {
+    if (link.seq <= lastSeq) continue;
+    if (link.seq > nextSeq) nextSeq = link.seq;
+    if (!backfillActive) toFire.push(link);
+  }
+  return { toFire, nextSeq };
+}
