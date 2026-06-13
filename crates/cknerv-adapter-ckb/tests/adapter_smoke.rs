@@ -233,6 +233,63 @@ async fn adapter_resume_skips_backfill_and_resumes_from_saved_tip() {
 }
 
 #[tokio::test]
+async fn adapter_resume_large_gap_runs_catchup_envelope() {
+    // Saved tip 8, node now at 12 → gap 4. With threshold 2 (< gap) the poll
+    // takes the catch-up branch: a BackfillProgress envelope brackets the
+    // window, blocks 9..=12 replay ascending, and last_tip jumps to 12.
+    let mut canned = mock_rpc::CannedResponses::default();
+    canned.tip = 12;
+    for n in 9..=12 {
+        canned
+            .blocks
+            .insert(n, mock_rpc::simple_block(n, &format!("0xblock{n}")));
+    }
+    let (rpc_url, _handle) = mock_rpc::start(canned).await;
+
+    let adapter = CkbDirectAdapter::new(rpc_url)
+        .with_backfill_blocks(1000) // catch-up cap; far above the gap → lo = 9
+        .with_catchup_threshold(2)
+        .with_resume_from(Some(8))
+        .with_poll_interval(Duration::from_millis(40));
+
+    let emitted = drive_for(
+        adapter,
+        Duration::from_millis(300),
+        Duration::from_millis(70),
+    )
+    .await;
+
+    // Envelope opens active and closes inactive at done==total==4.
+    assert!(
+        emitted
+            .iter()
+            .any(|m| matches!(m, Mutation::BackfillProgress { active: true, .. })),
+        "expected an active BackfillProgress on a large-gap resume; emitted: {emitted:#?}"
+    );
+    assert!(
+        emitted.iter().any(|m| matches!(
+            m,
+            Mutation::BackfillProgress { done: 4, total: 4, active: false }
+        )),
+        "expected a terminal BackfillProgress; emitted: {emitted:#?}"
+    );
+    // Catch-up replays the gap window ascending, once each; last_tip jumps to
+    // 12 so the forward poll does not re-emit it.
+    let nums: Vec<u64> = emitted
+        .iter()
+        .filter_map(|m| match m {
+            Mutation::BlockMined { number, .. } => Some(*number),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        nums,
+        vec![9, 10, 11, 12],
+        "catch-up replays the gap window ascending; got {nums:?}"
+    );
+}
+
+#[tokio::test]
 async fn adapter_polls_network_and_emits_peer_sync_and_node_info() {
     // Drive the real adapter loop (which owns the network-poll select arm)
     // against canned get_peers / sync_state / local_node_info responses.
