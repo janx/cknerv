@@ -40,6 +40,9 @@ pub async fn poll_once(
     // 1. Tip + block walk
     let tip = rpc.get_tip_block_number().await?;
     let prev = state.last_tip.unwrap_or_else(|| tip.saturating_sub(1));
+    // `catchup_cap == 0` means backfill is disabled (`--backfill-blocks 0`,
+    // legacy tip-only mode) — that opt-out intentionally disables catch-up too,
+    // so a large gap falls through to the live walk below.
     if catchup_cap > 0 && tip.saturating_sub(prev) > catchup_threshold {
         // Catch-up: a large forward gap (downtime, or the node IBD'ing while
         // we watch). Replay only the most recent `catchup_cap` blocks of the
