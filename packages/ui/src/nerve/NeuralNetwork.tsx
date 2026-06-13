@@ -17,6 +17,7 @@ import { useSimFrame } from '../tweaks/useSimFrame';
 import { simClock } from '../tweaks/simClock';
 import { buildNeighborGraph, emptyNeighborGraph, type NeighborGraph } from '../geometry/neighborGraph';
 import { planPulses, type Pulse, type PulsePlanningOptions } from './pulseRunner';
+import { advanceLinkCursor } from './linkCursor';
 import NeuralFabric, { type NeuralFabricHandles } from './NeuralFabric';
 import { bezierAt, bezierControl, fabricEdgeSeed } from '../geometry/edgeBezier';
 import { SpikePool } from './spikePool';
@@ -148,9 +149,16 @@ export default function NeuralNetwork({
   const pulsesRef = useRef<ActivePulse[]>([]);
   const lastLinksSeqRef = useRef<number>(0);
   useEffect(() => {
-    for (const link of cellsCache.recentLinks) {
-      if (link.seq <= lastLinksSeqRef.current) continue;
-      lastLinksSeqRef.current = link.seq;
+    // Decide which links fire. While a backfill/catch-up is active this
+    // returns toFire=[] but still advances the cursor, so the storm is
+    // suppressed and the window does not replay when `backfill` clears.
+    const { toFire, nextSeq } = advanceLinkCursor(
+      cellsCache.recentLinks,
+      lastLinksSeqRef.current,
+      !!cellsCache.backfill,
+    );
+    lastLinksSeqRef.current = nextSeq;
+    for (const link of toFire) {
       const planned = planPulses(link, cellsCache.cells, graphRef.current, {
         maxHops: topology?.maxHops,
         maxPulsesPerLink: pulses?.maxPulsesPerLink,
@@ -171,6 +179,7 @@ export default function NeuralNetwork({
   }, [
     cellsCache.recentLinks,
     cellsCache.cells,
+    cellsCache.backfill,
     topology?.maxHops,
     pulses?.maxPulsesPerLink,
     pulses?.maxSourcesPerParent,
