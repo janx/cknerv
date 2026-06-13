@@ -83,9 +83,14 @@ export const BLOCK_ARRIVAL_ORDER_JITTER = 0.1;
 /** Per-block jitter amplitude (±, s) on each peer's arrival TIME so arrivals don't
  *  snap to exact rank positions. Small vs the spread so the latency sweep dominates. */
 export const BLOCK_ARRIVAL_JITTER_S = 0.12;
-/** Visible courier flight time entry-peer → local; also the margin by which the
- *  local node trails the first peer (so local is never first). */
-export const BLOCK_RELAY_HOP_S = 0.27;
+/** Broadcast-courier flight time (s): a node's inbound courier flies from an
+ *  earlier-received node ≈ this long before it. Long enough that several couriers
+ *  overlap in flight (the broadcast) and each is slow enough to follow. */
+export const BLOCK_BROADCAST_HOP_S = 1.0;
+/** Entry-peer → local courier flight time (s); also the margin by which the local
+ *  node trails the entry peer (so local is never first). Slow enough that the
+ *  "we received it" cube is followable. */
+export const BLOCK_RELAY_HOP_S = 0.7;
 
 /** Deterministic generator for one peer × one block: fold the node-id hash with
  *  the per-block nonce so the same (node, block) always yields the same stream,
@@ -119,6 +124,10 @@ export interface BlockArrivalSchedule {
   /** Per-peer arrival age (s since pulse), keyed by node_id — when each peer's
    *  tributary beam fires. Computed set-relative so clustered latencies still sweep. */
   arrivals: Record<string, number>;
+  /** Broadcast cascade: for each peer, the node_id its courier flies FROM (an
+   *  earlier-received node ≈ one hop before it). The entry/source peer → null (it
+   *  relays to local instead). Drives the node→node broadcast couriers. */
+  senders: Record<string, string | null>;
 }
 
 /** Per-block schedule over the ranked + capped peer set (so entryId is always
@@ -128,7 +137,7 @@ export interface BlockArrivalSchedule {
  *  arrival; the local node applies one relay-hop later (never first). */
 export function blockArrivalSchedule(peers: Peer[], nonce: number): BlockArrivalSchedule {
   const arrivals: Record<string, number> = {};
-  if (peers.length === 0) return { entryId: null, localReceiveDelayS: 0, arrivals };
+  if (peers.length === 0) return { entryId: null, localReceiveDelayS: 0, arrivals, senders: {} };
 
   // One jitter draw per peer (draw #1 of its stream) perturbs BOTH the arrival order
   // and the time, so near-equal-latency peers reshuffle every block (no identical
@@ -172,7 +181,34 @@ export function blockArrivalSchedule(peers: Peer[], nonce: number): BlockArrival
       entryId = p.node_id;
     }
   }
-  return { entryId, localReceiveDelayS: bestAge + BLOCK_RELAY_HOP_S, arrivals };
+
+  // Broadcast cascade: order by actual arrival; each node after the source receives
+  // its courier from the earlier node whose arrival is closest to one hop before it,
+  // so couriers flow node→node (generally inner→outer) in arrival order.
+  const byArrival = [...items].sort(
+    (a, b) => arrivals[a.p.node_id] - arrivals[b.p.node_id],
+  );
+  const senders: Record<string, string | null> = {};
+  for (let j = 0; j < n; j += 1) {
+    const id = byArrival[j].p.node_id;
+    if (j === 0) {
+      senders[id] = null; // the source — no inbound courier; it relays to local
+      continue;
+    }
+    const target = arrivals[id] - BLOCK_BROADCAST_HOP_S;
+    let bestId = byArrival[0].p.node_id;
+    let bestD = Infinity;
+    for (let i = 0; i < j; i += 1) {
+      const d = Math.abs(arrivals[byArrival[i].p.node_id] - target);
+      if (d < bestD) {
+        bestD = d;
+        bestId = byArrival[i].p.node_id;
+      }
+    }
+    senders[id] = bestId;
+  }
+
+  return { entryId, localReceiveDelayS: bestAge + BLOCK_RELAY_HOP_S, arrivals, senders };
 }
 
 export interface BeamShapeJitter {
@@ -201,19 +237,20 @@ export function beamShapeJitter(nodeId: string, nonce: number): BeamShapeJitter 
   };
 }
 
-export interface EntryCourier {
+export interface CourierLeg {
   visible: boolean;
-  /** Position along peer→local: 1 = at the peer, 0 = arrived at local. */
-  pos: number;
+  /** Fraction along the flight: 0 at the start node, 1 arrived at the destination. */
+  t: number;
 }
 
-/** The entry peer's receive courier: rides peer→local over BLOCK_RELAY_HOP_S,
- *  starting when the peer hears the block (ageSec = arrivalAge). Hidden before it
- *  departs and after it lands. */
-export function entryCourierState(arrivalAge: number, ageSec: number): EntryCourier {
-  const t = (ageSec - arrivalAge) / BLOCK_RELAY_HOP_S; // 0 at depart, 1 at land
-  if (t < 0 || t >= 1) return { visible: false, pos: 0 };
-  return { visible: true, pos: 1 - t };
+/** One courier leg's per-frame state: visible only while `ageSec` is within
+ *  [startAge, startAge + durS), with `t` ramping 0→1 across it. Used for both the
+ *  node→node broadcast couriers and the entry-peer → local relay. */
+export function courierLeg(startAge: number, durS: number, ageSec: number): CourierLeg {
+  if (durS <= 1e-9) return { visible: false, t: 0 };
+  const t = (ageSec - startAge) / durS;
+  if (t < 0 || t >= 1) return { visible: false, t: 0 };
+  return { visible: true, t };
 }
 
 export type PeerColorKind = PeerDirection | 'version';

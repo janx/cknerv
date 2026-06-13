@@ -5,7 +5,7 @@ import { useSimFrame } from '../tweaks/useSimFrame';
 import { simClock } from '../tweaks/simClock';
 import { CHAIN_Y, CELLS_Y } from '../layout';
 import { FONT_MONO } from '../ui/fonts';
-import { fnv1a, bezierControl, bezierAt } from '../geometry/edgeBezier';
+import { fnv1a } from '../geometry/edgeBezier';
 import { phaseFor } from './GlowNode';
 import type { Peer } from '@cknerv/types';
 import type { Vec3 } from '../types';
@@ -16,11 +16,13 @@ import {
   peerChurnDiff,
   peerCrystalSize,
   peerCrystalBrightness,
-  entryCourierState,
+  courierLeg,
   beamShapeJitter,
   PEER_COLORS,
   PEER_OUTER_RADIUS,
   rankPeers,
+  BLOCK_BROADCAST_HOP_S,
+  BLOCK_RELAY_HOP_S,
 } from '../derives/peers.derive';
 import { BEAM_GROW_DUR_S, BEAM_HOLD_DUR_S, BEAM_STRIKE_DUR_S } from '../ui/topologyConstants';
 import { BEAM_FLOW_SPEED } from '../materials/blockBeamMaterial';
@@ -42,11 +44,11 @@ const PEER_FLOW_STYLE: FlowStyle = {
   jitter: 0.6,
   intensity: 1.3,
 };
-/** Block courier: a small wireframe cube ("a block") that couriers between
- *  nodes via CrystalGlow — the nodes-layer language, distinct from the soft
- *  particles. One unit cube shared by all couriers. */
+/** Block courier: a wireframe cube ("a block") that flies node→node via CrystalGlow
+ *  — the nodes-layer language, distinct from the soft particles. One unit cube shared
+ *  by all couriers; sized up so the broadcast flights are easy to follow. */
 const BLOCK_GEOM = new THREE.BoxGeometry(1, 1, 1);
-const BLOCK_SIZE = 0.9;
+const BLOCK_SIZE = 1.6;
 const BLOCK_COLOR = new THREE.Color('#d8faff');
 
 /** One unit-radius octahedron shared by every peer crystal (CrystalGlow
@@ -78,6 +80,9 @@ interface PeerConstellationProps {
    *  Each peer fires its tributary beam at pulse + its arrival; spread wide so the
    *  ignitions read as an outward sweep, not one flash. */
   arrivals?: Record<string, number>;
+  /** Broadcast cascade (blockArrivalSchedule): node_id → the node its courier flies
+   *  FROM. Drives the node→node broadcast couriers; entry peer maps to null. */
+  senders?: Record<string, string | null>;
 }
 
 export default function PeerConstellation({
@@ -89,6 +94,7 @@ export default function PeerConstellation({
   blockPulseAtMs = 0,
   entryPeerId = null,
   arrivals = {},
+  senders = {},
 }: PeerConstellationProps) {
   // Retain recently-dropped peers briefly so they can fade out.
   const retainRef = useRef<Map<string, RenderPeer>>(new Map());
@@ -158,22 +164,35 @@ export default function PeerConstellation({
   // scene hints that the constellation is summarized (spec §6).
   const hiddenCount = peers.length - render.length;
 
+  // node_id → world position, to resolve each peer's broadcast sender into a
+  // start point for its inbound courier.
+  const posById = useMemo(() => {
+    const m = new Map<string, Vec3>();
+    for (const rp of render) m.set(rp.peer.node_id, rp.pos);
+    return m;
+  }, [render]);
+
   return (
     <group>
-      {render.map((rp) => (
-        <PeerNode
-          key={rp.peer.node_id}
-          rp={rp}
-          tip={tip}
-          localVersion={localVersion}
-          selected={selectedId === `peer:${rp.peer.node_id}`}
-          onSelect={onSelect}
-          pulseRef={pulseRef}
-          blockPulseAtMs={blockPulseAtMs}
-          arrivalAge={arrivals[rp.peer.node_id] ?? 0}
-          onExpire={onExpire}
-        />
-      ))}
+      {render.map((rp) => {
+        const senderId = senders[rp.peer.node_id];
+        const senderPos = senderId ? posById.get(senderId) ?? null : null;
+        return (
+          <PeerNode
+            key={rp.peer.node_id}
+            rp={rp}
+            tip={tip}
+            localVersion={localVersion}
+            selected={selectedId === `peer:${rp.peer.node_id}`}
+            onSelect={onSelect}
+            pulseRef={pulseRef}
+            blockPulseAtMs={blockPulseAtMs}
+            arrivalAge={arrivals[rp.peer.node_id] ?? 0}
+            senderPos={senderPos}
+            onExpire={onExpire}
+          />
+        );
+      })}
       {hiddenCount > 0 && (
         <Billboard position={[0, CHAIN_Y, PEER_OUTER_RADIUS * 0.9]}>
           <Text
@@ -200,6 +219,7 @@ function PeerNode({
   pulseRef,
   blockPulseAtMs,
   arrivalAge,
+  senderPos,
   onExpire,
 }: {
   rp: RenderPeer;
@@ -210,6 +230,7 @@ function PeerNode({
   pulseRef: React.MutableRefObject<{ at: number; entryId: string | null } | null>;
   blockPulseAtMs: number;
   arrivalAge: number;
+  senderPos: Vec3 | null;
   onExpire: (nodeId: string) => void;
 }) {
   // Crystal + ambient-flow intensity (churn fade × sync brightness), each read
@@ -227,17 +248,8 @@ function PeerNode({
   const seed = useMemo(() => fnv1a(rp.peer.node_id), [rp.peer.node_id]);
   const phase = useMemo(() => phaseFor(rp.peer.node_id), [rp.peer.node_id]);
 
-  // Block courier cube: a group positioned along the bezier each frame, fading
-  // via its own intensity ref; rides the same curve the belt does.
-  const ctrl = useMemo(
-    () =>
-      bezierControl(
-        HUB_POS[0], HUB_POS[1], HUB_POS[2],
-        rp.pos[0], rp.pos[1], rp.pos[2],
-        seed,
-      ),
-    [rp.pos, seed],
-  );
+  // Block courier cube: a group positioned each frame along a straight node→node
+  // flight, fading via its own intensity ref.
   const courierRef = useRef<THREE.Group>(null);
   const courierIntensityRef = useRef(0);
   // Tributary beam: fired when this peer hears the block (latency-derived
@@ -278,34 +290,47 @@ function PeerNode({
     flowIntensityRef.current = alpha * brightness; // ambient flow (no surge)
 
     // New-block arrival: schedule this peer's tributary beam to fire when it hears
-    // the block (latency-derived arrival), and — if it is the entry peer — animate a
-    // receive courier riding peer → local over the relay hop.
+    // the block (its set-relative arrival), which also lands the courier below.
     const pulse = pulseRef.current;
     if (pulse && pulse.at !== lastBeamPulseRef.current) {
       lastBeamPulseRef.current = pulse.at;
       arrivalAgeRef.current = arrivalAge;
       peerBeamFireRef.current = { firedAt: pulse.at + arrivalAge };
     }
+    // Broadcast courier: a cube flies node→node, landing exactly as this peer's beam
+    // fires. The entry (source) peer instead relays its cube inward to the local node
+    // (we receive). Many couriers overlap in flight → the visible broadcast wave.
     const courier = courierRef.current;
     if (courier) {
-      const isEntry = pulse?.entryId === rp.peer.node_id;
-      const ev = pulse && isEntry
-        ? entryCourierState(arrivalAgeRef.current, now - pulse.at)
-        : { visible: false, pos: 0 };
-      if (!ev.visible) {
+      let leg = { visible: false, t: 0 };
+      let from: Vec3 = rp.pos;
+      let to: Vec3 = rp.pos;
+      if (pulse) {
+        const ageSec = now - pulse.at;
+        const arr = arrivalAgeRef.current;
+        if (pulse.entryId === rp.peer.node_id) {
+          leg = courierLeg(arr, BLOCK_RELAY_HOP_S, ageSec); // source → local center
+          from = rp.pos;
+          to = HUB_POS;
+        } else if (senderPos) {
+          const start = Math.max(0, arr - BLOCK_BROADCAST_HOP_S); // sender → this peer
+          leg = courierLeg(start, arr - start, ageSec);
+          from = senderPos;
+          to = rp.pos;
+        }
+      }
+      if (!leg.visible) {
         courier.visible = false;
         courierIntensityRef.current = 0;
       } else {
-        const [cx, cy, cz] = bezierAt(
-          HUB_POS[0], HUB_POS[1], HUB_POS[2],
-          ctrl[0], ctrl[1], ctrl[2],
-          rp.pos[0], rp.pos[1], rp.pos[2],
-          ev.pos,
-        );
         courier.visible = true;
-        courier.position.set(cx, cy, cz);
-        // Fade in on departure (pos→1), out on arrival (pos→0); peak mid-flight.
-        courierIntensityRef.current = Math.sin(Math.PI * (1 - ev.pos)) * alpha;
+        courier.position.set(
+          from[0] + (to[0] - from[0]) * leg.t,
+          from[1] + (to[1] - from[1]) * leg.t,
+          from[2] + (to[2] - from[2]) * leg.t,
+        );
+        // Fade in on departure, out on arrival; peak mid-flight.
+        courierIntensityRef.current = Math.sin(Math.PI * leg.t) * alpha;
       }
     }
   });
