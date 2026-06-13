@@ -141,6 +141,66 @@ describe('applyCellDelta', () => {
   });
 });
 
+describe('applyRevisionedCellDeltas (batched)', () => {
+  const rd = (revision: number, delta: RevisionedCellDelta['delta']) =>
+    ({ revision, delta } as RevisionedCellDelta);
+
+  it('applies a mixed batch identically to sequential single-delta application', () => {
+    const start = emptyCellsCache();
+    const deltas: RevisionedCellDelta[] = [
+      rd(1, { type: 'birth', cell: cell(1) }),
+      rd(2, { type: 'birth', cell: cell(2) }),
+      rd(3, { type: 'death', id: 1, at_ms: 5000 }),
+      rd(4, { type: 'pulse', at_ms: 7000 }),
+      rd(5, { type: 'stats', total_births: 2, total_deaths: 1 }),
+    ];
+
+    // Sequential reference using the pure single-delta reducer.
+    let seq = start;
+    for (const d of deltas) seq = applyCellDelta(seq, d.delta);
+
+    const batched = applyRevisionedCellDeltas(start, deltas);
+
+    expect(batched.revision).toBe(5);
+    expect([...batched.cells.keys()].sort()).toEqual([...seq.cells.keys()].sort());
+    expect(batched.cells.get(1)?.death_at_ms).toBe(5000);
+    expect(batched.cells.get(2)?.death_at_ms).toBeNull();
+    expect(batched.lastPulseAtMs).toBe(7000);
+    expect(batched.totalBirths).toBe(2);
+    expect(batched.totalDeaths).toBe(1);
+    // The input cache is never mutated.
+    expect(start.cells.size).toBe(0);
+    expect(start.revision).toBe(0);
+  });
+
+  it('returns the same reference when the batch is empty', () => {
+    const start = emptyCellsCache();
+    expect(applyRevisionedCellDeltas(start, [])).toBe(start);
+  });
+
+  it('advances linksSeq across multiple link deltas in one batch', () => {
+    const start = emptyCellsCache();
+    const link = (tx: string) =>
+      ({
+        type: 'link' as const,
+        tx_hash: tx,
+        block: 1,
+        from_ids: [],
+        to_ids: [],
+        parents: [],
+        tag: null,
+        at_ms: 1000,
+      });
+    const out = applyRevisionedCellDeltas(start, [
+      rd(1, link('0xa')),
+      rd(2, link('0xb')),
+    ]);
+    expect(out.linksSeq).toBe(2);
+    expect(out.recentLinks.map((l) => l.seq)).toEqual([1, 2]);
+    expect(out.recentLinks.map((l) => l.tx_hash)).toEqual(['0xa', '0xb']);
+  });
+});
+
 describe('applyRevisionedCellDeltas', () => {
   it('advances revision to the max in the batch', () => {
     const after = applyRevisionedCellDeltas(emptyCellsCache(), [

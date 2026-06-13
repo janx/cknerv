@@ -100,49 +100,53 @@ export function fromCellsSnapshot(
   };
 }
 
-/** Apply a single delta to a cells cache. **Pure**; returns a new cache. */
-export function applyCellDelta(
-  prev: CellGalaxyCache,
+/** Shallow working copy whose `cells` Map and `recentLinks` array are fresh
+ *  so in-place mutation never leaks into the caller's cache. Primitive fields
+ *  ride along via spread. */
+function cloneForMutation(prev: CellGalaxyCache): CellGalaxyCache {
+  return { ...prev, cells: new Map(prev.cells), recentLinks: prev.recentLinks.slice() };
+}
+
+/** Apply one delta to `c` **in place**. Returns true iff something changed
+ *  (death/tag of a missing cell are no-ops). Shared by the pure single-delta
+ *  `applyCellDelta` and the batched `applyRevisionedCellDeltas`. */
+function mutateCellDelta(
+  c: CellGalaxyCache,
   d: CellDelta,
-  opts: CellsReducerOptions = {},
-): CellGalaxyCache {
+  opts: CellsReducerOptions,
+): boolean {
   switch (d.type) {
     case 'birth': {
-      const cells = new Map(prev.cells);
-      cells.set(d.cell.id, d.cell);
-      return { ...prev, cells };
+      c.cells.set(d.cell.id, d.cell);
+      return true;
     }
     case 'death': {
-      const existing = prev.cells.get(d.id);
-      if (!existing) return prev;
-      const cells = new Map(prev.cells);
-      cells.set(d.id, { ...existing, death_at_ms: d.at_ms });
-      return { ...prev, cells };
+      const existing = c.cells.get(d.id);
+      if (!existing) return false;
+      c.cells.set(d.id, { ...existing, death_at_ms: d.at_ms });
+      return true;
     }
     case 'tag': {
-      const existing = prev.cells.get(d.id);
-      if (!existing) return prev;
-      const cells = new Map(prev.cells);
-      cells.set(d.id, { ...existing, tag: d.tag });
-      return { ...prev, cells };
+      const existing = c.cells.get(d.id);
+      if (!existing) return false;
+      c.cells.set(d.id, { ...existing, tag: d.tag });
+      return true;
     }
     case 'gc': {
-      const cells = new Map(prev.cells);
-      for (const id of d.ids) cells.delete(id);
-      return { ...prev, cells };
+      for (const id of d.ids) c.cells.delete(id);
+      return true;
     }
     case 'pulse': {
-      return { ...prev, lastPulseAtMs: d.at_ms };
+      c.lastPulseAtMs = d.at_ms;
+      return true;
     }
     case 'stats': {
-      return {
-        ...prev,
-        totalBirths: d.total_births,
-        totalDeaths: d.total_deaths,
-      };
+      c.totalBirths = d.total_births;
+      c.totalDeaths = d.total_deaths;
+      return true;
     }
     case 'link': {
-      const nextSeq = prev.linksSeq + 1;
+      const nextSeq = c.linksSeq + 1;
       const link: CellLink = {
         seq: nextSeq,
         tx_hash: d.tx_hash,
@@ -154,26 +158,39 @@ export function applyCellDelta(
         at_ms: d.at_ms,
       };
       const cap = linkRingCapacity(opts);
-      const recentLinks =
-        cap === 0
-          ? []
-          : prev.recentLinks.length >= cap
-            ? [...prev.recentLinks.slice(1), link]
-            : [...prev.recentLinks, link];
-      return { ...prev, recentLinks, linksSeq: nextSeq };
+      if (cap === 0) {
+        c.recentLinks = [];
+      } else {
+        c.recentLinks.push(link);
+        if (c.recentLinks.length > cap) {
+          c.recentLinks.splice(0, c.recentLinks.length - cap);
+        }
+      }
+      c.linksSeq = nextSeq;
+      return true;
     }
     case 'backfill': {
-      return {
-        ...prev,
-        backfill: d.active ? { done: d.done, total: d.total } : null,
-      };
+      c.backfill = d.active ? { done: d.done, total: d.total } : null;
+      return true;
     }
     default: {
       const _exhaustive: never = d;
       void _exhaustive;
-      return prev;
+      return false;
     }
   }
+}
+
+/** Apply a single delta to a cells cache. **Pure**; returns a new cache, or
+ *  the same reference when the delta is a no-op (preserves referential
+ *  equality for React selectors). */
+export function applyCellDelta(
+  prev: CellGalaxyCache,
+  d: CellDelta,
+  opts: CellsReducerOptions = {},
+): CellGalaxyCache {
+  const next = cloneForMutation(prev);
+  return mutateCellDelta(next, d, opts) ? next : prev;
 }
 
 export function applyRevisionedCellDeltas(
@@ -181,14 +198,17 @@ export function applyRevisionedCellDeltas(
   deltas: RevisionedCellDelta[],
   opts: CellsReducerOptions = {},
 ): CellGalaxyCache {
-  let next = prev;
+  if (deltas.length === 0) return prev;
+  // One clone for the whole batch — every delta mutates this single working
+  // copy, so a flood of N deltas costs one Map copy, not N.
+  const next = cloneForMutation(prev);
+  let changed = false;
   let maxRev = prev.revision;
   for (const rd of deltas) {
-    next = applyCellDelta(next, rd.delta, opts);
+    if (mutateCellDelta(next, rd.delta, opts)) changed = true;
     if (rd.revision > maxRev) maxRev = rd.revision;
   }
-  if (maxRev !== prev.revision) {
-    next = { ...next, revision: maxRev };
-  }
+  if (!changed && maxRev === prev.revision) return prev;
+  next.revision = maxRev;
   return next;
 }
