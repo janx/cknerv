@@ -18,6 +18,7 @@ import type { Cell } from '@cknerv/types';
 import { useCellGalaxy } from '../hooks/cellGalaxyContext';
 import { SHOCKWAVE_SLOTS } from '../materials/shockwaveMaterial';
 import { makeCellHybridMaterial } from '../materials/cellHybridMaterial';
+import { makeCellFlareMaterial } from '../materials/cellFlareMaterial';
 import {
   CELLS_Y,
   chainNodeWorldPosition,
@@ -701,6 +702,7 @@ export default function CellGalaxy({ ckbNodeIds, minerCkbNodeIds, universeSeed, 
   );
 
   const hybridMaterial = useMemo(() => makeCellHybridMaterial(), []);
+  const flareMaterial = useMemo(() => makeCellFlareMaterial(), []);
 
   const cellGeometry = useMemo(() => {
     const g = new THREE.BufferGeometry();
@@ -733,15 +735,19 @@ export default function CellGalaxy({ ckbNodeIds, minerCkbNodeIds, universeSeed, 
   useEffect(() => {
     hybridMaterial.uniforms.uBirthDurS.value = BIRTH_DURATION_MS / 1000;
     hybridMaterial.uniforms.uDeathDurS.value = DEATH_DURATION_MS / 1000;
-  }, [hybridMaterial]);
+    flareMaterial.uniforms.uBirthDurS.value = BIRTH_DURATION_MS / 1000;
+    flareMaterial.uniforms.uDeathDurS.value = DEATH_DURATION_MS / 1000;
+  }, [hybridMaterial, flareMaterial]);
 
   useEffect(() => {
     return () => {
       hybridMaterial.dispose();
+      flareMaterial.dispose();
       cellGeometry.dispose();
     };
   }, [
     hybridMaterial,
+    flareMaterial,
     cellGeometry,
   ]);
 
@@ -835,8 +841,10 @@ export default function CellGalaxy({ ckbNodeIds, minerCkbNodeIds, universeSeed, 
 
     // 3. Material uniforms.
     hybridMaterial.uniforms.uTime.value = now;
-    hybridMaterial.uniforms.uDischargeArms.value = dischargeArms;
     hybridMaterial.uniforms.uViewportHeight.value = state.size.height;
+    flareMaterial.uniforms.uTime.value = now;
+    flareMaterial.uniforms.uViewportHeight.value = state.size.height;
+    flareMaterial.uniforms.uDischargeArms.value = dischargeArms;
     if (pulseAtMs > prevPulseAtMs) {
       lastPulseAtMsRef.current = pulseAtMs;
       // Per-block effects fire here.
@@ -1002,6 +1010,15 @@ export default function CellGalaxy({ ckbNodeIds, minerCkbNodeIds, universeSeed, 
           geometry={cellGeometry}
           material={hybridMaterial}
           frustumCulled={false}
+        />
+        {/* Co-located nerve-pulse flare — shares the cell geometry (so the
+            per-frame aFlashAt writes feed it for free) and renders only the
+            discharge, additively, over a steady cell body. */}
+        <points
+          geometry={cellGeometry}
+          material={flareMaterial}
+          frustumCulled={false}
+          renderOrder={1}
         />
         {/* Consumer-supplied overlay — RCG supplies NeuralNetwork +
             DendriticBurst here; chain-generic consumers can leave this

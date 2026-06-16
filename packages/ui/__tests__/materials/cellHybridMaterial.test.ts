@@ -17,8 +17,8 @@ describe('makeCellHybridMaterial', () => {
     expect(m.uniforms.uDeathDurS).toBeDefined();
     expect(m.uniforms.uViewportHeight).toBeDefined();
 
-    // Hybrid-specific quality knobs
-    expect(m.uniforms.uDischargeArms).toBeDefined();
+    // Discharge moved to cellFlareMaterial — the cell body no longer flares.
+    expect(m.uniforms.uDischargeArms).toBeUndefined();
 
     // The block shockwave belongs to the actual cell body, not a separate
     // drifted halo Points layer beside the cell.
@@ -34,11 +34,11 @@ describe('makeCellHybridMaterial', () => {
     expect(m.uniforms.uShockwaveTrailBoost).toBeDefined();
   });
 
-  it('fragment shader contains cloud and discharge helpers', () => {
+  it('keeps cloud + hash11 but no discharge (moved to the flare layer)', () => {
     const m = makeCellHybridMaterial();
     expect(m.fragmentShader).toContain('vec4 cloud(');
-    expect(m.fragmentShader).toContain('vec4 discharge(');
     expect(m.fragmentShader).toContain('hash11');
+    expect(m.fragmentShader).not.toContain('vec4 discharge(');
   });
 
   it('brightens and expands the anchored cell core as the block shockwave crosses it', () => {
