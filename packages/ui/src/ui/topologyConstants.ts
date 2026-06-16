@@ -2,13 +2,14 @@
 // Previously housed in nervePulseScheduler.ts alongside the old NervePulses
 // machinery; extracted here so CellGalaxy does not depend on deleted modules.
 
-/** New-block animation breaks into three sub-phases:
+/** New-block animation breaks into these sub-phases:
  *
+ *    t = −BEAM_CHARGE_DUR_S             charge pre-roll begins — energy gathers
+ *                                       inside the node. firedAt is scheduled in
+ *                                       the future, so this fills the already-idle
+ *                                       window before launch (see blockBeamPhase).
  *    t = 0                              the receiving node's beam launches
- *                                       from its anchor toward the galaxy
- *                                       (no charge pre-roll — the node is
- *                                       applying a block it received, not
- *                                       mining one).
+ *                                       from its anchor toward the galaxy.
  *    t = BEAM_GROW_DUR_S                column reaches the cell plane;
  *                                       strike-splash sprite blooms at the
  *                                       impact point; column holds.
@@ -22,6 +23,13 @@
 export const BEAM_GROW_DUR_S = 1.00;
 export const BEAM_HOLD_DUR_S = 0.90;
 export const BEAM_STRIKE_DUR_S = 1.20;
+/** Pre-roll charge window (s) before a beam's burst. The beam's `firedAt` is
+ *  scheduled in the future (latency-derived arrival), so this charge renders in
+ *  the already-idle window age ∈ [−BEAM_CHARGE_DUR_S, 0): energy gathers inside
+ *  the node, then the column erupts at age 0. Splash/arrival timing is
+ *  unchanged. When there is no lead time (firedAt ≈ now) the charge is simply
+ *  skipped. */
+export const BEAM_CHARGE_DUR_S = 0.25;
 export const SHOCKWAVE_FIRE_DELAY_S = BEAM_GROW_DUR_S + BEAM_STRIKE_DUR_S;
 
 // Single calculation path: the shockwave delay is derived, not free.

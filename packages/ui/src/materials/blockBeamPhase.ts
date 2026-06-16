@@ -1,10 +1,12 @@
+import { BEAM_CHARGE_DUR_S } from '../ui/topologyConstants';
+
 /** Result of computeBeamPhase — the per-frame derivation BlockBeam applies to
  *  its splash sprite + cylinder visibility. Pure function of (age, durations).
  *  The cylinder's spatial growth/retract is shader-only (from uAge); this
- *  exposes only visibility + the splash size/alpha curves. */
+ *  exposes only visibility + the splash size/alpha curves + the charge state. */
 export interface BeamPhase {
   /** Whether the cylinder mesh should be drawn this frame. True from launch
-   *  (age 0) until expiry; false when idle (age < 0) or expired. */
+   *  (age 0) until expiry; false when charging, idle (age < 0), or expired. */
   visible: boolean;
   /** Whether the strike-splash sprite should be drawn (age ≥ growDur). */
   spriteVisible: boolean;
@@ -16,6 +18,13 @@ export interface BeamPhase {
   spriteAlpha: number;
   /** True once age ≥ growDur + strikeDur — caller nulls fireRef and skips. */
   expired: boolean;
+  /** True during the pre-roll charge window age ∈ [−chargeDur, 0): energy
+   *  gathers in the node before the burst. Beam body + splash stay hidden.
+   *  Consumed by BlockBeam to drive the node's charge-glow sprite. */
+  charging: boolean;
+  /** Charge progress 0 → 1 across the charge window; 0 when not charging.
+   *  Drives the charge glow's swell + brightness in BlockBeam. */
+  chargeT: number;
 }
 
 /** Absolute sub-phase durations in seconds. The shader needs the same numbers
@@ -27,25 +36,39 @@ export interface BeamPhaseConfig {
   holdDur: number;
   /** Total strike window = holdDur + retract. Expired at growDur + strikeDur. */
   strikeDur: number;
+  /** Pre-roll charge duration (s). Defaults to BEAM_CHARGE_DUR_S. */
+  chargeDur?: number;
 }
 
 /**
  * Pure derivation of the per-frame BlockBeam state. `age` is
- * `simClock.elapsedSec - fireRef.firedAt`. A negative `age` (slot not yet
- * written, or a future-dated receive trigger) returns "everything hidden, not
- * expired" so the caller leaves the slot intact. There is no charge pre-roll:
- * a received block is applied immediately, so the beam is visible from age 0.
+ * `simClock.elapsedSec - fireRef.firedAt`.
+ *
+ * - age ∈ [−chargeDur, 0): the charge pre-roll — energy gathers in the node.
+ *   `charging=true`, `chargeT` ramps 0→1; the beam body and splash stay hidden.
+ * - age < −chargeDur: fully idle (future-dated firedAt not yet near launch).
+ * - age ≥ 0: the burst/grow/hold/strike timeline, unchanged.
  */
 export function computeBeamPhase(age: number, cfg: BeamPhaseConfig): BeamPhase {
+  const chargeDur = cfg.chargeDur ?? BEAM_CHARGE_DUR_S;
   const empty: BeamPhase = {
     visible: false,
     spriteVisible: false,
     spriteSize: 0,
     spriteAlpha: 0,
     expired: false,
+    charging: false,
+    chargeT: 0,
   };
 
-  if (age < 0) return empty;
+  if (age < 0) {
+    // Charge pre-roll: render the gathering glow in the already-idle window
+    // before the burst. The beam body itself stays hidden (visible=false).
+    if (chargeDur > 0 && age >= -chargeDur) {
+      return { ...empty, charging: true, chargeT: (age + chargeDur) / chargeDur };
+    }
+    return empty; // fully idle
+  }
 
   const total = cfg.growDur + cfg.strikeDur;
   if (age >= total) {
@@ -71,5 +94,7 @@ export function computeBeamPhase(age: number, cfg: BeamPhaseConfig): BeamPhase {
     spriteSize,
     spriteAlpha,
     expired: false,
+    charging: false,
+    chargeT: 0,
   };
 }
