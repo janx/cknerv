@@ -372,9 +372,9 @@ function PeerNode({
       </group>
       {/* Light "tributary" beam: when this peer hears the block it
           fires a thin column up into the shared cells canopy — every node
-          confirms the block, not just the local hero beam. No charge, no
-          outer-glow, smaller splash; drives no canopy shockwave (the one
-          canonical ripple is the local node's). */}
+          confirms the block, not just the local hero beam. Small charge
+          glow, no outer-glow, smaller splash; drives no canopy shockwave
+          (the one canonical ripple is the local node's). */}
       <BlockBeam
         originWorld={rp.pos}
         targetY={CELLS_Y}
@@ -387,6 +387,7 @@ function PeerNode({
         holdDur={BEAM_HOLD_DUR_S * jit.tailMul}
         strikeDur={BEAM_STRIKE_DUR_S * jit.tailMul}
         flowSpeed={BEAM_FLOW_SPEED * jit.flowMul}
+        chargeRadius={0.6 * jit.coreMul}
       />
     </group>
   );
