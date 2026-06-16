@@ -15,6 +15,7 @@ import {
   BEAM_GROW_DUR_S,
   BEAM_HOLD_DUR_S,
   BEAM_STRIKE_DUR_S,
+  BEAM_CHARGE_DUR_S,
 } from '../ui/topologyConstants';
 
 export interface BlockBeamProps {
@@ -44,6 +45,11 @@ export interface BlockBeamProps {
   strikeDur?: number;
   /** Core scrolling-flow speed (wu/s). Default BEAM_FLOW_SPEED. */
   flowSpeed?: number;
+  /** Charge-glow radius (world units) seated at the node center. Default
+   *  CHARGE_RADIUS_W (hero-sized). Peers pass a smaller value. */
+  chargeRadius?: number;
+  /** Pre-roll charge duration (s). Default BEAM_CHARGE_DUR_S. */
+  chargeDur?: number;
 }
 
 /** Inner-core cylinder radius — the bright white-to-cyan filament. */
@@ -52,6 +58,11 @@ const CORE_RADIUS_W = 0.22;
 const HALO_RADIUS_W = 0.80;
 /** Outer-glow cylinder radius — the broad atmospheric bleed. ~5.7× the core. */
 const OUTER_GLOW_RADIUS_W = 1.25;
+/** Charge-glow radius — the energy that gathers inside the node before the
+ *  burst. ≈ the CKB icosahedron radius so the glow reads as filling the node. */
+const CHARGE_RADIUS_W = 2.4;
+/** How long the charge "releases" (pops + fades) after the beam launches. */
+const CHARGE_RELEASE_S = 0.12;
 
 // One splash texture shared by every BlockBeam (hero + all peer tributaries):
 // a soft white→cyan radial gradient, immutable. Built lazily on first use so
@@ -83,11 +94,14 @@ export default function BlockBeam({
   holdDur = BEAM_HOLD_DUR_S,
   strikeDur = BEAM_STRIKE_DUR_S,
   flowSpeed = BEAM_FLOW_SPEED,
+  chargeRadius = CHARGE_RADIUS_W,
+  chargeDur = BEAM_CHARGE_DUR_S,
 }: BlockBeamProps) {
   const coreMeshRef = useRef<THREE.Mesh>(null);
   const haloMeshRef = useRef<THREE.Mesh>(null);
   const outerGlowMeshRef = useRef<THREE.Mesh>(null);
   const splashSpriteRef = useRef<THREE.Sprite>(null);
+  const chargeSpriteRef = useRef<THREE.Sprite>(null);
 
   const coreMaterial = useMemo(() => {
     const m = makeBlockBeamMaterial();
@@ -121,13 +135,30 @@ export default function BlockBeam({
     });
   }, []);
 
+  // Charge-pre-roll glow — same shared white→cyan splash texture, seated at the
+  // node center. Brightens + swells as the charge builds, then pops + fades as
+  // the beam erupts. Opacity/scale are written per frame.
+  const chargeMaterial = useMemo(() => {
+    return new THREE.SpriteMaterial({
+      map: getSplashTexture(),
+      color: 0xffffff,
+      transparent: true,
+      depthWrite: false,
+      depthTest: true,
+      blending: THREE.AdditiveBlending,
+      toneMapped: false,
+      opacity: 0,
+    });
+  }, []);
+
   useEffect(() => () => {
     coreMaterial.dispose();
     haloMaterial.dispose();
     outerGlowMaterial?.dispose();
     splashMaterial.dispose();
+    chargeMaterial.dispose();
     // sharedSplashTexture is a module singleton — intentionally not disposed.
-  }, [coreMaterial, haloMaterial, outerGlowMaterial, splashMaterial]);
+  }, [coreMaterial, haloMaterial, outerGlowMaterial, splashMaterial, chargeMaterial]);
 
   useSimFrame(() => {
     const coreMesh = coreMeshRef.current;
@@ -145,6 +176,8 @@ export default function BlockBeam({
       coreMaterial.uniforms.uAge.value = -1;
       haloMaterial.uniforms.uAge.value = -1;
       if (outerGlowMaterial) outerGlowMaterial.uniforms.uAge.value = -1;
+      if (chargeSpriteRef.current) chargeSpriteRef.current.visible = false;
+      chargeMaterial.opacity = 0;
       return;
     }
 
@@ -164,7 +197,7 @@ export default function BlockBeam({
     }
 
     const age = simClock.elapsedSec - trigger.firedAt;
-    const phase = computeBeamPhase(age, { growDur, holdDur, strikeDur });
+    const phase = computeBeamPhase(age, { growDur, holdDur, strikeDur, chargeDur });
 
     if (phase.expired) {
       fireRef.current = null;
@@ -175,6 +208,8 @@ export default function BlockBeam({
       coreMaterial.uniforms.uAge.value = -1;
       haloMaterial.uniforms.uAge.value = -1;
       if (outerGlowMaterial) outerGlowMaterial.uniforms.uAge.value = -1;
+      if (chargeSpriteRef.current) chargeSpriteRef.current.visible = false;
+      chargeMaterial.opacity = 0;
       return;
     }
 
@@ -192,6 +227,28 @@ export default function BlockBeam({
       const sizeWorld = phase.spriteSize * splashPeakSize;
       splash.scale.set(sizeWorld, sizeWorld, 1);
       splashMaterial.opacity = phase.spriteAlpha;
+    }
+
+    // Charge glow: gather inside the node during the pre-roll (phase.charging),
+    // then a brief release pop as the column erupts (age ∈ [0, CHARGE_RELEASE_S)).
+    const charge = chargeSpriteRef.current;
+    if (charge) {
+      if (phase.charging) {
+        charge.visible = true;
+        const e = phase.chargeT * phase.chargeT; // ease-in: energy accelerating
+        const sizeW = chargeRadius * (0.35 + 0.65 * e);
+        charge.scale.set(sizeW, sizeW, 1);
+        chargeMaterial.opacity = e;
+      } else if (age >= 0 && age < CHARGE_RELEASE_S) {
+        charge.visible = true;
+        const rt = age / CHARGE_RELEASE_S; // pop outward + fade
+        const sizeW = chargeRadius * (1.0 + 0.6 * rt);
+        charge.scale.set(sizeW, sizeW, 1);
+        chargeMaterial.opacity = 1.0 - rt;
+      } else {
+        charge.visible = false;
+        chargeMaterial.opacity = 0;
+      }
     }
   });
 
@@ -240,6 +297,15 @@ export default function BlockBeam({
         ref={splashSpriteRef}
         position={[originWorld[0], targetY, originWorld[2]]}
         material={splashMaterial}
+        renderOrder={-1}
+        visible={false}
+      />
+      {/* Charge pre-roll glow — gathers inside the node, then releases as the
+          column erupts. Seated at the node center (originWorld). */}
+      <sprite
+        ref={chargeSpriteRef}
+        position={originWorld}
+        material={chargeMaterial}
         renderOrder={-1}
         visible={false}
       />

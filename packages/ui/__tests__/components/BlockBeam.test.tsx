@@ -44,6 +44,25 @@ describe('BlockBeam mount', () => {
     ).not.toThrow();
   });
 
+  it('mounts with a charge radius override without throwing', () => {
+    const fireRef = { current: null };
+    expect(() =>
+      render(
+        <Canvas>
+          <BlockBeam
+            originWorld={[40, 22, 10]}
+            targetY={CELLS_Y}
+            fireRef={fireRef}
+            coreRadius={0.1}
+            haloRadius={0.38}
+            showOuterGlow={false}
+            chargeRadius={0.6}
+          />
+        </Canvas>,
+      ),
+    ).not.toThrow();
+  });
+
   it('mounts with explicit shape overrides (jittered durations + flow) without throwing', () => {
     const fireRef = { current: null };
     expect(() =>
