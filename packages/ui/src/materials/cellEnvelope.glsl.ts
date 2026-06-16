@@ -1,6 +1,6 @@
-// Shared GLSL fragments consumed by cellHybridMaterial.ts and
-// cellShellMaterial.ts. Single Calculation Path: every birth/death/flash
-// envelope in the topology scene resolves to these exact functions.
+// Shared GLSL fragments consumed by the cell, flare, and shell materials in
+// the topology scene. Single Calculation Path: every birth/death/flash
+// envelope resolves to these exact functions.
 
 export const HASH11_GLSL = /* glsl */ `
   float hash11(float p) { return fract(sin(p * 12.9898) * 43758.5453); }
