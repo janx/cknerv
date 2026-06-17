@@ -16,7 +16,7 @@ describe('computeBeamPhase', () => {
   });
 
   it('is fully idle well before launch (age < −chargeDur)', () => {
-    const p = computeBeamPhase(-0.5, CFG); // default chargeDur 0.25 → −0.5 < −0.25
+    const p = computeBeamPhase(-0.5, CFG); // default chargeDur 0.4 → −0.5 < −0.4
     expect(p.charging).toBe(false);
     expect(p.chargeT).toBe(0);
     expect(p.visible).toBe(false);

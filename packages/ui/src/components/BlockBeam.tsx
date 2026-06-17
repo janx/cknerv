@@ -8,6 +8,7 @@ import {
   makeBlockBeamMaterial,
   makeBlockBeamOuterGlowMaterial,
   makeStrikeSplashSpriteTexture,
+  makeBeamSourceOrbMaterial,
   STRIKE_SPRITE_PEAK_SIZE,
   BEAM_FLOW_SPEED,
 } from '../materials/blockBeamMaterial';
@@ -45,8 +46,8 @@ export interface BlockBeamProps {
   strikeDur?: number;
   /** Core scrolling-flow speed (wu/s). Default BEAM_FLOW_SPEED. */
   flowSpeed?: number;
-  /** Charge-glow radius (world units) seated at the node center. Default
-   *  CHARGE_RADIUS_W (hero-sized). Peers pass a smaller value. */
+  /** Source-orb size basis (world units). The energy orb at the foot is sized
+   *  off this; default CHARGE_RADIUS_W (hero). Peers pass a smaller value. */
   chargeRadius?: number;
   /** Pre-roll charge duration (s). Default BEAM_CHARGE_DUR_S. */
   chargeDur?: number;
@@ -58,11 +59,22 @@ const CORE_RADIUS_W = 0.22;
 const HALO_RADIUS_W = 0.80;
 /** Outer-glow cylinder radius — the broad atmospheric bleed. ~5.7× the core. */
 const OUTER_GLOW_RADIUS_W = 1.25;
-/** Charge-glow radius — the energy that gathers inside the node before the
- *  burst. ≈ the CKB icosahedron radius so the glow reads as filling the node. */
+/** Source-orb size basis — the energy orb at the beam's foot is sized off this
+ *  (≈ half it). ≈ the CKB icosahedron radius. */
 const CHARGE_RADIUS_W = 2.4;
-/** How long the charge "releases" (pops + fades) after the beam launches. */
-const CHARGE_RELEASE_S = 0.12;
+/** Ignite-bloom window (s) right after launch, before the source settles to
+ *  its steady sustain glow. */
+const IGNITE_S = 0.12;
+/** Steady source-orb opacity during the beam's sustain — the root the column
+ *  is fed from — relative to the ignite peak of 1.0. */
+const SOURCE_SUSTAIN = 0.45;
+/** Spend window (s) at retract start: the orb flares then collapses to nothing
+ *  (a mirror of the gather), quick so it doesn't linger as the beam drains up. */
+const SPEND_S = 0.18;
+
+/** Unit sphere shared by every beam's source orb (scaled per frame). Module
+ *  singleton — built once, never disposed. */
+const SOURCE_ORB_GEOM = new THREE.SphereGeometry(1, 24, 16);
 
 // One splash texture shared by every BlockBeam (hero + all peer tributaries):
 // a soft white→cyan radial gradient, immutable. Built lazily on first use so
@@ -101,7 +113,7 @@ export default function BlockBeam({
   const haloMeshRef = useRef<THREE.Mesh>(null);
   const outerGlowMeshRef = useRef<THREE.Mesh>(null);
   const splashSpriteRef = useRef<THREE.Sprite>(null);
-  const chargeSpriteRef = useRef<THREE.Sprite>(null);
+  const chargeOrbRef = useRef<THREE.Mesh>(null);
 
   const coreMaterial = useMemo(() => {
     const m = makeBlockBeamMaterial();
@@ -135,30 +147,27 @@ export default function BlockBeam({
     });
   }, []);
 
-  // Charge-pre-roll glow — same shared white→cyan splash texture, seated at the
-  // node center. Brightens + swells as the charge builds, then pops + fades as
-  // the beam erupts. Opacity/scale are written per frame.
-  const chargeMaterial = useMemo(() => {
-    return new THREE.SpriteMaterial({
-      map: getSplashTexture(),
-      color: 0xffffff,
-      transparent: true,
-      depthWrite: false,
-      depthTest: true,
-      blending: THREE.AdditiveBlending,
-      toneMapped: false,
-      opacity: 0,
-    });
-  }, []);
+  // Energy-source orb — a soft glowing sphere at the node that spans the whole
+  // beam: condenses + brightens during the charge (visible 聚能), blooms at
+  // ignite, then settles to a steady breathing "root" the column erupts from
+  // and is fed by, fading as the base retracts. Its rounded form caps the foot.
+  // uOpacity + mesh scale are written per frame.
+  const orbMaterial = useMemo(() => makeBeamSourceOrbMaterial(), []);
+
+  // Per-beam phase so the source-glow breathing isn't synced across all nodes.
+  const breathePhase = useMemo(
+    () => originWorld[0] * 0.7 + originWorld[2] * 1.3,
+    [originWorld],
+  );
 
   useEffect(() => () => {
     coreMaterial.dispose();
     haloMaterial.dispose();
     outerGlowMaterial?.dispose();
     splashMaterial.dispose();
-    chargeMaterial.dispose();
-    // sharedSplashTexture is a module singleton — intentionally not disposed.
-  }, [coreMaterial, haloMaterial, outerGlowMaterial, splashMaterial, chargeMaterial]);
+    orbMaterial.dispose();
+    // shared textures + the orb geometry are module singletons — not disposed.
+  }, [coreMaterial, haloMaterial, outerGlowMaterial, splashMaterial, orbMaterial]);
 
   useSimFrame(() => {
     const coreMesh = coreMeshRef.current;
@@ -176,8 +185,8 @@ export default function BlockBeam({
       coreMaterial.uniforms.uAge.value = -1;
       haloMaterial.uniforms.uAge.value = -1;
       if (outerGlowMaterial) outerGlowMaterial.uniforms.uAge.value = -1;
-      if (chargeSpriteRef.current) chargeSpriteRef.current.visible = false;
-      chargeMaterial.opacity = 0;
+      if (chargeOrbRef.current) chargeOrbRef.current.visible = false;
+      orbMaterial.uniforms.uOpacity.value = 0;
       return;
     }
 
@@ -208,8 +217,8 @@ export default function BlockBeam({
       coreMaterial.uniforms.uAge.value = -1;
       haloMaterial.uniforms.uAge.value = -1;
       if (outerGlowMaterial) outerGlowMaterial.uniforms.uAge.value = -1;
-      if (chargeSpriteRef.current) chargeSpriteRef.current.visible = false;
-      chargeMaterial.opacity = 0;
+      if (chargeOrbRef.current) chargeOrbRef.current.visible = false;
+      orbMaterial.uniforms.uOpacity.value = 0;
       return;
     }
 
@@ -229,25 +238,53 @@ export default function BlockBeam({
       splashMaterial.opacity = phase.spriteAlpha;
     }
 
-    // Charge glow: gather inside the node during the pre-roll (phase.charging),
-    // then a brief release pop as the column erupts (age ∈ [0, CHARGE_RELEASE_S)).
-    const charge = chargeSpriteRef.current;
-    if (charge) {
+    // Energy-source orb at the node: ONE glowing sphere spanning the whole
+    // event — gather (condense + brighten) → ignite (bloom) → sustain (a steady
+    // breathing root the column erupts from) → fade as the base retracts. Its
+    // rounded form caps the foot; the condense + brighten is the visible 聚能.
+    const orb = chargeOrbRef.current;
+    if (orb) {
+      const orbBase = chargeRadius * 0.5;                  // nominal source radius
+      const sustainEndAge = growDur + holdDur;             // hold ends, retract begins
+      const breathe = 0.82 + 0.18 * Math.sin(simClock.elapsedSec * 2.6 + breathePhase);
       if (phase.charging) {
-        charge.visible = true;
-        const e = phase.chargeT * phase.chargeT; // ease-in: energy accelerating
-        const sizeW = chargeRadius * (0.35 + 0.65 * e);
-        charge.scale.set(sizeW, sizeW, 1);
-        chargeMaterial.opacity = e;
-      } else if (age >= 0 && age < CHARGE_RELEASE_S) {
-        charge.visible = true;
-        const rt = age / CHARGE_RELEASE_S; // pop outward + fade
-        const sizeW = chargeRadius * (1.0 + 0.6 * rt);
-        charge.scale.set(sizeW, sizeW, 1);
-        chargeMaterial.opacity = 1.0 - rt;
+        // Gather: the orb condenses from wide+faint to a tight bright ball.
+        const p = phase.chargeT;            // 0 → 1 across the charge window
+        const e = p * p;                    // accelerate the gather toward launch
+        const fadeIn = Math.min(1, p / 0.12);
+        orb.visible = true;
+        orb.scale.setScalar(orbBase * (1.5 - 0.6 * e)); // 1.5× → 0.9×
+        orbMaterial.uniforms.uOpacity.value = (0.2 + 0.8 * e) * fadeIn;
+      } else if (age < 0) {
+        // Future-dated firedAt still far off — nothing gathered yet.
+        orb.visible = false;
+        orbMaterial.uniforms.uOpacity.value = 0;
+      } else if (age < IGNITE_S) {
+        // Ignite: a brief bright bloom, then ease to the steady sustain level.
+        const it = age / IGNITE_S;
+        orb.visible = true;
+        orb.scale.setScalar(orbBase * (0.9 + 0.3 * Math.sin(Math.PI * it)));
+        orbMaterial.uniforms.uOpacity.value = 1.0 - (1.0 - SOURCE_SUSTAIN) * it;
+      } else if (age < sustainEndAge) {
+        // Sustain: a steady breathing root the column is continuously fed from.
+        orb.visible = true;
+        orb.scale.setScalar(orbBase * (0.95 + 0.05 * breathe));
+        orbMaterial.uniforms.uOpacity.value = SOURCE_SUSTAIN * breathe;
       } else {
-        charge.visible = false;
-        chargeMaterial.opacity = 0;
+        // Spend: a final bright flare (energy expelled up into the beam) then
+        // the orb collapses inward to nothing — a mirror of the gather's
+        // condense-in, and quick (SPEND_S) so it doesn't linger disconnected as
+        // the beam drains up off the node.
+        const st = Math.min(1, (age - sustainEndAge) / SPEND_S);
+        if (st >= 1) {
+          orb.visible = false;
+          orbMaterial.uniforms.uOpacity.value = 0;
+        } else {
+          orb.visible = true;
+          const flare = Math.sin(Math.PI * st);          // 0 → 1 → 0
+          orb.scale.setScalar(orbBase * (0.95 * (1 - st) + 0.6 * flare));
+          orbMaterial.uniforms.uOpacity.value = SOURCE_SUSTAIN * (1 - st) + 0.7 * flare;
+        }
       }
     }
   });
@@ -300,12 +337,15 @@ export default function BlockBeam({
         renderOrder={-1}
         visible={false}
       />
-      {/* Charge pre-roll glow — gathers inside the node, then releases as the
-          column erupts. Seated at the node center (originWorld). */}
-      <sprite
-        ref={chargeSpriteRef}
+      {/* Energy-source orb — a glowing sphere that gathers, ignites, then
+          sustains as the rounded source the column erupts from. Seated at the
+          node center (originWorld); its rounded form caps the beam foot. */}
+      <mesh
+        ref={chargeOrbRef}
         position={originWorld}
-        material={chargeMaterial}
+        geometry={SOURCE_ORB_GEOM}
+        material={orbMaterial}
+        frustumCulled={false}
         renderOrder={-1}
         visible={false}
       />

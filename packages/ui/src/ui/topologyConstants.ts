@@ -29,7 +29,7 @@ export const BEAM_STRIKE_DUR_S = 1.20;
  *  the node, then the column erupts at age 0. Splash/arrival timing is
  *  unchanged. When there is no lead time (firedAt ≈ now) the charge is simply
  *  skipped. */
-export const BEAM_CHARGE_DUR_S = 0.25;
+export const BEAM_CHARGE_DUR_S = 0.4;
 export const SHOCKWAVE_FIRE_DELAY_S = BEAM_GROW_DUR_S + BEAM_STRIKE_DUR_S;
 
 // Single calculation path: the shockwave delay is derived, not free.

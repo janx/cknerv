@@ -93,13 +93,11 @@ export function makeBlockBeamMaterial(): THREE.ShaderMaterial {
         //   Strike phase: bottomT∈[0,1], topT=1 → base retracts toward tip
         float yLocal = mix(bottomT, topT, h);
         float y      = yLocal * uTotalHeight;
-        // Shader-side tail taper: only the bottom ~22% of the beam
-        // narrows toward the axis (smoothstep curve). Body and head
-        // (h ≥ 0.22) keep the full cylinder radius — solid bright
-        // column rather than a uniformly tapered cone, so the body
-        // doesn't read as thin / washed-out.
-        float radiusFactor = smoothstep(0.0, 0.22, h);
-        vec3  p = vec3(position.x * radiusFactor, y, position.z * radiusFactor);
+        // Full-width foot: no radius taper (a dome narrowing to a point read as
+        // LESS rounded, not more). The column ends full width and is capped by
+        // the rounded energy orb at the source; the fragment makes the foot the
+        // brightest/whitest part (a hot root).
+        vec3  p = vec3(position.x, y, position.z);
 
         vec4 worldPos = modelMatrix * vec4(p, 1.0);
         vNormalWorld  = normalize(mat3(modelMatrix) * normal);
@@ -165,18 +163,17 @@ export function makeBlockBeamMaterial(): THREE.ShaderMaterial {
         float flowFactor   = 1.0 + flow * flowStrength;
         col *= flowFactor;
 
-        // Tail-only length fade: alpha is 0 at the very tail tip
-        // (vH = 0), ramps to full over the bottom ~22% via
-        // smoothstep, then stays at 1 for the entire body and head.
-        // Combined with the matching geometric taper this gives a
-        // solid bright column above a dissolving comet tail rather
-        // than a body that gradually thins out from end to end.
-        float lengthAlpha = smoothstep(0.0, 0.22, vH);
+        // Hot root: the bottom segment is the brightest, whitest part of the
+        // column — the foot where it is fed from the node's energy source —
+        // easing to the steady cyan body over the bottom ~15%. (Replaces the
+        // old comet-tail dissolve, which made the base the *dimmest* part.)
+        // The foot is full opacity (no tail fade); it sits inside the sustained
+        // source glow, so it reads as erupting from the source rather than cut.
+        float rootHeat = 1.0 - smoothstep(0.0, 0.15, vH);
+        col = mix(col, vec3(1.0), rootHeat * 0.5); // whiten toward the root
+        col *= 1.0 + rootHeat * 1.2;               // brighten the root
 
-        // No uniform-fade during strike: the vertex shader retracts
-        // the base toward the anchored tip, so the beam visually
-        // shrinks into the impact point rather than fading in place.
-        float alpha = bodyAlpha * lengthAlpha;
+        float alpha = bodyAlpha;
         if (alpha < 0.001) discard;
         gl_FragColor = vec4(col * alpha, alpha);
       }
@@ -237,11 +234,9 @@ export function makeBlockBeamHaloMaterial(): THREE.ShaderMaterial {
         float h      = position.y + 0.5;
         float yLocal = mix(bottomT, topT, h);
         float y      = yLocal * uTotalHeight;
-        // Shader-side tail taper: bottom ~22% narrows toward the axis;
-        // body + head keep full radius. Matches the core's radius
-        // profile so the layers stay co-axial as the tail dissolves.
-        float radiusFactor = smoothstep(0.0, 0.22, h);
-        vec3  p = vec3(position.x * radiusFactor, y, position.z * radiusFactor);
+        // Full-width foot — no radius taper, co-axial with the core; the source
+        // orb provides the rounded cap.
+        vec3  p = vec3(position.x, y, position.z);
 
         vec4 worldPos = modelMatrix * vec4(p, 1.0);
         vNormalWorld  = normalize(mat3(modelMatrix) * normal);
@@ -273,8 +268,10 @@ export function makeBlockBeamHaloMaterial(): THREE.ShaderMaterial {
         // screen.
         float facing = abs(dot(normalize(vNormalWorld), normalize(vViewDir)));
         float alpha  = pow(facing, 1.4) * 0.55;
-        // Tail-only fade — body + head fully opaque.
-        alpha *= smoothstep(0.0, 0.22, vH);
+        // Full opacity to the foot (no tail dissolve), with a slight boost at
+        // the root so the sheath glows hotter where the column is fed.
+        float rootHeat = 1.0 - smoothstep(0.0, 0.15, vH);
+        alpha *= 1.0 + rootHeat * 0.6;
 
         if (alpha < 0.001) discard;
         gl_FragColor = vec4(haloColor * alpha, alpha);
@@ -330,11 +327,9 @@ export function makeBlockBeamOuterGlowMaterial(): THREE.ShaderMaterial {
         float h      = position.y + 0.5;
         float yLocal = mix(bottomT, topT, h);
         float y      = yLocal * uTotalHeight;
-        // Shader-side tail taper: bottom ~22% narrows toward the axis;
-        // body + head keep full radius. Matches the core's radius
-        // profile so the layers stay co-axial as the tail dissolves.
-        float radiusFactor = smoothstep(0.0, 0.22, h);
-        vec3  p = vec3(position.x * radiusFactor, y, position.z * radiusFactor);
+        // Full-width foot — no radius taper, co-axial with the core; the source
+        // orb provides the rounded cap.
+        vec3  p = vec3(position.x, y, position.z);
 
         vec4 worldPos = modelMatrix * vec4(p, 1.0);
         vNormalWorld  = normalize(mat3(modelMatrix) * normal);
@@ -366,8 +361,10 @@ export function makeBlockBeamOuterGlowMaterial(): THREE.ShaderMaterial {
         // not a second halo.
         float facing = abs(dot(normalize(vNormalWorld), normalize(vViewDir)));
         float alpha  = facing * 0.18;
-        // Tail-only fade — body + head fully opaque.
-        alpha *= smoothstep(0.0, 0.22, vH);
+        // Full opacity to the foot (no tail dissolve); a faint root boost so
+        // the atmospheric bleed thickens around the source.
+        float rootHeat = 1.0 - smoothstep(0.0, 0.15, vH);
+        alpha *= 1.0 + rootHeat * 0.4;
 
         if (alpha < 0.001) discard;
         gl_FragColor = vec4(glowColor * alpha, alpha);
@@ -418,3 +415,51 @@ export function makeStrikeSplashSpriteTexture(): THREE.Texture {
  *  normalized `spriteSize` returned by `computeBeamPhase` by this
  *  value when setting `sprite.scale`. */
 export const STRIKE_SPRITE_PEAK_SIZE = 3.5;
+
+/**
+ * Glowing energy-orb material for the beam's source/foot — a soft additive
+ * sphere (white-hot core fading through cyan to a transparent silhouette via
+ * fresnel) that reads as a rounded ball of gathered energy the column erupts
+ * from. The orb gives the foot a genuine rounded 3D cap (an open cylinder can
+ * only taper to a point), and is the visible "聚能" source: BlockBeam writes
+ * `uOpacity` and the mesh scale per frame across the gather → ignite → sustain
+ * → fade lifecycle.
+ */
+export function makeBeamSourceOrbMaterial(): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    uniforms: {
+      uOpacity: { value: 0 },
+    },
+    transparent: true,
+    depthWrite: false,
+    depthTest: true,
+    blending: THREE.AdditiveBlending,
+    side: THREE.DoubleSide,
+    toneMapped: false,
+    vertexShader: /* glsl */ `
+      varying vec3 vNormalW;
+      varying vec3 vViewDir;
+      void main() {
+        vec4 worldPos = modelMatrix * vec4(position, 1.0);
+        vNormalW = normalize(mat3(modelMatrix) * normal);
+        vViewDir = normalize(cameraPosition - worldPos.xyz);
+        gl_Position = projectionMatrix * viewMatrix * worldPos;
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      uniform float uOpacity;
+      varying vec3 vNormalW;
+      varying vec3 vViewDir;
+      void main() {
+        // Bright white-hot where the sphere faces the camera, fading through
+        // cyan to a transparent silhouette — a soft ball of light, not a hard
+        // sphere. DoubleSide + additive thickens the glow through the volume.
+        float facing = abs(dot(normalize(vNormalW), normalize(vViewDir)));
+        float a = pow(facing, 1.6) * uOpacity;
+        vec3 col = mix(vec3(0.45, 0.82, 1.0), vec3(1.0, 1.0, 1.0), facing);
+        if (a < 0.002) discard;
+        gl_FragColor = vec4(col * a, a);
+      }
+    `,
+  });
+}
