@@ -44,7 +44,9 @@ export function makeCourierWakeMaterial(
         vec2 uv = gl_PointCoord - 0.5;
         float d = length(uv);
         if (d > 0.5) discard;
+        // Gaussian disc, re-based so it reaches 0 at the mask edge (no hard rim).
         float falloff = exp(-pow(d / 0.32, 2.0));
+        falloff = max(0.0, falloff - 0.135) / 0.865;
         float a = vAlpha * falloff;
         if (a < 0.004) discard;
         gl_FragColor = vec4(uColor * a, a);
