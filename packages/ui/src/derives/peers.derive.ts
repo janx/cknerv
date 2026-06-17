@@ -99,6 +99,49 @@ export function easeInOutCubic(t: number): number {
   return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
 }
 
+export interface CourierFlight {
+  from: Vec3;
+  to: Vec3;
+  /** Age (s since pulse) at which the courier departs. */
+  startAge: number;
+  /** Flight duration (s). */
+  dur: number;
+}
+
+export interface CourierSchedule {
+  entryId: string | null;
+  senders: Record<string, string | null>;
+  arrivals: Record<string, number>;
+}
+
+/** Resolve one peer's courier flight for the current block. The entry peer relays
+ *  inward to the hub over BLOCK_RELAY_HOP_S; every other peer receives a broadcast
+ *  hop from its sender, departing ≈ BLOCK_BROADCAST_HOP_S before its arrival.
+ *  Returns null when the peer has no arrival or a referenced position is missing. */
+export function courierFlight(
+  id: string,
+  schedule: CourierSchedule,
+  posById: Map<string, Vec3>,
+  hubPos: Vec3,
+): CourierFlight | null {
+  const { entryId, senders, arrivals } = schedule;
+  const arr = arrivals[id];
+  if (arr === undefined) return null;
+  const self = posById.get(id);
+  if (!self) return null;
+  if (id === entryId) {
+    return { from: self, to: hubPos, startAge: arr, dur: BLOCK_RELAY_HOP_S };
+  }
+  const senderId = senders[id];
+  if (!senderId) return null;
+  const from = posById.get(senderId);
+  if (!from) return null;
+  const startAge = Math.max(0, arr - BLOCK_BROADCAST_HOP_S);
+  const dur = arr - startAge;
+  if (dur <= 0) return null;
+  return { from, to: self, startAge, dur };
+}
+
 /** Deterministic generator for one peer × one block: fold the node-id hash with
  *  the per-block nonce so the same (node, block) always yields the same stream,
  *  and a new block reshuffles. Floors the (ms-timestamp) nonce to a uint first. */

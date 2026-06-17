@@ -298,4 +298,40 @@ describe('peers.derive', () => {
       expect(easeInOutCubic(0.9)).toBeGreaterThan(0.9);
     });
   });
+
+  describe('courierFlight', () => {
+    const pos = new Map<string, [number, number, number]>([
+      ['A', [10, 22, 0]],
+      ['B', [20, 22, 5]],
+      ['C', [30, 22, -5]],
+    ]);
+    const hub: [number, number, number] = [0, 22, 0];
+    const schedule = {
+      entryId: 'A',
+      senders: { A: null, B: 'A', C: 'B' } as Record<string, string | null>,
+      arrivals: { A: 0.12, B: 1.4, C: 1.9 } as Record<string, number>,
+    };
+
+    it('entry peer relays inward to the hub over BLOCK_RELAY_HOP_S', () => {
+      const f = courierFlight('A', schedule, pos, hub)!;
+      expect(f.from).toEqual([10, 22, 0]);
+      expect(f.to).toEqual(hub);
+      expect(f.startAge).toBe(0.12);
+      expect(f.dur).toBe(BLOCK_RELAY_HOP_S);
+    });
+
+    it('a broadcast peer flies sender→self with a clamped broadcast hop', () => {
+      const f = courierFlight('B', schedule, pos, hub)!;
+      expect(f.from).toEqual([10, 22, 0]);
+      expect(f.to).toEqual([20, 22, 5]);
+      expect(f.startAge).toBe(Math.max(0, 1.4 - 1.0));
+      expect(f.dur).toBeCloseTo(1.4 - f.startAge, 6);
+    });
+
+    it('returns null when the peer has no arrival or a position is missing', () => {
+      expect(courierFlight('Z', schedule, pos, hub)).toBeNull();
+      const onlyC = new Map<string, [number, number, number]>([['C', [1, 1, 1]]]);
+      expect(courierFlight('C', schedule, onlyC, hub)).toBeNull(); // sender 'B' absent
+    });
+  });
 });
