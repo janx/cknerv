@@ -142,6 +142,38 @@ export function courierFlight(
   return { from, to: self, startAge, dur };
 }
 
+export interface WakeSample {
+  pos: Vec3;
+  alpha: number;
+}
+
+/** Analytic wake: sample the courier's eased PAST positions behind the head.
+ *  Sample k is where the courier was `k·dtS` seconds ago; easing makes the wake
+ *  bunch where it moved slowly. Samples before launch (tk ≤ 0) are dropped, so an
+ *  early-flight courier has a short wake that grows to full length. */
+export function wakeSamples(
+  flight: CourierFlight,
+  age: number,
+  opts: { samples: number; dtS: number; gain: number },
+): WakeSample[] {
+  const { from, to, startAge, dur } = flight;
+  const out: WakeSample[] = [];
+  for (let k = 1; k <= opts.samples; k += 1) {
+    const tk = (age - k * opts.dtS - startAge) / dur;
+    if (tk <= 0) continue;
+    const s = easeInOutCubic(Math.min(1, tk));
+    out.push({
+      pos: [
+        from[0] + (to[0] - from[0]) * s,
+        from[1] + (to[1] - from[1]) * s,
+        from[2] + (to[2] - from[2]) * s,
+      ],
+      alpha: (1 - k / (opts.samples + 1)) * opts.gain,
+    });
+  }
+  return out;
+}
+
 /** Deterministic generator for one peer × one block: fold the node-id hash with
  *  the per-block nonce so the same (node, block) always yields the same stream,
  *  and a new block reshuffles. Floors the (ms-timestamp) nonce to a uint first. */
