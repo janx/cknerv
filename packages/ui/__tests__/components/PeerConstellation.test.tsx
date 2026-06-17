@@ -42,7 +42,7 @@ describe('PeerConstellation mount', () => {
     ).not.toThrow();
   });
 
-  it('mounts with a fired block pulse + entry peer (tributary beams + courier) without throwing', () => {
+  it('mounts a fired block pulse with a full schedule (wave + tributary beams) without throwing', () => {
     const peers = [
       peer({ node_id: 'A', direction: 'outbound', latency_ms: 20, best_known: 100 }),
       peer({ node_id: 'B', direction: 'inbound', latency_ms: 120, best_known: 98 }),
@@ -58,6 +58,8 @@ describe('PeerConstellation mount', () => {
             onSelect={() => {}}
             blockPulseAtMs={1234}
             entryPeerId="A"
+            arrivals={{ A: 0.12, B: 1.4 }}
+            senders={{ A: null, B: 'A' }}
           />
         </Canvas>,
       ),
