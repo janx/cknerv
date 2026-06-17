@@ -158,6 +158,7 @@ export function wakeSamples(
 ): WakeSample[] {
   const { from, to, startAge, dur } = flight;
   const out: WakeSample[] = [];
+  if (dur <= 0) return out; // parity with courierLeg; the producer guarantees dur > 0
   for (let k = 1; k <= opts.samples; k += 1) {
     const tk = (age - k * opts.dtS - startAge) / dur;
     if (tk <= 0) continue;

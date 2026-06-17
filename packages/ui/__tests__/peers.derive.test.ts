@@ -353,6 +353,20 @@ describe('peers.derive', () => {
       }
     });
 
+    it('scales alpha linearly with gain', () => {
+      const a1 = wakeSamples(flight, 0.6, { samples: 6, dtS: 0.04, gain: 1 });
+      const a2 = wakeSamples(flight, 0.6, { samples: 6, dtS: 0.04, gain: 2 });
+      expect(a2.length).toBe(a1.length);
+      for (let i = 0; i < a1.length; i += 1) {
+        expect(a2[i].alpha).toBeCloseTo(a1[i].alpha * 2, 6);
+      }
+    });
+
+    it('returns an empty wake for a degenerate (dur <= 0) flight', () => {
+      const degenerate = { from: [0, 0, 0] as [number, number, number], to: [10, 0, 0] as [number, number, number], startAge: 0, dur: 0 };
+      expect(wakeSamples(degenerate, 0.6, { samples: 6, dtS: 0.04, gain: 1 })).toEqual([]);
+    });
+
     it('samples lie on the eased path between from and to', () => {
       const s = wakeSamples(flight, 0.6, { samples: 4, dtS: 0.05, gain: 1 });
       for (const sm of s) {
