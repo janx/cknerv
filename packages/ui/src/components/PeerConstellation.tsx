@@ -48,7 +48,7 @@ const PEER_FLOW_STYLE: FlowStyle = {
  *  — the nodes-layer language, distinct from the soft particles. One unit cube shared
  *  by all couriers; sized up so the broadcast flights are easy to follow. */
 const BLOCK_GEOM = new THREE.BoxGeometry(1, 1, 1);
-const BLOCK_SIZE = 1.6;
+const BLOCK_SIZE = 1.0;
 const BLOCK_COLOR = new THREE.Color('#d8faff');
 
 /** One unit-radius octahedron shared by every peer crystal (CrystalGlow
