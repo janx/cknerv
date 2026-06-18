@@ -7,7 +7,7 @@ import type { Vec3 } from '../types';
 import {
   courierFlight,
   courierLeg,
-  easeInOutCubic,
+  easeOutCubic,
   wakeSamples,
   type CourierSchedule,
 } from '../derives/peers.derive';
@@ -16,14 +16,16 @@ import CrystalGlow from './CrystalGlow';
 
 /** Block courier cube — shared geometry/size/color (moved here from PeerConstellation). */
 const BLOCK_GEOM = new THREE.BoxGeometry(1, 1, 1);
-const BLOCK_SIZE = 1.0;
+const BLOCK_SIZE = 0.5; // smaller "thrown" block
 const BLOCK_COLOR = new THREE.Color('#d8faff');
 
-/** Wake tuning (harness-tunable). */
-const WAKE_SAMPLES = 12;
-const WAKE_DT_S = 0.04;
+/** Comet-tail tuning (harness-tunable). Dense + tightly spaced so the points read as
+ *  one tapering tail, not a dot cloud; size tapers WAKE_HEAD_SIZE → ×WAKE_TAIL_FRAC. */
+const WAKE_SAMPLES = 24;
+const WAKE_DT_S = 0.022;
 const WAKE_GAIN = 1.0;
-const WAKE_POINT_SIZE = 1.6;
+const WAKE_HEAD_SIZE = 2.2;  // bright wide head (the material's uBaseSize for the wake)
+const WAKE_TAIL_FRAC = 0.18; // tail size as a fraction of the head
 /** Cube presence: ease intensity in/out over this fraction of each leg so the
  *  solid cube doesn't pop at the endpoints (the flashes cover those moments). */
 const COURIER_END_EASE = 0.08;
@@ -86,21 +88,24 @@ export default function BlockCourierLayer({
     [],
   );
 
-  // Shared wake Points (one draw call for the whole wave).
+  // Shared wake Points (one draw call for the whole wave). `aSize` carries the
+  // per-point comet taper (head → tail); the material multiplies it by uBaseSize.
   const wakeGeom = useMemo(() => {
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(MAX_WAKE_POINTS * 3), 3));
     g.setAttribute('aAlpha', new THREE.BufferAttribute(new Float32Array(MAX_WAKE_POINTS), 1));
+    g.setAttribute('aSize', new THREE.BufferAttribute(new Float32Array(MAX_WAKE_POINTS), 1));
     g.setDrawRange(0, 0);
     return g;
   }, []);
-  const wakeMat = useMemo(() => makeCourierWakeMaterial(BLOCK_COLOR, WAKE_POINT_SIZE), []);
+  const wakeMat = useMemo(() => makeCourierWakeMaterial(BLOCK_COLOR, WAKE_HEAD_SIZE), []);
 
-  // Shared flash Points (ring buffer of live blooms).
+  // Shared flash Points (ring buffer of live blooms). Uniform size → aSize ≡ 1.
   const flashGeom = useMemo(() => {
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(FLASH_CAPACITY * 3), 3));
     g.setAttribute('aAlpha', new THREE.BufferAttribute(new Float32Array(FLASH_CAPACITY), 1));
+    g.setAttribute('aSize', new THREE.BufferAttribute(new Float32Array(FLASH_CAPACITY).fill(1), 1));
     g.setDrawRange(0, 0);
     return g;
   }, []);
@@ -140,6 +145,7 @@ export default function BlockCourierLayer({
     const schedule: CourierSchedule = { entryId, senders, arrivals };
     const wakePos = wakeGeom.getAttribute('position') as THREE.BufferAttribute;
     const wakeAlpha = wakeGeom.getAttribute('aAlpha') as THREE.BufferAttribute;
+    const wakeSize = wakeGeom.getAttribute('aSize') as THREE.BufferAttribute;
     let w = 0;
 
     const spawnFlash = (pos: Vec3) => {
@@ -177,7 +183,7 @@ export default function BlockCourierLayer({
             g.visible = false;
             h.intensity.current = 0;
           } else {
-            const s = easeInOutCubic(leg.t);
+            const s = easeOutCubic(leg.t);
             g.visible = true;
             g.position.set(
               flight.from[0] + (flight.to[0] - flight.from[0]) * s,
@@ -189,17 +195,19 @@ export default function BlockCourierLayer({
           }
         }
 
-        // Wake samples → shared buffer.
+        // Wake samples → shared comet-tail buffer.
         if (leg.visible) {
           const samples = wakeSamples(flight, age, {
             samples: WAKE_SAMPLES,
             dtS: WAKE_DT_S,
             gain: WAKE_GAIN,
+            tailFrac: WAKE_TAIL_FRAC,
           });
           for (const sm of samples) {
             if (w >= MAX_WAKE_POINTS) break;
             wakePos.setXYZ(w, sm.pos[0], sm.pos[1], sm.pos[2]);
             wakeAlpha.setX(w, sm.alpha);
+            wakeSize.setX(w, sm.size);
             w += 1;
           }
         }
@@ -210,6 +218,7 @@ export default function BlockCourierLayer({
     wakeGeom.setDrawRange(0, w);
     wakePos.needsUpdate = true;
     wakeAlpha.needsUpdate = true;
+    wakeSize.needsUpdate = true;
 
     // Advance + write flashes (drop expired, then fill the buffer).
     const live = flashes.current.filter((f) => now - f.bornSec < FLASH_DUR_S);
