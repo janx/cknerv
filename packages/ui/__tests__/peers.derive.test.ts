@@ -12,6 +12,7 @@ import {
   beamShapeJitter,
   courierLeg,
   easeInOutCubic,
+  easeOutCubic,
   courierFlight,
   wakeSamples,
   blockArrivalSchedule,
@@ -296,6 +297,24 @@ describe('peers.derive', () => {
       }
       expect(easeInOutCubic(0.1)).toBeLessThan(0.1);
       expect(easeInOutCubic(0.9)).toBeGreaterThan(0.9);
+    });
+  });
+
+  describe('easeOutCubic', () => {
+    it('pins endpoints and is front-loaded (fast launch)', () => {
+      expect(easeOutCubic(0)).toBe(0);
+      expect(easeOutCubic(1)).toBe(1);
+      expect(easeOutCubic(0.5)).toBeCloseTo(0.875, 6); // 1 - 0.5^3
+      expect(easeOutCubic(0.1)).toBeGreaterThan(0.25); // covers ground fast early
+    });
+    it('is monotonic and decelerating (slope shrinks toward 1)', () => {
+      let prev = -Infinity;
+      for (let i = 0; i <= 20; i += 1) {
+        const v = easeOutCubic(i / 20);
+        expect(v).toBeGreaterThanOrEqual(prev);
+        prev = v;
+      }
+      expect(easeOutCubic(0.1) - easeOutCubic(0)).toBeGreaterThan(easeOutCubic(1) - easeOutCubic(0.9));
     });
   });
 
