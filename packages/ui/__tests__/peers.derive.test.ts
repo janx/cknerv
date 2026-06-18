@@ -11,7 +11,6 @@ import {
   peerCrystalBrightness,
   beamShapeJitter,
   courierLeg,
-  easeInOutCubic,
   easeOutCubic,
   courierFlight,
   wakeSamples,
@@ -280,24 +279,6 @@ describe('peers.derive', () => {
       .toBe('SYNCING 30 behind');
     expect(summarizeNetwork([], { ...base, best_known_block: 130, ibd: true }, undefined).syncLabel)
       .toBe('IBD');
-  });
-
-  describe('easeInOutCubic', () => {
-    it('pins the endpoints and the midpoint', () => {
-      expect(easeInOutCubic(0)).toBe(0);
-      expect(easeInOutCubic(1)).toBe(1);
-      expect(easeInOutCubic(0.5)).toBeCloseTo(0.5, 6);
-    });
-    it('is monotonic and eased (slow) at both ends', () => {
-      let prev = -Infinity;
-      for (let i = 0; i <= 20; i += 1) {
-        const v = easeInOutCubic(i / 20);
-        expect(v).toBeGreaterThanOrEqual(prev);
-        prev = v;
-      }
-      expect(easeInOutCubic(0.1)).toBeLessThan(0.1);
-      expect(easeInOutCubic(0.9)).toBeGreaterThan(0.9);
-    });
   });
 
   describe('easeOutCubic', () => {

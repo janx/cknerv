@@ -93,12 +93,6 @@ export const BLOCK_BROADCAST_HOP_S = 1.0;
  *  "we received it" cube is followable. */
 export const BLOCK_RELAY_HOP_S = 0.7;
 
-/** Cubic ease-in-out: slow at both ends, fast through the middle. The courier
- *  velocity profile — accelerate, cruise, decelerate. */
-export function easeInOutCubic(t: number): number {
-  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
-}
-
 /** Cubic ease-out: fast launch, decelerate to rest. The "thrown" courier velocity —
  *  the block is flung off the sender and coasts to a stop at the receiver. */
 export function easeOutCubic(t: number): number {
