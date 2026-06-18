@@ -358,23 +358,23 @@ describe('peers.derive', () => {
     const flight = { from: [0, 0, 0] as [number, number, number], to: [10, 0, 0] as [number, number, number], startAge: 0, dur: 1 };
 
     it('drops samples that predate launch (tk <= 0) and caps at `samples`', () => {
-      const early = wakeSamples(flight, 0.05, { samples: 12, dtS: 0.04, gain: 1 });
+      const early = wakeSamples(flight, 0.05, { samples: 12, dtS: 0.04, gain: 1, tailFrac: 0.18 });
       expect(early.length).toBeLessThan(12);
-      const mid = wakeSamples(flight, 0.6, { samples: 12, dtS: 0.04, gain: 1 });
+      const mid = wakeSamples(flight, 0.6, { samples: 12, dtS: 0.04, gain: 1, tailFrac: 0.18 });
       expect(mid.length).toBeLessThanOrEqual(12);
       expect(mid.length).toBeGreaterThan(0);
     });
 
     it('alpha strictly decreases with distance behind the head', () => {
-      const s = wakeSamples(flight, 0.6, { samples: 6, dtS: 0.04, gain: 1 });
+      const s = wakeSamples(flight, 0.6, { samples: 6, dtS: 0.04, gain: 1, tailFrac: 0.18 });
       for (let i = 1; i < s.length; i += 1) {
         expect(s[i].alpha).toBeLessThan(s[i - 1].alpha);
       }
     });
 
     it('scales alpha linearly with gain', () => {
-      const a1 = wakeSamples(flight, 0.6, { samples: 6, dtS: 0.04, gain: 1 });
-      const a2 = wakeSamples(flight, 0.6, { samples: 6, dtS: 0.04, gain: 2 });
+      const a1 = wakeSamples(flight, 0.6, { samples: 6, dtS: 0.04, gain: 1, tailFrac: 0.18 });
+      const a2 = wakeSamples(flight, 0.6, { samples: 6, dtS: 0.04, gain: 2, tailFrac: 0.18 });
       expect(a2.length).toBe(a1.length);
       for (let i = 0; i < a1.length; i += 1) {
         expect(a2[i].alpha).toBeCloseTo(a1[i].alpha * 2, 6);
@@ -383,17 +383,30 @@ describe('peers.derive', () => {
 
     it('returns an empty wake for a degenerate (dur <= 0) flight', () => {
       const degenerate = { from: [0, 0, 0] as [number, number, number], to: [10, 0, 0] as [number, number, number], startAge: 0, dur: 0 };
-      expect(wakeSamples(degenerate, 0.6, { samples: 6, dtS: 0.04, gain: 1 })).toEqual([]);
+      expect(wakeSamples(degenerate, 0.6, { samples: 6, dtS: 0.04, gain: 1, tailFrac: 0.18 })).toEqual([]);
     });
 
     it('samples lie on the eased path between from and to', () => {
-      const s = wakeSamples(flight, 0.6, { samples: 4, dtS: 0.05, gain: 1 });
+      const s = wakeSamples(flight, 0.6, { samples: 4, dtS: 0.05, gain: 1, tailFrac: 0.18 });
       for (const sm of s) {
         expect(sm.pos[0]).toBeGreaterThanOrEqual(0);
         expect(sm.pos[0]).toBeLessThanOrEqual(10);
         expect(sm.pos[1]).toBe(0);
         expect(sm.pos[2]).toBe(0);
       }
+    });
+
+    it('returns a per-sample size that tapers head→tail', () => {
+      const s = wakeSamples(flight, 0.6, { samples: 8, dtS: 0.02, gain: 1, tailFrac: 0.2 });
+      expect(s[0].size).toBeCloseTo(1, 6);                 // head ≈ full
+      for (let i = 1; i < s.length; i += 1) {
+        expect(s[i].size).toBeLessThan(s[i - 1].size);     // strictly shrinking
+      }
+      expect(s[s.length - 1].size).toBeGreaterThanOrEqual(0.2 - 1e-6); // floors at tailFrac
+    });
+    it('size honours tailFrac as the tail floor', () => {
+      const s = wakeSamples(flight, 1.0, { samples: 5, dtS: 0.02, gain: 1, tailFrac: 0.3 });
+      expect(s[s.length - 1].size).toBeCloseTo(0.3, 6);
     });
   });
 });
