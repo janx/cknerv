@@ -8,39 +8,36 @@ import {
   courierFlight,
   courierLeg,
   easeOutCubic,
-  wakeSamples,
-  PEER_RENDER_CAP,
   type CourierSchedule,
 } from '../derives/peers.derive';
 import { makeCourierWakeMaterial } from '../materials/courierWakeMaterial';
+import { makeCourierPlumeTexture, makeCourierBloomTexture } from '../materials/courierFlameTexture';
 import CrystalGlow from './CrystalGlow';
 
-/** Block courier cube — shared geometry/size/color (moved here from PeerConstellation). */
+/** Block courier cube — shared geometry/size/color. */
 const BLOCK_GEOM = new THREE.BoxGeometry(1, 1, 1);
 const BLOCK_SIZE = 0.5; // smaller "thrown" block
 const BLOCK_COLOR = new THREE.Color('#d8faff');
 
-/** Comet-tail tuning (harness-tunable). Dense + tightly spaced so the points read as
- *  one tapering tail, not a dot cloud; size tapers WAKE_HEAD_SIZE → ×WAKE_TAIL_FRAC. */
-const WAKE_SAMPLES = 24;
-const WAKE_DT_S = 0.022;
-const WAKE_GAIN = 1.0;
-const WAKE_HEAD_SIZE = 2.2;  // bright wide head (the material's uBaseSize for the wake)
-const WAKE_TAIL_FRAC = 0.18; // tail size as a fraction of the head
-/** Cube presence: ease intensity in/out over this fraction of each leg so the
- *  solid cube doesn't pop at the endpoints (the flashes cover those moments). */
+/** Jet-thrust flame tuning (harness-tunable). The plume is a velocity-aligned quad
+ *  whose length tracks the courier's speed; the bloom is a fixed round nozzle sprite. */
+const FLAME_WIDTH = 1.5;           // plume width (world units)
+const FLAME_MIN_LEN = 1.6;         // plume length at rest
+const FLAME_MAX_LEN = 9.0;         // plume length cap on the fast launch
+const FLAME_SPEED_STRETCH = 0.04;  // length added per (world-unit/s) of courier speed
+const FLAME_BLOOM_SIZE = 1.25;     // round nozzle-bloom diameter (world units)
+/** Cube + flame presence: ease in/out over this fraction of each leg so nothing pops. */
 const COURIER_END_EASE = 0.08;
 /** Flash tuning (harness-tunable). */
 const FLASH_DUR_S = 0.4;
 const FLASH_POINT_SIZE = 5.0;
 const FLASH_CAPACITY = 32;
 
-/** Capacity for the shared wake buffer (PEER_RENDER_CAP × WAKE_SAMPLES). */
-const MAX_WAKE_POINTS = PEER_RENDER_CAP * WAKE_SAMPLES;
-
 interface Handle {
   group: React.RefObject<THREE.Group | null>;
   intensity: React.MutableRefObject<number>;
+  plume: React.RefObject<THREE.Mesh | null>;
+  bloom: React.RefObject<THREE.Sprite | null>;
 }
 
 interface Flash {
@@ -63,11 +60,20 @@ export interface BlockCourierLayerProps {
   hubPos: Vec3;
 }
 
+// Scratch objects reused every frame (no per-frame allocation).
+const _dir = new THREE.Vector3();
+const _view = new THREE.Vector3();
+const _x = new THREE.Vector3();
+const _z = new THREE.Vector3();
+const _up = new THREE.Vector3(0, 1, 0);
+const _basis = new THREE.Matrix4();
+const _camPos = new THREE.Vector3();
+
 /**
  * The new-block broadcast wave. One layer owns every courier: a CrystalGlow cube
- * per peer (eased straight flight, free tumble preserved), all wakes in one shared
- * Points, and launch/arrival flashes in a second small Points. Driven each frame
- * from the schedule PeerConstellation already computes — no per-peer courier code.
+ * per peer (eased straight flight), a velocity-aligned jet-thrust flame (plume quad
+ * + nozzle bloom) behind it, and launch/arrival flashes in one shared Points.
+ * Driven each frame from the schedule PeerConstellation already computes.
  */
 export default function BlockCourierLayer({
   posById,
@@ -79,7 +85,7 @@ export default function BlockCourierLayer({
 }: BlockCourierLayerProps) {
   const ids = useMemo(() => Array.from(posById.keys()), [posById]);
 
-  // Cube handles by id, populated by CourierCube children.
+  // Cube/flame handles by id, populated by CourierCube children.
   const registry = useRef<Map<string, Handle>>(new Map());
   const register = useMemo(
     () => (id: string, handle: Handle | null) => {
@@ -89,17 +95,36 @@ export default function BlockCourierLayer({
     [],
   );
 
-  // Shared wake Points (one draw call for the whole wave). `aSize` carries the
-  // per-point comet taper (head → tail); the material multiplies it by uBaseSize.
-  const wakeGeom = useMemo(() => {
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(MAX_WAKE_POINTS * 3), 3));
-    g.setAttribute('aAlpha', new THREE.BufferAttribute(new Float32Array(MAX_WAKE_POINTS), 1));
-    g.setAttribute('aSize', new THREE.BufferAttribute(new Float32Array(MAX_WAKE_POINTS), 1));
-    g.setDrawRange(0, 0);
+  // Shared flame resources (one texture/material/geometry for all couriers).
+  const plumeTex = useMemo(() => makeCourierPlumeTexture(), []);
+  const bloomTex = useMemo(() => makeCourierBloomTexture(), []);
+  const plumeGeom = useMemo(() => {
+    const g = new THREE.PlaneGeometry(1, 1);
+    g.translate(0, -0.5, 0); // nozzle edge at the origin; plume extends toward -Y
     return g;
   }, []);
-  const wakeMat = useMemo(() => makeCourierWakeMaterial(BLOCK_COLOR, WAKE_HEAD_SIZE), []);
+  const plumeMat = useMemo(
+    () =>
+      new THREE.MeshBasicMaterial({
+        map: plumeTex,
+        transparent: true,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        toneMapped: false,
+      }),
+    [plumeTex],
+  );
+  const bloomMat = useMemo(
+    () =>
+      new THREE.SpriteMaterial({
+        map: bloomTex,
+        transparent: true,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        toneMapped: false,
+      }),
+    [bloomTex],
+  );
 
   // Shared flash Points (ring buffer of live blooms). Uniform size → aSize ≡ 1.
   const flashGeom = useMemo(() => {
@@ -119,12 +144,15 @@ export default function BlockCourierLayer({
 
   useEffect(
     () => () => {
-      wakeGeom.dispose();
-      wakeMat.dispose();
+      plumeTex.dispose();
+      bloomTex.dispose();
+      plumeGeom.dispose();
+      plumeMat.dispose();
+      bloomMat.dispose();
       flashGeom.dispose();
       flashMat.dispose();
     },
-    [wakeGeom, wakeMat, flashGeom, flashMat],
+    [plumeTex, bloomTex, plumeGeom, plumeMat, bloomMat, flashGeom, flashMat],
   );
 
   useSimFrame((state: RootState) => {
@@ -132,11 +160,8 @@ export default function BlockCourierLayer({
     const pulse = pulseRef.current;
     const reg = registry.current;
 
-    // Depth-attenuation basis.
-    wakeMat.uniforms.uViewportHeight.value = state.size.height;
     flashMat.uniforms.uViewportHeight.value = state.size.height;
 
-    // Reset the crossing detector on a fresh pulse.
     if (pulse && pulse.at !== prevPulseAt.current) {
       prevPulseAt.current = pulse.at;
       prevAge.current = -1;
@@ -144,10 +169,6 @@ export default function BlockCourierLayer({
 
     const age = pulse ? now - pulse.at : 0;
     const schedule: CourierSchedule = { entryId, senders, arrivals };
-    const wakePos = wakeGeom.getAttribute('position') as THREE.BufferAttribute;
-    const wakeAlpha = wakeGeom.getAttribute('aAlpha') as THREE.BufferAttribute;
-    const wakeSize = wakeGeom.getAttribute('aSize') as THREE.BufferAttribute;
-    let w = 0;
 
     const spawnFlash = (pos: Vec3) => {
       const arr = flashes.current;
@@ -155,19 +176,24 @@ export default function BlockCourierLayer({
       if (arr.length > FLASH_CAPACITY) arr.shift();
     };
 
+    const hideCourier = (h?: Handle) => {
+      if (!h) return;
+      if (h.group.current) h.group.current.visible = false;
+      h.intensity.current = 0;
+      if (h.plume.current) h.plume.current.visible = false;
+      if (h.bloom.current) h.bloom.current.visible = false;
+    };
+
     if (!pulse) {
-      reg.forEach((h) => {
-        if (h.group.current) h.group.current.visible = false;
-        h.intensity.current = 0;
-      });
+      reg.forEach((h) => hideCourier(h));
       prevAge.current = -1;
     } else {
+      state.camera.getWorldPosition(_camPos);
       for (const id of ids) {
         const h = reg.get(id);
         const flight = courierFlight(id, schedule, posById, hubPos);
         if (!flight) {
-          if (h?.group.current) h.group.current.visible = false;
-          if (h) h.intensity.current = 0;
+          hideCourier(h);
           continue;
         }
         const leg = courierLeg(flight.startAge, flight.dur, age);
@@ -177,49 +203,55 @@ export default function BlockCourierLayer({
         if (prevAge.current < flight.startAge && age >= flight.startAge) spawnFlash(flight.from);
         if (prevAge.current < arrAge && age >= arrAge) spawnFlash(flight.to);
 
-        // Cube: eased straight position; solid with short end-eases.
-        if (h?.group.current) {
-          const g = h.group.current;
-          if (!leg.visible) {
-            g.visible = false;
-            h.intensity.current = 0;
-          } else {
-            const s = easeOutCubic(leg.t);
-            g.visible = true;
-            g.position.set(
-              flight.from[0] + (flight.to[0] - flight.from[0]) * s,
-              flight.from[1] + (flight.to[1] - flight.from[1]) * s,
-              flight.from[2] + (flight.to[2] - flight.from[2]) * s,
-            );
-            const edge = Math.min(leg.t / COURIER_END_EASE, (1 - leg.t) / COURIER_END_EASE, 1);
-            h.intensity.current = Math.max(0, edge);
-          }
+        if (!h || !h.group.current) continue;
+        if (!leg.visible) {
+          hideCourier(h);
+          continue;
         }
 
-        // Wake samples → shared comet-tail buffer.
-        if (leg.visible) {
-          const samples = wakeSamples(flight, age, {
-            samples: WAKE_SAMPLES,
-            dtS: WAKE_DT_S,
-            gain: WAKE_GAIN,
-            tailFrac: WAKE_TAIL_FRAC,
-          });
-          for (const sm of samples) {
-            if (w >= MAX_WAKE_POINTS) break;
-            wakePos.setXYZ(w, sm.pos[0], sm.pos[1], sm.pos[2]);
-            wakeAlpha.setX(w, sm.alpha);
-            wakeSize.setX(w, sm.size);
-            w += 1;
-          }
+        // Eased straight head position.
+        const s = easeOutCubic(leg.t);
+        const dx = flight.to[0] - flight.from[0];
+        const dy = flight.to[1] - flight.from[1];
+        const dz = flight.to[2] - flight.from[2];
+        const hx = flight.from[0] + dx * s;
+        const hy = flight.from[1] + dy * s;
+        const hz = flight.from[2] + dz * s;
+        const g = h.group.current;
+        g.visible = true;
+        g.position.set(hx, hy, hz);
+        const edge = Math.max(0, Math.min(leg.t / COURIER_END_EASE, (1 - leg.t) / COURIER_END_EASE, 1));
+        h.intensity.current = edge;
+
+        // Flame length tracks the courier's analytic speed (easeOut derivative):
+        // fast off the launch (long plume) → decelerating into B (short).
+        const legDist = Math.hypot(dx, dy, dz) || 1;
+        const speed = (legDist * 3 * (1 - leg.t) * (1 - leg.t)) / flight.dur;
+        const length = Math.min(FLAME_MAX_LEN, FLAME_MIN_LEN + speed * FLAME_SPEED_STRETCH);
+
+        if (h.plume.current) {
+          const plume = h.plume.current;
+          // Orient the plume's +Y along the flight direction, billboarded around
+          // that axis so the quad faces the camera. (Group rotation is identity,
+          // so the local quaternion is the world orientation.)
+          _dir.set(dx, dy, dz).normalize();
+          _view.set(_camPos.x - hx, _camPos.y - hy, _camPos.z - hz).normalize();
+          _x.crossVectors(_dir, _view);
+          if (_x.lengthSq() < 1e-6) _x.crossVectors(_dir, _up);
+          _x.normalize();
+          _z.crossVectors(_x, _dir).normalize();
+          _basis.makeBasis(_x, _dir, _z);
+          plume.quaternion.setFromRotationMatrix(_basis);
+          plume.scale.set(FLAME_WIDTH, length * edge, 1); // edge shrinks it to nothing at the leg ends
+          plume.visible = true;
+        }
+        if (h.bloom.current) {
+          h.bloom.current.scale.setScalar(FLAME_BLOOM_SIZE * edge);
+          h.bloom.current.visible = true;
         }
       }
       prevAge.current = age;
     }
-
-    wakeGeom.setDrawRange(0, w);
-    wakePos.needsUpdate = true;
-    wakeAlpha.needsUpdate = true;
-    wakeSize.needsUpdate = true;
 
     // Advance + write flashes (drop expired, then fill the buffer).
     const live = flashes.current.filter((f) => now - f.bornSec < FLASH_DUR_S);
@@ -239,27 +271,41 @@ export default function BlockCourierLayer({
   return (
     <group>
       {ids.map((id) => (
-        <CourierCube key={id} id={id} register={register} />
+        <CourierCube
+          key={id}
+          id={id}
+          register={register}
+          plumeGeom={plumeGeom}
+          plumeMat={plumeMat}
+          bloomMat={bloomMat}
+        />
       ))}
-      <points geometry={wakeGeom} material={wakeMat} frustumCulled={false} />
       <points geometry={flashGeom} material={flashMat} frustumCulled={false} />
     </group>
   );
 }
 
-/** One pooled courier cube: registers its group + intensity refs with the layer,
- *  which positions/shows it each frame. CrystalGlow keeps the halo + free tumble. */
+/** One pooled courier: a CrystalGlow cube + its jet-thrust flame (plume quad +
+ *  nozzle-bloom sprite). Registers its refs; the layer drives them each frame. */
 function CourierCube({
   id,
   register,
+  plumeGeom,
+  plumeMat,
+  bloomMat,
 }: {
   id: string;
   register: (id: string, handle: Handle | null) => void;
+  plumeGeom: THREE.PlaneGeometry;
+  plumeMat: THREE.Material;
+  bloomMat: THREE.SpriteMaterial;
 }) {
   const group = useRef<THREE.Group>(null);
   const intensity = useRef(0);
+  const plume = useRef<THREE.Mesh>(null);
+  const bloom = useRef<THREE.Sprite>(null);
   useEffect(() => {
-    register(id, { group, intensity });
+    register(id, { group, intensity, plume, bloom });
     return () => register(id, null);
   }, [id, register]);
   return (
@@ -271,6 +317,8 @@ function CourierCube({
         intensityRef={intensity}
         seed={id}
       />
+      <mesh ref={plume} geometry={plumeGeom} material={plumeMat} frustumCulled={false} />
+      <sprite ref={bloom} material={bloomMat} />
     </group>
   );
 }
