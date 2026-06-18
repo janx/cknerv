@@ -99,6 +99,12 @@ export function easeInOutCubic(t: number): number {
   return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
 }
 
+/** Cubic ease-out: fast launch, decelerate to rest. The "thrown" courier velocity —
+ *  the block is flung off the sender and coasts to a stop at the receiver. */
+export function easeOutCubic(t: number): number {
+  return 1 - Math.pow(1 - t, 3);
+}
+
 export interface CourierFlight {
   from: Vec3;
   to: Vec3;
