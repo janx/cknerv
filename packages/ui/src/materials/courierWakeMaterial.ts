@@ -26,6 +26,7 @@ export function makeCourierWakeMaterial(
     toneMapped: false,
     vertexShader: /* glsl */ `
       attribute float aAlpha;
+      attribute float aSize;
       uniform float uBaseSize;
       uniform float uViewportHeight;
       varying float vAlpha;
@@ -33,7 +34,7 @@ export function makeCourierWakeMaterial(
         vAlpha = aAlpha;
         vec4 viewPos = viewMatrix * modelMatrix * vec4(position, 1.0);
         gl_Position = projectionMatrix * viewPos;
-        gl_PointSize = uBaseSize * (uViewportHeight * 0.5 / max(-viewPos.z, 0.001));
+        gl_PointSize = aSize * uBaseSize * (uViewportHeight * 0.5 / max(-viewPos.z, 0.001));
       }
     `,
     fragmentShader: /* glsl */ `

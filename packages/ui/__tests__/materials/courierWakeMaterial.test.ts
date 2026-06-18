@@ -18,6 +18,7 @@ describe('makeCourierWakeMaterial', () => {
     expect(m.uniforms.uBaseSize.value).toBe(5);
     expect(m.uniforms.uViewportHeight).toBeDefined();
     expect(m.vertexShader).toContain('attribute float aAlpha;');
+    expect(m.vertexShader).toContain('attribute float aSize;');
     expect(m.fragmentShader).toContain('gl_PointCoord');
   });
 });
