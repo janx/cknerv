@@ -13,6 +13,7 @@ import {
   aggregateCellsStats,
   blockArrivalSchedule,
   rankPeers,
+  peerWorldPosition,
   BackfillHud,
   CellDetailHud,
   CellDetailHudOverlay,
@@ -137,6 +138,21 @@ export default function App({
     () => blockArrivalSchedule(rankPeers(peers), cellsCache.lastPulseAtMs),
     [peers, cellsCache.lastPulseAtMs],
   );
+  // The per-block ENTRY peer (first to receive the block) owns the canopy
+  // brightness wave — the local node is just an ordinary peer that receives it,
+  // never the hub/origin. Resolve the entry peer's world position + receive time
+  // from the schedule so CellGalaxy fires the wave from there instead of the
+  // local centre. null entryId (no peers) → CellGalaxy falls back to the local
+  // origin/timing, preserving single-node behaviour.
+  const entryWorld = useMemo(() => {
+    if (blockSchedule.entryId == null) return null;
+    const entryPeer = peers.find((p) => p.node_id === blockSchedule.entryId);
+    return entryPeer ? peerWorldPosition(entryPeer) : null;
+  }, [peers, blockSchedule.entryId]);
+  const entryArrivalS =
+    blockSchedule.entryId != null
+      ? blockSchedule.arrivals[blockSchedule.entryId] ?? 0
+      : 0;
   // The observed local node anchors the constellation + supplies the
   // version used for peer version-mismatch coloring. Prefer an explicit id
   // lookup over positional [0] so a registry reorder can't silently anchor
@@ -251,6 +267,8 @@ export default function App({
           <CellGalaxy
             ckbNodeIds={ckbNodeIds}
             localReceiveDelayS={blockSchedule.localReceiveDelayS}
+            entryWorld={entryWorld}
+            entryArrivalS={entryArrivalS}
             selectedId={selectedId}
             onSelect={setSelectedId}
             cellFlashRef={cellFlashRef}
