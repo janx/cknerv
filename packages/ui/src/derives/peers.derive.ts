@@ -151,24 +151,29 @@ export function courierFlight(
 export interface WakeSample {
   pos: Vec3;
   alpha: number;
+  /** Per-point size multiplier (1 at the head, tapering to `tailFrac` at the tail). */
+  size: number;
 }
 
-/** Analytic wake: sample the courier's eased PAST positions behind the head.
- *  Sample k is where the courier was `k·dtS` seconds ago; easing makes the wake
- *  bunch where it moved slowly. Samples before launch (tk ≤ 0) are dropped, so an
- *  early-flight courier has a short wake that grows to full length. */
+/** Analytic comet tail: sample the courier's eased PAST positions behind the head.
+ *  Sample k is where the courier was `k·dtS` seconds ago; the flung (easeOut) motion
+ *  makes the tail stretch on launch and draw in as it settles. Each sample carries a
+ *  size that tapers 1 → `tailFrac` so the points read as one tapering comet, not dots.
+ *  Pre-launch samples (tk ≤ 0) are dropped; a degenerate (dur ≤ 0) flight yields []. */
 export function wakeSamples(
   flight: CourierFlight,
   age: number,
-  opts: { samples: number; dtS: number; gain: number },
+  opts: { samples: number; dtS: number; gain: number; tailFrac: number },
 ): WakeSample[] {
   const { from, to, startAge, dur } = flight;
   const out: WakeSample[] = [];
-  if (dur <= 0) return out; // parity with courierLeg; the producer guarantees dur > 0
+  if (dur <= 0) return out;
+  const denom = opts.samples > 1 ? opts.samples - 1 : 1;
   for (let k = 1; k <= opts.samples; k += 1) {
     const tk = (age - k * opts.dtS - startAge) / dur;
     if (tk <= 0) continue;
-    const s = easeInOutCubic(Math.min(1, tk));
+    const s = easeOutCubic(Math.min(1, tk));
+    const f = (k - 1) / denom; // 0 at head .. 1 at tail
     out.push({
       pos: [
         from[0] + (to[0] - from[0]) * s,
@@ -176,6 +181,7 @@ export function wakeSamples(
         from[2] + (to[2] - from[2]) * s,
       ],
       alpha: (1 - k / (opts.samples + 1)) * opts.gain,
+      size: 1 + (opts.tailFrac - 1) * f, // 1 → tailFrac
     });
   }
   return out;
