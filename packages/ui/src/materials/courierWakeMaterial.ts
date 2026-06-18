@@ -3,9 +3,10 @@ import * as THREE from 'three';
 /**
  * Additive round-point material for courier wakes and launch/arrival flashes.
  * One factory, instantiated per use (small base size for the wake, larger for
- * flashes). Per-point alpha comes from the `aAlpha` attribute; the round falloff
- * is computed from `gl_PointCoord` so no sprite texture is needed. Mirrors the
- * house additive-points style (see cellFlareMaterial).
+ * flashes). Per-point alpha comes from the `aAlpha` attribute and a per-point size
+ * multiplier from `aSize` (1 = base; the wake tapers it head→tail); the round
+ * falloff is computed from `gl_PointCoord` so no sprite texture is needed. Mirrors
+ * the house additive-points style (see cellFlareMaterial).
  *
  * `baseSize` is a world-unit basis; on-screen size is attenuated by depth using
  * the viewport height (kept in sync each frame from `state.size.height`).

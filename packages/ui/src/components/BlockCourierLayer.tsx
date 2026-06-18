@@ -9,6 +9,7 @@ import {
   courierLeg,
   easeOutCubic,
   wakeSamples,
+  PEER_RENDER_CAP,
   type CourierSchedule,
 } from '../derives/peers.derive';
 import { makeCourierWakeMaterial } from '../materials/courierWakeMaterial';
@@ -35,7 +36,7 @@ const FLASH_POINT_SIZE = 5.0;
 const FLASH_CAPACITY = 32;
 
 /** Capacity for the shared wake buffer (PEER_RENDER_CAP × WAKE_SAMPLES). */
-const MAX_WAKE_POINTS = 80 * WAKE_SAMPLES;
+const MAX_WAKE_POINTS = PEER_RENDER_CAP * WAKE_SAMPLES;
 
 interface Handle {
   group: React.RefObject<THREE.Group | null>;
