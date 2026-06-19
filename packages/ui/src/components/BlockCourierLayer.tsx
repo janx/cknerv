@@ -237,6 +237,10 @@ export default function BlockCourierLayer({
           _dir.set(dx, dy, dz).normalize();
           _view.set(_camPos.x - hx, _camPos.y - hy, _camPos.z - hz).normalize();
           _x.crossVectors(_dir, _view);
+          // Camera looking straight down the flight axis → dir×view ≈ 0; fall back to
+          // dir×up. Safe because every leg is horizontal (peers + hub sit at constant
+          // CHAIN_Y), so _dir is never parallel to _up. If legs ever leave that plane,
+          // pick the fallback axis by |_dir.y| instead, or this basis can collapse.
           if (_x.lengthSq() < 1e-6) _x.crossVectors(_dir, _up);
           _x.normalize();
           _z.crossVectors(_x, _dir).normalize();
