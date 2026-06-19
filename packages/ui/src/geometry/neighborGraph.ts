@@ -358,6 +358,8 @@ export function buildNeighborGraph(
     }
   }
 
-  const denseEdges = edges.filter((e) => !skeletonKeys.has(edgeKey(e.from, e.to)));
+  const denseEdges = edges
+    .filter((e) => !skeletonKeys.has(edgeKey(e.from, e.to)))
+    .sort((a, b) => a.d - b.d || a.from - b.from || a.to - b.to);
   return { adjacency, edges: [...skeletonEdges, ...denseEdges] };
 }

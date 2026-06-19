@@ -227,4 +227,41 @@ describe('buildNeighborGraph', () => {
     const visiblePrefix = g.edges.slice(0, cells.size - 1);
     expect(reachableIdsFromEdges(1, visiblePrefix).size).toBe(cells.size);
   });
+
+  it('orders dense edges (after the skeleton) by ascending chord length', () => {
+    // Graceful degradation: if the fabric ever overflows, the shortest /
+    // most-local fibres survive after the coverage skeleton. For a
+    // connected field the skeleton is exactly N-1 edges, so everything
+    // from index N-1 on is the dense remainder and must be non-decreasing.
+    const cells = new Map<number, Cell>();
+    for (let i = 1; i <= 12; i++) {
+      cells.set(i, mkCell(i, Math.cos(i) * 5, 0, Math.sin(i) * 5));
+    }
+    const g = buildNeighborGraph(cells, DEFAULT_K);
+    const dense = g.edges.slice(cells.size - 1);
+    expect(dense.length).toBeGreaterThan(0);
+    for (let i = 1; i < dense.length; i++) {
+      expect(dense[i].d).toBeGreaterThanOrEqual(dense[i - 1].d);
+    }
+  });
+
+  it('produces an insertion-order-independent edge set', () => {
+    // The visible mesh equals the full edge set, which must not depend on
+    // Map insertion order — otherwise membership churn (oldest cell
+    // evicted each block) would re-shape the network. Same cells, two
+    // insertion orders -> identical edge set.
+    const made = Array.from({ length: 40 }, (_, i) =>
+      mkCell(i + 1, Math.cos(i) * 8, (i % 5) * 0.5, Math.sin(i) * 8),
+    );
+    const forward = new Map<number, Cell>();
+    for (const c of made) forward.set(c.id, c);
+    const reverse = new Map<number, Cell>();
+    for (const c of [...made].reverse()) reverse.set(c.id, c);
+
+    const keysOf = (g: ReturnType<typeof buildNeighborGraph>) =>
+      new Set(g.edges.map((e) => `${e.from}:${e.to}`));
+
+    expect(keysOf(buildNeighborGraph(forward, DEFAULT_K)))
+      .toEqual(keysOf(buildNeighborGraph(reverse, DEFAULT_K)));
+  });
 });
