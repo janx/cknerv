@@ -142,45 +142,6 @@ export function courierFlight(
   return { from, to: self, startAge, dur };
 }
 
-export interface WakeSample {
-  pos: Vec3;
-  alpha: number;
-  /** Per-point size multiplier (1 at the head, tapering to `tailFrac` at the tail). */
-  size: number;
-}
-
-/** Analytic comet tail: sample the courier's eased PAST positions behind the head.
- *  Sample k is where the courier was `k·dtS` seconds ago; the flung (easeOut) motion
- *  makes the tail stretch on launch and draw in as it settles. Each sample carries a
- *  size that tapers 1 → `tailFrac` so the points read as one tapering comet, not dots.
- *  Pre-launch samples (tk ≤ 0) are dropped; a degenerate (dur ≤ 0) flight yields []. */
-export function wakeSamples(
-  flight: CourierFlight,
-  age: number,
-  opts: { samples: number; dtS: number; gain: number; tailFrac: number },
-): WakeSample[] {
-  const { from, to, startAge, dur } = flight;
-  const out: WakeSample[] = [];
-  if (dur <= 0) return out;
-  const denom = opts.samples > 1 ? opts.samples - 1 : 1;
-  for (let k = 1; k <= opts.samples; k += 1) {
-    const tk = (age - k * opts.dtS - startAge) / dur;
-    if (tk <= 0) continue;
-    const s = easeOutCubic(Math.min(1, tk));
-    const f = (k - 1) / denom; // 0 at head .. 1 at tail
-    out.push({
-      pos: [
-        from[0] + (to[0] - from[0]) * s,
-        from[1] + (to[1] - from[1]) * s,
-        from[2] + (to[2] - from[2]) * s,
-      ],
-      alpha: (1 - k / (opts.samples + 1)) * opts.gain,
-      size: 1 + (opts.tailFrac - 1) * f, // 1 → tailFrac
-    });
-  }
-  return out;
-}
-
 /** Deterministic generator for one peer × one block: fold the node-id hash with
  *  the per-block nonce so the same (node, block) always yields the same stream,
  *  and a new block reshuffles. Floors the (ms-timestamp) nonce to a uint first. */
