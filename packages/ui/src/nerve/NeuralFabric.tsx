@@ -30,9 +30,9 @@ import { FABRIC_SAMPLES_PER_EDGE, MAX_FABRIC_SEGMENTS } from './fabricCapacity';
 
 // Dense-mesh baseline alpha. The full k-NN fabric stacks ~5× more
 // additive-blended lines than the old truncated view, so the core would
-// clip to white at the original 0.35. Starting point for the in-scene
-// retune (Task 4 of the mesh plan); the per-edge brightness hierarchy
-// and taper still multiply this.
+// clip to white at the original 0.35; 0.12 keeps the fibres legible
+// (verified in-scene against live mainnet data). The per-edge brightness
+// hierarchy and taper still multiply this.
 const FABRIC_ALPHA = 0.12;
 /** Deep crimson with a slight purple shoulder — Eva-flesh /
  *  internal-organ palette. Bloom shifts the halo toward warmer pink
