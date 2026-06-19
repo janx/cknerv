@@ -26,17 +26,14 @@ import type { Cell } from '@cknerv/types';
 import type { NeighborGraph } from '../geometry/neighborGraph';
 import { bezierAtInto, bezierControlInto, fabricEdgeSeed } from '../geometry/edgeBezier';
 import { fabricEdgeKey, orderFabricStateKeys } from './fabricOrder';
+import { FABRIC_SAMPLES_PER_EDGE, MAX_FABRIC_SEGMENTS } from './fabricCapacity';
 
-/** Fabric baseline alpha. Higher than the original 0.20 because the
- *  per-vertex taper now multiplies it by ~0.53 on average (parabolic
- *  profile from TAPER_MIN to 1.0), and per-edge brightness adds
- *  another ~0.73 average multiplier — so without compensation the
- *  network would read dimmer than the un-tapered original. At 0.35
- *  the endpoint hotspots (taper=1.0 × brightnessMul up to 1.0) land
- *  noticeably brighter than the old uniform 0.20, producing visible
- *  "bouton" glow where edges meet cells; midpoints and dim branches
- *  fade into a darker shaft, reading as axon taper. */
-const FABRIC_ALPHA = 0.35;
+// Dense-mesh baseline alpha. The full k-NN fabric stacks ~5× more
+// additive-blended lines than the old truncated view, so the core would
+// clip to white at the original 0.35. Starting point for the in-scene
+// retune (Task 4 of the mesh plan); the per-edge brightness hierarchy
+// and taper still multiply this.
+const FABRIC_ALPHA = 0.12;
 /** Deep crimson with a slight purple shoulder — Eva-flesh /
  *  internal-organ palette. Bloom shifts the halo toward warmer pink
  *  but the base stays unmistakably oxygenated-blood red. */
@@ -49,19 +46,14 @@ const ACTIVE_COLOR_R = 1.0;
 const ACTIVE_COLOR_G = 0.55;
 const ACTIVE_COLOR_B = 0.15;
 
-/** Number of sub-segments per fabric edge — gives every fibre a
- *  visible curve at typical zoom. 4 is enough for short edges,
- *  smooth enough for the eye not to pick out the polyline. */
-const FABRIC_SAMPLES_PER_EDGE = 4;
 /** Number of sub-segments emitted per active hop. Higher = smoother
  *  wavefront, more GPU work per pulse. 12 keeps the brightness
  *  gradient legible. */
 const ACTIVE_SAMPLES_PER_HOP = 12;
 
-/** Hard segment caps. ~3000 fabric edges × 4 sub-segments = 12000.
- *  Active: ~12 hops × 12 sub-segments = 144 per pulse, × ~32 active
- *  pulses = 4600. */
-const MAX_FABRIC_SEGMENTS = 16000;
+/** Hard segment cap for the active layer. Active: ~12 hops × 12
+ *  sub-segments = 144 per pulse, × ~32 active pulses = 4600. (The
+ *  fabric cap lives in fabricCapacity.ts.) */
 const MAX_ACTIVE_SEGMENTS = 6000;
 
 /** 2.5 px — visibly substantial crisp lines that read against
@@ -298,8 +290,8 @@ export default function NeuralFabric({ onReady }: NeuralFabricProps) {
   useEffect(() => {
     // Reused 3-element scratch buffers — the hot-loop fabric/active
     // sample paths previously allocated a fresh tuple per Bezier
-    // evaluation (~30k per setFabric call at 6k edges × 5 samples,
-    // plus ~400 per frame from active hop sampling).
+    // evaluation (~75k per rebuild at the full mesh's ~18k edges × 4
+    // samples, plus ~400 per frame from active hop sampling).
     const ctrl = new Float32Array(3);
     const sample = new Float32Array(3);
 
