@@ -60,7 +60,7 @@ describe('makeCellHybridMaterial', () => {
   it('uses mid-range core shockwave boosts (visible spreading front on sparse cells)', () => {
     const m = makeCellHybridMaterial();
 
-    expect(m.uniforms.uShockwaveColorBoost.value).toBeCloseTo(9.0);
+    expect(m.uniforms.uShockwaveColorBoost.value).toBeCloseTo(7.5);
     expect(m.uniforms.uShockwaveAlphaBoost.value).toBeCloseTo(5.5);
     expect(m.uniforms.uShockwaveSizeBoost.value).toBeCloseTo(0.5);
     expect(m.uniforms.uShockwaveTrailBoost.value).toBeCloseTo(0.18);
