@@ -32,7 +32,7 @@ export const SHOCKWAVE_SLOTS = 8;
 // and cellShellMaterial read these via makeShockwaveUniforms().
 export const SHOCKWAVE_BAND_BASE = 5.5;
 export const SHOCKWAVE_BAND_GROW = 1.5;
-export const SHOCKWAVE_COLOR_BOOST = 9.0;
+export const SHOCKWAVE_COLOR_BOOST = 7.5;
 export const SHOCKWAVE_ALPHA_BOOST = 5.5;
 export const SHOCKWAVE_SIZE_BOOST = 0.5;
 export const SHOCKWAVE_TRAIL_BOOST = 0.18;
