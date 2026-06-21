@@ -20,10 +20,8 @@ import {
   CellGalaxy,
   CellGalaxyProvider,
   CellLifeDetail3D,
-  CellsHud,
-  CkbNetworkHud,
   DendriticBurst,
-  NetworkHud,
+  HudOverlay,
   NeuralNetwork,
   PeerConstellation,
   SimClockTicker,
@@ -212,24 +210,17 @@ export default function App({
     return peers.find((p) => p.node_id === id) ?? null;
   }, [selectedId, peers]);
 
-  // HUD layout — left column hosts the network panel, right column hosts
-  // the cells stats, and the selection detail panel sits lower-left (clear
-  // of the network panel above it). Widths match the simulator's defaults
-  // so the HUD copy fits without truncation.
-  const NETWORK_PANEL_W = 240;
-  const NETWORK_PANEL_H = 256;
-  const CELLS_PANEL_W = 220;
+  // In-canvas HUD layout — the always-on BLOCKCHAIN/NETWORK/CELLS panels now
+  // live in the DOM HudOverlay; what remains here is the selection detail
+  // panel (lower-left) and the backfill banner. Widths match the simulator's
+  // defaults so the HUD copy fits without truncation.
   const DETAIL_PANEL_W = 250;
   const HUD_VIEWPORT_W = 1280;
   const HUD_VIEWPORT_H = 720;
-  const networkX = -HUD_VIEWPORT_W / 2 + 20;
-  const networkY = HUD_VIEWPORT_H / 2 - 20;
-  const cellsX = HUD_VIEWPORT_W / 2 - CELLS_PANEL_W - 20;
-  const cellsY = HUD_VIEWPORT_H / 2 - 20;
   const detailX = -HUD_VIEWPORT_W / 2 + 20;
   const detailY = -HUD_VIEWPORT_H / 2 + 210;
   // 3D cell-life scan viewport — stacked just above the cell detail text
-  // panel in the lower-left column, clear of the network panel above it.
+  // panel in the lower-left column.
   const SCAN_VIEWPORT_W = DETAIL_PANEL_W;
   const SCAN_VIEWPORT_H = 200;
   const DETAIL_GAP = 14;
@@ -240,6 +231,7 @@ export default function App({
       {/* Leva knobs panel (DOM overlay) — hidden by default, backtick toggles. */}
       <Tweaks />
       <VersionMarker />
+      <HudOverlay chain={chain} peers={peers} localNode={localNode} cellsStats={cellsStats} />
 
       <CellGalaxyProvider value={cellsCache}>
         <Canvas
@@ -327,27 +319,6 @@ export default function App({
               near={-1000}
               far={1000}
               position={[0, 0, 100]}
-            />
-            <CkbNetworkHud
-              x={networkX}
-              y={networkY}
-              width={NETWORK_PANEL_W}
-              height={NETWORK_PANEL_H}
-              chain={chain}
-            />
-            <NetworkHud
-              x={networkX}
-              y={networkY - NETWORK_PANEL_H - 16}
-              width={NETWORK_PANEL_W}
-              peers={peers}
-              chain={chain}
-              localNode={localNode}
-            />
-            <CellsHud
-              x={cellsX}
-              y={cellsY}
-              width={CELLS_PANEL_W}
-              stats={cellsStats}
             />
             <BackfillHud x={0} y={HUD_VIEWPORT_H / 2 - 60} width={260} />
             {selectedCell ? (
