@@ -17,8 +17,10 @@ describe('hudTheme', () => {
     const els = document.querySelectorAll(`#${HUD_THEME_STYLE_ID}`);
     expect(els.length).toBe(1);
     const css = els[0].textContent ?? '';
-    expect(css).toContain('@import');
-    expect(css).toContain('fontsapi.zeoseven.com/256');
+    expect(css).toContain('@font-face');
+    expect(css).toContain("font-family:'Huiwen-mincho'");
     expect(css).toContain('--hud-orange:#FF9830');
+    expect(css).not.toContain('@import');
+    expect(css).not.toContain('fontsapi.zeoseven.com');
   });
 });
