@@ -62,7 +62,7 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats }: {
       <BlockchainReadout chain={chain} style={{ left: 14, top: 42 }} />
       <CellsUmbrella stats={cellsStats} style={{ right: 14, top: 42 }} />
       <BlockCadenceEcg tip={chain.tip} condition={condition} reducedMotion={reduced} />
-      <NetworkPanel summary={summary} consensus={consensus} ping={ping} vers={vers} syncRatio={syncRatio} style={{ right: 14, bottom: 14 }} />
+      <NetworkPanel summary={summary} consensus={consensus} ping={ping} vers={vers} syncRatio={syncRatio} style={{ right: 14, bottom: 40 }} />
     </div>
   );
 }
