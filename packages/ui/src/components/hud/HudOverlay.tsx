@@ -13,6 +13,7 @@ import BlockCadenceEcg from './BlockCadenceEcg';
 import NetworkPanel from './NetworkPanel';
 import CellsUmbrella from './CellsUmbrella';
 import WarningBar from './WarningBar';
+import { useReducedMotion } from './useReducedMotion';
 
 const DEFAULT_TARGET_MS = 8000;
 function medianInterval(xs: number[]): number {
@@ -30,6 +31,8 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats }: {
   chain: ChainEntry; peers: Peer[]; localNode: ChainNode | undefined; cellsStats: CellsStats;
 }) {
   useEffect(() => { injectHudTheme(document); }, []);
+
+  const reduced = useReducedMotion();
 
   // session uptime + a 1s tick so msSinceLast / flatline re-evaluate
   const mountAt = useRef(Date.now());
@@ -53,12 +56,12 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats }: {
 
   return (
     <div style={ROOT_STYLE}>
-      <div style={SCAN_STYLE} />
+      {!reduced && <div style={SCAN_STYLE} />}
       <StatusStrip level={alert.level} uptimeMs={now - mountAt.current} />
-      <WarningBar level={alert.level} trigger={alert.trigger} />
+      <WarningBar level={alert.level} trigger={alert.trigger} reducedMotion={reduced} />
       <BlockchainReadout chain={chain} style={{ left: 14, top: 42 }} />
       <CellsUmbrella stats={cellsStats} style={{ right: 14, top: 42 }} />
-      <BlockCadenceEcg tip={chain.tip} condition={condition} />
+      <BlockCadenceEcg tip={chain.tip} condition={condition} reducedMotion={reduced} />
       <NetworkPanel summary={summary} consensus={consensus} ping={ping} vers={vers} syncRatio={syncRatio} style={{ right: 14, bottom: 14 }} />
     </div>
   );
