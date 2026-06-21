@@ -10,3 +10,4 @@ dist/
 docs/superpowers/
 .superpowers/
 temp/
+.playwright-mcp/
