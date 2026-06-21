@@ -1,10 +1,12 @@
 // Default SPA for the `cknerv` binary. Bootstraps from the chain + cells
 // snapshots, then subscribes to the live WS streams so the cell galaxy
 // fills in and block pulses fire as the chain advances. Renders a 3D
-// canvas (CellGalaxy canopy), two HUD panels (network + cells stats), and
-// a selection detail panel — CellDetailHud for a clicked cell, or a
-// chain-node panel for a clicked CKB icosahedron. The leva knobs panel is
-// hidden by default (toggle with backtick) — see Tweaks.
+// canvas (CellGalaxy canopy) alongside the DOM `HudOverlay` (a sibling of
+// the canvas) that carries the always-on telemetry panels (blockchain /
+// network / cells stats). The in-canvas `<Hud>` now only holds the
+// selection-detail panels (cell / node / peer) and the backfill/seeding
+// indicator. The leva knobs panel is hidden by default (toggle with
+// backtick) — see Tweaks.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Canvas } from '@react-three/fiber';
