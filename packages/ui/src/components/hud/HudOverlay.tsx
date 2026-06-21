@@ -6,7 +6,7 @@ import { fleetConsensus, pingStats, versionSpread } from '../../derives/fleetTel
 import { ecgCondition } from '../../derives/ecgCondition';
 import { alertLevel } from '../../derives/alertLevel';
 import type { CellsStats } from '../../derives/cellsStats.derive';
-import { injectHudTheme, HUD_COLORS } from './hudTheme';
+import { injectHudTheme } from './hudTheme';
 import StatusStrip from './StatusStrip';
 import BlockchainReadout from './BlockchainReadout';
 import BlockCadenceEcg from './BlockCadenceEcg';
