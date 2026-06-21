@@ -57,6 +57,10 @@ export * from './derives/cellShell.derive';
 export * from './derives/cellsStats.derive';
 export * from './derives/eventStreamLines';
 export * from './derives/peers.derive';
+export * from './derives/ecgCondition';
+export * from './derives/fleetTelemetry';
+export * from './derives/alertLevel';
+export * from './derives/umbrellaGauge';
 
 // ── Hooks ──────────────────────────────────────────────────────────
 export {
@@ -92,6 +96,7 @@ export {
   formatCommonKnowledgeBytes,
 } from './components/CellsHud';
 export { default as CkbNetworkHud } from './components/CkbNetworkHud';
+export { default as HudOverlay } from './components/hud/HudOverlay';
 export {
   default as EdgeEnvelopeLayer,
   buildTrajectories,
