@@ -1,3 +1,9 @@
+import sairaUrl from '../../fonts/Saira-latin.woff2';
+import chakra500Url from '../../fonts/ChakraPetch-500-latin.woff2';
+import chakra700Url from '../../fonts/ChakraPetch-700-latin.woff2';
+import shareTechUrl from '../../fonts/ShareTechMono-latin.woff2';
+import huiwenUrl from '../../fonts/HuiwenMincho-subset.woff2';
+
 export const HUD_COLORS = {
   ground: '#000000',
   panel: 'rgba(0,0,0,0.45)',
@@ -21,11 +27,15 @@ export const HUD_FONTS = {
   cjk: "'Huiwen-mincho', 'Noto Serif SC', serif",
 } as const;
 
-// v1: CDN imports (verified working in the brainstorm mockup). A later task swaps these
-// for self-hosted, subset woff2.
-const FONT_IMPORTS = [
-  'https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=Saira:wght@300;400;500;600;700&family=Share+Tech+Mono&display=swap',
-  'https://fontsapi.zeoseven.com/256/main/result.css',
+// Self-hosted, subset webfonts — no third-party CDN at runtime. Latin faces are
+// Google's latin-range woff2; the CJK face is Huiwen-mincho (public domain)
+// subset to the ~12 glyphs the HUD uses (主链细胞网络状态脉搏警告).
+const FONT_FACES = [
+  `@font-face{font-family:'Saira';font-weight:100 900;font-display:swap;src:url("${sairaUrl}") format("woff2")}`,
+  `@font-face{font-family:'Chakra Petch';font-weight:500;font-display:swap;src:url("${chakra500Url}") format("woff2")}`,
+  `@font-face{font-family:'Chakra Petch';font-weight:700;font-display:swap;src:url("${chakra700Url}") format("woff2")}`,
+  `@font-face{font-family:'Share Tech Mono';font-weight:400;font-display:swap;src:url("${shareTechUrl}") format("woff2")}`,
+  `@font-face{font-family:'Huiwen-mincho';font-display:swap;src:url("${huiwenUrl}") format("woff2")}`,
 ];
 
 export const HUD_THEME_STYLE_ID = 'cknerv-hud-theme';
@@ -36,7 +46,7 @@ export function injectHudTheme(doc: Document = document): void {
   style.id = HUD_THEME_STYLE_ID;
   const vars = Object.entries(HUD_COLORS).map(([k, v]) => `--hud-${k}:${v};`).join('');
   style.textContent =
-    FONT_IMPORTS.map((u) => `@import url("${u}");`).join('\n') + `\n:root{${vars}}` +
+    FONT_FACES.join('') + `\n:root{${vars}}` +
     `\n@keyframes cknerv-hud-flash{50%{opacity:.45}}` +
     `\n@keyframes cknerv-hud-scan{0%{transform:translateY(-100%)}100%{transform:translateY(100%)}}`;
   doc.head.appendChild(style);
