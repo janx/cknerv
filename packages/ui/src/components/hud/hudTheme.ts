@@ -47,7 +47,6 @@ export function injectHudTheme(doc: Document = document): void {
   const vars = Object.entries(HUD_COLORS).map(([k, v]) => `--hud-${k}:${v};`).join('');
   style.textContent =
     FONT_FACES.join('') + `\n:root{${vars}}` +
-    `\n@keyframes cknerv-hud-flash{50%{opacity:.45}}` +
-    `\n@keyframes cknerv-hud-scan{0%{transform:translateY(-100%)}100%{transform:translateY(100%)}}`;
+    `\n@keyframes cknerv-hud-flash{50%{opacity:.45}}`;
   doc.head.appendChild(style);
 }
