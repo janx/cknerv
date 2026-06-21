@@ -36,6 +36,8 @@ export function injectHudTheme(doc: Document = document): void {
   style.id = HUD_THEME_STYLE_ID;
   const vars = Object.entries(HUD_COLORS).map(([k, v]) => `--hud-${k}:${v};`).join('');
   style.textContent =
-    FONT_IMPORTS.map((u) => `@import url("${u}");`).join('\n') + `\n:root{${vars}}`;
+    FONT_IMPORTS.map((u) => `@import url("${u}");`).join('\n') + `\n:root{${vars}}` +
+    `\n@keyframes cknerv-hud-flash{50%{opacity:.45}}` +
+    `\n@keyframes cknerv-hud-scan{0%{transform:translateY(-100%)}100%{transform:translateY(100%)}}`;
   doc.head.appendChild(style);
 }
