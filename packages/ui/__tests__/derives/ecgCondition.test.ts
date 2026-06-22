@@ -19,4 +19,10 @@ describe('ecgCondition', () => {
   it('FINE on empty history with a fresh block', () => {
     expect(ecgCondition([], T, 0)).toBe('FINE');
   });
+  it('SYNCING overrides everything when the syncing flag is set', () => {
+    // a stale last-block age that would otherwise FLATLINE must read as SYNCING
+    expect(ecgCondition([8000], T, 8000 * 7, true)).toBe('SYNCING');
+    expect(ecgCondition([8000, 7800], T, 1000, true)).toBe('SYNCING');
+    expect(ecgCondition([], T, 0, true)).toBe('SYNCING');
+  });
 });

@@ -2,8 +2,8 @@ import type { AlertLevel } from '../../derives/alertLevel';
 import { HUD_COLORS, HUD_FONTS } from './hudTheme';
 
 const LEVEL_COLOR: Record<AlertLevel, string> = {
-  nominal: HUD_COLORS.nominal, caution: HUD_COLORS.caution, warning: HUD_COLORS.warning,
-  danger: HUD_COLORS.danger, crit: HUD_COLORS.danger,
+  nominal: HUD_COLORS.nominal, syncing: HUD_COLORS.cyanWire, caution: HUD_COLORS.caution,
+  warning: HUD_COLORS.warning, danger: HUD_COLORS.danger, crit: HUD_COLORS.danger,
 };
 
 function fmtUptime(ms: number): string {
