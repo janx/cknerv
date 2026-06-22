@@ -3,7 +3,8 @@ import type { EcgCondition } from '../../derives/ecgCondition';
 import { HUD_COLORS, HUD_FONTS } from './hudTheme';
 
 const COND_COLOR: Record<EcgCondition, string> = {
-  FINE: HUD_COLORS.nominal, CAUTION: HUD_COLORS.caution, DANGER: HUD_COLORS.danger, FLATLINE: HUD_COLORS.danger,
+  FINE: HUD_COLORS.nominal, CAUTION: HUD_COLORS.caution, DANGER: HUD_COLORS.danger,
+  FLATLINE: HUD_COLORS.danger, SYNCING: HUD_COLORS.cyanWire,
 };
 
 // PQRST complex repeating every 32 columns (RE2-style vertical-segment trace).
@@ -23,7 +24,8 @@ export default function BlockCadenceEcg({ tip, condition, reducedMotion = false 
     const ctx = cv.getContext('2d');
     if (!ctx || typeof ctx.fillRect !== 'function' || typeof ctx.clearRect !== 'function') return; // jsdom-safe
     const W = cv.width, H = cv.height, N = 128, mid = H * 0.6, amp = H * 0.46, colW = W / N;
-    const rgb = condition === 'FINE' ? '39,255,90' : condition === 'CAUTION' ? '246,226,1' : '255,48,48';
+    const rgb = condition === 'FINE' ? '39,255,90' : condition === 'CAUTION' ? '246,226,1'
+      : condition === 'SYNCING' ? '32,240,255' : '255,48,48';
     const draw = () => {
       ctx.clearRect(0, 0, W, H);
       for (let c = 0; c < N; c++) {
@@ -53,7 +55,7 @@ export default function BlockCadenceEcg({ tip, condition, reducedMotion = false 
       </div>
       <canvas ref={cvs} width={406} height={60} style={{ display: 'block', width: '100%', height: 60, background: '#000409' }} />
       <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 5, fontFamily: HUD_FONTS.mono, fontSize: 8.5, color: '#3a5a44', letterSpacing: 1 }}>
-        <span>BEAT = NEW BLOCK</span><span>FLATLINE @ SYNC STALL</span>
+        <span>BEAT = NEW BLOCK</span><span>FLATLINE = NO BLOCKS</span>
       </div>
     </div>
   );

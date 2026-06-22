@@ -16,6 +16,11 @@ import WarningBar from './WarningBar';
 import { useReducedMotion } from './useReducedMotion';
 
 const DEFAULT_TARGET_MS = 8000;
+// We're "syncing" (catching up, benign) if the node is in IBD, our tip trails the
+// network best-known by more than a couple of blocks, or most peers are ahead of us.
+const SYNC_LAG_THRESHOLD = 2; // blocks behind best-known before we count as syncing
+const SYNC_AHEAD_RATIO = 0.5; // fraction of peers ahead of our tip = we're behind
+
 function medianInterval(xs: number[]): number {
   const v = xs.filter((n) => Number.isFinite(n) && n > 0).sort((a, b) => a - b);
   if (!v.length) return DEFAULT_TARGET_MS;
@@ -50,8 +55,10 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats }: {
   const vers = versionSpread(peers);
   const targetMs = medianInterval(chain.recent_block_intervals_ms);
   const msSinceLast = chain.last_block_ts_ms ? now - chain.last_block_ts_ms : 0;
-  const condition = ecgCondition(chain.recent_block_intervals_ms, targetMs, msSinceLast);
-  const alert = alertLevel({ ecg: condition, reorgDepth, aheadRatio: consensus.aheadRatio, maxAhead: consensus.maxAhead });
+  const blocksBehind = Math.max(0, chain.best_known_block - chain.tip);
+  const syncing = chain.ibd || blocksBehind > SYNC_LAG_THRESHOLD || consensus.aheadRatio > SYNC_AHEAD_RATIO;
+  const condition = ecgCondition(chain.recent_block_intervals_ms, targetMs, msSinceLast, syncing);
+  const alert = alertLevel({ ecg: condition, reorgDepth, syncing });
   const syncRatio = chain.best_known_block > 0 ? Math.min(1, chain.tip / chain.best_known_block) : 1;
 
   return (
