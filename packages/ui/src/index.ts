@@ -60,7 +60,7 @@ export * from './derives/peers.derive';
 export * from './derives/ecgCondition';
 export * from './derives/fleetTelemetry';
 export * from './derives/alertLevel';
-export * from './derives/umbrellaGauge';
+export * from './derives/cellChurn';
 
 // ── Hooks ──────────────────────────────────────────────────────────
 export {
