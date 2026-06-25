@@ -11,7 +11,8 @@ import StatusStrip from './StatusStrip';
 import BlockchainReadout from './BlockchainReadout';
 import BlockCadenceEcg from './BlockCadenceEcg';
 import NetworkPanel from './NetworkPanel';
-import CellsUmbrella from './CellsUmbrella';
+import CellsPanel from './CellsPanel';
+import { useCellChurn } from './useCellChurn';
 import WarningBar from './WarningBar';
 import { useReducedMotion } from './useReducedMotion';
 
@@ -38,6 +39,7 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats }: {
   useEffect(() => { injectHudTheme(document); }, []);
 
   const reduced = useReducedMotion();
+  const churn = useCellChurn(chain.tip, cellsStats.born, cellsStats.dead);
 
   // session uptime + a 1s tick so msSinceLast / flatline re-evaluate
   const mountAt = useRef(Date.now());
@@ -67,7 +69,7 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats }: {
       <StatusStrip level={alert.level} uptimeMs={now - mountAt.current} />
       <WarningBar level={alert.level} trigger={alert.trigger} reducedMotion={reduced} />
       <BlockchainReadout chain={chain} style={{ left: 14, top: 42 }} />
-      <CellsUmbrella stats={cellsStats} style={{ right: 14, top: 42 }} />
+      <CellsPanel stats={cellsStats} churn={churn} reducedMotion={reduced} style={{ right: 14, top: 42 }} />
       <BlockCadenceEcg tip={chain.tip} condition={condition} reducedMotion={reduced} />
       <NetworkPanel summary={summary} consensus={consensus} ping={ping} vers={vers} syncRatio={syncRatio} style={{ right: 14, bottom: 40 }} />
     </div>
