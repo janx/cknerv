@@ -9,6 +9,8 @@ const stats: CellsStats = {
   born: 28431, live: 19204, dead: 9227,
   byKind: { wallet: 11302, dex: 4118, cf: 2401, ckbloom: 1383, generic: 0 },
   capacityShannons: 489201137700000000,
+  inView: 19204,
+  dataBearing: 0,
 };
 
 describe('CellsUmbrella', () => {

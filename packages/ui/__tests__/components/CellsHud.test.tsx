@@ -17,6 +17,8 @@ const stats: CellsStats = {
   dead: 2,
   byKind: { wallet: 3, dex: 4, cf: 2, ckbloom: 1, generic: 0 },
   capacityShannons: 12_345_600_000_000,
+  inView: 10,
+  dataBearing: 0,
 };
 
 describe('CellsHud', () => {

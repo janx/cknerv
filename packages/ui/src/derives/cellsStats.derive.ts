@@ -25,6 +25,11 @@ export interface CellsStats {
   byKind: Record<CellKindKey, number>;
   /** Sum of `capacity` over locally-alive cells (galaxy-view, see byKind). */
   capacityShannons: number;
+  /** # of alive cells in the local cache — the size of the sampled "in view"
+   *  window (≤ CELL_CAP). Distinct from `live` (the authoritative on-chain count). */
+  inView: number;
+  /** # of in-view alive cells carrying non-empty output data (`data_hex` past `0x`). */
+  dataBearing: number;
 }
 
 export function aggregateCellsStats(
@@ -40,9 +45,13 @@ export function aggregateCellsStats(
     generic: 0,
   };
   let capacityShannons = 0;
+  let inView = 0;
+  let dataBearing = 0;
   for (const c of cells.values()) {
     if (c.death_at_ms !== null) continue;
     capacityShannons += c.capacity;
+    inView += 1;
+    if (c.data_hex !== '0x' && c.data_hex.length > 2) dataBearing += 1;
     // Bucket unknown tag strings into `generic` so the aggregate row
     // shape stays the four-known-keys union. Today only four tag values
     // are emitted; if a future emitter introduces another tag, it
@@ -60,5 +69,7 @@ export function aggregateCellsStats(
     dead: totalDeaths,
     byKind,
     capacityShannons,
+    inView,
+    dataBearing,
   };
 }
