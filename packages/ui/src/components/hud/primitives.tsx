@@ -44,3 +44,20 @@ export function Gauge({ ratio, color }: { ratio: number; color: string }) {
     </div>
   );
 }
+
+export function CloseButton({ onClose }: { onClose: () => void }) {
+  return (
+    <span
+      role="button"
+      aria-label="close"
+      onClick={(e) => { e.stopPropagation(); onClose(); }}
+      onPointerDown={(e) => e.stopPropagation()}
+      onMouseOver={(e) => { (e.currentTarget as HTMLElement).style.color = HUD_COLORS.danger; }}
+      onMouseOut={(e) => { (e.currentTarget as HTMLElement).style.color = HUD_COLORS.dim; }}
+      style={{
+        position: 'absolute', top: 6, right: 11, cursor: 'pointer', pointerEvents: 'auto',
+        fontFamily: HUD_FONTS.mono, fontSize: 14, lineHeight: 1, color: HUD_COLORS.dim,
+      }}
+    >×</span>
+  );
+}
