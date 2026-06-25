@@ -7,6 +7,7 @@ function mkCell(
   capacity: number,
   tag: Cell['tag'],
   alive: boolean,
+  data = '0x',
 ): Cell {
   return {
     id,
@@ -17,7 +18,7 @@ function mkCell(
     pos_seed: [0, 0, 0],
     out_point: { tx_hash: '0x0', index: 0 },
     capacity,
-    data_hex: '0x',
+    data_hex: data,
     content_hash: '0x' + '00'.repeat(32),
   };
 }
@@ -34,6 +35,8 @@ describe('aggregateCellsStats', () => {
     expect(stats.dead).toBe(0);
     expect(stats.capacityShannons).toBe(0);
     expect(stats.byKind).toEqual({ wallet: 0, dex: 0, cf: 0, ckbloom: 0, generic: 0 });
+    expect(stats.inView).toBe(0);
+    expect(stats.dataBearing).toBe(0);
   });
 
   it('born/live/dead come from the backend counters, not the local map', () => {
@@ -70,5 +73,17 @@ describe('aggregateCellsStats', () => {
     );
     const stats = aggregateCellsStats(cells, 0, 0);
     expect(stats.capacityShannons).toBe(350);
+  });
+
+  it('inView counts alive cells; dataBearing counts alive cells with non-empty data', () => {
+    const cells = mkCells(
+      mkCell(1, 100, null, true, '0x'),          // alive, plain
+      mkCell(2, 100, null, true, '0xdeadbeef'),  // alive, data-bearing
+      mkCell(3, 100, null, true, '0x'),          // alive, plain
+      mkCell(4, 100, null, false, '0xcafe'),     // dead — excluded
+    );
+    const stats = aggregateCellsStats(cells, 0, 0);
+    expect(stats.inView).toBe(3);
+    expect(stats.dataBearing).toBe(1);
   });
 });
