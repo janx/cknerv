@@ -16,8 +16,6 @@ import {
   blockArrivalSchedule,
   rankPeers,
   peerWorldPosition,
-  BackfillHud,
-  CellDetailHud,
   CellDetailHudOverlay,
   CellGalaxy,
   CellGalaxyProvider,
@@ -44,8 +42,6 @@ import type {
 } from '@cknerv/types';
 import Tweaks from './Tweaks';
 import VersionMarker from './VersionMarker';
-import ChainNodeDetailHud from './ChainNodeDetailHud';
-import PeerDetailHud from './PeerDetailHud';
 import { resolveGalaxyConfig } from './runtime-config';
 
 /** CellGalaxy emits `cell:<id>` for a clicked cell and the bare node id
@@ -233,7 +229,17 @@ export default function App({
       {/* Leva knobs panel (DOM overlay) — hidden by default, backtick toggles. */}
       <Tweaks />
       <VersionMarker />
-      <HudOverlay chain={chain} peers={peers} localNode={localNode} cellsStats={cellsStats} />
+      <HudOverlay
+        chain={chain}
+        peers={peers}
+        localNode={localNode}
+        cellsStats={cellsStats}
+        selectedCell={selectedCell}
+        selectedNode={selectedNode}
+        selectedPeer={selectedPeer}
+        onClearSelection={() => setSelectedId(null)}
+        backfill={cellsCache.backfill}
+      />
 
       <CellGalaxyProvider value={cellsCache}>
         <Canvas
@@ -322,16 +328,6 @@ export default function App({
               far={1000}
               position={[0, 0, 100]}
             />
-            <BackfillHud x={0} y={HUD_VIEWPORT_H / 2 - 60} width={260} />
-            {selectedCell ? (
-              <CellDetailHud
-                cell={selectedCell}
-                onClose={() => setSelectedId(null)}
-                x={detailX}
-                y={detailY}
-                width={DETAIL_PANEL_W}
-              />
-            ) : null}
             {selectedCell ? (
               <>
                 {/* Floating 3D cell-life scan: a Game-of-Life automaton
@@ -353,24 +349,6 @@ export default function App({
                   height={SCAN_VIEWPORT_H}
                 />
               </>
-            ) : null}
-            {selectedNode ? (
-              <ChainNodeDetailHud
-                node={selectedNode}
-                chain={chain}
-                x={detailX}
-                y={detailY}
-                width={DETAIL_PANEL_W}
-              />
-            ) : null}
-            {selectedPeer ? (
-              <PeerDetailHud
-                peer={selectedPeer}
-                chain={chain}
-                x={detailX}
-                y={detailY}
-                width={DETAIL_PANEL_W}
-              />
             ) : null}
           </Hud>
         </Canvas>
