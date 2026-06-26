@@ -3,6 +3,8 @@
 // Rust and TS boundary; consumers must keep field names + types in
 // sync with `crates/cknerv-core/src/outpoint.rs`.
 
+import type { LockKind, AssetKind } from './cell';
+
 export interface OutPoint {
   tx_hash: string;
   index: number;
@@ -20,6 +22,12 @@ export interface TxOutputInfo {
    *  and identical to what the chain itself computes for this cell.
    *  66 chars including the `0x` prefix. */
   content_hash: string;
+  /** Lock-script family. Optional: old persisted state may lack it
+   *  (mirrors Rust `#[serde(default)]`). */
+  lock_kind?: LockKind;
+  /** Asset/type-script family. Optional: old persisted state may lack
+   *  it (mirrors Rust `#[serde(default)]`). */
+  asset_kind?: AssetKind;
 }
 
 /** Minimal output shape used by adapters that haven't computed a
