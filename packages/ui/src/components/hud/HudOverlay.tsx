@@ -80,11 +80,11 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats, select
       <NetworkPanel summary={summary} consensus={consensus} ping={ping} vers={vers} syncRatio={syncRatio} style={{ right: 14, bottom: 40 }} />
       <BackfillBar backfill={backfill ?? null} />
       {selectedCell ? (
-        <CellDetailPanel cell={selectedCell} onClose={onClearSelection ?? (() => {})} style={{ left: 14, top: 288 }} />
+        <CellDetailPanel cell={selectedCell} onClose={onClearSelection ?? (() => {})} style={{ right: 14, top: 330 }} />
       ) : selectedNode ? (
-        <NodeDetailPanel node={selectedNode} chain={chain} onClose={onClearSelection ?? (() => {})} style={{ left: 14, top: 288 }} />
+        <NodeDetailPanel node={selectedNode} chain={chain} onClose={onClearSelection ?? (() => {})} style={{ right: 14, top: 330 }} />
       ) : selectedPeer ? (
-        <PeerDetailPanel peer={selectedPeer} chain={chain} onClose={onClearSelection ?? (() => {})} style={{ left: 14, top: 288 }} />
+        <PeerDetailPanel peer={selectedPeer} chain={chain} onClose={onClearSelection ?? (() => {})} style={{ right: 14, top: 330 }} />
       ) : null}
     </div>
   );
