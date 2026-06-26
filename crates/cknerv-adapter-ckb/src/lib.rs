@@ -19,5 +19,6 @@ pub mod content_hash;
 mod network;
 pub mod poll;
 pub mod rpc;
+mod script_taxonomy;
 
 pub use adapter::CkbDirectAdapter;
