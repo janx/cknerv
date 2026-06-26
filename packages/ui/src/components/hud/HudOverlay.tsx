@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
-import type { ChainEntry, Peer, ChainNode } from '@cknerv/types';
+import type { ChainEntry, Peer, ChainNode, Cell } from '@cknerv/types';
 import { summarizeNetwork } from '../../derives/peers.derive';
 import { fleetConsensus, pingStats, versionSpread } from '../../derives/fleetTelemetry';
 import { ecgCondition } from '../../derives/ecgCondition';
@@ -11,6 +11,10 @@ import StatusStrip from './StatusStrip';
 import BlockchainReadout from './BlockchainReadout';
 import BlockCadenceEcg from './BlockCadenceEcg';
 import NetworkPanel from './NetworkPanel';
+import CellDetailPanel from './CellDetailPanel';
+import NodeDetailPanel from './NodeDetailPanel';
+import PeerDetailPanel from './PeerDetailPanel';
+import BackfillBar from './BackfillBar';
 import CellsPanel from './CellsPanel';
 import { useCellChurn } from './useCellChurn';
 import WarningBar from './WarningBar';
@@ -33,8 +37,10 @@ function medianInterval(xs: number[]): number {
 const ROOT_STYLE: CSSProperties = { position: 'fixed', inset: 0, zIndex: 15, pointerEvents: 'none', overflow: 'hidden' };
 const SCAN_STYLE: CSSProperties = { position: 'absolute', inset: 0, pointerEvents: 'none', background: 'repeating-linear-gradient(0deg,rgba(255,255,255,.035) 0 1px,transparent 1px 3px)', mixBlendMode: 'overlay', opacity: 0.5 };
 
-export default function HudOverlay({ chain, peers, localNode, cellsStats }: {
+export default function HudOverlay({ chain, peers, localNode, cellsStats, selectedCell, selectedNode, selectedPeer, onClearSelection, backfill }: {
   chain: ChainEntry; peers: Peer[]; localNode: ChainNode | undefined; cellsStats: CellsStats;
+  selectedCell?: Cell | null; selectedNode?: ChainNode | null; selectedPeer?: Peer | null;
+  onClearSelection?: () => void; backfill?: { done: number; total: number } | null;
 }) {
   useEffect(() => { injectHudTheme(document); }, []);
 
@@ -72,6 +78,14 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats }: {
       <CellsPanel stats={cellsStats} churn={churn} reducedMotion={reduced} style={{ right: 14, top: 42 }} />
       <BlockCadenceEcg tip={chain.tip} condition={condition} reducedMotion={reduced} />
       <NetworkPanel summary={summary} consensus={consensus} ping={ping} vers={vers} syncRatio={syncRatio} style={{ right: 14, bottom: 40 }} />
+      <BackfillBar backfill={backfill ?? null} />
+      {selectedCell ? (
+        <CellDetailPanel cell={selectedCell} onClose={onClearSelection ?? (() => {})} style={{ left: 14, top: 288 }} />
+      ) : selectedNode ? (
+        <NodeDetailPanel node={selectedNode} chain={chain} onClose={onClearSelection ?? (() => {})} style={{ left: 14, top: 288 }} />
+      ) : selectedPeer ? (
+        <PeerDetailPanel peer={selectedPeer} chain={chain} onClose={onClearSelection ?? (() => {})} style={{ left: 14, top: 288 }} />
+      ) : null}
     </div>
   );
 }
