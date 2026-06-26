@@ -15,6 +15,25 @@ function formatStateBytes(shannons: number): string {
   return `${Math.round(b)} B`;
 }
 
+type Bucket = { key: string; label: string; color: string; count: number };
+
+function TaxonomyBar({ title, buckets }: { title: string; buckets: Bucket[] }) {
+  const total = buckets.reduce((s, b) => s + b.count, 0);
+  if (total <= 0) return null;
+  const nonZero = buckets.filter((b) => b.count > 0);
+  return (
+    <div style={{ marginTop: 7 }}>
+      <div style={{ fontFamily: HUD_FONTS.tech, fontSize: 7.5, letterSpacing: 1.5, color: '#6b7f8e', textTransform: 'uppercase', marginBottom: 4 }}>{title}</div>
+      <div style={{ display: 'flex', height: 6, border: '1px solid rgba(255,152,48,.2)', background: '#0a0a0a' }}>
+        {buckets.map((b) => b.count > 0 ? <span key={b.key} style={{ width: `${(b.count / total) * 100}%`, background: b.color }} /> : null)}
+      </div>
+      <div style={{ fontFamily: HUD_FONTS.mono, fontSize: 8.5, color: '#9fb0bd', marginTop: 3, lineHeight: 1.5 }}>
+        {nonZero.map((b) => `${b.label} ${Math.round((b.count / total) * 100)}%`).join(' · ')}
+      </div>
+    </div>
+  );
+}
+
 function FlowRow({ label, color, width, value }: { label: string; color: string; width: string; value: number }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 7, height: 16 }}>
@@ -33,7 +52,6 @@ export default function CellsPanel({ stats, churn, reducedMotion = false, style 
   const maxRate = Math.max(churn.bornPerBlock, churn.spentPerBlock, 0.001);
   const bornW = `${Math.min(100, (churn.bornPerBlock / maxRate) * 100)}%`;
   const spentW = `${Math.min(100, (churn.spentPerBlock / maxRate) * 100)}%`;
-  const dataPct = stats.inView > 0 ? Math.round((stats.dataBearing / stats.inView) * 100) : 0;
   const netColor = churn.netPerBlock >= 0 ? HUD_COLORS.cyanWire : HUD_COLORS.caution;
   return (
     <HudPanel style={{ width: 248, ...style }}>
@@ -57,11 +75,21 @@ export default function CellsPanel({ stats, churn, reducedMotion = false, style 
           In view · {fmt(stats.inView)} cells
         </div>
         <StatRow label="Capacity">{formatStateBytes(stats.capacityShannons)} state</StatRow>
-        <StatRow label="Data · plain">{dataPct}% · {100 - dataPct}%</StatRow>
-        <div style={{ display: 'flex', height: 6, border: '1px solid rgba(255,152,48,.2)', background: '#0a0a0a', margin: '4px 0 2px' }}>
-          <span style={{ width: `${dataPct}%`, background: HUD_COLORS.cyanWire }} />
-          <span style={{ width: `${100 - dataPct}%`, background: '#33424f' }} />
-        </div>
+        <TaxonomyBar title="ASSETS" buckets={[
+          { key: 'native', label: 'CKB', color: HUD_COLORS.cyanWire, count: stats.byAsset.native },
+          { key: 'sudt', label: 'sUDT', color: HUD_COLORS.orange, count: stats.byAsset.sudt },
+          { key: 'xudt', label: 'xUDT', color: '#ffb84d', count: stats.byAsset.xudt },
+          { key: 'dao', label: 'DAO', color: HUD_COLORS.caution, count: stats.byAsset.dao },
+          { key: 'spore', label: 'NFT', color: '#9d7bd8', count: stats.byAsset.spore },
+          { key: 'other', label: '?', color: '#33424f', count: stats.byAsset.other },
+        ]} />
+        <TaxonomyBar title="LOCKS" buckets={[
+          { key: 'sighash', label: 'sighash', color: HUD_COLORS.cyanWire, count: stats.byLock.sighash },
+          { key: 'multisig', label: 'multisig', color: HUD_COLORS.orange, count: stats.byLock.multisig },
+          { key: 'acp', label: 'ACP', color: HUD_COLORS.caution, count: stats.byLock.acp },
+          { key: 'omnilock', label: 'omni', color: '#9d7bd8', count: stats.byLock.omnilock },
+          { key: 'other', label: '?', color: '#33424f', count: stats.byLock.other },
+        ]} />
       </div>
     </HudPanel>
   );

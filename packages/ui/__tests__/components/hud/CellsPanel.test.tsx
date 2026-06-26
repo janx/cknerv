@@ -10,8 +10,8 @@ const stats: CellsStats = {
   byKind: { wallet: 0, dex: 0, cf: 0, ckbloom: 0, generic: 19204 },
   capacityShannons: 121_000_000_000_000_000, // 1.21e17 shannons = 1.21e9 bytes = 1.21 GB
   inView: 4983, dataBearing: 1545,
-  byLock: { sighash: 0, multisig: 0, acp: 0, omnilock: 0, other: 0 },
-  byAsset: { native: 0, sudt: 0, xudt: 0, dao: 0, spore: 0, other: 0 },
+  byLock: { sighash: 3200, multisig: 1100, acp: 450, omnilock: 0, other: 233 },
+  byAsset: { native: 3500, sudt: 900, xudt: 350, dao: 200, spore: 33, other: 0 },
 };
 const churn = { bornPerBlock: 3.2, spentPerBlock: 2.7, netPerBlock: 0.5 };
 
@@ -28,7 +28,15 @@ describe('CellsPanel', () => {
     expect(t).toContain('In view');
     expect(t).toContain('4,983');
     expect(t).toContain('1.21 GB');   // capacity
-    expect(t).toContain('31%');       // data pct = round(1545/4983*100)
+  });
+  it('renders the asset + lock taxonomy bars', () => {
+    const { container } = render(<CellsPanel stats={stats} churn={churn} reducedMotion />);
+    const t = container.textContent ?? '';
+    expect(t).toContain('ASSETS');
+    expect(t).toContain('LOCKS');
+    expect(t).toContain('CKB');       // native legend label
+    expect(t).toContain('sighash');   // lock legend label
+    expect(t).not.toContain('Data · plain');
   });
   it('has no Umbrella octagon (no svg path)', () => {
     const { container } = render(<CellsPanel stats={stats} churn={churn} reducedMotion />);
