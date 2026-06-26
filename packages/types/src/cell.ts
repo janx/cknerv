@@ -13,6 +13,14 @@ import type { OutPoint } from './outpoint';
  *  at the SPA. */
 export type CellTag = string;
 
+/** Lock-script family classification. Mirrors the Rust
+ *  `#[serde(rename_all = "snake_case")]` `LockKind` enum. */
+export type LockKind = 'sighash' | 'multisig' | 'acp' | 'omnilock' | 'other';
+
+/** Asset/type-script family classification. Mirrors the Rust
+ *  `#[serde(rename_all = "snake_case")]` `AssetKind` enum. */
+export type AssetKind = 'native' | 'sudt' | 'xudt' | 'dao' | 'spore' | 'other';
+
 export interface Cell {
   id: number;
   born_at_ms: number;
@@ -26,6 +34,12 @@ export interface Cell {
   /** CKB-canonical BLAKE2b-256 of CellOutput + data. Stable, 66-char
    *  0x-prefixed hex. Seeds the per-cell CellLifeAvatar. */
   content_hash: string;
+  /** Lock-script family. Optional: old persisted state may lack it
+   *  (mirrors Rust `#[serde(default)]`). */
+  lock_kind?: LockKind;
+  /** Asset/type-script family. Optional: old persisted state may lack
+   *  it (mirrors Rust `#[serde(default)]`). */
+  asset_kind?: AssetKind;
 }
 
 /** Wire shape of one entry in the snapshot's `recent_links` history.
