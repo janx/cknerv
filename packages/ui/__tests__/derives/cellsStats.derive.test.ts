@@ -8,6 +8,7 @@ function mkCell(
   tag: Cell['tag'],
   alive: boolean,
   data = '0x',
+  taxonomy: Pick<Cell, 'lock_kind' | 'asset_kind'> = {},
 ): Cell {
   return {
     id,
@@ -20,6 +21,7 @@ function mkCell(
     capacity,
     data_hex: data,
     content_hash: '0x' + '00'.repeat(32),
+    ...taxonomy,
   };
 }
 
@@ -85,5 +87,23 @@ describe('aggregateCellsStats', () => {
     const stats = aggregateCellsStats(cells, 0, 0);
     expect(stats.inView).toBe(3);
     expect(stats.dataBearing).toBe(1);
+  });
+
+  it('counts byLock and byAsset over alive in-view cells', () => {
+    const cells = mkCells(
+      // alive: sighash + native
+      mkCell(1, 100, 'wallet', true, '0x', { lock_kind: 'sighash', asset_kind: 'native' }),
+      // alive: sighash + native
+      mkCell(2, 100, 'wallet', true, '0x', { lock_kind: 'sighash', asset_kind: 'native' }),
+      // alive: multisig + sudt
+      mkCell(3, 100, 'dex', true, '0x', { lock_kind: 'multisig', asset_kind: 'sudt' }),
+      // alive: missing BOTH taxonomy fields → other / other
+      mkCell(4, 100, null, true),
+      // dead: carries kinds but must be EXCLUDED from the counts
+      mkCell(5, 100, 'cf', false, '0x', { lock_kind: 'omnilock', asset_kind: 'dao' }),
+    );
+    const stats = aggregateCellsStats(cells, 10, 3);
+    expect(stats.byLock).toEqual({ sighash: 2, multisig: 1, acp: 0, omnilock: 0, other: 1 });
+    expect(stats.byAsset).toEqual({ native: 2, sudt: 1, xudt: 0, dao: 0, spore: 0, other: 1 });
   });
 });

@@ -1,4 +1,4 @@
-import type { Cell } from '@cknerv/types';
+import type { AssetKind, Cell, LockKind } from '@cknerv/types';
 
 /** Per-kind bucket keys. Today the simulator emits four known tag
  *  strings; cells without a tag bucket into `'generic'`. Kept as a
@@ -30,6 +30,13 @@ export interface CellsStats {
   inView: number;
   /** # of in-view alive cells carrying non-empty output data (`data_hex` past `0x`). */
   dataBearing: number;
+  /** Lock-script-family breakdown of in-view alive cells. A galaxy-view
+   *  sample (≤ CELL_CAP), same scope as `inView`; cells lacking `lock_kind`
+   *  bucket into `other`. */
+  byLock: Record<LockKind, number>;
+  /** Asset/type-script-family breakdown of in-view alive cells. Galaxy-view
+   *  sample like `byLock`; cells lacking `asset_kind` bucket into `other`. */
+  byAsset: Record<AssetKind, number>;
 }
 
 export function aggregateCellsStats(
@@ -44,6 +51,8 @@ export function aggregateCellsStats(
     ckbloom: 0,
     generic: 0,
   };
+  const byLock: Record<LockKind, number> = { sighash: 0, multisig: 0, acp: 0, omnilock: 0, other: 0 };
+  const byAsset: Record<AssetKind, number> = { native: 0, sudt: 0, xudt: 0, dao: 0, spore: 0, other: 0 };
   let capacityShannons = 0;
   let inView = 0;
   let dataBearing = 0;
@@ -52,6 +61,8 @@ export function aggregateCellsStats(
     capacityShannons += c.capacity;
     inView += 1;
     if (c.data_hex !== '0x' && c.data_hex.length > 2) dataBearing += 1;
+    byLock[c.lock_kind ?? 'other'] += 1;
+    byAsset[c.asset_kind ?? 'other'] += 1;
     // Bucket unknown tag strings into `generic` so the aggregate row
     // shape stays the four-known-keys union. Today only four tag values
     // are emitted; if a future emitter introduces another tag, it
@@ -71,5 +82,7 @@ export function aggregateCellsStats(
     capacityShannons,
     inView,
     dataBearing,
+    byLock,
+    byAsset,
   };
 }

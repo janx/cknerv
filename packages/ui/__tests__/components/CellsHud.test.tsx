@@ -19,6 +19,8 @@ const stats: CellsStats = {
   capacityShannons: 12_345_600_000_000,
   inView: 10,
   dataBearing: 0,
+  byLock: { sighash: 0, multisig: 0, acp: 0, omnilock: 0, other: 0 },
+  byAsset: { native: 0, sudt: 0, xudt: 0, dao: 0, spore: 0, other: 0 },
 };
 
 describe('CellsHud', () => {
