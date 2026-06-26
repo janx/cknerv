@@ -5,7 +5,7 @@
 //! Match on the (code_hash, hash_type) pair — xUDT mainnet is data1, testnet type.
 
 use cknerv_core::{AssetKind, LockKind};
-use ckb_types::{packed, prelude::*};
+use ckb_types::packed;
 
 // hash_type discriminants
 const TYPE: u8 = 1;
@@ -52,6 +52,7 @@ pub fn classify_asset(type_: Option<&packed::Script>) -> AssetKind {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ckb_types::prelude::*; // molecule builder traits for the test helper
 
     fn script(code_hash_hex: &str, ht: u8) -> packed::Script {
         let bytes = hex::decode(code_hash_hex).unwrap();
