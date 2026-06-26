@@ -20,6 +20,7 @@ pub mod outpoint;
 pub mod projection;
 pub mod ring;
 pub mod rng;
+pub mod taxonomy;
 
 pub use entity::{
     Chain, ChainNode, EpochInfo, MempoolStats, Peer, PeerDirection, RecentBlock, RecentTx,
@@ -32,3 +33,4 @@ pub use projection::cells::{
 };
 pub use projection::Projection;
 pub use ring::Ring;
+pub use taxonomy::{AssetKind, LockKind};
