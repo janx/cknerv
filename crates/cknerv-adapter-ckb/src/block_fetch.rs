@@ -129,6 +129,9 @@ fn parse_outputs(tx: &Value, tx_hash: &str) -> Result<Vec<TxOutputInfo>> {
         };
         let lock: packed::Script = lock_json.into();
         let type_: Option<packed::Script> = type_json.map(|t| t.into());
+        // Classify BEFORE `lock`/`type_` are moved into the CellOutput builder.
+        let lock_kind = crate::script_taxonomy::classify_lock(&lock);
+        let asset_kind = crate::script_taxonomy::classify_asset(type_.as_ref());
         let capacity_packed: packed::Uint64 = capacity.pack();
         let cell_output = packed::CellOutput::new_builder()
             .capacity(capacity_packed)
@@ -142,6 +145,8 @@ fn parse_outputs(tx: &Value, tx_hash: &str) -> Result<Vec<TxOutputInfo>> {
             capacity,
             data_hex,
             content_hash,
+            lock_kind,
+            asset_kind,
         });
     }
     Ok(outputs)

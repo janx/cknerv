@@ -25,6 +25,7 @@ use crate::helix::helix_seed_for;
 use crate::mutation::Mutation;
 use crate::outpoint::{is_cellbase_input, OutPoint, TxOutputInfo};
 use crate::projection::Projection;
+use crate::{AssetKind, LockKind};
 
 // ── visual / behavior constants — mirror cellGalaxy.ts ───────────────
 pub const CELL_CAP: usize = 5000;
@@ -67,6 +68,16 @@ pub struct Cell {
     /// Stable identifier for the cell's on-chain content; backs the
     /// per-cell `CellLifeAvatar` seed. 66 chars (0x-prefixed).
     pub content_hash: String,
+    /// How this cell is guarded (lock-script category). Copied from the
+    /// birthing `TxOutputInfo`; `#[serde(default)]` keeps pre-taxonomy
+    /// persisted snapshots loadable (→ `LockKind::Other`).
+    #[serde(default)]
+    pub lock_kind: LockKind,
+    /// What this cell holds (asset class). Copied from the birthing
+    /// `TxOutputInfo`; `#[serde(default)]` keeps pre-taxonomy snapshots
+    /// loadable (→ `AssetKind::Other`).
+    #[serde(default)]
+    pub asset_kind: AssetKind,
 }
 
 /// Transient boot-time backfill progress. `None` when not backfilling.
@@ -671,6 +682,8 @@ impl CellGalaxy {
                 capacity: out.capacity,
                 data_hex: out.data_hex.clone(),
                 content_hash: out.content_hash.clone(),
+                lock_kind: out.lock_kind,
+                asset_kind: out.asset_kind,
             };
             deltas.push(CellDelta::Birth { cell: cell.clone() });
             self.total_births += 1;
@@ -906,6 +919,8 @@ mod tests {
             // path computes BLAKE2b in chain_poll; tests only need the
             // field to be present and distinguishable.
             content_hash: format!("0x{:064x}", (cap as u128) ^ data.len() as u128),
+            lock_kind: LockKind::Other,
+            asset_kind: AssetKind::Other,
         }
     }
 
@@ -1680,6 +1695,8 @@ mod tests {
             capacity: 100,
             data_hex: "0x".to_string(),
             content_hash: format!("0x{:064x}", 0),
+            lock_kind: LockKind::Other,
+            asset_kind: AssetKind::Other,
         };
         let alive_b = Cell {
             id: 1,

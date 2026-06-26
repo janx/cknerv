@@ -12,6 +12,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::{AssetKind, LockKind};
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct OutPoint {
     pub tx_hash: String,
@@ -31,6 +33,16 @@ pub struct TxOutputInfo {
     /// and identical to what the chain itself computes for this cell.
     /// 66 chars including the `0x` prefix.
     pub content_hash: String,
+    /// How this cell is guarded — derived from the lock script's
+    /// well-known `code_hash` at parse time. `#[serde(default)]` keeps
+    /// pre-taxonomy persisted snapshots loadable (→ `LockKind::Other`).
+    #[serde(default)]
+    pub lock_kind: LockKind,
+    /// What this cell holds — derived from the (optional) type script.
+    /// `#[serde(default)]` keeps pre-taxonomy snapshots loadable
+    /// (→ `AssetKind::Other`).
+    #[serde(default)]
+    pub asset_kind: AssetKind,
 }
 
 /// Minimal output shape used by adapters that haven't computed a

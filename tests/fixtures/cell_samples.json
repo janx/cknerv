@@ -9,7 +9,9 @@
     "out_point": { "tx_hash": "0xabc", "index": 0 },
     "capacity": 100,
     "data_hex": "0x",
-    "content_hash": "0x0000000000000000000000000000000000000000000000000000000000000000"
+    "content_hash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+    "lock_kind": "sighash",
+    "asset_kind": "native"
   },
   {
     "id": 2,
@@ -21,7 +23,9 @@
     "out_point": { "tx_hash": "0xabc", "index": 1 },
     "capacity": 200,
     "data_hex": "0xdeadbeef",
-    "content_hash": "0x1111111111111111111111111111111111111111111111111111111111111111"
+    "content_hash": "0x1111111111111111111111111111111111111111111111111111111111111111",
+    "lock_kind": "sighash",
+    "asset_kind": "sudt"
   },
   {
     "id": 3,
@@ -33,6 +37,8 @@
     "out_point": { "tx_hash": "0xdef", "index": 0 },
     "capacity": 300,
     "data_hex": "0xcafebabe",
-    "content_hash": "0x2222222222222222222222222222222222222222222222222222222222222222"
+    "content_hash": "0x2222222222222222222222222222222222222222222222222222222222222222",
+    "lock_kind": "multisig",
+    "asset_kind": "other"
   }
 ]

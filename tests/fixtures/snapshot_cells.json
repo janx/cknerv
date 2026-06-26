@@ -10,7 +10,9 @@
       "out_point": { "tx_hash": "0xabc", "index": 0 },
       "capacity": 100,
       "data_hex": "0x",
-      "content_hash": "0x0000000000000000000000000000000000000000000000000000000000000000"
+      "content_hash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "lock_kind": "sighash",
+      "asset_kind": "native"
     },
     {
       "id": 2,
@@ -22,7 +24,9 @@
       "out_point": { "tx_hash": "0xabc", "index": 1 },
       "capacity": 200,
       "data_hex": "0xdeadbeef",
-      "content_hash": "0x1111111111111111111111111111111111111111111111111111111111111111"
+      "content_hash": "0x1111111111111111111111111111111111111111111111111111111111111111",
+      "lock_kind": "sighash",
+      "asset_kind": "sudt"
     }
   ],
   "last_pulse_at_ms": 1500,
