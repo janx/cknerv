@@ -3,7 +3,7 @@ import type { CSSProperties } from 'react';
 import type { ChainEntry, Peer, ChainNode, Cell } from '@cknerv/types';
 import { summarizeNetwork } from '../../derives/peers.derive';
 import { fleetConsensus, pingStats, versionSpread } from '../../derives/fleetTelemetry';
-import { ecgCondition, expectedBlockMs, type EcgCondition } from '../../derives/ecgCondition';
+import { ecgCondition, expectedBlockMs, windowMeanMs, ECG_WINDOW, type EcgCondition } from '../../derives/ecgCondition';
 import { alertLevel } from '../../derives/alertLevel';
 import type { CellsStats } from '../../derives/cellsStats.derive';
 import { injectHudTheme } from './hudTheme';
@@ -47,7 +47,6 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats, select
   // reorg delta across renders
   const prevReorgs = useRef(chain.reorgs);
   const reorgDepth = Math.max(0, chain.reorgs - prevReorgs.current);
-  useEffect(() => { prevReorgs.current = chain.reorgs; }, [chain.reorgs]);
 
   const summary = summarizeNetwork(peers, chain, localNode);
   const consensus = fleetConsensus(peers, chain.tip);
@@ -58,9 +57,13 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats, select
   const blocksBehind = Math.max(0, chain.best_known_block - chain.tip);
   const syncing = chain.ibd || blocksBehind > SYNC_LAG_THRESHOLD || consensus.aheadRatio > SYNC_AHEAD_RATIO;
   const condition = ecgCondition({ intervalsMs: chain.recent_block_intervals_ms, targetMs, msSinceLast, syncing, prev: prevCond.current });
+  const avgMs = windowMeanMs(chain.recent_block_intervals_ms, ECG_WINDOW);
   const alert = alertLevel({ ecg: condition, reorgDepth, syncing });
-  useEffect(() => { prevCond.current = condition; }, [condition]);
   const syncRatio = chain.best_known_block > 0 ? Math.min(1, chain.tip / chain.best_known_block) : 1;
+
+  // persist the across-render baselines after each commit
+  useEffect(() => { prevReorgs.current = chain.reorgs; }, [chain.reorgs]);
+  useEffect(() => { prevCond.current = condition; }, [condition]);
 
   return (
     <div style={ROOT_STYLE}>
@@ -69,7 +72,15 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats, select
       <WarningBar level={alert.level} trigger={alert.trigger} reducedMotion={reduced} />
       <BlockchainReadout chain={chain} style={{ left: 14, top: 42 }} />
       <CellsPanel stats={cellsStats} churn={churn} reducedMotion={reduced} style={{ right: 14, top: 42 }} />
-      <BlockCadenceEcg tip={chain.tip} condition={condition} reducedMotion={reduced} />
+      <BlockCadenceEcg
+        intervalsMs={chain.recent_block_intervals_ms}
+        lastBlockTsMs={chain.last_block_ts_ms ?? null}
+        targetMs={targetMs}
+        avgMs={avgMs}
+        gapMs={msSinceLast}
+        condition={condition}
+        reducedMotion={reduced}
+      />
       <NetworkPanel summary={summary} consensus={consensus} ping={ping} vers={vers} syncRatio={syncRatio} style={{ right: 14, bottom: 40 }} />
       <BackfillBar backfill={backfill ?? null} />
       {selectedCell ? (
