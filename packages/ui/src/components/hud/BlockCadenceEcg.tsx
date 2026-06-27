@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import type { EcgCondition } from '../../derives/ecgCondition';
+import { reconstructArrivals, drawStripChart } from './ecgTrace';
 import { HUD_COLORS, HUD_FONTS } from './hudTheme';
 
 const COND_COLOR: Record<EcgCondition, string> = {
@@ -7,44 +8,44 @@ const COND_COLOR: Record<EcgCondition, string> = {
   FLATLINE: HUD_COLORS.danger, SYNCING: HUD_COLORS.cyanWire,
 };
 
-// PQRST complex repeating every 32 columns (RE2-style vertical-segment trace).
-function sig(c: number): number {
-  const p = c % 32;
-  if (p === 5) return 0.16; if (p === 10) return -0.18; if (p === 11) return 1.0;
-  if (p === 12) return -0.5; if (p === 18) return 0.30; return 0;
+function fmtS(ms: number | null | undefined): string {
+  if (ms == null || !Number.isFinite(ms)) return '—';
+  return `${(ms / 1000).toFixed(1)}s`;
 }
 
-export default function BlockCadenceEcg({ tip, condition, reducedMotion = false }: { tip: number; condition: EcgCondition; reducedMotion?: boolean }) {
+export default function BlockCadenceEcg({
+  intervalsMs, lastBlockTsMs, targetMs, avgMs, gapMs, condition, reducedMotion = false,
+}: {
+  intervalsMs: number[];
+  lastBlockTsMs: number | null | undefined;
+  targetMs: number;
+  avgMs: number | null;
+  gapMs: number;
+  condition: EcgCondition;
+  reducedMotion?: boolean;
+}) {
   const cvs = useRef<HTMLCanvasElement | null>(null);
-  const head = useRef(0);
   const color = COND_COLOR[condition];
+  const rate = avgMs && avgMs > 0 ? Math.round(60000 / avgMs) : null;
 
   useEffect(() => {
     const cv = cvs.current; if (!cv) return;
     const ctx = cv.getContext('2d');
-    if (!ctx || typeof ctx.fillRect !== 'function' || typeof ctx.clearRect !== 'function') return; // jsdom-safe
-    const W = cv.width, H = cv.height, N = 128, mid = H * 0.6, amp = H * 0.46, colW = W / N;
-    const rgb = condition === 'FINE' ? '39,255,90' : condition === 'CAUTION' ? '246,226,1'
-      : condition === 'SYNCING' ? '32,240,255' : '255,48,48';
-    const draw = () => {
-      ctx.clearRect(0, 0, W, H);
-      for (let c = 0; c < N; c++) {
-        const d = (head.current - c + N) % N;
-        const b = 1 - d * 0.028; if (b <= 0) continue;
-        const y = condition === 'FLATLINE' ? mid : mid - sig(c) * amp;
-        ctx.fillStyle = `rgba(${rgb},${b})`;
-        ctx.fillRect(c * colW, Math.min(y, mid), Math.max(1.4, colW * 0.85), Math.max(1, Math.abs(mid - y)));
-      }
+    // jsdom-safe: its 2D stub is non-null but lacks the path methods drawStripChart needs.
+    if (!ctx || typeof ctx.fillRect !== 'function' || typeof ctx.clearRect !== 'function' || typeof ctx.setLineDash !== 'function') return;
+    const arrivals = reconstructArrivals(intervalsMs, lastBlockTsMs);
+    const W = cv.width, H = cv.height;
+    const draw = (nowMs: number) => {
+      // canvas uses a live per-frame gap (smooth 60fps warmth + now-cursor); the hero
+      // text uses the ~1s gapMs prop. Fall back to the prop when there's no last block.
+      const gap = lastBlockTsMs != null ? nowMs - lastBlockTsMs : gapMs;
+      drawStripChart(ctx, { width: W, height: H, arrivals, nowMs, targetMs, gapMs: gap, color });
     };
-    draw();
+    draw(Date.now());
     if (reducedMotion || typeof requestAnimationFrame !== 'function') return; // static trace; test-safe
-    let raf = requestAnimationFrame(function loop() {
-      head.current = (head.current + 1) % N;
-      draw();
-      raf = requestAnimationFrame(loop);
-    });
+    let raf = requestAnimationFrame(function loop() { draw(Date.now()); raf = requestAnimationFrame(loop); });
     return () => cancelAnimationFrame(raf);
-  }, [condition, reducedMotion, tip]);
+  }, [intervalsMs, lastBlockTsMs, targetMs, gapMs, color, reducedMotion]);
 
   return (
     <div style={{ position: 'absolute', left: 14, bottom: 14, width: 430, zIndex: 12, border: '1px solid rgba(39,255,90,.22)', background: 'rgba(0,12,4,.45)', padding: '10px 12px 9px' }}>
@@ -53,9 +54,16 @@ export default function BlockCadenceEcg({ tip, condition, reducedMotion = false 
         <span style={{ fontFamily: HUD_FONTS.cjk, fontSize: 10, color: '#2f7a44' }}>脉搏</span>
         <span style={{ marginLeft: 'auto', fontFamily: HUD_FONTS.tech, fontWeight: 700, fontSize: 11, letterSpacing: 3, color, textShadow: `0 0 9px ${color}` }}>● {condition}</span>
       </div>
-      <canvas ref={cvs} width={406} height={60} style={{ display: 'block', width: '100%', height: 60, background: '#000409' }} />
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 5, fontFamily: HUD_FONTS.mono, fontSize: 8.5, color: '#3a5a44', letterSpacing: 1 }}>
-        <span>BEAT = NEW BLOCK</span><span>FLATLINE = NO BLOCKS</span>
+      <div style={{ display: 'flex', gap: 12 }}>
+        <div style={{ flex: '0 0 96px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+          <span style={{ fontFamily: HUD_FONTS.mono, fontWeight: 700, fontSize: 26, lineHeight: 1, color, textShadow: `0 0 11px ${color}` }}>{fmtS(gapMs)}</span>
+          <span style={{ fontFamily: HUD_FONTS.mono, fontSize: 8, letterSpacing: 2, color: '#3a5a44', marginTop: 4 }}>SINCE LAST</span>
+          <span style={{ fontFamily: HUD_FONTS.mono, fontSize: 8.5, color: '#3a5a44', marginTop: 6 }}>avg {fmtS(avgMs)} · tgt {fmtS(targetMs)}</span>
+        </div>
+        <canvas ref={cvs} width={300} height={58} style={{ display: 'block', flex: 1, width: '100%', height: 58, background: '#000409', border: '1px solid rgba(39,255,90,.1)' }} />
+      </div>
+      <div style={{ display: 'flex', gap: 14, marginTop: 6, fontFamily: HUD_FONTS.mono, fontSize: 8.5, color: '#3a5a44', letterSpacing: 1 }}>
+        <span>TGT {fmtS(targetMs)}</span><span>AVG {fmtS(avgMs)}</span><span>RATE {rate != null ? `${rate}/min` : '—'}</span>
       </div>
     </div>
   );
