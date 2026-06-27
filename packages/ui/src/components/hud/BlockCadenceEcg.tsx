@@ -28,24 +28,34 @@ export default function BlockCadenceEcg({
   const color = COND_COLOR[condition];
   const rate = avgMs && avgMs > 0 ? Math.round(60000 / avgMs) : null;
 
+  // Latest draw inputs, read by the animation loop each frame. Writing a ref on
+  // every render is cheap and — crucially — does NOT re-create the rAF loop. The
+  // chain entity is re-cloned upstream on every tx/mempool/sync delta (dozens per
+  // second), so a dep-driven effect would tear the loop down that often and the
+  // trace would stutter on the delta cadence instead of animating at 60fps. One
+  // persistent loop reads `live.current` instead.
+  const live = useRef({ intervalsMs, lastBlockTsMs, targetMs, gapMs, color });
+  live.current = { intervalsMs, lastBlockTsMs, targetMs, gapMs, color };
+
   useEffect(() => {
     const cv = cvs.current; if (!cv) return;
     const ctx = cv.getContext('2d');
     // jsdom-safe: its 2D stub is non-null but lacks the path methods drawStripChart needs.
     if (!ctx || typeof ctx.fillRect !== 'function' || typeof ctx.clearRect !== 'function' || typeof ctx.setLineDash !== 'function') return;
-    const arrivals = reconstructArrivals(intervalsMs, lastBlockTsMs);
     const W = cv.width, H = cv.height;
     const draw = (nowMs: number) => {
-      // canvas uses a live per-frame gap (smooth 60fps warmth + now-cursor); the hero
-      // text uses the ~1s gapMs prop. Fall back to the prop when there's no last block.
-      const gap = lastBlockTsMs != null ? nowMs - lastBlockTsMs : gapMs;
-      drawStripChart(ctx, { width: W, height: H, arrivals, nowMs, targetMs, gapMs: gap, color });
+      const s = live.current;
+      const arrivals = reconstructArrivals(s.intervalsMs, s.lastBlockTsMs);
+      // clamp >=0: last_block_ts_ms (fresh receive time) can sit just ahead of a
+      // throttled clock, which would otherwise paint a negative gap.
+      const gap = Math.max(0, s.lastBlockTsMs != null ? nowMs - s.lastBlockTsMs : s.gapMs);
+      drawStripChart(ctx, { width: W, height: H, arrivals, nowMs, targetMs: s.targetMs, gapMs: gap, color: s.color });
     };
     draw(Date.now());
     if (reducedMotion || typeof requestAnimationFrame !== 'function') return; // static trace; test-safe
     let raf = requestAnimationFrame(function loop() { draw(Date.now()); raf = requestAnimationFrame(loop); });
     return () => cancelAnimationFrame(raf);
-  }, [intervalsMs, lastBlockTsMs, targetMs, gapMs, color, reducedMotion]);
+  }, [reducedMotion]);
 
   return (
     <div style={{ position: 'absolute', left: 14, bottom: 14, width: 430, zIndex: 12, border: `1px solid ${rgba(HUD_COLORS.nominal, 0.22)}`, background: 'rgba(0,12,4,.45)', padding: '10px 12px 9px' }}>

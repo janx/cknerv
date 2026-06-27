@@ -53,7 +53,9 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats, select
   const ping = pingStats(peers);
   const vers = versionSpread(peers);
   const targetMs = expectedBlockMs(chain.epoch.length);
-  const msSinceLast = chain.last_block_ts_ms ? now - chain.last_block_ts_ms : 0;
+  // clamp >=0: last_block_ts_ms is fresh receive time but `now` only re-ticks once
+  // a second, so right after a block `now - last` is briefly negative (negative hero).
+  const msSinceLast = chain.last_block_ts_ms ? Math.max(0, now - chain.last_block_ts_ms) : 0;
   const blocksBehind = Math.max(0, chain.best_known_block - chain.tip);
   const syncing = chain.ibd || blocksBehind > SYNC_LAG_THRESHOLD || consensus.aheadRatio > SYNC_AHEAD_RATIO;
   const condition = ecgCondition({ intervalsMs: chain.recent_block_intervals_ms, targetMs, msSinceLast, syncing, prev: prevCond.current });
