@@ -27,6 +27,14 @@ export const HUD_FONTS = {
   cjk: "'Huiwen-mincho', 'Noto Serif SC', serif",
 } as const;
 
+/** A `#RRGGBB` palette color as an `rgba(r,g,b,a)` string — single source for
+ *  canvas/border tints that need an alpha the hex form can't carry. */
+export function rgba(hex: string, alpha: number): string {
+  const h = hex.replace('#', '');
+  const r = parseInt(h.slice(0, 2), 16), g = parseInt(h.slice(2, 4), 16), b = parseInt(h.slice(4, 6), 16);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
 // Self-hosted, subset webfonts — no third-party CDN at runtime. Latin faces are
 // Google's latin-range woff2; the CJK face is Huiwen-mincho (public domain)
 // subset to the ~12 glyphs the HUD uses (主链细胞网络状态脉搏警告).

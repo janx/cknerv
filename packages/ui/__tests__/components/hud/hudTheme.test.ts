@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { HUD_COLORS, HUD_FONTS, injectHudTheme, HUD_THEME_STYLE_ID } from '../../../src/components/hud/hudTheme';
+import { HUD_COLORS, HUD_FONTS, injectHudTheme, HUD_THEME_STYLE_ID, rgba } from '../../../src/components/hud/hudTheme';
 
 describe('hudTheme', () => {
   beforeEach(() => { document.getElementById(HUD_THEME_STYLE_ID)?.remove(); });
@@ -9,6 +9,12 @@ describe('hudTheme', () => {
     expect(HUD_COLORS.nominal).toBe('#27FF5A');
     expect(HUD_COLORS.danger).toBe('#FF3030');
     expect(HUD_FONTS.cjk).toContain('Huiwen-mincho');
+  });
+
+  it('rgba() expands a palette hex to an rgba() string (byte-identical to the old literals)', () => {
+    expect(rgba(HUD_COLORS.nominal, 0.06)).toBe('rgba(39,255,90,0.06)');
+    expect(rgba(HUD_COLORS.nominal, 0.22)).toBe('rgba(39,255,90,0.22)');
+    expect(rgba(HUD_COLORS.danger, 0)).toBe('rgba(255,48,48,0)');
   });
 
   it('injects a single idempotent <style> with font imports + css vars', () => {

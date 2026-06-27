@@ -2,6 +2,7 @@
 // The trace is a real strip chart: x = time, "now" at the right edge, scrolling
 // left. Beats (PQRST) are drawn at real block-arrival timestamps; a stall shows
 // as the growing flat stretch at the right, warmed by gap survival.
+import { HUD_COLORS, rgba } from './hudTheme';
 
 export const ECG_SPAN_BEATS = 8; // expected beats visible across the canvas width
 
@@ -48,9 +49,9 @@ export function drawStripChart(ctx: CanvasRenderingContext2D, o: StripOpts): voi
 
   // grid
   ctx.lineWidth = 1;
-  ctx.strokeStyle = 'rgba(39,255,90,0.06)';
+  ctx.strokeStyle = rgba(HUD_COLORS.nominal, 0.06);
   for (let k = 0; k <= 8; k++) { const px = (w * k) / 8; ctx.beginPath(); ctx.moveTo(px, 0); ctx.lineTo(px, h); ctx.stroke(); }
-  ctx.strokeStyle = 'rgba(39,255,90,0.1)';
+  ctx.strokeStyle = rgba(HUD_COLORS.nominal, 0.1);
   ctx.beginPath(); ctx.moveTo(0, mid); ctx.lineTo(w, mid); ctx.stroke();
 
   // target-cadence dashed ticks: expected next beats forward from the last arrival.
@@ -60,7 +61,7 @@ export function drawStripChart(ctx: CanvasRenderingContext2D, o: StripOpts): voi
   if (targetMs > 0) {
     const firstTickM = Math.max(1, Math.ceil((nowMs - win - last) / targetMs));
     ctx.setLineDash([2, 4]);
-    ctx.strokeStyle = 'rgba(39,255,90,0.22)';
+    ctx.strokeStyle = rgba(HUD_COLORS.nominal, 0.22);
     for (let t = last + firstTickM * targetMs; t <= nowMs + targetMs; t += targetMs) {
       const px = w * (1 - (nowMs - t) / win);
       if (px > 2 && px < w) { ctx.beginPath(); ctx.moveTo(px, 4); ctx.lineTo(px, h - 4); ctx.stroke(); }
@@ -98,13 +99,13 @@ export function drawStripChart(ctx: CanvasRenderingContext2D, o: StripOpts): voi
   if (wf > 0.04) {
     const zw = Math.min(0.6, 0.12 + wf * 0.5) * w;
     const gr = ctx.createLinearGradient(w - zw, 0, w, 0);
-    gr.addColorStop(0, 'rgba(255,48,48,0)');
-    gr.addColorStop(1, `rgba(255,48,48,${0.06 + wf * 0.34})`);
+    gr.addColorStop(0, rgba(HUD_COLORS.danger, 0));
+    gr.addColorStop(1, rgba(HUD_COLORS.danger, 0.06 + wf * 0.34));
     ctx.fillStyle = gr;
     ctx.fillRect(w - zw, 0, zw, h);
   }
 
   // "now" edge
-  ctx.fillStyle = 'rgba(39,255,90,0.85)';
+  ctx.fillStyle = rgba(HUD_COLORS.nominal, 0.85);
   ctx.fillRect(w - 1.5, 0, 1.5, h);
 }
