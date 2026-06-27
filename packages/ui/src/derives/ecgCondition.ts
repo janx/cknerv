@@ -15,7 +15,9 @@ export const ECG_SIGMA_CAUTION = 2;    // enter CAUTION at +2σ
 export const ECG_SIGMA_DANGER = 3;     // enter DANGER at +3σ
 export const ECG_SIGMA_HYST = 0.4;     // leave a hotter state 0.4σ below its enter level
 export const ECG_FLATLINE_FACTOR = 8;  // gap > 8x target (~0.03% survival) -> flatline
-export const EPOCH_DURATION_TARGET_MS = 14_400_000; // CKB ~4h epoch target
+// CKB consensus targets ~4h epochs (EPOCH_DURATION_TARGET = 14400s); the realized
+// block time ≈ this / epoch.length, so epoch.length (≈1800 on mainnet) gives μ ≈ 8s.
+export const EPOCH_DURATION_TARGET_MS = 14_400_000;
 export const DEFAULT_TARGET_MS = 8000; // fallback expected block time
 
 /** Protocol-intended block time: epoch duration target / blocks per epoch. */
