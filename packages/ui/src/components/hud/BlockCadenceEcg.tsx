@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import type { EcgCondition } from '../../derives/ecgCondition';
 import { reconstructArrivals, drawStripChart } from './ecgTrace';
-import { HUD_COLORS, HUD_FONTS } from './hudTheme';
+import { HUD_COLORS, HUD_FONTS, rgba } from './hudTheme';
 
 const COND_COLOR: Record<EcgCondition, string> = {
   FINE: HUD_COLORS.nominal, CAUTION: HUD_COLORS.caution, DANGER: HUD_COLORS.danger,
@@ -48,7 +48,7 @@ export default function BlockCadenceEcg({
   }, [intervalsMs, lastBlockTsMs, targetMs, gapMs, color, reducedMotion]);
 
   return (
-    <div style={{ position: 'absolute', left: 14, bottom: 14, width: 430, zIndex: 12, border: '1px solid rgba(39,255,90,.22)', background: 'rgba(0,12,4,.45)', padding: '10px 12px 9px' }}>
+    <div style={{ position: 'absolute', left: 14, bottom: 14, width: 430, zIndex: 12, border: `1px solid ${rgba(HUD_COLORS.nominal, 0.22)}`, background: 'rgba(0,12,4,.45)', padding: '10px 12px 9px' }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 6 }}>
         <span style={{ fontFamily: HUD_FONTS.display, fontWeight: 600, fontSize: 10.5, letterSpacing: 2.5, color: HUD_COLORS.nominal, textTransform: 'uppercase' }}>BLOCK CADENCE</span>
         <span style={{ fontFamily: HUD_FONTS.cjk, fontSize: 10, color: '#2f7a44' }}>脉搏</span>
@@ -61,7 +61,7 @@ export default function BlockCadenceEcg({
           <span style={{ fontFamily: HUD_FONTS.mono, fontSize: 8, letterSpacing: 2, color: '#3a5a44', marginTop: 4 }}>SINCE LAST</span>
           <span style={{ fontFamily: HUD_FONTS.mono, fontSize: 8.5, color: '#3a5a44', marginTop: 6 }}>avg {fmtS(avgMs)} · tgt {fmtS(targetMs)}</span>
         </div>
-        <canvas ref={cvs} width={300} height={58} style={{ display: 'block', flex: 1, width: '100%', height: 58, background: '#000409', border: '1px solid rgba(39,255,90,.1)' }} />
+        <canvas ref={cvs} width={300} height={58} style={{ display: 'block', flex: 1, width: '100%', height: 58, background: '#000409', border: `1px solid ${rgba(HUD_COLORS.nominal, 0.1)}` }} />
       </div>
       <div style={{ display: 'flex', gap: 14, marginTop: 6, fontFamily: HUD_FONTS.mono, fontSize: 8.5, color: '#3a5a44', letterSpacing: 1 }}>
         <span>TGT {fmtS(targetMs)}</span><span>AVG {fmtS(avgMs)}</span><span>RATE {rate != null ? `${rate}/min` : '—'}</span>
