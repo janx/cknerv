@@ -56,6 +56,7 @@ export default function BlockCadenceEcg({
       </div>
       <div style={{ display: 'flex', gap: 12 }}>
         <div style={{ flex: '0 0 96px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+          {/* hero reads the throttled gapMs prop (~1s); the canvas uses a live per-frame gap — divergence is intentional, keep this on the prop */}
           <span style={{ fontFamily: HUD_FONTS.mono, fontWeight: 700, fontSize: 26, lineHeight: 1, color, textShadow: `0 0 11px ${color}` }}>{fmtS(gapMs)}</span>
           <span style={{ fontFamily: HUD_FONTS.mono, fontSize: 8, letterSpacing: 2, color: '#3a5a44', marginTop: 4 }}>SINCE LAST</span>
           <span style={{ fontFamily: HUD_FONTS.mono, fontSize: 8.5, color: '#3a5a44', marginTop: 6 }}>avg {fmtS(avgMs)} · tgt {fmtS(targetMs)}</span>
