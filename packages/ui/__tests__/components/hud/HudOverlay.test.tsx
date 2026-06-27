@@ -29,4 +29,10 @@ describe('HudOverlay', () => {
     expect(t).toContain('NETWORK');      // network
     expect(t).toContain('CELLS');        // cells
   });
+
+  it('reads CAUTION when recent intervals run ~1.5x the protocol target', () => {
+    const slow: ChainEntry = { ...chain, recent_block_intervals_ms: Array.from({ length: 30 }, () => 12000), last_block_ts_ms: Date.now() };
+    const { container } = render(<HudOverlay chain={slow} peers={peers} localNode={localNode} cellsStats={cellsStats} />);
+    expect(container.textContent).toContain('CAUTION');
+  });
 });
