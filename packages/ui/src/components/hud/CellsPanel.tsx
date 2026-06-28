@@ -63,7 +63,7 @@ export default function CellsPanel({ stats, churn, reducedMotion = false, style 
       </div>
       <FlowRow label="▲ BORN" color={HUD_COLORS.nominal} width={bornW} value={churn.bornPerBlock} />
       <div style={{ height: 5 }} />
-      <FlowRow label="▼ SPENT" color={HUD_COLORS.danger} width={spentW} value={churn.spentPerBlock} />
+      <FlowRow label="▼ DIED" color={HUD_COLORS.danger} width={spentW} value={churn.spentPerBlock} />
       <div style={{ marginTop: 11 }}>
         <StatRow label="Live cells"><span style={{ fontFamily: HUD_FONTS.display, fontWeight: 700, fontSize: 14, color: '#fff' }}>{fmt(stats.live)}</span></StatRow>
         <StatRow label="Total observed">{fmt(stats.born)}</StatRow>
