@@ -64,7 +64,7 @@ pub(crate) async fn replay_window(
         match fetched {
             Ok(Some(block)) => {
                 let at = header_timestamp_ms(&block).unwrap_or_else(now_ms);
-                match translate_block(&block, n, at) {
+                match translate_block(&block, n, at, /* size: real value wired in Task 2 */ 0) {
                     Ok(muts) => {
                         for m in muts {
                             let _ = out.send(m).await;

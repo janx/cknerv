@@ -39,6 +39,7 @@ impl Adapter for CountdownAdapter {
                             number: remaining as u64,
                             hash: "0xtest".into(),
                             tx_count: 0,
+                            size: 0,
                             at: 0,
                         })
                         .await;

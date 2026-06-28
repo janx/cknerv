@@ -25,6 +25,10 @@ pub enum Mutation {
         number: u64,
         hash: String,
         tx_count: u32,
+        /// Serialized block size in bytes. `#[serde(default)]` so frames from
+        /// the external simulator (which doesn't emit it yet) still decode → 0.
+        #[serde(default)]
+        size: u64,
         at: u64,
     },
     TxLanded {

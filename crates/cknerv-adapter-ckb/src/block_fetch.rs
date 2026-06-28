@@ -19,7 +19,7 @@ use crate::rpc::RpcClient;
 const DATA_HEX_CAP_BYTES: usize = 1024;
 
 /// Fetch + translate block `number`. Returns mutations in emit order:
-/// 1. `BlockMined { number, hash, tx_count, at }`
+/// 1. `BlockMined { number, hash, tx_count, size, at }`
 /// 2. for each tx (including cellbase): `TxLanded { tx_hash, block, inputs, outputs, at }`
 ///
 /// Returns `Ok(vec![])` if the block isn't visible yet (RPC race),
@@ -29,13 +29,13 @@ pub async fn fetch_and_translate(rpc: &RpcClient, number: u64) -> Result<Vec<Mut
         return Ok(vec![]);
     };
     let at = now_ms();
-    translate_block(&block, number, at)
+    translate_block(&block, number, at, /* size: real value wired in Task 2 */ 0)
 }
 
 /// Pure translation helper — split out so tests can exercise it without
 /// a live RPC. The `at` timestamp is injected so deterministic fixtures
 /// produce deterministic output.
-pub fn translate_block(block: &Value, number: u64, at: u64) -> Result<Vec<Mutation>> {
+pub fn translate_block(block: &Value, number: u64, at: u64, size: u64) -> Result<Vec<Mutation>> {
     let header_hash = block["header"]["hash"]
         .as_str()
         .ok_or_else(|| anyhow!("block {number}: missing header.hash"))?
@@ -53,6 +53,7 @@ pub fn translate_block(block: &Value, number: u64, at: u64) -> Result<Vec<Mutati
         number,
         hash: header_hash,
         tx_count,
+        size,
         at,
     });
 
@@ -233,18 +234,20 @@ mod tests {
     #[test]
     fn translate_block_emits_block_mined_first() {
         let block = cellbase_block_json(7, "0xblock7");
-        let muts = translate_block(&block, 7, 42).expect("translate ok");
+        let muts = translate_block(&block, 7, 42, 0).expect("translate ok");
         assert!(muts.len() >= 2, "expected BlockMined + at least one TxLanded");
         match &muts[0] {
             Mutation::BlockMined {
                 number,
                 hash,
                 tx_count,
+                size,
                 at,
             } => {
                 assert_eq!(*number, 7);
                 assert_eq!(hash, "0xblock7");
                 assert_eq!(*tx_count, 1);
+                assert_eq!(*size, 0);
                 assert_eq!(*at, 42);
             }
             other => panic!("expected BlockMined first, got {other:?}"),
@@ -254,7 +257,7 @@ mod tests {
     #[test]
     fn translate_block_emits_tx_landed_with_cellbase_input() {
         let block = cellbase_block_json(7, "0xblock7");
-        let muts = translate_block(&block, 7, 42).expect("translate ok");
+        let muts = translate_block(&block, 7, 42, 0).expect("translate ok");
         match &muts[1] {
             Mutation::TxLanded {
                 block,
@@ -305,7 +308,7 @@ mod tests {
             .as_object_mut()
             .unwrap()
             .remove("capacity");
-        let err = translate_block(&block, 1, 0).unwrap_err();
+        let err = translate_block(&block, 1, 0, 0).unwrap_err();
         let msg = format!("{err}");
         assert!(
             msg.contains("capacity"),

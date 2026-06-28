@@ -149,6 +149,9 @@ pub struct Chain {
     /// Per-block tx counts, parallel to `recent_block_intervals_ms`.
     #[serde(default)]
     pub recent_block_tx_counts: Vec<u32>,
+    /// Per-block serialized sizes (bytes), parallel to `recent_block_tx_counts`.
+    #[serde(default)]
+    pub recent_block_sizes: Vec<u64>,
     /// Wall-clock ms timestamp of the most recent BlockMined envelope —
     /// the anchor used to compute the next interval. None until the first
     /// block lands.

@@ -333,6 +333,7 @@ fn apply_chain_mutation(chain: &mut Chain, m: &Mutation) {
             number,
             hash,
             tx_count,
+            size,
             at,
         } => {
             if *number > chain.tip {
@@ -371,6 +372,10 @@ fn apply_chain_mutation(chain: &mut Chain, m: &Mutation) {
                 chain.recent_block_tx_counts.push(*tx_count);
                 while chain.recent_block_tx_counts.len() > RECENT_INTERVAL_CAP {
                     chain.recent_block_tx_counts.remove(0);
+                }
+                chain.recent_block_sizes.push(*size);
+                while chain.recent_block_sizes.len() > RECENT_INTERVAL_CAP {
+                    chain.recent_block_sizes.remove(0);
                 }
             }
             chain.recent_blocks.push(RecentBlock {
@@ -461,6 +466,7 @@ mod tests {
             number: 5,
             hash: "0x5".into(),
             tx_count: 2,
+            size: 0,
             at: 1_000,
         });
         assert_eq!(rev, 1);
@@ -472,18 +478,30 @@ mod tests {
     }
 
     #[test]
+    fn block_mined_accrues_recent_block_sizes_parallel_to_tx_counts() {
+        let s = ServerState::new();
+        s.apply_mutation(Mutation::BlockMined { number: 1, hash: "0x1".into(), tx_count: 2, size: 500, at: 100 });
+        s.apply_mutation(Mutation::BlockMined { number: 2, hash: "0x2".into(), tx_count: 7, size: 1200, at: 110 });
+        let snap = s.snapshot();
+        assert_eq!(snap["chain"]["recent_block_sizes"], serde_json::json!([500, 1200]));
+        assert_eq!(snap["chain"]["recent_block_tx_counts"], serde_json::json!([2, 7]));
+    }
+
+    #[test]
     fn duplicate_block_does_not_double_count() {
         let s = ServerState::new();
         s.apply_mutation(Mutation::BlockMined {
             number: 3,
             hash: "0xa".into(),
             tx_count: 0,
+            size: 0,
             at: 100,
         });
         s.apply_mutation(Mutation::BlockMined {
             number: 3,
             hash: "0xa".into(),
             tx_count: 0,
+            size: 0,
             at: 200,
         });
         let snap = s.snapshot();
@@ -497,12 +515,14 @@ mod tests {
             number: 3,
             hash: "0xa".into(),
             tx_count: 0,
+            size: 0,
             at: 100,
         });
         s.apply_mutation(Mutation::BlockMined {
             number: 3,
             hash: "0xb".into(),
             tx_count: 0,
+            size: 0,
             at: 200,
         });
         let snap = s.snapshot();
@@ -534,6 +554,7 @@ mod tests {
                 number: i,
                 hash: format!("0x{i}"),
                 tx_count: 0,
+                size: 0,
                 at: i * 10,
             });
             assert_eq!(rev, i + 1);
@@ -673,6 +694,7 @@ mod tests {
             number: 99,
             hash: "0xblk99".into(),
             tx_count: 4,
+            size: 0,
             at: 1_000,
         });
         let saved = s.save_entities();

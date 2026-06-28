@@ -176,6 +176,7 @@ mod tests {
             number: 42,
             hash: "0xblk42".into(),
             tx_count: 1,
+            size: 0,
             at: 1_000,
         });
         save(&s1, &workdir).expect("save");
@@ -201,6 +202,7 @@ mod tests {
             number: 12345,
             hash: "0xblk".into(),
             tx_count: 0,
+            size: 0,
             at: 1_000,
         });
         save(&s, &workdir).expect("save");
