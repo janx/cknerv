@@ -16,7 +16,7 @@ use tokio::sync::mpsc;
 
 use cknerv_core::Mutation;
 
-use crate::block_fetch::{header_timestamp_ms, translate_block};
+use crate::block_fetch::{header_timestamp_ms, serialized_block_size, translate_block};
 use crate::rpc::RpcClient;
 
 /// How many block fetches are in flight at once. `buffered` preserves
@@ -64,7 +64,8 @@ pub(crate) async fn replay_window(
         match fetched {
             Ok(Some(block)) => {
                 let at = header_timestamp_ms(&block).unwrap_or_else(now_ms);
-                match translate_block(&block, n, at, /* size: real value wired in Task 2 */ 0) {
+                let size = serialized_block_size(&block);
+                match translate_block(&block, n, at, size) {
                     Ok(muts) => {
                         for m in muts {
                             let _ = out.send(m).await;
