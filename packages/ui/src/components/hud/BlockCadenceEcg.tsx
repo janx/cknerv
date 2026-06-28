@@ -14,9 +14,11 @@ function fmtS(ms: number | null | undefined): string {
 }
 
 export default function BlockCadenceEcg({
-  intervalsMs, lastBlockTsMs, targetMs, avgMs, gapMs, condition, reducedMotion = false,
+  intervalsMs, sizes, txCounts, lastBlockTsMs, targetMs, avgMs, gapMs, condition, reducedMotion = false,
 }: {
   intervalsMs: number[];
+  sizes: number[];
+  txCounts: number[];
   lastBlockTsMs: number | null | undefined;
   targetMs: number;
   avgMs: number | null;
@@ -35,8 +37,8 @@ export default function BlockCadenceEcg({
   // second), so a dep-driven effect would tear the loop down that often and the
   // trace would stutter on the delta cadence instead of animating at 60fps. One
   // persistent loop reads `live.current` instead.
-  const live = useRef({ intervalsMs, lastBlockTsMs, targetMs, gapMs, color });
-  live.current = { intervalsMs, lastBlockTsMs, targetMs, gapMs, color };
+  const live = useRef({ intervalsMs, sizes, txCounts, lastBlockTsMs, targetMs, gapMs, color });
+  live.current = { intervalsMs, sizes, txCounts, lastBlockTsMs, targetMs, gapMs, color };
 
   useEffect(() => {
     const cv = cvs.current; if (!cv) return;
@@ -50,7 +52,7 @@ export default function BlockCadenceEcg({
       // clamp >=0: last_block_ts_ms (fresh receive time) can sit just ahead of a
       // throttled clock, which would otherwise paint a negative gap.
       const gap = Math.max(0, s.lastBlockTsMs != null ? nowMs - s.lastBlockTsMs : s.gapMs);
-      drawStripChart(ctx, { width: W, height: H, arrivals, nowMs, targetMs: s.targetMs, gapMs: gap, color: s.color });
+      drawStripChart(ctx, { width: W, height: H, arrivals, nowMs, targetMs: s.targetMs, gapMs: gap, color: s.color, sizes: s.sizes, txCounts: s.txCounts });
     };
     draw(Date.now());
     if (reducedMotion || typeof requestAnimationFrame !== 'function') return; // static trace; test-safe

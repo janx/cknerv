@@ -76,6 +76,8 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats, select
       <CellsPanel stats={cellsStats} churn={churn} reducedMotion={reduced} style={{ right: 14, top: 42 }} />
       <BlockCadenceEcg
         intervalsMs={chain.recent_block_intervals_ms}
+        sizes={chain.recent_block_sizes}
+        txCounts={chain.recent_block_tx_counts}
         lastBlockTsMs={chain.last_block_ts_ms ?? null}
         targetMs={targetMs}
         avgMs={avgMs}
