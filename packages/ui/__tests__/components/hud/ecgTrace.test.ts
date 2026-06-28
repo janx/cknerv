@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { reconstructArrivals, beatProfile, drawStripChart } from '../../../src/components/hud/ecgTrace';
+import { reconstructArrivals, beatProfile, drawStripChart, windowMax, alignedFracs } from '../../../src/components/hud/ecgTrace';
 
 describe('reconstructArrivals', () => {
   it('returns [] when there is no last arrival', () => {
@@ -30,12 +30,39 @@ describe('beatProfile', () => {
   });
 });
 
+describe('windowMax', () => {
+  it('returns the max with a floor of 1', () => {
+    expect(windowMax([100, 500, 200])).toBe(500);
+    expect(windowMax([])).toBe(1);
+    expect(windowMax([0, 0])).toBe(1);
+    expect(windowMax([NaN, 300])).toBe(300);
+  });
+});
+
+describe('alignedFracs', () => {
+  it('aligns newest-first and normalizes by window max', () => {
+    // sizes/txCounts newest LAST; result newest FIRST
+    const r = alignedFracs([100, 200, 400], [1, 5, 10], 3);
+    expect(r[0]).toEqual({ sizeFrac: 1, txFrac: 1 });            // newest: 400/400, 10/10
+    expect(r[1].sizeFrac).toBeCloseTo(0.5);                       // 200/400
+    expect(r[2].sizeFrac).toBeCloseTo(0.25);                      // 100/400
+  });
+  it('defaults to 0.5 when arrays are shorter than nBeats', () => {
+    const r = alignedFracs([400], [10], 3);
+    expect(r[0]).toEqual({ sizeFrac: 1, txFrac: 1 });
+    expect(r[1]).toEqual({ sizeFrac: 0.5, txFrac: 0.5 });
+    expect(r[2]).toEqual({ sizeFrac: 0.5, txFrac: 0.5 });
+  });
+});
+
 describe('drawStripChart (mock 2D context)', () => {
   function fakeCtx() {
-    const calls = { stroke: 0, fillRect: 0 };
+    const calls = { stroke: 0, fillRect: 0, ys: [] as number[] };
     const ctx = {
       calls,
-      clearRect() {}, beginPath() {}, moveTo() {}, lineTo() {},
+      clearRect() {}, beginPath() {},
+      moveTo(_x: number, y: number) { calls.ys.push(y); },
+      lineTo(_x: number, y: number) { calls.ys.push(y); },
       stroke() { calls.stroke++; }, fillRect() { calls.fillRect++; },
       setLineDash() {}, createLinearGradient() { return { addColorStop() {} }; },
       lineWidth: 0, strokeStyle: '', fillStyle: '', lineJoin: '', shadowBlur: 0, shadowColor: '',
@@ -66,5 +93,31 @@ describe('drawStripChart (mock 2D context)', () => {
     // gap (12s) exceeds target (8s) -> one expected-beat tick falls inside the window
     drawStripChart(ctx, { ...base, arrivals: [now - 12000], nowMs: now, targetMs: 8000, gapMs: 12000 });
     expect(ctx.calls.stroke).toBeGreaterThan(10); // grid is 10 strokes; tick + trace add more
+  });
+
+  it('plots only finite, on-canvas y-coords through the divergent size/tx scaling path', () => {
+    const ctx = fakeCtx() as ReturnType<typeof fakeCtx>;
+    const now = 1_000_000;
+    const lastTs = now - 2000;
+    // four beats on-screen (8s apart in a 64s window); three carry real, wildly
+    // divergent size/tx (incl. a 0 tx and a 50k-byte block) so the scaling math is
+    // exercised — the mock's lineTo is a no-op, so without this a NaN y (which would
+    // silently blank the real trace) would go uncaught.
+    const arrivals = reconstructArrivals([8000, 8000, 8000], lastTs);
+    drawStripChart(ctx, {
+      ...base,
+      arrivals,
+      nowMs: now,
+      targetMs: 8000,
+      gapMs: now - lastTs,
+      sizes: [200, 50_000, 1000],
+      txCounts: [0, 250, 12],
+    });
+    expect(ctx.calls.ys.length).toBeGreaterThan(10); // grid + trace plotted
+    for (const y of ctx.calls.ys) {
+      expect(Number.isFinite(y)).toBe(true);
+      expect(y).toBeGreaterThanOrEqual(0);
+      expect(y).toBeLessThanOrEqual(base.height);
+    }
   });
 });
