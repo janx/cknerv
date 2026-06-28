@@ -4,6 +4,7 @@
     "number": 1,
     "hash": "0xabc",
     "tx_count": 2,
+    "size": 1024,
     "at": 1000
   },
   "TxLanded": {

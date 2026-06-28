@@ -854,6 +854,7 @@ impl Projection for CellGalaxy {
                 number,
                 hash,
                 tx_count,
+                size: _,
                 at,
             } => self.handle_block_mined(*number, hash, *tx_count, *at),
             Mutation::TxLanded {
@@ -989,6 +990,7 @@ mod tests {
             number: 1,
             hash: "0xblock".into(),
             tx_count: 1,
+            size: 0,
             at: 2_000,
         });
 
