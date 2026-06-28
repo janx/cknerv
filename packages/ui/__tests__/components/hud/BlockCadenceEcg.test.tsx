@@ -6,6 +6,8 @@ afterEach(cleanup);
 
 const base = {
   intervalsMs: [8000, 8000, 8000],
+  sizes: [400, 900, 1500],
+  txCounts: [2, 8, 20],
   lastBlockTsMs: 1_000_000,
   targetMs: 8000,
   avgMs: 8000,
@@ -32,7 +34,7 @@ describe('BlockCadenceEcg', () => {
   });
   it('renders with an empty interval buffer (no last block) without throwing', () => {
     const { container } = render(
-      <BlockCadenceEcg intervalsMs={[]} lastBlockTsMs={null} targetMs={8000} avgMs={null} gapMs={0} condition="FINE" reducedMotion />,
+      <BlockCadenceEcg intervalsMs={[]} sizes={[]} txCounts={[]} lastBlockTsMs={null} targetMs={8000} avgMs={null} gapMs={0} condition="FINE" reducedMotion />,
     );
     expect(container.querySelector('canvas')).toBeTruthy();
   });
