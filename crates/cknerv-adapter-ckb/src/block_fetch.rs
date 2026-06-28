@@ -29,7 +29,21 @@ pub async fn fetch_and_translate(rpc: &RpcClient, number: u64) -> Result<Vec<Mut
         return Ok(vec![]);
     };
     let at = now_ms();
-    translate_block(&block, number, at, /* size: real value wired in Task 2 */ 0)
+    let size = serialized_block_size(&block);
+    translate_block(&block, number, at, size)
+}
+
+/// Canonical serialized block size (bytes), recovered by round-tripping the
+/// verbosity-0x2 JSON block back into packed form. Returns 0 if the value
+/// isn't a complete BlockView (e.g. partial test fixtures) — callers treat 0
+/// as "unknown" (uniform-width beat).
+pub fn serialized_block_size(block: &Value) -> u64 {
+    serde_json::from_value::<ckb_jsonrpc_types::BlockView>(block.clone())
+        .map(|bv| {
+            let core: ckb_types::core::BlockView = bv.into();
+            core.data().as_slice().len() as u64
+        })
+        .unwrap_or(0)
 }
 
 /// Pure translation helper — split out so tests can exercise it without
@@ -299,6 +313,21 @@ mod tests {
     #[test]
     fn truncate_hex_caps_long_input() {
         assert_eq!(truncate_hex("0xaabbccddeeff0011", 4), "0xaabbccdd…");
+    }
+
+    #[test]
+    fn serialized_block_size_round_trips_a_real_block() {
+        // Build a minimal real block, JSON-encode it the way the node would, and
+        // assert the helper recovers the canonical packed size.
+        let block = ckb_types::core::BlockBuilder::default().build();
+        let expected = block.data().as_slice().len() as u64;
+        let json = serde_json::to_value(ckb_jsonrpc_types::BlockView::from(block)).expect("to json");
+        assert_eq!(serialized_block_size(&json), expected);
+    }
+
+    #[test]
+    fn serialized_block_size_is_zero_on_garbage() {
+        assert_eq!(serialized_block_size(&serde_json::json!({})), 0);
     }
 
     #[test]
