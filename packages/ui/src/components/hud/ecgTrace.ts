@@ -30,6 +30,28 @@ export function beatProfile(dtSec: number): number {
   );
 }
 
+/** Max of finite, positive values with a floor of 1 (avoids /0; stable scale). */
+export function windowMax(arr: number[]): number {
+  let m = 1;
+  for (let i = 0; i < arr.length; i++) { const v = arr[i]; if (Number.isFinite(v) && v > m) m = v; }
+  return m;
+}
+
+/** Per-beat size/tx fractions, NEWEST-FIRST (result[0] = newest block), one entry
+ *  per visible beat. sizes/txCounts are newest-LAST and may be longer/shorter than
+ *  nBeats (intervals are pushed conditionally, so beats and metadata aren't strictly
+ *  index-parallel) — align from the newest end; default 0.5 when data is missing. */
+export function alignedFracs(sizes: number[], txCounts: number[], nBeats: number): { sizeFrac: number; txFrac: number }[] {
+  const maxS = windowMax(sizes), maxT = windowMax(txCounts);
+  const frac = (v: number | undefined, max: number) =>
+    v != null && Number.isFinite(v) ? Math.min(1, Math.max(0, v / max)) : 0.5;
+  const out: { sizeFrac: number; txFrac: number }[] = [];
+  for (let j = 0; j < nBeats; j++) {
+    out.push({ sizeFrac: frac(sizes[sizes.length - 1 - j], maxS), txFrac: frac(txCounts[txCounts.length - 1 - j], maxT) });
+  }
+  return out;
+}
+
 export interface StripOpts {
   width: number;
   height: number;
@@ -38,11 +60,13 @@ export interface StripOpts {
   targetMs: number;
   gapMs: number;
   color: string;
+  sizes?: number[];
+  txCounts?: number[];
 }
 
 /** Render one frame of the strip chart into a 2D context. */
 export function drawStripChart(ctx: CanvasRenderingContext2D, o: StripOpts): void {
-  const { width: w, height: h, arrivals, nowMs, targetMs, gapMs, color } = o;
+  const { width: w, height: h, arrivals, nowMs, targetMs, gapMs, color, sizes = [], txCounts = [] } = o;
   const win = ECG_SPAN_BEATS * Math.max(1000, targetMs); // ms span across width
   const mid = h * 0.6, amp = h * 0.5;
   ctx.clearRect(0, 0, w, h);
@@ -69,23 +93,30 @@ export function drawStripChart(ctx: CanvasRenderingContext2D, o: StripOpts): voi
     ctx.setLineDash([]);
   }
 
-  // trace (stroke line, condition color, phosphor glow).
-  // Beats are drawn as fixed-PIXEL-width spikes. A time-domain PQRST is sub-pixel at
-  // this window (a 0.6s beat is ~2.5px wide; its R/S swings sit ~0.16px apart), so a
-  // per-column sampler aliases it into peak<->trough flicker as the trace scrolls.
-  // Summing a resolvable spike profile in pixel space, centred on each arrival's x,
-  // keeps a clean heartbeat that just translates smoothly.
+  // trace — fixed-pixel spikes, each scaled: WIDTH by block size, HEIGHT by tx count.
+  // (Hue stays the condition color; only the glyph's width/height vary, so it stays
+  // alias-safe — no sub-pixel time-domain sampling.) Rationale: a time-domain PQRST is
+  // sub-pixel at this window and aliases into peak<->trough flicker as the trace
+  // scrolls, so we sum resolvable spike profiles in pixel space centred on each
+  // arrival's x instead of per-column sampling.
   const xc: number[] = [];
   for (let i = arrivals.length - 1; i >= 0; i--) {
     const x = w * (1 - (nowMs - arrivals[i]) / win);
     if (x < -8) break; // arrivals ascend in time; once one is left of view the rest are too
-    if (x <= w + 8) xc.push(x);
+    if (x <= w + 8) xc.push(x); // newest-first
   }
-  const gauss = (d: number, c: number, sg: number, h: number) => h * Math.exp(-((d - c) * (d - c)) / (2 * sg * sg));
-  const spikePx = (d: number) => gauss(d, 0, 1.5, 1.0) + gauss(d, 3, 1.6, -0.2) + gauss(d, 8, 2.6, 0.18); // R, S, T
+  // INVARIANT: fr[k] (k-th-newest metadata) aligns to xc[k]; this relies on xc[0] being
+  // the newest arrival, which holds because block timestamps are <= nowMs, so the newest
+  // arrival is never clipped off the right edge (the x <= w + 8 guard keeps it).
+  const fr = alignedFracs(sizes, txCounts, xc.length);            // newest-first, aligned to xc
+  const ws = fr.map((f) => 0.7 + f.sizeFrac * 1.1);               // width scale 0.7..1.8 (R sigma stays >=~1px)
+  const hs = fr.map((f) => 0.35 + f.txFrac * 0.65);              // height scale 0.35..1.0
+  const gauss = (d: number, c: number, sg: number, ht: number) => ht * Math.exp(-((d - c) * (d - c)) / (2 * sg * sg));
+  const beat = (d: number, wsc: number, hsc: number) =>
+    hsc * (gauss(d, 0, 1.5 * wsc, 1.0) + gauss(d, 3 * wsc, 1.6 * wsc, -0.2) + gauss(d, 8 * wsc, 2.6 * wsc, 0.18)); // R, S, T
   const waveAtPx = (px: number) => {
     let s = 0;
-    for (let i = 0; i < xc.length; i++) { const d = px - xc[i]; if (d > -6 && d < 16) s += spikePx(d); }
+    for (let k = 0; k < xc.length; k++) { const d = px - xc[k]; if (d > -10 && d < 32) s += beat(d, ws[k], hs[k]); }
     return s;
   };
   ctx.beginPath();
