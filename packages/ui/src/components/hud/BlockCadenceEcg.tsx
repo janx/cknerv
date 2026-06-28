@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { EcgCondition } from '../../derives/ecgCondition';
 import { reconstructArrivals, drawStripChart } from './ecgTrace';
 import { HUD_COLORS, HUD_FONTS, rgba } from './hudTheme';
@@ -27,6 +27,7 @@ export default function BlockCadenceEcg({
   const cvs = useRef<HTMLCanvasElement | null>(null);
   const color = COND_COLOR[condition];
   const rate = avgMs && avgMs > 0 ? Math.round(60000 / avgMs) : null;
+  const [heroMs, setHeroMs] = useState<number>(gapMs);
 
   // Latest draw inputs, read by the animation loop each frame. Writing a ref on
   // every render is cheap and — crucially — does NOT re-create the rAF loop. The
@@ -57,6 +58,20 @@ export default function BlockCadenceEcg({
     return () => cancelAnimationFrame(raf);
   }, [reducedMotion]);
 
+  // "Since last" hero updates at 0.1s resolution: a small timer recomputes the live
+  // gap from current time (reduced motion → ~1s). Kept off the rAF loop so the
+  // tenths keep ticking between block deltas.
+  useEffect(() => {
+    const tick = () => {
+      const s = live.current;
+      setHeroMs(Math.max(0, s.lastBlockTsMs != null ? Date.now() - s.lastBlockTsMs : s.gapMs));
+    };
+    tick();
+    if (typeof setInterval !== 'function') return; // test-safe
+    const id = setInterval(tick, reducedMotion ? 1000 : 100);
+    return () => clearInterval(id);
+  }, [reducedMotion]);
+
   return (
     <div style={{ position: 'absolute', left: 14, bottom: 14, width: 430, zIndex: 12, border: `1px solid ${rgba(HUD_COLORS.nominal, 0.22)}`, background: 'rgba(0,12,4,.45)', padding: '10px 12px 9px' }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 6 }}>
@@ -66,10 +81,9 @@ export default function BlockCadenceEcg({
       </div>
       <div style={{ display: 'flex', gap: 12 }}>
         <div style={{ flex: '0 0 96px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-          {/* hero reads the throttled gapMs prop (~1s); the canvas uses a live per-frame gap — divergence is intentional, keep this on the prop */}
-          <span style={{ fontFamily: HUD_FONTS.mono, fontWeight: 700, fontSize: 26, lineHeight: 1, color, textShadow: `0 0 11px ${color}` }}>{fmtS(gapMs)}</span>
+          {/* hero ticks at 0.1s via the heroMs timer; avg/tgt live only in the vitals row below */}
+          <span style={{ fontFamily: HUD_FONTS.mono, fontWeight: 700, fontSize: 26, lineHeight: 1, color, textShadow: `0 0 11px ${color}` }}>{fmtS(heroMs)}</span>
           <span style={{ fontFamily: HUD_FONTS.mono, fontSize: 8, letterSpacing: 2, color: '#3a5a44', marginTop: 4 }}>SINCE LAST</span>
-          <span style={{ fontFamily: HUD_FONTS.mono, fontSize: 8.5, color: '#3a5a44', marginTop: 6 }}>avg {fmtS(avgMs)} · tgt {fmtS(targetMs)}</span>
         </div>
         <canvas ref={cvs} width={300} height={58} style={{ display: 'block', flex: 1, width: '100%', height: 58, background: '#000409', border: `1px solid ${rgba(HUD_COLORS.nominal, 0.1)}` }} />
       </div>
