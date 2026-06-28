@@ -111,6 +111,14 @@ describe('applyChainMutation', () => {
     expect(c.last_block_ts_ms).toBe(7000);
   });
 
+  it('accrues recent_block_sizes parallel to tx_counts (size omitted → 0)', () => {
+    let c = emptyChainCache();
+    c = applyChainMutation(c, { type: 'block_mined', number: 1, hash: '0x1', tx_count: 2, size: 500, at: 100 });
+    c = applyChainMutation(c, { type: 'block_mined', number: 2, hash: '0x2', tx_count: 7, at: 110 }); // no size
+    expect(c.recent_block_sizes).toEqual([500, 0]);
+    expect(c.recent_block_tx_counts).toEqual([2, 7]);
+  });
+
   it('tx_landed appends and increments total_txs', () => {
     let c = applyChainMutation(emptyChainCache(), {
       type: 'tx_landed',

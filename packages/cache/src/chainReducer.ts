@@ -31,6 +31,7 @@ export function emptyChainCache(): ChainEntry {
     reorgs: 0,
     recent_block_intervals_ms: [],
     recent_block_tx_counts: [],
+    recent_block_sizes: [],
     last_block_ts_ms: null,
     ibd: false,
     best_known_block: 0,
@@ -38,7 +39,7 @@ export function emptyChainCache(): ChainEntry {
 }
 
 /** Shallow-clone the chain entry. Used internally so the reducer never
- *  mutates its input. The 4 ring arrays are sliced so writes in
+ *  mutates its input. The 5 ring arrays are sliced so writes in
  *  `applyToChain` don't leak into the caller. */
 function cloneChain(c: ChainEntry): ChainEntry {
   return {
@@ -47,6 +48,7 @@ function cloneChain(c: ChainEntry): ChainEntry {
     recent_tx_hashes: c.recent_tx_hashes.slice(),
     recent_block_intervals_ms: c.recent_block_intervals_ms.slice(),
     recent_block_tx_counts: c.recent_block_tx_counts.slice(),
+    recent_block_sizes: c.recent_block_sizes.slice(),
   };
 }
 
@@ -108,6 +110,10 @@ function applyToChain(chain: ChainEntry, m: Mutation): void {
         chain.recent_block_tx_counts.push(m.tx_count);
         while (chain.recent_block_tx_counts.length > 60) {
           chain.recent_block_tx_counts.shift();
+        }
+        chain.recent_block_sizes.push(m.size ?? 0);
+        while (chain.recent_block_sizes.length > 60) {
+          chain.recent_block_sizes.shift();
         }
       }
       chain.recent_blocks.push({ number: m.number, hash: m.hash });

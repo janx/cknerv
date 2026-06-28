@@ -52,6 +52,8 @@ export interface ChainEntry {
   recent_block_intervals_ms: number[];
   /** Per-block tx counts (parallel to recent_block_intervals_ms). Drives TPS. */
   recent_block_tx_counts: number[];
+  /** Per-block serialized sizes (bytes), parallel to recent_block_tx_counts. */
+  recent_block_sizes: number[];
   /** Wall-clock ms of the latest BlockMined envelope (omitted until first block). */
   last_block_ts_ms?: number | null;
   /** True while the node is in initial-block-download (`sync_state.ibd`). */
