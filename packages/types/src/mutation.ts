@@ -15,6 +15,7 @@ export type Mutation =
       number: number;
       hash: string;
       tx_count: number;
+      size?: number;
       at: number;
     }
   | {
