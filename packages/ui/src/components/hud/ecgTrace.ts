@@ -69,20 +69,28 @@ export function drawStripChart(ctx: CanvasRenderingContext2D, o: StripOpts): voi
     ctx.setLineDash([]);
   }
 
-  // trace (stroke line, condition color, phosphor glow)
-  const waveAt = (t: number) => {
+  // trace (stroke line, condition color, phosphor glow).
+  // Beats are drawn as fixed-PIXEL-width spikes. A time-domain PQRST is sub-pixel at
+  // this window (a 0.6s beat is ~2.5px wide; its R/S swings sit ~0.16px apart), so a
+  // per-column sampler aliases it into peak<->trough flicker as the trace scrolls.
+  // Summing a resolvable spike profile in pixel space, centred on each arrival's x,
+  // keeps a clean heartbeat that just translates smoothly.
+  const xc: number[] = [];
+  for (let i = arrivals.length - 1; i >= 0; i--) {
+    const x = w * (1 - (nowMs - arrivals[i]) / win);
+    if (x < -8) break; // arrivals ascend in time; once one is left of view the rest are too
+    if (x <= w + 8) xc.push(x);
+  }
+  const gauss = (d: number, c: number, sg: number, h: number) => h * Math.exp(-((d - c) * (d - c)) / (2 * sg * sg));
+  const spikePx = (d: number) => gauss(d, 0, 1.5, 1.0) + gauss(d, 3, 1.6, -0.2) + gauss(d, 8, 2.6, 0.18); // R, S, T
+  const waveAtPx = (px: number) => {
     let s = 0;
-    for (let i = arrivals.length - 1; i >= 0; i--) {
-      const dt = (t - arrivals[i]) / 1000;
-      if (dt > 0.7) break;
-      if (dt >= -0.02 && dt <= 0.6) s += beatProfile(dt);
-    }
+    for (let i = 0; i < xc.length; i++) { const d = px - xc[i]; if (d > -6 && d < 16) s += spikePx(d); }
     return s;
   };
   ctx.beginPath();
   for (let px = 0; px <= w; px++) {
-    const t = nowMs - (1 - px / w) * win;
-    const y = mid - waveAt(t) * amp;
+    const y = mid - waveAtPx(px) * amp;
     if (px === 0) ctx.moveTo(px, y); else ctx.lineTo(px, y);
   }
   ctx.lineJoin = 'round';
