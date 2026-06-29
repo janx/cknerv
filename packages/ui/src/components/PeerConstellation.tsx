@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { Billboard, Text } from '@react-three/drei';
 import { useSimFrame } from '../tweaks/useSimFrame';
 import { simClock } from '../tweaks/simClock';
-import { CHAIN_Y, CELLS_Y, chainNodeWorldPosition } from '../layout';
+import { CHAIN_Y, chainNodeWorldPosition } from '../layout';
 import { FONT_MONO } from '../ui/fonts';
 import { fnv1a } from '../geometry/edgeBezier';
 import { phaseFor } from './GlowNode';
@@ -16,16 +16,12 @@ import {
   peerChurnDiff,
   peerCrystalSize,
   peerCrystalBrightness,
-  beamShapeJitter,
   PEER_COLORS,
   PEER_OUTER_RADIUS,
   rankPeers,
 } from '../derives/peers.derive';
-import { BEAM_GROW_DUR_S, BEAM_HOLD_DUR_S, BEAM_STRIKE_DUR_S } from '../ui/topologyConstants';
-import { BEAM_FLOW_SPEED } from '../materials/blockBeamMaterial';
 import CrystalGlow from './CrystalGlow';
 import FlowBeam, { type FlowStyle } from './FlowBeam';
-import BlockBeam from './BlockBeam';
 import BlockCourierLayer from './BlockCourierLayer';
 import BlockDeliveryLayer from './BlockDeliveryLayer';
 
@@ -69,8 +65,7 @@ interface PeerConstellationProps {
    *  entry peer animates the receive courier; null = none / no peers. */
   entryPeerId?: string | null;
   /** Per-peer arrival age (s since pulse) keyed by node_id (blockArrivalSchedule).
-   *  Each peer fires its tributary beam at pulse + its arrival; spread wide so the
-   *  ignitions read as an outward sweep, not one flash. */
+   *  Drives per-peer arrival timing in the courier + delivery layers. */
   arrivals?: Record<string, number>;
   /** Broadcast cascade (blockArrivalSchedule): node_id → the node its courier flies
    *  FROM. Drives the node→node broadcast couriers; entry peer maps to null. */
@@ -196,7 +191,6 @@ export default function PeerConstellation({
           onSelect={onSelect}
           pulseRef={pulseRef}
           blockPulseAtMs={blockPulseAtMs}
-          arrivalAge={arrivals[rp.peer.node_id] ?? 0}
           onExpire={onExpire}
         />
       ))}
@@ -240,7 +234,6 @@ function PeerNode({
   onSelect,
   pulseRef,
   blockPulseAtMs,
-  arrivalAge,
   onExpire,
 }: {
   rp: RenderPeer;
@@ -250,12 +243,11 @@ function PeerNode({
   onSelect: (id: string | null) => void;
   pulseRef: React.MutableRefObject<{ at: number; entryId: string | null } | null>;
   blockPulseAtMs: number;
-  arrivalAge: number;
   onExpire: (nodeId: string) => void;
 }) {
   // Crystal + ambient-flow intensity (churn fade × sync brightness), each read
   // every frame by its child via the ref so fades don't trigger React
-  // re-renders. The block pulse is carried by the tributary beam, not these.
+  // re-renders.
   const intensityRef = useRef(1);
   const flowIntensityRef = useRef(1);
 
@@ -267,16 +259,6 @@ function PeerNode({
   // Deterministic per-peer Bezier seed + twinkle phase.
   const seed = useMemo(() => fnv1a(rp.peer.node_id), [rp.peer.node_id]);
   const phase = useMemo(() => phaseFor(rp.peer.node_id), [rp.peer.node_id]);
-
-  // Tributary beam: fired when this peer hears the block (latency-derived
-  // arrival); a future-dated firedAt sits idle until then.
-  const peerBeamFireRef = useRef<{ firedAt: number } | null>(null);
-  const lastBeamPulseRef = useRef(-1);
-
-  const jit = useMemo(
-    () => beamShapeJitter(rp.peer.node_id, blockPulseAtMs),
-    [rp.peer.node_id, blockPulseAtMs],
-  );
 
   const sync = syncProximity(rp.peer.best_known, tip);
   const size = peerCrystalSize(sync);
@@ -301,15 +283,6 @@ function PeerNode({
     }
     intensityRef.current = alpha * brightness;
     flowIntensityRef.current = alpha * brightness; // ambient flow (no surge)
-
-    // New-block arrival: schedule this peer's tributary beam to fire when it hears
-    // the block (its set-relative arrival). The broadcast couriers themselves now
-    // live in <BlockCourierLayer>.
-    const pulse = pulseRef.current;
-    if (pulse && pulse.at !== lastBeamPulseRef.current) {
-      lastBeamPulseRef.current = pulse.at;
-      peerBeamFireRef.current = { firedAt: pulse.at + arrivalAge };
-    }
   });
 
   return (
@@ -338,25 +311,6 @@ function PeerNode({
           }}
         />
       </group>
-      {/* Light "tributary" beam: when this peer hears the block it
-          fires a thin column up into the shared cells canopy — every node
-          confirms the block, not just the local hero beam. Small charge
-          glow, no outer-glow, smaller splash; drives no canopy shockwave
-          (the one canonical ripple is the local node's). */}
-      <BlockBeam
-        originWorld={rp.pos}
-        targetY={CELLS_Y}
-        fireRef={peerBeamFireRef}
-        coreRadius={0.1 * jit.coreMul}
-        haloRadius={0.38}
-        showOuterGlow={false}
-        splashPeakSize={1.6 * jit.splashMul}
-        growDur={BEAM_GROW_DUR_S * jit.growMul}
-        holdDur={BEAM_HOLD_DUR_S * jit.tailMul}
-        strikeDur={BEAM_STRIKE_DUR_S * jit.tailMul}
-        flowSpeed={BEAM_FLOW_SPEED * jit.flowMul}
-        chargeRadius={0.6 * jit.coreMul}
-      />
     </group>
   );
 }
