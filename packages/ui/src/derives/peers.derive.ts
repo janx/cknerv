@@ -303,6 +303,84 @@ export function courierLeg(startAge: number, durS: number, ageSec: number): Cour
   return { visible: true, t };
 }
 
+export interface Delivery {
+  /** Stable per-node key for the pooled bolus child. */
+  key: string;
+  from: Vec3;
+  to: Vec3;
+  /** Age (s since pulse) at which this node starts its delivery. */
+  startAge: number;
+  hero: boolean;
+}
+
+/** Build one delivery per delivering node: the local/hero node(s) (offered from
+ *  `localOrigins` at `localStartAge`) plus every rendered peer that has an
+ *  arrival. Each rises straight up from its node to `cellsY`. Pure. */
+export function planDeliveries(
+  localOrigins: Vec3[],
+  localStartAge: number,
+  posById: Map<string, Vec3>,
+  arrivals: Record<string, number>,
+  cellsY: number,
+): Delivery[] {
+  const out: Delivery[] = [];
+  localOrigins.forEach((from, i) => {
+    out.push({
+      key: `local:${i}`,
+      from,
+      to: [from[0], cellsY, from[2]],
+      startAge: localStartAge,
+      hero: true,
+    });
+  });
+  for (const [id, from] of posById) {
+    const a = arrivals[id];
+    if (a === undefined) continue;
+    out.push({
+      key: `peer:${id}`,
+      from,
+      to: [from[0], cellsY, from[2]],
+      startAge: a,
+      hero: false,
+    });
+  }
+  return out;
+}
+
+export interface DeliveryPhaseConfig {
+  /** Pre-roll "gather" before the lob (rides the old beam charge window). */
+  chargeDur: number;
+  /** Lob (node → membrane) duration. Set to BEAM_GROW_DUR_S to land at the old strike. */
+  lobDur: number;
+  /** Soft membrane ingest duration. */
+  ingestDur: number;
+}
+export type DeliveryPhaseName = 'idle' | 'gather' | 'lob' | 'ingest' | 'done';
+export interface DeliveryPhaseState {
+  phase: DeliveryPhaseName;
+  /** 0→1 within gather / lob / ingest; 0 for idle; 1 for done. */
+  t: number;
+}
+
+/** Pure per-node delivery phase from `localAge` (= ageSincePulse − startAge):
+ *  gather over [−chargeDur, 0), lob over [0, lobDur), ingest over
+ *  [lobDur, lobDur+ingestDur), done after. `idle` before the gather window
+ *  keeps a far-future delivery hidden. */
+export function deliveryPhase(localAge: number, cfg: DeliveryPhaseConfig): DeliveryPhaseState {
+  const { chargeDur, lobDur, ingestDur } = cfg;
+  if (localAge < -chargeDur) return { phase: 'idle', t: 0 };
+  if (localAge < 0) {
+    return { phase: 'gather', t: chargeDur > 1e-9 ? (localAge + chargeDur) / chargeDur : 1 };
+  }
+  if (localAge < lobDur) {
+    return { phase: 'lob', t: lobDur > 1e-9 ? localAge / lobDur : 1 };
+  }
+  if (localAge < lobDur + ingestDur) {
+    return { phase: 'ingest', t: ingestDur > 1e-9 ? (localAge - lobDur) / ingestDur : 1 };
+  }
+  return { phase: 'done', t: 1 };
+}
+
 export type PeerColorKind = PeerDirection | 'version';
 
 /** Color class: version-mismatch wins, else direction. */

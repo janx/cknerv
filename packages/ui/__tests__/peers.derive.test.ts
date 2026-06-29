@@ -13,6 +13,8 @@ import {
   courierLeg,
   easeOutCubic,
   courierFlight,
+  planDeliveries,
+  deliveryPhase,
   blockArrivalSchedule,
   rankPeers,
   PEER_RENDER_CAP,
@@ -331,6 +333,71 @@ describe('peers.derive', () => {
       expect(courierFlight('Z', schedule, pos, hub)).toBeNull();
       const onlyC = new Map<string, [number, number, number]>([['C', [1, 1, 1]]]);
       expect(courierFlight('C', schedule, onlyC, hub)).toBeNull(); // sender 'B' absent
+    });
+  });
+
+  describe('deliveryPhase', () => {
+    const CFG = { chargeDur: 0.4, lobDur: 1.0, ingestDur: 0.3 };
+
+    it('idle before the gather window (far-future firedAt stays hidden)', () => {
+      expect(deliveryPhase(-0.5, CFG)).toEqual({ phase: 'idle', t: 0 });
+    });
+
+    it('gather ramps 0→1 across the pre-roll', () => {
+      expect(deliveryPhase(-0.4, CFG).phase).toBe('gather');
+      const g = deliveryPhase(-0.2, CFG);
+      expect(g.phase).toBe('gather');
+      expect(g.t).toBeCloseTo(0.5, 6);
+    });
+
+    it('lob ramps 0→1 across lobDur', () => {
+      expect(deliveryPhase(0, CFG)).toEqual({ phase: 'lob', t: 0 });
+      const l = deliveryPhase(0.5, CFG);
+      expect(l.phase).toBe('lob');
+      expect(l.t).toBeCloseTo(0.5, 6);
+    });
+
+    it('ingest starts when the lob lands and ramps 0→1', () => {
+      expect(deliveryPhase(1.0, CFG)).toEqual({ phase: 'ingest', t: 0 });
+      const i = deliveryPhase(1.15, CFG);
+      expect(i.phase).toBe('ingest');
+      expect(i.t).toBeCloseTo(0.5, 6);
+    });
+
+    it('done once ingest completes', () => {
+      expect(deliveryPhase(1.3, CFG)).toEqual({ phase: 'done', t: 1 });
+    });
+
+    it('zero chargeDur: negative localAge is idle, lob starts at 0', () => {
+      const c = { chargeDur: 0, lobDur: 1, ingestDur: 0.3 };
+      expect(deliveryPhase(-0.001, c)).toEqual({ phase: 'idle', t: 0 });
+      expect(deliveryPhase(0, c)).toEqual({ phase: 'lob', t: 0 });
+    });
+  });
+
+  describe('planDeliveries', () => {
+    it('builds a hero delivery per local origin, rising to cellsY', () => {
+      const d = planDeliveries([[0, 22, 0]], 0.7, new Map(), {}, 38);
+      expect(d).toEqual([
+        { key: 'local:0', from: [0, 22, 0], to: [0, 38, 0], startAge: 0.7, hero: true },
+      ]);
+    });
+
+    it('builds a peer delivery per posById entry that has an arrival', () => {
+      const pos = new Map<string, [number, number, number]>([['A', [10, 22, 5]]]);
+      const d = planDeliveries([], 0, pos, { A: 1.4 }, 38);
+      expect(d).toEqual([
+        { key: 'peer:A', from: [10, 22, 5], to: [10, 38, 5], startAge: 1.4, hero: false },
+      ]);
+    });
+
+    it('skips peers without an arrival', () => {
+      const pos = new Map<string, [number, number, number]>([
+        ['A', [1, 22, 1]],
+        ['B', [2, 22, 2]],
+      ]);
+      const d = planDeliveries([], 0, pos, { A: 1.0 }, 38);
+      expect(d.map((x) => x.key)).toEqual(['peer:A']);
     });
   });
 });
