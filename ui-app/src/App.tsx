@@ -249,7 +249,7 @@ export default function App({
           onPointerMissed={() => setSelectedId(null)}
         >
           {/* Advances the module-level simClock once per frame so every
-              useSimFrame animation (CellGalaxy, BlockBeam, GlowNode,
+              useSimFrame animation (CellGalaxy, BlockDeliveryLayer, GlowNode,
               NeuralNetwork, PeerConstellation) actually plays. Must live
               under the r3f context; mount exactly once. */}
           <SimClockTicker />

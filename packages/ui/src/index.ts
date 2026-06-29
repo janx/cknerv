@@ -35,8 +35,6 @@ export * from './ui/topologyConstants';
 export * from './ui/scanState';
 
 // ── Materials (THREE.ShaderMaterials + GLSL chunks) ─────────────────
-export * from './materials/blockBeamMaterial';
-export * from './materials/blockBeamPhase';
 export * from './materials/cellEnvelope.glsl';
 export * from './materials/cellHybridMaterial';
 export * from './materials/cellLifeAvatarMaterial';
@@ -71,7 +69,6 @@ export {
 
 // ── Components ─────────────────────────────────────────────────────
 export { default as BackfillHud } from './components/BackfillHud';
-export { default as BlockBeam } from './components/BlockBeam';
 export { default as BlockDeliveryLayer } from './components/BlockDeliveryLayer';
 export {
   default as CellDetailHud,
