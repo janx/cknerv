@@ -72,6 +72,7 @@ export {
 // ── Components ─────────────────────────────────────────────────────
 export { default as BackfillHud } from './components/BackfillHud';
 export { default as BlockBeam } from './components/BlockBeam';
+export { default as BlockDeliveryLayer } from './components/BlockDeliveryLayer';
 export {
   default as CellDetailHud,
   formatCellKind,
