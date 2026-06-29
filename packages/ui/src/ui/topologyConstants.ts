@@ -7,7 +7,7 @@
  *    t = −BEAM_CHARGE_DUR_S             charge pre-roll begins — energy gathers
  *                                       inside the node. firedAt is scheduled in
  *                                       the future, so this fills the already-idle
- *                                       window before launch (see blockBeamPhase).
+ *                                       window before launch.
  *    t = 0                              the receiving node's beam launches
  *                                       from its anchor toward the galaxy.
  *    t = BEAM_GROW_DUR_S                column reaches the cell plane;
