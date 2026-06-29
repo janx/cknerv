@@ -304,6 +304,8 @@ export default function App({
             entryPeerId={blockSchedule.entryId}
             arrivals={blockSchedule.arrivals}
             senders={blockSchedule.senders}
+            ckbNodeIds={ckbNodeIds}
+            localReceiveDelayS={blockSchedule.localReceiveDelayS}
           />
 
           <OrbitControls
