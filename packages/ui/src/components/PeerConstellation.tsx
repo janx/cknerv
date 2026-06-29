@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { Billboard, Text } from '@react-three/drei';
 import { useSimFrame } from '../tweaks/useSimFrame';
 import { simClock } from '../tweaks/simClock';
-import { CHAIN_Y, CELLS_Y } from '../layout';
+import { CHAIN_Y, CELLS_Y, chainNodeWorldPosition } from '../layout';
 import { FONT_MONO } from '../ui/fonts';
 import { fnv1a } from '../geometry/edgeBezier';
 import { phaseFor } from './GlowNode';
@@ -27,6 +27,7 @@ import CrystalGlow from './CrystalGlow';
 import FlowBeam, { type FlowStyle } from './FlowBeam';
 import BlockBeam from './BlockBeam';
 import BlockCourierLayer from './BlockCourierLayer';
+import BlockDeliveryLayer from './BlockDeliveryLayer';
 
 /** Fade-in / fade-out duration for peer churn (seconds). */
 const FADE_S = 0.6;
@@ -74,6 +75,13 @@ interface PeerConstellationProps {
   /** Broadcast cascade (blockArrivalSchedule): node_id → the node its courier flies
    *  FROM. Drives the node→node broadcast couriers; entry peer maps to null. */
   senders?: Record<string, string | null>;
+  /** Observed CKB node ids — their world positions are the delivery origins
+   *  (boluses lob up from each into the cell canopy). Optional (default []) so
+   *  the existing mount-smoke tests render without it; App always supplies it. */
+  ckbNodeIds?: string[];
+  /** Local node's delivery start age (s since pulse); from blockArrivalSchedule.
+   *  Optional (default 0) for the same test-compat reason as `ckbNodeIds`. */
+  localReceiveDelayS?: number;
 }
 
 export default function PeerConstellation({
@@ -86,6 +94,8 @@ export default function PeerConstellation({
   entryPeerId = null,
   arrivals = {},
   senders = {},
+  ckbNodeIds = [],
+  localReceiveDelayS = 0,
 }: PeerConstellationProps) {
   // Retain recently-dropped peers briefly so they can fade out.
   const retainRef = useRef<Map<string, RenderPeer>>(new Map());
@@ -163,6 +173,17 @@ export default function PeerConstellation({
     return m;
   }, [render]);
 
+  // World positions of the observed CKB nodes — the bolus delivery origins.
+  // Same seed/count contract as CellGalaxy's icosahedra so boluses launch from
+  // exactly where the nodes are drawn.
+  const localOrigins = useMemo(
+    () =>
+      ckbNodeIds.map((_, idx) =>
+        chainNodeWorldPosition(idx, Math.max(1, ckbNodeIds.length)),
+      ),
+    [ckbNodeIds],
+  );
+
   return (
     <group>
       {render.map((rp) => (
@@ -186,6 +207,13 @@ export default function PeerConstellation({
         entryId={entryPeerId}
         pulseRef={pulseRef}
         hubPos={HUB_POS}
+      />
+      <BlockDeliveryLayer
+        posById={posById}
+        arrivals={arrivals}
+        localOrigins={localOrigins}
+        localReceiveDelayS={localReceiveDelayS}
+        pulseRef={pulseRef}
       />
       {hiddenCount > 0 && (
         <Billboard position={[0, CHAIN_Y, PEER_OUTER_RADIUS * 0.9]}>
