@@ -65,6 +65,20 @@ export function resolveBuildVersion(
     : DEFAULT_BUILD_VERSION;
 }
 
+export const CKNERV_REPOSITORY_URL = 'https://github.com/janx/cknerv';
+
+/**
+ * Link target for a build version. When the string carries a commit hash
+ * (`<date>@<hash>`), deep-link to that commit; otherwise (e.g. the `dev`
+ * fallback) link to the repository root.
+ */
+export function buildCommitHref(version: string): string {
+  const at = version.indexOf('@');
+  return at >= 0
+    ? `${CKNERV_REPOSITORY_URL}/commit/${version.slice(at + 1)}`
+    : CKNERV_REPOSITORY_URL;
+}
+
 function numberOrDefault(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value)
     ? value
