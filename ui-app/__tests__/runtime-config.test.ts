@@ -5,12 +5,14 @@ import {
   DEFAULT_GALAXY_CONFIG,
   resolveGalaxyConfig,
   resolveBuildVersion,
+  buildCommitHref,
+  CKNERV_REPOSITORY_URL,
 } from '../src/runtime-config';
 
 describe('resolveBuildVersion', () => {
   it('returns a configured nonblank build version', () => {
-    expect(resolveBuildVersion({ buildVersion: ' 0.1.0@abcdef123456 ' })).toBe(
-      '0.1.0@abcdef123456',
+    expect(resolveBuildVersion({ buildVersion: ' 20260630@61922ba ' })).toBe(
+      '20260630@61922ba',
     );
   });
 
@@ -51,5 +53,17 @@ describe('resolveGalaxyConfig', () => {
 
   it('falls back to bundled defaults when galaxy config is missing', () => {
     expect(resolveGalaxyConfig({})).toEqual(DEFAULT_GALAXY_CONFIG);
+  });
+});
+
+describe('buildCommitHref', () => {
+  it('deep-links to the exact commit when the version carries a hash', () => {
+    expect(buildCommitHref('20260630@61922ba')).toBe(
+      `${CKNERV_REPOSITORY_URL}/commit/61922ba`,
+    );
+  });
+
+  it('falls back to the repo root when the version has no hash', () => {
+    expect(buildCommitHref('dev')).toBe(CKNERV_REPOSITORY_URL);
   });
 });
