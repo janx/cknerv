@@ -26,16 +26,20 @@ fn main() -> anyhow::Result<()> {
 }
 
 fn emit_build_version(manifest_dir: &Path) -> anyhow::Result<()> {
-    let semver = env::var("CARGO_PKG_VERSION")?;
-    let branch_name = try_git_stdout(manifest_dir, &["branch", "--show-current"])?;
-    let commit_hash = git_stdout(manifest_dir, &["rev-parse", "--short=12", "HEAD"])?;
+    let commit_date = git_stdout(
+        manifest_dir,
+        &["show", "-s", "--date=format:%Y%m%d", "--format=%cd", "HEAD"],
+    )?;
+    let commit_hash = git_stdout(manifest_dir, &["rev-parse", "--short=7", "HEAD"])?;
 
+    if commit_date.is_empty() {
+        anyhow::bail!("git show --format=%cd HEAD returned an empty commit date");
+    }
     if commit_hash.is_empty() {
-        anyhow::bail!("git rev-parse --short=12 HEAD returned an empty commit hash");
+        anyhow::bail!("git rev-parse --short=7 HEAD returned an empty commit hash");
     }
 
-    let build_version =
-        build_version_format::format_build_version(&semver, branch_name.as_deref(), &commit_hash);
+    let build_version = build_version_format::format_build_version(&commit_date, &commit_hash);
     println!("cargo:rustc-env=CKNERV_BUILD_VERSION={build_version}");
 
     Ok(())

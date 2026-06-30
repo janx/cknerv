@@ -91,12 +91,12 @@ mod tests {
     #[test]
     fn runtime_config_body_assigns_build_version() {
         let body = runtime_config_body(
-            "0.1.0+feature/foo@abcdef123456",
+            "20260630@61922ba",
             &crate::config::ResolvedGalaxyConfig::for_profile(crate::config::GalaxyProfile::Devnet),
         );
 
         assert!(body.contains("window.__CKNERV_RUNTIME_CONFIG__"));
-        assert!(body.contains("\"buildVersion\":\"0.1.0+feature/foo@abcdef123456\""));
+        assert!(body.contains("\"buildVersion\":\"20260630@61922ba\""));
         assert!(body.contains("\"profile\":\"devnet\""));
         assert!(body.contains("\"neighborK\":5"));
     }
@@ -104,17 +104,17 @@ mod tests {
     #[test]
     fn runtime_config_body_json_escapes_build_version() {
         let body = runtime_config_body(
-            "0.1.0+quote\"branch@abcdef123456",
+            "20260630@61\"922ba",
             &crate::config::ResolvedGalaxyConfig::for_profile(crate::config::GalaxyProfile::Auto),
         );
 
-        assert!(body.contains("\"buildVersion\":\"0.1.0+quote\\\"branch@abcdef123456\""));
+        assert!(body.contains("\"buildVersion\":\"20260630@61\\\"922ba\""));
     }
 
     #[test]
     fn runtime_config_response_sets_javascript_headers() {
         let response = runtime_config_response(
-            "0.1.0@abcdef123456",
+            "20260630@61922ba",
             crate::config::ResolvedGalaxyConfig::for_profile(crate::config::GalaxyProfile::Auto),
         );
 

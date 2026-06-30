@@ -1,12 +1,7 @@
-/// Format the build version string.
-///
-/// - `main` branch or detached HEAD: `0.1.0@abcdef123456`
-/// - Other branches: `0.1.0+feature/foo@abcdef123456`
-pub fn format_build_version(semver: &str, branch_name: Option<&str>, commit_hash: &str) -> String {
-    match branch_name {
-        Some("main") | None => format!("{semver}@{commit_hash}"),
-        Some(branch) => format!("{semver}+{branch}@{commit_hash}"),
-    }
+/// Format the build version string as `<commit-date>@<short-hash>`,
+/// e.g. `20260630@61922ba`. The same on every branch — no semver, no branch label.
+pub fn format_build_version(commit_date: &str, commit_hash: &str) -> String {
+    format!("{commit_date}@{commit_hash}")
 }
 
 #[cfg(test)]
@@ -14,26 +9,17 @@ mod tests {
     use super::format_build_version;
 
     #[test]
-    fn omits_main_branch_label() {
+    fn joins_commit_date_and_hash_with_at() {
         assert_eq!(
-            format_build_version("0.1.0", Some("main"), "abcdef123456"),
-            "0.1.0@abcdef123456"
+            format_build_version("20260630", "61922ba"),
+            "20260630@61922ba"
         );
     }
 
     #[test]
-    fn omits_branch_label_on_detached_head() {
-        assert_eq!(
-            format_build_version("0.1.0", None, "abcdef123456"),
-            "0.1.0@abcdef123456"
-        );
-    }
-
-    #[test]
-    fn keeps_non_main_branch_label() {
-        assert_eq!(
-            format_build_version("0.1.0", Some("feature/foo"), "abcdef123456"),
-            "0.1.0+feature/foo@abcdef123456"
-        );
+    fn contains_no_branch_or_plus_adornment() {
+        let v = format_build_version("20260630", "61922ba");
+        assert!(!v.contains('+'));
+        assert_eq!(v.matches('@').count(), 1);
     }
 }
