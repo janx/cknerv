@@ -167,7 +167,7 @@ export default function BlockDeliveryLayer({
         const it = ph.t;
         if (h.flash.current) {
           const op = Math.exp(-FLASH_DECAY * it); // sharp attack, fast fall
-          const swell = 1 + RECOIL_OVERSHOOT * Math.sin(Math.min(1, it) * Math.PI); // recoil
+          const swell = 1 + RECOIL_OVERSHOOT * Math.sin(Math.min(1, it * 3) * Math.PI); // recoil (peaks early, while the flash is still bright)
           h.flash.current.scale.setScalar(INGEST_FLASH_SIZE * punch * swell);
           const m = h.flash.current.material as THREE.SpriteMaterial;
           m.opacity = op;
