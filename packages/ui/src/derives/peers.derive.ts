@@ -99,6 +99,13 @@ export function easeOutCubic(t: number): number {
   return 1 - Math.pow(1 - t, 3);
 }
 
+/** Accelerate-in lob easing: some launch velocity (0.15) plus acceleration, so the
+ *  bolus is fastest AT the membrane (slams in), unlike easeOutCubic which decelerates.
+ *  f(0)=0, f(1)=1; slope grows toward 1. */
+export function easeInLob(t: number): number {
+  return 0.15 * t + 0.85 * t * t;
+}
+
 export interface CourierFlight {
   from: Vec3;
   to: Vec3;

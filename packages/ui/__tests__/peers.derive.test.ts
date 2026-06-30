@@ -12,6 +12,7 @@ import {
   beamShapeJitter,
   courierLeg,
   easeOutCubic,
+  easeInLob,
   courierFlight,
   planDeliveries,
   deliveryPhase,
@@ -297,6 +298,24 @@ describe('peers.derive', () => {
         prev = v;
       }
       expect(easeOutCubic(0.1) - easeOutCubic(0)).toBeGreaterThan(easeOutCubic(1) - easeOutCubic(0.9));
+    });
+  });
+
+  describe('easeInLob', () => {
+    it('pins endpoints and is back-loaded (accelerating launch)', () => {
+      expect(easeInLob(0)).toBe(0);
+      expect(easeInLob(1)).toBeCloseTo(1, 6);
+      expect(easeInLob(0.5)).toBeCloseTo(0.2875, 6); // 0.15*0.5 + 0.85*0.25
+      expect(easeInLob(0.5)).toBeLessThan(0.5); // behind a linear ramp at the midpoint
+    });
+    it('is monotonic and accelerating (slope grows toward 1)', () => {
+      let prev = -Infinity;
+      for (let i = 0; i <= 20; i += 1) {
+        const v = easeInLob(i / 20);
+        expect(v).toBeGreaterThanOrEqual(prev);
+        prev = v;
+      }
+      expect(easeInLob(1) - easeInLob(0.9)).toBeGreaterThan(easeInLob(0.1) - easeInLob(0));
     });
   });
 
