@@ -7,7 +7,7 @@ import { ecgCondition, expectedBlockMs, windowMeanMs, ECG_WINDOW, type EcgCondit
 import { alertLevel } from '../../derives/alertLevel';
 import type { CellsStats } from '../../derives/cellsStats.derive';
 import { injectHudTheme } from './hudTheme';
-import StatusStrip from './StatusStrip';
+import StatusStrip, { type BuildInfo } from './StatusStrip';
 import BlockchainReadout from './BlockchainReadout';
 import BlockCadenceEcg from './BlockCadenceEcg';
 import NetworkPanel from './NetworkPanel';
@@ -28,10 +28,11 @@ const SYNC_AHEAD_RATIO = 0.5; // fraction of peers ahead of our tip = we're behi
 const ROOT_STYLE: CSSProperties = { position: 'fixed', inset: 0, zIndex: 15, pointerEvents: 'none', overflow: 'hidden' };
 const SCAN_STYLE: CSSProperties = { position: 'absolute', inset: 0, pointerEvents: 'none', background: 'repeating-linear-gradient(0deg,rgba(255,255,255,.035) 0 1px,transparent 1px 3px)', mixBlendMode: 'overlay', opacity: 0.5 };
 
-export default function HudOverlay({ chain, peers, localNode, cellsStats, selectedCell, selectedNode, selectedPeer, onClearSelection, backfill }: {
+export default function HudOverlay({ chain, peers, localNode, cellsStats, selectedCell, selectedNode, selectedPeer, onClearSelection, backfill, build }: {
   chain: ChainEntry; peers: Peer[]; localNode: ChainNode | undefined; cellsStats: CellsStats;
   selectedCell?: Cell | null; selectedNode?: ChainNode | null; selectedPeer?: Peer | null;
   onClearSelection?: () => void; backfill?: { done: number; total: number } | null;
+  build?: BuildInfo;
 }) {
   useEffect(() => { injectHudTheme(document); }, []);
 
@@ -70,7 +71,7 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats, select
   return (
     <div style={ROOT_STYLE}>
       {!reduced && <div style={SCAN_STYLE} />}
-      <StatusStrip level={alert.level} uptimeMs={now - mountAt.current} />
+      <StatusStrip level={alert.level} uptimeMs={now - mountAt.current} build={build} />
       <WarningBar level={alert.level} trigger={alert.trigger} reducedMotion={reduced} />
       <BlockchainReadout chain={chain} style={{ left: 14, top: 42 }} />
       <CellsPanel stats={cellsStats} churn={churn} reducedMotion={reduced} style={{ right: 14, top: 42 }} />
