@@ -35,4 +35,17 @@ describe('HudOverlay', () => {
     const { container } = render(<HudOverlay chain={slow} peers={peers} localNode={localNode} cellsStats={cellsStats} />);
     expect(container.textContent).toContain('CAUTION');
   });
+
+  it('threads the build version into the status strip', () => {
+    const { container } = render(
+      <HudOverlay
+        chain={chain}
+        peers={peers}
+        localNode={localNode}
+        cellsStats={cellsStats}
+        build={{ version: '20260630@61922ba', href: 'https://github.com/janx/cknerv/commit/61922ba' }}
+      />,
+    );
+    expect(container.textContent).toContain('20260630@61922ba');
+  });
 });
