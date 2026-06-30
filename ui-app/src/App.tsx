@@ -41,8 +41,7 @@ import type {
   Peer,
 } from '@cknerv/types';
 import Tweaks from './Tweaks';
-import VersionMarker from './VersionMarker';
-import { resolveGalaxyConfig } from './runtime-config';
+import { resolveBuildVersion, buildCommitHref, resolveGalaxyConfig } from './runtime-config';
 
 /** CellGalaxy emits `cell:<id>` for a clicked cell and the bare node id
  *  for a clicked CKB icosahedron. The prefix discriminates the two. */
@@ -224,11 +223,13 @@ export default function App({
   const DETAIL_GAP = 14;
   const scanViewportY = detailY + SCAN_VIEWPORT_H + DETAIL_GAP;
 
+  const buildVersion = resolveBuildVersion();
+  const build = { version: buildVersion, href: buildCommitHref(buildVersion) };
+
   return (
     <>
       {/* Leva knobs panel (DOM overlay) — hidden by default, backtick toggles. */}
       <Tweaks />
-      <VersionMarker />
       <HudOverlay
         chain={chain}
         peers={peers}
@@ -239,6 +240,7 @@ export default function App({
         selectedPeer={selectedPeer}
         onClearSelection={() => setSelectedId(null)}
         backfill={cellsCache.backfill}
+        build={build}
       />
 
       <CellGalaxyProvider value={cellsCache}>
