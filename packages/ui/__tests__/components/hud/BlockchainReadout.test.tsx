@@ -19,7 +19,7 @@ describe('BlockchainReadout', () => {
     expect(container.textContent).toContain('#16,204,887');
     expect(container.textContent).toContain('11042.842/1800');
     expect(container.textContent).toContain('312 · 64');
-    expect(container.textContent).toContain('BLOCKCHAIN');
-    expect(container.textContent).toContain('主链');
+    expect(container.textContent).toContain('COMMON KNOWLEDGE BASE');
+    expect(container.textContent).toContain('共识记忆');
   });
 });

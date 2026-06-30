@@ -20,7 +20,7 @@ describe('BlockCadenceEcg', () => {
     const { container } = render(<BlockCadenceEcg {...base} condition="FINE" />);
     expect(container.querySelector('canvas')).toBeTruthy();
     const t = container.textContent ?? '';
-    expect(t).toContain('BLOCK CADENCE');
+    expect(t).toContain('PULSE');
     expect(t).toContain('脉搏');
     expect(t).toContain('FINE');
     expect(t).toContain('SINCE LAST');

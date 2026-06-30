@@ -55,8 +55,8 @@ export default function CellsPanel({ stats, churn, reducedMotion = false, style 
   const netColor = churn.netPerBlock >= 0 ? HUD_COLORS.cyanWire : HUD_COLORS.caution;
   return (
     <HudPanel style={{ width: 248, ...style }}>
-      <PanelHeader en="CELLS" cjk="细胞" idx="UTXO·03" />
-      <div style={{ fontFamily: HUD_FONTS.mono, fontSize: 8.5, color: HUD_COLORS.dim, letterSpacing: 1.2, marginBottom: 2 }}>UTXO SET FLOW · per block</div>
+      <PanelHeader en="CELLS" cjk="细胞" idx="CELL·03" />
+      <div style={{ fontFamily: HUD_FONTS.mono, fontSize: 8.5, color: HUD_COLORS.dim, letterSpacing: 1.2, marginBottom: 2 }}>METABOLISM · per block</div>
       <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8, marginBottom: 9 }}>
         <span style={{ fontFamily: HUD_FONTS.display, fontWeight: 700, fontSize: 24, color: netColor, lineHeight: 1, textShadow: `0 0 12px ${netColor}66`, animation: reducedMotion ? undefined : 'cknerv-hud-breathe 3.2s ease-in-out infinite' }}>{fmtSigned(churn.netPerBlock)}</span>
         <span style={{ fontFamily: HUD_FONTS.mono, fontSize: 9, color: HUD_COLORS.dim, marginBottom: 4 }}>net /blk</span>

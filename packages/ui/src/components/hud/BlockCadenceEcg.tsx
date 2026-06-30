@@ -79,7 +79,7 @@ export default function BlockCadenceEcg({
 
   return (
     <HudPanel style={{ width: 430, zIndex: 12, ...style }}>
-      <PanelHeader en="BLOCK CADENCE" cjk="脉搏" idx="PULSE·04" />
+      <PanelHeader en="PULSE" cjk="脉搏" idx="ECG·04" />
       <div style={{ display: 'flex', gap: 12 }}>
         <div style={{ flex: '0 0 96px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
           {/* hero ticks at 0.1s via the heroMs timer; condition/avg/tgt live in the vitals row below */}
