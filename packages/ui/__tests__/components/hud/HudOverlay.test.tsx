@@ -24,8 +24,8 @@ describe('HudOverlay', () => {
     expect(root.style.pointerEvents).toBe('none');
     const t = container.textContent ?? '';
     expect(t).toContain('CKNERV');       // status strip
-    expect(t).toContain('BLOCKCHAIN');   // readout
-    expect(t).toContain('BLOCK CADENCE');// ecg
+    expect(t).toContain('COMMON KNOWLEDGE BASE'); // readout
+    expect(t).toContain('PULSE');                 // ecg
     expect(t).toContain('NETWORK');      // network
     expect(t).toContain('CELLS');        // cells
   });
