@@ -74,6 +74,12 @@ interface PeerConstellationProps {
    *  (boluses lob up from each into the cell canopy). Optional (default []) so
    *  the existing mount-smoke tests render without it; App always supplies it. */
   ckbNodeIds?: string[];
+  /** Universe seed for chain-node placement. MUST match the value CellGalaxy
+   *  gets: the boluses lob from `chainNodeWorldPosition(idx, n, universeSeed)`
+   *  and the galaxy ignites/positions off the same call, so a mismatch would
+   *  launch deliveries off the cells they should land on. `undefined` → both
+   *  fall back to UNIVERSE_SEED_FALLBACK (App drives them from one source). */
+  universeSeed?: number;
   /** Local node's delivery start age (s since pulse); from blockArrivalSchedule.
    *  Optional (default 0) for the same test-compat reason as `ckbNodeIds`. */
   localReceiveDelayS?: number;
@@ -95,6 +101,7 @@ export default function PeerConstellation({
   arrivals = {},
   senders = {},
   ckbNodeIds = [],
+  universeSeed,
   localReceiveDelayS = 0,
   cellFlashRef,
   flashDirtyRef,
@@ -188,9 +195,9 @@ export default function PeerConstellation({
   const localOrigins = useMemo(
     () =>
       ckbNodeIds.map((_, idx) =>
-        chainNodeWorldPosition(idx, Math.max(1, ckbNodeIds.length)),
+        chainNodeWorldPosition(idx, Math.max(1, ckbNodeIds.length), universeSeed),
       ),
-    [ckbNodeIds],
+    [ckbNodeIds, universeSeed],
   );
 
   return (
@@ -203,8 +210,6 @@ export default function PeerConstellation({
           localVersion={localVersion}
           selected={selectedId === `peer:${rp.peer.node_id}`}
           onSelect={onSelect}
-          pulseRef={pulseRef}
-          blockPulseAtMs={blockPulseAtMs}
           onExpire={onExpire}
         />
       ))}
@@ -248,8 +253,6 @@ function PeerNode({
   localVersion,
   selected,
   onSelect,
-  pulseRef,
-  blockPulseAtMs,
   onExpire,
 }: {
   rp: RenderPeer;
@@ -257,8 +260,6 @@ function PeerNode({
   localVersion: string;
   selected: boolean;
   onSelect: (id: string | null) => void;
-  pulseRef: React.MutableRefObject<{ at: number; entryId: string | null } | null>;
-  blockPulseAtMs: number;
   onExpire: (nodeId: string) => void;
 }) {
   // Crystal + ambient-flow intensity (churn fade × sync brightness), each read

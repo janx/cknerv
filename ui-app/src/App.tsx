@@ -25,6 +25,7 @@ import {
   NeuralNetwork,
   PeerConstellation,
   SimClockTicker,
+  UNIVERSE_SEED_FALLBACK,
   type ScanStateRef,
 } from '@cknerv/ui';
 import {
@@ -176,6 +177,13 @@ export default function App({
     return ids.length > 0 ? ids : ['ckb:local'];
   }, [chainNodes]);
 
+  // Single seed source for chain-node placement, fed to BOTH CellGalaxy and
+  // PeerConstellation so bolus launch points and the galaxy stay locked to the
+  // same layout (they'd diverge if only one got a real seed). The backend
+  // universe_seed isn't plumbed to the SPA yet; when it is, source it HERE and
+  // both move together.
+  const universeSeed = UNIVERSE_SEED_FALLBACK;
+
   const cellsStats = useMemo(
     () =>
       aggregateCellsStats(
@@ -268,6 +276,7 @@ export default function App({
 
           <CellGalaxy
             ckbNodeIds={ckbNodeIds}
+            universeSeed={universeSeed}
             localReceiveDelayS={blockSchedule.localReceiveDelayS}
             entryWorld={entryWorld}
             entryArrivalS={entryArrivalS}
@@ -307,6 +316,7 @@ export default function App({
             arrivals={blockSchedule.arrivals}
             senders={blockSchedule.senders}
             ckbNodeIds={ckbNodeIds}
+            universeSeed={universeSeed}
             localReceiveDelayS={blockSchedule.localReceiveDelayS}
             cellFlashRef={cellFlashRef}
             flashDirtyRef={flashDirtyRef}
