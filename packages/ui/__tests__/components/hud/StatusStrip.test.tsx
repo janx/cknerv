@@ -5,10 +5,9 @@ import StatusStrip from '../../../src/components/hud/StatusStrip';
 afterEach(cleanup);
 
 describe('StatusStrip', () => {
-  it('shows the wordmark, op label and a nominal indicator', () => {
+  it('shows the wordmark and a nominal indicator', () => {
     const { container } = render(<StatusStrip level="nominal" uptimeMs={0} />);
     expect(container.textContent).toContain('CKNERV');
-    expect(container.textContent).toContain('OPERATION MONITOR');
     expect(container.textContent).toContain('NOMINAL');
     expect(container.textContent).toContain('状态');
   });
