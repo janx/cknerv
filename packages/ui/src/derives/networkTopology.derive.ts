@@ -51,3 +51,34 @@ export function measuredPeerPos(anchor: Vec3, p: Peer): Vec3 {
     anchor[2] + Math.sin(a) * r * COLONY_ELLIPSE_Z,
   ];
 }
+
+/**
+ * Peer-INDEPENDENT inferred node scatter — rejection sampling with a min-spacing
+ * constraint over the elliptical colony disc. Pure function of `seed` ONLY: this
+ * is what makes the ⭐ churn-stability invariant hold. Never reference peers here.
+ */
+export function scatterInferred(seed: number): Vec3[] {
+  // decorrelate this stream from localAnchor's stream
+  const rng = mulberry32((seed ^ 0x9e3779b1) >>> 0);
+  const target = COLONY_INFERRED_COUNT + Math.floor((rng() - 0.5) * 2 * COLONY_INFERRED_JITTER);
+  const out: Vec3[] = [];
+  const min2 = COLONY_MIN_SPACING * COLONY_MIN_SPACING;
+  const maxAttempts = target * 40;
+  let attempts = 0;
+  while (out.length < target && attempts < maxAttempts) {
+    attempts += 1;
+    const a = rng() * Math.PI * 2;
+    const r = Math.sqrt(rng()) * COLONY_RADIUS;   // sqrt → uniform over the disc
+    const cand: Vec3 = [
+      Math.cos(a) * r * COLONY_ELLIPSE_X,
+      COLONY_Y + (rng() - 0.5) * COLONY_Y_THICKNESS,
+      Math.sin(a) * r * COLONY_ELLIPSE_Z,
+    ];
+    let ok = true;
+    for (let i = 0; i < out.length; i++) {
+      if (dist2(out[i], cand) < min2) { ok = false; break; }
+    }
+    if (ok) out.push(cand);
+  }
+  return out;
+}
