@@ -13,7 +13,7 @@ export default function NetworkPanel({ summary, consensus, ping, vers, syncRatio
   const seg = (n: number) => `${(n / total) * 100}%`;
   return (
     <HudPanel style={{ width: 302, paddingTop: 14, ...style }}>
-      <PanelHeader en="NETWORK" cjk="网络" idx="NET·02" />
+      <PanelHeader en="NEURAL MESH" cjk="神经元" idx="NET·02" />
       <StatRow label="Peers">{summary.peerCount} &nbsp; <span style={{ color: HUD_COLORS.dim }}>out</span> {summary.outbound} / <span style={{ color: HUD_COLORS.dim }}>in</span> {summary.inbound}</StatRow>
       <StatRow label="Head consensus">{consensus.atTip} / {consensus.total}</StatRow>
       <div style={{ display: 'flex', height: 7, border: '1px solid rgba(255,152,48,.2)', background: '#0a0a0a', margin: '4px 0' }}>

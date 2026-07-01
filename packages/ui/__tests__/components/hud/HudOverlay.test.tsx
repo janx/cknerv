@@ -26,13 +26,25 @@ describe('HudOverlay', () => {
     expect(t).toContain('CKNERV');       // status strip
     expect(t).toContain('COMMON KNOWLEDGE BASE'); // readout
     expect(t).toContain('PULSE');                 // ecg
-    expect(t).toContain('NETWORK');      // network
+    expect(t).toContain('NEURAL MESH');  // network
     expect(t).toContain('CELLS');        // cells
   });
 
-  it('reads CAUTION when recent intervals run ~1.5x the protocol target', () => {
-    const slow: ChainEntry = { ...chain, recent_block_intervals_ms: Array.from({ length: 30 }, () => 12000), last_block_ts_ms: Date.now() };
-    const { container } = render(<HudOverlay chain={slow} peers={peers} localNode={localNode} cellsStats={cellsStats} />);
+  it('does not raise CAUTION when blocks merely run slower than the 8s target', () => {
+    // R2: a uniformly slower-but-steady cadence is the chain's own rhythm, not an alarm.
+    const steadySlow: ChainEntry = { ...chain, recent_block_intervals_ms: Array.from({ length: 60 }, () => 12000), last_block_ts_ms: Date.now() };
+    const { container } = render(<HudOverlay chain={steadySlow} peers={peers} localNode={localNode} cellsStats={cellsStats} />);
+    expect(container.textContent).not.toContain('CAUTION');
+  });
+
+  it('raises CAUTION when the recent window slows well past the chain\'s own baseline', () => {
+    // 40 blocks at 8s establish the baseline; the last 20 at 14s are a genuine regime shift.
+    const regimeShift: ChainEntry = {
+      ...chain,
+      recent_block_intervals_ms: [...Array.from({ length: 40 }, () => 8000), ...Array.from({ length: 20 }, () => 14000)],
+      last_block_ts_ms: Date.now(),
+    };
+    const { container } = render(<HudOverlay chain={regimeShift} peers={peers} localNode={localNode} cellsStats={cellsStats} />);
     expect(container.textContent).toContain('CAUTION');
   });
 
@@ -43,9 +55,9 @@ describe('HudOverlay', () => {
         peers={peers}
         localNode={localNode}
         cellsStats={cellsStats}
-        build={{ version: '20260630@61922ba', href: 'https://github.com/janx/cknerv/commit/61922ba' }}
+        build={{ version: '61922ba@20260630', href: 'https://github.com/janx/cknerv/commit/61922ba' }}
       />,
     );
-    expect(container.textContent).toContain('20260630@61922ba');
+    expect(container.textContent).toContain('61922ba@20260630');
   });
 });
