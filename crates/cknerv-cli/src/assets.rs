@@ -91,12 +91,12 @@ mod tests {
     #[test]
     fn runtime_config_body_assigns_build_version() {
         let body = runtime_config_body(
-            "20260630@61922ba",
+            "61922ba@20260630",
             &crate::config::ResolvedGalaxyConfig::for_profile(crate::config::GalaxyProfile::Devnet),
         );
 
         assert!(body.contains("window.__CKNERV_RUNTIME_CONFIG__"));
-        assert!(body.contains("\"buildVersion\":\"20260630@61922ba\""));
+        assert!(body.contains("\"buildVersion\":\"61922ba@20260630\""));
         assert!(body.contains("\"profile\":\"devnet\""));
         assert!(body.contains("\"neighborK\":5"));
     }
@@ -104,17 +104,17 @@ mod tests {
     #[test]
     fn runtime_config_body_json_escapes_build_version() {
         let body = runtime_config_body(
-            "20260630@61\"922ba",
+            "61\"922ba@20260630",
             &crate::config::ResolvedGalaxyConfig::for_profile(crate::config::GalaxyProfile::Auto),
         );
 
-        assert!(body.contains("\"buildVersion\":\"20260630@61\\\"922ba\""));
+        assert!(body.contains("\"buildVersion\":\"61\\\"922ba@20260630\""));
     }
 
     #[test]
     fn runtime_config_response_sets_javascript_headers() {
         let response = runtime_config_response(
-            "20260630@61922ba",
+            "61922ba@20260630",
             crate::config::ResolvedGalaxyConfig::for_profile(crate::config::GalaxyProfile::Auto),
         );
 

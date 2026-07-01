@@ -1,7 +1,8 @@
-/// Format the build version string as `<commit-date>@<short-hash>`,
-/// e.g. `20260630@61922ba`. The same on every branch — no semver, no branch label.
+/// Format the build version string as `<short-hash>@<commit-date>`,
+/// e.g. `61922ba@20260630`. Leading with the hash keeps the string from reading
+/// as a bare number blob. The same on every branch — no semver, no branch label.
 pub fn format_build_version(commit_date: &str, commit_hash: &str) -> String {
-    format!("{commit_date}@{commit_hash}")
+    format!("{commit_hash}@{commit_date}")
 }
 
 #[cfg(test)]
@@ -9,10 +10,10 @@ mod tests {
     use super::format_build_version;
 
     #[test]
-    fn joins_commit_date_and_hash_with_at() {
+    fn joins_hash_and_commit_date_with_at() {
         assert_eq!(
             format_build_version("20260630", "61922ba"),
-            "20260630@61922ba"
+            "61922ba@20260630"
         );
     }
 
