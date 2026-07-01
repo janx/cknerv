@@ -21,7 +21,11 @@ export const ECG_MIN_SAMPLES = 8;        // min intervals in each window before 
 export const ECG_SIGMA_CAUTION = 3;      // enter CAUTION at +3σ above the realized baseline
 export const ECG_SIGMA_DANGER = 4;       // enter DANGER at +4σ
 export const ECG_SIGMA_HYST = 0.5;       // leave a hotter state 0.5σ below its enter level
-export const ECG_FLATLINE_FACTOR = 8;    // gap > 8x baseline (~0.03% survival) -> flatline
+// FLATLINE = genuine at-tip stall. It tests the residual gap/baseMean; measured on 1y of mainnet
+// (μ≈10s) that residual is fatter-tailed than e^-k — baseMean is a noisy 40-sample mean and steps
+// across epoch boundaries mid-window — so 8x fired ~5x/day with zero real stalls. 15x ≈ 1 false
+// alarm/month at ~2.5min detection latency.
+export const ECG_FLATLINE_FACTOR = 15;   // gap > 15x realized baseline -> flatline
 // CKB consensus targets ~4h epochs (EPOCH_DURATION_TARGET = 14400s); the realized
 // block time ≈ this / epoch.length, so epoch.length (≈1800 on mainnet) gives μ ≈ 8s.
 // This target is the FLATLINE fallback + the panel's TGT readout — not the health band.

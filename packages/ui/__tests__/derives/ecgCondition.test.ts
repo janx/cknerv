@@ -64,10 +64,10 @@ describe('ecgCondition', () => {
     expect(ecgCondition({ ...base, intervalsMs: jitter })).toBe('FINE');
   });
 
-  it('FLATLINEs on a gap past 8x the realized baseline, scaling with a slow chain', () => {
-    // realized baseline 10s → flatline only past 80s, not at the 64s an 8s target implies
-    expect(ecgCondition({ ...base, intervalsMs: rep(10000, 40), msSinceLast: 70000 })).toBe('FINE');
-    expect(ecgCondition({ ...base, intervalsMs: rep(10000, 40), msSinceLast: 85000 })).toBe('FLATLINE');
+  it('FLATLINEs on a gap past 15x the realized baseline, scaling with a slow chain', () => {
+    // realized baseline 10s → flatline only past 150s, not at the 120s the 8s target implies
+    expect(ecgCondition({ ...base, intervalsMs: rep(10000, 40), msSinceLast: 140000 })).toBe('FINE');
+    expect(ecgCondition({ ...base, intervalsMs: rep(10000, 40), msSinceLast: 160000 })).toBe('FLATLINE');
   });
 
   it('SYNCING overrides flatline/danger', () => {
