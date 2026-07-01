@@ -43,3 +43,48 @@ export function floodArrivalTimes(
   }
   return { arrival, predecessor };
 }
+
+/** Total wall-clock span of a flood (seconds since the block pulse). Tune live. */
+export const FLOOD_DURATION_S = 2.0;
+export const HERO_MIN_FRAC = 0.15;   // never feed the queen before this fraction
+export const HERO_MAX_FRAC = 0.85;   // …nor after this (so she's fed before the flood ends)
+
+export interface ColonyFlood {
+  entryId: string | null;                            // flood origin (may be inferred)
+  localReceiveDelayS: number;                        // hero timing (measured-worker feed)
+  arrivals: Record<string, number>;                  // MEASURED peers → secondsSincePulse (boluses)
+  senders: Record<string, string | null>;            // MEASURED peers → flood predecessor
+  colonyArrivalS: Record<string, number>;            // ALL nodes → secondsSincePulse (node flash)
+  colonyPredecessor: Record<string, string | null>;  // ALL nodes → predecessor (edge-pulse direction)
+}
+
+export function colonyFlood(topology: NetworkTopology, nonce: number): ColonyFlood {
+  if (topology.nodes.length <= 1) {
+    return { entryId: null, localReceiveDelayS: 0, arrivals: {}, senders: {}, colonyArrivalS: {}, colonyPredecessor: {} };
+  }
+  const originId = pickOrigin(topology, nonce);
+  const { arrival, predecessor } = floodArrivalTimes(topology, originId);
+
+  let maxA = 0;
+  for (const d of arrival.values()) if (Number.isFinite(d) && d > maxA) maxA = d;
+  const scale = maxA > 0 ? FLOOD_DURATION_S / maxA : 0;
+
+  const colonyArrivalS: Record<string, number> = {};
+  const colonyPredecessor: Record<string, string | null> = {};
+  const arrivals: Record<string, number> = {};
+  const senders: Record<string, string | null> = {};
+  for (const n of topology.nodes) {
+    const s = (arrival.get(n.id) ?? 0) * scale;
+    colonyArrivalS[n.id] = s;
+    colonyPredecessor[n.id] = predecessor.get(n.id) ?? null;
+    if (n.kind === 'measured') { arrivals[n.id] = s; senders[n.id] = predecessor.get(n.id) ?? null; }
+  }
+
+  const rawLocal = colonyArrivalS[topology.localId] ?? 0;
+  const localReceiveDelayS = Math.min(
+    Math.max(rawLocal, FLOOD_DURATION_S * HERO_MIN_FRAC),
+    FLOOD_DURATION_S * HERO_MAX_FRAC,
+  );
+
+  return { entryId: originId, localReceiveDelayS, arrivals, senders, colonyArrivalS, colonyPredecessor };
+}
