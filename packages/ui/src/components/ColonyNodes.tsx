@@ -9,7 +9,7 @@
 // Scene-clock discipline: the ghost shader's `uTime` is driven by
 // simClock.elapsedSec inside useSimFrame (NOT performance.now), so it shares the
 // exact time base M3 writes `aFlashAt` against. Same pattern as CrystalGlow.
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import { useSimFrame } from '../tweaks/useSimFrame';
 import { simClock } from '../tweaks/simClock';
@@ -88,7 +88,7 @@ function InferredCloud({
 
   // Hand the live flash buffer to the flood layer (M3) after commit, so
   // `flashRef.current` is always the array actually bound to the geometry.
-  useEffect(() => {
+  useLayoutEffect(() => {
     flashRef.current = flash;
   }, [flash, flashRef]);
 
@@ -138,13 +138,13 @@ function InferredCloud({
     [],
   );
 
-  useEffect(
-    () => () => {
-      geom.dispose();
-      mat.dispose();
-    },
-    [geom, mat],
-  );
+  // Dispose the geometry whenever it is rebuilt (and on unmount).
+  useEffect(() => () => geom.dispose(), [geom]);
+  // The material is memoized on [] (stable for the component's life), so dispose
+  // it on UNMOUNT ONLY. Tearing it down on a geometry rebuild would dispose the
+  // live, reused material and force a needless shader recompile every time the
+  // topology re-clones (e.g. on each peer poll).
+  useEffect(() => () => mat.dispose(), [mat]);
 
   // Drive the shader clock off the sim clock (see file header).
   useSimFrame(() => {
