@@ -16,6 +16,7 @@ import {
   courierFlight,
   planDeliveries,
   deliveryPhase,
+  bolusIngest,
   blockArrivalSchedule,
   rankPeers,
   PEER_RENDER_CAP,
@@ -391,6 +392,57 @@ describe('peers.derive', () => {
       const c = { chargeDur: 0, lobDur: 1, ingestDur: 0.3 };
       expect(deliveryPhase(-0.001, c)).toEqual({ phase: 'idle', t: 0 });
       expect(deliveryPhase(0, c)).toEqual({ phase: 'lob', t: 0 });
+    });
+  });
+
+  describe('bolusIngest', () => {
+    const samples = Array.from({ length: 21 }, (_, i) => i / 20);
+
+    it('body dissolves: scale & opacity start full and reach exactly 0', () => {
+      expect(bolusIngest(0).bodyScale).toBeCloseTo(1, 6);
+      expect(bolusIngest(0).bodyOpacity).toBeCloseTo(1, 6);
+      expect(bolusIngest(1).bodyScale).toBe(0);
+      expect(bolusIngest(1).bodyOpacity).toBe(0);
+    });
+
+    it('body scale & opacity are monotonically decreasing (no re-grow)', () => {
+      for (let i = 1; i < samples.length; i += 1) {
+        expect(bolusIngest(samples[i]).bodyScale).toBeLessThanOrEqual(
+          bolusIngest(samples[i - 1]).bodyScale + 1e-9,
+        );
+        expect(bolusIngest(samples[i]).bodyOpacity).toBeLessThanOrEqual(
+          bolusIngest(samples[i - 1]).bodyOpacity + 1e-9,
+        );
+      }
+    });
+
+    it('THE FIX: nothing visible remains at t=1, so the phase→done hard-hide is imperceptible', () => {
+      const end = bolusIngest(1);
+      expect(end.bodyScale * end.bodyOpacity).toBe(0);
+      expect(end.flashOpacity).toBe(0);
+    });
+
+    it('inward pull draws toward the core: 0→1, monotonic, back-loaded (accelerating suck-in)', () => {
+      expect(bolusIngest(0).pull).toBe(0);
+      expect(bolusIngest(1).pull).toBeCloseTo(1, 6);
+      expect(bolusIngest(0.1).pull).toBeLessThan(0.1); // behind a linear ramp — accelerates
+      for (let i = 1; i < samples.length; i += 1) {
+        expect(bolusIngest(samples[i]).pull).toBeGreaterThanOrEqual(
+          bolusIngest(samples[i - 1]).pull - 1e-9,
+        );
+      }
+    });
+
+    it('flash is a bright impact that lingers into an amber tail (not the old ~2-frame pop)', () => {
+      expect(bolusIngest(0).flashOpacity).toBeCloseTo(1, 6); // bright at the strike
+      // spans the window: at 30% through, brighter than the old exp(-7·t)=0.122 blink
+      expect(bolusIngest(0.3).flashOpacity).toBeGreaterThan(0.122);
+      expect(bolusIngest(1).flashOpacity).toBe(0); // clean end, no leftover pop
+    });
+
+    it('colour resolves white-hot → her amber across the ingest', () => {
+      expect(bolusIngest(0).colorT).toBe(0);
+      expect(bolusIngest(1).colorT).toBeCloseTo(1, 6);
     });
   });
 
