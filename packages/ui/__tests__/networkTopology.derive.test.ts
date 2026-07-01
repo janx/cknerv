@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   localAnchor, measuredPeerPos, COLONY_Y, LOCAL_ANCHOR_OFFSET, COLONY_ELLIPSE_X, COLONY_ELLIPSE_Z,
   scatterInferred, COLONY_INFERRED_COUNT, COLONY_INFERRED_JITTER, COLONY_MIN_SPACING,
+  inferredTopology,
 } from '../src/derives/networkTopology.derive';
 import { latencyToRadius01, PEER_INNER_RADIUS, PEER_OUTER_RADIUS } from '../src/derives/peers.derive';
 import type { Peer } from '@cknerv/types';
@@ -56,5 +57,63 @@ describe('scatterInferred (⭐ seed-only, churn-stable)', () => {
 
   it('different seeds give different scaffolds', () => {
     expect(scatterInferred(0xc0ffee)).not.toEqual(scatterInferred(0xbeef));
+  });
+});
+
+describe('inferredTopology assembly', () => {
+  const seed = 0xc0ffee;
+  const peers = [
+    peer({ node_id: 'A', latency_ms: 40, direction: 'outbound' }),
+    peer({ node_id: 'B', latency_ms: 180, direction: 'inbound' }),
+    peer({ node_id: 'C', latency_ms: 400, direction: 'outbound' }),
+  ];
+
+  it('has one local node, the measured peers, and the inferred scaffold', () => {
+    const t = inferredTopology(peers, seed, 'ckb:local');
+    expect(t.provenance).toBe('inferred');
+    expect(t.localId).toBe('ckb:local');
+    expect(t.nodes.filter((n) => n.kind === 'local')).toHaveLength(1);
+    expect(t.nodes.filter((n) => n.kind === 'measured')).toHaveLength(3);
+    expect(t.nodes.filter((n) => n.kind === 'inferred').length).toBeGreaterThan(150);
+  });
+
+  it('honesty: measured nodes carry a peer, inferred never do; only local↔peer edges are measured', () => {
+    const t = inferredTopology(peers, seed, 'ckb:local');
+    for (const n of t.nodes) {
+      if (n.kind === 'measured') expect(n.peer).toBeDefined();
+      if (n.kind === 'inferred') { expect(n.peer).toBeUndefined(); expect(n.id.startsWith('inf:')).toBe(true); }
+    }
+    const measuredEdges = t.edges.filter((e) => e.kind === 'measured');
+    for (const e of measuredEdges) {
+      const involvesLocal = e.a === 'ckb:local' || e.b === 'ckb:local';
+      expect(involvesLocal).toBe(true);
+    }
+    // every real peer has a measured edge to local
+    for (const p of peers) {
+      expect(measuredEdges.some((e) => e.a === p.node_id || e.b === p.node_id)).toBe(true);
+    }
+  });
+
+  it('is one connected component (no islands)', () => {
+    const t = inferredTopology(peers, seed, 'ckb:local');
+    const seen = new Set<string>();
+    const stack = [t.nodes[0].id];
+    while (stack.length) {
+      const u = stack.pop()!;
+      if (seen.has(u)) continue;
+      seen.add(u);
+      for (const { to } of t.adjacency.get(u) ?? []) if (!seen.has(to)) stack.push(to);
+    }
+    expect(seen.size).toBe(t.nodes.length);
+  });
+
+  it('⭐ adding/removing a peer leaves the inferred scaffold byte-identical', () => {
+    const t3 = inferredTopology(peers, seed, 'ckb:local');
+    const t2 = inferredTopology(peers.slice(0, 2), seed, 'ckb:local');
+    const inf = (t: ReturnType<typeof inferredTopology>) => ({
+      nodes: t.nodes.filter((n) => n.kind === 'inferred'),
+      edges: t.edges.filter((e) => e.kind === 'inferred' && e.a.startsWith('inf:') && e.b.startsWith('inf:')),
+    });
+    expect(inf(t2)).toEqual(inf(t3));  // inferred↔inferred unaffected by the peer set
   });
 });

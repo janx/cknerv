@@ -82,3 +82,120 @@ export function scatterInferred(seed: number): Vec3[] {
   }
   return out;
 }
+
+export function buildAdjacency(
+  nodes: NetworkNode[], edges: NetworkEdge[],
+): Map<string, { to: string; weight: number }[]> {
+  const adj = new Map<string, { to: string; weight: number }[]>();
+  for (const n of nodes) adj.set(n.id, []);
+  for (const e of edges) {
+    adj.get(e.a)?.push({ to: e.b, weight: e.weight });
+    adj.get(e.b)?.push({ to: e.a, weight: e.weight });
+  }
+  return adj;
+}
+
+export function inferredTopology(
+  peers: Peer[], seed: number, localId: string = LOCAL_ID_FALLBACK,
+): NetworkTopology {
+  const nodes: NetworkNode[] = [];
+
+  // 1) local anchor (seed-only)
+  const anchor = localAnchor(seed);
+  nodes.push({ id: localId, kind: 'local', pos: anchor });
+  const localIdx = 0;
+
+  // 2) measured core overlaid (peer-dependent)
+  const measuredIdx: number[] = [];
+  for (const p of peers) {
+    measuredIdx.push(nodes.length);
+    nodes.push({ id: p.node_id, kind: 'measured', pos: measuredPeerPos(anchor, p), peer: p });
+  }
+
+  // 3) inferred scaffold (seed-only)
+  const infStart = nodes.length;
+  const infPts = scatterInferred(seed);
+  infPts.forEach((pos, n) => nodes.push({ id: `inf:${n}`, kind: 'inferred', pos }));
+
+  // --- edges ---
+  const edges: NetworkEdge[] = [];
+  const seen = new Set<string>();
+  const key = (i: number, j: number) => (i < j ? `${i}:${j}` : `${j}:${i}`);
+  const add = (i: number, j: number, kind: EdgeKind) => {
+    if (i === j) return;
+    const k = key(i, j);
+    if (seen.has(k)) return;
+    seen.add(k);
+    edges.push({ a: nodes[i].id, b: nodes[j].id, kind, weight: Math.sqrt(dist2(nodes[i].pos, nodes[j].pos)) });
+  };
+
+  // 3a) inferred↔inferred: kNN base over ONLY the inferred scaffold (seed-only)
+  const rng = mulberry32((seed ^ 0x85ebca77) >>> 0);
+  const infNodes = nodes.slice(infStart);
+  const kNearestInf = (localI: number, k: number): number[] => {
+    const ds: { j: number; d: number }[] = [];
+    for (let j = 0; j < infNodes.length; j++) if (j !== localI) ds.push({ j, d: dist2(infNodes[localI].pos, infNodes[j].pos) });
+    ds.sort((a, b) => a.d - b.d);
+    return ds.slice(0, k).map((o) => o.j);
+  };
+  for (let i = 0; i < infNodes.length; i++) {
+    for (const j of kNearestInf(i, COLONY_KNN)) add(infStart + i, infStart + j, 'inferred');
+  }
+  // 3b) inferred long-range small-world links (seed-only)
+  for (let i = 0; i < infNodes.length; i++) {
+    if (rng() < COLONY_LONGRANGE_PROB && infNodes.length > 1) {
+      add(infStart + i, infStart + Math.floor(rng() * infNodes.length), 'inferred');
+    }
+  }
+  // 3c) connectivity: bridge any island of the inferred scaffold to its nearest earlier node
+  ensureConnectedFrom(nodes, infStart, buildAdjacency(nodes, edges), add);
+
+  // 4) measured edges local↔peer (observed) + stitch core into the scaffold
+  for (const mi of measuredIdx) add(localIdx, mi, 'measured');
+  const nearestInferred = (i: number): number => {
+    let best = -1, bestD = Infinity;
+    for (let j = infStart; j < nodes.length; j++) {
+      const d = dist2(nodes[i].pos, nodes[j].pos);
+      if (d < bestD) { bestD = d; best = j; }
+    }
+    return best;
+  };
+  for (const i of [localIdx, ...measuredIdx]) {
+    const j = nearestInferred(i);
+    if (j >= 0) add(i, j, 'inferred'); // relay edge into the colony (not "observed")
+  }
+
+  return { provenance: 'inferred', localId, nodes, edges, adjacency: buildAdjacency(nodes, edges) };
+}
+
+/** Union islands (restricted to the inferred scaffold) into one component. */
+function ensureConnectedFrom(
+  nodes: NetworkNode[], start: number,
+  adj: Map<string, { to: string; weight: number }[]>,
+  add: (i: number, j: number, kind: EdgeKind) => void,
+): void {
+  const idxById = new Map(nodes.map((n, i) => [n.id, i]));
+  const comp = new Map<string, number>();
+  let c = 0;
+  for (let i = start; i < nodes.length; i++) {
+    const id = nodes[i].id;
+    if (comp.has(id)) continue;
+    const stack = [id];
+    while (stack.length) {
+      const u = stack.pop()!;
+      if (comp.has(u)) continue;
+      comp.set(u, c);
+      for (const { to } of adj.get(u) ?? []) if ((idxById.get(to) ?? -1) >= start && !comp.has(to)) stack.push(to);
+    }
+    c += 1;
+  }
+  if (c <= 1) return;
+  // connect representative of each component>0 to nearest node in component 0
+  const comp0 = nodes.filter((n) => comp.get(n.id) === 0);
+  for (let k = 1; k < c; k++) {
+    const rep = nodes.find((n) => comp.get(n.id) === k)!;
+    let best = comp0[0], bestD = Infinity;
+    for (const q of comp0) { const d = dist2(rep.pos, q.pos); if (d < bestD) { bestD = d; best = q; } }
+    add(idxById.get(rep.id)!, idxById.get(best.id)!, 'inferred');
+  }
+}
