@@ -2,33 +2,28 @@
 // Previously housed in nervePulseScheduler.ts alongside the old NervePulses
 // machinery; extracted here so CellGalaxy does not depend on deleted modules.
 
-/** New-block animation breaks into these sub-phases:
+/** New-block delivery timeline. NOTE: the `BEAM_*` names are legacy (from the
+ *  retired BlockBeam) — they now drive the bolus DELIVERY timing. Kept as-is; a
+ *  rename is deferred since they're load-bearing across CellGalaxy + the delivery
+ *  layer + tests. Sub-phases, relative to a node's own arrival:
  *
- *    t = −BEAM_CHARGE_DUR_S             charge pre-roll begins — energy gathers
- *                                       inside the node. firedAt is scheduled in
- *                                       the future, so this fills the already-idle
- *                                       window before launch.
- *    t = 0                              the receiving node's beam launches
- *                                       from its anchor toward the galaxy.
- *    t = BEAM_GROW_DUR_S                column reaches the cell plane;
- *                                       strike-splash sprite blooms at the
- *                                       impact point; column holds.
- *    t = BEAM_GROW_DUR_S + BEAM_HOLD_DUR_S
- *                                       hold ends; the column retracts —
- *                                       tip anchored, base draining upward.
+ *    t = −BEAM_CHARGE_DUR_S             gather pre-roll — the bolus forms inside
+ *                                       the node. Arrival is scheduled in the
+ *                                       future, so this fills the idle window.
+ *    t = 0                              the bolus lobs from the node toward the
+ *                                       galaxy membrane.
+ *    t = BEAM_GROW_DUR_S                the bolus reaches the membrane and is
+ *                                       ingested (dissolves + ignites the cells
+ *                                       it lands on).
  *    t = SHOCKWAVE_FIRE_DELAY_S
  *      = BEAM_GROW_DUR_S + BEAM_STRIKE_DUR_S
- *                                       beam completes; the canopy
- *                                       brightness shockwave departs. */
+ *                                       the canopy brightness shockwave departs. */
 export const BEAM_GROW_DUR_S = 1.00;
-export const BEAM_HOLD_DUR_S = 0.90;
 export const BEAM_STRIKE_DUR_S = 1.20;
-/** Pre-roll charge window (s) before a beam's burst. The beam's `firedAt` is
- *  scheduled in the future (latency-derived arrival), so this charge renders in
- *  the already-idle window age ∈ [−BEAM_CHARGE_DUR_S, 0): energy gathers inside
- *  the node, then the column erupts at age 0. Splash/arrival timing is
- *  unchanged. When there is no lead time (firedAt ≈ now) the charge is simply
- *  skipped. */
+/** Pre-roll gather window (s) before a bolus lobs. Arrival (`firedAt`) is
+ *  scheduled in the future (latency-derived), so this renders in the idle
+ *  window age ∈ [−BEAM_CHARGE_DUR_S, 0): the bolus forms inside the node, then
+ *  lobs at age 0. When there is no lead time (firedAt ≈ now) it is skipped. */
 export const BEAM_CHARGE_DUR_S = 0.4;
 export const SHOCKWAVE_FIRE_DELAY_S = BEAM_GROW_DUR_S + BEAM_STRIKE_DUR_S;
 
