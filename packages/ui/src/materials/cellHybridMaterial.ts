@@ -106,6 +106,8 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
       uniform float uTime;
       uniform float uShockwaveColorBoost;
       uniform float uShockwaveAlphaBoost;
+      uniform float uShockwaveColorCeil;
+      uniform float uShockwaveAlphaCeil;
       uniform float uShockwaveTrailBoost;
 
       varying vec3  vColor;
@@ -164,8 +166,16 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
         float shockWash = exp(-pow(length(uv) / 0.42, 2.0)) * shock * uShockwaveTrailBoost;
         vec3 shockTint = mix(base.rgb, vec3(1.0, 0.96, 0.80), min(1.0, shockCore * 0.85));
 
-        vec3  col = shockTint * (1.0 + shock * uShockwaveColorBoost) + vColor * shockWash;
-        float a   = (base.a * (1.0 + shock * uShockwaveAlphaBoost) + shockWash) * (1.0 - vDeathRamp);
+        // Soft-knee the wave's brightness/alpha: same onset slope as the old
+        // linear (1 + BOOST*shock), but the bright leading edge saturates toward
+        // a warm ceiling instead of railing past white and hard-clipping (see
+        // shockwaveMaterial.ts). shock=0 → factor 1.0, so resting cells are
+        // untouched. This is the de-glare; the wave's reach/force is preserved.
+        float shockColorK = 1.0 + uShockwaveColorCeil * (1.0 - exp(-shock * uShockwaveColorBoost / max(uShockwaveColorCeil, 0.001)));
+        float shockAlphaK = 1.0 + uShockwaveAlphaCeil * (1.0 - exp(-shock * uShockwaveAlphaBoost / max(uShockwaveAlphaCeil, 0.001)));
+
+        vec3  col = shockTint * shockColorK + vColor * shockWash;
+        float a   = (base.a * shockAlphaK + shockWash) * (1.0 - vDeathRamp);
         if (a < 0.005) discard;
         gl_FragColor = vec4(col * a, a);
       }
