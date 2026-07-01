@@ -65,6 +65,14 @@ function InferredCloud({
     [topology],
   );
 
+  // Per-point flash peak time, ABSOLUTE simClock seconds; -1e9 ⇒ "never." Held
+  // in its own stable memo (not written from render) so it survives StrictMode's
+  // double-invoked factories and stays the exact array bound to `aFlashAt`.
+  const flash = useMemo(
+    () => new Float32Array(inferred.length).fill(-1e9),
+    [inferred],
+  );
+
   const geom = useMemo(() => {
     const g = new THREE.BufferGeometry();
     const pos = new Float32Array(inferred.length * 3);
@@ -74,12 +82,15 @@ function InferredCloud({
       pos[i * 3 + 2] = n.pos[2];
     });
     g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-    // Per-point flash peak time, ABSOLUTE simClock seconds; -1e9 ⇒ "never."
-    const flash = new Float32Array(inferred.length).fill(-1e9);
     g.setAttribute('aFlashAt', new THREE.BufferAttribute(flash, 1));
-    flashRef.current = flash; // hand the buffer to the flood layer (M3)
     return g;
-  }, [inferred, flashRef]);
+  }, [inferred, flash]);
+
+  // Hand the live flash buffer to the flood layer (M3) after commit, so
+  // `flashRef.current` is always the array actually bound to the geometry.
+  useEffect(() => {
+    flashRef.current = flash;
+  }, [flash, flashRef]);
 
   const mat = useMemo(
     () =>
