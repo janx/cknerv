@@ -308,6 +308,8 @@ export default function App({
             senders={blockSchedule.senders}
             ckbNodeIds={ckbNodeIds}
             localReceiveDelayS={blockSchedule.localReceiveDelayS}
+            cellFlashRef={cellFlashRef}
+            flashDirtyRef={flashDirtyRef}
           />
 
           <OrbitControls

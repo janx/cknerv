@@ -77,6 +77,11 @@ interface PeerConstellationProps {
   /** Local node's delivery start age (s since pulse); from blockArrivalSchedule.
    *  Optional (default 0) for the same test-compat reason as `ckbNodeIds`. */
   localReceiveDelayS?: number;
+  /** Galaxy flash buffers shared with CellGalaxy (cell.id → scene-seconds, and a
+   *  dirty flag). When supplied, each delivered bolus ignites the cells it lands
+   *  on. Optional: standalone mounts (tests) fall back to inert local refs. */
+  cellFlashRef?: React.MutableRefObject<Map<number, number>>;
+  flashDirtyRef?: React.MutableRefObject<boolean>;
 }
 
 export default function PeerConstellation({
@@ -91,7 +96,16 @@ export default function PeerConstellation({
   senders = {},
   ckbNodeIds = [],
   localReceiveDelayS = 0,
+  cellFlashRef,
+  flashDirtyRef,
 }: PeerConstellationProps) {
+  // Standalone mounts (tests, galaxy-less scenes) get inert local buffers so
+  // the delivery layer never sees undefined refs; the real app supplies the
+  // shared CellGalaxy buffers so boluses ignite the cells they land on.
+  const fallbackFlashRef = useRef<Map<number, number>>(new Map());
+  const fallbackDirtyRef = useRef(false);
+  const deliveryFlashRef = cellFlashRef ?? fallbackFlashRef;
+  const deliveryDirtyRef = flashDirtyRef ?? fallbackDirtyRef;
   // Retain recently-dropped peers briefly so they can fade out.
   const retainRef = useRef<Map<string, RenderPeer>>(new Map());
   const [render, setRender] = useState<RenderPeer[]>([]);
@@ -208,6 +222,8 @@ export default function PeerConstellation({
         localOrigins={localOrigins}
         localReceiveDelayS={localReceiveDelayS}
         pulseRef={pulseRef}
+        cellFlashRef={deliveryFlashRef}
+        flashDirtyRef={deliveryDirtyRef}
       />
       {hiddenCount > 0 && (
         <Billboard position={[0, CHAIN_Y, PEER_OUTER_RADIUS * 0.9]}>

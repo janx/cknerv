@@ -44,3 +44,13 @@ export function useCellGalaxy(): CellGalaxyCache {
   }
   return v;
 }
+
+/**
+ * Non-throwing variant: returns the cache, or `null` when no provider is
+ * mounted. For layers whose galaxy interaction is an *enhancement* (e.g.
+ * `BlockDeliveryLayer` igniting the cells it lands on) and which must still
+ * mount standalone (tests, galaxy-less scenes).
+ */
+export function useCellGalaxyOptional(): CellGalaxyCache | null {
+  return useContext(CellGalaxyContext);
+}

@@ -417,6 +417,35 @@ export function bolusIngest(t: number): BolusIngest {
   };
 }
 
+/** The `k` cell ids nearest (in the xz plane) to a world-space `landing`,
+ *  nearest first. Cells live in the galaxy group's rotating LOCAL frame
+ *  (`pos_seed`), so the world landing is projected back through the group's
+ *  `rotationY` before comparing. Used to ignite the cells a bolus lands on so
+ *  the galaxy visibly RECEIVES each delivery (sparse-rim-safe: "nearest k"
+ *  always finds cells, unlike a fixed radius). Pure. O(n) — called per block,
+ *  not per frame. */
+export function nearestCellIds(
+  landing: [number, number],
+  rotationY: number,
+  cells: Iterable<{ id: number; pos_seed: [number, number, number] }>,
+  k: number,
+): number[] {
+  if (k <= 0) return [];
+  // Inverse-rotate the world landing into the cells' local frame.
+  const c = Math.cos(-rotationY);
+  const s = Math.sin(-rotationY);
+  const lx = landing[0] * c - landing[1] * s;
+  const lz = landing[0] * s + landing[1] * c;
+  const scored: { id: number; d2: number }[] = [];
+  for (const cell of cells) {
+    const dx = cell.pos_seed[0] - lx;
+    const dz = cell.pos_seed[2] - lz;
+    scored.push({ id: cell.id, d2: dx * dx + dz * dz });
+  }
+  scored.sort((a, b) => a.d2 - b.d2);
+  return scored.slice(0, k).map((e) => e.id);
+}
+
 export type PeerColorKind = PeerDirection | 'version';
 
 /** Color class: version-mismatch wins, else direction. */
