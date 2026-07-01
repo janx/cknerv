@@ -5,6 +5,8 @@
 // component layer (geometry vectors, graph-node shapes, animation
 // hints) that are not part of the cknerv-core wire contract.
 
+import type { Peer } from '@cknerv/types';
+
 export type Vec3 = [number, number, number];
 
 /**
@@ -47,4 +49,31 @@ export interface GraphEdge {
   source: string;
   target: string;
   kind: string;
+}
+
+export type NodeKind = 'local' | 'measured' | 'inferred';
+export type EdgeKind = 'measured' | 'inferred';
+
+/** One node in the P2P colony. Only `measured`/`local` carry real data. */
+export interface NetworkNode {
+  id: string;            // real node_id (local/measured) | 'inf:<n>' (inferred)
+  kind: NodeKind;
+  pos: Vec3;
+  peer?: Peer;           // present ONLY on measured nodes
+}
+
+/** One colony edge. Only local↔peer edges are truly observed (`measured`). */
+export interface NetworkEdge {
+  a: string;
+  b: string;
+  kind: EdgeKind;
+  weight: number;        // traversal cost for the flood (∝ geometric distance)
+}
+
+export interface NetworkTopology {
+  provenance: 'inferred' | 'measured';
+  localId: string;
+  nodes: NetworkNode[];
+  edges: NetworkEdge[];
+  adjacency: Map<string, { to: string; weight: number }[]>;
 }
