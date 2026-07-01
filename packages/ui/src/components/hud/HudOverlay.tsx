@@ -87,7 +87,7 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats, select
         reducedMotion={reduced}
         style={{ left: 14, bottom: 14 }}
       />
-      <NetworkPanel summary={summary} consensus={consensus} ping={ping} vers={vers} syncRatio={syncRatio} style={{ right: 14, bottom: 40 }} />
+      <NetworkPanel summary={summary} consensus={consensus} ping={ping} vers={vers} syncRatio={syncRatio} style={{ right: 14, bottom: 14 }} />
       <BackfillBar backfill={backfill ?? null} />
       {selectedCell ? (
         <CellDetailPanel cell={selectedCell} onClose={onClearSelection ?? (() => {})} style={{ right: 14, top: 330 }} />
