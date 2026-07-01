@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import { useSimFrame } from '../tweaks/useSimFrame';
 import { simClock } from '../tweaks/simClock';
+import { galaxyFrame } from '../tweaks/galaxyFrame';
+import { useCellGalaxyOptional } from '../hooks/cellGalaxyContext';
 import type { Vec3 } from '../types';
 import { CELLS_Y } from '../layout';
 import {
@@ -9,6 +11,7 @@ import {
   deliveryPhase,
   easeInLob,
   bolusIngest,
+  nearestCellIds,
   type DeliveryPhaseConfig,
 } from '../derives/peers.derive';
 import {
@@ -36,6 +39,11 @@ const TRAIL_OPACITY = 0.85;
 const RING_MAX = 6.5; // shockwave ring max scale (hero)
 const RECOIL_OVERSHOOT = 0.22; // elastic flash swell = light membrane recoil (0 to drop)
 const PEER_PUNCH_SCALE = 0.55; // peers dialed down so 81 read as one wave
+// --- galaxy-receives-the-bolus (v2): ignite the cells each bolus lands on ---
+const IGNITE_K_HERO = 8; // nearest cells lit at the hero (local) landing
+const IGNITE_K_PEER = 3; // fewer per peer so 81 landings stay a rim sparkle, not glare
+const IGNITE_MAX_TOTAL = 300; // global per-block cap (safety on huge peer sets)
+const IGNITE_RIPPLE_S = 0.015; // per-cell stagger (nearest flares first) — tight so the landing pops as one
 const GOLD = new THREE.Color('#ffcf6a');
 const WHITE_HOT = new THREE.Color('#fffcf2'); // her flare colour at impact
 const AMBER = new THREE.Color('#ff8c26'); // flash resolves into her cortex amber
@@ -69,6 +77,12 @@ export interface BlockDeliveryLayerProps {
   localReceiveDelayS: number;
   /** When the current block fired (null = no active block). */
   pulseRef: React.MutableRefObject<{ at: number; entryId: string | null } | null>;
+  /** Galaxy's cell.id → scene-seconds flash map (owned by CellGalaxy). Each
+   *  bolus ignites the cells it lands on by writing here — the galaxy visibly
+   *  RECEIVES the delivery through its existing flare path. */
+  cellFlashRef: React.MutableRefObject<Map<number, number>>;
+  /** Set true when we add a flash CellGalaxy hasn't pushed to the GPU yet. */
+  flashDirtyRef: React.MutableRefObject<boolean>;
 }
 
 export default function BlockDeliveryLayer({
@@ -77,13 +91,18 @@ export default function BlockDeliveryLayer({
   localOrigins,
   localReceiveDelayS,
   pulseRef,
+  cellFlashRef,
+  flashDirtyRef,
 }: BlockDeliveryLayerProps) {
+  const cellsCache = useCellGalaxyOptional();
   const deliveries = useMemo(
     () => planDeliveries(localOrigins, localReceiveDelayS, posById, arrivals, CELLS_Y),
     [localOrigins, localReceiveDelayS, posById, arrivals],
   );
 
   const registry = useRef<Map<string, BolusHandle>>(new Map());
+  // pulse.at of the block whose landings we've already scheduled flares for.
+  const ignitedPulseAtRef = useRef<number | null>(null);
   const register = useMemo(
     () => (key: string, h: BolusHandle | null) => {
       if (h) registry.current.set(key, h);
@@ -117,9 +136,36 @@ export default function BlockDeliveryLayer({
       reg.forEach((h) => {
         if (h.group.current) h.group.current.visible = false;
       });
+      ignitedPulseAtRef.current = null;
       return;
     }
     const age = now - pulse.at;
+
+    // Galaxy RECEIVES the wave: once per block, schedule a flare on the cells
+    // nearest each bolus's landing, timed to that bolus's ingest (+ a tiny
+    // nearest-first ripple). Writes CellGalaxy's own flash buffer, so the cells
+    // light up in her existing amber flare where each delivery lands.
+    if (cellsCache && ignitedPulseAtRef.current !== pulse.at) {
+      ignitedPulseAtRef.current = pulse.at;
+      const rotY = galaxyFrame.rotationY;
+      const cells = cellsCache.cells;
+      let budget = IGNITE_MAX_TOTAL;
+      for (const d of deliveries) {
+        if (budget <= 0) break;
+        const k = Math.min(d.hero ? IGNITE_K_HERO : IGNITE_K_PEER, budget);
+        const ids = nearestCellIds([d.to[0], d.to[2]], rotY, cells.values(), k);
+        const ingestSceneS = pulse.at + d.startAge + LOB_DUR_S;
+        for (let i = 0; i < ids.length; i += 1) {
+          const flashAt = ingestSceneS + i * IGNITE_RIPPLE_S; // nearest cell flares first
+          const prev = cellFlashRef.current.get(ids[i]) ?? -1e9;
+          if (flashAt > prev) {
+            cellFlashRef.current.set(ids[i], flashAt);
+            flashDirtyRef.current = true;
+          }
+          budget -= 1;
+        }
+      }
+    }
 
     for (const d of deliveries) {
       const h = reg.get(d.key);

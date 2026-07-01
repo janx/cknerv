@@ -17,6 +17,7 @@ import {
   planDeliveries,
   deliveryPhase,
   bolusIngest,
+  nearestCellIds,
   blockArrivalSchedule,
   rankPeers,
   PEER_RENDER_CAP,
@@ -443,6 +444,41 @@ describe('peers.derive', () => {
     it('colour resolves white-hot → her amber across the ingest', () => {
       expect(bolusIngest(0).colorT).toBe(0);
       expect(bolusIngest(1).colorT).toBeCloseTo(1, 6);
+    });
+  });
+
+  describe('nearestCellIds', () => {
+    const grid = [
+      { id: 1, pos_seed: [0, 0, 0] as [number, number, number] },
+      { id: 2, pos_seed: [10, 0, 0] as [number, number, number] },
+      { id: 3, pos_seed: [0, 0, 10] as [number, number, number] },
+      { id: 4, pos_seed: [10, 0, 10] as [number, number, number] },
+      { id: 5, pos_seed: [30, 0, 30] as [number, number, number] },
+    ];
+
+    it('returns the k nearest cell ids, nearest first (no rotation)', () => {
+      // to (9,0): id2 (10,0) d=1, then id1 (0,0) d=9, then id4 (10,10) d≈10.05
+      expect(nearestCellIds([9, 0], 0, grid, 2)).toEqual([2, 1]);
+    });
+
+    it('picks by xz only (y in pos_seed is ignored)', () => {
+      const cells = [
+        { id: 1, pos_seed: [0, 999, 0] as [number, number, number] },
+        { id: 2, pos_seed: [50, 0, 50] as [number, number, number] },
+      ];
+      expect(nearestCellIds([1, 1], 0, cells, 1)).toEqual([1]);
+    });
+
+    it('accounts for galaxy rotation (landing is world-xz; cells live in the rotating local frame)', () => {
+      // cell 2 at local (10,0,0); with the group rotated +pi/2 its WORLD xz is (0,10).
+      const only = [grid[1]];
+      expect(nearestCellIds([0, 10], Math.PI / 2, only, 1)).toEqual([2]);
+    });
+
+    it('returns min(k, count) and never throws on empty', () => {
+      expect(nearestCellIds([0, 0], 0, grid, 99)).toHaveLength(5);
+      expect(nearestCellIds([0, 0], 0, [], 3)).toEqual([]);
+      expect(nearestCellIds([0, 0], 0, grid, 0)).toEqual([]);
     });
   });
 

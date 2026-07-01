@@ -3,6 +3,7 @@ import { useControls } from 'leva';
 import { useThree } from '@react-three/fiber';
 import { useSimFrame } from '../tweaks/useSimFrame';
 import { simClock } from '../tweaks/simClock';
+import { galaxyFrame } from '../tweaks/galaxyFrame';
 import { QUALITY_PRESETS } from '../tweaks/qualityPresets';
 import { Billboard, Html } from '@react-three/drei';
 import * as THREE from 'three';
@@ -1034,6 +1035,9 @@ export default function CellGalaxy({ ckbNodeIds, minerCkbNodeIds, universeSeed, 
     // 7. Group rotation.
     group.rotation.y += ROTATION_RATE * dt;
     groupRotationYRef.current = group.rotation.y;
+    // Mirror to the shared frame so sibling layers (BlockDeliveryLayer) can
+    // project world landings into this rotating cell frame.
+    galaxyFrame.rotationY = group.rotation.y;
   });
 
   return (
