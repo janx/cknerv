@@ -8,7 +8,7 @@ import {
   planDeliveries,
   deliveryPhase,
   easeInLob,
-  easeOutCubic,
+  bolusIngest,
   type DeliveryPhaseConfig,
 } from '../derives/peers.derive';
 import {
@@ -24,11 +24,11 @@ const BOLUS_GEOM = new THREE.BoxGeometry(1, 1, 1);
 const HERO_SIZE = 0.82; // mass: bigger than the flat version (was 0.62)
 const PEER_SIZE = 0.5; // (was 0.42)
 const LOB_DUR_S = BEAM_GROW_DUR_S; // UNCHANGED — ingest lands at the strike moment
-const INGEST_DUR_S = 0.34;
+const INGEST_DUR_S = 0.5; // longer than the old 0.34 so the dissolve reads (was a ~2-frame blink)
+const INGEST_PULL = 2.2; // world units the dissolving bolus is drawn toward the galaxy core
 const TUMBLE_RATE = 1.6;
 const BOLUS_BLOOM_SIZE = 2.1; // (was 1.5)
 const INGEST_FLASH_SIZE = 4.4; // (was 3.4)
-const FLASH_DECAY = 7.0; // sharp white-hot attack, exp fall
 const TRAIL_WIDTH = 0.85;
 const TRAIL_LEN_BASE = 1.2; // trail min length
 const TRAIL_LEN_GAIN = 2.0; // × analytic lob speed (longest right before impact)
@@ -135,11 +135,14 @@ export default function BlockDeliveryLayer({
       const punch = d.hero ? 1 : PEER_PUNCH_SCALE;
 
       const inFlight = ph.phase === 'gather' || ph.phase === 'lob';
-      if (h.body.current) h.body.current.visible = inFlight;
-      if (h.bloom.current) h.bloom.current.visible = inFlight;
+      const ingesting = ph.phase === 'ingest';
+      // Body + bloom now persist INTO ingest so the bolus visibly dissolves
+      // instead of hard-cutting to invisible (which read as "vanished").
+      if (h.body.current) h.body.current.visible = inFlight || ingesting;
+      if (h.bloom.current) h.bloom.current.visible = inFlight || ingesting;
       if (h.trail.current) h.trail.current.visible = ph.phase === 'lob';
-      if (h.flash.current) h.flash.current.visible = ph.phase === 'ingest';
-      if (h.ring.current) h.ring.current.visible = ph.phase === 'ingest';
+      if (h.flash.current) h.flash.current.visible = ingesting;
+      if (h.ring.current) h.ring.current.visible = ingesting;
 
       if (inFlight) {
         const s = ph.phase === 'lob' ? easeInLob(ph.t) : 0; // accelerate in; gather sits at `from`
@@ -152,8 +155,12 @@ export default function BlockDeliveryLayer({
         if (h.body.current) {
           h.body.current.rotation.set(now * TUMBLE_RATE, now * TUMBLE_RATE * 0.7, 0);
           h.body.current.scale.setScalar((d.hero ? HERO_SIZE : PEER_SIZE) * grow);
+          (h.body.current.material as THREE.MeshBasicMaterial).opacity = 1; // reset — ingest fades it toward 0
         }
-        if (h.bloom.current) h.bloom.current.scale.setScalar(BOLUS_BLOOM_SIZE * punch * grow);
+        if (h.bloom.current) {
+          h.bloom.current.scale.setScalar(BOLUS_BLOOM_SIZE * punch * grow);
+          (h.bloom.current.material as THREE.SpriteMaterial).opacity = 1; // reset — ingest fades it toward 0
+        }
         // speed trail: vertical streak behind the head, length ∝ acceleration.
         if (h.trail.current && ph.phase === 'lob') {
           const len = (TRAIL_LEN_BASE + TRAIL_LEN_GAIN * lobSpeed(ph.t)) * punch;
@@ -162,16 +169,34 @@ export default function BlockDeliveryLayer({
           (h.trail.current.material as THREE.SpriteMaterial).opacity = TRAIL_OPACITY;
         }
       } else {
-        // ingest: park at the membrane; hard white→amber flash + shockwave ring.
-        g.position.set(d.to[0], d.to[1], d.to[2]);
+        // ingest: the bolus is ABSORBED — the body dissolves (shrink + fade)
+        // while drawn toward the galaxy core, and the membrane flash resolves
+        // white-hot → her amber. No hard cut; by t=1 nothing is left to blink off.
         const it = ph.t;
+        const ing = bolusIngest(it);
+        // Slide inward on xz toward the core (0,·,0) as it dissolves.
+        const inLen = Math.hypot(d.to[0], d.to[2]) || 1;
+        const pull = INGEST_PULL * ing.pull;
+        g.position.set(
+          d.to[0] - (d.to[0] / inLen) * pull,
+          d.to[1],
+          d.to[2] - (d.to[2] / inLen) * pull,
+        );
+        if (h.body.current) {
+          h.body.current.rotation.set(now * TUMBLE_RATE, now * TUMBLE_RATE * 0.7, 0);
+          h.body.current.scale.setScalar((d.hero ? HERO_SIZE : PEER_SIZE) * ing.bodyScale);
+          (h.body.current.material as THREE.MeshBasicMaterial).opacity = ing.bodyOpacity;
+        }
+        if (h.bloom.current) {
+          h.bloom.current.scale.setScalar(BOLUS_BLOOM_SIZE * punch * ing.bodyScale);
+          (h.bloom.current.material as THREE.SpriteMaterial).opacity = ing.bodyOpacity;
+        }
         if (h.flash.current) {
-          const op = Math.exp(-FLASH_DECAY * it); // sharp attack, fast fall
-          const swell = 1 + RECOIL_OVERSHOOT * Math.sin(Math.min(1, it * 3) * Math.PI); // recoil (peaks early, while the flash is still bright)
+          const swell = 1 + RECOIL_OVERSHOOT * Math.sin(Math.min(1, it * 3) * Math.PI); // membrane recoil (peaks early)
           h.flash.current.scale.setScalar(INGEST_FLASH_SIZE * punch * swell);
           const m = h.flash.current.material as THREE.SpriteMaterial;
-          m.opacity = op;
-          m.color.lerpColors(WHITE_HOT, AMBER, easeOutCubic(it)); // white impact → her amber
+          m.opacity = ing.flashOpacity;
+          m.color.lerpColors(WHITE_HOT, AMBER, ing.colorT); // white-hot strike → her amber
         }
         if (h.ring.current) {
           h.ring.current.scale.setScalar(RING_MAX * punch * (0.15 + it));

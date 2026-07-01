@@ -388,6 +388,35 @@ export function deliveryPhase(localAge: number, cfg: DeliveryPhaseConfig): Deliv
   return { phase: 'done', t: 1 };
 }
 
+export interface BolusIngest {
+  /** Body + bloom scale multiplier: 1 at impact → 0 as the bolus dissolves. */
+  bodyScale: number;
+  /** Body + bloom opacity: 1 at impact → 0. */
+  bodyOpacity: number;
+  /** Draw toward the galaxy core, 0→1 (accelerating — the queen pulls it in). */
+  pull: number;
+  /** Membrane flash opacity: bright at the strike, gentle amber tail, 0 at t=1. */
+  flashOpacity: number;
+  /** White-hot → amber colour lerp param, 0→1. */
+  colorT: number;
+}
+
+/** Per-frame "absorb" envelope for a bolus during the ingest phase (t∈[0,1]).
+ *  Replaces the old hard cube-hide + ~2-frame white pop that read as the block
+ *  *vanishing*: the body now dissolves (shrink + fade, reaching exactly 0 at
+ *  t=1 so the phase→done hide is imperceptible) while being drawn toward the
+ *  core, and the flash lingers into her amber instead of blinking out. Pure. */
+export function bolusIngest(t: number): BolusIngest {
+  const k = 1 - t; // 1 → 0 collapse factor
+  return {
+    bodyScale: k * k, // fast initial dissolve, exactly 0 at t=1
+    bodyOpacity: k, // linear fade, exactly 0 at t=1
+    pull: t * t, // accelerating inward draw (sucked into the canopy)
+    flashOpacity: Math.exp(-3.0 * t) * k, // bright strike → amber tail; ×k pins a clean 0 at t=1
+    colorT: easeOutCubic(t), // white-hot impact → her cortex amber
+  };
+}
+
 export type PeerColorKind = PeerDirection | 'version';
 
 /** Color class: version-mismatch wins, else direction. */
