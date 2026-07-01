@@ -91,6 +91,8 @@ export function makeCellShellMaterial(): THREE.ShaderMaterial {
       uniform float uShockwaveBandGrow;
       uniform float uShockwaveColorBoost;
       uniform float uShockwaveAlphaBoost;
+      uniform float uShockwaveColorCeil;
+      uniform float uShockwaveAlphaCeil;
       uniform float uShockwaveTrailBoost;
 
       varying vec3  vColor;
@@ -129,17 +131,26 @@ export function makeCellShellMaterial(): THREE.ShaderMaterial {
         // Brightness goes from 1.0 → uFlashPeak at the flash envelope's peak.
         float flashBoost = 1.0 + (uFlashPeak - 1.0) * flashEnv(vFlashAge);
         float shock = shockwave();
-        float shockBoost = 1.0 + uShockwaveColorBoost * shock;
+        // Soft-knee the wave's brightness/alpha: same onset slope as the old
+        // linear (1 + BOOST*shock), but the bright leading edge saturates toward
+        // a warm ceiling instead of railing past white and hard-clipping (see
+        // shockwaveMaterial.ts). shock=0 → factor 1.0.
+        float shockBoost = 1.0 + uShockwaveColorCeil * (1.0 - exp(-shock * uShockwaveColorBoost / max(uShockwaveColorCeil, 0.001)));
+        float shockAlpha = 1.0 + uShockwaveAlphaCeil * (1.0 - exp(-shock * uShockwaveAlphaBoost / max(uShockwaveAlphaCeil, 0.001)));
 
         // Life gate: pre-birth invisible, mid-life full, in-death fading out.
         float lifeGate = vBirthRamp * (1.0 - vDeathRamp);
 
-        vec3 col = vColor * flashBoost * shockBoost * lifeGate;
+        // Warm the wavefront toward the core's white-hot bias so cool-hued
+        // shells stop clipping to a cold blue-white (matches cellHybridMaterial).
+        // shock=0 → shockTint == vColor, leaving resting + nerve-flash untouched.
+        vec3 shockTint = mix(vColor, vec3(1.0, 0.96, 0.80), min(1.0, shock * 0.85));
+        vec3 col = shockTint * flashBoost * shockBoost * lifeGate;
 
         // Additive blending; alpha is the modulation factor.
         gl_FragColor = vec4(
           col * uOpacity,
-          lifeGate * uOpacity * (1.0 + uShockwaveAlphaBoost * shock)
+          lifeGate * uOpacity * shockAlpha
         );
       }
     `,

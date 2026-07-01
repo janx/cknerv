@@ -37,6 +37,24 @@ export const SHOCKWAVE_ALPHA_BOOST = 5.5;
 export const SHOCKWAVE_SIZE_BOOST = 0.5;
 export const SHOCKWAVE_TRAIL_BOOST = 0.18;
 
+// Soft-knee ceilings for the wave's brightness/alpha response. The *_BOOST
+// values above act as the response's initial slope; these cap how far the peak
+// may climb before it rolls off. The shader applies
+//   factor = 1 + CEIL * (1 - exp(-shock * BOOST / CEIL))
+// so at small shock it matches the old linear `1 + BOOST*shock` (the wave's
+// onset/reach — its "punch" — is unchanged), while the bright leading edge
+// saturates toward `1 + CEIL` instead of railing past white and hard-clipping.
+// This is what takes the searing 刺眼 sting off without dulling the wave. A
+// lower CEIL rolls off sooner (softer); raise it toward BOOST to approach the
+// old hard-clip look. Tuned by eye in the ui-app harness (shock-check).
+//
+// At the wavefront (shock ≈ 0.6) these cut the peak boost ~36% vs the old
+// linear response — color 5.5×→3.5×, alpha 4.3×→2.8× — so the searing white
+// area shrinks and warms, while the front still boosts ~3.5×/2.8× over rest
+// (punch preserved). Raise both toward BOOST for less de-glare, lower for more.
+export const SHOCKWAVE_COLOR_CEIL = 3.5;
+export const SHOCKWAVE_ALPHA_CEIL = 2.5;
+
 export function makeShockwaveAtArray(): Float32Array {
   const a = new Float32Array(SHOCKWAVE_SLOTS);
   a.fill(-1e6);
@@ -67,6 +85,8 @@ export function makeShockwaveUniforms() {
     uShockwaveBandGrow: { value: SHOCKWAVE_BAND_GROW },
     uShockwaveColorBoost: { value: SHOCKWAVE_COLOR_BOOST },
     uShockwaveAlphaBoost: { value: SHOCKWAVE_ALPHA_BOOST },
+    uShockwaveColorCeil: { value: SHOCKWAVE_COLOR_CEIL },
+    uShockwaveAlphaCeil: { value: SHOCKWAVE_ALPHA_CEIL },
     uShockwaveSizeBoost: { value: SHOCKWAVE_SIZE_BOOST },
     uShockwaveTrailBoost: { value: SHOCKWAVE_TRAIL_BOOST },
   };
