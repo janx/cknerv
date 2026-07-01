@@ -48,12 +48,12 @@ export const SHOCKWAVE_TRAIL_BOOST = 0.18;
 // lower CEIL rolls off sooner (softer); raise it toward BOOST to approach the
 // old hard-clip look. Tuned by eye in the ui-app harness (shock-check).
 //
-// At the wavefront (shock ≈ 0.6) these cut the peak boost ~36% vs the old
-// linear response — color 5.5×→3.5×, alpha 4.3×→2.8× — so the searing white
-// area shrinks and warms, while the front still boosts ~3.5×/2.8× over rest
+// At the wavefront (shock ≈ 0.6) these cut the peak boost ~40% vs the old
+// linear response — color 5.5×→3.2×, alpha 4.3×→2.7× — so the searing white
+// area shrinks and warms, while the front still boosts ~3.2×/2.7× over rest
 // (punch preserved). Raise both toward BOOST for less de-glare, lower for more.
-export const SHOCKWAVE_COLOR_CEIL = 3.5;
-export const SHOCKWAVE_ALPHA_CEIL = 2.5;
+export const SHOCKWAVE_COLOR_CEIL = 2.8;
+export const SHOCKWAVE_ALPHA_CEIL = 2.2;
 
 export function makeShockwaveAtArray(): Float32Array {
   const a = new Float32Array(SHOCKWAVE_SLOTS);
