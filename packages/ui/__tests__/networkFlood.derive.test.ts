@@ -57,4 +57,17 @@ describe('colonyFlood schedule', () => {
     const f = colonyFlood(single as typeof lone, 1);
     expect(f).toEqual({ entryId: null, localReceiveDelayS: 0, arrivals: {}, senders: {}, colonyArrivalS: {}, colonyPredecessor: {} });
   });
+
+  it('zero-peers colony → queen unfed (arrivals {}) yet the colony still floods every node', () => {
+    // NOT the degenerate single-node case above: the full inferred scaffold is present,
+    // there are simply no MEASURED peers. An isolated node hears nothing to feed the queen.
+    const lone = inferredTopology([], 0xc0ffee, 'ckb:local');
+    const f = colonyFlood(lone, 1);
+    expect(f.arrivals).toEqual({});  // no measured workers → no boluses → queen stays unfed
+    expect(f.senders).toEqual({});   // …and thus no senders either
+    // the colony still floods visually: EVERY node gets a colony-arrival time.
+    expect(Object.keys(f.colonyArrivalS).length).toBe(lone.nodes.length);
+    for (const n of lone.nodes) expect(f.colonyArrivalS[n.id]).toBeGreaterThanOrEqual(0);
+    expect(f.entryId).not.toBe('ckb:local'); // origin is a real (inferred) node, not us
+  });
 });

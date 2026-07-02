@@ -117,3 +117,30 @@ describe('inferredTopology assembly', () => {
     expect(inf(t2)).toEqual(inf(t3));  // inferred↔inferred unaffected by the peer set
   });
 });
+
+describe('inferredTopology zero-peers edge case (an isolated node)', () => {
+  const seed = 0xc0ffee;
+
+  it('yields exactly one local node, zero measured nodes, and the full inferred scaffold', () => {
+    const t = inferredTopology([], seed, 'ckb:local');
+    expect(t.nodes.filter((n) => n.kind === 'local')).toHaveLength(1);
+    expect(t.nodes.filter((n) => n.kind === 'measured')).toHaveLength(0); // no peers observed
+    expect(t.nodes.filter((n) => n.kind === 'inferred').length).toBeGreaterThan(150); // scaffold intact
+  });
+
+  it('is one connected component — the isolated local is still stitched into the scaffold', () => {
+    const t = inferredTopology([], seed, 'ckb:local');
+    // traverse the adjacency from the isolated local node itself: if it's genuinely
+    // relayed into the colony, the reached set is EVERY node (no islands, local not orphaned).
+    const seen = new Set<string>();
+    const stack = [t.localId];
+    while (stack.length) {
+      const u = stack.pop()!;
+      if (seen.has(u)) continue;
+      seen.add(u);
+      for (const { to } of t.adjacency.get(u) ?? []) if (!seen.has(to)) stack.push(to);
+    }
+    // starting from local, reaching EVERY node proves local is not orphaned AND there are no islands.
+    expect(seen.size).toBe(t.nodes.length);
+  });
+});
