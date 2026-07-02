@@ -12,10 +12,11 @@
 // the delivery layer reads it every frame. Boluses run off `colonyFlood`, so the
 // measured workers already feed the galaxy on the flood's timing.
 //
-// `flashRef` / `edgePulseRef` are created here, handed to ColonyNodes/ColonyEdges
-// (which bind their real GPU buffers into them via useLayoutEffect), and passed
-// through — but they stay INERT this task. Task 9's wavefront flood writes them
-// off cf.colonyArrivalS / cf.colonyPredecessor.
+// The wavefront flood is COMPONENT-OWNED: ColonyNodes / ColonyEdges each take
+// `cf` + `blockPulseAtMs` and, on every new block, write their OWN flash / pulse
+// GPU buffer (off cf.colonyArrivalS) and flag it needsUpdate — no external
+// flash/edge refs pass through here. NetworkColony keeps only `pulseRef` for the
+// delivery layer.
 import { useEffect, useMemo, useRef } from 'react';
 import { simClock } from '../tweaks/simClock';
 import type { NetworkTopology, Vec3 } from '../types';
@@ -80,22 +81,18 @@ export default function NetworkColony({
     return local ? [local.pos] : [];
   }, [topology]);
 
-  // Flash / edge-pulse buffers owned here; ColonyNodes / ColonyEdges bind their
-  // real GPU arrays into these refs (useLayoutEffect handoff). INERT this task —
-  // Task 9's flood writes them off cf's colony maps.
-  const flashRef = useRef<Float32Array>(new Float32Array(0));
-  const edgePulseRef = useRef<Float32Array>(new Float32Array(0));
-
   return (
     <group>
       <ColonyEdges
         topology={topology}
-        edgePulseRef={edgePulseRef}
+        cf={cf}
+        blockPulseAtMs={blockPulseAtMs}
         localVersion={localVersion}
       />
       <ColonyNodes
         topology={topology}
-        flashRef={flashRef}
+        cf={cf}
+        blockPulseAtMs={blockPulseAtMs}
         selectedId={selectedId}
         onSelect={onSelect}
         localVersion={localVersion}
