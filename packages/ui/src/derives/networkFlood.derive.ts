@@ -49,6 +49,17 @@ export const FLOOD_DURATION_S = 2.0;
 export const HERO_MIN_FRAC = 0.15;   // never feed the queen before this fraction
 export const HERO_MAX_FRAC = 0.85;   // …nor after this (so she's fed before the flood ends)
 
+/** Clamp the hero (local) receive delay into the flood window's hero band
+ *  [FLOOD_DURATION_S·HERO_MIN_FRAC, FLOOD_DURATION_S·HERO_MAX_FRAC] = [0.3, 1.7]s,
+ *  so the queen is fed neither at t≈0 nor after the flood ends. Exported so the
+ *  bound math is unit-tested out-of-band (a swapped/mistyped bound would bite). */
+export function clampHeroDelayS(rawSec: number): number {
+  return Math.min(
+    Math.max(rawSec, FLOOD_DURATION_S * HERO_MIN_FRAC),
+    FLOOD_DURATION_S * HERO_MAX_FRAC,
+  );
+}
+
 export interface ColonyFlood {
   entryId: string | null;                            // flood origin (may be inferred)
   localReceiveDelayS: number;                        // hero timing (measured-worker feed)
@@ -74,17 +85,19 @@ export function colonyFlood(topology: NetworkTopology, nonce: number): ColonyFlo
   const arrivals: Record<string, number> = {};
   const senders: Record<string, string | null> = {};
   for (const n of topology.nodes) {
-    const s = (arrival.get(n.id) ?? 0) * scale;
-    colonyArrivalS[n.id] = s;
+    const raw = arrival.get(n.id) ?? 0;
+    const s = raw * scale;
+    // Defense-in-depth: an unreachable node has arrival=Infinity (→ Infinity, or
+    // NaN when scale=0); either would poison the GPU flash buffers downstream.
+    // Unreachable is impossible on today's connected graph — guard at this source.
+    const arrivalS = Number.isFinite(s) ? s : 0;
+    colonyArrivalS[n.id] = arrivalS;
     colonyPredecessor[n.id] = predecessor.get(n.id) ?? null;
-    if (n.kind === 'measured') { arrivals[n.id] = s; senders[n.id] = predecessor.get(n.id) ?? null; }
+    if (n.kind === 'measured') { arrivals[n.id] = arrivalS; senders[n.id] = predecessor.get(n.id) ?? null; }
   }
 
   const rawLocal = colonyArrivalS[topology.localId] ?? 0;
-  const localReceiveDelayS = Math.min(
-    Math.max(rawLocal, FLOOD_DURATION_S * HERO_MIN_FRAC),
-    FLOOD_DURATION_S * HERO_MAX_FRAC,
-  );
+  const localReceiveDelayS = clampHeroDelayS(rawLocal);
 
   return { entryId: originId, localReceiveDelayS, arrivals, senders, colonyArrivalS, colonyPredecessor };
 }
