@@ -37,7 +37,7 @@ export default function NetworkPanel({ summary, consensus, ping, vers, syncRatio
       <StatRow label="Best">#{fmt(summary.bestKnown)}</StatRow>
       {colonyCount != null && (
         <div style={{ marginTop: 5, fontFamily: HUD_FONTS.mono, fontSize: 8.5, letterSpacing: 0.4, color: HUD_COLORS.dim }}>
-          colony ~ {fmt(colonyCount)} (inferred)
+          colony ~ {fmt(colonyCount)} nodes (inferred)
         </div>
       )}
     </HudPanel>

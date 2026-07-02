@@ -112,9 +112,11 @@ interface CellGalaxyProps {
    *  colony model our own local node). The wave is fired from here so propagation
    *  reads as sweeping outward from it. null → falls back to the local origin. */
   entryWorld?: Vec3 | null;
-  /** Scene-seconds from the block pulse at which the entry peer receives the
-   *  block (`arrivals[entryId]`). The brightness wave departs at
-   *  `entryArrivalS + SHOCKWAVE_FIRE_DELAY_S` (entry-peer beam completion). */
+  /** Scene-seconds from the block pulse at which the entry point receives the
+   *  block. The brightness wave departs at `entryArrivalS + SHOCKWAVE_FIRE_DELAY_S`
+   *  (entry-point beam completion). ckb-rcg passes the entry peer's `arrivals[entryId]`;
+   *  the cknerv colony caller passes `localReceiveDelayS` (== the local apply time,
+   *  since our node IS the entry point), so wave-time and local-apply coincide. */
   entryArrivalS?: number;
 }
 
@@ -137,13 +139,19 @@ const TAGGED_CELL_POINT_SIZE = 3.0;
 
 /**
  * Choose the origin + scene-time for the canopy brightness wave (the shockwave
- * ring and the cell highlights swept by it). The wave is owned by the ENTRY peer
- * — the first peer to receive the block — NOT the local node, which is just an
- * ordinary peer that receives it. When the entry peer's world position is known
- * the wave fires from there at the peer's receive time (`elapsedSec +
- * entryArrivalS`); the caller adds `SHOCKWAVE_FIRE_DELAY_S` so it departs as the
- * entry peer's beam completes. With no entry peer (no peers connected) it falls
+ * ring and the cell highlights swept by it). Generic across callers: the wave is
+ * owned by whatever `entryWorld` the caller supplies — the block's entry point
+ * into the galaxy. When it is known the wave fires from there at the caller's
+ * `elapsedSec + entryArrivalS`; the caller adds `SHOCKWAVE_FIRE_DELAY_S` so it
+ * departs as that entry point's beam completes. With no entry (null) it falls
  * back to the local node's origin/time, preserving single-node behaviour.
+ *
+ * NOTE on callers: the ckb-rcg sibling passes the ENTRY PEER (the first peer to
+ * receive the block) — distinct from, and earlier than, the local node's own
+ * apply. The cknerv colony caller instead passes the LOCAL node as `entryWorld`
+ * with `entryArrivalS == localReceiveDelayS` (our node IS the galaxy's entry
+ * point — the queen is fed by us), so there the wave-time and the local-apply
+ * time coincide rather than the wave leading.
  */
 export function selectWaveAnchor(
   entryWorld: Vec3 | null,
@@ -901,15 +909,16 @@ export default function CellGalaxy({ ckbNodeIds, minerCkbNodeIds, universeSeed, 
         const receiveDelayS = localReceiveDelayS;
         const blockTriggerSceneS = simClock.elapsedSec + receiveDelayS;
 
-        // The canopy brightness wave is owned by the ENTRY peer's beam, not the
-        // local node (see selectWaveAnchor): fire the wave (shockwave ring +
-        // ring-swept cell highlights) from the entry peer's position + receive
-        // time, so it departs as that peer's beam completes (~BLOCK_RELAY_HOP_S
-        // earlier than the local apply, off-center) and sweeps across to reach
-        // the local cells naturally. Falls back to the local node when there are
-        // no peers. The local reaction below (halo/local-ignition) keeps the
-        // local origin + blockTriggerSceneS — the local node still reacts as an
-        // ordinary peer; it is simply no longer the source of the wave.
+        // The canopy brightness wave is owned by the caller-supplied entry point
+        // (see selectWaveAnchor): fire the wave (shockwave ring + ring-swept cell
+        // highlights) from that position + receive time so it sweeps outward from
+        // the entry and reaches the local cells naturally. In the ckb-rcg sibling
+        // the entry is the ENTRY PEER, so the wave departs ~BLOCK_RELAY_HOP_S
+        // earlier than the local apply (off-center); in the cknerv colony caller
+        // entryWorld IS the local node with entryArrivalS == localReceiveDelayS,
+        // so the wave and the local apply coincide. Falls back to the local node
+        // when there is no entry. The local reaction below (halo/local-ignition)
+        // keeps the local origin + blockTriggerSceneS regardless.
         const { origin: waveOrigin, triggerSceneS: waveTriggerSceneS } =
           selectWaveAnchor(
             entryWorld,
