@@ -1,15 +1,26 @@
 // ColonyNodes — the P2P "colony" rendered in three honesty classes:
 //   • inferred ghosts   — ONE faint additive <points> cloud (~240): a "possible
-//     network" haze. Inert until M3's flood drives per-point flashes through
-//     `flashRef` (absolute simClock seconds; sentinel -1e9 ⇒ "never").
+//     network" haze. Each block ignites a spreading wavefront: per-point flashes
+//     are written into `aFlashAt` (absolute simClock seconds; sentinel -1e9 ⇒
+//     "never") on the pulse, and the ghost shader boosts brightness by
+//     `flashEnv(uTime - aFlashAt)`.
 //   • measured crystals — one clickable CrystalGlow per real peer, bright and
-//     saturated: the honest "measured core."
+//     saturated: the honest "measured core." Flares as the front reaches it.
 //   • local marker      — one larger, distinctly-tinted CrystalGlow = "you."
+//     Flares as the front reaches it.
 //
 // Scene-clock discipline: the ghost shader's `uTime` is driven by
 // simClock.elapsedSec inside useSimFrame (NOT performance.now), so it shares the
-// exact time base M3 writes `aFlashAt` against. Same pattern as CrystalGlow.
-import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
+// exact time base the flood writes `aFlashAt` against. Same pattern as CrystalGlow.
+//
+// Component-owned flood write (NOT external refs): each buffer owner captures its
+// OWN flood t0 in ITS OWN pulse effect and sets its geometry's needsUpdate. t0 is
+// simClock.elapsedSec, which is mutated ONLY in the r3f loop (never during React's
+// effect flush) — so InferredCloud's, the crystals', and ColonyEdges' captures in
+// the same pulse's effect flush are identical (perfectly synced), while capturing
+// LOCALLY avoids the child-before-parent trap of reading a parent-set ref in a
+// child effect.
+import { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import { useSimFrame } from '../tweaks/useSimFrame';
 import { simClock } from '../tweaks/simClock';
@@ -18,6 +29,7 @@ import { PEER_COLORS, peerColorKind } from '../derives/peers.derive';
 import { FLASH_ENV_GLSL } from '../materials/cellEnvelope.glsl';
 import CrystalGlow from './CrystalGlow';
 import type { NetworkNode, NetworkTopology } from '../types';
+import type { ColonyFlood } from '../derives/networkFlood.derive';
 
 // Unit octahedron shared by every measured + local crystal (caller-owned; NOT
 // disposed by CrystalGlow). A deliberately-separate copy from PeerConstellation's
@@ -25,10 +37,10 @@ import type { NetworkNode, NetworkTopology } from '../types';
 // reach into it.
 const PEER_GEOM = new THREE.OctahedronGeometry(1, 0);
 
-// Ghost-cloud palette/scale. Faint blue haze; the flash boost is inert here.
+// Ghost-cloud palette/scale. Faint blue haze; the flood flash boosts it.
 const INFERRED_COLOR = new THREE.Color('#8fb7ff');
 const INFERRED_DIM = 0.18; // base brightness — "possible network," barely there
-const INFERRED_PEAK = 2.6; // flood-flash ceiling (driven in M3)
+const INFERRED_PEAK = 2.6; // flood-flash ceiling
 const INFERRED_SIZE = 2.2; // point-size factor (perspective-scaled)
 
 // Measured core: bright, near the top of the peer crystal range (0.55..1.65).
@@ -40,6 +52,16 @@ const MEASURED_BRIGHTNESS = 1.0;
 const LOCAL_MARKER_COLOR = new THREE.Color('#ffd27f');
 const LOCAL_SIZE = 2.5;
 
+// Crystal arrival flare: a short additive brightness spike layered ON TOP of a
+// crystal's breathe when the wavefront reaches it. 0 before arrival; decays over
+// ~FLARE_DUR_S. Tune K live against the real (brighter) backend flood.
+const FLARE_K = 1.5;      // peak boost at arrival
+const FLARE_DUR_S = 0.6;  // flare lifetime
+function arrivalFlare(nowSec: number, floodT0: number, arrivalS: number): number {
+  const age = nowSec - (floodT0 + arrivalS);
+  return age >= 0 && age < FLARE_DUR_S ? FLARE_K * Math.exp(-age * 6) : 0;
+}
+
 /** Measured node tint = the real peer palette: version-mismatch (violet) wins,
  *  else connection direction — single-sourced via peerColorKind. */
 function measuredColor(node: NetworkNode, localVersion: string): THREE.Color {
@@ -49,17 +71,19 @@ function measuredColor(node: NetworkNode, localVersion: string): THREE.Color {
 
 /**
  * The inferred scaffold as a single additive point cloud. `position` +
- * `aFlashAt` are allocated once; the flash buffer is handed out via `flashRef`
- * so M3's flood layer can ignite points in place without touching React. The
- * ghost shader boosts brightness by `flashEnv(uTime - aFlashAt)` — currently
- * always 0 (every `aFlashAt` sits at the -1e9 sentinel).
+ * `aFlashAt` are allocated once; the flash buffer is written IN PLACE on each
+ * block (this component owns the geometry, so it captures the flood t0 and sets
+ * needsUpdate itself). The ghost shader boosts brightness by
+ * `flashEnv(uTime - aFlashAt)` — a spreading wavefront across the cloud.
  */
 function InferredCloud({
   topology,
-  flashRef,
+  cf,
+  blockPulseAtMs,
 }: {
   topology: NetworkTopology;
-  flashRef: React.MutableRefObject<Float32Array>;
+  cf: ColonyFlood;
+  blockPulseAtMs: number;
 }) {
   const inferred = useMemo(
     () => topology.nodes.filter((n) => n.kind === 'inferred'),
@@ -68,7 +92,8 @@ function InferredCloud({
 
   // Per-point flash peak time, ABSOLUTE simClock seconds; -1e9 ⇒ "never." Held
   // in its own stable memo (not written from render) so it survives StrictMode's
-  // double-invoked factories and stays the exact array bound to `aFlashAt`.
+  // double-invoked factories and stays the exact array bound to `aFlashAt`. Slot
+  // i ↔ inferred[i].id (the SAME memoized array that builds the geometry below).
   const flash = useMemo(
     () => new Float32Array(inferred.length).fill(-1e9),
     [inferred],
@@ -87,11 +112,24 @@ function InferredCloud({
     return g;
   }, [inferred, flash]);
 
-  // Hand the live flash buffer to the flood layer (M3) after commit, so
-  // `flashRef.current` is always the array actually bound to the geometry.
-  useLayoutEffect(() => {
-    flashRef.current = flash;
-  }, [flash, flashRef]);
+  // Ignite the wavefront on each NEW block: write each inferred point's absolute
+  // flash time (t0 + its graph-flood arrival) and flag the attribute dirty. t0 is
+  // captured HERE (the buffer owner's own effect), never read from a parent ref,
+  // so it can't go stale before a parent effect runs (child effects flush first).
+  const lastPulseRef = useRef(blockPulseAtMs);
+  useEffect(() => {
+    if (blockPulseAtMs <= lastPulseRef.current) return;
+    lastPulseRef.current = blockPulseAtMs;
+    const t0 = simClock.elapsedSec;
+    for (let i = 0; i < inferred.length; i++) {
+      flash[i] = t0 + (cf.colonyArrivalS[inferred[i].id] ?? 0);
+    }
+    geom.getAttribute('aFlashAt').needsUpdate = true;
+    // cf + inferred/flash/geom are read from the render that bumped
+    // blockPulseAtMs (App recomputes cf + bumps the pulse together), so
+    // [blockPulseAtMs] suffices.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [blockPulseAtMs]);
 
   const mat = useMemo(
     () =>
@@ -158,16 +196,22 @@ function InferredCloud({
 /**
  * One measured peer crystal. A per-node component (not an inline map) so it can
  * own an `intensityRef` the child reads every frame — a gentle seeded breathe
- * keeps the measured core visibly alive against the inert ghost haze, animated
- * on the scene clock without a React re-render.
+ * keeps the measured core visibly alive against the inert ghost haze, plus a
+ * flood flare when the wavefront reaches it, animated on the scene clock without
+ * a React re-render. `floodT0Ref` is captured by ColonyNodes and read here in
+ * useSimFrame (after the effect flush → no staleness).
  */
 function MeasuredCrystal({
   node,
+  cf,
+  floodT0Ref,
   selectedId,
   onSelect,
   localVersion,
 }: {
   node: NetworkNode;
+  cf: ColonyFlood;
+  floodT0Ref: React.MutableRefObject<number>;
   selectedId: string | null;
   onSelect: (id: string | null) => void;
   localVersion: string;
@@ -178,8 +222,10 @@ function MeasuredCrystal({
   const intensityRef = useRef(MEASURED_BRIGHTNESS);
 
   useSimFrame(() => {
+    const now = simClock.elapsedSec;
+    const breathe = MEASURED_BRIGHTNESS * (0.9 + 0.1 * Math.sin(now * 0.8 + phase));
     intensityRef.current =
-      MEASURED_BRIGHTNESS * (0.9 + 0.1 * Math.sin(simClock.elapsedSec * 0.8 + phase));
+      breathe + arrivalFlare(now, floodT0Ref.current, cf.colonyArrivalS[node.id] ?? 0);
   });
 
   return (
@@ -201,18 +247,55 @@ function MeasuredCrystal({
 }
 
 /**
+ * The single local "you" marker: distinct color, larger, non-selectable. Base
+ * intensity 1 (CrystalGlow's internal halo breathe keeps it alive) plus the same
+ * flood flare when the wavefront reaches it.
+ */
+function LocalCrystal({
+  node,
+  cf,
+  floodT0Ref,
+}: {
+  node: NetworkNode;
+  cf: ColonyFlood;
+  floodT0Ref: React.MutableRefObject<number>;
+}) {
+  const intensityRef = useRef(1);
+  useSimFrame(() => {
+    intensityRef.current =
+      1 + arrivalFlare(simClock.elapsedSec, floodT0Ref.current, cf.colonyArrivalS[node.id] ?? 0);
+  });
+
+  return (
+    <group position={node.pos}>
+      <CrystalGlow
+        geom={PEER_GEOM}
+        size={LOCAL_SIZE}
+        color={LOCAL_MARKER_COLOR}
+        intensityRef={intensityRef}
+        seed={node.id}
+      />
+    </group>
+  );
+}
+
+/**
  * Composes the colony: the inferred ghost cloud + one CrystalGlow per measured
- * peer + the single local "you" marker. Does not wire into the app (Task 8).
+ * peer + the single local "you" marker. On each block the wavefront lights the
+ * cloud (InferredCloud owns its buffer) and flares the crystals; ColonyNodes owns
+ * the shared `floodT0Ref` the crystals read.
  */
 export default function ColonyNodes({
   topology,
-  flashRef,
+  cf,
+  blockPulseAtMs,
   selectedId,
   onSelect,
   localVersion,
 }: {
   topology: NetworkTopology;
-  flashRef: React.MutableRefObject<Float32Array>;
+  cf: ColonyFlood;
+  blockPulseAtMs: number;
   selectedId: string | null;
   onSelect: (id: string | null) => void;
   localVersion: string;
@@ -226,29 +309,34 @@ export default function ColonyNodes({
     [topology],
   );
 
+  // Flood t0 for the measured/local crystal flares. Captured in THIS component's
+  // own pulse effect; the crystals read it in useSimFrame (after the effect flush
+  // → no child-before-parent staleness). Equals InferredCloud's / ColonyEdges'
+  // own captures (same commit's effect flush reads the same simClock.elapsedSec).
+  const floodT0Ref = useRef(-1e9);
+  const lastPulseRef = useRef(blockPulseAtMs);
+  useEffect(() => {
+    if (blockPulseAtMs > lastPulseRef.current) {
+      lastPulseRef.current = blockPulseAtMs;
+      floodT0Ref.current = simClock.elapsedSec;
+    }
+  }, [blockPulseAtMs]);
+
   return (
     <group>
-      <InferredCloud topology={topology} flashRef={flashRef} />
+      <InferredCloud topology={topology} cf={cf} blockPulseAtMs={blockPulseAtMs} />
       {measured.map((n) => (
         <MeasuredCrystal
           key={n.id}
           node={n}
+          cf={cf}
+          floodT0Ref={floodT0Ref}
           selectedId={selectedId}
           onSelect={onSelect}
           localVersion={localVersion}
         />
       ))}
-      {local ? (
-        // Bespoke "you" marker: distinct color, larger, non-selectable.
-        <group position={local.pos}>
-          <CrystalGlow
-            geom={PEER_GEOM}
-            size={LOCAL_SIZE}
-            color={LOCAL_MARKER_COLOR}
-            seed={local.id}
-          />
-        </group>
-      ) : null}
+      {local ? <LocalCrystal node={local} cf={cf} floodT0Ref={floodT0Ref} /> : null}
     </group>
   );
 }
