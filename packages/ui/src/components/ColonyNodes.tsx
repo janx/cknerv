@@ -79,10 +79,12 @@ function InferredCloud({
   topology,
   cf,
   blockPulseAtMs,
+  backfillActive,
 }: {
   topology: NetworkTopology;
   cf: ColonyFlood;
   blockPulseAtMs: number;
+  backfillActive: boolean;
 }) {
   const inferred = useMemo(
     () => topology.nodes.filter((n) => n.kind === 'inferred'),
@@ -118,15 +120,19 @@ function InferredCloud({
   const lastPulseRef = useRef(blockPulseAtMs);
   useEffect(() => {
     if (blockPulseAtMs <= lastPulseRef.current) return;
+    // Consume even while backfilling (advance the guard so the backlog can't
+    // replay when `backfill` clears), then bail WITHOUT writing the flash buffer
+    // → the ghost cloud stays quiescent during catch-up (no wavefront strobe).
     lastPulseRef.current = blockPulseAtMs;
+    if (backfillActive) return;
     const t0 = simClock.elapsedSec;
     for (let i = 0; i < inferred.length; i++) {
       flash[i] = t0 + (cf.colonyArrivalS[inferred[i].id] ?? 0);
     }
     geom.getAttribute('aFlashAt').needsUpdate = true;
-    // cf + inferred/flash/geom are read from the render that bumped
-    // blockPulseAtMs (App recomputes cf + bumps the pulse together), so
-    // [blockPulseAtMs] suffices.
+    // cf + backfillActive + inferred/flash/geom are read from the render that
+    // bumped blockPulseAtMs (App recomputes cf + backfill + bumps the pulse
+    // together), so [blockPulseAtMs] suffices.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [blockPulseAtMs]);
 
@@ -288,6 +294,7 @@ export default function ColonyNodes({
   topology,
   cf,
   blockPulseAtMs,
+  backfillActive = false,
   selectedId,
   onSelect,
   localVersion,
@@ -295,6 +302,10 @@ export default function ColonyNodes({
   topology: NetworkTopology;
   cf: ColonyFlood;
   blockPulseAtMs: number;
+  /** Calm catch-up: when true, consume the block pulse but skip the wavefront
+   *  flash + crystal flares (see NetworkColony header). Optional/defaults false
+   *  so standalone/external mounts keep the un-gated behaviour. */
+  backfillActive?: boolean;
   selectedId: string | null;
   onSelect: (id: string | null) => void;
   localVersion: string;
@@ -315,15 +326,26 @@ export default function ColonyNodes({
   const floodT0Ref = useRef(-1e9);
   const lastPulseRef = useRef(blockPulseAtMs);
   useEffect(() => {
-    if (blockPulseAtMs > lastPulseRef.current) {
-      lastPulseRef.current = blockPulseAtMs;
-      floodT0Ref.current = simClock.elapsedSec;
-    }
+    if (blockPulseAtMs <= lastPulseRef.current) return;
+    // Consume even while backfilling, then bail WITHOUT advancing floodT0Ref → the
+    // measured/local crystals don't flare during catch-up (arrivalFlare reads the
+    // stale t0, so its age stays past the flare window). No replay on clear.
+    lastPulseRef.current = blockPulseAtMs;
+    if (backfillActive) return;
+    floodT0Ref.current = simClock.elapsedSec;
+    // backfillActive is read from the render that bumped blockPulseAtMs (App
+    // recomputes backfill + bumps the pulse together), so [blockPulseAtMs] suffices.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [blockPulseAtMs]);
 
   return (
     <group>
-      <InferredCloud topology={topology} cf={cf} blockPulseAtMs={blockPulseAtMs} />
+      <InferredCloud
+        topology={topology}
+        cf={cf}
+        blockPulseAtMs={blockPulseAtMs}
+        backfillActive={backfillActive}
+      />
       {measured.map((n) => (
         <MeasuredCrystal
           key={n.id}

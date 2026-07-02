@@ -69,10 +69,12 @@ function InferredMesh({
   topology,
   cf,
   blockPulseAtMs,
+  backfillActive,
 }: {
   topology: NetworkTopology;
   cf: ColonyFlood;
   blockPulseAtMs: number;
+  backfillActive: boolean;
 }) {
   const infEdges = useMemo(
     () => topology.edges.filter((e) => e.kind === 'inferred'),
@@ -110,7 +112,11 @@ function InferredMesh({
   const lastPulseRef = useRef(blockPulseAtMs);
   useEffect(() => {
     if (blockPulseAtMs <= lastPulseRef.current) return;
+    // Consume even while backfilling (advance the guard so the backlog can't
+    // replay when `backfill` clears), then bail WITHOUT writing the pulse buffer
+    // → the gossamer mesh stays quiescent during catch-up (no wavefront strobe).
     lastPulseRef.current = blockPulseAtMs;
+    if (backfillActive) return;
     const t0 = simClock.elapsedSec;
     for (let i = 0; i < infEdges.length; i++) {
       const e = infEdges[i];
@@ -120,9 +126,9 @@ function InferredMesh({
       pulse[2 * i + 1] = t;
     }
     geom.getAttribute('aPulseAt').needsUpdate = true;
-    // cf + infEdges/pulse/geom are read from the render that bumped
-    // blockPulseAtMs (App recomputes cf + bumps the pulse together), so
-    // [blockPulseAtMs] suffices.
+    // cf + backfillActive + infEdges/pulse/geom are read from the render that
+    // bumped blockPulseAtMs (App recomputes cf + backfill + bumps the pulse
+    // together), so [blockPulseAtMs] suffices.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [blockPulseAtMs]);
 
@@ -192,11 +198,16 @@ export default function ColonyEdges({
   topology,
   cf,
   blockPulseAtMs,
+  backfillActive = false,
   localVersion,
 }: {
   topology: NetworkTopology;
   cf: ColonyFlood;
   blockPulseAtMs: number;
+  /** Calm catch-up: when true, consume the block pulse but skip the mesh
+   *  wavefront write (see NetworkColony header). Optional/defaults false so
+   *  standalone/external mounts keep the un-gated behaviour. */
+  backfillActive?: boolean;
   localVersion: string;
 }) {
   // One live belt per measured (local↔peer) edge. Resolve endpoint positions +
@@ -235,7 +246,12 @@ export default function ColonyEdges({
           seed={b.seed}
         />
       ))}
-      <InferredMesh topology={topology} cf={cf} blockPulseAtMs={blockPulseAtMs} />
+      <InferredMesh
+        topology={topology}
+        cf={cf}
+        blockPulseAtMs={blockPulseAtMs}
+        backfillActive={backfillActive}
+      />
     </group>
   );
 }
