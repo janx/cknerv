@@ -1,5 +1,5 @@
 // NetworkColony — the assembled P2P "colony" that replaces the retired
-// hub-and-spoke PeerConstellation. It composes:
+// hub-and-spoke peer constellation. It composes:
 //   • ColonyEdges — the gossamer inferred mesh + one live belt per measured edge
 //   • ColonyNodes — the faint inferred cloud + bright measured crystals + the
 //     local "you" marker (rendered OVER the edges)
@@ -7,7 +7,7 @@
 //     plus the local hero (cf.localReceiveDelayS), lobbed up into the cell
 //     canopy and igniting the cells each lands on.
 //
-// Block wiring is ported from PeerConstellation (:155-232): on each new block
+// Block wiring (ported from the retired hub-and-spoke layer): on each new block
 // pulse we stamp `pulseRef` with { at: simClock.elapsedSec, entryId: cf.entryId };
 // the delivery layer reads it every frame. Boluses run off `colonyFlood`, so the
 // measured workers already feed the galaxy on the flood's timing.
@@ -52,8 +52,7 @@ export default function NetworkColony({
   localVersion,
 }: NetworkColonyProps) {
   // Per-block pulse: the delivery layer reads `at` (when it fired) and `entryId`
-  // (the flood origin). Per-worker arrival times come from `cf.arrivals`. Same
-  // effect shape as PeerConstellation:155-168.
+  // (the flood origin). Per-worker arrival times come from `cf.arrivals`.
   const pulseRef = useRef<{ at: number; entryId: string | null } | null>(null);
   const lastPulseRef = useRef(blockPulseAtMs);
   useEffect(() => {

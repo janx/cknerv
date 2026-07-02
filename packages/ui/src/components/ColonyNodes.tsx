@@ -32,9 +32,8 @@ import type { NetworkNode, NetworkTopology } from '../types';
 import type { ColonyFlood } from '../derives/networkFlood.derive';
 
 // Unit octahedron shared by every measured + local crystal (caller-owned; NOT
-// disposed by CrystalGlow). A deliberately-separate copy from PeerConstellation's
-// module-private geometry — that component is retired in Task 8, so we don't
-// reach into it.
+// disposed by CrystalGlow). A deliberately-separate copy from the retired
+// hub-and-spoke layer's module-private geometry, so we don't reach into it.
 const PEER_GEOM = new THREE.OctahedronGeometry(1, 0);
 
 // Ghost-cloud palette/scale. Faint blue haze; the flood flash boosts it.

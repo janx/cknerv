@@ -1,10 +1,9 @@
-// Pure data shapers for the peer constellation + NETWORK HUD. No React,
+// Pure data shapers for the peer colony + NETWORK HUD. No React,
 // no three.js — unit-tested directly.
 
 import type { ChainEntry, ChainNode, Peer, PeerDirection } from '@cknerv/types';
 import type { Vec3 } from '../types';
-import { CHAIN_Y, mulberry32 } from '../layout';
-import { fnv1a } from '../geometry/edgeBezier';
+import { CHAIN_Y } from '../layout';
 
 /** Latency at/above this (ms) maps to the outer rim. */
 export const PEER_LATENCY_CAP_MS = 400;
@@ -58,32 +57,7 @@ export function peerCrystalBrightness(sync: number): number {
   return 0.45 + sync * 0.5;
 }
 
-// ─── New-block propagation: latency-based arrival (no hub) ───────────────
-// A block is mined elsewhere and reaches each node at a time positioned across the
-// rendered peer set by latency — inner/low-latency first, outer last — so the beam
-// ignitions read as an outward sweep. A peer's position blends rank-even spacing
-// (so clustered real latencies still separate, not all at once) with latency
-// magnitude (so genuinely large gaps stretch), then jitter per block (seeded by
-// fnv1a(node_id) ⊕ lastPulseAtMs) reshuffles the fine order every block.
-
-/** Earliest peer's base delay after the pulse (s): even the nearest node takes a
- *  beat to hear the block. */
-export const BLOCK_ARRIVAL_BASE_S = 0.12;
-/** Total spread of arrival times across the rendered peer set (s): the farthest
- *  peer hears the block ~this long after the nearest. Kept well above the beam
- *  lifetime (~2.2s) so ignitions sweep outward instead of flashing together. */
-export const BLOCK_ARRIVAL_SPREAD_S = 2.4;
-/** Blend of rank-even spacing (→1) vs latency-magnitude spacing (→0) for a peer's
- *  position in the spread. Rank guarantees a readable gap even when latencies
- *  cluster; magnitude lets large latency gaps stretch the pause. */
-export const BLOCK_ARRIVAL_RANK_MIX = 0.6;
-/** Per-block jitter on the arrival ORDER, in latency-fraction (latency01) units, so
- *  near-equal-latency peers reshuffle which fires first each block (no identical
- *  sweep). Peers within ~2× this in latency01 can swap; beyond that order is stable. */
-export const BLOCK_ARRIVAL_ORDER_JITTER = 0.1;
-/** Per-block jitter amplitude (±, s) on each peer's arrival TIME so arrivals don't
- *  snap to exact rank positions. Small vs the spread so the latency sweep dominates. */
-export const BLOCK_ARRIVAL_JITTER_S = 0.12;
+// Courier flight timings, consumed by courierFlight below.
 /** Broadcast-courier flight time (s): a node's inbound courier flies from an
  *  earlier-received node ≈ this long before it. Long enough that several couriers
  *  overlap in flight (the broadcast) and each is slow enough to follow. */
@@ -149,19 +123,11 @@ export function courierFlight(
   return { from, to: self, startAge, dur };
 }
 
-/** Deterministic generator for one peer × one block: fold the node-id hash with
- *  the per-block nonce so the same (node, block) always yields the same stream,
- *  and a new block reshuffles. Floors the (ms-timestamp) nonce to a uint first. */
-function peerBlockRng(nodeId: string, nonce: number): () => number {
-  return mulberry32((fnv1a(nodeId) ^ (Math.floor(nonce) >>> 0)) >>> 0);
-}
-
 /** Max peers rendered; the rest are summarized in the NETWORK HUD. */
 export const PEER_RENDER_CAP = 80;
 
 /** Order peers deterministically (outbound first, then lowest latency) and cap
- *  the count so a high-degree node stays legible. Shared by PeerConstellation
- *  (what it renders) and App (what the schedule is computed over) so both agree. */
+ *  the count so a high-degree node stays legible. */
 export function rankPeers(peers: Peer[]): Peer[] {
   return [...peers]
     .sort((a, b) => {
@@ -169,103 +135,6 @@ export function rankPeers(peers: Peer[]): Peer[] {
       return (a.latency_ms ?? 1e9) - (b.latency_ms ?? 1e9);
     })
     .slice(0, PEER_RENDER_CAP);
-}
-
-export interface BlockArrivalSchedule {
-  /** node_id of the earliest-arriving peer this block (the one we hear it from);
-   *  null when there are no peers. */
-  entryId: string | null;
-  /** Age (s since pulse) at which the LOCAL node applies the block = entry peer's
-   *  arrival + BLOCK_RELAY_HOP_S. 0 when there are no peers (hero fires at t=0). */
-  localReceiveDelayS: number;
-  /** Per-peer arrival age (s since pulse), keyed by node_id — when each peer's
-   *  tributary beam fires. Computed set-relative so clustered latencies still sweep. */
-  arrivals: Record<string, number>;
-  /** Broadcast cascade: for each peer, the node_id its courier flies FROM (an
-   *  earlier-received node ≈ one hop before it). The entry/source peer → null (it
-   *  relays to local instead). Drives the node→node broadcast couriers. */
-  senders: Record<string, string | null>;
-}
-
-/** Per-block schedule over the ranked + capped peer set (so entryId is always
- *  on-screen). Each peer is positioned across [BASE, BASE+SPREAD] by a blend of its
- *  latency RANK (even spacing — a readable sweep even when latencies cluster) and
- *  latency MAGNITUDE (large gaps stretch), then jittered per block. entryId = argmin
- *  arrival; the local node applies one relay-hop later (never first). */
-export function blockArrivalSchedule(peers: Peer[], nonce: number): BlockArrivalSchedule {
-  const arrivals: Record<string, number> = {};
-  if (peers.length === 0) return { entryId: null, localReceiveDelayS: 0, arrivals, senders: {} };
-
-  // One jitter draw per peer (draw #1 of its stream) perturbs BOTH the arrival order
-  // and the time, so near-equal-latency peers reshuffle every block (no identical
-  // sweep).
-  const items = peers.map((p) => ({
-    p,
-    l01: latencyToRadius01(p.latency_ms),
-    j: (peerBlockRng(p.node_id, nonce)() - 0.5) * 2, // [-1, 1]
-  }));
-  let l01min = Infinity;
-  let l01max = -Infinity;
-  for (const it of items) {
-    if (it.l01 < l01min) l01min = it.l01;
-    if (it.l01 > l01max) l01max = it.l01;
-  }
-  const span01 = l01max - l01min;
-
-  // Inner / low-latency first, with per-block order jitter so near-equal peers swap;
-  // stable node_id tiebreak keeps it deterministic.
-  items.sort((a, b) => {
-    const ka = a.l01 + BLOCK_ARRIVAL_ORDER_JITTER * a.j;
-    const kb = b.l01 + BLOCK_ARRIVAL_ORDER_JITTER * b.j;
-    return ka !== kb ? ka - kb : a.p.node_id < b.p.node_id ? -1 : 1;
-  });
-
-  const n = items.length;
-  let entryId: string | null = null;
-  let bestAge = Infinity;
-  for (let i = 0; i < n; i += 1) {
-    const { p, l01, j } = items[i];
-    const rankFrac = n === 1 ? 0 : i / (n - 1);
-    const magFrac = span01 > 1e-6 ? (l01 - l01min) / span01 : rankFrac;
-    const pos = BLOCK_ARRIVAL_RANK_MIX * rankFrac + (1 - BLOCK_ARRIVAL_RANK_MIX) * magFrac;
-    const age = Math.max(
-      0,
-      BLOCK_ARRIVAL_BASE_S + BLOCK_ARRIVAL_SPREAD_S * pos + BLOCK_ARRIVAL_JITTER_S * j,
-    );
-    arrivals[p.node_id] = age;
-    if (age < bestAge) {
-      bestAge = age;
-      entryId = p.node_id;
-    }
-  }
-
-  // Broadcast cascade: order by actual arrival; each node after the source receives
-  // its courier from the earlier node whose arrival is closest to one hop before it,
-  // so couriers flow node→node (generally inner→outer) in arrival order.
-  const byArrival = [...items].sort(
-    (a, b) => arrivals[a.p.node_id] - arrivals[b.p.node_id],
-  );
-  const senders: Record<string, string | null> = {};
-  for (let j = 0; j < n; j += 1) {
-    const id = byArrival[j].p.node_id;
-    if (j === 0) {
-      senders[id] = null; // the source — no inbound courier; it relays to local
-      continue;
-    }
-    const target = arrivals[id] - BLOCK_BROADCAST_HOP_S;
-    let bestId = byArrival[0].p.node_id;
-    let bestD = Infinity;
-    for (let i = 0; i < j; i += 1) {
-      const d = Math.abs(arrivals[byArrival[i].p.node_id] - target);
-      if (d < bestD) {
-        bestD = d;
-        bestId = byArrival[i].p.node_id;
-      }
-    }
-    senders[id] = bestId;
-  }
-
-  return { entryId, localReceiveDelayS: bestAge + BLOCK_RELAY_HOP_S, arrivals, senders };
 }
 
 export interface CourierLeg {
