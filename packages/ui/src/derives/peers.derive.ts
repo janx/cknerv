@@ -11,9 +11,6 @@ export const PEER_INNER_RADIUS = 34;
 export const PEER_OUTER_RADIUS = 56;
 /** Lag (blocks) at which a peer's sync proximity bottoms out. */
 export const PEER_SYNC_LAG_FLOOR = 2000;
-// Now unused (their only consumer was removed in the colony cleanup); kept, not cascade-deleted.
-const PEER_ELLIPSE_X = 1.25;
-const PEER_ELLIPSE_Z = 0.85;
 
 /** Normalize latency to [0,1]. null/undefined → 0.5 (unknown = mid ring). */
 export function latencyToRadius01(latencyMs: number | null | undefined): number {
@@ -65,27 +62,6 @@ export function easeOutCubic(t: number): number {
  *  f(0)=0, f(1)=1; slope grows from 0.15 to 1.85 (accelerating). */
 export function easeInLob(t: number): number {
   return 0.15 * t + 0.85 * t * t;
-}
-
-// Now unused (its producer was removed in the colony cleanup); kept, not cascade-deleted.
-export interface CourierFlight {
-  from: Vec3;
-  to: Vec3;
-  /** Age (s since pulse) at which the block departs its sender. */
-  startAge: number;
-  /** Flight duration (s). */
-  dur: number;
-}
-
-/** Max peers rendered; the rest are summarized in the NETWORK HUD.
- *  (Now unused after the colony cleanup; kept, not cascade-deleted.) */
-export const PEER_RENDER_CAP = 80;
-
-// Now unused (its producer was removed in the colony cleanup); kept, not cascade-deleted.
-export interface CourierLeg {
-  visible: boolean;
-  /** Fraction along the flight: 0 at the start node, 1 arrived at the destination. */
-  t: number;
 }
 
 export interface Delivery {
