@@ -196,7 +196,7 @@ export default function App({
   const peersSig = useMemo(
     () =>
       peers
-        .map((p) => `${p.node_id}|${p.latency_ms ?? ''}|${p.direction}|${p.best_known ?? ''}`)
+        .map((p) => `${p.node_id}|${p.latency_ms ?? ''}|${p.direction}|${p.best_known ?? ''}|${p.version ?? ''}`)
         .join(';'),
     [peers],
   );
