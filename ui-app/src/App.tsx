@@ -167,10 +167,17 @@ export default function App({
   // identity — otherwise the inferred geometry (and Task 9's in-flight flood
   // flash/pulse buffers) would rebuild/reset every poll. No-op re-clones now keep
   // the same `topology` object; genuine peer changes still rebuild (accepted).
+  // The signature includes ONLY the fields the colony actually renders from the
+  // topology snapshot: node_id (identity), latency_ms (measured position),
+  // direction + version (measured colour via peerColorKind). `best_known` is
+  // deliberately EXCLUDED — nothing rendered reads it (sync-brightness was
+  // dropped), and it advances ~every block, so including it would rebuild the
+  // topology mid-flood and truncate the in-flight wavefront every block. If
+  // sync-based brightness is ever restored, drive it via a ref, not this sig.
   const peersSig = useMemo(
     () =>
       peers
-        .map((p) => `${p.node_id}|${p.latency_ms ?? ''}|${p.direction}|${p.best_known ?? ''}|${p.version ?? ''}`)
+        .map((p) => `${p.node_id}|${p.latency_ms ?? ''}|${p.direction}|${p.version ?? ''}`)
         .join(';'),
     [peers],
   );
