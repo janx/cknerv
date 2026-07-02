@@ -12,6 +12,16 @@
 // the delivery layer reads it every frame. Boluses run off `colonyFlood`, so the
 // measured workers already feed the galaxy on the flood's timing.
 //
+// Catch-up quiescence: during a backfill / large-restore-gap the cells projection
+// SUPPRESSES the block Pulse delta server-side (cknerv-core projection/cells.rs:
+// the Pulse delta is only pushed while `backfill.is_none()`), so `blockPulseAtMs`
+// (= cellsCache.lastPulseAtMs) FREEZES. Every pulse effect below keys on it, so
+// the flood + boluses are ALREADY quiet during catch-up (frozen pulse ⇒ no
+// strobe). We ALSO gate every pulse effect on `backfillActive` as a defensive
+// safety belt: should a pulse ever advance mid-backfill, we CONSUME it (advance
+// the local guard so the backlog can't replay as one strobe when `backfill`
+// clears) but do NOT fire — matching advanceLinkCursor's nerve suppression.
+//
 // The wavefront flood is COMPONENT-OWNED: ColonyNodes / ColonyEdges each take
 // `cf` + `blockPulseAtMs` and, on every new block, write their OWN flash / pulse
 // GPU buffer (off cf.colonyArrivalS) and flag it needsUpdate — no external
@@ -19,6 +29,7 @@
 // delivery layer.
 import { useEffect, useMemo, useRef } from 'react';
 import { simClock } from '../tweaks/simClock';
+import { useCellGalaxyOptional } from '../hooks/cellGalaxyContext';
 import type { NetworkTopology, Vec3 } from '../types';
 import type { ColonyFlood } from '../derives/networkFlood.derive';
 import ColonyNodes from './ColonyNodes';
@@ -51,18 +62,28 @@ export default function NetworkColony({
   flashDirtyRef,
   localVersion,
 }: NetworkColonyProps) {
+  // Calm catch-up signal (same flag beams/nerves already respect). Read via the
+  // NON-throwing hook so the exported NetworkColony still mounts standalone
+  // (galaxy-less scenes / tests) — matching its child BlockDeliveryLayer, which
+  // is deliberately optional-context; a throwing read here would defeat that.
+  const cellsCache = useCellGalaxyOptional();
+  const backfillActive = !!cellsCache?.backfill;
+
   // Per-block pulse: the delivery layer reads `at` (when it fired) and `entryId`
   // (the flood origin). Per-worker arrival times come from `cf.arrivals`.
   const pulseRef = useRef<{ at: number; entryId: string | null } | null>(null);
   const lastPulseRef = useRef(blockPulseAtMs);
   useEffect(() => {
-    if (blockPulseAtMs > lastPulseRef.current) {
-      lastPulseRef.current = blockPulseAtMs;
-      pulseRef.current = { at: simClock.elapsedSec, entryId: cf.entryId };
-    }
-    // cf.entryId is read from the latest closure when blockPulseAtMs advances (App
-    // recomputes cf + bumps blockPulseAtMs from the same cells-cache render), so
-    // [blockPulseAtMs] suffices.
+    if (blockPulseAtMs <= lastPulseRef.current) return;
+    // Consume the pulse even while backfilling so the backlog can't replay as one
+    // strobe when `backfill` clears (mirrors advanceLinkCursor's cursor advance),
+    // then bail WITHOUT stamping pulseRef → BlockDeliveryLayer fires no boluses.
+    lastPulseRef.current = blockPulseAtMs;
+    if (backfillActive) return;
+    pulseRef.current = { at: simClock.elapsedSec, entryId: cf.entryId };
+    // cf.entryId + backfillActive are read from the latest closure when
+    // blockPulseAtMs advances (App recomputes cf + backfill + bumps blockPulseAtMs
+    // from the same cells-cache render), so [blockPulseAtMs] suffices.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [blockPulseAtMs]);
 
@@ -86,12 +107,14 @@ export default function NetworkColony({
         topology={topology}
         cf={cf}
         blockPulseAtMs={blockPulseAtMs}
+        backfillActive={backfillActive}
         localVersion={localVersion}
       />
       <ColonyNodes
         topology={topology}
         cf={cf}
         blockPulseAtMs={blockPulseAtMs}
+        backfillActive={backfillActive}
         selectedId={selectedId}
         onSelect={onSelect}
         localVersion={localVersion}
