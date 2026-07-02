@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { pickOrigin, floodArrivalTimes, colonyFlood, FLOOD_DURATION_S, HERO_MIN_FRAC, HERO_MAX_FRAC } from '../src/derives/networkFlood.derive';
+import { pickOrigin, floodArrivalTimes, colonyFlood, clampHeroDelayS, FLOOD_DURATION_S, HERO_MIN_FRAC, HERO_MAX_FRAC } from '../src/derives/networkFlood.derive';
 import { inferredTopology } from '../src/derives/networkTopology.derive';
 import type { Peer } from '@cknerv/types';
 
@@ -50,6 +50,13 @@ describe('colonyFlood schedule', () => {
     expect(f.localReceiveDelayS).toBeLessThanOrEqual(FLOOD_DURATION_S * HERO_MAX_FRAC + 1e-6);
   });
 
+  it('clampHeroDelayS pins the hero band exactly (a swapped/mistyped bound would bite)', () => {
+    // band = [FLOOD_DURATION_S·HERO_MIN_FRAC, FLOOD_DURATION_S·HERO_MAX_FRAC] = [0.3, 1.7]
+    expect(clampHeroDelayS(0)).toBe(0.3);   // below the floor → clamped up to MIN
+    expect(clampHeroDelayS(5)).toBe(1.7);   // above the ceiling → clamped down to MAX
+    expect(clampHeroDelayS(1.0)).toBe(1.0); // inside the band → passes through unchanged
+  });
+
   it('empty/lone topology → inert schedule', () => {
     const lone = inferredTopology([], 0xc0ffee, 'ckb:local');
     // lone still has the inferred scaffold; a topology with a single node is the true degenerate:
@@ -58,16 +65,17 @@ describe('colonyFlood schedule', () => {
     expect(f).toEqual({ entryId: null, localReceiveDelayS: 0, arrivals: {}, senders: {}, colonyArrivalS: {}, colonyPredecessor: {} });
   });
 
-  it('zero-peers colony → queen unfed (arrivals {}) yet the colony still floods every node', () => {
+  it('zero-peers colony → no measured-worker boluses (arrivals {}), but the local hero still feeds her + colony floods every node', () => {
     // NOT the degenerate single-node case above: the full inferred scaffold is present,
-    // there are simply no MEASURED peers. An isolated node hears nothing to feed the queen.
+    // there are simply no MEASURED peers — so no worker boluses. The LOCAL HERO still
+    // feeds the queen (via localReceiveDelayS / the localOrigins delivery downstream).
     const lone = inferredTopology([], 0xc0ffee, 'ckb:local');
     const f = colonyFlood(lone, 1);
-    expect(f.arrivals).toEqual({});  // no measured workers → no boluses → queen stays unfed
+    expect(f.arrivals).toEqual({});  // no measured workers → no worker boluses (hero still feeds her)
     expect(f.senders).toEqual({});   // …and thus no senders either
-    // the colony still floods visually: EVERY node gets a colony-arrival time.
+    // the colony still floods visually: EVERY node gets a finite colony-arrival time.
     expect(Object.keys(f.colonyArrivalS).length).toBe(lone.nodes.length);
-    for (const n of lone.nodes) expect(f.colonyArrivalS[n.id]).toBeGreaterThanOrEqual(0);
+    for (const n of lone.nodes) expect(Number.isFinite(f.colonyArrivalS[n.id])).toBe(true);
     expect(f.entryId).not.toBe('ckb:local'); // origin is a real (inferred) node, not us
   });
 });
