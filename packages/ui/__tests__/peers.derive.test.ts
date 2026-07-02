@@ -2,28 +2,19 @@ import { describe, it, expect } from 'vitest';
 import {
   latencyToRadius01,
   peerAngle,
-  peerWorldPosition,
   syncProximity,
   peerColorKind,
   peerChurnDiff,
   summarizeNetwork,
   peerCrystalSize,
   peerCrystalBrightness,
-  courierLeg,
   easeOutCubic,
   easeInLob,
-  courierFlight,
   planDeliveries,
   deliveryPhase,
   bolusIngest,
   nearestCellIds,
-  rankPeers,
-  PEER_RENDER_CAP,
-  BLOCK_RELAY_HOP_S,
-  PEER_INNER_RADIUS,
-  PEER_OUTER_RADIUS,
 } from '../src/derives/peers.derive';
-import { CHAIN_Y } from '../src/layout';
 import { emptyChainCache } from '@cknerv/cache';
 import type { Peer, ChainNode } from '@cknerv/types';
 
@@ -50,14 +41,6 @@ describe('peers.derive', () => {
     expect(peerAngle('QmA')).not.toBe(peerAngle('QmB'));
   });
 
-  it('peerWorldPosition sits on the chain plane within the annulus', () => {
-    const [x, y, z] = peerWorldPosition(peer({ node_id: 'QmX', latency_ms: 0 }));
-    expect(y).toBe(CHAIN_Y);
-    const r = Math.hypot(x / 1.25, z / 0.85); // undo ellipse stretch
-    expect(r).toBeGreaterThanOrEqual(PEER_INNER_RADIUS - 0.001);
-    expect(r).toBeLessThanOrEqual(PEER_OUTER_RADIUS + 0.001);
-  });
-
   it('syncProximity is 1 at tip, decays with lag, 0.5 when unknown', () => {
     expect(syncProximity(100, 100)).toBe(1);
     expect(syncProximity(null, 100)).toBe(0.5);
@@ -74,37 +57,6 @@ describe('peers.derive', () => {
   it('peerCrystalBrightness grows with sync proximity', () => {
     expect(peerCrystalBrightness(0)).toBeCloseTo(0.45, 5);
     expect(peerCrystalBrightness(1)).toBeCloseTo(0.95, 5);
-  });
-
-  it('courierLeg: hidden before it departs', () => {
-    expect(courierLeg(0.5, 1.0, 0.4)).toEqual({ visible: false, t: 0 });
-  });
-
-  it('courierLeg: t ramps 0→1 across the flight window', () => {
-    expect(courierLeg(0.5, 1.0, 0.5)).toEqual({ visible: true, t: 0 }); // at the start node
-    const mid = courierLeg(0.5, 1.0, 1.0);
-    expect(mid.visible).toBe(true);
-    expect(mid.t).toBeCloseTo(0.5, 6);
-  });
-
-  it('courierLeg: hidden once it lands; a zero-length leg never shows', () => {
-    expect(courierLeg(0.5, 1.0, 1.5).visible).toBe(false); // landed
-    expect(courierLeg(0.5, 0, 0.5).visible).toBe(false); // dur 0
-  });
-
-  it('rankPeers: outbound first, then ascending latency', () => {
-    const ranked = rankPeers([
-      peer({ node_id: 'in-fast', direction: 'inbound', latency_ms: 5 }),
-      peer({ node_id: 'out-slow', direction: 'outbound', latency_ms: 300 }),
-      peer({ node_id: 'out-fast', direction: 'outbound', latency_ms: 10 }),
-    ]);
-    expect(ranked.map((p) => p.node_id)).toEqual(['out-fast', 'out-slow', 'in-fast']);
-  });
-
-  it('rankPeers: caps at PEER_RENDER_CAP', () => {
-    const many = Array.from({ length: PEER_RENDER_CAP + 20 }, (_, i) =>
-      peer({ node_id: `n${i}`, latency_ms: i }));
-    expect(rankPeers(many)).toHaveLength(PEER_RENDER_CAP);
   });
 
   it('peerColorKind reflects version mismatch then direction', () => {
@@ -184,42 +136,6 @@ describe('peers.derive', () => {
         prev = v;
       }
       expect(easeInLob(1) - easeInLob(0.9)).toBeGreaterThan(easeInLob(0.1) - easeInLob(0));
-    });
-  });
-
-  describe('courierFlight', () => {
-    const pos = new Map<string, [number, number, number]>([
-      ['A', [10, 22, 0]],
-      ['B', [20, 22, 5]],
-      ['C', [30, 22, -5]],
-    ]);
-    const hub: [number, number, number] = [0, 22, 0];
-    const schedule = {
-      entryId: 'A',
-      senders: { A: null, B: 'A', C: 'B' } as Record<string, string | null>,
-      arrivals: { A: 0.12, B: 1.4, C: 1.9 } as Record<string, number>,
-    };
-
-    it('entry peer relays inward to the hub over BLOCK_RELAY_HOP_S', () => {
-      const f = courierFlight('A', schedule, pos, hub)!;
-      expect(f.from).toEqual([10, 22, 0]);
-      expect(f.to).toEqual(hub);
-      expect(f.startAge).toBe(0.12);
-      expect(f.dur).toBe(BLOCK_RELAY_HOP_S);
-    });
-
-    it('a broadcast peer flies sender→self with a clamped broadcast hop', () => {
-      const f = courierFlight('B', schedule, pos, hub)!;
-      expect(f.from).toEqual([10, 22, 0]);
-      expect(f.to).toEqual([20, 22, 5]);
-      expect(f.startAge).toBe(Math.max(0, 1.4 - 1.0));
-      expect(f.dur).toBeCloseTo(1.4 - f.startAge, 6);
-    });
-
-    it('returns null when the peer has no arrival or a position is missing', () => {
-      expect(courierFlight('Z', schedule, pos, hub)).toBeNull();
-      const onlyC = new Map<string, [number, number, number]>([['C', [1, 1, 1]]]);
-      expect(courierFlight('C', schedule, onlyC, hub)).toBeNull(); // sender 'B' absent
     });
   });
 

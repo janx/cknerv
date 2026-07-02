@@ -3,7 +3,6 @@
 
 import type { ChainEntry, ChainNode, Peer, PeerDirection } from '@cknerv/types';
 import type { Vec3 } from '../types';
-import { CHAIN_Y } from '../layout';
 
 /** Latency at/above this (ms) maps to the outer rim. */
 export const PEER_LATENCY_CAP_MS = 400;
@@ -12,6 +11,7 @@ export const PEER_INNER_RADIUS = 34;
 export const PEER_OUTER_RADIUS = 56;
 /** Lag (blocks) at which a peer's sync proximity bottoms out. */
 export const PEER_SYNC_LAG_FLOOR = 2000;
+// Now unused (their only consumer was removed in the colony cleanup); kept, not cascade-deleted.
 const PEER_ELLIPSE_X = 1.25;
 const PEER_ELLIPSE_Z = 0.85;
 
@@ -27,14 +27,6 @@ export function peerAngle(nodeId: string): number {
   let h = 0;
   for (let i = 0; i < nodeId.length; i += 1) h = (h * 31 + nodeId.charCodeAt(i)) >>> 0;
   return ((h % 100000) / 100000) * Math.PI * 2;
-}
-
-/** World position [x, y, z] of a peer on the chain plane (y = CHAIN_Y). */
-export function peerWorldPosition(peer: Peer): [number, number, number] {
-  const t = latencyToRadius01(peer.latency_ms);
-  const r = PEER_INNER_RADIUS + t * (PEER_OUTER_RADIUS - PEER_INNER_RADIUS);
-  const a = peerAngle(peer.node_id);
-  return [Math.cos(a) * r * PEER_ELLIPSE_X, CHAIN_Y, Math.sin(a) * r * PEER_ELLIPSE_Z];
 }
 
 /** Sync proximity [0,1]: 1 at/above tip, → 0 as the peer lags. Unknown → 0.5. */
@@ -57,14 +49,9 @@ export function peerCrystalBrightness(sync: number): number {
   return 0.45 + sync * 0.5;
 }
 
-// Courier flight timings, consumed by courierFlight below.
-/** Broadcast-courier flight time (s): a node's inbound courier flies from an
- *  earlier-received node ≈ this long before it. Long enough that several couriers
- *  overlap in flight (the broadcast) and each is slow enough to follow. */
-export const BLOCK_BROADCAST_HOP_S = 1.0;
-/** Entry-peer → local courier flight time (s); also the margin by which the local
- *  node trails the entry peer (so local is never first). Slow enough that the
- *  "we received it" cube is followable. */
+/** Relay-hop margin (s): in the generic relay model, how long the local node
+ *  trails the block's entry peer (so local is never first). Referenced by
+ *  CellGalaxy's wave-timing comments. */
 export const BLOCK_RELAY_HOP_S = 0.7;
 
 /** Cubic ease-out: fast launch, decelerate to rest. The "thrown" courier velocity —
@@ -80,77 +67,25 @@ export function easeInLob(t: number): number {
   return 0.15 * t + 0.85 * t * t;
 }
 
+// Now unused (its producer was removed in the colony cleanup); kept, not cascade-deleted.
 export interface CourierFlight {
   from: Vec3;
   to: Vec3;
-  /** Age (s since pulse) at which the courier departs. */
+  /** Age (s since pulse) at which the block departs its sender. */
   startAge: number;
   /** Flight duration (s). */
   dur: number;
 }
 
-export interface CourierSchedule {
-  entryId: string | null;
-  senders: Record<string, string | null>;
-  arrivals: Record<string, number>;
-}
-
-/** Resolve one peer's courier flight for the current block. The entry peer relays
- *  inward to the hub over BLOCK_RELAY_HOP_S; every other peer receives a broadcast
- *  hop from its sender, departing ≈ BLOCK_BROADCAST_HOP_S before its arrival.
- *  Returns null when the peer has no arrival or a referenced position is missing. */
-export function courierFlight(
-  id: string,
-  schedule: CourierSchedule,
-  posById: Map<string, Vec3>,
-  hubPos: Vec3,
-): CourierFlight | null {
-  const { entryId, senders, arrivals } = schedule;
-  const arr = arrivals[id];
-  if (arr === undefined) return null;
-  const self = posById.get(id);
-  if (!self) return null;
-  if (id === entryId) {
-    return { from: self, to: hubPos, startAge: arr, dur: BLOCK_RELAY_HOP_S };
-  }
-  const senderId = senders[id];
-  if (!senderId) return null;
-  const from = posById.get(senderId);
-  if (!from) return null;
-  const startAge = Math.max(0, arr - BLOCK_BROADCAST_HOP_S);
-  const dur = arr - startAge;
-  if (dur <= 0) return null;
-  return { from, to: self, startAge, dur };
-}
-
-/** Max peers rendered; the rest are summarized in the NETWORK HUD. */
+/** Max peers rendered; the rest are summarized in the NETWORK HUD.
+ *  (Now unused after the colony cleanup; kept, not cascade-deleted.) */
 export const PEER_RENDER_CAP = 80;
 
-/** Order peers deterministically (outbound first, then lowest latency) and cap
- *  the count so a high-degree node stays legible. */
-export function rankPeers(peers: Peer[]): Peer[] {
-  return [...peers]
-    .sort((a, b) => {
-      if (a.direction !== b.direction) return a.direction === 'outbound' ? -1 : 1;
-      return (a.latency_ms ?? 1e9) - (b.latency_ms ?? 1e9);
-    })
-    .slice(0, PEER_RENDER_CAP);
-}
-
+// Now unused (its producer was removed in the colony cleanup); kept, not cascade-deleted.
 export interface CourierLeg {
   visible: boolean;
   /** Fraction along the flight: 0 at the start node, 1 arrived at the destination. */
   t: number;
-}
-
-/** One courier leg's per-frame state: visible only while `ageSec` is within
- *  [startAge, startAge + durS), with `t` ramping 0→1 across it. Used for both the
- *  node→node broadcast couriers and the entry-peer → local relay. */
-export function courierLeg(startAge: number, durS: number, ageSec: number): CourierLeg {
-  if (durS <= 1e-9) return { visible: false, t: 0 };
-  const t = (ageSec - startAge) / durS;
-  if (t < 0 || t >= 1) return { visible: false, t: 0 };
-  return { visible: true, t };
 }
 
 export interface Delivery {
