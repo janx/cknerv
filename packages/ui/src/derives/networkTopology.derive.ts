@@ -96,12 +96,18 @@ export function buildAdjacency(
 }
 
 export function inferredTopology(
-  peers: Peer[], seed: number, localId: string = LOCAL_ID_FALLBACK,
+  peers: Peer[], seed: number, localId: string = LOCAL_ID_FALLBACK, localPos?: Vec3,
 ): NetworkTopology {
   const nodes: NetworkNode[] = [];
 
-  // 1) local anchor (seed-only)
-  const anchor = localAnchor(seed);
+  // 1) local anchor. When a `localPos` is supplied (App pins it onto the galaxy's
+  //    labeled CkbNodeAnchor so there's a single "you"), it IS the local node's
+  //    position AND the anchor the measured peers scatter around. Otherwise fall
+  //    back to the seed-only localAnchor(seed) — preserving every existing caller.
+  //    NB: this only moves the local + measured core; the inferred scaffold below
+  //    stays seed-ONLY, so the ⭐ churn-stability invariant holds regardless of
+  //    peers OR localPos.
+  const anchor = localPos ?? localAnchor(seed);
   nodes.push({ id: localId, kind: 'local', pos: anchor });
   const localIdx = 0;
 

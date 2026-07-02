@@ -1,4 +1,4 @@
-// ColonyNodes — the P2P "colony" rendered in three honesty classes:
+// ColonyNodes — the P2P "colony" rendered in two honesty classes:
 //   • inferred ghosts   — ONE faint additive <points> cloud (~240): a "possible
 //     network" haze. Each block ignites a spreading wavefront: per-point flashes
 //     are written into `aFlashAt` (absolute simClock seconds; sentinel -1e9 ⇒
@@ -6,8 +6,11 @@
 //     `flashEnv(uTime - aFlashAt)`.
 //   • measured crystals — one clickable CrystalGlow per real peer, bright and
 //     saturated: the honest "measured core." Flares as the front reaches it.
-//   • local marker      — one larger, distinctly-tinted CrystalGlow = "you."
-//     Flares as the front reaches it.
+// The local "you" is NOT drawn here: the colony's local node is pinned onto the
+// galaxy's labeled CkbNodeAnchor (App feeds inferredTopology its world pos), so
+// that single cyan anchor is the one "you" and the measured belts converge on it.
+// The local node still lives in the topology (flood, bolus origin, measured
+// anchor) — only its colony-side crystal render is gone.
 //
 // Scene-clock discipline: the ghost shader's `uTime` is driven by
 // simClock.elapsedSec inside useSimFrame (NOT performance.now), so it shares the
@@ -45,11 +48,6 @@ const INFERRED_SIZE = 3.0; // point-size factor (perspective-scaled; was 2.2)
 // Measured core: bright, near the top of the peer crystal range (0.55..1.65).
 const MEASURED_SIZE = 1.4;
 const MEASURED_BRIGHTNESS = 1.0;
-
-// Local "you": larger than any peer and a warm gold that reads clear of the cool
-// inferred/measured palette (cyan / teal / violet). Non-selectable.
-const LOCAL_MARKER_COLOR = new THREE.Color('#ffd27f');
-const LOCAL_SIZE = 2.5;
 
 // Crystal arrival flare: a short additive brightness spike layered ON TOP of a
 // crystal's breathe when the wavefront reaches it. 0 before arrival; decays over
@@ -257,43 +255,11 @@ function MeasuredCrystal({
 }
 
 /**
- * The single local "you" marker: distinct color, larger, non-selectable. Base
- * intensity 1 (CrystalGlow's internal halo breathe keeps it alive) plus the same
- * flood flare when the wavefront reaches it.
- */
-function LocalCrystal({
-  node,
-  cf,
-  floodT0Ref,
-}: {
-  node: NetworkNode;
-  cf: ColonyFlood;
-  floodT0Ref: React.MutableRefObject<number>;
-}) {
-  const intensityRef = useRef(1);
-  useSimFrame(() => {
-    intensityRef.current =
-      1 + arrivalFlare(simClock.elapsedSec, floodT0Ref.current, cf.colonyArrivalS[node.id] ?? 0);
-  });
-
-  return (
-    <group position={node.pos}>
-      <CrystalGlow
-        geom={PEER_GEOM}
-        size={LOCAL_SIZE}
-        color={LOCAL_MARKER_COLOR}
-        intensityRef={intensityRef}
-        seed={node.id}
-      />
-    </group>
-  );
-}
-
-/**
  * Composes the colony: the inferred ghost cloud + one CrystalGlow per measured
- * peer + the single local "you" marker. On each block the wavefront lights the
- * cloud (InferredCloud owns its buffer) and flares the crystals; ColonyNodes owns
- * the shared `floodT0Ref` the crystals read.
+ * peer. The local "you" is drawn by the galaxy (its labeled CkbNodeAnchor), NOT
+ * here. On each block the wavefront lights the cloud (InferredCloud owns its
+ * buffer) and flares the crystals; ColonyNodes owns the shared `floodT0Ref` the
+ * crystals read.
  */
 export default function ColonyNodes({
   topology,
@@ -319,12 +285,8 @@ export default function ColonyNodes({
     () => topology.nodes.filter((n) => n.kind === 'measured'),
     [topology],
   );
-  const local = useMemo(
-    () => topology.nodes.find((n) => n.kind === 'local'),
-    [topology],
-  );
 
-  // Flood t0 for the measured/local crystal flares. Captured in THIS component's
+  // Flood t0 for the measured crystal flares. Captured in THIS component's
   // own pulse effect; the crystals read it in useSimFrame (after the effect flush
   // → no child-before-parent staleness). Equals InferredCloud's / ColonyEdges'
   // own captures (same commit's effect flush reads the same simClock.elapsedSec).
@@ -342,6 +304,10 @@ export default function ColonyNodes({
     // recomputes backfill + bumps the pulse together), so [blockPulseAtMs] suffices.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [blockPulseAtMs]);
+
+  // NB: no local "you" crystal is rendered here — the visible local node is the
+  // galaxy's labeled CkbNodeAnchor (App pins the colony's local node onto it via
+  // inferredTopology's localPos). The measured belts converge on that same point.
 
   return (
     <group>
@@ -362,7 +328,6 @@ export default function ColonyNodes({
           localVersion={localVersion}
         />
       ))}
-      {local ? <LocalCrystal node={local} cf={cf} floodT0Ref={floodT0Ref} /> : null}
     </group>
   );
 }

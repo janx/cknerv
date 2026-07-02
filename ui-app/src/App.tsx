@@ -13,6 +13,7 @@ import { Canvas } from '@react-three/fiber';
 import { Hud, OrbitControls, OrthographicCamera, Stars } from '@react-three/drei';
 import {
   aggregateCellsStats,
+  chainNodeWorldPosition,
   colonyFlood,
   inferredTopology,
   CellDetailHudOverlay,
@@ -160,6 +161,17 @@ export default function App({
   // both move together.
   const universeSeed = UNIVERSE_SEED_FALLBACK;
 
+  // World position of the `ckb:local` icosahedron — computed the SAME way
+  // CellGalaxy places its labeled CkbNodeAnchor (chainNodeWorldPosition at the
+  // `ckb:local` index, same count + seed). Fed to the colony as the local node's
+  // position so the ONE visible "you" is that labeled cyan anchor: the measured
+  // belts converge on it and the galaxy shockwave (heroWorld) anchors on it.
+  // Memoized for a stable identity so it doesn't churn the topology every poll.
+  const localCkbPos = useMemo(
+    () => chainNodeWorldPosition(Math.max(0, ckbNodeIds.indexOf('ckb:local')), ckbNodeIds.length, universeSeed),
+    [ckbNodeIds, universeSeed],
+  );
+
   // The P2P colony topology (inferred cloud/mesh + measured core + local marker)
   // and the per-block flood over it. `peers` gets a NEW array identity on every
   // ~4s poll even when its content is unchanged (the store wholesale-replaces
@@ -182,11 +194,11 @@ export default function App({
     [peers],
   );
   const topology = useMemo(
-    () => inferredTopology(peers, universeSeed, localNode?.id ?? 'ckb:local'),
+    () => inferredTopology(peers, universeSeed, localNode?.id ?? 'ckb:local', localCkbPos),
     // peers is read via the stable peersSig; keying on `peers` directly would
-    // rebuild the geometry every poll.
+    // rebuild the geometry every poll. localCkbPos is stably memoized (no churn).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [peersSig, universeSeed, localNode?.id],
+    [peersSig, universeSeed, localNode?.id, localCkbPos],
   );
   const cf = useMemo(
     () => colonyFlood(topology, cellsCache.lastPulseAtMs),
