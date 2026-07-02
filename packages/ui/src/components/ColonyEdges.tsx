@@ -1,137 +1,65 @@
-// ColonyEdges — the colony's connections rendered in two honesty classes:
-//   • measured belts — one live <FlowBeam> per local↔peer edge (~dozens): the
-//     honest, bidirectional particle exchange between "you" and each real peer.
-//   • inferred mesh  — ONE additive <lineSegments> over every inferred edge
-//     (~1–2k): a faint gossamer scaffold of the "possible network." Each block
-//     ignites a wavefront: per-edge pulse times are written into `aPulseAt`
-//     (absolute simClock seconds; sentinel -1e9 ⇒ "never"), and a pulse
-//     ShaderMaterial brightens each edge as the front crosses it.
-//
-// Sibling to ColonyNodes: same inferred/measured split, same palette, and the
-// same COMPONENT-OWNED flood write — InferredMesh owns the pulse Float32Array +
-// geometry, so it captures the flood t0 in its OWN pulse effect (never a
-// parent-set ref → no child-before-parent trap) and sets needsUpdate itself.
-// t0 = simClock.elapsedSec, mutated only in the r3f loop, so this matches
-// ColonyNodes' captures in the same pulse's effect flush (perfectly synced).
-import { useEffect, useMemo, useRef } from 'react';
+// ColonyEdges — the colony's connections rendered as ONE glow-line primitive
+// across two honesty classes, separated only by a confidence gradient (never two
+// visual languages — mirrors ColonyNodes' unified glow):
+//   • measured edges (local↔peer) — brighter glow-lines: the honest, observed
+//     connections between "you" and each real peer.
+//   • inferred edges — fainter glow-lines: a gossamer scaffold of the "possible
+//     network."
+// ALL edges live in a single additive <lineSegments> (~600, one draw). Per-edge
+// brightness = confidence: measured → MEASURED_LINE_BRIGHT, inferred →
+// INFERRED_LINE_BASE (both verts of an edge share the value via `aBright`). The
+// lines are STATIC — no per-block pulse. The block flood (the spreading wavefront)
+// is owned entirely by the courier / BlockDeliveryLayer now, so nothing block-timed
+// flows through here: ColonyEdges takes only `topology`.
+import { useEffect, useMemo } from 'react';
 import * as THREE from 'three';
-import { useSimFrame } from '../tweaks/useSimFrame';
-import { simClock } from '../tweaks/simClock';
-import { fnv1a } from '../geometry/edgeBezier';
-import { PEER_COLORS, peerColorKind } from '../derives/peers.derive';
-import { FLASH_ENV_GLSL } from '../materials/cellEnvelope.glsl';
-import FlowBeam, { type FlowStyle } from './FlowBeam';
-import type { NetworkNode, NetworkTopology } from '../types';
-import type { ColonyFlood } from '../derives/networkFlood.derive';
+import type { NetworkTopology } from '../types';
 
-// Forward (local→peer) particle color = the LOCAL node's cyan. Carried as a local
-// copy (it previously lived on the now-retired hub-and-spoke peer layer).
-const LOCAL_FLOW_COLOR = new THREE.Color('#7df9ff');
-
-// Visual character of a peer's particle belt — the tuned belt style, kept here so
-// the measured belts read identically to the retired hub-and-spoke layer.
-const PEER_FLOW_STYLE: FlowStyle = {
-  particleSize: 0.7,
-  count: 84,
-  speed: 0.08,
-  jitter: 0.6,
-  intensity: 1.3,
-};
-
-// Gossamer line color for the inferred scaffold — the same faint blue as
-// ColonyNodes' inferred ghost cloud so the mesh + cloud read as one structure.
-const INFERRED_LINE_COLOR = new THREE.Color('#8fb7ff');
-// Base line brightness — barely-there so ~1–2k edges read as gossamer structure,
-// not a solid mass (matches the old flat-material opacity under additive
-// blending). Tune live in the visual pass.
-const INFERRED_LINE_BASE = 0.16; // was 0.06 — too faint to see; the mesh must read as a persistent web
-// Pulse ceiling as the wavefront crosses an edge (scaled by the flash envelope,
-// which peaks ~0.78, so effective peak brightness ≈ base + 0.78·(peak−base)).
-const INFERRED_LINE_PEAK = 1.9; // softened from 2.5 so the flood is a wave over the (now visible) mesh, not a jarring flash
-
-/** Measured belt target tint = the real peer palette: version-mismatch (violet)
- *  wins, else connection direction — single-sourced via peerColorKind, matching
- *  ColonyNodes. */
-function peerBeltColor(node: NetworkNode, localVersion: string): THREE.Color {
-  const [r, g, b] = PEER_COLORS[peerColorKind(node.peer!, localVersion)];
-  return new THREE.Color(r, g, b);
-}
+// Gossamer line color for the whole mesh — the same faint blue as ColonyNodes'
+// inferred ghost cloud so the edges + cloud read as one structure. One `uColor`
+// for every edge; confidence lives in per-edge brightness (`aBright`), not tint.
+const INFERRED_LINE_COLOR = '#8fb7ff';
+// Base line brightness for inferred edges — barely-there so the ~1–2k gossamer
+// edges read as faint structure, not a solid mass (additive). Tune live.
+const INFERRED_LINE_BASE = 0.16;
+// Measured edges glow brighter — the honesty gradient (observed > inferred),
+// mirroring ColonyNodes' bright measured cores over the faint ghost haze. Tune live.
+const MEASURED_LINE_BRIGHT = 0.7;
 
 /**
- * The inferred scaffold as a single additive <lineSegments>. `position` (2
- * verts/edge) + `aPulseAt` (1 float PER VERTEX, both verts of an edge share the
- * value) are allocated once; the pulse buffer is written IN PLACE on each block
- * (this component owns the geometry, so it captures the flood t0 and sets
- * needsUpdate itself). A pulse ShaderMaterial brightens each edge by
- * `flashEnv(uTime - aPulseAt)` — a whole-edge brighten as the front crosses it.
+ * The colony's edges as a single additive <lineSegments> over ALL edges
+ * (measured + inferred). `position` (2 verts × 3 = 6 floats/edge) + a per-vertex
+ * `aBright` (1 float PER VERTEX, both verts of an edge share the value) are
+ * allocated once off the topology (this component owns the geometry). A static
+ * glow-line ShaderMaterial reads `aBright` → the per-edge confidence brightness.
+ * No pulse, no uTime — STATIC.
  */
-function InferredMesh({
-  topology,
-  cf,
-  blockPulseAtMs,
-  backfillActive,
-}: {
-  topology: NetworkTopology;
-  cf: ColonyFlood;
-  blockPulseAtMs: number;
-  backfillActive: boolean;
-}) {
-  const infEdges = useMemo(
-    () => topology.edges.filter((e) => e.kind === 'inferred'),
-    [topology],
-  );
-
-  // Per-vertex pulse peak time, ABSOLUTE simClock seconds; -1e9 ⇒ "never." Held
-  // in its own stable memo (not written from render) so it survives StrictMode's
-  // double-invoked factories and stays the exact array bound to `aPulseAt`. Edge
-  // i → verts 2i, 2i+1 (the SAME memoized array that builds the geometry below).
-  const pulse = useMemo(
-    () => new Float32Array(infEdges.length * 2).fill(-1e9),
-    [infEdges],
-  );
-
+export default function ColonyEdges({ topology }: { topology: NetworkTopology }) {
   const geom = useMemo(() => {
     const posById = new Map(topology.nodes.map((n) => [n.id, n.pos] as const));
+    const edges = topology.edges;
     const g = new THREE.BufferGeometry();
-    const pos = new Float32Array(infEdges.length * 6);
-    infEdges.forEach((e, i) => {
+    const pos = new Float32Array(edges.length * 6);
+    // Per-vertex confidence brightness; edge i → verts 2i, 2i+1 (both share the
+    // edge's value). The SAME buffer layout as `position` (2 verts/edge).
+    const bright = new Float32Array(edges.length * 2);
+    edges.forEach((e, i) => {
       const a = posById.get(e.a)!;
       const b = posById.get(e.b)!;
       pos.set([a[0], a[1], a[2], b[0], b[1], b[2]], i * 6);
+      const v = e.kind === 'measured' ? MEASURED_LINE_BRIGHT : INFERRED_LINE_BASE;
+      bright[2 * i] = v;
+      bright[2 * i + 1] = v;
     });
     g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-    g.setAttribute('aPulseAt', new THREE.BufferAttribute(pulse, 1));
+    g.setAttribute('aBright', new THREE.BufferAttribute(bright, 1));
     return g;
-  }, [infEdges, topology.nodes, pulse]);
+  }, [topology]);
 
-  // Ignite the wavefront on each NEW block: an edge lights when the front crosses
-  // it, i.e. when its LATER endpoint arrives (max of the two node arrivals). Both
-  // verts of edge i get the same time. t0 is captured HERE (the buffer owner's
-  // own effect), never read from a parent ref, so it can't go stale before a
-  // parent effect runs (child effects flush first).
-  const lastPulseRef = useRef(blockPulseAtMs);
-  useEffect(() => {
-    if (blockPulseAtMs <= lastPulseRef.current) return;
-    // Consume even while backfilling (advance the guard so the backlog can't
-    // replay when `backfill` clears), then bail WITHOUT writing the pulse buffer
-    // → the gossamer mesh stays quiescent during catch-up (no wavefront strobe).
-    lastPulseRef.current = blockPulseAtMs;
-    if (backfillActive) return;
-    const t0 = simClock.elapsedSec;
-    for (let i = 0; i < infEdges.length; i++) {
-      const e = infEdges[i];
-      const t =
-        t0 + Math.max(cf.colonyArrivalS[e.a] ?? 0, cf.colonyArrivalS[e.b] ?? 0);
-      pulse[2 * i] = t;
-      pulse[2 * i + 1] = t;
-    }
-    geom.getAttribute('aPulseAt').needsUpdate = true;
-    // cf + backfillActive + infEdges/pulse/geom are read from the render that
-    // bumped blockPulseAtMs (App recomputes cf + backfill + bumps the pulse
-    // together), so [blockPulseAtMs] suffices.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [blockPulseAtMs]);
-
+  // Static glow-line material — additive, per-vertex brightness (`aBright`) folded
+  // into both color and alpha (matching ColonyNodes' inferred cloud). Memoized on
+  // [] (stable for the component's life) so it survives topology re-clones without
+  // a shader recompile.
   const mat = useMemo(
     () =>
       new THREE.ShaderMaterial({
@@ -140,35 +68,22 @@ function InferredMesh({
         blending: THREE.AdditiveBlending,
         toneMapped: false,
         uniforms: {
-          uTime: { value: 0 },
-          uColor: { value: INFERRED_LINE_COLOR },
-          uDim: { value: INFERRED_LINE_BASE },
-          uPeak: { value: INFERRED_LINE_PEAK },
+          uColor: { value: new THREE.Color(INFERRED_LINE_COLOR) },
         },
         vertexShader: /* glsl */ `
-          attribute float aPulseAt;
-          uniform float uTime;
-          varying float vAge;
+          attribute float aBright;
+          varying float vB;
           void main() {
-            vAge = uTime - aPulseAt;
+            vB = aBright;
             gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
           }
         `,
         fragmentShader: /* glsl */ `
           precision highp float;
-
           uniform vec3 uColor;
-          uniform float uDim, uPeak;
-          varying float vAge;
-
-          ${FLASH_ENV_GLSL}
-
+          varying float vB;
           void main() {
-            float e = flashEnv(vAge);
-            float b = uDim + (uPeak - uDim) * e;
-            // Additive: fold brightness into rgb (alpha 1) so the quiescent mesh
-            // (b = uDim) matches the old flat gossamer contribution uColor·0.06.
-            gl_FragColor = vec4(uColor * b, 1.0);
+            gl_FragColor = vec4(uColor * vB, vB);
           }
         `,
       }),
@@ -179,79 +94,8 @@ function InferredMesh({
   useEffect(() => () => geom.dispose(), [geom]);
   // The material is memoized on [] (stable for the component's life), so dispose
   // it on UNMOUNT ONLY — tearing it down on a geometry rebuild would dispose the
-  // live, reused material and thrash a needless recompile each ~4s peer poll.
+  // live, reused material and force a needless shader recompile on every re-clone.
   useEffect(() => () => mat.dispose(), [mat]);
 
-  // Drive the shader clock off the sim clock (shared time base with aPulseAt).
-  useSimFrame(() => {
-    mat.uniforms.uTime.value = simClock.elapsedSec;
-  });
-
   return <lineSegments geometry={geom} material={mat} frustumCulled={false} />;
-}
-
-/**
- * Composes the colony's edges: one live FlowBeam per measured (local↔peer) edge
- * plus the single inferred gossamer mesh (which pulses on each block).
- */
-export default function ColonyEdges({
-  topology,
-  cf,
-  blockPulseAtMs,
-  backfillActive = false,
-  localVersion,
-}: {
-  topology: NetworkTopology;
-  cf: ColonyFlood;
-  blockPulseAtMs: number;
-  /** Calm catch-up: when true, consume the block pulse but skip the mesh
-   *  wavefront write (see NetworkColony header). Optional/defaults false so
-   *  standalone/external mounts keep the un-gated behaviour. */
-  backfillActive?: boolean;
-  localVersion: string;
-}) {
-  // One live belt per measured (local↔peer) edge. Resolve endpoint positions +
-  // the peer's tint once per topology; FlowBeam owns each belt's per-frame
-  // particle churn. `from` = the local node's pos, `to` = the peer's.
-  const beams = useMemo(() => {
-    const nodeById = new Map(topology.nodes.map((n) => [n.id, n] as const));
-    const localNode = nodeById.get(topology.localId);
-    return topology.edges
-      .filter((e) => e.kind === 'measured')
-      .map((e) => {
-        const peerId = e.a === topology.localId ? e.b : e.a;
-        const peerNode = nodeById.get(peerId);
-        if (!localNode || !peerNode || !peerNode.peer) return null;
-        return {
-          key: `${e.a}|${e.b}`,
-          from: localNode.pos,
-          to: peerNode.pos,
-          color: peerBeltColor(peerNode, localVersion),
-          seed: fnv1a(e.a + e.b),
-        };
-      })
-      .filter((b): b is NonNullable<typeof b> => b !== null);
-  }, [topology, localVersion]);
-
-  return (
-    <group>
-      {beams.map((b) => (
-        <FlowBeam
-          key={b.key}
-          from={b.from}
-          to={b.to}
-          colorSource={LOCAL_FLOW_COLOR}
-          colorTarget={b.color}
-          style={PEER_FLOW_STYLE}
-          seed={b.seed}
-        />
-      ))}
-      <InferredMesh
-        topology={topology}
-        cf={cf}
-        blockPulseAtMs={blockPulseAtMs}
-        backfillActive={backfillActive}
-      />
-    </group>
-  );
 }
