@@ -168,8 +168,11 @@ export function inferredTopology(
   return { provenance: 'inferred', localId, nodes, edges, adjacency: buildAdjacency(nodes, edges) };
 }
 
-/** Union islands (restricted to the inferred scaffold) into one component. */
-function ensureConnectedFrom(
+/** Union islands (restricted to nodes at index ≥ `start`) into one component by
+ *  bridging each extra island's representative to the nearest node in component 0.
+ *  Exported for out-of-band testing: the real inferred scaffold is always already
+ *  connected, so this multi-island bridge branch never fires in production. */
+export function ensureConnectedFrom(
   nodes: NetworkNode[], start: number,
   adj: Map<string, { to: string; weight: number }[]>,
   add: (i: number, j: number, kind: EdgeKind) => void,
