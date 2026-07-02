@@ -14,7 +14,7 @@ import * as THREE from 'three';
 import { useSimFrame } from '../tweaks/useSimFrame';
 import { simClock } from '../tweaks/simClock';
 import { phaseFor } from './GlowNode';
-import { PEER_COLORS } from '../derives/peers.derive';
+import { PEER_COLORS, peerColorKind } from '../derives/peers.derive';
 import { FLASH_ENV_GLSL } from '../materials/cellEnvelope.glsl';
 import CrystalGlow from './CrystalGlow';
 import type { NetworkNode, NetworkTopology } from '../types';
@@ -40,9 +40,10 @@ const MEASURED_BRIGHTNESS = 1.0;
 const LOCAL_MARKER_COLOR = new THREE.Color('#ffd27f');
 const LOCAL_SIZE = 2.5;
 
-/** Measured node tint = the real peer palette, keyed by connection direction. */
-function measuredColor(node: NetworkNode): THREE.Color {
-  const [r, g, b] = PEER_COLORS[node.peer!.direction];
+/** Measured node tint = the real peer palette: version-mismatch (violet) wins,
+ *  else connection direction — single-sourced via peerColorKind. */
+function measuredColor(node: NetworkNode, localVersion: string): THREE.Color {
+  const [r, g, b] = PEER_COLORS[peerColorKind(node.peer!, localVersion)];
   return new THREE.Color(r, g, b);
 }
 
@@ -164,13 +165,15 @@ function MeasuredCrystal({
   node,
   selectedId,
   onSelect,
+  localVersion,
 }: {
   node: NetworkNode;
   selectedId: string | null;
   onSelect: (id: string | null) => void;
+  localVersion: string;
 }) {
   const peerId = node.peer!.node_id;
-  const color = useMemo(() => measuredColor(node), [node]);
+  const color = useMemo(() => measuredColor(node, localVersion), [node, localVersion]);
   const phase = useMemo(() => phaseFor(peerId), [peerId]);
   const intensityRef = useRef(MEASURED_BRIGHTNESS);
 
@@ -206,11 +209,13 @@ export default function ColonyNodes({
   flashRef,
   selectedId,
   onSelect,
+  localVersion,
 }: {
   topology: NetworkTopology;
   flashRef: React.MutableRefObject<Float32Array>;
   selectedId: string | null;
   onSelect: (id: string | null) => void;
+  localVersion: string;
 }) {
   const measured = useMemo(
     () => topology.nodes.filter((n) => n.kind === 'measured'),
@@ -230,6 +235,7 @@ export default function ColonyNodes({
           node={n}
           selectedId={selectedId}
           onSelect={onSelect}
+          localVersion={localVersion}
         />
       ))}
       {local ? (
