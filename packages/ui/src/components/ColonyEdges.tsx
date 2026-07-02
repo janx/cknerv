@@ -14,7 +14,7 @@
 import { useEffect, useLayoutEffect, useMemo } from 'react';
 import * as THREE from 'three';
 import { fnv1a } from '../geometry/edgeBezier';
-import { PEER_COLORS } from '../derives/peers.derive';
+import { PEER_COLORS, peerColorKind } from '../derives/peers.derive';
 import FlowBeam, { type FlowStyle } from './FlowBeam';
 import type { NetworkNode, NetworkTopology } from '../types';
 
@@ -41,10 +41,11 @@ const INFERRED_LINE_COLOR = new THREE.Color('#8fb7ff');
 // supersedes this flat material.
 const INFERRED_LINE_OPACITY = 0.06;
 
-/** Measured belt target tint = the real peer palette, keyed by connection
- *  direction (single-sourced from peers.derive, matching ColonyNodes). */
-function peerDirectionColor(node: NetworkNode): THREE.Color {
-  const [r, g, b] = PEER_COLORS[node.peer!.direction];
+/** Measured belt target tint = the real peer palette: version-mismatch (violet)
+ *  wins, else connection direction — single-sourced via peerColorKind, matching
+ *  ColonyNodes. */
+function peerBeltColor(node: NetworkNode, localVersion: string): THREE.Color {
+  const [r, g, b] = PEER_COLORS[peerColorKind(node.peer!, localVersion)];
   return new THREE.Color(r, g, b);
 }
 
@@ -127,13 +128,15 @@ function InferredMesh({
 export default function ColonyEdges({
   topology,
   edgePulseRef,
+  localVersion,
 }: {
   topology: NetworkTopology;
   edgePulseRef: React.MutableRefObject<Float32Array>;
+  localVersion: string;
 }) {
   // One live belt per measured (local↔peer) edge. Resolve endpoint positions +
-  // the peer's direction tint once per topology; FlowBeam owns each belt's
-  // per-frame particle churn. `from` = the local node's pos, `to` = the peer's.
+  // the peer's tint once per topology; FlowBeam owns each belt's per-frame
+  // particle churn. `from` = the local node's pos, `to` = the peer's.
   const beams = useMemo(() => {
     const nodeById = new Map(topology.nodes.map((n) => [n.id, n] as const));
     const localNode = nodeById.get(topology.localId);
@@ -147,12 +150,12 @@ export default function ColonyEdges({
           key: `${e.a}|${e.b}`,
           from: localNode.pos,
           to: peerNode.pos,
-          color: peerDirectionColor(peerNode),
+          color: peerBeltColor(peerNode, localVersion),
           seed: fnv1a(e.a + e.b),
         };
       })
       .filter((b): b is NonNullable<typeof b> => b !== null);
-  }, [topology]);
+  }, [topology, localVersion]);
 
   return (
     <group>

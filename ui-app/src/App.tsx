@@ -14,6 +14,8 @@ import { Hud, OrbitControls, OrthographicCamera, Stars } from '@react-three/drei
 import {
   aggregateCellsStats,
   blockArrivalSchedule,
+  colonyFlood,
+  inferredTopology,
   rankPeers,
   peerWorldPosition,
   CellDetailHudOverlay,
@@ -22,8 +24,8 @@ import {
   CellLifeDetail3D,
   DendriticBurst,
   HudOverlay,
+  NetworkColony,
   NeuralNetwork,
-  PeerConstellation,
   SimClockTicker,
   UNIVERSE_SEED_FALLBACK,
   type ScanStateRef,
@@ -184,6 +186,32 @@ export default function App({
   // both move together.
   const universeSeed = UNIVERSE_SEED_FALLBACK;
 
+  // The P2P colony topology (inferred cloud/mesh + measured core + local marker)
+  // and the per-block flood over it. `peers` gets a NEW array identity on every
+  // ~4s poll even when its content is unchanged (the store wholesale-replaces
+  // the list), so memoize `topology` on a STABLE CONTENT SIGNATURE, not the array
+  // identity — otherwise the inferred geometry (and Task 9's in-flight flood
+  // flash/pulse buffers) would rebuild/reset every poll. No-op re-clones now keep
+  // the same `topology` object; genuine peer changes still rebuild (accepted).
+  const peersSig = useMemo(
+    () =>
+      peers
+        .map((p) => `${p.node_id}|${p.latency_ms ?? ''}|${p.direction}|${p.best_known ?? ''}`)
+        .join(';'),
+    [peers],
+  );
+  const topology = useMemo(
+    () => inferredTopology(peers, universeSeed, localNode?.id ?? 'ckb:local'),
+    // peers is read via the stable peersSig; keying on `peers` directly would
+    // rebuild the geometry every poll.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [peersSig, universeSeed, localNode?.id],
+  );
+  const cf = useMemo(
+    () => colonyFlood(topology, cellsCache.lastPulseAtMs),
+    [topology, cellsCache.lastPulseAtMs],
+  );
+
   const cellsStats = useMemo(
     () =>
       aggregateCellsStats(
@@ -260,7 +288,7 @@ export default function App({
         >
           {/* Advances the module-level simClock once per frame so every
               useSimFrame animation (CellGalaxy, BlockDeliveryLayer, GlowNode,
-              NeuralNetwork, PeerConstellation) actually plays. Must live
+              NeuralNetwork, NetworkColony) actually plays. Must live
               under the r3f context; mount exactly once. */}
           <SimClockTicker />
 
@@ -302,24 +330,19 @@ export default function App({
             }
           />
 
-          {/* Real P2P peers ringing the local hub: radius = latency,
-              color = direction / version-mismatch, with churn fade and a
-              per-block inward convergence pulse. */}
-          <PeerConstellation
-            peers={peers}
-            tip={chain.tip}
-            localVersion={localNode?.version ?? ''}
+          {/* The P2P colony: a broad inferred node cloud + gossamer mesh with
+              the bright measured crystals + local marker set within it. Blocks
+              flood the colony (colonyFlood); each measured worker + the local
+              hero lobs a bolus up into the cell canopy as the front reaches it. */}
+          <NetworkColony
+            topology={topology}
+            cf={cf}
+            blockPulseAtMs={cellsCache.lastPulseAtMs}
             selectedId={selectedId}
             onSelect={setSelectedId}
-            blockPulseAtMs={cellsCache.lastPulseAtMs}
-            entryPeerId={blockSchedule.entryId}
-            arrivals={blockSchedule.arrivals}
-            senders={blockSchedule.senders}
-            ckbNodeIds={ckbNodeIds}
-            universeSeed={universeSeed}
-            localReceiveDelayS={blockSchedule.localReceiveDelayS}
             cellFlashRef={cellFlashRef}
             flashDirtyRef={flashDirtyRef}
+            localVersion={localNode?.version ?? ''}
           />
 
           <OrbitControls
