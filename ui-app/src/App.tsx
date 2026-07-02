@@ -13,11 +13,8 @@ import { Canvas } from '@react-three/fiber';
 import { Hud, OrbitControls, OrthographicCamera, Stars } from '@react-three/drei';
 import {
   aggregateCellsStats,
-  blockArrivalSchedule,
   colonyFlood,
   inferredTopology,
-  rankPeers,
-  peerWorldPosition,
   CellDetailHudOverlay,
   CellGalaxy,
   CellGalaxyProvider,
@@ -128,29 +125,6 @@ export default function App({
   const chain = chainCache.chain;
   const chainNodes = chainCache.chainNodes;
   const peers = chainCache.peers;
-  // Per-block propagation schedule, recomputed when a new block pulse lands. Drives
-  // the local node's apply-delay (CellGalaxy) and the entry peer (PeerConstellation)
-  // from one source so both layers agree. Computed over the same ranked + capped set
-  // PeerConstellation renders, so entryId always references an on-screen peer.
-  const blockSchedule = useMemo(
-    () => blockArrivalSchedule(rankPeers(peers), cellsCache.lastPulseAtMs),
-    [peers, cellsCache.lastPulseAtMs],
-  );
-  // The per-block ENTRY peer (first to receive the block) owns the canopy
-  // brightness wave — the local node is just an ordinary peer that receives it,
-  // never the hub/origin. Resolve the entry peer's world position + receive time
-  // from the schedule so CellGalaxy fires the wave from there instead of the
-  // local centre. null entryId (no peers) → CellGalaxy falls back to the local
-  // origin/timing, preserving single-node behaviour.
-  const entryWorld = useMemo(() => {
-    if (blockSchedule.entryId == null) return null;
-    const entryPeer = peers.find((p) => p.node_id === blockSchedule.entryId);
-    return entryPeer ? peerWorldPosition(entryPeer) : null;
-  }, [peers, blockSchedule.entryId]);
-  const entryArrivalS =
-    blockSchedule.entryId != null
-      ? blockSchedule.arrivals[blockSchedule.entryId] ?? 0
-      : 0;
   // The observed local node anchors the constellation + supplies the
   // version used for peer version-mismatch coloring. Prefer an explicit id
   // lookup over positional [0] so a registry reorder can't silently anchor
@@ -180,7 +154,7 @@ export default function App({
   }, [chainNodes]);
 
   // Single seed source for chain-node placement, fed to BOTH CellGalaxy and
-  // PeerConstellation so bolus launch points and the galaxy stay locked to the
+  // NetworkColony so bolus launch points and the galaxy stay locked to the
   // same layout (they'd diverge if only one got a real seed). The backend
   // universe_seed isn't plumbed to the SPA yet; when it is, source it HERE and
   // both move together.
@@ -210,6 +184,15 @@ export default function App({
   const cf = useMemo(
     () => colonyFlood(topology, cellsCache.lastPulseAtMs),
     [topology, cellsCache.lastPulseAtMs],
+  );
+  // Galaxy shockwave anchor: in the colony model OUR local node IS the galaxy's
+  // entry point (the queen-brain is fed by our node), so the canopy brightness
+  // wave now originates at the local marker, timed by the flood's hero arrival
+  // (cf.localReceiveDelayS). null (no local node yet) → CellGalaxy falls back to
+  // its own local origin/timing.
+  const heroWorld = useMemo(
+    () => topology.nodes.find((n) => n.kind === 'local')?.pos ?? null,
+    [topology],
   );
 
   const cellsStats = useMemo(
@@ -302,12 +285,16 @@ export default function App({
             speed={0.3}
           />
 
+          {/* CellGalaxy's entryWorld/entryArrivalS/localReceiveDelayS now carry
+              the HERO (local) anchor — in the colony model our node IS the
+              galaxy's entry point (the queen is fed by us), so entry-time ==
+              local-receive-time. Prop names kept for the shared @cknerv/ui API. */}
           <CellGalaxy
             ckbNodeIds={ckbNodeIds}
             universeSeed={universeSeed}
-            localReceiveDelayS={blockSchedule.localReceiveDelayS}
-            entryWorld={entryWorld}
-            entryArrivalS={entryArrivalS}
+            localReceiveDelayS={cf.localReceiveDelayS}
+            entryWorld={heroWorld}
+            entryArrivalS={cf.localReceiveDelayS}
             selectedId={selectedId}
             onSelect={setSelectedId}
             cellFlashRef={cellFlashRef}

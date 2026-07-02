@@ -103,14 +103,14 @@ interface CellGalaxyProps {
    *  cell field without coupling CellGalaxy to non-generic components. */
   overlay?: ReactNode;
   /** Seconds after the block pulse at which the LOCAL node applies the block —
-   *  i.e. when it hears it from a peer (blockArrivalSchedule.localReceiveDelayS).
-   *  The whole ledger reaction is delayed by this, so the canonical ripple never
-   *  fires at t=0 / never before the peers. 0 = no peers (degenerate). */
+   *  i.e. when it hears the block from the network (caller-supplied delay). The
+   *  whole ledger reaction is delayed by this, so the canonical ripple never
+   *  fires at t=0 / never before the peers. 0 = no delay (degenerate). */
   localReceiveDelayS?: number;
-  /** World-space position of the per-block ENTRY peer (the first peer to receive
-   *  the block, `blockArrivalSchedule.entryId`). The canopy brightness wave is
-   *  fired from here — never the local node — so propagation reads as arriving
-   *  from a peer. null when there are no peers (falls back to the local origin). */
+  /** World-space anchor for the per-block canopy brightness wave, supplied by the
+   *  caller — the block's entry point into the galaxy (an entry peer, or in the
+   *  colony model our own local node). The wave is fired from here so propagation
+   *  reads as sweeping outward from it. null → falls back to the local origin. */
   entryWorld?: Vec3 | null;
   /** Scene-seconds from the block pulse at which the entry peer receives the
    *  block (`arrivals[entryId]`). The brightness wave departs at

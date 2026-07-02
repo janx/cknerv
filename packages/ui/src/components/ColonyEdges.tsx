@@ -24,13 +24,12 @@ import FlowBeam, { type FlowStyle } from './FlowBeam';
 import type { NetworkNode, NetworkTopology } from '../types';
 import type { ColonyFlood } from '../derives/networkFlood.derive';
 
-// Forward (local→peer) particle color = the LOCAL node's cyan. Copied from the
-// retired PeerConstellation (:33) rather than imported — that module goes away
-// in Task 8, so ColonyEdges carries its own copy.
+// Forward (local→peer) particle color = the LOCAL node's cyan. Carried as a local
+// copy (it previously lived on the now-retired hub-and-spoke peer layer).
 const LOCAL_FLOW_COLOR = new THREE.Color('#7df9ff');
 
-// Visual character of a peer's particle belt. Copied verbatim from
-// PeerConstellation (:35-41) so the measured belts read identically.
+// Visual character of a peer's particle belt — the tuned belt style, kept here so
+// the measured belts read identically to the retired hub-and-spoke layer.
 const PEER_FLOW_STYLE: FlowStyle = {
   particleSize: 0.7,
   count: 84,

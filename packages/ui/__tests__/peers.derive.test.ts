@@ -17,12 +17,8 @@ import {
   deliveryPhase,
   bolusIngest,
   nearestCellIds,
-  blockArrivalSchedule,
   rankPeers,
   PEER_RENDER_CAP,
-  BLOCK_ARRIVAL_BASE_S,
-  BLOCK_ARRIVAL_SPREAD_S,
-  BLOCK_ARRIVAL_JITTER_S,
   BLOCK_RELAY_HOP_S,
   PEER_INNER_RADIUS,
   PEER_OUTER_RADIUS,
@@ -109,105 +105,6 @@ describe('peers.derive', () => {
     const many = Array.from({ length: PEER_RENDER_CAP + 20 }, (_, i) =>
       peer({ node_id: `n${i}`, latency_ms: i }));
     expect(rankPeers(many)).toHaveLength(PEER_RENDER_CAP);
-  });
-
-  it('blockArrivalSchedule: empty peers → no entry, zero delay, no arrivals/senders', () => {
-    expect(blockArrivalSchedule([], 1)).toEqual({
-      entryId: null,
-      localReceiveDelayS: 0,
-      arrivals: {},
-      senders: {},
-    });
-  });
-
-  it('blockArrivalSchedule: senders form a broadcast cascade (source → null, rest earlier)', () => {
-    const peers = [
-      peer({ node_id: 'a', latency_ms: 20 }),
-      peer({ node_id: 'b', latency_ms: 45 }),
-      peer({ node_id: 'c', latency_ms: 80 }),
-      peer({ node_id: 'd', latency_ms: 130 }),
-      peer({ node_id: 'e', latency_ms: 200 }),
-    ];
-    const s = blockArrivalSchedule(peers, 3);
-    // the entry (earliest arrival) is the source — no inbound courier
-    expect(s.entryId).not.toBeNull();
-    expect(s.senders[s.entryId as string]).toBeNull();
-    // every other peer's courier comes from a node that received no later than it
-    // (couriers flow forward through the arrival order)
-    for (const id of Object.keys(s.arrivals)) {
-      if (id === s.entryId) continue;
-      const from = s.senders[id];
-      expect(from).not.toBeNull();
-      expect(s.arrivals[from as string]).toBeLessThanOrEqual(s.arrivals[id]);
-    }
-  });
-
-  it('blockArrivalSchedule: arrivals cover every peer, low→high latency, within the window', () => {
-    const peers = [
-      peer({ node_id: 'near', latency_ms: 10 }),
-      peer({ node_id: 'mid', latency_ms: 120 }),
-      peer({ node_id: 'far', latency_ms: 380 }),
-    ];
-    const s = blockArrivalSchedule(peers, 5);
-    expect(Object.keys(s.arrivals).sort()).toEqual(['far', 'mid', 'near']);
-    // Well-separated latencies → arrival order tracks latency order (gaps >> jitter).
-    expect(s.arrivals.near).toBeLessThan(s.arrivals.mid);
-    expect(s.arrivals.mid).toBeLessThan(s.arrivals.far);
-    const ceil = BLOCK_ARRIVAL_BASE_S + BLOCK_ARRIVAL_SPREAD_S + BLOCK_ARRIVAL_JITTER_S + 1e-9;
-    for (const a of Object.values(s.arrivals)) {
-      expect(a).toBeGreaterThanOrEqual(0);
-      expect(a).toBeLessThanOrEqual(ceil);
-    }
-  });
-
-  it('blockArrivalSchedule: entry = earliest arrival; local trails it by the relay hop', () => {
-    const peers = [
-      peer({ node_id: 'far', latency_ms: 400 }),
-      peer({ node_id: 'near', latency_ms: 0 }),
-    ];
-    const s = blockArrivalSchedule(peers, 5);
-    expect(s.entryId).toBe('near'); // lowest latency → earliest arrival
-    const minArrival = Math.min(...Object.values(s.arrivals));
-    expect(s.arrivals.near).toBeCloseTo(minArrival, 9);
-    expect(s.localReceiveDelayS).toBeCloseTo(minArrival + BLOCK_RELAY_HOP_S, 9);
-  });
-
-  it('blockArrivalSchedule: local is never first (delay > the earliest peer arrival)', () => {
-    const peers = [
-      peer({ node_id: 'A', latency_ms: 10 }),
-      peer({ node_id: 'B', latency_ms: 250 }),
-    ];
-    const s = blockArrivalSchedule(peers, 9);
-    const minArrival = Math.min(...Object.values(s.arrivals));
-    expect(s.localReceiveDelayS).toBeGreaterThan(minArrival);
-  });
-
-  it('blockArrivalSchedule: clustered latencies still spread out (the fix — not simultaneous)', () => {
-    // Worst case: 4 peers bunched at 30ms + 1 outlier at 50ms — pure latency-proportional
-    // timing would pile the 4 together. Rank-even spacing must still spread them so the
-    // sweep reads. (Old absolute model gave only ~0.1s of total spread here.)
-    const peers = [
-      peer({ node_id: 'a', latency_ms: 30 }),
-      peer({ node_id: 'b', latency_ms: 30 }),
-      peer({ node_id: 'c', latency_ms: 30 }),
-      peer({ node_id: 'd', latency_ms: 30 }),
-      peer({ node_id: 'e', latency_ms: 50 }),
-    ];
-    const ages = Object.values(blockArrivalSchedule(peers, 7).arrivals);
-    const span = Math.max(...ages) - Math.min(...ages);
-    expect(span).toBeGreaterThan(1.0);
-  });
-
-  it('blockArrivalSchedule: entry peer changes with the block nonce', () => {
-    // Equal latency → per-block jitter decides the winner.
-    const peers = [
-      peer({ node_id: 'A', latency_ms: 100 }),
-      peer({ node_id: 'B', latency_ms: 100 }),
-    ];
-    const winners = new Set(
-      [1, 2, 3, 4, 5, 6, 7, 8].map((n) => blockArrivalSchedule(peers, n).entryId),
-    );
-    expect(winners.size).toBeGreaterThan(1);
   });
 
   it('peerColorKind reflects version mismatch then direction', () => {
