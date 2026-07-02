@@ -260,6 +260,7 @@ export default function App({
         onClearSelection={() => setSelectedId(null)}
         backfill={cellsCache.backfill}
         build={build}
+        colonyCount={topology.nodes.length}
       />
 
       <CellGalaxyProvider value={cellsCache}>

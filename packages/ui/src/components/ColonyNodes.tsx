@@ -195,7 +195,12 @@ function InferredCloud({
     mat.uniforms.uTime.value = simClock.elapsedSec;
   });
 
-  return <points geometry={geom} material={mat} frustumCulled={false} />;
+  // Non-selectable: an explicit no-op raycast so the ghost cloud can NEVER be
+  // picked. r3f's pointer events already skip it (it has no event handlers, so
+  // it's not in the interaction set), but — unlike a plain Object3D — THREE.Points
+  // ships a real default raycast, so guard it defensively. Only the measured/local
+  // CrystalGlows carry onClick → onSelect('peer:…'); the inferred haze stays inert.
+  return <points geometry={geom} material={mat} frustumCulled={false} raycast={() => null} />;
 }
 
 /**

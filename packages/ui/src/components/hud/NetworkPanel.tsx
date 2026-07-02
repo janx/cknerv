@@ -6,8 +6,11 @@ import { HudPanel, PanelHeader, StatRow, Gauge } from './primitives';
 
 const fmt = (n: number) => n.toLocaleString('en-US');
 
-export default function NetworkPanel({ summary, consensus, ping, vers, syncRatio, style }: {
-  summary: NetworkSummary; consensus: FleetConsensus; ping: PingStats | null; vers: VersionSpread; syncRatio: number; style?: CSSProperties;
+export default function NetworkPanel({ summary, consensus, ping, vers, syncRatio, colonyCount, style }: {
+  summary: NetworkSummary; consensus: FleetConsensus; ping: PingStats | null; vers: VersionSpread; syncRatio: number;
+  /** Whole-colony node count (measured + inferred + local) for the honest
+   *  "inferred" footnote below the measured stats. Omitted ⇒ line not shown. */
+  colonyCount?: number; style?: CSSProperties;
 }) {
   const total = Math.max(1, consensus.total);
   const seg = (n: number) => `${(n / total) * 100}%`;
@@ -32,6 +35,11 @@ export default function NetworkPanel({ summary, consensus, ping, vers, syncRatio
       <StatRow label="Version">{vers.majorityVersion} ×{vers.majorityCount}{vers.otherCount > 0 ? ` · ×${vers.otherCount} other` : ''}</StatRow>
       <StatRow label="Ping">{ping ? `${ping.medianMs}ms med · ${ping.minMs}–${ping.maxMs}` : '—'}</StatRow>
       <StatRow label="Best">#{fmt(summary.bestKnown)}</StatRow>
+      {colonyCount != null && (
+        <div style={{ marginTop: 5, fontFamily: HUD_FONTS.mono, fontSize: 8.5, letterSpacing: 0.4, color: HUD_COLORS.dim }}>
+          colony ~ {fmt(colonyCount)} (inferred)
+        </div>
+      )}
     </HudPanel>
   );
 }
