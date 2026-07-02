@@ -44,10 +44,10 @@ const INFERRED_LINE_COLOR = new THREE.Color('#8fb7ff');
 // Base line brightness — barely-there so ~1–2k edges read as gossamer structure,
 // not a solid mass (matches the old flat-material opacity under additive
 // blending). Tune live in the visual pass.
-const INFERRED_LINE_BASE = 0.06;
+const INFERRED_LINE_BASE = 0.16; // was 0.06 — too faint to see; the mesh must read as a persistent web
 // Pulse ceiling as the wavefront crosses an edge (scaled by the flash envelope,
 // which peaks ~0.78, so effective peak brightness ≈ base + 0.78·(peak−base)).
-const INFERRED_LINE_PEAK = 2.5;
+const INFERRED_LINE_PEAK = 1.9; // softened from 2.5 so the flood is a wave over the (now visible) mesh, not a jarring flash
 
 /** Measured belt target tint = the real peer palette: version-mismatch (violet)
  *  wins, else connection direction — single-sourced via peerColorKind, matching

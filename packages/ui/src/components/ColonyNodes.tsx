@@ -38,9 +38,9 @@ const PEER_GEOM = new THREE.OctahedronGeometry(1, 0);
 
 // Ghost-cloud palette/scale. Faint blue haze; the flood flash boosts it.
 const INFERRED_COLOR = new THREE.Color('#8fb7ff');
-const INFERRED_DIM = 0.18; // base brightness — "possible network," barely there
-const INFERRED_PEAK = 2.6; // flood-flash ceiling
-const INFERRED_SIZE = 2.2; // point-size factor (perspective-scaled)
+const INFERRED_DIM = 0.42; // base brightness — a visible "possible network" haze (was 0.18, invisible against the galaxy)
+const INFERRED_PEAK = 2.1; // flood-flash ceiling (softened from 2.6 now the base reads)
+const INFERRED_SIZE = 3.0; // point-size factor (perspective-scaled; was 2.2)
 
 // Measured core: bright, near the top of the peer crystal range (0.55..1.65).
 const MEASURED_SIZE = 1.4;
