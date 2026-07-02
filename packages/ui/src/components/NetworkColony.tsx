@@ -1,6 +1,7 @@
 // NetworkColony — the assembled P2P "colony" that replaces the retired
 // hub-and-spoke peer constellation. It composes:
-//   • ColonyEdges — the gossamer inferred mesh + one live belt per measured edge
+//   • ColonyEdges — ALL edges as ONE static glow-line primitive on a confidence
+//     gradient (measured brighter, inferred fainter); no per-block pulse
 //   • ColonyNodes — the faint inferred cloud + bright measured nodes, unified as
 //     ONE glow primitive on a confidence gradient (rendered OVER the edges); the
 //     local "you" is the galaxy's anchor, not drawn here
@@ -23,11 +24,11 @@
 // the local guard so the backlog can't replay as one strobe when `backfill`
 // clears) but do NOT fire — matching advanceLinkCursor's nerve suppression.
 //
-// The wavefront flood is COMPONENT-OWNED: ColonyEdges takes `cf` + `blockPulseAtMs`
-// and, on every new block, writes its OWN pulse GPU buffer (off cf.colonyArrivalS)
-// and flags it needsUpdate — no external edge refs pass through here. ColonyNodes
-// is now flood-free (the courier / BlockDeliveryLayer owns the block flood), so it
-// takes no block timing. NetworkColony keeps only `pulseRef` for the delivery layer.
+// The block flood no longer lives in the edges/nodes: both ColonyEdges (static
+// glow-lines) and ColonyNodes (static glow-nodes) are flood-free — the spreading
+// wavefront is owned entirely by the courier / BlockDeliveryLayer. So neither takes
+// block timing; NetworkColony keeps `cf`/`blockPulseAtMs`/`backfillActive` only to
+// stamp `pulseRef` (and feed `cf.arrivals`) for the delivery layer.
 import { useEffect, useMemo, useRef } from 'react';
 import { simClock } from '../tweaks/simClock';
 import { useCellGalaxyOptional } from '../hooks/cellGalaxyContext';
@@ -104,13 +105,7 @@ export default function NetworkColony({
 
   return (
     <group>
-      <ColonyEdges
-        topology={topology}
-        cf={cf}
-        blockPulseAtMs={blockPulseAtMs}
-        backfillActive={backfillActive}
-        localVersion={localVersion}
-      />
+      <ColonyEdges topology={topology} />
       <ColonyNodes
         topology={topology}
         selectedId={selectedId}
