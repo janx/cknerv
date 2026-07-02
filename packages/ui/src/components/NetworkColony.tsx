@@ -1,8 +1,9 @@
 // NetworkColony — the assembled P2P "colony" that replaces the retired
 // hub-and-spoke peer constellation. It composes:
 //   • ColonyEdges — the gossamer inferred mesh + one live belt per measured edge
-//   • ColonyNodes — the faint inferred cloud + bright measured crystals + the
-//     local "you" marker (rendered OVER the edges)
+//   • ColonyNodes — the faint inferred cloud + bright measured nodes, unified as
+//     ONE glow primitive on a confidence gradient (rendered OVER the edges); the
+//     local "you" is the galaxy's anchor, not drawn here
 //   • BlockDeliveryLayer — one bolus per measured worker (timed by cf.arrivals)
 //     plus the local hero (cf.localReceiveDelayS), lobbed up into the cell
 //     canopy and igniting the cells each lands on.
@@ -22,11 +23,11 @@
 // the local guard so the backlog can't replay as one strobe when `backfill`
 // clears) but do NOT fire — matching advanceLinkCursor's nerve suppression.
 //
-// The wavefront flood is COMPONENT-OWNED: ColonyNodes / ColonyEdges each take
-// `cf` + `blockPulseAtMs` and, on every new block, write their OWN flash / pulse
-// GPU buffer (off cf.colonyArrivalS) and flag it needsUpdate — no external
-// flash/edge refs pass through here. NetworkColony keeps only `pulseRef` for the
-// delivery layer.
+// The wavefront flood is COMPONENT-OWNED: ColonyEdges takes `cf` + `blockPulseAtMs`
+// and, on every new block, writes its OWN pulse GPU buffer (off cf.colonyArrivalS)
+// and flags it needsUpdate — no external edge refs pass through here. ColonyNodes
+// is now flood-free (the courier / BlockDeliveryLayer owns the block flood), so it
+// takes no block timing. NetworkColony keeps only `pulseRef` for the delivery layer.
 import { useEffect, useMemo, useRef } from 'react';
 import { simClock } from '../tweaks/simClock';
 import { useCellGalaxyOptional } from '../hooks/cellGalaxyContext';
@@ -112,9 +113,6 @@ export default function NetworkColony({
       />
       <ColonyNodes
         topology={topology}
-        cf={cf}
-        blockPulseAtMs={blockPulseAtMs}
-        backfillActive={backfillActive}
         selectedId={selectedId}
         onSelect={onSelect}
         localVersion={localVersion}
