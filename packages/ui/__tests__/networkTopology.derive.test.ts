@@ -6,7 +6,7 @@ import {
 } from '../src/derives/networkTopology.derive';
 import { latencyToRadius01, PEER_INNER_RADIUS, PEER_OUTER_RADIUS } from '../src/derives/peers.derive';
 import type { Peer } from '@cknerv/types';
-import type { NetworkNode } from '../src/types';
+import type { NetworkNode, Vec3 } from '../src/types';
 
 function peer(p: Partial<Peer>): Peer {
   return { node_id: 'Qm', addr: '1.2.3.4:8115', direction: 'outbound', version: '0.116.1', connected_ms: 0, ...p };
@@ -116,6 +116,51 @@ describe('inferredTopology assembly', () => {
       edges: t.edges.filter((e) => e.kind === 'inferred' && e.a.startsWith('inf:') && e.b.startsWith('inf:')),
     });
     expect(inf(t2)).toEqual(inf(t3));  // inferred↔inferred unaffected by the peer set
+  });
+});
+
+describe('inferredTopology with an explicit localPos (pinned to the galaxy anchor)', () => {
+  const seed = 0xc0ffee;
+  // A world position distinct from the seed-only localAnchor(seed): stands in for
+  // the galaxy's labeled CkbNodeAnchor position App now feeds the colony.
+  const localPos: Vec3 = [12, 25, -7];
+  const peers = [
+    peer({ node_id: 'A', latency_ms: 40, direction: 'outbound' }),
+    peer({ node_id: 'B', latency_ms: 400, direction: 'inbound' }), // >= cap → outer ring
+  ];
+
+  it('places the local node exactly at localPos (not the seed fallback)', () => {
+    const t = inferredTopology(peers, seed, 'ckb:local', localPos);
+    const local = t.nodes.find((n) => n.kind === 'local')!;
+    expect(local.pos).toEqual(localPos);
+    expect(local.pos).not.toEqual(localAnchor(seed)); // genuinely overrides the fallback
+  });
+
+  it('scatters measured peers around localPos (distance = latency radius), NOT around localAnchor(seed)', () => {
+    const t = inferredTopology(peers, seed, 'ckb:local', localPos);
+    const b = t.nodes.find((n) => n.id === 'B')!;
+    // de-squash BOTH ellipse axes to recover the base (circular) radius around localPos
+    const rAroundLocalPos = Math.hypot(
+      (b.pos[0] - localPos[0]) / COLONY_ELLIPSE_X,
+      (b.pos[2] - localPos[2]) / COLONY_ELLIPSE_Z,
+    );
+    const tRad = latencyToRadius01(400);
+    const expectedR = PEER_INNER_RADIUS + tRad * (PEER_OUTER_RADIUS - PEER_INNER_RADIUS);
+    expect(rAroundLocalPos).toBeCloseTo(expectedR, 4); // placed around localPos
+    // exact: the peer is measuredPeerPos(localPos, …), and it moved OFF the
+    // seed-only anchor — proving localPos, not localAnchor(seed), is the anchor.
+    expect(b.pos).toEqual(measuredPeerPos(localPos, peers[1]));
+    expect(b.pos).not.toEqual(measuredPeerPos(localAnchor(seed), peers[1]));
+  });
+
+  it('⭐ leaves the inferred scaffold byte-identical to the seed-only build (localPos never touches it)', () => {
+    const withPos = inferredTopology(peers, seed, 'ckb:local', localPos);
+    const noPos = inferredTopology(peers, seed, 'ckb:local'); // localAnchor(seed) fallback
+    const inf = (t: ReturnType<typeof inferredTopology>) => ({
+      nodes: t.nodes.filter((n) => n.kind === 'inferred'),
+      edges: t.edges.filter((e) => e.kind === 'inferred' && e.a.startsWith('inf:') && e.b.startsWith('inf:')),
+    });
+    expect(inf(withPos)).toEqual(inf(noPos)); // inferred↔inferred unaffected by localPos
   });
 });
 
