@@ -1,7 +1,9 @@
-// ColonyCourierLayer — the block flood as a thrown-courier cascade. On each new
-// block a glowing mote + comet-tail plume is FLUNG node→node outward from the
-// flood origin along the shortest-path tree (colonyCourierSchedule), timed by the
-// flood arrivals. Adapted from the retired hub-and-spoke BlockCourierLayer:
+// ColonyCourierLayer — a faint GLINT accent riding the block wavefront. The primary
+// block signal is now ColonyEdges' surge (a bright band flowing along the links); on
+// top of it, a small dimmed glow-mote + short streak is flung node→node outward from
+// the flood origin along the shortest-path tree (colonyCourierSchedule), timed by the
+// flood arrivals — a spark tracing the surge, not a glaring projectile. Its motion is
+// adapted from the retired hub-and-spoke BlockCourierLayer:
 //   • straight easeOutCubic fling (fast off the launch, coasts to rest);
 //   • a velocity-aligned jet-thrust plume (length ∝ analytic speed) billboarded
 //     around the flight axis, with a nozzle-bloom sprite as the glow-mote HEAD
@@ -37,19 +39,24 @@ const COURIER_POOL = 64;
  *  least this long so it actually reads as a throw. */
 const MIN_THROW_S = 0.25;
 
-/** Jet-thrust flame tuning (verbatim from the retired BlockCourierLayer). The
- *  plume is a velocity-aligned quad whose length tracks the courier's analytic
- *  speed; the bloom is a fixed round nozzle sprite — now the mote HEAD itself. */
-const FLAME_WIDTH = 1.5;           // plume width (world units)
-const FLAME_MIN_LEN = 1.6;         // plume length at rest
-const FLAME_MAX_LEN = 9.0;         // plume length cap on the fast launch
-const FLAME_SPEED_STRETCH = 0.04;  // length added per (world-unit/s) of courier speed
-const FLAME_BLOOM_SIZE = 1.25;     // round glow-mote (nozzle-bloom) diameter (world units)
+/** Glint tuning. The courier is now a FAINT accent riding the edge surge (which is
+ *  the primary block signal), so the mote + its short streak are small and dim —
+ *  no longer a bright thrown comet. The plume is a velocity-aligned quad whose
+ *  length tracks the courier's analytic speed; the bloom is a round nozzle sprite. */
+const FLAME_WIDTH = 0.7;           // plume width (world units) — thin
+const FLAME_MIN_LEN = 0.7;         // plume length at rest — short streak, not a comet
+const FLAME_MAX_LEN = 2.5;         // plume length cap on the fast launch
+const FLAME_SPEED_STRETCH = 0.02;  // length added per (world-unit/s) of courier speed
+const FLAME_BLOOM_SIZE = 0.7;      // round glow-mote (nozzle-bloom) diameter (world units)
 /** Ease the mote + flame in/out over this fraction of each hop so nothing pops. */
 const COURIER_END_EASE = 0.08;
 /** Glow-mote tint — a pale white-cyan; multiplies the (already white→cyan) bloom
  *  texture so the mote head carries one defined colour. */
 const MOTE_COLOR = '#d8faff';
+/** Glint opacities — dim the additive mote + streak so the courier reads as a
+ *  faint spark on top of the edge surge, not a glaring projectile. Tune live. */
+const GLINT_BLOOM_OPACITY = 0.55;
+const GLINT_PLUME_OPACITY = 0.3;
 
 interface Slot {
   group: React.RefObject<THREE.Group | null>;
@@ -133,6 +140,7 @@ export default function ColonyCourierLayer({
       new THREE.MeshBasicMaterial({
         map: plumeTex,
         transparent: true,
+        opacity: GLINT_PLUME_OPACITY, // dim the additive streak → faint glint
         depthWrite: false,
         blending: THREE.AdditiveBlending,
         toneMapped: false,
@@ -145,6 +153,7 @@ export default function ColonyCourierLayer({
         map: bloomTex,
         color: new THREE.Color(MOTE_COLOR),
         transparent: true,
+        opacity: GLINT_BLOOM_OPACITY, // dim the additive mote head → faint glint
         depthWrite: false,
         blending: THREE.AdditiveBlending,
         toneMapped: false,
