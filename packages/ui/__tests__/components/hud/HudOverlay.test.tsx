@@ -1,6 +1,6 @@
 import { cleanup, render } from '@testing-library/react';
 import { afterEach, describe, it, expect } from 'vitest';
-import type { ChainEntry, Peer, ChainNode } from '@cknerv/types';
+import type { ChainEntry, Peer, ChainNode, Cell } from '@cknerv/types';
 import HudOverlay from '../../../src/components/hud/HudOverlay';
 import type { CellsStats } from '../../../src/derives/cellsStats.derive';
 
@@ -28,6 +28,23 @@ describe('HudOverlay', () => {
     expect(t).toContain('PULSE');                 // ecg
     expect(t).toContain('PEER MESH');    // peer mesh
     expect(t).toContain('CELL MESH');    // cell mesh
+  });
+
+  it('shows the cell detail and a node detail at the same time (independent axes)', () => {
+    const mockCell: Cell = {
+      id: 7, born_at_ms: 1, death_at_ms: null, birth_block: 16204800, tag: 'wallet',
+      pos_seed: [0, 0, 0], out_point: { tx_hash: '0x' + 'ab'.repeat(32), index: 0 },
+      capacity: 6_100_000_000, data_hex: '0x', content_hash: '0x' + 'cd'.repeat(32),
+    };
+    const { container } = render(
+      <HudOverlay
+        chain={chain} peers={peers} localNode={localNode} cellsStats={cellsStats}
+        selectedCell={mockCell} selectedNode={localNode}
+      />,
+    );
+    const t = container.textContent ?? '';
+    expect(t).toContain('Kind');     // CELL detail (galaxy axis) is present…
+    expect(t).toContain('OBSERVER'); // …AND the NODE detail (network axis) at the same time
   });
 
   it('does not raise CAUTION when blocks merely run slower than the 8s target', () => {
