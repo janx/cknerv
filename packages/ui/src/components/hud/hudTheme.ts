@@ -57,6 +57,9 @@ export function injectHudTheme(doc: Document = document): void {
   style.textContent =
     FONT_FACES.join('') + `\n:root{${vars}}` +
     `\n@keyframes cknerv-hud-flash{50%{opacity:.45}}`
-    + `\n@keyframes cknerv-hud-breathe{0%,100%{opacity:.82}50%{opacity:1}}`;
+    + `\n@keyframes cknerv-hud-breathe{0%,100%{opacity:.82}50%{opacity:1}}`
+    + `\n.cknerv-mesh-rail::-webkit-scrollbar{width:5px}`
+    + `\n.cknerv-mesh-rail::-webkit-scrollbar-thumb{background:rgba(255,152,48,.35);border-radius:3px}`
+    + `\n.cknerv-mesh-rail::-webkit-scrollbar-track{background:transparent}`;
   doc.head.appendChild(style);
 }
