@@ -1,13 +1,16 @@
 // NetworkColony — the assembled P2P "colony" that replaces the retired
-// hub-and-spoke peer constellation. It composes:
-//   • ColonyEdges — ALL edges as ONE static glow-line primitive on a confidence
-//     gradient (measured brighter, inferred fainter); no per-block pulse
+// hub-and-spoke peer constellation. The peer network has its OWN visual language,
+// a *data-flow mesh* (soft current along straight links), deliberately unlike the
+// cells' neural galaxy (sharp spikes on curved dendrites). It composes:
+//   • ColonyEdges — ALL edges as ONE glow-line primitive on a confidence gradient
+//     (measured brighter, inferred fainter) carrying an ambient data-flow current
+//     PLUS a per-block bright surge that flows outward along the propagation tree.
 //   • ColonyNodes — the faint inferred cloud + bright measured nodes, unified as
 //     ONE glow primitive on a confidence gradient (rendered OVER the edges); the
 //     local "you" is the galaxy's anchor, not drawn here
-//   • ColonyCourierLayer — the block flood: a thrown glow-mote + comet tail flung
-//     node→node outward from the flood origin along the shortest-path tree
-//     (colonyCourierSchedule), timed by the flood arrivals. Owns its own pulse.
+//   • ColonyCourierLayer — a faint glint accent riding the edge surge: a small,
+//     dimmed glow-mote flung node→node along the shortest-path tree, timed by the
+//     flood arrivals. The surge (on the edges) is the primary block signal now.
 //   • BlockDeliveryLayer — one bolus per measured worker (timed by cf.arrivals)
 //     plus the local hero (cf.localReceiveDelayS), lobbed up into the cell
 //     canopy and igniting the cells each lands on.
@@ -27,11 +30,12 @@
 // the local guard so the backlog can't replay as one strobe when `backfill`
 // clears) but do NOT fire — matching advanceLinkCursor's nerve suppression.
 //
-// The block flood no longer lives in the edges/nodes: both ColonyEdges (static
-// glow-lines) and ColonyNodes (static glow-nodes) are flood-free — the spreading
-// wavefront is owned entirely by the courier / BlockDeliveryLayer. So neither takes
-// block timing; NetworkColony keeps `cf`/`blockPulseAtMs`/`backfillActive` only to
-// stamp `pulseRef` (and feed `cf.arrivals`) for the delivery layer.
+// The block wavefront now shows on the EDGES (ColonyEdges' surge) with the courier
+// as a faint glint on top; ColonyNodes stays flood-free (static glow-nodes).
+// ColonyEdges + ColonyCourierLayer each own their own pulse clock, keyed on
+// `blockPulseAtMs` and gated on `backfillActive` (consume-then-bail); NetworkColony
+// keeps `cf`/`blockPulseAtMs`/`backfillActive` to feed all three (edges surge,
+// courier glint, delivery boluses) and to stamp its own `pulseRef` for delivery.
 import { useEffect, useMemo, useRef } from 'react';
 import { simClock } from '../tweaks/simClock';
 import { useCellGalaxyOptional } from '../hooks/cellGalaxyContext';
@@ -115,7 +119,12 @@ export default function NetworkColony({
 
   return (
     <group>
-      <ColonyEdges topology={topology} />
+      <ColonyEdges
+        topology={topology}
+        cf={cf}
+        blockPulseAtMs={blockPulseAtMs}
+        backfillActive={backfillActive}
+      />
       <ColonyNodes
         topology={topology}
         selectedId={selectedId}
