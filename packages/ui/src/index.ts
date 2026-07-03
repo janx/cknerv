@@ -116,7 +116,6 @@ export {
 } from './components/GlowNode';
 export type { Palette, Shape } from './components/GlowNode';
 export { default as CrystalGlow } from './components/CrystalGlow';
-export { default as FlowBeam, type FlowStyle } from './components/FlowBeam';
 export { default as NetworkHud } from './components/NetworkHud';
 export { default as ColonyEdges } from './components/ColonyEdges';
 export { default as ColonyNodes } from './components/ColonyNodes';
