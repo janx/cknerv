@@ -337,10 +337,12 @@ export default function App({
             }
           />
 
-          {/* The P2P colony: a broad inferred node cloud + gossamer mesh with
-              the bright measured crystals + local marker set within it. Blocks
-              flood the colony (colonyFlood); each measured worker + the local
-              hero lobs a bolus up into the cell canopy as the front reaches it. */}
+          {/* The P2P colony: a broad inferred glow-node cloud + gossamer glow-line
+              mesh, the bright measured glow-nodes set within it (one confidence
+              gradient; the local node is the galaxy's labeled anchor, not drawn
+              here). Each block flings a courier cascade outward through the mesh
+              (colonyFlood tree); each measured worker + the local hero lobs a bolus
+              up into the cell canopy as the front reaches it. */}
           <NetworkColony
             topology={topology}
             cf={cf}
