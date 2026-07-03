@@ -165,7 +165,8 @@ export default function App({
   // CellGalaxy places its labeled CkbNodeAnchor (chainNodeWorldPosition at the
   // `ckb:local` index, same count + seed). Fed to the colony as the local node's
   // position so the ONE visible "you" is that labeled cyan anchor: the measured
-  // belts converge on it and the galaxy shockwave (heroWorld) anchors on it.
+  // belts converge on it. (The block brightness shockwave no longer anchors here
+  // — it erupts from each block's origin peer; see entryPeerWorld below.)
   // Memoized for a stable identity so it doesn't churn the topology every poll.
   const localCkbPos = useMemo(
     () => chainNodeWorldPosition(Math.max(0, ckbNodeIds.indexOf('ckb:local')), ckbNodeIds.length, universeSeed),
@@ -204,15 +205,36 @@ export default function App({
     () => colonyFlood(topology, cellsCache.lastPulseAtMs),
     [topology, cellsCache.lastPulseAtMs],
   );
-  // Galaxy shockwave anchor: in the colony model OUR local node IS the galaxy's
-  // entry point (the queen-brain is fed by our node), so the canopy brightness
-  // wave now originates at the local marker, timed by the flood's hero arrival
-  // (cf.localReceiveDelayS). null (no local node yet) → CellGalaxy falls back to
-  // its own local origin/timing.
+  // Galaxy shockwave anchor. The canopy brightness wave erupts from the block's
+  // ORIGIN PEER — cf.entryId, the flood root, biased FAR from us — at its
+  // galaxy-contact point (the peer's xz lands on the cells-canopy rim, since
+  // COLONY_RADIUS echoes the canopy footprint), then sweeps inward and reaches
+  // our local cells naturally. Each block floods from a different origin, so the
+  // wave tracks where THAT block entered the network instead of always erupting
+  // from dead centre. This restores CellGalaxy's two-origin design — wave = entry
+  // peer, local reaction = our node — which had collapsed onto the on-axis local
+  // node (i.e. the galaxy centre).
+  //
+  // heroWorld (our local marker) is the fallback when there's no flood origin yet
+  // (single node / no peers); null → CellGalaxy uses its own local origin/timing.
   const heroWorld = useMemo(
     () => topology.nodes.find((n) => n.kind === 'local')?.pos ?? null,
     [topology],
   );
+  const entryPeerWorld = useMemo(
+    () =>
+      cf.entryId
+        ? topology.nodes.find((n) => n.id === cf.entryId)?.pos ?? heroWorld
+        : heroWorld,
+    [cf.entryId, topology, heroWorld],
+  );
+  // The origin peer is the flood root (colonyArrivalS ≈ 0), so the wave departs
+  // ~SHOCKWAVE_FIRE_DELAY_S after the pulse and sweeps across to us — not only at
+  // the moment WE apply the block. Fall back to our own receive delay when there
+  // is no flood origin.
+  const entryArrivalS = cf.entryId
+    ? cf.colonyArrivalS[cf.entryId] ?? 0
+    : cf.localReceiveDelayS;
 
   const cellsStats = useMemo(
     () =>
@@ -305,16 +327,17 @@ export default function App({
             speed={0.3}
           />
 
-          {/* CellGalaxy's entryWorld/entryArrivalS/localReceiveDelayS now carry
-              the HERO (local) anchor — in the colony model our node IS the
-              galaxy's entry point (the queen is fed by us), so entry-time ==
-              local-receive-time. Prop names kept for the shared @cknerv/ui API. */}
+          {/* The canopy brightness shockwave erupts from the block's ORIGIN PEER
+              (cf.entryId) at its galaxy-contact point and sweeps inward — see the
+              entryPeerWorld note above. localReceiveDelayS still times OUR local
+              reaction (halo + local-ignition at the local node). Prop names kept
+              for the shared @cknerv/ui API. */}
           <CellGalaxy
             ckbNodeIds={ckbNodeIds}
             universeSeed={universeSeed}
             localReceiveDelayS={cf.localReceiveDelayS}
-            entryWorld={heroWorld}
-            entryArrivalS={cf.localReceiveDelayS}
+            entryWorld={entryPeerWorld}
+            entryArrivalS={entryArrivalS}
             selectedId={selectedId}
             onSelect={setSelectedId}
             cellFlashRef={cellFlashRef}
