@@ -16,7 +16,7 @@ export default function NetworkPanel({ summary, consensus, ping, vers, syncRatio
   const seg = (n: number) => `${(n / total) * 100}%`;
   return (
     <HudPanel style={{ width: 302, paddingTop: 14, ...style }}>
-      <PanelHeader en="PEER MESH" cjk="全节点网络" idx="MESH·02" accent={HUD_COLORS.peerWire} sig="peer" />
+      <PanelHeader en="PEER MESH" cjk="全节点网络" idx="MESH·02" accent={HUD_COLORS.peerWire} />
       <StatRow label="Peers"><span style={{ color: HUD_COLORS.peerWire }}>{summary.peerCount}</span> &nbsp; <span style={{ color: HUD_COLORS.dim }}>out</span> {summary.outbound} / <span style={{ color: HUD_COLORS.dim }}>in</span> {summary.inbound}</StatRow>
       <StatRow label="Head consensus">{consensus.atTip} / {consensus.total}</StatRow>
       <div style={{ display: 'flex', height: 7, border: '1px solid rgba(255,152,48,.2)', background: '#0a0a0a', margin: '4px 0' }}>
