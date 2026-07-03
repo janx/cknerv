@@ -21,7 +21,7 @@ import type { NetworkTopology } from '../types';
 const INFERRED_LINE_COLOR = '#8fb7ff';
 // Base line brightness for inferred edges — barely-there so the ~1–2k gossamer
 // edges read as faint structure, not a solid mass (additive). Tune live.
-const INFERRED_LINE_BASE = 0.16;
+const INFERRED_LINE_BASE = 0.3;
 // Measured edges glow brighter — the honesty gradient (observed > inferred),
 // mirroring ColonyNodes' bright measured cores over the faint ghost haze. Tune live.
 const MEASURED_LINE_BRIGHT = 0.7;
