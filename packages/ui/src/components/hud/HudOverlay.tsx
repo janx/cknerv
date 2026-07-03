@@ -27,6 +27,15 @@ const SYNC_AHEAD_RATIO = 0.5; // fraction of peers ahead of our tip = we're behi
 
 const ROOT_STYLE: CSSProperties = { position: 'fixed', inset: 0, zIndex: 15, pointerEvents: 'none', overflow: 'hidden' };
 const SCAN_STYLE: CSSProperties = { position: 'absolute', inset: 0, pointerEvents: 'none', background: 'repeating-linear-gradient(0deg,rgba(255,255,255,.035) 0 1px,transparent 1px 3px)', mixBlendMode: 'overlay', opacity: 0.5 };
+// Right-edge MESH RAIL: the CELL zone stacked over the PEER zone, right-anchored.
+// Each zone is a flex row [detail | mesh] (detail fans LEFT of its own mesh); the
+// rail is a flex column so the zones stack and details top-align to their mesh
+// with no height math. Panels flow via PANEL_FLOW (position:relative) instead of
+// self-positioning. Container shrink-wraps and pins its right edge, so the meshes
+// never shift when a detail appears — the row just grows leftward.
+const MESH_RAIL_STYLE: CSSProperties = { position: 'absolute', top: 42, right: 14, display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'flex-end' };
+const MESH_ZONE_STYLE: CSSProperties = { display: 'flex', gap: 12, alignItems: 'flex-start' };
+const PANEL_FLOW: CSSProperties = { position: 'relative' };
 
 export default function HudOverlay({ chain, peers, localNode, cellsStats, selectedCell, selectedNode, selectedPeer, onClearSelection, backfill, build, colonyCount }: {
   chain: ChainEntry; peers: Peer[]; localNode: ChainNode | undefined; cellsStats: CellsStats;
@@ -76,7 +85,24 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats, select
       <StatusStrip level={alert.level} uptimeMs={now - mountAt.current} build={build} />
       <WarningBar level={alert.level} trigger={alert.trigger} reducedMotion={reduced} />
       <BlockchainReadout chain={chain} style={{ left: 14, top: 42 }} />
-      <CellsPanel stats={cellsStats} churn={churn} reducedMotion={reduced} style={{ right: 14, top: 42 }} />
+      {/* MESH RAIL — the two mesh panels juxtaposed as a pair, each with its
+          detail docked alongside. CELL zone (galaxy) over PEER zone (colony);
+          within a zone the selected entity's detail fans LEFT of its own mesh.
+          The local NODE and remote PEER details both belong to the PEER zone. */}
+      <div style={MESH_RAIL_STYLE}>
+        <div style={MESH_ZONE_STYLE}>
+          {selectedCell && <CellDetailPanel cell={selectedCell} onClose={onClearSelection ?? (() => {})} style={PANEL_FLOW} />}
+          <CellsPanel stats={cellsStats} churn={churn} reducedMotion={reduced} style={PANEL_FLOW} />
+        </div>
+        <div style={MESH_ZONE_STYLE}>
+          {selectedNode ? (
+            <NodeDetailPanel node={selectedNode} chain={chain} onClose={onClearSelection ?? (() => {})} style={PANEL_FLOW} />
+          ) : selectedPeer ? (
+            <PeerDetailPanel peer={selectedPeer} chain={chain} onClose={onClearSelection ?? (() => {})} style={PANEL_FLOW} />
+          ) : null}
+          <NetworkPanel summary={summary} consensus={consensus} ping={ping} vers={vers} syncRatio={syncRatio} colonyCount={colonyCount} style={PANEL_FLOW} />
+        </div>
+      </div>
       <BlockCadenceEcg
         intervalsMs={chain.recent_block_intervals_ms}
         sizes={chain.recent_block_sizes}
@@ -89,15 +115,7 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats, select
         reducedMotion={reduced}
         style={{ left: 14, bottom: 14 }}
       />
-      <NetworkPanel summary={summary} consensus={consensus} ping={ping} vers={vers} syncRatio={syncRatio} colonyCount={colonyCount} style={{ right: 14, bottom: 14 }} />
       <BackfillBar backfill={backfill ?? null} />
-      {selectedCell ? (
-        <CellDetailPanel cell={selectedCell} onClose={onClearSelection ?? (() => {})} style={{ left: 14, top: 246 }} />
-      ) : selectedNode ? (
-        <NodeDetailPanel node={selectedNode} chain={chain} onClose={onClearSelection ?? (() => {})} style={{ left: 14, top: 246 }} />
-      ) : selectedPeer ? (
-        <PeerDetailPanel peer={selectedPeer} chain={chain} onClose={onClearSelection ?? (() => {})} style={{ left: 14, top: 246 }} />
-      ) : null}
     </div>
   );
 }
