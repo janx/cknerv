@@ -19,6 +19,7 @@ import CellsPanel from './CellsPanel';
 import { useCellChurn } from './useCellChurn';
 import WarningBar from './WarningBar';
 import { useReducedMotion } from './useReducedMotion';
+import { useMediaQuery } from './useMediaQuery';
 
 // We're "syncing" (catching up, benign) if the node is in IBD, our tip trails the
 // network best-known by more than a couple of blocks, or most peers are ahead of us.
@@ -34,7 +35,11 @@ const SCAN_STYLE: CSSProperties = { position: 'absolute', inset: 0, pointerEvent
 // self-positioning. Container shrink-wraps and pins its right edge, so the meshes
 // never shift when a detail appears — the row just grows leftward.
 const MESH_RAIL_STYLE: CSSProperties = { position: 'absolute', top: 42, right: 14, display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'flex-end' };
-const MESH_ZONE_STYLE: CSSProperties = { display: 'flex', gap: 12, alignItems: 'flex-start' };
+// Wide: detail fans LEFT of its mesh — [detail | mesh].
+const MESH_ZONE_ROW: CSSProperties = { display: 'flex', gap: 12, alignItems: 'flex-start' };
+// Narrow: detail docks BELOW its mesh (stays on the right edge, clear of the
+// left-hand panels). column-reverse keeps JSX order [detail, mesh] → mesh on top.
+const MESH_ZONE_COL: CSSProperties = { display: 'flex', flexDirection: 'column-reverse', gap: 12, alignItems: 'flex-end' };
 const PANEL_FLOW: CSSProperties = { position: 'relative' };
 
 export default function HudOverlay({ chain, peers, localNode, cellsStats, selectedCell, selectedNode, selectedPeer, onClearSelection, onClearCell, onClearNet, backfill, build, colonyCount }: {
@@ -59,6 +64,10 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats, select
   const clearNet = onClearNet ?? onClearSelection ?? (() => {});
 
   const reduced = useReducedMotion();
+  // Below ~1100px the left-fanning detail would reach the left-hand panels, so
+  // dock it below its mesh instead (stays on the right edge). Tunable breakpoint.
+  const narrowRail = useMediaQuery('(max-width: 1100px)');
+  const zoneStyle = narrowRail ? MESH_ZONE_COL : MESH_ZONE_ROW;
   const prevCond = useRef<EcgCondition>('FINE');
   const churn = useCellChurn(chain.tip, cellsStats.born, cellsStats.dead);
 
@@ -101,11 +110,11 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats, select
           within a zone the selected entity's detail fans LEFT of its own mesh.
           The local NODE and remote PEER details both belong to the PEER zone. */}
       <div style={MESH_RAIL_STYLE}>
-        <div style={MESH_ZONE_STYLE}>
+        <div style={zoneStyle}>
           {selectedCell && <CellDetailPanel cell={selectedCell} onClose={clearCell} style={PANEL_FLOW} />}
           <CellsPanel stats={cellsStats} churn={churn} reducedMotion={reduced} style={PANEL_FLOW} />
         </div>
-        <div style={MESH_ZONE_STYLE}>
+        <div style={zoneStyle}>
           {selectedNode ? (
             <NodeDetailPanel node={selectedNode} chain={chain} onClose={clearNet} style={PANEL_FLOW} />
           ) : selectedPeer ? (
