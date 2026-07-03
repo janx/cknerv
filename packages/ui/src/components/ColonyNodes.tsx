@@ -31,8 +31,8 @@ import type { NetworkNode, NetworkTopology } from '../types';
 // Ghost-cloud palette/scale. A faint blue "possible network" haze — the same
 // core+halo radial as the measured halo, only dim and small.
 const INFERRED_COLOR = '#8fb7ff';
-const INFERRED_DIM = 0.42; // fixed base brightness — a visible haze against the galaxy
-const INFERRED_SIZE = 3.0; // point-size factor (perspective-scaled)
+const INFERRED_DIM = 0.65; // fixed base brightness — a visible haze against the galaxy
+const INFERRED_SIZE = 5.0; // point-size factor (perspective-scaled) — bigger so the dots read
 
 // Measured core: bright, saturated, larger than the ghost haze.
 const MEASURED_SIZE = 1.4;
@@ -99,7 +99,7 @@ function InferredCloud({ topology }: { topology: NetworkTopology }) {
           void main() {
             float r = length(gl_PointCoord - 0.5) * 2.0;
             if (r > 1.0) discard;
-            float core = pow(1.0 - r, 4.0);
+            float core = pow(1.0 - r, 2.0); // broader than the halo's pow-4 so a small point still reads
             float halo = pow(1.0 - r, 1.6) * 0.42;
             float a = (core + halo) * uDim;
             gl_FragColor = vec4(uColor * a, a);
