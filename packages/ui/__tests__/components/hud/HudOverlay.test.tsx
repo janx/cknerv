@@ -26,8 +26,8 @@ describe('HudOverlay', () => {
     expect(t).toContain('CKNERV');       // status strip
     expect(t).toContain('COMMON KNOWLEDGE BASE'); // readout
     expect(t).toContain('PULSE');                 // ecg
-    expect(t).toContain('NEURAL MESH');  // network
-    expect(t).toContain('CELLS');        // cells
+    expect(t).toContain('PEER MESH');    // peer mesh
+    expect(t).toContain('CELL MESH');    // cell mesh
   });
 
   it('does not raise CAUTION when blocks merely run slower than the 8s target', () => {

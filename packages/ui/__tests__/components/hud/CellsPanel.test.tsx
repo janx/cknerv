@@ -19,7 +19,7 @@ describe('CellsPanel', () => {
   it('renders the flow vital sign, authoritative counts, and the in-view block', () => {
     const { container } = render(<CellsPanel stats={stats} churn={churn} reducedMotion />);
     const t = container.textContent ?? '';
-    expect(t).toContain('CELLS');
+    expect(t).toContain('CELL MESH');
     expect(t).toContain('细胞');
     expect(t).toContain('+0.5');      // net /blk
     expect(t).toContain('19,204');    // live
@@ -38,8 +38,9 @@ describe('CellsPanel', () => {
     expect(t).toContain('sighash');   // lock legend label
     expect(t).not.toContain('Data · plain');
   });
-  it('has no Umbrella octagon (no svg path)', () => {
+  it('renders the cell-mesh signature and no Umbrella octagon (exactly one svg path)', () => {
     const { container } = render(<CellsPanel stats={stats} churn={churn} reducedMotion />);
-    expect(container.querySelectorAll('path').length).toBe(0);
+    // The lone path is the CELL MESH signature strip; a returning Umbrella octagon would add another.
+    expect(container.querySelectorAll('path').length).toBe(1);
   });
 });

@@ -10,6 +10,7 @@ export const HUD_COLORS = {
   orange: '#FF9830',
   orangeDeep: '#EC7420',
   cyanWire: '#20F0FF',
+  peerWire: '#8FB7FF',
   ink: '#E8E8E8',
   dim: '#7C8794',
   nominal: '#27FF5A',
