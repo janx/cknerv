@@ -38,9 +38,8 @@ describe('CellsPanel', () => {
     expect(t).toContain('sighash');   // lock legend label
     expect(t).not.toContain('Data · plain');
   });
-  it('renders the cell-mesh signature and no Umbrella octagon (exactly one svg path)', () => {
+  it('has no Umbrella octagon (no svg path)', () => {
     const { container } = render(<CellsPanel stats={stats} churn={churn} reducedMotion />);
-    // The lone path is the CELL MESH signature strip; a returning Umbrella octagon would add another.
-    expect(container.querySelectorAll('path').length).toBe(1);
+    expect(container.querySelectorAll('path').length).toBe(0);
   });
 });
