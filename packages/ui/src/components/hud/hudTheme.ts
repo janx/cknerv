@@ -38,7 +38,7 @@ export function rgba(hex: string, alpha: number): string {
 
 // Self-hosted, subset webfonts — no third-party CDN at runtime. Latin faces are
 // Google's latin-range woff2; the CJK face is Huiwen-mincho (public domain)
-// subset to the ~21 glyphs the HUD uses (共识记忆细胞状态脉搏警告节点对端播种神经元).
+// subset to the 21 glyphs the HUD uses (共识记忆细胞状态脉搏警告节点对端播种网络全).
 const FONT_FACES = [
   `@font-face{font-family:'Saira';font-weight:100 900;font-display:swap;src:url("${sairaUrl}") format("woff2")}`,
   `@font-face{font-family:'Chakra Petch';font-weight:500;font-display:swap;src:url("${chakra500Url}") format("woff2")}`,

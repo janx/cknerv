@@ -20,7 +20,7 @@ describe('CellsPanel', () => {
     const { container } = render(<CellsPanel stats={stats} churn={churn} reducedMotion />);
     const t = container.textContent ?? '';
     expect(t).toContain('CELL MESH');
-    expect(t).toContain('细胞');
+    expect(t).toContain('共识细胞网络');
     expect(t).toContain('+0.5');      // net /blk
     expect(t).toContain('19,204');    // live
     expect(t).toContain('28,431');    // total observed
