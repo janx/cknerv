@@ -146,8 +146,12 @@ function MeasuredNode({
     // makeHaloMaterial only reads palette.halo for the tint, but Palette requires
     // all three fields — set them all to the node's hex.
     const hex = `#${color.getHexString()}`;
-    return makeHaloMaterial({ edge: hex, halo: hex, fill: hex });
-  }, [color]);
+    const m = makeHaloMaterial({ edge: hex, halo: hex, fill: hex });
+    // Per-node phase so the shader's secondary breathe isn't synced colony-wide
+    // (defaults to 0 → a phantom colony-wide pulse). Matches GlowNode/CrystalGlow.
+    m.uniforms.uPhase.value = phaseFor(node.id);
+    return m;
+  }, [color, node.id]);
   const phase = useMemo(() => phaseFor(node.id), [node.id]);
   const rate = useMemo(() => 0.7 + 0.6 * rateFor(node.id), [node.id]);
 
