@@ -8,7 +8,7 @@
 // indicator. The leva knobs panel is hidden by default (toggle with
 // backtick) — see Tweaks.
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { Hud, OrbitControls, OrthographicCamera, Stars } from '@react-three/drei';
 import {
@@ -91,7 +91,18 @@ export default function App({
       linkRingCapacity: galaxyConfig.pulses.linkRingCapacity,
     }),
   );
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Two independent selections so a cell (galaxy axis) and a network entity
+  // (node/peer axis) can be inspected side-by-side. Clicks route by id prefix:
+  // `cell:` → cell axis; a node id / `peer:` → net axis (node and peer share it,
+  // one network entity at a time). The axes drive the two HUD detail zones
+  // independently.
+  const [selectedCellId, setSelectedCellId] = useState<string | null>(null);
+  const [selectedNetId, setSelectedNetId] = useState<string | null>(null);
+  const handleSelect = useCallback((id: string | null) => {
+    if (id == null) return;
+    if (id.startsWith(CELL_SELECT_PREFIX)) setSelectedCellId(id);
+    else setSelectedNetId(id);
+  }, []);
 
   // Subscribe once on mount. Each stream opens with `?since=<bootstrap
   // revision>` so the server replays missed deltas (or re-snapshots) with
@@ -246,26 +257,22 @@ export default function App({
     [cellsCache.cells, cellsCache.totalBirths, cellsCache.totalDeaths],
   );
 
-  // Resolve the current selection into either a cell or a chain node.
+  // Resolve the two selections. Cell = the galaxy axis; node/peer share the
+  // network axis (selectedNetId holds a node id or a `peer:` id, never a cell).
   const selectedCell = useMemo(() => {
-    if (!selectedId || !selectedId.startsWith(CELL_SELECT_PREFIX)) return null;
-    const id = Number(selectedId.slice(CELL_SELECT_PREFIX.length));
+    if (!selectedCellId || !selectedCellId.startsWith(CELL_SELECT_PREFIX)) return null;
+    const id = Number(selectedCellId.slice(CELL_SELECT_PREFIX.length));
     return Number.isFinite(id) ? cellsCache.cells.get(id) ?? null : null;
-  }, [selectedId, cellsCache.cells]);
+  }, [selectedCellId, cellsCache.cells]);
   const selectedNode = useMemo(() => {
-    if (
-      !selectedId ||
-      selectedId.startsWith(CELL_SELECT_PREFIX) ||
-      selectedId.startsWith('peer:')
-    )
-      return null;
-    return chainNodes.find((n) => n.id === selectedId) ?? null;
-  }, [selectedId, chainNodes]);
+    if (!selectedNetId || selectedNetId.startsWith('peer:')) return null;
+    return chainNodes.find((n) => n.id === selectedNetId) ?? null;
+  }, [selectedNetId, chainNodes]);
   const selectedPeer = useMemo(() => {
-    if (!selectedId || !selectedId.startsWith('peer:')) return null;
-    const id = selectedId.slice('peer:'.length);
+    if (!selectedNetId || !selectedNetId.startsWith('peer:')) return null;
+    const id = selectedNetId.slice('peer:'.length);
     return peers.find((p) => p.node_id === id) ?? null;
-  }, [selectedId, peers]);
+  }, [selectedNetId, peers]);
 
   // In-canvas HUD layout — the always-on BLOCKCHAIN/NETWORK/CELLS panels now
   // live in the DOM HudOverlay; what remains here is the selection detail
@@ -298,7 +305,8 @@ export default function App({
         selectedCell={selectedCell}
         selectedNode={selectedNode}
         selectedPeer={selectedPeer}
-        onClearSelection={() => setSelectedId(null)}
+        onClearCell={() => setSelectedCellId(null)}
+        onClearNet={() => setSelectedNetId(null)}
         backfill={cellsCache.backfill}
         build={build}
         colonyCount={topology.nodes.length}
@@ -309,7 +317,7 @@ export default function App({
           camera={{ position: [110, 108, 110], fov: 50, near: 1, far: 3000 }}
           gl={{ antialias: true, alpha: true }}
           style={{ background: '#02030a' }}
-          onPointerMissed={() => setSelectedId(null)}
+          onPointerMissed={() => { setSelectedCellId(null); setSelectedNetId(null); }}
         >
           {/* Advances the module-level simClock once per frame so every
               useSimFrame animation (CellGalaxy, BlockDeliveryLayer, GlowNode,
@@ -338,8 +346,8 @@ export default function App({
             localReceiveDelayS={cf.localReceiveDelayS}
             entryWorld={entryPeerWorld}
             entryArrivalS={entryArrivalS}
-            selectedId={selectedId}
-            onSelect={setSelectedId}
+            selectedId={selectedNetId}
+            onSelect={handleSelect}
             cellFlashRef={cellFlashRef}
             flashDirtyRef={flashDirtyRef}
             overlay={
@@ -370,8 +378,8 @@ export default function App({
             topology={topology}
             cf={cf}
             blockPulseAtMs={cellsCache.lastPulseAtMs}
-            selectedId={selectedId}
-            onSelect={setSelectedId}
+            selectedId={selectedNetId}
+            onSelect={handleSelect}
             cellFlashRef={cellFlashRef}
             flashDirtyRef={flashDirtyRef}
             localVersion={localNode?.version ?? ''}

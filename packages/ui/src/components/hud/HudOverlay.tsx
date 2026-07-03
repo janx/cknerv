@@ -37,15 +37,26 @@ const MESH_RAIL_STYLE: CSSProperties = { position: 'absolute', top: 42, right: 1
 const MESH_ZONE_STYLE: CSSProperties = { display: 'flex', gap: 12, alignItems: 'flex-start' };
 const PANEL_FLOW: CSSProperties = { position: 'relative' };
 
-export default function HudOverlay({ chain, peers, localNode, cellsStats, selectedCell, selectedNode, selectedPeer, onClearSelection, backfill, build, colonyCount }: {
+export default function HudOverlay({ chain, peers, localNode, cellsStats, selectedCell, selectedNode, selectedPeer, onClearSelection, onClearCell, onClearNet, backfill, build, colonyCount }: {
   chain: ChainEntry; peers: Peer[]; localNode: ChainNode | undefined; cellsStats: CellsStats;
   selectedCell?: Cell | null; selectedNode?: ChainNode | null; selectedPeer?: Peer | null;
-  onClearSelection?: () => void; backfill?: { done: number; total: number } | null;
+  /** Clear-all fallback (cell + net). Kept for the shared @cknerv/ui API. */
+  onClearSelection?: () => void;
+  /** Clear just the cell / just the network selection — the two detail panels
+   *  can now show at once (cell + node/peer), so each × clears its own axis.
+   *  Each falls back to onClearSelection when not provided. */
+  onClearCell?: () => void; onClearNet?: () => void;
+  backfill?: { done: number; total: number } | null;
   build?: BuildInfo;
   /** Whole inferred-colony node count for NetworkPanel's honest footnote. */
   colonyCount?: number;
 }) {
   useEffect(() => { injectHudTheme(document); }, []);
+
+  // Per-axis clear for the two independent detail panels; fall back to the
+  // single onClearSelection (shared @cknerv/ui API / non-split callers).
+  const clearCell = onClearCell ?? onClearSelection ?? (() => {});
+  const clearNet = onClearNet ?? onClearSelection ?? (() => {});
 
   const reduced = useReducedMotion();
   const prevCond = useRef<EcgCondition>('FINE');
@@ -91,14 +102,14 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats, select
           The local NODE and remote PEER details both belong to the PEER zone. */}
       <div style={MESH_RAIL_STYLE}>
         <div style={MESH_ZONE_STYLE}>
-          {selectedCell && <CellDetailPanel cell={selectedCell} onClose={onClearSelection ?? (() => {})} style={PANEL_FLOW} />}
+          {selectedCell && <CellDetailPanel cell={selectedCell} onClose={clearCell} style={PANEL_FLOW} />}
           <CellsPanel stats={cellsStats} churn={churn} reducedMotion={reduced} style={PANEL_FLOW} />
         </div>
         <div style={MESH_ZONE_STYLE}>
           {selectedNode ? (
-            <NodeDetailPanel node={selectedNode} chain={chain} onClose={onClearSelection ?? (() => {})} style={PANEL_FLOW} />
+            <NodeDetailPanel node={selectedNode} chain={chain} onClose={clearNet} style={PANEL_FLOW} />
           ) : selectedPeer ? (
-            <PeerDetailPanel peer={selectedPeer} chain={chain} onClose={onClearSelection ?? (() => {})} style={PANEL_FLOW} />
+            <PeerDetailPanel peer={selectedPeer} chain={chain} onClose={clearNet} style={PANEL_FLOW} />
           ) : null}
           <NetworkPanel summary={summary} consensus={consensus} ping={ping} vers={vers} syncRatio={syncRatio} colonyCount={colonyCount} style={PANEL_FLOW} />
         </div>
