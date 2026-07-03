@@ -31,8 +31,8 @@ import type { NetworkNode, NetworkTopology } from '../types';
 // Ghost-cloud palette/scale. A faint blue "possible network" haze — the same
 // core+halo radial as the measured halo, only dim and small.
 const INFERRED_COLOR = '#8fb7ff';
-const INFERRED_DIM = 0.65; // fixed base brightness — a visible haze against the galaxy
-const INFERRED_SIZE = 5.0; // point-size factor (perspective-scaled) — bigger so the dots read
+const INFERRED_DIM = 0.9; // fixed base brightness — a clearly visible haze, not barely-there
+const INFERRED_SIZE = 5.5; // point-size factor (perspective-scaled) — bigger so the dots read
 
 // Measured core: bright, saturated, larger than the ghost haze.
 const MEASURED_SIZE = 1.4;
