@@ -130,7 +130,7 @@ const COLOR_BY_TAG: Record<string, [number, number, number]> = {
   wallet:  [0.43, 0.91, 0.72],   // #6ee7b7
 };
 const GENERIC_COLOR: [number, number, number] = [0.62, 0.78, 1.0]; // pale star-blue
-const ROTATION_RATE = 0.005; // rad/s
+const ROTATION_RATE = 0.0025; // rad/s
 
 // Cell point sizes in world units. The hybrid shader draws the anchored
 // core/glow sprite, and CellShell draws the faceted exterior around it.
