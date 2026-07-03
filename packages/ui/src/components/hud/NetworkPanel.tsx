@@ -16,8 +16,8 @@ export default function NetworkPanel({ summary, consensus, ping, vers, syncRatio
   const seg = (n: number) => `${(n / total) * 100}%`;
   return (
     <HudPanel style={{ width: 302, paddingTop: 14, ...style }}>
-      <PanelHeader en="NEURAL MESH" cjk="神经元" idx="NET·02" />
-      <StatRow label="Peers">{summary.peerCount} &nbsp; <span style={{ color: HUD_COLORS.dim }}>out</span> {summary.outbound} / <span style={{ color: HUD_COLORS.dim }}>in</span> {summary.inbound}</StatRow>
+      <PanelHeader en="PEER MESH" cjk="对端" idx="MESH·02" accent={HUD_COLORS.peerWire} sig="peer" />
+      <StatRow label="Peers"><span style={{ color: HUD_COLORS.peerWire }}>{summary.peerCount}</span> &nbsp; <span style={{ color: HUD_COLORS.dim }}>out</span> {summary.outbound} / <span style={{ color: HUD_COLORS.dim }}>in</span> {summary.inbound}</StatRow>
       <StatRow label="Head consensus">{consensus.atTip} / {consensus.total}</StatRow>
       <div style={{ display: 'flex', height: 7, border: '1px solid rgba(255,152,48,.2)', background: '#0a0a0a', margin: '4px 0' }}>
         <span style={{ width: seg(consensus.atTip), background: HUD_COLORS.nominal, boxShadow: '0 0 7px rgba(39,255,90,.55)' }} />
@@ -36,7 +36,7 @@ export default function NetworkPanel({ summary, consensus, ping, vers, syncRatio
       <StatRow label="Ping">{ping ? `${ping.medianMs}ms med · ${ping.minMs}–${ping.maxMs}` : '—'}</StatRow>
       <StatRow label="Best">#{fmt(summary.bestKnown)}</StatRow>
       {colonyCount != null && (
-        <div style={{ marginTop: 5, fontFamily: HUD_FONTS.mono, fontSize: 8.5, letterSpacing: 0.4, color: HUD_COLORS.dim }}>
+        <div style={{ marginTop: 5, fontFamily: HUD_FONTS.mono, fontSize: 8.5, letterSpacing: 0.4, color: HUD_COLORS.peerWire, opacity: 0.85 }}>
           colony ~ {fmt(colonyCount)} nodes (inferred)
         </div>
       )}
