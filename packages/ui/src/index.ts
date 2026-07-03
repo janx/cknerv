@@ -120,6 +120,7 @@ export { default as FlowBeam, type FlowStyle } from './components/FlowBeam';
 export { default as NetworkHud } from './components/NetworkHud';
 export { default as ColonyEdges } from './components/ColonyEdges';
 export { default as ColonyNodes } from './components/ColonyNodes';
+export { default as ColonyCourierLayer } from './components/ColonyCourierLayer';
 export { default as NetworkColony } from './components/NetworkColony';
 export { default as StatsHud } from './components/StatsHud';
 
