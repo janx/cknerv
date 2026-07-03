@@ -68,6 +68,15 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats, select
   // dock it below its mesh instead (stays on the right edge). Tunable breakpoint.
   const narrowRail = useMediaQuery('(max-width: 1100px)');
   const zoneStyle = narrowRail ? MESH_ZONE_COL : MESH_ZONE_ROW;
+  // When narrow, the rail docks details BELOW their mesh and can grow taller than
+  // the viewport (esp. with both details open). Cap its height + let it scroll,
+  // but only capture pointer events (needed to scroll) when it actually overflows,
+  // so click-through to the 3D scene is preserved the rest of the time.
+  const railRef = useRef<HTMLDivElement>(null);
+  const [railScrolls, setRailScrolls] = useState(false);
+  const railStyle: CSSProperties = narrowRail
+    ? { ...MESH_RAIL_STYLE, maxHeight: 'calc(100vh - 56px)', overflowX: 'hidden', overflowY: 'auto', pointerEvents: railScrolls ? 'auto' : 'none', scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,152,48,.35) transparent' }
+    : MESH_RAIL_STYLE;
   const prevCond = useRef<EcgCondition>('FINE');
   const churn = useCellChurn(chain.tip, cellsStats.born, cellsStats.dead);
 
@@ -75,6 +84,14 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats, select
   const mountAt = useRef(Date.now());
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => { const id = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(id); }, []);
+
+  // Re-measure rail overflow on mode / selection change and each 1s tick (the
+  // latter catches viewport resize within a second). setRailScrolls no-ops when
+  // unchanged, so this doesn't churn renders.
+  useEffect(() => {
+    const el = railRef.current;
+    setRailScrolls(!!el && narrowRail && el.scrollHeight > el.clientHeight + 1);
+  }, [narrowRail, selectedCell, selectedNode, selectedPeer, now]);
 
   // reorg delta across renders
   const prevReorgs = useRef(chain.reorgs);
@@ -109,7 +126,7 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats, select
           detail docked alongside. CELL zone (galaxy) over PEER zone (colony);
           within a zone the selected entity's detail fans LEFT of its own mesh.
           The local NODE and remote PEER details both belong to the PEER zone. */}
-      <div style={MESH_RAIL_STYLE}>
+      <div ref={railRef} className="cknerv-mesh-rail" style={railStyle}>
         <div style={zoneStyle}>
           {selectedCell && <CellDetailPanel cell={selectedCell} onClose={clearCell} style={PANEL_FLOW} />}
           <CellsPanel stats={cellsStats} churn={churn} reducedMotion={reduced} style={PANEL_FLOW} />
