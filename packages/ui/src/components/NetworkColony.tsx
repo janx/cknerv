@@ -5,6 +5,9 @@
 //   • ColonyNodes — the faint inferred cloud + bright measured nodes, unified as
 //     ONE glow primitive on a confidence gradient (rendered OVER the edges); the
 //     local "you" is the galaxy's anchor, not drawn here
+//   • ColonyCourierLayer — the block flood: a thrown glow-mote + comet tail flung
+//     node→node outward from the flood origin along the shortest-path tree
+//     (colonyCourierSchedule), timed by the flood arrivals. Owns its own pulse.
 //   • BlockDeliveryLayer — one bolus per measured worker (timed by cf.arrivals)
 //     plus the local hero (cf.localReceiveDelayS), lobbed up into the cell
 //     canopy and igniting the cells each lands on.
@@ -36,6 +39,7 @@ import type { NetworkTopology, Vec3 } from '../types';
 import type { ColonyFlood } from '../derives/networkFlood.derive';
 import ColonyNodes from './ColonyNodes';
 import ColonyEdges from './ColonyEdges';
+import ColonyCourierLayer from './ColonyCourierLayer';
 import BlockDeliveryLayer from './BlockDeliveryLayer';
 
 interface NetworkColonyProps {
@@ -89,10 +93,16 @@ export default function NetworkColony({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [blockPulseAtMs]);
 
-  // Measured-worker launch points (bolus origins), keyed by node id.
+  // ALL colony node launch points, keyed by node id. The courier hops the FULL
+  // shortest-path tree (inferred nodes relay too), so it needs every node's
+  // position. BlockDeliveryLayer safely SHARES this map: its planDeliveries only
+  // emits a bolus for ids present in cf.arrivals (measured), and measured ⊆ all
+  // nodes — the extra inferred/local keys are skipped (no arrival → no delivery,
+  // and the local id is fed separately via localOrigins), so the delivery set is
+  // byte-identical to the old measured-only map.
   const posById = useMemo(() => {
     const m = new Map<string, Vec3>();
-    for (const n of topology.nodes) if (n.kind === 'measured') m.set(n.id, n.pos);
+    for (const n of topology.nodes) m.set(n.id, n.pos);
     return m;
   }, [topology]);
   // The single local/hero origin. inferredTopology always emits exactly one
@@ -111,6 +121,12 @@ export default function NetworkColony({
         selectedId={selectedId}
         onSelect={onSelect}
         localVersion={localVersion}
+      />
+      <ColonyCourierLayer
+        cf={cf}
+        posById={posById}
+        blockPulseAtMs={blockPulseAtMs}
+        backfillActive={backfillActive}
       />
       <BlockDeliveryLayer
         posById={posById}
