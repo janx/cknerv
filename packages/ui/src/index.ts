@@ -128,3 +128,4 @@ export { default as NeuralNetwork } from './nerve/NeuralNetwork';
 export { default as DendriticBurst } from './nerve/DendriticBurst';
 export type { DendriticBurstProps } from './nerve/DendriticBurst';
 export { planPulses, type Pulse, type PulsePlanningOptions } from './nerve/pulseRunner';
+export * from './nerve/pulseStats';
