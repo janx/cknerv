@@ -7,6 +7,7 @@ import type { Cell, CellLink } from '@cknerv/types';
 import { fnv1a } from '../geometry/edgeBezier';
 import type { NeighborGraph } from '../geometry/neighborGraph';
 import { shortestPath, DEFAULT_MAX_HOPS } from '../geometry/pathRouter';
+import type { PulseStatsSink } from './pulseStats';
 
 /** Base time the spike spends traversing one hop (cell-to-cell) in
  *  ms. Each individual pulse picks its own hop time around this base
@@ -97,6 +98,7 @@ export function planPulses(
   graph: NeighborGraph,
   optionsOrMaxHops: PulsePlanningOptions | number = DEFAULT_MAX_HOPS,
   nowMs: number = link.at_ms,
+  stats?: PulseStatsSink,
 ): Pulse[] {
   const maxHops =
     typeof optionsOrMaxHops === 'number'
@@ -110,7 +112,10 @@ export function planPulses(
     typeof optionsOrMaxHops === 'number'
       ? MAX_SOURCES_PER_PARENT
       : optionsOrMaxHops.maxSourcesPerParent ?? MAX_SOURCES_PER_PARENT;
-  if (link.to_ids.length === 0) return [];
+  if (link.to_ids.length === 0) {
+    stats?.bump('no-outputs');
+    return [];
+  }
 
   const color: [number, number, number] =
     (link.tag !== null && PULSE_COLOR_BY_TAG[link.tag]) ||
@@ -132,18 +137,27 @@ export function planPulses(
       perParent.set(tx, used + 1);
     }
   }
-  if (sources.length === 0) return [];
+  if (sources.length === 0) {
+    stats?.bump(link.parents.length === 0 ? 'no-parents' : 'no-source');
+    return [];
+  }
 
   const pulses: Pulse[] = [];
   outer: for (const src of sources) {
     for (const dst of link.to_ids) {
       if (pulses.length >= maxPulsesPerLink) break outer;
       if (src === dst) continue;
+      const missing =
+        !graph.adjacency.has(src) || !graph.adjacency.has(dst);
       const path = shortestPath(graph, src, dst, maxHops);
-      if (!path || path.length < 2) continue;
+      if (!path || path.length < 2) {
+        stats?.bumpPath(missing ? 'endpoint-missing' : 'no-path');
+        continue;
+      }
       const { startDelayMs, hopMs } = pulseTiming(link, src, dst);
       pulses.push({ path, bornAtMs: nowMs, color, startDelayMs, hopMs });
     }
   }
+  stats?.bump(pulses.length > 0 ? 'fired' : 'all-paths-failed');
   return pulses;
 }
