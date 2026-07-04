@@ -19,6 +19,8 @@ import { buildNeighborGraph, emptyNeighborGraph, type NeighborGraph } from '../g
 import { type Pulse, type PulsePlanningOptions } from './pulseRunner';
 import { planLinkBatch, tickBlockIfAdvanced } from './pulseBatch';
 import { pulseStats } from './pulseStats';
+import { diffCells, snapshotCells, type CellSnapshotEntry } from './cellsDelta';
+import { planMeshUpdate, shouldReconcile } from './livingMeshDriver';
 import NeuralFabric, { type NeuralFabricHandles } from './NeuralFabric';
 import { bezierAt, bezierControl, fabricEdgeSeed } from '../geometry/edgeBezier';
 import { SpikePool } from './spikePool';
@@ -49,11 +51,8 @@ const HOP_TAIL_BRIGHT = 1.4;
 const HOP_TAIL_DECAY = 0.65;
 /** How many past hops still glow behind the leading hop. */
 const TRAIL_HOPS = 5;
-/** Throttle the spatial-graph rebuild. With ~1500 cells, k-NN +
- *  MST stitching costs ~30-60 ms; the cells projection emits a
- *  delta several times a second, so without throttling we'd burn
- *  hundreds of ms per second on rebuilds we don't need. */
-const REBUILD_THROTTLE_MS = 250;
+const RIPPLE_STAGGER_MS = 60;      // per-birth grow-in delay within a block
+const RECONCILE_EVERY_N_BLOCKS = 6; // canonical drift repair cadence
 
 interface NeuralNetworkProps {
   cellFlashRef?: React.RefObject<Map<number, number>>;
@@ -82,67 +81,58 @@ export default function NeuralNetwork({
 }: NeuralNetworkProps = {}) {
   const cellsCache = useCellGalaxy();
 
-  // Neighbour graph rebuilds only when cell *membership* (the set of
-  // ids) actually changes — i.e. on birth/gc deltas. Death and tag
-  // deltas leave the id set + every cell's pos_seed identical, so the
-  // graph and fabric layout are unaffected and the rebuild would be
-  // pure waste. Profile-confirmed: setFabric + buildNeighborGraph were
-  // the dominant single-frame freezes (up to 244ms) before this skip.
+  // Living mesh: the neighbour graph is maintained INCREMENTALLY from the
+  // per-frame cells diff rather than rebuilt wholesale on every membership
+  // change. Each birth adds its k-NN out-edges (grown in with a ripple
+  // stagger), each real death retracts + flashes its edges, each cap
+  // eviction quietly fades them. The risky orchestration — mutating the
+  // graph plus building the fabric instruction maps — lives in the pure,
+  // unit-tested planMeshUpdate; this effect is a thin driver over the fabric
+  // handles. graphRef is mutated in place so the pulse-planning effect (and
+  // the per-frame loop) always route over a fresh adjacency — the stale-graph
+  // race the throttled rebuild used to open is closed.
   //
-  // The build itself is still O(N²) on raw cells.size, and the
-  // cells projection fires deltas several times a second. The throttle
-  // is now a debounce inside the membership-changed path: when births/
-  // GCs cluster, we coalesce them.
+  // The add-only incremental path never grows the symmetric in-edges an
+  // existing cell would gain from a newcomer, so every RECONCILE_EVERY_N_BLOCKS
+  // blocks' worth of births we rebuild the canonical graph and diff it back
+  // through setFabric — repairing the accrued drift, off the race path.
   const graphRef = useRef<NeighborGraph>(emptyNeighborGraph());
-  const lastRebuildAtRef = useRef<number>(0);
-  const pendingRebuildRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  /** FNV-1a-ish hash over (size, ids). Cheap (one O(N) pass over keys),
-   *  order-invariant via XOR. Sentinel `-1` triggers the first build. */
-  const lastMembershipHashRef = useRef<number>(-1);
+  const prevCellsRef = useRef<Map<number, CellSnapshotEntry>>(new Map());
+  const bootstrappedRef = useRef(false);
+  const blockCountRef = useRef(0);
   useEffect(() => {
-    // Compute a hash that captures the SET of cell ids. Death and tag
-    // deltas don't change keys → hash unchanged → skip rebuild.
-    let idsXor = 0;
-    for (const id of cellsCache.cells.keys()) {
-      idsXor ^= id;
-    }
-    const membershipHash = (cellsCache.cells.size * 0x100000) ^ idsXor;
-    if (membershipHash === lastMembershipHashRef.current) return;
-    lastMembershipHashRef.current = membershipHash;
+    const cells = cellsCache.cells;
+    const now = simClock.elapsedSec;
+    const handles = fabricHandlesRef.current;
+    const opts = { k: topology?.neighborK, maxEdgeLength: topology?.maxEdgeLength };
 
-    function doRebuild() {
-      pendingRebuildRef.current = null;
-      graphRef.current = buildNeighborGraph(cellsCache.cells, {
-        k: topology?.neighborK,
-        maxEdgeLength: topology?.maxEdgeLength,
-      });
-      fabricHandlesRef.current?.setFabric(
-        graphRef.current,
-        cellsCache.cells,
-        simClock.elapsedSec,
-      );
-      lastRebuildAtRef.current = performance.now();
+    if (!bootstrappedRef.current) {
+      if (cells.size === 0) return; // wait for first populated frame
+      graphRef.current = buildNeighborGraph(cells, opts);
+      handles?.setFabric(graphRef.current, cells, now);
+      prevCellsRef.current = snapshotCells(cells);
+      bootstrappedRef.current = true;
+      return;
     }
-    const now = performance.now();
-    const sinceLast = now - lastRebuildAtRef.current;
-    if (pendingRebuildRef.current) {
-      clearTimeout(pendingRebuildRef.current);
-      pendingRebuildRef.current = null;
+
+    const diff = diffCells(prevCellsRef.current, cells);
+    prevCellsRef.current = snapshotCells(cells);
+    if (diff.born.length === 0 && diff.died.length === 0 && diff.evicted.length === 0) return;
+
+    // All graph mutation + fabric-instruction building happens in the pure
+    // planMeshUpdate (unit-tested); the effect just drives the handles.
+    const u = planMeshUpdate(diff, graphRef.current, cells, now, opts, RIPPLE_STAGGER_MS);
+    if (u.addedEdges.length > 0) handles?.growEdges(u.addedEdges, cells, u.bornAtByKey, u.dirByKey);
+    if (u.deathKeys.length > 0) handles?.killEdges(u.deathKeys, now, 'death', u.deathEndByKey);
+    if (u.evictKeys.length > 0) handles?.killEdges(u.evictKeys, now, 'gc');
+
+    // Periodic canonical reconciliation (off the race path).
+    blockCountRef.current += diff.born.length; // proxy: births ≈ per-block activity
+    if (shouldReconcile(blockCountRef.current, RECONCILE_EVERY_N_BLOCKS)) {
+      blockCountRef.current = 0;
+      graphRef.current = buildNeighborGraph(cells, opts);
+      handles?.setFabric(graphRef.current, cells, now); // diff animates drift as grow/gc-fade
     }
-    if (sinceLast >= REBUILD_THROTTLE_MS) {
-      doRebuild();
-    } else {
-      pendingRebuildRef.current = setTimeout(
-        doRebuild,
-        REBUILD_THROTTLE_MS - sinceLast,
-      );
-    }
-    return () => {
-      if (pendingRebuildRef.current) {
-        clearTimeout(pendingRebuildRef.current);
-        pendingRebuildRef.current = null;
-      }
-    };
   }, [cellsCache.revision, cellsCache.cells, topology?.neighborK, topology?.maxEdgeLength]);
 
   // Pulse queue. Pulses are removed when their head reaches the
