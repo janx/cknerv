@@ -51,3 +51,25 @@ describe('fabricEdgeRenderState death retract', () => {
     expect(mid.tEnd).toBeCloseTo(0.5, 2);
   });
 });
+
+describe('fabricEdgeRenderState future-dated death (defensive decayMs clamp)', () => {
+  // A defensively future-dated dyingAt (> nowSec) makes the raw
+  // decayMs negative. Unclamped that over-whites the flash
+  // (exp(-neg/τ) > 1) and produces a negative/inverted retract
+  // interval. The Math.max(0, …) clamp bounds both sub-branches.
+  it('bounds a future-dated death edge — no over-white flash, no inverted interval', () => {
+    const st = { ...base, dyingAt: 10, deathKind: 'death' as const, deadEnd: 'from' as const };
+    const r = fabricEdgeRenderState(st, 9); // nowSec < dyingAt
+    expect(r.flash).toBeLessThanOrEqual(1);
+    expect(r.tStart).toBeGreaterThanOrEqual(0);
+    expect(r.tStart).toBeLessThanOrEqual(1);
+    expect(r.tEnd).toBeGreaterThanOrEqual(0);
+    expect(r.tEnd).toBeLessThanOrEqual(1);
+    expect(r.tEnd).toBeGreaterThanOrEqual(r.tStart);
+  });
+  it('bounds a future-dated gc edge — alphaMul stays <= 1', () => {
+    const st = { ...base, dyingAt: 10, deathKind: 'gc' as const };
+    const r = fabricEdgeRenderState(st, 9); // nowSec < dyingAt
+    expect(r.alphaMul).toBeLessThanOrEqual(1);
+  });
+});
