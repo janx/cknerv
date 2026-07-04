@@ -122,14 +122,16 @@ export function buildNeighborGraph(
     typeof optionsOrK === 'number'
       ? MAX_EDGE_LENGTH
       : optionsOrK.maxEdgeLength ?? MAX_EDGE_LENGTH;
-  const n = cells.size;
+  // Dead-but-not-yet-gc'd cells (death_at_ms set, still in the map)
+  // must contribute NO adjacency and NO edges: death retracts a cell's
+  // fibres, and a later reconciliation rebuild must not resurrect them.
+  const cellArr = [...cells.values()].filter((c) => c.death_at_ms == null);
+  const n = cellArr.length;
   if (n === 0) return emptyNeighborGraph();
   if (n === 1) {
-    const [id] = [...cells.keys()];
-    return { adjacency: new Map([[id, new Set()]]), edges: [] };
+    return { adjacency: new Map([[cellArr[0].id, new Set()]]), edges: [] };
   }
 
-  const cellArr = [...cells.values()];
   const byId = new Map<number, Cell>(cellArr.map((c) => [c.id, c]));
 
   // Pre-allocated parallel scratch buffers for top-k. Avoids the

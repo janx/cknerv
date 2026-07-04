@@ -265,3 +265,32 @@ describe('buildNeighborGraph', () => {
       .toEqual(keysOf(buildNeighborGraph(reverse, DEFAULT_K)));
   });
 });
+
+function liveCell(id: number, x: number, z: number, death: number | null = null): Cell {
+  return { id, born_at_ms: 0, death_at_ms: death, birth_block: 1, tag: null,
+    pos_seed: [x, 0, z], out_point: { tx_hash: '0x', index: 0 }, capacity: 0,
+    data_hex: '0x', content_hash: '0x' + '00'.repeat(32) };
+}
+
+describe('buildNeighborGraph dead-cell exclusion', () => {
+  it('omits cells with death_at_ms set from adjacency and edges', () => {
+    const cells = new Map<number, Cell>([
+      [1, liveCell(1, 0, 0)],
+      [2, liveCell(2, 3, 0)],
+      [3, liveCell(3, 6, 0, 123)], // dead
+    ]);
+    const g = buildNeighborGraph(cells);
+    expect(g.adjacency.has(3)).toBe(false);
+    expect(g.edges.every((e) => e.from !== 3 && e.to !== 3)).toBe(true);
+    expect(g.adjacency.has(1)).toBe(true);
+  });
+
+  it('is order-independent over the LIVE set (dead cells never enter)', () => {
+    const mk = (order: number[]) => {
+      const m = new Map<number, Cell>();
+      for (const id of order) m.set(id, id === 2 ? liveCell(2, 3, 0, 99) : liveCell(id, id * 3, 0));
+      return buildNeighborGraph(m).edges.map((e) => `${e.from}|${e.to}`).sort();
+    };
+    expect(mk([1, 2, 3, 4])).toEqual(mk([4, 3, 2, 1]));
+  });
+});
