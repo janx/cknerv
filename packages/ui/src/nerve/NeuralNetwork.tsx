@@ -16,8 +16,8 @@ import { useCellGalaxy } from '../hooks/cellGalaxyContext';
 import { useSimFrame } from '../tweaks/useSimFrame';
 import { simClock } from '../tweaks/simClock';
 import { buildNeighborGraph, emptyNeighborGraph, type NeighborGraph } from '../geometry/neighborGraph';
-import { planPulses, type Pulse, type PulsePlanningOptions } from './pulseRunner';
-import { advanceLinkCursor } from './linkCursor';
+import { type Pulse, type PulsePlanningOptions } from './pulseRunner';
+import { planLinkBatch, tickBlockIfAdvanced } from './pulseBatch';
 import { pulseStats } from './pulseStats';
 import NeuralFabric, { type NeuralFabricHandles } from './NeuralFabric';
 import { bezierAt, bezierControl, fabricEdgeSeed } from '../geometry/edgeBezier';
@@ -150,35 +150,29 @@ export default function NeuralNetwork({
   const pulsesRef = useRef<ActivePulse[]>([]);
   const lastLinksSeqRef = useRef<number>(0);
   useEffect(() => {
-    // Decide which links fire. While a backfill/catch-up is active this
-    // returns toFire=[] but still advances the cursor, so the storm is
-    // suppressed and the window does not replay when `backfill` clears.
-    const { toFire, nextSeq, suppressed } = advanceLinkCursor(
+    // Decide which links fire + plan their pulses. While a backfill/catch-up
+    // is active this returns planned=[] but still advances the cursor, so the
+    // storm is suppressed and the window does not replay when `backfill`
+    // clears. Drop reasons + per-block rollup are recorded into pulseStats.
+    const { planned, nextSeq } = planLinkBatch(
       cellsCache.recentLinks,
       lastLinksSeqRef.current,
       !!cellsCache.backfill,
+      cellsCache.cells,
+      graphRef.current,
+      {
+        maxHops: topology?.maxHops,
+        maxPulsesPerLink: pulses?.maxPulsesPerLink,
+        maxSourcesPerParent: pulses?.maxSourcesPerParent,
+      },
+      pulseStats,
     );
     lastLinksSeqRef.current = nextSeq;
-    if (suppressed > 0) pulseStats.bump('backfill', suppressed);
-    for (const link of toFire) {
-      const planned = planPulses(
-        link,
-        cellsCache.cells,
-        graphRef.current,
-        {
-          maxHops: topology?.maxHops,
-          maxPulsesPerLink: pulses?.maxPulsesPerLink,
-          maxSourcesPerParent: pulses?.maxSourcesPerParent,
-        },
-        link.at_ms,
-        pulseStats,
-      );
-      pulseStats.observeLink(link.block, planned.length > 0);
-      if (planned.length === 0) continue;
-      const startSec = simClock.elapsedSec;
-      for (const p of planned) {
-        pulsesRef.current.push({ ...p, startSec });
-      }
+    // All links in this synchronous batch share one clock read — simClock only
+    // advances per frame, so stamping once == the prior per-link stamping.
+    const startSec = simClock.elapsedSec;
+    for (const p of planned) {
+      pulsesRef.current.push({ ...p, startSec });
     }
     // Soft cap — drop oldest if we're way over.
     const maxActivePulses = pulses?.maxActivePulses ?? MAX_ACTIVE_PULSES;
@@ -202,11 +196,11 @@ export default function NeuralNetwork({
   // not a new block during this session).
   const lastSeenPulseAtRef = useRef<number>(0);
   useEffect(() => {
-    const at = cellsCache.lastPulseAtMs;
-    if (at > lastSeenPulseAtRef.current) {
-      if (lastSeenPulseAtRef.current !== 0) pulseStats.observeBlockTick();
-      lastSeenPulseAtRef.current = at;
-    }
+    lastSeenPulseAtRef.current = tickBlockIfAdvanced(
+      cellsCache.lastPulseAtMs,
+      lastSeenPulseAtRef.current,
+      pulseStats,
+    );
   }, [cellsCache.lastPulseAtMs]);
 
   // SpikePool sprites for the moving Na+ heads.
