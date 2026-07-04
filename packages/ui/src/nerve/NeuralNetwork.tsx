@@ -18,6 +18,7 @@ import { simClock } from '../tweaks/simClock';
 import { buildNeighborGraph, emptyNeighborGraph, type NeighborGraph } from '../geometry/neighborGraph';
 import { planPulses, type Pulse, type PulsePlanningOptions } from './pulseRunner';
 import { advanceLinkCursor } from './linkCursor';
+import { pulseStats } from './pulseStats';
 import NeuralFabric, { type NeuralFabricHandles } from './NeuralFabric';
 import { bezierAt, bezierControl, fabricEdgeSeed } from '../geometry/edgeBezier';
 import { SpikePool } from './spikePool';
@@ -152,18 +153,27 @@ export default function NeuralNetwork({
     // Decide which links fire. While a backfill/catch-up is active this
     // returns toFire=[] but still advances the cursor, so the storm is
     // suppressed and the window does not replay when `backfill` clears.
-    const { toFire, nextSeq } = advanceLinkCursor(
+    const { toFire, nextSeq, suppressed } = advanceLinkCursor(
       cellsCache.recentLinks,
       lastLinksSeqRef.current,
       !!cellsCache.backfill,
     );
     lastLinksSeqRef.current = nextSeq;
+    if (suppressed > 0) pulseStats.bump('backfill', suppressed);
     for (const link of toFire) {
-      const planned = planPulses(link, cellsCache.cells, graphRef.current, {
-        maxHops: topology?.maxHops,
-        maxPulsesPerLink: pulses?.maxPulsesPerLink,
-        maxSourcesPerParent: pulses?.maxSourcesPerParent,
-      });
+      const planned = planPulses(
+        link,
+        cellsCache.cells,
+        graphRef.current,
+        {
+          maxHops: topology?.maxHops,
+          maxPulsesPerLink: pulses?.maxPulsesPerLink,
+          maxSourcesPerParent: pulses?.maxSourcesPerParent,
+        },
+        link.at_ms,
+        pulseStats,
+      );
+      pulseStats.observeLink(link.block, planned.length > 0);
       if (planned.length === 0) continue;
       const startSec = simClock.elapsedSec;
       for (const p of planned) {
@@ -185,6 +195,19 @@ export default function NeuralNetwork({
     pulses?.maxSourcesPerParent,
     pulses?.maxActivePulses,
   ]);
+
+  // Dev metric: count every block that arrives (one `pulse` delta each,
+  // incl. empty blocks) so pulseStats can derive the per-block silent rate.
+  // The first observed value only seeds the ref (it is the bootstrap pulse,
+  // not a new block during this session).
+  const lastSeenPulseAtRef = useRef<number>(0);
+  useEffect(() => {
+    const at = cellsCache.lastPulseAtMs;
+    if (at > lastSeenPulseAtRef.current) {
+      if (lastSeenPulseAtRef.current !== 0) pulseStats.observeBlockTick();
+      lastSeenPulseAtRef.current = at;
+    }
+  }, [cellsCache.lastPulseAtMs]);
 
   // SpikePool sprites for the moving Na+ heads.
   const spikePool = useMemo(() => new SpikePool(SPIKE_POOL_CAPACITY), []);
