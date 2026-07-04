@@ -7,6 +7,7 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
 import { fetchCellsSnapshot, fetchChainSnapshot } from './connect';
+import { installPulseStatsHook } from './pulse-stats-hook';
 
 async function bootstrap() {
   const [chainResp, cellsResp] = await Promise.all([
@@ -27,6 +28,11 @@ async function bootstrap() {
     </React.StrictMode>,
   );
 }
+
+// Dev affordance — attach window.__pulseStats() / __pulseStatsReset() for
+// live inspection of the nerve-pulse drop counters. Independent of the
+// render, so it stays available even if bootstrap below fails.
+installPulseStatsHook();
 
 bootstrap().catch((e: unknown) => {
   // Safe DOM API rendering — `textContent` escapes the message so a
