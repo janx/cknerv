@@ -11,6 +11,8 @@ export interface LinkCursorResult {
   toFire: CellLink[];
   /** The advanced cursor — the max seq seen, never below `lastSeq`. */
   nextSeq: number;
+  /** New links consumed-but-not-fired because `backfillActive` (dev metric). */
+  suppressed: number;
 }
 
 export function advanceLinkCursor(
@@ -19,11 +21,13 @@ export function advanceLinkCursor(
   backfillActive: boolean,
 ): LinkCursorResult {
   let nextSeq = lastSeq;
+  let suppressed = 0;
   const toFire: CellLink[] = [];
   for (const link of recentLinks) {
     if (link.seq <= lastSeq) continue;
     if (link.seq > nextSeq) nextSeq = link.seq;
-    if (!backfillActive) toFire.push(link);
+    if (backfillActive) suppressed += 1;
+    else toFire.push(link);
   }
-  return { toFire, nextSeq };
+  return { toFire, nextSeq, suppressed };
 }

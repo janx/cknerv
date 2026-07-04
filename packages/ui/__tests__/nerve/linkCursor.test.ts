@@ -31,4 +31,24 @@ describe('advanceLinkCursor', () => {
     expect(toFire).toEqual([]); // no nerve pulses during catch-up/boot
     expect(nextSeq).toBe(3); // cursor still advances → no backlog replay later
   });
+
+  it('fires new links and reports suppressed=0 when not backfilling', () => {
+    const r = advanceLinkCursor([link(1), link(2)], 0, false);
+    expect(r.toFire.map((l) => l.seq)).toEqual([1, 2]);
+    expect(r.nextSeq).toBe(2);
+    expect(r.suppressed).toBe(0);
+  });
+
+  it('suppresses all new links and counts them while backfilling', () => {
+    const r = advanceLinkCursor([link(1), link(2), link(3)], 0, true);
+    expect(r.toFire).toEqual([]);
+    expect(r.nextSeq).toBe(3); // cursor still advances
+    expect(r.suppressed).toBe(3);
+  });
+
+  it('ignores already-consumed links (seq <= lastSeq)', () => {
+    const r = advanceLinkCursor([link(1), link(2), link(3)], 2, true);
+    expect(r.suppressed).toBe(1); // only seq 3 is new
+    expect(r.nextSeq).toBe(3);
+  });
 });
