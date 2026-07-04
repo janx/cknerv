@@ -23,10 +23,19 @@ import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js';
 import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js';
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 import type { Cell } from '@cknerv/types';
-import type { NeighborGraph } from '../geometry/neighborGraph';
+import type { NeighborGraph, NeighborEdge } from '../geometry/neighborGraph';
 import { bezierAtInto, bezierControlInto, fabricEdgeSeed } from '../geometry/edgeBezier';
 import { fabricEdgeKey, orderFabricStateKeys } from './fabricOrder';
 import { FABRIC_SAMPLES_PER_EDGE, MAX_FABRIC_SEGMENTS } from './fabricCapacity';
+import {
+  fabricEdgeRenderState,
+  GROWTH_MS,
+  DECAY_MS,
+  DEATH_RETRACT_MS,
+  DEATH_FLASH_MS,
+  type DeathKind,
+} from './fabricEdgeRender';
+import { simClock } from '../tweaks/simClock';
 
 // Dense-mesh baseline alpha. The full k-NN fabric stacks ~5× more
 // additive-blended lines than the old truncated view, so the core would
@@ -62,18 +71,10 @@ const MAX_ACTIVE_SEGMENTS = 6000;
 const FABRIC_WIDTH_PX = 2.5;
 const ACTIVE_WIDTH_PX = 3.4;
 
-/** Fabric edge growth window. A freshly-added edge takes this long
- *  to reach full length + alpha. Length is linear in progress
- *  (reads as a tendril extending from the source cell); alpha uses
- *  easeOutCubic (fast in, slow finish — looks more biological than
- *  a flat ramp). Tuned to feel like neural projection, not a wipe. */
-const GROWTH_MS = 1200;
-/** Fabric edge decay window. A removed edge's alpha rolls down
- *  linearly across this interval; the fibre keeps its full length
- *  through decay (retracting reads as "withdrawn", we want
- *  "atrophied"). Slightly longer than GROWTH_MS so deaths feel
- *  weightier than births. */
-const DECAY_MS = 1500;
+// Fabric edge lifecycle timings (GROWTH_MS growth window, DECAY_MS quiet
+// gc fade, DEATH_RETRACT_MS/DEATH_FLASH_MS real-death retract+flash) now
+// live in ./fabricEdgeRender as the single source of truth, shared with
+// the pure `fabricEdgeRenderState` render-math this layer draws from.
 
 /** Per-frame request to draw one active hop. The renderer samples
  *  the same Bezier the fabric uses, then emits ACTIVE_SAMPLES_PER_HOP
@@ -106,6 +107,29 @@ export interface NeuralFabricHandles {
    *  Gated internally: returns immediately when nothing is dirty
    *  and no edge is animating. */
   emitFabric(now: number): void;
+  /** Live per-edge births, driving the same grow-in engine `setFabric`
+   *  uses. `bornAtByKey` gives each edge an absolute sim-second birth
+   *  time (the driver spreads these for a ripple stagger — a future
+   *  value keeps the tendril hidden until its turn); `dirByKey` roots
+   *  each tendril's grow direction. Re-adding a dying edge revives it.
+   *  Appends new keys to the render order (emitFabric reaps). */
+  growEdges(
+    edges: NeighborEdge[],
+    cells: ReadonlyMap<number, Cell>,
+    bornAtByKey: Map<string, number>,
+    dirByKey: Map<string, 1 | -1>,
+  ): void;
+  /** Live per-edge deaths. `kind` selects the exit: `'death'` retracts
+   *  the dead end (from `deadEndByKey`, default `'from'`) with a
+   *  white-hot flash; `'gc'` is a quiet full-length fade. `dyingAt` is
+   *  the absolute sim-second death time (staggerable). Already-dying
+   *  edges are skipped so the clock never resets mid-death. */
+  killEdges(
+    keys: string[],
+    dyingAt: number,
+    kind: DeathKind,
+    deadEndByKey?: Map<string, 'from' | 'to'>,
+  ): void;
 }
 
 export interface NeuralFabricProps {
@@ -139,6 +163,18 @@ interface EdgeState {
   /** Sim seconds at which this edge entered the dying phase, or
    *  null while alive. */
   dyingAt: number | null;
+  /** How this edge dies (set when `dyingAt != null`): `'gc'` is a
+   *  quiet full-length alpha fade (reconciliation / capacity eviction);
+   *  `'death'` retracts the dead end toward the survivor with a
+   *  white-hot flash (a real chain cell death). */
+  deathKind: DeathKind | null;
+  /** For `'death'` only: which endpoint is the cell that died, so the
+   *  fibre retracts from that end. `null` for gc / while alive. */
+  deadEnd: 'from' | 'to' | null;
+  /** Grow-in direction: `1` extends the tip from `from`→`to`, `-1` from
+   *  `to`→`from`. Lets the driver root a new tendril at the surviving
+   *  cell rather than always at the lower id. */
+  growDir: 1 | -1;
   /** Per-edge brightness multiplier in [0.45, 1.0], derived from the
    *  edge's deterministic seed. Stable across the edge's lifetime so
    *  the network has a fixed hierarchy of bright "trunks" and dim
@@ -337,16 +373,79 @@ export default function NeuralFabric({ onReady }: NeuralFabricProps) {
             ctrlX: ctrl[0], ctrlY: ctrl[1], ctrlZ: ctrl[2],
             bornAt: now,
             dyingAt: null,
+            deathKind: null,
+            deadEnd: null,
+            growDir: 1,
             brightnessMul: edgeBrightness(seed),
           });
         }
-        // Pass 2: any state not in the new graph enters dying phase
-        // (idempotent — if it was already dying we keep the original
-        // dyingAt, so the decay clock doesn't reset on repeated
-        // setFabric calls during the same death window).
+        // Pass 2: any state not in the new graph enters dying phase,
+        // tagged 'gc' — a full-length quiet fade. This path is
+        // reconciliation / legacy whole-graph corrections, NOT a real
+        // chain cell death (those are driven per-edge via killEdges with
+        // kind 'death', which retracts + flashes). Idempotent: if it was
+        // already dying we keep the original dyingAt/deathKind, so the
+        // clock doesn't reset on repeated setFabric calls during the
+        // same death window.
         for (const [key, st] of states) {
           if (liveKeys.has(key)) continue;
-          if (st.dyingAt === null) st.dyingAt = now;
+          if (st.dyingAt === null) { st.dyingAt = now; st.deathKind = 'gc'; }
+        }
+        emitDirtyRef.current = true;
+      },
+      growEdges(edges, cells, bornAtByKey, dirByKey) {
+        // `now` is read from the shared sim clock so callers don't have
+        // to thread it; the driver's bornAtByKey values are absolute
+        // sim-seconds against the same clock (a future value staggers).
+        const now = simClock.elapsedSec;
+        const states = edgeStatesRef.current;
+        for (const e of edges) {
+          const key = fabricEdgeKey(e.from, e.to);
+          const existing = states.get(key);
+          if (existing) {
+            // Re-adding a dying edge: revive it (clear death, snap to
+            // fully-grown) rather than duplicating into a second state.
+            existing.dyingAt = null;
+            existing.deathKind = null;
+            existing.deadEnd = null;
+            existing.bornAt = now - GROWTH_MS / 1000;
+            continue;
+          }
+          const a = cells.get(e.from);
+          const c = cells.get(e.to);
+          if (!a || !c) continue;
+          const seed = fabricEdgeSeed(e.from, e.to);
+          bezierControlInto(
+            ctrl,
+            a.pos_seed[0], a.pos_seed[1], a.pos_seed[2],
+            c.pos_seed[0], c.pos_seed[1], c.pos_seed[2],
+            seed,
+          );
+          states.set(key, {
+            fromX: a.pos_seed[0], fromY: a.pos_seed[1], fromZ: a.pos_seed[2],
+            toX: c.pos_seed[0], toY: c.pos_seed[1], toZ: c.pos_seed[2],
+            ctrlX: ctrl[0], ctrlY: ctrl[1], ctrlZ: ctrl[2],
+            bornAt: bornAtByKey.get(key) ?? now,
+            dyingAt: null,
+            deathKind: null,
+            deadEnd: null,
+            growDir: dirByKey.get(key) ?? 1,
+            brightnessMul: edgeBrightness(seed),
+          });
+          renderOrderRef.current.push(key); // append; emitFabric reaps
+        }
+        emitDirtyRef.current = true;
+      },
+      killEdges(keys, dyingAt, kind, deadEndByKey) {
+        const states = edgeStatesRef.current;
+        for (const key of keys) {
+          const st = states.get(key);
+          // Skip unknown or already-dying edges — the latter keeps the
+          // death clock from resetting if a kill is issued twice.
+          if (!st || st.dyingAt !== null) continue;
+          st.dyingAt = dyingAt;
+          st.deathKind = kind;
+          st.deadEnd = kind === 'death' ? (deadEndByKey?.get(key) ?? 'from') : null;
         }
         emitDirtyRef.current = true;
       },
@@ -361,66 +460,41 @@ export default function NeuralFabric({ onReady }: NeuralFabricProps) {
         for (const key of renderOrderRef.current) {
           const st = states.get(key);
           if (!st) continue;
-          let alphaMul = 1;
-          let lengthFront = 1;
-
-          if (st.dyingAt !== null) {
-            const decayMs = (now - st.dyingAt) * 1000;
-            if (decayMs >= DECAY_MS) {
-              (toReap ??= []).push(key);
-              continue;
-            }
-            alphaMul = 1 - decayMs / DECAY_MS;
-            stillAnimating += 1;
-          } else {
-            const growthMs = (now - st.bornAt) * 1000;
-            if (growthMs < GROWTH_MS) {
-              const p = growthMs / GROWTH_MS;
-              // easeOutCubic on alpha — fast in, slow finish reads
-              // more biological than a flat ramp. Length is linear
-              // so the tendril's leading edge moves at constant
-              // visual speed.
-              const u = 1 - p;
-              alphaMul = 1 - u * u * u;
-              lengthFront = p;
-              stillAnimating += 1;
-            }
-            // else: stable, defaults of 1/1 apply.
-          }
-
-          if (alphaMul <= 0) continue;
+          // All lifecycle math (grow tip / gc fade / death retract +
+          // flash / future-staggered start) lives in the pure
+          // fabricEdgeRenderState. It returns the drawn Bezier interval
+          // [tStart, tEnd], the alpha multiplier, a white-hot death
+          // flash, and reap/animating flags — this loop just draws it.
+          const rs = fabricEdgeRenderState(st, now);
+          if (rs.reap) { (toReap ??= []).push(key); continue; }
+          if (rs.animating) stillAnimating += 1;
+          if (!rs.visible || rs.alphaMul <= 0) continue;
 
           // Base colour BEFORE per-vertex taper. We modulate this with
           // taper(t) at each sub-segment endpoint so the line gradients
           // from "bright at cell terminals" to "dim at shaft midpoint"
-          // — visual mimic of axon tapering / synaptic boutons.
-          const baseR = FABRIC_COLOR.r * FABRIC_ALPHA * alphaMul * st.brightnessMul;
-          const baseG = FABRIC_COLOR.g * FABRIC_ALPHA * alphaMul * st.brightnessMul;
-          const baseB = FABRIC_COLOR.b * FABRIC_ALPHA * alphaMul * st.brightnessMul;
+          // — visual mimic of axon tapering / synaptic boutons. The
+          // white-hot death flash (0 for grow/gc/stable) lerps the base
+          // toward white so a retracting tendril's hot tip clears bloom.
+          const fl = rs.flash;
+          const baseR = (FABRIC_COLOR.r * (1 - fl) + fl) * FABRIC_ALPHA * rs.alphaMul * st.brightnessMul;
+          const baseG = (FABRIC_COLOR.g * (1 - fl) + fl) * FABRIC_ALPHA * rs.alphaMul * st.brightnessMul;
+          const baseB = (FABRIC_COLOR.b * (1 - fl) + fl) * FABRIC_ALPHA * rs.alphaMul * st.brightnessMul;
 
-          // Walk sub-segments. When `lengthFront < 1`, stop at the
-          // last whole-or-partial segment that fits — the partial
-          // tip segment uses `lengthFront` as its t, which keeps the
-          // tendril ending at a clean point on the Bezier rather
-          // than snapping forward in 1/N increments.
-          let prevX = st.fromX, prevY = st.fromY, prevZ = st.fromZ;
-          let prevTaper = taper(0); // start of edge at t=0 → endpoint glow
+          // Walk sub-segments uniformly over the drawn interval
+          // [tStart, tEnd]. This covers every lifecycle case: stable
+          // [0,1], grow-in [0,p] or [1-p,1] (growDir), and death retract
+          // (dead end recedes toward the survivor). taper(t) uses the
+          // true t so a partial tendril tip near the shaft midpoint is
+          // correctly dim.
+          const tStart = rs.tStart, tEnd = rs.tEnd;
+          bezierAtInto(sample, st.fromX, st.fromY, st.fromZ, st.ctrlX, st.ctrlY, st.ctrlZ, st.toX, st.toY, st.toZ, tStart);
+          let prevX = sample[0], prevY = sample[1], prevZ = sample[2];
+          let prevTaper = taper(tStart);
           for (let i = 1; i <= FABRIC_SAMPLES_PER_EDGE; i++) {
-            const tFull = i / FABRIC_SAMPLES_PER_EDGE;
-            const tPrev = (i - 1) / FABRIC_SAMPLES_PER_EDGE;
-            if (tPrev >= lengthFront) break;
-            const t = tFull <= lengthFront ? tFull : lengthFront;
-            bezierAtInto(
-              sample,
-              st.fromX, st.fromY, st.fromZ,
-              st.ctrlX, st.ctrlY, st.ctrlZ,
-              st.toX, st.toY, st.toZ,
-              t,
-            );
-            // During growth (lengthFront < 1) the tip is a partial t
-            // value; its taper should reflect that actual t, not the
-            // sample index, so a freshly-extending tendril is dim if
-            // its front happens to be near the midpoint.
+            const tRaw = tStart + (tEnd - tStart) * (i / FABRIC_SAMPLES_PER_EDGE);
+            const t = tRaw > tEnd ? tEnd : tRaw;
+            bezierAtInto(sample, st.fromX, st.fromY, st.fromZ, st.ctrlX, st.ctrlY, st.ctrlZ, st.toX, st.toY, st.toZ, t);
             const endTaper = taper(t);
             pushSegmentGradient(
               fabric,
@@ -428,9 +502,8 @@ export default function NeuralFabric({ onReady }: NeuralFabricProps) {
               baseR * prevTaper, baseG * prevTaper, baseB * prevTaper,
               baseR * endTaper, baseG * endTaper, baseB * endTaper,
             );
-            prevX = sample[0]; prevY = sample[1]; prevZ = sample[2];
-            prevTaper = endTaper;
-            if (t >= lengthFront) break;
+            prevX = sample[0]; prevY = sample[1]; prevZ = sample[2]; prevTaper = endTaper;
+            if (t >= tEnd) break;
           }
         }
 
