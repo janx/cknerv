@@ -40,7 +40,12 @@ const HIDDEN: EdgeRender = { visible: false, alphaMul: 0, tStart: 0, tEnd: 0, fl
 
 export function fabricEdgeRenderState(st: EdgeLifecycle, nowSec: number): EdgeRender {
   if (st.dyingAt !== null) {
-    const decayMs = (nowSec - st.dyingAt) * 1000;
+    // Clamp at 0 so a defensively future-dated dyingAt (dyingAt > nowSec)
+    // can't drive decayMs negative — which would over-white the death
+    // flash (exp(-neg/τ) > 1) and invert the retract interval, or push
+    // the gc alphaMul above 1. The live driver always passes now >= dyingAt,
+    // so this is a no-op there; it closes the footgun against refactors.
+    const decayMs = Math.max(0, (nowSec - st.dyingAt) * 1000);
     if (st.deathKind === 'death') {
       if (decayMs >= DEATH_RETRACT_MS) return { ...HIDDEN, reap: true };
       const r = decayMs / DEATH_RETRACT_MS;

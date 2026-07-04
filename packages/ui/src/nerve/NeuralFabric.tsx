@@ -30,9 +30,6 @@ import { FABRIC_SAMPLES_PER_EDGE, MAX_FABRIC_SEGMENTS } from './fabricCapacity';
 import {
   fabricEdgeRenderState,
   GROWTH_MS,
-  DECAY_MS,
-  DEATH_RETRACT_MS,
-  DEATH_FLASH_MS,
   type DeathKind,
 } from './fabricEdgeRender';
 import { simClock } from '../tweaks/simClock';
