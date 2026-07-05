@@ -102,6 +102,7 @@ export {
 } from './components/CellsHud';
 export { default as CkbNetworkHud } from './components/CkbNetworkHud';
 export { default as HudOverlay } from './components/hud/HudOverlay';
+export { default as RenderStatsPanel } from './components/hud/RenderStatsPanel';
 export {
   default as EdgeEnvelopeLayer,
   buildTrajectories,
