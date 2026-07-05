@@ -24,6 +24,8 @@ import {
   HudOverlay,
   NetworkColony,
   NeuralNetwork,
+  RenderStatsPanel,
+  RenderStatsSampler,
   SimClockTicker,
   TweakSync,
   UNIVERSE_SEED_FALLBACK,
@@ -312,6 +314,9 @@ export default function App({
         build={build}
         colonyCount={topology.nodes.length}
       />
+      {/* Render-stats HUD overlay (DOM sibling of HudOverlay, NOT in-Canvas):
+          renders null unless the ` panel's "render stats" toggle is on. */}
+      <RenderStatsPanel />
 
       <CellGalaxyProvider value={cellsCache}>
         <Canvas
@@ -328,6 +333,9 @@ export default function App({
           {/* Mirrors the backtick leva panel into the LIVE tuning store.
               Re-renders only on knob drag (no per-frame cost); mount once. */}
           <TweakSync />
+          {/* Samples gl.info into the render-stats store when the ` panel's
+              "render stats" toggle is on; inert otherwise. Mount once. */}
+          <RenderStatsSampler />
 
           <Stars
             radius={400}

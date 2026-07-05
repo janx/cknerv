@@ -8,9 +8,15 @@
 // us drive `hidden` ourselves. Honors `?dev=1` for parity with ckb-rcg.
 
 import { useEffect, useState } from 'react';
-import { Leva } from 'leva';
+import { Leva, useControls } from 'leva';
+import { RENDER_STATS_TOGGLE } from '@cknerv/ui';
 
 export default function Tweaks() {
+  // Registered here (before <Canvas>) so this top-level control lands at the
+  // TOP of the leva panel, above the tweak folders. The sampler + panel read
+  // the same control (leva dedups by key).
+  useControls(RENDER_STATS_TOGGLE);
+
   const [shown, setShown] = useState(() => {
     if (typeof window === 'undefined') return false;
     return new URLSearchParams(window.location.search).get('dev') === '1';
