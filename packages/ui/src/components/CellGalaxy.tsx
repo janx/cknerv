@@ -4,6 +4,7 @@ import { useThree } from '@react-three/fiber';
 import { useSimFrame } from '../tweaks/useSimFrame';
 import { simClock } from '../tweaks/simClock';
 import { galaxyFrame } from '../tweaks/galaxyFrame';
+import { LIVE } from '../tweaks/liveTweaks';
 import { QUALITY_PRESETS } from '../tweaks/qualityPresets';
 import { Billboard, Html } from '@react-three/drei';
 import * as THREE from 'three';
@@ -130,7 +131,6 @@ const COLOR_BY_TAG: Record<string, [number, number, number]> = {
   wallet:  [0.43, 0.91, 0.72],   // #6ee7b7
 };
 const GENERIC_COLOR: [number, number, number] = [0.62, 0.78, 1.0]; // pale star-blue
-const ROTATION_RATE = 0.0025; // rad/s
 
 // Cell point sizes in world units. The hybrid shader draws the anchored
 // core/glow sprite, and CellShell draws the faceted exterior around it.
@@ -470,7 +470,7 @@ function CellPicker({ cellsListRef, onSelect }: CellPickerProps) {
   // dedupes by folder+key, so we read the live value without
   // duplicating the panel UI and the click radius tracks the shell
   // exactly as the user resizes it.
-  const { shellScale } = useControls('Cell Shell', {
+  const { shellScale } = useControls('Galaxy 共识记忆', {
     shellScale: { value: 1.0, min: 0.1, max: 3.0, step: 0.05, label: 'scale' },
   });
   // Live refs so the raycast closure reads the current viewport and
@@ -639,7 +639,7 @@ export default function CellGalaxy({ ckbNodeIds, minerCkbNodeIds, universeSeed, 
   // Leva dedupes by folder+key, so reading here does not duplicate the
   // panel control — we just get a stable live value to forward into
   // CellLifeAvatar so its billboard size tracks the shell.
-  const { shellScale } = useControls('Cell Shell', {
+  const { shellScale } = useControls('Galaxy 共识记忆', {
     shellScale: { value: 1.0, min: 0.1, max: 3.0, step: 0.05, label: 'scale' },
   });
   /** Per-frame mirror of the cellsList iteration order, written by
@@ -696,6 +696,12 @@ export default function CellGalaxy({ ckbNodeIds, minerCkbNodeIds, universeSeed, 
   const shellShockwaveUniformsRef = useRef<{
     at: Float32Array;
     originXZ: Float32Array;
+    colorBoost: { value: number };
+    alphaBoost: { value: number };
+    colorCeil: { value: number };
+    alphaCeil: { value: number };
+    sizeBoost: { value: number };
+    trailBoost: { value: number };
   } | null>(null);
   /** Mirrors `groupRef.current.rotation.y` each frame so child
    *  components (NervePulses) can project world-frame anchors into the
@@ -874,6 +880,27 @@ export default function CellGalaxy({ ckbNodeIds, minerCkbNodeIds, universeSeed, 
     // 3. Material uniforms.
     hybridMaterial.uniforms.uTime.value = now;
     hybridMaterial.uniforms.uViewportHeight.value = state.size.height;
+    // Live shockwave boosts/ceils (Galaxy panel). Written every frame — not in
+    // the block-fire trigger below — so a knob dragged mid-wave takes effect on
+    // the in-flight wave, not just the next block. Defaults in LIVE.galaxy.*
+    // equal the shipped literals, so with the panel closed these are byte-exact
+    // self-writes (zero drift). Both the core (hybrid) and shell materials read
+    // the same six uniforms via makeShockwaveUniforms().
+    hybridMaterial.uniforms.uShockwaveColorBoost.value = LIVE.galaxy.colorBoost;
+    hybridMaterial.uniforms.uShockwaveAlphaBoost.value = LIVE.galaxy.alphaBoost;
+    hybridMaterial.uniforms.uShockwaveColorCeil.value = LIVE.galaxy.colorCeil;
+    hybridMaterial.uniforms.uShockwaveAlphaCeil.value = LIVE.galaxy.alphaCeil;
+    hybridMaterial.uniforms.uShockwaveSizeBoost.value = LIVE.galaxy.sizeBoost;
+    hybridMaterial.uniforms.uShockwaveTrailBoost.value = LIVE.galaxy.trailBoost;
+    const shell = shellShockwaveUniformsRef.current;
+    if (shell) {
+      shell.colorBoost.value = LIVE.galaxy.colorBoost;
+      shell.alphaBoost.value = LIVE.galaxy.alphaBoost;
+      shell.colorCeil.value = LIVE.galaxy.colorCeil;
+      shell.alphaCeil.value = LIVE.galaxy.alphaCeil;
+      shell.sizeBoost.value = LIVE.galaxy.sizeBoost;
+      shell.trailBoost.value = LIVE.galaxy.trailBoost;
+    }
     flareMaterial.uniforms.uTime.value = now;
     flareMaterial.uniforms.uViewportHeight.value = state.size.height;
     flareMaterial.uniforms.uDischargeArms.value = dischargeArms;
@@ -1042,7 +1069,7 @@ export default function CellGalaxy({ ckbNodeIds, minerCkbNodeIds, universeSeed, 
     }
 
     // 7. Group rotation.
-    group.rotation.y += ROTATION_RATE * dt;
+    group.rotation.y += LIVE.galaxy.rotationRate * dt;
     groupRotationYRef.current = group.rotation.y;
     // Mirror to the shared frame so sibling layers (BlockDeliveryLayer) can
     // project world landings into this rotating cell frame.

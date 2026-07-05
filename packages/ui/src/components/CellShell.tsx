@@ -47,6 +47,12 @@ interface CellShellProps {
   shockwaveUniformsRef?: React.MutableRefObject<{
     at: Float32Array;
     originXZ: Float32Array;
+    colorBoost: { value: number };
+    alphaBoost: { value: number };
+    colorCeil: { value: number };
+    alphaCeil: { value: number };
+    sizeBoost: { value: number };
+    trailBoost: { value: number };
   } | null>;
 }
 
@@ -60,7 +66,7 @@ export default function CellShell({ cellFlashRef, flashDirtyRef, shockwaveUnifor
   });
   const cellGalaxyMul = QUALITY_PRESETS[quality].cellGalaxyMul;
 
-  const { shellScale, shellOpacity } = useControls('Cell Shell', {
+  const { shellScale, shellOpacity } = useControls('Galaxy 共识记忆', {
     shellScale:   { value: 1.0, min: 0.1, max: 3.0, step: 0.05, label: 'scale' },
     shellOpacity: { value: 0.75, min: 0.05, max: 1.0, step: 0.05, label: 'opacity' },
   });
@@ -74,6 +80,12 @@ export default function CellShell({ cellFlashRef, flashDirtyRef, shockwaveUnifor
     const uniforms = {
       at: material.uniforms.uShockwaveAt.value as Float32Array,
       originXZ: material.uniforms.uShockwaveOriginXZ.value as Float32Array,
+      colorBoost: material.uniforms.uShockwaveColorBoost,
+      alphaBoost: material.uniforms.uShockwaveAlphaBoost,
+      colorCeil: material.uniforms.uShockwaveColorCeil,
+      alphaCeil: material.uniforms.uShockwaveAlphaCeil,
+      sizeBoost: material.uniforms.uShockwaveSizeBoost,
+      trailBoost: material.uniforms.uShockwaveTrailBoost,
     };
     shockwaveUniformsRef.current = uniforms;
     return () => {
