@@ -27,6 +27,9 @@ export * from './tweaks/useSimFrame';
 export * from './tweaks/qualityPresets';
 export * from './tweaks/cameraPresets';
 export { default as SimClockTicker } from './tweaks/SimClockTicker';
+export { default as TweakSync } from './tweaks/TweakSync';
+export { LIVE } from './tweaks/liveTweaks';
+export type { LiveTweaks } from './tweaks/liveTweaks';
 
 // ── UI chrome (fonts, HUD layout, topology constants, scan state) ───
 export * from './ui/fonts';

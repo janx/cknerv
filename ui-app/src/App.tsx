@@ -25,6 +25,7 @@ import {
   NetworkColony,
   NeuralNetwork,
   SimClockTicker,
+  TweakSync,
   UNIVERSE_SEED_FALLBACK,
   type ScanStateRef,
 } from '@cknerv/ui';
@@ -324,6 +325,9 @@ export default function App({
               NeuralNetwork, NetworkColony) actually plays. Must live
               under the r3f context; mount exactly once. */}
           <SimClockTicker />
+          {/* Mirrors the backtick leva panel into the LIVE tuning store.
+              Re-renders only on knob drag (no per-frame cost); mount once. */}
+          <TweakSync />
 
           <Stars
             radius={400}
