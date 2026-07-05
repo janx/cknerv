@@ -3,6 +3,21 @@
 // renders identically to before the panel existed (see tweakSchema.test.ts).
 // Consumers read the live value from `LIVE.<folder>.<key>` (liveTweaks.ts),
 // NOT from these objects.
+//
+// The six galaxy shockwave knobs take their defaults from the SHOCKWAVE_*
+// constants in materials/shockwaveMaterial.ts — the material owns those values
+// (it seeds the uniforms at build time; CellGalaxy overwrites them from
+// LIVE.galaxy.* each frame), so there is ONE authority, not a shadowed copy.
+// tweakSchema.test.ts still pins them to the shipped numbers, so a drift in
+// either place fails the parity test.
+import {
+  SHOCKWAVE_COLOR_BOOST,
+  SHOCKWAVE_ALPHA_BOOST,
+  SHOCKWAVE_SIZE_BOOST,
+  SHOCKWAVE_TRAIL_BOOST,
+  SHOCKWAVE_COLOR_CEIL,
+  SHOCKWAVE_ALPHA_CEIL,
+} from '../materials/shockwaveMaterial';
 
 export interface KnobDef {
   value: number;
@@ -15,12 +30,12 @@ export type FolderSchema = Record<string, KnobDef>;
 
 export const galaxySchema = {
   rotationRate: { value: 0.0025, min: 0, max: 0.02, step: 0.0005, label: 'rotation rate' },
-  colorBoost: { value: 7.5, min: 0, max: 15, step: 0.1, label: 'shock color boost' },
-  alphaBoost: { value: 5.5, min: 0, max: 12, step: 0.1, label: 'shock alpha boost' },
-  sizeBoost: { value: 0.5, min: 0, max: 2, step: 0.05, label: 'shock size boost' },
-  trailBoost: { value: 0.18, min: 0, max: 1, step: 0.01, label: 'shock trail boost' },
-  colorCeil: { value: 2.8, min: 0, max: 8, step: 0.1, label: 'shock color ceil' },
-  alphaCeil: { value: 2.2, min: 0, max: 8, step: 0.1, label: 'shock alpha ceil' },
+  colorBoost: { value: SHOCKWAVE_COLOR_BOOST, min: 0, max: 15, step: 0.1, label: 'shock color boost' },
+  alphaBoost: { value: SHOCKWAVE_ALPHA_BOOST, min: 0, max: 12, step: 0.1, label: 'shock alpha boost' },
+  sizeBoost: { value: SHOCKWAVE_SIZE_BOOST, min: 0, max: 2, step: 0.05, label: 'shock size boost' },
+  trailBoost: { value: SHOCKWAVE_TRAIL_BOOST, min: 0, max: 1, step: 0.01, label: 'shock trail boost' },
+  colorCeil: { value: SHOCKWAVE_COLOR_CEIL, min: 0, max: 8, step: 0.1, label: 'shock color ceil' },
+  alphaCeil: { value: SHOCKWAVE_ALPHA_CEIL, min: 0, max: 8, step: 0.1, label: 'shock alpha ceil' },
 } satisfies FolderSchema;
 
 export const deliverySchema = {
