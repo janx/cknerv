@@ -23,6 +23,7 @@ import { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import { useSimFrame } from '../tweaks/useSimFrame';
 import { simClock } from '../tweaks/simClock';
+import { LIVE } from '../tweaks/liveTweaks';
 import { fnv1a } from '../geometry/edgeBezier';
 import type { NetworkTopology } from '../types';
 import type { ColonyFlood } from '../derives/networkFlood.derive';
@@ -39,16 +40,6 @@ const SURGE_COLOR = '#cfeeff';
 // barely-there values so the mesh reads as persistent structure. Tune live.
 const INFERRED_LINE_BASE = 0.42;
 const MEASURED_LINE_BRIGHT = 0.72;
-
-// Ambient data-flow drift — the always-on current sliding along every link.
-const AMBIENT_AMP = 0.22;   // peak brightness of the drifting band (added over base)
-const AMBIENT_SPEED = 0.05;  // band travel speed (edge-lengths per second) — SLOW
-const AMBIENT_SIGMA = 0.17;  // band half-width in edge-param space (0..1)
-
-// Block surge — the bright wavefront that flows outward along the propagation tree.
-const SURGE_AMP = 1.1;      // peak surge brightness (the block's primary edge signal)
-const SURGE_SIGMA = 0.13;   // surge band half-width
-const SURGE_EASE_S = 0.12;  // temporal fade in before launch / out after arrival (s)
 
 /** Per-edge ambient phase in [0,1): a stable hash of the endpoints so each link's
  *  drift starts at a different point (the mesh flows, but isn't a synced pulse). */
@@ -141,12 +132,13 @@ export default function ColonyEdges({
           uColor: { value: new THREE.Color(INFERRED_LINE_COLOR) },
           uSurgeColor: { value: new THREE.Color(SURGE_COLOR) },
           uTime: { value: 0 },
-          uAmbientAmp: { value: AMBIENT_AMP },
-          uAmbientSpeed: { value: AMBIENT_SPEED },
-          uAmbientSigma: { value: AMBIENT_SIGMA },
-          uSurgeAmp: { value: SURGE_AMP },
-          uSurgeSigma: { value: SURGE_SIGMA },
-          uSurgeEase: { value: SURGE_EASE_S },
+          // Zero-drift defaults (seeded once; refreshed per-frame from LIVE.peer.* below).
+          uAmbientAmp: { value: 0.22 },
+          uAmbientSpeed: { value: 0.05 },
+          uAmbientSigma: { value: 0.17 },
+          uSurgeAmp: { value: 1.1 },
+          uSurgeSigma: { value: 0.13 },
+          uSurgeEase: { value: 0.12 },
         },
         vertexShader: /* glsl */ `
           attribute float aBright;
@@ -231,8 +223,16 @@ export default function ColonyEdges({
   );
 
   // Drive the ambient current every frame (surge reads the same uTime vs its stamps).
+  // Ambient/surge tunables are refreshed from LIVE.peer.* each frame (panel drags
+  // land next frame; closed panel keeps the zero-drift defaults above).
   useSimFrame(() => {
     mat.uniforms.uTime.value = simClock.elapsedSec;
+    mat.uniforms.uAmbientAmp.value = LIVE.peer.ambientAmp;
+    mat.uniforms.uAmbientSpeed.value = LIVE.peer.ambientSpeed;
+    mat.uniforms.uAmbientSigma.value = LIVE.peer.ambientSigma;
+    mat.uniforms.uSurgeAmp.value = LIVE.peer.surgeAmp;
+    mat.uniforms.uSurgeSigma.value = LIVE.peer.surgeSigma;
+    mat.uniforms.uSurgeEase.value = LIVE.peer.surgeEase;
   });
 
   // Per-block surge stamp: on each blockPulseAtMs increase, rewrite the tree edges'

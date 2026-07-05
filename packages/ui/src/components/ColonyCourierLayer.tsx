@@ -25,6 +25,7 @@ import * as THREE from 'three';
 import type { RootState } from '@react-three/fiber';
 import { useSimFrame } from '../tweaks/useSimFrame';
 import { simClock } from '../tweaks/simClock';
+import { LIVE } from '../tweaks/liveTweaks';
 import type { Vec3 } from '../types';
 import type { ColonyFlood } from '../derives/networkFlood.derive';
 import { colonyCourierSchedule } from '../derives/colonyCourier.derive';
@@ -43,20 +44,12 @@ const MIN_THROW_S = 0.25;
  *  the primary block signal), so the mote + its short streak are small and dim —
  *  no longer a bright thrown comet. The plume is a velocity-aligned quad whose
  *  length tracks the courier's analytic speed; the bloom is a round nozzle sprite. */
-const FLAME_WIDTH = 0.7;           // plume width (world units) — thin
-const FLAME_MIN_LEN = 0.7;         // plume length at rest — short streak, not a comet
-const FLAME_MAX_LEN = 2.5;         // plume length cap on the fast launch
 const FLAME_SPEED_STRETCH = 0.02;  // length added per (world-unit/s) of courier speed
-const FLAME_BLOOM_SIZE = 0.7;      // round glow-mote (nozzle-bloom) diameter (world units)
 /** Ease the mote + flame in/out over this fraction of each hop so nothing pops. */
 const COURIER_END_EASE = 0.08;
 /** Glow-mote tint — a pale white-cyan; multiplies the (already white→cyan) bloom
  *  texture so the mote head carries one defined colour. */
 const MOTE_COLOR = '#d8faff';
-/** Glint opacities — dim the additive mote + streak so the courier reads as a
- *  faint spark on top of the edge surge, not a glaring projectile. Tune live. */
-const GLINT_BLOOM_OPACITY = 0.55;
-const GLINT_PLUME_OPACITY = 0.3;
 
 interface Slot {
   group: React.RefObject<THREE.Group | null>;
@@ -140,7 +133,7 @@ export default function ColonyCourierLayer({
       new THREE.MeshBasicMaterial({
         map: plumeTex,
         transparent: true,
-        opacity: GLINT_PLUME_OPACITY, // dim the additive streak → faint glint
+        opacity: 0.3, // zero-drift default; live via LIVE.peer.glintPlumeOpacity per-frame
         depthWrite: false,
         blending: THREE.AdditiveBlending,
         toneMapped: false,
@@ -153,7 +146,7 @@ export default function ColonyCourierLayer({
         map: bloomTex,
         color: new THREE.Color(MOTE_COLOR),
         transparent: true,
-        opacity: GLINT_BLOOM_OPACITY, // dim the additive mote head → faint glint
+        opacity: 0.55, // zero-drift default; live via LIVE.peer.glintBloomOpacity per-frame
         depthWrite: false,
         blending: THREE.AdditiveBlending,
         toneMapped: false,
@@ -175,6 +168,12 @@ export default function ColonyCourierLayer({
   useSimFrame((state: RootState) => {
     const pulse = pulseRef.current;
     const slots = pool.current;
+
+    // Glint opacities refreshed each frame from LIVE.peer.* (panel drags land next
+    // frame; closed panel keeps the zero-drift useMemo defaults). Runtime-settable
+    // on a transparent material — no needsUpdate; scalar writes, no allocation.
+    plumeMat.opacity = LIVE.peer.glintPlumeOpacity;
+    bloomMat.opacity = LIVE.peer.glintBloomOpacity;
 
     if (!pulse) {
       for (let i = 0; i < slots.length; i += 1) {
@@ -230,14 +229,14 @@ export default function ColonyCourierLayer({
       );
 
       // Glow-mote head (sprite auto-billboards; scale → 0 hides it at the ends).
-      if (h.bloom.current) h.bloom.current.scale.setScalar(FLAME_BLOOM_SIZE * edge);
+      if (h.bloom.current) h.bloom.current.scale.setScalar(LIVE.peer.flameBloom * edge);
 
       // Comet-tail plume: length tracks the courier's analytic easeOut speed
       // (fast off the launch → long plume; decelerating in → short).
       if (h.plume.current) {
         const legDist = Math.hypot(dx, dy, dz) || 1;
         const speed = (legDist * 3 * (1 - t) * (1 - t)) / dur;
-        const length = Math.min(FLAME_MAX_LEN, FLAME_MIN_LEN + speed * FLAME_SPEED_STRETCH);
+        const length = Math.min(LIVE.peer.flameMaxLen, LIVE.peer.flameMinLen + speed * FLAME_SPEED_STRETCH);
         const plume = h.plume.current;
         // Orient +Y along the flight direction, billboarded around that axis so
         // the quad faces the camera. Group rotation is identity, so the local
@@ -255,7 +254,7 @@ export default function ColonyCourierLayer({
         _z.crossVectors(_x, _dir).normalize();
         _basis.makeBasis(_x, _dir, _z);
         plume.quaternion.setFromRotationMatrix(_basis);
-        plume.scale.set(FLAME_WIDTH, length * edge, 1); // edge shrinks it at the ends
+        plume.scale.set(LIVE.peer.flameWidth, length * edge, 1); // edge shrinks it at the ends
       }
     }
 

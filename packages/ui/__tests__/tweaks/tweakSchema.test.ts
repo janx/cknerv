@@ -6,7 +6,7 @@ import { galaxySchema, deliverySchema, peerSchema, cellSchema, FOLDER_LABELS } f
 const EXPECTED_DEFAULTS = {
   galaxy: { rotationRate: 0.0025, colorBoost: 7.5, alphaBoost: 5.5, sizeBoost: 0.5, trailBoost: 0.18, colorCeil: 2.8, alphaCeil: 2.2 },
   delivery: { heroSize: 0.82, peerSize: 0.5, ingestDur: 0.5, ingestPull: 2.2, bolusBloom: 2.1, flashSize: 4.4, trailWidth: 0.85, trailLenBase: 1.2, trailLenGain: 2.0, trailOpacity: 0.85, ringMax: 6.5, recoil: 0.22, peerPunchScale: 0.55, igniteKHero: 8, igniteKPeer: 3, igniteMax: 300, igniteRipple: 0.015 },
-  peer: { inferredBase: 0.42, measuredBright: 0.72, ambientAmp: 0.22, ambientSpeed: 0.05, ambientSigma: 0.17, surgeAmp: 1.1, surgeSigma: 0.13, surgeEase: 0.12, flameWidth: 0.7, flameMinLen: 0.7, flameMaxLen: 2.5, flameBloom: 0.7, glintBloomOpacity: 0.55, glintPlumeOpacity: 0.3 },
+  peer: { ambientAmp: 0.22, ambientSpeed: 0.05, ambientSigma: 0.17, surgeAmp: 1.1, surgeSigma: 0.13, surgeEase: 0.12, flameWidth: 0.7, flameMinLen: 0.7, flameMaxLen: 2.5, flameBloom: 0.7, glintBloomOpacity: 0.55, glintPlumeOpacity: 0.3 },
   cell: { fabricAlpha: 0.12, activeColorR: 1.0, activeColorG: 0.55, activeColorB: 0.15, fabricWidth: 2.5, activeWidth: 3.4 },
 } as const;
 
