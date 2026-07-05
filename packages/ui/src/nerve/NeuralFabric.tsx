@@ -33,24 +33,24 @@ import {
   type DeathKind,
 } from './fabricEdgeRender';
 import { simClock } from '../tweaks/simClock';
+import { LIVE } from '../tweaks/liveTweaks';
 
-// Dense-mesh baseline alpha. The full k-NN fabric stacks ~5× more
-// additive-blended lines than the old truncated view, so the core would
-// clip to white at the original 0.35; 0.12 keeps the fibres legible
-// (verified in-scene against live mainnet data). The per-edge brightness
-// hierarchy and taper still multiply this.
-const FABRIC_ALPHA = 0.12;
+// Dense-mesh baseline alpha (now the `cell.fabricAlpha` tweak, default
+// 0.12). The full k-NN fabric stacks ~5× more additive-blended lines than
+// the old truncated view, so the core would clip to white at the original
+// 0.35; 0.12 keeps the fibres legible (verified in-scene against live
+// mainnet data). The per-edge brightness hierarchy and taper still
+// multiply this. Read live as `LIVE.cell.fabricAlpha` in `emitFabric`.
 /** Deep crimson with a slight purple shoulder — Eva-flesh /
  *  internal-organ palette. Bloom shifts the halo toward warmer pink
  *  but the base stays unmistakably oxygenated-blood red. */
 const FABRIC_COLOR = new THREE.Color(0.48, 0.06, 0.16);
 
-/** Active wavefront colour. LCL amber-orange, the colour synaptic
- *  firing reads as in Eva's berserk-mode anatomical close-ups. Bright
- *  enough to clear the bloom threshold and halo into yellow-white. */
-const ACTIVE_COLOR_R = 1.0;
-const ACTIVE_COLOR_G = 0.55;
-const ACTIVE_COLOR_B = 0.15;
+// Active wavefront colour (now the `cell.activeColorR/G/B` tweaks,
+// defaults 1.0 / 0.55 / 0.15). LCL amber-orange, the colour synaptic
+// firing reads as in Eva's berserk-mode anatomical close-ups. Bright
+// enough to clear the bloom threshold and halo into yellow-white. Read
+// live as `LIVE.cell.activeColorR/G/B` in `pushActiveHop`.
 
 /** Number of sub-segments emitted per active hop. Higher = smoother
  *  wavefront, more GPU work per pulse. 12 keeps the brightness
@@ -62,11 +62,12 @@ const ACTIVE_SAMPLES_PER_HOP = 12;
  *  fabric cap lives in fabricCapacity.ts.) */
 const MAX_ACTIVE_SEGMENTS = 6000;
 
-/** 2.5 px — visibly substantial crisp lines that read against
- *  post-bloom cells while staying clearly thinner than the active
- *  wavefront (3.4 px). */
-const FABRIC_WIDTH_PX = 2.5;
-const ACTIVE_WIDTH_PX = 3.4;
+// Line widths in px (now the `cell.fabricWidth` / `cell.activeWidth`
+// tweaks, defaults 2.5 / 3.4): visibly substantial crisp lines that read
+// against post-bloom cells, the fabric staying clearly thinner than the
+// active wavefront. Read live — `LIVE.cell.fabricWidth/activeWidth` seed
+// the layers at build time (useMemo below) and are re-pushed onto
+// `material.linewidth` each real draw in `emitFabric`.
 
 // Fabric edge lifecycle timings (GROWTH_MS growth window, DECAY_MS quiet
 // gc fade, DEATH_RETRACT_MS/DEATH_FLASH_MS real-death retract+flash) now
@@ -293,8 +294,8 @@ function commitLayer(layer: FatLineLayer): void {
 export default function NeuralFabric({ onReady }: NeuralFabricProps) {
   const { size } = useThree();
 
-  const fabric = useMemo(() => makeFatLineLayer(MAX_FABRIC_SEGMENTS, FABRIC_WIDTH_PX), []);
-  const active = useMemo(() => makeFatLineLayer(MAX_ACTIVE_SEGMENTS, ACTIVE_WIDTH_PX), []);
+  const fabric = useMemo(() => makeFatLineLayer(MAX_FABRIC_SEGMENTS, LIVE.cell.fabricWidth), []);
+  const active = useMemo(() => makeFatLineLayer(MAX_ACTIVE_SEGMENTS, LIVE.cell.activeWidth), []);
 
   // Persistent across handle re-creations (onReady callback identity
   // changes whenever the orchestrator's cellsCache.cells reference
@@ -307,6 +308,16 @@ export default function NeuralFabric({ onReady }: NeuralFabricProps) {
    *  off after a final emit settles everything into stable state. */
   const emitDirtyRef = useRef<boolean>(false);
   const renderOrderRef = useRef<string[]>([]);
+  // Snapshot of the last-applied Cell-mesh tweak values, seeded from the
+  // schema defaults so a closed/untouched panel matches on the first
+  // frame and forces NO spurious redraw (zero-drift). The change-detector
+  // at the top of `emitFabric` compares LIVE.cell.* against this every
+  // frame and, on any change, forces exactly one dirty redraw so a knob
+  // dragged in steady state (fabric not animating) still applies.
+  const lastCellTweakRef = useRef({
+    alpha: LIVE.cell.fabricAlpha, r: LIVE.cell.activeColorR, g: LIVE.cell.activeColorG,
+    b: LIVE.cell.activeColorB, fw: LIVE.cell.fabricWidth, aw: LIVE.cell.activeWidth,
+  });
 
   useEffect(() => {
     fabric.material.resolution.set(size.width, size.height);
@@ -447,7 +458,25 @@ export default function NeuralFabric({ onReady }: NeuralFabricProps) {
         emitDirtyRef.current = true;
       },
       emitFabric(now) {
+        // Cell-mesh live-tune change-detector. Runs BEFORE the early-
+        // return so a knob dragged while the fabric is idle still applies.
+        // Purely ADDITIVE: it only ever FORCES a redraw (sets emitDirtyRef
+        // true), never suppresses one, so it cannot regress the living-
+        // mesh animation. Steady state with no change = six numeric
+        // compares, then the existing early-return fires as before.
+        const ct = LIVE.cell, lc = lastCellTweakRef.current;
+        if (ct.fabricAlpha !== lc.alpha || ct.activeColorR !== lc.r || ct.activeColorG !== lc.g ||
+            ct.activeColorB !== lc.b || ct.fabricWidth !== lc.fw || ct.activeWidth !== lc.aw) {
+          lc.alpha = ct.fabricAlpha; lc.r = ct.activeColorR; lc.g = ct.activeColorG;
+          lc.b = ct.activeColorB; lc.fw = ct.fabricWidth; lc.aw = ct.activeWidth;
+          emitDirtyRef.current = true; // force one redraw with the new values
+        }
         if (!emitDirtyRef.current) return;
+        // Live line widths. LineMaterial.linewidth is runtime-settable, so
+        // pushing it on every real draw (after the early-return) picks up
+        // any width-knob change — including on the forced redraw above.
+        fabric.material.linewidth = LIVE.cell.fabricWidth;
+        active.material.linewidth = LIVE.cell.activeWidth;
         const states = edgeStatesRef.current;
         fabric.count = 0;
         let stillAnimating = 0;
@@ -474,9 +503,9 @@ export default function NeuralFabric({ onReady }: NeuralFabricProps) {
           // white-hot death flash (0 for grow/gc/stable) lerps the base
           // toward white so a retracting tendril's hot tip clears bloom.
           const fl = rs.flash;
-          const baseR = (FABRIC_COLOR.r * (1 - fl) + fl) * FABRIC_ALPHA * rs.alphaMul * st.brightnessMul;
-          const baseG = (FABRIC_COLOR.g * (1 - fl) + fl) * FABRIC_ALPHA * rs.alphaMul * st.brightnessMul;
-          const baseB = (FABRIC_COLOR.b * (1 - fl) + fl) * FABRIC_ALPHA * rs.alphaMul * st.brightnessMul;
+          const baseR = (FABRIC_COLOR.r * (1 - fl) + fl) * LIVE.cell.fabricAlpha * rs.alphaMul * st.brightnessMul;
+          const baseG = (FABRIC_COLOR.g * (1 - fl) + fl) * LIVE.cell.fabricAlpha * rs.alphaMul * st.brightnessMul;
+          const baseB = (FABRIC_COLOR.b * (1 - fl) + fl) * LIVE.cell.fabricAlpha * rs.alphaMul * st.brightnessMul;
 
           // Walk sub-segments uniformly over the drawn interval
           // [tStart, tEnd]. This covers every lifecycle case: stable
@@ -551,9 +580,9 @@ export default function NeuralFabric({ onReady }: NeuralFabricProps) {
             // which reads as a definite wave rather than a static line.
             const tail = Math.exp(-distBehind * 7.5);
             const intensity = hop.brightness * tail;
-            const r = ACTIVE_COLOR_R * intensity;
-            const g = ACTIVE_COLOR_G * intensity;
-            const b = ACTIVE_COLOR_B * intensity;
+            const r = LIVE.cell.activeColorR * intensity;
+            const g = LIVE.cell.activeColorG * intensity;
+            const b = LIVE.cell.activeColorB * intensity;
             pushSegment(active, prevX, prevY, prevZ, sample[0], sample[1], sample[2], r, g, b);
           }
           prevX = sample[0]; prevY = sample[1]; prevZ = sample[2];
