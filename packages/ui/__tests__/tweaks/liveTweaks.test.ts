@@ -1,0 +1,36 @@
+import { describe, it, expect } from 'vitest';
+import { defaultsFrom, applyTweaks, LIVE } from '../../src/tweaks/liveTweaks';
+import { galaxySchema } from '../../src/tweaks/tweakSchema';
+
+describe('defaultsFrom', () => {
+  it('extracts the numeric value from each knob def', () => {
+    expect(defaultsFrom(galaxySchema)).toMatchObject({ rotationRate: 0.0025, colorCeil: 2.8, alphaCeil: 2.2 });
+  });
+});
+
+describe('LIVE', () => {
+  it('is initialized to the schema defaults', () => {
+    expect(LIVE.galaxy.rotationRate).toBe(0.0025);
+    expect(LIVE.delivery.heroSize).toBe(0.82);
+    expect(LIVE.peer.surgeAmp).toBe(1.1);
+    expect(LIVE.cell.activeColorG).toBe(0.55);
+  });
+});
+
+describe('applyTweaks', () => {
+  it('merges present folders in place without reallocating LIVE or its folders', () => {
+    const live = { galaxy: { rotationRate: 0.0025 }, delivery: { heroSize: 0.82 } } as any;
+    const galaxyRef = live.galaxy;
+    applyTweaks(live, { galaxy: { rotationRate: 0.01 } });
+    expect(live.galaxy.rotationRate).toBe(0.01); // updated
+    expect(live.delivery.heroSize).toBe(0.82);   // untouched folder unchanged
+    expect(live.galaxy).toBe(galaxyRef);         // same object identity (no realloc)
+  });
+
+  it('ignores folders not present in the update', () => {
+    const live = { galaxy: { rotationRate: 1 }, cell: { fabricAlpha: 0.12 } } as any;
+    applyTweaks(live, { cell: { fabricAlpha: 0.3 } });
+    expect(live.galaxy.rotationRate).toBe(1);
+    expect(live.cell.fabricAlpha).toBe(0.3);
+  });
+});
