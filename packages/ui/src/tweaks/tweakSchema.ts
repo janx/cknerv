@@ -44,8 +44,6 @@ export const deliverySchema = {
 } satisfies FolderSchema;
 
 export const peerSchema = {
-  inferredBase: { value: 0.42, min: 0, max: 1, step: 0.02, label: 'inferred base' },
-  measuredBright: { value: 0.72, min: 0, max: 2, step: 0.02, label: 'measured bright' },
   ambientAmp: { value: 0.22, min: 0, max: 1, step: 0.01, label: 'ambient amp' },
   ambientSpeed: { value: 0.05, min: 0, max: 0.5, step: 0.005, label: 'ambient speed' },
   ambientSigma: { value: 0.17, min: 0.02, max: 0.5, step: 0.01, label: 'ambient sigma' },
