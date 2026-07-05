@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { useSimFrame } from '../tweaks/useSimFrame';
 import { simClock } from '../tweaks/simClock';
 import { galaxyFrame } from '../tweaks/galaxyFrame';
+import { LIVE } from '../tweaks/liveTweaks';
 import { useCellGalaxyOptional } from '../hooks/cellGalaxyContext';
 import type { Vec3 } from '../types';
 import { CELLS_Y } from '../layout';
@@ -24,26 +25,8 @@ import { BEAM_GROW_DUR_S, BEAM_CHARGE_DUR_S } from '../ui/topologyConstants';
 
 // --- tuning knobs ---------------------------------------------------------
 const BOLUS_GEOM = new THREE.BoxGeometry(1, 1, 1);
-const HERO_SIZE = 0.82; // mass: bigger than the flat version (was 0.62)
-const PEER_SIZE = 0.5; // (was 0.42)
 const LOB_DUR_S = BEAM_GROW_DUR_S; // UNCHANGED — ingest lands at the strike moment
-const INGEST_DUR_S = 0.5; // longer than the old 0.34 so the dissolve reads (was a ~2-frame blink)
-const INGEST_PULL = 2.2; // world units the dissolving bolus is drawn toward the galaxy core
 const TUMBLE_RATE = 1.6;
-const BOLUS_BLOOM_SIZE = 2.1; // (was 1.5)
-const INGEST_FLASH_SIZE = 4.4; // (was 3.4)
-const TRAIL_WIDTH = 0.85;
-const TRAIL_LEN_BASE = 1.2; // trail min length
-const TRAIL_LEN_GAIN = 2.0; // × analytic lob speed (longest right before impact)
-const TRAIL_OPACITY = 0.85;
-const RING_MAX = 6.5; // shockwave ring max scale (hero)
-const RECOIL_OVERSHOOT = 0.22; // elastic flash swell = light membrane recoil (0 to drop)
-const PEER_PUNCH_SCALE = 0.55; // peers dialed down so 81 read as one wave
-// --- galaxy-receives-the-bolus (v2): ignite the cells each bolus lands on ---
-const IGNITE_K_HERO = 8; // nearest cells lit at the hero (local) landing
-const IGNITE_K_PEER = 3; // fewer per peer so 81 landings stay a rim sparkle, not glare
-const IGNITE_MAX_TOTAL = 300; // global per-block cap (safety on huge peer sets)
-const IGNITE_RIPPLE_S = 0.015; // per-cell stagger (nearest flares first) — tight so the landing pops as one
 const GOLD = new THREE.Color('#ffcf6a');
 const WHITE_HOT = new THREE.Color('#fffcf2'); // her flare colour at impact
 const AMBER = new THREE.Color('#ff8c26'); // flash resolves into her cortex amber
@@ -51,7 +34,7 @@ const AMBER = new THREE.Color('#ff8c26'); // flash resolves into her cortex ambe
 const CFG: DeliveryPhaseConfig = {
   chargeDur: BEAM_CHARGE_DUR_S,
   lobDur: LOB_DUR_S,
-  ingestDur: INGEST_DUR_S,
+  ingestDur: LIVE.delivery.ingestDur, // seeded at default; refreshed per-frame in the sim loop
 };
 
 // analytic speed of easeInLob(t) = 0.15t + 0.85t^2  →  d/dt = 0.15 + 1.7t
@@ -129,6 +112,7 @@ export default function BlockDeliveryLayer({
 
   useSimFrame(() => {
     const now = simClock.elapsedSec;
+    CFG.ingestDur = LIVE.delivery.ingestDur; // live: `ingest dur` knob picks up drags next frame
     const pulse = pulseRef.current;
     const reg = registry.current;
 
@@ -149,14 +133,14 @@ export default function BlockDeliveryLayer({
       ignitedPulseAtRef.current = pulse.at;
       const rotY = galaxyFrame.rotationY;
       const cells = cellsCache.cells;
-      let budget = IGNITE_MAX_TOTAL;
+      let budget = LIVE.delivery.igniteMax;
       for (const d of deliveries) {
         if (budget <= 0) break;
-        const k = Math.min(d.hero ? IGNITE_K_HERO : IGNITE_K_PEER, budget);
+        const k = Math.min(d.hero ? LIVE.delivery.igniteKHero : LIVE.delivery.igniteKPeer, budget);
         const ids = nearestCellIds([d.to[0], d.to[2]], rotY, cells.values(), k);
         const ingestSceneS = pulse.at + d.startAge + LOB_DUR_S;
         for (let i = 0; i < ids.length; i += 1) {
-          const flashAt = ingestSceneS + i * IGNITE_RIPPLE_S; // nearest cell flares first
+          const flashAt = ingestSceneS + i * LIVE.delivery.igniteRipple; // nearest cell flares first
           const prev = cellFlashRef.current.get(ids[i]) ?? -1e9;
           if (flashAt > prev) {
             cellFlashRef.current.set(ids[i], flashAt);
@@ -178,7 +162,7 @@ export default function BlockDeliveryLayer({
         continue;
       }
       g.visible = true;
-      const punch = d.hero ? 1 : PEER_PUNCH_SCALE;
+      const punch = d.hero ? 1 : LIVE.delivery.peerPunchScale;
 
       const inFlight = ph.phase === 'gather' || ph.phase === 'lob';
       const ingesting = ph.phase === 'ingest';
@@ -200,19 +184,19 @@ export default function BlockDeliveryLayer({
         const grow = ph.phase === 'gather' ? ph.t : 1; // form during the gather pre-roll
         if (h.body.current) {
           h.body.current.rotation.set(now * TUMBLE_RATE, now * TUMBLE_RATE * 0.7, 0);
-          h.body.current.scale.setScalar((d.hero ? HERO_SIZE : PEER_SIZE) * grow);
+          h.body.current.scale.setScalar((d.hero ? LIVE.delivery.heroSize : LIVE.delivery.peerSize) * grow);
           (h.body.current.material as THREE.MeshBasicMaterial).opacity = 1; // reset — ingest fades it toward 0
         }
         if (h.bloom.current) {
-          h.bloom.current.scale.setScalar(BOLUS_BLOOM_SIZE * punch * grow);
+          h.bloom.current.scale.setScalar(LIVE.delivery.bolusBloom * punch * grow);
           (h.bloom.current.material as THREE.SpriteMaterial).opacity = 1; // reset — ingest fades it toward 0
         }
         // speed trail: vertical streak behind the head, length ∝ acceleration.
         if (h.trail.current && ph.phase === 'lob') {
-          const len = (TRAIL_LEN_BASE + TRAIL_LEN_GAIN * lobSpeed(ph.t)) * punch;
-          h.trail.current.scale.set(TRAIL_WIDTH * punch, len, 1);
+          const len = (LIVE.delivery.trailLenBase + LIVE.delivery.trailLenGain * lobSpeed(ph.t)) * punch;
+          h.trail.current.scale.set(LIVE.delivery.trailWidth * punch, len, 1);
           h.trail.current.position.set(0, -len / 2, 0); // head at the bolus, tail toward `from`
-          (h.trail.current.material as THREE.SpriteMaterial).opacity = TRAIL_OPACITY;
+          (h.trail.current.material as THREE.SpriteMaterial).opacity = LIVE.delivery.trailOpacity;
         }
       } else {
         // ingest: the bolus is ABSORBED — the body dissolves (shrink + fade)
@@ -222,7 +206,7 @@ export default function BlockDeliveryLayer({
         const ing = bolusIngest(it);
         // Slide inward on xz toward the core (0,·,0) as it dissolves.
         const inLen = Math.hypot(d.to[0], d.to[2]) || 1;
-        const pull = INGEST_PULL * ing.pull;
+        const pull = LIVE.delivery.ingestPull * ing.pull;
         g.position.set(
           d.to[0] - (d.to[0] / inLen) * pull,
           d.to[1],
@@ -230,22 +214,22 @@ export default function BlockDeliveryLayer({
         );
         if (h.body.current) {
           h.body.current.rotation.set(now * TUMBLE_RATE, now * TUMBLE_RATE * 0.7, 0);
-          h.body.current.scale.setScalar((d.hero ? HERO_SIZE : PEER_SIZE) * ing.bodyScale);
+          h.body.current.scale.setScalar((d.hero ? LIVE.delivery.heroSize : LIVE.delivery.peerSize) * ing.bodyScale);
           (h.body.current.material as THREE.MeshBasicMaterial).opacity = ing.bodyOpacity;
         }
         if (h.bloom.current) {
-          h.bloom.current.scale.setScalar(BOLUS_BLOOM_SIZE * punch * ing.bodyScale);
+          h.bloom.current.scale.setScalar(LIVE.delivery.bolusBloom * punch * ing.bodyScale);
           (h.bloom.current.material as THREE.SpriteMaterial).opacity = ing.bodyOpacity;
         }
         if (h.flash.current) {
-          const swell = 1 + RECOIL_OVERSHOOT * Math.sin(Math.min(1, it * 3) * Math.PI); // membrane recoil (peaks early)
-          h.flash.current.scale.setScalar(INGEST_FLASH_SIZE * punch * swell);
+          const swell = 1 + LIVE.delivery.recoil * Math.sin(Math.min(1, it * 3) * Math.PI); // membrane recoil (peaks early)
+          h.flash.current.scale.setScalar(LIVE.delivery.flashSize * punch * swell);
           const m = h.flash.current.material as THREE.SpriteMaterial;
           m.opacity = ing.flashOpacity;
           m.color.lerpColors(WHITE_HOT, AMBER, ing.colorT); // white-hot strike → her amber
         }
         if (h.ring.current) {
-          h.ring.current.scale.setScalar(RING_MAX * punch * (0.15 + it));
+          h.ring.current.scale.setScalar(LIVE.delivery.ringMax * punch * (0.15 + it));
           (h.ring.current.material as THREE.SpriteMaterial).opacity = (1 - it) * 0.9;
         }
       }
