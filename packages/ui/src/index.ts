@@ -30,6 +30,7 @@ export { default as SimClockTicker } from './tweaks/SimClockTicker';
 export { default as TweakSync } from './tweaks/TweakSync';
 export { LIVE } from './tweaks/liveTweaks';
 export type { LiveTweaks } from './tweaks/liveTweaks';
+export { RENDER_STATS_TOGGLE } from './tweaks/renderStatsStore';
 
 // ── UI chrome (fonts, HUD layout, topology constants, scan state) ───
 export * from './ui/fonts';
@@ -124,7 +125,6 @@ export { default as ColonyEdges } from './components/ColonyEdges';
 export { default as ColonyNodes } from './components/ColonyNodes';
 export { default as ColonyCourierLayer } from './components/ColonyCourierLayer';
 export { default as NetworkColony } from './components/NetworkColony';
-export { default as StatsHud } from './components/StatsHud';
 
 // ── Nerve overlay (cell→cell dendritic pulses; pass as CellGalaxy `overlay`) ──
 export { default as NeuralNetwork } from './nerve/NeuralNetwork';

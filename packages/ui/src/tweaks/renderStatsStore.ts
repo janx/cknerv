@@ -1,0 +1,88 @@
+// Render-stats core: the pure metric math + a tiny external store bridging the
+// in-Canvas sampler (writes) to the DOM panel (reads via useSyncExternalStore).
+// fpsColor/fmtCompact/the sampling math are migrated verbatim from the deleted
+// stats HUD component.
+
+export interface RuntimeStats {
+  fps: number;
+  msPerFrame: number;
+  drawCalls: number;
+  triangles: number;
+  geometries: number;
+  textures: number;
+  programs: number;
+}
+
+/** The subset of THREE.WebGLInfo we read — structural so tests pass a plain
+ *  object and we don't couple to three's exact type export. `gl.info` matches. */
+export interface RenderInfoLike {
+  render: { calls: number; triangles: number };
+  memory: { geometries: number; textures: number };
+  programs?: { length: number } | null;
+}
+
+export const ZERO_STATS: RuntimeStats = {
+  fps: 0, msPerFrame: 0, drawCalls: 0, triangles: 0, geometries: 0, textures: 0, programs: 0,
+};
+
+// Single leva schema for the top-level "render stats" toggle. Imported by
+// Tweaks (registers it first → top of the ` panel), the sampler (gates), and
+// the panel (show/hide). Same key+shape → leva dedups into ONE control.
+export const RENDER_STATS_TOGGLE = {
+  renderStats: { value: false, label: 'render stats' },
+} as const;
+
+/** Per-frame-average render metrics from a sampling window. render.calls /
+ *  render.triangles accumulate across the frame's passes while autoReset is
+ *  off, so divide by the frame count. memory/programs are instantaneous. */
+export function computeRuntimeStats(frames: number, elapsedMs: number, info: RenderInfoLike): RuntimeStats {
+  return {
+    fps: elapsedMs > 0 ? (frames * 1000) / elapsedMs : 0,
+    msPerFrame: frames > 0 ? elapsedMs / frames : 0,
+    drawCalls: frames > 0 ? info.render.calls / frames : 0,
+    triangles: frames > 0 ? info.render.triangles / frames : 0,
+    geometries: info.memory.geometries,
+    textures: info.memory.textures,
+    programs: info.programs?.length ?? 0,
+  };
+}
+
+/** Perf-overlay FPS color: green 55+, amber 30-54, red below 30. */
+export function fpsColor(fps: number): string {
+  if (fps >= 55) return '#86efac';
+  if (fps >= 30) return '#fbbf24';
+  return '#f87171';
+}
+
+/** Integer count with an SI-ish suffix so TRIS (100k+) doesn't overflow the
+ *  narrow value column. */
+export function fmtCompact(n: number): string {
+  if (!Number.isFinite(n) || n < 0) return '—';
+  if (n < 1000) return Math.round(n).toString();
+  if (n < 1_000_000) {
+    const k = n / 1000;
+    return k >= 100 ? `${Math.round(k)}k` : `${k.toFixed(1)}k`;
+  }
+  const m = n / 1_000_000;
+  return m >= 100 ? `${Math.round(m)}M` : `${m.toFixed(1)}M`;
+}
+
+// --- stats store: in-Canvas sampler writes, DOM panel reads ---
+let snapshot: RuntimeStats = ZERO_STATS;
+const listeners = new Set<() => void>();
+
+/** Replace the snapshot (new ref) and notify subscribers. */
+export function setStats(next: RuntimeStats): void {
+  snapshot = next;
+  for (const l of listeners) l();
+}
+
+/** Stable ref between setStats calls — safe for useSyncExternalStore. */
+export function getStatsSnapshot(): RuntimeStats {
+  return snapshot;
+}
+
+export function subscribeStats(cb: () => void): () => void {
+  listeners.add(cb);
+  return () => { listeners.delete(cb); };
+}
