@@ -18,6 +18,13 @@ import {
   SHOCKWAVE_COLOR_CEIL,
   SHOCKWAVE_ALPHA_CEIL,
 } from '../materials/shockwaveMaterial';
+// ② reinforcement defaults live in fabricReinforce.ts — import so there's ONE
+// authority (the module owns the numbers; these knobs just expose them live).
+import {
+  REINFORCE_AMOUNT,
+  USAGE_GAIN,
+  USAGE_DECAY_HALF_LIFE_S,
+} from '../nerve/fabricReinforce';
 
 export interface KnobDef {
   value: number;
@@ -80,6 +87,10 @@ export const cellSchema = {
   activeColorB: { value: 0.15, min: 0, max: 1, step: 0.01, label: 'active B' },
   fabricWidth: { value: 2.5, min: 0.5, max: 8, step: 0.1, label: 'fabric width px' },
   activeWidth: { value: 3.4, min: 0.5, max: 8, step: 0.1, label: 'active width px' },
+  // ② self-organization feel — how strongly/long pulse traffic reinforces veins.
+  reinforceAmount: { value: REINFORCE_AMOUNT, min: 0, max: 1, step: 0.02, label: 'reinforce amount' },
+  reinforceGain: { value: USAGE_GAIN, min: 0, max: 5, step: 0.1, label: 'reinforce gain' },
+  reinforceHalfLife: { value: USAGE_DECAY_HALF_LIFE_S, min: 0.2, max: 20, step: 0.2, label: 'reinforce half-life s' },
 } satisfies FolderSchema;
 
 export const FOLDER_LABELS = {

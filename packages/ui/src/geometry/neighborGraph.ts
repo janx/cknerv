@@ -10,6 +10,7 @@
 // make the whole field one connected neural network.
 
 import type { Cell } from '@cknerv/types';
+import { buildArborForest } from './arborForest';
 
 /** Default k for the nearest-neighbour query. k=4 gives the main
  *  galaxy disc generous local connectivity while still feeling
@@ -35,6 +36,11 @@ export interface NeighborEdge {
   to: number;
   /** Euclidean distance (xz primary, y is small Gaussian). */
   d: number;
+  /** Arbor "trunkness" ∈ (0,1] when this edge is part of the grown spanning
+   *  forest (weight = normalized subtree size); `undefined` for the extra
+   *  cross-link edges (rendered at the twig floor). Purely a VISUAL hierarchy
+   *  hint — connectivity/routing ignore it. */
+  w?: number;
 }
 
 export interface NeighborGraph {
@@ -363,5 +369,15 @@ export function buildNeighborGraph(
   const denseEdges = edges
     .filter((e) => !skeletonKeys.has(edgeKey(e.from, e.to)))
     .sort((a, b) => a.d - b.d || a.from - b.from || a.to - b.to);
-  return { adjacency, edges: [...skeletonEdges, ...denseEdges] };
+  const finalEdges = [...skeletonEdges, ...denseEdges];
+
+  // Grown-arbor VISUAL overlay: weight the spanning-forest edges by subtree
+  // size so the fabric's brightness hierarchy reads as real trunks→twigs.
+  // Derives only — adjacency/connectivity above are already final.
+  const arborWeights = buildArborForest(byId, adjacency);
+  for (const e of finalEdges) {
+    const w = arborWeights.get(`${e.from}:${e.to}`);
+    if (w !== undefined) e.w = w;
+  }
+  return { adjacency, edges: finalEdges };
 }
