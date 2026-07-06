@@ -70,6 +70,9 @@ interface NeuralNetworkProps {
 
 interface ActivePulse extends Pulse {
   startSec: number;
+  /** ② Highest hop index already reinforced, so each edge a pulse crosses
+   *  bumps its vein's usage exactly once (the head hop only advances). */
+  lastReinforcedHop?: number;
 }
 
 export default function NeuralNetwork({
@@ -282,6 +285,14 @@ export default function NeuralNetwork({
       if (!headAdj || !headAdj.has(headToId)) continue;
 
       stillActive.push(pulse);
+
+      // ② Reinforce the vein this pulse is traversing — once per edge crossed
+      // (headHop only advances). Repeatedly-travelled routes accumulate glow
+      // and persist; the fabric self-organizes toward live block/tx flow.
+      if (headHop > (pulse.lastReinforcedHop ?? -1)) {
+        handles?.reinforce(headFromId, headToId);
+        pulse.lastReinforcedHop = headHop;
+      }
 
       // For each hop in the visible window, draw the lit Bezier
       // sub-segments. The head hop's wavefront position is `subT`;

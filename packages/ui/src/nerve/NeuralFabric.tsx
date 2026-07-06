@@ -32,6 +32,7 @@ import {
   GROWTH_MS,
   type DeathKind,
 } from './fabricEdgeRender';
+import { reinforceUsage, decayUsage, usageBrightnessBoost } from './fabricReinforce';
 import { simClock } from '../tweaks/simClock';
 import { LIVE } from '../tweaks/liveTweaks';
 
@@ -128,6 +129,10 @@ export interface NeuralFabricHandles {
     kind: DeathKind,
     deadEndByKey?: Map<string, 'from' | 'to'>,
   ): void;
+  /** ② Reinforce the fabric edge a pulse is traversing (self-organization).
+   *  One call per edge-crossing; bumps that edge's usage weight so a
+   *  frequently-travelled vein glows and persists. No-op for an unknown edge. */
+  reinforce(fromCellId: number, toCellId: number): void;
 }
 
 export interface NeuralFabricProps {
@@ -178,6 +183,11 @@ interface EdgeState {
    *  the network has a fixed hierarchy of bright "trunks" and dim
    *  "branches" rather than uniform mesh. */
   brightnessMul: number;
+  /** ② Self-organization: activity weight in [0, USAGE_CAP]. Pulse
+   *  traversals bump it (`reinforce`), each frame decays it, and it boosts
+   *  the rendered brightness on top of `brightnessMul`. 0 in the resting
+   *  state → boost ×1 → byte-identical to ①. */
+  usage: number;
 }
 
 /** Floor brightness at the midpoint of a fabric edge, as a fraction of
@@ -197,14 +207,19 @@ function taper(t: number): number {
   return TAPER_MIN + (1 - TAPER_MIN) * k * k;
 }
 
-/** Map an edge's deterministic seed onto a per-edge brightness in
- *  [0.45, 1.0]. The high 8 bits of the seed give an even spread; the
- *  result is the same every frame so the network has a stable visual
- *  hierarchy of "main trunks" (near 1.0) and "fine branches" (near
- *  0.45) rather than a uniform mesh. */
-function edgeBrightness(seed: number): number {
-  const byte = (seed >>> 16) & 0xff;
-  return 0.45 + 0.55 * (byte / 0xff);
+/** Floor brightness — twigs / non-forest cross-links sit here. */
+const TWIG_MIN = 0.45;
+
+/** Per-edge brightness multiplier ∈ [TWIG_MIN, 1.0], the fabric's trunk/branch
+ *  hierarchy. Forest edges scale by their arbor weight `w` (normalized subtree
+ *  size), so REAL trunks (carrying many descendants) are bright and REAL twigs
+ *  dim — grown venation rather than a uniform web. Non-forest cross-links and
+ *  not-yet-weighted incremental edges (`w === undefined`) get a dim textured
+ *  band off the deterministic edge seed, reading as faint tissue without faking
+ *  trunks. Stable per edge across its lifetime. */
+function arborBrightness(w: number | undefined, seed: number): number {
+  if (w !== undefined) return TWIG_MIN + (1 - TWIG_MIN) * w;
+  return TWIG_MIN + 0.14 * (((seed >>> 16) & 0xff) / 0xff);
 }
 
 function makeFatLineLayer(maxSegments: number, widthPx: number): FatLineLayer {
@@ -318,6 +333,10 @@ export default function NeuralFabric({ onReady }: NeuralFabricProps) {
     alpha: LIVE.cell.fabricAlpha, r: LIVE.cell.activeColorR, g: LIVE.cell.activeColorG,
     b: LIVE.cell.activeColorB, fw: LIVE.cell.fabricWidth, aw: LIVE.cell.activeWidth,
   });
+  // Wall/sim-seconds of the previous emitFabric, for the ② usage-decay dt.
+  // Advanced every frame (even on early-return) so a redraw resuming after an
+  // idle stretch decays by one frame, not the whole idle gap.
+  const prevEmitSecRef = useRef<number | null>(null);
 
   useEffect(() => {
     fabric.material.resolution.set(size.width, size.height);
@@ -384,7 +403,8 @@ export default function NeuralFabric({ onReady }: NeuralFabricProps) {
             deathKind: null,
             deadEnd: null,
             growDir: 1,
-            brightnessMul: edgeBrightness(seed),
+            brightnessMul: arborBrightness(e.w, seed),
+            usage: 0,
           });
         }
         // Pass 2: any state not in the new graph enters dying phase,
@@ -438,7 +458,8 @@ export default function NeuralFabric({ onReady }: NeuralFabricProps) {
             deathKind: null,
             deadEnd: null,
             growDir: dirByKey.get(key) ?? 1,
-            brightnessMul: edgeBrightness(seed),
+            brightnessMul: arborBrightness(e.w, seed),
+            usage: 0,
           });
           renderOrderRef.current.push(key); // append; emitFabric reaps
         }
@@ -457,7 +478,18 @@ export default function NeuralFabric({ onReady }: NeuralFabricProps) {
         }
         emitDirtyRef.current = true;
       },
+      reinforce(fromCellId, toCellId) {
+        const st = edgeStatesRef.current.get(fabricEdgeKey(fromCellId, toCellId));
+        if (!st) return;
+        st.usage = reinforceUsage(st.usage, LIVE.cell.reinforceAmount);
+        emitDirtyRef.current = true;
+      },
       emitFabric(now) {
+        // ② usage-decay dt, advanced every frame (even when we early-return
+        // below) so decay never sees a stale multi-second idle gap.
+        const prevEmit = prevEmitSecRef.current;
+        const dt = prevEmit === null ? 0 : Math.max(0, now - prevEmit);
+        prevEmitSecRef.current = now;
         // Cell-mesh live-tune change-detector. Runs BEFORE the early-
         // return so a knob dragged while the fabric is idle still applies.
         // Purely ADDITIVE: it only ever FORCES a redraw (sets emitDirtyRef
@@ -493,7 +525,14 @@ export default function NeuralFabric({ onReady }: NeuralFabricProps) {
           // flash, and reap/animating flags — this loop just draws it.
           const rs = fabricEdgeRenderState(st, now);
           if (rs.reap) { (toReap ??= []).push(key); continue; }
-          if (rs.animating) stillAnimating += 1;
+          // ② A vein still warm from recent traffic keeps decaying, and keeps
+          // the fabric emitting each frame until it relaxes back to baseline.
+          let animating = rs.animating;
+          if (st.usage > 0) {
+            st.usage = decayUsage(st.usage, dt, LIVE.cell.reinforceHalfLife);
+            if (st.usage > 0) animating = true;
+          }
+          if (animating) stillAnimating += 1;
           if (!rs.visible || rs.alphaMul <= 0) continue;
 
           // Base colour BEFORE per-vertex taper. We modulate this with
@@ -502,10 +541,13 @@ export default function NeuralFabric({ onReady }: NeuralFabricProps) {
           // — visual mimic of axon tapering / synaptic boutons. The
           // white-hot death flash (0 for grow/gc/stable) lerps the base
           // toward white so a retracting tendril's hot tip clears bloom.
+          // ② usage boost multiplies the arbor baseline — exactly ×1 when the
+          // vein is cold, so an idle fabric is byte-identical to ①.
+          const boost = usageBrightnessBoost(st.usage, LIVE.cell.reinforceGain);
           const fl = rs.flash;
-          const baseR = (FABRIC_COLOR.r * (1 - fl) + fl) * LIVE.cell.fabricAlpha * rs.alphaMul * st.brightnessMul;
-          const baseG = (FABRIC_COLOR.g * (1 - fl) + fl) * LIVE.cell.fabricAlpha * rs.alphaMul * st.brightnessMul;
-          const baseB = (FABRIC_COLOR.b * (1 - fl) + fl) * LIVE.cell.fabricAlpha * rs.alphaMul * st.brightnessMul;
+          const baseR = (FABRIC_COLOR.r * (1 - fl) + fl) * LIVE.cell.fabricAlpha * rs.alphaMul * st.brightnessMul * boost;
+          const baseG = (FABRIC_COLOR.g * (1 - fl) + fl) * LIVE.cell.fabricAlpha * rs.alphaMul * st.brightnessMul * boost;
+          const baseB = (FABRIC_COLOR.b * (1 - fl) + fl) * LIVE.cell.fabricAlpha * rs.alphaMul * st.brightnessMul * boost;
 
           // Walk sub-segments uniformly over the drawn interval
           // [tStart, tEnd]. This covers every lifecycle case: stable
