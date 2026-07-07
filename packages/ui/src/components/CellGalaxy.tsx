@@ -35,6 +35,7 @@ import {
 const CHAIN_ANCHOR_PALETTE = { edge: '#7df9ff', halo: '#22d3ee', fill: '#0e7490' };
 import CellShell, { GENERIC_SHELL_SIZE, TAGGED_SHELL_SIZE } from './CellShell';
 import CellLifeAvatar from './CellLifeAvatar';
+import CellCrystal from './CellCrystal';
 
 // ---------------------------------------------------------------------------
 // Block trigger — written by CellGalaxy on every block, consumed by:
@@ -1105,13 +1106,17 @@ export default function CellGalaxy({ ckbNodeIds, minerCkbNodeIds, universeSeed, 
             and rotate with the canopy. */}
         {overlay}
 
-        <CellShell
+        {/* PROTOTYPE (feat/cell-crystal): the warm faceted crystal CONTAINER
+            (edges + faces) replaces the cyan TO wireframe cage. The old cage +
+            6-solid avatar are hidden for this first live sign-off; the identity
+            nucleus comes in the next increment. Warm glow (points, above) kept. */}
+        <CellCrystal />
+        {/* <CellShell
           cellFlashRef={cellFlashRef}
           flashDirtyRef={flashDirtyRef}
           shockwaveUniformsRef={shellShockwaveUniformsRef}
-        />
-
-        <CellLifeAvatar shellScale={shellScale} />
+        /> */}
+        {/* <CellLifeAvatar shellScale={shellScale} /> */}
 
         {/* Screen-space cell picker — replaces the legacy InstancedMesh
             sphere hitbox. Lives inside the rotating group so cell
