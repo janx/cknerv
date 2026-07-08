@@ -39,6 +39,7 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
       attribute float aBornAt;
       attribute float aDeathAt;
       attribute float aSize;
+      attribute float aDetail;  // LOD: 0 for all far cells (glow unchanged); ramps →1 as the camera nears, softening the white-hot peak so the nucleus shows
 
       uniform float uTime;
       uniform float uBirthDurS;
@@ -57,6 +58,7 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
       varying float vDeathRamp;
       varying float vSeed;
       varying float vShockwave;
+      varying float vDetail;
 
       ${BIRTH_DEATH_GLSL}
 
@@ -84,6 +86,7 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
 
       void main() {
         vColor = aColor;
+        vDetail = aDetail;
         float birthRamp = clamp((uTime - aBornAt) / uBirthDurS, 0.0, 1.0);
         float deathRamp = clamp((uTime - aDeathAt) / uDeathDurS, 0.0, 1.0);
         float bEase = birthEase(birthRamp);
@@ -114,6 +117,7 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
       varying float vDeathRamp;
       varying float vSeed;
       varying float vShockwave;
+      varying float vDetail;
 
       // hash11 — small deterministic scrambler. Used for per-cell decorrelation.
       ${HASH11_GLSL}
@@ -135,7 +139,9 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
         float br     = 0.7 + 0.6 * hash11(vSeed + 7.7);
         float breath = 1.0 + 0.08 * sin(t * br + vSeed);
         float sigma  = 0.10 * breath;
-        float peak   = exp(-pow(dC / sigma, 2.0));
+        // LOD peak suppression: near cells (vDetail→1) lose the white-hot core so
+        // the nucleus reads; far cells (vDetail=0) are byte-identical to before.
+        float peak   = exp(-pow(dC / sigma, 2.0)) * (1.0 - vDetail * 0.92);
 
         // Color: white-hot at peak center → vColor (per-tag hue) → warm-orange
         // shoulder. No red→burned-black wet-flesh gradient.
@@ -146,7 +152,7 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
         // Outer halo wash for boundary continuity — very faint full-sprite
         // glow that anchors the cell's footprint when peak alone is too
         // tight at distance.
-        float wash = exp(-pow(dC / 0.32, 2.0)) * 0.18;
+        float wash = exp(-pow(dC / 0.32, 2.0)) * 0.18 * (1.0 - vDetail * 0.45);
         col += vColor * wash;
 
         return vec4(col, peak + wash);
