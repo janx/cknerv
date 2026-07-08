@@ -36,6 +36,7 @@ const CHAIN_ANCHOR_PALETTE = { edge: '#7df9ff', halo: '#22d3ee', fill: '#0e7490'
 import CellShell, { GENERIC_SHELL_SIZE, TAGGED_SHELL_SIZE } from './CellShell';
 import CellLifeAvatar from './CellLifeAvatar';
 import CellCrystal from './CellCrystal';
+import CellNucleus from './CellNucleus';
 
 // ---------------------------------------------------------------------------
 // Block trigger — written by CellGalaxy on every block, consumed by:
@@ -739,6 +740,12 @@ export default function CellGalaxy({ ckbNodeIds, minerCkbNodeIds, universeSeed, 
     () => new THREE.BufferAttribute(new Float32Array(INSTANCE_CAPACITY), 1),
     [],
   );
+  // LOD detail factor per cell (0 = far/unchanged glow, →1 = camera-near, peak
+  // suppressed so the nucleus shows). Written each frame by <CellNucleus>.
+  const cellDetailAttr = useMemo(
+    () => new THREE.BufferAttribute(new Float32Array(INSTANCE_CAPACITY), 1),
+    [],
+  );
 
   const hybridMaterial = useMemo(() => makeCellHybridMaterial(), []);
   const flareMaterial = useMemo(() => makeCellFlareMaterial(), []);
@@ -751,6 +758,7 @@ export default function CellGalaxy({ ckbNodeIds, minerCkbNodeIds, universeSeed, 
     g.setAttribute('aDeathAt', cellDeathAtAttr);
     g.setAttribute('aFlashAt', cellFlashAtAttr);
     g.setAttribute('aSize', cellSizeAttr);
+    g.setAttribute('aDetail', cellDetailAttr);
     g.setDrawRange(0, 0);
     // Permissive bounding sphere — cells live in a Gaussian field bounded
     // by SIGMA, core sprites extend a few units past that. Skipping
@@ -765,6 +773,7 @@ export default function CellGalaxy({ ckbNodeIds, minerCkbNodeIds, universeSeed, 
     cellDeathAtAttr,
     cellFlashAtAttr,
     cellSizeAttr,
+    cellDetailAttr,
   ]);
 
   // Bind the duration uniforms once. The wall→scene-seconds conversion
@@ -1111,6 +1120,12 @@ export default function CellGalaxy({ ckbNodeIds, minerCkbNodeIds, universeSeed, 
             6-solid avatar are hidden for this first live sign-off; the identity
             nucleus comes in the next increment. Warm glow (points, above) kept. */}
         <CellCrystal />
+        <CellNucleus
+          cellsListRef={cellsListRef}
+          drawCountRef={drawCountRef}
+          groupRef={groupRef}
+          detailAttr={cellDetailAttr}
+        />
         {/* <CellShell
           cellFlashRef={cellFlashRef}
           flashDirtyRef={flashDirtyRef}
