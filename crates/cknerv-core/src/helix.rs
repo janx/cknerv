@@ -26,9 +26,10 @@ const SPIRAL_FRACTION: f64 = 0.45;
 // ridges) but lifts the dark inter-arm gaps off black: cells here share the
 // arms' radial profile with a UNIFORM angle, so they fill the whole disc evenly
 // and the arms read as brighter structure floating in a continuous disc rather
-// than isolated spokes. Budget is taken from FILAMENT (0.20 → 0.03) so the total
-// cell count is unchanged — the streaky radial filaments become smooth fill.
-const DISK_FRACTION: f64 = 0.17;
+// than isolated spokes. Budget taken from FILAMENT (0.20 → 0.03) and the halo
+// (0.07 → 0.00, so core+spiral+disk+filament == 1.0); total cell count unchanged.
+// 0.24 tuned live — 0.17 still read too gappy under the neural-fabric mesh.
+const DISK_FRACTION: f64 = 0.24;
 const FILAMENT_COUNT: u64 = 9;
 const FILAMENT_MIN_R: f64 = 1.0;
 const FILAMENT_MAX_R: f64 = 55.0;
