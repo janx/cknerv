@@ -52,8 +52,9 @@ const SPIRAL_FRACTION = 0.45;
 // Smooth axisymmetric disk fill — see the Rust twin (crates/cknerv-core/src/
 // helix.rs). Keeps the 6 arms as-is and lifts the inter-arm gaps off black by
 // scattering cells at the arms' radial profile but UNIFORM angle. Budget taken
-// from FILAMENT (0.20 → 0.03); total cell count unchanged.
-const DISK_FRACTION = 0.17;
+// from FILAMENT (0.20 → 0.03) and halo (→ 0.00); total cell count unchanged.
+// 0.24 tuned live (0.17 still read too gappy under the neural-fabric mesh).
+const DISK_FRACTION = 0.24;
 const FILAMENT_COUNT = 9;
 const FILAMENT_MIN_R = 1;
 const FILAMENT_MAX_R = 55;

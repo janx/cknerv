@@ -541,6 +541,10 @@ impl CellGalaxy {
                 for mut cell in deaths.into_iter().rev() {
                     cell.death_at_ms = None;
                     let id = cell.id;
+                    // Re-derive pos_seed from id (see snapshot()): the stored death
+                    // snapshot froze it at the original birth's helix, so recompute
+                    // so a resurrected cell matches the current helix too.
+                    cell.pos_seed = helix_seed_for(id);
                     if let Some(pos) = self.cells.iter().position(|c| c.id == id) {
                         self.cells[pos] = cell.clone();
                     } else {
@@ -839,7 +843,21 @@ impl Projection for CellGalaxy {
 
     fn snapshot(&self) -> CellGalaxySnapshot {
         CellGalaxySnapshot {
-            cells: self.cells.clone(),
+            // pos_seed is a PURE function of the cell id (helix_seed_for), so
+            // recompute it fresh here instead of serving the value frozen at the
+            // cell's birth. Without this, a helix change only reshapes cells born
+            // AFTER the change — persisted/restored cells keep their old position
+            // and the galaxy stays half-old. Recomputing on emit makes a helix
+            // tune apply retroactively to every live cell on the next snapshot.
+            // Cheap: one PRNG walk per cell, only on (re)connect.
+            cells: self
+                .cells
+                .iter()
+                .map(|c| Cell {
+                    pos_seed: helix_seed_for(c.id),
+                    ..c.clone()
+                })
+                .collect(),
             last_pulse_at_ms: self.last_pulse_at_ms,
             recent_links: self.recent_links.clone(),
             total_births: self.total_births,
