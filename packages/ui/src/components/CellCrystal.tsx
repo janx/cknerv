@@ -9,6 +9,7 @@ import * as THREE from 'three';
 import { useCellGalaxy } from '../hooks/cellGalaxyContext';
 import { useSimFrame } from '../tweaks/useSimFrame';
 import { simClock } from '../tweaks/simClock';
+import { LIVE } from '../tweaks/liveTweaks';
 import {
   INSTANCE_CAPACITY,
   BIRTH_DURATION_MS,
@@ -68,6 +69,7 @@ export default function CellCrystal() {
     const sceneStartWallMs = Date.now() - now * 1000;
     const toScene = (ms: number) => (ms - sceneStartWallMs) / 1000;
     material.uniforms.uTime.value = now;
+    material.uniforms.uWarmth.value = LIVE.cell.warmth;
 
     if (cache.cells !== lastCellsRef.current) {
       let i = 0;

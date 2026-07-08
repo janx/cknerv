@@ -11,7 +11,7 @@ export function makeNucleusPointMaterial(feather: number): THREE.ShaderMaterial 
     // uProjY = projectionMatrix[1][1] = 1/tan(fov/2). Including it makes aSize a
     // TRUE world diameter (matching meshes/sprites); without it points render
     // ~1/tan smaller (≈2.6× too small at fov 42) and vanish against the glow.
-    uniforms: { uViewportHeight: { value: 800 }, uProjY: { value: 1.0 } },
+    uniforms: { uViewportHeight: { value: 800 }, uProjY: { value: 1.0 }, uWarmth: { value: 1 } },
     transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false,
     vertexShader: /* glsl */`
       attribute float aSize;   // world-space point diameter
@@ -28,11 +28,13 @@ export function makeNucleusPointMaterial(feather: number): THREE.ShaderMaterial 
     fragmentShader: /* glsl */`
       precision highp float;
       varying float vAlpha;
+      uniform float uWarmth;
       void main(){
         vec2 uv = gl_PointCoord - 0.5; float r = length(uv); if (r > 0.5) discard;
         float g = exp(-pow(r / ${feather.toFixed(3)}, 2.0));
         float a = g * vAlpha;
-        gl_FragColor = vec4(vec3(1.0, 0.9, 0.66) * a, a);
+        vec3 tint = mix(vec3(0.82, 0.90, 1.0), vec3(1.0, 0.9, 0.66), uWarmth); // cool blue-white ↔ warm gold
+        gl_FragColor = vec4(tint * a, a);
       }`,
   });
 }

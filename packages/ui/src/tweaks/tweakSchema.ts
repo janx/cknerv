@@ -82,6 +82,14 @@ export const peerSchema = {
 
 export const cellSchema = {
   fabricAlpha: { value: 0.12, min: 0, max: 1, step: 0.01, label: 'fabric alpha' },
+  // cell body colour: the generic base is a luminous rose (GENERIC_COLOR in
+  // CellGalaxy.tsx), sitting in the crimson nerve's colour family. `warmth` pushes
+  // the body from rose (0) toward ember-orange (1); the hot core stays warm-white.
+  warmth: { value: 0.12, min: 0, max: 1, step: 0.01, label: 'body rose→ember' },
+  // point ①: galaxy-centre brightness floor. The dense core otherwise piles up
+  // additively into a white blob; this fades resting cell brightness toward the
+  // centre (1.0 = no dim; 0.3 shipped). Cells past r≈16 are unaffected.
+  centerDim: { value: 0.3, min: 0, max: 1, step: 0.02, label: 'center dim (core)' },
   activeColorR: { value: 1.0, min: 0, max: 1, step: 0.01, label: 'active R' },
   activeColorG: { value: 0.55, min: 0, max: 1, step: 0.01, label: 'active G' },
   activeColorB: { value: 0.15, min: 0, max: 1, step: 0.01, label: 'active B' },

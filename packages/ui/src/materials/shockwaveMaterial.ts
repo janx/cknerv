@@ -32,8 +32,11 @@ export const SHOCKWAVE_SLOTS = 8;
 // and cellShellMaterial read these via makeShockwaveUniforms().
 export const SHOCKWAVE_BAND_BASE = 5.5;
 export const SHOCKWAVE_BAND_GROW = 1.5;
-export const SHOCKWAVE_COLOR_BOOST = 7.5;
-export const SHOCKWAVE_ALPHA_BOOST = 5.5;
+// Halved 2026-07-08 (7.5/5.5 → 3.75/2.75, with the ceils below halved too):
+// new-block flash brightness reduced 50% for the blue-white palette. Boost/ceil
+// ratio kept, so the onset feel is unchanged and the amplitude is exactly halved.
+export const SHOCKWAVE_COLOR_BOOST = 3.75;
+export const SHOCKWAVE_ALPHA_BOOST = 2.75;
 export const SHOCKWAVE_SIZE_BOOST = 0.5;
 export const SHOCKWAVE_TRAIL_BOOST = 0.18;
 
@@ -52,8 +55,8 @@ export const SHOCKWAVE_TRAIL_BOOST = 0.18;
 // linear response — color 5.5×→3.2×, alpha 4.3×→2.7× — so the searing white
 // area shrinks and warms, while the front still boosts ~3.2×/2.7× over rest
 // (punch preserved). Raise both toward BOOST for less de-glare, lower for more.
-export const SHOCKWAVE_COLOR_CEIL = 2.8;
-export const SHOCKWAVE_ALPHA_CEIL = 2.2;
+export const SHOCKWAVE_COLOR_CEIL = 1.4;
+export const SHOCKWAVE_ALPHA_CEIL = 1.1;
 
 export function makeShockwaveAtArray(): Float32Array {
   const a = new Float32Array(SHOCKWAVE_SLOTS);

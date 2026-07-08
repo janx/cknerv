@@ -49,11 +49,16 @@ const SPIRAL_ARM_MAX_R = 58;
 const SPIRAL_ARM_PITCH = 0.95;
 const SPIRAL_ARM_THICKNESS = 0.16;
 const SPIRAL_FRACTION = 0.45;
+// Smooth axisymmetric disk fill — see the Rust twin (crates/cknerv-core/src/
+// helix.rs). Keeps the 6 arms as-is and lifts the inter-arm gaps off black by
+// scattering cells at the arms' radial profile but UNIFORM angle. Budget taken
+// from FILAMENT (0.20 → 0.03); total cell count unchanged.
+const DISK_FRACTION = 0.17;
 const FILAMENT_COUNT = 9;
 const FILAMENT_MIN_R = 1;
 const FILAMENT_MAX_R = 55;
 const FILAMENT_THICKNESS = 0.05;
-const FILAMENT_FRACTION = 0.20;
+const FILAMENT_FRACTION = 0.03;
 const HALO_MIN_R = 12;
 const HALO_MAX_R = 55;
 const NEBULA_RADIAL_MIN = 1;
@@ -87,7 +92,8 @@ export function helixSeedF64(id: number | bigint): [number, number, number] {
 
   const coreEnd = CORE_FRACTION;
   const spiralEnd = coreEnd + SPIRAL_FRACTION;
-  const filamentEnd = spiralEnd + FILAMENT_FRACTION;
+  const diskEnd = spiralEnd + DISK_FRACTION;
+  const filamentEnd = diskEnd + FILAMENT_FRACTION;
 
   if (u < coreEnd) {
     r = Math.abs(gauss(rand)) * CORE_SIGMA;
@@ -102,6 +108,11 @@ export function helixSeedF64(id: number | bigint): [number, number, number] {
     const spiralAngle = SPIRAL_ARM_PITCH * Math.log(Math.max(r, 1));
     const tangentialJitter = gauss(rand) * SPIRAL_ARM_THICKNESS;
     theta = armOffset + spiralAngle + tangentialJitter;
+  } else if (u < diskEnd) {
+    // Smooth disk fill — arms' radial profile, UNIFORM angle. Two rand() calls
+    // (r, theta); order MUST match the Rust twin exactly.
+    r = SPIRAL_ARM_MIN_R + Math.pow(rand(), 0.7) * (SPIRAL_ARM_MAX_R - SPIRAL_ARM_MIN_R);
+    theta = rand() * Math.PI * 2;
   } else if (u < filamentEnd) {
     const baseAngle = (filamentIndex / FILAMENT_COUNT) * Math.PI * 2;
     r = FILAMENT_MIN_R + rand() * (FILAMENT_MAX_R - FILAMENT_MIN_R);

@@ -28,6 +28,8 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
       uBirthDurS:       { value: 0.5 },
       uDeathDurS:       { value: 0.6 },
       uViewportHeight:  { value: 800 },
+      uWarmth:          { value: 1 }, // rose→ember push for the cell body (0 rose, 1 ember); set live from LIVE.cell.warmth
+      uCenterDim:       { value: 0.3 }, // point ①: resting-brightness floor at the galaxy centre (1.0 = no dim); set live from LIVE.cell.centerDim
       ...makeShockwaveUniforms(),
     },
     transparent: true,
@@ -45,6 +47,7 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
       uniform float uBirthDurS;
       uniform float uDeathDurS;
       uniform float uViewportHeight;
+      uniform float uCenterDim;
       uniform float uShockwaveAt[${SHOCKWAVE_SLOTS}];
       uniform vec2  uShockwaveOriginXZ[${SHOCKWAVE_SLOTS}];
       uniform float uShockwaveSpeed;
@@ -59,6 +62,7 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
       varying float vSeed;
       varying float vShockwave;
       varying float vDetail;
+      varying float vCenterDim;
 
       ${BIRTH_DEATH_GLSL}
 
@@ -97,6 +101,10 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
         vSeed      = float(gl_VertexID) * 0.61803 + aBornAt * 0.137;
 
         vec4 worldPos = modelMatrix * vec4(position, 1.0);
+        // point ①: fade resting brightness down toward the galaxy centre so the
+        // dense core stops piling up additively into a white-hot blob. Center is
+        // world XZ origin (group sits at x=z=0, rotates about y). 1.0 past r≈16.
+        vCenterDim = mix(uCenterDim, 1.0, smoothstep(2.0, 16.0, length(worldPos.xz)));
         vec4 viewPos  = viewMatrix * worldPos;
         vShockwave = shockwaveAtVertex(worldPos.xz);
         gl_Position   = projectionMatrix * viewPos;
@@ -112,12 +120,14 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
       uniform float uShockwaveColorCeil;
       uniform float uShockwaveAlphaCeil;
       uniform float uShockwaveTrailBoost;
+      uniform float uWarmth;
 
       varying vec3  vColor;
       varying float vDeathRamp;
       varying float vSeed;
       varying float vShockwave;
       varying float vDetail;
+      varying float vCenterDim;
 
       // hash11 — small deterministic scrambler. Used for per-cell decorrelation.
       ${HASH11_GLSL}
@@ -143,17 +153,20 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
         // the nucleus reads; far cells (vDetail=0) are byte-identical to before.
         float peak   = exp(-pow(dC / sigma, 2.0)) * (1.0 - vDetail * 0.92);
 
-        // Color: white-hot at peak center → vColor (per-tag hue) → warm-orange
-        // shoulder. No red→burned-black wet-flesh gradient.
-        vec3 hot  = mix(vColor, vec3(1.0, 0.97, 0.86), 0.7);
-        vec3 warm = mix(vColor, vec3(1.0, 0.65, 0.30), 0.4);
-        vec3 col  = mix(warm, hot, peak);
+        // Rose/ember star: the body is the per-cell rose (vColor — generic cells)
+        // or the tag colour, and the hot core lifts to a warm white. uWarmth pushes
+        // the body from rose (0) toward ember-orange (1), so the cells sit in the
+        // crimson nerve's colour family instead of reading as cool blue-white stars.
+        vec3 ember = mix(vColor, vec3(1.0, 0.52, 0.28), 0.55);
+        vec3 body  = mix(vColor, ember, uWarmth);
+        vec3 hot   = mix(body, vec3(1.0, 0.93, 0.85), 0.72);
+        vec3 col   = mix(body, hot, peak);
 
         // Outer halo wash for boundary continuity — very faint full-sprite
         // glow that anchors the cell's footprint when peak alone is too
         // tight at distance.
         float wash = exp(-pow(dC / 0.32, 2.0)) * 0.18 * (1.0 - vDetail * 0.45);
-        col += vColor * wash;
+        col += body * wash;
 
         return vec4(col, peak + wash);
       }
@@ -166,11 +179,12 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
         if (vDeathRamp >= 1.0) discard;
 
         vec4 base = cloud(uv, t);
+        base.a *= vCenterDim; // point ①: fade resting brightness toward the galaxy centre (shock events still punch through below)
 
         float shock = vShockwave;
         float shockCore = min(1.0, shock);
         float shockWash = exp(-pow(length(uv) / 0.42, 2.0)) * shock * uShockwaveTrailBoost;
-        vec3 shockTint = mix(base.rgb, vec3(1.0, 0.96, 0.80), min(1.0, shockCore * 0.85));
+        vec3 shockTint = mix(base.rgb, vec3(0.93, 0.94, 0.90), min(1.0, shockCore * 0.85)); // flash tint averaged with the blue-white cell → bright neutral-white, not warm-cream
 
         // Soft-knee the wave's brightness/alpha: same onset slope as the old
         // linear (1 + BOOST*shock), but the bright leading edge saturates toward

@@ -4,7 +4,7 @@ import { galaxySchema } from '../../src/tweaks/tweakSchema';
 
 describe('defaultsFrom', () => {
   it('extracts the numeric value from each knob def', () => {
-    expect(defaultsFrom(galaxySchema)).toMatchObject({ rotationRate: 0.0025, colorCeil: 2.8, alphaCeil: 2.2 });
+    expect(defaultsFrom(galaxySchema)).toMatchObject({ rotationRate: 0.0025, colorCeil: 1.4, alphaCeil: 1.1 });
   });
 });
 

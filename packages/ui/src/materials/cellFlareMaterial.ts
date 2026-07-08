@@ -94,7 +94,7 @@ export function makeCellFlareMaterial(): THREE.ShaderMaterial {
 
         float dC   = length(uv);
         float core = exp(-pow(dC / 0.06, 2.0));
-        vec3 col   = vec3(1.0, 0.99, 0.95) * core * env * 1.4;
+        vec3 col   = vec3(0.93, 0.95, 0.97) * core * env * 1.4; // flash core averaged toward the blue-white cell
         float alpha = core * env * 1.2;
 
         int A = int(armCount);
@@ -121,7 +121,7 @@ export function makeCellFlareMaterial(): THREE.ShaderMaterial {
             float dD   = length(uv - p);
             float dG   = exp(-pow(dD / dotR, 2.0));
             float aT   = env * (1.0 - t01);
-            col   += mix(vColor, vec3(1.0, 0.95, 0.78), 0.7) * dG * aT;
+            col   += mix(vColor, vec3(0.93, 0.93, 0.89), 0.7) * dG * aT; // arm tint averaged toward the blue-white cell
             alpha += dG * aT * 0.7;
           }
         }
