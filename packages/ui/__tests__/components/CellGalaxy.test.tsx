@@ -217,8 +217,8 @@ describe('writeCellBuffers', () => {
     expect(t.posArr[1]).toBe(2);
     expect(t.posArr[2]).toBe(3);
     expect(t.posArr[3]).toBe(4);
-    // Generic cell color (cell 1 has tag=null) — first channel of GENERIC_COLOR.
-    expect(t.colorArr[0]).toBeCloseTo(0.62, 5);
+    // Generic cell color (cell 1 has tag=null) — first channel of GENERIC_COLOR (rose).
+    expect(t.colorArr[0]).toBeCloseTo(1.0, 5);
     // wallet-tagged color (cell 2) — first channel of wallet [0.43, 0.91, 0.72].
     expect(t.colorArr[3]).toBeCloseTo(0.43, 5);
     // Size: generic vs tagged.

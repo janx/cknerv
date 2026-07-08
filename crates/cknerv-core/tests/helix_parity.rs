@@ -23,6 +23,30 @@ fn fixture_path() -> PathBuf {
         .join("helix_seed.json")
 }
 
+/// Regenerates `tests/fixtures/helix_seed.json` from the current helix
+/// parameters. IGNORED by default — run ONLY after an intended change to the
+/// helix distribution, then re-run both parity tests (Rust here + the TS twin
+/// in `packages/ui/__tests__/helix-parity.test.ts`) to confirm they still agree:
+///
+///   cargo test -p cknerv-core --test helix_parity regenerate_fixture -- --ignored --exact
+///
+/// The fixture stores each f32 value promoted to f64 (its exact f64 expansion) —
+/// i.e. the values are already f32-truncated, matching how the fixture was first
+/// generated; both parity tests narrow to f32 for the byte-exact comparison.
+#[test]
+#[ignore = "regenerates the parity fixture; run only after an intended helix change"]
+fn regenerate_fixture() {
+    let data: Vec<[f64; 3]> = (0..1000)
+        .map(|id| {
+            let p = helix_seed_for(id as u64);
+            [p[0] as f64, p[1] as f64, p[2] as f64]
+        })
+        .collect();
+    let json = serde_json::to_string(&data).expect("serialize fixture");
+    std::fs::write(fixture_path(), json).expect("write fixture");
+    eprintln!("regenerated {} ({} entries)", fixture_path().display(), data.len());
+}
+
 #[test]
 fn helix_seed_matches_fixture() {
     let path = fixture_path();

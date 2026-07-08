@@ -132,7 +132,7 @@ const COLOR_BY_TAG: Record<string, [number, number, number]> = {
   cf:      [0.99, 0.64, 0.69],   // #fda4af
   wallet:  [0.43, 0.91, 0.72],   // #6ee7b7
 };
-const GENERIC_COLOR: [number, number, number] = [0.62, 0.78, 1.0]; // pale star-blue
+const GENERIC_COLOR: [number, number, number] = [1.0, 0.40, 0.44]; // luminous rose — sits in the crimson nerve's colour family (was pale star-blue)
 
 // Cell point sizes in world units. The hybrid shader draws the anchored
 // core/glow sprite, and CellShell draws the faceted exterior around it.
@@ -902,6 +902,8 @@ export default function CellGalaxy({ ckbNodeIds, minerCkbNodeIds, universeSeed, 
     hybridMaterial.uniforms.uShockwaveAlphaCeil.value = LIVE.galaxy.alphaCeil;
     hybridMaterial.uniforms.uShockwaveSizeBoost.value = LIVE.galaxy.sizeBoost;
     hybridMaterial.uniforms.uShockwaveTrailBoost.value = LIVE.galaxy.trailBoost;
+    hybridMaterial.uniforms.uWarmth.value = LIVE.cell.warmth; // cell body rose→ember push
+    hybridMaterial.uniforms.uCenterDim.value = LIVE.cell.centerDim; // point ①: galaxy-centre brightness floor
     const shell = shellShockwaveUniformsRef.current;
     if (shell) {
       shell.colorBoost.value = LIVE.galaxy.colorBoost;

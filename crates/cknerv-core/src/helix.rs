@@ -22,11 +22,18 @@ const SPIRAL_ARM_MAX_R: f64 = 58.0;
 const SPIRAL_ARM_PITCH: f64 = 0.95;
 const SPIRAL_ARM_THICKNESS: f64 = 0.16;
 const SPIRAL_FRACTION: f64 = 0.45;
+// Smooth axisymmetric disk fill. Keeps the 6 arms exactly as-is (over-density
+// ridges) but lifts the dark inter-arm gaps off black: cells here share the
+// arms' radial profile with a UNIFORM angle, so they fill the whole disc evenly
+// and the arms read as brighter structure floating in a continuous disc rather
+// than isolated spokes. Budget is taken from FILAMENT (0.20 → 0.03) so the total
+// cell count is unchanged — the streaky radial filaments become smooth fill.
+const DISK_FRACTION: f64 = 0.17;
 const FILAMENT_COUNT: u64 = 9;
 const FILAMENT_MIN_R: f64 = 1.0;
 const FILAMENT_MAX_R: f64 = 55.0;
 const FILAMENT_THICKNESS: f64 = 0.05;
-const FILAMENT_FRACTION: f64 = 0.20;
+const FILAMENT_FRACTION: f64 = 0.03;
 const HALO_MIN_R: f64 = 12.0;
 const HALO_MAX_R: f64 = 55.0;
 const NEBULA_RADIAL_MIN: f64 = 1.0;
@@ -56,7 +63,8 @@ pub fn helix_seed_f64(id: u64) -> [f64; 3] {
 
     let core_end = CORE_FRACTION;
     let spiral_end = core_end + SPIRAL_FRACTION;
-    let filament_end = spiral_end + FILAMENT_FRACTION;
+    let disk_end = spiral_end + DISK_FRACTION;
+    let filament_end = disk_end + FILAMENT_FRACTION;
 
     let (mut r, theta);
 
@@ -73,6 +81,13 @@ pub fn helix_seed_f64(id: u64) -> [f64; 3] {
         let spiral_angle = SPIRAL_ARM_PITCH * r.max(1.0).ln();
         let tangential_jitter = gauss(&mut rng) * SPIRAL_ARM_THICKNESS;
         theta = arm_offset + spiral_angle + tangential_jitter;
+    } else if u < disk_end {
+        // Smooth disk fill: the arms' radial profile (denser inward via
+        // powf(0.7)) but a UNIFORM angle, so it lands everywhere — including the
+        // inter-arm gaps — without adding angular structure of its own. Two
+        // rng.next() calls (r, theta); order MUST match the TS twin exactly.
+        r = SPIRAL_ARM_MIN_R + rng.next().powf(0.7) * (SPIRAL_ARM_MAX_R - SPIRAL_ARM_MIN_R);
+        theta = rng.next() * 2.0 * std::f64::consts::PI;
     } else if u < filament_end {
         let filament = id % FILAMENT_COUNT;
         let base_angle = (filament as f64 / FILAMENT_COUNT as f64) * 2.0 * std::f64::consts::PI;

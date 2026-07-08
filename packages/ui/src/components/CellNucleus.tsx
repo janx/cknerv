@@ -13,6 +13,7 @@ import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { dendriteNucleus, type DendriteNucleus } from '../derives/dendriteNucleus';
 import { makeNucleusPointMaterial } from '../materials/cellNucleusMaterial';
+import { LIVE } from '../tweaks/liveTweaks';
 import type { Cell } from '@cknerv/types';
 
 const CRYSTAL_R = 0.14;   // matches CellCrystal — dendrite local units scale by this
@@ -22,7 +23,8 @@ const MAX_NEAR = 12;      // cap cells rendered in full nucleus detail
 const MAX_SEG = 480;      // per-cell segment cap (fuller dendrite emits ~300-405)
 const MAX_CORE = 100;     // per-cell tight-core cap
 const MAX_GLOW = 4;       // per-cell soft-glow cap
-const LINE_WARM: [number, number, number] = [1.0, 0.72, 0.42];
+const LINE_WARM: [number, number, number] = [1.0, 0.72, 0.42]; // warmth=1 (gold)
+const LINE_COOL: [number, number, number] = [0.72, 0.85, 1.0]; // warmth=0 (blue-white)
 
 interface Props {
   cellsListRef: { readonly current: Cell[] };
@@ -85,6 +87,11 @@ export default function CellNucleus({ cellsListRef, drawCountRef, groupRef, deta
     const p11 = state.camera.projectionMatrix.elements[5]; // 1/tan(fov/2) → points sized as true world diameters
     coreMat.uniforms.uViewportHeight.value = vh; coreMat.uniforms.uProjY.value = p11;
     glowMat.uniforms.uViewportHeight.value = vh; glowMat.uniforms.uProjY.value = p11;
+    const warmth = LIVE.cell.warmth; // cell star warmth (blue-white ↔ gold)
+    coreMat.uniforms.uWarmth.value = warmth; glowMat.uniforms.uWarmth.value = warmth;
+    const lb0 = LINE_COOL[0] + (LINE_WARM[0] - LINE_COOL[0]) * warmth;
+    const lb1 = LINE_COOL[1] + (LINE_WARM[1] - LINE_COOL[1]) * warmth;
+    const lb2 = LINE_COOL[2] + (LINE_WARM[2] - LINE_COOL[2]) * warmth;
 
     // 1. per-cell LOD detail (drives glow peak suppression) + collect near cells
     near.current.length = 0;
@@ -109,7 +116,7 @@ export default function CellNucleus({ cellsListRef, drawCountRef, groupRef, deta
       let d = cache.current.get(n.cell.content_hash);
       if (!d) { d = dendriteNucleus(n.cell.content_hash); cache.current.set(n.cell.content_hash, d); }
       const ox = n.cell.pos_seed[0], oy = n.cell.pos_seed[1], oz = n.cell.pos_seed[2];
-      const cr = LINE_WARM[0] * n.detail, cg = LINE_WARM[1] * n.detail, cb = LINE_WARM[2] * n.detail;
+      const cr = lb0 * n.detail, cg = lb1 * n.detail, cb = lb2 * n.detail;
       const segs = d.segments;
       for (let s = 0; s + 5 < segs.length && lv + 2 <= lineCap; s += 6) {
         linePos[lv * 3] = ox + segs[s] * CRYSTAL_R; linePos[lv * 3 + 1] = oy + segs[s + 1] * CRYSTAL_R; linePos[lv * 3 + 2] = oz + segs[s + 2] * CRYSTAL_R;

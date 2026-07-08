@@ -14,6 +14,7 @@ export function makeCellCrystalMaterial(): THREE.ShaderMaterial {
     uniforms: {
       uTime: { value: 0 }, uBirthDurS: { value: 0.5 }, uDeathDurS: { value: 0.6 },
       uRotRate: { value: 0.06 },   // gentle organic turn (glints on facets), not mechanical
+      uWarmth: { value: 1 },       // 0 cool blue-white → 1 warm gold (default set live to blue-white)
     },
     transparent: true, depthWrite: false, blending: THREE.NormalBlending, side: THREE.FrontSide, toneMapped: false,
     vertexShader: /* glsl */`
@@ -38,17 +39,20 @@ export function makeCellCrystalMaterial(): THREE.ShaderMaterial {
     fragmentShader: /* glsl */`
       precision highp float;
       varying vec3 vN; varying vec3 vView; varying vec3 vColor; varying float vLife; varying vec3 vBary;
+      uniform float uWarmth;
       void main(){
         if (vLife <= 0.001) discard;
         vec3 N = normalize(vN); vec3 V = normalize(vView);
         float diff = max(dot(N, normalize(vec3(0.4,0.72,0.55))), 0.0);   // lit facet → dark facet = 立体感
         float fres = pow(1.0 - max(dot(N,V),0.0), 2.4);                  // glassy sheen
         // translucent warm FACE
-        vec3 col = vColor*(0.26 + 0.5*diff) + vec3(1.0,0.9,0.7)*fres*0.4;
-        // bright warm facet EDGE from barycentric distance (the "边")
+        // star warmth: blue-white crystal (0) ↔ warm gold (1, = original)
+        vec3 face = mix(vec3(0.80, 0.90, 1.05), vColor, uWarmth);
+        vec3 col = face*(0.26 + 0.5*diff) + mix(vec3(0.85,0.92,1.0), vec3(1.0,0.9,0.7), uWarmth)*fres*0.4;
+        // bright facet EDGE from barycentric distance (the "边")
         float eMin = min(min(vBary.x, vBary.y), vBary.z);
         float edge = 1.0 - smoothstep(0.0, 0.04, eMin);
-        col += vec3(1.0,0.72,0.4) * edge * 0.6;
+        col += mix(vec3(0.72,0.85,1.0), vec3(1.0,0.72,0.4), uWarmth) * edge * 0.6;
         float a = (0.22 + fres*0.28 + edge*0.5) * vLife;                 // faces (substance) + defined edges
         gl_FragColor = vec4(col, a);
       }`,
