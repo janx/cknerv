@@ -1,6 +1,6 @@
 import type { CSSProperties } from 'react';
 import type { ChainEntry, ChainNode } from '@cknerv/types';
-import { midTruncate } from '../CellDetailHud';
+import { midTruncate } from './cellFormat';
 import { HudPanel, PanelHeader, StatRow, CloseButton } from './primitives';
 
 export default function NodeDetailPanel({ node, chain, onClose, style }: {
