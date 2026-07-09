@@ -3,6 +3,10 @@ import * as THREE from 'three';
 
 import type { Cell } from '@cknerv/types';
 import { FONT_DISPLAY, FONT_MONO, FONT_MONO_BOLD } from '../ui/fonts';
+import {
+  formatCkb, midTruncate, formatOutpoint, formatDataHex, formatCellKind,
+} from './hud/cellFormat';
+export { formatCkb, midTruncate, formatOutpoint, formatDataHex, formatCellKind };
 
 export interface CellDetailHudProps {
   cell: Cell;
@@ -16,33 +20,6 @@ export interface CellDetailHudProps {
 const PAD_X = 10;
 const HEADER_H = 24;
 const ROW_H = 16;
-
-export function formatCkb(shannons: number): string {
-  const ckb = shannons / 100_000_000;
-  return `${ckb.toFixed(2)} CKB`;
-}
-
-export function midTruncate(s: string, head: number, tail: number): string {
-  if (s.length <= head + tail + 1) return s;
-  return `${s.slice(0, head)}…${s.slice(s.length - tail)}`;
-}
-
-export function formatOutpoint(tx_hash: string, index: number): string {
-  return `${midTruncate(tx_hash, 6, 8)}#${index}`;
-}
-
-/** Truncate hex data for display. Keeps the `0x` prefix and the first
- *  N hex chars; appends `…` for any tail. Truncation at the wire was
- *  already capped at 1 KB upstream, so this only narrows the visual. */
-export function formatDataHex(hex: string, charLimit: number): string {
-  if (hex.length <= charLimit + 1) return hex;
-  return `${hex.slice(0, charLimit)}…`;
-}
-
-export function formatCellKind(k: Cell['tag']): string {
-  if (k === null) return 'GENERIC';
-  return k.toUpperCase();
-}
 
 export default function CellDetailHud({
   cell,
