@@ -34,7 +34,6 @@ import {
  *  entry of `_rcg/glowNodePalette.ts` — tune both together. */
 const CHAIN_ANCHOR_PALETTE = { edge: '#7df9ff', halo: '#22d3ee', fill: '#0e7490' };
 import CellShell, { GENERIC_SHELL_SIZE, TAGGED_SHELL_SIZE } from './CellShell';
-import CellLifeAvatar from './CellLifeAvatar';
 import CellCrystal from './CellCrystal';
 import CellNucleus from './CellNucleus';
 
@@ -639,8 +638,7 @@ export default function CellGalaxy({ ckbNodeIds, minerCkbNodeIds, universeSeed, 
   const dischargeArms = QUALITY_PRESETS[quality].dischargeArms;
   // Subscribe to the same `shellScale` knob CellShell / CellPicker use.
   // Leva dedupes by folder+key, so reading here does not duplicate the
-  // panel control — we just get a stable live value to forward into
-  // CellLifeAvatar so its billboard size tracks the shell.
+  // panel control.
   const { shellScale } = useControls('Galaxy 共识记忆', {
     shellScale: { value: 1.0, min: 0.1, max: 3.0, step: 0.05, label: 'scale' },
   });
@@ -1133,8 +1131,6 @@ export default function CellGalaxy({ ckbNodeIds, minerCkbNodeIds, universeSeed, 
           flashDirtyRef={flashDirtyRef}
           shockwaveUniformsRef={shellShockwaveUniformsRef}
         /> */}
-        {/* <CellLifeAvatar shellScale={shellScale} /> */}
-
         {/* Screen-space cell picker — replaces the legacy InstancedMesh
             sphere hitbox. Lives inside the rotating group so cell
             pos_seed (local frame) projects through the same world

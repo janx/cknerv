@@ -17,10 +17,6 @@ export type {
   Vec3,
 } from './types';
 
-// ── Cell Life (Game of Life evaluator + bit-packing) ────────────────
-export * from './cellLife/bitsPack';
-export * from './cellLife/gameOfLife';
-
 // ── Tweaks (sim-clock, useSimFrame, leva presets) ───────────────────
 export * from './tweaks/simClock';
 export * from './tweaks/useSimFrame';
@@ -41,9 +37,6 @@ export * from './ui/topologyConstants';
 // ── Materials (THREE.ShaderMaterials + GLSL chunks) ─────────────────
 export * from './materials/cellEnvelope.glsl';
 export * from './materials/cellHybridMaterial';
-export * from './materials/cellLifeAvatarMaterial';
-export * from './materials/cellLifeDetail3DMaterial';
-export * from './materials/cellLifeWall';
 export * from './materials/cellShellMaterial';
 export * from './materials/shockwaveMaterial';
 
@@ -88,7 +81,6 @@ export {
   BLOCK_HIGHLIGHT_DELAY_S,
 } from './components/CellGalaxy';
 export type { BlockEventTrigger, CellBufferTargets } from './components/CellGalaxy';
-export { default as CellLifeAvatar } from './components/CellLifeAvatar';
 export { default as CellShell } from './components/CellShell';
 export {
   default as CellsHud,
