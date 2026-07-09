@@ -3,23 +3,20 @@
 // fills in and block pulses fire as the chain advances. Renders a 3D
 // canvas (CellGalaxy canopy) alongside the DOM `HudOverlay` (a sibling of
 // the canvas) that carries the always-on telemetry panels (blockchain /
-// network / cells stats). The in-canvas `<Hud>` now only holds the
-// selection-detail panels (cell / node / peer) and the backfill/seeding
-// indicator. The leva knobs panel is hidden by default (toggle with
-// backtick) — see Tweaks.
+// network / cells stats) plus the selection-detail panels (cell / node /
+// peer) and the backfill/seeding indicator. The leva knobs panel is hidden
+// by default (toggle with backtick) — see Tweaks.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Canvas } from '@react-three/fiber';
-import { Hud, OrbitControls, OrthographicCamera, Stars } from '@react-three/drei';
+import { OrbitControls, Stars } from '@react-three/drei';
 import {
   aggregateCellsStats,
   chainNodeWorldPosition,
   colonyFlood,
   inferredTopology,
-  CellDetailHudOverlay,
   CellGalaxy,
   CellGalaxyProvider,
-  CellLifeDetail3D,
   DendriticBurst,
   HudOverlay,
   NetworkColony,
@@ -29,7 +26,6 @@ import {
   SimClockTicker,
   TweakSync,
   UNIVERSE_SEED_FALLBACK,
-  type ScanStateRef,
 } from '@cknerv/ui';
 import {
   connectCellsStream,
@@ -155,10 +151,6 @@ export default function App({
   const burstArrivalRef = useRef<
     Map<number, { firedAt: number; color: [number, number, number] }>
   >(new Map());
-  // The 3D cell-life scan sub-scene (CellLifeDetail3D) writes its GoL grid +
-  // generation here each frame; CellDetailHudOverlay polls it (~10 Hz) to
-  // draw the scan readout without forcing React re-renders.
-  const scanStateRef = useRef<ScanStateRef | null>(null);
 
   // ckb node ids drive the icosahedra scatter inside the cell canopy. The
   // CkbDirectAdapter registers `ckb:local` on boot; fall back to a single
@@ -277,22 +269,6 @@ export default function App({
     return peers.find((p) => p.node_id === id) ?? null;
   }, [selectedNetId, peers]);
 
-  // In-canvas HUD layout — the always-on BLOCKCHAIN/NETWORK/CELLS panels now
-  // live in the DOM HudOverlay; what remains here is the selection detail
-  // panel (lower-left) and the backfill banner. Widths match the simulator's
-  // defaults so the HUD copy fits without truncation.
-  const DETAIL_PANEL_W = 250;
-  const HUD_VIEWPORT_W = 1280;
-  const HUD_VIEWPORT_H = 720;
-  const detailX = -HUD_VIEWPORT_W / 2 + 20;
-  const detailY = -HUD_VIEWPORT_H / 2 + 210;
-  // 3D cell-life scan viewport — stacked just above the cell detail text
-  // panel in the lower-left column.
-  const SCAN_VIEWPORT_W = DETAIL_PANEL_W;
-  const SCAN_VIEWPORT_H = 200;
-  const DETAIL_GAP = 14;
-  const scanViewportY = detailY + SCAN_VIEWPORT_H + DETAIL_GAP;
-
   const buildVersion = resolveBuildVersion();
   const build = { version: buildVersion, href: buildCommitHref(buildVersion) };
 
@@ -407,41 +383,6 @@ export default function App({
             // centered rather than pushed to the top. Matches CAMERA_PRESETS.default.
             target={[0, 18, 0]}
           />
-
-          <Hud renderPriority={1}>
-            <OrthographicCamera
-              makeDefault
-              left={-HUD_VIEWPORT_W / 2}
-              right={HUD_VIEWPORT_W / 2}
-              top={HUD_VIEWPORT_H / 2}
-              bottom={-HUD_VIEWPORT_H / 2}
-              near={-1000}
-              far={1000}
-              position={[0, 0, 100]}
-            />
-            {selectedCell ? (
-              <>
-                {/* Floating 3D cell-life scan: a Game-of-Life automaton
-                    seeded from the cell's content_hash, with a bracket/text
-                    overlay polling the shared scanStateRef. */}
-                <CellLifeDetail3D
-                  cell={selectedCell}
-                  x={detailX}
-                  y={scanViewportY}
-                  width={SCAN_VIEWPORT_W}
-                  height={SCAN_VIEWPORT_H}
-                  scanStateRef={scanStateRef}
-                />
-                <CellDetailHudOverlay
-                  scanStateRef={scanStateRef}
-                  x={detailX}
-                  y={scanViewportY}
-                  width={SCAN_VIEWPORT_W}
-                  height={SCAN_VIEWPORT_H}
-                />
-              </>
-            ) : null}
-          </Hud>
         </Canvas>
       </CellGalaxyProvider>
     </>
