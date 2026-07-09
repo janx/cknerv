@@ -37,8 +37,13 @@ export const DEFAULT_GALAXY_CONFIG: GalaxyRuntimeConfig = {
   cellCap: 5000,
   recentLinksCap: 2048,
   topology: {
-    neighborK: 4,
-    maxEdgeLength: 28,
+    // Densified live to bridge the inter-arm gaps: sparse gap cells whose 4
+    // nearest neighbours sat beyond the old 28u reach were dropped (no edge →
+    // dark voids). maxEdgeLength 28 → 42 connects them; neighborK 4 → 5 adds a
+    // little local density. Fabric buffer is sized for this — see
+    // fabricCapacity.ts AVG_DEGREE_BOUND.
+    neighborK: 5,
+    maxEdgeLength: 42,
     maxHops: 40,
   },
   pulses: {

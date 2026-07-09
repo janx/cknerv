@@ -14,7 +14,10 @@
 use crate::rng::{gauss, Mulberry32};
 
 // ── helix_seed_for parameters ────────────────────────────────────────
-const CORE_FRACTION: f64 = 0.28;
+// Central bulge fraction. Cut 0.28 → 0.16 live: the σ=7 core packed ~28% of all
+// cells into the centre, which both blew out the middle (too-bright blob) and
+// starved the disk fill. The freed budget goes to DISK_FRACTION below.
+const CORE_FRACTION: f64 = 0.16;
 const CORE_SIGMA: f64 = 7.0;
 const SPIRAL_ARM_COUNT: u64 = 6;
 const SPIRAL_ARM_MIN_R: f64 = 0.5;
@@ -26,10 +29,11 @@ const SPIRAL_FRACTION: f64 = 0.45;
 // ridges) but lifts the dark inter-arm gaps off black: cells here share the
 // arms' radial profile with a UNIFORM angle, so they fill the whole disc evenly
 // and the arms read as brighter structure floating in a continuous disc rather
-// than isolated spokes. Budget taken from FILAMENT (0.20 → 0.03) and the halo
-// (0.07 → 0.00, so core+spiral+disk+filament == 1.0); total cell count unchanged.
-// 0.24 tuned live — 0.17 still read too gappy under the neural-fabric mesh.
-const DISK_FRACTION: f64 = 0.24;
+// than isolated spokes. Budget taken from FILAMENT (0.20 → 0.03), the halo
+// (0.07 → 0.00) and the core (0.28 → 0.16), so core+spiral+disk+filament == 1.0.
+// 0.24 → 0.36 tuned live: the neural-fabric mesh amplifies the arm/gap density
+// contrast, so the inter-arm gaps needed a much fuller disc to close.
+const DISK_FRACTION: f64 = 0.36;
 const FILAMENT_COUNT: u64 = 9;
 const FILAMENT_MIN_R: f64 = 1.0;
 const FILAMENT_MAX_R: f64 = 55.0;

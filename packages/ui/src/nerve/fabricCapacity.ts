@@ -14,15 +14,15 @@ export const FABRIC_SAMPLES_PER_EDGE = 4;
  *  operation. */
 export const MAX_GRAPH_CELLS = 7000;
 
-/** Upper bound on the *mean* cell degree for k=4 symmetrised k-NN. The
+/** Upper bound on the *mean* cell degree for k=5 symmetrised k-NN. The
  *  buffer is sized from edges ≈ cells × mean-degree / 2, so it is the
  *  mean — not any single cell — that the cap must cover; individual hub
  *  cells far exceed this after the lifeline/stitch passes. The real mean
- *  is ~7.5 at capacity; 9 is a safe ceiling. Guarded by
- *  fabricCapacity.test.ts, which builds the real graph over helix
- *  positions and asserts it fits — raise this (the buffer grows with it)
- *  if that test ever fails. */
-export const AVG_DEGREE_BOUND = 9;
+ *  is ~9.5 at capacity with the live k=5 / maxEdgeLength=42 config; 12 is a
+ *  safe ceiling. Guarded by fabricCapacity.test.ts, which builds the real graph
+ *  over helix positions and asserts it fits — raise this (the buffer grows with
+ *  it) if that test ever fails. */
+export const AVG_DEGREE_BOUND = 12;
 
 /** Hard segment cap for the fabric layer. Sized to hold every edge of
  *  the full graph at capacity: edges ≈ cells × degree / 2, each edge
