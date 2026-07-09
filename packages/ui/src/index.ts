@@ -33,11 +33,10 @@ export type { LiveTweaks } from './tweaks/liveTweaks';
 export { RENDER_STATS_TOGGLE } from './tweaks/renderStatsStore';
 export { default as RenderStatsSampler } from './tweaks/RenderStatsSampler';
 
-// ── UI chrome (fonts, HUD layout, topology constants, scan state) ───
+// ── UI chrome (fonts, HUD layout, topology constants) ───────────────
 export * from './ui/fonts';
 export * from './ui/hudLayout';
 export * from './ui/topologyConstants';
-export * from './ui/scanState';
 
 // ── Materials (THREE.ShaderMaterials + GLSL chunks) ─────────────────
 export * from './materials/cellEnvelope.glsl';
@@ -78,14 +77,10 @@ export {
 export { default as BackfillHud } from './components/BackfillHud';
 export { default as BlockDeliveryLayer } from './components/BlockDeliveryLayer';
 export {
-  default as CellDetailHud,
-  formatCellKind,
-  formatCkb,
-  formatDataHex,
-  formatOutpoint,
-  midTruncate,
-} from './components/CellDetailHud';
-export { default as CellDetailHudOverlay } from './components/CellDetailHudOverlay';
+  formatCkb, midTruncate, formatOutpoint, formatDataHex, formatCellKind,
+  formatAge, formatDataSize, formatLockKind, formatAssetKind,
+  LOCK_COLORS, ASSET_COLORS,
+} from './components/hud/cellFormat';
 export {
   default as CellGalaxy,
   writeCellBuffers,
@@ -94,7 +89,6 @@ export {
 } from './components/CellGalaxy';
 export type { BlockEventTrigger, CellBufferTargets } from './components/CellGalaxy';
 export { default as CellLifeAvatar } from './components/CellLifeAvatar';
-export { default as CellLifeDetail3D } from './components/CellLifeDetail3D';
 export { default as CellShell } from './components/CellShell';
 export {
   default as CellsHud,
