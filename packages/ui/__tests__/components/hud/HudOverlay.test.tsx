@@ -43,7 +43,7 @@ describe('HudOverlay', () => {
       />,
     );
     const t = container.textContent ?? '';
-    expect(t).toContain('Kind');     // CELL detail (galaxy axis) is present…
+    expect(t).toContain('CAPACITY'); // CELL detail (galaxy axis) is present…
     expect(t).toContain('OBSERVER'); // …AND the NODE detail (network axis) at the same time
   });
 
