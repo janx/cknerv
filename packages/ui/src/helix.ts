@@ -41,7 +41,9 @@ function idSeed(id: number | bigint, salt: number): number {
   return Number((idBig * saltBig) & 0xffffffffn);
 }
 
-const CORE_FRACTION = 0.28;
+// Central bulge — cut 0.28 → 0.16 live (too-bright centre + starved fill); see
+// the Rust twin. Freed budget goes to DISK_FRACTION.
+const CORE_FRACTION = 0.16;
 const CORE_SIGMA = 7;
 const SPIRAL_ARM_COUNT = 6;
 const SPIRAL_ARM_MIN_R = 0.5;
@@ -52,9 +54,10 @@ const SPIRAL_FRACTION = 0.45;
 // Smooth axisymmetric disk fill — see the Rust twin (crates/cknerv-core/src/
 // helix.rs). Keeps the 6 arms as-is and lifts the inter-arm gaps off black by
 // scattering cells at the arms' radial profile but UNIFORM angle. Budget taken
-// from FILAMENT (0.20 → 0.03) and halo (→ 0.00); total cell count unchanged.
-// 0.24 tuned live (0.17 still read too gappy under the neural-fabric mesh).
-const DISK_FRACTION = 0.24;
+// from FILAMENT (0.20 → 0.03), halo (→ 0.00) and core (0.28 → 0.16).
+// 0.24 → 0.36 tuned live: the fabric mesh amplifies the arm/gap contrast, so the
+// gaps needed a much fuller disc to close.
+const DISK_FRACTION = 0.36;
 const FILAMENT_COUNT = 9;
 const FILAMENT_MIN_R = 1;
 const FILAMENT_MAX_R = 55;

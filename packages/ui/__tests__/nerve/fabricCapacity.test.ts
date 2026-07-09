@@ -9,8 +9,8 @@ import {
 } from '../../src/nerve/fabricCapacity';
 
 // Production connectivity config — mirrors ui-app/src/runtime-config.ts.
-const PROD_K = 4;
-const PROD_MAX_EDGE_LENGTH = 28;
+const PROD_K = 5;
+const PROD_MAX_EDGE_LENGTH = 42;
 
 function helixCell(id: number): Cell {
   const [x, y, z] = helixSeedF64(id);
