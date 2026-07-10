@@ -87,3 +87,20 @@ export function genHelix(seedHash: string, _opts: PhylumOpts): PhylumGeometry {
   for (let s = 0; s <= steps; s += 3) { for (const P of [A[s], B[s]]) nodes.push({ x: P[0], y: P[1], z: P[2], s: 0.045, a: 0.9 }); }
   return { segments, nodes, membraneR: null, landmarks: { core: [0, 0, 0], species: A[0], membrane: A[Math.floor(steps / 2)], outer: A[steps] } };
 }
+
+/** PLASMID (other/unknown) — a supercoiled circular-DNA loop in 3D. */
+export function genPlasmid(seedHash: string, _opts: PhylumOpts): PhylumGeometry {
+  const r = seededRng(hashToBytes(seedHash));
+  const steps = 64, f1 = 2 + Math.floor(r() * 2), base = 0.5 + r() * 0.06, warp = 0.15 + r() * 0.09, tilt = 0.2 + r() * 0.25;
+  const axis = randDir(r), u1 = randPerp(r, axis), u2 = cross(axis, u1);
+  const pts: Vec3[] = []; const segments: number[] = []; const nodes: NucNode[] = [];
+  let prev: Vec3 | null = null;
+  for (let s = 0; s <= steps; s++) {
+    const a = (s / steps) * TAU, rad = base + warp * Math.sin(a * f1);
+    const p = add(add(scale(u1, Math.cos(a) * rad), scale(u2, Math.sin(a) * rad)), scale(axis, Math.sin(a * 2) * tilt));
+    pts.push(p); if (prev) segments.push(...prev, ...p); prev = p;
+  }
+  const nn = 6; let outer: Vec3 = pts[0], maxr = 0;
+  for (let i = 0; i < nn; i++) { const p = pts[Math.floor((i / nn) * steps)]; nodes.push({ x: p[0], y: p[1], z: p[2], s: 0.05, a: 0.9 }); if (len(p) > maxr) { maxr = len(p); outer = p; } }
+  return { segments, nodes, membraneR: null, landmarks: { core: [0, 0, 0], species: pts[Math.floor(steps / 4)], membrane: pts[Math.floor(steps / 2)], outer } };
+}

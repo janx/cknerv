@@ -47,3 +47,12 @@ describe('genHelix', () => {
     expect(Math.max(...zs) - Math.min(...zs)).toBeGreaterThan(0.05);
   });
 });
+
+import { genPlasmid } from '../../src/derives/specimenPhyla';
+describe('genPlasmid', () => {
+  it('is a closed supercoiled loop with nodes', () => {
+    const g = genPlasmid(H, { maturity: 1 });
+    expect(g.segments.length / 6).toBeGreaterThan(50); // ~64 steps
+    expect(g.nodes.length).toBeGreaterThanOrEqual(6);
+  });
+});
