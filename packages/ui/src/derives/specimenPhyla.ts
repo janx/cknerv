@@ -66,3 +66,24 @@ export function genColony(seedHash: string, opts: PhylumOpts): PhylumGeometry {
   for (const v of ves) { nodes.push({ x: v.p[0], y: v.p[1], z: v.p[2], s: v.s, a: 0.9 }); if (len(v.p) > maxr) { maxr = len(v.p); outer = v.p; } }
   return { segments, nodes, membraneR: 0.34, landmarks: { core: [0, 0, 0], species: outer, membrane: neckMid, outer } };
 }
+
+/** HELIX (dao) — a DNA double-helix winding along a 3D axis, with base-pair rungs. */
+export function genHelix(seedHash: string, _opts: PhylumOpts): PhylumGeometry {
+  const r = seededRng(hashToBytes(seedHash));
+  const turns = 2 + r() * 1.5, amp = 0.26 + r() * 0.08, steps = 34;
+  const axis = randDir(r), u1 = randPerp(r, axis), u2 = cross(axis, u1);
+  const A: Vec3[] = [], B: Vec3[] = []; const segments: number[] = []; const nodes: NucNode[] = [];
+  const along = (t: number) => -0.82 + 1.64 * t;
+  const strand = (phase: number, out: Vec3[]) => {
+    let prev: Vec3 | null = null;
+    for (let s = 0; s <= steps; s++) {
+      const t = s / steps, ang = t * turns * TAU + phase;
+      const p = add(scale(axis, along(t)), add(scale(u1, Math.cos(ang) * amp), scale(u2, Math.sin(ang) * amp)));
+      out.push(p); if (prev) segments.push(...prev, ...p); prev = p;
+    }
+  };
+  strand(0, A); strand(Math.PI, B);
+  for (let s = 2; s < steps; s += 4) segments.push(...A[s], ...B[s]);       // rungs
+  for (let s = 0; s <= steps; s += 3) { for (const P of [A[s], B[s]]) nodes.push({ x: P[0], y: P[1], z: P[2], s: 0.045, a: 0.9 }); }
+  return { segments, nodes, membraneR: null, landmarks: { core: [0, 0, 0], species: A[0], membrane: A[Math.floor(steps / 2)], outer: A[steps] } };
+}
