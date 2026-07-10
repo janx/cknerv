@@ -111,7 +111,6 @@ function NucleusScene({ contentHash, reducedMotion }: { contentHash: string; red
 
   return (
     <>
-      <ambientLight intensity={0.4} />
       <group ref={groupRef}>
         <lineSegments geometry={built.lineGeom} material={built.lineMat} frustumCulled={false} />
         <points geometry={built.glowGeom} material={built.glowMat} frustumCulled={false} renderOrder={2} />

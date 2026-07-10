@@ -636,12 +636,6 @@ export default function CellGalaxy({ ckbNodeIds, minerCkbNodeIds, universeSeed, 
   });
   const cellGalaxyMul = QUALITY_PRESETS[quality].cellGalaxyMul;
   const dischargeArms = QUALITY_PRESETS[quality].dischargeArms;
-  // Subscribe to the same `shellScale` knob CellShell / CellPicker use.
-  // Leva dedupes by folder+key, so reading here does not duplicate the
-  // panel control.
-  const { shellScale } = useControls('Galaxy 共识记忆', {
-    shellScale: { value: 1.0, min: 0.1, max: 3.0, step: 0.05, label: 'scale' },
-  });
   /** Per-frame mirror of the cellsList iteration order, written by
    *  `useFrame` below. `CellPicker` reads this ref each click so it
    *  sees the current frame's cells — an inline closure would otherwise
