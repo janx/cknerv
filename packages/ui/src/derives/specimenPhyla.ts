@@ -47,3 +47,22 @@ export function genRadiolarian(seedHash: string, opts: PhylumOpts): PhylumGeomet
   const membrane: Vec3 = scale(randDir(r), membraneR);
   return { segments, nodes, membraneR, landmarks: { core: [0, 0, 0], species, membrane, outer } };
 }
+
+/** COLONY (sudt/xudt) — cluster of near-identical vesicle-cells + membrane necks. */
+export function genColony(seedHash: string, opts: PhylumOpts): PhylumGeometry {
+  const r = seededRng(hashToBytes(seedHash));
+  const m = 7 + Math.floor(r() * 6);
+  const ves: { p: Vec3; s: number }[] = [{ p: [0, 0, 0], s: 0.18 + r() * 0.05 }];
+  for (let i = 1; i < m; i++) ves.push({ p: scale(randDir(r), 0.2 + r() * 0.5), s: 0.12 + r() * 0.07 });
+  const segments: number[] = []; const nodes: NucNode[] = [];
+  let neckMid: Vec3 = [0, 0, 0];
+  for (let i = 1; i < ves.length; i++) {
+    let bj = 0, bd = 1e9;
+    for (let j = 0; j < i; j++) { const d = dist(ves[i].p, ves[j].p); if (d < bd) { bd = d; bj = j; } }
+    segments.push(...ves[i].p, ...ves[bj].p);
+    if (i === 1) neckMid = mid(ves[i].p, ves[bj].p);
+  }
+  let outer: Vec3 = ves[0].p, maxr = 0;
+  for (const v of ves) { nodes.push({ x: v.p[0], y: v.p[1], z: v.p[2], s: v.s, a: 0.9 }); if (len(v.p) > maxr) { maxr = len(v.p); outer = v.p; } }
+  return { segments, nodes, membraneR: 0.34, landmarks: { core: [0, 0, 0], species: outer, membrane: neckMid, outer } };
+}

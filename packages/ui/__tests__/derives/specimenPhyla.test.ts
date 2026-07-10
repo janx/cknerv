@@ -25,3 +25,13 @@ describe('genRadiolarian', () => {
     expect(g.landmarks.species).not.toEqual(g.landmarks.core);
   });
 });
+
+import { genColony } from '../../src/derives/specimenPhyla';
+describe('genColony', () => {
+  it('is a cluster of ≥7 vesicle nodes linked by necks', () => {
+    const g = genColony(H, { maturity: 0.5 });
+    expect(g.nodes.length).toBeGreaterThanOrEqual(7);
+    expect(g.segments.length / 6).toBe(g.nodes.length - 1); // each non-root linked once
+    expect(g.membraneR).toBeGreaterThan(0);
+  });
+});
