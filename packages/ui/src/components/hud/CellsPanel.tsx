@@ -2,6 +2,7 @@ import type { CSSProperties } from 'react';
 import type { CellsStats } from '../../derives/cellsStats.derive';
 import type { ChurnRates } from '../../derives/cellChurn';
 import { HUD_COLORS, HUD_FONTS } from './hudTheme';
+import { LOCK_COLORS, ASSET_COLORS } from './cellFormat';
 import { HudPanel, PanelHeader, StatRow } from './primitives';
 
 const fmt = (n: number) => n.toLocaleString('en-US');
@@ -76,19 +77,19 @@ export default function CellsPanel({ stats, churn, reducedMotion = false, style 
         </div>
         <StatRow label="Capacity">{formatStateBytes(stats.capacityShannons)} state</StatRow>
         <TaxonomyBar title="ASSETS" buckets={[
-          { key: 'native', label: 'CKB', color: HUD_COLORS.cyanWire, count: stats.byAsset.native },
-          { key: 'sudt', label: 'sUDT', color: HUD_COLORS.orange, count: stats.byAsset.sudt },
-          { key: 'xudt', label: 'xUDT', color: '#ffb84d', count: stats.byAsset.xudt },
-          { key: 'dao', label: 'DAO', color: HUD_COLORS.caution, count: stats.byAsset.dao },
-          { key: 'spore', label: 'NFT', color: '#9d7bd8', count: stats.byAsset.spore },
-          { key: 'other', label: '?', color: '#33424f', count: stats.byAsset.other },
+          { key: 'native', label: 'CKB', color: ASSET_COLORS.native, count: stats.byAsset.native },
+          { key: 'sudt', label: 'sUDT', color: ASSET_COLORS.sudt, count: stats.byAsset.sudt },
+          { key: 'xudt', label: 'xUDT', color: ASSET_COLORS.xudt, count: stats.byAsset.xudt },
+          { key: 'dao', label: 'DAO', color: ASSET_COLORS.dao, count: stats.byAsset.dao },
+          { key: 'spore', label: 'NFT', color: ASSET_COLORS.spore, count: stats.byAsset.spore },
+          { key: 'other', label: '?', color: ASSET_COLORS.other, count: stats.byAsset.other },
         ]} />
         <TaxonomyBar title="LOCKS" buckets={[
-          { key: 'sighash', label: 'sighash', color: HUD_COLORS.cyanWire, count: stats.byLock.sighash },
-          { key: 'multisig', label: 'multisig', color: HUD_COLORS.orange, count: stats.byLock.multisig },
-          { key: 'acp', label: 'ACP', color: HUD_COLORS.caution, count: stats.byLock.acp },
-          { key: 'omnilock', label: 'omni', color: '#9d7bd8', count: stats.byLock.omnilock },
-          { key: 'other', label: '?', color: '#33424f', count: stats.byLock.other },
+          { key: 'sighash', label: 'sighash', color: LOCK_COLORS.sighash, count: stats.byLock.sighash },
+          { key: 'multisig', label: 'multisig', color: LOCK_COLORS.multisig, count: stats.byLock.multisig },
+          { key: 'acp', label: 'ACP', color: LOCK_COLORS.acp, count: stats.byLock.acp },
+          { key: 'omnilock', label: 'omni', color: LOCK_COLORS.omnilock, count: stats.byLock.omnilock },
+          { key: 'other', label: '?', color: LOCK_COLORS.other, count: stats.byLock.other },
         ]} />
       </div>
     </HudPanel>

@@ -1,4 +1,5 @@
 import type { Cell } from '@cknerv/types';
+import { HUD_COLORS } from './hudTheme';
 
 export function formatCkb(shannons: number): string {
   return `${(shannons / 100_000_000).toFixed(2)} CKB`;
@@ -61,10 +62,14 @@ export function formatAssetKind(k: Cell['asset_kind']): string {
   return k ? (ASSET_LABEL[k] ?? k) : '—';
 }
 
-// Family colors — reuse the CELLS-panel palette (CellsPanel byLock/byAsset).
+// Shared lock/asset family palette — the SINGLE source used by BOTH the CELLS
+// panel (CellsPanel byAsset/byLock bars) and the cell-detail panel, so a given
+// lock/asset family renders the same color in either place.
 export const LOCK_COLORS: Record<string, string> = {
-  sighash: '#27FF5A', multisig: '#4dd6ff', acp: '#ffb84d', omnilock: '#9d7bd8', other: '#7C8794',
+  sighash: HUD_COLORS.cyanWire, multisig: HUD_COLORS.orange, acp: HUD_COLORS.caution,
+  omnilock: '#9d7bd8', other: '#33424f',
 };
 export const ASSET_COLORS: Record<string, string> = {
-  native: '#E8E8E8', sudt: '#FF9830', xudt: '#ffb84d', dao: '#27FF5A', spore: '#ff6ba6', other: '#7C8794',
+  native: HUD_COLORS.cyanWire, sudt: HUD_COLORS.orange, xudt: '#ffb84d',
+  dao: HUD_COLORS.caution, spore: '#9d7bd8', other: '#33424f',
 };

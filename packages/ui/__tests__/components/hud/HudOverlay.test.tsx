@@ -1,6 +1,14 @@
 import { cleanup, render } from '@testing-library/react';
-import { afterEach, describe, it, expect } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import type { ChainEntry, Peer, ChainNode, Cell } from '@cknerv/types';
+
+// The embedded portrait spins a real WebGL context — stub it in jsdom.
+vi.mock('../../../src/components/hud/CellNucleusPortrait', () => ({
+  default: ({ contentHash }: { contentHash: string }) => (
+    <div data-testid="portrait" data-hash={contentHash} />
+  ),
+}));
+
 import HudOverlay from '../../../src/components/hud/HudOverlay';
 import type { CellsStats } from '../../../src/derives/cellsStats.derive';
 
