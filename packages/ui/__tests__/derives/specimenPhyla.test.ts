@@ -35,3 +35,15 @@ describe('genColony', () => {
     expect(g.membraneR).toBeGreaterThan(0);
   });
 });
+
+import { genHelix } from '../../src/derives/specimenPhyla';
+describe('genHelix', () => {
+  it('builds two strands + rungs winding through 3D (non-planar)', () => {
+    const g = genHelix(H, { maturity: 0.8 });
+    expect(g.segments.length).toBeGreaterThan(0);
+    expect(g.nodes.length).toBeGreaterThan(0);
+    // not all z equal → genuinely 3D
+    const zs = g.nodes.map((n) => n.z);
+    expect(Math.max(...zs) - Math.min(...zs)).toBeGreaterThan(0.05);
+  });
+});
