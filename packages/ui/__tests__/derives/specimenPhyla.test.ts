@@ -14,3 +14,14 @@ describe('genArbor', () => {
     expect(a.landmarks.core).toEqual([0, 0, 0]);
   });
 });
+
+import { genRadiolarian } from '../../src/derives/specimenPhyla';
+describe('genRadiolarian', () => {
+  it('has a membrane, ≥9 filopodia strands, a central body node, and landmarks', () => {
+    const g = genRadiolarian(H, { maturity: 0.6 });
+    expect(g.membraneR).toBeGreaterThan(0);
+    expect(g.segments.length / 6).toBeGreaterThanOrEqual(9 * 5); // ≥9 rays × 5 segs (floor)
+    expect(g.nodes.some((n) => n.x === 0 && n.y === 0 && n.z === 0)).toBe(true); // central body
+    expect(g.landmarks.species).not.toEqual(g.landmarks.core);
+  });
+});
