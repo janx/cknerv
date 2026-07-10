@@ -36,7 +36,8 @@ export default function CellDetailPanel({ cell, onClose, style }: {
       {!reduced && <style>{DECODE_KEYFRAMES}</style>}
       <CloseButton onClose={onClose} />
       <PanelHeader en="CELL" cjk="细胞" idx={`0x${cell.content_hash.slice(2, 10)}`} accent={HUD_COLORS.orange} />
-      <CellNucleusPortrait contentHash={cell.content_hash} reducedMotion={reduced} />
+      {/* scanEpochMs placeholder — Task 2 supplies the shared cursor/decode epoch */}
+      <CellNucleusPortrait contentHash={cell.content_hash} reducedMotion={reduced} scanEpochMs={0} />
       <div key={cell.id}>
         {rows.map(([label, value, color], i) => (
           <div
