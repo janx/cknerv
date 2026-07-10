@@ -7,6 +7,7 @@ vi.mock('../../../src/components/hud/CellNucleusPortrait', () => ({
   default: ({ contentHash }: { contentHash: string }) => (
     <div data-testid="portrait" data-hash={contentHash} />
   ),
+  SCAN_PERIOD_S: 4.0,
 }));
 
 import CellDetailPanel from '../../../src/components/hud/CellDetailPanel';
@@ -29,6 +30,7 @@ describe('CellDetailPanel', () => {
     const t = container.textContent ?? '';
     expect(t).toContain('CELL');
     expect(t).toContain('细胞');
+    expect(t).toContain('共识细胞');       // CJK title
     expect(getByTestId('portrait').getAttribute('data-hash')).toBe(base.content_hash);
     expect(t).toContain('omnilock');       // LOCK
     expect(t).toContain('xUDT');           // ASSET

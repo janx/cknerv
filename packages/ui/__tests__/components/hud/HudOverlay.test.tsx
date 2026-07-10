@@ -7,6 +7,7 @@ vi.mock('../../../src/components/hud/CellNucleusPortrait', () => ({
   default: ({ contentHash }: { contentHash: string }) => (
     <div data-testid="portrait" data-hash={contentHash} />
   ),
+  SCAN_PERIOD_S: 4.0,
 }));
 
 import HudOverlay from '../../../src/components/hud/HudOverlay';
