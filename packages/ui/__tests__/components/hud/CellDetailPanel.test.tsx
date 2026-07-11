@@ -11,8 +11,9 @@ vi.mock('../../../src/components/hud/CellNucleusPortrait', () => ({
 }));
 
 import CellDetailPanel from '../../../src/components/hud/CellDetailPanel';
+import { hashToAcgt } from '../../../src/derives/specimenKit';
 
-afterEach(() => { cleanup(); vi.useRealTimers(); });
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 const base: Cell = {
   id: 4242, born_at_ms: 0, death_at_ms: null, birth_block: 16204800,
@@ -40,6 +41,19 @@ describe('CellDetailPanel', () => {
     expect(t).toContain('#16204800');      // BORN
     expect(t).toContain('#2');             // SOURCE index
     expect(t).toContain('11 B');           // DATA — 22 hex chars = 11 bytes
+    expect(t).toContain('共识细胞');       // CJK title stays (no re-subset)
+    expect(t).toContain('GENOME');         // streaming ACGT strip label
+  });
+
+  it('reduced motion freezes the assay: CLASSIFIED verdict + full genome, all rows shown', () => {
+    // stub matchMedia so useReducedMotion() reports reduced — deterministic path
+    vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener: () => {}, removeEventListener: () => {} }));
+    const { container } = render(<CellDetailPanel cell={base} onClose={() => {}} />);
+    const t = container.textContent ?? '';
+    expect(t).toContain('CLASSIFIED');                             // verdict, not CLASSIFYING%
+    expect(t).toContain(hashToAcgt(base.content_hash).slice(0, 24)); // genome fully streamed
+    expect(t).toContain('omnilock');                              // decoded rows still present
+    expect(t).toContain('11 B');
   });
 
   it('shows DYING for a dead cell', () => {
