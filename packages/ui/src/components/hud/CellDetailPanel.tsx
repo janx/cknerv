@@ -51,7 +51,7 @@ export default function CellDetailPanel({ cell, onClose, style }: {
       {/* Portrait framed as a scan instrument: corner brackets + a cursor tick
           riding the right edge in sync with the beam (shared scanEpochMs). */}
       <div style={{ position: 'relative', marginBottom: 10 }}>
-        <CellNucleusPortrait contentHash={cell.content_hash} reducedMotion={reduced} scanEpochMs={scanEpochMs} />
+        <CellNucleusPortrait cell={cell} reducedMotion={reduced} scanEpochMs={scanEpochMs} />
         <span style={cornerBracket('tl')} /><span style={cornerBracket('tr')} />
         <span style={cornerBracket('bl')} /><span style={cornerBracket('br')} />
         {!reduced && (

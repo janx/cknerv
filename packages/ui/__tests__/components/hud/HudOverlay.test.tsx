@@ -4,10 +4,10 @@ import type { ChainEntry, Peer, ChainNode, Cell } from '@cknerv/types';
 
 // The embedded portrait spins a real WebGL context — stub it in jsdom.
 vi.mock('../../../src/components/hud/CellNucleusPortrait', () => ({
-  default: ({ contentHash }: { contentHash: string }) => (
-    <div data-testid="portrait" data-hash={contentHash} />
+  default: ({ cell }: { cell: { content_hash: string } }) => (
+    <div data-testid="portrait" data-hash={cell.content_hash} />
   ),
-  SCAN_PERIOD_S: 4.0,
+  SCAN_PERIOD_S: 4.2,
 }));
 
 import HudOverlay from '../../../src/components/hud/HudOverlay';
