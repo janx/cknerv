@@ -33,10 +33,10 @@ export function genRadiolarian(seedHash: string, opts: PhylumOpts): PhylumGeomet
   for (let i = 0; i < n; i++) {
     const dir = randDir(r), perp = randPerp(r, dir);
     const reach = (0.55 + r() * 0.34) * (0.72 + 0.28 * opts.maturity);
-    const steps = 5; let prev: Vec3 = scale(dir, membraneR * 0.5);
+    const steps = 5; let prev: Vec3 = [0, 0, 0];   // start AT the core so filopodia connect to the central body (no gap)
     for (let s = 1; s <= steps; s++) {
       const t = s / steps;
-      const p = add(scale(dir, membraneR * 0.5 + reach * t), scale(perp, Math.sin(t * Math.PI) * reach * 0.2 * (0.7 + r() * 0.6)));
+      const p = add(scale(dir, reach * t), scale(perp, Math.sin(t * Math.PI) * reach * 0.2 * (0.7 + r() * 0.6)));
       segments.push(prev[0], prev[1], prev[2], p[0], p[1], p[2]); prev = p;
     }
     nodes.push({ x: prev[0], y: prev[1], z: prev[2], s: 0.05, a: 1 });
