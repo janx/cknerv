@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { CSSProperties } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 import type { ChainEntry, Peer, ChainNode, Cell } from '@cknerv/types';
 import { summarizeNetwork } from '../../derives/peers.derive';
 import { fleetConsensus, pingStats, versionSpread } from '../../derives/fleetTelemetry';
@@ -35,8 +35,6 @@ const SCAN_STYLE: CSSProperties = { position: 'absolute', inset: 0, pointerEvent
 // self-positioning. Container shrink-wraps and pins its right edge, so the meshes
 // never shift when a detail appears — the row just grows leftward.
 const MESH_RAIL_STYLE: CSSProperties = { position: 'absolute', top: 42, right: 14, display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'flex-end' };
-// Wide: detail fans LEFT of its mesh — [detail | mesh].
-const MESH_ZONE_ROW: CSSProperties = { display: 'flex', gap: 12, alignItems: 'flex-start' };
 // Narrow: detail docks BELOW its mesh (stays on the right edge, clear of the
 // left-hand panels). column-reverse keeps JSX order [detail, mesh] → mesh on top.
 const MESH_ZONE_COL: CSSProperties = { display: 'flex', flexDirection: 'column-reverse', gap: 12, alignItems: 'flex-end' };
@@ -67,7 +65,20 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats, select
   // Below ~1100px the left-fanning detail would reach the left-hand panels, so
   // dock it below its mesh instead (stays on the right edge). Tunable breakpoint.
   const narrowRail = useMediaQuery('(max-width: 1100px)');
-  const zoneStyle = narrowRail ? MESH_ZONE_COL : MESH_ZONE_ROW;
+  // A rail zone: the MESH panel defines the zone's box. WIDE — its detail fans
+  // LEFT of the mesh via ABSOLUTE positioning, so a tall detail (the specimen
+  // portrait!) never inflates the zone height and never pushes the stacked meshes
+  // apart (that was the "cell detail appears → PEER MESH shoved down + big gap"
+  // bug). NARROW — the detail stacks below its mesh (in flow; the rail scrolls).
+  const meshZone = (detail: ReactNode, mesh: ReactNode): ReactNode =>
+    narrowRail ? (
+      <div style={MESH_ZONE_COL}>{detail}{mesh}</div>
+    ) : (
+      <div style={{ position: 'relative' }}>
+        {mesh}
+        {detail ? <div style={{ position: 'absolute', right: '100%', top: 0, marginRight: 12 }}>{detail}</div> : null}
+      </div>
+    );
   // When narrow, the rail docks details BELOW their mesh and can grow taller than
   // the viewport (esp. with both details open). Cap its height + let it scroll,
   // but only capture pointer events (needed to scroll) when it actually overflows,
@@ -127,18 +138,16 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats, select
           within a zone the selected entity's detail fans LEFT of its own mesh.
           The local NODE and remote PEER details both belong to the PEER zone. */}
       <div ref={railRef} className="cknerv-mesh-rail" style={railStyle}>
-        <div style={zoneStyle}>
-          {selectedCell && <CellDetailPanel cell={selectedCell} onClose={clearCell} style={PANEL_FLOW} />}
-          <CellsPanel stats={cellsStats} churn={churn} reducedMotion={reduced} style={PANEL_FLOW} />
-        </div>
-        <div style={zoneStyle}>
-          {selectedNode ? (
-            <NodeDetailPanel node={selectedNode} chain={chain} onClose={clearNet} style={PANEL_FLOW} />
-          ) : selectedPeer ? (
-            <PeerDetailPanel peer={selectedPeer} chain={chain} onClose={clearNet} style={PANEL_FLOW} />
-          ) : null}
-          <NetworkPanel summary={summary} consensus={consensus} ping={ping} vers={vers} syncRatio={syncRatio} colonyCount={colonyCount} style={PANEL_FLOW} />
-        </div>
+        {meshZone(
+          selectedCell ? <CellDetailPanel cell={selectedCell} onClose={clearCell} style={PANEL_FLOW} /> : null,
+          <CellsPanel stats={cellsStats} churn={churn} reducedMotion={reduced} style={PANEL_FLOW} />,
+        )}
+        {meshZone(
+          selectedNode ? <NodeDetailPanel node={selectedNode} chain={chain} onClose={clearNet} style={PANEL_FLOW} />
+            : selectedPeer ? <PeerDetailPanel peer={selectedPeer} chain={chain} onClose={clearNet} style={PANEL_FLOW} />
+            : null,
+          <NetworkPanel summary={summary} consensus={consensus} ping={ping} vers={vers} syncRatio={syncRatio} colonyCount={colonyCount} style={PANEL_FLOW} />,
+        )}
       </div>
       <BlockCadenceEcg
         intervalsMs={chain.recent_block_intervals_ms}
