@@ -19,4 +19,12 @@ describe('probeScan', () => {
     const s = probeScan(0, 0, N, true);
     expect(s.classified).toBe(true); expect(s.reveal).toBe(N);
   });
+  it('runs once then HOLDS classified — no replay/loop long after the scan', () => {
+    const s = probeScan(0, (PROBE_STEP_S * N + 999) * 1000, N, false);
+    expect(s.classified).toBe(true); expect(s.reveal).toBe(N); expect(s.status).toBe('classified');
+  });
+  it('clamps negative elapsed to the start (no NaN / negative index)', () => {
+    const s = probeScan(1000, 0, N, false); // now < epoch
+    expect(s.activeIndex).toBe(0); expect(Number.isFinite(s.pct)).toBe(true);
+  });
 });
