@@ -14,6 +14,7 @@ export interface SpecimenMorphology {
   membraneR: number | null; landmarks: LandmarkSet; mass: number; viability: number; tint: Vec3;
 }
 export const LANDMARK_FIELDS = ['core', 'species', 'membrane', 'organelle', 'body', 'outer'] as const;
+export type LandmarkField = (typeof LANDMARK_FIELDS)[number];
 
 const GEN: Record<Phylum, (h: string, o: { maturity: number }) => PhylumGeometry> = {
   arbor: genArbor, radiolarian: genRadiolarian, colony: genColony, helix: genHelix, plasmid: genPlasmid,
