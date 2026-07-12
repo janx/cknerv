@@ -1,4 +1,4 @@
-import { type CSSProperties, useMemo, useRef } from 'react';
+import { type CSSProperties, useMemo, useRef, useState } from 'react';
 import type { Cell } from '@cknerv/types';
 import {
   formatOutpoint, formatCkb, formatAge, formatDataSize,
@@ -49,6 +49,13 @@ export default function CellDetailPanel({ cell, onClose, style }: {
   const order = useMemo(() => LANDMARK_FIELDS.filter((f) => morph.landmarks[f] !== null), [morph]);
   const probeRef = useRef<ProbeScreen>({ x: 0, y: 0, visible: false, index: 0, lockT: 0, traveling: true });
 
+  // cross-highlight: after the scan completes the user can click a landmark ROW or
+  // an ENDPOINT in the portrait to select it — both highlight in sync (bidirectional).
+  const [selectedField, setSelectedField] = useState<Field | null>(null);
+  const [lastCellId, setLastCellId] = useState(cell.id);
+  if (cell.id !== lastCellId) { setLastCellId(cell.id); setSelectedField(null); } // reset selection on cell change
+  const selectField = (f: Field) => setSelectedField((cur) => (cur === f ? null : f));
+
   const DECODE: Record<Field, RowDecode> = {
     core: { label: 'CAPACITY', value: formatCkb(cell.capacity) },
     species: { label: 'ASSET', value: formatAssetKind(cell.asset_kind), color: cell.asset_kind ? ASSET_COLORS[cell.asset_kind] : HUD_COLORS.dim },
@@ -71,17 +78,18 @@ export default function CellDetailPanel({ cell, onClose, style }: {
   const genomeShown = genome.slice(0, Math.floor((p.classified ? 1 : p.pct / 100) * genome.length));
   const statusText = p.classified ? '✓ CLASSIFIED' : p.status === 'unidentified' ? 'UNIDENTIFIED SPECIMEN' : `CLASSIFYING ${p.pct}%`;
   const statusColor = p.classified ? HUD_COLORS.nominal : HUD_COLORS.cyanWire;
+  const interactive = p.classified; // scan finished → rows + endpoints become clickable/cross-highlight
 
   // All eight readout rows are ALWAYS mounted (text always in the DOM) and only
   // opacity-gated: present-landmark rows resolve as the probe reveal climbs (in
   // scan order → they light top-to-bottom in sync with the reticle); an absent
   // landmark (e.g. organelle with no data) resolves once the specimen classifies;
   // AGE + SOURCE are context, always shown.
-  const rows: Array<RowDecode & { on: boolean }> = [
+  const rows: Array<RowDecode & { on: boolean; field?: Field }> = [
     ...LANDMARK_FIELDS.map((f) => {
       const oi = order.indexOf(f);
       const on = oi === -1 ? p.classified : oi < p.reveal;
-      return { ...DECODE[f], on };
+      return { ...DECODE[f], on, field: f };
     }),
     { label: 'AGE', value: formatAge(cell.born_at_ms, now), on: true },
     { label: 'SOURCE', value: formatOutpoint(cell.out_point.tx_hash, cell.out_point.index), on: true },
@@ -94,20 +102,31 @@ export default function CellDetailPanel({ cell, onClose, style }: {
       {/* Portrait framed as an assay chamber: corner brackets + the marker probe
           reticle (SpecimenProbe) riding the projected landmark. */}
       <div style={{ position: 'relative', marginBottom: 10 }}>
-        <CellNucleusPortrait cell={cell} reducedMotion={reduced} scanEpochMs={scanEpochMs} probeRef={probeRef} />
+        <CellNucleusPortrait cell={cell} reducedMotion={reduced} scanEpochMs={scanEpochMs} probeRef={probeRef} interactive={interactive} selectedField={selectedField} onSelectField={selectField} />
         <span style={cornerBracket('tl')} /><span style={cornerBracket('tr')} />
         <span style={cornerBracket('bl')} /><span style={cornerBracket('br')} />
         <SpecimenProbe probeRef={probeRef} epochMs={scanEpochMs} count={order.length} reduced={reduced} labelFor={labelFor} />
       </div>
       <div key={cell.id}>
-        {rows.map((row) => (
-          <div
-            key={row.label}
-            style={{ opacity: reduced || row.on ? 1 : 0.16, transition: reduced ? undefined : 'opacity 320ms ease' }}
-          >
-            <StatRow label={row.label} valueColor={row.color}>{row.value}</StatRow>
-          </div>
-        ))}
+        {rows.map((row) => {
+          const clickable = interactive && !!row.field && order.includes(row.field);
+          const sel = !!row.field && row.field === selectedField;
+          return (
+            <div
+              key={row.label}
+              onClick={clickable ? () => selectField(row.field!) : undefined}
+              style={{
+                opacity: reduced || row.on ? 1 : 0.16,
+                transition: reduced ? undefined : 'opacity 320ms ease',
+                cursor: clickable ? 'pointer' : undefined,
+                background: sel ? `${HUD_COLORS.cyanWire}1f` : undefined,
+                boxShadow: sel ? `inset 2px 0 0 ${HUD_COLORS.cyanWire}` : undefined,
+              }}
+            >
+              <StatRow label={row.label} valueColor={row.color}>{row.value}</StatRow>
+            </div>
+          );
+        })}
       </div>
       {/* Live assay verdict + streaming genome — resolves with the scan. */}
       <div key={`assay-${cell.id}`} style={{ marginTop: 9, borderTop: `1px solid ${AMBER}22`, paddingTop: 7 }}>
