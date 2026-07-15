@@ -14,7 +14,7 @@ import {
   DEATH_DURATION_MS,
   INSTANCE_CAPACITY,
 } from '../geometry/cellPositions';
-import { QUALITY_PRESETS } from '../tweaks/qualityPresets';
+import { QUALITY_PRESETS, useQualityRuntime } from '../tweaks/qualityPresets';
 import { BLOCK_HIGHLIGHT_DELAY_S } from './CellGalaxy';
 import { buildTruncatedOctahedron } from '../geometry/truncatedOctahedron';
 import { makeCellShellMaterial } from '../materials/cellShellMaterial';
@@ -58,12 +58,7 @@ interface CellShellProps {
 
 export default function CellShell({ cellFlashRef, flashDirtyRef, shockwaveUniformsRef }: CellShellProps) {
   const cellsCache = useCellGalaxy();
-  const { quality } = useControls('Time', {
-    quality: {
-      value: 'high' as 'high' | 'med' | 'low',
-      options: ['high', 'med', 'low'] as const,
-    },
-  });
+  const { effective: quality } = useQualityRuntime();
   const cellGalaxyMul = QUALITY_PRESETS[quality].cellGalaxyMul;
 
   const { shellScale, shellOpacity } = useControls('Galaxy 共识记忆', {

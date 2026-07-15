@@ -85,6 +85,7 @@ export function makeCellShellMaterial(): THREE.ShaderMaterial {
       uniform float uOpacity;
       uniform float uShockwaveAt[${SHOCKWAVE_SLOTS}];
       uniform vec2  uShockwaveOriginXZ[${SHOCKWAVE_SLOTS}];
+      uniform vec3  uShockwaveColor[${SHOCKWAVE_SLOTS}];
       uniform float uShockwaveSpeed;
       uniform float uShockwaveDurS;
       uniform float uShockwaveBandBase;
@@ -103,8 +104,9 @@ export function makeCellShellMaterial(): THREE.ShaderMaterial {
 
       ${FLASH_ENV_GLSL}
 
-      float shockwave() {
+      vec4 shockwave() {
         float total = 0.0;
+        vec3 carrier = vec3(0.0);
         for (int i = 0; i < ${SHOCKWAVE_SLOTS}; i++) {
           float age = uTime - uShockwaveAt[i];
           if (age < 0.0 || age >= uShockwaveDurS) continue;
@@ -120,9 +122,11 @@ export function makeCellShellMaterial(): THREE.ShaderMaterial {
           // its early peak, and the (1 - t) linear factor stacks a steady
           // decay so brightness keeps dropping through the back half.
           float life = sin(3.14159265 * t) * (1.0 - smoothstep(0.3, 1.0, t)) * (1.0 - t);
-          total += (band + trail * uShockwaveTrailBoost) * life;
+          float signal = (band + trail * uShockwaveTrailBoost) * life;
+          total += signal;
+          carrier += uShockwaveColor[i] * signal;
         }
-        return total;
+        return vec4(carrier, total);
       }
 
       void main() {
@@ -130,7 +134,11 @@ export function makeCellShellMaterial(): THREE.ShaderMaterial {
 
         // Brightness goes from 1.0 → uFlashPeak at the flash envelope's peak.
         float flashBoost = 1.0 + (uFlashPeak - 1.0) * flashEnv(vFlashAge);
-        float shock = shockwave();
+        vec4 shockwaveSignal = shockwave();
+        float shock = shockwaveSignal.a;
+        vec3 waveColor = shock > 0.0001
+          ? shockwaveSignal.rgb / shock
+          : vec3(0.72, 0.96, 1.0);
         // Soft-knee the wave's brightness/alpha: same onset slope as the old
         // linear (1 + BOOST*shock), but the bright leading edge saturates toward
         // a warm ceiling instead of railing past white and hard-clipping (see
@@ -141,10 +149,9 @@ export function makeCellShellMaterial(): THREE.ShaderMaterial {
         // Life gate: pre-birth invisible, mid-life full, in-death fading out.
         float lifeGate = vBirthRamp * (1.0 - vDeathRamp);
 
-        // Warm the wavefront toward the core's white-hot bias so cool-hued
-        // shells stop clipping to a cold blue-white (matches cellHybridMaterial).
-        // shock=0 → shockTint == vColor, leaving resting + nerve-flash untouched.
-        vec3 shockTint = mix(vColor, vec3(1.0, 0.96, 0.80), min(1.0, shock * 0.85));
+        // The shell inherits the same per-block carrier hue as the far core.
+        // shock=0 leaves resting and local-write feedback untouched.
+        vec3 shockTint = mix(vColor, waveColor, min(1.0, shock * 0.85));
         vec3 col = shockTint * flashBoost * shockBoost * lifeGate;
 
         // Additive blending; alpha is the modulation factor.
