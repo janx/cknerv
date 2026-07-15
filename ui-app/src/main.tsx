@@ -6,6 +6,9 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
+import CellFormLab from './CellFormLab';
+import CellRelicLab from './CellRelicLab';
+import ProtocolEventLab from './ProtocolEventLab';
 import { fetchCellsSnapshot, fetchChainSnapshot } from './connect';
 import { installPulseStatsHook } from './pulse-stats-hook';
 
@@ -15,16 +18,28 @@ async function bootstrap() {
     fetchCellsSnapshot(),
   ]);
   const root = ReactDOM.createRoot(document.getElementById('root')!);
+  const params = new URLSearchParams(window.location.search);
+  const cellFormLab = params.get('cell-form-lab') === '1';
+  const cellRelicLab = params.get('cell-relic-lab') === '1';
+  const protocolEventLab = params.get('protocol-event-lab') === '1';
   root.render(
     <React.StrictMode>
-      <App
-        initialChain={chainResp.chain}
-        initialChainNodes={chainResp.chain_nodes ?? []}
-        initialPeers={chainResp.peers ?? []}
-        initialChainRevision={chainResp.revision}
-        initialCells={cellsResp.snapshot}
-        initialCellsRevision={cellsResp.revision}
-      />
+      {protocolEventLab ? (
+        <ProtocolEventLab snapshot={cellsResp.snapshot} />
+      ) : cellRelicLab ? (
+        <CellRelicLab snapshot={cellsResp.snapshot} />
+      ) : cellFormLab ? (
+        <CellFormLab snapshot={cellsResp.snapshot} />
+      ) : (
+        <App
+          initialChain={chainResp.chain}
+          initialChainNodes={chainResp.chain_nodes ?? []}
+          initialPeers={chainResp.peers ?? []}
+          initialChainRevision={chainResp.revision}
+          initialCells={cellsResp.snapshot}
+          initialCellsRevision={cellsResp.revision}
+        />
+      )}
     </React.StrictMode>,
   );
 }
