@@ -18,8 +18,8 @@ export function tickSimClock(rawDeltaSec: number, timeScale: number): void {
 
 /** Reset the clock to 0. Called by tests via beforeEach to isolate
  *  cases. The clock starts at 0 implicitly on module load; no
- *  per-mount reset is performed (Canvas remounts during quality
- *  changes intentionally preserve sim time). */
+ *  per-mount reset is performed, so an incidental Canvas remount
+ *  preserves simulation time. */
 export function resetSimClock(): void {
   simClock.elapsedSec = 0;
 }
