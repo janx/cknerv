@@ -1,6 +1,6 @@
 import * as THREE from 'three';
-// Green data-payload point material — same world-space sizing math as the warm
-// nucleus material, distinct green so "data" reads at a glance. Portrait-only.
+// Data-payload crystal packet — violet/cyan, small, and deliberately quieter
+// than the main photonic orbit packets in the selected-cell portrait.
 export function makeOrganelleMaterial(): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
     uniforms: { uViewportHeight: { value: 800 }, uProjY: { value: 1.0 } },
@@ -11,7 +11,20 @@ export function makeOrganelleMaterial(): THREE.ShaderMaterial {
         gl_PointSize=aSize*uProjY*(uViewportHeight*0.5/max(-vp.z,0.001)); }`,
     fragmentShader: /* glsl */`
       precision highp float; varying float vAlpha;
-      void main(){ vec2 uv=gl_PointCoord-0.5; float r=length(uv); if(r>0.5) discard;
-        float g=exp(-pow(r/0.32,2.0)); float a=g*vAlpha; gl_FragColor=vec4(vec3(0.65,0.95,0.4)*a,a); }`,
+      void main(){
+        vec2 uv=gl_PointCoord-0.5;
+        float diamond=abs(uv.x)+abs(uv.y);
+        if(diamond>0.5) discard;
+        float border=smoothstep(0.29,0.38,diamond)*(1.0-smoothstep(0.44,0.5,diamond));
+        float bitX=step(0.0,uv.x);
+        float bitY=step(0.0,uv.y);
+        float bit=mix(bitX,1.0-bitY,step(0.0,uv.x*uv.y));
+        float interior=(1.0-smoothstep(0.18,0.39,diamond))*(0.34+0.66*bit);
+        float a=(border*0.72+interior*0.5)*vAlpha;
+        vec3 violet=vec3(0.66,0.42,1.0);
+        vec3 cyan=vec3(0.28,0.92,1.0);
+        vec3 col=mix(violet,cyan,bit)*interior+cyan*border*0.8;
+        gl_FragColor=vec4(col*a,a);
+      }`,
   });
 }

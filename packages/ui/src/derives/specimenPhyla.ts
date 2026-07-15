@@ -1,106 +1,320 @@
-// packages/ui/src/derives/specimenPhyla.ts
-import { dendriteNucleus } from './dendriteNucleus';
+// Data-derived silicon architectures for the Cell nucleus.
+//
+// The historical phylum identifiers stay stable because the detail HUD and
+// tests consume them, but their geometry is deliberately non-biological:
+// straight buses, chiplet grids, clock stacks, recursive FPGA routing, and a
+// polygonal checksum loop. content_hash chooses the exact orientation,
+// topology, omissions, and port layout without introducing runtime randomness.
 import {
-  type PhylumGeometry, type PhylumOpts, type NucNode, type Vec3,
-  TAU, add, scale, len, dist, mid, randDir, randPerp, cross, seededRng, hashToBytes,
+  type PhylumGeometry,
+  type PhylumOpts,
+  type NucNode,
+  type Vec3,
+  TAU,
+  add,
+  scale,
+  len,
+  dist,
+  cross,
+  seededRng,
+  hashToBytes,
+  randDir,
+  randPerp,
 } from './specimenKit';
 
-/** ARBOR (spore) — reuse the existing hash-grown dendrite unchanged. */
-export function genArbor(seedHash: string, _opts: PhylumOpts): PhylumGeometry {
-  const n = dendriteNucleus(seedHash);
-  const nodes: NucNode[] = [
-    ...n.cores.map((c) => ({ x: c.x, y: c.y, z: c.z, s: c.s, a: 1 })),
-    ...n.glows.map((g) => ({ x: g.x, y: g.y, z: g.z, s: g.s, a: g.a })),
-  ];
-  const tips = n.cores.slice(1); // skip [0] hot centre
-  const byDist = [...tips].sort((p, q) => (q.x * q.x + q.y * q.y + q.z * q.z) - (p.x * p.x + p.y * p.y + p.z * p.z));
-  const at = (i: number): Vec3 => { const c = byDist[i] ?? { x: 0, y: 0, z: 0 }; return [c.x, c.y, c.z]; };
+type Frame = readonly [Vec3, Vec3, Vec3];
+
+function makeFrame(r: () => number): Frame {
+  const x = randDir(r);
+  const y = randPerp(r, x);
+  const z = cross(x, y);
+  return [x, y, z];
+}
+
+function inFrame(frame: Frame, x: number, y: number, z: number): Vec3 {
+  return add(add(scale(frame[0], x), scale(frame[1], y)), scale(frame[2], z));
+}
+
+function segment(out: number[], a: Vec3, b: Vec3): void {
+  out.push(a[0], a[1], a[2], b[0], b[1], b[2]);
+}
+
+function route(out: number[], points: Vec3[]): void {
+  for (let i = 1; i < points.length; i += 1) segment(out, points[i - 1], points[i]);
+}
+
+function node(p: Vec3, s: number, a = 0.92): NucNode {
+  return { x: p[0], y: p[1], z: p[2], s, a };
+}
+
+/**
+ * RADIOLARIAN / native — radial I/O backplane.
+ *
+ * Hash-addressed ports sit on three discrete layers. Each signal reaches its
+ * port through two hard routing elbows, while a polygonal perimeter bus joins
+ * the ports into one consensus plane.
+ */
+export function genRadiolarian(seedHash: string, opts: PhylumOpts): PhylumGeometry {
+  const r = seededRng(hashToBytes(seedHash), 0x5101);
+  const frame = makeFrame(r);
+  const count = 10 + Math.floor(r() * 5);
+  const reach = (0.66 + r() * 0.12) * (0.82 + opts.maturity * 0.18);
+  const phase = r() * TAU;
+  const segments: number[] = [];
+  const nodes: NucNode[] = [];
+  const ports: Vec3[] = [];
+
+  for (let i = 0; i < count; i += 1) {
+    const angle = phase + (i / count) * TAU;
+    const layer = ((i + Math.floor(r() * 3)) % 3 - 1) * 0.18;
+    const cx = Math.cos(angle);
+    const cz = Math.sin(angle);
+    const inner = inFrame(frame, cx * 0.24, 0, cz * 0.24);
+    const elbow = inFrame(frame, cx * 0.50, layer, cz * 0.50);
+    const port = inFrame(frame, cx * reach, layer, cz * reach);
+    route(segments, [[0, 0, 0], inner, elbow, port]);
+    ports.push(port);
+    nodes.push(node(port, 0.043 + r() * 0.012));
+  }
+
+  for (let i = 0; i < ports.length; i += 1) {
+    segment(segments, ports[i], ports[(i + 1) % ports.length]);
+  }
+  nodes.push(node([0, 0, 0], 0.12, 1));
+
+  let outer = ports[0];
+  for (const port of ports) if (len(port) > len(outer)) outer = port;
   return {
-    segments: n.segments.slice(),
+    segments,
+    nodes,
+    membraneR: 0.31,
+    landmarks: {
+      core: [0, 0, 0],
+      species: ports[0],
+      membrane: ports[Math.floor(ports.length / 3)],
+      outer,
+    },
+  };
+}
+
+/**
+ * COLONY / sUDT+xUDT — chiplet array.
+ *
+ * Token cells resolve to deterministic positions on a 3×3×3 substrate grid.
+ * Their nearest-earlier connection is routed Manhattan-style through the
+ * package instead of using soft necks.
+ */
+export function genColony(seedHash: string, opts: PhylumOpts): PhylumGeometry {
+  const r = seededRng(hashToBytes(seedHash), 0xc41f);
+  const frame = makeFrame(r);
+  const count = 8 + Math.floor(r() * 5);
+  const grid = 0.27 * (0.86 + opts.maturity * 0.14);
+  const occupied = new Set<string>(['0,0,0']);
+  const local: Vec3[] = [[0, 0, 0]];
+
+  while (local.length < count) {
+    const x = Math.floor(r() * 5) - 2;
+    const y = Math.floor(r() * 3) - 1;
+    const z = Math.floor(r() * 5) - 2;
+    if (x === 0 && y === 0 && z === 0) continue;
+    const key = `${x},${y},${z}`;
+    if (occupied.has(key)) continue;
+    occupied.add(key);
+    local.push([x * grid, y * grid * 0.62, z * grid]);
+  }
+
+  const points = local.map((p) => inFrame(frame, p[0], p[1], p[2]));
+  const segments: number[] = [];
+  const nodes: NucNode[] = points.map((p, i) => node(p, i === 0 ? 0.13 : 0.065 + r() * 0.025, i === 0 ? 1 : 0.92));
+  let firstBus: Vec3 = [0, 0, 0];
+
+  for (let i = 1; i < local.length; i += 1) {
+    let parent = 0;
+    let best = Number.POSITIVE_INFINITY;
+    for (let j = 0; j < i; j += 1) {
+      const d = dist(local[i], local[j]);
+      if (d < best) {
+        best = d;
+        parent = j;
+      }
+    }
+    const a = local[parent];
+    const b = local[i];
+    const elbowA = inFrame(frame, b[0], a[1], a[2]);
+    const elbowB = inFrame(frame, b[0], b[1], a[2]);
+    route(segments, [points[parent], elbowA, elbowB, points[i]]);
+    if (i === 1) firstBus = elbowB;
+  }
+
+  let outer = points[0];
+  for (const p of points) if (len(p) > len(outer)) outer = p;
+  return {
+    segments,
+    nodes,
+    membraneR: 0.36,
+    landmarks: { core: points[0], species: points[1], membrane: firstBus, outer },
+  };
+}
+
+/**
+ * HELIX / DAO — block-height clock stack.
+ *
+ * DAO time is expressed as a sequence of rigid hexagonal timing planes with
+ * vertical vias. There are no helical strands: maturity changes the height of
+ * the stack, while the hash selects phase and via omissions.
+ */
+export function genHelix(seedHash: string, opts: PhylumOpts): PhylumGeometry {
+  const r = seededRng(hashToBytes(seedHash), 0xda0c);
+  const frame = makeFrame(r);
+  const levels = 7 + Math.floor(r() * 3);
+  const sides = 6;
+  const radius = 0.30 + r() * 0.07;
+  const height = 1.35 * (0.78 + opts.maturity * 0.22);
+  const phase = r() * (TAU / sides);
+  const layers: Vec3[][] = [];
+  const segments: number[] = [];
+  const nodes: NucNode[] = [];
+
+  for (let level = 0; level < levels; level += 1) {
+    const y = -height * 0.5 + (height * level) / (levels - 1);
+    const twist = phase + (level % 2) * (TAU / sides) * 0.5;
+    const ring: Vec3[] = [];
+    for (let side = 0; side < sides; side += 1) {
+      const angle = twist + (side / sides) * TAU;
+      ring.push(inFrame(frame, Math.cos(angle) * radius, y, Math.sin(angle) * radius));
+    }
+    for (let side = 0; side < sides; side += 1) {
+      segment(segments, ring[side], ring[(side + 1) % sides]);
+    }
+    layers.push(ring);
+    if (level === 0 || level === levels - 1 || level % 2 === 0) {
+      for (let side = 0; side < sides; side += 2) nodes.push(node(ring[side], 0.045));
+    }
+  }
+
+  for (let level = 1; level < levels; level += 1) {
+    for (let side = 0; side < sides; side += 1) {
+      if ((side + level) % 3 !== 0 || r() > 0.35) {
+        segment(segments, layers[level - 1][side], layers[level][side]);
+      }
+    }
+  }
+  nodes.push(node([0, 0, 0], 0.105, 1));
+
+  return {
+    segments,
     nodes,
     membraneR: null,
-    landmarks: { core: [0, 0, 0], species: at(0), outer: at(1), membrane: at(Math.floor(byDist.length / 2)) },
+    landmarks: {
+      core: [0, 0, 0],
+      species: layers[0][0],
+      membrane: layers[Math.floor(levels / 2)][2],
+      outer: layers[levels - 1][3],
+    },
   };
 }
 
-/** RADIOLARIAN (native) — membraned cell body + curved 3D filopodia. */
-export function genRadiolarian(seedHash: string, opts: PhylumOpts): PhylumGeometry {
-  const r = seededRng(hashToBytes(seedHash));
-  const n = 9 + Math.floor(r() * 7);                 // floor 9 filopodia
-  const membraneR = 0.28 + r() * 0.06;
-  const segments: number[] = []; const nodes: NucNode[] = [];
-  let species: Vec3 = [0, 0, 0], outer: Vec3 = [0, 0, 0], maxr = 0;
-  for (let i = 0; i < n; i++) {
-    const dir = randDir(r), perp = randPerp(r, dir);
-    const reach = (0.55 + r() * 0.34) * (0.72 + 0.28 * opts.maturity);
-    const steps = 5; let prev: Vec3 = [0, 0, 0];   // start AT the core so filopodia connect to the central body (no gap)
-    for (let s = 1; s <= steps; s++) {
-      const t = s / steps;
-      const p = add(scale(dir, reach * t), scale(perp, Math.sin(t * Math.PI) * reach * 0.2 * (0.7 + r() * 0.6)));
-      segments.push(prev[0], prev[1], prev[2], p[0], p[1], p[2]); prev = p;
-    }
-    nodes.push({ x: prev[0], y: prev[1], z: prev[2], s: 0.05, a: 1 });
-    if (i === 0) species = prev;
-    if (len(prev) > maxr) { maxr = len(prev); outer = prev; }
-  }
-  nodes.push({ x: 0, y: 0, z: 0, s: 0.13, a: 0.9 });  // central body
-  const membrane: Vec3 = scale(randDir(r), membraneR);
-  return { segments, nodes, membraneR, landmarks: { core: [0, 0, 0], species, membrane, outer } };
-}
+/**
+ * ARBOR / Spore — recursive FPGA routing tree.
+ *
+ * Spore's composability remains visible as a hierarchy, but every branch is a
+ * right-angle clock/data route on alternating silicon planes.
+ */
+export function genArbor(seedHash: string, opts: PhylumOpts): PhylumGeometry {
+  const r = seededRng(hashToBytes(seedHash), 0x5f07);
+  const frame = makeFrame(r);
+  const depth = 3 + (r() > 0.58 ? 1 : 0);
+  const segments: number[] = [];
+  const nodes: NucNode[] = [node([0, 0, 0], 0.11, 1)];
+  type Branch = { local: Vec3; world: Vec3; heading: 1 | -1 };
+  let frontier: Branch[] = [{ local: [0, 0, 0], world: [0, 0, 0], heading: r() > 0.5 ? 1 : -1 }];
+  let species: Vec3 = [0, 0, 0];
+  let outer: Vec3 = [0, 0, 0];
 
-/** COLONY (sudt/xudt) — cluster of near-identical vesicle-cells + membrane necks. */
-export function genColony(seedHash: string, opts: PhylumOpts): PhylumGeometry {
-  const r = seededRng(hashToBytes(seedHash));
-  const m = 7 + Math.floor(r() * 6);
-  const ves: { p: Vec3; s: number }[] = [{ p: [0, 0, 0], s: 0.18 + r() * 0.05 }];
-  for (let i = 1; i < m; i++) ves.push({ p: scale(randDir(r), 0.2 + r() * 0.5), s: 0.12 + r() * 0.07 });
-  const segments: number[] = []; const nodes: NucNode[] = [];
-  let neckMid: Vec3 = [0, 0, 0];
-  for (let i = 1; i < ves.length; i++) {
-    let bj = 0, bd = 1e9;
-    for (let j = 0; j < i; j++) { const d = dist(ves[i].p, ves[j].p); if (d < bd) { bd = d; bj = j; } }
-    segments.push(...ves[i].p, ...ves[bj].p);
-    if (i === 1) neckMid = mid(ves[i].p, ves[bj].p);
-  }
-  let outer: Vec3 = ves[0].p, maxr = 0;
-  for (const v of ves) { nodes.push({ x: v.p[0], y: v.p[1], z: v.p[2], s: v.s, a: 0.9 }); if (len(v.p) > maxr) { maxr = len(v.p); outer = v.p; } }
-  return { segments, nodes, membraneR: 0.34, landmarks: { core: [0, 0, 0], species: outer, membrane: neckMid, outer } };
-}
+  for (let level = 0; level < depth; level += 1) {
+    const next: Branch[] = [];
+    const advance = (0.24 - level * 0.026) * (0.82 + opts.maturity * 0.18);
+    const spread = 0.22 - level * 0.025;
+    for (const branch of frontier) {
+      const axis = level % 3;
+      const trunkLocal: Vec3 = [...branch.local];
+      trunkLocal[axis] += advance * branch.heading;
+      const trunk = inFrame(frame, trunkLocal[0], trunkLocal[1], trunkLocal[2]);
+      segment(segments, branch.world, trunk);
 
-/** HELIX (dao) — a DNA double-helix winding along a 3D axis, with base-pair rungs. */
-export function genHelix(seedHash: string, _opts: PhylumOpts): PhylumGeometry {
-  const r = seededRng(hashToBytes(seedHash));
-  const turns = 2 + r() * 1.5, amp = 0.26 + r() * 0.08, steps = 34;
-  const axis = randDir(r), u1 = randPerp(r, axis), u2 = cross(axis, u1);
-  const A: Vec3[] = [], B: Vec3[] = []; const segments: number[] = []; const nodes: NucNode[] = [];
-  const along = (t: number) => -0.82 + 1.64 * t;
-  const strand = (phase: number, out: Vec3[]) => {
-    let prev: Vec3 | null = null;
-    for (let s = 0; s <= steps; s++) {
-      const t = s / steps, ang = t * turns * TAU + phase;
-      const p = add(scale(axis, along(t)), add(scale(u1, Math.cos(ang) * amp), scale(u2, Math.sin(ang) * amp)));
-      out.push(p); if (prev) segments.push(...prev, ...p); prev = p;
+      const splitAxis = (axis + 1 + (r() > 0.72 ? 1 : 0)) % 3;
+      for (const side of [-1, 1] as const) {
+        const childLocal: Vec3 = [...trunkLocal];
+        childLocal[splitAxis] += spread * side;
+        const child = inFrame(frame, childLocal[0], childLocal[1], childLocal[2]);
+        segment(segments, trunk, child);
+        nodes.push(node(child, 0.042 + (depth - level) * 0.005));
+        next.push({ local: childLocal, world: child, heading: side });
+        if (species[0] === 0 && species[1] === 0 && species[2] === 0) species = child;
+        if (len(child) > len(outer)) outer = child;
+      }
     }
+    frontier = next;
+  }
+
+  return {
+    segments,
+    nodes,
+    membraneR: null,
+    landmarks: {
+      core: [0, 0, 0],
+      species,
+      membrane: frontier[Math.floor(frontier.length / 2)]?.world ?? outer,
+      outer,
+    },
   };
-  strand(0, A); strand(Math.PI, B);
-  for (let s = 2; s < steps; s += 4) segments.push(...A[s], ...B[s]);       // rungs
-  for (let s = 0; s <= steps; s += 3) { for (const P of [A[s], B[s]]) nodes.push({ x: P[0], y: P[1], z: P[2], s: 0.045, a: 0.9 }); }
-  return { segments, nodes, membraneR: null, landmarks: { core: [0, 0, 0], species: A[0], membrane: A[Math.floor(steps / 2)], outer: A[steps] } };
 }
 
-/** PLASMID (other/unknown) — a supercoiled circular-DNA loop in 3D. */
+/**
+ * PLASMID / unknown — incomplete polygonal checksum bus.
+ *
+ * Unknown scripts are shown honestly as a partially decoded pair of hard
+ * checksum loops. Hash bits decide missing edges, vias, and observation pads.
+ */
 export function genPlasmid(seedHash: string, _opts: PhylumOpts): PhylumGeometry {
-  const r = seededRng(hashToBytes(seedHash));
-  const steps = 64, f1 = 2 + Math.floor(r() * 2), base = 0.5 + r() * 0.06, warp = 0.15 + r() * 0.09, tilt = 0.2 + r() * 0.25;
-  const axis = randDir(r), u1 = randPerp(r, axis), u2 = cross(axis, u1);
-  const pts: Vec3[] = []; const segments: number[] = []; const nodes: NucNode[] = [];
-  let prev: Vec3 | null = null;
-  for (let s = 0; s <= steps; s++) {
-    const a = (s / steps) * TAU, rad = base + warp * Math.sin(a * f1);
-    const p = add(add(scale(u1, Math.cos(a) * rad), scale(u2, Math.sin(a) * rad)), scale(axis, Math.sin(a * 2) * tilt));
-    pts.push(p); if (prev) segments.push(...prev, ...p); prev = p;
+  const r = seededRng(hashToBytes(seedHash), 0xb17f);
+  const frame = makeFrame(r);
+  const sides = 12 + Math.floor(r() * 5);
+  const phase = r() * (TAU / sides);
+  const outerRing: Vec3[] = [];
+  const innerRing: Vec3[] = [];
+  const segments: number[] = [];
+  const nodes: NucNode[] = [node([0, 0, 0], 0.09, 0.9)];
+
+  for (let i = 0; i < sides; i += 1) {
+    const angle = phase + (i / sides) * TAU;
+    const quantizedLayer = ((i % 4) - 1.5) * 0.055;
+    outerRing.push(inFrame(frame, Math.cos(angle) * 0.68, quantizedLayer, Math.sin(angle) * 0.68));
+    innerRing.push(inFrame(frame, Math.cos(angle) * 0.42, -quantizedLayer * 0.55, Math.sin(angle) * 0.42));
   }
-  const nn = 6; let outer: Vec3 = pts[0], maxr = 0;
-  for (let i = 0; i < nn; i++) { const p = pts[Math.floor((i / nn) * steps)]; nodes.push({ x: p[0], y: p[1], z: p[2], s: 0.05, a: 0.9 }); if (len(p) > maxr) { maxr = len(p); outer = p; } }
-  return { segments, nodes, membraneR: null, landmarks: { core: [0, 0, 0], species: pts[Math.floor(steps / 4)], membrane: pts[Math.floor(steps / 2)], outer } };
+
+  for (let i = 0; i < sides; i += 1) {
+    const next = (i + 1) % sides;
+    const bit = r();
+    if (bit > 0.14) segment(segments, outerRing[i], outerRing[next]);
+    if (bit < 0.88) segment(segments, innerRing[i], innerRing[next]);
+    if (i % 3 === 0 || r() > 0.74) {
+      segment(segments, innerRing[i], outerRing[i]);
+      nodes.push(node(outerRing[i], 0.045));
+    }
+  }
+
+  let outer = outerRing[0];
+  for (const p of outerRing) if (len(p) > len(outer)) outer = p;
+  return {
+    segments,
+    nodes,
+    membraneR: null,
+    landmarks: {
+      core: [0, 0, 0],
+      species: innerRing[1],
+      membrane: outerRing[Math.floor(sides / 2)],
+      outer,
+    },
+  };
 }
