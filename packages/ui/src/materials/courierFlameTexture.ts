@@ -9,9 +9,8 @@ function finish(canvas: HTMLCanvasElement): THREE.Texture {
 }
 
 /**
- * Round hot bloom for the nozzle — sits at the cube so it melts into the flame
- * head (the seamless cube↔tail junction). A single white-hot → cyan → transparent
- * radial blob. Stub-safe (createRadialGradient + fillRect only).
+ * Neutral protocol-packet bloom. Runtime material colour carries the block's
+ * identity, so the texture contributes only luminance and alpha.
  */
 export function makeCourierBloomTexture(): THREE.Texture {
   const size = 128;
@@ -21,21 +20,17 @@ export function makeCourierBloomTexture(): THREE.Texture {
   const ctx = canvas.getContext('2d')!;
   const g = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
   g.addColorStop(0.0, 'rgba(255,255,255,1.0)');
-  g.addColorStop(0.3, 'rgba(216,250,255,0.62)');
-  g.addColorStop(0.7, 'rgba(125,220,255,0.14)');
-  g.addColorStop(1.0, 'rgba(125,220,255,0.0)');
+  g.addColorStop(0.3, 'rgba(255,255,255,0.62)');
+  g.addColorStop(0.7, 'rgba(255,255,255,0.14)');
+  g.addColorStop(1.0, 'rgba(255,255,255,0.0)');
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, size, size);
   return finish(canvas);
 }
 
 /**
- * Directed jet-thrust plume: a tall texture, bright rounded nozzle at the TOP
- * (v=1) tapering to a feathered soft tail at the bottom (v=0). Built additively
- * from a column of overlapping radial blobs (wide+bright at the nozzle → narrow+
- * faint at the tail), so the alpha is feathered everywhere — no geometric edges.
- * Mapped on a quad whose +Y points along the flight direction. Stub-safe
- * (createRadialGradient + fillRect; `globalCompositeOperation` is just assigned).
+ * Directed protocol trace: a tall neutral luminance texture, bright at the
+ * packet and tapering behind it. The material supplies the block carrier hue.
  */
 export function makeCourierPlumeTexture(): THREE.Texture {
   const W = 96;
@@ -53,8 +48,8 @@ export function makeCourierPlumeTexture(): THREE.Texture {
     const hot = Math.pow(1 - f, 1.4);       // brightness fades toward the tail
     const g = ctx.createRadialGradient(W / 2, cy, 0, W / 2, cy, r);
     g.addColorStop(0.0, `rgba(255,255,255,${0.42 * hot})`);
-    g.addColorStop(0.4, `rgba(170,235,255,${0.26 * hot})`);
-    g.addColorStop(1.0, 'rgba(125,220,255,0.0)');
+    g.addColorStop(0.4, `rgba(255,255,255,${0.26 * hot})`);
+    g.addColorStop(1.0, 'rgba(255,255,255,0.0)');
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, W, H);
   }

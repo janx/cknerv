@@ -126,7 +126,7 @@ function InferredCloud({ topology }: { topology: NetworkTopology }) {
 /**
  * One measured peer as a glow-node: the same core+halo shader (makeHaloMaterial)
  * on a camera-facing plane — bright, saturated, larger than the ghost haze, and
- * gently breathing (per-node phase/rate so the colony reads organic, not synced).
+ * gently modulating (per-node phase/rate so the colony reads distributed, not synced).
  * A small invisible solid sphere sits underneath as the hit-target so the halo is
  * clickable (a billboarded plane raycasts poorly). Selection draws the reticle.
  */

@@ -46,12 +46,12 @@ export function floodArrivalTimes(
 
 /** Total wall-clock span of a flood (seconds since the block pulse). Tune live. */
 export const FLOOD_DURATION_S = 2.0;
-export const HERO_MIN_FRAC = 0.15;   // never feed the queen before this fraction
-export const HERO_MAX_FRAC = 0.85;   // …nor after this (so she's fed before the flood ends)
+export const HERO_MIN_FRAC = 0.15;   // never commit locally before this fraction
+export const HERO_MAX_FRAC = 0.85;   // …nor after this (commit before the flood ends)
 
 /** Clamp the hero (local) receive delay into the flood window's hero band
  *  [FLOOD_DURATION_S·HERO_MIN_FRAC, FLOOD_DURATION_S·HERO_MAX_FRAC] = [0.3, 1.7]s,
- *  so the queen is fed neither at t≈0 nor after the flood ends. Exported so the
+ *  so the local Cell field commits neither at t≈0 nor after the flood ends. Exported so the
  *  bound math is unit-tested out-of-band (a swapped/mistyped bound would bite). */
 export function clampHeroDelayS(rawSec: number): number {
   return Math.min(
@@ -63,7 +63,7 @@ export function clampHeroDelayS(rawSec: number): number {
 export interface ColonyFlood {
   entryId: string | null;                            // flood origin (may be inferred)
   localReceiveDelayS: number;                        // hero timing (measured-worker feed)
-  arrivals: Record<string, number>;                  // MEASURED peers → secondsSincePulse (boluses)
+  arrivals: Record<string, number>;                  // MEASURED peers → carrier arrival age
   senders: Record<string, string | null>;            // MEASURED peers → flood predecessor
   colonyArrivalS: Record<string, number>;            // ALL nodes → secondsSincePulse (node flash)
   colonyPredecessor: Record<string, string | null>;  // ALL nodes → predecessor (edge-pulse direction)
