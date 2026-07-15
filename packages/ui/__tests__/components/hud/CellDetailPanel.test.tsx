@@ -1,17 +1,23 @@
-import { cleanup, render } from '@testing-library/react';
+import { cleanup, fireEvent, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 import type { Cell } from '@cknerv/types';
 
 // The embedded portrait spins a real WebGL context — stub it in jsdom.
 vi.mock('../../../src/components/hud/CellNucleusPortrait', () => ({
-  default: ({ cell }: { cell: { content_hash: string } }) => (
-    <div data-testid="portrait" data-hash={cell.content_hash} />
+  default: ({ cell, focusField }: {
+    cell: { content_hash: string };
+    focusField?: string | null;
+  }) => (
+    <div
+      data-testid="portrait"
+      data-hash={cell.content_hash}
+      data-focus={focusField ?? ''}
+    />
   ),
   SCAN_PERIOD_S: 4.2,
 }));
 
 import CellDetailPanel from '../../../src/components/hud/CellDetailPanel';
-import { hashToAcgt } from '../../../src/derives/specimenKit';
 
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
@@ -41,19 +47,36 @@ describe('CellDetailPanel', () => {
     expect(t).toContain('#16204800');      // BORN
     expect(t).toContain('#2');             // SOURCE index
     expect(t).toContain('11 B');           // DATA — 22 hex chars = 11 bytes
+    expect(t).toContain('ƒ3:4:7');         // ASSET → frequency family
+    expect(t).toContain('5 paths');        // LOCK → contributor paths
+    expect(t).toContain('8 knots');        // DATA → agreement-node target
     expect(t).toContain('共识细胞');       // CJK title stays (no re-subset)
-    expect(t).toContain('GENOME');         // streaming ACGT strip label
+    expect(t).toContain('MICROCODE');      // streaming content-hash code label
+    expect(getByTestId('portrait').getAttribute('data-focus')).toBe('capacity');
+    expect((container.firstElementChild as HTMLElement).style.animation)
+      .toContain('cknerv-cell-consensus-enter');
   });
 
-  it('reduced motion freezes the assay: CLASSIFIED verdict + full genome, all rows shown', () => {
+  it('reduced motion freezes decoding: mapped verdict + full microcode, all rows shown', () => {
     // stub matchMedia so useReducedMotion() reports reduced — deterministic path
     vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener: () => {}, removeEventListener: () => {} }));
     const { container } = render(<CellDetailPanel cell={base} onClose={() => {}} />);
     const t = container.textContent ?? '';
-    expect(t).toContain('CLASSIFIED');                             // verdict, not CLASSIFYING%
-    expect(t).toContain(hashToAcgt(base.content_hash).slice(0, 24)); // genome fully streamed
+    expect(t).toContain('CONSENSUS MAPPED');
+    expect(t).toContain(base.content_hash.slice(2).toUpperCase().slice(0, 24));
     expect(t).toContain('omnilock');                              // decoded rows still present
     expect(t).toContain('11 B');
+    expect((container.firstElementChild as HTMLElement).style.animation).toBe('');
+  });
+
+  it('lets decoded rows directly focus the corresponding A layer', () => {
+    vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener: () => {}, removeEventListener: () => {} }));
+    const { getByTestId, getByText } = render(
+      <CellDetailPanel cell={base} onClose={() => {}} />,
+    );
+
+    fireEvent.click(getByText(/xUDT · ƒ3:4:7/));
+    expect(getByTestId('portrait').getAttribute('data-focus')).toBe('asset');
   });
 
   it('shows DYING for a dead cell', () => {
