@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { Cell } from '@cknerv/types';
+import { deriveCellVisual } from '../../src/derives/cellVisual.derive';
+import {
+  consensusBraidAgreementTarget,
+  deriveConsensusBraidTopology,
+} from '../../src/derives/consensusBraid.derive';
 import {
   deriveGalaxyConsensusBraid,
   writeGalaxyConsensusBraidBuffers,
@@ -46,7 +51,29 @@ describe('galaxy consensus braid LOD', () => {
     expect(left.colors).toHaveLength(left.segments.length);
     expect(left.detailWeights).toHaveLength(left.segments.length / 6);
     expect(left.detailWeights.some((weight) => weight > 0.5)).toBe(true);
-    expect(left.knots.length).toBeGreaterThan(0);
+    expect(left.knots).toHaveLength(
+      consensusBraidAgreementTarget(deriveCellVisual(CELL)),
+    );
+  });
+
+  it('uses the portrait topology agreement order and capacity scale exactly', () => {
+    const visual = deriveCellVisual(CELL);
+    const topology = deriveConsensusBraidTopology(visual, CELL.birth_block);
+    const braid = deriveGalaxyConsensusBraid(CELL);
+
+    expect(braid.presenceScale).toBe(topology.presenceScale);
+    expect(braid.knots.map((knot) => [knot.x, knot.y, knot.z])).toEqual(
+      topology.agreements.map((agreement) => [...agreement.midpoint]),
+    );
+  });
+
+  it('preserves the same topology while capacity changes physical presence', () => {
+    const low = deriveGalaxyConsensusBraid({ ...CELL, capacity: 61e8 });
+    const high = deriveGalaxyConsensusBraid({ ...CELL, capacity: 1_000_000e8 });
+
+    expect(high.segments).toEqual(low.segments);
+    expect(high.knots).toEqual(low.knots);
+    expect(high.presenceScale).toBeGreaterThan(low.presenceScale);
   });
 
   it('places the normalized A geometry around the real Cell origin', () => {

@@ -22,8 +22,8 @@ import {
 import {
   cellNucleusLodRefreshDue,
   cellFocusTarget,
+  consensusBraidRenderScale,
   dampCellFocus,
-  focusedBraidScale,
 } from '../derives/cellInteraction.derive';
 import { makeNucleusPointMaterial } from '../materials/cellNucleusMaterial';
 import { QUALITY_PRESETS, useQualityRuntime } from '../tweaks/qualityPresets';
@@ -297,11 +297,12 @@ export default function CellNucleus({
         entry.cell,
         braid,
         entry.detail,
-        focusedBraidScale(
+        consensusBraidRenderScale(
           entry.dist,
           state.size.height,
           state.camera.projectionMatrix.elements[5],
           entry.focus,
+          braid.presenceScale,
         ),
         buffers,
         writeCursor,

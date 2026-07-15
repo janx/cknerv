@@ -80,3 +80,19 @@ export function focusedBraidScale(
         - CONSENSUS_BRAID_BASE_SCALE) * eased,
   );
 }
+
+/** Final A scale shared by drawing and screen-space hit testing. */
+export function consensusBraidRenderScale(
+  viewDistance: number,
+  viewportHeight: number,
+  projectionY: number,
+  focus: number,
+  presenceScale: number,
+): number {
+  return focusedBraidScale(
+    viewDistance,
+    viewportHeight,
+    projectionY,
+    focus,
+  ) * Math.max(0, presenceScale);
+}
