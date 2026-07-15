@@ -139,7 +139,7 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats, select
           The local NODE and remote PEER details both belong to the PEER zone. */}
       <div ref={railRef} className="cknerv-mesh-rail" style={railStyle}>
         {meshZone(
-          selectedCell ? <CellDetailPanel cell={selectedCell} onClose={clearCell} style={PANEL_FLOW} /> : null,
+          selectedCell ? <CellDetailPanel key={selectedCell.id} cell={selectedCell} onClose={clearCell} style={PANEL_FLOW} /> : null,
           <CellsPanel stats={cellsStats} churn={churn} reducedMotion={reduced} style={PANEL_FLOW} />,
         )}
         {meshZone(
