@@ -7,6 +7,7 @@ import CellGalaxy from '../../src/components/CellGalaxy';
 import {
   writeFlashSlots,
   writeCellBuffers,
+  pinSelectedCellInVisiblePrefix,
   selectWaveAnchor,
 } from '../../src/components/CellGalaxy';
 import { CellGalaxyProvider } from '../../src/hooks/cellGalaxyContext';
@@ -59,6 +60,15 @@ describe('CellGalaxy', () => {
     const source = readFileSync(CELL_GALAXY_SOURCE, 'utf8');
 
     expect(source).not.toContain('CellCanopyVeil');
+  });
+
+  it('uses the consensus braid as the only production Cell form', () => {
+    const source = readFileSync(CELL_GALAXY_SOURCE, 'utf8');
+
+    expect(source).toContain('<CellNucleus');
+    expect(source).not.toContain('<CellOrganism');
+    expect(source).not.toContain('<CellCrystal');
+    expect(source).not.toContain('CELL_FORM');
   });
 
   it('mounts with localReceiveDelayS (receive-delayed reaction) without throwing', () => {
@@ -194,6 +204,24 @@ describe('writeFlashSlots', () => {
   });
 });
 
+describe('pinSelectedCellInVisiblePrefix', () => {
+  it('pins an inspected Cell without dropping or duplicating cache entries', () => {
+    const cells = [mkCell(1), mkCell(2), mkCell(3), mkCell(4), mkCell(5)];
+    const result = pinSelectedCellInVisiblePrefix(cells, 3, 5);
+
+    expect(result.slice(0, 3).map((cell) => cell.id)).toEqual([1, 2, 5]);
+    expect(new Set(result.map((cell) => cell.id))).toEqual(new Set([1, 2, 3, 4, 5]));
+    expect(cells.map((cell) => cell.id)).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  it('returns the existing order when selection is already visible or absent', () => {
+    const cells = [mkCell(1), mkCell(2), mkCell(3)];
+    expect(pinSelectedCellInVisiblePrefix(cells, 2, 2)).toBe(cells);
+    expect(pinSelectedCellInVisiblePrefix(cells, 2, 99)).toBe(cells);
+    expect(pinSelectedCellInVisiblePrefix(cells, 3, 3)).toBe(cells);
+  });
+});
+
 describe('writeCellBuffers', () => {
   it('writes position, color, born/death and flash for each cell', () => {
     const cells: Cell[] = [
@@ -217,10 +245,10 @@ describe('writeCellBuffers', () => {
     expect(t.posArr[1]).toBe(2);
     expect(t.posArr[2]).toBe(3);
     expect(t.posArr[3]).toBe(4);
-    // Generic cell color (cell 1 has tag=null) — first channel of GENERIC_COLOR (rose).
-    expect(t.colorArr[0]).toBeCloseTo(1.0, 5);
-    // wallet-tagged color (cell 2) — first channel of wallet [0.43, 0.91, 0.72].
-    expect(t.colorArr[3]).toBeCloseTo(0.43, 5);
+    // Far LOD stays in the structural cyan family; metadata remains secondary.
+    expect(t.colorArr[2]).toBeGreaterThan(t.colorArr[0]);
+    expect(t.colorArr[5]).toBeGreaterThan(t.colorArr[3]);
+    expect(t.colorArr[3]).not.toBe(t.colorArr[0]);
     // Size: generic vs tagged.
     expect(t.sizeArr[0]).toBeCloseTo(1.6, 5);
     expect(t.sizeArr[1]).toBeCloseTo(3, 5);

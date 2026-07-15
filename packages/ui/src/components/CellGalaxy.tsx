@@ -1,11 +1,10 @@
 import { useEffect, useMemo, useRef, type ReactNode } from 'react';
-import { useControls } from 'leva';
 import { useThree } from '@react-three/fiber';
 import { useSimFrame } from '../tweaks/useSimFrame';
 import { simClock } from '../tweaks/simClock';
 import { galaxyFrame } from '../tweaks/galaxyFrame';
 import { LIVE } from '../tweaks/liveTweaks';
-import { QUALITY_PRESETS } from '../tweaks/qualityPresets';
+import { QUALITY_PRESETS, useQualityRuntime } from '../tweaks/qualityPresets';
 import { Billboard, Html } from '@react-three/drei';
 import * as THREE from 'three';
 
@@ -18,7 +17,18 @@ import {
 } from '../geometry/cellPositions';
 import type { Cell } from '@cknerv/types';
 import { useCellGalaxy } from '../hooks/cellGalaxyContext';
-import { SHOCKWAVE_SLOTS } from '../materials/shockwaveMaterial';
+import { deriveCellVisual } from '../derives/cellVisual.derive';
+import {
+  consensusBlockColor,
+  consensusCellColor,
+} from '../derives/consensusFlow.derive';
+import {
+  CONSENSUS_BRAID_LOCAL_RADIUS,
+  cellFocusTarget,
+  focusedBraidScale,
+  selectedCellNumericId,
+} from '../derives/cellInteraction.derive';
+import { SHOCKWAVE_SLOTS, writeShockwaveSlot } from '../materials/shockwaveMaterial';
 import { makeCellHybridMaterial } from '../materials/cellHybridMaterial';
 import { makeCellFlareMaterial } from '../materials/cellFlareMaterial';
 import {
@@ -28,25 +38,22 @@ import {
 
 /** Cyan palette for the structural chain anchor (CKB icosahedron).
  *  The chain anchor reads as "structural backbone / chain truth" and
- *  stays visually distinct from the soft peripheral tissue of the RCG
- *  satellite kinds. Particles emitted from a chain anchor inherit this
- *  palette so they match the anchor itself. Kept in sync with the `ckb`
+ *  stays visually distinct from the Cell consensus field. Its resting
+ *  structure remains cyan while a block event temporarily carries that
+ *  block's A-lane hue. Kept in sync with the `ckb`
  *  entry of `_rcg/glowNodePalette.ts` — tune both together. */
 const CHAIN_ANCHOR_PALETTE = { edge: '#7df9ff', halo: '#22d3ee', fill: '#0e7490' };
-import CellShell, { GENERIC_SHELL_SIZE, TAGGED_SHELL_SIZE } from './CellShell';
-import CellCrystal from './CellCrystal';
 import CellNucleus from './CellNucleus';
 
 // ---------------------------------------------------------------------------
 // Block trigger — written by CellGalaxy on every block, consumed by:
 //   • NervePulses (shockwave-delay timing for cell→cell pulses)
 //   • CkbNodeAnchor (icosahedron halo flash)
-//   • cellHybridMaterial / CellShell — fragment-shader rings expanding
-//     outward from the miner anchor that brighten existing cells / shells
+//   • cellHybridMaterial — fragment-shader rings expanding
+//     outward from the miner anchor that brighten existing far-field cells
 //     as they pass.
-// The geometric block-cube + particle-burst was removed; the canopy
-// shockwave (this brightness ring) and the icosahedron neural
-// discharge are what carry the block visually now.
+// The geometric block cube was removed; one A carrier identity now passes
+// through the anchor halo, canopy wave, routes, and local write seals.
 // ---------------------------------------------------------------------------
 
 export interface BlockEventTrigger {
@@ -54,6 +61,8 @@ export interface BlockEventTrigger {
   firedAt: number;
   /** World-space anchor of the originating CKB node. */
   origin: [number, number, number];
+  /** Stable A carrier identity for this observed block. */
+  color: [number, number, number];
 }
 
 import {
@@ -88,11 +97,13 @@ interface CellGalaxyProps {
   universeSeed?: number;
   /** Currently selected node id (drives the CKB node selection reticle). */
   selectedId: string | null;
+  /** Currently selected Cell id (`cell:<id>`). Kept separate from the network
+   *  selection so both detail axes can remain open at the same time. */
+  selectedCellId?: string | null;
   onSelect: (id: string | null) => void;
   /** Map of cell.id → most-recent scene-seconds flash time. Owned by the
    *  consumer so overlay layers (e.g. RCG's NeuralNetwork) can write into
-   *  the same buffer that CellGalaxy's block-event highlights feed and
-   *  that CellShell consumes per frame. */
+   *  the same buffer that CellGalaxy's block-event highlights feed. */
   cellFlashRef: React.MutableRefObject<Map<number, number>>;
   /** Set true whenever cellFlashRef gains an entry that should appear on
    *  the next frame. Cleared after the per-cell write loop runs. Lets
@@ -101,7 +112,7 @@ interface CellGalaxyProps {
   flashDirtyRef: React.MutableRefObject<boolean>;
   /** Optional overlay rendered inside the cell galaxy's rotating
    *  world-space group. Used by consumers to add domain-specific
-   *  animations (e.g. RCG's NeuralNetwork + DendriticBurst) atop the
+   *  animations (e.g. consensus routes + write seals) atop the
    *  cell field without coupling CellGalaxy to non-generic components. */
   overlay?: ReactNode;
   /** Seconds after the block pulse at which the LOCAL node applies the block —
@@ -122,19 +133,8 @@ interface CellGalaxyProps {
   entryArrivalS?: number;
 }
 
-/** Per-tag palette. The cell-galaxy projection ships opaque tag strings
- *  ("wallet" | "dex" | "cf" | "ckbloom" in the simulator); colour lookup
- *  is a runtime map on the SPA. Unknown tags fall back to GENERIC_COLOR. */
-const COLOR_BY_TAG: Record<string, [number, number, number]> = {
-  ckbloom: [0.94, 0.67, 0.99],   // #f0abfc
-  dex:     [0.99, 0.83, 0.30],   // #fcd34d
-  cf:      [0.99, 0.64, 0.69],   // #fda4af
-  wallet:  [0.43, 0.91, 0.72],   // #6ee7b7
-};
-const GENERIC_COLOR: [number, number, number] = [1.0, 0.40, 0.44]; // luminous rose — sits in the crimson nerve's colour family (was pale star-blue)
-
 // Cell point sizes in world units. The hybrid shader draws the anchored
-// core/glow sprite, and CellShell draws the faceted exterior around it.
+// core/glow sprite; the closest points expand into the shared A braid LOD.
 const GENERIC_CELL_POINT_SIZE = 1.6;
 const TAGGED_CELL_POINT_SIZE = 3.0;
 
@@ -151,7 +151,7 @@ const TAGGED_CELL_POINT_SIZE = 3.0;
  * receive the block) — distinct from, and earlier than, the local node's own
  * apply. The cknerv colony caller instead passes the LOCAL node as `entryWorld`
  * with `entryArrivalS == localReceiveDelayS` (our node IS the galaxy's entry
- * point — the queen is fed by us), so there the wave-time and the local-apply
+ * point — the local ledger receives here), so there the wave-time and local-apply
  * time coincide rather than the wave leading.
  */
 export function selectWaveAnchor(
@@ -186,6 +186,29 @@ export function writeFlashSlots(
   }
 }
 
+/** Preserve the deterministic cache order while pinning one selected Cell into
+ * the visible prefix. Quality changes may reduce the prefix, but an identity the
+ * user is already inspecting must never disappear merely because the renderer
+ * shed background capacity. The tail remains intact for live-id pruning. */
+export function pinSelectedCellInVisiblePrefix(
+  cells: Cell[],
+  visibleCount: number,
+  selectedCellId: number | null,
+): Cell[] {
+  if (selectedCellId === null || visibleCount <= 0 || visibleCount >= cells.length) {
+    return cells;
+  }
+  const selectedIndex = cells.findIndex((cell) => cell.id === selectedCellId);
+  if (selectedIndex < 0 || selectedIndex < visibleCount) return cells;
+  const pinned = cells.slice();
+  const boundaryIndex = visibleCount - 1;
+  [pinned[boundaryIndex], pinned[selectedIndex]] = [
+    pinned[selectedIndex],
+    pinned[boundaryIndex],
+  ];
+  return pinned;
+}
+
 export interface CellBufferTargets {
   /** Shared per-cell attribute arrays consumed by the hybrid Points layer. */
   posArr:   Float32Array;
@@ -217,7 +240,8 @@ export function writeCellBuffers(
       : toSceneSeconds(c.death_at_ms) + BLOCK_HIGHLIGHT_DELAY_S;
     const flashAtS = flashMap.get(c.id) ?? -1e9;
 
-    const color = (c.tag !== null && COLOR_BY_TAG[c.tag]) || GENERIC_COLOR;
+    const visual = deriveCellVisual(c);
+    const color = consensusCellColor(visual);
     targets.posArr[i * 3 + 0]   = c.pos_seed[0];
     targets.posArr[i * 3 + 1]   = c.pos_seed[1];
     targets.posArr[i * 3 + 2]   = c.pos_seed[2];
@@ -271,7 +295,7 @@ function CkbNodeAnchor({
   position: [number, number, number];
   selected: boolean;
   onSelect: (id: string | null) => void;
-  flashRef?: { current: { firedAt: number } | null };
+  flashRef?: { current: { firedAt: number; color: [number, number, number] } | null };
 }) {
   const bodyRef = useRef<THREE.Group>(null);
   // Halo material drives the new-block flash exactly the way GlowNode
@@ -309,7 +333,12 @@ function CkbNodeAnchor({
       const age = simClock.elapsedSec - trigger.firedAt;
       if (age >= 0 && age < ANCHOR_FLASH_DURATION_S) {
         target = ANCHOR_FLASH_PEAK_INTENSITY;
+        haloMat.uniforms.uColor.value.setRGB(...trigger.color);
+      } else {
+        haloMat.uniforms.uColor.value.set(palette.halo);
       }
+    } else {
+      haloMat.uniforms.uColor.value.set(palette.halo);
     }
     intensityRef.current += (target - intensityRef.current) * Math.min(1, dt * 12);
 
@@ -429,8 +458,8 @@ export function CkbSelectionReticle({ size }: { size: number }) {
 // ---------------------------------------------------------------------------
 //
 // Why screen-space, not 3D raycast:
-//   • The visible cell footprint (shell wireframe + anchored core sprite) is tiny
-//     in world units (≤ ~0.25 world units shell, ~1.6–3.0 point size) but ~5–15 px
+//   • The visible cell footprint (anchored core sprite + near braid) is tiny
+//     in world units but ~5–15 px
 //     on screen. A 3D-radius hitbox has to be huge in world units to be
 //     clickable, which causes overlapping hitboxes in the dense core and
 //     "nearest along ray" picks a cell that isn't the one the user aimed
@@ -442,13 +471,12 @@ export function CkbSelectionReticle({ size }: { size: number }) {
 //
 // Pick radius is synced with the visible cell footprint — never a fixed
 // number. For every cell, on every click:
-//   pickRadius_px = max(cellPointHalfExtent_px, shellCircumradius_px)
+//   pickRadius_px = max(cellPointHalfExtent_px, braidCircumradius_px)
 // where both terms come from the live shaders' world→screen mapping:
 //   gl_PointSize ≈ aSize × 2 × (viewportHeight/2) / viewZ   (hybrid core sprite)
-//   shellR_world = aSize_shell × shellScale            (CellShell.tsx)
+//   braidR_world = the production A LOD's interaction-aware screen radius
 // Zoom in → cells appear bigger → pick radius grows the same way.
-// Increase `shellScale` → shell grows → pick radius grows. No constant
-// slop term — what you see is what you click.
+// No constant slop term — what you see is what you click.
 //
 // Performance: O(N) projections per click, no per-frame cost. N ≤ 6000
 // (INSTANCE_CAPACITY); each iteration is a couple of Vector3 mul+project
@@ -456,6 +484,8 @@ export function CkbSelectionReticle({ size }: { size: number }) {
 
 interface CellPickerProps {
   cellsListRef: React.MutableRefObject<Cell[]>;
+  selectedCellIdRef: React.MutableRefObject<number | null>;
+  hoveredCellIdRef: React.MutableRefObject<number | null>;
   onSelect: (id: string | null) => void;
 }
 
@@ -464,22 +494,17 @@ interface CellPickerProps {
  *  an intersect for the cell whose own visual radius covers the click.
  *  The intersect carries `instanceId` so the existing `cell:${id}`
  *  selection contract is preserved. */
-function CellPicker({ cellsListRef, onSelect }: CellPickerProps) {
+function CellPicker({
+  cellsListRef,
+  selectedCellIdRef,
+  hoveredCellIdRef,
+  onSelect,
+}: CellPickerProps) {
   const ref = useRef<THREE.Object3D>(null);
-  const { size } = useThree();
-  // Subscribe to the same `shellScale` knob CellShell.tsx uses. Leva
-  // dedupes by folder+key, so we read the live value without
-  // duplicating the panel UI and the click radius tracks the shell
-  // exactly as the user resizes it.
-  const { shellScale } = useControls('Galaxy 共识记忆', {
-    shellScale: { value: 1.0, min: 0.1, max: 3.0, step: 0.05, label: 'scale' },
-  });
-  // Live refs so the raycast closure reads the current viewport and
-  // shellScale without having to rebind on every change.
+  const { gl, size } = useThree();
+  // Live viewport ref keeps the raycast closure current without rebinding.
   const sizeRef = useRef(size);
   sizeRef.current = size;
-  const shellScaleRef = useRef(shellScale);
-  shellScaleRef.current = shellScale;
 
   useEffect(() => {
     const node = ref.current;
@@ -508,7 +533,6 @@ function CellPicker({ cellsListRef, onSelect }: CellPickerProps) {
       const { width, height } = sizeRef.current;
       const halfW = width * 0.5;
       const halfH = height * 0.5;
-      const liveShellScale = shellScaleRef.current;
 
       const matrix = this.matrixWorld;
       let bestIdx = -1;
@@ -532,19 +556,29 @@ function CellPicker({ cellsListRef, onSelect }: CellPickerProps) {
         //     — matches the hybrid shader's gl_PointSize formula
         //     (aSize × 2 × depthToPx); the sprite quad is what the user
         //     sees as the core/glow.
-        //   shell circumradius (px) = shellWorldR × halfH / viewZ
-        //     — matches the CellShell vertex shader where the
-        //     truncated-octahedron's max vertex norm is aSize × scale.
+        //   braid circumradius (px) = BRAID_PICK_RADIUS × halfH / viewZ.
         // Take the larger so neither layer can leak outside the
         // clickable area. No constant slop — strictly visual.
         const isTagged = c.tag !== null;
         const cellPointAsize = isTagged ? TAGGED_CELL_POINT_SIZE : GENERIC_CELL_POINT_SIZE;
-        const shellWorldR =
-          (isTagged ? TAGGED_SHELL_SIZE : GENERIC_SHELL_SIZE) * liveShellScale;
         const depthToPx = halfH / viewZ;
         const cellPointPxR = cellPointAsize * depthToPx;
-        const shellPxR = shellWorldR * depthToPx;
-        const pickPxR = cellPointPxR > shellPxR ? cellPointPxR : shellPxR;
+        const focus = cellFocusTarget(
+          c.id,
+          selectedCellIdRef.current,
+          hoveredCellIdRef.current,
+        );
+        const braidScale = focusedBraidScale(
+          viewZ,
+          height,
+          camera.projectionMatrix.elements[5],
+          focus,
+        );
+        const braidPxR = CONSENSUS_BRAID_LOCAL_RADIUS
+          * braidScale
+          * camera.projectionMatrix.elements[5]
+          * depthToPx;
+        const pickPxR = cellPointPxR > braidPxR ? cellPointPxR : braidPxR;
         const pickPxRSq = pickPxR * pickPxR;
 
         cellNdc.copy(cellWorld).project(camera);
@@ -589,16 +623,35 @@ function CellPicker({ cellsListRef, onSelect }: CellPickerProps) {
       // future remount doesn't carry a stale closure.
       node.raycast = THREE.Object3D.prototype.raycast;
     };
-  }, [cellsListRef]);
+  }, [cellsListRef, hoveredCellIdRef, selectedCellIdRef]);
+
+  useEffect(() => () => {
+    if (gl.domElement.style.cursor === 'pointer') gl.domElement.style.cursor = '';
+  }, [gl]);
+
+  const setHovered = (id: number | null) => {
+    hoveredCellIdRef.current = id;
+    gl.domElement.style.cursor = id === null ? '' : 'pointer';
+  };
 
   return (
     <object3D
       ref={ref}
+      onPointerMove={(e) => {
+        if (typeof e.instanceId !== 'number') {
+          setHovered(null);
+          return;
+        }
+        const cell = cellsListRef.current[e.instanceId];
+        setHovered(cell?.id ?? null);
+      }}
+      onPointerOut={() => setHovered(null)}
       onClick={(e) => {
         e.stopPropagation();
         if (typeof e.instanceId !== 'number') return;
         const cell = cellsListRef.current[e.instanceId];
         if (!cell) return;
+        setHovered(cell.id);
         onSelect(`cell:${cell.id}`);
       }}
     />
@@ -617,23 +670,31 @@ function CellPicker({ cellsListRef, onSelect }: CellPickerProps) {
  * attribute buffers. The reducer is pulled from the cellGalaxy module;
  * `cellHybridMaterial` renders the anchored cell core/glow sprite.
  *
- * Each cell is rendered as one anchored hybrid Points sprite plus its
- * CellShell wireframe. Block shockwaves brighten/expand that existing
- * core and shell; no separate drifted halo Points layer is mounted.
+ * Far cells are one anchored hybrid Points sprite. The selected A language
+ * expands the closest cells into one batched braid LOD without per-cell
+ * objects. Block shockwaves continue to brighten the anchored far core.
  */
-export default function CellGalaxy({ ckbNodeIds, minerCkbNodeIds, universeSeed, selectedId, onSelect, cellFlashRef, flashDirtyRef, overlay, localReceiveDelayS = 0, entryWorld = null, entryArrivalS = 0 }: CellGalaxyProps) {
+export default function CellGalaxy({
+  ckbNodeIds,
+  minerCkbNodeIds,
+  universeSeed,
+  selectedId,
+  selectedCellId = null,
+  onSelect,
+  cellFlashRef,
+  flashDirtyRef,
+  overlay,
+  localReceiveDelayS = 0,
+  entryWorld = null,
+  entryArrivalS = 0,
+}: CellGalaxyProps) {
   const groupRef = useRef<THREE.Group>(null);
   // Server-driven cell list. The component is now a pure visual layer:
   // it reads cells from the cache and writes their xyz / born / death
   // attributes into the Points BufferGeometry each frame. Birth / death / tag
   // are reduced server-side in `simulator/src/dashboard/projections/cells.rs`.
   const cellsCache = useCellGalaxy();
-  const { quality } = useControls('Time', {
-    quality: {
-      value: 'high' as 'high' | 'med' | 'low',
-      options: ['high', 'med', 'low'] as const,
-    },
-  });
+  const { effective: quality } = useQualityRuntime();
   const cellGalaxyMul = QUALITY_PRESETS[quality].cellGalaxyMul;
   const dischargeArms = QUALITY_PRESETS[quality].dischargeArms;
   /** Per-frame mirror of the cellsList iteration order, written by
@@ -644,6 +705,9 @@ export default function CellGalaxy({ ckbNodeIds, minerCkbNodeIds, universeSeed, 
    *  hitbox's `e.instanceId` did, so the `cell:${id}` selection
    *  contract is preserved. */
   const cellsListRef = useRef<Cell[]>([]);
+  const selectedCellIdRef = useRef<number | null>(null);
+  const hoveredCellIdRef = useRef<number | null>(null);
+  selectedCellIdRef.current = selectedCellNumericId(selectedCellId);
   /** Identity of the cells Map last seen by useSimFrame. When
    *  cellsCache.cells === lastCellsRef.current, no birth/death/tag/gc
    *  delta has landed since our previous frame, so the static per-cell
@@ -652,12 +716,15 @@ export default function CellGalaxy({ ckbNodeIds, minerCkbNodeIds, universeSeed, 
    *  flags. Pulse-only frames (which mutate lastPulseAtMs but leave
    *  the cells Map identity-stable) ride the skip path. */
   const lastCellsRef = useRef<Map<number, Cell> | null>(null);
-  /** Last-seen `cellGalaxyMul` (from the leva quality preset). Including
+  /** Last-seen `cellGalaxyMul` (from the effective runtime quality preset).
+   *  The preset can be owned by the adaptive controller or a manual override.
+   *  Including
    *  this in the change predicate keeps the skip-path correct when the
    *  user toggles quality between high/med/low while cells are stable —
    *  otherwise `cellGeometry.setDrawRange` stays at the old preset
    *  until the next birth/death/tag/gc delta lands. */
   const lastMulRef = useRef<number>(0);
+  const lastPinnedCellIdRef = useRef<number | null>(null);
   /** Per-frame mirror of the cell draw count. Written in the
    *  inputsChanged path; read by the flash-only fast path so neither
    *  path needs to recompute the clamp. */
@@ -673,30 +740,20 @@ export default function CellGalaxy({ ckbNodeIds, minerCkbNodeIds, universeSeed, 
    *  ckbNodeIds. */
   const chainNodeFlashRefs = useMemo(() => {
     return ckbNodeIds.map(() =>
-      ({ current: null as { firedAt: number } | null }),
+      ({ current: null as { firedAt: number; color: [number, number, number] } | null }),
     );
   }, [ckbNodeIds]);
   // Round-robin origin selector: blocks rotate through known CKB nodes so
   // the animation visibly samples the network rather than always firing
   // from the same anchor.
   const blockOriginIdxRef = useRef<number>(0);
-  // Round-robin shockwave slot. The cell core/shell shaders own a
+  // Round-robin shockwave slot. The far-field cell core shader owns a
   // SHOCKWAVE_SLOTS-sized ring buffer of (fireAt, originXZ); each new
   // block trigger writes into the next slot so concurrent in-flight
   // waves coexist instead of cancelling each other (mesh profile fires
   // blocks every ~2 s while each wave lives 5 s, so ~3 waves are alive
   // at once).
   const shockSlotRef = useRef<number>(0);
-  const shellShockwaveUniformsRef = useRef<{
-    at: Float32Array;
-    originXZ: Float32Array;
-    colorBoost: { value: number };
-    alphaBoost: { value: number };
-    colorCeil: { value: number };
-    alphaCeil: { value: number };
-    sizeBoost: { value: number };
-    trailBoost: { value: number };
-  } | null>(null);
   /** Mirrors `groupRef.current.rotation.y` each frame so child
    *  components (NervePulses) can project world-frame anchors into the
    *  cells-group's rotating local frame without traversing the
@@ -738,6 +795,12 @@ export default function CellGalaxy({ ckbNodeIds, minerCkbNodeIds, universeSeed, 
     () => new THREE.BufferAttribute(new Float32Array(INSTANCE_CAPACITY), 1),
     [],
   );
+  // Smooth hover/selection envelope. CellNucleus owns the easing and writes
+  // this shared attribute so the far point and the expanded braid stay in sync.
+  const cellFocusAttr = useMemo(
+    () => new THREE.BufferAttribute(new Float32Array(INSTANCE_CAPACITY), 1),
+    [],
+  );
 
   const hybridMaterial = useMemo(() => makeCellHybridMaterial(), []);
   const flareMaterial = useMemo(() => makeCellFlareMaterial(), []);
@@ -751,6 +814,7 @@ export default function CellGalaxy({ ckbNodeIds, minerCkbNodeIds, universeSeed, 
     g.setAttribute('aFlashAt', cellFlashAtAttr);
     g.setAttribute('aSize', cellSizeAttr);
     g.setAttribute('aDetail', cellDetailAttr);
+    g.setAttribute('aFocus', cellFocusAttr);
     g.setDrawRange(0, 0);
     // Permissive bounding sphere — cells live in a Gaussian field bounded
     // by SIGMA, core sprites extend a few units past that. Skipping
@@ -766,12 +830,12 @@ export default function CellGalaxy({ ckbNodeIds, minerCkbNodeIds, universeSeed, 
     cellFlashAtAttr,
     cellSizeAttr,
     cellDetailAttr,
+    cellFocusAttr,
   ]);
 
   // Bind the duration uniforms once. The wall→scene-seconds conversion
   // basis is derived per-frame from (Date.now(), simClock.elapsedSec) so
-  // it survives Canvas remounts (e.g. quality toggles, which preserve
-  // simClock by design).
+  // it survives any Canvas remount because simClock is module-owned.
   useEffect(() => {
     hybridMaterial.uniforms.uBirthDurS.value = BIRTH_DURATION_MS / 1000;
     hybridMaterial.uniforms.uDeathDurS.value = DEATH_DURATION_MS / 1000;
@@ -797,8 +861,8 @@ export default function CellGalaxy({ ckbNodeIds, minerCkbNodeIds, universeSeed, 
 
     const now = simClock.elapsedSec;
     // Derive the wall→scene-seconds basis live each frame instead of
-    // anchoring on mount. Canvas remounts (quality toggle) preserve
-    // simClock.elapsedSec, so a mount-time Date.now() anchor would
+    // anchoring on mount. Canvas remounts preserve simClock.elapsedSec,
+    // so a mount-time Date.now() anchor would
     // desync the shader's uTime from aBornAt/aDeathAt and cause new
     // events to render as if they had already happened.
     const sceneStartWallMs = Date.now() - now * 1000;
@@ -811,16 +875,22 @@ export default function CellGalaxy({ ckbNodeIds, minerCkbNodeIds, universeSeed, 
     //    or quality-preset multiplier change.
     const inputsChanged =
       cellsCache.cells !== lastCellsRef.current ||
-      cellGalaxyMul !== lastMulRef.current;
+      cellGalaxyMul !== lastMulRef.current ||
+      selectedCellIdRef.current !== lastPinnedCellIdRef.current;
     let cellsList = cellsListRef.current;
     let count = drawCountRef.current;
     if (inputsChanged) {
-      cellsList = Array.from(cellsCache.cells.values());
-      cellsListRef.current = cellsList;
+      const allCells = Array.from(cellsCache.cells.values());
       count = Math.min(
-        cellsList.length,
+        allCells.length,
         Math.max(1, Math.floor(INSTANCE_CAPACITY * cellGalaxyMul)),
       );
+      cellsList = pinSelectedCellInVisiblePrefix(
+        allCells,
+        count,
+        selectedCellIdRef.current,
+      );
+      cellsListRef.current = cellsList;
       drawCountRef.current = count;
       const flashMap = cellFlashRef.current;
 
@@ -858,6 +928,7 @@ export default function CellGalaxy({ ckbNodeIds, minerCkbNodeIds, universeSeed, 
 
       lastCellsRef.current = cellsCache.cells;
       lastMulRef.current = cellGalaxyMul;
+      lastPinnedCellIdRef.current = selectedCellIdRef.current;
     }
 
     // 2. Flash-only rewrite. When cells didn't change but a block event or
@@ -886,25 +957,15 @@ export default function CellGalaxy({ ckbNodeIds, minerCkbNodeIds, universeSeed, 
     // the block-fire trigger below — so a knob dragged mid-wave takes effect on
     // the in-flight wave, not just the next block. Defaults in LIVE.galaxy.*
     // equal the shipped literals, so with the panel closed these are byte-exact
-    // self-writes (zero drift). Both the core (hybrid) and shell materials read
-    // the same six uniforms via makeShockwaveUniforms().
+    // self-writes (zero drift).
     hybridMaterial.uniforms.uShockwaveColorBoost.value = LIVE.galaxy.colorBoost;
     hybridMaterial.uniforms.uShockwaveAlphaBoost.value = LIVE.galaxy.alphaBoost;
     hybridMaterial.uniforms.uShockwaveColorCeil.value = LIVE.galaxy.colorCeil;
     hybridMaterial.uniforms.uShockwaveAlphaCeil.value = LIVE.galaxy.alphaCeil;
     hybridMaterial.uniforms.uShockwaveSizeBoost.value = LIVE.galaxy.sizeBoost;
     hybridMaterial.uniforms.uShockwaveTrailBoost.value = LIVE.galaxy.trailBoost;
-    hybridMaterial.uniforms.uWarmth.value = LIVE.cell.warmth; // cell body rose→ember push
-    hybridMaterial.uniforms.uCenterDim.value = LIVE.cell.centerDim; // point ①: galaxy-centre brightness floor
-    const shell = shellShockwaveUniformsRef.current;
-    if (shell) {
-      shell.colorBoost.value = LIVE.galaxy.colorBoost;
-      shell.alphaBoost.value = LIVE.galaxy.alphaBoost;
-      shell.colorCeil.value = LIVE.galaxy.colorCeil;
-      shell.alphaCeil.value = LIVE.galaxy.alphaCeil;
-      shell.sizeBoost.value = LIVE.galaxy.sizeBoost;
-      shell.trailBoost.value = LIVE.galaxy.trailBoost;
-    }
+    hybridMaterial.uniforms.uWarmth.value = LIVE.cell.warmth; // hash-stable A hue → gold bias
+    hybridMaterial.uniforms.uCenterDim.value = LIVE.cell.centerDim; // shared centre-energy floor
     flareMaterial.uniforms.uTime.value = now;
     flareMaterial.uniforms.uViewportHeight.value = state.size.height;
     flareMaterial.uniforms.uDischargeArms.value = dischargeArms;
@@ -939,6 +1000,7 @@ export default function CellGalaxy({ ckbNodeIds, minerCkbNodeIds, universeSeed, 
         // pulse instant. Zero when we have no peer to receive from.
         const receiveDelayS = localReceiveDelayS;
         const blockTriggerSceneS = simClock.elapsedSec + receiveDelayS;
+        const blockColor = consensusBlockColor(pulseAtMs);
 
         // The canopy brightness wave is owned by the caller-supplied entry point
         // (see selectWaveAnchor): fire the wave (shockwave ring + ring-swept cell
@@ -960,15 +1022,16 @@ export default function CellGalaxy({ ckbNodeIds, minerCkbNodeIds, universeSeed, 
           );
 
         // Block trigger: anchored at the local node icosahedron (it applies
-        // the received block). Used by NervePulses' shockwave-delay pathway
+        // the received block). Used by consensus routes' shockwave-delay pathway
         // and by the icosahedron's own halo flash envelope.
         blockEventRef.current = {
           firedAt: blockTriggerSceneS,
           origin: worldOrigin,
+          color: blockColor,
         };
         const flashSlot = chainNodeFlashRefs[safeIdx];
         if (flashSlot) {
-          flashSlot.current = { firedAt: blockTriggerSceneS };
+          flashSlot.current = { firedAt: blockTriggerSceneS, color: blockColor };
         }
 
         // Fire the canopy brightness shockwave: a fragment-shader ring
@@ -988,15 +1051,16 @@ export default function CellGalaxy({ ckbNodeIds, minerCkbNodeIds, universeSeed, 
         shockSlotRef.current = (slot + 1) % SHOCKWAVE_SLOTS;
         const coreAt = hybridMaterial.uniforms.uShockwaveAt.value as Float32Array;
         const coreXZ = hybridMaterial.uniforms.uShockwaveOriginXZ.value as Float32Array;
-        coreAt[slot] = fireT;
-        coreXZ[slot * 2] = waveOrigin[0];
-        coreXZ[slot * 2 + 1] = waveOrigin[2];
-        const shellWave = shellShockwaveUniformsRef.current;
-        if (shellWave) {
-          shellWave.at[slot] = fireT;
-          shellWave.originXZ[slot * 2] = waveOrigin[0];
-          shellWave.originXZ[slot * 2 + 1] = waveOrigin[2];
-        }
+        const coreColor = hybridMaterial.uniforms.uShockwaveColor.value as Float32Array;
+        writeShockwaveSlot(
+          coreAt,
+          coreXZ,
+          coreColor,
+          slot,
+          fireT,
+          [waveOrigin[0], waveOrigin[2]],
+          blockColor,
+        );
         // Block-cell highlight: schedule a flash on every cell touched
         // by this block, timed to the moment the visible canopy
         // shockwave ring sweeps that cell. Each cell ignites just
@@ -1004,7 +1068,7 @@ export default function CellGalaxy({ ckbNodeIds, minerCkbNodeIds, universeSeed, 
         // it (NervePulses adds BLOCK_HIGHLIGHT_LEAD_S on top of the
         // same shockwave-arrival time). Together: ring sweeps cell →
         // cell ignites → trail departs → trail lands → target flash +
-        // DendriticBurst.
+        // protocol write seal.
         //
         // Distance is measured in the rotating local frame (where pos_seed
         // lives), so we project each origin's xz through the inverse y-rotation.
@@ -1093,52 +1157,48 @@ export default function CellGalaxy({ ckbNodeIds, minerCkbNodeIds, universeSeed, 
           material={hybridMaterial}
           frustumCulled={false}
         />
-        {/* Co-located nerve-pulse flare — shares the cell geometry (so the
+        {/* Co-located protocol-write signal — shares the cell geometry (so the
             per-frame aFlashAt writes feed it for free) and renders only the
-            discharge, additively, over a steady cell body. */}
+            contributor rails + agreement loops over a steady cell body. */}
         <points
           geometry={cellGeometry}
           material={flareMaterial}
           frustumCulled={false}
           renderOrder={1}
         />
-        {/* Consumer-supplied overlay — RCG supplies NeuralNetwork +
-            DendriticBurst here; chain-generic consumers can leave this
+        {/* Consumer-supplied overlay — the default app supplies consensus
+            routes + write seals here; chain-generic consumers can leave this
             empty or pass their own overlay layers. Lives inside the
             rotating group so overlay layers share the cells' xz layout
             and rotate with the canopy. */}
         {overlay}
 
-        {/* PROTOTYPE (feat/cell-crystal): the warm faceted crystal CONTAINER
-            (edges + faces) replaces the cyan TO wireframe cage. The old cage +
-            6-solid avatar are hidden for this first live sign-off; the identity
-            nucleus comes in the next increment. Warm glow (points, above) kept. */}
-        <CellCrystal />
+        {/* Production A language: far = hash-stable consensus light;
+            mid = contributor paths; near = stitches + agreement knots. */}
         <CellNucleus
           cellsListRef={cellsListRef}
           drawCountRef={drawCountRef}
           groupRef={groupRef}
           detailAttr={cellDetailAttr}
+          focusAttr={cellFocusAttr}
+          selectedCellIdRef={selectedCellIdRef}
+          hoveredCellIdRef={hoveredCellIdRef}
         />
-        {/* <CellShell
-          cellFlashRef={cellFlashRef}
-          flashDirtyRef={flashDirtyRef}
-          shockwaveUniformsRef={shellShockwaveUniformsRef}
-        /> */}
         {/* Screen-space cell picker — replaces the legacy InstancedMesh
             sphere hitbox. Lives inside the rotating group so cell
             pos_seed (local frame) projects through the same world
-            transform the visible core / shell layers use. */}
-        <CellPicker cellsListRef={cellsListRef} onSelect={onSelect} />
+            transform the visible core / braid layers use. */}
+        <CellPicker
+          cellsListRef={cellsListRef}
+          selectedCellIdRef={selectedCellIdRef}
+          hoveredCellIdRef={hoveredCellIdRef}
+          onSelect={onSelect}
+        />
       </group>
 
-      {/* No more geometric block decoration — the block-cube,
-          dissolve cloud, and canopy ripple ring were retired in N1.
-          The visible "block landed" cue now lives in the
-          source CKB icosahedron's neural discharge (scale pump +
-          radial spark rays + brightness flash inside CkbNodeAnchor),
-          which reads as a firing neuron rather than a mechanical
-          packet emerging from a cube. */}
+      {/* The old geometric block decoration is retired. CkbNodeAnchor exposes
+          only the protocol carrier hue; BlockDeliveryLayer and the canopy
+          wave continue that same identity into the Cell field. */}
 
       {/* Static icosahedra at chain-layer world positions. Each
           receives its own flashRef so it can light up when it sources

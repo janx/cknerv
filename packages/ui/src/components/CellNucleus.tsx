@@ -1,156 +1,339 @@
-// CellNucleus — the LOD identity-nucleus layer. Renders the "fuller" dendrite
-// nucleus (curved branches + glowing seed-core mass + soft inner glow, grown from
-// content_hash) ONLY for the handful of cells the camera is close to, and writes a
-// per-cell `detail` factor into the glow geometry so those cells' white-hot peak
-// fades and the nucleus reads. Far cells → detail 0 → the galaxy glow is
-// byte-identical to before. Camera-driven → raw useFrame (works while paused).
+// CellNucleus — production LOD for the selected A visual language.
 //
-// Three merged layers: curved branch LineSegments + tight core Points + soft glow
-// Points. Rebuilt each frame for the near set (cheap — only a few cells). Lives
-// inside CellGalaxy's rotating group, so nucleus geometry shares the cells' frame.
+// Far cells remain one hash-stable consensus light in the shared Points draw.
+// The closest cells expand into the same contributor paths used by the detail
+// portrait: mid LOD reveals the braid, near LOD resolves stitches, agreement
+// bridges and knots. All admitted Cells share two Line2 draws plus one point
+// draw; there are no per-Cell React objects or WebGL materials.
 import { useEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
-import { dendriteNucleus, type DendriteNucleus } from '../derives/dendriteNucleus';
-import { makeNucleusPointMaterial } from '../materials/cellNucleusMaterial';
-import { LIVE } from '../tweaks/liveTweaks';
+import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js';
+import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js';
+import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 import type { Cell } from '@cknerv/types';
+import {
+  deriveGalaxyConsensusBraid,
+  writeGalaxyConsensusBraidBuffers,
+  type GalaxyConsensusBraid,
+  type GalaxyNucleusBuffers,
+  type GalaxyNucleusCursor,
+} from '../derives/galaxyNucleus.derive';
+import {
+  cellNucleusLodRefreshDue,
+  cellFocusTarget,
+  dampCellFocus,
+  focusedBraidScale,
+} from '../derives/cellInteraction.derive';
+import { makeNucleusPointMaterial } from '../materials/cellNucleusMaterial';
+import { QUALITY_PRESETS, useQualityRuntime } from '../tweaks/qualityPresets';
 
-const CRYSTAL_R = 0.14;   // matches CellCrystal — dendrite local units scale by this
-const NEAR_DIST = 2.5;    // camera distance at/inside which detail = 1  (tunable, calibrate live)
-const FAR_DIST = 8.0;     // camera distance beyond which detail = 0
-const MAX_NEAR = 12;      // cap cells rendered in full nucleus detail
-const MAX_SEG = 480;      // per-cell segment cap (fuller dendrite emits ~300-405)
-const MAX_CORE = 100;     // per-cell tight-core cap
-const MAX_GLOW = 4;       // per-cell soft-glow cap
-const LINE_WARM: [number, number, number] = [1.0, 0.72, 0.42]; // warmth=1 (gold)
-const LINE_COOL: [number, number, number] = [0.72, 0.85, 1.0]; // warmth=0 (blue-white)
+const NEAR_DIST = 2.5;
+const FAR_DIST = 9.5;
+const MAX_NEAR_CAPACITY = 12;
+const MAX_SEG = 420;
+const MAX_NODE = 12;
+
+const BRAID_GLOW_WIDTH_PX = 2.7;
+const BRAID_CORE_WIDTH_PX = 0.78;
+const BRAID_GLOW_OPACITY = 0.11;
+const BRAID_CORE_OPACITY = 0.86;
 
 interface Props {
   cellsListRef: { readonly current: Cell[] };
   drawCountRef: { readonly current: number };
   groupRef: { readonly current: THREE.Group | null };
   detailAttr: THREE.BufferAttribute;
+  focusAttr: THREE.BufferAttribute;
+  selectedCellIdRef: { readonly current: number | null };
+  hoveredCellIdRef: { readonly current: number | null };
 }
 
-export default function CellNucleus({ cellsListRef, drawCountRef, groupRef, detailAttr }: Props) {
-  const lineCap = MAX_NEAR * MAX_SEG * 2;
-  const coreCap = MAX_NEAR * MAX_CORE;
-  const glowCap = MAX_NEAR * MAX_GLOW;
+function makePointGeometry(
+  position: Float32Array,
+  size: Float32Array,
+  alpha: Float32Array,
+): THREE.BufferGeometry {
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(position, 3));
+  geometry.setAttribute('aSize', new THREE.BufferAttribute(size, 1));
+  geometry.setAttribute('aAlpha', new THREE.BufferAttribute(alpha, 1));
+  geometry.setDrawRange(0, 0);
+  geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e6);
+  return geometry;
+}
 
-  const linePos = useMemo(() => new Float32Array(lineCap * 3), [lineCap]);
-  const lineCol = useMemo(() => new Float32Array(lineCap * 3), [lineCap]);
-  const corePos = useMemo(() => new Float32Array(coreCap * 3), [coreCap]);
-  const coreSize = useMemo(() => new Float32Array(coreCap), [coreCap]);
-  const coreAlpha = useMemo(() => new Float32Array(coreCap), [coreCap]);
-  const glowPos = useMemo(() => new Float32Array(glowCap * 3), [glowCap]);
-  const glowSize = useMemo(() => new Float32Array(glowCap), [glowCap]);
-  const glowAlpha = useMemo(() => new Float32Array(glowCap), [glowCap]);
+function makeBraidMaterial(linewidth: number, opacity: number): LineMaterial {
+  const material = new LineMaterial({
+    linewidth,
+    opacity,
+    transparent: true,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    toneMapped: false,
+  });
+  material.vertexColors = true;
+  material.worldUnits = false;
+  return material;
+}
 
-  const mkPoints = (pos: Float32Array, size: Float32Array, alpha: Float32Array) => {
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-    g.setAttribute('aSize', new THREE.BufferAttribute(size, 1));
-    g.setAttribute('aAlpha', new THREE.BufferAttribute(alpha, 1));
-    g.setDrawRange(0, 0); g.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e6);
-    return g;
-  };
-  const lineGeom = useMemo(() => {
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.BufferAttribute(linePos, 3));
-    g.setAttribute('color', new THREE.BufferAttribute(lineCol, 3));
-    g.setDrawRange(0, 0); g.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e6);
-    return g;
+export default function CellNucleus({
+  cellsListRef,
+  drawCountRef,
+  groupRef,
+  detailAttr,
+  focusAttr,
+  selectedCellIdRef,
+  hoveredCellIdRef,
+}: Props) {
+  const { effective: quality } = useQualityRuntime();
+  const nucleusNearCap = QUALITY_PRESETS[quality].nucleusNearCap;
+  const lineVertexCap = MAX_NEAR_CAPACITY * MAX_SEG * 2;
+  const nodeCap = MAX_NEAR_CAPACITY * MAX_NODE;
+  const linePos = useMemo(() => new Float32Array(lineVertexCap * 3), [lineVertexCap]);
+  const lineCol = useMemo(() => new Float32Array(lineVertexCap * 3), [lineVertexCap]);
+  const nodePos = useMemo(() => new Float32Array(nodeCap * 3), [nodeCap]);
+  const nodeSize = useMemo(() => new Float32Array(nodeCap), [nodeCap]);
+  const nodeAlpha = useMemo(() => new Float32Array(nodeCap), [nodeCap]);
+  const buffers = useMemo<GalaxyNucleusBuffers>(() => ({
+    linePos,
+    lineCol,
+    nodePos,
+    nodeSize,
+    nodeAlpha,
+  }), [linePos, lineCol, nodePos, nodeSize, nodeAlpha]);
+
+  const lineGeometry = useMemo(() => {
+    const geometry = new LineSegmentsGeometry();
+    geometry.setPositions(linePos);
+    geometry.setColors(lineCol);
+    geometry.instanceCount = 0;
+    geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e6);
+    return geometry;
   }, [linePos, lineCol]);
-  const coreGeom = useMemo(() => mkPoints(corePos, coreSize, coreAlpha), [corePos, coreSize, coreAlpha]);
-  const glowGeom = useMemo(() => mkPoints(glowPos, glowSize, glowAlpha), [glowPos, glowSize, glowAlpha]);
+  const nodeGeometry = useMemo(
+    () => makePointGeometry(nodePos, nodeSize, nodeAlpha),
+    [nodePos, nodeSize, nodeAlpha],
+  );
+  const glowMaterial = useMemo(
+    () => makeBraidMaterial(BRAID_GLOW_WIDTH_PX, BRAID_GLOW_OPACITY),
+    [],
+  );
+  const coreMaterial = useMemo(
+    () => makeBraidMaterial(BRAID_CORE_WIDTH_PX, BRAID_CORE_OPACITY),
+    [],
+  );
+  const nodeMaterial = useMemo(() => {
+    const material = makeNucleusPointMaterial(0.38);
+    material.uniforms.uWarmth.value = 0;
+    return material;
+  }, []);
+  const glow = useMemo(() => {
+    const line = new LineSegments2(lineGeometry, glowMaterial);
+    line.frustumCulled = false;
+    line.renderOrder = 2;
+    return line;
+  }, [lineGeometry, glowMaterial]);
+  const core = useMemo(() => {
+    const line = new LineSegments2(lineGeometry, coreMaterial);
+    line.frustumCulled = false;
+    line.renderOrder = 3;
+    return line;
+  }, [lineGeometry, coreMaterial]);
 
-  const lineMat = useMemo(() => new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }), []);
-  const coreMat = useMemo(() => makeNucleusPointMaterial(0.26), []); // tight bright pinpoint
-  const glowMat = useMemo(() => makeNucleusPointMaterial(0.46), []); // soft mass
-  useEffect(() => () => { lineGeom.dispose(); coreGeom.dispose(); glowGeom.dispose(); lineMat.dispose(); coreMat.dispose(); glowMat.dispose(); }, [lineGeom, coreGeom, glowGeom, lineMat, coreMat, glowMat]);
+  useEffect(() => () => {
+    lineGeometry.dispose();
+    nodeGeometry.dispose();
+    glowMaterial.dispose();
+    coreMaterial.dispose();
+    nodeMaterial.dispose();
+  }, [lineGeometry, nodeGeometry, glowMaterial, coreMaterial, nodeMaterial]);
 
-  const cache = useRef<Map<string, DendriteNucleus>>(new Map());
-  const near = useRef<{ cell: Cell; detail: number; dist: number }[]>([]);
-  const tmp = useMemo(() => new THREE.Vector3(), []);
-  const camPos = useMemo(() => new THREE.Vector3(), []);
+  // Cells are immutable cache values, so WeakMap naturally invalidates when a
+  // reducer replaces a Cell without growing an unbounded hash cache.
+  const cache = useRef<WeakMap<Cell, GalaxyConsensusBraid>>(new WeakMap());
+  const near = useRef<{
+    cell: Cell;
+    index: number;
+    detail: number;
+    cameraDetail: number;
+    focus: number;
+    dist: number;
+  }[]>([]);
+  const focusByCell = useRef<Map<number, number>>(new Map());
+  const cursor = useRef<GalaxyNucleusCursor>({ lineVertices: 0, nodes: 0 });
+  const lodElapsedS = useRef(Number.POSITIVE_INFINITY);
+  const lastCellsList = useRef<Cell[] | null>(null);
+  const lastCount = useRef(-1);
+  const lastSelectedCellId = useRef<number | null>(null);
+  const lastHoveredCellId = useRef<number | null>(null);
+  const lastNearCap = useRef(-1);
+  const localPosition = useMemo(() => new THREE.Vector3(), []);
+  const cameraPosition = useMemo(() => new THREE.Vector3(), []);
 
-  useFrame((state) => {
+  useFrame((state, deltaSeconds) => {
     const group = groupRef.current;
     const cells = cellsListRef.current;
     const count = Math.min(drawCountRef.current ?? 0, cells?.length ?? 0);
-    const detailArr = detailAttr.array as Float32Array;
-    if (!group || !cells || count === 0) return;
-    state.camera.getWorldPosition(camPos);
-    const gm = group.matrixWorld;
-    const vh = state.size.height;
-    const p11 = state.camera.projectionMatrix.elements[5]; // 1/tan(fov/2) → points sized as true world diameters
-    coreMat.uniforms.uViewportHeight.value = vh; coreMat.uniforms.uProjY.value = p11;
-    glowMat.uniforms.uViewportHeight.value = vh; glowMat.uniforms.uProjY.value = p11;
-    const warmth = LIVE.cell.warmth; // cell star warmth (blue-white ↔ gold)
-    coreMat.uniforms.uWarmth.value = warmth; glowMat.uniforms.uWarmth.value = warmth;
-    const lb0 = LINE_COOL[0] + (LINE_WARM[0] - LINE_COOL[0]) * warmth;
-    const lb1 = LINE_COOL[1] + (LINE_WARM[1] - LINE_COOL[1]) * warmth;
-    const lb2 = LINE_COOL[2] + (LINE_WARM[2] - LINE_COOL[2]) * warmth;
-
-    // 1. per-cell LOD detail (drives glow peak suppression) + collect near cells
-    near.current.length = 0;
-    for (let i = 0; i < count; i++) {
-      const c = cells[i];
-      tmp.set(c.pos_seed[0], c.pos_seed[1], c.pos_seed[2]).applyMatrix4(gm);
-      const dist = tmp.distanceTo(camPos);
-      let detail = (FAR_DIST - dist) / (FAR_DIST - NEAR_DIST);
-      detail = detail < 0 ? 0 : detail > 1 ? 1 : detail;
-      detailArr[i] = detail;
-      if (detail > 0.02) near.current.push({ cell: c, detail, dist });
-    }
-    detailAttr.needsUpdate = true;
-
-    // 2. nearest MAX_NEAR
-    near.current.sort((a, b) => a.dist - b.dist);
-    if (near.current.length > MAX_NEAR) near.current.length = MAX_NEAR;
-
-    // 3. build merged geometry (group-local coords = same frame as the cells)
-    let lv = 0, cv = 0, gv = 0;
-    for (const n of near.current) {
-      let d = cache.current.get(n.cell.content_hash);
-      if (!d) { d = dendriteNucleus(n.cell.content_hash); cache.current.set(n.cell.content_hash, d); }
-      const ox = n.cell.pos_seed[0], oy = n.cell.pos_seed[1], oz = n.cell.pos_seed[2];
-      const cr = lb0 * n.detail, cg = lb1 * n.detail, cb = lb2 * n.detail;
-      const segs = d.segments;
-      for (let s = 0; s + 5 < segs.length && lv + 2 <= lineCap; s += 6) {
-        linePos[lv * 3] = ox + segs[s] * CRYSTAL_R; linePos[lv * 3 + 1] = oy + segs[s + 1] * CRYSTAL_R; linePos[lv * 3 + 2] = oz + segs[s + 2] * CRYSTAL_R;
-        lineCol[lv * 3] = cr; lineCol[lv * 3 + 1] = cg; lineCol[lv * 3 + 2] = cb; lv++;
-        linePos[lv * 3] = ox + segs[s + 3] * CRYSTAL_R; linePos[lv * 3 + 1] = oy + segs[s + 4] * CRYSTAL_R; linePos[lv * 3 + 2] = oz + segs[s + 5] * CRYSTAL_R;
-        lineCol[lv * 3] = cr; lineCol[lv * 3 + 1] = cg; lineCol[lv * 3 + 2] = cb; lv++;
-      }
-      for (const nd of d.cores) {
-        if (cv >= coreCap) break;
-        corePos[cv * 3] = ox + nd.x * CRYSTAL_R; corePos[cv * 3 + 1] = oy + nd.y * CRYSTAL_R; corePos[cv * 3 + 2] = oz + nd.z * CRYSTAL_R;
-        coreSize[cv] = nd.s * CRYSTAL_R * 2.0; coreAlpha[cv] = n.detail; cv++;
-      }
-      for (const gl of d.glows) {
-        if (gv >= glowCap) break;
-        glowPos[gv * 3] = ox + gl.x * CRYSTAL_R; glowPos[gv * 3 + 1] = oy + gl.y * CRYSTAL_R; glowPos[gv * 3 + 2] = oz + gl.z * CRYSTAL_R;
-        glowSize[gv] = gl.s * CRYSTAL_R * 2.0; glowAlpha[gv] = gl.a * n.detail; gv++;
-      }
+    const detailArray = detailAttr.array as Float32Array;
+    const focusArray = focusAttr.array as Float32Array;
+    if (!group || !cells || count === 0) {
+      lineGeometry.instanceCount = 0;
+      nodeGeometry.setDrawRange(0, 0);
+      return;
     }
 
-    lineGeom.setDrawRange(0, lv); coreGeom.setDrawRange(0, cv); glowGeom.setDrawRange(0, gv);
-    (lineGeom.getAttribute('position') as THREE.BufferAttribute).needsUpdate = true;
-    (lineGeom.getAttribute('color') as THREE.BufferAttribute).needsUpdate = true;
-    for (const geom of [coreGeom, glowGeom]) {
-      (geom.getAttribute('position') as THREE.BufferAttribute).needsUpdate = true;
-      (geom.getAttribute('aSize') as THREE.BufferAttribute).needsUpdate = true;
-      (geom.getAttribute('aAlpha') as THREE.BufferAttribute).needsUpdate = true;
+    nodeMaterial.uniforms.uViewportHeight.value = state.size.height;
+    nodeMaterial.uniforms.uProjY.value = state.camera.projectionMatrix.elements[5];
+    glowMaterial.resolution.set(state.size.width, state.size.height);
+    coreMaterial.resolution.set(state.size.width, state.size.height);
+
+    const selectedCellId = selectedCellIdRef.current;
+    const hoveredCellId = hoveredCellIdRef.current;
+    const interactionChanged = selectedCellId !== lastSelectedCellId.current
+      || hoveredCellId !== lastHoveredCellId.current;
+    lastSelectedCellId.current = selectedCellId;
+    lastHoveredCellId.current = hoveredCellId;
+    const focusPreviouslyActive = focusByCell.current.size > 0;
+    if (selectedCellId !== null && !focusByCell.current.has(selectedCellId)) {
+      focusByCell.current.set(selectedCellId, 0);
     }
+    if (hoveredCellId !== null && !focusByCell.current.has(hoveredCellId)) {
+      focusByCell.current.set(hoveredCellId, 0);
+    }
+    for (const [cellId, current] of focusByCell.current) {
+      const target = cellFocusTarget(cellId, selectedCellId, hoveredCellId);
+      const next = dampCellFocus(current, target, deltaSeconds);
+      if (next === 0 && target === 0) focusByCell.current.delete(cellId);
+      else focusByCell.current.set(cellId, next);
+    }
+    const focusNeedsWrite = focusPreviouslyActive || focusByCell.current.size > 0;
+
+    lodElapsedS.current += Math.max(0, deltaSeconds);
+    const qualityBudgetChanged = nucleusNearCap !== lastNearCap.current;
+    const cellsChanged = cells !== lastCellsList.current
+      || count !== lastCount.current
+      || qualityBudgetChanged;
+    const refreshLod = cellNucleusLodRefreshDue(
+      lodElapsedS.current,
+      cellsChanged,
+      interactionChanged,
+    );
+
+    if (refreshLod) {
+      lodElapsedS.current = 0;
+      lastCellsList.current = cells;
+      lastCount.current = count;
+      lastNearCap.current = nucleusNearCap;
+      state.camera.getWorldPosition(cameraPosition);
+      // CellGalaxy rotates the parent in its frame callback. Refresh its world
+      // matrix only on the 12 Hz selection tick, not for every rendered frame.
+      group.updateWorldMatrix(true, false);
+      const groupMatrix = group.matrixWorld;
+
+      detailArray.fill(0, 0, count);
+      near.current.length = 0;
+      for (let index = 0; index < count; index += 1) {
+        const cell = cells[index];
+        localPosition
+          .set(cell.pos_seed[0], cell.pos_seed[1], cell.pos_seed[2])
+          .applyMatrix4(groupMatrix);
+        const dist = localPosition.distanceTo(cameraPosition);
+        const cameraDetail = Math.max(
+          0,
+          Math.min(1, (FAR_DIST - dist) / (FAR_DIST - NEAR_DIST)),
+        );
+        const focus = focusByCell.current.get(cell.id) ?? 0;
+        // Interaction reveals the identity at any distance, but it does not
+        // pretend a 20 px far-field mark can carry every microscopic stitch.
+        // Hover = contributor paths; selected = paths + partial agreements;
+        // actual camera proximity remains the only route to full micro-detail.
+        const interactionDetail = focus * (0.68 + cameraDetail * 0.32);
+        const detail = Math.max(cameraDetail, interactionDetail);
+        if (detail > 0.02) {
+          near.current.push({ cell, index, detail, cameraDetail, focus, dist });
+        }
+      }
+      near.current.sort((left, right) => (
+        right.focus - left.focus || left.dist - right.dist
+      ));
+      if (near.current.length > nucleusNearCap) near.current.length = nucleusNearCap;
+      for (const entry of near.current) detailArray[entry.index] = entry.detail;
+      detailAttr.needsUpdate = true;
+    } else if (focusNeedsWrite) {
+      // Camera selection is cached between LOD ticks, but the semantic focus
+      // envelope remains full-rate so hover/selection never feels quantized.
+      for (const entry of near.current) {
+        entry.focus = focusByCell.current.get(entry.cell.id) ?? 0;
+        const interactionDetail = entry.focus * (0.68 + entry.cameraDetail * 0.32);
+        entry.detail = Math.max(entry.cameraDetail, interactionDetail);
+        detailArray[entry.index] = entry.detail;
+      }
+      detailAttr.needsUpdate = true;
+    }
+
+    // The focus buffer is entirely idle in the resting state. Clear and upload
+    // it only while an envelope is active, plus one final frame on release.
+    if (focusNeedsWrite) {
+      focusArray.fill(0, 0, count);
+      for (const entry of near.current) focusArray[entry.index] = entry.focus;
+      focusAttr.needsUpdate = true;
+    }
+
+    // Geometry is stable in the rotating group's local frame. Only rewrite it
+    // when LOD membership changes or a semantic focus envelope is animating.
+    if (!refreshLod && !focusNeedsWrite) return;
+
+    const writeCursor = cursor.current;
+    writeCursor.lineVertices = 0;
+    writeCursor.nodes = 0;
+    for (const entry of near.current) {
+      let braid = cache.current.get(entry.cell);
+      if (!braid) {
+        braid = deriveGalaxyConsensusBraid(entry.cell);
+        cache.current.set(entry.cell, braid);
+      }
+      writeGalaxyConsensusBraidBuffers(
+        entry.cell,
+        braid,
+        entry.detail,
+        focusedBraidScale(
+          entry.dist,
+          state.size.height,
+          state.camera.projectionMatrix.elements[5],
+          entry.focus,
+        ),
+        buffers,
+        writeCursor,
+      );
+    }
+
+    lineGeometry.instanceCount = writeCursor.lineVertices / 2;
+    const positionAttribute = lineGeometry.getAttribute(
+      'instanceStart',
+    ) as THREE.InterleavedBufferAttribute;
+    const colorAttribute = lineGeometry.getAttribute(
+      'instanceColorStart',
+    ) as THREE.InterleavedBufferAttribute;
+    positionAttribute.data.needsUpdate = true;
+    colorAttribute.data.needsUpdate = true;
+
+    nodeGeometry.setDrawRange(0, writeCursor.nodes);
+    (nodeGeometry.getAttribute('position') as THREE.BufferAttribute).needsUpdate = true;
+    (nodeGeometry.getAttribute('aSize') as THREE.BufferAttribute).needsUpdate = true;
+    (nodeGeometry.getAttribute('aAlpha') as THREE.BufferAttribute).needsUpdate = true;
   });
 
   return (
     <group>
-      <lineSegments geometry={lineGeom} material={lineMat} frustumCulled={false} renderOrder={2} />
-      <points geometry={glowGeom} material={glowMat} frustumCulled={false} renderOrder={2} />
-      <points geometry={coreGeom} material={coreMat} frustumCulled={false} renderOrder={3} />
+      <primitive object={glow} />
+      <primitive object={core} />
+      <points
+        geometry={nodeGeometry}
+        material={nodeMaterial}
+        frustumCulled={false}
+        renderOrder={4}
+      />
     </group>
   );
 }
