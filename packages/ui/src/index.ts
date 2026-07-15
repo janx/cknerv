@@ -21,7 +21,9 @@ export type {
 export * from './tweaks/simClock';
 export * from './tweaks/useSimFrame';
 export * from './tweaks/qualityPresets';
+export * from './tweaks/adaptiveQuality';
 export * from './tweaks/cameraPresets';
+export { default as AdaptiveQualityController } from './tweaks/AdaptiveQualityController';
 export { default as SimClockTicker } from './tweaks/SimClockTicker';
 export { default as TweakSync } from './tweaks/TweakSync';
 export { LIVE } from './tweaks/liveTweaks';
