@@ -1,19 +1,13 @@
-// L2 + L3 — Sprite pool for action potentials and synaptic boutons.
+// Batched sprite pool for travelling consensus packets.
 //
 // A single Points mesh with N slots; each slot is an additive sprite with
 // per-instance position, color, size, alpha, and "white-bias" (how much
 // the sprite's core leans toward white-hot vs. its baseline tint). One
 // shader serves both:
 //
-//   • Action potential (L2): a moving sprite that walks along an axon
-//     trail. High whiteBias for the bright Na+ surge core, large size,
-//     short-lived per spike.
-//   • Synaptic bouton (L3): a stationary sprite at axon endpoints.
-//     Low whiteBias (just the colored halo, no white-hot core),
-//     smaller size, persists for the axon's life with a brief
-//     post-arrival brightening.
-//   • Saltatory leap node (miner pulse): like an action potential
-//     but multiple per pulse, each with its own offset arrival time.
+// The soft halo keeps motion readable at galaxy scale; a four-point data
+// lozenge at its centre distinguishes it from stars, cells, and biological
+// ion bubbles. One draw call carries every active transaction packet.
 //
 // Per-instance shader attributes:
 //   aColor      — base sprite tint (RGB linear)
@@ -21,9 +15,8 @@
 //   aAlpha      — additive intensity multiplier
 //   aWhiteBias  — [0, 1] core whiteness (0 = halo only, 1 = white core)
 //
-// Geometry: positions are stored in the standard `position` attribute
-// since this is a Points mesh. Sprites are screen-aligned circular
-// gradients drawn entirely in the fragment shader — no texture lookup.
+// Geometry: positions are stored in the standard `position` attribute.
+// Sprites are procedural screen-aligned glyphs — no texture lookup.
 
 import * as THREE from 'three';
 
@@ -121,21 +114,24 @@ export class SpikePool {
 
         void main() {
           if (vAlpha < 0.001) discard;
-          vec2 uv = gl_PointCoord - 0.5;
-          float r = length(uv) * 2.0;
+          vec2 uv = (gl_PointCoord - 0.5) * 2.0;
+          float r = length(uv);
           if (r > 1.0) discard;
 
-          // Bright tight core + softer outer halo.
-          float core = pow(1.0 - r, 7.0);
-          float halo = pow(1.0 - r, 1.6) * 0.55;
+          // Silicon packet: a sharp four-point lozenge nested in a restrained
+          // circular field. A fine inner contour keeps it legible through bloom.
+          float diamondD = abs(uv.x) + abs(uv.y);
+          float core = pow(max(0.0, 1.0 - diamondD), 5.0);
+          float contour = exp(-pow((diamondD - 0.43) / 0.075, 2.0))
+            * (1.0 - smoothstep(0.62, 0.9, r));
+          float halo = pow(max(0.0, 1.0 - r), 2.1) * 0.38;
 
-          // Mix toward white in the core region — only when whiteBias > 0.
-          // Action-potential sprites have whiteBias~1 (visible Na+ surge);
-          // boutons have whiteBias~0 (colored halo, no white-hot center).
+          // Resolve toward the same pale consensus light as A's agreement
+          // knots, while preserving the transaction colour around the contour.
           float whiteAmount = core * vWhiteBias;
-          vec3 baseCol = mix(vColor, vec3(1.0), whiteAmount);
+          vec3 baseCol = mix(vColor, vec3(0.86, 0.96, 1.0), whiteAmount);
 
-          float intensity = (core + halo) * vAlpha;
+          float intensity = (core + contour * 0.42 + halo) * vAlpha;
           if (intensity < 0.005) discard;
 
           gl_FragColor = vec4(baseCol * intensity, intensity);

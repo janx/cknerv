@@ -3,6 +3,7 @@ import type { Cell, CellLink } from '@cknerv/types';
 import type { NeighborGraph } from '../../src/geometry/neighborGraph';
 import { planPulses } from '../../src/nerve/pulseRunner';
 import { pulseStats, resetPulseStats } from '../../src/nerve/pulseStats';
+import { consensusPacketColor } from '../../src/derives/consensusFlow.derive';
 
 beforeEach(() => resetPulseStats());
 
@@ -87,6 +88,7 @@ describe('planPulses instrumentation', () => {
     const pulses = planPulses(mkLink({ parents: ['0xparent'], to_ids: [2] }), cells, graph, undefined, 0, pulseStats);
     expect(pulses.length).toBe(1);
     expect(pulseStats.linkReasons.fired).toBe(1);
+    expect(pulses[0].color).toEqual(consensusPacketColor('0xtx', null));
   });
 });
 
