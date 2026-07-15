@@ -39,6 +39,7 @@ export * from './ui/topologyConstants';
 // ── Materials (THREE.ShaderMaterials + GLSL chunks) ─────────────────
 export * from './materials/cellEnvelope.glsl';
 export * from './materials/cellHybridMaterial';
+export * from './materials/cellOrganismMaterial';
 export * from './materials/cellShellMaterial';
 export * from './materials/shockwaveMaterial';
 
@@ -51,6 +52,10 @@ export * from './geometry/truncatedOctahedron';
 
 // ── Derive helpers (pure data shapers consumed by HUDs) ─────────────
 export * from './derives/cellShell.derive';
+export * from './derives/cellVisual.derive';
+export * from './derives/cellInteraction.derive';
+export * from './derives/consensusBraid.derive';
+export * from './derives/consensusFlow.derive';
 export * from './derives/cellsStats.derive';
 export * from './derives/eventStreamLines';
 export * from './derives/peers.derive';
@@ -84,12 +89,20 @@ export {
 } from './components/CellGalaxy';
 export type { BlockEventTrigger, CellBufferTargets } from './components/CellGalaxy';
 export { default as CellShell } from './components/CellShell';
+export { default as CellOrganism } from './components/CellOrganism';
 export {
   default as CellsHud,
   formatCommonKnowledgeBytes,
 } from './components/CellsHud';
 export { default as CkbNetworkHud } from './components/CkbNetworkHud';
 export { default as HudOverlay } from './components/hud/HudOverlay';
+export { default as CellDetailPanel } from './components/hud/CellDetailPanel';
+export { default as CellNucleusPortrait } from './components/hud/CellNucleusPortrait';
+export {
+  default as CellCoreArtwork,
+  CELL_CORE_DIRECTIONS,
+  type CellCoreDirection,
+} from './components/hud/CellCoreArtwork';
 export { default as RenderStatsPanel } from './components/hud/RenderStatsPanel';
 export {
   default as EdgeEnvelopeLayer,
@@ -116,9 +129,13 @@ export { default as ColonyNodes } from './components/ColonyNodes';
 export { default as ColonyCourierLayer } from './components/ColonyCourierLayer';
 export { default as NetworkColony } from './components/NetworkColony';
 
-// ── Nerve overlay (cell→cell dendritic pulses; pass as CellGalaxy `overlay`) ──
+// ── Consensus flow overlay (Cell→Cell protocol writes) ──────────────
 export { default as NeuralNetwork } from './nerve/NeuralNetwork';
 export { default as DendriticBurst } from './nerve/DendriticBurst';
-export type { DendriticBurstProps } from './nerve/DendriticBurst';
+export { default as ConsensusWriteSeal } from './nerve/DendriticBurst';
+export type {
+  ConsensusWriteSealProps,
+  DendriticBurstProps,
+} from './nerve/DendriticBurst';
 export { planPulses, type Pulse, type PulsePlanningOptions } from './nerve/pulseRunner';
 export * from './nerve/pulseStats';
