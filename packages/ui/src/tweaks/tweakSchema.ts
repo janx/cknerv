@@ -46,18 +46,18 @@ export const galaxySchema = {
 } satisfies FolderSchema;
 
 export const deliverySchema = {
-  heroSize: { value: 0.82, min: 0.2, max: 2, step: 0.02, label: 'hero size' },
-  peerSize: { value: 0.5, min: 0.1, max: 1.5, step: 0.02, label: 'peer size' },
-  ingestDur: { value: 0.5, min: 0.1, max: 1.5, step: 0.05, label: 'ingest dur' },
+  heroSize: { value: 1.16, min: 0.2, max: 2, step: 0.02, label: 'hero size' },
+  peerSize: { value: 0.46, min: 0.1, max: 1.5, step: 0.02, label: 'peer size' },
+  ingestDur: { value: 0.7, min: 0.1, max: 1.5, step: 0.05, label: 'commit dur' },
   ingestPull: { value: 2.2, min: 0, max: 6, step: 0.1, label: 'ingest pull' },
-  bolusBloom: { value: 2.1, min: 0.5, max: 5, step: 0.1, label: 'bolus bloom' },
-  flashSize: { value: 4.4, min: 1, max: 10, step: 0.1, label: 'ingest flash' },
-  trailWidth: { value: 0.85, min: 0.1, max: 3, step: 0.05, label: 'trail width' },
-  trailLenBase: { value: 1.2, min: 0, max: 4, step: 0.1, label: 'trail len base' },
-  trailLenGain: { value: 2.0, min: 0, max: 6, step: 0.1, label: 'trail len gain' },
-  trailOpacity: { value: 0.85, min: 0, max: 1, step: 0.05, label: 'trail opacity' },
-  ringMax: { value: 6.5, min: 1, max: 15, step: 0.5, label: 'ring max' },
-  recoil: { value: 0.22, min: 0, max: 1, step: 0.01, label: 'recoil' },
+  bolusBloom: { value: 3.0, min: 0.5, max: 5, step: 0.1, label: 'carrier glyph' },
+  flashSize: { value: 3.6, min: 1, max: 10, step: 0.1, label: 'commit flash' },
+  trailWidth: { value: 0.7, min: 0.1, max: 3, step: 0.05, label: 'trace width' },
+  trailLenBase: { value: 1.0, min: 0, max: 4, step: 0.1, label: 'trace len base' },
+  trailLenGain: { value: 1.6, min: 0, max: 6, step: 0.1, label: 'trace len gain' },
+  trailOpacity: { value: 0.65, min: 0, max: 1, step: 0.05, label: 'trace opacity' },
+  ringMax: { value: 7.5, min: 1, max: 15, step: 0.5, label: 'seal radius' },
+  recoil: { value: 0.14, min: 0, max: 1, step: 0.01, label: 'agreement recoil' },
   peerPunchScale: { value: 0.55, min: 0, max: 1.5, step: 0.05, label: 'peer punch' },
   igniteKHero: { value: 8, min: 0, max: 30, step: 1, label: 'ignite k hero' },
   igniteKPeer: { value: 3, min: 0, max: 15, step: 1, label: 'ignite k peer' },
@@ -82,20 +82,21 @@ export const peerSchema = {
 
 export const cellSchema = {
   fabricAlpha: { value: 0.12, min: 0, max: 1, step: 0.01, label: 'fabric alpha' },
-  // cell body colour: the generic base is a luminous rose (GENERIC_COLOR in
-  // CellGalaxy.tsx), sitting in the crimson nerve's colour family. `warmth` pushes
-  // the body from rose (0) toward ember-orange (1); the hot core stays warm-white.
-  warmth: { value: 0.12, min: 0, max: 1, step: 0.01, label: 'body rose→ember' },
-  // point ①: galaxy-centre brightness floor. The dense core otherwise piles up
-  // additively into a white blob; this fades resting cell brightness toward the
-  // centre (1.0 = no dim; 0.3 shipped). Cells past r≈16 are unaffected.
+  // Resting Cells remain structural cyan. This small bias can warm the field
+  // without competing with gold routes driven by real hierarchy and traffic.
+  warmth: { value: 0.04, min: 0, max: 1, step: 0.01, label: 'structure→gold bias' },
+  // Shared galaxy-centre brightness floor. Cell bodies use it directly; the
+  // much denser passive fabric squares it, while trunks/activity/events reclaim
+  // headroom. 1.0 disables compression; Cells past the core are unaffected.
   centerDim: { value: 0.3, min: 0, max: 1, step: 0.02, label: 'center dim (core)' },
-  activeColorR: { value: 1.0, min: 0, max: 1, step: 0.01, label: 'active R' },
-  activeColorG: { value: 0.55, min: 0, max: 1, step: 0.01, label: 'active G' },
-  activeColorB: { value: 0.15, min: 0, max: 1, step: 0.01, label: 'active B' },
+  // Neutral by default: packet identity supplies hue; these remain live channel
+  // gains for art direction without collapsing every path back to orange.
+  activeColorR: { value: 1.0, min: 0, max: 1, step: 0.01, label: 'packet gain R' },
+  activeColorG: { value: 1.0, min: 0, max: 1, step: 0.01, label: 'packet gain G' },
+  activeColorB: { value: 1.0, min: 0, max: 1, step: 0.01, label: 'packet gain B' },
   fabricWidth: { value: 2.5, min: 0.5, max: 8, step: 0.1, label: 'fabric width px' },
   activeWidth: { value: 3.4, min: 0.5, max: 8, step: 0.1, label: 'active width px' },
-  // ② self-organization feel — how strongly/long pulse traffic reinforces veins.
+  // ② How strongly and how long observed packet traffic reinforces shared routes.
   reinforceAmount: { value: REINFORCE_AMOUNT, min: 0, max: 1, step: 0.02, label: 'reinforce amount' },
   reinforceGain: { value: USAGE_GAIN, min: 0, max: 5, step: 0.1, label: 'reinforce gain' },
   reinforceHalfLife: { value: USAGE_DECAY_HALF_LIFE_S, min: 0.2, max: 20, step: 0.2, label: 'reinforce half-life s' },
@@ -103,7 +104,7 @@ export const cellSchema = {
 
 export const FOLDER_LABELS = {
   galaxy: 'Galaxy 共识记忆',
-  delivery: 'Block delivery',
+  delivery: 'Consensus carrier 共识载体',
   peer: 'Peer mesh 对端',
-  cell: 'Cell mesh 细胞',
+  cell: 'Cell structure 数据结构',
 } as const;
