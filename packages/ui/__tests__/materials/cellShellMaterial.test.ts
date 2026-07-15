@@ -22,6 +22,7 @@ describe('makeCellShellMaterial', () => {
     expect(m.uniforms.uOpacity).toBeDefined();
     expect(m.uniforms.uShockwaveAt).toBeDefined();
     expect(m.uniforms.uShockwaveOriginXZ).toBeDefined();
+    expect(m.uniforms.uShockwaveColor).toBeDefined();
     expect(m.uniforms.uShockwaveSpeed).toBeDefined();
     expect(m.uniforms.uShockwaveDurS).toBeDefined();
     expect(m.uniforms.uShockwaveBandBase).toBeDefined();
@@ -54,7 +55,9 @@ describe('makeCellShellMaterial', () => {
   it('brightens existing shell geometry as the block shockwave crosses it', () => {
     const m = makeCellShellMaterial();
     expect(m.vertexShader).toContain('vWorldXZ');
-    expect(m.fragmentShader).toContain('float shockwave()');
+    expect(m.fragmentShader).toContain('vec4 shockwave()');
+    expect(m.fragmentShader).toContain('uShockwaveColor');
+    expect(m.fragmentShader).toContain('waveColor');
     expect(m.fragmentShader).toContain('uShockwaveColorBoost');
     expect(m.fragmentShader).toContain('uShockwaveTrailBoost');
     expect(m.fragmentShader).toContain('trail');
