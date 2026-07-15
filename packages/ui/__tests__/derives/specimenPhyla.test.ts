@@ -3,7 +3,7 @@ import { genArbor } from '../../src/derives/specimenPhyla';
 
 const H = '0x' + 'ab'.repeat(32);
 describe('genArbor', () => {
-  it('is deterministic and produces geometry + four landmarks', () => {
+  it('builds a deterministic recursive FPGA routing tree + four landmarks', () => {
     const a = genArbor(H, { maturity: 0.7 }), b = genArbor(H, { maturity: 0.7 });
     expect(a.segments.length).toBe(b.segments.length);
     expect(a.segments.length).toBeGreaterThan(0);
@@ -17,28 +17,30 @@ describe('genArbor', () => {
 
 import { genRadiolarian } from '../../src/derives/specimenPhyla';
 describe('genRadiolarian', () => {
-  it('has a membrane, ≥9 filopodia strands, a central body node, and landmarks', () => {
+  it('builds a radial I/O backplane with elbow routes and a perimeter bus', () => {
     const g = genRadiolarian(H, { maturity: 0.6 });
     expect(g.membraneR).toBeGreaterThan(0);
-    expect(g.segments.length / 6).toBeGreaterThanOrEqual(9 * 5); // ≥9 rays × 5 segs (floor)
-    expect(g.nodes.some((n) => n.x === 0 && n.y === 0 && n.z === 0)).toBe(true); // central body
+    const portCount = g.nodes.length - 1;
+    expect(portCount).toBeGreaterThanOrEqual(10);
+    expect(g.segments.length / 6).toBe(portCount * 4); // three route legs + one perimeter edge per port
+    expect(g.nodes.some((n) => n.x === 0 && n.y === 0 && n.z === 0)).toBe(true); // controller die
     expect(g.landmarks.species).not.toEqual(g.landmarks.core);
   });
 });
 
 import { genColony } from '../../src/derives/specimenPhyla';
 describe('genColony', () => {
-  it('is a cluster of ≥7 vesicle nodes linked by necks', () => {
+  it('is a grid of ≥8 chiplets linked by three-leg Manhattan routes', () => {
     const g = genColony(H, { maturity: 0.5 });
-    expect(g.nodes.length).toBeGreaterThanOrEqual(7);
-    expect(g.segments.length / 6).toBe(g.nodes.length - 1); // each non-root linked once
+    expect(g.nodes.length).toBeGreaterThanOrEqual(8);
+    expect(g.segments.length / 6).toBe((g.nodes.length - 1) * 3);
     expect(g.membraneR).toBeGreaterThan(0);
   });
 });
 
 import { genHelix } from '../../src/derives/specimenPhyla';
 describe('genHelix', () => {
-  it('builds two strands + rungs winding through 3D (non-planar)', () => {
+  it('builds a non-planar stack of hard hexagonal timing planes and vias', () => {
     const g = genHelix(H, { maturity: 0.8 });
     expect(g.segments.length).toBeGreaterThan(0);
     expect(g.nodes.length).toBeGreaterThan(0);
@@ -50,9 +52,10 @@ describe('genHelix', () => {
 
 import { genPlasmid } from '../../src/derives/specimenPhyla';
 describe('genPlasmid', () => {
-  it('is a closed supercoiled loop with nodes', () => {
+  it('builds an incomplete dual checksum bus with observation pads', () => {
     const g = genPlasmid(H, { maturity: 1 });
-    expect(g.segments.length / 6).toBeGreaterThan(50); // ~64 steps
+    expect(g.segments.length / 6).toBeGreaterThan(24);
     expect(g.nodes.length).toBeGreaterThanOrEqual(6);
+    expect(g.membraneR).toBeNull();
   });
 });

@@ -3,7 +3,7 @@ import type { Cell } from '@cknerv/types';
 import {
   type Phylum, type Vec3, type NucNode, type PhylumGeometry,
   phylumForAsset, massFromCapacity, maturityFromAge, viabilityFromDeath, dataBytes, tintFromTag,
-  seededRng, hashToBytes, randDir, scale,
+  seededRng, hashToBytes,
 } from './specimenKit';
 import { genArbor, genRadiolarian, genColony, genHelix, genPlasmid } from './specimenPhyla';
 import { nucleusBoundingRadius, framingScale } from '../components/hud/nucleusFraming';
@@ -33,13 +33,28 @@ export function specimenMorphology(cell: Cell, nowMs: number = Date.now()): Spec
   const nodes: NucNode[] = g.nodes.map((n) => ({ x: n.x * k, y: n.y * k, z: n.z * k, s: n.s * k, a: n.a }));
   const sv = (v: Vec3): Vec3 => [v[0] * k, v[1] * k, v[2] * k];
 
-  // data → organelles (green payload nodes), seeded off the hash with a salt
+  // Data → discrete memory blocks on a three-plane package grid. The payload
+  // stays hash-deterministic, but avoids free-floating organelle placement.
   const r = seededRng(hashToBytes(cell.content_hash), 0x0d1a);
   const nOrg = Math.min(MAX_ORG, Math.round(dataBytes(cell.data_hex) / ORG_DIVISOR));
   const organelles: NucNode[] = [];
+  const occupied = new Set<string>();
   for (let i = 0; i < nOrg; i++) {
-    const p = scale(randDir(r), (0.24 + r() * 0.5)); // within the framed body
-    organelles.push({ x: p[0], y: p[1], z: p[2], s: (0.05 + r() * 0.03), a: 0.95 });
+    let gx = 0, gy = 0, gz = 0, key = '';
+    do {
+      gx = Math.floor(r() * 5) - 2;
+      gy = Math.floor(r() * 3) - 1;
+      gz = Math.floor(r() * 5) - 2;
+      key = `${gx},${gy},${gz}`;
+    } while ((gx === 0 && gy === 0 && gz === 0) || occupied.has(key));
+    occupied.add(key);
+    organelles.push({
+      x: gx * 0.17,
+      y: gy * 0.13,
+      z: gz * 0.17,
+      s: 0.045 + r() * 0.018,
+      a: 0.95,
+    });
   }
 
   const landmarks: LandmarkSet = {
