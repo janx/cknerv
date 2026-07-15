@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { Billboard } from '@react-three/drei';
 import type { ThreeEvent } from '@react-three/fiber';
 import { useSimFrame } from '../tweaks/useSimFrame';
-import { simClock } from '../tweaks/simClock';
+import { useSimClock } from '../tweaks/SimClockScope';
 import { makeHaloMaterial, phaseFor, rateFor } from './GlowNode';
 import { CkbSelectionReticle } from './CellGalaxy';
 
@@ -38,6 +38,7 @@ export default function CrystalGlow({
   onClick,
   haloScale = 6,
 }: CrystalGlowProps) {
+  const simClock = useSimClock();
   const bodyRef = useRef<THREE.Group>(null);
   const lineRef = useRef<THREE.LineBasicMaterial>(null);
   const fillRef = useRef<THREE.MeshBasicMaterial>(null);

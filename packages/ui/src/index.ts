@@ -19,6 +19,7 @@ export type {
 
 // ── Tweaks (sim-clock, useSimFrame, leva presets) ───────────────────
 export * from './tweaks/simClock';
+export * from './tweaks/SimClockScope';
 export * from './tweaks/useSimFrame';
 export * from './tweaks/qualityPresets';
 export * from './tweaks/adaptiveQuality';

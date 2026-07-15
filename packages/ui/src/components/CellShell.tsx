@@ -8,7 +8,7 @@ import * as THREE from 'three';
 import { useControls } from 'leva';
 import { useCellGalaxy } from '../hooks/cellGalaxyContext';
 import { useSimFrame } from '../tweaks/useSimFrame';
-import { simClock } from '../tweaks/simClock';
+import { useSimClock } from '../tweaks/SimClockScope';
 import {
   BIRTH_DURATION_MS,
   DEATH_DURATION_MS,
@@ -57,6 +57,7 @@ interface CellShellProps {
 }
 
 export default function CellShell({ cellFlashRef, flashDirtyRef, shockwaveUniformsRef }: CellShellProps) {
+  const simClock = useSimClock();
   const cellsCache = useCellGalaxy();
   const { effective: quality } = useQualityRuntime();
   const cellGalaxyMul = QUALITY_PRESETS[quality].cellGalaxyMul;

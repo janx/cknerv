@@ -5,31 +5,42 @@
 
 import React from 'react';
 import ReactDOM from 'react-dom/client';
+import type { CellGalaxySnapshot } from '@cknerv/types';
 import App from './App';
-import CellFormLab from './CellFormLab';
-import CellRelicLab from './CellRelicLab';
-import ProtocolEventLab from './ProtocolEventLab';
 import { fetchCellsSnapshot, fetchChainSnapshot } from './connect';
 import { installPulseStatsHook } from './pulse-stats-hook';
+import {
+  resolveVisualReviewRoute,
+  type VisualReviewRoute,
+} from './visual-review-route';
+
+type VisualReviewLab = React.ComponentType<{ snapshot: CellGalaxySnapshot }>;
+
+async function loadVisualReviewLab(
+  route: VisualReviewRoute,
+): Promise<VisualReviewLab> {
+  switch (route) {
+    case 'protocol-event':
+      return (await import('./ProtocolEventLab')).default;
+    case 'cell-relic':
+      return (await import('./CellRelicLab')).default;
+    case 'cell-form':
+      return (await import('./CellFormLab')).default;
+  }
+}
 
 async function bootstrap() {
-  const [chainResp, cellsResp] = await Promise.all([
+  const reviewRoute = resolveVisualReviewRoute(window.location.search);
+  const [chainResp, cellsResp, ReviewLab] = await Promise.all([
     fetchChainSnapshot(),
     fetchCellsSnapshot(),
+    reviewRoute ? loadVisualReviewLab(reviewRoute) : Promise.resolve(null),
   ]);
   const root = ReactDOM.createRoot(document.getElementById('root')!);
-  const params = new URLSearchParams(window.location.search);
-  const cellFormLab = params.get('cell-form-lab') === '1';
-  const cellRelicLab = params.get('cell-relic-lab') === '1';
-  const protocolEventLab = params.get('protocol-event-lab') === '1';
   root.render(
     <React.StrictMode>
-      {protocolEventLab ? (
-        <ProtocolEventLab snapshot={cellsResp.snapshot} />
-      ) : cellRelicLab ? (
-        <CellRelicLab snapshot={cellsResp.snapshot} />
-      ) : cellFormLab ? (
-        <CellFormLab snapshot={cellsResp.snapshot} />
+      {ReviewLab ? (
+        <ReviewLab snapshot={cellsResp.snapshot} />
       ) : (
         <App
           initialChain={chainResp.chain}

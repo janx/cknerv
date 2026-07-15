@@ -3,7 +3,10 @@ import type { Cell, CellGalaxySnapshot } from '@cknerv/types';
 import { fromCellsSnapshot } from '@cknerv/cache';
 import {
   advanceProtocolEventLab,
+  PROTOCOL_EVENT_STAGE_TIME_S,
   protocolEventLabSnapshot,
+  protocolEventReviewNonce,
+  protocolEventReviewTarget,
   protocolEventStage,
 } from '../src/protocol-event-lab-state';
 
@@ -72,5 +75,23 @@ describe('protocol event lab state', () => {
     expect(protocolEventStage(1.6)).toBe('commit');
     expect(protocolEventStage(3.4)).toBe('commit');
     expect(protocolEventStage(6.2)).toBe('settled');
+  });
+
+  it('provides stable direct-link times inside every review stage', () => {
+    for (const [stage, at] of Object.entries(PROTOCOL_EVENT_STAGE_TIME_S)) {
+      expect(protocolEventStage(at)).toBe(stage);
+      expect(protocolEventReviewTarget(`?stage=${stage}`)).toBe(at);
+    }
+    expect(protocolEventReviewTarget('?at=2.75&stage=network')).toBe(2.75);
+    expect(protocolEventReviewTarget('?at=-1')).toBe(0);
+    expect(protocolEventReviewTarget('?at=99')).toBe(7.95);
+    expect(protocolEventReviewTarget('?at=nope&stage=commit')).toBe(3.4);
+    expect(protocolEventReviewTarget('?stage=nope')).toBeNull();
+  });
+
+  it('uses deterministic monotonic block identities for review cycles', () => {
+    expect(protocolEventReviewNonce(1)).toBe(protocolEventReviewNonce(0));
+    expect(protocolEventReviewNonce(2) - protocolEventReviewNonce(1)).toBe(8_000);
+    expect(protocolEventReviewNonce(12)).toBe(protocolEventReviewNonce(12));
   });
 });

@@ -14,7 +14,7 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useCellGalaxy } from '../hooks/cellGalaxyContext';
 import { useSimFrame } from '../tweaks/useSimFrame';
-import { simClock } from '../tweaks/simClock';
+import { useSimClock } from '../tweaks/SimClockScope';
 import { QUALITY_PRESETS, useQualityRuntime } from '../tweaks/qualityPresets';
 import { buildNeighborGraph, emptyNeighborGraph, type NeighborGraph } from '../geometry/neighborGraph';
 import { type Pulse, type PulsePlanningOptions } from './pulseRunner';
@@ -83,6 +83,7 @@ export default function NeuralNetwork({
   topology,
   pulses,
 }: NeuralNetworkProps = {}) {
+  const simClock = useSimClock();
   const cellsCache = useCellGalaxy();
   const { effective: quality } = useQualityRuntime();
   const particleCapMul = QUALITY_PRESETS[quality].particleCapMul;

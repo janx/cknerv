@@ -52,15 +52,15 @@ describe('CellCoreArtwork', () => {
     });
   });
 
-  it.each(CELL_CORE_DIRECTIONS)('routes $id to its dedicated renderer', ({ id }) => {
-    const { getByTestId } = render(
+  it.each(CELL_CORE_DIRECTIONS)('routes $id to its dedicated renderer', async ({ id }) => {
+    const { findByTestId } = render(
       <CellCoreArtwork
         direction={id as CellCoreDirection}
         cell={CELL}
         reducedMotion
       />,
     );
-    expect(getByTestId(id)).toBeTruthy();
+    expect(await findByTestId(id)).toBeTruthy();
   });
 
   it('threads readable field focus into the production A renderer', () => {

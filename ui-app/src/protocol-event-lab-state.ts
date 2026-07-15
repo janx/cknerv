@@ -4,6 +4,42 @@ import { buildNeighborGraph, planPulses } from '@cknerv/ui';
 
 export type ProtocolEventStage = 'network' | 'carrier' | 'commit' | 'settled';
 
+export const PROTOCOL_EVENT_REVIEW_PERIOD_S = 8;
+
+/** Stable inspection points inside each semantic window. */
+export const PROTOCOL_EVENT_STAGE_TIME_S: Record<ProtocolEventStage, number> = {
+  network: 0.3,
+  carrier: 1.1,
+  commit: 3.4,
+  settled: 6.2,
+};
+
+const PROTOCOL_EVENT_REVIEW_EPOCH_MS = 1_720_000_000_000;
+const PROTOCOL_EVENT_REVIEW_MAX_S = PROTOCOL_EVENT_REVIEW_PERIOD_S - 0.05;
+
+/** One deterministic block identity per review cycle. */
+export function protocolEventReviewNonce(serial: number): number {
+  const index = Math.max(0, Math.trunc(serial) - 1);
+  return PROTOCOL_EVENT_REVIEW_EPOCH_MS
+    + index * PROTOCOL_EVENT_REVIEW_PERIOD_S * 1000;
+}
+
+/** Resolve a shareable fixed review time from `?at=` or `?stage=`. */
+export function protocolEventReviewTarget(search: string): number | null {
+  const params = new URLSearchParams(search);
+  const requestedAt = params.get('at');
+  if (requestedAt !== null) {
+    const at = Number(requestedAt);
+    if (Number.isFinite(at)) {
+      return Math.max(0, Math.min(PROTOCOL_EVENT_REVIEW_MAX_S, at));
+    }
+  }
+  const requestedStage = params.get('stage') as ProtocolEventStage | null;
+  return requestedStage && requestedStage in PROTOCOL_EVENT_STAGE_TIME_S
+    ? PROTOCOL_EVENT_STAGE_TIME_S[requestedStage]
+    : null;
+}
+
 /** Keep the lab legible while preserving real Cell identities and positions. */
 export function protocolEventLabSnapshot(
   snapshot: CellGalaxySnapshot,

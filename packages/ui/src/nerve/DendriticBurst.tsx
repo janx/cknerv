@@ -17,7 +17,7 @@
 
 import { useEffect, useMemo, useRef } from 'react';
 import { useSimFrame } from '../tweaks/useSimFrame';
-import { simClock } from '../tweaks/simClock';
+import { useSimClock } from '../tweaks/SimClockScope';
 import * as THREE from 'three';
 
 import { useCellGalaxy } from '../hooks/cellGalaxyContext';
@@ -47,6 +47,7 @@ export interface ConsensusWriteSealProps {
 export type DendriticBurstProps = ConsensusWriteSealProps;
 
 export default function ConsensusWriteSeal({ arrivalRef }: ConsensusWriteSealProps) {
+  const simClock = useSimClock();
   const cellsCache = useCellGalaxy();
   const meshRef = useRef<THREE.Points>(null);
   const slotsRef = useRef<BurstSlot[]>([]);

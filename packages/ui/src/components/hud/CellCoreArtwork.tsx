@@ -1,8 +1,10 @@
+import { lazy, Suspense } from 'react';
 import type { Cell } from '@cknerv/types';
 import type { ConsensusBraidField } from '../../derives/consensusBraid.derive';
 import ConsensusMemory from './ConsensusMemory';
-import QuantumLoomCore from './QuantumLoomCore';
-import InscribedBraidCore from './InscribedBraidCore';
+
+const QuantumLoomCore = lazy(() => import('./QuantumLoomCore'));
+const InscribedBraidCore = lazy(() => import('./InscribedBraidCore'));
 
 export type CellCoreDirection = 'relic' | 'loom' | 'synthesis';
 
@@ -30,10 +32,18 @@ export default function CellCoreArtwork({
   focusField?: ConsensusBraidField | null;
 }) {
   if (direction === 'loom') {
-    return <QuantumLoomCore cell={cell} reducedMotion={reducedMotion} />;
+    return (
+      <Suspense fallback={null}>
+        <QuantumLoomCore cell={cell} reducedMotion={reducedMotion} />
+      </Suspense>
+    );
   }
   if (direction === 'synthesis') {
-    return <InscribedBraidCore cell={cell} reducedMotion={reducedMotion} />;
+    return (
+      <Suspense fallback={null}>
+        <InscribedBraidCore cell={cell} reducedMotion={reducedMotion} />
+      </Suspense>
+    );
   }
   return (
     <ConsensusMemory
