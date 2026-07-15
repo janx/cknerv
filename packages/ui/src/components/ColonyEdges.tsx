@@ -27,14 +27,13 @@ import { LIVE } from '../tweaks/liveTweaks';
 import { fnv1a } from '../geometry/edgeBezier';
 import type { NetworkTopology } from '../types';
 import type { ColonyFlood } from '../derives/networkFlood.derive';
+import { CONSENSUS_BRAID_PALETTE } from '../derives/consensusBraid.derive';
+import { consensusBlockColor } from '../derives/consensusFlow.derive';
 
 // Gossamer line color for the whole mesh — the faint blue that matches ColonyNodes'
 // inferred ghost cloud so edges + cloud read as one structure. Confidence lives in
 // per-edge brightness (`aBright`), not tint.
 const INFERRED_LINE_COLOR = '#8fb7ff';
-// A hotter blue-white for the block surge so the flowing wavefront reads as the
-// network lighting up, distinct from the cool ambient current. Tune live.
-const SURGE_COLOR = '#cfeeff';
 // Base line brightness. Inferred edges are the faint "possible network" scaffold;
 // measured edges glow brighter (the honesty gradient). Raised from the original
 // barely-there values so the mesh reads as persistent structure. Tune live.
@@ -130,7 +129,9 @@ export default function ColonyEdges({
         toneMapped: false,
         uniforms: {
           uColor: { value: new THREE.Color(INFERRED_LINE_COLOR) },
-          uSurgeColor: { value: new THREE.Color(SURGE_COLOR) },
+          uSurgeColor: {
+            value: new THREE.Color().setRGB(...CONSENSUS_BRAID_PALETTE.pale),
+          },
           uTime: { value: 0 },
           // Zero-drift defaults (seeded once; refreshed per-frame from LIVE.peer.* below).
           uAmbientAmp: { value: 0.22 },
@@ -245,6 +246,10 @@ export default function ColonyEdges({
     if (blockPulseAtMs <= lastPulseRef.current) return;
     lastPulseRef.current = blockPulseAtMs; // consume even while backfilling…
     if (backfillActive) return; //           …but don't stamp → no surge
+
+    // The active tree keeps the exact block carrier identity that will later
+    // appear on the vertical delivery and the Cell-field shockwave.
+    mat.uniforms.uSurgeColor.value.setRGB(...consensusBlockColor(blockPulseAtMs));
 
     const t0 = simClock.elapsedSec;
     const arr = cf.colonyArrivalS;

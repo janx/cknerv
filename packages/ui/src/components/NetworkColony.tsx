@@ -11,9 +11,9 @@
 //   • ColonyCourierLayer — a faint glint accent riding the edge surge: a small,
 //     dimmed glow-mote flung node→node along the shortest-path tree, timed by the
 //     flood arrivals. The surge (on the edges) is the primary block signal now.
-//   • BlockDeliveryLayer — one bolus per measured worker (timed by cf.arrivals)
-//     plus the local hero (cf.localReceiveDelayS), lobbed up into the cell
-//     canopy and igniting the cells each lands on.
+//   • BlockDeliveryLayer — one woven protocol carrier per measured worker
+//     (timed by cf.arrivals) plus the local source, delivered into the Cell
+//     field and resolved as an agreement seal.
 //
 // Block wiring (ported from the retired hub-and-spoke layer): on each new block
 // pulse we stamp `pulseRef` with { at: simClock.elapsedSec, entryId: cf.entryId };
@@ -24,7 +24,7 @@
 // SUPPRESSES the block Pulse delta server-side (cknerv-core projection/cells.rs:
 // the Pulse delta is only pushed while `backfill.is_none()`), so `blockPulseAtMs`
 // (= cellsCache.lastPulseAtMs) FREEZES. Every pulse effect below keys on it, so
-// the flood + boluses are ALREADY quiet during catch-up (frozen pulse ⇒ no
+// the flood + carriers are ALREADY quiet during catch-up (frozen pulse ⇒ no
 // strobe). We ALSO gate every pulse effect on `backfillActive` as a defensive
 // safety belt: should a pulse ever advance mid-backfill, we CONSUME it (advance
 // the local guard so the backlog can't replay as one strobe when `backfill`
@@ -35,7 +35,7 @@
 // ColonyEdges + ColonyCourierLayer each own their own pulse clock, keyed on
 // `blockPulseAtMs` and gated on `backfillActive` (consume-then-bail); NetworkColony
 // keeps `cf`/`blockPulseAtMs`/`backfillActive` to feed all three (edges surge,
-// courier glint, delivery boluses) and to stamp its own `pulseRef` for delivery.
+// courier glint, delivery carriers) and to stamp its own `pulseRef` for delivery.
 import { useEffect, useMemo, useRef } from 'react';
 import { simClock } from '../tweaks/simClock';
 import { useCellGalaxyOptional } from '../hooks/cellGalaxyContext';
@@ -44,7 +44,8 @@ import type { ColonyFlood } from '../derives/networkFlood.derive';
 import ColonyNodes from './ColonyNodes';
 import ColonyEdges from './ColonyEdges';
 import ColonyCourierLayer from './ColonyCourierLayer';
-import BlockDeliveryLayer from './BlockDeliveryLayer';
+import BlockDeliveryLayer, { type BlockDeliveryPulse } from './BlockDeliveryLayer';
+import { consensusBlockColor } from '../derives/consensusFlow.derive';
 
 interface NetworkColonyProps {
   topology: NetworkTopology;
@@ -54,7 +55,7 @@ interface NetworkColonyProps {
   selectedId: string | null;
   onSelect: (id: string | null) => void;
   /** Galaxy's cell.id → scene-seconds flash map (owned by App/CellGalaxy). Each
-   *  delivered bolus ignites the cells it lands on by writing here — the galaxy
+   *  delivered carrier ignites the cells it lands on by writing here — the galaxy
    *  visibly RECEIVES the delivery through its existing flare path. */
   cellFlashRef: React.MutableRefObject<Map<number, number>>;
   flashDirtyRef: React.MutableRefObject<boolean>;
@@ -81,16 +82,20 @@ export default function NetworkColony({
 
   // Per-block pulse: the delivery layer reads `at` (when it fired) and `entryId`
   // (the flood origin). Per-worker arrival times come from `cf.arrivals`.
-  const pulseRef = useRef<{ at: number; entryId: string | null } | null>(null);
+  const pulseRef = useRef<BlockDeliveryPulse | null>(null);
   const lastPulseRef = useRef(blockPulseAtMs);
   useEffect(() => {
     if (blockPulseAtMs <= lastPulseRef.current) return;
     // Consume the pulse even while backfilling so the backlog can't replay as one
     // strobe when `backfill` clears (mirrors advanceLinkCursor's cursor advance),
-    // then bail WITHOUT stamping pulseRef → BlockDeliveryLayer fires no boluses.
+    // then bail WITHOUT stamping pulseRef → BlockDeliveryLayer fires no carriers.
     lastPulseRef.current = blockPulseAtMs;
     if (backfillActive) return;
-    pulseRef.current = { at: simClock.elapsedSec, entryId: cf.entryId };
+    pulseRef.current = {
+      at: simClock.elapsedSec,
+      entryId: cf.entryId,
+      color: consensusBlockColor(blockPulseAtMs),
+    };
     // cf.entryId + backfillActive are read from the latest closure when
     // blockPulseAtMs advances (App recomputes cf + backfill + bumps blockPulseAtMs
     // from the same cells-cache render), so [blockPulseAtMs] suffices.
@@ -100,7 +105,7 @@ export default function NetworkColony({
   // ALL colony node launch points, keyed by node id. The courier hops the FULL
   // shortest-path tree (inferred nodes relay too), so it needs every node's
   // position. BlockDeliveryLayer safely SHARES this map: its planDeliveries only
-  // emits a bolus for ids present in cf.arrivals (measured), and measured ⊆ all
+  // emits a carrier for ids present in cf.arrivals (measured), and measured ⊆ all
   // nodes — the extra inferred/local keys are skipped (no arrival → no delivery,
   // and the local id is fed separately via localOrigins), so the delivery set is
   // byte-identical to the old measured-only map.
