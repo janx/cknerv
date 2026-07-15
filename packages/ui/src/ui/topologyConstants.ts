@@ -3,27 +3,25 @@
 // machinery; extracted here so CellGalaxy does not depend on deleted modules.
 
 /** New-block delivery timeline. NOTE: the `BEAM_*` names are legacy (from the
- *  retired BlockBeam) — they now drive the bolus DELIVERY timing. Kept as-is; a
+ *  retired BlockBeam) — they now drive protocol-carrier timing. Kept as-is; a
  *  rename is deferred since they're load-bearing across CellGalaxy + the delivery
  *  layer + tests. Sub-phases, relative to a node's own arrival:
  *
- *    t = −BEAM_CHARGE_DUR_S             gather pre-roll — the bolus forms inside
- *                                       the node. Arrival is scheduled in the
+ *    t = −BEAM_CHARGE_DUR_S             contributor gather — the carrier is woven
+ *                                       at the node. Arrival is scheduled in the
  *                                       future, so this fills the idle window.
- *    t = 0                              the bolus lobs from the node toward the
- *                                       galaxy membrane.
- *    t = BEAM_GROW_DUR_S                the bolus reaches the membrane and is
- *                                       ingested (dissolves + ignites the cells
- *                                       it lands on).
+ *    t = 0                              the carrier launches toward the Cell field.
+ *    t = BEAM_GROW_DUR_S                the carrier reaches the field boundary and
+ *                                       commits (contracts + illuminates nearby Cells).
  *    t = SHOCKWAVE_FIRE_DELAY_S
  *      = BEAM_GROW_DUR_S + BEAM_STRIKE_DUR_S
  *                                       the canopy brightness shockwave departs. */
 export const BEAM_GROW_DUR_S = 1.00;
 export const BEAM_STRIKE_DUR_S = 1.20;
-/** Pre-roll gather window (s) before a bolus lobs. Arrival (`firedAt`) is
+/** Pre-roll gather window (s) before a carrier launches. Arrival (`firedAt`) is
  *  scheduled in the future (latency-derived), so this renders in the idle
- *  window age ∈ [−BEAM_CHARGE_DUR_S, 0): the bolus forms inside the node, then
- *  lobs at age 0. When there is no lead time (firedAt ≈ now) it is skipped. */
+ *  window age ∈ [−BEAM_CHARGE_DUR_S, 0): contributor loops form at the node,
+ *  then launch at age 0. With no lead time (firedAt ≈ now), it is skipped. */
 export const BEAM_CHARGE_DUR_S = 0.4;
 export const SHOCKWAVE_FIRE_DELAY_S = BEAM_GROW_DUR_S + BEAM_STRIKE_DUR_S;
 
