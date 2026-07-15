@@ -22,7 +22,7 @@
 import { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import { useSimFrame } from '../tweaks/useSimFrame';
-import { simClock } from '../tweaks/simClock';
+import { useSimClock } from '../tweaks/SimClockScope';
 import { LIVE } from '../tweaks/liveTweaks';
 import { fnv1a } from '../geometry/edgeBezier';
 import type { NetworkTopology } from '../types';
@@ -67,6 +67,7 @@ export default function ColonyEdges({
   /** Calm catch-up: consume-then-bail so no surge replays post-backfill. */
   backfillActive?: boolean;
 }) {
+  const simClock = useSimClock();
   const edges = topology.edges;
 
   const geom = useMemo(() => {

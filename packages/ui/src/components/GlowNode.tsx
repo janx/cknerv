@@ -1,6 +1,6 @@
 import { useMemo, useRef } from 'react';
 import { useSimFrame } from '../tweaks/useSimFrame';
-import { simClock } from '../tweaks/simClock';
+import { useSimClock } from '../tweaks/SimClockScope';
 import { Billboard } from '@react-three/drei';
 import * as THREE from 'three';
 
@@ -101,6 +101,7 @@ export default function GlowNode({
   palette,
   shape,
 }: GlowNodeProps) {
+  const simClock = useSimClock();
   // Wireframe edges geometry derived once from the solid.
   const edgesGeom = useMemo(
     () => new THREE.EdgesGeometry(shape.geom),

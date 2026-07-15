@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, type ReactNode } from 'react';
 import { useThree } from '@react-three/fiber';
 import { useSimFrame } from '../tweaks/useSimFrame';
-import { simClock } from '../tweaks/simClock';
+import { useSimClock } from '../tweaks/SimClockScope';
 import { galaxyFrame } from '../tweaks/galaxyFrame';
 import { LIVE } from '../tweaks/liveTweaks';
 import { QUALITY_PRESETS, useQualityRuntime } from '../tweaks/qualityPresets';
@@ -298,6 +298,7 @@ function CkbNodeAnchor({
   onSelect: (id: string | null) => void;
   flashRef?: { current: { firedAt: number; color: [number, number, number] } | null };
 }) {
+  const simClock = useSimClock();
   const bodyRef = useRef<THREE.Group>(null);
   // Halo material drives the new-block flash exactly the way GlowNode
   // drives `flash_green` / `pulse_blue`: bake an `intensityRef` that
@@ -690,6 +691,7 @@ export default function CellGalaxy({
   entryWorld = null,
   entryArrivalS = 0,
 }: CellGalaxyProps) {
+  const simClock = useSimClock();
   const groupRef = useRef<THREE.Group>(null);
   // Server-driven cell list. The component is now a pure visual layer:
   // it reads cells from the cache and writes their xyz / born / death

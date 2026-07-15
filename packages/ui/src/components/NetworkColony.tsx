@@ -37,7 +37,7 @@
 // keeps `cf`/`blockPulseAtMs`/`backfillActive` to feed all three (edges surge,
 // courier glint, delivery carriers) and to stamp its own `pulseRef` for delivery.
 import { useEffect, useMemo, useRef } from 'react';
-import { simClock } from '../tweaks/simClock';
+import { useSimClock } from '../tweaks/SimClockScope';
 import { useCellGalaxyOptional } from '../hooks/cellGalaxyContext';
 import type { NetworkTopology, Vec3 } from '../types';
 import type { ColonyFlood } from '../derives/networkFlood.derive';
@@ -73,6 +73,7 @@ export default function NetworkColony({
   flashDirtyRef,
   localVersion,
 }: NetworkColonyProps) {
+  const simClock = useSimClock();
   // Calm catch-up signal (same flag beams/nerves already respect). Read via the
   // NON-throwing hook so the exported NetworkColony still mounts standalone
   // (galaxy-less scenes / tests) — matching its child BlockDeliveryLayer, which

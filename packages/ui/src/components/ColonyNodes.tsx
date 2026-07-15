@@ -22,7 +22,7 @@ import { useEffect, useMemo } from 'react';
 import * as THREE from 'three';
 import { Billboard } from '@react-three/drei';
 import { useSimFrame } from '../tweaks/useSimFrame';
-import { simClock } from '../tweaks/simClock';
+import { useSimClock } from '../tweaks/SimClockScope';
 import { makeHaloMaterial, phaseFor, rateFor } from './GlowNode';
 import { CkbSelectionReticle } from './CellGalaxy';
 import { PEER_COLORS, peerColorKind } from '../derives/peers.derive';
@@ -141,6 +141,7 @@ function MeasuredNode({
   selected: boolean;
   onSelect: (id: string | null) => void;
 }) {
+  const simClock = useSimClock();
   const color = useMemo(() => measuredColor(node, localVersion), [node, localVersion]);
   const haloMat = useMemo(() => {
     // makeHaloMaterial only reads palette.halo for the tint, but Palette requires

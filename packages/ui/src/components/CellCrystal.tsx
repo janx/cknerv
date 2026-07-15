@@ -8,7 +8,7 @@ import { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import { useCellGalaxy } from '../hooks/cellGalaxyContext';
 import { useSimFrame } from '../tweaks/useSimFrame';
-import { simClock } from '../tweaks/simClock';
+import { useSimClock } from '../tweaks/SimClockScope';
 import { LIVE } from '../tweaks/liveTweaks';
 import {
   INSTANCE_CAPACITY,
@@ -39,6 +39,7 @@ function makeCrystalGeometry(): THREE.BufferGeometry {
 const WARM: [number, number, number] = [1.0, 0.85, 0.62]; // warm-white crystal (asset accent later)
 
 export default function CellCrystal() {
+  const simClock = useSimClock();
   const cache = useCellGalaxy();
   const geom = useMemo(() => makeCrystalGeometry(), []);
   const material = useMemo(() => makeCellCrystalMaterial(), []);

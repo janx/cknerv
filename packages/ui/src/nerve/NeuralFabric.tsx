@@ -34,7 +34,7 @@ import {
 } from './fabricEdgeRender';
 import { reinforceUsage, decayUsage, usageBrightnessBoost } from './fabricReinforce';
 import { passiveFabricEnergyScale } from './fabricLuminance';
-import { simClock } from '../tweaks/simClock';
+import { useSimClock } from '../tweaks/SimClockScope';
 import { LIVE } from '../tweaks/liveTweaks';
 import { QUALITY_PRESETS, useQualityRuntime } from '../tweaks/qualityPresets';
 import {
@@ -324,6 +324,7 @@ function commitLayer(layer: FatLineLayer): void {
 }
 
 export default function NeuralFabric({ onReady }: NeuralFabricProps) {
+  const simClock = useSimClock();
   const { size } = useThree();
   const { effective: quality } = useQualityRuntime();
   const {

@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import type { MutableRefObject } from 'react';
 import * as THREE from 'three';
 import { useSimFrame } from '../tweaks/useSimFrame';
-import { simClock } from '../tweaks/simClock';
+import { useSimClock } from '../tweaks/SimClockScope';
 import { galaxyFrame } from '../tweaks/galaxyFrame';
 import { LIVE } from '../tweaks/liveTweaks';
 import { useCellGalaxyOptional } from '../hooks/cellGalaxyContext';
@@ -177,6 +177,7 @@ export default function BlockDeliveryLayer({
   cellFlashRef,
   flashDirtyRef,
 }: BlockDeliveryLayerProps) {
+  const simClock = useSimClock();
   const cellsCache = useCellGalaxyOptional();
   const deliveries = useMemo(
     () => planDeliveries(localOrigins, localReceiveDelayS, posById, arrivals, CELLS_Y),

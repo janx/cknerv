@@ -24,7 +24,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import type { RootState } from '@react-three/fiber';
 import { useSimFrame } from '../tweaks/useSimFrame';
-import { simClock } from '../tweaks/simClock';
+import { useSimClock } from '../tweaks/SimClockScope';
 import { LIVE } from '../tweaks/liveTweaks';
 import type { Vec3 } from '../types';
 import type { ColonyFlood } from '../derives/networkFlood.derive';
@@ -90,6 +90,7 @@ export default function ColonyCourierLayer({
   blockPulseAtMs,
   backfillActive,
 }: ColonyCourierLayerProps) {
+  const simClock = useSimClock();
   // The node→node throws for this block's tree. Pure; recomputed only when the
   // flood (new block / new origin) or the positions (topology) change.
   const schedule = useMemo(() => colonyCourierSchedule(cf, posById), [cf, posById]);

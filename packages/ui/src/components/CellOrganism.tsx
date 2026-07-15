@@ -11,7 +11,7 @@ import {
 import { deriveCellVisual } from '../derives/cellVisual.derive';
 import { makeCellOrganismMaterial } from '../materials/cellOrganismMaterial';
 import { useSimFrame } from '../tweaks/useSimFrame';
-import { simClock } from '../tweaks/simClock';
+import { useSimClock } from '../tweaks/SimClockScope';
 import { QUALITY_PRESETS, useQualityRuntime } from '../tweaks/qualityPresets';
 import { CELL_FORM_FOLDER } from '../tweaks/cellFormControl';
 
@@ -58,6 +58,7 @@ export default function CellOrganism({
   eventDelayS = 0,
   shockwaveUniformsRef,
 }: CellOrganismProps) {
+  const simClock = useSimClock();
   const cache = useCellGalaxy();
   const { effective: quality } = useQualityRuntime();
   const { membraneOpacity, membraneScale } = useControls(CELL_FORM_FOLDER, {
