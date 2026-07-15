@@ -12,20 +12,24 @@ import { Canvas } from '@react-three/fiber';
 import { OrbitControls, Stars } from '@react-three/drei';
 import {
   aggregateCellsStats,
+  AdaptiveQualityController,
+  CELL_SELECTION_PREFIX,
   chainNodeWorldPosition,
   colonyFlood,
   inferredTopology,
   CellGalaxy,
   CellGalaxyProvider,
-  DendriticBurst,
+  ConsensusWriteSeal,
   HudOverlay,
   NetworkColony,
   NeuralNetwork,
+  QUALITY_PRESETS,
   RenderStatsPanel,
   RenderStatsSampler,
   SimClockTicker,
   TweakSync,
   UNIVERSE_SEED_FALLBACK,
+  useQualityRuntime,
 } from '@cknerv/ui';
 import {
   connectCellsStream,
@@ -41,11 +45,8 @@ import type {
   Peer,
 } from '@cknerv/types';
 import Tweaks from './Tweaks';
+import { hasQuerySwitch, resolveCanvasDpr } from './render-quality';
 import { resolveBuildVersion, buildCommitHref, resolveGalaxyConfig } from './runtime-config';
-
-/** CellGalaxy emits `cell:<id>` for a clicked cell and the bare node id
- *  for a clicked CKB icosahedron. The prefix discriminates the two. */
-const CELL_SELECT_PREFIX = 'cell:';
 
 interface AppProps {
   /** Initial Chain entity from `/api/entities/chain/snapshot`. */
@@ -73,6 +74,16 @@ export default function App({
   initialCellsRevision,
 }: AppProps) {
   const galaxyConfig = resolveGalaxyConfig();
+  const qualityRuntime = useQualityRuntime();
+  const qualityCascade = QUALITY_PRESETS[qualityRuntime.effective];
+  const forceRenderStats = useMemo(() => (
+    typeof window !== 'undefined'
+    && hasQuerySwitch(window.location.search, 'render-stats')
+  ), []);
+  const canvasDpr = resolveCanvasDpr(
+    typeof window === 'undefined' ? 1 : window.devicePixelRatio,
+    qualityCascade.maxDpr,
+  );
   // Live caches, seeded from the bootstrap snapshots so the first paint is
   // already populated, then updated in place by the WS streams below. A
   // fresh cache object on every delta re-renders the tree; CellGalaxy reads
@@ -99,7 +110,7 @@ export default function App({
   const [selectedNetId, setSelectedNetId] = useState<string | null>(null);
   const handleSelect = useCallback((id: string | null) => {
     if (id == null) return;
-    if (id.startsWith(CELL_SELECT_PREFIX)) setSelectedCellId(id);
+    if (id.startsWith(CELL_SELECTION_PREFIX)) setSelectedCellId(id);
     else setSelectedNetId(id);
   }, []);
 
@@ -145,7 +156,7 @@ export default function App({
 
   // Shared per-cell flash buffers, owned here so the NeuralNetwork overlay
   // can write cell→cell pulse arrivals into the same Float32Array CellShell
-  // reads. burstArrivalRef carries terminal arrivals to DendriticBurst.
+  // reads. burstArrivalRef carries terminal arrivals to ConsensusWriteSeal.
   const cellFlashRef = useRef<Map<number, number>>(new Map());
   const flashDirtyRef = useRef<boolean>(false);
   const burstArrivalRef = useRef<
@@ -161,7 +172,7 @@ export default function App({
   }, [chainNodes]);
 
   // Single seed source for chain-node placement, fed to BOTH CellGalaxy and
-  // NetworkColony so bolus launch points and the galaxy stay locked to the
+  // NetworkColony so carrier launch points and the galaxy stay locked to the
   // same layout (they'd diverge if only one got a real seed). The backend
   // universe_seed isn't plumbed to the SPA yet; when it is, source it HERE and
   // both move together.
@@ -255,8 +266,8 @@ export default function App({
   // Resolve the two selections. Cell = the galaxy axis; node/peer share the
   // network axis (selectedNetId holds a node id or a `peer:` id, never a cell).
   const selectedCell = useMemo(() => {
-    if (!selectedCellId || !selectedCellId.startsWith(CELL_SELECT_PREFIX)) return null;
-    const id = Number(selectedCellId.slice(CELL_SELECT_PREFIX.length));
+    if (!selectedCellId || !selectedCellId.startsWith(CELL_SELECTION_PREFIX)) return null;
+    const id = Number(selectedCellId.slice(CELL_SELECTION_PREFIX.length));
     return Number.isFinite(id) ? cellsCache.cells.get(id) ?? null : null;
   }, [selectedCellId, cellsCache.cells]);
   const selectedNode = useMemo(() => {
@@ -291,13 +302,14 @@ export default function App({
         colonyCount={topology.nodes.length}
       />
       {/* Render-stats HUD overlay (DOM sibling of HudOverlay, NOT in-Canvas):
-          renders null unless the ` panel's "render stats" toggle is on. */}
-      <RenderStatsPanel />
+          visible through the ` panel toggle or ?render-stats=1. */}
+      <RenderStatsPanel forceVisible={forceRenderStats} />
 
       <CellGalaxyProvider value={cellsCache}>
         <Canvas
           camera={{ position: [110, 108, 110], fov: 50, near: 1, far: 3000 }}
           gl={{ antialias: true, alpha: true }}
+          dpr={canvasDpr}
           style={{ background: '#02030a' }}
           onPointerMissed={() => { setSelectedCellId(null); setSelectedNetId(null); }}
         >
@@ -306,17 +318,20 @@ export default function App({
               NeuralNetwork, NetworkColony) actually plays. Must live
               under the r3f context; mount exactly once. */}
           <SimClockTicker />
+          {/* Auto mode samples raw frame time with long hysteresis. Manual
+              high/med/low in the backtick panel overrides it immediately. */}
+          <AdaptiveQualityController />
           {/* Mirrors the backtick leva panel into the LIVE tuning store.
               Re-renders only on knob drag (no per-frame cost); mount once. */}
           <TweakSync />
-          {/* Samples gl.info into the render-stats store when the ` panel's
-              "render stats" toggle is on; inert otherwise. Mount once. */}
-          <RenderStatsSampler />
+          {/* Samples gl.info when the ` panel toggle or ?render-stats=1 is on;
+              inert otherwise. Mount once. */}
+          <RenderStatsSampler forceEnabled={forceRenderStats} />
 
           <Stars
             radius={400}
             depth={120}
-            count={2000}
+            count={qualityCascade.starsCount}
             factor={2}
             saturation={0}
             fade
@@ -335,15 +350,16 @@ export default function App({
             entryWorld={entryPeerWorld}
             entryArrivalS={entryArrivalS}
             selectedId={selectedNetId}
+            selectedCellId={selectedCellId}
             onSelect={handleSelect}
             cellFlashRef={cellFlashRef}
             flashDirtyRef={flashDirtyRef}
             overlay={
               <>
-                {/* Cell→cell nerve pulses: each landed tx routes a bead
-                    from its input cells to its outputs through the neighbour
-                    graph, flashing cells en route and bursting at the
-                    terminal. Ported from ckb-rcg's NeuralNetwork. */}
+                {/* Cell→cell consensus packets: each observed transaction
+                    routes its carrier from input cells to outputs through the
+                    shared neighbour graph, illuminating the maintained data
+                    structure before the terminal write seal resolves. */}
                 <NeuralNetwork
                   cellFlashRef={cellFlashRef}
                   flashDirtyRef={flashDirtyRef}
@@ -351,7 +367,7 @@ export default function App({
                   topology={galaxyConfig.topology}
                   pulses={galaxyConfig.pulses}
                 />
-                <DendriticBurst arrivalRef={burstArrivalRef} />
+                <ConsensusWriteSeal arrivalRef={burstArrivalRef} />
               </>
             }
           />
@@ -359,9 +375,9 @@ export default function App({
           {/* The P2P colony: a broad inferred glow-node cloud + gossamer glow-line
               mesh, the bright measured glow-nodes set within it (one confidence
               gradient; the local node is the galaxy's labeled anchor, not drawn
-              here). Each block flings a courier cascade outward through the mesh
-              (colonyFlood tree); each measured worker + the local hero lobs a bolus
-              up into the cell canopy as the front reaches it. */}
+              here). Each block sends a courier cascade through the mesh
+              (colonyFlood tree); each measured peer and the local anchor weave a
+              protocol carrier into the Cell field as the front reaches it. */}
           <NetworkColony
             topology={topology}
             cf={cf}
