@@ -13,6 +13,7 @@ import {
   planDeliveries,
   deliveryPhase,
   bolusIngest,
+  protocolLandingSealState,
   nearestCellIds,
 } from '../src/derives/peers.derive';
 import { emptyChainCache } from '@cknerv/cache';
@@ -216,16 +217,34 @@ describe('peers.derive', () => {
       }
     });
 
-    it('flash is a bright impact that lingers into an amber tail (not the old ~2-frame pop)', () => {
+    it('flash is a bright impact that lingers into an agreement tail (not the old ~2-frame pop)', () => {
       expect(bolusIngest(0).flashOpacity).toBeCloseTo(1, 6); // bright at the strike
       // spans the window: at 30% through, brighter than the old exp(-7·t)=0.122 blink
       expect(bolusIngest(0.3).flashOpacity).toBeGreaterThan(0.122);
       expect(bolusIngest(1).flashOpacity).toBe(0); // clean end, no leftover pop
     });
 
-    it('colour resolves white-hot → her amber across the ingest', () => {
+    it('colour resolves moving carrier hue → pale agreement across ingest', () => {
       expect(bolusIngest(0).colorT).toBe(0);
       expect(bolusIngest(1).colorT).toBeCloseTo(1, 6);
+    });
+  });
+
+  describe('protocolLandingSealState', () => {
+    it('attacks after contact, expands monotonically, and resolves cleanly', () => {
+      const start = protocolLandingSealState(0);
+      const peak = protocolLandingSealState(0.2);
+      const end = protocolLandingSealState(1);
+
+      expect(start.opacity).toBe(0);
+      expect(peak.opacity).toBeGreaterThan(0.85);
+      expect(end.opacity).toBe(0);
+      expect(peak.scale).toBeGreaterThan(start.scale);
+      expect(end.scale).toBe(1);
+      expect(end.rotation).toBeGreaterThan(start.rotation);
+      expect(start.paleMix).toBe(0);
+      expect(peak.paleMix).toBeGreaterThan(0.45);
+      expect(end.paleMix).toBe(1);
     });
   });
 

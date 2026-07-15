@@ -57,15 +57,15 @@ export function easeOutCubic(t: number): number {
   return 1 - Math.pow(1 - t, 3);
 }
 
-/** Accelerate-in lob easing: some launch velocity (0.15) plus acceleration, so the
- *  bolus is fastest AT the membrane (slams in), unlike easeOutCubic which decelerates.
+/** Accelerate-in carrier easing: some launch velocity (0.15) plus acceleration,
+ *  so the signal is fastest at the Cell-field boundary, unlike easeOutCubic.
  *  f(0)=0, f(1)=1; slope grows from 0.15 to 1.85 (accelerating). */
 export function easeInLob(t: number): number {
   return 0.15 * t + 0.85 * t * t;
 }
 
 export interface Delivery {
-  /** Stable per-node key for the pooled bolus child. */
+  /** Stable per-node key for the pooled protocol-carrier child. */
   key: string;
   from: Vec3;
   to: Vec3;
@@ -109,11 +109,11 @@ export function planDeliveries(
 }
 
 export interface DeliveryPhaseConfig {
-  /** Pre-roll "gather" before the lob (rides the old beam charge window). */
+  /** Pre-roll contributor gather before launch (rides the legacy beam window). */
   chargeDur: number;
-  /** Lob (node → membrane) duration. Set to BEAM_GROW_DUR_S to land at the old strike. */
+  /** Carrier transit (node → Cell field) duration. */
   lobDur: number;
-  /** Soft membrane ingest duration. */
+  /** Field-commit duration. */
   ingestDur: number;
 }
 export type DeliveryPhaseName = 'idle' | 'gather' | 'lob' | 'ingest' | 'done';
@@ -143,38 +143,68 @@ export function deliveryPhase(localAge: number, cfg: DeliveryPhaseConfig): Deliv
 }
 
 export interface BolusIngest {
-  /** Body + bloom scale multiplier: 1 at impact → 0 as the bolus dissolves. */
+  /** Legacy API name; describes the carrier's field-commit envelope. */
+  /** Carrier glyph scale multiplier: 1 at impact → 0 at commit. */
   bodyScale: number;
   /** Body + bloom opacity: 1 at impact → 0. */
   bodyOpacity: number;
-  /** Draw toward the galaxy core, 0→1 (accelerating — the queen pulls it in). */
+  /** Draw toward the consensus-field core, 0→1. */
   pull: number;
-  /** Membrane flash opacity: bright at the strike, gentle amber tail, 0 at t=1. */
+  /** Agreement flash opacity: bright at contact, resolved at t=1. */
   flashOpacity: number;
-  /** White-hot → amber colour lerp param, 0→1. */
+  /** Hash-stable carrier hue → pale agreement lerp param, 0→1. */
   colorT: number;
 }
 
-/** Per-frame "absorb" envelope for a bolus during the ingest phase (t∈[0,1]).
- *  Replaces the old hard cube-hide + ~2-frame white pop that read as the block
- *  *vanishing*: the body now dissolves (shrink + fade, reaching exactly 0 at
- *  t=1 so the phase→done hide is imperceptible) while being drawn toward the
- *  core, and the flash lingers into her amber instead of blinking out. Pure. */
+export interface ProtocolLandingSealState {
+  /** Normalised size multiplier for the interrupted landing rings. */
+  scale: number;
+  /** Additive seal opacity. */
+  opacity: number;
+  /** Screen-plane rotation in radians. */
+  rotation: number;
+  /** Carrier hue → pale agreement resolution in [0, 1]. */
+  paleMix: number;
+}
+
+/**
+ * Structured landing envelope. A short attack separates the agreement seal
+ * from the contact flash; the interrupted rings then expand and resolve over
+ * the full commit window instead of appearing as a one-frame white target.
+ */
+export function protocolLandingSealState(t: number): ProtocolLandingSealState {
+  const k = Math.max(0, Math.min(1, t));
+  const attackT = Math.min(1, k / 0.12);
+  const attack = attackT * attackT * (3 - 2 * attackT);
+  const fadeT = Math.max(0, Math.min(1, (k - 0.58) / 0.42));
+  const fade = 1 - fadeT * fadeT * (3 - 2 * fadeT);
+  return {
+    scale: 0.18 + easeOutCubic(k) * 0.82,
+    opacity: attack * fade * 0.92,
+    rotation: -0.24 + k * 0.72,
+    paleMix: easeOutCubic(k),
+  };
+}
+
+/** Per-frame field-commit envelope for the protocol carrier (t∈[0,1]).
+ *  The compatibility export name remains `bolusIngest`, but the visual is an
+ *  open woven glyph: it contracts into the field while the agreement flash
+ *  resolves from the block's stable warm hue to pale consensus. Pure. */
 export function bolusIngest(t: number): BolusIngest {
   const k = 1 - t; // 1 → 0 collapse factor
   return {
     bodyScale: k * k, // fast initial dissolve, exactly 0 at t=1
     bodyOpacity: k, // linear fade, exactly 0 at t=1
     pull: t * t, // accelerating inward draw (sucked into the canopy)
-    flashOpacity: Math.exp(-3.0 * t) * k, // bright strike → amber tail; ×k pins a clean 0 at t=1
-    colorT: easeOutCubic(t), // white-hot impact → her cortex amber
+    flashOpacity: Math.exp(-3.0 * t) * k, // bright strike → pale agreement tail; ×k pins a clean 0 at t=1
+    colorT: easeOutCubic(t), // moving carrier hue → pale committed information
   };
 }
 
-/** The `k` cell ids nearest (in the xz plane) to a world-space `landing`,
+/** The `k` Cell ids nearest (in the xz plane) to a carrier `landing`,
  *  nearest first. Cells live in the galaxy group's rotating LOCAL frame
  *  (`pos_seed`), so the world landing is projected back through the group's
- *  `rotationY` before comparing. Used to ignite the cells a bolus lands on so
+ *  `rotationY` before comparing. Used to illuminate the Cells a carrier reaches so
  *  the galaxy visibly RECEIVES each delivery (sparse-rim-safe: "nearest k"
  *  always finds cells, unlike a fixed radius). Pure. O(n) — called per block,
  *  not per frame. */
