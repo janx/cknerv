@@ -17,15 +17,20 @@ describe('makeCellFlareMaterial', () => {
     expect(m.uniforms.uDischargeArms).toBeDefined();
   });
 
-  it('renders the discharge flare and reads the shared aFlashAt attribute', () => {
+  it('renders an A protocol write and reads the shared aFlashAt attribute', () => {
     const m = makeCellFlareMaterial();
-    expect(m.fragmentShader).toContain('vec4 discharge(');
+    expect(m.fragmentShader).toContain('vec4 protocolWrite(');
+    expect(m.fragmentShader).toContain('segmentDistance');
+    expect(m.fragmentShader).toContain('outerGate');
+    expect(m.fragmentShader).toContain('innerGate');
+    expect(m.fragmentShader).toContain('diamondRadius');
+    expect(m.fragmentShader).not.toContain('vec4 discharge(');
     expect(m.fragmentShader).toContain('flashEnv');
     expect(m.vertexShader).toContain('attribute float aFlashAt;');
     expect(m.vertexShader).toContain('vFlashAge');
   });
 
-  it('carries no cloud or shockwave (those stay on the cell body)', () => {
+  it('carries no cloud or block shockwave (those stay on the cell body)', () => {
     const m = makeCellFlareMaterial();
     expect(m.fragmentShader).not.toContain('vec4 cloud(');
     expect(m.fragmentShader).not.toContain('vShockwave');

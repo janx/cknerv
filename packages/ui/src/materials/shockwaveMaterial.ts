@@ -68,6 +68,37 @@ export function makeShockwaveOriginArray(): Float32Array {
   return new Float32Array(SHOCKWAVE_SLOTS * 2);
 }
 
+export function makeShockwaveColorArray(): Float32Array {
+  const colors = new Float32Array(SHOCKWAVE_SLOTS * 3);
+  for (let slot = 0; slot < SHOCKWAVE_SLOTS; slot += 1) {
+    colors[slot * 3 + 0] = 0.72;
+    colors[slot * 3 + 1] = 0.96;
+    colors[slot * 3 + 2] = 1.0;
+  }
+  return colors;
+}
+
+/** Write one complete protocol-wave slot without letting time/origin/hue drift. */
+export function writeShockwaveSlot(
+  at: Float32Array,
+  originXZ: Float32Array,
+  colors: Float32Array,
+  slot: number,
+  firedAt: number,
+  origin: readonly [number, number],
+  color: readonly [number, number, number],
+): void {
+  if (!Number.isInteger(slot) || slot < 0 || slot >= SHOCKWAVE_SLOTS) {
+    throw new RangeError(`shockwave slot ${slot} is outside 0..${SHOCKWAVE_SLOTS - 1}`);
+  }
+  at[slot] = firedAt;
+  originXZ[slot * 2 + 0] = origin[0];
+  originXZ[slot * 2 + 1] = origin[1];
+  colors[slot * 3 + 0] = color[0];
+  colors[slot * 3 + 1] = color[1];
+  colors[slot * 3 + 2] = color[2];
+}
+
 /**
  * Shared uniform record for shockwave-aware materials. Each call returns a
  * fresh `{ value }` wrapper so different materials don't share mutable
@@ -82,6 +113,7 @@ export function makeShockwaveUniforms() {
   return {
     uShockwaveAt: { value: makeShockwaveAtArray() },
     uShockwaveOriginXZ: { value: makeShockwaveOriginArray() },
+    uShockwaveColor: { value: makeShockwaveColorArray() },
     uShockwaveSpeed: { value: 36 },
     uShockwaveDurS: { value: 5.0 },
     uShockwaveBandBase: { value: SHOCKWAVE_BAND_BASE },
