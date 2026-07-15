@@ -105,7 +105,7 @@ export default function ConsensusWriteSeal({ arrivalRef }: ConsensusWriteSealPro
             // Pure CPU lifecycle supplies an eased radius in [0, 1].
             float radius = uPeakRadius * aRadius;
             float pixelSize = radius * (uViewportHeight * 0.5) / -mv.z;
-            float memoryFloorPx = 18.0 * vMemory * uPixelRatio;
+            float memoryFloorPx = 34.0 * vMemory * uPixelRatio;
             gl_PointSize = max(2.0, max(pixelSize * 2.0 * uPixelRatio, memoryFloorPx));
           }
         `,

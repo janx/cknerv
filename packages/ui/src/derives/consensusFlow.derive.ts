@@ -189,7 +189,7 @@ export function consensusWriteSealState(ageS: number): ConsensusWriteSealState {
   return {
     visible: true,
     radius: 1 - latch * 0.48,
-    opacity: (0.22 + (1 - latch) * 0.13) * appear * fade,
+    opacity: (0.32 + (1 - latch) * 0.18) * appear * fade,
     core: latch * 0.5 * fade,
     rotation: 1.35 + memoryT * 0.65,
     memory: latch * fade,
