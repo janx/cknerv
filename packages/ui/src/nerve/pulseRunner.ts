@@ -7,6 +7,7 @@ import type { Cell, CellLink } from '@cknerv/types';
 import { fnv1a } from '../geometry/edgeBezier';
 import type { NeighborGraph } from '../geometry/neighborGraph';
 import { shortestPath, DEFAULT_MAX_HOPS } from '../geometry/pathRouter';
+import { consensusPacketColor } from '../derives/consensusFlow.derive';
 import type { PulseStatsSink } from './pulseStats';
 
 /** Base time the spike spends traversing one hop (cell-to-cell) in
@@ -29,25 +30,13 @@ export const MAX_PULSES_PER_LINK = 6;
  *  the goal but we don't need to fire from every alive sibling. */
 export const MAX_SOURCES_PER_PARENT = 2;
 
-/** Color palette echoes the legacy nervePulseScheduler so existing
- *  users / tag-tinted UI stays visually consistent. Keyed on the four
- *  known runtime tag values; unknown tags fall back to
- *  `PULSE_GENERIC_COLOR`. */
-export const PULSE_COLOR_BY_TAG: Record<string, [number, number, number]> = {
-  ckbloom: [0.94, 0.67, 0.99],
-  dex:     [0.99, 0.83, 0.30],
-  cf:      [0.99, 0.64, 0.69],
-  wallet:  [0.43, 0.91, 0.72],
-};
-export const PULSE_GENERIC_COLOR: [number, number, number] = [1.0, 0.85, 0.62];
-
 export interface Pulse {
   /** Cells in path order (length ≥ 2). path[0] = source (an alive
    *  sibling of a consumed input), path[last] = a new output cell. */
   path: number[];
   /** Wall-clock-ish ms when the pulse fired (caller's clock). */
   bornAtMs: number;
-  /** Pulse colour (kind-tinted). */
+  /** Hash-stable A packet colour, preserved from departure to write seal. */
   color: [number, number, number];
   /** Per-pulse start delay (ms) — random offset in [0, JITTER) so a
    *  cascade's many pulses don't all depart at the same instant. */
@@ -117,9 +106,7 @@ export function planPulses(
     return [];
   }
 
-  const color: [number, number, number] =
-    (link.tag !== null && PULSE_COLOR_BY_TAG[link.tag]) ||
-    PULSE_GENERIC_COLOR;
+  const color = consensusPacketColor(link.tx_hash, link.tag);
 
   // Collect candidate source cells: alive cells whose birth tx_hash
   // is one of the link's parent_tx_hashes.
