@@ -55,4 +55,41 @@ describe('NeuralFabric living-mesh handles', () => {
     expect(SRC).not.toMatch(/const\s+DECAY_MS\s*=/);
     expect(SRC).toMatch(/from\s+['"]\.\/fabricEdgeRender['"]/);
   });
+
+  it('uses A route endpoints and preserves each packet colour on active hops', () => {
+    expect(SRC).toContain('consensusRouteColors');
+    expect(SRC).toContain('consensusRouteGoldMix');
+    expect(SRC).toContain('consensusChromaIntensity');
+    expect(SRC).toContain('CONSENSUS_BRAID_PALETTE.retire');
+    expect(SRC).toContain('color: Vec3');
+    expect(SRC).toContain('hop.color[0]');
+    expect(SRC).not.toContain('new THREE.Color(0.48, 0.06, 0.16)');
+  });
+
+  it('spends fewer samples on passive fabric before simplifying active writes', () => {
+    expect(SRC).toContain('useQualityRuntime');
+    expect(SRC).toContain('fabricSamplesPerEdge');
+    expect(SRC).toContain('activeSamplesPerHop');
+    expect(SRC).not.toMatch(/i\s*<=\s*FABRIC_SAMPLES_PER_EDGE/);
+  });
+
+  it('compresses only passive core energy while semantic routes reclaim contrast', () => {
+    expect(SRC).toContain('passiveFabricEnergyScale');
+    expect(SRC).toContain('LIVE.cell.centerDim');
+    expect(SRC).toContain('hierarchy');
+    // Active packet paths intentionally bypass passive density compression.
+    const activeImplementation = SRC.slice(SRC.lastIndexOf('pushActiveHop(hop, cells)'));
+    expect(activeImplementation).not.toContain('passiveFabricEnergyScale');
+  });
+
+  it('uses bounded screen accumulation only for passive structure', () => {
+    expect(SRC).toContain("'screen' | 'additive'");
+    expect(SRC).toContain('THREE.CustomBlending');
+    expect(SRC).toContain('THREE.OneMinusSrcColorFactor');
+    expect(SRC).toContain("LIVE.cell.fabricWidth, 'screen'");
+    expect(SRC).toContain("LIVE.cell.activeWidth, 'additive'");
+    // Do not force passive routes ahead of Cell bodies: that destroys their
+    // shared depth relationship and visibly reintroduces centre clipping.
+    expect(SRC).not.toContain('mesh.renderOrder');
+  });
 });

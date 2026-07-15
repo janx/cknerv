@@ -1,4 +1,4 @@
-// Orchestrator for the cells neural network.
+// Orchestrator for the Cell consensus-flow overlay.
 //
 // Pipeline:
 //   1. cellsCache changes → rebuild the spatial neighbour graph and
@@ -8,13 +8,14 @@
 //      through the neighbour graph. Each pulse is queued.
 //   3. Per frame, every active pulse advances by elapsed/HOP_MS hops,
 //      lights up the current hop's edge in the active fabric layer,
-//      drives the spike head sprite, flashes the cells it crosses,
-//      and triggers a DendriticBurst when it lands on the terminal.
+//      drives the packet-head glyph, flashes the cells it crosses,
+//      and stamps a write seal when it lands on the terminal.
 
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useCellGalaxy } from '../hooks/cellGalaxyContext';
 import { useSimFrame } from '../tweaks/useSimFrame';
 import { simClock } from '../tweaks/simClock';
+import { QUALITY_PRESETS, useQualityRuntime } from '../tweaks/qualityPresets';
 import { buildNeighborGraph, emptyNeighborGraph, type NeighborGraph } from '../geometry/neighborGraph';
 import { type Pulse, type PulsePlanningOptions } from './pulseRunner';
 import { planLinkBatch, tickBlockIfAdvanced } from './pulseBatch';
@@ -32,7 +33,7 @@ const SPIKE_POOL_CAPACITY = 1024;
  *  first — keeps the visual coherent during burst-block activity. */
 const MAX_ACTIVE_PULSES = 256;
 
-/** Small white-hot accent sprite at the wavefront position. Only
+/** Small pale-hot packet glyph at the wavefront position. Only
  *  there to give the leading edge a sharp focal point — the lit
  *  curve does the heavy lifting visually. */
 const SPIKE_SIZE = 1.6;
@@ -83,6 +84,8 @@ export default function NeuralNetwork({
   pulses,
 }: NeuralNetworkProps = {}) {
   const cellsCache = useCellGalaxy();
+  const { effective: quality } = useQualityRuntime();
+  const particleCapMul = QUALITY_PRESETS[quality].particleCapMul;
 
   // Living mesh: the neighbour graph is maintained INCREMENTALLY from the
   // per-frame cells diff rather than rebuilt wholesale on every membership
@@ -168,7 +171,10 @@ export default function NeuralNetwork({
       pulsesRef.current.push({ ...p, startSec });
     }
     // Soft cap — drop oldest if we're way over.
-    const maxActivePulses = pulses?.maxActivePulses ?? MAX_ACTIVE_PULSES;
+    const maxActivePulses = Math.max(
+      1,
+      Math.floor((pulses?.maxActivePulses ?? MAX_ACTIVE_PULSES) * particleCapMul),
+    );
     if (pulsesRef.current.length > maxActivePulses) {
       const overflow = pulsesRef.current.length - maxActivePulses;
       pulsesRef.current.splice(0, overflow);
@@ -181,6 +187,7 @@ export default function NeuralNetwork({
     pulses?.maxPulsesPerLink,
     pulses?.maxSourcesPerParent,
     pulses?.maxActivePulses,
+    particleCapMul,
   ]);
 
   // Dev metric: count every block that arrives (one `pulse` delta each,
@@ -196,7 +203,7 @@ export default function NeuralNetwork({
     );
   }, [cellsCache.lastPulseAtMs]);
 
-  // SpikePool sprites for the moving Na+ heads.
+  // One batched glyph pool for the moving protocol packets.
   const spikePool = useMemo(() => new SpikePool(SPIKE_POOL_CAPACITY), []);
   useEffect(() => () => spikePool.dispose(), [spikePool]);
 
@@ -211,7 +218,7 @@ export default function NeuralNetwork({
 
   // Per-frame: roll every active pulse forward, light up the current
   // hop's edge, push the spike head sprite, flash the receiving
-  // cells, fire DendriticBurst at the terminal.
+  // cells, then stamp a consensus write seal at the terminal.
   useSimFrame((state) => {
     const now = simClock.elapsedSec;
     spikePool.beginFrame();
@@ -286,7 +293,7 @@ export default function NeuralNetwork({
 
       stillActive.push(pulse);
 
-      // ② Reinforce the vein this pulse is traversing — once per edge crossed
+      // Reinforce the route this packet is traversing — once per edge crossed
       // (headHop only advances). Repeatedly-travelled routes accumulate glow
       // and persist; the fabric self-organizes toward live block/tx flow.
       if (headHop > (pulse.lastReinforcedHop ?? -1)) {
@@ -324,6 +331,7 @@ export default function NeuralNetwork({
               toCellId: hToId,
               frontT,
               brightness,
+              color: pulse.color,
             },
             cells,
           );
