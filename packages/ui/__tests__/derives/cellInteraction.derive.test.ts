@@ -6,6 +6,7 @@ import {
   CONSENSUS_BRAID_BASE_SCALE,
   cellFocusTarget,
   cellNucleusLodRefreshDue,
+  consensusBraidRenderScale,
   dampCellFocus,
   focusedBraidScale,
   selectedCellNumericId,
@@ -41,6 +42,15 @@ describe('cell interaction derivation', () => {
     expect(focusedBraidScale(150, 1000, 2.1, 0)).toBe(CONSENSUS_BRAID_BASE_SCALE);
     expect(focusedBraidScale(150, 1000, 2.1, 1)).toBeGreaterThan(3);
     expect(focusedBraidScale(10_000, 100, 0.1, 1)).toBeLessThanOrEqual(6);
+  });
+
+  it('applies the same capacity presence multiplier to render and hit scale', () => {
+    const base = focusedBraidScale(3, 1000, 2.1, 1);
+
+    expect(consensusBraidRenderScale(3, 1000, 2.1, 1, 1.12)).toBeCloseTo(
+      base * 1.12,
+    );
+    expect(consensusBraidRenderScale(3, 1000, 2.1, 1, -1)).toBe(0);
   });
 
   it('samples passive nucleus LOD at 12 Hz but refreshes semantic changes immediately', () => {

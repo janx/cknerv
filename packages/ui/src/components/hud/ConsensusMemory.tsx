@@ -10,10 +10,9 @@ import {
   CONSENSUS_BRAID_PALETTE,
   CONSENSUS_BRAID_TAU,
   consensusBraidContributorColor,
-  consensusBraidBirthPhase,
   consensusBraidLayerOpacity,
   consensusBraidPoint,
-  consensusBraidSpecs,
+  deriveConsensusBraidTopology,
   type ConsensusBraidField,
   type ConsensusBraidSpec,
 } from '../../derives/consensusBraid.derive';
@@ -55,7 +54,8 @@ export default function ConsensusMemory({
   const packetsRef = useRef<THREE.InstancedMesh>(null);
   const visual = useMemo(() => deriveCellVisual(cell), [cell]);
   const built = useMemo(() => {
-    const specs = consensusBraidSpecs(visual);
+    const topology = deriveConsensusBraidTopology(visual, cell.birth_block);
+    const specs = topology.specs;
     const count = specs.length;
     const ribbonPositions: number[] = [];
     const ribbonColors: number[] = [];
@@ -144,60 +144,18 @@ export default function ConsensusMemory({
       }
     }
 
-    // Consensus is not an arbitrary centre ornament. For each neighboring
-    // contributor pair, locate their closest genuinely independent samples;
-    // only those spatial agreements receive a bridge and a luminous knot.
-    const agreementSamples = 72;
-    const agreementsPerPair = 1 + Math.round(visual.payload * 2);
-    const sampleA = new THREE.Vector3();
-    const sampleB = new THREE.Vector3();
-    const knot = new THREE.Vector3();
-    for (let pair = 0; pair < specs.length - 1; pair += 1) {
-      const candidates: Array<{
-        distanceSq: number;
-        indexA: number;
-        indexB: number;
-        pointA: THREE.Vector3;
-        pointB: THREE.Vector3;
-      }> = [];
-      for (let indexA = 0; indexA < agreementSamples; indexA += 1) {
-        consensusBraidPoint(specs[pair], indexA / agreementSamples * TAU, sampleA);
-        for (let indexB = 0; indexB < agreementSamples; indexB += 1) {
-          consensusBraidPoint(specs[pair + 1], indexB / agreementSamples * TAU, sampleB);
-          const distanceSq = sampleA.distanceToSquared(sampleB);
-          if (distanceSq > 0.035) continue;
-          candidates.push({
-            distanceSq,
-            indexA,
-            indexB,
-            pointA: sampleA.clone(),
-            pointB: sampleB.clone(),
-          });
-        }
-      }
-      candidates.sort((left, right) => left.distanceSq - right.distanceSq);
-      const chosen: typeof candidates = [];
-      for (const candidate of candidates) {
-        const tooClose = chosen.some((existing) => (
-          Math.abs(existing.indexA - candidate.indexA) < 8
-          || Math.abs(existing.indexB - candidate.indexB) < 8
-        ));
-        if (tooClose) continue;
-        chosen.push(candidate);
-        if (chosen.length >= agreementsPerPair) break;
-      }
-      for (let index = 0; index < chosen.length; index += 1) {
-        const agreement = chosen[index];
-        agreementPositions.push(
-          ...agreement.pointA.toArray(),
-          ...agreement.pointB.toArray(),
-        );
-        color.copy(pale).lerp(paleGold, (pair + index) % 2 === 0 ? 0.46 : 0.16);
-        agreementColors.push(color.r, color.g, color.b, color.r, color.g, color.b);
-        knot.addVectors(agreement.pointA, agreement.pointB).multiplyScalar(0.5);
-        knotPositions.push(...knot.toArray());
-        knotColors.push(color.r, color.g, color.b);
-      }
+    // The constellation is canonical A topology. This portrait may draw the
+    // paths at higher resolution, but it cannot invent different agreements
+    // from the production galaxy LOD.
+    for (const agreement of topology.agreements) {
+      agreementPositions.push(...agreement.pointA, ...agreement.pointB);
+      color.copy(pale).lerp(
+        paleGold,
+        (agreement.pair + agreement.ordinal) % 2 === 0 ? 0.46 : 0.16,
+      );
+      agreementColors.push(color.r, color.g, color.b, color.r, color.g, color.b);
+      knotPositions.push(...agreement.midpoint);
+      knotColors.push(color.r, color.g, color.b);
     }
 
     const ribbonGeometry = new THREE.BufferGeometry();
@@ -298,6 +256,8 @@ export default function ConsensusMemory({
     });
     return {
       specs,
+      presenceScale: topology.presenceScale,
+      birthPhase: topology.birthPhase,
       ribbonGeometry,
       ribbonMaterial,
       streamGeometry,
@@ -321,7 +281,7 @@ export default function ConsensusMemory({
       packetGeometry,
       packetMaterial,
     };
-  }, [visual]);
+  }, [cell.birth_block, visual]);
 
   // Every live Cell has at least one ledger packet even when data_hex is empty;
   // additional packets encode observed payload density.
@@ -329,8 +289,8 @@ export default function ConsensusMemory({
     MAX_PACKETS,
     Math.max(1, Math.round(visual.payload * MAX_PACKETS)),
   );
-  const presence = 1.02 + (visual.mass - 0.84) * 0.32;
-  const birthPhase = consensusBraidBirthPhase(cell.birth_block);
+  const presence = built.presenceScale;
+  const birthPhase = built.birthPhase;
   const life = cell.death_at_ms === null ? 1 : 0.52;
 
   useEffect(() => {

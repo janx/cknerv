@@ -6,10 +6,12 @@ import {
   consensusBraidAgreementTarget,
   consensusBraidBirthPhase,
   consensusBraidLayerOpacity,
+  consensusBraidPresenceScale,
   consensusBraidFrequencies,
   consensusBraidPoint,
   consensusBraidSpecs,
   consensusBraidStrandCount,
+  deriveConsensusBraidTopology,
 } from '../../src/derives/consensusBraid.derive';
 
 const VISUAL: CellVisualDescriptor = {
@@ -74,6 +76,43 @@ describe('canonical consensus braid mapping', () => {
       lockClass: 4,
       payload: 1,
     })).toBe(12);
+  });
+
+  it('resolves one stable full-density agreement constellation', () => {
+    const dense = {
+      ...VISUAL,
+      lockClass: 4,
+      payload: 1,
+      seeds: [0.93, 0.17, 0.61, 0.38] as const,
+    };
+    const left = deriveConsensusBraidTopology(dense, 12_345);
+    const right = deriveConsensusBraidTopology(dense, 12_345);
+
+    expect(left).toEqual(right);
+    expect(left.agreements).toHaveLength(consensusBraidAgreementTarget(dense));
+    expect(left.agreements).toHaveLength(12);
+    expect(Array.from({ length: 4 }, (_, pair) => (
+      left.agreements.filter((agreement) => agreement.pair === pair).length
+    ))).toEqual([3, 3, 3, 3]);
+    expect(left.agreements.map((agreement) => agreement.ordinal)).toEqual([
+      0, 1, 2,
+      0, 1, 2,
+      0, 1, 2,
+      0, 1, 2,
+    ]);
+    expect(left.birthPhase).toBe(consensusBraidBirthPhase(12_345));
+  });
+
+  it('maps capacity mass to one monotonic bounded presence scale', () => {
+    const low = consensusBraidPresenceScale(0.84);
+    const middle = consensusBraidPresenceScale(1);
+    const high = consensusBraidPresenceScale(1.2);
+
+    expect(low).toBeCloseTo(1.02);
+    expect(low).toBeLessThan(middle);
+    expect(middle).toBeLessThan(high);
+    expect(consensusBraidPresenceScale(-10)).toBe(low);
+    expect(consensusBraidPresenceScale(10)).toBe(high);
   });
 
   it('maps readable fields to distinct A layers', () => {

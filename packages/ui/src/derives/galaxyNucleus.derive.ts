@@ -5,8 +5,8 @@ import {
   CONSENSUS_BRAID_PALETTE,
   CONSENSUS_BRAID_TAU,
   consensusBraidContributorColor,
+  deriveConsensusBraidTopology,
   consensusBraidPoint,
-  consensusBraidSpecs,
 } from './consensusBraid.derive';
 
 export interface GalaxyNucleusBuffers {
@@ -39,6 +39,8 @@ export interface GalaxyConsensusBraid {
   /** 0 = visible at mid LOD, 1 = reserved for near LOD. */
   detailWeights: number[];
   knots: GalaxyConsensusKnot[];
+  /** Capacity-derived physical presence shared with the detail portrait. */
+  presenceScale: number;
 }
 
 const lerp = (from: number, to: number, amount: number): number => (
@@ -53,7 +55,8 @@ function smoothstep(edge0: number, edge1: number, value: number): number {
 /** Build once per immutable Cell; frame updates only copy into fixed buffers. */
 export function deriveGalaxyConsensusBraid(cell: Cell): GalaxyConsensusBraid {
   const visual = deriveCellVisual(cell);
-  const specs = consensusBraidSpecs(visual);
+  const topology = deriveConsensusBraidTopology(visual, cell.birth_block);
+  const specs = topology.specs;
   const segments: number[] = [];
   const colors: number[] = [];
   const detailWeights: number[] = [];
@@ -111,73 +114,28 @@ export function deriveGalaxyConsensusBraid(cell: Cell): GalaxyConsensusBraid {
     }
   }
 
-  const agreementSamples = 40;
-  const agreementsPerPair = 1 + Math.round(visual.payload);
-  const sampleA = new THREE.Vector3();
-  const sampleB = new THREE.Vector3();
-  const midpoint = new THREE.Vector3();
-  for (let pair = 0; pair < specs.length - 1; pair += 1) {
-    const candidates: Array<{
-      distanceSq: number;
-      indexA: number;
-      indexB: number;
-      pointA: THREE.Vector3;
-      pointB: THREE.Vector3;
-    }> = [];
-    for (let indexA = 0; indexA < agreementSamples; indexA += 1) {
-      consensusBraidPoint(
-        specs[pair],
-        indexA / agreementSamples * CONSENSUS_BRAID_TAU,
-        sampleA,
-      );
-      for (let indexB = 0; indexB < agreementSamples; indexB += 1) {
-        consensusBraidPoint(
-          specs[pair + 1],
-          indexB / agreementSamples * CONSENSUS_BRAID_TAU,
-          sampleB,
-        );
-        const distanceSq = sampleA.distanceToSquared(sampleB);
-        if (distanceSq > 0.04) continue;
-        candidates.push({
-          distanceSq,
-          indexA,
-          indexB,
-          pointA: sampleA.clone(),
-          pointB: sampleB.clone(),
-        });
-      }
-    }
-    candidates.sort((leftCandidate, rightCandidate) => (
-      leftCandidate.distanceSq - rightCandidate.distanceSq
-    ));
-    const chosen: typeof candidates = [];
-    for (const candidate of candidates) {
-      if (chosen.some((existing) => (
-        Math.abs(existing.indexA - candidate.indexA) < 6
-        || Math.abs(existing.indexB - candidate.indexB) < 6
-      ))) continue;
-      chosen.push(candidate);
-      if (chosen.length >= agreementsPerPair) break;
-    }
-    for (const agreement of chosen) {
-      addSegment(
-        agreement.pointA,
-        agreement.pointB,
-        CONSENSUS_BRAID_PALETTE.pale,
-        0.9,
-      );
-      midpoint.addVectors(agreement.pointA, agreement.pointB).multiplyScalar(0.5);
-      knots.push({
-        x: midpoint.x,
-        y: midpoint.y,
-        z: midpoint.z,
-        size: 0.045 + visual.payload * 0.018,
-        alpha: 0.9,
-      });
-    }
+  // Production uses the exact same agreement constellation as the portrait;
+  // only its contributor curves are sampled more coarsely for batching.
+  for (const agreement of topology.agreements) {
+    point.fromArray(agreement.pointA);
+    next.fromArray(agreement.pointB);
+    addSegment(point, next, CONSENSUS_BRAID_PALETTE.pale, 0.9);
+    knots.push({
+      x: agreement.midpoint[0],
+      y: agreement.midpoint[1],
+      z: agreement.midpoint[2],
+      size: 0.045 + visual.payload * 0.018,
+      alpha: 0.9,
+    });
   }
 
-  return { segments, colors, detailWeights, knots };
+  return {
+    segments,
+    colors,
+    detailWeights,
+    knots,
+    presenceScale: topology.presenceScale,
+  };
 }
 
 /**

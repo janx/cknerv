@@ -17,15 +17,16 @@ import {
 } from '../geometry/cellPositions';
 import type { Cell } from '@cknerv/types';
 import { useCellGalaxy } from '../hooks/cellGalaxyContext';
-import { deriveCellVisual } from '../derives/cellVisual.derive';
+import { capacityMass, deriveCellVisual } from '../derives/cellVisual.derive';
 import {
   consensusBlockColor,
   consensusCellColor,
 } from '../derives/consensusFlow.derive';
+import { consensusBraidPresenceScale } from '../derives/consensusBraid.derive';
 import {
   CONSENSUS_BRAID_LOCAL_RADIUS,
   cellFocusTarget,
-  focusedBraidScale,
+  consensusBraidRenderScale,
   selectedCellNumericId,
 } from '../derives/cellInteraction.derive';
 import { SHOCKWAVE_SLOTS, writeShockwaveSlot } from '../materials/shockwaveMaterial';
@@ -568,11 +569,12 @@ function CellPicker({
           selectedCellIdRef.current,
           hoveredCellIdRef.current,
         );
-        const braidScale = focusedBraidScale(
+        const braidScale = consensusBraidRenderScale(
           viewZ,
           height,
           camera.projectionMatrix.elements[5],
           focus,
+          consensusBraidPresenceScale(capacityMass(c.capacity)),
         );
         const braidPxR = CONSENSUS_BRAID_LOCAL_RADIUS
           * braidScale
