@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Canvas, useFrame } from '@react-three/fiber';
-import { OrbitControls } from '@react-three/drei';
+import { Canvas, useFrame, useThree } from '@react-three/fiber';
+import { Html, OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
-import type { CellGalaxySnapshot } from '@cknerv/types';
+import type { Cell, CellGalaxySnapshot } from '@cknerv/types';
 import { fromCellsSnapshot } from '@cknerv/cache';
 import {
   AdaptiveQualityController,
@@ -29,6 +29,10 @@ import {
 import Tweaks from './Tweaks';
 import { hasQuerySwitch, resolveCanvasDpr } from './render-quality';
 import {
+  protocolEventReviewCameraPose,
+  type ProtocolReviewVec3,
+} from './protocol-event-review-camera';
+import {
   advanceProtocolEventLab,
   PROTOCOL_EVENT_REVIEW_PERIOD_S,
   PROTOCOL_EVENT_STAGE_TIME_S,
@@ -54,11 +58,51 @@ type ReviewClockMode =
   | 'settling'
   | 'paused';
 
-const STAGE_META: Record<ProtocolEventStage, { code: string; name: string; cjk: string }> = {
-  network: { code: '00', name: 'NETWORK AGREEMENT', cjk: '网络共识' },
-  carrier: { code: '01', name: 'WOVEN CARRIER', cjk: '编织载体' },
-  commit: { code: '02', name: 'FIELD COMMIT', cjk: '场写入' },
-  settled: { code: '03', name: 'CONSENSUS MEMORY', cjk: '共识记忆' },
+const STAGE_META: Record<ProtocolEventStage, {
+  code: string;
+  name: string;
+  cjk: string;
+  thesis: string;
+  accent: string;
+  glow: string;
+  glowAt: string;
+}> = {
+  network: {
+    code: '00',
+    name: 'NETWORK AGREEMENT',
+    cjk: '网络共识',
+    thesis: 'DISTRIBUTED WITNESSES CONVERGE',
+    accent: '#73b8ff',
+    glow: 'rgba(45, 118, 255, 0.13)',
+    glowAt: '50% 62%',
+  },
+  carrier: {
+    code: '01',
+    name: 'WOVEN CARRIER',
+    cjk: '编织载体',
+    thesis: 'AGREED INFORMATION ENTERS THE CELL FIELD',
+    accent: '#f5c66c',
+    glow: 'rgba(245, 198, 108, 0.14)',
+    glowAt: '58% 54%',
+  },
+  commit: {
+    code: '02',
+    name: 'FIELD COMMIT',
+    cjk: '场写入',
+    thesis: 'CONSENSUS RESOLVES INTO REAL CELL STATE',
+    accent: '#c8fbff',
+    glow: 'rgba(77, 237, 255, 0.14)',
+    glowAt: '50% 55%',
+  },
+  settled: {
+    code: '03',
+    name: 'CONSENSUS MEMORY',
+    cjk: '共识记忆',
+    thesis: 'THE WRITE REMAINS AS SHARED MEMORY',
+    accent: '#b397ff',
+    glow: 'rgba(139, 92, 246, 0.13)',
+    glowAt: '50% 52%',
+  },
 };
 
 function colorCss(color: readonly [number, number, number]): string {
@@ -118,6 +162,81 @@ function DeterministicReviewStars({ count }: { count: number }) {
   }, [geometry, material]);
 
   return <points geometry={geometry} material={material} frustumCulled={false} />;
+}
+
+function ProtocolReviewCamera({
+  clock,
+  mode,
+  localWorld,
+  focusWorld,
+}: {
+  clock: MutableSimClock;
+  mode: ReviewClockMode;
+  localWorld: ProtocolReviewVec3 | null;
+  focusWorld: ProtocolReviewVec3 | null;
+}) {
+  const camera = useThree((state) => state.camera);
+  const target = useMemo(() => new THREE.Vector3(), []);
+
+  // The final deterministic frame establishes the fixed-stage composition.
+  // Once paused, OrbitControls owns the camera so reviewers can inspect it.
+  useFrame(() => {
+    if (mode === 'paused') return;
+    const pose = protocolEventReviewCameraPose(clock.elapsedSec, localWorld, focusWorld);
+    camera.position.fromArray(pose.position);
+    target.fromArray(pose.target);
+    camera.up.set(0, 1, 0);
+    camera.lookAt(target);
+    if (camera instanceof THREE.PerspectiveCamera && camera.fov !== pose.fov) {
+      camera.fov = pose.fov;
+      camera.updateProjectionMatrix();
+    }
+  }, -900);
+
+  return null;
+}
+
+function ProtocolFocusLabel({
+  stage,
+  cell,
+  position,
+  accent,
+  written,
+}: {
+  stage: ProtocolEventStage;
+  cell: Cell;
+  position: ProtocolReviewVec3;
+  accent: string;
+  written: boolean;
+}) {
+  if ((stage !== 'commit' && stage !== 'settled') || !written) return null;
+  const hash = cell.content_hash.replace(/^0x/, '').slice(0, 10).toUpperCase();
+  const state = stage === 'commit' ? 'WRITE VERIFIED' : 'SHARED MEMORY';
+
+  return (
+    <Html position={[...position]} zIndexRange={[4, 4]} style={{ pointerEvents: 'none' }}>
+      <div style={{
+        minWidth: 148,
+        padding: '7px 9px',
+        borderLeft: `1px solid ${accent}`,
+        background: 'linear-gradient(90deg, rgba(2,5,14,0.88), rgba(2,5,14,0.08))',
+        transform: 'translate(24px, -50%)',
+        fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+        whiteSpace: 'nowrap',
+        textShadow: '0 0 10px rgba(0,0,0,0.95)',
+      }}>
+        <div style={{ color: accent, fontSize: 8, letterSpacing: '0.15em' }}>
+          {state}
+        </div>
+        <div style={{ marginTop: 4, color: '#dbeafe', fontSize: 8, letterSpacing: '0.1em' }}>
+          CELL #{cell.id}
+        </div>
+        <div style={{ marginTop: 2, color: '#64748b', fontSize: 7, letterSpacing: '0.08em' }}>
+          CONTENT {hash}
+        </div>
+      </div>
+    </Html>
+  );
 }
 
 function ProtocolReviewClock({
@@ -362,8 +481,34 @@ export default function ProtocolEventLab({ snapshot }: { snapshot: CellGalaxySna
   const entryArrivalS = reviewFlood.entryId
     ? reviewFlood.colonyArrivalS[reviewFlood.entryId] ?? 0
     : reviewFlood.localReceiveDelayS;
+  const plannedFocusCell = useMemo(() => {
+    const link = cache.recentLinks.at(-1);
+    if (!link) return null;
+    for (const id of link.to_ids) {
+      const cell = cache.cells.get(id);
+      if (cell) return cell;
+    }
+    return null;
+  }, [cache.cells, cache.recentLinks]);
+  const writtenCellIds = [...burstArrivalRef.current.keys()];
+  const focusCell = cache.cells.get(writtenCellIds[0]) ?? plannedFocusCell;
+  const focusWorld = useMemo<ProtocolReviewVec3 | null>(() => (
+    focusCell
+      ? [
+          focusCell.pos_seed[0],
+          focusCell.pos_seed[1] + CELLS_Y,
+          focusCell.pos_seed[2],
+        ]
+      : null
+  ), [focusCell]);
 
   const stage = protocolEventStage(elapsedS);
+  const stageMeta = STAGE_META[stage];
+  const reviewCameraPose = protocolEventReviewCameraPose(
+    elapsedS,
+    localWorld,
+    focusWorld,
+  );
   const carrier = consensusBlockColor(cache.lastPulseAtMs);
   const carrierCss = colorCss(carrier);
   const reviewTransitioning = clockMode === 'arming'
@@ -387,6 +532,8 @@ export default function ProtocolEventLab({ snapshot }: { snapshot: CellGalaxySna
       data-review-time={elapsedS.toFixed(2)}
       data-review-stage={stage}
       data-review-mode={clockMode}
+      data-review-focus={focusCell ? String(focusCell.id) : 'field'}
+      data-review-writes={writtenCellIds.join(',')}
       style={{
         position: 'fixed',
         inset: 0,
@@ -397,6 +544,18 @@ export default function ProtocolEventLab({ snapshot }: { snapshot: CellGalaxySna
       }}
     >
       <Tweaks />
+      <div
+        aria-hidden="true"
+        style={{
+          position: 'absolute',
+          zIndex: 2,
+          inset: 0,
+          pointerEvents: 'none',
+          background: `radial-gradient(circle at ${stageMeta.glowAt}, ${stageMeta.glow} 0%, transparent 42%)`,
+          boxShadow: 'inset 0 0 180px rgba(0, 0, 0, 0.72)',
+          mixBlendMode: 'screen',
+        }}
+      />
       {showRenderStats ? <RenderStatsPanel forceVisible /> : null}
       <header style={{
         position: 'absolute',
@@ -414,8 +573,17 @@ export default function ProtocolEventLab({ snapshot }: { snapshot: CellGalaxySna
         }}>
           A / CONSENSUS PROTOCOL EVENT
         </div>
-        <div style={{ marginTop: 6, color: '#64748b', fontSize: 9, letterSpacing: '0.1em' }}>
-          REAL CELLS · OBSERVED LINKS · ISOLATED FIXED-STEP {clockMode.toUpperCase()} · CLICK A STAGE TO FREEZE
+        <div style={{
+          marginTop: 7,
+          color: stageMeta.accent,
+          fontSize: 9,
+          letterSpacing: '0.14em',
+          textShadow: `0 0 14px color-mix(in srgb, ${stageMeta.accent} 28%, transparent)`,
+        }}>
+          {stageMeta.thesis}
+        </div>
+        <div style={{ marginTop: 4, color: '#536277', fontSize: 8, letterSpacing: '0.09em' }}>
+          REAL CELLS · OBSERVED LINKS · FIXED-STEP {clockMode.toUpperCase()}
         </div>
       </header>
 
@@ -427,26 +595,28 @@ export default function ProtocolEventLab({ snapshot }: { snapshot: CellGalaxySna
         minWidth: 230,
         padding: '12px 14px',
         boxSizing: 'border-box',
-        border: `1px solid ${carrierCss}`,
+        border: `1px solid ${stageMeta.accent}`,
         background: 'rgba(2, 5, 14, 0.78)',
-        boxShadow: `inset 0 0 24px color-mix(in srgb, ${carrierCss} 8%, transparent)`,
+        boxShadow: `inset 0 0 24px color-mix(in srgb, ${stageMeta.accent} 9%, transparent)`,
         pointerEvents: 'none',
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 20 }}>
-          <span style={{ color: carrierCss, fontSize: 10, letterSpacing: '0.16em' }}>
-            {STAGE_META[stage].code} / {STAGE_META[stage].name}
+          <span style={{ color: stageMeta.accent, fontSize: 10, letterSpacing: '0.16em' }}>
+            {stageMeta.code} / {stageMeta.name}
           </span>
-          <span style={{ color: '#a78bfa', fontSize: 9 }}>{STAGE_META[stage].cjk}</span>
+          <span style={{ color: stageMeta.accent, fontSize: 9, opacity: 0.78 }}>
+            {stageMeta.cjk}
+          </span>
         </div>
         <div style={{ marginTop: 9, display: 'flex', alignItems: 'center', gap: 9 }}>
           <span style={{
-            width: 54,
+            width: 48,
             height: 1,
             background: carrierCss,
             boxShadow: `0 0 10px ${carrierCss}`,
           }} />
           <span style={{ color: '#64748b', fontSize: 8, letterSpacing: '0.1em' }}>
-            BLOCK {String(serial).padStart(2, '0')} · {Math.min(elapsedS, 9.9).toFixed(1)}S · LINKS {String(observedTemplates.length).padStart(2, '0')} · WRITES {String(burstArrivalRef.current.size).padStart(2, '0')}
+            BLOCK {String(serial).padStart(2, '0')} · {Math.min(elapsedS, 9.9).toFixed(1)}S · LINKS {String(observedTemplates.length).padStart(2, '0')} · WRITES {String(burstArrivalRef.current.size).padStart(2, '0')} · CELL {focusCell ? `#${focusCell.id}` : 'FIELD'}
           </span>
         </div>
       </aside>
@@ -463,6 +633,7 @@ export default function ProtocolEventLab({ snapshot }: { snapshot: CellGalaxySna
       }}>
         {(Object.keys(STAGE_META) as ProtocolEventStage[]).map((key) => {
           const active = key === stage;
+          const meta = STAGE_META[key];
           return (
             <button
               key={key}
@@ -473,17 +644,17 @@ export default function ProtocolEventLab({ snapshot }: { snapshot: CellGalaxySna
               minWidth: 126,
               padding: '8px 10px',
               border: 0,
-              borderTop: `1px solid ${active ? carrierCss : 'rgba(125,211,252,0.13)'}`,
+              borderTop: `1px solid ${active ? meta.accent : 'rgba(125,211,252,0.13)'}`,
               background: active ? 'rgba(12, 18, 38, 0.72)' : 'rgba(2, 5, 14, 0.48)',
               opacity: active ? 1 : 0.42,
               cursor: 'pointer',
               textAlign: 'left',
               fontFamily: 'inherit',
             }}>
-              <div style={{ color: active ? carrierCss : '#708198', fontSize: 8, letterSpacing: '0.12em' }}>
-                {STAGE_META[key].code} {STAGE_META[key].name}
+              <div style={{ color: active ? meta.accent : '#708198', fontSize: 8, letterSpacing: '0.12em' }}>
+                {meta.code} {meta.name}
               </div>
-              <div style={{ marginTop: 3, color: '#718096', fontSize: 8 }}>{STAGE_META[key].cjk}</div>
+              <div style={{ marginTop: 3, color: '#718096', fontSize: 8 }}>{meta.cjk}</div>
             </button>
           );
         })}
@@ -500,7 +671,7 @@ export default function ProtocolEventLab({ snapshot }: { snapshot: CellGalaxySna
         fontSize: 8,
         letterSpacing: '0.12em',
       }}>
-        <span style={{ marginRight: 3, color: reviewReady ? carrierCss : '#64748b' }}>
+        <span style={{ marginRight: 3, color: reviewReady ? stageMeta.accent : '#64748b' }}>
           {clockMode === 'seeking' ? 'SEEK ×4' : clockMode.toUpperCase()}
         </span>
         <button
@@ -540,7 +711,7 @@ export default function ProtocolEventLab({ snapshot }: { snapshot: CellGalaxySna
       {sceneKey > 0 ? <CellGalaxyProvider value={cache}>
         <Canvas
           key={sceneKey}
-          camera={{ position: [76, 70, 76], fov: 46, near: 0.5, far: 1200 }}
+          camera={{ position: [82, 74, 82], fov: 47, near: 0.5, far: 1200 }}
           gl={{ antialias: true, alpha: false }}
           dpr={canvasDpr}
           frameloop={clockMode === 'paused' ? 'demand' : 'always'}
@@ -554,6 +725,12 @@ export default function ProtocolEventLab({ snapshot }: { snapshot: CellGalaxySna
             maxElapsedSec={clockMode === 'seeking' ? clockTargetS : null}
           >
             <SimClockTicker />
+            <ProtocolReviewCamera
+              clock={reviewClock}
+              mode={clockMode}
+              localWorld={localWorld}
+              focusWorld={focusWorld}
+            />
             <ProtocolReviewClock
               clock={reviewClock}
               mode={clockMode}
@@ -569,6 +746,15 @@ export default function ProtocolEventLab({ snapshot }: { snapshot: CellGalaxySna
             <TweakSync />
             {showRenderStats ? <RenderStatsSampler forceEnabled /> : null}
             <DeterministicReviewStars count={starsCount} />
+            {focusCell && focusWorld ? (
+              <ProtocolFocusLabel
+                stage={stage}
+                cell={focusCell}
+                position={focusWorld}
+                accent={stageMeta.accent}
+                written={writtenCellIds.includes(focusCell.id)}
+              />
+            ) : null}
             <CellGalaxy
               ckbNodeIds={[...REVIEW_NODE_IDS]}
               minerCkbNodeIds={['ckb:local']}
@@ -605,11 +791,12 @@ export default function ProtocolEventLab({ snapshot }: { snapshot: CellGalaxySna
               localVersion=""
             />
             <OrbitControls
-              enableDamping={clockMode === 'playing'}
+              enabled={clockMode === 'paused'}
+              enableDamping={clockMode === 'paused'}
               dampingFactor={0.08}
-              minDistance={18}
+              minDistance={8}
               maxDistance={190}
-              target={[0, CELLS_Y - 8, 0]}
+              target={reviewCameraPose.target}
             />
           </SimClockScope>
         </Canvas>
