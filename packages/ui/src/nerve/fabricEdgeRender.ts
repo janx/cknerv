@@ -3,7 +3,7 @@
 // Given an edge's lifecycle + the current sim time, returns the drawn
 // Bezier interval [tStart, tEnd], alpha, a death flash, and reap/animating
 // flags. Growth extends the tip; gc fades alpha at full length; death
-// retracts the dead end with a white-hot flash.
+// retracts the dead end with a semantic retirement flash envelope.
 
 export type DeathKind = 'death' | 'gc';
 
@@ -20,7 +20,7 @@ export interface EdgeRender {
   alphaMul: number;
   tStart: number;
   tEnd: number;
-  flash: number;   // 0..1 white-hot spike (death only)
+  flash: number;   // 0..1 retirement signal envelope (death only)
   reap: boolean;
   animating: boolean;
 }
@@ -41,7 +41,7 @@ const HIDDEN: EdgeRender = { visible: false, alphaMul: 0, tStart: 0, tEnd: 0, fl
 export function fabricEdgeRenderState(st: EdgeLifecycle, nowSec: number): EdgeRender {
   if (st.dyingAt !== null) {
     // Clamp at 0 so a defensively future-dated dyingAt (dyingAt > nowSec)
-    // can't drive decayMs negative — which would over-white the death
+    // can't drive decayMs negative — which would overdrive the death
     // flash (exp(-neg/τ) > 1) and invert the retract interval, or push
     // the gc alphaMul above 1. The live driver always passes now >= dyingAt,
     // so this is a no-op there; it closes the footgun against refactors.
@@ -49,7 +49,7 @@ export function fabricEdgeRenderState(st: EdgeLifecycle, nowSec: number): EdgeRe
     if (st.deathKind === 'death') {
       if (decayMs >= DEATH_RETRACT_MS) return { ...HIDDEN, reap: true };
       const r = decayMs / DEATH_RETRACT_MS;
-      // White-hot spike at t=0 that falls off exponentially (τ=DEATH_FLASH_MS)
+      // Retirement spike at t=0 that falls off exponentially (τ=DEATH_FLASH_MS)
       // yet stays > 0 through the retract so the dying tendril keeps a hot tip.
       const flash = Math.exp(-decayMs / DEATH_FLASH_MS);
       const tStart = st.deadEnd === 'from' ? r : 0;
