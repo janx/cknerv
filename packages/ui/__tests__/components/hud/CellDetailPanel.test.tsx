@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
-import type { Cell } from '@cknerv/types';
+import type { Cell, CellLink } from '@cknerv/types';
 
 // The embedded portrait spins a real WebGL context — stub it in jsdom.
 vi.mock('../../../src/components/hud/CellNucleusPortrait', () => ({
@@ -42,28 +42,33 @@ describe('CellDetailPanel', () => {
     expect(t).toContain('omnilock');       // LOCK
     expect(t).toContain('xUDT');           // ASSET
     expect(t).toContain('123.00 CKB');     // CAPACITY
-    expect(t).toContain('ALIVE');          // STATE
+    expect(t).toContain('LIVE');           // STATE
     expect(t).toContain('3h 12m');         // AGE
-    expect(t).toContain('#16204800');      // BORN
-    expect(t).toContain('#2');             // SOURCE index
+    expect(t).toContain('#16204800');      // COMMIT / block anchor
+    expect(t).toContain('#2');             // immutable address index
     expect(t).toContain('11 B');           // DATA — 22 hex chars = 11 bytes
     expect(t).toContain('ƒ3:4:7');         // ASSET → frequency family
     expect(t).toContain('5 paths');        // LOCK → contributor paths
     expect(t).toContain('8 knots');        // DATA → agreement-node target
     expect(t).toContain('共识细胞');       // CJK title stays (no re-subset)
-    expect(t).toContain('MICROCODE');      // streaming content-hash code label
+    expect(t).toContain('CONSENSUS MEMORY');
+    expect(t).toContain('共识记忆');
+    expect(t).toContain('ADDRESS');
+    expect(t).toContain('CONTENT');
+    expect(t).toContain('ANCHOR');
+    expect(t).not.toContain('WRITE OBSERVED');
     expect(getByTestId('portrait').getAttribute('data-focus')).toBe('capacity');
     expect((container.firstElementChild as HTMLElement).style.animation)
       .toContain('cknerv-cell-consensus-enter');
   });
 
-  it('reduced motion freezes decoding: mapped verdict + full microcode, all rows shown', () => {
+  it('reduced motion freezes decoding: mapped identity + stable fingerprint, all rows shown', () => {
     // stub matchMedia so useReducedMotion() reports reduced — deterministic path
     vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener: () => {}, removeEventListener: () => {} }));
     const { container } = render(<CellDetailPanel cell={base} onClose={() => {}} />);
     const t = container.textContent ?? '';
-    expect(t).toContain('CONSENSUS MAPPED');
-    expect(t).toContain(base.content_hash.slice(2).toUpperCase().slice(0, 24));
+    expect(t).toContain('CONTENT IDENTITY MAPPED');
+    expect(t).toContain('1111111111111111 · 1111111111');
     expect(t).toContain('omnilock');                              // decoded rows still present
     expect(t).toContain('11 B');
     expect((container.firstElementChild as HTMLElement).style.animation).toBe('');
@@ -79,10 +84,32 @@ describe('CellDetailPanel', () => {
     expect(getByTestId('portrait').getAttribute('data-focus')).toBe('asset');
   });
 
-  it('shows DYING for a dead cell', () => {
+  it('shows SPENT for a consumed cell without biological death language', () => {
     const dead = { ...base, death_at_ms: 5000 };
     const { container } = render(<CellDetailPanel cell={dead} onClose={() => {}} />);
-    expect(container.textContent ?? '').toContain('DYING');
+    expect(container.textContent ?? '').toContain('SPENT');
+    expect(container.textContent ?? '').not.toContain('DYING');
+  });
+
+  it('shows retained write evidence only for the exact Cell origin', () => {
+    vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener: () => {}, removeEventListener: () => {} }));
+    const origin: CellLink = {
+      seq: 18,
+      tx_hash: base.out_point.tx_hash,
+      block: base.birth_block,
+      from_ids: [1, 2],
+      to_ids: [base.id],
+      parents: [],
+      tag: base.tag,
+      at_ms: 12_000,
+    };
+    const { container } = render(
+      <CellDetailPanel cell={base} recentLinks={[origin]} onClose={() => {}} />,
+    );
+    const t = container.textContent ?? '';
+    expect(t).toContain('WRITE OBSERVED');
+    expect(t).toContain(`#${base.birth_block} · 2→1`);
+    expect(container.querySelector('[data-write-observed="true"]')).not.toBeNull();
   });
 
   it('tolerates missing lock/asset with an em dash', () => {

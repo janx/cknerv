@@ -1,15 +1,17 @@
 import { type CSSProperties, useEffect, useMemo, useState } from 'react';
-import type { Cell } from '@cknerv/types';
+import type { Cell, CellLink } from '@cknerv/types';
 import {
-  formatOutpoint, formatCkb, formatAge, formatDataSize,
+  formatCkb, formatAge, formatDataSize,
   formatLockKind, formatAssetKind, LOCK_COLORS, ASSET_COLORS,
 } from './cellFormat';
-import { HUD_COLORS, HUD_FONTS } from './hudTheme';
+import { HUD_COLORS } from './hudTheme';
 import { HudPanel, PanelHeader, StatRow, CloseButton } from './primitives';
 import { useReducedMotion } from './useReducedMotion';
 import CellNucleusPortrait from './CellNucleusPortrait';
+import ConsensusIdentityPlate from './ConsensusIdentityPlate';
 import { PROBE_STEP_S, probeScan } from './probeScan';
 import { deriveCellVisual } from '../../derives/cellVisual.derive';
+import { deriveCellConsensusIdentity } from '../../derives/cellConsensusIdentity.derive';
 import {
   CONSENSUS_BRAID_FIELDS,
   consensusBraidAgreementTarget,
@@ -37,18 +39,29 @@ type Field = ConsensusBraidField;
 
 const nowPerf = () => (typeof performance !== 'undefined' ? performance.now() : 0);
 
-export default function CellDetailPanel({ cell, onClose, style }: {
-  cell: Cell; onClose: () => void; style?: CSSProperties;
+export default function CellDetailPanel({ cell, recentLinks = [], onClose, style }: {
+  cell: Cell;
+  recentLinks?: readonly CellLink[];
+  onClose: () => void;
+  style?: CSSProperties;
 }) {
   const reduced = useReducedMotion();
-  const alive = cell.death_at_ms === null;
+  const live = cell.death_at_ms === null;
   const now = Date.now();
-  // One scan epoch per selected Cell. A short-lived 12.5 fps ticker advances
-  // only the six-field decoding pass; it stops permanently after classification.
-  const scanEpochMs = useMemo(() => nowPerf(), [cell.id]);
-  const [scanNowMs, setScanNowMs] = useState(() => nowPerf());
+  // One scan epoch per selected Cell. Epoch + current time reset together when
+  // the effect actually mounts, so a busy main thread cannot skip unseen scan
+  // phases between render and first paint. The short-lived 12.5 fps ticker
+  // advances only the six-field pass and stops after classification.
+  const [scanClock, setScanClock] = useState(() => {
+    const atMs = nowPerf();
+    return { cellId: cell.id, epochMs: atMs, nowMs: atMs };
+  });
 
   const visual = useMemo(() => deriveCellVisual(cell), [cell]);
+  const identity = useMemo(
+    () => deriveCellConsensusIdentity(cell, recentLinks),
+    [cell, recentLinks],
+  );
   const order = CONSENSUS_BRAID_FIELDS;
   const frequencies = consensusBraidFrequencies(visual.assetClass);
   const strandCount = consensusBraidStrandCount(visual.lockClass);
@@ -59,8 +72,13 @@ export default function CellDetailPanel({ cell, onClose, style }: {
   useEffect(() => setSelectedField(null), [cell.id]);
   useEffect(() => {
     if (reduced) return;
-    const update = () => setScanNowMs(nowPerf());
-    update();
+    const epochMs = nowPerf();
+    const update = () => setScanClock({
+      cellId: cell.id,
+      epochMs,
+      nowMs: nowPerf(),
+    });
+    setScanClock({ cellId: cell.id, epochMs, nowMs: epochMs });
     const interval = window.setInterval(update, 80);
     const stop = window.setTimeout(() => {
       window.clearInterval(interval);
@@ -95,31 +113,38 @@ export default function CellDetailPanel({ cell, onClose, style }: {
     },
     state: {
       label: 'STATE',
-      value: alive ? '● ALIVE' : '✖ DYING',
-      color: alive ? HUD_COLORS.nominal : HUD_COLORS.caution,
+      value: live ? '● LIVE' : '◇ SPENT',
+      color: live ? HUD_COLORS.nominal : HUD_COLORS.caution,
     },
-    born: { label: 'BORN', value: `#${cell.birth_block}` },
+    born: { label: 'COMMIT', value: `#${cell.birth_block}` },
   };
 
   // Scan state for THIS render. During decoding it walks the six visible A
   // layers; after classification, clicking a row becomes the focus source.
-  const p = probeScan(scanEpochMs, reduced ? 0 : scanNowMs, order.length, reduced);
-  const microcode = cell.content_hash.replace(/^0x/, '').toUpperCase();
-  const microcodeShown = microcode.slice(0, Math.floor((p.classified ? 1 : p.pct / 100) * microcode.length));
+  const activeClock = scanClock.cellId === cell.id
+    ? scanClock
+    : { cellId: cell.id, epochMs: scanClock.nowMs, nowMs: scanClock.nowMs };
+  const p = probeScan(
+    activeClock.epochMs,
+    reduced ? 0 : activeClock.nowMs,
+    order.length,
+    reduced,
+  );
   const statusText = p.classified
-    ? '✓ CONSENSUS MAPPED'
+    ? '✓ CONTENT IDENTITY MAPPED'
     : p.status === 'unidentified'
-      ? 'UNMAPPED RECORD'
-      : `DECODING ${p.pct}%`;
+      ? 'IDENTITY UNRESOLVED'
+      : `READING IDENTITY ${p.pct}%`;
   const statusColor = p.classified ? HUD_COLORS.nominal : HUD_COLORS.cyanWire;
   const interactive = p.classified;
   const focusField = interactive
     ? selectedField
     : order[Math.min(p.activeIndex, order.length - 1)] ?? null;
 
-  // All eight readout rows remain mounted and opacity-gated. The six encoded
+  // All seven readout rows remain mounted and opacity-gated. The six encoded
   // rows resolve in the same order that the portrait emphasizes their layers;
-  // AGE + SOURCE are context and always shown.
+  // AGE is temporal context and always shown. Immutable address + content
+  // identity have moved into the consensus-memory plate below.
   const rows: Array<RowDecode & { on: boolean; field?: Field }> = [
     ...order.map((field, index) => ({
       ...DECODE[field],
@@ -127,13 +152,14 @@ export default function CellDetailPanel({ cell, onClose, style }: {
       field,
     })),
     { label: 'AGE', value: formatAge(cell.born_at_ms, now), on: true },
-    { label: 'SOURCE', value: formatOutpoint(cell.out_point.tx_hash, cell.out_point.index), on: true },
   ];
 
   return (
     <HudPanel style={{
       width: 270,
       pointerEvents: 'auto',
+      background: 'linear-gradient(180deg, rgba(0,2,9,.88) 0%, rgba(0,3,11,.78) 58%, rgba(1,4,12,.86) 100%)',
+      boxShadow: `-14px 0 30px rgba(0,0,0,.2), inset 0 0 34px ${HUD_COLORS.cyanWire}08`,
       transformOrigin: 'right top',
       animation: reduced
         ? undefined
@@ -147,7 +173,7 @@ export default function CellDetailPanel({ cell, onClose, style }: {
         <CellNucleusPortrait
           cell={cell}
           reducedMotion={reduced}
-          scanEpochMs={scanEpochMs}
+          scanEpochMs={activeClock.epochMs}
           focusField={focusField}
         />
         <span style={cornerBracket('tl')} /><span style={cornerBracket('tr')} />
@@ -174,16 +200,13 @@ export default function CellDetailPanel({ cell, onClose, style }: {
           );
         })}
       </div>
-      {/* Live consensus verdict + streaming content-hash microcode. */}
-      <div key={`assay-${cell.id}`} style={{ marginTop: 9, borderTop: `1px solid ${AMBER}22`, paddingTop: 7 }}>
-        <div style={{ fontFamily: HUD_FONTS.mono, fontSize: 9.5, letterSpacing: 0.5, color: statusColor, textShadow: `0 0 6px ${statusColor}66`, transition: reduced ? undefined : 'color 320ms ease' }}>
-          {statusText}
-        </div>
-        <div style={{ marginTop: 6, lineHeight: 1.5 }}>
-          <span style={{ fontFamily: HUD_FONTS.tech, fontWeight: 500, fontSize: 8, letterSpacing: 1.4, color: HUD_COLORS.dim }}>MICROCODE ▸ </span>
-          <span style={{ fontFamily: HUD_FONTS.mono, fontSize: 8.5, color: HUD_COLORS.cyanWire, wordBreak: 'break-all', textShadow: `0 0 5px ${HUD_COLORS.cyanWire}55` }}>{microcodeShown}</span>
-        </div>
-      </div>
+      <ConsensusIdentityPlate
+        identity={identity}
+        reveal={p.classified ? 1 : p.pct / 100}
+        statusText={statusText}
+        statusColor={statusColor}
+        reducedMotion={reduced}
+      />
     </HudPanel>
   );
 }

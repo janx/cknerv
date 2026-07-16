@@ -1,6 +1,6 @@
 import { cleanup, render } from '@testing-library/react';
 import { afterEach, describe, it, expect, vi } from 'vitest';
-import type { ChainEntry, Peer, ChainNode, Cell } from '@cknerv/types';
+import type { ChainEntry, Peer, ChainNode, Cell, CellLink } from '@cknerv/types';
 
 // The embedded portrait spins a real WebGL context — stub it in jsdom.
 vi.mock('../../../src/components/hud/CellNucleusPortrait', () => ({
@@ -54,6 +54,25 @@ describe('HudOverlay', () => {
     const t = container.textContent ?? '';
     expect(t).toContain('CAPACITY'); // CELL detail (galaxy axis) is present…
     expect(t).toContain('OBSERVER'); // …AND the NODE detail (network axis) at the same time
+  });
+
+  it('threads retained Cell origin evidence into the detail memory plate', () => {
+    const mockCell: Cell = {
+      id: 7, born_at_ms: 1, death_at_ms: null, birth_block: 16204800, tag: 'wallet',
+      pos_seed: [0, 0, 0], out_point: { tx_hash: `0x${'ab'.repeat(32)}`, index: 0 },
+      capacity: 6_100_000_000, data_hex: '0x', content_hash: `0x${'cd'.repeat(32)}`,
+    };
+    const origin: CellLink = {
+      seq: 3, tx_hash: mockCell.out_point.tx_hash, block: mockCell.birth_block,
+      from_ids: [1], to_ids: [mockCell.id], parents: [], tag: null, at_ms: 10,
+    };
+    const { container } = render(
+      <HudOverlay
+        chain={chain} peers={peers} localNode={localNode} cellsStats={cellsStats}
+        selectedCell={mockCell} recentCellLinks={[origin]}
+      />,
+    );
+    expect(container.textContent).toContain('WRITE OBSERVED');
   });
 
   it('does not raise CAUTION when blocks merely run slower than the 8s target', () => {
