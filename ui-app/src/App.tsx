@@ -293,6 +293,7 @@ export default function App({
         localNode={localNode}
         cellsStats={cellsStats}
         selectedCell={selectedCell}
+        recentCellLinks={cellsCache.recentLinks}
         selectedNode={selectedNode}
         selectedPeer={selectedPeer}
         onClearCell={() => setSelectedCellId(null)}
