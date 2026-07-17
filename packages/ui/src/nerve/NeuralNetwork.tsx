@@ -32,12 +32,14 @@ import {
   consensusMemoryCellResponse,
   consensusMemoryPulseActivityScale,
   consensusMemoryRouteHandoffScale,
+  consensusMemoryTraceReadout,
   consensusMemoryTraceRequestKey,
   consensusMemoryTraceResonance,
   consensusMemoryTraceFocusStrength,
   deriveConsensusMemoryTraceFocus,
   planConsensusMemoryTrace,
   type ConsensusMemoryTraceFocus,
+  type ConsensusMemoryTraceReadout,
   type ConsensusMemoryTraceRequest,
   type ConsensusPulseMode,
 } from './consensusMemoryTrace';
@@ -92,6 +94,11 @@ interface NeuralNetworkProps {
   traceMaxPulses?: number;
   /** Reports completion or an unavailable route so UI active state can exit. */
   onTraceComplete?: (request: ConsensusMemoryTraceRequest) => void;
+  /**
+   * Publishes semantic target-stage changes from the authoritative route clock.
+   * This is intentionally low-frequency: frame-level convergence stays in R3F.
+   */
+  onTraceReadoutChange?: (readout: ConsensusMemoryTraceReadout | null) => void;
 }
 
 interface ActivePulse extends Pulse {
@@ -111,6 +118,7 @@ export default function NeuralNetwork({
   traceRequest = null,
   traceMaxPulses,
   onTraceComplete,
+  onTraceReadoutChange,
 }: NeuralNetworkProps = {}) {
   const simClock = useSimClock();
   const cellsCache = useCellGalaxy();
@@ -228,6 +236,25 @@ export default function NeuralNetwork({
   const activeTraceRequestRef = useRef<ConsensusMemoryTraceRequest | null>(null);
   const traceFocusRef = useRef<ConsensusMemoryTraceFocus | null>(null);
   const [traceFocus, setTraceFocus] = useState<ConsensusMemoryTraceFocus | null>(null);
+  const traceReadoutSignatureRef = useRef('none');
+  const publishTraceReadout = useCallback((
+    readout: ConsensusMemoryTraceReadout | null,
+  ) => {
+    if (!onTraceReadoutChange) return;
+    const signature = readout
+      ? [
+        readout.key,
+        readout.targetCellId,
+        readout.stage,
+        readout.arrivedSourceCount,
+        readout.resolvedSourceCount,
+        readout.sourceCount,
+      ].join(':')
+      : 'none';
+    if (traceReadoutSignatureRef.current === signature) return;
+    traceReadoutSignatureRef.current = signature;
+    onTraceReadoutChange(readout);
+  }, [onTraceReadoutChange]);
   useEffect(() => () => {
     if (sharedTraceFocusRef) sharedTraceFocusRef.current = null;
   }, [sharedTraceFocusRef]);
@@ -239,6 +266,7 @@ export default function NeuralNetwork({
       traceFocusRef.current = null;
       if (sharedTraceFocusRef) sharedTraceFocusRef.current = null;
       setTraceFocus(null);
+      publishTraceReadout(null);
       return;
     }
     const key = consensusMemoryTraceRequestKey(traceRequest);
@@ -255,6 +283,7 @@ export default function NeuralNetwork({
       traceFocusRef.current = null;
       if (sharedTraceFocusRef) sharedTraceFocusRef.current = null;
       setTraceFocus(null);
+      publishTraceReadout(null);
       onTraceComplete?.(traceRequest);
       return;
     }
@@ -275,10 +304,15 @@ export default function NeuralNetwork({
     if (sharedTraceFocusRef) sharedTraceFocusRef.current = focus;
     setTraceFocus(focus);
     if (!focus) {
+      publishTraceReadout(null);
       onTraceComplete?.(traceRequest);
       return;
     }
     activeTraceRequestRef.current = traceRequest;
+    const targetCellId = traceRequest.targetCellId ?? focus.targetIds[0];
+    publishTraceReadout(targetCellId === undefined
+      ? null
+      : consensusMemoryTraceReadout(focus, targetCellId, startSec));
     for (const pulse of trace.pulses) {
       pulsesRef.current.push({ ...pulse, startSec, mode: 'memory' });
     }
@@ -302,6 +336,7 @@ export default function NeuralNetwork({
     pulses?.maxActivePulses,
     particleCapMul,
     onTraceComplete,
+    publishTraceReadout,
     sharedTraceFocusRef,
   ]);
 
@@ -347,7 +382,19 @@ export default function NeuralNetwork({
       traceFocusRef.current = null;
       if (sharedTraceFocusRef) sharedTraceFocusRef.current = null;
       setTraceFocus(null);
+      publishTraceReadout(null);
       if (completedRequest) onTraceComplete?.(completedRequest);
+    }
+    const currentFocus = traceFocusRef.current;
+    const currentRequest = activeTraceRequestRef.current;
+    const readoutTargetId = currentRequest?.targetCellId
+      ?? currentFocus?.targetIds[0];
+    if (currentFocus && readoutTargetId !== undefined) {
+      publishTraceReadout(consensusMemoryTraceReadout(
+        currentFocus,
+        readoutTargetId,
+        now,
+      ));
     }
     const focusStrength = consensusMemoryTraceFocusStrength(
       traceFocusRef.current,

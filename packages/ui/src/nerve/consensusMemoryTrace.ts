@@ -112,6 +112,23 @@ export interface ConsensusMemoryCellResponse {
   convergence: number;
 }
 
+export type ConsensusMemoryTraceStage = 'reading' | 'converging' | 'locked';
+
+/**
+ * Low-frequency semantic twin of the target Cell's frame-level response.
+ * Consumers such as the DOM HUD can subscribe to stage/count changes without
+ * copying route timing or re-rendering at the WebGL frame rate.
+ */
+export interface ConsensusMemoryTraceReadout {
+  key: string;
+  targetCellId: number;
+  sourceKind: Exclude<ConsensusMemoryTraceSource, 'none'>;
+  stage: ConsensusMemoryTraceStage;
+  sourceCount: number;
+  arrivedSourceCount: number;
+  resolvedSourceCount: number;
+}
+
 const smoothUnit = (value: number): number => {
   const t = Math.max(0, Math.min(1, value));
   return t * t * (3 - 2 * t);
@@ -231,6 +248,51 @@ export function consensusMemoryCellResponse(
     strength: focusStrength * consensusMemoryTraceSourceStrength(source, nowSec),
     phase,
     convergence: phase,
+  };
+}
+
+/**
+ * Project the same routed arrival clock used by the Cell shader into a compact
+ * explanatory state. "Reading" lasts until evidence reaches the target;
+ * "converging" spans the real per-source agreement transition; "locked" is
+ * emitted only once every routed source has fully resolved.
+ */
+export function consensusMemoryTraceReadout(
+  focus: ConsensusMemoryTraceFocus | null,
+  targetCellId: number,
+  nowSec: number,
+): ConsensusMemoryTraceReadout | null {
+  if (
+    !focus
+    || !focus.targetIds.includes(targetCellId)
+    || !Number.isFinite(nowSec)
+    || nowSec < focus.startedAtSec
+    || nowSec >= focus.endsAtSec
+  ) return null;
+
+  const resolutionSec = MEMORY_TRACE_CELL_CONVERGENCE_MS / 1000;
+  const arrivedSourceCount = focus.sources.filter(
+    (source) => nowSec >= source.arrivesAtSec,
+  ).length;
+  const resolvedSourceCount = focus.sources.filter(
+    (source) => nowSec >= source.arrivesAtSec + resolutionSec,
+  ).length;
+  const locked = focus.sources.length > 0
+    && resolvedSourceCount === focus.sources.length;
+  const stage: ConsensusMemoryTraceStage = locked
+    ? 'locked'
+    : arrivedSourceCount > 0
+      ? 'converging'
+      : 'reading';
+
+  return {
+    key: focus.key,
+    targetCellId,
+    sourceKind: focus.sourceKind,
+    stage,
+    sourceCount: focus.sources.length,
+    arrivedSourceCount,
+    resolvedSourceCount,
   };
 }
 
