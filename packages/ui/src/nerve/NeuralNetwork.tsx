@@ -28,6 +28,7 @@ import { SpikePool } from './spikePool';
 import type { Vec3 } from '../types';
 import {
   CONSENSUS_PULSE_POLICY,
+  consensusMemoryTraceRequestKey,
   consensusMemoryTraceResonance,
   consensusMemoryTraceFocusStrength,
   deriveConsensusMemoryTraceFocus,
@@ -85,6 +86,8 @@ interface NeuralNetworkProps {
   traceRequest?: ConsensusMemoryTraceRequest | null;
   /** Optional recall-only route cap; live traffic keeps its own pulse budget. */
   traceMaxPulses?: number;
+  /** Reports completion or an unavailable route so UI active state can exit. */
+  onTraceComplete?: (request: ConsensusMemoryTraceRequest) => void;
 }
 
 interface ActivePulse extends Pulse {
@@ -103,6 +106,7 @@ export default function NeuralNetwork({
   pulses,
   traceRequest = null,
   traceMaxPulses,
+  onTraceComplete,
 }: NeuralNetworkProps = {}) {
   const simClock = useSimClock();
   const cellsCache = useCellGalaxy();
@@ -216,24 +220,32 @@ export default function NeuralNetwork({
   // back to explicitly-labelled parent siblings only after those inputs leave
   // the cache. `memory` policy forbids reinforcement, Cell flashes, and seals.
   const lastTraceKeyRef = useRef<string | null>(null);
+  const activeTraceRequestRef = useRef<ConsensusMemoryTraceRequest | null>(null);
   const traceFocusRef = useRef<ConsensusMemoryTraceFocus | null>(null);
   const [traceFocus, setTraceFocus] = useState<ConsensusMemoryTraceFocus | null>(null);
   useEffect(() => {
     if (!traceRequest) {
+      pulsesRef.current = pulsesRef.current.filter((pulse) => pulse.mode !== 'memory');
       lastTraceKeyRef.current = null;
+      activeTraceRequestRef.current = null;
       traceFocusRef.current = null;
       setTraceFocus(null);
       return;
     }
-    const key = `${traceRequest.linkSeq}:${traceRequest.nonce}`;
+    const key = consensusMemoryTraceRequestKey(traceRequest);
     if (lastTraceKeyRef.current === key) return;
+    // A replay replaces the previous recollection. Live traffic remains in
+    // flight, but stale historical paths cannot overlap the new selection.
+    pulsesRef.current = pulsesRef.current.filter((pulse) => pulse.mode !== 'memory');
     lastTraceKeyRef.current = key;
+    activeTraceRequestRef.current = null;
     const link = cellsCache.recentLinks.find(
       (candidate) => candidate.seq === traceRequest.linkSeq,
     );
     if (!link) {
       traceFocusRef.current = null;
       setTraceFocus(null);
+      onTraceComplete?.(traceRequest);
       return;
     }
 
@@ -244,12 +256,18 @@ export default function NeuralNetwork({
       {
         maxHops: topology?.maxHops,
         maxPulses: traceMaxPulses ?? pulses?.maxPulsesPerLink,
+        targetCellId: traceRequest.targetCellId,
       },
     );
     const startSec = simClock.elapsedSec;
     const focus = deriveConsensusMemoryTraceFocus(trace, startSec, key);
     traceFocusRef.current = focus;
     setTraceFocus(focus);
+    if (!focus) {
+      onTraceComplete?.(traceRequest);
+      return;
+    }
+    activeTraceRequestRef.current = traceRequest;
     for (const pulse of trace.pulses) {
       pulsesRef.current.push({ ...pulse, startSec, mode: 'memory' });
     }
@@ -263,6 +281,7 @@ export default function NeuralNetwork({
     }
   }, [
     traceRequest?.linkSeq,
+    traceRequest?.targetCellId,
     traceRequest?.nonce,
     cellsCache.recentLinks,
     cellsCache.cells,
@@ -271,6 +290,7 @@ export default function NeuralNetwork({
     pulses?.maxPulsesPerLink,
     pulses?.maxActivePulses,
     particleCapMul,
+    onTraceComplete,
   ]);
 
   // Dev metric: count every block that arrives (one `pulse` delta each,
@@ -307,6 +327,15 @@ export default function NeuralNetwork({
     spikePool.beginFrame();
     const handles = fabricHandlesRef.current;
     const cells = cellsCache.cells;
+    const activeFocus = traceFocusRef.current;
+    if (activeFocus && now >= activeFocus.endsAtSec) {
+      const completedRequest = activeTraceRequestRef.current;
+      pulsesRef.current = pulsesRef.current.filter((pulse) => pulse.mode !== 'memory');
+      activeTraceRequestRef.current = null;
+      traceFocusRef.current = null;
+      setTraceFocus(null);
+      if (completedRequest) onTraceComplete?.(completedRequest);
+    }
     const focusStrength = consensusMemoryTraceFocusStrength(
       traceFocusRef.current,
       now,

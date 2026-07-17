@@ -150,12 +150,13 @@ describe('CellDetailPanel', () => {
       />,
     );
 
-    fireEvent.click(getByRole('button', { name: 'recall causal path' }));
+    fireEvent.click(getByRole('button', { name: 'exit causal recall' }));
     expect(onTraceWrite).toHaveBeenCalledWith(origin.seq);
-    expect(container.textContent).toContain('TRACE SELECTED · RECALL AGAIN');
+    expect(container.textContent).toContain('MEMORY RECALL ACTIVE · EXIT');
     const trace = container.querySelector('[data-trace-selected="true"]');
     expect(trace).not.toBeNull();
     expect(trace?.getAttribute('data-trace-source')).toBe('input');
+    expect(trace?.getAttribute('data-trace-state')).toBe('active');
   });
 
   it('labels surviving parent evidence as a lineage witness, not an input', () => {

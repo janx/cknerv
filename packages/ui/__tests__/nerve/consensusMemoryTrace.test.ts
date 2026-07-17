@@ -17,6 +17,7 @@ import {
   MEMORY_TRACE_SETTLE_MS,
   canRecallConsensusMemory,
   consensusMemoryPassiveOpacity,
+  consensusMemoryTraceRequestKey,
   consensusMemoryTraceFocusStrength,
   consensusMemoryTraceResonance,
   consensusMemoryTraceSourceStrength,
@@ -78,9 +79,38 @@ describe('planConsensusMemoryTrace', () => {
   it('offers exact recall only while an input and created output remain retained', () => {
     const cells = new Map([1, 5].map((id) => [id, cell(id)]));
     expect(canRecallConsensusMemory(link(), cells)).toBe(true);
+    expect(canRecallConsensusMemory(link(), cells, 5)).toBe(true);
+    expect(canRecallConsensusMemory(link(), cells, 9)).toBe(false);
     expect(canRecallConsensusMemory(link({ from_ids: [2] }), cells)).toBe(false);
     expect(canRecallConsensusMemory(link({ from_ids: [] }), cells)).toBe(false);
     expect(canRecallConsensusMemory(link({ to_ids: [9] }), cells)).toBe(false);
+  });
+
+  it('routes a selected Cell without recalling sibling outputs from the same write', () => {
+    const cells = new Map([1, 2, 3, 4, 5, 6].map((id) => [id, cell(id)]));
+    const plan = planConsensusMemoryTrace(
+      link({ to_ids: [5, 6] }),
+      cells,
+      graph([[1, 3], [2, 4], [3, 5], [4, 5], [3, 6], [4, 6]]),
+      { targetCellId: 6, maxPulses: 2 },
+    );
+
+    expect(plan.retainedOutputIds).toEqual([6]);
+    expect(plan.pulses).toHaveLength(2);
+    expect(plan.pulses.every((pulse) => pulse.path.at(-1) === 6)).toBe(true);
+  });
+
+  it('keys the selected output into replay identity', () => {
+    expect(consensusMemoryTraceRequestKey({ linkSeq: 7, nonce: 2 }))
+      .toBe('7:*:2');
+    expect(consensusMemoryTraceRequestKey({ linkSeq: 7, targetCellId: 5, nonce: 2 }))
+      .toBe('7:5:2');
+    expect(consensusMemoryTraceRequestKey({ linkSeq: 7, targetCellId: 6, nonce: 2 }))
+      .not.toBe(consensusMemoryTraceRequestKey({
+        linkSeq: 7,
+        targetCellId: 5,
+        nonce: 2,
+      }));
   });
 
   it('routes exact retained inputs to exact retained outputs, including spent inputs', () => {

@@ -237,11 +237,12 @@ export default function ConsensusIdentityPlate({
         {observed && onRecallWrite ? (
           <button
             type="button"
-            aria-label="recall causal path"
+            aria-label={traceSelected ? 'exit causal recall' : 'recall causal path'}
             data-write-observed="true"
             data-trace-available="true"
             data-trace-source={traceSource}
             data-trace-selected={traceSelected ? 'true' : 'false'}
+            data-trace-state={traceSelected ? 'active' : 'ready'}
             title={observed.txHash}
             onClick={onRecallWrite}
             disabled={!recallEnabled}
@@ -255,9 +256,7 @@ export default function ConsensusIdentityPlate({
               {!recallEnabled
                 ? '↳ TRACE READY AFTER IDENTITY MAP'
                 : traceSelected
-                  ? traceSource === 'witness'
-                    ? '↳ WITNESS TRACE · RECALL AGAIN'
-                    : '↳ TRACE SELECTED · RECALL AGAIN'
+                  ? '↳ MEMORY RECALL ACTIVE · EXIT'
                   : traceSource === 'witness'
                     ? '↳ RECALL LINEAGE WITNESS'
                     : traceSource === 'input'
