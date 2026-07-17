@@ -5,6 +5,7 @@ import {
   CONSENSUS_PULSE_POLICY,
   MAX_MEMORY_TRACE_PULSES,
   MEMORY_TRACE_ALIGNMENT_CAP_MS,
+  MEMORY_TRACE_CELL_CONVERGENCE_MS,
   MEMORY_TRACE_FADE_MS,
   MEMORY_TRACE_FOCUS_FADE_IN_MS,
   MEMORY_TRACE_FOCUS_FADE_OUT_MS,
@@ -12,13 +13,16 @@ import {
   MEMORY_TRACE_HOP_MS_SPAN,
   MEMORY_TRACE_LIVE_ACTIVITY_FLOOR,
   MEMORY_TRACE_PASSIVE_OPACITY_FLOOR,
+  MEMORY_TRACE_ROUTE_HANDOFF_FLOOR,
   MEMORY_TRACE_SOURCE_REVEAL_LEAD_MS,
   MEMORY_TRACE_SOURCE_REVEAL_MS,
   MEMORY_TRACE_START_STAGGER_MS,
   MEMORY_TRACE_SETTLE_MS,
   canRecallConsensusMemory,
+  consensusMemoryCellResponse,
   consensusMemoryLiveActivityScale,
   consensusMemoryPulseActivityScale,
+  consensusMemoryRouteHandoffScale,
   consensusMemoryPassiveOpacity,
   consensusMemoryTraceRequestKey,
   consensusMemoryTraceFocusStrength,
@@ -254,6 +258,35 @@ describe('planConsensusMemoryTrace', () => {
       firstSource.startsAtSec
         + (MEMORY_TRACE_SOURCE_REVEAL_MS - MEMORY_TRACE_SOURCE_REVEAL_LEAD_MS) / 1000,
     )).toBe(1);
+
+    const sourceMidpoint = (firstSource.startsAtSec + firstSource.arrivesAtSec) / 2;
+    const sourceResponse = consensusMemoryCellResponse(
+      focus,
+      firstSource.id,
+      sourceMidpoint,
+    );
+    expect(sourceResponse?.role).toBe('source');
+    expect(sourceResponse?.phase).toBeCloseTo(0.5);
+    expect(sourceResponse?.strength).toBeGreaterThan(0);
+
+    const firstArrival = Math.min(...focus!.sources.map((source) => source.arrivesAtSec));
+    const lastArrival = Math.max(...focus!.sources.map((source) => source.arrivesAtSec));
+    expect(consensusMemoryCellResponse(focus, 5, firstArrival - 0.001)?.convergence)
+      .toBe(0);
+    const resolvedTarget = consensusMemoryCellResponse(
+      focus,
+      5,
+      lastArrival + MEMORY_TRACE_CELL_CONVERGENCE_MS / 1000,
+    );
+    expect(resolvedTarget?.role).toBe('target');
+    expect(resolvedTarget?.convergence).toBeCloseTo(1);
+    expect(resolvedTarget?.phase).toBeGreaterThanOrEqual(0);
+    expect(resolvedTarget?.phase).toBeLessThan(1);
+    expect(consensusMemoryCellResponse(focus, 999, sourceMidpoint)).toBeNull();
+    expect(consensusMemoryRouteHandoffScale(0)).toBe(1);
+    expect(consensusMemoryRouteHandoffScale(1)).toBe(MEMORY_TRACE_ROUTE_HANDOFF_FLOOR);
+    expect(consensusMemoryRouteHandoffScale(0.5))
+      .toBeCloseTo((1 + MEMORY_TRACE_ROUTE_HANDOFF_FLOOR) / 2);
   });
 
   it('does not focus an unroutable memory or over-dim passive structure', () => {

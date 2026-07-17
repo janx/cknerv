@@ -16,11 +16,14 @@ export function makeNucleusPointMaterial(feather: number): THREE.ShaderMaterial 
     vertexShader: /* glsl */`
       attribute float aSize;   // world-space point diameter
       attribute float aAlpha;  // LOD fade × base alpha
+      attribute float aResolve; // recalled agreement has been verified
       uniform float uViewportHeight;
       uniform float uProjY;
       varying float vAlpha;
+      varying float vResolve;
       void main(){
         vAlpha = aAlpha;
+        vResolve = aResolve;
         vec4 viewPos = viewMatrix * modelMatrix * vec4(position, 1.0);
         gl_Position = projectionMatrix * viewPos;
         gl_PointSize = aSize * uProjY * (uViewportHeight * 0.5 / max(-viewPos.z, 0.001));
@@ -28,6 +31,7 @@ export function makeNucleusPointMaterial(feather: number): THREE.ShaderMaterial 
     fragmentShader: /* glsl */`
       precision highp float;
       varying float vAlpha;
+      varying float vResolve;
       uniform float uWarmth;
       void main(){
         vec2 uv = gl_PointCoord - 0.5;
@@ -43,6 +47,8 @@ export function makeNucleusPointMaterial(feather: number): THREE.ShaderMaterial 
         vec3 silicon = vec3(0.28, 0.82, 1.0);
         vec3 violet = vec3(0.68, 0.56, 1.0);
         vec3 tint = mix(silicon, violet, clamp(uWarmth, 0.0, 1.0) * 0.22);
+        vec3 resolvedGold = vec3(1.0, 0.78, 0.34);
+        tint = mix(tint, resolvedGold, clamp(vResolve, 0.0, 1.0) * 0.86);
         vec3 col = tint * (signal * 0.9 + bloom) + vec3(0.72, 0.95, 1.0) * core * 0.28;
         gl_FragColor = vec4(col * a, a);
       }`,

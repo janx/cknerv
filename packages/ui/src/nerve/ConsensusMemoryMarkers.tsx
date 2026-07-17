@@ -5,6 +5,7 @@ import { useCellGalaxy } from '../hooks/cellGalaxyContext';
 import { useSimClock } from '../tweaks/SimClockScope';
 import { useSimFrame } from '../tweaks/useSimFrame';
 import {
+  consensusMemoryCellResponse,
   consensusMemoryTraceFocusStrength,
   consensusMemoryTraceSourceStrength,
   type ConsensusMemoryTraceFocus,
@@ -75,8 +76,13 @@ function EndpointGlyph({
   return (
     <svg aria-hidden="true" viewBox="0 0 36 36" width="34" height="34">
       <path d="M5 13V5h8M23 5h8v8M31 23v8h-8M13 31H5v-8" fill="none" stroke="currentColor" strokeWidth="1" />
-      <circle cx="18" cy="18" r="5" fill="none" stroke="currentColor" strokeWidth="0.8" opacity="0.72" />
-      <circle cx="18" cy="18" r="1.8" fill="currentColor" />
+      <path
+        d="M16 5h4M31 16v4M20 31h-4M5 20v-4"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="0.7"
+        opacity="0.52"
+      />
     </svg>
   );
 }
@@ -249,6 +255,9 @@ export default function ConsensusMemoryMarkers({
         ? consensusMemoryTraceSourceStrength(marker.source, nowSec)
         : 1;
       node.style.opacity = (focusOpacity * sourceOpacity).toFixed(3);
+      const cellResponse = consensusMemoryCellResponse(focus, marker.cell.id, nowSec);
+      node.dataset.memoryCellPhase = (cellResponse?.phase ?? 0).toFixed(3);
+      node.dataset.memoryCellConvergence = (cellResponse?.convergence ?? 0).toFixed(3);
       const measurement = measurements[index];
       if (!measurement) return;
       const placement = placements.get(index);

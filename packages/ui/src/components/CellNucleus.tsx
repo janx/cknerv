@@ -27,6 +27,12 @@ import {
 } from '../derives/cellInteraction.derive';
 import { makeNucleusPointMaterial } from '../materials/cellNucleusMaterial';
 import { QUALITY_PRESETS, useQualityRuntime } from '../tweaks/qualityPresets';
+import { useSimClock } from '../tweaks/SimClockScope';
+import { useConsensusMemoryFocusRef } from '../hooks/consensusMemoryFocusContext';
+import {
+  consensusMemoryCellResponse,
+  type ConsensusMemoryCellResponse,
+} from '../nerve/consensusMemoryTrace';
 
 const NEAR_DIST = 2.5;
 const FAR_DIST = 9.5;
@@ -45,6 +51,8 @@ interface Props {
   groupRef: { readonly current: THREE.Group | null };
   detailAttr: THREE.BufferAttribute;
   focusAttr: THREE.BufferAttribute;
+  recallAttr: THREE.BufferAttribute;
+  recallStateAttr: THREE.BufferAttribute;
   selectedCellIdRef: { readonly current: number | null };
   hoveredCellIdRef: { readonly current: number | null };
 }
@@ -53,11 +61,13 @@ function makePointGeometry(
   position: Float32Array,
   size: Float32Array,
   alpha: Float32Array,
+  resolve: Float32Array,
 ): THREE.BufferGeometry {
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.BufferAttribute(position, 3));
   geometry.setAttribute('aSize', new THREE.BufferAttribute(size, 1));
   geometry.setAttribute('aAlpha', new THREE.BufferAttribute(alpha, 1));
+  geometry.setAttribute('aResolve', new THREE.BufferAttribute(resolve, 1));
   geometry.setDrawRange(0, 0);
   geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e6);
   return geometry;
@@ -83,9 +93,13 @@ export default function CellNucleus({
   groupRef,
   detailAttr,
   focusAttr,
+  recallAttr,
+  recallStateAttr,
   selectedCellIdRef,
   hoveredCellIdRef,
 }: Props) {
+  const simClock = useSimClock();
+  const recallFocusRef = useConsensusMemoryFocusRef();
   const { effective: quality } = useQualityRuntime();
   const nucleusNearCap = QUALITY_PRESETS[quality].nucleusNearCap;
   const lineVertexCap = MAX_NEAR_CAPACITY * MAX_SEG * 2;
@@ -95,13 +109,15 @@ export default function CellNucleus({
   const nodePos = useMemo(() => new Float32Array(nodeCap * 3), [nodeCap]);
   const nodeSize = useMemo(() => new Float32Array(nodeCap), [nodeCap]);
   const nodeAlpha = useMemo(() => new Float32Array(nodeCap), [nodeCap]);
+  const nodeResolve = useMemo(() => new Float32Array(nodeCap), [nodeCap]);
   const buffers = useMemo<GalaxyNucleusBuffers>(() => ({
     linePos,
     lineCol,
     nodePos,
     nodeSize,
     nodeAlpha,
-  }), [linePos, lineCol, nodePos, nodeSize, nodeAlpha]);
+    nodeResolve,
+  }), [linePos, lineCol, nodePos, nodeSize, nodeAlpha, nodeResolve]);
 
   const lineGeometry = useMemo(() => {
     const geometry = new LineSegmentsGeometry();
@@ -112,8 +128,8 @@ export default function CellNucleus({
     return geometry;
   }, [linePos, lineCol]);
   const nodeGeometry = useMemo(
-    () => makePointGeometry(nodePos, nodeSize, nodeAlpha),
-    [nodePos, nodeSize, nodeAlpha],
+    () => makePointGeometry(nodePos, nodeSize, nodeAlpha, nodeResolve),
+    [nodePos, nodeSize, nodeAlpha, nodeResolve],
   );
   const glowMaterial = useMemo(
     () => makeBraidMaterial(BRAID_GLOW_WIDTH_PX, BRAID_GLOW_OPACITY),
@@ -158,6 +174,8 @@ export default function CellNucleus({
     detail: number;
     cameraDetail: number;
     focus: number;
+    userFocus: number;
+    recall: ConsensusMemoryCellResponse | null;
     dist: number;
   }[]>([]);
   const focusByCell = useRef<Map<number, number>>(new Map());
@@ -167,6 +185,7 @@ export default function CellNucleus({
   const lastCount = useRef(-1);
   const lastSelectedCellId = useRef<number | null>(null);
   const lastHoveredCellId = useRef<number | null>(null);
+  const lastRecallKey = useRef<string | null>(null);
   const lastNearCap = useRef(-1);
   const localPosition = useMemo(() => new THREE.Vector3(), []);
   const cameraPosition = useMemo(() => new THREE.Vector3(), []);
@@ -177,6 +196,8 @@ export default function CellNucleus({
     const count = Math.min(drawCountRef.current ?? 0, cells?.length ?? 0);
     const detailArray = detailAttr.array as Float32Array;
     const focusArray = focusAttr.array as Float32Array;
+    const recallArray = recallAttr.array as Float32Array;
+    const recallStateArray = recallStateAttr.array as Float32Array;
     if (!group || !cells || count === 0) {
       lineGeometry.instanceCount = 0;
       nodeGeometry.setDrawRange(0, 0);
@@ -190,8 +211,30 @@ export default function CellNucleus({
 
     const selectedCellId = selectedCellIdRef.current;
     const hoveredCellId = hoveredCellIdRef.current;
+    const recallFocus = recallFocusRef?.current ?? null;
+    const previousRecallKey = lastRecallKey.current;
+    const recallKey = recallFocus?.key ?? null;
+    const recallChanged = recallKey !== previousRecallKey;
+    const recallNeedsWrite = recallFocus !== null || previousRecallKey !== null;
+    lastRecallKey.current = recallKey;
+    const recallByCell = new Map<number, ConsensusMemoryCellResponse>();
+    if (recallFocus) {
+      const endpointIds = new Set([
+        ...recallFocus.sources.map((source) => source.id),
+        ...recallFocus.targetIds,
+      ]);
+      for (const cellId of endpointIds) {
+        const response = consensusMemoryCellResponse(
+          recallFocus,
+          cellId,
+          simClock.elapsedSec,
+        );
+        if (response) recallByCell.set(cellId, response);
+      }
+    }
     const interactionChanged = selectedCellId !== lastSelectedCellId.current
-      || hoveredCellId !== lastHoveredCellId.current;
+      || hoveredCellId !== lastHoveredCellId.current
+      || recallChanged;
     lastSelectedCellId.current = selectedCellId;
     lastHoveredCellId.current = hoveredCellId;
     const focusPreviouslyActive = focusByCell.current.size > 0;
@@ -243,7 +286,13 @@ export default function CellNucleus({
           0,
           Math.min(1, (FAR_DIST - dist) / (FAR_DIST - NEAR_DIST)),
         );
-        const focus = focusByCell.current.get(cell.id) ?? 0;
+        const userFocus = focusByCell.current.get(cell.id) ?? 0;
+        const recall = recallByCell.get(cell.id) ?? null;
+        // Only the retained record expands its canonical structure at a
+        // distance. Sources keep their physical footprint and expose the
+        // bounded address-rail signal on the shared Cell body.
+        const recallDetailFocus = recall?.role === 'target' ? recall.strength : 0;
+        const focus = Math.max(userFocus, recallDetailFocus);
         // Interaction reveals the identity at any distance, but it does not
         // pretend a 20 px far-field mark can carry every microscopic stitch.
         // Hover = contributor paths; selected = paths + partial agreements;
@@ -251,7 +300,16 @@ export default function CellNucleus({
         const interactionDetail = focus * (0.68 + cameraDetail * 0.32);
         const detail = Math.max(cameraDetail, interactionDetail);
         if (detail > 0.02) {
-          near.current.push({ cell, index, detail, cameraDetail, focus, dist });
+          near.current.push({
+            cell,
+            index,
+            detail,
+            cameraDetail,
+            focus,
+            userFocus,
+            recall,
+            dist,
+          });
         }
       }
       near.current.sort((left, right) => (
@@ -260,11 +318,16 @@ export default function CellNucleus({
       if (near.current.length > nucleusNearCap) near.current.length = nucleusNearCap;
       for (const entry of near.current) detailArray[entry.index] = entry.detail;
       detailAttr.needsUpdate = true;
-    } else if (focusNeedsWrite) {
+    } else if (focusNeedsWrite || recallNeedsWrite) {
       // Camera selection is cached between LOD ticks, but the semantic focus
       // envelope remains full-rate so hover/selection never feels quantized.
       for (const entry of near.current) {
-        entry.focus = focusByCell.current.get(entry.cell.id) ?? 0;
+        entry.userFocus = focusByCell.current.get(entry.cell.id) ?? 0;
+        entry.recall = recallByCell.get(entry.cell.id) ?? null;
+        const recallDetailFocus = entry.recall?.role === 'target'
+          ? entry.recall.strength
+          : 0;
+        entry.focus = Math.max(entry.userFocus, recallDetailFocus);
         const interactionDetail = entry.focus * (0.68 + entry.cameraDetail * 0.32);
         entry.detail = Math.max(entry.cameraDetail, interactionDetail);
         detailArray[entry.index] = entry.detail;
@@ -276,13 +339,31 @@ export default function CellNucleus({
     // it only while an envelope is active, plus one final frame on release.
     if (focusNeedsWrite) {
       focusArray.fill(0, 0, count);
-      for (const entry of near.current) focusArray[entry.index] = entry.focus;
+      for (const entry of near.current) focusArray[entry.index] = entry.userFocus;
       focusAttr.needsUpdate = true;
+    }
+
+    // Recall buffers are dormant outside an explicit user request. The final
+    // release frame clears both arrays, so a historical read never leaves a
+    // persistent mark or masquerades as a new chain write.
+    if (recallNeedsWrite) {
+      recallArray.fill(0, 0, count);
+      recallStateArray.fill(0, 0, count);
+      for (let index = 0; index < count; index += 1) {
+        const response = recallByCell.get(cells[index].id);
+        if (!response) continue;
+        recallArray[index] = response.role === 'target'
+          ? response.strength
+          : -response.strength;
+        recallStateArray[index] = response.convergence;
+      }
+      recallAttr.needsUpdate = true;
+      recallStateAttr.needsUpdate = true;
     }
 
     // Geometry is stable in the rotating group's local frame. Only rewrite it
     // when LOD membership changes or a semantic focus envelope is animating.
-    if (!refreshLod && !focusNeedsWrite) return;
+    if (!refreshLod && !focusNeedsWrite && !recallNeedsWrite) return;
 
     const writeCursor = cursor.current;
     writeCursor.lineVertices = 0;
@@ -306,6 +387,7 @@ export default function CellNucleus({
         ),
         buffers,
         writeCursor,
+        entry.recall,
       );
     }
 
@@ -323,6 +405,7 @@ export default function CellNucleus({
     (nodeGeometry.getAttribute('position') as THREE.BufferAttribute).needsUpdate = true;
     (nodeGeometry.getAttribute('aSize') as THREE.BufferAttribute).needsUpdate = true;
     (nodeGeometry.getAttribute('aAlpha') as THREE.BufferAttribute).needsUpdate = true;
+    (nodeGeometry.getAttribute('aResolve') as THREE.BufferAttribute).needsUpdate = true;
   });
 
   return (

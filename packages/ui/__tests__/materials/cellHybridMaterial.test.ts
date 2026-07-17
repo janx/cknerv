@@ -70,6 +70,21 @@ describe('makeCellHybridMaterial', () => {
     expect(m.fragmentShader).toContain('focusCyan');
   });
 
+  it('reads recalled evidence through address rails and a resolved record latch', () => {
+    const m = makeCellHybridMaterial();
+
+    expect(m.vertexShader).toContain('attribute float aRecall');
+    expect(m.vertexShader).toContain('attribute float aRecallState');
+    expect(m.vertexShader).toContain('vRecall = aRecall');
+    expect(m.fragmentShader).toContain('scanAperture');
+    expect(m.fragmentShader).toContain('addressGate');
+    expect(m.fragmentShader).toContain('recordLatch');
+    expect(m.fragmentShader).toContain('departureRail');
+    expect(m.fragmentShader.indexOf('recordLatch')).toBeLessThan(
+      m.fragmentShader.indexOf('retireMix'),
+    );
+  });
+
   it('uses the purple-red retirement signal only as real death advances', () => {
     const m = makeCellHybridMaterial();
 

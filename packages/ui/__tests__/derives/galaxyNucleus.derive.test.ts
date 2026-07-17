@@ -34,6 +34,7 @@ function buffersFor(lineVertices: number, nodes: number): GalaxyNucleusBuffers {
     nodePos: new Float32Array(nodes * 3),
     nodeSize: new Float32Array(nodes),
     nodeAlpha: new Float32Array(nodes),
+    nodeResolve: new Float32Array(nodes),
   };
 }
 
@@ -137,5 +138,47 @@ describe('galaxy consensus braid LOD', () => {
     expect(nearBuffers.nodeAlpha[0]).toBeGreaterThan(0);
     expect(deadBuffers.nodeAlpha[0]).toBeLessThan(nearBuffers.nodeAlpha[0]);
     expect(deadBuffers.lineCol[0]).toBeLessThan(nearBuffers.lineCol[0]);
+  });
+
+  it('scans canonical paths and resolves real agreement knots during recall', () => {
+    const braid = deriveGalaxyConsensusBraid(CELL);
+    const baseline = buffersFor(braid.segments.length / 3, braid.knots.length);
+    const reading = buffersFor(braid.segments.length / 3, braid.knots.length);
+    const resolved = buffersFor(braid.segments.length / 3, braid.knots.length);
+
+    writeGalaxyConsensusBraidBuffers(
+      CELL,
+      braid,
+      0.55,
+      0.3,
+      baseline,
+      emptyCursor(),
+    );
+    writeGalaxyConsensusBraidBuffers(
+      CELL,
+      braid,
+      0.55,
+      0.3,
+      reading,
+      emptyCursor(),
+      { role: 'target', strength: 1, phase: 0.5, convergence: 0 },
+    );
+    writeGalaxyConsensusBraidBuffers(
+      CELL,
+      braid,
+      0.55,
+      0.3,
+      resolved,
+      emptyCursor(),
+      { role: 'target', strength: 1, phase: 0.5, convergence: 1 },
+    );
+
+    expect(Math.max(...reading.lineCol)).toBeGreaterThan(Math.max(...baseline.lineCol));
+    expect(resolved.lineCol.reduce((sum, channel) => sum + channel, 0))
+      .toBeGreaterThan(reading.lineCol.reduce((sum, channel) => sum + channel, 0));
+    expect(Math.max(...resolved.nodeAlpha)).toBeGreaterThan(Math.max(...reading.nodeAlpha));
+    expect(Math.max(...reading.nodeResolve)).toBe(0);
+    expect(Math.max(...resolved.nodeResolve)).toBe(1);
+    expect(resolved.linePos).toEqual(baseline.linePos);
   });
 });

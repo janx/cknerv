@@ -64,6 +64,7 @@ describe('ConsensusMemoryMarkers', () => {
     expect(target?.textContent).toContain('SHARED RECORD');
     expect(target?.textContent).toContain('共识记录');
     expect(target?.textContent).toContain('BBBBBBBBBB');
+    expect(target?.querySelectorAll('circle')).toHaveLength(0);
   });
 
   it('never fabricates a marker when the planned endpoint is absent', () => {
