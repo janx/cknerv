@@ -12,11 +12,17 @@ import {
   type ConsensusMemoryTraceSource,
 } from './consensusMemoryTrace';
 import {
+  chooseConsensusMemoryLabelSide,
   MEMORY_SOURCE_LABEL_RADIAL_SHIFT_PX,
   layoutConsensusMemorySourceLabels,
+  placeConsensusMemoryLabel,
+  type ConsensusMemoryScreenRect,
 } from './consensusMemoryLayout';
 
 type ConsensusMemoryEndpointRole = 'source' | 'target';
+
+const MEMORY_SOURCE_COPY_OFFSET_PX = 24;
+const MEMORY_TARGET_COPY_OFFSET_PX = 42;
 
 interface ConsensusMemoryEndpointCopy {
   headline: string;
@@ -91,8 +97,10 @@ export default function ConsensusMemoryMarkers({
   const cellsCache = useCellGalaxy();
   const markerRefs = useRef<Array<HTMLDivElement | null>>([]);
   const copyRefs = useRef<Array<HTMLDivElement | null>>([]);
-  const sourceLeaderSvgRefs = useRef<Array<SVGSVGElement | null>>([]);
-  const sourceLeaderRefs = useRef<Array<SVGPathElement | null>>([]);
+  const leaderSvgRefs = useRef<Array<SVGSVGElement | null>>([]);
+  const leaderRefs = useRef<Array<SVGPathElement | null>>([]);
+  const hudRectsRef = useRef<ConsensusMemoryScreenRect[]>([]);
+  const hudMeasureRef = useRef({ atMs: Number.NEGATIVE_INFINITY, width: -1, height: -1 });
   const markers = useMemo<MarkerRecord[]>(() => {
     if (!focus) return [];
     const result: MarkerRecord[] = [];
@@ -113,61 +121,126 @@ export default function ConsensusMemoryMarkers({
     const nowSec = simClock.elapsedSec;
     const focusOpacity = consensusMemoryTraceFocusStrength(focus, nowSec);
     const sourceColor = focus?.sourceKind === 'input' ? '#72B7FF' : '#A58AFF';
-    const targetIndex = markers.findIndex((marker) => marker.role === 'target');
-    const targetRect = targetIndex >= 0
-      ? markerRefs.current[targetIndex]?.getBoundingClientRect()
-      : null;
-    const targetX = targetRect ? targetRect.left + 17 : null;
-    const targetY = targetRect ? targetRect.top + 17 : null;
-    const sourceBaseShifts = new Map<number, number>();
-    const sourceAnchors = markers.flatMap((marker, index) => {
+    const viewportWidth = typeof window === 'undefined' ? 0 : window.innerWidth;
+    const viewportHeight = typeof window === 'undefined' ? 0 : window.innerHeight;
+    const layoutNowMs = typeof performance === 'undefined' ? 0 : performance.now();
+    const hudMeasure = hudMeasureRef.current;
+    if (
+      typeof document !== 'undefined'
+      && (viewportWidth !== hudMeasure.width
+        || viewportHeight !== hudMeasure.height
+        || layoutNowMs - hudMeasure.atMs >= 250)
+    ) {
+      hudRectsRef.current = Array.from(
+        document.querySelectorAll<HTMLElement>('[data-hud-occlusion="true"]'),
+      ).flatMap((element) => {
+        const rect = element.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0
+          ? [{ left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom }]
+          : [];
+      });
+      hudMeasureRef.current = {
+        atMs: layoutNowMs,
+        width: viewportWidth,
+        height: viewportHeight,
+      };
+    }
+    const obstacles = hudRectsRef.current;
+    const measurements = markers.map((marker, index) => {
       const node = markerRefs.current[index];
-      if (!marker.source || !node) return [];
+      if (!node) return null;
       const rect = node.getBoundingClientRect();
+      const copyRect = copyRefs.current[index]?.getBoundingClientRect();
       const currentSide = node.dataset.memoryLabelSide === 'right'
         ? 'right'
-        : 'left';
-      const x = currentSide === 'right' ? rect.left + 17 : rect.right - 17;
-      const side: 'left' | 'right' = targetX !== null && x > targetX
+        : node.dataset.memoryLabelSide === 'left'
+          ? 'left'
+          : marker.role === 'source' ? 'left' : 'right';
+      return {
+        x: currentSide === 'right' ? rect.left + 17 : rect.right - 17,
+        y: rect.top + rect.height / 2,
+        width: copyRect?.width ?? rect.width,
+        height: copyRect?.height ?? rect.height,
+      };
+    });
+    const targetIndex = markers.findIndex((marker) => marker.role === 'target');
+    const targetMeasurement = targetIndex >= 0 ? measurements[targetIndex] : null;
+    const targetX = targetMeasurement?.x ?? null;
+    const targetY = targetMeasurement?.y ?? null;
+    const sourceBaseShifts = new Map<number, number>();
+    const sourceAnchors = markers.flatMap((marker, index) => {
+      const measurement = measurements[index];
+      if (!marker.source || !measurement) return [];
+      const preferredSide: 'left' | 'right' = targetX !== null
+        && measurement.x > targetX
         ? 'right'
         : 'left';
-      node.dataset.memoryLabelSide = side;
-      node.style.flexDirection = side === 'left' ? 'row-reverse' : 'row';
-      node.style.transform = side === 'left'
-        ? 'translate(calc(-100% + 17px), -50%)'
-        : 'translate(-17px, -50%)';
-
-      const copy = copyRefs.current[index];
-      if (copy) {
-        copy.style.padding = side === 'left' ? '3px 7px 3px 0' : '3px 0 3px 7px';
-        copy.style.borderRight = side === 'left' ? `1px solid ${sourceColor}88` : '';
-        copy.style.borderLeft = side === 'right' ? `1px solid ${sourceColor}88` : '';
-        copy.style.textAlign = side;
-        copy.style.background = side === 'left'
-          ? `linear-gradient(270deg, ${sourceColor}12, transparent)`
-          : `linear-gradient(90deg, ${sourceColor}12, transparent)`;
-      }
-      const leaderSvg = sourceLeaderSvgRefs.current[index];
-      if (leaderSvg) {
-        leaderSvg.style.left = side === 'right' ? '34px' : '';
-        leaderSvg.style.right = side === 'left' ? '34px' : '';
-      }
-      const y = rect.top + rect.height / 2;
       const baseShift = targetY === null
         ? 0
-        : y <= targetY
+        : measurement.y <= targetY
           ? -MEMORY_SOURCE_LABEL_RADIAL_SHIFT_PX
           : MEMORY_SOURCE_LABEL_RADIAL_SHIFT_PX;
       sourceBaseShifts.set(marker.source.id, baseShift);
+      const side = chooseConsensusMemoryLabelSide({
+        x: measurement.x,
+        y: measurement.y + baseShift,
+        width: measurement.width,
+        height: measurement.height,
+        preferredSide,
+        viewportWidth,
+        obstacles,
+        horizontalOffsetPx: MEMORY_SOURCE_COPY_OFFSET_PX,
+      });
       return [{
         id: marker.source.id,
-        x,
-        y: y + baseShift,
-        width: rect.width,
+        x: side === 'left'
+          ? measurement.x - MEMORY_SOURCE_COPY_OFFSET_PX
+          : measurement.x + MEMORY_SOURCE_COPY_OFFSET_PX,
+        y: measurement.y + baseShift,
+        width: measurement.width,
         side,
       }];
     });
     const sourceShifts = layoutConsensusMemorySourceLabels(sourceAnchors);
+    const desiredShifts = markers.map((marker) => marker.source
+      ? (sourceBaseShifts.get(marker.source.id) ?? 0)
+        + (sourceShifts.get(marker.source.id) ?? 0)
+      : 42);
+    const placements = new Map<number, ReturnType<typeof placeConsensusMemoryLabel>>();
+    const placementObstacles = [...obstacles];
+    const placementOrder = markers
+      .map((marker, index) => ({
+        index,
+        source: Boolean(marker.source),
+        desiredY: (measurements[index]?.y ?? 0) + desiredShifts[index],
+      }))
+      .sort((a, b) => Number(b.source) - Number(a.source)
+        || a.desiredY - b.desiredY
+        || a.index - b.index);
+    for (const { index } of placementOrder) {
+      const marker = markers[index];
+      const measurement = measurements[index];
+      if (!measurement) continue;
+      const preferredSide: 'left' | 'right' = marker.source
+        ? (targetX !== null && measurement.x > targetX ? 'right' : 'left')
+        : (measurement.x > viewportWidth / 2 ? 'left' : 'right');
+      const placement = placeConsensusMemoryLabel({
+        x: measurement.x,
+        y: measurement.y,
+        width: measurement.width,
+        height: measurement.height,
+        preferredSide,
+        viewportWidth,
+        viewportHeight,
+        desiredShiftPx: desiredShifts[index],
+        obstacles: placementObstacles,
+        horizontalOffsetPx: marker.source
+          ? MEMORY_SOURCE_COPY_OFFSET_PX
+          : MEMORY_TARGET_COPY_OFFSET_PX,
+      });
+      placements.set(index, placement);
+      placementObstacles.push(placement.rect);
+    }
 
     markers.forEach((marker, index) => {
       const node = markerRefs.current[index];
@@ -176,19 +249,56 @@ export default function ConsensusMemoryMarkers({
         ? consensusMemoryTraceSourceStrength(marker.source, nowSec)
         : 1;
       node.style.opacity = (focusOpacity * sourceOpacity).toFixed(3);
-      if (!marker.source) return;
-
-      const shift = (sourceBaseShifts.get(marker.source.id) ?? 0)
-        + (sourceShifts.get(marker.source.id) ?? 0);
+      const measurement = measurements[index];
+      if (!measurement) return;
+      const placement = placements.get(index);
+      if (!placement) return;
+      const { shift, side } = placement;
+      node.dataset.memoryLabelSide = side;
       node.dataset.memoryLabelShift = shift.toFixed(1);
+      node.style.flexDirection = side === 'left' ? 'row-reverse' : 'row';
+      node.style.transform = side === 'left'
+        ? 'translate(calc(-100% + 17px), -50%)'
+        : 'translate(-17px, -50%)';
+
+      const color = marker.source ? sourceColor : '#8FF7FF';
       const copy = copyRefs.current[index];
-      if (copy) copy.style.transform = `translateY(${shift.toFixed(1)}px)`;
-      sourceLeaderRefs.current[index]?.setAttribute(
-        'd',
-        node.dataset.memoryLabelSide === 'right'
-          ? `M 0 0 L 7 ${shift.toFixed(1)}`
-          : `M 7 0 L 0 ${shift.toFixed(1)}`,
-      );
+      if (copy) {
+        copy.style.padding = side === 'left' ? '3px 7px 3px 0' : '3px 0 3px 7px';
+        copy.style.borderRight = side === 'left' ? `1px solid ${color}88` : '';
+        copy.style.borderLeft = side === 'right' ? `1px solid ${color}88` : '';
+        copy.style.textAlign = side;
+        copy.style.background = side === 'left'
+          ? `linear-gradient(270deg, ${color}12, transparent)`
+          : `linear-gradient(90deg, ${color}12, transparent)`;
+        copy.style.transform = marker.source
+          ? `translateY(${shift.toFixed(1)}px)`
+          : `translate(${side === 'right' ? '18px' : '-18px'}, ${shift.toFixed(1)}px)`;
+      }
+      const leaderSvg = leaderSvgRefs.current[index];
+      if (leaderSvg) {
+        leaderSvg.style.left = side === 'right' ? '34px' : '';
+        leaderSvg.style.right = side === 'left' ? '34px' : '';
+      }
+      const leader = leaderRefs.current[index];
+      if (leader) {
+        if (marker.source) {
+          leader.setAttribute(
+            'd',
+            side === 'right'
+              ? `M 0 0 L 7 ${shift.toFixed(1)}`
+              : `M 7 0 L 0 ${shift.toFixed(1)}`,
+          );
+        } else {
+          const leadY = shift === 0 ? 0 : shift - Math.sign(shift) * 8;
+          leader.setAttribute(
+            'd',
+            side === 'right'
+              ? `M 0 0 L 0 ${leadY.toFixed(1)} L 25 ${leadY.toFixed(1)}`
+              : `M 25 0 L 25 ${leadY.toFixed(1)} L 0 ${leadY.toFixed(1)}`,
+          );
+        }
+      }
     });
   });
 
@@ -242,43 +352,31 @@ export default function ConsensusMemoryMarkers({
               }}
             >
               <EndpointGlyph role={role} phaseIndex={Math.max(0, sourceIndex)} />
-              {source ? (
-                <svg
-                  ref={(node) => { sourceLeaderSvgRefs.current[index] = node; }}
-                  aria-hidden="true"
-                  width="7"
-                  height="1"
-                  style={{
-                    position: 'absolute',
-                    right: 34,
-                    top: 17,
-                    overflow: 'visible',
-                  }}
-                >
-                  <path
-                    ref={(node) => { sourceLeaderRefs.current[index] = node; }}
-                    d="M 7 0 L 0 0"
-                    fill="none"
-                    stroke={color}
-                    strokeWidth="0.8"
-                    opacity="0.52"
-                  />
-                </svg>
-              ) : (
-                <span
-                  style={{
-                    position: 'absolute',
-                    left: 34,
-                    top: 17,
-                    width: 25,
-                    height: 34,
-                    borderLeft: `1px solid ${color}66`,
-                    borderBottom: `1px solid ${color}66`,
-                  }}
+              <svg
+                ref={(node) => { leaderSvgRefs.current[index] = node; }}
+                aria-hidden="true"
+                width={source ? 7 : 25}
+                height="1"
+                style={{
+                  position: 'absolute',
+                  right: source ? 34 : undefined,
+                  left: source ? undefined : 34,
+                  top: 17,
+                  overflow: 'visible',
+                }}
+              >
+                <path
+                  ref={(node) => { leaderRefs.current[index] = node; }}
+                  d={source ? 'M 7 0 L 0 0' : 'M 0 0 L 0 34 L 25 34'}
+                  fill="none"
+                  stroke={color}
+                  strokeWidth="0.8"
+                  opacity="0.52"
                 />
-              )}
+              </svg>
               <div
                 ref={(node) => { copyRefs.current[index] = node; }}
+                data-memory-label-copy={role}
                 style={{
                   padding: source ? '3px 7px 3px 0' : '3px 0 3px 7px',
                   borderRight: source ? `1px solid ${color}88` : undefined,
@@ -296,8 +394,13 @@ export default function ConsensusMemoryMarkers({
                 <div style={{ marginTop: 2, fontSize: 7, letterSpacing: '0.09em', color: '#7B8CA6' }}>
                   {copy.cjk}
                   {!source ? ` · ${String(focus.routedSourceCount).padStart(2, '0')} ${evidenceNoun}` : ''}
-                  {' · CONTENT '}{shortContentHash(cell)}
+                  {source ? ` · CONTENT ${shortContentHash(cell)}` : ''}
                 </div>
+                {!source && (
+                  <div style={{ marginTop: 2, fontSize: 7, letterSpacing: '0.11em', color: '#56738A' }}>
+                    CONTENT {shortContentHash(cell)}
+                  </div>
+                )}
               </div>
             </div>
           </Html>

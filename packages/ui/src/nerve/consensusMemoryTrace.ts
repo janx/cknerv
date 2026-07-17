@@ -19,6 +19,8 @@ export const MEMORY_TRACE_FADE_MS = 1_600;
 export const MEMORY_TRACE_FOCUS_FADE_IN_MS = 160;
 export const MEMORY_TRACE_FOCUS_FADE_OUT_MS = 720;
 export const MEMORY_TRACE_PASSIVE_OPACITY_FLOOR = 0.26;
+/** Live writes remain visible during recall, but yield the active color lane. */
+export const MEMORY_TRACE_LIVE_ACTIVITY_FLOOR = 0.48;
 export const MEMORY_TRACE_SOURCE_REVEAL_LEAD_MS = 120;
 export const MEMORY_TRACE_SOURCE_REVEAL_MS = 180;
 const MAX_MEMORY_TRACE_FOCUS_ENDPOINTS = 3;
@@ -184,6 +186,26 @@ export function consensusMemoryPassiveOpacity(strength: number): number {
     ? Math.max(0, Math.min(1, strength))
     : 0;
   return 1 - focus * (1 - MEMORY_TRACE_PASSIVE_OPACITY_FLOOR);
+}
+
+/**
+ * Preserve live chain truth while an explicit historical route is inspected.
+ * Cell flashes and write seals remain full-strength; only competing route
+ * ribbons and packet heads yield visual priority to the recalled evidence.
+ */
+export function consensusMemoryLiveActivityScale(strength: number): number {
+  const focus = Number.isFinite(strength)
+    ? Math.max(0, Math.min(1, strength))
+    : 0;
+  return 1 - focus * (1 - MEMORY_TRACE_LIVE_ACTIVITY_FLOOR);
+}
+
+/** Memory evidence keeps full energy; only simultaneous live ribbons yield. */
+export function consensusMemoryPulseActivityScale(
+  mode: ConsensusPulseMode,
+  strength: number,
+): number {
+  return mode === 'live' ? consensusMemoryLiveActivityScale(strength) : 1;
 }
 
 /** Post-arrival route energy for the display-only consensus-memory afterimage. */
