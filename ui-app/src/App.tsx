@@ -7,7 +7,14 @@
 // peer) and the backfill/seeding indicator. The leva knobs panel is hidden
 // by default (toggle with backtick) — see Tweaks.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+} from 'react';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, Stars } from '@react-three/drei';
 import {
@@ -49,6 +56,11 @@ import type {
   Peer,
 } from '@cknerv/types';
 import Tweaks from './Tweaks';
+import {
+  CELL_MEMORY_RECALL_MAX_PULSES,
+  INITIAL_CELL_MEMORY_RECALL_STATE,
+  cellMemoryRecallReducer,
+} from './cell-memory-recall-state';
 import { hasQuerySwitch, resolveCanvasDpr } from './render-quality';
 import { resolveBuildVersion, buildCommitHref, resolveGalaxyConfig } from './runtime-config';
 
@@ -112,13 +124,16 @@ export default function App({
   // independently.
   const [selectedCellId, setSelectedCellId] = useState<string | null>(null);
   const [selectedNetId, setSelectedNetId] = useState<string | null>(null);
-  const [memoryTraceRequest, setMemoryTraceRequest] =
-    useState<ConsensusMemoryTraceRequest | null>(null);
+  const [memoryRecall, dispatchMemoryRecall] = useReducer(
+    cellMemoryRecallReducer,
+    INITIAL_CELL_MEMORY_RECALL_STATE,
+  );
+  const memoryTraceRequest = memoryRecall.request;
   const handleSelect = useCallback((id: string | null) => {
     if (id == null) return;
     if (id.startsWith(CELL_SELECTION_PREFIX)) {
       setSelectedCellId(id);
-      setMemoryTraceRequest(null);
+      dispatchMemoryRecall({ type: 'cancel' });
     }
     else setSelectedNetId(id);
   }, []);
@@ -291,17 +306,26 @@ export default function App({
       : null,
     [selectedOriginLink, cellsCache.cells],
   );
-  const selectedOriginTraceable = !!selectedOriginTrace
+  const selectedOriginTraceable = !!selectedCell
+    && !!selectedOriginTrace
     && selectedOriginTrace.sourceKind !== 'none'
-    && selectedOriginTrace.retainedOutputIds.length > 0;
+    && selectedOriginTrace.retainedOutputIds.includes(selectedCell.id);
   const recallSelectedCellOrigin = useCallback((linkSeq: number) => {
+    if (!selectedCell) return;
     const link = cellsCache.recentLinks.find((candidate) => candidate.seq === linkSeq);
-    if (!link || !canRecallConsensusMemory(link, cellsCache.cells)) return;
-    setMemoryTraceRequest((current) => ({
+    if (
+      !link
+      || !canRecallConsensusMemory(link, cellsCache.cells, selectedCell.id)
+    ) return;
+    dispatchMemoryRecall({
+      type: 'toggle',
       linkSeq,
-      nonce: (current?.nonce ?? 0) + 1,
-    }));
-  }, [cellsCache.cells, cellsCache.recentLinks]);
+      targetCellId: selectedCell.id,
+    });
+  }, [selectedCell, cellsCache.cells, cellsCache.recentLinks]);
+  const completeMemoryRecall = useCallback((request: ConsensusMemoryTraceRequest) => {
+    dispatchMemoryRecall({ type: 'complete', request });
+  }, []);
   const selectedNode = useMemo(() => {
     if (!selectedNetId || selectedNetId.startsWith('peer:')) return null;
     return chainNodes.find((n) => n.id === selectedNetId) ?? null;
@@ -335,7 +359,7 @@ export default function App({
         selectedPeer={selectedPeer}
         onClearCell={() => {
           setSelectedCellId(null);
-          setMemoryTraceRequest(null);
+          dispatchMemoryRecall({ type: 'cancel' });
         }}
         onClearNet={() => setSelectedNetId(null)}
         backfill={cellsCache.backfill}
@@ -355,7 +379,7 @@ export default function App({
           onPointerMissed={() => {
             setSelectedCellId(null);
             setSelectedNetId(null);
-            setMemoryTraceRequest(null);
+            dispatchMemoryRecall({ type: 'cancel' });
           }}
         >
           {/* Advances the module-level simClock once per frame so every
@@ -412,6 +436,8 @@ export default function App({
                   topology={galaxyConfig.topology}
                   pulses={galaxyConfig.pulses}
                   traceRequest={memoryTraceRequest}
+                  traceMaxPulses={CELL_MEMORY_RECALL_MAX_PULSES}
+                  onTraceComplete={completeMemoryRecall}
                 />
                 <ConsensusWriteSeal arrivalRef={burstArrivalRef} />
               </>

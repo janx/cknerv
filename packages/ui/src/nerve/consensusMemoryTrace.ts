@@ -25,8 +25,17 @@ const MAX_MEMORY_TRACE_FOCUS_ENDPOINTS = 3;
 
 export interface ConsensusMemoryTraceRequest {
   linkSeq: number;
+  /** Optional exact retained output selected by the user. */
+  targetCellId?: number;
   /** Monotonic UI nonce: incrementing replays the same retained link again. */
   nonce: number;
+}
+
+/** Stable identity for replay, cancellation, and stale-completion guards. */
+export function consensusMemoryTraceRequestKey(
+  request: ConsensusMemoryTraceRequest,
+): string {
+  return `${request.linkSeq}:${request.targetCellId ?? '*'}:${request.nonce}`;
 }
 
 export type ConsensusPulseMode = 'live' | 'memory';
@@ -45,6 +54,8 @@ export interface ConsensusMemoryTraceOptions {
   maxHops?: number;
   maxPulses?: number;
   maxWitnessesPerParent?: number;
+  /** Restrict recall to one real output instead of replaying its siblings. */
+  targetCellId?: number;
 }
 
 export type ConsensusMemoryTraceSource = 'input' | 'witness' | 'none';
@@ -239,10 +250,14 @@ export function deriveConsensusMemoryTraceEndpoints(
 export function canRecallConsensusMemory(
   link: CellLink,
   cells: ReadonlyMap<number, Cell>,
+  targetCellId?: number,
 ): boolean {
   const endpoints = deriveConsensusMemoryTraceEndpoints(link, cells);
+  const retainedOutputIds = targetCellId === undefined
+    ? endpoints.retainedOutputIds
+    : endpoints.retainedOutputIds.filter((id) => id === targetCellId);
   return endpoints.sourceKind !== 'none'
-    && endpoints.retainedOutputIds.length > 0;
+    && retainedOutputIds.length > 0;
 }
 
 function memoryTraceTiming(
@@ -273,6 +288,10 @@ export function planConsensusMemoryTrace(
     cells,
     options.maxWitnessesPerParent,
   );
+  const retainedOutputIds = options.targetCellId === undefined
+    ? endpoints.retainedOutputIds
+    : endpoints.retainedOutputIds.filter((id) => id === options.targetCellId);
+  const plannedEndpoints = { ...endpoints, retainedOutputIds };
   const maxHops = options.maxHops ?? DEFAULT_MAX_HOPS;
   const maxPulses = Math.max(
     0,
@@ -289,7 +308,7 @@ export function planConsensusMemoryTrace(
   // Target-major iteration spends the visual budget on source diversity: one
   // shared record receives every available witness before a second output is
   // considered. This reads as convergence instead of one source fan-out.
-  outer: for (const targetId of endpoints.retainedOutputIds) {
+  outer: for (const targetId of plannedEndpoints.retainedOutputIds) {
     for (const sourceId of endpoints.sourceIds) {
       if (candidates.length >= maxPulses) break outer;
       if (!graph.adjacency.has(sourceId)) continue;
@@ -336,5 +355,5 @@ export function planConsensusMemoryTrace(
     hopMs: candidate.hopMs,
   }));
 
-  return { pulses, ...endpoints };
+  return { pulses, ...plannedEndpoints };
 }
