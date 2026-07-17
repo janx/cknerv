@@ -28,6 +28,7 @@ import { SpikePool } from './spikePool';
 import type { Vec3 } from '../types';
 import {
   CONSENSUS_PULSE_POLICY,
+  consensusMemoryPulseActivityScale,
   consensusMemoryTraceRequestKey,
   consensusMemoryTraceResonance,
   consensusMemoryTraceFocusStrength,
@@ -357,6 +358,10 @@ export default function NeuralNetwork({
     const stillActive: ActivePulse[] = [];
     for (const pulse of pulsesRef.current) {
       const policy = CONSENSUS_PULSE_POLICY[pulse.mode];
+      const activityScale = consensusMemoryPulseActivityScale(
+        pulse.mode,
+        focusStrength,
+      );
       // Each pulse has its own start delay (jitter) and hop duration
       // (speed scale). Subtract the delay before checking elapsed.
       const rawElapsedMs = (now - pulse.startSec) * 1000;
@@ -477,7 +482,7 @@ export default function NeuralNetwork({
               fromCellId: hFromId,
               toCellId: hToId,
               frontT,
-              brightness,
+              brightness: brightness * activityScale,
               color: pulse.color,
             },
             cells,
@@ -507,7 +512,8 @@ export default function NeuralNetwork({
           position: [x, y, z],
           color: pulse.color,
           size: pulse.mode === 'memory' ? SPIKE_SIZE * 0.74 : SPIKE_SIZE,
-          alpha: pulse.mode === 'memory' ? SPIKE_ALPHA * 0.72 : SPIKE_ALPHA,
+          alpha: (pulse.mode === 'memory' ? SPIKE_ALPHA * 0.72 : SPIKE_ALPHA)
+            * activityScale,
           whiteBias: pulse.mode === 'memory' ? 0.5 : 0.95,
           glyph: pulse.mode === 'memory' ? 'memory' : 'packet',
         });

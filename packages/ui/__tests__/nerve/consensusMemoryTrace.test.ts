@@ -10,12 +10,15 @@ import {
   MEMORY_TRACE_FOCUS_FADE_OUT_MS,
   MEMORY_TRACE_HOP_MS_MIN,
   MEMORY_TRACE_HOP_MS_SPAN,
+  MEMORY_TRACE_LIVE_ACTIVITY_FLOOR,
   MEMORY_TRACE_PASSIVE_OPACITY_FLOOR,
   MEMORY_TRACE_SOURCE_REVEAL_LEAD_MS,
   MEMORY_TRACE_SOURCE_REVEAL_MS,
   MEMORY_TRACE_START_STAGGER_MS,
   MEMORY_TRACE_SETTLE_MS,
   canRecallConsensusMemory,
+  consensusMemoryLiveActivityScale,
+  consensusMemoryPulseActivityScale,
   consensusMemoryPassiveOpacity,
   consensusMemoryTraceRequestKey,
   consensusMemoryTraceFocusStrength,
@@ -264,6 +267,19 @@ describe('planConsensusMemoryTrace', () => {
     expect(consensusMemoryPassiveOpacity(1)).toBe(MEMORY_TRACE_PASSIVE_OPACITY_FLOOR);
     expect(consensusMemoryPassiveOpacity(2)).toBe(MEMORY_TRACE_PASSIVE_OPACITY_FLOOR);
     expect(consensusMemoryPassiveOpacity(Number.NaN)).toBe(1);
+  });
+
+  it('lets live writes yield priority without hiding their route', () => {
+    expect(consensusMemoryLiveActivityScale(0)).toBe(1);
+    expect(consensusMemoryLiveActivityScale(1))
+      .toBe(MEMORY_TRACE_LIVE_ACTIVITY_FLOOR);
+    expect(consensusMemoryLiveActivityScale(0.5))
+      .toBeCloseTo((1 + MEMORY_TRACE_LIVE_ACTIVITY_FLOOR) / 2);
+    expect(consensusMemoryLiveActivityScale(Number.NaN)).toBe(1);
+    expect(MEMORY_TRACE_LIVE_ACTIVITY_FLOOR).toBeGreaterThan(0);
+    expect(consensusMemoryPulseActivityScale('live', 1))
+      .toBe(MEMORY_TRACE_LIVE_ACTIVITY_FLOOR);
+    expect(consensusMemoryPulseActivityScale('memory', 1)).toBe(1);
   });
 
   it('keeps memory recall display-only while live pulses retain event effects', () => {

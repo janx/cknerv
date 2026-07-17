@@ -3,7 +3,10 @@ import { HUD_COLORS, HUD_FONTS } from './hudTheme';
 
 export function HudPanel({ style, children }: { style?: CSSProperties; children: ReactNode }) {
   return (
-    <div style={{ position: 'absolute', padding: '13px 15px', background: HUD_COLORS.panel, ...style }}>
+    <div
+      data-hud-occlusion="true"
+      style={{ position: 'absolute', padding: '13px 15px', background: HUD_COLORS.panel, ...style }}
+    >
       <span style={bracket('tl')} /><span style={bracket('br')} />
       {children}
     </div>
