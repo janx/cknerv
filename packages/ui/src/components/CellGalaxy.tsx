@@ -17,6 +17,7 @@ import {
 } from '../geometry/cellPositions';
 import type { Cell } from '@cknerv/types';
 import { useCellGalaxy } from '../hooks/cellGalaxyContext';
+import { ConsensusMemoryFocusScope } from '../hooks/consensusMemoryFocusContext';
 import { capacityMass, deriveCellVisual } from '../derives/cellVisual.derive';
 import {
   consensusBlockColor,
@@ -805,6 +806,17 @@ export default function CellGalaxy({
     () => new THREE.BufferAttribute(new Float32Array(INSTANCE_CAPACITY), 1),
     [],
   );
+  // Signed recall energy: negative = evidence source, positive = retained
+  // target. Resolution is separate so the target can lock only after its real
+  // witnesses arrive. Both buffers stay idle at zero outside explicit recall.
+  const cellRecallAttr = useMemo(
+    () => new THREE.BufferAttribute(new Float32Array(INSTANCE_CAPACITY), 1),
+    [],
+  );
+  const cellRecallStateAttr = useMemo(
+    () => new THREE.BufferAttribute(new Float32Array(INSTANCE_CAPACITY), 1),
+    [],
+  );
 
   const hybridMaterial = useMemo(() => makeCellHybridMaterial(), []);
   const flareMaterial = useMemo(() => makeCellFlareMaterial(), []);
@@ -819,6 +831,8 @@ export default function CellGalaxy({
     g.setAttribute('aSize', cellSizeAttr);
     g.setAttribute('aDetail', cellDetailAttr);
     g.setAttribute('aFocus', cellFocusAttr);
+    g.setAttribute('aRecall', cellRecallAttr);
+    g.setAttribute('aRecallState', cellRecallStateAttr);
     g.setDrawRange(0, 0);
     // Permissive bounding sphere — cells live in a Gaussian field bounded
     // by SIGMA, core sprites extend a few units past that. Skipping
@@ -835,6 +849,8 @@ export default function CellGalaxy({
     cellSizeAttr,
     cellDetailAttr,
     cellFocusAttr,
+    cellRecallAttr,
+    cellRecallStateAttr,
   ]);
 
   // Bind the duration uniforms once. The wall→scene-seconds conversion
@@ -1170,24 +1186,28 @@ export default function CellGalaxy({
           frustumCulled={false}
           renderOrder={1}
         />
-        {/* Consumer-supplied overlay — the default app supplies consensus
-            routes + write seals here; chain-generic consumers can leave this
-            empty or pass their own overlay layers. Lives inside the
-            rotating group so overlay layers share the cells' xz layout
-            and rotate with the canopy. */}
-        {overlay}
+        <ConsensusMemoryFocusScope>
+          {/* Consumer-supplied overlay — the default app supplies consensus
+              routes + write seals here; chain-generic consumers can leave this
+              empty or pass their own overlay layers. Lives inside the
+              rotating group so overlay layers share the cells' xz layout
+              and rotate with the canopy. */}
+          {overlay}
 
-        {/* Production A language: far = hash-stable consensus light;
-            mid = contributor paths; near = stitches + agreement knots. */}
-        <CellNucleus
-          cellsListRef={cellsListRef}
-          drawCountRef={drawCountRef}
-          groupRef={groupRef}
-          detailAttr={cellDetailAttr}
-          focusAttr={cellFocusAttr}
-          selectedCellIdRef={selectedCellIdRef}
-          hoveredCellIdRef={hoveredCellIdRef}
-        />
+          {/* Production A language: far = hash-stable consensus light;
+              mid = contributor paths; near = stitches + agreement knots. */}
+          <CellNucleus
+            cellsListRef={cellsListRef}
+            drawCountRef={drawCountRef}
+            groupRef={groupRef}
+            detailAttr={cellDetailAttr}
+            focusAttr={cellFocusAttr}
+            recallAttr={cellRecallAttr}
+            recallStateAttr={cellRecallStateAttr}
+            selectedCellIdRef={selectedCellIdRef}
+            hoveredCellIdRef={hoveredCellIdRef}
+          />
+        </ConsensusMemoryFocusScope>
         {/* Screen-space cell picker — replaces the legacy InstancedMesh
             sphere hitbox. Lives inside the rotating group so cell
             pos_seed (local frame) projects through the same world

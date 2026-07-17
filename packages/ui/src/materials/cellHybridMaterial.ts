@@ -54,6 +54,8 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
       attribute float aSize;
       attribute float aDetail;  // LOD: 0 for all far cells (glow unchanged); ramps →1 as the camera nears, softening the white-hot peak so the nucleus shows
       attribute float aFocus;   // eased interaction: 0 resting, ~0.46 hover, 1 selected
+      attribute float aRecall;  // signed historical read: source < 0, retained target > 0
+      attribute float aRecallState; // source travel / target witness resolution
 
       uniform float uTime;
       uniform float uBirthDurS;
@@ -77,6 +79,8 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
       varying vec3  vShockwaveColor;
       varying float vDetail;
       varying float vFocus;
+      varying float vRecall;
+      varying float vRecallState;
       varying float vCenterDim;
 
       ${BIRTH_DEATH_GLSL}
@@ -110,6 +114,8 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
         vColor = aColor;
         vDetail = aDetail;
         vFocus = aFocus;
+        vRecall = aRecall;
+        vRecallState = aRecallState;
         float birthRamp = clamp((uTime - aBornAt) / uBirthDurS, 0.0, 1.0);
         float deathRamp = clamp((uTime - aDeathAt) / uDeathDurS, 0.0, 1.0);
         float bEase = birthEase(birthRamp);
@@ -131,7 +137,7 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
           ? shockwaveSignal.rgb / vShockwave
           : vec3(0.72, 0.96, 1.0);
         gl_Position   = projectionMatrix * viewPos;
-        gl_PointSize  = aSize * ${HYBRID_BASE_PX_PER_WU.toFixed(1)} * (1.0 + vShockwave * uShockwaveSizeBoost) * (1.0 + vFocus * 0.18) * scale * (uViewportHeight * 0.5 / max(-viewPos.z, 0.001));
+        gl_PointSize  = aSize * ${HYBRID_BASE_PX_PER_WU.toFixed(1)} * (1.0 + vShockwave * uShockwaveSizeBoost) * (1.0 + vFocus * 0.18) * (1.0 + abs(vRecall) * 0.1) * scale * (uViewportHeight * 0.5 / max(-viewPos.z, 0.001));
       }
     `,
     fragmentShader: /* glsl */ `
@@ -152,6 +158,8 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
       varying vec3  vShockwaveColor;
       varying float vDetail;
       varying float vFocus;
+      varying float vRecall;
+      varying float vRecallState;
       varying float vCenterDim;
 
       // hash11 — small deterministic scrambler. Used for per-cell decorrelation.
@@ -235,6 +243,55 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
         vec3 focusTint = mix(focusGold, focusCyan, hash11(vSeed + 3.1));
         col += focusTint * focusSignal * 1.35;
         a += focusSignal * 0.62;
+
+        // Historical recall reads the Cell's record; it does not replay a
+        // write flash. Sources emit two bounded address rails. The retained
+        // target receives a segmented scan aperture, then resolves three
+        // checksum lanes only as its real witness arrivals converge.
+        float recallAmount = clamp(abs(vRecall), 0.0, 1.0);
+        float recallTarget = step(0.0, vRecall);
+        float recallSource = 1.0 - recallTarget;
+        float readPhase = fract(uTime * 0.38 + hash11(vSeed + 9.7) * 0.15);
+        float scanY = mix(-0.28, 0.28, readPhase);
+        float scanAperture = exp(-pow((uv.y - scanY) / 0.018, 2.0));
+        float scanWindow = 1.0 - smoothstep(0.18, 0.32, abs(uv.x));
+        float addressCell = floor((uv.x + 0.36) * 18.0);
+        float addressGate = 0.28 + 0.72 * step(
+          0.42,
+          hash11(addressCell + floor(readPhase * 16.0) + vSeed)
+        );
+        float targetRead = scanAperture * scanWindow * addressGate
+          * recallAmount * recallTarget;
+
+        float checksum0 = exp(-pow((uv.y + 0.058) / 0.011, 2.0))
+          * (1.0 - smoothstep(0.09, 0.16, abs(uv.x)));
+        float checksum1 = exp(-pow(uv.y / 0.011, 2.0))
+          * (1.0 - smoothstep(0.12, 0.2, abs(uv.x)));
+        float checksum2 = exp(-pow((uv.y - 0.058) / 0.011, 2.0))
+          * (1.0 - smoothstep(0.07, 0.14, abs(uv.x)));
+        float checksumGate = 0.4 + 0.6 * step(
+          0.32,
+          hash11(floor((uv.x + 0.22) * 24.0) + vSeed)
+        );
+        float recordLatch = (checksum0 + checksum1 + checksum2)
+          * checksumGate * clamp(vRecallState, 0.0, 1.0)
+          * recallAmount * recallTarget;
+
+        float departureX = mix(
+          0.06,
+          0.34,
+          clamp(vRecallState, 0.0, 1.0)
+        );
+        float departureRail = exp(-pow((abs(uv.x) - departureX) / 0.02, 2.0))
+          * (1.0 - smoothstep(0.1, 0.29, abs(uv.y)))
+          * recallAmount * recallSource;
+        vec3 recallCyan = vec3(0.22, 0.9, 1.0);
+        vec3 recallPale = vec3(0.78, 0.97, 1.0);
+        vec3 recallViolet = vec3(0.54, 0.38, 1.0);
+        col += recallCyan * targetRead * 1.35;
+        col += mix(recallCyan, recallPale, 0.72) * recordLatch * 1.5;
+        col += recallViolet * departureRail * 0.72;
+        a += targetRead * 0.54 + recordLatch * 0.68 + departureRail * 0.28;
 
         // A real on-chain Cell consumption is not agreement: transition the
         // fading body toward the retirement signal before it disappears. GC

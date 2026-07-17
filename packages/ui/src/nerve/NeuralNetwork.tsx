@@ -13,6 +13,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useCellGalaxy } from '../hooks/cellGalaxyContext';
+import { useConsensusMemoryFocusRef } from '../hooks/consensusMemoryFocusContext';
 import { useSimFrame } from '../tweaks/useSimFrame';
 import { useSimClock } from '../tweaks/SimClockScope';
 import { QUALITY_PRESETS, useQualityRuntime } from '../tweaks/qualityPresets';
@@ -28,7 +29,9 @@ import { SpikePool } from './spikePool';
 import type { Vec3 } from '../types';
 import {
   CONSENSUS_PULSE_POLICY,
+  consensusMemoryCellResponse,
   consensusMemoryPulseActivityScale,
+  consensusMemoryRouteHandoffScale,
   consensusMemoryTraceRequestKey,
   consensusMemoryTraceResonance,
   consensusMemoryTraceFocusStrength,
@@ -111,6 +114,7 @@ export default function NeuralNetwork({
 }: NeuralNetworkProps = {}) {
   const simClock = useSimClock();
   const cellsCache = useCellGalaxy();
+  const sharedTraceFocusRef = useConsensusMemoryFocusRef();
   const { effective: quality } = useQualityRuntime();
   const particleCapMul = QUALITY_PRESETS[quality].particleCapMul;
 
@@ -224,12 +228,16 @@ export default function NeuralNetwork({
   const activeTraceRequestRef = useRef<ConsensusMemoryTraceRequest | null>(null);
   const traceFocusRef = useRef<ConsensusMemoryTraceFocus | null>(null);
   const [traceFocus, setTraceFocus] = useState<ConsensusMemoryTraceFocus | null>(null);
+  useEffect(() => () => {
+    if (sharedTraceFocusRef) sharedTraceFocusRef.current = null;
+  }, [sharedTraceFocusRef]);
   useEffect(() => {
     if (!traceRequest) {
       pulsesRef.current = pulsesRef.current.filter((pulse) => pulse.mode !== 'memory');
       lastTraceKeyRef.current = null;
       activeTraceRequestRef.current = null;
       traceFocusRef.current = null;
+      if (sharedTraceFocusRef) sharedTraceFocusRef.current = null;
       setTraceFocus(null);
       return;
     }
@@ -245,6 +253,7 @@ export default function NeuralNetwork({
     );
     if (!link) {
       traceFocusRef.current = null;
+      if (sharedTraceFocusRef) sharedTraceFocusRef.current = null;
       setTraceFocus(null);
       onTraceComplete?.(traceRequest);
       return;
@@ -263,6 +272,7 @@ export default function NeuralNetwork({
     const startSec = simClock.elapsedSec;
     const focus = deriveConsensusMemoryTraceFocus(trace, startSec, key);
     traceFocusRef.current = focus;
+    if (sharedTraceFocusRef) sharedTraceFocusRef.current = focus;
     setTraceFocus(focus);
     if (!focus) {
       onTraceComplete?.(traceRequest);
@@ -292,6 +302,7 @@ export default function NeuralNetwork({
     pulses?.maxActivePulses,
     particleCapMul,
     onTraceComplete,
+    sharedTraceFocusRef,
   ]);
 
   // Dev metric: count every block that arrives (one `pulse` delta each,
@@ -334,6 +345,7 @@ export default function NeuralNetwork({
       pulsesRef.current = pulsesRef.current.filter((pulse) => pulse.mode !== 'memory');
       activeTraceRequestRef.current = null;
       traceFocusRef.current = null;
+      if (sharedTraceFocusRef) sharedTraceFocusRef.current = null;
       setTraceFocus(null);
       if (completedRequest) onTraceComplete?.(completedRequest);
     }
@@ -389,6 +401,16 @@ export default function NeuralNetwork({
           );
           if (resonance > 0) {
             stillActive.push(pulse);
+            const targetResponse = consensusMemoryCellResponse(
+              activeFocus,
+              term,
+              now,
+            );
+            const handoffScale = consensusMemoryRouteHandoffScale(
+              targetResponse?.role === 'target'
+                ? targetResponse.convergence
+                : 0,
+            );
             if (handles) {
               for (let h = 0; h < totalHops; h++) {
                 const fromId = pulse.path[h];
@@ -401,7 +423,7 @@ export default function NeuralNetwork({
                     fromCellId: fromId,
                     toCellId: toId,
                     frontT: 1,
-                    brightness: MEMORY_RESONANCE_BRIGHT * resonance,
+                    brightness: MEMORY_RESONANCE_BRIGHT * resonance * handoffScale,
                     tailDecay: MEMORY_RESONANCE_TAIL_DECAY,
                     color: pulse.color,
                   },

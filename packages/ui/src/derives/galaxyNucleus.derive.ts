@@ -15,11 +15,19 @@ export interface GalaxyNucleusBuffers {
   nodePos: Float32Array;
   nodeSize: Float32Array;
   nodeAlpha: Float32Array;
+  nodeResolve: Float32Array;
 }
 
 export interface GalaxyNucleusCursor {
   lineVertices: number;
   nodes: number;
+}
+
+export interface GalaxyNucleusRecallResponse {
+  role: 'source' | 'target';
+  strength: number;
+  phase: number;
+  convergence: number;
 }
 
 export interface GalaxyConsensusKnot {
@@ -50,6 +58,11 @@ const lerp = (from: number, to: number, amount: number): number => (
 function smoothstep(edge0: number, edge1: number, value: number): number {
   const t = Math.max(0, Math.min(1, (value - edge0) / (edge1 - edge0)));
   return t * t * (3 - 2 * t);
+}
+
+function circularUnitDistance(left: number, right: number): number {
+  const direct = Math.abs(left - right);
+  return Math.min(direct, 1 - direct);
 }
 
 /** Build once per immutable Cell; frame updates only copy into fixed buffers. */
@@ -149,6 +162,7 @@ export function writeGalaxyConsensusBraidBuffers(
   scale: number,
   buffers: GalaxyNucleusBuffers,
   cursor: GalaxyNucleusCursor,
+  recall: GalaxyNucleusRecallResponse | null = null,
 ): GalaxyNucleusCursor {
   let lineVertices = cursor.lineVertices;
   let nodes = cursor.nodes;
@@ -160,11 +174,16 @@ export function writeGalaxyConsensusBraidBuffers(
     Math.floor(buffers.nodePos.length / 3),
     buffers.nodeSize.length,
     buffers.nodeAlpha.length,
+    buffers.nodeResolve.length,
   );
   const midVisibility = smoothstep(0.02, 0.7, detail);
   const nearVisibility = smoothstep(0.38, 1, detail);
   const life = cell.death_at_ms === null ? 1 : 0.56;
   const [originX, originY, originZ] = cell.pos_seed;
+  const recallStrength = Math.max(0, Math.min(1, recall?.strength ?? 0));
+  const recallPhase = ((recall?.phase ?? 0) % 1 + 1) % 1;
+  const recallConvergence = Math.max(0, Math.min(1, recall?.convergence ?? 0));
+  const segmentCount = Math.max(1, Math.floor(braid.segments.length / 6));
 
   for (
     let segment = 0;
@@ -173,27 +192,72 @@ export function writeGalaxyConsensusBraidBuffers(
   ) {
     const sourceOffset = segment * 6;
     const weight = braid.detailWeights[segment] ?? 0;
-    const visibility = lerp(midVisibility, nearVisibility, weight) * life;
+    const baseVisibility = lerp(midVisibility, nearVisibility, weight) * life;
+    const segmentPhase = (segment + 0.5) / segmentCount;
+    const phaseDistance = circularUnitDistance(segmentPhase, recallPhase);
+    const readHead = Math.exp(-Math.pow(phaseDistance / 0.055, 2));
+    const targetRead = recall?.role === 'target'
+      ? recallStrength * readHead
+      : 0;
+    const sourceRead = recall?.role === 'source'
+      ? recallStrength * readHead
+      : 0;
+    const agreementRead = recall?.role === 'target' && weight > 0.7
+      ? recallStrength * recallConvergence
+      : 0;
+    const baseVisibilityScale = recall?.role === 'target'
+      ? 1 - recallStrength * 0.62
+      : 1;
+    const memoryEnergy = (targetRead * 1.12 + sourceRead * 0.58 + agreementRead * 0.82)
+      * life;
+    const memoryTint: readonly [number, number, number] = agreementRead > 0
+      ? CONSENSUS_BRAID_PALETTE.paleGold
+      : recall?.role === 'source'
+        ? CONSENSUS_BRAID_PALETTE.violet
+        : CONSENSUS_BRAID_PALETTE.cyan;
     for (let endpoint = 0; endpoint < 2; endpoint += 1) {
       const source = sourceOffset + endpoint * 3;
       const target = lineVertices * 3;
       buffers.linePos[target] = originX + braid.segments[source] * scale;
       buffers.linePos[target + 1] = originY + braid.segments[source + 1] * scale;
       buffers.linePos[target + 2] = originZ + braid.segments[source + 2] * scale;
-      buffers.lineCol[target] = braid.colors[source] * visibility;
-      buffers.lineCol[target + 1] = braid.colors[source + 1] * visibility;
-      buffers.lineCol[target + 2] = braid.colors[source + 2] * visibility;
+      buffers.lineCol[target] = braid.colors[source]
+        * baseVisibility * baseVisibilityScale
+        + memoryTint[0] * memoryEnergy;
+      buffers.lineCol[target + 1] = braid.colors[source + 1]
+        * baseVisibility * baseVisibilityScale
+        + memoryTint[1] * memoryEnergy;
+      buffers.lineCol[target + 2] = braid.colors[source + 2]
+        * baseVisibility * baseVisibilityScale
+        + memoryTint[2] * memoryEnergy;
       lineVertices += 1;
     }
   }
 
-  for (const knot of braid.knots) {
+  for (let knotIndex = 0; knotIndex < braid.knots.length; knotIndex += 1) {
+    const knot = braid.knots[knotIndex];
     if (nodes >= nodeCap) break;
+    const threshold = (knotIndex + 1) / Math.max(1, braid.knots.length);
+    const resolved = smoothstep(
+      Math.max(0, threshold - 0.22),
+      threshold,
+      recallConvergence,
+    );
+    const recallAlpha = recall?.role === 'target'
+      ? knot.alpha * recallStrength * (0.12 + resolved * 0.88) * life
+      : 0;
     buffers.nodePos[nodes * 3] = originX + knot.x * scale;
     buffers.nodePos[nodes * 3 + 1] = originY + knot.y * scale;
     buffers.nodePos[nodes * 3 + 2] = originZ + knot.z * scale;
-    buffers.nodeSize[nodes] = knot.size * scale * 2;
-    buffers.nodeAlpha[nodes] = knot.alpha * nearVisibility * life;
+    buffers.nodeSize[nodes] = knot.size * scale * 2
+      * (1 + recallStrength * (0.12 + resolved * 1.18));
+    buffers.nodeAlpha[nodes] = Math.max(
+      knot.alpha * nearVisibility * life,
+      recallAlpha,
+    );
+    buffers.nodeResolve[nodes] = recall?.role === 'target'
+      ? recallStrength * resolved
+      : 0;
     nodes += 1;
   }
 

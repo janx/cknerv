@@ -23,6 +23,12 @@ export const MEMORY_TRACE_PASSIVE_OPACITY_FLOOR = 0.26;
 export const MEMORY_TRACE_LIVE_ACTIVITY_FLOOR = 0.48;
 export const MEMORY_TRACE_SOURCE_REVEAL_LEAD_MS = 120;
 export const MEMORY_TRACE_SOURCE_REVEAL_MS = 180;
+/** Agreement knots resolve shortly after each recalled witness reaches target. */
+export const MEMORY_TRACE_CELL_CONVERGENCE_MS = 260;
+/** Slow phase read across the target's canonical contributor paths. */
+export const MEMORY_TRACE_CELL_READ_CYCLES_PER_S = 0.38;
+/** Completed routes yield to the resolved Cell without losing provenance. */
+export const MEMORY_TRACE_ROUTE_HANDOFF_FLOOR = 0.36;
 const MAX_MEMORY_TRACE_FOCUS_ENDPOINTS = 3;
 
 export interface ConsensusMemoryTraceRequest {
@@ -94,6 +100,16 @@ export interface ConsensusMemoryTraceFocus {
   targetIds: number[];
   startedAtSec: number;
   endsAtSec: number;
+}
+
+export interface ConsensusMemoryCellResponse {
+  role: 'source' | 'target';
+  /** Shared fade envelope, including a source's phased reveal. */
+  strength: number;
+  /** Source travel or target read-head phase, normalized to 0..1. */
+  phase: number;
+  /** Target witness resolution, or source departure progress. */
+  convergence: number;
 }
 
 const smoothUnit = (value: number): number => {
@@ -178,6 +194,50 @@ export function consensusMemoryTraceSourceStrength(
   if (revealAgeMs <= 1e-6) return 0;
   if (revealAgeMs >= MEMORY_TRACE_SOURCE_REVEAL_MS) return 1;
   return smoothUnit(revealAgeMs / MEMORY_TRACE_SOURCE_REVEAL_MS);
+}
+
+const clampUnit = (value: number): number => Math.max(0, Math.min(1, value));
+
+/**
+ * Translate one route focus into the Cell body's own visual state. Sources
+ * expose a restrained departure read; the retained target progressively
+ * resolves its real agreement constellation as witnesses arrive.
+ */
+export function consensusMemoryCellResponse(
+  focus: ConsensusMemoryTraceFocus | null,
+  cellId: number,
+  nowSec: number,
+): ConsensusMemoryCellResponse | null {
+  if (!focus || !Number.isFinite(cellId) || !Number.isFinite(nowSec)) return null;
+  const focusStrength = consensusMemoryTraceFocusStrength(focus, nowSec);
+  if (focus.targetIds.includes(cellId)) {
+    const elapsed = Math.max(0, nowSec - focus.startedAtSec);
+    const rawPhase = elapsed * MEMORY_TRACE_CELL_READ_CYCLES_PER_S;
+    const phase = rawPhase - Math.floor(rawPhase);
+    const convergence = focus.sources.length === 0
+      ? 0
+      : focus.sources.reduce((total, source) => total + smoothUnit(
+        (nowSec - source.arrivesAtSec) * 1000 / MEMORY_TRACE_CELL_CONVERGENCE_MS,
+      ), 0) / focus.sources.length;
+    return { role: 'target', strength: focusStrength, phase, convergence };
+  }
+
+  const source = focus.sources.find((candidate) => candidate.id === cellId);
+  if (!source) return null;
+  const travelSeconds = Math.max(0.001, source.arrivesAtSec - source.startsAtSec);
+  const phase = clampUnit((nowSec - source.startsAtSec) / travelSeconds);
+  return {
+    role: 'source',
+    strength: focusStrength * consensusMemoryTraceSourceStrength(source, nowSec),
+    phase,
+    convergence: phase,
+  };
+}
+
+/** Transfer focal energy from completed evidence paths into the retained Cell. */
+export function consensusMemoryRouteHandoffScale(convergence: number): number {
+  const resolved = Number.isFinite(convergence) ? clampUnit(convergence) : 0;
+  return 1 - resolved * (1 - MEMORY_TRACE_ROUTE_HANDOFF_FLOOR);
 }
 
 /** Global passive-line opacity; active live and recalled paths stay untouched. */

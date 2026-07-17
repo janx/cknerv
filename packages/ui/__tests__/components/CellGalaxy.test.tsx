@@ -71,6 +71,14 @@ describe('CellGalaxy', () => {
     expect(source).not.toContain('CELL_FORM');
   });
 
+  it('shares explicit memory focus between the route overlay and Cell body', () => {
+    const source = readFileSync(CELL_GALAXY_SOURCE, 'utf8');
+
+    expect(source).toContain('<ConsensusMemoryFocusScope>');
+    expect(source).toContain('recallAttr={cellRecallAttr}');
+    expect(source).toContain('recallStateAttr={cellRecallStateAttr}');
+  });
+
   it('mounts with localReceiveDelayS (receive-delayed reaction) without throwing', () => {
     const cellFlashRef = { current: new Map<number, number>() };
     const flashDirtyRef = { current: false };
