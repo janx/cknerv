@@ -44,6 +44,7 @@ import {
 } from '../derives/consensusFlow.derive';
 import { CONSENSUS_BRAID_PALETTE } from '../derives/consensusBraid.derive';
 import type { Vec3 } from '../types';
+import { consensusMemoryPassiveOpacity } from './consensusMemoryTrace';
 
 // Dense-mesh baseline energy (the `cell.fabricAlpha` tweak, default 0.12).
 // Passive fibres use bounded screen accumulation plus spatial compression;
@@ -91,6 +92,8 @@ export interface ActiveHop {
 }
 
 export interface NeuralFabricHandles {
+  /** Temporarily de-emphasize passive fibres during an explicit recall. */
+  setRecallFocus(strength: number): void;
   /** Push one active hop's worth of curve sub-segments into this
    *  frame's buffer. Driven from the orchestrator's per-frame loop. */
   pushActiveHop(hop: ActiveHop, cells: ReadonlyMap<number, Cell>): void;
@@ -392,6 +395,9 @@ export default function NeuralFabric({ onReady }: NeuralFabricProps) {
     const sample = new Float32Array(3);
 
     const handles: NeuralFabricHandles = {
+      setRecallFocus(strength) {
+        fabric.material.opacity = consensusMemoryPassiveOpacity(strength);
+      },
       setFabric(graph, cells, now) {
         const states = edgeStatesRef.current;
         const { order, liveKeys } = orderFabricStateKeys(graph.edges, states.keys());

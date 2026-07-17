@@ -71,6 +71,13 @@ describe('NeuralFabric living-mesh handles', () => {
     expect(SRC).toContain('hop.tailDecay ?? 7.5');
   });
 
+  it('dims only the passive fabric through the bounded recall-focus envelope', () => {
+    expect(SRC).toContain('setRecallFocus');
+    expect(SRC).toContain('consensusMemoryPassiveOpacity');
+    expect(SRC).toMatch(/fabric\.material\.opacity\s*=\s*consensusMemoryPassiveOpacity/);
+    expect(SRC).not.toMatch(/active\.material\.opacity\s*=\s*consensusMemoryPassiveOpacity/);
+  });
+
   it('spends fewer samples on passive fabric before simplifying active writes', () => {
     expect(SRC).toContain('useQualityRuntime');
     expect(SRC).toContain('fabricSamplesPerEdge');

@@ -13,6 +13,10 @@ export const MEMORY_TRACE_HOP_MS_SPAN = 90;
 /** A recalled route settles at full energy, then leaves no persistent mark. */
 export const MEMORY_TRACE_SETTLE_MS = 420;
 export const MEMORY_TRACE_FADE_MS = 1_600;
+export const MEMORY_TRACE_FOCUS_FADE_IN_MS = 160;
+export const MEMORY_TRACE_FOCUS_FADE_OUT_MS = 720;
+export const MEMORY_TRACE_PASSIVE_OPACITY_FLOOR = 0.26;
+const MAX_MEMORY_TRACE_FOCUS_ENDPOINTS = 2;
 
 export interface ConsensusMemoryTraceRequest {
   linkSeq: number;
@@ -56,6 +60,74 @@ export interface ConsensusMemoryTracePlan {
   retainedInputIds: number[];
   retainedOutputIds: number[];
   witnessIds: number[];
+}
+
+export interface ConsensusMemoryTraceFocus {
+  key: string;
+  sourceKind: Exclude<ConsensusMemoryTraceSource, 'none'>;
+  sourceIds: number[];
+  targetIds: number[];
+  startedAtSec: number;
+  endsAtSec: number;
+}
+
+const smoothUnit = (value: number): number => {
+  const t = Math.max(0, Math.min(1, value));
+  return t * t * (3 - 2 * t);
+};
+
+/**
+ * Focus only endpoints that actually participate in a planned route. The
+ * lifetime spans the slowest pulse plus its settled afterimage, so labels and
+ * passive-mesh dimming cannot outlive the visual evidence they describe.
+ */
+export function deriveConsensusMemoryTraceFocus(
+  plan: ConsensusMemoryTracePlan,
+  startedAtSec: number,
+  key: string,
+): ConsensusMemoryTraceFocus | null {
+  if (plan.sourceKind === 'none' || plan.pulses.length === 0) return null;
+  const sourceIds = [...new Set(plan.pulses.map((pulse) => pulse.path[0]))]
+    .slice(0, MAX_MEMORY_TRACE_FOCUS_ENDPOINTS);
+  const targetIds = [...new Set(plan.pulses.map(
+    (pulse) => pulse.path[pulse.path.length - 1],
+  ))].slice(0, MAX_MEMORY_TRACE_FOCUS_ENDPOINTS);
+  const lifetimeMs = Math.max(...plan.pulses.map((pulse) => (
+    pulse.startDelayMs
+      + (pulse.path.length - 1) * pulse.hopMs
+      + MEMORY_TRACE_SETTLE_MS
+      + MEMORY_TRACE_FADE_MS
+  )));
+  return {
+    key,
+    sourceKind: plan.sourceKind,
+    sourceIds,
+    targetIds,
+    startedAtSec,
+    endsAtSec: startedAtSec + lifetimeMs / 1000,
+  };
+}
+
+/** Shared envelope for endpoint labels and passive-fabric de-emphasis. */
+export function consensusMemoryTraceFocusStrength(
+  focus: ConsensusMemoryTraceFocus | null,
+  nowSec: number,
+): number {
+  if (!focus || !Number.isFinite(nowSec)) return 0;
+  const ageMs = (nowSec - focus.startedAtSec) * 1000;
+  const remainingMs = (focus.endsAtSec - nowSec) * 1000;
+  if (ageMs < 0 || remainingMs <= 0) return 0;
+  const fadeIn = smoothUnit(ageMs / MEMORY_TRACE_FOCUS_FADE_IN_MS);
+  const fadeOut = smoothUnit(remainingMs / MEMORY_TRACE_FOCUS_FADE_OUT_MS);
+  return fadeIn * fadeOut;
+}
+
+/** Global passive-line opacity; active live and recalled paths stay untouched. */
+export function consensusMemoryPassiveOpacity(strength: number): number {
+  const focus = Number.isFinite(strength)
+    ? Math.max(0, Math.min(1, strength))
+    : 0;
+  return 1 - focus * (1 - MEMORY_TRACE_PASSIVE_OPACITY_FLOOR);
 }
 
 /** Post-arrival route energy for the display-only consensus-memory afterimage. */

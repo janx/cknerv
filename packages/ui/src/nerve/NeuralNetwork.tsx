@@ -11,7 +11,7 @@
 //      drives the packet-head glyph, flashes the cells it crosses,
 //      and stamps a write seal when it lands on the terminal.
 
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useCellGalaxy } from '../hooks/cellGalaxyContext';
 import { useSimFrame } from '../tweaks/useSimFrame';
 import { useSimClock } from '../tweaks/SimClockScope';
@@ -29,10 +29,14 @@ import type { Vec3 } from '../types';
 import {
   CONSENSUS_PULSE_POLICY,
   consensusMemoryTraceResonance,
+  consensusMemoryTraceFocusStrength,
+  deriveConsensusMemoryTraceFocus,
   planConsensusMemoryTrace,
+  type ConsensusMemoryTraceFocus,
   type ConsensusMemoryTraceRequest,
   type ConsensusPulseMode,
 } from './consensusMemoryTrace';
+import ConsensusMemoryMarkers from './ConsensusMemoryMarkers';
 
 const SPIKE_POOL_CAPACITY = 1024;
 
@@ -209,15 +213,26 @@ export default function NeuralNetwork({
   // back to explicitly-labelled parent siblings only after those inputs leave
   // the cache. `memory` policy forbids reinforcement, Cell flashes, and seals.
   const lastTraceKeyRef = useRef<string | null>(null);
+  const traceFocusRef = useRef<ConsensusMemoryTraceFocus | null>(null);
+  const [traceFocus, setTraceFocus] = useState<ConsensusMemoryTraceFocus | null>(null);
   useEffect(() => {
-    if (!traceRequest) return;
+    if (!traceRequest) {
+      lastTraceKeyRef.current = null;
+      traceFocusRef.current = null;
+      setTraceFocus(null);
+      return;
+    }
     const key = `${traceRequest.linkSeq}:${traceRequest.nonce}`;
     if (lastTraceKeyRef.current === key) return;
     lastTraceKeyRef.current = key;
     const link = cellsCache.recentLinks.find(
       (candidate) => candidate.seq === traceRequest.linkSeq,
     );
-    if (!link) return;
+    if (!link) {
+      traceFocusRef.current = null;
+      setTraceFocus(null);
+      return;
+    }
 
     const trace = planConsensusMemoryTrace(
       link,
@@ -229,6 +244,9 @@ export default function NeuralNetwork({
       },
     );
     const startSec = simClock.elapsedSec;
+    const focus = deriveConsensusMemoryTraceFocus(trace, startSec, key);
+    traceFocusRef.current = focus;
+    setTraceFocus(focus);
     for (const pulse of trace.pulses) {
       pulsesRef.current.push({ ...pulse, startSec, mode: 'memory' });
     }
@@ -285,10 +303,15 @@ export default function NeuralNetwork({
     spikePool.beginFrame();
     const handles = fabricHandlesRef.current;
     const cells = cellsCache.cells;
+    const focusStrength = consensusMemoryTraceFocusStrength(
+      traceFocusRef.current,
+      now,
+    );
 
     // Drive growth/decay animation on the persistent fabric layer.
     // Internally gated: no-op when nothing is animating and nothing
     // has changed since last commit, so this is free in steady state.
+    handles?.setRecallFocus(focusStrength);
     handles?.emitFabric(now);
 
     // Live adjacency snapshot for this frame. Pulses ride only edges
@@ -480,6 +503,7 @@ export default function NeuralNetwork({
     <>
       <NeuralFabric onReady={onFabricReady} />
       <primitive object={spikePool.mesh} />
+      <ConsensusMemoryMarkers focus={traceFocus} />
     </>
   );
 }

@@ -5,11 +5,17 @@ import {
   CONSENSUS_PULSE_POLICY,
   MAX_MEMORY_TRACE_PULSES,
   MEMORY_TRACE_FADE_MS,
+  MEMORY_TRACE_FOCUS_FADE_IN_MS,
+  MEMORY_TRACE_FOCUS_FADE_OUT_MS,
   MEMORY_TRACE_HOP_MS_MIN,
   MEMORY_TRACE_HOP_MS_SPAN,
+  MEMORY_TRACE_PASSIVE_OPACITY_FLOOR,
   MEMORY_TRACE_SETTLE_MS,
   canRecallConsensusMemory,
+  consensusMemoryPassiveOpacity,
+  consensusMemoryTraceFocusStrength,
   consensusMemoryTraceResonance,
+  deriveConsensusMemoryTraceFocus,
   deriveConsensusMemoryTraceEndpoints,
   planConsensusMemoryTrace,
 } from '../../src/nerve/consensusMemoryTrace';
@@ -153,6 +159,55 @@ describe('planConsensusMemoryTrace', () => {
     expect(consensusMemoryTraceResonance(
       MEMORY_TRACE_SETTLE_MS + MEMORY_TRACE_FADE_MS,
     )).toBe(0);
+  });
+
+  it('focuses only the real routed endpoints for exactly the recall lifetime', () => {
+    const cells = new Map([1, 2, 3, 4, 5].map((id) => [id, cell(id)]));
+    const plan = planConsensusMemoryTrace(
+      link(),
+      cells,
+      graph([[1, 3], [2, 4], [3, 5], [4, 5]]),
+    );
+    const startedAtSec = 10;
+    const focus = deriveConsensusMemoryTraceFocus(plan, startedAtSec, '7:1');
+
+    expect(focus).not.toBeNull();
+    expect(focus?.sourceKind).toBe('input');
+    expect(focus?.sourceIds).toEqual([1, 2]);
+    expect(focus?.targetIds).toEqual([5]);
+    expect(focus?.startedAtSec).toBe(startedAtSec);
+
+    const slowestLifetimeMs = Math.max(...plan.pulses.map((pulse) => (
+      pulse.startDelayMs
+        + (pulse.path.length - 1) * pulse.hopMs
+        + MEMORY_TRACE_SETTLE_MS
+        + MEMORY_TRACE_FADE_MS
+    )));
+    expect(focus?.endsAtSec).toBeCloseTo(startedAtSec + slowestLifetimeMs / 1000);
+    expect(consensusMemoryTraceFocusStrength(focus, startedAtSec - 0.01)).toBe(0);
+    expect(consensusMemoryTraceFocusStrength(focus, startedAtSec)).toBe(0);
+    expect(consensusMemoryTraceFocusStrength(
+      focus,
+      startedAtSec + MEMORY_TRACE_FOCUS_FADE_IN_MS / 1000,
+    )).toBeCloseTo(1);
+    expect(consensusMemoryTraceFocusStrength(
+      focus,
+      focus!.endsAtSec - MEMORY_TRACE_FOCUS_FADE_OUT_MS / 2000,
+    )).toBeCloseTo(0.5);
+    expect(consensusMemoryTraceFocusStrength(focus, focus!.endsAtSec)).toBe(0);
+  });
+
+  it('does not focus an unroutable memory or over-dim passive structure', () => {
+    const cells = new Map([1, 5].map((id) => [id, cell(id)]));
+    const plan = planConsensusMemoryTrace(link(), cells, graph([]));
+
+    expect(deriveConsensusMemoryTraceFocus(plan, 1, '7:1')).toBeNull();
+    expect(consensusMemoryTraceFocusStrength(null, 1)).toBe(0);
+    expect(consensusMemoryTraceFocusStrength(null, Number.NaN)).toBe(0);
+    expect(consensusMemoryPassiveOpacity(0)).toBe(1);
+    expect(consensusMemoryPassiveOpacity(1)).toBe(MEMORY_TRACE_PASSIVE_OPACITY_FLOOR);
+    expect(consensusMemoryPassiveOpacity(2)).toBe(MEMORY_TRACE_PASSIVE_OPACITY_FLOOR);
+    expect(consensusMemoryPassiveOpacity(Number.NaN)).toBe(1);
   });
 
   it('keeps memory recall display-only while live pulses retain event effects', () => {
