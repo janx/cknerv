@@ -26,15 +26,11 @@ export interface CellConsensusIdentity {
 
 const canonicalHash = (value: string): string => value.toLowerCase();
 
-/**
- * Shapes immutable Cell identity plus optional, retained origin evidence for
- * the detail HUD. This never upgrades a generic chain record into a "recent
- * write" unless all three canonical coordinates agree.
- */
-export function deriveCellConsensusIdentity(
+/** Find the newest retained causal link that exactly created this Cell. */
+export function findCellOriginLink(
   cell: Cell,
-  recentLinks: readonly CellLink[] = [],
-): CellConsensusIdentity {
+  recentLinks: readonly CellLink[],
+): CellLink | null {
   const cellTxHash = canonicalHash(cell.out_point.tx_hash);
   let origin: CellLink | null = null;
 
@@ -51,6 +47,20 @@ export function deriveCellConsensusIdentity(
       origin = link;
     }
   }
+
+  return origin;
+}
+
+/**
+ * Shapes immutable Cell identity plus optional, retained origin evidence for
+ * the detail HUD. This never upgrades a generic chain record into a "recent
+ * write" unless all three canonical coordinates agree.
+ */
+export function deriveCellConsensusIdentity(
+  cell: Cell,
+  recentLinks: readonly CellLink[] = [],
+): CellConsensusIdentity {
+  const origin = findCellOriginLink(cell, recentLinks);
 
   return {
     txHash: cell.out_point.tx_hash,

@@ -12,6 +12,7 @@ import ConsensusIdentityPlate from './ConsensusIdentityPlate';
 import { PROBE_STEP_S, probeScan } from './probeScan';
 import { deriveCellVisual } from '../../derives/cellVisual.derive';
 import { deriveCellConsensusIdentity } from '../../derives/cellConsensusIdentity.derive';
+import type { ConsensusMemoryTraceSource } from '../../nerve/consensusMemoryTrace';
 import {
   CONSENSUS_BRAID_FIELDS,
   consensusBraidAgreementTarget,
@@ -22,6 +23,7 @@ import {
 
 const BRACKET = 9; // corner bracket arm length (px)
 const AMBER = HUD_COLORS.orange;
+const EMPTY_RECENT_LINKS: readonly CellLink[] = [];
 
 function cornerBracket(corner: 'tl' | 'tr' | 'bl' | 'br'): CSSProperties {
   const vy: CSSProperties = corner[0] === 't' ? { top: 0 } : { bottom: 0 };
@@ -39,9 +41,20 @@ type Field = ConsensusBraidField;
 
 const nowPerf = () => (typeof performance !== 'undefined' ? performance.now() : 0);
 
-export default function CellDetailPanel({ cell, recentLinks = [], onClose, style }: {
+export default function CellDetailPanel({
+  cell,
+  recentLinks = EMPTY_RECENT_LINKS,
+  tracedWriteSeq = null,
+  traceSource = 'none',
+  onTraceWrite,
+  onClose,
+  style,
+}: {
   cell: Cell;
   recentLinks?: readonly CellLink[];
+  tracedWriteSeq?: number | null;
+  traceSource?: ConsensusMemoryTraceSource;
+  onTraceWrite?: (linkSeq: number) => void;
   onClose: () => void;
   style?: CSSProperties;
 }) {
@@ -206,6 +219,16 @@ export default function CellDetailPanel({ cell, recentLinks = [], onClose, style
         statusText={statusText}
         statusColor={statusColor}
         reducedMotion={reduced}
+        focusedField={selectedField}
+        onInspectAddress={interactive ? () => selectField('state') : undefined}
+        onInspectContent={interactive ? () => selectField('data') : undefined}
+        onInspectAnchor={interactive ? () => selectField('born') : undefined}
+        onRecallWrite={identity.observedWrite && onTraceWrite
+          ? () => onTraceWrite(identity.observedWrite!.seq)
+          : undefined}
+        recallEnabled={interactive}
+        traceSource={traceSource}
+        traceSelected={identity.observedWrite?.seq === tracedWriteSeq}
       />
     </HudPanel>
   );

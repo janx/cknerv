@@ -9,12 +9,28 @@ const SEAL_SRC = readFileSync(
 );
 
 describe('consensus packet glyph', () => {
-  it('uses a procedural data lozenge instead of a biological ion bubble', () => {
+  it('separates the live data lozenge from the round historical phase knot', () => {
     const pool = new SpikePool(4);
 
     expect(pool.material.fragmentShader).toContain('diamondD');
-    expect(pool.material.fragmentShader).toContain('contour');
+    expect(pool.material.fragmentShader).toContain('phaseRingA');
+    expect(pool.material.fragmentShader).toContain('phaseRingB');
+    expect(pool.material.vertexShader).toContain('aGlyphMode');
     expect(pool.material.fragmentShader).toContain('vec3(0.86, 0.96, 1.0)');
+
+    const slot = {
+      position: [0, 0, 0] as [number, number, number],
+      color: [0.4, 0.2, 1] as [number, number, number],
+      size: 1,
+      alpha: 1,
+      whiteBias: 0.5,
+    };
+    pool.beginFrame();
+    pool.push({ ...slot, glyph: 'packet' });
+    pool.push({ ...slot, glyph: 'memory' });
+    pool.endFrame(900, 1);
+    const glyphs = pool.mesh.geometry.getAttribute('aGlyphMode').array;
+    expect(Array.from(glyphs.slice(0, 2))).toEqual([0, 1]);
     pool.dispose();
   });
 });

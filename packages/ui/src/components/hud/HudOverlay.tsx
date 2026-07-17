@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 import type { ChainEntry, Peer, ChainNode, Cell, CellLink } from '@cknerv/types';
+import type { ConsensusMemoryTraceSource } from '../../nerve/consensusMemoryTrace';
 import { summarizeNetwork } from '../../derives/peers.derive';
 import { fleetConsensus, pingStats, versionSpread } from '../../derives/fleetTelemetry';
 import { ecgCondition, expectedBlockMs, windowMeanMs, ECG_WINDOW, type EcgCondition } from '../../derives/ecgCondition';
@@ -40,11 +41,14 @@ const MESH_RAIL_STYLE: CSSProperties = { position: 'absolute', top: 42, right: 1
 const MESH_ZONE_COL: CSSProperties = { display: 'flex', flexDirection: 'column-reverse', gap: 12, alignItems: 'flex-end' };
 const PANEL_FLOW: CSSProperties = { position: 'relative' };
 
-export default function HudOverlay({ chain, peers, localNode, cellsStats, selectedCell, recentCellLinks, selectedNode, selectedPeer, onClearSelection, onClearCell, onClearNet, backfill, build, colonyCount }: {
+export default function HudOverlay({ chain, peers, localNode, cellsStats, selectedCell, recentCellLinks, tracedCellWriteSeq, cellTraceSource, onTraceCellWrite, selectedNode, selectedPeer, onClearSelection, onClearCell, onClearNet, backfill, build, colonyCount }: {
   chain: ChainEntry; peers: Peer[]; localNode: ChainNode | undefined; cellsStats: CellsStats;
   selectedCell?: Cell | null;
   /** Retained causal links used only to prove an exact selected-Cell origin. */
   recentCellLinks?: readonly CellLink[];
+  tracedCellWriteSeq?: number | null;
+  cellTraceSource?: ConsensusMemoryTraceSource;
+  onTraceCellWrite?: (linkSeq: number) => void;
   selectedNode?: ChainNode | null; selectedPeer?: Peer | null;
   /** Clear-all fallback (cell + net). Kept for the shared @cknerv/ui API. */
   onClearSelection?: () => void;
@@ -142,7 +146,18 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats, select
           The local NODE and remote PEER details both belong to the PEER zone. */}
       <div ref={railRef} className="cknerv-mesh-rail" style={railStyle}>
         {meshZone(
-          selectedCell ? <CellDetailPanel key={selectedCell.id} cell={selectedCell} recentLinks={recentCellLinks} onClose={clearCell} style={PANEL_FLOW} /> : null,
+          selectedCell ? (
+            <CellDetailPanel
+              key={selectedCell.id}
+              cell={selectedCell}
+              recentLinks={recentCellLinks}
+              tracedWriteSeq={tracedCellWriteSeq}
+              traceSource={cellTraceSource}
+              onTraceWrite={onTraceCellWrite}
+              onClose={clearCell}
+              style={PANEL_FLOW}
+            />
+          ) : null,
           <CellsPanel stats={cellsStats} churn={churn} reducedMotion={reduced} style={PANEL_FLOW} />,
         )}
         {meshZone(

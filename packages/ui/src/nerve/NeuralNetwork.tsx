@@ -26,6 +26,13 @@ import NeuralFabric, { type NeuralFabricHandles } from './NeuralFabric';
 import { bezierAt, bezierControl, fabricEdgeSeed } from '../geometry/edgeBezier';
 import { SpikePool } from './spikePool';
 import type { Vec3 } from '../types';
+import {
+  CONSENSUS_PULSE_POLICY,
+  consensusMemoryTraceResonance,
+  planConsensusMemoryTrace,
+  type ConsensusMemoryTraceRequest,
+  type ConsensusPulseMode,
+} from './consensusMemoryTrace';
 
 const SPIKE_POOL_CAPACITY = 1024;
 
@@ -33,9 +40,8 @@ const SPIKE_POOL_CAPACITY = 1024;
  *  first — keeps the visual coherent during burst-block activity. */
 const MAX_ACTIVE_PULSES = 256;
 
-/** Small pale-hot packet glyph at the wavefront position. Only
- *  there to give the leading edge a sharp focal point — the lit
- *  curve does the heavy lifting visually. */
+/** Wavefront glyph scale. Live writes use the pale data lozenge; historical
+ *  recall uses a smaller segmented phase knot. The curve carries the route. */
 const SPIKE_SIZE = 1.6;
 const SPIKE_ALPHA = 4.5;
 
@@ -52,6 +58,10 @@ const HOP_TAIL_BRIGHT = 1.4;
 const HOP_TAIL_DECAY = 0.65;
 /** How many past hops still glow behind the leading hop. */
 const TRAIL_HOPS = 5;
+/** Full recalled route afterimage, below the travelling wavefront energy. */
+const MEMORY_RESONANCE_BRIGHT = 1.35;
+/** Broad afterimage rather than the tight travelling-wave tail. */
+const MEMORY_RESONANCE_TAIL_DECAY = 0.65;
 const RIPPLE_STAGGER_MS = 60;      // per-birth grow-in delay within a block
 const RECONCILE_EVERY_N_BLOCKS = 6; // canonical drift repair cadence
 
@@ -67,10 +77,13 @@ interface NeuralNetworkProps {
   pulses?: PulsePlanningOptions & {
     maxActivePulses?: number;
   };
+  /** Explicit user-requested replay of one retained historical link. */
+  traceRequest?: ConsensusMemoryTraceRequest | null;
 }
 
 interface ActivePulse extends Pulse {
   startSec: number;
+  mode: ConsensusPulseMode;
   /** ② Highest hop index already reinforced, so each edge a pulse crosses
    *  bumps its vein's usage exactly once (the head hop only advances). */
   lastReinforcedHop?: number;
@@ -82,6 +95,7 @@ export default function NeuralNetwork({
   burstArrivalRef,
   topology,
   pulses,
+  traceRequest = null,
 }: NeuralNetworkProps = {}) {
   const simClock = useSimClock();
   const cellsCache = useCellGalaxy();
@@ -169,7 +183,7 @@ export default function NeuralNetwork({
     // advances per frame, so stamping once == the prior per-link stamping.
     const startSec = simClock.elapsedSec;
     for (const p of planned) {
-      pulsesRef.current.push({ ...p, startSec });
+      pulsesRef.current.push({ ...p, startSec, mode: 'live' });
     }
     // Soft cap — drop oldest if we're way over.
     const maxActivePulses = Math.max(
@@ -187,6 +201,52 @@ export default function NeuralNetwork({
     topology?.maxHops,
     pulses?.maxPulsesPerLink,
     pulses?.maxSourcesPerParent,
+    pulses?.maxActivePulses,
+    particleCapMul,
+  ]);
+
+  // User-driven historical recall. It prefers retained spent inputs and falls
+  // back to explicitly-labelled parent siblings only after those inputs leave
+  // the cache. `memory` policy forbids reinforcement, Cell flashes, and seals.
+  const lastTraceKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!traceRequest) return;
+    const key = `${traceRequest.linkSeq}:${traceRequest.nonce}`;
+    if (lastTraceKeyRef.current === key) return;
+    lastTraceKeyRef.current = key;
+    const link = cellsCache.recentLinks.find(
+      (candidate) => candidate.seq === traceRequest.linkSeq,
+    );
+    if (!link) return;
+
+    const trace = planConsensusMemoryTrace(
+      link,
+      cellsCache.cells,
+      graphRef.current,
+      {
+        maxHops: topology?.maxHops,
+        maxPulses: pulses?.maxPulsesPerLink,
+      },
+    );
+    const startSec = simClock.elapsedSec;
+    for (const pulse of trace.pulses) {
+      pulsesRef.current.push({ ...pulse, startSec, mode: 'memory' });
+    }
+
+    const maxActivePulses = Math.max(
+      1,
+      Math.floor((pulses?.maxActivePulses ?? MAX_ACTIVE_PULSES) * particleCapMul),
+    );
+    if (pulsesRef.current.length > maxActivePulses) {
+      pulsesRef.current.splice(0, pulsesRef.current.length - maxActivePulses);
+    }
+  }, [
+    traceRequest?.linkSeq,
+    traceRequest?.nonce,
+    cellsCache.recentLinks,
+    cellsCache.cells,
+    topology?.maxHops,
+    pulses?.maxPulsesPerLink,
     pulses?.maxActivePulses,
     particleCapMul,
   ]);
@@ -240,6 +300,7 @@ export default function NeuralNetwork({
     const adjacency = graphRef.current.adjacency;
     const stillActive: ActivePulse[] = [];
     for (const pulse of pulsesRef.current) {
+      const policy = CONSENSUS_PULSE_POLICY[pulse.mode];
       // Each pulse has its own start delay (jitter) and hop duration
       // (speed scale). Subtract the delay before checking elapsed.
       const rawElapsedMs = (now - pulse.startSec) * 1000;
@@ -261,7 +322,36 @@ export default function NeuralNetwork({
         const term = pulse.path[totalHops];
         const arriveAt =
           pulse.startSec + (pulse.startDelayMs + totalHops * hopMs) / 1000;
-        if (burstArrivalRef?.current) {
+        if (pulse.mode === 'memory') {
+          const resonance = consensusMemoryTraceResonance(
+            (now - arriveAt) * 1000,
+          );
+          if (resonance > 0) {
+            stillActive.push(pulse);
+            if (handles) {
+              for (let h = 0; h < totalHops; h++) {
+                const fromId = pulse.path[h];
+                const toId = pulse.path[h + 1];
+                if (!cells.has(fromId) || !cells.has(toId)) continue;
+                const hopAdjacency = adjacency.get(fromId);
+                if (!hopAdjacency?.has(toId)) continue;
+                handles.pushActiveHop(
+                  {
+                    fromCellId: fromId,
+                    toCellId: toId,
+                    frontT: 1,
+                    brightness: MEMORY_RESONANCE_BRIGHT * resonance,
+                    tailDecay: MEMORY_RESONANCE_TAIL_DECAY,
+                    color: pulse.color,
+                  },
+                  cells,
+                );
+              }
+            }
+          }
+          continue;
+        }
+        if (policy.stampWrite && burstArrivalRef?.current) {
           const prev = burstArrivalRef.current.get(term);
           if (!prev || arriveAt > prev.firedAt) {
             burstArrivalRef.current.set(term, {
@@ -271,7 +361,7 @@ export default function NeuralNetwork({
           }
         }
         // Final cell flash on the terminal too.
-        if (cellFlashRef?.current) {
+        if (policy.flashCells && cellFlashRef?.current) {
           const prev = cellFlashRef.current.get(term) ?? -1e9;
           if (arriveAt > prev) {
             cellFlashRef.current.set(term, arriveAt);
@@ -297,7 +387,7 @@ export default function NeuralNetwork({
       // Reinforce the route this packet is traversing — once per edge crossed
       // (headHop only advances). Repeatedly-travelled routes accumulate glow
       // and persist; the fabric self-organizes toward live block/tx flow.
-      if (headHop > (pulse.lastReinforcedHop ?? -1)) {
+      if (policy.reinforce && headHop > (pulse.lastReinforcedHop ?? -1)) {
         handles?.reinforce(headFromId, headToId);
         pulse.lastReinforcedHop = headHop;
       }
@@ -360,15 +450,16 @@ export default function NeuralNetwork({
         spikePool.push({
           position: [x, y, z],
           color: pulse.color,
-          size: SPIKE_SIZE,
-          alpha: SPIKE_ALPHA,
-          whiteBias: 0.95,
+          size: pulse.mode === 'memory' ? SPIKE_SIZE * 0.74 : SPIKE_SIZE,
+          alpha: pulse.mode === 'memory' ? SPIKE_ALPHA * 0.72 : SPIKE_ALPHA,
+          whiteBias: pulse.mode === 'memory' ? 0.5 : 0.95,
+          glyph: pulse.mode === 'memory' ? 'memory' : 'packet',
         });
       }
 
       // Cell flash on the cell we *arrive at* during this hop. Schedule
       // exactly when subT crosses 1 (= when we land on the next cell).
-      if (cellFlashRef?.current) {
+      if (policy.flashCells && cellFlashRef?.current) {
         const arrivingCellId = pulse.path[headHop + 1];
         const arriveAt =
           pulse.startSec + (pulse.startDelayMs + (headHop + 1) * hopMs) / 1000;

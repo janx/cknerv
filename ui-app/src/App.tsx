@@ -15,7 +15,10 @@ import {
   AdaptiveQualityController,
   CELL_SELECTION_PREFIX,
   chainNodeWorldPosition,
+  canRecallConsensusMemory,
   colonyFlood,
+  deriveConsensusMemoryTraceEndpoints,
+  findCellOriginLink,
   inferredTopology,
   CellGalaxy,
   CellGalaxyProvider,
@@ -30,6 +33,7 @@ import {
   TweakSync,
   UNIVERSE_SEED_FALLBACK,
   useQualityRuntime,
+  type ConsensusMemoryTraceRequest,
 } from '@cknerv/ui';
 import {
   connectCellsStream,
@@ -108,9 +112,14 @@ export default function App({
   // independently.
   const [selectedCellId, setSelectedCellId] = useState<string | null>(null);
   const [selectedNetId, setSelectedNetId] = useState<string | null>(null);
+  const [memoryTraceRequest, setMemoryTraceRequest] =
+    useState<ConsensusMemoryTraceRequest | null>(null);
   const handleSelect = useCallback((id: string | null) => {
     if (id == null) return;
-    if (id.startsWith(CELL_SELECTION_PREFIX)) setSelectedCellId(id);
+    if (id.startsWith(CELL_SELECTION_PREFIX)) {
+      setSelectedCellId(id);
+      setMemoryTraceRequest(null);
+    }
     else setSelectedNetId(id);
   }, []);
 
@@ -270,6 +279,29 @@ export default function App({
     const id = Number(selectedCellId.slice(CELL_SELECTION_PREFIX.length));
     return Number.isFinite(id) ? cellsCache.cells.get(id) ?? null : null;
   }, [selectedCellId, cellsCache.cells]);
+  const selectedOriginLink = useMemo(
+    () => selectedCell
+      ? findCellOriginLink(selectedCell, cellsCache.recentLinks)
+      : null,
+    [selectedCell, cellsCache.recentLinks],
+  );
+  const selectedOriginTrace = useMemo(
+    () => selectedOriginLink
+      ? deriveConsensusMemoryTraceEndpoints(selectedOriginLink, cellsCache.cells)
+      : null,
+    [selectedOriginLink, cellsCache.cells],
+  );
+  const selectedOriginTraceable = !!selectedOriginTrace
+    && selectedOriginTrace.sourceKind !== 'none'
+    && selectedOriginTrace.retainedOutputIds.length > 0;
+  const recallSelectedCellOrigin = useCallback((linkSeq: number) => {
+    const link = cellsCache.recentLinks.find((candidate) => candidate.seq === linkSeq);
+    if (!link || !canRecallConsensusMemory(link, cellsCache.cells)) return;
+    setMemoryTraceRequest((current) => ({
+      linkSeq,
+      nonce: (current?.nonce ?? 0) + 1,
+    }));
+  }, [cellsCache.cells, cellsCache.recentLinks]);
   const selectedNode = useMemo(() => {
     if (!selectedNetId || selectedNetId.startsWith('peer:')) return null;
     return chainNodes.find((n) => n.id === selectedNetId) ?? null;
@@ -294,9 +326,17 @@ export default function App({
         cellsStats={cellsStats}
         selectedCell={selectedCell}
         recentCellLinks={cellsCache.recentLinks}
+        tracedCellWriteSeq={memoryTraceRequest?.linkSeq ?? null}
+        cellTraceSource={selectedOriginTrace?.sourceKind ?? 'none'}
+        onTraceCellWrite={selectedOriginTraceable
+          ? recallSelectedCellOrigin
+          : undefined}
         selectedNode={selectedNode}
         selectedPeer={selectedPeer}
-        onClearCell={() => setSelectedCellId(null)}
+        onClearCell={() => {
+          setSelectedCellId(null);
+          setMemoryTraceRequest(null);
+        }}
         onClearNet={() => setSelectedNetId(null)}
         backfill={cellsCache.backfill}
         build={build}
@@ -312,7 +352,11 @@ export default function App({
           gl={{ antialias: true, alpha: true }}
           dpr={canvasDpr}
           style={{ background: '#02030a' }}
-          onPointerMissed={() => { setSelectedCellId(null); setSelectedNetId(null); }}
+          onPointerMissed={() => {
+            setSelectedCellId(null);
+            setSelectedNetId(null);
+            setMemoryTraceRequest(null);
+          }}
         >
           {/* Advances the module-level simClock once per frame so every
               useSimFrame animation (CellGalaxy, BlockDeliveryLayer, GlowNode,
@@ -367,6 +411,7 @@ export default function App({
                   burstArrivalRef={burstArrivalRef}
                   topology={galaxyConfig.topology}
                   pulses={galaxyConfig.pulses}
+                  traceRequest={memoryTraceRequest}
                 />
                 <ConsensusWriteSeal arrivalRef={burstArrivalRef} />
               </>

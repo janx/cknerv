@@ -1,5 +1,7 @@
 import type { CSSProperties } from 'react';
 import type { CellConsensusIdentity } from '../../derives/cellConsensusIdentity.derive';
+import type { ConsensusBraidField } from '../../derives/consensusBraid.derive';
+import type { ConsensusMemoryTraceSource } from '../../nerve/consensusMemoryTrace';
 import { formatOutpoint } from './cellFormat';
 import { HUD_COLORS, HUD_FONTS } from './hudTheme';
 
@@ -20,29 +22,66 @@ function fingerprintReadout(hash: string, reveal: number): string {
   return `${body.slice(0, visible)}${'·'.repeat(16 - visible)} · ${'·'.repeat(10)}`;
 }
 
-function memoryRow(label: string, value: string, color: string, title?: string) {
-  return (
-    <div style={{ display: 'grid', gridTemplateColumns: '58px minmax(0,1fr)', alignItems: 'baseline', minHeight: 17 }}>
+function memoryRow({
+  label,
+  value,
+  color,
+  title,
+  active,
+  onActivate,
+}: {
+  label: string;
+  value: string;
+  color: string;
+  title?: string;
+  active?: boolean;
+  onActivate?: () => void;
+}) {
+  const content = (
+    <>
       <span style={{ fontFamily: HUD_FONTS.tech, fontSize: 7.8, fontWeight: 500, letterSpacing: 1.35, color: HUD_COLORS.dim }}>
         {label}
       </span>
       <span title={title} style={{ minWidth: 0, textAlign: 'right', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis', fontFamily: HUD_FONTS.mono, fontSize: 9.5, letterSpacing: 0.3, color }}>
         {value}
       </span>
-    </div>
+    </>
+  );
+  const style: CSSProperties = {
+    display: 'grid',
+    gridTemplateColumns: '58px minmax(0,1fr)',
+    alignItems: 'baseline',
+    width: '100%',
+    minHeight: 17,
+    margin: 0,
+    padding: 0,
+    border: 0,
+    borderRadius: 0,
+    background: active ? `${CYAN}12` : 'transparent',
+    boxShadow: active ? `inset 1px 0 0 ${CYAN}99` : undefined,
+    cursor: onActivate ? 'pointer' : 'default',
+    textAlign: 'left',
+  };
+  return onActivate ? (
+    <button type="button" aria-label={`inspect ${label.toLowerCase()}`} onClick={onActivate} style={style}>
+      {content}
+    </button>
+  ) : (
+    <div style={style}>{content}</div>
   );
 }
 
-function IdentityBraid({ identity, reducedMotion }: {
+function IdentityBraid({ identity, reducedMotion, traceSelected }: {
   identity: CellConsensusIdentity;
   reducedMotion: boolean;
+  traceSelected: boolean;
 }) {
   const nibbles = fingerprintBody(identity.contentHash)
     .slice(0, 12)
     .split('')
     .map((hex) => Number.parseInt(hex, 16) || 0);
   const observed = identity.observedWrite !== null;
-  const knotColor = observed ? GOLD : CYAN;
+  const knotColor = traceSelected ? VIOLET : observed ? GOLD : CYAN;
 
   return (
     <svg
@@ -103,12 +142,28 @@ export default function ConsensusIdentityPlate({
   statusText,
   statusColor,
   reducedMotion,
+  focusedField,
+  onInspectAddress,
+  onInspectContent,
+  onInspectAnchor,
+  onRecallWrite,
+  recallEnabled = true,
+  traceSource = 'none',
+  traceSelected = false,
 }: {
   identity: CellConsensusIdentity;
   reveal: number;
   statusText: string;
   statusColor: string;
   reducedMotion: boolean;
+  focusedField?: ConsensusBraidField | null;
+  onInspectAddress?: () => void;
+  onInspectContent?: () => void;
+  onInspectAnchor?: () => void;
+  onRecallWrite?: () => void;
+  recallEnabled?: boolean;
+  traceSource?: ConsensusMemoryTraceSource;
+  traceSelected?: boolean;
 }) {
   const observed = identity.observedWrite;
   const lifecycleColor = identity.lifecycle === 'live'
@@ -145,17 +200,72 @@ export default function ConsensusIdentityPlate({
         </span>
       </div>
 
-      <IdentityBraid identity={identity} reducedMotion={reducedMotion} />
+      <IdentityBraid
+        identity={identity}
+        reducedMotion={reducedMotion}
+        traceSelected={traceSelected}
+      />
 
-      {memoryRow('ADDRESS', address, HUD_COLORS.ink, `${identity.txHash}#${identity.outPointIndex}`)}
-      {memoryRow('CONTENT', fingerprint, CYAN, identity.contentHash)}
-      {memoryRow('ANCHOR', `BLOCK #${identity.anchorBlock}`, '#C9F8FF')}
+      {memoryRow({
+        label: 'ADDRESS',
+        value: address,
+        color: HUD_COLORS.ink,
+        title: `${identity.txHash}#${identity.outPointIndex}`,
+        active: focusedField === 'state',
+        onActivate: onInspectAddress,
+      })}
+      {memoryRow({
+        label: 'CONTENT',
+        value: fingerprint,
+        color: CYAN,
+        title: identity.contentHash,
+        active: focusedField === 'data',
+        onActivate: onInspectContent,
+      })}
+      {memoryRow({
+        label: 'ANCHOR',
+        value: `BLOCK #${identity.anchorBlock}`,
+        color: '#C9F8FF',
+        active: focusedField === 'born',
+        onActivate: onInspectAnchor,
+      })}
 
       <div style={{ marginTop: 5, paddingTop: 5, borderTop: `1px solid ${CYAN}18` }}>
         <span style={{ fontFamily: HUD_FONTS.mono, fontSize: 8.3, letterSpacing: 0.45, color: statusColor, textShadow: `0 0 6px ${statusColor}55` }}>
           {statusText}
         </span>
-        {observed ? (
+        {observed && onRecallWrite ? (
+          <button
+            type="button"
+            aria-label="recall causal path"
+            data-write-observed="true"
+            data-trace-available="true"
+            data-trace-source={traceSource}
+            data-trace-selected={traceSelected ? 'true' : 'false'}
+            title={observed.txHash}
+            onClick={onRecallWrite}
+            disabled={!recallEnabled}
+            style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', alignItems: 'baseline', gap: '2px 8px', width: '100%', margin: '4px 0 0', padding: '3px 0 2px', border: 0, borderTop: `1px solid ${traceSelected ? VIOLET : GOLD}24`, background: traceSelected ? `${VIOLET}12` : 'transparent', fontFamily: HUD_FONTS.mono, fontSize: 8.1, letterSpacing: 0.35, color: traceSelected ? '#C7B9FF' : GOLD, textShadow: `0 0 6px ${traceSelected ? VIOLET : GOLD}55`, whiteSpace: 'nowrap', cursor: recallEnabled ? 'pointer' : 'default', textAlign: 'left', opacity: recallEnabled ? 1 : 0.62 }}
+          >
+            <span>WRITE OBSERVED</span>
+            <span style={{ marginLeft: 'auto', color: '#FFD29A' }}>
+              #{observed.block} · {observed.inputCount}→{observed.outputCount}
+            </span>
+            <span style={{ gridColumn: '1 / -1', color: traceSelected ? VIOLET : CYAN, letterSpacing: 0.8 }}>
+              {!recallEnabled
+                ? '↳ TRACE READY AFTER IDENTITY MAP'
+                : traceSelected
+                  ? traceSource === 'witness'
+                    ? '↳ WITNESS TRACE · RECALL AGAIN'
+                    : '↳ TRACE SELECTED · RECALL AGAIN'
+                  : traceSource === 'witness'
+                    ? '↳ RECALL LINEAGE WITNESS'
+                    : traceSource === 'input'
+                      ? '↳ RECALL CAUSAL PATH'
+                      : '↳ RECALL RETAINED TRACE'}
+            </span>
+          </button>
+        ) : observed ? (
           <div
             data-write-observed="true"
             title={observed.txHash}

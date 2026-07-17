@@ -5,15 +5,17 @@
 // the sprite's core leans toward white-hot vs. its baseline tint). One
 // shader serves both:
 //
-// The soft halo keeps motion readable at galaxy scale; a four-point data
-// lozenge at its centre distinguishes it from stars, cells, and biological
-// ion bubbles. One draw call carries every active transaction packet.
+// The soft halo keeps motion readable at galaxy scale. Live traffic carries a
+// four-point data lozenge; historical recall carries a segmented round phase
+// knot, so remembered information cannot read as a fresh write — or a logo.
+// One draw call carries both glyphs.
 //
 // Per-instance shader attributes:
 //   aColor      — base sprite tint (RGB linear)
 //   aSize       — world-units sphere radius (projected to pixels via depth)
 //   aAlpha      — additive intensity multiplier
 //   aWhiteBias  — [0, 1] core whiteness (0 = halo only, 1 = white core)
+//   aGlyphMode  — 0 = live data lozenge, 1 = consensus-memory phase knot
 //
 // Geometry: positions are stored in the standard `position` attribute.
 // Sprites are procedural screen-aligned glyphs — no texture lookup.
@@ -33,6 +35,7 @@ export interface SpikeSlotWrite {
   /** [0, 1] white-core mixing factor. 0 = colored halo only,
    *  1 = bright white core. */
   whiteBias: number;
+  glyph: 'packet' | 'memory';
 }
 
 /**
@@ -48,6 +51,7 @@ export class SpikePool {
   private readonly sizes: Float32Array;
   private readonly alphas: Float32Array;
   private readonly whiteBias: Float32Array;
+  private readonly glyphModes: Float32Array;
   private writtenCount = 0;
 
   constructor(capacity: number) {
@@ -57,6 +61,7 @@ export class SpikePool {
     this.sizes = new Float32Array(capacity);
     this.alphas = new Float32Array(capacity);
     this.whiteBias = new Float32Array(capacity);
+    this.glyphModes = new Float32Array(capacity);
 
     this.geometry = new THREE.BufferGeometry();
     this.geometry.setAttribute('position', new THREE.BufferAttribute(this.positions, 3));
@@ -64,6 +69,7 @@ export class SpikePool {
     this.geometry.setAttribute('aSize', new THREE.BufferAttribute(this.sizes, 1));
     this.geometry.setAttribute('aAlpha', new THREE.BufferAttribute(this.alphas, 1));
     this.geometry.setAttribute('aWhiteBias', new THREE.BufferAttribute(this.whiteBias, 1));
+    this.geometry.setAttribute('aGlyphMode', new THREE.BufferAttribute(this.glyphModes, 1));
     this.geometry.setDrawRange(0, 0);
     this.geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0, 0), 500);
 
@@ -81,6 +87,7 @@ export class SpikePool {
         attribute float aSize;
         attribute float aAlpha;
         attribute float aWhiteBias;
+        attribute float aGlyphMode;
 
         uniform float uViewportHeight;
         uniform float uPixelRatio;
@@ -88,6 +95,7 @@ export class SpikePool {
         varying vec3  vColor;
         varying float vAlpha;
         varying float vWhiteBias;
+        varying float vGlyphMode;
 
         void main() {
           vec4 mv = modelViewMatrix * vec4(position, 1.0);
@@ -103,6 +111,7 @@ export class SpikePool {
           vColor      = aColor;
           vAlpha      = aAlpha;
           vWhiteBias  = aWhiteBias;
+          vGlyphMode  = aGlyphMode;
         }
       `,
       fragmentShader: /* glsl */ `
@@ -111,6 +120,7 @@ export class SpikePool {
         varying vec3  vColor;
         varying float vAlpha;
         varying float vWhiteBias;
+        varying float vGlyphMode;
 
         void main() {
           if (vAlpha < 0.001) discard;
@@ -118,17 +128,34 @@ export class SpikePool {
           float r = length(uv);
           if (r > 1.0) discard;
 
-          // Silicon packet: a sharp four-point lozenge nested in a restrained
+          // Live packet: a sharp four-point lozenge nested in a restrained
           // circular field. A fine inner contour keeps it legible through bloom.
           float diamondD = abs(uv.x) + abs(uv.y);
-          float core = pow(max(0.0, 1.0 - diamondD), 5.0);
-          float contour = exp(-pow((diamondD - 0.43) / 0.075, 2.0))
+          float packetCore = pow(max(0.0, 1.0 - diamondD), 5.0);
+          float packetContour = exp(-pow((diamondD - 0.43) / 0.075, 2.0))
             * (1.0 - smoothstep(0.62, 0.9, r));
+
+          // Historical recall: a circular phase knot with interrupted rings.
+          // It reads as sampled information/resonance, never as the live
+          // lozenge and never as a second Cell body.
+          float angle = atan(uv.y, uv.x);
+          float phaseCore = pow(max(0.0, 1.0 - r / 0.28), 4.0) * 0.78;
+          float phaseRingA = exp(-pow((r - 0.43) / 0.055, 2.0));
+          float phaseRingB = exp(-pow((r - 0.72) / 0.038, 2.0));
+          float phaseGateA = 0.18 + 0.82
+            * smoothstep(0.18, 0.7, abs(sin(angle * 3.0 + 0.45)));
+          float phaseGateB = 0.2 + 0.8
+            * smoothstep(0.2, 0.74, abs(cos(angle * 4.0 - 0.3)));
+          float phaseContour = (phaseRingA * phaseGateA
+            + phaseRingB * phaseGateB * 0.68) * 1.35;
+
+          float core = mix(packetCore, phaseCore, vGlyphMode);
+          float contour = mix(packetContour, phaseContour, vGlyphMode);
           float halo = pow(max(0.0, 1.0 - r), 2.1) * 0.38;
 
           // Resolve toward the same pale consensus light as A's agreement
           // knots, while preserving the transaction colour around the contour.
-          float whiteAmount = core * vWhiteBias;
+          float whiteAmount = core * mix(vWhiteBias, 0.42, vGlyphMode);
           vec3 baseCol = mix(vColor, vec3(0.86, 0.96, 1.0), whiteAmount);
 
           float intensity = (core + contour * 0.42 + halo) * vAlpha;
@@ -166,6 +193,7 @@ export class SpikePool {
     this.sizes[i]             = slot.size;
     this.alphas[i]            = slot.alpha;
     this.whiteBias[i]         = slot.whiteBias;
+    this.glyphModes[i]        = slot.glyph === 'memory' ? 1 : 0;
     this.writtenCount += 1;
     return true;
   }
@@ -180,6 +208,7 @@ export class SpikePool {
     (this.geometry.getAttribute('aSize') as THREE.BufferAttribute).needsUpdate = true;
     (this.geometry.getAttribute('aAlpha') as THREE.BufferAttribute).needsUpdate = true;
     (this.geometry.getAttribute('aWhiteBias') as THREE.BufferAttribute).needsUpdate = true;
+    (this.geometry.getAttribute('aGlyphMode') as THREE.BufferAttribute).needsUpdate = true;
   }
 
   dispose(): void {

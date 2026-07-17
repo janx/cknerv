@@ -83,6 +83,9 @@ export interface ActiveHop {
   /** Overall brightness multiplier for this hop. Older trail hops
    *  get smaller values so the cascade reads as a fading wake. */
   brightness: number;
+  /** Exponential falloff behind frontT. Recall afterimages lower this so the
+   *  full proven route remains legible; live wavefronts use the tight default. */
+  tailDecay?: number;
   /** Per-transaction packet identity, shared with head glyph and write seal. */
   color: Vec3;
 }
@@ -691,7 +694,7 @@ export default function NeuralFabric({ onReady }: NeuralFabricProps) {
             // Sharper decay = tighter wavefront. 7.5 makes the lit
             // band extend roughly 0.4 of one hop behind the front,
             // which reads as a definite wave rather than a static line.
-            const tail = Math.exp(-distBehind * 7.5);
+            const tail = Math.exp(-distBehind * (hop.tailDecay ?? 7.5));
             // Preserve the packet's warm chroma instead of letting additive
             // energy rail every channel to white. The separate packet-head
             // glyph remains pale-hot and carries the focal brightness.

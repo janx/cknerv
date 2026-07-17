@@ -84,6 +84,20 @@ describe('CellDetailPanel', () => {
     expect(getByTestId('portrait').getAttribute('data-focus')).toBe('asset');
   });
 
+  it('maps memory facets back onto the matching A layers', () => {
+    vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener: () => {}, removeEventListener: () => {} }));
+    const { getByTestId, getByRole } = render(
+      <CellDetailPanel cell={base} onClose={() => {}} />,
+    );
+
+    fireEvent.click(getByRole('button', { name: 'inspect content' }));
+    expect(getByTestId('portrait').getAttribute('data-focus')).toBe('data');
+    fireEvent.click(getByRole('button', { name: 'inspect anchor' }));
+    expect(getByTestId('portrait').getAttribute('data-focus')).toBe('born');
+    fireEvent.click(getByRole('button', { name: 'inspect address' }));
+    expect(getByTestId('portrait').getAttribute('data-focus')).toBe('state');
+  });
+
   it('shows SPENT for a consumed cell without biological death language', () => {
     const dead = { ...base, death_at_ms: 5000 };
     const { container } = render(<CellDetailPanel cell={dead} onClose={() => {}} />);
@@ -110,6 +124,64 @@ describe('CellDetailPanel', () => {
     expect(t).toContain('WRITE OBSERVED');
     expect(t).toContain(`#${base.birth_block} · 2→1`);
     expect(container.querySelector('[data-write-observed="true"]')).not.toBeNull();
+  });
+
+  it('requests a display-only causal recall and marks the selected trace', () => {
+    vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener: () => {}, removeEventListener: () => {} }));
+    const onTraceWrite = vi.fn();
+    const origin: CellLink = {
+      seq: 18,
+      tx_hash: base.out_point.tx_hash,
+      block: base.birth_block,
+      from_ids: [1, 2],
+      to_ids: [base.id],
+      parents: [],
+      tag: base.tag,
+      at_ms: 12_000,
+    };
+    const { container, getByRole } = render(
+      <CellDetailPanel
+        cell={base}
+        recentLinks={[origin]}
+        tracedWriteSeq={origin.seq}
+        traceSource="input"
+        onTraceWrite={onTraceWrite}
+        onClose={() => {}}
+      />,
+    );
+
+    fireEvent.click(getByRole('button', { name: 'recall causal path' }));
+    expect(onTraceWrite).toHaveBeenCalledWith(origin.seq);
+    expect(container.textContent).toContain('TRACE SELECTED · RECALL AGAIN');
+    const trace = container.querySelector('[data-trace-selected="true"]');
+    expect(trace).not.toBeNull();
+    expect(trace?.getAttribute('data-trace-source')).toBe('input');
+  });
+
+  it('labels surviving parent evidence as a lineage witness, not an input', () => {
+    vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener: () => {}, removeEventListener: () => {} }));
+    const origin: CellLink = {
+      seq: 19,
+      tx_hash: base.out_point.tx_hash,
+      block: base.birth_block,
+      from_ids: [1],
+      to_ids: [base.id],
+      parents: ['0xparent'],
+      tag: base.tag,
+      at_ms: 12_000,
+    };
+    const { container } = render(
+      <CellDetailPanel
+        cell={base}
+        recentLinks={[origin]}
+        traceSource="witness"
+        onTraceWrite={() => {}}
+        onClose={() => {}}
+      />,
+    );
+
+    expect(container.textContent).toContain('RECALL LINEAGE WITNESS');
+    expect(container.querySelector('[data-trace-source="witness"]')).not.toBeNull();
   });
 
   it('tolerates missing lock/asset with an em dash', () => {

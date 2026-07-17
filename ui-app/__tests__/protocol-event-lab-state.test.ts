@@ -3,7 +3,10 @@ import type { Cell, CellGalaxySnapshot } from '@cknerv/types';
 import { fromCellsSnapshot } from '@cknerv/cache';
 import {
   advanceProtocolEventLab,
+  PROTOCOL_EVENT_MEMORY_TRACE_AT_S,
   PROTOCOL_EVENT_STAGE_TIME_S,
+  protocolEventMemoryTraceRequest,
+  protocolEventMemoryTraceTemplates,
   protocolEventLabSnapshot,
   protocolEventReviewNonce,
   protocolEventReviewTarget,
@@ -93,5 +96,50 @@ describe('protocol event lab state', () => {
     expect(protocolEventReviewNonce(1)).toBe(protocolEventReviewNonce(0));
     expect(protocolEventReviewNonce(2) - protocolEventReviewNonce(1)).toBe(8_000);
     expect(protocolEventReviewNonce(12)).toBe(protocolEventReviewNonce(12));
+  });
+
+  it('arms one stable production memory replay only after the write settles', () => {
+    const field = protocolEventLabSnapshot(snapshot([
+      cell(1), cell(2), cell(3), cell(4), cell(5),
+    ]));
+    const cache = fromCellsSnapshot(1, { ...field, recent_links: [] });
+    const advanced = advanceProtocolEventLab(cache, 10_000, field.recent_links);
+
+    expect(protocolEventMemoryTraceRequest(
+      true,
+      PROTOCOL_EVENT_MEMORY_TRACE_AT_S - 0.01,
+      2,
+      advanced.recentLinks,
+    )).toBeNull();
+    expect(protocolEventMemoryTraceRequest(
+      false,
+      PROTOCOL_EVENT_MEMORY_TRACE_AT_S,
+      2,
+      advanced.recentLinks,
+    )).toBeNull();
+    expect(protocolEventMemoryTraceRequest(
+      true,
+      PROTOCOL_EVENT_MEMORY_TRACE_AT_S,
+      2,
+      advanced.recentLinks,
+    )).toEqual({
+      linkSeq: advanced.recentLinks.at(-1)?.seq,
+      nonce: 2,
+    });
+  });
+
+  it('keeps the lab recall on one real, graph-routable observed template', () => {
+    const field = protocolEventLabSnapshot(snapshot([
+      cell(1), cell(2), cell(3), cell(4), cell(5),
+    ]));
+    const cache = fromCellsSnapshot(1, { ...field, recent_links: [] });
+    const templates = protocolEventMemoryTraceTemplates(
+      cache,
+      field.recent_links ?? [],
+    );
+
+    expect(templates).toHaveLength(1);
+    expect(templates[0]).toBe(field.recent_links?.[0]);
+    expect(templates[0].tx_hash).toBe(`0x${'ab'.repeat(32)}`);
   });
 });

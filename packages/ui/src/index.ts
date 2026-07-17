@@ -140,4 +140,14 @@ export type {
   DendriticBurstProps,
 } from './nerve/DendriticBurst';
 export { planPulses, type Pulse, type PulsePlanningOptions } from './nerve/pulseRunner';
+export {
+  planConsensusMemoryTrace,
+  canRecallConsensusMemory,
+  deriveConsensusMemoryTraceEndpoints,
+  CONSENSUS_PULSE_POLICY,
+  type ConsensusMemoryTracePlan,
+  type ConsensusMemoryTraceRequest,
+  type ConsensusMemoryTraceSource,
+  type ConsensusPulseMode,
+} from './nerve/consensusMemoryTrace';
 export * from './nerve/pulseStats';
