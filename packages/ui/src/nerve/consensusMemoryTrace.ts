@@ -6,7 +6,10 @@ import { consensusMemoryTraceColor } from '../derives/consensusFlow.derive';
 import type { Pulse } from './pulseRunner';
 
 export const MAX_MEMORY_TRACE_PULSES = 8;
-export const MEMORY_TRACE_START_STAGGER_MS = 180;
+/** Distinct real sources resolve into the shared record one phase apart. */
+export const MEMORY_TRACE_START_STAGGER_MS = 220;
+/** Bound how long a short route may wait for the slowest converging route. */
+export const MEMORY_TRACE_ALIGNMENT_CAP_MS = 720;
 /** Deliberate recall cadence: slower than live traffic so history is legible. */
 export const MEMORY_TRACE_HOP_MS_MIN = 220;
 export const MEMORY_TRACE_HOP_MS_SPAN = 90;
@@ -16,7 +19,9 @@ export const MEMORY_TRACE_FADE_MS = 1_600;
 export const MEMORY_TRACE_FOCUS_FADE_IN_MS = 160;
 export const MEMORY_TRACE_FOCUS_FADE_OUT_MS = 720;
 export const MEMORY_TRACE_PASSIVE_OPACITY_FLOOR = 0.26;
-const MAX_MEMORY_TRACE_FOCUS_ENDPOINTS = 2;
+export const MEMORY_TRACE_SOURCE_REVEAL_LEAD_MS = 120;
+export const MEMORY_TRACE_SOURCE_REVEAL_MS = 180;
+const MAX_MEMORY_TRACE_FOCUS_ENDPOINTS = 3;
 
 export interface ConsensusMemoryTraceRequest {
   linkSeq: number;
@@ -62,10 +67,17 @@ export interface ConsensusMemoryTracePlan {
   witnessIds: number[];
 }
 
+export interface ConsensusMemoryTraceFocusSource {
+  id: number;
+  startsAtSec: number;
+  arrivesAtSec: number;
+}
+
 export interface ConsensusMemoryTraceFocus {
   key: string;
   sourceKind: Exclude<ConsensusMemoryTraceSource, 'none'>;
-  sourceIds: number[];
+  sources: ConsensusMemoryTraceFocusSource[];
+  routedSourceCount: number;
   targetIds: number[];
   startedAtSec: number;
   endsAtSec: number;
@@ -87,7 +99,26 @@ export function deriveConsensusMemoryTraceFocus(
   key: string,
 ): ConsensusMemoryTraceFocus | null {
   if (plan.sourceKind === 'none' || plan.pulses.length === 0) return null;
-  const sourceIds = [...new Set(plan.pulses.map((pulse) => pulse.path[0]))]
+  const sourceById = new Map<number, ConsensusMemoryTraceFocusSource>();
+  for (const pulse of plan.pulses) {
+    const id = pulse.path[0];
+    const startsAtSec = startedAtSec + pulse.startDelayMs / 1000;
+    const arrivesAtSec = startsAtSec
+      + (pulse.path.length - 1) * pulse.hopMs / 1000;
+    const existing = sourceById.get(id);
+    if (!existing) {
+      sourceById.set(id, { id, startsAtSec, arrivesAtSec });
+      continue;
+    }
+    existing.startsAtSec = Math.min(existing.startsAtSec, startsAtSec);
+    existing.arrivesAtSec = Math.min(existing.arrivesAtSec, arrivesAtSec);
+  }
+  const sources = [...sourceById.values()]
+    .sort((a, b) => (
+      a.startsAtSec - b.startsAtSec
+      || a.arrivesAtSec - b.arrivesAtSec
+      || a.id - b.id
+    ))
     .slice(0, MAX_MEMORY_TRACE_FOCUS_ENDPOINTS);
   const targetIds = [...new Set(plan.pulses.map(
     (pulse) => pulse.path[pulse.path.length - 1],
@@ -101,7 +132,8 @@ export function deriveConsensusMemoryTraceFocus(
   return {
     key,
     sourceKind: plan.sourceKind,
-    sourceIds,
+    sources,
+    routedSourceCount: sourceById.size,
     targetIds,
     startedAtSec,
     endsAtSec: startedAtSec + lifetimeMs / 1000,
@@ -120,6 +152,19 @@ export function consensusMemoryTraceFocusStrength(
   const fadeIn = smoothUnit(ageMs / MEMORY_TRACE_FOCUS_FADE_IN_MS);
   const fadeOut = smoothUnit(remainingMs / MEMORY_TRACE_FOCUS_FADE_OUT_MS);
   return fadeIn * fadeOut;
+}
+
+/** Reveal each real source shortly before its own phased route departs. */
+export function consensusMemoryTraceSourceStrength(
+  source: ConsensusMemoryTraceFocusSource,
+  nowSec: number,
+): number {
+  if (!Number.isFinite(nowSec)) return 0;
+  const revealAgeMs = (nowSec - source.startsAtSec) * 1000
+    + MEMORY_TRACE_SOURCE_REVEAL_LEAD_MS;
+  if (revealAgeMs <= 1e-6) return 0;
+  if (revealAgeMs >= MEMORY_TRACE_SOURCE_REVEAL_MS) return 1;
+  return smoothUnit(revealAgeMs / MEMORY_TRACE_SOURCE_REVEAL_MS);
 }
 
 /** Global passive-line opacity; active live and recalled paths stay untouched. */
@@ -204,12 +249,10 @@ function memoryTraceTiming(
   link: CellLink,
   sourceId: number,
   targetId: number,
-): { startDelayMs: number; hopMs: number } {
+): { hopMs: number } {
   const seed = fnv1a(`memory:${link.tx_hash}\x00${sourceId}\x00${targetId}`);
-  const stagger = (seed & 0xffff) / 0x10000;
   const speed = ((seed >>> 16) & 0xffff) / 0x10000;
   return {
-    startDelayMs: stagger * MEMORY_TRACE_START_STAGGER_MS,
     hopMs: MEMORY_TRACE_HOP_MS_MIN + speed * MEMORY_TRACE_HOP_MS_SPAN,
   };
 }
@@ -236,25 +279,62 @@ export function planConsensusMemoryTrace(
     Math.floor(options.maxPulses ?? MAX_MEMORY_TRACE_PULSES),
   );
   const color = consensusMemoryTraceColor(link.tx_hash);
-  const pulses: Pulse[] = [];
+  const candidates: Array<{
+    path: number[];
+    sourceId: number;
+    hopMs: number;
+    travelMs: number;
+  }> = [];
 
-  outer: for (const sourceId of endpoints.sourceIds) {
-    if (!graph.adjacency.has(sourceId)) continue;
-    for (const targetId of endpoints.retainedOutputIds) {
-      if (pulses.length >= maxPulses) break outer;
+  // Target-major iteration spends the visual budget on source diversity: one
+  // shared record receives every available witness before a second output is
+  // considered. This reads as convergence instead of one source fan-out.
+  outer: for (const targetId of endpoints.retainedOutputIds) {
+    for (const sourceId of endpoints.sourceIds) {
+      if (candidates.length >= maxPulses) break outer;
+      if (!graph.adjacency.has(sourceId)) continue;
       if (sourceId === targetId || !graph.adjacency.has(targetId)) continue;
       const path = shortestPath(graph, sourceId, targetId, maxHops);
       if (!path || path.length < 2) continue;
-      const timing = memoryTraceTiming(link, sourceId, targetId);
-      pulses.push({
-        path,
-        bornAtMs: link.at_ms,
-        color,
-        startDelayMs: timing.startDelayMs,
-        hopMs: timing.hopMs,
+      const { hopMs } = memoryTraceTiming(link, sourceId, targetId);
+      candidates.push({
+        path, sourceId, hopMs, travelMs: (path.length - 1) * hopMs,
       });
     }
   }
+
+  const sourceFirstSeen = new Map<number, number>();
+  const sourceLongestTravel = new Map<number, number>();
+  candidates.forEach((candidate, index) => {
+    if (!sourceFirstSeen.has(candidate.sourceId)) {
+      sourceFirstSeen.set(candidate.sourceId, index);
+    }
+    sourceLongestTravel.set(candidate.sourceId, Math.max(
+      sourceLongestTravel.get(candidate.sourceId) ?? 0,
+      candidate.travelMs,
+    ));
+  });
+  const routedSources = [...sourceFirstSeen.keys()].sort((a, b) => (
+    (sourceLongestTravel.get(b) ?? 0) - (sourceLongestTravel.get(a) ?? 0)
+    || (sourceFirstSeen.get(a) ?? 0) - (sourceFirstSeen.get(b) ?? 0)
+  ));
+  const sourcePhase = new Map(routedSources.map((id, index) => [id, index]));
+  const longestTravelMs = candidates.reduce(
+    (longest, candidate) => Math.max(longest, candidate.travelMs),
+    0,
+  );
+  const pulses: Pulse[] = candidates.map((candidate) => ({
+    path: candidate.path,
+    bornAtMs: link.at_ms,
+    color,
+    // Short routes wait for the slowest one (within a hard bound), then each
+    // distinct real source resolves one phase later than the previous source.
+    startDelayMs: Math.min(
+      MEMORY_TRACE_ALIGNMENT_CAP_MS,
+      Math.max(0, longestTravelMs - candidate.travelMs),
+    ) + (sourcePhase.get(candidate.sourceId) ?? 0) * MEMORY_TRACE_START_STAGGER_MS,
+    hopMs: candidate.hopMs,
+  }));
 
   return { pulses, ...endpoints };
 }

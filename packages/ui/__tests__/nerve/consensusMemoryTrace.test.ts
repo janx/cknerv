@@ -4,17 +4,22 @@ import type { NeighborGraph } from '../../src/geometry/neighborGraph';
 import {
   CONSENSUS_PULSE_POLICY,
   MAX_MEMORY_TRACE_PULSES,
+  MEMORY_TRACE_ALIGNMENT_CAP_MS,
   MEMORY_TRACE_FADE_MS,
   MEMORY_TRACE_FOCUS_FADE_IN_MS,
   MEMORY_TRACE_FOCUS_FADE_OUT_MS,
   MEMORY_TRACE_HOP_MS_MIN,
   MEMORY_TRACE_HOP_MS_SPAN,
   MEMORY_TRACE_PASSIVE_OPACITY_FLOOR,
+  MEMORY_TRACE_SOURCE_REVEAL_LEAD_MS,
+  MEMORY_TRACE_SOURCE_REVEAL_MS,
+  MEMORY_TRACE_START_STAGGER_MS,
   MEMORY_TRACE_SETTLE_MS,
   canRecallConsensusMemory,
   consensusMemoryPassiveOpacity,
   consensusMemoryTraceFocusStrength,
   consensusMemoryTraceResonance,
+  consensusMemoryTraceSourceStrength,
   deriveConsensusMemoryTraceFocus,
   deriveConsensusMemoryTraceEndpoints,
   planConsensusMemoryTrace,
@@ -100,6 +105,14 @@ describe('planConsensusMemoryTrace', () => {
       && pulse.hopMs >= MEMORY_TRACE_HOP_MS_MIN
       && pulse.hopMs <= MEMORY_TRACE_HOP_MS_MIN + MEMORY_TRACE_HOP_MS_SPAN
     ))).toBe(true);
+    const arrivals = plan.pulses.map((pulse) => (
+      pulse.startDelayMs + (pulse.path.length - 1) * pulse.hopMs
+    )).sort((a, b) => a - b);
+    expect(arrivals[1] - arrivals[0]).toBeCloseTo(MEMORY_TRACE_START_STAGGER_MS);
+    expect(plan.pulses.every((pulse) => (
+      pulse.startDelayMs
+        <= MEMORY_TRACE_ALIGNMENT_CAP_MS + MEMORY_TRACE_START_STAGGER_MS
+    ))).toBe(true);
   });
 
   it('uses a surviving parent sibling as an explicitly labeled lineage witness', () => {
@@ -173,7 +186,9 @@ describe('planConsensusMemoryTrace', () => {
 
     expect(focus).not.toBeNull();
     expect(focus?.sourceKind).toBe('input');
-    expect(focus?.sourceIds).toEqual([1, 2]);
+    expect(new Set(focus?.sources.map((source) => source.id))).toEqual(new Set([1, 2]));
+    expect(focus!.sources[0].startsAtSec).toBeLessThan(focus!.sources[1].startsAtSec);
+    expect(focus?.routedSourceCount).toBe(2);
     expect(focus?.targetIds).toEqual([5]);
     expect(focus?.startedAtSec).toBe(startedAtSec);
 
@@ -195,6 +210,17 @@ describe('planConsensusMemoryTrace', () => {
       focus!.endsAtSec - MEMORY_TRACE_FOCUS_FADE_OUT_MS / 2000,
     )).toBeCloseTo(0.5);
     expect(consensusMemoryTraceFocusStrength(focus, focus!.endsAtSec)).toBe(0);
+
+    const firstSource = focus!.sources[0];
+    expect(consensusMemoryTraceSourceStrength(
+      firstSource,
+      firstSource.startsAtSec - MEMORY_TRACE_SOURCE_REVEAL_LEAD_MS / 1000,
+    )).toBe(0);
+    expect(consensusMemoryTraceSourceStrength(
+      firstSource,
+      firstSource.startsAtSec
+        + (MEMORY_TRACE_SOURCE_REVEAL_MS - MEMORY_TRACE_SOURCE_REVEAL_LEAD_MS) / 1000,
+    )).toBe(1);
   });
 
   it('does not focus an unroutable memory or over-dim passive structure', () => {

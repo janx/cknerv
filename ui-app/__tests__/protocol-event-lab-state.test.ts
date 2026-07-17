@@ -4,10 +4,12 @@ import { fromCellsSnapshot } from '@cknerv/cache';
 import {
   advanceProtocolEventLab,
   PROTOCOL_EVENT_MEMORY_TRACE_AT_S,
+  PROTOCOL_EVENT_MEMORY_TRACE_PULSES,
   PROTOCOL_EVENT_STAGE_TIME_S,
   protocolEventMemoryTraceRequest,
   protocolEventMemoryTraceTemplates,
   protocolEventLabSnapshot,
+  protocolEventMemoryTraceFrame,
   protocolEventReviewNonce,
   protocolEventReviewTarget,
   protocolEventStage,
@@ -141,5 +143,57 @@ describe('protocol event lab state', () => {
     expect(templates).toHaveLength(1);
     expect(templates[0]).toBe(field.recent_links?.[0]);
     expect(templates[0].tx_hash).toBe(`0x${'ab'.repeat(32)}`);
+  });
+
+  it('prefers a real multi-witness record for deterministic visual review', () => {
+    const cells = [cell(2), cell(3), cell(4), cell(5)];
+    const cache = fromCellsSnapshot(1, { cells, last_pulse_at_ms: 0 });
+    const single = {
+      tx_hash: `0x${'aa'.repeat(32)}`,
+      block: 10,
+      from_ids: [99],
+      to_ids: [5],
+      parents: [cellTxHash(2)],
+      tag: null,
+      at_ms: 100,
+    };
+    const multiple = {
+      tx_hash: `0x${'bb'.repeat(32)}`,
+      block: 11,
+      from_ids: [98],
+      to_ids: [4],
+      parents: [cellTxHash(2), cellTxHash(3)],
+      tag: null,
+      at_ms: 110,
+    };
+
+    const templates = protocolEventMemoryTraceTemplates(cache, [multiple, single]);
+
+    expect(templates).toEqual([multiple]);
+  });
+
+  it('frames the exact routed witnesses and shared record without invented points', () => {
+    const record = {
+      tx_hash: `0x${'cc'.repeat(32)}`,
+      block: 12,
+      from_ids: [97],
+      to_ids: [4],
+      parents: [cellTxHash(2), cellTxHash(3)],
+      tag: null,
+      at_ms: 120,
+    };
+    const cache = fromCellsSnapshot(1, {
+      cells: [cell(2), cell(3), cell(4)],
+      last_pulse_at_ms: 0,
+      recent_links: [record],
+    });
+
+    const frame = protocolEventMemoryTraceFrame(cache);
+
+    expect(PROTOCOL_EVENT_MEMORY_TRACE_PULSES).toBe(2);
+    expect(frame?.sourceIds).toEqual([2, 3]);
+    expect(frame?.targetIds).toEqual([4]);
+    expect(frame?.center).toEqual([3, 0, -3]);
+    expect(frame?.radius).toBeCloseTo(Math.SQRT2 * 1.12);
   });
 });

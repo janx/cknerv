@@ -34,9 +34,11 @@ import {
 } from './protocol-event-review-camera';
 import {
   advanceProtocolEventLab,
+  PROTOCOL_EVENT_MEMORY_TRACE_PULSES,
   PROTOCOL_EVENT_REVIEW_PERIOD_S,
   PROTOCOL_EVENT_STAGE_TIME_S,
   protocolEventLabSnapshot,
+  protocolEventMemoryTraceFrame,
   protocolEventMemoryTraceRequest,
   protocolEventMemoryTraceTemplates,
   protocolEventReviewNonce,
@@ -171,11 +173,13 @@ function ProtocolReviewCamera({
   mode,
   localWorld,
   focusWorld,
+  focusRadius,
 }: {
   clock: MutableSimClock;
   mode: ReviewClockMode;
   localWorld: ProtocolReviewVec3 | null;
   focusWorld: ProtocolReviewVec3 | null;
+  focusRadius: number;
 }) {
   const camera = useThree((state) => state.camera);
   const target = useMemo(() => new THREE.Vector3(), []);
@@ -184,7 +188,12 @@ function ProtocolReviewCamera({
   // Once paused, OrbitControls owns the camera so reviewers can inspect it.
   useFrame(() => {
     if (mode === 'paused') return;
-    const pose = protocolEventReviewCameraPose(clock.elapsedSec, localWorld, focusWorld);
+    const pose = protocolEventReviewCameraPose(
+      clock.elapsedSec,
+      localWorld,
+      focusWorld,
+      focusRadius,
+    );
     camera.position.fromArray(pose.position);
     target.fromArray(pose.target);
     camera.up.set(0, 1, 0);
@@ -513,13 +522,28 @@ export default function ProtocolEventLab({ snapshot }: { snapshot: CellGalaxySna
         ]
       : null
   ), [focusCell]);
+  const memoryTraceFrame = useMemo(
+    () => memoryTraceReview ? protocolEventMemoryTraceFrame(cache) : null,
+    [memoryTraceReview, cache.cells, cache.recentLinks],
+  );
+  const cameraFocusWorld = useMemo<ProtocolReviewVec3 | null>(() => (
+    memoryTraceFrame
+      ? [
+          memoryTraceFrame.center[0],
+          memoryTraceFrame.center[1] + CELLS_Y,
+          memoryTraceFrame.center[2],
+        ]
+      : focusWorld
+  ), [memoryTraceFrame, focusWorld]);
+  const cameraFocusRadius = memoryTraceFrame?.radius ?? 0;
 
   const stage = protocolEventStage(elapsedS);
   const stageMeta = STAGE_META[stage];
   const reviewCameraPose = protocolEventReviewCameraPose(
     elapsedS,
     localWorld,
-    focusWorld,
+    cameraFocusWorld,
+    cameraFocusRadius,
   );
   const carrier = consensusBlockColor(cache.lastPulseAtMs);
   const carrierCss = colorCss(carrier);
@@ -756,7 +780,8 @@ export default function ProtocolEventLab({ snapshot }: { snapshot: CellGalaxySna
               clock={reviewClock}
               mode={clockMode}
               localWorld={localWorld}
-              focusWorld={focusWorld}
+              focusWorld={cameraFocusWorld}
+              focusRadius={cameraFocusRadius}
             />
             <ProtocolReviewClock
               clock={reviewClock}
@@ -807,6 +832,9 @@ export default function ProtocolEventLab({ snapshot }: { snapshot: CellGalaxySna
                       maxSourcesPerParent: 2,
                     }}
                     traceRequest={memoryTraceRequest}
+                    traceMaxPulses={memoryTraceReview
+                      ? PROTOCOL_EVENT_MEMORY_TRACE_PULSES
+                      : undefined}
                   />
                   <ConsensusWriteSeal arrivalRef={burstArrivalRef} />
                 </>
