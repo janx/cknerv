@@ -148,6 +148,21 @@ export function consensusPacketColor(
 }
 
 /**
+ * Cool historical-recall identity. A memory trace must remain visibly
+ * distinct from the warm lane reserved for newly observed block/tx traffic.
+ */
+export function consensusMemoryTraceColor(txHash: string): ConsensusFlowColor {
+  const seed = fnv1a(`memory:${txHash}`);
+  const spectral = byteUnit(seed, 8);
+  const memory = mixColor(
+    CONSENSUS_BRAID_PALETTE.violet,
+    CONSENSUS_BRAID_PALETTE.cyan,
+    0.14 + spectral * 0.14,
+  );
+  return mixColor(memory, CONSENSUS_BRAID_PALETTE.pale, 0.06);
+}
+
+/**
  * Stable carrier identity for one observed block pulse. The block stays in the
  * warm information lane and lifts slightly toward pale while crossing the
  * dimmer P2P and galaxy layers. Transactions retain subtler identities after

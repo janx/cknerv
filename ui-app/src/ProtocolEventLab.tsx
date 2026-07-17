@@ -37,6 +37,8 @@ import {
   PROTOCOL_EVENT_REVIEW_PERIOD_S,
   PROTOCOL_EVENT_STAGE_TIME_S,
   protocolEventLabSnapshot,
+  protocolEventMemoryTraceRequest,
+  protocolEventMemoryTraceTemplates,
   protocolEventReviewNonce,
   protocolEventReviewTarget,
   protocolEventStage,
@@ -325,6 +327,10 @@ export default function ProtocolEventLab({ snapshot }: { snapshot: CellGalaxySna
     () => hasQuerySwitch(window.location.search, 'adaptive-quality'),
     [],
   );
+  const memoryTraceReview = useMemo(
+    () => hasQuerySwitch(window.location.search, 'memory-trace'),
+    [],
+  );
   const { effective: effectiveQuality } = useQualityRuntime();
   const qualityCascade = QUALITY_PRESETS[adaptiveQuality ? effectiveQuality : 'high'];
   const canvasDpr = resolveCanvasDpr(window.devicePixelRatio, qualityCascade.maxDpr);
@@ -344,6 +350,12 @@ export default function ProtocolEventLab({ snapshot }: { snapshot: CellGalaxySna
     ...fieldSnapshot,
     recent_links: [],
   }), [fieldSnapshot]);
+  const playbackTemplates = useMemo(
+    () => memoryTraceReview
+      ? protocolEventMemoryTraceTemplates(baseCache, observedTemplates)
+      : observedTemplates,
+    [memoryTraceReview, baseCache, observedTemplates],
+  );
   // Historical links are a real template library, not boot-time animation.
   // Each deterministic review cycle injects exactly one of them below.
   const [cache, setCache] = useState(baseCache);
@@ -398,10 +410,10 @@ export default function ProtocolEventLab({ snapshot }: { snapshot: CellGalaxySna
     setCache(advanceProtocolEventLab(
       baseCache,
       protocolEventReviewNonce(serial),
-      observedTemplates,
+      playbackTemplates,
     ));
     setClockMode('priming');
-  }, [baseCache, observedTemplates, serial]);
+  }, [baseCache, playbackTemplates, serial]);
 
   const handlePrimed = useCallback(() => {
     setClockMode(modeAfterPrime.current);
@@ -511,6 +523,15 @@ export default function ProtocolEventLab({ snapshot }: { snapshot: CellGalaxySna
   );
   const carrier = consensusBlockColor(cache.lastPulseAtMs);
   const carrierCss = colorCss(carrier);
+  const memoryTraceRequest = useMemo(
+    () => protocolEventMemoryTraceRequest(
+      memoryTraceReview,
+      elapsedS,
+      serial,
+      cache.recentLinks,
+    ),
+    [memoryTraceReview, elapsedS, serial, cache.recentLinks],
+  );
   const reviewTransitioning = clockMode === 'arming'
     || clockMode === 'priming'
     || clockMode === 'seeking'
@@ -534,6 +555,11 @@ export default function ProtocolEventLab({ snapshot }: { snapshot: CellGalaxySna
       data-review-mode={clockMode}
       data-review-focus={focusCell ? String(focusCell.id) : 'field'}
       data-review-writes={writtenCellIds.join(',')}
+      data-review-memory-trace={memoryTraceRequest
+        ? 'active'
+        : memoryTraceReview
+          ? 'armed'
+          : 'off'}
       style={{
         position: 'fixed',
         inset: 0,
@@ -584,6 +610,7 @@ export default function ProtocolEventLab({ snapshot }: { snapshot: CellGalaxySna
         </div>
         <div style={{ marginTop: 4, color: '#536277', fontSize: 8, letterSpacing: '0.09em' }}>
           REAL CELLS · OBSERVED LINKS · FIXED-STEP {clockMode.toUpperCase()}
+          {memoryTraceReview ? ' · MEMORY RECALL' : ''}
         </div>
       </header>
 
@@ -774,7 +801,12 @@ export default function ProtocolEventLab({ snapshot }: { snapshot: CellGalaxySna
                     flashDirtyRef={flashDirtyRef}
                     burstArrivalRef={burstArrivalRef}
                     topology={{ neighborK: 3, maxEdgeLength: 28, maxHops: 24 }}
-                    pulses={{ maxActivePulses: 36, maxPulsesPerLink: 3, maxSourcesPerParent: 2 }}
+                    pulses={{
+                      maxActivePulses: 36,
+                      maxPulsesPerLink: memoryTraceReview ? 1 : 3,
+                      maxSourcesPerParent: 2,
+                    }}
+                    traceRequest={memoryTraceRequest}
                   />
                   <ConsensusWriteSeal arrivalRef={burstArrivalRef} />
                 </>

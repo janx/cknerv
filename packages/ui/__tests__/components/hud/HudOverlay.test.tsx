@@ -1,4 +1,4 @@
-import { cleanup, render } from '@testing-library/react';
+import { cleanup, fireEvent, render } from '@testing-library/react';
 import { afterEach, describe, it, expect, vi } from 'vitest';
 import type { ChainEntry, Peer, ChainNode, Cell, CellLink } from '@cknerv/types';
 
@@ -13,7 +13,7 @@ vi.mock('../../../src/components/hud/CellNucleusPortrait', () => ({
 import HudOverlay from '../../../src/components/hud/HudOverlay';
 import type { CellsStats } from '../../../src/derives/cellsStats.derive';
 
-afterEach(cleanup);
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 const chain: ChainEntry = {
   tip: 16204887, recent_blocks: [], recent_tx_hashes: [], total_blocks: 4217, total_txs: 9338,
@@ -57,6 +57,7 @@ describe('HudOverlay', () => {
   });
 
   it('threads retained Cell origin evidence into the detail memory plate', () => {
+    vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener: () => {}, removeEventListener: () => {} }));
     const mockCell: Cell = {
       id: 7, born_at_ms: 1, death_at_ms: null, birth_block: 16204800, tag: 'wallet',
       pos_seed: [0, 0, 0], out_point: { tx_hash: `0x${'ab'.repeat(32)}`, index: 0 },
@@ -66,13 +67,18 @@ describe('HudOverlay', () => {
       seq: 3, tx_hash: mockCell.out_point.tx_hash, block: mockCell.birth_block,
       from_ids: [1], to_ids: [mockCell.id], parents: [], tag: null, at_ms: 10,
     };
-    const { container } = render(
+    const onTraceCellWrite = vi.fn();
+    const { container, getByRole } = render(
       <HudOverlay
         chain={chain} peers={peers} localNode={localNode} cellsStats={cellsStats}
         selectedCell={mockCell} recentCellLinks={[origin]}
+        cellTraceSource="input"
+        onTraceCellWrite={onTraceCellWrite}
       />,
     );
     expect(container.textContent).toContain('WRITE OBSERVED');
+    fireEvent.click(getByRole('button', { name: 'recall causal path' }));
+    expect(onTraceCellWrite).toHaveBeenCalledWith(origin.seq);
   });
 
   it('does not raise CAUTION when blocks merely run slower than the 8s target', () => {

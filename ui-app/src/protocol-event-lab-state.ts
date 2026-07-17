@@ -1,10 +1,17 @@
-import type { CellGalaxySnapshot, CellLinkRecord } from '@cknerv/types';
+import type { CellGalaxySnapshot, CellLink, CellLinkRecord } from '@cknerv/types';
 import type { CellGalaxyCache } from '@cknerv/cache';
-import { buildNeighborGraph, planPulses } from '@cknerv/ui';
+import {
+  buildNeighborGraph,
+  planPulses,
+  planConsensusMemoryTrace,
+  type ConsensusMemoryTraceRequest,
+} from '@cknerv/ui';
 
 export type ProtocolEventStage = 'network' | 'carrier' | 'commit' | 'settled';
 
 export const PROTOCOL_EVENT_REVIEW_PERIOD_S = 8;
+/** Recall begins only after the observed write has settled into memory. */
+export const PROTOCOL_EVENT_MEMORY_TRACE_AT_S = 5.72;
 
 /** Stable inspection points inside each semantic window. */
 export const PROTOCOL_EVENT_STAGE_TIME_S: Record<ProtocolEventStage, number> = {
@@ -22,6 +29,52 @@ export function protocolEventReviewNonce(serial: number): number {
   const index = Math.max(0, Math.trunc(serial) - 1);
   return PROTOCOL_EVENT_REVIEW_EPOCH_MS
     + index * PROTOCOL_EVENT_REVIEW_PERIOD_S * 1000;
+}
+
+/** Stable request used by the review lab; renderer and evidence stay production. */
+export function protocolEventMemoryTraceRequest(
+  enabled: boolean,
+  elapsedS: number,
+  serial: number,
+  links: readonly CellLink[],
+): ConsensusMemoryTraceRequest | null {
+  const link = links.at(-1);
+  if (!enabled || elapsedS < PROTOCOL_EVENT_MEMORY_TRACE_AT_S || !link) {
+    return null;
+  }
+  return {
+    linkSeq: link.seq,
+    nonce: Math.max(1, Math.trunc(serial)),
+  };
+}
+
+/** Pick a real observed link whose witness-to-output route reads at a glance. */
+export function protocolEventMemoryTraceTemplates(
+  cache: CellGalaxyCache,
+  templates: readonly CellLinkRecord[],
+): CellLinkRecord[] {
+  const graph = buildNeighborGraph(cache.cells, { k: 3, maxEdgeLength: 28 });
+  let best: CellLinkRecord | null = null;
+  let bestHops = Number.POSITIVE_INFINITY;
+
+  templates.forEach((template, index) => {
+    const plan = planConsensusMemoryTrace(
+      { ...template, seq: index + 1 },
+      cache.cells,
+      graph,
+      { maxHops: 24, maxPulses: 3, maxWitnessesPerParent: 2 },
+    );
+    if (plan.pulses.length === 0) return;
+    // The review renderer limits the event to its first pulse so the camera,
+    // write seal, and recalled route all describe the same output Cell.
+    const hops = plan.pulses[0].path.length - 1;
+    if (hops <= bestHops) {
+      best = template;
+      bestHops = hops;
+    }
+  });
+
+  return best ? [best] : [];
 }
 
 /** Resolve a shareable fixed review time from `?at=` or `?stage=`. */

@@ -66,6 +66,11 @@ describe('NeuralFabric living-mesh handles', () => {
     expect(SRC).not.toContain('new THREE.Color(0.48, 0.06, 0.16)');
   });
 
+  it('lets completed memory routes broaden their tail without changing live wavefronts', () => {
+    expect(SRC).toContain('tailDecay?: number');
+    expect(SRC).toContain('hop.tailDecay ?? 7.5');
+  });
+
   it('spends fewer samples on passive fabric before simplifying active writes', () => {
     expect(SRC).toContain('useQualityRuntime');
     expect(SRC).toContain('fabricSamplesPerEdge');
