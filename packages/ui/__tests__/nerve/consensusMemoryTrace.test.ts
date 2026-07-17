@@ -25,6 +25,7 @@ import {
   consensusMemoryRouteHandoffScale,
   consensusMemoryPassiveOpacity,
   consensusMemoryTraceRequestKey,
+  consensusMemoryTraceReadout,
   consensusMemoryTraceFocusStrength,
   consensusMemoryTraceResonance,
   consensusMemoryTraceSourceStrength,
@@ -287,6 +288,44 @@ describe('planConsensusMemoryTrace', () => {
     expect(consensusMemoryRouteHandoffScale(1)).toBe(MEMORY_TRACE_ROUTE_HANDOFF_FLOOR);
     expect(consensusMemoryRouteHandoffScale(0.5))
       .toBeCloseTo((1 + MEMORY_TRACE_ROUTE_HANDOFF_FLOOR) / 2);
+  });
+
+  it('projects the target read clock into reading, converging, and locked HUD states', () => {
+    const cells = new Map([1, 2, 3, 4, 5].map((id) => [id, cell(id)]));
+    const plan = planConsensusMemoryTrace(
+      link(),
+      cells,
+      graph([[1, 3], [2, 4], [3, 5], [4, 5]]),
+    );
+    const focus = deriveConsensusMemoryTraceFocus(plan, 10, '7:5:1')!;
+    const firstArrival = Math.min(...focus.sources.map((source) => source.arrivesAtSec));
+    const lastArrival = Math.max(...focus.sources.map((source) => source.arrivesAtSec));
+
+    expect(consensusMemoryTraceReadout(focus, 5, firstArrival - 0.001)).toMatchObject({
+      key: '7:5:1',
+      targetCellId: 5,
+      sourceKind: 'input',
+      stage: 'reading',
+      sourceCount: 2,
+      arrivedSourceCount: 0,
+      resolvedSourceCount: 0,
+    });
+    expect(consensusMemoryTraceReadout(focus, 5, firstArrival)).toMatchObject({
+      stage: 'converging',
+      arrivedSourceCount: 1,
+      resolvedSourceCount: 0,
+    });
+    expect(consensusMemoryTraceReadout(
+      focus,
+      5,
+      lastArrival + MEMORY_TRACE_CELL_CONVERGENCE_MS / 1000,
+    )).toMatchObject({
+      stage: 'locked',
+      arrivedSourceCount: 2,
+      resolvedSourceCount: 2,
+    });
+    expect(consensusMemoryTraceReadout(focus, 999, firstArrival)).toBeNull();
+    expect(consensusMemoryTraceReadout(focus, 5, focus.endsAtSec)).toBeNull();
   });
 
   it('does not focus an unroutable memory or over-dim passive structure', () => {

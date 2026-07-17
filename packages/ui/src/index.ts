@@ -143,12 +143,15 @@ export { planPulses, type Pulse, type PulsePlanningOptions } from './nerve/pulse
 export {
   planConsensusMemoryTrace,
   canRecallConsensusMemory,
+  consensusMemoryTraceReadout,
   consensusMemoryTraceRequestKey,
   deriveConsensusMemoryTraceEndpoints,
   CONSENSUS_PULSE_POLICY,
   type ConsensusMemoryTracePlan,
+  type ConsensusMemoryTraceReadout,
   type ConsensusMemoryTraceRequest,
   type ConsensusMemoryTraceSource,
+  type ConsensusMemoryTraceStage,
   type ConsensusPulseMode,
 } from './nerve/consensusMemoryTrace';
 export * from './nerve/pulseStats';

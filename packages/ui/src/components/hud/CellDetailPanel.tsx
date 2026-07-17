@@ -12,7 +12,10 @@ import ConsensusIdentityPlate from './ConsensusIdentityPlate';
 import { PROBE_STEP_S, probeScan } from './probeScan';
 import { deriveCellVisual } from '../../derives/cellVisual.derive';
 import { deriveCellConsensusIdentity } from '../../derives/cellConsensusIdentity.derive';
-import type { ConsensusMemoryTraceSource } from '../../nerve/consensusMemoryTrace';
+import type {
+  ConsensusMemoryTraceReadout,
+  ConsensusMemoryTraceSource,
+} from '../../nerve/consensusMemoryTrace';
 import {
   CONSENSUS_BRAID_FIELDS,
   consensusBraidAgreementTarget,
@@ -46,6 +49,7 @@ export default function CellDetailPanel({
   recentLinks = EMPTY_RECENT_LINKS,
   tracedWriteSeq = null,
   traceSource = 'none',
+  traceReadout = null,
   onTraceWrite,
   onClose,
   style,
@@ -54,6 +58,7 @@ export default function CellDetailPanel({
   recentLinks?: readonly CellLink[];
   tracedWriteSeq?: number | null;
   traceSource?: ConsensusMemoryTraceSource;
+  traceReadout?: ConsensusMemoryTraceReadout | null;
   onTraceWrite?: (linkSeq: number) => void;
   onClose: () => void;
   style?: CSSProperties;
@@ -229,6 +234,7 @@ export default function CellDetailPanel({
         recallEnabled={interactive}
         traceSource={traceSource}
         traceSelected={identity.observedWrite?.seq === tracedWriteSeq}
+        traceReadout={traceReadout}
       />
     </HudPanel>
   );

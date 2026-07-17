@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 import type { Cell, CellLink } from '@cknerv/types';
+import type { ConsensusMemoryTraceReadout } from '../../../src/nerve/consensusMemoryTrace';
 
 // The embedded portrait spins a real WebGL context — stub it in jsdom.
 vi.mock('../../../src/components/hud/CellNucleusPortrait', () => ({
@@ -28,6 +29,21 @@ const base: Cell = {
   capacity: 12300000000, data_hex: '0xdeadbeefcafe1234567890',
   content_hash: '0x' + '11'.repeat(32), lock_kind: 'omnilock', asset_kind: 'xudt',
 };
+
+function traceReadout(
+  overrides: Partial<ConsensusMemoryTraceReadout> = {},
+): ConsensusMemoryTraceReadout {
+  return {
+    key: `18:${base.id}:1`,
+    targetCellId: base.id,
+    sourceKind: 'input',
+    stage: 'reading',
+    sourceCount: 2,
+    arrivedSourceCount: 0,
+    resolvedSourceCount: 0,
+    ...overrides,
+  };
+}
 
 describe('CellDetailPanel', () => {
   beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(new Date(3 * 3600_000 + 12 * 60_000)); });
@@ -145,6 +161,7 @@ describe('CellDetailPanel', () => {
         recentLinks={[origin]}
         tracedWriteSeq={origin.seq}
         traceSource="input"
+        traceReadout={traceReadout()}
         onTraceWrite={onTraceWrite}
         onClose={() => {}}
       />,
@@ -152,11 +169,71 @@ describe('CellDetailPanel', () => {
 
     fireEvent.click(getByRole('button', { name: 'exit causal recall' }));
     expect(onTraceWrite).toHaveBeenCalledWith(origin.seq);
-    expect(container.textContent).toContain('MEMORY RECALL ACTIVE · EXIT');
+    expect(container.textContent).toContain('READING RETAINED RECORD · EXIT');
+    expect(container.textContent).toContain('SCANNING RETAINED RECORD');
+    expect(container.textContent).toContain('EVIDENCE 0/2');
     const trace = container.querySelector('[data-trace-selected="true"]');
     expect(trace).not.toBeNull();
     expect(trace?.getAttribute('data-trace-source')).toBe('input');
     expect(trace?.getAttribute('data-trace-state')).toBe('active');
+    expect(trace?.getAttribute('data-trace-stage')).toBe('reading');
+    expect(container.querySelector('[data-memory-read-state="reading"]')).not.toBeNull();
+  });
+
+  it('advances the explanatory rail through the same convergence stages as the Cell', () => {
+    vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener: () => {}, removeEventListener: () => {} }));
+    const origin: CellLink = {
+      seq: 18,
+      tx_hash: base.out_point.tx_hash,
+      block: base.birth_block,
+      from_ids: [1, 2],
+      to_ids: [base.id],
+      parents: [],
+      tag: base.tag,
+      at_ms: 12_000,
+    };
+    const props = {
+      cell: base,
+      recentLinks: [origin],
+      tracedWriteSeq: origin.seq,
+      traceSource: 'input' as const,
+      onTraceWrite: () => {},
+      onClose: () => {},
+    };
+    const { container, rerender } = render(
+      <CellDetailPanel {...props} traceReadout={traceReadout()} />,
+    );
+
+    rerender(<CellDetailPanel
+      {...props}
+      traceReadout={traceReadout({
+        stage: 'converging',
+        arrivedSourceCount: 1,
+      })}
+    />);
+    expect(container.textContent).toContain('RECONCILING EVIDENCE');
+    expect(container.textContent).toContain('ARRIVED 1/2');
+    expect(container.textContent).toContain('CONVERGING 1/2 EVIDENCE · EXIT');
+    expect(container.querySelector('[data-memory-stage="reading"]')
+      ?.getAttribute('data-memory-stage-state')).toBe('past');
+    expect(container.querySelector('[data-memory-stage="converging"]')
+      ?.getAttribute('data-memory-stage-state')).toBe('active');
+
+    rerender(<CellDetailPanel
+      {...props}
+      traceReadout={traceReadout({
+        stage: 'locked',
+        arrivedSourceCount: 2,
+        resolvedSourceCount: 2,
+      })}
+    />);
+    expect(container.textContent).toContain('CONSENSUS RECORD RESOLVED');
+    expect(container.textContent).toContain('VERIFIED 2/2');
+    expect(container.textContent).toContain('CONSENSUS LOCKED · EXIT');
+    expect(container.querySelector('[data-memory-stage="locked"]')
+      ?.getAttribute('data-memory-stage-state')).toBe('active');
+    expect(container.querySelector('[data-memory-read-state="locked"]')
+      ?.getAttribute('data-memory-resolved')).toBe('2');
   });
 
   it('labels surviving parent evidence as a lineage witness, not an input', () => {

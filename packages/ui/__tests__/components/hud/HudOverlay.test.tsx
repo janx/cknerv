@@ -81,6 +81,43 @@ describe('HudOverlay', () => {
     expect(onTraceCellWrite).toHaveBeenCalledWith(origin.seq);
   });
 
+  it('threads the authoritative recall stage into the selected Cell detail', () => {
+    vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener: () => {}, removeEventListener: () => {} }));
+    const mockCell: Cell = {
+      id: 7, born_at_ms: 1, death_at_ms: null, birth_block: 16204800, tag: 'wallet',
+      pos_seed: [0, 0, 0], out_point: { tx_hash: `0x${'ab'.repeat(32)}`, index: 0 },
+      capacity: 6_100_000_000, data_hex: '0x', content_hash: `0x${'cd'.repeat(32)}`,
+    };
+    const origin: CellLink = {
+      seq: 3, tx_hash: mockCell.out_point.tx_hash, block: mockCell.birth_block,
+      from_ids: [1, 2], to_ids: [mockCell.id], parents: [], tag: null, at_ms: 10,
+    };
+    const { container } = render(
+      <HudOverlay
+        chain={chain}
+        peers={peers}
+        localNode={localNode}
+        cellsStats={cellsStats}
+        selectedCell={mockCell}
+        recentCellLinks={[origin]}
+        tracedCellWriteSeq={origin.seq}
+        cellTraceSource="input"
+        cellTraceReadout={{
+          key: '3:7:1',
+          targetCellId: 7,
+          sourceKind: 'input',
+          stage: 'converging',
+          sourceCount: 2,
+          arrivedSourceCount: 1,
+          resolvedSourceCount: 0,
+        }}
+      />,
+    );
+
+    expect(container.querySelector('[data-memory-read-state="converging"]')).not.toBeNull();
+    expect(container.textContent).toContain('ARRIVED 1/2');
+  });
+
   it('does not raise CAUTION when blocks merely run slower than the 8s target', () => {
     // R2: a uniformly slower-but-steady cadence is the chain's own rhythm, not an alarm.
     const steadySlow: ChainEntry = { ...chain, recent_block_intervals_ms: Array.from({ length: 60 }, () => 12000), last_block_ts_ms: Date.now() };

@@ -23,6 +23,7 @@ import {
   CELL_SELECTION_PREFIX,
   chainNodeWorldPosition,
   canRecallConsensusMemory,
+  consensusMemoryTraceRequestKey,
   colonyFlood,
   deriveConsensusMemoryTraceEndpoints,
   findCellOriginLink,
@@ -41,6 +42,7 @@ import {
   UNIVERSE_SEED_FALLBACK,
   useQualityRuntime,
   type ConsensusMemoryTraceRequest,
+  type ConsensusMemoryTraceReadout,
 } from '@cknerv/ui';
 import {
   connectCellsStream,
@@ -129,6 +131,9 @@ export default function App({
     INITIAL_CELL_MEMORY_RECALL_STATE,
   );
   const memoryTraceRequest = memoryRecall.request;
+  const [memoryTraceReadout, setMemoryTraceReadout] = useState<
+    ConsensusMemoryTraceReadout | null
+  >(null);
   const handleSelect = useCallback((id: string | null) => {
     if (id == null) return;
     if (id.startsWith(CELL_SELECTION_PREFIX)) {
@@ -310,6 +315,13 @@ export default function App({
     && !!selectedOriginTrace
     && selectedOriginTrace.sourceKind !== 'none'
     && selectedOriginTrace.retainedOutputIds.includes(selectedCell.id);
+  const selectedMemoryTraceReadout = useMemo(() => {
+    if (!selectedCell || !memoryTraceRequest || !memoryTraceReadout) return null;
+    return memoryTraceReadout.targetCellId === selectedCell.id
+      && memoryTraceReadout.key === consensusMemoryTraceRequestKey(memoryTraceRequest)
+      ? memoryTraceReadout
+      : null;
+  }, [selectedCell, memoryTraceRequest, memoryTraceReadout]);
   const recallSelectedCellOrigin = useCallback((linkSeq: number) => {
     if (!selectedCell) return;
     const link = cellsCache.recentLinks.find((candidate) => candidate.seq === linkSeq);
@@ -352,6 +364,7 @@ export default function App({
         recentCellLinks={cellsCache.recentLinks}
         tracedCellWriteSeq={memoryTraceRequest?.linkSeq ?? null}
         cellTraceSource={selectedOriginTrace?.sourceKind ?? 'none'}
+        cellTraceReadout={selectedMemoryTraceReadout}
         onTraceCellWrite={selectedOriginTraceable
           ? recallSelectedCellOrigin
           : undefined}
@@ -438,6 +451,7 @@ export default function App({
                   traceRequest={memoryTraceRequest}
                   traceMaxPulses={CELL_MEMORY_RECALL_MAX_PULSES}
                   onTraceComplete={completeMemoryRecall}
+                  onTraceReadoutChange={setMemoryTraceReadout}
                 />
                 <ConsensusWriteSeal arrivalRef={burstArrivalRef} />
               </>

@@ -1,13 +1,29 @@
 import type { CSSProperties } from 'react';
 import type { CellConsensusIdentity } from '../../derives/cellConsensusIdentity.derive';
 import type { ConsensusBraidField } from '../../derives/consensusBraid.derive';
-import type { ConsensusMemoryTraceSource } from '../../nerve/consensusMemoryTrace';
+import type {
+  ConsensusMemoryTraceReadout,
+  ConsensusMemoryTraceSource,
+  ConsensusMemoryTraceStage,
+} from '../../nerve/consensusMemoryTrace';
 import { formatOutpoint } from './cellFormat';
 import { HUD_COLORS, HUD_FONTS } from './hudTheme';
 
 const CYAN = HUD_COLORS.cyanWire;
 const VIOLET = '#9D7BD8';
 const GOLD = HUD_COLORS.orange;
+const LOCKED_GOLD = '#FFD7A1';
+
+const MEMORY_READ_STAGES: ReadonlyArray<{
+  stage: ConsensusMemoryTraceStage;
+  code: string;
+  label: string;
+  color: string;
+}> = [
+  { stage: 'reading', code: '01', label: 'READING', color: CYAN },
+  { stage: 'converging', code: '02', label: 'CONVERGING', color: VIOLET },
+  { stage: 'locked', code: '03', label: 'LOCKED', color: LOCKED_GOLD },
+];
 
 function fingerprintBody(hash: string): string {
   return hash.replace(/^0x/i, '').toUpperCase();
@@ -136,6 +152,95 @@ function IdentityBraid({ identity, reducedMotion, traceSelected }: {
   );
 }
 
+function MemoryReadState({ readout, reducedMotion }: {
+  readout: ConsensusMemoryTraceReadout;
+  reducedMotion: boolean;
+}) {
+  const activeIndex = MEMORY_READ_STAGES.findIndex(
+    ({ stage }) => stage === readout.stage,
+  );
+  const summary = readout.stage === 'reading'
+    ? ['SCANNING RETAINED RECORD', `EVIDENCE 0/${readout.sourceCount}`]
+    : readout.stage === 'converging'
+      ? [
+        'RECONCILING EVIDENCE',
+        `ARRIVED ${readout.arrivedSourceCount}/${readout.sourceCount}`,
+      ]
+      : [
+        'CONSENSUS RECORD RESOLVED',
+        `VERIFIED ${readout.resolvedSourceCount}/${readout.sourceCount}`,
+      ];
+
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      aria-label={`${readout.stage}; ${summary[1]}`}
+      data-memory-read-state={readout.stage}
+      data-memory-arrived={readout.arrivedSourceCount}
+      data-memory-resolved={readout.resolvedSourceCount}
+      style={{
+        marginTop: 5,
+        padding: '6px 0 5px',
+        borderTop: `1px solid ${CYAN}22`,
+        borderBottom: `1px solid ${LOCKED_GOLD}16`,
+      }}
+    >
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))' }}>
+        {MEMORY_READ_STAGES.map((item, index) => {
+          const state = index < activeIndex
+            ? 'past'
+            : index === activeIndex
+              ? 'active'
+              : 'future';
+          const on = state !== 'future';
+          const active = state === 'active';
+          return (
+            <div
+              key={item.stage}
+              data-memory-stage={item.stage}
+              data-memory-stage-state={state}
+              style={{ minWidth: 0, color: item.color, opacity: active ? 1 : on ? 0.55 : 0.2 }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', height: 7 }}>
+                <span style={{
+                  flex: '0 0 auto',
+                  width: active ? 5 : 3,
+                  height: active ? 5 : 3,
+                  border: `1px solid ${item.color}`,
+                  background: on ? item.color : 'transparent',
+                  boxShadow: active ? `0 0 7px ${item.color}` : undefined,
+                  transform: 'rotate(45deg)',
+                  transition: reducedMotion ? undefined : 'all 180ms ease',
+                }} />
+                {index < MEMORY_READ_STAGES.length - 1 ? (
+                  <span style={{ flex: 1, height: 1, marginLeft: 4, background: item.color, opacity: on ? 0.45 : 0.16 }} />
+                ) : null}
+              </div>
+              <div style={{ display: 'flex', gap: 4, alignItems: 'baseline', whiteSpace: 'nowrap' }}>
+                <span style={{ fontFamily: HUD_FONTS.mono, fontSize: 6.8, opacity: 0.58 }}>
+                  {item.code}
+                </span>
+                <span style={{ fontFamily: HUD_FONTS.tech, fontSize: 7.1, fontWeight: active ? 700 : 500, letterSpacing: active ? 0.78 : 0.48 }}>
+                  {item.label}
+                </span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginTop: 5, fontFamily: HUD_FONTS.mono, fontSize: 7.6, letterSpacing: 0.45 }}>
+        <span style={{ color: MEMORY_READ_STAGES[activeIndex]?.color ?? CYAN }}>
+          {summary[0]}
+        </span>
+        <span style={{ marginLeft: 'auto', color: HUD_COLORS.ink }}>
+          {summary[1]}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 export default function ConsensusIdentityPlate({
   identity,
   reveal,
@@ -150,6 +255,7 @@ export default function ConsensusIdentityPlate({
   recallEnabled = true,
   traceSource = 'none',
   traceSelected = false,
+  traceReadout = null,
 }: {
   identity: CellConsensusIdentity;
   reveal: number;
@@ -164,6 +270,7 @@ export default function ConsensusIdentityPlate({
   recallEnabled?: boolean;
   traceSource?: ConsensusMemoryTraceSource;
   traceSelected?: boolean;
+  traceReadout?: ConsensusMemoryTraceReadout | null;
 }) {
   const observed = identity.observedWrite;
   const lifecycleColor = identity.lifecycle === 'live'
@@ -234,6 +341,9 @@ export default function ConsensusIdentityPlate({
         <span style={{ fontFamily: HUD_FONTS.mono, fontSize: 8.3, letterSpacing: 0.45, color: statusColor, textShadow: `0 0 6px ${statusColor}55` }}>
           {statusText}
         </span>
+        {traceSelected && traceReadout ? (
+          <MemoryReadState readout={traceReadout} reducedMotion={reducedMotion} />
+        ) : null}
         {observed && onRecallWrite ? (
           <button
             type="button"
@@ -243,6 +353,7 @@ export default function ConsensusIdentityPlate({
             data-trace-source={traceSource}
             data-trace-selected={traceSelected ? 'true' : 'false'}
             data-trace-state={traceSelected ? 'active' : 'ready'}
+            data-trace-stage={traceSelected ? traceReadout?.stage ?? 'planning' : 'ready'}
             title={observed.txHash}
             onClick={onRecallWrite}
             disabled={!recallEnabled}
@@ -256,7 +367,13 @@ export default function ConsensusIdentityPlate({
               {!recallEnabled
                 ? '↳ TRACE READY AFTER IDENTITY MAP'
                 : traceSelected
-                  ? '↳ MEMORY RECALL ACTIVE · EXIT'
+                  ? traceReadout?.stage === 'reading'
+                    ? '↳ READING RETAINED RECORD · EXIT'
+                    : traceReadout?.stage === 'converging'
+                      ? `↳ CONVERGING ${traceReadout.arrivedSourceCount}/${traceReadout.sourceCount} EVIDENCE · EXIT`
+                      : traceReadout?.stage === 'locked'
+                        ? '↳ CONSENSUS LOCKED · EXIT'
+                        : '↳ MEMORY ROUTE PLANNING · EXIT'
                   : traceSource === 'witness'
                     ? '↳ RECALL LINEAGE WITNESS'
                     : traceSource === 'input'
