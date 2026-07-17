@@ -83,6 +83,8 @@ interface NeuralNetworkProps {
   };
   /** Explicit user-requested replay of one retained historical link. */
   traceRequest?: ConsensusMemoryTraceRequest | null;
+  /** Optional recall-only route cap; live traffic keeps its own pulse budget. */
+  traceMaxPulses?: number;
 }
 
 interface ActivePulse extends Pulse {
@@ -100,6 +102,7 @@ export default function NeuralNetwork({
   topology,
   pulses,
   traceRequest = null,
+  traceMaxPulses,
 }: NeuralNetworkProps = {}) {
   const simClock = useSimClock();
   const cellsCache = useCellGalaxy();
@@ -240,7 +243,7 @@ export default function NeuralNetwork({
       graphRef.current,
       {
         maxHops: topology?.maxHops,
-        maxPulses: pulses?.maxPulsesPerLink,
+        maxPulses: traceMaxPulses ?? pulses?.maxPulsesPerLink,
       },
     );
     const startSec = simClock.elapsedSec;
@@ -264,6 +267,7 @@ export default function NeuralNetwork({
     cellsCache.recentLinks,
     cellsCache.cells,
     topology?.maxHops,
+    traceMaxPulses,
     pulses?.maxPulsesPerLink,
     pulses?.maxActivePulses,
     particleCapMul,

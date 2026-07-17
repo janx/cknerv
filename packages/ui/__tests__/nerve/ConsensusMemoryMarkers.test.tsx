@@ -34,7 +34,8 @@ function focus(overrides: Partial<ConsensusMemoryTraceFocus> = {}): ConsensusMem
   return {
     key: '7:1',
     sourceKind: 'witness',
-    sourceIds: [8],
+    sources: [{ id: 8, startsAtSec: 1.1, arrivesAtSec: 1.8 }],
+    routedSourceCount: 1,
     targetIds: [5],
     startedAtSec: 1,
     endsAtSec: 4,
@@ -94,5 +95,32 @@ describe('ConsensusMemoryMarkers', () => {
     expect(source?.getAttribute('data-memory-source-kind')).toBe('input');
     expect(source?.textContent).toContain('RETAINED INPUT');
     expect(source?.textContent).toContain('交易输入');
+  });
+
+  it('numbers every routed witness and summarizes the real convergence count', () => {
+    const cache = emptyCellsCache();
+    cache.cells.set(8, cell(8, 'a'));
+    cache.cells.set(9, cell(9, 'c'));
+    cache.cells.set(5, cell(5, 'b'));
+
+    const { container } = render(
+      <CellGalaxyProvider value={cache}>
+        <ConsensusMemoryMarkers focus={focus({
+          sources: [
+            { id: 8, startsAtSec: 1.1, arrivesAtSec: 1.8 },
+            { id: 9, startsAtSec: 1.32, arrivesAtSec: 2.02 },
+          ],
+          routedSourceCount: 2,
+        })} />
+      </CellGalaxyProvider>,
+    );
+
+    const sources = container.querySelectorAll('[data-memory-endpoint="source"]');
+    expect(sources).toHaveLength(2);
+    expect(sources[0].textContent).toContain('01/02');
+    expect(sources[1].textContent).toContain('02/02');
+    expect(sources[1].getAttribute('data-memory-source-index')).toBe('2');
+    expect(container.querySelector('[data-memory-endpoint="target"]')?.textContent)
+      .toContain('02 WITNESSES');
   });
 });

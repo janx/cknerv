@@ -38,4 +38,23 @@ describe('protocol event review camera', () => {
     expect(protocolEventReviewCameraPose(1.1, null, null).target).toEqual([0, 30, 0]);
     expect(protocolEventReviewCameraPose(3.4, null, null).target).toEqual([0, 38.4, 0]);
   });
+
+  it('backs out just enough to contain a real multi-witness route frame', () => {
+    const close = protocolEventReviewCameraPose(6.2, local, focus);
+    const framed = protocolEventReviewCameraPose(6.2, local, focus, 12);
+    const closeDistance = Math.hypot(
+      close.position[0] - focus[0],
+      close.position[1] - focus[1],
+      close.position[2] - focus[2],
+    );
+    const framedDistance = Math.hypot(
+      framed.position[0] - focus[0],
+      framed.position[1] - focus[1],
+      framed.position[2] - focus[2],
+    );
+
+    expect(framed.target).toEqual(close.target);
+    expect(framedDistance).toBeGreaterThan(closeDistance);
+    expect(framed.fov).toBeGreaterThan(close.fov);
+  });
 });

@@ -38,6 +38,31 @@ function mixPose(
   };
 }
 
+function framePosition(
+  focus: ProtocolReviewVec3,
+  offset: ProtocolReviewVec3,
+  radius: number,
+): [number, number, number] {
+  if (radius <= 0) return [
+    focus[0] + offset[0],
+    focus[1] + offset[1],
+    focus[2] + offset[2],
+  ];
+  const baseDistance = Math.hypot(offset[0], offset[1], offset[2]);
+  const distance = Math.min(190, Math.max(baseDistance, radius * 3.2));
+  return [
+    focus[0] + offset[0] / baseDistance * distance,
+    focus[1] + offset[1] / baseDistance * distance,
+    focus[2] + offset[2] / baseDistance * distance,
+  ];
+}
+
+function frameFov(baseFov: number, radius: number, positionDistance: number): number {
+  if (radius <= 0) return baseFov;
+  const required = Math.atan(radius * 1.15 / positionDistance) * 360 / Math.PI;
+  return Math.min(47, Math.max(baseFov, required));
+}
+
 /**
  * Editorial camera choreography for the four semantic review stages. It starts
  * with the distributed network, follows the local vertical handoff, then moves
@@ -47,6 +72,7 @@ export function protocolEventReviewCameraPose(
   elapsedS: number,
   localWorld: ProtocolReviewVec3 | null,
   focusWorld: ProtocolReviewVec3 | null,
+  focusRadius: number = 0,
 ): ProtocolReviewCameraPose {
   const local = localWorld ?? [0, 22, 0];
   const focus = focusWorld ?? [0, 38, 0];
@@ -65,15 +91,25 @@ export function protocolEventReviewCameraPose(
     target: [...carrierTarget],
     fov: 39,
   };
+  const commitPosition = framePosition(focus, [10, 8, 12], focusRadius);
+  const settledPosition = framePosition(focus, [6, 10, 8], focusRadius);
   const commit: ProtocolReviewCameraPose = {
-    position: [focus[0] + 10, focus[1] + 8, focus[2] + 12],
+    position: commitPosition,
     target: [focus[0], focus[1] + 0.4, focus[2]],
-    fov: 34,
+    fov: frameFov(34, focusRadius, Math.hypot(
+      commitPosition[0] - focus[0],
+      commitPosition[1] - focus[1],
+      commitPosition[2] - focus[2],
+    )),
   };
   const settled: ProtocolReviewCameraPose = {
-    position: [focus[0] + 6, focus[1] + 10, focus[2] + 8],
+    position: settledPosition,
     target: [focus[0], focus[1] + 0.2, focus[2]],
-    fov: 29,
+    fov: frameFov(29, focusRadius, Math.hypot(
+      settledPosition[0] - focus[0],
+      settledPosition[1] - focus[1],
+      settledPosition[2] - focus[2],
+    )),
   };
 
   if (elapsedS <= 0.4) return network;

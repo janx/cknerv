@@ -12,6 +12,8 @@ export type ProtocolEventStage = 'network' | 'carrier' | 'commit' | 'settled';
 export const PROTOCOL_EVENT_REVIEW_PERIOD_S = 8;
 /** Recall begins only after the observed write has settled into memory. */
 export const PROTOCOL_EVENT_MEMORY_TRACE_AT_S = 5.72;
+/** Two sources make convergence legible without turning recall into traffic. */
+export const PROTOCOL_EVENT_MEMORY_TRACE_PULSES = 2;
 
 /** Stable inspection points inside each semantic window. */
 export const PROTOCOL_EVENT_STAGE_TIME_S: Record<ProtocolEventStage, number> = {
@@ -55,6 +57,8 @@ export function protocolEventMemoryTraceTemplates(
 ): CellLinkRecord[] {
   const graph = buildNeighborGraph(cache.cells, { k: 3, maxEdgeLength: 28 });
   let best: CellLinkRecord | null = null;
+  let bestSourceTier = 0;
+  let bestSourceExcess = Number.POSITIVE_INFINITY;
   let bestHops = Number.POSITIVE_INFINITY;
 
   templates.forEach((template, index) => {
@@ -62,19 +66,94 @@ export function protocolEventMemoryTraceTemplates(
       { ...template, seq: index + 1 },
       cache.cells,
       graph,
-      { maxHops: 24, maxPulses: 3, maxWitnessesPerParent: 2 },
+      {
+        maxHops: 24,
+        maxPulses: PROTOCOL_EVENT_MEMORY_TRACE_PULSES,
+        maxWitnessesPerParent: 2,
+      },
     );
     if (plan.pulses.length === 0) return;
-    // The review renderer limits the event to its first pulse so the camera,
-    // write seal, and recalled route all describe the same output Cell.
-    const hops = plan.pulses[0].path.length - 1;
-    if (hops <= bestHops) {
+    const sourceCount = new Set(plan.pulses.map((pulse) => pulse.path[0])).size;
+    const sourceTier = Math.min(2, sourceCount);
+    const sourceExcess = Math.abs(2 - sourceCount);
+    // The live review keeps one observed write pulse; recall gets a separate
+    // route budget and spends it on real sources converging on that record.
+    // Prefer a multi-source example, then the most compact readable topology.
+    const hops = Math.max(...plan.pulses.map((pulse) => pulse.path.length - 1));
+    if (
+      sourceTier > bestSourceTier
+      || (sourceTier === bestSourceTier && sourceExcess < bestSourceExcess)
+      || (
+        sourceTier === bestSourceTier
+        && sourceExcess === bestSourceExcess
+        && hops <= bestHops
+      )
+    ) {
       best = template;
+      bestSourceTier = sourceTier;
+      bestSourceExcess = sourceExcess;
       bestHops = hops;
     }
   });
 
   return best ? [best] : [];
+}
+
+export interface ProtocolEventMemoryTraceFrame {
+  center: [number, number, number];
+  radius: number;
+  sourceIds: number[];
+  targetIds: number[];
+}
+
+/** Bounds the actual routed Cell positions for an honest review camera frame. */
+export function protocolEventMemoryTraceFrame(
+  cache: CellGalaxyCache,
+): ProtocolEventMemoryTraceFrame | null {
+  const link = cache.recentLinks.at(-1);
+  if (!link) return null;
+  const graph = buildNeighborGraph(cache.cells, { k: 3, maxEdgeLength: 28 });
+  const plan = planConsensusMemoryTrace(link, cache.cells, graph, {
+    maxHops: 24,
+    maxPulses: PROTOCOL_EVENT_MEMORY_TRACE_PULSES,
+    maxWitnessesPerParent: 2,
+  });
+  if (plan.pulses.length === 0) return null;
+
+  const sourceIds = [...new Set(plan.pulses.map((pulse) => pulse.path[0]))];
+  const targetIds = [...new Set(plan.pulses.map(
+    (pulse) => pulse.path[pulse.path.length - 1],
+  ))];
+  const routeIds = new Set(plan.pulses.flatMap((pulse) => pulse.path));
+  const routeCells = [...routeIds].flatMap((id) => {
+    const cell = cache.cells.get(id);
+    return cell ? [cell] : [];
+  });
+  if (routeCells.length === 0) return null;
+
+  const min = [...routeCells[0].pos_seed] as [number, number, number];
+  const max = [...routeCells[0].pos_seed] as [number, number, number];
+  for (const cell of routeCells.slice(1)) {
+    for (let axis = 0; axis < 3; axis += 1) {
+      min[axis] = Math.min(min[axis], cell.pos_seed[axis]);
+      max[axis] = Math.max(max[axis], cell.pos_seed[axis]);
+    }
+  }
+  const center: [number, number, number] = [
+    (min[0] + max[0]) * 0.5,
+    (min[1] + max[1]) * 0.5,
+    (min[2] + max[2]) * 0.5,
+  ];
+  const radius = routeCells.reduce((largest, cell) => Math.max(
+    largest,
+    Math.hypot(
+      cell.pos_seed[0] - center[0],
+      cell.pos_seed[1] - center[1],
+      cell.pos_seed[2] - center[2],
+    ),
+  ), 0) * 1.12;
+
+  return { center, radius, sourceIds, targetIds };
 }
 
 /** Resolve a shareable fixed review time from `?at=` or `?stage=`. */
