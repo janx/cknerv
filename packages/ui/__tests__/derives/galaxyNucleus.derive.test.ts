@@ -11,6 +11,7 @@ import {
   type GalaxyNucleusBuffers,
   type GalaxyNucleusCursor,
 } from '../../src/derives/galaxyNucleus.derive';
+import { consensusMemoryEvidenceBindings } from '../../src/derives/consensusMemoryEvidence.derive';
 
 const CELL: Cell = {
   id: 17,
@@ -180,5 +181,48 @@ describe('galaxy consensus braid LOD', () => {
     expect(Math.max(...reading.nodeResolve)).toBe(0);
     expect(Math.max(...resolved.nodeResolve)).toBe(1);
     expect(resolved.linePos).toEqual(baseline.linePos);
+  });
+
+  it('resolves each evidence-bound knot from that source instead of the aggregate', () => {
+    const braid = deriveGalaxyConsensusBraid(CELL);
+    const evidence = [
+      {
+        sourceId: 1,
+        ordinal: 1,
+        contentHash: `0x${'11'.repeat(32)}`,
+        convergence: 1,
+      },
+      {
+        sourceId: 2,
+        ordinal: 2,
+        contentHash: `0x${'33'.repeat(32)}`,
+        convergence: 0,
+      },
+    ];
+    const bindings = consensusMemoryEvidenceBindings(
+      CELL.content_hash,
+      evidence,
+      braid.knots.length,
+    );
+    const buffers = buffersFor(braid.segments.length / 3, braid.knots.length);
+
+    writeGalaxyConsensusBraidBuffers(
+      CELL,
+      braid,
+      1,
+      0.3,
+      buffers,
+      emptyCursor(),
+      {
+        role: 'target',
+        strength: 1,
+        phase: 0.5,
+        convergence: 0.5,
+        evidence,
+      },
+    );
+
+    expect(buffers.nodeResolve[bindings[0].knotIndex]).toBe(1);
+    expect(buffers.nodeResolve[bindings[1].knotIndex]).toBe(0);
   });
 });

@@ -34,7 +34,12 @@ function focus(overrides: Partial<ConsensusMemoryTraceFocus> = {}): ConsensusMem
   return {
     key: '7:1',
     sourceKind: 'witness',
-    sources: [{ id: 8, startsAtSec: 1.1, arrivesAtSec: 1.8 }],
+    sources: [{
+      id: 8,
+      contentHash: `0x${'a'.repeat(64)}`,
+      startsAtSec: 1.1,
+      arrivesAtSec: 1.8,
+    }],
     routedSourceCount: 1,
     targetIds: [5],
     startedAtSec: 1,
@@ -108,8 +113,18 @@ describe('ConsensusMemoryMarkers', () => {
       <CellGalaxyProvider value={cache}>
         <ConsensusMemoryMarkers focus={focus({
           sources: [
-            { id: 8, startsAtSec: 1.1, arrivesAtSec: 1.8 },
-            { id: 9, startsAtSec: 1.32, arrivesAtSec: 2.02 },
+            {
+              id: 8,
+              contentHash: `0x${'a'.repeat(64)}`,
+              startsAtSec: 1.1,
+              arrivesAtSec: 1.8,
+            },
+            {
+              id: 9,
+              contentHash: `0x${'c'.repeat(64)}`,
+              startsAtSec: 1.32,
+              arrivesAtSec: 2.02,
+            },
           ],
           routedSourceCount: 2,
         })} />

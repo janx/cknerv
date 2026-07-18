@@ -119,6 +119,20 @@ describe('HudOverlay', () => {
           sourceCount: 2,
           arrivedSourceCount: 1,
           resolvedSourceCount: 0,
+          evidence: [
+            {
+              sourceId: 1,
+              ordinal: 1,
+              contentHash: `0x${'1'.repeat(64)}`,
+              state: 'arrived',
+            },
+            {
+              sourceId: 2,
+              ordinal: 2,
+              contentHash: `0x${'2'.repeat(64)}`,
+              state: 'routing',
+            },
+          ],
         }}
         cellTraceResponseRef={{ current: null }}
       />,

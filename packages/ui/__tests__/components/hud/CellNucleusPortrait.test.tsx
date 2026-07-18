@@ -28,5 +28,7 @@ describe('CellNucleusPortrait production language', () => {
     expect(MEMORY_SOURCE).toContain('consensusBraidAgreementResolution(');
     expect(MEMORY_SOURCE).toContain('readHeadsRef');
     expect(MEMORY_SOURCE).toContain('CONSENSUS_BRAID_PALETTE.paleGold');
+    expect(MEMORY_SOURCE).toContain('consensusMemoryEvidenceBindings(');
+    expect(MEMORY_SOURCE).toContain('data-memory-knot-evidence');
   });
 });

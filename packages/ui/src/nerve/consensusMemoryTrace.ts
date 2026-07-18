@@ -80,6 +80,8 @@ export interface ConsensusMemoryTracePlan {
   pulses: Pulse[];
   sourceKind: ConsensusMemoryTraceSource;
   sourceIds: number[];
+  /** Immutable source identities captured when the display-only route is planned. */
+  sourceEvidence: ConsensusMemorySourceEvidence[];
   /** Exact link endpoints and parent witnesses still present in the cache. */
   retainedInputIds: number[];
   retainedOutputIds: number[];
@@ -88,8 +90,14 @@ export interface ConsensusMemoryTracePlan {
 
 export interface ConsensusMemoryTraceFocusSource {
   id: number;
+  contentHash: string;
   startsAtSec: number;
   arrivesAtSec: number;
+}
+
+export interface ConsensusMemorySourceEvidence {
+  id: number;
+  contentHash: string;
 }
 
 export interface ConsensusMemoryTraceFocus {
@@ -110,6 +118,15 @@ export interface ConsensusMemoryCellResponse {
   phase: number;
   /** Target witness resolution, or source departure progress. */
   convergence: number;
+  /** Exact per-source agreement progress, in stable routed-source order. */
+  evidence?: readonly ConsensusMemoryEvidenceResponse[];
+}
+
+export interface ConsensusMemoryEvidenceResponse {
+  sourceId: number;
+  ordinal: number;
+  contentHash: string;
+  convergence: number;
 }
 
 export interface ConsensusMemoryTargetResponse {
@@ -123,6 +140,14 @@ export interface ConsensusMemoryCellResponseRef {
 }
 
 export type ConsensusMemoryTraceStage = 'reading' | 'converging' | 'locked';
+export type ConsensusMemoryEvidenceState = 'routing' | 'arrived' | 'resolved';
+
+export interface ConsensusMemoryTraceEvidence {
+  sourceId: number;
+  ordinal: number;
+  contentHash: string;
+  state: ConsensusMemoryEvidenceState;
+}
 
 /**
  * Low-frequency semantic twin of the target Cell's frame-level response.
@@ -137,6 +162,8 @@ export interface ConsensusMemoryTraceReadout {
   sourceCount: number;
   arrivedSourceCount: number;
   resolvedSourceCount: number;
+  /** Stable evidence ledger used by the HUD and canonical knot bindings. */
+  evidence: readonly ConsensusMemoryTraceEvidence[];
 }
 
 const smoothUnit = (value: number): number => {
@@ -155,6 +182,9 @@ export function deriveConsensusMemoryTraceFocus(
   key: string,
 ): ConsensusMemoryTraceFocus | null {
   if (plan.sourceKind === 'none' || plan.pulses.length === 0) return null;
+  const evidenceById = new Map(
+    plan.sourceEvidence.map((source) => [source.id, source.contentHash]),
+  );
   const sourceById = new Map<number, ConsensusMemoryTraceFocusSource>();
   for (const pulse of plan.pulses) {
     const id = pulse.path[0];
@@ -163,7 +193,12 @@ export function deriveConsensusMemoryTraceFocus(
       + (pulse.path.length - 1) * pulse.hopMs / 1000;
     const existing = sourceById.get(id);
     if (!existing) {
-      sourceById.set(id, { id, startsAtSec, arrivesAtSec });
+      sourceById.set(id, {
+        id,
+        contentHash: evidenceById.get(id) ?? '',
+        startsAtSec,
+        arrivesAtSec,
+      });
       continue;
     }
     existing.startsAtSec = Math.min(existing.startsAtSec, startsAtSec);
@@ -241,12 +276,25 @@ export function consensusMemoryCellResponse(
     const elapsed = Math.max(0, nowSec - focus.startedAtSec);
     const rawPhase = elapsed * MEMORY_TRACE_CELL_READ_CYCLES_PER_S;
     const phase = rawPhase - Math.floor(rawPhase);
-    const convergence = focus.sources.length === 0
-      ? 0
-      : focus.sources.reduce((total, source) => total + smoothUnit(
+    const evidence = focus.sources.map((source, index) => ({
+      sourceId: source.id,
+      ordinal: index + 1,
+      contentHash: source.contentHash,
+      convergence: smoothUnit(
         (nowSec - source.arrivesAtSec) * 1000 / MEMORY_TRACE_CELL_CONVERGENCE_MS,
-      ), 0) / focus.sources.length;
-    return { role: 'target', strength: focusStrength, phase, convergence };
+      ),
+    }));
+    const convergence = evidence.length === 0
+      ? 0
+      : evidence.reduce((total, source) => total + source.convergence, 0)
+        / evidence.length;
+    return {
+      role: 'target',
+      strength: focusStrength,
+      phase,
+      convergence,
+      evidence,
+    };
   }
 
   const source = focus.sources.find((candidate) => candidate.id === cellId);
@@ -281,11 +329,21 @@ export function consensusMemoryTraceReadout(
   ) return null;
 
   const resolutionSec = MEMORY_TRACE_CELL_CONVERGENCE_MS / 1000;
-  const arrivedSourceCount = focus.sources.filter(
-    (source) => nowSec >= source.arrivesAtSec,
+  const evidence = focus.sources.map((source, index) => ({
+    sourceId: source.id,
+    ordinal: index + 1,
+    contentHash: source.contentHash,
+    state: nowSec >= source.arrivesAtSec + resolutionSec
+      ? 'resolved' as const
+      : nowSec >= source.arrivesAtSec
+        ? 'arrived' as const
+        : 'routing' as const,
+  }));
+  const arrivedSourceCount = evidence.filter(
+    (source) => source.state !== 'routing',
   ).length;
-  const resolvedSourceCount = focus.sources.filter(
-    (source) => nowSec >= source.arrivesAtSec + resolutionSec,
+  const resolvedSourceCount = evidence.filter(
+    (source) => source.state === 'resolved',
   ).length;
   const locked = focus.sources.length > 0
     && resolvedSourceCount === focus.sources.length;
@@ -303,6 +361,7 @@ export function consensusMemoryTraceReadout(
     sourceCount: focus.sources.length,
     arrivedSourceCount,
     resolvedSourceCount,
+    evidence,
   };
 }
 
@@ -442,6 +501,10 @@ export function planConsensusMemoryTrace(
     cells,
     options.maxWitnessesPerParent,
   );
+  const sourceEvidence = endpoints.sourceIds.flatMap((id) => {
+    const source = cells.get(id);
+    return source ? [{ id, contentHash: source.content_hash }] : [];
+  });
   const retainedOutputIds = options.targetCellId === undefined
     ? endpoints.retainedOutputIds
     : endpoints.retainedOutputIds.filter((id) => id === options.targetCellId);
@@ -509,5 +572,5 @@ export function planConsensusMemoryTrace(
     hopMs: candidate.hopMs,
   }));
 
-  return { pulses, ...plannedEndpoints };
+  return { pulses, sourceEvidence, ...plannedEndpoints };
 }

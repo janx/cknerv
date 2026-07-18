@@ -37,15 +37,31 @@ const base: Cell = {
 function traceReadout(
   overrides: Partial<ConsensusMemoryTraceReadout> = {},
 ): ConsensusMemoryTraceReadout {
-  return {
+  const value = {
     key: `18:${base.id}:1`,
     targetCellId: base.id,
-    sourceKind: 'input',
-    stage: 'reading',
+    sourceKind: 'input' as const,
+    stage: 'reading' as const,
     sourceCount: 2,
     arrivedSourceCount: 0,
     resolvedSourceCount: 0,
     ...overrides,
+  };
+  return {
+    ...value,
+    evidence: overrides.evidence ?? Array.from(
+      { length: value.sourceCount },
+      (_, index) => ({
+        sourceId: index + 11,
+        ordinal: index + 1,
+        contentHash: `0x${String(index + 1).repeat(64)}`,
+        state: index < value.resolvedSourceCount
+          ? 'resolved' as const
+          : index < value.arrivedSourceCount
+            ? 'arrived' as const
+            : 'routing' as const,
+      }),
+    ),
   };
 }
 
@@ -182,6 +198,9 @@ describe('CellDetailPanel', () => {
     expect(trace?.getAttribute('data-trace-state')).toBe('active');
     expect(trace?.getAttribute('data-trace-stage')).toBe('reading');
     expect(container.querySelector('[data-memory-read-state="reading"]')).not.toBeNull();
+    expect(container.querySelectorAll('[data-memory-evidence]')).toHaveLength(2);
+    expect(container.textContent).toContain('EVIDENCE → AGREEMENT');
+    expect(container.textContent).toContain('1111111·1111');
   });
 
   it('advances the explanatory rail through the same convergence stages as the Cell', () => {
@@ -227,6 +246,12 @@ describe('CellDetailPanel', () => {
       ?.getAttribute('data-trace-stage')).toBe('converging');
     expect(container.querySelector('[data-testid="portrait"]')
       ?.getAttribute('data-response-ref')).toBe('true');
+    expect(container.querySelector('[data-memory-evidence="1"]')
+      ?.getAttribute('data-memory-evidence-state')).toBe('arrived');
+    expect(container.querySelector('[data-memory-evidence="2"]')
+      ?.getAttribute('data-memory-evidence-state')).toBe('routing');
+    expect(container.querySelector('[data-memory-evidence="1"]')
+      ?.getAttribute('data-memory-evidence-knot')).toMatch(/^\d+$/);
 
     rerender(<CellDetailPanel
       {...props}
@@ -245,6 +270,9 @@ describe('CellDetailPanel', () => {
       ?.getAttribute('data-memory-resolved')).toBe('2');
     expect(container.querySelector('[data-testid="portrait"]')
       ?.getAttribute('data-trace-stage')).toBe('locked');
+    expect(Array.from(container.querySelectorAll('[data-memory-evidence]')).every(
+      (node) => node.getAttribute('data-memory-evidence-state') === 'resolved',
+    )).toBe(true);
   });
 
   it('labels surviving parent evidence as a lineage witness, not an input', () => {

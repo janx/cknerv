@@ -37,6 +37,16 @@ export function consensusMemoryPortraitResponse(
     strength: 1,
     phase,
     convergence,
+    evidence: readout.evidence.map((source) => ({
+      sourceId: source.sourceId,
+      ordinal: source.ordinal,
+      contentHash: source.contentHash,
+      convergence: source.state === 'resolved'
+        ? 1
+        : source.state === 'arrived'
+          ? 0.5
+          : 0,
+    })),
   };
 }
 

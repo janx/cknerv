@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
+import { Html } from '@react-three/drei';
 import * as THREE from 'three';
 import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js';
 import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js';
@@ -10,6 +11,11 @@ import {
   consensusMemoryPortraitLayerOpacity,
   consensusMemoryPortraitResponse,
 } from '../../derives/consensusMemoryPortrait.derive';
+import {
+  consensusMemoryEvidenceBindings,
+  consensusMemoryEvidenceColor,
+  consensusMemoryEvidenceCssColor,
+} from '../../derives/consensusMemoryEvidence.derive';
 import {
   CONSENSUS_BRAID_PALETTE,
   CONSENSUS_BRAID_TAU,
@@ -72,6 +78,7 @@ export default function ConsensusMemory({
   const rootRef = useRef<THREE.Group>(null);
   const packetsRef = useRef<THREE.InstancedMesh>(null);
   const readHeadsRef = useRef<THREE.InstancedMesh>(null);
+  const evidenceLabelRefs = useRef<Array<HTMLDivElement | null>>([]);
   const recallStrengthRef = useRef(0);
   const recallConvergenceRef = useRef(0);
   const recallPhaseRef = useRef(0);
@@ -288,6 +295,9 @@ export default function ConsensusMemory({
     });
     return {
       specs,
+      agreementMidpoints: topology.agreements.map((agreement) => (
+        [...agreement.midpoint] as [number, number, number]
+      )),
       presenceScale: topology.presenceScale,
       birthPhase: topology.birthPhase,
       ribbonGeometry,
@@ -328,6 +338,16 @@ export default function ConsensusMemory({
   const presence = built.presenceScale;
   const birthPhase = built.birthPhase;
   const life = cell.death_at_ms === null ? 1 : 0.52;
+  const evidenceBindings = useMemo(() => consensusMemoryEvidenceBindings(
+    cell.content_hash,
+    traceReadout?.targetCellId === cell.id ? traceReadout.evidence : [],
+    built.agreementMidpoints.length,
+  ), [
+    built.agreementMidpoints.length,
+    cell.content_hash,
+    cell.id,
+    traceReadout,
+  ]);
 
   useEffect(() => {
     const mesh = packetsRef.current;
@@ -376,6 +396,16 @@ export default function ConsensusMemory({
     if (response) recallPhaseRef.current = response.phase;
     const recallStrength = recallStrengthRef.current;
     const recallConvergence = recallConvergenceRef.current;
+    evidenceLabelRefs.current.forEach((label, index) => {
+      if (!label) return;
+      const binding = evidenceBindings[index];
+      const evidenceConvergence = binding
+        ? response?.evidence?.[binding.evidenceIndex]?.convergence ?? 0
+        : 0;
+      label.style.opacity = (
+        recallStrength * (0.42 + Math.max(0, Math.min(1, evidenceConvergence)) * 0.58)
+      ).toFixed(3);
+    });
     const target = consensusMemoryPortraitLayerOpacity(
       consensusBraidLayerOpacity(focusField, built.specs.length),
       recallStrength,
@@ -395,8 +425,8 @@ export default function ConsensusMemory({
     approach(built.knotCoreMaterial, target.knotCore * life);
     approach(built.packetMaterial, target.packet * life);
 
-    // The exact canonical agreements used by production A turn from cold
-    // addressable evidence into pale-gold verified knots in sequence.
+    // The exact canonical agreements used by production A turn from each
+    // source's cool identity lane into pale-gold verified knots.
     const agreementColorAttribute = built.agreementGeometry.getAttribute(
       'instanceColorStart',
     ) as THREE.InterleavedBufferAttribute | undefined;
@@ -410,16 +440,28 @@ export default function ConsensusMemory({
       && agreementColors.length === built.agreementBaseColors.length
     ) {
       for (let index = 0; index < agreementCount; index += 1) {
-        const resolved = consensusBraidAgreementResolution(
-          index,
-          agreementCount,
-          recallConvergence,
+        const binding = evidenceBindings.find(
+          (candidate) => candidate.knotIndex === index,
         );
+        const evidenceConvergence = binding
+          ? response?.evidence?.[binding.evidenceIndex]?.convergence
+          : undefined;
+        const resolved = typeof evidenceConvergence === 'number'
+          && Number.isFinite(evidenceConvergence)
+          ? Math.max(0, Math.min(1, evidenceConvergence))
+          : consensusBraidAgreementResolution(
+            index,
+            agreementCount,
+            recallConvergence,
+          );
+        const evidenceColor = binding
+          ? consensusMemoryEvidenceColor(binding.evidenceIndex)
+          : CONSENSUS_BRAID_PALETTE.cyan;
         const memoryMix = recallStrength * (0.72 + resolved * 0.28);
         for (let endpoint = 0; endpoint < 2; endpoint += 1) {
           for (let channel = 0; channel < 3; channel += 1) {
             const offset = index * 6 + endpoint * 3 + channel;
-            const cold = CONSENSUS_BRAID_PALETTE.cyan[channel];
+            const cold = evidenceColor[channel];
             const gold = CONSENSUS_BRAID_PALETTE.paleGold[channel];
             const memoryColor = cold + (gold - cold) * resolved;
             const colorTarget = built.agreementBaseColors[offset]
@@ -437,15 +479,27 @@ export default function ConsensusMemory({
     const knotColors = knotColorAttribute.array as Float32Array;
     const knotCount = Math.floor(built.knotBaseColors.length / 3);
     for (let index = 0; index < knotCount; index += 1) {
-      const resolved = consensusBraidAgreementResolution(
-        index,
-        knotCount,
-        recallConvergence,
+      const binding = evidenceBindings.find(
+        (candidate) => candidate.knotIndex === index,
       );
+      const evidenceConvergence = binding
+        ? response?.evidence?.[binding.evidenceIndex]?.convergence
+        : undefined;
+      const resolved = typeof evidenceConvergence === 'number'
+        && Number.isFinite(evidenceConvergence)
+        ? Math.max(0, Math.min(1, evidenceConvergence))
+        : consensusBraidAgreementResolution(
+          index,
+          knotCount,
+          recallConvergence,
+        );
+      const evidenceColor = binding
+        ? consensusMemoryEvidenceColor(binding.evidenceIndex)
+        : CONSENSUS_BRAID_PALETTE.cyan;
       const memoryMix = recallStrength * (0.78 + resolved * 0.22);
       for (let channel = 0; channel < 3; channel += 1) {
         const offset = index * 3 + channel;
-        const cold = CONSENSUS_BRAID_PALETTE.cyan[channel];
+        const cold = evidenceColor[channel];
         const gold = CONSENSUS_BRAID_PALETTE.paleGold[channel];
         const memoryColor = cold + (gold - cold) * resolved;
         const colorTarget = built.knotBaseColors[offset]
@@ -591,6 +645,60 @@ export default function ConsensusMemory({
         frustumCulled={false}
         renderOrder={9}
       />
+      {evidenceBindings.map((binding, index) => {
+        const evidence = traceReadout?.evidence[binding.evidenceIndex];
+        if (!evidence) return null;
+        const sourceColor = consensusMemoryEvidenceCssColor(binding.evidenceIndex);
+        const resolved = evidence.state === 'resolved';
+        const stateGlyph = resolved
+          ? '✓'
+          : evidence.state === 'arrived'
+            ? '·'
+            : '↗';
+        const offsetX = index % 2 === 0 ? '7px' : 'calc(-100% - 7px)';
+        const offsetY = index % 3 === 0 ? '-13px' : index % 3 === 1 ? '3px' : '-3px';
+        return (
+          <Html
+            key={`${traceReadout?.key}:${binding.sourceId}`}
+            position={built.agreementMidpoints[binding.knotIndex]}
+            zIndexRange={[5, 5]}
+            occlude={false}
+            style={{ pointerEvents: 'none' }}
+          >
+            <div
+              ref={(node) => { evidenceLabelRefs.current[index] = node; }}
+              data-memory-knot-evidence={binding.ordinal}
+              data-memory-knot-index={binding.knotIndex + 1}
+              data-memory-knot-state={evidence.state}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 3,
+                padding: '1px 3px 1px 2px',
+                borderLeft: `1px solid ${sourceColor}`,
+                background: 'rgba(0, 3, 12, .74)',
+                boxShadow: `0 0 7px ${sourceColor}33`,
+                color: resolved ? '#FFD79A' : '#C9F8FF',
+                fontFamily: '"JetBrains Mono Local", ui-monospace, monospace',
+                fontSize: 6.4,
+                lineHeight: 1.1,
+                letterSpacing: 0.35,
+                opacity: 0,
+                transform: `translate(${offsetX}, ${offsetY})`,
+                whiteSpace: 'nowrap',
+              }}
+            >
+              <span style={{ color: sourceColor }}>
+                {String(binding.ordinal).padStart(2, '0')}
+              </span>
+              <span>◇K{String(binding.knotIndex + 1).padStart(2, '0')}</span>
+              <span style={{ color: resolved ? '#FFD79A' : sourceColor }}>
+                {stateGlyph}
+              </span>
+            </div>
+          </Html>
+        );
+      })}
     </group>
   );
 }
