@@ -5,6 +5,10 @@
 import { Canvas } from '@react-three/fiber';
 import type { Cell } from '@cknerv/types';
 import type { ConsensusBraidField } from '../../derives/consensusBraid.derive';
+import type {
+  ConsensusMemoryCellResponseRef,
+  ConsensusMemoryTraceReadout,
+} from '../../nerve/consensusMemoryTrace';
 import CellCoreArtwork, { type CellCoreDirection } from './CellCoreArtwork';
 
 export const SCAN_PERIOD_S = 4.2;
@@ -24,11 +28,15 @@ function ConsensusScene({
   direction,
   reducedMotion,
   focusField,
+  traceReadout,
+  traceResponseRef,
 }: {
   cell: Cell;
   direction: CellCoreDirection;
   reducedMotion: boolean;
   focusField: ConsensusBraidField | null;
+  traceReadout: ConsensusMemoryTraceReadout | null;
+  traceResponseRef?: ConsensusMemoryCellResponseRef;
 }) {
   return (
     <CellCoreArtwork
@@ -36,6 +44,8 @@ function ConsensusScene({
       cell={cell}
       reducedMotion={reducedMotion}
       focusField={focusField}
+      traceReadout={traceReadout}
+      traceResponseRef={traceResponseRef}
     />
   );
 }
@@ -45,17 +55,24 @@ export default function CellNucleusPortrait({
   direction = 'relic',
   reducedMotion,
   focusField = null,
+  traceReadout = null,
+  traceResponseRef,
 }: {
   cell: Cell;
   direction?: CellCoreDirection;
   reducedMotion: boolean;
   /** Retained as the public semantic focus; only production A consumes it. */
   focusField?: ConsensusBraidField | null;
+  traceReadout?: ConsensusMemoryTraceReadout | null;
+  traceResponseRef?: ConsensusMemoryCellResponseRef;
   /** Compatibility input for callers that share a scan epoch with the panel. */
   scanEpochMs?: number;
 }) {
   return (
-    <div style={{ width: '100%', aspectRatio: '1 / 1', pointerEvents: 'none' }}>
+    <div
+      data-memory-portrait-state={traceReadout?.stage ?? 'idle'}
+      style={{ width: '100%', aspectRatio: '1 / 1', pointerEvents: 'none' }}
+    >
       <Canvas
         gl={{ alpha: true, antialias: true }}
         camera={{ position: [0, 0, 3], fov: 40, near: 0.1, far: 20 }}
@@ -67,6 +84,8 @@ export default function CellNucleusPortrait({
           direction={direction}
           reducedMotion={reducedMotion}
           focusField={focusField}
+          traceReadout={traceReadout}
+          traceResponseRef={traceResponseRef}
         />
       </Canvas>
     </div>

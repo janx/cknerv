@@ -5,6 +5,7 @@ import {
   CONSENSUS_BRAID_PALETTE,
   CONSENSUS_BRAID_TAU,
   consensusBraidContributorColor,
+  consensusBraidAgreementResolution,
   deriveConsensusBraidTopology,
   consensusBraidPoint,
 } from './consensusBraid.derive';
@@ -237,10 +238,9 @@ export function writeGalaxyConsensusBraidBuffers(
   for (let knotIndex = 0; knotIndex < braid.knots.length; knotIndex += 1) {
     const knot = braid.knots[knotIndex];
     if (nodes >= nodeCap) break;
-    const threshold = (knotIndex + 1) / Math.max(1, braid.knots.length);
-    const resolved = smoothstep(
-      Math.max(0, threshold - 0.22),
-      threshold,
+    const resolved = consensusBraidAgreementResolution(
+      knotIndex,
+      braid.knots.length,
       recallConvergence,
     );
     const recallAlpha = recall?.role === 'target'

@@ -4,8 +4,17 @@ import type { ChainEntry, Peer, ChainNode, Cell, CellLink } from '@cknerv/types'
 
 // The embedded portrait spins a real WebGL context — stub it in jsdom.
 vi.mock('../../../src/components/hud/CellNucleusPortrait', () => ({
-  default: ({ cell }: { cell: { content_hash: string } }) => (
-    <div data-testid="portrait" data-hash={cell.content_hash} />
+  default: ({ cell, traceReadout, traceResponseRef }: {
+    cell: { content_hash: string };
+    traceReadout?: { stage: string } | null;
+    traceResponseRef?: { current: unknown };
+  }) => (
+    <div
+      data-testid="portrait"
+      data-hash={cell.content_hash}
+      data-trace-stage={traceReadout?.stage ?? ''}
+      data-response-ref={traceResponseRef ? 'true' : 'false'}
+    />
   ),
   SCAN_PERIOD_S: 4.2,
 }));
@@ -111,11 +120,16 @@ describe('HudOverlay', () => {
           arrivedSourceCount: 1,
           resolvedSourceCount: 0,
         }}
+        cellTraceResponseRef={{ current: null }}
       />,
     );
 
     expect(container.querySelector('[data-memory-read-state="converging"]')).not.toBeNull();
     expect(container.textContent).toContain('ARRIVED 1/2');
+    expect(container.querySelector('[data-testid="portrait"]')
+      ?.getAttribute('data-trace-stage')).toBe('converging');
+    expect(container.querySelector('[data-testid="portrait"]')
+      ?.getAttribute('data-response-ref')).toBe('true');
   });
 
   it('does not raise CAUTION when blocks merely run slower than the 8s target', () => {

@@ -13,6 +13,7 @@ import { PROBE_STEP_S, probeScan } from './probeScan';
 import { deriveCellVisual } from '../../derives/cellVisual.derive';
 import { deriveCellConsensusIdentity } from '../../derives/cellConsensusIdentity.derive';
 import type {
+  ConsensusMemoryCellResponseRef,
   ConsensusMemoryTraceReadout,
   ConsensusMemoryTraceSource,
 } from '../../nerve/consensusMemoryTrace';
@@ -50,6 +51,7 @@ export default function CellDetailPanel({
   tracedWriteSeq = null,
   traceSource = 'none',
   traceReadout = null,
+  traceResponseRef,
   onTraceWrite,
   onClose,
   style,
@@ -59,6 +61,7 @@ export default function CellDetailPanel({
   tracedWriteSeq?: number | null;
   traceSource?: ConsensusMemoryTraceSource;
   traceReadout?: ConsensusMemoryTraceReadout | null;
+  traceResponseRef?: ConsensusMemoryCellResponseRef;
   onTraceWrite?: (linkSeq: number) => void;
   onClose: () => void;
   style?: CSSProperties;
@@ -193,6 +196,8 @@ export default function CellDetailPanel({
           reducedMotion={reduced}
           scanEpochMs={activeClock.epochMs}
           focusField={focusField}
+          traceReadout={traceReadout}
+          traceResponseRef={traceResponseRef}
         />
         <span style={cornerBracket('tl')} /><span style={cornerBracket('tr')} />
         <span style={cornerBracket('bl')} /><span style={cornerBracket('br')} />

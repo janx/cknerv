@@ -43,6 +43,7 @@ import {
   useQualityRuntime,
   type ConsensusMemoryTraceRequest,
   type ConsensusMemoryTraceReadout,
+  type ConsensusMemoryTargetResponse,
 } from '@cknerv/ui';
 import {
   connectCellsStream,
@@ -133,6 +134,9 @@ export default function App({
   const memoryTraceRequest = memoryRecall.request;
   const [memoryTraceReadout, setMemoryTraceReadout] = useState<
     ConsensusMemoryTraceReadout | null
+  >(null);
+  const memoryTraceTargetResponseRef = useRef<
+    ConsensusMemoryTargetResponse | null
   >(null);
   const handleSelect = useCallback((id: string | null) => {
     if (id == null) return;
@@ -365,6 +369,7 @@ export default function App({
         tracedCellWriteSeq={memoryTraceRequest?.linkSeq ?? null}
         cellTraceSource={selectedOriginTrace?.sourceKind ?? 'none'}
         cellTraceReadout={selectedMemoryTraceReadout}
+        cellTraceResponseRef={memoryTraceTargetResponseRef}
         onTraceCellWrite={selectedOriginTraceable
           ? recallSelectedCellOrigin
           : undefined}
@@ -452,6 +457,7 @@ export default function App({
                   traceMaxPulses={CELL_MEMORY_RECALL_MAX_PULSES}
                   onTraceComplete={completeMemoryRecall}
                   onTraceReadoutChange={setMemoryTraceReadout}
+                  traceTargetResponseRef={memoryTraceTargetResponseRef}
                 />
                 <ConsensusWriteSeal arrivalRef={burstArrivalRef} />
               </>

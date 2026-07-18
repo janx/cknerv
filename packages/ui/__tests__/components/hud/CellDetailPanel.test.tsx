@@ -5,14 +5,18 @@ import type { ConsensusMemoryTraceReadout } from '../../../src/nerve/consensusMe
 
 // The embedded portrait spins a real WebGL context — stub it in jsdom.
 vi.mock('../../../src/components/hud/CellNucleusPortrait', () => ({
-  default: ({ cell, focusField }: {
+  default: ({ cell, focusField, traceReadout, traceResponseRef }: {
     cell: { content_hash: string };
     focusField?: string | null;
+    traceReadout?: { stage: string } | null;
+    traceResponseRef?: { current: unknown };
   }) => (
     <div
       data-testid="portrait"
       data-hash={cell.content_hash}
       data-focus={focusField ?? ''}
+      data-trace-stage={traceReadout?.stage ?? ''}
+      data-response-ref={traceResponseRef ? 'true' : 'false'}
     />
   ),
   SCAN_PERIOD_S: 4.2,
@@ -197,6 +201,7 @@ describe('CellDetailPanel', () => {
       recentLinks: [origin],
       tracedWriteSeq: origin.seq,
       traceSource: 'input' as const,
+      traceResponseRef: { current: null },
       onTraceWrite: () => {},
       onClose: () => {},
     };
@@ -218,6 +223,10 @@ describe('CellDetailPanel', () => {
       ?.getAttribute('data-memory-stage-state')).toBe('past');
     expect(container.querySelector('[data-memory-stage="converging"]')
       ?.getAttribute('data-memory-stage-state')).toBe('active');
+    expect(container.querySelector('[data-testid="portrait"]')
+      ?.getAttribute('data-trace-stage')).toBe('converging');
+    expect(container.querySelector('[data-testid="portrait"]')
+      ?.getAttribute('data-response-ref')).toBe('true');
 
     rerender(<CellDetailPanel
       {...props}
@@ -234,6 +243,8 @@ describe('CellDetailPanel', () => {
       ?.getAttribute('data-memory-stage-state')).toBe('active');
     expect(container.querySelector('[data-memory-read-state="locked"]')
       ?.getAttribute('data-memory-resolved')).toBe('2');
+    expect(container.querySelector('[data-testid="portrait"]')
+      ?.getAttribute('data-trace-stage')).toBe('locked');
   });
 
   it('labels surviving parent evidence as a lineage witness, not an input', () => {

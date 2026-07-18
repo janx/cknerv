@@ -3,8 +3,17 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Cell } from '@cknerv/types';
 
 vi.mock('../../../src/components/hud/ConsensusMemory', () => ({
-  default: ({ focusField }: { focusField?: string | null }) => (
-    <div data-testid="relic" data-focus={focusField ?? ''} />
+  default: ({ focusField, traceReadout, traceResponseRef }: {
+    focusField?: string | null;
+    traceReadout?: { stage: string } | null;
+    traceResponseRef?: { current: unknown };
+  }) => (
+    <div
+      data-testid="relic"
+      data-focus={focusField ?? ''}
+      data-trace-stage={traceReadout?.stage ?? ''}
+      data-response-ref={traceResponseRef ? 'true' : 'false'}
+    />
   ),
 }));
 vi.mock('../../../src/components/hud/QuantumLoomCore', () => ({
@@ -64,14 +73,22 @@ describe('CellCoreArtwork', () => {
   });
 
   it('threads readable field focus into the production A renderer', () => {
+    const responseRef = { current: null };
     const { getByTestId } = render(
       <CellCoreArtwork
         direction="relic"
         cell={CELL}
         reducedMotion
         focusField="data"
+        traceReadout={{
+          key: '7:1:1', targetCellId: 1, sourceKind: 'input', stage: 'locked',
+          sourceCount: 2, arrivedSourceCount: 2, resolvedSourceCount: 2,
+        }}
+        traceResponseRef={responseRef}
       />,
     );
     expect(getByTestId('relic').getAttribute('data-focus')).toBe('data');
+    expect(getByTestId('relic').getAttribute('data-trace-stage')).toBe('locked');
+    expect(getByTestId('relic').getAttribute('data-response-ref')).toBe('true');
   });
 });
