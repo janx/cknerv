@@ -9,6 +9,10 @@ import {
   deriveConsensusBraidTopology,
   consensusBraidPoint,
 } from './consensusBraid.derive';
+import {
+  consensusMemoryEvidenceBindings,
+  type ConsensusMemoryEvidenceIdentity,
+} from './consensusMemoryEvidence.derive';
 
 export interface GalaxyNucleusBuffers {
   linePos: Float32Array;
@@ -29,6 +33,9 @@ export interface GalaxyNucleusRecallResponse {
   strength: number;
   phase: number;
   convergence: number;
+  evidence?: readonly (ConsensusMemoryEvidenceIdentity & {
+    convergence: number;
+  })[];
 }
 
 export interface GalaxyConsensusKnot {
@@ -185,6 +192,13 @@ export function writeGalaxyConsensusBraidBuffers(
   const recallPhase = ((recall?.phase ?? 0) % 1 + 1) % 1;
   const recallConvergence = Math.max(0, Math.min(1, recall?.convergence ?? 0));
   const segmentCount = Math.max(1, Math.floor(braid.segments.length / 6));
+  const evidenceBindings = recall?.role === 'target'
+    ? consensusMemoryEvidenceBindings(
+      cell.content_hash,
+      recall.evidence ?? [],
+      braid.knots.length,
+    )
+    : [];
 
   for (
     let segment = 0;
@@ -238,11 +252,20 @@ export function writeGalaxyConsensusBraidBuffers(
   for (let knotIndex = 0; knotIndex < braid.knots.length; knotIndex += 1) {
     const knot = braid.knots[knotIndex];
     if (nodes >= nodeCap) break;
-    const resolved = consensusBraidAgreementResolution(
-      knotIndex,
-      braid.knots.length,
-      recallConvergence,
+    const binding = evidenceBindings.find(
+      (candidate) => candidate.knotIndex === knotIndex,
     );
+    const evidenceResolution = binding
+      ? recall?.evidence?.[binding.evidenceIndex]?.convergence
+      : undefined;
+    const resolved = typeof evidenceResolution === 'number'
+      && Number.isFinite(evidenceResolution)
+      ? Math.max(0, Math.min(1, evidenceResolution))
+      : consensusBraidAgreementResolution(
+        knotIndex,
+        braid.knots.length,
+        recallConvergence,
+      );
     const recallAlpha = recall?.role === 'target'
       ? knot.alpha * recallStrength * (0.12 + resolved * 0.88) * life
       : 0;

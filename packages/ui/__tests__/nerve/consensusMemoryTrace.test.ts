@@ -132,6 +132,10 @@ describe('planConsensusMemoryTrace', () => {
     expect(plan.retainedInputIds).toEqual([1, 2]);
     expect(plan.retainedOutputIds).toEqual([5]);
     expect(plan.sourceKind).toBe('input');
+    expect(plan.sourceEvidence).toEqual([
+      { id: 1, contentHash: cell(1).content_hash },
+      { id: 2, contentHash: cell(2).content_hash },
+    ]);
     expect(plan.witnessIds).toEqual([]);
     expect(plan.pulses.map((pulse) => pulse.path)).toEqual([
       [1, 3, 5],
@@ -225,6 +229,10 @@ describe('planConsensusMemoryTrace', () => {
     expect(focus).not.toBeNull();
     expect(focus?.sourceKind).toBe('input');
     expect(new Set(focus?.sources.map((source) => source.id))).toEqual(new Set([1, 2]));
+    expect(focus?.sources.map((source) => source.contentHash)).toEqual([
+      cell(focus!.sources[0].id).content_hash,
+      cell(focus!.sources[1].id).content_hash,
+    ]);
     expect(focus!.sources[0].startsAtSec).toBeLessThan(focus!.sources[1].startsAtSec);
     expect(focus?.routedSourceCount).toBe(2);
     expect(focus?.targetIds).toEqual([5]);
@@ -281,6 +289,9 @@ describe('planConsensusMemoryTrace', () => {
     );
     expect(resolvedTarget?.role).toBe('target');
     expect(resolvedTarget?.convergence).toBeCloseTo(1);
+    expect(resolvedTarget?.evidence).toHaveLength(2);
+    expect(resolvedTarget?.evidence?.every((source) => source.convergence === 1))
+      .toBe(true);
     expect(resolvedTarget?.phase).toBeGreaterThanOrEqual(0);
     expect(resolvedTarget?.phase).toBeLessThan(1);
     expect(consensusMemoryCellResponse(focus, 999, sourceMidpoint)).toBeNull();
@@ -309,11 +320,18 @@ describe('planConsensusMemoryTrace', () => {
       sourceCount: 2,
       arrivedSourceCount: 0,
       resolvedSourceCount: 0,
+      evidence: [
+        expect.objectContaining({ ordinal: 1, state: 'routing' }),
+        expect.objectContaining({ ordinal: 2, state: 'routing' }),
+      ],
     });
     expect(consensusMemoryTraceReadout(focus, 5, firstArrival)).toMatchObject({
       stage: 'converging',
       arrivedSourceCount: 1,
       resolvedSourceCount: 0,
+      evidence: expect.arrayContaining([
+        expect.objectContaining({ state: 'arrived' }),
+      ]),
     });
     expect(consensusMemoryTraceReadout(
       focus,
@@ -323,6 +341,10 @@ describe('planConsensusMemoryTrace', () => {
       stage: 'locked',
       arrivedSourceCount: 2,
       resolvedSourceCount: 2,
+      evidence: [
+        expect.objectContaining({ state: 'resolved' }),
+        expect.objectContaining({ state: 'resolved' }),
+      ],
     });
     expect(consensusMemoryTraceReadout(focus, 999, firstArrival)).toBeNull();
     expect(consensusMemoryTraceReadout(focus, 5, focus.endsAtSec)).toBeNull();

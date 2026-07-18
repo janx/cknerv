@@ -59,6 +59,7 @@ export * from './derives/cellConsensusIdentity.derive';
 export * from './derives/consensusBraid.derive';
 export * from './derives/consensusFlow.derive';
 export * from './derives/consensusMemoryPortrait.derive';
+export * from './derives/consensusMemoryEvidence.derive';
 export * from './derives/cellsStats.derive';
 export * from './derives/eventStreamLines';
 export * from './derives/peers.derive';
@@ -155,6 +156,10 @@ export {
   type ConsensusMemoryTraceStage,
   type ConsensusMemoryCellResponse,
   type ConsensusMemoryCellResponseRef,
+  type ConsensusMemoryEvidenceResponse,
+  type ConsensusMemoryEvidenceState,
+  type ConsensusMemorySourceEvidence,
+  type ConsensusMemoryTraceEvidence,
   type ConsensusMemoryTargetResponse,
   type ConsensusPulseMode,
 } from './nerve/consensusMemoryTrace';

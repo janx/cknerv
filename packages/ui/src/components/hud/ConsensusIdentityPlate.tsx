@@ -1,6 +1,11 @@
 import type { CSSProperties } from 'react';
 import type { CellConsensusIdentity } from '../../derives/cellConsensusIdentity.derive';
 import type { ConsensusBraidField } from '../../derives/consensusBraid.derive';
+import {
+  consensusMemoryEvidenceBindings,
+  consensusMemoryEvidenceCssColor,
+  consensusMemoryEvidenceFingerprint,
+} from '../../derives/consensusMemoryEvidence.derive';
 import type {
   ConsensusMemoryTraceReadout,
   ConsensusMemoryTraceSource,
@@ -152,9 +157,101 @@ function IdentityBraid({ identity, reducedMotion, traceSelected }: {
   );
 }
 
-function MemoryReadState({ readout, reducedMotion }: {
+function EvidenceLedger({
+  readout,
+  targetContentHash,
+  agreementCount,
+}: {
+  readout: ConsensusMemoryTraceReadout;
+  targetContentHash: string;
+  agreementCount: number;
+}) {
+  const bindings = consensusMemoryEvidenceBindings(
+    targetContentHash,
+    readout.evidence,
+    agreementCount,
+  );
+  const evidenceLabel = readout.sourceKind === 'input'
+    ? 'RETAINED INPUTS'
+    : 'LINEAGE WITNESSES';
+
+  return (
+    <div
+      data-memory-evidence-ledger="true"
+      style={{ marginTop: 5, paddingTop: 4, borderTop: `1px solid ${CYAN}18` }}
+    >
+      <div style={{ display: 'flex', alignItems: 'baseline', marginBottom: 2 }}>
+        <span style={{ fontFamily: HUD_FONTS.tech, fontSize: 6.8, letterSpacing: 0.85, color: HUD_COLORS.dim }}>
+          {evidenceLabel}
+        </span>
+        <span style={{ marginLeft: 'auto', fontFamily: HUD_FONTS.mono, fontSize: 6.7, letterSpacing: 0.45, color: CYAN, opacity: 0.68 }}>
+          EVIDENCE → AGREEMENT
+        </span>
+      </div>
+      {bindings.map((binding) => {
+        const evidence = readout.evidence[binding.evidenceIndex];
+        const sourceColor = consensusMemoryEvidenceCssColor(binding.evidenceIndex);
+        const resolved = evidence.state === 'resolved';
+        const stateCopy = resolved
+          ? 'VERIFIED'
+          : evidence.state === 'arrived'
+            ? 'ARRIVED'
+            : 'ROUTING';
+        const stateColor = resolved
+          ? LOCKED_GOLD
+          : evidence.state === 'arrived'
+            ? '#C9F8FF'
+            : sourceColor;
+        return (
+          <div
+            key={evidence.sourceId}
+            data-memory-evidence={evidence.ordinal}
+            data-memory-evidence-source={evidence.sourceId}
+            data-memory-evidence-knot={binding.knotIndex + 1}
+            data-memory-evidence-state={evidence.state}
+            title={evidence.contentHash}
+            style={{
+              display: 'grid',
+              gridTemplateColumns: '25px minmax(0, 1fr) auto',
+              alignItems: 'baseline',
+              minHeight: 13,
+              borderLeft: `1px solid ${sourceColor}88`,
+              paddingLeft: 4,
+              fontFamily: HUD_FONTS.mono,
+              whiteSpace: 'nowrap',
+            }}
+          >
+            <span style={{ fontSize: 7.2, color: sourceColor }}>
+              E{String(evidence.ordinal).padStart(2, '0')}
+            </span>
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', fontSize: 7.3, letterSpacing: 0.22, color: HUD_COLORS.ink }}>
+              {consensusMemoryEvidenceFingerprint(evidence.contentHash)}
+            </span>
+            <span style={{ display: 'flex', alignItems: 'baseline', gap: 4, fontSize: 6.8, letterSpacing: 0.35 }}>
+              <span style={{ color: sourceColor }}>
+                ◇K{String(binding.knotIndex + 1).padStart(2, '0')}
+              </span>
+              <span style={{ color: stateColor }}>
+                {stateCopy}
+              </span>
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function MemoryReadState({
+  readout,
+  reducedMotion,
+  targetContentHash,
+  agreementCount,
+}: {
   readout: ConsensusMemoryTraceReadout;
   reducedMotion: boolean;
+  targetContentHash: string;
+  agreementCount: number;
 }) {
   const activeIndex = MEMORY_READ_STAGES.findIndex(
     ({ stage }) => stage === readout.stage,
@@ -237,6 +334,11 @@ function MemoryReadState({ readout, reducedMotion }: {
           {summary[1]}
         </span>
       </div>
+      <EvidenceLedger
+        readout={readout}
+        targetContentHash={targetContentHash}
+        agreementCount={agreementCount}
+      />
     </div>
   );
 }
@@ -256,6 +358,7 @@ export default function ConsensusIdentityPlate({
   traceSource = 'none',
   traceSelected = false,
   traceReadout = null,
+  agreementCount,
 }: {
   identity: CellConsensusIdentity;
   reveal: number;
@@ -271,6 +374,7 @@ export default function ConsensusIdentityPlate({
   traceSource?: ConsensusMemoryTraceSource;
   traceSelected?: boolean;
   traceReadout?: ConsensusMemoryTraceReadout | null;
+  agreementCount: number;
 }) {
   const observed = identity.observedWrite;
   const lifecycleColor = identity.lifecycle === 'live'
@@ -342,7 +446,12 @@ export default function ConsensusIdentityPlate({
           {statusText}
         </span>
         {traceSelected && traceReadout ? (
-          <MemoryReadState readout={traceReadout} reducedMotion={reducedMotion} />
+          <MemoryReadState
+            readout={traceReadout}
+            reducedMotion={reducedMotion}
+            targetContentHash={identity.contentHash}
+            agreementCount={agreementCount}
+          />
         ) : null}
         {observed && onRecallWrite ? (
           <button

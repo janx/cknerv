@@ -240,6 +240,7 @@ export default function CellDetailPanel({
         traceSource={traceSource}
         traceSelected={identity.observedWrite?.seq === tracedWriteSeq}
         traceReadout={traceReadout}
+        agreementCount={agreementTarget}
       />
     </HudPanel>
   );

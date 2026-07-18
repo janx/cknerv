@@ -11,16 +11,34 @@ import type {
 
 const readout = (
   overrides: Partial<ConsensusMemoryTraceReadout> = {},
-): ConsensusMemoryTraceReadout => ({
-  key: '7:5:1',
-  targetCellId: 5,
-  sourceKind: 'witness',
-  stage: 'reading',
-  sourceCount: 2,
-  arrivedSourceCount: 0,
-  resolvedSourceCount: 0,
-  ...overrides,
-});
+): ConsensusMemoryTraceReadout => {
+  const value = {
+    key: '7:5:1',
+    targetCellId: 5,
+    sourceKind: 'witness' as const,
+    stage: 'reading' as const,
+    sourceCount: 2,
+    arrivedSourceCount: 0,
+    resolvedSourceCount: 0,
+    ...overrides,
+  };
+  return {
+    ...value,
+    evidence: overrides.evidence ?? Array.from(
+      { length: value.sourceCount },
+      (_, index) => ({
+        sourceId: index + 1,
+        ordinal: index + 1,
+        contentHash: `0x${String(index + 1).repeat(64)}`,
+        state: index < value.resolvedSourceCount
+          ? 'resolved' as const
+          : index < value.arrivedSourceCount
+            ? 'arrived' as const
+            : 'routing' as const,
+      }),
+    ),
+  };
+};
 
 describe('consensusMemoryPortraitResponse', () => {
   it('uses the main Canvas frame response without altering its clock', () => {
@@ -55,6 +73,9 @@ describe('consensusMemoryPortraitResponse', () => {
       role: 'target',
       phase: 0.88,
       convergence: 1,
+      evidence: expect.arrayContaining([
+        expect.objectContaining({ convergence: 1 }),
+      ]),
     });
     expect(consensusMemoryPortraitResponse(null, null)).toBeNull();
   });

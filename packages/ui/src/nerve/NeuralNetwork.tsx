@@ -43,6 +43,7 @@ import {
   type ConsensusMemoryTraceRequest,
   type ConsensusMemoryCellResponse,
   type ConsensusMemoryCellResponseRef,
+  type ConsensusMemoryEvidenceResponse,
   type ConsensusMemoryTargetResponse,
   type ConsensusPulseMode,
 } from './consensusMemoryTrace';
@@ -250,6 +251,7 @@ export default function NeuralNetwork({
       strength: 0,
       phase: 0,
       convergence: 0,
+      evidence: [],
     },
   });
   const publishTraceTargetResponse = useCallback((
@@ -266,6 +268,21 @@ export default function NeuralNetwork({
     snapshot.response.strength = response.strength;
     snapshot.response.phase = response.phase;
     snapshot.response.convergence = response.convergence;
+    const evidence = snapshot.response.evidence as ConsensusMemoryEvidenceResponse[];
+    evidence.length = response.evidence?.length ?? 0;
+    response.evidence?.forEach((source, index) => {
+      const target = evidence[index] ?? {
+        sourceId: source.sourceId,
+        ordinal: source.ordinal,
+        contentHash: source.contentHash,
+        convergence: source.convergence,
+      };
+      target.sourceId = source.sourceId;
+      target.ordinal = source.ordinal;
+      target.contentHash = source.contentHash;
+      target.convergence = source.convergence;
+      evidence[index] = target;
+    });
     traceTargetResponseRef.current = snapshot;
   }, [traceTargetResponseRef]);
   const publishTraceReadout = useCallback((
@@ -280,6 +297,7 @@ export default function NeuralNetwork({
         readout.arrivedSourceCount,
         readout.resolvedSourceCount,
         readout.sourceCount,
+        ...readout.evidence.map((source) => `${source.sourceId}:${source.state}`),
       ].join(':')
       : 'none';
     if (traceReadoutSignatureRef.current === signature) return;
