@@ -4,6 +4,7 @@ import type { CellVisualDescriptor } from '../../src/derives/cellVisual.derive';
 import {
   CONSENSUS_BRAID_FIELDS,
   consensusBraidAgreementTarget,
+  consensusBraidAgreementResolution,
   consensusBraidBirthPhase,
   consensusBraidLayerOpacity,
   consensusBraidPresenceScale,
@@ -76,6 +77,18 @@ describe('canonical consensus braid mapping', () => {
       lockClass: 4,
       payload: 1,
     })).toBe(12);
+  });
+
+  it('resolves canonical agreement knots sequentially from shared convergence', () => {
+    expect(Array.from({ length: 4 }, (_, index) => (
+      consensusBraidAgreementResolution(index, 4, 0)
+    ))).toEqual([0, 0, 0, 0]);
+    expect(consensusBraidAgreementResolution(0, 4, 0.25)).toBe(1);
+    expect(consensusBraidAgreementResolution(1, 4, 0.25)).toBe(0);
+    expect(Array.from({ length: 4 }, (_, index) => (
+      consensusBraidAgreementResolution(index, 4, 1)
+    ))).toEqual([1, 1, 1, 1]);
+    expect(consensusBraidAgreementResolution(0, 0, 1)).toBe(0);
   });
 
   it('resolves one stable full-density agreement constellation', () => {

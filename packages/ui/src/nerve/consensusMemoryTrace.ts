@@ -112,6 +112,16 @@ export interface ConsensusMemoryCellResponse {
   convergence: number;
 }
 
+export interface ConsensusMemoryTargetResponse {
+  targetCellId: number;
+  response: ConsensusMemoryCellResponse;
+}
+
+/** Shared imperative lane for frame-level target visuals across Canvas roots. */
+export interface ConsensusMemoryCellResponseRef {
+  current: ConsensusMemoryTargetResponse | null;
+}
+
 export type ConsensusMemoryTraceStage = 'reading' | 'converging' | 'locked';
 
 /**

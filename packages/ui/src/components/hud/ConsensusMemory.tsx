@@ -7,8 +7,13 @@ import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 import type { Cell } from '@cknerv/types';
 import { deriveCellVisual } from '../../derives/cellVisual.derive';
 import {
+  consensusMemoryPortraitLayerOpacity,
+  consensusMemoryPortraitResponse,
+} from '../../derives/consensusMemoryPortrait.derive';
+import {
   CONSENSUS_BRAID_PALETTE,
   CONSENSUS_BRAID_TAU,
+  consensusBraidAgreementResolution,
   consensusBraidContributorColor,
   consensusBraidLayerOpacity,
   consensusBraidPoint,
@@ -16,6 +21,10 @@ import {
   type ConsensusBraidField,
   type ConsensusBraidSpec,
 } from '../../derives/consensusBraid.derive';
+import type {
+  ConsensusMemoryCellResponseRef,
+  ConsensusMemoryTraceReadout,
+} from '../../nerve/consensusMemoryTrace';
 
 const TAU = CONSENSUS_BRAID_TAU;
 const MAX_PACKETS = 14;
@@ -25,6 +34,12 @@ const PACKET_TANGENT = new THREE.Vector3();
 const PACKET_QUATERNION = new THREE.Quaternion();
 const PACKET_SCALE = new THREE.Vector3();
 const X_AXIS = new THREE.Vector3(1, 0, 0);
+const READ_HEAD_TRAIL = 5;
+const READ_HEAD_MATRIX = new THREE.Matrix4();
+const READ_HEAD_POSITION = new THREE.Vector3();
+const READ_HEAD_TANGENT = new THREE.Vector3();
+const READ_HEAD_QUATERNION = new THREE.Quaternion();
+const READ_HEAD_SCALE = new THREE.Vector3();
 
 function makeLineMaterial(width: number, opacity: number): LineMaterial {
   const material = new LineMaterial({
@@ -45,13 +60,21 @@ export default function ConsensusMemory({
   cell,
   reducedMotion,
   focusField = null,
+  traceReadout = null,
+  traceResponseRef,
 }: {
   cell: Cell;
   reducedMotion: boolean;
   focusField?: ConsensusBraidField | null;
+  traceReadout?: ConsensusMemoryTraceReadout | null;
+  traceResponseRef?: ConsensusMemoryCellResponseRef;
 }) {
   const rootRef = useRef<THREE.Group>(null);
   const packetsRef = useRef<THREE.InstancedMesh>(null);
+  const readHeadsRef = useRef<THREE.InstancedMesh>(null);
+  const recallStrengthRef = useRef(0);
+  const recallConvergenceRef = useRef(0);
+  const recallPhaseRef = useRef(0);
   const visual = useMemo(() => deriveCellVisual(cell), [cell]);
   const built = useMemo(() => {
     const topology = deriveConsensusBraidTopology(visual, cell.birth_block);
@@ -254,6 +277,15 @@ export default function ConsensusMemory({
       depthWrite: false,
       toneMapped: false,
     });
+    const readHeadGeometry = new THREE.OctahedronGeometry(0.048, 0);
+    const readHeadMaterial = new THREE.MeshBasicMaterial({
+      color: new THREE.Color(...CONSENSUS_BRAID_PALETTE.cyan),
+      transparent: true,
+      opacity: 0,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      toneMapped: false,
+    });
     return {
       specs,
       presenceScale: topology.presenceScale,
@@ -271,15 +303,19 @@ export default function ConsensusMemory({
       stitchGlow,
       stitchCore,
       agreementGeometry,
+      agreementBaseColors: new Float32Array(agreementColors),
       agreementGlowMaterial,
       agreementCoreMaterial,
       agreementGlow,
       agreementCore,
       knotGeometry,
+      knotBaseColors: new Float32Array(knotColors),
       knotGlowMaterial,
       knotCoreMaterial,
       packetGeometry,
       packetMaterial,
+      readHeadGeometry,
+      readHeadMaterial,
     };
   }, [cell.birth_block, visual]);
 
@@ -318,10 +354,33 @@ export default function ConsensusMemory({
       material.resolution.set(state.size.width, state.size.height);
     }
 
-    const target = consensusBraidLayerOpacity(focusField, built.specs.length);
     const blend = reducedMotion
       ? 1
       : 1 - Math.exp(-Math.min(0.1, deltaSeconds) * 11);
+    const frameTarget = traceResponseRef?.current ?? null;
+    const response = consensusMemoryPortraitResponse(
+      traceResponseRef ? null : traceReadout,
+      frameTarget?.targetCellId === cell.id ? frameTarget.response : null,
+    );
+    const responseStrength = Math.max(0, Math.min(1, response?.strength ?? 0));
+    const responseConvergence = Math.max(
+      0,
+      Math.min(1, response?.convergence ?? 0),
+    );
+    recallStrengthRef.current += (
+      responseStrength - recallStrengthRef.current
+    ) * blend;
+    recallConvergenceRef.current += (
+      responseConvergence - recallConvergenceRef.current
+    ) * blend;
+    if (response) recallPhaseRef.current = response.phase;
+    const recallStrength = recallStrengthRef.current;
+    const recallConvergence = recallConvergenceRef.current;
+    const target = consensusMemoryPortraitLayerOpacity(
+      consensusBraidLayerOpacity(focusField, built.specs.length),
+      recallStrength,
+      recallConvergence,
+    );
     const approach = (material: { opacity: number }, opacity: number) => {
       material.opacity += (opacity - material.opacity) * blend;
     };
@@ -336,11 +395,119 @@ export default function ConsensusMemory({
     approach(built.knotCoreMaterial, target.knotCore * life);
     approach(built.packetMaterial, target.packet * life);
 
+    // The exact canonical agreements used by production A turn from cold
+    // addressable evidence into pale-gold verified knots in sequence.
+    const agreementColorAttribute = built.agreementGeometry.getAttribute(
+      'instanceColorStart',
+    ) as THREE.InterleavedBufferAttribute | undefined;
+    const agreementColors = agreementColorAttribute?.data.array as
+      | Float32Array
+      | undefined;
+    const agreementCount = Math.floor(built.agreementBaseColors.length / 6);
+    if (
+      agreementColorAttribute
+      && agreementColors
+      && agreementColors.length === built.agreementBaseColors.length
+    ) {
+      for (let index = 0; index < agreementCount; index += 1) {
+        const resolved = consensusBraidAgreementResolution(
+          index,
+          agreementCount,
+          recallConvergence,
+        );
+        const memoryMix = recallStrength * (0.72 + resolved * 0.28);
+        for (let endpoint = 0; endpoint < 2; endpoint += 1) {
+          for (let channel = 0; channel < 3; channel += 1) {
+            const offset = index * 6 + endpoint * 3 + channel;
+            const cold = CONSENSUS_BRAID_PALETTE.cyan[channel];
+            const gold = CONSENSUS_BRAID_PALETTE.paleGold[channel];
+            const memoryColor = cold + (gold - cold) * resolved;
+            const colorTarget = built.agreementBaseColors[offset]
+              + (memoryColor - built.agreementBaseColors[offset]) * memoryMix;
+            agreementColors[offset] += (colorTarget - agreementColors[offset]) * blend;
+          }
+        }
+      }
+      agreementColorAttribute.data.needsUpdate = true;
+    }
+
+    const knotColorAttribute = built.knotGeometry.getAttribute(
+      'color',
+    ) as THREE.BufferAttribute;
+    const knotColors = knotColorAttribute.array as Float32Array;
+    const knotCount = Math.floor(built.knotBaseColors.length / 3);
+    for (let index = 0; index < knotCount; index += 1) {
+      const resolved = consensusBraidAgreementResolution(
+        index,
+        knotCount,
+        recallConvergence,
+      );
+      const memoryMix = recallStrength * (0.78 + resolved * 0.22);
+      for (let channel = 0; channel < 3; channel += 1) {
+        const offset = index * 3 + channel;
+        const cold = CONSENSUS_BRAID_PALETTE.cyan[channel];
+        const gold = CONSENSUS_BRAID_PALETTE.paleGold[channel];
+        const memoryColor = cold + (gold - cold) * resolved;
+        const colorTarget = built.knotBaseColors[offset]
+          + (memoryColor - built.knotBaseColors[offset]) * memoryMix;
+        knotColors[offset] += (colorTarget - knotColors[offset]) * blend;
+      }
+    }
+    knotColorAttribute.needsUpdate = knotCount > 0;
+    built.knotGlowMaterial.size = 0.058 * (
+      1 + recallStrength * (0.1 + recallConvergence * 0.42)
+    );
+    built.knotCoreMaterial.size = 0.014 * (
+      1 + recallStrength * (0.18 + recallConvergence * 0.82)
+    );
+
+    // One flattened read head traverses the same contributor order used by
+    // the production buffer writer. A short lozenge trail makes the scan
+    // legible at portrait scale without adding a second topology.
+    const readHeads = readHeadsRef.current;
+    const scanEnergy = recallStrength * (1 - recallConvergence * 0.9);
+    if (readHeads && built.specs.length > 0 && scanEnergy > 0.01) {
+      readHeads.count = READ_HEAD_TRAIL;
+      built.readHeadMaterial.opacity = Math.min(1, scanEnergy * 0.96);
+      for (let trail = 0; trail < READ_HEAD_TRAIL; trail += 1) {
+        const unit = (
+          recallPhaseRef.current - trail * 0.012 + 1
+        ) % 1;
+        const flattened = unit * built.specs.length;
+        const strand = Math.min(
+          built.specs.length - 1,
+          Math.floor(flattened),
+        );
+        const t = (flattened - strand) * TAU;
+        const spec = built.specs[strand];
+        consensusBraidPoint(spec, t, READ_HEAD_POSITION);
+        consensusBraidPoint(spec, t + 0.003, READ_HEAD_TANGENT)
+          .sub(READ_HEAD_POSITION)
+          .normalize();
+        READ_HEAD_QUATERNION.setFromUnitVectors(X_AXIS, READ_HEAD_TANGENT);
+        const tailScale = 1 - trail / (READ_HEAD_TRAIL + 0.25);
+        READ_HEAD_SCALE.set(2.15, 0.72, 0.72).multiplyScalar(tailScale);
+        READ_HEAD_MATRIX.compose(
+          READ_HEAD_POSITION,
+          READ_HEAD_QUATERNION,
+          READ_HEAD_SCALE,
+        );
+        readHeads.setMatrixAt(trail, READ_HEAD_MATRIX);
+      }
+      readHeads.instanceMatrix.needsUpdate = true;
+    } else if (readHeads) {
+      readHeads.count = 0;
+      built.readHeadMaterial.opacity = 0;
+    }
+
     if (rootRef.current) {
       rootRef.current.rotation.y = (visual.seeds[2] - 0.5) * 0.34
         + Math.sin(time * 0.12) * 0.12;
       rootRef.current.rotation.x = (visual.seeds[0] - 0.5) * 0.24;
-      const statePulse = focusField === 'state' && life === 1 && !reducedMotion
+      const statePulse = focusField === 'state'
+        && recallStrength < 0.01
+        && life === 1
+        && !reducedMotion
         ? 1 + Math.sin(time * 2.2) * 0.025
         : 1;
       rootRef.current.scale.setScalar(presence * statePulse);
@@ -383,6 +550,8 @@ export default function ConsensusMemory({
     built.knotCoreMaterial.dispose();
     built.packetGeometry.dispose();
     built.packetMaterial.dispose();
+    built.readHeadGeometry.dispose();
+    built.readHeadMaterial.dispose();
   }, [built]);
 
   return (
@@ -415,6 +584,12 @@ export default function ConsensusMemory({
         args={[built.packetGeometry, built.packetMaterial, MAX_PACKETS]}
         frustumCulled={false}
         renderOrder={8}
+      />
+      <instancedMesh
+        ref={readHeadsRef}
+        args={[built.readHeadGeometry, built.readHeadMaterial, READ_HEAD_TRAIL]}
+        frustumCulled={false}
+        renderOrder={9}
       />
     </group>
   );

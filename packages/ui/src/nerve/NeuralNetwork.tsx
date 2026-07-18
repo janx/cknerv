@@ -41,6 +41,9 @@ import {
   type ConsensusMemoryTraceFocus,
   type ConsensusMemoryTraceReadout,
   type ConsensusMemoryTraceRequest,
+  type ConsensusMemoryCellResponse,
+  type ConsensusMemoryCellResponseRef,
+  type ConsensusMemoryTargetResponse,
   type ConsensusPulseMode,
 } from './consensusMemoryTrace';
 import ConsensusMemoryMarkers from './ConsensusMemoryMarkers';
@@ -99,6 +102,8 @@ interface NeuralNetworkProps {
    * This is intentionally low-frequency: frame-level convergence stays in R3F.
    */
   onTraceReadoutChange?: (readout: ConsensusMemoryTraceReadout | null) => void;
+  /** Frame-level target response shared with secondary render roots. */
+  traceTargetResponseRef?: ConsensusMemoryCellResponseRef;
 }
 
 interface ActivePulse extends Pulse {
@@ -119,6 +124,7 @@ export default function NeuralNetwork({
   traceMaxPulses,
   onTraceComplete,
   onTraceReadoutChange,
+  traceTargetResponseRef,
 }: NeuralNetworkProps = {}) {
   const simClock = useSimClock();
   const cellsCache = useCellGalaxy();
@@ -237,6 +243,31 @@ export default function NeuralNetwork({
   const traceFocusRef = useRef<ConsensusMemoryTraceFocus | null>(null);
   const [traceFocus, setTraceFocus] = useState<ConsensusMemoryTraceFocus | null>(null);
   const traceReadoutSignatureRef = useRef('none');
+  const traceTargetSnapshotRef = useRef<ConsensusMemoryTargetResponse>({
+    targetCellId: -1,
+    response: {
+      role: 'target',
+      strength: 0,
+      phase: 0,
+      convergence: 0,
+    },
+  });
+  const publishTraceTargetResponse = useCallback((
+    targetCellId: number | null,
+    response: ConsensusMemoryCellResponse | null,
+  ) => {
+    if (!traceTargetResponseRef) return;
+    if (targetCellId === null || response?.role !== 'target') {
+      traceTargetResponseRef.current = null;
+      return;
+    }
+    const snapshot = traceTargetSnapshotRef.current;
+    snapshot.targetCellId = targetCellId;
+    snapshot.response.strength = response.strength;
+    snapshot.response.phase = response.phase;
+    snapshot.response.convergence = response.convergence;
+    traceTargetResponseRef.current = snapshot;
+  }, [traceTargetResponseRef]);
   const publishTraceReadout = useCallback((
     readout: ConsensusMemoryTraceReadout | null,
   ) => {
@@ -257,7 +288,8 @@ export default function NeuralNetwork({
   }, [onTraceReadoutChange]);
   useEffect(() => () => {
     if (sharedTraceFocusRef) sharedTraceFocusRef.current = null;
-  }, [sharedTraceFocusRef]);
+    publishTraceTargetResponse(null, null);
+  }, [publishTraceTargetResponse, sharedTraceFocusRef]);
   useEffect(() => {
     if (!traceRequest) {
       pulsesRef.current = pulsesRef.current.filter((pulse) => pulse.mode !== 'memory');
@@ -265,6 +297,7 @@ export default function NeuralNetwork({
       activeTraceRequestRef.current = null;
       traceFocusRef.current = null;
       if (sharedTraceFocusRef) sharedTraceFocusRef.current = null;
+      publishTraceTargetResponse(null, null);
       setTraceFocus(null);
       publishTraceReadout(null);
       return;
@@ -282,6 +315,7 @@ export default function NeuralNetwork({
     if (!link) {
       traceFocusRef.current = null;
       if (sharedTraceFocusRef) sharedTraceFocusRef.current = null;
+      publishTraceTargetResponse(null, null);
       setTraceFocus(null);
       publishTraceReadout(null);
       onTraceComplete?.(traceRequest);
@@ -304,12 +338,17 @@ export default function NeuralNetwork({
     if (sharedTraceFocusRef) sharedTraceFocusRef.current = focus;
     setTraceFocus(focus);
     if (!focus) {
+      publishTraceTargetResponse(null, null);
       publishTraceReadout(null);
       onTraceComplete?.(traceRequest);
       return;
     }
     activeTraceRequestRef.current = traceRequest;
     const targetCellId = traceRequest.targetCellId ?? focus.targetIds[0];
+    const initialTargetResponse = targetCellId === undefined
+      ? null
+      : consensusMemoryCellResponse(focus, targetCellId, startSec);
+    publishTraceTargetResponse(targetCellId ?? null, initialTargetResponse);
     publishTraceReadout(targetCellId === undefined
       ? null
       : consensusMemoryTraceReadout(focus, targetCellId, startSec));
@@ -337,6 +376,7 @@ export default function NeuralNetwork({
     particleCapMul,
     onTraceComplete,
     publishTraceReadout,
+    publishTraceTargetResponse,
     sharedTraceFocusRef,
   ]);
 
@@ -381,6 +421,7 @@ export default function NeuralNetwork({
       activeTraceRequestRef.current = null;
       traceFocusRef.current = null;
       if (sharedTraceFocusRef) sharedTraceFocusRef.current = null;
+      publishTraceTargetResponse(null, null);
       setTraceFocus(null);
       publishTraceReadout(null);
       if (completedRequest) onTraceComplete?.(completedRequest);
@@ -389,7 +430,15 @@ export default function NeuralNetwork({
     const currentRequest = activeTraceRequestRef.current;
     const readoutTargetId = currentRequest?.targetCellId
       ?? currentFocus?.targetIds[0];
+    let currentTargetResponse: ConsensusMemoryCellResponse | null = null;
     if (currentFocus && readoutTargetId !== undefined) {
+      const response = consensusMemoryCellResponse(
+        currentFocus,
+        readoutTargetId,
+        now,
+      );
+      currentTargetResponse = response?.role === 'target' ? response : null;
+      publishTraceTargetResponse(readoutTargetId, currentTargetResponse);
       publishTraceReadout(consensusMemoryTraceReadout(
         currentFocus,
         readoutTargetId,
@@ -448,11 +497,9 @@ export default function NeuralNetwork({
           );
           if (resonance > 0) {
             stillActive.push(pulse);
-            const targetResponse = consensusMemoryCellResponse(
-              activeFocus,
-              term,
-              now,
-            );
+            const targetResponse = term === readoutTargetId
+              ? currentTargetResponse
+              : consensusMemoryCellResponse(activeFocus, term, now);
             const handoffScale = consensusMemoryRouteHandoffScale(
               targetResponse?.role === 'target'
                 ? targetResponse.convergence

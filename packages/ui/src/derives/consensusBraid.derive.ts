@@ -81,6 +81,25 @@ export function consensusBraidAgreementTarget(
   return contributorPairs * (1 + Math.round(visual.payload * 2));
 }
 
+/** Shared sequential agreement envelope for production LOD and portrait A. */
+export function consensusBraidAgreementResolution(
+  agreementIndex: number,
+  agreementCount: number,
+  convergence: number,
+): number {
+  if (
+    !Number.isFinite(agreementIndex)
+    || !Number.isFinite(agreementCount)
+    || !Number.isFinite(convergence)
+    || agreementCount <= 0
+  ) return 0;
+  const threshold = (Math.max(0, agreementIndex) + 1) / agreementCount;
+  const start = Math.max(0, threshold - 0.22);
+  const width = Math.max(1e-6, threshold - start);
+  const t = Math.max(0, Math.min(1, (convergence - start) / width));
+  return t * t * (3 - 2 * t);
+}
+
 /** Capacity becomes a restrained, bounded physical presence in both views. */
 export function consensusBraidPresenceScale(mass: number): number {
   const boundedMass = Math.max(0.84, Math.min(1.2, mass));
