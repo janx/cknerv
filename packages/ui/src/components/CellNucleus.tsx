@@ -31,6 +31,7 @@ import { useSimClock } from '../tweaks/SimClockScope';
 import { useConsensusMemoryFocusRef } from '../hooks/consensusMemoryFocusContext';
 import {
   consensusMemoryCellResponse,
+  consensusMemoryRouteHopCellFocus,
   type ConsensusMemoryCellResponse,
 } from '../nerve/consensusMemoryTrace';
 
@@ -213,7 +214,10 @@ export default function CellNucleus({
     const hoveredCellId = hoveredCellIdRef.current;
     const recallFocus = recallFocusRef?.current ?? null;
     const previousRecallKey = lastRecallKey.current;
-    const recallKey = recallFocus?.key ?? null;
+    const routeHopFocus = recallFocus?.routeHopFocus ?? null;
+    const recallKey = recallFocus
+      ? `${recallFocus.key}:${routeHopFocus?.sourceId ?? '-'}:${routeHopFocus?.hopIndex ?? '-'}`
+      : null;
     const recallChanged = recallKey !== previousRecallKey;
     const recallNeedsWrite = recallFocus !== null || previousRecallKey !== null;
     lastRecallKey.current = recallKey;
@@ -244,8 +248,21 @@ export default function CellNucleus({
     if (hoveredCellId !== null && !focusByCell.current.has(hoveredCellId)) {
       focusByCell.current.set(hoveredCellId, 0);
     }
+    if (
+      routeHopFocus !== null
+      && !focusByCell.current.has(routeHopFocus.cellId)
+    ) {
+      focusByCell.current.set(routeHopFocus.cellId, 0);
+    }
     for (const [cellId, current] of focusByCell.current) {
-      const target = cellFocusTarget(cellId, selectedCellId, hoveredCellId);
+      const target = Math.max(
+        cellFocusTarget(cellId, selectedCellId, hoveredCellId),
+        consensusMemoryRouteHopCellFocus(
+          recallFocus,
+          cellId,
+          simClock.elapsedSec,
+        ),
+      );
       const next = dampCellFocus(current, target, deltaSeconds);
       if (next === 0 && target === 0) focusByCell.current.delete(cellId);
       else focusByCell.current.set(cellId, next);
@@ -312,11 +329,54 @@ export default function CellNucleus({
           });
         }
       }
+      // Quality presets may draw only a prefix of the retained Cell cache.
+      // A verified ledger hop still gets its canonical A braid even when its
+      // base sprite falls outside that prefix; this does not increase the
+      // shared Points draw range or invent a surrogate Cell.
+      const routeHopIndex = routeHopFocus === null
+        ? -1
+        : cells.findIndex((cell, index) => (
+          index >= count && cell.id === routeHopFocus.cellId
+        ));
+      if (routeHopIndex >= count) {
+        const cell = cells[routeHopIndex];
+        localPosition
+          .set(cell.pos_seed[0], cell.pos_seed[1], cell.pos_seed[2])
+          .applyMatrix4(groupMatrix);
+        const dist = localPosition.distanceTo(cameraPosition);
+        const cameraDetail = Math.max(
+          0,
+          Math.min(1, (FAR_DIST - dist) / (FAR_DIST - NEAR_DIST)),
+        );
+        const userFocus = focusByCell.current.get(cell.id) ?? 0;
+        const recall = recallByCell.get(cell.id) ?? null;
+        const recallDetailFocus = recall?.role === 'target' ? recall.strength : 0;
+        const focus = Math.max(userFocus, recallDetailFocus);
+        const interactionDetail = focus * (0.68 + cameraDetail * 0.32);
+        const detail = Math.max(cameraDetail, interactionDetail);
+        if (detail > 0.02) {
+          near.current.push({
+            cell,
+            index: routeHopIndex,
+            detail,
+            cameraDetail,
+            focus,
+            userFocus,
+            recall,
+            dist,
+          });
+        }
+      }
       near.current.sort((left, right) => (
-        right.focus - left.focus || left.dist - right.dist
+        Number(right.cell.id === routeHopFocus?.cellId)
+          - Number(left.cell.id === routeHopFocus?.cellId)
+        || right.focus - left.focus
+        || left.dist - right.dist
       ));
       if (near.current.length > nucleusNearCap) near.current.length = nucleusNearCap;
-      for (const entry of near.current) detailArray[entry.index] = entry.detail;
+      for (const entry of near.current) {
+        if (entry.index < count) detailArray[entry.index] = entry.detail;
+      }
       detailAttr.needsUpdate = true;
     } else if (focusNeedsWrite || recallNeedsWrite) {
       // Camera selection is cached between LOD ticks, but the semantic focus
@@ -330,7 +390,7 @@ export default function CellNucleus({
         entry.focus = Math.max(entry.userFocus, recallDetailFocus);
         const interactionDetail = entry.focus * (0.68 + entry.cameraDetail * 0.32);
         entry.detail = Math.max(entry.cameraDetail, interactionDetail);
-        detailArray[entry.index] = entry.detail;
+        if (entry.index < count) detailArray[entry.index] = entry.detail;
       }
       detailAttr.needsUpdate = true;
     }
@@ -339,7 +399,9 @@ export default function CellNucleus({
     // it only while an envelope is active, plus one final frame on release.
     if (focusNeedsWrite) {
       focusArray.fill(0, 0, count);
-      for (const entry of near.current) focusArray[entry.index] = entry.userFocus;
+      for (const entry of near.current) {
+        if (entry.index < count) focusArray[entry.index] = entry.userFocus;
+      }
       focusAttr.needsUpdate = true;
     }
 

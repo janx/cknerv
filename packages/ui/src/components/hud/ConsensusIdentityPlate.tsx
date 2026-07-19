@@ -7,11 +7,13 @@ import {
   consensusMemoryEvidenceFingerprint,
 } from '../../derives/consensusMemoryEvidence.derive';
 import type {
+  ConsensusMemoryRouteHopFocus,
   ConsensusMemoryTraceEvidence,
   ConsensusMemoryTraceReadout,
   ConsensusMemoryTraceSource,
   ConsensusMemoryTraceStage,
 } from '../../nerve/consensusMemoryTrace';
+import { deriveConsensusMemoryRouteHopFocus } from '../../nerve/consensusMemoryTrace';
 import { formatOutpoint } from './cellFormat';
 import { HUD_COLORS, HUD_FONTS } from './hudTheme';
 
@@ -55,14 +57,28 @@ function EvidenceRouteLedger({
   evidence,
   sourceColor,
   id,
+  readout,
+  focusedHop,
+  onHopFocusChange,
+  reducedMotion,
 }: {
   evidence: ConsensusMemoryTraceEvidence;
   sourceColor: string;
   id: string;
+  readout: ConsensusMemoryTraceReadout;
+  focusedHop: ConsensusMemoryRouteHopFocus | null;
+  onHopFocusChange?: (focus: ConsensusMemoryRouteHopFocus | null) => void;
+  reducedMotion: boolean;
 }) {
   const lastIndex = evidence.route.length - 1;
+  const focusedRouteHop = focusedHop?.traceKey === readout.key
+    && focusedHop.sourceId === evidence.sourceId
+    && focusedHop.targetCellId === evidence.route.at(-1)
+    && evidence.route[focusedHop.hopIndex] === focusedHop.cellId
+    ? focusedHop
+    : null;
   return (
-    <span
+    <div
       id={id}
       className="cknerv-memory-route-ledger"
       data-hud-occlusion="true"
@@ -109,8 +125,15 @@ function EvidenceRouteLedger({
         <span style={{ fontFamily: HUD_FONTS.tech, fontSize: 6.8, fontWeight: 700, letterSpacing: 0.9, color: sourceColor }}>
           ROUTE LEDGER
         </span>
-        <span style={{ marginLeft: 'auto', fontFamily: HUD_FONTS.mono, fontSize: 6.5, letterSpacing: 0.35, color: '#C9F8FF' }}>
-          {String(evidence.route.length).padStart(2, '0')} CELLS · H{String(evidence.hopCount).padStart(2, '0')}
+        <span
+          title={focusedRouteHop
+            ? `Hop ${focusedRouteHop.hopIndex}: Cell #${focusedRouteHop.cellId}`
+            : undefined}
+          style={{ marginLeft: 'auto', fontFamily: HUD_FONTS.mono, fontSize: 6.5, letterSpacing: 0.35, color: focusedRouteHop ? '#E8FCFF' : '#C9F8FF' }}
+        >
+          {focusedRouteHop
+            ? `H${String(focusedRouteHop.hopIndex).padStart(2, '0')} · CELL #${focusedRouteHop.cellId}`
+            : `${String(evidence.route.length).padStart(2, '0')} CELLS · H${String(evidence.hopCount).padStart(2, '0')}`}
         </span>
       </span>
       <span
@@ -149,6 +172,12 @@ function EvidenceRouteLedger({
             : role === 'target'
               ? 'T'
               : String(index).padStart(2, '0');
+          const hopFocus = deriveConsensusMemoryRouteHopFocus(
+            readout,
+            evidence.sourceId,
+            index,
+          );
+          const active = focusedRouteHop?.hopIndex === index;
           return (
             <span
               key={`${cellId}:${index}`}
@@ -159,29 +188,56 @@ function EvidenceRouteLedger({
                   →
                 </span>
               ) : null}
-              <span
+              <button
+                type="button"
+                aria-label={`Focus route hop ${index} of ${lastIndex}, ${role} Cell ${cellId}`}
+                aria-pressed={active}
                 data-memory-evidence-route-cell={cellId}
                 data-memory-evidence-route-hop={index}
                 data-memory-evidence-route-role={role}
+                data-memory-evidence-route-focus={active ? 'active' : 'idle'}
                 title={`Hop ${index}: Cell #${cellId} (${role})`}
+                disabled={!hopFocus || !onHopFocusChange}
+                onPointerEnter={() => onHopFocusChange?.(hopFocus)}
+                onPointerLeave={(event) => {
+                  if (
+                    typeof document !== 'undefined'
+                    && document.activeElement === event.currentTarget
+                  ) return;
+                  onHopFocusChange?.(null);
+                }}
+                onFocus={() => onHopFocusChange?.(hopFocus)}
+                onBlur={() => onHopFocusChange?.(null)}
+                onClick={() => onHopFocusChange?.(hopFocus)}
                 style={{
                   display: 'inline-flex',
                   alignItems: 'baseline',
                   gap: 2,
+                  margin: 0,
                   padding: '1px 2px',
-                  borderBottom: `1px solid ${nodeColor}66`,
-                  background: `${nodeColor}0b`,
-                  color: nodeColor,
+                  border: 0,
+                  borderBottom: `1px solid ${active ? sourceColor : `${nodeColor}66`}`,
+                  outline: active ? `1px solid ${sourceColor}88` : 'none',
+                  outlineOffset: 1,
+                  background: active ? `${sourceColor}24` : `${nodeColor}0b`,
+                  boxShadow: active ? `0 0 8px ${sourceColor}55` : undefined,
+                  font: 'inherit',
+                  lineHeight: 'inherit',
+                  color: active ? '#E8FCFF' : nodeColor,
+                  cursor: onHopFocusChange ? 'crosshair' : 'default',
+                  transition: reducedMotion
+                    ? undefined
+                    : 'color 120ms ease, background 120ms ease, box-shadow 120ms ease',
                 }}
               >
                 <span style={{ opacity: 0.64 }}>{indexCopy}</span>
                 <span>#{cellId}</span>
-              </span>
+              </button>
             </span>
           );
         })}
       </span>
-    </span>
+    </div>
   );
 }
 
@@ -306,6 +362,8 @@ function EvidenceLedger({
   reducedMotion,
   focusedSourceId,
   onFocusChange,
+  focusedHop,
+  onHopFocusChange,
 }: {
   readout: ConsensusMemoryTraceReadout;
   targetContentHash: string;
@@ -313,6 +371,8 @@ function EvidenceLedger({
   reducedMotion: boolean;
   focusedSourceId: number | null;
   onFocusChange?: (sourceId: number | null) => void;
+  focusedHop: ConsensusMemoryRouteHopFocus | null;
+  onHopFocusChange?: (focus: ConsensusMemoryRouteHopFocus | null) => void;
 }) {
   const [expandedEvidenceKey, setExpandedEvidenceKey] = useState<string | null>(null);
   const bindings = consensusMemoryEvidenceBindings(
@@ -373,31 +433,16 @@ function EvidenceLedger({
           onFocusChange?.(evidence.sourceId);
         };
         return (
-          <button
-            type="button"
+          <div
             key={evidence.sourceId}
-            aria-label={`Focus evidence ${String(evidence.ordinal).padStart(2, '0')}, source Cell ${evidence.sourceId}, ${evidence.hopCount} hops in ${routeDuration}, source ${evidence.sourceOutPoint.tx_hash}#${evidence.sourceOutPoint.index}, agreement knot ${String(binding.knotIndex + 1).padStart(2, '0')}; ${expanded ? 'collapse' : 'expand'} complete route`}
-            aria-pressed={active}
-            aria-expanded={expanded}
-            aria-controls={routeLedgerId}
-            data-memory-evidence={evidence.ordinal}
-            data-memory-evidence-source={evidence.sourceId}
-            data-memory-evidence-knot={binding.knotIndex + 1}
-            data-memory-evidence-state={evidence.state}
-            data-memory-evidence-focus={focusState}
-            data-memory-evidence-route={evidence.route.join('>')}
-            data-memory-evidence-route-hops={evidence.hopCount}
-            data-memory-evidence-route-duration-ms={evidence.routeDurationMs}
-            data-memory-evidence-source-outpoint={`${evidence.sourceOutPoint.tx_hash}#${evidence.sourceOutPoint.index}`}
-            title={`${evidence.contentHash} · ${evidence.sourceOutPoint.tx_hash}#${evidence.sourceOutPoint.index}`}
-            disabled={!onFocusChange}
-            onPointerEnter={activate}
+            data-memory-evidence-wrapper={evidence.ordinal}
             onPointerLeave={(event) => {
               if (typeof document === 'undefined') {
                 onFocusChange?.(null);
+                onHopFocusChange?.(null);
                 return;
               }
-              if (document.activeElement === event.currentTarget) return;
+              if (event.currentTarget.contains(document.activeElement)) return;
               const keyboardSourceId = Number(
                 (document.activeElement as HTMLElement | null)
                   ?.dataset.memoryEvidenceSource,
@@ -405,111 +450,145 @@ function EvidenceLedger({
               onFocusChange?.(
                 Number.isFinite(keyboardSourceId) ? keyboardSourceId : null,
               );
+              onHopFocusChange?.(null);
             }}
-            onFocus={activate}
-            onBlur={() => {
+            onBlur={(event) => {
+              const next = event.relatedTarget as Node | null;
+              if (next && event.currentTarget.contains(next)) return;
               setExpandedEvidenceKey((current) => (
                 current === evidenceKey ? null : current
               ));
               onFocusChange?.(null);
-            }}
-            onClick={(event) => {
-              if ((event.target as HTMLElement).closest(
-                '[data-memory-evidence-route-ledger="true"]',
-              )) return;
-              setExpandedEvidenceKey((current) => (
-                current === evidenceKey ? null : evidenceKey
-              ));
+              onHopFocusChange?.(null);
             }}
             onKeyDown={(event) => {
               if (event.key !== 'Escape' || !expanded) return;
               event.stopPropagation();
               setExpandedEvidenceKey(null);
+              onHopFocusChange?.(null);
+              event.currentTarget.querySelector<HTMLElement>(
+                '[data-memory-evidence]',
+              )?.focus();
             }}
             style={{
               position: 'relative',
-              display: 'grid',
-              gridTemplateColumns: '25px minmax(0, 1fr) auto',
-              alignItems: 'baseline',
               width: '100%',
-              minHeight: 13,
-              margin: 0,
-              padding: '0 0 0 4px',
-              border: 0,
-              borderLeft: `1px solid ${active ? sourceColor : `${sourceColor}88`}`,
-              borderRadius: 0,
-              outline: active ? `1px solid ${sourceColor}44` : 'none',
-              outlineOffset: -1,
-              background: active
-                ? `linear-gradient(90deg, ${sourceColor}22, ${sourceColor}08 68%, transparent)`
-                : 'transparent',
-              boxShadow: active ? `inset 2px 0 0 ${sourceColor}, 0 0 9px ${sourceColor}1c` : undefined,
-              fontFamily: HUD_FONTS.mono,
-              whiteSpace: 'nowrap',
-              textAlign: 'left',
-              cursor: onFocusChange ? 'pointer' : 'default',
               opacity: focusState === 'passive' ? 0.34 : 1,
-              transition: reducedMotion ? undefined : 'opacity 140ms ease, background 140ms ease, box-shadow 140ms ease',
+              transition: reducedMotion ? undefined : 'opacity 140ms ease',
             }}
           >
-            <span style={{ fontSize: 7.2, color: sourceColor }}>
-              E{String(evidence.ordinal).padStart(2, '0')}
-            </span>
-            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', fontSize: 7.3, letterSpacing: 0.22, color: HUD_COLORS.ink }}>
-              {consensusMemoryEvidenceFingerprint(evidence.contentHash)}
-            </span>
-            <span style={{ display: 'flex', alignItems: 'baseline', gap: 4, fontSize: 6.8, letterSpacing: 0.35 }}>
-              <span style={{ color: sourceColor }}>
-                ◇K{String(binding.knotIndex + 1).padStart(2, '0')}
+            <button
+              type="button"
+              aria-label={`Focus evidence ${String(evidence.ordinal).padStart(2, '0')}, source Cell ${evidence.sourceId}, ${evidence.hopCount} hops in ${routeDuration}, source ${evidence.sourceOutPoint.tx_hash}#${evidence.sourceOutPoint.index}, agreement knot ${String(binding.knotIndex + 1).padStart(2, '0')}; ${expanded ? 'collapse' : 'expand'} complete route`}
+              aria-pressed={active}
+              aria-expanded={expanded}
+              aria-controls={routeLedgerId}
+              data-memory-evidence={evidence.ordinal}
+              data-memory-evidence-source={evidence.sourceId}
+              data-memory-evidence-knot={binding.knotIndex + 1}
+              data-memory-evidence-state={evidence.state}
+              data-memory-evidence-focus={focusState}
+              data-memory-evidence-route={evidence.route.join('>')}
+              data-memory-evidence-route-hops={evidence.hopCount}
+              data-memory-evidence-route-duration-ms={evidence.routeDurationMs}
+              data-memory-evidence-source-outpoint={`${evidence.sourceOutPoint.tx_hash}#${evidence.sourceOutPoint.index}`}
+              title={`${evidence.contentHash} · ${evidence.sourceOutPoint.tx_hash}#${evidence.sourceOutPoint.index}`}
+              disabled={!onFocusChange}
+              onPointerEnter={activate}
+              onFocus={activate}
+              onClick={() => {
+                if (expanded) onHopFocusChange?.(null);
+                setExpandedEvidenceKey((current) => (
+                  current === evidenceKey ? null : evidenceKey
+                ));
+              }}
+              style={{
+                display: 'grid',
+                gridTemplateColumns: '25px minmax(0, 1fr) auto',
+                alignItems: 'baseline',
+                width: '100%',
+                minHeight: 13,
+                margin: 0,
+                padding: '0 0 0 4px',
+                border: 0,
+                borderLeft: `1px solid ${active ? sourceColor : `${sourceColor}88`}`,
+                borderRadius: 0,
+                outline: active ? `1px solid ${sourceColor}44` : 'none',
+                outlineOffset: -1,
+                background: active
+                  ? `linear-gradient(90deg, ${sourceColor}22, ${sourceColor}08 68%, transparent)`
+                  : 'transparent',
+                boxShadow: active ? `inset 2px 0 0 ${sourceColor}, 0 0 9px ${sourceColor}1c` : undefined,
+                fontFamily: HUD_FONTS.mono,
+                whiteSpace: 'nowrap',
+                textAlign: 'left',
+                cursor: onFocusChange ? 'pointer' : 'default',
+                transition: reducedMotion ? undefined : 'background 140ms ease, box-shadow 140ms ease',
+              }}
+            >
+              <span style={{ fontSize: 7.2, color: sourceColor }}>
+                E{String(evidence.ordinal).padStart(2, '0')}
               </span>
-              <span style={{ color: stateColor }}>
-                {stateCopy}
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', fontSize: 7.3, letterSpacing: 0.22, color: HUD_COLORS.ink }}>
+                {consensusMemoryEvidenceFingerprint(evidence.contentHash)}
               </span>
-            </span>
-            {active ? (
-              <span
-                data-memory-evidence-route-proof="true"
-                style={{
-                  gridColumn: '1 / -1',
-                  display: 'grid',
-                  gridTemplateColumns: 'minmax(0, 1fr) auto',
-                  gap: '1px 7px',
-                  minWidth: 0,
-                  margin: '2px 4px 2px 0',
-                  paddingTop: 3,
-                  borderTop: `1px solid ${sourceColor}2e`,
-                  fontSize: 6.5,
-                  letterSpacing: 0.3,
-                  color: HUD_COLORS.dim,
-                }}
-              >
-                <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', color: sourceColor }}>
-                  CELL #{evidence.sourceId} → #{routeTargetId}
+              <span style={{ display: 'flex', alignItems: 'baseline', gap: 4, fontSize: 6.8, letterSpacing: 0.35 }}>
+                <span style={{ color: sourceColor }}>
+                  ◇K{String(binding.knotIndex + 1).padStart(2, '0')}
                 </span>
-                <span>
-                  {String(evidence.hopCount).padStart(2, '0')} HOPS · {routeDuration} · ROUTE {expanded ? '−' : '+'}
+                <span style={{ color: stateColor }}>
+                  {stateCopy}
                 </span>
+              </span>
+              {active ? (
                 <span
-                  title={`${evidence.sourceOutPoint.tx_hash}#${evidence.sourceOutPoint.index}`}
+                  data-memory-evidence-route-proof="true"
                   style={{
                     gridColumn: '1 / -1',
+                    display: 'grid',
+                    gridTemplateColumns: 'minmax(0, 1fr) auto',
+                    gap: '1px 7px',
                     minWidth: 0,
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
+                    margin: '2px 4px 2px 0',
+                    paddingTop: 3,
+                    borderTop: `1px solid ${sourceColor}2e`,
+                    fontSize: 6.5,
+                    letterSpacing: 0.3,
+                    color: HUD_COLORS.dim,
                   }}
                 >
-                  SOURCE {sourceOutpoint} · BLOCK #{evidence.sourceBirthBlock}
+                  <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', color: sourceColor }}>
+                    CELL #{evidence.sourceId} → #{routeTargetId}
+                  </span>
+                  <span>
+                    {String(evidence.hopCount).padStart(2, '0')} HOPS · {routeDuration} · ROUTE {expanded ? '−' : '+'}
+                  </span>
+                  <span
+                    title={`${evidence.sourceOutPoint.tx_hash}#${evidence.sourceOutPoint.index}`}
+                    style={{
+                      gridColumn: '1 / -1',
+                      minWidth: 0,
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                    }}
+                  >
+                    SOURCE {sourceOutpoint} · BLOCK #{evidence.sourceBirthBlock}
+                  </span>
                 </span>
-              </span>
-            ) : null}
+              ) : null}
+            </button>
             {expanded ? (
               <EvidenceRouteLedger
                 id={routeLedgerId}
                 evidence={evidence}
                 sourceColor={sourceColor}
+                readout={readout}
+                focusedHop={focusedHop}
+                onHopFocusChange={onHopFocusChange}
+                reducedMotion={reducedMotion}
               />
             ) : null}
-          </button>
+          </div>
         );
       })}
     </div>
@@ -523,6 +602,8 @@ function MemoryReadState({
   agreementCount,
   focusedSourceId,
   onFocusChange,
+  focusedHop,
+  onHopFocusChange,
 }: {
   readout: ConsensusMemoryTraceReadout;
   reducedMotion: boolean;
@@ -530,6 +611,8 @@ function MemoryReadState({
   agreementCount: number;
   focusedSourceId: number | null;
   onFocusChange?: (sourceId: number | null) => void;
+  focusedHop: ConsensusMemoryRouteHopFocus | null;
+  onHopFocusChange?: (focus: ConsensusMemoryRouteHopFocus | null) => void;
 }) {
   const activeIndex = MEMORY_READ_STAGES.findIndex(
     ({ stage }) => stage === readout.stage,
@@ -619,6 +702,8 @@ function MemoryReadState({
         reducedMotion={reducedMotion}
         focusedSourceId={focusedSourceId}
         onFocusChange={onFocusChange}
+        focusedHop={focusedHop}
+        onHopFocusChange={onHopFocusChange}
       />
     </div>
   );
@@ -641,6 +726,8 @@ export default function ConsensusIdentityPlate({
   traceReadout = null,
   traceEvidenceFocusSourceId = null,
   onTraceEvidenceFocusChange,
+  traceRouteHopFocus = null,
+  onTraceRouteHopFocusChange,
   agreementCount,
 }: {
   identity: CellConsensusIdentity;
@@ -659,6 +746,10 @@ export default function ConsensusIdentityPlate({
   traceReadout?: ConsensusMemoryTraceReadout | null;
   traceEvidenceFocusSourceId?: number | null;
   onTraceEvidenceFocusChange?: (sourceId: number | null) => void;
+  traceRouteHopFocus?: ConsensusMemoryRouteHopFocus | null;
+  onTraceRouteHopFocusChange?: (
+    focus: ConsensusMemoryRouteHopFocus | null,
+  ) => void;
   agreementCount: number;
 }) {
   const observed = identity.observedWrite;
@@ -738,6 +829,8 @@ export default function ConsensusIdentityPlate({
             agreementCount={agreementCount}
             focusedSourceId={traceEvidenceFocusSourceId}
             onFocusChange={onTraceEvidenceFocusChange}
+            focusedHop={traceRouteHopFocus}
+            onHopFocusChange={onTraceRouteHopFocusChange}
           />
         ) : null}
         {observed && onRecallWrite ? (

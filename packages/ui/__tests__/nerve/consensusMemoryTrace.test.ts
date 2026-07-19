@@ -25,6 +25,8 @@ import {
   consensusMemoryEvidenceFocusScale,
   consensusMemoryLiveActivityScale,
   consensusMemoryPulseActivityScale,
+  consensusMemoryRouteHopAdjacentSegments,
+  consensusMemoryRouteHopCellFocus,
   consensusMemoryRouteHandoffScale,
   consensusMemoryPassiveOpacity,
   consensusMemoryTraceRequestKey,
@@ -33,8 +35,10 @@ import {
   consensusMemoryTraceResonance,
   consensusMemoryTraceSourceStrength,
   deriveConsensusMemoryTraceFocus,
+  deriveConsensusMemoryRouteHopFocus,
   deriveConsensusMemoryTraceEndpoints,
   planConsensusMemoryTrace,
+  validateConsensusMemoryRouteHopFocus,
 } from '../../src/nerve/consensusMemoryTrace';
 import { consensusMemoryTraceColor } from '../../src/derives/consensusFlow.derive';
 
@@ -256,6 +260,7 @@ describe('planConsensusMemoryTrace', () => {
       expect(source.routes[0]).toMatchObject({
         targetId: 5,
         path: plannedPulse.path,
+        color: plannedPulse.color,
         hopCount: plannedPulse.path.length - 1,
         hopMs: plannedPulse.hopMs,
       });
@@ -273,6 +278,7 @@ describe('planConsensusMemoryTrace', () => {
     expect(focus?.targetIds).toEqual([5]);
     expect(focus?.startedAtSec).toBe(startedAtSec);
     expect(focus?.evidenceFocusSourceId).toBeNull();
+    expect(focus?.routeHopFocus).toBeNull();
 
     const slowestLifetimeMs = Math.max(...plan.pulses.map((pulse) => (
       pulse.startDelayMs
@@ -363,6 +369,59 @@ describe('planConsensusMemoryTrace', () => {
       );
     expect(consensusMemoryCellResponse(focus, 5, fullyRevealedAt))
       .toMatchObject({ role: 'target', evidenceFocusSourceId: selected.id });
+  });
+
+  it('binds one HUD hop to its exact retained Cell and adjacent route segments', () => {
+    const cells = new Map([1, 2, 3, 4, 5].map((id) => [id, cell(id)]));
+    const plan = planConsensusMemoryTrace(
+      link(),
+      cells,
+      graph([[1, 3], [2, 4], [3, 5], [4, 5]]),
+    );
+    const focus = deriveConsensusMemoryTraceFocus(plan, 10, '7:5:1')!;
+    const readout = consensusMemoryTraceReadout(focus, 5, 10.001)!;
+    const evidence = readout.evidence[0];
+    const transit = deriveConsensusMemoryRouteHopFocus(
+      readout,
+      evidence.sourceId,
+      1,
+    );
+
+    expect(transit).toEqual({
+      traceKey: readout.key,
+      sourceId: evidence.sourceId,
+      targetCellId: 5,
+      cellId: evidence.route[1],
+      hopIndex: 1,
+    });
+    expect(validateConsensusMemoryRouteHopFocus(focus, transit)).toEqual(transit);
+    expect(consensusMemoryRouteHopAdjacentSegments(transit, evidence.route))
+      .toEqual([0, 1]);
+    expect(consensusMemoryRouteHopAdjacentSegments(
+      deriveConsensusMemoryRouteHopFocus(readout, evidence.sourceId, 0),
+      evidence.route,
+    )).toEqual([0]);
+    expect(consensusMemoryRouteHopAdjacentSegments(
+      deriveConsensusMemoryRouteHopFocus(readout, evidence.sourceId, 2),
+      evidence.route,
+    )).toEqual([1]);
+
+    focus.routeHopFocus = transit;
+    expect(consensusMemoryRouteHopCellFocus(focus, transit!.cellId, 10.2))
+      .toBeGreaterThan(0);
+    expect(consensusMemoryRouteHopCellFocus(focus, 999, 10.2)).toBe(0);
+    expect(validateConsensusMemoryRouteHopFocus(focus, {
+      ...transit!,
+      cellId: 999,
+    })).toBeNull();
+    expect(validateConsensusMemoryRouteHopFocus(focus, {
+      ...transit!,
+      traceKey: 'stale-trace',
+    })).toBeNull();
+    expect(consensusMemoryRouteHopAdjacentSegments(transit, [1, 4, 5]))
+      .toEqual([]);
+    expect(deriveConsensusMemoryRouteHopFocus(readout, evidence.sourceId, 99))
+      .toBeNull();
   });
 
   it('projects the target read clock into reading, converging, and locked HUD states', () => {

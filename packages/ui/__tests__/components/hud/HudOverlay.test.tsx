@@ -103,6 +103,7 @@ describe('HudOverlay', () => {
       seq: 3, tx_hash: mockCell.out_point.tx_hash, block: mockCell.birth_block,
       from_ids: [1, 2], to_ids: [mockCell.id], parents: [], tag: null, at_ms: 10,
     };
+    const onCellTraceRouteHopFocusChange = vi.fn();
     const { container } = render(
       <HudOverlay
         chain={chain}
@@ -149,6 +150,14 @@ describe('HudOverlay', () => {
         cellTraceResponseRef={{ current: null }}
         cellTraceEvidenceFocusSourceId={2}
         onCellTraceEvidenceFocusChange={() => {}}
+        cellTraceRouteHopFocus={{
+          traceKey: '3:7:1',
+          sourceId: 2,
+          targetCellId: 7,
+          cellId: 4,
+          hopIndex: 1,
+        }}
+        onCellTraceRouteHopFocusChange={onCellTraceRouteHopFocusChange}
       />,
     );
 
@@ -162,6 +171,19 @@ describe('HudOverlay', () => {
       ?.getAttribute('data-evidence-focus-source')).toBe('2');
     expect(container.querySelector('[data-memory-evidence="2"]')
       ?.getAttribute('data-memory-evidence-focus')).toBe('active');
+    fireEvent.click(container.querySelector('[data-memory-evidence="2"]')!);
+    const routeHop = container.querySelector<HTMLElement>(
+      '[data-memory-evidence-route-cell="4"]',
+    )!;
+    expect(routeHop.getAttribute('data-memory-evidence-route-focus')).toBe('active');
+    fireEvent.pointerEnter(routeHop);
+    expect(onCellTraceRouteHopFocusChange).toHaveBeenLastCalledWith({
+      traceKey: '3:7:1',
+      sourceId: 2,
+      targetCellId: 7,
+      cellId: 4,
+      hopIndex: 1,
+    });
   });
 
   it('does not raise CAUTION when blocks merely run slower than the 8s target', () => {

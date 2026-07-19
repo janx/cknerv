@@ -3,6 +3,7 @@ import type { CSSProperties, ReactNode } from 'react';
 import type { ChainEntry, Peer, ChainNode, Cell, CellLink } from '@cknerv/types';
 import type {
   ConsensusMemoryCellResponseRef,
+  ConsensusMemoryRouteHopFocus,
   ConsensusMemoryTraceReadout,
   ConsensusMemoryTraceSource,
 } from '../../nerve/consensusMemoryTrace';
@@ -45,7 +46,7 @@ const MESH_RAIL_STYLE: CSSProperties = { position: 'absolute', top: 42, right: 1
 const MESH_ZONE_COL: CSSProperties = { display: 'flex', flexDirection: 'column-reverse', gap: 12, alignItems: 'flex-end' };
 const PANEL_FLOW: CSSProperties = { position: 'relative' };
 
-export default function HudOverlay({ chain, peers, localNode, cellsStats, selectedCell, recentCellLinks, tracedCellWriteSeq, cellTraceSource, cellTraceReadout, cellTraceResponseRef, cellTraceEvidenceFocusSourceId, onCellTraceEvidenceFocusChange, onTraceCellWrite, selectedNode, selectedPeer, onClearSelection, onClearCell, onClearNet, backfill, build, colonyCount }: {
+export default function HudOverlay({ chain, peers, localNode, cellsStats, selectedCell, recentCellLinks, tracedCellWriteSeq, cellTraceSource, cellTraceReadout, cellTraceResponseRef, cellTraceEvidenceFocusSourceId, onCellTraceEvidenceFocusChange, cellTraceRouteHopFocus, onCellTraceRouteHopFocusChange, onTraceCellWrite, selectedNode, selectedPeer, onClearSelection, onClearCell, onClearNet, backfill, build, colonyCount }: {
   chain: ChainEntry; peers: Peer[]; localNode: ChainNode | undefined; cellsStats: CellsStats;
   selectedCell?: Cell | null;
   /** Retained causal links used only to prove an exact selected-Cell origin. */
@@ -56,6 +57,10 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats, select
   cellTraceResponseRef?: ConsensusMemoryCellResponseRef;
   cellTraceEvidenceFocusSourceId?: number | null;
   onCellTraceEvidenceFocusChange?: (sourceId: number | null) => void;
+  cellTraceRouteHopFocus?: ConsensusMemoryRouteHopFocus | null;
+  onCellTraceRouteHopFocusChange?: (
+    focus: ConsensusMemoryRouteHopFocus | null,
+  ) => void;
   onTraceCellWrite?: (linkSeq: number) => void;
   selectedNode?: ChainNode | null; selectedPeer?: Peer | null;
   /** Clear-all fallback (cell + net). Kept for the shared @cknerv/ui API. */
@@ -165,6 +170,8 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats, select
               traceResponseRef={cellTraceResponseRef}
               traceEvidenceFocusSourceId={cellTraceEvidenceFocusSourceId}
               onTraceEvidenceFocusChange={onCellTraceEvidenceFocusChange}
+              traceRouteHopFocus={cellTraceRouteHopFocus}
+              onTraceRouteHopFocusChange={onCellTraceRouteHopFocusChange}
               onTraceWrite={onTraceCellWrite}
               onClose={clearCell}
               style={PANEL_FLOW}

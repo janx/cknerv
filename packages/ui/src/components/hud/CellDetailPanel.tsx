@@ -14,6 +14,7 @@ import { deriveCellVisual } from '../../derives/cellVisual.derive';
 import { deriveCellConsensusIdentity } from '../../derives/cellConsensusIdentity.derive';
 import type {
   ConsensusMemoryCellResponseRef,
+  ConsensusMemoryRouteHopFocus,
   ConsensusMemoryTraceReadout,
   ConsensusMemoryTraceSource,
 } from '../../nerve/consensusMemoryTrace';
@@ -54,6 +55,8 @@ export default function CellDetailPanel({
   traceResponseRef,
   traceEvidenceFocusSourceId = null,
   onTraceEvidenceFocusChange,
+  traceRouteHopFocus = null,
+  onTraceRouteHopFocusChange,
   onTraceWrite,
   onClose,
   style,
@@ -66,6 +69,10 @@ export default function CellDetailPanel({
   traceResponseRef?: ConsensusMemoryCellResponseRef;
   traceEvidenceFocusSourceId?: number | null;
   onTraceEvidenceFocusChange?: (sourceId: number | null) => void;
+  traceRouteHopFocus?: ConsensusMemoryRouteHopFocus | null;
+  onTraceRouteHopFocusChange?: (
+    focus: ConsensusMemoryRouteHopFocus | null,
+  ) => void;
   onTraceWrite?: (linkSeq: number) => void;
   onClose: () => void;
   style?: CSSProperties;
@@ -247,6 +254,8 @@ export default function CellDetailPanel({
         traceReadout={traceReadout}
         traceEvidenceFocusSourceId={traceEvidenceFocusSourceId}
         onTraceEvidenceFocusChange={onTraceEvidenceFocusChange}
+        traceRouteHopFocus={traceRouteHopFocus}
+        onTraceRouteHopFocusChange={onTraceRouteHopFocusChange}
         agreementCount={agreementTarget}
       />
     </HudPanel>

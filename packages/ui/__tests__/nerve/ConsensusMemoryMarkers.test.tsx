@@ -50,6 +50,7 @@ function focusSource(
     routes: [{
       targetId,
       path: [id, id + 20, targetId],
+      color: [0.2, 0.8, 1],
       hopCount: 2,
       hopMs: (arrivesAtSec - startsAtSec) * 500,
       startsAtSec,
@@ -68,6 +69,7 @@ function focus(overrides: Partial<ConsensusMemoryTraceFocus> = {}): ConsensusMem
     startedAtSec: 1,
     endsAtSec: 4,
     evidenceFocusSourceId: null,
+    routeHopFocus: null,
     ...overrides,
   };
 }

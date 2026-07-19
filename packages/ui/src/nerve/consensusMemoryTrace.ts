@@ -106,6 +106,8 @@ export interface ConsensusMemoryTraceRoute {
   targetId: number;
   /** Exact Cell ids visited by this retained route, including endpoints. */
   path: readonly number[];
+  /** Exact display-only carrier lane planned for this retained route. */
+  color: Pulse['color'];
   hopCount: number;
   hopMs: number;
   startsAtSec: number;
@@ -129,6 +131,22 @@ export interface ConsensusMemoryTraceFocus {
   endsAtSec: number;
   /** UI-only evidence isolation; always references one routed real source. */
   evidenceFocusSourceId: number | null;
+  /** UI-only inspection of one exact Cell retained in one exact route. */
+  routeHopFocus: ConsensusMemoryRouteHopFocus | null;
+}
+
+/**
+ * Stable HUD → scene address for one Cell inside a retained route proof.
+ * Every field is revalidated against the authoritative frame-level focus
+ * before it may affect WebGL, so stale UI state cannot illuminate another
+ * trace, route, Cell, or segment.
+ */
+export interface ConsensusMemoryRouteHopFocus {
+  traceKey: string;
+  sourceId: number;
+  targetCellId: number;
+  cellId: number;
+  hopIndex: number;
 }
 
 export interface ConsensusMemoryCellResponse {
@@ -225,6 +243,7 @@ export function deriveConsensusMemoryTraceFocus(
     const route: ConsensusMemoryTraceRoute = {
       targetId: pulse.path[pulse.path.length - 1],
       path: [...pulse.path],
+      color: [...pulse.color],
       hopCount: pulse.path.length - 1,
       hopMs: pulse.hopMs,
       startsAtSec,
@@ -281,7 +300,93 @@ export function deriveConsensusMemoryTraceFocus(
     startedAtSec,
     endsAtSec: startedAtSec + lifetimeMs / 1000,
     evidenceFocusSourceId: null,
+    routeHopFocus: null,
   };
+}
+
+/** Derive one canonical hop address from the exact low-frequency HUD proof. */
+export function deriveConsensusMemoryRouteHopFocus(
+  readout: ConsensusMemoryTraceReadout | null,
+  sourceId: number,
+  hopIndex: number,
+): ConsensusMemoryRouteHopFocus | null {
+  if (
+    !readout
+    || !Number.isFinite(sourceId)
+    || !Number.isInteger(hopIndex)
+  ) return null;
+  const evidence = readout.evidence.find((source) => source.sourceId === sourceId);
+  if (!evidence || hopIndex < 0 || hopIndex >= evidence.route.length) return null;
+  const cellId = evidence.route[hopIndex];
+  const targetCellId = evidence.route.at(-1);
+  if (
+    !Number.isFinite(cellId)
+    || typeof targetCellId !== 'number'
+    || !Number.isFinite(targetCellId)
+  ) return null;
+  return {
+    traceKey: readout.key,
+    sourceId: evidence.sourceId,
+    targetCellId,
+    cellId,
+    hopIndex,
+  };
+}
+
+/**
+ * Rebind a HUD hop address to the authoritative route clock. Returning a
+ * canonical copy prevents caller-supplied ids from reaching scene geometry.
+ */
+export function validateConsensusMemoryRouteHopFocus(
+  focus: ConsensusMemoryTraceFocus | null,
+  candidate: ConsensusMemoryRouteHopFocus | null,
+): ConsensusMemoryRouteHopFocus | null {
+  if (!focus || !candidate || candidate.traceKey !== focus.key) return null;
+  const source = focus.sources.find(({ id }) => id === candidate.sourceId);
+  if (!source) return null;
+  const route = consensusMemoryTraceRouteForTarget(source, candidate.targetCellId);
+  if (
+    !route
+    || !Number.isInteger(candidate.hopIndex)
+    || candidate.hopIndex < 0
+    || candidate.hopIndex >= route.path.length
+    || route.path[candidate.hopIndex] !== candidate.cellId
+  ) return null;
+  return {
+    traceKey: focus.key,
+    sourceId: source.id,
+    targetCellId: route.targetId,
+    cellId: route.path[candidate.hopIndex],
+    hopIndex: candidate.hopIndex,
+  };
+}
+
+/** Exact adjacent edge indices for an inspected route Cell (one or two). */
+export function consensusMemoryRouteHopAdjacentSegments(
+  candidate: ConsensusMemoryRouteHopFocus | null,
+  path: readonly number[],
+): number[] {
+  if (
+    !candidate
+    || path.length < 2
+    || path[0] !== candidate.sourceId
+    || path.at(-1) !== candidate.targetCellId
+    || path[candidate.hopIndex] !== candidate.cellId
+  ) return [];
+  const segments: number[] = [];
+  if (candidate.hopIndex > 0) segments.push(candidate.hopIndex - 1);
+  if (candidate.hopIndex < path.length - 1) segments.push(candidate.hopIndex);
+  return segments;
+}
+
+/** Shared fade-aware emphasis for the exact Cell selected in the route ledger. */
+export function consensusMemoryRouteHopCellFocus(
+  focus: ConsensusMemoryTraceFocus | null,
+  cellId: number,
+  nowSec: number,
+): number {
+  if (focus?.routeHopFocus?.cellId !== cellId) return 0;
+  return consensusMemoryTraceFocusStrength(focus, nowSec);
 }
 
 /** Exact retained route from one real source into a particular target Cell. */

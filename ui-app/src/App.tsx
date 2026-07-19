@@ -24,6 +24,7 @@ import {
   chainNodeWorldPosition,
   canRecallConsensusMemory,
   consensusMemoryTraceRequestKey,
+  deriveConsensusMemoryRouteHopFocus,
   colonyFlood,
   deriveConsensusMemoryTraceEndpoints,
   findCellOriginLink,
@@ -43,6 +44,7 @@ import {
   useQualityRuntime,
   type ConsensusMemoryTraceRequest,
   type ConsensusMemoryTraceReadout,
+  type ConsensusMemoryRouteHopFocus,
   type ConsensusMemoryTargetResponse,
 } from '@cknerv/ui';
 import {
@@ -137,6 +139,9 @@ export default function App({
   >(null);
   const [memoryEvidenceFocusSourceId, setMemoryEvidenceFocusSourceId] = useState<
     number | null
+  >(null);
+  const [memoryRouteHopFocus, setMemoryRouteHopFocus] = useState<
+    ConsensusMemoryRouteHopFocus | null
   >(null);
   const memoryTraceTargetResponseRef = useRef<
     ConsensusMemoryTargetResponse | null
@@ -339,18 +344,61 @@ export default function App({
         : null
     ));
   }, [selectedMemoryTraceReadout]);
+  useEffect(() => {
+    setMemoryRouteHopFocus((current) => {
+      if (!current || memoryEvidenceFocusSourceId !== current.sourceId) return null;
+      const verified = deriveConsensusMemoryRouteHopFocus(
+        selectedMemoryTraceReadout,
+        current.sourceId,
+        current.hopIndex,
+      );
+      return verified
+        && verified.traceKey === current.traceKey
+        && verified.targetCellId === current.targetCellId
+        && verified.cellId === current.cellId
+        ? verified
+        : null;
+    });
+  }, [memoryEvidenceFocusSourceId, selectedMemoryTraceReadout]);
   const focusMemoryTraceEvidence = useCallback((sourceId: number | null) => {
     if (sourceId === null) {
       setMemoryEvidenceFocusSourceId(null);
+      setMemoryRouteHopFocus(null);
       return;
     }
-    setMemoryEvidenceFocusSourceId(
-      selectedMemoryTraceReadout?.evidence.some(
-        (evidence) => evidence.sourceId === sourceId,
-      )
-        ? sourceId
-        : null,
+    const verifiedSourceId = selectedMemoryTraceReadout?.evidence.some(
+      (evidence) => evidence.sourceId === sourceId,
+    )
+      ? sourceId
+      : null;
+    setMemoryEvidenceFocusSourceId(verifiedSourceId);
+    setMemoryRouteHopFocus((current) => (
+      current?.sourceId === verifiedSourceId ? current : null
+    ));
+  }, [selectedMemoryTraceReadout]);
+  const focusMemoryTraceRouteHop = useCallback((
+    candidate: ConsensusMemoryRouteHopFocus | null,
+  ) => {
+    if (!candidate) {
+      setMemoryRouteHopFocus(null);
+      return;
+    }
+    const verified = deriveConsensusMemoryRouteHopFocus(
+      selectedMemoryTraceReadout,
+      candidate.sourceId,
+      candidate.hopIndex,
     );
+    if (
+      !verified
+      || verified.traceKey !== candidate.traceKey
+      || verified.targetCellId !== candidate.targetCellId
+      || verified.cellId !== candidate.cellId
+    ) {
+      setMemoryRouteHopFocus(null);
+      return;
+    }
+    setMemoryEvidenceFocusSourceId(verified.sourceId);
+    setMemoryRouteHopFocus(verified);
   }, [selectedMemoryTraceReadout]);
   const recallSelectedCellOrigin = useCallback((linkSeq: number) => {
     if (!selectedCell) return;
@@ -398,6 +446,8 @@ export default function App({
         cellTraceResponseRef={memoryTraceTargetResponseRef}
         cellTraceEvidenceFocusSourceId={memoryEvidenceFocusSourceId}
         onCellTraceEvidenceFocusChange={focusMemoryTraceEvidence}
+        cellTraceRouteHopFocus={memoryRouteHopFocus}
+        onCellTraceRouteHopFocusChange={focusMemoryTraceRouteHop}
         onTraceCellWrite={selectedOriginTraceable
           ? recallSelectedCellOrigin
           : undefined}
@@ -487,6 +537,7 @@ export default function App({
                   onTraceReadoutChange={setMemoryTraceReadout}
                   traceTargetResponseRef={memoryTraceTargetResponseRef}
                   traceEvidenceFocusSourceId={memoryEvidenceFocusSourceId}
+                  traceRouteHopFocus={memoryRouteHopFocus}
                 />
                 <ConsensusWriteSeal arrivalRef={burstArrivalRef} />
               </>
