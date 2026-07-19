@@ -44,6 +44,7 @@ function focus(overrides: Partial<ConsensusMemoryTraceFocus> = {}): ConsensusMem
     targetIds: [5],
     startedAtSec: 1,
     endsAtSec: 4,
+    evidenceFocusSourceId: null,
     ...overrides,
   };
 }
@@ -138,5 +139,42 @@ describe('ConsensusMemoryMarkers', () => {
     expect(sources[1].getAttribute('data-memory-source-index')).toBe('2');
     expect(container.querySelector('[data-memory-endpoint="target"]')?.textContent)
       .toContain('02 WITNESSES');
+  });
+
+  it('marks the selected real source while retaining the target as context', () => {
+    const cache = emptyCellsCache();
+    cache.cells.set(8, cell(8, 'a'));
+    cache.cells.set(9, cell(9, 'c'));
+    cache.cells.set(5, cell(5, 'b'));
+    const traceFocus = focus({
+      sources: [
+        {
+          id: 8,
+          contentHash: `0x${'a'.repeat(64)}`,
+          startsAtSec: 1.1,
+          arrivesAtSec: 1.8,
+        },
+        {
+          id: 9,
+          contentHash: `0x${'c'.repeat(64)}`,
+          startsAtSec: 1.32,
+          arrivesAtSec: 2.02,
+        },
+      ],
+      routedSourceCount: 2,
+      evidenceFocusSourceId: 9,
+    });
+    const { container } = render(
+      <CellGalaxyProvider value={cache}>
+        <ConsensusMemoryMarkers focus={traceFocus} evidenceFocusSourceId={9} />
+      </CellGalaxyProvider>,
+    );
+
+    const sources = container.querySelectorAll('[data-memory-endpoint="source"]');
+    expect(sources[0].getAttribute('data-memory-evidence-focus')).toBe('passive');
+    expect(sources[1].getAttribute('data-memory-evidence-focus')).toBe('active');
+    expect(sources[1].getAttribute('data-memory-source-id')).toBe('9');
+    expect(container.querySelector('[data-memory-endpoint="target"]')
+      ?.getAttribute('data-memory-evidence-focus')).toBe('context');
   });
 });

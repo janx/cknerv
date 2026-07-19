@@ -17,6 +17,7 @@ describe('CellNucleusPortrait production language', () => {
     expect(SOURCE).toContain('focusField={focusField}');
     expect(SOURCE).toContain('traceReadout={traceReadout}');
     expect(SOURCE).toContain('traceResponseRef={traceResponseRef}');
+    expect(SOURCE).toContain('traceEvidenceFocusSourceId={traceEvidenceFocusSourceId}');
     expect(SOURCE).toContain('data-memory-portrait-state');
     expect(SOURCE).not.toContain('specimenMorphology(');
     expect(SOURCE).not.toContain('makeOrganelleMaterial');
@@ -30,5 +31,9 @@ describe('CellNucleusPortrait production language', () => {
     expect(MEMORY_SOURCE).toContain('CONSENSUS_BRAID_PALETTE.paleGold');
     expect(MEMORY_SOURCE).toContain('consensusMemoryEvidenceBindings(');
     expect(MEMORY_SOURCE).toContain('data-memory-knot-evidence');
+    expect(MEMORY_SOURCE).toContain('data-memory-knot-focus');
+    expect(MEMORY_SOURCE).toContain('consensusMemoryEvidenceFocusScale(');
+    expect(MEMORY_SOURCE).toContain('focusedEvidenceBinding');
+    expect(MEMORY_SOURCE).toContain('<ringGeometry args={[0.025, 0.032, 4]} />');
   });
 });

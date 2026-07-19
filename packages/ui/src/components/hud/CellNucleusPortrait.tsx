@@ -30,6 +30,7 @@ function ConsensusScene({
   focusField,
   traceReadout,
   traceResponseRef,
+  traceEvidenceFocusSourceId,
 }: {
   cell: Cell;
   direction: CellCoreDirection;
@@ -37,6 +38,7 @@ function ConsensusScene({
   focusField: ConsensusBraidField | null;
   traceReadout: ConsensusMemoryTraceReadout | null;
   traceResponseRef?: ConsensusMemoryCellResponseRef;
+  traceEvidenceFocusSourceId: number | null;
 }) {
   return (
     <CellCoreArtwork
@@ -46,6 +48,7 @@ function ConsensusScene({
       focusField={focusField}
       traceReadout={traceReadout}
       traceResponseRef={traceResponseRef}
+      traceEvidenceFocusSourceId={traceEvidenceFocusSourceId}
     />
   );
 }
@@ -57,6 +60,7 @@ export default function CellNucleusPortrait({
   focusField = null,
   traceReadout = null,
   traceResponseRef,
+  traceEvidenceFocusSourceId = null,
 }: {
   cell: Cell;
   direction?: CellCoreDirection;
@@ -65,12 +69,14 @@ export default function CellNucleusPortrait({
   focusField?: ConsensusBraidField | null;
   traceReadout?: ConsensusMemoryTraceReadout | null;
   traceResponseRef?: ConsensusMemoryCellResponseRef;
+  traceEvidenceFocusSourceId?: number | null;
   /** Compatibility input for callers that share a scan epoch with the panel. */
   scanEpochMs?: number;
 }) {
   return (
     <div
       data-memory-portrait-state={traceReadout?.stage ?? 'idle'}
+      data-memory-evidence-focus-source={traceEvidenceFocusSourceId ?? undefined}
       style={{ width: '100%', aspectRatio: '1 / 1', pointerEvents: 'none' }}
     >
       <Canvas
@@ -86,6 +92,7 @@ export default function CellNucleusPortrait({
           focusField={focusField}
           traceReadout={traceReadout}
           traceResponseRef={traceResponseRef}
+          traceEvidenceFocusSourceId={traceEvidenceFocusSourceId}
         />
       </Canvas>
     </div>

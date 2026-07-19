@@ -6,6 +6,8 @@ import {
   MAX_MEMORY_TRACE_PULSES,
   MEMORY_TRACE_ALIGNMENT_CAP_MS,
   MEMORY_TRACE_CELL_CONVERGENCE_MS,
+  MEMORY_TRACE_EVIDENCE_CONTEXT_SCALE,
+  MEMORY_TRACE_EVIDENCE_PASSIVE_SCALE,
   MEMORY_TRACE_FADE_MS,
   MEMORY_TRACE_FOCUS_FADE_IN_MS,
   MEMORY_TRACE_FOCUS_FADE_OUT_MS,
@@ -20,6 +22,7 @@ import {
   MEMORY_TRACE_SETTLE_MS,
   canRecallConsensusMemory,
   consensusMemoryCellResponse,
+  consensusMemoryEvidenceFocusScale,
   consensusMemoryLiveActivityScale,
   consensusMemoryPulseActivityScale,
   consensusMemoryRouteHandoffScale,
@@ -237,6 +240,7 @@ describe('planConsensusMemoryTrace', () => {
     expect(focus?.routedSourceCount).toBe(2);
     expect(focus?.targetIds).toEqual([5]);
     expect(focus?.startedAtSec).toBe(startedAtSec);
+    expect(focus?.evidenceFocusSourceId).toBeNull();
 
     const slowestLifetimeMs = Math.max(...plan.pulses.map((pulse) => (
       pulse.startDelayMs
@@ -299,6 +303,34 @@ describe('planConsensusMemoryTrace', () => {
     expect(consensusMemoryRouteHandoffScale(1)).toBe(MEMORY_TRACE_ROUTE_HANDOFF_FLOOR);
     expect(consensusMemoryRouteHandoffScale(0.5))
       .toBeCloseTo((1 + MEMORY_TRACE_ROUTE_HANDOFF_FLOOR) / 2);
+  });
+
+  it('isolates one routed source consistently without erasing structural context', () => {
+    const cells = new Map([1, 2, 3, 4, 5].map((id) => [id, cell(id)]));
+    const plan = planConsensusMemoryTrace(
+      link(),
+      cells,
+      graph([[1, 3], [2, 4], [3, 5], [4, 5]]),
+    );
+    const focus = deriveConsensusMemoryTraceFocus(plan, 10, '7:5:1')!;
+    const [selected, passive] = focus.sources;
+    focus.evidenceFocusSourceId = selected.id;
+    const fullyRevealedAt = Math.max(...focus.sources.map(
+      (source) => source.startsAtSec + MEMORY_TRACE_SOURCE_REVEAL_MS / 1000,
+    ));
+
+    expect(consensusMemoryEvidenceFocusScale(selected.id, selected.id)).toBe(1);
+    expect(consensusMemoryEvidenceFocusScale(passive.id, selected.id))
+      .toBe(MEMORY_TRACE_EVIDENCE_PASSIVE_SCALE);
+    expect(consensusMemoryEvidenceFocusScale(null, selected.id))
+      .toBe(MEMORY_TRACE_EVIDENCE_CONTEXT_SCALE);
+    expect(consensusMemoryEvidenceFocusScale(passive.id, null)).toBe(1);
+    expect(consensusMemoryCellResponse(focus, selected.id, fullyRevealedAt)?.strength)
+      .toBeGreaterThan(
+        consensusMemoryCellResponse(focus, passive.id, fullyRevealedAt)!.strength,
+      );
+    expect(consensusMemoryCellResponse(focus, 5, fullyRevealedAt))
+      .toMatchObject({ role: 'target', evidenceFocusSourceId: selected.id });
   });
 
   it('projects the target read clock into reading, converging, and locked HUD states', () => {

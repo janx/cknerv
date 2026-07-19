@@ -31,6 +31,7 @@ export default function CellCoreArtwork({
   focusField = null,
   traceReadout = null,
   traceResponseRef,
+  traceEvidenceFocusSourceId = null,
 }: {
   direction: CellCoreDirection;
   cell: Cell;
@@ -38,6 +39,7 @@ export default function CellCoreArtwork({
   focusField?: ConsensusBraidField | null;
   traceReadout?: ConsensusMemoryTraceReadout | null;
   traceResponseRef?: ConsensusMemoryCellResponseRef;
+  traceEvidenceFocusSourceId?: number | null;
 }) {
   if (direction === 'loom') {
     return (
@@ -60,6 +62,7 @@ export default function CellCoreArtwork({
       focusField={focusField}
       traceReadout={traceReadout}
       traceResponseRef={traceResponseRef}
+      traceEvidenceFocusSourceId={traceEvidenceFocusSourceId}
     />
   );
 }

@@ -3,16 +3,18 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Cell } from '@cknerv/types';
 
 vi.mock('../../../src/components/hud/ConsensusMemory', () => ({
-  default: ({ focusField, traceReadout, traceResponseRef }: {
+  default: ({ focusField, traceReadout, traceResponseRef, traceEvidenceFocusSourceId }: {
     focusField?: string | null;
     traceReadout?: { stage: string } | null;
     traceResponseRef?: { current: unknown };
+    traceEvidenceFocusSourceId?: number | null;
   }) => (
     <div
       data-testid="relic"
       data-focus={focusField ?? ''}
       data-trace-stage={traceReadout?.stage ?? ''}
       data-response-ref={traceResponseRef ? 'true' : 'false'}
+      data-evidence-focus-source={traceEvidenceFocusSourceId ?? ''}
     />
   ),
 }));
@@ -91,10 +93,12 @@ describe('CellCoreArtwork', () => {
           })),
         }}
         traceResponseRef={responseRef}
+        traceEvidenceFocusSourceId={2}
       />,
     );
     expect(getByTestId('relic').getAttribute('data-focus')).toBe('data');
     expect(getByTestId('relic').getAttribute('data-trace-stage')).toBe('locked');
     expect(getByTestId('relic').getAttribute('data-response-ref')).toBe('true');
+    expect(getByTestId('relic').getAttribute('data-evidence-focus-source')).toBe('2');
   });
 });

@@ -135,6 +135,9 @@ export default function App({
   const [memoryTraceReadout, setMemoryTraceReadout] = useState<
     ConsensusMemoryTraceReadout | null
   >(null);
+  const [memoryEvidenceFocusSourceId, setMemoryEvidenceFocusSourceId] = useState<
+    number | null
+  >(null);
   const memoryTraceTargetResponseRef = useRef<
     ConsensusMemoryTargetResponse | null
   >(null);
@@ -326,6 +329,29 @@ export default function App({
       ? memoryTraceReadout
       : null;
   }, [selectedCell, memoryTraceRequest, memoryTraceReadout]);
+  useEffect(() => {
+    setMemoryEvidenceFocusSourceId((current) => (
+      current !== null
+      && selectedMemoryTraceReadout?.evidence.some(
+        (evidence) => evidence.sourceId === current,
+      )
+        ? current
+        : null
+    ));
+  }, [selectedMemoryTraceReadout]);
+  const focusMemoryTraceEvidence = useCallback((sourceId: number | null) => {
+    if (sourceId === null) {
+      setMemoryEvidenceFocusSourceId(null);
+      return;
+    }
+    setMemoryEvidenceFocusSourceId(
+      selectedMemoryTraceReadout?.evidence.some(
+        (evidence) => evidence.sourceId === sourceId,
+      )
+        ? sourceId
+        : null,
+    );
+  }, [selectedMemoryTraceReadout]);
   const recallSelectedCellOrigin = useCallback((linkSeq: number) => {
     if (!selectedCell) return;
     const link = cellsCache.recentLinks.find((candidate) => candidate.seq === linkSeq);
@@ -370,6 +396,8 @@ export default function App({
         cellTraceSource={selectedOriginTrace?.sourceKind ?? 'none'}
         cellTraceReadout={selectedMemoryTraceReadout}
         cellTraceResponseRef={memoryTraceTargetResponseRef}
+        cellTraceEvidenceFocusSourceId={memoryEvidenceFocusSourceId}
+        onCellTraceEvidenceFocusChange={focusMemoryTraceEvidence}
         onTraceCellWrite={selectedOriginTraceable
           ? recallSelectedCellOrigin
           : undefined}
@@ -458,6 +486,7 @@ export default function App({
                   onTraceComplete={completeMemoryRecall}
                   onTraceReadoutChange={setMemoryTraceReadout}
                   traceTargetResponseRef={memoryTraceTargetResponseRef}
+                  traceEvidenceFocusSourceId={memoryEvidenceFocusSourceId}
                 />
                 <ConsensusWriteSeal arrivalRef={burstArrivalRef} />
               </>

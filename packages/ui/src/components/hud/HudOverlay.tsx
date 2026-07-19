@@ -45,7 +45,7 @@ const MESH_RAIL_STYLE: CSSProperties = { position: 'absolute', top: 42, right: 1
 const MESH_ZONE_COL: CSSProperties = { display: 'flex', flexDirection: 'column-reverse', gap: 12, alignItems: 'flex-end' };
 const PANEL_FLOW: CSSProperties = { position: 'relative' };
 
-export default function HudOverlay({ chain, peers, localNode, cellsStats, selectedCell, recentCellLinks, tracedCellWriteSeq, cellTraceSource, cellTraceReadout, cellTraceResponseRef, onTraceCellWrite, selectedNode, selectedPeer, onClearSelection, onClearCell, onClearNet, backfill, build, colonyCount }: {
+export default function HudOverlay({ chain, peers, localNode, cellsStats, selectedCell, recentCellLinks, tracedCellWriteSeq, cellTraceSource, cellTraceReadout, cellTraceResponseRef, cellTraceEvidenceFocusSourceId, onCellTraceEvidenceFocusChange, onTraceCellWrite, selectedNode, selectedPeer, onClearSelection, onClearCell, onClearNet, backfill, build, colonyCount }: {
   chain: ChainEntry; peers: Peer[]; localNode: ChainNode | undefined; cellsStats: CellsStats;
   selectedCell?: Cell | null;
   /** Retained causal links used only to prove an exact selected-Cell origin. */
@@ -54,6 +54,8 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats, select
   cellTraceSource?: ConsensusMemoryTraceSource;
   cellTraceReadout?: ConsensusMemoryTraceReadout | null;
   cellTraceResponseRef?: ConsensusMemoryCellResponseRef;
+  cellTraceEvidenceFocusSourceId?: number | null;
+  onCellTraceEvidenceFocusChange?: (sourceId: number | null) => void;
   onTraceCellWrite?: (linkSeq: number) => void;
   selectedNode?: ChainNode | null; selectedPeer?: Peer | null;
   /** Clear-all fallback (cell + net). Kept for the shared @cknerv/ui API. */
@@ -161,6 +163,8 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats, select
               traceSource={cellTraceSource}
               traceReadout={cellTraceReadout}
               traceResponseRef={cellTraceResponseRef}
+              traceEvidenceFocusSourceId={cellTraceEvidenceFocusSourceId}
+              onTraceEvidenceFocusChange={onCellTraceEvidenceFocusChange}
               onTraceWrite={onTraceCellWrite}
               onClose={clearCell}
               style={PANEL_FLOW}

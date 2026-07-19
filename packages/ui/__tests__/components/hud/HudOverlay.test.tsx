@@ -4,16 +4,18 @@ import type { ChainEntry, Peer, ChainNode, Cell, CellLink } from '@cknerv/types'
 
 // The embedded portrait spins a real WebGL context — stub it in jsdom.
 vi.mock('../../../src/components/hud/CellNucleusPortrait', () => ({
-  default: ({ cell, traceReadout, traceResponseRef }: {
+  default: ({ cell, traceReadout, traceResponseRef, traceEvidenceFocusSourceId }: {
     cell: { content_hash: string };
     traceReadout?: { stage: string } | null;
     traceResponseRef?: { current: unknown };
+    traceEvidenceFocusSourceId?: number | null;
   }) => (
     <div
       data-testid="portrait"
       data-hash={cell.content_hash}
       data-trace-stage={traceReadout?.stage ?? ''}
       data-response-ref={traceResponseRef ? 'true' : 'false'}
+      data-evidence-focus-source={traceEvidenceFocusSourceId ?? ''}
     />
   ),
   SCAN_PERIOD_S: 4.2,
@@ -135,6 +137,8 @@ describe('HudOverlay', () => {
           ],
         }}
         cellTraceResponseRef={{ current: null }}
+        cellTraceEvidenceFocusSourceId={2}
+        onCellTraceEvidenceFocusChange={() => {}}
       />,
     );
 
@@ -144,6 +148,10 @@ describe('HudOverlay', () => {
       ?.getAttribute('data-trace-stage')).toBe('converging');
     expect(container.querySelector('[data-testid="portrait"]')
       ?.getAttribute('data-response-ref')).toBe('true');
+    expect(container.querySelector('[data-testid="portrait"]')
+      ?.getAttribute('data-evidence-focus-source')).toBe('2');
+    expect(container.querySelector('[data-memory-evidence="2"]')
+      ?.getAttribute('data-memory-evidence-focus')).toBe('active');
   });
 
   it('does not raise CAUTION when blocks merely run slower than the 8s target', () => {
