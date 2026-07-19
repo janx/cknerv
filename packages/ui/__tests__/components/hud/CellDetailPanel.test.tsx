@@ -298,6 +298,7 @@ describe('CellDetailPanel', () => {
       at_ms: 12_000,
     };
     const onTraceEvidenceFocusChange = vi.fn();
+    const onTraceRouteHopFocusChange = vi.fn();
     const props = {
       cell: base,
       recentLinks: [origin],
@@ -306,6 +307,7 @@ describe('CellDetailPanel', () => {
       traceReadout: traceReadout(),
       onTraceWrite: () => {},
       onTraceEvidenceFocusChange,
+      onTraceRouteHopFocusChange,
       onClose: () => {},
     };
     const { container, rerender, getByTestId } = render(
@@ -347,6 +349,47 @@ describe('CellDetailPanel', () => {
     expect(routeCells?.[0].getAttribute('data-memory-evidence-route-role')).toBe('source');
     expect(routeCells?.[1].getAttribute('data-memory-evidence-route-hop')).toBe('1');
     expect(routeCells?.[2].getAttribute('data-memory-evidence-route-role')).toBe('target');
+    expect(routeCells?.[1].tagName).toBe('BUTTON');
+    fireEvent.pointerEnter(routeCells![1]);
+    expect(onTraceRouteHopFocusChange).toHaveBeenLastCalledWith({
+      traceKey: `18:${base.id}:1`,
+      sourceId: 11,
+      targetCellId: base.id,
+      cellId: 99,
+      hopIndex: 1,
+    });
+    rerender(<CellDetailPanel
+      {...props}
+      traceEvidenceFocusSourceId={11}
+      traceRouteHopFocus={{
+        traceKey: `18:${base.id}:1`,
+        sourceId: 11,
+        targetCellId: base.id,
+        cellId: 99,
+        hopIndex: 1,
+      }}
+    />);
+    const focusedTransit = container.querySelector<HTMLElement>(
+      '[data-memory-evidence-route-cell="99"]',
+    )!;
+    expect(focusedTransit.getAttribute('data-memory-evidence-route-focus')).toBe('active');
+    expect(focusedTransit.getAttribute('aria-pressed')).toBe('true');
+    expect(container.querySelector('[data-memory-evidence-route-ledger="true"]')
+      ?.textContent).toContain('H01 · CELL #99');
+    expect(onTraceEvidenceFocusChange).toHaveBeenLastCalledWith(11);
+    fireEvent.pointerLeave(focusedTransit, { relatedTarget: routeLedger });
+    expect(onTraceRouteHopFocusChange).toHaveBeenLastCalledWith(null);
+    focusedTransit.focus();
+    expect(onTraceRouteHopFocusChange).toHaveBeenLastCalledWith({
+      traceKey: `18:${base.id}:1`,
+      sourceId: 11,
+      targetCellId: base.id,
+      cellId: 99,
+      hopIndex: 1,
+    });
+    activeFirst.focus();
+    expect(onTraceRouteHopFocusChange).toHaveBeenLastCalledWith(null);
+    expect(onTraceEvidenceFocusChange).toHaveBeenLastCalledWith(11);
     fireEvent.click(routeLedger!);
     expect(container.querySelector('[data-memory-evidence-route-ledger="true"]')).not.toBeNull();
     fireEvent.keyDown(activeFirst, { key: 'Escape' });
@@ -358,7 +401,9 @@ describe('CellDetailPanel', () => {
     expect(activeFirst.getAttribute('aria-expanded')).toBe('false');
     expect(container.querySelector('[data-memory-evidence-route-ledger="true"]')).toBeNull();
 
-    fireEvent.pointerLeave(container.querySelector('[data-memory-evidence="1"]')!);
+    fireEvent.pointerLeave(container.querySelector('[data-memory-evidence-wrapper="1"]')!);
+    expect(onTraceEvidenceFocusChange).toHaveBeenLastCalledWith(11);
+    fireEvent.blur(activeFirst);
     expect(onTraceEvidenceFocusChange).toHaveBeenLastCalledWith(null);
     second.focus();
     expect(document.activeElement).toBe(second);

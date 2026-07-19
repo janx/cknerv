@@ -31,17 +31,21 @@ import {
   CONSENSUS_PULSE_POLICY,
   consensusMemoryCellResponse,
   consensusMemoryEvidenceFocusScale,
+  consensusMemoryRouteHopAdjacentSegments,
   consensusMemoryPulseActivityScale,
   consensusMemoryRouteHandoffScale,
+  consensusMemoryTraceRouteForTarget,
   consensusMemoryTraceReadout,
   consensusMemoryTraceRequestKey,
   consensusMemoryTraceResonance,
   consensusMemoryTraceFocusStrength,
   deriveConsensusMemoryTraceFocus,
+  validateConsensusMemoryRouteHopFocus,
   planConsensusMemoryTrace,
   type ConsensusMemoryTraceFocus,
   type ConsensusMemoryTraceReadout,
   type ConsensusMemoryTraceRequest,
+  type ConsensusMemoryRouteHopFocus,
   type ConsensusMemoryCellResponse,
   type ConsensusMemoryCellResponseRef,
   type ConsensusMemoryEvidenceResponse,
@@ -78,6 +82,9 @@ const TRAIL_HOPS = 5;
 const MEMORY_RESONANCE_BRIGHT = 1.35;
 /** Broad afterimage rather than the tight travelling-wave tail. */
 const MEMORY_RESONANCE_TAIL_DECAY = 0.65;
+/** Lift inspected edges above recall afterimage without becoming a write flash. */
+const MEMORY_ROUTE_HOP_INSPECT_BRIGHT = 2.05;
+const MEMORY_ROUTE_HOP_INSPECT_TAIL_DECAY = 0.18;
 const RIPPLE_STAGGER_MS = 60;      // per-birth grow-in delay within a block
 const RECONCILE_EVERY_N_BLOCKS = 6; // canonical drift repair cadence
 
@@ -108,6 +115,8 @@ interface NeuralNetworkProps {
   traceTargetResponseRef?: ConsensusMemoryCellResponseRef;
   /** One verified routed source isolated by the evidence ledger. */
   traceEvidenceFocusSourceId?: number | null;
+  /** One verified Cell address inside that source's exact retained route. */
+  traceRouteHopFocus?: ConsensusMemoryRouteHopFocus | null;
 }
 
 interface ActivePulse extends Pulse {
@@ -130,6 +139,7 @@ export default function NeuralNetwork({
   onTraceReadoutChange,
   traceTargetResponseRef,
   traceEvidenceFocusSourceId = null,
+  traceRouteHopFocus = null,
 }: NeuralNetworkProps = {}) {
   const simClock = useSimClock();
   const cellsCache = useCellGalaxy();
@@ -268,8 +278,20 @@ export default function NeuralNetwork({
       ? traceEvidenceFocusSourceId
       : null;
     focus.evidenceFocusSourceId = sourceId;
+    const validatedRouteHop = validateConsensusMemoryRouteHopFocus(
+      focus,
+      traceRouteHopFocus,
+    );
+    focus.routeHopFocus = validatedRouteHop?.sourceId === sourceId
+      ? validatedRouteHop
+      : null;
     if (sharedTraceFocusRef) sharedTraceFocusRef.current = focus;
-  }, [sharedTraceFocusRef, traceEvidenceFocusSourceId, traceFocus]);
+  }, [
+    sharedTraceFocusRef,
+    traceEvidenceFocusSourceId,
+    traceFocus,
+    traceRouteHopFocus,
+  ]);
   const publishTraceTargetResponse = useCallback((
     targetCellId: number | null,
     response: ConsensusMemoryCellResponse | null,
@@ -694,6 +716,41 @@ export default function NeuralNetwork({
       }
     }
     pulsesRef.current = stillActive;
+
+    // A route-ledger hover reads the exact retained route independently of
+    // packet progress. Only the one or two live graph edges adjacent to that
+    // verified Cell are lifted, so an untraversed or stale edge is never drawn.
+    const routeHopFocus = currentFocus?.routeHopFocus ?? null;
+    if (handles && currentFocus && routeHopFocus && focusStrength > 0) {
+      const source = currentFocus.sources.find(
+        ({ id }) => id === routeHopFocus.sourceId,
+      );
+      const inspectedRoute = source
+        ? consensusMemoryTraceRouteForTarget(source, routeHopFocus.targetCellId)
+        : null;
+      if (
+        inspectedRoute
+        && inspectedRoute.path[routeHopFocus.hopIndex] === routeHopFocus.cellId
+      ) {
+        for (const segmentIndex of consensusMemoryRouteHopAdjacentSegments(
+          routeHopFocus,
+          inspectedRoute.path,
+        )) {
+          const fromCellId = inspectedRoute.path[segmentIndex];
+          const toCellId = inspectedRoute.path[segmentIndex + 1];
+          if (!cells.has(fromCellId) || !cells.has(toCellId)) continue;
+          if (!adjacency.get(fromCellId)?.has(toCellId)) continue;
+          handles.pushActiveHop({
+            fromCellId,
+            toCellId,
+            frontT: 1,
+            brightness: MEMORY_ROUTE_HOP_INSPECT_BRIGHT * focusStrength,
+            tailDecay: MEMORY_ROUTE_HOP_INSPECT_TAIL_DECAY,
+            color: inspectedRoute.color,
+          }, cells);
+        }
+      }
+    }
 
     handles?.flushActive();
     spikePool.endFrame(state.size.height, state.viewport.dpr ?? 1);
