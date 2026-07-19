@@ -5,7 +5,10 @@ import { render } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { CellGalaxyProvider } from '../../src/hooks/cellGalaxyContext';
 import ConsensusMemoryMarkers from '../../src/nerve/ConsensusMemoryMarkers';
-import type { ConsensusMemoryTraceFocus } from '../../src/nerve/consensusMemoryTrace';
+import type {
+  ConsensusMemoryTraceFocus,
+  ConsensusMemoryTraceFocusSource,
+} from '../../src/nerve/consensusMemoryTrace';
 
 vi.mock('@react-three/drei', () => ({
   Html: ({ children }: { children: ReactNode }) => <div>{children}</div>,
@@ -30,16 +33,36 @@ function cell(id: number, hashDigit: string): Cell {
   };
 }
 
+function focusSource(
+  id: number,
+  hashDigit: string,
+  startsAtSec: number,
+  arrivesAtSec: number,
+  targetId = 5,
+): ConsensusMemoryTraceFocusSource {
+  return {
+    id,
+    contentHash: `0x${hashDigit.repeat(64)}`,
+    outPoint: { tx_hash: `0x${id}`, index: 0 },
+    birthBlock: 1,
+    startsAtSec,
+    arrivesAtSec,
+    routes: [{
+      targetId,
+      path: [id, id + 20, targetId],
+      hopCount: 2,
+      hopMs: (arrivesAtSec - startsAtSec) * 500,
+      startsAtSec,
+      arrivesAtSec,
+    }],
+  };
+}
+
 function focus(overrides: Partial<ConsensusMemoryTraceFocus> = {}): ConsensusMemoryTraceFocus {
   return {
     key: '7:1',
     sourceKind: 'witness',
-    sources: [{
-      id: 8,
-      contentHash: `0x${'a'.repeat(64)}`,
-      startsAtSec: 1.1,
-      arrivesAtSec: 1.8,
-    }],
+    sources: [focusSource(8, 'a', 1.1, 1.8)],
     routedSourceCount: 1,
     targetIds: [5],
     startedAtSec: 1,
@@ -114,18 +137,8 @@ describe('ConsensusMemoryMarkers', () => {
       <CellGalaxyProvider value={cache}>
         <ConsensusMemoryMarkers focus={focus({
           sources: [
-            {
-              id: 8,
-              contentHash: `0x${'a'.repeat(64)}`,
-              startsAtSec: 1.1,
-              arrivesAtSec: 1.8,
-            },
-            {
-              id: 9,
-              contentHash: `0x${'c'.repeat(64)}`,
-              startsAtSec: 1.32,
-              arrivesAtSec: 2.02,
-            },
+            focusSource(8, 'a', 1.1, 1.8),
+            focusSource(9, 'c', 1.32, 2.02),
           ],
           routedSourceCount: 2,
         })} />
@@ -148,18 +161,8 @@ describe('ConsensusMemoryMarkers', () => {
     cache.cells.set(5, cell(5, 'b'));
     const traceFocus = focus({
       sources: [
-        {
-          id: 8,
-          contentHash: `0x${'a'.repeat(64)}`,
-          startsAtSec: 1.1,
-          arrivesAtSec: 1.8,
-        },
-        {
-          id: 9,
-          contentHash: `0x${'c'.repeat(64)}`,
-          startsAtSec: 1.32,
-          arrivesAtSec: 2.02,
-        },
+        focusSource(8, 'a', 1.1, 1.8),
+        focusSource(9, 'c', 1.32, 2.02),
       ],
       routedSourceCount: 2,
       evidenceFocusSourceId: 9,
@@ -174,6 +177,10 @@ describe('ConsensusMemoryMarkers', () => {
     expect(sources[0].getAttribute('data-memory-evidence-focus')).toBe('passive');
     expect(sources[1].getAttribute('data-memory-evidence-focus')).toBe('active');
     expect(sources[1].getAttribute('data-memory-source-id')).toBe('9');
+    expect(sources[1].getAttribute('data-memory-route')).toBe('9>29>5');
+    expect(sources[1].getAttribute('data-memory-route-hops')).toBe('2');
+    expect(sources[1].querySelector('[data-memory-route-proof="true"]')?.textContent)
+      .toContain('CELL #9 · H02 · 700 MS');
     expect(container.querySelector('[data-memory-endpoint="target"]')
       ?.getAttribute('data-memory-evidence-focus')).toBe('context');
   });

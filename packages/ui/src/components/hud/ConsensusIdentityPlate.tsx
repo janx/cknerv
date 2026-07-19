@@ -43,6 +43,13 @@ function fingerprintReadout(hash: string, reveal: number): string {
   return `${body.slice(0, visible)}${'·'.repeat(16 - visible)} · ${'·'.repeat(10)}`;
 }
 
+function routeDurationReadout(durationMs: number): string {
+  const clamped = Number.isFinite(durationMs) ? Math.max(0, durationMs) : 0;
+  return clamped < 1_000
+    ? `${Math.round(clamped)} MS`
+    : `${(clamped / 1_000).toFixed(2)} S`;
+}
+
 function memoryRow({
   label,
   value,
@@ -197,6 +204,12 @@ function EvidenceLedger({
       {bindings.map((binding) => {
         const evidence = readout.evidence[binding.evidenceIndex];
         const sourceColor = consensusMemoryEvidenceCssColor(binding.evidenceIndex);
+        const sourceOutpoint = formatOutpoint(
+          evidence.sourceOutPoint.tx_hash,
+          evidence.sourceOutPoint.index,
+        );
+        const routeTargetId = evidence.route.at(-1) ?? readout.targetCellId;
+        const routeDuration = routeDurationReadout(evidence.routeDurationMs);
         const resolved = evidence.state === 'resolved';
         const stateCopy = resolved
           ? 'VERIFIED'
@@ -218,14 +231,18 @@ function EvidenceLedger({
           <button
             type="button"
             key={evidence.sourceId}
-            aria-label={`Focus evidence ${String(evidence.ordinal).padStart(2, '0')}, ${consensusMemoryEvidenceFingerprint(evidence.contentHash)}, agreement knot ${String(binding.knotIndex + 1).padStart(2, '0')}`}
+            aria-label={`Focus evidence ${String(evidence.ordinal).padStart(2, '0')}, source Cell ${evidence.sourceId}, ${evidence.hopCount} hops in ${routeDuration}, source ${evidence.sourceOutPoint.tx_hash}#${evidence.sourceOutPoint.index}, agreement knot ${String(binding.knotIndex + 1).padStart(2, '0')}`}
             aria-pressed={active}
             data-memory-evidence={evidence.ordinal}
             data-memory-evidence-source={evidence.sourceId}
             data-memory-evidence-knot={binding.knotIndex + 1}
             data-memory-evidence-state={evidence.state}
             data-memory-evidence-focus={focusState}
-            title={evidence.contentHash}
+            data-memory-evidence-route={evidence.route.join('>')}
+            data-memory-evidence-route-hops={evidence.hopCount}
+            data-memory-evidence-route-duration-ms={evidence.routeDurationMs}
+            data-memory-evidence-source-outpoint={`${evidence.sourceOutPoint.tx_hash}#${evidence.sourceOutPoint.index}`}
+            title={`${evidence.contentHash} · ${evidence.sourceOutPoint.tx_hash}#${evidence.sourceOutPoint.index}`}
             disabled={!onFocusChange}
             onPointerEnter={() => onFocusChange?.(evidence.sourceId)}
             onPointerLeave={(event) => {
@@ -283,6 +300,42 @@ function EvidenceLedger({
                 {stateCopy}
               </span>
             </span>
+            {active ? (
+              <span
+                data-memory-evidence-route-proof="true"
+                style={{
+                  gridColumn: '1 / -1',
+                  display: 'grid',
+                  gridTemplateColumns: 'minmax(0, 1fr) auto',
+                  gap: '1px 7px',
+                  minWidth: 0,
+                  margin: '2px 4px 2px 0',
+                  paddingTop: 3,
+                  borderTop: `1px solid ${sourceColor}2e`,
+                  fontSize: 6.5,
+                  letterSpacing: 0.3,
+                  color: HUD_COLORS.dim,
+                }}
+              >
+                <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', color: sourceColor }}>
+                  CELL #{evidence.sourceId} → #{routeTargetId}
+                </span>
+                <span>
+                  {String(evidence.hopCount).padStart(2, '0')} HOPS · {routeDuration}
+                </span>
+                <span
+                  title={`${evidence.sourceOutPoint.tx_hash}#${evidence.sourceOutPoint.index}`}
+                  style={{
+                    gridColumn: '1 / -1',
+                    minWidth: 0,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                  }}
+                >
+                  SOURCE {sourceOutpoint} · BLOCK #{evidence.sourceBirthBlock}
+                </span>
+              </span>
+            ) : null}
           </button>
         );
       })}

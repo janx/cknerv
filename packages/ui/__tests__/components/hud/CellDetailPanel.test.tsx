@@ -62,6 +62,14 @@ function traceReadout(
           : index < value.arrivedSourceCount
             ? 'arrived' as const
             : 'routing' as const,
+        sourceOutPoint: {
+          tx_hash: `0x${String(index + 1).repeat(64)}`,
+          index,
+        },
+        sourceBirthBlock: 100 + index,
+        route: [index + 11, 99, base.id],
+        hopCount: 2,
+        routeDurationMs: 520 + index * 80,
       }),
     ),
   };
@@ -317,6 +325,15 @@ describe('CellDetailPanel', () => {
     expect(container.querySelector('[data-memory-evidence="2"]')
       ?.getAttribute('data-memory-evidence-focus')).toBe('passive');
     expect(getByTestId('portrait').getAttribute('data-evidence-focus-source')).toBe('11');
+    const proof = container.querySelector('[data-memory-evidence-route-proof="true"]');
+    expect(proof?.textContent).toContain('CELL #11 → #4242');
+    expect(proof?.textContent).toContain('02 HOPS · 520 MS');
+    expect(proof?.textContent).toContain('SOURCE 0x1111…11111111#0 · BLOCK #100');
+    expect(container.querySelector('[data-memory-evidence="1"]')
+      ?.getAttribute('data-memory-evidence-route')).toBe('11>99>4242');
+    expect(container.querySelector('[data-memory-evidence="1"]')
+      ?.getAttribute('data-memory-evidence-source-outpoint'))
+      .toBe(`0x${'1'.repeat(64)}#0`);
 
     fireEvent.pointerLeave(container.querySelector('[data-memory-evidence="1"]')!);
     expect(onTraceEvidenceFocusChange).toHaveBeenLastCalledWith(null);

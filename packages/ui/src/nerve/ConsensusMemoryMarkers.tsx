@@ -7,6 +7,7 @@ import { useSimFrame } from '../tweaks/useSimFrame';
 import {
   consensusMemoryCellResponse,
   consensusMemoryEvidenceFocusScale,
+  consensusMemoryTraceRouteForTarget,
   consensusMemoryTraceFocusStrength,
   consensusMemoryTraceSourceStrength,
   type ConsensusMemoryTraceFocus,
@@ -46,6 +47,13 @@ function consensusMemoryEndpointCopy(
 
 function shortContentHash(cell: Cell): string {
   return cell.content_hash.replace(/^0x/i, '').slice(0, 10).toUpperCase();
+}
+
+function routeDurationReadout(durationMs: number): string {
+  const clamped = Number.isFinite(durationMs) ? Math.max(0, durationMs) : 0;
+  return clamped < 1_000
+    ? `${Math.round(clamped)} MS`
+    : `${(clamped / 1_000).toFixed(2)} S`;
 }
 
 function EndpointGlyph({
@@ -340,6 +348,15 @@ export default function ConsensusMemoryMarkers({
     <>
       {markers.map(({ cell, role, source: focusSource, sourceIndex }, index) => {
         const source = role === 'source';
+        const routeTargetId = focus.targetIds.length === 1
+          ? focus.targetIds[0]
+          : undefined;
+        const route = focusSource && routeTargetId !== undefined
+          ? consensusMemoryTraceRouteForTarget(focusSource, routeTargetId)
+          : null;
+        const routeDurationMs = route
+          ? route.hopCount * route.hopMs
+          : null;
         const copy = consensusMemoryEndpointCopy(role, focus.sourceKind);
         const color = source
           ? consensusMemoryEvidenceCssColor(sourceIndex)
@@ -374,6 +391,9 @@ export default function ConsensusMemoryMarkers({
               data-memory-source-total={source ? focus.routedSourceCount : undefined}
               data-memory-source-id={focusSource?.id}
               data-memory-evidence-focus={evidenceFocusState}
+              data-memory-route={route?.path.join('>')}
+              data-memory-route-hops={route?.hopCount}
+              data-memory-route-duration-ms={routeDurationMs ?? undefined}
               style={{
                 position: 'relative',
                 display: 'flex',
@@ -442,6 +462,14 @@ export default function ConsensusMemoryMarkers({
                     CONTENT {shortContentHash(cell)}
                   </div>
                 )}
+                {source && evidenceFocusState === 'active' && route && routeDurationMs !== null ? (
+                  <div
+                    data-memory-route-proof="true"
+                    style={{ marginTop: 2, fontSize: 6.8, letterSpacing: '0.09em', color }}
+                  >
+                    CELL #{route.path[0]} · H{String(route.hopCount).padStart(2, '0')} · {routeDurationReadout(routeDurationMs)}
+                  </div>
+                ) : null}
               </div>
             </div>
           </Html>
