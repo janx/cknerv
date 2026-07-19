@@ -35,6 +35,14 @@ const readout = (
           : index < value.arrivedSourceCount
             ? 'arrived' as const
             : 'routing' as const,
+        sourceOutPoint: {
+          tx_hash: `0x${String(index + 1).repeat(64)}`,
+          index,
+        },
+        sourceBirthBlock: 100 + index,
+        route: [index + 1, 5],
+        hopCount: 1,
+        routeDurationMs: 480 + index * 40,
       }),
     ),
   };

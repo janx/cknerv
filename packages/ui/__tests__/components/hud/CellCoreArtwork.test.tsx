@@ -90,6 +90,14 @@ describe('CellCoreArtwork', () => {
             ordinal,
             contentHash: `0x${String(ordinal).repeat(64)}`,
             state: 'resolved' as const,
+            sourceOutPoint: {
+              tx_hash: `0x${String(ordinal).repeat(64)}`,
+              index: ordinal - 1,
+            },
+            sourceBirthBlock: ordinal,
+            route: [ordinal, 1],
+            hopCount: 1,
+            routeDurationMs: 500,
           })),
         }}
         traceResponseRef={responseRef}

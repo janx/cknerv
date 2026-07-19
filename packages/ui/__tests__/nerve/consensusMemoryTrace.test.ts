@@ -136,8 +136,18 @@ describe('planConsensusMemoryTrace', () => {
     expect(plan.retainedOutputIds).toEqual([5]);
     expect(plan.sourceKind).toBe('input');
     expect(plan.sourceEvidence).toEqual([
-      { id: 1, contentHash: cell(1).content_hash },
-      { id: 2, contentHash: cell(2).content_hash },
+      {
+        id: 1,
+        contentHash: cell(1).content_hash,
+        outPoint: cell(1).out_point,
+        birthBlock: cell(1).birth_block,
+      },
+      {
+        id: 2,
+        contentHash: cell(2).content_hash,
+        outPoint: cell(2).out_point,
+        birthBlock: cell(2).birth_block,
+      },
     ]);
     expect(plan.witnessIds).toEqual([]);
     expect(plan.pulses.map((pulse) => pulse.path)).toEqual([
@@ -236,6 +246,28 @@ describe('planConsensusMemoryTrace', () => {
       cell(focus!.sources[0].id).content_hash,
       cell(focus!.sources[1].id).content_hash,
     ]);
+    for (const source of focus!.sources) {
+      const plannedPulse = plan.pulses.find((pulse) => (
+        pulse.path[0] === source.id && pulse.path.at(-1) === 5
+      ))!;
+      expect(source.outPoint).toEqual(cell(source.id).out_point);
+      expect(source.birthBlock).toBe(cell(source.id).birth_block);
+      expect(source.routes).toHaveLength(1);
+      expect(source.routes[0]).toMatchObject({
+        targetId: 5,
+        path: plannedPulse.path,
+        hopCount: plannedPulse.path.length - 1,
+        hopMs: plannedPulse.hopMs,
+      });
+      expect(source.routes[0].startsAtSec).toBeCloseTo(
+        startedAtSec + plannedPulse.startDelayMs / 1_000,
+      );
+      expect(source.routes[0].arrivesAtSec).toBeCloseTo(
+        startedAtSec
+          + plannedPulse.startDelayMs / 1_000
+          + (plannedPulse.path.length - 1) * plannedPulse.hopMs / 1_000,
+      );
+    }
     expect(focus!.sources[0].startsAtSec).toBeLessThan(focus!.sources[1].startsAtSec);
     expect(focus?.routedSourceCount).toBe(2);
     expect(focus?.targetIds).toEqual([5]);
@@ -344,7 +376,8 @@ describe('planConsensusMemoryTrace', () => {
     const firstArrival = Math.min(...focus.sources.map((source) => source.arrivesAtSec));
     const lastArrival = Math.max(...focus.sources.map((source) => source.arrivesAtSec));
 
-    expect(consensusMemoryTraceReadout(focus, 5, firstArrival - 0.001)).toMatchObject({
+    const reading = consensusMemoryTraceReadout(focus, 5, firstArrival - 0.001);
+    expect(reading).toMatchObject({
       key: '7:5:1',
       targetCellId: 5,
       sourceKind: 'input',
@@ -357,6 +390,19 @@ describe('planConsensusMemoryTrace', () => {
         expect.objectContaining({ ordinal: 2, state: 'routing' }),
       ],
     });
+    for (const evidence of reading!.evidence) {
+      const source = focus.sources.find((candidate) => (
+        candidate.id === evidence.sourceId
+      ))!;
+      const route = source.routes.find((candidate) => candidate.targetId === 5)!;
+      expect(evidence.sourceOutPoint).toEqual(cell(source.id).out_point);
+      expect(evidence.sourceBirthBlock).toBe(cell(source.id).birth_block);
+      expect(evidence.route).toEqual(route.path);
+      expect(evidence.hopCount).toBe(route.path.length - 1);
+      expect(evidence.routeDurationMs).toBeCloseTo(
+        route.hopCount * route.hopMs,
+      );
+    }
     expect(consensusMemoryTraceReadout(focus, 5, firstArrival)).toMatchObject({
       stage: 'converging',
       arrivedSourceCount: 1,
@@ -380,6 +426,30 @@ describe('planConsensusMemoryTrace', () => {
     });
     expect(consensusMemoryTraceReadout(focus, 999, firstArrival)).toBeNull();
     expect(consensusMemoryTraceReadout(focus, 5, focus.endsAtSec)).toBeNull();
+  });
+
+  it('keeps exact per-target route proofs when retained sources fan out', () => {
+    const cells = new Map([1, 2, 3, 4, 5, 6].map((id) => [id, cell(id)]));
+    const plan = planConsensusMemoryTrace(
+      link({ to_ids: [5, 6] }),
+      cells,
+      graph([[1, 3], [2, 4], [3, 5], [4, 5], [3, 6], [4, 6]]),
+    );
+    const focus = deriveConsensusMemoryTraceFocus(plan, 10, '7:*:1')!;
+
+    expect(new Set(focus.targetIds)).toEqual(new Set([5, 6]));
+    expect(focus.sources.every((source) => (
+      source.routes.map((route) => route.targetId).sort((a, b) => a - b)
+        .join(',') === '5,6'
+    ))).toBe(true);
+
+    const targetSix = consensusMemoryTraceReadout(focus, 6, 10.001)!;
+    expect(targetSix.sourceCount).toBe(2);
+    expect(targetSix.evidence.every((evidence) => evidence.route.at(-1) === 6))
+      .toBe(true);
+    expect(targetSix.evidence.every((evidence) => (
+      evidence.hopCount === evidence.route.length - 1
+    ))).toBe(true);
   });
 
   it('does not focus an unroutable memory or over-dim passive structure', () => {

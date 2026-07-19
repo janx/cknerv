@@ -1,4 +1,4 @@
-import type { Cell, CellLink } from '@cknerv/types';
+import type { Cell, CellLink, OutPoint } from '@cknerv/types';
 import { fnv1a } from '../geometry/edgeBezier';
 import type { NeighborGraph } from '../geometry/neighborGraph';
 import { DEFAULT_MAX_HOPS, shortestPath } from '../geometry/pathRouter';
@@ -95,6 +95,19 @@ export interface ConsensusMemoryTracePlan {
 export interface ConsensusMemoryTraceFocusSource {
   id: number;
   contentHash: string;
+  outPoint: OutPoint;
+  birthBlock: number;
+  startsAtSec: number;
+  arrivesAtSec: number;
+  routes: ConsensusMemoryTraceRoute[];
+}
+
+export interface ConsensusMemoryTraceRoute {
+  targetId: number;
+  /** Exact Cell ids visited by this retained route, including endpoints. */
+  path: readonly number[];
+  hopCount: number;
+  hopMs: number;
   startsAtSec: number;
   arrivesAtSec: number;
 }
@@ -102,6 +115,8 @@ export interface ConsensusMemoryTraceFocusSource {
 export interface ConsensusMemorySourceEvidence {
   id: number;
   contentHash: string;
+  outPoint: OutPoint;
+  birthBlock: number;
 }
 
 export interface ConsensusMemoryTraceFocus {
@@ -155,6 +170,12 @@ export interface ConsensusMemoryTraceEvidence {
   ordinal: number;
   contentHash: string;
   state: ConsensusMemoryEvidenceState;
+  sourceOutPoint: OutPoint;
+  sourceBirthBlock: number;
+  route: readonly number[];
+  hopCount: number;
+  /** Deterministic replay travel time on this graph route, not network latency. */
+  routeDurationMs: number;
 }
 
 /**
@@ -191,36 +212,59 @@ export function deriveConsensusMemoryTraceFocus(
 ): ConsensusMemoryTraceFocus | null {
   if (plan.sourceKind === 'none' || plan.pulses.length === 0) return null;
   const evidenceById = new Map(
-    plan.sourceEvidence.map((source) => [source.id, source.contentHash]),
+    plan.sourceEvidence.map((source) => [source.id, source]),
   );
   const sourceById = new Map<number, ConsensusMemoryTraceFocusSource>();
   for (const pulse of plan.pulses) {
     const id = pulse.path[0];
+    const sourceEvidence = evidenceById.get(id);
+    if (!sourceEvidence) continue;
     const startsAtSec = startedAtSec + pulse.startDelayMs / 1000;
     const arrivesAtSec = startsAtSec
       + (pulse.path.length - 1) * pulse.hopMs / 1000;
+    const route: ConsensusMemoryTraceRoute = {
+      targetId: pulse.path[pulse.path.length - 1],
+      path: [...pulse.path],
+      hopCount: pulse.path.length - 1,
+      hopMs: pulse.hopMs,
+      startsAtSec,
+      arrivesAtSec,
+    };
     const existing = sourceById.get(id);
     if (!existing) {
       sourceById.set(id, {
         id,
-        contentHash: evidenceById.get(id) ?? '',
+        contentHash: sourceEvidence.contentHash,
+        outPoint: { ...sourceEvidence.outPoint },
+        birthBlock: sourceEvidence.birthBlock,
         startsAtSec,
         arrivesAtSec,
+        routes: [route],
       });
       continue;
     }
     existing.startsAtSec = Math.min(existing.startsAtSec, startsAtSec);
     existing.arrivesAtSec = Math.min(existing.arrivesAtSec, arrivesAtSec);
+    existing.routes.push(route);
   }
+  if (sourceById.size === 0) return null;
   const sources = [...sourceById.values()]
+    .map((source) => ({
+      ...source,
+      routes: source.routes.sort((a, b) => (
+        a.startsAtSec - b.startsAtSec
+        || a.arrivesAtSec - b.arrivesAtSec
+        || a.targetId - b.targetId
+      )),
+    }))
     .sort((a, b) => (
       a.startsAtSec - b.startsAtSec
       || a.arrivesAtSec - b.arrivesAtSec
       || a.id - b.id
     ))
     .slice(0, MAX_MEMORY_TRACE_FOCUS_ENDPOINTS);
-  const targetIds = [...new Set(plan.pulses.map(
-    (pulse) => pulse.path[pulse.path.length - 1],
+  const targetIds = [...new Set(sources.flatMap(
+    (source) => source.routes.map((route) => route.targetId),
   ))].slice(0, MAX_MEMORY_TRACE_FOCUS_ENDPOINTS);
   const lifetimeMs = Math.max(...plan.pulses.map((pulse) => (
     pulse.startDelayMs
@@ -238,6 +282,14 @@ export function deriveConsensusMemoryTraceFocus(
     endsAtSec: startedAtSec + lifetimeMs / 1000,
     evidenceFocusSourceId: null,
   };
+}
+
+/** Exact retained route from one real source into a particular target Cell. */
+export function consensusMemoryTraceRouteForTarget(
+  source: ConsensusMemoryTraceFocusSource,
+  targetCellId: number,
+): ConsensusMemoryTraceRoute | null {
+  return source.routes.find((route) => route.targetId === targetCellId) ?? null;
 }
 
 /**
@@ -301,12 +353,16 @@ export function consensusMemoryCellResponse(
     const elapsed = Math.max(0, nowSec - focus.startedAtSec);
     const rawPhase = elapsed * MEMORY_TRACE_CELL_READ_CYCLES_PER_S;
     const phase = rawPhase - Math.floor(rawPhase);
-    const evidence = focus.sources.map((source, index) => ({
+    const evidence = focus.sources.flatMap((source) => {
+      const route = consensusMemoryTraceRouteForTarget(source, cellId);
+      return route ? [{ source, route }] : [];
+    }).map(({ source, route }, index) => ({
       sourceId: source.id,
       ordinal: index + 1,
       contentHash: source.contentHash,
       convergence: smoothUnit(
-        (nowSec - source.arrivesAtSec) * 1000 / MEMORY_TRACE_CELL_CONVERGENCE_MS,
+        (nowSec - route.arrivesAtSec) * 1000
+          / MEMORY_TRACE_CELL_CONVERGENCE_MS,
       ),
     }));
     const convergence = evidence.length === 0
@@ -358,15 +414,24 @@ export function consensusMemoryTraceReadout(
   ) return null;
 
   const resolutionSec = MEMORY_TRACE_CELL_CONVERGENCE_MS / 1000;
-  const evidence = focus.sources.map((source, index) => ({
+  const routedSources = focus.sources.flatMap((source) => {
+    const route = consensusMemoryTraceRouteForTarget(source, targetCellId);
+    return route ? [{ source, route }] : [];
+  });
+  const evidence = routedSources.map(({ source, route }, index) => ({
     sourceId: source.id,
     ordinal: index + 1,
     contentHash: source.contentHash,
-    state: nowSec >= source.arrivesAtSec + resolutionSec
+    state: nowSec >= route.arrivesAtSec + resolutionSec
       ? 'resolved' as const
-      : nowSec >= source.arrivesAtSec
+      : nowSec >= route.arrivesAtSec
         ? 'arrived' as const
         : 'routing' as const,
+    sourceOutPoint: { ...source.outPoint },
+    sourceBirthBlock: source.birthBlock,
+    route: route.path,
+    hopCount: route.hopCount,
+    routeDurationMs: route.hopCount * route.hopMs,
   }));
   const arrivedSourceCount = evidence.filter(
     (source) => source.state !== 'routing',
@@ -374,8 +439,8 @@ export function consensusMemoryTraceReadout(
   const resolvedSourceCount = evidence.filter(
     (source) => source.state === 'resolved',
   ).length;
-  const locked = focus.sources.length > 0
-    && resolvedSourceCount === focus.sources.length;
+  const locked = routedSources.length > 0
+    && resolvedSourceCount === routedSources.length;
   const stage: ConsensusMemoryTraceStage = locked
     ? 'locked'
     : arrivedSourceCount > 0
@@ -387,7 +452,7 @@ export function consensusMemoryTraceReadout(
     targetCellId,
     sourceKind: focus.sourceKind,
     stage,
-    sourceCount: focus.sources.length,
+    sourceCount: routedSources.length,
     arrivedSourceCount,
     resolvedSourceCount,
     evidence,
@@ -532,7 +597,12 @@ export function planConsensusMemoryTrace(
   );
   const sourceEvidence = endpoints.sourceIds.flatMap((id) => {
     const source = cells.get(id);
-    return source ? [{ id, contentHash: source.content_hash }] : [];
+    return source ? [{
+      id,
+      contentHash: source.content_hash,
+      outPoint: { ...source.out_point },
+      birthBlock: source.birth_block,
+    }] : [];
   });
   const retainedOutputIds = options.targetCellId === undefined
     ? endpoints.retainedOutputIds
