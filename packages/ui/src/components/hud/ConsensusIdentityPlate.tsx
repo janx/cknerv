@@ -1,4 +1,4 @@
-import type { CSSProperties } from 'react';
+import { useState, type CSSProperties } from 'react';
 import type { CellConsensusIdentity } from '../../derives/cellConsensusIdentity.derive';
 import type { ConsensusBraidField } from '../../derives/consensusBraid.derive';
 import {
@@ -7,6 +7,7 @@ import {
   consensusMemoryEvidenceFingerprint,
 } from '../../derives/consensusMemoryEvidence.derive';
 import type {
+  ConsensusMemoryTraceEvidence,
   ConsensusMemoryTraceReadout,
   ConsensusMemoryTraceSource,
   ConsensusMemoryTraceStage,
@@ -48,6 +49,140 @@ function routeDurationReadout(durationMs: number): string {
   return clamped < 1_000
     ? `${Math.round(clamped)} MS`
     : `${(clamped / 1_000).toFixed(2)} S`;
+}
+
+function EvidenceRouteLedger({
+  evidence,
+  sourceColor,
+  id,
+}: {
+  evidence: ConsensusMemoryTraceEvidence;
+  sourceColor: string;
+  id: string;
+}) {
+  const lastIndex = evidence.route.length - 1;
+  return (
+    <span
+      id={id}
+      className="cknerv-memory-route-ledger"
+      data-hud-occlusion="true"
+      data-memory-evidence-route-ledger="true"
+      data-memory-evidence-route-cell-count={evidence.route.length}
+      style={{
+        zIndex: 4,
+        gridColumn: '1 / -1',
+        display: 'block',
+        boxSizing: 'border-box',
+        padding: '6px 7px 7px',
+        borderTop: `1px solid ${sourceColor}7a`,
+        borderBottom: `1px solid ${CYAN}30`,
+        borderLeft: `1px solid ${sourceColor}4f`,
+        background: 'linear-gradient(110deg, rgba(1,4,12,.97), rgba(3,8,20,.94))',
+        boxShadow: `-8px 0 24px rgba(0,0,0,.3), inset 8px 0 18px ${sourceColor}0b`,
+        color: HUD_COLORS.dim,
+        whiteSpace: 'normal',
+        textAlign: 'left',
+      }}
+    >
+      <span
+        aria-hidden="true"
+        className="cknerv-memory-route-connector"
+        style={{
+          position: 'absolute',
+          right: -30,
+          top: 9,
+          width: 30,
+          borderTop: `1px solid ${sourceColor}66`,
+        }}
+      />
+      <span
+        aria-hidden="true"
+        className="cknerv-memory-route-connector-tail"
+        style={{
+          position: 'absolute',
+          right: -30,
+          top: 9,
+          borderRight: `1px solid ${sourceColor}42`,
+        }}
+      />
+      <span style={{ display: 'flex', alignItems: 'baseline', gap: 7, marginBottom: 5 }}>
+        <span style={{ fontFamily: HUD_FONTS.tech, fontSize: 6.8, fontWeight: 700, letterSpacing: 0.9, color: sourceColor }}>
+          ROUTE LEDGER
+        </span>
+        <span style={{ marginLeft: 'auto', fontFamily: HUD_FONTS.mono, fontSize: 6.5, letterSpacing: 0.35, color: '#C9F8FF' }}>
+          {String(evidence.route.length).padStart(2, '0')} CELLS · H{String(evidence.hopCount).padStart(2, '0')}
+        </span>
+      </span>
+      <span
+        className="cknerv-memory-route-cells"
+        data-memory-evidence-route-cells="true"
+        style={{
+          display: 'flex',
+          flexWrap: 'wrap',
+          alignContent: 'flex-start',
+          alignItems: 'center',
+          gap: '3px 4px',
+          maxHeight: 48,
+          overflowX: 'hidden',
+          overflowY: 'auto',
+          paddingRight: 2,
+          fontFamily: HUD_FONTS.mono,
+          fontSize: 6.4,
+          lineHeight: 1.15,
+          scrollbarWidth: 'thin',
+          scrollbarColor: `${sourceColor}55 transparent`,
+        }}
+      >
+        {evidence.route.map((cellId, index) => {
+          const role = index === 0
+            ? 'source'
+            : index === lastIndex
+              ? 'target'
+              : 'transit';
+          const nodeColor = role === 'source'
+            ? sourceColor
+            : role === 'target'
+              ? '#C9F8FF'
+              : HUD_COLORS.dim;
+          const indexCopy = role === 'source'
+            ? 'S'
+            : role === 'target'
+              ? 'T'
+              : String(index).padStart(2, '0');
+          return (
+            <span
+              key={`${cellId}:${index}`}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}
+            >
+              {index > 0 ? (
+                <span aria-hidden="true" style={{ color: sourceColor, opacity: 0.46 }}>
+                  →
+                </span>
+              ) : null}
+              <span
+                data-memory-evidence-route-cell={cellId}
+                data-memory-evidence-route-hop={index}
+                data-memory-evidence-route-role={role}
+                title={`Hop ${index}: Cell #${cellId} (${role})`}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'baseline',
+                  gap: 2,
+                  padding: '1px 2px',
+                  borderBottom: `1px solid ${nodeColor}66`,
+                  background: `${nodeColor}0b`,
+                  color: nodeColor,
+                }}
+              >
+                <span style={{ opacity: 0.64 }}>{indexCopy}</span>
+                <span>#{cellId}</span>
+              </span>
+            </span>
+          );
+        })}
+      </span>
+    </span>
+  );
 }
 
 function memoryRow({
@@ -179,6 +314,7 @@ function EvidenceLedger({
   focusedSourceId: number | null;
   onFocusChange?: (sourceId: number | null) => void;
 }) {
+  const [expandedEvidenceKey, setExpandedEvidenceKey] = useState<string | null>(null);
   const bindings = consensusMemoryEvidenceBindings(
     targetContentHash,
     readout.evidence,
@@ -227,12 +363,23 @@ function EvidenceLedger({
             ? 'active'
             : 'passive';
         const active = focusState === 'active';
+        const evidenceKey = `${readout.key}:${evidence.sourceId}`;
+        const expanded = active && expandedEvidenceKey === evidenceKey;
+        const routeLedgerId = `memory-route-ledger-${evidence.sourceId}-${evidence.ordinal}`;
+        const activate = () => {
+          setExpandedEvidenceKey((current) => (
+            current !== null && current !== evidenceKey ? null : current
+          ));
+          onFocusChange?.(evidence.sourceId);
+        };
         return (
           <button
             type="button"
             key={evidence.sourceId}
-            aria-label={`Focus evidence ${String(evidence.ordinal).padStart(2, '0')}, source Cell ${evidence.sourceId}, ${evidence.hopCount} hops in ${routeDuration}, source ${evidence.sourceOutPoint.tx_hash}#${evidence.sourceOutPoint.index}, agreement knot ${String(binding.knotIndex + 1).padStart(2, '0')}`}
+            aria-label={`Focus evidence ${String(evidence.ordinal).padStart(2, '0')}, source Cell ${evidence.sourceId}, ${evidence.hopCount} hops in ${routeDuration}, source ${evidence.sourceOutPoint.tx_hash}#${evidence.sourceOutPoint.index}, agreement knot ${String(binding.knotIndex + 1).padStart(2, '0')}; ${expanded ? 'collapse' : 'expand'} complete route`}
             aria-pressed={active}
+            aria-expanded={expanded}
+            aria-controls={routeLedgerId}
             data-memory-evidence={evidence.ordinal}
             data-memory-evidence-source={evidence.sourceId}
             data-memory-evidence-knot={binding.knotIndex + 1}
@@ -244,7 +391,7 @@ function EvidenceLedger({
             data-memory-evidence-source-outpoint={`${evidence.sourceOutPoint.tx_hash}#${evidence.sourceOutPoint.index}`}
             title={`${evidence.contentHash} · ${evidence.sourceOutPoint.tx_hash}#${evidence.sourceOutPoint.index}`}
             disabled={!onFocusChange}
-            onPointerEnter={() => onFocusChange?.(evidence.sourceId)}
+            onPointerEnter={activate}
             onPointerLeave={(event) => {
               if (typeof document === 'undefined') {
                 onFocusChange?.(null);
@@ -259,9 +406,28 @@ function EvidenceLedger({
                 Number.isFinite(keyboardSourceId) ? keyboardSourceId : null,
               );
             }}
-            onFocus={() => onFocusChange?.(evidence.sourceId)}
-            onBlur={() => onFocusChange?.(null)}
+            onFocus={activate}
+            onBlur={() => {
+              setExpandedEvidenceKey((current) => (
+                current === evidenceKey ? null : current
+              ));
+              onFocusChange?.(null);
+            }}
+            onClick={(event) => {
+              if ((event.target as HTMLElement).closest(
+                '[data-memory-evidence-route-ledger="true"]',
+              )) return;
+              setExpandedEvidenceKey((current) => (
+                current === evidenceKey ? null : evidenceKey
+              ));
+            }}
+            onKeyDown={(event) => {
+              if (event.key !== 'Escape' || !expanded) return;
+              event.stopPropagation();
+              setExpandedEvidenceKey(null);
+            }}
             style={{
+              position: 'relative',
               display: 'grid',
               gridTemplateColumns: '25px minmax(0, 1fr) auto',
               alignItems: 'baseline',
@@ -281,7 +447,7 @@ function EvidenceLedger({
               fontFamily: HUD_FONTS.mono,
               whiteSpace: 'nowrap',
               textAlign: 'left',
-              cursor: onFocusChange ? 'crosshair' : 'default',
+              cursor: onFocusChange ? 'pointer' : 'default',
               opacity: focusState === 'passive' ? 0.34 : 1,
               transition: reducedMotion ? undefined : 'opacity 140ms ease, background 140ms ease, box-shadow 140ms ease',
             }}
@@ -321,7 +487,7 @@ function EvidenceLedger({
                   CELL #{evidence.sourceId} → #{routeTargetId}
                 </span>
                 <span>
-                  {String(evidence.hopCount).padStart(2, '0')} HOPS · {routeDuration}
+                  {String(evidence.hopCount).padStart(2, '0')} HOPS · {routeDuration} · ROUTE {expanded ? '−' : '+'}
                 </span>
                 <span
                   title={`${evidence.sourceOutPoint.tx_hash}#${evidence.sourceOutPoint.index}`}
@@ -335,6 +501,13 @@ function EvidenceLedger({
                   SOURCE {sourceOutpoint} · BLOCK #{evidence.sourceBirthBlock}
                 </span>
               </span>
+            ) : null}
+            {expanded ? (
+              <EvidenceRouteLedger
+                id={routeLedgerId}
+                evidence={evidence}
+                sourceColor={sourceColor}
+              />
             ) : null}
           </button>
         );
@@ -498,7 +671,7 @@ export default function ConsensusIdentityPlate({
     position: 'relative',
     marginTop: 9,
     padding: '8px 9px 7px',
-    overflow: 'hidden',
+    overflow: 'visible',
     borderTop: `1px solid ${CYAN}30`,
     borderBottom: `1px solid ${VIOLET}26`,
     backgroundColor: 'rgba(1,4,12,.84)',

@@ -26,6 +26,9 @@ describe('hudTheme', () => {
     expect(css).toContain('@font-face');
     expect(css).toContain("font-family:'Huiwen-mincho'");
     expect(css).toContain('--hud-orange:#FF9830');
+    expect(css).toContain('.cknerv-memory-route-ledger');
+    expect(css).toContain('@media (min-width:1101px) and (max-width:1373px)');
+    expect(css).toContain('@media (max-width:1100px)');
     expect(css).not.toContain('@import');
     expect(css).not.toContain('fontsapi.zeoseven.com');
   });

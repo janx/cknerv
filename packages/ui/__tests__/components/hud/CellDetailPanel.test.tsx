@@ -334,6 +334,29 @@ describe('CellDetailPanel', () => {
     expect(container.querySelector('[data-memory-evidence="1"]')
       ?.getAttribute('data-memory-evidence-source-outpoint'))
       .toBe(`0x${'1'.repeat(64)}#0`);
+    const activeFirst = container.querySelector<HTMLElement>('[data-memory-evidence="1"]')!;
+    expect(activeFirst.getAttribute('aria-expanded')).toBe('false');
+    fireEvent.click(activeFirst);
+    expect(activeFirst.getAttribute('aria-expanded')).toBe('true');
+    const routeLedger = container.querySelector('[data-memory-evidence-route-ledger="true"]');
+    expect(routeLedger?.textContent).toContain('03 CELLS · H02');
+    const routeCells = routeLedger?.querySelectorAll('[data-memory-evidence-route-cell]');
+    expect(Array.from(routeCells ?? []).map((node) => (
+      node.getAttribute('data-memory-evidence-route-cell')
+    ))).toEqual(['11', '99', '4242']);
+    expect(routeCells?.[0].getAttribute('data-memory-evidence-route-role')).toBe('source');
+    expect(routeCells?.[1].getAttribute('data-memory-evidence-route-hop')).toBe('1');
+    expect(routeCells?.[2].getAttribute('data-memory-evidence-route-role')).toBe('target');
+    fireEvent.click(routeLedger!);
+    expect(container.querySelector('[data-memory-evidence-route-ledger="true"]')).not.toBeNull();
+    fireEvent.keyDown(activeFirst, { key: 'Escape' });
+    expect(activeFirst.getAttribute('aria-expanded')).toBe('false');
+    expect(container.querySelector('[data-memory-evidence-route-ledger="true"]')).toBeNull();
+    fireEvent.click(activeFirst);
+    expect(activeFirst.getAttribute('aria-expanded')).toBe('true');
+    fireEvent.click(activeFirst);
+    expect(activeFirst.getAttribute('aria-expanded')).toBe('false');
+    expect(container.querySelector('[data-memory-evidence-route-ledger="true"]')).toBeNull();
 
     fireEvent.pointerLeave(container.querySelector('[data-memory-evidence="1"]')!);
     expect(onTraceEvidenceFocusChange).toHaveBeenLastCalledWith(null);
@@ -346,6 +369,56 @@ describe('CellDetailPanel', () => {
     expect(onTraceEvidenceFocusChange).toHaveBeenLastCalledWith(12);
     fireEvent.blur(second);
     expect(onTraceEvidenceFocusChange).toHaveBeenLastCalledWith(null);
+  });
+
+  it('keeps every retained hop inspectable inside a bounded route ledger', () => {
+    vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener: () => {}, removeEventListener: () => {} }));
+    const origin: CellLink = {
+      seq: 18,
+      tx_hash: base.out_point.tx_hash,
+      block: base.birth_block,
+      from_ids: [1],
+      to_ids: [base.id],
+      parents: [],
+      tag: base.tag,
+      at_ms: 12_000,
+    };
+    const route = Array.from({ length: 41 }, (_, index) => (
+      index === 0 ? 11 : index === 40 ? base.id : 1_000 + index
+    ));
+    const baseline = traceReadout({ sourceCount: 1 });
+    const readout = traceReadout({
+      sourceCount: 1,
+      evidence: [{
+        ...baseline.evidence[0],
+        route,
+        hopCount: 40,
+        routeDurationMs: 10_000,
+      }],
+    });
+    const { container } = render(
+      <CellDetailPanel
+        cell={base}
+        recentLinks={[origin]}
+        tracedWriteSeq={origin.seq}
+        traceSource="input"
+        traceReadout={readout}
+        traceEvidenceFocusSourceId={11}
+        onTraceEvidenceFocusChange={() => {}}
+        onTraceWrite={() => {}}
+        onClose={() => {}}
+      />,
+    );
+
+    fireEvent.click(container.querySelector('[data-memory-evidence="1"]')!);
+    const ledger = container.querySelector('[data-memory-evidence-route-ledger="true"]');
+    const cells = ledger?.querySelectorAll('[data-memory-evidence-route-cell]');
+    expect(ledger?.textContent).toContain('41 CELLS · H40');
+    expect(cells).toHaveLength(41);
+    expect(cells?.[0].getAttribute('data-memory-evidence-route-cell')).toBe('11');
+    expect(cells?.[40].getAttribute('data-memory-evidence-route-cell')).toBe(String(base.id));
+    expect((ledger?.querySelector('[data-memory-evidence-route-cells="true"]') as HTMLElement)
+      .style.maxHeight).toBe('48px');
   });
 
   it('labels surviving parent evidence as a lineage witness, not an input', () => {
