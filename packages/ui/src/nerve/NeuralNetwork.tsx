@@ -30,6 +30,7 @@ import type { Vec3 } from '../types';
 import {
   CONSENSUS_PULSE_POLICY,
   consensusMemoryCellResponse,
+  consensusMemoryEvidenceFocusScale,
   consensusMemoryPulseActivityScale,
   consensusMemoryRouteHandoffScale,
   consensusMemoryTraceReadout,
@@ -105,6 +106,8 @@ interface NeuralNetworkProps {
   onTraceReadoutChange?: (readout: ConsensusMemoryTraceReadout | null) => void;
   /** Frame-level target response shared with secondary render roots. */
   traceTargetResponseRef?: ConsensusMemoryCellResponseRef;
+  /** One verified routed source isolated by the evidence ledger. */
+  traceEvidenceFocusSourceId?: number | null;
 }
 
 interface ActivePulse extends Pulse {
@@ -126,6 +129,7 @@ export default function NeuralNetwork({
   onTraceComplete,
   onTraceReadoutChange,
   traceTargetResponseRef,
+  traceEvidenceFocusSourceId = null,
 }: NeuralNetworkProps = {}) {
   const simClock = useSimClock();
   const cellsCache = useCellGalaxy();
@@ -252,8 +256,20 @@ export default function NeuralNetwork({
       phase: 0,
       convergence: 0,
       evidence: [],
+      evidenceFocusSourceId: null,
     },
   });
+  useEffect(() => {
+    const focus = traceFocusRef.current;
+    if (!focus) return;
+    const sourceId = traceEvidenceFocusSourceId !== null
+      && Number.isFinite(traceEvidenceFocusSourceId)
+      && focus.sources.some((source) => source.id === traceEvidenceFocusSourceId)
+      ? traceEvidenceFocusSourceId
+      : null;
+    focus.evidenceFocusSourceId = sourceId;
+    if (sharedTraceFocusRef) sharedTraceFocusRef.current = focus;
+  }, [sharedTraceFocusRef, traceEvidenceFocusSourceId, traceFocus]);
   const publishTraceTargetResponse = useCallback((
     targetCellId: number | null,
     response: ConsensusMemoryCellResponse | null,
@@ -268,6 +284,7 @@ export default function NeuralNetwork({
     snapshot.response.strength = response.strength;
     snapshot.response.phase = response.phase;
     snapshot.response.convergence = response.convergence;
+    snapshot.response.evidenceFocusSourceId = response.evidenceFocusSourceId ?? null;
     const evidence = snapshot.response.evidence as ConsensusMemoryEvidenceResponse[];
     evidence.length = response.evidence?.length ?? 0;
     response.evidence?.forEach((source, index) => {
@@ -488,6 +505,13 @@ export default function NeuralNetwork({
         pulse.mode,
         focusStrength,
       );
+      const evidenceActivityScale = pulse.mode === 'memory'
+        ? consensusMemoryEvidenceFocusScale(
+          pulse.path[0] ?? null,
+          currentFocus?.evidenceFocusSourceId ?? null,
+        )
+        : 1;
+      const routeActivityScale = activityScale * evidenceActivityScale;
       // Each pulse has its own start delay (jitter) and hop duration
       // (speed scale). Subtract the delay before checking elapsed.
       const rawElapsedMs = (now - pulse.startSec) * 1000;
@@ -535,7 +559,10 @@ export default function NeuralNetwork({
                     fromCellId: fromId,
                     toCellId: toId,
                     frontT: 1,
-                    brightness: MEMORY_RESONANCE_BRIGHT * resonance * handoffScale,
+                    brightness: MEMORY_RESONANCE_BRIGHT
+                      * resonance
+                      * handoffScale
+                      * evidenceActivityScale,
                     tailDecay: MEMORY_RESONANCE_TAIL_DECAY,
                     color: pulse.color,
                   },
@@ -616,7 +643,7 @@ export default function NeuralNetwork({
               fromCellId: hFromId,
               toCellId: hToId,
               frontT,
-              brightness: brightness * activityScale,
+              brightness: brightness * routeActivityScale,
               color: pulse.color,
             },
             cells,
@@ -647,7 +674,7 @@ export default function NeuralNetwork({
           color: pulse.color,
           size: pulse.mode === 'memory' ? SPIKE_SIZE * 0.74 : SPIKE_SIZE,
           alpha: (pulse.mode === 'memory' ? SPIKE_ALPHA * 0.72 : SPIKE_ALPHA)
-            * activityScale,
+            * routeActivityScale,
           whiteBias: pulse.mode === 'memory' ? 0.5 : 0.95,
           glyph: pulse.mode === 'memory' ? 'memory' : 'packet',
         });
@@ -676,7 +703,10 @@ export default function NeuralNetwork({
     <>
       <NeuralFabric onReady={onFabricReady} />
       <primitive object={spikePool.mesh} />
-      <ConsensusMemoryMarkers focus={traceFocus} />
+      <ConsensusMemoryMarkers
+        focus={traceFocus}
+        evidenceFocusSourceId={traceEvidenceFocusSourceId}
+      />
     </>
   );
 }

@@ -5,11 +5,12 @@ import type { ConsensusMemoryTraceReadout } from '../../../src/nerve/consensusMe
 
 // The embedded portrait spins a real WebGL context — stub it in jsdom.
 vi.mock('../../../src/components/hud/CellNucleusPortrait', () => ({
-  default: ({ cell, focusField, traceReadout, traceResponseRef }: {
+  default: ({ cell, focusField, traceReadout, traceResponseRef, traceEvidenceFocusSourceId }: {
     cell: { content_hash: string };
     focusField?: string | null;
     traceReadout?: { stage: string } | null;
     traceResponseRef?: { current: unknown };
+    traceEvidenceFocusSourceId?: number | null;
   }) => (
     <div
       data-testid="portrait"
@@ -17,6 +18,7 @@ vi.mock('../../../src/components/hud/CellNucleusPortrait', () => ({
       data-focus={focusField ?? ''}
       data-trace-stage={traceReadout?.stage ?? ''}
       data-response-ref={traceResponseRef ? 'true' : 'false'}
+      data-evidence-focus-source={traceEvidenceFocusSourceId ?? ''}
     />
   ),
   SCAN_PERIOD_S: 4.2,
@@ -273,6 +275,60 @@ describe('CellDetailPanel', () => {
     expect(Array.from(container.querySelectorAll('[data-memory-evidence]')).every(
       (node) => node.getAttribute('data-memory-evidence-state') === 'resolved',
     )).toBe(true);
+  });
+
+  it('focuses one real evidence source by pointer or keyboard and forwards it to the portrait', () => {
+    vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener: () => {}, removeEventListener: () => {} }));
+    const origin: CellLink = {
+      seq: 18,
+      tx_hash: base.out_point.tx_hash,
+      block: base.birth_block,
+      from_ids: [1, 2],
+      to_ids: [base.id],
+      parents: [],
+      tag: base.tag,
+      at_ms: 12_000,
+    };
+    const onTraceEvidenceFocusChange = vi.fn();
+    const props = {
+      cell: base,
+      recentLinks: [origin],
+      tracedWriteSeq: origin.seq,
+      traceSource: 'input' as const,
+      traceReadout: traceReadout(),
+      onTraceWrite: () => {},
+      onTraceEvidenceFocusChange,
+      onClose: () => {},
+    };
+    const { container, rerender, getByTestId } = render(
+      <CellDetailPanel {...props} />,
+    );
+    const first = container.querySelector<HTMLElement>('[data-memory-evidence="1"]')!;
+    const second = container.querySelector<HTMLElement>('[data-memory-evidence="2"]')!;
+
+    expect(first.tagName).toBe('BUTTON');
+    expect(first.getAttribute('data-memory-evidence-focus')).toBe('idle');
+    fireEvent.pointerEnter(first);
+    expect(onTraceEvidenceFocusChange).toHaveBeenLastCalledWith(11);
+
+    rerender(<CellDetailPanel {...props} traceEvidenceFocusSourceId={11} />);
+    expect(container.querySelector('[data-memory-evidence="1"]')
+      ?.getAttribute('data-memory-evidence-focus')).toBe('active');
+    expect(container.querySelector('[data-memory-evidence="2"]')
+      ?.getAttribute('data-memory-evidence-focus')).toBe('passive');
+    expect(getByTestId('portrait').getAttribute('data-evidence-focus-source')).toBe('11');
+
+    fireEvent.pointerLeave(container.querySelector('[data-memory-evidence="1"]')!);
+    expect(onTraceEvidenceFocusChange).toHaveBeenLastCalledWith(null);
+    second.focus();
+    expect(document.activeElement).toBe(second);
+    expect(onTraceEvidenceFocusChange).toHaveBeenLastCalledWith(12);
+    fireEvent.pointerEnter(container.querySelector('[data-memory-evidence="1"]')!);
+    expect(onTraceEvidenceFocusChange).toHaveBeenLastCalledWith(11);
+    fireEvent.pointerLeave(container.querySelector('[data-memory-evidence="1"]')!);
+    expect(onTraceEvidenceFocusChange).toHaveBeenLastCalledWith(12);
+    fireEvent.blur(second);
+    expect(onTraceEvidenceFocusChange).toHaveBeenLastCalledWith(null);
   });
 
   it('labels surviving parent evidence as a lineage witness, not an input', () => {

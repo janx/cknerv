@@ -52,6 +52,8 @@ export default function CellDetailPanel({
   traceSource = 'none',
   traceReadout = null,
   traceResponseRef,
+  traceEvidenceFocusSourceId = null,
+  onTraceEvidenceFocusChange,
   onTraceWrite,
   onClose,
   style,
@@ -62,6 +64,8 @@ export default function CellDetailPanel({
   traceSource?: ConsensusMemoryTraceSource;
   traceReadout?: ConsensusMemoryTraceReadout | null;
   traceResponseRef?: ConsensusMemoryCellResponseRef;
+  traceEvidenceFocusSourceId?: number | null;
+  onTraceEvidenceFocusChange?: (sourceId: number | null) => void;
   onTraceWrite?: (linkSeq: number) => void;
   onClose: () => void;
   style?: CSSProperties;
@@ -198,6 +202,7 @@ export default function CellDetailPanel({
           focusField={focusField}
           traceReadout={traceReadout}
           traceResponseRef={traceResponseRef}
+          traceEvidenceFocusSourceId={traceEvidenceFocusSourceId}
         />
         <span style={cornerBracket('tl')} /><span style={cornerBracket('tr')} />
         <span style={cornerBracket('bl')} /><span style={cornerBracket('br')} />
@@ -240,6 +245,8 @@ export default function CellDetailPanel({
         traceSource={traceSource}
         traceSelected={identity.observedWrite?.seq === tracedWriteSeq}
         traceReadout={traceReadout}
+        traceEvidenceFocusSourceId={traceEvidenceFocusSourceId}
+        onTraceEvidenceFocusChange={onTraceEvidenceFocusChange}
         agreementCount={agreementTarget}
       />
     </HudPanel>

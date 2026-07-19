@@ -161,10 +161,16 @@ function EvidenceLedger({
   readout,
   targetContentHash,
   agreementCount,
+  reducedMotion,
+  focusedSourceId,
+  onFocusChange,
 }: {
   readout: ConsensusMemoryTraceReadout;
   targetContentHash: string;
   agreementCount: number;
+  reducedMotion: boolean;
+  focusedSourceId: number | null;
+  onFocusChange?: (sourceId: number | null) => void;
 }) {
   const bindings = consensusMemoryEvidenceBindings(
     targetContentHash,
@@ -202,23 +208,65 @@ function EvidenceLedger({
           : evidence.state === 'arrived'
             ? '#C9F8FF'
             : sourceColor;
+        const focusState = focusedSourceId === null
+          ? 'idle'
+          : focusedSourceId === evidence.sourceId
+            ? 'active'
+            : 'passive';
+        const active = focusState === 'active';
         return (
-          <div
+          <button
+            type="button"
             key={evidence.sourceId}
+            aria-label={`Focus evidence ${String(evidence.ordinal).padStart(2, '0')}, ${consensusMemoryEvidenceFingerprint(evidence.contentHash)}, agreement knot ${String(binding.knotIndex + 1).padStart(2, '0')}`}
+            aria-pressed={active}
             data-memory-evidence={evidence.ordinal}
             data-memory-evidence-source={evidence.sourceId}
             data-memory-evidence-knot={binding.knotIndex + 1}
             data-memory-evidence-state={evidence.state}
+            data-memory-evidence-focus={focusState}
             title={evidence.contentHash}
+            disabled={!onFocusChange}
+            onPointerEnter={() => onFocusChange?.(evidence.sourceId)}
+            onPointerLeave={(event) => {
+              if (typeof document === 'undefined') {
+                onFocusChange?.(null);
+                return;
+              }
+              if (document.activeElement === event.currentTarget) return;
+              const keyboardSourceId = Number(
+                (document.activeElement as HTMLElement | null)
+                  ?.dataset.memoryEvidenceSource,
+              );
+              onFocusChange?.(
+                Number.isFinite(keyboardSourceId) ? keyboardSourceId : null,
+              );
+            }}
+            onFocus={() => onFocusChange?.(evidence.sourceId)}
+            onBlur={() => onFocusChange?.(null)}
             style={{
               display: 'grid',
               gridTemplateColumns: '25px minmax(0, 1fr) auto',
               alignItems: 'baseline',
+              width: '100%',
               minHeight: 13,
-              borderLeft: `1px solid ${sourceColor}88`,
-              paddingLeft: 4,
+              margin: 0,
+              padding: '0 0 0 4px',
+              border: 0,
+              borderLeft: `1px solid ${active ? sourceColor : `${sourceColor}88`}`,
+              borderRadius: 0,
+              outline: active ? `1px solid ${sourceColor}44` : 'none',
+              outlineOffset: -1,
+              background: active
+                ? `linear-gradient(90deg, ${sourceColor}22, ${sourceColor}08 68%, transparent)`
+                : 'transparent',
+              boxShadow: active ? `inset 2px 0 0 ${sourceColor}, 0 0 9px ${sourceColor}1c` : undefined,
               fontFamily: HUD_FONTS.mono,
               whiteSpace: 'nowrap',
+              textAlign: 'left',
+              cursor: onFocusChange ? 'crosshair' : 'default',
+              opacity: focusState === 'passive' ? 0.34 : 1,
+              transition: reducedMotion ? undefined : 'opacity 140ms ease, background 140ms ease, box-shadow 140ms ease',
             }}
           >
             <span style={{ fontSize: 7.2, color: sourceColor }}>
@@ -235,7 +283,7 @@ function EvidenceLedger({
                 {stateCopy}
               </span>
             </span>
-          </div>
+          </button>
         );
       })}
     </div>
@@ -247,11 +295,15 @@ function MemoryReadState({
   reducedMotion,
   targetContentHash,
   agreementCount,
+  focusedSourceId,
+  onFocusChange,
 }: {
   readout: ConsensusMemoryTraceReadout;
   reducedMotion: boolean;
   targetContentHash: string;
   agreementCount: number;
+  focusedSourceId: number | null;
+  onFocusChange?: (sourceId: number | null) => void;
 }) {
   const activeIndex = MEMORY_READ_STAGES.findIndex(
     ({ stage }) => stage === readout.stage,
@@ -338,6 +390,9 @@ function MemoryReadState({
         readout={readout}
         targetContentHash={targetContentHash}
         agreementCount={agreementCount}
+        reducedMotion={reducedMotion}
+        focusedSourceId={focusedSourceId}
+        onFocusChange={onFocusChange}
       />
     </div>
   );
@@ -358,6 +413,8 @@ export default function ConsensusIdentityPlate({
   traceSource = 'none',
   traceSelected = false,
   traceReadout = null,
+  traceEvidenceFocusSourceId = null,
+  onTraceEvidenceFocusChange,
   agreementCount,
 }: {
   identity: CellConsensusIdentity;
@@ -374,6 +431,8 @@ export default function ConsensusIdentityPlate({
   traceSource?: ConsensusMemoryTraceSource;
   traceSelected?: boolean;
   traceReadout?: ConsensusMemoryTraceReadout | null;
+  traceEvidenceFocusSourceId?: number | null;
+  onTraceEvidenceFocusChange?: (sourceId: number | null) => void;
   agreementCount: number;
 }) {
   const observed = identity.observedWrite;
@@ -451,6 +510,8 @@ export default function ConsensusIdentityPlate({
             reducedMotion={reducedMotion}
             targetContentHash={identity.contentHash}
             agreementCount={agreementCount}
+            focusedSourceId={traceEvidenceFocusSourceId}
+            onFocusChange={onTraceEvidenceFocusChange}
           />
         ) : null}
         {observed && onRecallWrite ? (

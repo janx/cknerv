@@ -6,12 +6,14 @@ import { useSimClock } from '../tweaks/SimClockScope';
 import { useSimFrame } from '../tweaks/useSimFrame';
 import {
   consensusMemoryCellResponse,
+  consensusMemoryEvidenceFocusScale,
   consensusMemoryTraceFocusStrength,
   consensusMemoryTraceSourceStrength,
   type ConsensusMemoryTraceFocus,
   type ConsensusMemoryTraceFocusSource,
   type ConsensusMemoryTraceSource,
 } from './consensusMemoryTrace';
+import { consensusMemoryEvidenceCssColor } from '../derives/consensusMemoryEvidence.derive';
 import {
   chooseConsensusMemoryLabelSide,
   MEMORY_SOURCE_LABEL_RADIAL_SHIFT_PX,
@@ -96,8 +98,10 @@ interface MarkerRecord {
 
 export default function ConsensusMemoryMarkers({
   focus,
+  evidenceFocusSourceId = null,
 }: {
   focus: ConsensusMemoryTraceFocus | null;
+  evidenceFocusSourceId?: number | null;
 }) {
   const simClock = useSimClock();
   const cellsCache = useCellGalaxy();
@@ -126,7 +130,6 @@ export default function ConsensusMemoryMarkers({
   useSimFrame(() => {
     const nowSec = simClock.elapsedSec;
     const focusOpacity = consensusMemoryTraceFocusStrength(focus, nowSec);
-    const sourceColor = focus?.sourceKind === 'input' ? '#72B7FF' : '#A58AFF';
     const viewportWidth = typeof window === 'undefined' ? 0 : window.innerWidth;
     const viewportHeight = typeof window === 'undefined' ? 0 : window.innerHeight;
     const layoutNowMs = typeof performance === 'undefined' ? 0 : performance.now();
@@ -254,7 +257,22 @@ export default function ConsensusMemoryMarkers({
       const sourceOpacity = marker.source
         ? consensusMemoryTraceSourceStrength(marker.source, nowSec)
         : 1;
-      node.style.opacity = (focusOpacity * sourceOpacity).toFixed(3);
+      const evidenceScale = marker.source
+        ? consensusMemoryEvidenceFocusScale(
+          marker.source.id,
+          evidenceFocusSourceId,
+        )
+        : evidenceFocusSourceId === null ? 1 : 0.62;
+      node.style.opacity = (
+        focusOpacity * sourceOpacity * evidenceScale
+      ).toFixed(3);
+      node.dataset.memoryEvidenceFocus = marker.source
+        ? evidenceFocusSourceId === null
+          ? 'idle'
+          : marker.source.id === evidenceFocusSourceId
+            ? 'active'
+            : 'passive'
+        : evidenceFocusSourceId === null ? 'idle' : 'context';
       const cellResponse = consensusMemoryCellResponse(focus, marker.cell.id, nowSec);
       node.dataset.memoryCellPhase = (cellResponse?.phase ?? 0).toFixed(3);
       node.dataset.memoryCellConvergence = (cellResponse?.convergence ?? 0).toFixed(3);
@@ -270,7 +288,12 @@ export default function ConsensusMemoryMarkers({
         ? 'translate(calc(-100% + 17px), -50%)'
         : 'translate(-17px, -50%)';
 
-      const color = marker.source ? sourceColor : '#8FF7FF';
+      const color = marker.source
+        ? consensusMemoryEvidenceCssColor(marker.sourceIndex)
+        : '#8FF7FF';
+      node.style.filter = marker.source && evidenceFocusSourceId === marker.source.id
+        ? `drop-shadow(0 0 11px ${color}aa)`
+        : `drop-shadow(0 0 7px ${color}66)`;
       const copy = copyRefs.current[index];
       if (copy) {
         copy.style.padding = side === 'left' ? '3px 7px 3px 0' : '3px 0 3px 7px';
@@ -319,8 +342,15 @@ export default function ConsensusMemoryMarkers({
         const source = role === 'source';
         const copy = consensusMemoryEndpointCopy(role, focus.sourceKind);
         const color = source
-          ? focus.sourceKind === 'input' ? '#72B7FF' : '#A58AFF'
+          ? consensusMemoryEvidenceCssColor(sourceIndex)
           : '#8FF7FF';
+        const evidenceFocusState = source
+          ? evidenceFocusSourceId === null
+            ? 'idle'
+            : focusSource?.id === evidenceFocusSourceId
+              ? 'active'
+              : 'passive'
+          : evidenceFocusSourceId === null ? 'idle' : 'context';
         const sourceOrdinal = source && focus.routedSourceCount > 1
           ? ` ${String(sourceIndex + 1).padStart(2, '0')}/${String(focus.routedSourceCount).padStart(2, '0')}`
           : '';
@@ -342,6 +372,8 @@ export default function ConsensusMemoryMarkers({
               data-memory-source-kind={source ? focus.sourceKind : undefined}
               data-memory-source-index={source ? sourceIndex + 1 : undefined}
               data-memory-source-total={source ? focus.routedSourceCount : undefined}
+              data-memory-source-id={focusSource?.id}
+              data-memory-evidence-focus={evidenceFocusState}
               style={{
                 position: 'relative',
                 display: 'flex',

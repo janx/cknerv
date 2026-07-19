@@ -29,6 +29,10 @@ export const MEMORY_TRACE_CELL_CONVERGENCE_MS = 260;
 export const MEMORY_TRACE_CELL_READ_CYCLES_PER_S = 0.38;
 /** Completed routes yield to the resolved Cell without losing provenance. */
 export const MEMORY_TRACE_ROUTE_HANDOFF_FLOOR = 0.36;
+/** Non-selected evidence remains faintly legible as structural context. */
+export const MEMORY_TRACE_EVIDENCE_PASSIVE_SCALE = 0.16;
+/** Unbound target structure yields without disappearing during evidence focus. */
+export const MEMORY_TRACE_EVIDENCE_CONTEXT_SCALE = 0.28;
 const MAX_MEMORY_TRACE_FOCUS_ENDPOINTS = 3;
 
 export interface ConsensusMemoryTraceRequest {
@@ -108,6 +112,8 @@ export interface ConsensusMemoryTraceFocus {
   targetIds: number[];
   startedAtSec: number;
   endsAtSec: number;
+  /** UI-only evidence isolation; always references one routed real source. */
+  evidenceFocusSourceId: number | null;
 }
 
 export interface ConsensusMemoryCellResponse {
@@ -120,6 +126,8 @@ export interface ConsensusMemoryCellResponse {
   convergence: number;
   /** Exact per-source agreement progress, in stable routed-source order. */
   evidence?: readonly ConsensusMemoryEvidenceResponse[];
+  /** Routed source currently isolated by the explanatory UI, if any. */
+  evidenceFocusSourceId?: number | null;
 }
 
 export interface ConsensusMemoryEvidenceResponse {
@@ -228,7 +236,24 @@ export function deriveConsensusMemoryTraceFocus(
     targetIds,
     startedAtSec,
     endsAtSec: startedAtSec + lifetimeMs / 1000,
+    evidenceFocusSourceId: null,
   };
+}
+
+/**
+ * Shared evidence-isolation scale for real sources, routes, and agreement
+ * knots. A null candidate represents target structure without a direct
+ * evidence binding, which remains visible as quieter context.
+ */
+export function consensusMemoryEvidenceFocusScale(
+  candidateSourceId: number | null,
+  focusedSourceId: number | null,
+): number {
+  if (focusedSourceId === null || !Number.isFinite(focusedSourceId)) return 1;
+  if (candidateSourceId !== null && candidateSourceId === focusedSourceId) return 1;
+  return candidateSourceId === null
+    ? MEMORY_TRACE_EVIDENCE_CONTEXT_SCALE
+    : MEMORY_TRACE_EVIDENCE_PASSIVE_SCALE;
 }
 
 /** Shared envelope for endpoint labels and passive-fabric de-emphasis. */
@@ -294,6 +319,7 @@ export function consensusMemoryCellResponse(
       phase,
       convergence,
       evidence,
+      evidenceFocusSourceId: focus.evidenceFocusSourceId,
     };
   }
 
@@ -303,9 +329,12 @@ export function consensusMemoryCellResponse(
   const phase = clampUnit((nowSec - source.startsAtSec) / travelSeconds);
   return {
     role: 'source',
-    strength: focusStrength * consensusMemoryTraceSourceStrength(source, nowSec),
+    strength: focusStrength
+      * consensusMemoryTraceSourceStrength(source, nowSec)
+      * consensusMemoryEvidenceFocusScale(source.id, focus.evidenceFocusSourceId),
     phase,
     convergence: phase,
+    evidenceFocusSourceId: focus.evidenceFocusSourceId,
   };
 }
 

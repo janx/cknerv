@@ -27,9 +27,10 @@ import {
   type ConsensusBraidField,
   type ConsensusBraidSpec,
 } from '../../derives/consensusBraid.derive';
-import type {
-  ConsensusMemoryCellResponseRef,
-  ConsensusMemoryTraceReadout,
+import {
+  consensusMemoryEvidenceFocusScale,
+  type ConsensusMemoryCellResponseRef,
+  type ConsensusMemoryTraceReadout,
 } from '../../nerve/consensusMemoryTrace';
 
 const TAU = CONSENSUS_BRAID_TAU;
@@ -68,16 +69,21 @@ export default function ConsensusMemory({
   focusField = null,
   traceReadout = null,
   traceResponseRef,
+  traceEvidenceFocusSourceId = null,
 }: {
   cell: Cell;
   reducedMotion: boolean;
   focusField?: ConsensusBraidField | null;
   traceReadout?: ConsensusMemoryTraceReadout | null;
   traceResponseRef?: ConsensusMemoryCellResponseRef;
+  traceEvidenceFocusSourceId?: number | null;
 }) {
   const rootRef = useRef<THREE.Group>(null);
   const packetsRef = useRef<THREE.InstancedMesh>(null);
   const readHeadsRef = useRef<THREE.InstancedMesh>(null);
+  const focusedKnotRef = useRef<THREE.Group>(null);
+  const focusedKnotOuterMaterialRef = useRef<THREE.MeshBasicMaterial>(null);
+  const focusedKnotInnerMaterialRef = useRef<THREE.MeshBasicMaterial>(null);
   const evidenceLabelRefs = useRef<Array<HTMLDivElement | null>>([]);
   const recallStrengthRef = useRef(0);
   const recallConvergenceRef = useRef(0);
@@ -348,6 +354,13 @@ export default function ConsensusMemory({
     cell.id,
     traceReadout,
   ]);
+  const focusedEvidenceBinding = useMemo(() => (
+    traceEvidenceFocusSourceId === null
+      ? null
+      : evidenceBindings.find(
+        (binding) => binding.sourceId === traceEvidenceFocusSourceId,
+      ) ?? null
+  ), [evidenceBindings, traceEvidenceFocusSourceId]);
 
   useEffect(() => {
     const mesh = packetsRef.current;
@@ -396,14 +409,35 @@ export default function ConsensusMemory({
     if (response) recallPhaseRef.current = response.phase;
     const recallStrength = recallStrengthRef.current;
     const recallConvergence = recallConvergenceRef.current;
+    const focusedKnot = focusedKnotRef.current;
+    if (focusedKnot) {
+      const pulse = reducedMotion ? 1 : 0.94 + Math.sin(time * 3.1) * 0.06;
+      focusedKnot.scale.setScalar(pulse);
+      focusedKnot.rotation.z = reducedMotion ? 0 : time * 0.28;
+    }
+    if (focusedKnotOuterMaterialRef.current) {
+      focusedKnotOuterMaterialRef.current.opacity += (
+        recallStrength * 0.58 - focusedKnotOuterMaterialRef.current.opacity
+      ) * blend;
+    }
+    if (focusedKnotInnerMaterialRef.current) {
+      focusedKnotInnerMaterialRef.current.opacity += (
+        recallStrength * 0.94 - focusedKnotInnerMaterialRef.current.opacity
+      ) * blend;
+    }
     evidenceLabelRefs.current.forEach((label, index) => {
       if (!label) return;
       const binding = evidenceBindings[index];
       const evidenceConvergence = binding
         ? response?.evidence?.[binding.evidenceIndex]?.convergence ?? 0
         : 0;
+      const evidenceFocusScale = consensusMemoryEvidenceFocusScale(
+        binding?.sourceId ?? null,
+        traceEvidenceFocusSourceId,
+      );
       label.style.opacity = (
         recallStrength * (0.42 + Math.max(0, Math.min(1, evidenceConvergence)) * 0.58)
+        * evidenceFocusScale
       ).toFixed(3);
     });
     const target = consensusMemoryPortraitLayerOpacity(
@@ -457,15 +491,24 @@ export default function ConsensusMemory({
         const evidenceColor = binding
           ? consensusMemoryEvidenceColor(binding.evidenceIndex)
           : CONSENSUS_BRAID_PALETTE.cyan;
-        const memoryMix = recallStrength * (0.72 + resolved * 0.28);
+        const evidenceFocusScale = consensusMemoryEvidenceFocusScale(
+          binding?.sourceId ?? null,
+          traceEvidenceFocusSourceId,
+        );
+        const structureScale = 1
+          - recallStrength * (1 - evidenceFocusScale) * 0.82;
+        const memoryMix = recallStrength
+          * (0.72 + resolved * 0.28)
+          * evidenceFocusScale;
         for (let endpoint = 0; endpoint < 2; endpoint += 1) {
           for (let channel = 0; channel < 3; channel += 1) {
             const offset = index * 6 + endpoint * 3 + channel;
             const cold = evidenceColor[channel];
             const gold = CONSENSUS_BRAID_PALETTE.paleGold[channel];
             const memoryColor = cold + (gold - cold) * resolved;
-            const colorTarget = built.agreementBaseColors[offset]
-              + (memoryColor - built.agreementBaseColors[offset]) * memoryMix;
+            const baseline = built.agreementBaseColors[offset] * structureScale;
+            const colorTarget = baseline
+              + (memoryColor - baseline) * memoryMix;
             agreementColors[offset] += (colorTarget - agreementColors[offset]) * blend;
           }
         }
@@ -496,14 +539,22 @@ export default function ConsensusMemory({
       const evidenceColor = binding
         ? consensusMemoryEvidenceColor(binding.evidenceIndex)
         : CONSENSUS_BRAID_PALETTE.cyan;
-      const memoryMix = recallStrength * (0.78 + resolved * 0.22);
+      const evidenceFocusScale = consensusMemoryEvidenceFocusScale(
+        binding?.sourceId ?? null,
+        traceEvidenceFocusSourceId,
+      );
+      const structureScale = 1
+        - recallStrength * (1 - evidenceFocusScale) * 0.86;
+      const memoryMix = recallStrength
+        * (0.78 + resolved * 0.22)
+        * evidenceFocusScale;
       for (let channel = 0; channel < 3; channel += 1) {
         const offset = index * 3 + channel;
         const cold = evidenceColor[channel];
         const gold = CONSENSUS_BRAID_PALETTE.paleGold[channel];
         const memoryColor = cold + (gold - cold) * resolved;
-        const colorTarget = built.knotBaseColors[offset]
-          + (memoryColor - built.knotBaseColors[offset]) * memoryMix;
+        const baseline = built.knotBaseColors[offset] * structureScale;
+        const colorTarget = baseline + (memoryColor - baseline) * memoryMix;
         knotColors[offset] += (colorTarget - knotColors[offset]) * blend;
       }
     }
@@ -519,7 +570,9 @@ export default function ConsensusMemory({
     // the production buffer writer. A short lozenge trail makes the scan
     // legible at portrait scale without adding a second topology.
     const readHeads = readHeadsRef.current;
-    const scanEnergy = recallStrength * (1 - recallConvergence * 0.9);
+    const scanEnergy = recallStrength
+      * (1 - recallConvergence * 0.9)
+      * (traceEvidenceFocusSourceId === null ? 1 : 0.22);
     if (readHeads && built.specs.length > 0 && scanEnergy > 0.01) {
       readHeads.count = READ_HEAD_TRAIL;
       built.readHeadMaterial.opacity = Math.min(1, scanEnergy * 0.96);
@@ -645,10 +698,50 @@ export default function ConsensusMemory({
         frustumCulled={false}
         renderOrder={9}
       />
+      {focusedEvidenceBinding ? (
+        <group
+          ref={focusedKnotRef}
+          position={built.agreementMidpoints[focusedEvidenceBinding.knotIndex]}
+        >
+          <mesh renderOrder={11}>
+            <ringGeometry args={[0.048, 0.054, 18]} />
+            <meshBasicMaterial
+              ref={focusedKnotOuterMaterialRef}
+              color={consensusMemoryEvidenceCssColor(
+                focusedEvidenceBinding.evidenceIndex,
+              )}
+              transparent
+              opacity={0}
+              blending={THREE.AdditiveBlending}
+              depthTest={false}
+              depthWrite={false}
+              toneMapped={false}
+            />
+          </mesh>
+          <mesh rotation={[0, 0, Math.PI / 4]} renderOrder={12}>
+            <ringGeometry args={[0.025, 0.032, 4]} />
+            <meshBasicMaterial
+              ref={focusedKnotInnerMaterialRef}
+              color="#E9FCFF"
+              transparent
+              opacity={0}
+              blending={THREE.AdditiveBlending}
+              depthTest={false}
+              depthWrite={false}
+              toneMapped={false}
+            />
+          </mesh>
+        </group>
+      ) : null}
       {evidenceBindings.map((binding, index) => {
         const evidence = traceReadout?.evidence[binding.evidenceIndex];
         if (!evidence) return null;
         const sourceColor = consensusMemoryEvidenceCssColor(binding.evidenceIndex);
+        const focusState = traceEvidenceFocusSourceId === null
+          ? 'idle'
+          : traceEvidenceFocusSourceId === binding.sourceId
+            ? 'active'
+            : 'passive';
         const resolved = evidence.state === 'resolved';
         const stateGlyph = resolved
           ? '✓'
@@ -670,14 +763,19 @@ export default function ConsensusMemory({
               data-memory-knot-evidence={binding.ordinal}
               data-memory-knot-index={binding.knotIndex + 1}
               data-memory-knot-state={evidence.state}
+              data-memory-knot-focus={focusState}
               style={{
                 display: 'flex',
                 alignItems: 'center',
                 gap: 3,
                 padding: '1px 3px 1px 2px',
                 borderLeft: `1px solid ${sourceColor}`,
-                background: 'rgba(0, 3, 12, .74)',
-                boxShadow: `0 0 7px ${sourceColor}33`,
+                background: focusState === 'active'
+                  ? `linear-gradient(90deg, ${sourceColor}30, rgba(0, 3, 12, .84))`
+                  : 'rgba(0, 3, 12, .74)',
+                boxShadow: focusState === 'active'
+                  ? `0 0 11px ${sourceColor}66`
+                  : `0 0 7px ${sourceColor}33`,
                 color: resolved ? '#FFD79A' : '#C9F8FF',
                 fontFamily: '"JetBrains Mono Local", ui-monospace, monospace',
                 fontSize: 6.4,

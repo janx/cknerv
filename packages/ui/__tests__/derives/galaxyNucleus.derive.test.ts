@@ -225,4 +225,53 @@ describe('galaxy consensus braid LOD', () => {
     expect(buffers.nodeResolve[bindings[0].knotIndex]).toBe(1);
     expect(buffers.nodeResolve[bindings[1].knotIndex]).toBe(0);
   });
+
+  it('isolates the knot bound to the focused evidence source', () => {
+    const braid = deriveGalaxyConsensusBraid(CELL);
+    const evidence = [
+      {
+        sourceId: 1,
+        ordinal: 1,
+        contentHash: `0x${'11'.repeat(32)}`,
+        convergence: 1,
+      },
+      {
+        sourceId: 2,
+        ordinal: 2,
+        contentHash: `0x${'33'.repeat(32)}`,
+        convergence: 1,
+      },
+    ];
+    const bindings = consensusMemoryEvidenceBindings(
+      CELL.content_hash,
+      evidence,
+      braid.knots.length,
+    );
+    const buffers = buffersFor(braid.segments.length / 3, braid.knots.length);
+
+    writeGalaxyConsensusBraidBuffers(
+      CELL,
+      braid,
+      1,
+      0.3,
+      buffers,
+      emptyCursor(),
+      {
+        role: 'target',
+        strength: 1,
+        phase: 0.5,
+        convergence: 1,
+        evidence,
+        evidenceFocusSourceId: evidence[0].sourceId,
+      },
+    );
+
+    const selectedKnot = bindings[0].knotIndex;
+    const passiveKnot = bindings[1].knotIndex;
+    expect(buffers.nodeAlpha[selectedKnot]).toBeGreaterThan(
+      buffers.nodeAlpha[passiveKnot],
+    );
+    expect(buffers.nodeResolve[selectedKnot]).toBe(1);
+    expect(buffers.nodeResolve[passiveKnot]).toBeLessThan(0.2);
+  });
 });
