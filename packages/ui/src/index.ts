@@ -60,6 +60,7 @@ export * from './derives/consensusBraid.derive';
 export * from './derives/consensusFlow.derive';
 export * from './derives/consensusMemoryPortrait.derive';
 export * from './derives/consensusMemoryEvidence.derive';
+export * from './derives/consensusRouteHopAgreement.derive';
 export * from './derives/consensusRouteCamera.derive';
 export * from './derives/cellsStats.derive';
 export * from './derives/eventStreamLines';
