@@ -13,7 +13,11 @@ import type {
   ConsensusMemoryTraceSource,
   ConsensusMemoryTraceStage,
 } from '../../nerve/consensusMemoryTrace';
-import { deriveConsensusMemoryRouteHopFocus } from '../../nerve/consensusMemoryTrace';
+import {
+  consensusMemoryRouteHopFocusEqual,
+  deriveConsensusMemoryRouteHopFocus,
+  stepConsensusMemoryRouteHopFocus,
+} from '../../nerve/consensusMemoryTrace';
 import { formatOutpoint } from './cellFormat';
 import { HUD_COLORS, HUD_FONTS } from './hudTheme';
 
@@ -60,6 +64,8 @@ function EvidenceRouteLedger({
   readout,
   focusedHop,
   onHopFocusChange,
+  lockedHop,
+  onHopLockChange,
   reducedMotion,
 }: {
   evidence: ConsensusMemoryTraceEvidence;
@@ -68,6 +74,8 @@ function EvidenceRouteLedger({
   readout: ConsensusMemoryTraceReadout;
   focusedHop: ConsensusMemoryRouteHopFocus | null;
   onHopFocusChange?: (focus: ConsensusMemoryRouteHopFocus | null) => void;
+  lockedHop: ConsensusMemoryRouteHopFocus | null;
+  onHopLockChange?: (focus: ConsensusMemoryRouteHopFocus | null) => void;
   reducedMotion: boolean;
 }) {
   const lastIndex = evidence.route.length - 1;
@@ -77,6 +85,16 @@ function EvidenceRouteLedger({
     && evidence.route[focusedHop.hopIndex] === focusedHop.cellId
     ? focusedHop
     : null;
+  const lockedRouteHop = lockedHop?.traceKey === readout.key
+    && lockedHop.sourceId === evidence.sourceId
+    && lockedHop.targetCellId === evidence.route.at(-1)
+    && evidence.route[lockedHop.hopIndex] === lockedHop.cellId
+    ? lockedHop
+    : null;
+  const focusIsLocked = consensusMemoryRouteHopFocusEqual(
+    focusedRouteHop,
+    lockedRouteHop,
+  );
   return (
     <div
       id={id}
@@ -132,7 +150,7 @@ function EvidenceRouteLedger({
           style={{ marginLeft: 'auto', fontFamily: HUD_FONTS.mono, fontSize: 6.5, letterSpacing: 0.35, color: focusedRouteHop ? '#E8FCFF' : '#C9F8FF' }}
         >
           {focusedRouteHop
-            ? `H${String(focusedRouteHop.hopIndex).padStart(2, '0')} · CELL #${focusedRouteHop.cellId}`
+            ? `${focusIsLocked ? 'LOCK ' : ''}H${String(focusedRouteHop.hopIndex).padStart(2, '0')} · CELL #${focusedRouteHop.cellId}`
             : `${String(evidence.route.length).padStart(2, '0')} CELLS · H${String(evidence.hopCount).padStart(2, '0')}`}
         </span>
       </span>
@@ -178,6 +196,8 @@ function EvidenceRouteLedger({
             index,
           );
           const active = focusedRouteHop?.hopIndex === index;
+          const locked = lockedRouteHop?.hopIndex === index;
+          const focusState = locked ? 'locked' : active ? 'preview' : 'idle';
           return (
             <span
               key={`${cellId}:${index}`}
@@ -190,14 +210,18 @@ function EvidenceRouteLedger({
               ) : null}
               <button
                 type="button"
-                aria-label={`Focus route hop ${index} of ${lastIndex}, ${role} Cell ${cellId}`}
-                aria-pressed={active}
+                aria-label={`${locked ? 'Release' : 'Lock'} route hop ${index} of ${lastIndex}, ${role} Cell ${cellId}`}
+                aria-pressed={locked}
                 data-memory-evidence-route-cell={cellId}
                 data-memory-evidence-route-hop={index}
                 data-memory-evidence-route-role={role}
-                data-memory-evidence-route-focus={active ? 'active' : 'idle'}
-                title={`Hop ${index}: Cell #${cellId} (${role})`}
-                disabled={!hopFocus || !onHopFocusChange}
+                data-memory-evidence-route-focus={focusState}
+                data-memory-evidence-route-lock={locked ? 'locked' : 'unlocked'}
+                title={`Hop ${index}: Cell #${cellId} (${role}) · click to ${locked ? 'release' : 'lock'}`}
+                disabled={
+                  !hopFocus
+                  || (!onHopFocusChange && !onHopLockChange)
+                }
                 onPointerEnter={() => onHopFocusChange?.(hopFocus)}
                 onPointerLeave={(event) => {
                   if (
@@ -208,7 +232,40 @@ function EvidenceRouteLedger({
                 }}
                 onFocus={() => onHopFocusChange?.(hopFocus)}
                 onBlur={() => onHopFocusChange?.(null)}
-                onClick={() => onHopFocusChange?.(hopFocus)}
+                onClick={() => {
+                  onHopLockChange?.(locked ? null : hopFocus);
+                  if (locked) onHopFocusChange?.(null);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === 'Escape' && lockedRouteHop) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    onHopLockChange?.(null);
+                    onHopFocusChange?.(null);
+                    return;
+                  }
+                  const direction = event.key === 'ArrowLeft'
+                    ? -1
+                    : event.key === 'ArrowRight'
+                      ? 1
+                      : 0;
+                  if (direction === 0 || !hopFocus) return;
+                  const next = stepConsensusMemoryRouteHopFocus(
+                    readout,
+                    hopFocus,
+                    direction,
+                  );
+                  if (!next) return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  onHopLockChange?.(next);
+                  onHopFocusChange?.(next);
+                  event.currentTarget.closest(
+                    '[data-memory-evidence-route-ledger="true"]',
+                  )?.querySelector<HTMLElement>(
+                    `[data-memory-evidence-route-hop="${next.hopIndex}"]`,
+                  )?.focus();
+                }}
                 style={{
                   display: 'inline-flex',
                   alignItems: 'baseline',
@@ -216,15 +273,29 @@ function EvidenceRouteLedger({
                   margin: 0,
                   padding: '1px 2px',
                   border: 0,
-                  borderBottom: `1px solid ${active ? sourceColor : `${nodeColor}66`}`,
-                  outline: active ? `1px solid ${sourceColor}88` : 'none',
+                  borderBottom: `1px solid ${locked || active ? sourceColor : `${nodeColor}66`}`,
+                  outline: locked
+                    ? `1px solid ${LOCKED_GOLD}`
+                    : active
+                      ? `1px solid ${sourceColor}88`
+                      : 'none',
                   outlineOffset: 1,
-                  background: active ? `${sourceColor}24` : `${nodeColor}0b`,
-                  boxShadow: active ? `0 0 8px ${sourceColor}55` : undefined,
+                  background: locked
+                    ? `linear-gradient(90deg, ${sourceColor}38, ${LOCKED_GOLD}18)`
+                    : active
+                      ? `${sourceColor}24`
+                      : `${nodeColor}0b`,
+                  boxShadow: locked
+                    ? `0 0 10px ${sourceColor}72, inset 0 0 5px ${LOCKED_GOLD}24`
+                    : active
+                      ? `0 0 8px ${sourceColor}55`
+                      : undefined,
                   font: 'inherit',
                   lineHeight: 'inherit',
-                  color: active ? '#E8FCFF' : nodeColor,
-                  cursor: onHopFocusChange ? 'crosshair' : 'default',
+                  color: locked ? LOCKED_GOLD : active ? '#E8FCFF' : nodeColor,
+                  cursor: onHopFocusChange || onHopLockChange
+                    ? 'crosshair'
+                    : 'default',
                   transition: reducedMotion
                     ? undefined
                     : 'color 120ms ease, background 120ms ease, box-shadow 120ms ease',
@@ -237,6 +308,28 @@ function EvidenceRouteLedger({
           );
         })}
       </span>
+      {lockedRouteHop ? (
+        <span
+          data-memory-evidence-route-lock-status="true"
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            marginTop: 5,
+            paddingTop: 4,
+            borderTop: `1px solid ${LOCKED_GOLD}28`,
+            fontFamily: HUD_FONTS.mono,
+            fontSize: 6.2,
+            letterSpacing: 0.42,
+            color: LOCKED_GOLD,
+          }}
+        >
+          <span>◆ ROUTE LOCK</span>
+          <span style={{ marginLeft: 'auto', color: HUD_COLORS.dim }}>
+            ←/→ STEP · ESC RELEASE
+          </span>
+        </span>
+      ) : null}
     </div>
   );
 }
@@ -364,6 +457,8 @@ function EvidenceLedger({
   onFocusChange,
   focusedHop,
   onHopFocusChange,
+  lockedHop,
+  onHopLockChange,
 }: {
   readout: ConsensusMemoryTraceReadout;
   targetContentHash: string;
@@ -373,6 +468,8 @@ function EvidenceLedger({
   onFocusChange?: (sourceId: number | null) => void;
   focusedHop: ConsensusMemoryRouteHopFocus | null;
   onHopFocusChange?: (focus: ConsensusMemoryRouteHopFocus | null) => void;
+  lockedHop: ConsensusMemoryRouteHopFocus | null;
+  onHopLockChange?: (focus: ConsensusMemoryRouteHopFocus | null) => void;
 }) {
   const [expandedEvidenceKey, setExpandedEvidenceKey] = useState<string | null>(null);
   const bindings = consensusMemoryEvidenceBindings(
@@ -426,7 +523,13 @@ function EvidenceLedger({
         const evidenceKey = `${readout.key}:${evidence.sourceId}`;
         const expanded = active && expandedEvidenceKey === evidenceKey;
         const routeLedgerId = `memory-route-ledger-${evidence.sourceId}-${evidence.ordinal}`;
+        const lockedForEvidence = lockedHop?.traceKey === readout.key
+          && lockedHop.sourceId === evidence.sourceId
+          && lockedHop.targetCellId === routeTargetId;
+        const lockedElsewhere = lockedHop?.traceKey === readout.key
+          && lockedHop.sourceId !== evidence.sourceId;
         const activate = () => {
+          if (lockedElsewhere) return;
           setExpandedEvidenceKey((current) => (
             current !== null && current !== evidenceKey ? null : current
           ));
@@ -455,9 +558,11 @@ function EvidenceLedger({
             onBlur={(event) => {
               const next = event.relatedTarget as Node | null;
               if (next && event.currentTarget.contains(next)) return;
-              setExpandedEvidenceKey((current) => (
-                current === evidenceKey ? null : current
-              ));
+              if (!lockedForEvidence) {
+                setExpandedEvidenceKey((current) => (
+                  current === evidenceKey ? null : current
+                ));
+              }
               onFocusChange?.(null);
               onHopFocusChange?.(null);
             }}
@@ -466,6 +571,7 @@ function EvidenceLedger({
               event.stopPropagation();
               setExpandedEvidenceKey(null);
               onHopFocusChange?.(null);
+              if (lockedForEvidence) onHopLockChange?.(null);
               event.currentTarget.querySelector<HTMLElement>(
                 '[data-memory-evidence]',
               )?.focus();
@@ -493,11 +599,14 @@ function EvidenceLedger({
               data-memory-evidence-route-duration-ms={evidence.routeDurationMs}
               data-memory-evidence-source-outpoint={`${evidence.sourceOutPoint.tx_hash}#${evidence.sourceOutPoint.index}`}
               title={`${evidence.contentHash} · ${evidence.sourceOutPoint.tx_hash}#${evidence.sourceOutPoint.index}`}
-              disabled={!onFocusChange}
+              disabled={!onFocusChange || lockedElsewhere}
               onPointerEnter={activate}
               onFocus={activate}
               onClick={() => {
-                if (expanded) onHopFocusChange?.(null);
+                if (expanded) {
+                  onHopFocusChange?.(null);
+                  if (lockedForEvidence) onHopLockChange?.(null);
+                }
                 setExpandedEvidenceKey((current) => (
                   current === evidenceKey ? null : evidenceKey
                 ));
@@ -522,7 +631,7 @@ function EvidenceLedger({
                 fontFamily: HUD_FONTS.mono,
                 whiteSpace: 'nowrap',
                 textAlign: 'left',
-                cursor: onFocusChange ? 'pointer' : 'default',
+                cursor: onFocusChange && !lockedElsewhere ? 'pointer' : 'default',
                 transition: reducedMotion ? undefined : 'background 140ms ease, box-shadow 140ms ease',
               }}
             >
@@ -585,6 +694,8 @@ function EvidenceLedger({
                 readout={readout}
                 focusedHop={focusedHop}
                 onHopFocusChange={onHopFocusChange}
+                lockedHop={lockedHop}
+                onHopLockChange={onHopLockChange}
                 reducedMotion={reducedMotion}
               />
             ) : null}
@@ -604,6 +715,8 @@ function MemoryReadState({
   onFocusChange,
   focusedHop,
   onHopFocusChange,
+  lockedHop,
+  onHopLockChange,
 }: {
   readout: ConsensusMemoryTraceReadout;
   reducedMotion: boolean;
@@ -613,6 +726,8 @@ function MemoryReadState({
   onFocusChange?: (sourceId: number | null) => void;
   focusedHop: ConsensusMemoryRouteHopFocus | null;
   onHopFocusChange?: (focus: ConsensusMemoryRouteHopFocus | null) => void;
+  lockedHop: ConsensusMemoryRouteHopFocus | null;
+  onHopLockChange?: (focus: ConsensusMemoryRouteHopFocus | null) => void;
 }) {
   const activeIndex = MEMORY_READ_STAGES.findIndex(
     ({ stage }) => stage === readout.stage,
@@ -704,6 +819,8 @@ function MemoryReadState({
         onFocusChange={onFocusChange}
         focusedHop={focusedHop}
         onHopFocusChange={onHopFocusChange}
+        lockedHop={lockedHop}
+        onHopLockChange={onHopLockChange}
       />
     </div>
   );
@@ -728,6 +845,8 @@ export default function ConsensusIdentityPlate({
   onTraceEvidenceFocusChange,
   traceRouteHopFocus = null,
   onTraceRouteHopFocusChange,
+  traceRouteHopLock = null,
+  onTraceRouteHopLockChange,
   agreementCount,
 }: {
   identity: CellConsensusIdentity;
@@ -748,6 +867,10 @@ export default function ConsensusIdentityPlate({
   onTraceEvidenceFocusChange?: (sourceId: number | null) => void;
   traceRouteHopFocus?: ConsensusMemoryRouteHopFocus | null;
   onTraceRouteHopFocusChange?: (
+    focus: ConsensusMemoryRouteHopFocus | null,
+  ) => void;
+  traceRouteHopLock?: ConsensusMemoryRouteHopFocus | null;
+  onTraceRouteHopLockChange?: (
     focus: ConsensusMemoryRouteHopFocus | null,
   ) => void;
   agreementCount: number;
@@ -831,6 +954,8 @@ export default function ConsensusIdentityPlate({
             onFocusChange={onTraceEvidenceFocusChange}
             focusedHop={traceRouteHopFocus}
             onHopFocusChange={onTraceRouteHopFocusChange}
+            lockedHop={traceRouteHopLock}
+            onHopLockChange={onTraceRouteHopLockChange}
           />
         ) : null}
         {observed && onRecallWrite ? (

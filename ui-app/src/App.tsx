@@ -14,6 +14,7 @@ import {
   useReducer,
   useRef,
   useState,
+  type ElementRef,
 } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, Stars } from '@react-three/drei';
@@ -23,6 +24,7 @@ import {
   CELL_SELECTION_PREFIX,
   chainNodeWorldPosition,
   canRecallConsensusMemory,
+  consensusMemoryRouteHopFocusEqual,
   consensusMemoryTraceRequestKey,
   deriveConsensusMemoryRouteHopFocus,
   colonyFlood,
@@ -31,6 +33,7 @@ import {
   inferredTopology,
   CellGalaxy,
   CellGalaxyProvider,
+  ConsensusRouteCamera,
   ConsensusWriteSeal,
   HudOverlay,
   NetworkColony,
@@ -86,6 +89,8 @@ interface AppProps {
   initialCellsRevision: number;
 }
 
+const DEFAULT_CAMERA_TARGET: [number, number, number] = [0, 18, 0];
+
 export default function App({
   initialChain,
   initialChainNodes,
@@ -97,6 +102,11 @@ export default function App({
   const galaxyConfig = resolveGalaxyConfig();
   const qualityRuntime = useQualityRuntime();
   const qualityCascade = QUALITY_PRESETS[qualityRuntime.effective];
+  const orbitControlsRef = useRef<ElementRef<typeof OrbitControls>>(null);
+  const [orbitInteractionRevision, noteOrbitInteraction] = useReducer(
+    (revision: number) => revision + 1,
+    0,
+  );
   const forceRenderStats = useMemo(() => (
     typeof window !== 'undefined'
     && hasQuerySwitch(window.location.search, 'render-stats')
@@ -140,7 +150,10 @@ export default function App({
   const [memoryEvidenceFocusSourceId, setMemoryEvidenceFocusSourceId] = useState<
     number | null
   >(null);
-  const [memoryRouteHopFocus, setMemoryRouteHopFocus] = useState<
+  const [memoryRouteHopPreview, setMemoryRouteHopPreview] = useState<
+    ConsensusMemoryRouteHopFocus | null
+  >(null);
+  const [memoryRouteHopLock, setMemoryRouteHopLock] = useState<
     ConsensusMemoryRouteHopFocus | null
   >(null);
   const memoryTraceTargetResponseRef = useRef<
@@ -335,35 +348,44 @@ export default function App({
       : null;
   }, [selectedCell, memoryTraceRequest, memoryTraceReadout]);
   useEffect(() => {
-    setMemoryEvidenceFocusSourceId((current) => (
-      current !== null
-      && selectedMemoryTraceReadout?.evidence.some(
-        (evidence) => evidence.sourceId === current,
-      )
-        ? current
-        : null
-    ));
-  }, [selectedMemoryTraceReadout]);
-  useEffect(() => {
-    setMemoryRouteHopFocus((current) => {
-      if (!current || memoryEvidenceFocusSourceId !== current.sourceId) return null;
+    const validate = (
+      current: ConsensusMemoryRouteHopFocus | null,
+    ): ConsensusMemoryRouteHopFocus | null => {
+      if (!current) return null;
       const verified = deriveConsensusMemoryRouteHopFocus(
         selectedMemoryTraceReadout,
         current.sourceId,
         current.hopIndex,
       );
-      return verified
-        && verified.traceKey === current.traceKey
-        && verified.targetCellId === current.targetCellId
-        && verified.cellId === current.cellId
+      return consensusMemoryRouteHopFocusEqual(verified, current)
         ? verified
         : null;
+    };
+    setMemoryRouteHopPreview(validate);
+    setMemoryRouteHopLock(validate);
+  }, [selectedMemoryTraceReadout]);
+  const memoryRouteHopFocus = memoryRouteHopPreview ?? memoryRouteHopLock;
+  useEffect(() => {
+    setMemoryEvidenceFocusSourceId((current) => {
+      const preferredSourceId = memoryRouteHopFocus?.sourceId ?? current;
+      return preferredSourceId !== null
+        && selectedMemoryTraceReadout?.evidence.some(
+          (evidence) => evidence.sourceId === preferredSourceId,
+        )
+        ? preferredSourceId
+        : null;
     });
-  }, [memoryEvidenceFocusSourceId, selectedMemoryTraceReadout]);
+  }, [memoryRouteHopFocus, selectedMemoryTraceReadout]);
   const focusMemoryTraceEvidence = useCallback((sourceId: number | null) => {
+    const lockedSourceId = memoryRouteHopLock?.sourceId ?? null;
+    if (lockedSourceId !== null && sourceId !== lockedSourceId) {
+      setMemoryEvidenceFocusSourceId(lockedSourceId);
+      setMemoryRouteHopPreview(null);
+      return;
+    }
     if (sourceId === null) {
       setMemoryEvidenceFocusSourceId(null);
-      setMemoryRouteHopFocus(null);
+      setMemoryRouteHopPreview(null);
       return;
     }
     const verifiedSourceId = selectedMemoryTraceReadout?.evidence.some(
@@ -372,15 +394,22 @@ export default function App({
       ? sourceId
       : null;
     setMemoryEvidenceFocusSourceId(verifiedSourceId);
-    setMemoryRouteHopFocus((current) => (
+    setMemoryRouteHopPreview((current) => (
       current?.sourceId === verifiedSourceId ? current : null
     ));
-  }, [selectedMemoryTraceReadout]);
+  }, [memoryRouteHopLock, selectedMemoryTraceReadout]);
   const focusMemoryTraceRouteHop = useCallback((
     candidate: ConsensusMemoryRouteHopFocus | null,
   ) => {
     if (!candidate) {
-      setMemoryRouteHopFocus(null);
+      setMemoryRouteHopPreview(null);
+      return;
+    }
+    if (
+      memoryRouteHopLock
+      && candidate.sourceId !== memoryRouteHopLock.sourceId
+    ) {
+      setMemoryRouteHopPreview(null);
       return;
     }
     const verified = deriveConsensusMemoryRouteHopFocus(
@@ -394,11 +423,30 @@ export default function App({
       || verified.targetCellId !== candidate.targetCellId
       || verified.cellId !== candidate.cellId
     ) {
-      setMemoryRouteHopFocus(null);
+      setMemoryRouteHopPreview(null);
       return;
     }
     setMemoryEvidenceFocusSourceId(verified.sourceId);
-    setMemoryRouteHopFocus(verified);
+    setMemoryRouteHopPreview(verified);
+  }, [memoryRouteHopLock, selectedMemoryTraceReadout]);
+  const lockMemoryTraceRouteHop = useCallback((
+    candidate: ConsensusMemoryRouteHopFocus | null,
+  ) => {
+    if (!candidate) {
+      setMemoryRouteHopLock(null);
+      return;
+    }
+    const verified = deriveConsensusMemoryRouteHopFocus(
+      selectedMemoryTraceReadout,
+      candidate.sourceId,
+      candidate.hopIndex,
+    );
+    if (!verified || !consensusMemoryRouteHopFocusEqual(verified, candidate)) {
+      setMemoryRouteHopLock(null);
+      return;
+    }
+    setMemoryEvidenceFocusSourceId(verified.sourceId);
+    setMemoryRouteHopLock(verified);
   }, [selectedMemoryTraceReadout]);
   const recallSelectedCellOrigin = useCallback((linkSeq: number) => {
     if (!selectedCell) return;
@@ -448,6 +496,8 @@ export default function App({
         onCellTraceEvidenceFocusChange={focusMemoryTraceEvidence}
         cellTraceRouteHopFocus={memoryRouteHopFocus}
         onCellTraceRouteHopFocusChange={focusMemoryTraceRouteHop}
+        cellTraceRouteHopLock={memoryRouteHopLock}
+        onCellTraceRouteHopLockChange={lockMemoryTraceRouteHop}
         onTraceCellWrite={selectedOriginTraceable
           ? recallSelectedCellOrigin
           : undefined}
@@ -561,7 +611,14 @@ export default function App({
             localVersion={localNode?.version ?? ''}
           />
 
+          <ConsensusRouteCamera
+            focus={memoryRouteHopLock}
+            controlsRef={orbitControlsRef}
+            manualRevision={orbitInteractionRevision}
+          />
+
           <OrbitControls
+            ref={orbitControlsRef}
             enableDamping
             dampingFactor={0.08}
             minDistance={4}
@@ -569,7 +626,8 @@ export default function App({
             // Aim at the content's vertical center (chain plane y=22, cell
             // canopy y=38) instead of the world origin, so the scene sits
             // centered rather than pushed to the top. Matches CAMERA_PRESETS.default.
-            target={[0, 18, 0]}
+            target={DEFAULT_CAMERA_TARGET}
+            onStart={noteOrbitInteraction}
           />
         </Canvas>
       </CellGalaxyProvider>

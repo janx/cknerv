@@ -60,6 +60,7 @@ export * from './derives/consensusBraid.derive';
 export * from './derives/consensusFlow.derive';
 export * from './derives/consensusMemoryPortrait.derive';
 export * from './derives/consensusMemoryEvidence.derive';
+export * from './derives/consensusRouteCamera.derive';
 export * from './derives/cellsStats.derive';
 export * from './derives/eventStreamLines';
 export * from './derives/peers.derive';
@@ -137,6 +138,11 @@ export { default as NetworkColony } from './components/NetworkColony';
 export { default as NeuralNetwork } from './nerve/NeuralNetwork';
 export { default as DendriticBurst } from './nerve/DendriticBurst';
 export { default as ConsensusWriteSeal } from './nerve/DendriticBurst';
+export {
+  default as ConsensusRouteCamera,
+  type ConsensusRouteCameraControls,
+  type ConsensusRouteCameraProps,
+} from './nerve/ConsensusRouteCamera';
 export type {
   ConsensusWriteSealProps,
   DendriticBurstProps,
@@ -149,8 +155,10 @@ export {
   consensusMemoryTraceRequestKey,
   consensusMemoryRouteHopAdjacentSegments,
   consensusMemoryRouteHopCellFocus,
+  consensusMemoryRouteHopFocusEqual,
   deriveConsensusMemoryRouteHopFocus,
   deriveConsensusMemoryTraceEndpoints,
+  stepConsensusMemoryRouteHopFocus,
   validateConsensusMemoryRouteHopFocus,
   CONSENSUS_PULSE_POLICY,
   type ConsensusMemoryTracePlan,

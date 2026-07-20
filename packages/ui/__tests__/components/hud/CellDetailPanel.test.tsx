@@ -299,6 +299,7 @@ describe('CellDetailPanel', () => {
     };
     const onTraceEvidenceFocusChange = vi.fn();
     const onTraceRouteHopFocusChange = vi.fn();
+    const onTraceRouteHopLockChange = vi.fn();
     const props = {
       cell: base,
       recentLinks: [origin],
@@ -308,6 +309,7 @@ describe('CellDetailPanel', () => {
       onTraceWrite: () => {},
       onTraceEvidenceFocusChange,
       onTraceRouteHopFocusChange,
+      onTraceRouteHopLockChange,
       onClose: () => {},
     };
     const { container, rerender, getByTestId } = render(
@@ -372,8 +374,8 @@ describe('CellDetailPanel', () => {
     const focusedTransit = container.querySelector<HTMLElement>(
       '[data-memory-evidence-route-cell="99"]',
     )!;
-    expect(focusedTransit.getAttribute('data-memory-evidence-route-focus')).toBe('active');
-    expect(focusedTransit.getAttribute('aria-pressed')).toBe('true');
+    expect(focusedTransit.getAttribute('data-memory-evidence-route-focus')).toBe('preview');
+    expect(focusedTransit.getAttribute('aria-pressed')).toBe('false');
     expect(container.querySelector('[data-memory-evidence-route-ledger="true"]')
       ?.textContent).toContain('H01 · CELL #99');
     expect(onTraceEvidenceFocusChange).toHaveBeenLastCalledWith(11);
@@ -414,6 +416,98 @@ describe('CellDetailPanel', () => {
     expect(onTraceEvidenceFocusChange).toHaveBeenLastCalledWith(12);
     fireEvent.blur(second);
     expect(onTraceEvidenceFocusChange).toHaveBeenLastCalledWith(null);
+  });
+
+  it('separates route preview from lock and steps a locked inspector by keyboard', () => {
+    vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener: () => {}, removeEventListener: () => {} }));
+    const origin: CellLink = {
+      seq: 18,
+      tx_hash: base.out_point.tx_hash,
+      block: base.birth_block,
+      from_ids: [1],
+      to_ids: [base.id],
+      parents: [],
+      tag: base.tag,
+      at_ms: 12_000,
+    };
+    const onTraceRouteHopFocusChange = vi.fn();
+    const onTraceRouteHopLockChange = vi.fn();
+    const props = {
+      cell: base,
+      recentLinks: [origin],
+      tracedWriteSeq: origin.seq,
+      traceSource: 'input' as const,
+      traceReadout: traceReadout(),
+      traceEvidenceFocusSourceId: 11,
+      onTraceEvidenceFocusChange: vi.fn(),
+      onTraceRouteHopFocusChange,
+      onTraceRouteHopLockChange,
+      onTraceWrite: () => {},
+      onClose: () => {},
+    };
+    const transitFocus = {
+      traceKey: `18:${base.id}:1`,
+      sourceId: 11,
+      targetCellId: base.id,
+      cellId: 99,
+      hopIndex: 1,
+    };
+    const targetFocus = {
+      ...transitFocus,
+      cellId: base.id,
+      hopIndex: 2,
+    };
+    const { container, rerender } = render(<CellDetailPanel {...props} />);
+    fireEvent.click(container.querySelector('[data-memory-evidence="1"]')!);
+
+    const transit = container.querySelector<HTMLElement>(
+      '[data-memory-evidence-route-cell="99"]',
+    )!;
+    fireEvent.pointerEnter(transit);
+    expect(onTraceRouteHopFocusChange).toHaveBeenLastCalledWith(transitFocus);
+    expect(transit.getAttribute('data-memory-evidence-route-focus')).toBe('idle');
+    fireEvent.click(transit);
+    expect(onTraceRouteHopLockChange).toHaveBeenLastCalledWith(transitFocus);
+
+    rerender(
+      <CellDetailPanel
+        {...props}
+        traceRouteHopFocus={transitFocus}
+        traceRouteHopLock={transitFocus}
+      />,
+    );
+    const lockedTransit = container.querySelector<HTMLElement>(
+      '[data-memory-evidence-route-cell="99"]',
+    )!;
+    expect(lockedTransit.getAttribute('data-memory-evidence-route-focus')).toBe('locked');
+    expect(lockedTransit.getAttribute('aria-pressed')).toBe('true');
+    expect(container.querySelector<HTMLButtonElement>('[data-memory-evidence="2"]')
+      ?.disabled).toBe(true);
+    expect(container.textContent).toContain('LOCK H01 · CELL #99');
+    expect(container.textContent).toContain('←/→ STEP · ESC RELEASE');
+
+    fireEvent.keyDown(lockedTransit, { key: 'ArrowRight' });
+    expect(onTraceRouteHopLockChange).toHaveBeenLastCalledWith(targetFocus);
+    expect(onTraceRouteHopFocusChange).toHaveBeenLastCalledWith(targetFocus);
+    expect(document.activeElement).toBe(container.querySelector(
+      `[data-memory-evidence-route-cell="${base.id}"]`,
+    ));
+
+    rerender(
+      <CellDetailPanel
+        {...props}
+        traceRouteHopFocus={targetFocus}
+        traceRouteHopLock={targetFocus}
+      />,
+    );
+    const lockedTarget = container.querySelector<HTMLElement>(
+      `[data-memory-evidence-route-cell="${base.id}"]`,
+    )!;
+    fireEvent.keyDown(lockedTarget, { key: 'Escape' });
+    expect(onTraceRouteHopLockChange).toHaveBeenLastCalledWith(null);
+    expect(onTraceRouteHopFocusChange).toHaveBeenLastCalledWith(null);
+    expect(container.querySelector('[data-memory-evidence-route-ledger="true"]'))
+      .not.toBeNull();
   });
 
   it('keeps every retained hop inspectable inside a bounded route ledger', () => {
