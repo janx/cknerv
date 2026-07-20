@@ -639,11 +639,13 @@ export default function ConsensusRouteHopMarker({
   focus,
   lockedHop,
   focusedSourceId = null,
+  onAgreementPreviewChange,
   onAgreementLockChange,
 }: {
   focus: ConsensusMemoryTraceFocus | null;
   lockedHop?: ConsensusMemoryRouteHopFocus | null;
   focusedSourceId?: number | null;
+  onAgreementPreviewChange?: (sourceId: number | null) => void;
   onAgreementLockChange?: (focus: ConsensusMemoryRouteHopFocus) => void;
 }) {
   const simClock = useSimClock();
@@ -692,6 +694,14 @@ export default function ConsensusRouteHopMarker({
       );
     if (!retainsInspectedSignature) setInspectedAgreementSourceId(null);
   }, [agreementPlan.ticks, inspectedAgreementSourceId, spatial?.role]);
+
+  useEffect(() => {
+    onAgreementPreviewChange?.(inspectedAgreementSourceId);
+  }, [inspectedAgreementSourceId, onAgreementPreviewChange]);
+
+  useEffect(() => () => {
+    onAgreementPreviewChange?.(null);
+  }, [onAgreementPreviewChange]);
 
   useLayoutEffect(() => {
     if (!spatial || !presentation) {

@@ -418,6 +418,82 @@ describe('CellDetailPanel', () => {
     expect(onTraceEvidenceFocusChange).toHaveBeenLastCalledWith(null);
   });
 
+  it('previews a scene agreement in the ledger without replacing the locked evidence route', () => {
+    vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener: () => {}, removeEventListener: () => {} }));
+    const origin: CellLink = {
+      seq: 18,
+      tx_hash: base.out_point.tx_hash,
+      block: base.birth_block,
+      from_ids: [1, 2],
+      to_ids: [base.id],
+      parents: [],
+      tag: base.tag,
+      at_ms: 12_000,
+    };
+    const lockedHop = {
+      traceKey: `18:${base.id}:1`,
+      sourceId: 11,
+      targetCellId: base.id,
+      cellId: base.id,
+      hopIndex: 2,
+    };
+    const props = {
+      cell: base,
+      recentLinks: [origin],
+      tracedWriteSeq: origin.seq,
+      traceSource: 'input' as const,
+      traceReadout: traceReadout(),
+      traceEvidenceFocusSourceId: 11,
+      traceRouteHopLock: lockedHop,
+      onTraceEvidenceFocusChange: vi.fn(),
+      onTraceRouteHopLockChange: vi.fn(),
+      onTraceWrite: () => {},
+      onClose: () => {},
+    };
+    const { container, getByTestId, rerender } = render(
+      <CellDetailPanel {...props} traceEvidencePreviewSourceId={12} />,
+    );
+    const locked = container.querySelector<HTMLElement>(
+      '[data-memory-evidence="1"]',
+    )!;
+    const preview = container.querySelector<HTMLElement>(
+      '[data-memory-evidence="2"]',
+    )!;
+
+    expect(locked.getAttribute('data-memory-evidence-focus')).toBe('retained');
+    expect(locked.getAttribute('aria-pressed')).toBe('true');
+    expect(locked.getAttribute('aria-expanded')).toBe('true');
+    expect(locked.closest('[data-memory-evidence-wrapper]')?.querySelector(
+      '[data-memory-evidence-route-ledger="true"]',
+    )).not.toBeNull();
+    expect(preview.getAttribute('data-memory-evidence-focus')).toBe('preview');
+    expect(preview.getAttribute('data-memory-evidence-scene-preview')).toBe('true');
+    expect(preview.getAttribute('aria-pressed')).toBe('false');
+    expect(preview.getAttribute('aria-expanded')).toBe('false');
+    expect(preview.textContent).toContain('INSPECT');
+    expect(getByTestId('portrait').getAttribute('data-evidence-focus-source')).toBe('11');
+
+    rerender(<CellDetailPanel {...props} traceEvidencePreviewSourceId={11} />);
+    expect(container.querySelector('[data-memory-evidence="1"]')
+      ?.getAttribute('data-memory-evidence-focus')).toBe('active');
+    expect(container.querySelector('[data-memory-evidence-focus="retained"]'))
+      .toBeNull();
+    expect(container.querySelector(
+      '[data-memory-evidence-scene-preview="true"]',
+    )).toBeNull();
+
+    rerender(<CellDetailPanel {...props} traceEvidencePreviewSourceId={null} />);
+    expect(container.querySelector('[data-memory-evidence="1"]')
+      ?.getAttribute('data-memory-evidence-focus')).toBe('active');
+    expect(container.querySelector('[data-memory-evidence="2"]')
+      ?.getAttribute('data-memory-evidence-focus')).toBe('passive');
+    expect(container.querySelector(
+      '[data-memory-evidence-scene-preview="true"]',
+    )).toBeNull();
+    expect(container.querySelector('[data-memory-evidence-route-lock="locked"]')
+      ?.getAttribute('data-memory-evidence-route-cell')).toBe(String(base.id));
+  });
+
   it('separates route preview from lock and steps a locked inspector by keyboard', () => {
     vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener: () => {}, removeEventListener: () => {} }));
     const origin: CellLink = {

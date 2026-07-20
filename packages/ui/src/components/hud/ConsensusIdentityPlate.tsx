@@ -748,6 +748,7 @@ function EvidenceLedger({
   agreementCount,
   reducedMotion,
   focusedSourceId,
+  previewSourceId,
   onFocusChange,
   focusedHop,
   onHopFocusChange,
@@ -760,6 +761,7 @@ function EvidenceLedger({
   agreementCount: number;
   reducedMotion: boolean;
   focusedSourceId: number | null;
+  previewSourceId: number | null;
   onFocusChange?: (sourceId: number | null) => void;
   focusedHop: ConsensusMemoryRouteHopFocus | null;
   onHopFocusChange?: (focus: ConsensusMemoryRouteHopFocus | null) => void;
@@ -785,6 +787,10 @@ function EvidenceLedger({
   const evidenceLabel = readout.sourceKind === 'input'
     ? 'RETAINED INPUTS'
     : 'LINEAGE WITNESSES';
+  const scenePreviewSourceId = previewSourceId !== null
+    && readout.evidence.some((evidence) => evidence.sourceId === previewSourceId)
+    ? previewSourceId
+    : null;
 
   return (
     <div
@@ -809,22 +815,33 @@ function EvidenceLedger({
         const routeTargetId = evidence.route.at(-1) ?? readout.targetCellId;
         const routeDuration = routeDurationReadout(evidence.routeDurationMs);
         const resolved = evidence.state === 'resolved';
-        const stateCopy = resolved
+        const evidenceStateCopy = resolved
           ? 'VERIFIED'
           : evidence.state === 'arrived'
             ? 'ARRIVED'
             : 'ROUTING';
-        const stateColor = resolved
+        const evidenceStateColor = resolved
           ? LOCKED_GOLD
           : evidence.state === 'arrived'
             ? '#C9F8FF'
             : sourceColor;
-        const focusState = focusedSourceId === null
-          ? 'idle'
-          : focusedSourceId === evidence.sourceId
-            ? 'active'
-            : 'passive';
-        const active = focusState === 'active';
+        const active = focusedSourceId === evidence.sourceId;
+        const previewed = scenePreviewSourceId === evidence.sourceId
+          && !active;
+        const retained = active
+          && scenePreviewSourceId !== null
+          && scenePreviewSourceId !== evidence.sourceId;
+        const focusState = previewed
+          ? 'preview'
+          : retained
+            ? 'retained'
+            : active
+              ? 'active'
+              : focusedSourceId !== null || scenePreviewSourceId !== null
+                ? 'passive'
+                : 'idle';
+        const stateCopy = previewed ? 'INSPECT' : evidenceStateCopy;
+        const stateColor = previewed ? sourceColor : evidenceStateColor;
         const evidenceKey = `${readout.key}:${evidence.sourceId}`;
         const expanded = active
           && (lockedEvidenceKey ?? expandedEvidenceKey) === evidenceKey;
@@ -885,7 +902,11 @@ function EvidenceLedger({
             style={{
               position: 'relative',
               width: '100%',
-              opacity: focusState === 'passive' ? 0.34 : 1,
+              opacity: focusState === 'passive'
+                ? 0.34
+                : retained
+                  ? 0.62
+                  : 1,
               transition: reducedMotion ? undefined : 'opacity 140ms ease',
             }}
           >
@@ -900,6 +921,7 @@ function EvidenceLedger({
               data-memory-evidence-knot={binding.knotIndex + 1}
               data-memory-evidence-state={evidence.state}
               data-memory-evidence-focus={focusState}
+              data-memory-evidence-scene-preview={previewed ? 'true' : undefined}
               data-memory-evidence-route={evidence.route.join('>')}
               data-memory-evidence-route-hops={evidence.hopCount}
               data-memory-evidence-route-duration-ms={evidence.routeDurationMs}
@@ -926,14 +948,26 @@ function EvidenceLedger({
                 margin: 0,
                 padding: '0 0 0 4px',
                 border: 0,
-                borderLeft: `1px solid ${active ? sourceColor : `${sourceColor}88`}`,
+                borderLeft: previewed
+                  ? `2px solid ${sourceColor}`
+                  : `1px solid ${active ? sourceColor : `${sourceColor}88`}`,
                 borderRadius: 0,
-                outline: active ? `1px solid ${sourceColor}44` : 'none',
+                outline: previewed
+                  ? `1px solid ${sourceColor}70`
+                  : active
+                    ? `1px solid ${sourceColor}${retained ? '26' : '44'}`
+                    : 'none',
                 outlineOffset: -1,
-                background: active
-                  ? `linear-gradient(90deg, ${sourceColor}22, ${sourceColor}08 68%, transparent)`
-                  : 'transparent',
-                boxShadow: active ? `inset 2px 0 0 ${sourceColor}, 0 0 9px ${sourceColor}1c` : undefined,
+                background: previewed
+                  ? `linear-gradient(90deg, ${sourceColor}30, ${sourceColor}10 72%, transparent)`
+                  : active
+                    ? `linear-gradient(90deg, ${sourceColor}${retained ? '12' : '22'}, ${sourceColor}08 68%, transparent)`
+                    : 'transparent',
+                boxShadow: previewed
+                  ? `inset 3px 0 0 ${sourceColor}, 0 0 11px ${sourceColor}2c`
+                  : active
+                    ? `inset 2px 0 0 ${sourceColor}, 0 0 9px ${sourceColor}${retained ? '10' : '1c'}`
+                    : undefined,
                 fontFamily: HUD_FONTS.mono,
                 whiteSpace: 'nowrap',
                 textAlign: 'left',
@@ -1019,6 +1053,7 @@ function MemoryReadState({
   targetContentHash,
   agreementCount,
   focusedSourceId,
+  previewSourceId,
   onFocusChange,
   focusedHop,
   onHopFocusChange,
@@ -1031,6 +1066,7 @@ function MemoryReadState({
   targetContentHash: string;
   agreementCount: number;
   focusedSourceId: number | null;
+  previewSourceId: number | null;
   onFocusChange?: (sourceId: number | null) => void;
   focusedHop: ConsensusMemoryRouteHopFocus | null;
   onHopFocusChange?: (focus: ConsensusMemoryRouteHopFocus | null) => void;
@@ -1125,6 +1161,7 @@ function MemoryReadState({
         agreementCount={agreementCount}
         reducedMotion={reducedMotion}
         focusedSourceId={focusedSourceId}
+        previewSourceId={previewSourceId}
         onFocusChange={onFocusChange}
         focusedHop={focusedHop}
         onHopFocusChange={onHopFocusChange}
@@ -1152,6 +1189,7 @@ export default function ConsensusIdentityPlate({
   traceSelected = false,
   traceReadout = null,
   traceEvidenceFocusSourceId = null,
+  traceEvidencePreviewSourceId = null,
   onTraceEvidenceFocusChange,
   traceRouteHopFocus = null,
   onTraceRouteHopFocusChange,
@@ -1175,6 +1213,7 @@ export default function ConsensusIdentityPlate({
   traceSelected?: boolean;
   traceReadout?: ConsensusMemoryTraceReadout | null;
   traceEvidenceFocusSourceId?: number | null;
+  traceEvidencePreviewSourceId?: number | null;
   onTraceEvidenceFocusChange?: (sourceId: number | null) => void;
   traceRouteHopFocus?: ConsensusMemoryRouteHopFocus | null;
   onTraceRouteHopFocusChange?: (
@@ -1263,6 +1302,7 @@ export default function ConsensusIdentityPlate({
             targetContentHash={identity.contentHash}
             agreementCount={agreementCount}
             focusedSourceId={traceEvidenceFocusSourceId}
+            previewSourceId={traceEvidencePreviewSourceId}
             onFocusChange={onTraceEvidenceFocusChange}
             focusedHop={traceRouteHopFocus}
             onHopFocusChange={onTraceRouteHopFocusChange}

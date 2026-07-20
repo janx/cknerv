@@ -168,6 +168,7 @@ describe('HudOverlay', () => {
         }}
         cellTraceResponseRef={{ current: null }}
         cellTraceEvidenceFocusSourceId={2}
+        cellTraceEvidencePreviewSourceId={1}
         onCellTraceEvidenceFocusChange={() => {}}
         cellTraceRouteHopFocus={routeHopFocus}
         onCellTraceRouteHopFocusChange={onCellTraceRouteHopFocusChange}
@@ -185,9 +186,17 @@ describe('HudOverlay', () => {
     expect(container.querySelector('[data-testid="portrait"]')
       ?.getAttribute('data-evidence-focus-source')).toBe('2');
     expect(container.querySelector('[data-memory-evidence="2"]')
-      ?.getAttribute('data-memory-evidence-focus')).toBe('active');
+      ?.getAttribute('data-memory-evidence-focus')).toBe('retained');
+    expect(container.querySelector('[data-memory-evidence="2"]')
+      ?.getAttribute('aria-pressed')).toBe('true');
     expect(container.querySelector('[data-memory-evidence="2"]')
       ?.getAttribute('aria-expanded')).toBe('true');
+    expect(container.querySelector('[data-memory-evidence="1"]')
+      ?.getAttribute('data-memory-evidence-focus')).toBe('preview');
+    expect(container.querySelector('[data-memory-evidence="1"]')
+      ?.getAttribute('data-memory-evidence-scene-preview')).toBe('true');
+    expect(container.querySelector('[data-memory-evidence="1"]')
+      ?.getAttribute('aria-pressed')).toBe('false');
     const routeHop = container.querySelector<HTMLElement>(
       '[data-memory-evidence-route-cell="4"]',
     )!;
