@@ -27,6 +27,7 @@ import {
   consensusMemoryPulseActivityScale,
   consensusMemoryRouteHopAdjacentSegments,
   consensusMemoryRouteHopCellFocus,
+  consensusMemoryRouteHopFocusEqual,
   consensusMemoryRouteHandoffScale,
   consensusMemoryPassiveOpacity,
   consensusMemoryTraceRequestKey,
@@ -38,6 +39,7 @@ import {
   deriveConsensusMemoryRouteHopFocus,
   deriveConsensusMemoryTraceEndpoints,
   planConsensusMemoryTrace,
+  stepConsensusMemoryRouteHopFocus,
   validateConsensusMemoryRouteHopFocus,
 } from '../../src/nerve/consensusMemoryTrace';
 import { consensusMemoryTraceColor } from '../../src/derives/consensusFlow.derive';
@@ -394,6 +396,28 @@ describe('planConsensusMemoryTrace', () => {
       cellId: evidence.route[1],
       hopIndex: 1,
     });
+    expect(consensusMemoryRouteHopFocusEqual(transit, { ...transit! })).toBe(true);
+    expect(consensusMemoryRouteHopFocusEqual(transit, {
+      ...transit!,
+      cellId: 999,
+    })).toBe(false);
+    expect(stepConsensusMemoryRouteHopFocus(readout, transit, 1)).toEqual({
+      traceKey: readout.key,
+      sourceId: evidence.sourceId,
+      targetCellId: 5,
+      cellId: evidence.route[2],
+      hopIndex: 2,
+    });
+    expect(stepConsensusMemoryRouteHopFocus(readout, transit, -1)?.hopIndex).toBe(0);
+    expect(stepConsensusMemoryRouteHopFocus(
+      readout,
+      deriveConsensusMemoryRouteHopFocus(readout, evidence.sourceId, 2),
+      1,
+    )?.hopIndex).toBe(2);
+    expect(stepConsensusMemoryRouteHopFocus(readout, {
+      ...transit!,
+      traceKey: 'stale-trace',
+    }, 1)).toBeNull();
     expect(validateConsensusMemoryRouteHopFocus(focus, transit)).toEqual(transit);
     expect(consensusMemoryRouteHopAdjacentSegments(transit, evidence.route))
       .toEqual([0, 1]);

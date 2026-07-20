@@ -57,6 +57,8 @@ export default function CellDetailPanel({
   onTraceEvidenceFocusChange,
   traceRouteHopFocus = null,
   onTraceRouteHopFocusChange,
+  traceRouteHopLock = null,
+  onTraceRouteHopLockChange,
   onTraceWrite,
   onClose,
   style,
@@ -71,6 +73,10 @@ export default function CellDetailPanel({
   onTraceEvidenceFocusChange?: (sourceId: number | null) => void;
   traceRouteHopFocus?: ConsensusMemoryRouteHopFocus | null;
   onTraceRouteHopFocusChange?: (
+    focus: ConsensusMemoryRouteHopFocus | null,
+  ) => void;
+  traceRouteHopLock?: ConsensusMemoryRouteHopFocus | null;
+  onTraceRouteHopLockChange?: (
     focus: ConsensusMemoryRouteHopFocus | null,
   ) => void;
   onTraceWrite?: (linkSeq: number) => void;
@@ -256,6 +262,8 @@ export default function CellDetailPanel({
         onTraceEvidenceFocusChange={onTraceEvidenceFocusChange}
         traceRouteHopFocus={traceRouteHopFocus}
         onTraceRouteHopFocusChange={onTraceRouteHopFocusChange}
+        traceRouteHopLock={traceRouteHopLock}
+        onTraceRouteHopLockChange={onTraceRouteHopLockChange}
         agreementCount={agreementTarget}
       />
     </HudPanel>

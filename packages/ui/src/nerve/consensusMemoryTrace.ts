@@ -333,6 +333,46 @@ export function deriveConsensusMemoryRouteHopFocus(
   };
 }
 
+/** Exact identity comparison shared by HUD preview, lock, and scene focus. */
+export function consensusMemoryRouteHopFocusEqual(
+  left: ConsensusMemoryRouteHopFocus | null,
+  right: ConsensusMemoryRouteHopFocus | null,
+): boolean {
+  if (left === right) return true;
+  return !!left
+    && !!right
+    && left.traceKey === right.traceKey
+    && left.sourceId === right.sourceId
+    && left.targetCellId === right.targetCellId
+    && left.cellId === right.cellId
+    && left.hopIndex === right.hopIndex;
+}
+
+/** Move a locked inspector by one exact retained hop without wrapping. */
+export function stepConsensusMemoryRouteHopFocus(
+  readout: ConsensusMemoryTraceReadout | null,
+  current: ConsensusMemoryRouteHopFocus | null,
+  delta: number,
+): ConsensusMemoryRouteHopFocus | null {
+  if (!current || !Number.isFinite(delta)) return null;
+  const canonical = deriveConsensusMemoryRouteHopFocus(
+    readout,
+    current.sourceId,
+    current.hopIndex,
+  );
+  if (!consensusMemoryRouteHopFocusEqual(canonical, current)) return null;
+  const evidence = readout?.evidence.find(
+    ({ sourceId }) => sourceId === current.sourceId,
+  );
+  if (!evidence) return null;
+  const direction = delta < 0 ? -1 : delta > 0 ? 1 : 0;
+  const hopIndex = Math.max(
+    0,
+    Math.min(evidence.route.length - 1, current.hopIndex + direction),
+  );
+  return deriveConsensusMemoryRouteHopFocus(readout, current.sourceId, hopIndex);
+}
+
 /**
  * Rebind a HUD hop address to the authoritative route clock. Returning a
  * canonical copy prevents caller-supplied ids from reaching scene geometry.
