@@ -2,6 +2,7 @@ import type { Cell } from '@cknerv/types';
 import {
   consensusMemoryEvidenceBindings,
   consensusMemoryEvidenceColor,
+  consensusMemoryEvidenceFingerprint,
 } from './consensusMemoryEvidence.derive';
 import {
   consensusMemoryEvidenceFocusScale,
@@ -41,6 +42,16 @@ export interface ConsensusRouteHopAgreementPlan {
 export interface ConsensusRouteHopAgreementEmphasis {
   sourceId: number | null;
   scales: readonly number[];
+}
+
+export interface ConsensusRouteHopAgreementCallout {
+  evidenceCode: string;
+  sourceLabel: string;
+  fingerprint: string;
+  anchorXPx: number;
+  anchorYPx: number;
+  offsetYPx: number;
+  side: 'left' | 'right';
 }
 
 function emptyAgreementPlan(targetCellId: number): ConsensusRouteHopAgreementPlan {
@@ -156,5 +167,32 @@ export function deriveConsensusRouteHopAgreementEmphasis(
       tick.sourceId,
       sourceId,
     )),
+  };
+}
+
+/**
+ * Turn one real agreement signature into a compact inspection label. The
+ * anchor shares the shader tick's hash-derived angle, while the small vertical
+ * bias pulls top/bottom labels toward the ring centre to avoid the role chip.
+ */
+export function deriveConsensusRouteHopAgreementCallout(
+  tick: ConsensusRouteHopAgreementTick,
+  radiusPx = 32,
+): ConsensusRouteHopAgreementCallout {
+  const safeRadiusPx = Number.isFinite(radiusPx)
+    ? Math.min(64, Math.max(0, radiusPx))
+    : 32;
+  const xDirection = Math.cos(tick.angle);
+  const yDirection = Math.sin(tick.angle);
+  return {
+    evidenceCode: `E${String(tick.ordinal).padStart(2, '0')}`,
+    sourceLabel: `CELL #${tick.sourceId}`,
+    fingerprint: consensusMemoryEvidenceFingerprint(tick.contentHash),
+    anchorXPx: xDirection * safeRadiusPx,
+    anchorYPx: yDirection * safeRadiusPx,
+    offsetYPx: Math.abs(yDirection) > 0.55
+      ? -Math.sign(yDirection) * 6
+      : 0,
+    side: xDirection >= 0 ? 'right' : 'left',
   };
 }

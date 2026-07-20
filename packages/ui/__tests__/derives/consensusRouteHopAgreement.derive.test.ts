@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Cell } from '@cknerv/types';
 import {
   CONSENSUS_ROUTE_HOP_AGREEMENT_CAP,
+  deriveConsensusRouteHopAgreementCallout,
   deriveConsensusRouteHopAgreementEmphasis,
   deriveConsensusRouteHopAgreementPlan,
 } from '../../src/derives/consensusRouteHopAgreement.derive';
@@ -153,5 +154,31 @@ describe('deriveConsensusRouteHopAgreementPlan', () => {
       sourceId: null,
       scales: [1, 1, 1],
     });
+  });
+
+  it('places a chain-derived evidence label on the matching signature', () => {
+    const model = deriveConsensusRouteHopAgreementPlan(
+      focus([source(17, 11), source(24, 12)]),
+      target(),
+    );
+    const tick = model.ticks[1];
+    const callout = deriveConsensusRouteHopAgreementCallout(tick);
+
+    expect(callout).toMatchObject({
+      evidenceCode: 'E02',
+      sourceLabel: 'CELL #24',
+      fingerprint: 'EVIDENCE-24',
+      side: Math.cos(tick.angle) >= 0 ? 'right' : 'left',
+    });
+    expect(Math.hypot(callout.anchorXPx, callout.anchorYPx)).toBeCloseTo(32);
+    expect(Math.abs(callout.offsetYPx)).toBeLessThanOrEqual(6);
+    expect(Math.hypot(
+      deriveConsensusRouteHopAgreementCallout(tick, 200).anchorXPx,
+      deriveConsensusRouteHopAgreementCallout(tick, 200).anchorYPx,
+    )).toBeCloseTo(64);
+    expect(Math.hypot(
+      deriveConsensusRouteHopAgreementCallout(tick, Number.NaN).anchorXPx,
+      deriveConsensusRouteHopAgreementCallout(tick, Number.NaN).anchorYPx,
+    )).toBeCloseTo(32);
   });
 });
