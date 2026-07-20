@@ -8,10 +8,16 @@ import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useCellGalaxy } from '../hooks/cellGalaxyContext';
 import { useReducedMotion } from '../components/hud/useReducedMotion';
+import {
+  CONSENSUS_ROUTE_HOP_AGREEMENT_CAP,
+  deriveConsensusRouteHopAgreementPlan,
+  type ConsensusRouteHopAgreementPlan,
+} from '../derives/consensusRouteHopAgreement.derive';
 import { useSimClock } from '../tweaks/SimClockScope';
 import { useSimFrame } from '../tweaks/useSimFrame';
 import {
   consensusMemoryTraceFocusStrength,
+  consensusMemoryCellResponse,
   classifyConsensusMemoryRouteHopTransition,
   deriveConsensusMemoryRouteHopSpatialFocus,
   deriveConsensusMemoryRouteHopTangent,
@@ -30,6 +36,13 @@ const HANDOFF_MIN_SECONDS = 0.28;
 const HANDOFF_MAX_SECONDS = 0.48;
 const HANDOFF_SECONDS_PER_UNIT = 0.018;
 const TARGET_LATCH_SECONDS = 0.82;
+const EMPTY_AGREEMENT_PLAN: ConsensusRouteHopAgreementPlan = {
+  targetCellId: -1,
+  routedSourceCount: 0,
+  visibleSourceCount: 0,
+  hiddenSourceCount: 0,
+  ticks: [],
+};
 
 interface RolePresentation {
   index: number;
@@ -43,6 +56,7 @@ interface RolePresentation {
 interface GlyphWaypoint {
   spatial: ConsensusMemoryRouteHopSpatialFocus;
   presentation: RolePresentation;
+  agreementPlan: ConsensusRouteHopAgreementPlan;
   position: THREE.Vector3;
   phase: number;
 }
@@ -112,10 +126,12 @@ function glyphPhase(cellId: number): number {
 function glyphWaypoint(
   spatial: ConsensusMemoryRouteHopSpatialFocus,
   presentation: RolePresentation,
+  agreementPlan: ConsensusRouteHopAgreementPlan,
 ): GlyphWaypoint {
   return {
     spatial,
     presentation,
+    agreementPlan,
     position: new THREE.Vector3(...spatial.cell.pos_seed),
     phase: glyphPhase(spatial.cell.id),
   };
@@ -146,6 +162,23 @@ function phaseLerp(from: number, to: number, progress: number): number {
   return from + delta * progress;
 }
 
+function applyAgreementPlan(
+  material: THREE.ShaderMaterial,
+  plan: ConsensusRouteHopAgreementPlan,
+): void {
+  material.uniforms.uAgreementCount.value = plan.visibleSourceCount;
+  for (let index = 0; index < CONSENSUS_ROUTE_HOP_AGREEMENT_CAP; index += 1) {
+    const tick = plan.ticks[index] ?? null;
+    material.uniforms[`uAgreementAngle${index}`].value = tick?.angle ?? 0;
+    material.uniforms[`uAgreementArrival${index}`].value =
+      tick?.arrivalProgress ?? 1;
+    material.uniforms[`uAgreementStrength${index}`].value = 0;
+    material.uniforms[`uAgreementColor${index}`].value.setRGB(
+      ...(tick?.color ?? PALE),
+    );
+  }
+}
+
 function applyGlyphBlend(
   material: THREE.ShaderMaterial,
   from: GlyphWaypoint,
@@ -155,6 +188,12 @@ function applyGlyphBlend(
   const t = smoothstep01(progress);
   const fromRole = from.presentation;
   const toRole = to.presentation;
+  applyAgreementPlan(
+    material,
+    to.agreementPlan.visibleSourceCount > 0
+      ? to.agreementPlan
+      : from.agreementPlan,
+  );
   material.uniforms.uRole.value = THREE.MathUtils.lerp(
     fromRole.index,
     toRole.index,
@@ -185,6 +224,14 @@ function applyGlyphWaypoint(
   applyGlyphBlend(material, waypoint, waypoint, 1);
 }
 
+function motionAgreementPlan(motion: GlyphMotion): ConsensusRouteHopAgreementPlan {
+  const segment = motion.segment;
+  if (!segment) return motion.destination.agreementPlan;
+  return segment.to.agreementPlan.visibleSourceCount > 0
+    ? segment.to.agreementPlan
+    : segment.from.agreementPlan;
+}
+
 function clearTargetLatch(material: THREE.ShaderMaterial): void {
   material.uniforms.uLatchActive.value = 0;
   material.uniforms.uLatchProgress.value = 0;
@@ -199,6 +246,19 @@ function makeGlyphMaterial(): THREE.ShaderMaterial {
       uRouteAngle: { value: 0 },
       uLatchActive: { value: 0 },
       uLatchProgress: { value: 0 },
+      uAgreementCount: { value: 0 },
+      uAgreementAngle0: { value: 0 },
+      uAgreementAngle1: { value: 0 },
+      uAgreementAngle2: { value: 0 },
+      uAgreementArrival0: { value: 1 },
+      uAgreementArrival1: { value: 1 },
+      uAgreementArrival2: { value: 1 },
+      uAgreementStrength0: { value: 0 },
+      uAgreementStrength1: { value: 0 },
+      uAgreementStrength2: { value: 0 },
+      uAgreementColor0: { value: new THREE.Color(...PALE) },
+      uAgreementColor1: { value: new THREE.Color(...PALE) },
+      uAgreementColor2: { value: new THREE.Color(...PALE) },
       uOpacity: { value: 0 },
       uRadius: { value: 1.5 },
       uViewportHeight: { value: 1 },
@@ -231,6 +291,19 @@ function makeGlyphMaterial(): THREE.ShaderMaterial {
       uniform float uRouteAngle;
       uniform float uLatchActive;
       uniform float uLatchProgress;
+      uniform float uAgreementCount;
+      uniform float uAgreementAngle0;
+      uniform float uAgreementAngle1;
+      uniform float uAgreementAngle2;
+      uniform float uAgreementArrival0;
+      uniform float uAgreementArrival1;
+      uniform float uAgreementArrival2;
+      uniform float uAgreementStrength0;
+      uniform float uAgreementStrength1;
+      uniform float uAgreementStrength2;
+      uniform vec3 uAgreementColor0;
+      uniform vec3 uAgreementColor1;
+      uniform vec3 uAgreementColor2;
       uniform float uOpacity;
       uniform vec3 uPrimary;
       uniform vec3 uSecondary;
@@ -254,6 +327,10 @@ function makeGlyphMaterial(): THREE.ShaderMaterial {
       }
       float segment(vec2 p, vec2 a, vec2 b, float width) {
         return stroke(segmentDistance(p, a, b), width);
+      }
+      float angularTick(float angle, float centre) {
+        float delta = abs(atan(sin(angle - centre), cos(angle - centre)));
+        return exp(-pow(delta / 0.090, 2.0));
       }
 
       void main() {
@@ -342,12 +419,77 @@ function makeGlyphMaterial(): THREE.ShaderMaterial {
         );
         float targetOuter = ring(length(targetP), 0.70, 0.025) * targetOuterGate;
         float targetInner = ring(r, 0.48, 0.022) * targetInnerGate;
-        float targetAgreements = ring(r, 0.59, 0.040)
-          * exp(-pow(abs(sin(theta * 2.0 + 0.785)) / 0.075, 2.0));
         float latchProgress = clamp(uLatchProgress, 0.0, 1.0);
         float latchClose = smoothstep(0.04, 0.68, latchProgress);
         float latchEnvelope = uLatchActive
           * sin(3.14159265 * latchProgress);
+        // Evidence identities sit outside the maintained record as sparse
+        // address signatures, clear of the Cell body's own bright nucleus.
+        float agreementRing = ring(r, 0.82, 0.034) * 1.18;
+        float agreementStem = smoothstep(0.64, 0.69, r)
+          * (1.0 - smoothstep(0.80, 0.85, r)) * 0.34;
+        float agreementAddress = agreementRing + agreementStem;
+        float agreementEnable0 = step(0.5, uAgreementCount);
+        float agreementEnable1 = step(1.5, uAgreementCount);
+        float agreementEnable2 = step(2.5, uAgreementCount);
+        float agreementReplay0 = mix(
+          1.0,
+          0.16 + 0.84 * smoothstep(
+            uAgreementArrival0,
+            uAgreementArrival0 + 0.10,
+            latchProgress
+          ),
+          uLatchActive
+        );
+        float agreementReplay1 = mix(
+          1.0,
+          0.16 + 0.84 * smoothstep(
+            uAgreementArrival1,
+            uAgreementArrival1 + 0.10,
+            latchProgress
+          ),
+          uLatchActive
+        );
+        float agreementReplay2 = mix(
+          1.0,
+          0.16 + 0.84 * smoothstep(
+            uAgreementArrival2,
+            uAgreementArrival2 + 0.10,
+            latchProgress
+          ),
+          uLatchActive
+        );
+        float agreementPulse0 = uLatchActive * uAgreementStrength0
+          * exp(-pow((latchProgress - uAgreementArrival0) / 0.065, 2.0));
+        float agreementPulse1 = uLatchActive * uAgreementStrength1
+          * exp(-pow((latchProgress - uAgreementArrival1) / 0.065, 2.0));
+        float agreementPulse2 = uLatchActive * uAgreementStrength2
+          * exp(-pow((latchProgress - uAgreementArrival2) / 0.065, 2.0));
+        float agreementTick0 = agreementAddress
+          * angularTick(theta, uAgreementAngle0)
+          * agreementEnable0
+          * (
+            mix(0.14, 1.0, uAgreementStrength0) * agreementReplay0
+            + agreementPulse0 * 0.9
+          );
+        float agreementTick1 = agreementAddress
+          * angularTick(theta, uAgreementAngle1)
+          * agreementEnable1
+          * (
+            mix(0.14, 1.0, uAgreementStrength1) * agreementReplay1
+            + agreementPulse1 * 0.9
+          );
+        float agreementTick2 = agreementAddress
+          * angularTick(theta, uAgreementAngle2)
+          * agreementEnable2
+          * (
+            mix(0.14, 1.0, uAgreementStrength2) * agreementReplay2
+            + agreementPulse2 * 0.9
+          );
+        float agreementGlyph = agreementTick0 + agreementTick1 + agreementTick2;
+        vec3 agreementEmission = uAgreementColor0 * agreementTick0
+          + uAgreementColor1 * agreementTick1
+          + uAgreementColor2 * agreementTick2;
         float targetBracketOuter = mix(
           0.76,
           mix(0.86, 0.76, latchClose),
@@ -413,11 +555,6 @@ function makeGlyphMaterial(): THREE.ShaderMaterial {
           mix(0.90, 0.18, latchClose),
           mix(0.018, 0.040, latchClose)
         ) * latchEnvelope * 1.25;
-        float latchVotes = ring(r, 0.59, 0.052)
-          * exp(-pow(abs(sin(theta * 2.0 + 0.785)) / 0.11, 2.0))
-          * uLatchActive
-          * smoothstep(0.14, 0.42, latchProgress)
-          * (1.0 - smoothstep(0.72, 1.0, latchProgress));
         float latchWriteGate = uLatchActive
           * smoothstep(0.34, 0.54, latchProgress)
           * (1.0 - smoothstep(0.90, 1.0, latchProgress));
@@ -433,12 +570,11 @@ function makeGlyphMaterial(): THREE.ShaderMaterial {
         )) * uLatchActive
           * smoothstep(0.56, 0.72, latchProgress)
           * (1.0 - smoothstep(0.90, 1.0, latchProgress));
-        float latchGlyph = latchSweep + latchVotes * 0.9
-          + latchDiamond * 1.15 + latchCore * 1.25;
-        float targetGlyph = targetOuter + targetInner * 0.72 + targetAgreements
+        float latchGlyph = latchSweep + latchDiamond * 1.15 + latchCore * 1.25;
+        float targetGlyph = targetOuter + targetInner * 0.72 + agreementGlyph
           + targetBrackets * 0.82 + targetKnot + latchGlyph;
-        float targetSecondary = targetInner + targetAgreements + targetKnot
-          + latchVotes + latchDiamond + latchCore;
+        float targetSecondary = targetInner + targetKnot
+          + latchDiamond + latchCore;
 
         // uRole continuously travels 0→1→2 so endpoint handoffs morph
         // through the carrier language instead of switching silhouettes.
@@ -455,7 +591,19 @@ function makeGlyphMaterial(): THREE.ShaderMaterial {
         float field = exp(-pow((r - 0.58) / 0.28, 2.0)) * 0.055;
         float intensity = min(1.45, glyph + field) * uOpacity;
         if (intensity < 0.008) discard;
-        vec3 color = mix(uPrimary, uSecondary, clamp(secondaryMask, 0.0, 1.0));
+        vec3 baseColor = mix(
+          uPrimary,
+          uSecondary,
+          clamp(secondaryMask, 0.0, 1.0)
+        );
+        float agreementVisible = agreementGlyph * targetWeight;
+        vec3 agreementColor = agreementEmission
+          / max(0.0001, agreementGlyph);
+        vec3 color = mix(
+          baseColor,
+          agreementColor,
+          clamp(agreementVisible * 0.88, 0.0, 1.0)
+        );
         gl_FragColor = vec4(color * intensity, intensity);
       }
     `,
@@ -483,6 +631,12 @@ export default function ConsensusRouteHopMarker({
     lockedHop ?? null,
     cellsCache.cells,
   ), [cellsCache.cells, focus, lockedHop]);
+  const agreementPlan = useMemo(
+    () => spatial
+      ? deriveConsensusRouteHopAgreementPlan(focus, spatial.cell)
+      : EMPTY_AGREEMENT_PLAN,
+    [focus, spatial],
+  );
   const presentation = useMemo(
     () => spatial ? rolePresentation(spatial) : null,
     [spatial],
@@ -508,7 +662,7 @@ export default function ConsensusRouteHopMarker({
     }
     const group = groupRef.current;
     if (!group) return;
-    const destination = glyphWaypoint(spatial, presentation);
+    const destination = glyphWaypoint(spatial, presentation, agreementPlan);
     const motion = motionRef.current;
     geometry.setDrawRange(0, 1);
 
@@ -566,7 +720,14 @@ export default function ConsensusRouteHopMarker({
       motion.segment = glyphSegment(motion.destination, destination);
     }
     motion.destination = destination;
-  }, [geometry, material, presentation, reducedMotion, spatial]);
+  }, [
+    agreementPlan,
+    geometry,
+    material,
+    presentation,
+    reducedMotion,
+    spatial,
+  ]);
 
   useEffect(() => () => {
     geometry.dispose();
@@ -654,6 +815,30 @@ export default function ConsensusRouteHopMarker({
       material.uniforms.uRouteAngle.value = 0;
     }
 
+    const activeAgreementPlan = motionAgreementPlan(motion);
+    const agreementResponse = activeAgreementPlan.visibleSourceCount > 0
+      ? consensusMemoryCellResponse(
+        focus,
+        activeAgreementPlan.targetCellId,
+        simClock.elapsedSec,
+      )
+      : null;
+    const agreementStrengths: number[] = [];
+    for (
+      let index = 0;
+      index < CONSENSUS_ROUTE_HOP_AGREEMENT_CAP;
+      index += 1
+    ) {
+      const tick = activeAgreementPlan.ticks[index] ?? null;
+      const tickStrength = tick
+        ? agreementResponse?.evidence?.find(
+          (evidence) => evidence.sourceId === tick.sourceId,
+        )?.convergence ?? 0
+        : 0;
+      material.uniforms[`uAgreementStrength${index}`].value = tickStrength;
+      if (tick) agreementStrengths.push(tickStrength);
+    }
+
     if (chipRef.current) {
       const segment = motion.segment;
       chipRef.current.dataset.memoryRouteHopMotion = segment
@@ -678,6 +863,23 @@ export default function ConsensusRouteHopMarker({
         : motion.latchedCellId === motion.destination.spatial.cell.id
           ? '1.000'
           : '0.000';
+      chipRef.current.dataset.memoryRouteHopAgreementCount = String(
+        activeAgreementPlan.visibleSourceCount,
+      );
+      chipRef.current.dataset.memoryRouteHopAgreementTotal = String(
+        activeAgreementPlan.routedSourceCount,
+      );
+      chipRef.current.dataset.memoryRouteHopAgreementHidden = String(
+        activeAgreementPlan.hiddenSourceCount,
+      );
+      chipRef.current.dataset.memoryRouteHopAgreementSources =
+        activeAgreementPlan.ticks.map(({ sourceId }) => sourceId).join(',');
+      chipRef.current.dataset.memoryRouteHopAgreementArrivals =
+        activeAgreementPlan.ticks
+          .map(({ arrivalProgress }) => arrivalProgress.toFixed(3))
+          .join(',');
+      chipRef.current.dataset.memoryRouteHopAgreementStrengths =
+        agreementStrengths.map((value) => value.toFixed(3)).join(',');
     }
   });
 
