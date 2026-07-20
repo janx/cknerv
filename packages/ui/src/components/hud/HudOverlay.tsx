@@ -46,9 +46,11 @@ const MESH_RAIL_STYLE: CSSProperties = { position: 'absolute', top: 42, right: 1
 const MESH_ZONE_COL: CSSProperties = { display: 'flex', flexDirection: 'column-reverse', gap: 12, alignItems: 'flex-end' };
 const PANEL_FLOW: CSSProperties = { position: 'relative' };
 
-export default function HudOverlay({ chain, peers, localNode, cellsStats, selectedCell, recentCellLinks, tracedCellWriteSeq, cellTraceSource, cellTraceReadout, cellTraceResponseRef, cellTraceEvidenceFocusSourceId, onCellTraceEvidenceFocusChange, cellTraceRouteHopFocus, onCellTraceRouteHopFocusChange, cellTraceRouteHopLock, onCellTraceRouteHopLockChange, onTraceCellWrite, selectedNode, selectedPeer, onClearSelection, onClearCell, onClearNet, backfill, build, colonyCount }: {
+export default function HudOverlay({ chain, peers, localNode, cellsStats, selectedCell, cellRecordsById, recentCellLinks, tracedCellWriteSeq, cellTraceSource, cellTraceReadout, cellTraceResponseRef, cellTraceEvidenceFocusSourceId, onCellTraceEvidenceFocusChange, cellTraceRouteHopFocus, onCellTraceRouteHopFocusChange, cellTraceRouteHopLock, onCellTraceRouteHopLockChange, onTraceCellWrite, selectedNode, selectedPeer, onClearSelection, onClearCell, onClearNet, backfill, build, colonyCount }: {
   chain: ChainEntry; peers: Peer[]; localNode: ChainNode | undefined; cellsStats: CellsStats;
   selectedCell?: Cell | null;
+  /** Current Cell projection records for exact route-hop inspection. */
+  cellRecordsById?: ReadonlyMap<number, Cell>;
   /** Retained causal links used only to prove an exact selected-Cell origin. */
   recentCellLinks?: readonly CellLink[];
   tracedCellWriteSeq?: number | null;
@@ -167,6 +169,7 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats, select
             <CellDetailPanel
               key={selectedCell.id}
               cell={selectedCell}
+              routeCellById={cellRecordsById}
               recentLinks={recentCellLinks}
               tracedWriteSeq={tracedCellWriteSeq}
               traceSource={cellTraceSource}

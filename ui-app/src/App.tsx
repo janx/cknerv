@@ -487,6 +487,7 @@ export default function App({
         localNode={localNode}
         cellsStats={cellsStats}
         selectedCell={selectedCell}
+        cellRecordsById={cellsCache.cells}
         recentCellLinks={cellsCache.recentLinks}
         tracedCellWriteSeq={memoryTraceRequest?.linkSeq ?? null}
         cellTraceSource={selectedOriginTrace?.sourceKind ?? 'none'}

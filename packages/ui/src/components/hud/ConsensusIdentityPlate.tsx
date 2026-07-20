@@ -1,4 +1,5 @@
 import { useState, type CSSProperties } from 'react';
+import type { Cell } from '@cknerv/types';
 import type { CellConsensusIdentity } from '../../derives/cellConsensusIdentity.derive';
 import type { ConsensusBraidField } from '../../derives/consensusBraid.derive';
 import {
@@ -16,6 +17,7 @@ import type {
 import {
   consensusMemoryRouteHopFocusEqual,
   deriveConsensusMemoryRouteHopFocus,
+  deriveConsensusMemoryRouteHopInspection,
   deriveConsensusMemoryRouteHopWindow,
   stepConsensusMemoryRouteHopFocus,
 } from '../../nerve/consensusMemoryTrace';
@@ -59,6 +61,168 @@ function routeDurationReadout(durationMs: number): string {
     : `${(clamped / 1_000).toFixed(2)} S`;
 }
 
+function RouteHopInspector({
+  readout,
+  evidence,
+  lockedHop,
+  routeCellById,
+  sourceColor,
+}: {
+  readout: ConsensusMemoryTraceReadout;
+  evidence: ConsensusMemoryTraceEvidence;
+  lockedHop: ConsensusMemoryRouteHopFocus;
+  routeCellById?: ReadonlyMap<number, Cell>;
+  sourceColor: string;
+}) {
+  const inspection = deriveConsensusMemoryRouteHopInspection(
+    readout,
+    lockedHop,
+  );
+  if (!inspection) return null;
+  const record = routeCellById?.get(inspection.cellId) ?? null;
+  const evidenceFallback = inspection.role === 'source';
+  const contentHash = record?.content_hash
+    ?? (evidenceFallback ? evidence.contentHash : null);
+  const anchorBlock = record?.birth_block
+    ?? (evidenceFallback ? evidence.sourceBirthBlock : null);
+  const recordState = record
+    ? record.death_at_ms === null ? 'LIVE' : 'SPENT'
+    : evidenceFallback
+      ? 'EVIDENCE'
+      : 'OUT OF VIEW';
+  const recordAvailability = record
+    ? 'available'
+    : evidenceFallback
+      ? 'evidence-only'
+      : 'unavailable';
+  const roleCopy = inspection.role === 'source'
+    ? {
+        semantic: 'provenance',
+        label: 'EVIDENCE SOURCE',
+        note: 'REAL RETAINED EVIDENCE',
+        color: sourceColor,
+      }
+    : inspection.role === 'target'
+      ? {
+          semantic: 'record',
+          label: 'MAINTAINED RECORD',
+          note: 'REAL TARGET RECORD',
+          color: LOCKED_GOLD,
+        }
+      : {
+          semantic: 'display-carrier',
+          label: 'DISPLAY CARRIER',
+          note: 'VISUAL LANE · NO CAUSAL CLAIM',
+          color: CYAN,
+        };
+  const fingerprint = contentHash
+    ? consensusMemoryEvidenceFingerprint(contentHash)
+    : 'UNAVAILABLE';
+  const anchor = anchorBlock === null
+    ? recordState
+    : `BLOCK #${anchorBlock} · ${recordState}`;
+  const recordTitle = record
+    ? `${record.out_point.tx_hash}#${record.out_point.index}`
+    : evidenceFallback
+      ? `${evidence.sourceOutPoint.tx_hash}#${evidence.sourceOutPoint.index}`
+      : undefined;
+
+  return (
+    <div
+      role="group"
+      aria-label={`Locked hop ${inspection.hopIndex}, ${roleCopy.label.toLowerCase()}, Cell ${inspection.cellId}`}
+      data-memory-evidence-route-hop-inspector="true"
+      data-memory-evidence-route-hop-role={inspection.role}
+      data-memory-evidence-route-hop-semantic={roleCopy.semantic}
+      data-memory-evidence-route-hop-record={recordAvailability}
+      data-memory-evidence-route-hop-content-hash={contentHash ?? undefined}
+      data-memory-evidence-route-hop-distance-source={inspection.distanceFromSource}
+      data-memory-evidence-route-hop-distance-target={inspection.distanceToTarget}
+      style={{
+        marginTop: 5,
+        padding: '5px 6px 4px',
+        borderTop: `1px solid ${roleCopy.color}52`,
+        borderLeft: `1px solid ${roleCopy.color}78`,
+        background: `linear-gradient(105deg, ${roleCopy.color}12, rgba(3,8,20,.72) 58%, ${sourceColor}08)`,
+        boxShadow: `inset 5px 0 12px ${roleCopy.color}08`,
+        fontFamily: HUD_FONTS.mono,
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 5 }}>
+        <span
+          aria-hidden="true"
+          style={{
+            width: 4,
+            height: 4,
+            border: `1px solid ${roleCopy.color}`,
+            boxShadow: `0 0 7px ${roleCopy.color}88`,
+            transform: 'rotate(45deg)',
+          }}
+        />
+        <span style={{ fontFamily: HUD_FONTS.tech, fontSize: 6.6, fontWeight: 700, letterSpacing: 0.82, color: roleCopy.color }}>
+          HOP SEMANTICS
+        </span>
+        <span style={{ marginLeft: 'auto', fontSize: 6.2, letterSpacing: 0.48, color: roleCopy.color }}>
+          {roleCopy.label}
+        </span>
+      </div>
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: '54px minmax(0, 1fr)',
+          gap: '2px 6px',
+          marginTop: 4,
+          fontSize: 6.1,
+          letterSpacing: 0.34,
+        }}
+      >
+        <span style={{ color: HUD_COLORS.dim }}>OWN CONTENT</span>
+        <span title={contentHash ?? undefined} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign: 'right', color: contentHash ? '#C9F8FF' : HUD_COLORS.dim }}>
+          {fingerprint}
+        </span>
+        <span style={{ color: HUD_COLORS.dim }}>CHAIN ANCHOR</span>
+        <span title={recordTitle} style={{ textAlign: 'right', color: record ? HUD_COLORS.ink : HUD_COLORS.dim }}>
+          {anchor}
+        </span>
+      </div>
+      <div
+        data-memory-evidence-route-hop-binding="true"
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'minmax(0, 1fr) auto minmax(0, 1fr)',
+          alignItems: 'baseline',
+          gap: 5,
+          marginTop: 4,
+          paddingTop: 3,
+          borderTop: `1px solid ${roleCopy.color}22`,
+          fontSize: 6,
+          letterSpacing: 0.28,
+        }}
+      >
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: HUD_COLORS.dim }}>
+          {inspection.previousCellId === null
+            ? '◆ SOURCE'
+            : `← #${inspection.previousCellId}`}
+        </span>
+        <span style={{ color: roleCopy.color }}>
+          H{String(inspection.hopIndex).padStart(2, '0')} · #{inspection.cellId}
+        </span>
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign: 'right', color: HUD_COLORS.dim }}>
+          {inspection.nextCellId === null
+            ? 'TARGET ◆'
+            : `#${inspection.nextCellId} →`}
+        </span>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginTop: 3, fontSize: 5.7, letterSpacing: 0.32 }}>
+        <span style={{ color: roleCopy.color }}>{roleCopy.note}</span>
+        <span style={{ marginLeft: 'auto', color: HUD_COLORS.dim }}>
+          {inspection.distanceFromSource} FROM SOURCE · {inspection.distanceToTarget} TO TARGET
+        </span>
+      </div>
+    </div>
+  );
+}
+
 function EvidenceRouteLedger({
   evidence,
   sourceColor,
@@ -68,6 +232,7 @@ function EvidenceRouteLedger({
   onHopFocusChange,
   lockedHop,
   onHopLockChange,
+  routeCellById,
   reducedMotion,
 }: {
   evidence: ConsensusMemoryTraceEvidence;
@@ -78,6 +243,7 @@ function EvidenceRouteLedger({
   onHopFocusChange?: (focus: ConsensusMemoryRouteHopFocus | null) => void;
   lockedHop: ConsensusMemoryRouteHopFocus | null;
   onHopLockChange?: (focus: ConsensusMemoryRouteHopFocus | null) => void;
+  routeCellById?: ReadonlyMap<number, Cell>;
   reducedMotion: boolean;
 }) {
   const lastIndex = evidence.route.length - 1;
@@ -428,6 +594,15 @@ function EvidenceRouteLedger({
         })}
       </span>
       {lockedRouteHop ? (
+        <RouteHopInspector
+          readout={readout}
+          evidence={evidence}
+          lockedHop={lockedRouteHop}
+          routeCellById={routeCellById}
+          sourceColor={sourceColor}
+        />
+      ) : null}
+      {lockedRouteHop ? (
         <span
           data-memory-evidence-route-lock-status="true"
           style={{
@@ -578,6 +753,7 @@ function EvidenceLedger({
   onHopFocusChange,
   lockedHop,
   onHopLockChange,
+  routeCellById,
 }: {
   readout: ConsensusMemoryTraceReadout;
   targetContentHash: string;
@@ -589,6 +765,7 @@ function EvidenceLedger({
   onHopFocusChange?: (focus: ConsensusMemoryRouteHopFocus | null) => void;
   lockedHop: ConsensusMemoryRouteHopFocus | null;
   onHopLockChange?: (focus: ConsensusMemoryRouteHopFocus | null) => void;
+  routeCellById?: ReadonlyMap<number, Cell>;
 }) {
   const [expandedEvidenceKey, setExpandedEvidenceKey] = useState<string | null>(null);
   const bindings = consensusMemoryEvidenceBindings(
@@ -815,6 +992,7 @@ function EvidenceLedger({
                 onHopFocusChange={onHopFocusChange}
                 lockedHop={lockedHop}
                 onHopLockChange={onHopLockChange}
+                routeCellById={routeCellById}
                 reducedMotion={reducedMotion}
               />
             ) : null}
@@ -836,6 +1014,7 @@ function MemoryReadState({
   onHopFocusChange,
   lockedHop,
   onHopLockChange,
+  routeCellById,
 }: {
   readout: ConsensusMemoryTraceReadout;
   reducedMotion: boolean;
@@ -847,6 +1026,7 @@ function MemoryReadState({
   onHopFocusChange?: (focus: ConsensusMemoryRouteHopFocus | null) => void;
   lockedHop: ConsensusMemoryRouteHopFocus | null;
   onHopLockChange?: (focus: ConsensusMemoryRouteHopFocus | null) => void;
+  routeCellById?: ReadonlyMap<number, Cell>;
 }) {
   const activeIndex = MEMORY_READ_STAGES.findIndex(
     ({ stage }) => stage === readout.stage,
@@ -940,6 +1120,7 @@ function MemoryReadState({
         onHopFocusChange={onHopFocusChange}
         lockedHop={lockedHop}
         onHopLockChange={onHopLockChange}
+        routeCellById={routeCellById}
       />
     </div>
   );
@@ -966,6 +1147,7 @@ export default function ConsensusIdentityPlate({
   onTraceRouteHopFocusChange,
   traceRouteHopLock = null,
   onTraceRouteHopLockChange,
+  routeCellById,
   agreementCount,
 }: {
   identity: CellConsensusIdentity;
@@ -992,6 +1174,7 @@ export default function ConsensusIdentityPlate({
   onTraceRouteHopLockChange?: (
     focus: ConsensusMemoryRouteHopFocus | null,
   ) => void;
+  routeCellById?: ReadonlyMap<number, Cell>;
   agreementCount: number;
 }) {
   const observed = identity.observedWrite;
@@ -1075,6 +1258,7 @@ export default function ConsensusIdentityPlate({
             onHopFocusChange={onTraceRouteHopFocusChange}
             lockedHop={traceRouteHopLock}
             onHopLockChange={onTraceRouteHopLockChange}
+            routeCellById={routeCellById}
           />
         ) : null}
         {observed && onRecallWrite ? (

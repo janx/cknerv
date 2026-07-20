@@ -535,16 +535,34 @@ describe('CellDetailPanel', () => {
         routeDurationMs: 10_000,
       }],
     });
+    const transitRecord: Cell = {
+      ...base,
+      id: route[20],
+      birth_block: 16_200_020,
+      death_at_ms: 24_000,
+      out_point: { tx_hash: `0x${'55'.repeat(32)}`, index: 1 },
+      content_hash: `0x${'55'.repeat(32)}`,
+    };
     const onTraceRouteHopFocusChange = vi.fn();
     const onTraceRouteHopLockChange = vi.fn();
-    const panel = (
+    const routeCellById = new Map([[transitRecord.id, transitRecord]]);
+    const panel = (lockedFocus: {
+      traceKey: string;
+      sourceId: number;
+      targetCellId: number;
+      cellId: number;
+      hopIndex: number;
+    } | null = null, records: ReadonlyMap<number, Cell> = routeCellById) => (
       <CellDetailPanel
         cell={base}
+        routeCellById={records}
         recentLinks={[origin]}
         tracedWriteSeq={origin.seq}
         traceSource="input"
         traceReadout={readout}
         traceEvidenceFocusSourceId={11}
+        traceRouteHopFocus={lockedFocus}
+        traceRouteHopLock={lockedFocus}
         onTraceEvidenceFocusChange={() => {}}
         onTraceRouteHopFocusChange={onTraceRouteHopFocusChange}
         onTraceRouteHopLockChange={onTraceRouteHopLockChange}
@@ -552,7 +570,7 @@ describe('CellDetailPanel', () => {
         onClose={() => {}}
       />
     );
-    const { container, rerender } = render(panel);
+    const { container, rerender } = render(panel());
 
     fireEvent.click(container.querySelector('[data-memory-evidence="1"]')!);
     const ledger = container.querySelector('[data-memory-evidence-route-ledger="true"]');
@@ -571,23 +589,7 @@ describe('CellDetailPanel', () => {
       cellId: route[20],
       hopIndex: 20,
     };
-    rerender(
-      <CellDetailPanel
-        cell={base}
-        recentLinks={[origin]}
-        tracedWriteSeq={origin.seq}
-        traceSource="input"
-        traceReadout={readout}
-        traceEvidenceFocusSourceId={11}
-        traceRouteHopFocus={lockedFocus}
-        traceRouteHopLock={lockedFocus}
-        onTraceEvidenceFocusChange={() => {}}
-        onTraceRouteHopFocusChange={onTraceRouteHopFocusChange}
-        onTraceRouteHopLockChange={onTraceRouteHopLockChange}
-        onTraceWrite={() => {}}
-        onClose={() => {}}
-      />,
-    );
+    rerender(panel(lockedFocus));
     const lens = container.querySelector<HTMLElement>(
       '[data-memory-evidence-route-mode="lens"]',
     )!;
@@ -611,6 +613,25 @@ describe('CellDetailPanel', () => {
     expect(progress.querySelector<HTMLElement>(
       '[data-memory-evidence-route-progress-marker="true"]',
     )?.style.left).toBe('50%');
+    const inspector = container.querySelector<HTMLElement>(
+      '[data-memory-evidence-route-hop-inspector="true"]',
+    )!;
+    expect(inspector.getAttribute('data-memory-evidence-route-hop-role'))
+      .toBe('transit');
+    expect(inspector.getAttribute('data-memory-evidence-route-hop-semantic'))
+      .toBe('display-carrier');
+    expect(inspector.getAttribute('data-memory-evidence-route-hop-record'))
+      .toBe('available');
+    expect(inspector.getAttribute('data-memory-evidence-route-hop-content-hash'))
+      .toBe(transitRecord.content_hash);
+    expect(inspector.getAttribute('data-memory-evidence-route-hop-distance-source'))
+      .toBe('20');
+    expect(inspector.getAttribute('data-memory-evidence-route-hop-distance-target'))
+      .toBe('20');
+    expect(inspector.textContent).toContain('DISPLAY CARRIER');
+    expect(inspector.textContent).toContain('VISUAL LANE · NO CAUSAL CLAIM');
+    expect(inspector.textContent).toContain('5555555·5555');
+    expect(inspector.textContent).toContain('BLOCK #16200020 · SPENT');
 
     fireEvent.keyDown(lens.querySelector(
       '[data-memory-evidence-route-hop="20"]',
@@ -625,6 +646,48 @@ describe('CellDetailPanel', () => {
       cellId: route[21],
       hopIndex: 21,
     });
+
+    const sourceFocus = {
+      ...lockedFocus,
+      cellId: route[0],
+      hopIndex: 0,
+    };
+    rerender(panel(sourceFocus));
+    const sourceInspector = container.querySelector<HTMLElement>(
+      '[data-memory-evidence-route-hop-inspector="true"]',
+    )!;
+    expect(sourceInspector.getAttribute('data-memory-evidence-route-hop-role'))
+      .toBe('source');
+    expect(sourceInspector.getAttribute('data-memory-evidence-route-hop-record'))
+      .toBe('evidence-only');
+    expect(sourceInspector.textContent).toContain('EVIDENCE SOURCE');
+    expect(sourceInspector.textContent).toContain('REAL RETAINED EVIDENCE');
+
+    const targetFocus = {
+      ...lockedFocus,
+      cellId: route[40],
+      hopIndex: 40,
+    };
+    rerender(panel(targetFocus));
+    const targetInspector = container.querySelector<HTMLElement>(
+      '[data-memory-evidence-route-hop-inspector="true"]',
+    )!;
+    expect(targetInspector.getAttribute('data-memory-evidence-route-hop-role'))
+      .toBe('target');
+    expect(targetInspector.getAttribute('data-memory-evidence-route-hop-record'))
+      .toBe('available');
+    expect(targetInspector.textContent).toContain('MAINTAINED RECORD');
+    expect(targetInspector.textContent).toContain('REAL TARGET RECORD');
+    expect(targetInspector.textContent).toContain('BLOCK #16204800 · LIVE');
+
+    rerender(panel(lockedFocus, new Map()));
+    const missingInspector = container.querySelector<HTMLElement>(
+      '[data-memory-evidence-route-hop-inspector="true"]',
+    )!;
+    expect(missingInspector.getAttribute('data-memory-evidence-route-hop-record'))
+      .toBe('unavailable');
+    expect(missingInspector.textContent).toContain('UNAVAILABLE');
+    expect(missingInspector.textContent).toContain('OUT OF VIEW');
   });
 
   it('labels surviving parent evidence as a lineage witness, not an input', () => {

@@ -99,6 +99,13 @@ describe('HudOverlay', () => {
       pos_seed: [0, 0, 0], out_point: { tx_hash: `0x${'ab'.repeat(32)}`, index: 0 },
       capacity: 6_100_000_000, data_hex: '0x', content_hash: `0x${'cd'.repeat(32)}`,
     };
+    const transitCell: Cell = {
+      ...mockCell,
+      id: 4,
+      birth_block: 16204796,
+      out_point: { tx_hash: `0x${'44'.repeat(32)}`, index: 0 },
+      content_hash: `0x${'44'.repeat(32)}`,
+    };
     const origin: CellLink = {
       seq: 3, tx_hash: mockCell.out_point.tx_hash, block: mockCell.birth_block,
       from_ids: [1, 2], to_ids: [mockCell.id], parents: [], tag: null, at_ms: 10,
@@ -119,6 +126,10 @@ describe('HudOverlay', () => {
         localNode={localNode}
         cellsStats={cellsStats}
         selectedCell={mockCell}
+        cellRecordsById={new Map([
+          [transitCell.id, transitCell],
+          [mockCell.id, mockCell],
+        ])}
         recentCellLinks={[origin]}
         tracedCellWriteSeq={origin.seq}
         cellTraceSource="input"
@@ -181,6 +192,9 @@ describe('HudOverlay', () => {
     )!;
     expect(routeHop.getAttribute('data-memory-evidence-route-focus')).toBe('locked');
     expect(routeHop.getAttribute('aria-pressed')).toBe('true');
+    expect(container.querySelector(
+      '[data-memory-evidence-route-hop-inspector="true"]',
+    )?.textContent).toContain('4444444·4444');
     fireEvent.pointerEnter(routeHop);
     expect(onCellTraceRouteHopFocusChange).toHaveBeenLastCalledWith({
       traceKey: '3:7:1',

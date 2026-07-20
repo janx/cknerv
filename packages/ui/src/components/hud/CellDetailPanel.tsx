@@ -49,6 +49,7 @@ const nowPerf = () => (typeof performance !== 'undefined' ? performance.now() : 
 export default function CellDetailPanel({
   cell,
   recentLinks = EMPTY_RECENT_LINKS,
+  routeCellById,
   tracedWriteSeq = null,
   traceSource = 'none',
   traceReadout = null,
@@ -65,6 +66,8 @@ export default function CellDetailPanel({
 }: {
   cell: Cell;
   recentLinks?: readonly CellLink[];
+  /** Current projection records used to explain exact route-hop identities. */
+  routeCellById?: ReadonlyMap<number, Cell>;
   tracedWriteSeq?: number | null;
   traceSource?: ConsensusMemoryTraceSource;
   traceReadout?: ConsensusMemoryTraceReadout | null;
@@ -100,6 +103,14 @@ export default function CellDetailPanel({
     () => deriveCellConsensusIdentity(cell, recentLinks),
     [cell, recentLinks],
   );
+  const inspectedCellById = useMemo(() => {
+    if (routeCellById?.get(cell.id) === cell) return routeCellById;
+    const cells = new Map(routeCellById);
+    // The selected target is authoritative even when callers omit routeCellById
+    // or pass a snapshot that predates the current detail selection.
+    cells.set(cell.id, cell);
+    return cells;
+  }, [cell, routeCellById]);
   const order = CONSENSUS_BRAID_FIELDS;
   const frequencies = consensusBraidFrequencies(visual.assetClass);
   const strandCount = consensusBraidStrandCount(visual.lockClass);
@@ -264,6 +275,7 @@ export default function CellDetailPanel({
         onTraceRouteHopFocusChange={onTraceRouteHopFocusChange}
         traceRouteHopLock={traceRouteHopLock}
         onTraceRouteHopLockChange={onTraceRouteHopLockChange}
+        routeCellById={inspectedCellById}
         agreementCount={agreementTarget}
       />
     </HudPanel>
