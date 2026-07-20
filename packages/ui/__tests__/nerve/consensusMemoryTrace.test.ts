@@ -37,6 +37,7 @@ import {
   consensusMemoryTraceSourceStrength,
   deriveConsensusMemoryTraceFocus,
   deriveConsensusMemoryRouteHopFocus,
+  deriveConsensusMemoryRouteHopWindow,
   deriveConsensusMemoryTraceEndpoints,
   planConsensusMemoryTrace,
   stepConsensusMemoryRouteHopFocus,
@@ -446,6 +447,33 @@ describe('planConsensusMemoryTrace', () => {
       .toEqual([]);
     expect(deriveConsensusMemoryRouteHopFocus(readout, evidence.sourceId, 99))
       .toBeNull();
+  });
+
+  it('keeps a stable five-Cell reading window around a locked long-route hop', () => {
+    expect(deriveConsensusMemoryRouteHopWindow(41, 20)).toEqual({
+      startIndex: 18,
+      endIndex: 22,
+      indices: [18, 19, 20, 21, 22],
+      hiddenBefore: 18,
+      hiddenAfter: 18,
+    });
+    expect(deriveConsensusMemoryRouteHopWindow(41, 0)).toEqual({
+      startIndex: 0,
+      endIndex: 4,
+      indices: [0, 1, 2, 3, 4],
+      hiddenBefore: 0,
+      hiddenAfter: 36,
+    });
+    expect(deriveConsensusMemoryRouteHopWindow(41, 40)).toEqual({
+      startIndex: 36,
+      endIndex: 40,
+      indices: [36, 37, 38, 39, 40],
+      hiddenBefore: 36,
+      hiddenAfter: 0,
+    });
+    expect(deriveConsensusMemoryRouteHopWindow(3, 1)?.indices).toEqual([0, 1, 2]);
+    expect(deriveConsensusMemoryRouteHopWindow(0, 0)).toBeNull();
+    expect(deriveConsensusMemoryRouteHopWindow(41, 41)).toBeNull();
   });
 
   it('projects the target read clock into reading, converging, and locked HUD states', () => {
