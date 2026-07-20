@@ -28,6 +28,7 @@ import {
   consensusMemoryRouteHopAdjacentSegments,
   consensusMemoryRouteHopCellFocus,
   consensusMemoryRouteHopFocusEqual,
+  classifyConsensusMemoryRouteHopTransition,
   consensusMemoryRouteHandoffScale,
   consensusMemoryPassiveOpacity,
   consensusMemoryTraceRequestKey,
@@ -39,6 +40,7 @@ import {
   deriveConsensusMemoryRouteHopFocus,
   deriveConsensusMemoryRouteHopInspection,
   deriveConsensusMemoryRouteHopSpatialFocus,
+  deriveConsensusMemoryRouteHopTangent,
   deriveConsensusMemoryRouteHopWindow,
   deriveConsensusMemoryTraceEndpoints,
   planConsensusMemoryTrace,
@@ -448,16 +450,46 @@ describe('planConsensusMemoryTrace', () => {
     expect(spatial?.routeColor).toEqual(focus.sources.find(
       ({ id }) => id === evidence.sourceId,
     )?.routes[0].color);
-    expect(deriveConsensusMemoryRouteHopSpatialFocus(
+    expect(deriveConsensusMemoryRouteHopTangent(spatial!)).toMatchObject({
+      from: { id: evidence.route[0] },
+      to: { id: evidence.route[2] },
+    });
+    const sourceSpatial = deriveConsensusMemoryRouteHopSpatialFocus(
       focus,
       deriveConsensusMemoryRouteHopFocus(readout, evidence.sourceId, 0),
       cells,
-    )?.role).toBe('source');
-    expect(deriveConsensusMemoryRouteHopSpatialFocus(
+    );
+    expect(sourceSpatial?.role).toBe('source');
+    expect(deriveConsensusMemoryRouteHopTangent(sourceSpatial!)).toMatchObject({
+      from: { id: evidence.route[0] },
+      to: { id: evidence.route[1] },
+    });
+    const targetSpatial = deriveConsensusMemoryRouteHopSpatialFocus(
       focus,
       deriveConsensusMemoryRouteHopFocus(readout, evidence.sourceId, 2),
       cells,
-    )?.role).toBe('target');
+    );
+    expect(targetSpatial?.role).toBe('target');
+    expect(deriveConsensusMemoryRouteHopTangent(targetSpatial!)).toMatchObject({
+      from: { id: evidence.route[1] },
+      to: { id: evidence.route[2] },
+    });
+    expect(classifyConsensusMemoryRouteHopTransition(
+      sourceSpatial!.focus,
+      spatial!.focus,
+    )).toBe('adjacent');
+    expect(classifyConsensusMemoryRouteHopTransition(
+      spatial!.focus,
+      { ...spatial!.focus },
+    )).toBe('stationary');
+    expect(classifyConsensusMemoryRouteHopTransition(
+      sourceSpatial!.focus,
+      targetSpatial!.focus,
+    )).toBe('discontinuous');
+    expect(classifyConsensusMemoryRouteHopTransition(
+      spatial!.focus,
+      { ...targetSpatial!.focus, traceKey: 'other-trace' },
+    )).toBe('discontinuous');
     const missingLockedCell = new Map(cells);
     missingLockedCell.delete(transit!.cellId);
     expect(deriveConsensusMemoryRouteHopSpatialFocus(
@@ -467,11 +499,23 @@ describe('planConsensusMemoryTrace', () => {
     )).toBeNull();
     const missingPreviousCell = new Map(cells);
     missingPreviousCell.delete(evidence.route[0]);
-    expect(deriveConsensusMemoryRouteHopSpatialFocus(
+    const missingPreviousSpatial = deriveConsensusMemoryRouteHopSpatialFocus(
       focus,
       transit,
       missingPreviousCell,
-    )?.previousCell).toBeNull();
+    );
+    expect(missingPreviousSpatial?.previousCell).toBeNull();
+    expect(deriveConsensusMemoryRouteHopTangent(missingPreviousSpatial!))
+      .toMatchObject({
+        from: { id: evidence.route[1] },
+        to: { id: evidence.route[2] },
+      });
+    const isolatedTransit = deriveConsensusMemoryRouteHopSpatialFocus(
+      focus,
+      transit,
+      new Map([[transit!.cellId, cells.get(transit!.cellId)!]]),
+    );
+    expect(deriveConsensusMemoryRouteHopTangent(isolatedTransit!)).toBeNull();
     expect(deriveConsensusMemoryRouteHopSpatialFocus(focus, {
       ...transit!,
       traceKey: 'stale-trace',

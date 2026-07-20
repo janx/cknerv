@@ -383,6 +383,50 @@ export interface ConsensusMemoryRouteHopSpatialFocus {
   routeColor: Pulse['color'];
 }
 
+export type ConsensusMemoryRouteHopTransitionKind =
+  | 'stationary'
+  | 'adjacent'
+  | 'discontinuous';
+
+export interface ConsensusMemoryRouteHopTangent {
+  from: Cell;
+  to: Cell;
+}
+
+/**
+ * Only consecutive addresses on the same verified route may animate as one
+ * spatial handoff. Everything else snaps, rather than drawing a shortcut that
+ * does not exist in the retained route.
+ */
+export function classifyConsensusMemoryRouteHopTransition(
+  from: ConsensusMemoryRouteHopFocus,
+  to: ConsensusMemoryRouteHopFocus,
+): ConsensusMemoryRouteHopTransitionKind {
+  const sameRoute = from.traceKey === to.traceKey
+    && from.sourceId === to.sourceId
+    && from.targetCellId === to.targetCellId;
+  if (!sameRoute) return 'discontinuous';
+  if (
+    from.hopIndex === to.hopIndex
+    && from.cellId === to.cellId
+  ) return 'stationary';
+  return Math.abs(from.hopIndex - to.hopIndex) === 1
+    ? 'adjacent'
+    : 'discontinuous';
+}
+
+/**
+ * Resolve the strongest real local route direction available for one glyph.
+ * Transit uses previous→next; endpoints use their one retained segment.
+ */
+export function deriveConsensusMemoryRouteHopTangent(
+  spatial: ConsensusMemoryRouteHopSpatialFocus,
+): ConsensusMemoryRouteHopTangent | null {
+  const from = spatial.previousCell ?? spatial.cell;
+  const to = spatial.nextCell ?? spatial.cell;
+  return from.id === to.id ? null : { from, to };
+}
+
 /**
  * Keep a fixed-size reading lens centred on one canonical route hop. Near an
  * endpoint the window shifts instead of shrinking, so long routes do not
