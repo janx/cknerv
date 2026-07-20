@@ -38,6 +38,7 @@ import {
   deriveConsensusMemoryTraceFocus,
   deriveConsensusMemoryRouteHopFocus,
   deriveConsensusMemoryRouteHopInspection,
+  deriveConsensusMemoryRouteHopSpatialFocus,
   deriveConsensusMemoryRouteHopWindow,
   deriveConsensusMemoryTraceEndpoints,
   planConsensusMemoryTrace,
@@ -432,6 +433,49 @@ describe('planConsensusMemoryTrace', () => {
       ...transit!,
       traceKey: 'stale-trace',
     })).toBeNull();
+    const spatial = deriveConsensusMemoryRouteHopSpatialFocus(
+      focus,
+      transit,
+      cells,
+    );
+    expect(spatial).toMatchObject({
+      focus: transit,
+      role: 'transit',
+      cell: { id: evidence.route[1] },
+      previousCell: { id: evidence.route[0] },
+      nextCell: { id: evidence.route[2] },
+    });
+    expect(spatial?.routeColor).toEqual(focus.sources.find(
+      ({ id }) => id === evidence.sourceId,
+    )?.routes[0].color);
+    expect(deriveConsensusMemoryRouteHopSpatialFocus(
+      focus,
+      deriveConsensusMemoryRouteHopFocus(readout, evidence.sourceId, 0),
+      cells,
+    )?.role).toBe('source');
+    expect(deriveConsensusMemoryRouteHopSpatialFocus(
+      focus,
+      deriveConsensusMemoryRouteHopFocus(readout, evidence.sourceId, 2),
+      cells,
+    )?.role).toBe('target');
+    const missingLockedCell = new Map(cells);
+    missingLockedCell.delete(transit!.cellId);
+    expect(deriveConsensusMemoryRouteHopSpatialFocus(
+      focus,
+      transit,
+      missingLockedCell,
+    )).toBeNull();
+    const missingPreviousCell = new Map(cells);
+    missingPreviousCell.delete(evidence.route[0]);
+    expect(deriveConsensusMemoryRouteHopSpatialFocus(
+      focus,
+      transit,
+      missingPreviousCell,
+    )?.previousCell).toBeNull();
+    expect(deriveConsensusMemoryRouteHopSpatialFocus(focus, {
+      ...transit!,
+      traceKey: 'stale-trace',
+    }, cells)).toBeNull();
     expect(consensusMemoryRouteHopFocusEqual(transit, { ...transit! })).toBe(true);
     expect(consensusMemoryRouteHopFocusEqual(transit, {
       ...transit!,
