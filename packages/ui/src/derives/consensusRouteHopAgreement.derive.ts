@@ -4,7 +4,9 @@ import {
   consensusMemoryEvidenceColor,
 } from './consensusMemoryEvidence.derive';
 import {
+  consensusMemoryEvidenceFocusScale,
   consensusMemoryTraceRouteForTarget,
+  type ConsensusMemoryRouteHopFocus,
   type ConsensusMemoryTraceFocus,
 } from '../nerve/consensusMemoryTrace';
 
@@ -24,6 +26,8 @@ export interface ConsensusRouteHopAgreementTick {
   /** Real arrival timing replayed inside the latch's normalized timeline. */
   arrivalProgress: number;
   color: readonly [number, number, number];
+  /** Exact target-hop address used when this signature is inspected. */
+  targetFocus: ConsensusMemoryRouteHopFocus;
 }
 
 export interface ConsensusRouteHopAgreementPlan {
@@ -32,6 +36,11 @@ export interface ConsensusRouteHopAgreementPlan {
   visibleSourceCount: number;
   hiddenSourceCount: number;
   ticks: readonly ConsensusRouteHopAgreementTick[];
+}
+
+export interface ConsensusRouteHopAgreementEmphasis {
+  sourceId: number | null;
+  scales: readonly number[];
 }
 
 function emptyAgreementPlan(targetCellId: number): ConsensusRouteHopAgreementPlan {
@@ -59,7 +68,7 @@ export function deriveConsensusRouteHopAgreementPlan(
   }
   const routed = focus.sources.flatMap((source) => {
     const route = consensusMemoryTraceRouteForTarget(source, target.id);
-    return route ? [{ source, route }] : [];
+    return route?.path.at(-1) === target.id ? [{ source, route }] : [];
   });
   const routedSourceCount = focus.targetIds.length === 1
     ? Math.max(routed.length, focus.routedSourceCount)
@@ -108,6 +117,13 @@ export function deriveConsensusRouteHopAgreementPlan(
         : -Math.PI / 2,
       arrivalProgress,
       color: consensusMemoryEvidenceColor(binding?.evidenceIndex ?? index),
+      targetFocus: {
+        traceKey: focus.key,
+        sourceId: source.id,
+        targetCellId: target.id,
+        cellId: target.id,
+        hopIndex: route.path.length - 1,
+      },
     };
   });
 
@@ -117,5 +133,28 @@ export function deriveConsensusRouteHopAgreementPlan(
     visibleSourceCount: ticks.length,
     hiddenSourceCount: Math.max(0, routedSourceCount - ticks.length),
     ticks,
+  };
+}
+
+/**
+ * Project one verified HUD/scene source selection onto the visible target
+ * signatures. Unknown source ids are ignored so stale UI state cannot dim a
+ * different agreement constellation.
+ */
+export function deriveConsensusRouteHopAgreementEmphasis(
+  plan: ConsensusRouteHopAgreementPlan,
+  requestedSourceId: number | null,
+): ConsensusRouteHopAgreementEmphasis {
+  const sourceId = requestedSourceId !== null
+    && Number.isFinite(requestedSourceId)
+    && plan.ticks.some((tick) => tick.sourceId === requestedSourceId)
+    ? requestedSourceId
+    : null;
+  return {
+    sourceId,
+    scales: plan.ticks.map((tick) => consensusMemoryEvidenceFocusScale(
+      tick.sourceId,
+      sourceId,
+    )),
   };
 }

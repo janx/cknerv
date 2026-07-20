@@ -186,7 +186,8 @@ describe('HudOverlay', () => {
       ?.getAttribute('data-evidence-focus-source')).toBe('2');
     expect(container.querySelector('[data-memory-evidence="2"]')
       ?.getAttribute('data-memory-evidence-focus')).toBe('active');
-    fireEvent.click(container.querySelector('[data-memory-evidence="2"]')!);
+    expect(container.querySelector('[data-memory-evidence="2"]')
+      ?.getAttribute('aria-expanded')).toBe('true');
     const routeHop = container.querySelector<HTMLElement>(
       '[data-memory-evidence-route-cell="4"]',
     )!;

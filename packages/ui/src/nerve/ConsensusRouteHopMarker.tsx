@@ -10,6 +10,7 @@ import { useCellGalaxy } from '../hooks/cellGalaxyContext';
 import { useReducedMotion } from '../components/hud/useReducedMotion';
 import {
   CONSENSUS_ROUTE_HOP_AGREEMENT_CAP,
+  deriveConsensusRouteHopAgreementEmphasis,
   deriveConsensusRouteHopAgreementPlan,
   type ConsensusRouteHopAgreementPlan,
 } from '../derives/consensusRouteHopAgreement.derive';
@@ -172,6 +173,7 @@ function applyAgreementPlan(
     material.uniforms[`uAgreementAngle${index}`].value = tick?.angle ?? 0;
     material.uniforms[`uAgreementArrival${index}`].value =
       tick?.arrivalProgress ?? 1;
+    material.uniforms[`uAgreementFocus${index}`].value = 1;
     material.uniforms[`uAgreementStrength${index}`].value = 0;
     material.uniforms[`uAgreementColor${index}`].value.setRGB(
       ...(tick?.color ?? PALE),
@@ -253,6 +255,9 @@ function makeGlyphMaterial(): THREE.ShaderMaterial {
       uAgreementArrival0: { value: 1 },
       uAgreementArrival1: { value: 1 },
       uAgreementArrival2: { value: 1 },
+      uAgreementFocus0: { value: 1 },
+      uAgreementFocus1: { value: 1 },
+      uAgreementFocus2: { value: 1 },
       uAgreementStrength0: { value: 0 },
       uAgreementStrength1: { value: 0 },
       uAgreementStrength2: { value: 0 },
@@ -298,6 +303,9 @@ function makeGlyphMaterial(): THREE.ShaderMaterial {
       uniform float uAgreementArrival0;
       uniform float uAgreementArrival1;
       uniform float uAgreementArrival2;
+      uniform float uAgreementFocus0;
+      uniform float uAgreementFocus1;
+      uniform float uAgreementFocus2;
       uniform float uAgreementStrength0;
       uniform float uAgreementStrength1;
       uniform float uAgreementStrength2;
@@ -468,6 +476,7 @@ function makeGlyphMaterial(): THREE.ShaderMaterial {
         float agreementTick0 = agreementAddress
           * angularTick(theta, uAgreementAngle0)
           * agreementEnable0
+          * uAgreementFocus0
           * (
             mix(0.14, 1.0, uAgreementStrength0) * agreementReplay0
             + agreementPulse0 * 0.9
@@ -475,6 +484,7 @@ function makeGlyphMaterial(): THREE.ShaderMaterial {
         float agreementTick1 = agreementAddress
           * angularTick(theta, uAgreementAngle1)
           * agreementEnable1
+          * uAgreementFocus1
           * (
             mix(0.14, 1.0, uAgreementStrength1) * agreementReplay1
             + agreementPulse1 * 0.9
@@ -482,6 +492,7 @@ function makeGlyphMaterial(): THREE.ShaderMaterial {
         float agreementTick2 = agreementAddress
           * angularTick(theta, uAgreementAngle2)
           * agreementEnable2
+          * uAgreementFocus2
           * (
             mix(0.14, 1.0, uAgreementStrength2) * agreementReplay2
             + agreementPulse2 * 0.9
@@ -613,9 +624,13 @@ function makeGlyphMaterial(): THREE.ShaderMaterial {
 export default function ConsensusRouteHopMarker({
   focus,
   lockedHop,
+  focusedSourceId = null,
+  onAgreementLockChange,
 }: {
   focus: ConsensusMemoryTraceFocus | null;
   lockedHop?: ConsensusMemoryRouteHopFocus | null;
+  focusedSourceId?: number | null;
+  onAgreementLockChange?: (focus: ConsensusMemoryRouteHopFocus) => void;
 }) {
   const simClock = useSimClock();
   const reducedMotion = useReducedMotion();
@@ -624,6 +639,7 @@ export default function ConsensusRouteHopMarker({
   const pointsRef = useRef<THREE.Points>(null);
   const chipRef = useRef<HTMLDivElement>(null);
   const motionRef = useRef<GlyphMotion | null>(null);
+  const inspectedAgreementSourceIdRef = useRef<number | null>(null);
   const routeFromNdc = useMemo(() => new THREE.Vector3(), []);
   const routeToNdc = useMemo(() => new THREE.Vector3(), []);
   const spatial = useMemo(() => deriveConsensusMemoryRouteHopSpatialFocus(
@@ -685,12 +701,16 @@ export default function ConsensusRouteHopMarker({
       destination.spatial.focus,
     );
     if (reducedMotion || transition === 'discontinuous') {
+      const preservesSealedTarget = destination.spatial.role === 'target'
+        && motion.latchedCellId === destination.spatial.cell.id;
       motionRef.current = {
         destination,
         segment: null,
         queue: [],
         latch: null,
-        latchedCellId: null,
+        latchedCellId: preservesSealedTarget
+          ? destination.spatial.cell.id
+          : null,
       };
       group.position.copy(destination.position);
       applyGlyphWaypoint(material, destination);
@@ -816,6 +836,10 @@ export default function ConsensusRouteHopMarker({
     }
 
     const activeAgreementPlan = motionAgreementPlan(motion);
+    const agreementEmphasis = deriveConsensusRouteHopAgreementEmphasis(
+      activeAgreementPlan,
+      inspectedAgreementSourceIdRef.current ?? focusedSourceId,
+    );
     const agreementResponse = activeAgreementPlan.visibleSourceCount > 0
       ? consensusMemoryCellResponse(
         focus,
@@ -835,6 +859,8 @@ export default function ConsensusRouteHopMarker({
           (evidence) => evidence.sourceId === tick.sourceId,
         )?.convergence ?? 0
         : 0;
+      material.uniforms[`uAgreementFocus${index}`].value =
+        agreementEmphasis.scales[index] ?? 1;
       material.uniforms[`uAgreementStrength${index}`].value = tickStrength;
       if (tick) agreementStrengths.push(tickStrength);
     }
@@ -880,6 +906,12 @@ export default function ConsensusRouteHopMarker({
           .join(',');
       chipRef.current.dataset.memoryRouteHopAgreementStrengths =
         agreementStrengths.map((value) => value.toFixed(3)).join(',');
+      chipRef.current.dataset.memoryRouteHopAgreementFocus =
+        agreementEmphasis.sourceId === null
+          ? 'none'
+          : String(agreementEmphasis.sourceId);
+      chipRef.current.dataset.memoryRouteHopAgreementFocusScales =
+        agreementEmphasis.scales.map((value) => value.toFixed(3)).join(',');
     }
   });
 
@@ -907,6 +939,76 @@ export default function ConsensusRouteHopMarker({
         frustumCulled={false}
         renderOrder={8}
       />
+      {spatial.role === 'target' && agreementPlan.ticks.length > 0 ? (
+        <Html
+          position={[0, 0, 0]}
+          zIndexRange={[8, 8]}
+          occlude={false}
+          style={{ pointerEvents: 'none' }}
+        >
+          <div
+            data-memory-route-hop-agreement-controls="true"
+            style={{ position: 'relative', width: 0, height: 0 }}
+          >
+            {agreementPlan.ticks.map((tick) => {
+              const radiusPx = 32;
+              return (
+                <button
+                  key={tick.sourceId}
+                  type="button"
+                  aria-label={`Inspect evidence ${String(tick.ordinal).padStart(2, '0')}, source Cell ${tick.sourceId}, at maintained record Cell ${agreementPlan.targetCellId}`}
+                  aria-pressed={focusedSourceId === tick.sourceId}
+                  data-memory-route-hop-agreement-control={tick.ordinal}
+                  data-memory-route-hop-agreement-source={tick.sourceId}
+                  data-memory-route-hop-agreement-focus={
+                    focusedSourceId === tick.sourceId ? 'active' : 'idle'
+                  }
+                  title={`E${String(tick.ordinal).padStart(2, '0')} · CELL #${tick.sourceId}`}
+                  disabled={!onAgreementLockChange}
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onPointerEnter={() => {
+                    inspectedAgreementSourceIdRef.current = tick.sourceId;
+                  }}
+                  onPointerLeave={(event) => {
+                    if (document.activeElement === event.currentTarget) return;
+                    if (inspectedAgreementSourceIdRef.current === tick.sourceId) {
+                      inspectedAgreementSourceIdRef.current = null;
+                    }
+                  }}
+                  onFocus={() => {
+                    inspectedAgreementSourceIdRef.current = tick.sourceId;
+                  }}
+                  onBlur={() => {
+                    if (inspectedAgreementSourceIdRef.current === tick.sourceId) {
+                      inspectedAgreementSourceIdRef.current = null;
+                    }
+                  }}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onAgreementLockChange?.(tick.targetFocus);
+                  }}
+                  style={{
+                    position: 'absolute',
+                    left: Math.cos(tick.angle) * radiusPx,
+                    top: Math.sin(tick.angle) * radiusPx,
+                    width: 16,
+                    height: 16,
+                    margin: 0,
+                    padding: 0,
+                    transform: 'translate(-50%, -50%)',
+                    border: 0,
+                    borderRadius: '50%',
+                    outline: 0,
+                    background: 'transparent',
+                    pointerEvents: 'auto',
+                    cursor: onAgreementLockChange ? 'pointer' : 'default',
+                  }}
+                />
+              );
+            })}
+          </div>
+        </Html>
+      ) : null}
       <Html
         position={[0, 0, 0]}
         zIndexRange={[7, 7]}
@@ -917,6 +1019,7 @@ export default function ConsensusRouteHopMarker({
           ref={chipRef}
           aria-hidden="true"
           data-memory-route-hop-spatial={spatial.role}
+          data-memory-route-hop-source={spatial.focus.sourceId}
           data-memory-route-hop-cell={spatial.focus.cellId}
           data-memory-route-hop-index={spatial.focus.hopIndex}
           data-memory-route-hop-claim={presentation.claim}

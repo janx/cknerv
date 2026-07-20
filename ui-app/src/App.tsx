@@ -590,6 +590,7 @@ export default function App({
                   traceEvidenceFocusSourceId={memoryEvidenceFocusSourceId}
                   traceRouteHopFocus={memoryRouteHopFocus}
                   traceRouteHopLock={memoryRouteHopLock}
+                  onTraceRouteHopLockChange={lockMemoryTraceRouteHop}
                 />
                 <ConsensusWriteSeal arrivalRef={burstArrivalRef} />
               </>

@@ -508,6 +508,25 @@ describe('CellDetailPanel', () => {
     expect(onTraceRouteHopFocusChange).toHaveBeenLastCalledWith(null);
     expect(container.querySelector('[data-memory-evidence-route-ledger="true"]'))
       .not.toBeNull();
+
+    const alternateTargetFocus = {
+      ...targetFocus,
+      sourceId: 12,
+    };
+    rerender(
+      <CellDetailPanel
+        {...props}
+        traceEvidenceFocusSourceId={12}
+        traceRouteHopFocus={alternateTargetFocus}
+        traceRouteHopLock={alternateTargetFocus}
+      />,
+    );
+    expect(container.querySelector('[data-memory-evidence="2"]')
+      ?.getAttribute('aria-expanded')).toBe('true');
+    expect(Array.from(container.querySelectorAll(
+      '[data-memory-evidence-route-cell]',
+    )).map((node) => node.getAttribute('data-memory-evidence-route-cell')))
+      .toEqual(['12', '99', String(base.id)]);
   });
 
   it('keeps every retained hop inspectable inside a bounded route ledger', () => {
