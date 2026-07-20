@@ -120,6 +120,10 @@ interface NeuralNetworkProps {
   traceRouteHopFocus?: ConsensusMemoryRouteHopFocus | null;
   /** Click-locked hop only; hover preview must not stamp a spatial glyph. */
   traceRouteHopLock?: ConsensusMemoryRouteHopFocus | null;
+  /** Switch a target agreement signature onto its verified source route. */
+  onTraceRouteHopLockChange?: (
+    focus: ConsensusMemoryRouteHopFocus | null,
+  ) => void;
 }
 
 interface ActivePulse extends Pulse {
@@ -144,6 +148,7 @@ export default function NeuralNetwork({
   traceEvidenceFocusSourceId = null,
   traceRouteHopFocus = null,
   traceRouteHopLock = null,
+  onTraceRouteHopLockChange,
 }: NeuralNetworkProps = {}) {
   const simClock = useSimClock();
   const cellsCache = useCellGalaxy();
@@ -771,6 +776,8 @@ export default function NeuralNetwork({
       <ConsensusRouteHopMarker
         focus={traceFocus}
         lockedHop={traceRouteHopLock}
+        focusedSourceId={traceEvidenceFocusSourceId}
+        onAgreementLockChange={onTraceRouteHopLockChange}
       />
     </>
   );

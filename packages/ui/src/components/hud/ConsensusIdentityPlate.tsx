@@ -1,4 +1,4 @@
-import { useState, type CSSProperties } from 'react';
+import { useEffect, useState, type CSSProperties } from 'react';
 import type { Cell } from '@cknerv/types';
 import type { CellConsensusIdentity } from '../../derives/cellConsensusIdentity.derive';
 import type { ConsensusBraidField } from '../../derives/consensusBraid.derive';
@@ -768,6 +768,15 @@ function EvidenceLedger({
   routeCellById?: ReadonlyMap<number, Cell>;
 }) {
   const [expandedEvidenceKey, setExpandedEvidenceKey] = useState<string | null>(null);
+  const lockedEvidenceKey = lockedHop?.traceKey === readout.key
+    && readout.evidence.some(
+      (evidence) => evidence.sourceId === lockedHop.sourceId,
+    )
+    ? `${readout.key}:${lockedHop.sourceId}`
+    : null;
+  useEffect(() => {
+    if (lockedEvidenceKey !== null) setExpandedEvidenceKey(lockedEvidenceKey);
+  }, [lockedEvidenceKey]);
   const bindings = consensusMemoryEvidenceBindings(
     targetContentHash,
     readout.evidence,
@@ -817,7 +826,8 @@ function EvidenceLedger({
             : 'passive';
         const active = focusState === 'active';
         const evidenceKey = `${readout.key}:${evidence.sourceId}`;
-        const expanded = active && expandedEvidenceKey === evidenceKey;
+        const expanded = active
+          && (lockedEvidenceKey ?? expandedEvidenceKey) === evidenceKey;
         const routeLedgerId = `memory-route-ledger-${evidence.sourceId}-${evidence.ordinal}`;
         const lockedForEvidence = lockedHop?.traceKey === readout.key
           && lockedHop.sourceId === evidence.sourceId

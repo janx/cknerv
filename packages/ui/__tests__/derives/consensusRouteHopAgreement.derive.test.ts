@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Cell } from '@cknerv/types';
 import {
   CONSENSUS_ROUTE_HOP_AGREEMENT_CAP,
+  deriveConsensusRouteHopAgreementEmphasis,
   deriveConsensusRouteHopAgreementPlan,
 } from '../../src/derives/consensusRouteHopAgreement.derive';
 import type {
@@ -77,6 +78,13 @@ describe('deriveConsensusRouteHopAgreementPlan', () => {
     expect(model.ticks[0].arrivalProgress).toBeCloseTo(0.62);
     expect(new Set(model.ticks.map(({ angle }) => angle)).size).toBe(3);
     expect(model.ticks.every(({ color }) => color.length === 3)).toBe(true);
+    expect(model.ticks[0].targetFocus).toEqual({
+      traceKey: 'trace',
+      sourceId: 1,
+      targetCellId: 9,
+      cellId: 9,
+      hopIndex: 2,
+    });
   });
 
   it('resolves simultaneous evidence together and reports a visible cap', () => {
@@ -124,6 +132,26 @@ describe('deriveConsensusRouteHopAgreementPlan', () => {
       routedSourceCount: 1,
       visibleSourceCount: 0,
       hiddenSourceCount: 1,
+    });
+  });
+
+  it('isolates only a retained visible source and ignores stale focus', () => {
+    const model = deriveConsensusRouteHopAgreementPlan(
+      focus([source(1, 11), source(2, 12), source(3, 13)]),
+      target(),
+    );
+
+    expect(deriveConsensusRouteHopAgreementEmphasis(model, null)).toEqual({
+      sourceId: null,
+      scales: [1, 1, 1],
+    });
+    expect(deriveConsensusRouteHopAgreementEmphasis(model, 2)).toEqual({
+      sourceId: 2,
+      scales: [0.16, 1, 0.16],
+    });
+    expect(deriveConsensusRouteHopAgreementEmphasis(model, 999)).toEqual({
+      sourceId: null,
+      scales: [1, 1, 1],
     });
   });
 });
