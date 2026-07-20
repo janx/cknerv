@@ -55,6 +55,7 @@ export default function CellDetailPanel({
   traceReadout = null,
   traceResponseRef,
   traceEvidenceFocusSourceId = null,
+  traceEvidencePreviewSourceId = null,
   onTraceEvidenceFocusChange,
   traceRouteHopFocus = null,
   onTraceRouteHopFocusChange,
@@ -73,6 +74,7 @@ export default function CellDetailPanel({
   traceReadout?: ConsensusMemoryTraceReadout | null;
   traceResponseRef?: ConsensusMemoryCellResponseRef;
   traceEvidenceFocusSourceId?: number | null;
+  traceEvidencePreviewSourceId?: number | null;
   onTraceEvidenceFocusChange?: (sourceId: number | null) => void;
   traceRouteHopFocus?: ConsensusMemoryRouteHopFocus | null;
   onTraceRouteHopFocusChange?: (
@@ -270,6 +272,7 @@ export default function CellDetailPanel({
         traceSelected={identity.observedWrite?.seq === tracedWriteSeq}
         traceReadout={traceReadout}
         traceEvidenceFocusSourceId={traceEvidenceFocusSourceId}
+        traceEvidencePreviewSourceId={traceEvidencePreviewSourceId}
         onTraceEvidenceFocusChange={onTraceEvidenceFocusChange}
         traceRouteHopFocus={traceRouteHopFocus}
         onTraceRouteHopFocusChange={onTraceRouteHopFocusChange}

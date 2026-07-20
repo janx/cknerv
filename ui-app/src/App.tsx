@@ -150,6 +150,8 @@ export default function App({
   const [memoryEvidenceFocusSourceId, setMemoryEvidenceFocusSourceId] = useState<
     number | null
   >(null);
+  const [memoryAgreementPreviewSourceId, setMemoryAgreementPreviewSourceId] =
+    useState<number | null>(null);
   const [memoryRouteHopPreview, setMemoryRouteHopPreview] = useState<
     ConsensusMemoryRouteHopFocus | null
   >(null);
@@ -376,6 +378,25 @@ export default function App({
         : null;
     });
   }, [memoryRouteHopFocus, selectedMemoryTraceReadout]);
+  useEffect(() => {
+    setMemoryAgreementPreviewSourceId((current) => (
+      current !== null
+      && selectedMemoryTraceReadout?.evidence.some(
+        (evidence) => evidence.sourceId === current,
+      )
+        ? current
+        : null
+    ));
+  }, [selectedMemoryTraceReadout]);
+  const previewMemoryTraceAgreement = useCallback((sourceId: number | null) => {
+    const verifiedSourceId = sourceId !== null
+      && selectedMemoryTraceReadout?.evidence.some(
+        (evidence) => evidence.sourceId === sourceId,
+      )
+      ? sourceId
+      : null;
+    setMemoryAgreementPreviewSourceId(verifiedSourceId);
+  }, [selectedMemoryTraceReadout]);
   const focusMemoryTraceEvidence = useCallback((sourceId: number | null) => {
     const lockedSourceId = memoryRouteHopLock?.sourceId ?? null;
     if (lockedSourceId !== null && sourceId !== lockedSourceId) {
@@ -494,6 +515,7 @@ export default function App({
         cellTraceReadout={selectedMemoryTraceReadout}
         cellTraceResponseRef={memoryTraceTargetResponseRef}
         cellTraceEvidenceFocusSourceId={memoryEvidenceFocusSourceId}
+        cellTraceEvidencePreviewSourceId={memoryAgreementPreviewSourceId}
         onCellTraceEvidenceFocusChange={focusMemoryTraceEvidence}
         cellTraceRouteHopFocus={memoryRouteHopFocus}
         onCellTraceRouteHopFocusChange={focusMemoryTraceRouteHop}
@@ -590,6 +612,7 @@ export default function App({
                   traceEvidenceFocusSourceId={memoryEvidenceFocusSourceId}
                   traceRouteHopFocus={memoryRouteHopFocus}
                   traceRouteHopLock={memoryRouteHopLock}
+                  onTraceAgreementPreviewChange={previewMemoryTraceAgreement}
                   onTraceRouteHopLockChange={lockMemoryTraceRouteHop}
                 />
                 <ConsensusWriteSeal arrivalRef={burstArrivalRef} />

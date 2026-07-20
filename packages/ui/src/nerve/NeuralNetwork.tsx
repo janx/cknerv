@@ -120,6 +120,8 @@ interface NeuralNetworkProps {
   traceRouteHopFocus?: ConsensusMemoryRouteHopFocus | null;
   /** Click-locked hop only; hover preview must not stamp a spatial glyph. */
   traceRouteHopLock?: ConsensusMemoryRouteHopFocus | null;
+  /** Mirror target-signature inspection into the evidence ledger only. */
+  onTraceAgreementPreviewChange?: (sourceId: number | null) => void;
   /** Switch a target agreement signature onto its verified source route. */
   onTraceRouteHopLockChange?: (
     focus: ConsensusMemoryRouteHopFocus | null,
@@ -148,6 +150,7 @@ export default function NeuralNetwork({
   traceEvidenceFocusSourceId = null,
   traceRouteHopFocus = null,
   traceRouteHopLock = null,
+  onTraceAgreementPreviewChange,
   onTraceRouteHopLockChange,
 }: NeuralNetworkProps = {}) {
   const simClock = useSimClock();
@@ -777,6 +780,7 @@ export default function NeuralNetwork({
         focus={traceFocus}
         lockedHop={traceRouteHopLock}
         focusedSourceId={traceEvidenceFocusSourceId}
+        onAgreementPreviewChange={onTraceAgreementPreviewChange}
         onAgreementLockChange={onTraceRouteHopLockChange}
       />
     </>
