@@ -535,7 +535,9 @@ describe('CellDetailPanel', () => {
         routeDurationMs: 10_000,
       }],
     });
-    const { container } = render(
+    const onTraceRouteHopFocusChange = vi.fn();
+    const onTraceRouteHopLockChange = vi.fn();
+    const panel = (
       <CellDetailPanel
         cell={base}
         recentLinks={[origin]}
@@ -544,10 +546,13 @@ describe('CellDetailPanel', () => {
         traceReadout={readout}
         traceEvidenceFocusSourceId={11}
         onTraceEvidenceFocusChange={() => {}}
+        onTraceRouteHopFocusChange={onTraceRouteHopFocusChange}
+        onTraceRouteHopLockChange={onTraceRouteHopLockChange}
         onTraceWrite={() => {}}
         onClose={() => {}}
-      />,
+      />
     );
+    const { container, rerender } = render(panel);
 
     fireEvent.click(container.querySelector('[data-memory-evidence="1"]')!);
     const ledger = container.querySelector('[data-memory-evidence-route-ledger="true"]');
@@ -558,6 +563,68 @@ describe('CellDetailPanel', () => {
     expect(cells?.[40].getAttribute('data-memory-evidence-route-cell')).toBe(String(base.id));
     expect((ledger?.querySelector('[data-memory-evidence-route-cells="true"]') as HTMLElement)
       .style.maxHeight).toBe('48px');
+
+    const lockedFocus = {
+      traceKey: readout.key,
+      sourceId: 11,
+      targetCellId: base.id,
+      cellId: route[20],
+      hopIndex: 20,
+    };
+    rerender(
+      <CellDetailPanel
+        cell={base}
+        recentLinks={[origin]}
+        tracedWriteSeq={origin.seq}
+        traceSource="input"
+        traceReadout={readout}
+        traceEvidenceFocusSourceId={11}
+        traceRouteHopFocus={lockedFocus}
+        traceRouteHopLock={lockedFocus}
+        onTraceEvidenceFocusChange={() => {}}
+        onTraceRouteHopFocusChange={onTraceRouteHopFocusChange}
+        onTraceRouteHopLockChange={onTraceRouteHopLockChange}
+        onTraceWrite={() => {}}
+        onClose={() => {}}
+      />,
+    );
+    const lens = container.querySelector<HTMLElement>(
+      '[data-memory-evidence-route-mode="lens"]',
+    )!;
+    const lensCells = lens.querySelectorAll('[data-memory-evidence-route-cell]');
+    expect(lens.getAttribute('data-memory-evidence-route-window-start')).toBe('18');
+    expect(lens.getAttribute('data-memory-evidence-route-window-end')).toBe('22');
+    expect(lens.getAttribute('data-memory-evidence-route-hidden-before')).toBe('18');
+    expect(lens.getAttribute('data-memory-evidence-route-hidden-after')).toBe('18');
+    expect(Array.from(lensCells).map((node) => (
+      node.getAttribute('data-memory-evidence-route-hop')
+    ))).toEqual(['18', '19', '20', '21', '22']);
+    expect(lens.textContent).toContain('18 PRIOR');
+    expect(lens.textContent).toContain('18 NEXT');
+    const progress = container.querySelector<HTMLElement>(
+      '[data-memory-evidence-route-progress="true"]',
+    )!;
+    expect(progress.getAttribute('aria-valuenow')).toBe('20');
+    expect(progress.getAttribute('aria-valuemax')).toBe('40');
+    expect(progress.getAttribute('data-memory-evidence-route-progress-value'))
+      .toBe('0.5000');
+    expect(progress.querySelector<HTMLElement>(
+      '[data-memory-evidence-route-progress-marker="true"]',
+    )?.style.left).toBe('50%');
+
+    fireEvent.keyDown(lens.querySelector(
+      '[data-memory-evidence-route-hop="20"]',
+    )!, { key: 'ArrowRight' });
+    expect(onTraceRouteHopLockChange).toHaveBeenLastCalledWith({
+      ...lockedFocus,
+      cellId: route[21],
+      hopIndex: 21,
+    });
+    expect(onTraceRouteHopFocusChange).toHaveBeenLastCalledWith({
+      ...lockedFocus,
+      cellId: route[21],
+      hopIndex: 21,
+    });
   });
 
   it('labels surviving parent evidence as a lineage witness, not an input', () => {

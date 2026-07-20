@@ -16,6 +16,7 @@ import type {
 import {
   consensusMemoryRouteHopFocusEqual,
   deriveConsensusMemoryRouteHopFocus,
+  deriveConsensusMemoryRouteHopWindow,
   stepConsensusMemoryRouteHopFocus,
 } from '../../nerve/consensusMemoryTrace';
 import { formatOutpoint } from './cellFormat';
@@ -25,6 +26,7 @@ const CYAN = HUD_COLORS.cyanWire;
 const VIOLET = '#9D7BD8';
 const GOLD = HUD_COLORS.orange;
 const LOCKED_GOLD = '#FFD7A1';
+const ROUTE_LENS_MIN_CELLS = 9;
 
 const MEMORY_READ_STAGES: ReadonlyArray<{
   stage: ConsensusMemoryTraceStage;
@@ -95,10 +97,22 @@ function EvidenceRouteLedger({
     focusedRouteHop,
     lockedRouteHop,
   );
+  const routeLens = lockedRouteHop
+    && evidence.route.length >= ROUTE_LENS_MIN_CELLS
+    ? deriveConsensusMemoryRouteHopWindow(
+      evidence.route.length,
+      lockedRouteHop.hopIndex,
+    )
+    : null;
+  const visibleHopIndices = routeLens?.indices
+    ?? evidence.route.map((_, index) => index);
+  const lockedProgress = lockedRouteHop && lastIndex > 0
+    ? lockedRouteHop.hopIndex / lastIndex
+    : 0;
   return (
     <div
       id={id}
-      className="cknerv-memory-route-ledger"
+      className={`cknerv-memory-route-ledger${routeLens ? ' cknerv-memory-route-ledger-lens' : ''}`}
       data-hud-occlusion="true"
       data-memory-evidence-route-ledger="true"
       data-memory-evidence-route-cell-count={evidence.route.length}
@@ -154,27 +168,128 @@ function EvidenceRouteLedger({
             : `${String(evidence.route.length).padStart(2, '0')} CELLS · H${String(evidence.hopCount).padStart(2, '0')}`}
         </span>
       </span>
+      {routeLens && lockedRouteHop ? (
+        <span
+          role="progressbar"
+          aria-label={`Locked route position, hop ${lockedRouteHop.hopIndex} of ${lastIndex}`}
+          aria-valuemin={0}
+          aria-valuemax={lastIndex}
+          aria-valuenow={lockedRouteHop.hopIndex}
+          data-memory-evidence-route-progress="true"
+          data-memory-evidence-route-progress-hop={lockedRouteHop.hopIndex}
+          data-memory-evidence-route-progress-max={lastIndex}
+          data-memory-evidence-route-progress-value={lockedProgress.toFixed(4)}
+          style={{
+            display: 'block',
+            margin: '0 0 6px',
+            padding: '4px 5px 5px',
+            border: `1px solid ${sourceColor}2e`,
+            background: `linear-gradient(90deg, ${sourceColor}0d, ${LOCKED_GOLD}0a)`,
+            fontFamily: HUD_FONTS.mono,
+          }}
+        >
+          <span
+            aria-hidden="true"
+            style={{
+              display: 'flex',
+              alignItems: 'baseline',
+              fontSize: 5.8,
+              letterSpacing: 0.42,
+              color: HUD_COLORS.dim,
+            }}
+          >
+            <span>SOURCE</span>
+            <span style={{ marginLeft: 'auto', color: LOCKED_GOLD }}>
+              H{String(lockedRouteHop.hopIndex).padStart(2, '0')} / H{String(lastIndex).padStart(2, '0')}
+            </span>
+            <span style={{ marginLeft: 'auto' }}>TARGET</span>
+          </span>
+          <span
+            aria-hidden="true"
+            style={{
+              position: 'relative',
+              display: 'block',
+              height: 5,
+              marginTop: 3,
+              borderTop: `1px solid ${CYAN}2b`,
+              borderBottom: `1px solid ${CYAN}1a`,
+              background: `linear-gradient(90deg, ${sourceColor}38 0 ${lockedProgress * 100}%, ${CYAN}10 ${lockedProgress * 100}% 100%)`,
+            }}
+          >
+            <span
+              data-memory-evidence-route-progress-marker="true"
+              style={{
+                position: 'absolute',
+                left: `${lockedProgress * 100}%`,
+                top: '50%',
+                width: 5,
+                height: 5,
+                border: `1px solid ${LOCKED_GOLD}`,
+                background: '#07101B',
+                boxShadow: `0 0 8px ${LOCKED_GOLD}aa`,
+                transform: 'translate(-50%, -50%) rotate(45deg)',
+                transition: reducedMotion ? undefined : 'left 180ms ease-out',
+              }}
+            />
+          </span>
+        </span>
+      ) : null}
       <span
         className="cknerv-memory-route-cells"
         data-memory-evidence-route-cells="true"
+        data-memory-evidence-route-mode={routeLens ? 'lens' : 'full'}
+        data-memory-evidence-route-window-start={routeLens?.startIndex}
+        data-memory-evidence-route-window-end={routeLens?.endIndex}
+        data-memory-evidence-route-hidden-before={routeLens?.hiddenBefore}
+        data-memory-evidence-route-hidden-after={routeLens?.hiddenAfter}
         style={{
           display: 'flex',
           flexWrap: 'wrap',
           alignContent: 'flex-start',
           alignItems: 'center',
           gap: '3px 4px',
-          maxHeight: 48,
+          maxHeight: routeLens ? 'none' : 48,
           overflowX: 'hidden',
-          overflowY: 'auto',
-          paddingRight: 2,
+          overflowY: routeLens ? 'visible' : 'auto',
+          padding: routeLens ? '4px 3px 3px' : '0 2px 0 0',
+          border: routeLens ? `1px solid ${LOCKED_GOLD}20` : undefined,
+          background: routeLens
+            ? `linear-gradient(90deg, ${sourceColor}0d, ${LOCKED_GOLD}0b, ${sourceColor}0d)`
+            : undefined,
           fontFamily: HUD_FONTS.mono,
-          fontSize: 6.4,
+          fontSize: routeLens ? 6.8 : 6.4,
           lineHeight: 1.15,
           scrollbarWidth: 'thin',
           scrollbarColor: `${sourceColor}55 transparent`,
         }}
       >
-        {evidence.route.map((cellId, index) => {
+        {routeLens ? (
+          <span
+            data-memory-evidence-route-window-context="true"
+            style={{
+              display: 'flex',
+              width: '100%',
+              alignItems: 'baseline',
+              marginBottom: 2,
+              fontSize: 5.6,
+              letterSpacing: 0.38,
+              color: HUD_COLORS.dim,
+            }}
+          >
+            <span>
+              {routeLens.hiddenBefore > 0
+                ? `← SOURCE · ${routeLens.hiddenBefore} PRIOR`
+                : '◆ SOURCE IN VIEW'}
+            </span>
+            <span style={{ marginLeft: 'auto' }}>
+              {routeLens.hiddenAfter > 0
+                ? `${routeLens.hiddenAfter} NEXT · TARGET →`
+                : 'TARGET IN VIEW ◆'}
+            </span>
+          </span>
+        ) : null}
+        {visibleHopIndices.map((index) => {
+          const cellId = evidence.route[index];
           const role = index === 0
             ? 'source'
             : index === lastIndex
@@ -210,14 +325,14 @@ function EvidenceRouteLedger({
               ) : null}
               <button
                 type="button"
-                aria-label={`${locked ? 'Release' : 'Lock'} route hop ${index} of ${lastIndex}, ${role} Cell ${cellId}`}
-                aria-pressed={locked}
+                aria-label={`${onHopLockChange ? (locked ? 'Release' : 'Lock') : 'Focus'} route hop ${index} of ${lastIndex}, ${role} Cell ${cellId}`}
+                aria-pressed={onHopLockChange ? locked : active}
                 data-memory-evidence-route-cell={cellId}
                 data-memory-evidence-route-hop={index}
                 data-memory-evidence-route-role={role}
                 data-memory-evidence-route-focus={focusState}
                 data-memory-evidence-route-lock={locked ? 'locked' : 'unlocked'}
-                title={`Hop ${index}: Cell #${cellId} (${role}) · click to ${locked ? 'release' : 'lock'}`}
+                title={`Hop ${index}: Cell #${cellId} (${role}) · click to ${onHopLockChange ? (locked ? 'release' : 'lock') : 'focus'}`}
                 disabled={
                   !hopFocus
                   || (!onHopFocusChange && !onHopLockChange)
@@ -233,8 +348,12 @@ function EvidenceRouteLedger({
                 onFocus={() => onHopFocusChange?.(hopFocus)}
                 onBlur={() => onHopFocusChange?.(null)}
                 onClick={() => {
-                  onHopLockChange?.(locked ? null : hopFocus);
-                  if (locked) onHopFocusChange?.(null);
+                  if (onHopLockChange) {
+                    onHopLockChange(locked ? null : hopFocus);
+                    if (locked) onHopFocusChange?.(null);
+                  } else {
+                    onHopFocusChange?.(hopFocus);
+                  }
                 }}
                 onKeyDown={(event) => {
                   if (event.key === 'Escape' && lockedRouteHop) {

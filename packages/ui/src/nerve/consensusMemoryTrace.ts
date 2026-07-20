@@ -348,6 +348,51 @@ export function consensusMemoryRouteHopFocusEqual(
     && left.hopIndex === right.hopIndex;
 }
 
+export interface ConsensusMemoryRouteHopWindow {
+  startIndex: number;
+  endIndex: number;
+  indices: number[];
+  hiddenBefore: number;
+  hiddenAfter: number;
+}
+
+/**
+ * Keep a fixed-size reading lens centred on one canonical route hop. Near an
+ * endpoint the window shifts instead of shrinking, so long routes do not
+ * jitter between three, four, and five visible Cells while stepping.
+ */
+export function deriveConsensusMemoryRouteHopWindow(
+  routeLength: number,
+  hopIndex: number,
+  radius = 2,
+): ConsensusMemoryRouteHopWindow | null {
+  if (
+    !Number.isInteger(routeLength)
+    || routeLength <= 0
+    || !Number.isInteger(hopIndex)
+    || hopIndex < 0
+    || hopIndex >= routeLength
+    || !Number.isFinite(radius)
+  ) return null;
+  const safeRadius = Math.max(0, Math.floor(radius));
+  const windowSize = Math.min(routeLength, safeRadius * 2 + 1);
+  const startIndex = Math.max(
+    0,
+    Math.min(routeLength - windowSize, hopIndex - safeRadius),
+  );
+  const endIndex = startIndex + windowSize - 1;
+  return {
+    startIndex,
+    endIndex,
+    indices: Array.from(
+      { length: windowSize },
+      (_, offset) => startIndex + offset,
+    ),
+    hiddenBefore: startIndex,
+    hiddenAfter: routeLength - endIndex - 1,
+  };
+}
+
 /** Move a locked inspector by one exact retained hop without wrapping. */
 export function stepConsensusMemoryRouteHopFocus(
   readout: ConsensusMemoryTraceReadout | null,

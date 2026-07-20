@@ -63,6 +63,7 @@ export function injectHudTheme(doc: Document = document): void {
     + `\n.cknerv-mesh-rail::-webkit-scrollbar-thumb{background:rgba(255,152,48,.35);border-radius:3px}`
     + `\n.cknerv-mesh-rail::-webkit-scrollbar-track{background:transparent}`
     + `\n.cknerv-memory-route-ledger{position:absolute;right:calc(100% + 30px);top:-1px;width:230px}`
+    + `\n.cknerv-memory-route-ledger-lens{width:268px}`
     + `\n.cknerv-memory-route-cells::-webkit-scrollbar{width:3px}`
     + `\n.cknerv-memory-route-cells::-webkit-scrollbar-thumb{background:rgba(32,240,255,.28)}`
     + `\n.cknerv-memory-route-cells::-webkit-scrollbar-track{background:transparent}`
