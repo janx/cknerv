@@ -2,7 +2,13 @@
 // the HUD's source / display-carrier / maintained-record semantics spatial.
 // Intermediate Cells remain explicitly visual routing context, never lineage.
 
-import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { Html } from '@react-three/drei';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
@@ -10,6 +16,7 @@ import { useCellGalaxy } from '../hooks/cellGalaxyContext';
 import { useReducedMotion } from '../components/hud/useReducedMotion';
 import {
   CONSENSUS_ROUTE_HOP_AGREEMENT_CAP,
+  deriveConsensusRouteHopAgreementCallout,
   deriveConsensusRouteHopAgreementEmphasis,
   deriveConsensusRouteHopAgreementPlan,
   type ConsensusRouteHopAgreementPlan,
@@ -116,8 +123,14 @@ function rolePresentation(
   };
 }
 
-function cssColor(color: readonly [number, number, number]): string {
-  return `rgb(${color.map((channel) => Math.round(channel * 255)).join(' ')})`;
+function cssColor(
+  color: readonly [number, number, number],
+  alpha = 1,
+): string {
+  const channels = color
+    .map((channel) => Math.round(channel * 255))
+    .join(' ');
+  return `rgb(${channels} / ${alpha})`;
 }
 
 function glyphPhase(cellId: number): number {
@@ -639,7 +652,8 @@ export default function ConsensusRouteHopMarker({
   const pointsRef = useRef<THREE.Points>(null);
   const chipRef = useRef<HTMLDivElement>(null);
   const motionRef = useRef<GlyphMotion | null>(null);
-  const inspectedAgreementSourceIdRef = useRef<number | null>(null);
+  const [inspectedAgreementSourceId, setInspectedAgreementSourceId] =
+    useState<number | null>(null);
   const routeFromNdc = useMemo(() => new THREE.Vector3(), []);
   const routeToNdc = useMemo(() => new THREE.Vector3(), []);
   const spatial = useMemo(() => deriveConsensusMemoryRouteHopSpatialFocus(
@@ -668,6 +682,15 @@ export default function ConsensusRouteHopMarker({
     return value;
   }, []);
   const material = useMemo(() => makeGlyphMaterial(), []);
+
+  useEffect(() => {
+    if (inspectedAgreementSourceId === null) return;
+    const retainsInspectedSignature = spatial?.role === 'target'
+      && agreementPlan.ticks.some(
+        (tick) => tick.sourceId === inspectedAgreementSourceId,
+      );
+    if (!retainsInspectedSignature) setInspectedAgreementSourceId(null);
+  }, [agreementPlan.ticks, inspectedAgreementSourceId, spatial?.role]);
 
   useLayoutEffect(() => {
     if (!spatial || !presentation) {
@@ -838,7 +861,7 @@ export default function ConsensusRouteHopMarker({
     const activeAgreementPlan = motionAgreementPlan(motion);
     const agreementEmphasis = deriveConsensusRouteHopAgreementEmphasis(
       activeAgreementPlan,
-      inspectedAgreementSourceIdRef.current ?? focusedSourceId,
+      inspectedAgreementSourceId ?? focusedSourceId,
     );
     const agreementResponse = activeAgreementPlan.visibleSourceCount > 0
       ? consensusMemoryCellResponse(
@@ -951,59 +974,170 @@ export default function ConsensusRouteHopMarker({
             style={{ position: 'relative', width: 0, height: 0 }}
           >
             {agreementPlan.ticks.map((tick) => {
-              const radiusPx = 32;
+              const callout = deriveConsensusRouteHopAgreementCallout(tick);
+              const signatureColor = cssColor(tick.color);
+              const signatureLineStart = cssColor(tick.color, 0.9);
+              const signatureLineEnd = cssColor(tick.color, 0.26);
+              const signatureGlow = cssColor(tick.color, 0.5);
+              const signatureBorder = cssColor(tick.color, 0.32);
+              const signatureFill = cssColor(tick.color, 0.09);
+              const signatureShadow = cssColor(tick.color, 0.15);
+              const inspected = inspectedAgreementSourceId === tick.sourceId;
+              const labelX = callout.side === 'right' ? 12 : -12;
+              const inspectionLabel = [
+                `Inspect ${callout.evidenceCode}`,
+                `source ${callout.sourceLabel}`,
+                `fingerprint ${callout.fingerprint}`,
+                `at maintained record Cell ${agreementPlan.targetCellId}`,
+              ].join(', ');
+              const connectorAngle = Math.atan2(callout.offsetYPx, labelX);
+              const connectorLength = Math.max(
+                0,
+                Math.hypot(labelX, callout.offsetYPx) - 5,
+              );
+              const calloutBackground = callout.side === 'right'
+                ? `linear-gradient(90deg, rgba(1,5,14,.96), ${signatureFill}, rgba(1,5,14,.82))`
+                : `linear-gradient(270deg, rgba(1,5,14,.96), ${signatureFill}, rgba(1,5,14,.82))`;
               return (
-                <button
+                <div
                   key={tick.sourceId}
-                  type="button"
-                  aria-label={`Inspect evidence ${String(tick.ordinal).padStart(2, '0')}, source Cell ${tick.sourceId}, at maintained record Cell ${agreementPlan.targetCellId}`}
-                  aria-pressed={focusedSourceId === tick.sourceId}
-                  data-memory-route-hop-agreement-control={tick.ordinal}
-                  data-memory-route-hop-agreement-source={tick.sourceId}
-                  data-memory-route-hop-agreement-focus={
-                    focusedSourceId === tick.sourceId ? 'active' : 'idle'
-                  }
-                  title={`E${String(tick.ordinal).padStart(2, '0')} · CELL #${tick.sourceId}`}
-                  disabled={!onAgreementLockChange}
-                  onPointerDown={(event) => event.stopPropagation()}
-                  onPointerEnter={() => {
-                    inspectedAgreementSourceIdRef.current = tick.sourceId;
-                  }}
-                  onPointerLeave={(event) => {
-                    if (document.activeElement === event.currentTarget) return;
-                    if (inspectedAgreementSourceIdRef.current === tick.sourceId) {
-                      inspectedAgreementSourceIdRef.current = null;
-                    }
-                  }}
-                  onFocus={() => {
-                    inspectedAgreementSourceIdRef.current = tick.sourceId;
-                  }}
-                  onBlur={() => {
-                    if (inspectedAgreementSourceIdRef.current === tick.sourceId) {
-                      inspectedAgreementSourceIdRef.current = null;
-                    }
-                  }}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onAgreementLockChange?.(tick.targetFocus);
-                  }}
                   style={{
                     position: 'absolute',
-                    left: Math.cos(tick.angle) * radiusPx,
-                    top: Math.sin(tick.angle) * radiusPx,
-                    width: 16,
-                    height: 16,
-                    margin: 0,
-                    padding: 0,
-                    transform: 'translate(-50%, -50%)',
-                    border: 0,
-                    borderRadius: '50%',
-                    outline: 0,
-                    background: 'transparent',
-                    pointerEvents: 'auto',
-                    cursor: onAgreementLockChange ? 'pointer' : 'default',
+                    left: callout.anchorXPx,
+                    top: callout.anchorYPx,
+                    width: 0,
+                    height: 0,
+                    pointerEvents: 'none',
                   }}
-                />
+                >
+                  <button
+                    type="button"
+                    aria-label={inspectionLabel}
+                    aria-pressed={focusedSourceId === tick.sourceId}
+                    data-memory-route-hop-agreement-control={tick.ordinal}
+                    data-memory-route-hop-agreement-source={tick.sourceId}
+                    data-memory-route-hop-agreement-focus={
+                      focusedSourceId === tick.sourceId ? 'active' : 'idle'
+                    }
+                    data-memory-route-hop-agreement-inspection={
+                      inspected ? 'active' : 'idle'
+                    }
+                    title={`${callout.evidenceCode} · ${callout.sourceLabel} · ${callout.fingerprint}`}
+                    disabled={!onAgreementLockChange}
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onPointerEnter={() => {
+                      setInspectedAgreementSourceId(tick.sourceId);
+                    }}
+                    onPointerLeave={(event) => {
+                      if (document.activeElement === event.currentTarget) return;
+                      setInspectedAgreementSourceId((current) =>
+                        current === tick.sourceId ? null : current,
+                      );
+                    }}
+                    onFocus={() => {
+                      setInspectedAgreementSourceId(tick.sourceId);
+                    }}
+                    onBlur={() => {
+                      setInspectedAgreementSourceId((current) =>
+                        current === tick.sourceId ? null : current,
+                      );
+                    }}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onAgreementLockChange?.(tick.targetFocus);
+                    }}
+                    style={{
+                      position: 'absolute',
+                      left: 0,
+                      top: 0,
+                      width: 16,
+                      height: 16,
+                      margin: 0,
+                      padding: 0,
+                      transform: 'translate(-50%, -50%)',
+                      border: 0,
+                      borderRadius: '50%',
+                      outline: 0,
+                      background: 'transparent',
+                      pointerEvents: 'auto',
+                      cursor: onAgreementLockChange ? 'pointer' : 'default',
+                    }}
+                  />
+                  {inspected ? (
+                    <>
+                      <span
+                        aria-hidden="true"
+                        style={{
+                          position: 'absolute',
+                          left: Math.cos(connectorAngle) * 5,
+                          top: Math.sin(connectorAngle) * 5,
+                          width: connectorLength,
+                          height: 1,
+                          transform: `translateY(-50%) rotate(${connectorAngle}rad)`,
+                          transformOrigin: 'left center',
+                          background: `linear-gradient(90deg, ${signatureLineStart}, ${signatureLineEnd})`,
+                          boxShadow: `0 0 4px ${signatureGlow}`,
+                          pointerEvents: 'none',
+                        }}
+                      />
+                      <div
+                        aria-hidden="true"
+                        data-memory-route-hop-agreement-callout={tick.ordinal}
+                        data-memory-route-hop-agreement-callout-source={
+                          tick.sourceId
+                        }
+                        data-memory-route-hop-agreement-callout-fingerprint={
+                          callout.fingerprint
+                        }
+                        style={{
+                          position: 'absolute',
+                          left: labelX,
+                          top: callout.offsetYPx,
+                          minWidth: 66,
+                          padding: callout.side === 'right'
+                            ? '3px 5px 3px 6px'
+                            : '3px 6px 3px 5px',
+                          transform: callout.side === 'right'
+                            ? 'translate(0, -50%)'
+                            : 'translate(-100%, -50%)',
+                          borderLeft: callout.side === 'right'
+                            ? `1px solid ${signatureColor}`
+                            : undefined,
+                          borderRight: callout.side === 'left'
+                            ? `1px solid ${signatureColor}`
+                            : undefined,
+                          borderBottom: `1px solid ${signatureBorder}`,
+                          background: calloutBackground,
+                          boxShadow: `0 0 10px ${signatureShadow}`,
+                          color: 'rgba(232, 247, 255, .92)',
+                          fontFamily: '"JetBrains Mono Local", ui-monospace, monospace',
+                          fontSize: 6,
+                          lineHeight: 1.12,
+                          letterSpacing: '0.08em',
+                          whiteSpace: 'nowrap',
+                          pointerEvents: 'none',
+                        }}
+                      >
+                        <div style={{ display: 'flex', gap: 4 }}>
+                          <span style={{ color: signatureColor }}>
+                            {callout.evidenceCode}
+                          </span>
+                          <span>{callout.sourceLabel}</span>
+                        </div>
+                        <div
+                          style={{
+                            marginTop: 2,
+                            color: 'rgba(167, 204, 220, .72)',
+                            fontSize: 5.4,
+                            letterSpacing: '0.11em',
+                          }}
+                        >
+                          {callout.fingerprint}
+                        </div>
+                      </div>
+                    </>
+                  ) : null}
+                </div>
               );
             })}
           </div>
@@ -1028,9 +1162,9 @@ export default function ConsensusRouteHopMarker({
             transform: 'translate(-50%, 39px)',
             padding: '2px 5px 2px 6px',
             borderLeft: `1px solid ${color}`,
-            borderBottom: `1px solid ${color}66`,
-            background: `linear-gradient(90deg, rgba(1,5,14,.92), ${color}12, rgba(1,5,14,.78))`,
-            boxShadow: `0 0 10px ${color}2b`,
+            borderBottom: `1px solid ${cssColor(presentation.primary, 0.4)}`,
+            background: `linear-gradient(90deg, rgba(1,5,14,.92), ${cssColor(presentation.primary, 0.07)}, rgba(1,5,14,.78))`,
+            boxShadow: `0 0 10px ${cssColor(presentation.primary, 0.17)}`,
             opacity: 0,
             whiteSpace: 'nowrap',
             fontFamily: '"JetBrains Mono Local", ui-monospace, monospace',
