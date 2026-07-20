@@ -427,6 +427,37 @@ export function deriveConsensusMemoryRouteHopTangent(
   return from.id === to.id ? null : { from, to };
 }
 
+/** A latch is earned only by crossing the final verified route segment. */
+export function isConsensusMemoryRouteHopTargetArrival(
+  from: ConsensusMemoryRouteHopSpatialFocus,
+  to: ConsensusMemoryRouteHopSpatialFocus,
+): boolean {
+  return from.role !== 'target'
+    && to.role === 'target'
+    && classifyConsensusMemoryRouteHopTransition(
+      from.focus,
+      to.focus,
+    ) === 'adjacent';
+}
+
+/**
+ * Motion preferences and queued departures can suppress the visual ceremony;
+ * neither changes the underlying fact that the target record exists.
+ */
+export function shouldAnimateConsensusMemoryRouteHopTargetLatch(
+  from: ConsensusMemoryRouteHopSpatialFocus | null,
+  to: ConsensusMemoryRouteHopSpatialFocus,
+  options: {
+    reducedMotion?: boolean;
+    hasQueuedHandoff?: boolean;
+  } = {},
+): boolean {
+  return !options.reducedMotion
+    && !options.hasQueuedHandoff
+    && !!from
+    && isConsensusMemoryRouteHopTargetArrival(from, to);
+}
+
 /**
  * Keep a fixed-size reading lens centred on one canonical route hop. Near an
  * endpoint the window shifts instead of shrinking, so long routes do not
