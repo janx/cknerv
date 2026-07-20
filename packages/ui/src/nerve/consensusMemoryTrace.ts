@@ -356,6 +356,24 @@ export interface ConsensusMemoryRouteHopWindow {
   hiddenAfter: number;
 }
 
+export type ConsensusMemoryRouteHopRole = 'source' | 'transit' | 'target';
+
+/**
+ * Exact route-relative meaning for one locked Cell. Only the endpoints carry
+ * causal meaning; intermediate Cells are display carriers chosen by the
+ * neighbour-graph router and must never be presented as transaction lineage.
+ */
+export interface ConsensusMemoryRouteHopInspection {
+  cellId: number;
+  hopIndex: number;
+  role: ConsensusMemoryRouteHopRole;
+  previousCellId: number | null;
+  nextCellId: number | null;
+  distanceFromSource: number;
+  distanceToTarget: number;
+  progress: number;
+}
+
 /**
  * Keep a fixed-size reading lens centred on one canonical route hop. Near an
  * endpoint the window shifts instead of shrinking, so long routes do not
@@ -390,6 +408,44 @@ export function deriveConsensusMemoryRouteHopWindow(
     ),
     hiddenBefore: startIndex,
     hiddenAfter: routeLength - endIndex - 1,
+  };
+}
+
+/** Revalidate and explain one canonical route hop without inventing lineage. */
+export function deriveConsensusMemoryRouteHopInspection(
+  readout: ConsensusMemoryTraceReadout | null,
+  focus: ConsensusMemoryRouteHopFocus | null,
+): ConsensusMemoryRouteHopInspection | null {
+  if (!focus) return null;
+  const canonical = deriveConsensusMemoryRouteHopFocus(
+    readout,
+    focus.sourceId,
+    focus.hopIndex,
+  );
+  if (!consensusMemoryRouteHopFocusEqual(canonical, focus)) return null;
+  const route = readout?.evidence.find(
+    ({ sourceId }) => sourceId === focus.sourceId,
+  )?.route;
+  if (!route) return null;
+  const lastIndex = route.length - 1;
+  const role: ConsensusMemoryRouteHopRole = focus.hopIndex === 0
+    ? 'source'
+    : focus.hopIndex === lastIndex
+      ? 'target'
+      : 'transit';
+  return {
+    cellId: focus.cellId,
+    hopIndex: focus.hopIndex,
+    role,
+    previousCellId: focus.hopIndex > 0
+      ? route[focus.hopIndex - 1] ?? null
+      : null,
+    nextCellId: focus.hopIndex < lastIndex
+      ? route[focus.hopIndex + 1] ?? null
+      : null,
+    distanceFromSource: focus.hopIndex,
+    distanceToTarget: lastIndex - focus.hopIndex,
+    progress: lastIndex > 0 ? focus.hopIndex / lastIndex : 0,
   };
 }
 

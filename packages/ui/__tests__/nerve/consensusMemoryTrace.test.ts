@@ -37,6 +37,7 @@ import {
   consensusMemoryTraceSourceStrength,
   deriveConsensusMemoryTraceFocus,
   deriveConsensusMemoryRouteHopFocus,
+  deriveConsensusMemoryRouteHopInspection,
   deriveConsensusMemoryRouteHopWindow,
   deriveConsensusMemoryTraceEndpoints,
   planConsensusMemoryTrace,
@@ -397,6 +398,40 @@ describe('planConsensusMemoryTrace', () => {
       cellId: evidence.route[1],
       hopIndex: 1,
     });
+    expect(deriveConsensusMemoryRouteHopInspection(readout, transit)).toEqual({
+      cellId: evidence.route[1],
+      hopIndex: 1,
+      role: 'transit',
+      previousCellId: evidence.route[0],
+      nextCellId: evidence.route[2],
+      distanceFromSource: 1,
+      distanceToTarget: 1,
+      progress: 0.5,
+    });
+    expect(deriveConsensusMemoryRouteHopInspection(
+      readout,
+      deriveConsensusMemoryRouteHopFocus(readout, evidence.sourceId, 0),
+    )).toMatchObject({
+      role: 'source',
+      previousCellId: null,
+      distanceFromSource: 0,
+      distanceToTarget: 2,
+      progress: 0,
+    });
+    expect(deriveConsensusMemoryRouteHopInspection(
+      readout,
+      deriveConsensusMemoryRouteHopFocus(readout, evidence.sourceId, 2),
+    )).toMatchObject({
+      role: 'target',
+      nextCellId: null,
+      distanceFromSource: 2,
+      distanceToTarget: 0,
+      progress: 1,
+    });
+    expect(deriveConsensusMemoryRouteHopInspection(readout, {
+      ...transit!,
+      traceKey: 'stale-trace',
+    })).toBeNull();
     expect(consensusMemoryRouteHopFocusEqual(transit, { ...transit! })).toBe(true);
     expect(consensusMemoryRouteHopFocusEqual(transit, {
       ...transit!,
