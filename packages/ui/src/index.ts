@@ -163,6 +163,8 @@ export {
   deriveConsensusMemoryRouteHopTangent,
   deriveConsensusMemoryRouteHopWindow,
   deriveConsensusMemoryTraceEndpoints,
+  isConsensusMemoryRouteHopTargetArrival,
+  shouldAnimateConsensusMemoryRouteHopTargetLatch,
   stepConsensusMemoryRouteHopFocus,
   validateConsensusMemoryRouteHopFocus,
   CONSENSUS_PULSE_POLICY,

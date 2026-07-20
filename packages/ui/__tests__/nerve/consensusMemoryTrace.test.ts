@@ -43,7 +43,9 @@ import {
   deriveConsensusMemoryRouteHopTangent,
   deriveConsensusMemoryRouteHopWindow,
   deriveConsensusMemoryTraceEndpoints,
+  isConsensusMemoryRouteHopTargetArrival,
   planConsensusMemoryTrace,
+  shouldAnimateConsensusMemoryRouteHopTargetLatch,
   stepConsensusMemoryRouteHopFocus,
   validateConsensusMemoryRouteHopFocus,
 } from '../../src/nerve/consensusMemoryTrace';
@@ -490,6 +492,36 @@ describe('planConsensusMemoryTrace', () => {
       spatial!.focus,
       { ...targetSpatial!.focus, traceKey: 'other-trace' },
     )).toBe('discontinuous');
+    expect(isConsensusMemoryRouteHopTargetArrival(
+      spatial!,
+      targetSpatial!,
+    )).toBe(true);
+    expect(isConsensusMemoryRouteHopTargetArrival(
+      targetSpatial!,
+      spatial!,
+    )).toBe(false);
+    expect(isConsensusMemoryRouteHopTargetArrival(
+      sourceSpatial!,
+      targetSpatial!,
+    )).toBe(false);
+    expect(shouldAnimateConsensusMemoryRouteHopTargetLatch(
+      spatial!,
+      targetSpatial!,
+    )).toBe(true);
+    expect(shouldAnimateConsensusMemoryRouteHopTargetLatch(
+      null,
+      targetSpatial!,
+    )).toBe(false);
+    expect(shouldAnimateConsensusMemoryRouteHopTargetLatch(
+      spatial!,
+      targetSpatial!,
+      { reducedMotion: true },
+    )).toBe(false);
+    expect(shouldAnimateConsensusMemoryRouteHopTargetLatch(
+      spatial!,
+      targetSpatial!,
+      { hasQueuedHandoff: true },
+    )).toBe(false);
     const missingLockedCell = new Map(cells);
     missingLockedCell.delete(transit!.cellId);
     expect(deriveConsensusMemoryRouteHopSpatialFocus(

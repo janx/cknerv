@@ -15,6 +15,7 @@ import {
   classifyConsensusMemoryRouteHopTransition,
   deriveConsensusMemoryRouteHopSpatialFocus,
   deriveConsensusMemoryRouteHopTangent,
+  shouldAnimateConsensusMemoryRouteHopTargetLatch,
   type ConsensusMemoryRouteHopFocus,
   type ConsensusMemoryRouteHopRole,
   type ConsensusMemoryRouteHopSpatialFocus,
@@ -28,6 +29,7 @@ const GOLD = [1, 0.72, 0.38] as const;
 const HANDOFF_MIN_SECONDS = 0.28;
 const HANDOFF_MAX_SECONDS = 0.48;
 const HANDOFF_SECONDS_PER_UNIT = 0.018;
+const TARGET_LATCH_SECONDS = 0.82;
 
 interface RolePresentation {
   index: number;
@@ -56,6 +58,14 @@ interface GlyphMotion {
   destination: GlyphWaypoint;
   segment: GlyphSegment | null;
   queue: GlyphWaypoint[];
+  latch: GlyphLatch | null;
+  latchedCellId: number | null;
+}
+
+interface GlyphLatch {
+  cellId: number;
+  elapsedSeconds: number;
+  durationSeconds: number;
 }
 
 function rolePresentation(
@@ -175,6 +185,11 @@ function applyGlyphWaypoint(
   applyGlyphBlend(material, waypoint, waypoint, 1);
 }
 
+function clearTargetLatch(material: THREE.ShaderMaterial): void {
+  material.uniforms.uLatchActive.value = 0;
+  material.uniforms.uLatchProgress.value = 0;
+}
+
 function makeGlyphMaterial(): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
     uniforms: {
@@ -182,6 +197,8 @@ function makeGlyphMaterial(): THREE.ShaderMaterial {
       uTime: { value: 0 },
       uPhase: { value: 0 },
       uRouteAngle: { value: 0 },
+      uLatchActive: { value: 0 },
+      uLatchProgress: { value: 0 },
       uOpacity: { value: 0 },
       uRadius: { value: 1.5 },
       uViewportHeight: { value: 1 },
@@ -212,6 +229,8 @@ function makeGlyphMaterial(): THREE.ShaderMaterial {
       uniform float uTime;
       uniform float uPhase;
       uniform float uRouteAngle;
+      uniform float uLatchActive;
+      uniform float uLatchProgress;
       uniform float uOpacity;
       uniform vec3 uPrimary;
       uniform vec3 uSecondary;
@@ -325,19 +344,101 @@ function makeGlyphMaterial(): THREE.ShaderMaterial {
         float targetInner = ring(r, 0.48, 0.022) * targetInnerGate;
         float targetAgreements = ring(r, 0.59, 0.040)
           * exp(-pow(abs(sin(theta * 2.0 + 0.785)) / 0.075, 2.0));
+        float latchProgress = clamp(uLatchProgress, 0.0, 1.0);
+        float latchClose = smoothstep(0.04, 0.68, latchProgress);
+        float latchEnvelope = uLatchActive
+          * sin(3.14159265 * latchProgress);
+        float targetBracketOuter = mix(
+          0.76,
+          mix(0.86, 0.76, latchClose),
+          uLatchActive
+        );
+        float targetBracketInner = mix(
+          0.58,
+          mix(0.48, 0.58, latchClose),
+          uLatchActive
+        );
         float targetBrackets = 0.0;
-        targetBrackets += segment(p, vec2(-0.74, -0.58), vec2(-0.74, -0.76), 0.024);
-        targetBrackets += segment(p, vec2(-0.74, -0.76), vec2(-0.56, -0.76), 0.024);
-        targetBrackets += segment(p, vec2(0.74, -0.58), vec2(0.74, -0.76), 0.024);
-        targetBrackets += segment(p, vec2(0.74, -0.76), vec2(0.56, -0.76), 0.024);
-        targetBrackets += segment(p, vec2(-0.74, 0.58), vec2(-0.74, 0.76), 0.024);
-        targetBrackets += segment(p, vec2(-0.74, 0.76), vec2(-0.56, 0.76), 0.024);
-        targetBrackets += segment(p, vec2(0.74, 0.58), vec2(0.74, 0.76), 0.024);
-        targetBrackets += segment(p, vec2(0.74, 0.76), vec2(0.56, 0.76), 0.024);
+        targetBrackets += segment(
+          p,
+          vec2(-targetBracketOuter, -targetBracketInner),
+          vec2(-targetBracketOuter, -targetBracketOuter),
+          0.024
+        );
+        targetBrackets += segment(
+          p,
+          vec2(-targetBracketOuter, -targetBracketOuter),
+          vec2(-targetBracketInner, -targetBracketOuter),
+          0.024
+        );
+        targetBrackets += segment(
+          p,
+          vec2(targetBracketOuter, -targetBracketInner),
+          vec2(targetBracketOuter, -targetBracketOuter),
+          0.024
+        );
+        targetBrackets += segment(
+          p,
+          vec2(targetBracketOuter, -targetBracketOuter),
+          vec2(targetBracketInner, -targetBracketOuter),
+          0.024
+        );
+        targetBrackets += segment(
+          p,
+          vec2(-targetBracketOuter, targetBracketInner),
+          vec2(-targetBracketOuter, targetBracketOuter),
+          0.024
+        );
+        targetBrackets += segment(
+          p,
+          vec2(-targetBracketOuter, targetBracketOuter),
+          vec2(-targetBracketInner, targetBracketOuter),
+          0.024
+        );
+        targetBrackets += segment(
+          p,
+          vec2(targetBracketOuter, targetBracketInner),
+          vec2(targetBracketOuter, targetBracketOuter),
+          0.024
+        );
+        targetBrackets += segment(
+          p,
+          vec2(targetBracketOuter, targetBracketOuter),
+          vec2(targetBracketInner, targetBracketOuter),
+          0.024
+        );
         float targetKnot = 1.0 - smoothstep(0.080, 0.155, abs(p.x) + abs(p.y));
+        float latchSweep = ring(
+          r,
+          mix(0.90, 0.18, latchClose),
+          mix(0.018, 0.040, latchClose)
+        ) * latchEnvelope * 1.25;
+        float latchVotes = ring(r, 0.59, 0.052)
+          * exp(-pow(abs(sin(theta * 2.0 + 0.785)) / 0.11, 2.0))
+          * uLatchActive
+          * smoothstep(0.14, 0.42, latchProgress)
+          * (1.0 - smoothstep(0.72, 1.0, latchProgress));
+        float latchWriteGate = uLatchActive
+          * smoothstep(0.34, 0.54, latchProgress)
+          * (1.0 - smoothstep(0.90, 1.0, latchProgress));
+        float latchDiamond = ring(
+          abs(p.x) + abs(p.y),
+          mix(0.34, 0.11, smoothstep(0.42, 0.86, latchProgress)),
+          0.024
+        ) * latchWriteGate;
+        float latchCore = (1.0 - smoothstep(
+          0.030,
+          0.105,
+          abs(p.x) + abs(p.y)
+        )) * uLatchActive
+          * smoothstep(0.56, 0.72, latchProgress)
+          * (1.0 - smoothstep(0.90, 1.0, latchProgress));
+        float latchGlyph = latchSweep + latchVotes * 0.9
+          + latchDiamond * 1.15 + latchCore * 1.25;
         float targetGlyph = targetOuter + targetInner * 0.72 + targetAgreements
-          + targetBrackets * 0.82 + targetKnot;
-        float targetSecondary = targetInner + targetAgreements + targetKnot;
+          + targetBrackets * 0.82 + targetKnot + latchGlyph;
+        float targetSecondary = targetInner + targetAgreements + targetKnot
+          + latchVotes + latchDiamond + latchCore;
 
         // uRole continuously travels 0→1→2 so endpoint handoffs morph
         // through the carrier language instead of switching silhouettes.
@@ -402,6 +503,7 @@ export default function ConsensusRouteHopMarker({
     if (!spatial || !presentation) {
       geometry.setDrawRange(0, 0);
       motionRef.current = null;
+      clearTargetLatch(material);
       return;
     }
     const group = groupRef.current;
@@ -415,9 +517,12 @@ export default function ConsensusRouteHopMarker({
         destination,
         segment: null,
         queue: [],
+        latch: null,
+        latchedCellId: null,
       };
       group.position.copy(destination.position);
       applyGlyphWaypoint(material, destination);
+      clearTargetLatch(material);
       return;
     }
 
@@ -430,9 +535,12 @@ export default function ConsensusRouteHopMarker({
         destination,
         segment: null,
         queue: [],
+        latch: null,
+        latchedCellId: null,
       };
       group.position.copy(destination.position);
       applyGlyphWaypoint(material, destination);
+      clearTargetLatch(material);
       return;
     }
 
@@ -449,6 +557,9 @@ export default function ConsensusRouteHopMarker({
       return;
     }
 
+    motion.latch = null;
+    motion.latchedCellId = null;
+    clearTargetLatch(material);
     if (motion.segment) {
       motion.queue.push(destination);
     } else {
@@ -486,6 +597,38 @@ export default function ConsensusRouteHopMarker({
       applyGlyphWaypoint(material, segment.to);
       const next = motion.queue.shift() ?? null;
       motion.segment = next ? glyphSegment(segment.to, next) : null;
+      if (shouldAnimateConsensusMemoryRouteHopTargetLatch(
+        segment.from.spatial,
+        segment.to.spatial,
+        {
+          reducedMotion,
+          hasQueuedHandoff: !!next,
+        },
+      )) {
+        motion.latch = {
+          cellId: segment.to.spatial.cell.id,
+          elapsedSeconds: 0,
+          durationSeconds: TARGET_LATCH_SECONDS,
+        };
+        motion.latchedCellId = null;
+        material.uniforms.uLatchActive.value = 1;
+        material.uniforms.uLatchProgress.value = 0;
+      }
+    }
+
+    if (motion.latch && !motion.segment) {
+      motion.latch.elapsedSeconds += remainingSeconds;
+      const latchProgress = Math.min(
+        1,
+        motion.latch.elapsedSeconds / motion.latch.durationSeconds,
+      );
+      material.uniforms.uLatchActive.value = 1;
+      material.uniforms.uLatchProgress.value = latchProgress;
+      if (latchProgress >= 1) {
+        motion.latchedCellId = motion.latch.cellId;
+        motion.latch = null;
+        material.uniforms.uLatchActive.value = 0;
+      }
     }
 
     const tangentSpatial = motion.segment?.to.spatial
@@ -522,6 +665,19 @@ export default function ConsensusRouteHopMarker({
       chipRef.current.dataset.memoryRouteHopAngle = tangent
         ? material.uniforms.uRouteAngle.value.toFixed(3)
         : 'none';
+      chipRef.current.dataset.memoryRouteHopLatch = motion.latch
+        ? 'closing'
+        : motion.latchedCellId === motion.destination.spatial.cell.id
+          ? 'sealed'
+          : 'idle';
+      chipRef.current.dataset.memoryRouteHopLatchProgress = motion.latch
+        ? Math.min(
+            1,
+            motion.latch.elapsedSeconds / motion.latch.durationSeconds,
+          ).toFixed(3)
+        : motion.latchedCellId === motion.destination.spatial.cell.id
+          ? '1.000'
+          : '0.000';
     }
   });
 
