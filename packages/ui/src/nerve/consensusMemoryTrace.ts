@@ -374,6 +374,15 @@ export interface ConsensusMemoryRouteHopInspection {
   progress: number;
 }
 
+export interface ConsensusMemoryRouteHopSpatialFocus {
+  focus: ConsensusMemoryRouteHopFocus;
+  role: ConsensusMemoryRouteHopRole;
+  cell: Cell;
+  previousCell: Cell | null;
+  nextCell: Cell | null;
+  routeColor: Pulse['color'];
+}
+
 /**
  * Keep a fixed-size reading lens centred on one canonical route hop. Near an
  * endpoint the window shifts instead of shrinking, so long routes do not
@@ -446,6 +455,44 @@ export function deriveConsensusMemoryRouteHopInspection(
     distanceFromSource: focus.hopIndex,
     distanceToTarget: lastIndex - focus.hopIndex,
     progress: lastIndex > 0 ? focus.hopIndex / lastIndex : 0,
+  };
+}
+
+/**
+ * Bind one verified lock to real projection records for its spatial glyph.
+ * Missing neighbours merely shorten the local context; a missing locked Cell
+ * suppresses the marker instead of fabricating a scene position.
+ */
+export function deriveConsensusMemoryRouteHopSpatialFocus(
+  focus: ConsensusMemoryTraceFocus | null,
+  candidate: ConsensusMemoryRouteHopFocus | null,
+  cells: ReadonlyMap<number, Cell>,
+): ConsensusMemoryRouteHopSpatialFocus | null {
+  const canonical = validateConsensusMemoryRouteHopFocus(focus, candidate);
+  if (!focus || !canonical) return null;
+  const source = focus.sources.find(({ id }) => id === canonical.sourceId);
+  const route = source
+    ? consensusMemoryTraceRouteForTarget(source, canonical.targetCellId)
+    : null;
+  const cell = cells.get(canonical.cellId);
+  if (!route || !cell) return null;
+  const lastIndex = route.path.length - 1;
+  const role: ConsensusMemoryRouteHopRole = canonical.hopIndex === 0
+    ? 'source'
+    : canonical.hopIndex === lastIndex
+      ? 'target'
+      : 'transit';
+  return {
+    focus: canonical,
+    role,
+    cell,
+    previousCell: canonical.hopIndex > 0
+      ? cells.get(route.path[canonical.hopIndex - 1]) ?? null
+      : null,
+    nextCell: canonical.hopIndex < lastIndex
+      ? cells.get(route.path[canonical.hopIndex + 1]) ?? null
+      : null,
+    routeColor: route.color,
   };
 }
 

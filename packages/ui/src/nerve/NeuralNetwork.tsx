@@ -53,6 +53,7 @@ import {
   type ConsensusPulseMode,
 } from './consensusMemoryTrace';
 import ConsensusMemoryMarkers from './ConsensusMemoryMarkers';
+import ConsensusRouteHopMarker from './ConsensusRouteHopMarker';
 
 const SPIKE_POOL_CAPACITY = 1024;
 
@@ -117,6 +118,8 @@ interface NeuralNetworkProps {
   traceEvidenceFocusSourceId?: number | null;
   /** One verified Cell address inside that source's exact retained route. */
   traceRouteHopFocus?: ConsensusMemoryRouteHopFocus | null;
+  /** Click-locked hop only; hover preview must not stamp a spatial glyph. */
+  traceRouteHopLock?: ConsensusMemoryRouteHopFocus | null;
 }
 
 interface ActivePulse extends Pulse {
@@ -140,6 +143,7 @@ export default function NeuralNetwork({
   traceTargetResponseRef,
   traceEvidenceFocusSourceId = null,
   traceRouteHopFocus = null,
+  traceRouteHopLock = null,
 }: NeuralNetworkProps = {}) {
   const simClock = useSimClock();
   const cellsCache = useCellGalaxy();
@@ -763,6 +767,10 @@ export default function NeuralNetwork({
       <ConsensusMemoryMarkers
         focus={traceFocus}
         evidenceFocusSourceId={traceEvidenceFocusSourceId}
+      />
+      <ConsensusRouteHopMarker
+        focus={traceFocus}
+        lockedHop={traceRouteHopLock}
       />
     </>
   );
