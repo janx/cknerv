@@ -18,6 +18,7 @@ import {
   CONSENSUS_ROUTE_HOP_AGREEMENT_CAP,
   deriveConsensusRouteHopAgreementCallout,
   deriveConsensusRouteHopAgreementEmphasis,
+  deriveConsensusRouteHopAgreementNavigationIndex,
   deriveConsensusRouteHopAgreementPlan,
   type ConsensusRouteHopAgreementPlan,
 } from '../derives/consensusRouteHopAgreement.derive';
@@ -970,11 +971,16 @@ export default function ConsensusRouteHopMarker({
           style={{ pointerEvents: 'none' }}
         >
           <div
+            role="group"
+            aria-label={`${agreementPlan.visibleSourceCount} agreement evidence signatures`}
             data-memory-route-hop-agreement-controls="true"
+            data-memory-route-hop-agreement-navigation="arrows-home-end"
             style={{ position: 'relative', width: 0, height: 0 }}
           >
-            {agreementPlan.ticks.map((tick) => {
-              const callout = deriveConsensusRouteHopAgreementCallout(tick);
+            {agreementPlan.ticks.map((tick, tickIndex) => {
+              const callout = deriveConsensusRouteHopAgreementCallout(tick, {
+                visibleSourceCount: agreementPlan.visibleSourceCount,
+              });
               const signatureColor = cssColor(tick.color);
               const signatureLineStart = cssColor(tick.color, 0.9);
               const signatureLineEnd = cssColor(tick.color, 0.26);
@@ -986,6 +992,7 @@ export default function ConsensusRouteHopMarker({
               const labelX = callout.side === 'right' ? 12 : -12;
               const inspectionLabel = [
                 `Inspect ${callout.evidenceCode}`,
+                `signature ${tick.ordinal} of ${agreementPlan.visibleSourceCount}`,
                 `source ${callout.sourceLabel}`,
                 `fingerprint ${callout.fingerprint}`,
                 `at maintained record Cell ${agreementPlan.targetCellId}`,
@@ -1014,8 +1021,12 @@ export default function ConsensusRouteHopMarker({
                     type="button"
                     aria-label={inspectionLabel}
                     aria-pressed={focusedSourceId === tick.sourceId}
+                    aria-keyshortcuts="ArrowLeft ArrowRight ArrowUp ArrowDown Home End"
                     data-memory-route-hop-agreement-control={tick.ordinal}
                     data-memory-route-hop-agreement-source={tick.sourceId}
+                    data-memory-route-hop-agreement-position={
+                      callout.sequenceLabel
+                    }
                     data-memory-route-hop-agreement-focus={
                       focusedSourceId === tick.sourceId ? 'active' : 'idle'
                     }
@@ -1041,6 +1052,23 @@ export default function ConsensusRouteHopMarker({
                       setInspectedAgreementSourceId((current) =>
                         current === tick.sourceId ? null : current,
                       );
+                    }}
+                    onKeyDown={(event) => {
+                      const nextIndex =
+                        deriveConsensusRouteHopAgreementNavigationIndex(
+                          tickIndex,
+                          event.key,
+                          agreementPlan.visibleSourceCount,
+                        );
+                      if (nextIndex === null) return;
+                      event.preventDefault();
+                      event.stopPropagation();
+                      const controls = event.currentTarget.closest(
+                        '[data-memory-route-hop-agreement-controls]',
+                      )?.querySelectorAll<HTMLButtonElement>(
+                        '[data-memory-route-hop-agreement-control]',
+                      );
+                      controls?.item(nextIndex).focus();
                     }}
                     onClick={(event) => {
                       event.stopPropagation();
@@ -1089,6 +1117,9 @@ export default function ConsensusRouteHopMarker({
                         data-memory-route-hop-agreement-callout-fingerprint={
                           callout.fingerprint
                         }
+                        data-memory-route-hop-agreement-callout-position={
+                          callout.sequenceLabel
+                        }
                         style={{
                           position: 'absolute',
                           left: labelX,
@@ -1120,7 +1151,7 @@ export default function ConsensusRouteHopMarker({
                       >
                         <div style={{ display: 'flex', gap: 4 }}>
                           <span style={{ color: signatureColor }}>
-                            {callout.evidenceCode}
+                            {callout.sequenceLabel}
                           </span>
                           <span>{callout.sourceLabel}</span>
                         </div>

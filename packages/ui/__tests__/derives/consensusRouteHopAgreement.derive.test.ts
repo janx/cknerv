@@ -4,6 +4,7 @@ import {
   CONSENSUS_ROUTE_HOP_AGREEMENT_CAP,
   deriveConsensusRouteHopAgreementCallout,
   deriveConsensusRouteHopAgreementEmphasis,
+  deriveConsensusRouteHopAgreementNavigationIndex,
   deriveConsensusRouteHopAgreementPlan,
 } from '../../src/derives/consensusRouteHopAgreement.derive';
 import type {
@@ -162,10 +163,13 @@ describe('deriveConsensusRouteHopAgreementPlan', () => {
       target(),
     );
     const tick = model.ticks[1];
-    const callout = deriveConsensusRouteHopAgreementCallout(tick);
+    const callout = deriveConsensusRouteHopAgreementCallout(tick, {
+      visibleSourceCount: model.visibleSourceCount,
+    });
 
     expect(callout).toMatchObject({
       evidenceCode: 'E02',
+      sequenceLabel: 'E02/02',
       sourceLabel: 'CELL #24',
       fingerprint: 'EVIDENCE-24',
       side: Math.cos(tick.angle) >= 0 ? 'right' : 'left',
@@ -173,12 +177,51 @@ describe('deriveConsensusRouteHopAgreementPlan', () => {
     expect(Math.hypot(callout.anchorXPx, callout.anchorYPx)).toBeCloseTo(32);
     expect(Math.abs(callout.offsetYPx)).toBeLessThanOrEqual(6);
     expect(Math.hypot(
-      deriveConsensusRouteHopAgreementCallout(tick, 200).anchorXPx,
-      deriveConsensusRouteHopAgreementCallout(tick, 200).anchorYPx,
+      deriveConsensusRouteHopAgreementCallout(tick, {
+        radiusPx: 200,
+      }).anchorXPx,
+      deriveConsensusRouteHopAgreementCallout(tick, {
+        radiusPx: 200,
+      }).anchorYPx,
     )).toBeCloseTo(64);
     expect(Math.hypot(
-      deriveConsensusRouteHopAgreementCallout(tick, Number.NaN).anchorXPx,
-      deriveConsensusRouteHopAgreementCallout(tick, Number.NaN).anchorYPx,
+      deriveConsensusRouteHopAgreementCallout(tick, {
+        radiusPx: Number.NaN,
+      }).anchorXPx,
+      deriveConsensusRouteHopAgreementCallout(tick, {
+        radiusPx: Number.NaN,
+      }).anchorYPx,
     )).toBeCloseTo(32);
+  });
+
+  it('scans signatures in stable ledger order without stealing other keys', () => {
+    expect(deriveConsensusRouteHopAgreementNavigationIndex(
+      0,
+      'ArrowLeft',
+      3,
+    )).toBe(2);
+    expect(deriveConsensusRouteHopAgreementNavigationIndex(
+      2,
+      'ArrowRight',
+      3,
+    )).toBe(0);
+    expect(deriveConsensusRouteHopAgreementNavigationIndex(
+      1,
+      'ArrowUp',
+      3,
+    )).toBe(0);
+    expect(deriveConsensusRouteHopAgreementNavigationIndex(
+      1,
+      'ArrowDown',
+      3,
+    )).toBe(2);
+    expect(deriveConsensusRouteHopAgreementNavigationIndex(1, 'Home', 3))
+      .toBe(0);
+    expect(deriveConsensusRouteHopAgreementNavigationIndex(1, 'End', 3))
+      .toBe(2);
+    expect(deriveConsensusRouteHopAgreementNavigationIndex(1, 'Enter', 3))
+      .toBeNull();
+    expect(deriveConsensusRouteHopAgreementNavigationIndex(0, 'ArrowRight', 0))
+      .toBeNull();
   });
 });

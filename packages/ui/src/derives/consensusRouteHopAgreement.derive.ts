@@ -46,6 +46,7 @@ export interface ConsensusRouteHopAgreementEmphasis {
 
 export interface ConsensusRouteHopAgreementCallout {
   evidenceCode: string;
+  sequenceLabel: string;
   sourceLabel: string;
   fingerprint: string;
   anchorXPx: number;
@@ -53,6 +54,19 @@ export interface ConsensusRouteHopAgreementCallout {
   offsetYPx: number;
   side: 'left' | 'right';
 }
+
+export interface ConsensusRouteHopAgreementCalloutOptions {
+  radiusPx?: number;
+  visibleSourceCount?: number;
+}
+
+export type ConsensusRouteHopAgreementNavigationKey =
+  | 'ArrowLeft'
+  | 'ArrowRight'
+  | 'ArrowUp'
+  | 'ArrowDown'
+  | 'Home'
+  | 'End';
 
 function emptyAgreementPlan(targetCellId: number): ConsensusRouteHopAgreementPlan {
   return {
@@ -177,15 +191,25 @@ export function deriveConsensusRouteHopAgreementEmphasis(
  */
 export function deriveConsensusRouteHopAgreementCallout(
   tick: ConsensusRouteHopAgreementTick,
-  radiusPx = 32,
+  options: ConsensusRouteHopAgreementCalloutOptions = {},
 ): ConsensusRouteHopAgreementCallout {
+  const radiusPx = options.radiusPx ?? 32;
   const safeRadiusPx = Number.isFinite(radiusPx)
     ? Math.min(64, Math.max(0, radiusPx))
     : 32;
+  const safeOrdinal = Number.isFinite(tick.ordinal)
+    ? Math.max(1, Math.trunc(tick.ordinal))
+    : 1;
+  const requestedCount = options.visibleSourceCount ?? safeOrdinal;
+  const safeVisibleSourceCount = Number.isFinite(requestedCount)
+    ? Math.max(safeOrdinal, Math.trunc(requestedCount))
+    : safeOrdinal;
+  const evidenceCode = `E${String(safeOrdinal).padStart(2, '0')}`;
   const xDirection = Math.cos(tick.angle);
   const yDirection = Math.sin(tick.angle);
   return {
-    evidenceCode: `E${String(tick.ordinal).padStart(2, '0')}`,
+    evidenceCode,
+    sequenceLabel: `${evidenceCode}/${String(safeVisibleSourceCount).padStart(2, '0')}`,
     sourceLabel: `CELL #${tick.sourceId}`,
     fingerprint: consensusMemoryEvidenceFingerprint(tick.contentHash),
     anchorXPx: xDirection * safeRadiusPx,
@@ -195,4 +219,37 @@ export function deriveConsensusRouteHopAgreementCallout(
       : 0,
     side: xDirection >= 0 ? 'right' : 'left',
   };
+}
+
+/**
+ * Resolve keyboard scanning in stable evidence-ledger order. Arrow navigation
+ * wraps, while Home/End expose deterministic first/last shortcuts. Unknown
+ * keys return null so parent route and camera controls remain untouched.
+ */
+export function deriveConsensusRouteHopAgreementNavigationIndex(
+  currentIndex: number,
+  key: string,
+  itemCount: number,
+): number | null {
+  const safeItemCount = Number.isFinite(itemCount)
+    ? Math.max(0, Math.trunc(itemCount))
+    : 0;
+  if (safeItemCount === 0) return null;
+  const safeCurrentIndex = Number.isFinite(currentIndex)
+    ? Math.min(safeItemCount - 1, Math.max(0, Math.trunc(currentIndex)))
+    : 0;
+  switch (key as ConsensusRouteHopAgreementNavigationKey) {
+    case 'ArrowLeft':
+    case 'ArrowUp':
+      return (safeCurrentIndex - 1 + safeItemCount) % safeItemCount;
+    case 'ArrowRight':
+    case 'ArrowDown':
+      return (safeCurrentIndex + 1) % safeItemCount;
+    case 'Home':
+      return 0;
+    case 'End':
+      return safeItemCount - 1;
+    default:
+      return null;
+  }
 }
