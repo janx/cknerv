@@ -261,4 +261,71 @@ describe('ConsensusMemoryMarkers', () => {
     expect(arriving.getAttribute('data-memory-evidence-focus')).toBe('active');
     expect(arriving.getAttribute('data-memory-source-handoff')).toBe('idle');
   });
+
+  it('retains endpoint DOM across a same-route replay but not changed geometry', () => {
+    const cache = emptyCellsCache();
+    cache.cells.set(8, cell(8, 'a'));
+    cache.cells.set(5, cell(5, 'b'));
+    const firstFocus = focus();
+    const view = render(
+      <CellGalaxyProvider value={cache}>
+        <ConsensusMemoryMarkers focus={firstFocus} />
+      </CellGalaxyProvider>,
+    );
+
+    act(() => {
+      simClock.elapsedSec = 2;
+      simFrameMock.callback?.();
+    });
+    const firstTarget = view.container.querySelector<HTMLElement>(
+      '[data-memory-endpoint="target"]',
+    )!;
+    expect(Number(firstTarget.style.opacity)).toBeGreaterThan(0);
+
+    const replayFocus = focus({
+      key: '7:2',
+      startedAtSec: 2.1,
+      endsAtSec: 5,
+      visualContinuity: {
+        mode: 'floor',
+        floorStrength: 0.75,
+        endsAtSec: 2.26,
+      },
+    });
+    view.rerender(
+      <CellGalaxyProvider value={cache}>
+        <ConsensusMemoryMarkers focus={replayFocus} />
+      </CellGalaxyProvider>,
+    );
+    const replayTarget = view.container.querySelector<HTMLElement>(
+      '[data-memory-endpoint="target"]',
+    )!;
+    expect(replayTarget).toBe(firstTarget);
+    expect(replayTarget.dataset.memoryTraceContinuity).toBe('floor');
+    expect(Number(replayTarget.style.opacity)).toBeGreaterThan(0);
+
+    const changedFocus = focus({
+      key: '8:1',
+      sources: [{
+        ...focusSource(8, 'a', 2.1, 2.8),
+        routes: [{
+          ...focusSource(8, 'a', 2.1, 2.8).routes[0],
+          path: [8, 28, 30, 5],
+          hopCount: 3,
+        }],
+      }],
+      startedAtSec: 2.1,
+      endsAtSec: 5,
+    });
+    view.rerender(
+      <CellGalaxyProvider value={cache}>
+        <ConsensusMemoryMarkers focus={changedFocus} />
+      </CellGalaxyProvider>,
+    );
+    const changedTarget = view.container.querySelector<HTMLElement>(
+      '[data-memory-endpoint="target"]',
+    )!;
+    expect(changedTarget).not.toBe(firstTarget);
+    expect(changedTarget.style.opacity).toBe('0');
+  });
 });

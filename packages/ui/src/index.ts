@@ -137,6 +137,7 @@ export { default as NetworkColony } from './components/NetworkColony';
 
 // ── Consensus flow overlay (Cell→Cell protocol writes) ──────────────
 export { default as NeuralNetwork } from './nerve/NeuralNetwork';
+export { consensusMemoryTraceIdentityKey } from './nerve/consensusMemoryTraceContinuity';
 export { default as DendriticBurst } from './nerve/DendriticBurst';
 export { default as ConsensusWriteSeal } from './nerve/DendriticBurst';
 export {

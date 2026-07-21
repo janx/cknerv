@@ -92,6 +92,19 @@ export interface ConsensusMemoryTracePlan {
   witnessIds: number[];
 }
 
+/**
+ * A short, display-only floor used when the same verified trace is replayed
+ * before its exit afterimage has finished. The floor expires only after the
+ * new native envelope has caught up, so it cannot extend semantic readout or
+ * create a route that was not present in either verified focus.
+ */
+export interface ConsensusMemoryVisualContinuity {
+  mode: 'floor' | 'hold' | 'release';
+  floorStrength: number;
+  startedAtSec?: number;
+  endsAtSec: number;
+}
+
 export interface ConsensusMemoryTraceFocusSource {
   id: number;
   contentHash: string;
@@ -100,6 +113,7 @@ export interface ConsensusMemoryTraceFocusSource {
   startsAtSec: number;
   arrivesAtSec: number;
   routes: ConsensusMemoryTraceRoute[];
+  visualContinuity?: ConsensusMemoryVisualContinuity;
 }
 
 export interface ConsensusMemoryTraceRoute {
@@ -133,6 +147,8 @@ export interface ConsensusMemoryTraceFocus {
   evidenceFocusSourceId: number | null;
   /** UI-only inspection of one exact Cell retained in one exact route. */
   routeHopFocus: ConsensusMemoryRouteHopFocus | null;
+  /** Display-only replay bridge; never changes route/readout lifetime. */
+  visualContinuity?: ConsensusMemoryVisualContinuity;
 }
 
 /**
@@ -217,6 +233,22 @@ const smoothUnit = (value: number): number => {
   const t = Math.max(0, Math.min(1, value));
   return t * t * (3 - 2 * t);
 };
+
+function consensusMemoryVisualContinuityFloor(
+  continuity: ConsensusMemoryVisualContinuity | undefined,
+  nowSec: number,
+): number {
+  if (!continuity || nowSec >= continuity.endsAtSec) return 0;
+  const strength = Number.isFinite(continuity.floorStrength)
+    ? clampUnit(continuity.floorStrength)
+    : 0;
+  if (continuity.mode !== 'release') return strength;
+  const startedAtSec = continuity.startedAtSec;
+  if (startedAtSec === undefined || !Number.isFinite(startedAtSec)) return 0;
+  const duration = continuity.endsAtSec - startedAtSec;
+  if (!(duration > 0)) return 0;
+  return strength * (1 - smoothUnit((nowSec - startedAtSec) / duration));
+}
 
 /**
  * Focus only endpoints that actually participate in a planned route. The
@@ -684,10 +716,20 @@ export function consensusMemoryTraceFocusStrength(
   if (!focus || !Number.isFinite(nowSec)) return 0;
   const ageMs = (nowSec - focus.startedAtSec) * 1000;
   const remainingMs = (focus.endsAtSec - nowSec) * 1000;
-  if (ageMs < 0 || remainingMs <= 0) return 0;
+  const continuityStrength = consensusMemoryVisualContinuityFloor(
+    focus.visualContinuity,
+    nowSec,
+  );
+  if (remainingMs <= 0) return 0;
+  // A React effect may stamp the new replay a fraction of a render frame
+  // ahead of SimClockTicker. Keep the verified predecessor visible across
+  // that clock boundary instead of producing one black frame.
+  if (ageMs < 0) return continuityStrength;
   const fadeIn = smoothUnit(ageMs / MEMORY_TRACE_FOCUS_FADE_IN_MS);
   const fadeOut = smoothUnit(remainingMs / MEMORY_TRACE_FOCUS_FADE_OUT_MS);
-  return fadeIn * fadeOut;
+  return focus.visualContinuity?.mode === 'release'
+    ? continuityStrength
+    : Math.max(fadeIn * fadeOut, continuityStrength);
 }
 
 /** Reveal each real source shortly before its own phased route departs. */
@@ -698,9 +740,19 @@ export function consensusMemoryTraceSourceStrength(
   if (!Number.isFinite(nowSec)) return 0;
   const revealAgeMs = (nowSec - source.startsAtSec) * 1000
     + MEMORY_TRACE_SOURCE_REVEAL_LEAD_MS;
-  if (revealAgeMs <= 1e-6) return 0;
-  if (revealAgeMs >= MEMORY_TRACE_SOURCE_REVEAL_MS) return 1;
-  return smoothUnit(revealAgeMs / MEMORY_TRACE_SOURCE_REVEAL_MS);
+  const nativeStrength = revealAgeMs <= 1e-6
+    ? 0
+    : revealAgeMs >= MEMORY_TRACE_SOURCE_REVEAL_MS
+      ? 1
+      : smoothUnit(revealAgeMs / MEMORY_TRACE_SOURCE_REVEAL_MS);
+  const continuityStrength = consensusMemoryVisualContinuityFloor(
+    source.visualContinuity,
+    nowSec,
+  );
+  return source.visualContinuity?.mode === 'hold'
+    || source.visualContinuity?.mode === 'release'
+    ? continuityStrength
+    : Math.max(nativeStrength, continuityStrength);
 }
 
 const clampUnit = (value: number): number => Math.max(0, Math.min(1, value));

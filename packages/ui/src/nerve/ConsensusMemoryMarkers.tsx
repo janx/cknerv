@@ -20,6 +20,7 @@ import {
   consensusMemorySourceHandoffProgress,
   type ConsensusMemorySourceHandoff,
 } from './consensusMemorySourceHandoff';
+import { consensusMemoryTraceShapeKey } from './consensusMemoryTraceContinuity';
 import {
   chooseConsensusMemoryLabelSide,
   MEMORY_SOURCE_LABEL_RADIAL_SHIFT_PX,
@@ -143,6 +144,10 @@ export default function ConsensusMemoryMarkers({
     }
     return result;
   }, [focus, cellsCache.cells]);
+  const traceShapeKey = useMemo(
+    () => consensusMemoryTraceShapeKey(focus) ?? 'none',
+    [focus],
+  );
 
   useSimFrame(() => {
     const nowSec = simClock.elapsedSec;
@@ -416,7 +421,7 @@ export default function ConsensusMemoryMarkers({
           : focus.routedSourceCount === 1 ? 'WITNESS' : 'WITNESSES';
         return (
           <Html
-            key={`${focus.key}:${role}:${cell.id}`}
+            key={`${traceShapeKey}:${role}:${cell.id}`}
             position={[cell.pos_seed[0], cell.pos_seed[1], cell.pos_seed[2]]}
             zIndexRange={[6, 6]}
             occlude={false}
@@ -433,6 +438,12 @@ export default function ConsensusMemoryMarkers({
               data-memory-evidence-focus={evidenceFocusState}
               data-memory-source-handoff="idle"
               data-memory-source-handoff-progress="1.000"
+              data-memory-trace-continuity={
+                focus.visualContinuity?.mode ?? 'native'
+              }
+              data-memory-trace-continuity-floor={
+                focus.visualContinuity?.floorStrength.toFixed(3) ?? '0.000'
+              }
               data-memory-route={route?.path.join('>')}
               data-memory-route-hops={route?.hopCount}
               data-memory-route-duration-ms={routeDurationMs ?? undefined}
