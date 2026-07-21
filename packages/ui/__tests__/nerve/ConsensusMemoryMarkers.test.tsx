@@ -328,4 +328,59 @@ describe('ConsensusMemoryMarkers', () => {
     expect(changedTarget).not.toBe(firstTarget);
     expect(changedTarget.style.opacity).toBe('0');
   });
+
+  it('keeps departing and arriving records as independent endpoint layers', () => {
+    const cache = emptyCellsCache();
+    cache.cells.set(8, cell(8, 'a'));
+    cache.cells.set(5, cell(5, 'b'));
+    cache.cells.set(9, cell(9, 'c'));
+    cache.cells.set(6, cell(6, 'd'));
+    const departingFocus = focus();
+    const arrivingFocus = focus({
+      key: '8:6:1',
+      sources: [focusSource(9, 'c', 2, 2.5, 6)],
+      targetIds: [6],
+      startedAtSec: 2,
+      endsAtSec: 5,
+      visualContinuity: {
+        mode: 'entry',
+        floorStrength: 0,
+        startedAtSec: 2.1,
+        endsAtSec: 2.5,
+      },
+    });
+    const { container } = render(
+      <CellGalaxyProvider value={cache}>
+        <ConsensusMemoryMarkers
+          focus={departingFocus}
+          recordTransition="departing"
+        />
+        <ConsensusMemoryMarkers
+          focus={arrivingFocus}
+          recordTransition="arriving"
+        />
+      </CellGalaxyProvider>,
+    );
+
+    const departing = container.querySelectorAll<HTMLElement>(
+      '[data-memory-record-transition="departing"]',
+    );
+    const arriving = container.querySelectorAll<HTMLElement>(
+      '[data-memory-record-transition="arriving"]',
+    );
+    expect(departing).toHaveLength(2);
+    expect(arriving).toHaveLength(2);
+    expect(departing[0].dataset.memoryRecordBridge).toBe('independent');
+    expect(arriving[0].dataset.memoryRecordBridge).toBe('independent');
+    expect(departing[0].dataset.memoryRoute).toBe('8>28>5');
+    expect(arriving[0].dataset.memoryRoute).toBe('9>29>6');
+    expect(container.querySelector('[data-memory-route="5>9"]')).toBeNull();
+
+    act(() => {
+      simClock.elapsedSec = 2.5;
+      simFrameMock.callback?.();
+    });
+    expect(arriving[0].dataset.memoryRecordTransition).toBe('native');
+    expect(arriving[0].dataset.memoryRecordBridge).toBe('none');
+  });
 });

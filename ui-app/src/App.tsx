@@ -68,6 +68,7 @@ import {
   CELL_MEMORY_RECALL_MAX_PULSES,
   INITIAL_CELL_MEMORY_RECALL_STATE,
   cellMemoryRecallReducer,
+  cellMemoryRecallWriteSeqForTarget,
 } from './cell-memory-recall-state';
 import {
   cellMemoryRouteAnchor,
@@ -174,7 +175,13 @@ export default function App({
         if (current !== id) memoryRouteHopAnchorRef.current = null;
         return id;
       });
-      dispatchMemoryRecall({ type: 'cancel' });
+      // Selecting another Cell is inspection, not yet a record replacement.
+      // Keep the verified recall alive until the user explicitly recalls the
+      // new Cell, so NeuralNetwork can stage two independent record layers.
+      dispatchMemoryRecall({
+        type: 'inspect',
+        targetCellId: Number(id.slice(CELL_SELECTION_PREFIX.length)),
+      });
     }
     else setSelectedNetId(id);
   }, []);
@@ -536,7 +543,10 @@ export default function App({
         selectedCell={selectedCell}
         cellRecordsById={cellsCache.cells}
         recentCellLinks={cellsCache.recentLinks}
-        tracedCellWriteSeq={memoryTraceRequest?.linkSeq ?? null}
+        tracedCellWriteSeq={cellMemoryRecallWriteSeqForTarget(
+          memoryTraceRequest,
+          selectedCell?.id,
+        )}
         cellTraceSource={selectedOriginTrace?.sourceKind ?? 'none'}
         cellTraceReadout={selectedMemoryTraceReadout}
         cellTraceResponseRef={memoryTraceTargetResponseRef}
@@ -634,6 +644,11 @@ export default function App({
                   pulses={galaxyConfig.pulses}
                   traceRequest={memoryTraceRequest}
                   traceMaxPulses={CELL_MEMORY_RECALL_MAX_PULSES}
+                  traceHoldForRecordSwitch={
+                    memoryTraceRequest !== null
+                    && selectedCell !== null
+                    && selectedCell.id !== memoryTraceRequest.targetCellId
+                  }
                   onTraceComplete={completeMemoryRecall}
                   onTraceReadoutChange={setMemoryTraceReadout}
                   traceTargetResponseRef={memoryTraceTargetResponseRef}
