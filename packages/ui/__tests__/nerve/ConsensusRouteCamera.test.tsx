@@ -4,12 +4,16 @@ import { emptyCellsCache } from '@cknerv/cache';
 import { act, render } from '@testing-library/react';
 import * as THREE from 'three';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { deriveConsensusRecordSafeAnchor } from '../../src/derives/consensusRouteCamera.derive';
+import {
+  CONSENSUS_RECORD_CAMERA_MAX_DISTANCE,
+  deriveConsensusRecordSafeAnchor,
+} from '../../src/derives/consensusRouteCamera.derive';
 import { CELLS_Y } from '../../src/layout';
 import { CellGalaxyProvider } from '../../src/hooks/cellGalaxyContext';
 import ConsensusRouteCamera, {
   type ConsensusRouteCameraControls,
 } from '../../src/nerve/ConsensusRouteCamera';
+import type { ConsensusMemoryTraceReadout } from '../../src/nerve/consensusMemoryTrace';
 import { galaxyFrame } from '../../src/tweaks/galaxyFrame';
 
 const frameMock = vi.hoisted(() => ({
@@ -91,6 +95,29 @@ function screenPosition(world: THREE.Vector3): [number, number] {
   ];
 }
 
+function traceReadout(): ConsensusMemoryTraceReadout {
+  return {
+    key: '19:2:1',
+    targetCellId: 2,
+    sourceKind: 'input',
+    stage: 'reading',
+    sourceCount: 1,
+    arrivedSourceCount: 0,
+    resolvedSourceCount: 0,
+    evidence: [{
+      sourceId: 3,
+      ordinal: 1,
+      contentHash: `0x${'3'.padStart(64, '0')}`,
+      state: 'routing',
+      sourceOutPoint: { tx_hash: '0x3', index: 0 },
+      sourceBirthBlock: 1,
+      route: [3, 4, 2],
+      hopCount: 2,
+      routeDurationMs: 400,
+    }],
+  };
+}
+
 describe('ConsensusRouteCamera record composition', () => {
   beforeEach(() => {
     frameMock.callback = null;
@@ -115,6 +142,19 @@ describe('ConsensusRouteCamera record composition', () => {
     const cache = emptyCellsCache();
     cache.cells.set(1, cell(1, [-12, 0, 4]));
     cache.cells.set(2, cell(2, [20, 1, -8]));
+    cache.cells.set(3, cell(3, [20, 61, -8]));
+    cache.cells.set(4, cell(4, [40, 20, -20]));
+    const readout = traceReadout();
+    const initialReadout: ConsensusMemoryTraceReadout = {
+      ...readout,
+      key: '18:1:1',
+      targetCellId: 1,
+      evidence: [{
+        ...readout.evidence[0],
+        route: [3, 1],
+        hopCount: 1,
+      }],
+    };
     const rightRail = document.createElement('div');
     rightRail.dataset.hudOcclusion = 'true';
     vi.spyOn(rightRail, 'getBoundingClientRect').mockReturnValue(
@@ -158,6 +198,22 @@ describe('ConsensusRouteCamera record composition', () => {
         controlsRef={controlsRef}
         recordIdentity="18:1"
         recordTargetCellId={1}
+        recordTraceReadout={initialReadout}
+      />,
+    ));
+    act(() => {
+      for (let frame = 0; frame < 12; frame += 1) {
+        frameMock.callback?.({}, 0.1);
+      }
+    });
+    expect(cameraMock.current!.position).toEqual(initialPosition);
+    expect(controls.target).toEqual(initialTarget);
+
+    rendered.rerender(view(
+      <ConsensusRouteCamera
+        controlsRef={controlsRef}
+        recordIdentity="18:1"
+        recordTargetCellId={1}
         recordSwitchPending
       />,
     ));
@@ -184,6 +240,14 @@ describe('ConsensusRouteCamera record composition', () => {
     });
     expect(controls.target.distanceTo(initialTarget)).toBeLessThan(0.05);
 
+    rendered.rerender(view(
+      <ConsensusRouteCamera
+        controlsRef={controlsRef}
+        recordIdentity="19:2"
+        recordTargetCellId={2}
+        recordTraceReadout={readout}
+      />,
+    ));
     act(() => {
       for (let frame = 0; frame < 36; frame += 1) {
         frameMock.callback?.({}, 0.1);
@@ -198,8 +262,10 @@ describe('ConsensusRouteCamera record composition', () => {
     const wideScreen = screenPosition(recordWorld);
     expect(wideScreen[0]).toBeCloseTo(wideAnchor[0], 0);
     expect(wideScreen[1]).toBeCloseTo(wideAnchor[1], 0);
-    expect(distance(cameraMock.current!.position, recordWorld))
-      .toBeCloseTo(64, 1);
+    const wideRecordDistance = distance(cameraMock.current!.position, recordWorld);
+    expect(wideRecordDistance).toBeGreaterThan(64);
+    expect(wideRecordDistance)
+      .toBeLessThanOrEqual(CONSENSUS_RECORD_CAMERA_MAX_DISTANCE);
 
     viewportMock.width = 1000;
     cameraMock.current!.aspect = viewportMock.width / viewportMock.height;
@@ -209,6 +275,7 @@ describe('ConsensusRouteCamera record composition', () => {
         controlsRef={controlsRef}
         recordIdentity="19:2"
         recordTargetCellId={2}
+        recordTraceReadout={readout}
       />,
     ));
     act(() => {
@@ -225,18 +292,23 @@ describe('ConsensusRouteCamera record composition', () => {
     expect(narrowScreen[0]).toBeCloseTo(narrowAnchor[0], 0);
     expect(narrowScreen[1]).toBeCloseTo(narrowAnchor[1], 0);
     expect(narrowScreen[0]).not.toBeCloseTo(wideScreen[0], 0);
+    const narrowRecordDistance = distance(cameraMock.current!.position, recordWorld);
+    expect(narrowRecordDistance).toBeGreaterThan(64);
+    expect(narrowRecordDistance)
+      .toBeLessThanOrEqual(CONSENSUS_RECORD_CAMERA_MAX_DISTANCE);
 
     rendered.rerender(view(
       <ConsensusRouteCamera
         controlsRef={controlsRef}
         recordIdentity="19:2"
         recordTargetCellId={2}
+        recordTraceReadout={readout}
         focus={{
           traceKey: '19:2:1',
-          sourceId: 2,
+          sourceId: 3,
           targetCellId: 2,
           cellId: 2,
-          hopIndex: 0,
+          hopIndex: 2,
         }}
       />,
     ));
@@ -253,6 +325,7 @@ describe('ConsensusRouteCamera record composition', () => {
         controlsRef={controlsRef}
         recordIdentity="19:2"
         recordTargetCellId={2}
+        recordTraceReadout={readout}
       />,
     ));
     act(() => {
@@ -261,7 +334,7 @@ describe('ConsensusRouteCamera record composition', () => {
       }
     });
     expect(distance(cameraMock.current!.position, recordWorld))
-      .toBeCloseTo(64, 1);
+      .toBeCloseTo(narrowRecordDistance, 1);
     const restoredScreen = screenPosition(recordWorld);
     expect(restoredScreen[0]).toBeCloseTo(narrowAnchor[0], 0);
     expect(restoredScreen[1]).toBeCloseTo(narrowAnchor[1], 0);

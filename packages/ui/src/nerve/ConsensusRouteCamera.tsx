@@ -1,10 +1,10 @@
-import { useEffect, useRef, type RefObject } from 'react';
+import { useEffect, useMemo, useRef, type RefObject } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useReducedMotion } from '../components/hud/useReducedMotion';
 import {
-  CONSENSUS_RECORD_CAMERA_DISTANCE,
   consensusRouteHopWorldPosition,
+  deriveConsensusRecordCameraDistance,
   deriveConsensusRecordCameraIntent,
   deriveConsensusRecordCameraPose,
   deriveConsensusRecordNeutralCameraPose,
@@ -15,7 +15,10 @@ import {
 import { useCellGalaxy } from '../hooks/cellGalaxyContext';
 import { galaxyFrame } from '../tweaks/galaxyFrame';
 import { CONSENSUS_MEMORY_RECORD_BRIDGE_MAX_SECONDS } from './consensusMemoryRecordBridge';
-import type { ConsensusMemoryRouteHopFocus } from './consensusMemoryTrace';
+import type {
+  ConsensusMemoryRouteHopFocus,
+  ConsensusMemoryTraceReadout,
+} from './consensusMemoryTrace';
 
 const CAMERA_RESPONSE = 6.5;
 const POSITION_EPSILON_SQ = 0.0025;
@@ -42,6 +45,8 @@ export interface ConsensusRouteCameraProps {
   recordIdentity?: string | null;
   /** Exact real Cell framed only after an independent record switch settles. */
   recordTargetCellId?: number | null;
+  /** Exact retained routes whose real Cell extent determines broad framing. */
+  recordTraceReadout?: ConsensusMemoryTraceReadout | null;
   /** A different Cell is being mapped, but its record is not recalled yet. */
   recordSwitchPending?: boolean;
   /** Delay broad record framing until endpoint entry has completed. */
@@ -142,6 +147,7 @@ export default function ConsensusRouteCamera({
   releaseHoldSeconds = CONSENSUS_ROUTE_CAMERA_RELEASE_HOLD_SECONDS,
   recordIdentity = null,
   recordTargetCellId = null,
+  recordTraceReadout = null,
   recordSwitchPending = false,
   recordEntryDelaySeconds = CONSENSUS_RECORD_CAMERA_ENTRY_DELAY_SECONDS,
 }: ConsensusRouteCameraProps) {
@@ -164,6 +170,42 @@ export default function ConsensusRouteCamera({
     : 50;
   const compositionKey = `${viewportWidth}:${viewportHeight}:${verticalFovDegrees}`;
   const previousCompositionKeyRef = useRef(compositionKey);
+
+  const recordRouteCells = useMemo(() => {
+    if (
+      recordIdentity === null
+      || recordTargetCellId === null
+      || recordTraceReadout?.targetCellId !== recordTargetCellId
+      || !recordTraceReadout.key.startsWith(`${recordIdentity}:`)
+    ) return [];
+    const evidenceRoutes = recordTraceReadout.evidence.filter((evidence) => (
+      evidence.route[0] === evidence.sourceId
+      && evidence.route.at(-1) === recordTargetCellId
+    ));
+    const endpointIds = new Set<number>([
+      recordTargetCellId,
+      ...evidenceRoutes.map((evidence) => evidence.sourceId),
+    ]);
+    const orderedIds: number[] = [];
+    const seen = new Set<number>();
+    const append = (id: number) => {
+      if (!Number.isFinite(id) || seen.has(id)) return;
+      seen.add(id);
+      orderedIds.push(id);
+    };
+    append(recordTargetCellId);
+    for (const evidence of evidenceRoutes) {
+      evidence.route.forEach(append);
+    }
+    return orderedIds.map((id) => ({
+      id,
+      role: endpointIds.has(id) ? 'endpoint' : 'carrier',
+    } as const));
+  }, [recordIdentity, recordTargetCellId, recordTraceReadout]);
+  const recordGeometryKey = recordRouteCells
+    .map(({ id, role }) => `${id}:${role}`)
+    .join('|');
+  const previousRecordGeometryKeyRef = useRef(recordGeometryKey);
 
   const focusedCell = focus ? cellsCache.cells.get(focus.cellId) ?? null : null;
   const cellX = focusedCell?.pos_seed[0] ?? null;
@@ -198,6 +240,8 @@ export default function ConsensusRouteCamera({
     const previousSwitchPending = previousRecordSwitchPendingRef.current;
     const previousRouteFocusIdentity = previousRouteFocusIdentityRef.current;
     const compositionChanged = previousCompositionKeyRef.current !== compositionKey;
+    const recordGeometryChanged = previousRecordGeometryKeyRef.current
+      !== recordGeometryKey;
     const routeFocusIdentity = focus
       && cellX !== null
       && cellY !== null
@@ -221,6 +265,7 @@ export default function ConsensusRouteCamera({
     previousRecordSwitchPendingRef.current = recordSwitchPending;
     previousRouteFocusIdentityRef.current = routeFocusIdentity;
     previousCompositionKeyRef.current = compositionKey;
+    previousRecordGeometryKeyRef.current = recordGeometryKey;
 
     const existingSession = sessionRef.current;
     if (existingSession?.manuallyAdjusted) {
@@ -266,23 +311,47 @@ export default function ConsensusRouteCamera({
         [recordCellX, recordCellY, recordCellZ],
         galaxyFrame.rotationY,
       );
+      const hudOcclusions = measureHudOcclusions(
+        canvas,
+        viewportWidth,
+        viewportHeight,
+      );
       const anchor = deriveConsensusRecordSafeAnchor(
         viewportWidth,
         viewportHeight,
-        measureHudOcclusions(canvas, viewportWidth, viewportHeight),
+        hudOcclusions,
+      );
+      const composition = {
+        viewportWidth,
+        viewportHeight,
+        verticalFovDegrees,
+        anchor,
+        cameraUp: camera.up.toArray(),
+      };
+      const routePoints = recordRouteCells.flatMap(({ id, role }) => {
+        const cell = cellsCache.cells.get(id);
+        return cell ? [{
+          position: consensusRouteHopWorldPosition(
+            cell.pos_seed,
+            galaxyFrame.rotationY,
+          ),
+          role,
+        }] : [];
+      });
+      const distance = deriveConsensusRecordCameraDistance(
+        camera.position.toArray(),
+        controls.target.toArray(),
+        recordWorld,
+        routePoints,
+        composition,
+        hudOcclusions,
       );
       const record = deriveConsensusRecordCameraPose(
         camera.position.toArray(),
         controls.target.toArray(),
         recordWorld,
-        CONSENSUS_RECORD_CAMERA_DISTANCE,
-        {
-          viewportWidth,
-          viewportHeight,
-          verticalFovDegrees,
-          anchor,
-          cameraUp: camera.up.toArray(),
-        },
+        distance,
+        composition,
       );
       return poseVectors(record.position, record.target);
     };
@@ -356,7 +425,7 @@ export default function ConsensusRouteCamera({
 
     if (
       recordIntent === 'idle'
-      && compositionChanged
+      && (compositionChanged || recordGeometryChanged)
       && routeFocusIdentity === null
       && existingSession?.recordFramed
       && existingSession.recordIdentity === recordIdentity
@@ -444,6 +513,7 @@ export default function ConsensusRouteCamera({
     recordCellY,
     recordCellZ,
     recordEntryDelaySeconds,
+    recordGeometryKey,
     recordIdentity,
     recordSwitchPending,
     reducedMotion,

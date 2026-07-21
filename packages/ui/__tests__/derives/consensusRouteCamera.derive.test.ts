@@ -3,12 +3,14 @@ import * as THREE from 'three';
 import {
   CONSENSUS_RECORD_CAMERA_DISTANCE,
   CONSENSUS_RECORD_CAMERA_HUD_GAP_PX,
+  CONSENSUS_RECORD_CAMERA_MAX_DISTANCE,
   CONSENSUS_RECORD_CAMERA_NEUTRAL_MIN_DISTANCE,
   CONSENSUS_RECORD_CAMERA_PREFERRED_Y_RATIO,
   CONSENSUS_RECORD_CAMERA_SAFE_WIDTH_PX,
   CONSENSUS_ROUTE_CAMERA_DISTANCE,
   consensusRouteHopWorldPosition,
   deriveConsensusRecordCameraIntent,
+  deriveConsensusRecordCameraDistance,
   deriveConsensusRecordCameraPose,
   deriveConsensusRecordNeutralCameraPose,
   deriveConsensusRecordSafeAnchor,
@@ -198,6 +200,87 @@ describe('consensus route camera derive', () => {
     expect(distance(pose.position, recordWorld))
       .toBeCloseTo(CONSENSUS_RECORD_CAMERA_DISTANCE, 8);
     expect(pose.target).not.toEqual(recordWorld);
+  });
+
+  it('widens only when verified route carriers need more viewport space', () => {
+    const composition = {
+      viewportWidth: 1000,
+      viewportHeight: 800,
+      verticalFovDegrees: 50,
+      anchor: [500, 400] as const,
+      cameraUp: [0, 1, 0] as [number, number, number],
+    };
+    const currentPosition: [number, number, number] = [0, 0, 64];
+    const currentTarget: [number, number, number] = [0, 0, 0];
+    const recordWorld: [number, number, number] = [0, 0, 0];
+    const compact = deriveConsensusRecordCameraDistance(
+      currentPosition,
+      currentTarget,
+      recordWorld,
+      [
+        { position: recordWorld, role: 'endpoint' },
+        { position: [10, 0, 0], role: 'carrier' },
+      ],
+      composition,
+    );
+    const extended = deriveConsensusRecordCameraDistance(
+      currentPosition,
+      currentTarget,
+      recordWorld,
+      [
+        { position: recordWorld, role: 'endpoint' },
+        { position: [70, 0, 0], role: 'carrier' },
+      ],
+      composition,
+    );
+    const capped = deriveConsensusRecordCameraDistance(
+      currentPosition,
+      currentTarget,
+      recordWorld,
+      [
+        { position: recordWorld, role: 'endpoint' },
+        { position: [300, 0, 0], role: 'carrier' },
+      ],
+      composition,
+    );
+
+    expect(compact).toBe(CONSENSUS_RECORD_CAMERA_DISTANCE);
+    expect(extended).toBeGreaterThan(CONSENSUS_RECORD_CAMERA_DISTANCE);
+    expect(extended).toBeLessThan(CONSENSUS_RECORD_CAMERA_MAX_DISTANCE);
+    expect(capped).toBe(CONSENSUS_RECORD_CAMERA_MAX_DISTANCE);
+  });
+
+  it('keeps carrier semantics separate from endpoint HUD clearance', () => {
+    const composition = {
+      viewportWidth: 1000,
+      viewportHeight: 800,
+      verticalFovDegrees: 50,
+      anchor: [500, 400] as const,
+      cameraUp: [0, 1, 0] as [number, number, number],
+    };
+    const common = [
+      { position: [0, 0, 0] as [number, number, number], role: 'endpoint' as const },
+    ];
+    const obstacle = [{ left: 850, top: 0, right: 950, bottom: 800 }];
+    const carrierDistance = deriveConsensusRecordCameraDistance(
+      [0, 0, 64],
+      [0, 0, 0],
+      [0, 0, 0],
+      [...common, { position: [30, 0, 0], role: 'carrier' }],
+      composition,
+      obstacle,
+    );
+    const endpointDistance = deriveConsensusRecordCameraDistance(
+      [0, 0, 64],
+      [0, 0, 0],
+      [0, 0, 0],
+      [...common, { position: [30, 0, 0], role: 'endpoint' }],
+      composition,
+      obstacle,
+    );
+
+    expect(carrierDistance).toBe(CONSENSUS_RECORD_CAMERA_DISTANCE);
+    expect(endpointDistance).toBeGreaterThan(carrierDistance);
   });
 
   it('derives neutral space without using either record target', () => {
