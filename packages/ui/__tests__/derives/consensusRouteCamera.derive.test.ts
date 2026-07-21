@@ -1,12 +1,17 @@
 import { describe, expect, it } from 'vitest';
+import * as THREE from 'three';
 import {
   CONSENSUS_RECORD_CAMERA_DISTANCE,
+  CONSENSUS_RECORD_CAMERA_HUD_GAP_PX,
   CONSENSUS_RECORD_CAMERA_NEUTRAL_MIN_DISTANCE,
+  CONSENSUS_RECORD_CAMERA_PREFERRED_Y_RATIO,
+  CONSENSUS_RECORD_CAMERA_SAFE_WIDTH_PX,
   CONSENSUS_ROUTE_CAMERA_DISTANCE,
   consensusRouteHopWorldPosition,
   deriveConsensusRecordCameraIntent,
   deriveConsensusRecordCameraPose,
   deriveConsensusRecordNeutralCameraPose,
+  deriveConsensusRecordSafeAnchor,
   deriveConsensusRouteCameraPose,
 } from '../../src/derives/consensusRouteCamera.derive';
 import { CELLS_Y } from '../../src/layout';
@@ -117,6 +122,82 @@ describe('consensus route camera derive', () => {
       .toBeCloseTo(CONSENSUS_RECORD_CAMERA_DISTANCE, 8);
     expect(CONSENSUS_RECORD_CAMERA_DISTANCE)
       .toBeGreaterThan(CONSENSUS_ROUTE_CAMERA_DISTANCE);
+  });
+
+  it('moves the record anchor only far enough to clear measured HUD rails', () => {
+    const viewportWidth = 1440;
+    const viewportHeight = 800;
+    const unobstructed = deriveConsensusRecordSafeAnchor(
+      viewportWidth,
+      viewportHeight,
+    );
+    const rightRail = { left: 760, top: 40, right: 1440, bottom: 790 };
+    const guarded = deriveConsensusRecordSafeAnchor(
+      viewportWidth,
+      viewportHeight,
+      [rightRail],
+    );
+
+    expect(unobstructed[0]).toBe(viewportWidth / 2);
+    expect(unobstructed[1]).toBe(
+      viewportHeight * CONSENSUS_RECORD_CAMERA_PREFERRED_Y_RATIO,
+    );
+    expect(guarded[0]).toBeCloseTo(
+      rightRail.left
+        - CONSENSUS_RECORD_CAMERA_HUD_GAP_PX
+        - CONSENSUS_RECORD_CAMERA_SAFE_WIDTH_PX / 2,
+      8,
+    );
+    expect(guarded[1]).toBe(unobstructed[1]);
+
+    const narrow = deriveConsensusRecordSafeAnchor(1000, 800, [
+      { left: 720, top: 40, right: 1000, bottom: 790 },
+    ]);
+    expect(narrow).toEqual([500, unobstructed[1]]);
+  });
+
+  it('projects the exact record Cell onto the derived safe anchor', () => {
+    const viewportWidth = 1440;
+    const viewportHeight = 800;
+    const anchor = deriveConsensusRecordSafeAnchor(
+      viewportWidth,
+      viewportHeight,
+      [{ left: 760, top: 40, right: 1440, bottom: 790 }],
+    );
+    const recordWorld: [number, number, number] = [-8, 39, 5];
+    const pose = deriveConsensusRecordCameraPose(
+      [12, 10, 14],
+      [2, 4, 6],
+      recordWorld,
+      CONSENSUS_RECORD_CAMERA_DISTANCE,
+      {
+        viewportWidth,
+        viewportHeight,
+        verticalFovDegrees: 50,
+        anchor,
+        cameraUp: [0, 1, 0],
+      },
+    );
+    const camera = new THREE.PerspectiveCamera(
+      50,
+      viewportWidth / viewportHeight,
+      0.1,
+      1000,
+    );
+    camera.position.set(...pose.position);
+    camera.lookAt(...pose.target);
+    camera.updateMatrixWorld();
+    const projected = new THREE.Vector3(...recordWorld).project(camera);
+    const screen = [
+      (projected.x + 1) * viewportWidth / 2,
+      (1 - projected.y) * viewportHeight / 2,
+    ];
+
+    expect(screen[0]).toBeCloseTo(anchor[0], 6);
+    expect(screen[1]).toBeCloseTo(anchor[1], 6);
+    expect(distance(pose.position, recordWorld))
+      .toBeCloseTo(CONSENSUS_RECORD_CAMERA_DISTANCE, 8);
+    expect(pose.target).not.toEqual(recordWorld);
   });
 
   it('derives neutral space without using either record target', () => {

@@ -3,11 +3,14 @@ import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useReducedMotion } from '../components/hud/useReducedMotion';
 import {
+  CONSENSUS_RECORD_CAMERA_DISTANCE,
   consensusRouteHopWorldPosition,
   deriveConsensusRecordCameraIntent,
   deriveConsensusRecordCameraPose,
   deriveConsensusRecordNeutralCameraPose,
+  deriveConsensusRecordSafeAnchor,
   deriveConsensusRouteCameraPose,
+  type ConsensusRecordCameraScreenRect,
 } from '../derives/consensusRouteCamera.derive';
 import { useCellGalaxy } from '../hooks/cellGalaxyContext';
 import { galaxyFrame } from '../tweaks/galaxyFrame';
@@ -55,6 +58,8 @@ interface CameraSession {
   restPose: CameraPoseVectors;
   manuallyAdjusted: boolean;
   neutralized: boolean;
+  recordFramed: boolean;
+  recordIdentity: string | null;
 }
 
 interface CameraTransition {
@@ -90,6 +95,40 @@ function clonePose(pose: CameraPoseVectors): CameraPoseVectors {
   };
 }
 
+function measureHudOcclusions(
+  canvas: HTMLCanvasElement,
+  viewportWidth: number,
+  viewportHeight: number,
+): ConsensusRecordCameraScreenRect[] {
+  if (typeof document === 'undefined') return [];
+  const canvasRect = canvas.getBoundingClientRect();
+  const hasCanvasBounds = canvasRect.width > 0 && canvasRect.height > 0;
+  const left = hasCanvasBounds ? canvasRect.left : 0;
+  const top = hasCanvasBounds ? canvasRect.top : 0;
+  const scaleX = hasCanvasBounds ? viewportWidth / canvasRect.width : 1;
+  const scaleY = hasCanvasBounds ? viewportHeight / canvasRect.height : 1;
+  return Array.from(
+    document.querySelectorAll<HTMLElement>('[data-hud-occlusion="true"]'),
+  ).flatMap((element) => {
+    const rect = element.getBoundingClientRect();
+    const measured = {
+      left: (rect.left - left) * scaleX,
+      top: (rect.top - top) * scaleY,
+      right: (rect.right - left) * scaleX,
+      bottom: (rect.bottom - top) * scaleY,
+    };
+    const clipped = {
+      left: Math.max(0, measured.left),
+      top: Math.max(0, measured.top),
+      right: Math.min(viewportWidth, measured.right),
+      bottom: Math.min(viewportHeight, measured.bottom),
+    };
+    return clipped.right > clipped.left && clipped.bottom > clipped.top
+      ? [clipped]
+      : [];
+  });
+}
+
 /**
  * Frames explicit record and route inspection while hover remains passive.
  * Record replacement crosses identity-free neutral space before a broad target
@@ -108,6 +147,9 @@ export default function ConsensusRouteCamera({
 }: ConsensusRouteCameraProps) {
   const reducedMotion = useReducedMotion();
   const camera = useThree((state) => state.camera);
+  const canvas = useThree((state) => state.gl.domElement);
+  const viewportWidth = useThree((state) => state.size.width);
+  const viewportHeight = useThree((state) => state.size.height);
   const cellsCache = useCellGalaxy();
   const sessionRef = useRef<CameraSession | null>(null);
   const transitionRef = useRef<CameraTransition | null>(null);
@@ -117,6 +159,11 @@ export default function ConsensusRouteCamera({
   const previousRecordIdentityRef = useRef(recordIdentity);
   const previousRecordSwitchPendingRef = useRef(recordSwitchPending);
   const previousRouteFocusIdentityRef = useRef<string | null>(null);
+  const verticalFovDegrees = camera instanceof THREE.PerspectiveCamera
+    ? camera.fov
+    : 50;
+  const compositionKey = `${viewportWidth}:${viewportHeight}:${verticalFovDegrees}`;
+  const previousCompositionKeyRef = useRef(compositionKey);
 
   const focusedCell = focus ? cellsCache.cells.get(focus.cellId) ?? null : null;
   const cellX = focusedCell?.pos_seed[0] ?? null;
@@ -150,6 +197,7 @@ export default function ConsensusRouteCamera({
     const previousRecordIdentity = previousRecordIdentityRef.current;
     const previousSwitchPending = previousRecordSwitchPendingRef.current;
     const previousRouteFocusIdentity = previousRouteFocusIdentityRef.current;
+    const compositionChanged = previousCompositionKeyRef.current !== compositionKey;
     const routeFocusIdentity = focus
       && cellX !== null
       && cellY !== null
@@ -172,6 +220,7 @@ export default function ConsensusRouteCamera({
     previousRecordIdentityRef.current = recordIdentity;
     previousRecordSwitchPendingRef.current = recordSwitchPending;
     previousRouteFocusIdentityRef.current = routeFocusIdentity;
+    previousCompositionKeyRef.current = compositionKey;
 
     const existingSession = sessionRef.current;
     if (existingSession?.manuallyAdjusted) {
@@ -194,6 +243,8 @@ export default function ConsensusRouteCamera({
         restPose: clonePose(returnPose),
         manuallyAdjusted: false,
         neutralized: false,
+        recordFramed: false,
+        recordIdentity: null,
       };
       sessionRef.current = session;
       return session;
@@ -207,6 +258,34 @@ export default function ConsensusRouteCamera({
     const holdSeconds = reducedMotion || !Number.isFinite(releaseHoldSeconds)
       ? 0
       : Math.max(0, releaseHoldSeconds);
+    const deriveRecordPose = (): CameraPoseVectors | null => {
+      if (recordCellX === null || recordCellY === null || recordCellZ === null) {
+        return null;
+      }
+      const recordWorld = consensusRouteHopWorldPosition(
+        [recordCellX, recordCellY, recordCellZ],
+        galaxyFrame.rotationY,
+      );
+      const anchor = deriveConsensusRecordSafeAnchor(
+        viewportWidth,
+        viewportHeight,
+        measureHudOcclusions(canvas, viewportWidth, viewportHeight),
+      );
+      const record = deriveConsensusRecordCameraPose(
+        camera.position.toArray(),
+        controls.target.toArray(),
+        recordWorld,
+        CONSENSUS_RECORD_CAMERA_DISTANCE,
+        {
+          viewportWidth,
+          viewportHeight,
+          verticalFovDegrees,
+          anchor,
+          cameraUp: camera.up.toArray(),
+        },
+      );
+      return poseVectors(record.position, record.target);
+    };
 
     if (recordIntent === 'neutral') {
       const session = ensureSession();
@@ -219,6 +298,8 @@ export default function ConsensusRouteCamera({
       const neutralPose = poseVectors(neutral.position, neutral.target);
       session.restPose = neutralPose;
       session.neutralized = true;
+      session.recordFramed = false;
+      session.recordIdentity = null;
       queuedTransitionRef.current = null;
       if (holdSeconds > 0) {
         transitionRef.current = null;
@@ -241,17 +322,11 @@ export default function ConsensusRouteCamera({
       && recordCellZ !== null
     ) {
       const session = ensureSession();
-      const recordWorld = consensusRouteHopWorldPosition(
-        [recordCellX, recordCellY, recordCellZ],
-        galaxyFrame.rotationY,
-      );
-      const record = deriveConsensusRecordCameraPose(
-        camera.position.toArray(),
-        controls.target.toArray(),
-        recordWorld,
-      );
-      const recordPose = poseVectors(record.position, record.target);
+      const recordPose = deriveRecordPose();
+      if (!recordPose) return;
       session.restPose = recordPose;
+      session.recordFramed = true;
+      session.recordIdentity = recordIdentity;
       releaseHoldRef.current = null;
       const delaySeconds = reducedMotion
         || !Number.isFinite(recordEntryDelaySeconds)
@@ -276,6 +351,22 @@ export default function ConsensusRouteCamera({
         queuedTransitionRef.current = null;
         transitionTo(recordPose, false);
       }
+      return;
+    }
+
+    if (
+      recordIntent === 'idle'
+      && compositionChanged
+      && routeFocusIdentity === null
+      && existingSession?.recordFramed
+      && existingSession.recordIdentity === recordIdentity
+    ) {
+      const recordPose = deriveRecordPose();
+      if (!recordPose) return;
+      existingSession.restPose = recordPose;
+      const queued = queuedTransitionRef.current;
+      if (queued) queued.transition.pose = recordPose;
+      else transitionTo(recordPose, false);
       return;
     }
 
@@ -312,6 +403,15 @@ export default function ConsensusRouteCamera({
       && queuedTransitionRef.current
     ) return;
     queuedTransitionRef.current = null;
+    if (
+      routeFocusReleased
+      && !recordEnded
+      && session.recordFramed
+      && session.recordIdentity === recordIdentity
+    ) {
+      const recordPose = deriveRecordPose();
+      if (recordPose) session.restPose = recordPose;
+    }
     const restoring = recordIdentity === null;
     const restPose = restoring ? session.returnPose : session.restPose;
     if (holdSeconds > 0) {
@@ -329,10 +429,12 @@ export default function ConsensusRouteCamera({
     };
   }, [
     camera,
+    canvas,
     cellX,
     cellY,
     cellZ,
     controlsRef,
+    compositionKey,
     focus?.cellId,
     focus?.hopIndex,
     focus?.sourceId,
@@ -346,6 +448,9 @@ export default function ConsensusRouteCamera({
     recordSwitchPending,
     reducedMotion,
     releaseHoldSeconds,
+    verticalFovDegrees,
+    viewportHeight,
+    viewportWidth,
   ]);
 
   useFrame((_, deltaSeconds) => {

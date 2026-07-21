@@ -4,6 +4,7 @@ import { emptyCellsCache } from '@cknerv/cache';
 import { act, render } from '@testing-library/react';
 import * as THREE from 'three';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { deriveConsensusRecordSafeAnchor } from '../../src/derives/consensusRouteCamera.derive';
 import { CELLS_Y } from '../../src/layout';
 import { CellGalaxyProvider } from '../../src/hooks/cellGalaxyContext';
 import ConsensusRouteCamera, {
@@ -17,13 +18,25 @@ const frameMock = vi.hoisted(() => ({
 const cameraMock = vi.hoisted(() => ({
   current: null as THREE.PerspectiveCamera | null,
 }));
+const canvasMock = vi.hoisted(() => ({
+  current: null as HTMLCanvasElement | null,
+}));
+const viewportMock = vi.hoisted(() => ({ width: 1440, height: 800 }));
 
 vi.mock('@react-three/fiber', () => ({
   useFrame: (callback: (state: unknown, deltaSeconds: number) => void) => {
     frameMock.callback = callback;
   },
-  useThree: (selector: (state: { camera: THREE.PerspectiveCamera }) => unknown) => (
-    selector({ camera: cameraMock.current! })
+  useThree: (selector: (state: {
+    camera: THREE.PerspectiveCamera;
+    gl: { domElement: HTMLCanvasElement };
+    size: { width: number; height: number };
+  }) => unknown) => (
+    selector({
+      camera: cameraMock.current!,
+      gl: { domElement: canvasMock.current! },
+      size: viewportMock,
+    })
   ),
 }));
 
@@ -50,10 +63,50 @@ function distance(left: THREE.Vector3, right: THREE.Vector3): number {
   return left.distanceTo(right);
 }
 
+function rect(
+  left: number,
+  top: number,
+  right: number,
+  bottom: number,
+): DOMRect {
+  return {
+    x: left,
+    y: top,
+    left,
+    top,
+    right,
+    bottom,
+    width: right - left,
+    height: bottom - top,
+    toJSON: () => ({}),
+  };
+}
+
+function screenPosition(world: THREE.Vector3): [number, number] {
+  cameraMock.current!.updateMatrixWorld();
+  const projected = world.clone().project(cameraMock.current!);
+  return [
+    (projected.x + 1) * viewportMock.width / 2,
+    (1 - projected.y) * viewportMock.height / 2,
+  ];
+}
+
 describe('ConsensusRouteCamera record composition', () => {
   beforeEach(() => {
     frameMock.callback = null;
-    cameraMock.current = new THREE.PerspectiveCamera();
+    document.body.innerHTML = '';
+    viewportMock.width = 1440;
+    viewportMock.height = 800;
+    canvasMock.current = document.createElement('canvas');
+    vi.spyOn(canvasMock.current, 'getBoundingClientRect').mockImplementation(() => (
+      rect(0, 0, viewportMock.width, viewportMock.height)
+    ));
+    cameraMock.current = new THREE.PerspectiveCamera(
+      50,
+      viewportMock.width / viewportMock.height,
+      0.1,
+      1000,
+    );
     cameraMock.current.position.set(30, 50, 20);
     galaxyFrame.rotationY = 0;
   });
@@ -62,10 +115,20 @@ describe('ConsensusRouteCamera record composition', () => {
     const cache = emptyCellsCache();
     cache.cells.set(1, cell(1, [-12, 0, 4]));
     cache.cells.set(2, cell(2, [20, 1, -8]));
+    const rightRail = document.createElement('div');
+    rightRail.dataset.hudOcclusion = 'true';
+    vi.spyOn(rightRail, 'getBoundingClientRect').mockReturnValue(
+      rect(760, 40, 1440, 790),
+    );
+    document.body.append(rightRail);
     const controls = {
       target: new THREE.Vector3(0, 30, 0),
-      update: vi.fn(),
+      update: vi.fn(() => {
+        cameraMock.current!.lookAt(controls.target);
+        cameraMock.current!.updateMatrixWorld();
+      }),
     } satisfies ConsensusRouteCameraControls;
+    controls.update();
     const controlsRef: { current: ConsensusRouteCameraControls | null } = {
       current: controls,
     };
@@ -127,9 +190,41 @@ describe('ConsensusRouteCamera record composition', () => {
       }
     });
     const recordWorld = new THREE.Vector3(20, CELLS_Y + 1, -8);
-    expect(controls.target.distanceTo(recordWorld)).toBeLessThan(0.05);
-    expect(distance(cameraMock.current!.position, controls.target))
+    const wideAnchor = deriveConsensusRecordSafeAnchor(
+      viewportMock.width,
+      viewportMock.height,
+      [{ left: 760, top: 40, right: 1440, bottom: 790 }],
+    );
+    const wideScreen = screenPosition(recordWorld);
+    expect(wideScreen[0]).toBeCloseTo(wideAnchor[0], 0);
+    expect(wideScreen[1]).toBeCloseTo(wideAnchor[1], 0);
+    expect(distance(cameraMock.current!.position, recordWorld))
       .toBeCloseTo(64, 1);
+
+    viewportMock.width = 1000;
+    cameraMock.current!.aspect = viewportMock.width / viewportMock.height;
+    cameraMock.current!.updateProjectionMatrix();
+    rendered.rerender(view(
+      <ConsensusRouteCamera
+        controlsRef={controlsRef}
+        recordIdentity="19:2"
+        recordTargetCellId={2}
+      />,
+    ));
+    act(() => {
+      for (let frame = 0; frame < 36; frame += 1) {
+        frameMock.callback?.({}, 0.1);
+      }
+    });
+    const narrowAnchor = deriveConsensusRecordSafeAnchor(
+      viewportMock.width,
+      viewportMock.height,
+      [{ left: 760, top: 40, right: 1000, bottom: 790 }],
+    );
+    const narrowScreen = screenPosition(recordWorld);
+    expect(narrowScreen[0]).toBeCloseTo(narrowAnchor[0], 0);
+    expect(narrowScreen[1]).toBeCloseTo(narrowAnchor[1], 0);
+    expect(narrowScreen[0]).not.toBeCloseTo(wideScreen[0], 0);
 
     rendered.rerender(view(
       <ConsensusRouteCamera
@@ -150,7 +245,7 @@ describe('ConsensusRouteCamera record composition', () => {
         frameMock.callback?.({}, 0.1);
       }
     });
-    expect(distance(cameraMock.current!.position, controls.target))
+    expect(distance(cameraMock.current!.position, recordWorld))
       .toBeCloseTo(36, 1);
 
     rendered.rerender(view(
@@ -165,8 +260,11 @@ describe('ConsensusRouteCamera record composition', () => {
         frameMock.callback?.({}, 0.1);
       }
     });
-    expect(distance(cameraMock.current!.position, controls.target))
+    expect(distance(cameraMock.current!.position, recordWorld))
       .toBeCloseTo(64, 1);
+    const restoredScreen = screenPosition(recordWorld);
+    expect(restoredScreen[0]).toBeCloseTo(narrowAnchor[0], 0);
+    expect(restoredScreen[1]).toBeCloseTo(narrowAnchor[1], 0);
 
     rendered.rerender(view(
       <ConsensusRouteCamera controlsRef={controlsRef} />,
