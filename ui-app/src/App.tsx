@@ -358,6 +358,12 @@ export default function App({
     && !!selectedOriginTrace
     && selectedOriginTrace.sourceKind !== 'none'
     && selectedOriginTrace.retainedOutputIds.includes(selectedCell.id);
+  const memoryRecordIdentity = memoryTraceRequest
+    ? `${memoryTraceRequest.linkSeq}:${memoryTraceRequest.targetCellId}`
+    : null;
+  const memoryRecordSwitchPending = memoryTraceRequest !== null
+    && selectedCell !== null
+    && selectedCell.id !== memoryTraceRequest.targetCellId;
   const selectedMemoryTraceReadout = useMemo(() => {
     if (!selectedCell || !memoryTraceRequest || !memoryTraceReadout) return null;
     return memoryTraceReadout.targetCellId === selectedCell.id
@@ -644,11 +650,7 @@ export default function App({
                   pulses={galaxyConfig.pulses}
                   traceRequest={memoryTraceRequest}
                   traceMaxPulses={CELL_MEMORY_RECALL_MAX_PULSES}
-                  traceHoldForRecordSwitch={
-                    memoryTraceRequest !== null
-                    && selectedCell !== null
-                    && selectedCell.id !== memoryTraceRequest.targetCellId
-                  }
+                  traceHoldForRecordSwitch={memoryRecordSwitchPending}
                   onTraceComplete={completeMemoryRecall}
                   onTraceReadoutChange={setMemoryTraceReadout}
                   traceTargetResponseRef={memoryTraceTargetResponseRef}
@@ -684,6 +686,9 @@ export default function App({
             focus={memoryRouteHopLock}
             controlsRef={orbitControlsRef}
             manualRevision={orbitInteractionRevision}
+            recordIdentity={memoryRecordIdentity}
+            recordTargetCellId={memoryTraceRequest?.targetCellId ?? null}
+            recordSwitchPending={memoryRecordSwitchPending}
           />
 
           <OrbitControls

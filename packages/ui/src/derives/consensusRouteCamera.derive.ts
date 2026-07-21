@@ -2,10 +2,34 @@ import { CELLS_Y } from '../layout';
 import type { Vec3 } from '../types';
 
 export const CONSENSUS_ROUTE_CAMERA_DISTANCE = 36;
+export const CONSENSUS_RECORD_CAMERA_DISTANCE = 64;
+export const CONSENSUS_RECORD_CAMERA_NEUTRAL_MIN_DISTANCE = 96;
 
 export interface ConsensusRouteCameraPose {
   position: Vec3;
   target: Vec3;
+}
+
+export type ConsensusRecordCameraIntent = 'idle' | 'neutral' | 'record';
+
+/**
+ * A record switch is a composition change, never a route. The pending edge
+ * enters neutral space once; only an exact old→new record identity change may
+ * later frame the new record target.
+ */
+export function deriveConsensusRecordCameraIntent(
+  previousRecordIdentity: string | null,
+  recordIdentity: string | null,
+  previousSwitchPending: boolean,
+  switchPending: boolean,
+  hasRecordTarget: boolean,
+): ConsensusRecordCameraIntent {
+  const recordChanged = previousRecordIdentity !== null
+    && recordIdentity !== null
+    && previousRecordIdentity !== recordIdentity
+    && hasRecordTarget;
+  if (recordChanged) return 'record';
+  return switchPending && !previousSwitchPending ? 'neutral' : 'idle';
 }
 
 /** Project one Cell's rotating galaxy-local seed into current world space. */
@@ -52,4 +76,49 @@ export function deriveConsensusRouteCameraPose(
       hopWorld[2] + dz * scale,
     ],
   };
+}
+
+/** Broadly frame one verified record target, without choosing a route hop. */
+export function deriveConsensusRecordCameraPose(
+  currentPosition: Vec3,
+  currentTarget: Vec3,
+  recordWorld: Vec3,
+  distance = CONSENSUS_RECORD_CAMERA_DISTANCE,
+): ConsensusRouteCameraPose {
+  return deriveConsensusRouteCameraPose(
+    currentPosition,
+    currentTarget,
+    recordWorld,
+    distance,
+  );
+}
+
+/**
+ * Return to the pre-session target and widen along the current view ray. No
+ * Cell position participates, so this pose cannot imply an A→B relationship.
+ */
+export function deriveConsensusRecordNeutralCameraPose(
+  currentPosition: Vec3,
+  currentTarget: Vec3,
+  returnPosition: Vec3,
+  returnTarget: Vec3,
+  minimumDistance = CONSENSUS_RECORD_CAMERA_NEUTRAL_MIN_DISTANCE,
+): ConsensusRouteCameraPose {
+  const returnDistance = Math.hypot(
+    returnPosition[0] - returnTarget[0],
+    returnPosition[1] - returnTarget[1],
+    returnPosition[2] - returnTarget[2],
+  );
+  const safeMinimum = Number.isFinite(minimumDistance) && minimumDistance > 0
+    ? minimumDistance
+    : CONSENSUS_RECORD_CAMERA_NEUTRAL_MIN_DISTANCE;
+  const distance = Number.isFinite(returnDistance)
+    ? Math.max(returnDistance, safeMinimum)
+    : safeMinimum;
+  return deriveConsensusRouteCameraPose(
+    currentPosition,
+    currentTarget,
+    returnTarget,
+    distance,
+  );
 }

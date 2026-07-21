@@ -2,15 +2,24 @@ import { useEffect, useRef, type RefObject } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useReducedMotion } from '../components/hud/useReducedMotion';
-import { deriveConsensusRouteCameraPose, consensusRouteHopWorldPosition } from '../derives/consensusRouteCamera.derive';
+import {
+  consensusRouteHopWorldPosition,
+  deriveConsensusRecordCameraIntent,
+  deriveConsensusRecordCameraPose,
+  deriveConsensusRecordNeutralCameraPose,
+  deriveConsensusRouteCameraPose,
+} from '../derives/consensusRouteCamera.derive';
 import { useCellGalaxy } from '../hooks/cellGalaxyContext';
 import { galaxyFrame } from '../tweaks/galaxyFrame';
+import { CONSENSUS_MEMORY_RECORD_BRIDGE_MAX_SECONDS } from './consensusMemoryRecordBridge';
 import type { ConsensusMemoryRouteHopFocus } from './consensusMemoryTrace';
 
 const CAMERA_RESPONSE = 6.5;
 const POSITION_EPSILON_SQ = 0.0025;
 const TARGET_EPSILON_SQ = 0.001;
 export const CONSENSUS_ROUTE_CAMERA_RELEASE_HOLD_SECONDS = 0.32;
+export const CONSENSUS_RECORD_CAMERA_ENTRY_DELAY_SECONDS =
+  CONSENSUS_MEMORY_RECORD_BRIDGE_MAX_SECONDS;
 
 /** The small OrbitControls surface needed by the route camera. */
 export interface ConsensusRouteCameraControls {
@@ -26,6 +35,14 @@ export interface ConsensusRouteCameraProps {
   manualRevision?: number;
   /** Keep the verified framing while its route afterimage begins to recede. */
   releaseHoldSeconds?: number;
+  /** Stable link + target identity; replay nonce must not create a new frame. */
+  recordIdentity?: string | null;
+  /** Exact real Cell framed only after an independent record switch settles. */
+  recordTargetCellId?: number | null;
+  /** A different Cell is being mapped, but its record is not recalled yet. */
+  recordSwitchPending?: boolean;
+  /** Delay broad record framing until endpoint entry has completed. */
+  recordEntryDelaySeconds?: number;
 }
 
 interface CameraPoseVectors {
@@ -35,7 +52,9 @@ interface CameraPoseVectors {
 
 interface CameraSession {
   returnPose: CameraPoseVectors;
+  restPose: CameraPoseVectors;
   manuallyAdjusted: boolean;
+  neutralized: boolean;
 }
 
 interface CameraTransition {
@@ -45,6 +64,12 @@ interface CameraTransition {
 
 interface CameraReleaseHold {
   pose: CameraPoseVectors;
+  remainingSeconds: number;
+  restoring: boolean;
+}
+
+interface QueuedCameraTransition {
+  transition: CameraTransition;
   remainingSeconds: number;
 }
 
@@ -58,16 +83,28 @@ function poseVectors(
   };
 }
 
+function clonePose(pose: CameraPoseVectors): CameraPoseVectors {
+  return {
+    position: pose.position.clone(),
+    target: pose.target.clone(),
+  };
+}
+
 /**
- * Frames a locked consensus route hop while leaving hover inspection passive.
- * A route-lock session remembers the incoming view and restores it on release,
- * unless the viewer has manually taken control in the meantime.
+ * Frames explicit record and route inspection while hover remains passive.
+ * Record replacement crosses identity-free neutral space before a broad target
+ * frame; a verified route lock may then move closer. Manual control cancels
+ * the remaining automatic session.
  */
 export default function ConsensusRouteCamera({
   focus = null,
   controlsRef,
   manualRevision = 0,
   releaseHoldSeconds = CONSENSUS_ROUTE_CAMERA_RELEASE_HOLD_SECONDS,
+  recordIdentity = null,
+  recordTargetCellId = null,
+  recordSwitchPending = false,
+  recordEntryDelaySeconds = CONSENSUS_RECORD_CAMERA_ENTRY_DELAY_SECONDS,
 }: ConsensusRouteCameraProps) {
   const reducedMotion = useReducedMotion();
   const camera = useThree((state) => state.camera);
@@ -75,12 +112,22 @@ export default function ConsensusRouteCamera({
   const sessionRef = useRef<CameraSession | null>(null);
   const transitionRef = useRef<CameraTransition | null>(null);
   const releaseHoldRef = useRef<CameraReleaseHold | null>(null);
+  const queuedTransitionRef = useRef<QueuedCameraTransition | null>(null);
   const manualRevisionRef = useRef(manualRevision);
+  const previousRecordIdentityRef = useRef(recordIdentity);
+  const previousRecordSwitchPendingRef = useRef(recordSwitchPending);
+  const previousRouteFocusIdentityRef = useRef<string | null>(null);
 
   const focusedCell = focus ? cellsCache.cells.get(focus.cellId) ?? null : null;
   const cellX = focusedCell?.pos_seed[0] ?? null;
   const cellY = focusedCell?.pos_seed[1] ?? null;
   const cellZ = focusedCell?.pos_seed[2] ?? null;
+  const recordTargetCell = recordTargetCellId === null
+    ? null
+    : cellsCache.cells.get(recordTargetCellId) ?? null;
+  const recordCellX = recordTargetCell?.pos_seed[0] ?? null;
+  const recordCellY = recordTargetCell?.pos_seed[1] ?? null;
+  const recordCellZ = recordTargetCell?.pos_seed[2] ?? null;
 
   useEffect(() => {
     if (manualRevisionRef.current === manualRevision) return;
@@ -89,6 +136,7 @@ export default function ConsensusRouteCamera({
     if (!session) return;
     session.manuallyAdjusted = true;
     transitionRef.current = null;
+    queuedTransitionRef.current = null;
     if (releaseHoldRef.current) {
       releaseHoldRef.current = null;
       sessionRef.current = null;
@@ -99,17 +147,142 @@ export default function ConsensusRouteCamera({
     const controls = controlsRef.current;
     if (!controls) return;
 
+    const previousRecordIdentity = previousRecordIdentityRef.current;
+    const previousSwitchPending = previousRecordSwitchPendingRef.current;
+    const previousRouteFocusIdentity = previousRouteFocusIdentityRef.current;
+    const routeFocusIdentity = focus
+      && cellX !== null
+      && cellY !== null
+      && cellZ !== null
+      ? [
+        focus.traceKey,
+        focus.sourceId,
+        focus.targetCellId,
+        focus.cellId,
+        focus.hopIndex,
+      ].join(':')
+      : null;
+    const recordIntent = deriveConsensusRecordCameraIntent(
+      previousRecordIdentity,
+      recordIdentity,
+      previousSwitchPending,
+      recordSwitchPending,
+      recordCellX !== null && recordCellY !== null && recordCellZ !== null,
+    );
+    previousRecordIdentityRef.current = recordIdentity;
+    previousRecordSwitchPendingRef.current = recordSwitchPending;
+    previousRouteFocusIdentityRef.current = routeFocusIdentity;
+
+    const existingSession = sessionRef.current;
+    if (existingSession?.manuallyAdjusted) {
+      transitionRef.current = null;
+      releaseHoldRef.current = null;
+      queuedTransitionRef.current = null;
+      sessionRef.current = null;
+      return;
+    }
+
+    const ensureSession = (): CameraSession => {
+      const existing = sessionRef.current;
+      if (existing) return existing;
+      const returnPose = {
+        position: camera.position.clone(),
+        target: controls.target.clone(),
+      };
+      const session: CameraSession = {
+        returnPose,
+        restPose: clonePose(returnPose),
+        manuallyAdjusted: false,
+        neutralized: false,
+      };
+      sessionRef.current = session;
+      return session;
+    };
+    const transitionTo = (
+      pose: CameraPoseVectors,
+      restoring: boolean,
+    ) => {
+      transitionRef.current = { pose, restoring };
+    };
+    const holdSeconds = reducedMotion || !Number.isFinite(releaseHoldSeconds)
+      ? 0
+      : Math.max(0, releaseHoldSeconds);
+
+    if (recordIntent === 'neutral') {
+      const session = ensureSession();
+      const neutral = deriveConsensusRecordNeutralCameraPose(
+        camera.position.toArray(),
+        controls.target.toArray(),
+        session.returnPose.position.toArray(),
+        session.returnPose.target.toArray(),
+      );
+      const neutralPose = poseVectors(neutral.position, neutral.target);
+      session.restPose = neutralPose;
+      session.neutralized = true;
+      queuedTransitionRef.current = null;
+      if (holdSeconds > 0) {
+        transitionRef.current = null;
+        releaseHoldRef.current = {
+          pose: neutralPose,
+          remainingSeconds: holdSeconds,
+          restoring: false,
+        };
+      } else {
+        releaseHoldRef.current = null;
+        transitionTo(neutralPose, false);
+      }
+      return;
+    }
+
+    if (
+      recordIntent === 'record'
+      && recordCellX !== null
+      && recordCellY !== null
+      && recordCellZ !== null
+    ) {
+      const session = ensureSession();
+      const recordWorld = consensusRouteHopWorldPosition(
+        [recordCellX, recordCellY, recordCellZ],
+        galaxyFrame.rotationY,
+      );
+      const record = deriveConsensusRecordCameraPose(
+        camera.position.toArray(),
+        controls.target.toArray(),
+        recordWorld,
+      );
+      const recordPose = poseVectors(record.position, record.target);
+      session.restPose = recordPose;
+      releaseHoldRef.current = null;
+      const delaySeconds = reducedMotion
+        || !Number.isFinite(recordEntryDelaySeconds)
+        ? 0
+        : Math.max(0, recordEntryDelaySeconds);
+      if (!session.neutralized) {
+        const neutral = deriveConsensusRecordNeutralCameraPose(
+          camera.position.toArray(),
+          controls.target.toArray(),
+          session.returnPose.position.toArray(),
+          session.returnPose.target.toArray(),
+        );
+        transitionTo(poseVectors(neutral.position, neutral.target), false);
+      }
+      session.neutralized = false;
+      if (delaySeconds > 0) {
+        queuedTransitionRef.current = {
+          transition: { pose: recordPose, restoring: false },
+          remainingSeconds: delaySeconds,
+        };
+      } else {
+        queuedTransitionRef.current = null;
+        transitionTo(recordPose, false);
+      }
+      return;
+    }
+
     if (focus && cellX !== null && cellY !== null && cellZ !== null) {
       releaseHoldRef.current = null;
-      if (!sessionRef.current) {
-        sessionRef.current = {
-          returnPose: {
-            position: camera.position.clone(),
-            target: controls.target.clone(),
-          },
-          manuallyAdjusted: false,
-        };
-      }
+      queuedTransitionRef.current = null;
+      ensureSession();
       const hopWorld = consensusRouteHopWorldPosition(
         [cellX, cellY, cellZ],
         galaxyFrame.rotationY,
@@ -128,26 +301,31 @@ export default function ConsensusRouteCamera({
 
     const session = sessionRef.current;
     if (!session) return;
-    if (session.manuallyAdjusted) {
-      sessionRef.current = null;
-      transitionRef.current = null;
-      releaseHoldRef.current = null;
-      return;
-    }
-    const holdSeconds = reducedMotion || !Number.isFinite(releaseHoldSeconds)
-      ? 0
-      : Math.max(0, releaseHoldSeconds);
+    const recordEnded = previousRecordIdentity !== null
+      && recordIdentity === null;
+    const routeFocusReleased = previousRouteFocusIdentity !== null
+      && routeFocusIdentity === null;
+    if (!recordEnded && !routeFocusReleased) return;
+    if (
+      routeFocusReleased
+      && !recordEnded
+      && queuedTransitionRef.current
+    ) return;
+    queuedTransitionRef.current = null;
+    const restoring = recordIdentity === null;
+    const restPose = restoring ? session.returnPose : session.restPose;
     if (holdSeconds > 0) {
       transitionRef.current = null;
       releaseHoldRef.current = {
-        pose: session.returnPose,
+        pose: restPose,
         remainingSeconds: holdSeconds,
+        restoring,
       };
       return;
     }
     transitionRef.current = {
-      pose: session.returnPose,
-      restoring: true,
+      pose: restPose,
+      restoring,
     };
   }, [
     camera,
@@ -160,26 +338,43 @@ export default function ConsensusRouteCamera({
     focus?.sourceId,
     focus?.targetCellId,
     focus?.traceKey,
+    recordCellX,
+    recordCellY,
+    recordCellZ,
+    recordEntryDelaySeconds,
+    recordIdentity,
+    recordSwitchPending,
     reducedMotion,
     releaseHoldSeconds,
   ]);
 
   useFrame((_, deltaSeconds) => {
+    const safeDeltaSeconds = Math.min(Math.max(deltaSeconds, 0), 0.1);
+    const queued = queuedTransitionRef.current;
+    if (queued) {
+      queued.remainingSeconds -= safeDeltaSeconds;
+      if (queued.remainingSeconds <= 0) {
+        transitionRef.current = queued.transition;
+        queuedTransitionRef.current = null;
+      }
+    }
     const releaseHold = releaseHoldRef.current;
     if (releaseHold) {
-      releaseHold.remainingSeconds -= Math.min(Math.max(deltaSeconds, 0), 0.1);
+      releaseHold.remainingSeconds -= safeDeltaSeconds;
       if (releaseHold.remainingSeconds > 0) return;
       releaseHoldRef.current = null;
       transitionRef.current = {
         pose: releaseHold.pose,
-        restoring: true,
+        restoring: releaseHold.restoring,
       };
     }
     const transition = transitionRef.current;
     const controls = controlsRef.current;
     if (!transition || !controls) return;
 
-    const alpha = 1 - Math.exp(-Math.min(deltaSeconds, 0.1) * CAMERA_RESPONSE);
+    const alpha = reducedMotion
+      ? 1
+      : 1 - Math.exp(-safeDeltaSeconds * CAMERA_RESPONSE);
     camera.position.lerp(transition.pose.position, alpha);
     controls.target.lerp(transition.pose.target, alpha);
     controls.update();
