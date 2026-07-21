@@ -18,7 +18,6 @@ export const MEMORY_TRACE_SETTLE_MS = 420;
 export const MEMORY_TRACE_FADE_MS = 1_600;
 export const MEMORY_TRACE_FOCUS_FADE_IN_MS = 160;
 export const MEMORY_TRACE_FOCUS_FADE_OUT_MS = 720;
-export const MEMORY_TRACE_PASSIVE_OPACITY_FLOOR = 0.26;
 /** Live writes remain visible during recall, but yield the active color lane. */
 export const MEMORY_TRACE_LIVE_ACTIVITY_FLOOR = 0.48;
 export const MEMORY_TRACE_SOURCE_REVEAL_LEAD_MS = 120;
@@ -931,14 +930,6 @@ export function consensusMemoryTraceReadout(
 export function consensusMemoryRouteHandoffScale(convergence: number): number {
   const resolved = Number.isFinite(convergence) ? clampUnit(convergence) : 0;
   return 1 - resolved * (1 - MEMORY_TRACE_ROUTE_HANDOFF_FLOOR);
-}
-
-/** Global passive-line opacity; active live and recalled paths stay untouched. */
-export function consensusMemoryPassiveOpacity(strength: number): number {
-  const focus = Number.isFinite(strength)
-    ? Math.max(0, Math.min(1, strength))
-    : 0;
-  return 1 - focus * (1 - MEMORY_TRACE_PASSIVE_OPACITY_FLOOR);
 }
 
 /**

@@ -44,7 +44,10 @@ import {
 } from '../derives/consensusFlow.derive';
 import { CONSENSUS_BRAID_PALETTE } from '../derives/consensusBraid.derive';
 import type { Vec3 } from '../types';
-import { consensusMemoryPassiveOpacity } from './consensusMemoryTrace';
+import {
+  consensusMemoryApertureScale,
+  type ConsensusMemoryAperture,
+} from './consensusMemoryAperture';
 
 // Dense-mesh baseline energy (the `cell.fabricAlpha` tweak, default 0.12).
 // Passive fibres use bounded screen accumulation plus spatial compression;
@@ -97,8 +100,13 @@ export interface ActiveHop {
 }
 
 export interface NeuralFabricHandles {
-  /** Temporarily de-emphasize passive fibres during an explicit recall. */
-  setRecallFocus(strength: number): void;
+  /** Clear passive noise only around exact recalled routes. */
+  setRecallAperture(
+    active: ConsensusMemoryAperture | null,
+    activeStrength: number,
+    departing: ConsensusMemoryAperture | null,
+    departingStrength: number,
+  ): void;
   /** Maintain recalled-route screen weight as broad framing moves away. */
   setMemoryRouteWidthScale(scale: number): void;
   /** Push one active hop's worth of curve sub-segments into this
@@ -202,6 +210,46 @@ interface EdgeState {
    *  the rendered brightness on top of `brightnessMul`. 0 in the resting
    *  state → boost ×1 → byte-identical to ①. */
   usage: number;
+}
+
+interface RecallApertureState {
+  active: ConsensusMemoryAperture | null;
+  activeStrength: number;
+  departing: ConsensusMemoryAperture | null;
+  departingStrength: number;
+}
+
+function recallApertureScaleAt(
+  state: RecallApertureState,
+  x: number,
+  z: number,
+  lifecycleFlash: number,
+): number {
+  if (state.active === state.departing) {
+    return consensusMemoryApertureScale(
+      state.active,
+      x,
+      z,
+      Math.max(state.activeStrength, state.departingStrength),
+      lifecycleFlash,
+    );
+  }
+  return Math.min(
+    consensusMemoryApertureScale(
+      state.active,
+      x,
+      z,
+      state.activeStrength,
+      lifecycleFlash,
+    ),
+    consensusMemoryApertureScale(
+      state.departing,
+      x,
+      z,
+      state.departingStrength,
+      lifecycleFlash,
+    ),
+  );
 }
 
 /** Floor brightness at the midpoint of a fabric edge, as a fraction of
@@ -384,6 +432,12 @@ export default function NeuralFabric({ onReady }: NeuralFabricProps) {
   // Advanced every frame (even on early-return) so a redraw resuming after an
   // idle stretch decays by one frame, not the whole idle gap.
   const prevEmitSecRef = useRef<number | null>(null);
+  const recallApertureRef = useRef<RecallApertureState>({
+    active: null,
+    activeStrength: 0,
+    departing: null,
+    departingStrength: 0,
+  });
 
   useEffect(() => {
     fabric.material.resolution.set(size.width, size.height);
@@ -409,8 +463,30 @@ export default function NeuralFabric({ onReady }: NeuralFabricProps) {
     const sample = new Float32Array(3);
 
     const handles: NeuralFabricHandles = {
-      setRecallFocus(strength) {
-        fabric.material.opacity = consensusMemoryPassiveOpacity(strength);
+      setRecallAperture(
+        activeAperture,
+        activeStrength,
+        departingAperture,
+        departingStrength,
+      ) {
+        const nextActiveStrength = Number.isFinite(activeStrength)
+          ? Math.max(0, Math.min(1, activeStrength))
+          : 0;
+        const nextDepartingStrength = Number.isFinite(departingStrength)
+          ? Math.max(0, Math.min(1, departingStrength))
+          : 0;
+        const previous = recallApertureRef.current;
+        if (
+          previous.active === activeAperture
+          && previous.departing === departingAperture
+          && Math.abs(previous.activeStrength - nextActiveStrength) < 1e-4
+          && Math.abs(previous.departingStrength - nextDepartingStrength) < 1e-4
+        ) return;
+        previous.active = activeAperture;
+        previous.activeStrength = nextActiveStrength;
+        previous.departing = departingAperture;
+        previous.departingStrength = nextDepartingStrength;
+        emitDirtyRef.current = true;
       },
       setMemoryRouteWidthScale(scale) {
         const safeScale = Number.isFinite(scale) && scale > 0 ? scale : 1;
@@ -575,6 +651,7 @@ export default function NeuralFabric({ onReady }: NeuralFabricProps) {
         fabric.material.linewidth = LIVE.cell.fabricWidth;
         active.material.linewidth = LIVE.cell.activeWidth;
         const states = edgeStatesRef.current;
+        const recallAperture = recallApertureRef.current;
         fabric.count = 0;
         let stillAnimating = 0;
         // Reap list deferred so we don't mutate the map mid-iteration.
@@ -642,9 +719,19 @@ export default function NeuralFabric({ onReady }: NeuralFabricProps) {
             fl,
             LIVE.cell.centerDim,
           );
-          let prevR = (fromSemanticR + (toSemanticR - fromSemanticR) * tStart) * energy * startTaper * prevSpatial;
-          let prevG = (fromSemanticG + (toSemanticG - fromSemanticG) * tStart) * energy * startTaper * prevSpatial;
-          let prevB = (fromSemanticB + (toSemanticB - fromSemanticB) * tStart) * energy * startTaper * prevSpatial;
+          const prevAperture = recallApertureScaleAt(
+            recallAperture,
+            prevX,
+            prevZ,
+            fl,
+          );
+          const startEnergy = energy * startTaper * prevSpatial * prevAperture;
+          let prevR = (fromSemanticR + (toSemanticR - fromSemanticR) * tStart)
+            * startEnergy;
+          let prevG = (fromSemanticG + (toSemanticG - fromSemanticG) * tStart)
+            * startEnergy;
+          let prevB = (fromSemanticB + (toSemanticB - fromSemanticB) * tStart)
+            * startEnergy;
           for (let i = 1; i <= fabricSamplesPerEdge; i++) {
             const tRaw = tStart + (tEnd - tStart) * (i / fabricSamplesPerEdge);
             const t = tRaw > tEnd ? tEnd : tRaw;
@@ -658,9 +745,19 @@ export default function NeuralFabric({ onReady }: NeuralFabricProps) {
               fl,
               LIVE.cell.centerDim,
             );
-            const endR = (fromSemanticR + (toSemanticR - fromSemanticR) * t) * energy * endTaper * endSpatial;
-            const endG = (fromSemanticG + (toSemanticG - fromSemanticG) * t) * energy * endTaper * endSpatial;
-            const endB = (fromSemanticB + (toSemanticB - fromSemanticB) * t) * energy * endTaper * endSpatial;
+            const endAperture = recallApertureScaleAt(
+              recallAperture,
+              sample[0],
+              sample[2],
+              fl,
+            );
+            const endEnergy = energy * endTaper * endSpatial * endAperture;
+            const endR = (fromSemanticR + (toSemanticR - fromSemanticR) * t)
+              * endEnergy;
+            const endG = (fromSemanticG + (toSemanticG - fromSemanticG) * t)
+              * endEnergy;
+            const endB = (fromSemanticB + (toSemanticB - fromSemanticB) * t)
+              * endEnergy;
             pushSegmentGradient(
               fabric,
               prevX, prevY, prevZ, sample[0], sample[1], sample[2],

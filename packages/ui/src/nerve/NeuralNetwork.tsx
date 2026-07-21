@@ -86,6 +86,7 @@ import {
   CONSENSUS_MEMORY_NEAR_PRESENTATION,
   deriveConsensusMemoryDistancePresentation,
 } from './consensusMemoryDistancePresentation';
+import { deriveConsensusMemoryAperture } from './consensusMemoryAperture';
 
 const SPIKE_POOL_CAPACITY = 1024;
 
@@ -322,6 +323,14 @@ export default function NeuralNetwork({
   const departingTraceFocusRef = useRef<ConsensusMemoryTraceFocus | null>(null);
   const [departingTraceFocus, setDepartingTraceFocus] =
     useState<ConsensusMemoryTraceFocus | null>(null);
+  const traceAperture = useMemo(
+    () => deriveConsensusMemoryAperture(traceFocus, cellsCache.cells),
+    [traceFocus, cellsCache.cells],
+  );
+  const departingTraceAperture = useMemo(
+    () => deriveConsensusMemoryAperture(departingTraceFocus, cellsCache.cells),
+    [departingTraceFocus, cellsCache.cells],
+  );
   const [traceDisplayRouteHopLock, setTraceDisplayRouteHopLock] =
     useState<ConsensusMemoryRouteHopFocus | null>(null);
   const [traceDisplayEvidenceSourceId, setTraceDisplayEvidenceSourceId] =
@@ -803,7 +812,12 @@ export default function NeuralNetwork({
     // Drive growth/decay animation on the persistent fabric layer.
     // Internally gated: no-op when nothing is animating and nothing
     // has changed since last commit, so this is free in steady state.
-    handles?.setRecallFocus(presentationFocusStrength);
+    handles?.setRecallAperture(
+      traceAperture,
+      focusStrength,
+      departingTraceAperture,
+      departingFocusStrength,
+    );
     handles?.setMemoryRouteWidthScale(distancePresentation.routeWidthScale);
     handles?.emitFabric(now);
 
