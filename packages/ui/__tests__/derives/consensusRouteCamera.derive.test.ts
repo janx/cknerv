@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
+  CONSENSUS_RECORD_CAMERA_DISTANCE,
+  CONSENSUS_RECORD_CAMERA_NEUTRAL_MIN_DISTANCE,
   CONSENSUS_ROUTE_CAMERA_DISTANCE,
   consensusRouteHopWorldPosition,
+  deriveConsensusRecordCameraIntent,
+  deriveConsensusRecordCameraPose,
+  deriveConsensusRecordNeutralCameraPose,
   deriveConsensusRouteCameraPose,
 } from '../../src/derives/consensusRouteCamera.derive';
 import { CELLS_Y } from '../../src/layout';
@@ -53,5 +58,78 @@ describe('consensus route camera derive', () => {
     expect(pose.position.every(Number.isFinite)).toBe(true);
     expect(distance(pose.position, pose.target))
       .toBeCloseTo(CONSENSUS_ROUTE_CAMERA_DISTANCE, 8);
+  });
+
+  it('enters neutral space once, then recognizes only an exact record change', () => {
+    expect(deriveConsensusRecordCameraIntent(
+      '18:5',
+      '18:5',
+      false,
+      true,
+      true,
+    )).toBe('neutral');
+    expect(deriveConsensusRecordCameraIntent(
+      '18:5',
+      '18:5',
+      true,
+      true,
+      true,
+    )).toBe('idle');
+    expect(deriveConsensusRecordCameraIntent(
+      '18:5',
+      '19:9',
+      true,
+      false,
+      true,
+    )).toBe('record');
+    expect(deriveConsensusRecordCameraIntent(
+      '18:5',
+      '19:9',
+      false,
+      true,
+      true,
+    )).toBe('record');
+    expect(deriveConsensusRecordCameraIntent(
+      null,
+      '19:9',
+      false,
+      false,
+      true,
+    )).toBe('idle');
+    expect(deriveConsensusRecordCameraIntent(
+      '18:5',
+      '19:9',
+      false,
+      false,
+      false,
+    )).toBe('idle');
+  });
+
+  it('frames a record more broadly than one locked route hop', () => {
+    const record = deriveConsensusRecordCameraPose(
+      [12, 10, 14],
+      [2, 4, 6],
+      [-8, 39, 5],
+    );
+
+    expect(record.target).toEqual([-8, 39, 5]);
+    expect(distance(record.position, record.target))
+      .toBeCloseTo(CONSENSUS_RECORD_CAMERA_DISTANCE, 8);
+    expect(CONSENSUS_RECORD_CAMERA_DISTANCE)
+      .toBeGreaterThan(CONSENSUS_ROUTE_CAMERA_DISTANCE);
+  });
+
+  it('derives neutral space without using either record target', () => {
+    const neutral = deriveConsensusRecordNeutralCameraPose(
+      [20, 50, 20],
+      [4, 38, 6],
+      [40, 80, 40],
+      [0, 30, 0],
+    );
+
+    expect(neutral.target).toEqual([0, 30, 0]);
+    expect(distance(neutral.position, neutral.target))
+      .toBeGreaterThanOrEqual(CONSENSUS_RECORD_CAMERA_NEUTRAL_MIN_DISTANCE);
+    expect(neutral.target).not.toEqual([4, 38, 6]);
   });
 });
