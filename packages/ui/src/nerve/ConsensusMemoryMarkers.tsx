@@ -28,6 +28,10 @@ import {
   placeConsensusMemoryLabel,
   type ConsensusMemoryScreenRect,
 } from './consensusMemoryLayout';
+import {
+  CONSENSUS_MEMORY_NEAR_PRESENTATION,
+  type ConsensusMemoryDistancePresentation,
+} from './consensusMemoryDistancePresentation';
 
 type ConsensusMemoryEndpointRole = 'source' | 'target';
 
@@ -121,12 +125,15 @@ export default function ConsensusMemoryMarkers({
   evidenceFocusSourceId = null,
   sourceHandoffRef,
   sourceHandoffTimeRef,
+  distancePresentationRef,
   recordTransition = 'native',
 }: {
   focus: ConsensusMemoryTraceFocus | null;
   evidenceFocusSourceId?: number | null;
   sourceHandoffRef?: RefObject<ConsensusMemorySourceHandoff | null>;
   sourceHandoffTimeRef?: RefObject<number>;
+  /** Shared camera-distance treatment for route weight and endpoint copy. */
+  distancePresentationRef?: RefObject<ConsensusMemoryDistancePresentation>;
   recordTransition?: ConsensusMemoryRecordTransition;
 }) {
   const simClock = useSimClock();
@@ -135,6 +142,9 @@ export default function ConsensusMemoryMarkers({
   const copyRefs = useRef<Array<HTMLDivElement | null>>([]);
   const leaderSvgRefs = useRef<Array<SVGSVGElement | null>>([]);
   const leaderRefs = useRef<Array<SVGPathElement | null>>([]);
+  const metadataRefs = useRef<Array<HTMLDivElement | null>>([]);
+  const sourceContentRefs = useRef<Array<HTMLSpanElement | null>>([]);
+  const targetContentRefs = useRef<Array<HTMLDivElement | null>>([]);
   const hudRectsRef = useRef<ConsensusMemoryScreenRect[]>([]);
   const hudMeasureRef = useRef({ atMs: Number.NEGATIVE_INFINITY, width: -1, height: -1 });
   const markers = useMemo<MarkerRecord[]>(() => {
@@ -177,6 +187,27 @@ export default function ConsensusMemoryMarkers({
     const handoffProgress = handoffActive
       ? consensusMemorySourceHandoffProgress(sourceHandoff, sourceHandoffNowSec)
       : 1;
+    const distancePresentation = distancePresentationRef?.current
+      ?? CONSENSUS_MEMORY_NEAR_PRESENTATION;
+    const labelLod = distancePresentation.labelLod;
+    markers.forEach((_, index) => {
+      const node = markerRefs.current[index];
+      if (node) {
+        node.dataset.memoryDistanceLod = labelLod;
+        node.dataset.memoryCameraDistance =
+          distancePresentation.cameraDistance.toFixed(1);
+      }
+      const metadata = metadataRefs.current[index];
+      if (metadata) metadata.style.display = labelLod === 'signal' ? 'none' : '';
+      const sourceContent = sourceContentRefs.current[index];
+      if (sourceContent) {
+        sourceContent.style.display = labelLod === 'full' ? '' : 'none';
+      }
+      const targetContent = targetContentRefs.current[index];
+      if (targetContent) {
+        targetContent.style.display = labelLod === 'full' ? '' : 'none';
+      }
+    });
     const viewportWidth = typeof window === 'undefined' ? 0 : window.innerWidth;
     const viewportHeight = typeof window === 'undefined' ? 0 : window.innerHeight;
     const layoutNowMs = typeof performance === 'undefined' ? 0 : performance.now();
@@ -474,6 +505,10 @@ export default function ConsensusMemoryMarkers({
               data-memory-route={route?.path.join('>')}
               data-memory-route-hops={route?.hopCount}
               data-memory-route-duration-ms={routeDurationMs ?? undefined}
+              data-memory-distance-lod="full"
+              data-memory-camera-distance={
+                CONSENSUS_MEMORY_NEAR_PRESENTATION.cameraDistance.toFixed(1)
+              }
               style={{
                 position: 'relative',
                 display: 'flex',
@@ -532,13 +567,28 @@ export default function ConsensusMemoryMarkers({
                 <div style={{ fontSize: 8, letterSpacing: '0.15em', color }}>
                   {copy.headline}{sourceOrdinal}
                 </div>
-                <div style={{ marginTop: 2, fontSize: 7, letterSpacing: '0.09em', color: '#7B8CA6' }}>
+                <div
+                  ref={(node) => { metadataRefs.current[index] = node; }}
+                  data-memory-label-metadata="true"
+                  style={{ marginTop: 2, fontSize: 7, letterSpacing: '0.09em', color: '#7B8CA6' }}
+                >
                   {copy.cjk}
                   {!source ? ` · ${String(focus.routedSourceCount).padStart(2, '0')} ${evidenceNoun}` : ''}
-                  {source ? ` · CONTENT ${shortContentHash(cell)}` : ''}
+                  {source ? (
+                    <span
+                      ref={(node) => { sourceContentRefs.current[index] = node; }}
+                      data-memory-label-source-content="true"
+                    >
+                      {' · CONTENT '}{shortContentHash(cell)}
+                    </span>
+                  ) : null}
                 </div>
                 {!source && (
-                  <div style={{ marginTop: 2, fontSize: 7, letterSpacing: '0.11em', color: '#56738A' }}>
+                  <div
+                    ref={(node) => { targetContentRefs.current[index] = node; }}
+                    data-memory-label-target-content="true"
+                    style={{ marginTop: 2, fontSize: 7, letterSpacing: '0.11em', color: '#56738A' }}
+                  >
                     CONTENT {shortContentHash(cell)}
                   </div>
                 )}

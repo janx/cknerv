@@ -13,6 +13,9 @@ import {
   CONSENSUS_MEMORY_SOURCE_HANDOFF_SECONDS,
   deriveConsensusMemorySourceHandoff,
 } from '../../src/nerve/consensusMemorySourceHandoff';
+import {
+  deriveConsensusMemoryDistancePresentation,
+} from '../../src/nerve/consensusMemoryDistancePresentation';
 import { simClock } from '../../src/tweaks/simClock';
 
 const simFrameMock = vi.hoisted(() => ({
@@ -165,6 +168,56 @@ describe('ConsensusMemoryMarkers', () => {
     expect(sources[1].getAttribute('data-memory-source-index')).toBe('2');
     expect(container.querySelector('[data-memory-endpoint="target"]')?.textContent)
       .toContain('02 WITNESSES');
+  });
+
+  it('reduces only subordinate endpoint copy as the record frame widens', () => {
+    const cache = emptyCellsCache();
+    cache.cells.set(8, cell(8, 'a'));
+    cache.cells.set(5, cell(5, 'b'));
+    const distancePresentationRef = {
+      current: deriveConsensusMemoryDistancePresentation(184),
+    };
+    const { container } = render(
+      <CellGalaxyProvider value={cache}>
+        <ConsensusMemoryMarkers
+          focus={focus({ evidenceFocusSourceId: 8 })}
+          evidenceFocusSourceId={8}
+          distancePresentationRef={distancePresentationRef}
+        />
+      </CellGalaxyProvider>,
+    );
+
+    act(() => simFrameMock.callback?.());
+    const source = container.querySelector<HTMLElement>(
+      '[data-memory-endpoint="source"]',
+    )!;
+    const target = container.querySelector<HTMLElement>(
+      '[data-memory-endpoint="target"]',
+    )!;
+    expect(source.dataset.memoryDistanceLod).toBe('compact');
+    expect(source.querySelector<HTMLElement>(
+      '[data-memory-label-metadata]',
+    )?.style.display).toBe('');
+    expect(source.querySelector<HTMLElement>(
+      '[data-memory-label-source-content]',
+    )?.style.display).toBe('none');
+    expect(source.querySelector('[data-memory-route-proof="true"]'))
+      .not.toBeNull();
+    expect(target.querySelector<HTMLElement>(
+      '[data-memory-label-target-content]',
+    )?.style.display).toBe('none');
+
+    distancePresentationRef.current =
+      deriveConsensusMemoryDistancePresentation(208);
+    act(() => simFrameMock.callback?.());
+    expect(source.dataset.memoryDistanceLod).toBe('signal');
+    expect(source.querySelector<HTMLElement>(
+      '[data-memory-label-metadata]',
+    )?.style.display).toBe('none');
+    expect(source.querySelector('[data-memory-route-proof="true"]'))
+      .not.toBeNull();
+    expect(source.textContent).toContain('LINEAGE WITNESS');
+    expect(target.textContent).toContain('SHARED RECORD');
   });
 
   it('marks the selected real source while retaining the target as context', () => {

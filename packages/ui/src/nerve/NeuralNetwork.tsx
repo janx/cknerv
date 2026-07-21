@@ -18,6 +18,7 @@ import { useConsensusMemoryFocusRef } from '../hooks/consensusMemoryFocusContext
 import { useReducedMotion } from '../components/hud/useReducedMotion';
 import { useSimFrame } from '../tweaks/useSimFrame';
 import { useSimClock } from '../tweaks/SimClockScope';
+import { galaxyFrame } from '../tweaks/galaxyFrame';
 import { QUALITY_PRESETS, useQualityRuntime } from '../tweaks/qualityPresets';
 import { buildNeighborGraph, emptyNeighborGraph, type NeighborGraph } from '../geometry/neighborGraph';
 import { type Pulse, type PulsePlanningOptions } from './pulseRunner';
@@ -27,6 +28,7 @@ import { diffCells, snapshotCells, type CellSnapshotEntry } from './cellsDelta';
 import { planMeshUpdate, shouldReconcile } from './livingMeshDriver';
 import NeuralFabric, { type NeuralFabricHandles } from './NeuralFabric';
 import { bezierAt, bezierControl, fabricEdgeSeed } from '../geometry/edgeBezier';
+import { consensusRouteHopWorldPosition } from '../derives/consensusRouteCamera.derive';
 import { SpikePool } from './spikePool';
 import type { Vec3 } from '../types';
 import {
@@ -80,6 +82,10 @@ import {
   deriveConsensusMemoryRecordBridge,
   deriveConsensusMemoryRecordParkFocus,
 } from './consensusMemoryRecordBridge';
+import {
+  CONSENSUS_MEMORY_NEAR_PRESENTATION,
+  deriveConsensusMemoryDistancePresentation,
+} from './consensusMemoryDistancePresentation';
 
 const SPIKE_POOL_CAPACITY = 1024;
 
@@ -310,6 +316,9 @@ export default function NeuralNetwork({
   const activeTraceRequestRef = useRef<ConsensusMemoryTraceRequest | null>(null);
   const traceFocusRef = useRef<ConsensusMemoryTraceFocus | null>(null);
   const [traceFocus, setTraceFocus] = useState<ConsensusMemoryTraceFocus | null>(null);
+  const traceDistancePresentationRef = useRef(
+    CONSENSUS_MEMORY_NEAR_PRESENTATION,
+  );
   const departingTraceFocusRef = useRef<ConsensusMemoryTraceFocus | null>(null);
   const [departingTraceFocus, setDepartingTraceFocus] =
     useState<ConsensusMemoryTraceFocus | null>(null);
@@ -765,11 +774,37 @@ export default function NeuralNetwork({
       focusStrength,
       departingFocusStrength,
     );
+    let memoryCameraDistance = CONSENSUS_MEMORY_NEAR_PRESENTATION.cameraDistance;
+    let hasMemoryTarget = false;
+    for (const candidateFocus of [traceFocusRef.current, departingFocus]) {
+      if (!candidateFocus) continue;
+      for (const targetId of candidateFocus.targetIds) {
+        const target = cells.get(targetId);
+        if (!target) continue;
+        const world = consensusRouteHopWorldPosition(
+          target.pos_seed,
+          galaxyFrame.rotationY,
+        );
+        const distance = Math.hypot(
+          state.camera.position.x - world[0],
+          state.camera.position.y - world[1],
+          state.camera.position.z - world[2],
+        );
+        if (!Number.isFinite(distance)) continue;
+        hasMemoryTarget = true;
+        memoryCameraDistance = Math.max(memoryCameraDistance, distance);
+      }
+    }
+    const distancePresentation = hasMemoryTarget
+      ? deriveConsensusMemoryDistancePresentation(memoryCameraDistance)
+      : CONSENSUS_MEMORY_NEAR_PRESENTATION;
+    traceDistancePresentationRef.current = distancePresentation;
 
     // Drive growth/decay animation on the persistent fabric layer.
     // Internally gated: no-op when nothing is animating and nothing
     // has changed since last commit, so this is free in steady state.
     handles?.setRecallFocus(presentationFocusStrength);
+    handles?.setMemoryRouteWidthScale(distancePresentation.routeWidthScale);
     handles?.emitFabric(now);
 
     // Live adjacency snapshot for this frame. Pulses ride only edges
@@ -809,7 +844,10 @@ export default function NeuralNetwork({
       const routeActivityScale = activityScale
         * evidenceActivityScale
         * releaseScale
-        * recordEntryScale;
+        * recordEntryScale
+        * (pulse.mode === 'memory'
+          ? distancePresentation.routeEnergyScale
+          : 1);
       // Each pulse has its own start delay (jitter) and hop duration
       // (speed scale). Subtract the delay before checking elapsed.
       const rawElapsedMs = (now - pulse.startSec) * 1000;
@@ -862,6 +900,7 @@ export default function NeuralNetwork({
                   {
                     fromCellId: fromId,
                     toCellId: toId,
+                    mode: 'memory',
                     frontT: 1,
                     brightness: MEMORY_RESONANCE_BRIGHT
                       * resonance
@@ -946,6 +985,7 @@ export default function NeuralNetwork({
             {
               fromCellId: hFromId,
               toCellId: hToId,
+              mode: pulse.mode,
               frontT,
               brightness: brightness * routeActivityScale,
               color: pulse.color,
@@ -976,7 +1016,9 @@ export default function NeuralNetwork({
         spikePool.push({
           position: [x, y, z],
           color: pulse.color,
-          size: pulse.mode === 'memory' ? SPIKE_SIZE * 0.74 : SPIKE_SIZE,
+          size: pulse.mode === 'memory'
+            ? SPIKE_SIZE * 0.74 * distancePresentation.spikeScale
+            : SPIKE_SIZE,
           alpha: (pulse.mode === 'memory' ? SPIKE_ALPHA * 0.72 : SPIKE_ALPHA)
             * routeActivityScale,
           whiteBias: pulse.mode === 'memory' ? 0.5 : 0.95,
@@ -1035,10 +1077,12 @@ export default function NeuralNetwork({
           handles.pushActiveHop({
             fromCellId,
             toCellId,
+            mode: 'memory',
             frontT: 1,
             brightness: MEMORY_ROUTE_HOP_INSPECT_BRIGHT
               * focusStrength
-              * brightnessScale,
+              * brightnessScale
+              * distancePresentation.routeEnergyScale,
             tailDecay: MEMORY_ROUTE_HOP_INSPECT_TAIL_DECAY,
             color: resolved.route.color,
           }, cells);
@@ -1068,10 +1112,12 @@ export default function NeuralNetwork({
           handles.pushActiveHop({
             fromCellId,
             toCellId,
+            mode: 'memory',
             frontT: 1,
             brightness: MEMORY_SOURCE_HANDOFF_FLARE_BRIGHT
               * focusStrength
-              * flareScale,
+              * flareScale
+              * distancePresentation.routeEnergyScale,
             tailDecay: MEMORY_SOURCE_HANDOFF_FLARE_TAIL_DECAY,
             color: resolved.route.color,
           }, cells);
@@ -1122,6 +1168,7 @@ export default function NeuralNetwork({
       <ConsensusMemoryMarkers
         focus={departingTraceFocus}
         evidenceFocusSourceId={departingTraceFocus?.evidenceFocusSourceId ?? null}
+        distancePresentationRef={traceDistancePresentationRef}
         recordTransition="departing"
       />
       <ConsensusMemoryMarkers
@@ -1129,6 +1176,7 @@ export default function NeuralNetwork({
         evidenceFocusSourceId={traceDisplayEvidenceSourceId}
         sourceHandoffRef={sourceHandoffRef}
         sourceHandoffTimeRef={sourceHandoffTimeRef}
+        distancePresentationRef={traceDistancePresentationRef}
         recordTransition={
           traceFocus?.visualContinuity?.mode === 'entry'
             ? 'arriving'
