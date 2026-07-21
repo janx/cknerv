@@ -710,6 +710,9 @@ export default function ConsensusRouteHopMarker({
     return value;
   }, []);
   const material = useMemo(() => makeGlyphMaterial(), []);
+  const renderStrength = spatial
+    ? consensusMemoryTraceFocusStrength(focus, simClock.elapsedSec)
+    : 0;
 
   useEffect(() => {
     if (inspectedAgreementSourceId === null) return;
@@ -737,6 +740,9 @@ export default function ConsensusRouteHopMarker({
     }
     const group = groupRef.current;
     if (!group) return;
+    if (pointsRef.current) pointsRef.current.visible = renderStrength > 0.001;
+    material.uniforms.uOpacity.value = renderStrength;
+    if (chipRef.current) chipRef.current.style.opacity = renderStrength.toFixed(3);
     const destination = glyphWaypoint(spatial, presentation, agreementPlan);
     const motion = motionRef.current;
     geometry.setDrawRange(0, 1);
@@ -805,6 +811,7 @@ export default function ConsensusRouteHopMarker({
     material,
     presentation,
     reducedMotion,
+    renderStrength,
     spatial,
   ]);
 
@@ -1330,6 +1337,12 @@ export default function ConsensusRouteHopMarker({
           data-memory-route-hop-source-handoff-observed-range="none"
           data-memory-route-hop-source-handoff-mid-progress="none"
           data-memory-route-hop-source-handoff-mid-agreement-scales="none"
+          data-memory-trace-continuity={
+            focus?.visualContinuity?.mode ?? 'native'
+          }
+          data-memory-trace-continuity-floor={
+            focus?.visualContinuity?.floorStrength.toFixed(3) ?? '0.000'
+          }
           style={{
             position: 'relative',
             transform: 'translate(-50%, 39px)',
@@ -1338,7 +1351,7 @@ export default function ConsensusRouteHopMarker({
             borderBottom: `1px solid ${cssColor(presentation.primary, 0.4)}`,
             background: `linear-gradient(90deg, rgba(1,5,14,.92), ${cssColor(presentation.primary, 0.07)}, rgba(1,5,14,.78))`,
             boxShadow: `0 0 10px ${cssColor(presentation.primary, 0.17)}`,
-            opacity: 0,
+            opacity: renderStrength,
             whiteSpace: 'nowrap',
             fontFamily: '"JetBrains Mono Local", ui-monospace, monospace',
             fontSize: 6.4,

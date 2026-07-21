@@ -65,6 +65,14 @@ import {
   type ConsensusMemorySourceHandoff,
   type ConsensusMemorySourceHandoffSide,
 } from './consensusMemorySourceHandoff';
+import {
+  consensusMemoryTraceVisualRouteHopFocus,
+  consensusMemoryTraceReleaseStrength,
+  deriveConsensusMemoryTraceReentryFocus,
+  deriveConsensusMemoryTraceReleaseEnvelope,
+  deriveConsensusMemoryTraceReleaseFocus,
+  type ConsensusMemoryTraceReleaseEnvelope,
+} from './consensusMemoryTraceContinuity';
 
 const SPIKE_POOL_CAPACITY = 1024;
 
@@ -145,6 +153,13 @@ interface NeuralNetworkProps {
 interface ActivePulse extends Pulse {
   startSec: number;
   mode: ConsensusPulseMode;
+  /** Replay identity; live traffic deliberately has no historical key. */
+  traceKey?: string;
+  /** Visual-only exit envelope for an already verified memory packet. */
+  release?: ConsensusMemoryTraceReleaseEnvelope & {
+    evidenceScale: number;
+    routeHandoffScale: number;
+  };
   /** ② Highest hop index already reinforced, so each edge a pulse crosses
    *  bumps its vein's usage exactly once (the head hop only advances). */
   lastReinforcedHop?: number;
@@ -285,6 +300,10 @@ export default function NeuralNetwork({
   const activeTraceRequestRef = useRef<ConsensusMemoryTraceRequest | null>(null);
   const traceFocusRef = useRef<ConsensusMemoryTraceFocus | null>(null);
   const [traceFocus, setTraceFocus] = useState<ConsensusMemoryTraceFocus | null>(null);
+  const [traceDisplayRouteHopLock, setTraceDisplayRouteHopLock] =
+    useState<ConsensusMemoryRouteHopFocus | null>(null);
+  const [traceDisplayEvidenceSourceId, setTraceDisplayEvidenceSourceId] =
+    useState<number | null>(null);
   const previousRouteHopLockRef = useRef<ConsensusMemoryRouteHopFocus | null>(null);
   const sourceHandoffRef = useRef<ConsensusMemorySourceHandoff | null>(null);
   const sourceHandoffTimeRef = useRef(0);
@@ -305,7 +324,7 @@ export default function NeuralNetwork({
     const previousLock = previousRouteHopLockRef.current;
     const nextState = reconcileConsensusMemorySourceHandoff(
       previousLock,
-      traceRouteHopLock,
+      traceDisplayRouteHopLock,
       sourceHandoffRef.current,
       0,
       { reducedMotion },
@@ -340,7 +359,7 @@ export default function NeuralNetwork({
     };
     invalidate();
     sourceHandoffFrameRef.current = window.requestAnimationFrame(animateHandoff);
-  }, [invalidate, reducedMotion, traceRouteHopLock]);
+  }, [invalidate, reducedMotion, traceDisplayRouteHopLock]);
   useEffect(() => () => {
     if (sourceHandoffFrameRef.current !== null && typeof window !== 'undefined') {
       window.cancelAnimationFrame(sourceHandoffFrameRef.current);
@@ -349,7 +368,7 @@ export default function NeuralNetwork({
   }, []);
   useEffect(() => {
     const focus = traceFocusRef.current;
-    if (!focus) return;
+    if (!focus || !traceRequest) return;
     const sourceId = traceEvidenceFocusSourceId !== null
       && Number.isFinite(traceEvidenceFocusSourceId)
       && focus.sources.some((source) => source.id === traceEvidenceFocusSourceId)
@@ -363,12 +382,20 @@ export default function NeuralNetwork({
     focus.routeHopFocus = validatedRouteHop?.sourceId === sourceId
       ? validatedRouteHop
       : null;
+    const validatedLock = validateConsensusMemoryRouteHopFocus(
+      focus,
+      traceRouteHopLock,
+    );
+    setTraceDisplayEvidenceSourceId(sourceId);
+    setTraceDisplayRouteHopLock(validatedLock);
     if (sharedTraceFocusRef) sharedTraceFocusRef.current = focus;
   }, [
     sharedTraceFocusRef,
     traceEvidenceFocusSourceId,
     traceFocus,
+    traceRequest,
     traceRouteHopFocus,
+    traceRouteHopLock,
   ]);
   const publishTraceTargetResponse = useCallback((
     targetCellId: number | null,
@@ -425,23 +452,83 @@ export default function NeuralNetwork({
     if (sharedTraceFocusRef) sharedTraceFocusRef.current = null;
     publishTraceTargetResponse(null, null);
   }, [publishTraceTargetResponse, sharedTraceFocusRef]);
+  const releaseMemoryPulses = useCallback((
+    nowSec: number,
+    focus: ConsensusMemoryTraceFocus | null,
+  ) => {
+    const release = deriveConsensusMemoryTraceReleaseEnvelope(nowSec, {
+      reducedMotion,
+    });
+    if (!release) {
+      pulsesRef.current = pulsesRef.current.filter(
+        (pulse) => pulse.mode !== 'memory',
+      );
+      return;
+    }
+    for (const pulse of pulsesRef.current) {
+      if (pulse.mode !== 'memory' || pulse.release) continue;
+      const sourceId = pulse.path[0] ?? null;
+      const targetId = pulse.path[pulse.path.length - 1] ?? null;
+      const targetResponse = targetId === null
+        ? null
+        : consensusMemoryCellResponse(focus, targetId, nowSec);
+      pulse.release = {
+        ...release,
+        evidenceScale: consensusMemorySourceHandoffEvidenceScale(
+          sourceId,
+          focus?.evidenceFocusSourceId ?? null,
+          sourceHandoffRef.current,
+          sourceHandoffTimeRef.current,
+        ),
+        routeHandoffScale: consensusMemoryRouteHandoffScale(
+          targetResponse?.role === 'target'
+            ? targetResponse.convergence
+            : 0,
+        ),
+      };
+    }
+  }, [reducedMotion]);
   useEffect(() => {
     if (!traceRequest) {
-      pulsesRef.current = pulsesRef.current.filter((pulse) => pulse.mode !== 'memory');
       lastTraceKeyRef.current = null;
+      const completedRequest = activeTraceRequestRef.current;
+      const currentFocus = traceFocusRef.current;
       activeTraceRequestRef.current = null;
-      traceFocusRef.current = null;
-      if (sharedTraceFocusRef) sharedTraceFocusRef.current = null;
       publishTraceTargetResponse(null, null);
-      setTraceFocus(null);
       publishTraceReadout(null);
+      // Cache revisions may rerun this effect while an exit is already fading.
+      // Only the active→idle edge may create a new release envelope.
+      if (!completedRequest) {
+        if (!currentFocus) {
+          if (sharedTraceFocusRef) sharedTraceFocusRef.current = null;
+          setTraceFocus(null);
+        }
+        return;
+      }
+      releaseMemoryPulses(simClock.elapsedSec, currentFocus);
+      const releaseFocus = deriveConsensusMemoryTraceReleaseFocus(
+        currentFocus
+          ? { ...currentFocus, routeHopFocus: traceDisplayRouteHopLock }
+          : null,
+        simClock.elapsedSec,
+        { reducedMotion },
+      );
+      traceFocusRef.current = releaseFocus;
+      if (sharedTraceFocusRef) sharedTraceFocusRef.current = releaseFocus;
+      setTraceFocus(releaseFocus);
+      if (!releaseFocus) {
+        setTraceDisplayEvidenceSourceId(null);
+        setTraceDisplayRouteHopLock(null);
+      }
       return;
     }
     const key = consensusMemoryTraceRequestKey(traceRequest);
     if (lastTraceKeyRef.current === key) return;
-    // A replay replaces the previous recollection. Live traffic remains in
-    // flight, but stale historical paths cannot overlap the new selection.
-    pulsesRef.current = pulsesRef.current.filter((pulse) => pulse.mode !== 'memory');
+    // The previous verified route becomes a fading afterimage while the fresh
+    // route begins. Live traffic remains in flight and is never rewritten.
+    const startSec = simClock.elapsedSec;
+    const previousFocus = traceFocusRef.current;
+    releaseMemoryPulses(startSec, previousFocus);
     lastTraceKeyRef.current = key;
     activeTraceRequestRef.current = null;
     const link = cellsCache.recentLinks.find(
@@ -452,6 +539,8 @@ export default function NeuralNetwork({
       if (sharedTraceFocusRef) sharedTraceFocusRef.current = null;
       publishTraceTargetResponse(null, null);
       setTraceFocus(null);
+      setTraceDisplayEvidenceSourceId(null);
+      setTraceDisplayRouteHopLock(null);
       publishTraceReadout(null);
       onTraceComplete?.(traceRequest);
       return;
@@ -467,17 +556,28 @@ export default function NeuralNetwork({
         targetCellId: traceRequest.targetCellId,
       },
     );
-    const startSec = simClock.elapsedSec;
-    const focus = deriveConsensusMemoryTraceFocus(trace, startSec, key);
+    const plannedFocus = deriveConsensusMemoryTraceFocus(trace, startSec, key);
+    const focus = plannedFocus
+      ? deriveConsensusMemoryTraceReentryFocus(
+        plannedFocus,
+        previousFocus,
+        startSec,
+        { reducedMotion },
+      )
+      : null;
     traceFocusRef.current = focus;
     if (sharedTraceFocusRef) sharedTraceFocusRef.current = focus;
     setTraceFocus(focus);
     if (!focus) {
+      setTraceDisplayEvidenceSourceId(null);
+      setTraceDisplayRouteHopLock(null);
       publishTraceTargetResponse(null, null);
       publishTraceReadout(null);
       onTraceComplete?.(traceRequest);
       return;
     }
+    setTraceDisplayEvidenceSourceId(focus.evidenceFocusSourceId);
+    setTraceDisplayRouteHopLock(focus.routeHopFocus);
     activeTraceRequestRef.current = traceRequest;
     const targetCellId = traceRequest.targetCellId ?? focus.targetIds[0];
     const initialTargetResponse = targetCellId === undefined
@@ -488,7 +588,12 @@ export default function NeuralNetwork({
       ? null
       : consensusMemoryTraceReadout(focus, targetCellId, startSec));
     for (const pulse of trace.pulses) {
-      pulsesRef.current.push({ ...pulse, startSec, mode: 'memory' });
+      pulsesRef.current.push({
+        ...pulse,
+        startSec,
+        mode: 'memory',
+        traceKey: key,
+      });
     }
 
     const maxActivePulses = Math.max(
@@ -512,7 +617,10 @@ export default function NeuralNetwork({
     onTraceComplete,
     publishTraceReadout,
     publishTraceTargetResponse,
+    reducedMotion,
+    releaseMemoryPulses,
     sharedTraceFocusRef,
+    traceDisplayRouteHopLock,
   ]);
 
   // Dev metric: count every block that arrives (one `pulse` delta each,
@@ -558,6 +666,8 @@ export default function NeuralNetwork({
       if (sharedTraceFocusRef) sharedTraceFocusRef.current = null;
       publishTraceTargetResponse(null, null);
       setTraceFocus(null);
+      setTraceDisplayEvidenceSourceId(null);
+      setTraceDisplayRouteHopLock(null);
       publishTraceReadout(null);
       if (completedRequest) onTraceComplete?.(completedRequest);
     }
@@ -573,12 +683,14 @@ export default function NeuralNetwork({
         now,
       );
       currentTargetResponse = response?.role === 'target' ? response : null;
-      publishTraceTargetResponse(readoutTargetId, currentTargetResponse);
-      publishTraceReadout(consensusMemoryTraceReadout(
-        currentFocus,
-        readoutTargetId,
-        now,
-      ));
+      if (currentRequest) {
+        publishTraceTargetResponse(readoutTargetId, currentTargetResponse);
+        publishTraceReadout(consensusMemoryTraceReadout(
+          currentFocus,
+          readoutTargetId,
+          now,
+        ));
+      }
     }
     const focusStrength = consensusMemoryTraceFocusStrength(
       traceFocusRef.current,
@@ -601,19 +713,30 @@ export default function NeuralNetwork({
     const stillActive: ActivePulse[] = [];
     for (const pulse of pulsesRef.current) {
       const policy = CONSENSUS_PULSE_POLICY[pulse.mode];
+      const releaseScale = pulse.mode === 'memory'
+        ? consensusMemoryTraceReleaseStrength(pulse.release, now)
+        : 1;
+      if (releaseScale <= 0.001) continue;
       const activityScale = consensusMemoryPulseActivityScale(
         pulse.mode,
         focusStrength,
       );
+      const pulseMatchesFocus = pulse.mode === 'memory'
+        && pulse.traceKey === currentFocus?.key;
       const evidenceActivityScale = pulse.mode === 'memory'
-        ? consensusMemorySourceHandoffEvidenceScale(
-          pulse.path[0] ?? null,
-          currentFocus?.evidenceFocusSourceId ?? null,
-          sourceHandoffRef.current,
-          sourceHandoffTimeRef.current,
-        )
+        ? pulse.release?.evidenceScale
+          ?? (pulseMatchesFocus
+            ? consensusMemorySourceHandoffEvidenceScale(
+              pulse.path[0] ?? null,
+              currentFocus?.evidenceFocusSourceId ?? null,
+              sourceHandoffRef.current,
+              sourceHandoffTimeRef.current,
+            )
+            : 1)
         : 1;
-      const routeActivityScale = activityScale * evidenceActivityScale;
+      const routeActivityScale = activityScale
+        * evidenceActivityScale
+        * releaseScale;
       // Each pulse has its own start delay (jitter) and hop duration
       // (speed scale). Subtract the delay before checking elapsed.
       const rawElapsedMs = (now - pulse.startSec) * 1000;
@@ -622,6 +745,9 @@ export default function NeuralNetwork({
       if (totalHops <= 0) continue;
       // Pulse hasn't started yet (still in its jitter delay).
       if (elapsedMs < 0) {
+        // A packet that was never visible should not depart after its recall
+        // has already been released.
+        if (pulse.release) continue;
         stillActive.push(pulse);
         continue;
       }
@@ -641,14 +767,17 @@ export default function NeuralNetwork({
           );
           if (resonance > 0) {
             stillActive.push(pulse);
-            const targetResponse = term === readoutTargetId
+            const targetResponse = pulseMatchesFocus && term === readoutTargetId
               ? currentTargetResponse
-              : consensusMemoryCellResponse(activeFocus, term, now);
-            const handoffScale = consensusMemoryRouteHandoffScale(
-              targetResponse?.role === 'target'
-                ? targetResponse.convergence
-                : 0,
-            );
+              : pulseMatchesFocus
+                ? consensusMemoryCellResponse(currentFocus, term, now)
+                : null;
+            const handoffScale = pulse.release?.routeHandoffScale
+              ?? consensusMemoryRouteHandoffScale(
+                targetResponse?.role === 'target'
+                  ? targetResponse.convergence
+                  : 0,
+              );
             if (handles) {
               for (let h = 0; h < totalHops; h++) {
                 const fromId = pulse.path[h];
@@ -664,7 +793,7 @@ export default function NeuralNetwork({
                     brightness: MEMORY_RESONANCE_BRIGHT
                       * resonance
                       * handoffScale
-                      * evidenceActivityScale,
+                      * routeActivityScale,
                     tailDecay: MEMORY_RESONANCE_TAIL_DECAY,
                     color: pulse.color,
                   },
@@ -908,20 +1037,25 @@ export default function NeuralNetwork({
     spikePool.endFrame(state.size.height, state.viewport.dpr ?? 1);
   });
 
+  const renderedTraceRouteHopLock = consensusMemoryTraceVisualRouteHopFocus(
+    traceFocus,
+    traceDisplayRouteHopLock,
+  );
+
   return (
     <>
       <NeuralFabric onReady={onFabricReady} />
       <primitive object={spikePool.mesh} />
       <ConsensusMemoryMarkers
         focus={traceFocus}
-        evidenceFocusSourceId={traceEvidenceFocusSourceId}
+        evidenceFocusSourceId={traceDisplayEvidenceSourceId}
         sourceHandoffRef={sourceHandoffRef}
         sourceHandoffTimeRef={sourceHandoffTimeRef}
       />
       <ConsensusRouteHopMarker
         focus={traceFocus}
-        lockedHop={traceRouteHopLock}
-        focusedSourceId={traceEvidenceFocusSourceId}
+        lockedHop={renderedTraceRouteHopLock}
+        focusedSourceId={traceDisplayEvidenceSourceId}
         sourceHandoffRef={sourceHandoffRef}
         sourceHandoffTimeRef={sourceHandoffTimeRef}
         onAgreementPreviewChange={onTraceAgreementPreviewChange}

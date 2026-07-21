@@ -69,6 +69,11 @@ import {
   INITIAL_CELL_MEMORY_RECALL_STATE,
   cellMemoryRecallReducer,
 } from './cell-memory-recall-state';
+import {
+  cellMemoryRouteAnchor,
+  restoreCellMemoryRouteAnchor,
+  type CellMemoryRouteAnchor,
+} from './cell-memory-route-continuity';
 import { hasQuerySwitch, resolveCanvasDpr } from './render-quality';
 import { resolveBuildVersion, buildCommitHref, resolveGalaxyConfig } from './runtime-config';
 
@@ -158,13 +163,17 @@ export default function App({
   const [memoryRouteHopLock, setMemoryRouteHopLock] = useState<
     ConsensusMemoryRouteHopFocus | null
   >(null);
+  const memoryRouteHopAnchorRef = useRef<CellMemoryRouteAnchor | null>(null);
   const memoryTraceTargetResponseRef = useRef<
     ConsensusMemoryTargetResponse | null
   >(null);
   const handleSelect = useCallback((id: string | null) => {
     if (id == null) return;
     if (id.startsWith(CELL_SELECTION_PREFIX)) {
-      setSelectedCellId(id);
+      setSelectedCellId((current) => {
+        if (current !== id) memoryRouteHopAnchorRef.current = null;
+        return id;
+      });
       dispatchMemoryRecall({ type: 'cancel' });
     }
     else setSelectedNetId(id);
@@ -364,7 +373,21 @@ export default function App({
         : null;
     };
     setMemoryRouteHopPreview(validate);
-    setMemoryRouteHopLock(validate);
+    setMemoryRouteHopLock((current) => {
+      const verified = validate(current);
+      if (verified) {
+        memoryRouteHopAnchorRef.current = cellMemoryRouteAnchor(verified);
+        return verified;
+      }
+      const restored = restoreCellMemoryRouteAnchor(
+        memoryRouteHopAnchorRef.current,
+        selectedMemoryTraceReadout,
+      );
+      if (restored) {
+        memoryRouteHopAnchorRef.current = cellMemoryRouteAnchor(restored);
+      }
+      return restored;
+    });
   }, [selectedMemoryTraceReadout]);
   const memoryRouteHopFocus = memoryRouteHopPreview ?? memoryRouteHopLock;
   useEffect(() => {
@@ -454,6 +477,7 @@ export default function App({
     candidate: ConsensusMemoryRouteHopFocus | null,
   ) => {
     if (!candidate) {
+      memoryRouteHopAnchorRef.current = null;
       setMemoryRouteHopLock(null);
       return;
     }
@@ -463,10 +487,12 @@ export default function App({
       candidate.hopIndex,
     );
     if (!verified || !consensusMemoryRouteHopFocusEqual(verified, candidate)) {
+      memoryRouteHopAnchorRef.current = null;
       setMemoryRouteHopLock(null);
       return;
     }
     setMemoryEvidenceFocusSourceId(verified.sourceId);
+    memoryRouteHopAnchorRef.current = cellMemoryRouteAnchor(verified);
     setMemoryRouteHopLock(verified);
   }, [selectedMemoryTraceReadout]);
   const recallSelectedCellOrigin = useCallback((linkSeq: number) => {
@@ -527,6 +553,7 @@ export default function App({
         selectedNode={selectedNode}
         selectedPeer={selectedPeer}
         onClearCell={() => {
+          memoryRouteHopAnchorRef.current = null;
           setSelectedCellId(null);
           dispatchMemoryRecall({ type: 'cancel' });
         }}
@@ -546,6 +573,7 @@ export default function App({
           dpr={canvasDpr}
           style={{ background: '#02030a' }}
           onPointerMissed={() => {
+            memoryRouteHopAnchorRef.current = null;
             setSelectedCellId(null);
             setSelectedNetId(null);
             dispatchMemoryRecall({ type: 'cancel' });
