@@ -3,6 +3,7 @@ import {
   CELL_MEMORY_RECALL_MAX_PULSES,
   INITIAL_CELL_MEMORY_RECALL_STATE,
   cellMemoryRecallReducer,
+  cellMemoryRecallWriteSeqForTarget,
 } from '../src/cell-memory-recall-state';
 
 describe('cell memory recall state', () => {
@@ -56,6 +57,29 @@ describe('cell memory recall state', () => {
       request: second.request!,
     });
     expect(completed).toEqual({ request: null, nonce: 2 });
+  });
+
+  it('marks only the exact recalled output as active in the Cell HUD', () => {
+    const active = cellMemoryRecallReducer(
+      INITIAL_CELL_MEMORY_RECALL_STATE,
+      { type: 'toggle', linkSeq: 18, targetCellId: 4242 },
+    );
+
+    expect(cellMemoryRecallWriteSeqForTarget(active.request, 4242)).toBe(18);
+    expect(cellMemoryRecallWriteSeqForTarget(active.request, 5252)).toBeNull();
+    expect(cellMemoryRecallWriteSeqForTarget(null, 4242)).toBeNull();
+  });
+
+  it('preserves a verified record while another Cell is only inspected', () => {
+    const active = cellMemoryRecallReducer(
+      INITIAL_CELL_MEMORY_RECALL_STATE,
+      { type: 'toggle', linkSeq: 18, targetCellId: 4242 },
+    );
+
+    expect(cellMemoryRecallReducer(active, {
+      type: 'inspect',
+      targetCellId: 5252,
+    })).toBe(active);
   });
 
   it('cancels selection without resetting replay identity', () => {

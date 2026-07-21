@@ -39,6 +39,7 @@ import {
   consensusMemoryTraceReadout,
   consensusMemoryTraceRequestKey,
   consensusMemoryTraceResonance,
+  consensusMemoryTraceEntryScale,
   consensusMemoryTraceFocusStrength,
   deriveConsensusMemoryTraceFocus,
   validateConsensusMemoryRouteHopFocus,
@@ -66,6 +67,8 @@ import {
   type ConsensusMemorySourceHandoffSide,
 } from './consensusMemorySourceHandoff';
 import {
+  CONSENSUS_MEMORY_TRACE_RELEASE_SECONDS,
+  consensusMemoryTraceShapeKey,
   consensusMemoryTraceVisualRouteHopFocus,
   consensusMemoryTraceReleaseStrength,
   deriveConsensusMemoryTraceReentryFocus,
@@ -73,6 +76,10 @@ import {
   deriveConsensusMemoryTraceReleaseFocus,
   type ConsensusMemoryTraceReleaseEnvelope,
 } from './consensusMemoryTraceContinuity';
+import {
+  deriveConsensusMemoryRecordBridge,
+  deriveConsensusMemoryRecordParkFocus,
+} from './consensusMemoryRecordBridge';
 
 const SPIKE_POOL_CAPACITY = 1024;
 
@@ -127,6 +134,8 @@ interface NeuralNetworkProps {
   traceRequest?: ConsensusMemoryTraceRequest | null;
   /** Optional recall-only route cap; live traffic keeps its own pulse budget. */
   traceMaxPulses?: number;
+  /** Keep a quiet old record while the user maps a different selected Cell. */
+  traceHoldForRecordSwitch?: boolean;
   /** Reports completion or an unavailable route so UI active state can exit. */
   onTraceComplete?: (request: ConsensusMemoryTraceRequest) => void;
   /**
@@ -173,6 +182,7 @@ export default function NeuralNetwork({
   pulses,
   traceRequest = null,
   traceMaxPulses,
+  traceHoldForRecordSwitch = false,
   onTraceComplete,
   onTraceReadoutChange,
   traceTargetResponseRef,
@@ -300,6 +310,9 @@ export default function NeuralNetwork({
   const activeTraceRequestRef = useRef<ConsensusMemoryTraceRequest | null>(null);
   const traceFocusRef = useRef<ConsensusMemoryTraceFocus | null>(null);
   const [traceFocus, setTraceFocus] = useState<ConsensusMemoryTraceFocus | null>(null);
+  const departingTraceFocusRef = useRef<ConsensusMemoryTraceFocus | null>(null);
+  const [departingTraceFocus, setDepartingTraceFocus] =
+    useState<ConsensusMemoryTraceFocus | null>(null);
   const [traceDisplayRouteHopLock, setTraceDisplayRouteHopLock] =
     useState<ConsensusMemoryRouteHopFocus | null>(null);
   const [traceDisplayEvidenceSourceId, setTraceDisplayEvidenceSourceId] =
@@ -366,6 +379,11 @@ export default function NeuralNetwork({
     }
     sourceHandoffFrameRef.current = null;
   }, []);
+  useEffect(() => {
+    if (!reducedMotion) return;
+    departingTraceFocusRef.current = null;
+    setDepartingTraceFocus(null);
+  }, [reducedMotion]);
   useEffect(() => {
     const focus = traceFocusRef.current;
     if (!focus || !traceRequest) return;
@@ -535,9 +553,11 @@ export default function NeuralNetwork({
       (candidate) => candidate.seq === traceRequest.linkSeq,
     );
     if (!link) {
+      departingTraceFocusRef.current = null;
       traceFocusRef.current = null;
       if (sharedTraceFocusRef) sharedTraceFocusRef.current = null;
       publishTraceTargetResponse(null, null);
+      setDepartingTraceFocus(null);
       setTraceFocus(null);
       setTraceDisplayEvidenceSourceId(null);
       setTraceDisplayRouteHopLock(null);
@@ -557,14 +577,31 @@ export default function NeuralNetwork({
       },
     );
     const plannedFocus = deriveConsensusMemoryTraceFocus(trace, startSec, key);
+    const recordBridge = deriveConsensusMemoryRecordBridge(
+      previousFocus,
+      plannedFocus,
+      startSec,
+      { reducedMotion },
+    );
     const focus = plannedFocus
-      ? deriveConsensusMemoryTraceReentryFocus(
-        plannedFocus,
-        previousFocus,
-        startSec,
-        { reducedMotion },
-      )
+      ? recordBridge?.arrivingFocus
+        ?? deriveConsensusMemoryTraceReentryFocus(
+          plannedFocus,
+          previousFocus,
+          startSec,
+          { reducedMotion },
+        )
       : null;
+    if (recordBridge) {
+      departingTraceFocusRef.current = recordBridge.departingFocus;
+      setDepartingTraceFocus(recordBridge.departingFocus);
+    } else if (
+      consensusMemoryTraceShapeKey(previousFocus)
+      !== consensusMemoryTraceShapeKey(plannedFocus)
+    ) {
+      departingTraceFocusRef.current = null;
+      setDepartingTraceFocus(null);
+    }
     traceFocusRef.current = focus;
     if (sharedTraceFocusRef) sharedTraceFocusRef.current = focus;
     setTraceFocus(focus);
@@ -657,7 +694,31 @@ export default function NeuralNetwork({
     spikePool.beginFrame();
     const handles = fabricHandlesRef.current;
     const cells = cellsCache.cells;
-    const activeFocus = traceFocusRef.current;
+    const departingFocus = departingTraceFocusRef.current;
+    if (departingFocus && now >= departingFocus.endsAtSec) {
+      departingTraceFocusRef.current = null;
+      setDepartingTraceFocus(null);
+    }
+    let activeFocus = traceFocusRef.current;
+    if (
+      activeFocus
+      && activeTraceRequestRef.current
+      && traceHoldForRecordSwitch
+      && activeFocus.visualContinuity?.mode !== 'park'
+      && now >= activeFocus.endsAtSec - CONSENSUS_MEMORY_TRACE_RELEASE_SECONDS
+    ) {
+      const parkedFocus = deriveConsensusMemoryRecordParkFocus(
+        activeFocus,
+        now,
+        { reducedMotion },
+      );
+      if (parkedFocus) {
+        activeFocus = parkedFocus;
+        traceFocusRef.current = parkedFocus;
+        if (sharedTraceFocusRef) sharedTraceFocusRef.current = parkedFocus;
+        setTraceFocus(parkedFocus);
+      }
+    }
     if (activeFocus && now >= activeFocus.endsAtSec) {
       const completedRequest = activeTraceRequestRef.current;
       pulsesRef.current = pulsesRef.current.filter((pulse) => pulse.mode !== 'memory');
@@ -696,11 +757,19 @@ export default function NeuralNetwork({
       traceFocusRef.current,
       now,
     );
+    const departingFocusStrength = consensusMemoryTraceFocusStrength(
+      departingTraceFocusRef.current,
+      now,
+    );
+    const presentationFocusStrength = Math.max(
+      focusStrength,
+      departingFocusStrength,
+    );
 
     // Drive growth/decay animation on the persistent fabric layer.
     // Internally gated: no-op when nothing is animating and nothing
     // has changed since last commit, so this is free in steady state.
-    handles?.setRecallFocus(focusStrength);
+    handles?.setRecallFocus(presentationFocusStrength);
     handles?.emitFabric(now);
 
     // Live adjacency snapshot for this frame. Pulses ride only edges
@@ -719,10 +788,13 @@ export default function NeuralNetwork({
       if (releaseScale <= 0.001) continue;
       const activityScale = consensusMemoryPulseActivityScale(
         pulse.mode,
-        focusStrength,
+        presentationFocusStrength,
       );
       const pulseMatchesFocus = pulse.mode === 'memory'
         && pulse.traceKey === currentFocus?.key;
+      const recordEntryScale = pulseMatchesFocus
+        ? consensusMemoryTraceEntryScale(currentFocus, now)
+        : 1;
       const evidenceActivityScale = pulse.mode === 'memory'
         ? pulse.release?.evidenceScale
           ?? (pulseMatchesFocus
@@ -736,7 +808,8 @@ export default function NeuralNetwork({
         : 1;
       const routeActivityScale = activityScale
         * evidenceActivityScale
-        * releaseScale;
+        * releaseScale
+        * recordEntryScale;
       // Each pulse has its own start delay (jitter) and hop duration
       // (speed scale). Subtract the delay before checking elapsed.
       const rawElapsedMs = (now - pulse.startSec) * 1000;
@@ -1047,10 +1120,22 @@ export default function NeuralNetwork({
       <NeuralFabric onReady={onFabricReady} />
       <primitive object={spikePool.mesh} />
       <ConsensusMemoryMarkers
+        focus={departingTraceFocus}
+        evidenceFocusSourceId={departingTraceFocus?.evidenceFocusSourceId ?? null}
+        recordTransition="departing"
+      />
+      <ConsensusMemoryMarkers
         focus={traceFocus}
         evidenceFocusSourceId={traceDisplayEvidenceSourceId}
         sourceHandoffRef={sourceHandoffRef}
         sourceHandoffTimeRef={sourceHandoffTimeRef}
+        recordTransition={
+          traceFocus?.visualContinuity?.mode === 'entry'
+            ? 'arriving'
+            : traceFocus?.visualContinuity?.mode === 'park'
+              ? 'parked'
+              : 'native'
+        }
       />
       <ConsensusRouteHopMarker
         focus={traceFocus}

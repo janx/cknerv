@@ -93,15 +93,16 @@ export interface ConsensusMemoryTracePlan {
 }
 
 /**
- * A short, display-only floor used when the same verified trace is replayed
- * before its exit afterimage has finished. The floor expires only after the
- * new native envelope has caught up, so it cannot extend semantic readout or
- * create a route that was not present in either verified focus.
+ * Display-only envelope for same-trace replay and independent-record handoff.
+ * It can retain or stage an already verified focus, but cannot add endpoints,
+ * routes, or semantic readout that were absent from that focus.
  */
 export interface ConsensusMemoryVisualContinuity {
-  mode: 'floor' | 'hold' | 'release';
+  mode: 'floor' | 'hold' | 'release' | 'entry' | 'park';
   floorStrength: number;
+  startStrength?: number;
   startedAtSec?: number;
+  settlesAtSec?: number;
   endsAtSec: number;
 }
 
@@ -242,12 +243,50 @@ function consensusMemoryVisualContinuityFloor(
   const strength = Number.isFinite(continuity.floorStrength)
     ? clampUnit(continuity.floorStrength)
     : 0;
+  if (continuity.mode === 'park') {
+    const startedAtSec = continuity.startedAtSec;
+    const settlesAtSec = continuity.settlesAtSec;
+    if (
+      startedAtSec === undefined
+      || settlesAtSec === undefined
+      || !Number.isFinite(startedAtSec)
+      || !Number.isFinite(settlesAtSec)
+      || !(settlesAtSec > startedAtSec)
+    ) return strength;
+    const startStrength = Number.isFinite(continuity.startStrength)
+      ? clampUnit(continuity.startStrength ?? 1)
+      : 1;
+    const settle = smoothUnit(
+      (nowSec - startedAtSec) / (settlesAtSec - startedAtSec),
+    );
+    return startStrength + (strength - startStrength) * settle;
+  }
   if (continuity.mode !== 'release') return strength;
   const startedAtSec = continuity.startedAtSec;
   if (startedAtSec === undefined || !Number.isFinite(startedAtSec)) return 0;
   const duration = continuity.endsAtSec - startedAtSec;
   if (!(duration > 0)) return 0;
   return strength * (1 - smoothUnit((nowSec - startedAtSec) / duration));
+}
+
+/**
+ * Visual-only arrival envelope for a newly selected, independently verified
+ * record. It never changes the route clock or readout lifetime; it only keeps
+ * the new record quiet while the previous record leaves the scene.
+ */
+export function consensusMemoryTraceEntryScale(
+  focus: ConsensusMemoryTraceFocus | null,
+  nowSec: number,
+): number {
+  const continuity = focus?.visualContinuity;
+  if (continuity?.mode !== 'entry') return 1;
+  if (!Number.isFinite(nowSec)) return 0;
+  const startedAtSec = continuity.startedAtSec;
+  if (startedAtSec === undefined || !Number.isFinite(startedAtSec)) return 1;
+  if (nowSec >= continuity.endsAtSec) return 1;
+  const duration = continuity.endsAtSec - startedAtSec;
+  if (!(duration > 0) || nowSec <= startedAtSec) return 0;
+  return smoothUnit((nowSec - startedAtSec) / duration);
 }
 
 /**
@@ -724,12 +763,21 @@ export function consensusMemoryTraceFocusStrength(
   // A React effect may stamp the new replay a fraction of a render frame
   // ahead of SimClockTicker. Keep the verified predecessor visible across
   // that clock boundary instead of producing one black frame.
-  if (ageMs < 0) return continuityStrength;
+  if (ageMs < 0) {
+    return focus.visualContinuity?.mode === 'entry'
+      ? 0
+      : continuityStrength;
+  }
   const fadeIn = smoothUnit(ageMs / MEMORY_TRACE_FOCUS_FADE_IN_MS);
   const fadeOut = smoothUnit(remainingMs / MEMORY_TRACE_FOCUS_FADE_OUT_MS);
-  return focus.visualContinuity?.mode === 'release'
-    ? continuityStrength
-    : Math.max(fadeIn * fadeOut, continuityStrength);
+  if (focus.visualContinuity?.mode === 'release') return continuityStrength;
+  if (focus.visualContinuity?.mode === 'park') {
+    return continuityStrength * fadeOut;
+  }
+  const nativeStrength = fadeIn * fadeOut;
+  return focus.visualContinuity?.mode === 'entry'
+    ? nativeStrength * consensusMemoryTraceEntryScale(focus, nowSec)
+    : Math.max(nativeStrength, continuityStrength);
 }
 
 /** Reveal each real source shortly before its own phased route departs. */

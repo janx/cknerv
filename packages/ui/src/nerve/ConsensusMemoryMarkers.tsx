@@ -110,16 +110,24 @@ interface MarkerRecord {
   sourceIndex: number;
 }
 
+export type ConsensusMemoryRecordTransition =
+  | 'native'
+  | 'departing'
+  | 'arriving'
+  | 'parked';
+
 export default function ConsensusMemoryMarkers({
   focus,
   evidenceFocusSourceId = null,
   sourceHandoffRef,
   sourceHandoffTimeRef,
+  recordTransition = 'native',
 }: {
   focus: ConsensusMemoryTraceFocus | null;
   evidenceFocusSourceId?: number | null;
   sourceHandoffRef?: RefObject<ConsensusMemorySourceHandoff | null>;
   sourceHandoffTimeRef?: RefObject<number>;
+  recordTransition?: ConsensusMemoryRecordTransition;
 }) {
   const simClock = useSimClock();
   const cellsCache = useCellGalaxy();
@@ -152,6 +160,13 @@ export default function ConsensusMemoryMarkers({
   useSimFrame(() => {
     const nowSec = simClock.elapsedSec;
     const focusOpacity = consensusMemoryTraceFocusStrength(focus, nowSec);
+    const resolvedRecordTransition = recordTransition === 'arriving'
+      && (
+        focus?.visualContinuity?.mode !== 'entry'
+        || nowSec >= focus.visualContinuity.endsAtSec
+      )
+      ? 'native'
+      : recordTransition;
     const sourceHandoff = sourceHandoffRef?.current ?? null;
     const sourceHandoffNowSec = sourceHandoffTimeRef?.current ?? nowSec;
     const handoffActive = consensusMemorySourceHandoffActive(
@@ -307,6 +322,11 @@ export default function ConsensusMemoryMarkers({
       node.style.opacity = (
         focusOpacity * sourceOpacity * evidenceScale
       ).toFixed(3);
+      node.dataset.memoryRecordTransition = resolvedRecordTransition;
+      node.dataset.memoryRecordBridge = (
+        resolvedRecordTransition === 'departing'
+        || resolvedRecordTransition === 'arriving'
+      ) ? 'independent' : 'none';
       node.dataset.memoryEvidenceFocus = marker.source
         ? handoffRole
           ?? (evidenceFocusSourceId === null
@@ -443,6 +463,13 @@ export default function ConsensusMemoryMarkers({
               }
               data-memory-trace-continuity-floor={
                 focus.visualContinuity?.floorStrength.toFixed(3) ?? '0.000'
+              }
+              data-memory-record-transition={recordTransition}
+              data-memory-record-bridge={
+                recordTransition === 'departing'
+                || recordTransition === 'arriving'
+                  ? 'independent'
+                  : 'none'
               }
               data-memory-route={route?.path.join('>')}
               data-memory-route-hops={route?.hopCount}

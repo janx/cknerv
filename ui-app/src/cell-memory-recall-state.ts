@@ -11,6 +11,7 @@ export interface CellMemoryRecallState {
 
 export type CellMemoryRecallAction =
   | { type: 'toggle'; linkSeq: number; targetCellId: number }
+  | { type: 'inspect'; targetCellId: number }
   | { type: 'cancel' }
   | { type: 'complete'; request: ConsensusMemoryTraceRequest };
 
@@ -18,6 +19,16 @@ export const INITIAL_CELL_MEMORY_RECALL_STATE: CellMemoryRecallState = {
   request: null,
   nonce: 0,
 };
+
+/** A write is active in the HUD only for the exact recalled output Cell. */
+export function cellMemoryRecallWriteSeqForTarget(
+  request: ConsensusMemoryTraceRequest | null,
+  selectedCellId: number | null | undefined,
+): number | null {
+  return request && request.targetCellId === selectedCellId
+    ? request.linkSeq
+    : null;
+}
 
 function sameRequest(
   a: ConsensusMemoryTraceRequest,
@@ -37,6 +48,10 @@ export function cellMemoryRecallReducer(
   state: CellMemoryRecallState,
   action: CellMemoryRecallAction,
 ): CellMemoryRecallState {
+  // Merely opening another Cell's identity panel does not replace the active
+  // record. Its explicit recall action will perform the verified handoff.
+  if (action.type === 'inspect') return state;
+
   if (action.type === 'cancel') {
     return state.request === null ? state : { ...state, request: null };
   }
