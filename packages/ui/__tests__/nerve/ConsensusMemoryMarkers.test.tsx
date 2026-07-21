@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import type { Cell } from '@cknerv/types';
 import { emptyCellsCache } from '@cknerv/cache';
-import { render } from '@testing-library/react';
+import { act, render } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { CellGalaxyProvider } from '../../src/hooks/cellGalaxyContext';
 import ConsensusMemoryMarkers from '../../src/nerve/ConsensusMemoryMarkers';
@@ -9,13 +9,24 @@ import type {
   ConsensusMemoryTraceFocus,
   ConsensusMemoryTraceFocusSource,
 } from '../../src/nerve/consensusMemoryTrace';
+import {
+  CONSENSUS_MEMORY_SOURCE_HANDOFF_SECONDS,
+  deriveConsensusMemorySourceHandoff,
+} from '../../src/nerve/consensusMemorySourceHandoff';
+import { simClock } from '../../src/tweaks/simClock';
+
+const simFrameMock = vi.hoisted(() => ({
+  callback: null as null | (() => void),
+}));
 
 vi.mock('@react-three/drei', () => ({
   Html: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }));
 
 vi.mock('../../src/tweaks/useSimFrame', () => ({
-  useSimFrame: () => undefined,
+  useSimFrame: (callback: () => void) => {
+    simFrameMock.callback = callback;
+  },
 }));
 
 function cell(id: number, hashDigit: string): Cell {
@@ -185,5 +196,69 @@ describe('ConsensusMemoryMarkers', () => {
       .toContain('CELL #9 · H02 · 700 MS');
     expect(container.querySelector('[data-memory-endpoint="target"]')
       ?.getAttribute('data-memory-evidence-focus')).toBe('context');
+  });
+
+  it('hands endpoint emphasis from the departing source to the arriving source', () => {
+    const cache = emptyCellsCache();
+    cache.cells.set(8, cell(8, 'a'));
+    cache.cells.set(9, cell(9, 'c'));
+    cache.cells.set(5, cell(5, 'b'));
+    const traceFocus = focus({
+      sources: [
+        focusSource(8, 'a', 1.1, 1.8),
+        focusSource(9, 'c', 1.32, 2.02),
+      ],
+      routedSourceCount: 2,
+      evidenceFocusSourceId: 9,
+    });
+    const sourceHandoff = deriveConsensusMemorySourceHandoff(
+      {
+        traceKey: traceFocus.key,
+        sourceId: 8,
+        targetCellId: 5,
+        cellId: 5,
+        hopIndex: 2,
+      },
+      {
+        traceKey: traceFocus.key,
+        sourceId: 9,
+        targetCellId: 5,
+        cellId: 5,
+        hopIndex: 2,
+      },
+      2.2,
+    )!;
+    const { container } = render(
+      <CellGalaxyProvider value={cache}>
+        <ConsensusMemoryMarkers
+          focus={traceFocus}
+          evidenceFocusSourceId={9}
+          sourceHandoffRef={{ current: sourceHandoff }}
+        />
+      </CellGalaxyProvider>,
+    );
+
+    act(() => {
+      simClock.elapsedSec = 2.2 + CONSENSUS_MEMORY_SOURCE_HANDOFF_SECONDS / 2;
+      simFrameMock.callback?.();
+    });
+    const departing = container.querySelector<HTMLElement>(
+      '[data-memory-source-id="8"]',
+    )!;
+    const arriving = container.querySelector<HTMLElement>(
+      '[data-memory-source-id="9"]',
+    )!;
+    expect(departing.getAttribute('data-memory-evidence-focus')).toBe('departing');
+    expect(arriving.getAttribute('data-memory-evidence-focus')).toBe('arriving');
+    expect(departing.getAttribute('data-memory-source-handoff-progress')).toBe('0.500');
+    expect(Number(departing.style.opacity)).toBeCloseTo(Number(arriving.style.opacity));
+
+    act(() => {
+      simClock.elapsedSec = sourceHandoff.endsAtSec;
+      simFrameMock.callback?.();
+    });
+    expect(departing.getAttribute('data-memory-evidence-focus')).toBe('passive');
+    expect(arriving.getAttribute('data-memory-evidence-focus')).toBe('active');
+    expect(arriving.getAttribute('data-memory-source-handoff')).toBe('idle');
   });
 });

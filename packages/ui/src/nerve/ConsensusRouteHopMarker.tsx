@@ -8,6 +8,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type RefObject,
 } from 'react';
 import { Html } from '@react-three/drei';
 import { useFrame } from '@react-three/fiber';
@@ -24,6 +25,12 @@ import {
 } from '../derives/consensusRouteHopAgreement.derive';
 import { useSimClock } from '../tweaks/SimClockScope';
 import { useSimFrame } from '../tweaks/useSimFrame';
+import {
+  consensusMemorySourceHandoffActive,
+  consensusMemorySourceHandoffEvidenceScale,
+  consensusMemorySourceHandoffProgress,
+  type ConsensusMemorySourceHandoff,
+} from './consensusMemorySourceHandoff';
 import {
   consensusMemoryTraceFocusStrength,
   consensusMemoryCellResponse,
@@ -89,6 +96,19 @@ interface GlyphLatch {
   cellId: number;
   elapsedSeconds: number;
   durationSeconds: number;
+}
+
+interface SourceHandoffAudit {
+  key: string;
+  traceKey: string;
+  fromSourceId: number;
+  toSourceId: number;
+  frames: number;
+  minProgress: number;
+  maxProgress: number;
+  midDistance: number;
+  midProgress: number;
+  midAgreementScales: string;
 }
 
 function rolePresentation(
@@ -639,12 +659,16 @@ export default function ConsensusRouteHopMarker({
   focus,
   lockedHop,
   focusedSourceId = null,
+  sourceHandoffRef,
+  sourceHandoffTimeRef,
   onAgreementPreviewChange,
   onAgreementLockChange,
 }: {
   focus: ConsensusMemoryTraceFocus | null;
   lockedHop?: ConsensusMemoryRouteHopFocus | null;
   focusedSourceId?: number | null;
+  sourceHandoffRef?: RefObject<ConsensusMemorySourceHandoff | null>;
+  sourceHandoffTimeRef?: RefObject<number>;
   onAgreementPreviewChange?: (sourceId: number | null) => void;
   onAgreementLockChange?: (focus: ConsensusMemoryRouteHopFocus) => void;
 }) {
@@ -655,6 +679,7 @@ export default function ConsensusRouteHopMarker({
   const pointsRef = useRef<THREE.Points>(null);
   const chipRef = useRef<HTMLDivElement>(null);
   const motionRef = useRef<GlyphMotion | null>(null);
+  const sourceHandoffAuditRef = useRef<SourceHandoffAudit | null>(null);
   const [inspectedAgreementSourceId, setInspectedAgreementSourceId] =
     useState<number | null>(null);
   const routeFromNdc = useMemo(() => new THREE.Vector3(), []);
@@ -869,19 +894,36 @@ export default function ConsensusRouteHopMarker({
       material.uniforms.uRouteAngle.value = 0;
     }
 
+    const nowSec = simClock.elapsedSec;
     const activeAgreementPlan = motionAgreementPlan(motion);
     const agreementEmphasis = deriveConsensusRouteHopAgreementEmphasis(
       activeAgreementPlan,
       inspectedAgreementSourceId ?? focusedSourceId,
     );
+    const sourceHandoff = sourceHandoffRef?.current ?? null;
+    const sourceHandoffNowSec = sourceHandoffTimeRef?.current ?? nowSec;
+    const sourceHandoffActive = consensusMemorySourceHandoffActive(
+      sourceHandoff,
+      focusedSourceId,
+      sourceHandoffNowSec,
+    );
+    const handoffControlsAgreement = sourceHandoffActive
+      && (
+        inspectedAgreementSourceId === null
+        || inspectedAgreementSourceId === sourceHandoff.to.sourceId
+    );
+    const handoffProgress = sourceHandoffActive
+      ? consensusMemorySourceHandoffProgress(sourceHandoff, sourceHandoffNowSec)
+      : 1;
     const agreementResponse = activeAgreementPlan.visibleSourceCount > 0
       ? consensusMemoryCellResponse(
         focus,
         activeAgreementPlan.targetCellId,
-        simClock.elapsedSec,
+        nowSec,
       )
       : null;
     const agreementStrengths: number[] = [];
+    const agreementFocusScales: number[] = [];
     for (
       let index = 0;
       index < CONSENSUS_ROUTE_HOP_AGREEMENT_CAP;
@@ -893,10 +935,56 @@ export default function ConsensusRouteHopMarker({
           (evidence) => evidence.sourceId === tick.sourceId,
         )?.convergence ?? 0
         : 0;
-      material.uniforms[`uAgreementFocus${index}`].value =
-        agreementEmphasis.scales[index] ?? 1;
+      const agreementFocusScale = tick && handoffControlsAgreement
+        ? consensusMemorySourceHandoffEvidenceScale(
+          tick.sourceId,
+          focusedSourceId,
+          sourceHandoff,
+          sourceHandoffNowSec,
+        )
+        : agreementEmphasis.scales[index] ?? 1;
+      material.uniforms[`uAgreementFocus${index}`].value = agreementFocusScale;
       material.uniforms[`uAgreementStrength${index}`].value = tickStrength;
-      if (tick) agreementStrengths.push(tickStrength);
+      if (tick) {
+        agreementStrengths.push(tickStrength);
+        agreementFocusScales.push(agreementFocusScale);
+      }
+    }
+    if (sourceHandoffActive) {
+      const auditKey = [
+        sourceHandoff.from.traceKey,
+        sourceHandoff.from.sourceId,
+        sourceHandoff.to.sourceId,
+      ].join(':');
+      let audit = sourceHandoffAuditRef.current;
+      if (!audit || audit.key !== auditKey) {
+        audit = {
+          key: auditKey,
+          traceKey: sourceHandoff.from.traceKey,
+          fromSourceId: sourceHandoff.from.sourceId,
+          toSourceId: sourceHandoff.to.sourceId,
+          frames: 0,
+          minProgress: handoffProgress,
+          maxProgress: handoffProgress,
+          midDistance: Number.POSITIVE_INFINITY,
+          midProgress: handoffProgress,
+          midAgreementScales: agreementFocusScales
+            .map((value) => value.toFixed(3))
+            .join(','),
+        };
+        sourceHandoffAuditRef.current = audit;
+      }
+      audit.frames += 1;
+      audit.minProgress = Math.min(audit.minProgress, handoffProgress);
+      audit.maxProgress = Math.max(audit.maxProgress, handoffProgress);
+      const midDistance = Math.abs(handoffProgress - 0.5);
+      if (midDistance < audit.midDistance) {
+        audit.midDistance = midDistance;
+        audit.midProgress = handoffProgress;
+        audit.midAgreementScales = agreementFocusScales
+          .map((value) => value.toFixed(3))
+          .join(',');
+      }
     }
 
     if (chipRef.current) {
@@ -945,7 +1033,45 @@ export default function ConsensusRouteHopMarker({
           ? 'none'
           : String(agreementEmphasis.sourceId);
       chipRef.current.dataset.memoryRouteHopAgreementFocusScales =
-        agreementEmphasis.scales.map((value) => value.toFixed(3)).join(',');
+        agreementFocusScales.map((value) => value.toFixed(3)).join(',');
+      chipRef.current.dataset.memoryRouteHopSourceHandoff =
+        sourceHandoffActive ? 'active' : 'settled';
+      chipRef.current.dataset.memoryRouteHopSourceHandoffProgress =
+        handoffProgress.toFixed(3);
+      const retainedSourceHandoffAudit = sourceHandoffAuditRef.current;
+      const sourceHandoffAudit = retainedSourceHandoffAudit?.traceKey
+        === motion.destination.spatial.focus.traceKey
+        ? retainedSourceHandoffAudit
+        : null;
+      if (sourceHandoffActive) {
+        chipRef.current.dataset.memoryRouteHopSourceHandoffFrom = String(
+          sourceHandoff.from.sourceId,
+        );
+        chipRef.current.dataset.memoryRouteHopSourceHandoffTo = String(
+          sourceHandoff.to.sourceId,
+        );
+      } else if (sourceHandoffAudit) {
+        chipRef.current.dataset.memoryRouteHopSourceHandoffFrom = String(
+          sourceHandoffAudit.fromSourceId,
+        );
+        chipRef.current.dataset.memoryRouteHopSourceHandoffTo = String(
+          sourceHandoffAudit.toSourceId,
+        );
+      } else {
+        delete chipRef.current.dataset.memoryRouteHopSourceHandoffFrom;
+        delete chipRef.current.dataset.memoryRouteHopSourceHandoffTo;
+      }
+      chipRef.current.dataset.memoryRouteHopSourceHandoffObservedFrames = String(
+        sourceHandoffAudit?.frames ?? 0,
+      );
+      chipRef.current.dataset.memoryRouteHopSourceHandoffObservedRange =
+        sourceHandoffAudit
+          ? `${sourceHandoffAudit.minProgress.toFixed(3)},${sourceHandoffAudit.maxProgress.toFixed(3)}`
+          : 'none';
+      chipRef.current.dataset.memoryRouteHopSourceHandoffMidProgress =
+        sourceHandoffAudit?.midProgress.toFixed(3) ?? 'none';
+      chipRef.current.dataset.memoryRouteHopSourceHandoffMidAgreementScales =
+        sourceHandoffAudit?.midAgreementScales ?? 'none';
     }
   });
 
@@ -1198,6 +1324,12 @@ export default function ConsensusRouteHopMarker({
           data-memory-route-hop-cell={spatial.focus.cellId}
           data-memory-route-hop-index={spatial.focus.hopIndex}
           data-memory-route-hop-claim={presentation.claim}
+          data-memory-route-hop-source-handoff="settled"
+          data-memory-route-hop-source-handoff-progress="1.000"
+          data-memory-route-hop-source-handoff-observed-frames="0"
+          data-memory-route-hop-source-handoff-observed-range="none"
+          data-memory-route-hop-source-handoff-mid-progress="none"
+          data-memory-route-hop-source-handoff-mid-agreement-scales="none"
           style={{
             position: 'relative',
             transform: 'translate(-50%, 39px)',
