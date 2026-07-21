@@ -12,8 +12,10 @@
 //      and stamps a write seal when it lands on the terminal.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useThree } from '@react-three/fiber';
 import { useCellGalaxy } from '../hooks/cellGalaxyContext';
 import { useConsensusMemoryFocusRef } from '../hooks/consensusMemoryFocusContext';
+import { useReducedMotion } from '../components/hud/useReducedMotion';
 import { useSimFrame } from '../tweaks/useSimFrame';
 import { useSimClock } from '../tweaks/SimClockScope';
 import { QUALITY_PRESETS, useQualityRuntime } from '../tweaks/qualityPresets';
@@ -30,7 +32,6 @@ import type { Vec3 } from '../types';
 import {
   CONSENSUS_PULSE_POLICY,
   consensusMemoryCellResponse,
-  consensusMemoryEvidenceFocusScale,
   consensusMemoryRouteHopAdjacentSegments,
   consensusMemoryPulseActivityScale,
   consensusMemoryRouteHandoffScale,
@@ -54,6 +55,16 @@ import {
 } from './consensusMemoryTrace';
 import ConsensusMemoryMarkers from './ConsensusMemoryMarkers';
 import ConsensusRouteHopMarker from './ConsensusRouteHopMarker';
+import {
+  advanceConsensusMemorySourceHandoffTime,
+  consensusMemorySourceHandoffActive,
+  consensusMemorySourceHandoffEvidenceScale,
+  consensusMemorySourceHandoffLockScale,
+  consensusMemorySourceHandoffRouteFlareScale,
+  reconcileConsensusMemorySourceHandoff,
+  type ConsensusMemorySourceHandoff,
+  type ConsensusMemorySourceHandoffSide,
+} from './consensusMemorySourceHandoff';
 
 const SPIKE_POOL_CAPACITY = 1024;
 
@@ -86,6 +97,9 @@ const MEMORY_RESONANCE_TAIL_DECAY = 0.65;
 /** Lift inspected edges above recall afterimage without becoming a write flash. */
 const MEMORY_ROUTE_HOP_INSPECT_BRIGHT = 2.05;
 const MEMORY_ROUTE_HOP_INSPECT_TAIL_DECAY = 0.18;
+/** Brief route-wide glow used only while one verified source replaces another. */
+const MEMORY_SOURCE_HANDOFF_FLARE_BRIGHT = 1.18;
+const MEMORY_SOURCE_HANDOFF_FLARE_TAIL_DECAY = 0.42;
 const RIPPLE_STAGGER_MS = 60;      // per-birth grow-in delay within a block
 const RECONCILE_EVERY_N_BLOCKS = 6; // canonical drift repair cadence
 
@@ -154,6 +168,8 @@ export default function NeuralNetwork({
   onTraceRouteHopLockChange,
 }: NeuralNetworkProps = {}) {
   const simClock = useSimClock();
+  const reducedMotion = useReducedMotion();
+  const invalidate = useThree((state) => state.invalidate);
   const cellsCache = useCellGalaxy();
   const sharedTraceFocusRef = useConsensusMemoryFocusRef();
   const { effective: quality } = useQualityRuntime();
@@ -269,6 +285,10 @@ export default function NeuralNetwork({
   const activeTraceRequestRef = useRef<ConsensusMemoryTraceRequest | null>(null);
   const traceFocusRef = useRef<ConsensusMemoryTraceFocus | null>(null);
   const [traceFocus, setTraceFocus] = useState<ConsensusMemoryTraceFocus | null>(null);
+  const previousRouteHopLockRef = useRef<ConsensusMemoryRouteHopFocus | null>(null);
+  const sourceHandoffRef = useRef<ConsensusMemorySourceHandoff | null>(null);
+  const sourceHandoffTimeRef = useRef(0);
+  const sourceHandoffFrameRef = useRef<number | null>(null);
   const traceReadoutSignatureRef = useRef('none');
   const traceTargetSnapshotRef = useRef<ConsensusMemoryTargetResponse>({
     targetCellId: -1,
@@ -281,6 +301,52 @@ export default function NeuralNetwork({
       evidenceFocusSourceId: null,
     },
   });
+  useEffect(() => {
+    const previousLock = previousRouteHopLockRef.current;
+    const nextState = reconcileConsensusMemorySourceHandoff(
+      previousLock,
+      traceRouteHopLock,
+      sourceHandoffRef.current,
+      0,
+      { reducedMotion },
+    );
+    previousRouteHopLockRef.current = nextState.lock;
+    sourceHandoffRef.current = nextState.handoff;
+    if (!nextState.changed) return;
+    sourceHandoffTimeRef.current = 0;
+    if (sourceHandoffFrameRef.current !== null) {
+      if (typeof window !== 'undefined') {
+        window.cancelAnimationFrame(sourceHandoffFrameRef.current);
+      }
+      sourceHandoffFrameRef.current = null;
+    }
+    const sourceHandoff = nextState.handoff;
+    if (!sourceHandoff || typeof window === 'undefined') return;
+    let previousFrameAtMs = window.performance.now();
+    const animateHandoff = (frameAtMs: number) => {
+      if (sourceHandoffRef.current !== sourceHandoff) return;
+      sourceHandoffTimeRef.current = advanceConsensusMemorySourceHandoffTime(
+        sourceHandoff,
+        sourceHandoffTimeRef.current,
+        (frameAtMs - previousFrameAtMs) / 1_000,
+      );
+      previousFrameAtMs = frameAtMs;
+      invalidate();
+      if (sourceHandoffTimeRef.current < sourceHandoff.endsAtSec) {
+        sourceHandoffFrameRef.current = window.requestAnimationFrame(animateHandoff);
+      } else {
+        sourceHandoffFrameRef.current = null;
+      }
+    };
+    invalidate();
+    sourceHandoffFrameRef.current = window.requestAnimationFrame(animateHandoff);
+  }, [invalidate, reducedMotion, traceRouteHopLock]);
+  useEffect(() => () => {
+    if (sourceHandoffFrameRef.current !== null && typeof window !== 'undefined') {
+      window.cancelAnimationFrame(sourceHandoffFrameRef.current);
+    }
+    sourceHandoffFrameRef.current = null;
+  }, []);
   useEffect(() => {
     const focus = traceFocusRef.current;
     if (!focus) return;
@@ -540,9 +606,11 @@ export default function NeuralNetwork({
         focusStrength,
       );
       const evidenceActivityScale = pulse.mode === 'memory'
-        ? consensusMemoryEvidenceFocusScale(
+        ? consensusMemorySourceHandoffEvidenceScale(
           pulse.path[0] ?? null,
           currentFocus?.evidenceFocusSourceId ?? null,
+          sourceHandoffRef.current,
+          sourceHandoffTimeRef.current,
         )
         : 1;
       const routeActivityScale = activityScale * evidenceActivityScale;
@@ -733,34 +801,106 @@ export default function NeuralNetwork({
     // packet progress. Only the one or two live graph edges adjacent to that
     // verified Cell are lifted, so an untraversed or stale edge is never drawn.
     const routeHopFocus = currentFocus?.routeHopFocus ?? null;
-    if (handles && currentFocus && routeHopFocus && focusStrength > 0) {
-      const source = currentFocus.sources.find(
-        ({ id }) => id === routeHopFocus.sourceId,
-      );
-      const inspectedRoute = source
-        ? consensusMemoryTraceRouteForTarget(source, routeHopFocus.targetCellId)
-        : null;
-      if (
-        inspectedRoute
-        && inspectedRoute.path[routeHopFocus.hopIndex] === routeHopFocus.cellId
-      ) {
+    if (handles && currentFocus && focusStrength > 0) {
+      const routeForFocus = (candidate: ConsensusMemoryRouteHopFocus) => {
+        const verified = validateConsensusMemoryRouteHopFocus(
+          currentFocus,
+          candidate,
+        );
+        const source = verified
+          ? currentFocus.sources.find(({ id }) => id === verified.sourceId)
+          : null;
+        const route = source && verified
+          ? consensusMemoryTraceRouteForTarget(source, verified.targetCellId)
+          : null;
+        return verified && route ? { focus: verified, route } : null;
+      };
+      const pushAdjacentRoute = (
+        candidate: ConsensusMemoryRouteHopFocus,
+        brightnessScale: number,
+      ) => {
+        if (brightnessScale <= 0.001) return;
+        const resolved = routeForFocus(candidate);
+        if (!resolved) return;
         for (const segmentIndex of consensusMemoryRouteHopAdjacentSegments(
-          routeHopFocus,
-          inspectedRoute.path,
+          resolved.focus,
+          resolved.route.path,
         )) {
-          const fromCellId = inspectedRoute.path[segmentIndex];
-          const toCellId = inspectedRoute.path[segmentIndex + 1];
+          const fromCellId = resolved.route.path[segmentIndex];
+          const toCellId = resolved.route.path[segmentIndex + 1];
           if (!cells.has(fromCellId) || !cells.has(toCellId)) continue;
           if (!adjacency.get(fromCellId)?.has(toCellId)) continue;
           handles.pushActiveHop({
             fromCellId,
             toCellId,
             frontT: 1,
-            brightness: MEMORY_ROUTE_HOP_INSPECT_BRIGHT * focusStrength,
+            brightness: MEMORY_ROUTE_HOP_INSPECT_BRIGHT
+              * focusStrength
+              * brightnessScale,
             tailDecay: MEMORY_ROUTE_HOP_INSPECT_TAIL_DECAY,
-            color: inspectedRoute.color,
+            color: resolved.route.color,
           }, cells);
         }
+      };
+      const pushRouteFlare = (
+        candidate: ConsensusMemoryRouteHopFocus,
+        side: ConsensusMemorySourceHandoffSide,
+        handoff: ConsensusMemorySourceHandoff,
+      ) => {
+        const resolved = routeForFocus(candidate);
+        if (!resolved) return;
+        const segmentCount = resolved.route.path.length - 1;
+        for (let segmentIndex = 0; segmentIndex < segmentCount; segmentIndex += 1) {
+          const flareScale = consensusMemorySourceHandoffRouteFlareScale(
+            side,
+            segmentIndex,
+            segmentCount,
+            handoff,
+            sourceHandoffTimeRef.current,
+          );
+          if (flareScale <= 0.001) continue;
+          const fromCellId = resolved.route.path[segmentIndex];
+          const toCellId = resolved.route.path[segmentIndex + 1];
+          if (!cells.has(fromCellId) || !cells.has(toCellId)) continue;
+          if (!adjacency.get(fromCellId)?.has(toCellId)) continue;
+          handles.pushActiveHop({
+            fromCellId,
+            toCellId,
+            frontT: 1,
+            brightness: MEMORY_SOURCE_HANDOFF_FLARE_BRIGHT
+              * focusStrength
+              * flareScale,
+            tailDecay: MEMORY_SOURCE_HANDOFF_FLARE_TAIL_DECAY,
+            color: resolved.route.color,
+          }, cells);
+        }
+      };
+      const handoff = sourceHandoffRef.current;
+      if (consensusMemorySourceHandoffActive(
+        handoff,
+        currentFocus.evidenceFocusSourceId,
+        sourceHandoffTimeRef.current,
+      )) {
+        pushAdjacentRoute(
+          handoff.from,
+          consensusMemorySourceHandoffLockScale(
+            'from',
+            handoff,
+            sourceHandoffTimeRef.current,
+          ),
+        );
+        pushAdjacentRoute(
+          handoff.to,
+          consensusMemorySourceHandoffLockScale(
+            'to',
+            handoff,
+            sourceHandoffTimeRef.current,
+          ),
+        );
+        pushRouteFlare(handoff.from, 'from', handoff);
+        pushRouteFlare(handoff.to, 'to', handoff);
+      } else if (routeHopFocus) {
+        pushAdjacentRoute(routeHopFocus, 1);
       }
     }
 
@@ -775,11 +915,15 @@ export default function NeuralNetwork({
       <ConsensusMemoryMarkers
         focus={traceFocus}
         evidenceFocusSourceId={traceEvidenceFocusSourceId}
+        sourceHandoffRef={sourceHandoffRef}
+        sourceHandoffTimeRef={sourceHandoffTimeRef}
       />
       <ConsensusRouteHopMarker
         focus={traceFocus}
         lockedHop={traceRouteHopLock}
         focusedSourceId={traceEvidenceFocusSourceId}
+        sourceHandoffRef={sourceHandoffRef}
+        sourceHandoffTimeRef={sourceHandoffTimeRef}
         onAgreementPreviewChange={onTraceAgreementPreviewChange}
         onAgreementLockChange={onTraceRouteHopLockChange}
       />

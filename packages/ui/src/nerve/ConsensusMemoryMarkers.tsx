@@ -1,4 +1,4 @@
-import { useMemo, useRef } from 'react';
+import { useMemo, useRef, type RefObject } from 'react';
 import { Html } from '@react-three/drei';
 import type { Cell } from '@cknerv/types';
 import { useCellGalaxy } from '../hooks/cellGalaxyContext';
@@ -6,7 +6,6 @@ import { useSimClock } from '../tweaks/SimClockScope';
 import { useSimFrame } from '../tweaks/useSimFrame';
 import {
   consensusMemoryCellResponse,
-  consensusMemoryEvidenceFocusScale,
   consensusMemoryTraceRouteForTarget,
   consensusMemoryTraceFocusStrength,
   consensusMemoryTraceSourceStrength,
@@ -15,6 +14,12 @@ import {
   type ConsensusMemoryTraceSource,
 } from './consensusMemoryTrace';
 import { consensusMemoryEvidenceCssColor } from '../derives/consensusMemoryEvidence.derive';
+import {
+  consensusMemorySourceHandoffActive,
+  consensusMemorySourceHandoffEvidenceScale,
+  consensusMemorySourceHandoffProgress,
+  type ConsensusMemorySourceHandoff,
+} from './consensusMemorySourceHandoff';
 import {
   chooseConsensusMemoryLabelSide,
   MEMORY_SOURCE_LABEL_RADIAL_SHIFT_PX,
@@ -107,9 +112,13 @@ interface MarkerRecord {
 export default function ConsensusMemoryMarkers({
   focus,
   evidenceFocusSourceId = null,
+  sourceHandoffRef,
+  sourceHandoffTimeRef,
 }: {
   focus: ConsensusMemoryTraceFocus | null;
   evidenceFocusSourceId?: number | null;
+  sourceHandoffRef?: RefObject<ConsensusMemorySourceHandoff | null>;
+  sourceHandoffTimeRef?: RefObject<number>;
 }) {
   const simClock = useSimClock();
   const cellsCache = useCellGalaxy();
@@ -138,6 +147,16 @@ export default function ConsensusMemoryMarkers({
   useSimFrame(() => {
     const nowSec = simClock.elapsedSec;
     const focusOpacity = consensusMemoryTraceFocusStrength(focus, nowSec);
+    const sourceHandoff = sourceHandoffRef?.current ?? null;
+    const sourceHandoffNowSec = sourceHandoffTimeRef?.current ?? nowSec;
+    const handoffActive = consensusMemorySourceHandoffActive(
+      sourceHandoff,
+      evidenceFocusSourceId,
+      sourceHandoffNowSec,
+    );
+    const handoffProgress = handoffActive
+      ? consensusMemorySourceHandoffProgress(sourceHandoff, sourceHandoffNowSec)
+      : 1;
     const viewportWidth = typeof window === 'undefined' ? 0 : window.innerWidth;
     const viewportHeight = typeof window === 'undefined' ? 0 : window.innerHeight;
     const layoutNowMs = typeof performance === 'undefined' ? 0 : performance.now();
@@ -266,21 +285,40 @@ export default function ConsensusMemoryMarkers({
         ? consensusMemoryTraceSourceStrength(marker.source, nowSec)
         : 1;
       const evidenceScale = marker.source
-        ? consensusMemoryEvidenceFocusScale(
+        ? consensusMemorySourceHandoffEvidenceScale(
           marker.source.id,
           evidenceFocusSourceId,
+          sourceHandoff,
+          sourceHandoffNowSec,
         )
         : evidenceFocusSourceId === null ? 1 : 0.62;
+      const handoffRole = marker.source && handoffActive
+        ? marker.source.id === sourceHandoff.from.sourceId
+          ? 'departing'
+          : marker.source.id === sourceHandoff.to.sourceId
+            ? 'arriving'
+            : null
+        : null;
       node.style.opacity = (
         focusOpacity * sourceOpacity * evidenceScale
       ).toFixed(3);
       node.dataset.memoryEvidenceFocus = marker.source
-        ? evidenceFocusSourceId === null
-          ? 'idle'
-          : marker.source.id === evidenceFocusSourceId
-            ? 'active'
-            : 'passive'
+        ? handoffRole
+          ?? (evidenceFocusSourceId === null
+            ? 'idle'
+            : marker.source.id === evidenceFocusSourceId
+              ? 'active'
+              : 'passive')
         : evidenceFocusSourceId === null ? 'idle' : 'context';
+      node.dataset.memorySourceHandoff = handoffRole ?? 'idle';
+      node.dataset.memorySourceHandoffProgress = handoffProgress.toFixed(3);
+      if (handoffActive) {
+        node.dataset.memorySourceHandoffFrom = String(sourceHandoff.from.sourceId);
+        node.dataset.memorySourceHandoffTo = String(sourceHandoff.to.sourceId);
+      } else {
+        delete node.dataset.memorySourceHandoffFrom;
+        delete node.dataset.memorySourceHandoffTo;
+      }
       const cellResponse = consensusMemoryCellResponse(focus, marker.cell.id, nowSec);
       node.dataset.memoryCellPhase = (cellResponse?.phase ?? 0).toFixed(3);
       node.dataset.memoryCellConvergence = (cellResponse?.convergence ?? 0).toFixed(3);
@@ -299,7 +337,9 @@ export default function ConsensusMemoryMarkers({
       const color = marker.source
         ? consensusMemoryEvidenceCssColor(marker.sourceIndex)
         : '#8FF7FF';
-      node.style.filter = marker.source && evidenceFocusSourceId === marker.source.id
+      node.style.filter = marker.source && (
+        evidenceFocusSourceId === marker.source.id || handoffRole !== null
+      )
         ? `drop-shadow(0 0 11px ${color}aa)`
         : `drop-shadow(0 0 7px ${color}66)`;
       const copy = copyRefs.current[index];
@@ -391,6 +431,8 @@ export default function ConsensusMemoryMarkers({
               data-memory-source-total={source ? focus.routedSourceCount : undefined}
               data-memory-source-id={focusSource?.id}
               data-memory-evidence-focus={evidenceFocusState}
+              data-memory-source-handoff="idle"
+              data-memory-source-handoff-progress="1.000"
               data-memory-route={route?.path.join('>')}
               data-memory-route-hops={route?.hopCount}
               data-memory-route-duration-ms={routeDurationMs ?? undefined}
