@@ -3,12 +3,16 @@ import type { Vec3 } from '../types';
 
 export const CONSENSUS_ROUTE_CAMERA_DISTANCE = 36;
 export const CONSENSUS_RECORD_CAMERA_DISTANCE = 64;
+export const CONSENSUS_RECORD_CAMERA_MAX_DISTANCE = 224;
 export const CONSENSUS_RECORD_CAMERA_NEUTRAL_MIN_DISTANCE = 96;
 export const CONSENSUS_RECORD_CAMERA_SAFE_WIDTH_PX = 192;
 export const CONSENSUS_RECORD_CAMERA_SAFE_HEIGHT_PX = 144;
 export const CONSENSUS_RECORD_CAMERA_SAFE_MARGIN_PX = 18;
 export const CONSENSUS_RECORD_CAMERA_HUD_GAP_PX = 14;
 export const CONSENSUS_RECORD_CAMERA_PREFERRED_Y_RATIO = 0.44;
+/** Includes a little motion slack for the continuously rotating Cell canopy. */
+export const CONSENSUS_RECORD_CAMERA_ROUTE_MARGIN_PX = 36;
+export const CONSENSUS_RECORD_CAMERA_ENDPOINT_HUD_GAP_PX = 18;
 
 export interface ConsensusRouteCameraPose {
   position: Vec3;
@@ -28,6 +32,12 @@ export interface ConsensusRecordCameraComposition {
   verticalFovDegrees: number;
   anchor: readonly [number, number];
   cameraUp?: Vec3;
+}
+
+export interface ConsensusRecordCameraWorldPoint {
+  position: Vec3;
+  /** Only transaction sources and the retained output are semantic endpoints. */
+  role: 'endpoint' | 'carrier';
 }
 
 export type ConsensusRecordCameraIntent = 'idle' | 'neutral' | 'record';
@@ -180,7 +190,16 @@ function normalize(
   fallback: Vec3,
 ): Vec3 {
   const length = Math.hypot(value[0], value[1], value[2]);
-  if (!Number.isFinite(length) || length < 1e-6) return [...fallback];
+  if (!Number.isFinite(length) || length < 1e-6) {
+    const fallbackLength = Math.hypot(fallback[0], fallback[1], fallback[2]);
+    return Number.isFinite(fallbackLength) && fallbackLength >= 1e-6
+      ? [
+        fallback[0] / fallbackLength,
+        fallback[1] / fallbackLength,
+        fallback[2] / fallbackLength,
+      ]
+      : [0, 0, -1];
+  }
   return [value[0] / length, value[1] / length, value[2] / length];
 }
 
@@ -190,6 +209,31 @@ function cross(left: Vec3, right: Vec3): Vec3 {
     left[2] * right[0] - left[0] * right[2],
     left[0] * right[1] - left[1] * right[0],
   ];
+}
+
+function dot(left: Vec3, right: Vec3): number {
+  return left[0] * right[0] + left[1] * right[1] + left[2] * right[2];
+}
+
+function cameraAxes(
+  forwardValue: Vec3,
+  requestedUpValue: Vec3 = [0, 1, 0],
+): { forward: Vec3; right: Vec3; up: Vec3 } {
+  const forward = normalize(forwardValue, [-1, -0.72, -1]);
+  const requestedUp = normalize(requestedUpValue, [0, 1, 0]);
+  let rightValue = cross(forward, requestedUp);
+  if (Math.hypot(...rightValue) < 1e-6) {
+    const fallbackUp: Vec3 = Math.abs(forward[1]) < 0.98
+      ? [0, 1, 0]
+      : [0, 0, 1];
+    rightValue = cross(forward, fallbackUp);
+  }
+  const right = normalize(rightValue, [1, 0, 0]);
+  return {
+    forward,
+    right,
+    up: normalize(cross(right, forward), [0, 1, 0]),
+  };
 }
 
 /** Project one Cell's rotating galaxy-local seed into current world space. */
@@ -270,25 +314,11 @@ export function deriveConsensusRecordCameraPose(
     || !Number.isFinite(anchorY)
   ) return centered;
 
-  const backward = normalize([
-    currentPosition[0] - currentTarget[0],
-    currentPosition[1] - currentTarget[1],
-    currentPosition[2] - currentTarget[2],
-  ], [1, 0.72, 1]);
-  const forward: Vec3 = [-backward[0], -backward[1], -backward[2]];
-  const requestedUp = normalize(composition.cameraUp ?? [0, 1, 0], [0, 1, 0]);
-  let right = normalize(cross(forward, requestedUp), [1, 0, 0]);
-  if (Math.abs(
-    right[0] * forward[0]
-    + right[1] * forward[1]
-    + right[2] * forward[2]
-  ) > 1e-4) {
-    const fallbackUp: Vec3 = Math.abs(forward[1]) < 0.98
-      ? [0, 1, 0]
-      : [0, 0, 1];
-    right = normalize(cross(forward, fallbackUp), [1, 0, 0]);
-  }
-  const up = normalize(cross(right, forward), [0, 1, 0]);
+  const { forward, right, up } = cameraAxes([
+    currentTarget[0] - currentPosition[0],
+    currentTarget[1] - currentPosition[1],
+    currentTarget[2] - currentPosition[2],
+  ], composition.cameraUp);
   const ndcX = (clamp(anchorX, 0, width) / width) * 2 - 1;
   const ndcY = 1 - (clamp(anchorY, 0, height) / height) * 2;
   const tangent = Math.tan((fov * Math.PI) / 360);
@@ -308,11 +338,7 @@ export function deriveConsensusRecordCameraPose(
     recordWorld[1] - ray[1] * framedDistance,
     recordWorld[2] - ray[2] * framedDistance,
   ];
-  const centralDepth = framedDistance * (
-    ray[0] * forward[0]
-    + ray[1] * forward[1]
-    + ray[2] * forward[2]
-  );
+  const centralDepth = framedDistance * dot(ray, forward);
   return {
     position,
     target: [
@@ -321,6 +347,135 @@ export function deriveConsensusRecordCameraPose(
       position[2] + forward[2] * centralDepth,
     ],
   };
+}
+
+function projectConsensusRecordWorldPoint(
+  point: Vec3,
+  pose: ConsensusRouteCameraPose,
+  composition: ConsensusRecordCameraComposition,
+): [number, number] | null {
+  const { forward, right, up } = cameraAxes([
+    pose.target[0] - pose.position[0],
+    pose.target[1] - pose.position[1],
+    pose.target[2] - pose.position[2],
+  ], composition.cameraUp);
+  const relative: Vec3 = [
+    point[0] - pose.position[0],
+    point[1] - pose.position[1],
+    point[2] - pose.position[2],
+  ];
+  const depth = dot(relative, forward);
+  const tangent = Math.tan((composition.verticalFovDegrees * Math.PI) / 360);
+  const aspect = composition.viewportWidth / composition.viewportHeight;
+  if (
+    !Number.isFinite(depth)
+    || depth <= 1e-3
+    || !Number.isFinite(tangent)
+    || tangent <= 0
+    || !Number.isFinite(aspect)
+    || aspect <= 0
+  ) return null;
+  const ndcX = dot(relative, right) / (depth * tangent * aspect);
+  const ndcY = dot(relative, up) / (depth * tangent);
+  if (!Number.isFinite(ndcX) || !Number.isFinite(ndcY)) return null;
+  return [
+    (ndcX + 1) * composition.viewportWidth / 2,
+    (1 - ndcY) * composition.viewportHeight / 2,
+  ];
+}
+
+/**
+ * Find the closest broad-record distance that contains every verified route
+ * Cell. Display-only carriers must remain in the viewport; only real sources
+ * and the retained output are required to clear HUD panels.
+ */
+export function deriveConsensusRecordCameraDistance(
+  currentPosition: Vec3,
+  currentTarget: Vec3,
+  recordWorld: Vec3,
+  points: readonly ConsensusRecordCameraWorldPoint[],
+  composition: ConsensusRecordCameraComposition,
+  obstacles: readonly ConsensusRecordCameraScreenRect[] = [],
+  minimumDistance = CONSENSUS_RECORD_CAMERA_DISTANCE,
+  maximumDistance = CONSENSUS_RECORD_CAMERA_MAX_DISTANCE,
+): number {
+  const minimum = Number.isFinite(minimumDistance) && minimumDistance > 0
+    ? minimumDistance
+    : CONSENSUS_RECORD_CAMERA_DISTANCE;
+  const maximum = Number.isFinite(maximumDistance) && maximumDistance >= minimum
+    ? maximumDistance
+    : Math.max(minimum, CONSENSUS_RECORD_CAMERA_MAX_DISTANCE);
+  const width = composition.viewportWidth;
+  const height = composition.viewportHeight;
+  const fov = composition.verticalFovDegrees;
+  if (
+    !Number.isFinite(width)
+    || width <= 0
+    || !Number.isFinite(height)
+    || height <= 0
+    || !Number.isFinite(fov)
+    || fov <= 1
+    || fov >= 179
+  ) return minimum;
+  const validPoints = points.filter(({ position }) => (
+    position.every(Number.isFinite)
+  ));
+  if (validPoints.length <= 1) return minimum;
+  const routeMargin = Math.min(
+    CONSENSUS_RECORD_CAMERA_ROUTE_MARGIN_PX,
+    width / 2,
+    height / 2,
+  );
+  const endpointGap = CONSENSUS_RECORD_CAMERA_ENDPOINT_HUD_GAP_PX;
+  const validObstacles = obstacles.filter((obstacle) => (
+    Number.isFinite(obstacle.left)
+    && Number.isFinite(obstacle.top)
+    && Number.isFinite(obstacle.right)
+    && Number.isFinite(obstacle.bottom)
+    && obstacle.right > obstacle.left
+    && obstacle.bottom > obstacle.top
+  ));
+  const fits = (distance: number): boolean => {
+    const pose = deriveConsensusRecordCameraPose(
+      currentPosition,
+      currentTarget,
+      recordWorld,
+      distance,
+      composition,
+    );
+    return validPoints.every((point) => {
+      const screen = projectConsensusRecordWorldPoint(
+        point.position,
+        pose,
+        composition,
+      );
+      if (!screen) return false;
+      const [x, y] = screen;
+      if (
+        x < routeMargin
+        || x > width - routeMargin
+        || y < routeMargin
+        || y > height - routeMargin
+      ) return false;
+      if (point.role !== 'endpoint') return true;
+      return validObstacles.every((obstacle) => (
+        x < obstacle.left - endpointGap
+        || x > obstacle.right + endpointGap
+        || y < obstacle.top - endpointGap
+        || y > obstacle.bottom + endpointGap
+      ));
+    });
+  };
+  if (fits(minimum)) return minimum;
+  if (!fits(maximum)) return maximum;
+  let lower = minimum;
+  let upper = maximum;
+  for (let iteration = 0; iteration < 14; iteration += 1) {
+    const candidate = (lower + upper) / 2;
+    if (fits(candidate)) upper = candidate;
+    else lower = candidate;
+  }
+  return upper;
 }
 
 /**

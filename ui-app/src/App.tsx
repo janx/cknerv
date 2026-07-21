@@ -688,6 +688,7 @@ export default function App({
             manualRevision={orbitInteractionRevision}
             recordIdentity={memoryRecordIdentity}
             recordTargetCellId={memoryTraceRequest?.targetCellId ?? null}
+            recordTraceReadout={selectedMemoryTraceReadout}
             recordSwitchPending={memoryRecordSwitchPending}
           />
 
