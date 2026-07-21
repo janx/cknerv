@@ -71,6 +71,19 @@ describe('NeuralFabric living-mesh handles', () => {
     expect(SRC).toContain('hop.tailDecay ?? 7.5');
   });
 
+  it('isolates distance-compensated memory weight from live writes', () => {
+    expect(SRC).toContain('MAX_MEMORY_SEGMENTS');
+    expect(SRC).toContain("mode: 'live' | 'memory'");
+    expect(SRC).toContain('setMemoryRouteWidthScale');
+    expect(SRC).toContain("hop.mode === 'memory' ? memory : active");
+    expect(SRC).toContain(
+      'memory.material.linewidth = LIVE.cell.activeWidth * safeScale',
+    );
+    expect(SRC).not.toContain(
+      'active.material.linewidth = LIVE.cell.activeWidth * safeScale',
+    );
+  });
+
   it('dims only the passive fabric through the bounded recall-focus envelope', () => {
     expect(SRC).toContain('setRecallFocus');
     expect(SRC).toContain('consensusMemoryPassiveOpacity');

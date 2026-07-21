@@ -1,13 +1,13 @@
-// Persistent renderer for the spatial consensus graph + per-frame rebuild
-// for actively-written segments along in-progress transaction paths.
+// Persistent renderer for the spatial consensus graph + separate per-frame
+// layers for live writes and explicitly recalled historical routes.
 //
 // Each logical edge is a quadratic Bezier with a perpendicular xz
 // offset on the control point (deterministic per edge), so the
 // fabric reads as a layered contribution field rather than a wireframe. The
-// active layer draws sub-segments of the same curve with a brightness
+// activity layers draw sub-segments of the same curve with a brightness
 // gradient — the wavefront end is bright, the wake fades exponentially
-// behind it. Both layers share the same Bezier control points so the
-// pulse always rides on the visible line.
+// behind it. Every layer shares the same Bezier control points so the pulse
+// always rides on the visible line; recall gets independent screen weight.
 //
 // Fabric edges are not rebuilt as a single atomic wipe; they live in
 // a persistent `edgeStates` map keyed by canonical (lo|hi) ids. A
@@ -59,13 +59,16 @@ import { consensusMemoryPassiveOpacity } from './consensusMemoryTrace';
  *  sub-segments = 144 per pulse, × ~32 active pulses = 4600. (The
  *  fabric cap lives in fabricCapacity.ts.) */
 const MAX_ACTIVE_SEGMENTS = 6000;
+/** Recall routes use their own layer so distance compensation cannot thicken
+ * live protocol writes that happen behind an explicit historical inspection. */
+const MAX_MEMORY_SEGMENTS = 6000;
 
 // Line widths in px (now the `cell.fabricWidth` / `cell.activeWidth`
 // tweaks, defaults 2.5 / 3.4): visibly substantial crisp lines that read
 // against post-bloom cells, the fabric staying clearly thinner than the
 // active wavefront. Read live — `LIVE.cell.fabricWidth/activeWidth` seed
-// the layers at build time (useMemo below) and are re-pushed onto
-// `material.linewidth` each real draw in `emitFabric`.
+// the layers at build time (useMemo below). Historical recall scales only its
+// own material from the same active-width baseline.
 
 // Fabric edge lifecycle timings (GROWTH_MS growth window, DECAY_MS quiet
 // gc fade, DEATH_RETRACT_MS/DEATH_FLASH_MS real-death retract+flash) now
@@ -79,6 +82,8 @@ const MAX_ACTIVE_SEGMENTS = 6000;
 export interface ActiveHop {
   fromCellId: number;
   toCellId: number;
+  /** Historical recall is rendered separately from live write traffic. */
+  mode: 'live' | 'memory';
   /** Wavefront position in [0, 1] along the hop's Bezier. */
   frontT: number;
   /** Overall brightness multiplier for this hop. Older trail hops
@@ -94,10 +99,12 @@ export interface ActiveHop {
 export interface NeuralFabricHandles {
   /** Temporarily de-emphasize passive fibres during an explicit recall. */
   setRecallFocus(strength: number): void;
+  /** Maintain recalled-route screen weight as broad framing moves away. */
+  setMemoryRouteWidthScale(scale: number): void;
   /** Push one active hop's worth of curve sub-segments into this
    *  frame's buffer. Driven from the orchestrator's per-frame loop. */
   pushActiveHop(hop: ActiveHop, cells: ReadonlyMap<number, Cell>): void;
-  /** Commit the active buffer at end of frame. */
+  /** Commit both live and recalled activity buffers at end of frame. */
   flushActive(): void;
   /** Diff a new neighbour graph into the persistent edge map. New
    *  edges enter growing phase (bornAt=now); missing edges enter
@@ -346,6 +353,10 @@ export default function NeuralFabric({ onReady }: NeuralFabricProps) {
     () => makeFatLineLayer(MAX_ACTIVE_SEGMENTS, LIVE.cell.activeWidth, 'additive'),
     [],
   );
+  const memory = useMemo(
+    () => makeFatLineLayer(MAX_MEMORY_SEGMENTS, LIVE.cell.activeWidth, 'additive'),
+    [],
+  );
 
   // Persistent across handle re-creations (onReady callback identity
   // changes whenever the orchestrator's cellsCache.cells reference
@@ -377,14 +388,17 @@ export default function NeuralFabric({ onReady }: NeuralFabricProps) {
   useEffect(() => {
     fabric.material.resolution.set(size.width, size.height);
     active.material.resolution.set(size.width, size.height);
-  }, [size, fabric.material, active.material]);
+    memory.material.resolution.set(size.width, size.height);
+  }, [size, fabric.material, active.material, memory.material]);
 
   useEffect(() => () => {
     fabric.geometry.dispose();
     fabric.material.dispose();
     active.geometry.dispose();
     active.material.dispose();
-  }, [fabric, active]);
+    memory.geometry.dispose();
+    memory.material.dispose();
+  }, [fabric, active, memory]);
 
   useEffect(() => {
     // Reused 3-element scratch buffers — the hot-loop fabric/active
@@ -397,6 +411,10 @@ export default function NeuralFabric({ onReady }: NeuralFabricProps) {
     const handles: NeuralFabricHandles = {
       setRecallFocus(strength) {
         fabric.material.opacity = consensusMemoryPassiveOpacity(strength);
+      },
+      setMemoryRouteWidthScale(scale) {
+        const safeScale = Number.isFinite(scale) && scale > 0 ? scale : 1;
+        memory.material.linewidth = LIVE.cell.activeWidth * safeScale;
       },
       setFabric(graph, cells, now) {
         const states = edgeStatesRef.current;
@@ -683,6 +701,7 @@ export default function NeuralFabric({ onReady }: NeuralFabricProps) {
         // brightness peaks at the wavefront (frontT) and decays
         // exponentially behind it; segments AHEAD of the wavefront
         // are skipped entirely so the lit region grows smoothly.
+        const layer = hop.mode === 'memory' ? memory : active;
         let prevX = a.pos_seed[0], prevY = a.pos_seed[1], prevZ = a.pos_seed[2];
         for (let i = 1; i <= activeSamplesPerHop; i++) {
           const t = i / activeSamplesPerHop;
@@ -708,23 +727,26 @@ export default function NeuralFabric({ onReady }: NeuralFabricProps) {
             const r = hop.color[0] * LIVE.cell.activeColorR * intensity;
             const g = hop.color[1] * LIVE.cell.activeColorG * intensity;
             const b = hop.color[2] * LIVE.cell.activeColorB * intensity;
-            pushSegment(active, prevX, prevY, prevZ, sample[0], sample[1], sample[2], r, g, b);
+            pushSegment(layer, prevX, prevY, prevZ, sample[0], sample[1], sample[2], r, g, b);
           }
           prevX = sample[0]; prevY = sample[1]; prevZ = sample[2];
         }
       },
       flushActive() {
         commitLayer(active);
+        commitLayer(memory);
         active.count = 0;
+        memory.count = 0;
       },
     };
     onReady(handles);
-  }, [fabric, active, onReady, fabricSamplesPerEdge, activeSamplesPerHop]);
+  }, [fabric, active, memory, onReady, fabricSamplesPerEdge, activeSamplesPerHop]);
 
   return (
     <>
       <primitive object={fabric.mesh} />
       <primitive object={active.mesh} />
+      <primitive object={memory.mesh} />
     </>
   );
 }
