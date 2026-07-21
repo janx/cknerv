@@ -84,11 +84,13 @@ describe('NeuralFabric living-mesh handles', () => {
     );
   });
 
-  it('dims only the passive fabric through the bounded recall-focus envelope', () => {
-    expect(SRC).toContain('setRecallFocus');
-    expect(SRC).toContain('consensusMemoryPassiveOpacity');
-    expect(SRC).toMatch(/fabric\.material\.opacity\s*=\s*consensusMemoryPassiveOpacity/);
-    expect(SRC).not.toMatch(/active\.material\.opacity\s*=\s*consensusMemoryPassiveOpacity/);
+  it('clears passive noise only around exact recalled-route apertures', () => {
+    expect(SRC).toContain('setRecallAperture');
+    expect(SRC).toContain('consensusMemoryApertureScale');
+    expect(SRC).toContain('prevSpatial * prevAperture');
+    expect(SRC).toContain('endSpatial * endAperture');
+    expect(SRC).not.toMatch(/fabric\.material\.opacity\s*=/);
+    expect(SRC).not.toMatch(/active\.material\.opacity\s*=/);
   });
 
   it('spends fewer samples on passive fabric before simplifying active writes', () => {

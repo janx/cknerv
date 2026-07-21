@@ -14,7 +14,6 @@ import {
   MEMORY_TRACE_HOP_MS_MIN,
   MEMORY_TRACE_HOP_MS_SPAN,
   MEMORY_TRACE_LIVE_ACTIVITY_FLOOR,
-  MEMORY_TRACE_PASSIVE_OPACITY_FLOOR,
   MEMORY_TRACE_ROUTE_HANDOFF_FLOOR,
   MEMORY_TRACE_SOURCE_REVEAL_LEAD_MS,
   MEMORY_TRACE_SOURCE_REVEAL_MS,
@@ -30,7 +29,6 @@ import {
   consensusMemoryRouteHopFocusEqual,
   classifyConsensusMemoryRouteHopTransition,
   consensusMemoryRouteHandoffScale,
-  consensusMemoryPassiveOpacity,
   consensusMemoryTraceRequestKey,
   consensusMemoryTraceReadout,
   consensusMemoryTraceFocusStrength,
@@ -718,17 +716,13 @@ describe('planConsensusMemoryTrace', () => {
     ))).toBe(true);
   });
 
-  it('does not focus an unroutable memory or over-dim passive structure', () => {
+  it('does not focus an unroutable memory', () => {
     const cells = new Map([1, 5].map((id) => [id, cell(id)]));
     const plan = planConsensusMemoryTrace(link(), cells, graph([]));
 
     expect(deriveConsensusMemoryTraceFocus(plan, 1, '7:1')).toBeNull();
     expect(consensusMemoryTraceFocusStrength(null, 1)).toBe(0);
     expect(consensusMemoryTraceFocusStrength(null, Number.NaN)).toBe(0);
-    expect(consensusMemoryPassiveOpacity(0)).toBe(1);
-    expect(consensusMemoryPassiveOpacity(1)).toBe(MEMORY_TRACE_PASSIVE_OPACITY_FLOOR);
-    expect(consensusMemoryPassiveOpacity(2)).toBe(MEMORY_TRACE_PASSIVE_OPACITY_FLOOR);
-    expect(consensusMemoryPassiveOpacity(Number.NaN)).toBe(1);
   });
 
   it('lets live writes yield priority without hiding their route', () => {
