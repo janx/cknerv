@@ -87,6 +87,8 @@ describe('NeuralFabric living-mesh handles', () => {
   it('clears passive noise only around exact recalled-route apertures', () => {
     expect(SRC).toContain('setRecallAperture');
     expect(SRC).toContain('consensusMemoryApertureScale');
+    expect(SRC).toContain('consensusMemoryApertureAnimating');
+    expect(SRC).toContain('apertureAnimationRef');
     expect(SRC).toContain('prevSpatial * prevAperture');
     expect(SRC).toContain('endSpatial * endAperture');
     expect(SRC).not.toMatch(/fabric\.material\.opacity\s*=/);
