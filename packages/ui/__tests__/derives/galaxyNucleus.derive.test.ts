@@ -226,6 +226,24 @@ describe('galaxy consensus braid LOD', () => {
     expect(buffers.nodeResolve[bindings[1].knotIndex]).toBe(0);
   });
 
+  it('holds resolved agreement knots while the route aperture releases', () => {
+    const braid = deriveGalaxyConsensusBraid(CELL);
+    const buffers = buffersFor(braid.segments.length / 3, braid.knots.length);
+
+    writeGalaxyConsensusBraidBuffers(
+      CELL,
+      braid,
+      1,
+      0.3,
+      buffers,
+      emptyCursor(),
+      { role: 'target', strength: 0.25, phase: 0.5, convergence: 1 },
+    );
+
+    expect(Math.max(...buffers.nodeResolve)).toBe(0.5);
+    expect(Math.max(...buffers.nodeAlpha)).toBeGreaterThan(0.25);
+  });
+
   it('isolates the knot bound to the focused evidence source', () => {
     const braid = deriveGalaxyConsensusBraid(CELL);
     const evidence = [

@@ -2,6 +2,10 @@ import * as THREE from 'three';
 import { HASH11_GLSL, BIRTH_DEATH_GLSL } from './cellEnvelope.glsl';
 import { makeShockwaveUniforms, SHOCKWAVE_SLOTS } from './shockwaveMaterial';
 import { CONSENSUS_BRAID_PALETTE } from '../derives/consensusBraid.derive';
+import {
+  CONSENSUS_MEMORY_CORE_READ_FLOOR,
+  CONSENSUS_MEMORY_CORE_RELEASE_EXPONENT,
+} from '../derives/consensusMemoryCore.derive';
 
 /**
  * Single-peak Gaussian cloud baseline + block shockwave for each cell.
@@ -137,7 +141,12 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
           ? shockwaveSignal.rgb / vShockwave
           : vec3(0.72, 0.96, 1.0);
         gl_Position   = projectionMatrix * viewPos;
-        gl_PointSize  = aSize * ${HYBRID_BASE_PX_PER_WU.toFixed(1)} * (1.0 + vShockwave * uShockwaveSizeBoost) * (1.0 + vFocus * 0.18) * (1.0 + abs(vRecall) * 0.1) * scale * (uViewportHeight * 0.5 / max(-viewPos.z, 0.001));
+        float retainedCore = pow(
+          clamp(max(aRecall, 0.0), 0.0, 1.0),
+          ${CONSENSUS_MEMORY_CORE_RELEASE_EXPONENT.toFixed(1)}
+        )
+          * smoothstep(0.0, 1.0, clamp(aRecallState, 0.0, 1.0));
+        gl_PointSize  = aSize * ${HYBRID_BASE_PX_PER_WU.toFixed(1)} * (1.0 + vShockwave * uShockwaveSizeBoost) * (1.0 + vFocus * 0.18) * (1.0 + abs(vRecall) * 0.06 + retainedCore * 0.12) * scale * (uViewportHeight * 0.5 / max(-viewPos.z, 0.001));
       }
     `,
     fragmentShader: /* glsl */ `
@@ -247,10 +256,27 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
         // Historical recall reads the Cell's record; it does not replay a
         // write flash. Sources emit two bounded address rails. The retained
         // target receives a segmented scan aperture, then resolves three
-        // checksum lanes only as its real witness arrivals converge.
+        // checksum lanes and one central agreement knot only as its real
+        // witness arrivals converge. The knot outlasts the route aperture but
+        // clears exactly when the explicit historical read ends.
         float recallAmount = clamp(abs(vRecall), 0.0, 1.0);
         float recallTarget = step(0.0, vRecall);
         float recallSource = 1.0 - recallTarget;
+        float recallResolved = smoothstep(
+          0.0,
+          1.0,
+          clamp(vRecallState, 0.0, 1.0)
+        );
+        float readEnergy = recallAmount * (
+          1.0 - recallResolved
+            * (1.0 - ${CONSENSUS_MEMORY_CORE_READ_FLOOR.toFixed(1)})
+        );
+        float retainedEnergy = pow(
+          recallAmount,
+          ${CONSENSUS_MEMORY_CORE_RELEASE_EXPONENT.toFixed(1)}
+        )
+          * recallResolved
+          * recallTarget;
         float readPhase = fract(uTime * 0.38 + hash11(vSeed + 9.7) * 0.15);
         float scanY = mix(-0.28, 0.28, readPhase);
         float scanAperture = exp(-pow((uv.y - scanY) / 0.018, 2.0));
@@ -261,7 +287,7 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
           hash11(addressCell + floor(readPhase * 16.0) + vSeed)
         );
         float targetRead = scanAperture * scanWindow * addressGate
-          * recallAmount * recallTarget;
+          * readEnergy * recallTarget;
 
         float checksum0 = exp(-pow((uv.y + 0.058) / 0.011, 2.0))
           * (1.0 - smoothstep(0.09, 0.16, abs(uv.x)));
@@ -274,8 +300,9 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
           hash11(floor((uv.x + 0.22) * 24.0) + vSeed)
         );
         float recordLatch = (checksum0 + checksum1 + checksum2)
-          * checksumGate * clamp(vRecallState, 0.0, 1.0)
-          * recallAmount * recallTarget;
+          * checksumGate * retainedEnergy;
+        float recordKnot = exp(-pow(length(uv) / 0.036, 2.0))
+          * retainedEnergy;
 
         float departureX = mix(
           0.06,
@@ -288,10 +315,15 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
         vec3 recallCyan = vec3(0.22, 0.9, 1.0);
         vec3 recallPale = vec3(0.78, 0.97, 1.0);
         vec3 recallViolet = vec3(0.54, 0.38, 1.0);
+        vec3 recallGold = vec3(1.0, 0.78, 0.34);
         col += recallCyan * targetRead * 1.35;
-        col += mix(recallCyan, recallPale, 0.72) * recordLatch * 1.5;
+        col += mix(recallPale, recallGold, 0.48) * recordLatch * 1.62;
+        col += recallGold * recordKnot * 1.18;
         col += recallViolet * departureRail * 0.72;
-        a += targetRead * 0.54 + recordLatch * 0.68 + departureRail * 0.28;
+        a += targetRead * 0.54
+          + recordLatch * 0.72
+          + recordKnot * 0.48
+          + departureRail * 0.28;
 
         // A real on-chain Cell consumption is not agreement: transition the
         // fading body toward the retirement signal before it disappears. GC

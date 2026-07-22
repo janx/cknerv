@@ -3,6 +3,7 @@ import type {
   ConsensusMemoryTraceReadout,
 } from '../nerve/consensusMemoryTrace';
 import type { ConsensusBraidLayerOpacity } from './consensusBraid.derive';
+import { consensusMemoryCoreEnergy } from './consensusMemoryCore.derive';
 
 const clampUnit = (value: number): number => Math.max(0, Math.min(1, value));
 
@@ -57,9 +58,8 @@ export function consensusMemoryPortraitLayerOpacity(
   convergence: number,
 ): ConsensusBraidLayerOpacity {
   const recall = clampUnit(strength);
-  const resolved = clampUnit(convergence);
-  const readEnergy = recall * (1 - resolved * 0.78);
-  const agreementEnergy = recall * resolved;
+  const { reading: readEnergy, retained: agreementEnergy } =
+    consensusMemoryCoreEnergy(recall, convergence);
   return {
     ribbon: base.ribbon * (1 - recall * 0.7),
     streamGlow: Math.max(
@@ -80,19 +80,19 @@ export function consensusMemoryPortraitLayerOpacity(
     ),
     agreementGlow: Math.max(
       base.agreementGlow * (1 - recall * 0.55),
-      recall * (0.035 + resolved * 0.2),
+      recall * 0.035 + agreementEnergy * 0.2,
     ),
     agreementCore: Math.max(
       base.agreementCore * (1 - recall * 0.74),
-      recall * (0.24 + resolved * 0.74),
+      recall * 0.24 + agreementEnergy * 0.74,
     ),
     knotGlow: Math.max(
       base.knotGlow * (1 - recall * 0.58),
-      recall * (0.08 + resolved * 0.34),
+      recall * 0.08 + agreementEnergy * 0.34,
     ),
     knotCore: Math.max(
       base.knotCore * (1 - recall * 0.72),
-      recall * (0.28 + resolved * 0.72),
+      recall * 0.28 + agreementEnergy * 0.72,
     ),
     packet: base.packet * (1 - recall * 0.58),
   };

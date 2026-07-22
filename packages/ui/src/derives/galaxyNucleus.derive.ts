@@ -14,6 +14,7 @@ import {
   type ConsensusMemoryEvidenceIdentity,
 } from './consensusMemoryEvidence.derive';
 import { consensusMemoryEvidenceFocusScale } from '../nerve/consensusMemoryTrace';
+import { consensusMemoryCoreEnergy } from './consensusMemoryCore.derive';
 
 export interface GalaxyNucleusBuffers {
   linePos: Float32Array;
@@ -193,6 +194,10 @@ export function writeGalaxyConsensusBraidBuffers(
   const recallStrength = Math.max(0, Math.min(1, recall?.strength ?? 0));
   const recallPhase = ((recall?.phase ?? 0) % 1 + 1) % 1;
   const recallConvergence = Math.max(0, Math.min(1, recall?.convergence ?? 0));
+  const coreEnergy = consensusMemoryCoreEnergy(
+    recallStrength,
+    recallConvergence,
+  );
   const segmentCount = Math.max(1, Math.floor(braid.segments.length / 6));
   const evidenceBindings = recall?.role === 'target'
     ? consensusMemoryEvidenceBindings(
@@ -217,13 +222,15 @@ export function writeGalaxyConsensusBraidBuffers(
     const phaseDistance = circularUnitDistance(segmentPhase, recallPhase);
     const readHead = Math.exp(-Math.pow(phaseDistance / 0.055, 2));
     const targetRead = recall?.role === 'target'
-      ? recallStrength * readHead * (evidenceFocusSourceId === null ? 1 : 0.22)
+      ? coreEnergy.reading
+        * readHead
+        * (evidenceFocusSourceId === null ? 1 : 0.22)
       : 0;
     const sourceRead = recall?.role === 'source'
       ? recallStrength * readHead
       : 0;
     const agreementRead = recall?.role === 'target' && weight > 0.7
-      ? recallStrength * recallConvergence
+      ? coreEnergy.retained
       : 0;
     const baseVisibilityScale = recall?.role === 'target'
       ? 1 - recallStrength * 0.62
@@ -275,10 +282,10 @@ export function writeGalaxyConsensusBraidBuffers(
         braid.knots.length,
         recallConvergence,
       );
+    const knotEnergy = consensusMemoryCoreEnergy(recallStrength, resolved);
     const recallAlpha = recall?.role === 'target'
       ? knot.alpha
-        * recallStrength
-        * (0.12 + resolved * 0.88)
+        * (knotEnergy.reading * 0.12 + knotEnergy.retained * 0.88)
         * evidenceFocusScale
         * life
       : 0;
@@ -286,7 +293,10 @@ export function writeGalaxyConsensusBraidBuffers(
     buffers.nodePos[nodes * 3 + 1] = originY + knot.y * scale;
     buffers.nodePos[nodes * 3 + 2] = originZ + knot.z * scale;
     buffers.nodeSize[nodes] = knot.size * scale * 2
-      * (1 + recallStrength * (0.12 + resolved * 1.18) * evidenceFocusScale);
+      * (1 + (
+        knotEnergy.reading * 0.12
+          + knotEnergy.retained * 1.18
+      ) * evidenceFocusScale);
     const contextScale = evidenceFocusSourceId === null
       ? 1
       : 0.22 + evidenceFocusScale * 0.78;
@@ -295,7 +305,7 @@ export function writeGalaxyConsensusBraidBuffers(
       recallAlpha,
     );
     buffers.nodeResolve[nodes] = recall?.role === 'target'
-      ? recallStrength * resolved * evidenceFocusScale
+      ? knotEnergy.retained * evidenceFocusScale
       : 0;
     nodes += 1;
   }
