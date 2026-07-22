@@ -43,6 +43,7 @@ export * from './materials/cellHybridMaterial';
 export * from './materials/cellOrganismMaterial';
 export * from './materials/cellShellMaterial';
 export * from './materials/shockwaveMaterial';
+export * from './materials/consensusMemoryKnotMaterial';
 
 // ── Geometry helpers ───────────────────────────────────────────────
 export * from './geometry/cellPositions';
@@ -59,6 +60,7 @@ export * from './derives/cellConsensusIdentity.derive';
 export * from './derives/consensusBraid.derive';
 export * from './derives/consensusFlow.derive';
 export * from './derives/consensusMemoryCore.derive';
+export * from './derives/consensusMemoryCoreIdentity.derive';
 export * from './derives/consensusMemoryPortrait.derive';
 export * from './derives/consensusMemoryEvidence.derive';
 export * from './derives/consensusRouteHopAgreement.derive';

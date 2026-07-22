@@ -25,6 +25,9 @@ import {
 } from '../derives/consensusFlow.derive';
 import { consensusBraidPresenceScale } from '../derives/consensusBraid.derive';
 import {
+  consensusMemoryCoreIdentity,
+} from '../derives/consensusMemoryCoreIdentity.derive';
+import {
   CONSENSUS_BRAID_LOCAL_RADIUS,
   cellFocusTarget,
   consensusBraidRenderScale,
@@ -219,6 +222,8 @@ export interface CellBufferTargets {
   deathArr: Float32Array;
   flashArr: Float32Array;
   sizeArr:  Float32Array;
+  memoryIdentityArr: Float32Array;
+  memorySeedArr: Float32Array;
 }
 
 /**
@@ -244,6 +249,7 @@ export function writeCellBuffers(
 
     const visual = deriveCellVisual(c);
     const color = consensusCellColor(visual);
+    const memoryIdentity = consensusMemoryCoreIdentity(visual);
     targets.posArr[i * 3 + 0]   = c.pos_seed[0];
     targets.posArr[i * 3 + 1]   = c.pos_seed[1];
     targets.posArr[i * 3 + 2]   = c.pos_seed[2];
@@ -254,6 +260,8 @@ export function writeCellBuffers(
     targets.deathArr[i]         = deathAtS;
     targets.flashArr[i]         = flashAtS;
     targets.sizeArr[i]          = isTagged ? TAGGED_CELL_POINT_SIZE : GENERIC_CELL_POINT_SIZE;
+    targets.memoryIdentityArr.set(memoryIdentity.semantic, i * 4);
+    targets.memorySeedArr[i]    = memoryIdentity.hashSeed;
   }
 }
 
@@ -716,7 +724,7 @@ export default function CellGalaxy({
   /** Identity of the cells Map last seen by useSimFrame. When
    *  cellsCache.cells === lastCellsRef.current, no birth/death/tag/gc
    *  delta has landed since our previous frame, so the static per-cell
-   *  buffers (positions, colors, born/death, flash, size) are still
+   *  buffers (positions, colors, lifecycle, size, memory identity) are still
    *  valid — we skip writeCellBuffers and the matching needsUpdate
    *  flags. Pulse-only frames (which mutate lastPulseAtMs but leave
    *  the cells Map identity-stable) ride the skip path. */
@@ -794,6 +802,16 @@ export default function CellGalaxy({
     () => new THREE.BufferAttribute(new Float32Array(INSTANCE_CAPACITY), 1),
     [],
   );
+  // Compact A identity for the far retained core: asset orientation, lock
+  // cadence, payload lanes, capacity mass, and one stable content-hash seed.
+  const cellMemoryIdentityAttr = useMemo(
+    () => new THREE.BufferAttribute(new Float32Array(INSTANCE_CAPACITY * 4), 4),
+    [],
+  );
+  const cellMemorySeedAttr = useMemo(
+    () => new THREE.BufferAttribute(new Float32Array(INSTANCE_CAPACITY), 1),
+    [],
+  );
   // LOD detail factor per cell (0 = far/unchanged glow, →1 = camera-near, peak
   // suppressed so the nucleus shows). Written each frame by <CellNucleus>.
   const cellDetailAttr = useMemo(
@@ -829,6 +847,8 @@ export default function CellGalaxy({
     g.setAttribute('aDeathAt', cellDeathAtAttr);
     g.setAttribute('aFlashAt', cellFlashAtAttr);
     g.setAttribute('aSize', cellSizeAttr);
+    g.setAttribute('aMemoryIdentity', cellMemoryIdentityAttr);
+    g.setAttribute('aMemorySeed', cellMemorySeedAttr);
     g.setAttribute('aDetail', cellDetailAttr);
     g.setAttribute('aFocus', cellFocusAttr);
     g.setAttribute('aRecall', cellRecallAttr);
@@ -847,6 +867,8 @@ export default function CellGalaxy({
     cellDeathAtAttr,
     cellFlashAtAttr,
     cellSizeAttr,
+    cellMemoryIdentityAttr,
+    cellMemorySeedAttr,
     cellDetailAttr,
     cellFocusAttr,
     cellRecallAttr,
@@ -926,6 +948,8 @@ export default function CellGalaxy({
           deathArr: cellDeathAtAttr.array as Float32Array,
           flashArr: cellFlashAtAttr.array as Float32Array,
           sizeArr:  cellSizeAttr.array as Float32Array,
+          memoryIdentityArr: cellMemoryIdentityAttr.array as Float32Array,
+          memorySeedArr: cellMemorySeedAttr.array as Float32Array,
         },
       );
 
@@ -945,6 +969,8 @@ export default function CellGalaxy({
       cellDeathAtAttr.needsUpdate = true;
       cellFlashAtAttr.needsUpdate = true;
       cellSizeAttr.needsUpdate = true;
+      cellMemoryIdentityAttr.needsUpdate = true;
+      cellMemorySeedAttr.needsUpdate = true;
 
       lastCellsRef.current = cellsCache.cells;
       lastMulRef.current = cellGalaxyMul;

@@ -33,6 +33,10 @@ import {
   type ConsensusMemoryCellResponseRef,
   type ConsensusMemoryTraceReadout,
 } from '../../nerve/consensusMemoryTrace';
+import {
+  disposeConsensusMemoryKnotMaterial,
+  makeConsensusMemoryKnotMaterial,
+} from '../../materials/consensusMemoryKnotMaterial';
 
 const TAU = CONSENSUS_BRAID_TAU;
 const MAX_PACKETS = 14;
@@ -262,26 +266,16 @@ export default function ConsensusMemory({
       new THREE.Float32BufferAttribute(knotColors, 3),
     );
     knotGeometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 0.5);
-    const knotGlowMaterial = new THREE.PointsMaterial({
-      size: 0.058,
-      sizeAttenuation: true,
-      vertexColors: true,
-      transparent: true,
-      opacity: 0.18,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-      toneMapped: false,
-    });
-    const knotCoreMaterial = new THREE.PointsMaterial({
-      size: 0.014,
-      sizeAttenuation: true,
-      vertexColors: true,
-      transparent: true,
-      opacity: 0.98,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-      toneMapped: false,
-    });
+    const knotGlowMaterial = makeConsensusMemoryKnotMaterial(
+      'glow',
+      0.058,
+      0.18,
+    );
+    const knotCoreMaterial = makeConsensusMemoryKnotMaterial(
+      'core',
+      0.014,
+      0.98,
+    );
     const packetGeometry = new THREE.BoxGeometry(0.03, 0.006, 0.012);
     const packetMaterial = new THREE.MeshBasicMaterial({
       vertexColors: true,
@@ -657,8 +651,8 @@ export default function ConsensusMemory({
     built.agreementGlowMaterial.dispose();
     built.agreementCoreMaterial.dispose();
     built.knotGeometry.dispose();
-    built.knotGlowMaterial.dispose();
-    built.knotCoreMaterial.dispose();
+    disposeConsensusMemoryKnotMaterial(built.knotGlowMaterial);
+    disposeConsensusMemoryKnotMaterial(built.knotCoreMaterial);
     built.packetGeometry.dispose();
     built.packetMaterial.dispose();
     built.readHeadGeometry.dispose();

@@ -12,6 +12,10 @@ import {
 } from '@cknerv/ui';
 import Tweaks from './Tweaks';
 import { selectRelicSamples, type RelicSampleBasis } from './cell-relic-samples';
+import {
+  cellRelicMemoryResponse,
+  resolveCellRelicMemoryPose,
+} from './cell-relic-memory-pose';
 
 const BASIS_COLOR: Record<RelicSampleBasis, string> = {
   asset: '#7dd3fc',
@@ -24,11 +28,19 @@ const BASIS_COLOR: Record<RelicSampleBasis, string> = {
 export default function CellRelicLab({ snapshot }: { snapshot: CellGalaxySnapshot }) {
   const samples = useMemo(() => selectRelicSamples(snapshot), [snapshot]);
   const moving = new URLSearchParams(window.location.search).get('motion') === '1';
+  const memoryPose = resolveCellRelicMemoryPose(window.location.search);
+  const memoryResponseRefs = useMemo(
+    () => new Map(samples.map(({ cell }) => [
+      cell.id,
+      { current: cellRelicMemoryResponse(cell.id, memoryPose) },
+    ])),
+    [memoryPose, samples],
+  );
   const assetCoverage = new Set(samples.map(({ cell }) => cell.asset_kind ?? 'other')).size;
   const lockCoverage = new Set(samples.map(({ cell }) => cell.lock_kind ?? 'other')).size;
 
   return (
-    <main style={{
+    <main data-cell-relic-memory-pose={memoryPose} style={{
       minHeight: '100vh',
       boxSizing: 'border-box',
       padding: '18px 18px 24px',
@@ -57,7 +69,8 @@ export default function CellRelicLab({ snapshot }: { snapshot: CellGalaxySnapsho
             PSIONIC BRAID / A
           </div>
           <div style={{ marginTop: 6, fontSize: 10, color: '#64748b', letterSpacing: '0.08em' }}>
-            REAL CELL CALIBRATION MATRIX · {moving ? 'MOTION' : 'HASH-STABLE STATIC'}
+            REAL CELL CALIBRATION MATRIX · {memoryPose.toUpperCase()} ·{' '}
+            {moving ? 'MOTION' : 'HASH-STABLE STATIC'}
           </div>
         </div>
         <div style={{ textAlign: 'right', fontSize: 9, lineHeight: 1.65, color: '#718096' }}>
@@ -117,6 +130,7 @@ export default function CellRelicLab({ snapshot }: { snapshot: CellGalaxySnapsho
                       cell={cell}
                       direction="relic"
                       reducedMotion={!moving}
+                      traceResponseRef={memoryResponseRefs.get(cell.id)}
                     />
                   </View>
                   <div style={{
