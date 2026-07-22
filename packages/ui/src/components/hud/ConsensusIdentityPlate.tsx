@@ -30,6 +30,7 @@ const GOLD = HUD_COLORS.orange;
 const LOCKED_GOLD = '#FFD7A1';
 const ROUTE_LENS_MIN_CELLS = 9;
 const ROUTE_SCROLL_EDGE_EPSILON_PX = 1;
+const ROUTE_SCROLL_ANCHOR_INSET_PX = 4;
 
 function syncRouteLedgerScrollAffordance(node: HTMLDivElement): void {
   const viewport = node.closest<HTMLElement>(
@@ -51,6 +52,39 @@ function syncRouteLedgerScrollAffordance(node: HTMLDivElement): void {
     '--route-ledger-scroll-progress',
     `${(progress * 100).toFixed(2)}%`,
   );
+}
+
+function alignLockedRouteHopInspector(
+  node: HTMLDivElement,
+  reducedMotion: boolean,
+): boolean {
+  const inspector = node.querySelector<HTMLElement>(
+    '[data-memory-evidence-route-hop-inspector="true"]',
+  );
+  const maxScrollTop = Math.max(0, node.scrollHeight - node.clientHeight);
+  if (!inspector || maxScrollTop <= ROUTE_SCROLL_EDGE_EPSILON_PX) return false;
+  const anchorTop = inspector.offsetTop;
+  const anchorHeight = inspector.offsetHeight;
+  const anchorBottom = anchorTop + anchorHeight;
+  const centeredInset = Math.max(0, (node.clientHeight - anchorHeight) / 2);
+  const visibilityInset = Math.min(
+    ROUTE_SCROLL_ANCHOR_INSET_PX,
+    centeredInset,
+  );
+  const visibleTop = node.scrollTop + visibilityInset;
+  const visibleBottom = node.scrollTop + node.clientHeight
+    - visibilityInset;
+  if (anchorTop >= visibleTop && anchorBottom <= visibleBottom) return false;
+  const target = Math.min(
+    maxScrollTop,
+    Math.max(0, anchorTop - centeredInset),
+  );
+  if (!reducedMotion && typeof node.scrollTo === 'function') {
+    node.scrollTo({ top: target, behavior: 'smooth' });
+  } else {
+    node.scrollTop = target;
+  }
+  return true;
 }
 
 const MEMORY_READ_STAGES: ReadonlyArray<{
@@ -303,17 +337,21 @@ function EvidenceRouteLedger({
     const node = routeScrollRef.current;
     if (!node) return undefined;
     const sync = () => syncRouteLedgerScrollAffordance(node);
-    sync();
+    const align = () => {
+      alignLockedRouteHopInspector(node, reducedMotion);
+      sync();
+    };
+    align();
     const resizeObserver = typeof ResizeObserver === 'undefined'
       ? null
       : new ResizeObserver(sync);
     resizeObserver?.observe(node);
-    window.addEventListener('resize', sync);
+    window.addEventListener('resize', align);
     return () => {
       resizeObserver?.disconnect();
-      window.removeEventListener('resize', sync);
+      window.removeEventListener('resize', align);
     };
-  }, [evidence.route.length, lockedRouteHop?.hopIndex]);
+  }, [evidence.route.length, lockedRouteHop?.hopIndex, reducedMotion]);
   return (
     <div
       id={id}

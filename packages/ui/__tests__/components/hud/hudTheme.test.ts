@@ -35,6 +35,9 @@ describe('hudTheme', () => {
     expect(css).toContain(
       '.cknerv-memory-route-ledger-viewport{position:relative;display:flex;flex:1 1 auto;min-height:0}',
     );
+    expect(css).toContain(
+      '.cknerv-memory-route-ledger-scroll{position:relative;flex:1 1 auto',
+    );
     expect(css).toContain('top:var(--route-ledger-scroll-progress,0%)');
     expect(css).toContain(
       '[data-memory-evidence-route-scrollable="true"] .cknerv-memory-route-scroll-position{opacity:1}',

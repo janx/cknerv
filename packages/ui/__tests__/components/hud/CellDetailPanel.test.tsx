@@ -751,6 +751,10 @@ describe('CellDetailPanel', () => {
       scrollHeight: { configurable: true, value: 147 },
       scrollTop: { configurable: true, writable: true, value: 0 },
     });
+    Object.defineProperties(inspector, {
+      offsetTop: { configurable: true, value: 70 },
+      offsetHeight: { configurable: true, value: 62 },
+    });
     fireEvent.scroll(ledgerScroll!);
     expect(ledgerViewport?.getAttribute(
       'data-memory-evidence-route-scrollable',
@@ -764,6 +768,12 @@ describe('CellDetailPanel', () => {
     expect(ledgerViewport?.style.getPropertyValue(
       '--route-ledger-scroll-progress',
     )).toBe('0.00%');
+
+    fireEvent.resize(window);
+    expect(ledgerScroll?.scrollTop).toBe(65);
+    expect(ledgerViewport?.style.getPropertyValue(
+      '--route-ledger-scroll-progress',
+    )).toBe('86.67%');
 
     ledgerScroll!.scrollTop = 37.5;
     fireEvent.scroll(ledgerScroll!);
@@ -802,6 +812,18 @@ describe('CellDetailPanel', () => {
       cellId: route[21],
       hopIndex: 21,
     });
+
+    ledgerScroll!.scrollTop = 0;
+    const steppedFocus = {
+      ...lockedFocus,
+      cellId: route[21],
+      hopIndex: 21,
+    };
+    rerender(panel(steppedFocus));
+    expect(ledgerScroll?.scrollTop).toBe(65);
+    expect(ledgerViewport?.style.getPropertyValue(
+      '--route-ledger-scroll-progress',
+    )).toBe('86.67%');
 
     const sourceFocus = {
       ...lockedFocus,
