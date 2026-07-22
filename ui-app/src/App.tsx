@@ -42,6 +42,7 @@ import {
   RenderStatsPanel,
   RenderStatsSampler,
   SimClockTicker,
+  setQualityMode,
   TweakSync,
   UNIVERSE_SEED_FALLBACK,
   useQualityRuntime,
@@ -75,7 +76,11 @@ import {
   restoreCellMemoryRouteAnchor,
   type CellMemoryRouteAnchor,
 } from './cell-memory-route-continuity';
-import { hasQuerySwitch, resolveCanvasDpr } from './render-quality';
+import {
+  hasQuerySwitch,
+  resolveCanvasDpr,
+  resolveQualityOverride,
+} from './render-quality';
 import { resolveBuildVersion, buildCommitHref, resolveGalaxyConfig } from './runtime-config';
 
 interface AppProps {
@@ -106,6 +111,14 @@ export default function App({
   initialCellsRevision,
 }: AppProps) {
   const galaxyConfig = resolveGalaxyConfig();
+  const qualityOverride = useMemo(() => (
+    typeof window === 'undefined'
+      ? null
+      : resolveQualityOverride(window.location.search)
+  ), []);
+  useEffect(() => {
+    if (qualityOverride) setQualityMode(qualityOverride);
+  }, [qualityOverride]);
   const qualityRuntime = useQualityRuntime();
   const qualityCascade = QUALITY_PRESETS[qualityRuntime.effective];
   const orbitControlsRef = useRef<ElementRef<typeof OrbitControls>>(null);
@@ -602,7 +615,7 @@ export default function App({
           <SimClockTicker />
           {/* Auto mode samples raw frame time with long hysteresis. Manual
               high/med/low in the backtick panel overrides it immediately. */}
-          <AdaptiveQualityController />
+          {qualityOverride ? null : <AdaptiveQualityController />}
           {/* Mirrors the backtick leva panel into the LIVE tuning store.
               Re-renders only on knob drag (no per-frame cost); mount once. */}
           <TweakSync />

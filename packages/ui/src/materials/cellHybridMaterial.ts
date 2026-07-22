@@ -6,6 +6,10 @@ import {
   CONSENSUS_MEMORY_CORE_READ_FLOOR,
   CONSENSUS_MEMORY_CORE_RELEASE_EXPONENT,
 } from '../derives/consensusMemoryCore.derive';
+import {
+  CONSENSUS_MEMORY_HANDOFF_END,
+  CONSENSUS_MEMORY_HANDOFF_START,
+} from '../derives/consensusMemoryLod.derive';
 
 /**
  * Single-peak Gaussian cloud baseline + block shockwave for each cell.
@@ -34,6 +38,10 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
       uBirthDurS:       { value: 0.5 },
       uDeathDurS:       { value: 0.6 },
       uViewportHeight:  { value: 800 },
+      uPixelRatio:      { value: 1 },
+      uMemoryMinPointPx: { value: 24 },
+      uMemoryLinePx:    { value: 0.55 },
+      uMemorySignalEnergy: { value: 1 },
       uWarmth:          { value: 0.04 }, // cool resting structure → restrained gold bias; set live from LIVE.cell.warmth
       uCenterDim:       { value: 0.3 }, // shared centre-energy floor; passive fabric applies its stronger squared form
       ...makeShockwaveUniforms(),
@@ -67,6 +75,8 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
       uniform float uBirthDurS;
       uniform float uDeathDurS;
       uniform float uViewportHeight;
+      uniform float uPixelRatio;
+      uniform float uMemoryMinPointPx;
       uniform float uCenterDim;
       uniform float uShockwaveAt[${SHOCKWAVE_SLOTS}];
       uniform vec2  uShockwaveOriginXZ[${SHOCKWAVE_SLOTS}];
@@ -89,6 +99,7 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
       varying float vRecall;
       varying float vRecallState;
       varying float vCenterDim;
+      varying float vPointCssPx;
 
       ${BIRTH_DEATH_GLSL}
 
@@ -153,6 +164,21 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
           * smoothstep(0.0, 1.0, clamp(aRecallState, 0.0, 1.0));
         float retainedSizeBoost = mix(0.08, 0.16, aMemoryIdentity.w);
         gl_PointSize  = aSize * ${HYBRID_BASE_PX_PER_WU.toFixed(1)} * (1.0 + vShockwave * uShockwaveSizeBoost) * (1.0 + vFocus * 0.18) * (1.0 + abs(vRecall) * 0.06 + retainedCore * retainedSizeBoost) * scale * (uViewportHeight * 0.5 / max(-viewPos.z, 0.001));
+        // Retained records have a semantic CSS-pixel floor so 1/3/5 checksum
+        // lanes survive every quality DPR. The floor recedes by the exact
+        // complement used when the expanded braid takes over.
+        float compactVisibility = 1.0 - smoothstep(
+          ${CONSENSUS_MEMORY_HANDOFF_START.toFixed(2)},
+          ${CONSENSUS_MEMORY_HANDOFF_END.toFixed(2)},
+          clamp(aDetail, 0.0, 1.0)
+        );
+        float retainedFloor = uMemoryMinPointPx
+          * max(uPixelRatio, 0.001)
+          * retainedCore
+          * compactVisibility
+          * scale;
+        gl_PointSize = max(gl_PointSize, retainedFloor);
+        vPointCssPx = gl_PointSize / max(uPixelRatio, 0.001);
       }
     `,
     fragmentShader: /* glsl */ `
@@ -165,6 +191,8 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
       uniform float uShockwaveAlphaCeil;
       uniform float uShockwaveTrailBoost;
       uniform float uWarmth;
+      uniform float uMemoryLinePx;
+      uniform float uMemorySignalEnergy;
 
       varying vec3  vColor;
       varying float vDeathRamp;
@@ -177,6 +205,7 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
       varying float vRecall;
       varying float vRecallState;
       varying float vCenterDim;
+      varying float vPointCssPx;
 
       // hash11 — small deterministic scrambler. Used for per-cell decorrelation.
       ${HASH11_GLSL}
@@ -278,12 +307,18 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
           1.0 - recallResolved
             * (1.0 - ${CONSENSUS_MEMORY_CORE_READ_FLOOR.toFixed(1)})
         );
+        float compactVisibility = 1.0 - smoothstep(
+          ${CONSENSUS_MEMORY_HANDOFF_START.toFixed(2)},
+          ${CONSENSUS_MEMORY_HANDOFF_END.toFixed(2)},
+          clamp(vDetail, 0.0, 1.0)
+        );
         float retainedEnergy = pow(
           recallAmount,
           ${CONSENSUS_MEMORY_CORE_RELEASE_EXPONENT.toFixed(1)}
         )
           * recallResolved
-          * recallTarget;
+          * recallTarget
+          * compactVisibility;
         float readPhase = fract(uTime * 0.38 + hash11(vSeed + 9.7) * 0.15);
         float scanY = mix(-0.28, 0.28, readPhase);
         float scanAperture = exp(-pow((uv.y - scanY) / 0.018, 2.0));
@@ -294,7 +329,9 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
           hash11(addressCell + floor(readPhase * 16.0) + vSeed)
         );
         float targetRead = scanAperture * scanWindow * addressGate
-          * readEnergy * recallTarget;
+          * readEnergy * recallTarget
+          * compactVisibility
+          * uMemorySignalEnergy;
 
         // Far retained-core identity is the compact LOD of canonical A:
         // asset rotates the record axis, lock changes its gate cadence, data
@@ -308,21 +345,30 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
           recordCos, -recordSin,
           recordSin, recordCos
         ) * uv;
+        float memoryUvPerPx = 1.0 / max(vPointCssPx, 1.0);
+        float checksumWidth = max(
+          0.0125,
+          uMemoryLinePx * memoryUvPerPx
+        );
+        float checksumLaneStep = max(0.056, 1.34 * memoryUvPerPx);
         float recordPayload = clamp(vMemoryIdentity.z, 0.0, 1.0);
-        float recordSpan = mix(0.11, 0.2, recordPayload);
+        float recordSpan = max(
+          mix(0.11, 0.2, recordPayload),
+          checksumLaneStep * 2.34
+        );
         float recordWindow = 1.0 - smoothstep(
           recordSpan * 0.72,
           recordSpan,
           abs(recordUv.x)
         );
-        float checksumCenter = exp(-pow(recordUv.y / 0.0125, 2.0));
+        float checksumCenter = exp(-pow(recordUv.y / checksumWidth, 2.0));
         float checksumInner = (
-          exp(-pow((recordUv.y + 0.056) / 0.0125, 2.0))
-          + exp(-pow((recordUv.y - 0.056) / 0.0125, 2.0))
+          exp(-pow((recordUv.y + checksumLaneStep) / checksumWidth, 2.0))
+          + exp(-pow((recordUv.y - checksumLaneStep) / checksumWidth, 2.0))
         ) * smoothstep(0.04, 0.22, recordPayload);
         float checksumOuter = (
-          exp(-pow((recordUv.y + 0.112) / 0.0125, 2.0))
-          + exp(-pow((recordUv.y - 0.112) / 0.0125, 2.0))
+          exp(-pow((recordUv.y + checksumLaneStep * 2.0) / checksumWidth, 2.0))
+          + exp(-pow((recordUv.y - checksumLaneStep * 2.0) / checksumWidth, 2.0))
         ) * smoothstep(0.42, 0.78, recordPayload);
         float checksumLanes = (
           checksumCenter + checksumInner + checksumOuter
@@ -339,10 +385,15 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
               + vSeed
           )
         );
-        float recordLatch = checksumLanes * checksumGate * retainedEnergy;
-        float recordKnotRadius = mix(0.03, 0.044, vMemoryIdentity.w);
+        float recordLatch = checksumLanes * checksumGate * retainedEnergy
+          * uMemorySignalEnergy;
+        float recordKnotRadius = max(
+          mix(0.03, 0.044, vMemoryIdentity.w),
+          uMemoryLinePx * 1.45 * memoryUvPerPx
+        );
         float recordKnot = exp(-pow(length(uv) / recordKnotRadius, 2.0))
-          * retainedEnergy;
+          * retainedEnergy
+          * uMemorySignalEnergy;
 
         float departureX = mix(
           0.06,

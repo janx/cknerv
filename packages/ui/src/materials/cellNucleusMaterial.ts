@@ -17,7 +17,7 @@ export function makeNucleusPointMaterial(feather: number): THREE.ShaderMaterial 
       attribute float aSize;   // world-space point diameter
       attribute float aAlpha;  // LOD fade × base alpha
       attribute float aResolve; // recalled agreement has been verified
-      uniform float uViewportHeight;
+      uniform float uViewportHeight; // drawing-buffer height (CSS height × DPR)
       uniform float uProjY;
       varying float vAlpha;
       varying float vResolve;

@@ -15,6 +15,7 @@ import {
 } from './consensusMemoryEvidence.derive';
 import { consensusMemoryEvidenceFocusScale } from '../nerve/consensusMemoryTrace';
 import { consensusMemoryCoreEnergy } from './consensusMemoryCore.derive';
+import { consensusMemoryExpandedVisibility } from './consensusMemoryLod.derive';
 
 export interface GalaxyNucleusBuffers {
   linePos: Float32Array;
@@ -188,7 +189,7 @@ export function writeGalaxyConsensusBraidBuffers(
     buffers.nodeResolve.length,
   );
   const midVisibility = smoothstep(0.02, 0.7, detail);
-  const nearVisibility = smoothstep(0.38, 1, detail);
+  const nearVisibility = consensusMemoryExpandedVisibility(detail);
   const life = cell.death_at_ms === null ? 1 : 0.56;
   const [originX, originY, originZ] = cell.pos_seed;
   const recallStrength = Math.max(0, Math.min(1, recall?.strength ?? 0));
@@ -225,12 +226,13 @@ export function writeGalaxyConsensusBraidBuffers(
       ? coreEnergy.reading
         * readHead
         * (evidenceFocusSourceId === null ? 1 : 0.22)
+        * nearVisibility
       : 0;
     const sourceRead = recall?.role === 'source'
       ? recallStrength * readHead
       : 0;
     const agreementRead = recall?.role === 'target' && weight > 0.7
-      ? coreEnergy.retained
+      ? coreEnergy.retained * nearVisibility
       : 0;
     const baseVisibilityScale = recall?.role === 'target'
       ? 1 - recallStrength * 0.62
@@ -287,6 +289,7 @@ export function writeGalaxyConsensusBraidBuffers(
       ? knot.alpha
         * (knotEnergy.reading * 0.12 + knotEnergy.retained * 0.88)
         * evidenceFocusScale
+        * nearVisibility
         * life
       : 0;
     buffers.nodePos[nodes * 3] = originX + knot.x * scale;

@@ -141,7 +141,7 @@ describe('galaxy consensus braid LOD', () => {
     expect(deadBuffers.lineCol[0]).toBeLessThan(nearBuffers.lineCol[0]);
   });
 
-  it('scans canonical paths and resolves real agreement knots during recall', () => {
+  it('scans expanded paths and resolves real agreement knots during recall', () => {
     const braid = deriveGalaxyConsensusBraid(CELL);
     const baseline = buffersFor(braid.segments.length / 3, braid.knots.length);
     const reading = buffersFor(braid.segments.length / 3, braid.knots.length);
@@ -150,7 +150,7 @@ describe('galaxy consensus braid LOD', () => {
     writeGalaxyConsensusBraidBuffers(
       CELL,
       braid,
-      0.55,
+      1,
       0.3,
       baseline,
       emptyCursor(),
@@ -158,7 +158,7 @@ describe('galaxy consensus braid LOD', () => {
     writeGalaxyConsensusBraidBuffers(
       CELL,
       braid,
-      0.55,
+      1,
       0.3,
       reading,
       emptyCursor(),
@@ -167,7 +167,7 @@ describe('galaxy consensus braid LOD', () => {
     writeGalaxyConsensusBraidBuffers(
       CELL,
       braid,
-      0.55,
+      1,
       0.3,
       resolved,
       emptyCursor(),
@@ -177,7 +177,9 @@ describe('galaxy consensus braid LOD', () => {
     expect(Math.max(...reading.lineCol)).toBeGreaterThan(Math.max(...baseline.lineCol));
     expect(resolved.lineCol.reduce((sum, channel) => sum + channel, 0))
       .toBeGreaterThan(reading.lineCol.reduce((sum, channel) => sum + channel, 0));
-    expect(Math.max(...resolved.nodeAlpha)).toBeGreaterThan(Math.max(...reading.nodeAlpha));
+    expect(Math.max(...resolved.nodeAlpha)).toBeGreaterThanOrEqual(
+      Math.max(...reading.nodeAlpha),
+    );
     expect(Math.max(...reading.nodeResolve)).toBe(0);
     expect(Math.max(...resolved.nodeResolve)).toBe(1);
     expect(resolved.linePos).toEqual(baseline.linePos);

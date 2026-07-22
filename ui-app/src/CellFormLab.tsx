@@ -13,15 +13,18 @@ import {
   CellNucleusPortrait,
   ConsensusWriteSeal,
   NeuralNetwork,
+  QUALITY_PRESETS,
   RenderStatsPanel,
   RenderStatsSampler,
   SimClockTicker,
   TweakSync,
+  useQualityRuntime,
   type CellCoreDirection,
   type ConsensusBraidField,
 } from '@cknerv/ui';
 import Tweaks from './Tweaks';
 import { selectInitialLabCell } from './cell-form-lab-selection';
+import { resolveCanvasDpr } from './render-quality';
 
 const SAMPLE_ASSETS = ['native', 'sudt', 'xudt', 'dao', 'spore', 'other'] as const;
 const FIELD_COUNT = 260;
@@ -49,6 +52,12 @@ function initialCoreDirection(): CellCoreDirection {
 
 export default function CellFormLab({ snapshot }: { snapshot: CellGalaxySnapshot }) {
   const query = new URLSearchParams(window.location.search);
+  const { effective: quality } = useQualityRuntime();
+  const qualityCascade = QUALITY_PRESETS[quality];
+  const canvasDpr = resolveCanvasDpr(
+    window.devicePixelRatio,
+    qualityCascade.maxDpr,
+  );
   const compareMode = query.get('compare') === '1';
   const comparisonMoving = query.get('motion') === '1';
   const lodMode = query.get('lod') === '1';
@@ -227,7 +236,10 @@ export default function CellFormLab({ snapshot }: { snapshot: CellGalaxySnapshot
   }
 
   return (
-    <div style={{ position: 'fixed', inset: 0, overflow: 'hidden', background: '#02030a', color: '#dbeafe' }}>
+    <div
+      data-cell-form-quality={quality}
+      style={{ position: 'fixed', inset: 0, overflow: 'hidden', background: '#02030a', color: '#dbeafe' }}
+    >
       <Tweaks />
       <RenderStatsPanel />
       <div style={{ position: 'absolute', left: 18, top: 15, zIndex: 5, pointerEvents: 'none' }}>
@@ -250,13 +262,29 @@ export default function CellFormLab({ snapshot }: { snapshot: CellGalaxySnapshot
           <Canvas
             camera={{ position: galaxyCamera, fov: 44, near: 0.1, far: 1000 }}
             gl={{ antialias: true, alpha: false }}
+            dpr={canvasDpr}
             style={{ background: '#02030a' }}
             onPointerMissed={() => undefined}
           >
             <SimClockTicker />
             <TweakSync />
             <RenderStatsSampler />
-            <Stars radius={180} depth={70} count={450} factor={1.5} saturation={0} fade speed={0.2} />
+            <Stars
+              radius={180}
+              depth={70}
+              count={Math.max(
+                45,
+                Math.round(
+                  450
+                    * qualityCascade.starsCount
+                    / QUALITY_PRESETS.high.starsCount,
+                ),
+              )}
+              factor={1.5}
+              saturation={0}
+              fade
+              speed={0.2}
+            />
             <CellGalaxy
               ckbNodeIds={['ckb:local']}
               universeSeed={0x434b42}

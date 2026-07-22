@@ -41,7 +41,7 @@ export function makeCellFlareMaterial(): THREE.ShaderMaterial {
       uniform float uTime;
       uniform float uBirthDurS;
       uniform float uDeathDurS;
-      uniform float uViewportHeight;
+      uniform float uViewportHeight; // drawing-buffer height (CSS height × DPR)
 
       varying vec3  vColor;
       varying float vBirthRamp;

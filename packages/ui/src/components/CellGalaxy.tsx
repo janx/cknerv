@@ -37,6 +37,10 @@ import { SHOCKWAVE_SLOTS, writeShockwaveSlot } from '../materials/shockwaveMater
 import { makeCellHybridMaterial } from '../materials/cellHybridMaterial';
 import { makeCellFlareMaterial } from '../materials/cellFlareMaterial';
 import {
+  pointSpriteDeviceViewportHeight,
+  resolvePointSpritePixelRatio,
+} from '../materials/pointSpritePresentation';
+import {
   CELLS_Y,
   chainNodeWorldPosition,
 } from '../layout';
@@ -710,6 +714,7 @@ export default function CellGalaxy({
   const { effective: quality } = useQualityRuntime();
   const cellGalaxyMul = QUALITY_PRESETS[quality].cellGalaxyMul;
   const dischargeArms = QUALITY_PRESETS[quality].dischargeArms;
+  const memorySignal = QUALITY_PRESETS[quality].memorySignal;
   /** Per-frame mirror of the cellsList iteration order, written by
    *  `useFrame` below. `CellPicker` reads this ref each click so it
    *  sees the current frame's cells — an inline closure would otherwise
@@ -997,8 +1002,19 @@ export default function CellGalaxy({
     }
 
     // 3. Material uniforms.
+    const pointPixelRatio = resolvePointSpritePixelRatio(
+      state.gl.getPixelRatio(),
+    );
+    const pointViewportHeight = pointSpriteDeviceViewportHeight(
+      state.size.height,
+      pointPixelRatio,
+    );
     hybridMaterial.uniforms.uTime.value = now;
-    hybridMaterial.uniforms.uViewportHeight.value = state.size.height;
+    hybridMaterial.uniforms.uViewportHeight.value = pointViewportHeight;
+    hybridMaterial.uniforms.uPixelRatio.value = pointPixelRatio;
+    hybridMaterial.uniforms.uMemoryMinPointPx.value = memorySignal.coreMinPx;
+    hybridMaterial.uniforms.uMemoryLinePx.value = memorySignal.compactLinePx;
+    hybridMaterial.uniforms.uMemorySignalEnergy.value = memorySignal.energyScale;
     // Live shockwave boosts/ceils (Galaxy panel). Written every frame — not in
     // the block-fire trigger below — so a knob dragged mid-wave takes effect on
     // the in-flight wave, not just the next block. Defaults in LIVE.galaxy.*
@@ -1013,7 +1029,7 @@ export default function CellGalaxy({
     hybridMaterial.uniforms.uWarmth.value = LIVE.cell.warmth; // hash-stable A hue → gold bias
     hybridMaterial.uniforms.uCenterDim.value = LIVE.cell.centerDim; // shared centre-energy floor
     flareMaterial.uniforms.uTime.value = now;
-    flareMaterial.uniforms.uViewportHeight.value = state.size.height;
+    flareMaterial.uniforms.uViewportHeight.value = pointViewportHeight;
     flareMaterial.uniforms.uDischargeArms.value = dischargeArms;
     if (pulseAtMs > prevPulseAtMs) {
       lastPulseAtMsRef.current = pulseAtMs;

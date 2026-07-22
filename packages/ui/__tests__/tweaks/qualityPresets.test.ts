@@ -18,6 +18,12 @@ describe('QUALITY_PRESETS', () => {
       fabricSamplesPerEdge: 4,
       activeSamplesPerHop: 12,
       nucleusNearCap: 12,
+      memorySignal: {
+        coreMinPx: 24,
+        compactLinePx: 0.55,
+        energyScale: 1,
+        expandedLineScale: 1,
+      },
     });
   });
 
@@ -30,6 +36,12 @@ describe('QUALITY_PRESETS', () => {
     expect(QUALITY_PRESETS.med.fabricSamplesPerEdge).toBe(2);
     expect(QUALITY_PRESETS.med.activeSamplesPerHop).toBeGreaterThanOrEqual(10);
     expect(QUALITY_PRESETS.med.nucleusNearCap).toBe(8);
+    expect(QUALITY_PRESETS.med.memorySignal).toEqual({
+      coreMinPx: 24,
+      compactLinePx: 0.62,
+      energyScale: 0.94,
+      expandedLineScale: 1.06,
+    });
   });
 
   it('low caps DPR at one and drops visual capacity hard', () => {
@@ -43,6 +55,25 @@ describe('QUALITY_PRESETS', () => {
     // fabric collapses to one segment: semantic signal wins over ambience.
     expect(QUALITY_PRESETS.low.activeSamplesPerHop).toBeGreaterThanOrEqual(8);
     expect(QUALITY_PRESETS.low.nucleusNearCap).toBe(4);
+    expect(QUALITY_PRESETS.low.memorySignal).toEqual({
+      coreMinPx: 24,
+      compactLinePx: 0.72,
+      energyScale: 0.86,
+      expandedLineScale: 1.15,
+    });
+  });
+
+  it('never sheds memory semantics when the renderer reduces ambience', () => {
+    const signals = Object.values(QUALITY_PRESETS).map(
+      (preset) => preset.memorySignal,
+    );
+
+    expect(new Set(signals.map((signal) => signal.coreMinPx))).toEqual(
+      new Set([24]),
+    );
+    expect(signals[2].compactLinePx).toBeGreaterThan(signals[1].compactLinePx);
+    expect(signals[1].compactLinePx).toBeGreaterThan(signals[0].compactLinePx);
+    expect(signals[2].energyScale).toBeLessThan(signals[0].energyScale);
   });
 });
 

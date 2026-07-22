@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { hasQuerySwitch, resolveCanvasDpr } from '../src/render-quality';
+import {
+  hasQuerySwitch,
+  resolveCanvasDpr,
+  resolveQualityOverride,
+} from '../src/render-quality';
 
 describe('render quality route helpers', () => {
   it('enables review switches only for an explicit one', () => {
@@ -18,5 +22,13 @@ describe('render quality route helpers', () => {
   it('normalizes invalid and sub-one browser DPR readings', () => {
     expect(resolveCanvasDpr(Number.NaN, 2)).toBe(1);
     expect(resolveCanvasDpr(0.75, 2)).toBe(1);
+  });
+
+  it('accepts only explicit deterministic quality overrides', () => {
+    expect(resolveQualityOverride('?quality=high')).toBe('high');
+    expect(resolveQualityOverride('?quality=med')).toBe('med');
+    expect(resolveQualityOverride('?quality=low')).toBe('low');
+    expect(resolveQualityOverride('?quality=auto')).toBeNull();
+    expect(resolveQualityOverride('?quality=')).toBeNull();
   });
 });
