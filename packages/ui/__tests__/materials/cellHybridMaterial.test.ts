@@ -22,6 +22,10 @@ describe('makeCellHybridMaterial', () => {
     expect(m.uniforms.uBirthDurS).toBeDefined();
     expect(m.uniforms.uDeathDurS).toBeDefined();
     expect(m.uniforms.uViewportHeight).toBeDefined();
+    expect(m.uniforms.uPixelRatio.value).toBe(1);
+    expect(m.uniforms.uMemoryMinPointPx.value).toBe(24);
+    expect(m.uniforms.uMemoryLinePx.value).toBe(0.55);
+    expect(m.uniforms.uMemorySignalEnergy.value).toBe(1);
     expect(m.uniforms.uWarmth.value).toBe(0.04);
     expect(m.uniforms.uCenterDim.value).toBe(0.3);
 
@@ -100,6 +104,20 @@ describe('makeCellHybridMaterial', () => {
     expect(m.fragmentShader).toContain('checksumOuter');
     expect(m.fragmentShader).toContain('lockCadence');
     expect(m.fragmentShader).toContain('recordKnotRadius');
+    expect(m.vertexShader).toContain('retainedFloor');
+    expect(m.vertexShader).toContain('vPointCssPx');
+    expect(m.fragmentShader).toContain('checksumWidth');
+    expect(m.fragmentShader).toContain('checksumLaneStep');
+  });
+
+  it('cross-fades compact memory into the expanded braid instead of stacking both', () => {
+    const m = makeCellHybridMaterial();
+
+    expect(m.vertexShader).toContain('float compactVisibility');
+    expect(m.fragmentShader).toContain('float compactVisibility');
+    expect(m.fragmentShader).toContain('* compactVisibility');
+    expect(m.vertexShader).toContain('uMemoryMinPointPx');
+    expect(m.fragmentShader).toContain('uMemorySignalEnergy');
   });
 
   it('uses the purple-red retirement signal only as real death advances', () => {

@@ -26,6 +26,10 @@ import {
   dampCellFocus,
 } from '../derives/cellInteraction.derive';
 import { makeNucleusPointMaterial } from '../materials/cellNucleusMaterial';
+import {
+  pointSpriteDeviceViewportHeight,
+  resolvePointSpritePixelRatio,
+} from '../materials/pointSpritePresentation';
 import { QUALITY_PRESETS, useQualityRuntime } from '../tweaks/qualityPresets';
 import { useSimClock } from '../tweaks/SimClockScope';
 import { useConsensusMemoryFocusRef } from '../hooks/consensusMemoryFocusContext';
@@ -103,6 +107,7 @@ export default function CellNucleus({
   const recallFocusRef = useConsensusMemoryFocusRef();
   const { effective: quality } = useQualityRuntime();
   const nucleusNearCap = QUALITY_PRESETS[quality].nucleusNearCap;
+  const memorySignal = QUALITY_PRESETS[quality].memorySignal;
   const lineVertexCap = MAX_NEAR_CAPACITY * MAX_SEG * 2;
   const nodeCap = MAX_NEAR_CAPACITY * MAX_NODE;
   const linePos = useMemo(() => new Float32Array(lineVertexCap * 3), [lineVertexCap]);
@@ -205,8 +210,20 @@ export default function CellNucleus({
       return;
     }
 
-    nodeMaterial.uniforms.uViewportHeight.value = state.size.height;
+    const pointPixelRatio = resolvePointSpritePixelRatio(
+      state.gl.getPixelRatio(),
+    );
+    nodeMaterial.uniforms.uViewportHeight.value = pointSpriteDeviceViewportHeight(
+      state.size.height,
+      pointPixelRatio,
+    );
     nodeMaterial.uniforms.uProjY.value = state.camera.projectionMatrix.elements[5];
+    glowMaterial.linewidth = BRAID_GLOW_WIDTH_PX
+      * memorySignal.expandedLineScale;
+    coreMaterial.linewidth = BRAID_CORE_WIDTH_PX
+      * memorySignal.expandedLineScale;
+    glowMaterial.opacity = BRAID_GLOW_OPACITY * memorySignal.energyScale;
+    coreMaterial.opacity = BRAID_CORE_OPACITY * memorySignal.energyScale;
     glowMaterial.resolution.set(state.size.width, state.size.height);
     coreMaterial.resolution.set(state.size.width, state.size.height);
 

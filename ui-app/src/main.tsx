@@ -6,6 +6,7 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import type { CellGalaxySnapshot } from '@cknerv/types';
+import { setQualityMode } from '@cknerv/ui';
 import App from './App';
 import { fetchCellsSnapshot, fetchChainSnapshot } from './connect';
 import { installPulseStatsHook } from './pulse-stats-hook';
@@ -13,6 +14,7 @@ import {
   resolveVisualReviewRoute,
   type VisualReviewRoute,
 } from './visual-review-route';
+import { resolveQualityOverride } from './render-quality';
 
 type VisualReviewLab = React.ComponentType<{ snapshot: CellGalaxySnapshot }>;
 
@@ -31,6 +33,8 @@ async function loadVisualReviewLab(
 
 async function bootstrap() {
   const reviewRoute = resolveVisualReviewRoute(window.location.search);
+  const qualityOverride = resolveQualityOverride(window.location.search);
+  if (qualityOverride) setQualityMode(qualityOverride);
   const [chainResp, cellsResp, ReviewLab] = await Promise.all([
     fetchChainSnapshot(),
     fetchCellsSnapshot(),

@@ -5,10 +5,12 @@ import type { CellGalaxySnapshot } from '@cknerv/types';
 import {
   ASSET_COLORS,
   CellCoreArtwork,
+  QUALITY_PRESETS,
   formatAssetKind,
   formatCkb,
   formatDataSize,
   formatLockKind,
+  useQualityRuntime,
 } from '@cknerv/ui';
 import Tweaks from './Tweaks';
 import { selectRelicSamples, type RelicSampleBasis } from './cell-relic-samples';
@@ -16,6 +18,7 @@ import {
   cellRelicMemoryResponse,
   resolveCellRelicMemoryPose,
 } from './cell-relic-memory-pose';
+import { resolveCanvasDpr } from './render-quality';
 
 const BASIS_COLOR: Record<RelicSampleBasis, string> = {
   asset: '#7dd3fc',
@@ -26,6 +29,12 @@ const BASIS_COLOR: Record<RelicSampleBasis, string> = {
 };
 
 export default function CellRelicLab({ snapshot }: { snapshot: CellGalaxySnapshot }) {
+  const { effective: quality } = useQualityRuntime();
+  const qualityCascade = QUALITY_PRESETS[quality];
+  const canvasDpr = resolveCanvasDpr(
+    window.devicePixelRatio,
+    qualityCascade.maxDpr,
+  );
   const samples = useMemo(() => selectRelicSamples(snapshot), [snapshot]);
   const moving = new URLSearchParams(window.location.search).get('motion') === '1';
   const memoryPose = resolveCellRelicMemoryPose(window.location.search);
@@ -40,15 +49,19 @@ export default function CellRelicLab({ snapshot }: { snapshot: CellGalaxySnapsho
   const lockCoverage = new Set(samples.map(({ cell }) => cell.lock_kind ?? 'other')).size;
 
   return (
-    <main data-cell-relic-memory-pose={memoryPose} style={{
-      minHeight: '100vh',
-      boxSizing: 'border-box',
-      padding: '18px 18px 24px',
-      overflow: 'auto',
-      color: '#dbeafe',
-      background: 'radial-gradient(circle at 50% 30%, #090c1c 0%, #02030a 48%, #010207 100%)',
-      fontFamily: '"JetBrains Mono", ui-monospace, monospace',
-    }}>
+    <main
+      data-cell-relic-memory-pose={memoryPose}
+      data-cell-relic-quality={quality}
+      style={{
+        minHeight: '100vh',
+        boxSizing: 'border-box',
+        padding: '18px 18px 24px',
+        overflow: 'auto',
+        color: '#dbeafe',
+        background: 'radial-gradient(circle at 50% 30%, #090c1c 0%, #02030a 48%, #010207 100%)',
+        fontFamily: '"JetBrains Mono", ui-monospace, monospace',
+      }}
+    >
       <Tweaks />
       <header style={{
         minHeight: 70,
@@ -174,6 +187,7 @@ export default function CellRelicLab({ snapshot }: { snapshot: CellGalaxySnapsho
       <Canvas
         camera={{ position: [0, 0, 3], fov: 40, near: 0.1, far: 20 }}
         gl={{ alpha: true, antialias: true }}
+        dpr={canvasDpr}
         style={{
           position: 'fixed',
           inset: 0,

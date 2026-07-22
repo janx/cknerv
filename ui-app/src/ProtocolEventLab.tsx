@@ -27,7 +27,11 @@ import {
   type MutableSimClock,
 } from '@cknerv/ui';
 import Tweaks from './Tweaks';
-import { hasQuerySwitch, resolveCanvasDpr } from './render-quality';
+import {
+  hasQuerySwitch,
+  resolveCanvasDpr,
+  resolveQualityOverride,
+} from './render-quality';
 import {
   protocolEventReviewCameraPose,
   type ProtocolReviewVec3,
@@ -336,12 +340,18 @@ export default function ProtocolEventLab({ snapshot }: { snapshot: CellGalaxySna
     () => hasQuerySwitch(window.location.search, 'adaptive-quality'),
     [],
   );
+  const qualityOverride = useMemo(
+    () => resolveQualityOverride(window.location.search),
+    [],
+  );
   const memoryTraceReview = useMemo(
     () => hasQuerySwitch(window.location.search, 'memory-trace'),
     [],
   );
   const { effective: effectiveQuality } = useQualityRuntime();
-  const qualityCascade = QUALITY_PRESETS[adaptiveQuality ? effectiveQuality : 'high'];
+  const qualityCascade = QUALITY_PRESETS[
+    qualityOverride ?? (adaptiveQuality ? effectiveQuality : 'high')
+  ];
   const canvasDpr = resolveCanvasDpr(window.devicePixelRatio, qualityCascade.maxDpr);
   const starsCount = Math.round(
     900 * (qualityCascade.starsCount / QUALITY_PRESETS.high.starsCount),
@@ -794,7 +804,9 @@ export default function ProtocolEventLab({ snapshot }: { snapshot: CellGalaxySna
               onSettled={handleSettled}
               onCycle={handleCycle}
             />
-            {adaptiveQuality ? <AdaptiveQualityController /> : null}
+            {adaptiveQuality && !qualityOverride
+              ? <AdaptiveQualityController />
+              : null}
             <TweakSync />
             {showRenderStats ? <RenderStatsSampler forceEnabled /> : null}
             <DeterministicReviewStars count={starsCount} />
