@@ -21,6 +21,10 @@ import {
   deriveConsensusMemoryRouteHopWindow,
   stepConsensusMemoryRouteHopFocus,
 } from '../../nerve/consensusMemoryTrace';
+import {
+  CONSENSUS_ROUTE_HOP_PULSE_MS,
+  consensusMemoryRouteHopPulseKey,
+} from '../../nerve/consensusRouteHopPulse';
 import { formatOutpoint } from './cellFormat';
 import { HUD_COLORS, HUD_FONTS } from './hudTheme';
 
@@ -31,6 +35,21 @@ const LOCKED_GOLD = '#FFD7A1';
 const ROUTE_LENS_MIN_CELLS = 9;
 const ROUTE_SCROLL_EDGE_EPSILON_PX = 1;
 const ROUTE_SCROLL_ANCHOR_INSET_PX = 4;
+
+type RouteHopPulseStyle = CSSProperties & {
+  '--route-hop-pulse-color': string;
+};
+
+function routeHopPulseStyle(
+  color: string,
+  reducedMotion: boolean,
+): CSSProperties {
+  if (reducedMotion) return {};
+  return {
+    '--route-hop-pulse-color': color,
+    animation: `cknerv-route-hop-lock-pulse ${CONSENSUS_ROUTE_HOP_PULSE_MS}ms cubic-bezier(.18,.72,.2,1) both`,
+  } as RouteHopPulseStyle;
+}
 
 function syncRouteLedgerScrollAffordance(node: HTMLDivElement): void {
   const viewport = node.closest<HTMLElement>(
@@ -122,14 +141,18 @@ function RouteHopInspector({
   readout,
   evidence,
   lockedHop,
+  pulseKey,
   routeCellById,
   sourceColor,
+  reducedMotion,
 }: {
   readout: ConsensusMemoryTraceReadout;
   evidence: ConsensusMemoryTraceEvidence;
   lockedHop: ConsensusMemoryRouteHopFocus;
+  pulseKey: string;
   routeCellById?: ReadonlyMap<number, Cell>;
   sourceColor: string;
+  reducedMotion: boolean;
 }) {
   const inspection = deriveConsensusMemoryRouteHopInspection(
     readout,
@@ -195,7 +218,9 @@ function RouteHopInspector({
       data-memory-evidence-route-hop-content-hash={contentHash ?? undefined}
       data-memory-evidence-route-hop-distance-source={inspection.distanceFromSource}
       data-memory-evidence-route-hop-distance-target={inspection.distanceToTarget}
+      data-memory-evidence-route-pulse-key={pulseKey}
       style={{
+        position: 'relative',
         marginTop: 5,
         padding: '5px 6px 4px',
         borderTop: `1px solid ${roleCopy.color}52`,
@@ -205,6 +230,21 @@ function RouteHopInspector({
         fontFamily: HUD_FONTS.mono,
       }}
     >
+      <span
+        key={pulseKey}
+        aria-hidden="true"
+        data-memory-evidence-route-pulse-surface="true"
+        style={{
+          position: 'absolute',
+          inset: -1,
+          borderTop: `1px solid ${roleCopy.color}52`,
+          borderLeft: `1px solid ${roleCopy.color}78`,
+          background: `linear-gradient(105deg, ${roleCopy.color}12, transparent 62%)`,
+          boxShadow: `inset 5px 0 12px ${roleCopy.color}0b`,
+          pointerEvents: 'none',
+          ...routeHopPulseStyle(roleCopy.color, reducedMotion),
+        }}
+      />
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 5 }}>
         <span
           aria-hidden="true"
@@ -333,6 +373,7 @@ function EvidenceRouteLedger({
   const lockedProgress = lockedRouteHop && lastIndex > 0
     ? lockedRouteHop.hopIndex / lastIndex
     : 0;
+  const lockedPulseKey = consensusMemoryRouteHopPulseKey(lockedRouteHop);
   useEffect(() => {
     const node = routeScrollRef.current;
     if (!node) return undefined;
@@ -591,6 +632,9 @@ function EvidenceRouteLedger({
                 data-memory-evidence-route-role={role}
                 data-memory-evidence-route-focus={focusState}
                 data-memory-evidence-route-lock={locked ? 'locked' : 'unlocked'}
+                data-memory-evidence-route-pulse-key={
+                  locked ? lockedPulseKey ?? undefined : undefined
+                }
                 title={`Hop ${index}: Cell #${cellId} (${role}) · click to ${onHopLockChange ? (locked ? 'release' : 'lock') : 'focus'}`}
                 disabled={
                   !hopFocus
@@ -677,6 +721,9 @@ function EvidenceRouteLedger({
                   transition: reducedMotion
                     ? undefined
                     : 'color 120ms ease, background 120ms ease, box-shadow 120ms ease',
+                  ...(locked
+                    ? routeHopPulseStyle(LOCKED_GOLD, reducedMotion)
+                    : {}),
                 }}
               >
                 <span style={{ opacity: 0.64 }}>{indexCopy}</span>
@@ -686,13 +733,15 @@ function EvidenceRouteLedger({
           );
         })}
         </span>
-        {lockedRouteHop ? (
+        {lockedRouteHop && lockedPulseKey ? (
           <RouteHopInspector
             readout={readout}
             evidence={evidence}
             lockedHop={lockedRouteHop}
+            pulseKey={lockedPulseKey}
             routeCellById={routeCellById}
             sourceColor={sourceColor}
+            reducedMotion={reducedMotion}
           />
         ) : null}
         {lockedRouteHop ? (

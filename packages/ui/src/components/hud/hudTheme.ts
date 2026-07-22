@@ -59,6 +59,7 @@ export function injectHudTheme(doc: Document = document): void {
     `\n@keyframes cknerv-hud-flash{50%{opacity:.45}}`
     + `\n@keyframes cknerv-hud-breathe{0%,100%{opacity:.82}50%{opacity:1}}`
     + `\n@keyframes cknerv-cell-consensus-enter{0%{opacity:0;transform:translate3d(12px,-2px,0) scale(.985)}55%{opacity:1}100%{opacity:1;transform:translate3d(0,0,0) scale(1)}}`
+    + `\n@keyframes cknerv-route-hop-lock-pulse{0%{filter:brightness(1) drop-shadow(0 0 0 transparent)}18%{filter:brightness(1.58) drop-shadow(0 0 7px var(--route-hop-pulse-color,rgba(255,215,161,.76)))}52%{filter:brightness(1.16) drop-shadow(0 0 3px var(--route-hop-pulse-color,rgba(255,215,161,.42)))}100%{filter:brightness(1) drop-shadow(0 0 0 transparent)}}`
     + `\n.cknerv-mesh-rail::-webkit-scrollbar{width:5px}`
     + `\n.cknerv-mesh-rail::-webkit-scrollbar-thumb{background:rgba(255,152,48,.35);border-radius:3px}`
     + `\n.cknerv-mesh-rail::-webkit-scrollbar-track{background:transparent}`

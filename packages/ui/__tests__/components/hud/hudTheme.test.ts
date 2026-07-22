@@ -26,6 +26,8 @@ describe('hudTheme', () => {
     expect(css).toContain('@font-face');
     expect(css).toContain("font-family:'Huiwen-mincho'");
     expect(css).toContain('--hud-orange:#FF9830');
+    expect(css).toContain('@keyframes cknerv-route-hop-lock-pulse');
+    expect(css).toContain('var(--route-hop-pulse-color');
     expect(css).toContain('.cknerv-memory-route-ledger');
     expect(css).toContain('max-height:100px');
     expect(css).toContain(
