@@ -8,6 +8,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type RefObject,
 } from 'react';
 import { Html } from '@react-three/drei';
@@ -31,6 +32,13 @@ import {
   consensusMemorySourceHandoffProgress,
   type ConsensusMemorySourceHandoff,
 } from './consensusMemorySourceHandoff';
+import {
+  CONSENSUS_ROUTE_HOP_PULSE_MS,
+  CONSENSUS_ROUTE_HOP_PULSE_SECONDS,
+  advanceConsensusMemoryRouteHopPulse,
+  consensusMemoryRouteHopPulseFrame,
+  consensusMemoryRouteHopPulseKey,
+} from './consensusRouteHopPulse';
 import {
   consensusMemoryTraceFocusStrength,
   consensusMemoryCellResponse,
@@ -96,6 +104,11 @@ interface GlyphLatch {
   cellId: number;
   elapsedSeconds: number;
   durationSeconds: number;
+}
+
+interface GlyphPulse {
+  key: string;
+  elapsedSeconds: number;
 }
 
 interface SourceHandoffAudit {
@@ -273,6 +286,11 @@ function clearTargetLatch(material: THREE.ShaderMaterial): void {
   material.uniforms.uLatchProgress.value = 0;
 }
 
+function clearFocusPulse(material: THREE.ShaderMaterial): void {
+  material.uniforms.uFocusPulseProgress.value = 1;
+  material.uniforms.uFocusPulseStrength.value = 0;
+}
+
 function makeGlyphMaterial(): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
     uniforms: {
@@ -282,6 +300,8 @@ function makeGlyphMaterial(): THREE.ShaderMaterial {
       uRouteAngle: { value: 0 },
       uLatchActive: { value: 0 },
       uLatchProgress: { value: 0 },
+      uFocusPulseProgress: { value: 1 },
+      uFocusPulseStrength: { value: 0 },
       uAgreementCount: { value: 0 },
       uAgreementAngle0: { value: 0 },
       uAgreementAngle1: { value: 0 },
@@ -330,6 +350,8 @@ function makeGlyphMaterial(): THREE.ShaderMaterial {
       uniform float uRouteAngle;
       uniform float uLatchActive;
       uniform float uLatchProgress;
+      uniform float uFocusPulseProgress;
+      uniform float uFocusPulseStrength;
       uniform float uAgreementCount;
       uniform float uAgreementAngle0;
       uniform float uAgreementAngle1;
@@ -633,8 +655,28 @@ function makeGlyphMaterial(): THREE.ShaderMaterial {
           + carrierSecondary * carrierWeight
           + targetSecondary * targetWeight;
 
+        // A lock acknowledgement is one sparse address echo around whichever
+        // semantic glyph is active. It changes emphasis, never role meaning.
+        float focusPulseProgress = clamp(uFocusPulseProgress, 0.0, 1.0);
+        float focusEchoRadius = mix(
+          0.40,
+          0.94,
+          smoothstep(0.0, 1.0, focusPulseProgress)
+        );
+        float focusEchoGate = 0.22 + 0.78 * smoothstep(
+          0.18,
+          0.84,
+          abs(sin(theta * 4.0 + uPhase))
+        );
+        float focusEcho = ring(
+          r,
+          focusEchoRadius,
+          mix(0.042, 0.018, focusPulseProgress)
+        ) * focusEchoGate * uFocusPulseStrength;
+
         float field = exp(-pow((r - 0.58) / 0.28, 2.0)) * 0.055;
-        float intensity = min(1.45, glyph + field) * uOpacity;
+        float intensity = min(1.52, glyph + field + focusEcho * 0.82)
+          * uOpacity;
         if (intensity < 0.008) discard;
         vec3 baseColor = mix(
           uPrimary,
@@ -648,6 +690,12 @@ function makeGlyphMaterial(): THREE.ShaderMaterial {
           baseColor,
           agreementColor,
           clamp(agreementVisible * 0.88, 0.0, 1.0)
+        );
+        vec3 focusEchoColor = mix(uPrimary, uSecondary, 0.58);
+        color = mix(
+          color,
+          focusEchoColor,
+          clamp(focusEcho * 0.92, 0.0, 1.0)
         );
         gl_FragColor = vec4(color * intensity, intensity);
       }
@@ -679,6 +727,7 @@ export default function ConsensusRouteHopMarker({
   const pointsRef = useRef<THREE.Points>(null);
   const chipRef = useRef<HTMLDivElement>(null);
   const motionRef = useRef<GlyphMotion | null>(null);
+  const pulseRef = useRef<GlyphPulse | null>(null);
   const sourceHandoffAuditRef = useRef<SourceHandoffAudit | null>(null);
   const [inspectedAgreementSourceId, setInspectedAgreementSourceId] =
     useState<number | null>(null);
@@ -689,6 +738,7 @@ export default function ConsensusRouteHopMarker({
     lockedHop ?? null,
     cellsCache.cells,
   ), [cellsCache.cells, focus, lockedHop]);
+  const pulseKey = consensusMemoryRouteHopPulseKey(spatial?.focus ?? null);
   const agreementPlan = useMemo(
     () => spatial
       ? deriveConsensusRouteHopAgreementPlan(focus, spatial.cell)
@@ -735,7 +785,9 @@ export default function ConsensusRouteHopMarker({
     if (!spatial || !presentation) {
       geometry.setDrawRange(0, 0);
       motionRef.current = null;
+      pulseRef.current = null;
       clearTargetLatch(material);
+      clearFocusPulse(material);
       return;
     }
     const group = groupRef.current;
@@ -746,6 +798,25 @@ export default function ConsensusRouteHopMarker({
     const destination = glyphWaypoint(spatial, presentation, agreementPlan);
     const motion = motionRef.current;
     geometry.setDrawRange(0, 1);
+    const destinationPulseKey = consensusMemoryRouteHopPulseKey(
+      destination.spatial.focus,
+    );
+    if (
+      destinationPulseKey
+      && pulseRef.current?.key !== destinationPulseKey
+    ) {
+      pulseRef.current = {
+        key: destinationPulseKey,
+        elapsedSeconds: 0,
+      };
+    }
+    const pulseFrame = consensusMemoryRouteHopPulseFrame(
+      pulseRef.current?.elapsedSeconds
+        ?? CONSENSUS_ROUTE_HOP_PULSE_SECONDS,
+      reducedMotion,
+    );
+    material.uniforms.uFocusPulseProgress.value = pulseFrame.progress;
+    material.uniforms.uFocusPulseStrength.value = pulseFrame.strength;
 
     if (!motion) {
       motionRef.current = {
@@ -824,6 +895,20 @@ export default function ConsensusRouteHopMarker({
     const group = groupRef.current;
     const motion = motionRef.current;
     if (!group || !motion) return;
+
+    const pulse = pulseRef.current;
+    if (pulse) {
+      pulse.elapsedSeconds = advanceConsensusMemoryRouteHopPulse(
+        pulse.elapsedSeconds,
+        rawDeltaSeconds,
+      );
+    }
+    const pulseFrame = consensusMemoryRouteHopPulseFrame(
+      pulse?.elapsedSeconds ?? CONSENSUS_ROUTE_HOP_PULSE_SECONDS,
+      reducedMotion,
+    );
+    material.uniforms.uFocusPulseProgress.value = pulseFrame.progress;
+    material.uniforms.uFocusPulseStrength.value = pulseFrame.strength;
 
     let remainingSeconds = Math.min(Math.max(rawDeltaSeconds, 0), 0.1);
     while (motion.segment && remainingSeconds > 0) {
@@ -1002,6 +1087,12 @@ export default function ConsensusRouteHopMarker({
       chipRef.current.dataset.memoryRouteHopMotionProgress = segment
         ? Math.min(1, segment.elapsedSeconds / segment.durationSeconds).toFixed(3)
         : '1.000';
+      chipRef.current.dataset.memoryRouteHopPulse = pulseFrame.state;
+      chipRef.current.dataset.memoryRouteHopPulseKey = pulse?.key ?? 'none';
+      chipRef.current.dataset.memoryRouteHopPulseProgress =
+        pulseFrame.progress.toFixed(3);
+      chipRef.current.dataset.memoryRouteHopPulseStrength =
+        pulseFrame.strength.toFixed(3);
       chipRef.current.dataset.memoryRouteHopAngle = tangent
         ? material.uniforms.uRouteAngle.value.toFixed(3)
         : 'none';
@@ -1096,6 +1187,12 @@ export default function ConsensusRouteHopMarker({
 
   if (!spatial || !presentation) return null;
   const color = cssColor(presentation.primary);
+  const chipPulseStyle = {
+    '--route-hop-pulse-color': color,
+    animation: reducedMotion || !pulseKey
+      ? undefined
+      : `cknerv-route-hop-lock-pulse ${CONSENSUS_ROUTE_HOP_PULSE_MS}ms cubic-bezier(.18,.72,.2,1) both`,
+  } as CSSProperties & { '--route-hop-pulse-color': string };
 
   return (
     <group ref={groupRef}>
@@ -1324,6 +1421,7 @@ export default function ConsensusRouteHopMarker({
         style={{ pointerEvents: 'none' }}
       >
         <div
+          key={pulseKey}
           ref={chipRef}
           aria-hidden="true"
           data-memory-route-hop-spatial={spatial.role}
@@ -1331,6 +1429,10 @@ export default function ConsensusRouteHopMarker({
           data-memory-route-hop-cell={spatial.focus.cellId}
           data-memory-route-hop-index={spatial.focus.hopIndex}
           data-memory-route-hop-claim={presentation.claim}
+          data-memory-route-hop-pulse={reducedMotion ? 'reduced' : 'active'}
+          data-memory-route-hop-pulse-key={pulseKey ?? undefined}
+          data-memory-route-hop-pulse-progress={reducedMotion ? '1.000' : '0.000'}
+          data-memory-route-hop-pulse-strength="0.000"
           data-memory-route-hop-source-handoff="settled"
           data-memory-route-hop-source-handoff-progress="1.000"
           data-memory-route-hop-source-handoff-observed-frames="0"
@@ -1357,6 +1459,7 @@ export default function ConsensusRouteHopMarker({
             fontSize: 6.4,
             letterSpacing: '0.12em',
             color,
+            ...chipPulseStyle,
           }}
         >
           H{String(spatial.focus.hopIndex).padStart(2, '0')} · {presentation.label}

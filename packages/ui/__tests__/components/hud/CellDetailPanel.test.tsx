@@ -495,7 +495,7 @@ describe('CellDetailPanel', () => {
   });
 
   it('separates route preview from lock and steps a locked inspector by keyboard', () => {
-    vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener: () => {}, removeEventListener: () => {} }));
+    vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener: () => {}, removeEventListener: () => {} }));
     const origin: CellLink = {
       seq: 18,
       tx_hash: base.out_point.tx_hash,
@@ -557,6 +557,20 @@ describe('CellDetailPanel', () => {
     )!;
     expect(lockedTransit.getAttribute('data-memory-evidence-route-focus')).toBe('locked');
     expect(lockedTransit.getAttribute('aria-pressed')).toBe('true');
+    const transitPulseKey = '18:4242:1:11:4242:1:99';
+    const transitInspector = container.querySelector<HTMLElement>(
+      '[data-memory-evidence-route-hop-inspector="true"]',
+    )!;
+    expect(lockedTransit.getAttribute('data-memory-evidence-route-pulse-key'))
+      .toBe(transitPulseKey);
+    expect(transitInspector.getAttribute('data-memory-evidence-route-pulse-key'))
+      .toBe(transitPulseKey);
+    expect(lockedTransit.style.animation)
+      .toContain('cknerv-route-hop-lock-pulse 480ms');
+    expect(transitInspector.querySelector<HTMLElement>(
+      '[data-memory-evidence-route-pulse-surface="true"]',
+    )?.style.animation)
+      .toContain('cknerv-route-hop-lock-pulse 480ms');
     expect(container.querySelector<HTMLButtonElement>('[data-memory-evidence="2"]')
       ?.disabled).toBe(true);
     expect(container.textContent).toContain('LOCK H01 · CELL #99');
@@ -579,6 +593,13 @@ describe('CellDetailPanel', () => {
     const lockedTarget = container.querySelector<HTMLElement>(
       `[data-memory-evidence-route-cell="${base.id}"]`,
     )!;
+    const targetInspector = container.querySelector<HTMLElement>(
+      '[data-memory-evidence-route-hop-inspector="true"]',
+    )!;
+    expect(lockedTarget.getAttribute('data-memory-evidence-route-pulse-key'))
+      .toBe('18:4242:1:11:4242:2:4242');
+    expect(targetInspector.getAttribute('data-memory-evidence-route-pulse-key'))
+      .toBe(lockedTarget.getAttribute('data-memory-evidence-route-pulse-key'));
     fireEvent.keyDown(lockedTarget, { key: 'Escape' });
     expect(onTraceRouteHopLockChange).toHaveBeenLastCalledWith(null);
     expect(onTraceRouteHopFocusChange).toHaveBeenLastCalledWith(null);
@@ -728,7 +749,16 @@ describe('CellDetailPanel', () => {
     const inspector = container.querySelector<HTMLElement>(
       '[data-memory-evidence-route-hop-inspector="true"]',
     )!;
+    const lockedLensCell = lens.querySelector<HTMLElement>(
+      '[data-memory-evidence-route-lock="locked"]',
+    )!;
     expect(ledgerScroll?.contains(inspector)).toBe(true);
+    expect(lockedLensCell.getAttribute('data-memory-evidence-route-pulse-key'))
+      .toBe(inspector.getAttribute('data-memory-evidence-route-pulse-key'));
+    expect(lockedLensCell.style.animation).toBe('');
+    expect(inspector.querySelector<HTMLElement>(
+      '[data-memory-evidence-route-pulse-surface="true"]',
+    )?.style.animation).toBe('');
     expect(inspector.getAttribute('data-memory-evidence-route-hop-role'))
       .toBe('transit');
     expect(inspector.getAttribute('data-memory-evidence-route-hop-semantic'))
