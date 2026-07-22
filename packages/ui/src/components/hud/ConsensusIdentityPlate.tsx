@@ -285,7 +285,8 @@ function EvidenceRouteLedger({
       style={{
         zIndex: 4,
         gridColumn: '1 / -1',
-        display: 'block',
+        display: 'flex',
+        flexDirection: 'column',
         boxSizing: 'border-box',
         padding: '6px 7px 7px',
         borderTop: `1px solid ${sourceColor}7a`,
@@ -319,7 +320,7 @@ function EvidenceRouteLedger({
           borderRight: `1px solid ${sourceColor}42`,
         }}
       />
-      <span style={{ display: 'flex', alignItems: 'baseline', gap: 7, marginBottom: 5 }}>
+      <span style={{ display: 'flex', flex: '0 0 auto', alignItems: 'baseline', gap: 7, marginBottom: 5 }}>
         <span style={{ fontFamily: HUD_FONTS.tech, fontSize: 6.8, fontWeight: 700, letterSpacing: 0.9, color: sourceColor }}>
           ROUTE LEDGER
         </span>
@@ -334,7 +335,12 @@ function EvidenceRouteLedger({
             : `${String(evidence.route.length).padStart(2, '0')} CELLS · H${String(evidence.hopCount).padStart(2, '0')}`}
         </span>
       </span>
-      {routeLens && lockedRouteHop ? (
+      <div
+        className="cknerv-memory-route-ledger-scroll"
+        data-memory-evidence-route-scroll="true"
+        style={{ flex: '1 1 auto', minHeight: 0 }}
+      >
+        {routeLens && lockedRouteHop ? (
         <span
           role="progressbar"
           aria-label={`Locked route position, hop ${lockedRouteHop.hopIndex} of ${lastIndex}`}
@@ -399,36 +405,36 @@ function EvidenceRouteLedger({
             />
           </span>
         </span>
-      ) : null}
-      <span
-        className="cknerv-memory-route-cells"
-        data-memory-evidence-route-cells="true"
-        data-memory-evidence-route-mode={routeLens ? 'lens' : 'full'}
-        data-memory-evidence-route-window-start={routeLens?.startIndex}
-        data-memory-evidence-route-window-end={routeLens?.endIndex}
-        data-memory-evidence-route-hidden-before={routeLens?.hiddenBefore}
-        data-memory-evidence-route-hidden-after={routeLens?.hiddenAfter}
-        style={{
-          display: 'flex',
-          flexWrap: 'wrap',
-          alignContent: 'flex-start',
-          alignItems: 'center',
-          gap: '3px 4px',
-          maxHeight: routeLens ? 'none' : 48,
-          overflowX: 'hidden',
-          overflowY: routeLens ? 'visible' : 'auto',
-          padding: routeLens ? '4px 3px 3px' : '0 2px 0 0',
-          border: routeLens ? `1px solid ${LOCKED_GOLD}20` : undefined,
-          background: routeLens
-            ? `linear-gradient(90deg, ${sourceColor}0d, ${LOCKED_GOLD}0b, ${sourceColor}0d)`
-            : undefined,
-          fontFamily: HUD_FONTS.mono,
-          fontSize: routeLens ? 6.8 : 6.4,
-          lineHeight: 1.15,
-          scrollbarWidth: 'thin',
-          scrollbarColor: `${sourceColor}55 transparent`,
-        }}
-      >
+        ) : null}
+        <span
+          className="cknerv-memory-route-cells"
+          data-memory-evidence-route-cells="true"
+          data-memory-evidence-route-mode={routeLens ? 'lens' : 'full'}
+          data-memory-evidence-route-window-start={routeLens?.startIndex}
+          data-memory-evidence-route-window-end={routeLens?.endIndex}
+          data-memory-evidence-route-hidden-before={routeLens?.hiddenBefore}
+          data-memory-evidence-route-hidden-after={routeLens?.hiddenAfter}
+          style={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            alignContent: 'flex-start',
+            alignItems: 'center',
+            gap: '3px 4px',
+            maxHeight: routeLens ? 'none' : 48,
+            overflowX: 'hidden',
+            overflowY: routeLens ? 'visible' : 'auto',
+            padding: routeLens ? '4px 3px 3px' : '0 2px 0 0',
+            border: routeLens ? `1px solid ${LOCKED_GOLD}20` : undefined,
+            background: routeLens
+              ? `linear-gradient(90deg, ${sourceColor}0d, ${LOCKED_GOLD}0b, ${sourceColor}0d)`
+              : undefined,
+            fontFamily: HUD_FONTS.mono,
+            fontSize: routeLens ? 6.8 : 6.4,
+            lineHeight: 1.15,
+            scrollbarWidth: 'thin',
+            scrollbarColor: `${sourceColor}55 transparent`,
+          }}
+        >
         {routeLens ? (
           <span
             data-memory-evidence-route-window-context="true"
@@ -592,38 +598,39 @@ function EvidenceRouteLedger({
             </span>
           );
         })}
-      </span>
-      {lockedRouteHop ? (
-        <RouteHopInspector
-          readout={readout}
-          evidence={evidence}
-          lockedHop={lockedRouteHop}
-          routeCellById={routeCellById}
-          sourceColor={sourceColor}
-        />
-      ) : null}
-      {lockedRouteHop ? (
-        <span
-          data-memory-evidence-route-lock-status="true"
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 6,
-            marginTop: 5,
-            paddingTop: 4,
-            borderTop: `1px solid ${LOCKED_GOLD}28`,
-            fontFamily: HUD_FONTS.mono,
-            fontSize: 6.2,
-            letterSpacing: 0.42,
-            color: LOCKED_GOLD,
-          }}
-        >
-          <span>◆ ROUTE LOCK</span>
-          <span style={{ marginLeft: 'auto', color: HUD_COLORS.dim }}>
-            ←/→ STEP · ESC RELEASE
-          </span>
         </span>
-      ) : null}
+        {lockedRouteHop ? (
+          <RouteHopInspector
+            readout={readout}
+            evidence={evidence}
+            lockedHop={lockedRouteHop}
+            routeCellById={routeCellById}
+            sourceColor={sourceColor}
+          />
+        ) : null}
+        {lockedRouteHop ? (
+          <span
+            data-memory-evidence-route-lock-status="true"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              marginTop: 5,
+              paddingTop: 4,
+              borderTop: `1px solid ${LOCKED_GOLD}28`,
+              fontFamily: HUD_FONTS.mono,
+              fontSize: 6.2,
+              letterSpacing: 0.42,
+              color: LOCKED_GOLD,
+            }}
+          >
+            <span>◆ ROUTE LOCK</span>
+            <span style={{ marginLeft: 'auto', color: HUD_COLORS.dim }}>
+              ←/→ STEP · ESC RELEASE
+            </span>
+          </span>
+        ) : null}
+      </div>
     </div>
   );
 }

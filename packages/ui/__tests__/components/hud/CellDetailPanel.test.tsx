@@ -669,8 +669,16 @@ describe('CellDetailPanel', () => {
 
     fireEvent.click(container.querySelector('[data-memory-evidence="1"]')!);
     const ledger = container.querySelector('[data-memory-evidence-route-ledger="true"]');
+    const ledgerScroll = ledger?.querySelector(
+      '[data-memory-evidence-route-scroll="true"]',
+    );
     const cells = ledger?.querySelectorAll('[data-memory-evidence-route-cell]');
     expect(ledger?.textContent).toContain('41 CELLS · H40');
+    expect((ledger as HTMLElement).style.display).toBe('flex');
+    expect(ledgerScroll?.classList.contains(
+      'cknerv-memory-route-ledger-scroll',
+    )).toBe(true);
+    expect(ledgerScroll?.contains(cells?.[0] ?? null)).toBe(true);
     expect(cells).toHaveLength(41);
     expect(cells?.[0].getAttribute('data-memory-evidence-route-cell')).toBe('11');
     expect(cells?.[40].getAttribute('data-memory-evidence-route-cell')).toBe(String(base.id));
@@ -711,6 +719,7 @@ describe('CellDetailPanel', () => {
     const inspector = container.querySelector<HTMLElement>(
       '[data-memory-evidence-route-hop-inspector="true"]',
     )!;
+    expect(ledgerScroll?.contains(inspector)).toBe(true);
     expect(inspector.getAttribute('data-memory-evidence-route-hop-role'))
       .toBe('transit');
     expect(inspector.getAttribute('data-memory-evidence-route-hop-semantic'))
