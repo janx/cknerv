@@ -41,9 +41,10 @@ const SCAN_STYLE: CSSProperties = { position: 'absolute', inset: 0, pointerEvent
 // self-positioning. Container shrink-wraps and pins its right edge, so the meshes
 // never shift when a detail appears — the row just grows leftward.
 const MESH_RAIL_STYLE: CSSProperties = { position: 'absolute', top: 42, right: 14, display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'flex-end' };
-// Narrow: detail docks BELOW its mesh (stays on the right edge, clear of the
-// left-hand panels). column-reverse keeps JSX order [detail, mesh] → mesh on top.
-const MESH_ZONE_COL: CSSProperties = { display: 'flex', flexDirection: 'column-reverse', gap: 12, alignItems: 'flex-end' };
+// Narrow: the selected detail owns the immediately visible rail area; its mesh
+// follows below. This keeps the consensus-memory readout in the first viewport
+// instead of spending that space on the summary that opened it.
+const MESH_ZONE_COL: CSSProperties = { display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'flex-end' };
 const PANEL_FLOW: CSSProperties = { position: 'relative' };
 
 export default function HudOverlay({ chain, peers, localNode, cellsStats, selectedCell, cellRecordsById, recentCellLinks, tracedCellWriteSeq, cellTraceSource, cellTraceReadout, cellTraceResponseRef, cellTraceEvidenceFocusSourceId, cellTraceEvidencePreviewSourceId, onCellTraceEvidenceFocusChange, cellTraceRouteHopFocus, onCellTraceRouteHopFocusChange, cellTraceRouteHopLock, onCellTraceRouteHopLockChange, onTraceCellWrite, selectedNode, selectedPeer, onClearSelection, onClearCell, onClearNet, backfill, build, colonyCount }: {
@@ -96,7 +97,7 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats, select
   // LEFT of the mesh via ABSOLUTE positioning, so a tall detail (the specimen
   // portrait!) never inflates the zone height and never pushes the stacked meshes
   // apart (that was the "cell detail appears → PEER MESH shoved down + big gap"
-  // bug). NARROW — the detail stacks below its mesh (in flow; the rail scrolls).
+  // bug). NARROW — selected detail comes first, then its mesh (the rail scrolls).
   const meshZone = (detail: ReactNode, mesh: ReactNode): ReactNode =>
     narrowRail ? (
       <div style={MESH_ZONE_COL}>{detail}{mesh}</div>

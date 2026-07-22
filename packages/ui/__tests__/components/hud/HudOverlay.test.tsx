@@ -67,6 +67,34 @@ describe('HudOverlay', () => {
     expect(t).toContain('OBSERVER'); // …AND the NODE detail (network axis) at the same time
   });
 
+  it('keeps the selected Cell detail first in the narrow scroll rail', () => {
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: query.includes('max-width: 1100px'),
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }));
+    const mockCell: Cell = {
+      id: 7, born_at_ms: 1, death_at_ms: null, birth_block: 16204800, tag: 'wallet',
+      pos_seed: [0, 0, 0], out_point: { tx_hash: `0x${'ab'.repeat(32)}`, index: 0 },
+      capacity: 6_100_000_000, data_hex: '0x', content_hash: `0x${'cd'.repeat(32)}`,
+    };
+    const { container } = render(
+      <HudOverlay
+        chain={chain}
+        peers={peers}
+        localNode={localNode}
+        cellsStats={cellsStats}
+        selectedCell={mockCell}
+      />,
+    );
+    const rail = container.querySelector('.cknerv-mesh-rail')!;
+    const cellZone = rail.firstElementChild as HTMLElement;
+
+    expect(cellZone.style.flexDirection).toBe('column');
+    expect(cellZone.firstElementChild?.textContent).toContain('CAPACITY');
+    expect(cellZone.children[1]?.textContent).toContain('CELL MESH');
+  });
+
   it('threads retained Cell origin evidence into the detail memory plate', () => {
     vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener: () => {}, removeEventListener: () => {} }));
     const mockCell: Cell = {

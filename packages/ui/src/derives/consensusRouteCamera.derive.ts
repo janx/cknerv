@@ -43,9 +43,9 @@ export interface ConsensusRecordCameraWorldPoint {
 export type ConsensusRecordCameraIntent = 'idle' | 'neutral' | 'record';
 
 /**
- * A record switch is a composition change, never a route. The pending edge
- * enters neutral space once; only an exact old→new record identity change may
- * later frame the new record target.
+ * A record recall is a composition change, never a route. First entry and an
+ * exact old→new identity change frame the verified target; a replacement's
+ * pending edge enters neutral space once before that new record arrives.
  */
 export function deriveConsensusRecordCameraIntent(
   previousRecordIdentity: string | null,
@@ -54,8 +54,7 @@ export function deriveConsensusRecordCameraIntent(
   switchPending: boolean,
   hasRecordTarget: boolean,
 ): ConsensusRecordCameraIntent {
-  const recordChanged = previousRecordIdentity !== null
-    && recordIdentity !== null
+  const recordChanged = recordIdentity !== null
     && previousRecordIdentity !== recordIdentity
     && hasRecordTarget;
   if (recordChanged) return 'record';
@@ -251,12 +250,13 @@ export function consensusRouteHopWorldPosition(
   ];
 }
 
-/** Preserve the current viewing direction while framing one route Cell. */
-export function deriveConsensusRouteCameraPose(
+function deriveConsensusCameraPose(
   currentPosition: Vec3,
   currentTarget: Vec3,
-  hopWorld: Vec3,
-  distance = CONSENSUS_ROUTE_CAMERA_DISTANCE,
+  worldPoint: Vec3,
+  distance: number,
+  fallbackDistance: number,
+  composition?: ConsensusRecordCameraComposition,
 ): ConsensusRouteCameraPose {
   let dx = currentPosition[0] - currentTarget[0];
   let dy = currentPosition[1] - currentTarget[1];
@@ -270,32 +270,16 @@ export function deriveConsensusRouteCameraPose(
   }
   const framedDistance = Number.isFinite(distance) && distance > 0
     ? distance
-    : CONSENSUS_ROUTE_CAMERA_DISTANCE;
+    : fallbackDistance;
   const scale = framedDistance / length;
-  return {
-    target: [...hopWorld],
+  const centered: ConsensusRouteCameraPose = {
+    target: [...worldPoint],
     position: [
-      hopWorld[0] + dx * scale,
-      hopWorld[1] + dy * scale,
-      hopWorld[2] + dz * scale,
+      worldPoint[0] + dx * scale,
+      worldPoint[1] + dy * scale,
+      worldPoint[2] + dz * scale,
     ],
   };
-}
-
-/** Broadly frame one verified record target, without choosing a route hop. */
-export function deriveConsensusRecordCameraPose(
-  currentPosition: Vec3,
-  currentTarget: Vec3,
-  recordWorld: Vec3,
-  distance = CONSENSUS_RECORD_CAMERA_DISTANCE,
-  composition?: ConsensusRecordCameraComposition,
-): ConsensusRouteCameraPose {
-  const centered = deriveConsensusRouteCameraPose(
-    currentPosition,
-    currentTarget,
-    recordWorld,
-    distance,
-  );
   if (!composition) return centered;
   const width = composition.viewportWidth;
   const height = composition.viewportHeight;
@@ -330,13 +314,10 @@ export function deriveConsensusRecordCameraPose(
     forward[2] + right[2] * ndcX * (width / height) * tangent
       + up[2] * ndcY * tangent,
   ], forward);
-  const framedDistance = Number.isFinite(distance) && distance > 0
-    ? distance
-    : CONSENSUS_RECORD_CAMERA_DISTANCE;
   const position: Vec3 = [
-    recordWorld[0] - ray[0] * framedDistance,
-    recordWorld[1] - ray[1] * framedDistance,
-    recordWorld[2] - ray[2] * framedDistance,
+    worldPoint[0] - ray[0] * framedDistance,
+    worldPoint[1] - ray[1] * framedDistance,
+    worldPoint[2] - ray[2] * framedDistance,
   ];
   const centralDepth = framedDistance * dot(ray, forward);
   return {
@@ -347,6 +328,46 @@ export function deriveConsensusRecordCameraPose(
       position[2] + forward[2] * centralDepth,
     ],
   };
+}
+
+/**
+ * Preserve the current viewing direction while framing one exact route Cell.
+ * When a composition is supplied, the Cell lands on its measured scene-safe
+ * anchor instead of being hidden beneath a HUD rail.
+ */
+export function deriveConsensusRouteCameraPose(
+  currentPosition: Vec3,
+  currentTarget: Vec3,
+  hopWorld: Vec3,
+  distance = CONSENSUS_ROUTE_CAMERA_DISTANCE,
+  composition?: ConsensusRecordCameraComposition,
+): ConsensusRouteCameraPose {
+  return deriveConsensusCameraPose(
+    currentPosition,
+    currentTarget,
+    hopWorld,
+    distance,
+    CONSENSUS_ROUTE_CAMERA_DISTANCE,
+    composition,
+  );
+}
+
+/** Broadly frame one verified record target, without choosing a route hop. */
+export function deriveConsensusRecordCameraPose(
+  currentPosition: Vec3,
+  currentTarget: Vec3,
+  recordWorld: Vec3,
+  distance = CONSENSUS_RECORD_CAMERA_DISTANCE,
+  composition?: ConsensusRecordCameraComposition,
+): ConsensusRouteCameraPose {
+  return deriveConsensusCameraPose(
+    currentPosition,
+    currentTarget,
+    recordWorld,
+    distance,
+    CONSENSUS_RECORD_CAMERA_DISTANCE,
+    composition,
+  );
 }
 
 function projectConsensusRecordWorldPoint(

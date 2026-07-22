@@ -3,6 +3,7 @@ import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useReducedMotion } from '../components/hud/useReducedMotion';
 import {
+  CONSENSUS_ROUTE_CAMERA_DISTANCE,
   consensusRouteHopWorldPosition,
   deriveConsensusRecordCameraDistance,
   deriveConsensusRecordCameraIntent,
@@ -303,14 +304,7 @@ export default function ConsensusRouteCamera({
     const holdSeconds = reducedMotion || !Number.isFinite(releaseHoldSeconds)
       ? 0
       : Math.max(0, releaseHoldSeconds);
-    const deriveRecordPose = (): CameraPoseVectors | null => {
-      if (recordCellX === null || recordCellY === null || recordCellZ === null) {
-        return null;
-      }
-      const recordWorld = consensusRouteHopWorldPosition(
-        [recordCellX, recordCellY, recordCellZ],
-        galaxyFrame.rotationY,
-      );
+    const measureSafeComposition = () => {
       const hudOcclusions = measureHudOcclusions(
         canvas,
         viewportWidth,
@@ -328,6 +322,17 @@ export default function ConsensusRouteCamera({
         anchor,
         cameraUp: camera.up.toArray(),
       };
+      return { composition, hudOcclusions };
+    };
+    const deriveRecordPose = (): CameraPoseVectors | null => {
+      if (recordCellX === null || recordCellY === null || recordCellZ === null) {
+        return null;
+      }
+      const recordWorld = consensusRouteHopWorldPosition(
+        [recordCellX, recordCellY, recordCellZ],
+        galaxyFrame.rotationY,
+      );
+      const { composition, hudOcclusions } = measureSafeComposition();
       const routePoints = recordRouteCells.flatMap(({ id, role }) => {
         const cell = cellsCache.cells.get(id);
         return cell ? [{
@@ -447,10 +452,13 @@ export default function ConsensusRouteCamera({
         [cellX, cellY, cellZ],
         galaxyFrame.rotationY,
       );
+      const { composition } = measureSafeComposition();
       const pose = deriveConsensusRouteCameraPose(
         camera.position.toArray(),
         controls.target.toArray(),
         hopWorld,
+        CONSENSUS_ROUTE_CAMERA_DISTANCE,
+        composition,
       );
       transitionRef.current = {
         pose: poseVectors(pose.position, pose.target),

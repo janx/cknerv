@@ -67,7 +67,52 @@ describe('consensus route camera derive', () => {
       .toBeCloseTo(CONSENSUS_ROUTE_CAMERA_DISTANCE, 8);
   });
 
-  it('enters neutral space once, then recognizes only an exact record change', () => {
+  it('places an exact route Cell on the measured HUD-safe anchor', () => {
+    const viewportWidth = 720;
+    const viewportHeight = 900;
+    const obstacle = { left: 396, top: 42, right: 696, bottom: 850 };
+    const anchor = deriveConsensusRecordSafeAnchor(
+      viewportWidth,
+      viewportHeight,
+      [obstacle],
+    );
+    const hopWorld: [number, number, number] = [20, 39, -8];
+    const pose = deriveConsensusRouteCameraPose(
+      [30, 50, 20],
+      [0, 30, 0],
+      hopWorld,
+      CONSENSUS_ROUTE_CAMERA_DISTANCE,
+      {
+        viewportWidth,
+        viewportHeight,
+        verticalFovDegrees: 50,
+        anchor,
+        cameraUp: [0, 1, 0],
+      },
+    );
+    const camera = new THREE.PerspectiveCamera(
+      50,
+      viewportWidth / viewportHeight,
+      0.1,
+      1000,
+    );
+    camera.position.set(...pose.position);
+    camera.lookAt(...pose.target);
+    camera.updateMatrixWorld();
+    const projected = new THREE.Vector3(...hopWorld).project(camera);
+    const screen = [
+      (projected.x + 1) * viewportWidth / 2,
+      (1 - projected.y) * viewportHeight / 2,
+    ];
+
+    expect(screen[0]).toBeCloseTo(anchor[0], 6);
+    expect(screen[1]).toBeCloseTo(anchor[1], 6);
+    expect(distance(pose.position, hopWorld))
+      .toBeCloseTo(CONSENSUS_ROUTE_CAMERA_DISTANCE, 8);
+    expect(screen[0]).toBeLessThan(obstacle.left);
+  });
+
+  it('frames first recall and exact replacement, entering neutral space once', () => {
     expect(deriveConsensusRecordCameraIntent(
       '18:5',
       '18:5',
@@ -102,7 +147,7 @@ describe('consensus route camera derive', () => {
       false,
       false,
       true,
-    )).toBe('idle');
+    )).toBe('record');
     expect(deriveConsensusRecordCameraIntent(
       '18:5',
       '19:9',
