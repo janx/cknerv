@@ -64,11 +64,15 @@ export function injectHudTheme(doc: Document = document): void {
     + `\n.cknerv-mesh-rail::-webkit-scrollbar-track{background:transparent}`
     + `\n.cknerv-memory-route-ledger{position:absolute;right:calc(100% + 30px);top:-1px;width:230px}`
     + `\n.cknerv-memory-route-ledger-lens{width:268px}`
+    + `\n.cknerv-memory-route-ledger-scroll{min-height:0}`
+    + `\n.cknerv-memory-route-ledger-scroll::-webkit-scrollbar{width:3px}`
+    + `\n.cknerv-memory-route-ledger-scroll::-webkit-scrollbar-thumb{background:rgba(32,240,255,.28)}`
+    + `\n.cknerv-memory-route-ledger-scroll::-webkit-scrollbar-track{background:transparent}`
     + `\n.cknerv-memory-route-cells::-webkit-scrollbar{width:3px}`
     + `\n.cknerv-memory-route-cells::-webkit-scrollbar-thumb{background:rgba(32,240,255,.28)}`
     + `\n.cknerv-memory-route-cells::-webkit-scrollbar-track{background:transparent}`
     + `\n.cknerv-memory-route-connector-tail{display:none}`
-    + `\n@media (min-width:1101px) and (max-width:1373px){.cknerv-memory-route-ledger{top:-106px}.cknerv-memory-route-connector-tail{display:block;height:106px}}`
-    + `\n@media (max-width:1100px){.cknerv-memory-route-ledger{position:static;width:auto;margin:4px 4px 2px 0}.cknerv-memory-route-connector,.cknerv-memory-route-connector-tail{display:none}}`;
+    + `\n@media (min-width:1101px) and (max-width:1373px),(min-width:1374px) and (max-height:860px){.cknerv-memory-route-ledger{top:-106px}.cknerv-memory-route-connector-tail{display:block;height:106px}}`
+    + `\n@media (max-width:1100px){.cknerv-memory-route-ledger{position:static;width:auto;max-height:100px;margin:4px 4px 2px 0;overflow:hidden}.cknerv-memory-route-ledger-scroll{overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:rgba(32,240,255,.28) transparent;padding-right:3px}.cknerv-memory-route-connector,.cknerv-memory-route-connector-tail{display:none}}`;
   doc.head.appendChild(style);
 }
