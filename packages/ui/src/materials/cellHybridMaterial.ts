@@ -56,6 +56,8 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
       attribute float aBornAt;
       attribute float aDeathAt;
       attribute float aSize;
+      attribute vec4  aMemoryIdentity; // normalized asset / lock / payload / mass
+      attribute float aMemorySeed; // stable content-hash word; never draw-order based
       attribute float aDetail;  // LOD: 0 for all far cells (glow unchanged); ramps →1 as the camera nears, softening the white-hot peak so the nucleus shows
       attribute float aFocus;   // eased interaction: 0 resting, ~0.46 hover, 1 selected
       attribute float aRecall;  // signed historical read: source < 0, retained target > 0
@@ -79,6 +81,7 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
       varying vec3  vColor;
       varying float vDeathRamp;
       varying float vSeed;
+      varying vec4  vMemoryIdentity;
       varying float vShockwave;
       varying vec3  vShockwaveColor;
       varying float vDetail;
@@ -116,6 +119,7 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
 
       void main() {
         vColor = aColor;
+        vMemoryIdentity = aMemoryIdentity;
         vDetail = aDetail;
         vFocus = aFocus;
         vRecall = aRecall;
@@ -127,7 +131,8 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
         float scale = bEase * (1.0 - dEase);
 
         vDeathRamp = deathRamp;
-        vSeed      = float(gl_VertexID) * 0.61803 + aBornAt * 0.137;
+        vSeed      = aMemorySeed * 91.73
+          + dot(position, vec3(0.071, 0.113, 0.173));
 
         vec4 worldPos = modelMatrix * vec4(position, 1.0);
         // Fade resting brightness down toward the galaxy centre so the
@@ -146,7 +151,8 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
           ${CONSENSUS_MEMORY_CORE_RELEASE_EXPONENT.toFixed(1)}
         )
           * smoothstep(0.0, 1.0, clamp(aRecallState, 0.0, 1.0));
-        gl_PointSize  = aSize * ${HYBRID_BASE_PX_PER_WU.toFixed(1)} * (1.0 + vShockwave * uShockwaveSizeBoost) * (1.0 + vFocus * 0.18) * (1.0 + abs(vRecall) * 0.06 + retainedCore * 0.12) * scale * (uViewportHeight * 0.5 / max(-viewPos.z, 0.001));
+        float retainedSizeBoost = mix(0.08, 0.16, aMemoryIdentity.w);
+        gl_PointSize  = aSize * ${HYBRID_BASE_PX_PER_WU.toFixed(1)} * (1.0 + vShockwave * uShockwaveSizeBoost) * (1.0 + vFocus * 0.18) * (1.0 + abs(vRecall) * 0.06 + retainedCore * retainedSizeBoost) * scale * (uViewportHeight * 0.5 / max(-viewPos.z, 0.001));
       }
     `,
     fragmentShader: /* glsl */ `
@@ -163,6 +169,7 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
       varying vec3  vColor;
       varying float vDeathRamp;
       varying float vSeed;
+      varying vec4  vMemoryIdentity;
       varying float vShockwave;
       varying vec3  vShockwaveColor;
       varying float vDetail;
@@ -289,19 +296,52 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
         float targetRead = scanAperture * scanWindow * addressGate
           * readEnergy * recallTarget;
 
-        float checksum0 = exp(-pow((uv.y + 0.058) / 0.011, 2.0))
-          * (1.0 - smoothstep(0.09, 0.16, abs(uv.x)));
-        float checksum1 = exp(-pow(uv.y / 0.011, 2.0))
-          * (1.0 - smoothstep(0.12, 0.2, abs(uv.x)));
-        float checksum2 = exp(-pow((uv.y - 0.058) / 0.011, 2.0))
-          * (1.0 - smoothstep(0.07, 0.14, abs(uv.x)));
+        // Far retained-core identity is the compact LOD of canonical A:
+        // asset rotates the record axis, lock changes its gate cadence, data
+        // opens 1/3/5 checksum lanes, capacity sizes the central knot, and the
+        // content hash chooses stable gaps. Gold remains the shared agreement
+        // state instead of turning taxonomy into an activity colour code.
+        float recordAngle = (vMemoryIdentity.x - 0.5) * 0.9;
+        float recordCos = cos(recordAngle);
+        float recordSin = sin(recordAngle);
+        vec2 recordUv = mat2(
+          recordCos, -recordSin,
+          recordSin, recordCos
+        ) * uv;
+        float recordPayload = clamp(vMemoryIdentity.z, 0.0, 1.0);
+        float recordSpan = mix(0.11, 0.2, recordPayload);
+        float recordWindow = 1.0 - smoothstep(
+          recordSpan * 0.72,
+          recordSpan,
+          abs(recordUv.x)
+        );
+        float checksumCenter = exp(-pow(recordUv.y / 0.0125, 2.0));
+        float checksumInner = (
+          exp(-pow((recordUv.y + 0.056) / 0.0125, 2.0))
+          + exp(-pow((recordUv.y - 0.056) / 0.0125, 2.0))
+        ) * smoothstep(0.04, 0.22, recordPayload);
+        float checksumOuter = (
+          exp(-pow((recordUv.y + 0.112) / 0.0125, 2.0))
+          + exp(-pow((recordUv.y - 0.112) / 0.0125, 2.0))
+        ) * smoothstep(0.42, 0.78, recordPayload);
+        float checksumLanes = (
+          checksumCenter + checksumInner + checksumOuter
+        ) * recordWindow;
+        float lockCadence = mix(15.0, 29.0, vMemoryIdentity.y);
+        float checksumCell = floor(
+          (recordUv.x + recordSpan) * lockCadence
+        );
         float checksumGate = 0.4 + 0.6 * step(
           0.32,
-          hash11(floor((uv.x + 0.22) * 24.0) + vSeed)
+          hash11(
+            checksumCell
+              + floor(vMemoryIdentity.y * 4.01) * 17.0
+              + vSeed
+          )
         );
-        float recordLatch = (checksum0 + checksum1 + checksum2)
-          * checksumGate * retainedEnergy;
-        float recordKnot = exp(-pow(length(uv) / 0.036, 2.0))
+        float recordLatch = checksumLanes * checksumGate * retainedEnergy;
+        float recordKnotRadius = mix(0.03, 0.044, vMemoryIdentity.w);
+        float recordKnot = exp(-pow(length(uv) / recordKnotRadius, 2.0))
           * retainedEnergy;
 
         float departureX = mix(

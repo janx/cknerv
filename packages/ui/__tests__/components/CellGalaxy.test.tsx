@@ -233,8 +233,24 @@ describe('pinSelectedCellInVisiblePrefix', () => {
 describe('writeCellBuffers', () => {
   it('writes position, color, born/death and flash for each cell', () => {
     const cells: Cell[] = [
-      { ...mkCell(1), pos_seed: [1, 2, 3], born_at_ms: 1000 },
-      { ...mkCell(2), pos_seed: [4, 5, 6], born_at_ms: 2000, tag: 'wallet' },
+      {
+        ...mkCell(1),
+        pos_seed: [1, 2, 3],
+        born_at_ms: 1000,
+        capacity: 61e8,
+        asset_kind: 'native',
+        lock_kind: 'sighash',
+      },
+      {
+        ...mkCell(2),
+        pos_seed: [4, 5, 6],
+        born_at_ms: 2000,
+        tag: 'wallet',
+        capacity: 1_000_000e8,
+        data_hex: `0x${'ab'.repeat(1024)}`,
+        asset_kind: 'dao',
+        lock_kind: 'omnilock',
+      },
     ];
     const t = {
       posArr:   new Float32Array(6),
@@ -243,6 +259,8 @@ describe('writeCellBuffers', () => {
       deathArr: new Float32Array(2).fill(1e9),
       flashArr: new Float32Array(2).fill(-1e9),
       sizeArr:  new Float32Array(2),
+      memoryIdentityArr: new Float32Array(8),
+      memorySeedArr: new Float32Array(2),
     };
     const flashMap = new Map<number, number>([[2, 7.5]]);
 
@@ -262,6 +280,15 @@ describe('writeCellBuffers', () => {
     expect(t.sizeArr[1]).toBeCloseTo(3, 5);
     // Flash slot 1 (cell id=2) has 7.5 from flashMap.
     expect(t.flashArr[1]).toBe(7.5);
+    // Far retained cores preserve the same bounded A field mapping.
+    expect([...t.memoryIdentityArr.slice(0, 3)]).toEqual([0, 0, 0]);
+    expect(t.memoryIdentityArr[3]).toBeGreaterThan(0);
+    expect(t.memoryIdentityArr[3]).toBeLessThan(1);
+    expect(t.memoryIdentityArr[4]).toBeCloseTo(0.6);
+    expect(t.memoryIdentityArr[5]).toBeCloseTo(0.75);
+    expect(t.memoryIdentityArr[6]).toBe(1);
+    expect(t.memoryIdentityArr[7]).toBe(1);
+    expect(t.memorySeedArr[0]).toBe(0);
   });
 });
 
@@ -279,6 +306,8 @@ describe('CellGalaxy useSimFrame skip behavior', () => {
       deathArr: new Float32Array(1).fill(1e9),
       flashArr: new Float32Array(1).fill(-1e9),
       sizeArr:  new Float32Array(1),
+      memoryIdentityArr: new Float32Array(4),
+      memorySeedArr: new Float32Array(1),
     };
     writeCellBuffers(cells, 1, (ms: number) => ms / 1000, new Map(), t);
     const snapshotColor = t.colorArr[0];

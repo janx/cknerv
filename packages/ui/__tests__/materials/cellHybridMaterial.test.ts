@@ -88,6 +88,20 @@ describe('makeCellHybridMaterial', () => {
     );
   });
 
+  it('keeps far retained cores distinct through the canonical A field mapping', () => {
+    const m = makeCellHybridMaterial();
+
+    expect(m.vertexShader).toContain('attribute vec4  aMemoryIdentity');
+    expect(m.vertexShader).toContain('attribute float aMemorySeed');
+    expect(m.vertexShader).toContain('vSeed      = aMemorySeed');
+    expect(m.vertexShader).not.toContain('float(gl_VertexID)');
+    expect(m.fragmentShader).toContain('recordAngle');
+    expect(m.fragmentShader).toContain('checksumInner');
+    expect(m.fragmentShader).toContain('checksumOuter');
+    expect(m.fragmentShader).toContain('lockCadence');
+    expect(m.fragmentShader).toContain('recordKnotRadius');
+  });
+
   it('uses the purple-red retirement signal only as real death advances', () => {
     const m = makeCellHybridMaterial();
 
