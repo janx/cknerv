@@ -138,6 +138,59 @@ describe('ConsensusRouteCamera record composition', () => {
     galaxyFrame.rotationY = 0;
   });
 
+  it('frames an explicitly started first recall in measured scene-safe space', () => {
+    const cache = emptyCellsCache();
+    cache.cells.set(2, cell(2, [20, 1, -8]));
+    const rightRail = document.createElement('div');
+    rightRail.dataset.hudOcclusion = 'true';
+    vi.spyOn(rightRail, 'getBoundingClientRect').mockReturnValue(
+      rect(760, 40, 1440, 790),
+    );
+    document.body.append(rightRail);
+    const controls = {
+      target: new THREE.Vector3(0, 30, 0),
+      update: vi.fn(() => {
+        cameraMock.current!.lookAt(controls.target);
+        cameraMock.current!.updateMatrixWorld();
+      }),
+    } satisfies ConsensusRouteCameraControls;
+    controls.update();
+    const controlsRef: { current: ConsensusRouteCameraControls | null } = {
+      current: controls,
+    };
+    const view = (children: ReactNode) => (
+      <CellGalaxyProvider value={cache}>{children}</CellGalaxyProvider>
+    );
+    const rendered = render(view(
+      <ConsensusRouteCamera controlsRef={controlsRef} />,
+    ));
+
+    rendered.rerender(view(
+      <ConsensusRouteCamera
+        controlsRef={controlsRef}
+        recordIdentity="19:2"
+        recordTargetCellId={2}
+      />,
+    ));
+    act(() => {
+      for (let frame = 0; frame < 36; frame += 1) {
+        frameMock.callback?.({}, 0.1);
+      }
+    });
+
+    const recordWorld = new THREE.Vector3(20, CELLS_Y + 1, -8);
+    const anchor = deriveConsensusRecordSafeAnchor(
+      viewportMock.width,
+      viewportMock.height,
+      [{ left: 760, top: 40, right: 1440, bottom: 790 }],
+    );
+    const screen = screenPosition(recordWorld);
+    expect(screen[0]).toBeCloseTo(anchor[0], 0);
+    expect(screen[1]).toBeCloseTo(anchor[1], 0);
+    expect(distance(cameraMock.current!.position, recordWorld))
+      .toBeCloseTo(64, 1);
+  });
+
   it('moves through neutral space before broadly framing the new record', () => {
     const cache = emptyCellsCache();
     cache.cells.set(1, cell(1, [-12, 0, 4]));
@@ -319,6 +372,9 @@ describe('ConsensusRouteCamera record composition', () => {
     });
     expect(distance(cameraMock.current!.position, recordWorld))
       .toBeCloseTo(36, 1);
+    const lockedScreen = screenPosition(recordWorld);
+    expect(lockedScreen[0]).toBeCloseTo(narrowAnchor[0], 0);
+    expect(lockedScreen[1]).toBeCloseTo(narrowAnchor[1], 0);
 
     rendered.rerender(view(
       <ConsensusRouteCamera
