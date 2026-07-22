@@ -65,7 +65,7 @@ export function injectHudTheme(doc: Document = document): void {
     + `\n.cknerv-memory-route-ledger{position:absolute;right:calc(100% + 30px);top:-1px;width:230px}`
     + `\n.cknerv-memory-route-ledger-lens{width:268px}`
     + `\n.cknerv-memory-route-ledger-viewport{position:relative;display:flex;flex:1 1 auto;min-height:0}`
-    + `\n.cknerv-memory-route-ledger-scroll{flex:1 1 auto;min-width:0;min-height:0;box-sizing:border-box}`
+    + `\n.cknerv-memory-route-ledger-scroll{position:relative;flex:1 1 auto;min-width:0;min-height:0;box-sizing:border-box}`
     + `\n.cknerv-memory-route-scroll-edge{position:absolute;left:0;right:9px;z-index:2;height:14px;pointer-events:none;opacity:0}`
     + `\n.cknerv-memory-route-scroll-edge-before{top:0;background:linear-gradient(180deg,rgba(1,5,14,.98),rgba(1,5,14,0));box-shadow:inset 0 1px 0 rgba(32,240,255,.14)}`
     + `\n.cknerv-memory-route-scroll-edge-after{bottom:0;background:linear-gradient(0deg,rgba(1,5,14,.98),rgba(1,5,14,0));box-shadow:inset 0 -1px 0 rgba(32,240,255,.14)}`
