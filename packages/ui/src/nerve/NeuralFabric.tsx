@@ -45,6 +45,7 @@ import {
 import { CONSENSUS_BRAID_PALETTE } from '../derives/consensusBraid.derive';
 import type { Vec3 } from '../types';
 import {
+  consensusMemoryApertureAnimating,
   consensusMemoryApertureScale,
   type ConsensusMemoryAperture,
 } from './consensusMemoryAperture';
@@ -100,7 +101,7 @@ export interface ActiveHop {
 }
 
 export interface NeuralFabricHandles {
-  /** Clear passive noise only around exact recalled routes. */
+  /** Clear passive noise only behind exact recalled-route wavefronts. */
   setRecallAperture(
     active: ConsensusMemoryAperture | null,
     activeStrength: number,
@@ -224,6 +225,7 @@ function recallApertureScaleAt(
   x: number,
   z: number,
   lifecycleFlash: number,
+  nowSec: number,
 ): number {
   if (state.active === state.departing) {
     return consensusMemoryApertureScale(
@@ -231,6 +233,7 @@ function recallApertureScaleAt(
       x,
       z,
       Math.max(state.activeStrength, state.departingStrength),
+      nowSec,
       lifecycleFlash,
     );
   }
@@ -240,6 +243,7 @@ function recallApertureScaleAt(
       x,
       z,
       state.activeStrength,
+      nowSec,
       lifecycleFlash,
     ),
     consensusMemoryApertureScale(
@@ -247,6 +251,7 @@ function recallApertureScaleAt(
       x,
       z,
       state.departingStrength,
+      nowSec,
       lifecycleFlash,
     ),
   );
@@ -438,6 +443,7 @@ export default function NeuralFabric({ onReady }: NeuralFabricProps) {
     departing: null,
     departingStrength: 0,
   });
+  const apertureAnimationRef = useRef(false);
 
   useEffect(() => {
     fabric.material.resolution.set(size.width, size.height);
@@ -644,6 +650,21 @@ export default function NeuralFabric({ onReady }: NeuralFabricProps) {
           lc.cd = ct.centerDim;
           emitDirtyRef.current = true; // force one redraw with the new values
         }
+        const recallAperture = recallApertureRef.current;
+        const apertureAnimating = (
+          recallAperture.activeStrength > 0.001
+          && consensusMemoryApertureAnimating(recallAperture.active, now)
+        ) || (
+          recallAperture.departingStrength > 0.001
+          && consensusMemoryApertureAnimating(recallAperture.departing, now)
+        );
+        // Temporal masks need fresh passive vertices while their verified
+        // wavefront or targetward closure is moving. One final redraw after
+        // the interval restores every released fibre to its exact baseline.
+        if (apertureAnimating || apertureAnimationRef.current) {
+          emitDirtyRef.current = true;
+        }
+        apertureAnimationRef.current = apertureAnimating;
         if (!emitDirtyRef.current) return;
         // Live line widths. LineMaterial.linewidth is runtime-settable, so
         // pushing it on every real draw (after the early-return) picks up
@@ -651,7 +672,6 @@ export default function NeuralFabric({ onReady }: NeuralFabricProps) {
         fabric.material.linewidth = LIVE.cell.fabricWidth;
         active.material.linewidth = LIVE.cell.activeWidth;
         const states = edgeStatesRef.current;
-        const recallAperture = recallApertureRef.current;
         fabric.count = 0;
         let stillAnimating = 0;
         // Reap list deferred so we don't mutate the map mid-iteration.
@@ -724,6 +744,7 @@ export default function NeuralFabric({ onReady }: NeuralFabricProps) {
             prevX,
             prevZ,
             fl,
+            now,
           );
           const startEnergy = energy * startTaper * prevSpatial * prevAperture;
           let prevR = (fromSemanticR + (toSemanticR - fromSemanticR) * tStart)
@@ -750,6 +771,7 @@ export default function NeuralFabric({ onReady }: NeuralFabricProps) {
               sample[0],
               sample[2],
               fl,
+              now,
             );
             const endEnergy = energy * endTaper * endSpatial * endAperture;
             const endR = (fromSemanticR + (toSemanticR - fromSemanticR) * t)

@@ -4,14 +4,18 @@ import {
   CONSENSUS_MEMORY_APERTURE_CORE_SCALE,
   CONSENSUS_MEMORY_APERTURE_INNER_RADIUS,
   CONSENSUS_MEMORY_APERTURE_OUTER_RADIUS,
+  consensusMemoryApertureAnimating,
   consensusMemoryApertureScale,
   deriveConsensusMemoryAperture,
   type ConsensusMemoryAperture,
 } from '../../src/nerve/consensusMemoryAperture';
-import type {
-  ConsensusMemoryTraceFocus,
-  ConsensusMemoryTraceFocusSource,
-  ConsensusMemoryTraceRoute,
+import {
+  MEMORY_TRACE_FADE_MS,
+  MEMORY_TRACE_SETTLE_MS,
+  MEMORY_TRACE_SOURCE_REVEAL_MS,
+  type ConsensusMemoryTraceFocus,
+  type ConsensusMemoryTraceFocusSource,
+  type ConsensusMemoryTraceRoute,
 } from '../../src/nerve/consensusMemoryTrace';
 
 function cell(id: number, x: number, z: number): Cell {
@@ -29,15 +33,20 @@ function cell(id: number, x: number, z: number): Cell {
   };
 }
 
-function route(targetId: number, path: number[]): ConsensusMemoryTraceRoute {
+function route(
+  targetId: number,
+  path: number[],
+  startsAtSec = 1,
+  hopMs = 240,
+): ConsensusMemoryTraceRoute {
   return {
     targetId,
     path,
     color: [1, 0.7, 0.3],
     hopCount: path.length - 1,
-    hopMs: 240,
-    startsAtSec: 1,
-    arrivesAtSec: 2,
+    hopMs,
+    startsAtSec,
+    arrivesAtSec: startsAtSec + (path.length - 1) * hopMs / 1_000,
   };
 }
 
@@ -45,13 +54,15 @@ function source(
   id: number,
   routes: ConsensusMemoryTraceRoute[],
 ): ConsensusMemoryTraceFocusSource {
+  const startsAtSec = Math.min(...routes.map((candidate) => candidate.startsAtSec));
+  const arrivesAtSec = Math.min(...routes.map((candidate) => candidate.arrivesAtSec));
   return {
     id,
     contentHash: `0x${String(id).padStart(64, '0')}`,
     outPoint: { tx_hash: `0x${id}`, index: 0 },
     birthBlock: 1,
-    startsAtSec: 1,
-    arrivesAtSec: 2,
+    startsAtSec,
+    arrivesAtSec,
     routes,
   };
 }
@@ -80,12 +91,28 @@ function straightField(): ConsensusMemoryAperture {
     zBuckets.set(gridZ, candidates);
   }
   return {
-    segments: [{ ax: 0, az: 0, bx: 20, bz: 0 }],
+    segments: [{
+      ax: 0,
+      az: 0,
+      bx: 20,
+      bz: 0,
+      traversals: [{
+        opensAtStartSec: 1,
+        opensAtEndSec: 2,
+        routeProgressStart: 0,
+        routeProgressEnd: 1,
+        routeProgressFeather: 1,
+        collapseStartsAtSec: 3,
+        collapseEndsAtSec: 4,
+      }],
+    }],
     buckets: new Map([[0, zBuckets]]),
     edgeCount: 1,
     gridSize: CONSENSUS_MEMORY_APERTURE_OUTER_RADIUS,
     innerRadius: CONSENSUS_MEMORY_APERTURE_INNER_RADIUS,
     outerRadius: CONSENSUS_MEMORY_APERTURE_OUTER_RADIUS,
+    temporalStartsAtSec: 1,
+    temporalEndsAtSec: 4,
   };
 }
 
@@ -145,12 +172,91 @@ describe('consensus memory aperture', () => {
     ]);
     const aperture = deriveConsensusMemoryAperture(focus([
       source(1, [route(5, [1, 2, 3, 5])]),
-      source(4, [route(5, [4, 2, 3, 5])]),
+      source(4, [route(5, [4, 2, 3, 5], 2)]),
     ], [5]), cells);
 
     expect(aperture?.edgeCount).toBe(4);
     expect(aperture?.segments.length).toBeGreaterThan(aperture?.edgeCount ?? 0);
+    expect(aperture?.segments.some((segment) => (
+      segment.traversals.length === 2
+    ))).toBe(true);
     expect(consensusMemoryApertureScale(aperture, 0, -30, 1)).toBe(1);
+    // The first traversal has fully closed, but the later real source still
+    // owns the shared target edge; it closes only on its own route clock.
+    expect(consensusMemoryApertureScale(aperture, 20, 0, 1, 3.9))
+      .toBeLessThan(1);
+    expect(consensusMemoryApertureScale(aperture, 20, 0, 1, 4.8)).toBe(1);
+  });
+
+  it('opens progressively behind the exact evidence wavefront', () => {
+    const cells = new Map<number, Cell>([
+      [1, cell(1, 0, 0)],
+      [2, cell(2, 20, 0)],
+      [3, cell(3, 40, 0)],
+      [4, cell(4, 60, 0)],
+    ]);
+    const timedRoute = route(4, [1, 2, 3, 4], 10, 1_000);
+    const aperture = deriveConsensusMemoryAperture(
+      focus([source(1, [timedRoute])], [4]),
+      cells,
+    );
+    const openedAtSource = 10 + MEMORY_TRACE_SOURCE_REVEAL_MS / 1_000;
+    const openedAtTarget = timedRoute.arrivesAtSec
+      + MEMORY_TRACE_SOURCE_REVEAL_MS / 1_000;
+
+    expect(consensusMemoryApertureScale(aperture, 0, 0, 1, 9.99)).toBe(1);
+    expect(consensusMemoryApertureScale(aperture, 0, 0, 1, openedAtSource))
+      .toBeCloseTo(CONSENSUS_MEMORY_APERTURE_CORE_SCALE);
+    expect(consensusMemoryApertureScale(aperture, 60, 0, 1, 11)).toBe(1);
+    expect(consensusMemoryApertureScale(aperture, 60, 0, 1, openedAtTarget))
+      .toBeCloseTo(CONSENSUS_MEMORY_APERTURE_CORE_SCALE);
+  });
+
+  it('closes from source toward the retained target on the resonance clock', () => {
+    const cells = new Map<number, Cell>([
+      [1, cell(1, 0, 0)],
+      [2, cell(2, 20, 0)],
+      [3, cell(3, 40, 0)],
+      [4, cell(4, 60, 0)],
+      [5, cell(5, 80, 0)],
+    ]);
+    const timedRoute = route(5, [1, 2, 3, 4, 5], 0, 500);
+    const aperture = deriveConsensusMemoryAperture(
+      focus([source(1, [timedRoute])], [5]),
+      cells,
+    );
+    const collapseStartsAtSec = timedRoute.arrivesAtSec
+      + MEMORY_TRACE_SETTLE_MS / 1_000;
+    const collapseEndsAtSec = collapseStartsAtSec
+      + MEMORY_TRACE_FADE_MS / 1_000;
+    const halfway = (collapseStartsAtSec + collapseEndsAtSec) * 0.5;
+
+    expect(aperture?.temporalStartsAtSec).toBe(timedRoute.startsAtSec);
+    expect(aperture?.temporalEndsAtSec).toBeCloseTo(collapseEndsAtSec);
+    expect(consensusMemoryApertureAnimating(aperture, -0.01)).toBe(false);
+    expect(consensusMemoryApertureAnimating(aperture, 0)).toBe(true);
+    expect(consensusMemoryApertureAnimating(aperture, collapseEndsAtSec))
+      .toBe(true);
+    expect(consensusMemoryApertureAnimating(aperture, collapseEndsAtSec + 0.01))
+      .toBe(false);
+
+    expect(consensusMemoryApertureScale(
+      aperture,
+      0,
+      0,
+      1,
+      collapseStartsAtSec,
+    )).toBeCloseTo(CONSENSUS_MEMORY_APERTURE_CORE_SCALE);
+    expect(consensusMemoryApertureScale(aperture, 0, 0, 1, halfway)).toBe(1);
+    expect(consensusMemoryApertureScale(aperture, 80, 0, 1, halfway))
+      .toBeCloseTo(CONSENSUS_MEMORY_APERTURE_CORE_SCALE);
+    expect(consensusMemoryApertureScale(
+      aperture,
+      80,
+      0,
+      1,
+      collapseEndsAtSec,
+    )).toBe(1);
   });
 
   it('attenuates smoothly near the route and is exactly neutral outside', () => {
@@ -186,9 +292,10 @@ describe('consensus memory aperture', () => {
     expect(consensusMemoryApertureScale(aperture, 5, 0, 0)).toBe(1);
     expect(consensusMemoryApertureScale(aperture, 5, 0, 0.5))
       .toBeCloseTo(halfFocus);
-    expect(consensusMemoryApertureScale(aperture, 5, 0, 1, 0.5))
+    expect(consensusMemoryApertureScale(aperture, 5, 0, 1, undefined, 0.5))
       .toBeCloseTo((1 + CONSENSUS_MEMORY_APERTURE_CORE_SCALE) * 0.5);
-    expect(consensusMemoryApertureScale(aperture, 5, 0, 1, 1)).toBe(1);
+    expect(consensusMemoryApertureScale(aperture, 5, 0, 1, undefined, 1))
+      .toBe(1);
     expect(consensusMemoryApertureScale(aperture, 5, 0, Number.NaN)).toBe(1);
   });
 });

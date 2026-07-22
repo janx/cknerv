@@ -809,9 +809,9 @@ export default function NeuralNetwork({
       : CONSENSUS_MEMORY_NEAR_PRESENTATION;
     traceDistancePresentationRef.current = distancePresentation;
 
-    // Drive growth/decay animation on the persistent fabric layer.
-    // Internally gated: no-op when nothing is animating and nothing
-    // has changed since last commit, so this is free in steady state.
+    // Drive growth/decay plus the trace-clock aperture on the persistent
+    // fabric layer. Internally gated: no-op when neither can change and
+    // nothing has changed since the last commit, so steady state stays free.
     handles?.setRecallAperture(
       traceAperture,
       focusStrength,
