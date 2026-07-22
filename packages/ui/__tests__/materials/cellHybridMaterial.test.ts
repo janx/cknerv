@@ -78,7 +78,10 @@ describe('makeCellHybridMaterial', () => {
     expect(m.vertexShader).toContain('vRecall = aRecall');
     expect(m.fragmentShader).toContain('scanAperture');
     expect(m.fragmentShader).toContain('addressGate');
+    expect(m.fragmentShader).toContain('readEnergy');
+    expect(m.fragmentShader).toContain('retainedEnergy');
     expect(m.fragmentShader).toContain('recordLatch');
+    expect(m.fragmentShader).toContain('recordKnot');
     expect(m.fragmentShader).toContain('departureRail');
     expect(m.fragmentShader.indexOf('recordLatch')).toBeLessThan(
       m.fragmentShader.indexOf('retireMix'),

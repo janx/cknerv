@@ -11,6 +11,7 @@ import {
   consensusMemoryPortraitLayerOpacity,
   consensusMemoryPortraitResponse,
 } from '../../derives/consensusMemoryPortrait.derive';
+import { consensusMemoryCoreEnergy } from '../../derives/consensusMemoryCore.derive';
 import {
   consensusMemoryEvidenceBindings,
   consensusMemoryEvidenceColor,
@@ -409,6 +410,10 @@ export default function ConsensusMemory({
     if (response) recallPhaseRef.current = response.phase;
     const recallStrength = recallStrengthRef.current;
     const recallConvergence = recallConvergenceRef.current;
+    const coreEnergy = consensusMemoryCoreEnergy(
+      recallStrength,
+      recallConvergence,
+    );
     const focusedKnot = focusedKnotRef.current;
     if (focusedKnot) {
       const pulse = reducedMotion ? 1 : 0.94 + Math.sin(time * 3.1) * 0.06;
@@ -560,18 +565,17 @@ export default function ConsensusMemory({
     }
     knotColorAttribute.needsUpdate = knotCount > 0;
     built.knotGlowMaterial.size = 0.058 * (
-      1 + recallStrength * (0.1 + recallConvergence * 0.42)
+      1 + coreEnergy.reading * 0.1 + coreEnergy.retained * 0.42
     );
     built.knotCoreMaterial.size = 0.014 * (
-      1 + recallStrength * (0.18 + recallConvergence * 0.82)
+      1 + coreEnergy.reading * 0.18 + coreEnergy.retained * 0.82
     );
 
     // One flattened read head traverses the same contributor order used by
     // the production buffer writer. A short lozenge trail makes the scan
     // legible at portrait scale without adding a second topology.
     const readHeads = readHeadsRef.current;
-    const scanEnergy = recallStrength
-      * (1 - recallConvergence * 0.9)
+    const scanEnergy = coreEnergy.reading
       * (traceEvidenceFocusSourceId === null ? 1 : 0.22);
     if (readHeads && built.specs.length > 0 && scanEnergy > 0.01) {
       readHeads.count = READ_HEAD_TRAIL;
