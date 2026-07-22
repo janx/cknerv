@@ -1,4 +1,4 @@
-import { useEffect, useState, type CSSProperties } from 'react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import type { Cell } from '@cknerv/types';
 import type { CellConsensusIdentity } from '../../derives/cellConsensusIdentity.derive';
 import type { ConsensusBraidField } from '../../derives/consensusBraid.derive';
@@ -29,6 +29,29 @@ const VIOLET = '#9D7BD8';
 const GOLD = HUD_COLORS.orange;
 const LOCKED_GOLD = '#FFD7A1';
 const ROUTE_LENS_MIN_CELLS = 9;
+const ROUTE_SCROLL_EDGE_EPSILON_PX = 1;
+
+function syncRouteLedgerScrollAffordance(node: HTMLDivElement): void {
+  const viewport = node.closest<HTMLElement>(
+    '[data-memory-evidence-route-scroll-viewport="true"]',
+  );
+  if (!viewport) return;
+  const maxScrollTop = Math.max(0, node.scrollHeight - node.clientHeight);
+  const scrollTop = Math.min(maxScrollTop, Math.max(0, node.scrollTop));
+  const scrollable = maxScrollTop > ROUTE_SCROLL_EDGE_EPSILON_PX;
+  const hasBefore = scrollable
+    && scrollTop > ROUTE_SCROLL_EDGE_EPSILON_PX;
+  const hasAfter = scrollable
+    && scrollTop < maxScrollTop - ROUTE_SCROLL_EDGE_EPSILON_PX;
+  const progress = scrollable ? scrollTop / maxScrollTop : 0;
+  viewport.dataset.memoryEvidenceRouteScrollable = String(scrollable);
+  viewport.dataset.memoryEvidenceRouteScrollBefore = String(hasBefore);
+  viewport.dataset.memoryEvidenceRouteScrollAfter = String(hasAfter);
+  viewport.style.setProperty(
+    '--route-ledger-scroll-progress',
+    `${(progress * 100).toFixed(2)}%`,
+  );
+}
 
 const MEMORY_READ_STAGES: ReadonlyArray<{
   stage: ConsensusMemoryTraceStage;
@@ -246,6 +269,7 @@ function EvidenceRouteLedger({
   routeCellById?: ReadonlyMap<number, Cell>;
   reducedMotion: boolean;
 }) {
+  const routeScrollRef = useRef<HTMLDivElement>(null);
   const lastIndex = evidence.route.length - 1;
   const focusedRouteHop = focusedHop?.traceKey === readout.key
     && focusedHop.sourceId === evidence.sourceId
@@ -275,6 +299,21 @@ function EvidenceRouteLedger({
   const lockedProgress = lockedRouteHop && lastIndex > 0
     ? lockedRouteHop.hopIndex / lastIndex
     : 0;
+  useEffect(() => {
+    const node = routeScrollRef.current;
+    if (!node) return undefined;
+    const sync = () => syncRouteLedgerScrollAffordance(node);
+    sync();
+    const resizeObserver = typeof ResizeObserver === 'undefined'
+      ? null
+      : new ResizeObserver(sync);
+    resizeObserver?.observe(node);
+    window.addEventListener('resize', sync);
+    return () => {
+      resizeObserver?.disconnect();
+      window.removeEventListener('resize', sync);
+    };
+  }, [evidence.route.length, lockedRouteHop?.hopIndex]);
   return (
     <div
       id={id}
@@ -336,10 +375,20 @@ function EvidenceRouteLedger({
         </span>
       </span>
       <div
-        className="cknerv-memory-route-ledger-scroll"
-        data-memory-evidence-route-scroll="true"
-        style={{ flex: '1 1 auto', minHeight: 0 }}
+        className="cknerv-memory-route-ledger-viewport"
+        data-memory-evidence-route-scroll-viewport="true"
+        data-memory-evidence-route-scrollable="false"
+        data-memory-evidence-route-scroll-before="false"
+        data-memory-evidence-route-scroll-after="false"
       >
+        <div
+          ref={routeScrollRef}
+          className="cknerv-memory-route-ledger-scroll"
+          data-memory-evidence-route-scroll="true"
+          onScroll={(event) => {
+            syncRouteLedgerScrollAffordance(event.currentTarget);
+          }}
+        >
         {routeLens && lockedRouteHop ? (
         <span
           role="progressbar"
@@ -630,6 +679,24 @@ function EvidenceRouteLedger({
             </span>
           </span>
         ) : null}
+        </div>
+        <span
+          aria-hidden="true"
+          className="cknerv-memory-route-scroll-edge cknerv-memory-route-scroll-edge-before"
+          style={{ transition: reducedMotion ? undefined : 'opacity 140ms ease' }}
+        />
+        <span
+          aria-hidden="true"
+          className="cknerv-memory-route-scroll-edge cknerv-memory-route-scroll-edge-after"
+          style={{ transition: reducedMotion ? undefined : 'opacity 140ms ease' }}
+        />
+        <span
+          aria-hidden="true"
+          className="cknerv-memory-route-scroll-position"
+          data-memory-evidence-route-scroll-position="true"
+        >
+          <span className="cknerv-memory-route-scroll-position-marker" />
+        </span>
       </div>
     </div>
   );
