@@ -31,6 +31,17 @@ describe('hudTheme', () => {
     expect(css).toContain(
       '.cknerv-memory-route-ledger-scroll{overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain',
     );
+    expect(css).toContain('.cknerv-memory-route-scroll-edge-before');
+    expect(css).toContain(
+      '.cknerv-memory-route-ledger-viewport{position:relative;display:flex;flex:1 1 auto;min-height:0}',
+    );
+    expect(css).toContain('top:var(--route-ledger-scroll-progress,0%)');
+    expect(css).toContain(
+      '[data-memory-evidence-route-scrollable="true"] .cknerv-memory-route-scroll-position{opacity:1}',
+    );
+    expect(css).toContain(
+      '[data-memory-evidence-route-scroll-after="true"] .cknerv-memory-route-scroll-edge-after{opacity:1}',
+    );
     expect(css).toContain('@media (min-width:1101px) and (max-width:1373px)');
     expect(css).toContain('(min-width:1374px) and (max-height:860px)');
     expect(css).toContain('@media (max-width:1100px)');

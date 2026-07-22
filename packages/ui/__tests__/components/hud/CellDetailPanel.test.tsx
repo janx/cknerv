@@ -669,7 +669,10 @@ describe('CellDetailPanel', () => {
 
     fireEvent.click(container.querySelector('[data-memory-evidence="1"]')!);
     const ledger = container.querySelector('[data-memory-evidence-route-ledger="true"]');
-    const ledgerScroll = ledger?.querySelector(
+    const ledgerViewport = ledger?.querySelector<HTMLElement>(
+      '[data-memory-evidence-route-scroll-viewport="true"]',
+    );
+    const ledgerScroll = ledger?.querySelector<HTMLElement>(
       '[data-memory-evidence-route-scroll="true"]',
     );
     const cells = ledger?.querySelectorAll('[data-memory-evidence-route-cell]');
@@ -678,6 +681,12 @@ describe('CellDetailPanel', () => {
     expect(ledgerScroll?.classList.contains(
       'cknerv-memory-route-ledger-scroll',
     )).toBe(true);
+    expect(ledgerViewport?.classList.contains(
+      'cknerv-memory-route-ledger-viewport',
+    )).toBe(true);
+    expect(ledgerViewport?.querySelector(
+      '[data-memory-evidence-route-scroll-position="true"]',
+    )).not.toBeNull();
     expect(ledgerScroll?.contains(cells?.[0] ?? null)).toBe(true);
     expect(cells).toHaveLength(41);
     expect(cells?.[0].getAttribute('data-memory-evidence-route-cell')).toBe('11');
@@ -736,6 +745,49 @@ describe('CellDetailPanel', () => {
     expect(inspector.textContent).toContain('VISUAL LANE · NO CAUSAL CLAIM');
     expect(inspector.textContent).toContain('5555555·5555');
     expect(inspector.textContent).toContain('BLOCK #16200020 · SPENT');
+
+    Object.defineProperties(ledgerScroll!, {
+      clientHeight: { configurable: true, value: 72 },
+      scrollHeight: { configurable: true, value: 147 },
+      scrollTop: { configurable: true, writable: true, value: 0 },
+    });
+    fireEvent.scroll(ledgerScroll!);
+    expect(ledgerViewport?.getAttribute(
+      'data-memory-evidence-route-scrollable',
+    )).toBe('true');
+    expect(ledgerViewport?.getAttribute(
+      'data-memory-evidence-route-scroll-before',
+    )).toBe('false');
+    expect(ledgerViewport?.getAttribute(
+      'data-memory-evidence-route-scroll-after',
+    )).toBe('true');
+    expect(ledgerViewport?.style.getPropertyValue(
+      '--route-ledger-scroll-progress',
+    )).toBe('0.00%');
+
+    ledgerScroll!.scrollTop = 37.5;
+    fireEvent.scroll(ledgerScroll!);
+    expect(ledgerViewport?.getAttribute(
+      'data-memory-evidence-route-scroll-before',
+    )).toBe('true');
+    expect(ledgerViewport?.getAttribute(
+      'data-memory-evidence-route-scroll-after',
+    )).toBe('true');
+    expect(ledgerViewport?.style.getPropertyValue(
+      '--route-ledger-scroll-progress',
+    )).toBe('50.00%');
+
+    ledgerScroll!.scrollTop = 75;
+    fireEvent.scroll(ledgerScroll!);
+    expect(ledgerViewport?.getAttribute(
+      'data-memory-evidence-route-scroll-before',
+    )).toBe('true');
+    expect(ledgerViewport?.getAttribute(
+      'data-memory-evidence-route-scroll-after',
+    )).toBe('false');
+    expect(ledgerViewport?.style.getPropertyValue(
+      '--route-ledger-scroll-progress',
+    )).toBe('100.00%');
 
     fireEvent.keyDown(lens.querySelector(
       '[data-memory-evidence-route-hop="20"]',

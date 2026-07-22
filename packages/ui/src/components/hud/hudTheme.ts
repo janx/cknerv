@@ -64,7 +64,14 @@ export function injectHudTheme(doc: Document = document): void {
     + `\n.cknerv-mesh-rail::-webkit-scrollbar-track{background:transparent}`
     + `\n.cknerv-memory-route-ledger{position:absolute;right:calc(100% + 30px);top:-1px;width:230px}`
     + `\n.cknerv-memory-route-ledger-lens{width:268px}`
-    + `\n.cknerv-memory-route-ledger-scroll{min-height:0}`
+    + `\n.cknerv-memory-route-ledger-viewport{position:relative;display:flex;flex:1 1 auto;min-height:0}`
+    + `\n.cknerv-memory-route-ledger-scroll{flex:1 1 auto;min-width:0;min-height:0;box-sizing:border-box}`
+    + `\n.cknerv-memory-route-scroll-edge{position:absolute;left:0;right:9px;z-index:2;height:14px;pointer-events:none;opacity:0}`
+    + `\n.cknerv-memory-route-scroll-edge-before{top:0;background:linear-gradient(180deg,rgba(1,5,14,.98),rgba(1,5,14,0));box-shadow:inset 0 1px 0 rgba(32,240,255,.14)}`
+    + `\n.cknerv-memory-route-scroll-edge-after{bottom:0;background:linear-gradient(0deg,rgba(1,5,14,.98),rgba(1,5,14,0));box-shadow:inset 0 -1px 0 rgba(32,240,255,.14)}`
+    + `\n.cknerv-memory-route-scroll-position{position:absolute;top:3px;right:4px;bottom:3px;z-index:3;width:4px;border-right:1px solid rgba(32,240,255,.18);pointer-events:none;opacity:0}`
+    + `\n.cknerv-memory-route-scroll-position-marker{position:absolute;left:100%;top:var(--route-ledger-scroll-progress,0%);width:4px;height:4px;border:1px solid rgba(201,248,255,.88);background:#06111B;box-shadow:0 0 6px rgba(32,240,255,.72);transform:translate(-50%,-50%) rotate(45deg)}`
+    + `\n.cknerv-memory-route-ledger-lens .cknerv-memory-route-scroll-position-marker{border-color:rgba(255,215,161,.9);box-shadow:0 0 7px rgba(255,215,161,.66)}`
     + `\n.cknerv-memory-route-ledger-scroll::-webkit-scrollbar{width:3px}`
     + `\n.cknerv-memory-route-ledger-scroll::-webkit-scrollbar-thumb{background:rgba(32,240,255,.28)}`
     + `\n.cknerv-memory-route-ledger-scroll::-webkit-scrollbar-track{background:transparent}`
@@ -73,6 +80,6 @@ export function injectHudTheme(doc: Document = document): void {
     + `\n.cknerv-memory-route-cells::-webkit-scrollbar-track{background:transparent}`
     + `\n.cknerv-memory-route-connector-tail{display:none}`
     + `\n@media (min-width:1101px) and (max-width:1373px),(min-width:1374px) and (max-height:860px){.cknerv-memory-route-ledger{top:-106px}.cknerv-memory-route-connector-tail{display:block;height:106px}}`
-    + `\n@media (max-width:1100px){.cknerv-memory-route-ledger{position:static;width:auto;max-height:100px;margin:4px 4px 2px 0;overflow:hidden}.cknerv-memory-route-ledger-scroll{overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:rgba(32,240,255,.28) transparent;padding-right:3px}.cknerv-memory-route-connector,.cknerv-memory-route-connector-tail{display:none}}`;
+    + `\n@media (max-width:1100px){.cknerv-memory-route-ledger{position:static;width:auto;max-height:100px;margin:4px 4px 2px 0;overflow:hidden}.cknerv-memory-route-ledger-scroll{overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:rgba(32,240,255,.28) transparent;padding-right:8px}.cknerv-memory-route-ledger-viewport[data-memory-evidence-route-scrollable="true"] .cknerv-memory-route-scroll-position{opacity:1}.cknerv-memory-route-ledger-viewport[data-memory-evidence-route-scroll-before="true"] .cknerv-memory-route-scroll-edge-before{opacity:1}.cknerv-memory-route-ledger-viewport[data-memory-evidence-route-scroll-after="true"] .cknerv-memory-route-scroll-edge-after{opacity:1}.cknerv-memory-route-connector,.cknerv-memory-route-connector-tail{display:none}}`;
   doc.head.appendChild(style);
 }
