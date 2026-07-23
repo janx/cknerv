@@ -25,8 +25,12 @@ describe('CellNucleusPortrait production language', () => {
     expect(SOURCE).toContain('deriveCellContentAddressEncoding(');
     expect(SOURCE).toContain('data-memory-portrait-address-fingerprint');
     expect(SOURCE).toContain('data-memory-portrait-address-lanes');
+    expect(SOURCE).toContain('data-memory-portrait-address-focus');
     expect(CORE_SOURCE).toContain('<CellContentAddressHalo');
+    expect(CORE_SOURCE).toContain("contentFocused={focusField === 'data'}");
     expect(ADDRESS_SOURCE).toContain('deriveCellContentAddressFacets(');
+    expect(ADDRESS_SOURCE).toContain('cellContentAddressReadFrame(');
+    expect(ADDRESS_SOURCE).toContain('memoryPortraitAddressActiveLane');
     expect(ADDRESS_SOURCE).toContain('new LineSegments2(');
     expect(ADDRESS_SOURCE).toContain('THREE.AdditiveBlending');
     expect(ADDRESS_SOURCE).toContain('invalidate();');

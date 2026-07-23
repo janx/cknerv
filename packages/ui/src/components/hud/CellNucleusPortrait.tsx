@@ -89,6 +89,9 @@ export default function CellNucleusPortrait({
         .map((lane) => lane.toFixed(3))
         .join(',')}
       data-memory-portrait-address-phase={addressEncoding.phase.toFixed(3)}
+      data-memory-portrait-address-focus={
+        focusField === 'data' ? 'content' : 'idle'
+      }
       style={{ width: '100%', aspectRatio: '1 / 1', pointerEvents: 'none' }}
     >
       <Canvas

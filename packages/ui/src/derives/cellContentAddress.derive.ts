@@ -10,6 +10,7 @@ export const CELL_CONTENT_ADDRESS_HALF_SPAN_MAX = 0.38;
 export const CELL_CONTENT_ADDRESS_SPINE_THRESHOLD = 0.76;
 export const CELL_CONTENT_ADDRESS_CYAN = [0.18, 0.92, 1] as const;
 export const CELL_CONTENT_ADDRESS_VIOLET = [0.72, 0.42, 1] as const;
+export const CELL_CONTENT_ADDRESS_READ_LANE_SECONDS = 0.16;
 
 export type CellContentAddressLanes = readonly [
   number,
@@ -36,6 +37,20 @@ export interface CellContentAddressFacet {
   halfSpan: number;
   hasSpine: boolean;
   color: readonly [number, number, number];
+}
+
+export type CellContentAddressReadState =
+  | 'idle'
+  | 'reading'
+  | 'resolved'
+  | 'reduced';
+
+export interface CellContentAddressReadFrame {
+  state: CellContentAddressReadState;
+  activeLane: number | null;
+  laneProgress: number;
+  readCount: number;
+  progress: number;
 }
 
 function unitHash(value: string): number {
@@ -97,4 +112,69 @@ export function deriveCellContentAddressFacets(
       mix(CELL_CONTENT_ADDRESS_CYAN[2], CELL_CONTENT_ADDRESS_VIOLET[2], value),
     ],
   }));
+}
+
+/** One bounded, non-looping content read driven by the portrait render clock. */
+export function cellContentAddressReadFrame(
+  elapsedSeconds: number,
+  contentFocused: boolean,
+  reducedMotion = false,
+): CellContentAddressReadFrame {
+  if (!contentFocused) {
+    return {
+      state: 'idle',
+      activeLane: null,
+      laneProgress: 0,
+      readCount: 0,
+      progress: 0,
+    };
+  }
+  if (reducedMotion) {
+    return {
+      state: 'reduced',
+      activeLane: null,
+      laneProgress: 1,
+      readCount: CELL_CONTENT_ADDRESS_LANE_COUNT,
+      progress: 1,
+    };
+  }
+  const duration = CELL_CONTENT_ADDRESS_LANE_COUNT
+    * CELL_CONTENT_ADDRESS_READ_LANE_SECONDS;
+  const elapsed = Math.max(0, Number.isFinite(elapsedSeconds)
+    ? elapsedSeconds
+    : 0);
+  if (elapsed >= duration) {
+    return {
+      state: 'resolved',
+      activeLane: null,
+      laneProgress: 1,
+      readCount: CELL_CONTENT_ADDRESS_LANE_COUNT,
+      progress: 1,
+    };
+  }
+  const laneUnit = elapsed / CELL_CONTENT_ADDRESS_READ_LANE_SECONDS;
+  const activeLane = Math.min(
+    CELL_CONTENT_ADDRESS_LANE_COUNT - 1,
+    Math.floor(laneUnit),
+  );
+  return {
+    state: 'reading',
+    activeLane,
+    laneProgress: laneUnit - activeLane,
+    readCount: activeLane,
+    progress: elapsed / duration,
+  };
+}
+
+/** Relative energy for one facet during the read; identity colors never move. */
+export function cellContentAddressLaneEnergy(
+  frame: CellContentAddressReadFrame,
+  laneIndex: number,
+): number {
+  if (frame.state === 'idle') return 1;
+  if (frame.state === 'resolved' || frame.state === 'reduced') return 1.16;
+  if (frame.activeLane === null) return 1;
+  if (laneIndex < frame.activeLane) return 0.78;
+  if (laneIndex > frame.activeLane) return 0.16;
+  return 1.18 + Math.sin(Math.PI * frame.laneProgress) * 0.72;
 }
