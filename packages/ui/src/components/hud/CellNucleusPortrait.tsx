@@ -7,6 +7,11 @@ import { Canvas } from '@react-three/fiber';
 import type { Cell } from '@cknerv/types';
 import type { ConsensusBraidField } from '../../derives/consensusBraid.derive';
 import { deriveCellContentAddressEncoding } from '../../derives/cellContentAddress.derive';
+import {
+  deriveCellBirthAnchorEncoding,
+  deriveCellOutpointLocatorEncoding,
+  type CellIdentityProofKind,
+} from '../../derives/cellIdentityProof.derive';
 import type {
   ConsensusMemoryCellResponseRef,
   ConsensusMemoryTraceReadout,
@@ -33,7 +38,7 @@ function ConsensusScene({
   traceReadout,
   traceResponseRef,
   traceEvidenceFocusSourceId,
-  onContentAddressRead,
+  onIdentityProofRead,
 }: {
   cell: Cell;
   direction: CellCoreDirection;
@@ -42,7 +47,7 @@ function ConsensusScene({
   traceReadout: ConsensusMemoryTraceReadout | null;
   traceResponseRef?: ConsensusMemoryCellResponseRef;
   traceEvidenceFocusSourceId: number | null;
-  onContentAddressRead?: () => void;
+  onIdentityProofRead?: (kind: CellIdentityProofKind) => void;
 }) {
   return (
     <CellCoreArtwork
@@ -53,7 +58,7 @@ function ConsensusScene({
       traceReadout={traceReadout}
       traceResponseRef={traceResponseRef}
       traceEvidenceFocusSourceId={traceEvidenceFocusSourceId}
-      onContentAddressRead={onContentAddressRead}
+      onIdentityProofRead={onIdentityProofRead}
     />
   );
 }
@@ -66,7 +71,7 @@ export default function CellNucleusPortrait({
   traceReadout = null,
   traceResponseRef,
   traceEvidenceFocusSourceId = null,
-  onContentAddressRead,
+  onIdentityProofRead,
 }: {
   cell: Cell;
   direction?: CellCoreDirection;
@@ -76,7 +81,7 @@ export default function CellNucleusPortrait({
   traceReadout?: ConsensusMemoryTraceReadout | null;
   traceResponseRef?: ConsensusMemoryCellResponseRef;
   traceEvidenceFocusSourceId?: number | null;
-  onContentAddressRead?: () => void;
+  onIdentityProofRead?: (kind: CellIdentityProofKind) => void;
   /** Compatibility input for callers that share a scan epoch with the panel. */
   scanEpochMs?: number;
 }) {
@@ -84,6 +89,24 @@ export default function CellNucleusPortrait({
     () => deriveCellContentAddressEncoding(cell.content_hash),
     [cell.content_hash],
   );
+  const outpointEncoding = useMemo(
+    () => deriveCellOutpointLocatorEncoding(
+      cell.out_point.tx_hash,
+      cell.out_point.index,
+    ),
+    [cell.out_point.index, cell.out_point.tx_hash],
+  );
+  const anchorEncoding = useMemo(
+    () => deriveCellBirthAnchorEncoding(cell.birth_block),
+    [cell.birth_block],
+  );
+  const proofFocus = focusField === 'state'
+    ? 'address'
+    : focusField === 'data'
+      ? 'content'
+      : focusField === 'born'
+        ? 'anchor'
+        : 'idle';
   return (
     <div
       data-memory-portrait-state={traceReadout?.stage ?? 'idle'}
@@ -97,6 +120,12 @@ export default function CellNucleusPortrait({
       data-memory-portrait-address-focus={
         focusField === 'data' ? 'content' : 'idle'
       }
+      data-memory-portrait-proof-focus={proofFocus}
+      data-memory-portrait-outpoint-fingerprint={outpointEncoding.fingerprint}
+      data-memory-portrait-outpoint-index-bytes={outpointEncoding.indexBytes
+        .join(',')}
+      data-memory-portrait-anchor-block={anchorEncoding.block}
+      data-memory-portrait-anchor-hex={anchorEncoding.hexadecimal}
       style={{ width: '100%', aspectRatio: '1 / 1', pointerEvents: 'none' }}
     >
       <Canvas
@@ -113,7 +142,7 @@ export default function CellNucleusPortrait({
           traceReadout={traceReadout}
           traceResponseRef={traceResponseRef}
           traceEvidenceFocusSourceId={traceEvidenceFocusSourceId}
-          onContentAddressRead={onContentAddressRead}
+          onIdentityProofRead={onIdentityProofRead}
         />
       </Canvas>
     </div>

@@ -6,7 +6,11 @@ import type {
   ConsensusMemoryCellResponseRef,
   ConsensusMemoryTraceReadout,
 } from '../../nerve/consensusMemoryTrace';
+import type {
+  CellIdentityProofKind,
+} from '../../derives/cellIdentityProof.derive';
 import CellContentAddressHalo from './CellContentAddressHalo';
+import CellIdentityProofReader from './CellIdentityProofReader';
 import ConsensusMemory from './ConsensusMemory';
 
 const QuantumLoomCore = lazy(() => import('./QuantumLoomCore'));
@@ -34,7 +38,7 @@ export default function CellCoreArtwork({
   traceReadout = null,
   traceResponseRef,
   traceEvidenceFocusSourceId = null,
-  onContentAddressRead,
+  onIdentityProofRead,
 }: {
   direction: CellCoreDirection;
   cell: Cell;
@@ -43,7 +47,7 @@ export default function CellCoreArtwork({
   traceReadout?: ConsensusMemoryTraceReadout | null;
   traceResponseRef?: ConsensusMemoryCellResponseRef;
   traceEvidenceFocusSourceId?: number | null;
-  onContentAddressRead?: () => void;
+  onIdentityProofRead?: (kind: CellIdentityProofKind) => void;
 }) {
   const addressEncoding = useMemo(
     () => deriveCellContentAddressEncoding(cell.content_hash),
@@ -74,7 +78,21 @@ export default function CellCoreArtwork({
         encoding={addressEncoding}
         contentFocused={focusField === 'data'}
         reducedMotion={reducedMotion}
-        onReadResolved={onContentAddressRead}
+        onReadResolved={onIdentityProofRead
+          ? () => onIdentityProofRead('content')
+          : undefined}
+      />
+      <CellIdentityProofReader
+        cell={cell}
+        proof={
+          focusField === 'state'
+            ? 'address'
+            : focusField === 'born'
+              ? 'anchor'
+              : null
+        }
+        reducedMotion={reducedMotion}
+        onReadResolved={onIdentityProofRead}
       />
     </>
   );

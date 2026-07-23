@@ -25,6 +25,9 @@ import {
   consensusBraidStrandCount,
   type ConsensusBraidField,
 } from '../../derives/consensusBraid.derive';
+import type {
+  CellIdentityProofKind,
+} from '../../derives/cellIdentityProof.derive';
 
 const BRACKET = 9; // corner bracket arm length (px)
 const AMBER = HUD_COLORS.orange;
@@ -62,7 +65,7 @@ export default function CellDetailPanel({
   traceRouteHopLock = null,
   onTraceRouteHopLockChange,
   onTraceWrite,
-  onContentAddressRead,
+  onIdentityProofRead,
   onClose,
   style,
 }: {
@@ -86,7 +89,11 @@ export default function CellDetailPanel({
     focus: ConsensusMemoryRouteHopFocus | null,
   ) => void;
   onTraceWrite?: (linkSeq: number) => void;
-  onContentAddressRead?: (cellId: number, reducedMotion: boolean) => void;
+  onIdentityProofRead?: (
+    kind: CellIdentityProofKind,
+    cellId: number,
+    reducedMotion: boolean,
+  ) => void;
   onClose: () => void;
   style?: CSSProperties;
 }) {
@@ -231,8 +238,8 @@ export default function CellDetailPanel({
           traceReadout={traceReadout}
           traceResponseRef={traceResponseRef}
           traceEvidenceFocusSourceId={traceEvidenceFocusSourceId}
-          onContentAddressRead={onContentAddressRead
-            ? () => onContentAddressRead(cell.id, reduced)
+          onIdentityProofRead={onIdentityProofRead
+            ? (kind) => onIdentityProofRead(kind, cell.id, reduced)
             : undefined}
         />
         <span style={cornerBracket('tl')} /><span style={cornerBracket('tr')} />

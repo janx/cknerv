@@ -6,20 +6,14 @@ import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeome
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 import type { Cell } from '@cknerv/types';
 import {
-  CELL_CONTENT_ADDRESS_RADIUS_MAX,
-  CELL_CONTENT_ADDRESS_SPINE_OVERSHOOT,
-  cellContentAddressEchoFrame,
-  deriveCellContentAddressEncoding,
-  deriveCellContentAddressSegments,
-} from '../derives/cellContentAddress.derive';
-import type {
-  CellIdentityProofEvent,
+  CELL_OUTPOINT_LOCATOR_BOUND_RADIUS,
+  cellOutpointLocatorEchoFrame,
+  deriveCellOutpointLocatorEncoding,
+  deriveCellOutpointLocatorSegments,
+  type CellIdentityProofEvent,
 } from '../derives/cellIdentityProof.derive';
 
-const ADDRESS_GEOMETRY_RADIUS = CELL_CONTENT_ADDRESS_RADIUS_MAX
-  + CELL_CONTENT_ADDRESS_SPINE_OVERSHOOT;
-
-function makeEchoLineMaterial(
+function makeLocatorLineMaterial(
   linewidth: number,
   opacity: number,
   blending: THREE.Blending,
@@ -38,11 +32,8 @@ function makeEchoLineMaterial(
   return material;
 }
 
-/**
- * One exact full-hash signature at the selected Cell's real scene position.
- * It appears only after the portrait has read all eight address lanes.
- */
-export default function CellContentAddressEchoMarker({
+/** Contracting, open-corner WHERE proof at the Cell's exact scene position. */
+export default function CellOutpointLocatorMarker({
   cell,
   event,
 }: {
@@ -53,13 +44,17 @@ export default function CellContentAddressEchoMarker({
   const groupRef = useRef<THREE.Group>(null);
   const settledSequenceRef = useRef<number | null>(null);
   const encoding = useMemo(
-    () => deriveCellContentAddressEncoding(cell.content_hash),
-    [cell.content_hash],
+    () => deriveCellOutpointLocatorEncoding(
+      cell.out_point.tx_hash,
+      cell.out_point.index,
+    ),
+    [cell.out_point.index, cell.out_point.tx_hash],
   );
   const built = useMemo(() => {
+    const segments = deriveCellOutpointLocatorSegments(encoding);
     const positions: number[] = [];
     const colors: number[] = [];
-    for (const segment of deriveCellContentAddressSegments(encoding)) {
+    for (const segment of segments) {
       positions.push(...segment.from, ...segment.to);
       colors.push(
         segment.color[0] * segment.energy,
@@ -75,66 +70,28 @@ export default function CellContentAddressEchoMarker({
     geometry.setColors(colors);
     geometry.boundingSphere = new THREE.Sphere(
       new THREE.Vector3(),
-      ADDRESS_GEOMETRY_RADIUS,
+      CELL_OUTPOINT_LOCATOR_BOUND_RADIUS,
     );
-    const glowMaterial = makeEchoLineMaterial(
-      3.6,
+    const glowMaterial = makeLocatorLineMaterial(
+      4.4,
       0,
       THREE.AdditiveBlending,
     );
-    const coreMaterial = makeEchoLineMaterial(
-      0.78,
+    const coreMaterial = makeLocatorLineMaterial(
+      0.86,
       0,
       THREE.NormalBlending,
     );
-    const horizonGeometry = new THREE.PlaneGeometry(1.36, 1.36);
-    const horizonMaterial = new THREE.ShaderMaterial({
-      uniforms: {
-        uOpacity: { value: 0 },
-      },
-      transparent: true,
-      blending: THREE.NormalBlending,
-      depthTest: false,
-      depthWrite: false,
-      toneMapped: false,
-      vertexShader: /* glsl */ `
-        varying vec2 vUv;
-        void main() {
-          vUv = uv;
-          gl_Position = projectionMatrix * modelViewMatrix
-            * vec4(position, 1.0);
-        }
-      `,
-      fragmentShader: /* glsl */ `
-        precision highp float;
-        uniform float uOpacity;
-        varying vec2 vUv;
-        void main() {
-          float radius = length(vUv - 0.5);
-          float inner = smoothstep(0.22, 0.29, radius);
-          float outer = 1.0 - smoothstep(0.43, 0.5, radius);
-          float horizon = inner * outer;
-          if (horizon <= 0.001) discard;
-          gl_FragColor = vec4(0.002, 0.008, 0.022, horizon * uOpacity);
-        }
-      `,
-    });
-    const horizon = new THREE.Mesh(horizonGeometry, horizonMaterial);
     const glow = new LineSegments2(geometry, glowMaterial);
     const core = new LineSegments2(geometry, coreMaterial);
-    horizon.frustumCulled = false;
     glow.frustumCulled = false;
     core.frustumCulled = false;
-    horizon.renderOrder = 15;
     glow.renderOrder = 16;
     core.renderOrder = 17;
     return {
       geometry,
       glowMaterial,
       coreMaterial,
-      horizonGeometry,
-      horizonMaterial,
-      horizon,
       glow,
       core,
       segmentCount: positions.length / 6,
@@ -145,26 +102,36 @@ export default function CellContentAddressEchoMarker({
   const cameraQuaternion = useMemo(() => new THREE.Quaternion(), []);
   const parentQuaternion = useMemo(() => new THREE.Quaternion(), []);
   const parentScale = useMemo(() => new THREE.Vector3(1, 1, 1), []);
+  const encodedTilt = useMemo(() => (
+    new THREE.Quaternion().setFromAxisAngle(
+      new THREE.Vector3(0, 0, 1),
+      (Math.sin(encoding.phase) * 0.055),
+    )
+  ), [encoding.phase]);
+  const tiltQuaternion = useMemo(() => new THREE.Quaternion(), []);
+  const identityQuaternion = useMemo(() => new THREE.Quaternion(), []);
   const auditData = useMemo(() => ({
-    memoryIdentityProof: 'content',
-    memoryContentAddressEcho: 'idle',
-    memoryContentAddressEchoCell: cell.id,
-    memoryContentAddressEchoSequence: event.sequence,
-    memoryContentAddressEchoFingerprint: encoding.fingerprint,
-    memoryContentAddressEchoLanes: encoding.lanes
+    memoryIdentityProof: 'address',
+    memoryOutpointLocator: 'idle',
+    memoryOutpointLocatorCell: cell.id,
+    memoryOutpointLocatorSequence: event.sequence,
+    memoryOutpointLocatorFingerprint: encoding.fingerprint,
+    memoryOutpointLocatorIndex: encoding.index,
+    memoryOutpointLocatorIndexBytes: encoding.indexBytes.join(','),
+    memoryOutpointLocatorLanes: encoding.lanes
       .map((lane) => lane.toFixed(3))
       .join(','),
-    memoryContentAddressEchoPhase: encoding.phase.toFixed(3),
-    memoryContentAddressEchoSegments: built.segmentCount,
-    memoryContentAddressEchoProgress: 0,
-    memoryContentAddressEchoStrength: 0,
-    memoryContentAddressEchoRadiusPx: 0,
+    memoryOutpointLocatorSegments: built.segmentCount,
+    memoryOutpointLocatorProgress: 0,
+    memoryOutpointLocatorStrength: 0,
+    memoryOutpointLocatorRadiusPx: 0,
   }), [
     built.segmentCount,
     cell.id,
     encoding.fingerprint,
+    encoding.index,
+    encoding.indexBytes,
     encoding.lanes,
-    encoding.phase,
     event.sequence,
   ]);
 
@@ -176,14 +143,14 @@ export default function CellContentAddressEchoMarker({
   useFrame((state) => {
     const group = groupRef.current;
     if (!group || settledSequenceRef.current === event.sequence) return;
-    const frame = cellContentAddressEchoFrame(
+    const frame = cellOutpointLocatorEchoFrame(
       (performance.now() - event.emittedAtMs) / 1000,
       event.reducedMotion,
     );
-    group.userData.memoryContentAddressEcho = frame.state;
-    group.userData.memoryContentAddressEchoProgress = frame.progress;
-    group.userData.memoryContentAddressEchoStrength = frame.strength;
-    group.userData.memoryContentAddressEchoRadiusPx = frame.radiusPx;
+    group.userData.memoryOutpointLocator = frame.state;
+    group.userData.memoryOutpointLocatorProgress = frame.progress;
+    group.userData.memoryOutpointLocatorStrength = frame.strength;
+    group.userData.memoryOutpointLocatorRadiusPx = frame.radiusPx;
     const active = (frame.state === 'confirming' || frame.state === 'reduced')
       && frame.strength > 0.001;
     group.visible = active;
@@ -211,6 +178,14 @@ export default function CellContentAddressEchoMarker({
       .copy(parentQuaternion)
       .invert()
       .multiply(cameraQuaternion);
+    if (frame.state === 'confirming') {
+      const tiltStrength = 1 - Math.min(1, frame.progress / 0.74);
+      tiltQuaternion.copy(encodedTilt).slerp(
+        identityQuaternion,
+        1 - tiltStrength,
+      );
+      group.quaternion.multiply(tiltQuaternion);
+    }
     const distance = Math.max(0.001, worldPosition.distanceTo(cameraPosition));
     const worldPerCssPixel = 2 * distance / (
       Math.max(1, state.size.height)
@@ -222,19 +197,16 @@ export default function CellContentAddressEchoMarker({
         + Math.abs(parentScale.z)) / 3,
     );
     const localScale = frame.radiusPx * worldPerCssPixel
-      / (ADDRESS_GEOMETRY_RADIUS * inheritedScale);
+      / (CELL_OUTPOINT_LOCATOR_BOUND_RADIUS * inheritedScale);
     group.scale.setScalar(localScale);
-    built.glowMaterial.opacity = frame.strength * 0.13;
-    built.coreMaterial.opacity = frame.strength * 0.82;
-    built.horizonMaterial.uniforms.uOpacity.value = frame.strength * 0.48;
+    built.glowMaterial.opacity = frame.strength * 0.18;
+    built.coreMaterial.opacity = frame.strength * 0.9;
   });
 
   useEffect(() => () => {
     built.geometry.dispose();
     built.glowMaterial.dispose();
     built.coreMaterial.dispose();
-    built.horizonGeometry.dispose();
-    built.horizonMaterial.dispose();
   }, [built]);
 
   return (
@@ -244,7 +216,6 @@ export default function CellContentAddressEchoMarker({
       visible={false}
       userData={auditData}
     >
-      <primitive object={built.horizon} />
       <primitive object={built.glow} />
       <primitive object={built.core} />
     </group>

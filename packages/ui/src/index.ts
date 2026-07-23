@@ -99,8 +99,9 @@ export {
 } from './components/CellGalaxy';
 export type { BlockEventTrigger, CellBufferTargets } from './components/CellGalaxy';
 export type {
-  CellContentAddressEchoEvent,
-} from './components/CellContentAddressEchoMarker';
+  CellIdentityProofEvent,
+  CellIdentityProofKind,
+} from './components/CellIdentityProofMarker';
 export { default as CellShell } from './components/CellShell';
 export { default as CellOrganism } from './components/CellOrganism';
 export {

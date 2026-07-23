@@ -22,6 +22,18 @@ const CONTENT_ADDRESS_ECHO_SOURCE = resolve(
   process.cwd(),
   'src/components/CellContentAddressEchoMarker.tsx',
 );
+const OUTPOINT_LOCATOR_SOURCE = resolve(
+  process.cwd(),
+  'src/components/CellOutpointLocatorMarker.tsx',
+);
+const BIRTH_ANCHOR_SOURCE = resolve(
+  process.cwd(),
+  'src/components/CellBirthAnchorMarker.tsx',
+);
+const IDENTITY_PROOF_MARKER_SOURCE = resolve(
+  process.cwd(),
+  'src/components/CellIdentityProofMarker.tsx',
+);
 
 describe('CellGalaxy', () => {
   it('mounts inside an r3f Canvas without throwing', () => {
@@ -83,16 +95,31 @@ describe('CellGalaxy', () => {
     expect(source).toContain('recallStateAttr={cellRecallStateAttr}');
   });
 
-  it('mounts one exact content-address echo at the confirmed Cell', () => {
+  it('mounts one exact WHERE / WHAT / WHEN proof at the confirmed Cell', () => {
     const galaxySource = readFileSync(CELL_GALAXY_SOURCE, 'utf8');
     const echoSource = readFileSync(CONTENT_ADDRESS_ECHO_SOURCE, 'utf8');
+    const locatorSource = readFileSync(OUTPOINT_LOCATOR_SOURCE, 'utf8');
+    const anchorSource = readFileSync(BIRTH_ANCHOR_SOURCE, 'utf8');
+    const dispatcherSource = readFileSync(
+      IDENTITY_PROOF_MARKER_SOURCE,
+      'utf8',
+    );
 
-    expect(galaxySource).toContain('<CellContentAddressEchoMarker');
-    expect(galaxySource).toContain('cellsCache.cells.get(contentAddressEcho.cellId)');
+    expect(galaxySource).toContain('<CellIdentityProofMarker');
+    expect(galaxySource).toContain('cellsCache.cells.get(identityProof.cellId)');
+    expect(dispatcherSource).toContain("event.kind === 'address'");
+    expect(dispatcherSource).toContain("event.kind === 'anchor'");
+    expect(dispatcherSource).toContain('<CellContentAddressEchoMarker');
     expect(echoSource).toContain('deriveCellContentAddressSegments(encoding)');
     expect(echoSource).toContain('cellContentAddressEchoFrame(');
     expect(echoSource).toContain('memoryContentAddressEchoFingerprint');
     expect(echoSource).toContain('new LineSegments2(');
+    expect(locatorSource).toContain('deriveCellOutpointLocatorSegments(encoding)');
+    expect(locatorSource).toContain('cellOutpointLocatorEchoFrame(');
+    expect(locatorSource).toContain('memoryOutpointLocatorIndexBytes');
+    expect(anchorSource).toContain('deriveCellBirthAnchorSegments(encoding)');
+    expect(anchorSource).toContain('cellBirthAnchorEchoFrame(');
+    expect(anchorSource).toContain('memoryBirthAnchorTargetWorldY: CHAIN_Y');
   });
 
   it('mounts with localReceiveDelayS (receive-delayed reaction) without throwing', () => {

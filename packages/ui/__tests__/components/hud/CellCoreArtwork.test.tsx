@@ -41,6 +41,23 @@ vi.mock('../../../src/components/hud/CellContentAddressHalo', () => ({
     />
   ),
 }));
+vi.mock('../../../src/components/hud/CellIdentityProofReader', () => ({
+  default: ({ proof, reducedMotion, onReadResolved }: {
+    proof: 'address' | 'anchor' | null;
+    reducedMotion: boolean;
+    onReadResolved?: (kind: 'address' | 'anchor') => void;
+  }) => (
+    <button
+      type="button"
+      data-testid="identity-proof-reader"
+      data-proof={proof ?? ''}
+      data-reduced-motion={reducedMotion}
+      onClick={() => {
+        if (proof) onReadResolved?.(proof);
+      }}
+    />
+  ),
+}));
 
 import CellCoreArtwork, {
   CELL_CORE_DIRECTIONS,
@@ -95,7 +112,7 @@ describe('CellCoreArtwork', () => {
 
   it('threads readable field focus into the production A renderer', () => {
     const responseRef = { current: null };
-    const onContentAddressRead = vi.fn();
+    const onIdentityProofRead = vi.fn();
     const { getByTestId } = render(
       <CellCoreArtwork
         direction="relic"
@@ -122,7 +139,7 @@ describe('CellCoreArtwork', () => {
         }}
         traceResponseRef={responseRef}
         traceEvidenceFocusSourceId={2}
-        onContentAddressRead={onContentAddressRead}
+        onIdentityProofRead={onIdentityProofRead}
       />,
     );
     expect(getByTestId('relic').getAttribute('data-focus')).toBe('data');
@@ -134,6 +151,27 @@ describe('CellCoreArtwork', () => {
     expect(getByTestId('address-halo').getAttribute('data-reduced-motion'))
       .toBe('true');
     fireEvent.click(getByTestId('address-halo'));
-    expect(onContentAddressRead).toHaveBeenCalledOnce();
+    expect(onIdentityProofRead).toHaveBeenCalledWith('content');
+  });
+
+  it.each([
+    ['state', 'address'],
+    ['born', 'anchor'],
+  ] as const)('maps %s focus onto the %s proof reader', (focus, proof) => {
+    const onIdentityProofRead = vi.fn();
+    const { getByTestId } = render(
+      <CellCoreArtwork
+        direction="relic"
+        cell={CELL}
+        reducedMotion
+        focusField={focus}
+        onIdentityProofRead={onIdentityProofRead}
+      />,
+    );
+
+    const reader = getByTestId('identity-proof-reader');
+    expect(reader.getAttribute('data-proof')).toBe(proof);
+    fireEvent.click(reader);
+    expect(onIdentityProofRead).toHaveBeenCalledWith(proof);
   });
 });

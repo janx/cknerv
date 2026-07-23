@@ -10,9 +10,10 @@ describe('HudOverlay wiring', () => {
     expect(typeof HudOverlay).toBe('function');
   });
 
-  it('routes a resolved portrait address back to the matching galaxy Cell', () => {
-    expect(APP_SOURCE).toContain('onCellContentAddressRead={confirmCellContentAddress}');
-    expect(APP_SOURCE).toContain('contentAddressEcho={contentAddressEcho}');
+  it('routes each resolved identity proof back to the matching galaxy Cell', () => {
+    expect(APP_SOURCE).toContain('onCellIdentityProofRead={confirmCellIdentityProof}');
+    expect(APP_SOURCE).toContain('identityProof={cellIdentityProof}');
+    expect(APP_SOURCE).toContain('kind,');
     expect(APP_SOURCE).toContain('emittedAtMs: performance.now()');
   });
 });
