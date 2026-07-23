@@ -68,7 +68,11 @@ export default function CellCoreArtwork({
   return (
     <>
       {core}
-      <CellContentAddressHalo encoding={addressEncoding} />
+      <CellContentAddressHalo
+        encoding={addressEncoding}
+        contentFocused={focusField === 'data'}
+        reducedMotion={reducedMotion}
+      />
     </>
   );
 }

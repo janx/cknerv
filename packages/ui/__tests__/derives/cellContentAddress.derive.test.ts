@@ -3,7 +3,10 @@ import {
   CELL_CONTENT_ADDRESS_LANE_COUNT,
   CELL_CONTENT_ADDRESS_RADIUS_MAX,
   CELL_CONTENT_ADDRESS_RADIUS_MIN,
+  CELL_CONTENT_ADDRESS_READ_LANE_SECONDS,
   CELL_CONTENT_ADDRESS_TAU,
+  cellContentAddressLaneEnergy,
+  cellContentAddressReadFrame,
   deriveCellContentAddressEncoding,
   deriveCellContentAddressFacets,
 } from '../../src/derives/cellContentAddress.derive';
@@ -47,5 +50,47 @@ describe('Cell content-address visual identity', () => {
         && facet.halfSpan < CELL_CONTENT_ADDRESS_TAU / 16,
     )).toBe(true);
     expect(facets.some((facet) => facet.hasSpine)).toBe(true);
+  });
+
+  it('reads all eight lanes once, then holds the resolved identity', () => {
+    const idle = cellContentAddressReadFrame(0, false);
+    const reading = cellContentAddressReadFrame(
+      CELL_CONTENT_ADDRESS_READ_LANE_SECONDS * 3.5,
+      true,
+    );
+    const resolved = cellContentAddressReadFrame(
+      CELL_CONTENT_ADDRESS_READ_LANE_SECONDS
+        * CELL_CONTENT_ADDRESS_LANE_COUNT,
+      true,
+    );
+
+    expect(idle.state).toBe('idle');
+    expect(reading).toMatchObject({
+      state: 'reading',
+      activeLane: 3,
+      readCount: 3,
+    });
+    expect(reading.laneProgress).toBeCloseTo(0.5);
+    expect(resolved).toMatchObject({
+      state: 'resolved',
+      activeLane: null,
+      readCount: CELL_CONTENT_ADDRESS_LANE_COUNT,
+      progress: 1,
+    });
+  });
+
+  it('dims unread lanes, flashes the read head, and resolves reduced motion', () => {
+    const reading = cellContentAddressReadFrame(
+      CELL_CONTENT_ADDRESS_READ_LANE_SECONDS * 2.5,
+      true,
+    );
+    const reduced = cellContentAddressReadFrame(0, true, true);
+
+    expect(cellContentAddressLaneEnergy(reading, 1)).toBe(0.78);
+    expect(cellContentAddressLaneEnergy(reading, 2)).toBeGreaterThan(1.8);
+    expect(cellContentAddressLaneEnergy(reading, 3)).toBe(0.16);
+    expect(reduced.state).toBe('reduced');
+    expect(reduced.readCount).toBe(CELL_CONTENT_ADDRESS_LANE_COUNT);
+    expect(cellContentAddressLaneEnergy(reduced, 4)).toBe(1.16);
   });
 });

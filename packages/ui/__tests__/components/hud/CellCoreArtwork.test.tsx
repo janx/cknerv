@@ -25,8 +25,17 @@ vi.mock('../../../src/components/hud/InscribedBraidCore', () => ({
   default: () => <div data-testid="synthesis" />,
 }));
 vi.mock('../../../src/components/hud/CellContentAddressHalo', () => ({
-  default: ({ encoding }: { encoding: { fingerprint: string } }) => (
-    <div data-testid="address-halo" data-fingerprint={encoding.fingerprint} />
+  default: ({ encoding, contentFocused, reducedMotion }: {
+    encoding: { fingerprint: string };
+    contentFocused: boolean;
+    reducedMotion: boolean;
+  }) => (
+    <div
+      data-testid="address-halo"
+      data-fingerprint={encoding.fingerprint}
+      data-content-focused={contentFocused}
+      data-reduced-motion={reducedMotion}
+    />
   ),
 }));
 
@@ -115,5 +124,9 @@ describe('CellCoreArtwork', () => {
     expect(getByTestId('relic').getAttribute('data-trace-stage')).toBe('locked');
     expect(getByTestId('relic').getAttribute('data-response-ref')).toBe('true');
     expect(getByTestId('relic').getAttribute('data-evidence-focus-source')).toBe('2');
+    expect(getByTestId('address-halo').getAttribute('data-content-focused'))
+      .toBe('true');
+    expect(getByTestId('address-halo').getAttribute('data-reduced-motion'))
+      .toBe('true');
   });
 });
