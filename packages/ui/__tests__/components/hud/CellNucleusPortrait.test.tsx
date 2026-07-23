@@ -18,6 +18,10 @@ const ADDRESS_SOURCE = readFileSync(
   resolve(process.cwd(), 'src/components/hud/CellContentAddressHalo.tsx'),
   'utf8',
 );
+const PROOF_READER_SOURCE = readFileSync(
+  resolve(process.cwd(), 'src/components/hud/CellIdentityProofReader.tsx'),
+  'utf8',
+);
 
 describe('CellNucleusPortrait production language', () => {
   it('renders the selected core directly without the retired anatomy overlay', () => {
@@ -26,8 +30,14 @@ describe('CellNucleusPortrait production language', () => {
     expect(SOURCE).toContain('data-memory-portrait-address-fingerprint');
     expect(SOURCE).toContain('data-memory-portrait-address-lanes');
     expect(SOURCE).toContain('data-memory-portrait-address-focus');
+    expect(SOURCE).toContain('data-memory-portrait-proof-focus');
+    expect(SOURCE).toContain('data-memory-portrait-outpoint-index-bytes');
+    expect(SOURCE).toContain('data-memory-portrait-anchor-hex');
     expect(CORE_SOURCE).toContain('<CellContentAddressHalo');
+    expect(CORE_SOURCE).toContain('<CellIdentityProofReader');
     expect(CORE_SOURCE).toContain("contentFocused={focusField === 'data'}");
+    expect(CORE_SOURCE).toContain("focusField === 'state'");
+    expect(CORE_SOURCE).toContain("focusField === 'born'");
     expect(ADDRESS_SOURCE).toContain('deriveCellContentAddressSegments(');
     expect(ADDRESS_SOURCE).toContain('cellContentAddressReadFrame(');
     expect(ADDRESS_SOURCE).toContain('onReadResolvedRef.current?.()');
@@ -39,7 +49,12 @@ describe('CellNucleusPortrait production language', () => {
     expect(SOURCE).toContain('traceReadout={traceReadout}');
     expect(SOURCE).toContain('traceResponseRef={traceResponseRef}');
     expect(SOURCE).toContain('traceEvidenceFocusSourceId={traceEvidenceFocusSourceId}');
-    expect(SOURCE).toContain('onContentAddressRead={onContentAddressRead}');
+    expect(PROOF_READER_SOURCE).toContain('deriveCellOutpointLocatorSegments(');
+    expect(PROOF_READER_SOURCE).toContain('deriveCellBirthAnchorSegments(');
+    expect(PROOF_READER_SOURCE).toContain("onReadResolvedRef.current?.('address')");
+    expect(PROOF_READER_SOURCE).toContain("onReadResolvedRef.current?.('anchor')");
+    expect(PROOF_READER_SOURCE).toContain('settledRef.current = true');
+    expect(SOURCE).toContain('onIdentityProofRead={onIdentityProofRead}');
     expect(SOURCE).toContain('data-memory-portrait-state');
     expect(SOURCE).not.toContain('specimenMorphology(');
     expect(SOURCE).not.toContain('makeOrganelleMaterial');

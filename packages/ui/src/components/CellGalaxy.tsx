@@ -44,9 +44,9 @@ import {
   CELLS_Y,
   chainNodeWorldPosition,
 } from '../layout';
-import CellContentAddressEchoMarker, {
-  type CellContentAddressEchoEvent,
-} from './CellContentAddressEchoMarker';
+import CellIdentityProofMarker, {
+  type CellIdentityProofEvent,
+} from './CellIdentityProofMarker';
 
 /** Cyan palette for the structural chain anchor (CKB icosahedron).
  *  The chain anchor reads as "structural backbone / chain truth" and
@@ -112,9 +112,9 @@ interface CellGalaxyProps {
   /** Currently selected Cell id (`cell:<id>`). Kept separate from the network
    *  selection so both detail axes can remain open at the same time. */
   selectedCellId?: string | null;
-  /** One full-hash acknowledgement emitted after the portrait resolves all
-   *  eight content-address lanes. It never represents a chain mutation. */
-  contentAddressEcho?: CellContentAddressEchoEvent | null;
+  /** One WHERE / WHAT / WHEN acknowledgement emitted after the portrait
+   *  resolves the selected identity facet. It never mutates chain state. */
+  identityProof?: CellIdentityProofEvent | null;
   onSelect: (id: string | null) => void;
   /** Map of cell.id → most-recent scene-seconds flash time. Owned by the
    *  consumer so overlay layers (e.g. RCG's NeuralNetwork) can write into
@@ -688,9 +688,8 @@ function CellPicker({
  * Backdrop "galaxy" of cells (UTXOs) at the chain anchor y=CHAIN_Y.
  *
  * Chain-stream arrivals stay in shared buffers without per-Cell React objects.
- * The sole event object is a user-requested content-address confirmation,
- * mounted as one bounded marker. `cellHybridMaterial` renders the anchored
- * cell core/glow sprites.
+ * The sole event object is a user-requested identity proof, mounted as one
+ * bounded marker. `cellHybridMaterial` renders the anchored core/glow sprites.
  *
  * Far cells are one anchored hybrid Points sprite. The selected A language
  * expands the closest cells into one batched braid LOD without per-cell
@@ -702,7 +701,7 @@ export default function CellGalaxy({
   universeSeed,
   selectedId,
   selectedCellId = null,
-  contentAddressEcho = null,
+  identityProof = null,
   onSelect,
   cellFlashRef,
   flashDirtyRef,
@@ -718,8 +717,8 @@ export default function CellGalaxy({
   // attributes into the Points BufferGeometry each frame. Birth / death / tag
   // are reduced server-side in `simulator/src/dashboard/projections/cells.rs`.
   const cellsCache = useCellGalaxy();
-  const contentAddressEchoCell = contentAddressEcho
-    ? cellsCache.cells.get(contentAddressEcho.cellId) ?? null
+  const identityProofCell = identityProof
+    ? cellsCache.cells.get(identityProof.cellId) ?? null
     : null;
   const { effective: quality } = useQualityRuntime();
   const cellGalaxyMul = QUALITY_PRESETS[quality].cellGalaxyMul;
@@ -1259,10 +1258,10 @@ export default function CellGalaxy({
             selectedCellIdRef={selectedCellIdRef}
             hoveredCellIdRef={hoveredCellIdRef}
           />
-          {contentAddressEcho && contentAddressEchoCell ? (
-            <CellContentAddressEchoMarker
-              cell={contentAddressEchoCell}
-              event={contentAddressEcho}
+          {identityProof && identityProofCell ? (
+            <CellIdentityProofMarker
+              cell={identityProofCell}
+              event={identityProof}
             />
           ) : null}
         </ConsensusMemoryFocusScope>

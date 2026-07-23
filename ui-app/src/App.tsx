@@ -50,7 +50,8 @@ import {
   type ConsensusMemoryTraceReadout,
   type ConsensusMemoryRouteHopFocus,
   type ConsensusMemoryTargetResponse,
-  type CellContentAddressEchoEvent,
+  type CellIdentityProofEvent,
+  type CellIdentityProofKind,
 } from '@cknerv/ui';
 import {
   connectCellsStream,
@@ -159,10 +160,10 @@ export default function App({
   // independently.
   const [selectedCellId, setSelectedCellId] = useState<string | null>(null);
   const [selectedNetId, setSelectedNetId] = useState<string | null>(null);
-  const [contentAddressEcho, setContentAddressEcho] = useState<
-    CellContentAddressEchoEvent | null
+  const [cellIdentityProof, setCellIdentityProof] = useState<
+    CellIdentityProofEvent | null
   >(null);
-  const contentAddressEchoSequenceRef = useRef(0);
+  const cellIdentityProofSequenceRef = useRef(0);
   const [memoryRecall, dispatchMemoryRecall] = useReducer(
     cellMemoryRecallReducer,
     INITIAL_CELL_MEMORY_RECALL_STATE,
@@ -190,7 +191,7 @@ export default function App({
     if (id == null) return;
     if (id.startsWith(CELL_SELECTION_PREFIX)) {
       const nextCellId = Number(id.slice(CELL_SELECTION_PREFIX.length));
-      setContentAddressEcho((current) => (
+      setCellIdentityProof((current) => (
         current?.cellId === nextCellId ? current : null
       ));
       setSelectedCellId((current) => {
@@ -207,15 +208,17 @@ export default function App({
     }
     else setSelectedNetId(id);
   }, []);
-  const confirmCellContentAddress = useCallback((
+  const confirmCellIdentityProof = useCallback((
+    kind: CellIdentityProofKind,
     cellId: number,
     reducedMotion: boolean,
   ) => {
     if (selectedCellId !== `${CELL_SELECTION_PREFIX}${cellId}`) return;
-    contentAddressEchoSequenceRef.current += 1;
-    setContentAddressEcho({
+    cellIdentityProofSequenceRef.current += 1;
+    setCellIdentityProof({
+      kind,
       cellId,
-      sequence: contentAddressEchoSequenceRef.current,
+      sequence: cellIdentityProofSequenceRef.current,
       emittedAtMs: performance.now(),
       reducedMotion,
     });
@@ -601,12 +604,12 @@ export default function App({
         onTraceCellWrite={selectedOriginTraceable
           ? recallSelectedCellOrigin
           : undefined}
-        onCellContentAddressRead={confirmCellContentAddress}
+        onCellIdentityProofRead={confirmCellIdentityProof}
         selectedNode={selectedNode}
         selectedPeer={selectedPeer}
         onClearCell={() => {
           memoryRouteHopAnchorRef.current = null;
-          setContentAddressEcho(null);
+          setCellIdentityProof(null);
           setSelectedCellId(null);
           dispatchMemoryRecall({ type: 'cancel' });
         }}
@@ -627,7 +630,7 @@ export default function App({
           style={{ background: '#02030a' }}
           onPointerMissed={() => {
             memoryRouteHopAnchorRef.current = null;
-            setContentAddressEcho(null);
+            setCellIdentityProof(null);
             setSelectedCellId(null);
             setSelectedNetId(null);
             dispatchMemoryRecall({ type: 'cancel' });
@@ -671,7 +674,7 @@ export default function App({
             entryArrivalS={entryArrivalS}
             selectedId={selectedNetId}
             selectedCellId={selectedCellId}
-            contentAddressEcho={contentAddressEcho}
+            identityProof={cellIdentityProof}
             onSelect={handleSelect}
             cellFlashRef={cellFlashRef}
             flashDirtyRef={flashDirtyRef}

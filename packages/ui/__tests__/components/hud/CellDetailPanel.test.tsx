@@ -5,13 +5,15 @@ import type { ConsensusMemoryTraceReadout } from '../../../src/nerve/consensusMe
 
 // The embedded portrait spins a real WebGL context — stub it in jsdom.
 vi.mock('../../../src/components/hud/CellNucleusPortrait', () => ({
-  default: ({ cell, focusField, traceReadout, traceResponseRef, traceEvidenceFocusSourceId, onContentAddressRead }: {
+  default: ({ cell, focusField, traceReadout, traceResponseRef, traceEvidenceFocusSourceId, onIdentityProofRead }: {
     cell: { content_hash: string };
     focusField?: string | null;
     traceReadout?: { stage: string } | null;
     traceResponseRef?: { current: unknown };
     traceEvidenceFocusSourceId?: number | null;
-    onContentAddressRead?: () => void;
+    onIdentityProofRead?: (
+      kind: 'address' | 'content' | 'anchor',
+    ) => void;
   }) => (
     <div
       data-testid="portrait"
@@ -21,11 +23,14 @@ vi.mock('../../../src/components/hud/CellNucleusPortrait', () => ({
       data-response-ref={traceResponseRef ? 'true' : 'false'}
       data-evidence-focus-source={traceEvidenceFocusSourceId ?? ''}
     >
-      <button
-        type="button"
-        data-testid="content-address-read-resolved"
-        onClick={onContentAddressRead}
-      />
+      {(['address', 'content', 'anchor'] as const).map((kind) => (
+        <button
+          key={kind}
+          type="button"
+          data-testid={`${kind}-proof-read-resolved`}
+          onClick={() => onIdentityProofRead?.(kind)}
+        />
+      ))}
     </div>
   ),
   SCAN_PERIOD_S: 4.2,
@@ -151,24 +156,30 @@ describe('CellDetailPanel', () => {
     expect(getByTestId('portrait').getAttribute('data-focus')).toBe('state');
   });
 
-  it('reports the exact Cell only after the portrait resolves its address read', () => {
+  it('reports each exact Cell proof only after the portrait resolves it', () => {
     vi.stubGlobal('matchMedia', () => ({
       matches: true,
       addEventListener: () => {},
       removeEventListener: () => {},
     }));
-    const onContentAddressRead = vi.fn();
+    const onIdentityProofRead = vi.fn();
     const { getByRole, getByTestId } = render(
       <CellDetailPanel
         cell={base}
-        onContentAddressRead={onContentAddressRead}
+        onIdentityProofRead={onIdentityProofRead}
         onClose={() => {}}
       />,
     );
 
-    fireEvent.click(getByRole('button', { name: 'inspect content' }));
-    fireEvent.click(getByTestId('content-address-read-resolved'));
-    expect(onContentAddressRead).toHaveBeenCalledWith(base.id, true);
+    for (const kind of ['address', 'content', 'anchor'] as const) {
+      fireEvent.click(getByRole('button', { name: `inspect ${kind}` }));
+      fireEvent.click(getByTestId(`${kind}-proof-read-resolved`));
+    }
+    expect(onIdentityProofRead.mock.calls).toEqual([
+      ['address', base.id, true],
+      ['content', base.id, true],
+      ['anchor', base.id, true],
+    ]);
   });
 
   it('shows SPENT for a consumed cell without biological death language', () => {
