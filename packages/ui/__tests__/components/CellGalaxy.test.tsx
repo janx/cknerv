@@ -18,6 +18,10 @@ const CELL_GALAXY_SOURCE = resolve(
   process.cwd(),
   'src/components/CellGalaxy.tsx',
 );
+const CONTENT_ADDRESS_ECHO_SOURCE = resolve(
+  process.cwd(),
+  'src/components/CellContentAddressEchoMarker.tsx',
+);
 
 describe('CellGalaxy', () => {
   it('mounts inside an r3f Canvas without throwing', () => {
@@ -77,6 +81,18 @@ describe('CellGalaxy', () => {
     expect(source).toContain('<ConsensusMemoryFocusScope>');
     expect(source).toContain('recallAttr={cellRecallAttr}');
     expect(source).toContain('recallStateAttr={cellRecallStateAttr}');
+  });
+
+  it('mounts one exact content-address echo at the confirmed Cell', () => {
+    const galaxySource = readFileSync(CELL_GALAXY_SOURCE, 'utf8');
+    const echoSource = readFileSync(CONTENT_ADDRESS_ECHO_SOURCE, 'utf8');
+
+    expect(galaxySource).toContain('<CellContentAddressEchoMarker');
+    expect(galaxySource).toContain('cellsCache.cells.get(contentAddressEcho.cellId)');
+    expect(echoSource).toContain('deriveCellContentAddressSegments(encoding)');
+    expect(echoSource).toContain('cellContentAddressEchoFrame(');
+    expect(echoSource).toContain('memoryContentAddressEchoFingerprint');
+    expect(echoSource).toContain('new LineSegments2(');
   });
 
   it('mounts with localReceiveDelayS (receive-delayed reaction) without throwing', () => {

@@ -7,11 +7,10 @@ import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 import {
   cellContentAddressLaneEnergy,
   cellContentAddressReadFrame,
-  deriveCellContentAddressFacets,
+  deriveCellContentAddressSegments,
   type CellContentAddressEncoding,
 } from '../../derives/cellContentAddress.derive';
 
-const FACET_SEGMENTS = 5;
 const PORTRAIT_ADDRESS_SCALE = 0.92;
 
 function makeAddressLineMaterial(
@@ -40,15 +39,20 @@ export default function CellContentAddressHalo({
   encoding,
   contentFocused,
   reducedMotion,
+  onReadResolved,
 }: {
   encoding: CellContentAddressEncoding;
   contentFocused: boolean;
   reducedMotion: boolean;
+  onReadResolved?: () => void;
 }) {
   const size = useThree((state) => state.size);
   const invalidate = useThree((state) => state.invalidate);
   const groupRef = useRef<THREE.Group>(null);
   const focusStartedAtRef = useRef<number | null>(null);
+  const resolvedNotifiedRef = useRef(false);
+  const onReadResolvedRef = useRef(onReadResolved);
+  onReadResolvedRef.current = onReadResolved;
   const lastVisualFrameRef = useRef<{
     state: string;
     activeLane: number | null;
@@ -58,67 +62,17 @@ export default function CellContentAddressHalo({
     const positions: number[] = [];
     const colors: number[] = [];
     const laneBySegment: number[] = [];
-    const facets = deriveCellContentAddressFacets(encoding);
-    const pushSegment = (
-      from: readonly [number, number, number],
-      to: readonly [number, number, number],
-      color: readonly [number, number, number],
-      laneIndex: number,
-      energy = 1,
-    ) => {
-      positions.push(...from, ...to);
+    for (const segment of deriveCellContentAddressSegments(encoding)) {
+      positions.push(...segment.from, ...segment.to);
       colors.push(
-        color[0] * energy,
-        color[1] * energy,
-        color[2] * energy,
-        color[0] * energy,
-        color[1] * energy,
-        color[2] * energy,
+        segment.color[0] * segment.energy,
+        segment.color[1] * segment.energy,
+        segment.color[2] * segment.energy,
+        segment.color[0] * segment.energy,
+        segment.color[1] * segment.energy,
+        segment.color[2] * segment.energy,
       );
-      laneBySegment.push(laneIndex);
-    };
-
-    for (const facet of facets) {
-      for (let segment = 0; segment < FACET_SEGMENTS; segment += 1) {
-        const fromUnit = segment / FACET_SEGMENTS;
-        const toUnit = (segment + 1) / FACET_SEGMENTS;
-        const fromAngle = facet.angle
-          + THREE.MathUtils.lerp(-facet.halfSpan, facet.halfSpan, fromUnit);
-        const toAngle = facet.angle
-          + THREE.MathUtils.lerp(-facet.halfSpan, facet.halfSpan, toUnit);
-        pushSegment(
-          [
-            Math.cos(fromAngle) * facet.radius,
-            Math.sin(fromAngle) * facet.radius,
-            0,
-          ],
-          [
-            Math.cos(toAngle) * facet.radius,
-            Math.sin(toAngle) * facet.radius,
-            0,
-          ],
-          facet.color,
-          facet.index,
-        );
-      }
-      if (facet.hasSpine) {
-        const innerRadius = 0.38;
-        pushSegment(
-          [
-            Math.cos(facet.angle) * innerRadius,
-            Math.sin(facet.angle) * innerRadius,
-            0,
-          ],
-          [
-            Math.cos(facet.angle) * (facet.radius + 0.025),
-            Math.sin(facet.angle) * (facet.radius + 0.025),
-            0,
-          ],
-          facet.color,
-          facet.index,
-          0.72,
-        );
-      }
+      laneBySegment.push(segment.laneIndex);
     }
 
     const geometry = new LineSegmentsGeometry();
@@ -156,6 +110,7 @@ export default function CellContentAddressHalo({
 
   useEffect(() => {
     focusStartedAtRef.current = null;
+    resolvedNotifiedRef.current = false;
     lastVisualFrameRef.current = null;
     invalidate();
   }, [contentFocused, encoding, invalidate, reducedMotion]);
@@ -226,6 +181,14 @@ export default function CellContentAddressHalo({
         frame.readCount;
       groupRef.current.userData.memoryPortraitAddressReadProgress =
         frame.progress;
+    }
+    if (
+      contentFocused
+      && !resolvedNotifiedRef.current
+      && (frame.state === 'resolved' || frame.state === 'reduced')
+    ) {
+      resolvedNotifiedRef.current = true;
+      onReadResolvedRef.current?.();
     }
   });
 

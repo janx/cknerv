@@ -47,7 +47,7 @@ const MESH_RAIL_STYLE: CSSProperties = { position: 'absolute', top: 42, right: 1
 const MESH_ZONE_COL: CSSProperties = { display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'flex-end' };
 const PANEL_FLOW: CSSProperties = { position: 'relative' };
 
-export default function HudOverlay({ chain, peers, localNode, cellsStats, selectedCell, cellRecordsById, recentCellLinks, tracedCellWriteSeq, cellTraceSource, cellTraceReadout, cellTraceResponseRef, cellTraceEvidenceFocusSourceId, cellTraceEvidencePreviewSourceId, onCellTraceEvidenceFocusChange, cellTraceRouteHopFocus, onCellTraceRouteHopFocusChange, cellTraceRouteHopLock, onCellTraceRouteHopLockChange, onTraceCellWrite, selectedNode, selectedPeer, onClearSelection, onClearCell, onClearNet, backfill, build, colonyCount }: {
+export default function HudOverlay({ chain, peers, localNode, cellsStats, selectedCell, cellRecordsById, recentCellLinks, tracedCellWriteSeq, cellTraceSource, cellTraceReadout, cellTraceResponseRef, cellTraceEvidenceFocusSourceId, cellTraceEvidencePreviewSourceId, onCellTraceEvidenceFocusChange, cellTraceRouteHopFocus, onCellTraceRouteHopFocusChange, cellTraceRouteHopLock, onCellTraceRouteHopLockChange, onTraceCellWrite, onCellContentAddressRead, selectedNode, selectedPeer, onClearSelection, onClearCell, onClearNet, backfill, build, colonyCount }: {
   chain: ChainEntry; peers: Peer[]; localNode: ChainNode | undefined; cellsStats: CellsStats;
   selectedCell?: Cell | null;
   /** Current Cell projection records for exact route-hop inspection. */
@@ -70,6 +70,10 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats, select
     focus: ConsensusMemoryRouteHopFocus | null,
   ) => void;
   onTraceCellWrite?: (linkSeq: number) => void;
+  onCellContentAddressRead?: (
+    cellId: number,
+    reducedMotion: boolean,
+  ) => void;
   selectedNode?: ChainNode | null; selectedPeer?: Peer | null;
   /** Clear-all fallback (cell + net). Kept for the shared @cknerv/ui API. */
   onClearSelection?: () => void;
@@ -185,6 +189,7 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats, select
               traceRouteHopLock={cellTraceRouteHopLock}
               onTraceRouteHopLockChange={onCellTraceRouteHopLockChange}
               onTraceWrite={onTraceCellWrite}
+              onContentAddressRead={onCellContentAddressRead}
               onClose={clearCell}
               style={PANEL_FLOW}
             />

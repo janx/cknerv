@@ -34,6 +34,7 @@ export default function CellCoreArtwork({
   traceReadout = null,
   traceResponseRef,
   traceEvidenceFocusSourceId = null,
+  onContentAddressRead,
 }: {
   direction: CellCoreDirection;
   cell: Cell;
@@ -42,6 +43,7 @@ export default function CellCoreArtwork({
   traceReadout?: ConsensusMemoryTraceReadout | null;
   traceResponseRef?: ConsensusMemoryCellResponseRef;
   traceEvidenceFocusSourceId?: number | null;
+  onContentAddressRead?: () => void;
 }) {
   const addressEncoding = useMemo(
     () => deriveCellContentAddressEncoding(cell.content_hash),
@@ -72,6 +74,7 @@ export default function CellCoreArtwork({
         encoding={addressEncoding}
         contentFocused={focusField === 'data'}
         reducedMotion={reducedMotion}
+        onReadResolved={onContentAddressRead}
       />
     </>
   );

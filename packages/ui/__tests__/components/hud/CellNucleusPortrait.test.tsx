@@ -28,8 +28,9 @@ describe('CellNucleusPortrait production language', () => {
     expect(SOURCE).toContain('data-memory-portrait-address-focus');
     expect(CORE_SOURCE).toContain('<CellContentAddressHalo');
     expect(CORE_SOURCE).toContain("contentFocused={focusField === 'data'}");
-    expect(ADDRESS_SOURCE).toContain('deriveCellContentAddressFacets(');
+    expect(ADDRESS_SOURCE).toContain('deriveCellContentAddressSegments(');
     expect(ADDRESS_SOURCE).toContain('cellContentAddressReadFrame(');
+    expect(ADDRESS_SOURCE).toContain('onReadResolvedRef.current?.()');
     expect(ADDRESS_SOURCE).toContain('memoryPortraitAddressActiveLane');
     expect(ADDRESS_SOURCE).toContain('new LineSegments2(');
     expect(ADDRESS_SOURCE).toContain('THREE.AdditiveBlending');
@@ -38,6 +39,7 @@ describe('CellNucleusPortrait production language', () => {
     expect(SOURCE).toContain('traceReadout={traceReadout}');
     expect(SOURCE).toContain('traceResponseRef={traceResponseRef}');
     expect(SOURCE).toContain('traceEvidenceFocusSourceId={traceEvidenceFocusSourceId}');
+    expect(SOURCE).toContain('onContentAddressRead={onContentAddressRead}');
     expect(SOURCE).toContain('data-memory-portrait-state');
     expect(SOURCE).not.toContain('specimenMorphology(');
     expect(SOURCE).not.toContain('makeOrganelleMaterial');

@@ -11,6 +11,14 @@ export const CELL_CONTENT_ADDRESS_SPINE_THRESHOLD = 0.76;
 export const CELL_CONTENT_ADDRESS_CYAN = [0.18, 0.92, 1] as const;
 export const CELL_CONTENT_ADDRESS_VIOLET = [0.72, 0.42, 1] as const;
 export const CELL_CONTENT_ADDRESS_READ_LANE_SECONDS = 0.16;
+export const CELL_CONTENT_ADDRESS_FACET_SEGMENTS = 5;
+export const CELL_CONTENT_ADDRESS_SPINE_INNER_RADIUS = 0.38;
+export const CELL_CONTENT_ADDRESS_SPINE_OVERSHOOT = 0.025;
+export const CELL_CONTENT_ADDRESS_ECHO_DURATION_SECONDS = 1.18;
+export const CELL_CONTENT_ADDRESS_ECHO_REDUCED_SECONDS = 0.72;
+export const CELL_CONTENT_ADDRESS_ECHO_RADIUS_PX_MIN = 22;
+export const CELL_CONTENT_ADDRESS_ECHO_RADIUS_PX_MAX = 58;
+export const CELL_CONTENT_ADDRESS_ECHO_REDUCED_RADIUS_PX = 36;
 
 export type CellContentAddressLanes = readonly [
   number,
@@ -39,6 +47,14 @@ export interface CellContentAddressFacet {
   color: readonly [number, number, number];
 }
 
+export interface CellContentAddressSegment {
+  laneIndex: number;
+  from: readonly [number, number, number];
+  to: readonly [number, number, number];
+  color: readonly [number, number, number];
+  energy: number;
+}
+
 export type CellContentAddressReadState =
   | 'idle'
   | 'reading'
@@ -51,6 +67,19 @@ export interface CellContentAddressReadFrame {
   laneProgress: number;
   readCount: number;
   progress: number;
+}
+
+export type CellContentAddressEchoState =
+  | 'idle'
+  | 'confirming'
+  | 'reduced'
+  | 'settled';
+
+export interface CellContentAddressEchoFrame {
+  state: CellContentAddressEchoState;
+  progress: number;
+  strength: number;
+  radiusPx: number;
 }
 
 function unitHash(value: string): number {
@@ -112,6 +141,65 @@ export function deriveCellContentAddressFacets(
       mix(CELL_CONTENT_ADDRESS_CYAN[2], CELL_CONTENT_ADDRESS_VIOLET[2], value),
     ],
   }));
+}
+
+/**
+ * Shared code-native linework for portrait and spatial confirmation markers.
+ * Every rendered segment remains traceable to one of the eight full-hash lanes.
+ */
+export function deriveCellContentAddressSegments(
+  encoding: CellContentAddressEncoding,
+): CellContentAddressSegment[] {
+  const segments: CellContentAddressSegment[] = [];
+  for (const facet of deriveCellContentAddressFacets(encoding)) {
+    for (
+      let segment = 0;
+      segment < CELL_CONTENT_ADDRESS_FACET_SEGMENTS;
+      segment += 1
+    ) {
+      const fromUnit = segment / CELL_CONTENT_ADDRESS_FACET_SEGMENTS;
+      const toUnit = (segment + 1) / CELL_CONTENT_ADDRESS_FACET_SEGMENTS;
+      const fromAngle = facet.angle
+        + mix(-facet.halfSpan, facet.halfSpan, fromUnit);
+      const toAngle = facet.angle
+        + mix(-facet.halfSpan, facet.halfSpan, toUnit);
+      segments.push({
+        laneIndex: facet.index,
+        from: [
+          Math.cos(fromAngle) * facet.radius,
+          Math.sin(fromAngle) * facet.radius,
+          0,
+        ],
+        to: [
+          Math.cos(toAngle) * facet.radius,
+          Math.sin(toAngle) * facet.radius,
+          0,
+        ],
+        color: facet.color,
+        energy: 1,
+      });
+    }
+    if (facet.hasSpine) {
+      segments.push({
+        laneIndex: facet.index,
+        from: [
+          Math.cos(facet.angle) * CELL_CONTENT_ADDRESS_SPINE_INNER_RADIUS,
+          Math.sin(facet.angle) * CELL_CONTENT_ADDRESS_SPINE_INNER_RADIUS,
+          0,
+        ],
+        to: [
+          Math.cos(facet.angle)
+            * (facet.radius + CELL_CONTENT_ADDRESS_SPINE_OVERSHOOT),
+          Math.sin(facet.angle)
+            * (facet.radius + CELL_CONTENT_ADDRESS_SPINE_OVERSHOOT),
+          0,
+        ],
+        color: facet.color,
+        energy: 0.72,
+      });
+    }
+  }
+  return segments;
 }
 
 /** One bounded, non-looping content read driven by the portrait render clock. */
@@ -177,4 +265,65 @@ export function cellContentAddressLaneEnergy(
   if (laneIndex < frame.activeLane) return 0.78;
   if (laneIndex > frame.activeLane) return 0.16;
   return 1.18 + Math.sin(Math.PI * frame.laneProgress) * 0.72;
+}
+
+function smoothstep(edge0: number, edge1: number, value: number): number {
+  const unit = Math.max(0, Math.min(1, (value - edge0) / (edge1 - edge0)));
+  return unit * unit * (3 - 2 * unit);
+}
+
+/**
+ * One non-looping spatial acknowledgement emitted only after all address lanes
+ * resolve. Reduced motion exposes the complete signature without expansion.
+ */
+export function cellContentAddressEchoFrame(
+  elapsedSeconds: number,
+  reducedMotion = false,
+): CellContentAddressEchoFrame {
+  const elapsed = Number.isFinite(elapsedSeconds)
+    ? elapsedSeconds
+    : Number.POSITIVE_INFINITY;
+  if (elapsed < 0) {
+    return {
+      state: 'idle',
+      progress: 0,
+      strength: 0,
+      radiusPx: CELL_CONTENT_ADDRESS_ECHO_RADIUS_PX_MIN,
+    };
+  }
+  const duration = reducedMotion
+    ? CELL_CONTENT_ADDRESS_ECHO_REDUCED_SECONDS
+    : CELL_CONTENT_ADDRESS_ECHO_DURATION_SECONDS;
+  if (elapsed >= duration) {
+    return {
+      state: 'settled',
+      progress: 1,
+      strength: 0,
+      radiusPx: reducedMotion
+        ? CELL_CONTENT_ADDRESS_ECHO_REDUCED_RADIUS_PX
+        : CELL_CONTENT_ADDRESS_ECHO_RADIUS_PX_MAX,
+    };
+  }
+  if (reducedMotion) {
+    return {
+      state: 'reduced',
+      progress: 1,
+      strength: 0.76,
+      radiusPx: CELL_CONTENT_ADDRESS_ECHO_REDUCED_RADIUS_PX,
+    };
+  }
+  const progress = elapsed / duration;
+  const attack = smoothstep(0, 0.14, progress);
+  const release = 1 - smoothstep(0.48, 1, progress);
+  const expansion = 1 - ((1 - progress) ** 3);
+  return {
+    state: 'confirming',
+    progress,
+    strength: attack * release,
+    radiusPx: mix(
+      CELL_CONTENT_ADDRESS_ECHO_RADIUS_PX_MIN,
+      CELL_CONTENT_ADDRESS_ECHO_RADIUS_PX_MAX,
+      expansion,
+    ),
+  };
 }
