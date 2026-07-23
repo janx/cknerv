@@ -1,10 +1,12 @@
-import { lazy, Suspense } from 'react';
+import { lazy, Suspense, useMemo } from 'react';
 import type { Cell } from '@cknerv/types';
 import type { ConsensusBraidField } from '../../derives/consensusBraid.derive';
+import { deriveCellContentAddressEncoding } from '../../derives/cellContentAddress.derive';
 import type {
   ConsensusMemoryCellResponseRef,
   ConsensusMemoryTraceReadout,
 } from '../../nerve/consensusMemoryTrace';
+import CellContentAddressHalo from './CellContentAddressHalo';
 import ConsensusMemory from './ConsensusMemory';
 
 const QuantumLoomCore = lazy(() => import('./QuantumLoomCore'));
@@ -41,21 +43,19 @@ export default function CellCoreArtwork({
   traceResponseRef?: ConsensusMemoryCellResponseRef;
   traceEvidenceFocusSourceId?: number | null;
 }) {
-  if (direction === 'loom') {
-    return (
-      <Suspense fallback={null}>
-        <QuantumLoomCore cell={cell} reducedMotion={reducedMotion} />
-      </Suspense>
-    );
-  }
-  if (direction === 'synthesis') {
-    return (
-      <Suspense fallback={null}>
-        <InscribedBraidCore cell={cell} reducedMotion={reducedMotion} />
-      </Suspense>
-    );
-  }
-  return (
+  const addressEncoding = useMemo(
+    () => deriveCellContentAddressEncoding(cell.content_hash),
+    [cell.content_hash],
+  );
+  const core = direction === 'loom' ? (
+    <Suspense fallback={null}>
+      <QuantumLoomCore cell={cell} reducedMotion={reducedMotion} />
+    </Suspense>
+  ) : direction === 'synthesis' ? (
+    <Suspense fallback={null}>
+      <InscribedBraidCore cell={cell} reducedMotion={reducedMotion} />
+    </Suspense>
+  ) : (
     <ConsensusMemory
       cell={cell}
       reducedMotion={reducedMotion}
@@ -64,5 +64,11 @@ export default function CellCoreArtwork({
       traceResponseRef={traceResponseRef}
       traceEvidenceFocusSourceId={traceEvidenceFocusSourceId}
     />
+  );
+  return (
+    <>
+      {core}
+      <CellContentAddressHalo encoding={addressEncoding} />
+    </>
   );
 }

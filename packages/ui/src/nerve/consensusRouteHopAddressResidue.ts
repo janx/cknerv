@@ -1,28 +1,8 @@
-import { fnv1a } from '../geometry/edgeBezier';
-import { consensusMemoryEvidenceFingerprint } from '../derives/consensusMemoryEvidence.derive';
 import type { ConsensusRouteHopPulseFrame } from './consensusRouteHopPulse';
 
-export const CONSENSUS_ROUTE_HOP_ADDRESS_LANE_COUNT = 8;
 export const CONSENSUS_ROUTE_HOP_ADDRESS_SETTLED_STRENGTH = 0.48;
 export const CONSENSUS_ROUTE_HOP_ADDRESS_RESOLVE_START = 0.32;
 export const CONSENSUS_ROUTE_HOP_ADDRESS_RESOLVE_END = 0.72;
-
-export type ConsensusRouteHopAddressLanes = readonly [
-  number,
-  number,
-  number,
-  number,
-  number,
-  number,
-  number,
-  number,
-];
-
-export interface ConsensusRouteHopAddressEncoding {
-  fingerprint: string;
-  phase: number;
-  lanes: ConsensusRouteHopAddressLanes;
-}
 
 export type ConsensusRouteHopAddressResidueState =
   | 'hidden'
@@ -36,34 +16,9 @@ export interface ConsensusRouteHopAddressResidueFrame {
   state: ConsensusRouteHopAddressResidueState;
 }
 
-function unitHash(value: string): number {
-  return fnv1a(value) / 0xffff_ffff;
-}
-
 function smoothUnit(value: number): number {
   const t = Math.min(1, Math.max(0, value));
   return t * t * (3 - 2 * t);
-}
-
-/**
- * Eight shader lanes derived from the entire canonical content hash. Salting
- * each lane avoids treating a visible substring as the identity while keeping
- * every Cell's optical checksum stable across sessions and render quality.
- */
-export function deriveConsensusRouteHopAddressEncoding(
-  contentHash: string,
-): ConsensusRouteHopAddressEncoding {
-  const body = contentHash.trim().replace(/^0x/i, '').toLowerCase()
-    || 'unavailable';
-  const lanes = Array.from(
-    { length: CONSENSUS_ROUTE_HOP_ADDRESS_LANE_COUNT },
-    (_, index) => unitHash(`cell-address:${index}:${body}`),
-  ) as unknown as ConsensusRouteHopAddressLanes;
-  return {
-    fingerprint: consensusMemoryEvidenceFingerprint(contentHash),
-    phase: unitHash(`cell-address:phase:${body}`) * Math.PI * 2,
-    lanes,
-  };
 }
 
 /**

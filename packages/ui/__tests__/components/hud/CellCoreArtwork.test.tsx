@@ -24,6 +24,11 @@ vi.mock('../../../src/components/hud/QuantumLoomCore', () => ({
 vi.mock('../../../src/components/hud/InscribedBraidCore', () => ({
   default: () => <div data-testid="synthesis" />,
 }));
+vi.mock('../../../src/components/hud/CellContentAddressHalo', () => ({
+  default: ({ encoding }: { encoding: { fingerprint: string } }) => (
+    <div data-testid="address-halo" data-fingerprint={encoding.fingerprint} />
+  ),
+}));
 
 import CellCoreArtwork, {
   CELL_CORE_DIRECTIONS,
@@ -64,7 +69,7 @@ describe('CellCoreArtwork', () => {
   });
 
   it.each(CELL_CORE_DIRECTIONS)('routes $id to its dedicated renderer', async ({ id }) => {
-    const { findByTestId } = render(
+    const { findByTestId, getByTestId } = render(
       <CellCoreArtwork
         direction={id as CellCoreDirection}
         cell={CELL}
@@ -72,6 +77,8 @@ describe('CellCoreArtwork', () => {
       />,
     );
     expect(await findByTestId(id)).toBeTruthy();
+    expect(getByTestId('address-halo').getAttribute('data-fingerprint'))
+      .toBe('2222222·2222');
   });
 
   it('threads readable field focus into the production A renderer', () => {

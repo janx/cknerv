@@ -2,9 +2,11 @@
 // record. The portrait renders the chosen code-native core directly; no legacy
 // specimen/anatomy graph is layered behind it. `focusField` is the readable A
 // grammar used by CellDetailPanel's scan and row selection.
+import { useMemo } from 'react';
 import { Canvas } from '@react-three/fiber';
 import type { Cell } from '@cknerv/types';
 import type { ConsensusBraidField } from '../../derives/consensusBraid.derive';
+import { deriveCellContentAddressEncoding } from '../../derives/cellContentAddress.derive';
 import type {
   ConsensusMemoryCellResponseRef,
   ConsensusMemoryTraceReadout,
@@ -73,10 +75,20 @@ export default function CellNucleusPortrait({
   /** Compatibility input for callers that share a scan epoch with the panel. */
   scanEpochMs?: number;
 }) {
+  const addressEncoding = useMemo(
+    () => deriveCellContentAddressEncoding(cell.content_hash),
+    [cell.content_hash],
+  );
   return (
     <div
       data-memory-portrait-state={traceReadout?.stage ?? 'idle'}
       data-memory-evidence-focus-source={traceEvidenceFocusSourceId ?? undefined}
+      data-memory-portrait-address="resolved"
+      data-memory-portrait-address-fingerprint={addressEncoding.fingerprint}
+      data-memory-portrait-address-lanes={addressEncoding.lanes
+        .map((lane) => lane.toFixed(3))
+        .join(',')}
+      data-memory-portrait-address-phase={addressEncoding.phase.toFixed(3)}
       style={{ width: '100%', aspectRatio: '1 / 1', pointerEvents: 'none' }}
     >
       <Canvas
