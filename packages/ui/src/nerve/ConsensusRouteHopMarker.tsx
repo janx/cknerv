@@ -35,9 +35,9 @@ import {
 import {
   CONSENSUS_ROUTE_HOP_PULSE_MS,
   CONSENSUS_ROUTE_HOP_PULSE_SECONDS,
-  advanceConsensusMemoryRouteHopPulse,
   consensusMemoryRouteHopPulseFrame,
   consensusMemoryRouteHopPulseKey,
+  type ConsensusMemoryRouteHopPulseClock,
 } from './consensusRouteHopPulse';
 import {
   consensusMemoryTraceFocusStrength,
@@ -104,11 +104,6 @@ interface GlyphLatch {
   cellId: number;
   elapsedSeconds: number;
   durationSeconds: number;
-}
-
-interface GlyphPulse {
-  key: string;
-  elapsedSeconds: number;
 }
 
 interface SourceHandoffAudit {
@@ -707,6 +702,7 @@ export default function ConsensusRouteHopMarker({
   focus,
   lockedHop,
   focusedSourceId = null,
+  pulseClockRef,
   sourceHandoffRef,
   sourceHandoffTimeRef,
   onAgreementPreviewChange,
@@ -715,6 +711,7 @@ export default function ConsensusRouteHopMarker({
   focus: ConsensusMemoryTraceFocus | null;
   lockedHop?: ConsensusMemoryRouteHopFocus | null;
   focusedSourceId?: number | null;
+  pulseClockRef: RefObject<ConsensusMemoryRouteHopPulseClock | null>;
   sourceHandoffRef?: RefObject<ConsensusMemorySourceHandoff | null>;
   sourceHandoffTimeRef?: RefObject<number>;
   onAgreementPreviewChange?: (sourceId: number | null) => void;
@@ -727,7 +724,6 @@ export default function ConsensusRouteHopMarker({
   const pointsRef = useRef<THREE.Points>(null);
   const chipRef = useRef<HTMLDivElement>(null);
   const motionRef = useRef<GlyphMotion | null>(null);
-  const pulseRef = useRef<GlyphPulse | null>(null);
   const sourceHandoffAuditRef = useRef<SourceHandoffAudit | null>(null);
   const [inspectedAgreementSourceId, setInspectedAgreementSourceId] =
     useState<number | null>(null);
@@ -785,7 +781,6 @@ export default function ConsensusRouteHopMarker({
     if (!spatial || !presentation) {
       geometry.setDrawRange(0, 0);
       motionRef.current = null;
-      pulseRef.current = null;
       clearTargetLatch(material);
       clearFocusPulse(material);
       return;
@@ -801,20 +796,13 @@ export default function ConsensusRouteHopMarker({
     const destinationPulseKey = consensusMemoryRouteHopPulseKey(
       destination.spatial.focus,
     );
-    if (
-      destinationPulseKey
-      && pulseRef.current?.key !== destinationPulseKey
-    ) {
-      pulseRef.current = {
-        key: destinationPulseKey,
-        elapsedSeconds: 0,
-      };
-    }
-    const pulseFrame = consensusMemoryRouteHopPulseFrame(
-      pulseRef.current?.elapsedSeconds
-        ?? CONSENSUS_ROUTE_HOP_PULSE_SECONDS,
-      reducedMotion,
-    );
+    const pulseClock = pulseClockRef.current;
+    const pulseFrame = pulseClock?.key === destinationPulseKey
+      ? pulseClock.frame
+      : consensusMemoryRouteHopPulseFrame(
+        CONSENSUS_ROUTE_HOP_PULSE_SECONDS,
+        reducedMotion,
+      );
     material.uniforms.uFocusPulseProgress.value = pulseFrame.progress;
     material.uniforms.uFocusPulseStrength.value = pulseFrame.strength;
 
@@ -884,6 +872,7 @@ export default function ConsensusRouteHopMarker({
     reducedMotion,
     renderStrength,
     spatial,
+    pulseClockRef,
   ]);
 
   useEffect(() => () => {
@@ -896,15 +885,15 @@ export default function ConsensusRouteHopMarker({
     const motion = motionRef.current;
     if (!group || !motion) return;
 
-    const pulse = pulseRef.current;
-    if (pulse) {
-      pulse.elapsedSeconds = advanceConsensusMemoryRouteHopPulse(
-        pulse.elapsedSeconds,
-        rawDeltaSeconds,
-      );
-    }
-    const pulseFrame = consensusMemoryRouteHopPulseFrame(
-      pulse?.elapsedSeconds ?? CONSENSUS_ROUTE_HOP_PULSE_SECONDS,
+    const motionPulseKey = consensusMemoryRouteHopPulseKey(
+      motion.destination.spatial.focus,
+    );
+    const candidatePulseClock = pulseClockRef.current;
+    const pulseClock = candidatePulseClock?.key === motionPulseKey
+      ? candidatePulseClock
+      : null;
+    const pulseFrame = pulseClock?.frame ?? consensusMemoryRouteHopPulseFrame(
+      CONSENSUS_ROUTE_HOP_PULSE_SECONDS,
       reducedMotion,
     );
     material.uniforms.uFocusPulseProgress.value = pulseFrame.progress;
@@ -1088,7 +1077,7 @@ export default function ConsensusRouteHopMarker({
         ? Math.min(1, segment.elapsedSeconds / segment.durationSeconds).toFixed(3)
         : '1.000';
       chipRef.current.dataset.memoryRouteHopPulse = pulseFrame.state;
-      chipRef.current.dataset.memoryRouteHopPulseKey = pulse?.key ?? 'none';
+      chipRef.current.dataset.memoryRouteHopPulseKey = pulseClock?.key ?? 'none';
       chipRef.current.dataset.memoryRouteHopPulseProgress =
         pulseFrame.progress.toFixed(3);
       chipRef.current.dataset.memoryRouteHopPulseStrength =

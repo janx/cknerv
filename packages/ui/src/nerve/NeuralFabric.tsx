@@ -1,5 +1,6 @@
 // Persistent renderer for the spatial consensus graph + separate per-frame
-// layers for live writes and explicitly recalled historical routes.
+// layers for live writes, explicitly recalled historical routes, and the
+// bounded optical acknowledgement of one click-locked route Cell.
 //
 // Each logical edge is a quadratic Bezier with a perpendicular xz
 // offset on the control point (deterministic per edge), so the
@@ -66,6 +67,10 @@ const MAX_ACTIVE_SEGMENTS = 6000;
 /** Recall routes use their own layer so distance compensation cannot thicken
  * live protocol writes that happen behind an explicit historical inspection. */
 const MAX_MEMORY_SEGMENTS = 6000;
+/** One lock response can touch at most two route edges. */
+const ROUTE_HOP_PULSE_SAMPLES_PER_HOP = 24;
+const MAX_ROUTE_HOP_PULSE_SEGMENTS = ROUTE_HOP_PULSE_SAMPLES_PER_HOP * 2;
+const ROUTE_HOP_PULSE_WIDTH_SCALE = 1.3;
 
 // Line widths in px (now the `cell.fabricWidth` / `cell.activeWidth`
 // tweaks, defaults 2.5 / 3.4): visibly substantial crisp lines that read
@@ -86,17 +91,19 @@ const MAX_MEMORY_SEGMENTS = 6000;
 export interface ActiveHop {
   fromCellId: number;
   toCellId: number;
-  /** Historical recall is rendered separately from live write traffic. */
-  mode: 'live' | 'memory';
+  /** Historical recall and lock response do not share live-write buffers. */
+  mode: 'live' | 'memory' | 'lock';
   /** Wavefront position in [0, 1] along the hop's Bezier. */
   frontT: number;
+  /** Optional travel direction without swapping the route-order Bezier. */
+  direction?: 1 | -1;
   /** Overall brightness multiplier for this hop. Older trail hops
    *  get smaller values so the cascade reads as a fading wake. */
   brightness: number;
   /** Exponential falloff behind frontT. Recall afterimages lower this so the
    *  full proven route remains legible; live wavefronts use the tight default. */
   tailDecay?: number;
-  /** Per-transaction packet identity, shared with head glyph and write seal. */
+  /** Route chroma identity; lock echoes retain the recalled route's colour. */
   color: Vec3;
 }
 
@@ -115,6 +122,8 @@ export interface NeuralFabricHandles {
   pushActiveHop(hop: ActiveHop, cells: ReadonlyMap<number, Cell>): void;
   /** Commit both live and recalled activity buffers at end of frame. */
   flushActive(): void;
+  /** Commit the raw-clock lock response without touching sim-clock traffic. */
+  flushRouteHopPulse(): void;
   /** Diff a new neighbour graph into the persistent edge map. New
    *  edges enter growing phase (bornAt=now); missing edges enter
    *  dying phase (dyingAt=now); stable edges are untouched. Does
@@ -410,6 +419,14 @@ export default function NeuralFabric({ onReady }: NeuralFabricProps) {
     () => makeFatLineLayer(MAX_MEMORY_SEGMENTS, LIVE.cell.activeWidth, 'additive'),
     [],
   );
+  const routeHopPulse = useMemo(
+    () => makeFatLineLayer(
+      MAX_ROUTE_HOP_PULSE_SEGMENTS,
+      LIVE.cell.activeWidth * ROUTE_HOP_PULSE_WIDTH_SCALE,
+      'additive',
+    ),
+    [],
+  );
 
   // Persistent across handle re-creations (onReady callback identity
   // changes whenever the orchestrator's cellsCache.cells reference
@@ -449,7 +466,14 @@ export default function NeuralFabric({ onReady }: NeuralFabricProps) {
     fabric.material.resolution.set(size.width, size.height);
     active.material.resolution.set(size.width, size.height);
     memory.material.resolution.set(size.width, size.height);
-  }, [size, fabric.material, active.material, memory.material]);
+    routeHopPulse.material.resolution.set(size.width, size.height);
+  }, [
+    size,
+    fabric.material,
+    active.material,
+    memory.material,
+    routeHopPulse.material,
+  ]);
 
   useEffect(() => () => {
     fabric.geometry.dispose();
@@ -458,7 +482,9 @@ export default function NeuralFabric({ onReady }: NeuralFabricProps) {
     active.material.dispose();
     memory.geometry.dispose();
     memory.material.dispose();
-  }, [fabric, active, memory]);
+    routeHopPulse.geometry.dispose();
+    routeHopPulse.material.dispose();
+  }, [fabric, active, memory, routeHopPulse]);
 
   useEffect(() => {
     // Reused 3-element scratch buffers — the hot-loop fabric/active
@@ -497,6 +523,9 @@ export default function NeuralFabric({ onReady }: NeuralFabricProps) {
       setMemoryRouteWidthScale(scale) {
         const safeScale = Number.isFinite(scale) && scale > 0 ? scale : 1;
         memory.material.linewidth = LIVE.cell.activeWidth * safeScale;
+        routeHopPulse.material.linewidth = LIVE.cell.activeWidth
+          * ROUTE_HOP_PULSE_WIDTH_SCALE
+          * safeScale;
       },
       setFabric(graph, cells, now) {
         const states = edgeStatesRef.current;
@@ -820,28 +849,41 @@ export default function NeuralFabric({ onReady }: NeuralFabricProps) {
         // brightness peaks at the wavefront (frontT) and decays
         // exponentially behind it; segments AHEAD of the wavefront
         // are skipped entirely so the lit region grows smoothly.
-        const layer = hop.mode === 'memory' ? memory : active;
-        let prevX = a.pos_seed[0], prevY = a.pos_seed[1], prevZ = a.pos_seed[2];
-        for (let i = 1; i <= activeSamplesPerHop; i++) {
-          const t = i / activeSamplesPerHop;
+        const layer = hop.mode === 'memory'
+          ? memory
+          : hop.mode === 'lock'
+            ? routeHopPulse
+            : active;
+        const direction = hop.direction ?? 1;
+        const samplesPerHop = hop.mode === 'lock'
+          ? ROUTE_HOP_PULSE_SAMPLES_PER_HOP
+          : activeSamplesPerHop;
+        let prevX = direction === 1 ? a.pos_seed[0] : c.pos_seed[0];
+        let prevY = direction === 1 ? a.pos_seed[1] : c.pos_seed[1];
+        let prevZ = direction === 1 ? a.pos_seed[2] : c.pos_seed[2];
+        for (let i = 1; i <= samplesPerHop; i++) {
+          const travelT = i / samplesPerHop;
+          const curveT = direction === 1 ? travelT : 1 - travelT;
           bezierAtInto(
             sample,
             a.pos_seed[0], a.pos_seed[1], a.pos_seed[2],
             ctrl[0], ctrl[1], ctrl[2],
             c.pos_seed[0], c.pos_seed[1], c.pos_seed[2],
-            t,
+            curveT,
           );
-          // Mid-t of this sub-segment.
-          const tMid = (t + (i - 1) / activeSamplesPerHop) * 0.5;
-          if (tMid <= hop.frontT) {
-            const distBehind = hop.frontT - tMid;
+          // Midpoint in travel space, independent of Bezier sampling direction.
+          const travelMid = (
+            travelT + (i - 1) / samplesPerHop
+          ) * 0.5;
+          if (travelMid <= hop.frontT) {
+            const distBehind = hop.frontT - travelMid;
             // Sharper decay = tighter wavefront. 7.5 makes the lit
             // band extend roughly 0.4 of one hop behind the front,
             // which reads as a definite wave rather than a static line.
             const tail = Math.exp(-distBehind * (hop.tailDecay ?? 7.5));
-            // Preserve the packet's warm chroma instead of letting additive
-            // energy rail every channel to white. The separate packet-head
-            // glyph remains pale-hot and carries the focal brightness.
+            // Preserve route chroma instead of letting additive energy rail
+            // every channel to white. Live packets retain a separate pale-hot
+            // head; lock echoes deliberately remain a headless phase sheath.
             const intensity = consensusChromaIntensity(hop.brightness * tail);
             const r = hop.color[0] * LIVE.cell.activeColorR * intensity;
             const g = hop.color[1] * LIVE.cell.activeColorG * intensity;
@@ -857,15 +899,32 @@ export default function NeuralFabric({ onReady }: NeuralFabricProps) {
         active.count = 0;
         memory.count = 0;
       },
+      flushRouteHopPulse() {
+        if (
+          routeHopPulse.count === 0
+          && routeHopPulse.geometry.instanceCount === 0
+        ) return;
+        commitLayer(routeHopPulse);
+        routeHopPulse.count = 0;
+      },
     };
     onReady(handles);
-  }, [fabric, active, memory, onReady, fabricSamplesPerEdge, activeSamplesPerHop]);
+  }, [
+    fabric,
+    active,
+    memory,
+    routeHopPulse,
+    onReady,
+    fabricSamplesPerEdge,
+    activeSamplesPerHop,
+  ]);
 
   return (
     <>
       <primitive object={fabric.mesh} />
       <primitive object={active.mesh} />
       <primitive object={memory.mesh} />
+      <primitive object={routeHopPulse.mesh} />
     </>
   );
 }

@@ -5,6 +5,8 @@ export const CONSENSUS_ROUTE_HOP_PULSE_SECONDS = 0.48;
 export const CONSENSUS_ROUTE_HOP_PULSE_MS =
   CONSENSUS_ROUTE_HOP_PULSE_SECONDS * 1_000;
 export const CONSENSUS_ROUTE_HOP_PULSE_MAX_FRAME_SECONDS = 0.1;
+/** Publish before default-priority marker/material frame consumers. */
+export const CONSENSUS_ROUTE_HOP_PULSE_FRAME_PRIORITY = -1;
 
 export type ConsensusRouteHopPulseState = 'active' | 'settled' | 'reduced';
 
@@ -13,6 +15,26 @@ export interface ConsensusRouteHopPulseFrame {
   strength: number;
   state: ConsensusRouteHopPulseState;
 }
+
+/** One raw-frame clock shared by the Cell glyph and its real adjacent edges. */
+export interface ConsensusMemoryRouteHopPulseClock {
+  key: string;
+  focus: ConsensusMemoryRouteHopFocus;
+  elapsedSeconds: number;
+  frame: ConsensusRouteHopPulseFrame;
+}
+
+export interface ConsensusMemoryRouteHopPulseEdge {
+  segmentIndex: number;
+  fromCellId: number;
+  toCellId: number;
+  /** Travel direction on the route-order Bezier; -1 keeps its geometry intact. */
+  direction: 1 | -1;
+  frontT: number;
+}
+
+/** The inward edge wave reaches the locked Cell before the optical tail ends. */
+export const CONSENSUS_ROUTE_HOP_EDGE_ARRIVAL_PROGRESS = 0.62;
 
 /** Stable identity shared by every visual surface bound to one exact lock. */
 export function consensusMemoryRouteHopPulseKey(
@@ -81,4 +103,89 @@ export function consensusMemoryRouteHopPulseFrame(
     strength: attack * decay,
     state: 'active',
   };
+}
+
+/**
+ * Advance one lock response independently of the simulation clock. A changed
+ * canonical key starts a fresh response; clearing the lock clears the clock.
+ */
+export function advanceConsensusMemoryRouteHopPulseClock(
+  current: ConsensusMemoryRouteHopPulseClock | null,
+  focus: ConsensusMemoryRouteHopFocus | null,
+  rawDeltaSeconds: number,
+  reducedMotion = false,
+): ConsensusMemoryRouteHopPulseClock | null {
+  const key = consensusMemoryRouteHopPulseKey(focus);
+  if (!focus || !key) return null;
+  const settledState: ConsensusRouteHopPulseState = reducedMotion
+    ? 'reduced'
+    : 'settled';
+  if (
+    current?.key === key
+    && current.elapsedSeconds >= CONSENSUS_ROUTE_HOP_PULSE_SECONDS
+    && current.frame.state === settledState
+  ) return current;
+  if (reducedMotion) {
+    return {
+      key,
+      focus,
+      elapsedSeconds: CONSENSUS_ROUTE_HOP_PULSE_SECONDS,
+      frame: consensusMemoryRouteHopPulseFrame(0, true),
+    };
+  }
+  const elapsedSeconds = advanceConsensusMemoryRouteHopPulse(
+    current?.key === key ? current.elapsedSeconds : 0,
+    rawDeltaSeconds,
+  );
+  return {
+    key,
+    focus,
+    elapsedSeconds,
+    frame: consensusMemoryRouteHopPulseFrame(elapsedSeconds),
+  };
+}
+
+/**
+ * Plan only the one or two retained route edges touching the locked Cell.
+ * Both wavefronts travel inward, so a transit Cell reads as address agreement
+ * converging from its immediate route neighbours rather than a new packet.
+ */
+export function deriveConsensusMemoryRouteHopPulseEdges(
+  focus: ConsensusMemoryRouteHopFocus | null,
+  path: readonly number[],
+  frame: ConsensusRouteHopPulseFrame,
+): ConsensusMemoryRouteHopPulseEdge[] {
+  if (
+    !focus
+    || frame.state !== 'active'
+    || frame.strength <= 0.001
+    || path.length < 2
+    || path[0] !== focus.sourceId
+    || path.at(-1) !== focus.targetCellId
+    || path[focus.hopIndex] !== focus.cellId
+  ) return [];
+
+  const frontT = smoothstep01(
+    frame.progress / CONSENSUS_ROUTE_HOP_EDGE_ARRIVAL_PROGRESS,
+  );
+  const edges: ConsensusMemoryRouteHopPulseEdge[] = [];
+  if (focus.hopIndex > 0) {
+    edges.push({
+      segmentIndex: focus.hopIndex - 1,
+      fromCellId: path[focus.hopIndex - 1],
+      toCellId: focus.cellId,
+      direction: 1,
+      frontT,
+    });
+  }
+  if (focus.hopIndex < path.length - 1) {
+    edges.push({
+      segmentIndex: focus.hopIndex,
+      fromCellId: focus.cellId,
+      toCellId: path[focus.hopIndex + 1],
+      direction: -1,
+      frontT,
+    });
+  }
+  return edges;
 }

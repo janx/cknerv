@@ -12,7 +12,7 @@
 //      and stamps a write seal when it lands on the terminal.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useThree } from '@react-three/fiber';
+import { useFrame, useThree } from '@react-three/fiber';
 import { useCellGalaxy } from '../hooks/cellGalaxyContext';
 import { useConsensusMemoryFocusRef } from '../hooks/consensusMemoryFocusContext';
 import { useReducedMotion } from '../components/hud/useReducedMotion';
@@ -87,6 +87,12 @@ import {
   deriveConsensusMemoryDistancePresentation,
 } from './consensusMemoryDistancePresentation';
 import { deriveConsensusMemoryAperture } from './consensusMemoryAperture';
+import {
+  CONSENSUS_ROUTE_HOP_PULSE_FRAME_PRIORITY,
+  advanceConsensusMemoryRouteHopPulseClock,
+  deriveConsensusMemoryRouteHopPulseEdges,
+  type ConsensusMemoryRouteHopPulseClock,
+} from './consensusRouteHopPulse';
 
 const SPIKE_POOL_CAPACITY = 1024;
 
@@ -119,6 +125,9 @@ const MEMORY_RESONANCE_TAIL_DECAY = 0.65;
 /** Lift inspected edges above recall afterimage without becoming a write flash. */
 const MEMORY_ROUTE_HOP_INSPECT_BRIGHT = 2.05;
 const MEMORY_ROUTE_HOP_INSPECT_TAIL_DECAY = 0.18;
+/** Narrow address echo converging on a click-locked route Cell. */
+const MEMORY_ROUTE_HOP_LOCK_PULSE_BRIGHT = 2.8;
+const MEMORY_ROUTE_HOP_LOCK_PULSE_TAIL_DECAY = 6.5;
 /** Brief route-wide glow used only while one verified source replaces another. */
 const MEMORY_SOURCE_HANDOFF_FLARE_BRIGHT = 1.18;
 const MEMORY_SOURCE_HANDOFF_FLARE_TAIL_DECAY = 0.42;
@@ -697,6 +706,77 @@ export default function NeuralNetwork({
 
   // NeuralFabric hands us imperative draw handles via onReady.
   const fabricHandlesRef = useRef<NeuralFabricHandles | null>(null);
+  const renderedTraceRouteHopLock = consensusMemoryTraceVisualRouteHopFocus(
+    traceFocus,
+    traceDisplayRouteHopLock,
+  );
+  const routeHopPulseRef =
+    useRef<ConsensusMemoryRouteHopPulseClock | null>(null);
+
+  // Lock acknowledgement is an input response, so it keeps raw wall-clock
+  // time even when the replay simulation is paused. Its own tiny layer means
+  // clearing it cannot overwrite live writes or recalled-route afterimages.
+  // Negative priority publishes the clock before default-priority consumers.
+  useFrame((_, rawDeltaSeconds) => {
+    const pulseClock = advanceConsensusMemoryRouteHopPulseClock(
+      routeHopPulseRef.current,
+      renderedTraceRouteHopLock,
+      rawDeltaSeconds,
+      reducedMotion,
+    );
+    routeHopPulseRef.current = pulseClock;
+
+    const handles = fabricHandlesRef.current;
+    const currentFocus = traceFocusRef.current;
+    if (
+      handles
+      && pulseClock?.frame.state === 'active'
+      && currentFocus
+    ) {
+      const verified = validateConsensusMemoryRouteHopFocus(
+        currentFocus,
+        pulseClock.focus,
+      );
+      const source = verified
+        ? currentFocus.sources.find(({ id }) => id === verified.sourceId)
+        : null;
+      const route = source && verified
+        ? consensusMemoryTraceRouteForTarget(source, verified.targetCellId)
+        : null;
+      const focusStrength = consensusMemoryTraceFocusStrength(
+        currentFocus,
+        simClock.elapsedSec,
+      );
+      if (verified && route && focusStrength > 0.001) {
+        const cells = cellsCache.cells;
+        const adjacency = graphRef.current.adjacency;
+        const distancePresentation = traceDistancePresentationRef.current;
+        for (const edge of deriveConsensusMemoryRouteHopPulseEdges(
+          verified,
+          route.path,
+          pulseClock.frame,
+        )) {
+          if (!cells.has(edge.fromCellId) || !cells.has(edge.toCellId)) continue;
+          if (!adjacency.get(edge.fromCellId)?.has(edge.toCellId)) continue;
+          handles.pushActiveHop({
+            fromCellId: edge.fromCellId,
+            toCellId: edge.toCellId,
+            mode: 'lock',
+            frontT: edge.frontT,
+            direction: edge.direction,
+            brightness: MEMORY_ROUTE_HOP_LOCK_PULSE_BRIGHT
+              * pulseClock.frame.strength
+              * focusStrength
+              * distancePresentation.routeEnergyScale,
+            tailDecay: MEMORY_ROUTE_HOP_LOCK_PULSE_TAIL_DECAY,
+            color: route.color,
+          }, cells);
+        }
+      }
+    }
+    handles?.flushRouteHopPulse();
+  }, CONSENSUS_ROUTE_HOP_PULSE_FRAME_PRIORITY);
+
   const onFabricReady = useCallback((handles: NeuralFabricHandles) => {
     fabricHandlesRef.current = handles;
     // Re-derive immediately in case cellsCache had already populated
@@ -1170,11 +1250,6 @@ export default function NeuralNetwork({
     spikePool.endFrame(state.size.height, state.viewport.dpr ?? 1);
   });
 
-  const renderedTraceRouteHopLock = consensusMemoryTraceVisualRouteHopFocus(
-    traceFocus,
-    traceDisplayRouteHopLock,
-  );
-
   return (
     <>
       <NeuralFabric onReady={onFabricReady} />
@@ -1203,6 +1278,7 @@ export default function NeuralNetwork({
         focus={traceFocus}
         lockedHop={renderedTraceRouteHopLock}
         focusedSourceId={traceDisplayEvidenceSourceId}
+        pulseClockRef={routeHopPulseRef}
         sourceHandoffRef={sourceHandoffRef}
         sourceHandoffTimeRef={sourceHandoffTimeRef}
         onAgreementPreviewChange={onTraceAgreementPreviewChange}

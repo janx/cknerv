@@ -71,17 +71,39 @@ describe('NeuralFabric living-mesh handles', () => {
     expect(SRC).toContain('hop.tailDecay ?? 7.5');
   });
 
+  it('can reverse wave travel without changing the route-order Bezier', () => {
+    expect(SRC).toContain('direction?: 1 | -1');
+    expect(SRC).toContain('const direction = hop.direction ?? 1');
+    expect(SRC).toContain(
+      'const curveT = direction === 1 ? travelT : 1 - travelT',
+    );
+    expect(SRC).toContain('if (travelMid <= hop.frontT)');
+    expect(SRC).toContain('const distBehind = hop.frontT - travelMid');
+  });
+
   it('isolates distance-compensated memory weight from live writes', () => {
     expect(SRC).toContain('MAX_MEMORY_SEGMENTS');
-    expect(SRC).toContain("mode: 'live' | 'memory'");
+    expect(SRC).toContain("mode: 'live' | 'memory' | 'lock'");
     expect(SRC).toContain('setMemoryRouteWidthScale');
-    expect(SRC).toContain("hop.mode === 'memory' ? memory : active");
+    expect(SRC).toContain("const layer = hop.mode === 'memory'");
+    expect(SRC).toContain(': active;');
     expect(SRC).toContain(
       'memory.material.linewidth = LIVE.cell.activeWidth * safeScale',
     );
     expect(SRC).not.toContain(
       'active.material.linewidth = LIVE.cell.activeWidth * safeScale',
     );
+  });
+
+  it('keeps the raw-clock lock response out of sim-clock activity buffers', () => {
+    expect(SRC).toContain('MAX_ROUTE_HOP_PULSE_SEGMENTS');
+    expect(SRC).toContain('ROUTE_HOP_PULSE_SAMPLES_PER_HOP = 24');
+    expect(SRC).toContain("const samplesPerHop = hop.mode === 'lock'");
+    expect(SRC).toContain('flushRouteHopPulse');
+    expect(SRC).toContain("hop.mode === 'lock'");
+    expect(SRC).toContain('routeHopPulse.geometry.instanceCount === 0');
+    expect(SRC).toContain('commitLayer(routeHopPulse)');
+    expect(SRC).toContain('routeHopPulse.count = 0');
   });
 
   it('clears passive noise only around exact recalled-route apertures', () => {
