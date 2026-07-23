@@ -40,6 +40,12 @@ import {
   type ConsensusMemoryRouteHopPulseClock,
 } from './consensusRouteHopPulse';
 import {
+  consensusRouteHopAddressResidueFrame,
+  deriveConsensusRouteHopAddressEncoding,
+  type ConsensusRouteHopAddressEncoding,
+  type ConsensusRouteHopAddressResidueFrame,
+} from './consensusRouteHopAddressResidue';
+import {
   consensusMemoryTraceFocusStrength,
   consensusMemoryCellResponse,
   classifyConsensusMemoryRouteHopTransition,
@@ -286,6 +292,38 @@ function clearFocusPulse(material: THREE.ShaderMaterial): void {
   material.uniforms.uFocusPulseStrength.value = 0;
 }
 
+function applyAddressEncoding(
+  material: THREE.ShaderMaterial,
+  encoding: ConsensusRouteHopAddressEncoding,
+): void {
+  material.uniforms.uAddressLaneA.value.set(
+    encoding.lanes[0],
+    encoding.lanes[1],
+    encoding.lanes[2],
+    encoding.lanes[3],
+  );
+  material.uniforms.uAddressLaneB.value.set(
+    encoding.lanes[4],
+    encoding.lanes[5],
+    encoding.lanes[6],
+    encoding.lanes[7],
+  );
+  material.uniforms.uAddressPhase.value = encoding.phase;
+}
+
+function applyAddressResidueFrame(
+  material: THREE.ShaderMaterial,
+  frame: ConsensusRouteHopAddressResidueFrame,
+): void {
+  material.uniforms.uAddressReveal.value = frame.reveal;
+  material.uniforms.uAddressStrength.value = frame.strength;
+}
+
+function clearAddressResidue(material: THREE.ShaderMaterial): void {
+  material.uniforms.uAddressReveal.value = 0;
+  material.uniforms.uAddressStrength.value = 0;
+}
+
 function makeGlyphMaterial(): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
     uniforms: {
@@ -297,6 +335,11 @@ function makeGlyphMaterial(): THREE.ShaderMaterial {
       uLatchProgress: { value: 0 },
       uFocusPulseProgress: { value: 1 },
       uFocusPulseStrength: { value: 0 },
+      uAddressLaneA: { value: new THREE.Vector4() },
+      uAddressLaneB: { value: new THREE.Vector4() },
+      uAddressPhase: { value: 0 },
+      uAddressReveal: { value: 0 },
+      uAddressStrength: { value: 0 },
       uAgreementCount: { value: 0 },
       uAgreementAngle0: { value: 0 },
       uAgreementAngle1: { value: 0 },
@@ -347,6 +390,11 @@ function makeGlyphMaterial(): THREE.ShaderMaterial {
       uniform float uLatchProgress;
       uniform float uFocusPulseProgress;
       uniform float uFocusPulseStrength;
+      uniform vec4 uAddressLaneA;
+      uniform vec4 uAddressLaneB;
+      uniform float uAddressPhase;
+      uniform float uAddressReveal;
+      uniform float uAddressStrength;
       uniform float uAgreementCount;
       uniform float uAgreementAngle0;
       uniform float uAgreementAngle1;
@@ -390,6 +438,16 @@ function makeGlyphMaterial(): THREE.ShaderMaterial {
       float angularTick(float angle, float centre) {
         float delta = abs(atan(sin(angle - centre), cos(angle - centre)));
         return exp(-pow(delta / 0.090, 2.0));
+      }
+      float addressLane(float index) {
+        if (index < 0.5) return uAddressLaneA.x;
+        if (index < 1.5) return uAddressLaneA.y;
+        if (index < 2.5) return uAddressLaneA.z;
+        if (index < 3.5) return uAddressLaneA.w;
+        if (index < 4.5) return uAddressLaneB.x;
+        if (index < 5.5) return uAddressLaneB.y;
+        if (index < 6.5) return uAddressLaneB.z;
+        return uAddressLaneB.w;
       }
 
       void main() {
@@ -650,6 +708,61 @@ function makeGlyphMaterial(): THREE.ShaderMaterial {
           + carrierSecondary * carrierWeight
           + targetSecondary * targetWeight;
 
+        // The locked Cell's complete content_hash resolves into eight
+        // prismatic checksum cuts on its inner horizon. The cuts alter an
+        // existing optical boundary instead of adding a plate or shell; the
+        // surrounding role glyph still says source / carrier / record.
+        float addressAngle = mix(
+          uAddressPhase,
+          uRouteAngle + 0.54,
+          carrierWeight
+        );
+        vec2 addressP = rotate2d(addressAngle) * p;
+        float addressTheta = atan(addressP.y, addressP.x);
+        float addressCoord = (
+          addressTheta + 3.14159265
+        ) / 6.28318530 * 8.0;
+        float addressIndex = clamp(floor(addressCoord), 0.0, 7.0);
+        float addressValue = addressLane(addressIndex);
+        float addressLocal = abs(fract(addressCoord) - 0.5);
+        float addressHalfSpan = mix(0.18, 0.38, addressValue);
+        float addressSectorGate = 1.0 - smoothstep(
+          addressHalfSpan,
+          addressHalfSpan + 0.060,
+          addressLocal
+        );
+        float addressRadius = mix(0.465, 0.535, addressValue);
+        float addressRadiusDistance = abs(r - addressRadius);
+        float addressFacet = (
+          stroke(addressRadiusDistance, 0.014)
+          + stroke(addressRadiusDistance, 0.036) * 0.16
+        ) * addressSectorGate;
+        float addressSpineDistance = addressLocal * 0.78539816 * r;
+        float addressSpine = (
+          stroke(addressSpineDistance, 0.010)
+          + stroke(addressSpineDistance, 0.026) * 0.12
+        )
+          * smoothstep(0.33, 0.38, r)
+          * (
+            1.0 - smoothstep(
+              addressRadius + 0.015,
+              addressRadius + 0.045,
+              r
+            )
+          )
+          * step(0.76, addressValue);
+        float addressResolveAt = abs(addressIndex - 3.5) / 3.5;
+        float addressResolve = smoothstep(
+          addressResolveAt * 0.70 - 0.10,
+          addressResolveAt * 0.70 + 0.12,
+          uAddressReveal
+        ) * uAddressReveal;
+        float addressGlyph = (addressFacet + addressSpine * 0.72)
+          * addressResolve
+          * uAddressStrength;
+        glyph += addressGlyph * mix(0.92, 1.08, carrierWeight);
+        secondaryMask += addressGlyph * 0.88;
+
         // A lock acknowledgement is one sparse address echo around whichever
         // semantic glyph is active. It changes emphasis, never role meaning.
         float focusPulseProgress = clamp(uFocusPulseProgress, 0.0, 1.0);
@@ -685,6 +798,16 @@ function makeGlyphMaterial(): THREE.ShaderMaterial {
           baseColor,
           agreementColor,
           clamp(agreementVisible * 0.88, 0.0, 1.0)
+        );
+        vec3 addressColor = mix(
+          vec3(0.18, 0.92, 1.0),
+          vec3(0.72, 0.42, 1.0),
+          addressValue
+        );
+        color = mix(
+          color,
+          addressColor,
+          clamp(addressGlyph * 1.36, 0.0, 0.84)
         );
         vec3 focusEchoColor = mix(uPrimary, uSecondary, 0.58);
         color = mix(
@@ -735,6 +858,12 @@ export default function ConsensusRouteHopMarker({
     cellsCache.cells,
   ), [cellsCache.cells, focus, lockedHop]);
   const pulseKey = consensusMemoryRouteHopPulseKey(spatial?.focus ?? null);
+  const addressEncoding = useMemo(
+    () => spatial
+      ? deriveConsensusRouteHopAddressEncoding(spatial.cell.content_hash)
+      : null,
+    [spatial],
+  );
   const agreementPlan = useMemo(
     () => spatial
       ? deriveConsensusRouteHopAgreementPlan(focus, spatial.cell)
@@ -778,11 +907,12 @@ export default function ConsensusRouteHopMarker({
   }, [onAgreementPreviewChange]);
 
   useLayoutEffect(() => {
-    if (!spatial || !presentation) {
+    if (!spatial || !presentation || !addressEncoding) {
       geometry.setDrawRange(0, 0);
       motionRef.current = null;
       clearTargetLatch(material);
       clearFocusPulse(material);
+      clearAddressResidue(material);
       return;
     }
     const group = groupRef.current;
@@ -803,8 +933,14 @@ export default function ConsensusRouteHopMarker({
         CONSENSUS_ROUTE_HOP_PULSE_SECONDS,
         reducedMotion,
       );
+    const addressFrame = consensusRouteHopAddressResidueFrame(
+      pulseFrame,
+      pulseClock?.key === destinationPulseKey,
+    );
     material.uniforms.uFocusPulseProgress.value = pulseFrame.progress;
     material.uniforms.uFocusPulseStrength.value = pulseFrame.strength;
+    applyAddressEncoding(material, addressEncoding);
+    applyAddressResidueFrame(material, addressFrame);
 
     if (!motion) {
       motionRef.current = {
@@ -865,6 +1001,7 @@ export default function ConsensusRouteHopMarker({
     }
     motion.destination = destination;
   }, [
+    addressEncoding,
     agreementPlan,
     geometry,
     material,
@@ -896,8 +1033,13 @@ export default function ConsensusRouteHopMarker({
       CONSENSUS_ROUTE_HOP_PULSE_SECONDS,
       reducedMotion,
     );
+    const addressFrame = consensusRouteHopAddressResidueFrame(
+      pulseFrame,
+      !!pulseClock,
+    );
     material.uniforms.uFocusPulseProgress.value = pulseFrame.progress;
     material.uniforms.uFocusPulseStrength.value = pulseFrame.strength;
+    applyAddressResidueFrame(material, addressFrame);
 
     let remainingSeconds = Math.min(Math.max(rawDeltaSeconds, 0), 0.1);
     while (motion.segment && remainingSeconds > 0) {
@@ -1082,6 +1224,11 @@ export default function ConsensusRouteHopMarker({
         pulseFrame.progress.toFixed(3);
       chipRef.current.dataset.memoryRouteHopPulseStrength =
         pulseFrame.strength.toFixed(3);
+      chipRef.current.dataset.memoryRouteHopAddress = addressFrame.state;
+      chipRef.current.dataset.memoryRouteHopAddressReveal =
+        addressFrame.reveal.toFixed(3);
+      chipRef.current.dataset.memoryRouteHopAddressStrength =
+        addressFrame.strength.toFixed(3);
       chipRef.current.dataset.memoryRouteHopAngle = tangent
         ? material.uniforms.uRouteAngle.value.toFixed(3)
         : 'none';
@@ -1422,6 +1569,20 @@ export default function ConsensusRouteHopMarker({
           data-memory-route-hop-pulse-key={pulseKey ?? undefined}
           data-memory-route-hop-pulse-progress={reducedMotion ? '1.000' : '0.000'}
           data-memory-route-hop-pulse-strength="0.000"
+          data-memory-route-hop-address="hidden"
+          data-memory-route-hop-address-fingerprint={
+            addressEncoding?.fingerprint
+          }
+          data-memory-route-hop-address-lanes={
+            addressEncoding?.lanes
+              .map((lane) => lane.toFixed(3))
+              .join(',')
+          }
+          data-memory-route-hop-address-phase={
+            addressEncoding?.phase.toFixed(3)
+          }
+          data-memory-route-hop-address-reveal="0.000"
+          data-memory-route-hop-address-strength="0.000"
           data-memory-route-hop-source-handoff="settled"
           data-memory-route-hop-source-handoff-progress="1.000"
           data-memory-route-hop-source-handoff-observed-frames="0"
