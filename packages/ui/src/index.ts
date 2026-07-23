@@ -98,6 +98,9 @@ export {
   BLOCK_HIGHLIGHT_DELAY_S,
 } from './components/CellGalaxy';
 export type { BlockEventTrigger, CellBufferTargets } from './components/CellGalaxy';
+export type {
+  CellContentAddressEchoEvent,
+} from './components/CellContentAddressEchoMarker';
 export { default as CellShell } from './components/CellShell';
 export { default as CellOrganism } from './components/CellOrganism';
 export {

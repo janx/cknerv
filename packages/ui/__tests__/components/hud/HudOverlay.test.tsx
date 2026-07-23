@@ -4,11 +4,12 @@ import type { ChainEntry, Peer, ChainNode, Cell, CellLink } from '@cknerv/types'
 
 // The embedded portrait spins a real WebGL context — stub it in jsdom.
 vi.mock('../../../src/components/hud/CellNucleusPortrait', () => ({
-  default: ({ cell, traceReadout, traceResponseRef, traceEvidenceFocusSourceId }: {
+  default: ({ cell, traceReadout, traceResponseRef, traceEvidenceFocusSourceId, onContentAddressRead }: {
     cell: { content_hash: string };
     traceReadout?: { stage: string } | null;
     traceResponseRef?: { current: unknown };
     traceEvidenceFocusSourceId?: number | null;
+    onContentAddressRead?: () => void;
   }) => (
     <div
       data-testid="portrait"
@@ -16,7 +17,13 @@ vi.mock('../../../src/components/hud/CellNucleusPortrait', () => ({
       data-trace-stage={traceReadout?.stage ?? ''}
       data-response-ref={traceResponseRef ? 'true' : 'false'}
       data-evidence-focus-source={traceEvidenceFocusSourceId ?? ''}
-    />
+    >
+      <button
+        type="button"
+        data-testid="content-address-read-resolved"
+        onClick={onContentAddressRead}
+      />
+    </div>
   ),
   SCAN_PERIOD_S: 4.2,
 }));
@@ -65,6 +72,34 @@ describe('HudOverlay', () => {
     const t = container.textContent ?? '';
     expect(t).toContain('CAPACITY'); // CELL detail (galaxy axis) is present…
     expect(t).toContain('OBSERVER'); // …AND the NODE detail (network axis) at the same time
+  });
+
+  it('forwards a resolved content address from the selected Cell detail', () => {
+    vi.stubGlobal('matchMedia', () => ({
+      matches: true,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }));
+    const mockCell: Cell = {
+      id: 7, born_at_ms: 1, death_at_ms: null, birth_block: 16204800, tag: 'wallet',
+      pos_seed: [0, 0, 0], out_point: { tx_hash: `0x${'ab'.repeat(32)}`, index: 0 },
+      capacity: 6_100_000_000, data_hex: '0x', content_hash: `0x${'cd'.repeat(32)}`,
+    };
+    const onCellContentAddressRead = vi.fn();
+    const { getByRole, getByTestId } = render(
+      <HudOverlay
+        chain={chain}
+        peers={peers}
+        localNode={localNode}
+        cellsStats={cellsStats}
+        selectedCell={mockCell}
+        onCellContentAddressRead={onCellContentAddressRead}
+      />,
+    );
+
+    fireEvent.click(getByRole('button', { name: 'inspect content' }));
+    fireEvent.click(getByTestId('content-address-read-resolved'));
+    expect(onCellContentAddressRead).toHaveBeenCalledWith(mockCell.id, true);
   });
 
   it('keeps the selected Cell detail first in the narrow scroll rail', () => {

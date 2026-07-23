@@ -62,6 +62,7 @@ export default function CellDetailPanel({
   traceRouteHopLock = null,
   onTraceRouteHopLockChange,
   onTraceWrite,
+  onContentAddressRead,
   onClose,
   style,
 }: {
@@ -85,6 +86,7 @@ export default function CellDetailPanel({
     focus: ConsensusMemoryRouteHopFocus | null,
   ) => void;
   onTraceWrite?: (linkSeq: number) => void;
+  onContentAddressRead?: (cellId: number, reducedMotion: boolean) => void;
   onClose: () => void;
   style?: CSSProperties;
 }) {
@@ -229,6 +231,9 @@ export default function CellDetailPanel({
           traceReadout={traceReadout}
           traceResponseRef={traceResponseRef}
           traceEvidenceFocusSourceId={traceEvidenceFocusSourceId}
+          onContentAddressRead={onContentAddressRead
+            ? () => onContentAddressRead(cell.id, reduced)
+            : undefined}
         />
         <span style={cornerBracket('tl')} /><span style={cornerBracket('tr')} />
         <span style={cornerBracket('bl')} /><span style={cornerBracket('br')} />

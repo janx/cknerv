@@ -50,6 +50,7 @@ import {
   type ConsensusMemoryTraceReadout,
   type ConsensusMemoryRouteHopFocus,
   type ConsensusMemoryTargetResponse,
+  type CellContentAddressEchoEvent,
 } from '@cknerv/ui';
 import {
   connectCellsStream,
@@ -158,6 +159,10 @@ export default function App({
   // independently.
   const [selectedCellId, setSelectedCellId] = useState<string | null>(null);
   const [selectedNetId, setSelectedNetId] = useState<string | null>(null);
+  const [contentAddressEcho, setContentAddressEcho] = useState<
+    CellContentAddressEchoEvent | null
+  >(null);
+  const contentAddressEchoSequenceRef = useRef(0);
   const [memoryRecall, dispatchMemoryRecall] = useReducer(
     cellMemoryRecallReducer,
     INITIAL_CELL_MEMORY_RECALL_STATE,
@@ -184,6 +189,10 @@ export default function App({
   const handleSelect = useCallback((id: string | null) => {
     if (id == null) return;
     if (id.startsWith(CELL_SELECTION_PREFIX)) {
+      const nextCellId = Number(id.slice(CELL_SELECTION_PREFIX.length));
+      setContentAddressEcho((current) => (
+        current?.cellId === nextCellId ? current : null
+      ));
       setSelectedCellId((current) => {
         if (current !== id) memoryRouteHopAnchorRef.current = null;
         return id;
@@ -198,6 +207,19 @@ export default function App({
     }
     else setSelectedNetId(id);
   }, []);
+  const confirmCellContentAddress = useCallback((
+    cellId: number,
+    reducedMotion: boolean,
+  ) => {
+    if (selectedCellId !== `${CELL_SELECTION_PREFIX}${cellId}`) return;
+    contentAddressEchoSequenceRef.current += 1;
+    setContentAddressEcho({
+      cellId,
+      sequence: contentAddressEchoSequenceRef.current,
+      emittedAtMs: performance.now(),
+      reducedMotion,
+    });
+  }, [selectedCellId]);
 
   // Subscribe once on mount. Each stream opens with `?since=<bootstrap
   // revision>` so the server replays missed deltas (or re-snapshots) with
@@ -579,10 +601,12 @@ export default function App({
         onTraceCellWrite={selectedOriginTraceable
           ? recallSelectedCellOrigin
           : undefined}
+        onCellContentAddressRead={confirmCellContentAddress}
         selectedNode={selectedNode}
         selectedPeer={selectedPeer}
         onClearCell={() => {
           memoryRouteHopAnchorRef.current = null;
+          setContentAddressEcho(null);
           setSelectedCellId(null);
           dispatchMemoryRecall({ type: 'cancel' });
         }}
@@ -603,6 +627,7 @@ export default function App({
           style={{ background: '#02030a' }}
           onPointerMissed={() => {
             memoryRouteHopAnchorRef.current = null;
+            setContentAddressEcho(null);
             setSelectedCellId(null);
             setSelectedNetId(null);
             dispatchMemoryRecall({ type: 'cancel' });
@@ -646,6 +671,7 @@ export default function App({
             entryArrivalS={entryArrivalS}
             selectedId={selectedNetId}
             selectedCellId={selectedCellId}
+            contentAddressEcho={contentAddressEcho}
             onSelect={handleSelect}
             cellFlashRef={cellFlashRef}
             flashDirtyRef={flashDirtyRef}

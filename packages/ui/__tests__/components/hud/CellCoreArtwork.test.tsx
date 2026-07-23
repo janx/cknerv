@@ -1,4 +1,4 @@
-import { cleanup, render } from '@testing-library/react';
+import { cleanup, fireEvent, render } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Cell } from '@cknerv/types';
 
@@ -25,16 +25,19 @@ vi.mock('../../../src/components/hud/InscribedBraidCore', () => ({
   default: () => <div data-testid="synthesis" />,
 }));
 vi.mock('../../../src/components/hud/CellContentAddressHalo', () => ({
-  default: ({ encoding, contentFocused, reducedMotion }: {
+  default: ({ encoding, contentFocused, reducedMotion, onReadResolved }: {
     encoding: { fingerprint: string };
     contentFocused: boolean;
     reducedMotion: boolean;
+    onReadResolved?: () => void;
   }) => (
-    <div
+    <button
+      type="button"
       data-testid="address-halo"
       data-fingerprint={encoding.fingerprint}
       data-content-focused={contentFocused}
       data-reduced-motion={reducedMotion}
+      onClick={onReadResolved}
     />
   ),
 }));
@@ -92,6 +95,7 @@ describe('CellCoreArtwork', () => {
 
   it('threads readable field focus into the production A renderer', () => {
     const responseRef = { current: null };
+    const onContentAddressRead = vi.fn();
     const { getByTestId } = render(
       <CellCoreArtwork
         direction="relic"
@@ -118,6 +122,7 @@ describe('CellCoreArtwork', () => {
         }}
         traceResponseRef={responseRef}
         traceEvidenceFocusSourceId={2}
+        onContentAddressRead={onContentAddressRead}
       />,
     );
     expect(getByTestId('relic').getAttribute('data-focus')).toBe('data');
@@ -128,5 +133,7 @@ describe('CellCoreArtwork', () => {
       .toBe('true');
     expect(getByTestId('address-halo').getAttribute('data-reduced-motion'))
       .toBe('true');
+    fireEvent.click(getByTestId('address-halo'));
+    expect(onContentAddressRead).toHaveBeenCalledOnce();
   });
 });

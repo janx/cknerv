@@ -5,12 +5,13 @@ import type { ConsensusMemoryTraceReadout } from '../../../src/nerve/consensusMe
 
 // The embedded portrait spins a real WebGL context — stub it in jsdom.
 vi.mock('../../../src/components/hud/CellNucleusPortrait', () => ({
-  default: ({ cell, focusField, traceReadout, traceResponseRef, traceEvidenceFocusSourceId }: {
+  default: ({ cell, focusField, traceReadout, traceResponseRef, traceEvidenceFocusSourceId, onContentAddressRead }: {
     cell: { content_hash: string };
     focusField?: string | null;
     traceReadout?: { stage: string } | null;
     traceResponseRef?: { current: unknown };
     traceEvidenceFocusSourceId?: number | null;
+    onContentAddressRead?: () => void;
   }) => (
     <div
       data-testid="portrait"
@@ -19,7 +20,13 @@ vi.mock('../../../src/components/hud/CellNucleusPortrait', () => ({
       data-trace-stage={traceReadout?.stage ?? ''}
       data-response-ref={traceResponseRef ? 'true' : 'false'}
       data-evidence-focus-source={traceEvidenceFocusSourceId ?? ''}
-    />
+    >
+      <button
+        type="button"
+        data-testid="content-address-read-resolved"
+        onClick={onContentAddressRead}
+      />
+    </div>
   ),
   SCAN_PERIOD_S: 4.2,
 }));
@@ -142,6 +149,26 @@ describe('CellDetailPanel', () => {
     expect(getByTestId('portrait').getAttribute('data-focus')).toBe('born');
     fireEvent.click(getByRole('button', { name: 'inspect address' }));
     expect(getByTestId('portrait').getAttribute('data-focus')).toBe('state');
+  });
+
+  it('reports the exact Cell only after the portrait resolves its address read', () => {
+    vi.stubGlobal('matchMedia', () => ({
+      matches: true,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }));
+    const onContentAddressRead = vi.fn();
+    const { getByRole, getByTestId } = render(
+      <CellDetailPanel
+        cell={base}
+        onContentAddressRead={onContentAddressRead}
+        onClose={() => {}}
+      />,
+    );
+
+    fireEvent.click(getByRole('button', { name: 'inspect content' }));
+    fireEvent.click(getByTestId('content-address-read-resolved'));
+    expect(onContentAddressRead).toHaveBeenCalledWith(base.id, true);
   });
 
   it('shows SPENT for a consumed cell without biological death language', () => {
