@@ -24,6 +24,17 @@ import {
   deriveConsensusRouteHopAgreementPlan,
   type ConsensusRouteHopAgreementPlan,
 } from '../derives/consensusRouteHopAgreement.derive';
+import {
+  CELL_CONTENT_ADDRESS_CYAN,
+  CELL_CONTENT_ADDRESS_HALF_SPAN_MAX,
+  CELL_CONTENT_ADDRESS_HALF_SPAN_MIN,
+  CELL_CONTENT_ADDRESS_RADIUS_MAX,
+  CELL_CONTENT_ADDRESS_RADIUS_MIN,
+  CELL_CONTENT_ADDRESS_SPINE_THRESHOLD,
+  CELL_CONTENT_ADDRESS_VIOLET,
+  deriveCellContentAddressEncoding,
+  type CellContentAddressEncoding,
+} from '../derives/cellContentAddress.derive';
 import { useSimClock } from '../tweaks/SimClockScope';
 import { useSimFrame } from '../tweaks/useSimFrame';
 import {
@@ -41,8 +52,6 @@ import {
 } from './consensusRouteHopPulse';
 import {
   consensusRouteHopAddressResidueFrame,
-  deriveConsensusRouteHopAddressEncoding,
-  type ConsensusRouteHopAddressEncoding,
   type ConsensusRouteHopAddressResidueFrame,
 } from './consensusRouteHopAddressResidue';
 import {
@@ -294,7 +303,7 @@ function clearFocusPulse(material: THREE.ShaderMaterial): void {
 
 function applyAddressEncoding(
   material: THREE.ShaderMaterial,
-  encoding: ConsensusRouteHopAddressEncoding,
+  encoding: CellContentAddressEncoding,
 ): void {
   material.uniforms.uAddressLaneA.value.set(
     encoding.lanes[0],
@@ -725,13 +734,21 @@ function makeGlyphMaterial(): THREE.ShaderMaterial {
         float addressIndex = clamp(floor(addressCoord), 0.0, 7.0);
         float addressValue = addressLane(addressIndex);
         float addressLocal = abs(fract(addressCoord) - 0.5);
-        float addressHalfSpan = mix(0.18, 0.38, addressValue);
+        float addressHalfSpan = mix(
+          ${CELL_CONTENT_ADDRESS_HALF_SPAN_MIN.toFixed(3)},
+          ${CELL_CONTENT_ADDRESS_HALF_SPAN_MAX.toFixed(3)},
+          addressValue
+        );
         float addressSectorGate = 1.0 - smoothstep(
           addressHalfSpan,
           addressHalfSpan + 0.060,
           addressLocal
         );
-        float addressRadius = mix(0.465, 0.535, addressValue);
+        float addressRadius = mix(
+          ${CELL_CONTENT_ADDRESS_RADIUS_MIN.toFixed(3)},
+          ${CELL_CONTENT_ADDRESS_RADIUS_MAX.toFixed(3)},
+          addressValue
+        );
         float addressRadiusDistance = abs(r - addressRadius);
         float addressFacet = (
           stroke(addressRadiusDistance, 0.014)
@@ -750,7 +767,10 @@ function makeGlyphMaterial(): THREE.ShaderMaterial {
               r
             )
           )
-          * step(0.76, addressValue);
+          * step(
+            ${CELL_CONTENT_ADDRESS_SPINE_THRESHOLD.toFixed(3)},
+            addressValue
+          );
         float addressResolveAt = abs(addressIndex - 3.5) / 3.5;
         float addressResolve = smoothstep(
           addressResolveAt * 0.70 - 0.10,
@@ -800,8 +820,12 @@ function makeGlyphMaterial(): THREE.ShaderMaterial {
           clamp(agreementVisible * 0.88, 0.0, 1.0)
         );
         vec3 addressColor = mix(
-          vec3(0.18, 0.92, 1.0),
-          vec3(0.72, 0.42, 1.0),
+          vec3(${CELL_CONTENT_ADDRESS_CYAN
+            .map((channel) => channel.toFixed(2))
+            .join(', ')}),
+          vec3(${CELL_CONTENT_ADDRESS_VIOLET
+            .map((channel) => channel.toFixed(2))
+            .join(', ')}),
           addressValue
         );
         color = mix(
@@ -860,7 +884,7 @@ export default function ConsensusRouteHopMarker({
   const pulseKey = consensusMemoryRouteHopPulseKey(spatial?.focus ?? null);
   const addressEncoding = useMemo(
     () => spatial
-      ? deriveConsensusRouteHopAddressEncoding(spatial.cell.content_hash)
+      ? deriveCellContentAddressEncoding(spatial.cell.content_hash)
       : null,
     [spatial],
   );
