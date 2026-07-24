@@ -3,9 +3,12 @@ import type { NeighborGraph } from '../../src/geometry/neighborGraph';
 import {
   CELL_INSPECTION_BACKGROUND_ENERGY,
   CELL_INSPECTION_HOP_ENERGY,
+  CELL_INSPECTION_NAVIGATION_MAX_HOP,
+  cellInspectionDirectNavigationRole,
   cellInspectionEdgeScaleAt,
   cellInspectionFieldScale,
   cellInspectionFieldTransitionScaleAt,
+  cellInspectionNavigationTarget,
   dampCellInspectionFieldScale,
   deriveCellInspectionField,
 } from '../../src/nerve/cellInspectionField';
@@ -66,6 +69,32 @@ describe('Cell inspection information field', () => {
     expect(cellInspectionFieldScale(field, 4))
       .toBe(CELL_INSPECTION_BACKGROUND_ENERGY);
     expect(cellInspectionFieldScale(null, 4)).toBe(1);
+  });
+
+  it('limits topology navigation to the root and real direct neighbours', () => {
+    const field = deriveCellInspectionField(
+      graph([[1, 2], [2, 3], [3, 4]]),
+      1,
+    );
+
+    expect(CELL_INSPECTION_NAVIGATION_MAX_HOP).toBe(1);
+    expect(cellInspectionNavigationTarget(field, 1)).toBe(true);
+    expect(cellInspectionNavigationTarget(field, 2)).toBe(true);
+    expect(cellInspectionNavigationTarget(field, 3)).toBe(false);
+    expect(cellInspectionNavigationTarget(field, 4)).toBe(false);
+    expect(cellInspectionNavigationTarget(null, 4)).toBe(true);
+  });
+
+  it('marks only direct neighbours with the shader navigation role', () => {
+    const field = deriveCellInspectionField(
+      graph([[1, 2], [2, 3]]),
+      1,
+    );
+
+    expect(cellInspectionDirectNavigationRole(field, 1)).toBe(0);
+    expect(cellInspectionDirectNavigationRole(field, 2)).toBe(1);
+    expect(cellInspectionDirectNavigationRole(field, 3)).toBe(0);
+    expect(cellInspectionDirectNavigationRole(null, 2)).toBe(0);
   });
 
   it('grades a retained fibre between its endpoint hop energies', () => {

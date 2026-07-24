@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
-import { makeCellHybridMaterial } from '../../src/materials/cellHybridMaterial';
+import {
+  CELL_INSPECTION_NAVIGATION_SIZE_SCALE,
+  makeCellHybridMaterial,
+} from '../../src/materials/cellHybridMaterial';
 
 describe('makeCellHybridMaterial', () => {
   it('uses bounded accumulation for resting Cells and exposes its uniforms', () => {
@@ -75,6 +78,22 @@ describe('makeCellHybridMaterial', () => {
       .toBeLessThan(m.fragmentShader.indexOf('focusSignal'));
     expect(m.fragmentShader.indexOf('base.a *= vCenterDim * vInspection'))
       .toBeLessThan(m.fragmentShader.indexOf('readEnergy'));
+  });
+
+  it('gives direct neighbours a split interface affordance within the pick footprint', () => {
+    const m = makeCellHybridMaterial();
+
+    expect(CELL_INSPECTION_NAVIGATION_SIZE_SCALE).toBeGreaterThan(1);
+    expect(m.vertexShader).toContain('attribute float aInspectionRole');
+    expect(m.vertexShader).toContain('inspectionNavigationScale');
+    expect(m.vertexShader).toContain(
+      CELL_INSPECTION_NAVIGATION_SIZE_SCALE.toFixed(2),
+    );
+    expect(m.fragmentShader).toContain('navigationRing');
+    expect(m.fragmentShader).toContain('navigationArc');
+    expect(m.fragmentShader).toContain('navigationNotch');
+    expect(m.fragmentShader.indexOf('navigationSignal'))
+      .toBeLessThan(m.fragmentShader.indexOf('focusSignal'));
   });
 
   it('renders hover and selection as an interrupted braid interference signal', () => {

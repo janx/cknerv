@@ -30,6 +30,10 @@ import {
 
 // Tunable feel constants — collected here so reviewers find them in one place.
 const HYBRID_BASE_PX_PER_WU = 2.0; // sprite world→screen multiplier — ~2× halo outer-glow size; cell body (gl_PointCoord ≤ 0.5) renders at roughly halo-equivalent screen weight
+/** Direct inspection neighbours gain enough sprite room for their split
+ * interface arcs. CellPicker imports the same value so the affordance never
+ * extends beyond its hit area. */
+export const CELL_INSPECTION_NAVIGATION_SIZE_SCALE = 1.18;
 
 export function makeCellHybridMaterial(): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
@@ -71,6 +75,7 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
       attribute float aRecall;  // signed historical read: source < 0, retained target > 0
       attribute float aRecallState; // source travel / target witness resolution
       attribute float aInspection; // eased real-adjacency energy; 1 outside inspection
+      attribute float aInspectionRole; // 1 = direct, navigable renderer-neighbour
 
       uniform float uTime;
       uniform float uBirthDurS;
@@ -100,6 +105,7 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
       varying float vRecall;
       varying float vRecallState;
       varying float vInspection;
+      varying float vInspectionRole;
       varying float vCenterDim;
       varying float vPointCssPx;
 
@@ -138,6 +144,7 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
         vRecall = aRecall;
         vRecallState = aRecallState;
         vInspection = aInspection;
+        vInspectionRole = aInspectionRole;
         float birthRamp = clamp((uTime - aBornAt) / uBirthDurS, 0.0, 1.0);
         float deathRamp = clamp((uTime - aDeathAt) / uDeathDurS, 0.0, 1.0);
         float bEase = birthEase(birthRamp);
@@ -166,7 +173,12 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
         )
           * smoothstep(0.0, 1.0, clamp(aRecallState, 0.0, 1.0));
         float retainedSizeBoost = mix(0.08, 0.16, aMemoryIdentity.w);
-        gl_PointSize  = aSize * ${HYBRID_BASE_PX_PER_WU.toFixed(1)} * (1.0 + vShockwave * uShockwaveSizeBoost) * (1.0 + vFocus * 0.18) * (1.0 + abs(vRecall) * 0.06 + retainedCore * retainedSizeBoost) * scale * (uViewportHeight * 0.5 / max(-viewPos.z, 0.001));
+        float inspectionNavigationScale = mix(
+          1.0,
+          ${CELL_INSPECTION_NAVIGATION_SIZE_SCALE.toFixed(2)},
+          step(0.5, aInspectionRole)
+        );
+        gl_PointSize  = aSize * ${HYBRID_BASE_PX_PER_WU.toFixed(1)} * inspectionNavigationScale * (1.0 + vShockwave * uShockwaveSizeBoost) * (1.0 + vFocus * 0.18) * (1.0 + abs(vRecall) * 0.06 + retainedCore * retainedSizeBoost) * scale * (uViewportHeight * 0.5 / max(-viewPos.z, 0.001));
         // Retained records have a semantic CSS-pixel floor so 1/3/5 checksum
         // lanes survive every quality DPR. The floor recedes by the exact
         // complement used when the expanded braid takes over.
@@ -208,6 +220,7 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
       varying float vRecall;
       varying float vRecallState;
       varying float vInspection;
+      varying float vInspectionRole;
       varying float vCenterDim;
       varying float vPointCssPx;
 
@@ -280,6 +293,45 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
 
         vec3  col = shockTint * shockColorK + vShockwaveColor * shockWash;
         float a   = (base.a * shockAlphaK + shockWash) * (1.0 - vDeathRamp);
+
+        // A direct spatial neighbour is an interface into the next bounded
+        // topology field. Three open, hash-oriented arcs express that role
+        // without wrapping the Cell in a generic UI ring or adding per-Cell
+        // geometry. The role changes atomically with the pick surface; the
+        // eased inspection energy only softens its arrival.
+        float navigationAngle = atan(uv.y, uv.x);
+        float navigationPhase = vSeed * 0.19 + uTime * 0.16;
+        float navigationRing = exp(
+          -pow((length(uv) - 0.405) / 0.027, 2.0)
+        );
+        float navigationArc = smoothstep(
+          0.42,
+          0.88,
+          cos(navigationAngle * 3.0 + navigationPhase)
+        );
+        float navigationNotch = exp(
+          -pow((length(uv) - 0.315) / 0.021, 2.0)
+        ) * smoothstep(
+          0.72,
+          0.96,
+          cos(navigationAngle * 3.0 + navigationPhase + 1.28)
+        );
+        float navigationReveal = smoothstep(0.18, 0.76, vInspection);
+        float navigationSignal = vInspectionRole
+          * navigationReveal
+          * (navigationRing * navigationArc + navigationNotch * 0.56)
+          * (1.0 - vDeathRamp);
+        vec3 navigationCyan = vec3(0.16, 0.86, 1.0);
+        vec3 navigationGold = vec3(0.94, 0.68, 0.28);
+        float navigationPolarity = 0.5 + 0.5 * sin(
+          navigationAngle + navigationPhase * 0.34
+        );
+        col += mix(
+          navigationCyan,
+          navigationGold,
+          navigationPolarity * 0.36
+        ) * navigationSignal * 1.18;
+        a += navigationSignal * 0.52;
 
         // Interaction feedback uses an interrupted two-fold interference ring,
         // echoing the contributor crossings of A instead of adding a generic

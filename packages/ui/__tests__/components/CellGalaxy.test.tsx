@@ -7,6 +7,7 @@ import CellGalaxy from '../../src/components/CellGalaxy';
 import {
   writeFlashSlots,
   writeCellBuffers,
+  writeCellInspectionNavigationRoles,
   writeCellInspectionTargets,
   pinSelectedCellInVisiblePrefix,
   selectWaveAnchor,
@@ -104,6 +105,20 @@ describe('CellGalaxy', () => {
     expect(source).not.toContain('<CellOrganism');
     expect(source).not.toContain('<CellCrystal');
     expect(source).not.toContain('CELL_FORM');
+  });
+
+  it('turns direct inspection neighbours into the bounded pick surface', () => {
+    const source = readFileSync(CELL_GALAXY_SOURCE, 'utf8');
+
+    expect(source).toContain(
+      'cellInspectionNavigationTarget(inspectionField, c.id)',
+    );
+    expect(source).toContain(
+      'const count = Math.min(drawCountRef.current, cells.length)',
+    );
+    expect(source).toContain('i < count');
+    expect(source).toContain('inspectionFieldRef={inspectionFieldRef}');
+    expect(source).toContain("g.setAttribute('aInspectionRole'");
   });
 
   it('shares explicit memory focus between the route overlay and Cell body', () => {
@@ -351,6 +366,43 @@ describe('writeCellInspectionTargets', () => {
     writeCellInspectionTargets([mkCell(1), mkCell(2)], 2, null, targets);
 
     expect([...targets]).toEqual([1, 1, 0]);
+  });
+});
+
+describe('writeCellInspectionNavigationRoles', () => {
+  it('marks only direct neighbours in the current visible Cell order', () => {
+    const cells = [mkCell(3), mkCell(1), mkCell(4), mkCell(2)];
+    const graph: NeighborGraph = {
+      adjacency: new Map([
+        [1, new Set([2])],
+        [2, new Set([1, 3])],
+        [3, new Set([2])],
+        [4, new Set()],
+      ]),
+      edges: [
+        { from: 1, to: 2, d: 1 },
+        { from: 2, to: 3, d: 1 },
+      ],
+    };
+    const field = deriveCellInspectionField(graph, 1);
+    const roles = new Float32Array(4);
+
+    writeCellInspectionNavigationRoles(cells, cells.length, field, roles);
+
+    expect([...roles]).toEqual([0, 0, 0, 1]);
+  });
+
+  it('clears navigation roles when inspection closes', () => {
+    const roles = new Float32Array([1, 1, 1]);
+
+    writeCellInspectionNavigationRoles(
+      [mkCell(1), mkCell(2)],
+      2,
+      null,
+      roles,
+    );
+
+    expect([...roles]).toEqual([0, 0, 1]);
   });
 });
 
