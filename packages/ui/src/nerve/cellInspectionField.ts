@@ -14,6 +14,9 @@ export const CELL_INSPECTION_MAX_HOPS = 2;
  */
 export const CELL_INSPECTION_HOP_ENERGY = [1, 0.82, 0.42] as const;
 export const CELL_INSPECTION_BACKGROUND_ENERGY = 0.12;
+/** Only the inspected Cell and its direct renderer-neighbours are topology
+ * navigation targets. The second ring remains visual context, not a shortcut. */
+export const CELL_INSPECTION_NAVIGATION_MAX_HOP = 1;
 
 export interface CellInspectionField {
   readonly selectedCellId: number;
@@ -77,6 +80,31 @@ export function cellInspectionFieldScale(
   return CELL_INSPECTION_HOP_ENERGY[
     Math.min(hop, CELL_INSPECTION_HOP_ENERGY.length - 1)
   ];
+}
+
+/** Whether one visible Cell belongs to the bounded topology-navigation surface.
+ *
+ * With no active inspection the galaxy retains its normal pick-any-Cell
+ * behaviour. During inspection, navigation is deliberately limited to the
+ * current root and real direct neighbours from the renderer's spatial graph.
+ */
+export function cellInspectionNavigationTarget(
+  field: CellInspectionField | null,
+  cellId: number,
+): boolean {
+  if (!field) return true;
+  const hop = field.hopsByCellId.get(cellId);
+  return hop !== undefined && hop <= CELL_INSPECTION_NAVIGATION_MAX_HOP;
+}
+
+/** Static shader role for a direct topology-navigation neighbour.
+ * Selected and contextual Cells return zero: the root already owns the
+ * existing focus signal, while hop-two Cells must read as context only. */
+export function cellInspectionDirectNavigationRole(
+  field: CellInspectionField | null,
+  cellId: number,
+): number {
+  return field?.hopsByCellId.get(cellId) === 1 ? 1 : 0;
 }
 
 /**

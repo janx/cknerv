@@ -36,7 +36,10 @@ import {
   selectedCellNumericId,
 } from '../derives/cellInteraction.derive';
 import { SHOCKWAVE_SLOTS, writeShockwaveSlot } from '../materials/shockwaveMaterial';
-import { makeCellHybridMaterial } from '../materials/cellHybridMaterial';
+import {
+  CELL_INSPECTION_NAVIGATION_SIZE_SCALE,
+  makeCellHybridMaterial,
+} from '../materials/cellHybridMaterial';
 import { makeCellFlareMaterial } from '../materials/cellFlareMaterial';
 import {
   pointSpriteDeviceViewportHeight,
@@ -52,7 +55,9 @@ import CellIdentityProofMarker, {
 } from './CellIdentityProofMarker';
 import CellIdentityBindingMarker from './CellIdentityBindingMarker';
 import {
+  cellInspectionDirectNavigationRole,
   cellInspectionFieldScale,
+  cellInspectionNavigationTarget,
   dampCellInspectionFieldScale,
   type CellInspectionField,
 } from '../nerve/cellInspectionField';
@@ -229,6 +234,20 @@ export function writeCellInspectionTargets(
 ): void {
   for (let i = 0; i < count; i += 1) {
     targetArr[i] = cellInspectionFieldScale(field, cells[i].id);
+  }
+}
+
+/** Write the atomic navigation affordance for direct renderer-neighbours.
+ * This intentionally does not ease: visual role and pickability change on the
+ * same field snapshot, so a fading marker never advertises a stale target. */
+export function writeCellInspectionNavigationRoles(
+  cells: Cell[],
+  count: number,
+  field: CellInspectionField | null,
+  roleArr: Float32Array,
+): void {
+  for (let i = 0; i < count; i += 1) {
+    roleArr[i] = cellInspectionDirectNavigationRole(field, cells[i].id);
   }
 }
 
@@ -536,8 +555,10 @@ export function CkbSelectionReticle({ size }: { size: number }) {
 
 interface CellPickerProps {
   cellsListRef: React.MutableRefObject<Cell[]>;
+  drawCountRef: React.MutableRefObject<number>;
   selectedCellIdRef: React.MutableRefObject<number | null>;
   hoveredCellIdRef: React.MutableRefObject<number | null>;
+  inspectionFieldRef?: React.RefObject<CellInspectionField | null>;
   onSelect: (id: string | null) => void;
 }
 
@@ -548,8 +569,10 @@ interface CellPickerProps {
  *  selection contract is preserved. */
 function CellPicker({
   cellsListRef,
+  drawCountRef,
   selectedCellIdRef,
   hoveredCellIdRef,
+  inspectionFieldRef,
   onSelect,
 }: CellPickerProps) {
   const ref = useRef<THREE.Object3D>(null);
@@ -571,7 +594,9 @@ function CellPicker({
 
     node.raycast = function raycastCells(raycaster, intersects) {
       const cells = cellsListRef.current;
-      if (cells.length === 0) return;
+      const count = Math.min(drawCountRef.current, cells.length);
+      if (count === 0) return;
+      const inspectionField = inspectionFieldRef?.current ?? null;
       const camera = raycaster.camera;
       if (!camera) return;
       const ray = raycaster.ray;
@@ -591,8 +616,9 @@ function CellPicker({
       let bestPxSq = Infinity;
       let bestDepth = Infinity;
 
-      for (let i = 0; i < cells.length; i++) {
+      for (let i = 0; i < count; i++) {
         const c = cells[i];
+        if (!cellInspectionNavigationTarget(inspectionField, c.id)) continue;
         cellWorld
           .set(c.pos_seed[0], c.pos_seed[1], c.pos_seed[2])
           .applyMatrix4(matrix);
@@ -612,7 +638,16 @@ function CellPicker({
         // Take the larger so neither layer can leak outside the
         // clickable area. No constant slop — strictly visual.
         const isTagged = c.tag !== null;
-        const cellPointAsize = isTagged ? TAGGED_CELL_POINT_SIZE : GENERIC_CELL_POINT_SIZE;
+        const baseCellPointAsize = isTagged
+          ? TAGGED_CELL_POINT_SIZE
+          : GENERIC_CELL_POINT_SIZE;
+        const navigationSizeScale = cellInspectionDirectNavigationRole(
+          inspectionField,
+          c.id,
+        ) > 0
+          ? CELL_INSPECTION_NAVIGATION_SIZE_SCALE
+          : 1;
+        const cellPointAsize = baseCellPointAsize * navigationSizeScale;
         const depthToPx = halfH / viewZ;
         const cellPointPxR = cellPointAsize * depthToPx;
         const focus = cellFocusTarget(
@@ -676,7 +711,13 @@ function CellPicker({
       // future remount doesn't carry a stale closure.
       node.raycast = THREE.Object3D.prototype.raycast;
     };
-  }, [cellsListRef, hoveredCellIdRef, selectedCellIdRef]);
+  }, [
+    cellsListRef,
+    drawCountRef,
+    hoveredCellIdRef,
+    inspectionFieldRef,
+    selectedCellIdRef,
+  ]);
 
   useEffect(() => () => {
     if (gl.domElement.style.cursor === 'pointer') gl.domElement.style.cursor = '';
@@ -691,7 +732,11 @@ function CellPicker({
     <object3D
       ref={ref}
       onPointerMove={(e) => {
-        if (typeof e.instanceId !== 'number') {
+        if (
+          typeof e.instanceId !== 'number'
+          || e.instanceId < 0
+          || e.instanceId >= drawCountRef.current
+        ) {
           setHovered(null);
           return;
         }
@@ -701,9 +746,17 @@ function CellPicker({
       onPointerOut={() => setHovered(null)}
       onClick={(e) => {
         e.stopPropagation();
-        if (typeof e.instanceId !== 'number') return;
+        if (
+          typeof e.instanceId !== 'number'
+          || e.instanceId < 0
+          || e.instanceId >= drawCountRef.current
+        ) return;
         const cell = cellsListRef.current[e.instanceId];
         if (!cell) return;
+        if (!cellInspectionNavigationTarget(
+          inspectionFieldRef?.current ?? null,
+          cell.id,
+        )) return;
         setHovered(cell.id);
         onSelect(`cell:${cell.id}`);
       }}
@@ -900,6 +953,13 @@ export default function CellGalaxy({
     arr.fill(1);
     return arr;
   }, []);
+  // Atomic direct-neighbour navigation role. Unlike the body energy, this does
+  // not cross-fade: the shader affordance and CellPicker eligibility always
+  // describe the same current graph snapshot.
+  const cellInspectionRoleAttr = useMemo(
+    () => new THREE.BufferAttribute(new Float32Array(INSTANCE_CAPACITY), 1),
+    [],
+  );
   const lastInspectionFieldRef = useRef<CellInspectionField | null>(null);
   const inspectionAnimatingRef = useRef(false);
 
@@ -921,6 +981,7 @@ export default function CellGalaxy({
     g.setAttribute('aRecall', cellRecallAttr);
     g.setAttribute('aRecallState', cellRecallStateAttr);
     g.setAttribute('aInspection', cellInspectionAttr);
+    g.setAttribute('aInspectionRole', cellInspectionRoleAttr);
     g.setDrawRange(0, 0);
     // Permissive bounding sphere — cells live in a Gaussian field bounded
     // by SIGMA, core sprites extend a few units past that. Skipping
@@ -942,6 +1003,7 @@ export default function CellGalaxy({
     cellRecallAttr,
     cellRecallStateAttr,
     cellInspectionAttr,
+    cellInspectionRoleAttr,
   ]);
 
   // Bind the duration uniforms once. The wall→scene-seconds conversion
@@ -1059,6 +1121,13 @@ export default function CellGalaxy({
         inspectionField,
         cellInspectionTargetArr,
       );
+      writeCellInspectionNavigationRoles(
+        cellsList,
+        count,
+        inspectionField,
+        cellInspectionRoleAttr.array as Float32Array,
+      );
+      cellInspectionRoleAttr.needsUpdate = true;
       lastInspectionFieldRef.current = inspectionField;
       inspectionAnimatingRef.current = true;
     }
@@ -1373,8 +1442,10 @@ export default function CellGalaxy({
             transform the visible core / braid layers use. */}
         <CellPicker
           cellsListRef={cellsListRef}
+          drawCountRef={drawCountRef}
           selectedCellIdRef={selectedCellIdRef}
           hoveredCellIdRef={hoveredCellIdRef}
+          inspectionFieldRef={inspectionFieldRef}
           onSelect={onSelect}
         />
       </group>
