@@ -10,7 +10,7 @@ import CellIdentityBindingGlyph from './CellIdentityBindingGlyph';
 
 const GLYPH_RADIUS = 0.64;
 
-/** Persistent selected-Cell identity knot assembled from resolved proofs. */
+/** Selected-Cell identity aperture, open at 0/3 and bound by resolved proofs. */
 export default function CellIdentityBindingMarker({
   cell,
   binding,
@@ -48,9 +48,7 @@ export default function CellIdentityBindingMarker({
     );
   });
 
-  if (binding.cellId !== cell.id || binding.resolvedKinds.length === 0) {
-    return null;
-  }
+  if (binding.cellId !== cell.id) return null;
 
   return (
     <group

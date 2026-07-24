@@ -2,6 +2,7 @@ import { CELLS_Y } from '../layout';
 import type { Vec3 } from '../types';
 
 export const CONSENSUS_ROUTE_CAMERA_DISTANCE = 36;
+export const CONSENSUS_CELL_INSPECTION_CAMERA_DISTANCE = 52;
 export const CONSENSUS_RECORD_CAMERA_DISTANCE = 64;
 export const CONSENSUS_RECORD_CAMERA_MAX_DISTANCE = 288;
 export const CONSENSUS_RECORD_CAMERA_NEUTRAL_MIN_DISTANCE = 96;
@@ -348,6 +349,28 @@ export function deriveConsensusRouteCameraPose(
     hopWorld,
     distance,
     CONSENSUS_ROUTE_CAMERA_DISTANCE,
+    composition,
+  );
+}
+
+/**
+ * Frame one explicitly selected Cell closely enough to read its identity knot,
+ * while remaining wider than a locked route hop and narrower than a recalled
+ * record.
+ */
+export function deriveConsensusCellInspectionCameraPose(
+  currentPosition: Vec3,
+  currentTarget: Vec3,
+  cellWorld: Vec3,
+  distance = CONSENSUS_CELL_INSPECTION_CAMERA_DISTANCE,
+  composition?: ConsensusRecordCameraComposition,
+): ConsensusRouteCameraPose {
+  return deriveConsensusCameraPose(
+    currentPosition,
+    currentTarget,
+    cellWorld,
+    distance,
+    CONSENSUS_CELL_INSPECTION_CAMERA_DISTANCE,
     composition,
   );
 }

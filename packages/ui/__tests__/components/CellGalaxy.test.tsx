@@ -158,7 +158,7 @@ describe('CellGalaxy', () => {
     expect(labelSource).toContain("pointerEvents: 'none'");
   });
 
-  it('retains resolved proofs as one bounded identity knot', () => {
+  it('opens one bounded identity knot at 0/3 and retains resolved proofs', () => {
     const galaxySource = readFileSync(CELL_GALAXY_SOURCE, 'utf8');
     const markerSource = readFileSync(IDENTITY_BINDING_MARKER_SOURCE, 'utf8');
     const glyphSource = readFileSync(IDENTITY_BINDING_GLYPH_SOURCE, 'utf8');
@@ -167,8 +167,14 @@ describe('CellGalaxy', () => {
     expect(galaxySource).toContain(
       'cellsCache.cells.get(identityProofBinding.cellId)',
     );
+    expect(galaxySource).toContain(
+      '{identityProofBinding && identityProofBindingCell ? (',
+    );
+    expect(galaxySource).toContain('cellGalaxyRotationScaleTarget(');
+    expect(galaxySource).toContain('dampCellGalaxyRotationScale(');
     expect(markerSource).toContain('<Billboard');
     expect(markerSource).toContain('<CellIdentityBindingGlyph');
+    expect(markerSource).not.toContain('resolvedKinds.length === 0');
     expect(glyphSource).toContain('CELL_IDENTITY_PROOF_KINDS.map');
     expect(glyphSource).toContain('cellIdentityProofBindingComplete(binding)');
     expect(glyphSource).toContain('memoryIdentityBindingPhase');

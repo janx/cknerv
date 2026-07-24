@@ -38,6 +38,9 @@ describe('CellNucleusPortrait production language', () => {
     expect(CORE_SOURCE).toContain('<CellContentAddressHalo');
     expect(CORE_SOURCE).toContain('<CellIdentityProofReader');
     expect(CORE_SOURCE).toContain('<CellIdentityBindingGlyph');
+    expect(CORE_SOURCE).not.toContain(
+      'identityProofBinding.resolvedKinds.length > 0',
+    );
     expect(CORE_SOURCE).toContain("contentFocused={focusField === 'data'}");
     expect(CORE_SOURCE).toContain("focusField === 'state'");
     expect(CORE_SOURCE).toContain("focusField === 'born'");

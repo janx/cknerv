@@ -5,6 +5,8 @@ import { act, render } from '@testing-library/react';
 import * as THREE from 'three';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  CONSENSUS_CELL_INSPECTION_CAMERA_DISTANCE,
+  CONSENSUS_RECORD_CAMERA_DISTANCE,
   CONSENSUS_RECORD_CAMERA_MAX_DISTANCE,
   deriveConsensusRecordSafeAnchor,
 } from '../../src/derives/consensusRouteCamera.derive';
@@ -394,6 +396,102 @@ describe('ConsensusRouteCamera record composition', () => {
     const restoredScreen = screenPosition(recordWorld);
     expect(restoredScreen[0]).toBeCloseTo(narrowAnchor[0], 0);
     expect(restoredScreen[1]).toBeCloseTo(narrowAnchor[1], 0);
+
+    rendered.rerender(view(
+      <ConsensusRouteCamera controlsRef={controlsRef} />,
+    ));
+    act(() => {
+      for (let frame = 0; frame < 40; frame += 1) {
+        frameMock.callback?.({}, 0.1);
+      }
+    });
+    expect(cameraMock.current!.position.distanceTo(initialPosition))
+      .toBeLessThan(0.05);
+    expect(controls.target.distanceTo(initialTarget)).toBeLessThan(0.05);
+  });
+
+  it('frames selection, opens for recall, then returns to the inspected Cell', () => {
+    const cache = emptyCellsCache();
+    cache.cells.set(2, cell(2, [20, 1, -8]));
+    const rightRail = document.createElement('div');
+    rightRail.dataset.hudOcclusion = 'true';
+    vi.spyOn(rightRail, 'getBoundingClientRect').mockReturnValue(
+      rect(760, 40, 1440, 790),
+    );
+    document.body.append(rightRail);
+    const controls = {
+      target: new THREE.Vector3(0, 30, 0),
+      update: vi.fn(() => {
+        cameraMock.current!.lookAt(controls.target);
+        cameraMock.current!.updateMatrixWorld();
+      }),
+    } satisfies ConsensusRouteCameraControls;
+    controls.update();
+    const controlsRef: { current: ConsensusRouteCameraControls | null } = {
+      current: controls,
+    };
+    const view = (children: ReactNode) => (
+      <CellGalaxyProvider value={cache}>{children}</CellGalaxyProvider>
+    );
+    const rendered = render(view(
+      <ConsensusRouteCamera controlsRef={controlsRef} />,
+    ));
+    const initialPosition = cameraMock.current!.position.clone();
+    const initialTarget = controls.target.clone();
+    const cellWorld = new THREE.Vector3(20, CELLS_Y + 1, -8);
+    const anchor = deriveConsensusRecordSafeAnchor(
+      viewportMock.width,
+      viewportMock.height,
+      [{ left: 760, top: 40, right: 1440, bottom: 790 }],
+    );
+
+    rendered.rerender(view(
+      <ConsensusRouteCamera
+        controlsRef={controlsRef}
+        inspectionCellId={2}
+      />,
+    ));
+    act(() => {
+      for (let frame = 0; frame < 36; frame += 1) {
+        frameMock.callback?.({}, 0.1);
+      }
+    });
+    expect(distance(cameraMock.current!.position, cellWorld))
+      .toBeCloseTo(CONSENSUS_CELL_INSPECTION_CAMERA_DISTANCE, 1);
+    expect(screenPosition(cellWorld)[0]).toBeCloseTo(anchor[0], 0);
+    expect(screenPosition(cellWorld)[1]).toBeCloseTo(anchor[1], 0);
+
+    rendered.rerender(view(
+      <ConsensusRouteCamera
+        controlsRef={controlsRef}
+        inspectionCellId={2}
+        recordIdentity="19:2"
+        recordTargetCellId={2}
+      />,
+    ));
+    act(() => {
+      for (let frame = 0; frame < 40; frame += 1) {
+        frameMock.callback?.({}, 0.1);
+      }
+    });
+    expect(distance(cameraMock.current!.position, cellWorld))
+      .toBeCloseTo(CONSENSUS_RECORD_CAMERA_DISTANCE, 1);
+
+    rendered.rerender(view(
+      <ConsensusRouteCamera
+        controlsRef={controlsRef}
+        inspectionCellId={2}
+      />,
+    ));
+    act(() => {
+      for (let frame = 0; frame < 40; frame += 1) {
+        frameMock.callback?.({}, 0.1);
+      }
+    });
+    expect(distance(cameraMock.current!.position, cellWorld))
+      .toBeCloseTo(CONSENSUS_CELL_INSPECTION_CAMERA_DISTANCE, 1);
+    expect(screenPosition(cellWorld)[0]).toBeCloseTo(anchor[0], 0);
+    expect(screenPosition(cellWorld)[1]).toBeCloseTo(anchor[1], 0);
 
     rendered.rerender(view(
       <ConsensusRouteCamera controlsRef={controlsRef} />,
