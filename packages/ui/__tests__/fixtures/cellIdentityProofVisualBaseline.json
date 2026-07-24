@@ -1,0 +1,192 @@
+{
+  "tokens": {
+    "zIndex": 4,
+    "gapPx": 4,
+    "padding": "2px 5px 2px 6px",
+    "glowRadiusPx": 12,
+    "codeFontSizePx": 7.4,
+    "codeLetterSpacingPx": 1.05,
+    "separatorFontSizePx": 6.4,
+    "detailFontSizePx": 7.2,
+    "detailLetterSpacingPx": 0.45
+  },
+  "address": {
+    "encoding": {
+      "fingerprint": "0123456·CDEF#16909060",
+      "indexBytes": [1, 2, 3, 4],
+      "lanes": [0.4869, 0.0366, 0.5781, 0.1981]
+    },
+    "frame": {
+      "state": "confirming",
+      "progress": 0.3214,
+      "strength": 1,
+      "radiusPx": 54.3283
+    },
+    "label": {
+      "kind": "address",
+      "code": "WHERE",
+      "detail": "0123456·CDEF#16909060",
+      "title": "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef#16909060",
+      "color": "#9DF7FF",
+      "dimColor": "rgba(157, 247, 255, 0.52)"
+    },
+    "labelFrame": {
+      "opacity": 0.94,
+      "reveal": 1,
+      "driftPx": 0
+    },
+    "placement": {
+      "horizontal": "right",
+      "vertical": "above",
+      "gapPx": 62.3283,
+      "yPx": -8
+    },
+    "geometry": {
+      "count": 16,
+      "roles": {
+        "rail": 8,
+        "index": 4,
+        "crosshair": 4
+      },
+      "extent": 0.665,
+      "coordinateSum": -4.8179,
+      "energySum": 14.8,
+      "first": {
+        "from": [-0.5832, 0.5832, 0],
+        "to": [-0.3972, 0.5832, 0],
+        "color": [0.4283, 0.6814, 1],
+        "energy": 1,
+        "role": "rail"
+      },
+      "last": {
+        "from": [0, 0.024, 0],
+        "to": [0, 0.082, 0],
+        "color": [0.4424, 0.8944, 0.8336],
+        "energy": 0.78,
+        "role": "crosshair"
+      }
+    }
+  },
+  "content": {
+    "encoding": {
+      "fingerprint": "FEDCBA9·3210",
+      "phase": 2.9634,
+      "lanes": [
+        0.0848,
+        0.1191,
+        0.7493,
+        0.9155,
+        0.8194,
+        0.4295,
+        0.5679,
+        0.3785
+      ]
+    },
+    "frame": {
+      "state": "confirming",
+      "progress": 0.3051,
+      "strength": 1,
+      "radiusPx": 45.9191
+    },
+    "label": {
+      "kind": "content",
+      "code": "WHAT",
+      "detail": "FEDCBA9·3210",
+      "title": "0xfedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
+      "color": "#C7A7FF",
+      "dimColor": "rgba(199, 167, 255, 0.54)"
+    },
+    "labelFrame": {
+      "opacity": 0.94,
+      "reveal": 1,
+      "driftPx": 0
+    },
+    "placement": {
+      "horizontal": "left",
+      "vertical": "above",
+      "gapPx": 53.9191,
+      "yPx": -8
+    },
+    "geometry": {
+      "count": 42,
+      "roles": {
+        "signature": 42
+      },
+      "extent": 0.5414,
+      "coordinateSum": -3.0993,
+      "energySum": 41.44,
+      "first": {
+        "from": [0.4307, 0.1904, 0],
+        "to": [0.4181, 0.2167, 0],
+        "color": [0.2258, 0.8776, 1],
+        "energy": 1,
+        "role": "signature"
+      },
+      "last": {
+        "from": [0.4893, -0.0462, 0],
+        "to": [0.4914, -0.0067, 0],
+        "color": [0.3844, 0.7308, 1],
+        "energy": 1,
+        "role": "signature"
+      }
+    }
+  },
+  "anchor": {
+    "encoding": {
+      "block": 16204800,
+      "hexadecimal": "F74400",
+      "digits": [15, 7, 4, 4, 0, 0],
+      "phase": 1.5708
+    },
+    "frame": {
+      "state": "confirming",
+      "progress": 0.4737,
+      "strength": 1,
+      "depthProgress": 0.8483,
+      "pulseStrength": 1
+    },
+    "label": {
+      "kind": "anchor",
+      "code": "WHEN",
+      "detail": "#16204800",
+      "title": "Birth block #16204800 · 0xF74400",
+      "color": "#FFD48C",
+      "dimColor": "rgba(255, 212, 140, 0.52)"
+    },
+    "labelFrame": {
+      "opacity": 0.94,
+      "reveal": 1,
+      "driftPx": 0
+    },
+    "placement": {
+      "horizontal": "left",
+      "vertical": "above",
+      "gapPx": 20,
+      "yPx": -8
+    },
+    "geometry": {
+      "count": 7,
+      "roles": {
+        "spine": 1,
+        "digit": 6
+      },
+      "extent": 1,
+      "coordinateSum": -6.928,
+      "energySum": 6.06,
+      "first": {
+        "from": [0, 0, 0],
+        "to": [0, -1, 0],
+        "color": [1, 0.52, 0.12],
+        "energy": 0.78,
+        "role": "spine"
+      },
+      "last": {
+        "from": [0, -0.8571, 0],
+        "to": [0.055, -0.8571, 0],
+        "color": [1, 0.52, 0.12],
+        "energy": 0.82,
+        "role": "digit"
+      }
+    }
+  }
+}

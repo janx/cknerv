@@ -120,18 +120,25 @@ describe('CellGalaxy', () => {
 
     expect(galaxySource).toContain('<CellIdentityProofMarker');
     expect(galaxySource).toContain('cellsCache.cells.get(identityProof.cellId)');
+    expect(galaxySource).toContain(
+      'sampleElapsedSeconds={identityProofSampleElapsedSeconds}',
+    );
     expect(dispatcherSource).toContain("event.kind === 'address'");
     expect(dispatcherSource).toContain("event.kind === 'anchor'");
     expect(dispatcherSource).toContain('<CellContentAddressEchoMarker');
+    expect(dispatcherSource.match(/sampleElapsedSeconds=/g)).toHaveLength(3);
     expect(echoSource).toContain('deriveCellContentAddressSegments(encoding)');
     expect(echoSource).toContain('cellContentAddressEchoFrame(');
+    expect(echoSource).toContain('sampleElapsedSeconds');
     expect(echoSource).toContain('memoryContentAddressEchoFingerprint');
     expect(echoSource).toContain('new LineSegments2(');
     expect(locatorSource).toContain('deriveCellOutpointLocatorSegments(encoding)');
     expect(locatorSource).toContain('cellOutpointLocatorEchoFrame(');
+    expect(locatorSource).toContain('sampleElapsedSeconds');
     expect(locatorSource).toContain('memoryOutpointLocatorIndexBytes');
     expect(anchorSource).toContain('deriveCellBirthAnchorSegments(encoding)');
     expect(anchorSource).toContain('cellBirthAnchorEchoFrame(');
+    expect(anchorSource).toContain('sampleElapsedSeconds');
     expect(anchorSource).toContain('memoryBirthAnchorTargetWorldY: CHAIN_Y');
     expect(echoSource).toContain('<CellIdentityProofLabel');
     expect(locatorSource).toContain('<CellIdentityProofLabel');

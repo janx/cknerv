@@ -52,9 +52,11 @@ function makeEchoLineMaterial(
 export default function CellContentAddressEchoMarker({
   cell,
   event,
+  sampleElapsedSeconds,
 }: {
   cell: Cell;
   event: CellIdentityProofEvent;
+  sampleElapsedSeconds?: number;
 }) {
   const size = useThree((state) => state.size);
   const groupRef = useRef<THREE.Group>(null);
@@ -190,7 +192,8 @@ export default function CellContentAddressEchoMarker({
     const group = groupRef.current;
     if (!group || settledSequenceRef.current === event.sequence) return;
     const frame = cellContentAddressEchoFrame(
-      (performance.now() - event.emittedAtMs) / 1000,
+      sampleElapsedSeconds
+        ?? (performance.now() - event.emittedAtMs) / 1000,
       event.reducedMotion,
     );
     group.userData.memoryContentAddressEcho = frame.state;

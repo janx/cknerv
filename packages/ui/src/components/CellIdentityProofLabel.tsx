@@ -3,6 +3,9 @@ import { Html } from '@react-three/drei';
 import type {
   CellIdentityProofLabel as CellIdentityProofLabelValue,
 } from '../derives/cellIdentityProofLabel.derive';
+import {
+  CELL_IDENTITY_PROOF_LABEL_VISUAL_TOKENS as TOKENS,
+} from './cellIdentityProofLabel.presentation';
 
 /** One transient screen-space evidence tag attached to a scene proof marker. */
 const CellIdentityProofLabel = forwardRef<
@@ -11,7 +14,7 @@ const CellIdentityProofLabel = forwardRef<
 >(function CellIdentityProofLabel({ label }, ref) {
   return (
     <Html
-      zIndexRange={[4, 4]}
+      zIndexRange={[TOKENS.zIndex, TOKENS.zIndex]}
       occlude={false}
       style={{ pointerEvents: 'none', userSelect: 'none' }}
     >
@@ -30,15 +33,18 @@ const CellIdentityProofLabel = forwardRef<
         style={{
           display: 'inline-flex',
           alignItems: 'baseline',
-          gap: 4,
+          gap: TOKENS.gapPx,
           boxSizing: 'border-box',
           minWidth: 'max-content',
-          padding: '2px 5px 2px 6px',
+          padding: TOKENS.padding,
           borderTop: `1px solid ${label.dimColor}`,
           borderLeft: '1px solid transparent',
           borderRight: '1px solid transparent',
           background: `linear-gradient(105deg, ${label.color}17, rgba(1, 4, 12, .92) 32%, rgba(1, 4, 12, .74))`,
-          boxShadow: `0 0 12px rgba(0, 0, 0, .58), inset 0 0 8px ${label.color}0b`,
+          boxShadow: [
+            `0 0 ${TOKENS.glowRadiusPx}px rgba(0, 0, 0, .58)`,
+            `inset 0 0 8px ${label.color}0b`,
+          ].join(', '),
           color: label.color,
           opacity: 0,
           transform: 'translate3d(12px, -8px, 0)',
@@ -50,10 +56,10 @@ const CellIdentityProofLabel = forwardRef<
         <span
           style={{
             fontFamily: '"Chakra Petch", system-ui, sans-serif',
-            fontSize: 7.4,
+            fontSize: TOKENS.codeFontSizePx,
             lineHeight: 1,
             fontWeight: 700,
-            letterSpacing: 1.05,
+            letterSpacing: TOKENS.codeLetterSpacingPx,
             textShadow: `0 0 7px ${label.color}66`,
           }}
         >
@@ -61,16 +67,19 @@ const CellIdentityProofLabel = forwardRef<
         </span>
         <span
           aria-hidden="true"
-          style={{ color: label.dimColor, fontSize: 6.4 }}
+          style={{
+            color: label.dimColor,
+            fontSize: TOKENS.separatorFontSizePx,
+          }}
         >
           /
         </span>
         <span
           style={{
             fontFamily: '"Share Tech Mono", ui-monospace, monospace',
-            fontSize: 7.2,
+            fontSize: TOKENS.detailFontSizePx,
             lineHeight: 1,
-            letterSpacing: 0.45,
+            letterSpacing: TOKENS.detailLetterSpacingPx,
             color: '#D9F8FF',
           }}
         >

@@ -115,6 +115,9 @@ interface CellGalaxyProps {
   /** One WHERE / WHAT / WHEN acknowledgement emitted after the portrait
    *  resolves the selected identity facet. It never mutates chain state. */
   identityProof?: CellIdentityProofEvent | null;
+  /** Fixed elapsed time for deterministic identity-proof review frames.
+   *  Production callers omit this and retain the live event clock. */
+  identityProofSampleElapsedSeconds?: number;
   onSelect: (id: string | null) => void;
   /** Map of cell.id → most-recent scene-seconds flash time. Owned by the
    *  consumer so overlay layers (e.g. RCG's NeuralNetwork) can write into
@@ -702,6 +705,7 @@ export default function CellGalaxy({
   selectedId,
   selectedCellId = null,
   identityProof = null,
+  identityProofSampleElapsedSeconds,
   onSelect,
   cellFlashRef,
   flashDirtyRef,
@@ -1262,6 +1266,7 @@ export default function CellGalaxy({
             <CellIdentityProofMarker
               cell={identityProofCell}
               event={identityProof}
+              sampleElapsedSeconds={identityProofSampleElapsedSeconds}
             />
           ) : null}
         </ConsensusMemoryFocusScope>

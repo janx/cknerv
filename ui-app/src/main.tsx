@@ -24,6 +24,8 @@ async function loadVisualReviewLab(
   switch (route) {
     case 'protocol-event':
       return (await import('./ProtocolEventLab')).default;
+    case 'cell-proof':
+      return (await import('./CellIdentityProofLab')).default;
     case 'cell-relic':
       return (await import('./CellRelicLab')).default;
     case 'cell-form':

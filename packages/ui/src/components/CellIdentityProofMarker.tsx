@@ -10,17 +10,38 @@ import CellOutpointLocatorMarker from './CellOutpointLocatorMarker';
 export default function CellIdentityProofMarker({
   cell,
   event,
+  sampleElapsedSeconds,
 }: {
   cell: Cell;
   event: CellIdentityProofEvent;
+  /** Fixed review-frame time. Omit to use the live event clock. */
+  sampleElapsedSeconds?: number;
 }) {
   if (event.kind === 'address') {
-    return <CellOutpointLocatorMarker cell={cell} event={event} />;
+    return (
+      <CellOutpointLocatorMarker
+        cell={cell}
+        event={event}
+        sampleElapsedSeconds={sampleElapsedSeconds}
+      />
+    );
   }
   if (event.kind === 'anchor') {
-    return <CellBirthAnchorMarker cell={cell} event={event} />;
+    return (
+      <CellBirthAnchorMarker
+        cell={cell}
+        event={event}
+        sampleElapsedSeconds={sampleElapsedSeconds}
+      />
+    );
   }
-  return <CellContentAddressEchoMarker cell={cell} event={event} />;
+  return (
+    <CellContentAddressEchoMarker
+      cell={cell}
+      event={event}
+      sampleElapsedSeconds={sampleElapsedSeconds}
+    />
+  );
 }
 
 export type {

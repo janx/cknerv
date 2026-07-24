@@ -6,6 +6,18 @@ import {
   deriveCellIdentityProofLabelPlacement,
 } from '../derives/cellIdentityProofLabel.derive';
 
+export const CELL_IDENTITY_PROOF_LABEL_VISUAL_TOKENS = {
+  zIndex: 4,
+  gapPx: 4,
+  padding: '2px 5px 2px 6px',
+  glowRadiusPx: 12,
+  codeFontSizePx: 7.4,
+  codeLetterSpacingPx: 1.05,
+  separatorFontSizePx: 6.4,
+  detailFontSizePx: 7.2,
+  detailLetterSpacingPx: 0.45,
+} as const;
+
 export interface CellIdentityProofLabelPresentation {
   state: CellIdentityEchoState;
   progress: number;
