@@ -98,15 +98,14 @@ export default function CellCoreArtwork({
         reducedMotion={reducedMotion}
         onReadResolved={onIdentityProofRead}
       />
-      {identityProofBinding?.cellId === cell.id
-        && identityProofBinding.resolvedKinds.length > 0 ? (
-          <group position={[0, 0, 0.58]}>
-            <CellIdentityBindingGlyph
-              binding={identityProofBinding}
-              mode="portrait"
-            />
-          </group>
-        ) : null}
+      {identityProofBinding?.cellId === cell.id ? (
+        <group position={[0, 0, 0.58]}>
+          <CellIdentityBindingGlyph
+            binding={identityProofBinding}
+            mode="portrait"
+          />
+        </group>
+      ) : null}
     </>
   );
 }

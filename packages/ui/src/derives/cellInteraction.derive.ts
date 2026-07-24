@@ -1,6 +1,7 @@
 export const CELL_SELECTION_PREFIX = 'cell:';
 export const CELL_HOVER_FOCUS = 0.46;
 export const CELL_SELECTED_FOCUS = 1;
+export const CELL_INSPECTION_GALAXY_ROTATION_SCALE = 0.12;
 export const CONSENSUS_BRAID_BASE_SCALE = 0.3;
 export const CONSENSUS_BRAID_LOCAL_RADIUS = 0.55;
 /** Camera-distance LOD is perceptual state, not motion. Sampling it at 12 Hz
@@ -10,6 +11,26 @@ export const CELL_NUCLEUS_LOD_REFRESH_HZ = 12;
 export const CELL_NUCLEUS_LOD_REFRESH_INTERVAL_S = 1 / CELL_NUCLEUS_LOD_REFRESH_HZ;
 
 const clamp01 = (value: number): number => Math.max(0, Math.min(1, value));
+
+/** Selection slows the canopy without freezing it into a diagram. */
+export function cellGalaxyRotationScaleTarget(
+  selectedCellId: number | null,
+): number {
+  return selectedCellId === null ? 1 : CELL_INSPECTION_GALAXY_ROTATION_SCALE;
+}
+
+/** Smoothly enter and leave inspection tempo without a visible speed step. */
+export function dampCellGalaxyRotationScale(
+  current: number,
+  target: number,
+  deltaSeconds: number,
+): number {
+  const from = Number.isFinite(current) ? clamp01(current) : 1;
+  const to = Number.isFinite(target) ? clamp01(target) : 1;
+  const delta = Math.max(0, Math.min(0.1, deltaSeconds));
+  const next = to + (from - to) * Math.exp(-5.2 * delta);
+  return Math.abs(next - to) < 0.001 ? to : next;
+}
 
 /** Interaction and topology changes bypass the cadence so semantic focus is
  *  immediate; passive camera-distance selection may wait for the next sample. */

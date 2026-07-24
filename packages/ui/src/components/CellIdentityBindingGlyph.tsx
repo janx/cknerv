@@ -104,7 +104,7 @@ export default function CellIdentityBindingGlyph({
           ? 0.62 + arrival + (
             binding.phase === 'recalling' ? phasePulse * 0.16 : 0
           )
-          : 0.045;
+          : 0.12;
       }
       if (railMaterial) {
         railMaterial.opacity = isResolved
@@ -113,12 +113,12 @@ export default function CellIdentityBindingGlyph({
               binding.phase === 'recalling' ? 0.18 : 0.04
             )
             : 0.16 + arrival
-          : 0.018;
+          : 0.035;
       }
       if (terminalMaterial) {
         terminalMaterial.opacity = isResolved
           ? 0.7 + arrival
-          : 0.055;
+          : 0.14;
       }
     });
 

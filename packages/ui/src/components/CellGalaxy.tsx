@@ -29,8 +29,10 @@ import {
 } from '../derives/consensusMemoryCoreIdentity.derive';
 import {
   CONSENSUS_BRAID_LOCAL_RADIUS,
+  cellGalaxyRotationScaleTarget,
   cellFocusTarget,
   consensusBraidRenderScale,
+  dampCellGalaxyRotationScale,
   selectedCellNumericId,
 } from '../derives/cellInteraction.derive';
 import { SHOCKWAVE_SLOTS, writeShockwaveSlot } from '../materials/shockwaveMaterial';
@@ -799,6 +801,7 @@ export default function CellGalaxy({
    *  cells-group's rotating local frame without traversing the
    *  Three.js scene graph. */
   const groupRotationYRef = useRef<number>(0);
+  const galaxyRotationScaleRef = useRef(1);
 
   // Hybrid Points buffers: one entry per cell. Written each frame
   // by writeCellBuffers. Indices are stable across frames so gl_VertexID
@@ -1221,7 +1224,14 @@ export default function CellGalaxy({
     }
 
     // 7. Group rotation.
-    group.rotation.y += LIVE.galaxy.rotationRate * dt;
+    galaxyRotationScaleRef.current = dampCellGalaxyRotationScale(
+      galaxyRotationScaleRef.current,
+      cellGalaxyRotationScaleTarget(selectedCellIdRef.current),
+      dt,
+    );
+    group.rotation.y += LIVE.galaxy.rotationRate
+      * galaxyRotationScaleRef.current
+      * dt;
     groupRotationYRef.current = group.rotation.y;
     // Mirror to the shared frame so sibling layers (BlockDeliveryLayer) can
     // project world landings into this rotating cell frame.
@@ -1278,9 +1288,7 @@ export default function CellGalaxy({
               sampleElapsedSeconds={identityProofSampleElapsedSeconds}
             />
           ) : null}
-          {identityProofBinding
-            && identityProofBinding.resolvedKinds.length > 0
-            && identityProofBindingCell ? (
+          {identityProofBinding && identityProofBindingCell ? (
             <CellIdentityBindingMarker
               cell={identityProofBindingCell}
               binding={identityProofBinding}

@@ -30,5 +30,14 @@ describe('HudOverlay wiring', () => {
     expect(APP_SOURCE).toContain(
       'identityProofBinding={cellIdentityProofBinding}',
     );
+    expect(APP_SOURCE).toContain(
+      'inspectionCellId={selectedCell?.id ?? null}',
+    );
+    expect(APP_SOURCE).toContain('onStart={beginOrbitInteraction}');
+    expect(APP_SOURCE).toContain('onChange={changeOrbitInteraction}');
+    expect(APP_SOURCE).toContain('onEnd={endOrbitInteraction}');
+    expect(APP_SOURCE).toContain(
+      'orbitGestureSuppressesPointerMiss(',
+    );
   });
 });

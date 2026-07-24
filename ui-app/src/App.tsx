@@ -73,6 +73,13 @@ import {
   cellIdentityJourneyReducer,
 } from './cell-identity-journey-state';
 import {
+  beginOrbitGesture,
+  changeOrbitGesture,
+  createOrbitGestureState,
+  endOrbitGesture,
+  orbitGestureSuppressesPointerMiss,
+} from './orbit-gesture-state';
+import {
   CELL_MEMORY_RECALL_MAX_PULSES,
   INITIAL_CELL_MEMORY_RECALL_STATE,
   cellMemoryRecallReducer,
@@ -133,6 +140,16 @@ export default function App({
     (revision: number) => revision + 1,
     0,
   );
+  const orbitGestureRef = useRef(createOrbitGestureState());
+  const beginOrbitInteraction = useCallback(() => {
+    beginOrbitGesture(orbitGestureRef.current);
+  }, []);
+  const changeOrbitInteraction = useCallback(() => {
+    if (changeOrbitGesture(orbitGestureRef.current)) noteOrbitInteraction();
+  }, []);
+  const endOrbitInteraction = useCallback(() => {
+    endOrbitGesture(orbitGestureRef.current, performance.now());
+  }, []);
   const forceRenderStats = useMemo(() => (
     typeof window !== 'undefined'
     && hasQuerySwitch(window.location.search, 'render-stats')
@@ -697,6 +714,10 @@ export default function App({
           dpr={canvasDpr}
           style={{ background: '#02030a' }}
           onPointerMissed={() => {
+            if (orbitGestureSuppressesPointerMiss(
+              orbitGestureRef.current,
+              performance.now(),
+            )) return;
             memoryRouteHopAnchorRef.current = null;
             setCellIdentityProof(null);
             dispatchCellIdentityJourney({ type: 'clear' });
@@ -798,6 +819,7 @@ export default function App({
             focus={memoryRouteHopLock}
             controlsRef={orbitControlsRef}
             manualRevision={orbitInteractionRevision}
+            inspectionCellId={selectedCell?.id ?? null}
             recordIdentity={memoryRecordIdentity}
             recordTargetCellId={memoryTraceRequest?.targetCellId ?? null}
             recordTraceReadout={selectedMemoryTraceReadout}
@@ -814,7 +836,9 @@ export default function App({
             // canopy y=38) instead of the world origin, so the scene sits
             // centered rather than pushed to the top. Matches CAMERA_PRESETS.default.
             target={DEFAULT_CAMERA_TARGET}
-            onStart={noteOrbitInteraction}
+            onStart={beginOrbitInteraction}
+            onChange={changeOrbitInteraction}
+            onEnd={endOrbitInteraction}
           />
         </Canvas>
       </CellGalaxyProvider>

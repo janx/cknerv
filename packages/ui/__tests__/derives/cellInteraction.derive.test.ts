@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import {
   CELL_HOVER_FOCUS,
+  CELL_INSPECTION_GALAXY_ROTATION_SCALE,
   CELL_NUCLEUS_LOD_REFRESH_INTERVAL_S,
   CELL_SELECTED_FOCUS,
   CONSENSUS_BRAID_BASE_SCALE,
+  cellGalaxyRotationScaleTarget,
   cellFocusTarget,
   cellNucleusLodRefreshDue,
   consensusBraidRenderScale,
+  dampCellGalaxyRotationScale,
   dampCellFocus,
   focusedBraidScale,
   selectedCellNumericId,
@@ -26,6 +29,27 @@ describe('cell interaction derivation', () => {
     expect(cellFocusTarget(7, null, 7)).toBe(CELL_HOVER_FOCUS);
     expect(cellFocusTarget(7, 7, 7)).toBe(CELL_SELECTED_FOCUS);
     expect(cellFocusTarget(7, 8, 9)).toBe(0);
+  });
+
+  it('eases the galaxy into a slower inspection tempo and back out', () => {
+    expect(cellGalaxyRotationScaleTarget(null)).toBe(1);
+    expect(cellGalaxyRotationScaleTarget(7))
+      .toBe(CELL_INSPECTION_GALAXY_ROTATION_SCALE);
+
+    const entering = dampCellGalaxyRotationScale(
+      1,
+      cellGalaxyRotationScaleTarget(7),
+      1 / 60,
+    );
+    const leaving = dampCellGalaxyRotationScale(
+      CELL_INSPECTION_GALAXY_ROTATION_SCALE,
+      cellGalaxyRotationScaleTarget(null),
+      1 / 60,
+    );
+    expect(entering).toBeLessThan(1);
+    expect(entering).toBeGreaterThan(CELL_INSPECTION_GALAXY_ROTATION_SCALE);
+    expect(leaving).toBeGreaterThan(CELL_INSPECTION_GALAXY_ROTATION_SCALE);
+    expect(dampCellGalaxyRotationScale(Number.NaN, 3, -1)).toBe(1);
   });
 
   it('eases focus in faster than it releases', () => {

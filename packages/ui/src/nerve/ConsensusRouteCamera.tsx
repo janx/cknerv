@@ -3,8 +3,10 @@ import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useReducedMotion } from '../components/hud/useReducedMotion';
 import {
+  CONSENSUS_CELL_INSPECTION_CAMERA_DISTANCE,
   CONSENSUS_ROUTE_CAMERA_DISTANCE,
   consensusRouteHopWorldPosition,
+  deriveConsensusCellInspectionCameraPose,
   deriveConsensusRecordCameraDistance,
   deriveConsensusRecordCameraIntent,
   deriveConsensusRecordCameraPose,
@@ -40,6 +42,8 @@ export interface ConsensusRouteCameraProps {
   controlsRef: RefObject<ConsensusRouteCameraControls | null>;
   /** Incremented by the host whenever OrbitControls starts a manual gesture. */
   manualRevision?: number;
+  /** Exact selected Cell to place in measured HUD-safe inspection space. */
+  inspectionCellId?: number | null;
   /** Keep the verified framing while its route afterimage begins to recede. */
   releaseHoldSeconds?: number;
   /** Stable link + target identity; replay nonce must not create a new frame. */
@@ -64,6 +68,7 @@ interface CameraSession {
   restPose: CameraPoseVectors;
   manuallyAdjusted: boolean;
   neutralized: boolean;
+  inspectionCellId: number | null;
   recordFramed: boolean;
   recordIdentity: string | null;
 }
@@ -136,15 +141,16 @@ function measureHudOcclusions(
 }
 
 /**
- * Frames explicit record and route inspection while hover remains passive.
- * Record replacement crosses identity-free neutral space before a broad target
- * frame; a verified route lock may then move closer. Manual control cancels
- * the remaining automatic session.
+ * Frames explicit Cell selection, record recall, and route inspection while
+ * hover remains passive. Record replacement crosses identity-free neutral
+ * space before a broad target frame; a verified route lock may then move
+ * closer. Manual control cancels the remaining automatic session.
  */
 export default function ConsensusRouteCamera({
   focus = null,
   controlsRef,
   manualRevision = 0,
+  inspectionCellId = null,
   releaseHoldSeconds = CONSENSUS_ROUTE_CAMERA_RELEASE_HOLD_SECONDS,
   recordIdentity = null,
   recordTargetCellId = null,
@@ -166,6 +172,7 @@ export default function ConsensusRouteCamera({
   const previousRecordIdentityRef = useRef(recordIdentity);
   const previousRecordSwitchPendingRef = useRef(recordSwitchPending);
   const previousRouteFocusIdentityRef = useRef<string | null>(null);
+  const previousInspectionCellIdRef = useRef<number | null>(null);
   const verticalFovDegrees = camera instanceof THREE.PerspectiveCamera
     ? camera.fov
     : 50;
@@ -212,6 +219,12 @@ export default function ConsensusRouteCamera({
   const cellX = focusedCell?.pos_seed[0] ?? null;
   const cellY = focusedCell?.pos_seed[1] ?? null;
   const cellZ = focusedCell?.pos_seed[2] ?? null;
+  const inspectionCell = inspectionCellId === null
+    ? null
+    : cellsCache.cells.get(inspectionCellId) ?? null;
+  const inspectionCellX = inspectionCell?.pos_seed[0] ?? null;
+  const inspectionCellY = inspectionCell?.pos_seed[1] ?? null;
+  const inspectionCellZ = inspectionCell?.pos_seed[2] ?? null;
   const recordTargetCell = recordTargetCellId === null
     ? null
     : cellsCache.cells.get(recordTargetCellId) ?? null;
@@ -240,6 +253,7 @@ export default function ConsensusRouteCamera({
     const previousRecordIdentity = previousRecordIdentityRef.current;
     const previousSwitchPending = previousRecordSwitchPendingRef.current;
     const previousRouteFocusIdentity = previousRouteFocusIdentityRef.current;
+    const previousInspectionCellId = previousInspectionCellIdRef.current;
     const compositionChanged = previousCompositionKeyRef.current !== compositionKey;
     const recordGeometryChanged = previousRecordGeometryKeyRef.current
       !== recordGeometryKey;
@@ -265,6 +279,7 @@ export default function ConsensusRouteCamera({
     previousRecordIdentityRef.current = recordIdentity;
     previousRecordSwitchPendingRef.current = recordSwitchPending;
     previousRouteFocusIdentityRef.current = routeFocusIdentity;
+    previousInspectionCellIdRef.current = inspectionCellId;
     previousCompositionKeyRef.current = compositionKey;
     previousRecordGeometryKeyRef.current = recordGeometryKey;
 
@@ -289,6 +304,7 @@ export default function ConsensusRouteCamera({
         restPose: clonePose(returnPose),
         manuallyAdjusted: false,
         neutralized: false,
+        inspectionCellId: null,
         recordFramed: false,
         recordIdentity: null,
       };
@@ -323,6 +339,26 @@ export default function ConsensusRouteCamera({
         cameraUp: camera.up.toArray(),
       };
       return { composition, hudOcclusions };
+    };
+    const deriveInspectionPose = (): CameraPoseVectors | null => {
+      if (
+        inspectionCellX === null
+        || inspectionCellY === null
+        || inspectionCellZ === null
+      ) return null;
+      const cellWorld = consensusRouteHopWorldPosition(
+        [inspectionCellX, inspectionCellY, inspectionCellZ],
+        galaxyFrame.rotationY,
+      );
+      const { composition } = measureSafeComposition();
+      const inspection = deriveConsensusCellInspectionCameraPose(
+        camera.position.toArray(),
+        controls.target.toArray(),
+        cellWorld,
+        CONSENSUS_CELL_INSPECTION_CAMERA_DISTANCE,
+        composition,
+      );
+      return poseVectors(inspection.position, inspection.target);
     };
     const deriveRecordPose = (): CameraPoseVectors | null => {
       if (recordCellX === null || recordCellY === null || recordCellZ === null) {
@@ -467,13 +503,43 @@ export default function ConsensusRouteCamera({
       return;
     }
 
+    const inspectionChanged = previousInspectionCellId !== inspectionCellId;
+    if (
+      recordIdentity === null
+      && routeFocusIdentity === null
+      && inspectionCellId !== null
+      && (
+        inspectionChanged
+        || (
+          compositionChanged
+          && existingSession?.inspectionCellId === inspectionCellId
+        )
+      )
+    ) {
+      const inspectionPose = deriveInspectionPose();
+      if (!inspectionPose) return;
+      const session = ensureSession();
+      session.restPose = inspectionPose;
+      session.inspectionCellId = inspectionCellId;
+      session.recordFramed = false;
+      session.recordIdentity = null;
+      session.neutralized = false;
+      releaseHoldRef.current = null;
+      queuedTransitionRef.current = null;
+      transitionTo(inspectionPose, false);
+      return;
+    }
+
     const session = sessionRef.current;
     if (!session) return;
     const recordEnded = previousRecordIdentity !== null
       && recordIdentity === null;
     const routeFocusReleased = previousRouteFocusIdentity !== null
       && routeFocusIdentity === null;
-    if (!recordEnded && !routeFocusReleased) return;
+    const inspectionEnded = previousInspectionCellId !== null
+      && inspectionCellId === null
+      && recordIdentity === null;
+    if (!recordEnded && !routeFocusReleased && !inspectionEnded) return;
     if (
       routeFocusReleased
       && !recordEnded
@@ -489,8 +555,21 @@ export default function ConsensusRouteCamera({
       const recordPose = deriveRecordPose();
       if (recordPose) session.restPose = recordPose;
     }
-    const restoring = recordIdentity === null;
-    const restPose = restoring ? session.returnPose : session.restPose;
+    let restoring = false;
+    let restPose = session.restPose;
+    if (recordIdentity === null) {
+      const inspectionPose = deriveInspectionPose();
+      if (inspectionPose && inspectionCellId !== null) {
+        session.restPose = inspectionPose;
+        session.inspectionCellId = inspectionCellId;
+        session.recordFramed = false;
+        session.recordIdentity = null;
+        restPose = inspectionPose;
+      } else {
+        restoring = true;
+        restPose = session.returnPose;
+      }
+    }
     if (holdSeconds > 0) {
       transitionRef.current = null;
       releaseHoldRef.current = {
@@ -517,6 +596,10 @@ export default function ConsensusRouteCamera({
     focus?.sourceId,
     focus?.targetCellId,
     focus?.traceKey,
+    inspectionCellId,
+    inspectionCellX,
+    inspectionCellY,
+    inspectionCellZ,
     recordCellX,
     recordCellY,
     recordCellZ,

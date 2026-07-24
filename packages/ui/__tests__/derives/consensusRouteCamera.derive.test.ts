@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import {
+  CONSENSUS_CELL_INSPECTION_CAMERA_DISTANCE,
   CONSENSUS_RECORD_CAMERA_DISTANCE,
   CONSENSUS_RECORD_CAMERA_HUD_GAP_PX,
   CONSENSUS_RECORD_CAMERA_MAX_DISTANCE,
@@ -9,6 +10,7 @@ import {
   CONSENSUS_RECORD_CAMERA_SAFE_WIDTH_PX,
   CONSENSUS_ROUTE_CAMERA_DISTANCE,
   consensusRouteHopWorldPosition,
+  deriveConsensusCellInspectionCameraPose,
   deriveConsensusRecordCameraIntent,
   deriveConsensusRecordCameraDistance,
   deriveConsensusRecordCameraPose,
@@ -169,6 +171,22 @@ describe('consensus route camera derive', () => {
       .toBeCloseTo(CONSENSUS_RECORD_CAMERA_DISTANCE, 8);
     expect(CONSENSUS_RECORD_CAMERA_DISTANCE)
       .toBeGreaterThan(CONSENSUS_ROUTE_CAMERA_DISTANCE);
+  });
+
+  it('places selected-Cell inspection between route detail and record context', () => {
+    const inspection = deriveConsensusCellInspectionCameraPose(
+      [12, 10, 14],
+      [2, 4, 6],
+      [-8, 39, 5],
+    );
+
+    expect(inspection.target).toEqual([-8, 39, 5]);
+    expect(distance(inspection.position, inspection.target))
+      .toBeCloseTo(CONSENSUS_CELL_INSPECTION_CAMERA_DISTANCE, 8);
+    expect(CONSENSUS_CELL_INSPECTION_CAMERA_DISTANCE)
+      .toBeGreaterThan(CONSENSUS_ROUTE_CAMERA_DISTANCE);
+    expect(CONSENSUS_CELL_INSPECTION_CAMERA_DISTANCE)
+      .toBeLessThan(CONSENSUS_RECORD_CAMERA_DISTANCE);
   });
 
   it('moves the record anchor only far enough to clear measured HUD rails', () => {
