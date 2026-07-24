@@ -42,6 +42,14 @@ const IDENTITY_PROOF_LABEL_PRESENTATION_SOURCE = resolve(
   process.cwd(),
   'src/components/cellIdentityProofLabel.presentation.ts',
 );
+const IDENTITY_BINDING_MARKER_SOURCE = resolve(
+  process.cwd(),
+  'src/components/CellIdentityBindingMarker.tsx',
+);
+const IDENTITY_BINDING_GLYPH_SOURCE = resolve(
+  process.cwd(),
+  'src/components/CellIdentityBindingGlyph.tsx',
+);
 
 describe('CellGalaxy', () => {
   it('mounts inside an r3f Canvas without throwing', () => {
@@ -148,6 +156,25 @@ describe('CellGalaxy', () => {
       'presentCellIdentityProofLabel',
     );
     expect(labelSource).toContain("pointerEvents: 'none'");
+  });
+
+  it('retains resolved proofs as one bounded identity knot', () => {
+    const galaxySource = readFileSync(CELL_GALAXY_SOURCE, 'utf8');
+    const markerSource = readFileSync(IDENTITY_BINDING_MARKER_SOURCE, 'utf8');
+    const glyphSource = readFileSync(IDENTITY_BINDING_GLYPH_SOURCE, 'utf8');
+
+    expect(galaxySource).toContain('<CellIdentityBindingMarker');
+    expect(galaxySource).toContain(
+      'cellsCache.cells.get(identityProofBinding.cellId)',
+    );
+    expect(markerSource).toContain('<Billboard');
+    expect(markerSource).toContain('<CellIdentityBindingGlyph');
+    expect(glyphSource).toContain('CELL_IDENTITY_PROOF_KINDS.map');
+    expect(glyphSource).toContain('cellIdentityProofBindingComplete(binding)');
+    expect(glyphSource).toContain('memoryIdentityBindingPhase');
+    expect(glyphSource).toContain('<ringGeometry');
+    expect(glyphSource).not.toContain('<Html');
+    expect(glyphSource).not.toContain('<img');
   });
 
   it('mounts with localReceiveDelayS (receive-delayed reaction) without throwing', () => {

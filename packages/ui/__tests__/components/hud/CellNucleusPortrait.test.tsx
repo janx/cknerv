@@ -31,10 +31,13 @@ describe('CellNucleusPortrait production language', () => {
     expect(SOURCE).toContain('data-memory-portrait-address-lanes');
     expect(SOURCE).toContain('data-memory-portrait-address-focus');
     expect(SOURCE).toContain('data-memory-portrait-proof-focus');
+    expect(SOURCE).toContain('data-memory-portrait-identity-phase');
+    expect(SOURCE).toContain('data-memory-portrait-identity-count');
     expect(SOURCE).toContain('data-memory-portrait-outpoint-index-bytes');
     expect(SOURCE).toContain('data-memory-portrait-anchor-hex');
     expect(CORE_SOURCE).toContain('<CellContentAddressHalo');
     expect(CORE_SOURCE).toContain('<CellIdentityProofReader');
+    expect(CORE_SOURCE).toContain('<CellIdentityBindingGlyph');
     expect(CORE_SOURCE).toContain("contentFocused={focusField === 'data'}");
     expect(CORE_SOURCE).toContain("focusField === 'state'");
     expect(CORE_SOURCE).toContain("focusField === 'born'");
@@ -55,6 +58,7 @@ describe('CellNucleusPortrait production language', () => {
     expect(PROOF_READER_SOURCE).toContain("onReadResolvedRef.current?.('anchor')");
     expect(PROOF_READER_SOURCE).toContain('settledRef.current = true');
     expect(SOURCE).toContain('onIdentityProofRead={onIdentityProofRead}');
+    expect(SOURCE).toContain('identityProofBinding={');
     expect(SOURCE).toContain('data-memory-portrait-state');
     expect(SOURCE).not.toContain('specimenMorphology(');
     expect(SOURCE).not.toContain('makeOrganelleMaterial');

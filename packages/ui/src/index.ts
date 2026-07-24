@@ -99,9 +99,15 @@ export {
 } from './components/CellGalaxy';
 export type { BlockEventTrigger, CellBufferTargets } from './components/CellGalaxy';
 export type {
+  CellIdentityBindingPhase,
+  CellIdentityProofBinding,
   CellIdentityProofEvent,
   CellIdentityProofKind,
 } from './components/CellIdentityProofMarker';
+export {
+  CELL_IDENTITY_PROOF_KINDS,
+  cellIdentityProofBindingComplete,
+} from './derives/cellIdentityProof.derive';
 export {
   default as CellIdentityProofMarker,
 } from './components/CellIdentityProofMarker';

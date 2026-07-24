@@ -24,6 +24,7 @@ import {
   CELL_SELECTION_PREFIX,
   chainNodeWorldPosition,
   canRecallConsensusMemory,
+  cellIdentityProofBindingComplete,
   consensusMemoryRouteHopFocusEqual,
   consensusMemoryTraceRequestKey,
   deriveConsensusMemoryRouteHopFocus,
@@ -67,6 +68,10 @@ import type {
   Peer,
 } from '@cknerv/types';
 import Tweaks from './Tweaks';
+import {
+  INITIAL_CELL_IDENTITY_JOURNEY_STATE,
+  cellIdentityJourneyReducer,
+} from './cell-identity-journey-state';
 import {
   CELL_MEMORY_RECALL_MAX_PULSES,
   INITIAL_CELL_MEMORY_RECALL_STATE,
@@ -164,6 +169,11 @@ export default function App({
     CellIdentityProofEvent | null
   >(null);
   const cellIdentityProofSequenceRef = useRef(0);
+  const [cellIdentityJourney, dispatchCellIdentityJourney] = useReducer(
+    cellIdentityJourneyReducer,
+    INITIAL_CELL_IDENTITY_JOURNEY_STATE,
+  );
+  const cellIdentityProofBinding = cellIdentityJourney.binding;
   const [memoryRecall, dispatchMemoryRecall] = useReducer(
     cellMemoryRecallReducer,
     INITIAL_CELL_MEMORY_RECALL_STATE,
@@ -191,6 +201,11 @@ export default function App({
     if (id == null) return;
     if (id.startsWith(CELL_SELECTION_PREFIX)) {
       const nextCellId = Number(id.slice(CELL_SELECTION_PREFIX.length));
+      dispatchCellIdentityJourney({
+        type: 'select',
+        cellId: nextCellId,
+        atMs: performance.now(),
+      });
       setCellIdentityProof((current) => (
         current?.cellId === nextCellId ? current : null
       ));
@@ -214,12 +229,20 @@ export default function App({
     reducedMotion: boolean,
   ) => {
     if (selectedCellId !== `${CELL_SELECTION_PREFIX}${cellId}`) return;
+    const emittedAtMs = performance.now();
     cellIdentityProofSequenceRef.current += 1;
     setCellIdentityProof({
       kind,
       cellId,
       sequence: cellIdentityProofSequenceRef.current,
-      emittedAtMs: performance.now(),
+      emittedAtMs,
+      reducedMotion,
+    });
+    dispatchCellIdentityJourney({
+      type: 'resolve',
+      kind,
+      cellId,
+      atMs: emittedAtMs,
       reducedMotion,
     });
   }, [selectedCellId]);
@@ -402,6 +425,33 @@ export default function App({
   const memoryRecordSwitchPending = memoryTraceRequest !== null
     && selectedCell !== null
     && selectedCell.id !== memoryTraceRequest.targetCellId;
+  useEffect(() => {
+    const targetCellId = memoryTraceRequest?.targetCellId;
+    if (
+      memoryTraceRequest
+      && typeof targetCellId === 'number'
+      && cellIdentityProofBinding?.cellId === targetCellId
+      && cellIdentityProofBindingComplete(cellIdentityProofBinding)
+    ) {
+      dispatchCellIdentityJourney({
+        type: 'recall-start',
+        cellId: targetCellId,
+        requestKey: consensusMemoryTraceRequestKey(memoryTraceRequest),
+        atMs: performance.now(),
+      });
+    } else if (
+      memoryTraceRequest === null
+      && cellIdentityProofBinding?.phase === 'recalling'
+    ) {
+      dispatchCellIdentityJourney({
+        type: 'recall-stop',
+        atMs: performance.now(),
+      });
+    }
+  }, [
+    cellIdentityProofBinding,
+    memoryTraceRequest,
+  ]);
   const selectedMemoryTraceReadout = useMemo(() => {
     if (!selectedCell || !memoryTraceRequest || !memoryTraceReadout) return null;
     return memoryTraceReadout.targetCellId === selectedCell.id
@@ -547,7 +597,11 @@ export default function App({
     setMemoryRouteHopLock(verified);
   }, [selectedMemoryTraceReadout]);
   const recallSelectedCellOrigin = useCallback((linkSeq: number) => {
-    if (!selectedCell) return;
+    if (
+      !selectedCell
+      || cellIdentityProofBinding?.cellId !== selectedCell.id
+      || !cellIdentityProofBindingComplete(cellIdentityProofBinding)
+    ) return;
     const link = cellsCache.recentLinks.find((candidate) => candidate.seq === linkSeq);
     if (
       !link
@@ -558,9 +612,21 @@ export default function App({
       linkSeq,
       targetCellId: selectedCell.id,
     });
-  }, [selectedCell, cellsCache.cells, cellsCache.recentLinks]);
+  }, [
+    cellIdentityProofBinding,
+    selectedCell,
+    cellsCache.cells,
+    cellsCache.recentLinks,
+  ]);
   const completeMemoryRecall = useCallback((request: ConsensusMemoryTraceRequest) => {
     dispatchMemoryRecall({ type: 'complete', request });
+    if (typeof request.targetCellId !== 'number') return;
+    dispatchCellIdentityJourney({
+      type: 'recall-retained',
+      cellId: request.targetCellId,
+      requestKey: consensusMemoryTraceRequestKey(request),
+      atMs: performance.now(),
+    });
   }, []);
   const selectedNode = useMemo(() => {
     if (!selectedNetId || selectedNetId.startsWith('peer:')) return null;
@@ -601,6 +667,7 @@ export default function App({
         onCellTraceRouteHopFocusChange={focusMemoryTraceRouteHop}
         cellTraceRouteHopLock={memoryRouteHopLock}
         onCellTraceRouteHopLockChange={lockMemoryTraceRouteHop}
+        cellIdentityProofBinding={cellIdentityProofBinding}
         onTraceCellWrite={selectedOriginTraceable
           ? recallSelectedCellOrigin
           : undefined}
@@ -610,6 +677,7 @@ export default function App({
         onClearCell={() => {
           memoryRouteHopAnchorRef.current = null;
           setCellIdentityProof(null);
+          dispatchCellIdentityJourney({ type: 'clear' });
           setSelectedCellId(null);
           dispatchMemoryRecall({ type: 'cancel' });
         }}
@@ -631,6 +699,7 @@ export default function App({
           onPointerMissed={() => {
             memoryRouteHopAnchorRef.current = null;
             setCellIdentityProof(null);
+            dispatchCellIdentityJourney({ type: 'clear' });
             setSelectedCellId(null);
             setSelectedNetId(null);
             dispatchMemoryRecall({ type: 'cancel' });
@@ -675,6 +744,7 @@ export default function App({
             selectedId={selectedNetId}
             selectedCellId={selectedCellId}
             identityProof={cellIdentityProof}
+            identityProofBinding={cellIdentityProofBinding}
             onSelect={handleSelect}
             cellFlashRef={cellFlashRef}
             flashDirtyRef={flashDirtyRef}

@@ -45,8 +45,10 @@ import {
   chainNodeWorldPosition,
 } from '../layout';
 import CellIdentityProofMarker, {
+  type CellIdentityProofBinding,
   type CellIdentityProofEvent,
 } from './CellIdentityProofMarker';
+import CellIdentityBindingMarker from './CellIdentityBindingMarker';
 
 /** Cyan palette for the structural chain anchor (CKB icosahedron).
  *  The chain anchor reads as "structural backbone / chain truth" and
@@ -115,6 +117,9 @@ interface CellGalaxyProps {
   /** One WHERE / WHAT / WHEN acknowledgement emitted after the portrait
    *  resolves the selected identity facet. It never mutates chain state. */
   identityProof?: CellIdentityProofEvent | null;
+  /** Accumulated proof state for the selected Cell. One bounded scene glyph
+   *  persists as the bridge from exact identity into causal recall. */
+  identityProofBinding?: CellIdentityProofBinding | null;
   /** Fixed elapsed time for deterministic identity-proof review frames.
    *  Production callers omit this and retain the live event clock. */
   identityProofSampleElapsedSeconds?: number;
@@ -705,6 +710,7 @@ export default function CellGalaxy({
   selectedId,
   selectedCellId = null,
   identityProof = null,
+  identityProofBinding = null,
   identityProofSampleElapsedSeconds,
   onSelect,
   cellFlashRef,
@@ -723,6 +729,9 @@ export default function CellGalaxy({
   const cellsCache = useCellGalaxy();
   const identityProofCell = identityProof
     ? cellsCache.cells.get(identityProof.cellId) ?? null
+    : null;
+  const identityProofBindingCell = identityProofBinding
+    ? cellsCache.cells.get(identityProofBinding.cellId) ?? null
     : null;
   const { effective: quality } = useQualityRuntime();
   const cellGalaxyMul = QUALITY_PRESETS[quality].cellGalaxyMul;
@@ -1267,6 +1276,14 @@ export default function CellGalaxy({
               cell={identityProofCell}
               event={identityProof}
               sampleElapsedSeconds={identityProofSampleElapsedSeconds}
+            />
+          ) : null}
+          {identityProofBinding
+            && identityProofBinding.resolvedKinds.length > 0
+            && identityProofBindingCell ? (
+            <CellIdentityBindingMarker
+              cell={identityProofBindingCell}
+              binding={identityProofBinding}
             />
           ) : null}
         </ConsensusMemoryFocusScope>

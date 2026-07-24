@@ -45,6 +45,8 @@ export default function CellIdentityProofMarker({
 }
 
 export type {
+  CellIdentityBindingPhase,
+  CellIdentityProofBinding,
   CellIdentityProofEvent,
   CellIdentityProofKind,
 } from '../derives/cellIdentityProof.derive';

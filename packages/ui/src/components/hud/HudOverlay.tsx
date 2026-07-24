@@ -13,6 +13,7 @@ import { ecgCondition, expectedBlockMs, windowMeanMs, ECG_WINDOW, type EcgCondit
 import { alertLevel } from '../../derives/alertLevel';
 import type { CellsStats } from '../../derives/cellsStats.derive';
 import type {
+  CellIdentityProofBinding,
   CellIdentityProofKind,
 } from '../../derives/cellIdentityProof.derive';
 import { injectHudTheme } from './hudTheme';
@@ -50,7 +51,7 @@ const MESH_RAIL_STYLE: CSSProperties = { position: 'absolute', top: 42, right: 1
 const MESH_ZONE_COL: CSSProperties = { display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'flex-end' };
 const PANEL_FLOW: CSSProperties = { position: 'relative' };
 
-export default function HudOverlay({ chain, peers, localNode, cellsStats, selectedCell, cellRecordsById, recentCellLinks, tracedCellWriteSeq, cellTraceSource, cellTraceReadout, cellTraceResponseRef, cellTraceEvidenceFocusSourceId, cellTraceEvidencePreviewSourceId, onCellTraceEvidenceFocusChange, cellTraceRouteHopFocus, onCellTraceRouteHopFocusChange, cellTraceRouteHopLock, onCellTraceRouteHopLockChange, onTraceCellWrite, onCellIdentityProofRead, selectedNode, selectedPeer, onClearSelection, onClearCell, onClearNet, backfill, build, colonyCount }: {
+export default function HudOverlay({ chain, peers, localNode, cellsStats, selectedCell, cellRecordsById, recentCellLinks, tracedCellWriteSeq, cellTraceSource, cellTraceReadout, cellTraceResponseRef, cellTraceEvidenceFocusSourceId, cellTraceEvidencePreviewSourceId, onCellTraceEvidenceFocusChange, cellTraceRouteHopFocus, onCellTraceRouteHopFocusChange, cellTraceRouteHopLock, onCellTraceRouteHopLockChange, cellIdentityProofBinding, onTraceCellWrite, onCellIdentityProofRead, selectedNode, selectedPeer, onClearSelection, onClearCell, onClearNet, backfill, build, colonyCount }: {
   chain: ChainEntry; peers: Peer[]; localNode: ChainNode | undefined; cellsStats: CellsStats;
   selectedCell?: Cell | null;
   /** Current Cell projection records for exact route-hop inspection. */
@@ -72,6 +73,7 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats, select
   onCellTraceRouteHopLockChange?: (
     focus: ConsensusMemoryRouteHopFocus | null,
   ) => void;
+  cellIdentityProofBinding?: CellIdentityProofBinding | null;
   onTraceCellWrite?: (linkSeq: number) => void;
   onCellIdentityProofRead?: (
     kind: CellIdentityProofKind,
@@ -192,6 +194,7 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats, select
               onTraceRouteHopFocusChange={onCellTraceRouteHopFocusChange}
               traceRouteHopLock={cellTraceRouteHopLock}
               onTraceRouteHopLockChange={onCellTraceRouteHopLockChange}
+              identityProofBinding={cellIdentityProofBinding}
               onTraceWrite={onTraceCellWrite}
               onIdentityProofRead={onCellIdentityProofRead}
               onClose={clearCell}

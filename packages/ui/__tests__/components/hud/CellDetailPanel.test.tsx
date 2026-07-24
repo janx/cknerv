@@ -2,15 +2,20 @@ import { cleanup, fireEvent, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 import type { Cell, CellLink } from '@cknerv/types';
 import type { ConsensusMemoryTraceReadout } from '../../../src/nerve/consensusMemoryTrace';
+import type {
+  CellIdentityBindingPhase,
+  CellIdentityProofBinding,
+} from '../../../src/derives/cellIdentityProof.derive';
 
 // The embedded portrait spins a real WebGL context — stub it in jsdom.
 vi.mock('../../../src/components/hud/CellNucleusPortrait', () => ({
-  default: ({ cell, focusField, traceReadout, traceResponseRef, traceEvidenceFocusSourceId, onIdentityProofRead }: {
+  default: ({ cell, focusField, traceReadout, traceResponseRef, traceEvidenceFocusSourceId, identityProofBinding, onIdentityProofRead }: {
     cell: { content_hash: string };
     focusField?: string | null;
     traceReadout?: { stage: string } | null;
     traceResponseRef?: { current: unknown };
     traceEvidenceFocusSourceId?: number | null;
+    identityProofBinding?: CellIdentityProofBinding | null;
     onIdentityProofRead?: (
       kind: 'address' | 'content' | 'anchor',
     ) => void;
@@ -22,6 +27,8 @@ vi.mock('../../../src/components/hud/CellNucleusPortrait', () => ({
       data-trace-stage={traceReadout?.stage ?? ''}
       data-response-ref={traceResponseRef ? 'true' : 'false'}
       data-evidence-focus-source={traceEvidenceFocusSourceId ?? ''}
+      data-identity-phase={identityProofBinding?.phase ?? 'idle'}
+      data-identity-count={identityProofBinding?.resolvedKinds.length ?? 0}
     >
       {(['address', 'content', 'anchor'] as const).map((kind) => (
         <button
@@ -47,6 +54,20 @@ const base: Cell = {
   capacity: 12300000000, data_hex: '0xdeadbeefcafe1234567890',
   content_hash: '0x' + '11'.repeat(32), lock_kind: 'omnilock', asset_kind: 'xudt',
 };
+
+function identityBinding(
+  phase: CellIdentityBindingPhase = 'verified',
+): CellIdentityProofBinding {
+  return {
+    cellId: base.id,
+    resolvedKinds: ['address', 'content', 'anchor'],
+    phase,
+    revision: 3,
+    changedAtMs: 100,
+    lastResolvedKind: 'anchor',
+    reducedMotion: true,
+  };
+}
 
 function traceReadout(
   overrides: Partial<ConsensusMemoryTraceReadout> = {},
@@ -182,6 +203,80 @@ describe('CellDetailPanel', () => {
     ]);
   });
 
+  it('binds causal recall to all three resolved identity facets', () => {
+    vi.stubGlobal('matchMedia', () => ({
+      matches: true,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }));
+    const origin: CellLink = {
+      seq: 18,
+      tx_hash: base.out_point.tx_hash,
+      block: base.birth_block,
+      from_ids: [1, 2],
+      to_ids: [base.id],
+      parents: [],
+      tag: base.tag,
+      at_ms: 12_000,
+    };
+    const onTraceWrite = vi.fn();
+    const partial: CellIdentityProofBinding = {
+      ...identityBinding(),
+      resolvedKinds: ['address'],
+      phase: 'collecting',
+      revision: 1,
+      lastResolvedKind: 'address',
+    };
+    const props = {
+      cell: base,
+      recentLinks: [origin],
+      traceSource: 'input' as const,
+      onTraceWrite,
+      onClose: () => {},
+    };
+    const { container, getByRole, getByTestId, rerender } = render(
+      <CellDetailPanel {...props} identityProofBinding={partial} />,
+    );
+
+    const recall = getByRole('button', { name: 'recall causal path' });
+    expect((recall as HTMLButtonElement).disabled).toBe(true);
+    expect(container.querySelector('[data-memory-identity-binding="true"]')
+      ?.getAttribute('data-memory-identity-count')).toBe('1');
+    expect(container.querySelector('[data-memory-identity-proof="address"]')
+      ?.getAttribute('data-memory-identity-proof-state')).toBe('resolved');
+    expect(container.querySelector('[data-memory-identity-proof="content"]')
+      ?.getAttribute('data-memory-identity-proof-state')).toBe('pending');
+    expect(container.textContent).toContain(
+      'VERIFY WHERE / WHAT / WHEN TO RECALL',
+    );
+    expect(getByTestId('portrait').getAttribute('data-identity-count')).toBe('1');
+
+    rerender(
+      <CellDetailPanel
+        {...props}
+        identityProofBinding={identityBinding()}
+      />,
+    );
+    expect((
+      getByRole('button', { name: 'recall causal path' }) as HTMLButtonElement
+    ).disabled).toBe(false);
+    expect(container.textContent).toContain(
+      'IDENTITY BOUND · MEMORY ROUTE READY',
+    );
+    fireEvent.click(getByRole('button', { name: 'recall causal path' }));
+    expect(onTraceWrite).toHaveBeenCalledWith(origin.seq);
+
+    rerender(
+      <CellDetailPanel
+        {...props}
+        identityProofBinding={identityBinding('retained')}
+      />,
+    );
+    expect(container.textContent).toContain(
+      'RETAINED MEMORY · REPLAY CAUSAL PATH',
+    );
+  });
+
   it('shows SPENT for a consumed cell without biological death language', () => {
     const dead = { ...base, death_at_ms: 5000 };
     const { container } = render(<CellDetailPanel cell={dead} onClose={() => {}} />);
@@ -230,6 +325,7 @@ describe('CellDetailPanel', () => {
         tracedWriteSeq={origin.seq}
         traceSource="input"
         traceReadout={traceReadout()}
+        identityProofBinding={identityBinding('recalling')}
         onTraceWrite={onTraceWrite}
         onClose={() => {}}
       />,
@@ -268,6 +364,7 @@ describe('CellDetailPanel', () => {
       recentLinks: [origin],
       tracedWriteSeq: origin.seq,
       traceSource: 'input' as const,
+      identityProofBinding: identityBinding('recalling'),
       traceResponseRef: { current: null },
       onTraceWrite: () => {},
       onClose: () => {},
@@ -343,6 +440,7 @@ describe('CellDetailPanel', () => {
       recentLinks: [origin],
       tracedWriteSeq: origin.seq,
       traceSource: 'input' as const,
+      identityProofBinding: identityBinding('recalling'),
       traceReadout: traceReadout(),
       onTraceWrite: () => {},
       onTraceEvidenceFocusChange,
@@ -480,6 +578,7 @@ describe('CellDetailPanel', () => {
       recentLinks: [origin],
       tracedWriteSeq: origin.seq,
       traceSource: 'input' as const,
+      identityProofBinding: identityBinding('recalling'),
       traceReadout: traceReadout(),
       traceEvidenceFocusSourceId: 11,
       traceRouteHopLock: lockedHop,
@@ -551,6 +650,7 @@ describe('CellDetailPanel', () => {
       recentLinks: [origin],
       tracedWriteSeq: origin.seq,
       traceSource: 'input' as const,
+      identityProofBinding: identityBinding('recalling'),
       traceReadout: traceReadout(),
       traceEvidenceFocusSourceId: 11,
       onTraceEvidenceFocusChange: vi.fn(),
@@ -713,6 +813,7 @@ describe('CellDetailPanel', () => {
         recentLinks={[origin]}
         tracedWriteSeq={origin.seq}
         traceSource="input"
+        identityProofBinding={identityBinding('recalling')}
         traceReadout={readout}
         traceEvidenceFocusSourceId={11}
         traceRouteHopFocus={lockedFocus}
@@ -953,6 +1054,7 @@ describe('CellDetailPanel', () => {
         cell={base}
         recentLinks={[origin]}
         traceSource="witness"
+        identityProofBinding={identityBinding()}
         onTraceWrite={() => {}}
         onClose={() => {}}
       />,
