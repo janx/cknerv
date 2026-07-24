@@ -50,6 +50,10 @@ import {
   consensusMemoryApertureScale,
   type ConsensusMemoryAperture,
 } from './consensusMemoryAperture';
+import {
+  cellInspectionFieldTransitionScaleAt,
+  type CellInspectionField,
+} from './cellInspectionField';
 
 // Dense-mesh baseline energy (the `cell.fabricAlpha` tweak, default 0.12).
 // Passive fibres use bounded screen accumulation plus spatial compression;
@@ -108,6 +112,9 @@ export interface ActiveHop {
 }
 
 export interface NeuralFabricHandles {
+  /** Grade passive structure by bounded real adjacency around one inspected
+   * Cell. Active writes and recalled routes keep their independent layers. */
+  setInspectionField(field: CellInspectionField | null): void;
   /** Clear passive noise only behind exact recalled-route wavefronts. */
   setRecallAperture(
     active: ConsensusMemoryAperture | null,
@@ -187,6 +194,8 @@ interface FatLineLayer {
  *  growing (`dyingAt === null`, age < GROWTH_MS), stable
  *  (`dyingAt === null`, age >= GROWTH_MS), or dying. */
 interface EdgeState {
+  fromCellId: number;
+  toCellId: number;
   fromX: number; fromY: number; fromZ: number;
   toX: number; toY: number; toZ: number;
   ctrlX: number; ctrlY: number; ctrlZ: number;
@@ -227,6 +236,36 @@ interface RecallApertureState {
   activeStrength: number;
   departing: ConsensusMemoryAperture | null;
   departingStrength: number;
+}
+
+interface InspectionFieldTransition {
+  from: CellInspectionField | null;
+  to: CellInspectionField | null;
+  progress: number;
+}
+
+/** Short enough to feel directly attached to selection, long enough that a
+ * different Cell's graph-distance hierarchy never pops into existence. */
+const INSPECTION_FIELD_TRANSITION_SECONDS = 0.34;
+
+function inspectionFieldScaleAt(
+  state: InspectionFieldTransition,
+  fromCellId: number,
+  toCellId: number,
+  edgeT: number,
+  lifecycleFlash: number,
+): number {
+  const fieldScale = cellInspectionFieldTransitionScaleAt(
+    state.from,
+    state.to,
+    state.progress,
+    fromCellId,
+    toCellId,
+    edgeT,
+  );
+  // A real Cell retirement is an event, not passive context. Let its existing
+  // semantic flash reclaim full energy even when it occurs outside inspection.
+  return fieldScale + (1 - fieldScale) * lifecycleFlash;
 }
 
 function recallApertureScaleAt(
@@ -461,6 +500,11 @@ export default function NeuralFabric({ onReady }: NeuralFabricProps) {
     departingStrength: 0,
   });
   const apertureAnimationRef = useRef(false);
+  const inspectionFieldRef = useRef<InspectionFieldTransition>({
+    from: null,
+    to: null,
+    progress: 1,
+  });
 
   useEffect(() => {
     fabric.material.resolution.set(size.width, size.height);
@@ -495,6 +539,14 @@ export default function NeuralFabric({ onReady }: NeuralFabricProps) {
     const sample = new Float32Array(3);
 
     const handles: NeuralFabricHandles = {
+      setInspectionField(field) {
+        const transition = inspectionFieldRef.current;
+        if (transition.to === field) return;
+        transition.from = transition.to;
+        transition.to = field;
+        transition.progress = 0;
+        emitDirtyRef.current = true;
+      },
       setRecallAperture(
         activeAperture,
         activeStrength,
@@ -564,6 +616,8 @@ export default function NeuralFabric({ onReady }: NeuralFabricProps) {
             seed,
           );
           states.set(key, {
+            fromCellId: e.from,
+            toCellId: e.to,
             fromX: a.pos_seed[0], fromY: a.pos_seed[1], fromZ: a.pos_seed[2],
             toX: c.pos_seed[0], toY: c.pos_seed[1], toZ: c.pos_seed[2],
             ctrlX: ctrl[0], ctrlY: ctrl[1], ctrlZ: ctrl[2],
@@ -622,6 +676,8 @@ export default function NeuralFabric({ onReady }: NeuralFabricProps) {
             seed,
           );
           states.set(key, {
+            fromCellId: e.from,
+            toCellId: e.to,
             fromX: a.pos_seed[0], fromY: a.pos_seed[1], fromZ: a.pos_seed[2],
             toX: c.pos_seed[0], toY: c.pos_seed[1], toZ: c.pos_seed[2],
             ctrlX: ctrl[0], ctrlY: ctrl[1], ctrlZ: ctrl[2],
@@ -678,6 +734,18 @@ export default function NeuralFabric({ onReady }: NeuralFabricProps) {
           lc.b = ct.activeColorB; lc.fw = ct.fabricWidth; lc.aw = ct.activeWidth;
           lc.cd = ct.centerDim;
           emitDirtyRef.current = true; // force one redraw with the new values
+        }
+        const inspectionField = inspectionFieldRef.current;
+        if (inspectionField.progress < 1) {
+          inspectionField.progress = Math.min(
+            1,
+            inspectionField.progress
+              + dt / INSPECTION_FIELD_TRANSITION_SECONDS,
+          );
+          emitDirtyRef.current = true;
+          if (inspectionField.progress >= 1) {
+            inspectionField.from = inspectionField.to;
+          }
         }
         const recallAperture = recallApertureRef.current;
         const apertureAnimating = (
@@ -775,7 +843,18 @@ export default function NeuralFabric({ onReady }: NeuralFabricProps) {
             fl,
             now,
           );
-          const startEnergy = energy * startTaper * prevSpatial * prevAperture;
+          const prevInspection = inspectionFieldScaleAt(
+            inspectionField,
+            st.fromCellId,
+            st.toCellId,
+            tStart,
+            fl,
+          );
+          const startEnergy = energy
+            * startTaper
+            * prevSpatial
+            * prevAperture
+            * prevInspection;
           let prevR = (fromSemanticR + (toSemanticR - fromSemanticR) * tStart)
             * startEnergy;
           let prevG = (fromSemanticG + (toSemanticG - fromSemanticG) * tStart)
@@ -802,7 +881,18 @@ export default function NeuralFabric({ onReady }: NeuralFabricProps) {
               fl,
               now,
             );
-            const endEnergy = energy * endTaper * endSpatial * endAperture;
+            const endInspection = inspectionFieldScaleAt(
+              inspectionField,
+              st.fromCellId,
+              st.toCellId,
+              t,
+              fl,
+            );
+            const endEnergy = energy
+              * endTaper
+              * endSpatial
+              * endAperture
+              * endInspection;
             const endR = (fromSemanticR + (toSemanticR - fromSemanticR) * t)
               * endEnergy;
             const endG = (fromSemanticG + (toSemanticG - fromSemanticG) * t)

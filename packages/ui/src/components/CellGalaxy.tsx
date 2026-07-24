@@ -51,6 +51,11 @@ import CellIdentityProofMarker, {
   type CellIdentityProofEvent,
 } from './CellIdentityProofMarker';
 import CellIdentityBindingMarker from './CellIdentityBindingMarker';
+import {
+  cellInspectionFieldScale,
+  dampCellInspectionFieldScale,
+  type CellInspectionField,
+} from '../nerve/cellInspectionField';
 
 /** Cyan palette for the structural chain anchor (CKB icosahedron).
  *  The chain anchor reads as "structural backbone / chain truth" and
@@ -140,6 +145,9 @@ interface CellGalaxyProps {
    *  animations (e.g. consensus routes + write seals) atop the
    *  cell field without coupling CellGalaxy to non-generic components. */
   overlay?: ReactNode;
+  /** Shared topology field published by the overlay's NeuralNetwork. The
+   * Cell body reads it directly so selection never rebuilds the graph here. */
+  inspectionFieldRef?: React.RefObject<CellInspectionField | null>;
   /** Seconds after the block pulse at which the LOCAL node applies the block —
    *  i.e. when it hears the block from the network (caller-supplied delay). The
    *  whole ledger reaction is delayed by this, so the canonical ripple never
@@ -208,6 +216,19 @@ export function writeFlashSlots(
   for (let i = 0; i < count; i += 1) {
     const c = cells[i];
     flashArr[i] = flashMap.get(c.id) ?? -1e9;
+  }
+}
+
+/** Write the static graph-distance target for each currently visible Cell.
+ * The render loop eases a separate GPU attribute toward these values. */
+export function writeCellInspectionTargets(
+  cells: Cell[],
+  count: number,
+  field: CellInspectionField | null,
+  targetArr: Float32Array,
+): void {
+  for (let i = 0; i < count; i += 1) {
+    targetArr[i] = cellInspectionFieldScale(field, cells[i].id);
   }
 }
 
@@ -718,6 +739,7 @@ export default function CellGalaxy({
   cellFlashRef,
   flashDirtyRef,
   overlay,
+  inspectionFieldRef,
   localReceiveDelayS = 0,
   entryWorld = null,
   entryArrivalS = 0,
@@ -865,6 +887,21 @@ export default function CellGalaxy({
     () => new THREE.BufferAttribute(new Float32Array(INSTANCE_CAPACITY), 1),
     [],
   );
+  // One eased topology-energy scalar per body point. The target lives in a
+  // CPU-only array so a selection change can cross-fade without React state or
+  // rebuilding any Cell geometry.
+  const cellInspectionAttr = useMemo(() => {
+    const arr = new Float32Array(INSTANCE_CAPACITY);
+    arr.fill(1);
+    return new THREE.BufferAttribute(arr, 1);
+  }, []);
+  const cellInspectionTargetArr = useMemo(() => {
+    const arr = new Float32Array(INSTANCE_CAPACITY);
+    arr.fill(1);
+    return arr;
+  }, []);
+  const lastInspectionFieldRef = useRef<CellInspectionField | null>(null);
+  const inspectionAnimatingRef = useRef(false);
 
   const hybridMaterial = useMemo(() => makeCellHybridMaterial(), []);
   const flareMaterial = useMemo(() => makeCellFlareMaterial(), []);
@@ -883,6 +920,7 @@ export default function CellGalaxy({
     g.setAttribute('aFocus', cellFocusAttr);
     g.setAttribute('aRecall', cellRecallAttr);
     g.setAttribute('aRecallState', cellRecallStateAttr);
+    g.setAttribute('aInspection', cellInspectionAttr);
     g.setDrawRange(0, 0);
     // Permissive bounding sphere — cells live in a Gaussian field bounded
     // by SIGMA, core sprites extend a few units past that. Skipping
@@ -903,6 +941,7 @@ export default function CellGalaxy({
     cellFocusAttr,
     cellRecallAttr,
     cellRecallStateAttr,
+    cellInspectionAttr,
   ]);
 
   // Bind the duration uniforms once. The wall→scene-seconds conversion
@@ -1007,7 +1046,40 @@ export default function CellGalaxy({
       lastPinnedCellIdRef.current = selectedCellIdRef.current;
     }
 
-    // 2. Flash-only rewrite. When cells didn't change but a block event or
+    // 2. Topology-distance field. Its immutable snapshot changes only when
+    // selection or real graph membership changes; GPU writes continue for the
+    // short easing interval, then return to a zero-cost steady state.
+    const inspectionField = inspectionFieldRef?.current ?? null;
+    const inspectionFieldChanged =
+      inspectionField !== lastInspectionFieldRef.current;
+    if (inputsChanged || inspectionFieldChanged) {
+      writeCellInspectionTargets(
+        cellsList,
+        count,
+        inspectionField,
+        cellInspectionTargetArr,
+      );
+      lastInspectionFieldRef.current = inspectionField;
+      inspectionAnimatingRef.current = true;
+    }
+    if (inspectionAnimatingRef.current) {
+      const inspectionValues = cellInspectionAttr.array as Float32Array;
+      let inspectionNeedsWrite = false;
+      let inspectionStillAnimating = false;
+      for (let i = 0; i < count; i += 1) {
+        const current = inspectionValues[i];
+        const target = cellInspectionTargetArr[i];
+        if (current === target) continue;
+        const next = dampCellInspectionFieldScale(current, target, dt);
+        inspectionValues[i] = next;
+        inspectionNeedsWrite = true;
+        if (next !== target) inspectionStillAnimating = true;
+      }
+      inspectionAnimatingRef.current = inspectionStillAnimating;
+      if (inspectionNeedsWrite) cellInspectionAttr.needsUpdate = true;
+    }
+
+    // 3. Flash-only rewrite. When cells didn't change but a block event or
     //    spike arrival wrote into cellFlashRef, push the new values into
     //    the cell flash slots without redoing positions / colors / sizes.
     if (!inputsChanged && flashDirtyRef.current) {
@@ -1026,7 +1098,7 @@ export default function CellGalaxy({
       flashDirtyRef.current = false;
     }
 
-    // 3. Material uniforms.
+    // 4. Material uniforms.
     const pointPixelRatio = resolvePointSpritePixelRatio(
       state.gl.getPixelRatio(),
     );

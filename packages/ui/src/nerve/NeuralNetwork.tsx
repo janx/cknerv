@@ -93,6 +93,10 @@ import {
   deriveConsensusMemoryRouteHopPulseEdges,
   type ConsensusMemoryRouteHopPulseClock,
 } from './consensusRouteHopPulse';
+import {
+  deriveCellInspectionField,
+  type CellInspectionField,
+} from './cellInspectionField';
 
 const SPIKE_POOL_CAPACITY = 1024;
 
@@ -146,6 +150,11 @@ interface NeuralNetworkProps {
   pulses?: PulsePlanningOptions & {
     maxActivePulses?: number;
   };
+  /** Exact selected Cell used to derive a bounded real-adjacency field. */
+  inspectionCellId?: number | null;
+  /** Shared with CellGalaxy so body points and passive fibres read one field
+   * without duplicating the neighbour graph or triggering React frame state. */
+  inspectionFieldRef?: React.MutableRefObject<CellInspectionField | null>;
   /** Explicit user-requested replay of one retained historical link. */
   traceRequest?: ConsensusMemoryTraceRequest | null;
   /** Optional recall-only route cap; live traffic keeps its own pulse budget. */
@@ -196,6 +205,8 @@ export default function NeuralNetwork({
   burstArrivalRef,
   topology,
   pulses,
+  inspectionCellId = null,
+  inspectionFieldRef,
   traceRequest = null,
   traceMaxPulses,
   traceHoldForRecordSwitch = false,
@@ -232,9 +243,19 @@ export default function NeuralNetwork({
   // blocks' worth of births we rebuild the canonical graph and diff it back
   // through setFabric — repairing the accrued drift, off the race path.
   const graphRef = useRef<NeighborGraph>(emptyNeighborGraph());
+  const inspectionFieldSnapshotRef = useRef<CellInspectionField | null>(null);
   const prevCellsRef = useRef<Map<number, CellSnapshotEntry>>(new Map());
   const bootstrappedRef = useRef(false);
   const blockCountRef = useRef(0);
+  const publishInspectionField = useCallback(() => {
+    const next = deriveCellInspectionField(
+      graphRef.current,
+      inspectionCellId,
+    );
+    inspectionFieldSnapshotRef.current = next;
+    if (inspectionFieldRef) inspectionFieldRef.current = next;
+    fabricHandlesRef.current?.setInspectionField(next);
+  }, [inspectionCellId, inspectionFieldRef]);
   useEffect(() => {
     const cells = cellsCache.cells;
     const now = simClock.elapsedSec;
@@ -247,6 +268,7 @@ export default function NeuralNetwork({
       handles?.setFabric(graphRef.current, cells, now);
       prevCellsRef.current = snapshotCells(cells);
       bootstrappedRef.current = true;
+      publishInspectionField();
       return;
     }
 
@@ -268,7 +290,25 @@ export default function NeuralNetwork({
       graphRef.current = buildNeighborGraph(cells, opts);
       handles?.setFabric(graphRef.current, cells, now); // diff animates drift as grow/gc-fade
     }
-  }, [cellsCache.revision, cellsCache.cells, topology?.neighborK, topology?.maxEdgeLength]);
+    publishInspectionField();
+  }, [
+    cellsCache.revision,
+    cellsCache.cells,
+    topology?.neighborK,
+    topology?.maxEdgeLength,
+    publishInspectionField,
+  ]);
+  useEffect(() => {
+    publishInspectionField();
+  }, [publishInspectionField]);
+  useEffect(() => () => {
+    if (
+      inspectionFieldRef
+      && inspectionFieldRef.current === inspectionFieldSnapshotRef.current
+    ) {
+      inspectionFieldRef.current = null;
+    }
+  }, [inspectionFieldRef]);
 
   // Pulse queue. Pulses are removed when their head reaches the
   // terminal cell (or after a generous fallback lifetime).
@@ -782,6 +822,7 @@ export default function NeuralNetwork({
     // Re-derive immediately in case cellsCache had already populated
     // before the fabric mounted.
     handles.setFabric(graphRef.current, cellsCache.cells, simClock.elapsedSec);
+    handles.setInspectionField(inspectionFieldSnapshotRef.current);
   }, [cellsCache.cells]);
 
   // Per-frame: roll every active pulse forward, light up the current

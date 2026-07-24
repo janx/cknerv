@@ -111,10 +111,26 @@ describe('NeuralFabric living-mesh handles', () => {
     expect(SRC).toContain('consensusMemoryApertureScale');
     expect(SRC).toContain('consensusMemoryApertureAnimating');
     expect(SRC).toContain('apertureAnimationRef');
-    expect(SRC).toContain('prevSpatial * prevAperture');
-    expect(SRC).toContain('endSpatial * endAperture');
+    expect(SRC).toContain('* prevSpatial');
+    expect(SRC).toContain('* prevAperture');
+    expect(SRC).toContain('* endSpatial');
+    expect(SRC).toContain('* endAperture');
     expect(SRC).not.toMatch(/fabric\.material\.opacity\s*=/);
     expect(SRC).not.toMatch(/active\.material\.opacity\s*=/);
+  });
+
+  it('grades passive fibres by real selected-Cell topology without dimming events', () => {
+    expect(SRC).toContain('setInspectionField');
+    expect(SRC).toContain('cellInspectionFieldTransitionScaleAt');
+    expect(SRC).toContain('st.fromCellId');
+    expect(SRC).toContain('st.toCellId');
+    expect(SRC).toContain('* prevInspection');
+    expect(SRC).toContain('* endInspection');
+    expect(SRC).toContain('(1 - fieldScale) * lifecycleFlash');
+    const activeImplementation = SRC.slice(
+      SRC.lastIndexOf('pushActiveHop(hop, cells)'),
+    );
+    expect(activeImplementation).not.toContain('inspectionFieldScaleAt');
   });
 
   it('spends fewer samples on passive fabric before simplifying active writes', () => {

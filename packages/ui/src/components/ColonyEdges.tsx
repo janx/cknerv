@@ -59,6 +59,7 @@ export default function ColonyEdges({
   cf,
   blockPulseAtMs,
   backfillActive = false,
+  contextEnergyRef,
 }: {
   topology: NetworkTopology;
   cf?: ColonyFlood;
@@ -66,6 +67,8 @@ export default function ColonyEdges({
   blockPulseAtMs?: number;
   /** Calm catch-up: consume-then-bail so no surge replays post-backfill. */
   backfillActive?: boolean;
+  /** Cell inspection lowers passive P2P context while event surges bypass it. */
+  contextEnergyRef?: { readonly current: number };
 }) {
   const simClock = useSimClock();
   const edges = topology.edges;
@@ -141,6 +144,7 @@ export default function ColonyEdges({
           uSurgeAmp: { value: 1.1 },
           uSurgeSigma: { value: 0.13 },
           uSurgeEase: { value: 0.12 },
+          uContextEnergy: { value: 1 },
         },
         vertexShader: /* glsl */ `
           attribute float aBright;
@@ -176,6 +180,7 @@ export default function ColonyEdges({
           uniform float uSurgeAmp;
           uniform float uSurgeSigma;
           uniform float uSurgeEase;
+          uniform float uContextEnergy;
           varying float vB;
           varying float vParam;
           varying float vPhase;
@@ -215,8 +220,9 @@ export default function ColonyEdges({
               surge = uSurgeAmp * bump(vParam, center, uSurgeSigma) * env;
             }
 
-            float intensity = base + ambient + surge;
-            vec3 col = uColor * (base + ambient) + uSurgeColor * surge;
+            float passive = (base + ambient) * uContextEnergy;
+            float intensity = passive + surge;
+            vec3 col = uColor * passive + uSurgeColor * surge;
             gl_FragColor = vec4(col, intensity);
           }
         `,
@@ -235,6 +241,7 @@ export default function ColonyEdges({
     mat.uniforms.uSurgeAmp.value = LIVE.peer.surgeAmp;
     mat.uniforms.uSurgeSigma.value = LIVE.peer.surgeSigma;
     mat.uniforms.uSurgeEase.value = LIVE.peer.surgeEase;
+    mat.uniforms.uContextEnergy.value = contextEnergyRef?.current ?? 1;
   });
 
   // Per-block surge stamp: on each blockPulseAtMs increase, rewrite the tree edges'
