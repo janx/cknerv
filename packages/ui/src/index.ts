@@ -102,6 +102,9 @@ export type {
   CellIdentityProofEvent,
   CellIdentityProofKind,
 } from './components/CellIdentityProofMarker';
+export {
+  default as CellIdentityProofMarker,
+} from './components/CellIdentityProofMarker';
 export { default as CellShell } from './components/CellShell';
 export { default as CellOrganism } from './components/CellOrganism';
 export {

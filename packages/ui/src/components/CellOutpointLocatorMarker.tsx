@@ -43,9 +43,11 @@ function makeLocatorLineMaterial(
 export default function CellOutpointLocatorMarker({
   cell,
   event,
+  sampleElapsedSeconds,
 }: {
   cell: Cell;
   event: CellIdentityProofEvent;
+  sampleElapsedSeconds?: number;
 }) {
   const size = useThree((state) => state.size);
   const groupRef = useRef<THREE.Group>(null);
@@ -157,7 +159,8 @@ export default function CellOutpointLocatorMarker({
     const group = groupRef.current;
     if (!group || settledSequenceRef.current === event.sequence) return;
     const frame = cellOutpointLocatorEchoFrame(
-      (performance.now() - event.emittedAtMs) / 1000,
+      sampleElapsedSeconds
+        ?? (performance.now() - event.emittedAtMs) / 1000,
       event.reducedMotion,
     );
     group.userData.memoryOutpointLocator = frame.state;

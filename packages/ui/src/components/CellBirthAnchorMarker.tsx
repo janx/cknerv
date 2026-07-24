@@ -50,9 +50,11 @@ function makeAnchorLineMaterial(
 export default function CellBirthAnchorMarker({
   cell,
   event,
+  sampleElapsedSeconds,
 }: {
   cell: Cell;
   event: CellIdentityProofEvent;
+  sampleElapsedSeconds?: number;
 }) {
   const size = useThree((state) => state.size);
   const rootRef = useRef<THREE.Group>(null);
@@ -162,7 +164,8 @@ export default function CellBirthAnchorMarker({
     const root = rootRef.current;
     if (!root || settledSequenceRef.current === event.sequence) return;
     const frame = cellBirthAnchorEchoFrame(
-      (performance.now() - event.emittedAtMs) / 1000,
+      sampleElapsedSeconds
+        ?? (performance.now() - event.emittedAtMs) / 1000,
       event.reducedMotion,
     );
     root.userData.memoryBirthAnchor = frame.state;
