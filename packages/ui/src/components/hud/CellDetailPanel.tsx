@@ -25,8 +25,10 @@ import {
   consensusBraidStrandCount,
   type ConsensusBraidField,
 } from '../../derives/consensusBraid.derive';
-import type {
-  CellIdentityProofKind,
+import {
+  cellIdentityProofBindingComplete,
+  type CellIdentityProofBinding,
+  type CellIdentityProofKind,
 } from '../../derives/cellIdentityProof.derive';
 
 const BRACKET = 9; // corner bracket arm length (px)
@@ -64,6 +66,7 @@ export default function CellDetailPanel({
   onTraceRouteHopFocusChange,
   traceRouteHopLock = null,
   onTraceRouteHopLockChange,
+  identityProofBinding = null,
   onTraceWrite,
   onIdentityProofRead,
   onClose,
@@ -88,6 +91,7 @@ export default function CellDetailPanel({
   onTraceRouteHopLockChange?: (
     focus: ConsensusMemoryRouteHopFocus | null,
   ) => void;
+  identityProofBinding?: CellIdentityProofBinding | null;
   onTraceWrite?: (linkSeq: number) => void;
   onIdentityProofRead?: (
     kind: CellIdentityProofKind,
@@ -113,6 +117,11 @@ export default function CellDetailPanel({
   const identity = useMemo(
     () => deriveCellConsensusIdentity(cell, recentLinks),
     [cell, recentLinks],
+  );
+  const selectedIdentityProofBinding =
+    identityProofBinding?.cellId === cell.id ? identityProofBinding : null;
+  const identityProofComplete = cellIdentityProofBindingComplete(
+    selectedIdentityProofBinding,
   );
   const inspectedCellById = useMemo(() => {
     if (routeCellById?.get(cell.id) === cell) return routeCellById;
@@ -238,6 +247,7 @@ export default function CellDetailPanel({
           traceReadout={traceReadout}
           traceResponseRef={traceResponseRef}
           traceEvidenceFocusSourceId={traceEvidenceFocusSourceId}
+          identityProofBinding={selectedIdentityProofBinding}
           onIdentityProofRead={onIdentityProofRead
             ? (kind) => onIdentityProofRead(kind, cell.id, reduced)
             : undefined}
@@ -273,13 +283,14 @@ export default function CellDetailPanel({
         statusColor={statusColor}
         reducedMotion={reduced}
         focusedField={selectedField}
+        identityProofBinding={selectedIdentityProofBinding}
         onInspectAddress={interactive ? () => selectField('state') : undefined}
         onInspectContent={interactive ? () => selectField('data') : undefined}
         onInspectAnchor={interactive ? () => selectField('born') : undefined}
         onRecallWrite={identity.observedWrite && onTraceWrite
           ? () => onTraceWrite(identity.observedWrite!.seq)
           : undefined}
-        recallEnabled={interactive}
+        recallEnabled={interactive && identityProofComplete}
         traceSource={traceSource}
         traceSelected={identity.observedWrite?.seq === tracedWriteSeq}
         traceReadout={traceReadout}

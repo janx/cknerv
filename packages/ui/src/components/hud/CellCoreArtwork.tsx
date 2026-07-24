@@ -7,8 +7,10 @@ import type {
   ConsensusMemoryTraceReadout,
 } from '../../nerve/consensusMemoryTrace';
 import type {
+  CellIdentityProofBinding,
   CellIdentityProofKind,
 } from '../../derives/cellIdentityProof.derive';
+import CellIdentityBindingGlyph from '../CellIdentityBindingGlyph';
 import CellContentAddressHalo from './CellContentAddressHalo';
 import CellIdentityProofReader from './CellIdentityProofReader';
 import ConsensusMemory from './ConsensusMemory';
@@ -38,6 +40,7 @@ export default function CellCoreArtwork({
   traceReadout = null,
   traceResponseRef,
   traceEvidenceFocusSourceId = null,
+  identityProofBinding = null,
   onIdentityProofRead,
 }: {
   direction: CellCoreDirection;
@@ -47,6 +50,7 @@ export default function CellCoreArtwork({
   traceReadout?: ConsensusMemoryTraceReadout | null;
   traceResponseRef?: ConsensusMemoryCellResponseRef;
   traceEvidenceFocusSourceId?: number | null;
+  identityProofBinding?: CellIdentityProofBinding | null;
   onIdentityProofRead?: (kind: CellIdentityProofKind) => void;
 }) {
   const addressEncoding = useMemo(
@@ -94,6 +98,15 @@ export default function CellCoreArtwork({
         reducedMotion={reducedMotion}
         onReadResolved={onIdentityProofRead}
       />
+      {identityProofBinding?.cellId === cell.id
+        && identityProofBinding.resolvedKinds.length > 0 ? (
+          <group position={[0, 0, 0.58]}>
+            <CellIdentityBindingGlyph
+              binding={identityProofBinding}
+              mode="portrait"
+            />
+          </group>
+        ) : null}
     </>
   );
 }

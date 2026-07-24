@@ -14,6 +14,21 @@ describe('HudOverlay wiring', () => {
     expect(APP_SOURCE).toContain('onCellIdentityProofRead={confirmCellIdentityProof}');
     expect(APP_SOURCE).toContain('identityProof={cellIdentityProof}');
     expect(APP_SOURCE).toContain('kind,');
-    expect(APP_SOURCE).toContain('emittedAtMs: performance.now()');
+    expect(APP_SOURCE).toContain('const emittedAtMs = performance.now()');
+    expect(APP_SOURCE).toContain('emittedAtMs,');
+  });
+
+  it('binds complete identity to the exact causal recall lifecycle', () => {
+    expect(APP_SOURCE).toContain('cellIdentityJourneyReducer');
+    expect(APP_SOURCE).toContain("type: 'resolve'");
+    expect(APP_SOURCE).toContain('cellIdentityProofBindingComplete(');
+    expect(APP_SOURCE).toContain("type: 'recall-start'");
+    expect(APP_SOURCE).toContain("type: 'recall-retained'");
+    expect(APP_SOURCE).toContain(
+      'cellIdentityProofBinding={cellIdentityProofBinding}',
+    );
+    expect(APP_SOURCE).toContain(
+      'identityProofBinding={cellIdentityProofBinding}',
+    );
   });
 });

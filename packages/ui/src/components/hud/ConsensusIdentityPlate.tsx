@@ -3,6 +3,12 @@ import type { Cell } from '@cknerv/types';
 import type { CellConsensusIdentity } from '../../derives/cellConsensusIdentity.derive';
 import type { ConsensusBraidField } from '../../derives/consensusBraid.derive';
 import {
+  CELL_IDENTITY_PROOF_KINDS,
+  cellIdentityProofBindingComplete,
+  type CellIdentityProofBinding,
+  type CellIdentityProofKind,
+} from '../../derives/cellIdentityProof.derive';
+import {
   consensusMemoryEvidenceBindings,
   consensusMemoryEvidenceCssColor,
   consensusMemoryEvidenceFingerprint,
@@ -35,6 +41,14 @@ const LOCKED_GOLD = '#FFD7A1';
 const ROUTE_LENS_MIN_CELLS = 9;
 const ROUTE_SCROLL_EDGE_EPSILON_PX = 1;
 const ROUTE_SCROLL_ANCHOR_INSET_PX = 4;
+const IDENTITY_PROOF_META: Record<CellIdentityProofKind, {
+  code: 'WHERE' | 'WHAT' | 'WHEN';
+  color: string;
+}> = {
+  address: { code: 'WHERE', color: '#9DF7FF' },
+  content: { code: 'WHAT', color: '#C7A7FF' },
+  anchor: { code: 'WHEN', color: '#FFD48C' },
+};
 
 type RouteHopPulseStyle = CSSProperties & {
   '--route-hop-pulse-color': string;
@@ -135,6 +149,56 @@ function routeDurationReadout(durationMs: number): string {
   return clamped < 1_000
     ? `${Math.round(clamped)} MS`
     : `${(clamped / 1_000).toFixed(2)} S`;
+}
+
+function recallActionCopy({
+  enabled,
+  identityComplete,
+  identityPhase,
+  traceSelected,
+  traceReadout,
+  traceSource,
+}: {
+  enabled: boolean;
+  identityComplete: boolean;
+  identityPhase: CellIdentityProofBinding['phase'] | null;
+  traceSelected: boolean;
+  traceReadout: ConsensusMemoryTraceReadout | null;
+  traceSource: ConsensusMemoryTraceSource;
+}): string {
+  if (!enabled) {
+    return identityComplete
+      ? '↳ TRACE READY AFTER IDENTITY MAP'
+      : '↳ VERIFY WHERE / WHAT / WHEN TO RECALL';
+  }
+  if (traceSelected) {
+    if (traceReadout?.stage === 'reading') {
+      return '↳ READING RETAINED RECORD · EXIT';
+    }
+    if (traceReadout?.stage === 'converging') {
+      return `↳ CONVERGING ${traceReadout.arrivedSourceCount}/${traceReadout.sourceCount} EVIDENCE · EXIT`;
+    }
+    if (traceReadout?.stage === 'locked') {
+      return '↳ CONSENSUS LOCKED · EXIT';
+    }
+    return '↳ MEMORY ROUTE PLANNING · EXIT';
+  }
+  if (identityPhase === 'retained') {
+    if (traceSource === 'witness') {
+      return '↳ RETAINED MEMORY · REPLAY LINEAGE WITNESS';
+    }
+    if (traceSource === 'input') {
+      return '↳ RETAINED MEMORY · REPLAY CAUSAL PATH';
+    }
+    return '↳ RETAINED MEMORY · REPLAY TRACE';
+  }
+  if (traceSource === 'witness') {
+    return '↳ IDENTITY BOUND · RECALL LINEAGE WITNESS';
+  }
+  if (traceSource === 'input') {
+    return '↳ IDENTITY BOUND · RECALL CAUSAL PATH';
+  }
+  return '↳ IDENTITY BOUND · RECALL RETAINED TRACE';
 }
 
 function RouteHopInspector({
@@ -838,17 +902,37 @@ function memoryRow({
   );
 }
 
-function IdentityBraid({ identity, reducedMotion, traceSelected }: {
+function IdentityBraid({
+  identity,
+  reducedMotion,
+  traceSelected,
+  identityProofBinding,
+}: {
   identity: CellConsensusIdentity;
   reducedMotion: boolean;
   traceSelected: boolean;
+  identityProofBinding: CellIdentityProofBinding | null;
 }) {
   const nibbles = fingerprintBody(identity.contentHash)
     .slice(0, 12)
     .split('')
     .map((hex) => Number.parseInt(hex, 16) || 0);
   const observed = identity.observedWrite !== null;
-  const knotColor = traceSelected ? VIOLET : observed ? GOLD : CYAN;
+  const proofComplete = cellIdentityProofBindingComplete(identityProofBinding);
+  const knotColor = traceSelected
+    ? VIOLET
+    : identityProofBinding?.phase === 'retained'
+      ? GOLD
+      : proofComplete
+        ? '#D9F8FF'
+        : observed
+          ? GOLD
+          : CYAN;
+  const proofNodes = [
+    { kind: 'address', cx: 108, cy: 12 },
+    { kind: 'content', cx: 130, cy: 12 },
+    { kind: 'anchor', cx: 119, cy: 31 },
+  ] as const;
 
   return (
     <svg
@@ -899,6 +983,27 @@ function IdentityBraid({ identity, reducedMotion, traceSelected }: {
         style={{ animation: reducedMotion ? undefined : 'cknerv-hud-breathe 1.8s ease-in-out infinite' }}
       />
       <path d="M119 15 L125 21 L119 27 L113 21 Z" fill="none" stroke={knotColor} strokeOpacity=".72" strokeWidth=".7" />
+      {proofNodes.map(({ kind, cx, cy }) => {
+        const proof = IDENTITY_PROOF_META[kind];
+        const resolved = identityProofBinding?.resolvedKinds.includes(kind)
+          ?? false;
+        return (
+          <circle
+            key={kind}
+            data-memory-identity-proof-node={kind}
+            data-memory-identity-proof-node-state={
+              resolved ? 'resolved' : 'pending'
+            }
+            cx={cx}
+            cy={cy}
+            r={resolved ? 1.65 : 1.15}
+            fill={resolved ? proof.color : 'transparent'}
+            stroke={proof.color}
+            strokeOpacity={resolved ? 0.9 : 0.18}
+            strokeWidth=".7"
+          />
+        );
+      })}
     </svg>
   );
 }
@@ -1341,6 +1446,7 @@ export default function ConsensusIdentityPlate({
   statusColor,
   reducedMotion,
   focusedField,
+  identityProofBinding = null,
   onInspectAddress,
   onInspectContent,
   onInspectAnchor,
@@ -1365,6 +1471,7 @@ export default function ConsensusIdentityPlate({
   statusColor: string;
   reducedMotion: boolean;
   focusedField?: ConsensusBraidField | null;
+  identityProofBinding?: CellIdentityProofBinding | null;
   onInspectAddress?: () => void;
   onInspectContent?: () => void;
   onInspectAnchor?: () => void;
@@ -1388,6 +1495,12 @@ export default function ConsensusIdentityPlate({
   agreementCount: number;
 }) {
   const observed = identity.observedWrite;
+  const selectedIdentityProofBinding = identityProofBinding;
+  const identityProofComplete = cellIdentityProofBindingComplete(
+    selectedIdentityProofBinding,
+  );
+  const identityProofCount =
+    selectedIdentityProofBinding?.resolvedKinds.length ?? 0;
   const lifecycleColor = identity.lifecycle === 'live'
     ? HUD_COLORS.nominal
     : HUD_COLORS.caution;
@@ -1426,6 +1539,7 @@ export default function ConsensusIdentityPlate({
         identity={identity}
         reducedMotion={reducedMotion}
         traceSelected={traceSelected}
+        identityProofBinding={selectedIdentityProofBinding}
       />
 
       {memoryRow({
@@ -1451,6 +1565,76 @@ export default function ConsensusIdentityPlate({
         active: focusedField === 'born',
         onActivate: onInspectAnchor,
       })}
+
+      <div
+        data-memory-identity-binding="true"
+        data-memory-identity-phase={
+          selectedIdentityProofBinding?.phase ?? 'collecting'
+        }
+        data-memory-identity-count={identityProofCount}
+        data-memory-identity-complete={
+          identityProofComplete ? 'true' : 'false'
+        }
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(3, minmax(0, 1fr)) auto',
+          alignItems: 'baseline',
+          gap: 5,
+          marginTop: 5,
+          paddingTop: 5,
+          borderTop: `1px solid ${CYAN}18`,
+          fontFamily: HUD_FONTS.mono,
+          fontSize: 6.5,
+          letterSpacing: 0.48,
+        }}
+      >
+        {CELL_IDENTITY_PROOF_KINDS.map((kind) => {
+          const proof = IDENTITY_PROOF_META[kind];
+          const resolved = selectedIdentityProofBinding?.resolvedKinds
+            .includes(kind) ?? false;
+          return (
+            <span
+              key={kind}
+              data-memory-identity-proof={kind}
+              data-memory-identity-proof-state={
+                resolved ? 'resolved' : 'pending'
+              }
+              style={{
+                color: resolved ? proof.color : HUD_COLORS.dim,
+                textShadow: resolved ? `0 0 6px ${proof.color}66` : undefined,
+                opacity: resolved ? 1 : 0.56,
+              }}
+            >
+              {resolved ? '◆' : '◇'} {proof.code}
+            </span>
+          );
+        })}
+        <span style={{
+          color: identityProofComplete ? '#D9F8FF' : HUD_COLORS.dim,
+          textAlign: 'right',
+        }}>
+          {identityProofCount}/3
+        </span>
+        <span
+          style={{
+            gridColumn: '1 / -1',
+            color: identityProofComplete
+              ? selectedIdentityProofBinding?.phase === 'retained'
+                ? GOLD
+                : '#BFEFFF'
+              : HUD_COLORS.dim,
+            letterSpacing: 0.62,
+          }}
+        >
+          {selectedIdentityProofBinding?.phase === 'retained'
+            ? 'IDENTITY + CONSENSUS MEMORY RETAINED'
+            : selectedIdentityProofBinding?.phase === 'recalling'
+              ? 'IDENTITY BOUND · RECALLING MAINTAINED RECORD'
+              : identityProofComplete
+                ? 'IDENTITY BOUND · MEMORY ROUTE READY'
+                : 'RESOLVE ALL IDENTITY FACETS TO RECALL'}
+        </span>
+      </div>
 
       <div style={{ marginTop: 5, paddingTop: 5, borderTop: `1px solid ${CYAN}18` }}>
         <span style={{ fontFamily: HUD_FONTS.mono, fontSize: 8.3, letterSpacing: 0.45, color: statusColor, textShadow: `0 0 6px ${statusColor}55` }}>
@@ -1492,21 +1676,14 @@ export default function ConsensusIdentityPlate({
               #{observed.block} · {observed.inputCount}→{observed.outputCount}
             </span>
             <span style={{ gridColumn: '1 / -1', color: traceSelected ? VIOLET : CYAN, letterSpacing: 0.8 }}>
-              {!recallEnabled
-                ? '↳ TRACE READY AFTER IDENTITY MAP'
-                : traceSelected
-                  ? traceReadout?.stage === 'reading'
-                    ? '↳ READING RETAINED RECORD · EXIT'
-                    : traceReadout?.stage === 'converging'
-                      ? `↳ CONVERGING ${traceReadout.arrivedSourceCount}/${traceReadout.sourceCount} EVIDENCE · EXIT`
-                      : traceReadout?.stage === 'locked'
-                        ? '↳ CONSENSUS LOCKED · EXIT'
-                        : '↳ MEMORY ROUTE PLANNING · EXIT'
-                  : traceSource === 'witness'
-                    ? '↳ RECALL LINEAGE WITNESS'
-                    : traceSource === 'input'
-                      ? '↳ RECALL CAUSAL PATH'
-                      : '↳ RECALL RETAINED TRACE'}
+              {recallActionCopy({
+                enabled: recallEnabled,
+                identityComplete: identityProofComplete,
+                identityPhase: selectedIdentityProofBinding?.phase ?? null,
+                traceSelected,
+                traceReadout,
+                traceSource,
+              })}
             </span>
           </button>
         ) : observed ? (

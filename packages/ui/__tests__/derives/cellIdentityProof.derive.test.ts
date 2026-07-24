@@ -2,12 +2,14 @@ import { describe, expect, it } from 'vitest';
 import {
   CELL_BIRTH_ANCHOR_ECHO_SECONDS,
   CELL_BIRTH_ANCHOR_READ_SECONDS,
+  CELL_IDENTITY_PROOF_KINDS,
   CELL_OUTPOINT_LOCATOR_ECHO_SECONDS,
   CELL_OUTPOINT_LOCATOR_LANE_COUNT,
   CELL_OUTPOINT_LOCATOR_READ_SECONDS,
   cellBirthAnchorEchoFrame,
   cellBirthAnchorReadFrame,
   cellBirthAnchorSegmentEnergy,
+  cellIdentityProofBindingComplete,
   cellOutpointLocatorEchoFrame,
   cellOutpointLocatorReadFrame,
   cellOutpointLocatorSegmentEnergy,
@@ -169,5 +171,29 @@ describe('Cell WHERE / WHEN visual proofs', () => {
     ).state).toBe('settled');
     expect(cellOutpointLocatorEchoFrame(0, true).state).toBe('reduced');
     expect(cellBirthAnchorEchoFrame(0, true).depthProgress).toBe(1);
+  });
+
+  it('requires all three distinct facets before identity can bind to recall', () => {
+    const binding = {
+      cellId: 42,
+      resolvedKinds: ['address', 'content'] as const,
+      phase: 'collecting' as const,
+      revision: 3,
+      changedAtMs: 100,
+      lastResolvedKind: 'content' as const,
+      reducedMotion: false,
+    };
+
+    expect(CELL_IDENTITY_PROOF_KINDS).toEqual([
+      'address',
+      'content',
+      'anchor',
+    ]);
+    expect(cellIdentityProofBindingComplete(binding)).toBe(false);
+    expect(cellIdentityProofBindingComplete({
+      ...binding,
+      resolvedKinds: [...binding.resolvedKinds, 'anchor'],
+      phase: 'verified',
+    })).toBe(true);
   });
 });

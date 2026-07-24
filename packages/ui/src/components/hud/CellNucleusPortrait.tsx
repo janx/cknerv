@@ -10,6 +10,7 @@ import { deriveCellContentAddressEncoding } from '../../derives/cellContentAddre
 import {
   deriveCellBirthAnchorEncoding,
   deriveCellOutpointLocatorEncoding,
+  type CellIdentityProofBinding,
   type CellIdentityProofKind,
 } from '../../derives/cellIdentityProof.derive';
 import type {
@@ -38,6 +39,7 @@ function ConsensusScene({
   traceReadout,
   traceResponseRef,
   traceEvidenceFocusSourceId,
+  identityProofBinding,
   onIdentityProofRead,
 }: {
   cell: Cell;
@@ -47,6 +49,7 @@ function ConsensusScene({
   traceReadout: ConsensusMemoryTraceReadout | null;
   traceResponseRef?: ConsensusMemoryCellResponseRef;
   traceEvidenceFocusSourceId: number | null;
+  identityProofBinding: CellIdentityProofBinding | null;
   onIdentityProofRead?: (kind: CellIdentityProofKind) => void;
 }) {
   return (
@@ -58,6 +61,7 @@ function ConsensusScene({
       traceReadout={traceReadout}
       traceResponseRef={traceResponseRef}
       traceEvidenceFocusSourceId={traceEvidenceFocusSourceId}
+      identityProofBinding={identityProofBinding}
       onIdentityProofRead={onIdentityProofRead}
     />
   );
@@ -71,6 +75,7 @@ export default function CellNucleusPortrait({
   traceReadout = null,
   traceResponseRef,
   traceEvidenceFocusSourceId = null,
+  identityProofBinding = null,
   onIdentityProofRead,
 }: {
   cell: Cell;
@@ -81,6 +86,7 @@ export default function CellNucleusPortrait({
   traceReadout?: ConsensusMemoryTraceReadout | null;
   traceResponseRef?: ConsensusMemoryCellResponseRef;
   traceEvidenceFocusSourceId?: number | null;
+  identityProofBinding?: CellIdentityProofBinding | null;
   onIdentityProofRead?: (kind: CellIdentityProofKind) => void;
   /** Compatibility input for callers that share a scan epoch with the panel. */
   scanEpochMs?: number;
@@ -121,6 +127,16 @@ export default function CellNucleusPortrait({
         focusField === 'data' ? 'content' : 'idle'
       }
       data-memory-portrait-proof-focus={proofFocus}
+      data-memory-portrait-identity-phase={
+        identityProofBinding?.cellId === cell.id
+          ? identityProofBinding.phase
+          : 'idle'
+      }
+      data-memory-portrait-identity-count={
+        identityProofBinding?.cellId === cell.id
+          ? identityProofBinding.resolvedKinds.length
+          : 0
+      }
       data-memory-portrait-outpoint-fingerprint={outpointEncoding.fingerprint}
       data-memory-portrait-outpoint-index-bytes={outpointEncoding.indexBytes
         .join(',')}
@@ -142,6 +158,11 @@ export default function CellNucleusPortrait({
           traceReadout={traceReadout}
           traceResponseRef={traceResponseRef}
           traceEvidenceFocusSourceId={traceEvidenceFocusSourceId}
+          identityProofBinding={
+            identityProofBinding?.cellId === cell.id
+              ? identityProofBinding
+              : null
+          }
           onIdentityProofRead={onIdentityProofRead}
         />
       </Canvas>

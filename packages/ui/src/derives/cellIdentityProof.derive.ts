@@ -20,6 +20,36 @@ export interface CellIdentityProofEvent {
   reducedMotion: boolean;
 }
 
+export type CellIdentityBindingPhase =
+  | 'collecting'
+  | 'verified'
+  | 'recalling'
+  | 'retained';
+
+/**
+ * Display-only identity state for one inspected Cell. Every resolved kind
+ * comes from a completed portrait read; the binding never implies additional
+ * chain evidence or mutates the underlying record.
+ */
+export interface CellIdentityProofBinding {
+  cellId: number;
+  resolvedKinds: readonly CellIdentityProofKind[];
+  phase: CellIdentityBindingPhase;
+  revision: number;
+  changedAtMs: number;
+  lastResolvedKind: CellIdentityProofKind | null;
+  reducedMotion: boolean;
+}
+
+export function cellIdentityProofBindingComplete(
+  binding: CellIdentityProofBinding | null | undefined,
+): boolean {
+  return !!binding
+    && CELL_IDENTITY_PROOF_KINDS.every(
+      (kind) => binding.resolvedKinds.includes(kind),
+    );
+}
+
 export const CELL_OUTPOINT_LOCATOR_LANE_COUNT = 4;
 export const CELL_OUTPOINT_LOCATOR_READ_SECONDS = 0.96;
 export const CELL_OUTPOINT_LOCATOR_ECHO_SECONDS = 1.12;

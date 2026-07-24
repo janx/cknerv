@@ -32,6 +32,9 @@ vi.mock('../../../src/components/hud/CellNucleusPortrait', () => ({
 
 import HudOverlay from '../../../src/components/hud/HudOverlay';
 import type { CellsStats } from '../../../src/derives/cellsStats.derive';
+import type {
+  CellIdentityProofBinding,
+} from '../../../src/derives/cellIdentityProof.derive';
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
@@ -45,6 +48,21 @@ const chain: ChainEntry = {
 const peers: Peer[] = [{ node_id: 'n', addr: 'a', direction: 'outbound', version: '0.201.0', latency_ms: 84, best_known: 16204887, connected_ms: 1000 }];
 const localNode: ChainNode = { id: 'ckb:local', label: 'local', is_miner: false, version: '0.201.0', connections: 47 };
 const cellsStats: CellsStats = { born: 28431, live: 19204, dead: 9227, byKind: { wallet: 11302, dex: 4118, cf: 2401, ckbloom: 1383, generic: 0 }, capacityShannons: 0, inView: 19204, dataBearing: 0, byLock: { sighash: 0, multisig: 0, acp: 0, omnilock: 0, other: 0 }, byAsset: { native: 0, sudt: 0, xudt: 0, dao: 0, spore: 0, other: 0 } };
+
+function identityBinding(
+  cellId: number,
+  phase: CellIdentityProofBinding['phase'] = 'verified',
+): CellIdentityProofBinding {
+  return {
+    cellId,
+    resolvedKinds: ['address', 'content', 'anchor'],
+    phase,
+    revision: 4,
+    changedAtMs: 100,
+    lastResolvedKind: 'anchor',
+    reducedMotion: true,
+  };
+}
 
 describe('HudOverlay', () => {
   it('mounts a non-interactive overlay containing every panel', () => {
@@ -153,6 +171,7 @@ describe('HudOverlay', () => {
         chain={chain} peers={peers} localNode={localNode} cellsStats={cellsStats}
         selectedCell={mockCell} recentCellLinks={[origin]}
         cellTraceSource="input"
+        cellIdentityProofBinding={identityBinding(mockCell.id)}
         onTraceCellWrite={onTraceCellWrite}
       />,
     );
@@ -202,6 +221,7 @@ describe('HudOverlay', () => {
         recentCellLinks={[origin]}
         tracedCellWriteSeq={origin.seq}
         cellTraceSource="input"
+        cellIdentityProofBinding={identityBinding(mockCell.id, 'recalling')}
         cellTraceReadout={{
           key: '3:7:1',
           targetCellId: 7,
