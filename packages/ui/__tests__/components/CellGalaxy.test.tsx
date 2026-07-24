@@ -38,6 +38,10 @@ const IDENTITY_PROOF_LABEL_SOURCE = resolve(
   process.cwd(),
   'src/components/CellIdentityProofLabel.tsx',
 );
+const IDENTITY_PROOF_LABEL_PRESENTATION_SOURCE = resolve(
+  process.cwd(),
+  'src/components/cellIdentityProofLabel.presentation.ts',
+);
 
 describe('CellGalaxy', () => {
   it('mounts inside an r3f Canvas without throwing', () => {
@@ -109,6 +113,10 @@ describe('CellGalaxy', () => {
       'utf8',
     );
     const labelSource = readFileSync(IDENTITY_PROOF_LABEL_SOURCE, 'utf8');
+    const labelPresentationSource = readFileSync(
+      IDENTITY_PROOF_LABEL_PRESENTATION_SOURCE,
+      'utf8',
+    );
 
     expect(galaxySource).toContain('<CellIdentityProofMarker');
     expect(galaxySource).toContain('cellsCache.cells.get(identityProof.cellId)');
@@ -129,7 +137,9 @@ describe('CellGalaxy', () => {
     expect(locatorSource).toContain('<CellIdentityProofLabel');
     expect(anchorSource).toContain('<CellIdentityProofLabel');
     expect(labelSource).toContain('<Html');
-    expect(labelSource).toContain('presentCellIdentityProofLabel');
+    expect(labelPresentationSource).toContain(
+      'presentCellIdentityProofLabel',
+    );
     expect(labelSource).toContain("pointerEvents: 'none'");
   });
 

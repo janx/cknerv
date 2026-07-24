@@ -15,9 +15,10 @@ import {
 import {
   deriveCellIdentityProofLabel,
 } from '../derives/cellIdentityProofLabel.derive';
-import CellIdentityProofLabel, {
+import {
   presentCellIdentityProofLabel,
-} from './CellIdentityProofLabel';
+} from './cellIdentityProofLabel.presentation';
+import CellIdentityProofLabel from './CellIdentityProofLabel';
 
 function makeLocatorLineMaterial(
   linewidth: number,
