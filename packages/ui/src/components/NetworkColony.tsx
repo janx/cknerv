@@ -38,6 +38,7 @@
 // courier glint, delivery carriers) and to stamp its own `pulseRef` for delivery.
 import { useEffect, useMemo, useRef } from 'react';
 import { useSimClock } from '../tweaks/SimClockScope';
+import { useSimFrame } from '../tweaks/useSimFrame';
 import { useCellGalaxyOptional } from '../hooks/cellGalaxyContext';
 import type { NetworkTopology, Vec3 } from '../types';
 import type { ColonyFlood } from '../derives/networkFlood.derive';
@@ -46,6 +47,11 @@ import ColonyEdges from './ColonyEdges';
 import ColonyCourierLayer from './ColonyCourierLayer';
 import BlockDeliveryLayer, { type BlockDeliveryPulse } from './BlockDeliveryLayer';
 import { consensusBlockColor } from '../derives/consensusFlow.derive';
+import { dampCellInspectionFieldScale } from '../nerve/cellInspectionField';
+
+/** Environmental P2P structure remains perceptible while Cell inspection owns
+ * the visual hierarchy. Block surges/couriers keep full event energy. */
+const CELL_INSPECTION_COLONY_CONTEXT_ENERGY = 0.16;
 
 interface NetworkColonyProps {
   topology: NetworkTopology;
@@ -61,6 +67,8 @@ interface NetworkColonyProps {
   flashDirtyRef: React.MutableRefObject<boolean>;
   /** Local node version — drives measured version-mismatch coloring (violet). */
   localVersion: string;
+  /** A Cell inspection subdues only passive P2P context, never block traffic. */
+  cellInspectionActive?: boolean;
 }
 
 export default function NetworkColony({
@@ -72,6 +80,7 @@ export default function NetworkColony({
   cellFlashRef,
   flashDirtyRef,
   localVersion,
+  cellInspectionActive = false,
 }: NetworkColonyProps) {
   const simClock = useSimClock();
   // Calm catch-up signal (same flag beams/nerves already respect). Read via the
@@ -80,6 +89,14 @@ export default function NetworkColony({
   // is deliberately optional-context; a throwing read here would defeat that.
   const cellsCache = useCellGalaxyOptional();
   const backfillActive = !!cellsCache?.backfill;
+  const contextEnergyRef = useRef(1);
+  useSimFrame((_, deltaSeconds) => {
+    contextEnergyRef.current = dampCellInspectionFieldScale(
+      contextEnergyRef.current,
+      cellInspectionActive ? CELL_INSPECTION_COLONY_CONTEXT_ENERGY : 1,
+      deltaSeconds,
+    );
+  });
 
   // Per-block pulse: the delivery layer reads `at` (when it fired) and `entryId`
   // (the flood origin). Per-worker arrival times come from `cf.arrivals`.
@@ -130,12 +147,14 @@ export default function NetworkColony({
         cf={cf}
         blockPulseAtMs={blockPulseAtMs}
         backfillActive={backfillActive}
+        contextEnergyRef={contextEnergyRef}
       />
       <ColonyNodes
         topology={topology}
         selectedId={selectedId}
         onSelect={onSelect}
         localVersion={localVersion}
+        contextEnergyRef={contextEnergyRef}
       />
       <ColonyCourierLayer
         cf={cf}

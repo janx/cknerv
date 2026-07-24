@@ -40,4 +40,16 @@ describe('HudOverlay wiring', () => {
       'orbitGestureSuppressesPointerMiss(',
     );
   });
+
+  it('shares one selected-Cell topology field between bodies and fibres', () => {
+    expect(APP_SOURCE).toContain(
+      'useRef<CellInspectionField | null>(null)',
+    );
+    expect(APP_SOURCE.match(
+      /inspectionFieldRef=\{cellInspectionFieldRef\}/g,
+    )).toHaveLength(2);
+    expect(APP_SOURCE).toContain(
+      'cellInspectionActive={selectedCell !== null}',
+    );
+  });
 });

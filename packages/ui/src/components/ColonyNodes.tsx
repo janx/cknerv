@@ -51,7 +51,13 @@ function measuredColor(node: NetworkNode, localVersion: string): THREE.Color {
  * is a STATIC haze — no flash attribute, no per-block write. Each point renders
  * the same soft core+halo as `makeHaloMaterial`, faint and fixed.
  */
-function InferredCloud({ topology }: { topology: NetworkTopology }) {
+function InferredCloud({
+  topology,
+  contextEnergyRef,
+}: {
+  topology: NetworkTopology;
+  contextEnergyRef?: { readonly current: number };
+}) {
   const inferred = useMemo(
     () => topology.nodes.filter((n) => n.kind === 'inferred'),
     [topology],
@@ -83,6 +89,7 @@ function InferredCloud({ topology }: { topology: NetworkTopology }) {
           uColor: { value: new THREE.Color(INFERRED_COLOR) },
           uDim: { value: INFERRED_DIM },
           uSize: { value: INFERRED_SIZE },
+          uContextEnergy: { value: 1 },
         },
         vertexShader: /* glsl */ `
           uniform float uSize;
@@ -96,12 +103,13 @@ function InferredCloud({ topology }: { topology: NetworkTopology }) {
           precision highp float;
           uniform vec3 uColor;
           uniform float uDim;
+          uniform float uContextEnergy;
           void main() {
             float r = length(gl_PointCoord - 0.5) * 2.0;
             if (r > 1.0) discard;
             float core = pow(1.0 - r, 2.0); // broader than the halo's pow-4 so a small point still reads
             float halo = pow(1.0 - r, 1.6) * 0.42;
-            float a = (core + halo) * uDim;
+            float a = (core + halo) * uDim * uContextEnergy;
             gl_FragColor = vec4(uColor * a, a);
           }
         `,
@@ -115,6 +123,9 @@ function InferredCloud({ topology }: { topology: NetworkTopology }) {
   // it on UNMOUNT ONLY — tearing it down on a geometry rebuild would dispose the
   // live, reused material and force a needless shader recompile on every re-clone.
   useEffect(() => () => mat.dispose(), [mat]);
+  useSimFrame(() => {
+    mat.uniforms.uContextEnergy.value = contextEnergyRef?.current ?? 1;
+  });
 
   // Non-selectable: an explicit no-op raycast so the ghost cloud can NEVER be
   // picked. r3f's pointer events already skip it (no handlers), but — unlike a
@@ -135,11 +146,13 @@ function MeasuredNode({
   localVersion,
   selected,
   onSelect,
+  contextEnergyRef,
 }: {
   node: NetworkNode;
   localVersion: string;
   selected: boolean;
   onSelect: (id: string | null) => void;
+  contextEnergyRef?: { readonly current: number };
 }) {
   const simClock = useSimClock();
   const color = useMemo(() => measuredColor(node, localVersion), [node, localVersion]);
@@ -160,7 +173,9 @@ function MeasuredNode({
     const t = simClock.elapsedSec;
     haloMat.uniforms.uTime.value = t;
     haloMat.uniforms.uIntensity.value =
-      MEASURED_BRIGHTNESS * (0.85 + 0.15 * Math.sin(t * rate + phase));
+      MEASURED_BRIGHTNESS
+      * (0.85 + 0.15 * Math.sin(t * rate + phase))
+      * (selected ? 1 : contextEnergyRef?.current ?? 1);
   });
 
   useEffect(() => () => haloMat.dispose(), [haloMat]);
@@ -199,11 +214,13 @@ export default function ColonyNodes({
   selectedId,
   onSelect,
   localVersion,
+  contextEnergyRef,
 }: {
   topology: NetworkTopology;
   selectedId: string | null;
   onSelect: (id: string | null) => void;
   localVersion: string;
+  contextEnergyRef?: { readonly current: number };
 }) {
   const measured = useMemo(
     () => topology.nodes.filter((n) => n.kind === 'measured'),
@@ -216,7 +233,10 @@ export default function ColonyNodes({
 
   return (
     <group>
-      <InferredCloud topology={topology} />
+      <InferredCloud
+        topology={topology}
+        contextEnergyRef={contextEnergyRef}
+      />
       {measured.map((n) => (
         <MeasuredNode
           key={n.id}
@@ -224,6 +244,7 @@ export default function ColonyNodes({
           selected={selectedId === `peer:${n.peer!.node_id}`}
           onSelect={onSelect}
           localVersion={localVersion}
+          contextEnergyRef={contextEnergyRef}
         />
       ))}
     </group>

@@ -70,6 +70,7 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
       attribute float aFocus;   // eased interaction: 0 resting, ~0.46 hover, 1 selected
       attribute float aRecall;  // signed historical read: source < 0, retained target > 0
       attribute float aRecallState; // source travel / target witness resolution
+      attribute float aInspection; // eased real-adjacency energy; 1 outside inspection
 
       uniform float uTime;
       uniform float uBirthDurS;
@@ -98,6 +99,7 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
       varying float vFocus;
       varying float vRecall;
       varying float vRecallState;
+      varying float vInspection;
       varying float vCenterDim;
       varying float vPointCssPx;
 
@@ -135,6 +137,7 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
         vFocus = aFocus;
         vRecall = aRecall;
         vRecallState = aRecallState;
+        vInspection = aInspection;
         float birthRamp = clamp((uTime - aBornAt) / uBirthDurS, 0.0, 1.0);
         float deathRamp = clamp((uTime - aDeathAt) / uDeathDurS, 0.0, 1.0);
         float bEase = birthEase(birthRamp);
@@ -204,6 +207,7 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
       varying float vFocus;
       varying float vRecall;
       varying float vRecallState;
+      varying float vInspection;
       varying float vCenterDim;
       varying float vPointCssPx;
 
@@ -256,7 +260,10 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
         if (vDeathRamp >= 1.0) discard;
 
         vec4 base = cloud(uv, t);
-        base.a *= vCenterDim; // resting body only; shock/focus events still reclaim headroom below
+        // Both density compression and graph-distance inspection apply only to
+        // the resting body. Shock, focus, write, and recall signals below can
+        // still reclaim headroom because they describe real events.
+        base.a *= vCenterDim * vInspection;
 
         float shock = vShockwave;
         float shockCore = min(1.0, shock);

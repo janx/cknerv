@@ -51,6 +51,7 @@ import {
   type ConsensusMemoryTraceReadout,
   type ConsensusMemoryRouteHopFocus,
   type ConsensusMemoryTargetResponse,
+  type CellInspectionField,
   type CellIdentityProofEvent,
   type CellIdentityProofKind,
 } from '@cknerv/ui';
@@ -309,6 +310,7 @@ export default function App({
   // reads. burstArrivalRef carries terminal arrivals to ConsensusWriteSeal.
   const cellFlashRef = useRef<Map<number, number>>(new Map());
   const flashDirtyRef = useRef<boolean>(false);
+  const cellInspectionFieldRef = useRef<CellInspectionField | null>(null);
   const burstArrivalRef = useRef<
     Map<number, { firedAt: number; color: [number, number, number] }>
   >(new Map());
@@ -769,6 +771,7 @@ export default function App({
             onSelect={handleSelect}
             cellFlashRef={cellFlashRef}
             flashDirtyRef={flashDirtyRef}
+            inspectionFieldRef={cellInspectionFieldRef}
             overlay={
               <>
                 {/* Cell→cell consensus packets: each observed transaction
@@ -781,6 +784,8 @@ export default function App({
                   burstArrivalRef={burstArrivalRef}
                   topology={galaxyConfig.topology}
                   pulses={galaxyConfig.pulses}
+                  inspectionCellId={selectedCell?.id ?? null}
+                  inspectionFieldRef={cellInspectionFieldRef}
                   traceRequest={memoryTraceRequest}
                   traceMaxPulses={CELL_MEMORY_RECALL_MAX_PULSES}
                   traceHoldForRecordSwitch={memoryRecordSwitchPending}
@@ -813,6 +818,7 @@ export default function App({
             cellFlashRef={cellFlashRef}
             flashDirtyRef={flashDirtyRef}
             localVersion={localNode?.version ?? ''}
+            cellInspectionActive={selectedCell !== null}
           />
 
           <ConsensusRouteCamera

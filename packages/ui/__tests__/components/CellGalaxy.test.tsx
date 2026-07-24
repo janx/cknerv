@@ -7,9 +7,12 @@ import CellGalaxy from '../../src/components/CellGalaxy';
 import {
   writeFlashSlots,
   writeCellBuffers,
+  writeCellInspectionTargets,
   pinSelectedCellInVisiblePrefix,
   selectWaveAnchor,
 } from '../../src/components/CellGalaxy';
+import { deriveCellInspectionField } from '../../src/nerve/cellInspectionField';
+import type { NeighborGraph } from '../../src/geometry/neighborGraph';
 import { CellGalaxyProvider } from '../../src/hooks/cellGalaxyContext';
 import { emptyCellsCache } from '@cknerv/cache';
 import type { Cell } from '@cknerv/types';
@@ -313,6 +316,41 @@ describe('writeFlashSlots', () => {
     writeFlashSlots(cells, 1, flashMap, flashArr);
 
     expect(flashArr[0]).toBe(-1e9);
+  });
+});
+
+describe('writeCellInspectionTargets', () => {
+  it('writes graph-hop energy in the current visible Cell order', () => {
+    const cells = [mkCell(3), mkCell(1), mkCell(4), mkCell(2)];
+    const graph: NeighborGraph = {
+      adjacency: new Map([
+        [1, new Set([2])],
+        [2, new Set([1, 3])],
+        [3, new Set([2])],
+        [4, new Set()],
+      ]),
+      edges: [
+        { from: 1, to: 2, d: 1 },
+        { from: 2, to: 3, d: 1 },
+      ],
+    };
+    const field = deriveCellInspectionField(graph, 1);
+    const targets = new Float32Array(4);
+
+    writeCellInspectionTargets(cells, cells.length, field, targets);
+
+    expect(targets[0]).toBeCloseTo(0.42);
+    expect(targets[1]).toBe(1);
+    expect(targets[2]).toBeCloseTo(0.12);
+    expect(targets[3]).toBeCloseTo(0.82);
+  });
+
+  it('restores every visible Cell to full energy without inspection', () => {
+    const targets = new Float32Array(3).fill(0);
+
+    writeCellInspectionTargets([mkCell(1), mkCell(2)], 2, null, targets);
+
+    expect([...targets]).toEqual([1, 1, 0]);
   });
 });
 

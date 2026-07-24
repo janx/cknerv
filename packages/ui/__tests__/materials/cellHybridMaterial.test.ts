@@ -63,6 +63,20 @@ describe('makeCellHybridMaterial', () => {
     );
   });
 
+  it('applies topology inspection only to the resting Cell body', () => {
+    const m = makeCellHybridMaterial();
+
+    expect(m.vertexShader).toContain('attribute float aInspection');
+    expect(m.vertexShader).toContain('vInspection = aInspection');
+    expect(m.fragmentShader).toContain(
+      'base.a *= vCenterDim * vInspection',
+    );
+    expect(m.fragmentShader.indexOf('base.a *= vCenterDim * vInspection'))
+      .toBeLessThan(m.fragmentShader.indexOf('focusSignal'));
+    expect(m.fragmentShader.indexOf('base.a *= vCenterDim * vInspection'))
+      .toBeLessThan(m.fragmentShader.indexOf('readEnergy'));
+  });
+
   it('renders hover and selection as an interrupted braid interference signal', () => {
     const m = makeCellHybridMaterial();
 
