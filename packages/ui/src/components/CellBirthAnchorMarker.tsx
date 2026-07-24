@@ -16,9 +16,10 @@ import {
   deriveCellIdentityProofLabel,
 } from '../derives/cellIdentityProofLabel.derive';
 import { CELLS_Y, CHAIN_Y } from '../layout';
-import CellIdentityProofLabel, {
+import {
   presentCellIdentityProofLabel,
-} from './CellIdentityProofLabel';
+} from './cellIdentityProofLabel.presentation';
+import CellIdentityProofLabel from './CellIdentityProofLabel';
 
 const CHAIN_LOCAL_Y = CHAIN_Y - CELLS_Y;
 const ANCHOR_TICK_WORLD_SCALE = 0.92;

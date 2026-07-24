@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   presentCellIdentityProofLabel,
-} from '../../src/components/CellIdentityProofLabel';
+} from '../../src/components/cellIdentityProofLabel.presentation';
 
 describe('CellIdentityProofLabel presentation', () => {
   it('places a visible label left of a proof in the inspection half', () => {

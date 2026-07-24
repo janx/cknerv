@@ -18,9 +18,10 @@ import type {
 import {
   deriveCellIdentityProofLabel,
 } from '../derives/cellIdentityProofLabel.derive';
-import CellIdentityProofLabel, {
+import {
   presentCellIdentityProofLabel,
-} from './CellIdentityProofLabel';
+} from './cellIdentityProofLabel.presentation';
+import CellIdentityProofLabel from './CellIdentityProofLabel';
 
 const ADDRESS_GEOMETRY_RADIUS = CELL_CONTENT_ADDRESS_RADIUS_MAX
   + CELL_CONTENT_ADDRESS_SPINE_OVERSHOOT;
