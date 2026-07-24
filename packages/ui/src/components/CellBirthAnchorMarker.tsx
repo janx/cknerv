@@ -12,7 +12,13 @@ import {
   deriveCellBirthAnchorSegments,
   type CellIdentityProofEvent,
 } from '../derives/cellIdentityProof.derive';
+import {
+  deriveCellIdentityProofLabel,
+} from '../derives/cellIdentityProofLabel.derive';
 import { CELLS_Y, CHAIN_Y } from '../layout';
+import CellIdentityProofLabel, {
+  presentCellIdentityProofLabel,
+} from './CellIdentityProofLabel';
 
 const CHAIN_LOCAL_Y = CHAIN_Y - CELLS_Y;
 const ANCHOR_TICK_WORLD_SCALE = 0.92;
@@ -51,6 +57,7 @@ export default function CellBirthAnchorMarker({
   const rootRef = useRef<THREE.Group>(null);
   const lineGroupRef = useRef<THREE.Group>(null);
   const terminalRef = useRef<THREE.Group>(null);
+  const labelRef = useRef<HTMLDivElement>(null);
   const terminalRingMaterialRef = useRef<THREE.MeshBasicMaterial>(null);
   const terminalCoreMaterialRef = useRef<THREE.MeshBasicMaterial>(null);
   const settledSequenceRef = useRef<number | null>(null);
@@ -58,7 +65,13 @@ export default function CellBirthAnchorMarker({
     () => deriveCellBirthAnchorEncoding(cell.birth_block),
     [cell.birth_block],
   );
+  const label = useMemo(
+    () => deriveCellIdentityProofLabel(cell, 'anchor'),
+    [cell.birth_block],
+  );
   const anchorDepth = Math.max(0.1, cell.pos_seed[1] - CHAIN_LOCAL_Y);
+  const terminalWorldPosition = useMemo(() => new THREE.Vector3(), []);
+  const terminalProjectedPosition = useMemo(() => new THREE.Vector3(), []);
   const built = useMemo(() => {
     const segments = deriveCellBirthAnchorSegments(encoding);
     const positions: number[] = [];
@@ -144,7 +157,7 @@ export default function CellBirthAnchorMarker({
     built.coreMaterial.resolution.set(size.width, size.height);
   }, [built, size.height, size.width]);
 
-  useFrame(() => {
+  useFrame((state) => {
     const root = rootRef.current;
     if (!root || settledSequenceRef.current === event.sequence) return;
     const frame = cellBirthAnchorEchoFrame(
@@ -159,6 +172,17 @@ export default function CellBirthAnchorMarker({
       && frame.strength > 0.001;
     root.visible = active;
     if (!active) {
+      presentCellIdentityProofLabel(labelRef.current, {
+        state: frame.state,
+        progress: frame.progress,
+        strength: 0,
+        reducedMotion: event.reducedMotion,
+        screenX: state.size.width * 0.5,
+        screenY: state.size.height * 0.5,
+        viewportWidth: state.size.width,
+        viewportHeight: state.size.height,
+        radiusPx: 12,
+      });
       if (frame.state === 'settled') {
         settledSequenceRef.current = event.sequence;
       }
@@ -179,6 +203,23 @@ export default function CellBirthAnchorMarker({
         ? 0.92
         : 0.84 + frame.pulseStrength * 0.36;
       terminalRef.current.scale.setScalar(pulse);
+      terminalRef.current.getWorldPosition(terminalWorldPosition);
+      terminalProjectedPosition
+        .copy(terminalWorldPosition)
+        .project(state.camera);
+      presentCellIdentityProofLabel(labelRef.current, {
+        state: frame.state,
+        progress: frame.progress,
+        strength: frame.strength,
+        reducedMotion: event.reducedMotion,
+        screenX: (terminalProjectedPosition.x + 1)
+          * 0.5 * state.size.width,
+        screenY: (1 - terminalProjectedPosition.y)
+          * 0.5 * state.size.height,
+        viewportWidth: state.size.width,
+        viewportHeight: state.size.height,
+        radiusPx: 12,
+      });
     }
     if (terminalRingMaterialRef.current) {
       terminalRingMaterialRef.current.opacity = frame.strength * 0.94;
@@ -239,6 +280,7 @@ export default function CellBirthAnchorMarker({
             toneMapped={false}
           />
         </mesh>
+        <CellIdentityProofLabel ref={labelRef} label={label} />
       </Billboard>
     </group>
   );

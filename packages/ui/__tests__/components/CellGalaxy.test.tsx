@@ -34,6 +34,10 @@ const IDENTITY_PROOF_MARKER_SOURCE = resolve(
   process.cwd(),
   'src/components/CellIdentityProofMarker.tsx',
 );
+const IDENTITY_PROOF_LABEL_SOURCE = resolve(
+  process.cwd(),
+  'src/components/CellIdentityProofLabel.tsx',
+);
 
 describe('CellGalaxy', () => {
   it('mounts inside an r3f Canvas without throwing', () => {
@@ -104,6 +108,7 @@ describe('CellGalaxy', () => {
       IDENTITY_PROOF_MARKER_SOURCE,
       'utf8',
     );
+    const labelSource = readFileSync(IDENTITY_PROOF_LABEL_SOURCE, 'utf8');
 
     expect(galaxySource).toContain('<CellIdentityProofMarker');
     expect(galaxySource).toContain('cellsCache.cells.get(identityProof.cellId)');
@@ -120,6 +125,12 @@ describe('CellGalaxy', () => {
     expect(anchorSource).toContain('deriveCellBirthAnchorSegments(encoding)');
     expect(anchorSource).toContain('cellBirthAnchorEchoFrame(');
     expect(anchorSource).toContain('memoryBirthAnchorTargetWorldY: CHAIN_Y');
+    expect(echoSource).toContain('<CellIdentityProofLabel');
+    expect(locatorSource).toContain('<CellIdentityProofLabel');
+    expect(anchorSource).toContain('<CellIdentityProofLabel');
+    expect(labelSource).toContain('<Html');
+    expect(labelSource).toContain('presentCellIdentityProofLabel');
+    expect(labelSource).toContain("pointerEvents: 'none'");
   });
 
   it('mounts with localReceiveDelayS (receive-delayed reaction) without throwing', () => {

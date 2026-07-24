@@ -12,6 +12,12 @@ import {
   deriveCellOutpointLocatorSegments,
   type CellIdentityProofEvent,
 } from '../derives/cellIdentityProof.derive';
+import {
+  deriveCellIdentityProofLabel,
+} from '../derives/cellIdentityProofLabel.derive';
+import CellIdentityProofLabel, {
+  presentCellIdentityProofLabel,
+} from './CellIdentityProofLabel';
 
 function makeLocatorLineMaterial(
   linewidth: number,
@@ -42,12 +48,17 @@ export default function CellOutpointLocatorMarker({
 }) {
   const size = useThree((state) => state.size);
   const groupRef = useRef<THREE.Group>(null);
+  const labelRef = useRef<HTMLDivElement>(null);
   const settledSequenceRef = useRef<number | null>(null);
   const encoding = useMemo(
     () => deriveCellOutpointLocatorEncoding(
       cell.out_point.tx_hash,
       cell.out_point.index,
     ),
+    [cell.out_point.index, cell.out_point.tx_hash],
+  );
+  const label = useMemo(
+    () => deriveCellIdentityProofLabel(cell, 'address'),
     [cell.out_point.index, cell.out_point.tx_hash],
   );
   const built = useMemo(() => {
@@ -98,6 +109,7 @@ export default function CellOutpointLocatorMarker({
     };
   }, [encoding]);
   const worldPosition = useMemo(() => new THREE.Vector3(), []);
+  const projectedPosition = useMemo(() => new THREE.Vector3(), []);
   const cameraPosition = useMemo(() => new THREE.Vector3(), []);
   const cameraQuaternion = useMemo(() => new THREE.Quaternion(), []);
   const parentQuaternion = useMemo(() => new THREE.Quaternion(), []);
@@ -155,6 +167,17 @@ export default function CellOutpointLocatorMarker({
       && frame.strength > 0.001;
     group.visible = active;
     if (!active) {
+      presentCellIdentityProofLabel(labelRef.current, {
+        state: frame.state,
+        progress: frame.progress,
+        strength: 0,
+        reducedMotion: event.reducedMotion,
+        screenX: state.size.width * 0.5,
+        screenY: state.size.height * 0.5,
+        viewportWidth: state.size.width,
+        viewportHeight: state.size.height,
+        radiusPx: frame.radiusPx,
+      });
       if (frame.state === 'settled') {
         settledSequenceRef.current = event.sequence;
       }
@@ -165,6 +188,7 @@ export default function CellOutpointLocatorMarker({
     parent?.updateWorldMatrix(true, false);
     state.camera.updateWorldMatrix(true, false);
     group.getWorldPosition(worldPosition);
+    projectedPosition.copy(worldPosition).project(state.camera);
     state.camera.getWorldPosition(cameraPosition);
     state.camera.getWorldQuaternion(cameraQuaternion);
     if (parent) {
@@ -201,6 +225,17 @@ export default function CellOutpointLocatorMarker({
     group.scale.setScalar(localScale);
     built.glowMaterial.opacity = frame.strength * 0.18;
     built.coreMaterial.opacity = frame.strength * 0.9;
+    presentCellIdentityProofLabel(labelRef.current, {
+      state: frame.state,
+      progress: frame.progress,
+      strength: frame.strength,
+      reducedMotion: event.reducedMotion,
+      screenX: (projectedPosition.x + 1) * 0.5 * state.size.width,
+      screenY: (1 - projectedPosition.y) * 0.5 * state.size.height,
+      viewportWidth: state.size.width,
+      viewportHeight: state.size.height,
+      radiusPx: frame.radiusPx,
+    });
   });
 
   useEffect(() => () => {
@@ -218,6 +253,7 @@ export default function CellOutpointLocatorMarker({
     >
       <primitive object={built.glow} />
       <primitive object={built.core} />
+      <CellIdentityProofLabel ref={labelRef} label={label} />
     </group>
   );
 }
