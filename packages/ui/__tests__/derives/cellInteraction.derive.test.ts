@@ -6,6 +6,7 @@ import {
   CELL_SELECTED_FOCUS,
   CONSENSUS_BRAID_BASE_SCALE,
   cellGalaxyRotationScaleTarget,
+  cellCanvasCursor,
   cellFocusTarget,
   cellNucleusLodRefreshDue,
   consensusBraidRenderScale,
@@ -29,6 +30,13 @@ describe('cell interaction derivation', () => {
     expect(cellFocusTarget(7, null, 7)).toBe(CELL_HOVER_FOCUS);
     expect(cellFocusTarget(7, 7, 7)).toBe(CELL_SELECTED_FOCUS);
     expect(cellFocusTarget(7, 8, 9)).toBe(0);
+  });
+
+  it('does not clear a nearer causal endpoint cursor', () => {
+    expect(cellCanvasCursor(false, false)).toBe('');
+    expect(cellCanvasCursor(true, false)).toBe('pointer');
+    expect(cellCanvasCursor(false, true)).toBe('pointer');
+    expect(cellCanvasCursor(true, true)).toBe('pointer');
   });
 
   it('eases the galaxy into a slower inspection tempo and back out', () => {

@@ -29,6 +29,7 @@ import {
 } from '../derives/consensusMemoryCoreIdentity.derive';
 import {
   CONSENSUS_BRAID_LOCAL_RADIUS,
+  cellCanvasCursor,
   cellGalaxyRotationScaleTarget,
   cellFocusTarget,
   consensusBraidRenderScale,
@@ -807,12 +808,29 @@ function CellPicker({
   ]);
 
   useEffect(() => () => {
-    if (gl.domElement.style.cursor === 'pointer') gl.domElement.style.cursor = '';
+    delete gl.domElement.dataset.cellPickerHover;
+    gl.domElement.style.cursor = cellCanvasCursor(
+      false,
+      gl.domElement.dataset.cellCausalNavigationHover !== undefined,
+    );
   }, [gl]);
 
   const setHovered = (id: number | null) => {
     hoveredCellIdRef.current = id;
-    gl.domElement.style.cursor = id === null ? '' : 'pointer';
+    if (id === null) {
+      delete gl.domElement.dataset.cellPickerHover;
+    } else {
+      gl.domElement.dataset.cellPickerHover = String(id);
+    }
+    // A nearer causal endpoint can stop propagation and deliberately own the
+    // same screen point. Its marker remains the active affordance even when
+    // this farther picker receives the synthetic pointer-out cleanup.
+    const causalNavigationOwnsCursor =
+      gl.domElement.dataset.cellCausalNavigationHover !== undefined;
+    gl.domElement.style.cursor = cellCanvasCursor(
+      id !== null,
+      causalNavigationOwnsCursor,
+    );
   };
 
   return (

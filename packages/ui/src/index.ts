@@ -88,7 +88,10 @@ export {
 // ── Components ─────────────────────────────────────────────────────
 export { default as BackfillHud } from './components/BackfillHud';
 export { default as BlockDeliveryLayer } from './components/BlockDeliveryLayer';
-export { default as CellCausalLensLayer } from './components/CellCausalLensLayer';
+export {
+  default as CellCausalLensLayer,
+  type CellCausalLensLayerProps,
+} from './components/CellCausalLensLayer';
 export {
   formatCkb, midTruncate, formatOutpoint, formatDataHex, formatCellKind,
   formatAge, formatDataSize, formatLockKind, formatAssetKind,

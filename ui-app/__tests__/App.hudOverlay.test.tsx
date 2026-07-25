@@ -60,5 +60,11 @@ describe('HudOverlay wiring', () => {
     );
     expect(APP_SOURCE).toContain('<CellCausalLensLayer');
     expect(APP_SOURCE).toContain('lens={selectedCausalLens}');
+    expect(APP_SOURCE).toContain(
+      'onNavigateCell={navigateCausalCell}',
+    );
+    expect(APP_SOURCE).toContain(
+      'handleSelect(`${CELL_SELECTION_PREFIX}${cellId}`)',
+    );
   });
 });

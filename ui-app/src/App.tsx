@@ -243,6 +243,9 @@ export default function App({
     }
     else setSelectedNetId(id);
   }, []);
+  const navigateCausalCell = useCallback((cellId: number) => {
+    handleSelect(`${CELL_SELECTION_PREFIX}${cellId}`);
+  }, [handleSelect]);
   const confirmCellIdentityProof = useCallback((
     kind: CellIdentityProofKind,
     cellId: number,
@@ -791,6 +794,7 @@ export default function App({
                   <CellCausalLensLayer
                     key={selectedCausalLens.key}
                     lens={selectedCausalLens}
+                    onNavigateCell={navigateCausalCell}
                   />
                 ) : null}
                 {/* Cell→cell consensus packets: each observed transaction

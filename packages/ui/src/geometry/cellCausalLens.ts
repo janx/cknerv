@@ -14,6 +14,12 @@ export interface CellCausalArc {
   key: string;
   endpointId: number;
   role: CellCausalArcRole;
+  /**
+   * Retained input/sibling record that can become the next inspected Cell.
+   * The already-selected output and identity-only tether deliberately remain
+   * inert, even though both have honest geometry.
+   */
+  navigationTargetId: number | null;
   from: Vec3;
   control: Vec3;
   to: Vec3;
@@ -101,6 +107,7 @@ export function deriveCellCausalLensLayout(
         key: `output:${selectedOutput.id}`,
         endpointId: selectedOutput.id,
         role: 'selected-output',
+        navigationTargetId: null,
         from: [...hub],
         control: arcControl(
           hub,
@@ -150,6 +157,7 @@ export function deriveCellCausalLensLayout(
       key: `input:${input.id}`,
       endpointId: input.id,
       role: 'input',
+      navigationTargetId: input.id,
       from,
       control: arcControl(from, hub, input.id, 'input'),
       to: [...hub],
@@ -165,6 +173,7 @@ export function deriveCellCausalLensLayout(
       key: `output:${output.id}`,
       endpointId: output.id,
       role,
+      navigationTargetId: role === 'sibling-output' ? output.id : null,
       from: [...hub],
       control: arcControl(hub, to, output.id, role),
       to,
