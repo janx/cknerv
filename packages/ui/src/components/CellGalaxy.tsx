@@ -251,27 +251,114 @@ export function writeCellInspectionNavigationRoles(
   }
 }
 
-/** Preserve the deterministic cache order while pinning one selected Cell into
- * the visible prefix. Quality changes may reduce the prefix, but an identity the
- * user is already inspecting must never disappear merely because the renderer
- * shed background capacity. The tail remains intact for live-id pruning. */
+/** Preserve the deterministic cache order while pinning a bounded inspection
+ * neighbourhood into the visible prefix.
+ *
+ * Priority is semantic rather than draw-order based: selected root, every
+ * direct renderer-neighbour, then hop-two context while capacity remains.
+ * Swaps happen only against non-field entries at the end of the prefix, so
+ * background density yields before local meaning. The complete array remains
+ * one permutation of the cache order; tail entries stay available for live-id
+ * pruning and no Cell is copied or dropped.
+ *
+ * A field belonging to the previous selection is deliberately ignored. React
+ * can publish the new selected id one frame before NeuralNetwork publishes its
+ * matching graph snapshot, and the old neighbourhood must not leak into that
+ * transition.
+ */
+export function pinCellInspectionFieldInVisiblePrefix(
+  cells: Cell[],
+  visibleCount: number,
+  selectedCellId: number | null,
+  field: CellInspectionField | null,
+): Cell[] {
+  const count = Math.min(
+    cells.length,
+    Math.max(0, Math.floor(visibleCount)),
+  );
+  if (
+    selectedCellId === null
+    || count === 0
+    || count >= cells.length
+  ) return cells;
+
+  const selectedIndex = cells.findIndex(
+    (cell) => cell.id === selectedCellId,
+  );
+  if (selectedIndex < 0) return cells;
+
+  const priorityIds = [selectedCellId];
+  if (field?.selectedCellId === selectedCellId) {
+    const fieldMembers: Array<{ id: number; hop: number; order: number }> = [];
+    for (let order = 0; order < cells.length; order += 1) {
+      const cell = cells[order];
+      const hop = field.hopsByCellId.get(cell.id);
+      if (
+        hop === undefined
+        || !Number.isFinite(hop)
+        || hop <= 0
+        || hop > field.maxHops
+      ) continue;
+      fieldMembers.push({ id: cell.id, hop, order });
+    }
+    fieldMembers.sort((a, b) => a.hop - b.hop || a.order - b.order);
+    for (const member of fieldMembers) {
+      priorityIds.push(member.id);
+    }
+  }
+
+  const pinnedIds = priorityIds.slice(0, count);
+  const pinnedSet = new Set(pinnedIds);
+  const visibleIds = new Set(
+    cells.slice(0, count).map((cell) => cell.id),
+  );
+  const missingIds = pinnedIds.filter((id) => !visibleIds.has(id));
+  if (missingIds.length === 0) return cells;
+
+  // Missing ids fill backwards in semantic priority order. When the selected
+  // Cell itself is missing, it therefore receives the final draw slot, keeping
+  // its non-depth-writing point above the quieter context.
+  const replacementSlots: number[] = [];
+  for (let i = count - 1; i >= 0; i -= 1) {
+    if (!pinnedSet.has(cells[i].id)) replacementSlots.push(i);
+  }
+
+  const pinned = cells.slice();
+  const indexById = new Map<number, number>();
+  for (let i = 0; i < pinned.length; i += 1) {
+    indexById.set(pinned[i].id, i);
+  }
+
+  for (let i = 0; i < missingIds.length; i += 1) {
+    const sourceIndex = indexById.get(missingIds[i]);
+    const targetIndex = replacementSlots[i];
+    if (sourceIndex === undefined || targetIndex === undefined) break;
+    const displacedId = pinned[targetIndex].id;
+    const insertedId = pinned[sourceIndex].id;
+    [pinned[targetIndex], pinned[sourceIndex]] = [
+      pinned[sourceIndex],
+      pinned[targetIndex],
+    ];
+    indexById.set(insertedId, targetIndex);
+    indexById.set(displacedId, sourceIndex);
+  }
+
+  return pinned;
+}
+
+/** Compatibility helper for consumers that only have a selected identity.
+ * Production CellGalaxy uses the full inspection-field variant above. */
 export function pinSelectedCellInVisiblePrefix(
   cells: Cell[],
   visibleCount: number,
   selectedCellId: number | null,
 ): Cell[] {
-  if (selectedCellId === null || visibleCount <= 0 || visibleCount >= cells.length) {
-    return cells;
-  }
-  const selectedIndex = cells.findIndex((cell) => cell.id === selectedCellId);
-  if (selectedIndex < 0 || selectedIndex < visibleCount) return cells;
-  const pinned = cells.slice();
-  const boundaryIndex = visibleCount - 1;
-  [pinned[boundaryIndex], pinned[selectedIndex]] = [
-    pinned[selectedIndex],
-    pinned[boundaryIndex],
-  ];
-  return pinned;
+  return pinCellInspectionFieldInVisiblePrefix(
+    cells,
+    visibleCount,
+    selectedCellId,
+    null,
+  );
 }
 
 export interface CellBufferTargets {
@@ -842,6 +929,7 @@ export default function CellGalaxy({
    *  until the next birth/death/tag/gc delta lands. */
   const lastMulRef = useRef<number>(0);
   const lastPinnedCellIdRef = useRef<number | null>(null);
+  const lastPinnedInspectionFieldRef = useRef<CellInspectionField | null>(null);
   /** Per-frame mirror of the cell draw count. Written in the
    *  inputsChanged path; read by the flash-only fast path so neither
    *  path needs to recompute the clamp. */
@@ -1043,13 +1131,15 @@ export default function CellGalaxy({
 
     const prevPulseAtMs = lastPulseAtMsRef.current;
     const pulseAtMs = cellsCache.lastPulseAtMs;
+    const inspectionField = inspectionFieldRef?.current ?? null;
 
     // 1. Skip-or-rewrite the static per-cell buffers based on cells Map identity
-    //    or quality-preset multiplier change.
+    //    or quality/selection/inspection-prefix change.
     const inputsChanged =
       cellsCache.cells !== lastCellsRef.current ||
       cellGalaxyMul !== lastMulRef.current ||
-      selectedCellIdRef.current !== lastPinnedCellIdRef.current;
+      selectedCellIdRef.current !== lastPinnedCellIdRef.current ||
+      inspectionField !== lastPinnedInspectionFieldRef.current;
     let cellsList = cellsListRef.current;
     let count = drawCountRef.current;
     if (inputsChanged) {
@@ -1058,10 +1148,11 @@ export default function CellGalaxy({
         allCells.length,
         Math.max(1, Math.floor(INSTANCE_CAPACITY * cellGalaxyMul)),
       );
-      cellsList = pinSelectedCellInVisiblePrefix(
+      cellsList = pinCellInspectionFieldInVisiblePrefix(
         allCells,
         count,
         selectedCellIdRef.current,
+        inspectionField,
       );
       cellsListRef.current = cellsList;
       drawCountRef.current = count;
@@ -1106,12 +1197,12 @@ export default function CellGalaxy({
       lastCellsRef.current = cellsCache.cells;
       lastMulRef.current = cellGalaxyMul;
       lastPinnedCellIdRef.current = selectedCellIdRef.current;
+      lastPinnedInspectionFieldRef.current = inspectionField;
     }
 
     // 2. Topology-distance field. Its immutable snapshot changes only when
     // selection or real graph membership changes; GPU writes continue for the
     // short easing interval, then return to a zero-cost steady state.
-    const inspectionField = inspectionFieldRef?.current ?? null;
     const inspectionFieldChanged =
       inspectionField !== lastInspectionFieldRef.current;
     if (inputsChanged || inspectionFieldChanged) {
