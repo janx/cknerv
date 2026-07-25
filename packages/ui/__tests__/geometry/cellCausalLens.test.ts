@@ -57,6 +57,19 @@ describe('deriveCellCausalLensLayout', () => {
       .toHaveLength(4);
     expect(layout.arcs.find((arc) => arc.role === 'selected-output')?.to)
       .toEqual(selected.pos_seed);
+    expect(layout.arcs.map((arc) => [
+      arc.role,
+      arc.endpointId,
+      arc.navigationTargetId,
+    ])).toEqual([
+      ['input', 1, 1],
+      ['input', 2, 2],
+      ['input', 3, 3],
+      ['sibling-output', 7, 7],
+      ['sibling-output', 8, 8],
+      ['selected-output', 9, null],
+      ['sibling-output', 10, 10],
+    ]);
     expect(layout.arcs.every((arc) => (
       arc.role === 'input'
         ? arc.to.every((value, index) => value === layout.hub[index])
@@ -100,9 +113,11 @@ describe('deriveCellCausalLensLayout', () => {
     expect(deriveCellCausalLensLayout(unavailable).arcs.map((arc) => ({
       key: arc.key,
       role: arc.role,
+      navigationTargetId: arc.navigationTargetId,
     }))).toEqual([{
       key: 'output:9',
       role: 'selected-output',
+      navigationTargetId: null,
     }]);
   });
 });

@@ -3,6 +3,7 @@ import {
   useEffect,
   useMemo,
   useRef,
+  useState,
   type CSSProperties,
 } from 'react';
 import { Billboard, Html } from '@react-three/drei';
@@ -12,6 +13,7 @@ import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js';
 import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js';
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 import type { CellCausalLens } from '../derives/cellCausalLens.derive';
+import { cellCanvasCursor } from '../derives/cellInteraction.derive';
 import {
   cellCausalArcPoint,
   deriveCellCausalLensLayout,
@@ -21,10 +23,18 @@ import {
 import { useReducedMotion } from './hud/useReducedMotion';
 
 const ARC_SEGMENTS = 18;
+const ENDPOINT_PICK_RADIUS_PX = 10;
 const INPUT_COLOR: readonly [number, number, number] = [0.47, 0.38, 1];
 const SIBLING_COLOR: readonly [number, number, number] = [1, 0.48, 0.12];
 const SELECTED_COLOR: readonly [number, number, number] = [1, 0.82, 0.47];
 const IDENTITY_COLOR: readonly [number, number, number] = [0.54, 0.4, 1];
+
+function syncCanvasPointerCursor(canvas: HTMLCanvasElement): void {
+  canvas.style.cursor = cellCanvasCursor(
+    canvas.dataset.cellPickerHover !== undefined,
+    canvas.dataset.cellCausalNavigationHover !== undefined,
+  );
+}
 
 function lineMaterial(
   linewidth: number,
@@ -118,6 +128,10 @@ function endpointCssColor(
   return role === 'selected-output' ? '#FFD48C' : '#FF9830';
 }
 
+function navigationRoleLabel(role: CellCausalArcRole): string {
+  return role === 'input' ? 'INPUT CELL' : 'SIBLING OUTPUT';
+}
+
 function shortHash(value: string): string {
   return value.length <= 14
     ? value
@@ -139,16 +153,163 @@ function sceneSignature(lens: CellCausalLens): string {
   ].join('|');
 }
 
+type NavigableCausalArc = CellCausalArc & {
+  navigationTargetId: number;
+};
+
+function CellCausalEndpointPicker({
+  arcs,
+  onHover,
+  onNavigateCell,
+}: {
+  arcs: readonly CellCausalArc[];
+  onHover: (cellId: number | null) => void;
+  onNavigateCell: (cellId: number) => void;
+}) {
+  const ref = useRef<THREE.Object3D>(null);
+  const { gl, size } = useThree();
+  const sizeRef = useRef(size);
+  sizeRef.current = size;
+  const navigableArcs = useMemo(
+    () => arcs.filter((arc): arc is NavigableCausalArc => (
+      arc.navigationTargetId !== null
+    )),
+    [arcs],
+  );
+
+  useEffect(() => {
+    const node = ref.current;
+    if (!node) return undefined;
+    const world = new THREE.Vector3();
+    const ndc = new THREE.Vector3();
+    const rayNdc = new THREE.Vector3();
+    const bestWorld = new THREE.Vector3();
+
+    node.raycast = function raycastCausalEndpoints(raycaster, intersects) {
+      const camera = raycaster.camera;
+      if (!camera || navigableArcs.length === 0) return;
+      rayNdc
+        .copy(raycaster.ray.origin)
+        .addScaledVector(raycaster.ray.direction, 1)
+        .project(camera);
+      const halfWidth = sizeRef.current.width * 0.5;
+      const halfHeight = sizeRef.current.height * 0.5;
+      let bestIndex = -1;
+      let bestPixelDistanceSq = Infinity;
+      let bestDepth = Infinity;
+
+      for (let index = 0; index < navigableArcs.length; index += 1) {
+        const arc = navigableArcs[index];
+        const local = arc.role === 'input' ? arc.from : arc.to;
+        world.set(...local).applyMatrix4(this.matrixWorld);
+        ndc.copy(world).project(camera);
+        if (ndc.z < -1 || ndc.z > 1) continue;
+        const dx = (ndc.x - rayNdc.x) * halfWidth;
+        const dy = (ndc.y - rayNdc.y) * halfHeight;
+        const pixelDistanceSq = dx * dx + dy * dy;
+        if (pixelDistanceSq > ENDPOINT_PICK_RADIUS_PX ** 2) continue;
+        if (
+          pixelDistanceSq < bestPixelDistanceSq - 0.25
+          || (
+            Math.abs(pixelDistanceSq - bestPixelDistanceSq) <= 0.25
+            && ndc.z < bestDepth
+          )
+        ) {
+          bestIndex = index;
+          bestPixelDistanceSq = pixelDistanceSq;
+          bestDepth = ndc.z;
+          bestWorld.copy(world);
+        }
+      }
+      if (bestIndex < 0) return;
+      intersects.push({
+        distance: raycaster.ray.origin.distanceTo(bestWorld),
+        point: bestWorld.clone(),
+        object: this,
+        instanceId: bestIndex,
+      });
+    };
+
+    return () => {
+      node.raycast = THREE.Object3D.prototype.raycast;
+    };
+  }, [navigableArcs]);
+
+  useEffect(() => () => {
+    delete gl.domElement.dataset.cellCausalNavigationHover;
+    syncCanvasPointerCursor(gl.domElement);
+  }, [gl]);
+
+  const setHovered = (cellId: number | null) => {
+    if (cellId === null) {
+      delete gl.domElement.dataset.cellCausalNavigationHover;
+      syncCanvasPointerCursor(gl.domElement);
+      onHover(null);
+      return;
+    }
+    gl.domElement.dataset.cellCausalNavigationHover = String(cellId);
+    syncCanvasPointerCursor(gl.domElement);
+    onHover(cellId);
+  };
+
+  return (
+    <object3D
+      ref={ref}
+      userData={{
+        cellCausalEndpointPicker: true,
+        cellCausalEndpointPickRadiusPx: ENDPOINT_PICK_RADIUS_PX,
+      }}
+      onPointerMove={(event) => {
+        event.stopPropagation();
+        if (
+          typeof event.instanceId !== 'number'
+          || event.instanceId < 0
+          || event.instanceId >= navigableArcs.length
+        ) {
+          setHovered(null);
+          return;
+        }
+        setHovered(navigableArcs[event.instanceId].navigationTargetId);
+      }}
+      onPointerOut={(event) => {
+        event.stopPropagation();
+        setHovered(null);
+      }}
+      onPointerDown={(event) => event.stopPropagation()}
+      onClick={(event) => {
+        event.stopPropagation();
+        if (
+          typeof event.instanceId !== 'number'
+          || event.instanceId < 0
+          || event.instanceId >= navigableArcs.length
+        ) return;
+        onNavigateCell(
+          navigableArcs[event.instanceId].navigationTargetId,
+        );
+      }}
+    />
+  );
+}
+
+export interface CellCausalLensLayerProps {
+  lens: CellCausalLens;
+  /** Navigate only to retained input/sibling records exposed by the layout. */
+  onNavigateCell?: (cellId: number) => void;
+}
+
 function CellCausalLensLayer({
   lens,
-}: {
-  lens: CellCausalLens;
-}) {
+  onNavigateCell,
+}: CellCausalLensLayerProps) {
   const size = useThree((state) => state.size);
+  const gl = useThree((state) => state.gl);
   const reducedMotion = useReducedMotion();
   const hubGlyphRef = useRef<THREE.Group>(null);
   const labelRef = useRef<HTMLDivElement>(null);
   const startedAtRef = useRef<number | null>(null);
+  const [hoveredNavigationTargetId, setHoveredNavigationTargetId] = useState<
+    number | null
+  >(null);
   const layout = useMemo(() => deriveCellCausalLensLayout(lens), [lens]);
   const identityOnly = lens.status === 'unavailable';
   const built = useMemo(
@@ -185,6 +346,30 @@ function CellCausalLensLayer({
     built.glowMaterial.dispose();
     built.coreMaterial.dispose();
   }, [built]);
+  useEffect(() => () => {
+    delete gl.domElement.dataset.cellCausalNavigationHover;
+    syncCanvasPointerCursor(gl.domElement);
+  }, [gl, lens.key]);
+  useEffect(() => {
+    if (hoveredNavigationTargetId === null) return undefined;
+    // CellPicker occupies the same screen point and may receive a synthetic
+    // pointer-out after this nearer marker stops propagation. Reassert cursor
+    // ownership after the hover state commits so that farther-layer cleanup
+    // cannot erase the causal affordance.
+    gl.domElement.dataset.cellCausalNavigationHover = String(
+      hoveredNavigationTargetId,
+    );
+    syncCanvasPointerCursor(gl.domElement);
+    return () => {
+      if (
+        gl.domElement.dataset.cellCausalNavigationHover
+        === String(hoveredNavigationTargetId)
+      ) {
+        delete gl.domElement.dataset.cellCausalNavigationHover;
+      }
+      syncCanvasPointerCursor(gl.domElement);
+    };
+  }, [gl, hoveredNavigationTargetId]);
 
   useFrame((state) => {
     if (startedAtRef.current === null) {
@@ -212,6 +397,7 @@ function CellCausalLensLayer({
         cellCausalLens: true,
         cellCausalLensStatus: lens.status,
         cellCausalLensProvenance: identityOnly ? 'identity-only' : 'observed',
+        cellCausalLensSelectedCell: lens.selectedCell.id,
         cellCausalLensTx: lens.txHash,
         cellCausalLensBlock: lens.block,
         cellCausalLensInputs: lens.inputCount ?? -1,
@@ -219,12 +405,22 @@ function CellCausalLensLayer({
         cellCausalLensMissingInputs: lens.missingInputIds.length,
         cellCausalLensMissingOutputs: lens.missingOutputIds.length,
         cellCausalLensRenderedArcs: layout.arcs.length,
+        cellCausalLensNavigableEndpoints: layout.arcs.filter(
+          (arc) => arc.navigationTargetId !== null,
+        ).length,
         cellCausalLensHiddenInputs: layout.hiddenInputCount,
         cellCausalLensHiddenSiblings: layout.hiddenSiblingCount,
       }}
     >
       <primitive object={built.glow} dispose={null} />
       <primitive object={built.core} dispose={null} />
+      {onNavigateCell ? (
+        <CellCausalEndpointPicker
+          arcs={layout.arcs}
+          onHover={setHoveredNavigationTargetId}
+          onNavigateCell={onNavigateCell}
+        />
+      ) : null}
 
       <group position={layout.hub}>
         <Billboard follow>
@@ -272,6 +468,13 @@ function CellCausalLensLayer({
         const at = arc.role === 'input' ? arc.from : arc.to;
         const color = endpointCssColor(arc.role, identityOnly);
         const selected = arc.role === 'selected-output';
+        const navigationTargetId = arc.navigationTargetId;
+        const navigable = (
+          navigationTargetId !== null
+          && onNavigateCell !== undefined
+        );
+        const hovered = navigable
+          && hoveredNavigationTargetId === navigationTargetId;
         return (
           <group
             key={arc.key}
@@ -279,27 +482,83 @@ function CellCausalLensLayer({
             userData={{
               cellCausalEndpoint: arc.role,
               cellCausalEndpointId: arc.endpointId,
+              cellCausalEndpointNavigable: navigable,
+              cellCausalNavigationTarget: navigationTargetId ?? -1,
             }}
           >
             <Billboard follow>
-              <mesh rotation={[0, 0, Math.PI * 0.25]} renderOrder={14}>
-                <ringGeometry args={[
-                  selected ? 0.26 : 0.16,
-                  selected ? 0.34 : 0.23,
-                  4,
-                  1,
-                ]} />
-                <meshBasicMaterial
-                  color={color}
-                  transparent
-                  opacity={selected ? 0.94 : 0.76}
-                  blending={THREE.AdditiveBlending}
-                  depthTest={false}
-                  depthWrite={false}
-                  toneMapped={false}
-                />
-              </mesh>
+              <group scale={hovered ? 1.16 : 1}>
+                <mesh rotation={[0, 0, Math.PI * 0.25]} renderOrder={14}>
+                  <ringGeometry args={[
+                    selected ? 0.26 : 0.16,
+                    selected ? 0.34 : 0.23,
+                    4,
+                    1,
+                  ]} />
+                  <meshBasicMaterial
+                    color={color}
+                    transparent
+                    opacity={selected ? 0.94 : hovered ? 1 : 0.76}
+                    blending={THREE.AdditiveBlending}
+                    depthTest={false}
+                    depthWrite={false}
+                    toneMapped={false}
+                  />
+                </mesh>
+                {navigable ? (
+                  <>
+                    <mesh
+                      rotation={[0, 0, Math.PI * 0.25]}
+                      renderOrder={14}
+                    >
+                      <ringGeometry args={[0.29, 0.315, 4, 1]} />
+                      <meshBasicMaterial
+                        color={color}
+                        transparent
+                        opacity={hovered ? 0.92 : 0.27}
+                        blending={THREE.AdditiveBlending}
+                        depthTest={false}
+                        depthWrite={false}
+                        toneMapped={false}
+                      />
+                    </mesh>
+                  </>
+                ) : null}
+              </group>
             </Billboard>
+            {hovered && navigationTargetId !== null ? (
+              <Html
+                position={[0, 0.62, 0]}
+                center
+                zIndexRange={[8, 8]}
+                occlude={false}
+                style={{ pointerEvents: 'none' }}
+              >
+                <div
+                  aria-hidden="true"
+                  data-cell-causal-navigation-label="true"
+                  data-causal-navigation-target={navigationTargetId}
+                  style={{
+                    padding: '3px 6px',
+                    border: `1px solid ${color}66`,
+                    borderLeftColor: color,
+                    background: 'rgba(1,5,15,.92)',
+                    boxShadow: `0 0 12px ${color}22`,
+                    color,
+                    fontFamily: "'Share Tech Mono', ui-monospace, monospace",
+                    fontSize: 7.5,
+                    letterSpacing: 0.62,
+                    whiteSpace: 'nowrap',
+                    pointerEvents: 'none',
+                  }}
+                >
+                  {navigationRoleLabel(arc.role)} #{navigationTargetId}
+                  <span style={{ color: '#E8E8E8', opacity: 0.62 }}>
+                    {' · FOLLOW'}
+                  </span>
+                </div>
+              </Html>
+            ) : null}
           </group>
         );
       })}
@@ -345,5 +604,6 @@ export default memo(
   CellCausalLensLayer,
   (previous, next) => (
     sceneSignature(previous.lens) === sceneSignature(next.lens)
+    && previous.onNavigateCell === next.onNavigateCell
   ),
 );

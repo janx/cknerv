@@ -64,6 +64,16 @@ export function cellFocusTarget(
   return 0;
 }
 
+/** Resolve the shared canvas cursor from independent scene interaction layers. */
+export function cellCanvasCursor(
+  cellPickerOwnsCursor: boolean,
+  causalNavigationOwnsCursor: boolean,
+): '' | 'pointer' {
+  return !cellPickerOwnsCursor && !causalNavigationOwnsCursor
+    ? ''
+    : 'pointer';
+}
+
 /** Frame-rate-independent focus easing with a quicker attack than release. */
 export function dampCellFocus(current: number, target: number, deltaSeconds: number): number {
   const delta = Math.max(0, Math.min(0.1, deltaSeconds));
