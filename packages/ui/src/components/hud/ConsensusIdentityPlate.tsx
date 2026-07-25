@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import type { Cell } from '@cknerv/types';
 import type { CellConsensusIdentity } from '../../derives/cellConsensusIdentity.derive';
+import type { CellCausalLens } from '../../derives/cellCausalLens.derive';
 import type { ConsensusBraidField } from '../../derives/consensusBraid.derive';
 import {
   CELL_IDENTITY_PROOF_KINDS,
@@ -32,6 +33,7 @@ import {
   consensusMemoryRouteHopPulseKey,
 } from '../../nerve/consensusRouteHopPulse';
 import { formatOutpoint } from './cellFormat';
+import CellCausalLensReadout from './CellCausalLensReadout';
 import { HUD_COLORS, HUD_FONTS } from './hudTheme';
 
 const CYAN = HUD_COLORS.cyanWire;
@@ -1441,6 +1443,7 @@ function MemoryReadState({
 
 export default function ConsensusIdentityPlate({
   identity,
+  causalLens = null,
   reveal,
   statusText,
   statusColor,
@@ -1466,6 +1469,7 @@ export default function ConsensusIdentityPlate({
   agreementCount,
 }: {
   identity: CellConsensusIdentity;
+  causalLens?: CellCausalLens | null;
   reveal: number;
   statusText: string;
   statusColor: string;
@@ -1565,6 +1569,10 @@ export default function ConsensusIdentityPlate({
         active: focusedField === 'born',
         onActivate: onInspectAnchor,
       })}
+
+      {causalLens ? (
+        <CellCausalLensReadout lens={causalLens} reveal={reveal} />
+      ) : null}
 
       <div
         data-memory-identity-binding="true"

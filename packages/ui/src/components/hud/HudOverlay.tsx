@@ -16,6 +16,7 @@ import type {
   CellIdentityProofBinding,
   CellIdentityProofKind,
 } from '../../derives/cellIdentityProof.derive';
+import type { CellCausalLens } from '../../derives/cellCausalLens.derive';
 import { injectHudTheme } from './hudTheme';
 import StatusStrip, { type BuildInfo } from './StatusStrip';
 import BlockchainReadout from './BlockchainReadout';
@@ -51,13 +52,15 @@ const MESH_RAIL_STYLE: CSSProperties = { position: 'absolute', top: 42, right: 1
 const MESH_ZONE_COL: CSSProperties = { display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'flex-end' };
 const PANEL_FLOW: CSSProperties = { position: 'relative' };
 
-export default function HudOverlay({ chain, peers, localNode, cellsStats, selectedCell, cellRecordsById, recentCellLinks, tracedCellWriteSeq, cellTraceSource, cellTraceReadout, cellTraceResponseRef, cellTraceEvidenceFocusSourceId, cellTraceEvidencePreviewSourceId, onCellTraceEvidenceFocusChange, cellTraceRouteHopFocus, onCellTraceRouteHopFocusChange, cellTraceRouteHopLock, onCellTraceRouteHopLockChange, cellIdentityProofBinding, onTraceCellWrite, onCellIdentityProofRead, selectedNode, selectedPeer, onClearSelection, onClearCell, onClearNet, backfill, build, colonyCount }: {
+export default function HudOverlay({ chain, peers, localNode, cellsStats, selectedCell, cellRecordsById, recentCellLinks, cellCausalLens, tracedCellWriteSeq, cellTraceSource, cellTraceReadout, cellTraceResponseRef, cellTraceEvidenceFocusSourceId, cellTraceEvidencePreviewSourceId, onCellTraceEvidenceFocusChange, cellTraceRouteHopFocus, onCellTraceRouteHopFocusChange, cellTraceRouteHopLock, onCellTraceRouteHopLockChange, cellIdentityProofBinding, onTraceCellWrite, onCellIdentityProofRead, selectedNode, selectedPeer, onClearSelection, onClearCell, onClearNet, backfill, build, colonyCount }: {
   chain: ChainEntry; peers: Peer[]; localNode: ChainNode | undefined; cellsStats: CellsStats;
   selectedCell?: Cell | null;
   /** Current Cell projection records for exact route-hop inspection. */
   cellRecordsById?: ReadonlyMap<number, Cell>;
   /** Retained causal links used only to prove an exact selected-Cell origin. */
   recentCellLinks?: readonly CellLink[];
+  /** Shared selected-Cell causal evidence rendered in both HUD and scene. */
+  cellCausalLens?: CellCausalLens | null;
   tracedCellWriteSeq?: number | null;
   cellTraceSource?: ConsensusMemoryTraceSource;
   cellTraceReadout?: ConsensusMemoryTraceReadout | null;
@@ -183,6 +186,7 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats, select
               cell={selectedCell}
               routeCellById={cellRecordsById}
               recentLinks={recentCellLinks}
+              causalLens={cellCausalLens}
               tracedWriteSeq={tracedCellWriteSeq}
               traceSource={cellTraceSource}
               traceReadout={cellTraceReadout}
