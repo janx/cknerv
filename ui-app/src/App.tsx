@@ -27,6 +27,7 @@ import {
   cellIdentityProofBindingComplete,
   consensusMemoryRouteHopFocusEqual,
   consensusMemoryTraceRequestKey,
+  deriveCellCausalLens,
   deriveConsensusMemoryRouteHopFocus,
   colonyFlood,
   deriveConsensusMemoryTraceEndpoints,
@@ -34,6 +35,7 @@ import {
   inferredTopology,
   CellGalaxy,
   CellGalaxyProvider,
+  CellCausalLensLayer,
   ConsensusRouteCamera,
   ConsensusWriteSeal,
   HudOverlay,
@@ -422,6 +424,16 @@ export default function App({
     const id = Number(selectedCellId.slice(CELL_SELECTION_PREFIX.length));
     return Number.isFinite(id) ? cellsCache.cells.get(id) ?? null : null;
   }, [selectedCellId, cellsCache.cells]);
+  const selectedCausalLens = useMemo(
+    () => selectedCell
+      ? deriveCellCausalLens(
+        selectedCell,
+        cellsCache.recentLinks,
+        cellsCache.cells,
+      )
+      : null,
+    [selectedCell, cellsCache.cells, cellsCache.recentLinks],
+  );
   const selectedOriginLink = useMemo(
     () => selectedCell
       ? findCellOriginLink(selectedCell, cellsCache.recentLinks)
@@ -672,6 +684,7 @@ export default function App({
         selectedCell={selectedCell}
         cellRecordsById={cellsCache.cells}
         recentCellLinks={cellsCache.recentLinks}
+        cellCausalLens={selectedCausalLens}
         tracedCellWriteSeq={cellMemoryRecallWriteSeqForTarget(
           memoryTraceRequest,
           selectedCell?.id,
@@ -774,6 +787,12 @@ export default function App({
             inspectionFieldRef={cellInspectionFieldRef}
             overlay={
               <>
+                {selectedCausalLens ? (
+                  <CellCausalLensLayer
+                    key={selectedCausalLens.key}
+                    lens={selectedCausalLens}
+                  />
+                ) : null}
                 {/* Cell→cell consensus packets: each observed transaction
                     routes its carrier from input cells to outputs through the
                     shared neighbour graph, illuminating the maintained data

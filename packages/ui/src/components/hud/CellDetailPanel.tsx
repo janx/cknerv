@@ -12,6 +12,10 @@ import ConsensusIdentityPlate from './ConsensusIdentityPlate';
 import { PROBE_STEP_S, probeScan } from './probeScan';
 import { deriveCellVisual } from '../../derives/cellVisual.derive';
 import { deriveCellConsensusIdentity } from '../../derives/cellConsensusIdentity.derive';
+import {
+  deriveCellCausalLens,
+  type CellCausalLens,
+} from '../../derives/cellCausalLens.derive';
 import type {
   ConsensusMemoryCellResponseRef,
   ConsensusMemoryRouteHopFocus,
@@ -55,6 +59,7 @@ export default function CellDetailPanel({
   cell,
   recentLinks = EMPTY_RECENT_LINKS,
   routeCellById,
+  causalLens = null,
   tracedWriteSeq = null,
   traceSource = 'none',
   traceReadout = null,
@@ -76,6 +81,8 @@ export default function CellDetailPanel({
   recentLinks?: readonly CellLink[];
   /** Current projection records used to explain exact route-hop identities. */
   routeCellById?: ReadonlyMap<number, Cell>;
+  /** Shared scene/HUD model of the selected Cell's real origin transaction. */
+  causalLens?: CellCausalLens | null;
   tracedWriteSeq?: number | null;
   traceSource?: ConsensusMemoryTraceSource;
   traceReadout?: ConsensusMemoryTraceReadout | null;
@@ -131,6 +138,14 @@ export default function CellDetailPanel({
     cells.set(cell.id, cell);
     return cells;
   }, [cell, routeCellById]);
+  const resolvedCausalLens = useMemo(
+    () => causalLens ?? deriveCellCausalLens(
+      cell,
+      recentLinks,
+      inspectedCellById,
+    ),
+    [causalLens, cell, inspectedCellById, recentLinks],
+  );
   const order = CONSENSUS_BRAID_FIELDS;
   const frequencies = consensusBraidFrequencies(visual.assetClass);
   const strandCount = consensusBraidStrandCount(visual.lockClass);
@@ -278,6 +293,7 @@ export default function CellDetailPanel({
       </div>
       <ConsensusIdentityPlate
         identity={identity}
+        causalLens={resolvedCausalLens}
         reveal={p.classified ? 1 : p.pct / 100}
         statusText={statusText}
         statusColor={statusColor}

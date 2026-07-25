@@ -180,6 +180,62 @@ describe('HudOverlay', () => {
     expect(onTraceCellWrite).toHaveBeenCalledWith(origin.seq);
   });
 
+  it('renders the selected Cell causal neighbourhood from exact retained records', () => {
+    vi.stubGlobal('matchMedia', () => ({
+      matches: true,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }));
+    const target: Cell = {
+      id: 7, born_at_ms: 1, death_at_ms: null, birth_block: 16204800, tag: 'wallet',
+      pos_seed: [0, 0, 0], out_point: { tx_hash: `0x${'ab'.repeat(32)}`, index: 0 },
+      capacity: 6_100_000_000, data_hex: '0x', content_hash: `0x${'cd'.repeat(32)}`,
+    };
+    const input: Cell = {
+      ...target,
+      id: 1,
+      death_at_ms: 12,
+      out_point: { tx_hash: `0x${'11'.repeat(32)}`, index: 1 },
+    };
+    const sibling: Cell = {
+      ...target,
+      id: 8,
+      out_point: { tx_hash: target.out_point.tx_hash, index: 1 },
+    };
+    const origin: CellLink = {
+      seq: 3,
+      tx_hash: target.out_point.tx_hash,
+      block: target.birth_block,
+      from_ids: [input.id],
+      to_ids: [target.id, sibling.id],
+      parents: [input.out_point.tx_hash],
+      tag: null,
+      at_ms: 10,
+    };
+    const { container } = render(
+      <HudOverlay
+        chain={chain}
+        peers={peers}
+        localNode={localNode}
+        cellsStats={cellsStats}
+        selectedCell={target}
+        cellRecordsById={new Map([
+          [input.id, input],
+          [target.id, target],
+          [sibling.id, sibling],
+        ])}
+        recentCellLinks={[origin]}
+      />,
+    );
+    const causal = container.querySelector('[data-cell-causal-lens]')!;
+
+    expect(causal.getAttribute('data-causal-status')).toBe('exact');
+    expect(causal.getAttribute('data-causal-provenance')).toBe('observed');
+    expect(causal.textContent).toContain('1/1 INPUTS');
+    expect(causal.textContent).toContain('2/2 OUTPUTS');
+    expect(causal.textContent).toContain('1 SELECTED · 1 SIBLING');
+  });
+
   it('threads the authoritative recall stage into the selected Cell detail', () => {
     vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener: () => {}, removeEventListener: () => {} }));
     const mockCell: Cell = {

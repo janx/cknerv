@@ -47,6 +47,7 @@ export * from './materials/consensusMemoryKnotMaterial';
 
 // ── Geometry helpers ───────────────────────────────────────────────
 export * from './geometry/cellPositions';
+export * from './geometry/cellCausalLens';
 export * from './geometry/edgeBezier';
 export * from './geometry/neighborGraph';
 export * from './geometry/pathRouter';
@@ -57,6 +58,7 @@ export * from './derives/cellShell.derive';
 export * from './derives/cellVisual.derive';
 export * from './derives/cellInteraction.derive';
 export * from './derives/cellConsensusIdentity.derive';
+export * from './derives/cellCausalLens.derive';
 export * from './derives/consensusBraid.derive';
 export * from './derives/consensusFlow.derive';
 export * from './derives/consensusMemoryCore.derive';
@@ -86,6 +88,7 @@ export {
 // ── Components ─────────────────────────────────────────────────────
 export { default as BackfillHud } from './components/BackfillHud';
 export { default as BlockDeliveryLayer } from './components/BlockDeliveryLayer';
+export { default as CellCausalLensLayer } from './components/CellCausalLensLayer';
 export {
   formatCkb, midTruncate, formatOutpoint, formatDataHex, formatCellKind,
   formatAge, formatDataSize, formatLockKind, formatAssetKind,

@@ -52,4 +52,13 @@ describe('HudOverlay wiring', () => {
       'cellInspectionActive={selectedCell !== null}',
     );
   });
+
+  it('shares one real causal-lens model between the HUD and scene', () => {
+    expect(APP_SOURCE).toContain('deriveCellCausalLens(');
+    expect(APP_SOURCE).toContain(
+      'cellCausalLens={selectedCausalLens}',
+    );
+    expect(APP_SOURCE).toContain('<CellCausalLensLayer');
+    expect(APP_SOURCE).toContain('lens={selectedCausalLens}');
+  });
 });
