@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import {
+  CONSENSUS_CAUSAL_CAMERA_DISTANCE,
+  CONSENSUS_CAUSAL_CAMERA_ENDPOINT_HUD_GAP_PX,
+  CONSENSUS_CAUSAL_CAMERA_MAX_DISTANCE,
   CONSENSUS_CELL_INSPECTION_CAMERA_DISTANCE,
   CONSENSUS_RECORD_CAMERA_DISTANCE,
   CONSENSUS_RECORD_CAMERA_HUD_GAP_PX,
@@ -10,6 +13,8 @@ import {
   CONSENSUS_RECORD_CAMERA_SAFE_WIDTH_PX,
   CONSENSUS_ROUTE_CAMERA_DISTANCE,
   consensusRouteHopWorldPosition,
+  deriveConsensusCausalCameraDistance,
+  deriveConsensusCausalCameraPose,
   deriveConsensusCellInspectionCameraPose,
   deriveConsensusRecordCameraIntent,
   deriveConsensusRecordCameraDistance,
@@ -187,6 +192,83 @@ describe('consensus route camera derive', () => {
       .toBeGreaterThan(CONSENSUS_ROUTE_CAMERA_DISTANCE);
     expect(CONSENSUS_CELL_INSPECTION_CAMERA_DISTANCE)
       .toBeLessThan(CONSENSUS_RECORD_CAMERA_DISTANCE);
+  });
+
+  it('widens causal inspection around the selected Cell and real endpoints', () => {
+    const viewportWidth = 1000;
+    const viewportHeight = 800;
+    const composition = {
+      viewportWidth,
+      viewportHeight,
+      verticalFovDegrees: 50,
+      anchor: [500, 400] as const,
+      cameraUp: [0, 1, 0] as [number, number, number],
+    };
+    const obstacle = { left: 720, top: 0, right: 1000, bottom: 800 };
+    const selectedWorld: [number, number, number] = [0, 0, 0];
+    const points = [
+      { position: selectedWorld, role: 'endpoint' as const },
+      { position: [0, 5, 0] as [number, number, number], role: 'carrier' as const },
+      { position: [26, 7, 0] as [number, number, number], role: 'carrier' as const },
+      { position: [50, 0, 0] as [number, number, number], role: 'endpoint' as const },
+    ];
+    const distanceToFit = deriveConsensusCausalCameraDistance(
+      [0, 0, 64],
+      [0, 0, 0],
+      selectedWorld,
+      points,
+      composition,
+      [obstacle],
+    );
+    const pose = deriveConsensusCausalCameraPose(
+      [0, 0, 64],
+      [0, 0, 0],
+      selectedWorld,
+      distanceToFit,
+      composition,
+    );
+    const camera = new THREE.PerspectiveCamera(
+      50,
+      viewportWidth / viewportHeight,
+      0.1,
+      1000,
+    );
+    camera.position.set(...pose.position);
+    camera.lookAt(...pose.target);
+    camera.updateMatrixWorld();
+    const selectedScreen = new THREE.Vector3(...selectedWorld).project(camera);
+    const endpointScreen = new THREE.Vector3(50, 0, 0).project(camera);
+    const endpointX = (endpointScreen.x + 1) * viewportWidth / 2;
+
+    expect(distanceToFit).toBeGreaterThan(CONSENSUS_CAUSAL_CAMERA_DISTANCE);
+    expect(distanceToFit).toBeLessThan(CONSENSUS_CAUSAL_CAMERA_MAX_DISTANCE);
+    expect((selectedScreen.x + 1) * viewportWidth / 2).toBeCloseTo(500, 6);
+    expect((1 - selectedScreen.y) * viewportHeight / 2).toBeCloseTo(400, 6);
+    expect(endpointX).toBeLessThanOrEqual(
+      obstacle.left - CONSENSUS_CAUSAL_CAMERA_ENDPOINT_HUD_GAP_PX,
+    );
+  });
+
+  it('keeps a compact causal lens at the ordinary inspection distance', () => {
+    const selectedWorld: [number, number, number] = [0, 0, 0];
+    const distanceToFit = deriveConsensusCausalCameraDistance(
+      [0, 0, 64],
+      [0, 0, 0],
+      selectedWorld,
+      [
+        { position: selectedWorld, role: 'endpoint' },
+        { position: [4, 5, 0], role: 'carrier' },
+        { position: [8, 0, 0], role: 'endpoint' },
+      ],
+      {
+        viewportWidth: 1000,
+        viewportHeight: 800,
+        verticalFovDegrees: 50,
+        anchor: [500, 400],
+      },
+    );
+
+    expect(distanceToFit).toBe(CONSENSUS_CAUSAL_CAMERA_DISTANCE);
   });
 
   it('moves the record anchor only far enough to clear measured HUD rails', () => {

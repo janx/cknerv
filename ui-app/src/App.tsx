@@ -76,6 +76,11 @@ import {
   cellIdentityJourneyReducer,
 } from './cell-identity-journey-state';
 import {
+  INITIAL_CELL_CAUSAL_NAVIGATION_STATE,
+  cellCausalNavigationReducer,
+  cellCausalNavigationStep,
+} from './cell-causal-navigation-state';
+import {
   beginOrbitGesture,
   changeOrbitGesture,
   createOrbitGestureState,
@@ -178,6 +183,8 @@ export default function App({
       linkRingCapacity: galaxyConfig.pulses.linkRingCapacity,
     }),
   );
+  const retainedCellRecordsRef = useRef(cellsCache.cells);
+  retainedCellRecordsRef.current = cellsCache.cells;
   // Two independent selections so a cell (galaxy axis) and a network entity
   // (node/peer axis) can be inspected side-by-side. Clicks route by id prefix:
   // `cell:` → cell axis; a node id / `peer:` → net axis (node and peer share it,
@@ -185,6 +192,10 @@ export default function App({
   // independently.
   const [selectedCellId, setSelectedCellId] = useState<string | null>(null);
   const [selectedNetId, setSelectedNetId] = useState<string | null>(null);
+  const [cellCausalNavigation, dispatchCellCausalNavigation] = useReducer(
+    cellCausalNavigationReducer,
+    INITIAL_CELL_CAUSAL_NAVIGATION_STATE,
+  );
   const [cellIdentityProof, setCellIdentityProof] = useState<
     CellIdentityProofEvent | null
   >(null);
@@ -217,35 +228,52 @@ export default function App({
   const memoryTraceTargetResponseRef = useRef<
     ConsensusMemoryTargetResponse | null
   >(null);
+  const inspectCell = useCallback((nextCellId: number) => {
+    if (!Number.isSafeInteger(nextCellId) || nextCellId < 0) return;
+    const selectionId = `${CELL_SELECTION_PREFIX}${nextCellId}`;
+    dispatchCellIdentityJourney({
+      type: 'select',
+      cellId: nextCellId,
+      atMs: performance.now(),
+    });
+    setCellIdentityProof((current) => (
+      current?.cellId === nextCellId ? current : null
+    ));
+    setSelectedCellId((current) => {
+      if (current !== selectionId) memoryRouteHopAnchorRef.current = null;
+      return selectionId;
+    });
+    // Selecting another Cell is inspection, not yet a record replacement.
+    // Keep the verified recall alive until the user explicitly recalls the
+    // new Cell, so NeuralNetwork can stage two independent record layers.
+    dispatchMemoryRecall({ type: 'inspect', targetCellId: nextCellId });
+  }, []);
   const handleSelect = useCallback((id: string | null) => {
     if (id == null) return;
     if (id.startsWith(CELL_SELECTION_PREFIX)) {
       const nextCellId = Number(id.slice(CELL_SELECTION_PREFIX.length));
-      dispatchCellIdentityJourney({
-        type: 'select',
-        cellId: nextCellId,
-        atMs: performance.now(),
-      });
-      setCellIdentityProof((current) => (
-        current?.cellId === nextCellId ? current : null
-      ));
-      setSelectedCellId((current) => {
-        if (current !== id) memoryRouteHopAnchorRef.current = null;
-        return id;
-      });
-      // Selecting another Cell is inspection, not yet a record replacement.
-      // Keep the verified recall alive until the user explicitly recalls the
-      // new Cell, so NeuralNetwork can stage two independent record layers.
-      dispatchMemoryRecall({
-        type: 'inspect',
-        targetCellId: Number(id.slice(CELL_SELECTION_PREFIX.length)),
-      });
+      if (!Number.isSafeInteger(nextCellId) || nextCellId < 0) return;
+      dispatchCellCausalNavigation({ type: 'select', cellId: nextCellId });
+      inspectCell(nextCellId);
+    } else {
+      setSelectedNetId(id);
     }
-    else setSelectedNetId(id);
-  }, []);
+  }, [inspectCell]);
   const navigateCausalCell = useCallback((cellId: number) => {
-    handleSelect(`${CELL_SELECTION_PREFIX}${cellId}`);
-  }, [handleSelect]);
+    if (!retainedCellRecordsRef.current.has(cellId)) return;
+    const encodedCurrent = selectedCellId?.startsWith(CELL_SELECTION_PREFIX)
+      ? Number(selectedCellId.slice(CELL_SELECTION_PREFIX.length))
+      : Number.NaN;
+    const fromCellId = Number.isSafeInteger(encodedCurrent)
+      ? encodedCurrent
+      : null;
+    dispatchCellCausalNavigation({
+      type: 'navigate',
+      fromCellId,
+      targetCellId: cellId,
+    });
+    inspectCell(cellId);
+  }, [inspectCell, selectedCellId]);
   const confirmCellIdentityProof = useCallback((
     kind: CellIdentityProofKind,
     cellId: number,
@@ -437,6 +465,45 @@ export default function App({
       : null,
     [selectedCell, cellsCache.cells, cellsCache.recentLinks],
   );
+  const causalBackStep = cellCausalNavigationStep(
+    cellCausalNavigation,
+    -1,
+    (cellId) => cellsCache.cells.has(cellId),
+  );
+  const causalForwardStep = cellCausalNavigationStep(
+    cellCausalNavigation,
+    1,
+    (cellId) => cellsCache.cells.has(cellId),
+  );
+  const navigateCausalBack = useCallback(() => {
+    if (!causalBackStep) return;
+    dispatchCellCausalNavigation({
+      type: 'move',
+      index: causalBackStep.index,
+    });
+    inspectCell(causalBackStep.cellId);
+  }, [causalBackStep, inspectCell]);
+  const navigateCausalForward = useCallback(() => {
+    if (!causalForwardStep) return;
+    dispatchCellCausalNavigation({
+      type: 'move',
+      index: causalForwardStep.index,
+    });
+    inspectCell(causalForwardStep.cellId);
+  }, [causalForwardStep, inspectCell]);
+  const selectedCausalNavigation = selectedCell
+    && cellCausalNavigation.entries[cellCausalNavigation.index]
+      === selectedCell.id
+    && cellCausalNavigation.entries.length > 1
+    ? {
+      position: cellCausalNavigation.index + 1,
+      total: cellCausalNavigation.entries.length,
+      backCellId: causalBackStep?.cellId ?? null,
+      forwardCellId: causalForwardStep?.cellId ?? null,
+      onBack: navigateCausalBack,
+      onForward: navigateCausalForward,
+    }
+    : null;
   const selectedOriginLink = useMemo(
     () => selectedCell
       ? findCellOriginLink(selectedCell, cellsCache.recentLinks)
@@ -688,6 +755,7 @@ export default function App({
         cellRecordsById={cellsCache.cells}
         recentCellLinks={cellsCache.recentLinks}
         cellCausalLens={selectedCausalLens}
+        cellCausalNavigation={selectedCausalNavigation}
         tracedCellWriteSeq={cellMemoryRecallWriteSeqForTarget(
           memoryTraceRequest,
           selectedCell?.id,
@@ -713,6 +781,7 @@ export default function App({
           memoryRouteHopAnchorRef.current = null;
           setCellIdentityProof(null);
           dispatchCellIdentityJourney({ type: 'clear' });
+          dispatchCellCausalNavigation({ type: 'clear' });
           setSelectedCellId(null);
           dispatchMemoryRecall({ type: 'cancel' });
         }}
@@ -739,6 +808,7 @@ export default function App({
             memoryRouteHopAnchorRef.current = null;
             setCellIdentityProof(null);
             dispatchCellIdentityJourney({ type: 'clear' });
+            dispatchCellCausalNavigation({ type: 'clear' });
             setSelectedCellId(null);
             setSelectedNetId(null);
             dispatchMemoryRecall({ type: 'cancel' });
@@ -849,6 +919,7 @@ export default function App({
             controlsRef={orbitControlsRef}
             manualRevision={orbitInteractionRevision}
             inspectionCellId={selectedCell?.id ?? null}
+            causalLens={selectedCausalLens}
             recordIdentity={memoryRecordIdentity}
             recordTargetCellId={memoryTraceRequest?.targetCellId ?? null}
             recordTraceReadout={selectedMemoryTraceReadout}

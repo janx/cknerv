@@ -1,5 +1,6 @@
-import { cleanup, render } from '@testing-library/react';
+import { cleanup, fireEvent, render } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
+import { vi } from 'vitest';
 import type { Cell, CellLink } from '@cknerv/types';
 import CellCausalLensReadout from '../../../src/components/hud/CellCausalLensReadout';
 import { deriveCellCausalLens } from '../../../src/derives/cellCausalLens.derive';
@@ -89,5 +90,59 @@ describe('CellCausalLensReadout', () => {
     expect(root.textContent).toContain('1+ OUTPUTS');
     expect(root.textContent).toContain('IDENTITY ONLY');
     expect(root.textContent).toContain('LINK OUTSIDE RETAINED WINDOW');
+  });
+
+  it('exposes browser-like back and forward controls for a causal path', () => {
+    const records = new Map([
+      [1, cell(1)],
+      [2, cell(2)],
+      [8, cell(8)],
+      [9, selected],
+    ]);
+    const onBack = vi.fn();
+    const onForward = vi.fn();
+    const { container, getByRole } = render(
+      <CellCausalLensReadout
+        lens={deriveCellCausalLens(selected, [link], records)}
+        navigation={{
+          position: 2,
+          total: 3,
+          backCellId: 1,
+          forwardCellId: 8,
+          onBack,
+          onForward,
+        }}
+      />,
+    );
+
+    fireEvent.click(getByRole('button', { name: 'Back to Cell 1' }));
+    fireEvent.click(getByRole('button', { name: 'Forward to Cell 8' }));
+
+    const navigation = container.querySelector('[data-causal-navigation]')!;
+    expect(navigation.getAttribute('data-causal-navigation-position')).toBe('2');
+    expect(navigation.textContent).toContain('PATH 2/3');
+    expect(onBack).toHaveBeenCalledOnce();
+    expect(onForward).toHaveBeenCalledOnce();
+  });
+
+  it('disables an unavailable direction at a path boundary', () => {
+    const { getByRole } = render(
+      <CellCausalLensReadout
+        lens={deriveCellCausalLens(selected, [], new Map([[9, selected]]))}
+        navigation={{
+          position: 1,
+          total: 2,
+          backCellId: null,
+          forwardCellId: 8,
+          onBack: vi.fn(),
+          onForward: vi.fn(),
+        }}
+      />,
+    );
+
+    expect(getByRole('button', { name: 'No back causal Cell' })
+      .hasAttribute('disabled')).toBe(true);
+    expect(getByRole('button', { name: 'Forward to Cell 8' })
+      .hasAttribute('disabled')).toBe(false);
   });
 });
