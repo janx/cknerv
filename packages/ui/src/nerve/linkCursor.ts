@@ -1,4 +1,4 @@
-// Pure cursor over the cells cache's `recentLinks` ring: decides which new
+// Pure cursor over the cells cache's `pulseLinks` ring: decides which new
 // links should fire nerve pulses, and how far to advance the consumed-seq
 // cursor. While a backfill/catch-up is active, links are consumed (cursor
 // advances) but none fire — suppressing the storm AND preventing the whole
@@ -16,14 +16,14 @@ export interface LinkCursorResult {
 }
 
 export function advanceLinkCursor(
-  recentLinks: CellLink[],
+  pulseLinks: CellLink[],
   lastSeq: number,
   backfillActive: boolean,
 ): LinkCursorResult {
   let nextSeq = lastSeq;
   let suppressed = 0;
   const toFire: CellLink[] = [];
-  for (const link of recentLinks) {
+  for (const link of pulseLinks) {
     if (link.seq <= lastSeq) continue;
     if (link.seq > nextSeq) nextSeq = link.seq;
     if (backfillActive) suppressed += 1;

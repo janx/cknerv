@@ -268,6 +268,7 @@ export function advanceProtocolEventLab(
     revision: cache.revision + 1,
     lastPulseAtMs: nonce,
     recentLinks: [...cache.recentLinks.slice(-23), link],
+    pulseLinks: [...cache.pulseLinks.slice(-23), link],
     linksSeq: nextSeq,
   };
 }

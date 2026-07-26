@@ -27,7 +27,7 @@ export interface PulseBatchStats extends PulseStatsSink {
  * the per-pulse `startSec` stamp + ref push the caller applies.
  */
 export function planLinkBatch(
-  recentLinks: CellLink[],
+  pulseLinks: CellLink[],
   lastSeq: number,
   backfillActive: boolean,
   cells: ReadonlyMap<number, Cell>,
@@ -36,7 +36,7 @@ export function planLinkBatch(
   stats: PulseBatchStats,
 ): { planned: Pulse[]; nextSeq: number } {
   const { toFire, nextSeq, suppressed } = advanceLinkCursor(
-    recentLinks,
+    pulseLinks,
     lastSeq,
     backfillActive,
   );

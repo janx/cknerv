@@ -180,6 +180,7 @@ export default function App({
   }));
   const [cellsCache, setCellsCache] = useState<CellGalaxyCache>(() =>
     fromCellsSnapshot(initialCellsRevision, initialCells, {
+      recentLinksCapacity: galaxyConfig.recentLinksCap,
       linkRingCapacity: galaxyConfig.pulses.linkRingCapacity,
     }),
   );
@@ -315,10 +316,14 @@ export default function App({
     const cells = connectCellsStream(
       '/api/projections/cells/stream',
       fromCellsSnapshot(initialCellsRevision, initialCells, {
+        recentLinksCapacity: galaxyConfig.recentLinksCap,
         linkRingCapacity: galaxyConfig.pulses.linkRingCapacity,
       }),
       setCellsCache,
-      { linkRingCapacity: galaxyConfig.pulses.linkRingCapacity },
+      {
+        recentLinksCapacity: galaxyConfig.recentLinksCap,
+        linkRingCapacity: galaxyConfig.pulses.linkRingCapacity,
+      },
     );
     return () => {
       entity.disconnect();

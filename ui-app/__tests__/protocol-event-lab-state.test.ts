@@ -71,7 +71,9 @@ describe('protocol event lab state', () => {
     expect(next.recentLinks.at(-1)?.tx_hash).toBe(`0x${'ab'.repeat(32)}`);
     expect(next.recentLinks.at(-1)?.from_ids).toEqual([1]);
     expect(next.recentLinks.at(-1)?.to_ids).toEqual([4]);
+    expect(next.pulseLinks).toEqual(next.recentLinks);
     expect(cache.recentLinks).toEqual([]);
+    expect(cache.pulseLinks).toEqual([]);
   });
 
   it('labels the network, carrier, commit, and settled review windows', () => {

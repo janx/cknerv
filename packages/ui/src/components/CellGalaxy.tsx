@@ -1418,7 +1418,7 @@ export default function CellGalaxy({
         const waveOriginLocalZ = waveOrigin[0] * sinTinv + waveOrigin[2] * cosTinv;
         const originLocalX = worldOrigin[0] * cosTinv - worldOrigin[2] * sinTinv;
         const originLocalZ = worldOrigin[0] * sinTinv + worldOrigin[2] * cosTinv;
-        const freshLinks = cellsCache.recentLinks.filter(
+        const freshLinks = cellsCache.pulseLinks.filter(
           (lk) => lk.at_ms >= prevPulseAtMs,
         );
         const seenCells = new Set<number>();

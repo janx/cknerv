@@ -5,6 +5,7 @@
 // pulseRunner.test.ts (Tasks 1-3).
 
 import { beforeEach, describe, expect, it } from 'vitest';
+import { fromCellsSnapshot } from '@cknerv/cache';
 import type { Cell, CellLink } from '@cknerv/types';
 import type { NeighborGraph } from '../../src/geometry/neighborGraph';
 import type { PulsePlanningOptions } from '../../src/nerve/pulseRunner';
@@ -59,6 +60,31 @@ function mkGraph(edges: [number, number][]): NeighborGraph {
 const OPTS: PulsePlanningOptions = {};
 
 describe('planLinkBatch', () => {
+  it('does not replay snapshot evidence as live pulse traffic', () => {
+    const { seq: _seq, ...record } = mkLink({ seq: 9, at_ms: 9000 });
+    const cache = fromCellsSnapshot(12, {
+      cells: [mkCell(1, '0xparent'), mkCell(2, '0xtx')],
+      last_pulse_at_ms: 9000,
+      recent_links: [record],
+    });
+
+    const { planned, nextSeq } = planLinkBatch(
+      cache.pulseLinks,
+      0,
+      false,
+      cache.cells,
+      mkGraph([[1, 2]]),
+      OPTS,
+      pulseStats,
+    );
+
+    expect(cache.recentLinks).toHaveLength(1);
+    expect(cache.pulseLinks).toEqual([]);
+    expect(planned).toEqual([]);
+    expect(nextSeq).toBe(0);
+    expect(snapshotPulseStats().blocksWithLinks).toBe(0);
+  });
+
   it('suppresses every link during backfill: no pulses, cursor still advances, backfill bumped by the SUPPRESSED count, block excluded from the rollup', () => {
     const { planned, nextSeq } = planLinkBatch(
       [mkLink({ seq: 1 }), mkLink({ seq: 2 })],
