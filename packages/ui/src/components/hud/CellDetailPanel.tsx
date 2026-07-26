@@ -9,6 +9,9 @@ import { HudPanel, PanelHeader, StatRow, CloseButton } from './primitives';
 import { useReducedMotion } from './useReducedMotion';
 import CellNucleusPortrait from './CellNucleusPortrait';
 import ConsensusIdentityPlate from './ConsensusIdentityPlate';
+import type {
+  CellCausalNavigationReadout,
+} from './CellCausalLensReadout';
 import { PROBE_STEP_S, probeScan } from './probeScan';
 import { deriveCellVisual } from '../../derives/cellVisual.derive';
 import { deriveCellConsensusIdentity } from '../../derives/cellConsensusIdentity.derive';
@@ -60,6 +63,7 @@ export default function CellDetailPanel({
   recentLinks = EMPTY_RECENT_LINKS,
   routeCellById,
   causalLens = null,
+  causalNavigation = null,
   tracedWriteSeq = null,
   traceSource = 'none',
   traceReadout = null,
@@ -83,6 +87,8 @@ export default function CellDetailPanel({
   routeCellById?: ReadonlyMap<number, Cell>;
   /** Shared scene/HUD model of the selected Cell's real origin transaction. */
   causalLens?: CellCausalLens | null;
+  /** Local browser-like path through explicit causal endpoint selections. */
+  causalNavigation?: CellCausalNavigationReadout | null;
   tracedWriteSeq?: number | null;
   traceSource?: ConsensusMemoryTraceSource;
   traceReadout?: ConsensusMemoryTraceReadout | null;
@@ -294,6 +300,7 @@ export default function CellDetailPanel({
       <ConsensusIdentityPlate
         identity={identity}
         causalLens={resolvedCausalLens}
+        causalNavigation={causalNavigation}
         reveal={p.classified ? 1 : p.pct / 100}
         statusText={statusText}
         statusColor={statusColor}

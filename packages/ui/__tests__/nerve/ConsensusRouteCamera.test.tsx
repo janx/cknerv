@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import type { Cell } from '@cknerv/types';
+import type { Cell, CellLink } from '@cknerv/types';
 import { emptyCellsCache } from '@cknerv/cache';
 import { act, render } from '@testing-library/react';
 import * as THREE from 'three';
@@ -8,8 +8,10 @@ import {
   CONSENSUS_CELL_INSPECTION_CAMERA_DISTANCE,
   CONSENSUS_RECORD_CAMERA_DISTANCE,
   CONSENSUS_RECORD_CAMERA_MAX_DISTANCE,
+  consensusRouteHopWorldPosition,
   deriveConsensusRecordSafeAnchor,
 } from '../../src/derives/consensusRouteCamera.derive';
+import { deriveCellCausalLens } from '../../src/derives/cellCausalLens.derive';
 import { CELLS_Y } from '../../src/layout';
 import { CellGalaxyProvider } from '../../src/hooks/cellGalaxyContext';
 import ConsensusRouteCamera, {
@@ -504,5 +506,147 @@ describe('ConsensusRouteCamera record composition', () => {
     expect(cameraMock.current!.position.distanceTo(initialPosition))
       .toBeLessThan(0.05);
     expect(controls.target.distanceTo(initialTarget)).toBeLessThan(0.05);
+  });
+
+  it('widens selected-Cell framing to include its retained causal endpoints', () => {
+    viewportMock.width = 1000;
+    viewportMock.height = 800;
+    cameraMock.current!.aspect = viewportMock.width / viewportMock.height;
+    cameraMock.current!.position.set(0, CELLS_Y, 64);
+    cameraMock.current!.updateProjectionMatrix();
+    const cache = emptyCellsCache();
+    const selected = cell(2, [0, 0, 0]);
+    const input = cell(3, [60, 0, 0]);
+    cache.cells.set(selected.id, selected);
+    cache.cells.set(input.id, input);
+    const origin: CellLink = {
+      seq: 19,
+      tx_hash: selected.out_point.tx_hash,
+      block: selected.birth_block,
+      from_ids: [input.id],
+      to_ids: [selected.id],
+      parents: [],
+      tag: null,
+      at_ms: 100,
+    };
+    const lens = deriveCellCausalLens(selected, [origin], cache.cells);
+    const rightRail = document.createElement('div');
+    rightRail.dataset.hudOcclusion = 'true';
+    vi.spyOn(rightRail, 'getBoundingClientRect').mockReturnValue(
+      rect(720, 0, 1000, 800),
+    );
+    document.body.append(rightRail);
+    const controls = {
+      target: new THREE.Vector3(0, CELLS_Y, 0),
+      update: vi.fn(() => {
+        cameraMock.current!.lookAt(controls.target);
+        cameraMock.current!.updateMatrixWorld();
+      }),
+    } satisfies ConsensusRouteCameraControls;
+    controls.update();
+    const controlsRef: { current: ConsensusRouteCameraControls | null } = {
+      current: controls,
+    };
+
+    render(
+      <CellGalaxyProvider value={cache}>
+        <ConsensusRouteCamera
+          controlsRef={controlsRef}
+          inspectionCellId={selected.id}
+          causalLens={lens}
+        />
+      </CellGalaxyProvider>,
+    );
+    act(() => {
+      for (let frame = 0; frame < 50; frame += 1) {
+        frameMock.callback?.({}, 0.1);
+      }
+    });
+
+    const selectedWorld = new THREE.Vector3(0, CELLS_Y, 0);
+    const inputWorld = new THREE.Vector3(60, CELLS_Y, 0);
+    const anchor = deriveConsensusRecordSafeAnchor(
+      viewportMock.width,
+      viewportMock.height,
+      [{ left: 720, top: 0, right: 1000, bottom: 800 }],
+    );
+    expect(distance(cameraMock.current!.position, selectedWorld))
+      .toBeGreaterThan(CONSENSUS_CELL_INSPECTION_CAMERA_DISTANCE);
+    expect(screenPosition(selectedWorld)[0]).toBeCloseTo(anchor[0], 0);
+    expect(screenPosition(selectedWorld)[1]).toBeCloseTo(anchor[1], 0);
+    expect(screenPosition(inputWorld)[0]).toBeLessThan(720);
+    const driftingInputWorld = new THREE.Vector3(
+      ...consensusRouteHopWorldPosition(input.pos_seed, -0.1),
+    );
+    expect(screenPosition(driftingInputWorld)[0]).toBeLessThan(720);
+  });
+
+  it('does not reclaim a manually adjusted camera for passive causal updates', () => {
+    const cache = emptyCellsCache();
+    const selected = cell(2, [0, 0, 0]);
+    const input = cell(3, [40, 0, 0]);
+    cache.cells.set(selected.id, selected);
+    cache.cells.set(input.id, input);
+    const unavailable = deriveCellCausalLens(selected, [], cache.cells);
+    const origin = (seq: number): CellLink => ({
+      seq,
+      tx_hash: selected.out_point.tx_hash,
+      block: selected.birth_block,
+      from_ids: [input.id],
+      to_ids: [selected.id],
+      parents: [],
+      tag: null,
+      at_ms: 100,
+    });
+    const controls = {
+      target: new THREE.Vector3(0, 30, 0),
+      update: vi.fn(() => {
+        cameraMock.current!.lookAt(controls.target);
+        cameraMock.current!.updateMatrixWorld();
+      }),
+    } satisfies ConsensusRouteCameraControls;
+    controls.update();
+    const controlsRef: { current: ConsensusRouteCameraControls | null } = {
+      current: controls,
+    };
+    const view = (
+      causalLens: ReturnType<typeof deriveCellCausalLens>,
+      manualRevision: number,
+    ) => (
+      <CellGalaxyProvider value={cache}>
+        <ConsensusRouteCamera
+          controlsRef={controlsRef}
+          inspectionCellId={selected.id}
+          causalLens={causalLens}
+          manualRevision={manualRevision}
+        />
+      </CellGalaxyProvider>
+    );
+    const rendered = render(view(unavailable, 0));
+    act(() => {
+      for (let frame = 0; frame < 40; frame += 1) {
+        frameMock.callback?.({}, 0.1);
+      }
+    });
+    const manuallyOwnedPosition = cameraMock.current!.position.clone();
+    const manuallyOwnedTarget = controls.target.clone();
+
+    rendered.rerender(view(unavailable, 1));
+    rendered.rerender(view(
+      deriveCellCausalLens(selected, [origin(19)], cache.cells),
+      1,
+    ));
+    rendered.rerender(view(
+      deriveCellCausalLens(selected, [origin(20)], cache.cells),
+      1,
+    ));
+    act(() => {
+      for (let frame = 0; frame < 40; frame += 1) {
+        frameMock.callback?.({}, 0.1);
+      }
+    });
+
+    expect(cameraMock.current!.position).toEqual(manuallyOwnedPosition);
+    expect(controls.target).toEqual(manuallyOwnedTarget);
   });
 });

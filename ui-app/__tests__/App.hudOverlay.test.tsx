@@ -64,7 +64,14 @@ describe('HudOverlay wiring', () => {
       'onNavigateCell={navigateCausalCell}',
     );
     expect(APP_SOURCE).toContain(
-      'handleSelect(`${CELL_SELECTION_PREFIX}${cellId}`)',
+      "type: 'navigate',",
     );
+    expect(APP_SOURCE).toContain('cellCausalNavigationReducer');
+    expect(APP_SOURCE).toContain(
+      'cellCausalNavigation={selectedCausalNavigation}',
+    );
+    expect(APP_SOURCE).toContain('causalLens={selectedCausalLens}');
+    expect(APP_SOURCE).toContain('onBack: navigateCausalBack');
+    expect(APP_SOURCE).toContain('onForward: navigateCausalForward');
   });
 });

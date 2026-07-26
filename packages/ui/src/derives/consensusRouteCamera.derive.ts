@@ -3,8 +3,12 @@ import type { Vec3 } from '../types';
 
 export const CONSENSUS_ROUTE_CAMERA_DISTANCE = 36;
 export const CONSENSUS_CELL_INSPECTION_CAMERA_DISTANCE = 52;
+export const CONSENSUS_CAUSAL_CAMERA_DISTANCE =
+  CONSENSUS_CELL_INSPECTION_CAMERA_DISTANCE;
 export const CONSENSUS_RECORD_CAMERA_DISTANCE = 64;
 export const CONSENSUS_RECORD_CAMERA_MAX_DISTANCE = 288;
+export const CONSENSUS_CAUSAL_CAMERA_MAX_DISTANCE =
+  CONSENSUS_RECORD_CAMERA_MAX_DISTANCE;
 export const CONSENSUS_RECORD_CAMERA_NEUTRAL_MIN_DISTANCE = 96;
 export const CONSENSUS_RECORD_CAMERA_SAFE_WIDTH_PX = 192;
 export const CONSENSUS_RECORD_CAMERA_SAFE_HEIGHT_PX = 144;
@@ -14,6 +18,10 @@ export const CONSENSUS_RECORD_CAMERA_PREFERRED_Y_RATIO = 0.44;
 /** Includes a little motion slack for the continuously rotating Cell canopy. */
 export const CONSENSUS_RECORD_CAMERA_ROUTE_MARGIN_PX = 36;
 export const CONSENSUS_RECORD_CAMERA_ENDPOINT_HUD_GAP_PX = 18;
+/** Covers endpoint drift while the selected canopy eases into inspection tempo. */
+export const CONSENSUS_CAUSAL_CAMERA_ENDPOINT_HUD_GAP_PX =
+  CONSENSUS_RECORD_CAMERA_ENDPOINT_HUD_GAP_PX
+  + CONSENSUS_RECORD_CAMERA_ROUTE_MARGIN_PX;
 
 export interface ConsensusRouteCameraPose {
   position: Vec3;
@@ -35,11 +43,13 @@ export interface ConsensusRecordCameraComposition {
   cameraUp?: Vec3;
 }
 
-export interface ConsensusRecordCameraWorldPoint {
+export interface ConsensusCameraWorldPoint {
   position: Vec3;
-  /** Only transaction sources and the retained output are semantic endpoints. */
+  /** Real Cell records clear HUD; connective geometry only clears the viewport. */
   role: 'endpoint' | 'carrier';
 }
+
+export type ConsensusRecordCameraWorldPoint = ConsensusCameraWorldPoint;
 
 export type ConsensusRecordCameraIntent = 'idle' | 'neutral' | 'record';
 
@@ -375,6 +385,27 @@ export function deriveConsensusCellInspectionCameraPose(
   );
 }
 
+/**
+ * Frame a selected Cell as the stable causal anchor while allowing its real
+ * transaction hub and retained endpoint neighbourhood to widen the view.
+ */
+export function deriveConsensusCausalCameraPose(
+  currentPosition: Vec3,
+  currentTarget: Vec3,
+  selectedWorld: Vec3,
+  distance = CONSENSUS_CAUSAL_CAMERA_DISTANCE,
+  composition?: ConsensusRecordCameraComposition,
+): ConsensusRouteCameraPose {
+  return deriveConsensusCameraPose(
+    currentPosition,
+    currentTarget,
+    selectedWorld,
+    distance,
+    CONSENSUS_CAUSAL_CAMERA_DISTANCE,
+    composition,
+  );
+}
+
 /** Broadly frame one verified record target, without choosing a route hop. */
 export function deriveConsensusRecordCameraPose(
   currentPosition: Vec3,
@@ -429,26 +460,19 @@ function projectConsensusRecordWorldPoint(
 }
 
 /**
- * Find the closest broad-record distance that contains every verified route
- * Cell. Display-only carriers must remain in the viewport; only real sources
- * and the retained output are required to clear HUD panels.
+ * Find the closest distance that contains every causal point. Display-only
+ * carriers must remain in the viewport; only real Cell endpoints are required
+ * to clear HUD panels.
  */
-export function deriveConsensusRecordCameraDistance(
-  currentPosition: Vec3,
-  currentTarget: Vec3,
-  recordWorld: Vec3,
-  points: readonly ConsensusRecordCameraWorldPoint[],
+function deriveConsensusCameraExtentDistance(
+  points: readonly ConsensusCameraWorldPoint[],
   composition: ConsensusRecordCameraComposition,
-  obstacles: readonly ConsensusRecordCameraScreenRect[] = [],
-  minimumDistance = CONSENSUS_RECORD_CAMERA_DISTANCE,
-  maximumDistance = CONSENSUS_RECORD_CAMERA_MAX_DISTANCE,
+  obstacles: readonly ConsensusRecordCameraScreenRect[],
+  minimum: number,
+  maximum: number,
+  poseAtDistance: (distance: number) => ConsensusRouteCameraPose,
+  endpointHudGap: number,
 ): number {
-  const minimum = Number.isFinite(minimumDistance) && minimumDistance > 0
-    ? minimumDistance
-    : CONSENSUS_RECORD_CAMERA_DISTANCE;
-  const maximum = Number.isFinite(maximumDistance) && maximumDistance >= minimum
-    ? maximumDistance
-    : Math.max(minimum, CONSENSUS_RECORD_CAMERA_MAX_DISTANCE);
   const width = composition.viewportWidth;
   const height = composition.viewportHeight;
   const fov = composition.verticalFovDegrees;
@@ -470,7 +494,7 @@ export function deriveConsensusRecordCameraDistance(
     width / 2,
     height / 2,
   );
-  const endpointGap = CONSENSUS_RECORD_CAMERA_ENDPOINT_HUD_GAP_PX;
+  const endpointGap = endpointHudGap;
   const validObstacles = obstacles.filter((obstacle) => (
     Number.isFinite(obstacle.left)
     && Number.isFinite(obstacle.top)
@@ -480,13 +504,7 @@ export function deriveConsensusRecordCameraDistance(
     && obstacle.bottom > obstacle.top
   ));
   const fits = (distance: number): boolean => {
-    const pose = deriveConsensusRecordCameraPose(
-      currentPosition,
-      currentTarget,
-      recordWorld,
-      distance,
-      composition,
-    );
+    const pose = poseAtDistance(distance);
     return validPoints.every((point) => {
       const screen = projectConsensusRecordWorldPoint(
         point.position,
@@ -520,6 +538,81 @@ export function deriveConsensusRecordCameraDistance(
     else lower = candidate;
   }
   return upper;
+}
+
+/**
+ * Find the closest broad-record distance that contains every verified route
+ * Cell. Display-only carriers must remain in the viewport; only real sources
+ * and the retained output are required to clear HUD panels.
+ */
+export function deriveConsensusRecordCameraDistance(
+  currentPosition: Vec3,
+  currentTarget: Vec3,
+  recordWorld: Vec3,
+  points: readonly ConsensusRecordCameraWorldPoint[],
+  composition: ConsensusRecordCameraComposition,
+  obstacles: readonly ConsensusRecordCameraScreenRect[] = [],
+  minimumDistance = CONSENSUS_RECORD_CAMERA_DISTANCE,
+  maximumDistance = CONSENSUS_RECORD_CAMERA_MAX_DISTANCE,
+): number {
+  const minimum = Number.isFinite(minimumDistance) && minimumDistance > 0
+    ? minimumDistance
+    : CONSENSUS_RECORD_CAMERA_DISTANCE;
+  const maximum = Number.isFinite(maximumDistance) && maximumDistance >= minimum
+    ? maximumDistance
+    : Math.max(minimum, CONSENSUS_RECORD_CAMERA_MAX_DISTANCE);
+  return deriveConsensusCameraExtentDistance(
+    points,
+    composition,
+    obstacles,
+    minimum,
+    maximum,
+    (distance) => deriveConsensusRecordCameraPose(
+      currentPosition,
+      currentTarget,
+      recordWorld,
+      distance,
+      composition,
+    ),
+    CONSENSUS_RECORD_CAMERA_ENDPOINT_HUD_GAP_PX,
+  );
+}
+
+/**
+ * Widen selected-Cell inspection only as far as its visible transaction core,
+ * Bézier carriers, and real retained endpoints require.
+ */
+export function deriveConsensusCausalCameraDistance(
+  currentPosition: Vec3,
+  currentTarget: Vec3,
+  selectedWorld: Vec3,
+  points: readonly ConsensusCameraWorldPoint[],
+  composition: ConsensusRecordCameraComposition,
+  obstacles: readonly ConsensusRecordCameraScreenRect[] = [],
+  minimumDistance = CONSENSUS_CAUSAL_CAMERA_DISTANCE,
+  maximumDistance = CONSENSUS_CAUSAL_CAMERA_MAX_DISTANCE,
+): number {
+  const minimum = Number.isFinite(minimumDistance) && minimumDistance > 0
+    ? minimumDistance
+    : CONSENSUS_CAUSAL_CAMERA_DISTANCE;
+  const maximum = Number.isFinite(maximumDistance) && maximumDistance >= minimum
+    ? maximumDistance
+    : Math.max(minimum, CONSENSUS_CAUSAL_CAMERA_MAX_DISTANCE);
+  return deriveConsensusCameraExtentDistance(
+    points,
+    composition,
+    obstacles,
+    minimum,
+    maximum,
+    (distance) => deriveConsensusCausalCameraPose(
+      currentPosition,
+      currentTarget,
+      selectedWorld,
+      distance,
+      composition,
+    ),
+    CONSENSUS_CAUSAL_CAMERA_ENDPOINT_HUD_GAP_PX,
+  );
 }
 
 /**

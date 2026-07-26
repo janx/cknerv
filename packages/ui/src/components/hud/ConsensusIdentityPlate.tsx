@@ -33,7 +33,9 @@ import {
   consensusMemoryRouteHopPulseKey,
 } from '../../nerve/consensusRouteHopPulse';
 import { formatOutpoint } from './cellFormat';
-import CellCausalLensReadout from './CellCausalLensReadout';
+import CellCausalLensReadout, {
+  type CellCausalNavigationReadout,
+} from './CellCausalLensReadout';
 import { HUD_COLORS, HUD_FONTS } from './hudTheme';
 
 const CYAN = HUD_COLORS.cyanWire;
@@ -1444,6 +1446,7 @@ function MemoryReadState({
 export default function ConsensusIdentityPlate({
   identity,
   causalLens = null,
+  causalNavigation = null,
   reveal,
   statusText,
   statusColor,
@@ -1470,6 +1473,7 @@ export default function ConsensusIdentityPlate({
 }: {
   identity: CellConsensusIdentity;
   causalLens?: CellCausalLens | null;
+  causalNavigation?: CellCausalNavigationReadout | null;
   reveal: number;
   statusText: string;
   statusColor: string;
@@ -1571,7 +1575,11 @@ export default function ConsensusIdentityPlate({
       })}
 
       {causalLens ? (
-        <CellCausalLensReadout lens={causalLens} reveal={reveal} />
+        <CellCausalLensReadout
+          lens={causalLens}
+          reveal={reveal}
+          navigation={causalNavigation}
+        />
       ) : null}
 
       <div

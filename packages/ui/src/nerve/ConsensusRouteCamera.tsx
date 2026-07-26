@@ -2,10 +2,13 @@ import { useEffect, useMemo, useRef, type RefObject } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useReducedMotion } from '../components/hud/useReducedMotion';
+import type { CellCausalLens } from '../derives/cellCausalLens.derive';
 import {
   CONSENSUS_CELL_INSPECTION_CAMERA_DISTANCE,
   CONSENSUS_ROUTE_CAMERA_DISTANCE,
   consensusRouteHopWorldPosition,
+  deriveConsensusCausalCameraDistance,
+  deriveConsensusCausalCameraPose,
   deriveConsensusCellInspectionCameraPose,
   deriveConsensusRecordCameraDistance,
   deriveConsensusRecordCameraIntent,
@@ -13,8 +16,10 @@ import {
   deriveConsensusRecordNeutralCameraPose,
   deriveConsensusRecordSafeAnchor,
   deriveConsensusRouteCameraPose,
+  type ConsensusCameraWorldPoint,
   type ConsensusRecordCameraScreenRect,
 } from '../derives/consensusRouteCamera.derive';
+import { deriveCellCausalLensLayout } from '../geometry/cellCausalLens';
 import { useCellGalaxy } from '../hooks/cellGalaxyContext';
 import { galaxyFrame } from '../tweaks/galaxyFrame';
 import { CONSENSUS_MEMORY_RECORD_BRIDGE_MAX_SECONDS } from './consensusMemoryRecordBridge';
@@ -44,6 +49,8 @@ export interface ConsensusRouteCameraProps {
   manualRevision?: number;
   /** Exact selected Cell to place in measured HUD-safe inspection space. */
   inspectionCellId?: number | null;
+  /** Real selected-Cell transaction geometry that may widen inspection. */
+  causalLens?: CellCausalLens | null;
   /** Keep the verified framing while its route afterimage begins to recede. */
   releaseHoldSeconds?: number;
   /** Stable link + target identity; replay nonce must not create a new frame. */
@@ -151,6 +158,7 @@ export default function ConsensusRouteCamera({
   controlsRef,
   manualRevision = 0,
   inspectionCellId = null,
+  causalLens = null,
   releaseHoldSeconds = CONSENSUS_ROUTE_CAMERA_RELEASE_HOLD_SECONDS,
   recordIdentity = null,
   recordTargetCellId = null,
@@ -178,6 +186,39 @@ export default function ConsensusRouteCamera({
     : 50;
   const compositionKey = `${viewportWidth}:${viewportHeight}:${verticalFovDegrees}`;
   const previousCompositionKeyRef = useRef(compositionKey);
+
+  const causalCameraLocalPoints = useMemo(() => {
+    if (
+      !causalLens
+      || causalLens.status === 'unavailable'
+      || causalLens.selectedCell.id !== inspectionCellId
+    ) return [];
+    const layout = deriveCellCausalLensLayout(causalLens);
+    const points: ConsensusCameraWorldPoint[] = [{
+      position: [...causalLens.selectedCell.pos_seed],
+      role: 'endpoint',
+    }];
+    points.push({ position: [...layout.hub], role: 'carrier' });
+    for (const arc of layout.arcs) {
+      points.push({ position: [...arc.control], role: 'carrier' });
+      points.push({
+        position: [...(arc.role === 'input' ? arc.from : arc.to)],
+        role: 'endpoint',
+      });
+    }
+    return points;
+  }, [causalLens, inspectionCellId]);
+  const causalGeometryKey = causalLens
+    && causalLens.status !== 'unavailable'
+    && causalLens.selectedCell.id === inspectionCellId
+    ? [
+      causalLens.key,
+      ...causalCameraLocalPoints.map(({ position, role }) => (
+        `${role}:${position.join(',')}`
+      )),
+    ].join('|')
+    : '';
+  const previousCausalGeometryKeyRef = useRef(causalGeometryKey);
 
   const recordRouteCells = useMemo(() => {
     if (
@@ -255,6 +296,8 @@ export default function ConsensusRouteCamera({
     const previousRouteFocusIdentity = previousRouteFocusIdentityRef.current;
     const previousInspectionCellId = previousInspectionCellIdRef.current;
     const compositionChanged = previousCompositionKeyRef.current !== compositionKey;
+    const causalGeometryChanged = previousCausalGeometryKeyRef.current
+      !== causalGeometryKey;
     const recordGeometryChanged = previousRecordGeometryKeyRef.current
       !== recordGeometryKey;
     const routeFocusIdentity = focus
@@ -281,6 +324,7 @@ export default function ConsensusRouteCamera({
     previousRouteFocusIdentityRef.current = routeFocusIdentity;
     previousInspectionCellIdRef.current = inspectionCellId;
     previousCompositionKeyRef.current = compositionKey;
+    previousCausalGeometryKeyRef.current = causalGeometryKey;
     previousRecordGeometryKeyRef.current = recordGeometryKey;
 
     const existingSession = sessionRef.current;
@@ -350,7 +394,32 @@ export default function ConsensusRouteCamera({
         [inspectionCellX, inspectionCellY, inspectionCellZ],
         galaxyFrame.rotationY,
       );
-      const { composition } = measureSafeComposition();
+      const { composition, hudOcclusions } = measureSafeComposition();
+      if (causalCameraLocalPoints.length > 1) {
+        const causalWorldPoints = causalCameraLocalPoints.map((point) => ({
+          ...point,
+          position: consensusRouteHopWorldPosition(
+            point.position,
+            galaxyFrame.rotationY,
+          ),
+        }));
+        const distance = deriveConsensusCausalCameraDistance(
+          camera.position.toArray(),
+          controls.target.toArray(),
+          cellWorld,
+          causalWorldPoints,
+          composition,
+          hudOcclusions,
+        );
+        const causal = deriveConsensusCausalCameraPose(
+          camera.position.toArray(),
+          controls.target.toArray(),
+          cellWorld,
+          distance,
+          composition,
+        );
+        return poseVectors(causal.position, causal.target);
+      }
       const inspection = deriveConsensusCellInspectionCameraPose(
         camera.position.toArray(),
         controls.target.toArray(),
@@ -511,7 +580,7 @@ export default function ConsensusRouteCamera({
       && (
         inspectionChanged
         || (
-          compositionChanged
+          (compositionChanged || causalGeometryChanged)
           && existingSession?.inspectionCellId === inspectionCellId
         )
       )
@@ -586,6 +655,8 @@ export default function ConsensusRouteCamera({
   }, [
     camera,
     canvas,
+    causalCameraLocalPoints,
+    causalGeometryKey,
     cellX,
     cellY,
     cellZ,

@@ -6,6 +6,15 @@ const EXACT = '#91F7FF';
 const PARTIAL = '#FFD48C';
 const UNAVAILABLE = '#9D7BD8';
 
+export interface CellCausalNavigationReadout {
+  position: number;
+  total: number;
+  backCellId: number | null;
+  forwardCellId: number | null;
+  onBack: () => void;
+  onForward: () => void;
+}
+
 const clampUnit = (value: number): number => (
   Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 1
 );
@@ -64,9 +73,11 @@ function endpointCount(
 export default function CellCausalLensReadout({
   lens,
   reveal = 1,
+  navigation = null,
 }: {
   lens: CellCausalLens;
   reveal?: number;
+  navigation?: CellCausalNavigationReadout | null;
 }) {
   const meta = statusMeta(lens);
   const retainedInputs = lens.inputs.filter((item) => item.record).length;
@@ -81,6 +92,48 @@ export default function CellCausalLensReadout({
     fontSize: 7.1,
     letterSpacing: 0.42,
     whiteSpace: 'nowrap',
+  };
+  const navigationButton = (
+    targetCellId: number | null,
+    direction: 'back' | 'forward',
+    onClick: () => void,
+  ) => {
+    const enabled = targetCellId !== null;
+    const isBack = direction === 'back';
+    return (
+      <button
+        type="button"
+        disabled={!enabled}
+        aria-label={enabled
+          ? `${isBack ? 'Back to' : 'Forward to'} Cell ${targetCellId}`
+          : `No ${direction} causal Cell`}
+        title={enabled
+          ? `${isBack ? 'Back' : 'Forward'} · Cell #${targetCellId}`
+          : undefined}
+        onClick={enabled ? onClick : undefined}
+        style={{
+          minWidth: 0,
+          padding: '2px 4px',
+          border: `1px solid ${enabled ? `${meta.color}42` : `${HUD_COLORS.dim}20`}`,
+          background: enabled ? `${meta.color}0c` : 'transparent',
+          color: enabled ? meta.color : HUD_COLORS.dim,
+          fontFamily: HUD_FONTS.mono,
+          fontSize: 6.4,
+          letterSpacing: 0.32,
+          lineHeight: 1.2,
+          textAlign: isBack ? 'left' : 'right',
+          whiteSpace: 'nowrap',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          cursor: enabled ? 'pointer' : 'default',
+          opacity: enabled ? 0.9 : 0.34,
+          pointerEvents: enabled ? 'auto' : 'none',
+        }}
+      >
+        {isBack ? '‹ BACK' : 'FORWARD ›'}
+        {enabled ? ` #${targetCellId}` : ''}
+      </button>
+    );
   };
 
   return (
@@ -207,6 +260,45 @@ export default function CellCausalLensReadout({
             : `1 SELECTED · ${siblings} SIBLING${siblings === 1 ? '' : 'S'}`}
         </span>
       </div>
+
+      {navigation && navigation.total > 1 ? (
+        <div
+          data-causal-navigation="true"
+          data-causal-navigation-position={navigation.position}
+          data-causal-navigation-total={navigation.total}
+          data-causal-navigation-back={navigation.backCellId ?? ''}
+          data-causal-navigation-forward={navigation.forwardCellId ?? ''}
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'minmax(0,1fr) auto minmax(0,1fr)',
+            alignItems: 'center',
+            gap: 5,
+            marginTop: 4,
+            paddingTop: 4,
+            borderTop: `1px solid ${meta.color}18`,
+          }}
+        >
+          {navigationButton(
+            navigation.backCellId,
+            'back',
+            navigation.onBack,
+          )}
+          <span style={{
+            color: HUD_COLORS.dim,
+            fontFamily: HUD_FONTS.mono,
+            fontSize: 6.1,
+            letterSpacing: 0.48,
+            whiteSpace: 'nowrap',
+          }}>
+            PATH {navigation.position}/{navigation.total}
+          </span>
+          {navigationButton(
+            navigation.forwardCellId,
+            'forward',
+            navigation.onForward,
+          )}
+        </div>
+      ) : null}
     </div>
   );
 }

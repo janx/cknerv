@@ -127,6 +127,9 @@ export {
 export { default as CkbNetworkHud } from './components/CkbNetworkHud';
 export { default as HudOverlay } from './components/hud/HudOverlay';
 export { default as CellDetailPanel } from './components/hud/CellDetailPanel';
+export type {
+  CellCausalNavigationReadout,
+} from './components/hud/CellCausalLensReadout';
 export { default as CellNucleusPortrait } from './components/hud/CellNucleusPortrait';
 export {
   default as CellCoreArtwork,

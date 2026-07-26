@@ -17,6 +17,9 @@ import type {
   CellIdentityProofKind,
 } from '../../derives/cellIdentityProof.derive';
 import type { CellCausalLens } from '../../derives/cellCausalLens.derive';
+import type {
+  CellCausalNavigationReadout,
+} from './CellCausalLensReadout';
 import { injectHudTheme } from './hudTheme';
 import StatusStrip, { type BuildInfo } from './StatusStrip';
 import BlockchainReadout from './BlockchainReadout';
@@ -52,7 +55,7 @@ const MESH_RAIL_STYLE: CSSProperties = { position: 'absolute', top: 42, right: 1
 const MESH_ZONE_COL: CSSProperties = { display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'flex-end' };
 const PANEL_FLOW: CSSProperties = { position: 'relative' };
 
-export default function HudOverlay({ chain, peers, localNode, cellsStats, selectedCell, cellRecordsById, recentCellLinks, cellCausalLens, tracedCellWriteSeq, cellTraceSource, cellTraceReadout, cellTraceResponseRef, cellTraceEvidenceFocusSourceId, cellTraceEvidencePreviewSourceId, onCellTraceEvidenceFocusChange, cellTraceRouteHopFocus, onCellTraceRouteHopFocusChange, cellTraceRouteHopLock, onCellTraceRouteHopLockChange, cellIdentityProofBinding, onTraceCellWrite, onCellIdentityProofRead, selectedNode, selectedPeer, onClearSelection, onClearCell, onClearNet, backfill, build, colonyCount }: {
+export default function HudOverlay({ chain, peers, localNode, cellsStats, selectedCell, cellRecordsById, recentCellLinks, cellCausalLens, cellCausalNavigation, tracedCellWriteSeq, cellTraceSource, cellTraceReadout, cellTraceResponseRef, cellTraceEvidenceFocusSourceId, cellTraceEvidencePreviewSourceId, onCellTraceEvidenceFocusChange, cellTraceRouteHopFocus, onCellTraceRouteHopFocusChange, cellTraceRouteHopLock, onCellTraceRouteHopLockChange, cellIdentityProofBinding, onTraceCellWrite, onCellIdentityProofRead, selectedNode, selectedPeer, onClearSelection, onClearCell, onClearNet, backfill, build, colonyCount }: {
   chain: ChainEntry; peers: Peer[]; localNode: ChainNode | undefined; cellsStats: CellsStats;
   selectedCell?: Cell | null;
   /** Current Cell projection records for exact route-hop inspection. */
@@ -61,6 +64,8 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats, select
   recentCellLinks?: readonly CellLink[];
   /** Shared selected-Cell causal evidence rendered in both HUD and scene. */
   cellCausalLens?: CellCausalLens | null;
+  /** Local back/forward path through explicitly visited causal endpoints. */
+  cellCausalNavigation?: CellCausalNavigationReadout | null;
   tracedCellWriteSeq?: number | null;
   cellTraceSource?: ConsensusMemoryTraceSource;
   cellTraceReadout?: ConsensusMemoryTraceReadout | null;
@@ -187,6 +192,7 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats, select
               routeCellById={cellRecordsById}
               recentLinks={recentCellLinks}
               causalLens={cellCausalLens}
+              causalNavigation={cellCausalNavigation}
               tracedWriteSeq={tracedCellWriteSeq}
               traceSource={cellTraceSource}
               traceReadout={cellTraceReadout}
