@@ -51,6 +51,18 @@ export function planLinkBatch(
 }
 
 /**
+ * Remove already-planned packets whose source transaction was rolled back.
+ * Generic over Pulse subtypes so the renderer can preserve its ActivePulse
+ * timing fields while applying the same canonical block boundary.
+ */
+export function prunePulsesFromBlock<T extends Pulse>(
+  pulses: readonly T[],
+  fromBlock: number,
+): T[] {
+  return pulses.filter((pulse) => pulse.linkBlock < fromBlock);
+}
+
+/**
  * Tick the per-block counter when `at` strictly advances past `lastSeen`,
  * skipping the bootstrap value (`lastSeen === 0` — the initial pulse delta,
  * not a new block during this session). Returns the new `lastSeen`.

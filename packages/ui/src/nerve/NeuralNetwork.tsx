@@ -11,7 +11,14 @@
 //      drives the packet-head glyph, flashes the cells it crosses,
 //      and stamps a write seal when it lands on the terminal.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import { useCellGalaxy } from '../hooks/cellGalaxyContext';
 import { useConsensusMemoryFocusRef } from '../hooks/consensusMemoryFocusContext';
@@ -22,7 +29,11 @@ import { galaxyFrame } from '../tweaks/galaxyFrame';
 import { QUALITY_PRESETS, useQualityRuntime } from '../tweaks/qualityPresets';
 import { buildNeighborGraph, emptyNeighborGraph, type NeighborGraph } from '../geometry/neighborGraph';
 import { type Pulse, type PulsePlanningOptions } from './pulseRunner';
-import { planLinkBatch, tickBlockIfAdvanced } from './pulseBatch';
+import {
+  planLinkBatch,
+  prunePulsesFromBlock,
+  tickBlockIfAdvanced,
+} from './pulseBatch';
 import { pulseStats } from './pulseStats';
 import { diffCells, snapshotCells, type CellSnapshotEntry } from './cellsDelta';
 import { planMeshUpdate, shouldReconcile } from './livingMeshDriver';
@@ -47,6 +58,7 @@ import {
   validateConsensusMemoryRouteHopFocus,
   planConsensusMemoryTrace,
   type ConsensusMemoryTraceFocus,
+  type ConsensusMemoryTraceOutcome,
   type ConsensusMemoryTraceReadout,
   type ConsensusMemoryTraceRequest,
   type ConsensusMemoryRouteHopFocus,
@@ -161,8 +173,11 @@ interface NeuralNetworkProps {
   traceMaxPulses?: number;
   /** Keep a quiet old record while the user maps a different selected Cell. */
   traceHoldForRecordSwitch?: boolean;
-  /** Reports completion or an unavailable route so UI active state can exit. */
-  onTraceComplete?: (request: ConsensusMemoryTraceRequest) => void;
+  /** Reports completion or invalidation so UI active state can exit safely. */
+  onTraceComplete?: (
+    request: ConsensusMemoryTraceRequest,
+    outcome: ConsensusMemoryTraceOutcome,
+  ) => void;
   /**
    * Publishes semantic target-stage changes from the authoritative route clock.
    * This is intentionally low-frequency: frame-level convergence stays in R3F.
@@ -313,6 +328,7 @@ export default function NeuralNetwork({
   // Pulse queue. Pulses are removed when their head reaches the
   // terminal cell (or after a generous fallback lifetime).
   const pulsesRef = useRef<ActivePulse[]>([]);
+  const handledLinkPruneRef = useRef(cellsCache.linkPrune);
   const lastLinksSeqRef = useRef<number>(cellsCache.linksSeq);
   useEffect(() => {
     if (cellsCache.pulseLinks.length === 0) {
@@ -551,6 +567,34 @@ export default function NeuralNetwork({
     traceReadoutSignatureRef.current = signature;
     onTraceReadoutChange(readout);
   }, [onTraceReadoutChange]);
+  const invalidateMemoryTrace = useCallback((
+    request: ConsensusMemoryTraceRequest | null,
+  ) => {
+    if (request) {
+      lastTraceKeyRef.current = consensusMemoryTraceRequestKey(request);
+    }
+    activeTraceRequestRef.current = null;
+    pulsesRef.current = pulsesRef.current.filter(
+      (pulse) => pulse.mode !== 'memory',
+    );
+    departingTraceFocusRef.current = null;
+    traceFocusRef.current = null;
+    if (sharedTraceFocusRef) sharedTraceFocusRef.current = null;
+    publishTraceTargetResponse(null, null);
+    setDepartingTraceFocus(null);
+    setTraceFocus(null);
+    setTraceDisplayEvidenceSourceId(null);
+    setTraceDisplayRouteHopLock(null);
+    publishTraceReadout(null);
+    invalidate();
+    if (request) onTraceComplete?.(request, 'unavailable');
+  }, [
+    invalidate,
+    onTraceComplete,
+    publishTraceReadout,
+    publishTraceTargetResponse,
+    sharedTraceFocusRef,
+  ]);
   useEffect(() => () => {
     if (sharedTraceFocusRef) sharedTraceFocusRef.current = null;
     publishTraceTargetResponse(null, null);
@@ -591,6 +635,28 @@ export default function NeuralNetwork({
       };
     }
   }, [reducedMotion]);
+  useLayoutEffect(() => {
+    const prune = cellsCache.linkPrune;
+    if (!prune || handledLinkPruneRef.current === prune) return;
+    handledLinkPruneRef.current = prune;
+    pulsesRef.current = prunePulsesFromBlock(
+      pulsesRef.current,
+      prune.fromBlock,
+    );
+
+    const activeFocus = traceFocusRef.current;
+    if (activeFocus && activeFocus.linkBlock >= prune.fromBlock) {
+      invalidateMemoryTrace(activeTraceRequestRef.current);
+      return;
+    }
+
+    const departingFocus = departingTraceFocusRef.current;
+    if (departingFocus && departingFocus.linkBlock >= prune.fromBlock) {
+      departingTraceFocusRef.current = null;
+      setDepartingTraceFocus(null);
+    }
+    invalidate();
+  }, [cellsCache.linkPrune, invalidate, invalidateMemoryTrace]);
   useEffect(() => {
     if (!traceRequest) {
       lastTraceKeyRef.current = null;
@@ -626,6 +692,19 @@ export default function NeuralNetwork({
       return;
     }
     const key = consensusMemoryTraceRequestKey(traceRequest);
+    const link = cellsCache.recentLinks.find(
+      (candidate) => candidate.seq === traceRequest.linkSeq,
+    );
+    if (!link) {
+      const alreadyUnavailable = lastTraceKeyRef.current === key
+        && activeTraceRequestRef.current === null
+        && traceFocusRef.current === null;
+      if (alreadyUnavailable) return;
+      // Missing evidence is not an aesthetic exit. A reorg invalidates the
+      // claim immediately, including packets and afterimages already queued.
+      invalidateMemoryTrace(traceRequest);
+      return;
+    }
     if (lastTraceKeyRef.current === key) return;
     // The previous verified route becomes a fading afterimage while the fresh
     // route begins. Live traffic remains in flight and is never rewritten.
@@ -634,22 +713,6 @@ export default function NeuralNetwork({
     releaseMemoryPulses(startSec, previousFocus);
     lastTraceKeyRef.current = key;
     activeTraceRequestRef.current = null;
-    const link = cellsCache.recentLinks.find(
-      (candidate) => candidate.seq === traceRequest.linkSeq,
-    );
-    if (!link) {
-      departingTraceFocusRef.current = null;
-      traceFocusRef.current = null;
-      if (sharedTraceFocusRef) sharedTraceFocusRef.current = null;
-      publishTraceTargetResponse(null, null);
-      setDepartingTraceFocus(null);
-      setTraceFocus(null);
-      setTraceDisplayEvidenceSourceId(null);
-      setTraceDisplayRouteHopLock(null);
-      publishTraceReadout(null);
-      onTraceComplete?.(traceRequest);
-      return;
-    }
 
     const trace = planConsensusMemoryTrace(
       link,
@@ -695,7 +758,7 @@ export default function NeuralNetwork({
       setTraceDisplayRouteHopLock(null);
       publishTraceTargetResponse(null, null);
       publishTraceReadout(null);
-      onTraceComplete?.(traceRequest);
+      onTraceComplete?.(traceRequest, 'unavailable');
       return;
     }
     setTraceDisplayEvidenceSourceId(focus.evidenceFocusSourceId);
@@ -736,6 +799,8 @@ export default function NeuralNetwork({
     pulses?.maxPulsesPerLink,
     pulses?.maxActivePulses,
     particleCapMul,
+    invalidate,
+    invalidateMemoryTrace,
     onTraceComplete,
     publishTraceReadout,
     publishTraceTargetResponse,
@@ -887,7 +952,7 @@ export default function NeuralNetwork({
       setTraceDisplayEvidenceSourceId(null);
       setTraceDisplayRouteHopLock(null);
       publishTraceReadout(null);
-      if (completedRequest) onTraceComplete?.(completedRequest);
+      if (completedRequest) onTraceComplete?.(completedRequest, 'complete');
     }
     const currentFocus = traceFocusRef.current;
     const currentRequest = activeTraceRequestRef.current;

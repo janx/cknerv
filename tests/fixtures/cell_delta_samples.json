@@ -1,0 +1,6 @@
+{
+  "link_prune": {
+    "type": "link_prune",
+    "from_block": 42
+  }
+}

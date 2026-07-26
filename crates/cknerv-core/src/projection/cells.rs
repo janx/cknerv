@@ -202,6 +202,14 @@ pub enum CellDelta {
         total: u64,
         active: bool,
     },
+    /// Canonical invalidation boundary for causal evidence during a reorg.
+    /// Consumers must discard every retained or queued link whose block is
+    /// greater than or equal to `from_block`. The boundary is emitted even
+    /// when this projection's own bounded link history has no matching entry:
+    /// a client may retain a different evidence window.
+    LinkPrune {
+        from_block: u64,
+    },
     /// Causal edge for one tx: the input cells (now dead) it consumed
     /// and the output cells (now alive) it produced. Front-end fans
     /// out a "nerve pulse" particle along each (from, to) pair so
@@ -532,13 +540,16 @@ impl CellGalaxy {
             return Vec::new();
         }
 
-        // Drop any link records whose block was rolled back — those
-        // txs don't exist in the canonical chain anymore.
-        let height_set: std::collections::HashSet<u64> = heights.iter().copied().collect();
-        self.recent_links
-            .retain(|link| !height_set.contains(&link.block));
+        // The frontend may retain a different evidence window than this
+        // bounded backend FIFO, so publish the canonical rollback boundary
+        // even when no local link matches it.
+        let mut deltas = vec![CellDelta::LinkPrune { from_block: number }];
 
-        let mut deltas = Vec::new();
+        // Drop every record at or beyond the replacement boundary. Comparing
+        // the boundary directly also protects against an out-of-order record
+        // whose height was not present in `block_hashes`.
+        self.recent_links.retain(|link| link.block < number);
+
         let mut counters_touched = false;
         for height in heights.into_iter().rev() {
             let mut gc_ids = Vec::new();
@@ -1102,6 +1113,14 @@ mod tests {
     }
 
     #[test]
+    fn link_prune_delta_wire_shape_is_snake_case() {
+        let d = CellDelta::LinkPrune { from_block: 42 };
+        let v = serde_json::to_value(&d).expect("serialize");
+        assert_eq!(v["type"], "link_prune");
+        assert_eq!(v["from_block"], 42);
+    }
+
+    #[test]
     fn pulse_suppressed_while_backfilling_but_links_and_births_refill() {
         let mut g = make_galaxy();
         g.apply_mutation(&Mutation::BackfillProgress {
@@ -1653,12 +1672,39 @@ mod tests {
         assert_eq!(g.cells[0].out_point, base);
         assert!(g.cells[0].death_at_ms.is_none());
         assert!(g.outpoint_index.contains_key(&base));
+        assert!(matches!(
+            deltas.first(),
+            Some(CellDelta::LinkPrune { from_block: 2 })
+        ));
+        assert!(
+            g.recent_links.iter().all(|link| link.block < 2),
+            "orphaned causal evidence must leave the canonical snapshot"
+        );
         assert!(deltas
             .iter()
             .any(|d| matches!(d, CellDelta::Gc { ids } if !ids.is_empty())));
         assert!(deltas
             .iter()
             .any(|d| matches!(d, CellDelta::Birth { cell } if cell.out_point == base)));
+    }
+
+    #[test]
+    fn reorg_emits_link_prune_even_when_backend_evidence_fifo_is_empty() {
+        let mut g = CellGalaxy::with_config(CellGalaxyConfig {
+            cell_cap: CELL_CAP,
+            recent_links_cap: 0,
+        });
+        g.handle_block_mined(1, "0xaaa", 1, 1_000);
+        g.handle_tx_landed("0xbase", 1, 1_000, &[], &[out(100, "0x")]);
+        g.handle_block_mined(2, "0xbbb", 1, 1_100);
+        g.handle_tx_landed("0xorphan", 2, 1_100, &[op("0xbase", 0)], &[out(100, "0x")]);
+        assert!(g.recent_links.is_empty());
+
+        let deltas = g.handle_block_mined(2, "0xccc", 1, 1_200);
+        assert!(matches!(
+            deltas.first(),
+            Some(CellDelta::LinkPrune { from_block: 2 })
+        ));
     }
 
     #[test]

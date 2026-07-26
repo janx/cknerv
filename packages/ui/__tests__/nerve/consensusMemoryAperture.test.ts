@@ -73,6 +73,8 @@ function focus(
 ): ConsensusMemoryTraceFocus {
   return {
     key: 'trace:1',
+    linkSeq: 1,
+    linkBlock: 1,
     sourceKind: 'input',
     sources,
     routedSourceCount: sources.length,

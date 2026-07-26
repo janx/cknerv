@@ -50,6 +50,7 @@ import {
   UNIVERSE_SEED_FALLBACK,
   useQualityRuntime,
   type ConsensusMemoryTraceRequest,
+  type ConsensusMemoryTraceOutcome,
   type ConsensusMemoryTraceReadout,
   type ConsensusMemoryRouteHopFocus,
   type ConsensusMemoryTargetResponse,
@@ -724,8 +725,12 @@ export default function App({
     cellsCache.cells,
     cellsCache.recentLinks,
   ]);
-  const completeMemoryRecall = useCallback((request: ConsensusMemoryTraceRequest) => {
+  const completeMemoryRecall = useCallback((
+    request: ConsensusMemoryTraceRequest,
+    outcome: ConsensusMemoryTraceOutcome,
+  ) => {
     dispatchMemoryRecall({ type: 'complete', request });
+    if (outcome === 'unavailable') return;
     if (typeof request.targetCellId !== 'number') return;
     dispatchCellIdentityJourney({
       type: 'recall-retained',

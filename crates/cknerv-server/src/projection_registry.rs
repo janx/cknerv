@@ -240,3 +240,113 @@ impl Default for Registry {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cknerv_core::{CellGalaxy, Mutation, OutPoint, TxOutputInfo};
+
+    fn output(capacity: u64) -> TxOutputInfo {
+        TxOutputInfo {
+            capacity,
+            data_hex: "0x".to_string(),
+            content_hash: format!("0x{}", "00".repeat(32)),
+            lock_kind: Default::default(),
+            asset_kind: Default::default(),
+        }
+    }
+
+    #[test]
+    fn cell_reorg_stream_orders_link_prune_before_rollback_deltas() {
+        let mut registry = Registry::new();
+        registry.register(CellGalaxy::new());
+        let runtime = registry.lookup("cells").expect("cells runtime");
+        let writer = registry.writers().into_iter().next().expect("cells writer");
+        let apply = |revision, mutation| {
+            writer.apply(&RevisionedMutation { revision, mutation });
+        };
+
+        apply(
+            1,
+            Mutation::BlockMined {
+                number: 1,
+                hash: "0xblock-1".to_string(),
+                tx_count: 1,
+                size: 0,
+                at: 1_000,
+            },
+        );
+        apply(
+            2,
+            Mutation::TxLanded {
+                tx_hash: "0xbase".to_string(),
+                block: 1,
+                at: 1_000,
+                inputs: vec![],
+                outputs: vec![output(100)],
+            },
+        );
+        apply(
+            3,
+            Mutation::BlockMined {
+                number: 2,
+                hash: "0xorphan-block".to_string(),
+                tx_count: 1,
+                size: 0,
+                at: 1_100,
+            },
+        );
+        apply(
+            4,
+            Mutation::TxLanded {
+                tx_hash: "0xorphan-tx".to_string(),
+                block: 2,
+                at: 1_100,
+                inputs: vec![OutPoint {
+                    tx_hash: "0xbase".to_string(),
+                    index: 0,
+                }],
+                outputs: vec![output(100)],
+            },
+        );
+        apply(
+            5,
+            Mutation::BlockMined {
+                number: 2,
+                hash: "0xcanonical-block".to_string(),
+                tx_count: 0,
+                size: 0,
+                at: 1_200,
+            },
+        );
+
+        let reorg: Vec<_> = runtime
+            .delta_ring_snapshot()
+            .into_iter()
+            .filter(|entry| entry.rev == 5)
+            .collect();
+        assert_eq!(
+            reorg.first().map(|entry| &entry.value),
+            Some(&serde_json::json!({
+                "type": "link_prune",
+                "from_block": 2
+            }))
+        );
+        assert!(
+            reorg.iter().skip(1).any(|entry| {
+                matches!(
+                    entry.value.get("type").and_then(Value::as_str),
+                    Some("gc" | "birth" | "stats")
+                )
+            }),
+            "rollback Cell deltas must follow the causal invalidation"
+        );
+
+        let (_, snapshot) = runtime.snapshot_json();
+        assert!(snapshot["recent_links"]
+            .as_array()
+            .expect("recent_links array")
+            .iter()
+            .all(|link| link["block"].as_u64().is_some_and(|block| block < 2)));
+    }
+}

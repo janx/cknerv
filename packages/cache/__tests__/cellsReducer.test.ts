@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 
 import type {
   Cell,
+  CellDelta,
   CellGalaxySnapshot,
   RevisionedCellDelta,
 } from '@cknerv/types';
@@ -37,6 +38,20 @@ function cell(id: number, overrides: Partial<Cell> = {}): Cell {
     data_hex: '0x',
     content_hash: '0x' + '00'.repeat(32),
     ...overrides,
+  };
+}
+
+function linkDelta(txHash: string, block: number): CellDelta {
+  return {
+    type: 'link',
+    tx_hash: txHash,
+    block,
+    from_ids: [],
+    to_ids: [block],
+    endpoint_anchors: [],
+    parents: [],
+    tag: null,
+    at_ms: block * 1000,
   };
 }
 
@@ -154,6 +169,21 @@ describe('applyCellDelta', () => {
     expect(c.linksSeq).toBe(4);
   });
 
+  it('link_prune removes orphan evidence and pending pulse events without rewinding seq', () => {
+    let c = emptyCellsCache();
+    c = applyCellDelta(c, linkDelta('0xcanonical', 1));
+    c = applyCellDelta(c, linkDelta('0xorphan-2', 2));
+    c = applyCellDelta(c, linkDelta('0xorphan-3', 3));
+    const linksSeq = c.linksSeq;
+
+    c = applyCellDelta(c, { type: 'link_prune', from_block: 2 });
+
+    expect(c.recentLinks.map((link) => link.tx_hash)).toEqual(['0xcanonical']);
+    expect(c.pulseLinks.map((link) => link.tx_hash)).toEqual(['0xcanonical']);
+    expect(c.linksSeq).toBe(linksSeq);
+    expect(c.linkPrune).toEqual({ fromBlock: 2 });
+  });
+
   it('returns a new reference on a birth (purity)', () => {
     const before = emptyCellsCache();
     const after = applyCellDelta(before, { type: 'birth', cell: cell(1) });
@@ -221,6 +251,32 @@ describe('applyRevisionedCellDeltas (batched)', () => {
     expect(out.recentLinks.map((l) => l.seq)).toEqual([1, 2]);
     expect(out.recentLinks.map((l) => l.tx_hash)).toEqual(['0xa', '0xb']);
     expect(out.pulseLinks.map((l) => l.tx_hash)).toEqual(['0xa', '0xb']);
+  });
+
+  it('keeps the prune event one-shot while replacement links receive fresh seq values', () => {
+    let start = emptyCellsCache();
+    start = applyCellDelta(start, linkDelta('0xcanonical', 1));
+    start = applyCellDelta(start, linkDelta('0xorphan', 2));
+
+    const pruned = applyRevisionedCellDeltas(start, [
+      rd(3, { type: 'link_prune', from_block: 2 }),
+      rd(4, linkDelta('0xreplacement', 2)),
+    ]);
+
+    expect(pruned.recentLinks.map((link) => link.tx_hash))
+      .toEqual(['0xcanonical', '0xreplacement']);
+    expect(pruned.pulseLinks.map((link) => link.tx_hash))
+      .toEqual(['0xcanonical', '0xreplacement']);
+    expect(pruned.recentLinks.map((link) => link.seq)).toEqual([1, 3]);
+    expect(pruned.linksSeq).toBe(3);
+    expect(pruned.linkPrune).toEqual({ fromBlock: 2 });
+
+    const marker = pruned.linkPrune;
+    const afterOrdinaryDelta = applyCellDelta(pruned, {
+      type: 'pulse',
+      at_ms: 5000,
+    });
+    expect(afterOrdinaryDelta.linkPrune).toBe(marker);
   });
 });
 

@@ -105,6 +105,8 @@ export type CellDelta =
   | { type: 'pulse'; at_ms: number }
   | { type: 'stats'; total_births: number; total_deaths: number }
   | { type: 'backfill'; done: number; total: number; active: boolean }
+  /** Reorg invalidation boundary: discard every causal link at or above it. */
+  | { type: 'link_prune'; from_block: number }
   | {
       type: 'link';
       tx_hash: string;

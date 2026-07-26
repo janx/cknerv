@@ -169,6 +169,8 @@ describe('planConsensusMemoryTrace', () => {
     expect(plan.pulses.every((pulse) => (
       pulse.color === plan.pulses[0].color
       && pulse.bornAtMs === 1234
+      && pulse.linkSeq === 7
+      && pulse.linkBlock === 99
       && pulse.hopMs >= MEMORY_TRACE_HOP_MS_MIN
       && pulse.hopMs <= MEMORY_TRACE_HOP_MS_MIN + MEMORY_TRACE_HOP_MS_SPAN
     ))).toBe(true);
@@ -252,6 +254,7 @@ describe('planConsensusMemoryTrace', () => {
     const focus = deriveConsensusMemoryTraceFocus(plan, startedAtSec, '7:1');
 
     expect(focus).not.toBeNull();
+    expect(focus).toMatchObject({ linkSeq: 7, linkBlock: 99 });
     expect(focus?.sourceKind).toBe('input');
     expect(new Set(focus?.sources.map((source) => source.id))).toEqual(new Set([1, 2]));
     expect(focus?.sources.map((source) => source.contentHash)).toEqual([

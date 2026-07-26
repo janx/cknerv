@@ -21,6 +21,8 @@ function focus(
   const targetId = path[path.length - 1];
   return {
     key,
+    linkSeq: Number(key.split(':')[0]),
+    linkBlock: Number(key.split(':')[0]),
     sourceKind: 'input',
     sources: [{
       id: sourceId,

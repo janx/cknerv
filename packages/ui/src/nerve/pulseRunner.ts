@@ -31,6 +31,10 @@ export const MAX_PULSES_PER_LINK = 6;
 export const MAX_SOURCES_PER_PARENT = 2;
 
 export interface Pulse {
+  /** Local evidence identity of the CellLink that produced this pulse. */
+  linkSeq: number;
+  /** Canonical block height of that link, used for immediate reorg pruning. */
+  linkBlock: number;
   /** Cells in path order (length ≥ 2). path[0] = source (an alive
    *  sibling of a consumed input), path[last] = a new output cell. */
   path: number[];
@@ -142,7 +146,15 @@ export function planPulses(
         continue;
       }
       const { startDelayMs, hopMs } = pulseTiming(link, src, dst);
-      pulses.push({ path, bornAtMs: nowMs, color, startDelayMs, hopMs });
+      pulses.push({
+        linkSeq: link.seq,
+        linkBlock: link.block,
+        path,
+        bornAtMs: nowMs,
+        color,
+        startDelayMs,
+        hopMs,
+      });
     }
   }
   stats?.bump(pulses.length > 0 ? 'fired' : 'all-paths-failed');

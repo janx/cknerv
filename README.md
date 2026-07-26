@@ -191,6 +191,13 @@ ordering plus compact `endpoint_anchors` containing each endpoint's `id`,
 transaction's spatial and content evidence after a bounded full Cell record is
 garbage-collected; they do not preserve the complete Cell payload.
 
+When a reorg replaces height `N`, the cells stream emits
+`{"type":"link_prune","from_block":N}` before its Cell rollback deltas.
+Consumers must discard retained causal links and queued visual events whose
+`block >= N`; replacement-chain links then arrive as ordinary `link` deltas.
+This keeps inspection, memory recall, and live pulses tied only to the current
+canonical chain.
+
 ## Configuration
 
 `cknerv init` writes a commented `cknerv.toml` template:
