@@ -42,6 +42,17 @@ export interface Cell {
   asset_kind?: AssetKind;
 }
 
+/**
+ * Compact immutable evidence captured when a transaction link is observed.
+ * The full Cell may leave the bounded live projection; this anchor keeps its
+ * real scene position and maintained-content identity.
+ */
+export interface CellLinkEndpointAnchor {
+  id: number;
+  pos_seed: [number, number, number];
+  content_hash: string;
+}
+
 /** Wire shape of one entry in the snapshot's `recent_links` history.
  *  Mirrors the Rust `CellLinkRecord` struct. */
 export interface CellLinkRecord {
@@ -49,6 +60,7 @@ export interface CellLinkRecord {
   block: number;
   from_ids: number[];
   to_ids: number[];
+  endpoint_anchors: CellLinkEndpointAnchor[];
   parents: string[];
   tag: CellTag | null;
   at_ms: number;
@@ -78,6 +90,7 @@ export interface CellLink {
   block: number;
   from_ids: number[];
   to_ids: number[];
+  endpoint_anchors: CellLinkEndpointAnchor[];
   parents: string[];
   tag: CellTag | null;
   at_ms: number;
@@ -98,6 +111,7 @@ export type CellDelta =
       block: number;
       from_ids: number[];
       to_ids: number[];
+      endpoint_anchors: CellLinkEndpointAnchor[];
       parents: string[];
       tag: CellTag | null;
       at_ms: number;

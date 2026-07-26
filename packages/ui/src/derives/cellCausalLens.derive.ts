@@ -1,7 +1,11 @@
-import type { Cell, CellLink } from '@cknerv/types';
+import type {
+  Cell,
+  CellLink,
+  CellLinkEndpointAnchor,
+} from '@cknerv/types';
 import { findCellOriginLink } from './cellConsensusIdentity.derive';
 
-/** Endpoint completeness of one selected Cell's retained origin transaction. */
+/** Anchor completeness of one selected Cell's retained origin transaction. */
 export type CellCausalLensStatus = 'exact' | 'partial' | 'unavailable';
 
 export type CellCausalEndpointRole = 'input' | 'selected' | 'sibling';
@@ -13,8 +17,13 @@ export interface CellCausalEndpoint {
   ordinal: number;
   role: CellCausalEndpointRole;
   /**
-   * Exact projection record when it is still retained. Missing records stay
-   * explicit instead of being replaced by a spatial neighbour or sibling.
+   * Immutable evidence position/content captured by the transaction link.
+   * Unlike the full record, this survives live-cache GC.
+   */
+  anchor: CellLinkEndpointAnchor | null;
+  /**
+   * Full projection record when it is still retained. A null record makes the
+   * anchored endpoint non-navigable; it does not erase its evidence geometry.
    */
   record: Cell | null;
 }
@@ -51,29 +60,51 @@ function uniqueIds(ids: readonly number[]): number[] {
   return unique;
 }
 
+function anchorFromCell(cell: Cell): CellLinkEndpointAnchor {
+  return {
+    id: cell.id,
+    pos_seed: [...cell.pos_seed],
+    content_hash: cell.content_hash,
+  };
+}
+
+function anchorsById(
+  anchors: readonly CellLinkEndpointAnchor[],
+): ReadonlyMap<number, CellLinkEndpointAnchor> {
+  const byId = new Map<number, CellLinkEndpointAnchor>();
+  for (const anchor of anchors) {
+    if (!byId.has(anchor.id)) byId.set(anchor.id, anchor);
+  }
+  return byId;
+}
+
 function endpoint(
   id: number,
   ordinal: number,
   role: CellCausalEndpointRole,
   selectedCell: Cell,
   cells: ReadonlyMap<number, Cell>,
+  linkAnchors: ReadonlyMap<number, CellLinkEndpointAnchor>,
 ): CellCausalEndpoint {
+  const record = role === 'selected' ? selectedCell : cells.get(id) ?? null;
   return {
     id,
     ordinal,
     role,
-    record: role === 'selected' ? selectedCell : cells.get(id) ?? null,
+    anchor: linkAnchors.get(id) ?? (record ? anchorFromCell(record) : null),
+    record,
   };
 }
 
 /**
  * Resolve the selected Cell's real transaction neighbourhood.
  *
- * `exact` means the exact origin link and all recorded endpoint Cell records
- * remain available. `partial` means the link is authoritative but one or more
- * endpoint records have left the live projection cache. `unavailable` means
- * only the selected Cell's immutable tx/block identity remains; no relationship
- * is inferred from a hash-only, block-only, or spatial match.
+ * `exact` means the exact origin link and every endpoint evidence anchor remain
+ * available, even when full spent-Cell records have left the live cache.
+ * `partial` means the link is authoritative but one or more anchors are absent.
+ * `unavailable` means only the selected Cell's immutable tx/block identity
+ * remains; no relationship is inferred from a hash-only, block-only, or
+ * spatial match.
  */
 export function deriveCellCausalLens(
   selectedCell: Cell,
@@ -99,6 +130,7 @@ export function deriveCellCausalLens(
         id: selectedCell.id,
         ordinal: selectedCell.out_point.index,
         role: 'selected',
+        anchor: anchorFromCell(selectedCell),
         record: selectedCell,
       }],
       missingInputIds: [],
@@ -108,12 +140,14 @@ export function deriveCellCausalLens(
 
   const inputIds = uniqueIds(origin.from_ids);
   const outputIds = uniqueIds(origin.to_ids);
+  const linkAnchors = anchorsById(origin.endpoint_anchors);
   const inputs = inputIds.map((id, ordinal) => endpoint(
     id,
     ordinal,
     'input',
     selectedCell,
     cells,
+    linkAnchors,
   ));
   const outputs = outputIds.map((id, ordinal) => endpoint(
     id,
@@ -121,12 +155,13 @@ export function deriveCellCausalLens(
     id === selectedCell.id ? 'selected' : 'sibling',
     selectedCell,
     cells,
+    linkAnchors,
   ));
   const missingInputIds = inputs.flatMap((item) => (
-    item.record ? [] : [item.id]
+    item.anchor ? [] : [item.id]
   ));
   const missingOutputIds = outputs.flatMap((item) => (
-    item.record ? [] : [item.id]
+    item.anchor ? [] : [item.id]
   ));
   const status: CellCausalLensStatus =
     missingInputIds.length === 0 && missingOutputIds.length === 0

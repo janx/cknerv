@@ -88,6 +88,28 @@ pub struct BackfillState {
     pub total: u64,
 }
 
+/// Immutable evidence captured when a transaction link is observed.
+///
+/// The full [`Cell`] may leave the bounded live projection shortly after it is
+/// consumed. This compact anchor keeps only what the causal scene needs to
+/// render the real endpoint and identify its maintained content.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct CellLinkEndpointAnchor {
+    pub id: u64,
+    pub pos_seed: [f32; 3],
+    pub content_hash: String,
+}
+
+impl From<&Cell> for CellLinkEndpointAnchor {
+    fn from(cell: &Cell) -> Self {
+        Self {
+            id: cell.id,
+            pos_seed: cell.pos_seed,
+            content_hash: cell.content_hash.clone(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CellGalaxySnapshot {
     pub cells: Vec<Cell>,
@@ -127,6 +149,9 @@ pub struct CellLinkRecord {
     pub block: u64,
     pub from_ids: Vec<u64>,
     pub to_ids: Vec<u64>,
+    /// Compact input/output evidence in `from_ids` then `to_ids` order.
+    /// Unlike the live Cell set, these anchors survive the death-animation GC.
+    pub endpoint_anchors: Vec<CellLinkEndpointAnchor>,
     /// Unique tx_hashes of the input cells' birth txs. Computed at
     /// emission time from the input outpoints, so it survives later
     /// gc of those input cells.
@@ -182,12 +207,14 @@ pub enum CellDelta {
     /// out a "nerve pulse" particle along each (from, to) pair so
     /// users can see the tx propagate through the cell field.
     /// Emitted alongside the matching Death + Birth deltas; consumers
-    /// resolve cell positions via the entity cache they already hold.
+    /// use `endpoint_anchors` for durable evidence geometry and the live
+    /// entity cache only for richer inspection/navigation.
     Link {
         tx_hash: String,
         block: u64,
         from_ids: Vec<u64>,
         to_ids: Vec<u64>,
+        endpoint_anchors: Vec<CellLinkEndpointAnchor>,
         /// Unique tx_hashes from the input outpoints — same as
         /// `CellLinkRecord.parents`. Lets the frontend construct
         /// parent edges in its tx DAG without having to look up dead
@@ -629,6 +656,8 @@ impl CellGalaxy {
 
         // 1. Death pass — for each input, kill the matching cell.
         let mut dead_ids: Vec<u64> = Vec::with_capacity(inputs.len());
+        let mut endpoint_anchors: Vec<CellLinkEndpointAnchor> =
+            Vec::with_capacity(inputs.len() + outputs.len());
         for inp in inputs {
             if is_cellbase_input(inp) {
                 continue;
@@ -647,6 +676,7 @@ impl CellGalaxy {
                     }
                 }
                 if let Some(cell) = death_snapshot {
+                    endpoint_anchors.push(CellLinkEndpointAnchor::from(&cell));
                     self.block_deaths.entry(block).or_default().push(cell);
                 }
             }
@@ -696,6 +726,7 @@ impl CellGalaxy {
                 .entry(block)
                 .or_default()
                 .push(cell.out_point.clone());
+            endpoint_anchors.push(CellLinkEndpointAnchor::from(&cell));
             self.cells.push(cell);
             birthed_ids.push(id);
         }
@@ -752,6 +783,7 @@ impl CellGalaxy {
                 block,
                 from_ids: dead_ids.clone(),
                 to_ids: birthed_ids.clone(),
+                endpoint_anchors: endpoint_anchors.clone(),
                 parents: parents.clone(),
                 tag: link_tag.clone(),
                 at_ms,
@@ -768,6 +800,7 @@ impl CellGalaxy {
                 block,
                 from_ids: dead_ids,
                 to_ids: birthed_ids,
+                endpoint_anchors,
                 parents,
                 tag: link_tag,
                 at_ms,
@@ -1187,7 +1220,7 @@ mod tests {
     }
 
     #[test]
-    fn tx_landed_emits_link_with_from_and_to_ids() {
+    fn tx_landed_emits_link_with_ids_and_durable_endpoint_anchors() {
         let mut g = make_galaxy();
         // Seed two parent cells we'll consume.
         g.handle_tx_landed("0xa", 1, 1_000, &[], &[out(100, "0x"), out(200, "0x")]);
@@ -1207,6 +1240,7 @@ mod tests {
                     block,
                     from_ids,
                     to_ids,
+                    endpoint_anchors,
                     parents,
                     tag,
                     at_ms,
@@ -1215,6 +1249,7 @@ mod tests {
                     *block,
                     from_ids.clone(),
                     to_ids.clone(),
+                    endpoint_anchors.clone(),
                     parents.clone(),
                     tag.clone(),
                     *at_ms,
@@ -1226,14 +1261,37 @@ mod tests {
         assert_eq!(link.1, 2);
         assert_eq!(link.2, vec![0, 1]); // ids of the two consumed cells
         assert_eq!(link.3, vec![2, 3]); // ids of the two birthed cells
-        assert_eq!(link.4, vec!["0xa".to_string()]); // parent tx hash
-        assert!(link.5.is_none());
-        assert_eq!(link.6, 2_000);
+        assert_eq!(
+            link.4.iter().map(|anchor| anchor.id).collect::<Vec<_>>(),
+            vec![0, 1, 2, 3],
+        );
+        assert_eq!(link.4[0].pos_seed, helix_seed_for(0));
+        assert_eq!(link.4[0].content_hash, out(100, "0x").content_hash);
+        assert_eq!(link.4[3].pos_seed, helix_seed_for(3));
+        assert_eq!(link.4[3].content_hash, out(150, "0x").content_hash);
+        assert_eq!(link.5, vec!["0xa".to_string()]); // parent tx hash
+        assert!(link.6.is_none());
+        assert_eq!(link.7, 2_000);
         // Persisted record was appended too.
         assert_eq!(g.recent_links.len(), 2); // "0xa" + "0xb"
         let last = g.recent_links.last().unwrap();
         assert_eq!(last.tx_hash, "0xb");
         assert_eq!(last.parents, vec!["0xa".to_string()]);
+        assert_eq!(last.endpoint_anchors, link.4);
+
+        // Full input Cells disappear after the death-animation tail, while
+        // the authoritative transaction evidence remains available.
+        g.gc(2_601);
+        assert!(g.cells.iter().all(|cell| cell.id >= 2));
+        let retained = g.recent_links.last().unwrap();
+        assert_eq!(
+            retained
+                .endpoint_anchors
+                .iter()
+                .map(|anchor| anchor.id)
+                .collect::<Vec<_>>(),
+            vec![0, 1, 2, 3],
+        );
     }
 
     #[test]
@@ -1262,13 +1320,20 @@ mod tests {
             .iter()
             .find_map(|d| match d {
                 CellDelta::Link {
-                    from_ids, parents, ..
-                } => Some((from_ids.clone(), parents.clone())),
+                    from_ids,
+                    endpoint_anchors,
+                    parents,
+                    ..
+                } => Some((from_ids.clone(), endpoint_anchors.clone(), parents.clone())),
                 _ => None,
             })
             .unwrap();
         assert!(link.0.is_empty(), "cellbase has no consumed inputs");
-        assert!(link.1.is_empty(), "cellbase has no parent txs");
+        assert_eq!(
+            link.1.iter().map(|anchor| anchor.id).collect::<Vec<_>>(),
+            vec![0],
+        );
+        assert!(link.2.is_empty(), "cellbase has no parent txs");
         assert_eq!(g.recent_links.len(), 1);
     }
 
@@ -1548,6 +1613,10 @@ mod tests {
         assert_eq!(g2.next_id, g.next_id);
         assert_eq!(g2.outpoint_index.len(), g.outpoint_index.len());
         assert_eq!(g2.last_pulse_at_ms, g.last_pulse_at_ms);
+        assert_eq!(
+            g2.recent_links, g.recent_links,
+            "causal links and their endpoint evidence must survive persistence"
+        );
         // Outpoint index entries match.
         for (op, id) in &g.outpoint_index {
             assert_eq!(g2.outpoint_index.get(op), Some(id));
@@ -1846,6 +1915,7 @@ mod tests {
             "block": 1,
             "from_ids": [],
             "to_ids": [],
+            "endpoint_anchors": [],
             "parents": [],
             "otp_kind": "dex",
             "at_ms": 1000,

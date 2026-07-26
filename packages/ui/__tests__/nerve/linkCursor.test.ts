@@ -8,6 +8,7 @@ const link = (seq: number): CellLink => ({
   block: 1,
   from_ids: [],
   to_ids: [],
+  endpoint_anchors: [],
   parents: [],
   tag: null,
   at_ms: 1000 + seq,

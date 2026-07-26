@@ -164,6 +164,7 @@ describe('HudOverlay', () => {
     const origin: CellLink = {
       seq: 3, tx_hash: mockCell.out_point.tx_hash, block: mockCell.birth_block,
       from_ids: [1], to_ids: [mockCell.id], parents: [], tag: null, at_ms: 10,
+      endpoint_anchors: [],
     };
     const onTraceCellWrite = vi.fn();
     const { container, getByRole } = render(
@@ -208,6 +209,7 @@ describe('HudOverlay', () => {
       block: target.birth_block,
       from_ids: [input.id],
       to_ids: [target.id, sibling.id],
+      endpoint_anchors: [],
       parents: [input.out_point.tx_hash],
       tag: null,
       at_ms: 10,
@@ -253,6 +255,7 @@ describe('HudOverlay', () => {
     const origin: CellLink = {
       seq: 3, tx_hash: mockCell.out_point.tx_hash, block: mockCell.birth_block,
       from_ids: [1, 2], to_ids: [mockCell.id], parents: [], tag: null, at_ms: 10,
+      endpoint_anchors: [],
     };
     const onCellTraceRouteHopFocusChange = vi.fn();
     const onCellTraceRouteHopLockChange = vi.fn();

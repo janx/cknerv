@@ -27,6 +27,12 @@ const selected = cell(42, {
   out_point: { tx_hash: hash('ab'), index: 1 },
 });
 
+const anchor = (record: Cell) => ({
+  id: record.id,
+  pos_seed: record.pos_seed,
+  content_hash: record.content_hash,
+});
+
 function link(over: Partial<CellLink> = {}): CellLink {
   return {
     seq: 7,
@@ -34,6 +40,13 @@ function link(over: Partial<CellLink> = {}): CellLink {
     block: selected.birth_block,
     from_ids: [7, 8],
     to_ids: [41, selected.id, 43],
+    endpoint_anchors: [
+      anchor(cell(7)),
+      anchor(cell(8)),
+      anchor(cell(41)),
+      anchor(selected),
+      anchor(cell(43)),
+    ],
     parents: [hash('01'), hash('02')],
     tag: null,
     at_ms: 1_500,
@@ -70,19 +83,34 @@ describe('deriveCellCausalLens', () => {
     expect(lens.missingOutputIds).toEqual([]);
   });
 
-  it('keeps an observed link partial when endpoint records leave the cache', () => {
+  it('keeps exact evidence geometry after full records leave the live cache', () => {
     const lens = deriveCellCausalLens(
       selected,
       [link()],
       records(cell(7), selected, cell(43)),
     );
 
+    expect(lens.status).toBe('exact');
+    expect(lens.missingInputIds).toEqual([]);
+    expect(lens.missingOutputIds).toEqual([]);
+    expect(lens.inputs[1].record).toBeNull();
+    expect(lens.inputs[1].anchor).toEqual(anchor(cell(8)));
+    expect(lens.outputs.find((item) => item.id === 41)?.anchor)
+      .toEqual(anchor(cell(41)));
+    expect(lens.outputs.find((item) => item.id === selected.id)?.record)
+      .toBe(selected);
+  });
+
+  it('stays partial only when neither an anchor nor a full record exists', () => {
+    const lens = deriveCellCausalLens(
+      selected,
+      [link({ endpoint_anchors: [] })],
+      records(cell(7), selected, cell(43)),
+    );
+
     expect(lens.status).toBe('partial');
     expect(lens.missingInputIds).toEqual([8]);
     expect(lens.missingOutputIds).toEqual([41]);
-    expect(lens.inputs[1].record).toBeNull();
-    expect(lens.outputs.find((item) => item.id === selected.id)?.record)
-      .toBe(selected);
   });
 
   it('reports identity-only evidence when no exact origin link is retained', () => {
@@ -104,6 +132,7 @@ describe('deriveCellCausalLens', () => {
       id: selected.id,
       ordinal: selected.out_point.index,
       role: 'selected',
+      anchor: anchor(selected),
       record: selected,
     }]);
   });

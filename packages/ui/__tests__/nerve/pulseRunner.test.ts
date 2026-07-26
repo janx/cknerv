@@ -28,6 +28,7 @@ function mkLink(over: Partial<CellLink> = {}): CellLink {
     block: 1,
     from_ids: [],
     to_ids: [2],
+    endpoint_anchors: [],
     parents: ['0xparent'],
     tag: null,
     at_ms: 0,

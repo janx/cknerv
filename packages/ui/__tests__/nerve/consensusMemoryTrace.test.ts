@@ -71,6 +71,7 @@ function link(over: Partial<CellLink> = {}): CellLink {
     block: 99,
     from_ids: [1, 2],
     to_ids: [5],
+    endpoint_anchors: [],
     parents: [],
     tag: null,
     at_ms: 1234,

@@ -185,6 +185,12 @@ fall back to the SPA.
 The projection route name for the cell galaxy is literally `cells`
 (`CellGalaxy::name()`).
 
+Each entry in `snapshot.recent_links` keeps `from_ids` / `to_ids` for causal
+ordering plus compact `endpoint_anchors` containing each endpoint's `id`,
+`pos_seed`, and `content_hash`. These immutable anchors preserve the observed
+transaction's spatial and content evidence after a bounded full Cell record is
+garbage-collected; they do not preserve the complete Cell payload.
+
 ## Configuration
 
 `cknerv init` writes a commented `cknerv.toml` template:
@@ -238,6 +244,10 @@ exists, and lets the normal forward poll catch up any downtime gap.
 Persistence is best-effort: unreadable, corrupt, or schema-mismatched state is
 discarded and the server starts empty. `cknerv prune --confirm` deletes derived
 `data/` state while preserving `cknerv.toml`.
+
+Persistence schema v3 adds durable Cell-link endpoint anchors. Existing
+schema-v2 state is incompatible; run `cknerv prune --confirm` before the first
+v3 launch, then let cknerv rebuild the derived state from the configured node.
 
 ## Build and Test
 

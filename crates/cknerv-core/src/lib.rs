@@ -29,7 +29,8 @@ pub use helix::{helix_seed_f64, helix_seed_for};
 pub use mutation::{Mutation, RevisionedMutation};
 pub use outpoint::{is_cellbase_input, CellOutput, OutPoint, TxOutputInfo};
 pub use projection::cells::{
-    Cell, CellDelta, CellGalaxy, CellGalaxyPersisted, CellGalaxySnapshot, CellLinkRecord,
+    Cell, CellDelta, CellGalaxy, CellGalaxyPersisted, CellGalaxySnapshot, CellLinkEndpointAnchor,
+    CellLinkRecord,
 };
 pub use projection::Projection;
 pub use ring::Ring;

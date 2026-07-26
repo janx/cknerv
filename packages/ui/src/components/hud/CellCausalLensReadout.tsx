@@ -30,12 +30,17 @@ function statusMeta(lens: CellCausalLens): {
   provenance: 'observed' | 'identity-only';
   note: string;
 } {
+  const archived = [...lens.inputs, ...lens.outputs].filter((endpoint) => (
+    endpoint.anchor !== null && endpoint.record === null
+  )).length;
   if (lens.status === 'exact') {
     return {
       color: EXACT,
       label: 'EXACT',
       provenance: 'observed',
-      note: 'OBSERVED LINK · ALL ENDPOINT RECORDS RETAINED',
+      note: archived > 0
+        ? `OBSERVED LINK · ${archived} ARCHIVED ANCHOR${archived === 1 ? '' : 'S'}`
+        : 'OBSERVED LINK · ALL ENDPOINT RECORDS LIVE',
     };
   }
   if (lens.status === 'partial') {
@@ -44,7 +49,7 @@ function statusMeta(lens: CellCausalLens): {
       color: PARTIAL,
       label: 'PARTIAL',
       provenance: 'observed',
-      note: `OBSERVED LINK · ${missing} ENDPOINT${missing === 1 ? '' : 'S'} OUTSIDE LIVE CACHE`,
+      note: `OBSERVED LINK · ${missing} ENDPOINT ANCHOR${missing === 1 ? '' : 'S'} MISSING`,
     };
   }
   return {
@@ -80,8 +85,11 @@ export default function CellCausalLensReadout({
   navigation?: CellCausalNavigationReadout | null;
 }) {
   const meta = statusMeta(lens);
-  const retainedInputs = lens.inputs.filter((item) => item.record).length;
-  const retainedOutputs = lens.outputs.filter((item) => item.record).length;
+  const anchoredInputs = lens.inputs.filter((item) => item.anchor).length;
+  const anchoredOutputs = lens.outputs.filter((item) => item.anchor).length;
+  const archivedEndpoints = [...lens.inputs, ...lens.outputs].filter(
+    (item) => item.anchor !== null && item.record === null,
+  ).length;
   const siblings = lens.outputCount === null
     ? null
     : Math.max(0, lens.outputCount - 1);
@@ -144,10 +152,11 @@ export default function CellCausalLensReadout({
       data-causal-tx={lens.txHash}
       data-causal-block={lens.block}
       data-causal-link-seq={lens.linkSeq ?? ''}
-      data-causal-inputs-retained={retainedInputs}
+      data-causal-inputs-anchored={anchoredInputs}
       data-causal-inputs-total={lens.inputCount ?? ''}
-      data-causal-outputs-retained={retainedOutputs}
+      data-causal-outputs-anchored={anchoredOutputs}
       data-causal-outputs-total={lens.outputCount ?? ''}
+      data-causal-endpoints-archived={archivedEndpoints}
       style={{
         position: 'relative',
         marginTop: 6,
@@ -219,7 +228,7 @@ export default function CellCausalLensReadout({
         marginTop: 4,
       }}>
         <span style={{ ...flowCell, color: '#BBA8FF' }}>
-          {endpointCount(retainedInputs, lens.inputCount, 'INPUTS')}
+          {endpointCount(anchoredInputs, lens.inputCount, 'INPUTS')}
         </span>
         <span
           aria-hidden="true"
@@ -233,7 +242,7 @@ export default function CellCausalLensReadout({
           ─◇ TX ◆─
         </span>
         <span style={{ ...flowCell, color: '#FFD29A', textAlign: 'right' }}>
-          {endpointCount(retainedOutputs, lens.outputCount, 'OUTPUTS')}
+          {endpointCount(anchoredOutputs, lens.outputCount, 'OUTPUTS')}
         </span>
       </div>
 

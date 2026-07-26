@@ -10,7 +10,7 @@
 //!
 //! ```json
 //! {
-//!   "schema_version": 1,
+//!   "schema_version": 3,
 //!   "entities":   { "revision": N, "chain": {...}, "chain_nodes": [...] },
 //!   "projections": { "<projection-name>": <save-blob>, ... }
 //!   // NOTE: live `peers` are ephemeral and intentionally NOT persisted.
@@ -31,7 +31,7 @@ use crate::state::ServerState;
 
 /// Bumped when the on-disk shape changes incompatibly. Older files are
 /// ignored on load.
-pub const SCHEMA_VERSION: u32 = 2;
+pub const SCHEMA_VERSION: u32 = 3;
 
 /// Filename inside `<workdir>/`. Atomic write goes to `<name>.tmp` and
 /// renames over it. Per spec §6.
@@ -221,13 +221,13 @@ mod tests {
     }
 
     #[test]
-    fn load_with_wrong_schema_discards_file() {
+    fn load_with_schema_v2_discards_file() {
         let workdir = tmpdir();
         let path = persisted_path(&workdir);
         std::fs::write(
             &path,
             serde_json::to_vec(&serde_json::json!({
-                "schema_version": SCHEMA_VERSION + 99,
+                "schema_version": 2,
                 "entities": {},
                 "projections": {},
             }))
