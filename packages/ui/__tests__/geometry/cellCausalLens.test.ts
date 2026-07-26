@@ -61,20 +61,56 @@ describe('deriveCellCausalLensLayout', () => {
       arc.role,
       arc.endpointId,
       arc.navigationTargetId,
+      arc.laneIndex,
+      arc.laneCount,
     ])).toEqual([
-      ['input', 1, 1],
-      ['input', 2, 2],
-      ['input', 3, 3],
-      ['sibling-output', 7, 7],
-      ['sibling-output', 8, 8],
-      ['selected-output', 9, null],
-      ['sibling-output', 10, 10],
+      ['input', 1, 1, 0, 3],
+      ['input', 2, 2, 1, 3],
+      ['input', 3, 3, 2, 3],
+      ['sibling-output', 7, 7, 0, 4],
+      ['sibling-output', 8, 8, 1, 4],
+      ['selected-output', 9, null, 2, 4],
+      ['sibling-output', 10, 10, 3, 4],
     ]);
     expect(layout.arcs.every((arc) => (
       arc.role === 'input'
         ? arc.to.every((value, index) => value === layout.hub[index])
         : arc.from.every((value, index) => value === layout.hub[index])
     ))).toBe(true);
+  });
+
+  it('keeps every carrier in its radial plane and layers transaction order', () => {
+    const lens = deriveCellCausalLens(selected, [causalLink], records);
+    const layout = deriveCellCausalLensLayout(lens);
+
+    for (const arc of layout.arcs) {
+      const endpoint = arc.role === 'input' ? arc.from : arc.to;
+      const endpointX = endpoint[0] - layout.hub[0];
+      const endpointZ = endpoint[2] - layout.hub[2];
+      const controlX = arc.control[0] - layout.hub[0];
+      const controlZ = arc.control[2] - layout.hub[2];
+      expect(endpointX * controlZ - endpointZ * controlX).toBeCloseTo(0, 8);
+    }
+
+    const inputs = layout.arcs.filter((arc) => arc.role === 'input');
+    const siblings = layout.arcs.filter(
+      (arc) => arc.role === 'sibling-output',
+    );
+    const shoulderLift = (arc: (typeof layout.arcs)[number]) => (
+      arc.control[1] - Math.max(arc.from[1], arc.to[1])
+    );
+    const inputShoulders = inputs.map(shoulderLift);
+    const siblingShoulders = siblings.map(shoulderLift);
+    expect(inputShoulders).toEqual(
+      [...inputShoulders].sort((a, b) => a - b),
+    );
+    expect(siblingShoulders).toEqual(
+      [...siblingShoulders].sort((a, b) => a - b),
+    );
+    expect(Math.min(...inputShoulders)).toBeGreaterThan(
+      Math.max(...siblingShoulders),
+    );
+    expect(siblings.map((arc) => arc.laneIndex)).toEqual([0, 1, 3]);
   });
 
   it('always keeps the selected output while applying presentation caps', () => {

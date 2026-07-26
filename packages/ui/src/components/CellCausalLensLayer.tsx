@@ -5,6 +5,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type RefObject,
 } from 'react';
 import { Billboard, Html } from '@react-three/drei';
 import { useFrame, useThree } from '@react-three/fiber';
@@ -13,6 +14,10 @@ import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js';
 import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js';
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 import type { CellCausalLens } from '../derives/cellCausalLens.derive';
+import {
+  deriveCellCausalLabelPlacement,
+  type CellCausalScreenRect,
+} from '../derives/cellCausalLabel.derive';
 import { cellCanvasCursor } from '../derives/cellInteraction.derive';
 import {
   cellCausalArcPoint,
@@ -24,6 +29,8 @@ import { useReducedMotion } from './hud/useReducedMotion';
 
 const ARC_SEGMENTS = 18;
 const ENDPOINT_PICK_RADIUS_PX = 10;
+const ENDPOINT_LABEL_GAP_PX = 12;
+const ENDPOINT_LABEL_VIEWPORT_MARGIN_PX = 8;
 const INPUT_COLOR: readonly [number, number, number] = [0.47, 0.38, 1];
 const SIBLING_COLOR: readonly [number, number, number] = [1, 0.48, 0.12];
 const SELECTED_COLOR: readonly [number, number, number] = [1, 0.82, 0.47];
@@ -136,6 +143,178 @@ function shortHash(value: string): string {
   return value.length <= 14
     ? value
     : `${value.slice(0, 8)}…${value.slice(-4)}`;
+}
+
+function canvasLocalRect(
+  rect: DOMRect,
+  canvasRect: DOMRect,
+): CellCausalScreenRect {
+  return {
+    left: rect.left - canvasRect.left,
+    top: rect.top - canvasRect.top,
+    right: rect.right - canvasRect.left,
+    bottom: rect.bottom - canvasRect.top,
+  };
+}
+
+function visibleCanvasOcclusions(
+  canvasRect: DOMRect,
+  hubLabel: HTMLDivElement | null,
+): CellCausalScreenRect[] {
+  if (typeof document === 'undefined') return [];
+  const candidates: HTMLElement[] = Array.from(
+    document.querySelectorAll<HTMLElement>('[data-hud-occlusion="true"]'),
+  );
+  if (hubLabel) candidates.push(hubLabel);
+  return candidates.flatMap((element) => {
+    const rect = canvasLocalRect(element.getBoundingClientRect(), canvasRect);
+    const clipped: CellCausalScreenRect = {
+      left: Math.max(0, rect.left),
+      top: Math.max(0, rect.top),
+      right: Math.min(canvasRect.width, rect.right),
+      bottom: Math.min(canvasRect.height, rect.bottom),
+    };
+    return clipped.right > clipped.left && clipped.bottom > clipped.top
+      ? [clipped]
+      : [];
+  });
+}
+
+function CellCausalNavigationLabel({
+  color,
+  hubRef,
+  hubLabelRef,
+  laneCount,
+  laneIndex,
+  navigationTargetId,
+  role,
+}: {
+  color: string;
+  hubRef: RefObject<THREE.Group | null>;
+  hubLabelRef: RefObject<HTMLDivElement | null>;
+  laneCount: number;
+  laneIndex: number;
+  navigationTargetId: number;
+  role: CellCausalArcRole;
+}) {
+  const anchorRef = useRef<THREE.Object3D>(null);
+  const labelRef = useRef<HTMLDivElement>(null);
+  const placementSignatureRef = useRef('');
+  const endpointWorldRef = useRef(new THREE.Vector3());
+  const hubWorldRef = useRef(new THREE.Vector3());
+  const camera = useThree((state) => state.camera);
+  const canvas = useThree((state) => state.gl.domElement);
+  const fallbackSize = useThree((state) => state.size);
+
+  useFrame(() => {
+    const anchor = anchorRef.current;
+    const hub = hubRef.current;
+    const label = labelRef.current;
+    if (!anchor || !hub || !label) return;
+    const measuredCanvasRect = canvas.getBoundingClientRect();
+    const width = measuredCanvasRect.width > 0
+      ? measuredCanvasRect.width
+      : fallbackSize.width;
+    const height = measuredCanvasRect.height > 0
+      ? measuredCanvasRect.height
+      : fallbackSize.height;
+    const canvasRect = measuredCanvasRect.width > 0
+      && measuredCanvasRect.height > 0
+      ? measuredCanvasRect
+      : new DOMRect(0, 0, width, height);
+    anchor.updateWorldMatrix(true, false);
+    hub.updateWorldMatrix(true, false);
+    const endpointWorld = anchor.getWorldPosition(endpointWorldRef.current);
+    const hubWorld = hub.getWorldPosition(hubWorldRef.current);
+    endpointWorld.project(camera);
+    hubWorld.project(camera);
+    const placement = deriveCellCausalLabelPlacement({
+      endpoint: {
+        x: (endpointWorld.x * 0.5 + 0.5) * width,
+        y: (-endpointWorld.y * 0.5 + 0.5) * height,
+      },
+      hub: {
+        x: (hubWorld.x * 0.5 + 0.5) * width,
+        y: (-hubWorld.y * 0.5 + 0.5) * height,
+      },
+      viewport: { width, height },
+      label: {
+        width: label.offsetWidth,
+        height: label.offsetHeight,
+      },
+      occlusions: visibleCanvasOcclusions(
+        canvasRect,
+        hubLabelRef.current,
+      ),
+      gap: ENDPOINT_LABEL_GAP_PX,
+      margin: ENDPOINT_LABEL_VIEWPORT_MARGIN_PX,
+    });
+    const offsetX = Math.round(placement.offsetX * 10) / 10;
+    const offsetY = Math.round(placement.offsetY * 10) / 10;
+    const signature = [
+      offsetX,
+      offsetY,
+      placement.strategy,
+      placement.avoidedOcclusion,
+      placement.clampedToViewport,
+    ].join(':');
+    if (signature === placementSignatureRef.current) return;
+    placementSignatureRef.current = signature;
+    label.style.transform = `translate3d(${offsetX}px,${offsetY}px,0)`;
+    const placedLeft = offsetX < 0;
+    label.style.borderLeftColor = placedLeft ? `${color}33` : color;
+    label.style.borderRightColor = placedLeft ? color : `${color}33`;
+    label.dataset.causalLabelPlacement = placement.strategy;
+    label.dataset.causalLabelAvoidedOcclusion = String(
+      placement.avoidedOcclusion,
+    );
+    label.dataset.causalLabelViewportClamped = String(
+      placement.clampedToViewport,
+    );
+    label.dataset.causalLabelOffset = `${offsetX},${offsetY}`;
+  });
+
+  return (
+    <>
+      <object3D ref={anchorRef} />
+      <Html
+        center
+        zIndexRange={[8, 8]}
+        occlude={false}
+        style={{ pointerEvents: 'none' }}
+      >
+        <div
+          ref={labelRef}
+          aria-hidden="true"
+          data-cell-causal-navigation-label="true"
+          data-causal-navigation-target={navigationTargetId}
+          data-causal-label-placement="pending"
+          data-causal-label-avoided-occlusion="false"
+          data-causal-label-viewport-clamped="false"
+          data-causal-lane-index={laneIndex}
+          data-causal-lane-count={laneCount}
+          style={{
+            padding: '3px 6px',
+            border: `1px solid ${color}33`,
+            background: 'rgba(1,5,15,.92)',
+            boxShadow: `0 0 12px ${color}22`,
+            color,
+            fontFamily: "'Share Tech Mono', ui-monospace, monospace",
+            fontSize: 7.5,
+            letterSpacing: 0.62,
+            whiteSpace: 'nowrap',
+            pointerEvents: 'none',
+            willChange: 'transform',
+          }}
+        >
+          {navigationRoleLabel(role)} #{navigationTargetId}
+          <span style={{ color: '#E8E8E8', opacity: 0.62 }}>
+            {' · FOLLOW'}
+          </span>
+        </div>
+      </Html>
+    </>
+  );
 }
 
 function sceneSignature(lens: CellCausalLens): string {
@@ -304,8 +483,9 @@ function CellCausalLensLayer({
   const size = useThree((state) => state.size);
   const gl = useThree((state) => state.gl);
   const reducedMotion = useReducedMotion();
+  const hubAnchorRef = useRef<THREE.Group>(null);
   const hubGlyphRef = useRef<THREE.Group>(null);
-  const labelRef = useRef<HTMLDivElement>(null);
+  const hubLabelRef = useRef<HTMLDivElement>(null);
   const startedAtRef = useRef<number | null>(null);
   const [hoveredNavigationTargetId, setHoveredNavigationTargetId] = useState<
     number | null
@@ -386,8 +566,8 @@ function CellCausalLensLayer({
         : Math.PI * 0.25 + Math.min(1, age / 0.8) * Math.PI * 0.5;
       hubGlyphRef.current.scale.setScalar(0.82 + intro * 0.18);
     }
-    if (labelRef.current) {
-      labelRef.current.style.opacity = intro.toFixed(3);
+    if (hubLabelRef.current) {
+      hubLabelRef.current.style.opacity = intro.toFixed(3);
     }
   });
 
@@ -410,6 +590,13 @@ function CellCausalLensLayer({
         ).length,
         cellCausalLensHiddenInputs: layout.hiddenInputCount,
         cellCausalLensHiddenSiblings: layout.hiddenSiblingCount,
+        cellCausalLensArcLayout: 'radial-tier-v1',
+        cellCausalLensInputLanes: layout.arcs.filter(
+          (arc) => arc.role === 'input',
+        ).length,
+        cellCausalLensOutputLanes: layout.arcs.filter(
+          (arc) => arc.role !== 'input',
+        ).length,
       }}
     >
       <primitive object={built.glow} dispose={null} />
@@ -422,7 +609,7 @@ function CellCausalLensLayer({
         />
       ) : null}
 
-      <group position={layout.hub}>
+      <group ref={hubAnchorRef} position={layout.hub}>
         <Billboard follow>
           <group ref={hubGlyphRef}>
             <mesh renderOrder={15}>
@@ -484,6 +671,12 @@ function CellCausalLensLayer({
               cellCausalEndpointId: arc.endpointId,
               cellCausalEndpointNavigable: navigable,
               cellCausalNavigationTarget: navigationTargetId ?? -1,
+              cellCausalArcLaneIndex: arc.laneIndex,
+              cellCausalArcLaneCount: arc.laneCount,
+              cellCausalArcLayout: 'radial-tier-v1',
+              cellCausalArcFrom: [...arc.from],
+              cellCausalArcControl: [...arc.control],
+              cellCausalArcTo: [...arc.to],
             }}
           >
             <Billboard follow>
@@ -527,37 +720,15 @@ function CellCausalLensLayer({
               </group>
             </Billboard>
             {hovered && navigationTargetId !== null ? (
-              <Html
-                position={[0, 0.62, 0]}
-                center
-                zIndexRange={[8, 8]}
-                occlude={false}
-                style={{ pointerEvents: 'none' }}
-              >
-                <div
-                  aria-hidden="true"
-                  data-cell-causal-navigation-label="true"
-                  data-causal-navigation-target={navigationTargetId}
-                  style={{
-                    padding: '3px 6px',
-                    border: `1px solid ${color}66`,
-                    borderLeftColor: color,
-                    background: 'rgba(1,5,15,.92)',
-                    boxShadow: `0 0 12px ${color}22`,
-                    color,
-                    fontFamily: "'Share Tech Mono', ui-monospace, monospace",
-                    fontSize: 7.5,
-                    letterSpacing: 0.62,
-                    whiteSpace: 'nowrap',
-                    pointerEvents: 'none',
-                  }}
-                >
-                  {navigationRoleLabel(arc.role)} #{navigationTargetId}
-                  <span style={{ color: '#E8E8E8', opacity: 0.62 }}>
-                    {' · FOLLOW'}
-                  </span>
-                </div>
-              </Html>
+              <CellCausalNavigationLabel
+                color={color}
+                hubRef={hubAnchorRef}
+                hubLabelRef={hubLabelRef}
+                laneCount={arc.laneCount}
+                laneIndex={arc.laneIndex}
+                navigationTargetId={navigationTargetId}
+                role={arc.role}
+              />
             ) : null}
           </group>
         );
@@ -571,7 +742,7 @@ function CellCausalLensLayer({
         style={{ pointerEvents: 'none' }}
       >
         <div
-          ref={labelRef}
+          ref={hubLabelRef}
           aria-hidden="true"
           data-cell-causal-lens-label="true"
           data-causal-status={lens.status}
