@@ -9,6 +9,7 @@ export {
   fromCellsSnapshot,
   applyCellDelta,
   applyRevisionedCellDeltas,
+  DEFAULT_RECENT_LINKS_CAPACITY,
   DEFAULT_LINK_RING_CAPACITY,
   type CellGalaxyCache,
   type CellsReducerOptions,

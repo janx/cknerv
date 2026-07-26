@@ -14,12 +14,25 @@ import type {
   RevisionedCellDelta,
 } from '@cknerv/types';
 
-/** FIFO retention for nerve-pulse causal edges. Pulses live ~0.8 s on
- *  the GPU, so 128 entries is plenty even at burst rates of ~150 tx/s. */
+/** Causal evidence history retained for inspection and memory recall.
+ *  Mirrors the backend's default `recent_links_cap`. */
+export const DEFAULT_RECENT_LINKS_CAPACITY = 2048;
+
+/** FIFO retention for newly-arrived links that may trigger live visual
+ *  pulses. Pulses live ~0.8 s on the GPU, so 128 entries is enough even at
+ *  burst rates of ~150 tx/s. Snapshot history never enters this queue. */
 export const DEFAULT_LINK_RING_CAPACITY = 128;
 
 export interface CellsReducerOptions {
+  recentLinksCapacity?: number;
   linkRingCapacity?: number;
+}
+
+function recentLinksCapacity(opts?: CellsReducerOptions): number {
+  return Math.max(
+    0,
+    opts?.recentLinksCapacity ?? DEFAULT_RECENT_LINKS_CAPACITY,
+  );
 }
 
 function linkRingCapacity(opts?: CellsReducerOptions): number {
@@ -33,10 +46,14 @@ export interface CellGalaxyCache {
    *  semantics). */
   cells: Map<number, Cell>;
   lastPulseAtMs: number;
-  /** Recent causal edges (input cells → output cells of one tx). FIFO,
-   *  capped at LINK_RING_CAPACITY. NervePulses tracks its own consumed-up-to
-   *  seq cursor and processes anything with a higher seq. */
+  /** Authoritative recent causal evidence used by inspection, identity, and
+   *  memory recall. Snapshot history hydrates this FIFO in full up to the
+   *  configured evidence capacity. */
   recentLinks: CellLink[];
+  /** Newly-arrived Link deltas available to live pulse/highlight consumers.
+   *  This short FIFO is empty after snapshot hydration, preventing historical
+   *  evidence from replaying as current activity. */
+  pulseLinks: CellLink[];
   /** Monotonic seq assigned to the most recent link. 0 = no link yet. */
   linksSeq: number;
   /** Cumulative on-chain counters mirrored from the backend. CellsHud reads
@@ -56,6 +73,7 @@ export function emptyCellsCache(): CellGalaxyCache {
     cells: new Map(),
     lastPulseAtMs: 0,
     recentLinks: [],
+    pulseLinks: [],
     linksSeq: 0,
     totalBirths: 0,
     totalDeaths: 0,
@@ -70,13 +88,13 @@ export function fromCellsSnapshot(
 ): CellGalaxyCache {
   const cells = new Map<number, Cell>();
   for (const c of snap.cells) cells.set(c.id, c);
-  // Hydrate recentLinks from the snapshot's historical link records,
-  // assigning sequential seq numbers in chronological order. The
-  // backend ships these so the frontend tx DAG can be reconstructed
-  // on first paint without orphaning cells alive at page load.
+  // Hydrate the authoritative evidence history from snapshot records,
+  // assigning sequential seq numbers in chronological order. Historical
+  // records deliberately do not enter `pulseLinks`: loading a page is not a
+  // new chain event and must not replay old traffic.
   const records: CellLinkRecord[] = snap.recent_links ?? [];
   const sorted = [...records].sort((a, b) => a.at_ms - b.at_ms);
-  const cap = linkRingCapacity(opts);
+  const cap = recentLinksCapacity(opts);
   const capped = cap === 0 ? [] : sorted.slice(-cap);
   const recentLinks: CellLink[] = capped.map((r, i) => ({
     seq: i + 1,
@@ -94,6 +112,7 @@ export function fromCellsSnapshot(
     cells,
     lastPulseAtMs: snap.last_pulse_at_ms,
     recentLinks,
+    pulseLinks: [],
     linksSeq: recentLinks.length,
     totalBirths: snap.total_births ?? 0,
     totalDeaths: snap.total_deaths ?? 0,
@@ -101,11 +120,27 @@ export function fromCellsSnapshot(
   };
 }
 
-/** Shallow working copy whose `cells` Map and `recentLinks` array are fresh
- *  so in-place mutation never leaks into the caller's cache. Primitive fields
- *  ride along via spread. */
+/** Shallow working copy whose mutable collections are fresh so in-place
+ *  mutation never leaks into the caller's cache. Primitive fields ride along
+ *  via spread. */
 function cloneForMutation(prev: CellGalaxyCache): CellGalaxyCache {
-  return { ...prev, cells: new Map(prev.cells), recentLinks: prev.recentLinks.slice() };
+  return {
+    ...prev,
+    cells: new Map(prev.cells),
+    recentLinks: prev.recentLinks.slice(),
+    pulseLinks: prev.pulseLinks.slice(),
+  };
+}
+
+function appendBounded<T>(items: T[], item: T, capacity: number): void {
+  if (capacity === 0) {
+    items.length = 0;
+    return;
+  }
+  items.push(item);
+  if (items.length > capacity) {
+    items.splice(0, items.length - capacity);
+  }
 }
 
 /** Apply one delta to `c` **in place**. Returns true iff something changed
@@ -159,15 +194,8 @@ function mutateCellDelta(
         tag: d.tag,
         at_ms: d.at_ms,
       };
-      const cap = linkRingCapacity(opts);
-      if (cap === 0) {
-        c.recentLinks = [];
-      } else {
-        c.recentLinks.push(link);
-        if (c.recentLinks.length > cap) {
-          c.recentLinks.splice(0, c.recentLinks.length - cap);
-        }
-      }
+      appendBounded(c.recentLinks, link, recentLinksCapacity(opts));
+      appendBounded(c.pulseLinks, link, linkRingCapacity(opts));
       c.linksSeq = nextSeq;
       return true;
     }

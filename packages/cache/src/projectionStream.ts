@@ -32,6 +32,7 @@ function resolveWsUrl(url: string): string {
 
 export interface ProjectionStreamOptions {
   reconnectMs?: number;
+  recentLinksCapacity?: number;
   linkRingCapacity?: number;
 }
 

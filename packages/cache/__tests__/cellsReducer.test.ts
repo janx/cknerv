@@ -122,11 +122,12 @@ describe('applyCellDelta', () => {
     expect(c.recentLinks[0].tx_hash).toBe('0xtx');
     expect(c.recentLinks[0].endpoint_anchors.map((anchor) => anchor.id))
       .toEqual([1, 2]);
+    expect(c.pulseLinks).toEqual(c.recentLinks);
   });
 
-  it('link retention respects a configured ring capacity', () => {
+  it('retains evidence and pulse events under independent capacities', () => {
     let c = emptyCellsCache();
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 4; i++) {
       c = applyCellDelta(
         c,
         {
@@ -140,12 +141,17 @@ describe('applyCellDelta', () => {
           tag: null,
           at_ms: 1000 + i,
         },
-        { linkRingCapacity: 2 },
+        {
+          recentLinksCapacity: 3,
+          linkRingCapacity: 2,
+        },
       );
     }
 
-    expect(c.recentLinks.map((l) => l.tx_hash)).toEqual(['0xtx1', '0xtx2']);
-    expect(c.linksSeq).toBe(3);
+    expect(c.recentLinks.map((l) => l.tx_hash))
+      .toEqual(['0xtx1', '0xtx2', '0xtx3']);
+    expect(c.pulseLinks.map((l) => l.tx_hash)).toEqual(['0xtx2', '0xtx3']);
+    expect(c.linksSeq).toBe(4);
   });
 
   it('returns a new reference on a birth (purity)', () => {
@@ -214,6 +220,7 @@ describe('applyRevisionedCellDeltas (batched)', () => {
     expect(out.linksSeq).toBe(2);
     expect(out.recentLinks.map((l) => l.seq)).toEqual([1, 2]);
     expect(out.recentLinks.map((l) => l.tx_hash)).toEqual(['0xa', '0xb']);
+    expect(out.pulseLinks.map((l) => l.tx_hash)).toEqual(['0xa', '0xb']);
   });
 });
 
@@ -270,11 +277,12 @@ describe('fromCellsSnapshot', () => {
     expect(c.totalBirths).toBe(2);
     expect(c.recentLinks.length).toBe(1);
     expect(c.recentLinks[0].seq).toBe(1);
+    expect(c.pulseLinks).toEqual([]);
     expect(c.linksSeq).toBe(1);
     expect(c.lastPulseAtMs).toBe(1234);
   });
 
-  it('trims hydrated recent_links with a configured ring capacity', () => {
+  it('hydrates the evidence window without replaying snapshot links as pulses', () => {
     const snap: CellGalaxySnapshot = {
       cells: [],
       last_pulse_at_ms: 0,
@@ -290,9 +298,40 @@ describe('fromCellsSnapshot', () => {
       })),
     };
 
-    const c = fromCellsSnapshot(7, snap, { linkRingCapacity: 2 });
+    const c = fromCellsSnapshot(7, snap, {
+      recentLinksCapacity: 3,
+      linkRingCapacity: 1,
+    });
+
+    expect(c.recentLinks.map((l) => l.tx_hash))
+      .toEqual(['0xtx0', '0xtx1', '0xtx2']);
+    expect(c.pulseLinks).toEqual([]);
+    expect(c.linksSeq).toBe(3);
+  });
+
+  it('trims hydrated evidence only with the evidence capacity', () => {
+    const snap: CellGalaxySnapshot = {
+      cells: [],
+      last_pulse_at_ms: 0,
+      recent_links: [0, 1, 2].map((i) => ({
+        tx_hash: `0xtx${i}`,
+        block: i,
+        from_ids: [],
+        to_ids: [i],
+        endpoint_anchors: [],
+        parents: [],
+        tag: null,
+        at_ms: 1000 + i,
+      })),
+    };
+
+    const c = fromCellsSnapshot(7, snap, {
+      recentLinksCapacity: 2,
+      linkRingCapacity: 1,
+    });
 
     expect(c.recentLinks.map((l) => l.tx_hash)).toEqual(['0xtx1', '0xtx2']);
+    expect(c.pulseLinks).toEqual([]);
     expect(c.linksSeq).toBe(2);
   });
 });

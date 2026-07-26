@@ -313,14 +313,31 @@ export default function NeuralNetwork({
   // Pulse queue. Pulses are removed when their head reaches the
   // terminal cell (or after a generous fallback lifetime).
   const pulsesRef = useRef<ActivePulse[]>([]);
-  const lastLinksSeqRef = useRef<number>(0);
+  const lastLinksSeqRef = useRef<number>(cellsCache.linksSeq);
   useEffect(() => {
+    if (cellsCache.pulseLinks.length === 0) {
+      // Snapshot hydration (including a lag recovery) replaces the evidence
+      // archive but intentionally carries no live events. Rebase the local
+      // cursor so historical records can never replay as current traffic.
+      lastLinksSeqRef.current = cellsCache.linksSeq;
+      return;
+    }
+    const newestPulseSeq = cellsCache.pulseLinks.at(-1)?.seq ?? 0;
+    if (newestPulseSeq < lastLinksSeqRef.current) {
+      // A full snapshot can re-sequence the local evidence archive. WebSocket
+      // messages normally render the empty queue first, but recover safely if
+      // React batches that snapshot with the first subsequent Link delta.
+      lastLinksSeqRef.current = Math.max(
+        0,
+        (cellsCache.pulseLinks[0]?.seq ?? 1) - 1,
+      );
+    }
     // Decide which links fire + plan their pulses. While a backfill/catch-up
     // is active this returns planned=[] but still advances the cursor, so the
     // storm is suppressed and the window does not replay when `backfill`
     // clears. Drop reasons + per-block rollup are recorded into pulseStats.
     const { planned, nextSeq } = planLinkBatch(
-      cellsCache.recentLinks,
+      cellsCache.pulseLinks,
       lastLinksSeqRef.current,
       !!cellsCache.backfill,
       cellsCache.cells,
@@ -349,7 +366,8 @@ export default function NeuralNetwork({
       pulsesRef.current.splice(0, overflow);
     }
   }, [
-    cellsCache.recentLinks,
+    cellsCache.pulseLinks,
+    cellsCache.linksSeq,
     cellsCache.cells,
     cellsCache.backfill,
     topology?.maxHops,

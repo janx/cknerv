@@ -228,6 +228,10 @@ uses a smaller cell cap and shorter default backfill; `mainnet` uses sparser
 topology and lower pulse caps to reduce visual noise; `auto`, `testnet`, and
 `custom` start from balanced defaults.
 
+`recent_links_cap` retains authoritative causal evidence for inspection and
+memory recall. `pulses.link_ring_capacity` bounds only newly-arrived animation
+events; snapshot history is never replayed as live traffic.
+
 ## Persistence
 
 On Ctrl-C/SIGINT, the CLI asks `cknerv-server` to persist the chain entity and
