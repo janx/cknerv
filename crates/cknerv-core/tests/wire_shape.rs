@@ -11,7 +11,7 @@
 
 use std::path::PathBuf;
 
-use cknerv_core::{Cell, CellGalaxySnapshot, Chain, Mutation};
+use cknerv_core::{Cell, CellDelta, CellGalaxySnapshot, Chain, Mutation};
 
 fn fixture(name: &str) -> serde_json::Value {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -58,6 +58,15 @@ fn mutation_samples_round_trip() {
             "Mutation::{variant_name} round-trip mismatch"
         );
     }
+}
+
+#[test]
+fn cell_delta_samples_match_serialized_shape() {
+    let samples = fixture("cell_delta_samples.json");
+    let sample = &samples["link_prune"];
+    let delta = CellDelta::LinkPrune { from_block: 42 };
+    let serialized = serde_json::to_value(delta).expect("serialize CellDelta::LinkPrune");
+    assert_eq!(canonicalize(sample), canonicalize(&serialized));
 }
 
 #[test]

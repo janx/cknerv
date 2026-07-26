@@ -42,6 +42,9 @@ export interface ConsensusMemoryTraceRequest {
   nonce: number;
 }
 
+/** Why a requested memory trace left the active renderer. */
+export type ConsensusMemoryTraceOutcome = 'complete' | 'unavailable';
+
 /** Stable identity for replay, cancellation, and stale-completion guards. */
 export function consensusMemoryTraceRequestKey(
   request: ConsensusMemoryTraceRequest,
@@ -137,6 +140,10 @@ export interface ConsensusMemorySourceEvidence {
 
 export interface ConsensusMemoryTraceFocus {
   key: string;
+  /** Retained evidence identity that this focus visualizes. */
+  linkSeq: number;
+  /** Canonical source height, retained through continuity afterimages. */
+  linkBlock: number;
   sourceKind: Exclude<ConsensusMemoryTraceSource, 'none'>;
   sources: ConsensusMemoryTraceFocusSource[];
   routedSourceCount: number;
@@ -361,8 +368,11 @@ export function deriveConsensusMemoryTraceFocus(
       + MEMORY_TRACE_SETTLE_MS
       + MEMORY_TRACE_FADE_MS
   )));
+  const originPulse = plan.pulses[0];
   return {
     key,
+    linkSeq: originPulse.linkSeq,
+    linkBlock: originPulse.linkBlock,
     sourceKind: plan.sourceKind,
     sources,
     routedSourceCount: sourceById.size,
@@ -1118,6 +1128,8 @@ export function planConsensusMemoryTrace(
     0,
   );
   const pulses: Pulse[] = candidates.map((candidate) => ({
+    linkSeq: link.seq,
+    linkBlock: link.block,
     path: candidate.path,
     bornAtMs: link.at_ms,
     color,

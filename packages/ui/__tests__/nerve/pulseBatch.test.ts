@@ -9,7 +9,11 @@ import { fromCellsSnapshot } from '@cknerv/cache';
 import type { Cell, CellLink } from '@cknerv/types';
 import type { NeighborGraph } from '../../src/geometry/neighborGraph';
 import type { PulsePlanningOptions } from '../../src/nerve/pulseRunner';
-import { planLinkBatch, tickBlockIfAdvanced } from '../../src/nerve/pulseBatch';
+import {
+  planLinkBatch,
+  prunePulsesFromBlock,
+  tickBlockIfAdvanced,
+} from '../../src/nerve/pulseBatch';
 import { pulseStats, resetPulseStats, snapshotPulseStats } from '../../src/nerve/pulseStats';
 
 beforeEach(() => resetPulseStats());
@@ -118,6 +122,7 @@ describe('planLinkBatch', () => {
       pulseStats,
     );
     expect(planned.length).toBe(1);
+    expect(planned[0]).toMatchObject({ linkSeq: 1, linkBlock: 7 });
     expect(nextSeq).toBe(1);
     const snap = snapshotPulseStats();
     expect(snap.linkReasons.fired).toBe(1);
@@ -143,6 +148,32 @@ describe('planLinkBatch', () => {
     // observeLink fires for EVERY link, incl. the dropped/empty one (lit=false).
     expect(snap.blocksWithLinks).toBe(1);
     expect(snap.blocksLit).toBe(0);
+  });
+
+  it('removes already-planned pulses from orphaned blocks only', () => {
+    const cells = new Map<number, Cell>([[1, mkCell(1, '0xparent')]]);
+    const graph = mkGraph([[1, 2]]);
+    const canonical = planLinkBatch(
+      [mkLink({ seq: 1, block: 6 })],
+      0,
+      false,
+      cells,
+      graph,
+      OPTS,
+      pulseStats,
+    ).planned;
+    const orphaned = planLinkBatch(
+      [mkLink({ seq: 2, block: 7 })],
+      1,
+      false,
+      cells,
+      graph,
+      OPTS,
+      pulseStats,
+    ).planned;
+
+    expect(prunePulsesFromBlock([...canonical, ...orphaned], 7))
+      .toEqual(canonical);
   });
 });
 

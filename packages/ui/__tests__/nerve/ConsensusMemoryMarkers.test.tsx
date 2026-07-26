@@ -76,6 +76,8 @@ function focusSource(
 function focus(overrides: Partial<ConsensusMemoryTraceFocus> = {}): ConsensusMemoryTraceFocus {
   return {
     key: '7:1',
+    linkSeq: 7,
+    linkBlock: 99,
     sourceKind: 'witness',
     sources: [focusSource(8, 'a', 1.1, 1.8)],
     routedSourceCount: 1,

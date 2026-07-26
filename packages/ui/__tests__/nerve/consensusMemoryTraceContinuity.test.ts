@@ -24,6 +24,8 @@ function focus(
   const sourceArrivesAtSec = startedAtSec + 0.5;
   return {
     key,
+    linkSeq: Number(key.split(':')[0]),
+    linkBlock: Number(key.split(':')[0]),
     sourceKind: 'input',
     sources: [{
       id: 1,

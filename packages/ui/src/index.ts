@@ -212,6 +212,7 @@ export {
   type ConsensusMemoryTracePlan,
   type ConsensusMemoryTraceReadout,
   type ConsensusMemoryTraceRequest,
+  type ConsensusMemoryTraceOutcome,
   type ConsensusMemoryRouteHopFocus,
   type ConsensusMemoryRouteHopInspection,
   type ConsensusMemoryRouteHopRole,

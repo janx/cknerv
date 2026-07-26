@@ -2,7 +2,7 @@
 //
 // Mirrors the Rust `CellGalaxy` projection's wire shape (from
 // `cknerv-core::projection::cells`). The cache holds the live cell set;
-// `applyCellDelta` mutates it via Birth/Death/Tag/Gc/Pulse/Stats/Link.
+// `applyCellDelta` mutates it via Birth/Death/Tag/Gc/Pulse/Stats/LinkPrune/Link.
 // `fromCellsSnapshot()` hydrates from a snapshot frame.
 
 import type {
@@ -56,6 +56,12 @@ export interface CellGalaxyCache {
   pulseLinks: CellLink[];
   /** Monotonic seq assigned to the most recent link. 0 = no link yet. */
   linksSeq: number;
+  /**
+   * One-shot causal invalidation marker. Its object identity changes only
+   * when a `link_prune` delta arrives, allowing renderers to clear already
+   * planned activity once without rejecting later replacement-chain links.
+   */
+  linkPrune: { fromBlock: number } | null;
   /** Cumulative on-chain counters mirrored from the backend. CellsHud reads
    *  these for its TOTAL / DEAD / ALIVE rows so the panel reflects chain
    *  reality rather than what's currently rendered in the galaxy. */
@@ -75,6 +81,7 @@ export function emptyCellsCache(): CellGalaxyCache {
     recentLinks: [],
     pulseLinks: [],
     linksSeq: 0,
+    linkPrune: null,
     totalBirths: 0,
     totalDeaths: 0,
     backfill: null,
@@ -114,6 +121,7 @@ export function fromCellsSnapshot(
     recentLinks,
     pulseLinks: [],
     linksSeq: recentLinks.length,
+    linkPrune: null,
     totalBirths: snap.total_births ?? 0,
     totalDeaths: snap.total_deaths ?? 0,
     backfill: snap.backfill ?? null,
@@ -179,6 +187,14 @@ function mutateCellDelta(
     case 'stats': {
       c.totalBirths = d.total_births;
       c.totalDeaths = d.total_deaths;
+      return true;
+    }
+    case 'link_prune': {
+      c.recentLinks = c.recentLinks.filter((link) => link.block < d.from_block);
+      c.pulseLinks = c.pulseLinks.filter((link) => link.block < d.from_block);
+      // Never rewind linksSeq: replacement-chain links must receive fresh
+      // identities so stale cursors and recall requests cannot alias them.
+      c.linkPrune = { fromBlock: d.from_block };
       return true;
     }
     case 'link': {

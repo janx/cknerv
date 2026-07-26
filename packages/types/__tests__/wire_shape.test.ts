@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url';
 import type {
   Mutation,
   Cell,
+  CellDelta,
   ChainEntry,
   CellGalaxySnapshot,
 } from '../src';
@@ -65,6 +66,14 @@ describe('wire-shape parity (TS twin of cknerv-core)', () => {
     expect(typeof sample.chain_name).toBe('string');
     expect(typeof sample.mempool).toBe('object');
     expect(typeof sample.epoch).toBe('object');
+  });
+
+  it('cell_delta_samples.json covers the reorg evidence boundary', () => {
+    const samples = fixture<Record<string, CellDelta>>('cell_delta_samples.json');
+    expect(samples.link_prune).toEqual({
+      type: 'link_prune',
+      from_block: 42,
+    });
   });
 
   it('cell_samples.json entries match Cell shape', () => {
