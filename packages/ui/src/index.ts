@@ -59,6 +59,7 @@ export * from './derives/cellVisual.derive';
 export * from './derives/cellInteraction.derive';
 export * from './derives/cellConsensusIdentity.derive';
 export * from './derives/cellCausalLens.derive';
+export * from './derives/cellCausalLabel.derive';
 export * from './derives/consensusBraid.derive';
 export * from './derives/consensusFlow.derive';
 export * from './derives/consensusMemoryCore.derive';

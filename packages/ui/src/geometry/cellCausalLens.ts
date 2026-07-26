@@ -14,6 +14,10 @@ export interface CellCausalArc {
   key: string;
   endpointId: number;
   role: CellCausalArcRole;
+  /** Stable transaction-order tier within the input or output fan. */
+  laneIndex: number;
+  /** Visible tier count for the matching input or output fan. */
+  laneCount: number;
   /**
    * Retained input/sibling record that can become the next inspected Cell.
    * The already-selected output and identity-only tether deliberately remain
@@ -51,29 +55,40 @@ function endpointPosition(endpoint: CellCausalEndpoint): Vec3 | null {
 function arcControl(
   from: Vec3,
   to: Vec3,
-  endpointId: number,
   role: CellCausalArcRole,
+  laneIndex: number,
 ): Vec3 {
-  const dx = to[0] - from[0];
-  const dz = to[2] - from[2];
-  const planarDistance = Math.hypot(dx, dz);
-  const seed = Math.imul(endpointId ^ (role === 'input' ? 0x45d9f3b : 0x27d4eb2d), 0x9e3779b1);
-  const sign = (seed & 1) === 0 ? -1 : 1;
-  let px: number;
-  let pz: number;
-  if (planarDistance > 0.001) {
-    px = -dz / planarDistance;
-    pz = dx / planarDistance;
-  } else {
-    const phase = ((seed >>> 1) & 0xffff) / 0xffff * Math.PI * 2;
-    px = Math.cos(phase);
-    pz = Math.sin(phase);
+  if (role === 'selected-output') {
+    // The selected output is the identity spine directly beneath the
+    // transaction hub. Keeping its carrier axial makes the inspected Cell the
+    // visual conclusion instead of treating it as another decorative lane.
+    return [
+      (from[0] + to[0]) * 0.5,
+      (from[1] + to[1]) * 0.5,
+      (from[2] + to[2]) * 0.5,
+    ];
   }
-  const bow = Math.min(4.2, 0.58 + planarDistance * 0.075) * sign;
+  const hub = role === 'input' ? to : from;
+  const endpoint = role === 'input' ? from : to;
+  const dx = endpoint[0] - hub[0];
+  const dz = endpoint[2] - hub[2];
+  const planarDistance = Math.hypot(dx, dz);
+  const radialX = planarDistance > 0.001 ? dx / planarDistance : 0;
+  const radialZ = planarDistance > 0.001 ? dz / planarDistance : 0;
+  // Every control remains on the hub→endpoint radial plane, so adjacent
+  // transaction lanes cannot acquire the arbitrary left/right crossings of
+  // the former id-seeded bow. A small outward pull keeps the silhouette soft.
+  const radialPull = Math.min(1.45, 0.2 + planarDistance * 0.045);
+  const terrainLift = Math.min(0.36, planarDistance * 0.03);
+  // Incoming evidence forms the upper vault; produced sibling Cells occupy a
+  // lower fan. Transaction order adds a stable tier inside each band.
+  const tierLift = role === 'input'
+    ? 1.5 + laneIndex * 0.34
+    : 0.44 + laneIndex * 0.15;
   return [
-    (from[0] + to[0]) * 0.5 + px * bow,
-    (from[1] + to[1]) * 0.5 + Math.min(2.8, 0.65 + planarDistance * 0.055),
-    (from[2] + to[2]) * 0.5 + pz * bow,
+    (from[0] + to[0]) * 0.5 + radialX * radialPull,
+    Math.max(from[1], to[1]) + tierLift + terrainLift,
+    (from[2] + to[2]) * 0.5 + radialZ * radialPull,
   ];
 }
 
@@ -107,13 +122,15 @@ export function deriveCellCausalLensLayout(
         key: `output:${selectedOutput.id}`,
         endpointId: selectedOutput.id,
         role: 'selected-output',
+        laneIndex: 0,
+        laneCount: 1,
         navigationTargetId: null,
         from: [...hub],
         control: arcControl(
           hub,
           to,
-          selectedOutput.id,
           'selected-output',
+          0,
         ),
         to,
       });
@@ -150,20 +167,24 @@ export function deriveCellCausalLensLayout(
   ));
   const arcs: CellCausalArc[] = [];
 
-  for (const input of visibleInputs) {
+  for (let laneIndex = 0; laneIndex < visibleInputs.length; laneIndex += 1) {
+    const input = visibleInputs[laneIndex];
     const from = endpointPosition(input);
     if (!from) continue;
     arcs.push({
       key: `input:${input.id}`,
       endpointId: input.id,
       role: 'input',
+      laneIndex,
+      laneCount: visibleInputs.length,
       navigationTargetId: input.id,
       from,
-      control: arcControl(from, hub, input.id, 'input'),
+      control: arcControl(from, hub, 'input', laneIndex),
       to: [...hub],
     });
   }
-  for (const output of visibleOutputs) {
+  for (let laneIndex = 0; laneIndex < visibleOutputs.length; laneIndex += 1) {
+    const output = visibleOutputs[laneIndex];
     const to = endpointPosition(output);
     if (!to) continue;
     const role = output.role === 'selected'
@@ -173,9 +194,11 @@ export function deriveCellCausalLensLayout(
       key: `output:${output.id}`,
       endpointId: output.id,
       role,
+      laneIndex,
+      laneCount: visibleOutputs.length,
       navigationTargetId: role === 'sibling-output' ? output.id : null,
       from: [...hub],
-      control: arcControl(hub, to, output.id, role),
+      control: arcControl(hub, to, role, laneIndex),
       to,
     });
   }
