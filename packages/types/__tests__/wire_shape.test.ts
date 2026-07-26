@@ -90,6 +90,16 @@ describe('wire-shape parity (TS twin of cknerv-core)', () => {
     expect(typeof sample.total_deaths).toBe('number');
     if (sample.recent_links !== undefined) {
       expect(Array.isArray(sample.recent_links)).toBe(true);
+      for (const link of sample.recent_links) {
+        expect(Array.isArray(link.endpoint_anchors)).toBe(true);
+        expect(link.endpoint_anchors.map((anchor) => anchor.id)).toEqual(
+          [...link.from_ids, ...link.to_ids],
+        );
+        for (const anchor of link.endpoint_anchors) {
+          expect(anchor.pos_seed).toHaveLength(3);
+          expect(typeof anchor.content_hash).toBe('string');
+        }
+      }
     }
   });
 });

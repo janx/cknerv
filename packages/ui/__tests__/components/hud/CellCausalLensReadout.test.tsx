@@ -25,12 +25,23 @@ function cell(id: number): Cell {
 }
 
 const selected = cell(9);
+const anchor = (record: Cell) => ({
+  id: record.id,
+  pos_seed: record.pos_seed,
+  content_hash: record.content_hash,
+});
 const link: CellLink = {
   seq: 12,
   tx_hash: selected.out_point.tx_hash,
   block: selected.birth_block,
   from_ids: [1, 2],
   to_ids: [8, 9],
+  endpoint_anchors: [
+    anchor(cell(1)),
+    anchor(cell(2)),
+    anchor(cell(8)),
+    anchor(selected),
+  ],
   parents: [],
   tag: null,
   at_ms: 100,
@@ -53,14 +64,15 @@ describe('CellCausalLensReadout', () => {
 
     expect(root.getAttribute('data-causal-status')).toBe('exact');
     expect(root.getAttribute('data-causal-provenance')).toBe('observed');
-    expect(root.getAttribute('data-causal-inputs-retained')).toBe('2');
-    expect(root.getAttribute('data-causal-outputs-retained')).toBe('2');
+    expect(root.getAttribute('data-causal-inputs-anchored')).toBe('2');
+    expect(root.getAttribute('data-causal-outputs-anchored')).toBe('2');
+    expect(root.getAttribute('data-causal-endpoints-archived')).toBe('0');
     expect(root.textContent).toContain('2/2 INPUTS');
     expect(root.textContent).toContain('2/2 OUTPUTS');
-    expect(root.textContent).toContain('ALL ENDPOINT RECORDS RETAINED');
+    expect(root.textContent).toContain('ALL ENDPOINT RECORDS LIVE');
   });
 
-  it('reports exactly how many observed endpoints are missing', () => {
+  it('reports complete archived anchors without calling them live records', () => {
     const records = new Map([[1, cell(1)], [9, selected]]);
     const { container } = render(
       <CellCausalLensReadout
@@ -69,10 +81,32 @@ describe('CellCausalLensReadout', () => {
     );
     const root = container.querySelector('[data-cell-causal-lens]')!;
 
+    expect(root.getAttribute('data-causal-status')).toBe('exact');
+    expect(root.getAttribute('data-causal-inputs-anchored')).toBe('2');
+    expect(root.getAttribute('data-causal-outputs-anchored')).toBe('2');
+    expect(root.getAttribute('data-causal-endpoints-archived')).toBe('2');
+    expect(root.textContent).toContain('2/2 INPUTS');
+    expect(root.textContent).toContain('2/2 OUTPUTS');
+    expect(root.textContent).toContain('2 ARCHIVED ANCHORS');
+  });
+
+  it('reports exactly how many observed endpoint anchors are missing', () => {
+    const records = new Map([[1, cell(1)], [9, selected]]);
+    const partialLink: CellLink = {
+      ...link,
+      endpoint_anchors: [anchor(cell(1)), anchor(selected)],
+    };
+    const { container } = render(
+      <CellCausalLensReadout
+        lens={deriveCellCausalLens(selected, [partialLink], records)}
+      />,
+    );
+    const root = container.querySelector('[data-cell-causal-lens]')!;
+
     expect(root.getAttribute('data-causal-status')).toBe('partial');
     expect(root.textContent).toContain('1/2 INPUTS');
     expect(root.textContent).toContain('1/2 OUTPUTS');
-    expect(root.textContent).toContain('2 ENDPOINTS OUTSIDE LIVE CACHE');
+    expect(root.textContent).toContain('2 ENDPOINT ANCHORS MISSING');
   });
 
   it('does not invent endpoint totals outside the retained link window', () => {

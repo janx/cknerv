@@ -319,9 +319,15 @@ function CellCausalNavigationLabel({
 
 function sceneSignature(lens: CellCausalLens): string {
   const endpoints = [...lens.inputs, ...lens.outputs].map((item) => (
-    item.record
-      ? `${item.role}:${item.id}:${item.record.pos_seed.join(',')}`
-      : `${item.role}:${item.id}:missing`
+    item.anchor
+      ? [
+        item.role,
+        item.id,
+        item.anchor.pos_seed.join(','),
+        item.anchor.content_hash,
+        item.record ? 'live-record' : 'archived-anchor',
+      ].join(':')
+      : `${item.role}:${item.id}:missing-anchor`
   ));
   return [
     lens.key,
@@ -472,7 +478,7 @@ function CellCausalEndpointPicker({
 
 export interface CellCausalLensLayerProps {
   lens: CellCausalLens;
-  /** Navigate only to retained input/sibling records exposed by the layout. */
+  /** Navigate only to full input/sibling records still in the live cache. */
   onNavigateCell?: (cellId: number) => void;
 }
 
@@ -588,6 +594,10 @@ function CellCausalLensLayer({
         cellCausalLensNavigableEndpoints: layout.arcs.filter(
           (arc) => arc.navigationTargetId !== null,
         ).length,
+        cellCausalLensArchivedEndpoints: layout.arcs.filter((arc) => (
+          arc.role !== 'selected-output'
+          && arc.navigationTargetId === null
+        )).length,
         cellCausalLensHiddenInputs: layout.hiddenInputCount,
         cellCausalLensHiddenSiblings: layout.hiddenSiblingCount,
         cellCausalLensArcLayout: 'radial-tier-v1',
@@ -656,6 +666,7 @@ function CellCausalLensLayer({
         const color = endpointCssColor(arc.role, identityOnly);
         const selected = arc.role === 'selected-output';
         const navigationTargetId = arc.navigationTargetId;
+        const archived = !selected && navigationTargetId === null;
         const navigable = (
           navigationTargetId !== null
           && onNavigateCell !== undefined
@@ -670,6 +681,9 @@ function CellCausalLensLayer({
               cellCausalEndpoint: arc.role,
               cellCausalEndpointId: arc.endpointId,
               cellCausalEndpointNavigable: navigable,
+              cellCausalEndpointEvidence: archived
+                ? 'archived-anchor'
+                : 'live-record',
               cellCausalNavigationTarget: navigationTargetId ?? -1,
               cellCausalArcLaneIndex: arc.laneIndex,
               cellCausalArcLaneCount: arc.laneCount,
@@ -691,7 +705,9 @@ function CellCausalLensLayer({
                   <meshBasicMaterial
                     color={color}
                     transparent
-                    opacity={selected ? 0.94 : hovered ? 1 : 0.76}
+                    opacity={
+                      selected ? 0.94 : hovered ? 1 : archived ? 0.52 : 0.76
+                    }
                     blending={THREE.AdditiveBlending}
                     depthTest={false}
                     depthWrite={false}

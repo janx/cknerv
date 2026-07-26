@@ -25,12 +25,26 @@ function cell(id: number, pos: [number, number, number]): Cell {
 }
 
 const selected = cell(9, [2, 0, -3]);
+const anchor = (record: Cell) => ({
+  id: record.id,
+  pos_seed: record.pos_seed,
+  content_hash: record.content_hash,
+});
 const causalLink: CellLink = {
   seq: 4,
   tx_hash: selected.out_point.tx_hash,
   block: selected.birth_block,
   from_ids: [1, 2, 3],
   to_ids: [7, 8, 9, 10],
+  endpoint_anchors: [
+    anchor(cell(1, [-8, 0, 2])),
+    anchor(cell(2, [-5, 1, -6])),
+    anchor(cell(3, [-2, -1, 7])),
+    anchor(cell(7, [9, 0, 4])),
+    anchor(cell(8, [7, 1, -8])),
+    anchor(selected),
+    anchor(cell(10, [12, -1, -2])),
+  ],
   parents: [],
   tag: null,
   at_ms: 100,
@@ -129,10 +143,34 @@ describe('deriveCellCausalLensLayout', () => {
     expect(layout.hiddenSiblingCount).toBe(2);
   });
 
-  it('never invents geometry for missing endpoint records', () => {
-    const partial = deriveCellCausalLens(
+  it('keeps archived evidence geometry but disables record navigation', () => {
+    const archived = deriveCellCausalLens(
       selected,
       [causalLink],
+      new Map([[1, records.get(1)!], [9, selected]]),
+    );
+    const layout = deriveCellCausalLensLayout(archived);
+
+    expect(archived.status).toBe('exact');
+    expect(layout.arcs).toHaveLength(7);
+    expect(layout.arcs.find((arc) => arc.key === 'input:1')
+      ?.navigationTargetId).toBe(1);
+    expect(layout.arcs.find((arc) => arc.key === 'input:2')
+      ?.navigationTargetId).toBeNull();
+    expect(layout.arcs.find((arc) => arc.key === 'output:7')
+      ?.navigationTargetId).toBeNull();
+  });
+
+  it('never invents geometry when both anchor and record are missing', () => {
+    const partial = deriveCellCausalLens(
+      selected,
+      [{
+        ...causalLink,
+        endpoint_anchors: [
+          causalLink.endpoint_anchors[0],
+          causalLink.endpoint_anchors[5],
+        ],
+      }],
       new Map([[1, records.get(1)!], [9, selected]]),
     );
     const layout = deriveCellCausalLensLayout(partial);

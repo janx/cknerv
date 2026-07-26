@@ -21,6 +21,7 @@ const link = (over: Partial<CellLink> = {}): CellLink => ({
   block: cell.birth_block,
   from_ids: [7, 8],
   to_ids: [cell.id, 43, 44],
+  endpoint_anchors: [],
   parents: [],
   tag: null,
   at_ms: 1_200,

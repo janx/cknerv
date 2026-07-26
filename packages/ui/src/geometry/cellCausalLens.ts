@@ -49,7 +49,7 @@ const clampCount = (value: number | undefined, fallback: number): number => (
 );
 
 function endpointPosition(endpoint: CellCausalEndpoint): Vec3 | null {
-  return endpoint.record ? [...endpoint.record.pos_seed] : null;
+  return endpoint.anchor ? [...endpoint.anchor.pos_seed] : null;
 }
 
 function arcControl(
@@ -113,7 +113,7 @@ export function deriveCellCausalLensLayout(
   ];
   if (lens.status === 'unavailable') {
     const selectedOutput = lens.outputs.find(
-      (item) => item.role === 'selected' && item.record !== null,
+      (item) => item.role === 'selected' && item.anchor !== null,
     );
     const to = selectedOutput ? endpointPosition(selectedOutput) : null;
     const identityArc: CellCausalArc[] = [];
@@ -153,16 +153,16 @@ export function deriveCellCausalLensLayout(
     options.maxSiblings,
     CELL_CAUSAL_LENS_MAX_SIBLINGS,
   );
-  const retainedInputs = lens.inputs.filter((item) => item.record !== null);
-  const retainedSiblings = lens.outputs.filter(
-    (item) => item.role === 'sibling' && item.record !== null,
+  const anchoredInputs = lens.inputs.filter((item) => item.anchor !== null);
+  const anchoredSiblings = lens.outputs.filter(
+    (item) => item.role === 'sibling' && item.anchor !== null,
   );
-  const visibleInputs = retainedInputs.slice(0, maxInputs);
+  const visibleInputs = anchoredInputs.slice(0, maxInputs);
   const visibleSiblingIds = new Set(
-    retainedSiblings.slice(0, maxSiblings).map((item) => item.id),
+    anchoredSiblings.slice(0, maxSiblings).map((item) => item.id),
   );
   const visibleOutputs = lens.outputs.filter((item) => (
-    item.record !== null
+    item.anchor !== null
     && (item.role === 'selected' || visibleSiblingIds.has(item.id))
   ));
   const arcs: CellCausalArc[] = [];
@@ -177,7 +177,7 @@ export function deriveCellCausalLensLayout(
       role: 'input',
       laneIndex,
       laneCount: visibleInputs.length,
-      navigationTargetId: input.id,
+      navigationTargetId: input.record ? input.id : null,
       from,
       control: arcControl(from, hub, 'input', laneIndex),
       to: [...hub],
@@ -196,7 +196,9 @@ export function deriveCellCausalLensLayout(
       role,
       laneIndex,
       laneCount: visibleOutputs.length,
-      navigationTargetId: role === 'sibling-output' ? output.id : null,
+      navigationTargetId: role === 'sibling-output' && output.record
+        ? output.id
+        : null,
       from: [...hub],
       control: arcControl(hub, to, role, laneIndex),
       to,
@@ -206,10 +208,10 @@ export function deriveCellCausalLensLayout(
   return {
     hub,
     arcs,
-    hiddenInputCount: Math.max(0, retainedInputs.length - visibleInputs.length),
+    hiddenInputCount: Math.max(0, anchoredInputs.length - visibleInputs.length),
     hiddenSiblingCount: Math.max(
       0,
-      retainedSiblings.length - visibleSiblingIds.size,
+      anchoredSiblings.length - visibleSiblingIds.size,
     ),
   };
 }

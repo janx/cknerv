@@ -101,6 +101,18 @@ describe('applyCellDelta', () => {
       block: 1,
       from_ids: [1],
       to_ids: [2],
+      endpoint_anchors: [
+        {
+          id: 1,
+          pos_seed: [1, 0, -1],
+          content_hash: '0x' + '11'.repeat(32),
+        },
+        {
+          id: 2,
+          pos_seed: [2, 0, -2],
+          content_hash: '0x' + '22'.repeat(32),
+        },
+      ],
       parents: ['0xparent'],
       tag: null,
       at_ms: 1000,
@@ -108,6 +120,8 @@ describe('applyCellDelta', () => {
     expect(c.linksSeq).toBe(1);
     expect(c.recentLinks[0].seq).toBe(1);
     expect(c.recentLinks[0].tx_hash).toBe('0xtx');
+    expect(c.recentLinks[0].endpoint_anchors.map((anchor) => anchor.id))
+      .toEqual([1, 2]);
   });
 
   it('link retention respects a configured ring capacity', () => {
@@ -121,6 +135,7 @@ describe('applyCellDelta', () => {
           block: i,
           from_ids: [],
           to_ids: [i],
+          endpoint_anchors: [],
           parents: [],
           tag: null,
           at_ms: 1000 + i,
@@ -187,6 +202,7 @@ describe('applyRevisionedCellDeltas (batched)', () => {
         block: 1,
         from_ids: [],
         to_ids: [],
+        endpoint_anchors: [],
         parents: [],
         tag: null,
         at_ms: 1000,
@@ -228,6 +244,18 @@ describe('fromCellsSnapshot', () => {
           block: 1,
           from_ids: [],
           to_ids: [1, 2],
+          endpoint_anchors: [
+            {
+              id: 1,
+              pos_seed: [0, 0, 0],
+              content_hash: cell(1).content_hash,
+            },
+            {
+              id: 2,
+              pos_seed: [0, 0, 0],
+              content_hash: cell(2).content_hash,
+            },
+          ],
           parents: [],
           tag: null,
           at_ms: 1100,
@@ -255,6 +283,7 @@ describe('fromCellsSnapshot', () => {
         block: i,
         from_ids: [],
         to_ids: [i],
+        endpoint_anchors: [],
         parents: [],
         tag: null,
         at_ms: 1000 + i,

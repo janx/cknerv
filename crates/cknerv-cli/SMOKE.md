@@ -71,6 +71,11 @@ The cell set lives under `snapshot.cells`; cumulative counters are
 (The projection name in the route path is literally `cells` — it is
 `CellGalaxy::name()`.)
 
+When `recent_links` is non-empty, each link must include
+`endpoint_anchors: [{id, pos_seed, content_hash}, ...]` in
+`from_ids`-then-`to_ids` order. The anchors remain available after the bounded
+full Cell records age out.
+
 ## Programmatic smoke (no browser)
 
 Boot cknerv pointed at a live node, then poll its HTTP API to confirm the
