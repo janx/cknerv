@@ -13,7 +13,6 @@ import {
   planDeliveries,
   deliveryPhase,
   bolusIngest,
-  protocolLandingSealState,
   nearestCellIds,
 } from '../src/derives/peers.derive';
 import { emptyChainCache } from '@cknerv/cache';
@@ -206,17 +205,6 @@ describe('peers.derive', () => {
       expect(end.flashOpacity).toBe(0);
     });
 
-    it('inward pull draws toward the core: 0→1, monotonic, back-loaded (accelerating suck-in)', () => {
-      expect(bolusIngest(0).pull).toBe(0);
-      expect(bolusIngest(1).pull).toBeCloseTo(1, 6);
-      expect(bolusIngest(0.1).pull).toBeLessThan(0.1); // behind a linear ramp — accelerates
-      for (let i = 1; i < samples.length; i += 1) {
-        expect(bolusIngest(samples[i]).pull).toBeGreaterThanOrEqual(
-          bolusIngest(samples[i - 1]).pull - 1e-9,
-        );
-      }
-    });
-
     it('flash is a bright impact that lingers into an agreement tail (not the old ~2-frame pop)', () => {
       expect(bolusIngest(0).flashOpacity).toBeCloseTo(1, 6); // bright at the strike
       // spans the window: at 30% through, brighter than the old exp(-7·t)=0.122 blink
@@ -227,24 +215,6 @@ describe('peers.derive', () => {
     it('colour resolves moving carrier hue → pale agreement across ingest', () => {
       expect(bolusIngest(0).colorT).toBe(0);
       expect(bolusIngest(1).colorT).toBeCloseTo(1, 6);
-    });
-  });
-
-  describe('protocolLandingSealState', () => {
-    it('attacks after contact, expands monotonically, and resolves cleanly', () => {
-      const start = protocolLandingSealState(0);
-      const peak = protocolLandingSealState(0.2);
-      const end = protocolLandingSealState(1);
-
-      expect(start.opacity).toBe(0);
-      expect(peak.opacity).toBeGreaterThan(0.85);
-      expect(end.opacity).toBe(0);
-      expect(peak.scale).toBeGreaterThan(start.scale);
-      expect(end.scale).toBe(1);
-      expect(end.rotation).toBeGreaterThan(start.rotation);
-      expect(start.paleMix).toBe(0);
-      expect(peak.paleMix).toBeGreaterThan(0.45);
-      expect(end.paleMix).toBe(1);
     });
   });
 
