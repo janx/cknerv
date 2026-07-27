@@ -88,6 +88,22 @@ impl RpcClient {
             .map_err(|e| anyhow!("get_tip_block_number: bad hex {s:?}: {e}"))
     }
 
+    /// Return the canonical block hash at `number`, or `None` when the node
+    /// has no canonical block at that height (for example above its current
+    /// tip). This is substantially cheaper than fetching a full block and is
+    /// used by the poller to validate its last emitted canonical anchor.
+    pub async fn get_block_hash(&self, number: u64) -> Result<Option<String>> {
+        let params = serde_json::json!([format!("0x{:x}", number)]);
+        let v = self.call("get_block_hash", params).await?;
+        if v.is_null() {
+            return Ok(None);
+        }
+        let hash = v
+            .as_str()
+            .ok_or_else(|| anyhow!("get_block_hash: expected string or null, got {v}"))?;
+        Ok(Some(hash.to_string()))
+    }
+
     /// `get_block_by_number` with verbosity `0x2` so we receive a fully
     /// parsed `BlockView` (`transactions`/`inputs`/`outputs` arrays vs.
     /// raw molecule bytes).

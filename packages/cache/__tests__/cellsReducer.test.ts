@@ -181,7 +181,62 @@ describe('applyCellDelta', () => {
     expect(c.recentLinks.map((link) => link.tx_hash)).toEqual(['0xcanonical']);
     expect(c.pulseLinks.map((link) => link.tx_hash)).toEqual(['0xcanonical']);
     expect(c.linksSeq).toBe(linksSeq);
-    expect(c.linkPrune).toEqual({ fromBlock: 2 });
+    expect(c.linkPrune).toEqual({ fromBlock: 2, invalidatedCells: [] });
+  });
+
+  it('captures compact orphan Cell evidence before rollback GC removes it', () => {
+    let c = emptyCellsCache();
+    c = applyCellDelta(c, {
+      type: 'birth',
+      cell: cell(1, {
+        birth_block: 1,
+        pos_seed: [1, 2, 3],
+        content_hash: `0x${'11'.repeat(32)}`,
+      }),
+    });
+    c = applyCellDelta(c, {
+      type: 'birth',
+      cell: cell(2, {
+        birth_block: 2,
+        pos_seed: [4, 5, 6],
+        content_hash: `0x${'22'.repeat(32)}`,
+        data_hex: `0x${'ff'.repeat(256)}`,
+      }),
+    });
+
+    const pruned = applyCellDelta(c, {
+      type: 'link_prune',
+      from_block: 2,
+    });
+    expect(pruned.linkPrune).toEqual({
+      fromBlock: 2,
+      invalidatedCells: [{
+        id: 2,
+        posSeed: [4, 5, 6],
+        contentHash: `0x${'22'.repeat(32)}`,
+      }],
+    });
+    expect(pruned.linkPrune?.invalidatedCells[0]).not.toHaveProperty('data_hex');
+
+    const afterGc = applyCellDelta(pruned, { type: 'gc', ids: [2] });
+    expect(afterGc.cells.has(2)).toBe(false);
+    expect(afterGc.linkPrune).toBe(pruned.linkPrune);
+  });
+
+  it('captures the whole bounded field for a deep rebuild from block zero', () => {
+    let c = emptyCellsCache();
+    c = applyCellDelta(c, {
+      type: 'birth',
+      cell: cell(1, { birth_block: 1 }),
+    });
+    c = applyCellDelta(c, {
+      type: 'birth',
+      cell: cell(2, { birth_block: 20 }),
+    });
+
+    c = applyCellDelta(c, { type: 'link_prune', from_block: 0 });
+
+    expect(c.linkPrune?.invalidatedCells.map((echo) => echo.id)).toEqual([1, 2]);
   });
 
   it('returns a new reference on a birth (purity)', () => {
@@ -269,7 +324,10 @@ describe('applyRevisionedCellDeltas (batched)', () => {
       .toEqual(['0xcanonical', '0xreplacement']);
     expect(pruned.recentLinks.map((link) => link.seq)).toEqual([1, 3]);
     expect(pruned.linksSeq).toBe(3);
-    expect(pruned.linkPrune).toEqual({ fromBlock: 2 });
+    expect(pruned.linkPrune).toEqual({
+      fromBlock: 2,
+      invalidatedCells: [],
+    });
 
     const marker = pruned.linkPrune;
     const afterOrdinaryDelta = applyCellDelta(pruned, {
@@ -277,6 +335,30 @@ describe('applyRevisionedCellDeltas (batched)', () => {
       at_ms: 5000,
     });
     expect(afterOrdinaryDelta.linkPrune).toBe(marker);
+  });
+
+  it('captures invalidation evidence before GC inside one revision batch', () => {
+    let start = emptyCellsCache();
+    start = applyCellDelta(start, {
+      type: 'birth',
+      cell: cell(9, {
+        birth_block: 7,
+        pos_seed: [9, 1, -9],
+        content_hash: `0x${'99'.repeat(32)}`,
+      }),
+    });
+
+    const rewritten = applyRevisionedCellDeltas(start, [
+      rd(8, { type: 'link_prune', from_block: 7 }),
+      rd(8, { type: 'gc', ids: [9] }),
+    ]);
+
+    expect(rewritten.cells.has(9)).toBe(false);
+    expect(rewritten.linkPrune?.invalidatedCells).toEqual([{
+      id: 9,
+      posSeed: [9, 1, -9],
+      contentHash: `0x${'99'.repeat(32)}`,
+    }]);
   });
 });
 

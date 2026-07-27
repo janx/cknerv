@@ -18,6 +18,19 @@ export type Mutation =
       size?: number;
       at: number;
     }
+  /** Invalidates the formerly-canonical suffix before replacement blocks
+   *  are replayed. */
+  | {
+      type: 'chain_reorganized';
+      from_block: number;
+    }
+  /** The common ancestor fell outside retained history. Consumers discard
+   *  unsafe derived state before the adapter replays a fresh canonical
+   *  window beginning at `from_block`. */
+  | {
+      type: 'chain_rebuild';
+      from_block: number;
+    }
   | {
       type: 'tx_landed';
       tx_hash: string;

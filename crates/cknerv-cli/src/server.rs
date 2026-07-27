@@ -41,7 +41,8 @@ pub async fn run(workdir: PathBuf, cfg: ResolvedConfig) -> Result<()> {
     // If persisted state exists, skip the boot backfill and resume the
     // forward poll from the saved tip (ServerBuilder::build hydrates the
     // restored galaxy from the same file).
-    let resume_tip = cknerv_server::peek_restored_tip(&state_dir);
+    let resume_cursor = cknerv_server::peek_restored_chain_cursor(&state_dir);
+    let resume_tip = resume_cursor.as_ref().map(|cursor| cursor.tip);
     if let Some(tip) = resume_tip {
         tracing::info!(
             "restored state found (tip {tip}); skipping backfill, resuming forward poll"
@@ -49,10 +50,20 @@ pub async fn run(workdir: PathBuf, cfg: ResolvedConfig) -> Result<()> {
     }
     let adapter = CkbDirectAdapter::new(cfg.rpc_url.clone())
         .with_backfill_blocks(cfg.backfill_blocks)
-        .with_resume_from(resume_tip);
+        .with_resume_from(resume_tip)
+        .with_resume_anchors(
+            resume_cursor
+                .map(|cursor| cursor.recent_blocks)
+                .unwrap_or_default(),
+        );
     let galaxy_config = cknerv_core::projection::cells::CellGalaxyConfig {
         cell_cap: cfg.galaxy.cell_cap,
         recent_links_cap: cfg.galaxy.recent_links_cap,
+        // The cell undo journal and the adapter's canonical anchors share the
+        // same horizon. Even with boot backfill disabled, retain two live
+        // blocks so ordinary one-block reorgs can still roll back exactly.
+        reorg_window_blocks: usize::try_from(cfg.backfill_blocks.max(2))
+            .unwrap_or(usize::MAX),
     };
     let runtime_galaxy = cfg.galaxy.clone();
 

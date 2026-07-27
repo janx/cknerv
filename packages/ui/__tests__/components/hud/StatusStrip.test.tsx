@@ -35,4 +35,24 @@ describe('StatusStrip', () => {
     const { queryByRole } = render(<StatusStrip level="nominal" uptimeMs={0} />);
     expect(queryByRole('link')).toBeNull();
   });
+
+  it('shows transport freshness independently from the chain alert level', () => {
+    const { container } = render(
+      <StatusStrip
+        level="nominal"
+        uptimeMs={0}
+        stream={{
+          phase: 'stale',
+          affectedChannels: ['cells'],
+          lastMessageAgeMs: 17_000,
+          attempt: 2,
+        }}
+      />,
+    );
+    const chip = container.querySelector('[data-stream-chip]') as HTMLElement;
+    expect(chip.dataset.streamPhase).toBe('stale');
+    expect(chip.textContent).toContain('DATA STALE');
+    expect(chip.textContent).toContain('17s');
+    expect(container.textContent).toContain('NOMINAL');
+  });
 });

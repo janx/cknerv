@@ -91,6 +91,81 @@ describe('applyChainMutation', () => {
     expect(c.total_blocks).toBe(2);
   });
 
+  it('chain_reorganized prunes the orphan suffix and lowers the tip', () => {
+    let c = emptyChainCache();
+    for (let number = 1; number <= 3; number += 1) {
+      c = applyChainMutation(c, {
+        type: 'block_mined',
+        number,
+        hash: `0x${number}`,
+        tx_count: 1,
+        size: 100,
+        at: number * 1000,
+      });
+      c = applyChainMutation(c, {
+        type: 'tx_landed',
+        tx_hash: `0xtx${number}`,
+        block: number,
+        at: number * 1000,
+        inputs: [],
+        outputs: [],
+      });
+    }
+
+    c = applyChainMutation(c, {
+      type: 'chain_reorganized',
+      from_block: 2,
+    });
+
+    expect(c.tip).toBe(1);
+    expect(c.reorgs).toBe(1);
+    expect(c.recent_blocks).toEqual([{ number: 1, hash: '0x1' }]);
+    expect(c.recent_tx_hashes).toEqual([
+      { tx_hash: '0xtx1', block: 1 },
+    ]);
+    expect(c.recent_block_tx_counts).toEqual([]);
+    expect(c.total_blocks).toBe(3);
+    expect(c.total_txs).toBe(3);
+  });
+
+  it('chain_rebuild clears every canonical ring before bounded replay', () => {
+    let c = emptyChainCache();
+    for (let number = 10; number <= 12; number += 1) {
+      c = applyChainMutation(c, {
+        type: 'block_mined',
+        number,
+        hash: `0xorphan${number}`,
+        tx_count: 1,
+        size: 100,
+        at: number * 1000,
+      });
+      c = applyChainMutation(c, {
+        type: 'tx_landed',
+        tx_hash: `0xtx${number}`,
+        block: number,
+        at: number * 1000,
+        inputs: [],
+        outputs: [],
+      });
+    }
+
+    c = applyChainMutation(c, {
+      type: 'chain_rebuild',
+      from_block: 20,
+    });
+
+    expect(c.tip).toBe(19);
+    expect(c.reorgs).toBe(1);
+    expect(c.recent_blocks).toEqual([]);
+    expect(c.recent_tx_hashes).toEqual([]);
+    expect(c.recent_block_intervals_ms).toEqual([]);
+    expect(c.recent_block_tx_counts).toEqual([]);
+    expect(c.recent_block_sizes).toEqual([]);
+    expect(c.last_block_ts_ms).toBeNull();
+    expect(c.total_blocks).toBe(3);
+    expect(c.total_txs).toBe(3);
+  });
+
   it('block_mined fills the interval / tx-count rings from at-deltas', () => {
     let c = applyChainMutation(emptyChainCache(), {
       type: 'block_mined',

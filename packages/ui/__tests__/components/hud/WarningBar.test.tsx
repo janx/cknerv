@@ -15,4 +15,10 @@ describe('WarningBar', () => {
     expect(t).toContain('警告');
     expect(t).toContain('SYNC-STALL');
   });
+  it('can stack below a transport-health banner', () => {
+    const { container } = render(
+      <WarningBar level="danger" trigger="sync-stall" top={60} />,
+    );
+    expect((container.firstElementChild as HTMLElement).style.top).toBe('60px');
+  });
 });

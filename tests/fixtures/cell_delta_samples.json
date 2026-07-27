@@ -2,5 +2,12 @@
   "link_prune": {
     "type": "link_prune",
     "from_block": 42
+  },
+  "backfill_rebuild": {
+    "type": "backfill",
+    "done": 3,
+    "total": 10,
+    "active": true,
+    "phase": "rebuild"
   }
 }

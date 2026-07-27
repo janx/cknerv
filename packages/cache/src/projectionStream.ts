@@ -21,6 +21,10 @@ import {
   fromCellsSnapshot,
   type CellGalaxyCache,
 } from './cellsReducer';
+import {
+  createStreamHealthTracker,
+  type StreamHealthOptions,
+} from './streamHealth';
 
 function resolveWsUrl(url: string): string {
   if (url.startsWith('ws://') || url.startsWith('wss://')) return url;
@@ -30,7 +34,7 @@ function resolveWsUrl(url: string): string {
   return `${proto}//${window.location.host}${path}`;
 }
 
-export interface ProjectionStreamOptions {
+export interface ProjectionStreamOptions extends StreamHealthOptions {
   reconnectMs?: number;
   recentLinksCapacity?: number;
   linkRingCapacity?: number;
@@ -69,19 +73,31 @@ export function connectProjectionStream<Cache, Snapshot, Delta>(
   let socket: WebSocket | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let cache: Cache = initial;
+  let needsResync = false;
+
+  const health = createStreamHealthTracker(opts, () => {
+    try {
+      socket?.close();
+    } catch {
+      // Best effort; onclose/retry still handles ordinary failures.
+    }
+  });
 
   type Frame =
     | { kind: 'snapshot'; revision: number; snapshot: Snapshot }
     | { kind: 'delta'; revision: number; deltas: { revision: number; delta: Delta }[] }
-    | { kind: 'lagged'; skipped: number };
+    | { kind: 'lagged'; skipped: number }
+    | { kind: 'heartbeat'; revision?: number };
 
   const open = () => {
     if (stopped) return;
+    health.startAttempt(needsResync);
     const base = resolveWsUrl(streamUrl);
     const sep = base.includes('?') ? '&' : '?';
     const url = `${base}${sep}since=${hooks.getRevision(cache)}`;
     const ws = new WebSocket(url);
     socket = ws;
+    ws.onopen = () => health.opened(needsResync);
 
     ws.onmessage = (msg: MessageEvent) => {
       let frame: Frame;
@@ -91,13 +107,21 @@ export function connectProjectionStream<Cache, Snapshot, Delta>(
         return;
       }
       if (!frame || typeof frame !== 'object') return;
-      if (frame.kind === 'snapshot') {
+      if (frame.kind === 'heartbeat') {
+        health.message(needsResync);
+      } else if (frame.kind === 'snapshot') {
         cache = hooks.fromSnapshot(frame.revision, frame.snapshot);
+        needsResync = false;
+        health.message();
         onChange(cache);
       } else if (frame.kind === 'delta') {
         cache = hooks.applyDeltas(cache, frame.deltas);
+        needsResync = false;
+        health.message();
         onChange(cache);
       } else if (frame.kind === 'lagged') {
+        needsResync = true;
+        health.resyncing();
         cache = hooks.markLagged(cache);
         try {
           ws.close();
@@ -110,6 +134,7 @@ export function connectProjectionStream<Cache, Snapshot, Delta>(
     const onClose = () => {
       if (stopped) return;
       if (reconnectTimer !== null) return;
+      health.closed(needsResync);
       reconnectTimer = setTimeout(() => {
         reconnectTimer = null;
         open();
@@ -124,6 +149,7 @@ export function connectProjectionStream<Cache, Snapshot, Delta>(
   return {
     disconnect: () => {
       stopped = true;
+      health.stop();
       if (reconnectTimer !== null) {
         clearTimeout(reconnectTimer);
         reconnectTimer = null;
@@ -131,6 +157,7 @@ export function connectProjectionStream<Cache, Snapshot, Delta>(
       if (socket) {
         socket.onclose = null;
         socket.onerror = null;
+        socket.onopen = null;
         socket.onmessage = null;
         try {
           socket.close();

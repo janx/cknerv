@@ -329,6 +329,41 @@ fn apply_chain_mutation(chain: &mut Chain, m: &Mutation) {
     use cknerv_core::entity::RECENT_INTERVAL_CAP;
 
     match m {
+        Mutation::ChainReorganized { from_block } => {
+            let canonical_tip = from_block.saturating_sub(1);
+            chain.tip = chain.tip.min(canonical_tip);
+            chain.reorgs = chain
+                .reorgs
+                .checked_add(1)
+                .expect("chain.reorgs overflowed u64 — see total_blocks comment");
+            chain
+                .recent_blocks
+                .retain(|block| block.number < *from_block);
+            chain.recent_tx_hashes.retain(|tx| tx.block < *from_block);
+            // The rolling metric rings do not carry block numbers. Clear them
+            // rather than mix orphan samples with the replacement suffix.
+            chain.recent_block_intervals_ms.clear();
+            chain.recent_block_tx_counts.clear();
+            chain.recent_block_sizes.clear();
+            chain.last_block_ts_ms = None;
+        }
+        Mutation::ChainRebuild { from_block } => {
+            // No common ancestor was provable inside the retained rollback
+            // window. Drop every canonical ring before the adapter replays a
+            // fresh bounded window; lifetime observed counters remain
+            // cumulative, matching ordinary reorg replacement semantics.
+            chain.tip = from_block.saturating_sub(1);
+            chain.reorgs = chain
+                .reorgs
+                .checked_add(1)
+                .expect("chain.reorgs overflowed u64 — see total_blocks comment");
+            chain.recent_blocks.clear();
+            chain.recent_tx_hashes.clear();
+            chain.recent_block_intervals_ms.clear();
+            chain.recent_block_tx_counts.clear();
+            chain.recent_block_sizes.clear();
+            chain.last_block_ts_ms = None;
+        }
         Mutation::BlockMined {
             number,
             hash,
@@ -336,9 +371,6 @@ fn apply_chain_mutation(chain: &mut Chain, m: &Mutation) {
             size,
             at,
         } => {
-            if *number > chain.tip {
-                chain.tip = *number;
-            }
             let exact_dup = chain
                 .recent_blocks
                 .iter()
@@ -348,35 +380,47 @@ fn apply_chain_mutation(chain: &mut Chain, m: &Mutation) {
                     .recent_blocks
                     .iter()
                     .any(|b| b.number == *number && b.hash != *hash);
-            if !exact_dup {
-                chain.total_blocks = chain.total_blocks.checked_add(1).expect(
-                    "chain.total_blocks overflowed u64 — the server has \
+            if exact_dup {
+                return;
+            }
+            if reorg {
+                chain.tip = *number;
+                chain.recent_blocks.retain(|block| block.number < *number);
+                chain.recent_tx_hashes.retain(|tx| tx.block < *number);
+                chain.recent_block_intervals_ms.clear();
+                chain.recent_block_tx_counts.clear();
+                chain.recent_block_sizes.clear();
+                chain.last_block_ts_ms = None;
+            } else if *number > chain.tip {
+                chain.tip = *number;
+            }
+            chain.total_blocks = chain.total_blocks.checked_add(1).expect(
+                "chain.total_blocks overflowed u64 — the server has \
                      observed 18 quintillion distinct blocks, which is \
                      structurally impossible on any real chain",
-                );
-                if reorg {
-                    chain.reorgs = chain
-                        .reorgs
-                        .checked_add(1)
-                        .expect("chain.reorgs overflowed u64 — see total_blocks comment");
-                }
-                if let Some(prev_ts) = chain.last_block_ts_ms {
-                    if *at >= prev_ts {
-                        chain.recent_block_intervals_ms.push(*at - prev_ts);
-                        while chain.recent_block_intervals_ms.len() > RECENT_INTERVAL_CAP {
-                            chain.recent_block_intervals_ms.remove(0);
-                        }
+            );
+            if reorg {
+                chain.reorgs = chain
+                    .reorgs
+                    .checked_add(1)
+                    .expect("chain.reorgs overflowed u64 — see total_blocks comment");
+            }
+            if let Some(prev_ts) = chain.last_block_ts_ms {
+                if *at >= prev_ts {
+                    chain.recent_block_intervals_ms.push(*at - prev_ts);
+                    while chain.recent_block_intervals_ms.len() > RECENT_INTERVAL_CAP {
+                        chain.recent_block_intervals_ms.remove(0);
                     }
                 }
-                chain.last_block_ts_ms = Some(*at);
-                chain.recent_block_tx_counts.push(*tx_count);
-                while chain.recent_block_tx_counts.len() > RECENT_INTERVAL_CAP {
-                    chain.recent_block_tx_counts.remove(0);
-                }
-                chain.recent_block_sizes.push(*size);
-                while chain.recent_block_sizes.len() > RECENT_INTERVAL_CAP {
-                    chain.recent_block_sizes.remove(0);
-                }
+            }
+            chain.last_block_ts_ms = Some(*at);
+            chain.recent_block_tx_counts.push(*tx_count);
+            while chain.recent_block_tx_counts.len() > RECENT_INTERVAL_CAP {
+                chain.recent_block_tx_counts.remove(0);
+            }
+            chain.recent_block_sizes.push(*size);
+            while chain.recent_block_sizes.len() > RECENT_INTERVAL_CAP {
+                chain.recent_block_sizes.remove(0);
             }
             chain.recent_blocks.push(RecentBlock {
                 number: *number,
@@ -528,6 +572,100 @@ mod tests {
         let snap = s.snapshot();
         assert_eq!(snap["chain"]["reorgs"], 1);
         assert_eq!(snap["chain"]["total_blocks"], 2);
+    }
+
+    #[test]
+    fn explicit_reorg_prunes_orphan_suffix_and_lowers_tip() {
+        let s = ServerState::new();
+        for number in 1..=3 {
+            s.apply_mutation(Mutation::BlockMined {
+                number,
+                hash: format!("0x{number}"),
+                tx_count: 1,
+                size: 100,
+                at: number * 1_000,
+            });
+            s.apply_mutation(Mutation::TxLanded {
+                tx_hash: format!("0xtx{number}"),
+                block: number,
+                at: number * 1_000,
+                inputs: vec![],
+                outputs: vec![],
+            });
+        }
+
+        s.apply_mutation(Mutation::ChainReorganized { from_block: 2 });
+        let snap = s.snapshot();
+
+        assert_eq!(snap["chain"]["tip"], 1);
+        assert_eq!(snap["chain"]["reorgs"], 1);
+        assert_eq!(
+            snap["chain"]["recent_blocks"],
+            serde_json::json!([{ "number": 1, "hash": "0x1" }])
+        );
+        assert_eq!(
+            snap["chain"]["recent_tx_hashes"],
+            serde_json::json!([{ "tx_hash": "0xtx1", "block": 1 }])
+        );
+        assert_eq!(
+            snap["chain"]["recent_block_tx_counts"],
+            serde_json::json!([])
+        );
+        // Lifetime observed counters stay cumulative; only canonical windows
+        // and the current tip are rewritten.
+        assert_eq!(snap["chain"]["total_blocks"], 3);
+        assert_eq!(snap["chain"]["total_txs"], 3);
+    }
+
+    #[test]
+    fn deep_reorg_rebuild_clears_canonical_windows_before_replay() {
+        let s = ServerState::new();
+        for number in 10..=12 {
+            s.apply_mutation(Mutation::BlockMined {
+                number,
+                hash: format!("0xorphan{number}"),
+                tx_count: 1,
+                size: 100,
+                at: number * 1_000,
+            });
+            s.apply_mutation(Mutation::TxLanded {
+                tx_hash: format!("0xtx{number}"),
+                block: number,
+                at: number * 1_000,
+                inputs: vec![],
+                outputs: vec![],
+            });
+        }
+
+        s.apply_mutation(Mutation::ChainRebuild { from_block: 20 });
+        let reset = s.snapshot();
+        assert_eq!(reset["chain"]["tip"], 19);
+        assert_eq!(reset["chain"]["reorgs"], 1);
+        assert_eq!(reset["chain"]["recent_blocks"], serde_json::json!([]));
+        assert_eq!(
+            reset["chain"]["recent_tx_hashes"],
+            serde_json::json!([])
+        );
+        assert_eq!(
+            reset["chain"]["recent_block_intervals_ms"],
+            serde_json::json!([])
+        );
+        assert_eq!(reset["chain"]["total_blocks"], 3);
+        assert_eq!(reset["chain"]["total_txs"], 3);
+
+        s.apply_mutation(Mutation::BlockMined {
+            number: 20,
+            hash: "0xcanonical20".into(),
+            tx_count: 0,
+            size: 80,
+            at: 20_000,
+        });
+        let replayed = s.snapshot();
+        assert_eq!(replayed["chain"]["tip"], 20);
+        assert_eq!(
+            replayed["chain"]["recent_blocks"],
+            serde_json::json!([{ "number": 20, "hash": "0xcanonical20" }])
+        );
     }
 
     #[test]

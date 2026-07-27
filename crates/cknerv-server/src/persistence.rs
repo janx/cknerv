@@ -28,6 +28,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use crate::state::ServerState;
+use cknerv_core::RecentBlock;
 
 /// Bumped when the on-disk shape changes incompatibly. Older files are
 /// ignored on load.
@@ -56,6 +57,14 @@ pub struct LoadOutcome {
     /// The chain tip immediately after restore (for callers that resume
     /// indexing from there). `None` if nothing was restored.
     pub restored_chain_tip: Option<u64>,
+}
+
+/// Minimal canonical cursor needed by an adapter to resume without assuming
+/// that the saved height still belongs to the node's current main chain.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RestoredChainCursor {
+    pub tip: u64,
+    pub recent_blocks: Vec<RecentBlock>,
 }
 
 /// Serialize the chain entity + every registered projection. Writes
@@ -144,12 +153,28 @@ pub fn load(state: Arc<ServerState>, workdir: &Path) -> LoadOutcome {
 /// the schema mismatches. The CLI uses this to decide whether to skip
 /// the boot backfill and resume the forward poll from the saved tip.
 pub fn peek_restored_tip(workdir: &Path) -> Option<u64> {
+    peek_restored_chain_cursor(workdir).map(|cursor| cursor.tip)
+}
+
+/// Lightweight read of the persisted tip plus its recent canonical hash
+/// anchors. No state is hydrated. The CKB adapter uses the hashes to detect a
+/// reorg that occurred while cknerv was offline before it replays any tx.
+pub fn peek_restored_chain_cursor(workdir: &Path) -> Option<RestoredChainCursor> {
     let bytes = std::fs::read(persisted_path(workdir)).ok()?;
     let file: PersistedFile = serde_json::from_slice(&bytes).ok()?;
     if file.schema_version != SCHEMA_VERSION {
         return None;
     }
-    file.entities.get("chain")?.get("tip")?.as_u64()
+    let chain = file.entities.get("chain")?;
+    let tip = chain.get("tip")?.as_u64()?;
+    let recent_blocks = serde_json::from_value(
+        chain
+            .get("recent_blocks")
+            .cloned()
+            .unwrap_or_else(|| serde_json::Value::Array(Vec::new())),
+    )
+    .unwrap_or_default();
+    Some(RestoredChainCursor { tip, recent_blocks })
 }
 
 #[cfg(test)]
@@ -207,6 +232,47 @@ mod tests {
         });
         save(&s, &workdir).expect("save");
         assert_eq!(peek_restored_tip(&workdir), Some(12345));
+        assert_eq!(
+            peek_restored_chain_cursor(&workdir),
+            Some(RestoredChainCursor {
+                tip: 12345,
+                recent_blocks: vec![RecentBlock {
+                    number: 12345,
+                    hash: "0xblk".into(),
+                }],
+            })
+        );
+
+        let _ = std::fs::remove_dir_all(&workdir);
+    }
+
+    #[test]
+    fn peek_restored_cursor_keeps_tip_when_hash_anchors_are_unreadable() {
+        let workdir = tmpdir();
+        let path = persisted_path(&workdir);
+        std::fs::write(
+            path,
+            serde_json::to_vec(&serde_json::json!({
+                "schema_version": SCHEMA_VERSION,
+                "entities": {
+                    "chain": {
+                        "tip": 77,
+                        "recent_blocks": "legacy-or-corrupt-anchor-window"
+                    }
+                },
+                "projections": {}
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            peek_restored_chain_cursor(&workdir),
+            Some(RestoredChainCursor {
+                tip: 77,
+                recent_blocks: Vec::new(),
+            })
+        );
 
         let _ = std::fs::remove_dir_all(&workdir);
     }

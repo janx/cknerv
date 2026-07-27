@@ -583,6 +583,32 @@ describe('writeCellBuffers', () => {
     expect(t.memoryIdentityArr[7]).toBe(1);
     expect(t.memorySeedArr[0]).toBe(0);
   });
+
+  it('uses receipt-time birth only for canonical replacement overrides', () => {
+    const cells = [mkCell(1), mkCell(2)];
+    const t = {
+      posArr: new Float32Array(6),
+      colorArr: new Float32Array(6),
+      bornArr: new Float32Array(2),
+      deathArr: new Float32Array(2).fill(1e9),
+      flashArr: new Float32Array(2).fill(-1e9),
+      sizeArr: new Float32Array(2),
+      memoryIdentityArr: new Float32Array(8),
+      memorySeedArr: new Float32Array(2),
+    };
+
+    writeCellBuffers(
+      cells,
+      2,
+      (ms: number) => ms / 1000,
+      new Map(),
+      t,
+      new Map([[2, 42]]),
+    );
+
+    expect(t.bornArr[1]).toBe(42);
+    expect(t.bornArr[0]).not.toBe(42);
+  });
 });
 
 describe('CellGalaxy useSimFrame skip behavior', () => {

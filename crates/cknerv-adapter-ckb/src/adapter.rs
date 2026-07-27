@@ -12,7 +12,7 @@ use std::time::Duration;
 use tokio::sync::{mpsc, watch};
 use url::Url;
 
-use cknerv_core::Mutation;
+use cknerv_core::{Mutation, RecentBlock};
 use cknerv_server::Adapter;
 
 use crate::network::poll_network_once;
@@ -27,6 +27,7 @@ pub struct CkbDirectAdapter {
     node_label: String,
     backfill_blocks: u64,
     resume_from: Option<u64>,
+    resume_anchors: Vec<RecentBlock>,
     /// Forward-gap (blocks) above which the poll treats an advance as a
     /// catch-up — replaying a bounded recent window through the backfill
     /// envelope (pulses suppressed, progress HUD) instead of animating every
@@ -45,6 +46,7 @@ impl CkbDirectAdapter {
             node_label: "ckb-local".into(),
             backfill_blocks: 2000,
             resume_from: None,
+            resume_anchors: Vec::new(),
             catchup_threshold: 25,
         }
     }
@@ -65,9 +67,10 @@ impl CkbDirectAdapter {
         self
     }
 
-    /// Number of recent blocks to replay at boot to seed the cell galaxy
-    /// with the recent live-cell set. `0` disables backfill (legacy
-    /// tip-only behavior).
+    /// Number of recent blocks to replay at boot to seed the cell galaxy and
+    /// to retain as the exact reorg/rebuild horizon. `0` disables historical
+    /// backfill/rebuild (legacy tip-only behavior), while the poller still
+    /// keeps a minimal two-block live reorg journal.
     pub fn with_backfill_blocks(mut self, n: u64) -> Self {
         self.backfill_blocks = n;
         self
@@ -79,6 +82,14 @@ impl CkbDirectAdapter {
     /// rather than re-replayed.
     pub fn with_resume_from(mut self, tip: Option<u64>) -> Self {
         self.resume_from = tip;
+        self
+    }
+
+    /// Canonical hash anchors saved alongside a restored cursor. Supplying
+    /// these makes the first poll able to detect a reorg that happened while
+    /// cknerv was offline; a height-only cursor cannot distinguish that case.
+    pub fn with_resume_anchors(mut self, anchors: Vec<RecentBlock>) -> Self {
+        self.resume_anchors = anchors;
         self
     }
 
@@ -126,9 +137,17 @@ impl Adapter for CkbDirectAdapter {
             // pulses suppressed). Skip the boot backfill either way so we don't
             // re-replay (and duplicate) blocks at/below the saved tip.
             state.last_tip = Some(resume_tip);
+            state.seed_canonical(
+                self.resume_anchors
+                    .iter()
+                    .map(|block| (block.number, block.hash.clone())),
+            );
         } else if self.backfill_blocks > 0 {
             match crate::backfill::run_backfill(&rpc, self.backfill_blocks, &out).await {
-                Ok(tip0) => state.last_tip = Some(tip0),
+                Ok(backfill) => {
+                    state.last_tip = Some(backfill.tip);
+                    state.seed_canonical(backfill.anchors);
+                }
                 Err(e) => tracing::warn!(
                     target: "cknerv-adapter-ckb",
                     "backfill failed: {e}; starting live-only"

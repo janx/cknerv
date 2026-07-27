@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 import type { ChainEntry, Peer, ChainNode, Cell, CellLink } from '@cknerv/types';
+import type { ActiveReplayProgress } from '@cknerv/cache';
 import type {
   ConsensusMemoryCellResponseRef,
   ConsensusMemoryRouteHopFocus,
@@ -34,6 +35,11 @@ import { useCellChurn } from './useCellChurn';
 import WarningBar from './WarningBar';
 import { useReducedMotion } from './useReducedMotion';
 import { useMediaQuery } from './useMediaQuery';
+import {
+  deriveStreamHealthSummary,
+  type StreamHealthChannels,
+} from '../../derives/streamHealth.derive';
+import StreamHealthBanner from './StreamHealthBanner';
 
 // We're "syncing" (catching up, benign) if the node is in IBD, our tip trails the
 // network best-known by more than a couple of blocks, or most peers are ahead of us.
@@ -55,7 +61,7 @@ const MESH_RAIL_STYLE: CSSProperties = { position: 'absolute', top: 42, right: 1
 const MESH_ZONE_COL: CSSProperties = { display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'flex-end' };
 const PANEL_FLOW: CSSProperties = { position: 'relative' };
 
-export default function HudOverlay({ chain, peers, localNode, cellsStats, selectedCell, cellRecordsById, recentCellLinks, cellCausalLens, cellCausalNavigation, tracedCellWriteSeq, cellTraceSource, cellTraceReadout, cellTraceResponseRef, cellTraceEvidenceFocusSourceId, cellTraceEvidencePreviewSourceId, onCellTraceEvidenceFocusChange, cellTraceRouteHopFocus, onCellTraceRouteHopFocusChange, cellTraceRouteHopLock, onCellTraceRouteHopLockChange, cellIdentityProofBinding, onTraceCellWrite, onCellIdentityProofRead, selectedNode, selectedPeer, onClearSelection, onClearCell, onClearNet, backfill, build, colonyCount }: {
+export default function HudOverlay({ chain, peers, localNode, cellsStats, selectedCell, cellRecordsById, recentCellLinks, cellCausalLens, cellCausalNavigation, tracedCellWriteSeq, cellTraceSource, cellTraceReadout, cellTraceResponseRef, cellTraceEvidenceFocusSourceId, cellTraceEvidencePreviewSourceId, onCellTraceEvidenceFocusChange, cellTraceRouteHopFocus, onCellTraceRouteHopFocusChange, cellTraceRouteHopLock, onCellTraceRouteHopLockChange, cellIdentityProofBinding, onTraceCellWrite, onCellIdentityProofRead, selectedNode, selectedPeer, onClearSelection, onClearCell, onClearNet, backfill, streamHealth, build, colonyCount }: {
   chain: ChainEntry; peers: Peer[]; localNode: ChainNode | undefined; cellsStats: CellsStats;
   selectedCell?: Cell | null;
   /** Current Cell projection records for exact route-hop inspection. */
@@ -95,7 +101,11 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats, select
    *  can now show at once (cell + node/peer), so each × clears its own axis.
    *  Each falls back to onClearSelection when not provided. */
   onClearCell?: () => void; onClearNet?: () => void;
-  backfill?: { done: number; total: number } | null;
+  backfill?: ActiveReplayProgress | null;
+  /** Browser transport health for the independent chain and cells streams.
+   * Kept separate from node sync/IBD so a frozen dashboard cannot look
+   * nominal, and a syncing node is not mislabeled as a broken connection. */
+  streamHealth?: StreamHealthChannels;
   build?: BuildInfo;
   /** Whole inferred-colony node count for NetworkPanel's honest footnote. */
   colonyCount?: number;
@@ -131,9 +141,6 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats, select
   // so click-through to the 3D scene is preserved the rest of the time.
   const railRef = useRef<HTMLDivElement>(null);
   const [railScrolls, setRailScrolls] = useState(false);
-  const railStyle: CSSProperties = narrowRail
-    ? { ...MESH_RAIL_STYLE, maxHeight: 'calc(100vh - 56px)', overflowX: 'hidden', overflowY: 'auto', pointerEvents: railScrolls ? 'auto' : 'none', scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,152,48,.35) transparent' }
-    : MESH_RAIL_STYLE;
   const prevCond = useRef<EcgCondition>('FINE');
   const churn = useCellChurn(chain.tip, cellsStats.born, cellsStats.dead);
 
@@ -141,6 +148,14 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats, select
   const mountAt = useRef(Date.now());
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => { const id = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(id); }, []);
+  const streamSummary = streamHealth
+    ? deriveStreamHealthSummary(streamHealth, now)
+    : null;
+  const streamInterrupted = !!streamSummary && streamSummary.phase !== 'live';
+  const contentTop = streamInterrupted ? 72 : 42;
+  const railStyle: CSSProperties = narrowRail
+    ? { ...MESH_RAIL_STYLE, top: contentTop, maxHeight: 'calc(100vh - 56px)', overflowX: 'hidden', overflowY: 'auto', pointerEvents: railScrolls ? 'auto' : 'none', scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,152,48,.35) transparent' }
+    : { ...MESH_RAIL_STYLE, top: contentTop };
 
   // Re-measure rail overflow on mode / selection change and each 1s tick (the
   // latter catches viewport resize within a second). setRailScrolls no-ops when
@@ -174,11 +189,17 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats, select
   useEffect(() => { prevCond.current = condition; }, [condition]);
 
   return (
-    <div style={ROOT_STYLE}>
+    <div
+      style={ROOT_STYLE}
+      data-stream-phase={streamSummary?.phase}
+    >
       {!reduced && <div style={SCAN_STYLE} />}
-      <StatusStrip level={alert.level} uptimeMs={now - mountAt.current} build={build} />
-      <WarningBar level={alert.level} trigger={alert.trigger} reducedMotion={reduced} />
-      <BlockchainReadout chain={chain} style={{ left: 14, top: 42 }} />
+      <StatusStrip level={alert.level} uptimeMs={now - mountAt.current} build={build} stream={streamSummary} />
+      {streamSummary ? (
+        <StreamHealthBanner summary={streamSummary} reducedMotion={reduced} />
+      ) : null}
+      <WarningBar level={alert.level} trigger={alert.trigger} reducedMotion={reduced} top={streamInterrupted ? 60 : 30} />
+      <BlockchainReadout chain={chain} style={{ left: 14, top: contentTop }} />
       {/* MESH RAIL — the two mesh panels juxtaposed as a pair, each with its
           detail docked alongside. CELL zone (galaxy) over PEER zone (colony);
           within a zone the selected entity's detail fans LEFT of its own mesh.
@@ -232,7 +253,10 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats, select
         reducedMotion={reduced}
         style={{ left: 14, bottom: 14 }}
       />
-      <BackfillBar backfill={backfill ?? null} />
+      <BackfillBar
+        backfill={backfill ?? null}
+        style={streamInterrupted ? { top: 70 } : undefined}
+      />
     </div>
   );
 }

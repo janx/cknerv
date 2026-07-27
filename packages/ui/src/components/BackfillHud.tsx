@@ -2,6 +2,7 @@ import { Text } from '@react-three/drei';
 
 import { FONT_DISPLAY, FONT_MONO } from '../ui/fonts';
 import { useCellGalaxy } from '../hooks/cellGalaxyContext';
+import { replayPresentation } from './hud/replayPresentation';
 
 interface BackfillHudProps {
   /** HUD-space center x of the panel. */
@@ -16,13 +17,14 @@ const BAR_H = 6;
 const HEADER_SIZE = 11;
 const FIELD_SIZE = 10;
 
-/** Boot-time seeding progress. Renders only while `cache.backfill` is
- *  non-null (server is replaying the recent block window). Anchored by
- *  its top-center; the bar spans `width`. */
+/** Cause-specific canonical replay progress. Renders while `cache.backfill`
+ *  is non-null, including a zero-total reorg waiting state. Anchored by its
+ *  top-center; the bar spans `width`. */
 export default function BackfillHud({ x, y, width }: BackfillHudProps) {
   const { backfill } = useCellGalaxy();
   if (!backfill) return null;
 
+  const visual = replayPresentation(backfill.phase);
   const ratio =
     backfill.total > 0
       ? Math.min(1, Math.max(0, backfill.done / backfill.total))
@@ -37,13 +39,13 @@ export default function BackfillHud({ x, y, width }: BackfillHudProps) {
         anchorX="center"
         anchorY="top"
         fontSize={HEADER_SIZE}
-        color="#67e8f9"
+        color={visual.color}
         letterSpacing={0.3}
         outlineWidth={0.18}
-        outlineColor="#0ea5e9"
+        outlineColor={visual.color}
         outlineOpacity={0.45}
       >
-        ⟦ SEEDING LIVE CELLS ⟧
+        {`⟦ ${visual.tag} · ${visual.title} ⟧`}
       </Text>
 
       <Text
@@ -54,7 +56,9 @@ export default function BackfillHud({ x, y, width }: BackfillHudProps) {
         fontSize={FIELD_SIZE}
         color="#e2e8f0"
       >
-        {`${backfill.done} / ${backfill.total} blocks`}
+        {backfill.total > 0
+          ? `${backfill.done} / ${backfill.total} blocks`
+          : visual.waiting}
       </Text>
 
       {/* Progress bar: track + fill. Bar is centered on x, so it spans
@@ -67,7 +71,7 @@ export default function BackfillHud({ x, y, width }: BackfillHudProps) {
         position={[-width / 2 + filledW / 2, -HEADER_SIZE - FIELD_SIZE - 16, 1]}
       >
         <planeGeometry args={[Math.max(filledW, 0.001), BAR_H]} />
-        <meshBasicMaterial color="#67e8f9" transparent opacity={0.9} />
+        <meshBasicMaterial color={visual.color} transparent opacity={0.9} />
       </mesh>
     </group>
   );
