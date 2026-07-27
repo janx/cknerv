@@ -14,6 +14,14 @@ use cknerv_core::{Mutation, OutPoint, TxOutputInfo};
 use crate::content_hash::compute_content_hash;
 use crate::rpc::RpcClient;
 
+/// One fully-translated canonical block plus the header linkage needed by
+/// the live poller to reject a mixed-fork fetch.
+pub struct FetchedBlock {
+    pub hash: String,
+    pub parent_hash: String,
+    pub mutations: Vec<Mutation>,
+}
+
 /// Truncation cap that matches simulator's `truncate_hex` so wire bytes
 /// agree. Source bytes (= 2× hex chars without the `0x` prefix).
 const DATA_HEX_CAP_BYTES: usize = 1024;
@@ -22,15 +30,34 @@ const DATA_HEX_CAP_BYTES: usize = 1024;
 /// 1. `BlockMined { number, hash, tx_count, size, at }`
 /// 2. for each tx (including cellbase): `TxLanded { tx_hash, block, inputs, outputs, at }`
 ///
-/// Returns `Ok(vec![])` if the block isn't visible yet (RPC race),
-/// letting the poll loop retry on the next tick.
-pub async fn fetch_and_translate(rpc: &RpcClient, number: u64) -> Result<Vec<Mutation>> {
+/// Returns `Ok(None)` if the block isn't visible yet (RPC race), letting the
+/// poll loop retry on the next tick.
+pub async fn fetch_and_translate(rpc: &RpcClient, number: u64) -> Result<Option<FetchedBlock>> {
     let Some(block) = rpc.get_block_by_number(number).await? else {
-        return Ok(vec![]);
+        return Ok(None);
     };
     let at = now_ms();
     let size = serialized_block_size(&block);
-    translate_block(&block, number, at, size)
+    let hash = header_hash(&block, number)?.to_string();
+    let parent_hash = header_parent_hash(&block, number)?.to_string();
+    let mutations = translate_block(&block, number, at, size)?;
+    Ok(Some(FetchedBlock {
+        hash,
+        parent_hash,
+        mutations,
+    }))
+}
+
+pub(crate) fn header_hash(block: &Value, number: u64) -> Result<&str> {
+    block["header"]["hash"]
+        .as_str()
+        .ok_or_else(|| anyhow!("block {number}: missing header.hash"))
+}
+
+pub(crate) fn header_parent_hash(block: &Value, number: u64) -> Result<&str> {
+    block["header"]["parent_hash"]
+        .as_str()
+        .ok_or_else(|| anyhow!("block {number}: missing header.parent_hash"))
 }
 
 /// Canonical serialized block size (bytes), recovered by round-tripping the
@@ -50,10 +77,7 @@ pub fn serialized_block_size(block: &Value) -> u64 {
 /// a live RPC. The `at` timestamp is injected so deterministic fixtures
 /// produce deterministic output.
 pub fn translate_block(block: &Value, number: u64, at: u64, size: u64) -> Result<Vec<Mutation>> {
-    let header_hash = block["header"]["hash"]
-        .as_str()
-        .ok_or_else(|| anyhow!("block {number}: missing header.hash"))?
-        .to_string();
+    let header_hash = header_hash(block, number)?.to_string();
 
     let txs = block["transactions"]
         .as_array()

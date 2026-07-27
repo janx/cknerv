@@ -11,7 +11,7 @@
 
 use std::path::PathBuf;
 
-use cknerv_core::{Cell, CellDelta, CellGalaxySnapshot, Chain, Mutation};
+use cknerv_core::{Cell, CellDelta, CellGalaxySnapshot, Chain, Mutation, ReplayPhase};
 
 fn fixture(name: &str) -> serde_json::Value {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -66,6 +66,16 @@ fn cell_delta_samples_match_serialized_shape() {
     let sample = &samples["link_prune"];
     let delta = CellDelta::LinkPrune { from_block: 42 };
     let serialized = serde_json::to_value(delta).expect("serialize CellDelta::LinkPrune");
+    assert_eq!(canonicalize(sample), canonicalize(&serialized));
+
+    let sample = &samples["backfill_rebuild"];
+    let delta = CellDelta::Backfill {
+        done: 3,
+        total: 10,
+        active: true,
+        phase: ReplayPhase::Rebuild,
+    };
+    let serialized = serde_json::to_value(delta).expect("serialize CellDelta::Backfill");
     assert_eq!(canonicalize(sample), canonicalize(&serialized));
 }
 

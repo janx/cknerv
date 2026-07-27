@@ -22,7 +22,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::helix::helix_seed_for;
-use crate::mutation::Mutation;
+use crate::mutation::{Mutation, ReplayPhase};
 use crate::outpoint::{is_cellbase_input, OutPoint, TxOutputInfo};
 use crate::projection::Projection;
 use crate::{AssetKind, LockKind};
@@ -30,6 +30,10 @@ use crate::{AssetKind, LockKind};
 // ── visual / behavior constants — mirror cellGalaxy.ts ───────────────
 pub const CELL_CAP: usize = 5000;
 pub const DEFAULT_RECENT_LINKS_CAP: usize = 2048;
+/// Canonical block journals retained for exact reorg rollback. The CLI ties
+/// this to its configured backfill window so rollback and controlled rebuild
+/// cover the same recent-chain horizon.
+pub const DEFAULT_REORG_WINDOW_BLOCKS: usize = 2000;
 const PULSE_THROTTLE_MS: u64 = 800;
 const DEATH_DURATION_MS: u64 = 600;
 
@@ -37,6 +41,7 @@ const DEATH_DURATION_MS: u64 = 600;
 pub struct CellGalaxyConfig {
     pub cell_cap: usize,
     pub recent_links_cap: usize,
+    pub reorg_window_blocks: usize,
 }
 
 impl Default for CellGalaxyConfig {
@@ -44,6 +49,7 @@ impl Default for CellGalaxyConfig {
         Self {
             cell_cap: CELL_CAP,
             recent_links_cap: DEFAULT_RECENT_LINKS_CAP,
+            reorg_window_blocks: DEFAULT_REORG_WINDOW_BLOCKS,
         }
     }
 }
@@ -80,12 +86,15 @@ pub struct Cell {
     pub asset_kind: AssetKind,
 }
 
-/// Transient boot-time backfill progress. `None` when not backfilling.
-/// Not persisted (a restart re-seeds from the chain).
+/// Transient historical-replay progress. `None` during ordinary live polling.
+/// Not persisted (a restart reconciles from the chain).
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BackfillState {
     pub done: u64,
     pub total: u64,
+    /// Missing on snapshots produced before replay causes were exposed.
+    #[serde(default)]
+    pub phase: ReplayPhase,
 }
 
 /// Immutable evidence captured when a transaction link is observed.
@@ -120,20 +129,19 @@ pub struct CellGalaxySnapshot {
     /// whose `link` deltas pre-date the WebSocket connection.
     #[serde(default)]
     pub recent_links: Vec<CellLinkRecord>,
-    /// Cumulative count of cells ever-born on chain. Monotonic — unaffected
-    /// by `CELL_CAP` evictions, post-death-tail GC, or projection restarts.
-    /// Backs the CellsHud `TOTAL` row so the panel reads true on-chain
-    /// activity rather than the capped projection view.
+    /// Canonical births represented by the current observation history.
+    /// Unaffected by `CELL_CAP` evictions and post-death-tail GC; exact reorg
+    /// rollback decrements it, while a controlled deep-reorg rebuild resets
+    /// and reconstructs it from the configured recent-chain window.
     #[serde(default)]
     pub total_births: u64,
-    /// Cumulative count of real chain deaths (input cells consumed by a
-    /// landed tx). `CELL_CAP` evictions are *not* counted — those cells are
-    /// alive on chain and only forced into the projection's death-tail
-    /// because the in-memory cap is exceeded.
+    /// Real chain deaths represented by the current observation history.
+    /// `CELL_CAP` evictions are *not* counted — those cells remain alive on
+    /// chain and only leave this bounded projection.
     #[serde(default)]
     pub total_deaths: u64,
-    /// Boot-time backfill progress; present only while seeding. Omitted
-    /// from the wire when `None` so existing snapshot fixtures are
+    /// Historical replay progress; present only while seeding or rebuilding.
+    /// Omitted from the wire when `None` so existing snapshot fixtures are
     /// unaffected.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub backfill: Option<BackfillState>,
@@ -192,15 +200,17 @@ pub enum CellDelta {
         total_births: u64,
         total_deaths: u64,
     },
-    /// Boot-time backfill progress passthrough. `active` true while
-    /// seeding, false on completion. The SPA shows a progress HUD and
-    /// the projection suppresses block pulse deltas while active so the
-    /// boot replay does not fire one shockwave per historical block.
-    /// Tx link deltas still stream so nerves refill with cells.
+    /// Historical replay progress passthrough. `active` is true while boot,
+    /// catch-up, reorg, or rebuild replay is in progress and false on
+    /// completion. The SPA shows a cause-specific HUD and the projection
+    /// suppresses block pulse deltas while active so replay does not fire one
+    /// shockwave per historical block. Tx link deltas still stream so nerves
+    /// refill with cells.
     Backfill {
         done: u64,
         total: u64,
         active: bool,
+        phase: ReplayPhase,
     },
     /// Canonical invalidation boundary for causal evidence during a reorg.
     /// Consumers must discard every retained or queued link whose block is
@@ -246,13 +256,14 @@ pub struct CellGalaxy {
     /// input-spend; rebuilt lazily by `gc()` when entries fall out.
     /// Also used by `apply_cell_tagged` to resolve the cell to tag.
     outpoint_index: std::collections::HashMap<OutPoint, u64>,
-    /// Block hash journal for detecting canonical replacement at a height.
+    /// Bounded block hash journal for detecting canonical replacement at a
+    /// height. Its horizon is `config.reorg_window_blocks`.
     block_hashes: std::collections::BTreeMap<u64, String>,
-    /// Per-block output journal. Used to remove cells born in orphaned
-    /// blocks when the chain poller reports a replacement block.
+    /// Bounded per-block output journal. Used to remove cells born in
+    /// orphaned blocks when the chain poller reports a replacement block.
     block_births: std::collections::BTreeMap<u64, Vec<OutPoint>>,
-    /// Per-block input journal. Each entry is the pre-death cell snapshot
-    /// so rollback can resurrect UTXOs spent by an orphaned block.
+    /// Bounded per-block input journal. Each entry is the pre-death cell
+    /// snapshot so rollback can resurrect UTXOs spent by an orphaned block.
     block_deaths: std::collections::BTreeMap<u64, Vec<Cell>>,
     last_pulse_at_ms: u64,
     /// Tx-link history shipped in snapshots so a fresh frontend can
@@ -260,7 +271,7 @@ pub struct CellGalaxy {
     /// deltas pre-date the WebSocket connection. Pruned in `gc` once a
     /// link's outputs are all dead; bounded by `RECENT_LINKS_CAP`.
     recent_links: Vec<CellLinkRecord>,
-    /// Cumulative on-chain birth/death counters. See [`CellGalaxySnapshot`]
+    /// Canonical-window birth/death counters. See [`CellGalaxySnapshot`]
     /// for the semantics; `enforce_cap` deliberately does not touch them.
     total_births: u64,
     total_deaths: u64,
@@ -283,7 +294,7 @@ pub struct CellGalaxy {
     /// Bounded upstream by the reducer's 5-min pairing TTL, so even
     /// pathological out-of-order cases stay finite.
     pending_births_tag: std::collections::HashMap<OutPoint, String>,
-    /// `Some` while a boot-time backfill is in progress. Gates block pulse
+    /// `Some` while a historical replay is in progress. Gates block pulse
     /// emission (see `handle_block_mined`) and is surfaced in the snapshot
     /// for clients connecting mid-backfill. Tx links still emit during
     /// backfill so the neural fabric refills along with cells.
@@ -402,6 +413,7 @@ impl CellGalaxy {
         self.total_births = p.total_births;
         self.total_deaths = p.total_deaths;
         self.pending_births_tag = p.pending_births_tag.into_iter().collect();
+        self.prune_reorg_journal();
 
         // Legacy persistence (pre-counter) lacks the two fields and
         // `#[serde(default)]` falls them to 0. `next_id` survived from old
@@ -418,7 +430,7 @@ impl CellGalaxy {
         // the alive subset is treated as dead). Going forward, real
         // `handle_tx_landed` deltas keep counters in sync; this seed only
         // runs on legacy state where both counters arrived as zero.
-        if self.total_births == 0 && self.next_id > 0 {
+        if self.total_births == 0 && self.next_id > 0 && !self.cells.is_empty() {
             let alive_now = self
                 .cells
                 .iter()
@@ -463,6 +475,73 @@ impl CellGalaxy {
             self.outpoint_index.remove(&op);
         }
         killed
+    }
+
+    /// Keep the rollback journals inside the configured recent-chain window.
+    /// All three maps are pruned from the same numeric floor so a retained
+    /// block hash never loses the births/deaths needed to undo that block.
+    fn prune_reorg_journal(&mut self) {
+        let latest = self
+            .block_hashes
+            .keys()
+            .next_back()
+            .copied()
+            .into_iter()
+            .chain(self.block_births.keys().next_back().copied())
+            .chain(self.block_deaths.keys().next_back().copied())
+            .max();
+        let Some(latest) = latest else {
+            return;
+        };
+        let capacity =
+            u64::try_from(self.config.reorg_window_blocks.max(1)).unwrap_or(u64::MAX);
+        let retain_from = latest.saturating_sub(capacity.saturating_sub(1));
+        self.block_hashes
+            .retain(|height, _| *height >= retain_from);
+        self.block_births
+            .retain(|height, _| *height >= retain_from);
+        self.block_deaths
+            .retain(|height, _| *height >= retain_from);
+    }
+
+    fn reorg_journal_floor(&self) -> Option<u64> {
+        self.block_hashes
+            .keys()
+            .next()
+            .copied()
+            .into_iter()
+            .chain(self.block_births.keys().next().copied())
+            .chain(self.block_deaths.keys().next().copied())
+            .min()
+    }
+
+    /// Establish a fresh bounded canonical observation window after a reorg
+    /// deeper than the retained undo journal. `next_id` and the last live
+    /// pulse timestamp deliberately survive: IDs must not alias visual work
+    /// queued before the reset, and replayed historical blocks must not move
+    /// the pulse clock backward.
+    fn reset_for_rebuild(&mut self) -> Vec<CellDelta> {
+        let ids = self.cells.iter().map(|cell| cell.id).collect::<Vec<_>>();
+        self.cells.clear();
+        self.outpoint_index.clear();
+        self.block_hashes.clear();
+        self.block_births.clear();
+        self.block_deaths.clear();
+        self.recent_links.clear();
+        self.pending_births_tag.clear();
+        self.total_births = 0;
+        self.total_deaths = 0;
+        self.backfill = None;
+
+        let mut deltas = vec![CellDelta::LinkPrune { from_block: 0 }];
+        if !ids.is_empty() {
+            deltas.push(CellDelta::Gc { ids });
+        }
+        deltas.push(CellDelta::Stats {
+            total_births: 0,
+            total_deaths: 0,
+        });
+        deltas
     }
 
     /// Drop dead cells past the death-animation tail and expired pending
@@ -531,13 +610,23 @@ impl CellGalaxy {
     }
 
     fn rollback_from(&mut self, number: u64) -> Vec<CellDelta> {
+        if self
+            .reorg_journal_floor()
+            .is_some_and(|floor| number < floor)
+        {
+            return self.reset_for_rebuild();
+        }
+
         let heights: Vec<u64> = self
             .block_hashes
             .range(number..)
             .map(|(height, _)| *height)
             .collect();
         if heights.is_empty() {
-            return Vec::new();
+            self.recent_links.retain(|link| link.block < number);
+            return vec![CellDelta::LinkPrune {
+                from_block: number,
+            }];
         }
 
         // The frontend may retain a different evidence window than this
@@ -628,6 +717,7 @@ impl CellGalaxy {
             deltas.extend(self.rollback_from(number));
         }
         self.block_hashes.insert(number, hash.to_string());
+        self.prune_reorg_journal();
 
         // Cap enforcement (kill oldest *generic* alive if alive > 5000).
         // Real birth/death is now driven entirely by tx_landed; block_mined
@@ -832,6 +922,7 @@ impl CellGalaxy {
             });
         }
 
+        self.prune_reorg_journal();
         deltas
     }
 
@@ -919,6 +1010,8 @@ impl Projection for CellGalaxy {
                 size: _,
                 at,
             } => self.handle_block_mined(*number, hash, *tx_count, *at),
+            Mutation::ChainReorganized { from_block } => self.rollback_from(*from_block),
+            Mutation::ChainRebuild { .. } => self.reset_for_rebuild(),
             Mutation::TxLanded {
                 tx_hash,
                 block,
@@ -931,15 +1024,18 @@ impl Projection for CellGalaxy {
                 done,
                 total,
                 active,
+                phase,
             } => {
                 self.backfill = active.then_some(BackfillState {
                     done: *done,
                     total: *total,
+                    phase: *phase,
                 });
                 vec![CellDelta::Backfill {
                     done: *done,
                     total: *total,
                     active: *active,
+                    phase: *phase,
                 }]
             }
             _ => Vec::new(),
@@ -995,6 +1091,7 @@ mod tests {
             done: 25,
             total: 100,
             active: true,
+            phase: ReplayPhase::Reorg,
         });
         assert!(
             matches!(
@@ -1002,7 +1099,8 @@ mod tests {
                 [CellDelta::Backfill {
                     done: 25,
                     total: 100,
-                    active: true
+                    active: true,
+                    phase: ReplayPhase::Reorg
                 }]
             ),
             "expected a single active Backfill delta; got {d1:?}"
@@ -1011,7 +1109,8 @@ mod tests {
             g.snapshot().backfill,
             Some(BackfillState {
                 done: 25,
-                total: 100
+                total: 100,
+                phase: ReplayPhase::Reorg
             })
         );
         // active:false → snapshot clears.
@@ -1019,6 +1118,7 @@ mod tests {
             done: 100,
             total: 100,
             active: false,
+            phase: ReplayPhase::Reorg,
         });
         assert!(matches!(
             d2.as_slice(),
@@ -1032,6 +1132,7 @@ mod tests {
         let mut g = CellGalaxy::with_config(CellGalaxyConfig {
             cell_cap: 2,
             recent_links_cap: DEFAULT_RECENT_LINKS_CAP,
+            reorg_window_blocks: DEFAULT_REORG_WINDOW_BLOCKS,
         });
         let births = g.apply_mutation(&Mutation::TxLanded {
             tx_hash: "0xmint".into(),
@@ -1078,6 +1179,7 @@ mod tests {
         let mut g = CellGalaxy::with_config(CellGalaxyConfig {
             cell_cap: CELL_CAP,
             recent_links_cap: 2,
+            reorg_window_blocks: DEFAULT_REORG_WINDOW_BLOCKS,
         });
         for n in 0..3 {
             g.apply_mutation(&Mutation::TxLanded {
@@ -1104,12 +1206,24 @@ mod tests {
             done: 1,
             total: 2,
             active: true,
+            phase: ReplayPhase::Rebuild,
         };
         let v = serde_json::to_value(&d).expect("serialize");
         assert_eq!(v["type"], "backfill");
         assert_eq!(v["done"], 1);
         assert_eq!(v["total"], 2);
         assert_eq!(v["active"], true);
+        assert_eq!(v["phase"], "rebuild");
+    }
+
+    #[test]
+    fn legacy_backfill_snapshot_state_defaults_to_boot() {
+        let state: BackfillState = serde_json::from_value(serde_json::json!({
+            "done": 3,
+            "total": 9
+        }))
+        .expect("deserialize legacy backfill state");
+        assert_eq!(state.phase, ReplayPhase::Boot);
     }
 
     #[test]
@@ -1127,6 +1241,7 @@ mod tests {
             done: 0,
             total: 10,
             active: true,
+            phase: ReplayPhase::Boot,
         });
 
         // A landed tx during backfill: births and causal links both emit so
@@ -1163,6 +1278,7 @@ mod tests {
             done: 10,
             total: 10,
             active: false,
+            phase: ReplayPhase::Boot,
         });
         let tx2 = g.handle_tx_landed("0xlive", 2, 5_000, &[], &[out(100, "0x")]);
         assert!(
@@ -1689,10 +1805,164 @@ mod tests {
     }
 
     #[test]
+    fn explicit_chain_reorganized_rolls_back_before_replacement_arrives() {
+        let mut g = make_galaxy();
+        g.handle_block_mined(1, "0xaaa", 1, 1_000);
+        g.handle_tx_landed("0xbase", 1, 1_000, &[], &[out(100, "0x")]);
+        g.handle_block_mined(2, "0xbbb", 1, 1_100);
+        g.handle_tx_landed("0xorphan", 2, 1_100, &[op("0xbase", 0)], &[out(200, "0x")]);
+
+        let deltas = g.apply_mutation(&Mutation::ChainReorganized { from_block: 2 });
+
+        assert!(matches!(
+            deltas.first(),
+            Some(CellDelta::LinkPrune { from_block: 2 })
+        ));
+        assert_eq!(g.cells.len(), 1);
+        assert_eq!(g.cells[0].out_point, op("0xbase", 0));
+        assert!(g.cells[0].death_at_ms.is_none());
+        assert!(!g.block_hashes.contains_key(&2));
+    }
+
+    #[test]
+    fn reorg_journal_is_bounded_and_oversized_persistence_is_trimmed_on_restore() {
+        let mut source = CellGalaxy::with_config(CellGalaxyConfig {
+            cell_cap: CELL_CAP,
+            recent_links_cap: DEFAULT_RECENT_LINKS_CAP,
+            reorg_window_blocks: 10,
+        });
+        for block in 1..=4 {
+            source.handle_block_mined(
+                block,
+                &format!("0xblock{block}"),
+                1,
+                block * 1_000,
+            );
+            let inputs = if block == 1 {
+                Vec::new()
+            } else {
+                vec![op(&format!("0xtx{}", block - 1), 0)]
+            };
+            source.handle_tx_landed(
+                &format!("0xtx{block}"),
+                block,
+                block * 1_000,
+                &inputs,
+                &[out(100, "0x")],
+            );
+        }
+        assert_eq!(source.block_hashes.len(), 4);
+
+        let mut restored = CellGalaxy::with_config(CellGalaxyConfig {
+            cell_cap: CELL_CAP,
+            recent_links_cap: DEFAULT_RECENT_LINKS_CAP,
+            reorg_window_blocks: 2,
+        });
+        restored.restore_from(source.to_persisted());
+
+        assert_eq!(
+            restored.block_hashes.keys().copied().collect::<Vec<_>>(),
+            vec![3, 4]
+        );
+        assert_eq!(
+            restored.block_births.keys().copied().collect::<Vec<_>>(),
+            vec![3, 4]
+        );
+        assert_eq!(
+            restored.block_deaths.keys().copied().collect::<Vec<_>>(),
+            vec![3, 4]
+        );
+        let persisted = restored.to_persisted();
+        assert_eq!(persisted.block_hashes.len(), 2);
+        assert_eq!(persisted.block_births.len(), 2);
+        assert_eq!(persisted.block_deaths.len(), 2);
+    }
+
+    #[test]
+    fn chain_rebuild_clears_unsafe_state_without_reusing_cell_ids() {
+        let mut g = CellGalaxy::with_config(CellGalaxyConfig {
+            cell_cap: CELL_CAP,
+            recent_links_cap: DEFAULT_RECENT_LINKS_CAP,
+            reorg_window_blocks: 2,
+        });
+        g.handle_block_mined(1, "0xblock1", 1, 1_000);
+        g.handle_tx_landed("0xtx1", 1, 1_000, &[], &[out(100, "0x")]);
+        g.handle_block_mined(2, "0xblock2", 1, 2_000);
+        g.handle_tx_landed("0xtx2", 2, 2_000, &[], &[out(100, "0x")]);
+        let next_id = g.next_id;
+
+        let deltas = g.apply_mutation(&Mutation::ChainRebuild { from_block: 20 });
+
+        assert!(matches!(
+            deltas.first(),
+            Some(CellDelta::LinkPrune { from_block: 0 })
+        ));
+        assert!(deltas
+            .iter()
+            .any(|delta| matches!(delta, CellDelta::Gc { ids } if ids.len() == 2)));
+        assert!(deltas.iter().any(|delta| matches!(
+            delta,
+            CellDelta::Stats {
+                total_births: 0,
+                total_deaths: 0
+            }
+        )));
+        assert!(g.cells.is_empty());
+        assert!(g.outpoint_index.is_empty());
+        assert!(g.block_hashes.is_empty());
+        assert!(g.block_births.is_empty());
+        assert!(g.block_deaths.is_empty());
+        assert!(g.recent_links.is_empty());
+        assert_eq!(g.total_births, 0);
+        assert_eq!(g.total_deaths, 0);
+        assert_eq!(g.next_id, next_id);
+
+        let replay = g.handle_tx_landed("0xcanonical", 20, 20_000, &[], &[out(100, "0x")]);
+        assert!(replay.iter().any(
+            |delta| matches!(delta, CellDelta::Birth { cell } if cell.id == next_id)
+        ));
+    }
+
+    #[test]
+    fn reorg_below_the_retained_journal_floor_escalates_to_safe_reset() {
+        let mut g = CellGalaxy::with_config(CellGalaxyConfig {
+            cell_cap: CELL_CAP,
+            recent_links_cap: DEFAULT_RECENT_LINKS_CAP,
+            reorg_window_blocks: 2,
+        });
+        for block in 1..=4 {
+            g.handle_block_mined(
+                block,
+                &format!("0xblock{block}"),
+                1,
+                block * 1_000,
+            );
+            g.handle_tx_landed(
+                &format!("0xtx{block}"),
+                block,
+                block * 1_000,
+                &[],
+                &[out(100, "0x")],
+            );
+        }
+        assert_eq!(g.reorg_journal_floor(), Some(3));
+
+        let deltas = g.apply_mutation(&Mutation::ChainReorganized { from_block: 2 });
+
+        assert!(matches!(
+            deltas.first(),
+            Some(CellDelta::LinkPrune { from_block: 0 })
+        ));
+        assert!(g.cells.is_empty());
+        assert!(g.block_hashes.is_empty());
+    }
+
+    #[test]
     fn reorg_emits_link_prune_even_when_backend_evidence_fifo_is_empty() {
         let mut g = CellGalaxy::with_config(CellGalaxyConfig {
             cell_cap: CELL_CAP,
             recent_links_cap: 0,
+            reorg_window_blocks: DEFAULT_REORG_WINDOW_BLOCKS,
         });
         g.handle_block_mined(1, "0xaaa", 1, 1_000);
         g.handle_tx_landed("0xbase", 1, 1_000, &[], &[out(100, "0x")]);

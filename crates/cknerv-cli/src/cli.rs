@@ -45,7 +45,8 @@ pub struct RunArgs {
     #[arg(long)]
     pub no_open: bool,
 
-    /// Recent blocks to replay at boot to seed the live-cell galaxy. 0 disables.
+    /// Recent blocks used for boot replay and the reorg/rebuild window. 0
+    /// disables historical replay (a minimal live reorg journal remains).
     /// Overrides cknerv.toml. Default: 2000.
     #[arg(long, value_name = "N")]
     pub backfill_blocks: Option<u64>,

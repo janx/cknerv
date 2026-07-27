@@ -1,4 +1,12 @@
 {
+  "ChainReorganized": {
+    "type": "chain_reorganized",
+    "from_block": 1
+  },
+  "ChainRebuild": {
+    "type": "chain_rebuild",
+    "from_block": 1
+  },
   "BlockMined": {
     "type": "block_mined",
     "number": 1,

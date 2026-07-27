@@ -26,7 +26,7 @@ pub use entity::{
     Chain, ChainNode, EpochInfo, MempoolStats, Peer, PeerDirection, RecentBlock, RecentTx,
 };
 pub use helix::{helix_seed_f64, helix_seed_for};
-pub use mutation::{Mutation, RevisionedMutation};
+pub use mutation::{Mutation, ReplayPhase, RevisionedMutation};
 pub use outpoint::{is_cellbase_input, CellOutput, OutPoint, TxOutputInfo};
 pub use projection::cells::{
     Cell, CellDelta, CellGalaxy, CellGalaxyPersisted, CellGalaxySnapshot, CellLinkEndpointAnchor,

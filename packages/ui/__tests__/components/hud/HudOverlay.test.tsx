@@ -77,6 +77,42 @@ describe('HudOverlay', () => {
     expect(t).toContain('CELL MESH');    // cell mesh
   });
 
+  it('marks frozen browser data without changing nominal chain telemetry', () => {
+    const now = Date.now();
+    const { container } = render(
+      <HudOverlay
+        chain={chain}
+        peers={peers}
+        localNode={localNode}
+        cellsStats={cellsStats}
+        streamHealth={{
+          chain: {
+            phase: 'live',
+            attempt: 0,
+            lastMessageAtMs: now - 1_000,
+            reason: null,
+          },
+          cells: {
+            phase: 'stale',
+            attempt: 2,
+            lastMessageAtMs: now - 17_000,
+            reason: 'heartbeat_timeout',
+          },
+        }}
+      />,
+    );
+
+    const root = container.firstElementChild as HTMLElement;
+    expect(root.dataset.streamPhase).toBe('stale');
+    expect(container.querySelector('[data-stream-stale-frame]')).not.toBeNull();
+    expect(container.textContent).toContain('DATA FROZEN');
+    expect(container.textContent).toContain('CELLS');
+    expect(container.textContent).toContain('NOMINAL');
+    expect(
+      (container.querySelector('.cknerv-mesh-rail') as HTMLElement).style.top,
+    ).toBe('72px');
+  });
+
   it('shows the cell detail and a node detail at the same time (independent axes)', () => {
     const mockCell: Cell = {
       id: 7, born_at_ms: 1, death_at_ms: null, birth_block: 16204800, tag: 'wallet',

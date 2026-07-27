@@ -1,5 +1,7 @@
 import { useState } from 'react';
 import type { AlertLevel } from '../../derives/alertLevel';
+import type { StreamHealthSummary } from '../../derives/streamHealth.derive';
+import { formatStreamAge } from '../../derives/streamHealth.derive';
 import { HUD_COLORS, HUD_FONTS, rgba } from './hudTheme';
 
 export type BuildInfo = { version: string; href: string };
@@ -54,13 +56,48 @@ function BuildChip({ build }: { build: BuildInfo }) {
   );
 }
 
-export default function StatusStrip({ level, uptimeMs, build }: { level: AlertLevel; uptimeMs: number; build?: BuildInfo }) {
+const STREAM_COLOR: Record<StreamHealthSummary['phase'], string> = {
+  connecting: HUD_COLORS.cyanWire,
+  live: HUD_COLORS.nominal,
+  retrying: HUD_COLORS.warning,
+  resyncing: HUD_COLORS.rebuild,
+  stale: HUD_COLORS.danger,
+};
+
+export default function StatusStrip({ level, uptimeMs, build, stream }: {
+  level: AlertLevel;
+  uptimeMs: number;
+  build?: BuildInfo;
+  stream?: StreamHealthSummary | null;
+}) {
   const color = LEVEL_COLOR[level];
+  const streamColor = stream ? STREAM_COLOR[stream.phase] : null;
   return (
     <div style={{ position: 'absolute', left: 0, right: 0, top: 0, height: 30, display: 'flex', alignItems: 'center', gap: 14, padding: '0 14px', borderBottom: '1px solid rgba(255,152,48,.18)', background: 'linear-gradient(180deg,rgba(255,152,48,.05),transparent)' }}>
       <span style={{ fontFamily: HUD_FONTS.display, fontWeight: 700, fontSize: 12, letterSpacing: 5, color: HUD_COLORS.orange, textShadow: '0 0 8px rgba(255,152,48,.5)' }}>CKNERV</span>
       {build ? <BuildChip build={build} /> : null}
       <span style={{ flex: 1 }} />
+      {stream && streamColor ? (
+        <span
+          data-stream-chip
+          data-stream-phase={stream.phase}
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 6,
+            padding: '2px 7px',
+            border: `1px solid ${rgba(streamColor, 0.28)}`,
+            fontFamily: HUD_FONTS.mono,
+            fontSize: 9,
+            letterSpacing: 1,
+            color: streamColor,
+          }}
+        >
+          <span style={{ width: 4, height: 4, borderRadius: '50%', background: streamColor, boxShadow: `0 0 6px ${streamColor}` }} />
+          DATA {stream.phase.toUpperCase()}
+          <span style={{ color: HUD_COLORS.dim }}>{formatStreamAge(stream.lastMessageAgeMs)}</span>
+        </span>
+      ) : null}
       <span style={{ display: 'flex', alignItems: 'center', gap: 7, fontFamily: HUD_FONTS.tech, fontWeight: 600, fontSize: 10, letterSpacing: 2, color }}>
         <span style={{ fontFamily: HUD_FONTS.cjk, color: HUD_COLORS.dim }}>状态</span>
         <span data-dot data-level={level} style={{ width: 6, height: 6, borderRadius: '50%', background: color, boxShadow: `0 0 8px ${color}` }} />

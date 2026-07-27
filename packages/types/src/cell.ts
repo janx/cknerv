@@ -21,6 +21,18 @@ export type LockKind = 'sighash' | 'multisig' | 'acp' | 'omnilock' | 'other';
  *  `#[serde(rename_all = "snake_case")]` `AssetKind` enum. */
 export type AssetKind = 'native' | 'sudt' | 'xudt' | 'dao' | 'spore' | 'other';
 
+/** Why canonical blocks are being replayed instead of followed live.
+ *  Mirrors `cknerv_core::ReplayPhase`. */
+export type ReplayPhase = 'boot' | 'catchup' | 'reorg' | 'rebuild';
+
+/** Replay progress embedded in a cells snapshot. `phase` is optional on the
+ *  wire so snapshots from before replay-cause reporting remain readable. */
+export interface ReplayProgress {
+  done: number;
+  total: number;
+  phase?: ReplayPhase;
+}
+
 export interface Cell {
   id: number;
   born_at_ms: number;
@@ -72,14 +84,13 @@ export interface CellGalaxySnapshot {
   /** Tx-link history shipped from the backend so the frontend can
    *  rebuild the full tx DAG on bootstrap. */
   recent_links?: CellLinkRecord[];
-  /** Cumulative count of cells ever-born on chain. */
+  /** Canonical births represented by the current observation/rebuild window. */
   total_births?: number;
-  /** Cumulative count of real chain deaths (input cells consumed by a
-   *  landed tx). Excludes `CELL_CAP` evictions. */
+  /** Real chain deaths represented by the current observation/rebuild window.
+   *  Excludes `CELL_CAP` evictions. */
   total_deaths?: number;
-  /** Boot-time backfill progress; present only while the server is
-   *  seeding the recent live-cell set. */
-  backfill?: { done: number; total: number } | null;
+  /** Historical replay progress; present while seeding or rebuilding. */
+  backfill?: ReplayProgress | null;
 }
 
 /** Causal-edge entry kept in the live cache after `applyCellDelta`. */
@@ -104,7 +115,14 @@ export type CellDelta =
   | { type: 'gc'; ids: number[] }
   | { type: 'pulse'; at_ms: number }
   | { type: 'stats'; total_births: number; total_deaths: number }
-  | { type: 'backfill'; done: number; total: number; active: boolean }
+  | {
+      type: 'backfill';
+      done: number;
+      total: number;
+      active: boolean;
+      /** Optional only for compatibility with older projection streams. */
+      phase?: ReplayPhase;
+    }
   /** Reorg invalidation boundary: discard every causal link at or above it. */
   | { type: 'link_prune'; from_block: number }
   | {

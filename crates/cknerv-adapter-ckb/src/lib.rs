@@ -4,7 +4,10 @@
 //! endpoint at a configurable interval. Emits chain-generic
 //! [`cknerv_core::Mutation`]s into the server's pipeline:
 //! - `ChainNodeRegistered` once on startup
-//! - `BlockMined` + `TxLanded` per new block on tip advance
+//! - `BlockMined` + `TxLanded` per new canonical block
+//! - `ChainReorganized` before replaying a changed canonical suffix
+//! - `ChainRebuild` before a bounded replay when no retained common ancestor
+//!   can be proven
 //! - `ChainInfoUpdated` + `ChainMempoolUpdated` when those snapshots change
 //!
 //! Mirrors `simulator/src/telemetry/chain_poll.rs` so the same on-chain

@@ -17,6 +17,23 @@ use serde::{Deserialize, Serialize};
 use crate::entity::{EpochInfo, Peer};
 use crate::outpoint::{OutPoint, TxOutputInfo};
 
+/// Why the adapter is replaying canonical blocks instead of following the
+/// ordinary live tip. Kept chain-generic so projections and UI consumers can
+/// explain the operation without knowing which source adapter produced it.
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ReplayPhase {
+    /// Initial recent-window replay used to seed an empty projection.
+    #[default]
+    Boot,
+    /// The observed chain advanced while cknerv was offline or behind.
+    Catchup,
+    /// A proven canonical suffix is being rolled back and replaced.
+    Reorg,
+    /// No bounded common ancestor was found; derived state is rebuilt.
+    Rebuild,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Mutation {
@@ -31,6 +48,22 @@ pub enum Mutation {
         size: u64,
         at: u64,
     },
+    /// Invalidates the previously-observed canonical suffix beginning at
+    /// `from_block`. Adapters emit this before replaying replacement blocks
+    /// after finding a common ancestor. Keeping the boundary chain-generic
+    /// lets projections roll back immediately even when the observed node's
+    /// tip regresses and no replacement block exists at the old tip yet.
+    ChainReorganized { from_block: u64 },
+    /// The adapter could not prove a common ancestor within its bounded
+    /// canonical-history window. Consumers must discard chain-derived state
+    /// that cannot be safely rolled back; the adapter then replays the
+    /// canonical window beginning at `from_block`.
+    ///
+    /// This is deliberately distinct from [`Mutation::ChainReorganized`]:
+    /// `ChainReorganized` preserves the proven prefix and performs an exact
+    /// journal rollback, while `ChainRebuild` establishes a fresh bounded
+    /// observation window.
+    ChainRebuild { from_block: u64 },
     TxLanded {
         tx_hash: String,
         block: u64,
@@ -86,17 +119,27 @@ pub enum Mutation {
         at: u64,
     },
 
-    /// Boot-time backfill progress. Projection-only: the cell-galaxy
-    /// projection surfaces it as a `CellDelta::Backfill` progress HUD and
-    /// suppresses block-pulse effects while `active`; tx links still stream
-    /// so nerves refill with cells. The `Chain` entity no-ops it. `active`
-    /// is true for in-progress updates, false on the terminal "done" signal.
+    /// Historical replay progress (boot backfill, downtime catch-up, exact
+    /// canonical reorg, or controlled deep-reorg rebuild). Projection-only:
+    /// the cell-galaxy projection surfaces it as a `CellDelta::Backfill`
+    /// progress HUD and suppresses block-pulse effects while `active`; tx
+    /// links still stream so nerves refill with cells. The `Chain` entity
+    /// no-ops it. `active` is true for in-progress updates, false on the
+    /// terminal "done" signal.
     /// Intentionally absent from the TS chain `Mutation` union — the SPA
     /// consumes it via the cells stream. It still rides the chain mutation
     /// broadcast like any mutation, but both the server `Chain` reducer and
     /// the SPA chain reducer ignore it; the SPA acts on it only via the cells
     /// projection stream (`CellDelta::Backfill`).
-    BackfillProgress { done: u64, total: u64, active: bool },
+    BackfillProgress {
+        done: u64,
+        total: u64,
+        active: bool,
+        /// Defaults to boot when reading frames produced before replay causes
+        /// were exposed on the wire.
+        #[serde(default)]
+        phase: ReplayPhase,
+    },
 
     /// Full snapshot of the observed node's current P2P peers. Replaces
     /// the server's `peers` list wholesale; consumers diff successive
@@ -134,15 +177,55 @@ mod tests {
             done: 250,
             total: 1000,
             active: true,
+            phase: ReplayPhase::Catchup,
         };
         let v = serde_json::to_value(&m).expect("serialize");
         assert_eq!(v["type"], "backfill_progress");
         assert_eq!(v["done"], 250);
         assert_eq!(v["total"], 1000);
         assert_eq!(v["active"], true);
+        assert_eq!(v["phase"], "catchup");
         // Round-trips back to the same variant.
         let back: Mutation = serde_json::from_value(v).expect("deserialize");
         assert_eq!(back, m);
+    }
+
+    #[test]
+    fn legacy_backfill_progress_defaults_to_boot() {
+        let back: Mutation = serde_json::from_value(serde_json::json!({
+            "type": "backfill_progress",
+            "done": 1,
+            "total": 2,
+            "active": true
+        }))
+        .expect("deserialize legacy frame");
+        assert_eq!(
+            back,
+            Mutation::BackfillProgress {
+                done: 1,
+                total: 2,
+                active: true,
+                phase: ReplayPhase::Boot,
+            }
+        );
+    }
+
+    #[test]
+    fn chain_reorganized_wire_shape_is_snake_case() {
+        let m = Mutation::ChainReorganized { from_block: 42 };
+        let v = serde_json::to_value(&m).expect("serialize");
+        assert_eq!(v["type"], "chain_reorganized");
+        assert_eq!(v["from_block"], 42);
+        assert_eq!(serde_json::from_value::<Mutation>(v).unwrap(), m);
+    }
+
+    #[test]
+    fn chain_rebuild_wire_shape_is_snake_case() {
+        let m = Mutation::ChainRebuild { from_block: 7 };
+        let v = serde_json::to_value(&m).expect("serialize");
+        assert_eq!(v["type"], "chain_rebuild");
+        assert_eq!(v["from_block"], 7);
+        assert_eq!(serde_json::from_value::<Mutation>(v).unwrap(), m);
     }
 
     #[test]

@@ -11,6 +11,7 @@ import type {
   CellGalaxySnapshot,
   CellLink,
   CellLinkRecord,
+  ReplayPhase,
   RevisionedCellDelta,
 } from '@cknerv/types';
 
@@ -26,6 +27,40 @@ export const DEFAULT_LINK_RING_CAPACITY = 128;
 export interface CellsReducerOptions {
   recentLinksCapacity?: number;
   linkRingCapacity?: number;
+}
+
+export interface ActiveReplayProgress {
+  done: number;
+  total: number;
+  /** Normalized to `boot` when an older snapshot/delta omits the field. */
+  phase: ReplayPhase;
+}
+
+/** Compact visual evidence captured at the exact canonical invalidation
+ * boundary. Deliberately excludes the Cell payload (`data_hex`, scripts,
+ * capacity, ...): renderers need only the real retained position and stable
+ * content identity to show which records just lost canonical status. */
+export interface CanonicalRewriteEcho {
+  id: number;
+  posSeed: [number, number, number];
+  contentHash: string;
+}
+
+export interface CanonicalRewriteMarker {
+  fromBlock: number;
+  invalidatedCells: CanonicalRewriteEcho[];
+}
+
+function normalizeReplayProgress(progress: {
+  done: number;
+  total: number;
+  phase?: ReplayPhase;
+}): ActiveReplayProgress {
+  return {
+    done: progress.done,
+    total: progress.total,
+    phase: progress.phase ?? 'boot',
+  };
 }
 
 function recentLinksCapacity(opts?: CellsReducerOptions): number {
@@ -61,16 +96,16 @@ export interface CellGalaxyCache {
    * when a `link_prune` delta arrives, allowing renderers to clear already
    * planned activity once without rejecting later replacement-chain links.
    */
-  linkPrune: { fromBlock: number } | null;
-  /** Cumulative on-chain counters mirrored from the backend. CellsHud reads
-   *  these for its TOTAL / DEAD / ALIVE rows so the panel reflects chain
-   *  reality rather than what's currently rendered in the galaxy. */
+  linkPrune: CanonicalRewriteMarker | null;
+  /** Canonical-window counters mirrored from the backend. Unlike the bounded
+   *  rendered Cell map, these survive ordinary GC/cap eviction; a controlled
+   *  deep-reorg rebuild resets and reconstructs them from its replay window. */
   totalBirths: number;
   totalDeaths: number;
-  /** Boot-time backfill progress, or null when not seeding. Drives the
+  /** Historical replay progress, or null during ordinary live polling. Drives the
    *  BackfillHud and (server-side) block-pulse suppression. Tx links still
    *  stream during backfill so nerves refill with cells. */
-  backfill: { done: number; total: number } | null;
+  backfill: ActiveReplayProgress | null;
 }
 
 export function emptyCellsCache(): CellGalaxyCache {
@@ -124,7 +159,7 @@ export function fromCellsSnapshot(
     linkPrune: null,
     totalBirths: snap.total_births ?? 0,
     totalDeaths: snap.total_deaths ?? 0,
-    backfill: snap.backfill ?? null,
+    backfill: snap.backfill ? normalizeReplayProgress(snap.backfill) : null,
   };
 }
 
@@ -190,11 +225,24 @@ function mutateCellDelta(
       return true;
     }
     case 'link_prune': {
+      // link_prune is emitted before the rollback GC. Capture a compact,
+      // immutable witness while the orphan suffix is still materialized; the
+      // following GC can then remove canonical records without erasing the
+      // renderer's one-shot correction evidence.
+      const invalidatedCells: CanonicalRewriteEcho[] = [];
+      for (const cell of c.cells.values()) {
+        if (cell.birth_block < d.from_block) continue;
+        invalidatedCells.push({
+          id: cell.id,
+          posSeed: [...cell.pos_seed],
+          contentHash: cell.content_hash,
+        });
+      }
       c.recentLinks = c.recentLinks.filter((link) => link.block < d.from_block);
       c.pulseLinks = c.pulseLinks.filter((link) => link.block < d.from_block);
       // Never rewind linksSeq: replacement-chain links must receive fresh
       // identities so stale cursors and recall requests cannot alias them.
-      c.linkPrune = { fromBlock: d.from_block };
+      c.linkPrune = { fromBlock: d.from_block, invalidatedCells };
       return true;
     }
     case 'link': {
@@ -216,7 +264,7 @@ function mutateCellDelta(
       return true;
     }
     case 'backfill': {
-      c.backfill = d.active ? { done: d.done, total: d.total } : null;
+      c.backfill = d.active ? normalizeReplayProgress(d) : null;
       return true;
     }
     default: {

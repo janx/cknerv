@@ -8,14 +8,14 @@ import type { AssetKind, Cell, LockKind } from '@cknerv/types';
 export type CellKindKey = 'wallet' | 'dex' | 'cf' | 'ckbloom' | 'generic';
 
 export interface CellsStats {
-  /** Cumulative cells ever-born on chain. From the backend's authoritative
-   *  counter, unaffected by CELL_CAP eviction or local GC. */
+  /** Canonical births in the backend's current observation/rebuild window,
+   *  unaffected by CELL_CAP eviction or local GC. */
   born: number;
-  /** Cells alive on chain right now (`born - dead`). May exceed the size of
-   *  the local `cells` map when the backend has capped its projection. */
+  /** Cells still alive within the observation window (`born - dead`). May
+   *  exceed the local `cells` map after backend cap eviction. */
   live: number;
-  /** Cumulative real chain deaths. CELL_CAP evictions are excluded — those
-   *  cells are still alive on chain. */
+  /** Real chain deaths in that observation window. CELL_CAP evictions are
+   *  excluded — those cells are still alive on chain. */
   dead: number;
   /** Per-kind breakdown of cells *currently in the galaxy view* (i.e. alive
    *  in the local cache). This stays a galaxy-view stat: with CELL_CAP=5000
@@ -25,8 +25,8 @@ export interface CellsStats {
   byKind: Record<CellKindKey, number>;
   /** Sum of `capacity` over locally-alive cells (galaxy-view, see byKind). */
   capacityShannons: number;
-  /** # of alive cells in the local cache — the size of the sampled "in view"
-   *  window (≤ CELL_CAP). Distinct from `live` (the authoritative on-chain count). */
+  /** # of alive cells in the local cache — the sampled "in view" set
+   *  (≤ CELL_CAP). Distinct from `live` (the observation-window count). */
   inView: number;
   /** # of in-view alive cells carrying non-empty output data (`data_hex` past `0x`). */
   dataBearing: number;

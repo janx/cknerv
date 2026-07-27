@@ -14,7 +14,8 @@ the same server/UI pipeline through its own adapter.
 **Status:** v0.1. The standalone CLI boots against a local CKB node, polls
 read-only JSON-RPC methods, serves an embedded dashboard SPA, streams live
 HTTP/WS snapshots and deltas, and persists derived state on clean shutdown so
-the next run resumes from the saved tip instead of replaying the same backfill.
+the next run resumes from the saved tip and recent canonical hash anchors
+instead of replaying the same backfill.
 See [`crates/cknerv-cli/SMOKE.md`](crates/cknerv-cli/SMOKE.md) for the manual
 smoke procedure and an observed live-node run.
 
@@ -178,12 +179,20 @@ fall back to the SPA.
 | Method | Path | Shape |
 |---|---|---|
 | `GET` | `/api/entities/chain/snapshot` | `{ revision, chain, chain_nodes }` |
-| `WS` | `/api/entities/chain/stream?since=<rev>` | snapshot, delta, or lagged frames |
+| `WS` | `/api/entities/chain/stream?since=<rev>` | snapshot, delta, lagged, or heartbeat frames |
 | `GET` | `/api/projections/cells/snapshot` | `{ revision, snapshot }` where `snapshot.cells` is the live cell set |
-| `WS` | `/api/projections/cells/stream?since=<rev>` | snapshot, delta, or lagged frames |
+| `WS` | `/api/projections/cells/stream?since=<rev>` | snapshot, delta, lagged, or heartbeat frames |
 
 The projection route name for the cell galaxy is literally `cells`
 (`CellGalaxy::name()`).
+
+Both WebSocket routes emit
+`{"kind":"heartbeat","revision":<last-confirmed-revision>}` every five seconds
+when no data frame is needed. `@cknerv/cache` reports each transport as
+connecting, live, retrying, resyncing, or stale; the default dashboard treats
+15 seconds without a valid data/heartbeat frame as stale. This browser
+freshness state is displayed separately from CKB IBD/tip sync, so a quiet chain
+cannot look disconnected and a frozen dashboard cannot look nominal.
 
 Each entry in `snapshot.recent_links` keeps `from_ids` / `to_ids` for causal
 ordering plus compact `endpoint_anchors` containing each endpoint's `id`,
@@ -191,12 +200,43 @@ ordering plus compact `endpoint_anchors` containing each endpoint's `id`,
 transaction's spatial and content evidence after a bounded full Cell record is
 garbage-collected; they do not preserve the complete Cell payload.
 
-When a reorg replaces height `N`, the cells stream emits
+The CKB adapter validates its last canonical block hash on every poll. On a
+same-height replacement, tip regression, or changed ancestor beneath an
+advancing tip, it walks saved height/hash anchors backward to the highest
+common ancestor and emits `{"type":"chain_reorganized","from_block":N}`
+before replaying canonical blocks from `N`.
+
+In response, the cells stream emits
 `{"type":"link_prune","from_block":N}` before its Cell rollback deltas.
 Consumers must discard retained causal links and queued visual events whose
 `block >= N`; replacement-chain links then arrive as ordinary `link` deltas.
 This keeps inspection, memory recall, and live pulses tied only to the current
 canonical chain.
+
+The browser cache also captures a compact visual witness (`id`, `pos_seed`,
+`content_hash`) for suffix Cells at the instant `link_prune` arrives, before
+rollback GC removes them. The scene renders those real records as one short
+fractured invalidation echo; only subsequent real `birth` deltas can trigger
+the replacement re-entry animation. No synthetic fork, transaction, or Cell
+payload is invented or retained for the effect.
+
+Canonical anchors and the Cell birth/death undo journals are bounded by the
+configured `[backfill].blocks` horizon (plus one parent anchor needed to prove
+the rollback boundary). If no common ancestor survives inside that window, the
+adapter emits `{"type":"chain_rebuild","from_block":N}`. Chain rings are
+cleared, the Cell projection emits `link_prune` from block `0` plus GC/stats
+reset deltas, and blocks `N..=tip` are replayed in a progress envelope. This
+avoids both unbounded journals and silently retaining an unprovable orphan
+state. Cell IDs remain monotonic across the rebuild so queued visual work
+cannot alias newly replayed Cells.
+
+The cells snapshot and delta stream expose the replay cause as
+`phase: "boot" | "catchup" | "reorg" | "rebuild"`. The dashboard gives
+each operation its own language and color instead of presenting every replay
+as boot seeding. A regressed tip with no replacement suffix yet remains
+visible as a reorg waiting state; transient block-visibility gaps keep their
+original phase until replay completes. Older frames without `phase` are read
+as `boot`.
 
 ## Configuration
 
@@ -238,6 +278,10 @@ topology and lower pulse caps to reduce visual noise; `auto`, `testnet`, and
 `recent_links_cap` retains authoritative causal evidence for inspection and
 memory recall. `pulses.link_ring_capacity` bounds only newly-arrived animation
 events; snapshot history is never replayed as live traffic.
+
+`backfill.blocks` also sets the exact reorg rollback and controlled-rebuild
+horizon. Setting it to `0` keeps legacy tip-only historical replay behavior;
+cknerv still retains a minimal two-block live rollback journal.
 
 ## Persistence
 
@@ -285,7 +329,8 @@ twin, the fixtures, and both sides of the tests together.
 - The cell galaxy tracks a bounded recent live-cell projection, not the full
   global live-cell set. The boot backfill depth is controlled by
   `--backfill-blocks` or `[backfill].blocks`; a full live set would require an
-  indexer.
+  indexer. After a deep-reorg rebuild, Cell TOTAL/DEAD counters are likewise
+  reconstructed from that bounded observation window.
 - The CKB adapter is read-only JSON-RPC polling. There is no bundled CKB node,
   indexer, or transaction submitter.
 - The ckbadger adapter is deferred until ckbadger publishes a stable feed

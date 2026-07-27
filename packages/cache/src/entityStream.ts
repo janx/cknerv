@@ -22,6 +22,10 @@ import {
   applyRevisionedChainMutations,
   emptyChainCache,
 } from './chainReducer';
+import {
+  createStreamHealthTracker,
+  type StreamHealthOptions,
+} from './streamHealth';
 
 /** Materialized client-side chain entity cache. Subscribers receive a
  *  fresh `ChainCache` value on every change so React selectors with
@@ -51,7 +55,8 @@ interface EntitiesPayload {
 type EntitiesFrame =
   | { kind: 'snapshot'; revision: number; entities: EntitiesPayload }
   | { kind: 'delta'; revision: number; mutations: RevisionedMutation[] }
-  | { kind: 'lagged'; skipped: number; revision?: number };
+  | { kind: 'lagged'; skipped: number; revision?: number }
+  | { kind: 'heartbeat'; revision?: number };
 
 export function fromEntitiesSnapshot(rev: number, p: EntitiesPayload): ChainCache {
   return {
@@ -129,7 +134,7 @@ function resolveWsUrl(url: string): string {
   return `${proto}//${window.location.host}${path}`;
 }
 
-export interface EntityStreamOptions {
+export interface EntityStreamOptions extends StreamHealthOptions {
   /** Optional override for `Map<string,*>` fetch URL the bootstrap call
    *  would otherwise infer from `streamUrl`. Default: replace `/stream`
    *  with `/snapshot`. */
@@ -165,14 +170,25 @@ export function connectEntityStream(
   let socket: WebSocket | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let cache: ChainCache = initial ?? emptyChainEntityCache();
+  let needsResync = false;
+
+  const health = createStreamHealthTracker(opts, () => {
+    try {
+      socket?.close();
+    } catch {
+      // Best effort.
+    }
+  });
 
   const open = () => {
     if (stopped) return;
+    health.startAttempt(needsResync);
     const base = resolveWsUrl(streamUrl);
     const sep = base.includes('?') ? '&' : '?';
     const url = `${base}${sep}since=${cache.revision}`;
     const ws = new WebSocket(url);
     socket = ws;
+    ws.onopen = () => health.opened(needsResync);
 
     ws.onmessage = (msg: MessageEvent) => {
       let frame: EntitiesFrame;
@@ -182,15 +198,23 @@ export function connectEntityStream(
         return;
       }
       if (!frame || typeof frame !== 'object') return;
-      if (frame.kind === 'snapshot') {
+      if (frame.kind === 'heartbeat') {
+        health.message(needsResync);
+      } else if (frame.kind === 'snapshot') {
         cache = fromEntitiesSnapshot(frame.revision, frame.entities);
+        needsResync = false;
+        health.message();
         onChange(cache);
       } else if (frame.kind === 'delta') {
         cache = applyEntityDelta(cache, frame.mutations);
+        needsResync = false;
+        health.message();
         onChange(cache);
       } else if (frame.kind === 'lagged') {
         // Stream lost mutations; force a re-snapshot on reconnect by
         // zeroing our revision. Then drop the connection.
+        needsResync = true;
+        health.resyncing();
         cache = { ...cache, revision: 0 };
         try {
           ws.close();
@@ -206,6 +230,7 @@ export function connectEntityStream(
       // socket; without this guard each outage would schedule two timers
       // and reconnect twice in parallel.
       if (reconnectTimer !== null) return;
+      health.closed(needsResync);
       reconnectTimer = setTimeout(() => {
         reconnectTimer = null;
         open();
@@ -220,6 +245,7 @@ export function connectEntityStream(
   return {
     disconnect: () => {
       stopped = true;
+      health.stop();
       if (reconnectTimer !== null) {
         clearTimeout(reconnectTimer);
         reconnectTimer = null;
@@ -227,6 +253,7 @@ export function connectEntityStream(
       if (socket) {
         socket.onclose = null;
         socket.onerror = null;
+        socket.onopen = null;
         socket.onmessage = null;
         try {
           socket.close();

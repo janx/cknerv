@@ -11,6 +11,9 @@ export {
   applyRevisionedCellDeltas,
   DEFAULT_RECENT_LINKS_CAPACITY,
   DEFAULT_LINK_RING_CAPACITY,
+  type ActiveReplayProgress,
+  type CanonicalRewriteEcho,
+  type CanonicalRewriteMarker,
   type CellGalaxyCache,
   type CellsReducerOptions,
 } from './cellsReducer';
@@ -37,3 +40,12 @@ export {
   type ProjectionStreamHandle,
   type ProjectionStreamOptions,
 } from './projectionStream';
+
+export {
+  createStreamHealthTracker,
+  type StreamHealth,
+  type StreamHealthOptions,
+  type StreamHealthPhase,
+  type StreamHealthReason,
+  type StreamHealthTracker,
+} from './streamHealth';

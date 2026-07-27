@@ -55,6 +55,7 @@ import CellIdentityProofMarker, {
   type CellIdentityProofEvent,
 } from './CellIdentityProofMarker';
 import CellIdentityBindingMarker from './CellIdentityBindingMarker';
+import CanonicalRewriteEcho from './CanonicalRewriteEcho';
 import {
   cellInspectionDirectNavigationRole,
   cellInspectionFieldScale,
@@ -62,6 +63,7 @@ import {
   dampCellInspectionFieldScale,
   type CellInspectionField,
 } from '../nerve/cellInspectionField';
+import { deriveCanonicalRewriteArrivals } from '../derives/canonicalRewrite.derive';
 
 /** Cyan palette for the structural chain anchor (CKB icosahedron).
  *  The chain anchor reads as "structural backbone / chain truth" and
@@ -385,11 +387,13 @@ export function writeCellBuffers(
   toSceneSeconds: (ms: number) => number,
   flashMap: Map<number, number>,
   targets: CellBufferTargets,
+  bornAtOverrides?: ReadonlyMap<number, number>,
 ): void {
   for (let i = 0; i < count; i += 1) {
     const c = cells[i];
     const isTagged = c.tag !== null;
-    const bornAtS = toSceneSeconds(c.born_at_ms) + BLOCK_HIGHLIGHT_DELAY_S;
+    const bornAtS = bornAtOverrides?.get(c.id)
+      ?? toSceneSeconds(c.born_at_ms) + BLOCK_HIGHLIGHT_DELAY_S;
     const deathAtS = c.death_at_ms === null
       ? 1e9
       : toSceneSeconds(c.death_at_ms) + BLOCK_HIGHLIGHT_DELAY_S;
@@ -938,6 +942,13 @@ export default function CellGalaxy({
    *  flags. Pulse-only frames (which mutate lastPulseAtMs but leave
    *  the cells Map identity-stable) ride the skip path. */
   const lastCellsRef = useRef<Map<number, Cell> | null>(null);
+  /** Receipt-time lifecycle overrides for records arriving during a canonical
+   * suffix rewrite. Replayed chain timestamps are historical, so without this
+   * small client-side clock the replacement records would appear fully formed
+   * instead of visibly re-entering the maintained structure. */
+  const rewriteBirthAtRef = useRef<Map<number, number>>(new Map());
+  const handledRewriteRef = useRef(cellsCache.linkPrune);
+  const rewriteArrivalUntilRef = useRef(-1e9);
   /** Last-seen `cellGalaxyMul` (from the effective runtime quality preset).
    *  The preset can be owned by the adaptive controller or a manual override.
    *  Including
@@ -1150,6 +1161,18 @@ export default function CellGalaxy({
     const prevPulseAtMs = lastPulseAtMsRef.current;
     const pulseAtMs = cellsCache.lastPulseAtMs;
     const inspectionField = inspectionFieldRef?.current ?? null;
+    const rewrite = cellsCache.linkPrune;
+    const rewriteMarkerChanged = rewrite !== handledRewriteRef.current;
+    const rewriteReplayActive = cellsCache.backfill?.phase === 'reorg'
+      || cellsCache.backfill?.phase === 'rebuild';
+    if (rewriteMarkerChanged) {
+      handledRewriteRef.current = rewrite;
+      rewriteArrivalUntilRef.current = now + 2.5;
+      rewriteBirthAtRef.current.clear();
+    }
+    if (rewriteReplayActive) {
+      rewriteArrivalUntilRef.current = now + 1.0;
+    }
 
     // 1. Skip-or-rewrite the static per-cell buffers based on cells Map identity
     //    or quality/selection/inspection-prefix change.
@@ -1161,6 +1184,26 @@ export default function CellGalaxy({
     let cellsList = cellsListRef.current;
     let count = drawCountRef.current;
     if (inputsChanged) {
+      for (const [id, bornAt] of rewriteBirthAtRef.current) {
+        if (now - bornAt > 2) rewriteBirthAtRef.current.delete(id);
+      }
+      if (
+        rewrite
+        && (rewriteMarkerChanged
+          || rewriteReplayActive
+          || now <= rewriteArrivalUntilRef.current)
+      ) {
+        const arrivals = deriveCanonicalRewriteArrivals(
+          lastCellsRef.current,
+          cellsCache.cells,
+          rewrite.fromBlock,
+        );
+        for (const id of arrivals) {
+          rewriteBirthAtRef.current.set(id, now);
+          cellFlashRef.current.set(id, now);
+          flashDirtyRef.current = true;
+        }
+      }
       const allCells = Array.from(cellsCache.cells.values());
       count = Math.min(
         allCells.length,
@@ -1191,6 +1234,7 @@ export default function CellGalaxy({
           memoryIdentityArr: cellMemoryIdentityAttr.array as Float32Array,
           memorySeedArr: cellMemorySeedAttr.array as Float32Array,
         },
+        rewriteBirthAtRef.current,
       );
 
       // Opportunistic prune: keep flashMap from leaking entries for cells
@@ -1510,6 +1554,11 @@ export default function CellGalaxy({
           frustumCulled={false}
           renderOrder={1}
         />
+        {/* Canonical correction is not hidden as a cache reset. The exact
+            suffix records invalidated by link_prune briefly fracture inward;
+            real replacement Birth deltas then use the ordinary Cell body with
+            a receipt-time re-entry envelope. */}
+        <CanonicalRewriteEcho />
         <ConsensusMemoryFocusScope>
           {/* Consumer-supplied overlay — the default app supplies consensus
               routes + write seals here; chain-generic consumers can leave this

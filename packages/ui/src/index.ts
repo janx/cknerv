@@ -78,6 +78,8 @@ export * from './derives/alertLevel';
 export * from './derives/cellChurn';
 export * from './derives/networkTopology.derive';
 export * from './derives/networkFlood.derive';
+export * from './derives/canonicalRewrite.derive';
+export * from './derives/streamHealth.derive';
 
 // ── Hooks ──────────────────────────────────────────────────────────
 export {
@@ -105,6 +107,10 @@ export {
   writeCellInspectionTargets,
   BLOCK_HIGHLIGHT_DELAY_S,
 } from './components/CellGalaxy';
+export {
+  default as CanonicalRewriteEcho,
+  makeCanonicalRewriteEchoMaterial,
+} from './components/CanonicalRewriteEcho';
 export type { BlockEventTrigger, CellBufferTargets } from './components/CellGalaxy';
 export type {
   CellIdentityBindingPhase,

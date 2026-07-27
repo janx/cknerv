@@ -9,11 +9,13 @@
 //!   * `{"kind":"snapshot", "revision":N, "entities": <chain snap>}`
 //!   * `{"kind":"delta", "revision":N, "mutations": [RevisionedMutation, ...]}`
 //!   * `{"kind":"lagged", "skipped":N, "revision":lastSent}`
+//!   * `{"kind":"heartbeat", "revision":lastSent}`
 //!
 //! Frame kinds (projection stream):
 //!   * `{"kind":"snapshot", "revision":N, "snapshot": <projection snap>}`
 //!   * `{"kind":"delta", "revision":N, "deltas":[{"revision":N,"delta":V}, ...]}`
 //!   * `{"kind":"lagged", "skipped":N}`
+//!   * `{"kind":"heartbeat", "revision":lastSent}`
 //!
 //! Catch-up policy:
 //!   1. Subscribe FIRST so any mutation emitted while we read the ring
@@ -24,15 +26,32 @@
 //!      boundary doesn't produce double-sent frames.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::extract::ws::{Message, WebSocket};
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::watch;
+use tokio::time::{self, Instant, MissedTickBehavior};
 
 use cknerv_core::RevisionedMutation;
 
 use crate::projection_registry::{DeltaEntry, ProjectionRuntime};
 use crate::state::ServerState;
+
+const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
+
+fn heartbeat_interval() -> time::Interval {
+    let mut interval = time::interval_at(Instant::now() + HEARTBEAT_INTERVAL, HEARTBEAT_INTERVAL);
+    interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
+    interval
+}
+
+fn heartbeat_frame(revision: u64) -> serde_json::Value {
+    serde_json::json!({
+        "kind": "heartbeat",
+        "revision": revision,
+    })
+}
 
 /// Block until `rx` observes `true`. Used by long-lived WS handlers in
 /// `select!` to break out of their main recv loop on shutdown signal.
@@ -110,10 +129,7 @@ pub async fn handle_chain_stream(
     match action {
         StreamAction::FullSnapshot => {
             let snap = state.snapshot();
-            let revision = snap
-                .get("revision")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0);
+            let revision = snap.get("revision").and_then(|v| v.as_u64()).unwrap_or(0);
             let frame = serde_json::json!({
                 "kind": "snapshot",
                 "revision": revision,
@@ -152,10 +168,18 @@ pub async fn handle_chain_stream(
         StreamAction::NothingToReplay => {}
     }
 
-    // Live loop with dedupe.
+    // Live loop with dedupe. Application heartbeats let browser clients
+    // distinguish a quiet chain from a half-open transport.
+    let mut heartbeat = heartbeat_interval();
     loop {
         tokio::select! {
             _ = wait_for_shutdown(&mut shutdown) => break,
+            _ = heartbeat.tick() => {
+                let frame = heartbeat_frame(last_sent_revision);
+                if socket.send(Message::Text(frame.to_string())).await.is_err() {
+                    break;
+                }
+            }
             recv = rx.recv() => match recv {
                 Ok(rev) => {
                     if rev.revision <= last_sent_revision {
@@ -211,6 +235,7 @@ pub async fn handle_projection_stream(
     let ring_last = ring_snapshot.last().map(|d| d.rev);
 
     let mut last_sent_seq: u64 = 0;
+    let mut last_sent_revision = since;
     let action = decide_action(since, ring_first, ring_last);
 
     match action {
@@ -224,6 +249,7 @@ pub async fn handle_projection_stream(
             if socket.send(Message::Text(frame.to_string())).await.is_err() {
                 return;
             }
+            last_sent_revision = rev;
             // After a full snapshot the client's effective revision is
             // `rev`. Drop any stream entries with rev <= rev (their
             // effects are already in the snapshot).
@@ -234,12 +260,10 @@ pub async fn handle_projection_stream(
             }
         }
         StreamAction::ReplayDelta => {
-            let deltas: Vec<&DeltaEntry> = ring_snapshot
-                .iter()
-                .filter(|d| d.rev > since)
-                .collect();
+            let deltas: Vec<&DeltaEntry> = ring_snapshot.iter().filter(|d| d.rev > since).collect();
             if let Some(last) = deltas.last() {
                 last_sent_seq = last.seq;
+                last_sent_revision = last.rev;
             }
             if !deltas.is_empty() {
                 let payload: Vec<serde_json::Value> = deltas
@@ -267,15 +291,23 @@ pub async fn handle_projection_stream(
         }
     }
 
+    let mut heartbeat = heartbeat_interval();
     loop {
         tokio::select! {
             _ = wait_for_shutdown(&mut shutdown) => break,
+            _ = heartbeat.tick() => {
+                let frame = heartbeat_frame(last_sent_revision);
+                if socket.send(Message::Text(frame.to_string())).await.is_err() {
+                    break;
+                }
+            }
             recv = rx.recv() => match recv {
                 Ok(entry) => {
                     if entry.seq <= last_sent_seq {
                         continue;
                     }
                     last_sent_seq = entry.seq;
+                    last_sent_revision = entry.rev;
                     let frame = serde_json::json!({
                         "kind": "delta",
                         "revision": entry.rev,
@@ -335,9 +367,14 @@ mod tests {
 
     #[test]
     fn decide_action_empty_ring_fresh_client() {
+        assert_eq!(decide_action(0, None, None), StreamAction::NothingToReplay);
+    }
+
+    #[test]
+    fn heartbeat_reports_the_last_confirmed_revision() {
         assert_eq!(
-            decide_action(0, None, None),
-            StreamAction::NothingToReplay
+            heartbeat_frame(42),
+            serde_json::json!({ "kind": "heartbeat", "revision": 42 })
         );
     }
 

@@ -268,7 +268,8 @@ port = 7001
 open = true
 
 [backfill]
-# Recent blocks to replay at boot to seed the live-cell galaxy. 0 disables.
+# Recent blocks used for boot replay and the reorg/rebuild window. 0 disables
+# historical replay; a minimal two-block live reorg journal remains.
 blocks = 2000
 
 [galaxy]

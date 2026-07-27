@@ -61,6 +61,8 @@ function cloneChain(c: ChainEntry): ChainEntry {
 function touchesChain(m: Mutation): boolean {
   switch (m.type) {
     case 'block_mined':
+    case 'chain_reorganized':
+    case 'chain_rebuild':
     case 'tx_landed':
     case 'chain_mempool_updated':
     case 'chain_info_updated':
@@ -86,8 +88,36 @@ function touchesChain(m: Mutation): boolean {
 /** In-place mutation; caller is responsible for cloning before calling. */
 function applyToChain(chain: ChainEntry, m: Mutation): void {
   switch (m.type) {
+    case 'chain_reorganized': {
+      const canonicalTip = m.from_block === 0 ? 0 : m.from_block - 1;
+      chain.tip = Math.min(chain.tip, canonicalTip);
+      chain.reorgs += 1;
+      chain.recent_blocks = chain.recent_blocks.filter(
+        (block) => block.number < m.from_block,
+      );
+      chain.recent_tx_hashes = chain.recent_tx_hashes.filter(
+        (tx) => tx.block < m.from_block,
+      );
+      // These rings do not carry block numbers, so retaining them could mix
+      // orphan timing/throughput samples with the replacement suffix.
+      chain.recent_block_intervals_ms = [];
+      chain.recent_block_tx_counts = [];
+      chain.recent_block_sizes = [];
+      chain.last_block_ts_ms = null;
+      return;
+    }
+    case 'chain_rebuild': {
+      chain.tip = m.from_block === 0 ? 0 : m.from_block - 1;
+      chain.reorgs += 1;
+      chain.recent_blocks = [];
+      chain.recent_tx_hashes = [];
+      chain.recent_block_intervals_ms = [];
+      chain.recent_block_tx_counts = [];
+      chain.recent_block_sizes = [];
+      chain.last_block_ts_ms = null;
+      return;
+    }
     case 'block_mined': {
-      if (m.number > chain.tip) chain.tip = m.number;
       const exactDup = chain.recent_blocks.some(
         (b) => b.number === m.number && b.hash === m.hash,
       );
@@ -96,25 +126,39 @@ function applyToChain(chain: ChainEntry, m: Mutation): void {
         chain.recent_blocks.some(
           (b) => b.number === m.number && b.hash !== m.hash,
         );
-      if (!exactDup) {
-        chain.total_blocks += 1;
-        if (reorg) chain.reorgs += 1;
-        const prevTs = chain.last_block_ts_ms ?? null;
-        if (prevTs !== null && m.at >= prevTs) {
-          chain.recent_block_intervals_ms.push(m.at - prevTs);
-          while (chain.recent_block_intervals_ms.length > 60) {
-            chain.recent_block_intervals_ms.shift();
-          }
+      if (exactDup) return;
+      if (reorg) {
+        chain.tip = m.number;
+        chain.recent_blocks = chain.recent_blocks.filter(
+          (block) => block.number < m.number,
+        );
+        chain.recent_tx_hashes = chain.recent_tx_hashes.filter(
+          (tx) => tx.block < m.number,
+        );
+        chain.recent_block_intervals_ms = [];
+        chain.recent_block_tx_counts = [];
+        chain.recent_block_sizes = [];
+        chain.last_block_ts_ms = null;
+      } else if (m.number > chain.tip) {
+        chain.tip = m.number;
+      }
+      chain.total_blocks += 1;
+      if (reorg) chain.reorgs += 1;
+      const prevTs = chain.last_block_ts_ms ?? null;
+      if (prevTs !== null && m.at >= prevTs) {
+        chain.recent_block_intervals_ms.push(m.at - prevTs);
+        while (chain.recent_block_intervals_ms.length > 60) {
+          chain.recent_block_intervals_ms.shift();
         }
-        chain.last_block_ts_ms = m.at;
-        chain.recent_block_tx_counts.push(m.tx_count);
-        while (chain.recent_block_tx_counts.length > 60) {
-          chain.recent_block_tx_counts.shift();
-        }
-        chain.recent_block_sizes.push(m.size ?? 0);
-        while (chain.recent_block_sizes.length > 60) {
-          chain.recent_block_sizes.shift();
-        }
+      }
+      chain.last_block_ts_ms = m.at;
+      chain.recent_block_tx_counts.push(m.tx_count);
+      while (chain.recent_block_tx_counts.length > 60) {
+        chain.recent_block_tx_counts.shift();
+      }
+      chain.recent_block_sizes.push(m.size ?? 0);
+      while (chain.recent_block_sizes.length > 60) {
+        chain.recent_block_sizes.shift();
       }
       chain.recent_blocks.push({ number: m.number, hash: m.hash });
       while (chain.recent_blocks.length > 50) chain.recent_blocks.shift();

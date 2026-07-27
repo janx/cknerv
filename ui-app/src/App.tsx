@@ -64,6 +64,7 @@ import {
   fromCellsSnapshot,
   type CellGalaxyCache,
   type ChainCache,
+  type StreamHealth,
 } from '@cknerv/cache';
 import type {
   CellGalaxySnapshot,
@@ -124,6 +125,16 @@ interface AppProps {
 }
 
 const DEFAULT_CAMERA_TARGET: [number, number, number] = [0, 18, 0];
+const STREAM_STALE_AFTER_MS = 15_000;
+
+function initialStreamHealth(): StreamHealth {
+  return {
+    phase: 'connecting',
+    attempt: 0,
+    lastMessageAtMs: null,
+    reason: 'initial',
+  };
+}
 
 export default function App({
   initialChain,
@@ -184,6 +195,12 @@ export default function App({
       recentLinksCapacity: galaxyConfig.recentLinksCap,
       linkRingCapacity: galaxyConfig.pulses.linkRingCapacity,
     }),
+  );
+  const [chainStreamHealth, setChainStreamHealth] = useState<StreamHealth>(
+    initialStreamHealth,
+  );
+  const [cellsStreamHealth, setCellsStreamHealth] = useState<StreamHealth>(
+    initialStreamHealth,
   );
   const retainedCellRecordsRef = useRef(cellsCache.cells);
   retainedCellRecordsRef.current = cellsCache.cells;
@@ -313,6 +330,10 @@ export default function App({
         peers: initialPeers,
       },
       setChainCache,
+      {
+        onHealth: setChainStreamHealth,
+        staleAfterMs: STREAM_STALE_AFTER_MS,
+      },
     );
     const cells = connectCellsStream(
       '/api/projections/cells/stream',
@@ -324,6 +345,8 @@ export default function App({
       {
         recentLinksCapacity: galaxyConfig.recentLinksCap,
         linkRingCapacity: galaxyConfig.pulses.linkRingCapacity,
+        onHealth: setCellsStreamHealth,
+        staleAfterMs: STREAM_STALE_AFTER_MS,
       },
     );
     return () => {
@@ -797,6 +820,10 @@ export default function App({
         }}
         onClearNet={() => setSelectedNetId(null)}
         backfill={cellsCache.backfill}
+        streamHealth={{
+          chain: chainStreamHealth,
+          cells: cellsStreamHealth,
+        }}
         build={build}
         colonyCount={topology.nodes.length}
       />

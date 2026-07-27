@@ -30,6 +30,6 @@ pub mod state;
 pub mod ws;
 
 pub use adapter::Adapter;
-pub use persistence::peek_restored_tip;
+pub use persistence::{peek_restored_chain_cursor, peek_restored_tip, RestoredChainCursor};
 pub use server::{ServerBuilder, ServerHandle};
 pub use state::ServerState;

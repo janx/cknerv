@@ -1,28 +1,88 @@
 //! Periodic tip + chain-info + mempool polling.
 //!
-//! Emits chain-info / mempool mutations on change; emits BlockMined +
-//! TxLanded on tip advance. Mirrors the simulator's chain_poll behavior,
-//! adapted to push directly into cknerv-server's `mpsc::Sender<Mutation>`.
+//! Emits chain-info / mempool mutations on change; validates the last
+//! canonical hash, emits `ChainReorganized` on divergence, then emits
+//! BlockMined + TxLanded while advancing. Pushes directly into
+//! cknerv-server's `mpsc::Sender<Mutation>`.
+
+use std::collections::BTreeMap;
 
 use anyhow::{anyhow, Result};
 use serde_json::Value;
 use tokio::sync::mpsc;
 
-use cknerv_core::{EpochInfo, MempoolStats, Mutation};
+use cknerv_core::{EpochInfo, MempoolStats, Mutation, ReplayPhase};
 
 use crate::block_fetch::fetch_and_translate;
 use crate::rpc::RpcClient;
 
+/// Even when historical backfill is disabled, retain enough history to prove
+/// and exactly replay the common one-block reorg case. One additional parent
+/// anchor is retained by [`PollState::prune_canonical_history`].
+const MIN_REORG_WINDOW_BLOCKS: u64 = 2;
+
 /// Mutable state threaded across `poll_once` invocations.
 #[derive(Default)]
 pub struct PollState {
-    /// Last tip we've successfully emitted a `BlockMined` for. `None`
-    /// until the first poll observes a node tip; on first poll we
-    /// anchor to `tip - 1` so we emit one `BlockMined` for the current
-    /// tip rather than replaying history from genesis.
+    /// Highest canonical height synchronized by the poller. This is normally
+    /// the last emitted `BlockMined`; a bounded catch-up may advance it to the
+    /// anchor immediately before the replay window.
     pub last_tip: Option<u64>,
+    /// Canonical hashes observed by this adapter. The poller validates the
+    /// hash at `last_tip` every cycle; a mismatch causes a backward walk over
+    /// these anchors to find the highest common ancestor.
+    canonical_blocks: BTreeMap<u64, String>,
+    /// True after a canonical suffix was invalidated until every replacement
+    /// block through the observed tip has been emitted. Prevents a transient
+    /// fetch gap from turning the remainder into a capped downtime catch-up.
+    replaying_reorg: bool,
+    /// True while an ordinary downtime catch-up has only partially emitted.
+    /// Keeps the cause stable across transient block-visibility gaps even if
+    /// the remaining gap falls below the initial catch-up threshold.
+    catching_up: bool,
+    /// Start of a controlled rebuild after the common ancestor fell outside
+    /// retained history. Kept until the entire target window has replayed so
+    /// a transient block-visibility gap cannot silently skip its prefix.
+    rebuild_from: Option<u64>,
     pub last_chain_info: Option<(EpochInfo, u64, String, String)>,
     pub last_mempool: Option<MempoolStats>,
+}
+
+impl PollState {
+    /// Seed canonical anchors restored from persisted chain state or produced
+    /// by boot backfill. Later entries at the same height win.
+    pub fn seed_canonical<I>(&mut self, anchors: I)
+    where
+        I: IntoIterator<Item = (u64, String)>,
+    {
+        self.canonical_blocks.extend(anchors);
+    }
+
+    pub fn canonical_hash(&self, number: u64) -> Option<&str> {
+        self.canonical_blocks.get(&number).map(String::as_str)
+    }
+
+    fn prune_canonical_history(&mut self, catchup_cap: u64) {
+        let Some(latest) = self
+            .last_tip
+            .or_else(|| self.canonical_blocks.keys().next_back().copied())
+        else {
+            return;
+        };
+        let retained = catchup_cap
+            .max(MIN_REORG_WINDOW_BLOCKS)
+            .saturating_add(1);
+        let retain_from = latest.saturating_sub(retained.saturating_sub(1));
+        self.canonical_blocks
+            .retain(|number, _| *number >= retain_from);
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CanonicalChange {
+    Unchanged,
+    Reorganize { from_block: u64 },
+    Rebuild,
 }
 
 /// Run one poll cycle. Emits mutations into `out` based on changes
@@ -39,37 +99,7 @@ pub async fn poll_once(
 ) -> Result<()> {
     // 1. Tip + block walk
     let tip = rpc.get_tip_block_number().await?;
-    let prev = state.last_tip.unwrap_or_else(|| tip.saturating_sub(1));
-    // `catchup_cap == 0` means backfill is disabled (`--backfill-blocks 0`,
-    // legacy tip-only mode) — that opt-out intentionally disables catch-up too,
-    // so a large gap falls through to the live walk below.
-    if catchup_cap > 0 && tip.saturating_sub(prev) > catchup_threshold {
-        // Catch-up: a large forward gap (downtime, or the node IBD'ing while
-        // we watch). Replay only the most recent `catchup_cap` blocks of the
-        // gap through the backfill envelope (pulses suppressed, progress HUD,
-        // nerves quieted on the SPA) and jump to tip — never animate the whole
-        // gap block-by-block. Forward-only, so it can't double-birth a
-        // persisted cell. Older blocks beyond the cap are skipped.
-        let lo = (prev + 1).max(tip.saturating_sub(catchup_cap.saturating_sub(1)));
-        crate::backfill::replay_window(rpc, lo, tip, out).await?;
-        state.last_tip = Some(tip);
-    } else if tip > prev {
-        for n in (prev + 1)..=tip {
-            let muts = fetch_and_translate(rpc, n).await?;
-            if muts.is_empty() {
-                // Block not yet visible (RPC race); break and retry next interval.
-                break;
-            }
-            for m in muts {
-                let _ = out.send(m).await;
-            }
-            state.last_tip = Some(n);
-        }
-    } else if state.last_tip.is_none() {
-        // First poll, but tip hasn't moved past our anchor — just record
-        // the anchor so the next genuine advance triggers a single emit.
-        state.last_tip = Some(prev);
-    }
+    sync_canonical_blocks(rpc, state, out, tip, catchup_threshold, catchup_cap).await?;
 
     // 2. Chain info
     match rpc.get_blockchain_info().await {
@@ -116,6 +146,347 @@ pub async fn poll_once(
     Ok(())
 }
 
+async fn sync_canonical_blocks(
+    rpc: &RpcClient,
+    state: &mut PollState,
+    out: &mpsc::Sender<Mutation>,
+    tip: u64,
+    catchup_threshold: u64,
+    catchup_cap: u64,
+) -> Result<()> {
+    // The only rebuild that can have no parent cursor begins at genesis. Keep
+    // its start explicitly so a transient get_block_by_number(0) gap resumes
+    // from zero rather than falling into the live-only boot initializer.
+    if state.last_tip.is_none() {
+        if let Some(from_block) = state.rebuild_from {
+            let result = emit_canonical_range(
+                rpc,
+                state,
+                out,
+                from_block,
+                tip,
+                Some(ReplayPhase::Rebuild),
+                catchup_cap,
+            )
+            .await;
+            if result.is_ok() && state.last_tip == Some(tip) {
+                state.replaying_reorg = false;
+                state.rebuild_from = None;
+            }
+            return result;
+        }
+    }
+
+    if state.last_tip.is_none() {
+        // Preserve the legacy live-only boot behavior: establish the block
+        // immediately before the current tip as an anchor, then emit only the
+        // current tip. Unlike the former height-only cursor, retain its hash so
+        // a same-height replacement is visible on the next cycle.
+        let anchor = tip.saturating_sub(1);
+        if let Some(hash) = rpc.get_block_hash(anchor).await? {
+            state.canonical_blocks.insert(anchor, hash);
+        }
+        state.last_tip = Some(anchor);
+    }
+
+    match find_canonical_change(rpc, state, tip).await? {
+        CanonicalChange::Unchanged => {}
+        CanonicalChange::Reorganize { from_block } => {
+            let _ = out.send(Mutation::ChainReorganized { from_block }).await;
+            state.canonical_blocks.split_off(&from_block);
+            state.last_tip = Some(from_block.saturating_sub(1));
+            state.replaying_reorg = true;
+            state.catching_up = false;
+            state.rebuild_from = None;
+
+            // A regressed tip can invalidate a suffix before any replacement
+            // block exists. Keep the replay HUD active while waiting for that
+            // canonical suffix; a non-empty range is announced by
+            // `emit_canonical_range` below.
+            if tip < from_block {
+                let _ = out
+                    .send(Mutation::BackfillProgress {
+                        done: 0,
+                        total: 0,
+                        active: true,
+                        phase: ReplayPhase::Reorg,
+                    })
+                    .await;
+            }
+        }
+        CanonicalChange::Rebuild => {
+            state.catching_up = false;
+            return rebuild_canonical_window(rpc, state, out, tip, catchup_cap).await;
+        }
+    }
+
+    let prev = state
+        .last_tip
+        .expect("sync_canonical_blocks initializes last_tip");
+    if tip <= prev {
+        state.prune_canonical_history(catchup_cap);
+        return Ok(());
+    }
+
+    let gap = tip - prev;
+    let (lo, phase) = if state.replaying_reorg {
+        // Reorg replay must begin at the actual invalidation boundary. Applying
+        // the normal catch-up cap here would skip canonical transactions that
+        // are required to undo/replace the orphan suffix.
+        (
+            prev + 1,
+            Some(if state.rebuild_from.is_some() {
+                ReplayPhase::Rebuild
+            } else {
+                ReplayPhase::Reorg
+            }),
+        )
+    } else if state.catching_up {
+        (prev + 1, Some(ReplayPhase::Catchup))
+    } else if catchup_cap > 0 && gap > catchup_threshold {
+        // Ordinary downtime catch-up intentionally keeps only the most recent
+        // configured window.
+        let lo = (prev + 1).max(tip.saturating_sub(catchup_cap.saturating_sub(1)));
+        if lo > prev + 1 {
+            let anchor_height = lo - 1;
+            let anchor_hash = rpc.get_block_hash(anchor_height).await?.ok_or_else(|| {
+                anyhow!("canonical catch-up anchor {anchor_height} missing while node tip is {tip}")
+            })?;
+            state.canonical_blocks.insert(anchor_height, anchor_hash);
+            state.last_tip = Some(anchor_height);
+        }
+        state.catching_up = true;
+        (lo, Some(ReplayPhase::Catchup))
+    } else {
+        (prev + 1, None)
+    };
+
+    let result = emit_canonical_range(rpc, state, out, lo, tip, phase, catchup_cap).await;
+    if result.is_ok() && state.last_tip == Some(tip) {
+        state.replaying_reorg = false;
+        state.catching_up = false;
+        state.rebuild_from = None;
+    }
+    result
+}
+
+async fn rebuild_canonical_window(
+    rpc: &RpcClient,
+    state: &mut PollState,
+    out: &mpsc::Sender<Mutation>,
+    tip: u64,
+    catchup_cap: u64,
+) -> Result<()> {
+    let from_block = if catchup_cap == 0 {
+        tip
+    } else {
+        tip.saturating_sub(catchup_cap.saturating_sub(1))
+    };
+    let parent_anchor = if from_block == 0 {
+        None
+    } else {
+        let number = from_block - 1;
+        let hash = rpc.get_block_hash(number).await?.ok_or_else(|| {
+            anyhow!(
+                "canonical rebuild parent {number} missing while node tip is {tip}"
+            )
+        })?;
+        Some((number, hash))
+    };
+
+    // Fetch the parent before publishing the reset. A transient RPC failure
+    // therefore leaves the currently visible derived state intact; once the
+    // reset is emitted, replay ownership moves entirely to this state machine.
+    let _ = out
+        .send(Mutation::ChainRebuild { from_block })
+        .await;
+    state.canonical_blocks.clear();
+    state.last_tip = None;
+    if let Some((number, hash)) = parent_anchor {
+        state.canonical_blocks.insert(number, hash);
+        state.last_tip = Some(number);
+    }
+    state.replaying_reorg = true;
+    state.catching_up = false;
+    state.rebuild_from = Some(from_block);
+
+    let result = emit_canonical_range(
+        rpc,
+        state,
+        out,
+        from_block,
+        tip,
+        Some(ReplayPhase::Rebuild),
+        catchup_cap,
+    )
+    .await;
+    if result.is_ok() && state.last_tip == Some(tip) {
+        state.replaying_reorg = false;
+        state.rebuild_from = None;
+    }
+    result
+}
+
+/// Classify the current cursor as canonical, exactly rollbackable, or deeper
+/// than the bounded anchor window.
+async fn find_canonical_change(
+    rpc: &RpcClient,
+    state: &mut PollState,
+    tip: u64,
+) -> Result<CanonicalChange> {
+    let Some(prev) = state.last_tip else {
+        return Ok(CanonicalChange::Unchanged);
+    };
+
+    if tip >= prev {
+        let Some(local_hash) = state.canonical_blocks.get(&prev).cloned() else {
+            // Legacy resume cursors persisted only a height. Seed the missing
+            // hash once; new persisted states provide anchors and therefore do
+            // not take this compatibility path.
+            if let Some(remote_hash) = rpc.get_block_hash(prev).await? {
+                state.canonical_blocks.insert(prev, remote_hash);
+            }
+            return Ok(CanonicalChange::Unchanged);
+        };
+        let remote_hash = rpc
+            .get_block_hash(prev)
+            .await?
+            .ok_or_else(|| anyhow!("canonical block {prev} missing while node tip is {tip}"))?;
+        if local_hash == remote_hash {
+            return Ok(CanonicalChange::Unchanged);
+        }
+    }
+
+    // A lower tip is itself a suffix invalidation, even when its current tip
+    // hash still matches. A hash mismatch at an equal/higher tip also lands
+    // here. Walk known anchors backward and choose the highest match.
+    let search_tip = tip.min(prev);
+    let anchors: Vec<(u64, String)> = state
+        .canonical_blocks
+        .range(..=search_tip)
+        .rev()
+        .map(|(number, hash)| (*number, hash.clone()))
+        .collect();
+    if anchors.is_empty() {
+        return Ok(CanonicalChange::Rebuild);
+    }
+
+    for (number, local_hash) in anchors {
+        let remote_hash = rpc
+            .get_block_hash(number)
+            .await?
+            .ok_or_else(|| anyhow!("canonical block {number} missing while node tip is {tip}"))?;
+        if local_hash == remote_hash {
+            return Ok(CanonicalChange::Reorganize {
+                from_block: number.saturating_add(1),
+            });
+        }
+    }
+
+    Ok(CanonicalChange::Rebuild)
+}
+
+async fn emit_canonical_range(
+    rpc: &RpcClient,
+    state: &mut PollState,
+    out: &mpsc::Sender<Mutation>,
+    lo: u64,
+    hi: u64,
+    phase: Option<ReplayPhase>,
+    catchup_cap: u64,
+) -> Result<()> {
+    if lo > hi {
+        return Ok(());
+    }
+
+    let total = hi - lo + 1;
+    if let Some(phase) = phase {
+        let _ = out
+            .send(Mutation::BackfillProgress {
+                done: 0,
+                total,
+                active: true,
+                phase,
+            })
+            .await;
+    }
+
+    let mut done = 0;
+    let result: Result<()> = async {
+        for number in lo..=hi {
+            let Some(block) = fetch_and_translate(rpc, number).await? else {
+                // The tip can become visible before get_block_by_number catches
+                // up. Leave the cursor at the last fully-emitted block and
+                // retry.
+                break;
+            };
+
+            if number > 0 {
+                let parent_height = number - 1;
+                let expected_parent = match state.canonical_blocks.get(&parent_height) {
+                    Some(hash) => hash.clone(),
+                    None => {
+                        let hash =
+                            rpc.get_block_hash(parent_height).await?.ok_or_else(|| {
+                                anyhow!(
+                                    "canonical parent {parent_height} missing for block {number}"
+                                )
+                            })?;
+                        state
+                            .canonical_blocks
+                            .insert(parent_height, hash.clone());
+                        hash
+                    }
+                };
+                if block.parent_hash != expected_parent {
+                    return Err(anyhow!(
+                        "block {number} parent mismatch during poll: expected {expected_parent}, \
+                         fetched {}; retrying canonical reconciliation",
+                        block.parent_hash
+                    ));
+                }
+            }
+
+            for mutation in block.mutations {
+                let _ = out.send(mutation).await;
+            }
+            state.canonical_blocks.insert(number, block.hash);
+            state.last_tip = Some(number);
+            state.prune_canonical_history(catchup_cap);
+            done += 1;
+
+            if let Some(phase) = phase.filter(|_| done % 25 == 0 && done != total) {
+                let _ = out
+                    .send(Mutation::BackfillProgress {
+                        done,
+                        total,
+                        active: true,
+                        phase,
+                    })
+                    .await;
+            }
+        }
+        Ok(())
+    }
+    .await;
+
+    if let Some(phase) = phase {
+        let complete = result.is_ok() && state.last_tip == Some(hi);
+        let _ = out
+            .send(Mutation::BackfillProgress {
+                done,
+                total,
+                // A temporarily unavailable block is not completion. Keep the
+                // phase visible and resume it on the next poll. Hard errors
+                // close this attempt before the retry reopens it.
+                active: result.is_ok() && !complete,
+                phase,
+            })
+            .await;
+    }
+    result
+}
+
 /// Decode the `epoch` packed `EpochNumberWithFraction` u64.
 /// Layout (LSB→MSB): number 24b | index 16b | length 16b | reserved 8b.
 pub(crate) fn parse_epoch_packed(packed: u64) -> (u64, u64, u64) {
@@ -142,7 +513,9 @@ fn parse_chain_info(result: &Value) -> Result<Option<(EpochInfo, u64, String, St
         .as_str()
         .ok_or_else(|| anyhow!("get_blockchain_info.median_time: missing or non-string"))?;
     let median_time_ms = u64::from_str_radix(median_time_str.trim_start_matches("0x"), 16)
-        .map_err(|e| anyhow!("get_blockchain_info.median_time: bad hex {median_time_str:?}: {e}"))?;
+        .map_err(|e| {
+            anyhow!("get_blockchain_info.median_time: bad hex {median_time_str:?}: {e}")
+        })?;
 
     let difficulty = result["difficulty"]
         .as_str()
