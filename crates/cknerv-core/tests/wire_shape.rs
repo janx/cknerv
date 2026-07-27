@@ -33,8 +33,10 @@ fn canonicalize(v: &serde_json::Value) -> serde_json::Value {
     use serde_json::Value;
     match v {
         Value::Object(map) => {
-            let sorted: std::collections::BTreeMap<String, Value> =
-                map.iter().map(|(k, v)| (k.clone(), canonicalize(v))).collect();
+            let sorted: std::collections::BTreeMap<String, Value> = map
+                .iter()
+                .map(|(k, v)| (k.clone(), canonicalize(v)))
+                .collect();
             Value::Object(sorted.into_iter().collect())
         }
         Value::Array(arr) => Value::Array(arr.iter().map(canonicalize).collect()),
@@ -45,7 +47,9 @@ fn canonicalize(v: &serde_json::Value) -> serde_json::Value {
 #[test]
 fn mutation_samples_round_trip() {
     let samples = fixture("mutation_samples.json");
-    let map = samples.as_object().expect("mutation_samples.json must be a JSON object");
+    let map = samples
+        .as_object()
+        .expect("mutation_samples.json must be a JSON object");
     assert!(!map.is_empty(), "mutation_samples.json must have entries");
     for (variant_name, sample) in map {
         let m: Mutation = serde_json::from_value(sample.clone())
@@ -82,10 +86,9 @@ fn cell_delta_samples_match_serialized_shape() {
 #[test]
 fn snapshot_chain_round_trips() {
     let sample = fixture("snapshot_chain.json");
-    let chain: Chain = serde_json::from_value(sample.clone())
-        .unwrap_or_else(|e| panic!("deserialize Chain: {e}"));
-    let re = serde_json::to_value(&chain)
-        .unwrap_or_else(|e| panic!("serialize Chain: {e}"));
+    let chain: Chain =
+        serde_json::from_value(sample.clone()).unwrap_or_else(|e| panic!("deserialize Chain: {e}"));
+    let re = serde_json::to_value(&chain).unwrap_or_else(|e| panic!("serialize Chain: {e}"));
     assert_eq!(canonicalize(&sample), canonicalize(&re));
 }
 
@@ -94,21 +97,26 @@ fn snapshot_cells_round_trips() {
     let sample = fixture("snapshot_cells.json");
     let g: CellGalaxySnapshot = serde_json::from_value(sample.clone())
         .unwrap_or_else(|e| panic!("deserialize CellGalaxySnapshot: {e}"));
-    let re = serde_json::to_value(&g)
-        .unwrap_or_else(|e| panic!("serialize CellGalaxySnapshot: {e}"));
+    let re =
+        serde_json::to_value(&g).unwrap_or_else(|e| panic!("serialize CellGalaxySnapshot: {e}"));
     assert_eq!(canonicalize(&sample), canonicalize(&re));
 }
 
 #[test]
 fn cell_samples_round_trip() {
     let samples = fixture("cell_samples.json");
-    let arr = samples.as_array().expect("cell_samples.json must be a JSON array");
+    let arr = samples
+        .as_array()
+        .expect("cell_samples.json must be a JSON array");
     assert!(!arr.is_empty(), "cell_samples.json must have entries");
     for (i, sample) in arr.iter().enumerate() {
         let cell: Cell = serde_json::from_value(sample.clone())
             .unwrap_or_else(|e| panic!("deserialize cell[{i}]: {e}"));
-        let re = serde_json::to_value(&cell)
-            .unwrap_or_else(|e| panic!("serialize cell[{i}]: {e}"));
-        assert_eq!(canonicalize(sample), canonicalize(&re), "cell[{i}] round-trip");
+        let re = serde_json::to_value(&cell).unwrap_or_else(|e| panic!("serialize cell[{i}]: {e}"));
+        assert_eq!(
+            canonicalize(sample),
+            canonicalize(&re),
+            "cell[{i}] round-trip"
+        );
     }
 }

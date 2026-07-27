@@ -29,15 +29,9 @@ pub struct RouterState {
 
 pub fn build_router(state: Arc<ServerState>, shutdown_rx: watch::Receiver<bool>) -> Router {
     Router::new()
-        .route(
-            "/api/entities/chain/snapshot",
-            get(entities_chain_snapshot),
-        )
+        .route("/api/entities/chain/snapshot", get(entities_chain_snapshot))
         .route("/api/entities/chain/stream", get(entities_chain_stream))
-        .route(
-            "/api/projections/:name/snapshot",
-            get(projection_snapshot),
-        )
+        .route("/api/projections/:name/snapshot", get(projection_snapshot))
         .route("/api/projections/:name/stream", get(projection_stream))
         .with_state(RouterState { state, shutdown_rx })
 }

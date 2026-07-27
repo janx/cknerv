@@ -178,8 +178,7 @@ impl Registry {
         let runner = Arc::new(ProjectionRunner::new(projection));
         self.read_runtimes
             .push(runner.clone() as Arc<dyn ProjectionRuntime>);
-        self.writers
-            .push(runner.clone() as Arc<dyn ApplyMutation>);
+        self.writers.push(runner.clone() as Arc<dyn ApplyMutation>);
     }
 
     pub fn lookup(&self, name: &str) -> Option<Arc<dyn ProjectionRuntime>> {

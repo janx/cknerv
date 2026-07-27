@@ -141,7 +141,7 @@ pub(crate) async fn replay_window(
             }
         }
         done += 1;
-        if done % PROGRESS_EVERY == 0 && done != total {
+        if done.is_multiple_of(PROGRESS_EVERY) && done != total {
             let _ = out
                 .send(Mutation::BackfillProgress {
                     done,
@@ -195,9 +195,7 @@ pub(crate) async fn run_backfill(
     } else {
         let number = lo - 1;
         let hash = rpc.get_block_hash(number).await?.ok_or_else(|| {
-            anyhow::anyhow!(
-                "canonical backfill parent {number} missing while node tip is {tip0}"
-            )
+            anyhow::anyhow!("canonical backfill parent {number} missing while node tip is {tip0}")
         })?;
         Some((number, hash))
     };

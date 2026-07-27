@@ -20,7 +20,10 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     let workdir = cli.workdir_path();
 
-    match cli.command.unwrap_or_else(|| Command::Run(RunArgs::default())) {
+    match cli
+        .command
+        .unwrap_or_else(|| Command::Run(RunArgs::default()))
+    {
         Command::Run(args) => {
             let file = config::load(&workdir)?;
             let resolved = config::resolve(

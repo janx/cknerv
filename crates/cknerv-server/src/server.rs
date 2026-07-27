@@ -138,7 +138,9 @@ impl ServerBuilder {
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
         // 4. Spawn the reducer.
-        let reducer_handle = state.clone().spawn_reducer(mutation_rx, shutdown_rx.clone());
+        let reducer_handle = state
+            .clone()
+            .spawn_reducer(mutation_rx, shutdown_rx.clone());
 
         // 5. Spawn adapters. Drop the local `mutation_tx` clone after
         //    fanning out — when every adapter exits and drops its

@@ -83,8 +83,8 @@ pub fn translate_block(block: &Value, number: u64, at: u64, size: u64) -> Result
         .as_array()
         .cloned()
         .unwrap_or_default();
-    let tx_count = u32::try_from(txs.len())
-        .map_err(|_| anyhow!("block {number}: tx_count exceeds u32"))?;
+    let tx_count =
+        u32::try_from(txs.len()).map_err(|_| anyhow!("block {number}: tx_count exceeds u32"))?;
 
     let mut out = Vec::with_capacity(1 + txs.len());
     out.push(Mutation::BlockMined {
@@ -123,9 +123,7 @@ fn parse_inputs(tx: &Value, tx_hash: &str) -> Result<Vec<OutPoint>> {
         let prev = &inp["previous_output"];
         let prev_tx_hash = prev["tx_hash"]
             .as_str()
-            .ok_or_else(|| {
-                anyhow!("tx {tx_hash} input[{j}]: missing previous_output.tx_hash")
-            })?
+            .ok_or_else(|| anyhow!("tx {tx_hash} input[{j}]: missing previous_output.tx_hash"))?
             .to_string();
         let index = parse_hex_u32(
             &prev["index"],
@@ -273,7 +271,10 @@ mod tests {
     fn translate_block_emits_block_mined_first() {
         let block = cellbase_block_json(7, "0xblock7");
         let muts = translate_block(&block, 7, 42, 0).expect("translate ok");
-        assert!(muts.len() >= 2, "expected BlockMined + at least one TxLanded");
+        assert!(
+            muts.len() >= 2,
+            "expected BlockMined + at least one TxLanded"
+        );
         match &muts[0] {
             Mutation::BlockMined {
                 number,
@@ -345,7 +346,8 @@ mod tests {
         // assert the helper recovers the canonical packed size.
         let block = ckb_types::core::BlockBuilder::default().build();
         let expected = block.data().as_slice().len() as u64;
-        let json = serde_json::to_value(ckb_jsonrpc_types::BlockView::from(block)).expect("to json");
+        let json =
+            serde_json::to_value(ckb_jsonrpc_types::BlockView::from(block)).expect("to json");
         assert_eq!(serialized_block_size(&json), expected);
     }
 

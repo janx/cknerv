@@ -106,8 +106,10 @@ async fn adapter_registers_node_and_polls_chain_info() {
 
 #[tokio::test]
 async fn adapter_emits_block_on_tip_advance() {
-    let mut canned = mock_rpc::CannedResponses::default();
-    canned.tip = 1;
+    let mut canned = mock_rpc::CannedResponses {
+        tip: 1,
+        ..Default::default()
+    };
     canned
         .blocks
         .insert(1, mock_rpc::simple_block(1, "0xblock1"));
@@ -393,9 +395,7 @@ async fn poll_rebuilds_when_every_restored_anchor_is_orphaned() {
     let canonical: Vec<(u64, String)> = rebuild
         .iter()
         .filter_map(|mutation| match mutation {
-            Mutation::ChainRebuild { from_block } => {
-                Some((*from_block, "rebuild".to_string()))
-            }
+            Mutation::ChainRebuild { from_block } => Some((*from_block, "rebuild".to_string())),
             Mutation::BlockMined { number, hash, .. } => Some((*number, hash.clone())),
             _ => None,
         })
@@ -487,12 +487,8 @@ async fn poll_rebuilds_recent_window_when_reorg_is_deeper_than_retained_anchors(
     let canonical: Vec<(u64, String)> = rebuild
         .iter()
         .filter_map(|mutation| match mutation {
-            Mutation::ChainRebuild { from_block } => {
-                Some((*from_block, "rebuild".to_string()))
-            }
-            Mutation::ChainReorganized { from_block } => {
-                Some((*from_block, "reorg".to_string()))
-            }
+            Mutation::ChainRebuild { from_block } => Some((*from_block, "rebuild".to_string())),
+            Mutation::ChainReorganized { from_block } => Some((*from_block, "reorg".to_string())),
             Mutation::BlockMined { number, hash, .. } => Some((*number, hash.clone())),
             _ => None,
         })
@@ -800,8 +796,10 @@ async fn adapter_respects_shutdown() {
 
 #[tokio::test]
 async fn adapter_backfills_recent_blocks_in_ascending_order() {
-    let mut canned = mock_rpc::CannedResponses::default();
-    canned.tip = 5;
+    let mut canned = mock_rpc::CannedResponses {
+        tip: 5,
+        ..Default::default()
+    };
     for n in 1..=5 {
         canned
             .blocks
@@ -902,8 +900,10 @@ async fn adapter_backfill_stops_at_first_visibility_gap_instead_of_skipping() {
 
 #[tokio::test]
 async fn adapter_resume_skips_backfill_and_resumes_from_saved_tip() {
-    let mut canned = mock_rpc::CannedResponses::default();
-    canned.tip = 10;
+    let mut canned = mock_rpc::CannedResponses {
+        tip: 10,
+        ..Default::default()
+    };
     // Only the gap blocks (saved_tip+1 ..= tip) should be polled forward.
     for n in 8..=10 {
         canned
@@ -951,8 +951,10 @@ async fn adapter_resume_large_gap_runs_catchup_envelope() {
     // Saved tip 8, node now at 12 → gap 4. With threshold 2 (< gap) the poll
     // takes the catch-up branch: a BackfillProgress envelope brackets the
     // window, blocks 9..=12 replay ascending, and last_tip jumps to 12.
-    let mut canned = mock_rpc::CannedResponses::default();
-    canned.tip = 12;
+    let mut canned = mock_rpc::CannedResponses {
+        tip: 12,
+        ..Default::default()
+    };
     // Include the saved canonical anchor (8) so the first resumed poll can
     // validate that the persisted cursor is still on the node's main chain.
     for n in 8..=12 {
@@ -1017,23 +1019,25 @@ async fn adapter_polls_network_and_emits_peer_sync_and_node_info() {
     // Going through `run()` exercises the wiring end-to-end; `poll_network_once`
     // and the `network` module are `pub(crate)`, so a direct call isn't even
     // reachable from an integration test — the full loop is the right seam.
-    let mut canned = mock_rpc::CannedResponses::default();
-    canned.peers = json!([
-        {
-            "node_id": "QmPeerX",
-            "version": "0.116.1",
-            "is_outbound": true,
-            "addresses": [
-                { "address": "/ip4/1.2.3.4/tcp/8115", "score": "0x64" }
-            ],
-            "last_ping_duration": "0x1f",
-            "connected_duration": "0x3e8",
-            "sync_state": { "best_known_header_number": "0x64" }
-        }
-    ]);
-    canned.sync_state = json!({ "ibd": false, "best_known_block_number": "0x64" });
-    canned.node_version = "0.116.1".to_string();
-    canned.node_connections = 0x8;
+    let canned = mock_rpc::CannedResponses {
+        peers: json!([
+            {
+                "node_id": "QmPeerX",
+                "version": "0.116.1",
+                "is_outbound": true,
+                "addresses": [
+                    { "address": "/ip4/1.2.3.4/tcp/8115", "score": "0x64" }
+                ],
+                "last_ping_duration": "0x1f",
+                "connected_duration": "0x3e8",
+                "sync_state": { "best_known_header_number": "0x64" }
+            }
+        ]),
+        sync_state: json!({ "ibd": false, "best_known_block_number": "0x64" }),
+        node_version: "0.116.1".to_string(),
+        node_connections: 0x8,
+        ..Default::default()
+    };
     let (rpc_url, _handle) = mock_rpc::start(canned).await;
 
     let adapter = CkbDirectAdapter::new(rpc_url)

@@ -62,8 +62,7 @@ pub async fn run(workdir: PathBuf, cfg: ResolvedConfig) -> Result<()> {
         // The cell undo journal and the adapter's canonical anchors share the
         // same horizon. Even with boot backfill disabled, retain two live
         // blocks so ordinary one-block reorgs can still roll back exactly.
-        reorg_window_blocks: usize::try_from(cfg.backfill_blocks.max(2))
-            .unwrap_or(usize::MAX),
+        reorg_window_blocks: usize::try_from(cfg.backfill_blocks.max(2)).unwrap_or(usize::MAX),
     };
     let runtime_galaxy = cfg.galaxy.clone();
 

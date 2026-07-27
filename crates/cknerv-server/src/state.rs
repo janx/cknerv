@@ -524,11 +524,29 @@ mod tests {
     #[test]
     fn block_mined_accrues_recent_block_sizes_parallel_to_tx_counts() {
         let s = ServerState::new();
-        s.apply_mutation(Mutation::BlockMined { number: 1, hash: "0x1".into(), tx_count: 2, size: 500, at: 100 });
-        s.apply_mutation(Mutation::BlockMined { number: 2, hash: "0x2".into(), tx_count: 7, size: 1200, at: 110 });
+        s.apply_mutation(Mutation::BlockMined {
+            number: 1,
+            hash: "0x1".into(),
+            tx_count: 2,
+            size: 500,
+            at: 100,
+        });
+        s.apply_mutation(Mutation::BlockMined {
+            number: 2,
+            hash: "0x2".into(),
+            tx_count: 7,
+            size: 1200,
+            at: 110,
+        });
         let snap = s.snapshot();
-        assert_eq!(snap["chain"]["recent_block_sizes"], serde_json::json!([500, 1200]));
-        assert_eq!(snap["chain"]["recent_block_tx_counts"], serde_json::json!([2, 7]));
+        assert_eq!(
+            snap["chain"]["recent_block_sizes"],
+            serde_json::json!([500, 1200])
+        );
+        assert_eq!(
+            snap["chain"]["recent_block_tx_counts"],
+            serde_json::json!([2, 7])
+        );
     }
 
     #[test]
@@ -642,10 +660,7 @@ mod tests {
         assert_eq!(reset["chain"]["tip"], 19);
         assert_eq!(reset["chain"]["reorgs"], 1);
         assert_eq!(reset["chain"]["recent_blocks"], serde_json::json!([]));
-        assert_eq!(
-            reset["chain"]["recent_tx_hashes"],
-            serde_json::json!([])
-        );
+        assert_eq!(reset["chain"]["recent_tx_hashes"], serde_json::json!([]));
         assert_eq!(
             reset["chain"]["recent_block_intervals_ms"],
             serde_json::json!([])
@@ -789,7 +804,7 @@ mod tests {
             assert_eq!(nodes.len(), 1);
             assert_eq!(nodes[0].id, "ckb:mainnet");
             assert_eq!(nodes[0].label, "ckb-mainnet");
-            assert_eq!(nodes[0].is_miner, false);
+            assert!(!nodes[0].is_miner);
         }
 
         // Re-register with updated label + is_miner: in-place mutation,
@@ -804,7 +819,7 @@ mod tests {
             let nodes = &state.entity_store.read().unwrap().chain_nodes;
             assert_eq!(nodes.len(), 1, "no duplicate row");
             assert_eq!(nodes[0].label, "ckb-mainnet-renamed");
-            assert_eq!(nodes[0].is_miner, true);
+            assert!(nodes[0].is_miner);
         }
 
         // Different id: appends as separate row.

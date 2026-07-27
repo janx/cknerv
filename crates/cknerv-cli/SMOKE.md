@@ -71,6 +71,15 @@ The cell set lives under `snapshot.cells`; cumulative counters are
 (The projection name in the route path is literally `cells` — it is
 `CellGalaxy::name()`.)
 
+The corresponding WebSocket routes are:
+
+- `/api/entities/chain/stream?since=<revision>`
+- `/api/projections/cells/stream?since=<revision>`
+
+Each route emits a `{"kind":"heartbeat","revision":N}` frame after roughly
+five seconds without a data frame. A heartbeat confirms browser transport
+freshness; it does not imply that the CKB node tip advanced.
+
 When `recent_links` is non-empty, each link must include
 `endpoint_anchors: [{id, pos_seed, content_hash}, ...]` in
 `from_ids`-then-`to_ids` order. The anchors remain available after the bounded
@@ -83,7 +92,11 @@ chain entity advances and cells accumulate. Note the `chain.tip` JSON path
 (`tip` is nested under `chain`) and the `snapshot.cells` array path.
 
 ```bash
-./target/release/cknerv run --no-open --port 17001 > /tmp/cknerv_smoke.log 2>&1 &
+SMOKE_WORKDIR=$(mktemp -d /tmp/cknerv-smoke.XXXXXX)
+./target/release/cknerv init -C "$SMOKE_WORKDIR"
+./target/release/cknerv run -C "$SMOKE_WORKDIR" \
+  --rpc http://localhost:8114 --no-open --port 17001 \
+  > /tmp/cknerv_smoke.log 2>&1 &
 CKNERV_PID=$!
 sleep 5
 
@@ -111,17 +124,43 @@ CELLS=$(curl -s http://localhost:17001/api/projections/cells/snapshot \
 echo "cells observed: $CELLS"
 
 kill -INT $CKNERV_PID
+wait $CKNERV_PID
+
+# 4. Graceful shutdown persisted a valid derived-state file.
+STATE_FILE="$SMOKE_WORKDIR/data/cknerv-state.json"
+test -s "$STATE_FILE"
+SAVED_TIP=$(python3 -c \
+  "import json,sys; print(json.load(open(sys.argv[1]))['entities']['chain']['tip'])" \
+  "$STATE_FILE")
+echo "persisted tip: $SAVED_TIP"
+
+# 5. Restart from the same workdir and confirm resume, not boot backfill.
+./target/release/cknerv run -C "$SMOKE_WORKDIR" \
+  --rpc http://localhost:8114 --no-open --port 17001 \
+  > /tmp/cknerv_smoke_resume.log 2>&1 &
+CKNERV_PID=$!
+sleep 5
+grep -F "restored state found (tip $SAVED_TIP)" /tmp/cknerv_smoke_resume.log
+RESUMED_TIP=$(curl -s http://localhost:17001/api/entities/chain/snapshot \
+  | python3 -c "import sys,json; print(json.load(sys.stdin)['chain']['tip'])")
+echo "tip after resume: $RESUMED_TIP  (must be >= persisted tip)"
+
+kill -INT $CKNERV_PID
+wait $CKNERV_PID
 ```
 
 Pass criteria:
+
 - chain snapshot returns a `chain.tip` matching the node's `get_tip_block_number`
   (cknerv may trail by a block or two — it ingests blocks asynchronously)
 - tip advances over the observation window (if the chain is producing blocks)
 - cells projection returns a non-empty `snapshot.cells` set once the chain
   has tx activity
 - no panics in cknerv's stdout (`grep -iE "panic|error|fatal" /tmp/cknerv_smoke.log`)
-- clean SIGINT/SIGTERM shutdown (process exits, port freed, no orphan; the
-  log prints `Ctrl-C received, shutting down...`)
+- clean SIGINT shutdown persists a non-empty state file, exits, frees the port,
+  and leaves no orphan process
+- restart logs the restored tip, skips boot backfill, and serves a tip greater
+  than or equal to the persisted tip
 
 ## Visual checklist (browser)
 
@@ -135,6 +174,40 @@ Open `http://localhost:7001` (or whatever `--port` you used):
 - [ ] No errors in browser DevTools console
 - [ ] Tip advances steadily (watch CkbNetworkHud's tip readout)
 - [ ] After ~30 min: chain entity tip matches `curl get_tip_block_number`
+- [ ] Status strip reaches `DATA LIVE`; no transport warning banner remains
+- [ ] On an idle chain, `DATA LIVE` remains live for more than 15 seconds
+- [ ] DevTools Network → WS shows both streams receiving a heartbeat about
+      every five seconds when there are no data frames
+- [ ] Stop cknerv while leaving the page open: transport becomes
+      `DATA RETRYING`, then `DATA STALE` / `DATA FROZEN` after about 15 seconds
+- [ ] Restart cknerv on the same port: both streams reconnect and return to
+      `DATA LIVE` without reloading the page
+- [ ] CKB node sync/IBD state remains visually separate from transport health
+
+## Canonical correction checklist (disposable devnet or mock only)
+
+Do not manufacture a reorg against a public or valued node. Use a disposable
+devnet or deterministic mock source that can replace a known suffix.
+
+For a shallow reorg within the configured backfill window:
+
+- [ ] The chain stream emits `chain_reorganized` before replacement
+      `block_mined` mutations
+- [ ] The cells stream emits `link_prune` before rollback `death`, `birth`,
+      `gc`, or `stats` deltas
+- [ ] The HUD enters the reorg presentation and the reorg counter increments
+- [ ] Invalidated real Cell witnesses briefly fracture inward
+- [ ] Only replacement-chain `birth` deltas produce Cell re-entry
+- [ ] Orphaned causal links, selections, and queued pulses do not return
+- [ ] After replay, both transport channels return to `DATA LIVE`
+
+For a correction deeper than the retained canonical-anchor window:
+
+- [ ] The chain stream emits `chain_rebuild`
+- [ ] The cells stream emits `link_prune` from block `0`, followed by reset
+      deltas and a replay envelope with `phase: "rebuild"`
+- [ ] The rebuild HUD clears when replay completes
+- [ ] Cell totals and links describe only the rebuilt observation window
 
 ## Target chains
 
@@ -144,9 +217,13 @@ Open `http://localhost:7001` (or whatever `--port` you used):
 | Pudge testnet | (your pudge node) | Real tx traffic; ~10s/block |
 | Mainnet | (your mainnet node) | Real production traffic |
 
-## Known limitations
+## Persistence scope
 
-- No persist-on-exit; state rehydrates from the live chain on each boot.
+- Derived state is persisted on graceful Ctrl-C and restored on the next boot.
+  Abrupt termination, including SIGKILL, is not a persistence boundary.
+- Corrupt or schema-mismatched state is discarded and rebuilt from the
+  configured node. For an intentional incompatible schema change, run
+  `cknerv prune --confirm` as documented in the repository README.
 
 ## Observed run (2026-05-27)
 

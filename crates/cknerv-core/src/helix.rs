@@ -64,7 +64,7 @@ fn id_seed(id: u64, salt: u32) -> u32 {
 /// emit.
 pub fn helix_seed_f64(id: u64) -> [f64; 3] {
     let mut rng = Mulberry32::new(id_seed(id, 2_654_435_761));
-    let u = rng.next();
+    let u = rng.next_f64();
 
     let core_end = CORE_FRACTION;
     let spiral_end = core_end + SPIRAL_FRACTION;
@@ -75,13 +75,13 @@ pub fn helix_seed_f64(id: u64) -> [f64; 3] {
 
     if u < core_end {
         r = gauss(&mut rng).abs() * CORE_SIGMA;
-        theta = rng.next() * 2.0 * std::f64::consts::PI;
+        theta = rng.next_f64() * 2.0 * std::f64::consts::PI;
     } else if u < spiral_end {
         let arm = id % SPIRAL_ARM_COUNT;
         let arm_offset = (arm as f64 / SPIRAL_ARM_COUNT as f64) * 2.0 * std::f64::consts::PI;
-        let radial_eased = 1.0 - (2.0 * rng.next() - 1.0).powi(2);
+        let radial_eased = 1.0 - (2.0 * rng.next_f64() - 1.0).powi(2);
         r = SPIRAL_ARM_MIN_R
-            + rng.next().powf(0.7) * (SPIRAL_ARM_MAX_R - SPIRAL_ARM_MIN_R)
+            + rng.next_f64().powf(0.7) * (SPIRAL_ARM_MAX_R - SPIRAL_ARM_MIN_R)
             + (radial_eased - 0.5) * 2.0;
         let spiral_angle = SPIRAL_ARM_PITCH * r.max(1.0).ln();
         let tangential_jitter = gauss(&mut rng) * SPIRAL_ARM_THICKNESS;
@@ -90,14 +90,18 @@ pub fn helix_seed_f64(id: u64) -> [f64; 3] {
         // Smooth disk fill: the arms' radial profile (denser inward via
         // powf(0.7)) but a UNIFORM angle, so it lands everywhere — including the
         // inter-arm gaps — without adding angular structure of its own. Two
-        // rng.next() calls (r, theta); order MUST match the TS twin exactly.
-        r = SPIRAL_ARM_MIN_R + rng.next().powf(0.7) * (SPIRAL_ARM_MAX_R - SPIRAL_ARM_MIN_R);
-        theta = rng.next() * 2.0 * std::f64::consts::PI;
+        // Two PRNG draws (r, theta); order MUST match the TS twin exactly.
+        r = SPIRAL_ARM_MIN_R + rng.next_f64().powf(0.7) * (SPIRAL_ARM_MAX_R - SPIRAL_ARM_MIN_R);
+        theta = rng.next_f64() * 2.0 * std::f64::consts::PI;
     } else if u < filament_end {
         let filament = id % FILAMENT_COUNT;
         let base_angle = (filament as f64 / FILAMENT_COUNT as f64) * 2.0 * std::f64::consts::PI;
-        r = FILAMENT_MIN_R + rng.next() * (FILAMENT_MAX_R - FILAMENT_MIN_R);
-        let drift_sign = if filament % 2 == 0 { 1.0 } else { -1.0 };
+        r = FILAMENT_MIN_R + rng.next_f64() * (FILAMENT_MAX_R - FILAMENT_MIN_R);
+        let drift_sign = if filament.is_multiple_of(2) {
+            1.0
+        } else {
+            -1.0
+        };
         let drift = drift_sign * 0.005 * (r - 30.0);
         theta = base_angle + drift + gauss(&mut rng) * FILAMENT_THICKNESS;
     } else {
@@ -106,7 +110,7 @@ pub fn helix_seed_f64(id: u64) -> [f64; 3] {
         // boundary reads as a soft fall-off rather than a hard disc edge.
         let half_range = (HALO_MAX_R - HALO_MIN_R) / 2.0;
         r = HALO_MIN_R + gauss(&mut rng).abs() * half_range;
-        theta = rng.next() * 2.0 * std::f64::consts::PI;
+        theta = rng.next_f64() * 2.0 * std::f64::consts::PI;
     }
 
     // Universal rim softening — apply BEFORE the lower clamp so any

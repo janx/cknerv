@@ -36,6 +36,10 @@ impl<T: Clone> Ring<T> {
         self.inner.lock().unwrap().len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.inner.lock().unwrap().is_empty()
+    }
+
     pub fn capacity(&self) -> usize {
         self.cap
     }
