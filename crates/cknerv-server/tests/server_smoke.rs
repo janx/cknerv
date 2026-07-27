@@ -26,7 +26,10 @@ async fn server_boots_and_serves_chain_snapshot() {
         .expect("GET succeeds");
     assert_eq!(resp.status(), 200);
     let body: serde_json::Value = resp.json().await.expect("JSON parse");
-    assert!(body.is_object(), "snapshot body should be an object: {body}");
+    assert!(
+        body.is_object(),
+        "snapshot body should be an object: {body}"
+    );
     assert!(
         body.get("chain").is_some(),
         "snapshot should contain chain entity data: {body}"
@@ -51,12 +54,9 @@ async fn unknown_projection_returns_404() {
     });
     tokio::time::sleep(Duration::from_millis(50)).await;
 
-    let resp = reqwest::get(format!(
-        "http://{}/api/projections/nope/snapshot",
-        addr
-    ))
-    .await
-    .expect("GET succeeds");
+    let resp = reqwest::get(format!("http://{}/api/projections/nope/snapshot", addr))
+        .await
+        .expect("GET succeeds");
     assert_eq!(resp.status(), 404);
 
     handle.shutdown().await;
@@ -79,12 +79,9 @@ async fn registered_projection_snapshot_returns_200() {
     });
     tokio::time::sleep(Duration::from_millis(50)).await;
 
-    let resp = reqwest::get(format!(
-        "http://{}/api/projections/cells/snapshot",
-        addr
-    ))
-    .await
-    .expect("GET succeeds");
+    let resp = reqwest::get(format!("http://{}/api/projections/cells/snapshot", addr))
+        .await
+        .expect("GET succeeds");
     assert_eq!(resp.status(), 200);
     let body: serde_json::Value = resp.json().await.expect("JSON parse");
     assert!(body.get("revision").is_some(), "body: {body}");

@@ -493,15 +493,11 @@ impl CellGalaxy {
         let Some(latest) = latest else {
             return;
         };
-        let capacity =
-            u64::try_from(self.config.reorg_window_blocks.max(1)).unwrap_or(u64::MAX);
+        let capacity = u64::try_from(self.config.reorg_window_blocks.max(1)).unwrap_or(u64::MAX);
         let retain_from = latest.saturating_sub(capacity.saturating_sub(1));
-        self.block_hashes
-            .retain(|height, _| *height >= retain_from);
-        self.block_births
-            .retain(|height, _| *height >= retain_from);
-        self.block_deaths
-            .retain(|height, _| *height >= retain_from);
+        self.block_hashes.retain(|height, _| *height >= retain_from);
+        self.block_births.retain(|height, _| *height >= retain_from);
+        self.block_deaths.retain(|height, _| *height >= retain_from);
     }
 
     fn reorg_journal_floor(&self) -> Option<u64> {
@@ -624,9 +620,7 @@ impl CellGalaxy {
             .collect();
         if heights.is_empty() {
             self.recent_links.retain(|link| link.block < number);
-            return vec![CellDelta::LinkPrune {
-                from_block: number,
-            }];
+            return vec![CellDelta::LinkPrune { from_block: number }];
         }
 
         // The frontend may retain a different evidence window than this
@@ -1772,7 +1766,13 @@ mod tests {
         assert!(g.cells[0].death_at_ms.is_none());
 
         g.handle_block_mined(2, "0xbbb", 1, 1_100);
-        g.handle_tx_landed("0xorphan", 2, 1_100, &[base.clone()], &[out(200, "0x")]);
+        g.handle_tx_landed(
+            "0xorphan",
+            2,
+            1_100,
+            std::slice::from_ref(&base),
+            &[out(200, "0x")],
+        );
         assert_eq!(g.cells.len(), 2);
         assert!(g
             .cells
@@ -1832,12 +1832,7 @@ mod tests {
             reorg_window_blocks: 10,
         });
         for block in 1..=4 {
-            source.handle_block_mined(
-                block,
-                &format!("0xblock{block}"),
-                1,
-                block * 1_000,
-            );
+            source.handle_block_mined(block, &format!("0xblock{block}"), 1, block * 1_000);
             let inputs = if block == 1 {
                 Vec::new()
             } else {
@@ -1918,9 +1913,9 @@ mod tests {
         assert_eq!(g.next_id, next_id);
 
         let replay = g.handle_tx_landed("0xcanonical", 20, 20_000, &[], &[out(100, "0x")]);
-        assert!(replay.iter().any(
-            |delta| matches!(delta, CellDelta::Birth { cell } if cell.id == next_id)
-        ));
+        assert!(replay
+            .iter()
+            .any(|delta| matches!(delta, CellDelta::Birth { cell } if cell.id == next_id)));
     }
 
     #[test]
@@ -1931,12 +1926,7 @@ mod tests {
             reorg_window_blocks: 2,
         });
         for block in 1..=4 {
-            g.handle_block_mined(
-                block,
-                &format!("0xblock{block}"),
-                1,
-                block * 1_000,
-            );
+            g.handle_block_mined(block, &format!("0xblock{block}"), 1, block * 1_000);
             g.handle_tx_landed(
                 &format!("0xtx{block}"),
                 block,
@@ -2064,7 +2054,13 @@ mod tests {
         let base = op("0xbase", 0);
 
         g.handle_block_mined(2, "0xbbb", 1, 1_100);
-        g.handle_tx_landed("0xorphan", 2, 1_100, &[base.clone()], &[out(200, "0x")]);
+        g.handle_tx_landed(
+            "0xorphan",
+            2,
+            1_100,
+            std::slice::from_ref(&base),
+            &[out(200, "0x")],
+        );
         // 2 births (base + orphan), 1 death (base consumed).
         assert_eq!(g.total_births, 2);
         assert_eq!(g.total_deaths, 1);

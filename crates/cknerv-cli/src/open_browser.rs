@@ -6,9 +6,7 @@
 pub fn open(port: u16) {
     let url = format!("http://localhost:{port}");
     if let Err(e) = webbrowser::open(&url) {
-        tracing::warn!(
-            "could not auto-open browser: {e}. Open manually: {url}"
-        );
+        tracing::warn!("could not auto-open browser: {e}. Open manually: {url}");
     } else {
         tracing::info!("opened browser at {url}");
     }

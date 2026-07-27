@@ -44,14 +44,18 @@ fn regenerate_fixture() {
         .collect();
     let json = serde_json::to_string(&data).expect("serialize fixture");
     std::fs::write(fixture_path(), json).expect("write fixture");
-    eprintln!("regenerated {} ({} entries)", fixture_path().display(), data.len());
+    eprintln!(
+        "regenerated {} ({} entries)",
+        fixture_path().display(),
+        data.len()
+    );
 }
 
 #[test]
 fn helix_seed_matches_fixture() {
     let path = fixture_path();
-    let raw = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+    let raw =
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
     let expected: Vec<[f32; 3]> =
         serde_json::from_str(&raw).expect("parse helix_seed.json as Vec<[f32; 3]>");
     assert_eq!(expected.len(), 1000, "fixture must have 1000 entries");

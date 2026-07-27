@@ -37,10 +37,22 @@ mod tests {
 
     #[test]
     fn serializes_to_snake_case_strings() {
-        assert_eq!(serde_json::to_string(&LockKind::Sighash).unwrap(), "\"sighash\"");
-        assert_eq!(serde_json::to_string(&LockKind::Omnilock).unwrap(), "\"omnilock\"");
-        assert_eq!(serde_json::to_string(&AssetKind::Native).unwrap(), "\"native\"");
-        assert_eq!(serde_json::to_string(&AssetKind::Spore).unwrap(), "\"spore\"");
+        assert_eq!(
+            serde_json::to_string(&LockKind::Sighash).unwrap(),
+            "\"sighash\""
+        );
+        assert_eq!(
+            serde_json::to_string(&LockKind::Omnilock).unwrap(),
+            "\"omnilock\""
+        );
+        assert_eq!(
+            serde_json::to_string(&AssetKind::Native).unwrap(),
+            "\"native\""
+        );
+        assert_eq!(
+            serde_json::to_string(&AssetKind::Spore).unwrap(),
+            "\"spore\""
+        );
     }
 
     #[test]
@@ -51,11 +63,24 @@ mod tests {
 
     #[test]
     fn round_trips() {
-        for v in [LockKind::Sighash, LockKind::Multisig, LockKind::Acp, LockKind::Omnilock, LockKind::Other] {
+        for v in [
+            LockKind::Sighash,
+            LockKind::Multisig,
+            LockKind::Acp,
+            LockKind::Omnilock,
+            LockKind::Other,
+        ] {
             let s = serde_json::to_string(&v).unwrap();
             assert_eq!(serde_json::from_str::<LockKind>(&s).unwrap(), v);
         }
-        for v in [AssetKind::Native, AssetKind::Sudt, AssetKind::Xudt, AssetKind::Dao, AssetKind::Spore, AssetKind::Other] {
+        for v in [
+            AssetKind::Native,
+            AssetKind::Sudt,
+            AssetKind::Xudt,
+            AssetKind::Dao,
+            AssetKind::Spore,
+            AssetKind::Other,
+        ] {
             let s = serde_json::to_string(&v).unwrap();
             assert_eq!(serde_json::from_str::<AssetKind>(&s).unwrap(), v);
         }

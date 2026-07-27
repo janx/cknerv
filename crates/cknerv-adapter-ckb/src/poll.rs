@@ -69,9 +69,7 @@ impl PollState {
         else {
             return;
         };
-        let retained = catchup_cap
-            .max(MIN_REORG_WINDOW_BLOCKS)
-            .saturating_add(1);
+        let retained = catchup_cap.max(MIN_REORG_WINDOW_BLOCKS).saturating_add(1);
         let retain_from = latest.saturating_sub(retained.saturating_sub(1));
         self.canonical_blocks
             .retain(|number, _| *number >= retain_from);
@@ -287,9 +285,7 @@ async fn rebuild_canonical_window(
     } else {
         let number = from_block - 1;
         let hash = rpc.get_block_hash(number).await?.ok_or_else(|| {
-            anyhow!(
-                "canonical rebuild parent {number} missing while node tip is {tip}"
-            )
+            anyhow!("canonical rebuild parent {number} missing while node tip is {tip}")
         })?;
         Some((number, hash))
     };
@@ -297,9 +293,7 @@ async fn rebuild_canonical_window(
     // Fetch the parent before publishing the reset. A transient RPC failure
     // therefore leaves the currently visible derived state intact; once the
     // reset is emitted, replay ownership moves entirely to this state machine.
-    let _ = out
-        .send(Mutation::ChainRebuild { from_block })
-        .await;
+    let _ = out.send(Mutation::ChainRebuild { from_block }).await;
     state.canonical_blocks.clear();
     state.last_tip = None;
     if let Some((number, hash)) = parent_anchor {
@@ -426,15 +420,10 @@ async fn emit_canonical_range(
                 let expected_parent = match state.canonical_blocks.get(&parent_height) {
                     Some(hash) => hash.clone(),
                     None => {
-                        let hash =
-                            rpc.get_block_hash(parent_height).await?.ok_or_else(|| {
-                                anyhow!(
-                                    "canonical parent {parent_height} missing for block {number}"
-                                )
-                            })?;
-                        state
-                            .canonical_blocks
-                            .insert(parent_height, hash.clone());
+                        let hash = rpc.get_block_hash(parent_height).await?.ok_or_else(|| {
+                            anyhow!("canonical parent {parent_height} missing for block {number}")
+                        })?;
+                        state.canonical_blocks.insert(parent_height, hash.clone());
                         hash
                     }
                 };

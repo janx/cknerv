@@ -68,9 +68,7 @@ impl RpcClient {
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
-            return Err(anyhow!(
-                "RPC error {code}: {message} (method={method})"
-            ));
+            return Err(anyhow!("RPC error {code}: {message} (method={method})"));
         }
         let result = resp
             .get_mut("result")
@@ -80,10 +78,12 @@ impl RpcClient {
     }
 
     pub async fn get_tip_block_number(&self) -> Result<u64> {
-        let v = self.call("get_tip_block_number", Value::Array(vec![])).await?;
-        let s = v.as_str().ok_or_else(|| {
-            anyhow!("get_tip_block_number: expected hex string, got {v}")
-        })?;
+        let v = self
+            .call("get_tip_block_number", Value::Array(vec![]))
+            .await?;
+        let s = v
+            .as_str()
+            .ok_or_else(|| anyhow!("get_tip_block_number: expected hex string, got {v}"))?;
         u64::from_str_radix(s.trim_start_matches("0x"), 16)
             .map_err(|e| anyhow!("get_tip_block_number: bad hex {s:?}: {e}"))
     }

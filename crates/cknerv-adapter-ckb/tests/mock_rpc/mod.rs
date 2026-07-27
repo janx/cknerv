@@ -41,7 +41,7 @@ impl Default for CannedResponses {
             blocks: HashMap::new(),
             unavailable_blocks: HashSet::new(),
             // length=1800, index=0, number=1
-            epoch_packed: (1800u64 << 40) | (0u64 << 24) | 1u64,
+            epoch_packed: (1800u64 << 40) | 1u64,
             mempool_pending: 0,
             peers: json!([]),
             sync_state: json!({ "ibd": false, "best_known_block_number": "0x0" }),
@@ -151,7 +151,7 @@ async fn handle(
                 .and_then(|v| v.as_array())
                 .cloned()
                 .unwrap_or_default();
-            let num_str = params.get(0).and_then(|v| v.as_str()).unwrap_or("0x0");
+            let num_str = params.first().and_then(|v| v.as_str()).unwrap_or("0x0");
             let num = u64::from_str_radix(num_str.trim_start_matches("0x"), 16).unwrap_or(0);
             canned
                 .blocks
@@ -164,7 +164,7 @@ async fn handle(
                 .and_then(|v| v.as_array())
                 .cloned()
                 .unwrap_or_default();
-            let num_str = params.get(0).and_then(|v| v.as_str()).unwrap_or("0x0");
+            let num_str = params.first().and_then(|v| v.as_str()).unwrap_or("0x0");
             let num = u64::from_str_radix(num_str.trim_start_matches("0x"), 16).unwrap_or(0);
             if canned.unavailable_blocks.contains(&num) {
                 Value::Null

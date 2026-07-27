@@ -78,7 +78,10 @@ mod tests {
         std::fs::write(dir.join("cknerv.toml"), "rpc_url = \"keepme\"\n").unwrap();
         cmd_init(&dir).unwrap();
         let content = std::fs::read_to_string(dir.join("cknerv.toml")).unwrap();
-        assert!(content.contains("keepme"), "existing config must not be clobbered");
+        assert!(
+            content.contains("keepme"),
+            "existing config must not be clobbered"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

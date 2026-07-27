@@ -41,8 +41,7 @@ fn parity_with_simulator_golden_fixture() {
 
     let got = compute_content_hash(&cell_output, &data);
     assert_eq!(
-        got,
-        "0x30796fed129dc23603c862e5bb9fb1c801d9cc1a33557a04cf4b2cc9708acf9f",
+        got, "0x30796fed129dc23603c862e5bb9fb1c801d9cc1a33557a04cf4b2cc9708acf9f",
         "content_hash drift would break CellLifeAvatar GoL seed parity with simulator"
     );
 }
