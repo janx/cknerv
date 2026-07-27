@@ -148,54 +148,21 @@ export interface BolusIngest {
   bodyScale: number;
   /** Body + bloom opacity: 1 at impact → 0. */
   bodyOpacity: number;
-  /** Draw toward the consensus-field core, 0→1. */
-  pull: number;
   /** Agreement flash opacity: bright at contact, resolved at t=1. */
   flashOpacity: number;
   /** Hash-stable carrier hue → pale agreement lerp param, 0→1. */
   colorT: number;
 }
 
-export interface ProtocolLandingSealState {
-  /** Normalised size multiplier for the interrupted landing rings. */
-  scale: number;
-  /** Additive seal opacity. */
-  opacity: number;
-  /** Screen-plane rotation in radians. */
-  rotation: number;
-  /** Carrier hue → pale agreement resolution in [0, 1]. */
-  paleMix: number;
-}
-
-/**
- * Structured landing envelope. A short attack separates the agreement seal
- * from the contact flash; the interrupted rings then expand and resolve over
- * the full commit window instead of appearing as a one-frame white target.
- */
-export function protocolLandingSealState(t: number): ProtocolLandingSealState {
-  const k = Math.max(0, Math.min(1, t));
-  const attackT = Math.min(1, k / 0.12);
-  const attack = attackT * attackT * (3 - 2 * attackT);
-  const fadeT = Math.max(0, Math.min(1, (k - 0.58) / 0.42));
-  const fade = 1 - fadeT * fadeT * (3 - 2 * fadeT);
-  return {
-    scale: 0.18 + easeOutCubic(k) * 0.82,
-    opacity: attack * fade * 0.92,
-    rotation: -0.24 + k * 0.72,
-    paleMix: easeOutCubic(k),
-  };
-}
-
 /** Per-frame field-commit envelope for the protocol carrier (t∈[0,1]).
  *  The compatibility export name remains `bolusIngest`, but the visual is an
- *  open woven glyph: it contracts into the field while the agreement flash
+ *  open woven glyph: it contracts at the field contact while the agreement flash
  *  resolves from the block's stable warm hue to pale consensus. Pure. */
 export function bolusIngest(t: number): BolusIngest {
   const k = 1 - t; // 1 → 0 collapse factor
   return {
     bodyScale: k * k, // fast initial dissolve, exactly 0 at t=1
     bodyOpacity: k, // linear fade, exactly 0 at t=1
-    pull: t * t, // accelerating inward draw (sucked into the canopy)
     flashOpacity: Math.exp(-3.0 * t) * k, // bright strike → pale agreement tail; ×k pins a clean 0 at t=1
     colorT: easeOutCubic(t), // moving carrier hue → pale committed information
   };

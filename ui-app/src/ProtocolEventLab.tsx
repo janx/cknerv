@@ -494,7 +494,7 @@ export default function ProtocolEventLab({ snapshot }: { snapshot: CellGalaxySna
   );
   // Review-only clock normalization: production still uses latency-derived
   // arrival. Fixing the local handoff lets every 8 s loop expose the carrier
-  // and landing seal at repeatable timestamps while reusing the same renderer.
+  // and field contact at repeatable timestamps while reusing the same renderer.
   const reviewFlood = useMemo(() => ({
     ...flood,
     localReceiveDelayS: REVIEW_LOCAL_DELAY_S,

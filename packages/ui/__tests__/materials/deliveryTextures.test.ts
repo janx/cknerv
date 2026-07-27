@@ -5,8 +5,6 @@ import {
   makeProtocolCarrierTexture,
   makeIngestFlashTexture,
   makeBolusTrailTexture,
-  makeProtocolLandingTexture,
-  makeRingTexture,
 } from '../../src/materials/deliveryTextures';
 
 describe('deliveryTextures', () => {
@@ -21,11 +19,5 @@ describe('deliveryTextures', () => {
   });
   it('bakes the segmented three-rail carrier trace', () => {
     expect(makeBolusTrailTexture()).toBeInstanceOf(THREE.Texture);
-  });
-  it('bakes the interrupted A protocol landing seal', () => {
-    expect(makeProtocolLandingTexture()).toBeInstanceOf(THREE.Texture);
-  });
-  it('keeps the legacy ring export mapped to the protocol seal', () => {
-    expect(makeRingTexture()).toBeInstanceOf(THREE.Texture);
   });
 });

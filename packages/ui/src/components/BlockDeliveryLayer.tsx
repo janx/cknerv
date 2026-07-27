@@ -13,7 +13,6 @@ import {
   deliveryPhase,
   easeInLob,
   bolusIngest,
-  protocolLandingSealState,
   nearestCellIds,
   type DeliveryPhaseConfig,
 } from '../derives/peers.derive';
@@ -21,7 +20,6 @@ import {
   makeProtocolCarrierTexture,
   makeIngestFlashTexture,
   makeBolusTrailTexture,
-  makeProtocolLandingTexture,
 } from '../materials/deliveryTextures';
 import { BEAM_GROW_DUR_S, BEAM_CHARGE_DUR_S } from '../ui/topologyConstants';
 import { CONSENSUS_BRAID_PALETTE } from '../derives/consensusBraid.derive';
@@ -30,9 +28,11 @@ import { makeProtocolCarrierGeometry } from '../geometry/protocolCarrier';
 
 // BlockDeliveryLayer — the network→Cell-field handoff in the A visual language.
 // Every real measured node keeps its own timing and transform, but the renderer
-// submits the whole event as five semantic batches: one merged woven-line body,
-// plus instanced carrier glyph, information rails, contact flash, and landing
-// seal. Delivery count therefore changes instance/vertex counts, not draw calls.
+// submits the whole event as four semantic batches: one merged woven-line body,
+// plus instanced carrier glyph, information rails, and contact flash. At contact
+// the carrier contracts in place; subsequent motion belongs to real Cells and
+// their maintained network, not a free-floating landing emblem. Delivery count
+// therefore changes instance/vertex counts, not draw calls.
 
 const CARRIER_GEOM = makeProtocolCarrierGeometry();
 const CARRIER_BASE_POSITION = CARRIER_GEOM.getAttribute('position') as THREE.BufferAttribute;
@@ -43,7 +43,6 @@ const PALE_CONSENSUS = new THREE.Color().setRGB(...CONSENSUS_BRAID_PALETTE.pale)
 const CARRIER_COLOR = new THREE.Color();
 const WHITE = new THREE.Color(1, 1, 1);
 const BLACK = new THREE.Color(0, 0, 0);
-const LOCAL_Z = new THREE.Vector3(0, 0, 1);
 
 const CFG: DeliveryPhaseConfig = {
   chargeDur: BEAM_CHARGE_DUR_S,
@@ -62,12 +61,9 @@ const _scale = new THREE.Vector3();
 const _bodyEuler = new THREE.Euler();
 const _bodyQuaternion = new THREE.Quaternion();
 const _cameraQuaternion = new THREE.Quaternion();
-const _screenQuaternion = new THREE.Quaternion();
-const _instanceQuaternion = new THREE.Quaternion();
 const _matrix = new THREE.Matrix4();
 const _batchColor = new THREE.Color();
 const _flashColor = new THREE.Color();
-const _sealColor = new THREE.Color();
 
 export interface BlockDeliveryPulse {
   at: number;
@@ -116,15 +112,9 @@ function writeSpriteInstance(
   color: THREE.Color,
   opacity: number,
   cameraQuaternion: THREE.Quaternion,
-  screenRotation = 0,
 ): void {
-  _instanceQuaternion.copy(cameraQuaternion);
-  if (screenRotation !== 0) {
-    _screenQuaternion.setFromAxisAngle(LOCAL_Z, screenRotation);
-    _instanceQuaternion.multiply(_screenQuaternion);
-  }
   _scale.set(width, height, 1);
-  _matrix.compose(position, _instanceQuaternion, _scale);
+  _matrix.compose(position, cameraQuaternion, _scale);
   batch.setMatrixAt(index, _matrix);
   _batchColor.copy(color).multiplyScalar(Math.max(0, opacity));
   batch.setColorAt(index, _batchColor);
@@ -225,24 +215,20 @@ export default function BlockDeliveryLayer({
   const bloomTex = useMemo(() => makeProtocolCarrierTexture(), []);
   const flashTex = useMemo(() => makeIngestFlashTexture(), []);
   const trailTex = useMemo(() => makeBolusTrailTexture(), []);
-  const sealTex = useMemo(() => makeProtocolLandingTexture(), []);
   const spriteGeometry = useMemo(() => new THREE.PlaneGeometry(1, 1), []);
   const bloomMaterial = useMemo(() => makeSpriteBatchMaterial(bloomTex), [bloomTex]);
   const trailMaterial = useMemo(() => makeSpriteBatchMaterial(trailTex), [trailTex]);
   const flashMaterial = useMemo(() => makeSpriteBatchMaterial(flashTex), [flashTex]);
-  const sealMaterial = useMemo(() => makeSpriteBatchMaterial(sealTex), [sealTex]);
 
   const bloomBatchRef = useRef<THREE.InstancedMesh>(null);
   const trailBatchRef = useRef<THREE.InstancedMesh>(null);
   const flashBatchRef = useRef<THREE.InstancedMesh>(null);
-  const sealBatchRef = useRef<THREE.InstancedMesh>(null);
 
   useLayoutEffect(() => {
     const batches = [
       bloomBatchRef.current,
       trailBatchRef.current,
       flashBatchRef.current,
-      sealBatchRef.current,
     ];
     for (const batch of batches) {
       if (!batch) continue;
@@ -262,11 +248,9 @@ export default function BlockDeliveryLayer({
     bloomMaterial.dispose();
     trailMaterial.dispose();
     flashMaterial.dispose();
-    sealMaterial.dispose();
     bloomTex.dispose();
     flashTex.dispose();
     trailTex.dispose();
-    sealTex.dispose();
   }, [
     bodyGeometry,
     bodyMaterial,
@@ -274,19 +258,16 @@ export default function BlockDeliveryLayer({
     bloomMaterial,
     trailMaterial,
     flashMaterial,
-    sealMaterial,
     bloomTex,
     flashTex,
     trailTex,
-    sealTex,
   ]);
 
   useSimFrame((state) => {
     const bloomBatch = bloomBatchRef.current;
     const trailBatch = trailBatchRef.current;
     const flashBatch = flashBatchRef.current;
-    const sealBatch = sealBatchRef.current;
-    if (!bloomBatch || !trailBatch || !flashBatch || !sealBatch) return;
+    if (!bloomBatch || !trailBatch || !flashBatch) return;
 
     const now = simClock.elapsedSec;
     CFG.ingestDur = LIVE.delivery.ingestDur;
@@ -296,7 +277,6 @@ export default function BlockDeliveryLayer({
       bloomBatch.count = 0;
       trailBatch.count = 0;
       flashBatch.count = 0;
-      sealBatch.count = 0;
       ignitedPulseAtRef.current = null;
       return;
     }
@@ -348,7 +328,6 @@ export default function BlockDeliveryLayer({
     let bloomCount = 0;
     let trailCount = 0;
     let flashCount = 0;
-    let sealCount = 0;
 
     for (const delivery of deliveries) {
       const phase = deliveryPhase(age - delivery.startAge, CFG);
@@ -391,12 +370,13 @@ export default function BlockDeliveryLayer({
         }
       } else {
         const ingest = bolusIngest(phase.t);
-        const inwardLength = Math.hypot(delivery.to[0], delivery.to[2]) || 1;
-        const pull = LIVE.delivery.ingestPull * ingest.pull;
+        // Contact is an event boundary, not another travelling object. Keep the
+        // carrier and flash pinned to the real field landing while they resolve;
+        // nearby Cells carry every post-impact spatial response.
         _position.set(
-          delivery.to[0] - (delivery.to[0] / inwardLength) * pull,
+          delivery.to[0],
           delivery.to[1],
-          delivery.to[2] - (delivery.to[2] / inwardLength) * pull,
+          delivery.to[2],
         );
         bodyScale = (
           delivery.hero ? LIVE.delivery.heroSize : LIVE.delivery.peerSize
@@ -420,24 +400,6 @@ export default function BlockDeliveryLayer({
             _cameraQuaternion,
           );
           flashCount += 1;
-        }
-
-        const landing = protocolLandingSealState(phase.t);
-        if (landing.opacity > 0.001) {
-          _sealColor.copy(CARRIER_COLOR).lerp(PALE_CONSENSUS, landing.paleMix);
-          const size = LIVE.delivery.ringMax * punch * landing.scale;
-          writeSpriteInstance(
-            sealBatch,
-            sealCount,
-            _position,
-            size,
-            size,
-            _sealColor,
-            landing.opacity,
-            _cameraQuaternion,
-            landing.rotation,
-          );
-          sealCount += 1;
         }
       }
 
@@ -476,7 +438,6 @@ export default function BlockDeliveryLayer({
     commitInstanceBatch(bloomBatch, bloomCount);
     commitInstanceBatch(trailBatch, trailCount);
     commitInstanceBatch(flashBatch, flashCount);
-    commitInstanceBatch(sealBatch, sealCount);
   });
 
   return (
@@ -504,12 +465,6 @@ export default function BlockDeliveryLayer({
         args={[spriteGeometry, flashMaterial, capacity]}
         frustumCulled={false}
         renderOrder={4}
-      />
-      <instancedMesh
-        ref={sealBatchRef}
-        args={[spriteGeometry, sealMaterial, capacity]}
-        frustumCulled={false}
-        renderOrder={5}
       />
     </group>
   );

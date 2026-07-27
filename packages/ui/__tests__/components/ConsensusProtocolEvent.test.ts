@@ -18,7 +18,7 @@ describe('A protocol event relay', () => {
     expect(positions.count).toBeGreaterThan(120);
     expect(geometry.index).toBeNull();
     expect(source('BlockDeliveryLayer.tsx')).not.toContain('BoxGeometry');
-    expect(source('BlockDeliveryLayer.tsx')).toContain('makeProtocolLandingTexture');
+    expect(source('BlockDeliveryLayer.tsx')).not.toContain('makeProtocolLandingTexture');
     geometry.dispose();
   });
 
@@ -38,12 +38,15 @@ describe('A protocol event relay', () => {
     expect(courier).not.toContain('<sprite');
   });
 
-  it('submits every concurrent field delivery in five semantic batches', () => {
+  it('submits every concurrent field delivery in four semantic batches', () => {
     const delivery = source('BlockDeliveryLayer.tsx');
 
-    expect(delivery.match(/<instancedMesh/g)).toHaveLength(4);
+    expect(delivery.match(/<instancedMesh/g)).toHaveLength(3);
     expect(delivery.match(/<lineSegments/g)).toHaveLength(1);
-    expect(delivery).toContain('Delivery count therefore changes instance/vertex counts, not draw calls.');
+    expect(delivery).toContain('therefore changes instance/vertex counts, not draw calls.');
+    expect(delivery).toContain('delivery.to[0]');
+    expect(delivery).not.toContain('ingestPull');
+    expect(delivery).not.toContain('sealBatch');
     expect(delivery).toContain('batch.instanceColor.needsUpdate = true');
     expect(delivery).not.toContain('<ProtocolCarrier');
     expect(delivery).not.toContain('registry.current');
