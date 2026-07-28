@@ -1010,6 +1010,23 @@ async fn adapter_resume_large_gap_runs_catchup_envelope() {
         vec![9, 10, 11, 12],
         "catch-up replays the gap window ascending; got {nums:?}"
     );
+
+    // A catch-up can replay thousands of blocks in milliseconds. Its mutation
+    // timestamps must come from each block header, not from the local replay
+    // loop, or the chain cadence collapses to ~0ms and the HUD stays STALLED.
+    let replayed_times: Vec<(u64, u64)> = emitted
+        .iter()
+        .filter_map(|m| match m {
+            Mutation::BlockMined { number, at, .. } => Some((*number, *at)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        replayed_times,
+        (9..=12)
+            .map(|number| (number, 1_700_000_000_000 + number * 8_000))
+            .collect::<Vec<_>>()
+    );
 }
 
 #[tokio::test]

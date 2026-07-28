@@ -13,7 +13,7 @@ use tokio::sync::mpsc;
 
 use cknerv_core::{EpochInfo, MempoolStats, Mutation, ReplayPhase};
 
-use crate::block_fetch::fetch_and_translate;
+use crate::block_fetch::{fetch_and_translate, fetch_and_translate_replay};
 use crate::rpc::RpcClient;
 
 /// Even when historical backfill is disabled, retain enough history to prove
@@ -408,7 +408,12 @@ async fn emit_canonical_range(
     let mut done = 0;
     let result: Result<()> = async {
         for number in lo..=hi {
-            let Some(block) = fetch_and_translate(rpc, number).await? else {
+            let fetched = if phase.is_some() {
+                fetch_and_translate_replay(rpc, number).await?
+            } else {
+                fetch_and_translate(rpc, number).await?
+            };
+            let Some(block) = fetched else {
                 // The tip can become visible before get_block_by_number catches
                 // up. Leave the cursor at the last fully-emitted block and
                 // retry.
