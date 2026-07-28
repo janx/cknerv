@@ -10,6 +10,7 @@ import {
   CONSENSUS_MEMORY_HANDOFF_END,
   CONSENSUS_MEMORY_HANDOFF_START,
 } from '../derives/consensusMemoryLod.derive';
+import { CELL_GALAXY_PALETTE } from '../visualPalette';
 
 /**
  * Single-peak Gaussian cloud baseline + block shockwave for each cell.
@@ -46,7 +47,7 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
       uMemoryMinPointPx: { value: 24 },
       uMemoryLinePx:    { value: 0.55 },
       uMemorySignalEnergy: { value: 1 },
-      uWarmth:          { value: 0.04 }, // cool resting structure → restrained gold bias; set live from LIVE.cell.warmth
+      uWarmth:          { value: 0.12 }, // living rose body → ember bias; set live from LIVE.cell.warmth
       uCenterDim:       { value: 0.3 }, // shared centre-energy floor; passive fabric applies its stronger squared form
       ...makeShockwaveUniforms(),
     },
@@ -248,12 +249,20 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
         // the nucleus reads; far cells (vDetail=0) are byte-identical to before.
         float peak   = exp(-pow(dC / sigma, 2.0)) * (1.0 - vDetail * 0.92);
 
-        // A body: vColor is the Cell's hash-stable point on the gold↔cyan
-        // spectrum. uWarmth biases toward the shared gold contributor while the
-        // core resolves toward pale consensus light, matching the near braid.
-        vec3 gold = vec3(0.86, 0.61, 0.25);
-        vec3 body = mix(vColor, gold, uWarmth);
-        vec3 hot  = mix(body, vec3(0.86, 0.96, 1.0), 0.72);
+        // Living Cell body: rose tissue warms toward ember while the centre
+        // resolves to a soft warm-white nucleus. The colour stays visually
+        // separate from the peer network's synthetic blue data plane.
+        vec3 ember = mix(
+          vColor,
+          vec3(${CELL_GALAXY_PALETTE.ember.join(', ')}),
+          0.55
+        );
+        vec3 body = mix(vColor, ember, uWarmth);
+        vec3 hot  = mix(
+          body,
+          vec3(${CELL_GALAXY_PALETTE.warmWhite.join(', ')}),
+          0.72
+        );
         vec3 col   = mix(body, hot, peak);
 
         // Outer halo wash for boundary continuity — very faint full-sprite

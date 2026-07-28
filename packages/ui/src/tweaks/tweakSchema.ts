@@ -80,15 +80,15 @@ export const peerSchema = {
 
 export const cellSchema = {
   fabricAlpha: { value: 0.12, min: 0, max: 1, step: 0.01, label: 'fabric alpha' },
-  // Resting Cells remain structural cyan. This small bias can warm the field
-  // without competing with gold routes driven by real hierarchy and traffic.
-  warmth: { value: 0.04, min: 0, max: 1, step: 0.01, label: 'structure→gold bias' },
+  // Restore the living rose body used by the earlier brain-like galaxy.
+  // `warmth` adds only a restrained ember bias; real packet traffic remains the
+  // brighter synaptic signal.
+  warmth: { value: 0.12, min: 0, max: 1, step: 0.01, label: 'body rose→ember' },
   // Shared galaxy-centre brightness floor. Cell bodies use it directly; the
   // much denser passive fabric squares it, while trunks/activity/events reclaim
   // headroom. 1.0 disables compression; Cells past the core are unaffected.
   centerDim: { value: 0.3, min: 0, max: 1, step: 0.02, label: 'center dim (core)' },
-  // Neutral by default: packet identity supplies hue; these remain live channel
-  // gains for art direction without collapsing every path back to orange.
+  // Neutral by default: packet identity supplies the amber/violet event hue.
   activeColorR: { value: 1.0, min: 0, max: 1, step: 0.01, label: 'packet gain R' },
   activeColorG: { value: 1.0, min: 0, max: 1, step: 0.01, label: 'packet gain G' },
   activeColorB: { value: 1.0, min: 0, max: 1, step: 0.01, label: 'packet gain B' },

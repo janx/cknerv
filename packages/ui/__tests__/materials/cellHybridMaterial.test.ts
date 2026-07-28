@@ -29,7 +29,7 @@ describe('makeCellHybridMaterial', () => {
     expect(m.uniforms.uMemoryMinPointPx.value).toBe(24);
     expect(m.uniforms.uMemoryLinePx.value).toBe(0.55);
     expect(m.uniforms.uMemorySignalEnergy.value).toBe(1);
-    expect(m.uniforms.uWarmth.value).toBe(0.04);
+    expect(m.uniforms.uWarmth.value).toBe(0.12);
     expect(m.uniforms.uCenterDim.value).toBe(0.3);
 
     // Discharge moved to cellFlareMaterial — the cell body no longer flares.
@@ -54,6 +54,8 @@ describe('makeCellHybridMaterial', () => {
     const m = makeCellHybridMaterial();
     expect(m.fragmentShader).toContain('vec4 cloud(');
     expect(m.fragmentShader).toContain('hash11');
+    expect(m.fragmentShader).toContain('vec3 ember');
+    expect(m.fragmentShader).toContain('vec3 hot');
     expect(m.fragmentShader).not.toContain('vec4 discharge(');
   });
 

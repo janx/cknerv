@@ -31,11 +31,11 @@ import type { ColonyFlood } from '../derives/networkFlood.derive';
 import { colonyCourierSchedule } from '../derives/colonyCourier.derive';
 import { easeOutCubic } from '../derives/peers.derive';
 import { makeCourierPlumeTexture, makeCourierBloomTexture } from '../materials/courierFlameTexture';
-import { CONSENSUS_BRAID_PALETTE } from '../derives/consensusBraid.derive';
 import {
   consensusBlockColor,
   type ConsensusFlowColor,
 } from '../derives/consensusFlow.derive';
+import { PEER_NETWORK_PALETTE } from '../visualPalette';
 
 /** Fixed courier pool. The tree has ~277 hops but only dozens are ever in flight
  *  at once (each visible for ≥ MIN_THROW_S of the ~2s flood); 64 covers the
@@ -133,7 +133,7 @@ export default function ColonyCourierLayer({
     () =>
       new THREE.MeshBasicMaterial({
         map: plumeTex,
-        color: new THREE.Color().setRGB(...CONSENSUS_BRAID_PALETTE.pale),
+        color: new THREE.Color().setRGB(...PEER_NETWORK_PALETTE.coldWhite),
         transparent: true,
         opacity: 0.3, // zero-drift default; live via LIVE.peer.glintPlumeOpacity per-frame
         depthWrite: false,
@@ -146,7 +146,7 @@ export default function ColonyCourierLayer({
     () =>
       new THREE.MeshBasicMaterial({
         map: bloomTex,
-        color: new THREE.Color().setRGB(...CONSENSUS_BRAID_PALETTE.pale),
+        color: new THREE.Color().setRGB(...PEER_NETWORK_PALETTE.coldWhite),
         transparent: true,
         opacity: 0.55, // zero-drift default; live via LIVE.peer.glintBloomOpacity per-frame
         depthWrite: false,

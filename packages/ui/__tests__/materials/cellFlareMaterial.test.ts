@@ -24,6 +24,10 @@ describe('makeCellFlareMaterial', () => {
     expect(m.fragmentShader).toContain('outerGate');
     expect(m.fragmentShader).toContain('innerGate');
     expect(m.fragmentShader).toContain('diamondRadius');
+    expect(m.fragmentShader).toContain('vec3 amber');
+    expect(m.fragmentShader).toContain('vec3 rose');
+    expect(m.fragmentShader).toContain('vec3 violet');
+    expect(m.fragmentShader).not.toContain('vec3 cyan');
     expect(m.fragmentShader).not.toContain('vec4 discharge(');
     expect(m.fragmentShader).toContain('flashEnv');
     expect(m.vertexShader).toContain('attribute float aFlashAt;');

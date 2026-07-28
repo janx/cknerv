@@ -7,6 +7,7 @@ import {
   consensusBraidAgreementResolution,
   consensusBraidBirthPhase,
   consensusBraidLayerOpacity,
+  consensusBraidContributorColor,
   consensusBraidPresenceScale,
   consensusBraidFrequencies,
   consensusBraidPoint,
@@ -150,5 +151,15 @@ describe('canonical consensus braid mapping', () => {
     expect(consensusBraidBirthPhase(1024)).toBeCloseTo(Math.PI / 2);
     expect(consensusBraidBirthPhase(4096)).toBe(0);
     expect(consensusBraidBirthPhase(-1)).toBeGreaterThan(6);
+  });
+
+  it('keeps the production Cell braid in the warm biological family', () => {
+    const tissue = consensusBraidContributorColor(0, 0.5);
+    const synapse = consensusBraidContributorColor(1, 0.5);
+    const memory = consensusBraidContributorColor(2, 0.5);
+
+    expect(tissue[0]).toBeGreaterThan(tissue[2]);
+    expect(synapse[0]).toBeGreaterThan(synapse[2]);
+    expect(memory[0]).toBeGreaterThan(memory[1]);
   });
 });

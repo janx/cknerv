@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { HASH11_GLSL, BIRTH_DEATH_GLSL, FLASH_ENV_GLSL } from './cellEnvelope.glsl';
+import { CELL_GALAXY_PALETTE } from '../visualPalette';
 
 /** Default contributor-rail count (overridden per-frame by the quality preset). */
 const PROTOCOL_RAILS_DEFAULT = 3;
@@ -8,10 +9,10 @@ const PROTOCOL_RAILS_DEFAULT = 3;
 const FLARE_BASE_PX_PER_WU = 2.0;
 
 /**
- * Protocol-write Points material. Straight contributor rails converge on an
- * interrupted pair of agreement loops and a central four-way knot. It remains
- * a separate additive layer over the steady Cell body, but deliberately avoids
- * sparks, tendrils, membranes, and other carbon-biological motion.
+ * Synaptic protocol-write Points material. Contributor rails converge on an
+ * interrupted pair of agreement loops and a central four-way knot. The
+ * protocol grammar remains exact, while its rose/amber/violet energy belongs
+ * to the living Cell field rather than the peer network's synthetic blue plane.
  *
  * Reads the shared `aFlashAt` attribute → `vFlashAge`; gated by birth/death so
  * unborn/dead cells never flare. No cloud, no shockwave — those stay on the
@@ -107,10 +108,10 @@ export function makeCellFlareMaterial(): THREE.ShaderMaterial {
         if (env <= 0.0) return vec4(0.0);
 
         const float TAU = 6.28318530718;
-        vec3 gold = vec3(0.86, 0.61, 0.25);
-        vec3 cyan = vec3(0.10, 0.82, 1.00);
-        vec3 violet = vec3(0.40, 0.20, 1.00);
-        vec3 pale = vec3(0.72, 0.96, 1.00);
+        vec3 amber = vec3(${CELL_GALAXY_PALETTE.synapseAmber.join(', ')});
+        vec3 rose = vec3(${CELL_GALAXY_PALETTE.tissueRose.join(', ')});
+        vec3 violet = vec3(${CELL_GALAXY_PALETTE.memoryViolet.join(', ')});
+        vec3 pale = vec3(${CELL_GALAXY_PALETTE.warmWhite.join(', ')});
         float eventPhase = clamp(flashAge / 0.5, 0.0, 1.0);
         float dC = length(uv);
         float angle = atan(uv.y, uv.x);
@@ -140,7 +141,7 @@ export function makeCellFlareMaterial(): THREE.ShaderMaterial {
         float knot = exp(-pow((diamondRadius - 0.061) / 0.009, 2.0)) * env;
         float core = exp(-pow(dC / 0.034, 2.0)) * env;
 
-        vec3 col = gold * outer * 0.9 + cyan * inner * 1.05;
+        vec3 col = amber * outer * 0.9 + rose * inner * 1.05;
         col += pale * (knot * 1.05 + core * 1.25);
         float alpha = outer * 0.72 + inner * 0.72 + knot + core;
 
@@ -159,9 +160,9 @@ export function makeCellFlareMaterial(): THREE.ShaderMaterial {
           float rail = exp(-pow(segmentDistance(uv, railStart, railEnd) / 0.009, 2.0));
           float node = exp(-pow(length(uv - railStart) / 0.018, 2.0));
           float railGate = env * smoothstep(0.0, 0.1, resolve);
-          vec3 lane = gold;
-          if (i == 1) lane = cyan;
-          if (i == 2) lane = mix(violet, cyan, 0.24);
+          vec3 lane = amber;
+          if (i == 1) lane = rose;
+          if (i == 2) lane = mix(violet, rose, 0.24);
           col += lane * (rail * 0.72 + node * 0.92) * railGate;
           alpha += (rail * 0.48 + node * 0.7) * railGate;
         }

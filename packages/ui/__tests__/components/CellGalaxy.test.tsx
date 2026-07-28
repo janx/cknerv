@@ -564,10 +564,14 @@ describe('writeCellBuffers', () => {
     expect(t.posArr[1]).toBe(2);
     expect(t.posArr[2]).toBe(3);
     expect(t.posArr[3]).toBe(4);
-    // Far LOD stays in the structural cyan family; metadata remains secondary.
-    expect(t.colorArr[2]).toBeGreaterThan(t.colorArr[0]);
-    expect(t.colorArr[5]).toBeGreaterThan(t.colorArr[3]);
-    expect(t.colorArr[3]).not.toBe(t.colorArr[0]);
+    // Untagged Cells restore the earlier luminous rose body.
+    expect(t.colorArr[0]).toBeCloseTo(1, 5);
+    expect(t.colorArr[1]).toBeCloseTo(0.4, 5);
+    expect(t.colorArr[2]).toBeCloseTo(0.44, 5);
+    // Explicit runtime tags keep their established pastel identity.
+    expect(t.colorArr[3]).toBeCloseTo(0.43, 5);
+    expect(t.colorArr[4]).toBeCloseTo(0.91, 5);
+    expect(t.colorArr[5]).toBeCloseTo(0.72, 5);
     // Size: generic vs tagged.
     expect(t.sizeArr[0]).toBeCloseTo(1.6, 5);
     expect(t.sizeArr[1]).toBeCloseTo(3, 5);
