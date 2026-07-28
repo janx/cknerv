@@ -3,6 +3,7 @@ import chakra500Url from '../../fonts/ChakraPetch-500-latin.woff2';
 import chakra700Url from '../../fonts/ChakraPetch-700-latin.woff2';
 import shareTechUrl from '../../fonts/ShareTechMono-latin.woff2';
 import huiwenUrl from '../../fonts/HuiwenMincho-subset.woff2';
+import { PEER_NETWORK_HEX } from '../../visualPalette';
 
 export const HUD_COLORS = {
   ground: '#000000',
@@ -10,7 +11,7 @@ export const HUD_COLORS = {
   orange: '#FF9830',
   orangeDeep: '#EC7420',
   cyanWire: '#20F0FF',
-  peerWire: '#8FB7FF',
+  peerWire: PEER_NETWORK_HEX.scaffold,
   rebuild: '#AE86FF',
   ink: '#E8E8E8',
   dim: '#7C8794',

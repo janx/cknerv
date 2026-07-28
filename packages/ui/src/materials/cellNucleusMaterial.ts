@@ -1,9 +1,10 @@
-// cellNucleusMaterial — restrained diamond decode marker for the silicon core.
+// cellNucleusMaterial — restrained synaptic decode marker for the Cell core.
 // World-space sizing keeps ports a stable fraction of the Cell at any zoom;
 // per-point aAlpha carries the LOD fade. The feather argument is retained for
 // API compatibility, but now controls the small photonic bloom around a crisp
 // crystal marker instead of drawing either biological blobs or literal UI pads.
 import * as THREE from 'three';
+import { CELL_GALAXY_PALETTE } from '../visualPalette';
 
 /** @param feather Gaussian falloff radius in point-UV space (0.26 = tight core, ~0.46 = soft glow). */
 export function makeNucleusPointMaterial(feather: number): THREE.ShaderMaterial {
@@ -44,12 +45,13 @@ export function makeNucleusPointMaterial(feather: number): THREE.ShaderMaterial 
         float bloom = exp(-pow(length(uv) / ${feather.toFixed(3)}, 2.0)) * 0.055;
         float signal = max(max(rim, filament * 0.48), core * 0.7);
         float a = (signal * 0.72 + bloom) * vAlpha;
-        vec3 silicon = vec3(0.28, 0.82, 1.0);
-        vec3 violet = vec3(0.68, 0.56, 1.0);
-        vec3 tint = mix(silicon, violet, clamp(uWarmth, 0.0, 1.0) * 0.22);
+        vec3 tissue = vec3(${CELL_GALAXY_PALETTE.tissueRose.join(', ')});
+        vec3 violet = vec3(${CELL_GALAXY_PALETTE.memoryViolet.join(', ')});
+        vec3 tint = mix(tissue, violet, 0.16 + clamp(uWarmth, 0.0, 1.0) * 0.18);
         vec3 resolvedGold = vec3(1.0, 0.78, 0.34);
         tint = mix(tint, resolvedGold, clamp(vResolve, 0.0, 1.0) * 0.86);
-        vec3 col = tint * (signal * 0.9 + bloom) + vec3(0.72, 0.95, 1.0) * core * 0.28;
+        vec3 col = tint * (signal * 0.9 + bloom)
+          + vec3(${CELL_GALAXY_PALETTE.warmWhite.join(', ')}) * core * 0.28;
         gl_FragColor = vec4(col * a, a);
       }`,
   });

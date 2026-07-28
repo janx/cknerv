@@ -60,9 +60,9 @@ import {
 // active writes keep additive blending in a separate layer. The per-edge
 // brightness hierarchy and taper still multiply this baseline. Read live as
 // `LIVE.cell.fabricAlpha` in `emitFabric`.
-// Every edge receives a deterministic cool/gold endpoint pair from
-// consensusRouteColors. The live RGB knobs are neutral channel gains for
-// packet paths; they no longer impose one global orange firing colour.
+// Every edge receives a deterministic crimson vascular endpoint pair from
+// consensusRouteColors. Hierarchy and observed traffic warm those veins toward
+// gold, restoring the visual rhythm of tissue at rest and synapses under load.
 
 /** Hard segment cap for the active layer. Active: ~12 hops × 12
  *  sub-segments = 144 per pulse, × ~32 active pulses = 4600. (The
@@ -794,8 +794,8 @@ export default function NeuralFabric({ onReady }: NeuralFabricProps) {
           if (animating) stillAnimating += 1;
           if (!rs.visible || rs.alphaMul <= 0) continue;
 
-          // Route energy BEFORE per-vertex taper. Cold routes stay structural
-          // cyan; hierarchy and recent real traffic reclaim gold. Brightness
+          // Route energy BEFORE per-vertex taper. Resting routes stay vascular
+          // crimson; hierarchy and recent real traffic reclaim gold. Brightness
           // falls toward the middle so Cells remain the agreement anchors. A
           // real Cell death resolves toward the retirement colour, never the
           // pale light reserved for successful agreement.

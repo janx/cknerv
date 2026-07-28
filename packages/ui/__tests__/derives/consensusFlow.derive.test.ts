@@ -17,20 +17,22 @@ const distance = (a: readonly number[], b: readonly number[]): number => Math.hy
 );
 
 describe('A consensus-flow visual contract', () => {
-  it('keeps resting routes deterministic, bounded, and predominantly cool', () => {
+  it('keeps resting routes deterministic, bounded, and vascular crimson', () => {
     const left = consensusRouteColors(0x1234_5600);
     const right = consensusRouteColors(0x1234_5600);
 
     expect(left).toEqual(right);
     expect([...left.from, ...left.to].every((value) => value >= 0 && value <= 1)).toBe(true);
-    expect(left.from[2]).toBeGreaterThan(left.from[0]);
-    expect(left.to[2]).toBeGreaterThan(left.to[0]);
+    expect(left.from[0]).toBeGreaterThan(left.from[2]);
+    expect(left.to[0]).toBeGreaterThan(left.to[2]);
+    expect(left.from[2]).toBeGreaterThan(left.from[1]);
+    expect(left.to[2]).toBeGreaterThan(left.to[1]);
   });
 
-  it('never assigns a false gold signal to an idle route by hash alone', () => {
+  it('never assigns a false cold-network signal to an idle Cell route', () => {
     const routes = Array.from({ length: 64 }, (_, seed) => consensusRouteColors(seed * 0x1f_123));
     expect(routes.every(({ from, to }) => (
-      from[2] > from[0] && to[2] > to[0]
+      from[0] > from[2] && to[0] > to[2]
     ))).toBe(true);
   });
 
@@ -45,17 +47,20 @@ describe('A consensus-flow visual contract', () => {
     expect(used).toBeGreaterThan(trunk);
   });
 
-  it('keeps resting Cell identity inside the structural cyan family', () => {
-    const color = consensusCellColor({
+  it('restores the living rose body while preserving explicit tag colours', () => {
+    const visual = {
       assetClass: 2,
       lockClass: 3,
       mass: 1,
       payload: 0.8,
       seeds: [0.2, 0.7, 0.4, 0.9],
       accent: [0.94, 0.48, 0.68],
-    });
+    } as const;
+    const color = consensusCellColor(visual);
+    const tagged = consensusCellColor(visual, true);
 
-    expect(color[2]).toBeGreaterThan(color[0]);
+    expect(color).toEqual([1, 0.4, 0.44]);
+    expect(tagged).toEqual([0.94, 0.48, 0.68]);
     expect(color.every((value) => value >= 0 && value <= 1)).toBe(true);
   });
 

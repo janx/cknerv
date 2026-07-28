@@ -27,10 +27,10 @@ import { makeHaloMaterial, phaseFor, rateFor } from './GlowNode';
 import { CkbSelectionReticle } from './CellGalaxy';
 import { PEER_COLORS, peerColorKind } from '../derives/peers.derive';
 import type { NetworkNode, NetworkTopology } from '../types';
+import { PEER_NETWORK_PALETTE } from '../visualPalette';
 
 // Ghost-cloud palette/scale. A faint blue "possible network" haze — the same
 // core+halo radial as the measured halo, only dim and small.
-const INFERRED_COLOR = '#8fb7ff';
 const INFERRED_DIM = 0.9; // fixed base brightness — a clearly visible haze, not barely-there
 const INFERRED_SIZE = 5.5; // point-size factor (perspective-scaled) — bigger so the dots read
 
@@ -86,7 +86,9 @@ function InferredCloud({
         blending: THREE.AdditiveBlending,
         toneMapped: false,
         uniforms: {
-          uColor: { value: new THREE.Color(INFERRED_COLOR) },
+          uColor: {
+            value: new THREE.Color().setRGB(...PEER_NETWORK_PALETTE.scaffold),
+          },
           uDim: { value: INFERRED_DIM },
           uSize: { value: INFERRED_SIZE },
           uContextEnergy: { value: 1 },

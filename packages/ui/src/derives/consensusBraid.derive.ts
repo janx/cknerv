@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { CellVisualDescriptor } from './cellVisual.derive';
+import { CELL_GALAXY_PALETTE } from '../visualPalette';
 
 export const CONSENSUS_BRAID_TAU = Math.PI * 2;
 
@@ -358,21 +359,21 @@ export function consensusBraidContributorColor(
   ];
   if (strand % 3 === 0) {
     return mix(
-      CONSENSUS_BRAID_PALETTE.gold,
-      CONSENSUS_BRAID_PALETTE.paleGold,
-      spectral * 0.2,
+      CELL_GALAXY_PALETTE.tissueRose,
+      CELL_GALAXY_PALETTE.warmWhite,
+      0.08 + spectral * 0.18,
     );
   }
   if (strand % 3 === 1) {
     return mix(
-      CONSENSUS_BRAID_PALETTE.cyan,
-      CONSENSUS_BRAID_PALETTE.pale,
-      spectral * 0.16,
+      CELL_GALAXY_PALETTE.synapseAmber,
+      CELL_GALAXY_PALETTE.warmWhite,
+      0.06 + spectral * 0.18,
     );
   }
   return mix(
-    CONSENSUS_BRAID_PALETTE.violet,
-    CONSENSUS_BRAID_PALETTE.cyan,
-    0.3 + spectral * 0.34,
+    CELL_GALAXY_PALETTE.memoryViolet,
+    CELL_GALAXY_PALETTE.tissueRose,
+    0.24 + spectral * 0.28,
   );
 }

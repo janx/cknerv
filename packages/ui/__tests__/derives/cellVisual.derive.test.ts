@@ -4,6 +4,7 @@ import {
   capacityMass,
   contentHashSeeds,
   deriveCellVisual,
+  hasCellTagAccent,
   observedDataBytes,
   payloadDensity,
 } from '../../src/derives/cellVisual.derive';
@@ -24,6 +25,12 @@ const CELL: Cell = {
 };
 
 describe('cellVisual derive', () => {
+  it('recognises only renderer-owned tag accents', () => {
+    expect(hasCellTagAccent('wallet')).toBe(true);
+    expect(hasCellTagAccent('future-chain-tag')).toBe(false);
+    expect(hasCellTagAccent(null)).toBe(false);
+  });
+
   it('maps chain semantics to stable compact shader values', () => {
     const visual = deriveCellVisual(CELL);
     expect(visual.assetClass).toBe(3);

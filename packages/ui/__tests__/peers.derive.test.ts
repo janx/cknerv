@@ -14,6 +14,7 @@ import {
   deliveryPhase,
   bolusIngest,
   nearestCellIds,
+  PEER_COLORS,
 } from '../src/derives/peers.derive';
 import { emptyChainCache } from '@cknerv/cache';
 import type { Peer, ChainNode } from '@cknerv/types';
@@ -63,6 +64,14 @@ describe('peers.derive', () => {
     expect(peerColorKind(peer({ version: '0.115.0' }), '0.116.1')).toBe('version');
     expect(peerColorKind(peer({ direction: 'outbound', version: '0.116.1' }), '0.116.1')).toBe('outbound');
     expect(peerColorKind(peer({ direction: 'inbound', version: '0.116.1' }), '0.116.1')).toBe('inbound');
+  });
+
+  it('keeps the peer data plane inside the synthetic blue/ultraviolet family', () => {
+    expect(PEER_COLORS.outbound[2]).toBeGreaterThan(PEER_COLORS.outbound[0]);
+    expect(PEER_COLORS.inbound[2]).toBeGreaterThan(PEER_COLORS.inbound[0]);
+    expect(PEER_COLORS.version[2]).toBeGreaterThan(PEER_COLORS.version[0]);
+    expect(PEER_COLORS.outbound).not.toEqual(PEER_COLORS.inbound);
+    expect(PEER_COLORS.version).not.toEqual(PEER_COLORS.outbound);
   });
 
   it('peerChurnDiff splits joined/dropped/stable by node_id', () => {

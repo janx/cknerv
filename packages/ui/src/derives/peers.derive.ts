@@ -3,6 +3,10 @@
 
 import type { ChainEntry, ChainNode, Peer, PeerDirection } from '@cknerv/types';
 import type { Vec3 } from '../types';
+import {
+  PEER_NETWORK_PALETTE,
+  type SceneColor,
+} from '../visualPalette';
 
 /** Latency at/above this (ms) maps to the outer rim. */
 export const PEER_LATENCY_CAP_MS = 400;
@@ -206,10 +210,10 @@ export function peerColorKind(peer: Peer, localVersion: string): PeerColorKind {
 }
 
 /** RGB triples (0..1) for each color class. */
-export const PEER_COLORS: Record<PeerColorKind, [number, number, number]> = {
-  outbound: [0.49, 0.976, 1.0], // #7df9ff
-  inbound: [0.373, 0.745, 0.796], // #5fbecb
-  version: [0.941, 0.671, 0.988], // #f0abfc
+export const PEER_COLORS: Readonly<Record<PeerColorKind, SceneColor>> = {
+  outbound: PEER_NETWORK_PALETTE.outbound,
+  inbound: PEER_NETWORK_PALETTE.inbound,
+  version: PEER_NETWORK_PALETTE.version,
 };
 
 export interface PeerChurn {

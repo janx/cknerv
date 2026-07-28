@@ -56,14 +56,13 @@ describe('NeuralFabric living-mesh handles', () => {
     expect(SRC).toMatch(/from\s+['"]\.\/fabricEdgeRender['"]/);
   });
 
-  it('uses A route endpoints and preserves each packet colour on active hops', () => {
+  it('uses vascular route endpoints and preserves each packet colour on active hops', () => {
     expect(SRC).toContain('consensusRouteColors');
     expect(SRC).toContain('consensusRouteGoldMix');
     expect(SRC).toContain('consensusChromaIntensity');
     expect(SRC).toContain('CONSENSUS_BRAID_PALETTE.retire');
     expect(SRC).toContain('color: Vec3');
     expect(SRC).toContain('hop.color[0]');
-    expect(SRC).not.toContain('new THREE.Color(0.48, 0.06, 0.16)');
   });
 
   it('lets completed memory routes broaden their tail without changing live wavefronts', () => {

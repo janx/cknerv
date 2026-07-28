@@ -18,7 +18,11 @@ import {
 import type { Cell } from '@cknerv/types';
 import { useCellGalaxy } from '../hooks/cellGalaxyContext';
 import { ConsensusMemoryFocusScope } from '../hooks/consensusMemoryFocusContext';
-import { capacityMass, deriveCellVisual } from '../derives/cellVisual.derive';
+import {
+  capacityMass,
+  deriveCellVisual,
+  hasCellTagAccent,
+} from '../derives/cellVisual.derive';
 import {
   consensusBlockColor,
   consensusCellColor,
@@ -400,7 +404,7 @@ export function writeCellBuffers(
     const flashAtS = flashMap.get(c.id) ?? -1e9;
 
     const visual = deriveCellVisual(c);
-    const color = consensusCellColor(visual);
+    const color = consensusCellColor(visual, hasCellTagAccent(c.tag));
     const memoryIdentity = consensusMemoryCoreIdentity(visual);
     targets.posArr[i * 3 + 0]   = c.pos_seed[0];
     targets.posArr[i * 3 + 1]   = c.pos_seed[1];
@@ -1345,7 +1349,7 @@ export default function CellGalaxy({
     hybridMaterial.uniforms.uShockwaveAlphaCeil.value = LIVE.galaxy.alphaCeil;
     hybridMaterial.uniforms.uShockwaveSizeBoost.value = LIVE.galaxy.sizeBoost;
     hybridMaterial.uniforms.uShockwaveTrailBoost.value = LIVE.galaxy.trailBoost;
-    hybridMaterial.uniforms.uWarmth.value = LIVE.cell.warmth; // hash-stable A hue → gold bias
+    hybridMaterial.uniforms.uWarmth.value = LIVE.cell.warmth; // living rose body → ember bias
     hybridMaterial.uniforms.uCenterDim.value = LIVE.cell.centerDim; // shared centre-energy floor
     flareMaterial.uniforms.uTime.value = now;
     flareMaterial.uniforms.uViewportHeight.value = pointViewportHeight;

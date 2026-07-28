@@ -1,6 +1,7 @@
 import { fnv1a } from '../geometry/edgeBezier';
 import { CONSENSUS_BRAID_PALETTE } from './consensusBraid.derive';
 import type { CellVisualDescriptor } from './cellVisual.derive';
+import { CELL_GALAXY_PALETTE } from '../visualPalette';
 
 export type ConsensusFlowColor = [number, number, number];
 
@@ -59,6 +60,16 @@ const smoothstep = (edge0: number, edge1: number, value: number): number => {
   return t * t * (3 - 2 * t);
 };
 
+function veinContributor(amount: number): ConsensusFlowColor {
+  return mixColor(
+    CELL_GALAXY_PALETTE.veinCrimson,
+    CELL_GALAXY_PALETTE.veinRose,
+    0.08 + amount * 0.18,
+  );
+}
+
+/** Restrained cool contributor used only as a spectral shoulder on moving
+ * protocol identities and historical memory, never as the resting Cell field. */
 function coolContributor(amount: number): ConsensusFlowColor {
   return mixColor(
     CONSENSUS_BRAID_PALETTE.deepCyan,
@@ -77,29 +88,29 @@ function goldContributor(amount: number): ConsensusFlowColor {
 
 /**
  * Stable resting colours for one canonical Cell edge. Hash variation stays
- * inside the structural blue/cyan family; gold is applied later from actual
- * hierarchy and observed traffic, never assigned to a cold route by chance.
+ * inside the crimson vascular family; gold is applied later from actual
+ * hierarchy and observed traffic, so the field reads as living tissue at rest
+ * and a firing neural structure under load.
  */
 export function consensusRouteColors(seed: number): ConsensusRouteColors {
-  const first = coolContributor(byteUnit(seed, 8));
-  const second = coolContributor(byteUnit(seed, 16));
-  const energy = 0.72;
+  const first = veinContributor(byteUnit(seed, 8));
+  const second = veinContributor(byteUnit(seed, 16));
+  const energy = 0.92;
   return { from: scaleColor(first, energy), to: scaleColor(second, energy) };
 }
 
-/** Stable resting Cell colour. Content hash supplies variation only within the
- * structural cyan family; on-chain asset/tag metadata is retained as a small
- * accent and can never turn an idle Cell into a false activity signal. */
+/** Stable resting Cell colour. Untagged Cells restore the luminous rose body
+ * used by the earlier galaxy; explicit runtime tags retain their established
+ * pastel identity. Asset/lock semantics remain encoded by the Cell form rather
+ * than turning the far field into a categorical network chart. */
 export function consensusCellColor(
   visual: CellVisualDescriptor,
+  tagged = false,
 ): ConsensusFlowColor {
-  const structure = coolContributor(visual.seeds[0]);
-  const depth = mixColor(
-    CONSENSUS_BRAID_PALETTE.deepCyan,
-    structure,
-    0.58 + visual.seeds[1] * 0.3,
-  );
-  return mixColor(depth, visual.accent, 0.025 + visual.payload * 0.015);
+  const color = tagged
+    ? visual.accent
+    : CELL_GALAXY_PALETTE.tissueRose;
+  return [color[0], color[1], color[2]];
 }
 
 /** Gold occupancy for one passive route. Geometric hierarchy establishes a

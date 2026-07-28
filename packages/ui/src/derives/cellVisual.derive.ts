@@ -52,6 +52,12 @@ const TAG_ACCENT: Record<string, CellVisualAccent> = {
   wallet: [0.43, 0.91, 0.72],
 };
 
+/** Only explicit, renderer-owned tags displace the galaxy's generic rose.
+ * Unknown chain-generic tags retain the Cell field's default body colour. */
+export function hasCellTagAccent(tag: CellTag | null): boolean {
+  return tag !== null && Object.hasOwn(TAG_ACCENT, tag);
+}
+
 const clamp01 = (v: number): number => Math.max(0, Math.min(1, v));
 
 /** Number of bytes visibly present in the wire payload. */
