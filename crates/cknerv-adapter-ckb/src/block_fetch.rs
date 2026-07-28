@@ -33,10 +33,37 @@ const DATA_HEX_CAP_BYTES: usize = 1024;
 /// Returns `Ok(None)` if the block isn't visible yet (RPC race), letting the
 /// poll loop retry on the next tick.
 pub async fn fetch_and_translate(rpc: &RpcClient, number: u64) -> Result<Option<FetchedBlock>> {
+    fetch_and_translate_with_time(rpc, number, BlockTimeSource::Observed).await
+}
+
+/// Fetch + translate a block that is being replayed rather than observed at
+/// the live tip. Historical catch-up/reorg/rebuild blocks must retain their
+/// header timestamps; stamping a fast replay with wall-clock receipt times
+/// collapses the cadence ring to 0–2ms and makes the HUD report a permanent
+/// false stall once replay completes.
+pub(crate) async fn fetch_and_translate_replay(
+    rpc: &RpcClient,
+    number: u64,
+) -> Result<Option<FetchedBlock>> {
+    fetch_and_translate_with_time(rpc, number, BlockTimeSource::Header).await
+}
+
+#[derive(Clone, Copy)]
+enum BlockTimeSource {
+    Observed,
+    Header,
+}
+
+async fn fetch_and_translate_with_time(
+    rpc: &RpcClient,
+    number: u64,
+    time_source: BlockTimeSource,
+) -> Result<Option<FetchedBlock>> {
     let Some(block) = rpc.get_block_by_number(number).await? else {
         return Ok(None);
     };
-    let at = now_ms();
+    let observed_at = now_ms();
+    let at = block_time_ms(&block, time_source, observed_at);
     let size = serialized_block_size(&block);
     let hash = header_hash(&block, number)?.to_string();
     let parent_hash = header_parent_hash(&block, number)?.to_string();
@@ -46,6 +73,13 @@ pub async fn fetch_and_translate(rpc: &RpcClient, number: u64) -> Result<Option<
         parent_hash,
         mutations,
     }))
+}
+
+fn block_time_ms(block: &Value, source: BlockTimeSource, observed_at: u64) -> u64 {
+    match source {
+        BlockTimeSource::Observed => observed_at,
+        BlockTimeSource::Header => header_timestamp_ms(block).unwrap_or(observed_at),
+    }
 }
 
 pub(crate) fn header_hash(block: &Value, number: u64) -> Result<&str> {
@@ -328,6 +362,18 @@ mod tests {
 
         let no_ts = serde_json::json!({ "header": { "hash": "0xh" } });
         assert_eq!(header_timestamp_ms(&no_ts), None);
+    }
+
+    #[test]
+    fn block_time_uses_header_only_for_replay() {
+        let block = serde_json::json!({
+            "header": { "hash": "0xh", "timestamp": "0x1234" }
+        });
+        assert_eq!(block_time_ms(&block, BlockTimeSource::Observed, 99), 99);
+        assert_eq!(block_time_ms(&block, BlockTimeSource::Header, 99), 0x1234);
+
+        let no_ts = serde_json::json!({ "header": { "hash": "0xh" } });
+        assert_eq!(block_time_ms(&no_ts, BlockTimeSource::Header, 99), 99);
     }
 
     #[test]
