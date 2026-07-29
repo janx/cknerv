@@ -178,7 +178,7 @@ describe('consensus route camera derive', () => {
       .toBeGreaterThan(CONSENSUS_ROUTE_CAMERA_DISTANCE);
   });
 
-  it('places selected-Cell inspection between route detail and record context', () => {
+  it('keeps selected-Cell inspection broader than explicit detail views', () => {
     const inspection = deriveConsensusCellInspectionCameraPose(
       [12, 10, 14],
       [2, 4, 6],
@@ -191,7 +191,8 @@ describe('consensus route camera derive', () => {
     expect(CONSENSUS_CELL_INSPECTION_CAMERA_DISTANCE)
       .toBeGreaterThan(CONSENSUS_ROUTE_CAMERA_DISTANCE);
     expect(CONSENSUS_CELL_INSPECTION_CAMERA_DISTANCE)
-      .toBeLessThan(CONSENSUS_RECORD_CAMERA_DISTANCE);
+      .toBeGreaterThan(CONSENSUS_RECORD_CAMERA_DISTANCE);
+    expect(CONSENSUS_CELL_INSPECTION_CAMERA_DISTANCE).toBe(104);
   });
 
   it('widens causal inspection around the selected Cell and real endpoints', () => {

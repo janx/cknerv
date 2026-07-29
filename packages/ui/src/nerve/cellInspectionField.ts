@@ -8,12 +8,11 @@ export const CELL_INSPECTION_MAX_HOPS = 2;
  *
  * The selected record remains authoritative, its direct visual neighbours stay
  * clearly legible, the second ring supplies context, and every unrelated Cell
- * retains a quiet floor so inspection never pretends the rest of the ledger
- * disappeared. These hops describe the renderer's spatial fabric, not a new
- * on-chain relationship.
+ * retains enough energy for simultaneous field observation. These hops
+ * describe the renderer's spatial fabric, not a new on-chain relationship.
  */
-export const CELL_INSPECTION_HOP_ENERGY = [1, 0.82, 0.42] as const;
-export const CELL_INSPECTION_BACKGROUND_ENERGY = 0.12;
+export const CELL_INSPECTION_HOP_ENERGY = [1, 0.9, 0.72] as const;
+export const CELL_INSPECTION_BACKGROUND_ENERGY = 0.46;
 /** Only the inspected Cell and its direct renderer-neighbours are topology
  * navigation targets. The second ring remains visual context, not a shortcut. */
 export const CELL_INSPECTION_NAVIGATION_MAX_HOP = 1;
