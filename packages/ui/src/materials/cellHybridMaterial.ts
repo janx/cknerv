@@ -1,6 +1,5 @@
 import * as THREE from 'three';
 import { HASH11_GLSL, BIRTH_DEATH_GLSL } from './cellEnvelope.glsl';
-import { makeShockwaveUniforms, SHOCKWAVE_SLOTS } from './shockwaveMaterial';
 import { CONSENSUS_BRAID_PALETTE } from '../derives/consensusBraid.derive';
 import {
   CONSENSUS_MEMORY_CORE_READ_FLOOR,
@@ -13,7 +12,7 @@ import {
 import { CELL_GALAXY_PALETTE } from '../visualPalette';
 
 /**
- * Single-peak Gaussian cloud baseline + block shockwave for each cell.
+ * Single-peak Gaussian cloud baseline for each Cell.
  *
  * - Resting state: one central Gaussian peak anchored at sprite center + a
  *   faint outer halo wash. The cell's brightest pixel always sits at sprite
@@ -24,9 +23,9 @@ import { CELL_GALAXY_PALETTE } from '../visualPalette';
  *   through it. The nerve-pulse discharge flare still renders in a separate
  *   additive layer (materials/cellFlareMaterial.ts), preserving event urgency.
  *
- * The block shockwave is handled here, on the actual cell body. It never
- * creates a separate point beside the cell: the shader uses the anchored cell
- * position, then brightens and expands that same sprite as the wave crosses it.
+ * New-block delivery can still flash exact Cells through `aFlashAt`; the broad
+ * brightness shockwave belongs to the peer network and is intentionally absent
+ * from this material.
  */
 
 // Tunable feel constants — collected here so reviewers find them in one place.
@@ -49,7 +48,6 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
       uMemorySignalEnergy: { value: 1 },
       uWarmth:          { value: 0.12 }, // living rose body → ember bias; set live from LIVE.cell.warmth
       uCenterDim:       { value: 0.3 }, // shared centre-energy floor; passive fabric applies its stronger squared form
-      ...makeShockwaveUniforms(),
     },
     transparent: true,
     depthWrite: false,
@@ -85,22 +83,11 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
       uniform float uPixelRatio;
       uniform float uMemoryMinPointPx;
       uniform float uCenterDim;
-      uniform float uShockwaveAt[${SHOCKWAVE_SLOTS}];
-      uniform vec2  uShockwaveOriginXZ[${SHOCKWAVE_SLOTS}];
-      uniform vec3  uShockwaveColor[${SHOCKWAVE_SLOTS}];
-      uniform float uShockwaveSpeed;
-      uniform float uShockwaveDurS;
-      uniform float uShockwaveBandBase;
-      uniform float uShockwaveBandGrow;
-      uniform float uShockwaveSizeBoost;
-      uniform float uShockwaveTrailBoost;
 
       varying vec3  vColor;
       varying float vDeathRamp;
       varying float vSeed;
       varying vec4  vMemoryIdentity;
-      varying float vShockwave;
-      varying vec3  vShockwaveColor;
       varying float vDetail;
       varying float vFocus;
       varying float vRecall;
@@ -111,31 +98,6 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
       varying float vPointCssPx;
 
       ${BIRTH_DEATH_GLSL}
-
-      vec4 shockwaveAtVertex(vec2 worldXZ) {
-        float total = 0.0;
-        vec3 carrier = vec3(0.0);
-        for (int i = 0; i < ${SHOCKWAVE_SLOTS}; i++) {
-          float age = uTime - uShockwaveAt[i];
-          if (age < 0.0 || age >= uShockwaveDurS) continue;
-          float ringR = uShockwaveSpeed * age;
-          float dist = length(worldXZ - uShockwaveOriginXZ[i]);
-          float bandWidth = uShockwaveBandBase + uShockwaveBandGrow * age;
-          float band = exp(-pow((dist - ringR) / bandWidth, 2.0));
-          float behind = max(0.0, ringR - dist);
-          float trail = exp(-behind / max(bandWidth * 3.2, 0.001)) * step(dist, ringR);
-          float t = age / uShockwaveDurS;
-          // Asymmetric envelope: rises like sin, then drops fast.
-          // smoothstep(0.3, 1.0, t) starts attenuating once the wave is past
-          // its early peak, and the (1 - t) linear factor stacks a steady
-          // decay so brightness keeps dropping through the back half.
-          float life = sin(3.14159265 * t) * (1.0 - smoothstep(0.3, 1.0, t)) * (1.0 - t);
-          float signal = (band + trail * uShockwaveTrailBoost) * life;
-          total += signal;
-          carrier += uShockwaveColor[i] * signal;
-        }
-        return vec4(carrier, total);
-      }
 
       void main() {
         vColor = aColor;
@@ -162,11 +124,6 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
         // world XZ origin (group sits at x=z=0, rotates about y). 1.0 past r≈16.
         vCenterDim = mix(uCenterDim, 1.0, smoothstep(2.0, 16.0, length(worldPos.xz)));
         vec4 viewPos  = viewMatrix * worldPos;
-        vec4 shockwaveSignal = shockwaveAtVertex(worldPos.xz);
-        vShockwave = shockwaveSignal.a;
-        vShockwaveColor = vShockwave > 0.0001
-          ? shockwaveSignal.rgb / vShockwave
-          : vec3(0.72, 0.96, 1.0);
         gl_Position   = projectionMatrix * viewPos;
         float retainedCore = pow(
           clamp(max(aRecall, 0.0), 0.0, 1.0),
@@ -179,7 +136,7 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
           ${CELL_INSPECTION_NAVIGATION_SIZE_SCALE.toFixed(2)},
           step(0.5, aInspectionRole)
         );
-        gl_PointSize  = aSize * ${HYBRID_BASE_PX_PER_WU.toFixed(1)} * inspectionNavigationScale * (1.0 + vShockwave * uShockwaveSizeBoost) * (1.0 + vFocus * 0.18) * (1.0 + abs(vRecall) * 0.06 + retainedCore * retainedSizeBoost) * scale * (uViewportHeight * 0.5 / max(-viewPos.z, 0.001));
+        gl_PointSize  = aSize * ${HYBRID_BASE_PX_PER_WU.toFixed(1)} * inspectionNavigationScale * (1.0 + vFocus * 0.18) * (1.0 + abs(vRecall) * 0.06 + retainedCore * retainedSizeBoost) * scale * (uViewportHeight * 0.5 / max(-viewPos.z, 0.001));
         // Retained records have a semantic CSS-pixel floor so 1/3/5 checksum
         // lanes survive every quality DPR. The floor recedes by the exact
         // complement used when the expanded braid takes over.
@@ -201,11 +158,6 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
       precision highp float;
 
       uniform float uTime;
-      uniform float uShockwaveColorBoost;
-      uniform float uShockwaveAlphaBoost;
-      uniform float uShockwaveColorCeil;
-      uniform float uShockwaveAlphaCeil;
-      uniform float uShockwaveTrailBoost;
       uniform float uWarmth;
       uniform float uMemoryLinePx;
       uniform float uMemorySignalEnergy;
@@ -214,8 +166,6 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
       varying float vDeathRamp;
       varying float vSeed;
       varying vec4  vMemoryIdentity;
-      varying float vShockwave;
-      varying vec3  vShockwaveColor;
       varying float vDetail;
       varying float vFocus;
       varying float vRecall;
@@ -283,25 +233,12 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
 
         vec4 base = cloud(uv, t);
         // Both density compression and graph-distance inspection apply only to
-        // the resting body. Shock, focus, write, and recall signals below can
-        // still reclaim headroom because they describe real events.
+        // the resting body. Focus, write, and recall signals below can still
+        // reclaim headroom because they describe real events.
         base.a *= vCenterDim * vInspection;
 
-        float shock = vShockwave;
-        float shockCore = min(1.0, shock);
-        float shockWash = exp(-pow(length(uv) / 0.42, 2.0)) * shock * uShockwaveTrailBoost;
-        vec3 shockTint = mix(base.rgb, vShockwaveColor, min(1.0, shockCore * 0.85));
-
-        // Soft-knee the wave's brightness/alpha: same onset slope as the old
-        // linear (1 + BOOST*shock), but the bright leading edge saturates toward
-        // a warm ceiling instead of railing past white and hard-clipping (see
-        // shockwaveMaterial.ts). shock=0 → factor 1.0, so resting cells are
-        // untouched. This is the de-glare; the wave's reach/force is preserved.
-        float shockColorK = 1.0 + uShockwaveColorCeil * (1.0 - exp(-shock * uShockwaveColorBoost / max(uShockwaveColorCeil, 0.001)));
-        float shockAlphaK = 1.0 + uShockwaveAlphaCeil * (1.0 - exp(-shock * uShockwaveAlphaBoost / max(uShockwaveAlphaCeil, 0.001)));
-
-        vec3  col = shockTint * shockColorK + vShockwaveColor * shockWash;
-        float a   = (base.a * shockAlphaK + shockWash) * (1.0 - vDeathRamp);
+        vec3  col = base.rgb;
+        float a   = base.a * (1.0 - vDeathRamp);
 
         // A direct spatial neighbour is an interface into the next bounded
         // topology field. Three open, hash-oriented arcs express that role

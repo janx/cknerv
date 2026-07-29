@@ -18,22 +18,9 @@ import { CELL_FORM_FOLDER } from '../tweaks/cellFormControl';
 const MEMBRANE_R = 0.155;
 const TAU = Math.PI * 2;
 
-export interface CellOrganismShockwaveUniforms {
-  at: Float32Array;
-  originXZ: Float32Array;
-  colorBoost: { value: number };
-  alphaBoost: { value: number };
-  colorCeil: { value: number };
-  alphaCeil: { value: number };
-  sizeBoost: { value: number };
-  trailBoost: { value: number };
-}
-
 interface CellOrganismProps {
   /** Keeps membrane morphogenesis aligned with the existing point core. */
   eventDelayS?: number;
-  /** Lets CellGalaxy write the same block-wave ring into the membrane. */
-  shockwaveUniformsRef?: React.MutableRefObject<CellOrganismShockwaveUniforms | null>;
 }
 
 export function makeOrganismGeometry(detail: number): THREE.BufferGeometry {
@@ -56,7 +43,6 @@ export function makeOrganismGeometry(detail: number): THREE.BufferGeometry {
  */
 export default function CellOrganism({
   eventDelayS = 0,
-  shockwaveUniformsRef,
 }: CellOrganismProps) {
   const simClock = useSimClock();
   const cache = useCellGalaxy();
@@ -118,24 +104,6 @@ export default function CellOrganism({
     material.uniforms.uBirthDurS.value = BIRTH_DURATION_MS / 1000;
     material.uniforms.uDeathDurS.value = DEATH_DURATION_MS / 1000;
   }, [material]);
-
-  useEffect(() => {
-    if (!shockwaveUniformsRef) return;
-    const uniforms: CellOrganismShockwaveUniforms = {
-      at: material.uniforms.uShockwaveAt.value as Float32Array,
-      originXZ: material.uniforms.uShockwaveOriginXZ.value as Float32Array,
-      colorBoost: material.uniforms.uShockwaveColorBoost,
-      alphaBoost: material.uniforms.uShockwaveAlphaBoost,
-      colorCeil: material.uniforms.uShockwaveColorCeil,
-      alphaCeil: material.uniforms.uShockwaveAlphaCeil,
-      sizeBoost: material.uniforms.uShockwaveSizeBoost,
-      trailBoost: material.uniforms.uShockwaveTrailBoost,
-    };
-    shockwaveUniformsRef.current = uniforms;
-    return () => {
-      if (shockwaveUniformsRef.current === uniforms) shockwaveUniformsRef.current = null;
-    };
-  }, [material, shockwaveUniformsRef]);
 
   useEffect(() => () => {
     geometry.dispose();

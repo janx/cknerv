@@ -257,7 +257,7 @@ export default function ColonyEdges({
     if (backfillActive) return; //           …but don't stamp → no surge
 
     // The active tree keeps the exact block carrier identity that will later
-    // appear on the vertical delivery and the Cell-field shockwave.
+    // appear on the peer-node shockwave and the vertical delivery.
     mat.uniforms.uSurgeColor.value.setRGB(...consensusBlockColor(blockPulseAtMs));
 
     const t0 = simClock.elapsedSec;

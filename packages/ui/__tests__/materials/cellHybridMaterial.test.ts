@@ -35,19 +35,10 @@ describe('makeCellHybridMaterial', () => {
     // Discharge moved to cellFlareMaterial — the cell body no longer flares.
     expect(m.uniforms.uDischargeArms).toBeUndefined();
 
-    // The block shockwave belongs to the actual cell body, not a separate
-    // drifted halo Points layer beside the cell.
-    expect(m.uniforms.uShockwaveAt).toBeDefined();
-    expect(m.uniforms.uShockwaveOriginXZ).toBeDefined();
-    expect(m.uniforms.uShockwaveColor).toBeDefined();
-    expect(m.uniforms.uShockwaveSpeed).toBeDefined();
-    expect(m.uniforms.uShockwaveDurS).toBeDefined();
-    expect(m.uniforms.uShockwaveBandBase).toBeDefined();
-    expect(m.uniforms.uShockwaveBandGrow).toBeDefined();
-    expect(m.uniforms.uShockwaveColorBoost).toBeDefined();
-    expect(m.uniforms.uShockwaveAlphaBoost).toBeDefined();
-    expect(m.uniforms.uShockwaveSizeBoost).toBeDefined();
-    expect(m.uniforms.uShockwaveTrailBoost).toBeDefined();
+    // The broad new-block wave belongs to the peer network.
+    expect(m.uniforms.uShockwaveAt).toBeUndefined();
+    expect(m.uniforms.uShockwaveOriginXZ).toBeUndefined();
+    expect(m.uniforms.uShockwaveColor).toBeUndefined();
   });
 
   it('keeps cloud + hash11 but no discharge (moved to the flare layer)', () => {
@@ -166,31 +157,15 @@ describe('makeCellHybridMaterial', () => {
     );
   });
 
-  it('brightens and expands the anchored cell core as the block shockwave crosses it', () => {
+  it('keeps the broad network shockwave out of the anchored Cell core', () => {
     const m = makeCellHybridMaterial();
 
-    expect(m.vertexShader).toContain('shockwaveAtVertex');
-    expect(m.vertexShader).toContain('vShockwave');
-    expect(m.vertexShader).toContain('uShockwaveColor');
-    expect(m.vertexShader).toContain('vShockwaveColor');
-    expect(m.vertexShader).toContain('uShockwaveSizeBoost');
-    expect(m.vertexShader).toContain('(1.0 + vShockwave * uShockwaveSizeBoost)');
+    expect(m.vertexShader).not.toContain('shockwaveSignalAt');
+    expect(m.vertexShader).not.toContain('vShockwave');
+    expect(m.vertexShader).not.toContain('uShockwave');
     expect(m.vertexShader).not.toContain('drift');
     expect(m.vertexShader).not.toContain('position + drift');
-
-    expect(m.fragmentShader).toContain('vShockwave');
-    expect(m.fragmentShader).toContain('uShockwaveColorBoost');
-    expect(m.fragmentShader).toContain('uShockwaveAlphaBoost');
-    expect(m.fragmentShader).toContain('uShockwaveTrailBoost');
-    expect(m.fragmentShader).toContain('vShockwaveColor');
-  });
-
-  it('uses mid-range core shockwave boosts (visible spreading front on sparse cells)', () => {
-    const m = makeCellHybridMaterial();
-
-    expect(m.uniforms.uShockwaveColorBoost.value).toBeCloseTo(3.75); // halved 2026-07-08 (new-block flash −50%)
-    expect(m.uniforms.uShockwaveAlphaBoost.value).toBeCloseTo(2.75);
-    expect(m.uniforms.uShockwaveSizeBoost.value).toBeCloseTo(0.5);
-    expect(m.uniforms.uShockwaveTrailBoost.value).toBeCloseTo(0.18);
+    expect(m.fragmentShader).not.toContain('vShockwave');
+    expect(m.fragmentShader).not.toContain('uShockwave');
   });
 });

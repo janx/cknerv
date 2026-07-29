@@ -11,7 +11,6 @@ import {
   writeCellInspectionTargets,
   pinCellInspectionFieldInVisiblePrefix,
   pinSelectedCellInVisiblePrefix,
-  selectWaveAnchor,
 } from '../../src/components/CellGalaxy';
 import { deriveCellInspectionField } from '../../src/nerve/cellInspectionField';
 import type { NeighborGraph } from '../../src/geometry/neighborGraph';
@@ -83,6 +82,14 @@ describe('CellGalaxy', () => {
     expect(source).not.toContain('makeHaloPointsMaterial');
     expect(source).not.toContain('makeHaloSpriteTexture');
     expect(source).not.toContain('haloMaterial');
+  });
+
+  it('leaves the broad new-block brightness wave to the peer network', () => {
+    const source = readFileSync(CELL_GALAXY_SOURCE, 'utf8');
+
+    expect(source).not.toContain('writeShockwaveSlot(');
+    expect(source).not.toContain('uShockwaveAt');
+    expect(source).not.toContain('selectWaveAnchor');
   });
 
   it('does not mount the retired nebula gas background layer', () => {
@@ -289,26 +296,6 @@ function mkCell(id: number): Cell {
     content_hash: '0x' + '00'.repeat(32),
   };
 }
-
-describe('selectWaveAnchor', () => {
-  const LOCAL: [number, number, number] = [0, 22, 0];
-
-  it('anchors the wave at the entry peer (origin + receive time) when present', () => {
-    const entry: [number, number, number] = [10, 22, -5];
-    const r = selectWaveAnchor(entry, 0.3, 4.0, LOCAL, 5.0);
-    expect(r.origin).toEqual(entry);
-    // Entry-peer receive time = elapsedSec + entryArrivalS — NOT the local
-    // node's trigger time. This is the whole point: the wave is owned by the
-    // first peer to receive the block, never the local node.
-    expect(r.triggerSceneS).toBeCloseTo(4.3, 6);
-  });
-
-  it('falls back to the local node origin/time when there is no entry peer', () => {
-    const r = selectWaveAnchor(null, 0, 4.0, LOCAL, 5.0);
-    expect(r.origin).toEqual(LOCAL);
-    expect(r.triggerSceneS).toBe(5.0);
-  });
-});
 
 describe('writeFlashSlots', () => {
   it('writes flashMap value into the flash array at the cell index', () => {

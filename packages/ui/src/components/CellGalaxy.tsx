@@ -40,7 +40,6 @@ import {
   dampCellGalaxyRotationScale,
   selectedCellNumericId,
 } from '../derives/cellInteraction.derive';
-import { SHOCKWAVE_SLOTS, writeShockwaveSlot } from '../materials/shockwaveMaterial';
 import {
   CELL_INSPECTION_NAVIGATION_SIZE_SCALE,
   makeCellHybridMaterial,
@@ -79,14 +78,9 @@ const CHAIN_ANCHOR_PALETTE = { edge: '#7df9ff', halo: '#22d3ee', fill: '#0e7490'
 import CellNucleus from './CellNucleus';
 
 // ---------------------------------------------------------------------------
-// Block trigger — written by CellGalaxy on every block, consumed by:
-//   • NervePulses (shockwave-delay timing for cell→cell pulses)
-//   • CkbNodeAnchor (icosahedron halo flash)
-//   • cellHybridMaterial — fragment-shader rings expanding
-//     outward from the miner anchor that brighten existing far-field cells
-//     as they pass.
-// The geometric block cube was removed; one A carrier identity now passes
-// through the anchor halo, canopy wave, routes, and local write seals.
+// Portable block trigger shape retained for overlay consumers. CellGalaxy uses
+// the same event identity for its exact delivery/commit flashes; the broad
+// brightness shockwave is owned and rendered by the P2P colony.
 // ---------------------------------------------------------------------------
 
 export interface BlockEventTrigger {
@@ -100,24 +94,17 @@ export interface BlockEventTrigger {
 
 import {
   BEAM_GROW_DUR_S,
+  BLOCK_COMMIT_DELAY_S,
   LOCAL_IGNITION_RADIUS,
   LOCAL_IGNITION_SPEED,
   MAX_BLOCK_HIGHLIGHTS,
   MAX_LOCAL_IGNITIONS,
-  SHOCKWAVE_FIRE_DELAY_S,
-  SHOCKWAVE_SPEED,
 } from '../ui/topologyConstants';
 
 // Cell birth/death visual timing offset (s) — applied to each cell's
 // born/death scene timestamp so the shader starts the birth scale-up
-// (or the death fade-out) approximately when the visible canopy
-// shockwave ring sweeps the cell. Equal to SHOCKWAVE_FIRE_DELAY_S +
-// a typical traversal time (~0.15 s) so a cell midway through the
-// galaxy ignites in sync with the highlight write CellGalaxy emits
-// when the block lands. Per-cell distance-exact alignment would
-// require threading the originating miner's coords into each cell's
-// birth metadata; the static offset is close enough.
-export const BLOCK_HIGHLIGHT_DELAY_S = SHOCKWAVE_FIRE_DELAY_S + 0.15;
+// (or the death fade-out) at the end of the delivery/commit choreography.
+export const BLOCK_HIGHLIGHT_DELAY_S = BLOCK_COMMIT_DELAY_S + 0.15;
 
 interface CellGalaxyProps {
   ckbNodeIds: string[];
@@ -165,52 +152,12 @@ interface CellGalaxyProps {
    *  whole ledger reaction is delayed by this, so the canonical ripple never
    *  fires at t=0 / never before the peers. 0 = no delay (degenerate). */
   localReceiveDelayS?: number;
-  /** World-space anchor for the per-block canopy brightness wave, supplied by the
-   *  caller — the block's entry point into the galaxy (an entry peer, or in the
-   *  colony model our own local node). The wave is fired from here so propagation
-   *  reads as sweeping outward from it. null → falls back to the local origin. */
-  entryWorld?: Vec3 | null;
-  /** Scene-seconds from the block pulse at which the entry point receives the
-   *  block. The brightness wave departs at `entryArrivalS + SHOCKWAVE_FIRE_DELAY_S`
-   *  (entry-point beam completion). ckb-rcg passes the entry peer's `arrivals[entryId]`;
-   *  the cknerv colony caller passes `localReceiveDelayS` (== the local apply time,
-   *  since our node IS the entry point), so wave-time and local-apply coincide. */
-  entryArrivalS?: number;
 }
 
 // Cell point sizes in world units. The hybrid shader draws the anchored
 // core/glow sprite; the closest points expand into the shared A braid LOD.
 const GENERIC_CELL_POINT_SIZE = 1.6;
 const TAGGED_CELL_POINT_SIZE = 3.0;
-
-/**
- * Choose the origin + scene-time for the canopy brightness wave (the shockwave
- * ring and the cell highlights swept by it). Generic across callers: the wave is
- * owned by whatever `entryWorld` the caller supplies — the block's entry point
- * into the galaxy. When it is known the wave fires from there at the caller's
- * `elapsedSec + entryArrivalS`; the caller adds `SHOCKWAVE_FIRE_DELAY_S` so it
- * departs as that entry point's beam completes. With no entry (null) it falls
- * back to the local node's origin/time, preserving single-node behaviour.
- *
- * NOTE on callers: the ckb-rcg sibling passes the ENTRY PEER (the first peer to
- * receive the block) — distinct from, and earlier than, the local node's own
- * apply. The cknerv colony caller instead passes the LOCAL node as `entryWorld`
- * with `entryArrivalS == localReceiveDelayS` (our node IS the galaxy's entry
- * point — the local ledger receives here), so there the wave-time and local-apply
- * time coincide rather than the wave leading.
- */
-export function selectWaveAnchor(
-  entryWorld: Vec3 | null,
-  entryArrivalS: number,
-  elapsedSec: number,
-  localOrigin: Vec3,
-  localTriggerSceneS: number,
-): { origin: Vec3; triggerSceneS: number } {
-  if (entryWorld) {
-    return { origin: entryWorld, triggerSceneS: elapsedSec + entryArrivalS };
-  }
-  return { origin: localOrigin, triggerSceneS: localTriggerSceneS };
-}
 
 /**
  * Write per-cell flash timestamps into the shared flash buffer (consumed by
@@ -890,7 +837,8 @@ function CellPicker({
  *
  * Far cells are one anchored hybrid Points sprite. The selected A language
  * expands the closest cells into one batched braid LOD without per-cell
- * objects. Block shockwaves continue to brighten the anchored far core.
+ * objects. Exact delivery/commit flashes remain anchored to real Cells; the
+ * broad new-block brightness wave renders in the peer network.
  */
 export default function CellGalaxy({
   ckbNodeIds,
@@ -907,8 +855,6 @@ export default function CellGalaxy({
   overlay,
   inspectionFieldRef,
   localReceiveDelayS = 0,
-  entryWorld = null,
-  entryArrivalS = 0,
 }: CellGalaxyProps) {
   const simClock = useSimClock();
   const groupRef = useRef<THREE.Group>(null);
@@ -968,9 +914,6 @@ export default function CellGalaxy({
    *  path needs to recompute the clamp. */
   const drawCountRef = useRef<number>(0);
   const lastPulseAtMsRef = useRef<number>(0);
-  /** BlockEvent trigger — written on each new block so cell→cell pulses
-   *  can sync their fire time to the visible shockwave wavefront. */
-  const blockEventRef = useRef<BlockEventTrigger | null>(null);
   /** Per-icosahedron flash trigger — written on each new block for the
    *  miner anchor that sourced it. CkbNodeAnchor reads its own slot
    *  each frame and brightens the wireframe + inner shell when fresh.
@@ -985,13 +928,6 @@ export default function CellGalaxy({
   // the animation visibly samples the network rather than always firing
   // from the same anchor.
   const blockOriginIdxRef = useRef<number>(0);
-  // Round-robin shockwave slot. The far-field cell core shader owns a
-  // SHOCKWAVE_SLOTS-sized ring buffer of (fireAt, originXZ); each new
-  // block trigger writes into the next slot so concurrent in-flight
-  // waves coexist instead of cancelling each other (mesh profile fires
-  // blocks every ~2 s while each wave lives 5 s, so ~3 waves are alive
-  // at once).
-  const shockSlotRef = useRef<number>(0);
   /** Mirrors `groupRef.current.rotation.y` each frame so child
    *  components (NervePulses) can project world-frame anchors into the
    *  cells-group's rotating local frame without traversing the
@@ -1338,17 +1274,6 @@ export default function CellGalaxy({
     hybridMaterial.uniforms.uMemoryMinPointPx.value = memorySignal.coreMinPx;
     hybridMaterial.uniforms.uMemoryLinePx.value = memorySignal.compactLinePx;
     hybridMaterial.uniforms.uMemorySignalEnergy.value = memorySignal.energyScale;
-    // Live shockwave boosts/ceils (Galaxy panel). Written every frame — not in
-    // the block-fire trigger below — so a knob dragged mid-wave takes effect on
-    // the in-flight wave, not just the next block. Defaults in LIVE.galaxy.*
-    // equal the shipped literals, so with the panel closed these are byte-exact
-    // self-writes (zero drift).
-    hybridMaterial.uniforms.uShockwaveColorBoost.value = LIVE.galaxy.colorBoost;
-    hybridMaterial.uniforms.uShockwaveAlphaBoost.value = LIVE.galaxy.alphaBoost;
-    hybridMaterial.uniforms.uShockwaveColorCeil.value = LIVE.galaxy.colorCeil;
-    hybridMaterial.uniforms.uShockwaveAlphaCeil.value = LIVE.galaxy.alphaCeil;
-    hybridMaterial.uniforms.uShockwaveSizeBoost.value = LIVE.galaxy.sizeBoost;
-    hybridMaterial.uniforms.uShockwaveTrailBoost.value = LIVE.galaxy.trailBoost;
     hybridMaterial.uniforms.uWarmth.value = LIVE.cell.warmth; // living rose body → ember bias
     hybridMaterial.uniforms.uCenterDim.value = LIVE.cell.centerDim; // shared centre-energy floor
     flareMaterial.uniforms.uTime.value = now;
@@ -1387,83 +1312,21 @@ export default function CellGalaxy({
         const blockTriggerSceneS = simClock.elapsedSec + receiveDelayS;
         const blockColor = consensusBlockColor(pulseAtMs);
 
-        // The canopy brightness wave is owned by the caller-supplied entry point
-        // (see selectWaveAnchor): fire the wave (shockwave ring + ring-swept cell
-        // highlights) from that position + receive time so it sweeps outward from
-        // the entry and reaches the local cells naturally. In the ckb-rcg sibling
-        // the entry is the ENTRY PEER, so the wave departs ~BLOCK_RELAY_HOP_S
-        // earlier than the local apply (off-center); in the cknerv colony caller
-        // entryWorld IS the local node with entryArrivalS == localReceiveDelayS,
-        // so the wave and the local apply coincide. Falls back to the local node
-        // when there is no entry. The local reaction below (halo/local-ignition)
-        // keeps the local origin + blockTriggerSceneS regardless.
-        const { origin: waveOrigin, triggerSceneS: waveTriggerSceneS } =
-          selectWaveAnchor(
-            entryWorld,
-            entryArrivalS,
-            simClock.elapsedSec,
-            worldOrigin,
-            blockTriggerSceneS,
-          );
-
-        // Block trigger: anchored at the local node icosahedron (it applies
-        // the received block). Used by consensus routes' shockwave-delay pathway
-        // and by the icosahedron's own halo flash envelope.
-        blockEventRef.current = {
-          firedAt: blockTriggerSceneS,
-          origin: worldOrigin,
-          color: blockColor,
-        };
+        // The local chain anchor still acknowledges the block when our node
+        // applies it. Network propagation and its broad brightness wave are
+        // already visible in NetworkColony.
         const flashSlot = chainNodeFlashRefs[safeIdx];
         if (flashSlot) {
           flashSlot.current = { firedAt: blockTriggerSceneS, color: blockColor };
         }
 
-        // Fire the canopy brightness shockwave: a fragment-shader ring
-        // expanding outward from (waveOrigin.xz = the entry peer) at
-        // uShockwaveSpeed (matched to PULSE_PROPAGATION_VELOCITY =
-        // SHOCKWAVE_SPEED) for uShockwaveDurS (sized to reach the outer galaxy
-        // rim). Fire at SHOCKWAVE_FIRE_DELAY_S past the entry peer's receive
-        // (= its beam completion), so the ring departs after that column has
-        // fully completed instead of competing with the beam body. The shader's
-        // `if (age < 0.0) return 0.0;` keeps the ring invisible until that moment.
-        const fireT = waveTriggerSceneS + SHOCKWAVE_FIRE_DELAY_S;
-        // Round-robin into the shader ring buffer so a new wave doesn't
-        // cancel any still in flight from earlier blocks. In-place
-        // Float32Array mutation is picked up by three.js's per-frame
-        // element-wise uniform cache check.
-        const slot = shockSlotRef.current;
-        shockSlotRef.current = (slot + 1) % SHOCKWAVE_SLOTS;
-        const coreAt = hybridMaterial.uniforms.uShockwaveAt.value as Float32Array;
-        const coreXZ = hybridMaterial.uniforms.uShockwaveOriginXZ.value as Float32Array;
-        const coreColor = hybridMaterial.uniforms.uShockwaveColor.value as Float32Array;
-        writeShockwaveSlot(
-          coreAt,
-          coreXZ,
-          coreColor,
-          slot,
-          fireT,
-          [waveOrigin[0], waveOrigin[2]],
-          blockColor,
-        );
-        // Block-cell highlight: schedule a flash on every cell touched
-        // by this block, timed to the moment the visible canopy
-        // shockwave ring sweeps that cell. Each cell ignites just
-        // before NervePulses' input→output trail starts growing out of
-        // it (NervePulses adds BLOCK_HIGHLIGHT_LEAD_S on top of the
-        // same shockwave-arrival time). Together: ring sweeps cell →
-        // cell ignites → trail departs → trail lands → target flash +
-        // protocol write seal.
-        //
-        // Distance is measured in the rotating local frame (where pos_seed
-        // lives), so we project each origin's xz through the inverse y-rotation.
-        // Two origins now: the wave (entry peer) drives the ring-swept block-cell
-        // highlights; the local node drives the local-ignition sweep below.
+        // Exact block-cell acknowledgement: flash only Cells touched by the
+        // block at the end of the shared carrier/commit phase. There is no
+        // distance sweep here; a broad radial wave would falsely make unrelated
+        // Cell state read as network propagation.
         const groupRotY = group.rotation.y;
         const cosTinv = Math.cos(-groupRotY);
         const sinTinv = Math.sin(-groupRotY);
-        const waveOriginLocalX = waveOrigin[0] * cosTinv - waveOrigin[2] * sinTinv;
-        const waveOriginLocalZ = waveOrigin[0] * sinTinv + waveOrigin[2] * cosTinv;
         const originLocalX = worldOrigin[0] * cosTinv - worldOrigin[2] * sinTinv;
         const originLocalZ = worldOrigin[0] * sinTinv + worldOrigin[2] * cosTinv;
         const freshLinks = cellsCache.pulseLinks.filter(
@@ -1478,11 +1341,7 @@ export default function CellGalaxy({
             seenCells.add(cellId);
             const cell = cellsCache.cells.get(cellId);
             if (!cell) continue;
-            const dx = cell.pos_seed[0] - waveOriginLocalX;
-            const dz = cell.pos_seed[2] - waveOriginLocalZ;
-            const dist = Math.hypot(dx, dz);
-            const flashAtS =
-              waveTriggerSceneS + SHOCKWAVE_FIRE_DELAY_S + dist / SHOCKWAVE_SPEED;
+            const flashAtS = blockTriggerSceneS + BLOCK_HIGHLIGHT_DELAY_S;
             const prev = cellFlashRef.current.get(cellId) ?? -1e9;
             if (flashAtS > prev) {
               cellFlashRef.current.set(cellId, flashAtS);
@@ -1495,14 +1354,9 @@ export default function CellGalaxy({
         // Local-ignition pass: at the strike moment (block trigger +
         // BEAM_GROW_DUR_S), cells geographically near the impact xz
         // ignite in a fast radial sweep at LOCAL_IGNITION_SPEED. This
-        // bridges the "beam → cells" narrative — cells visibly
-        // *receive* the injected energy at the strike moment, before
-        // the slower canopy shockwave begins its much wider sweep at
-        // SHOCKWAVE_FIRE_DELAY_S. Iterates all live cells (not just
-        // freshLinks) so geography wins over transaction membership;
-        // for cells in both sets the ignition overrides the slower
-        // shockwave-aligned flash because the strike-time ignition is
-        // the closer cause and reads better visually.
+        // bridges the "carrier → cells" narrative: nearby Cells visibly receive
+        // the delivered block at the field contact. It is deliberately bounded
+        // to the landing area, while the broad wave stays in the peer network.
         const strikeSceneS = blockTriggerSceneS + BEAM_GROW_DUR_S;
         const radiusSq = LOCAL_IGNITION_RADIUS * LOCAL_IGNITION_RADIUS;
         let ignited = 0;

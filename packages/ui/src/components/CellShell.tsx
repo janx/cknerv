@@ -42,21 +42,9 @@ interface CellShellProps {
   cellFlashRef: React.MutableRefObject<Map<number, number>>;
   /** True when cellFlashRef gained an entry CellShell hasn't pushed yet. */
   flashDirtyRef: React.MutableRefObject<boolean>;
-  /** Exposes this material's shockwave buffers so CellGalaxy can write the
-   *  same block wave into halo Points and shell lines in one pass. */
-  shockwaveUniformsRef?: React.MutableRefObject<{
-    at: Float32Array;
-    originXZ: Float32Array;
-    colorBoost: { value: number };
-    alphaBoost: { value: number };
-    colorCeil: { value: number };
-    alphaCeil: { value: number };
-    sizeBoost: { value: number };
-    trailBoost: { value: number };
-  } | null>;
 }
 
-export default function CellShell({ cellFlashRef, flashDirtyRef, shockwaveUniformsRef }: CellShellProps) {
+export default function CellShell({ cellFlashRef, flashDirtyRef }: CellShellProps) {
   const simClock = useSimClock();
   const cellsCache = useCellGalaxy();
   const { effective: quality } = useQualityRuntime();
@@ -71,25 +59,6 @@ export default function CellShell({ cellFlashRef, flashDirtyRef, shockwaveUnifor
   const oct = useMemo(() => buildTruncatedOctahedron(1), []);
   const material = useMemo(() => makeCellShellMaterial(), []);
   useEffect(() => () => material.dispose(), [material]);
-  useEffect(() => {
-    if (!shockwaveUniformsRef) return;
-    const uniforms = {
-      at: material.uniforms.uShockwaveAt.value as Float32Array,
-      originXZ: material.uniforms.uShockwaveOriginXZ.value as Float32Array,
-      colorBoost: material.uniforms.uShockwaveColorBoost,
-      alphaBoost: material.uniforms.uShockwaveAlphaBoost,
-      colorCeil: material.uniforms.uShockwaveColorCeil,
-      alphaCeil: material.uniforms.uShockwaveAlphaCeil,
-      sizeBoost: material.uniforms.uShockwaveSizeBoost,
-      trailBoost: material.uniforms.uShockwaveTrailBoost,
-    };
-    shockwaveUniformsRef.current = uniforms;
-    return () => {
-      if (shockwaveUniformsRef.current === uniforms) {
-        shockwaveUniformsRef.current = null;
-      }
-    };
-  }, [material, shockwaveUniformsRef]);
 
   // Bind duration uniforms once.
   useEffect(() => {

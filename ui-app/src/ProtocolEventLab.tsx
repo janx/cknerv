@@ -503,15 +503,6 @@ export default function ProtocolEventLab({ snapshot }: { snapshot: CellGalaxySna
     () => topology.nodes.find((node) => node.kind === 'local')?.pos ?? null,
     [topology],
   );
-  const entryWorld = useMemo(
-    () => flood.entryId
-      ? topology.nodes.find((node) => node.id === flood.entryId)?.pos ?? localWorld
-      : localWorld,
-    [flood.entryId, topology, localWorld],
-  );
-  const entryArrivalS = reviewFlood.entryId
-    ? reviewFlood.colonyArrivalS[reviewFlood.entryId] ?? 0
-    : reviewFlood.localReceiveDelayS;
   const plannedFocusCell = useMemo(() => {
     const link = cache.recentLinks.at(-1);
     if (!link) return null;
@@ -824,8 +815,6 @@ export default function ProtocolEventLab({ snapshot }: { snapshot: CellGalaxySna
               minerCkbNodeIds={['ckb:local']}
               universeSeed={EVENT_SEED}
               localReceiveDelayS={reviewFlood.localReceiveDelayS}
-              entryWorld={entryWorld}
-              entryArrivalS={entryArrivalS}
               selectedId={null}
               selectedCellId={null}
               onSelect={() => undefined}

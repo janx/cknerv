@@ -13,9 +13,12 @@
  *    t = 0                              the carrier launches toward the Cell field.
  *    t = BEAM_GROW_DUR_S                the carrier reaches the field boundary and
  *                                       commits (contracts + illuminates nearby Cells).
- *    t = SHOCKWAVE_FIRE_DELAY_S
+ *    t = BLOCK_COMMIT_DELAY_S
  *      = BEAM_GROW_DUR_S + BEAM_STRIKE_DUR_S
- *                                       the canopy brightness shockwave departs. */
+ *                                       the Cell ledger acknowledges the block.
+ *
+ * The peer-network brightness shockwave starts at the raw P2P pulse and is not
+ * delayed by this Cell-delivery timeline. */
 export const BEAM_GROW_DUR_S = 1.00;
 export const BEAM_STRIKE_DUR_S = 1.20;
 /** Pre-roll gather window (s) before a carrier launches. Arrival (`firedAt`) is
@@ -23,19 +26,22 @@ export const BEAM_STRIKE_DUR_S = 1.20;
  *  window age ∈ [−BEAM_CHARGE_DUR_S, 0): contributor loops form at the node,
  *  then launch at age 0. With no lead time (firedAt ≈ now), it is skipped. */
 export const BEAM_CHARGE_DUR_S = 0.4;
-export const SHOCKWAVE_FIRE_DELAY_S = BEAM_GROW_DUR_S + BEAM_STRIKE_DUR_S;
+export const BLOCK_COMMIT_DELAY_S = BEAM_GROW_DUR_S + BEAM_STRIKE_DUR_S;
+/** Legacy public name retained for downstream compatibility. The visible
+ * shockwave moved to the peer network; new Cell code should use
+ * BLOCK_COMMIT_DELAY_S. */
+export const SHOCKWAVE_FIRE_DELAY_S = BLOCK_COMMIT_DELAY_S;
 
-// Single calculation path: the shockwave delay is derived, not free.
+// Single calculation path: the Cell commit delay is derived, not free.
 // If anyone retunes one of the beam phases they must keep the identity
 // holding; the runtime assert + unit test guard against drift.
 console.assert(
-  Math.abs(SHOCKWAVE_FIRE_DELAY_S - (BEAM_GROW_DUR_S + BEAM_STRIKE_DUR_S)) < 1e-9,
-  'SHOCKWAVE_FIRE_DELAY_S must equal BEAM_GROW_DUR_S + BEAM_STRIKE_DUR_S',
+  Math.abs(BLOCK_COMMIT_DELAY_S - (BEAM_GROW_DUR_S + BEAM_STRIKE_DUR_S)) < 1e-9,
+  'BLOCK_COMMIT_DELAY_S must equal BEAM_GROW_DUR_S + BEAM_STRIKE_DUR_S',
 );
 
-/** Speed (world-units / second) at which the canopy shockwave ring
- *  expands. Equals PULSE_PROPAGATION_VELOCITY (36) so timing formulas
- *  in CellGalaxy line up with where the visible ring actually is. */
+/** Speed (world-units / second) at which the peer-node brightness shockwave
+ * expands from the block's network entry point. */
 export const SHOCKWAVE_SPEED = 36;
 
 /** Eviction ceiling for the per-block cell-highlight write loop.
@@ -49,9 +55,8 @@ export const MAX_BLOCK_HIGHLIGHTS = 256;
  *  of the impact xz ignite in a fast radial sweep at
  *  LOCAL_IGNITION_SPEED. Bridges the "beam → cells" narrative
  *  directly: cells visibly *receive* the injected energy at the strike
- *  moment, before the slower canopy shockwave wavefront begins its
- *  much wider sweep. Independent from the existing freshLinks-based
- *  per-cell highlights (which align with the canopy shockwave). */
+ *  moment. Independent from the existing freshLinks-based exact
+ *  per-cell acknowledgements. */
 export const LOCAL_IGNITION_RADIUS = 14;
 export const LOCAL_IGNITION_SPEED = 60;
 export const MAX_LOCAL_IGNITIONS = 128;

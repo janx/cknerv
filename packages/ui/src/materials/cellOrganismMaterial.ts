@@ -1,6 +1,5 @@
 import * as THREE from 'three';
 import { BIRTH_DEATH_GLSL, HASH11_GLSL } from './cellEnvelope.glsl';
-import { makeShockwaveUniforms, SHOCKWAVE_SLOTS } from './shockwaveMaterial';
 
 /**
  * Programmable silicon Cell shell.
@@ -17,7 +16,6 @@ export function makeCellOrganismMaterial(): THREE.ShaderMaterial {
       uBirthDurS: { value: 0.5 },
       uDeathDurS: { value: 0.6 },
       uOpacity: { value: 1.0 },
-      ...makeShockwaveUniforms(),
     },
     transparent: true,
     depthWrite: false,
@@ -38,13 +36,6 @@ export function makeCellOrganismMaterial(): THREE.ShaderMaterial {
       uniform float uTime;
       uniform float uBirthDurS;
       uniform float uDeathDurS;
-      uniform float uShockwaveAt[${SHOCKWAVE_SLOTS}];
-      uniform vec2 uShockwaveOriginXZ[${SHOCKWAVE_SLOTS}];
-      uniform float uShockwaveSpeed;
-      uniform float uShockwaveDurS;
-      uniform float uShockwaveBandBase;
-      uniform float uShockwaveBandGrow;
-      uniform float uShockwaveTrailBoost;
 
       varying vec3 vNormal;
       varying vec3 vView;
@@ -54,29 +45,8 @@ export function makeCellOrganismMaterial(): THREE.ShaderMaterial {
       varying vec4 vGenome;
       varying vec4 vSemantic;
       varying float vLife;
-      varying float vShockwave;
 
       ${BIRTH_DEATH_GLSL}
-
-      float shockwaveAtVertex(vec2 worldXZ) {
-        float total = 0.0;
-        for (int i = 0; i < ${SHOCKWAVE_SLOTS}; i++) {
-          float age = uTime - uShockwaveAt[i];
-          if (age < 0.0 || age >= uShockwaveDurS) continue;
-          float ringR = uShockwaveSpeed * age;
-          float dist = length(worldXZ - uShockwaveOriginXZ[i]);
-          float bandWidth = uShockwaveBandBase + uShockwaveBandGrow * age;
-          float band = exp(-pow((dist - ringR) / bandWidth, 2.0));
-          float behind = max(0.0, ringR - dist);
-          float trail = exp(-behind / max(bandWidth * 3.2, 0.001)) * step(dist, ringR);
-          float t = age / uShockwaveDurS;
-          float life = sin(3.14159265 * t)
-            * (1.0 - smoothstep(0.3, 1.0, t))
-            * (1.0 - t);
-          total += (band + trail * uShockwaveTrailBoost) * life;
-        }
-        return total;
-      }
 
       void main() {
         float birth = clamp((uTime - aBornAt) / uBirthDurS, 0.0, 1.0);
@@ -129,12 +99,8 @@ export function makeCellOrganismMaterial(): THREE.ShaderMaterial {
           -s * shapedNormal.x + c * shapedNormal.z
         ));
 
-        vec4 baseWorld = modelMatrix * instanceMatrix * vec4(p * life, 1.0);
-        float shock = shockwaveAtVertex(baseWorld.xz);
-        p *= 1.0 + min(1.0, shock) * 0.07;
         vec4 world = modelMatrix * instanceMatrix * vec4(p * life, 1.0);
 
-        vShockwave = shock;
         vNormal = normalize(mat3(modelMatrix) * mat3(instanceMatrix) * nr);
         vView = normalize(cameraPosition - world.xyz);
         gl_Position = projectionMatrix * viewMatrix * world;
@@ -152,7 +118,6 @@ export function makeCellOrganismMaterial(): THREE.ShaderMaterial {
       varying vec4 vGenome;
       varying vec4 vSemantic;
       varying float vLife;
-      varying float vShockwave;
 
       ${HASH11_GLSL}
 
@@ -260,7 +225,6 @@ export function makeCellOrganismMaterial(): THREE.ShaderMaterial {
         dataOrbit *= packetWindow * dataPackets * vSemantic.z;
 
         float gate = accessGate(P, vSemantic.y);
-        float shock = min(1.0, vShockwave);
 
         vec3 ceramic = vec3(0.006, 0.024, 0.043);
         vec3 cool = vec3(0.22, 0.82, 1.0);
@@ -273,7 +237,6 @@ export function makeCellOrganismMaterial(): THREE.ShaderMaterial {
         col += mix(cool, vAccent, 0.12) * trace * 0.58;
         col += payloadViolet * dataOrbit * 1.45;
         col += mix(cool, payloadViolet, 0.38) * gate * 0.92;
-        col = mix(col, siliconWhite * 1.22, shock * 0.52);
 
         float alpha = 0.055
           + fresnel * 0.30
@@ -281,8 +244,7 @@ export function makeCellOrganismMaterial(): THREE.ShaderMaterial {
           + checksum * 0.30
           + trace * 0.16
           + dataOrbit * 0.48
-          + gate * 0.30
-          + shock * 0.18;
+          + gate * 0.30;
         alpha = min(0.92, alpha) * vLife * uOpacity;
         if (alpha < 0.012) discard;
         gl_FragColor = vec4(col, alpha);

@@ -20,16 +20,8 @@ describe('makeCellShellMaterial', () => {
     expect(m.uniforms.uRotRate).toBeDefined();
     expect(m.uniforms.uFlashPeak).toBeDefined();
     expect(m.uniforms.uOpacity).toBeDefined();
-    expect(m.uniforms.uShockwaveAt).toBeDefined();
-    expect(m.uniforms.uShockwaveOriginXZ).toBeDefined();
-    expect(m.uniforms.uShockwaveColor).toBeDefined();
-    expect(m.uniforms.uShockwaveSpeed).toBeDefined();
-    expect(m.uniforms.uShockwaveDurS).toBeDefined();
-    expect(m.uniforms.uShockwaveBandBase).toBeDefined();
-    expect(m.uniforms.uShockwaveBandGrow).toBeDefined();
-    expect(m.uniforms.uShockwaveColorBoost).toBeDefined();
-    expect(m.uniforms.uShockwaveAlphaBoost).toBeDefined();
-    expect(m.uniforms.uShockwaveTrailBoost).toBeDefined();
+    expect(m.uniforms.uShockwaveAt).toBeUndefined();
+    expect(m.uniforms.uShockwaveOriginXZ).toBeUndefined();
     // Color comes from per-vertex aColor now, not a uniform.
     expect(m.uniforms.uColor).toBeUndefined();
   });
@@ -52,14 +44,10 @@ describe('makeCellShellMaterial', () => {
     expect(m.fragmentShader).toContain('flashEnv');
   });
 
-  it('brightens existing shell geometry as the block shockwave crosses it', () => {
+  it('keeps the peer-network shockwave out of Cell shell geometry', () => {
     const m = makeCellShellMaterial();
-    expect(m.vertexShader).toContain('vWorldXZ');
-    expect(m.fragmentShader).toContain('vec4 shockwave()');
-    expect(m.fragmentShader).toContain('uShockwaveColor');
-    expect(m.fragmentShader).toContain('waveColor');
-    expect(m.fragmentShader).toContain('uShockwaveColorBoost');
-    expect(m.fragmentShader).toContain('uShockwaveTrailBoost');
-    expect(m.fragmentShader).toContain('trail');
+    expect(m.vertexShader).not.toContain('vWorldXZ');
+    expect(m.fragmentShader).not.toContain('shockwaveSignalAt');
+    expect(m.fragmentShader).not.toContain('uShockwave');
   });
 });

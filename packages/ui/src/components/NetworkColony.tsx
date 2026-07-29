@@ -6,11 +6,13 @@
 //     (measured brighter, inferred fainter) carrying an ambient data-flow current
 //     PLUS a per-block bright surge that flows outward along the propagation tree.
 //   • ColonyNodes — the faint inferred cloud + bright measured nodes, unified as
-//     ONE glow primitive on a confidence gradient (rendered OVER the edges); the
-//     local "you" is the galaxy's anchor, not drawn here
+//     ONE glow primitive on a confidence gradient (rendered OVER the edges). A
+//     new block sends a radial brightness shockwave across these existing nodes;
+//     the local "you" is the galaxy's anchor, not drawn here.
 //   • ColonyCourierLayer — a faint glint accent riding the edge surge: a small,
 //     dimmed glow-mote flung node→node along the shortest-path tree, timed by the
-//     flood arrivals. The surge (on the edges) is the primary block signal now.
+//     flood arrivals. The edge surge traces the actual route while the node
+//     shockwave supplies the broad network response.
 //   • BlockDeliveryLayer — one woven protocol carrier per measured worker
 //     (timed by cf.arrivals) plus the local source, delivered into the Cell
 //     field and resolved in place into real Cell illumination.
@@ -30,12 +32,12 @@
 // the local guard so the backlog can't replay as one strobe when `backfill`
 // clears) but do NOT fire — matching advanceLinkCursor's nerve suppression.
 //
-// The block wavefront now shows on the EDGES (ColonyEdges' surge) with the courier
-// as a faint glint on top; ColonyNodes stays flood-free (static glow-nodes).
-// ColonyEdges + ColonyCourierLayer each own their own pulse clock, keyed on
-// `blockPulseAtMs` and gated on `backfillActive` (consume-then-bail); NetworkColony
-// keeps `cf`/`blockPulseAtMs`/`backfillActive` to feed all three (edges surge,
-// courier glint, delivery carriers) and to stamp its own `pulseRef` for delivery.
+// The block wavefront belongs to the peer network: ColonyEdges carries the
+// graph-accurate surge, ColonyNodes carries the broad brightness shockwave, and
+// ColonyCourierLayer adds a faint glint. Each owner keys its clock on
+// `blockPulseAtMs` and gates on `backfillActive` (consume-then-bail);
+// NetworkColony keeps `cf`/`blockPulseAtMs`/`backfillActive` to feed the peer
+// effects and to stamp its own `pulseRef` for delivery into the Cell field.
 import { useEffect, useMemo, useRef } from 'react';
 import { useSimClock } from '../tweaks/SimClockScope';
 import { useSimFrame } from '../tweaks/useSimFrame';
@@ -151,6 +153,9 @@ export default function NetworkColony({
       />
       <ColonyNodes
         topology={topology}
+        cf={cf}
+        blockPulseAtMs={blockPulseAtMs}
+        backfillActive={backfillActive}
         selectedId={selectedId}
         onSelect={onSelect}
         localVersion={localVersion}
