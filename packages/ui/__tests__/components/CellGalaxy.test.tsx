@@ -365,10 +365,10 @@ describe('writeCellInspectionTargets', () => {
 
     writeCellInspectionTargets(cells, cells.length, field, targets);
 
-    expect(targets[0]).toBeCloseTo(0.42);
+    expect(targets[0]).toBeCloseTo(0.72);
     expect(targets[1]).toBe(1);
-    expect(targets[2]).toBeCloseTo(0.12);
-    expect(targets[3]).toBeCloseTo(0.82);
+    expect(targets[2]).toBeCloseTo(0.46);
+    expect(targets[3]).toBeCloseTo(0.9);
   });
 
   it('restores every visible Cell to full energy without inspection', () => {

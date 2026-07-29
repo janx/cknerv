@@ -49,11 +49,10 @@ import ColonyEdges from './ColonyEdges';
 import ColonyCourierLayer from './ColonyCourierLayer';
 import BlockDeliveryLayer, { type BlockDeliveryPulse } from './BlockDeliveryLayer';
 import { consensusBlockColor } from '../derives/consensusFlow.derive';
-import { dampCellInspectionFieldScale } from '../nerve/cellInspectionField';
-
-/** Environmental P2P structure remains perceptible while Cell inspection owns
- * the visual hierarchy. Block surges/couriers keep full event energy. */
-const CELL_INSPECTION_COLONY_CONTEXT_ENERGY = 0.16;
+import {
+  CELL_INSPECTION_BACKGROUND_ENERGY,
+  dampCellInspectionFieldScale,
+} from '../nerve/cellInspectionField';
 
 interface NetworkColonyProps {
   topology: NetworkTopology;
@@ -93,9 +92,11 @@ export default function NetworkColony({
   const backfillActive = !!cellsCache?.backfill;
   const contextEnergyRef = useRef(1);
   useSimFrame((_, deltaSeconds) => {
+    // Passive P2P context shares the Cell field's readable observation floor;
+    // real block surges and couriers bypass this multiplier below.
     contextEnergyRef.current = dampCellInspectionFieldScale(
       contextEnergyRef.current,
-      cellInspectionActive ? CELL_INSPECTION_COLONY_CONTEXT_ENERGY : 1,
+      cellInspectionActive ? CELL_INSPECTION_BACKGROUND_ENERGY : 1,
       deltaSeconds,
     );
   });

@@ -16,7 +16,7 @@ describe('NetworkColony Cell-inspection context', () => {
 
     expect(network).toContain('cellInspectionActive?: boolean');
     expect(network).toContain('dampCellInspectionFieldScale(');
-    expect(network).toContain('CELL_INSPECTION_COLONY_CONTEXT_ENERGY');
+    expect(network).toContain('CELL_INSPECTION_BACKGROUND_ENERGY');
     expect(network.match(/contextEnergyRef=\{contextEnergyRef\}/g))
       .toHaveLength(2);
   });

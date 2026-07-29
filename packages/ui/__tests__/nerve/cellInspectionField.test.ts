@@ -71,6 +71,12 @@ describe('Cell inspection information field', () => {
     expect(cellInspectionFieldScale(null, 4)).toBe(1);
   });
 
+  it('keeps the wider ledger field readable during inspection', () => {
+    expect(CELL_INSPECTION_HOP_ENERGY).toEqual([1, 0.9, 0.72]);
+    expect(CELL_INSPECTION_BACKGROUND_ENERGY).toBe(0.46);
+    expect(CELL_INSPECTION_BACKGROUND_ENERGY).toBeGreaterThanOrEqual(0.4);
+  });
+
   it('limits topology navigation to the root and real direct neighbours', () => {
     const field = deriveCellInspectionField(
       graph([[1, 2], [2, 3], [3, 4]]),
@@ -141,14 +147,26 @@ describe('Cell inspection information field', () => {
   });
 
   it('eases toward the field without overshoot and releases to baseline', () => {
-    const entering = dampCellInspectionFieldScale(1, 0.12, 1 / 60);
-    const releasing = dampCellInspectionFieldScale(0.12, 1, 1 / 60);
+    const entering = dampCellInspectionFieldScale(
+      1,
+      CELL_INSPECTION_BACKGROUND_ENERGY,
+      1 / 60,
+    );
+    const releasing = dampCellInspectionFieldScale(
+      CELL_INSPECTION_BACKGROUND_ENERGY,
+      1,
+      1 / 60,
+    );
 
-    expect(entering).toBeGreaterThan(0.12);
+    expect(entering).toBeGreaterThan(CELL_INSPECTION_BACKGROUND_ENERGY);
     expect(entering).toBeLessThan(1);
-    expect(releasing).toBeGreaterThan(0.12);
+    expect(releasing).toBeGreaterThan(CELL_INSPECTION_BACKGROUND_ENERGY);
     expect(releasing).toBeLessThanOrEqual(1);
-    expect(dampCellInspectionFieldScale(0.12, 1, 0)).toBe(0.12);
+    expect(dampCellInspectionFieldScale(
+      CELL_INSPECTION_BACKGROUND_ENERGY,
+      1,
+      0,
+    )).toBe(CELL_INSPECTION_BACKGROUND_ENERGY);
   });
 
   it('rejects invalid selections instead of creating synthetic field roots', () => {

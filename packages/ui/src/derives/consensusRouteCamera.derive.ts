@@ -2,7 +2,7 @@ import { CELLS_Y } from '../layout';
 import type { Vec3 } from '../types';
 
 export const CONSENSUS_ROUTE_CAMERA_DISTANCE = 36;
-export const CONSENSUS_CELL_INSPECTION_CAMERA_DISTANCE = 52;
+export const CONSENSUS_CELL_INSPECTION_CAMERA_DISTANCE = 104;
 export const CONSENSUS_CAUSAL_CAMERA_DISTANCE =
   CONSENSUS_CELL_INSPECTION_CAMERA_DISTANCE;
 export const CONSENSUS_RECORD_CAMERA_DISTANCE = 64;
@@ -364,9 +364,9 @@ export function deriveConsensusRouteCameraPose(
 }
 
 /**
- * Frame one explicitly selected Cell closely enough to read its identity knot,
- * while remaining wider than a locked route hop and narrower than a recalled
- * record.
+ * Frame one explicitly selected Cell with enough surrounding galaxy for
+ * simultaneous observation. Explicit record recall and locked route hops may
+ * move closer when the user asks for their finer detail.
  */
 export function deriveConsensusCellInspectionCameraPose(
   currentPosition: Vec3,
