@@ -15,13 +15,19 @@ export const CELL_GALAXY_PALETTE = {
   memoryViolet: [0.66, 0.32, 0.82],
 } as const satisfies Record<string, SceneColor>;
 
-/** Cold, synthetic colour family for the peer data plane. */
+/**
+ * Bright, synthetic colour family for the peer data plane. The scaffold
+ * restores the earlier Cell galaxy's consensus-cyan, while measured nodes lift
+ * toward ice-cyan, sky-blue, or pale ultraviolet. Confidence still comes from
+ * opacity/size, so brighter hues improve legibility without flattening the
+ * observed-vs-inferred hierarchy.
+ */
 export const PEER_NETWORK_HEX = {
-  scaffold: '#5577FF',
-  outbound: '#58E7FF',
-  inbound: '#547FFF',
-  version: '#A866FF',
-  coldWhite: '#B8F5FF',
+  scaffold: '#1AD1FF',
+  outbound: '#7DF9FF',
+  inbound: '#5EB9FF',
+  version: '#B69CFF',
+  coldWhite: '#D8FAFF',
 } as const;
 
 function rgbFromHex(hex: `#${string}`): SceneColor {
