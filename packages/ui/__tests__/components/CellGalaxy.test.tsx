@@ -5,6 +5,8 @@ import { render } from '@testing-library/react';
 import { Canvas } from '@react-three/fiber';
 import CellGalaxy from '../../src/components/CellGalaxy';
 import {
+  ckbNodeAnchorHaloTarget,
+  ckbNodeAnchorPresentation,
   writeFlashSlots,
   writeCellBuffers,
   writeCellInspectionNavigationRoles,
@@ -228,6 +230,27 @@ describe('CellGalaxy', () => {
         </CellGalaxyProvider>,
       ),
     ).not.toThrow();
+  });
+});
+
+describe('CKB node anchor emphasis', () => {
+  it('keeps the resting anchor subordinate and promotes deliberate states', () => {
+    const resting = ckbNodeAnchorPresentation(false);
+    const selected = ckbNodeAnchorPresentation(true);
+
+    expect(resting.haloIntensity).toBeLessThan(selected.haloIntensity);
+    expect(resting.edgeOpacity).toBeLessThan(selected.edgeOpacity);
+    expect(resting.fillOpacity).toBeLessThan(selected.fillOpacity);
+    expect(resting.labelOpacity).toBeLessThan(selected.labelOpacity);
+    expect(ckbNodeAnchorHaloTarget(false, false)).toBe(
+      resting.haloIntensity,
+    );
+    expect(ckbNodeAnchorHaloTarget(true, false)).toBe(
+      selected.haloIntensity,
+    );
+    expect(ckbNodeAnchorHaloTarget(false, true)).toBeGreaterThan(
+      selected.haloIntensity,
+    );
   });
 });
 

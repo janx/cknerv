@@ -9,7 +9,7 @@ import { Billboard, Html } from '@react-three/drei';
 import * as THREE from 'three';
 
 import type { Vec3 } from '../types';
-import { makeHaloMaterial, phaseFor, rateFor } from './GlowNode';
+import { makeHaloMaterial, phaseFor } from './GlowNode';
 import {
   BIRTH_DURATION_MS,
   DEATH_DURATION_MS,
@@ -387,15 +387,65 @@ function ckbNodeLabel(id: string): string {
 /** Duration in seconds of the GlowNode-style halo intensity pulse on
  *  block arrival. Mirrors the temporal feel of GlowNode's flash hint:
  *  intensityRef snaps toward `ANCHOR_FLASH_PEAK_INTENSITY` and lerps
- *  back to the resting 1.0 over the same envelope. */
+ *  back to the quieter resting presentation over the same envelope. */
 const ANCHOR_FLASH_DURATION_S = 0.6;
-/** Peak halo intensity multiplier during the flash. Matches
- *  GlowNode.flash_green's target=2.4. */
-const ANCHOR_FLASH_PEAK_INTENSITY = 2.4;
-/** World-units edge of the halo billboard plane. Sized like
- *  GlowNode.shape.size * 6 — the icosahedron radius is 2.5, so the
- *  halo plane is 15 × 15. */
-const ANCHOR_HALO_PLANE_SIZE = 2.5 * 6.0;
+/** The local anchor remains a little larger than a measured peer (1.4), but
+ *  no longer reads as a second hero beside the Cell field. */
+const ANCHOR_BODY_RADIUS = 1.75;
+/** Preserve the generous glow language without the old 15 × 15 billboard. */
+const ANCHOR_HALO_PLANE_SIZE = ANCHOR_BODY_RADIUS * 5.6;
+/** Keep the original hit area after shrinking the visible body. */
+const ANCHOR_HIT_RADIUS = 2.5;
+/** A real block may briefly promote the anchor above both resting and selected
+ *  states. The lower peak avoids a cyan strobe competing with the peer wave. */
+const ANCHOR_FLASH_PEAK_INTENSITY = 1.85;
+
+export interface CkbNodeAnchorPresentation {
+  haloIntensity: number;
+  edgeOpacity: number;
+  fillOpacity: number;
+  labelOpacity: number;
+  labelColor: string;
+  labelShadow: string;
+}
+
+const ANCHOR_REST_PRESENTATION: CkbNodeAnchorPresentation = {
+  haloIntensity: 0.52,
+  edgeOpacity: 0.46,
+  fillOpacity: 0.07,
+  labelOpacity: 0.46,
+  labelColor: '#86aab2',
+  labelShadow: '0 0 6px rgba(34, 211, 238, 0.24)',
+};
+
+const ANCHOR_SELECTED_PRESENTATION: CkbNodeAnchorPresentation = {
+  haloIntensity: 0.92,
+  edgeOpacity: 0.9,
+  fillOpacity: 0.14,
+  labelOpacity: 0.92,
+  labelColor: '#d8f8fb',
+  labelShadow:
+    '0 0 5px rgba(125, 249, 255, 0.62), 0 0 11px rgba(34, 211, 238, 0.32)',
+};
+
+/** Three explicit levels keep the anchor quiet at rest, legible on selection,
+ *  and momentarily bright only when chain data actually arrives. */
+export function ckbNodeAnchorPresentation(
+  selected: boolean,
+): CkbNodeAnchorPresentation {
+  return selected
+    ? ANCHOR_SELECTED_PRESENTATION
+    : ANCHOR_REST_PRESENTATION;
+}
+
+export function ckbNodeAnchorHaloTarget(
+  selected: boolean,
+  flashActive: boolean,
+): number {
+  return flashActive
+    ? ANCHOR_FLASH_PEAK_INTENSITY
+    : ckbNodeAnchorPresentation(selected).haloIntensity;
+}
 
 function CkbNodeAnchor({
   id,
@@ -412,23 +462,17 @@ function CkbNodeAnchor({
 }) {
   const simClock = useSimClock();
   const bodyRef = useRef<THREE.Group>(null);
-  // Halo material drives the new-block flash exactly the way GlowNode
-  // drives `flash_green` / `pulse_blue`: bake an `intensityRef` that
-  // smoothly lerps toward a target (peak during the flash window,
-  // rest = 1.0 otherwise), multiply by the breathing envelope, and
-  // write into `uIntensity`. No more wireframe colour lerp, shell
-  // opacity pump, corona ring, or spark rays — all of that visual
-  // mass moves into the additive halo so the icosahedron flash
-  // reads identically to every other node's flash hint.
+  const presentation = ckbNodeAnchorPresentation(selected);
+  // The event carrier lives in the halo. An intensity ref eases between the
+  // subdued rest/selection levels and a short block-arrival peak, while the
+  // shader supplies the single shared breathing envelope.
   const palette = CHAIN_ANCHOR_PALETTE;
   const haloMat = useMemo(() => {
     const m = makeHaloMaterial(palette);
     m.uniforms.uPhase.value = phaseFor(id);
     return m;
   }, [palette, id]);
-  const phase = useMemo(() => phaseFor(id), [id]);
-  const rate = useMemo(() => 0.7 + 0.6 * rateFor(id), [id]);
-  const intensityRef = useRef(1);
+  const intensityRef = useRef(presentation.haloIntensity);
 
   useEffect(() => () => haloMat.dispose(), [haloMat]);
 
@@ -437,16 +481,14 @@ function CkbNodeAnchor({
       bodyRef.current.rotation.x += dt * 0.15;
       bodyRef.current.rotation.y += dt * 0.1;
     }
-    // Hint-style flash target. `flashRef` is set on each new block
-    // and reads as a brief peak in halo intensity, just like GlowNode
-    // when its hint is `flash_green` (target=2.4 sustained, then back
-    // to 1 after the hint clears).
-    let target = 1;
+    // `flashRef` is set on each new block and temporarily promotes the halo
+    // above both rest and selection before it eases back.
+    let flashActive = false;
     const trigger = flashRef?.current ?? null;
     if (trigger) {
       const age = simClock.elapsedSec - trigger.firedAt;
       if (age >= 0 && age < ANCHOR_FLASH_DURATION_S) {
-        target = ANCHOR_FLASH_PEAK_INTENSITY;
+        flashActive = true;
         haloMat.uniforms.uColor.value.setRGB(...trigger.color);
       } else {
         haloMat.uniforms.uColor.value.set(palette.halo);
@@ -454,12 +496,14 @@ function CkbNodeAnchor({
     } else {
       haloMat.uniforms.uColor.value.set(palette.halo);
     }
+    const target = ckbNodeAnchorHaloTarget(selected, flashActive);
     intensityRef.current += (target - intensityRef.current) * Math.min(1, dt * 12);
 
     const t = simClock.elapsedSec;
     haloMat.uniforms.uTime.value = t;
-    const breathe = 0.85 + 0.15 * Math.sin(t * rate + phase);
-    haloMat.uniforms.uIntensity.value = intensityRef.current * breathe;
+    // makeHaloMaterial already carries one subtle breathing envelope. Avoid
+    // multiplying a second one here: the anchor should not pulse at rest.
+    haloMat.uniforms.uIntensity.value = intensityRef.current;
   });
 
   return (
@@ -469,30 +513,31 @@ function CkbNodeAnchor({
           rest of the topology speak the same flash language. */}
       <Billboard follow lockX={false} lockY={false} lockZ={false}>
         <mesh material={haloMat}>
-          <planeGeometry args={[ANCHOR_HALO_PLANE_SIZE, ANCHOR_HALO_PLANE_SIZE]} />
+          <planeGeometry
+            args={[ANCHOR_HALO_PLANE_SIZE, ANCHOR_HALO_PLANE_SIZE]}
+          />
         </mesh>
       </Billboard>
       <group ref={bodyRef}>
         <lineSegments>
-          <edgesGeometry args={[new THREE.IcosahedronGeometry(2.5, 0)]} />
+          <edgesGeometry
+            args={[new THREE.IcosahedronGeometry(ANCHOR_BODY_RADIUS, 0)]}
+          />
           <lineBasicMaterial
             color="#7df9ff"
             toneMapped={false}
             blending={THREE.AdditiveBlending}
             transparent
+            opacity={presentation.edgeOpacity}
+            depthWrite={false}
           />
         </lineSegments>
-        <mesh
-          onClick={(e) => {
-            e.stopPropagation();
-            onSelect(id);
-          }}
-        >
-          <icosahedronGeometry args={[2.5, 0]} />
+        <mesh>
+          <icosahedronGeometry args={[ANCHOR_BODY_RADIUS, 0]} />
           <meshBasicMaterial
             color="#0e7490"
             transparent
-            opacity={0.18}
+            opacity={presentation.fillOpacity}
             side={THREE.DoubleSide}
             depthWrite={false}
             blending={THREE.AdditiveBlending}
@@ -500,30 +545,45 @@ function CkbNodeAnchor({
           />
         </mesh>
       </group>
+      {/* The visible form is quieter, but the original click target remains
+          forgiving and follows the anchor rather than its DOM label. */}
+      <mesh
+        onClick={(e) => {
+          e.stopPropagation();
+          onSelect(id);
+        }}
+      >
+        <sphereGeometry args={[ANCHOR_HIT_RADIUS, 8, 8]} />
+        <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+      </mesh>
       <Html
-        position={[0, -3.6, 0]}
+        position={[0, -2.72, 0]}
         center
         occlude={false}
-        style={{ pointerEvents: 'none' }}
+        style={{ pointerEvents: 'none', userSelect: 'none' }}
       >
         <div
           style={{
-            color: '#e6f4ff',
-            fontSize: '9.5px',
-            fontWeight: 500,
-            letterSpacing: '0.32em',
+            color: presentation.labelColor,
+            opacity: presentation.labelOpacity,
+            fontSize: '8px',
+            fontWeight: selected ? 500 : 400,
+            letterSpacing: '0.24em',
             fontFamily:
               "'Orbitron Local', 'JetBrains Mono Local', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
             whiteSpace: 'nowrap',
-            textShadow:
-              '0 0 4px rgba(125, 249, 255, 0.9), 0 0 12px rgba(125, 249, 255, 0.55), 0 0 22px rgba(125, 249, 255, 0.25)',
+            textShadow: presentation.labelShadow,
             textTransform: 'uppercase',
+            transition:
+              'color 180ms ease, opacity 180ms ease, text-shadow 180ms ease',
           }}
         >
           {ckbNodeLabel(id)}
         </div>
       </Html>
-      {selected ? <CkbSelectionReticle size={6} /> : null}
+      {selected ? (
+        <CkbSelectionReticle size={ANCHOR_BODY_RADIUS * 3.2} />
+      ) : null}
     </group>
   );
 }
