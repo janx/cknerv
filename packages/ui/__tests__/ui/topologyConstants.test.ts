@@ -2,17 +2,19 @@ import { describe, expect, it } from 'vitest';
 import {
   BEAM_GROW_DUR_S,
   BEAM_STRIKE_DUR_S,
+  BLOCK_COMMIT_DELAY_S,
   SHOCKWAVE_FIRE_DELAY_S,
   SHOCKWAVE_SPEED,
   MAX_BLOCK_HIGHLIGHTS,
 } from '../../src/ui/topologyConstants';
 
 describe('topologyConstants', () => {
-  it('SHOCKWAVE_FIRE_DELAY_S starts after the beam animation completes', () => {
-    expect(SHOCKWAVE_FIRE_DELAY_S).toBeCloseTo(
+  it('derives Cell commit timing from the carrier phases', () => {
+    expect(BLOCK_COMMIT_DELAY_S).toBeCloseTo(
       BEAM_GROW_DUR_S + BEAM_STRIKE_DUR_S,
       9,
     );
+    expect(SHOCKWAVE_FIRE_DELAY_S).toBe(BLOCK_COMMIT_DELAY_S);
   });
 
   it('BEAM_GROW_DUR_S and BEAM_STRIKE_DUR_S are positive', () => {

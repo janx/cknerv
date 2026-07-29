@@ -15,8 +15,8 @@ const FLARE_BASE_PX_PER_WU = 2.0;
  * to the living Cell field rather than the peer network's synthetic blue plane.
  *
  * Reads the shared `aFlashAt` attribute → `vFlashAge`; gated by birth/death so
- * unborn/dead cells never flare. No cloud, no shockwave — those stay on the
- * cell body material.
+ * unborn/dead cells never flare. No cloud or broad shockwave: the latter
+ * belongs to the peer network.
  */
 export function makeCellFlareMaterial(): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
@@ -67,8 +67,8 @@ export function makeCellFlareMaterial(): THREE.ShaderMaterial {
 
         vec4 viewPos = viewMatrix * modelMatrix * vec4(position, 1.0);
         gl_Position  = projectionMatrix * viewPos;
-        // Same base point size as the cell body (minus the shockwave boost,
-        // a cell-body-only effect) so the arms register over their cell.
+        // Same base point size as the cell body so the arms register over their
+        // Cell.
         gl_PointSize = aSize * ${FLARE_BASE_PX_PER_WU.toFixed(1)} * scale * (uViewportHeight * 0.5 / max(-viewPos.z, 0.001));
       }
     `,

@@ -52,10 +52,10 @@ describe('A protocol event relay', () => {
     expect(delivery).not.toContain('registry.current');
   });
 
-  it('hands the same hue to the galaxy shockwave instead of bleaching it white', () => {
-    const galaxy = source('CellGalaxy.tsx');
-    expect(galaxy).toContain('const blockColor = consensusBlockColor(pulseAtMs)');
-    expect(galaxy).toContain('uShockwaveColor.value as Float32Array');
-    expect(galaxy).toContain('writeShockwaveSlot(');
+  it('hands the same hue to the peer-network shockwave instead of bleaching it white', () => {
+    const nodes = source('ColonyNodes.tsx');
+    expect(nodes).toContain('consensusBlockColor(blockPulseAtMs)');
+    expect(nodes).toContain('writeShockwaveSlot(');
+    expect(source('CellGalaxy.tsx')).not.toContain('writeShockwaveSlot(');
   });
 });

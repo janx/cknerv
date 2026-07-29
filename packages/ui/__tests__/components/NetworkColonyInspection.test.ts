@@ -6,6 +6,10 @@ function source(file: string): string {
   return readFileSync(resolve(process.cwd(), `src/components/${file}`), 'utf8');
 }
 
+function materialSource(file: string): string {
+  return readFileSync(resolve(process.cwd(), `src/materials/${file}`), 'utf8');
+}
+
 describe('NetworkColony Cell-inspection context', () => {
   it('eases one shared passive-context value for edges and nodes', () => {
     const network = source('NetworkColony.tsx');
@@ -33,10 +37,12 @@ describe('NetworkColony Cell-inspection context', () => {
 
   it('keeps a separately selected peer legible inside Cell inspection', () => {
     const nodes = source('ColonyNodes.tsx');
+    const material = materialSource('peerNodeMaterial.ts');
 
-    expect(nodes).toContain('* uDim * uContextEnergy');
+    expect(material).toContain('uDim * uContextEnergy');
+    expect(material).toContain('shape * alphaExtra * eventScale');
     expect(nodes).toContain(
-      '* (selected ? 1 : contextEnergyRef?.current ?? 1)',
+      'selected ? 1 : contextEnergyRef?.current ?? 1',
     );
     expect(nodes).toContain('contextEnergyRef={contextEnergyRef}');
   });

@@ -4,10 +4,10 @@
 // Consumers read the live value from `LIVE.<folder>.<key>` (liveTweaks.ts),
 // NOT from these objects.
 //
-// The six galaxy shockwave knobs take their defaults from the SHOCKWAVE_*
+// The six peer-network shockwave knobs take their defaults from the SHOCKWAVE_*
 // constants in materials/shockwaveMaterial.ts — the material owns those values
-// (it seeds the uniforms at build time; CellGalaxy overwrites them from
-// LIVE.galaxy.* each frame), so there is ONE authority, not a shadowed copy.
+// (it seeds the uniforms at build time; ColonyNodes overwrites them from
+// LIVE.peer.* each frame), so there is ONE authority, not a shadowed copy.
 // tweakSchema.test.ts still pins them to the shipped numbers, so a drift in
 // either place fails the parity test.
 import {
@@ -37,12 +37,6 @@ export type FolderSchema = Record<string, KnobDef>;
 
 export const galaxySchema = {
   rotationRate: { value: 0.0025, min: 0, max: 0.02, step: 0.0005, label: 'rotation rate' },
-  colorBoost: { value: SHOCKWAVE_COLOR_BOOST, min: 0, max: 15, step: 0.1, label: 'shock color boost' },
-  alphaBoost: { value: SHOCKWAVE_ALPHA_BOOST, min: 0, max: 12, step: 0.1, label: 'shock alpha boost' },
-  sizeBoost: { value: SHOCKWAVE_SIZE_BOOST, min: 0, max: 2, step: 0.05, label: 'shock size boost' },
-  trailBoost: { value: SHOCKWAVE_TRAIL_BOOST, min: 0, max: 1, step: 0.01, label: 'shock trail boost' },
-  colorCeil: { value: SHOCKWAVE_COLOR_CEIL, min: 0, max: 8, step: 0.1, label: 'shock color ceil' },
-  alphaCeil: { value: SHOCKWAVE_ALPHA_CEIL, min: 0, max: 8, step: 0.1, label: 'shock alpha ceil' },
 } satisfies FolderSchema;
 
 export const deliverySchema = {
@@ -70,6 +64,12 @@ export const peerSchema = {
   surgeAmp: { value: 1.1, min: 0, max: 4, step: 0.05, label: 'surge amp' },
   surgeSigma: { value: 0.13, min: 0.02, max: 0.5, step: 0.01, label: 'surge sigma' },
   surgeEase: { value: 0.12, min: 0, max: 0.5, step: 0.01, label: 'surge ease s' },
+  colorBoost: { value: SHOCKWAVE_COLOR_BOOST, min: 0, max: 15, step: 0.1, label: 'shock color boost' },
+  alphaBoost: { value: SHOCKWAVE_ALPHA_BOOST, min: 0, max: 12, step: 0.1, label: 'shock alpha boost' },
+  sizeBoost: { value: SHOCKWAVE_SIZE_BOOST, min: 0, max: 2, step: 0.05, label: 'shock size boost' },
+  trailBoost: { value: SHOCKWAVE_TRAIL_BOOST, min: 0, max: 1, step: 0.01, label: 'shock trail boost' },
+  colorCeil: { value: SHOCKWAVE_COLOR_CEIL, min: 0, max: 8, step: 0.1, label: 'shock color ceil' },
+  alphaCeil: { value: SHOCKWAVE_ALPHA_CEIL, min: 0, max: 8, step: 0.1, label: 'shock alpha ceil' },
   flameWidth: { value: 0.7, min: 0.1, max: 2, step: 0.05, label: 'flame width' },
   flameMinLen: { value: 0.7, min: 0.1, max: 3, step: 0.05, label: 'flame min len' },
   flameMaxLen: { value: 2.5, min: 0.5, max: 6, step: 0.1, label: 'flame max len' },

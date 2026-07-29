@@ -1,9 +1,12 @@
 /**
- * Shared block-shockwave uniforms for materials that render real topology
- * geometry: cell cores and cell shells. Nebula gas and other decorative
- * particle fields must not import these, otherwise block waves read as
- * new stars appearing instead of existing cells/nerves brightening.
+ * Shared block-shockwave state for materials that render real topology.
+ *
+ * The production owner is the P2P colony: a new block stamps one wave at its
+ * network entry node, and the existing peer nodes brighten as the front crosses
+ * them. Decorative particle fields must not import this; otherwise the event
+ * reads as new stars appearing instead of network structure carrying a block.
  */
+import { SHOCKWAVE_SPEED } from '../ui/topologyConstants';
 
 /**
  * Ring-buffer size for in-flight shockwaves. The `mesh` profile fires
@@ -11,7 +14,7 @@
  * spread) while each wave lives `uShockwaveDurS = 5 s`, so up to ~3
  * waves can be alive at once. 8 slots give comfortable headroom and
  * survive even denser cadences (e.g. dust-stress profiles). Older
- * slots are overwritten round-robin in CellGalaxy.
+ * slots are overwritten round-robin in ColonyNodes.
  *
  * Without this ring buffer, `uShockwaveAt` was a single scalar uniform:
  * every new block trigger overwrote the in-flight wave and cancelled
@@ -20,16 +23,16 @@
  */
 export const SHOCKWAVE_SLOTS = 8;
 
-// Block-shockwave intensities. The wave renders only on the actual cell
-// cores + shells now — the dense "nebula gas" surface it used to paint was
-// removed, and on sparse point-sprites the original gas-era boosts
+// Block-shockwave intensities. The wave renders on the actual peer nodes — the
+// dense "nebula gas" surface it once painted was removed, and on sparse
+// point-sprites the original gas-era boosts
 // (color 22 / alpha 14) blew out, so they were dampened. But they were
 // dampened so far (color 3.5 / alpha 2.0 / size 0.095) that the spreading
 // wave became imperceptible. These mid-range values restore a clearly
-// visible, coherent expanding front without white-blobbing the lit cells.
-// A wider band lights more cells at once, so the ring reads as a spreading
-// front rather than isolated twinkles. Tune here; both cellHybridMaterial
-// and cellShellMaterial read these via makeShockwaveUniforms().
+// visible, coherent expanding front without white-blobbing the lit peers.
+// A wider band lights more nodes at once, so the ring reads as a spreading
+// front rather than isolated twinkles. Tune here; inferred and measured
+// peer-node materials read these through the same shared uniform record.
 export const SHOCKWAVE_BAND_BASE = 5.5;
 export const SHOCKWAVE_BAND_GROW = 1.5;
 // Halved 2026-07-08 (7.5/5.5 → 3.75/2.75, with the ceils below halved too):
@@ -57,6 +60,53 @@ export const SHOCKWAVE_TRAIL_BOOST = 0.18;
 // (punch preserved). Raise both toward BOOST for less de-glare, lower for more.
 export const SHOCKWAVE_COLOR_CEIL = 1.4;
 export const SHOCKWAVE_ALPHA_CEIL = 1.1;
+
+/**
+ * GLSL declarations and the single wave-sampling calculation used by both peer
+ * node materials. Keeping the ring math here prevents inferred and measured
+ * nodes from drifting into two different wavefronts.
+ */
+export const SHOCKWAVE_UNIFORMS_GLSL = /* glsl */ `
+  uniform float uShockwaveAt[${SHOCKWAVE_SLOTS}];
+  uniform vec2  uShockwaveOriginXZ[${SHOCKWAVE_SLOTS}];
+  uniform vec3  uShockwaveColor[${SHOCKWAVE_SLOTS}];
+  uniform float uShockwaveSpeed;
+  uniform float uShockwaveDurS;
+  uniform float uShockwaveBandBase;
+  uniform float uShockwaveBandGrow;
+  uniform float uShockwaveColorBoost;
+  uniform float uShockwaveAlphaBoost;
+  uniform float uShockwaveColorCeil;
+  uniform float uShockwaveAlphaCeil;
+  uniform float uShockwaveSizeBoost;
+  uniform float uShockwaveTrailBoost;
+`;
+
+export const SHOCKWAVE_SIGNAL_GLSL = /* glsl */ `
+  vec4 shockwaveSignalAt(vec2 worldXZ) {
+    float total = 0.0;
+    vec3 carrier = vec3(0.0);
+    for (int i = 0; i < ${SHOCKWAVE_SLOTS}; i++) {
+      float age = uTime - uShockwaveAt[i];
+      if (age < 0.0 || age >= uShockwaveDurS) continue;
+      float ringR = uShockwaveSpeed * age;
+      float dist = length(worldXZ - uShockwaveOriginXZ[i]);
+      float bandWidth = uShockwaveBandBase + uShockwaveBandGrow * age;
+      float band = exp(-pow((dist - ringR) / bandWidth, 2.0));
+      float behind = max(0.0, ringR - dist);
+      float trail = exp(-behind / max(bandWidth * 3.2, 0.001))
+        * step(dist, ringR);
+      float t = age / uShockwaveDurS;
+      float life = sin(3.14159265 * t)
+        * (1.0 - smoothstep(0.3, 1.0, t))
+        * (1.0 - t);
+      float signal = (band + trail * uShockwaveTrailBoost) * life;
+      total += signal;
+      carrier += uShockwaveColor[i] * signal;
+    }
+    return vec4(carrier, total);
+  }
+`;
 
 export function makeShockwaveAtArray(): Float32Array {
   const a = new Float32Array(SHOCKWAVE_SLOTS);
@@ -105,16 +155,15 @@ export function writeShockwaveSlot(
  * state — `uShockwaveAt` / `uShockwaveOriginXZ` are mutated in place each
  * frame by the trigger code (round-robin into the ring buffer).
  *
- * `uShockwaveSizeBoost` is included unconditionally even though only the
- * core (point-sprite) material reads it; on the shell material it sits as
- * unused state, costing nothing at the GPU level.
+ * `uShockwaveSizeBoost` expands both inferred point sprites and measured halo
+ * planes at the same front.
  */
 export function makeShockwaveUniforms() {
   return {
     uShockwaveAt: { value: makeShockwaveAtArray() },
     uShockwaveOriginXZ: { value: makeShockwaveOriginArray() },
     uShockwaveColor: { value: makeShockwaveColorArray() },
-    uShockwaveSpeed: { value: 36 },
+    uShockwaveSpeed: { value: SHOCKWAVE_SPEED },
     uShockwaveDurS: { value: 5.0 },
     uShockwaveBandBase: { value: SHOCKWAVE_BAND_BASE },
     uShockwaveBandGrow: { value: SHOCKWAVE_BAND_GROW },
@@ -126,3 +175,5 @@ export function makeShockwaveUniforms() {
     uShockwaveTrailBoost: { value: SHOCKWAVE_TRAIL_BOOST },
   };
 }
+
+export type ShockwaveUniforms = ReturnType<typeof makeShockwaveUniforms>;

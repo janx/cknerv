@@ -34,7 +34,7 @@ describe('makeCellFlareMaterial', () => {
     expect(m.vertexShader).toContain('vFlashAge');
   });
 
-  it('carries no cloud or block shockwave (those stay on the cell body)', () => {
+  it('carries no cloud or peer-network shockwave', () => {
     const m = makeCellFlareMaterial();
     expect(m.fragmentShader).not.toContain('vec4 cloud(');
     expect(m.fragmentShader).not.toContain('vShockwave');

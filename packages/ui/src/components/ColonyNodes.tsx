@@ -3,9 +3,9 @@
 // languages):
 //   • inferred ghosts   — ONE faint additive <points> cloud (~240): a "possible
 //     network" haze. Each point is the SAME soft core+halo radial as the measured
-//     halo (makeHaloMaterial), drawn small and dim and STATIC. Non-selectable.
+//     halo, drawn small and dim. Non-selectable.
 //   • measured nodes    — one bright, saturated, larger glow-halo per real peer:
-//     a billboarded plane carrying that same core+halo shader (makeHaloMaterial),
+//     a billboarded plane carrying that same core+halo shader,
 //     gently breathing, with an invisible solid sphere hit-target so it stays
 //     clickable (a camera-facing plane raycasts poorly). The honest "measured
 //     core."
@@ -13,26 +13,32 @@
 // galaxy's labeled CkbNodeAnchor (App feeds inferredTopology its world pos), so
 // that single cyan anchor is the one "you" and the measured belts converge on it.
 //
-// NO per-block flash lives here anymore. Earlier this layer wrote a spreading
-// wavefront into a per-point `aFlashAt` buffer and flared the crystals on each
-// block; that flood is now owned entirely by the courier / BlockDeliveryLayer.
-// ColonyNodes is a pure confidence-gradient render: it takes topology + selection
-// + local version and nothing block-timed.
-import { useEffect, useMemo } from 'react';
+// A new block stamps a radial brightness shockwave at the colony flood's entry
+// node. It brightens these existing topology nodes while ColonyEdges carries the
+// graph-accurate surge and ColonyCourierLayer supplies the moving glint. The Cell
+// field keeps only delivery/commit feedback; the broad wave belongs here.
+import { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import { Billboard } from '@react-three/drei';
 import { useSimFrame } from '../tweaks/useSimFrame';
 import { useSimClock } from '../tweaks/SimClockScope';
-import { makeHaloMaterial, phaseFor, rateFor } from './GlowNode';
+import { LIVE } from '../tweaks/liveTweaks';
+import { phaseFor, rateFor } from './GlowNode';
 import { CkbSelectionReticle } from './CellGalaxy';
 import { PEER_COLORS, peerColorKind } from '../derives/peers.derive';
 import type { NetworkNode, NetworkTopology } from '../types';
-import { PEER_NETWORK_PALETTE } from '../visualPalette';
-
-// Ghost-cloud palette/scale. A faint blue "possible network" haze — the same
-// core+halo radial as the measured halo, only dim and small.
-const INFERRED_DIM = 0.9; // fixed base brightness — a clearly visible haze, not barely-there
-const INFERRED_SIZE = 5.5; // point-size factor (perspective-scaled) — bigger so the dots read
+import type { ColonyFlood } from '../derives/networkFlood.derive';
+import { consensusBlockColor } from '../derives/consensusFlow.derive';
+import {
+  makeShockwaveUniforms,
+  SHOCKWAVE_SLOTS,
+  writeShockwaveSlot,
+  type ShockwaveUniforms,
+} from '../materials/shockwaveMaterial';
+import {
+  makePeerCloudMaterial,
+  makePeerHaloMaterial,
+} from '../materials/peerNodeMaterial';
 
 // Measured core: bright, saturated, larger than the ghost haze.
 const MEASURED_SIZE = 1.4;
@@ -47,17 +53,20 @@ function measuredColor(node: NetworkNode, localVersion: string): THREE.Color {
 
 /**
  * The inferred scaffold as a single additive point cloud. `position` is
- * allocated once (this component owns the geometry) and never mutated: the cloud
- * is a STATIC haze — no flash attribute, no per-block write. Each point renders
- * the same soft core+halo as `makeHaloMaterial`, faint and fixed.
+ * allocated once (this component owns the geometry) and never mutated. Per-block
+ * state stays in shared uniforms, so every in-flight wave crosses the same fixed
+ * topology without rebuilding the point buffer.
  */
 function InferredCloud({
   topology,
   contextEnergyRef,
+  shockwaveUniforms,
 }: {
   topology: NetworkTopology;
   contextEnergyRef?: { readonly current: number };
+  shockwaveUniforms: ShockwaveUniforms;
 }) {
+  const simClock = useSimClock();
   const inferred = useMemo(
     () => topology.nodes.filter((n) => n.kind === 'inferred'),
     [topology],
@@ -75,48 +84,9 @@ function InferredCloud({
     return g;
   }, [inferred]);
 
-  // Inferred glow-point material — the SAME core+halo look as makeHaloMaterial,
-  // faint & static (no uTime, no flash). Memoized on [] (stable for the
-  // component's life) so it survives topology re-clones without a shader recompile.
   const mat = useMemo(
-    () =>
-      new THREE.ShaderMaterial({
-        transparent: true,
-        depthWrite: false,
-        blending: THREE.AdditiveBlending,
-        toneMapped: false,
-        uniforms: {
-          uColor: {
-            value: new THREE.Color().setRGB(...PEER_NETWORK_PALETTE.scaffold),
-          },
-          uDim: { value: INFERRED_DIM },
-          uSize: { value: INFERRED_SIZE },
-          uContextEnergy: { value: 1 },
-        },
-        vertexShader: /* glsl */ `
-          uniform float uSize;
-          void main() {
-            vec4 mv = modelViewMatrix * vec4(position, 1.0);
-            gl_PointSize = uSize * (300.0 / max(-mv.z, 0.001));
-            gl_Position = projectionMatrix * mv;
-          }
-        `,
-        fragmentShader: /* glsl */ `
-          precision highp float;
-          uniform vec3 uColor;
-          uniform float uDim;
-          uniform float uContextEnergy;
-          void main() {
-            float r = length(gl_PointCoord - 0.5) * 2.0;
-            if (r > 1.0) discard;
-            float core = pow(1.0 - r, 2.0); // broader than the halo's pow-4 so a small point still reads
-            float halo = pow(1.0 - r, 1.6) * 0.42;
-            float a = (core + halo) * uDim * uContextEnergy;
-            gl_FragColor = vec4(uColor * a, a);
-          }
-        `,
-      }),
-    [],
+    () => makePeerCloudMaterial(shockwaveUniforms),
+    [shockwaveUniforms],
   );
 
   // Dispose the geometry whenever it is rebuilt (and on unmount).
@@ -126,6 +96,7 @@ function InferredCloud({
   // live, reused material and force a needless shader recompile on every re-clone.
   useEffect(() => () => mat.dispose(), [mat]);
   useSimFrame(() => {
+    mat.uniforms.uTime.value = simClock.elapsedSec;
     mat.uniforms.uContextEnergy.value = contextEnergyRef?.current ?? 1;
   });
 
@@ -149,25 +120,24 @@ function MeasuredNode({
   selected,
   onSelect,
   contextEnergyRef,
+  shockwaveUniforms,
 }: {
   node: NetworkNode;
   localVersion: string;
   selected: boolean;
   onSelect: (id: string | null) => void;
   contextEnergyRef?: { readonly current: number };
+  shockwaveUniforms: ShockwaveUniforms;
 }) {
   const simClock = useSimClock();
   const color = useMemo(() => measuredColor(node, localVersion), [node, localVersion]);
   const haloMat = useMemo(() => {
-    // makeHaloMaterial only reads palette.halo for the tint, but Palette requires
-    // all three fields — set them all to the node's hex.
-    const hex = `#${color.getHexString()}`;
-    const m = makeHaloMaterial({ edge: hex, halo: hex, fill: hex });
+    const m = makePeerHaloMaterial(color, shockwaveUniforms);
     // Per-node phase so the shader's secondary breathe isn't synced colony-wide
     // (defaults to 0 → a phantom colony-wide pulse). Matches GlowNode/CrystalGlow.
     m.uniforms.uPhase.value = phaseFor(node.id);
     return m;
-  }, [color, node.id]);
+  }, [color, node.id, shockwaveUniforms]);
   const phase = useMemo(() => phaseFor(node.id), [node.id]);
   const rate = useMemo(() => 0.7 + 0.6 * rateFor(node.id), [node.id]);
 
@@ -176,8 +146,9 @@ function MeasuredNode({
     haloMat.uniforms.uTime.value = t;
     haloMat.uniforms.uIntensity.value =
       MEASURED_BRIGHTNESS
-      * (0.85 + 0.15 * Math.sin(t * rate + phase))
-      * (selected ? 1 : contextEnergyRef?.current ?? 1);
+      * (0.85 + 0.15 * Math.sin(t * rate + phase));
+    haloMat.uniforms.uContextEnergy.value =
+      selected ? 1 : contextEnergyRef?.current ?? 1;
   });
 
   useEffect(() => () => haloMat.dispose(), [haloMat]);
@@ -208,26 +179,75 @@ function MeasuredNode({
 /**
  * Composes the colony: the inferred ghost cloud + one measured glow-node per real
  * peer, unified as a single glow primitive on a confidence gradient. The local
- * "you" is drawn by the galaxy (its labeled CkbNodeAnchor), NOT here. No block
- * timing flows through here — the flood is the courier layer's job now.
+ * "you" is drawn by the galaxy (its labeled CkbNodeAnchor), NOT here. This owner
+ * stamps one shared ring-buffer slot per block so inferred and measured nodes
+ * cannot drift or cancel an older in-flight wave.
  */
 export default function ColonyNodes({
   topology,
+  cf,
+  blockPulseAtMs,
+  backfillActive = false,
   selectedId,
   onSelect,
   localVersion,
   contextEnergyRef,
 }: {
   topology: NetworkTopology;
+  cf: ColonyFlood;
+  blockPulseAtMs: number;
+  backfillActive?: boolean;
   selectedId: string | null;
   onSelect: (id: string | null) => void;
   localVersion: string;
   contextEnergyRef?: { readonly current: number };
 }) {
+  const simClock = useSimClock();
   const measured = useMemo(
     () => topology.nodes.filter((n) => n.kind === 'measured'),
     [topology],
   );
+  const shockwaveUniforms = useMemo(() => makeShockwaveUniforms(), []);
+  const shockwaveSlotRef = useRef(0);
+  const lastPulseRef = useRef(blockPulseAtMs);
+
+  useEffect(() => {
+    if (blockPulseAtMs <= lastPulseRef.current) return;
+    lastPulseRef.current = blockPulseAtMs;
+    // Consume while backfilling so a historical backlog cannot replay as one
+    // network-wide strobe when live mode resumes.
+    if (backfillActive) return;
+
+    const origin = topology.nodes.find((node) => node.id === cf.entryId)
+      ?? topology.nodes.find((node) => node.id === topology.localId);
+    if (!origin) return;
+
+    const slot = shockwaveSlotRef.current;
+    shockwaveSlotRef.current = (slot + 1) % SHOCKWAVE_SLOTS;
+    writeShockwaveSlot(
+      shockwaveUniforms.uShockwaveAt.value,
+      shockwaveUniforms.uShockwaveOriginXZ.value,
+      shockwaveUniforms.uShockwaveColor.value,
+      slot,
+      simClock.elapsedSec,
+      [origin.pos[0], origin.pos[2]],
+      consensusBlockColor(blockPulseAtMs),
+    );
+    // cf/topology/backfillActive are recomputed in the same render that advances
+    // blockPulseAtMs; use the pulse as the sole event edge.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [blockPulseAtMs]);
+
+  // These values are shared by every peer material. Refreshing them here lets a
+  // panel drag reshape waves already in flight instead of only the next block.
+  useSimFrame(() => {
+    shockwaveUniforms.uShockwaveColorBoost.value = LIVE.peer.colorBoost;
+    shockwaveUniforms.uShockwaveAlphaBoost.value = LIVE.peer.alphaBoost;
+    shockwaveUniforms.uShockwaveColorCeil.value = LIVE.peer.colorCeil;
+    shockwaveUniforms.uShockwaveAlphaCeil.value = LIVE.peer.alphaCeil;
+    shockwaveUniforms.uShockwaveSizeBoost.value = LIVE.peer.sizeBoost;
+    shockwaveUniforms.uShockwaveTrailBoost.value = LIVE.peer.trailBoost;
+  });
 
   // NB: no local "you" node is rendered here — the visible local node is the
   // galaxy's labeled CkbNodeAnchor (App pins the colony's local node onto it via
@@ -238,6 +258,7 @@ export default function ColonyNodes({
       <InferredCloud
         topology={topology}
         contextEnergyRef={contextEnergyRef}
+        shockwaveUniforms={shockwaveUniforms}
       />
       {measured.map((n) => (
         <MeasuredNode
@@ -247,6 +268,7 @@ export default function ColonyNodes({
           onSelect={onSelect}
           localVersion={localVersion}
           contextEnergyRef={contextEnergyRef}
+          shockwaveUniforms={shockwaveUniforms}
         />
       ))}
     </group>

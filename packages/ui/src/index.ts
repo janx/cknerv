@@ -43,6 +43,7 @@ export * from './materials/cellHybridMaterial';
 export * from './materials/cellOrganismMaterial';
 export * from './materials/cellShellMaterial';
 export * from './materials/shockwaveMaterial';
+export * from './materials/peerNodeMaterial';
 export * from './materials/consensusMemoryKnotMaterial';
 
 // ── Geometry helpers ───────────────────────────────────────────────
