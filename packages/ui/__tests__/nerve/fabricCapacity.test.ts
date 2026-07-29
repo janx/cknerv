@@ -24,6 +24,10 @@ function helixCell(id: number): Cell {
 }
 
 describe('fabric capacity', () => {
+  it('preserves enough samples for an organic passive-fabric curve', () => {
+    expect(FABRIC_SAMPLES_PER_EDGE).toBeGreaterThanOrEqual(4);
+  });
+
   // Builds the real neighbour graph over a capacity-sized helix field,
   // exactly as the renderer would, and asserts every edge fits the
   // segment buffer. This is the empirical degree measurement encoded as

@@ -27,7 +27,7 @@ import type { Cell } from '@cknerv/types';
 import type { NeighborGraph, NeighborEdge } from '../geometry/neighborGraph';
 import { bezierAtInto, bezierControlInto, fabricEdgeSeed } from '../geometry/edgeBezier';
 import { fabricEdgeKey, orderFabricStateKeys } from './fabricOrder';
-import { MAX_FABRIC_SEGMENTS } from './fabricCapacity';
+import { FABRIC_SAMPLES_PER_EDGE, MAX_FABRIC_SEGMENTS } from './fabricCapacity';
 import {
   fabricEdgeRenderState,
   GROWTH_MS,
@@ -441,10 +441,7 @@ export default function NeuralFabric({ onReady }: NeuralFabricProps) {
   const simClock = useSimClock();
   const { size } = useThree();
   const { effective: quality } = useQualityRuntime();
-  const {
-    fabricSamplesPerEdge,
-    activeSamplesPerHop,
-  } = QUALITY_PRESETS[quality];
+  const { activeSamplesPerHop } = QUALITY_PRESETS[quality];
 
   const fabric = useMemo(
     () => makeFatLineLayer(MAX_FABRIC_SEGMENTS, LIVE.cell.fabricWidth, 'screen'),
@@ -861,8 +858,8 @@ export default function NeuralFabric({ onReady }: NeuralFabricProps) {
             * startEnergy;
           let prevB = (fromSemanticB + (toSemanticB - fromSemanticB) * tStart)
             * startEnergy;
-          for (let i = 1; i <= fabricSamplesPerEdge; i++) {
-            const tRaw = tStart + (tEnd - tStart) * (i / fabricSamplesPerEdge);
+          for (let i = 1; i <= FABRIC_SAMPLES_PER_EDGE; i++) {
+            const tRaw = tStart + (tEnd - tStart) * (i / FABRIC_SAMPLES_PER_EDGE);
             const t = tRaw > tEnd ? tEnd : tRaw;
             bezierAtInto(sample, st.fromX, st.fromY, st.fromZ, st.ctrlX, st.ctrlY, st.ctrlZ, st.toX, st.toY, st.toZ, t);
             const endTaper = taper(t);
@@ -1005,7 +1002,6 @@ export default function NeuralFabric({ onReady }: NeuralFabricProps) {
     memory,
     routeHopPulse,
     onReady,
-    fabricSamplesPerEdge,
     activeSamplesPerHop,
   ]);
 

@@ -132,11 +132,12 @@ describe('NeuralFabric living-mesh handles', () => {
     expect(activeImplementation).not.toContain('inspectionFieldScaleAt');
   });
 
-  it('spends fewer samples on passive fabric before simplifying active writes', () => {
+  it('keeps passive Bezier curvature fixed while active writes adapt', () => {
     expect(SRC).toContain('useQualityRuntime');
-    expect(SRC).toContain('fabricSamplesPerEdge');
+    expect(SRC).toContain('FABRIC_SAMPLES_PER_EDGE');
+    expect(SRC).not.toContain('fabricSamplesPerEdge');
     expect(SRC).toContain('activeSamplesPerHop');
-    expect(SRC).not.toMatch(/i\s*<=\s*FABRIC_SAMPLES_PER_EDGE/);
+    expect(SRC).toMatch(/i\s*<=\s*FABRIC_SAMPLES_PER_EDGE/);
   });
 
   it('compresses only passive core energy while semantic routes reclaim contrast', () => {
