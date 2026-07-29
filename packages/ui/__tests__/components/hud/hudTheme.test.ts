@@ -6,7 +6,7 @@ describe('hudTheme', () => {
 
   it('exposes the locked palette + fonts', () => {
     expect(HUD_COLORS.orange).toBe('#FF9830');
-    expect(HUD_COLORS.peerWire).toBe('#5577FF');
+    expect(HUD_COLORS.peerWire).toBe('#1AD1FF');
     expect(HUD_COLORS.nominal).toBe('#27FF5A');
     expect(HUD_COLORS.danger).toBe('#FF3030');
     expect(HUD_FONTS.cjk).toContain('Huiwen-mincho');
