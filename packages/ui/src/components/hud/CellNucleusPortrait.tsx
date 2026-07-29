@@ -2,8 +2,9 @@
 // record. The portrait renders the chosen code-native core directly; no legacy
 // specimen/anatomy graph is layered behind it. `focusField` is the readable A
 // grammar used by CellDetailPanel's scan and row selection.
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { Canvas } from '@react-three/fiber';
+import { OrbitControls } from '@react-three/drei';
 import type { Cell } from '@cknerv/types';
 import type { ConsensusBraidField } from '../../derives/consensusBraid.derive';
 import { deriveCellContentAddressEncoding } from '../../derives/cellContentAddress.derive';
@@ -91,6 +92,7 @@ export default function CellNucleusPortrait({
   /** Compatibility input for callers that share a scan epoch with the panel. */
   scanEpochMs?: number;
 }) {
+  const [dragging, setDragging] = useState(false);
   const addressEncoding = useMemo(
     () => deriveCellContentAddressEncoding(cell.content_hash),
     [cell.content_hash],
@@ -142,12 +144,24 @@ export default function CellNucleusPortrait({
         .join(',')}
       data-memory-portrait-anchor-block={anchorEncoding.block}
       data-memory-portrait-anchor-hex={anchorEncoding.hexadecimal}
-      style={{ width: '100%', aspectRatio: '1 / 1', pointerEvents: 'none' }}
+      data-cell-portrait-interactive="true"
+      title="Drag to rotate"
+      style={{
+        width: '100%',
+        aspectRatio: '1 / 1',
+        pointerEvents: 'auto',
+        cursor: dragging ? 'grabbing' : 'grab',
+        userSelect: 'none',
+      }}
     >
       <Canvas
         gl={{ alpha: true, antialias: true }}
         camera={{ position: [0, 0, 3], fov: 40, near: 0.1, far: 20 }}
-        style={{ background: 'transparent' }}
+        style={{
+          background: 'transparent',
+          cursor: dragging ? 'grabbing' : 'grab',
+          touchAction: 'none',
+        }}
         frameloop={reducedMotion ? 'demand' : 'always'}
       >
         <ConsensusScene
@@ -164,6 +178,16 @@ export default function CellNucleusPortrait({
               : null
           }
           onIdentityProofRead={onIdentityProofRead}
+        />
+        <OrbitControls
+          enableDamping={!reducedMotion}
+          dampingFactor={0.08}
+          enablePan={false}
+          enableZoom={false}
+          rotateSpeed={0.65}
+          target={[0, 0, 0]}
+          onStart={() => setDragging(true)}
+          onEnd={() => setDragging(false)}
         />
       </Canvas>
     </div>

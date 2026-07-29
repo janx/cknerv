@@ -80,4 +80,15 @@ describe('CellNucleusPortrait production language', () => {
     expect(MEMORY_SOURCE).toContain('focusedEvidenceBinding');
     expect(MEMORY_SOURCE).toContain('<ringGeometry args={[0.025, 0.032, 4]} />');
   });
+
+  it('lets the selected Cell portrait rotate without taking over panel scroll', () => {
+    expect(SOURCE).toContain("import { OrbitControls } from '@react-three/drei'");
+    expect(SOURCE).toContain('data-cell-portrait-interactive="true"');
+    expect(SOURCE).toContain("pointerEvents: 'auto'");
+    expect(SOURCE).toContain("cursor: dragging ? 'grabbing' : 'grab'");
+    expect(SOURCE).toContain('<OrbitControls');
+    expect(SOURCE).toContain('enablePan={false}');
+    expect(SOURCE).toContain('enableZoom={false}');
+    expect(SOURCE).toContain('enableDamping={!reducedMotion}');
+  });
 });
