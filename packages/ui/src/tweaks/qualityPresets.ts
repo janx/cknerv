@@ -10,9 +10,10 @@ export interface QualityCascade {
   particleCapMul: number;
   cellGalaxyMul: number;
   dischargeArms: number;
-  /** Curvature resolution for the passive consensus fabric. Background
-   * structure yields first; active writes retain a separate, higher budget. */
-  fabricSamplesPerEdge: number;
+  /** Active writes can shed tessellation under pressure. Passive fabric
+   * curvature is intentionally fixed in `fabricCapacity.ts`: collapsing a
+   * quadratic Bezier to one segment erases its control point and visual
+   * identity. */
   activeSamplesPerHop: number;
   /** Expanded A-braid identities admitted around the camera. Focused Cells are
    * sorted ahead of this cap and therefore remain visible at every preset. */
@@ -34,7 +35,7 @@ export interface QualityCascade {
 export const QUALITY_PRESETS: Record<QualityPreset, QualityCascade> = {
   high: {
     maxDpr: 2, starsCount: 2000, particleCapMul: 1, cellGalaxyMul: 1,
-    dischargeArms: 3, fabricSamplesPerEdge: 4, activeSamplesPerHop: 12,
+    dischargeArms: 3, activeSamplesPerHop: 12,
     nucleusNearCap: 12,
     memorySignal: {
       coreMinPx: 24, compactLinePx: 0.55, energyScale: 1,
@@ -43,7 +44,7 @@ export const QUALITY_PRESETS: Record<QualityPreset, QualityCascade> = {
   },
   med: {
     maxDpr: 1.5, starsCount: 600, particleCapMul: 0.5, cellGalaxyMul: 0.7,
-    dischargeArms: 2, fabricSamplesPerEdge: 2, activeSamplesPerHop: 10,
+    dischargeArms: 2, activeSamplesPerHop: 10,
     nucleusNearCap: 8,
     memorySignal: {
       coreMinPx: 24, compactLinePx: 0.62, energyScale: 0.94,
@@ -52,7 +53,7 @@ export const QUALITY_PRESETS: Record<QualityPreset, QualityCascade> = {
   },
   low: {
     maxDpr: 1, starsCount: 200, particleCapMul: 0.25, cellGalaxyMul: 0.3,
-    dischargeArms: 1, fabricSamplesPerEdge: 1, activeSamplesPerHop: 8,
+    dischargeArms: 1, activeSamplesPerHop: 8,
     nucleusNearCap: 4,
     memorySignal: {
       coreMinPx: 24, compactLinePx: 0.72, energyScale: 0.86,

@@ -1,7 +1,14 @@
 import { useState } from 'react';
+import { useControls } from 'leva';
 import type { AlertLevel } from '../../derives/alertLevel';
 import type { StreamHealthSummary } from '../../derives/streamHealth.derive';
 import { formatStreamAge } from '../../derives/streamHealth.derive';
+import {
+  QUALITY_MODE_CONTROL,
+  setQualityMode,
+  useQualityRuntime,
+  type QualityMode,
+} from '../../tweaks/qualityPresets';
 import { HUD_COLORS, HUD_FONTS, rgba } from './hudTheme';
 
 export type BuildInfo = { version: string; href: string };
@@ -64,6 +71,109 @@ const STREAM_COLOR: Record<StreamHealthSummary['phase'], string> = {
   stale: HUD_COLORS.danger,
 };
 
+const QUALITY_MODES = ['auto', 'high', 'med', 'low'] as const satisfies readonly QualityMode[];
+
+function RenderQualityControl() {
+  const quality = useQualityRuntime();
+  const [, setLevaQuality] = useControls('Time', () => QUALITY_MODE_CONTROL, []);
+  const accent = quality.mode === 'auto' ? HUD_COLORS.cyanWire : HUD_COLORS.orange;
+
+  const selectMode = (mode: QualityMode) => {
+    // Keep the always-visible HUD control and the hidden developer panel on
+    // one setting. The direct runtime write makes the response immediate;
+    // the Leva write lets AdaptiveQualityController reset its sampling state
+    // when ownership moves between automatic and manual modes.
+    setLevaQuality({ quality: mode });
+    setQualityMode(mode);
+  };
+
+  return (
+    <div
+      role="group"
+      aria-label="Render quality"
+      data-render-quality-control
+      data-quality-mode={quality.mode}
+      data-quality-effective={quality.effective}
+      onPointerDown={(event) => event.stopPropagation()}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 6,
+        flexShrink: 0,
+        pointerEvents: 'auto',
+        fontFamily: HUD_FONTS.mono,
+      }}
+    >
+      <span
+        className="cknerv-quality-label"
+        style={{
+          color: HUD_COLORS.dim,
+          fontSize: 8.5,
+          letterSpacing: 1.2,
+          lineHeight: 1,
+        }}
+      >
+        QUALITY
+      </span>
+      <span
+        style={{
+          display: 'inline-flex',
+          height: 20,
+          overflow: 'hidden',
+          border: `1px solid ${rgba(accent, 0.28)}`,
+          borderRadius: 2,
+          background: 'rgba(0,0,0,.34)',
+          boxShadow: `inset 0 0 8px ${rgba(accent, 0.035)}`,
+        }}
+      >
+        {QUALITY_MODES.map((mode, index) => {
+          const active = quality.mode === mode;
+          const autoSuffix = mode === 'auto' && active
+            ? `/${quality.effective.slice(0, 1).toUpperCase()}`
+            : '';
+          return (
+            <button
+              key={mode}
+              type="button"
+              className="cknerv-quality-option"
+              aria-label={`${mode[0].toUpperCase()}${mode.slice(1)} render quality`}
+              aria-pressed={active}
+              data-quality-option={mode}
+              title={mode === 'auto'
+                ? `Adaptive render quality — currently ${quality.effective.toUpperCase()}`
+                : `Use ${mode.toUpperCase()} render quality`}
+              onClick={(event) => {
+                event.stopPropagation();
+                selectMode(mode);
+              }}
+              style={{
+                appearance: 'none',
+                minWidth: mode === 'auto' ? 42 : 34,
+                height: 20,
+                padding: '0 5px',
+                border: 0,
+                borderRight: index < QUALITY_MODES.length - 1
+                  ? `1px solid ${rgba(accent, 0.16)}`
+                  : 0,
+                background: active ? rgba(accent, 0.14) : 'transparent',
+                boxShadow: active ? `inset 0 -1px 0 ${accent}` : 'none',
+                color: active ? accent : HUD_COLORS.dim,
+                font: `400 8.5px/20px ${HUD_FONTS.mono}`,
+                letterSpacing: 0.45,
+                textAlign: 'center',
+                cursor: 'pointer',
+                transition: 'color .14s, background .14s, box-shadow .14s',
+              }}
+            >
+              {mode.toUpperCase()}{autoSuffix}
+            </button>
+          );
+        })}
+      </span>
+    </div>
+  );
+}
+
 export default function StatusStrip({ level, uptimeMs, build, stream }: {
   level: AlertLevel;
   uptimeMs: number;
@@ -77,6 +187,7 @@ export default function StatusStrip({ level, uptimeMs, build, stream }: {
       <span style={{ fontFamily: HUD_FONTS.display, fontWeight: 700, fontSize: 12, letterSpacing: 5, color: HUD_COLORS.orange, textShadow: '0 0 8px rgba(255,152,48,.5)' }}>CKNERV</span>
       {build ? <BuildChip build={build} /> : null}
       <span style={{ flex: 1 }} />
+      <RenderQualityControl />
       {stream && streamColor ? (
         <span
           data-stream-chip

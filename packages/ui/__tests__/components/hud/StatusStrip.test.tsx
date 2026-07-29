@@ -1,8 +1,32 @@
-import { cleanup, render, screen } from '@testing-library/react';
-import { afterEach, describe, it, expect } from 'vitest';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
+import {
+  getQualityRuntimeSnapshot,
+  setAdaptiveQuality,
+  setQualityMode,
+} from '../../../src/tweaks/qualityPresets';
+
+const levaMocks = vi.hoisted(() => ({
+  setQuality: vi.fn(),
+}));
+
+vi.mock('leva', () => ({
+  useControls: () => [{ quality: 'auto' }, levaMocks.setQuality],
+}));
+
 import StatusStrip from '../../../src/components/hud/StatusStrip';
 
-afterEach(cleanup);
+beforeEach(() => {
+  setQualityMode('auto');
+  setAdaptiveQuality('high');
+  levaMocks.setQuality.mockClear();
+});
+
+afterEach(() => {
+  cleanup();
+  setQualityMode('auto');
+  setAdaptiveQuality('high');
+});
 
 describe('StatusStrip', () => {
   it('shows the wordmark and a nominal indicator', () => {
@@ -54,5 +78,36 @@ describe('StatusStrip', () => {
     expect(chip.textContent).toContain('DATA STALE');
     expect(chip.textContent).toContain('17s');
     expect(container.textContent).toContain('NOMINAL');
+  });
+
+  it('offers an always-visible auto/high/med/low render-quality control', () => {
+    render(<StatusStrip level="nominal" uptimeMs={0} />);
+    const control = screen.getByRole('group', { name: 'Render quality' });
+    const scoped = within(control);
+
+    expect(scoped.getAllByRole('button')).toHaveLength(4);
+    expect(
+      scoped.getByRole('button', { name: 'Auto render quality' })
+        .getAttribute('aria-pressed'),
+    ).toBe('true');
+    expect(scoped.getByRole('button', { name: 'High render quality' })).not.toBeNull();
+    expect(scoped.getByRole('button', { name: 'Med render quality' })).not.toBeNull();
+    expect(scoped.getByRole('button', { name: 'Low render quality' })).not.toBeNull();
+    expect(control.getAttribute('data-quality-effective')).toBe('high');
+  });
+
+  it('applies a manual quality mode and synchronizes the developer control', () => {
+    render(<StatusStrip level="nominal" uptimeMs={0} />);
+    const low = screen.getByRole('button', { name: 'Low render quality' });
+
+    fireEvent.click(low);
+
+    expect(levaMocks.setQuality).toHaveBeenCalledWith({ quality: 'low' });
+    expect(getQualityRuntimeSnapshot()).toMatchObject({
+      mode: 'low',
+      effective: 'low',
+      source: 'manual',
+    });
+    expect(low.getAttribute('aria-pressed')).toBe('true');
   });
 });

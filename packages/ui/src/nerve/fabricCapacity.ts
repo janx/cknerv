@@ -2,9 +2,10 @@
 // Separated from NeuralFabric so the "buffer holds the full graph at
 // capacity" invariant is unit-testable without importing three.js.
 
-/** Maximum sub-segments emitted per fabric edge — HIGH curve resolution.
- *  MED/LOW select smaller runtime counts while retaining this allocation as
- *  the one worst-case capacity bound. */
+/** Sub-segments emitted per passive fabric edge at every quality preset.
+ *  Four is the visual floor for the organic quadratic-Bezier silhouette:
+ *  one segment samples only the endpoints and degenerates into a straight
+ *  chord. Adaptive quality sheds other capacity instead of this identity. */
 export const FABRIC_SAMPLES_PER_EDGE = 4;
 
 /** Upper bound on the cells the graph can be built over in one frame.
@@ -28,7 +29,7 @@ export const AVG_DEGREE_BOUND = 12;
 /** Hard segment cap for the fabric layer. Sized to hold every edge of
  *  the full graph at capacity: edges ≈ cells × degree / 2, each edge
  *  FABRIC_SAMPLES_PER_EDGE segments. The complete mesh therefore
- *  renders rather than a truncated spanning-tree prefix at HIGH quality.
+ *  renders rather than a truncated spanning-tree prefix at every quality.
  *    7000 × 9 / 2 × 4 = 126000 segments (~5.8 MB across pos+col buffers). */
 export const MAX_FABRIC_SEGMENTS = Math.ceil(
   ((MAX_GRAPH_CELLS * AVG_DEGREE_BOUND) / 2) * FABRIC_SAMPLES_PER_EDGE,
