@@ -12,6 +12,7 @@ import type { PulsePlanningOptions } from '../../src/nerve/pulseRunner';
 import {
   planLinkBatch,
   prunePulsesFromBlock,
+  scheduleLivePulseStartSec,
   tickBlockIfAdvanced,
 } from '../../src/nerve/pulseBatch';
 import { pulseStats, resetPulseStats, snapshotPulseStats } from '../../src/nerve/pulseStats';
@@ -194,5 +195,16 @@ describe('tickBlockIfAdvanced', () => {
     expect(tickBlockIfAdvanced(1000, 1000, pulseStats)).toBe(1000);
     expect(tickBlockIfAdvanced(999, 1000, pulseStats)).toBe(1000);
     expect(snapshotPulseStats().blocksTotal).toBe(0);
+  });
+});
+
+describe('scheduleLivePulseStartSec', () => {
+  it('keeps live nerve traffic behind the caller-supplied protocol delay', () => {
+    expect(scheduleLivePulseStartSec(10, 1.6)).toBeCloseTo(11.6, 9);
+  });
+
+  it('does not let invalid or negative delays move traffic before now', () => {
+    expect(scheduleLivePulseStartSec(10, -1)).toBe(10);
+    expect(scheduleLivePulseStartSec(10, Number.NaN)).toBe(10);
   });
 });

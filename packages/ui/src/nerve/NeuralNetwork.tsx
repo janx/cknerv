@@ -32,6 +32,7 @@ import { type Pulse, type PulsePlanningOptions } from './pulseRunner';
 import {
   planLinkBatch,
   prunePulsesFromBlock,
+  scheduleLivePulseStartSec,
   tickBlockIfAdvanced,
 } from './pulseBatch';
 import { pulseStats } from './pulseStats';
@@ -162,6 +163,12 @@ interface NeuralNetworkProps {
   pulses?: PulsePlanningOptions & {
     maxActivePulses?: number;
   };
+  /**
+   * Scene-time delay applied only to newly observed live links. The dashboard
+   * aligns this with the local carrier's Cell-field contact; standalone
+   * consumers default to immediate live traffic.
+   */
+  livePulseDelayS?: number;
   /** Exact selected Cell used to derive a bounded real-adjacency field. */
   inspectionCellId?: number | null;
   /** Shared with CellGalaxy so body points and passive fibres read one field
@@ -220,6 +227,7 @@ export default function NeuralNetwork({
   burstArrivalRef,
   topology,
   pulses,
+  livePulseDelayS = 0,
   inspectionCellId = null,
   inspectionFieldRef,
   traceRequest = null,
@@ -368,7 +376,10 @@ export default function NeuralNetwork({
     lastLinksSeqRef.current = nextSeq;
     // All links in this synchronous batch share one clock read — simClock only
     // advances per frame, so stamping once == the prior per-link stamping.
-    const startSec = simClock.elapsedSec;
+    const startSec = scheduleLivePulseStartSec(
+      simClock.elapsedSec,
+      livePulseDelayS,
+    );
     for (const p of planned) {
       pulsesRef.current.push({ ...p, startSec, mode: 'live' });
     }
@@ -390,6 +401,7 @@ export default function NeuralNetwork({
     pulses?.maxPulsesPerLink,
     pulses?.maxSourcesPerParent,
     pulses?.maxActivePulses,
+    livePulseDelayS,
     particleCapMul,
   ]);
 

@@ -51,6 +51,21 @@ export function planLinkBatch(
 }
 
 /**
+ * Place a live nerve batch on the shared protocol-event clock. Generic
+ * consumers keep the default zero delay; the dashboard supplies its
+ * peer-network-to-Cell-field handoff delay.
+ */
+export function scheduleLivePulseStartSec(
+  nowSec: number,
+  livePulseDelayS: number,
+): number {
+  const safeDelayS = Number.isFinite(livePulseDelayS)
+    ? Math.max(0, livePulseDelayS)
+    : 0;
+  return nowSec + safeDelayS;
+}
+
+/**
  * Remove already-planned packets whose source transaction was rolled back.
  * Generic over Pulse subtypes so the renderer can preserve its ActivePulse
  * timing fields while applying the same canonical block boundary.

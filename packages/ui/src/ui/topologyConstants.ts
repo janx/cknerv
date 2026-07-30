@@ -32,6 +32,19 @@ export const BLOCK_COMMIT_DELAY_S = BEAM_GROW_DUR_S + BEAM_STRIKE_DUR_S;
  * BLOCK_COMMIT_DELAY_S. */
 export const SHOCKWAVE_FIRE_DELAY_S = BLOCK_COMMIT_DELAY_S;
 
+/**
+ * Delay from the raw peer-network block pulse until the local protocol carrier
+ * reaches the Cell field. Live Cell-to-Cell nerve traffic must not start before
+ * this boundary: the local node first receives the block, then the carrier
+ * crosses into the field.
+ */
+export function cellFieldContactDelayS(localReceiveDelayS: number): number {
+  const receiveDelayS = Number.isFinite(localReceiveDelayS)
+    ? Math.max(0, localReceiveDelayS)
+    : 0;
+  return receiveDelayS + BEAM_GROW_DUR_S;
+}
+
 // Single calculation path: the Cell commit delay is derived, not free.
 // If anyone retunes one of the beam phases they must keep the identity
 // holding; the runtime assert + unit test guard against drift.
