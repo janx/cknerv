@@ -22,6 +22,7 @@ import {
   aggregateCellsStats,
   AdaptiveQualityController,
   CELL_SELECTION_PREFIX,
+  cellFieldContactDelayS,
   chainNodeWorldPosition,
   canRecallConsensusMemory,
   cellIdentityProofBindingComplete,
@@ -435,6 +436,7 @@ export default function App({
     () => colonyFlood(topology, cellsCache.lastPulseAtMs),
     [topology, cellsCache.lastPulseAtMs],
   );
+  const livePulseDelayS = cellFieldContactDelayS(cf.localReceiveDelayS);
 
   const cellsStats = useMemo(
     () =>
@@ -878,6 +880,7 @@ export default function App({
                   burstArrivalRef={burstArrivalRef}
                   topology={galaxyConfig.topology}
                   pulses={galaxyConfig.pulses}
+                  livePulseDelayS={livePulseDelayS}
                   inspectionCellId={selectedCell?.id ?? null}
                   inspectionFieldRef={cellInspectionFieldRef}
                   traceRequest={memoryTraceRequest}

@@ -9,6 +9,7 @@ import {
   CELLS_Y,
   CellGalaxy,
   CellGalaxyProvider,
+  cellFieldContactDelayS,
   ConsensusWriteSeal,
   NetworkColony,
   NeuralNetwork,
@@ -499,6 +500,9 @@ export default function ProtocolEventLab({ snapshot }: { snapshot: CellGalaxySna
     ...flood,
     localReceiveDelayS: REVIEW_LOCAL_DELAY_S,
   }), [flood]);
+  const livePulseDelayS = cellFieldContactDelayS(
+    reviewFlood.localReceiveDelayS,
+  );
   const localWorld = useMemo(
     () => topology.nodes.find((node) => node.kind === 'local')?.pos ?? null,
     [topology],
@@ -827,6 +831,7 @@ export default function ProtocolEventLab({ snapshot }: { snapshot: CellGalaxySna
                     flashDirtyRef={flashDirtyRef}
                     burstArrivalRef={burstArrivalRef}
                     topology={{ neighborK: 3, maxEdgeLength: 28, maxHops: 24 }}
+                    livePulseDelayS={livePulseDelayS}
                     pulses={{
                       maxActivePulses: 36,
                       maxPulsesPerLink: memoryTraceReview ? 1 : 3,
