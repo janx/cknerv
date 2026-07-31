@@ -6,7 +6,7 @@ use std::time::Duration;
 use tokio::sync::{mpsc, watch};
 
 use cknerv_adapter_ckb::{
-    poll::{poll_once, PollState},
+    poll::{poll_once, poll_once_with_reorg_window, PollState},
     rpc::RpcClient,
     CkbDirectAdapter,
 };
@@ -59,6 +59,32 @@ async fn poll_cycle_with(
     poll_once(rpc, state, tx, catchup_threshold, catchup_cap)
         .await
         .expect("poll cycle");
+    let mut emitted = Vec::new();
+    while let Ok(mutation) = rx.try_recv() {
+        emitted.push(mutation);
+    }
+    emitted
+}
+
+async fn poll_cycle_with_windows(
+    rpc: &RpcClient,
+    state: &mut PollState,
+    tx: &mpsc::Sender<Mutation>,
+    rx: &mut mpsc::Receiver<Mutation>,
+    catchup_threshold: u64,
+    catchup_cap: u64,
+    reorg_window_blocks: u64,
+) -> Vec<Mutation> {
+    poll_once_with_reorg_window(
+        rpc,
+        state,
+        tx,
+        catchup_threshold,
+        catchup_cap,
+        reorg_window_blocks,
+    )
+    .await
+    .expect("poll cycle");
     let mut emitted = Vec::new();
     while let Ok(mutation) = rx.try_recv() {
         emitted.push(mutation);
@@ -414,7 +440,7 @@ async fn poll_rebuilds_when_every_restored_anchor_is_orphaned() {
 }
 
 #[tokio::test]
-async fn poll_bounds_canonical_anchors_to_rebuild_window_plus_parent() {
+async fn poll_bounds_canonical_anchors_independently_of_replay_window() {
     let mut canned = mock_rpc::CannedResponses {
         tip: 1,
         ..Default::default()
@@ -430,10 +456,10 @@ async fn poll_bounds_canonical_anchors_to_rebuild_window_plus_parent() {
     let (tx, mut rx) = mpsc::channel(128);
     let mut state = PollState::default();
 
-    let _ = poll_cycle_with(&rpc, &mut state, &tx, &mut rx, 25, 2).await;
+    let _ = poll_cycle_with_windows(&rpc, &mut state, &tx, &mut rx, 25, 10, 2).await;
     for tip in 2..=10 {
         canned.lock().unwrap().tip = tip;
-        let _ = poll_cycle_with(&rpc, &mut state, &tx, &mut rx, 25, 2).await;
+        let _ = poll_cycle_with_windows(&rpc, &mut state, &tx, &mut rx, 25, 10, 2).await;
     }
 
     // Two exactly rollbackable blocks plus their common-parent proof.

@@ -156,6 +156,7 @@ Pass criteria:
 - tip advances over the observation window (if the chain is producing blocks)
 - cells projection returns a non-empty `snapshot.cells` set once the chain
   has tx activity
+- after boot replay completes, `data/cknerv-state.json` exists before shutdown
 - no panics in cknerv's stdout (`grep -iE "panic|error|fatal" /tmp/cknerv_smoke.log`)
 - clean SIGINT shutdown persists a non-empty state file, exits, frees the port,
   and leaves no orphan process
@@ -189,7 +190,7 @@ Open `http://localhost:7001` (or whatever `--port` you used):
 Do not manufacture a reorg against a public or valued node. Use a disposable
 devnet or deterministic mock source that can replace a known suffix.
 
-For a shallow reorg within the configured backfill window:
+For a shallow reorg within the 48-block exact rollback window:
 
 - [ ] The chain stream emits `chain_reorganized` before replacement
       `block_mined` mutations

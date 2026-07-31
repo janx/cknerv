@@ -13,9 +13,9 @@ the same server/UI pipeline through its own adapter.
 
 **Status:** v0.1. The standalone CLI boots against a local CKB node, polls
 read-only JSON-RPC methods, serves an embedded dashboard SPA, streams live
-HTTP/WS snapshots and deltas, and persists derived state on clean shutdown so
-the next run resumes from the saved tip and recent canonical hash anchors
-instead of replaying the same backfill.
+HTTP/WS snapshots and deltas, and checkpoints derived state after boot replay
+and on clean shutdown so the next run resumes from the saved tip and recent
+canonical hash anchors instead of replaying the same backfill.
 See [`crates/cknerv-cli/SMOKE.md`](crates/cknerv-cli/SMOKE.md) for the manual
 smoke procedure and an observed live-node run.
 
@@ -68,9 +68,11 @@ Useful run options:
 - `cknerv.toml`: local config.
 - `data/`: derived dashboard state, including `cknerv-state.json`.
 
-Config priority is **CLI args > `cknerv.toml` > built-in defaults**. The CKB
-node is accessed read-only; cknerv polls node state and never submits
-transactions.
+Config priority is **CLI args > `cknerv.toml` > built-in defaults**. Historical
+replay is selected automatically from the galaxy profile; the
+`--backfill-blocks` flag is a one-run diagnostic override and is intentionally
+not persisted in `cknerv.toml`. The CKB node is accessed read-only; cknerv
+polls node state and never submits transactions.
 
 ## Development
 
@@ -220,15 +222,15 @@ fractured invalidation echo; only subsequent real `birth` deltas can trigger
 the replacement re-entry animation. No synthetic fork, transaction, or Cell
 payload is invented or retained for the effect.
 
-Canonical anchors and the Cell birth/death undo journals are bounded by the
-configured `[backfill].blocks` horizon (plus one parent anchor needed to prove
-the rollback boundary). If no common ancestor survives inside that window, the
+Canonical anchors and the Cell birth/death undo journals retain a compact
+48-block exact-rollback window (plus one parent anchor needed to prove the
+rollback boundary). If no common ancestor survives inside that window, the
 adapter emits `{"type":"chain_rebuild","from_block":N}`. Chain rings are
 cleared, the Cell projection emits `link_prune` from block `0` plus GC/stats
-reset deltas, and blocks `N..=tip` are replayed in a progress envelope. This
-avoids both unbounded journals and silently retaining an unprovable orphan
-state. Cell IDs remain monotonic across the rebuild so queued visual work
-cannot alias newly replayed Cells.
+reset deltas, and the profile-selected recent window is replayed in a progress
+envelope. This avoids retaining every boot-time birth/death snapshot while
+still refusing to keep an unprovable orphan state. Cell IDs remain monotonic
+across the rebuild so queued visual work cannot alias newly replayed Cells.
 
 The cells snapshot and delta stream expose the replay cause as
 `phase: "boot" | "catchup" | "reorg" | "rebuild"`. The dashboard gives
@@ -250,9 +252,6 @@ rpc_url = "http://localhost:8114"
 port = 7001
 open = true
 
-[backfill]
-blocks = 2000
-
 [galaxy]
 profile = "auto" # auto, devnet, testnet, mainnet, custom
 cell_cap = 20000
@@ -271,16 +270,18 @@ max_active_pulses = 256
 ```
 
 Profile defaults are resolved in `crates/cknerv-cli/src/config.rs`. `devnet`
-uses a smaller cell cap and shorter default backfill; `mainnet` uses sparser
-topology and lower pulse caps to reduce visual noise; `auto`, `testnet`, and
-`custom` start from balanced defaults.
+uses a smaller cell cap and an automatic 1,000-block replay window; the other
+profiles use a balanced 2,000-block window. `mainnet` also uses sparser
+topology and lower pulse caps to reduce visual noise. Backfill is deliberately
+absent from `cknerv.toml`; legacy `[backfill]` sections are ignored. Use
+`--backfill-blocks N` only when a one-run diagnostic override is needed.
 
 The dashboard's manual Cell-count controller tops out at the built-in
 20,000-Cell visual ceiling. AUTO scales within the resolved `cell_cap`; when an
 older config still specifies a smaller cap, the manual controller keeps its
 full range but cannot display records the server did not retain. Existing
 persisted state remains valid after increasing `cell_cap`. Run
-`cknerv prune --confirm` once only when you want the configured backfill to
+`cknerv prune --confirm` once only when you want the automatic replay window to
 repopulate the larger retained view immediately; otherwise the retained set
 grows naturally as new blocks arrive.
 
@@ -288,14 +289,15 @@ grows naturally as new blocks arrive.
 memory recall. `pulses.link_ring_capacity` bounds only newly-arrived animation
 events; snapshot history is never replayed as live traffic.
 
-`backfill.blocks` also sets the exact reorg rollback and controlled-rebuild
-horizon. Setting it to `0` keeps legacy tip-only historical replay behavior;
-cknerv still retains a minimal two-block live rollback journal.
+The exact reorg journal is independently bounded to 48 blocks. Deeper changes
+trigger a controlled rebuild using the profile-selected replay window. A
+one-run `--backfill-blocks 0` keeps legacy tip-only historical replay behavior;
+cknerv still retains the exact rollback journal.
 
 ## Persistence
 
-On Ctrl-C/SIGINT, the CLI asks `cknerv-server` to persist the chain entity and
-registered projections to:
+When boot replay completes, and again on Ctrl-C/SIGINT, `cknerv-server`
+persists the chain entity and registered projections to:
 
 ```text
 <workdir>/data/cknerv-state.json
@@ -336,10 +338,10 @@ twin, the fixtures, and both sides of the tests together.
 ## Known Limits
 
 - The cell galaxy tracks a bounded recent live-cell projection, not the full
-  global live-cell set. The boot backfill depth is controlled by
-  `--backfill-blocks` or `[backfill].blocks`; a full live set would require an
-  indexer. After a deep-reorg rebuild, Cell TOTAL/DEAD counters are likewise
-  reconstructed from that bounded observation window.
+  global live-cell set. Boot replay depth is selected by profile and can be
+  overridden for one run with `--backfill-blocks`; a full live set would
+  require an indexer. After a deep-reorg rebuild, Cell TOTAL/DEAD counters are
+  likewise reconstructed from that bounded observation window.
 - The CKB adapter is read-only JSON-RPC polling. There is no bundled CKB node,
   indexer, or transaction submitter.
 - The ckbadger adapter is deferred until ckbadger publishes a stable feed

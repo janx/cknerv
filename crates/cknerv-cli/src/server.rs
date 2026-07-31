@@ -12,7 +12,7 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use cknerv_adapter_ckb::CkbDirectAdapter;
-use cknerv_core::CellGalaxy;
+use cknerv_core::{CellGalaxy, DEFAULT_REORG_WINDOW_BLOCKS};
 use cknerv_server::ServerBuilder;
 
 use axum::routing::get;
@@ -32,10 +32,12 @@ pub async fn run(workdir: PathBuf, cfg: ResolvedConfig) -> Result<()> {
     std::fs::create_dir_all(&state_dir)?;
 
     tracing::info!(
-        "cknerv starting: rpc={}, port={}, workdir={}",
+        "cknerv starting: rpc={}, port={}, workdir={}, replay_blocks={}, exact_reorg_blocks={}",
         cfg.rpc_url,
         cfg.port,
-        workdir.display()
+        workdir.display(),
+        cfg.backfill_blocks,
+        DEFAULT_REORG_WINDOW_BLOCKS,
     );
 
     // If persisted state exists, skip the boot backfill and resume the
@@ -50,6 +52,7 @@ pub async fn run(workdir: PathBuf, cfg: ResolvedConfig) -> Result<()> {
     }
     let adapter = CkbDirectAdapter::new(cfg.rpc_url.clone())
         .with_backfill_blocks(cfg.backfill_blocks)
+        .with_reorg_window_blocks(DEFAULT_REORG_WINDOW_BLOCKS as u64)
         .with_resume_from(resume_tip)
         .with_resume_anchors(
             resume_cursor
@@ -59,10 +62,11 @@ pub async fn run(workdir: PathBuf, cfg: ResolvedConfig) -> Result<()> {
     let galaxy_config = cknerv_core::projection::cells::CellGalaxyConfig {
         cell_cap: cfg.galaxy.cell_cap,
         recent_links_cap: cfg.galaxy.recent_links_cap,
-        // The cell undo journal and the adapter's canonical anchors share the
-        // same horizon. Even with boot backfill disabled, retain two live
-        // blocks so ordinary one-block reorgs can still roll back exactly.
-        reorg_window_blocks: usize::try_from(cfg.backfill_blocks.max(2)).unwrap_or(usize::MAX),
+        // Forty-eight rollback blocks plus their parent proof fit inside the
+        // server's persisted 50-block canonical evidence ring. Deeper changes
+        // rebuild the profile-selected replay window instead of keeping every
+        // boot mutation in the undo journal.
+        reorg_window_blocks: DEFAULT_REORG_WINDOW_BLOCKS,
     };
     let runtime_galaxy = cfg.galaxy.clone();
 

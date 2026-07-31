@@ -30,10 +30,12 @@ use crate::{AssetKind, LockKind};
 // ── visual / behavior constants — mirror cellGalaxy.ts ───────────────
 pub const CELL_CAP: usize = 20_000;
 pub const DEFAULT_RECENT_LINKS_CAP: usize = 2048;
-/// Canonical block journals retained for exact reorg rollback. The CLI ties
-/// this to its configured backfill window so rollback and controlled rebuild
-/// cover the same recent-chain horizon.
-pub const DEFAULT_REORG_WINDOW_BLOCKS: usize = 2000;
+/// Canonical block journals retained for exact reorg rollback. This stays
+/// intentionally smaller than the historical replay window: deeper changes
+/// use the projection's controlled rebuild path instead of retaining every
+/// boot-time birth/death snapshot indefinitely. The caller may override this
+/// chain-generic default when its canonical evidence policy differs.
+pub const DEFAULT_REORG_WINDOW_BLOCKS: usize = 48;
 const PULSE_THROTTLE_MS: u64 = 800;
 const DEATH_DURATION_MS: u64 = 600;
 
@@ -301,9 +303,9 @@ pub struct CellGalaxy {
     backfill: Option<BackfillState>,
 }
 
-/// Persisted form of [`CellGalaxy`]. Written under preserved-workdir
-/// shutdown, restored on the next boot so the cell field doesn't reset
-/// to empty on every restart.
+/// Persisted form of [`CellGalaxy`]. Written at preserved-workdir checkpoints
+/// and shutdown, then restored on the next boot so the cell field doesn't
+/// reset to empty on every restart.
 ///
 /// Forward-compat: pre-PR-A3 workdirs serialized a `pending_tag_window`
 /// field here. Serde silently ignores unknown fields on deserialize, so

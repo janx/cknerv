@@ -12,11 +12,11 @@ use std::time::Duration;
 use tokio::sync::{mpsc, watch};
 use url::Url;
 
-use cknerv_core::{Mutation, RecentBlock};
+use cknerv_core::{Mutation, RecentBlock, DEFAULT_REORG_WINDOW_BLOCKS};
 use cknerv_server::Adapter;
 
 use crate::network::poll_network_once;
-use crate::poll::{poll_once, PollState};
+use crate::poll::PollState;
 use crate::rpc::RpcClient;
 
 pub struct CkbDirectAdapter {
@@ -26,6 +26,7 @@ pub struct CkbDirectAdapter {
     node_id: String,
     node_label: String,
     backfill_blocks: u64,
+    reorg_window_blocks: u64,
     resume_from: Option<u64>,
     resume_anchors: Vec<RecentBlock>,
     /// Forward-gap (blocks) above which the poll treats an advance as a
@@ -45,6 +46,7 @@ impl CkbDirectAdapter {
             node_id: "ckb:local".into(),
             node_label: "ckb-local".into(),
             backfill_blocks: 2000,
+            reorg_window_blocks: DEFAULT_REORG_WINDOW_BLOCKS as u64,
             resume_from: None,
             resume_anchors: Vec::new(),
             catchup_threshold: 25,
@@ -67,12 +69,19 @@ impl CkbDirectAdapter {
         self
     }
 
-    /// Number of recent blocks to replay at boot to seed the cell galaxy and
-    /// to retain as the exact reorg/rebuild horizon. `0` disables historical
-    /// backfill/rebuild (legacy tip-only behavior), while the poller still
-    /// keeps a minimal two-block live reorg journal.
+    /// Number of recent blocks to replay at boot and during bounded catch-up
+    /// or controlled rebuild. `0` disables historical replay (legacy tip-only
+    /// behavior). Exact reorg history is configured independently.
     pub fn with_backfill_blocks(mut self, n: u64) -> Self {
         self.backfill_blocks = n;
+        self
+    }
+
+    /// Canonical hash history retained for exact reorg reconciliation. The
+    /// poller always keeps at least two blocks; deeper changes fall back to a
+    /// controlled replay of `backfill_blocks`.
+    pub fn with_reorg_window_blocks(mut self, n: u64) -> Self {
+        self.reorg_window_blocks = n;
         self
     }
 
@@ -169,12 +178,13 @@ impl Adapter for CkbDirectAdapter {
                     }
                 }
                 _ = interval.tick() => {
-                    if let Err(e) = poll_once(
+                    if let Err(e) = crate::poll::poll_once_with_reorg_window(
                         &rpc,
                         &mut state,
                         &out,
                         self.catchup_threshold,
                         self.backfill_blocks,
+                        self.reorg_window_blocks,
                     ).await {
                         tracing::warn!(
                             target: "cknerv-adapter-ckb",
@@ -214,5 +224,9 @@ mod tests {
         let adapter = CkbDirectAdapter::new(Url::parse("http://localhost:8114").unwrap());
 
         assert_eq!(adapter.backfill_blocks, 2000);
+        assert_eq!(
+            adapter.reorg_window_blocks,
+            DEFAULT_REORG_WINDOW_BLOCKS as u64
+        );
     }
 }

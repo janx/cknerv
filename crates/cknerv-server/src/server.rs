@@ -14,11 +14,12 @@
 //!      conflict with a stale snapshot.
 //!   4. Spawn the reducer task: drains `mutation_rx`, applies into
 //!      `ServerState`.
-//!   5. Spawn each adapter; each one drops a `Sender` clone into the
+//!   5. Arm a one-shot boot-replay persistence checkpoint.
+//!   6. Spawn each adapter; each one drops a `Sender` clone into the
 //!      shared mpsc; the reducer multiplexes them.
 
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use axum::Router;
 use tokio::sync::{mpsc, watch};
@@ -136,13 +137,62 @@ impl ServerBuilder {
         // 3. Pipeline channels.
         let (mutation_tx, mutation_rx) = mpsc::channel::<Mutation>(MUTATION_PIPELINE_CAPACITY);
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
+        let save_lock = Arc::new(Mutex::new(()));
 
         // 4. Spawn the reducer.
         let reducer_handle = state
             .clone()
             .spawn_reducer(mutation_rx, shutdown_rx.clone());
 
-        // 5. Spawn adapters. Drop the local `mutation_tx` clone after
+        // Persist the first usable derived snapshot as soon as boot replay
+        // closes. This task listens to a lightweight watch signal rather than
+        // the mutation broadcast, so historical Tx payloads are not cloned a
+        // second time merely to detect the terminal progress marker.
+        let checkpoint_handle = self.workdir.as_ref().map(|workdir| {
+            let mut replay_complete = state.subscribe_boot_replay_completion();
+            let mut checkpoint_shutdown = shutdown_rx.clone();
+            let checkpoint_state = state.clone();
+            let checkpoint_workdir = workdir.clone();
+            let checkpoint_lock = save_lock.clone();
+            tokio::spawn(async move {
+                loop {
+                    tokio::select! {
+                        changed = replay_complete.changed() => {
+                            if changed.is_err() || *replay_complete.borrow() {
+                                break;
+                            }
+                        }
+                        changed = checkpoint_shutdown.changed() => {
+                            if changed.is_err() || *checkpoint_shutdown.borrow() {
+                                return;
+                            }
+                        }
+                    }
+                }
+
+                let result = tokio::task::spawn_blocking(move || {
+                    let _guard = checkpoint_lock.lock().unwrap();
+                    crate::persistence::save(&checkpoint_state, &checkpoint_workdir)
+                })
+                .await;
+                match result {
+                    Ok(Ok(())) => tracing::info!(
+                        target: "cknerv-server",
+                        "boot replay checkpoint persisted"
+                    ),
+                    Ok(Err(e)) => tracing::warn!(
+                        target: "cknerv-server",
+                        "failed to persist boot replay checkpoint: {e}"
+                    ),
+                    Err(e) => tracing::warn!(
+                        target: "cknerv-server",
+                        "boot replay checkpoint task failed: {e}"
+                    ),
+                }
+            })
+        });
+
+        // 6. Spawn adapters. Drop the local `mutation_tx` clone after
         //    fanning out — when every adapter exits and drops its
         //    clone, `mutation_rx.recv()` returns `None` and the reducer
         //    exits naturally even if no one called shutdown.
@@ -158,9 +208,11 @@ impl ServerBuilder {
         let handle = ServerHandle {
             state,
             workdir: self.workdir,
+            save_lock,
             shutdown_tx,
             adapter_handles,
             reducer_handle,
+            checkpoint_handle,
         };
 
         Ok((router, handle))
@@ -180,9 +232,11 @@ impl Default for ServerBuilder {
 pub struct ServerHandle {
     state: Arc<ServerState>,
     workdir: Option<PathBuf>,
+    save_lock: Arc<Mutex<()>>,
     shutdown_tx: watch::Sender<bool>,
     adapter_handles: Vec<tokio::task::JoinHandle<anyhow::Result<()>>>,
     reducer_handle: tokio::task::JoinHandle<()>,
+    checkpoint_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl ServerHandle {
@@ -198,6 +252,7 @@ impl ServerHandle {
     /// was configured.
     pub fn save(&self) -> std::io::Result<()> {
         if let Some(workdir) = self.workdir.as_ref() {
+            let _guard = self.save_lock.lock().unwrap();
             crate::persistence::save(&self.state, workdir)?;
         }
         Ok(())
@@ -209,6 +264,19 @@ impl ServerHandle {
     /// watch channel — repeated calls have no further effect.
     pub async fn shutdown(self) {
         let _ = self.shutdown_tx.send(true);
+        if let Some(handle) = self.checkpoint_handle {
+            let abort = handle.abort_handle();
+            if tokio::time::timeout(std::time::Duration::from_secs(2), handle)
+                .await
+                .is_err()
+            {
+                tracing::warn!(
+                    target: "cknerv-server",
+                    "boot replay checkpoint did not exit within 2s; aborting"
+                );
+                abort.abort();
+            }
+        }
         for h in self.adapter_handles {
             let abort = h.abort_handle();
             if tokio::time::timeout(std::time::Duration::from_secs(2), h)

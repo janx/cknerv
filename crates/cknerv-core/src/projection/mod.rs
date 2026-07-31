@@ -30,9 +30,9 @@ pub mod cells;
 ///   * `snapshot()` is called under the server's coord read lock — it
 ///     must be cheap-ish and lock-free internally (the projection's own
 ///     state isn't shared with the reducer, so this is naturally true).
-///   * `save()`/`load()` are used by the preserved-workdir shutdown/boot
-///     path to persist the projection's full internal state across
-///     restarts. The default impls write/read nothing (suitable for
+///   * `save()`/`load()` are used by the preserved-workdir checkpoint/boot
+///     path to persist the projection's full internal state across restarts.
+///     The default impls write/read nothing (suitable for
 ///     projections that are cheap to recompute from the mutation stream);
 ///     projections with non-trivial accumulated state (cell galaxy) override.
 pub trait Projection: Send + Sync + 'static {

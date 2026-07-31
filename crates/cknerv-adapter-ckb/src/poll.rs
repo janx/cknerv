@@ -62,14 +62,16 @@ impl PollState {
         self.canonical_blocks.get(&number).map(String::as_str)
     }
 
-    fn prune_canonical_history(&mut self, catchup_cap: u64) {
+    fn prune_canonical_history(&mut self, reorg_window_blocks: u64) {
         let Some(latest) = self
             .last_tip
             .or_else(|| self.canonical_blocks.keys().next_back().copied())
         else {
             return;
         };
-        let retained = catchup_cap.max(MIN_REORG_WINDOW_BLOCKS).saturating_add(1);
+        let retained = reorg_window_blocks
+            .max(MIN_REORG_WINDOW_BLOCKS)
+            .saturating_add(1);
         let retain_from = latest.saturating_sub(retained.saturating_sub(1));
         self.canonical_blocks
             .retain(|number, _| *number >= retain_from);
@@ -95,9 +97,33 @@ pub async fn poll_once(
     catchup_threshold: u64,
     catchup_cap: u64,
 ) -> Result<()> {
+    poll_once_with_reorg_window(rpc, state, out, catchup_threshold, catchup_cap, catchup_cap).await
+}
+
+/// Run one poll cycle with independent bounded-replay and exact-reorg
+/// horizons. [`poll_once`] preserves the historical coupled behavior for
+/// external callers; the production adapter uses this entry point so a deep
+/// boot window does not force an equally deep birth/death undo journal.
+pub async fn poll_once_with_reorg_window(
+    rpc: &RpcClient,
+    state: &mut PollState,
+    out: &mpsc::Sender<Mutation>,
+    catchup_threshold: u64,
+    catchup_cap: u64,
+    reorg_window_blocks: u64,
+) -> Result<()> {
     // 1. Tip + block walk
     let tip = rpc.get_tip_block_number().await?;
-    sync_canonical_blocks(rpc, state, out, tip, catchup_threshold, catchup_cap).await?;
+    sync_canonical_blocks(
+        rpc,
+        state,
+        out,
+        tip,
+        catchup_threshold,
+        catchup_cap,
+        reorg_window_blocks,
+    )
+    .await?;
 
     // 2. Chain info
     match rpc.get_blockchain_info().await {
@@ -151,6 +177,7 @@ async fn sync_canonical_blocks(
     tip: u64,
     catchup_threshold: u64,
     catchup_cap: u64,
+    reorg_window_blocks: u64,
 ) -> Result<()> {
     // The only rebuild that can have no parent cursor begins at genesis. Keep
     // its start explicitly so a transient get_block_by_number(0) gap resumes
@@ -164,7 +191,7 @@ async fn sync_canonical_blocks(
                 from_block,
                 tip,
                 Some(ReplayPhase::Rebuild),
-                catchup_cap,
+                reorg_window_blocks,
             )
             .await;
             if result.is_ok() && state.last_tip == Some(tip) {
@@ -214,7 +241,15 @@ async fn sync_canonical_blocks(
         }
         CanonicalChange::Rebuild => {
             state.catching_up = false;
-            return rebuild_canonical_window(rpc, state, out, tip, catchup_cap).await;
+            return rebuild_canonical_window(
+                rpc,
+                state,
+                out,
+                tip,
+                catchup_cap,
+                reorg_window_blocks,
+            )
+            .await;
         }
     }
 
@@ -222,7 +257,7 @@ async fn sync_canonical_blocks(
         .last_tip
         .expect("sync_canonical_blocks initializes last_tip");
     if tip <= prev {
-        state.prune_canonical_history(catchup_cap);
+        state.prune_canonical_history(reorg_window_blocks);
         return Ok(());
     }
 
@@ -259,7 +294,7 @@ async fn sync_canonical_blocks(
         (prev + 1, None)
     };
 
-    let result = emit_canonical_range(rpc, state, out, lo, tip, phase, catchup_cap).await;
+    let result = emit_canonical_range(rpc, state, out, lo, tip, phase, reorg_window_blocks).await;
     if result.is_ok() && state.last_tip == Some(tip) {
         state.replaying_reorg = false;
         state.catching_up = false;
@@ -274,6 +309,7 @@ async fn rebuild_canonical_window(
     out: &mpsc::Sender<Mutation>,
     tip: u64,
     catchup_cap: u64,
+    reorg_window_blocks: u64,
 ) -> Result<()> {
     let from_block = if catchup_cap == 0 {
         tip
@@ -311,7 +347,7 @@ async fn rebuild_canonical_window(
         from_block,
         tip,
         Some(ReplayPhase::Rebuild),
-        catchup_cap,
+        reorg_window_blocks,
     )
     .await;
     if result.is_ok() && state.last_tip == Some(tip) {
@@ -387,7 +423,7 @@ async fn emit_canonical_range(
     lo: u64,
     hi: u64,
     phase: Option<ReplayPhase>,
-    catchup_cap: u64,
+    reorg_window_blocks: u64,
 ) -> Result<()> {
     if lo > hi {
         return Ok(());
@@ -446,7 +482,7 @@ async fn emit_canonical_range(
             }
             state.canonical_blocks.insert(number, block.hash);
             state.last_tip = Some(number);
-            state.prune_canonical_history(catchup_cap);
+            state.prune_canonical_history(reorg_window_blocks);
             done += 1;
 
             if let Some(phase) = phase.filter(|_| done % 25 == 0 && done != total) {
