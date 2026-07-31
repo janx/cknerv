@@ -125,6 +125,7 @@ describe('StatusStrip', () => {
     expect(automatic.getAttribute('aria-pressed')).toBe('true');
     expect(slider.value).toBe('6000');
     expect(control.getAttribute('data-cell-display-count')).toBe('5000');
+    expect(control.querySelector('[data-cell-display-track]')).not.toBeNull();
 
     fireEvent.change(slider, { target: { value: '3000' } });
 
@@ -146,6 +147,7 @@ describe('StatusStrip', () => {
     const control = screen.getByRole('group', { name: 'Render quality' });
     const scoped = within(control);
 
+    expect(control.querySelector('[data-quality-rail]')).not.toBeNull();
     expect(scoped.getAllByRole('button')).toHaveLength(4);
     expect(
       scoped.getByRole('button', { name: 'Auto render quality' })

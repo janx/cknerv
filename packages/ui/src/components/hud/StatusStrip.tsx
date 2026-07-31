@@ -81,6 +81,7 @@ const STREAM_COLOR: Record<StreamHealthSummary['phase'], string> = {
 };
 
 const QUALITY_MODES = ['auto', 'high', 'med', 'low'] as const satisfies readonly QualityMode[];
+const CELL_TRACK_TICKS = [0, 25, 50, 75, 100] as const;
 
 function fmtCellCount(count: number): string {
   if (count < 1_000) return String(count);
@@ -96,6 +97,9 @@ function CellDisplayControl({ availableCells }: { availableCells?: number }) {
     ? Math.max(0, Math.floor(availableCells ?? 0))
     : limit;
   const visible = Math.min(available, limit);
+  const progress = (
+    (limit - CELL_DISPLAY_MIN) / (CELL_DISPLAY_MAX - CELL_DISPLAY_MIN)
+  ) * 100;
   const accent = display.mode === 'auto'
     ? HUD_COLORS.cyanWire
     : HUD_COLORS.orange;
@@ -117,8 +121,11 @@ function CellDisplayControl({ availableCells }: { availableCells?: number }) {
       style={{
         display: 'inline-flex',
         alignItems: 'center',
-        gap: 6,
+        gap: 7,
         flexShrink: 0,
+        height: 20,
+        paddingLeft: 12,
+        borderLeft: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.1)}`,
         pointerEvents: 'auto',
         fontFamily: HUD_FONTS.mono,
       }}
@@ -136,7 +143,7 @@ function CellDisplayControl({ availableCells }: { availableCells?: number }) {
       </span>
       <button
         type="button"
-        className="cknerv-cell-display-auto"
+        className="cknerv-hud-control-button cknerv-cell-display-auto"
         aria-label="Automatic cell count"
         aria-pressed={display.mode === 'auto'}
         title={`Let adaptive render quality set the Cell count · ${quality.effective.toUpperCase()} = ${limit.toLocaleString()}`}
@@ -146,51 +153,140 @@ function CellDisplayControl({ availableCells }: { availableCells?: number }) {
         }}
         style={{
           appearance: 'none',
-          height: 20,
-          padding: '0 6px',
-          border: `1px solid ${rgba(accent, 0.28)}`,
-          borderRadius: 2,
-          background: display.mode === 'auto'
-            ? rgba(accent, 0.14)
-            : 'rgba(0,0,0,.34)',
-          boxShadow: display.mode === 'auto'
-            ? `inset 0 -1px 0 ${accent}`
-            : 'none',
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 5,
+          height: 18,
+          padding: '0 2px',
+          border: 0,
+          background: 'transparent',
           color: display.mode === 'auto' ? accent : HUD_COLORS.dim,
           font: `400 8.5px/18px ${HUD_FONTS.mono}`,
-          letterSpacing: 0.45,
+          letterSpacing: 0.65,
+          textShadow: display.mode === 'auto'
+            ? `0 0 7px ${rgba(accent, 0.45)}`
+            : 'none',
           cursor: 'pointer',
+          transition: 'color .14s, text-shadow .14s',
         }}
       >
+        <span
+          aria-hidden="true"
+          style={{
+            width: 4,
+            height: 4,
+            border: `1px solid ${display.mode === 'auto' ? accent : rgba(HUD_COLORS.dim, 0.65)}`,
+            background: display.mode === 'auto'
+              ? rgba(accent, 0.2)
+              : 'transparent',
+            boxShadow: display.mode === 'auto'
+              ? `0 0 6px ${rgba(accent, 0.65)}`
+              : 'none',
+            transform: 'rotate(45deg)',
+          }}
+        />
         AUTO
       </button>
-      <input
-        type="range"
-        aria-label="Displayed cell limit"
-        aria-valuetext={`${limit.toLocaleString()} Cells · ${display.mode}`}
-        min={CELL_DISPLAY_MIN}
-        max={CELL_DISPLAY_MAX}
-        step={CELL_DISPLAY_STEP}
-        value={limit}
-        onChange={(event) => {
-          setCellDisplayLimit(Number(event.currentTarget.value));
-        }}
+      <span
+        className="cknerv-cell-display-track"
+        data-cell-display-track
         style={{
-          width: 68,
+          position: 'relative',
+          display: 'inline-block',
+          width: 76,
           height: 18,
-          margin: 0,
-          accentColor: accent,
-          cursor: 'ew-resize',
+          flexShrink: 0,
         }}
-      />
+      >
+        <span
+          aria-hidden="true"
+          style={{
+            position: 'absolute',
+            left: 0,
+            right: 0,
+            top: 9,
+            height: 1,
+            background: rgba(HUD_COLORS.cyanWire, 0.16),
+          }}
+        />
+        <span
+          aria-hidden="true"
+          style={{
+            position: 'absolute',
+            left: 0,
+            top: 9,
+            width: `${progress}%`,
+            height: 1,
+            background: rgba(accent, 0.72),
+            boxShadow: `0 0 5px ${rgba(accent, 0.28)}`,
+          }}
+        />
+        {CELL_TRACK_TICKS.map((tick) => (
+          <span
+            key={tick}
+            aria-hidden="true"
+            style={{
+              position: 'absolute',
+              left: `${tick}%`,
+              top: 7,
+              width: 1,
+              height: 5,
+              background: tick <= progress
+                ? rgba(accent, 0.52)
+                : rgba(HUD_COLORS.cyanWire, 0.14),
+              transform: 'translateX(-0.5px)',
+            }}
+          />
+        ))}
+        <span
+          aria-hidden="true"
+          style={{
+            position: 'absolute',
+            left: `${progress}%`,
+            top: 6,
+            width: 6,
+            height: 6,
+            border: `1px solid ${accent}`,
+            background: HUD_COLORS.ground,
+            boxShadow: `0 0 7px ${rgba(accent, 0.72)}`,
+            transform: 'translateX(-50%) rotate(45deg)',
+          }}
+        />
+        <input
+          className="cknerv-cell-display-slider"
+          type="range"
+          aria-label="Displayed cell limit"
+          aria-valuetext={`${limit.toLocaleString()} Cells · ${display.mode}`}
+          min={CELL_DISPLAY_MIN}
+          max={CELL_DISPLAY_MAX}
+          step={CELL_DISPLAY_STEP}
+          value={limit}
+          onChange={(event) => {
+            setCellDisplayLimit(Number(event.currentTarget.value));
+          }}
+          style={{
+            appearance: 'none',
+            position: 'absolute',
+            zIndex: 1,
+            inset: 0,
+            width: '100%',
+            height: '100%',
+            margin: 0,
+            opacity: 0,
+            cursor: 'ew-resize',
+          }}
+        />
+      </span>
       <output
         aria-label={`${visible.toLocaleString()} Cells displayed`}
         style={{
-          minWidth: 28,
+          minWidth: 31,
           color: accent,
           fontSize: 9,
-          letterSpacing: 0.4,
+          fontVariantNumeric: 'tabular-nums',
+          letterSpacing: 0.65,
           textAlign: 'right',
+          textShadow: `0 0 6px ${rgba(accent, 0.38)}`,
         }}
       >
         {fmtCellCount(visible)}
@@ -224,8 +320,11 @@ function RenderQualityControl() {
       style={{
         display: 'inline-flex',
         alignItems: 'center',
-        gap: 6,
+        gap: 7,
         flexShrink: 0,
+        height: 20,
+        paddingLeft: 12,
+        borderLeft: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.1)}`,
         pointerEvents: 'auto',
         fontFamily: HUD_FONTS.mono,
       }}
@@ -242,26 +341,26 @@ function RenderQualityControl() {
         QUALITY
       </span>
       <span
+        className="cknerv-quality-rail"
+        data-quality-rail
         style={{
+          position: 'relative',
           display: 'inline-flex',
-          height: 20,
-          overflow: 'hidden',
-          border: `1px solid ${rgba(accent, 0.28)}`,
-          borderRadius: 2,
-          background: 'rgba(0,0,0,.34)',
-          boxShadow: `inset 0 0 8px ${rgba(accent, 0.035)}`,
+          alignItems: 'center',
+          height: 18,
+          padding: '0 1px',
         }}
       >
         {QUALITY_MODES.map((mode, index) => {
           const active = quality.mode === mode;
           const autoSuffix = mode === 'auto' && active
-            ? `/${quality.effective.slice(0, 1).toUpperCase()}`
+            ? `·${quality.effective.slice(0, 1).toUpperCase()}`
             : '';
           return (
             <button
               key={mode}
               type="button"
-              className="cknerv-quality-option"
+              className="cknerv-hud-control-button cknerv-quality-option"
               aria-label={`${mode[0].toUpperCase()}${mode.slice(1)} render quality`}
               aria-pressed={active}
               data-quality-option={mode}
@@ -274,24 +373,53 @@ function RenderQualityControl() {
               }}
               style={{
                 appearance: 'none',
-                minWidth: mode === 'auto' ? 42 : 34,
-                height: 20,
-                padding: '0 5px',
+                position: 'relative',
+                minWidth: mode === 'auto' ? 43 : 32,
+                height: 18,
+                padding: '0 5px 2px',
                 border: 0,
-                borderRight: index < QUALITY_MODES.length - 1
-                  ? `1px solid ${rgba(accent, 0.16)}`
-                  : 0,
-                background: active ? rgba(accent, 0.14) : 'transparent',
-                boxShadow: active ? `inset 0 -1px 0 ${accent}` : 'none',
+                background: 'transparent',
                 color: active ? accent : HUD_COLORS.dim,
-                font: `400 8.5px/20px ${HUD_FONTS.mono}`,
-                letterSpacing: 0.45,
+                font: `400 8.5px/16px ${HUD_FONTS.mono}`,
+                letterSpacing: 0.65,
                 textAlign: 'center',
+                textShadow: active
+                  ? `0 0 7px ${rgba(accent, 0.5)}`
+                  : 'none',
                 cursor: 'pointer',
-                transition: 'color .14s, background .14s, box-shadow .14s',
+                transition: 'color .14s, text-shadow .14s',
               }}
             >
+              {index > 0 ? (
+                <span
+                  aria-hidden="true"
+                  style={{
+                    position: 'absolute',
+                    left: 0,
+                    top: 6,
+                    width: 1,
+                    height: 5,
+                    background: rgba(HUD_COLORS.cyanWire, 0.12),
+                  }}
+                />
+              ) : null}
               {mode.toUpperCase()}{autoSuffix}
+              {active ? (
+                <span
+                  aria-hidden="true"
+                  style={{
+                    position: 'absolute',
+                    left: '50%',
+                    bottom: 0,
+                    width: 4,
+                    height: 4,
+                    border: `1px solid ${accent}`,
+                    background: HUD_COLORS.ground,
+                    boxShadow: `0 0 6px ${rgba(accent, 0.7)}`,
+                    transform: 'translateX(-50%) rotate(45deg)',
+                  }}
+                />
+              ) : null}
             </button>
           );
         })}
