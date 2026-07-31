@@ -132,6 +132,13 @@ impl<P: Projection> ProjectionRuntime for ProjectionRunner<P> {
 
 impl<P: Projection> ApplyMutation for ProjectionRunner<P> {
     fn apply(&self, rm: &RevisionedMutation) {
+        if let cknerv_core::Mutation::BackfillProgress { active, .. } = &rm.mutation {
+            if *active {
+                self.ring.clear();
+            } else {
+                self.ring.clear_and_shrink();
+            }
+        }
         // Collect deltas under the projection's own write lock. The lock
         // is released before broadcasting so a slow subscriber can't
         // wedge the reducer task. (Same discipline as simulator.)
@@ -253,6 +260,42 @@ mod tests {
             lock_kind: Default::default(),
             asset_kind: Default::default(),
         }
+    }
+
+    #[test]
+    fn replay_progress_compacts_projection_delta_ring() {
+        let mut registry = Registry::new();
+        registry.register(CellGalaxy::new());
+        let runtime = registry.lookup("cells").expect("cells runtime");
+        let writer = registry.writers().into_iter().next().expect("cells writer");
+
+        for revision in 1..=3 {
+            writer.apply(&RevisionedMutation {
+                revision,
+                mutation: Mutation::TxLanded {
+                    tx_hash: format!("0xtx{revision}"),
+                    block: revision,
+                    at: revision,
+                    inputs: vec![],
+                    outputs: vec![output(revision)],
+                },
+            });
+        }
+        assert!(runtime.delta_ring_snapshot().len() > 3);
+
+        writer.apply(&RevisionedMutation {
+            revision: 4,
+            mutation: Mutation::BackfillProgress {
+                done: 25,
+                total: 100,
+                active: true,
+                phase: cknerv_core::ReplayPhase::Boot,
+            },
+        });
+        let ring = runtime.delta_ring_snapshot();
+        assert_eq!(ring.len(), 1);
+        assert_eq!(ring[0].rev, 4);
+        assert_eq!(ring[0].value["type"], "backfill");
     }
 
     #[test]

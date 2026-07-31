@@ -52,8 +52,9 @@ function cloneChain(c: ChainEntry): ChainEntry {
   };
 }
 
-/** True iff this mutation needs a chain-table change. `cell_tagged` is
- *  projection-only and produces no entity-table side effect.
+/** True iff this mutation needs a chain-table change. `cell_tagged` and
+ *  `cell_hydration_completed` are projection-only and produce no entity-table
+ *  side effect.
  *  `chain_node_registered` updates `EntityStore.chain_nodes` (a separate
  *  slice from `ChainEntry`); this reducer is `ChainEntry`-only so it
  *  reports false here. Consumers maintaining the chain-nodes list
@@ -69,6 +70,7 @@ function touchesChain(m: Mutation): boolean {
     case 'chain_sync_updated':
       return true;
     case 'cell_tagged':
+    case 'cell_hydration_completed':
     case 'chain_node_registered':
     case 'peers_updated':
     case 'chain_node_info_updated':
@@ -190,6 +192,10 @@ function applyToChain(chain: ChainEntry, m: Mutation): void {
     }
     case 'cell_tagged': {
       // projection-only; no chain-table update
+      return;
+    }
+    case 'cell_hydration_completed': {
+      // cell-galaxy persistence metadata only
       return;
     }
     case 'chain_node_registered': {

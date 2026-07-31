@@ -94,11 +94,18 @@ chain entity advances and cells accumulate. Note the `chain.tip` JSON path
 ```bash
 SMOKE_WORKDIR=$(mktemp -d /tmp/cknerv-smoke.XXXXXX)
 ./target/release/cknerv init -C "$SMOKE_WORKDIR"
+# Keep this smoke quick while still exercising target-driven hydration.
+sed -i 's/cell_cap = 20000/cell_cap = 100/' "$SMOKE_WORKDIR/cknerv.toml"
 ./target/release/cknerv run -C "$SMOKE_WORKDIR" \
   --rpc http://localhost:8114 --no-open --port 17001 \
   > /tmp/cknerv_smoke.log 2>&1 &
 CKNERV_PID=$!
-sleep 5
+STATE_FILE="$SMOKE_WORKDIR/data/cknerv-state.json"
+for _ in $(seq 1 60); do
+  test -s "$STATE_FILE" && break
+  sleep 1
+done
+test -s "$STATE_FILE"
 
 # 1. Chain entity reflects the real chain. tip is nested under .chain
 TIP1=$(curl -s http://localhost:17001/api/entities/chain/snapshot \
@@ -120,19 +127,22 @@ echo "tip after 35s: $TIP2"
 
 # 3. Cells accumulated. The cell set is snapshot.cells (an array)
 CELLS=$(curl -s http://localhost:17001/api/projections/cells/snapshot \
-  | python3 -c "import sys,json; print(len(json.load(sys.stdin)['snapshot']['cells']))")
-echo "cells observed: $CELLS"
+  | python3 -c "import sys,json; print(sum(c['death_at_ms'] is None for c in json.load(sys.stdin)['snapshot']['cells']))")
+echo "live cells observed: $CELLS  (target: 100, or fewer only if genesis was reached)"
 
 kill -INT $CKNERV_PID
 wait $CKNERV_PID
 
 # 4. Graceful shutdown persisted a valid derived-state file.
-STATE_FILE="$SMOKE_WORKDIR/data/cknerv-state.json"
 test -s "$STATE_FILE"
 SAVED_TIP=$(python3 -c \
   "import json,sys; print(json.load(open(sys.argv[1]))['entities']['chain']['tip'])" \
   "$STATE_FILE")
+HYDRATED_TARGET=$(python3 -c \
+  "import json,sys; print(json.load(open(sys.argv[1]))['projections']['cells']['hydrated_cell_target'])" \
+  "$STATE_FILE")
 echo "persisted tip: $SAVED_TIP"
+echo "persisted Cell target: $HYDRATED_TARGET  (must be 100)"
 
 # 5. Restart from the same workdir and confirm resume, not boot backfill.
 ./target/release/cknerv run -C "$SMOKE_WORKDIR" \
@@ -154,8 +164,9 @@ Pass criteria:
 - chain snapshot returns a `chain.tip` matching the node's `get_tip_block_number`
   (cknerv may trail by a block or two — it ingests blocks asynchronously)
 - tip advances over the observation window (if the chain is producing blocks)
-- cells projection returns a non-empty `snapshot.cells` set once the chain
-  has tx activity
+- cells projection reaches the configured 100-live-Cell target, unless the
+  reverse scan reached genesis with fewer globally available Cells
+- persisted `projections.cells.hydrated_cell_target` is `100`
 - after boot replay completes, `data/cknerv-state.json` exists before shutdown
 - no panics in cknerv's stdout (`grep -iE "panic|error|fatal" /tmp/cknerv_smoke.log`)
 - clean SIGINT shutdown persists a non-empty state file, exits, frees the port,
@@ -175,8 +186,8 @@ Open `http://localhost:7001` (or whatever `--port` you used):
 - [ ] No errors in browser DevTools console
 - [ ] Tip advances steadily (watch CkbNetworkHud's tip readout)
 - [ ] After ~30 min: chain entity tip matches `curl get_tip_block_number`
-- [ ] Status strip reaches `DATA LIVE`; no transport warning banner remains
-- [ ] On an idle chain, `DATA LIVE` remains live for more than 15 seconds
+- [ ] No transport warning banner remains after both streams connect
+- [ ] On an idle chain, transport remains nominal for more than 15 seconds
 - [ ] DevTools Network → WS shows both streams receiving a heartbeat about
       every five seconds when there are no data frames
 - [ ] Stop cknerv while leaving the page open: transport becomes

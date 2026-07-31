@@ -14,12 +14,18 @@ pub struct Ring<T> {
 impl<T: Clone> Ring<T> {
     pub fn with_capacity(cap: usize) -> Self {
         Self {
-            inner: Mutex::new(VecDeque::with_capacity(cap)),
+            // Keep the logical cap without eagerly reserving tens of thousands
+            // of entries. Most fresh/restarted servers need only a small live
+            // suffix, and replay barriers compact historical segments.
+            inner: Mutex::new(VecDeque::new()),
             cap,
         }
     }
 
     pub fn push(&self, item: T) {
+        if self.cap == 0 {
+            return;
+        }
         let mut g = self.inner.lock().unwrap();
         if g.len() >= self.cap {
             g.pop_front();
@@ -42,5 +48,44 @@ impl<T: Clone> Ring<T> {
 
     pub fn capacity(&self) -> usize {
         self.cap
+    }
+
+    /// Drop every retained entry while keeping the current allocation for the
+    /// next short replay segment.
+    pub fn clear(&self) {
+        self.inner.lock().unwrap().clear();
+    }
+
+    /// Drop entries and release their backing allocation. Used at terminal
+    /// replay barriers so boot-only capacity does not remain in steady-state
+    /// RSS.
+    pub fn clear_and_shrink(&self) {
+        *self.inner.lock().unwrap() = VecDeque::new();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Ring;
+
+    #[test]
+    fn clear_preserves_logical_capacity_and_accepts_new_entries() {
+        let ring = Ring::with_capacity(2);
+        ring.push(1);
+        ring.push(2);
+        ring.clear();
+        assert!(ring.is_empty());
+        assert_eq!(ring.capacity(), 2);
+        ring.push(3);
+        assert_eq!(ring.snapshot(), vec![3]);
+        ring.clear_and_shrink();
+        assert!(ring.is_empty());
+    }
+
+    #[test]
+    fn zero_capacity_ring_never_retains_an_entry() {
+        let ring = Ring::with_capacity(0);
+        ring.push(1);
+        assert!(ring.is_empty());
     }
 }

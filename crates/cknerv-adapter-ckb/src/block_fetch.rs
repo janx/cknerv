@@ -33,7 +33,7 @@ const DATA_HEX_CAP_BYTES: usize = 1024;
 /// Returns `Ok(None)` if the block isn't visible yet (RPC race), letting the
 /// poll loop retry on the next tick.
 pub async fn fetch_and_translate(rpc: &RpcClient, number: u64) -> Result<Option<FetchedBlock>> {
-    fetch_and_translate_with_time(rpc, number, BlockTimeSource::Observed).await
+    fetch_and_translate_with_time(rpc, number, BlockTimeSource::Observed, true).await
 }
 
 /// Fetch + translate a block that is being replayed rather than observed at
@@ -45,7 +45,20 @@ pub(crate) async fn fetch_and_translate_replay(
     rpc: &RpcClient,
     number: u64,
 ) -> Result<Option<FetchedBlock>> {
-    fetch_and_translate_with_time(rpc, number, BlockTimeSource::Header).await
+    fetch_and_translate_replay_with_size(rpc, number, true).await
+}
+
+/// Replay fetch with optional canonical serialized-size recovery. Only the
+/// latest rolling metrics window needs exact block sizes during a deep boot
+/// hydration; skipping the full JSON -> typed BlockView clone for older
+/// blocks substantially reduces discovery allocations without changing Cell
+/// or transaction mutations.
+pub(crate) async fn fetch_and_translate_replay_with_size(
+    rpc: &RpcClient,
+    number: u64,
+    include_size: bool,
+) -> Result<Option<FetchedBlock>> {
+    fetch_and_translate_with_time(rpc, number, BlockTimeSource::Header, include_size).await
 }
 
 #[derive(Clone, Copy)]
@@ -58,13 +71,18 @@ async fn fetch_and_translate_with_time(
     rpc: &RpcClient,
     number: u64,
     time_source: BlockTimeSource,
+    include_size: bool,
 ) -> Result<Option<FetchedBlock>> {
     let Some(block) = rpc.get_block_by_number(number).await? else {
         return Ok(None);
     };
     let observed_at = now_ms();
     let at = block_time_ms(&block, time_source, observed_at);
-    let size = serialized_block_size(&block);
+    let size = if include_size {
+        serialized_block_size(&block)
+    } else {
+        0
+    };
     let hash = header_hash(&block, number)?.to_string();
     let parent_hash = header_parent_hash(&block, number)?.to_string();
     let mutations = translate_block(&block, number, at, size)?;
@@ -115,8 +133,8 @@ pub fn translate_block(block: &Value, number: u64, at: u64, size: u64) -> Result
 
     let txs = block["transactions"]
         .as_array()
-        .cloned()
-        .unwrap_or_default();
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
     let tx_count =
         u32::try_from(txs.len()).map_err(|_| anyhow!("block {number}: tx_count exceeds u32"))?;
 
@@ -135,8 +153,8 @@ pub fn translate_block(block: &Value, number: u64, at: u64, size: u64) -> Result
             .ok_or_else(|| anyhow!("block {number}: tx missing hash"))?
             .to_string();
 
-        let inputs = parse_inputs(&t, &tx_hash)?;
-        let outputs = parse_outputs(&t, &tx_hash)?;
+        let inputs = parse_inputs(t, &tx_hash)?;
+        let outputs = parse_outputs(t, &tx_hash)?;
 
         out.push(Mutation::TxLanded {
             tx_hash,
@@ -151,7 +169,7 @@ pub fn translate_block(block: &Value, number: u64, at: u64, size: u64) -> Result
 }
 
 fn parse_inputs(tx: &Value, tx_hash: &str) -> Result<Vec<OutPoint>> {
-    let inputs_json = tx["inputs"].as_array().cloned().unwrap_or_default();
+    let inputs_json = tx["inputs"].as_array().map(Vec::as_slice).unwrap_or(&[]);
     let mut inputs = Vec::with_capacity(inputs_json.len());
     for (j, inp) in inputs_json.iter().enumerate() {
         let prev = &inp["previous_output"];
@@ -172,8 +190,11 @@ fn parse_inputs(tx: &Value, tx_hash: &str) -> Result<Vec<OutPoint>> {
 }
 
 fn parse_outputs(tx: &Value, tx_hash: &str) -> Result<Vec<TxOutputInfo>> {
-    let outputs_json = tx["outputs"].as_array().cloned().unwrap_or_default();
-    let outputs_data = tx["outputs_data"].as_array().cloned().unwrap_or_default();
+    let outputs_json = tx["outputs"].as_array().map(Vec::as_slice).unwrap_or(&[]);
+    let outputs_data = tx["outputs_data"]
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
     let mut outputs = Vec::with_capacity(outputs_json.len());
     for (i, o) in outputs_json.iter().enumerate() {
         let capacity = parse_hex_u64(

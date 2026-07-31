@@ -257,6 +257,18 @@ describe('applyChainMutation', () => {
     expect(after).toBe(before); // referentially identical — no clone
   });
 
+  it('cell_hydration_completed is a no-op (projection metadata only)', () => {
+    const before = emptyChainCache();
+    const after = applyChainMutation(before, {
+      type: 'cell_hydration_completed',
+      target: 20_000,
+      available: 20_017,
+      from_block: 123,
+      at_tip: 456,
+    });
+    expect(after).toBe(before);
+  });
+
   it('ignores projection-only mutations (e.g. backfill_progress) without throwing', () => {
     const prev = emptyChainCache();
     // backfill_progress rides the chain broadcast but is intentionally not in

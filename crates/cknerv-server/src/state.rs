@@ -159,6 +159,13 @@ impl ServerState {
             revision,
             mutation: m,
         };
+        if let Mutation::BackfillProgress { active, .. } = &rev.mutation {
+            if *active {
+                self.mutation_ring.clear();
+            } else {
+                self.mutation_ring.clear_and_shrink();
+            }
+        }
         self.mutation_ring.push(rev.clone());
 
         // 2. Fan into projections. Each projection takes its own
@@ -494,7 +501,7 @@ fn apply_chain_mutation(chain: &mut Chain, m: &Mutation) {
             chain.difficulty = difficulty.clone();
             chain.chain_name = chain_name.clone();
         }
-        Mutation::CellTagged { .. } => {
+        Mutation::CellTagged { .. } | Mutation::CellHydrationCompleted { .. } => {
             // Projection-only: cell-galaxy consumes via its own
             // `apply_mutation`. Entity-store is a no-op.
         }
@@ -735,6 +742,47 @@ mod tests {
             });
             assert_eq!(rev, i + 1);
         }
+    }
+
+    #[test]
+    fn replay_progress_is_a_mutation_ring_compaction_barrier() {
+        let state = ServerState::new();
+        for number in 1..=10 {
+            state.apply_mutation(Mutation::BlockMined {
+                number,
+                hash: format!("0x{number}"),
+                tx_count: 0,
+                size: 0,
+                at: number,
+            });
+        }
+        assert_eq!(state.mutation_ring_snapshot().len(), 10);
+
+        let barrier_revision = state.apply_mutation(Mutation::BackfillProgress {
+            done: 25,
+            total: 100,
+            active: true,
+            phase: ReplayPhase::Boot,
+        });
+        let ring = state.mutation_ring_snapshot();
+        assert_eq!(ring.len(), 1);
+        assert_eq!(ring[0].revision, barrier_revision);
+
+        state.apply_mutation(Mutation::BlockMined {
+            number: 11,
+            hash: "0x11".into(),
+            tx_count: 0,
+            size: 0,
+            at: 11,
+        });
+        assert_eq!(state.mutation_ring_snapshot().len(), 2);
+        state.apply_mutation(Mutation::BackfillProgress {
+            done: 100,
+            total: 100,
+            active: false,
+            phase: ReplayPhase::Boot,
+        });
+        assert_eq!(state.mutation_ring_snapshot().len(), 1);
     }
 
     #[test]

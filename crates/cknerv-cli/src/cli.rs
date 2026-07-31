@@ -45,9 +45,9 @@ pub struct RunArgs {
     #[arg(long)]
     pub no_open: bool,
 
-    /// One-run override for the profile-selected boot/catch-up/rebuild replay
-    /// window. 0 disables historical replay. Default: 1000 for devnet, 2000
-    /// otherwise.
+    /// One-run hard block limit for target-driven boot/rebuild hydration.
+    /// Without it, cknerv scans until galaxy.cell_cap live Cells or genesis.
+    /// 0 disables historical boot replay.
     #[arg(long, value_name = "N")]
     pub backfill_blocks: Option<u64>,
 }

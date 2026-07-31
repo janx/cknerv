@@ -32,26 +32,44 @@ pub async fn run(workdir: PathBuf, cfg: ResolvedConfig) -> Result<()> {
     std::fs::create_dir_all(&state_dir)?;
 
     tracing::info!(
-        "cknerv starting: rpc={}, port={}, workdir={}, replay_blocks={}, exact_reorg_blocks={}",
+        "cknerv starting: rpc={}, port={}, workdir={}, cell_target={}, replay_block_override={:?}, exact_reorg_blocks={}",
         cfg.rpc_url,
         cfg.port,
         workdir.display(),
+        cfg.galaxy.cell_cap,
         cfg.backfill_blocks,
         DEFAULT_REORG_WINDOW_BLOCKS,
     );
 
-    // If persisted state exists, skip the boot backfill and resume the
-    // forward poll from the saved tip (ServerBuilder::build hydrates the
-    // restored galaxy from the same file).
-    let resume_cursor = cknerv_server::peek_restored_chain_cursor(&state_dir);
+    // Restore only when the saved reservoir is known to satisfy the current
+    // Cell target. Legacy fixed-window state reports target=0; increasing
+    // `cell_cap` also invalidates the old reservoir. In either case start from
+    // empty derived state and let the boot checkpoint atomically replace the
+    // file. An explicit diagnostic block override likewise requests a fresh
+    // one-run replay rather than silently losing to the resume cursor.
+    let persisted_cursor = cknerv_server::peek_restored_chain_cursor(&state_dir);
+    let restore_persisted = cfg.backfill_blocks.is_none()
+        && persisted_cursor
+            .as_ref()
+            .is_some_and(|cursor| cursor.hydrated_cell_target >= cfg.galaxy.cell_cap);
+    if let Some(cursor) = persisted_cursor.as_ref() {
+        if !restore_persisted {
+            tracing::info!(
+                "saved Cell reservoir target {} does not satisfy requested {} (or a replay override is active); rebuilding",
+                cursor.hydrated_cell_target,
+                cfg.galaxy.cell_cap,
+            );
+        }
+    }
+    let resume_cursor = restore_persisted.then_some(persisted_cursor).flatten();
     let resume_tip = resume_cursor.as_ref().map(|cursor| cursor.tip);
     if let Some(tip) = resume_tip {
         tracing::info!(
             "restored state found (tip {tip}); skipping backfill, resuming forward poll"
         );
     }
-    let adapter = CkbDirectAdapter::new(cfg.rpc_url.clone())
-        .with_backfill_blocks(cfg.backfill_blocks)
+    let mut adapter = CkbDirectAdapter::new(cfg.rpc_url.clone())
+        .with_cell_target(cfg.galaxy.cell_cap)
         .with_reorg_window_blocks(DEFAULT_REORG_WINDOW_BLOCKS as u64)
         .with_resume_from(resume_tip)
         .with_resume_anchors(
@@ -59,6 +77,9 @@ pub async fn run(workdir: PathBuf, cfg: ResolvedConfig) -> Result<()> {
                 .map(|cursor| cursor.recent_blocks)
                 .unwrap_or_default(),
         );
+    if let Some(blocks) = cfg.backfill_blocks {
+        adapter = adapter.with_backfill_blocks(blocks);
+    }
     let galaxy_config = cknerv_core::projection::cells::CellGalaxyConfig {
         cell_cap: cfg.galaxy.cell_cap,
         recent_links_cap: cfg.galaxy.recent_links_cap,
@@ -74,6 +95,7 @@ pub async fn run(workdir: PathBuf, cfg: ResolvedConfig) -> Result<()> {
         .add_adapter(adapter)
         .add_projection(CellGalaxy::with_config(galaxy_config))
         .workdir(state_dir.clone())
+        .restore_persisted(restore_persisted)
         .build()?;
 
     let runtime_config_route = get(move || {

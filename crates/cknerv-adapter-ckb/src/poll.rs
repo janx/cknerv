@@ -13,6 +13,7 @@ use tokio::sync::mpsc;
 
 use cknerv_core::{EpochInfo, MempoolStats, Mutation, ReplayPhase};
 
+use crate::backfill::{hydrate_at_tip, HydrationPolicy};
 use crate::block_fetch::{fetch_and_translate, fetch_and_translate_replay};
 use crate::rpc::RpcClient;
 
@@ -25,8 +26,7 @@ const MIN_REORG_WINDOW_BLOCKS: u64 = 2;
 #[derive(Default)]
 pub struct PollState {
     /// Highest canonical height synchronized by the poller. This is normally
-    /// the last emitted `BlockMined`; a bounded catch-up may advance it to the
-    /// anchor immediately before the replay window.
+    /// the last emitted `BlockMined`.
     pub last_tip: Option<u64>,
     /// Canonical hashes observed by this adapter. The poller validates the
     /// hash at `last_tip` every cycle; a mismatch causes a backward walk over
@@ -40,10 +40,6 @@ pub struct PollState {
     /// Keeps the cause stable across transient block-visibility gaps even if
     /// the remaining gap falls below the initial catch-up threshold.
     catching_up: bool,
-    /// Start of a controlled rebuild after the common ancestor fell outside
-    /// retained history. Kept until the entire target window has replayed so
-    /// a transient block-visibility gap cannot silently skip its prefix.
-    rebuild_from: Option<u64>,
     pub last_chain_info: Option<(EpochInfo, u64, String, String)>,
     pub last_mempool: Option<MempoolStats>,
 }
@@ -97,19 +93,68 @@ pub async fn poll_once(
     catchup_threshold: u64,
     catchup_cap: u64,
 ) -> Result<()> {
-    poll_once_with_reorg_window(rpc, state, out, catchup_threshold, catchup_cap, catchup_cap).await
+    poll_once_with_policy(
+        rpc,
+        state,
+        out,
+        catchup_threshold,
+        HydrationPolicy::with_block_limit(usize::MAX, catchup_cap).for_rebuild(),
+        catchup_cap,
+    )
+    .await
 }
 
-/// Run one poll cycle with independent bounded-replay and exact-reorg
-/// horizons. [`poll_once`] preserves the historical coupled behavior for
-/// external callers; the production adapter uses this entry point so a deep
-/// boot window does not force an equally deep birth/death undo journal.
+/// Run one poll cycle with independent deep-rebuild and exact-reorg horizons.
+/// [`poll_once`] preserves the historical fixed-window rebuild policy for
+/// external callers; the production adapter uses a target-driven policy so its
+/// Cell hydration depth does not enlarge the birth/death undo journal.
 pub async fn poll_once_with_reorg_window(
     rpc: &RpcClient,
     state: &mut PollState,
     out: &mpsc::Sender<Mutation>,
     catchup_threshold: u64,
     catchup_cap: u64,
+    reorg_window_blocks: u64,
+) -> Result<()> {
+    poll_once_with_policy(
+        rpc,
+        state,
+        out,
+        catchup_threshold,
+        HydrationPolicy::with_block_limit(usize::MAX, catchup_cap).for_rebuild(),
+        reorg_window_blocks,
+    )
+    .await
+}
+
+/// Production poll path: catch-up always replays every missing canonical
+/// block, while an unprovably deep reorg rebuilds a target-sized Cell
+/// reservoir rather than falling back to a fixed recent-block guess.
+pub(crate) async fn poll_once_with_hydration(
+    rpc: &RpcClient,
+    state: &mut PollState,
+    out: &mpsc::Sender<Mutation>,
+    catchup_threshold: u64,
+    hydration_policy: HydrationPolicy,
+    reorg_window_blocks: u64,
+) -> Result<()> {
+    poll_once_with_policy(
+        rpc,
+        state,
+        out,
+        catchup_threshold,
+        hydration_policy.for_rebuild(),
+        reorg_window_blocks,
+    )
+    .await
+}
+
+async fn poll_once_with_policy(
+    rpc: &RpcClient,
+    state: &mut PollState,
+    out: &mpsc::Sender<Mutation>,
+    catchup_threshold: u64,
+    hydration_policy: HydrationPolicy,
     reorg_window_blocks: u64,
 ) -> Result<()> {
     // 1. Tip + block walk
@@ -120,7 +165,7 @@ pub async fn poll_once_with_reorg_window(
         out,
         tip,
         catchup_threshold,
-        catchup_cap,
+        hydration_policy,
         reorg_window_blocks,
     )
     .await?;
@@ -176,32 +221,9 @@ async fn sync_canonical_blocks(
     out: &mpsc::Sender<Mutation>,
     tip: u64,
     catchup_threshold: u64,
-    catchup_cap: u64,
+    hydration_policy: HydrationPolicy,
     reorg_window_blocks: u64,
 ) -> Result<()> {
-    // The only rebuild that can have no parent cursor begins at genesis. Keep
-    // its start explicitly so a transient get_block_by_number(0) gap resumes
-    // from zero rather than falling into the live-only boot initializer.
-    if state.last_tip.is_none() {
-        if let Some(from_block) = state.rebuild_from {
-            let result = emit_canonical_range(
-                rpc,
-                state,
-                out,
-                from_block,
-                tip,
-                Some(ReplayPhase::Rebuild),
-                reorg_window_blocks,
-            )
-            .await;
-            if result.is_ok() && state.last_tip == Some(tip) {
-                state.replaying_reorg = false;
-                state.rebuild_from = None;
-            }
-            return result;
-        }
-    }
-
     if state.last_tip.is_none() {
         // Preserve the legacy live-only boot behavior: establish the block
         // immediately before the current tip as an anchor, then emit only the
@@ -222,7 +244,6 @@ async fn sync_canonical_blocks(
             state.last_tip = Some(from_block.saturating_sub(1));
             state.replaying_reorg = true;
             state.catching_up = false;
-            state.rebuild_from = None;
 
             // A regressed tip can invalidate a suffix before any replacement
             // block exists. Keep the replay HUD active while waiting for that
@@ -246,7 +267,7 @@ async fn sync_canonical_blocks(
                 state,
                 out,
                 tip,
-                catchup_cap,
+                hydration_policy,
                 reorg_window_blocks,
             )
             .await;
@@ -266,30 +287,15 @@ async fn sync_canonical_blocks(
         // Reorg replay must begin at the actual invalidation boundary. Applying
         // the normal catch-up cap here would skip canonical transactions that
         // are required to undo/replace the orphan suffix.
-        (
-            prev + 1,
-            Some(if state.rebuild_from.is_some() {
-                ReplayPhase::Rebuild
-            } else {
-                ReplayPhase::Reorg
-            }),
-        )
+        (prev + 1, Some(ReplayPhase::Reorg))
     } else if state.catching_up {
         (prev + 1, Some(ReplayPhase::Catchup))
-    } else if catchup_cap > 0 && gap > catchup_threshold {
-        // Ordinary downtime catch-up intentionally keeps only the most recent
-        // configured window.
-        let lo = (prev + 1).max(tip.saturating_sub(catchup_cap.saturating_sub(1)));
-        if lo > prev + 1 {
-            let anchor_height = lo - 1;
-            let anchor_hash = rpc.get_block_hash(anchor_height).await?.ok_or_else(|| {
-                anyhow!("canonical catch-up anchor {anchor_height} missing while node tip is {tip}")
-            })?;
-            state.canonical_blocks.insert(anchor_height, anchor_hash);
-            state.last_tip = Some(anchor_height);
-        }
+    } else if gap > catchup_threshold {
+        // Never skip the middle of a downtime gap: doing so can retain Cells
+        // spent in omitted blocks and omit births that are still live. Large
+        // gaps use a calm replay envelope but remain canonically complete.
         state.catching_up = true;
-        (lo, Some(ReplayPhase::Catchup))
+        (prev + 1, Some(ReplayPhase::Catchup))
     } else {
         (prev + 1, None)
     };
@@ -298,7 +304,6 @@ async fn sync_canonical_blocks(
     if result.is_ok() && state.last_tip == Some(tip) {
         state.replaying_reorg = false;
         state.catching_up = false;
-        state.rebuild_from = None;
     }
     result
 }
@@ -308,53 +313,21 @@ async fn rebuild_canonical_window(
     state: &mut PollState,
     out: &mpsc::Sender<Mutation>,
     tip: u64,
-    catchup_cap: u64,
+    hydration_policy: HydrationPolicy,
     reorg_window_blocks: u64,
 ) -> Result<()> {
-    let from_block = if catchup_cap == 0 {
-        tip
-    } else {
-        tip.saturating_sub(catchup_cap.saturating_sub(1))
-    };
-    let parent_anchor = if from_block == 0 {
-        None
-    } else {
-        let number = from_block - 1;
-        let hash = rpc.get_block_hash(number).await?.ok_or_else(|| {
-            anyhow!("canonical rebuild parent {number} missing while node tip is {tip}")
-        })?;
-        Some((number, hash))
-    };
-
-    // Fetch the parent before publishing the reset. A transient RPC failure
-    // therefore leaves the currently visible derived state intact; once the
-    // reset is emitted, replay ownership moves entirely to this state machine.
-    let _ = out.send(Mutation::ChainRebuild { from_block }).await;
+    // Discovery and linkage validation happen before `ChainRebuild` is sent,
+    // so a transient visibility gap leaves the currently visible state intact
+    // and the next poll can retry cleanly.
+    let rebuilt =
+        hydrate_at_tip(rpc, tip, hydration_policy, ReplayPhase::Rebuild, true, out).await?;
     state.canonical_blocks.clear();
-    state.last_tip = None;
-    if let Some((number, hash)) = parent_anchor {
-        state.canonical_blocks.insert(number, hash);
-        state.last_tip = Some(number);
-    }
-    state.replaying_reorg = true;
+    state.seed_canonical(rebuilt.anchors);
+    state.last_tip = Some(rebuilt.tip);
+    state.prune_canonical_history(reorg_window_blocks);
+    state.replaying_reorg = false;
     state.catching_up = false;
-    state.rebuild_from = Some(from_block);
-
-    let result = emit_canonical_range(
-        rpc,
-        state,
-        out,
-        from_block,
-        tip,
-        Some(ReplayPhase::Rebuild),
-        reorg_window_blocks,
-    )
-    .await;
-    if result.is_ok() && state.last_tip == Some(tip) {
-        state.replaying_reorg = false;
-        state.rebuild_from = None;
-    }
-    result
+    Ok(())
 }
 
 /// Classify the current cursor as canonical, exactly rollbackable, or deeper

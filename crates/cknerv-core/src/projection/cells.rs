@@ -301,6 +301,12 @@ pub struct CellGalaxy {
     /// for clients connecting mid-backfill. Tx links still emit during
     /// backfill so the neural fabric refills along with cells.
     backfill: Option<BackfillState>,
+    /// Largest configured live-Cell target for which this reservoir was
+    /// completely hydrated. Zero identifies legacy or explicitly bounded
+    /// replay state that is not known to satisfy `config.cell_cap`.
+    hydrated_cell_target: usize,
+    /// Oldest canonical block included by the last complete hydration.
+    hydration_floor: Option<u64>,
 }
 
 /// Persisted form of [`CellGalaxy`]. Written at preserved-workdir checkpoints
@@ -334,6 +340,12 @@ pub struct CellGalaxyPersisted {
     /// (pre-fix persisted blobs lack this field; they load as empty).
     #[serde(default)]
     pub pending_births_tag: Vec<(OutPoint, String)>,
+    /// Added compatibly: older state defaults to zero and is automatically
+    /// rebuilt when the configured reservoir target is larger.
+    #[serde(default)]
+    pub hydrated_cell_target: usize,
+    #[serde(default)]
+    pub hydration_floor: Option<u64>,
 }
 
 impl Default for CellGalaxy {
@@ -362,6 +374,8 @@ impl CellGalaxy {
             total_deaths: 0,
             pending_births_tag: std::collections::HashMap::new(),
             backfill: None,
+            hydrated_cell_target: 0,
+            hydration_floor: None,
         }
     }
 
@@ -399,6 +413,8 @@ impl CellGalaxy {
                 .iter()
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect(),
+            hydrated_cell_target: self.hydrated_cell_target,
+            hydration_floor: self.hydration_floor,
         }
     }
 
@@ -415,6 +431,8 @@ impl CellGalaxy {
         self.total_births = p.total_births;
         self.total_deaths = p.total_deaths;
         self.pending_births_tag = p.pending_births_tag.into_iter().collect();
+        self.hydrated_cell_target = p.hydrated_cell_target;
+        self.hydration_floor = p.hydration_floor;
         self.prune_reorg_journal();
 
         // Legacy persistence (pre-counter) lacks the two fields and
@@ -530,6 +548,8 @@ impl CellGalaxy {
         self.total_births = 0;
         self.total_deaths = 0;
         self.backfill = None;
+        self.hydrated_cell_target = 0;
+        self.hydration_floor = None;
 
         let mut deltas = vec![CellDelta::LinkPrune { from_block: 0 }];
         if !ids.is_empty() {
@@ -542,10 +562,10 @@ impl CellGalaxy {
         deltas
     }
 
-    /// Drop dead cells past the death-animation tail and expired pending
-    /// entries. Returns the ids of cells GC'd from the live set so consumers
-    /// know to drop them from their local cache.
-    fn gc(&mut self, now_ms: u64) -> Vec<u64> {
+    /// Drop dead cells past the death-animation tail. Returns the ids of Cells
+    /// removed from the retained set so consumers can discard their local
+    /// records.
+    fn gc_cells(&mut self, now_ms: u64) -> Vec<u64> {
         let tail = DEATH_DURATION_MS;
         let mut removed_ids = Vec::new();
         let mut removed_outpoints: Vec<OutPoint> = Vec::new();
@@ -568,6 +588,13 @@ impl CellGalaxy {
             }
         }
 
+        removed_ids
+    }
+
+    /// Remove causal records that no longer lead to a retained Cell. This is
+    /// more expensive than Cell-tail GC because it computes the transitive
+    /// parent closure across the retained link graph.
+    fn prune_recent_links(&mut self) {
         // Prune link records whose outputs are all dead AND whose tx
         // isn't referenced as a parent by any surviving link. The
         // recursive reference check keeps the ancestor chain intact:
@@ -603,7 +630,15 @@ impl CellGalaxy {
             self.recent_links
                 .retain(|link| keep.contains(&link.tx_hash));
         }
+    }
 
+    /// Full steady-state GC. Historical replay uses [`Self::gc_cells`] per
+    /// block and runs causal-link pruning once at its terminal barrier: the
+    /// FIFO cap already bounds replay memory, while recomputing a transitive
+    /// closure for every historical block makes large reservoirs quadratic.
+    fn gc(&mut self, now_ms: u64) -> Vec<u64> {
+        let removed_ids = self.gc_cells(now_ms);
+        self.prune_recent_links();
         removed_ids
     }
 
@@ -715,12 +750,17 @@ impl CellGalaxy {
         self.block_hashes.insert(number, hash.to_string());
         self.prune_reorg_journal();
 
-        // Cap enforcement (kill oldest *generic* alive above the configured cap).
-        // Real birth/death is now driven entirely by tx_landed; block_mined
-        // just updates the pulse + GCs.
-        let cap_killed = self.enforce_cap(at_ms);
-        for id in cap_killed {
-            deltas.push(CellDelta::Death { id, at_ms });
+        // A Cell alive at an intermediate historical prefix may still be
+        // spent later in the same ordered replay. Enforcing the cap here can
+        // evict an older output that survives at the final tip, then leave the
+        // reservoir under-filled after the temporary output is spent. Defer
+        // cap enforcement until the terminal replay marker; ordinary live
+        // blocks keep the existing death-tail animation.
+        if self.backfill.is_none() {
+            let cap_killed = self.enforce_cap(at_ms);
+            for id in cap_killed {
+                deltas.push(CellDelta::Death { id, at_ms });
+            }
         }
 
         // Pulse throttle. Suppressed during backfill so the boot replay
@@ -733,7 +773,11 @@ impl CellGalaxy {
         }
 
         // GC dead cells past the death-animation tail.
-        let gc_removed = self.gc(at_ms);
+        let gc_removed = if self.backfill.is_some() {
+            self.gc_cells(at_ms)
+        } else {
+            self.gc(at_ms)
+        };
         if !gc_removed.is_empty() {
             deltas.push(CellDelta::Gc { ids: gc_removed });
         }
@@ -1022,17 +1066,40 @@ impl Projection for CellGalaxy {
                 active,
                 phase,
             } => {
+                let was_active = self.backfill.is_some();
                 self.backfill = active.then_some(BackfillState {
                     done: *done,
                     total: *total,
                     phase: *phase,
                 });
-                vec![CellDelta::Backfill {
+                let mut deltas = vec![CellDelta::Backfill {
                     done: *done,
                     total: *total,
                     active: *active,
                     phase: *phase,
-                }]
+                }];
+                if !active && was_active {
+                    let at_ms = self
+                        .cells
+                        .iter()
+                        .map(|cell| cell.death_at_ms.unwrap_or(cell.born_at_ms))
+                        .max()
+                        .unwrap_or(0);
+                    deltas.extend(
+                        self.enforce_cap(at_ms)
+                            .into_iter()
+                            .map(|id| CellDelta::Death { id, at_ms }),
+                    );
+                    self.prune_recent_links();
+                }
+                deltas
+            }
+            Mutation::CellHydrationCompleted {
+                target, from_block, ..
+            } => {
+                self.hydrated_cell_target = usize::try_from(*target).unwrap_or(usize::MAX);
+                self.hydration_floor = Some(*from_block);
+                Vec::new()
             }
             _ => Vec::new(),
         }
@@ -1168,6 +1235,159 @@ mod tests {
                 .count(),
             2
         );
+    }
+
+    #[test]
+    fn replay_defers_cap_so_final_live_survivors_fill_the_target() {
+        let mut g = CellGalaxy::with_config(CellGalaxyConfig {
+            cell_cap: 2,
+            recent_links_cap: DEFAULT_RECENT_LINKS_CAP,
+            reorg_window_blocks: DEFAULT_REORG_WINDOW_BLOCKS,
+        });
+        g.apply_mutation(&Mutation::BackfillProgress {
+            done: 0,
+            total: 3,
+            active: true,
+            phase: ReplayPhase::Boot,
+        });
+
+        g.apply_mutation(&Mutation::BlockMined {
+            number: 1,
+            hash: "0xb1".into(),
+            tx_count: 1,
+            size: 0,
+            at: 1_000,
+        });
+        g.apply_mutation(&Mutation::TxLanded {
+            tx_hash: "0xmint".into(),
+            block: 1,
+            at: 1_000,
+            inputs: vec![],
+            outputs: vec![out(1, "a"), out(2, "b")],
+        });
+        g.apply_mutation(&Mutation::BlockMined {
+            number: 2,
+            hash: "0xb2".into(),
+            tx_count: 1,
+            size: 0,
+            at: 1_100,
+        });
+        g.apply_mutation(&Mutation::TxLanded {
+            tx_hash: "0xsurvivor".into(),
+            block: 2,
+            at: 1_100,
+            inputs: vec![],
+            outputs: vec![out(3, "c")],
+        });
+
+        // At this prefix three Cells are alive. The next block spends mint#1;
+        // enforcing the cap before that transaction would wrongly evict the
+        // older mint#0 survivor and leave only one final live Cell.
+        let block = g.apply_mutation(&Mutation::BlockMined {
+            number: 3,
+            hash: "0xb3".into(),
+            tx_count: 1,
+            size: 0,
+            at: 1_200,
+        });
+        assert!(!block
+            .iter()
+            .any(|delta| matches!(delta, CellDelta::Death { .. })));
+        g.apply_mutation(&Mutation::TxLanded {
+            tx_hash: "0xspend".into(),
+            block: 3,
+            at: 1_200,
+            inputs: vec![op("0xmint", 1)],
+            outputs: vec![],
+        });
+        g.apply_mutation(&Mutation::BackfillProgress {
+            done: 3,
+            total: 3,
+            active: false,
+            phase: ReplayPhase::Boot,
+        });
+
+        let alive: Vec<OutPoint> = g
+            .snapshot()
+            .cells
+            .into_iter()
+            .filter(|cell| cell.death_at_ms.is_none())
+            .map(|cell| cell.out_point)
+            .collect();
+        assert_eq!(alive, vec![op("0xmint", 0), op("0xsurvivor", 0)]);
+    }
+
+    #[test]
+    fn replay_defers_expensive_link_pruning_until_the_terminal_barrier() {
+        let mut g = make_galaxy();
+        g.apply_mutation(&Mutation::BackfillProgress {
+            done: 0,
+            total: 3,
+            active: true,
+            phase: ReplayPhase::Boot,
+        });
+        g.apply_mutation(&Mutation::BlockMined {
+            number: 1,
+            hash: "0xb1".into(),
+            tx_count: 1,
+            size: 0,
+            at: 1_000,
+        });
+        g.apply_mutation(&Mutation::TxLanded {
+            tx_hash: "0xobsolete".into(),
+            block: 1,
+            at: 1_000,
+            inputs: vec![],
+            outputs: vec![out(1, "a")],
+        });
+        g.apply_mutation(&Mutation::TxLanded {
+            tx_hash: "0xspend".into(),
+            block: 2,
+            at: 2_000,
+            inputs: vec![op("0xobsolete", 0)],
+            outputs: vec![],
+        });
+        g.apply_mutation(&Mutation::BlockMined {
+            number: 3,
+            hash: "0xb3".into(),
+            tx_count: 0,
+            size: 0,
+            at: 3_000,
+        });
+
+        assert!(g.cells.is_empty(), "Cell-tail GC still runs during replay");
+        assert_eq!(g.recent_links.len(), 1, "link closure is deferred");
+
+        g.apply_mutation(&Mutation::BackfillProgress {
+            done: 3,
+            total: 3,
+            active: false,
+            phase: ReplayPhase::Boot,
+        });
+        assert!(g.recent_links.is_empty());
+    }
+
+    #[test]
+    fn hydration_completion_metadata_persists_and_rebuild_resets_it() {
+        let mut g = make_galaxy();
+        g.apply_mutation(&Mutation::CellHydrationCompleted {
+            target: 10_000,
+            available: 10_017,
+            from_block: 42,
+            at_tip: 99,
+        });
+        let persisted = g.to_persisted();
+        assert_eq!(persisted.hydrated_cell_target, 10_000);
+        assert_eq!(persisted.hydration_floor, Some(42));
+
+        let mut restored = make_galaxy();
+        restored.restore_from(persisted);
+        assert_eq!(restored.hydrated_cell_target, 10_000);
+        assert_eq!(restored.hydration_floor, Some(42));
+
+        restored.apply_mutation(&Mutation::ChainRebuild { from_block: 80 });
+        assert_eq!(restored.hydrated_cell_target, 0);
+        assert_eq!(restored.hydration_floor, None);
     }
 
     #[test]
@@ -2124,6 +2344,8 @@ mod tests {
             total_births: 0, // legacy: field absent → defaulted to 0
             total_deaths: 0,
             pending_births_tag: Vec::new(),
+            hydrated_cell_target: 0,
+            hydration_floor: None,
         };
         let mut g = make_galaxy();
         g.restore_from(persisted);
@@ -2156,6 +2378,8 @@ mod tests {
             total_births: 0,
             total_deaths: 0,
             pending_births_tag: Vec::new(),
+            hydrated_cell_target: 0,
+            hydration_floor: None,
         };
         let mut g = make_galaxy();
         g.restore_from(persisted);
