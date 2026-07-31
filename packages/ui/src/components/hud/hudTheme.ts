@@ -62,10 +62,10 @@ export function injectHudTheme(doc: Document = document): void {
     + `\n@keyframes cknerv-hud-breathe{0%,100%{opacity:.82}50%{opacity:1}}`
     + `\n@keyframes cknerv-cell-consensus-enter{0%{opacity:0;transform:translate3d(12px,-2px,0) scale(.985)}55%{opacity:1}100%{opacity:1;transform:translate3d(0,0,0) scale(1)}}`
     + `\n@keyframes cknerv-route-hop-lock-pulse{0%{filter:brightness(1) drop-shadow(0 0 0 transparent)}18%{filter:brightness(1.58) drop-shadow(0 0 7px var(--route-hop-pulse-color,rgba(255,215,161,.76)))}52%{filter:brightness(1.16) drop-shadow(0 0 3px var(--route-hop-pulse-color,rgba(255,215,161,.42)))}100%{filter:brightness(1) drop-shadow(0 0 0 transparent)}}`
-    + `\n.cknerv-quality-option:hover{filter:brightness(1.28)}`
-    + `\n.cknerv-quality-option:focus-visible{outline:1px solid var(--hud-cyanWire);outline-offset:-2px}`
-    + `\n.cknerv-cell-display-auto:hover{filter:brightness(1.28)}`
-    + `\n.cknerv-cell-display-auto:focus-visible,.cknerv-cell-display-control input:focus-visible{outline:1px solid var(--hud-cyanWire);outline-offset:1px}`
+    + `\n.cknerv-hud-control-button:hover{filter:brightness(1.35)}`
+    + `\n.cknerv-hud-control-button:focus-visible{outline:1px solid rgba(32,240,255,.55);outline-offset:1px}`
+    + `\n.cknerv-cell-display-track:focus-within{filter:brightness(1.35)}`
+    + `\n.cknerv-cell-display-track:focus-within::after{content:'';position:absolute;left:0;right:0;bottom:0;height:1px;background:rgba(32,240,255,.42);box-shadow:0 0 5px rgba(32,240,255,.3)}`
     + `\n.cknerv-mesh-rail::-webkit-scrollbar{width:5px}`
     + `\n.cknerv-mesh-rail::-webkit-scrollbar-thumb{background:rgba(255,152,48,.35);border-radius:3px}`
     + `\n.cknerv-mesh-rail::-webkit-scrollbar-track{background:transparent}`
