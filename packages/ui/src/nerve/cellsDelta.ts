@@ -2,7 +2,7 @@
 // living mesh reacts to. Death vs gc is derived here: a cell whose
 // death_at_ms went null -> non-null really died (retract + flash); a cell
 // that vanished from the map while still alive (death_at_ms null) was
-// evicted by the 5000-cap (quiet fade). An already-dead cell that later
+// evicted by the configured Cell cap (quiet fade). An already-dead cell that later
 // gc's is a no-op — its edges retracted at death.
 
 export interface CellSnapshotEntry {

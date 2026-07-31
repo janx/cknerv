@@ -21,7 +21,9 @@ export function helixSeedFor(id: number): [number, number, number] {
   return helixSeedF64(id);
 }
 
-/** Visual constants — same defaults the reducer assumes. */
-export const INSTANCE_CAPACITY = 6000;
+/** Hard visual ceiling shared by every instanced Cell layer. The default
+ * server projection uses the same live-cell cap; a short death tail can remain
+ * in the browser cache without overflowing because draw ranges clamp here. */
+export const INSTANCE_CAPACITY = 20_000;
 export const BIRTH_DURATION_MS = 500;
 export const DEATH_DURATION_MS = 600;

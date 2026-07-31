@@ -112,6 +112,9 @@ export const BLOCK_HIGHLIGHT_DELAY_S = BLOCK_COMMIT_DELAY_S + 0.15;
 
 interface CellGalaxyProps {
   ckbNodeIds: string[];
+  /** Resolved server projection cap. The shared renderer hard ceiling still
+   * bounds allocations, while smaller profiles keep AUTO honest. */
+  cellCapacity?: number;
   /** Subset of `ckbNodeIds` whose chain node runs a miner. Miner pulses
    *  only fire from these positions. Falls back to all node ids when empty
    *  (e.g. tests / placeholder profile). */
@@ -656,9 +659,9 @@ export function CkbSelectionReticle({ size }: { size: number }) {
 // Zoom in → cells appear bigger → pick radius grows the same way.
 // No constant slop term — what you see is what you click.
 //
-// Performance: O(N) projections per click, no per-frame cost. N ≤ 6000
+// Performance: O(N) projections per click, no per-frame cost. N ≤ 20,000
 // (INSTANCE_CAPACITY); each iteration is a couple of Vector3 mul+project
-// — sub-ms on commodity hardware.
+// operations, keeping the work bounded to an explicit interaction.
 
 interface CellPickerProps {
   cellsListRef: React.MutableRefObject<Cell[]>;
@@ -906,6 +909,7 @@ function CellPicker({
  */
 export default function CellGalaxy({
   ckbNodeIds,
+  cellCapacity,
   minerCkbNodeIds,
   universeSeed,
   selectedId,
@@ -935,7 +939,11 @@ export default function CellGalaxy({
     : null;
   const { effective: quality } = useQualityRuntime();
   const cellDisplay = useCellDisplayRuntime();
-  const cellDisplayLimit = resolveCellDisplayLimit(cellDisplay, quality);
+  const cellDisplayLimit = resolveCellDisplayLimit(
+    cellDisplay,
+    quality,
+    cellCapacity,
+  );
   const dischargeArms = QUALITY_PRESETS[quality].dischargeArms;
   const memorySignal = QUALITY_PRESETS[quality].memorySignal;
   /** Per-frame mirror of the cellsList iteration order, written by

@@ -255,7 +255,7 @@ blocks = 2000
 
 [galaxy]
 profile = "auto" # auto, devnet, testnet, mainnet, custom
-cell_cap = 5000
+cell_cap = 20000
 recent_links_cap = 2048
 
 [galaxy.topology]
@@ -274,6 +274,15 @@ Profile defaults are resolved in `crates/cknerv-cli/src/config.rs`. `devnet`
 uses a smaller cell cap and shorter default backfill; `mainnet` uses sparser
 topology and lower pulse caps to reduce visual noise; `auto`, `testnet`, and
 `custom` start from balanced defaults.
+
+The dashboard's manual Cell-count controller tops out at the built-in
+20,000-Cell visual ceiling. AUTO scales within the resolved `cell_cap`; when an
+older config still specifies a smaller cap, the manual controller keeps its
+full range but cannot display records the server did not retain. Existing
+persisted state remains valid after increasing `cell_cap`. Run
+`cknerv prune --confirm` once only when you want the configured backfill to
+repopulate the larger retained view immediately; otherwise the retained set
+grows naturally as new blocks arrive.
 
 `recent_links_cap` retains authoritative causal evidence for inspection and
 memory recall. `pulses.link_ring_capacity` bounds only newly-arrived animation

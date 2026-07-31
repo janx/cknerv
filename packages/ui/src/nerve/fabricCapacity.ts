@@ -9,12 +9,11 @@
 export const FABRIC_SAMPLES_PER_EDGE = 4;
 
 /** Upper bound on the cells the graph can be built over in one frame.
- *  The live set is bounded by the backend cell_cap (5000 alive) plus a
- *  short death-tail / burst margin; INSTANCE_CAPACITY (6000 drawn
- *  points) plus headroom is a safe ceiling. The buffer is sized for
+ *  The live set is bounded by the default backend cell_cap (20,000 alive)
+ *  plus a short death-tail / block-burst margin. The buffer is sized for
  *  this worst case so the full k-NN graph never truncates in normal
  *  operation. */
-export const MAX_GRAPH_CELLS = 7000;
+export const MAX_GRAPH_CELLS = 22_000;
 
 /** Upper bound on the *mean* cell degree for k=5 symmetrised k-NN. The
  *  buffer is sized from edges ≈ cells × mean-degree / 2, so it is the
@@ -30,7 +29,7 @@ export const AVG_DEGREE_BOUND = 12;
  *  the full graph at capacity: edges ≈ cells × degree / 2, each edge
  *  FABRIC_SAMPLES_PER_EDGE segments. The complete mesh therefore
  *  renders rather than a truncated spanning-tree prefix at every quality.
- *    7000 × 9 / 2 × 4 = 126000 segments (~5.8 MB across pos+col buffers). */
+ *    22000 × 12 / 2 × 4 = 528000 segments (~24.2 MiB across pos+col buffers). */
 export const MAX_FABRIC_SEGMENTS = Math.ceil(
   ((MAX_GRAPH_CELLS * AVG_DEGREE_BOUND) / 2) * FABRIC_SAMPLES_PER_EDGE,
 );

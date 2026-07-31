@@ -134,7 +134,7 @@ impl ResolvedGalaxyConfig {
             },
             GalaxyProfile::Mainnet => Self {
                 profile,
-                cell_cap: 5000,
+                cell_cap: 20_000,
                 recent_links_cap: 1536,
                 topology: ResolvedGalaxyTopologyConfig {
                     neighbor_k: 3,
@@ -150,7 +150,7 @@ impl ResolvedGalaxyConfig {
             },
             GalaxyProfile::Auto | GalaxyProfile::Testnet | GalaxyProfile::Custom => Self {
                 profile,
-                cell_cap: 5000,
+                cell_cap: 20_000,
                 recent_links_cap: 2048,
                 topology: ResolvedGalaxyTopologyConfig {
                     neighbor_k: 4,
@@ -275,8 +275,9 @@ blocks = 2000
 [galaxy]
 # auto uses balanced defaults. Explicit: devnet, testnet, mainnet, custom.
 profile = "auto"
-# Maximum live cells retained by the server projection.
-cell_cap = 5000
+# Maximum live cells retained by the server projection and used by the
+# dashboard's automatic Cell-count budget.
+cell_cap = 20000
 # Recent tx-link records retained in server snapshots.
 recent_links_cap = 2048
 
@@ -318,6 +319,7 @@ mod tests {
         assert_eq!(r.port, 7001);
         assert!(r.open);
         assert_eq!(r.backfill_blocks, 2000);
+        assert_eq!(r.galaxy.cell_cap, 20_000);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -400,6 +402,7 @@ mod tests {
         assert_eq!(r.port, 7001);
         assert!(r.open);
         assert_eq!(r.backfill_blocks, 2000);
+        assert_eq!(r.galaxy.cell_cap, 20_000);
     }
 
     #[test]

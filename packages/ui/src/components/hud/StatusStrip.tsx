@@ -11,8 +11,10 @@ import {
 } from '../../tweaks/qualityPresets';
 import {
   CELL_DISPLAY_MAX,
-  CELL_DISPLAY_MIN,
-  CELL_DISPLAY_STEP,
+  cellDisplayLimitToSliderValue,
+  cellDisplaySliderMaximum,
+  cellDisplaySliderValueToLimit,
+  normalizeCellDisplayCapacity,
   resolveCellDisplayLimit,
   setCellDisplayLimit,
   setCellDisplayMode,
@@ -89,23 +91,46 @@ function fmtCellCount(count: number): string {
   return `${Number.isInteger(compact) ? compact : compact.toFixed(1)}K`;
 }
 
-function CellDisplayControl({ availableCells }: { availableCells?: number }) {
+function CellDisplayControl({
+  availableCells,
+  capacity = CELL_DISPLAY_MAX,
+}: {
+  availableCells?: number;
+  capacity?: number;
+}) {
   const quality = useQualityRuntime();
   const display = useCellDisplayRuntime();
-  const limit = resolveCellDisplayLimit(display, quality.effective);
+  const serverCapacity = Number.isFinite(capacity)
+    ? Math.max(0, Math.floor(capacity))
+    : CELL_DISPLAY_MAX;
+  const automaticCapacity = normalizeCellDisplayCapacity(serverCapacity);
+  const limit = resolveCellDisplayLimit(
+    display,
+    quality.effective,
+    automaticCapacity,
+  );
+  const sliderMaximum = cellDisplaySliderMaximum();
+  const sliderValue = cellDisplayLimitToSliderValue(limit);
   const available = Number.isFinite(availableCells)
     ? Math.max(0, Math.floor(availableCells ?? 0))
     : limit;
   const visible = Math.min(available, limit);
-  const progress = (
-    (limit - CELL_DISPLAY_MIN) / (CELL_DISPLAY_MAX - CELL_DISPLAY_MIN)
-  ) * 100;
+  const readout = visible < limit
+    ? `${fmtCellCount(visible)}/${fmtCellCount(limit)}`
+    : fmtCellCount(visible);
+  const progress = sliderMaximum > 0
+    ? (sliderValue / sliderMaximum) * 100
+    : 100;
   const accent = display.mode === 'auto'
     ? HUD_COLORS.cyanWire
     : HUD_COLORS.orange;
   const detail = display.mode === 'auto'
-    ? `${visible.toLocaleString()} displayed · adaptive ${quality.effective.toUpperCase()} cap ${limit.toLocaleString()}`
-    : `${visible.toLocaleString()} displayed · manual cap ${limit.toLocaleString()}`;
+    ? `${visible.toLocaleString()} displayed · adaptive ${quality.effective.toUpperCase()} cap ${limit.toLocaleString()} · server retains ${serverCapacity.toLocaleString()}`
+    : `${visible.toLocaleString()} displayed · manual cap ${limit.toLocaleString()}${
+      serverCapacity < limit
+        ? ` · server currently retains ${serverCapacity.toLocaleString()}`
+        : ''
+    }`;
 
   return (
     <div
@@ -115,6 +140,8 @@ function CellDisplayControl({ availableCells }: { availableCells?: number }) {
       data-cell-display-mode={display.mode}
       data-cell-display-limit={limit}
       data-cell-display-count={visible}
+      data-cell-display-capacity={CELL_DISPLAY_MAX}
+      data-cell-display-source-capacity={serverCapacity}
       title={detail}
       onPointerDown={(event) => event.stopPropagation()}
       onKeyDown={(event) => event.stopPropagation()}
@@ -257,12 +284,14 @@ function CellDisplayControl({ availableCells }: { availableCells?: number }) {
           type="range"
           aria-label="Displayed cell limit"
           aria-valuetext={`${limit.toLocaleString()} Cells · ${display.mode}`}
-          min={CELL_DISPLAY_MIN}
-          max={CELL_DISPLAY_MAX}
-          step={CELL_DISPLAY_STEP}
-          value={limit}
+          min={0}
+          max={sliderMaximum}
+          step={1}
+          value={sliderValue}
           onChange={(event) => {
-            setCellDisplayLimit(Number(event.currentTarget.value));
+            setCellDisplayLimit(
+              cellDisplaySliderValueToLimit(Number(event.currentTarget.value)),
+            );
           }}
           style={{
             appearance: 'none',
@@ -280,7 +309,7 @@ function CellDisplayControl({ availableCells }: { availableCells?: number }) {
       <output
         aria-label={`${visible.toLocaleString()} Cells displayed`}
         style={{
-          minWidth: 31,
+          minWidth: 44,
           color: accent,
           fontSize: 9,
           fontVariantNumeric: 'tabular-nums',
@@ -289,7 +318,7 @@ function CellDisplayControl({ availableCells }: { availableCells?: number }) {
           textShadow: `0 0 6px ${rgba(accent, 0.38)}`,
         }}
       >
-        {fmtCellCount(visible)}
+        {readout}
       </output>
     </div>
   );
@@ -428,13 +457,22 @@ function RenderQualityControl() {
   );
 }
 
-export default function StatusStrip({ level, uptimeMs, build, stream, cellCount }: {
+export default function StatusStrip({
+  level,
+  uptimeMs,
+  build,
+  stream,
+  cellCount,
+  cellCapacity,
+}: {
   level: AlertLevel;
   uptimeMs: number;
   build?: BuildInfo;
   stream?: StreamHealthSummary | null;
   /** Records currently available to the visual layer, before its draw cap. */
   cellCount?: number;
+  /** Resolved server projection cap used by AUTO and capacity disclosure. */
+  cellCapacity?: number;
 }) {
   const color = LEVEL_COLOR[level];
   const streamColor = stream && stream.phase !== 'live'
@@ -445,7 +483,10 @@ export default function StatusStrip({ level, uptimeMs, build, stream, cellCount 
       <span style={{ fontFamily: HUD_FONTS.display, fontWeight: 700, fontSize: 12, letterSpacing: 5, color: HUD_COLORS.orange, textShadow: '0 0 8px rgba(255,152,48,.5)' }}>CKNERV</span>
       {build ? <BuildChip build={build} /> : null}
       <span style={{ flex: 1 }} />
-      <CellDisplayControl availableCells={cellCount} />
+      <CellDisplayControl
+        availableCells={cellCount}
+        capacity={cellCapacity}
+      />
       <RenderQualityControl />
       {stream && streamColor ? (
         <span

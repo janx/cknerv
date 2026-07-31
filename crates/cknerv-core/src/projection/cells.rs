@@ -28,7 +28,7 @@ use crate::projection::Projection;
 use crate::{AssetKind, LockKind};
 
 // ── visual / behavior constants — mirror cellGalaxy.ts ───────────────
-pub const CELL_CAP: usize = 5000;
+pub const CELL_CAP: usize = 20_000;
 pub const DEFAULT_RECENT_LINKS_CAP: usize = 2048;
 /// Canonical block journals retained for exact reorg rollback. The CLI ties
 /// this to its configured backfill window so rollback and controlled rebuild
@@ -713,7 +713,7 @@ impl CellGalaxy {
         self.block_hashes.insert(number, hash.to_string());
         self.prune_reorg_journal();
 
-        // Cap enforcement (kill oldest *generic* alive if alive > 5000).
+        // Cap enforcement (kill oldest *generic* alive above the configured cap).
         // Real birth/death is now driven entirely by tx_landed; block_mined
         // just updates the pulse + GCs.
         let cap_killed = self.enforce_cap(at_ms);
