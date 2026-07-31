@@ -23,6 +23,7 @@ export * from './tweaks/SimClockScope';
 export * from './tweaks/useSimFrame';
 export * from './tweaks/qualityPresets';
 export * from './tweaks/adaptiveQuality';
+export * from './tweaks/cellDisplay';
 export * from './tweaks/cameraPresets';
 export { default as AdaptiveQualityController } from './tweaks/AdaptiveQualityController';
 export { default as SimClockTicker } from './tweaks/SimClockTicker';

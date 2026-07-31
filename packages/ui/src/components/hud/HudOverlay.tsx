@@ -61,8 +61,10 @@ const MESH_RAIL_STYLE: CSSProperties = { position: 'absolute', top: 42, right: 1
 const MESH_ZONE_COL: CSSProperties = { display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'flex-end' };
 const PANEL_FLOW: CSSProperties = { position: 'relative' };
 
-export default function HudOverlay({ chain, peers, localNode, cellsStats, selectedCell, cellRecordsById, recentCellLinks, cellCausalLens, cellCausalNavigation, tracedCellWriteSeq, cellTraceSource, cellTraceReadout, cellTraceResponseRef, cellTraceEvidenceFocusSourceId, cellTraceEvidencePreviewSourceId, onCellTraceEvidenceFocusChange, cellTraceRouteHopFocus, onCellTraceRouteHopFocusChange, cellTraceRouteHopLock, onCellTraceRouteHopLockChange, cellIdentityProofBinding, onTraceCellWrite, onCellIdentityProofRead, selectedNode, selectedPeer, onClearSelection, onClearCell, onClearNet, backfill, streamHealth, build, colonyCount }: {
+export default function HudOverlay({ chain, peers, localNode, cellsStats, cellCount, selectedCell, cellRecordsById, recentCellLinks, cellCausalLens, cellCausalNavigation, tracedCellWriteSeq, cellTraceSource, cellTraceReadout, cellTraceResponseRef, cellTraceEvidenceFocusSourceId, cellTraceEvidencePreviewSourceId, onCellTraceEvidenceFocusChange, cellTraceRouteHopFocus, onCellTraceRouteHopFocusChange, cellTraceRouteHopLock, onCellTraceRouteHopLockChange, cellIdentityProofBinding, onTraceCellWrite, onCellIdentityProofRead, selectedNode, selectedPeer, onClearSelection, onClearCell, onClearNet, backfill, streamHealth, build, colonyCount }: {
   chain: ChainEntry; peers: Peer[]; localNode: ChainNode | undefined; cellsStats: CellsStats;
+  /** Records available to CellGalaxy before the top-bar display cap. */
+  cellCount?: number;
   selectedCell?: Cell | null;
   /** Current Cell projection records for exact route-hop inspection. */
   cellRecordsById?: ReadonlyMap<number, Cell>;
@@ -194,7 +196,13 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats, select
       data-stream-phase={streamSummary?.phase}
     >
       {!reduced && <div style={SCAN_STYLE} />}
-      <StatusStrip level={alert.level} uptimeMs={now - mountAt.current} build={build} stream={streamSummary} />
+      <StatusStrip
+        level={alert.level}
+        uptimeMs={now - mountAt.current}
+        build={build}
+        stream={streamSummary}
+        cellCount={cellCount ?? cellsStats.inView}
+      />
       {streamSummary ? (
         <StreamHealthBanner summary={streamSummary} reducedMotion={reduced} />
       ) : null}

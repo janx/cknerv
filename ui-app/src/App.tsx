@@ -755,6 +755,7 @@ export default function App({
         peers={peers}
         localNode={localNode}
         cellsStats={cellsStats}
+        cellCount={cellsCache.cells.size}
         selectedCell={selectedCell}
         cellRecordsById={cellsCache.cells}
         recentCellLinks={cellsCache.recentLinks}
