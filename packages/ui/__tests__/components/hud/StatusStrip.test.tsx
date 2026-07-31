@@ -128,8 +128,15 @@ describe('StatusStrip', () => {
     expect(slider.getAttribute('aria-valuetext')).toContain('20,000 Cells');
     expect(control.getAttribute('data-cell-display-capacity')).toBe('20000');
     expect(control.getAttribute('data-cell-display-count')).toBe('5000');
+    expect(control.getAttribute('data-cell-display-available')).toBe('5000');
     expect(control.querySelector('[data-cell-display-track]')).not.toBeNull();
-    expect(within(control).getByText('5K/20K')).not.toBeNull();
+    expect(
+      control.querySelector('[data-cell-display-shown]')?.textContent,
+    ).toContain('5K');
+    expect(
+      control.querySelector('[data-cell-display-cap]')?.textContent,
+    ).toContain('CAP20K');
+    expect(automatic.textContent).toContain('AUTO');
 
     fireEvent.change(slider, { target: { value: '29' } });
 
@@ -139,11 +146,18 @@ describe('StatusStrip', () => {
     });
     expect(control.getAttribute('data-cell-display-mode')).toBe('manual');
     expect(control.getAttribute('data-cell-display-count')).toBe('3000');
-    expect(within(control).getByText('3K')).not.toBeNull();
+    expect(
+      control.querySelector('[data-cell-display-shown]')?.textContent,
+    ).toContain('3K');
+    expect(
+      control.querySelector('[data-cell-display-cap]')?.textContent,
+    ).toContain('CAP3K');
+    expect(automatic.textContent).toContain('MAN');
 
     fireEvent.click(automatic);
     expect(getCellDisplayRuntimeSnapshot().mode).toBe('auto');
     expect(automatic.getAttribute('aria-pressed')).toBe('true');
+    expect(automatic.textContent).toContain('AUTO');
   });
 
   it('keeps a 20K manual range while AUTO respects a smaller server cap', () => {
@@ -175,10 +189,71 @@ describe('StatusStrip', () => {
     });
     expect(control.getAttribute('data-cell-display-limit')).toBe('20000');
     expect(control.getAttribute('data-cell-display-count')).toBe('2000');
-    expect(within(control).getByText('2K/20K')).not.toBeNull();
+    expect(
+      control.querySelector('[data-cell-display-shown]')?.textContent,
+    ).toContain('2K');
+    expect(
+      control.querySelector('[data-cell-display-cap]')?.textContent,
+    ).toContain('CAP20K');
     expect(control.getAttribute('title')).toContain(
       'server currently retains 2,000',
     );
+  });
+
+  it('separates the shown count from the cap while exposing unused headroom', () => {
+    render(
+      <StatusStrip level="nominal" uptimeMs={0} cellCount={2_700} />,
+    );
+    const control = screen.getByRole('group', { name: 'Cell display count' });
+    const automatic = within(control).getByRole(
+      'button',
+      { name: 'Automatic cell count' },
+    );
+    const slider = within(control).getByRole(
+      'slider',
+      { name: 'Displayed cell limit' },
+    ) as HTMLInputElement;
+
+    fireEvent.change(slider, { target: { value: '59' } });
+
+    expect(getCellDisplayRuntimeSnapshot()).toEqual({
+      mode: 'manual',
+      manualLimit: 7_500,
+    });
+    expect(control.getAttribute('data-cell-display-count')).toBe('2700');
+    expect(control.getAttribute('data-cell-display-available')).toBe('2700');
+    expect(
+      control.querySelector('[data-cell-display-shown]')?.textContent,
+    ).toContain('2.7K');
+    expect(
+      control.querySelector('[data-cell-display-cap]')?.textContent,
+    ).toContain('CAP7.5K');
+    expect(control.querySelector('[data-cell-display-headroom]')).not.toBeNull();
+    expect(control.querySelector('[data-cell-display-shown-marker]')).not.toBeNull();
+    expect(control.querySelector('[data-cell-display-cap-marker]')).not.toBeNull();
+    expect(automatic.textContent).toContain('MAN');
+    expect(slider.getAttribute('aria-valuetext')).toContain(
+      '2,700 shown of 2,700 available',
+    );
+
+    fireEvent.change(slider, { target: { value: '53' } });
+
+    expect(control.getAttribute('data-cell-display-count')).toBe('2700');
+    expect(
+      control.querySelector('[data-cell-display-cap]')?.textContent,
+    ).toContain('CAP6K');
+
+    fireEvent.change(slider, { target: { value: '19' } });
+
+    expect(control.getAttribute('data-cell-display-count')).toBe('2000');
+    expect(
+      control.querySelector('[data-cell-display-shown]')?.textContent,
+    ).toContain('2K');
+    expect(
+      control.querySelector('[data-cell-display-cap]')?.textContent,
+    ).toContain('CAP2K');
+    expect(control.querySelector('[data-cell-display-headroom]')).toBeNull();
+    expect(control.querySelector('[data-cell-display-shown-marker]')).toBeNull();
   });
 
   it('offers an always-visible auto/high/med/low render-quality control', () => {

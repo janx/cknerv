@@ -115,18 +115,21 @@ function CellDisplayControl({
     ? Math.max(0, Math.floor(availableCells ?? 0))
     : limit;
   const visible = Math.min(available, limit);
-  const readout = visible < limit
-    ? `${fmtCellCount(visible)}/${fmtCellCount(limit)}`
-    : fmtCellCount(visible);
   const progress = sliderMaximum > 0
     ? (sliderValue / sliderMaximum) * 100
     : 100;
+  const shownSliderValue = cellDisplayLimitToSliderValue(visible);
+  const shownProgress = sliderMaximum > 0
+    ? (shownSliderValue / sliderMaximum) * 100
+    : 100;
+  const headroomProgress = Math.max(0, progress - shownProgress);
   const accent = display.mode === 'auto'
     ? HUD_COLORS.cyanWire
     : HUD_COLORS.orange;
+  const modeLabel = display.mode === 'auto' ? 'AUTO' : 'MAN';
   const detail = display.mode === 'auto'
-    ? `${visible.toLocaleString()} displayed · adaptive ${quality.effective.toUpperCase()} cap ${limit.toLocaleString()} · server retains ${serverCapacity.toLocaleString()}`
-    : `${visible.toLocaleString()} displayed · manual cap ${limit.toLocaleString()}${
+    ? `${visible.toLocaleString()} shown · ${available.toLocaleString()} available · adaptive ${quality.effective.toUpperCase()} cap ${limit.toLocaleString()} · server retains ${serverCapacity.toLocaleString()}`
+    : `${visible.toLocaleString()} shown · ${available.toLocaleString()} available · manual cap ${limit.toLocaleString()}${
       serverCapacity < limit
         ? ` · server currently retains ${serverCapacity.toLocaleString()}`
         : ''
@@ -140,6 +143,7 @@ function CellDisplayControl({
       data-cell-display-mode={display.mode}
       data-cell-display-limit={limit}
       data-cell-display-count={visible}
+      data-cell-display-available={available}
       data-cell-display-capacity={CELL_DISPLAY_MAX}
       data-cell-display-source-capacity={serverCapacity}
       title={detail}
@@ -168,12 +172,43 @@ function CellDisplayControl({
       >
         CELLS
       </span>
+      <output
+        data-cell-display-shown
+        aria-label={`${visible.toLocaleString()} Cells shown`}
+        style={{
+          display: 'inline-flex',
+          alignItems: 'baseline',
+          gap: 3,
+          minWidth: 61,
+          color: HUD_COLORS.cyanWire,
+          fontSize: 9,
+          fontVariantNumeric: 'tabular-nums',
+          letterSpacing: 0.55,
+          whiteSpace: 'nowrap',
+          textShadow: `0 0 6px ${rgba(HUD_COLORS.cyanWire, 0.34)}`,
+        }}
+      >
+        <span>{fmtCellCount(visible)}</span>
+        <span
+          aria-hidden="true"
+          style={{
+            color: HUD_COLORS.dim,
+            fontSize: 7,
+            letterSpacing: 0.8,
+            textShadow: 'none',
+          }}
+        >
+          SHOWN
+        </span>
+      </output>
       <button
         type="button"
         className="cknerv-hud-control-button cknerv-cell-display-auto"
         aria-label="Automatic cell count"
         aria-pressed={display.mode === 'auto'}
-        title={`Let adaptive render quality set the Cell count · ${quality.effective.toUpperCase()} = ${limit.toLocaleString()}`}
+        title={display.mode === 'auto'
+          ? `Automatic cap active · ${quality.effective.toUpperCase()} = ${limit.toLocaleString()}`
+          : 'Manual cap active · click to return to AUTO'}
         onClick={(event) => {
           event.stopPropagation();
           setCellDisplayMode('auto');
@@ -187,12 +222,10 @@ function CellDisplayControl({
           padding: '0 2px',
           border: 0,
           background: 'transparent',
-          color: display.mode === 'auto' ? accent : HUD_COLORS.dim,
+          color: accent,
           font: `400 8.5px/18px ${HUD_FONTS.mono}`,
           letterSpacing: 0.65,
-          textShadow: display.mode === 'auto'
-            ? `0 0 7px ${rgba(accent, 0.45)}`
-            : 'none',
+          textShadow: `0 0 7px ${rgba(accent, 0.45)}`,
           cursor: 'pointer',
           transition: 'color .14s, text-shadow .14s',
         }}
@@ -202,17 +235,13 @@ function CellDisplayControl({
           style={{
             width: 4,
             height: 4,
-            border: `1px solid ${display.mode === 'auto' ? accent : rgba(HUD_COLORS.dim, 0.65)}`,
-            background: display.mode === 'auto'
-              ? rgba(accent, 0.2)
-              : 'transparent',
-            boxShadow: display.mode === 'auto'
-              ? `0 0 6px ${rgba(accent, 0.65)}`
-              : 'none',
+            border: `1px solid ${accent}`,
+            background: rgba(accent, 0.2),
+            boxShadow: `0 0 6px ${rgba(accent, 0.65)}`,
             transform: 'rotate(45deg)',
           }}
         />
-        AUTO
+        {modeLabel}
       </button>
       <span
         className="cknerv-cell-display-track"
@@ -238,16 +267,31 @@ function CellDisplayControl({
         />
         <span
           aria-hidden="true"
+          data-cell-display-shown-fill
           style={{
             position: 'absolute',
             left: 0,
             top: 9,
-            width: `${progress}%`,
+            width: `${shownProgress}%`,
             height: 1,
-            background: rgba(accent, 0.72),
-            boxShadow: `0 0 5px ${rgba(accent, 0.28)}`,
+            background: rgba(HUD_COLORS.cyanWire, 0.78),
+            boxShadow: `0 0 5px ${rgba(HUD_COLORS.cyanWire, 0.32)}`,
           }}
         />
+        {headroomProgress > 0 ? (
+          <span
+            aria-hidden="true"
+            data-cell-display-headroom
+            style={{
+              position: 'absolute',
+              left: `${shownProgress}%`,
+              top: 9,
+              width: `${headroomProgress}%`,
+              height: 1,
+              background: `repeating-linear-gradient(90deg,${rgba(accent, 0.42)} 0 2px,transparent 2px 4px)`,
+            }}
+          />
+        ) : null}
         {CELL_TRACK_TICKS.map((tick) => (
           <span
             key={tick}
@@ -258,15 +302,36 @@ function CellDisplayControl({
               top: 7,
               width: 1,
               height: 5,
-              background: tick <= progress
-                ? rgba(accent, 0.52)
-                : rgba(HUD_COLORS.cyanWire, 0.14),
+              background: tick <= shownProgress
+                ? rgba(HUD_COLORS.cyanWire, 0.58)
+                : tick <= progress
+                  ? rgba(accent, 0.34)
+                  : rgba(HUD_COLORS.cyanWire, 0.14),
               transform: 'translateX(-0.5px)',
             }}
           />
         ))}
+        {visible > 0 && headroomProgress > 0 ? (
+          <span
+            aria-hidden="true"
+            data-cell-display-shown-marker
+            style={{
+              position: 'absolute',
+              left: `${shownProgress}%`,
+              top: 7,
+              width: 4,
+              height: 4,
+              borderRadius: '50%',
+              border: `1px solid ${HUD_COLORS.cyanWire}`,
+              background: HUD_COLORS.ground,
+              boxShadow: `0 0 6px ${rgba(HUD_COLORS.cyanWire, 0.68)}`,
+              transform: 'translateX(-50%)',
+            }}
+          />
+        ) : null}
         <span
           aria-hidden="true"
+          data-cell-display-cap-marker
           style={{
             position: 'absolute',
             left: `${progress}%`,
@@ -283,7 +348,7 @@ function CellDisplayControl({
           className="cknerv-cell-display-slider"
           type="range"
           aria-label="Displayed cell limit"
-          aria-valuetext={`${limit.toLocaleString()} Cells · ${display.mode}`}
+          aria-valuetext={`Display cap ${limit.toLocaleString()} Cells · ${visible.toLocaleString()} shown of ${available.toLocaleString()} available · ${display.mode}`}
           min={0}
           max={sliderMaximum}
           step={1}
@@ -307,18 +372,37 @@ function CellDisplayControl({
         />
       </span>
       <output
-        aria-label={`${visible.toLocaleString()} Cells displayed`}
+        data-cell-display-cap
+        aria-label={`Cell display cap: ${limit.toLocaleString()} Cells`}
         style={{
-          minWidth: 44,
-          color: accent,
-          fontSize: 9,
+          display: 'inline-flex',
+          alignItems: 'baseline',
+          gap: 3,
+          minWidth: 54,
           fontVariantNumeric: 'tabular-nums',
-          letterSpacing: 0.65,
-          textAlign: 'right',
-          textShadow: `0 0 6px ${rgba(accent, 0.38)}`,
+          whiteSpace: 'nowrap',
         }}
       >
-        {readout}
+        <span
+          aria-hidden="true"
+          style={{
+            color: HUD_COLORS.dim,
+            fontSize: 7,
+            letterSpacing: 0.8,
+          }}
+        >
+          CAP
+        </span>
+        <span
+          style={{
+            color: accent,
+            fontSize: 9,
+            letterSpacing: 0.65,
+            textShadow: `0 0 6px ${rgba(accent, 0.38)}`,
+          }}
+        >
+          {fmtCellCount(limit)}
+        </span>
       </output>
     </div>
   );
