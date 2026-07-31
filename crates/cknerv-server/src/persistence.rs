@@ -65,6 +65,9 @@ pub struct LoadOutcome {
 pub struct RestoredChainCursor {
     pub tip: u64,
     pub recent_blocks: Vec<RecentBlock>,
+    /// Largest live-Cell reservoir target fully represented by the saved
+    /// cells projection. Zero denotes legacy/fixed-window state.
+    pub hydrated_cell_target: usize,
 }
 
 /// Serialize the chain entity + every registered projection. Writes
@@ -174,7 +177,18 @@ pub fn peek_restored_chain_cursor(workdir: &Path) -> Option<RestoredChainCursor>
             .unwrap_or_else(|| serde_json::Value::Array(Vec::new())),
     )
     .unwrap_or_default();
-    Some(RestoredChainCursor { tip, recent_blocks })
+    let hydrated_cell_target = file
+        .projections
+        .get("cells")
+        .and_then(|cells| cells.get("hydrated_cell_target"))
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|target| usize::try_from(target).ok())
+        .unwrap_or(0);
+    Some(RestoredChainCursor {
+        tip,
+        recent_blocks,
+        hydrated_cell_target,
+    })
 }
 
 #[cfg(test)]
@@ -240,6 +254,7 @@ mod tests {
                     number: 12345,
                     hash: "0xblk".into(),
                 }],
+                hydrated_cell_target: 0,
             })
         );
 
@@ -271,8 +286,40 @@ mod tests {
             Some(RestoredChainCursor {
                 tip: 77,
                 recent_blocks: Vec::new(),
+                hydrated_cell_target: 0,
             })
         );
+
+        let _ = std::fs::remove_dir_all(&workdir);
+    }
+
+    #[test]
+    fn peek_cursor_reads_completed_cell_hydration_target() {
+        let workdir = tmpdir();
+        let state = Arc::new(ServerState::new());
+        state
+            .projections
+            .write()
+            .unwrap()
+            .register(cknerv_core::CellGalaxy::new());
+        state.apply_mutation(Mutation::BlockMined {
+            number: 88,
+            hash: "0xblock88".into(),
+            tx_count: 0,
+            size: 0,
+            at: 1_000,
+        });
+        state.apply_mutation(Mutation::CellHydrationCompleted {
+            target: 20_000,
+            available: 20_003,
+            from_block: 12,
+            at_tip: 88,
+        });
+        save(&state, &workdir).expect("save");
+
+        let cursor = peek_restored_chain_cursor(&workdir).expect("cursor");
+        assert_eq!(cursor.tip, 88);
+        assert_eq!(cursor.hydrated_cell_target, 20_000);
 
         let _ = std::fs::remove_dir_all(&workdir);
     }

@@ -62,6 +62,13 @@
     "is_miner": false,
     "at": 1700000000000
   },
+  "CellHydrationCompleted": {
+    "type": "cell_hydration_completed",
+    "target": 20000,
+    "available": 20017,
+    "from_block": 123,
+    "at_tip": 456
+  },
   "PeersUpdated": {
     "type": "peers_updated",
     "peers": [

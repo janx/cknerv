@@ -25,15 +25,20 @@ pub struct CkbDirectAdapter {
     network_poll_interval: Duration,
     node_id: String,
     node_label: String,
-    backfill_blocks: u64,
+    /// Target size of the retained live-Cell reservoir. The default boot path
+    /// discovers as many canonical blocks as needed to satisfy this target.
+    cell_target: usize,
+    /// Optional one-run hard window override (`--backfill-blocks`). `None`
+    /// keeps target-driven discovery; `Some(0)` preserves live-only boot.
+    backfill_blocks: Option<u64>,
     reorg_window_blocks: u64,
     resume_from: Option<u64>,
     resume_anchors: Vec<RecentBlock>,
     /// Forward-gap (blocks) above which the poll treats an advance as a
-    /// catch-up — replaying a bounded recent window through the backfill
-    /// envelope (pulses suppressed, progress HUD) instead of animating every
-    /// block live. A normal poll advances 1–2 blocks, so this sits well above
-    /// that but below any real downtime gap.
+    /// catch-up — replaying every missing block through a calm progress
+    /// envelope (pulses suppressed) instead of animating the gap as live
+    /// traffic. A normal poll advances 1–2 blocks, so this sits well above that
+    /// but below any real downtime gap.
     catchup_threshold: u64,
 }
 
@@ -45,7 +50,8 @@ impl CkbDirectAdapter {
             network_poll_interval: Duration::from_secs(4),
             node_id: "ckb:local".into(),
             node_label: "ckb-local".into(),
-            backfill_blocks: 2000,
+            cell_target: cknerv_core::projection::cells::CELL_CAP,
+            backfill_blocks: None,
             reorg_window_blocks: DEFAULT_REORG_WINDOW_BLOCKS as u64,
             resume_from: None,
             resume_anchors: Vec::new(),
@@ -69,17 +75,25 @@ impl CkbDirectAdapter {
         self
     }
 
-    /// Number of recent blocks to replay at boot and during bounded catch-up
-    /// or controlled rebuild. `0` disables historical replay (legacy tip-only
-    /// behavior). Exact reorg history is configured independently.
+    /// Target number of live Cells the adapter should hydrate before entering
+    /// ordinary polling. This is a data-reservoir budget, independent from the
+    /// exact reorg journal and the browser's current display limit.
+    pub fn with_cell_target(mut self, n: usize) -> Self {
+        self.cell_target = n;
+        self
+    }
+
+    /// One-run hard limit for boot/rebuild discovery. `0` disables historical
+    /// boot replay (legacy tip-only behavior). Without this override the
+    /// adapter scans until `cell_target` live outputs or genesis.
     pub fn with_backfill_blocks(mut self, n: u64) -> Self {
-        self.backfill_blocks = n;
+        self.backfill_blocks = Some(n);
         self
     }
 
     /// Canonical hash history retained for exact reorg reconciliation. The
     /// poller always keeps at least two blocks; deeper changes fall back to a
-    /// controlled replay of `backfill_blocks`.
+    /// controlled target-driven rebuild.
     pub fn with_reorg_window_blocks(mut self, n: u64) -> Self {
         self.reorg_window_blocks = n;
         self
@@ -142,24 +156,25 @@ impl Adapter for CkbDirectAdapter {
         if let Some(resume_tip) = self.resume_from {
             // Restored from persisted state: resume the forward poll from the
             // saved tip. A small gap replays live; a large one is caught up
-            // calmly by poll_once's catch-up branch (bounded backfill window,
-            // pulses suppressed). Skip the boot backfill either way so we don't
-            // re-replay (and duplicate) blocks at/below the saved tip.
+            // calmly by poll_once's catch-up branch (complete gap, pulses
+            // suppressed). Skip boot hydration either way so we don't replay
+            // (and duplicate) blocks at/below the saved tip.
             state.last_tip = Some(resume_tip);
             state.seed_canonical(
                 self.resume_anchors
                     .iter()
                     .map(|block| (block.number, block.hash.clone())),
             );
-        } else if self.backfill_blocks > 0 {
-            match crate::backfill::run_backfill(&rpc, self.backfill_blocks, &out).await {
+        } else if self.backfill_blocks != Some(0) && self.cell_target > 0 {
+            let policy = self.hydration_policy();
+            match crate::backfill::run_hydration(&rpc, policy, &out).await {
                 Ok(backfill) => {
                     state.last_tip = Some(backfill.tip);
                     state.seed_canonical(backfill.anchors);
                 }
                 Err(e) => tracing::warn!(
                     target: "cknerv-adapter-ckb",
-                    "backfill failed: {e}; starting live-only"
+                    "cell hydration failed: {e}; starting live-only"
                 ),
             }
         }
@@ -178,12 +193,12 @@ impl Adapter for CkbDirectAdapter {
                     }
                 }
                 _ = interval.tick() => {
-                    if let Err(e) = crate::poll::poll_once_with_reorg_window(
+                    if let Err(e) = crate::poll::poll_once_with_hydration(
                         &rpc,
                         &mut state,
                         &out,
                         self.catchup_threshold,
-                        self.backfill_blocks,
+                        self.hydration_policy(),
                         self.reorg_window_blocks,
                     ).await {
                         tracing::warn!(
@@ -215,15 +230,27 @@ fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
+impl CkbDirectAdapter {
+    fn hydration_policy(&self) -> crate::backfill::HydrationPolicy {
+        match self.backfill_blocks {
+            Some(limit) => {
+                crate::backfill::HydrationPolicy::with_block_limit(self.cell_target, limit)
+            }
+            None => crate::backfill::HydrationPolicy::adaptive(self.cell_target),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn new_defaults_to_2000_backfill_blocks() {
+    fn new_defaults_to_target_driven_hydration() {
         let adapter = CkbDirectAdapter::new(Url::parse("http://localhost:8114").unwrap());
 
-        assert_eq!(adapter.backfill_blocks, 2000);
+        assert_eq!(adapter.cell_target, 20_000);
+        assert_eq!(adapter.backfill_blocks, None);
         assert_eq!(
             adapter.reorg_window_blocks,
             DEFAULT_REORG_WINDOW_BLOCKS as u64

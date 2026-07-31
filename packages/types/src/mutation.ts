@@ -78,6 +78,16 @@ export type Mutation =
       is_miner: boolean;
       at: number;
     }
+  /** Records that target-driven historical replay found enough live cells
+   *  (or reached genesis). Projection metadata only; it does not alter the
+   *  chain entity. */
+  | {
+      type: 'cell_hydration_completed';
+      target: number;
+      available: number;
+      from_block: number;
+      at_tip: number;
+    }
   | {
       type: 'peers_updated';
       peers: Peer[];

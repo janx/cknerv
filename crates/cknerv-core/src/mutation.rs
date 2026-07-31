@@ -141,6 +141,17 @@ pub enum Mutation {
         phase: ReplayPhase,
     },
 
+    /// Marks a bounded Cell reservoir as fully hydrated for `target` live
+    /// records. Adapters emit this immediately before the terminal boot or
+    /// rebuild replay marker, after reaching the target or chain genesis.
+    /// Projection metadata only: this does not synthesize an on-chain event.
+    CellHydrationCompleted {
+        target: u64,
+        available: u64,
+        from_block: u64,
+        at_tip: u64,
+    },
+
     /// Full snapshot of the observed node's current P2P peers. Replaces
     /// the server's `peers` list wholesale; consumers diff successive
     /// snapshots for join/drop animation.
@@ -208,6 +219,23 @@ mod tests {
                 phase: ReplayPhase::Boot,
             }
         );
+    }
+
+    #[test]
+    fn cell_hydration_completed_wire_shape_is_snake_case() {
+        let m = Mutation::CellHydrationCompleted {
+            target: 20_000,
+            available: 20_017,
+            from_block: 123,
+            at_tip: 456,
+        };
+        let v = serde_json::to_value(&m).expect("serialize");
+        assert_eq!(v["type"], "cell_hydration_completed");
+        assert_eq!(v["target"], 20_000);
+        assert_eq!(v["available"], 20_017);
+        assert_eq!(v["from_block"], 123);
+        assert_eq!(v["at_tip"], 456);
+        assert_eq!(serde_json::from_value::<Mutation>(v).unwrap(), m);
     }
 
     #[test]

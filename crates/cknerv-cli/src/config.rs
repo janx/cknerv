@@ -98,13 +98,14 @@ pub struct ResolvedConfig {
     pub rpc_url: Url,
     pub port: u16,
     pub open: bool,
-    pub backfill_blocks: u64,
+    /// Optional one-run hard limit for Cell hydration. `None` uses the
+    /// target-driven policy derived from `galaxy.cell_cap`.
+    pub backfill_blocks: Option<u64>,
     pub galaxy: ResolvedGalaxyConfig,
 }
 
 const DEFAULT_RPC: &str = "http://localhost:8114";
 const DEFAULT_PORT: u16 = 7001;
-const DEFAULT_BACKFILL: u64 = 2000;
 
 impl ResolvedGalaxyConfig {
     pub fn for_profile(profile: GalaxyProfile) -> Self {
@@ -161,16 +162,6 @@ impl ResolvedGalaxyConfig {
     }
 }
 
-fn profile_backfill_default(profile: GalaxyProfile) -> u64 {
-    match profile {
-        GalaxyProfile::Devnet => 1000,
-        GalaxyProfile::Auto
-        | GalaxyProfile::Testnet
-        | GalaxyProfile::Mainnet
-        | GalaxyProfile::Custom => DEFAULT_BACKFILL,
-    }
-}
-
 /// Load `<workdir>/cknerv.toml`. Absent file → empty (all-default) config.
 /// Present but unparseable → error.
 pub fn load(workdir: &Path) -> anyhow::Result<FileConfig> {
@@ -207,10 +198,10 @@ pub fn resolve(
         file.dashboard.open.unwrap_or(true)
     };
     let profile = file.galaxy.profile.unwrap_or(GalaxyProfile::Auto);
-    // Historical replay is an operational policy, not durable workdir
-    // configuration. Profiles select the normal value; the CLI flag remains
-    // as a one-run diagnostic override.
-    let backfill_blocks = cli_backfill.unwrap_or_else(|| profile_backfill_default(profile));
+    // Historical hydration is target-driven by `galaxy.cell_cap`. The CLI
+    // value is deliberately not defaulted: when present it is a one-run hard
+    // block-window override for diagnostics.
+    let backfill_blocks = cli_backfill;
     let mut galaxy = ResolvedGalaxyConfig::for_profile(profile);
     if let Some(v) = file.galaxy.cell_cap {
         galaxy.cell_cap = v;
@@ -307,7 +298,7 @@ mod tests {
         assert_eq!(r.rpc_url.as_str(), "http://localhost:8114/");
         assert_eq!(r.port, 7001);
         assert!(r.open);
-        assert_eq!(r.backfill_blocks, 2000);
+        assert_eq!(r.backfill_blocks, None);
         assert_eq!(r.galaxy.cell_cap, 20_000);
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -325,23 +316,23 @@ mod tests {
         assert_eq!(r.rpc_url.as_str(), "http://node:9999/");
         assert_eq!(r.port, 8080);
         assert!(!r.open);
-        assert_eq!(r.backfill_blocks, 2000);
+        assert_eq!(r.backfill_blocks, None);
 
         let cli_rpc = Url::parse("http://cli:1111").unwrap();
         let r2 = resolve(Some(cli_rpc), Some(1234), false, Some(7), &file).unwrap();
         assert_eq!(r2.rpc_url.as_str(), "http://cli:1111/");
         assert_eq!(r2.port, 1234);
-        assert_eq!(r2.backfill_blocks, 7);
+        assert_eq!(r2.backfill_blocks, Some(7));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
-    fn legacy_toml_backfill_is_ignored_in_favor_of_profile_policy() {
+    fn legacy_toml_backfill_is_ignored_in_favor_of_target_policy() {
         let file: FileConfig =
             toml::from_str("[backfill]\nblocks = 77\n[galaxy]\nprofile = \"devnet\"\n").unwrap();
         let r = resolve(None, None, false, None, &file).unwrap();
 
-        assert_eq!(r.backfill_blocks, 1000);
+        assert_eq!(r.backfill_blocks, None);
     }
 
     #[test]
@@ -349,7 +340,7 @@ mod tests {
         let file: FileConfig = toml::from_str("[galaxy]\nprofile = \"devnet\"\n").unwrap();
         let r = resolve(None, None, false, None, &file).unwrap();
 
-        assert_eq!(r.backfill_blocks, 1000);
+        assert_eq!(r.backfill_blocks, None);
         assert_eq!(r.galaxy.profile, GalaxyProfile::Devnet);
         assert_eq!(r.galaxy.cell_cap, 2000);
         assert_eq!(r.galaxy.recent_links_cap, 1024);
@@ -371,7 +362,7 @@ mod tests {
         .unwrap();
         let r = resolve(None, None, false, None, &file).unwrap();
 
-        assert_eq!(r.backfill_blocks, 2000);
+        assert_eq!(r.backfill_blocks, None);
         assert_eq!(r.galaxy.profile, GalaxyProfile::Mainnet);
         assert_eq!(r.galaxy.cell_cap, 3333);
         assert_eq!(r.galaxy.recent_links_cap, 444);
@@ -399,7 +390,7 @@ mod tests {
         assert_eq!(r.rpc_url.as_str(), "http://localhost:8114/");
         assert_eq!(r.port, 7001);
         assert!(r.open);
-        assert_eq!(r.backfill_blocks, 2000);
+        assert_eq!(r.backfill_blocks, None);
         assert_eq!(r.galaxy.cell_cap, 20_000);
     }
 

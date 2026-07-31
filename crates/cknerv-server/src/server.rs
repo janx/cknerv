@@ -78,6 +78,7 @@ pub struct ServerBuilder {
     adapters: Vec<Box<dyn AdapterRunner>>,
     projections: Vec<ProjectionInstaller>,
     workdir: Option<PathBuf>,
+    restore_persisted: bool,
 }
 
 impl ServerBuilder {
@@ -86,6 +87,7 @@ impl ServerBuilder {
             adapters: Vec::new(),
             projections: Vec::new(),
             workdir: None,
+            restore_persisted: true,
         }
     }
 
@@ -105,6 +107,15 @@ impl ServerBuilder {
 
     pub fn workdir(mut self, p: PathBuf) -> Self {
         self.workdir = Some(p);
+        self
+    }
+
+    /// Control whether an existing persisted snapshot is hydrated before
+    /// adapters start. Callers can disable restoration when lightweight
+    /// metadata shows that a derived reservoir no longer satisfies the
+    /// configured target; the next boot checkpoint atomically replaces it.
+    pub fn restore_persisted(mut self, restore: bool) -> Self {
+        self.restore_persisted = restore;
         self
     }
 
@@ -130,8 +141,10 @@ impl ServerBuilder {
         // 2. Hydrate from disk if a workdir was provided. Must happen
         //    BEFORE adapters spawn so the first arriving mutation
         //    doesn't conflict with a stale snapshot.
-        if let Some(workdir) = self.workdir.as_ref() {
-            let _ = crate::persistence::load(state.clone(), workdir);
+        if self.restore_persisted {
+            if let Some(workdir) = self.workdir.as_ref() {
+                let _ = crate::persistence::load(state.clone(), workdir);
+            }
         }
 
         // 3. Pipeline channels.

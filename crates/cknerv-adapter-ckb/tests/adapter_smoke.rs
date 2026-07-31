@@ -553,7 +553,7 @@ async fn poll_rebuilds_recent_window_when_reorg_is_deeper_than_retained_anchors(
 }
 
 #[tokio::test]
-async fn interrupted_deep_rebuild_resumes_without_a_second_reset() {
+async fn failed_deep_rebuild_discovery_keeps_old_state_until_clean_retry() {
     let mut canned = mock_rpc::CannedResponses {
         tip: 1,
         ..Default::default()
@@ -591,37 +591,45 @@ async fn interrupted_deep_rebuild_resumes_without_a_second_reset() {
         canned.unavailable_blocks.insert(6);
     }
 
-    let partial = poll_cycle_with(&rpc, &mut state, &tx, &mut rx, 25, 2).await;
-    assert_eq!(
-        partial
-            .iter()
-            .filter(|mutation| matches!(mutation, Mutation::ChainRebuild { .. }))
-            .count(),
-        1
-    );
-    assert!(partial
+    let error = poll_once(&rpc, &mut state, &tx, 25, 2)
+        .await
+        .expect_err("discovery must stop before publishing a partial reset");
+    assert!(error.to_string().contains("block 6 is not visible"));
+    let mut failed_attempt = Vec::new();
+    while let Ok(mutation) = rx.try_recv() {
+        failed_attempt.push(mutation);
+    }
+    assert!(!failed_attempt
         .iter()
-        .any(|mutation| matches!(mutation, Mutation::BlockMined { number: 5, .. })));
-    assert_eq!(state.last_tip, Some(5));
+        .any(|mutation| matches!(mutation, Mutation::ChainRebuild { .. })));
+    assert!(!failed_attempt
+        .iter()
+        .any(|mutation| matches!(mutation, Mutation::BlockMined { .. })));
+    assert_eq!(state.last_tip, Some(6));
 
     canned.lock().unwrap().unavailable_blocks.remove(&6);
     let retry = poll_cycle_with(&rpc, &mut state, &tx, &mut rx, 25, 2).await;
 
-    assert!(!retry
+    assert!(retry
         .iter()
-        .any(|mutation| matches!(mutation, Mutation::ChainRebuild { .. })));
+        .any(|mutation| matches!(mutation, Mutation::ChainRebuild { from_block: 5 })));
     assert!(retry.iter().any(|mutation| matches!(
         mutation,
         Mutation::BackfillProgress {
             done: 0,
-            total: 1,
+            total: 2,
             active: true,
             phase: ReplayPhase::Rebuild
         }
     )));
-    assert!(retry
+    let replayed: Vec<u64> = retry
         .iter()
-        .any(|mutation| matches!(mutation, Mutation::BlockMined { number: 6, .. })));
+        .filter_map(|mutation| match mutation {
+            Mutation::BlockMined { number, .. } => Some(*number),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(replayed, vec![5, 6]);
     assert_eq!(state.last_tip, Some(6));
 }
 
@@ -881,7 +889,61 @@ async fn adapter_backfills_recent_blocks_in_ascending_order() {
 }
 
 #[tokio::test]
-async fn adapter_backfill_stops_at_first_visibility_gap_instead_of_skipping() {
+async fn adapter_discovers_minimum_window_for_live_cell_target() {
+    let mut canned = mock_rpc::CannedResponses {
+        tip: 5,
+        ..Default::default()
+    };
+    for number in 1..=5 {
+        canned.blocks.insert(
+            number,
+            mock_rpc::simple_block(number, &format!("0xblock{number}")),
+        );
+    }
+    let (rpc_url, _handle) = mock_rpc::start(canned).await;
+
+    // Each canned block creates one never-spent cell. A target of three must
+    // discover exactly blocks 3..=5, then replay them once in ascending order.
+    let adapter = CkbDirectAdapter::new(rpc_url)
+        .with_cell_target(3)
+        .with_poll_interval(Duration::from_millis(50));
+    let emitted = drive_for(
+        adapter,
+        Duration::from_millis(400),
+        Duration::from_millis(90),
+    )
+    .await;
+
+    let numbers: Vec<u64> = emitted
+        .iter()
+        .filter_map(|mutation| match mutation {
+            Mutation::BlockMined { number, .. } => Some(*number),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(numbers, vec![3, 4, 5]);
+    assert!(emitted.iter().any(|mutation| matches!(
+        mutation,
+        Mutation::CellHydrationCompleted {
+            target: 3,
+            available: 3,
+            from_block: 3,
+            at_tip: 5,
+        }
+    )));
+    assert!(emitted.iter().any(|mutation| matches!(
+        mutation,
+        Mutation::BackfillProgress {
+            done: 3,
+            total: 3,
+            active: false,
+            phase: ReplayPhase::Boot,
+        }
+    )));
+}
+
+#[tokio::test]
+async fn adapter_discards_incomplete_discovery_instead_of_partial_replay() {
     let mut canned = mock_rpc::CannedResponses {
         tip: 5,
         ..Default::default()
@@ -912,12 +974,18 @@ async fn adapter_backfill_stops_at_first_visibility_gap_instead_of_skipping() {
             _ => None,
         })
         .collect();
-    assert_eq!(numbers, vec![1, 2]);
+    // Discovery runs newest -> oldest and publishes no blocks until the whole
+    // candidate window is canonical. The failed boot attempt is discarded;
+    // ordinary live polling then emits only the current tip.
+    assert_eq!(numbers, vec![5]);
+    assert!(!emitted
+        .iter()
+        .any(|mutation| matches!(mutation, Mutation::CellHydrationCompleted { .. })));
     assert!(emitted.iter().any(|mutation| matches!(
         mutation,
         Mutation::BackfillProgress {
-            done: 2,
-            total: 5,
+            done: 0,
+            total: 0,
             active: false,
             phase: ReplayPhase::Boot
         }
@@ -991,7 +1059,10 @@ async fn adapter_resume_large_gap_runs_catchup_envelope() {
     let (rpc_url, _handle) = mock_rpc::start(canned).await;
 
     let adapter = CkbDirectAdapter::new(rpc_url)
-        .with_backfill_blocks(1000) // catch-up cap; far above the gap → lo = 9
+        // This diagnostic rebuild limit is smaller than the four-block gap.
+        // Catch-up must still replay every missing block rather than using it
+        // as a correctness-breaking skip cap.
+        .with_backfill_blocks(2)
         .with_catchup_threshold(2)
         .with_resume_from(Some(8))
         .with_poll_interval(Duration::from_millis(40));
