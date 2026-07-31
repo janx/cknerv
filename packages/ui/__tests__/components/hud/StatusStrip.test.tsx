@@ -5,6 +5,12 @@ import {
   setAdaptiveQuality,
   setQualityMode,
 } from '../../../src/tweaks/qualityPresets';
+import {
+  CELL_DISPLAY_MAX,
+  getCellDisplayRuntimeSnapshot,
+  setCellDisplayLimit,
+  setCellDisplayMode,
+} from '../../../src/tweaks/cellDisplay';
 
 const levaMocks = vi.hoisted(() => ({
   setQuality: vi.fn(),
@@ -19,6 +25,8 @@ import StatusStrip from '../../../src/components/hud/StatusStrip';
 beforeEach(() => {
   setQualityMode('auto');
   setAdaptiveQuality('high');
+  setCellDisplayLimit(CELL_DISPLAY_MAX);
+  setCellDisplayMode('auto');
   levaMocks.setQuality.mockClear();
 });
 
@@ -26,6 +34,8 @@ afterEach(() => {
   cleanup();
   setQualityMode('auto');
   setAdaptiveQuality('high');
+  setCellDisplayLimit(CELL_DISPLAY_MAX);
+  setCellDisplayMode('auto');
 });
 
 describe('StatusStrip', () => {
@@ -78,6 +88,57 @@ describe('StatusStrip', () => {
     expect(chip.textContent).toContain('DATA STALE');
     expect(chip.textContent).toContain('17s');
     expect(container.textContent).toContain('NOMINAL');
+  });
+
+  it('removes the redundant DATA LIVE chip while keeping live transport implicit', () => {
+    const { container } = render(
+      <StatusStrip
+        level="nominal"
+        uptimeMs={0}
+        stream={{
+          phase: 'live',
+          affectedChannels: [],
+          lastMessageAgeMs: 2_000,
+          attempt: 0,
+        }}
+      />,
+    );
+
+    expect(container.querySelector('[data-stream-chip]')).toBeNull();
+    expect(container.textContent).not.toContain('DATA LIVE');
+  });
+
+  it('offers an adaptive Cell-count cap with an immediate manual slider override', () => {
+    const { container } = render(
+      <StatusStrip level="nominal" uptimeMs={0} cellCount={5_000} />,
+    );
+    const control = screen.getByRole('group', { name: 'Cell display count' });
+    const automatic = within(control).getByRole(
+      'button',
+      { name: 'Automatic cell count' },
+    );
+    const slider = within(control).getByRole(
+      'slider',
+      { name: 'Displayed cell limit' },
+    ) as HTMLInputElement;
+
+    expect(automatic.getAttribute('aria-pressed')).toBe('true');
+    expect(slider.value).toBe('6000');
+    expect(control.getAttribute('data-cell-display-count')).toBe('5000');
+
+    fireEvent.change(slider, { target: { value: '3000' } });
+
+    expect(getCellDisplayRuntimeSnapshot()).toEqual({
+      mode: 'manual',
+      manualLimit: 3_000,
+    });
+    expect(control.getAttribute('data-cell-display-mode')).toBe('manual');
+    expect(control.getAttribute('data-cell-display-count')).toBe('3000');
+    expect(within(control).getByText('3K')).not.toBeNull();
+
+    fireEvent.click(automatic);
+    expect(getCellDisplayRuntimeSnapshot().mode).toBe('auto');
+    expect(automatic.getAttribute('aria-pressed')).toBe('true');
   });
 
   it('offers an always-visible auto/high/med/low render-quality control', () => {

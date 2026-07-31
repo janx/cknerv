@@ -9,6 +9,15 @@ import {
   useQualityRuntime,
   type QualityMode,
 } from '../../tweaks/qualityPresets';
+import {
+  CELL_DISPLAY_MAX,
+  CELL_DISPLAY_MIN,
+  CELL_DISPLAY_STEP,
+  resolveCellDisplayLimit,
+  setCellDisplayLimit,
+  setCellDisplayMode,
+  useCellDisplayRuntime,
+} from '../../tweaks/cellDisplay';
 import { HUD_COLORS, HUD_FONTS, rgba } from './hudTheme';
 
 export type BuildInfo = { version: string; href: string };
@@ -72,6 +81,123 @@ const STREAM_COLOR: Record<StreamHealthSummary['phase'], string> = {
 };
 
 const QUALITY_MODES = ['auto', 'high', 'med', 'low'] as const satisfies readonly QualityMode[];
+
+function fmtCellCount(count: number): string {
+  if (count < 1_000) return String(count);
+  const compact = count / 1_000;
+  return `${Number.isInteger(compact) ? compact : compact.toFixed(1)}K`;
+}
+
+function CellDisplayControl({ availableCells }: { availableCells?: number }) {
+  const quality = useQualityRuntime();
+  const display = useCellDisplayRuntime();
+  const limit = resolveCellDisplayLimit(display, quality.effective);
+  const available = Number.isFinite(availableCells)
+    ? Math.max(0, Math.floor(availableCells ?? 0))
+    : limit;
+  const visible = Math.min(available, limit);
+  const accent = display.mode === 'auto'
+    ? HUD_COLORS.cyanWire
+    : HUD_COLORS.orange;
+  const detail = display.mode === 'auto'
+    ? `${visible.toLocaleString()} displayed · adaptive ${quality.effective.toUpperCase()} cap ${limit.toLocaleString()}`
+    : `${visible.toLocaleString()} displayed · manual cap ${limit.toLocaleString()}`;
+
+  return (
+    <div
+      role="group"
+      aria-label="Cell display count"
+      data-cell-display-control
+      data-cell-display-mode={display.mode}
+      data-cell-display-limit={limit}
+      data-cell-display-count={visible}
+      title={detail}
+      onPointerDown={(event) => event.stopPropagation()}
+      onKeyDown={(event) => event.stopPropagation()}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 6,
+        flexShrink: 0,
+        pointerEvents: 'auto',
+        fontFamily: HUD_FONTS.mono,
+      }}
+    >
+      <span
+        className="cknerv-cell-display-label"
+        style={{
+          color: HUD_COLORS.dim,
+          fontSize: 8.5,
+          letterSpacing: 1.2,
+          lineHeight: 1,
+        }}
+      >
+        CELLS
+      </span>
+      <button
+        type="button"
+        className="cknerv-cell-display-auto"
+        aria-label="Automatic cell count"
+        aria-pressed={display.mode === 'auto'}
+        title={`Let adaptive render quality set the Cell count · ${quality.effective.toUpperCase()} = ${limit.toLocaleString()}`}
+        onClick={(event) => {
+          event.stopPropagation();
+          setCellDisplayMode('auto');
+        }}
+        style={{
+          appearance: 'none',
+          height: 20,
+          padding: '0 6px',
+          border: `1px solid ${rgba(accent, 0.28)}`,
+          borderRadius: 2,
+          background: display.mode === 'auto'
+            ? rgba(accent, 0.14)
+            : 'rgba(0,0,0,.34)',
+          boxShadow: display.mode === 'auto'
+            ? `inset 0 -1px 0 ${accent}`
+            : 'none',
+          color: display.mode === 'auto' ? accent : HUD_COLORS.dim,
+          font: `400 8.5px/18px ${HUD_FONTS.mono}`,
+          letterSpacing: 0.45,
+          cursor: 'pointer',
+        }}
+      >
+        AUTO
+      </button>
+      <input
+        type="range"
+        aria-label="Displayed cell limit"
+        aria-valuetext={`${limit.toLocaleString()} Cells · ${display.mode}`}
+        min={CELL_DISPLAY_MIN}
+        max={CELL_DISPLAY_MAX}
+        step={CELL_DISPLAY_STEP}
+        value={limit}
+        onChange={(event) => {
+          setCellDisplayLimit(Number(event.currentTarget.value));
+        }}
+        style={{
+          width: 68,
+          height: 18,
+          margin: 0,
+          accentColor: accent,
+          cursor: 'ew-resize',
+        }}
+      />
+      <output
+        aria-label={`${visible.toLocaleString()} Cells displayed`}
+        style={{
+          minWidth: 28,
+          color: accent,
+          fontSize: 9,
+          letterSpacing: 0.4,
+          textAlign: 'right',
+        }}
+      >
+        {fmtCellCount(visible)}
+      </output>
+    </div>
+  );
+}
 
 function RenderQualityControl() {
   const quality = useQualityRuntime();
@@ -174,19 +300,24 @@ function RenderQualityControl() {
   );
 }
 
-export default function StatusStrip({ level, uptimeMs, build, stream }: {
+export default function StatusStrip({ level, uptimeMs, build, stream, cellCount }: {
   level: AlertLevel;
   uptimeMs: number;
   build?: BuildInfo;
   stream?: StreamHealthSummary | null;
+  /** Records currently available to the visual layer, before its draw cap. */
+  cellCount?: number;
 }) {
   const color = LEVEL_COLOR[level];
-  const streamColor = stream ? STREAM_COLOR[stream.phase] : null;
+  const streamColor = stream && stream.phase !== 'live'
+    ? STREAM_COLOR[stream.phase]
+    : null;
   return (
     <div style={{ position: 'absolute', left: 0, right: 0, top: 0, height: 30, display: 'flex', alignItems: 'center', gap: 14, padding: '0 14px', borderBottom: '1px solid rgba(255,152,48,.18)', background: 'linear-gradient(180deg,rgba(255,152,48,.05),transparent)' }}>
       <span style={{ fontFamily: HUD_FONTS.display, fontWeight: 700, fontSize: 12, letterSpacing: 5, color: HUD_COLORS.orange, textShadow: '0 0 8px rgba(255,152,48,.5)' }}>CKNERV</span>
       {build ? <BuildChip build={build} /> : null}
       <span style={{ flex: 1 }} />
+      <CellDisplayControl availableCells={cellCount} />
       <RenderQualityControl />
       {stream && streamColor ? (
         <span

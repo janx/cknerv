@@ -5,6 +5,10 @@ import { useSimClock } from '../tweaks/SimClockScope';
 import { galaxyFrame } from '../tweaks/galaxyFrame';
 import { LIVE } from '../tweaks/liveTweaks';
 import { QUALITY_PRESETS, useQualityRuntime } from '../tweaks/qualityPresets';
+import {
+  resolveCellDisplayLimit,
+  useCellDisplayRuntime,
+} from '../tweaks/cellDisplay';
 import { Billboard, Html } from '@react-three/drei';
 import * as THREE from 'three';
 
@@ -930,7 +934,8 @@ export default function CellGalaxy({
     ? cellsCache.cells.get(identityProofBinding.cellId) ?? null
     : null;
   const { effective: quality } = useQualityRuntime();
-  const cellGalaxyMul = QUALITY_PRESETS[quality].cellGalaxyMul;
+  const cellDisplay = useCellDisplayRuntime();
+  const cellDisplayLimit = resolveCellDisplayLimit(cellDisplay, quality);
   const dischargeArms = QUALITY_PRESETS[quality].dischargeArms;
   const memorySignal = QUALITY_PRESETS[quality].memorySignal;
   /** Per-frame mirror of the cellsList iteration order, written by
@@ -959,14 +964,10 @@ export default function CellGalaxy({
   const rewriteBirthAtRef = useRef<Map<number, number>>(new Map());
   const handledRewriteRef = useRef(cellsCache.linkPrune);
   const rewriteArrivalUntilRef = useRef(-1e9);
-  /** Last-seen `cellGalaxyMul` (from the effective runtime quality preset).
-   *  The preset can be owned by the adaptive controller or a manual override.
-   *  Including
-   *  this in the change predicate keeps the skip-path correct when the
-   *  user toggles quality between high/med/low while cells are stable —
-   *  otherwise `cellGeometry.setDrawRange` stays at the old preset
-   *  until the next birth/death/tag/gc delta lands. */
-  const lastMulRef = useRef<number>(0);
+  /** Last-seen resolved display cap. AUTO follows the adaptive quality tier;
+   *  the top-bar slider can own this cap independently. Including it in the
+   *  change predicate keeps drawRange current while the Cell map is stable. */
+  const lastCellDisplayLimitRef = useRef<number>(0);
   const lastPinnedCellIdRef = useRef<number | null>(null);
   const lastPinnedInspectionFieldRef = useRef<CellInspectionField | null>(null);
   /** Per-frame mirror of the cell draw count. Written in the
@@ -1178,7 +1179,7 @@ export default function CellGalaxy({
     //    or quality/selection/inspection-prefix change.
     const inputsChanged =
       cellsCache.cells !== lastCellsRef.current ||
-      cellGalaxyMul !== lastMulRef.current ||
+      cellDisplayLimit !== lastCellDisplayLimitRef.current ||
       selectedCellIdRef.current !== lastPinnedCellIdRef.current ||
       inspectionField !== lastPinnedInspectionFieldRef.current;
     let cellsList = cellsListRef.current;
@@ -1205,10 +1206,7 @@ export default function CellGalaxy({
         }
       }
       const allCells = Array.from(cellsCache.cells.values());
-      count = Math.min(
-        allCells.length,
-        Math.max(1, Math.floor(INSTANCE_CAPACITY * cellGalaxyMul)),
-      );
+      count = Math.min(allCells.length, cellDisplayLimit);
       cellsList = pinCellInspectionFieldInVisiblePrefix(
         allCells,
         count,
@@ -1257,7 +1255,7 @@ export default function CellGalaxy({
       cellMemorySeedAttr.needsUpdate = true;
 
       lastCellsRef.current = cellsCache.cells;
-      lastMulRef.current = cellGalaxyMul;
+      lastCellDisplayLimitRef.current = cellDisplayLimit;
       lastPinnedCellIdRef.current = selectedCellIdRef.current;
       lastPinnedInspectionFieldRef.current = inspectionField;
     }

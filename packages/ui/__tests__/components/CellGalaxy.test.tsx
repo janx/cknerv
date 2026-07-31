@@ -117,6 +117,13 @@ describe('CellGalaxy', () => {
     expect(source).not.toContain('CELL_FORM');
   });
 
+  it('uses the shared manual-or-adaptive display budget for its draw range', () => {
+    const source = readFileSync(CELL_GALAXY_SOURCE, 'utf8');
+
+    expect(source).toContain('resolveCellDisplayLimit(cellDisplay, quality)');
+    expect(source).toContain('Math.min(allCells.length, cellDisplayLimit)');
+  });
+
   it('turns direct inspection neighbours into the bounded pick surface', () => {
     const source = readFileSync(CELL_GALAXY_SOURCE, 'utf8');
 
