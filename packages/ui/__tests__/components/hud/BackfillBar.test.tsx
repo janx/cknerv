@@ -23,7 +23,7 @@ describe('BackfillBar', () => {
   });
 
   it.each([
-    ['catchup', 'RESTORING CHAIN CONTINUITY', 'CHAIN SYNC'],
+    ['catchup', 'RESTORING CKB CONTINUITY', 'CKB SYNC'],
     ['reorg', 'RECONCILING CANON', 'CANON REPAIR'],
     ['rebuild', 'REBUILDING CONSENSUS MEMORY', 'STATE RESET'],
   ] as const)('renders the %s replay language', (phase, title, subtitle) => {
