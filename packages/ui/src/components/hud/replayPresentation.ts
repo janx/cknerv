@@ -24,8 +24,8 @@ export function replayPresentation(phase: ReplayPhase): ReplayPresentation {
     case 'catchup':
       return {
         tag: 'CATCHUP',
-        title: 'RESTORING CHAIN CONTINUITY',
-        subtitle: 'CHAIN SYNC',
+        title: 'RESTORING CKB CONTINUITY',
+        subtitle: 'CKB SYNC',
         color: HUD_COLORS.cyanWire,
         waiting: 'WAITING FOR CANONICAL BLOCKS',
       };
