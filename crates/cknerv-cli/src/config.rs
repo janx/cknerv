@@ -15,8 +15,6 @@ pub struct FileConfig {
     #[serde(default)]
     pub dashboard: DashboardSection,
     #[serde(default)]
-    pub backfill: BackfillSection,
-    #[serde(default)]
     pub galaxy: GalaxySection,
 }
 
@@ -29,11 +27,6 @@ pub struct CkbSection {
 pub struct DashboardSection {
     pub port: Option<u16>,
     pub open: Option<bool>,
-}
-
-#[derive(Debug, Default, serde::Deserialize)]
-pub struct BackfillSection {
-    pub blocks: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
@@ -214,9 +207,10 @@ pub fn resolve(
         file.dashboard.open.unwrap_or(true)
     };
     let profile = file.galaxy.profile.unwrap_or(GalaxyProfile::Auto);
-    let backfill_blocks = cli_backfill
-        .or(file.backfill.blocks)
-        .unwrap_or_else(|| profile_backfill_default(profile));
+    // Historical replay is an operational policy, not durable workdir
+    // configuration. Profiles select the normal value; the CLI flag remains
+    // as a one-run diagnostic override.
+    let backfill_blocks = cli_backfill.unwrap_or_else(|| profile_backfill_default(profile));
     let mut galaxy = ResolvedGalaxyConfig::for_profile(profile);
     if let Some(v) = file.galaxy.cell_cap {
         galaxy.cell_cap = v;
@@ -266,11 +260,6 @@ rpc_url = "http://localhost:8114"
 port = 7001
 # Auto-open the browser on start (--no-open overrides).
 open = true
-
-[backfill]
-# Recent blocks used for boot replay and the reorg/rebuild window. 0 disables
-# historical replay; a minimal two-block live reorg journal remains.
-blocks = 2000
 
 [galaxy]
 # auto uses balanced defaults. Explicit: devnet, testnet, mainnet, custom.
@@ -324,11 +313,11 @@ mod tests {
     }
 
     #[test]
-    fn file_overrides_defaults_then_cli_overrides_file() {
+    fn file_overrides_defaults_then_cli_overrides_automatic_replay() {
         let dir = tmpdir();
         std::fs::write(
             dir.join("cknerv.toml"),
-            "[ckb]\nrpc_url = \"http://node:9999\"\n[dashboard]\nport = 8080\nopen = false\n[backfill]\nblocks = 50\n",
+            "[ckb]\nrpc_url = \"http://node:9999\"\n[dashboard]\nport = 8080\nopen = false\n",
         )
         .unwrap();
         let file = load(&dir).unwrap();
@@ -336,7 +325,7 @@ mod tests {
         assert_eq!(r.rpc_url.as_str(), "http://node:9999/");
         assert_eq!(r.port, 8080);
         assert!(!r.open);
-        assert_eq!(r.backfill_blocks, 50);
+        assert_eq!(r.backfill_blocks, 2000);
 
         let cli_rpc = Url::parse("http://cli:1111").unwrap();
         let r2 = resolve(Some(cli_rpc), Some(1234), false, Some(7), &file).unwrap();
@@ -344,6 +333,15 @@ mod tests {
         assert_eq!(r2.port, 1234);
         assert_eq!(r2.backfill_blocks, 7);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn legacy_toml_backfill_is_ignored_in_favor_of_profile_policy() {
+        let file: FileConfig =
+            toml::from_str("[backfill]\nblocks = 77\n[galaxy]\nprofile = \"devnet\"\n").unwrap();
+        let r = resolve(None, None, false, None, &file).unwrap();
+
+        assert_eq!(r.backfill_blocks, 1000);
     }
 
     #[test]
@@ -366,15 +364,14 @@ mod tests {
     #[test]
     fn explicit_galaxy_values_override_profile_defaults() {
         let file: FileConfig = toml::from_str(
-            "[backfill]\nblocks = 77\n\
-             [galaxy]\nprofile = \"mainnet\"\ncell_cap = 3333\nrecent_links_cap = 444\n\
+            "[galaxy]\nprofile = \"mainnet\"\ncell_cap = 3333\nrecent_links_cap = 444\n\
              [galaxy.topology]\nneighbor_k = 6\nmax_edge_length = 31.5\nmax_hops = 44\n\
              [galaxy.pulses]\nlink_ring_capacity = 88\nmax_pulses_per_link = 9\nmax_sources_per_parent = 3\nmax_active_pulses = 111\n",
         )
         .unwrap();
         let r = resolve(None, None, false, None, &file).unwrap();
 
-        assert_eq!(r.backfill_blocks, 77);
+        assert_eq!(r.backfill_blocks, 2000);
         assert_eq!(r.galaxy.profile, GalaxyProfile::Mainnet);
         assert_eq!(r.galaxy.cell_cap, 3333);
         assert_eq!(r.galaxy.recent_links_cap, 444);
@@ -396,6 +393,7 @@ mod tests {
 
     #[test]
     fn template_parses_to_documented_defaults() {
+        assert!(!CKNERV_TOML_TEMPLATE.contains("[backfill]"));
         let file: FileConfig = toml::from_str(CKNERV_TOML_TEMPLATE).unwrap();
         let r = resolve(None, None, false, None, &file).unwrap();
         assert_eq!(r.rpc_url.as_str(), "http://localhost:8114/");

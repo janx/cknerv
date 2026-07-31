@@ -3,7 +3,7 @@
 //! Lifted from `simulator/src/dashboard/persistence.rs`, scoped to
 //! cknerv-server's responsibility: persist the [`Chain`] singleton +
 //! every registered projection's `save()` blob to a single JSON file
-//! on shutdown, hydrate it on boot. RCG entity persistence stays in
+//! after boot replay and on shutdown, hydrate it on boot. RCG entity persistence stays in
 //! simulator.
 //!
 //! On-disk format (per spec §6):

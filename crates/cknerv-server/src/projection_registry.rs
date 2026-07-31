@@ -193,7 +193,7 @@ impl Registry {
     }
 
     /// Save every registered projection's state into a `{name → value}`
-    /// JSON object. Used by the preserved-workdir shutdown hook.
+    /// JSON object. Used by preserved-workdir checkpoints and shutdown.
     pub fn save_all(&self) -> Value {
         let mut map = serde_json::Map::new();
         for r in &self.read_runtimes {

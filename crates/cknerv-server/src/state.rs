@@ -23,7 +23,8 @@ use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::{broadcast, mpsc, watch};
 
 use cknerv_core::{
-    Chain, ChainNode, MempoolStats, Mutation, Peer, RecentBlock, RecentTx, RevisionedMutation, Ring,
+    Chain, ChainNode, MempoolStats, Mutation, Peer, RecentBlock, RecentTx, ReplayPhase,
+    RevisionedMutation, Ring,
 };
 
 use crate::projection_registry::Registry;
@@ -73,6 +74,10 @@ pub struct ServerState {
     pub(crate) revision: AtomicU64,
     pub(crate) mutation_tx: broadcast::Sender<RevisionedMutation>,
     pub(crate) mutation_ring: Ring<RevisionedMutation>,
+    /// Lightweight completion signal used by persistence. Keeping this
+    /// separate from `mutation_tx` avoids cloning every historical block/tx
+    /// payload into a subscriber that only needs the terminal boot marker.
+    boot_replay_complete_tx: watch::Sender<bool>,
     pub(crate) projections: RwLock<Registry>,
     /// Coordination lock making (state, revision) snapshot-atomic. The
     /// reducer takes the write side around its full apply sequence
@@ -85,11 +90,13 @@ pub struct ServerState {
 impl ServerState {
     pub fn new() -> Self {
         let (mutation_tx, _) = broadcast::channel(MUTATION_CHANNEL_CAPACITY);
+        let (boot_replay_complete_tx, _) = watch::channel(false);
         Self {
             entity_store: RwLock::new(EntityStore::new()),
             revision: AtomicU64::new(0),
             mutation_tx,
             mutation_ring: Ring::with_capacity(MUTATION_RING_CAP),
+            boot_replay_complete_tx,
             projections: RwLock::new(Registry::new()),
             coord: RwLock::new(()),
         }
@@ -98,6 +105,10 @@ impl ServerState {
     /// Subscribe to the live mutation broadcast.
     pub fn subscribe_mutations(&self) -> broadcast::Receiver<RevisionedMutation> {
         self.mutation_tx.subscribe()
+    }
+
+    pub(crate) fn subscribe_boot_replay_completion(&self) -> watch::Receiver<bool> {
+        self.boot_replay_complete_tx.subscribe()
     }
 
     /// Snapshot of the mutation ring contents (oldest → newest revision).
@@ -125,6 +136,15 @@ impl ServerState {
     /// projection fan-out) so concurrent `snapshot()` readers observe
     /// (state, revision) atomically. Returns the assigned revision.
     pub fn apply_mutation(&self, m: Mutation) -> u64 {
+        let boot_replay_completed = matches!(
+            &m,
+            Mutation::BackfillProgress {
+                active: false,
+                phase: ReplayPhase::Boot,
+                ..
+            }
+        );
+
         // 1. Apply the mutation to the entity store (chain-side arms
         //    only; `CellTagged` is projection-only). Done under the
         //    coord write lock so the snapshot read side sees a
@@ -156,6 +176,9 @@ impl ServerState {
         //    subscribers errors — ignore it, the ring still holds the
         //    record for catch-up.
         let _ = self.mutation_tx.send(rev);
+        if boot_replay_completed {
+            self.boot_replay_complete_tx.send_replace(true);
+        }
 
         revision
     }
