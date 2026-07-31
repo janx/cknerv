@@ -18,8 +18,8 @@ export interface CellsStats {
    *  excluded — those cells are still alive on chain. */
   dead: number;
   /** Per-kind breakdown of cells *currently in the galaxy view* (i.e. alive
-   *  in the local cache). This stays a galaxy-view stat: with CELL_CAP=5000
-   *  it may understate true on-chain per-kind counts, but no per-kind chain
+   *  in the local cache). This stays a galaxy-view stat: at the configured
+   *  CELL_CAP it may understate true on-chain per-kind counts, but no per-kind chain
    *  counter exists yet and the panel uses this for visual decomposition,
    *  not for chain accounting. */
   byKind: Record<CellKindKey, number>;

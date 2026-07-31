@@ -756,6 +756,7 @@ export default function App({
         localNode={localNode}
         cellsStats={cellsStats}
         cellCount={cellsCache.cells.size}
+        cellCapacity={galaxyConfig.cellCap}
         selectedCell={selectedCell}
         cellRecordsById={cellsCache.cells}
         recentCellLinks={cellsCache.recentLinks}
@@ -853,6 +854,7 @@ export default function App({
           <CellGalaxy
             ckbNodeIds={ckbNodeIds}
             universeSeed={universeSeed}
+            cellCapacity={galaxyConfig.cellCap}
             localReceiveDelayS={cf.localReceiveDelayS}
             selectedId={selectedNetId}
             selectedCellId={selectedCellId}

@@ -16,6 +16,10 @@ export interface CellDisplayRuntimeSnapshot {
 export const CELL_DISPLAY_MIN = 100;
 export const CELL_DISPLAY_MAX = INSTANCE_CAPACITY;
 export const CELL_DISPLAY_STEP = 100;
+/** Keep the lower field precise, then spend fewer physical slider pixels on
+ * large-count changes where 250-Cell increments are visually equivalent. */
+export const CELL_DISPLAY_FINE_MAX = 5_000;
+export const CELL_DISPLAY_COARSE_STEP = 250;
 
 const listeners = new Set<() => void>();
 let runtimeSnapshot: CellDisplayRuntimeSnapshot = {
@@ -23,30 +27,119 @@ let runtimeSnapshot: CellDisplayRuntimeSnapshot = {
   manualLimit: CELL_DISPLAY_MAX,
 };
 
-export function normalizeCellDisplayLimit(limit: number): number {
-  if (!Number.isFinite(limit)) return CELL_DISPLAY_MAX;
-  const stepped = Math.round(limit / CELL_DISPLAY_STEP) * CELL_DISPLAY_STEP;
-  return Math.max(CELL_DISPLAY_MIN, Math.min(CELL_DISPLAY_MAX, stepped));
-}
-
-/** AUTO shares the adaptive quality controller's measured performance tier.
- * It changes only visual capacity; the complete browser cache remains intact. */
-export function automaticCellDisplayLimit(quality: QualityPreset): number {
+/** Clamp a server-provided capacity to what the bundled renderer can hold. */
+export function normalizeCellDisplayCapacity(capacity: number): number {
+  if (!Number.isFinite(capacity)) return CELL_DISPLAY_MAX;
   return Math.max(
     CELL_DISPLAY_MIN,
-    Math.min(
-      CELL_DISPLAY_MAX,
-      Math.floor(INSTANCE_CAPACITY * QUALITY_PRESETS[quality].cellGalaxyMul),
+    Math.min(CELL_DISPLAY_MAX, Math.floor(capacity)),
+  );
+}
+
+export function normalizeCellDisplayLimit(
+  limit: number,
+  capacity = CELL_DISPLAY_MAX,
+): number {
+  const maximum = normalizeCellDisplayCapacity(capacity);
+  if (!Number.isFinite(limit)) return maximum;
+  if (limit <= CELL_DISPLAY_MIN) return CELL_DISPLAY_MIN;
+  if (limit >= maximum) return maximum;
+  const stepped = limit <= CELL_DISPLAY_FINE_MAX
+    ? Math.round(limit / CELL_DISPLAY_STEP) * CELL_DISPLAY_STEP
+    : CELL_DISPLAY_FINE_MAX
+      + Math.round(
+        (limit - CELL_DISPLAY_FINE_MAX) / CELL_DISPLAY_COARSE_STEP,
+      ) * CELL_DISPLAY_COARSE_STEP;
+  return Math.max(CELL_DISPLAY_MIN, Math.min(maximum, stepped));
+}
+
+function fineSliderStepCount(maximum: number): number {
+  const fineMaximum = Math.min(maximum, CELL_DISPLAY_FINE_MAX);
+  return Math.ceil(
+    (fineMaximum - CELL_DISPLAY_MIN) / CELL_DISPLAY_STEP,
+  );
+}
+
+/** Range-input domain size for a capacity. The first 4,900 Cells get
+ * 100-Cell steps; the remaining range uses 250-Cell steps. At the default
+ * 20,000 cap this is 0…109 instead of a visually cramped 100…20,000 rail. */
+export function cellDisplaySliderMaximum(
+  capacity = CELL_DISPLAY_MAX,
+): number {
+  const maximum = normalizeCellDisplayCapacity(capacity);
+  const fineMaximum = Math.min(maximum, CELL_DISPLAY_FINE_MAX);
+  const coarseSteps = Math.ceil(
+    (maximum - fineMaximum) / CELL_DISPLAY_COARSE_STEP,
+  );
+  return fineSliderStepCount(maximum) + coarseSteps;
+}
+
+export function cellDisplaySliderValueToLimit(
+  value: number,
+  capacity = CELL_DISPLAY_MAX,
+): number {
+  const maximum = normalizeCellDisplayCapacity(capacity);
+  const sliderMaximum = cellDisplaySliderMaximum(maximum);
+  const index = Number.isFinite(value)
+    ? Math.max(0, Math.min(sliderMaximum, Math.round(value)))
+    : sliderMaximum;
+  if (index >= sliderMaximum) return maximum;
+
+  const fineSteps = fineSliderStepCount(maximum);
+  const fineMaximum = Math.min(maximum, CELL_DISPLAY_FINE_MAX);
+  const limit = index <= fineSteps
+    ? CELL_DISPLAY_MIN + index * CELL_DISPLAY_STEP
+    : fineMaximum + (index - fineSteps) * CELL_DISPLAY_COARSE_STEP;
+  return normalizeCellDisplayLimit(limit, maximum);
+}
+
+export function cellDisplayLimitToSliderValue(
+  limit: number,
+  capacity = CELL_DISPLAY_MAX,
+): number {
+  const maximum = normalizeCellDisplayCapacity(capacity);
+  const normalized = normalizeCellDisplayLimit(limit, maximum);
+  const sliderMaximum = cellDisplaySliderMaximum(maximum);
+  if (normalized >= maximum) return sliderMaximum;
+
+  const fineSteps = fineSliderStepCount(maximum);
+  if (normalized <= CELL_DISPLAY_FINE_MAX) {
+    return Math.min(
+      fineSteps,
+      Math.round((normalized - CELL_DISPLAY_MIN) / CELL_DISPLAY_STEP),
+    );
+  }
+  return Math.min(
+    sliderMaximum,
+    fineSteps + Math.round(
+      (normalized - CELL_DISPLAY_FINE_MAX) / CELL_DISPLAY_COARSE_STEP,
     ),
   );
 }
 
+/** AUTO shares the adaptive quality controller's measured performance tier.
+ * It changes only visual capacity; the complete browser cache remains intact. */
+export function automaticCellDisplayLimit(
+  quality: QualityPreset,
+  capacity = CELL_DISPLAY_MAX,
+): number {
+  const maximum = normalizeCellDisplayCapacity(capacity);
+  return normalizeCellDisplayLimit(
+    maximum * QUALITY_PRESETS[quality].cellGalaxyMul,
+    maximum,
+  );
+}
+
+/** AUTO scales from the server's retained capacity. Manual mode remains a
+ * renderer request up to the 20K hard ceiling, so an older low-cap config does
+ * not silently shrink the slider's numeric range. */
 export function resolveCellDisplayLimit(
   snapshot: CellDisplayRuntimeSnapshot,
   quality: QualityPreset,
+  automaticCapacity = CELL_DISPLAY_MAX,
 ): number {
   return snapshot.mode === 'auto'
-    ? automaticCellDisplayLimit(quality)
+    ? automaticCellDisplayLimit(quality, automaticCapacity)
     : normalizeCellDisplayLimit(snapshot.manualLimit);
 }
 

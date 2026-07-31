@@ -32,8 +32,8 @@ describe('fabric capacity', () => {
   // exactly as the renderer would, and asserts every edge fits the
   // segment buffer. This is the empirical degree measurement encoded as
   // a guard: if it fails, AVG_DEGREE_BOUND (and the buffer) must grow.
-  // MAX_GRAPH_CELLS (~7000) cells — the worst case the buffer is sized
-  // for; the build is O(N·k) in practice and runs in ~1-2s.
+  // MAX_GRAPH_CELLS (~22,000) cells — the worst case the buffer is sized
+  // for; the build is O(N·k) in practice.
   it('holds the full graph at MAX_GRAPH_CELLS without truncation', () => {
     const cells = new Map<number, Cell>();
     for (let id = 0; id < MAX_GRAPH_CELLS; id++) cells.set(id, helixCell(id));

@@ -120,7 +120,9 @@ describe('CellGalaxy', () => {
   it('uses the shared manual-or-adaptive display budget for its draw range', () => {
     const source = readFileSync(CELL_GALAXY_SOURCE, 'utf8');
 
-    expect(source).toContain('resolveCellDisplayLimit(cellDisplay, quality)');
+    expect(source).toMatch(
+      /resolveCellDisplayLimit\(\s*cellDisplay,\s*quality,\s*cellCapacity,\s*\)/,
+    );
     expect(source).toContain('Math.min(allCells.length, cellDisplayLimit)');
   });
 

@@ -34,7 +34,7 @@ declare global {
 export const DEFAULT_BUILD_VERSION = 'dev';
 export const DEFAULT_GALAXY_CONFIG: GalaxyRuntimeConfig = {
   profile: 'auto',
-  cellCap: 5000,
+  cellCap: 20_000,
   recentLinksCap: 2048,
   topology: {
     // Densified live to bridge the inter-arm gaps: sparse gap cells whose 4

@@ -123,11 +123,15 @@ describe('StatusStrip', () => {
     ) as HTMLInputElement;
 
     expect(automatic.getAttribute('aria-pressed')).toBe('true');
-    expect(slider.value).toBe('6000');
+    expect(slider.value).toBe('109');
+    expect(slider.max).toBe('109');
+    expect(slider.getAttribute('aria-valuetext')).toContain('20,000 Cells');
+    expect(control.getAttribute('data-cell-display-capacity')).toBe('20000');
     expect(control.getAttribute('data-cell-display-count')).toBe('5000');
     expect(control.querySelector('[data-cell-display-track]')).not.toBeNull();
+    expect(within(control).getByText('5K/20K')).not.toBeNull();
 
-    fireEvent.change(slider, { target: { value: '3000' } });
+    fireEvent.change(slider, { target: { value: '29' } });
 
     expect(getCellDisplayRuntimeSnapshot()).toEqual({
       mode: 'manual',
@@ -140,6 +144,41 @@ describe('StatusStrip', () => {
     fireEvent.click(automatic);
     expect(getCellDisplayRuntimeSnapshot().mode).toBe('auto');
     expect(automatic.getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('keeps a 20K manual range while AUTO respects a smaller server cap', () => {
+    render(
+      <StatusStrip
+        level="nominal"
+        uptimeMs={0}
+        cellCount={2_000}
+        cellCapacity={2_000}
+      />,
+    );
+    const control = screen.getByRole('group', { name: 'Cell display count' });
+    const slider = within(control).getByRole(
+      'slider',
+      { name: 'Displayed cell limit' },
+    ) as HTMLInputElement;
+
+    expect(slider.max).toBe('109');
+    expect(slider.value).toBe('19');
+    expect(slider.getAttribute('aria-valuetext')).toContain('2,000 Cells');
+    expect(control.getAttribute('data-cell-display-capacity')).toBe('20000');
+    expect(control.getAttribute('data-cell-display-source-capacity')).toBe('2000');
+
+    fireEvent.change(slider, { target: { value: '109' } });
+
+    expect(getCellDisplayRuntimeSnapshot()).toEqual({
+      mode: 'manual',
+      manualLimit: 20_000,
+    });
+    expect(control.getAttribute('data-cell-display-limit')).toBe('20000');
+    expect(control.getAttribute('data-cell-display-count')).toBe('2000');
+    expect(within(control).getByText('2K/20K')).not.toBeNull();
+    expect(control.getAttribute('title')).toContain(
+      'server currently retains 2,000',
+    );
   });
 
   it('offers an always-visible auto/high/med/low render-quality control', () => {
