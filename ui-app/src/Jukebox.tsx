@@ -6,10 +6,34 @@ import {
   type CSSProperties,
 } from 'react';
 
-export const SPOTIFY_TRACK_URL =
-  'https://open.spotify.com/track/0MUQtVlIkuMeDfZFm5xKRq';
-export const SPOTIFY_EMBED_URL =
-  'https://open.spotify.com/embed/track/0MUQtVlIkuMeDfZFm5xKRq?utm_source=oembed';
+export const JUKEBOX_TRACKS = [
+  {
+    id: 'myuk',
+    kind: 'VOCAL',
+    artist: 'MYUK',
+    duration: '04:36',
+    selectorLabel: 'Select vocal version by Myuk',
+    frameTitle: 'YouTube Embed: 翼をください — Myuk vocal',
+    watchUrl: 'https://www.youtube.com/watch?v=E6HOEpZc-J0',
+    embedUrl:
+      'https://www.youtube.com/embed/E6HOEpZc-J0?playsinline=1&rel=0',
+  },
+  {
+    id: 'iso-piano',
+    kind: 'PIANO',
+    artist: 'ISO PIANO',
+    duration: '03:36',
+    selectorLabel: 'Select piano version by Iso Piano',
+    frameTitle: 'YouTube Embed: 翼をください — Iso Piano instrumental',
+    watchUrl: 'https://www.youtube.com/watch?v=sp8eJEbxIao',
+    embedUrl:
+      'https://www.youtube.com/embed/sp8eJEbxIao?playsinline=1&rel=0',
+  },
+] as const;
+
+export type JukeboxTrackId = (typeof JUKEBOX_TRACKS)[number]['id'];
+
+export const DEFAULT_JUKEBOX_TRACK_ID: JukeboxTrackId = 'myuk';
 
 const PANEL_ID = 'cknerv-jukebox-player';
 const CYAN = 'var(--hud-cyanWire, #20F0FF)';
@@ -24,7 +48,10 @@ const panelStyle: CSSProperties = {
   bottom: 'max(14px, env(safe-area-inset-bottom, 0px))',
   zIndex: 20,
   width:
-    'min(456px, calc(100vw - 28px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)))',
+    'min(510px, calc(100vw - 28px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)))',
+  maxHeight:
+    'calc(100vh - 28px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px))',
+  overflowY: 'auto',
   boxSizing: 'border-box',
   padding: 7,
   border: '1px solid rgba(32,240,255,.24)',
@@ -35,6 +62,11 @@ const panelStyle: CSSProperties = {
   pointerEvents: 'auto',
 };
 
+function getTrack(trackId: JukeboxTrackId) {
+  return JUKEBOX_TRACKS.find((track) => track.id === trackId)
+    ?? JUKEBOX_TRACKS[0];
+}
+
 function JukeboxGlyph({ active }: { active: boolean }) {
   const color = active ? CYAN : DIM;
   return (
@@ -44,7 +76,12 @@ function JukeboxGlyph({ active }: { active: boolean }) {
       height="14"
       viewBox="0 0 16 16"
       fill="none"
-      style={{ flex: '0 0 auto', filter: active ? 'drop-shadow(0 0 4px rgba(32,240,255,.55))' : undefined }}
+      style={{
+        flex: '0 0 auto',
+        filter: active
+          ? 'drop-shadow(0 0 4px rgba(32,240,255,.55))'
+          : undefined,
+      }}
     >
       <path
         d="M4 13V7.2a4 4 0 0 1 8 0V13M4 9h8M6 13V9h4v4"
@@ -65,12 +102,16 @@ function JukeboxGlyph({ active }: { active: boolean }) {
 
 export default function Jukebox() {
   const [open, setOpen] = useState(false);
-  const [frameReady, setFrameReady] = useState(false);
+  const [selectedTrackId, setSelectedTrackId] =
+    useState<JukeboxTrackId>(DEFAULT_JUKEBOX_TRACK_ID);
+  const [readyTrackId, setReadyTrackId] = useState<JukeboxTrackId | null>(null);
   const toggleRef = useRef<HTMLButtonElement>(null);
+  const selectedTrack = getTrack(selectedTrackId);
+  const frameReady = readyTrackId === selectedTrackId;
 
   const close = useCallback(() => {
     setOpen(false);
-    setFrameReady(false);
+    setReadyTrackId(null);
     toggleRef.current?.focus();
   }, []);
 
@@ -111,15 +152,15 @@ export default function Jukebox() {
         aria-expanded={open}
         aria-label={open
           ? 'Close Jukebox and stop playback'
-          : 'Open Jukebox; loads Spotify content'}
+          : 'Open Jukebox; loads YouTube player'}
         title={open
           ? 'Close Jukebox and stop playback'
-          : 'Open Jukebox — loads Spotify only on request'}
+          : 'Open Jukebox — loads YouTube only on request'}
         onClick={() => {
           if (open) {
             close();
           } else {
-            setFrameReady(false);
+            setReadyTrackId(null);
             setOpen(true);
           }
         }}
@@ -158,8 +199,9 @@ export default function Jukebox() {
         <section
           id={PANEL_ID}
           role="dialog"
-          aria-label="Spotify Jukebox"
+          aria-label="YouTube Jukebox"
           data-jukebox-panel
+          data-jukebox-selected-track={selectedTrackId}
           data-jukebox-frame-ready={frameReady ? 'true' : 'false'}
           style={panelStyle}
         >
@@ -176,19 +218,22 @@ export default function Jukebox() {
             }}
           >
             <span style={{ color: ORANGE, letterSpacing: 1.4 }}>JUKEBOX</span>
-            <span style={{ margin: '0 7px', color: 'rgba(124,135,148,.45)' }}>//</span>
+            <span style={{ margin: '0 7px', color: 'rgba(124,135,148,.45)' }}>
+              //
+            </span>
             <span
+              aria-live="polite"
               data-jukebox-load-state={frameReady ? 'ready' : 'connecting'}
               style={{ color: frameReady ? CYAN : DIM }}
             >
-              SPOTIFY {frameReady ? 'READY' : 'CONNECTING'}
+              YOUTUBE {frameReady ? 'READY' : 'CONNECTING'}
             </span>
             <span style={{ flex: 1 }} />
             <a
-              href={SPOTIFY_TRACK_URL}
+              href={selectedTrack.watchUrl}
               target="_blank"
               rel="noopener noreferrer"
-              aria-label="Open in Spotify"
+              aria-label={`Open ${selectedTrack.kind.toLowerCase()} version by ${selectedTrack.artist} on YouTube`}
               onClick={(event) => event.stopPropagation()}
               onPointerDown={(event) => event.stopPropagation()}
               style={{
@@ -197,7 +242,7 @@ export default function Jukebox() {
                 whiteSpace: 'nowrap',
               }}
             >
-              OPEN IN SPOTIFY ↗
+              OPEN ON YOUTUBE ↗
             </a>
             <button
               type="button"
@@ -221,23 +266,114 @@ export default function Jukebox() {
               ×
             </button>
           </div>
-          <iframe
-            src={SPOTIFY_EMBED_URL}
-            title="Spotify Embed: TSUBASA WO KUDASAI"
-            width="100%"
-            height="152"
-            frameBorder="0"
-            allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
-            allowFullScreen
-            loading="lazy"
-            onLoad={() => setFrameReady(true)}
+
+          <div
+            role="group"
+            aria-label="Choose Jukebox track"
             style={{
-              display: 'block',
-              border: 0,
-              borderRadius: 12,
-              background: '#191414',
+              display: 'grid',
+              gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+              gap: 5,
+              marginBottom: 7,
             }}
-          />
+          >
+            {JUKEBOX_TRACKS.map((track) => {
+              const selected = track.id === selectedTrackId;
+              return (
+                <button
+                  key={track.id}
+                  type="button"
+                  className="cknerv-hud-control-button"
+                  data-jukebox-track={track.id}
+                  aria-label={track.selectorLabel}
+                  aria-pressed={selected}
+                  onClick={() => {
+                    if (selected) return;
+                    setReadyTrackId(null);
+                    setSelectedTrackId(track.id);
+                  }}
+                  style={{
+                    appearance: 'none',
+                    display: 'grid',
+                    gridTemplateColumns: 'auto 1fr auto',
+                    alignItems: 'center',
+                    minWidth: 0,
+                    minHeight: 29,
+                    padding: '4px 7px',
+                    border: selected
+                      ? '1px solid rgba(32,240,255,.52)'
+                      : '1px solid rgba(124,135,148,.2)',
+                    background: selected
+                      ? 'linear-gradient(90deg,rgba(32,240,255,.1),rgba(32,240,255,.025))'
+                      : 'rgba(0,0,0,.28)',
+                    boxShadow: selected
+                      ? 'inset 0 0 15px rgba(32,240,255,.04)'
+                      : 'none',
+                    color: selected ? CYAN : DIM,
+                    font: `400 8.5px/15px ${MONO}`,
+                    letterSpacing: .9,
+                    textAlign: 'left',
+                    cursor: 'pointer',
+                  }}
+                >
+                  <span style={{ color: selected ? ORANGE : DIM }}>
+                    {track.kind}
+                  </span>
+                  <span
+                    style={{
+                      minWidth: 0,
+                      marginLeft: 7,
+                      overflow: 'hidden',
+                      color: selected ? INK : DIM,
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {track.artist}
+                  </span>
+                  <span style={{ marginLeft: 7, opacity: .72 }}>
+                    {track.duration}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          <div
+            data-jukebox-player
+            style={{
+              position: 'relative',
+              width: '100%',
+              height: 'clamp(200px, calc(56.25vw - 23.625px), 279px)',
+              overflow: 'hidden',
+              border: '1px solid rgba(32,240,255,.12)',
+              boxSizing: 'border-box',
+              background: '#000',
+            }}
+          >
+            <iframe
+              key={selectedTrack.id}
+              src={selectedTrack.embedUrl}
+              title={selectedTrack.frameTitle}
+              width="100%"
+              height="100%"
+              frameBorder="0"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+              allowFullScreen
+              loading="lazy"
+              referrerPolicy="strict-origin-when-cross-origin"
+              onLoad={() => setReadyTrackId(selectedTrack.id)}
+              style={{
+                position: 'absolute',
+                inset: 0,
+                display: 'block',
+                width: '100%',
+                height: '100%',
+                border: 0,
+                background: '#000',
+              }}
+            />
+          </div>
         </section>
       ) : null}
     </div>
