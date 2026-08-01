@@ -74,6 +74,7 @@ import type {
   Peer,
 } from '@cknerv/types';
 import Tweaks from './Tweaks';
+import Jukebox from './Jukebox';
 import {
   INITIAL_CELL_IDENTITY_JOURNEY_STATE,
   cellIdentityJourneyReducer,
@@ -798,6 +799,7 @@ export default function App({
           cells: cellsStreamHealth,
         }}
         build={build}
+        topBarActions={<Jukebox />}
         colonyCount={topology.nodes.length}
       />
       {/* Render-stats HUD overlay (DOM sibling of HudOverlay, NOT in-Canvas):

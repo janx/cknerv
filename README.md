@@ -92,6 +92,17 @@ The Vite dev server uses port `5181` and proxies `/api` plus WebSocket traffic
 to `http://localhost:7001`. Release builds embed `ui-app/dist` into the
 `cknerv` binary via `crates/cknerv-cli/build.rs`.
 
+### Optional Jukebox
+
+The dashboard top bar includes an optional Spotify Jukebox for
+`TSUBASA WO KUDASAI`. Spotify is not contacted and no audio is loaded during
+dashboard startup. Opening the Jukebox loads Spotify's official player; audio
+starts only after the user activates that player. Closing the Jukebox removes
+the player and stops playback. The feature requires internet access, remains
+independent of chain events and visual timing, and is subject to Spotify's
+terms and regional availability. Playback length and sign-in behavior are
+controlled by Spotify; signed-out sessions may be offered a preview.
+
 ## Tech Stack
 
 | Layer | Technology | Purpose |

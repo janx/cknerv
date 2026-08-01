@@ -108,6 +108,23 @@ describe('StatusStrip', () => {
     expect(container.textContent).not.toContain('DATA LIVE');
   });
 
+  it('renders product-owned actions without coupling them to status semantics', () => {
+    const { container } = render(
+      <StatusStrip
+        level="nominal"
+        uptimeMs={0}
+        actions={<button type="button">JUKEBOX</button>}
+      />,
+    );
+
+    const actions = container.querySelector('[data-status-actions]');
+    expect(actions).not.toBeNull();
+    expect(within(actions as HTMLElement).getByRole('button', {
+      name: 'JUKEBOX',
+    })).not.toBeNull();
+    expect(container.textContent).toContain('NOMINAL');
+  });
+
   it('offers an adaptive Cell-count cap with an immediate manual slider override', () => {
     const { container } = render(
       <StatusStrip level="nominal" uptimeMs={0} cellCount={5_000} />,
