@@ -42,9 +42,9 @@ describe('HudOverlay wiring', () => {
     expect(APP_SOURCE).toContain('onStart={beginOrbitInteraction}');
     expect(APP_SOURCE).toContain('onChange={changeOrbitInteraction}');
     expect(APP_SOURCE).toContain('onEnd={endOrbitInteraction}');
-    expect(APP_SOURCE).toContain(
-      'orbitGestureSuppressesPointerMiss(',
-    );
+    expect(APP_SOURCE.match(
+      /orbitGestureSuppressesPointerAction\(/g,
+    )).toHaveLength(3);
   });
 
   it('shares one selected-Cell topology field between bodies and fibres', () => {

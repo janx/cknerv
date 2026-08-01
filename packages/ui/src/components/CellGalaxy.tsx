@@ -576,6 +576,17 @@ interface CellPickerProps {
   onSelect: (id: string | null) => void;
 }
 
+/** Match R3F's stationary-click tolerance, which it otherwise applies only
+ * to missed clicks. Successful raycast hits must reject drag-generated clicks
+ * explicitly. */
+export const CELL_CLICK_MAX_POINTER_DELTA_PX = 2;
+
+export function cellPointerGestureIsClick(delta: number): boolean {
+  return Number.isFinite(delta)
+    && delta >= 0
+    && delta <= CELL_CLICK_MAX_POINTER_DELTA_PX;
+}
+
 /** Custom Object3D that participates in r3f's raycast pipeline. Its
  *  `raycast()` projects every live cell's pos_seed to screen and pushes
  *  an intersect for the cell whose own visual radius covers the click.
@@ -774,6 +785,7 @@ function CellPicker({
       onPointerOut={() => setHovered(null)}
       onClick={(e) => {
         e.stopPropagation();
+        if (!cellPointerGestureIsClick(e.delta)) return;
         if (
           typeof e.instanceId !== 'number'
           || e.instanceId < 0

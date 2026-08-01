@@ -1,10 +1,10 @@
-export const ORBIT_POINTER_MISS_SUPPRESS_MS = 180;
+export const ORBIT_POINTER_ACTION_SUPPRESS_MS = 180;
 
 export interface OrbitGestureState {
   active: boolean;
   moved: boolean;
   revisionNoted: boolean;
-  suppressPointerMissUntilMs: number;
+  suppressPointerActionUntilMs: number;
 }
 
 export function createOrbitGestureState(): OrbitGestureState {
@@ -12,7 +12,7 @@ export function createOrbitGestureState(): OrbitGestureState {
     active: false,
     moved: false,
     revisionNoted: false,
-    suppressPointerMissUntilMs: 0,
+    suppressPointerActionUntilMs: 0,
   };
 }
 
@@ -38,18 +38,18 @@ export function endOrbitGesture(
   state.active = false;
   if (!state.moved) return;
   const safeAtMs = Number.isFinite(atMs) ? atMs : 0;
-  state.suppressPointerMissUntilMs = Math.max(
-    state.suppressPointerMissUntilMs,
-    safeAtMs + ORBIT_POINTER_MISS_SUPPRESS_MS,
+  state.suppressPointerActionUntilMs = Math.max(
+    state.suppressPointerActionUntilMs,
+    safeAtMs + ORBIT_POINTER_ACTION_SUPPRESS_MS,
   );
 }
 
-/** A drag may release before or after R3F reports the missed pointer target. */
-export function orbitGestureSuppressesPointerMiss(
+/** A drag may release before or after R3F reports its hit or missed click. */
+export function orbitGestureSuppressesPointerAction(
   state: OrbitGestureState,
   atMs: number,
 ): boolean {
   const safeAtMs = Number.isFinite(atMs) ? atMs : 0;
   return (state.active && state.moved)
-    || safeAtMs < state.suppressPointerMissUntilMs;
+    || safeAtMs < state.suppressPointerActionUntilMs;
 }

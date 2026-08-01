@@ -7,6 +7,7 @@ import CellGalaxy from '../../src/components/CellGalaxy';
 import {
   ckbNodeAnchorHaloTarget,
   ckbNodeAnchorPresentation,
+  cellPointerGestureIsClick,
   cellPointSize,
   writeFlashSlots,
   writeCellBuffers,
@@ -268,6 +269,18 @@ describe('CKB node anchor emphasis', () => {
 });
 
 describe('CellGalaxy click', () => {
+  it('rejects R3F clicks synthesized from pointer drags', () => {
+    expect(cellPointerGestureIsClick(0)).toBe(true);
+    expect(cellPointerGestureIsClick(2)).toBe(true);
+    expect(cellPointerGestureIsClick(3)).toBe(false);
+    expect(cellPointerGestureIsClick(Number.NaN)).toBe(false);
+
+    const source = readFileSync(CELL_GALAXY_SOURCE, 'utf8');
+    expect(source).toContain(
+      'if (!cellPointerGestureIsClick(e.delta)) return;',
+    );
+  });
+
   it('encodes cell selection as `cell:<id>` when instanceId is set', () => {
     const onSelect = vi.fn();
 
