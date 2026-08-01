@@ -1,9 +1,6 @@
 import { useSyncExternalStore } from 'react';
 import { INSTANCE_CAPACITY } from '../geometry/cellPositions';
-import {
-  QUALITY_PRESETS,
-  type QualityPreset,
-} from './qualityPresets';
+import type { QualityPreset } from './qualityPresets';
 
 export type CellDisplayMode = 'auto' | 'manual';
 
@@ -20,6 +17,13 @@ export const CELL_DISPLAY_STEP = 100;
  * large-count changes where 250-Cell increments are visually equivalent. */
 export const CELL_DISPLAY_FINE_MAX = 5_000;
 export const CELL_DISPLAY_COARSE_STEP = 250;
+/**
+ * Stable structural budget for AUTO mode. Adaptive quality may change DPR and
+ * transient effect sampling, but it must not add/remove thousands of Cells:
+ * doing so rebuilds the passive topology and creates a visible density loop.
+ * Smaller retained fields still show every Cell.
+ */
+export const AUTO_CELL_DISPLAY_BUDGET = 6_000;
 
 const listeners = new Set<() => void>();
 let runtimeSnapshot: CellDisplayRuntimeSnapshot = {
@@ -117,22 +121,21 @@ export function cellDisplayLimitToSliderValue(
   );
 }
 
-/** AUTO shares the adaptive quality controller's measured performance tier.
- * It changes only visual capacity; the complete browser cache remains intact. */
+/** AUTO owns one stable structural budget for the lifetime of the dashboard.
+ * `quality` remains in the signature because callers already resolve the two
+ * controls together, but it deliberately cannot change Galaxy membership.
+ * The complete browser cache remains intact. */
 export function automaticCellDisplayLimit(
-  quality: QualityPreset,
+  _quality: QualityPreset,
   capacity = CELL_DISPLAY_MAX,
 ): number {
   const maximum = normalizeCellDisplayCapacity(capacity);
-  return normalizeCellDisplayLimit(
-    maximum * QUALITY_PRESETS[quality].cellGalaxyMul,
-    maximum,
-  );
+  return Math.min(maximum, AUTO_CELL_DISPLAY_BUDGET);
 }
 
-/** AUTO scales from the server's retained capacity. Manual mode remains a
- * renderer request up to the 20K hard ceiling, so an older low-cap config does
- * not silently shrink the slider's numeric range. */
+/** AUTO stays within both its stable visual budget and the server's retained
+ * capacity. Manual mode remains a renderer request up to the 20K hard ceiling,
+ * so an older low-cap config does not silently shrink the slider's range. */
 export function resolveCellDisplayLimit(
   snapshot: CellDisplayRuntimeSnapshot,
   quality: QualityPreset,

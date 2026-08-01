@@ -14,7 +14,11 @@ import {
   DEATH_DURATION_MS,
   INSTANCE_CAPACITY,
 } from '../geometry/cellPositions';
-import { QUALITY_PRESETS, useQualityRuntime } from '../tweaks/qualityPresets';
+import { useQualityRuntime } from '../tweaks/qualityPresets';
+import {
+  resolveCellDisplayLimit,
+  useCellDisplayRuntime,
+} from '../tweaks/cellDisplay';
 import { BLOCK_HIGHLIGHT_DELAY_S } from './CellGalaxy';
 import { buildTruncatedOctahedron } from '../geometry/truncatedOctahedron';
 import { makeCellShellMaterial } from '../materials/cellShellMaterial';
@@ -48,7 +52,8 @@ export default function CellShell({ cellFlashRef, flashDirtyRef }: CellShellProp
   const simClock = useSimClock();
   const cellsCache = useCellGalaxy();
   const { effective: quality } = useQualityRuntime();
-  const cellGalaxyMul = QUALITY_PRESETS[quality].cellGalaxyMul;
+  const cellDisplay = useCellDisplayRuntime();
+  const cellDisplayLimit = resolveCellDisplayLimit(cellDisplay, quality);
 
   const { shellScale, shellOpacity } = useControls('Galaxy 共识记忆', {
     shellScale:   { value: 1.0, min: 0.1, max: 3.0, step: 0.05, label: 'scale' },
@@ -102,7 +107,7 @@ export default function CellShell({ cellFlashRef, flashDirtyRef }: CellShellProp
   const lastRebuildAtRef = useRef(0);
   const pendingRebuildRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastMembershipHashRef = useRef(-1);
-  const lastMulRef = useRef<number>(0);
+  const lastDisplayLimitRef = useRef<number>(0);
   const lastShellScaleRef = useRef<number>(1);
 
   useEffect(() => {
@@ -160,7 +165,7 @@ export default function CellShell({ cellFlashRef, flashDirtyRef }: CellShellProp
 
     const inputsChanged =
       cellsCache.cells !== lastCellsRef.current ||
-      cellGalaxyMul !== lastMulRef.current ||
+      cellDisplayLimit !== lastDisplayLimitRef.current ||
       shellScale !== lastShellScaleRef.current;
 
     if (inputsChanged) {
@@ -168,7 +173,7 @@ export default function CellShell({ cellFlashRef, flashDirtyRef }: CellShellProp
       cellsListRef.current = cellsList;
       const count = Math.min(
         cellsList.length,
-        Math.max(1, Math.floor(INSTANCE_CAPACITY * cellGalaxyMul)),
+        cellDisplayLimit,
       );
       drawCountRef.current = count;
 
@@ -195,7 +200,7 @@ export default function CellShell({ cellFlashRef, flashDirtyRef }: CellShellProp
       sizeAttr.needsUpdate = true;
 
       lastCellsRef.current = cellsCache.cells;
-      lastMulRef.current = cellGalaxyMul;
+      lastDisplayLimitRef.current = cellDisplayLimit;
       lastShellScaleRef.current = shellScale;
     } else if (flashDirtyRef.current) {
       writeCellShellFlashSlots(

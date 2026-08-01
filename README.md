@@ -291,12 +291,14 @@ sections are ignored. Use `--backfill-blocks N` only as a one-run hard scan
 limit for diagnostics.
 
 The dashboard's manual Cell-count controller tops out at the built-in
-20,000-Cell visual ceiling. AUTO scales within the resolved `cell_cap`; when an
-older config still specifies a smaller cap, the manual controller keeps its
-full range but cannot display records the server did not retain. Increasing
-`cell_cap` invalidates a checkpoint whose recorded hydration target is too
-small, so the next launch automatically rebuilds the larger reservoir. Legacy
-fixed-window checkpoints are treated the same way. No manual prune is needed.
+20,000-Cell visual ceiling. AUTO keeps a stable 6,000-Cell structural budget
+(or the complete field when `cell_cap` is smaller); adaptive quality changes
+DPR and transient effect sampling without rebuilding Galaxy membership. The
+manual controller keeps its full range but cannot display records the server
+did not retain. Increasing `cell_cap` invalidates a checkpoint whose recorded
+hydration target is too small, so the next launch automatically rebuilds the
+larger reservoir. Legacy fixed-window checkpoints are treated the same way. No
+manual prune is needed.
 
 `recent_links_cap` retains authoritative causal evidence for inspection and
 memory recall. `pulses.link_ring_capacity` bounds only newly-arrived animation

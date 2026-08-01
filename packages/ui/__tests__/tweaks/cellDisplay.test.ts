@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+  AUTO_CELL_DISPLAY_BUDGET,
   CELL_DISPLAY_MAX,
   CELL_DISPLAY_MIN,
   automaticCellDisplayLimit,
@@ -20,14 +21,14 @@ afterEach(() => {
 });
 
 describe('Cell display budget', () => {
-  it('maps adaptive quality tiers across the expanded visual capacity', () => {
-    expect(automaticCellDisplayLimit('high')).toBe(20_000);
-    expect(automaticCellDisplayLimit('med')).toBe(14_000);
-    expect(automaticCellDisplayLimit('low')).toBe(6_000);
+  it('keeps AUTO membership stable across adaptive quality tiers', () => {
+    expect(automaticCellDisplayLimit('high')).toBe(AUTO_CELL_DISPLAY_BUDGET);
+    expect(automaticCellDisplayLimit('med')).toBe(AUTO_CELL_DISPLAY_BUDGET);
+    expect(automaticCellDisplayLimit('low')).toBe(AUTO_CELL_DISPLAY_BUDGET);
 
     expect(automaticCellDisplayLimit('high', 2_000)).toBe(2_000);
-    expect(automaticCellDisplayLimit('med', 2_000)).toBe(1_400);
-    expect(automaticCellDisplayLimit('low', 2_000)).toBe(600);
+    expect(automaticCellDisplayLimit('med', 2_000)).toBe(2_000);
+    expect(automaticCellDisplayLimit('low', 2_000)).toBe(2_000);
   });
 
   it('normalizes manual values to a safe renderer step and capacity', () => {
@@ -66,7 +67,8 @@ describe('Cell display budget', () => {
 
     setCellDisplayMode('auto');
     const automatic = getCellDisplayRuntimeSnapshot();
-    expect(resolveCellDisplayLimit(automatic, 'low')).toBe(6_000);
+    expect(resolveCellDisplayLimit(automatic, 'low')).toBe(AUTO_CELL_DISPLAY_BUDGET);
+    expect(resolveCellDisplayLimit(automatic, 'high')).toBe(AUTO_CELL_DISPLAY_BUDGET);
     expect(automatic.manualLimit).toBe(2_700);
   });
 });

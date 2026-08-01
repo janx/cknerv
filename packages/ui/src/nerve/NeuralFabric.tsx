@@ -216,7 +216,7 @@ interface EdgeState {
    *  `to`→`from`. Lets the driver root a new tendril at the surviving
    *  cell rather than always at the lower id. */
   growDir: 1 | -1;
-  /** Per-edge brightness multiplier in [0.45, 1.0], derived from the
+  /** Per-edge brightness multiplier in [0.18, 1.0], derived from the
    *  edge's deterministic seed. Stable across the edge's lifetime so
    *  the network has a fixed hierarchy of bright "trunks" and dim
    *  "branches" rather than uniform mesh. */
@@ -322,7 +322,7 @@ function taper(t: number): number {
 }
 
 /** Floor brightness — twigs / non-forest cross-links sit here. */
-const TWIG_MIN = 0.45;
+const TWIG_MIN = 0.18;
 
 /** Per-edge brightness multiplier ∈ [TWIG_MIN, 1.0], the fabric's trunk/branch
  *  hierarchy. Forest edges scale by their arbor weight `w` (normalized subtree
@@ -332,8 +332,10 @@ const TWIG_MIN = 0.45;
  *  band off the deterministic edge seed, reading as faint tissue without faking
  *  trunks. Stable per edge across its lifetime. */
 function arborBrightness(w: number | undefined, seed: number): number {
-  if (w !== undefined) return TWIG_MIN + (1 - TWIG_MIN) * w;
-  return TWIG_MIN + 0.14 * (((seed >>> 16) & 0xff) / 0xff);
+  if (w !== undefined) {
+    return TWIG_MIN + (1 - TWIG_MIN) * Math.pow(w, 1.25);
+  }
+  return TWIG_MIN + 0.08 * (((seed >>> 16) & 0xff) / 0xff);
 }
 
 function makeFatLineLayer(

@@ -8,7 +8,6 @@ export interface QualityCascade {
   maxDpr: number;
   starsCount: number;
   particleCapMul: number;
-  cellGalaxyMul: number;
   dischargeArms: number;
   /** Active writes can shed tessellation under pressure. Passive fabric
    * curvature is intentionally fixed in `fabricCapacity.ts`: collapsing a
@@ -34,7 +33,7 @@ export interface QualityCascade {
  * minimum readable footprint of a retained record. */
 export const QUALITY_PRESETS: Record<QualityPreset, QualityCascade> = {
   high: {
-    maxDpr: 2, starsCount: 2000, particleCapMul: 1, cellGalaxyMul: 1,
+    maxDpr: 2, starsCount: 2000, particleCapMul: 1,
     dischargeArms: 3, activeSamplesPerHop: 12,
     nucleusNearCap: 12,
     memorySignal: {
@@ -43,7 +42,7 @@ export const QUALITY_PRESETS: Record<QualityPreset, QualityCascade> = {
     },
   },
   med: {
-    maxDpr: 1.5, starsCount: 600, particleCapMul: 0.5, cellGalaxyMul: 0.7,
+    maxDpr: 1.5, starsCount: 600, particleCapMul: 0.5,
     dischargeArms: 2, activeSamplesPerHop: 10,
     nucleusNearCap: 8,
     memorySignal: {
@@ -52,7 +51,7 @@ export const QUALITY_PRESETS: Record<QualityPreset, QualityCascade> = {
     },
   },
   low: {
-    maxDpr: 1, starsCount: 200, particleCapMul: 0.25, cellGalaxyMul: 0.3,
+    maxDpr: 1, starsCount: 200, particleCapMul: 0.25,
     dischargeArms: 1, activeSamplesPerHop: 8,
     nucleusNearCap: 4,
     memorySignal: {

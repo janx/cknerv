@@ -1,129 +1,161 @@
 //! Deterministic cell-galaxy positioning.
 //!
-//! `helix_seed_for(id)` returns a deterministic 3-axis position for the
-//! given cell id, sampled from an irregular organic-tissue distribution.
-//! The reducer (birth / death / tag) lives in the server;
-//! this module is just the pure positioning helper.
+//! `helix_seed_for(id)` returns a deterministic 3-axis position for the given
+//! cell id, sampled from a multi-scale organic tissue field. The reducer lives
+//! in the server; this module is only the pure positioning helper.
 //!
-//! **Determinism is contract**: `helix_seed_for(id)` here MUST produce
-//! the same xyz as the TS implementation in `@cknerv/ui/src/helix.ts` for
-//! every id, byte-identical when both reduce to f32. This is anchored by
-//! the JSON fixture at `tests/fixtures/helix_seed.json` (cknerv repo
-//! root) that both languages compare against.
+//! **Determinism is contract**: this implementation MUST match
+//! `@cknerv/ui/src/helix.ts`, byte-identical after both reduce to f32. The
+//! shared `tests/fixtures/helix_seed.json` fixture anchors that contract.
 
 use crate::rng::{gauss, Mulberry32};
 
-// Organic tissue mixture. Unlike the former six-arm galaxy, no category uses
-// `id % symmetry_count`: deterministic randomness chooses irregular overlapping
-// lobes, background tissue, a few curling tendrils and a soft halo.
-const CORE_FRACTION: f64 = 0.12;
-const LOBE_FRACTION: f64 = 0.60;
-const TISSUE_FRACTION: f64 = 0.18;
-const TENDRIL_FRACTION: f64 = 0.07;
+const FIELD_HALF_X: f64 = 60.0;
+const FIELD_HALF_Z: f64 = 54.0;
+const SAMPLE_ATTEMPTS: usize = 10;
+const HALO_FRACTION: f64 = 0.045;
 
-const LOBE_CENTER_X: [f64; 8] = [-24.0, -13.0, 2.0, 18.0, 27.0, 14.0, -7.0, -28.0];
-const LOBE_CENTER_Y: [f64; 8] = [3.5, -2.5, 1.0, 4.0, -3.5, 0.5, -4.0, 1.5];
-const LOBE_CENTER_Z: [f64; 8] = [-9.0, 15.0, 24.0, 14.0, -6.0, -25.0, -24.0, 8.0];
-const LOBE_MAJOR: [f64; 8] = [15.0, 13.0, 14.0, 12.0, 11.0, 15.0, 13.0, 10.0];
-const LOBE_MINOR: [f64; 8] = [6.5, 5.5, 7.0, 5.0, 4.5, 6.0, 5.5, 4.5];
-const LOBE_ANGLE: [f64; 8] = [0.18, 1.05, 2.35, -0.72, 0.45, 2.75, -1.35, 1.62];
-const LOBE_THICKNESS: [f64; 8] = [3.8, 4.6, 3.4, 4.2, 3.2, 4.8, 3.6, 4.1];
-// Repeated indices are deliberate unequal lobe weights. A uniform picker made
-// even irregular centres converge into another visually balanced oval.
-const LOBE_PICK: [usize; 16] = [0, 0, 0, 1, 2, 2, 2, 2, 3, 4, 5, 5, 5, 6, 6, 7];
-
-const TENDRIL_ANGLE: [f64; 5] = [-2.65, -1.25, -0.18, 1.15, 2.52];
-const TENDRIL_BEND: [f64; 5] = [0.42, -0.58, 0.31, -0.36, 0.53];
-const TENDRIL_LENGTH: [f64; 5] = [47.0, 56.0, 43.0, 52.0, 49.0];
-const TENDRIL_Y: [f64; 5] = [2.5, -3.0, 4.0, -1.5, 1.0];
-
-fn tissue_boundary(theta: f64) -> f64 {
-    46.0 * (1.0
-        + 0.15 * (3.0 * theta + 0.7).sin()
-        + 0.09 * (5.0 * theta - 1.1).sin()
-        + 0.06 * (9.0 * theta + 0.2).sin())
+fn clamp01(value: f64) -> f64 {
+    value.clamp(0.0, 1.0)
 }
 
-/// JS uses `id * 2654435761` then `>>> 0` truncates to u32. Match that:
-/// full multiply in u64 (no precision loss for id < 2^21 — well within
-/// any reasonable cell count), then truncate to low 32 bits.
+fn smoothstep(edge0: f64, edge1: f64, value: f64) -> f64 {
+    let t = clamp01((value - edge0) / (edge1 - edge0));
+    t * t * (3.0 - 2.0 * t)
+}
+
+fn lattice_value(ix: i32, iz: i32, salt: u32) -> f64 {
+    let mut h =
+        (ix as u32).wrapping_mul(0x1f12_3bb5) ^ (iz as u32).wrapping_mul(0x5f35_6495) ^ salt;
+    h = (h ^ (h >> 16)).wrapping_mul(0x7feb_352d);
+    h = (h ^ (h >> 15)).wrapping_mul(0x846c_a68b);
+    h ^= h >> 16;
+    (h as f64) / 4_294_967_295.0 * 2.0 - 1.0
+}
+
+fn value_noise_2(x: f64, z: f64, scale: f64, salt: u32) -> f64 {
+    let gx = x / scale;
+    let gz = z / scale;
+    let ix = gx.floor() as i32;
+    let iz = gz.floor() as i32;
+    let tx = gx - ix as f64;
+    let tz = gz - iz as f64;
+    let sx = tx * tx * (3.0 - 2.0 * tx);
+    let sz = tz * tz * (3.0 - 2.0 * tz);
+    let a = lattice_value(ix, iz, salt);
+    let b = lattice_value(ix + 1, iz, salt);
+    let c = lattice_value(ix, iz + 1, salt);
+    let d = lattice_value(ix + 1, iz + 1, salt);
+    let nx0 = a + (b - a) * sx;
+    let nx1 = c + (d - c) * sx;
+    nx0 + (nx1 - nx0) * sz
+}
+
+#[derive(Clone, Copy)]
+struct TissueField {
+    density: f64,
+    ridge: f64,
+    qx: f64,
+    qz: f64,
+}
+
+fn tissue_field(x: f64, z: f64) -> TissueField {
+    let warp_x = value_noise_2(x, z, 34.0, 0x68bc_21eb) * 11.0
+        + value_noise_2(x, z, 17.0, 0x02e5_be93) * 3.5;
+    let warp_z = value_noise_2(x, z, 37.0, 0x967a_889b) * 10.0
+        + value_noise_2(x, z, 19.0, 0x4f1b_bcdc) * 3.5;
+    let qx = x + warp_x;
+    let qz = z + warp_z;
+
+    let broad = 0.5 + 0.5 * value_noise_2(qx, qz, 35.0, 0x9e37_79b9);
+    let middle = 0.5 + 0.5 * value_noise_2(qx, qz, 17.0, 0x243f_6a88);
+    let broad_ridge_base = 1.0 - value_noise_2(qx, qz, 23.0, 0x3c6e_f372).abs();
+    let broad_ridge = broad_ridge_base * broad_ridge_base * broad_ridge_base;
+    let ridge_base = 1.0 - value_noise_2(qx, qz, 11.0, 0xb7e1_5162).abs();
+    let ridge_2 = ridge_base * ridge_base;
+    let ridge = ridge_2 * ridge_2;
+    let void_field = 0.5 + 0.5 * value_noise_2(qx - 13.0, qz + 9.0, 19.0, 0xdead_beef);
+    let cavity = smoothstep(0.64, 0.88, void_field);
+
+    let nx = x / FIELD_HALF_X;
+    let nz = z / FIELD_HALF_Z;
+    let radial = (nx * nx + nz * nz).sqrt();
+    let boundary_warp = value_noise_2(x, z, 42.0, 0xa341_316c) * 0.13
+        + value_noise_2(x, z, 21.0, 0xc801_3ea4) * 0.055;
+    let envelope = 1.0 - smoothstep(0.61, 1.04, radial + boundary_warp);
+    let core = (1.0 - radial / 0.52).max(0.0);
+    let broad_2 = broad * broad;
+    let body =
+        0.015 + broad_2 * 0.55 + middle * 0.08 + broad_ridge * 0.28 + ridge * 0.52 + core * 0.10
+            - cavity * 0.68;
+
+    TissueField {
+        density: clamp01(envelope * body),
+        ridge,
+        qx,
+        qz,
+    }
+}
+
+/// `(id * salt) mod 2^32`, matching the JS BigInt implementation.
 fn id_seed(id: u64, salt: u32) -> u32 {
-    (id.wrapping_mul(salt as u64)) as u32
+    id.wrapping_mul(salt as u64) as u32
 }
 
-/// Deterministic 3-axis organic Cell-tissue sample for cell `id`.
-/// Returns f64; consumers downcast to f32 only at the wire boundary so
-/// the cross-language fixture compares the 32-bit values both languages
-/// emit.
+/// Deterministic multi-scale Cell-tissue sample. Returns f64; consumers
+/// downcast only at the wire boundary.
 pub fn helix_seed_f64(id: u64) -> [f64; 3] {
     let mut rng = Mulberry32::new(id_seed(id, 2_654_435_761));
-    let u = rng.next_f64();
 
-    let core_end = CORE_FRACTION;
-    let lobe_end = core_end + LOBE_FRACTION;
-    let tissue_end = lobe_end + TISSUE_FRACTION;
-    let tendril_end = tissue_end + TENDRIL_FRACTION;
+    let mut x = 0.0;
+    let mut z = 0.0;
+    let mut field = tissue_field(0.0, 0.0);
+    let mut best_density = -1.0;
+    let mut accepted = false;
 
-    let (mut x, mut y, mut z);
-
-    if u < core_end {
-        x = gauss(&mut rng) * 10.0;
-        z = gauss(&mut rng) * 8.0;
-        y = gauss(&mut rng) * 4.2;
-    } else if u < lobe_end {
-        let pick = (rng.next_f64() * LOBE_PICK.len() as f64).floor() as usize;
-        let lobe = LOBE_PICK[pick];
-        let along = gauss(&mut rng) * LOBE_MAJOR[lobe];
-        let across = gauss(&mut rng) * LOBE_MINOR[lobe];
-        let angle = LOBE_ANGLE[lobe];
-        x = LOBE_CENTER_X[lobe] + angle.cos() * along - angle.sin() * across;
-        z = LOBE_CENTER_Z[lobe] + angle.sin() * along + angle.cos() * across;
-        y = LOBE_CENTER_Y[lobe] + gauss(&mut rng) * LOBE_THICKNESS[lobe] + along * 0.065;
-    } else if u < tissue_end {
-        let theta = rng.next_f64() * 2.0 * std::f64::consts::PI;
-        let boundary = tissue_boundary(theta);
-        let r = 2.0 + rng.next_f64().powf(0.62) * (boundary - 2.0);
-        x = theta.cos() * r * 1.06;
-        z = theta.sin() * r * 0.92;
-        y = gauss(&mut rng) * (2.3 + 1.5 * (1.0 - r / boundary));
-    } else if u < tendril_end {
-        let tendril = (rng.next_f64() * TENDRIL_ANGLE.len() as f64).floor() as usize;
-        let t = rng.next_f64();
-        let r = 10.0 + t * TENDRIL_LENGTH[tendril] + gauss(&mut rng) * 1.8;
-        let theta = TENDRIL_ANGLE[tendril]
-            + TENDRIL_BEND[tendril] * (t - 0.2)
-            + (t * std::f64::consts::PI).sin() * TENDRIL_BEND[tendril] * 0.42
-            + gauss(&mut rng) * 0.045;
-        x = theta.cos() * r * 1.04;
-        z = theta.sin() * r * 0.94;
-        y = TENDRIL_Y[tendril]
-            + (t - 0.5) * TENDRIL_BEND[tendril] * 9.0
-            + gauss(&mut rng) * (1.2 + 1.8 * t);
-    } else {
-        let theta = rng.next_f64() * 2.0 * std::f64::consts::PI;
-        let r = tissue_boundary(theta) * 0.82 + gauss(&mut rng).abs() * 10.0;
-        x = theta.cos() * r * 1.08;
-        z = theta.sin() * r * 0.94;
-        y = gauss(&mut rng) * 5.5;
+    for _ in 0..SAMPLE_ATTEMPTS {
+        let candidate_x = (rng.next_f64() * 2.0 - 1.0) * FIELD_HALF_X;
+        let candidate_z = (rng.next_f64() * 2.0 - 1.0) * FIELD_HALF_Z;
+        let threshold = rng.next_f64();
+        let candidate_field = tissue_field(candidate_x, candidate_z);
+        if candidate_field.density > best_density {
+            x = candidate_x;
+            z = candidate_z;
+            field = candidate_field;
+            best_density = candidate_field.density;
+        }
+        if threshold < candidate_field.density {
+            x = candidate_x;
+            z = candidate_z;
+            field = candidate_field;
+            accepted = true;
+            break;
+        }
     }
 
-    // Low-frequency domain warp and vertical folding make neighbouring lobes
-    // merge as tissue instead of reading as independent Gaussian blobs. Keep a
-    // copy of the unwarped position so x/z updates do not affect one another.
-    let base_x = x;
-    let base_z = z;
-    let radial = (base_x * base_x + base_z * base_z).sqrt();
-    let warp_scale = 0.8 + radial.min(60.0) * 0.025;
-    x = base_x + (base_z * 0.083 + (base_x * 0.029).sin() * 1.7).sin() * warp_scale;
-    z = base_z + (base_x * 0.071 - base_z * 0.026).sin() * warp_scale * 0.9;
-    y += 2.2 * (base_x * 0.052 + base_z * 0.019).sin()
-        + 1.4 * (base_z * 0.079 - base_x * 0.024).sin();
+    if !accepted && best_density <= 0.0 {
+        x *= 0.55;
+        z *= 0.55;
+        field = tissue_field(x, z);
+    }
+
+    let vertical_mass = 0.5 + 0.5 * value_noise_2(field.qx, field.qz, 23.0, 0x1319_8a2e);
+    let thickness = 2.1 + vertical_mass * 3.4 + field.ridge * 1.8;
+    let fold = value_noise_2(field.qx, field.qz, 31.0, 0x0370_7344) * 4.6
+        + value_noise_2(field.qx, field.qz, 13.0, 0xa409_3822) * 1.7;
+    let mut y = fold + gauss(&mut rng) * thickness;
+
+    if rng.next_f64() < HALO_FRACTION {
+        let scale = 1.08 + gauss(&mut rng).abs() * 0.17;
+        x *= scale;
+        z *= scale;
+        y += gauss(&mut rng) * 3.2;
+    }
 
     [x, y, z]
 }
 
-/// f32 wire-boundary version of [`helix_seed_f64`]. The cross-language
-/// fixture parity test compares these 32-bit values byte-for-byte.
+/// f32 wire-boundary version of [`helix_seed_f64`].
 pub fn helix_seed_for(id: u64) -> [f32; 3] {
     let [x, y, z] = helix_seed_f64(id);
     [x as f32, y as f32, z as f32]
