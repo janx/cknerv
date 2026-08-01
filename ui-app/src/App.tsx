@@ -89,7 +89,7 @@ import {
   changeOrbitGesture,
   createOrbitGestureState,
   endOrbitGesture,
-  orbitGestureSuppressesPointerMiss,
+  orbitGestureSuppressesPointerAction,
 } from './orbit-gesture-state';
 import {
   CELL_MEMORY_RECALL_MAX_PULSES,
@@ -270,7 +270,13 @@ export default function App({
     dispatchMemoryRecall({ type: 'inspect', targetCellId: nextCellId });
   }, []);
   const handleSelect = useCallback((id: string | null) => {
-    if (id == null) return;
+    if (
+      id == null
+      || orbitGestureSuppressesPointerAction(
+        orbitGestureRef.current,
+        performance.now(),
+      )
+    ) return;
     if (id.startsWith(CELL_SELECTION_PREFIX)) {
       const nextCellId = Number(id.slice(CELL_SELECTION_PREFIX.length));
       if (!Number.isSafeInteger(nextCellId) || nextCellId < 0) return;
@@ -281,6 +287,10 @@ export default function App({
     }
   }, [inspectCell]);
   const navigateCausalCell = useCallback((cellId: number) => {
+    if (orbitGestureSuppressesPointerAction(
+      orbitGestureRef.current,
+      performance.now(),
+    )) return;
     if (!retainedCellRecordsRef.current.has(cellId)) return;
     const encodedCurrent = selectedCellId?.startsWith(CELL_SELECTION_PREFIX)
       ? Number(selectedCellId.slice(CELL_SELECTION_PREFIX.length))
@@ -813,7 +823,7 @@ export default function App({
           dpr={canvasDpr}
           style={{ background: '#02030a' }}
           onPointerMissed={() => {
-            if (orbitGestureSuppressesPointerMiss(
+            if (orbitGestureSuppressesPointerAction(
               orbitGestureRef.current,
               performance.now(),
             )) return;
