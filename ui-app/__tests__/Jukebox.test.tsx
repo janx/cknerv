@@ -5,114 +5,120 @@ import Jukebox, {
   JUKEBOX_TRACKS,
 } from '../src/Jukebox';
 
-const MYUK_TRACK = JUKEBOX_TRACKS[0];
-const ISO_PIANO_TRACK = JUKEBOX_TRACKS[1];
+const MICHELLE_TRACK = JUKEBOX_TRACKS[0];
+const ARIA_PIANO_TRACK = JUKEBOX_TRACKS[1];
 
 afterEach(() => cleanup());
 
 describe('Jukebox', () => {
-  it('loads no third-party content until opened, then defaults to Myuk', () => {
+  it('loads no third-party content until opened, then defaults to Michelle', () => {
     const { container } = render(<Jukebox />);
     const opener = screen.getByRole('button', {
-      name: 'Open Jukebox; loads YouTube player',
+      name: 'Open Jukebox; loads SoundCloud player',
     });
 
-    expect(DEFAULT_JUKEBOX_TRACK_ID).toBe(MYUK_TRACK.id);
+    expect(DEFAULT_JUKEBOX_TRACK_ID).toBe(MICHELLE_TRACK.id);
     expect(opener.getAttribute('aria-expanded')).toBe('false');
     expect(container.querySelector('iframe')).toBeNull();
 
     fireEvent.click(opener);
 
-    const panel = screen.getByRole('dialog', { name: 'YouTube Jukebox' });
-    const frame = screen.getByTitle(MYUK_TRACK.frameTitle) as HTMLIFrameElement;
+    const panel = screen.getByRole('dialog', { name: 'SoundCloud Jukebox' });
+    const frame = screen.getByTitle(
+      MICHELLE_TRACK.frameTitle,
+    ) as HTMLIFrameElement;
     expect(opener.getAttribute('aria-expanded')).toBe('true');
     expect(panel.getAttribute('data-jukebox-selected-track')).toBe(
-      MYUK_TRACK.id,
+      MICHELLE_TRACK.id,
     );
-    expect(frame.getAttribute('src')).toBe(MYUK_TRACK.embedUrl);
+    expect(frame.getAttribute('src')).toBe(MICHELLE_TRACK.embedUrl);
     expect(frame.getAttribute('loading')).toBe('lazy');
     expect(frame.getAttribute('referrerpolicy')).toBe(
       'strict-origin-when-cross-origin',
     );
     expect(frame.getAttribute('allow')).toContain('autoplay');
     expect(frame.hasAttribute('autoplay')).toBe(false);
-    expect(frame.getAttribute('src')).not.toContain('autoplay');
+    expect(frame.getAttribute('src')).toContain('auto_play=false');
+    expect(frame.getAttribute('src')).toContain('visual=false');
+    expect(frame.getAttribute('src')).toContain('show_comments=false');
+    expect(frame.getAttribute('src')).not.toContain('youtube.com');
+    expect(frame.hasAttribute('allowfullscreen')).toBe(false);
     expect(container.querySelectorAll('iframe')).toHaveLength(1);
 
     expect(screen.getByRole('button', {
-      name: MYUK_TRACK.selectorLabel,
+      name: MICHELLE_TRACK.selectorLabel,
     }).getAttribute('aria-pressed')).toBe('true');
     expect(screen.getByRole('button', {
-      name: ISO_PIANO_TRACK.selectorLabel,
+      name: ARIA_PIANO_TRACK.selectorLabel,
     }).getAttribute('aria-pressed')).toBe('false');
   });
 
   it('switches to the piano version by replacing, not stacking, players', () => {
     const { container } = render(<Jukebox />);
     fireEvent.click(screen.getByRole('button', {
-      name: 'Open Jukebox; loads YouTube player',
+      name: 'Open Jukebox; loads SoundCloud player',
     }));
 
-    const panel = screen.getByRole('dialog', { name: 'YouTube Jukebox' });
-    const myukFrame = screen.getByTitle(MYUK_TRACK.frameTitle);
-    fireEvent.load(myukFrame);
+    const panel = screen.getByRole('dialog', { name: 'SoundCloud Jukebox' });
+    const michelleFrame = screen.getByTitle(MICHELLE_TRACK.frameTitle);
+    fireEvent.load(michelleFrame);
     expect(panel.getAttribute('data-jukebox-frame-ready')).toBe('true');
 
     fireEvent.click(screen.getByRole('button', {
-      name: ISO_PIANO_TRACK.selectorLabel,
+      name: ARIA_PIANO_TRACK.selectorLabel,
     }));
 
     const pianoFrame = screen.getByTitle(
-      ISO_PIANO_TRACK.frameTitle,
+      ARIA_PIANO_TRACK.frameTitle,
     ) as HTMLIFrameElement;
-    expect(myukFrame.isConnected).toBe(false);
+    expect(michelleFrame.isConnected).toBe(false);
     expect(container.querySelectorAll('iframe')).toHaveLength(1);
-    expect(pianoFrame.getAttribute('src')).toBe(ISO_PIANO_TRACK.embedUrl);
+    expect(pianoFrame.getAttribute('src')).toBe(ARIA_PIANO_TRACK.embedUrl);
     expect(panel.getAttribute('data-jukebox-selected-track')).toBe(
-      ISO_PIANO_TRACK.id,
+      ARIA_PIANO_TRACK.id,
     );
     expect(panel.getAttribute('data-jukebox-frame-ready')).toBe('false');
-    expect(panel.textContent).toContain('YOUTUBE CONNECTING');
+    expect(panel.textContent).toContain('SOUNDCLOUD CONNECTING');
 
     expect(screen.getByRole('button', {
-      name: MYUK_TRACK.selectorLabel,
+      name: MICHELLE_TRACK.selectorLabel,
     }).getAttribute('aria-pressed')).toBe('false');
     expect(screen.getByRole('button', {
-      name: ISO_PIANO_TRACK.selectorLabel,
+      name: ARIA_PIANO_TRACK.selectorLabel,
     }).getAttribute('aria-pressed')).toBe('true');
 
     fireEvent.load(pianoFrame);
     expect(panel.getAttribute('data-jukebox-frame-ready')).toBe('true');
-    expect(panel.textContent).toContain('YOUTUBE READY');
+    expect(panel.textContent).toContain('SOUNDCLOUD READY');
   });
 
   it('reports readiness without claiming that playback started', () => {
     render(<Jukebox />);
     fireEvent.click(screen.getByRole('button', {
-      name: 'Open Jukebox; loads YouTube player',
+      name: 'Open Jukebox; loads SoundCloud player',
     }));
 
-    const panel = screen.getByRole('dialog', { name: 'YouTube Jukebox' });
-    const frame = screen.getByTitle(MYUK_TRACK.frameTitle);
+    const panel = screen.getByRole('dialog', { name: 'SoundCloud Jukebox' });
+    const frame = screen.getByTitle(MICHELLE_TRACK.frameTitle);
     expect(panel.getAttribute('data-jukebox-frame-ready')).toBe('false');
-    expect(panel.textContent).toContain('YOUTUBE CONNECTING');
+    expect(panel.textContent).toContain('SOUNDCLOUD CONNECTING');
     expect(panel.textContent).not.toContain('PLAYING');
 
     fireEvent.load(frame);
 
     expect(panel.getAttribute('data-jukebox-frame-ready')).toBe('true');
-    expect(panel.textContent).toContain('YOUTUBE READY');
+    expect(panel.textContent).toContain('SOUNDCLOUD READY');
     expect(panel.textContent).not.toContain('PLAYING');
   });
 
   it('docks a visible player in the bottom-right safe area', () => {
     render(<Jukebox />);
     fireEvent.click(screen.getByRole('button', {
-      name: 'Open Jukebox; loads YouTube player',
+      name: 'Open Jukebox; loads SoundCloud player',
     }));
 
     const panel = screen.getByRole('dialog', {
-      name: 'YouTube Jukebox',
+      name: 'SoundCloud Jukebox',
     }) as HTMLElement;
     const player = panel.querySelector('[data-jukebox-player]') as HTMLElement;
     expect(panel.style.right).toContain('safe-area-inset-right');
@@ -120,14 +126,13 @@ describe('Jukebox', () => {
     expect(panel.style.top).toBe('');
     expect(panel.style.left).toBe('');
     expect(panel.style.transform).toBe('');
-    expect(player.style.height).toContain('200px');
-    expect(player.style.height).toContain('279px');
+    expect(player.style.height).toBe('166px');
   });
 
   it('unmounts the player on close or Escape so audio cannot remain hidden', () => {
     const { container } = render(<Jukebox />);
     const opener = screen.getByRole('button', {
-      name: 'Open Jukebox; loads YouTube player',
+      name: 'Open Jukebox; loads SoundCloud player',
     });
 
     fireEvent.click(opener);
@@ -147,12 +152,12 @@ describe('Jukebox', () => {
   it('keeps a manual track choice for the current page session', () => {
     const { container } = render(<Jukebox />);
     const opener = screen.getByRole('button', {
-      name: 'Open Jukebox; loads YouTube player',
+      name: 'Open Jukebox; loads SoundCloud player',
     });
 
     fireEvent.click(opener);
     fireEvent.click(screen.getByRole('button', {
-      name: ISO_PIANO_TRACK.selectorLabel,
+      name: ARIA_PIANO_TRACK.selectorLabel,
     }));
     fireEvent.click(screen.getByRole('button', {
       name: 'Close Jukebox player',
@@ -160,29 +165,29 @@ describe('Jukebox', () => {
     fireEvent.click(opener);
 
     expect(container.querySelector('iframe')?.getAttribute('src')).toBe(
-      ISO_PIANO_TRACK.embedUrl,
+      ARIA_PIANO_TRACK.embedUrl,
     );
   });
 
-  it('opens the currently selected version on YouTube', () => {
+  it('opens the currently selected version on SoundCloud', () => {
     render(<Jukebox />);
     fireEvent.click(screen.getByRole('button', {
-      name: 'Open Jukebox; loads YouTube player',
+      name: 'Open Jukebox; loads SoundCloud player',
     }));
 
-    const myukLink = screen.getByRole('link', {
-      name: 'Open vocal version by MYUK on YouTube',
+    const michelleLink = screen.getByRole('link', {
+      name: 'Open vocal version by MICHELLE ♥ on SoundCloud',
     });
-    expect(myukLink.getAttribute('href')).toBe(MYUK_TRACK.watchUrl);
-    expect(myukLink.getAttribute('target')).toBe('_blank');
-    expect(myukLink.getAttribute('rel')).toBe('noopener noreferrer');
+    expect(michelleLink.getAttribute('href')).toBe(MICHELLE_TRACK.trackUrl);
+    expect(michelleLink.getAttribute('target')).toBe('_blank');
+    expect(michelleLink.getAttribute('rel')).toBe('noopener noreferrer');
 
     fireEvent.click(screen.getByRole('button', {
-      name: ISO_PIANO_TRACK.selectorLabel,
+      name: ARIA_PIANO_TRACK.selectorLabel,
     }));
     expect(screen.getByRole('link', {
-      name: 'Open piano version by ISO PIANO on YouTube',
-    }).getAttribute('href')).toBe(ISO_PIANO_TRACK.watchUrl);
+      name: 'Open piano version by ARIALATE on SoundCloud',
+    }).getAttribute('href')).toBe(ARIA_PIANO_TRACK.trackUrl);
   });
 
   it('keeps Jukebox interactions inside the HUD action', () => {
@@ -194,10 +199,10 @@ describe('Jukebox', () => {
     );
 
     fireEvent.click(screen.getByRole('button', {
-      name: 'Open Jukebox; loads YouTube player',
+      name: 'Open Jukebox; loads SoundCloud player',
     }));
     fireEvent.click(screen.getByRole('button', {
-      name: ISO_PIANO_TRACK.selectorLabel,
+      name: ARIA_PIANO_TRACK.selectorLabel,
     }));
     expect(onParentClick).not.toHaveBeenCalled();
   });
