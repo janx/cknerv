@@ -87,7 +87,7 @@ export function injectHudTheme(doc: Document = document): void {
     + `\n.cknerv-memory-route-cells::-webkit-scrollbar-track{background:transparent}`
     + `\n.cknerv-memory-route-connector-tail{display:none}`
     + `\n@media (min-width:1101px) and (max-width:1373px),(min-width:1374px) and (max-height:860px){.cknerv-memory-route-ledger{top:-106px}.cknerv-memory-route-connector-tail{display:block;height:106px}}`
-    + `\n@media (max-width:1050px){.cknerv-cell-display-label,.cknerv-quality-label{display:none}}`
+    + `\n@media (max-width:1050px){.cknerv-cell-display-label,.cknerv-quality-label,.cknerv-top-bar-action-label{display:none}}`
     + `\n@media (max-width:1100px){.cknerv-memory-route-ledger{position:static;width:auto;max-height:100px;margin:4px 4px 2px 0;overflow:hidden}.cknerv-memory-route-ledger-scroll{overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:rgba(32,240,255,.28) transparent;padding-right:8px}.cknerv-memory-route-ledger-viewport[data-memory-evidence-route-scrollable="true"] .cknerv-memory-route-scroll-position{opacity:1}.cknerv-memory-route-ledger-viewport[data-memory-evidence-route-scroll-before="true"] .cknerv-memory-route-scroll-edge-before{opacity:1}.cknerv-memory-route-ledger-viewport[data-memory-evidence-route-scroll-after="true"] .cknerv-memory-route-scroll-edge-after{opacity:1}.cknerv-memory-route-connector,.cknerv-memory-route-connector-tail{display:none}}`;
   doc.head.appendChild(style);
 }

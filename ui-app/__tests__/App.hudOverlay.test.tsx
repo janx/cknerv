@@ -10,6 +10,11 @@ describe('HudOverlay wiring', () => {
     expect(typeof HudOverlay).toBe('function');
   });
 
+  it('owns the Spotify Jukebox in the product app and injects it into the HUD', () => {
+    expect(APP_SOURCE).toContain("import Jukebox from './Jukebox'");
+    expect(APP_SOURCE).toContain('topBarActions={<Jukebox />}');
+  });
+
   it('routes each resolved identity proof back to the matching galaxy Cell', () => {
     expect(APP_SOURCE).toContain('onCellIdentityProofRead={confirmCellIdentityProof}');
     expect(APP_SOURCE).toContain('identityProof={cellIdentityProof}');

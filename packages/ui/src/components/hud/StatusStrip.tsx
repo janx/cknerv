@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import type { ReactNode } from 'react';
 import { useControls } from 'leva';
 import type { AlertLevel } from '../../derives/alertLevel';
 import type { StreamHealthSummary } from '../../derives/streamHealth.derive';
@@ -548,6 +549,7 @@ export default function StatusStrip({
   stream,
   cellCount,
   cellCapacity,
+  actions,
 }: {
   level: AlertLevel;
   uptimeMs: number;
@@ -557,6 +559,8 @@ export default function StatusStrip({
   cellCount?: number;
   /** Resolved server projection cap used by AUTO and capacity disclosure. */
   cellCapacity?: number;
+  /** Product-specific controls rendered without coupling the shared HUD to them. */
+  actions?: ReactNode;
 }) {
   const color = LEVEL_COLOR[level];
   const streamColor = stream && stream.phase !== 'live'
@@ -572,6 +576,19 @@ export default function StatusStrip({
         capacity={cellCapacity}
       />
       <RenderQualityControl />
+      {actions ? (
+        <div
+          data-status-actions
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            flexShrink: 0,
+            pointerEvents: 'auto',
+          }}
+        >
+          {actions}
+        </div>
+      ) : null}
       {stream && streamColor ? (
         <span
           data-stream-chip

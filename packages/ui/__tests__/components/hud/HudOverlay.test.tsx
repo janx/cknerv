@@ -431,4 +431,18 @@ describe('HudOverlay', () => {
     );
     expect(container.textContent).toContain('61922ba@20260630');
   });
+
+  it('passes product-owned actions through the shared top bar slot', () => {
+    const { getByRole } = render(
+      <HudOverlay
+        chain={chain}
+        peers={peers}
+        localNode={localNode}
+        cellsStats={cellsStats}
+        topBarActions={<button type="button">JUKEBOX</button>}
+      />,
+    );
+
+    expect(getByRole('button', { name: 'JUKEBOX' })).not.toBeNull();
+  });
 });
