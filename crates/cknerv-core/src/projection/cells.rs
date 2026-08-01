@@ -2,7 +2,7 @@
 //!
 //! Births and deaths are driven by real chain outpoints carried in
 //! `Mutation::TxLanded`: every output spawns a cell (positioned
-//! deterministically along a hybrid Crab+Milky-Way spiral via
+//! deterministically inside an irregular organic field via
 //! [`crate::helix::helix_seed_for`]); every consumed input kills the cell
 //! that represents that outpoint. `BlockMined` only handles cap
 //! enforcement, pulse throttling and GC. Tagging is chain-generic: the
@@ -115,7 +115,10 @@ impl From<&Cell> for CellLinkEndpointAnchor {
     fn from(cell: &Cell) -> Self {
         Self {
             id: cell.id,
-            pos_seed: cell.pos_seed,
+            // Position is derived identity, not historical evidence. Always
+            // resolve it through the current layout contract so a restored
+            // legacy Cell cannot freeze a causal anchor in an obsolete shape.
+            pos_seed: helix_seed_for(cell.id),
             content_hash: cell.content_hash.clone(),
         }
     }
@@ -418,6 +421,25 @@ impl CellGalaxy {
         }
     }
 
+    /// Refresh every persisted copy of the pure id→position derivation. Layout
+    /// changes are visual migrations, not chain-state migrations: existing
+    /// workdirs should adopt them immediately without a schema bump or prune.
+    fn refresh_derived_positions(&mut self) {
+        for cell in &mut self.cells {
+            cell.pos_seed = helix_seed_for(cell.id);
+        }
+        for deaths in self.block_deaths.values_mut() {
+            for cell in deaths {
+                cell.pos_seed = helix_seed_for(cell.id);
+            }
+        }
+        for link in &mut self.recent_links {
+            for anchor in &mut link.endpoint_anchors {
+                anchor.pos_seed = helix_seed_for(anchor.id);
+            }
+        }
+    }
+
     /// Hydrate from a previously persisted state. Replaces every field.
     pub fn restore_from(&mut self, p: CellGalaxyPersisted) {
         self.cells = p.cells;
@@ -433,6 +455,7 @@ impl CellGalaxy {
         self.pending_births_tag = p.pending_births_tag.into_iter().collect();
         self.hydrated_cell_target = p.hydrated_cell_target;
         self.hydration_floor = p.hydration_floor;
+        self.refresh_derived_positions();
         self.prune_reorg_journal();
 
         // Legacy persistence (pre-counter) lacks the two fields and
@@ -1034,7 +1057,17 @@ impl Projection for CellGalaxy {
                 })
                 .collect(),
             last_pulse_at_ms: self.last_pulse_at_ms,
-            recent_links: self.recent_links.clone(),
+            recent_links: self
+                .recent_links
+                .iter()
+                .cloned()
+                .map(|mut link| {
+                    for anchor in &mut link.endpoint_anchors {
+                        anchor.pos_seed = helix_seed_for(anchor.id);
+                    }
+                    link
+                })
+                .collect(),
             total_births: self.total_births,
             total_deaths: self.total_deaths,
             backfill: self.backfill,
@@ -1976,6 +2009,56 @@ mod tests {
         let c0_a = g.cells.iter().find(|c| c.id == 0).unwrap();
         let c0_b = g2.cells.iter().find(|c| c.id == 0).unwrap();
         assert_eq!(c0_a.death_at_ms, c0_b.death_at_ms);
+    }
+
+    #[test]
+    fn restore_refreshes_every_persisted_copy_of_derived_position() {
+        let mut source = make_galaxy();
+        source.handle_tx_landed("0xa", 1, 1_000, &[], &[out(100, "0x"), out(200, "0xdead")]);
+        source.handle_tx_landed("0xb", 2, 2_000, &[op("0xa", 0)], &[out(50, "0xff")]);
+
+        let stale = [999.0, -999.0, 777.0];
+        let mut persisted = source.to_persisted();
+        for cell in &mut persisted.cells {
+            cell.pos_seed = stale;
+        }
+        for (_, deaths) in &mut persisted.block_deaths {
+            for cell in deaths {
+                cell.pos_seed = stale;
+            }
+        }
+        for link in &mut persisted.recent_links {
+            for anchor in &mut link.endpoint_anchors {
+                anchor.pos_seed = stale;
+            }
+        }
+
+        let mut restored = make_galaxy();
+        restored.restore_from(persisted);
+
+        for cell in &restored.cells {
+            assert_eq!(cell.pos_seed, helix_seed_for(cell.id));
+        }
+        for deaths in restored.block_deaths.values() {
+            for cell in deaths {
+                assert_eq!(cell.pos_seed, helix_seed_for(cell.id));
+            }
+        }
+        for link in &restored.recent_links {
+            for anchor in &link.endpoint_anchors {
+                assert_eq!(anchor.pos_seed, helix_seed_for(anchor.id));
+            }
+        }
+
+        // Snapshot emission remains defensive even if an in-memory caller
+        // accidentally carries stale evidence after the restore boundary.
+        restored.recent_links[0].endpoint_anchors[0].pos_seed = stale;
+        let snapshot = restored.snapshot();
+        for link in snapshot.recent_links {
+            for anchor in link.endpoint_anchors {
+                assert_eq!(anchor.pos_seed, helix_seed_for(anchor.id));
+            }
+        }
     }
 
     #[test]

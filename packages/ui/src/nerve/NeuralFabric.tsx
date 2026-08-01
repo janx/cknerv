@@ -464,10 +464,8 @@ export default function NeuralFabric({ onReady }: NeuralFabricProps) {
     [],
   );
 
-  // Persistent across handle re-creations (onReady callback identity
-  // changes whenever the orchestrator's cellsCache.cells reference
-  // flips, which would otherwise drop our lifecycle state every
-  // birth/death delta).
+  // Persistent across handle re-creations so Canvas remounts and quality-view
+  // reconciliation never drop an edge's growth/decay lifecycle state.
   const edgeStatesRef = useRef<Map<string, EdgeState>>(new Map());
   /** True when there's pending work to emit: either the edge map
    *  was just mutated by `setFabric`, or at least one edge is in

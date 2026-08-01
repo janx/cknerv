@@ -1,8 +1,8 @@
 // Orchestrator for the Cell consensus-flow overlay.
 //
 // Pipeline:
-//   1. cellsCache changes → rebuild the spatial neighbour graph and
-//      hand the new edge set to NeuralFabric.
+//   1. cellsCache changes → maintain the complete routing graph, then derive
+//      a sparse passive graph over the exact CellGalaxy display subset.
 //   2. Each new CellLink delta → planPulses derives source cells from
 //      parent tx siblings + finds shortest paths to the new outputs
 //      through the neighbour graph. Each pulse is queued.
@@ -27,7 +27,13 @@ import { useSimFrame } from '../tweaks/useSimFrame';
 import { useSimClock } from '../tweaks/SimClockScope';
 import { galaxyFrame } from '../tweaks/galaxyFrame';
 import { QUALITY_PRESETS, useQualityRuntime } from '../tweaks/qualityPresets';
+import {
+  resolveCellDisplayLimit,
+  useCellDisplayRuntime,
+} from '../tweaks/cellDisplay';
 import { buildNeighborGraph, emptyNeighborGraph, type NeighborGraph } from '../geometry/neighborGraph';
+import { buildPassiveNeighborGraph } from '../geometry/passiveNeighborGraph';
+import { cellRenderList, cellRenderMap } from '../geometry/cellRenderSet';
 import { type Pulse, type PulsePlanningOptions } from './pulseRunner';
 import {
   planLinkBatch,
@@ -110,6 +116,7 @@ import {
   deriveCellInspectionField,
   type CellInspectionField,
 } from './cellInspectionField';
+import type { Cell } from '@cknerv/types';
 
 const SPIKE_POOL_CAPACITY = 1024;
 
@@ -152,6 +159,9 @@ const RIPPLE_STAGGER_MS = 60;      // per-birth grow-in delay within a block
 const RECONCILE_EVERY_N_BLOCKS = 6; // canonical drift repair cadence
 
 interface NeuralNetworkProps {
+  /** Server projection cap used by CellGalaxy's AUTO display budget. Passive
+   * fibres resolve the same budget so hidden Cells never leave visible hair. */
+  cellCapacity?: number;
   cellFlashRef?: React.RefObject<Map<number, number>>;
   flashDirtyRef?: React.MutableRefObject<boolean>;
   burstArrivalRef?: React.RefObject<Map<number, { firedAt: number; color: Vec3 }>>;
@@ -222,6 +232,7 @@ interface ActivePulse extends Pulse {
 }
 
 export default function NeuralNetwork({
+  cellCapacity,
   cellFlashRef,
   flashDirtyRef,
   burstArrivalRef,
@@ -248,50 +259,87 @@ export default function NeuralNetwork({
   const cellsCache = useCellGalaxy();
   const sharedTraceFocusRef = useConsensusMemoryFocusRef();
   const { effective: quality } = useQualityRuntime();
+  const cellDisplayRuntime = useCellDisplayRuntime();
+  const cellDisplayLimit = resolveCellDisplayLimit(
+    cellDisplayRuntime,
+    quality,
+    cellCapacity,
+  );
   const particleCapMul = QUALITY_PRESETS[quality].particleCapMul;
 
-  // Living mesh: the neighbour graph is maintained INCREMENTALLY from the
-  // per-frame cells diff rather than rebuilt wholesale on every membership
-  // change. Each birth adds its k-NN out-edges (grown in with a ripple
-  // stagger), each real death retracts + flashes its edges, each cap
-  // eviction quietly fades them. The risky orchestration — mutating the
-  // graph plus building the fabric instruction maps — lives in the pure,
-  // unit-tested planMeshUpdate; this effect is a thin driver over the fabric
-  // handles. graphRef is mutated in place so the pulse-planning effect (and
-  // the per-frame loop) always route over a fresh adjacency — the stale-graph
-  // race the throttled rebuild used to open is closed.
+  // The complete neighbour graph is maintained incrementally for causal pulse
+  // routing. Passive rendering is deliberately separate: it is rebuilt over
+  // the exact CellGalaxy display subset, then thinned to a connected skeleton,
+  // grown arbor and a small deterministic cross-link sample. Hidden cache
+  // entries therefore cannot leave visible fibres behind.
   //
   // The add-only incremental path never grows the symmetric in-edges an
   // existing cell would gain from a newcomer, so every RECONCILE_EVERY_N_BLOCKS
-  // blocks' worth of births we rebuild the canonical graph and diff it back
-  // through setFabric — repairing the accrued drift, off the race path.
+  // blocks' worth of births we rebuild the canonical routing graph.
   const graphRef = useRef<NeighborGraph>(emptyNeighborGraph());
+  const passiveGraphRef = useRef<NeighborGraph>(emptyNeighborGraph());
+  const displayCellsRef = useRef<Map<number, Cell>>(new Map());
+  const fabricHandlesRef = useRef<NeuralFabricHandles | null>(null);
   const inspectionFieldSnapshotRef = useRef<CellInspectionField | null>(null);
   const prevCellsRef = useRef<Map<number, CellSnapshotEntry>>(new Map());
   const bootstrappedRef = useRef(false);
   const blockCountRef = useRef(0);
-  const publishInspectionField = useCallback(() => {
+  const routingTopologyRef = useRef('');
+
+  const syncDisplayFabric = useCallback(() => {
+    const visibleCells = cellRenderList(
+      cellsCache.cells,
+      cellDisplayLimit,
+      inspectionCellId,
+      inspectionFieldSnapshotRef.current,
+    );
+    const displayCells = cellRenderMap(visibleCells);
+    const displayGraph = buildNeighborGraph(displayCells, {
+      k: topology?.neighborK,
+      maxEdgeLength: topology?.maxEdgeLength,
+    });
+    const passiveGraph = buildPassiveNeighborGraph(displayGraph);
     const next = deriveCellInspectionField(
-      graphRef.current,
+      displayGraph,
       inspectionCellId,
     );
+
+    displayCellsRef.current = displayCells;
+    passiveGraphRef.current = passiveGraph;
     inspectionFieldSnapshotRef.current = next;
     if (inspectionFieldRef) inspectionFieldRef.current = next;
-    fabricHandlesRef.current?.setInspectionField(next);
-  }, [inspectionCellId, inspectionFieldRef]);
+    const handles = fabricHandlesRef.current;
+    handles?.setFabric(passiveGraph, displayCells, simClock.elapsedSec);
+    handles?.setInspectionField(next);
+  }, [
+    cellDisplayLimit,
+    cellsCache.cells,
+    inspectionCellId,
+    inspectionFieldRef,
+    topology?.neighborK,
+    topology?.maxEdgeLength,
+  ]);
+
   useEffect(() => {
     const cells = cellsCache.cells;
     const now = simClock.elapsedSec;
-    const handles = fabricHandlesRef.current;
     const opts = { k: topology?.neighborK, maxEdgeLength: topology?.maxEdgeLength };
+    const topologyKey = `${opts.k ?? ''}:${opts.maxEdgeLength ?? ''}`;
 
     if (!bootstrappedRef.current) {
       if (cells.size === 0) return; // wait for first populated frame
       graphRef.current = buildNeighborGraph(cells, opts);
-      handles?.setFabric(graphRef.current, cells, now);
       prevCellsRef.current = snapshotCells(cells);
       bootstrappedRef.current = true;
-      publishInspectionField();
+      routingTopologyRef.current = topologyKey;
+      return;
+    }
+
+    if (routingTopologyRef.current !== topologyKey) {
+      graphRef.current = buildNeighborGraph(cells, opts);
+      prevCellsRef.current = snapshotCells(cells);
+      routingTopologyRef.current = topologyKey;
+      blockCountRef.current = 0;
       return;
     }
 
@@ -299,31 +347,43 @@ export default function NeuralNetwork({
     prevCellsRef.current = snapshotCells(cells);
     if (diff.born.length === 0 && diff.died.length === 0 && diff.evicted.length === 0) return;
 
-    // All graph mutation + fabric-instruction building happens in the pure
-    // planMeshUpdate (unit-tested); the effect just drives the handles.
-    const u = planMeshUpdate(diff, graphRef.current, cells, now, opts, RIPPLE_STAGGER_MS);
-    if (u.addedEdges.length > 0) handles?.growEdges(u.addedEdges, cells, u.bornAtByKey, u.dirByKey);
-    if (u.deathKeys.length > 0) handles?.killEdges(u.deathKeys, now, 'death', u.deathEndByKey);
-    if (u.evictKeys.length > 0) handles?.killEdges(u.evictKeys, now, 'gc');
+    // The pure driver mutates the routing graph immediately, closing the
+    // stale-graph window for pulses. Passive fibres are reconciled below from
+    // the authoritative display subset in one animated setFabric diff.
+    const update = planMeshUpdate(
+      diff,
+      graphRef.current,
+      cells,
+      now,
+      opts,
+      RIPPLE_STAGGER_MS,
+    );
+    if (update.deathKeys.length > 0) {
+      fabricHandlesRef.current?.killEdges(
+        update.deathKeys,
+        now,
+        'death',
+        update.deathEndByKey,
+      );
+    }
 
     // Periodic canonical reconciliation (off the race path).
     blockCountRef.current += diff.born.length; // proxy: births ≈ per-block activity
     if (shouldReconcile(blockCountRef.current, RECONCILE_EVERY_N_BLOCKS)) {
       blockCountRef.current = 0;
       graphRef.current = buildNeighborGraph(cells, opts);
-      handles?.setFabric(graphRef.current, cells, now); // diff animates drift as grow/gc-fade
     }
-    publishInspectionField();
   }, [
     cellsCache.revision,
     cellsCache.cells,
     topology?.neighborK,
     topology?.maxEdgeLength,
-    publishInspectionField,
   ]);
+
   useEffect(() => {
-    publishInspectionField();
-  }, [publishInspectionField]);
+    syncDisplayFabric();
+  }, [syncDisplayFabric]);
+
   useEffect(() => () => {
     if (
       inspectionFieldRef
@@ -840,7 +900,6 @@ export default function NeuralNetwork({
   useEffect(() => () => spikePool.dispose(), [spikePool]);
 
   // NeuralFabric hands us imperative draw handles via onReady.
-  const fabricHandlesRef = useRef<NeuralFabricHandles | null>(null);
   const renderedTraceRouteHopLock = consensusMemoryTraceVisualRouteHopFocus(
     traceFocus,
     traceDisplayRouteHopLock,
@@ -914,11 +973,15 @@ export default function NeuralNetwork({
 
   const onFabricReady = useCallback((handles: NeuralFabricHandles) => {
     fabricHandlesRef.current = handles;
-    // Re-derive immediately in case cellsCache had already populated
-    // before the fabric mounted.
-    handles.setFabric(graphRef.current, cellsCache.cells, simClock.elapsedSec);
+    // Rehydrate only the bounded passive view. Causal routing continues to
+    // read the complete graphRef and full cache independently.
+    handles.setFabric(
+      passiveGraphRef.current,
+      displayCellsRef.current,
+      simClock.elapsedSec,
+    );
     handles.setInspectionField(inspectionFieldSnapshotRef.current);
-  }, [cellsCache.cells]);
+  }, []);
 
   // Per-frame: roll every active pulse forward, light up the current
   // hop's edge, push the spike head sprite, flash the receiving

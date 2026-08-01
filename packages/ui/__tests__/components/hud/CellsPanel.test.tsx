@@ -25,7 +25,7 @@ describe('CellsPanel', () => {
     expect(t).toContain('19,204');    // live
     expect(t).toContain('28,431');    // total observed
     expect(t).toContain('9,227');     // dead
-    expect(t).toContain('In view');
+    expect(t).toContain('Retained');
     expect(t).toContain('4,983');
     expect(t).toContain('1.21 GB');   // capacity
   });

@@ -878,6 +878,7 @@ export default function App({
                     shared neighbour graph, illuminating the maintained data
                     structure before the terminal write seal resolves. */}
                 <NeuralNetwork
+                  cellCapacity={galaxyConfig.cellCap}
                   cellFlashRef={cellFlashRef}
                   flashDirtyRef={flashDirtyRef}
                   burstArrivalRef={burstArrivalRef}

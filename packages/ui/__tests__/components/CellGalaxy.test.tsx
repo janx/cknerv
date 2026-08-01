@@ -7,6 +7,7 @@ import CellGalaxy from '../../src/components/CellGalaxy';
 import {
   ckbNodeAnchorHaloTarget,
   ckbNodeAnchorPresentation,
+  cellPointSize,
   writeFlashSlots,
   writeCellBuffers,
   writeCellInspectionNavigationRoles,
@@ -123,7 +124,10 @@ describe('CellGalaxy', () => {
     expect(source).toMatch(
       /resolveCellDisplayLimit\(\s*cellDisplay,\s*quality,\s*cellCapacity,\s*\)/,
     );
-    expect(source).toContain('Math.min(allCells.length, cellDisplayLimit)');
+    expect(source).toMatch(
+      /cellRenderList\(\s*cellsCache\.cells,\s*cellDisplayLimit,/,
+    );
+    expect(source).toContain('count = cellsList.length');
   });
 
   it('turns direct inspection neighbours into the bounded pick surface', () => {
@@ -591,9 +595,10 @@ describe('writeCellBuffers', () => {
     expect(t.colorArr[3]).toBeCloseTo(0.43, 5);
     expect(t.colorArr[4]).toBeCloseTo(0.91, 5);
     expect(t.colorArr[5]).toBeCloseTo(0.72, 5);
-    // Size: generic vs tagged.
-    expect(t.sizeArr[0]).toBeCloseTo(1.6, 5);
-    expect(t.sizeArr[1]).toBeCloseTo(3, 5);
+    // Size: stable per-id morphology; tags remain the larger landmarks.
+    expect(t.sizeArr[0]).toBeCloseTo(cellPointSize(cells[0]), 5);
+    expect(t.sizeArr[1]).toBeCloseTo(cellPointSize(cells[1]), 5);
+    expect(t.sizeArr[1]).toBeGreaterThan(t.sizeArr[0]);
     // Flash slot 1 (cell id=2) has 7.5 from flashMap.
     expect(t.flashArr[1]).toBe(7.5);
     // Far retained cores preserve the same bounded A field mapping.

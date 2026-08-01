@@ -19,6 +19,11 @@ import {
   DEATH_DURATION_MS,
   INSTANCE_CAPACITY,
 } from '../geometry/cellPositions';
+import { cellRenderList } from '../geometry/cellRenderSet';
+export {
+  pinCellInspectionFieldInVisiblePrefix,
+  pinSelectedCellInVisiblePrefix,
+} from '../geometry/cellRenderSet';
 import type { Cell } from '@cknerv/types';
 import { useCellGalaxy } from '../hooks/cellGalaxyContext';
 import { ConsensusMemoryFocusScope } from '../hooks/consensusMemoryFocusContext';
@@ -161,10 +166,18 @@ interface CellGalaxyProps {
   localReceiveDelayS?: number;
 }
 
-// Cell point sizes in world units. The hybrid shader draws the anchored
-// core/glow sprite; the closest points expand into the shared A braid LOD.
-const GENERIC_CELL_POINT_SIZE = 1.6;
-const TAGGED_CELL_POINT_SIZE = 3.0;
+// Cell point sizes in world units. A stable per-id range prevents the far field
+// from becoming an evenly punched dot screen; tags remain larger landmarks.
+const GENERIC_CELL_POINT_SIZE = 1.35;
+const TAGGED_CELL_POINT_SIZE = 2.75;
+
+export function cellPointSize(cell: Pick<Cell, 'id' | 'tag'>): number {
+  let hash = Math.imul(cell.id >>> 0, 0x9e3779b1) >>> 0;
+  hash = Math.imul(hash ^ (hash >>> 16), 0x85ebca6b) >>> 0;
+  const morphology = 0.78 + 0.44 * (((hash >>> 8) & 0xffff) / 0xffff);
+  return (cell.tag === null ? GENERIC_CELL_POINT_SIZE : TAGGED_CELL_POINT_SIZE)
+    * morphology;
+}
 
 /**
  * Write per-cell flash timestamps into the shared flash buffer (consumed by
@@ -212,116 +225,6 @@ export function writeCellInspectionNavigationRoles(
   }
 }
 
-/** Preserve the deterministic cache order while pinning a bounded inspection
- * neighbourhood into the visible prefix.
- *
- * Priority is semantic rather than draw-order based: selected root, every
- * direct renderer-neighbour, then hop-two context while capacity remains.
- * Swaps happen only against non-field entries at the end of the prefix, so
- * background density yields before local meaning. The complete array remains
- * one permutation of the cache order; tail entries stay available for live-id
- * pruning and no Cell is copied or dropped.
- *
- * A field belonging to the previous selection is deliberately ignored. React
- * can publish the new selected id one frame before NeuralNetwork publishes its
- * matching graph snapshot, and the old neighbourhood must not leak into that
- * transition.
- */
-export function pinCellInspectionFieldInVisiblePrefix(
-  cells: Cell[],
-  visibleCount: number,
-  selectedCellId: number | null,
-  field: CellInspectionField | null,
-): Cell[] {
-  const count = Math.min(
-    cells.length,
-    Math.max(0, Math.floor(visibleCount)),
-  );
-  if (
-    selectedCellId === null
-    || count === 0
-    || count >= cells.length
-  ) return cells;
-
-  const selectedIndex = cells.findIndex(
-    (cell) => cell.id === selectedCellId,
-  );
-  if (selectedIndex < 0) return cells;
-
-  const priorityIds = [selectedCellId];
-  if (field?.selectedCellId === selectedCellId) {
-    const fieldMembers: Array<{ id: number; hop: number; order: number }> = [];
-    for (let order = 0; order < cells.length; order += 1) {
-      const cell = cells[order];
-      const hop = field.hopsByCellId.get(cell.id);
-      if (
-        hop === undefined
-        || !Number.isFinite(hop)
-        || hop <= 0
-        || hop > field.maxHops
-      ) continue;
-      fieldMembers.push({ id: cell.id, hop, order });
-    }
-    fieldMembers.sort((a, b) => a.hop - b.hop || a.order - b.order);
-    for (const member of fieldMembers) {
-      priorityIds.push(member.id);
-    }
-  }
-
-  const pinnedIds = priorityIds.slice(0, count);
-  const pinnedSet = new Set(pinnedIds);
-  const visibleIds = new Set(
-    cells.slice(0, count).map((cell) => cell.id),
-  );
-  const missingIds = pinnedIds.filter((id) => !visibleIds.has(id));
-  if (missingIds.length === 0) return cells;
-
-  // Missing ids fill backwards in semantic priority order. When the selected
-  // Cell itself is missing, it therefore receives the final draw slot, keeping
-  // its non-depth-writing point above the quieter context.
-  const replacementSlots: number[] = [];
-  for (let i = count - 1; i >= 0; i -= 1) {
-    if (!pinnedSet.has(cells[i].id)) replacementSlots.push(i);
-  }
-
-  const pinned = cells.slice();
-  const indexById = new Map<number, number>();
-  for (let i = 0; i < pinned.length; i += 1) {
-    indexById.set(pinned[i].id, i);
-  }
-
-  for (let i = 0; i < missingIds.length; i += 1) {
-    const sourceIndex = indexById.get(missingIds[i]);
-    const targetIndex = replacementSlots[i];
-    if (sourceIndex === undefined || targetIndex === undefined) break;
-    const displacedId = pinned[targetIndex].id;
-    const insertedId = pinned[sourceIndex].id;
-    [pinned[targetIndex], pinned[sourceIndex]] = [
-      pinned[sourceIndex],
-      pinned[targetIndex],
-    ];
-    indexById.set(insertedId, targetIndex);
-    indexById.set(displacedId, sourceIndex);
-  }
-
-  return pinned;
-}
-
-/** Compatibility helper for consumers that only have a selected identity.
- * Production CellGalaxy uses the full inspection-field variant above. */
-export function pinSelectedCellInVisiblePrefix(
-  cells: Cell[],
-  visibleCount: number,
-  selectedCellId: number | null,
-): Cell[] {
-  return pinCellInspectionFieldInVisiblePrefix(
-    cells,
-    visibleCount,
-    selectedCellId,
-    null,
-  );
-}
-
 export interface CellBufferTargets {
   /** Shared per-cell attribute arrays consumed by the hybrid Points layer. */
   posArr:   Float32Array;
@@ -349,7 +252,6 @@ export function writeCellBuffers(
 ): void {
   for (let i = 0; i < count; i += 1) {
     const c = cells[i];
-    const isTagged = c.tag !== null;
     const bornAtS = bornAtOverrides?.get(c.id)
       ?? toSceneSeconds(c.born_at_ms) + BLOCK_HIGHLIGHT_DELAY_S;
     const deathAtS = c.death_at_ms === null
@@ -369,7 +271,7 @@ export function writeCellBuffers(
     targets.bornArr[i]          = bornAtS;
     targets.deathArr[i]         = deathAtS;
     targets.flashArr[i]         = flashAtS;
-    targets.sizeArr[i]          = isTagged ? TAGGED_CELL_POINT_SIZE : GENERIC_CELL_POINT_SIZE;
+    targets.sizeArr[i]          = cellPointSize(c);
     targets.memoryIdentityArr.set(memoryIdentity.semantic, i * 4);
     targets.memorySeedArr[i]    = memoryIdentity.hashSeed;
   }
@@ -747,10 +649,7 @@ function CellPicker({
         //   braid circumradius (px) = BRAID_PICK_RADIUS × halfH / viewZ.
         // Take the larger so neither layer can leak outside the
         // clickable area. No constant slop — strictly visual.
-        const isTagged = c.tag !== null;
-        const baseCellPointAsize = isTagged
-          ? TAGGED_CELL_POINT_SIZE
-          : GENERIC_CELL_POINT_SIZE;
+        const baseCellPointAsize = cellPointSize(c);
         const navigationSizeScale = cellInspectionDirectNavigationRole(
           inspectionField,
           c.id,
@@ -1213,14 +1112,13 @@ export default function CellGalaxy({
           flashDirtyRef.current = true;
         }
       }
-      const allCells = Array.from(cellsCache.cells.values());
-      count = Math.min(allCells.length, cellDisplayLimit);
-      cellsList = pinCellInspectionFieldInVisiblePrefix(
-        allCells,
-        count,
+      cellsList = cellRenderList(
+        cellsCache.cells,
+        cellDisplayLimit,
         selectedCellIdRef.current,
         inspectionField,
       );
+      count = cellsList.length;
       cellsListRef.current = cellsList;
       drawCountRef.current = count;
       const flashMap = cellFlashRef.current;
@@ -1458,9 +1356,9 @@ export default function CellGalaxy({
 
   return (
     <>
-      {/* Cells galaxy — flat hybrid Crab+MW canopy at CELLS_Y, the
-          top layer above the chain mesh. Slow rotation gives the
-          arms a living-galaxy feel. The cube + ripple animation
+      {/* Cells galaxy — folded organic tissue at CELLS_Y, the top layer
+          above the chain mesh. Slow rotation exposes its real depth and
+          irregular lobes. The cube + ripple animation
           lives in world space (below) so it can span chain → cells
           planes. */}
       <group ref={groupRef} position={[0, CELLS_Y, 0]}>

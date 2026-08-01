@@ -7,10 +7,8 @@
 import type { NeighborGraph } from './neighborGraph';
 
 /** Maximum hops a pulse will travel. Has to be high enough that
- *  paths spanning the disc — from one spiral arm to the opposite —
- *  can complete; the cell field in galaxy shape has its hub-and-
- *  spoke topology centred in the dense core, so short hop caps
- *  trap every successful pulse near the centre. 40 covers ~75% of
+ *  paths spanning distant tissue lobes can complete; short hop caps
+ *  trap successful pulses inside one local cluster. 40 covers ~75% of
  *  random source/target pairs in a 1500-cell field; pulses past
  *  that get dropped, which is rarer than the previous limit. */
 export const DEFAULT_MAX_HOPS = 40;
