@@ -48,14 +48,13 @@ const SYNC_AHEAD_RATIO = 0.5; // fraction of peers ahead of our tip = we're behi
 
 const ROOT_STYLE: CSSProperties = { position: 'fixed', inset: 0, zIndex: 15, pointerEvents: 'none', overflow: 'hidden' };
 const SCAN_STYLE: CSSProperties = { position: 'absolute', inset: 0, pointerEvents: 'none', background: 'repeating-linear-gradient(0deg,rgba(255,255,255,.035) 0 1px,transparent 1px 3px)', mixBlendMode: 'overlay', opacity: 0.5 };
-// Right-edge MESH RAIL: the CELL zone stacked over the PEER zone, anchored to
-// the bottom edge and right HUD margin so both summaries move as one unit.
+// Right-edge MESH RAIL: the CELL zone stacked over the PEER zone, right-anchored.
 // Each zone is a flex row [detail | mesh] (detail fans LEFT of its own mesh); the
 // rail is a flex column so the zones stack and details top-align to their mesh
 // with no height math. Panels flow via PANEL_FLOW (position:relative) instead of
 // self-positioning. Container shrink-wraps and pins its right edge, so the meshes
 // never shift when a detail appears — the row just grows leftward.
-const MESH_RAIL_STYLE: CSSProperties = { position: 'absolute', right: 14, bottom: 0, display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'flex-end' };
+const MESH_RAIL_STYLE: CSSProperties = { position: 'absolute', top: 42, right: 14, display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'flex-end' };
 // Narrow: the selected detail owns the immediately visible rail area; its mesh
 // follows below. This keeps the consensus-memory readout in the first viewport
 // instead of spending that space on the summary that opened it.
@@ -161,8 +160,8 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats, cellCo
   const streamInterrupted = !!streamSummary && streamSummary.phase !== 'live';
   const contentTop = streamInterrupted ? 72 : 42;
   const railStyle: CSSProperties = narrowRail
-    ? { ...MESH_RAIL_STYLE, maxHeight: `calc(100vh - ${contentTop}px)`, overflowX: 'hidden', overflowY: 'auto', pointerEvents: railScrolls ? 'auto' : 'none', scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,152,48,.35) transparent' }
-    : MESH_RAIL_STYLE;
+    ? { ...MESH_RAIL_STYLE, top: contentTop, maxHeight: 'calc(100vh - 56px)', overflowX: 'hidden', overflowY: 'auto', pointerEvents: railScrolls ? 'auto' : 'none', scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,152,48,.35) transparent' }
+    : { ...MESH_RAIL_STYLE, top: contentTop };
 
   // Re-measure rail overflow on mode / selection change and each 1s tick (the
   // latter catches viewport resize within a second). setRailScrolls no-ops when

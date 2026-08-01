@@ -799,9 +799,9 @@ export default function App({
           cells: cellsStreamHealth,
         }}
         build={build}
-        topBarActions={<Jukebox />}
         colonyCount={topology.nodes.length}
       />
+      <Jukebox />
       {/* Render-stats HUD overlay (DOM sibling of HudOverlay, NOT in-Canvas):
           visible through the ` panel toggle or ?render-stats=1. */}
       <RenderStatsPanel forceVisible={forceRenderStats} />
