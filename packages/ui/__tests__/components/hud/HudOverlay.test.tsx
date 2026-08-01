@@ -75,6 +75,9 @@ describe('HudOverlay', () => {
     expect(t).toContain('PULSE');                 // ecg
     expect(t).toContain('PEER MESH');    // peer mesh
     expect(t).toContain('CELL MESH');    // cell mesh
+    const meshRail = container.querySelector('.cknerv-mesh-rail') as HTMLElement;
+    expect(meshRail.style.bottom).toBe('0px');
+    expect(meshRail.style.top).toBe('');
   });
 
   it('marks frozen browser data without changing nominal chain telemetry', () => {
@@ -108,9 +111,9 @@ describe('HudOverlay', () => {
     expect(container.textContent).toContain('DATA FROZEN');
     expect(container.textContent).toContain('CELLS');
     expect(container.textContent).toContain('NOMINAL');
-    expect(
-      (container.querySelector('.cknerv-mesh-rail') as HTMLElement).style.top,
-    ).toBe('72px');
+    const meshRail = container.querySelector('.cknerv-mesh-rail') as HTMLElement;
+    expect(meshRail.style.bottom).toBe('0px');
+    expect(meshRail.style.top).toBe('');
   });
 
   it('shows the cell detail and a node detail at the same time (independent axes)', () => {
