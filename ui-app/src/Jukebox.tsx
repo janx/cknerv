@@ -20,11 +20,11 @@ const MONO = "'Share Tech Mono', ui-monospace, monospace";
 
 const panelStyle: CSSProperties = {
   position: 'fixed',
-  // Clear the 30px status strip plus its optional 30px health banner.
-  top: 68,
-  left: '50%',
+  right: 'max(14px, env(safe-area-inset-right, 0px))',
+  bottom: 'max(14px, env(safe-area-inset-bottom, 0px))',
   zIndex: 20,
-  width: 'min(456px, calc(100vw - 28px))',
+  width:
+    'min(456px, calc(100vw - 28px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)))',
   boxSizing: 'border-box',
   padding: 7,
   border: '1px solid rgba(32,240,255,.24)',
@@ -32,7 +32,6 @@ const panelStyle: CSSProperties = {
     'linear-gradient(180deg,rgba(3,10,18,.97),rgba(0,0,0,.94))',
   boxShadow:
     '0 16px 42px rgba(0,0,0,.64), inset 0 0 28px rgba(32,240,255,.035)',
-  transform: 'translateX(-50%)',
   pointerEvents: 'auto',
 };
 

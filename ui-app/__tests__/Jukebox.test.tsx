@@ -49,6 +49,22 @@ describe('Jukebox', () => {
     expect(panel.textContent).not.toContain('PLAYING');
   });
 
+  it('docks the player in the bottom-right safe area', () => {
+    render(<Jukebox />);
+    fireEvent.click(screen.getByRole('button', {
+      name: 'Open Jukebox; loads Spotify content',
+    }));
+
+    const panel = screen.getByRole('dialog', {
+      name: 'Spotify Jukebox',
+    }) as HTMLElement;
+    expect(panel.style.right).toContain('safe-area-inset-right');
+    expect(panel.style.bottom).toContain('safe-area-inset-bottom');
+    expect(panel.style.top).toBe('');
+    expect(panel.style.left).toBe('');
+    expect(panel.style.transform).toBe('');
+  });
+
   it('unmounts the player on close or Escape so audio cannot remain hidden', () => {
     const { container } = render(<Jukebox />);
     const opener = screen.getByRole('button', {
