@@ -10,7 +10,7 @@ describe('HudOverlay wiring', () => {
     expect(typeof HudOverlay).toBe('function');
   });
 
-  it('owns the YouTube Jukebox in the product app and injects it into the HUD', () => {
+  it('owns the SoundCloud Jukebox in the product app and injects it into the HUD', () => {
     expect(APP_SOURCE).toContain("import Jukebox from './Jukebox'");
     expect(APP_SOURCE).toContain('topBarActions={<Jukebox />}');
   });

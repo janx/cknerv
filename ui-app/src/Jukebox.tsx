@@ -8,32 +8,33 @@ import {
 
 export const JUKEBOX_TRACKS = [
   {
-    id: 'myuk',
+    id: 'michelle-vocal',
     kind: 'VOCAL',
-    artist: 'MYUK',
-    duration: '04:36',
-    selectorLabel: 'Select vocal version by Myuk',
-    frameTitle: 'YouTube Embed: 翼をください — Myuk vocal',
-    watchUrl: 'https://www.youtube.com/watch?v=E6HOEpZc-J0',
+    artist: 'MICHELLE ♥',
+    duration: '05:24',
+    selectorLabel: 'Select vocal version uploaded by Michelle',
+    frameTitle: 'SoundCloud player: 翼をください — Michelle vocal upload',
+    trackUrl: 'https://soundcloud.com/nuraminmi/tsubasa-wo-kudasai',
     embedUrl:
-      'https://www.youtube.com/embed/E6HOEpZc-J0?playsinline=1&rel=0',
+      'https://w.soundcloud.com/player/?url=https%3A%2F%2Fapi.soundcloud.com%2Ftracks%2F54664795&color=%2320f0ff&auto_play=false&hide_related=true&show_comments=false&show_user=true&show_reposts=false&show_teaser=false&visual=false',
   },
   {
-    id: 'iso-piano',
+    id: 'aria-piano',
     kind: 'PIANO',
-    artist: 'ISO PIANO',
-    duration: '03:36',
-    selectorLabel: 'Select piano version by Iso Piano',
-    frameTitle: 'YouTube Embed: 翼をください — Iso Piano instrumental',
-    watchUrl: 'https://www.youtube.com/watch?v=sp8eJEbxIao',
+    artist: 'ARIALATE',
+    duration: '04:36',
+    selectorLabel: 'Select piano version by AriaLate',
+    frameTitle: 'SoundCloud player: 翼をください — AriaLate piano',
+    trackUrl:
+      'https://soundcloud.com/arialate/evangelion-tsubasa-wo-kudasai-only-piano',
     embedUrl:
-      'https://www.youtube.com/embed/sp8eJEbxIao?playsinline=1&rel=0',
+      'https://w.soundcloud.com/player/?url=https%3A%2F%2Fapi.soundcloud.com%2Ftracks%2F560812260&color=%2320f0ff&auto_play=false&hide_related=true&show_comments=false&show_user=true&show_reposts=false&show_teaser=false&visual=false',
   },
 ] as const;
 
 export type JukeboxTrackId = (typeof JUKEBOX_TRACKS)[number]['id'];
 
-export const DEFAULT_JUKEBOX_TRACK_ID: JukeboxTrackId = 'myuk';
+export const DEFAULT_JUKEBOX_TRACK_ID: JukeboxTrackId = 'michelle-vocal';
 
 const PANEL_ID = 'cknerv-jukebox-player';
 const CYAN = 'var(--hud-cyanWire, #20F0FF)';
@@ -152,10 +153,10 @@ export default function Jukebox() {
         aria-expanded={open}
         aria-label={open
           ? 'Close Jukebox and stop playback'
-          : 'Open Jukebox; loads YouTube player'}
+          : 'Open Jukebox; loads SoundCloud player'}
         title={open
           ? 'Close Jukebox and stop playback'
-          : 'Open Jukebox — loads YouTube only on request'}
+          : 'Open Jukebox — loads SoundCloud only on request'}
         onClick={() => {
           if (open) {
             close();
@@ -199,8 +200,9 @@ export default function Jukebox() {
         <section
           id={PANEL_ID}
           role="dialog"
-          aria-label="YouTube Jukebox"
+          aria-label="SoundCloud Jukebox"
           data-jukebox-panel
+          data-jukebox-provider="soundcloud"
           data-jukebox-selected-track={selectedTrackId}
           data-jukebox-frame-ready={frameReady ? 'true' : 'false'}
           style={panelStyle}
@@ -226,14 +228,14 @@ export default function Jukebox() {
               data-jukebox-load-state={frameReady ? 'ready' : 'connecting'}
               style={{ color: frameReady ? CYAN : DIM }}
             >
-              YOUTUBE {frameReady ? 'READY' : 'CONNECTING'}
+              SOUNDCLOUD {frameReady ? 'READY' : 'CONNECTING'}
             </span>
             <span style={{ flex: 1 }} />
             <a
-              href={selectedTrack.watchUrl}
+              href={selectedTrack.trackUrl}
               target="_blank"
               rel="noopener noreferrer"
-              aria-label={`Open ${selectedTrack.kind.toLowerCase()} version by ${selectedTrack.artist} on YouTube`}
+              aria-label={`Open ${selectedTrack.kind.toLowerCase()} version by ${selectedTrack.artist} on SoundCloud`}
               onClick={(event) => event.stopPropagation()}
               onPointerDown={(event) => event.stopPropagation()}
               style={{
@@ -242,7 +244,7 @@ export default function Jukebox() {
                 whiteSpace: 'nowrap',
               }}
             >
-              OPEN ON YOUTUBE ↗
+              OPEN ON SOUNDCLOUD ↗
             </a>
             <button
               type="button"
@@ -344,7 +346,7 @@ export default function Jukebox() {
             style={{
               position: 'relative',
               width: '100%',
-              height: 'clamp(200px, calc(56.25vw - 23.625px), 279px)',
+              height: 166,
               overflow: 'hidden',
               border: '1px solid rgba(32,240,255,.12)',
               boxSizing: 'border-box',
@@ -358,9 +360,9 @@ export default function Jukebox() {
               width="100%"
               height="100%"
               frameBorder="0"
-              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-              allowFullScreen
+              allow="autoplay; encrypted-media"
               loading="lazy"
+              scrolling="no"
               referrerPolicy="strict-origin-when-cross-origin"
               onLoad={() => setReadyTrackId(selectedTrack.id)}
               style={{
