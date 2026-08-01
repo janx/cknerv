@@ -52,12 +52,12 @@ const MONO = "'Share Tech Mono', ui-monospace, monospace";
 const panelStyle: CSSProperties = {
   position: 'fixed',
   right: 'max(14px, env(safe-area-inset-right, 0px))',
-  bottom: 'max(14px, env(safe-area-inset-bottom, 0px))',
+  top: 'calc(30px + env(safe-area-inset-top, 0px))',
   zIndex: 20,
   width:
     `min(${JUKEBOX_PANEL_WIDTH_PX}px, calc(100vw - 28px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)))`,
   maxHeight:
-    'calc(100vh - 28px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px))',
+    'calc(100vh - 30px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px))',
   overflowY: 'auto',
   boxSizing: 'border-box',
   padding: 6,

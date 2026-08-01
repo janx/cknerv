@@ -119,7 +119,7 @@ describe('Jukebox', () => {
     expect(panel.textContent).not.toContain('PLAYING');
   });
 
-  it('docks a compact darkened player in the bottom-right safe area', () => {
+  it('docks a compact darkened player below the top bar on the right', () => {
     render(<Jukebox />);
     fireEvent.click(screen.getByRole('button', {
       name: 'Open Jukebox and play default SoundCloud track',
@@ -131,8 +131,9 @@ describe('Jukebox', () => {
     const player = panel.querySelector('[data-jukebox-player]') as HTMLElement;
     const frame = panel.querySelector('iframe') as HTMLIFrameElement;
     expect(panel.style.right).toContain('safe-area-inset-right');
-    expect(panel.style.bottom).toContain('safe-area-inset-bottom');
-    expect(panel.style.top).toBe('');
+    expect(panel.style.top).toContain('30px');
+    expect(panel.style.top).toContain('safe-area-inset-top');
+    expect(panel.style.bottom).toBe('');
     expect(panel.style.left).toBe('');
     expect(panel.style.transform).toBe('');
     expect(panel.style.width).toContain(`${JUKEBOX_PANEL_WIDTH_PX}px`);
