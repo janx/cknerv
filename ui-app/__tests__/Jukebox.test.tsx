@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import Jukebox, {
   DEFAULT_JUKEBOX_TRACK_ID,
+  JUKEBOX_BUTTON_SIZE_PX,
   JUKEBOX_PANEL_WIDTH_PX,
   JUKEBOX_PLAYER_HEIGHT_PX,
   JUKEBOX_TRACKS,
@@ -23,6 +24,8 @@ describe('Jukebox', () => {
 
     expect(DEFAULT_JUKEBOX_TRACK_ID).toBe(MICHELLE_TRACK.id);
     expect(opener.getAttribute('aria-expanded')).toBe('false');
+    expect(opener.textContent).toBe('');
+    expect(container.querySelector('.cknerv-top-bar-action-label')).toBeNull();
     expect(container.querySelector('iframe')).toBeNull();
 
     fireEvent.click(opener);
@@ -31,7 +34,13 @@ describe('Jukebox', () => {
     const frame = screen.getByTitle(
       MICHELLE_TRACK.frameTitle,
     ) as HTMLIFrameElement;
-    expect(opener.getAttribute('aria-expanded')).toBe('true');
+    expect(opener.isConnected).toBe(false);
+    expect(screen.queryByRole('button', {
+      name: 'Open Jukebox and play default SoundCloud track',
+    })).toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole('button', {
+      name: 'Close Jukebox player',
+    }));
     expect(panel.getAttribute('data-jukebox-selected-track')).toBe(
       MICHELLE_TRACK.id,
     );
@@ -119,21 +128,31 @@ describe('Jukebox', () => {
     expect(panel.textContent).not.toContain('PLAYING');
   });
 
-  it('docks a compact darkened player below the top bar on the right', () => {
-    render(<Jukebox />);
-    fireEvent.click(screen.getByRole('button', {
+  it('docks a compact trigger and player in the bottom-right corner', () => {
+    const { container } = render(<Jukebox />);
+    const floating = container.querySelector('[data-jukebox]') as HTMLElement;
+    const opener = screen.getByRole('button', {
       name: 'Open Jukebox and play default SoundCloud track',
-    }));
+    });
+
+    expect(floating.style.position).toBe('fixed');
+    expect(floating.style.right).toContain('safe-area-inset-right');
+    expect(floating.style.bottom).toContain('safe-area-inset-bottom');
+    expect(opener.style.width).toBe(`${JUKEBOX_BUTTON_SIZE_PX}px`);
+    expect(opener.style.height).toBe(`${JUKEBOX_BUTTON_SIZE_PX}px`);
+
+    fireEvent.click(opener);
 
     const panel = screen.getByRole('dialog', {
       name: 'SoundCloud Jukebox',
     }) as HTMLElement;
     const player = panel.querySelector('[data-jukebox-player]') as HTMLElement;
     const frame = panel.querySelector('iframe') as HTMLIFrameElement;
-    expect(panel.style.right).toContain('safe-area-inset-right');
-    expect(panel.style.top).toContain('30px');
-    expect(panel.style.top).toContain('safe-area-inset-top');
+    expect(floating.getAttribute('data-jukebox-open')).toBe('true');
+    expect(panel.style.position).toBe('relative');
+    expect(panel.style.right).toBe('');
     expect(panel.style.bottom).toBe('');
+    expect(panel.style.top).toBe('');
     expect(panel.style.left).toBe('');
     expect(panel.style.transform).toBe('');
     expect(JUKEBOX_PANEL_WIDTH_PX).toBe(332);
@@ -148,38 +167,41 @@ describe('Jukebox', () => {
 
   it('unmounts the player on close or Escape so audio cannot remain hidden', () => {
     const { container } = render(<Jukebox />);
-    const opener = screen.getByRole('button', {
+    fireEvent.click(screen.getByRole('button', {
       name: 'Open Jukebox and play default SoundCloud track',
-    });
-
-    fireEvent.click(opener);
+    }));
     fireEvent.click(screen.getByRole('button', {
       name: 'Close Jukebox player',
     }));
     expect(container.querySelector('iframe')).toBeNull();
-    expect(document.activeElement).toBe(opener);
+    const restoredOpener = screen.getByRole('button', {
+      name: 'Open Jukebox and play default SoundCloud track',
+    });
+    expect(document.activeElement).toBe(restoredOpener);
 
-    fireEvent.click(opener);
+    fireEvent.click(restoredOpener);
     expect(container.querySelector('iframe')).not.toBeNull();
     fireEvent.keyDown(window, { key: 'Escape' });
     expect(container.querySelector('iframe')).toBeNull();
-    expect(document.activeElement).toBe(opener);
+    expect(document.activeElement).toBe(screen.getByRole('button', {
+      name: 'Open Jukebox and play default SoundCloud track',
+    }));
   });
 
   it('keeps a manual track choice for the current page session', () => {
     const { container } = render(<Jukebox />);
-    const opener = screen.getByRole('button', {
+    fireEvent.click(screen.getByRole('button', {
       name: 'Open Jukebox and play default SoundCloud track',
-    });
-
-    fireEvent.click(opener);
+    }));
     fireEvent.click(screen.getByRole('button', {
       name: ARIA_PIANO_TRACK.selectorLabel,
     }));
     fireEvent.click(screen.getByRole('button', {
       name: 'Close Jukebox player',
     }));
-    fireEvent.click(opener);
+    fireEvent.click(screen.getByRole('button', {
+      name: 'Open Jukebox and play default SoundCloud track',
+    }));
 
     expect(container.querySelector('iframe')?.getAttribute('src')).toBe(
       ARIA_PIANO_TRACK.embedUrl,
@@ -207,7 +229,7 @@ describe('Jukebox', () => {
     }).getAttribute('href')).toBe(ARIA_PIANO_TRACK.trackUrl);
   });
 
-  it('keeps Jukebox interactions inside the HUD action', () => {
+  it('keeps Jukebox interactions inside the floating control', () => {
     const onParentClick = vi.fn();
     render(
       <div onClick={onParentClick}>

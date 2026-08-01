@@ -37,6 +37,7 @@ export type JukeboxTrackId = (typeof JUKEBOX_TRACKS)[number]['id'];
 export const DEFAULT_JUKEBOX_TRACK_ID: JukeboxTrackId = 'michelle-vocal';
 // Match the CELL MESH panel's 302px content width plus 15px inline padding.
 export const JUKEBOX_PANEL_WIDTH_PX = 332;
+export const JUKEBOX_BUTTON_SIZE_PX = 32;
 export const SOUNDCLOUD_NATIVE_PLAYER_HEIGHT_PX = 166;
 export const SOUNDCLOUD_PLAYER_SCALE = 0.72;
 export const JUKEBOX_PLAYER_HEIGHT_PX = Math.ceil(
@@ -50,15 +51,24 @@ const INK = 'var(--hud-ink, #E8E8E8)';
 const DIM = 'var(--hud-dim, #7C8794)';
 const MONO = "'Share Tech Mono', ui-monospace, monospace";
 
-const panelStyle: CSSProperties = {
+const floatingStyle: CSSProperties = {
   position: 'fixed',
   right: 'max(14px, env(safe-area-inset-right, 0px))',
-  top: 'calc(30px + env(safe-area-inset-top, 0px))',
-  zIndex: 20,
+  bottom: 'max(14px, env(safe-area-inset-bottom, 0px))',
+  zIndex: 22,
+  display: 'inline-flex',
+  alignItems: 'flex-end',
+  justifyContent: 'flex-end',
+  pointerEvents: 'auto',
+  fontFamily: MONO,
+};
+
+const panelStyle: CSSProperties = {
+  position: 'relative',
   width:
     `min(${JUKEBOX_PANEL_WIDTH_PX}px, calc(100vw - 28px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)))`,
   maxHeight:
-    'calc(100vh - 30px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px))',
+    'calc(100vh - 28px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px))',
   overflowY: 'auto',
   boxSizing: 'border-box',
   padding: 6,
@@ -115,14 +125,26 @@ export default function Jukebox() {
     useState<JukeboxTrackId>(DEFAULT_JUKEBOX_TRACK_ID);
   const [readyTrackId, setReadyTrackId] = useState<JukeboxTrackId | null>(null);
   const toggleRef = useRef<HTMLButtonElement>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
+  const restoreFocusRef = useRef(false);
   const selectedTrack = getTrack(selectedTrackId);
   const frameReady = readyTrackId === selectedTrackId;
 
   const close = useCallback(() => {
+    restoreFocusRef.current = true;
     setOpen(false);
     setReadyTrackId(null);
-    toggleRef.current?.focus();
   }, []);
+
+  useEffect(() => {
+    if (open) {
+      closeRef.current?.focus();
+      return;
+    }
+    if (!restoreFocusRef.current) return;
+    restoreFocusRef.current = false;
+    toggleRef.current?.focus();
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -142,67 +164,42 @@ export default function Jukebox() {
       data-jukebox-open={open ? 'true' : 'false'}
       onClick={(event) => event.stopPropagation()}
       onPointerDown={(event) => event.stopPropagation()}
-      style={{
-        position: 'relative',
-        display: 'inline-flex',
-        alignItems: 'center',
-        height: 20,
-        paddingLeft: 12,
-        borderLeft: '1px solid rgba(32,240,255,.1)',
-        pointerEvents: 'auto',
-        fontFamily: MONO,
-      }}
+      style={floatingStyle}
     >
-      <button
-        ref={toggleRef}
-        type="button"
-        className="cknerv-hud-control-button"
-        aria-controls={PANEL_ID}
-        aria-expanded={open}
-        aria-label={open
-          ? 'Close Jukebox and stop playback'
-          : 'Open Jukebox and play default SoundCloud track'}
-        title={open
-          ? 'Close Jukebox and stop playback'
-          : 'Open Jukebox — load SoundCloud and request playback'}
-        onClick={() => {
-          if (open) {
-            close();
-          } else {
+      {!open ? (
+        <button
+          ref={toggleRef}
+          type="button"
+          className="cknerv-hud-control-button"
+          data-jukebox-trigger
+          aria-controls={PANEL_ID}
+          aria-expanded={false}
+          aria-label="Open Jukebox and play default SoundCloud track"
+          title="Open Jukebox — load SoundCloud and request playback"
+          onClick={() => {
             setReadyTrackId(null);
             setOpen(true);
-          }
-        }}
-        style={{
-          appearance: 'none',
-          display: 'inline-flex',
-          alignItems: 'center',
-          gap: 6,
-          height: 20,
-          padding: '0 6px',
-          border: 0,
-          background: 'transparent',
-          color: open ? CYAN : DIM,
-          font: `400 8.5px/18px ${MONO}`,
-          letterSpacing: 1.05,
-          textShadow: open ? '0 0 7px rgba(32,240,255,.48)' : 'none',
-          cursor: 'pointer',
-          transition: 'color .14s, text-shadow .14s',
-        }}
-      >
-        <JukeboxGlyph active={open} />
-        <span className="cknerv-top-bar-action-label">JUKEBOX</span>
-        <span
-          aria-hidden="true"
-          style={{
-            width: 3,
-            height: 3,
-            borderRadius: '50%',
-            background: open ? CYAN : 'rgba(124,135,148,.46)',
-            boxShadow: open ? '0 0 6px rgba(32,240,255,.75)' : 'none',
           }}
-        />
-      </button>
+          style={{
+            appearance: 'none',
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: JUKEBOX_BUTTON_SIZE_PX,
+            height: JUKEBOX_BUTTON_SIZE_PX,
+            padding: 0,
+            border: '1px solid rgba(32,240,255,.3)',
+            background:
+              'linear-gradient(180deg,rgba(3,10,18,.96),rgba(0,0,0,.94))',
+            boxShadow:
+              '0 8px 24px rgba(0,0,0,.6), inset 0 0 16px rgba(32,240,255,.045)',
+            color: CYAN,
+            cursor: 'pointer',
+          }}
+        >
+          <JukeboxGlyph active />
+        </button>
+      ) : null}
 
       {open ? (
         <section
@@ -256,6 +253,7 @@ export default function Jukebox() {
               SOUNDCLOUD ↗
             </a>
             <button
+              ref={closeRef}
               type="button"
               className="cknerv-hud-control-button"
               aria-label="Close Jukebox player"

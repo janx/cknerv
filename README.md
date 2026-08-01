@@ -94,16 +94,17 @@ to `http://localhost:7001`. Release builds embed `ui-app/dist` into the
 
 ### Optional Jukebox
 
-The dashboard top bar includes an optional SoundCloud Jukebox for
-`TSUBASA WO KUDASAI`. SoundCloud is not contacted and no audio is loaded during
-dashboard startup. Clicking the Jukebox loads SoundCloud's official HTML5
-player and requests playback of the selected track; browser autoplay policy
-may still require a second tap, especially on mobile. The visible player is
-scaled and darkened inside a compact cknerv HUD shell, while its native controls
-and SoundCloud attribution remain intact. Closing the Jukebox removes the
-player and stops playback. The feature requires internet access, remains
-independent of chain events and visual timing, and is subject to SoundCloud's
-terms and regional availability.
+The dashboard includes an optional SoundCloud Jukebox for `TSUBASA WO KUDASAI`,
+collapsed into a small floating button in the bottom-right corner. SoundCloud is
+not contacted and no audio is loaded during dashboard startup. Clicking the
+button replaces it with SoundCloud's official HTML5 player and requests playback
+of the selected track; browser autoplay policy may still require a second tap,
+especially on mobile. The visible player is scaled and darkened inside a compact
+cknerv HUD shell, while its native controls and SoundCloud attribution remain
+intact. Closing the Jukebox removes the player, stops playback, and restores the
+floating button. The feature requires internet access, remains independent of
+chain events and visual timing, and is subject to SoundCloud's terms and regional
+availability.
 
 ## Tech Stack
 

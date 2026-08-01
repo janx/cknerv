@@ -10,9 +10,10 @@ describe('HudOverlay wiring', () => {
     expect(typeof HudOverlay).toBe('function');
   });
 
-  it('owns the SoundCloud Jukebox in the product app and injects it into the HUD', () => {
+  it('owns the SoundCloud Jukebox as a floating app control', () => {
     expect(APP_SOURCE).toContain("import Jukebox from './Jukebox'");
-    expect(APP_SOURCE).toContain('topBarActions={<Jukebox />}');
+    expect(APP_SOURCE).toContain('      <Jukebox />');
+    expect(APP_SOURCE).not.toContain('topBarActions={<Jukebox />}');
   });
 
   it('routes each resolved identity proof back to the matching galaxy Cell', () => {
