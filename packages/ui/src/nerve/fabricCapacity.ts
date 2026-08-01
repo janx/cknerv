@@ -10,9 +10,10 @@ export const FABRIC_SAMPLES_PER_EDGE = 4;
  * adversarial sequence degrades by clipping old afterimages, never live form. */
 export const MAX_PASSIVE_EDGE_GENERATIONS = 3;
 
-/** 1,800 edges × 3 transition generations × 4 segments = 21,600 segments.
- * This replaces the former full-routing-graph allocation of 528K segments;
- * routing remains complete in CPU data and active writes use separate buffers. */
+/** 8,000 edges × 3 transition generations × 4 segments = 96,000 segments.
+ * This remains well below the former full-routing-graph allocation of 528K
+ * segments; routing stays complete in CPU data and active writes use separate
+ * buffers. */
 export const MAX_FABRIC_SEGMENTS =
   PASSIVE_EDGE_BUDGET
   * MAX_PASSIVE_EDGE_GENERATIONS

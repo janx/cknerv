@@ -1,11 +1,12 @@
 import { fabricEdgeSeed } from './edgeBezier';
 import type { NeighborEdge, NeighborGraph } from './neighborGraph';
 
-/** Hard screen-composition budget. Manual 20K mode may add Cell points, but
- * resting fibres stop here so density cannot converge into uniform hair. */
-export const PASSIVE_EDGE_BUDGET = 1_800;
-/** Small fields scale gently; large fields converge on the screen budget. */
-export const PASSIVE_EDGES_PER_CELL = 0.27;
+/** Hard screen-composition budget. This is large enough for the displayed
+ * tissue to read as a neural network, but remains far below the complete k-NN
+ * graph that previously collapsed dense views into uniform hair. */
+export const PASSIVE_EDGE_BUDGET = 8_000;
+/** Keep roughly one resting fibre per visible Cell until the screen cap. */
+export const PASSIVE_EDGES_PER_CELL = 1.0;
 /** Most screen energy belongs to coherent carrying branches. */
 export const PASSIVE_TRUNK_SHARE = 0.72;
 /** A minority of lower-order arbor edges break up clean top-weight contours. */

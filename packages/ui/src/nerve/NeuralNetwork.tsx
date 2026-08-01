@@ -269,8 +269,8 @@ export default function NeuralNetwork({
 
   // The complete neighbour graph is maintained incrementally for causal pulse
   // routing. Passive rendering is deliberately separate: it is rebuilt over
-  // the exact CellGalaxy display subset, then thinned to a connected skeleton,
-  // grown arbor and a small deterministic cross-link sample. Hidden cache
+  // the exact CellGalaxy display subset, then thinned to a bounded grown arbor
+  // plus a small deterministic cross-link sample. Hidden cache
   // entries therefore cannot leave visible fibres behind.
   //
   // The add-only incremental path never grows the symmetric in-edges an

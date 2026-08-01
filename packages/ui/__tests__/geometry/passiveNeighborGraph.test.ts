@@ -33,17 +33,29 @@ describe('buildPassiveNeighborGraph', () => {
   );
   const full = buildNeighborGraph(cells, { k: 7, maxEdgeLength: 30 });
 
-  it('uses a bounded resting-fibre budget instead of an N-1 skeleton', () => {
+  it('keeps about one resting fibre per Cell before the screen cap', () => {
     const passive = buildPassiveNeighborGraph(full);
 
     expect(passive.edges).toHaveLength(passiveEdgeBudget(cells.size));
-    expect(passive.edges.length).toBeLessThan(cells.size - 1);
+    expect(passive.edges.length).toBeGreaterThanOrEqual(cells.size - 1);
     expect(passive.adjacency.size).toBe(full.adjacency.size);
-    expect([...passive.adjacency.values()].some((edges) => edges.size === 0)).toBe(true);
+    const covered = [...passive.adjacency.values()]
+      .filter((edges) => edges.size > 0).length;
+    expect(covered / cells.size).toBeGreaterThan(0.9);
     for (const edge of passive.edges) {
       expect(passive.adjacency.get(edge.from)?.has(edge.to)).toBe(true);
       expect(passive.adjacency.get(edge.to)?.has(edge.from)).toBe(true);
     }
+  });
+
+  it('keeps broad Cell coverage when a manual field reaches the screen cap', () => {
+    const capped = buildPassiveNeighborGraph(full, {
+      edgeBudget: Math.round(cells.size * (8 / 9)),
+    });
+    const covered = [...capped.adjacency.values()]
+      .filter((edges) => edges.size > 0).length;
+
+    expect(covered / cells.size).toBeGreaterThan(0.85);
   });
 
   it('selects hierarchical branches and capillaries deterministically', () => {
@@ -60,11 +72,12 @@ describe('buildPassiveNeighborGraph', () => {
     expect(keys(a).every((key) => fullKeys.has(key))).toBe(true);
   });
 
-  it('caps growth sub-linearly when manual mode admits more Cells', () => {
+  it('scales with visible Cells before converging on a fixed screen cap', () => {
     expect(passiveEdgeBudget(6_000)).toBe(Math.round(6_000 * PASSIVE_EDGES_PER_CELL));
+    expect(passiveEdgeBudget(9_000)).toBe(PASSIVE_EDGE_BUDGET);
     expect(passiveEdgeBudget(14_000)).toBe(PASSIVE_EDGE_BUDGET);
     expect(passiveEdgeBudget(20_000)).toBe(PASSIVE_EDGE_BUDGET);
-    expect(passiveEdgeBudget(14_000) / passiveEdgeBudget(6_000)).toBeLessThan(1.2);
+    expect(passiveEdgeBudget(14_000) / passiveEdgeBudget(6_000)).toBeLessThan(1.4);
   });
 
   it('preserves surviving old branches across ordinary Cell churn', () => {

@@ -310,7 +310,7 @@ function recallApertureScaleAt(
  *  cell down to TAPER_MIN at the shaft midpoint, then back to 1.0 at
  *  the other cell — a parabolic profile that lets each Cell read as a
  *  bright agreement endpoint rather than a uniform vessel. */
-const TAPER_MIN = 0.30;
+const TAPER_MIN = 0.38;
 
 /** Returns the per-vertex brightness multiplier along a fabric edge at
  *  parameter t ∈ [0, 1]. Parabolic in (2t − 1)² so it's exactly
@@ -322,7 +322,7 @@ function taper(t: number): number {
 }
 
 /** Floor brightness — twigs / non-forest cross-links sit here. */
-const TWIG_MIN = 0.18;
+const TWIG_MIN = 0.28;
 
 /** Per-edge brightness multiplier ∈ [TWIG_MIN, 1.0], the fabric's trunk/branch
  *  hierarchy. Forest edges scale by their arbor weight `w` (normalized subtree
@@ -333,9 +333,9 @@ const TWIG_MIN = 0.18;
  *  trunks. Stable per edge across its lifetime. */
 function arborBrightness(w: number | undefined, seed: number): number {
   if (w !== undefined) {
-    return TWIG_MIN + (1 - TWIG_MIN) * Math.pow(w, 1.25);
+    return TWIG_MIN + (1 - TWIG_MIN) * Math.pow(w, 1.2);
   }
-  return TWIG_MIN + 0.08 * (((seed >>> 16) & 0xff) / 0xff);
+  return TWIG_MIN + 0.10 * (((seed >>> 16) & 0xff) / 0xff);
 }
 
 function makeFatLineLayer(
