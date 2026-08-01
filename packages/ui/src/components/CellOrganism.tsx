@@ -12,7 +12,11 @@ import { deriveCellVisual } from '../derives/cellVisual.derive';
 import { makeCellOrganismMaterial } from '../materials/cellOrganismMaterial';
 import { useSimFrame } from '../tweaks/useSimFrame';
 import { useSimClock } from '../tweaks/SimClockScope';
-import { QUALITY_PRESETS, useQualityRuntime } from '../tweaks/qualityPresets';
+import { useQualityRuntime } from '../tweaks/qualityPresets';
+import {
+  resolveCellDisplayLimit,
+  useCellDisplayRuntime,
+} from '../tweaks/cellDisplay';
 import { CELL_FORM_FOLDER } from '../tweaks/cellFormControl';
 
 const MEMBRANE_R = 0.155;
@@ -47,6 +51,7 @@ export default function CellOrganism({
   const simClock = useSimClock();
   const cache = useCellGalaxy();
   const { effective: quality } = useQualityRuntime();
+  const cellDisplay = useCellDisplayRuntime();
   const { membraneOpacity, membraneScale } = useControls(CELL_FORM_FOLDER, {
     membraneOpacity: {
       value: 0.78,
@@ -63,7 +68,7 @@ export default function CellOrganism({
       label: 'shell scale',
     },
   });
-  const cellGalaxyMul = QUALITY_PRESETS[quality].cellGalaxyMul;
+  const cellDisplayLimit = resolveCellDisplayLimit(cellDisplay, quality);
   const geometryDetail = quality === 'high' ? 1 : 0;
 
   const accent = useMemo(() => new Float32Array(INSTANCE_CAPACITY * 3), []);
@@ -111,7 +116,7 @@ export default function CellOrganism({
   }, [geometry, material]);
 
   const lastCellsRef = useRef<Map<number, Cell> | null>(null);
-  const lastMulRef = useRef(-1);
+  const lastDisplayLimitRef = useRef(-1);
   const lastScaleRef = useRef(-1);
 
   useSimFrame(() => {
@@ -125,13 +130,13 @@ export default function CellOrganism({
 
     if (
       cache.cells === lastCellsRef.current
-      && cellGalaxyMul === lastMulRef.current
+      && cellDisplayLimit === lastDisplayLimitRef.current
       && membraneScale === lastScaleRef.current
     ) return;
 
     const count = Math.min(
       cache.cells.size,
-      Math.max(1, Math.floor(INSTANCE_CAPACITY * cellGalaxyMul)),
+      cellDisplayLimit,
     );
     let i = 0;
     for (const cell of cache.cells.values()) {
@@ -167,7 +172,7 @@ export default function CellOrganism({
     attributes.death.needsUpdate = true;
     attributes.phase.needsUpdate = true;
     lastCellsRef.current = cache.cells;
-    lastMulRef.current = cellGalaxyMul;
+    lastDisplayLimitRef.current = cellDisplayLimit;
     lastScaleRef.current = membraneScale;
   });
 

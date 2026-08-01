@@ -62,6 +62,42 @@ describe('helixSeed (TS) — fixture parity', () => {
     expect(std[1] / planarStd).toBeGreaterThan(0.16);
     expect(std[1] / planarStd).toBeLessThan(0.42);
 
+    // A biological field needs coherent crowded regions and real cavities.
+    // Uniform random scatter (or a smooth Gaussian ellipse) drives this
+    // coarse-grid coefficient toward zero as N grows; multi-scale tissue must
+    // preserve strong variance at the full 20K sample.
+    const gridSize = 14;
+    const bins = new Array<number>(gridSize * gridSize).fill(0);
+    for (const [x, , z] of points) {
+      const ix = Math.floor(((x + 60) / 120) * gridSize);
+      const iz = Math.floor(((z + 54) / 108) * gridSize);
+      if (ix < 0 || ix >= gridSize || iz < 0 || iz >= gridSize) continue;
+      bins[iz * gridSize + ix] += 1;
+    }
+    const interior: number[] = [];
+    for (let iz = 0; iz < gridSize; iz += 1) {
+      for (let ix = 0; ix < gridSize; ix += 1) {
+        const nx = ((ix + 0.5) / gridSize) * 2 - 1;
+        const nz = ((iz + 0.5) / gridSize) * 2 - 1;
+        if (nx * nx + nz * nz < 0.85) {
+          interior.push(bins[iz * gridSize + ix]);
+        }
+      }
+    }
+    const binMean = interior.reduce((sum, count) => sum + count, 0)
+      / interior.length;
+    const binCv = Math.sqrt(
+      interior.reduce(
+        (sum, count) => sum + (count - binMean) ** 2,
+        0,
+      ) / interior.length,
+    ) / binMean;
+    expect(binCv).toBeGreaterThan(0.50);
+    expect(interior.filter((count) => count < binMean * 0.2).length)
+      .toBeGreaterThanOrEqual(8);
+    expect(interior.filter((count) => count > binMean * 1.8).length)
+      .toBeGreaterThanOrEqual(8);
+
     // Six equally populated arms create a large sixth angular harmonic. Keep
     // that signature low without demanding rotational symmetry from the lobes.
     const sixthHarmonic = Math.hypot(

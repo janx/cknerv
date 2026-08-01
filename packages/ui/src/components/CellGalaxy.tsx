@@ -174,7 +174,9 @@ const TAGGED_CELL_POINT_SIZE = 2.75;
 export function cellPointSize(cell: Pick<Cell, 'id' | 'tag'>): number {
   let hash = Math.imul(cell.id >>> 0, 0x9e3779b1) >>> 0;
   hash = Math.imul(hash ^ (hash >>> 16), 0x85ebca6b) >>> 0;
-  const morphology = 0.78 + 0.44 * (((hash >>> 8) & 0xffff) / 0xffff);
+  const u = ((hash >>> 8) & 0xffff) / 0xffff;
+  const morphology = 0.58 + 0.72 * u * u
+    + (cell.tag === null && u > 0.975 ? 0.48 : 0);
   return (cell.tag === null ? GENERIC_CELL_POINT_SIZE : TAGGED_CELL_POINT_SIZE)
     * morphology;
 }
@@ -871,9 +873,9 @@ export default function CellGalaxy({
   const rewriteBirthAtRef = useRef<Map<number, number>>(new Map());
   const handledRewriteRef = useRef(cellsCache.linkPrune);
   const rewriteArrivalUntilRef = useRef(-1e9);
-  /** Last-seen resolved display cap. AUTO follows the adaptive quality tier;
-   *  the top-bar slider can own this cap independently. Including it in the
-   *  change predicate keeps drawRange current while the Cell map is stable. */
+  /** Last-seen resolved display cap. AUTO owns one stable structural budget;
+   *  the top-bar slider can own it independently. Including it in the change
+   *  predicate keeps drawRange current while the Cell map is stable. */
   const lastCellDisplayLimitRef = useRef<number>(0);
   const lastPinnedCellIdRef = useRef<number | null>(null);
   const lastPinnedInspectionFieldRef = useRef<CellInspectionField | null>(null);
@@ -1008,11 +1010,10 @@ export default function CellGalaxy({
     g.setAttribute('aInspection', cellInspectionAttr);
     g.setAttribute('aInspectionRole', cellInspectionRoleAttr);
     g.setDrawRange(0, 0);
-    // Permissive bounding sphere — cells live in a Gaussian field bounded
-    // by SIGMA, core sprites extend a few units past that. Skipping
-    // computeBoundingSphere would let frustum culling drop the entire
-    // cloud at oblique angles.
-    g.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0, 0), 80);
+    // Permissive sphere for the bounded tissue plus its rare halo drift.
+    // Skipping this would let frustum culling drop the entire cloud at
+    // oblique angles.
+    g.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0, 0), 120);
     return g;
   }, [
     cellPosAttr,

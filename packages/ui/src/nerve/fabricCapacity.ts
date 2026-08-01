@@ -1,35 +1,19 @@
-// Fabric geometry budget for the persistent neighbour-graph layer.
-// Separated from NeuralFabric so the "buffer holds the full graph at
-// capacity" invariant is unit-testable without importing three.js.
+// Geometry budget for the bounded persistent resting-fibre layer.
 
-/** Sub-segments emitted per passive fabric edge at every quality preset.
- *  Four is the visual floor for the organic quadratic-Bezier silhouette:
- *  one segment samples only the endpoints and degenerates into a straight
- *  chord. Adaptive quality sheds other capacity instead of this identity. */
+import { PASSIVE_EDGE_BUDGET } from '../geometry/passiveNeighborGraph';
+
+/** Four samples preserve the quadratic silhouette of one organic fibre. */
 export const FABRIC_SAMPLES_PER_EDGE = 4;
 
-/** Upper bound on the cells the graph can be built over in one frame.
- *  The live set is bounded by the default backend cell_cap (20,000 alive)
- *  plus a short death-tail / block-burst margin. The buffer is sized for
- *  this worst case so the full k-NN graph never truncates in normal
- *  operation. */
-export const MAX_GRAPH_CELLS = 22_000;
+/** The current graph plus two rapidly superseded generations may coexist
+ * during the quiet decay window. Current edges are ordered first, so even an
+ * adversarial sequence degrades by clipping old afterimages, never live form. */
+export const MAX_PASSIVE_EDGE_GENERATIONS = 3;
 
-/** Upper bound on the *mean* cell degree for k=5 symmetrised k-NN. The
- *  buffer is sized from edges ≈ cells × mean-degree / 2, so it is the
- *  mean — not any single cell — that the cap must cover; individual hub
- *  cells far exceed this after the lifeline/stitch passes. The real mean
- *  is ~9.5 at capacity with the live k=5 / maxEdgeLength=42 config; 12 is a
- *  safe ceiling. Guarded by fabricCapacity.test.ts, which builds the real graph
- *  over helix positions and asserts it fits — raise this (the buffer grows with
- *  it) if that test ever fails. */
-export const AVG_DEGREE_BOUND = 12;
-
-/** Hard segment cap for the fabric layer. Sized to hold every edge of
- *  the full graph at capacity: edges ≈ cells × degree / 2, each edge
- *  FABRIC_SAMPLES_PER_EDGE segments. The complete mesh therefore
- *  renders rather than a truncated spanning-tree prefix at every quality.
- *    22000 × 12 / 2 × 4 = 528000 segments (~24.2 MiB across pos+col buffers). */
-export const MAX_FABRIC_SEGMENTS = Math.ceil(
-  ((MAX_GRAPH_CELLS * AVG_DEGREE_BOUND) / 2) * FABRIC_SAMPLES_PER_EDGE,
-);
+/** 1,800 edges × 3 transition generations × 4 segments = 21,600 segments.
+ * This replaces the former full-routing-graph allocation of 528K segments;
+ * routing remains complete in CPU data and active writes use separate buffers. */
+export const MAX_FABRIC_SEGMENTS =
+  PASSIVE_EDGE_BUDGET
+  * MAX_PASSIVE_EDGE_GENERATIONS
+  * FABRIC_SAMPLES_PER_EDGE;

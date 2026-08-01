@@ -125,7 +125,7 @@ describe('StatusStrip', () => {
     expect(container.textContent).toContain('NOMINAL');
   });
 
-  it('offers an adaptive Cell-count cap with an immediate manual slider override', () => {
+  it('offers a stable AUTO Cell cap with an immediate manual slider override', () => {
     const { container } = render(
       <StatusStrip level="nominal" uptimeMs={0} cellCount={5_000} />,
     );
@@ -140,9 +140,9 @@ describe('StatusStrip', () => {
     ) as HTMLInputElement;
 
     expect(automatic.getAttribute('aria-pressed')).toBe('true');
-    expect(slider.value).toBe('109');
+    expect(slider.value).toBe('53');
     expect(slider.max).toBe('109');
-    expect(slider.getAttribute('aria-valuetext')).toContain('20,000 Cells');
+    expect(slider.getAttribute('aria-valuetext')).toContain('6,000 Cells');
     expect(control.getAttribute('data-cell-display-capacity')).toBe('20000');
     expect(control.getAttribute('data-cell-display-count')).toBe('5000');
     expect(control.getAttribute('data-cell-display-available')).toBe('5000');
@@ -152,7 +152,7 @@ describe('StatusStrip', () => {
     ).toContain('5K');
     expect(
       control.querySelector('[data-cell-display-cap]')?.textContent,
-    ).toContain('CAP20K');
+    ).toContain('CAP6K');
     expect(automatic.textContent).toContain('AUTO');
 
     fireEvent.change(slider, { target: { value: '29' } });

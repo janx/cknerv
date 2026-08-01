@@ -5,9 +5,8 @@
 // at `<repo-root>/tests/fixtures/helix_seed.json` anchors this; the parity
 // test in `__tests__/helix-parity.test.ts` exercises every entry.
 //
-// All numeric constants must stay byte-identical to the Rust copy in
-// `crates/cknerv-core/src/helix.rs` — do not "simplify" forms (e.g. don't
-// turn 0.28 into a fraction). The fixture is the source of truth.
+// All numeric constants and operation order must stay aligned with
+// `crates/cknerv-core/src/helix.rs`. The fixture is the source of truth.
 
 /** mulberry32 PRNG — byte-exact match to the Rust implementation. */
 function mulberry32(seed: number): () => number {
@@ -28,146 +27,175 @@ function gauss(rand: () => number): number {
   return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
 }
 
-/**
- * Rust does `(id as u64).wrapping_mul(salt as u64) as u32`. JS Numbers
- * cannot represent the full u64 product above 2^53; use BigInt for the
- * multiplication then truncate to u32 via `& 0xFFFFFFFFn`. The PRNG's
- * own `>>> 0` would also truncate, but doing it here matches the Rust
- * signature exactly and keeps `idSeed` available as a building block.
- */
+/** `(id * salt) mod 2^32`, without JS Number precision loss. */
 function idSeed(id: number | bigint, salt: number): number {
   const idBig = typeof id === 'bigint' ? id : BigInt(id);
   const saltBig = BigInt(salt >>> 0);
   return Number((idBig * saltBig) & 0xffffffffn);
 }
 
-// Organic tissue mixture. Unlike the former six-arm galaxy, no category uses
-// `id % symmetry_count`: deterministic randomness chooses irregular overlapping
-// lobes, background tissue, a few curling tendrils and a soft halo.
-const CORE_FRACTION = 0.12;
-const LOBE_FRACTION = 0.60;
-const TISSUE_FRACTION = 0.18;
-const TENDRIL_FRACTION = 0.07;
+const FIELD_HALF_X = 60;
+const FIELD_HALF_Z = 54;
+const SAMPLE_ATTEMPTS = 10;
+const HALO_FRACTION = 0.045;
 
-const LOBE_CENTER_X = [-24, -13, 2, 18, 27, 14, -7, -28] as const;
-const LOBE_CENTER_Y = [3.5, -2.5, 1, 4, -3.5, 0.5, -4, 1.5] as const;
-const LOBE_CENTER_Z = [-9, 15, 24, 14, -6, -25, -24, 8] as const;
-const LOBE_MAJOR = [15, 13, 14, 12, 11, 15, 13, 10] as const;
-const LOBE_MINOR = [6.5, 5.5, 7, 5, 4.5, 6, 5.5, 4.5] as const;
-const LOBE_ANGLE = [0.18, 1.05, 2.35, -0.72, 0.45, 2.75, -1.35, 1.62] as const;
-const LOBE_THICKNESS = [3.8, 4.6, 3.4, 4.2, 3.2, 4.8, 3.6, 4.1] as const;
-// Repeated indices are deliberate unequal lobe weights. A uniform picker made
-// even irregular centres converge into another visually balanced oval.
-const LOBE_PICK = [0, 0, 0, 1, 2, 2, 2, 2, 3, 4, 5, 5, 5, 6, 6, 7] as const;
+function clamp01(value: number): number {
+  return Math.max(0, Math.min(1, value));
+}
 
-const TENDRIL_ANGLE = [-2.65, -1.25, -0.18, 1.15, 2.52] as const;
-const TENDRIL_BEND = [0.42, -0.58, 0.31, -0.36, 0.53] as const;
-const TENDRIL_LENGTH = [47, 56, 43, 52, 49] as const;
-const TENDRIL_Y = [2.5, -3, 4, -1.5, 1] as const;
+function smoothstep(edge0: number, edge1: number, value: number): number {
+  const t = clamp01((value - edge0) / (edge1 - edge0));
+  return t * t * (3 - 2 * t);
+}
 
-function tissueBoundary(theta: number): number {
-  return 46 * (
-    1
-    + 0.15 * Math.sin(3 * theta + 0.7)
-    + 0.09 * Math.sin(5 * theta - 1.1)
-    + 0.06 * Math.sin(9 * theta + 0.2)
-  );
+/** Integer avalanche shared with the Rust port. */
+function latticeValue(ix: number, iz: number, salt: number): number {
+  let h = (
+    Math.imul(ix | 0, 0x1f123bb5)
+    ^ Math.imul(iz | 0, 0x5f356495)
+    ^ (salt >>> 0)
+  ) >>> 0;
+  h = Math.imul(h ^ (h >>> 16), 0x7feb352d) >>> 0;
+  h = Math.imul(h ^ (h >>> 15), 0x846ca68b) >>> 0;
+  h = (h ^ (h >>> 16)) >>> 0;
+  return h / 0xffff_ffff * 2 - 1;
+}
+
+/** Smooth deterministic 2D value noise in [-1, 1]. No transcendental branch
+ * decisions: Rust and JS therefore choose the same rejection-sampling path. */
+function valueNoise2(x: number, z: number, scale: number, salt: number): number {
+  const gx = x / scale;
+  const gz = z / scale;
+  const ix = Math.floor(gx);
+  const iz = Math.floor(gz);
+  const tx = gx - ix;
+  const tz = gz - iz;
+  const sx = tx * tx * (3 - 2 * tx);
+  const sz = tz * tz * (3 - 2 * tz);
+  const a = latticeValue(ix, iz, salt);
+  const b = latticeValue(ix + 1, iz, salt);
+  const c = latticeValue(ix, iz + 1, salt);
+  const d = latticeValue(ix + 1, iz + 1, salt);
+  const nx0 = a + (b - a) * sx;
+  const nx1 = c + (d - c) * sx;
+  return nx0 + (nx1 - nx0) * sz;
+}
+
+interface TissueField {
+  density: number;
+  ridge: number;
+  qx: number;
+  qz: number;
 }
 
 /**
- * Deterministic organic Cell-tissue sample as JS f64 values.
+ * Domain-warped, multi-scale tissue density. Broad noise makes unequal organs,
+ * a ridged octave makes branching growth corridors, and an independent field
+ * carves cavities. Unlike fixed lobe/tendril tables, denser sampling reveals
+ * more irregular structure instead of converging on a small repeated template.
+ */
+function tissueField(x: number, z: number): TissueField {
+  const warpX = valueNoise2(x, z, 34, 0x68bc21eb) * 11
+    + valueNoise2(x, z, 17, 0x02e5be93) * 3.5;
+  const warpZ = valueNoise2(x, z, 37, 0x967a889b) * 10
+    + valueNoise2(x, z, 19, 0x4f1bbcdc) * 3.5;
+  const qx = x + warpX;
+  const qz = z + warpZ;
+
+  const broad = 0.5 + 0.5 * valueNoise2(qx, qz, 35, 0x9e3779b9);
+  const middle = 0.5 + 0.5 * valueNoise2(qx, qz, 17, 0x243f6a88);
+  const broadRidgeBase = 1 - Math.abs(valueNoise2(qx, qz, 23, 0x3c6ef372));
+  const broadRidge = broadRidgeBase * broadRidgeBase * broadRidgeBase;
+  const ridgeBase = 1 - Math.abs(valueNoise2(qx, qz, 11, 0xb7e15162));
+  const ridge2 = ridgeBase * ridgeBase;
+  const ridge = ridge2 * ridge2;
+  const voidField = 0.5 + 0.5 * valueNoise2(qx - 13, qz + 9, 19, 0xdeadbeef);
+  const cavity = smoothstep(0.64, 0.88, voidField);
+
+  const nx = x / FIELD_HALF_X;
+  const nz = z / FIELD_HALF_Z;
+  const radial = Math.sqrt(nx * nx + nz * nz);
+  const boundaryWarp = valueNoise2(x, z, 42, 0xa341316c) * 0.13
+    + valueNoise2(x, z, 21, 0xc8013ea4) * 0.055;
+  const envelope = 1 - smoothstep(0.61, 1.04, radial + boundaryWarp);
+  const core = Math.max(0, 1 - radial / 0.52);
+  const broad2 = broad * broad;
+  const body = 0.015
+    + broad2 * 0.55
+    + middle * 0.08
+    + broadRidge * 0.28
+    + ridge * 0.52
+    + core * 0.10
+    - cavity * 0.68;
+
+  return { density: clamp01(envelope * body), ridge, qx, qz };
+}
+
+/**
+ * Deterministic multi-scale Cell tissue sample as JS f64 values.
  * Consumers that need byte-parity with Rust's `helix_seed_for` (f32)
  * should use {@link helixSeed} instead.
  */
 export function helixSeedF64(id: number | bigint): [number, number, number] {
   const idBig = typeof id === 'bigint' ? id : BigInt(id);
   const rand = mulberry32(idSeed(idBig, 2654435761));
-  const u = rand();
 
-  const coreEnd = CORE_FRACTION;
-  const lobeEnd = coreEnd + LOBE_FRACTION;
-  const tissueEnd = lobeEnd + TISSUE_FRACTION;
-  const tendrilEnd = tissueEnd + TENDRIL_FRACTION;
+  let x = 0;
+  let z = 0;
+  let field = tissueField(0, 0);
+  let bestDensity = -1;
+  let accepted = false;
 
-  let x: number;
-  let y: number;
-  let z: number;
-
-  if (u < coreEnd) {
-    x = gauss(rand) * 10;
-    z = gauss(rand) * 8;
-    y = gauss(rand) * 4.2;
-  } else if (u < lobeEnd) {
-    const lobe = LOBE_PICK[Math.min(
-      LOBE_PICK.length - 1,
-      Math.floor(rand() * LOBE_PICK.length),
-    )];
-    const along = gauss(rand) * LOBE_MAJOR[lobe];
-    const across = gauss(rand) * LOBE_MINOR[lobe];
-    const angle = LOBE_ANGLE[lobe];
-    x = LOBE_CENTER_X[lobe]
-      + Math.cos(angle) * along
-      - Math.sin(angle) * across;
-    z = LOBE_CENTER_Z[lobe]
-      + Math.sin(angle) * along
-      + Math.cos(angle) * across;
-    y = LOBE_CENTER_Y[lobe]
-      + gauss(rand) * LOBE_THICKNESS[lobe]
-      + along * 0.065;
-  } else if (u < tissueEnd) {
-    const theta = rand() * Math.PI * 2;
-    const boundary = tissueBoundary(theta);
-    const r = 2 + Math.pow(rand(), 0.62) * (boundary - 2);
-    x = Math.cos(theta) * r * 1.06;
-    z = Math.sin(theta) * r * 0.92;
-    y = gauss(rand) * (2.3 + 1.5 * (1 - r / boundary));
-  } else if (u < tendrilEnd) {
-    const tendril = Math.min(
-      TENDRIL_ANGLE.length - 1,
-      Math.floor(rand() * TENDRIL_ANGLE.length),
-    );
-    const t = rand();
-    const r = 10 + t * TENDRIL_LENGTH[tendril] + gauss(rand) * 1.8;
-    const theta = TENDRIL_ANGLE[tendril]
-      + TENDRIL_BEND[tendril] * (t - 0.2)
-      + Math.sin(t * Math.PI) * TENDRIL_BEND[tendril] * 0.42
-      + gauss(rand) * 0.045;
-    x = Math.cos(theta) * r * 1.04;
-    z = Math.sin(theta) * r * 0.94;
-    y = TENDRIL_Y[tendril]
-      + (t - 0.5) * TENDRIL_BEND[tendril] * 9
-      + gauss(rand) * (1.2 + 1.8 * t);
-  } else {
-    const theta = rand() * Math.PI * 2;
-    const r = tissueBoundary(theta) * 0.82 + Math.abs(gauss(rand)) * 10;
-    x = Math.cos(theta) * r * 1.08;
-    z = Math.sin(theta) * r * 0.94;
-    y = gauss(rand) * 5.5;
+  // Rejection sampling turns the continuous field into stable Cell positions.
+  // Keeping the best candidate avoids a hard fallback shape at rare misses.
+  for (let attempt = 0; attempt < SAMPLE_ATTEMPTS; attempt += 1) {
+    const candidateX = (rand() * 2 - 1) * FIELD_HALF_X;
+    const candidateZ = (rand() * 2 - 1) * FIELD_HALF_Z;
+    const threshold = rand();
+    const candidateField = tissueField(candidateX, candidateZ);
+    if (candidateField.density > bestDensity) {
+      x = candidateX;
+      z = candidateZ;
+      field = candidateField;
+      bestDensity = candidateField.density;
+    }
+    if (threshold < candidateField.density) {
+      x = candidateX;
+      z = candidateZ;
+      field = candidateField;
+      accepted = true;
+      break;
+    }
   }
 
-  // Low-frequency domain warp and vertical folding make neighbouring lobes
-  // merge as tissue instead of reading as independent Gaussian blobs. Keep a
-  // copy of the unwarped position so x/z updates do not affect one another.
-  const baseX = x;
-  const baseZ = z;
-  const radial = Math.sqrt(baseX * baseX + baseZ * baseZ);
-  const warpScale = 0.8 + Math.min(radial, 60) * 0.025;
-  x = baseX
-    + Math.sin(baseZ * 0.083 + Math.sin(baseX * 0.029) * 1.7) * warpScale;
-  z = baseZ
-    + Math.sin(baseX * 0.071 - baseZ * 0.026) * warpScale * 0.9;
-  y += 2.2 * Math.sin(baseX * 0.052 + baseZ * 0.019)
-    + 1.4 * Math.sin(baseZ * 0.079 - baseX * 0.024);
+  // An extremely rare all-zero miss belongs near the organism, not on a box
+  // corner. This branch is deterministic and normally unreachable in 20K.
+  if (!accepted && bestDensity <= 0) {
+    x *= 0.55;
+    z *= 0.55;
+    field = tissueField(x, z);
+  }
+
+  const verticalMass = 0.5
+    + 0.5 * valueNoise2(field.qx, field.qz, 23, 0x13198a2e);
+  const thickness = 2.1 + verticalMass * 3.4 + field.ridge * 1.8;
+  const fold = valueNoise2(field.qx, field.qz, 31, 0x03707344) * 4.6
+    + valueNoise2(field.qx, field.qz, 13, 0xa4093822) * 1.7;
+  let y = fold + gauss(rand) * thickness;
+
+  // A few real outliers keep the silhouette alive at the rim without fixed
+  // spokes. They inherit the same local field before drifting outward.
+  if (rand() < HALO_FRACTION) {
+    const scale = 1.08 + Math.abs(gauss(rand)) * 0.17;
+    x *= scale;
+    z *= scale;
+    y += gauss(rand) * 3.2;
+  }
 
   return [x, y, z];
 }
 
-/**
- * f32 wire-boundary version of {@link helixSeedF64}. Uses `Math.fround`
- * to mirror Rust's `as f32` downcast — without this, JS would return f64
- * values that drift from the Rust port at the f32-precision boundary
- * and the cross-language parity test would fail.
- */
+/** f32 wire-boundary version of {@link helixSeedF64}. */
 export function helixSeed(id: number | bigint): [number, number, number] {
   const [x, y, z] = helixSeedF64(id);
   return [Math.fround(x), Math.fround(y), Math.fround(z)];

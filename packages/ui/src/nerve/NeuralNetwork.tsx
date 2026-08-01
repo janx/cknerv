@@ -298,7 +298,9 @@ export default function NeuralNetwork({
       k: topology?.neighborK,
       maxEdgeLength: topology?.maxEdgeLength,
     });
-    const passiveGraph = buildPassiveNeighborGraph(displayGraph);
+    const passiveGraph = buildPassiveNeighborGraph(displayGraph, {
+      preferredEdges: passiveGraphRef.current.edges,
+    });
     const next = deriveCellInspectionField(
       displayGraph,
       inspectionCellId,
