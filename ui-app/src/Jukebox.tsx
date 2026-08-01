@@ -35,7 +35,8 @@ export const JUKEBOX_TRACKS = [
 export type JukeboxTrackId = (typeof JUKEBOX_TRACKS)[number]['id'];
 
 export const DEFAULT_JUKEBOX_TRACK_ID: JukeboxTrackId = 'michelle-vocal';
-export const JUKEBOX_PANEL_WIDTH_PX = 390;
+// Match the CELL MESH panel's 302px content width plus 15px inline padding.
+export const JUKEBOX_PANEL_WIDTH_PX = 332;
 export const SOUNDCLOUD_NATIVE_PLAYER_HEIGHT_PX = 166;
 export const SOUNDCLOUD_PLAYER_SCALE = 0.72;
 export const JUKEBOX_PLAYER_HEIGHT_PX = Math.ceil(

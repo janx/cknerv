@@ -136,6 +136,7 @@ describe('Jukebox', () => {
     expect(panel.style.bottom).toBe('');
     expect(panel.style.left).toBe('');
     expect(panel.style.transform).toBe('');
+    expect(JUKEBOX_PANEL_WIDTH_PX).toBe(332);
     expect(panel.style.width).toContain(`${JUKEBOX_PANEL_WIDTH_PX}px`);
     expect(player.style.height).toBe(`${JUKEBOX_PLAYER_HEIGHT_PX}px`);
     expect(frame.getAttribute('height')).toBe(
