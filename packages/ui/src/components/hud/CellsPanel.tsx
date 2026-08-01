@@ -73,7 +73,7 @@ export default function CellsPanel({ stats, churn, reducedMotion = false, style 
       <div style={{ marginTop: 11, paddingTop: 9, borderTop: '1px solid rgba(255,152,48,.12)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontFamily: HUD_FONTS.tech, fontSize: 7.5, letterSpacing: 1.5, color: '#5f7384', textTransform: 'uppercase', marginBottom: 5 }}>
           <span style={{ width: 5, height: 5, borderRadius: '50%', background: HUD_COLORS.cyanWire, boxShadow: `0 0 6px ${HUD_COLORS.cyanWire}` }} />
-          In view · {fmt(stats.inView)} cells
+          Retained · {fmt(stats.inView)} cells
         </div>
         <StatRow label="Capacity">{formatStateBytes(stats.capacityShannons)} state</StatRow>
         <TaxonomyBar title="ASSETS" buckets={[

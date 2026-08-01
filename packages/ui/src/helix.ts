@@ -41,112 +41,125 @@ function idSeed(id: number | bigint, salt: number): number {
   return Number((idBig * saltBig) & 0xffffffffn);
 }
 
-// Central bulge — cut 0.28 → 0.16 live (too-bright centre + starved fill); see
-// the Rust twin. Freed budget goes to DISK_FRACTION.
-const CORE_FRACTION = 0.16;
-const CORE_SIGMA = 7;
-const SPIRAL_ARM_COUNT = 6;
-const SPIRAL_ARM_MIN_R = 0.5;
-const SPIRAL_ARM_MAX_R = 58;
-const SPIRAL_ARM_PITCH = 0.95;
-const SPIRAL_ARM_THICKNESS = 0.16;
-const SPIRAL_FRACTION = 0.45;
-// Smooth axisymmetric disk fill — see the Rust twin (crates/cknerv-core/src/
-// helix.rs). Keeps the 6 arms as-is and lifts the inter-arm gaps off black by
-// scattering cells at the arms' radial profile but UNIFORM angle. Budget taken
-// from FILAMENT (0.20 → 0.03), halo (→ 0.00) and core (0.28 → 0.16).
-// 0.24 → 0.36 tuned live: the fabric mesh amplifies the arm/gap contrast, so the
-// gaps needed a much fuller disc to close.
-const DISK_FRACTION = 0.36;
-const FILAMENT_COUNT = 9;
-const FILAMENT_MIN_R = 1;
-const FILAMENT_MAX_R = 55;
-const FILAMENT_THICKNESS = 0.05;
-const FILAMENT_FRACTION = 0.03;
-const HALO_MIN_R = 12;
-const HALO_MAX_R = 55;
-const NEBULA_RADIAL_MIN = 1;
-const NEBULA_DISK_SIGMA = 1.5;
-const NEBULA_ELLIPSE_X = 1.12;
-const NEBULA_ELLIPSE_Z = 0.93;
-// Universal rim softening — Gaussian scatter scaled by (r/50)² capped at
-// 1, so inner cells barely move while rim cells get a noticeable push.
-// Turns the disc boundary into a wispy taper instead of a clean ellipse.
-const RIM_SOFTNESS_REF_R = 50;
-const RIM_SOFTNESS_SCALE = 3;
+// Organic tissue mixture. Unlike the former six-arm galaxy, no category uses
+// `id % symmetry_count`: deterministic randomness chooses irregular overlapping
+// lobes, background tissue, a few curling tendrils and a soft halo.
+const CORE_FRACTION = 0.12;
+const LOBE_FRACTION = 0.60;
+const TISSUE_FRACTION = 0.18;
+const TENDRIL_FRACTION = 0.07;
+
+const LOBE_CENTER_X = [-24, -13, 2, 18, 27, 14, -7, -28] as const;
+const LOBE_CENTER_Y = [3.5, -2.5, 1, 4, -3.5, 0.5, -4, 1.5] as const;
+const LOBE_CENTER_Z = [-9, 15, 24, 14, -6, -25, -24, 8] as const;
+const LOBE_MAJOR = [15, 13, 14, 12, 11, 15, 13, 10] as const;
+const LOBE_MINOR = [6.5, 5.5, 7, 5, 4.5, 6, 5.5, 4.5] as const;
+const LOBE_ANGLE = [0.18, 1.05, 2.35, -0.72, 0.45, 2.75, -1.35, 1.62] as const;
+const LOBE_THICKNESS = [3.8, 4.6, 3.4, 4.2, 3.2, 4.8, 3.6, 4.1] as const;
+// Repeated indices are deliberate unequal lobe weights. A uniform picker made
+// even irregular centres converge into another visually balanced oval.
+const LOBE_PICK = [0, 0, 0, 1, 2, 2, 2, 2, 3, 4, 5, 5, 5, 6, 6, 7] as const;
+
+const TENDRIL_ANGLE = [-2.65, -1.25, -0.18, 1.15, 2.52] as const;
+const TENDRIL_BEND = [0.42, -0.58, 0.31, -0.36, 0.53] as const;
+const TENDRIL_LENGTH = [47, 56, 43, 52, 49] as const;
+const TENDRIL_Y = [2.5, -3, 4, -1.5, 1] as const;
+
+function tissueBoundary(theta: number): number {
+  return 46 * (
+    1
+    + 0.15 * Math.sin(3 * theta + 0.7)
+    + 0.09 * Math.sin(5 * theta - 1.1)
+    + 0.06 * Math.sin(9 * theta + 0.2)
+  );
+}
 
 /**
- * Deterministic Crab + Milky-Way nebula sample as JS f64 values.
+ * Deterministic organic Cell-tissue sample as JS f64 values.
  * Consumers that need byte-parity with Rust's `helix_seed_for` (f32)
  * should use {@link helixSeed} instead.
  */
 export function helixSeedF64(id: number | bigint): [number, number, number] {
-  // Bigint-safe modulus / division for the per-arm and per-filament
-  // bucketing. The arms and filaments only depend on `id % small_count`,
-  // which yields a small number convertible to Number losslessly.
   const idBig = typeof id === 'bigint' ? id : BigInt(id);
-  const armIndex = Number(idBig % BigInt(SPIRAL_ARM_COUNT));
-  const filamentIndex = Number(idBig % BigInt(FILAMENT_COUNT));
-
   const rand = mulberry32(idSeed(idBig, 2654435761));
   const u = rand();
 
-  let r: number;
-  let theta: number;
-
   const coreEnd = CORE_FRACTION;
-  const spiralEnd = coreEnd + SPIRAL_FRACTION;
-  const diskEnd = spiralEnd + DISK_FRACTION;
-  const filamentEnd = diskEnd + FILAMENT_FRACTION;
+  const lobeEnd = coreEnd + LOBE_FRACTION;
+  const tissueEnd = lobeEnd + TISSUE_FRACTION;
+  const tendrilEnd = tissueEnd + TENDRIL_FRACTION;
+
+  let x: number;
+  let y: number;
+  let z: number;
 
   if (u < coreEnd) {
-    r = Math.abs(gauss(rand)) * CORE_SIGMA;
-    theta = rand() * Math.PI * 2;
-  } else if (u < spiralEnd) {
-    const armOffset = (armIndex / SPIRAL_ARM_COUNT) * Math.PI * 2;
-    const radialEased = 1 - Math.pow(2 * rand() - 1, 2);
-    r =
-      SPIRAL_ARM_MIN_R +
-      Math.pow(rand(), 0.7) * (SPIRAL_ARM_MAX_R - SPIRAL_ARM_MIN_R) +
-      (radialEased - 0.5) * 2;
-    const spiralAngle = SPIRAL_ARM_PITCH * Math.log(Math.max(r, 1));
-    const tangentialJitter = gauss(rand) * SPIRAL_ARM_THICKNESS;
-    theta = armOffset + spiralAngle + tangentialJitter;
-  } else if (u < diskEnd) {
-    // Smooth disk fill — arms' radial profile, UNIFORM angle. Two rand() calls
-    // (r, theta); order MUST match the Rust twin exactly.
-    r = SPIRAL_ARM_MIN_R + Math.pow(rand(), 0.7) * (SPIRAL_ARM_MAX_R - SPIRAL_ARM_MIN_R);
-    theta = rand() * Math.PI * 2;
-  } else if (u < filamentEnd) {
-    const baseAngle = (filamentIndex / FILAMENT_COUNT) * Math.PI * 2;
-    r = FILAMENT_MIN_R + rand() * (FILAMENT_MAX_R - FILAMENT_MIN_R);
-    const driftSign = filamentIndex % 2 === 0 ? 1 : -1;
-    const drift = driftSign * 0.005 * (r - 30);
-    theta = baseAngle + drift + gauss(rand) * FILAMENT_THICKNESS;
+    x = gauss(rand) * 10;
+    z = gauss(rand) * 8;
+    y = gauss(rand) * 4.2;
+  } else if (u < lobeEnd) {
+    const lobe = LOBE_PICK[Math.min(
+      LOBE_PICK.length - 1,
+      Math.floor(rand() * LOBE_PICK.length),
+    )];
+    const along = gauss(rand) * LOBE_MAJOR[lobe];
+    const across = gauss(rand) * LOBE_MINOR[lobe];
+    const angle = LOBE_ANGLE[lobe];
+    x = LOBE_CENTER_X[lobe]
+      + Math.cos(angle) * along
+      - Math.sin(angle) * across;
+    z = LOBE_CENTER_Z[lobe]
+      + Math.sin(angle) * along
+      + Math.cos(angle) * across;
+    y = LOBE_CENTER_Y[lobe]
+      + gauss(rand) * LOBE_THICKNESS[lobe]
+      + along * 0.065;
+  } else if (u < tissueEnd) {
+    const theta = rand() * Math.PI * 2;
+    const boundary = tissueBoundary(theta);
+    const r = 2 + Math.pow(rand(), 0.62) * (boundary - 2);
+    x = Math.cos(theta) * r * 1.06;
+    z = Math.sin(theta) * r * 0.92;
+    y = gauss(rand) * (2.3 + 1.5 * (1 - r / boundary));
+  } else if (u < tendrilEnd) {
+    const tendril = Math.min(
+      TENDRIL_ANGLE.length - 1,
+      Math.floor(rand() * TENDRIL_ANGLE.length),
+    );
+    const t = rand();
+    const r = 10 + t * TENDRIL_LENGTH[tendril] + gauss(rand) * 1.8;
+    const theta = TENDRIL_ANGLE[tendril]
+      + TENDRIL_BEND[tendril] * (t - 0.2)
+      + Math.sin(t * Math.PI) * TENDRIL_BEND[tendril] * 0.42
+      + gauss(rand) * 0.045;
+    x = Math.cos(theta) * r * 1.04;
+    z = Math.sin(theta) * r * 0.94;
+    y = TENDRIL_Y[tendril]
+      + (t - 0.5) * TENDRIL_BEND[tendril] * 9
+      + gauss(rand) * (1.2 + 1.8 * t);
   } else {
-    // Gaussian-tail halo: cells cluster near the inner halo rim and
-    // taper out smoothly with rare extreme outliers, so the outer
-    // boundary reads as a soft fall-off rather than a hard disc edge.
-    const halfRange = (HALO_MAX_R - HALO_MIN_R) / 2;
-    r = HALO_MIN_R + Math.abs(gauss(rand)) * halfRange;
-    theta = rand() * Math.PI * 2;
+    const theta = rand() * Math.PI * 2;
+    const r = tissueBoundary(theta) * 0.82 + Math.abs(gauss(rand)) * 10;
+    x = Math.cos(theta) * r * 1.08;
+    z = Math.sin(theta) * r * 0.94;
+    y = gauss(rand) * 5.5;
   }
 
-  // Universal rim softening — apply BEFORE the lower clamp so any
-  // inward-scattered cells still get pulled back to NEBULA_RADIAL_MIN.
-  // Outward extreme tail is intentionally unbounded; the rim is meant
-  // to feather out into a wisp rather than terminate cleanly.
-  const softness = Math.min(1, (r / RIM_SOFTNESS_REF_R) ** 2);
-  r = r + gauss(rand) * RIM_SOFTNESS_SCALE * softness;
+  // Low-frequency domain warp and vertical folding make neighbouring lobes
+  // merge as tissue instead of reading as independent Gaussian blobs. Keep a
+  // copy of the unwarped position so x/z updates do not affect one another.
+  const baseX = x;
+  const baseZ = z;
+  const radial = Math.sqrt(baseX * baseX + baseZ * baseZ);
+  const warpScale = 0.8 + Math.min(radial, 60) * 0.025;
+  x = baseX
+    + Math.sin(baseZ * 0.083 + Math.sin(baseX * 0.029) * 1.7) * warpScale;
+  z = baseZ
+    + Math.sin(baseX * 0.071 - baseZ * 0.026) * warpScale * 0.9;
+  y += 2.2 * Math.sin(baseX * 0.052 + baseZ * 0.019)
+    + 1.4 * Math.sin(baseZ * 0.079 - baseX * 0.024);
 
-  if (r < NEBULA_RADIAL_MIN) r = NEBULA_RADIAL_MIN;
-
-  const y = gauss(rand) * NEBULA_DISK_SIGMA;
-  return [
-    Math.cos(theta) * r * NEBULA_ELLIPSE_X,
-    y,
-    Math.sin(theta) * r * NEBULA_ELLIPSE_Z,
-  ];
+  return [x, y, z];
 }
 
 /**

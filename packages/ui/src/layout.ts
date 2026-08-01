@@ -6,24 +6,20 @@ import type { Vec3 } from './types';
 export const SATELLITE_Y = -26;
 export const CKBLOOM_Y = 0;
 export const CHAIN_Y = 22;
-/** Cells galaxy plane: a flat spiral nebula immediately *above* the
- *  chain layer. ~9 world units above the icosahedra so the chain mesh
- *  visually sits just under the cell canopy. */
+/** Cell-tissue anchor plane immediately *above* the chain layer. Its points
+ *  fold on y around this origin; the chain mesh remains visibly underneath. */
 export const CELLS_Y = CHAIN_Y + 16;
 
 /** Inner / outer radius bounds of the chain-node scatter (BEFORE
  *  the elliptical stretch is applied). The chain network is
  *  rendered larger than the ckbloom ring — that mesh sits at
  *  radius `12 + 4 * ckbloomCount` ≈ 28 for the mesh profile — and
- *  stays inside the cells-galaxy footprint above (Crab+MW canopy,
- *  hard cutoff at NEBULA_RADIAL_MAX = 60 pre-stretch). The min is
+ *  stays inside the irregular Cell-tissue footprint above. The min is
  *  tuned so the squashed-z effective radius (× CHAIN_ELLIPSE_Z)
  *  still clears the ckbloom mesh ring. */
 const CHAIN_SCATTER_MIN_RADIUS = 34;
 const CHAIN_SCATTER_MAX_RADIUS = 56;
-/** Match the cells canopy ellipse (NEBULA_ELLIPSE_X / NEBULA_ELLIPSE_Z
- *  in cellGalaxy.ts) so the chain network sits *under* the same oval
- *  Crab+MW canopy. Visual contract — tune both together. */
+/** Keep the chain network beneath the broad Cell-tissue footprint. */
 const CHAIN_ELLIPSE_X = 1.25;
 const CHAIN_ELLIPSE_Z = 0.85;
 
@@ -77,9 +73,7 @@ function chainNodeLocalOffset(idx: number, count: number, seed: number): Vec3 {
   // Vertical wobble in the chain plane to give the network mesh some
   // depth — a third of the radial scale, signed by the radial seed.
   const yWobble = (rRand() - 0.5) * 6;
-  // Ellipse stretch matches the Crab-nebula canopy above so each
-  // icosahedron sits under the cell field rather than poking past
-  // its squashed-z edges.
+  // The broad ellipse remains inside the organic tissue's outer lobes.
   const x = Math.cos(angle) * r * CHAIN_ELLIPSE_X;
   const z = Math.sin(angle) * r * CHAIN_ELLIPSE_Z;
   return [x, yWobble, z];

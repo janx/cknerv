@@ -29,10 +29,10 @@ export function fabricEdgeSeed(a: number, b: number): number {
   return mixHash(lo >>> 0, hi >>> 0);
 }
 
-/** Quadratic Bezier control point: midpoint plus a perpendicular
- *  offset in the xz plane. Magnitude scales with chord length so
- *  short and long fibres bend by similar visual proportions; sign
- *  comes from the hash so each edge curves the same way every frame.
+/** Quadratic Bezier control point: midpoint plus independent perpendicular
+ *  and vertical offsets. Magnitude scales with chord length so short and long
+ *  fibres bend by similar proportions; stable hash bands vary arc direction
+ *  and depth so the tissue does not collapse into repeated planar bows.
  *
  *  Returns a fresh tuple each call. Callers in hot loops should use
  *  the `bezierControlInto` form below to avoid the per-edge tuple
@@ -55,12 +55,15 @@ export function bezierControl(
   const ipx = -dz / planar;
   const ipz = dx / planar;
   const sign = (hashSeed & 1) === 0 ? 1 : -1;
-  const magFrac = 0.10 + 0.10 * (((hashSeed >>> 8) & 0xff) / 0xff);
+  const verticalSign = (hashSeed & 2) === 0 ? 1 : -1;
+  const magFrac = 0.06 + 0.22 * (((hashSeed >>> 8) & 0xff) / 0xff);
+  const verticalFrac = 0.02 + 0.08 * (((hashSeed >>> 16) & 0xff) / 0xff);
   const chord = Math.sqrt(planar * planar + (by - ay) * (by - ay));
   const off = chord * magFrac * sign;
+  const verticalOff = chord * verticalFrac * verticalSign;
   return [
     (ax + bx) * 0.5 + ipx * off,
-    (ay + by) * 0.5,
+    (ay + by) * 0.5 + verticalOff,
     (az + bz) * 0.5 + ipz * off,
   ];
 }
@@ -93,11 +96,14 @@ export function bezierControlInto(
   const ipx = -dz / planar;
   const ipz = dx / planar;
   const sign = (hashSeed & 1) === 0 ? 1 : -1;
-  const magFrac = 0.10 + 0.10 * (((hashSeed >>> 8) & 0xff) / 0xff);
+  const verticalSign = (hashSeed & 2) === 0 ? 1 : -1;
+  const magFrac = 0.06 + 0.22 * (((hashSeed >>> 8) & 0xff) / 0xff);
+  const verticalFrac = 0.02 + 0.08 * (((hashSeed >>> 16) & 0xff) / 0xff);
   const chord = Math.sqrt(planar * planar + (by - ay) * (by - ay));
   const off = chord * magFrac * sign;
+  const verticalOff = chord * verticalFrac * verticalSign;
   out[0] = (ax + bx) * 0.5 + ipx * off;
-  out[1] = (ay + by) * 0.5;
+  out[1] = (ay + by) * 0.5 + verticalOff;
   out[2] = (az + bz) * 0.5 + ipz * off;
 }
 

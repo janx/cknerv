@@ -13,7 +13,7 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-import { helixSeed } from '../src/helix';
+import { helixSeed, helixSeedF64 } from '../src/helix';
 
 type Triple = [number, number, number];
 
@@ -42,5 +42,38 @@ describe('helixSeed (TS) — fixture parity', () => {
         );
       }
     }
+  });
+
+  it('forms asymmetric three-dimensional tissue rather than a thin radial lattice', () => {
+    const points = Array.from({ length: 20_000 }, (_, id) => helixSeedF64(id));
+    const means = [0, 1, 2].map((axis) =>
+      points.reduce((sum, point) => sum + point[axis], 0) / points.length,
+    );
+    const std = [0, 1, 2].map((axis) => Math.sqrt(
+      points.reduce(
+        (sum, point) => sum + (point[axis] - means[axis]) ** 2,
+        0,
+      ) / points.length,
+    ));
+    const planarStd = Math.sqrt(std[0] * std[2]);
+
+    // The old σ=1.5 disc measured near 0.06 here. A folded field must keep
+    // enough depth for parallax while remaining recognisably field-shaped.
+    expect(std[1] / planarStd).toBeGreaterThan(0.16);
+    expect(std[1] / planarStd).toBeLessThan(0.42);
+
+    // Six equally populated arms create a large sixth angular harmonic. Keep
+    // that signature low without demanding rotational symmetry from the lobes.
+    const sixthHarmonic = Math.hypot(
+      points.reduce(
+        (sum, [x, , z]) => sum + Math.cos(6 * Math.atan2(z, x)),
+        0,
+      ) / points.length,
+      points.reduce(
+        (sum, [x, , z]) => sum + Math.sin(6 * Math.atan2(z, x)),
+        0,
+      ) / points.length,
+    );
+    expect(sixthHarmonic).toBeLessThan(0.10);
   });
 });
