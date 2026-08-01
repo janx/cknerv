@@ -16,7 +16,7 @@ export const JUKEBOX_TRACKS = [
     frameTitle: 'SoundCloud player: 翼をください — Michelle vocal upload',
     trackUrl: 'https://soundcloud.com/nuraminmi/tsubasa-wo-kudasai',
     embedUrl:
-      'https://w.soundcloud.com/player/?url=https%3A%2F%2Fapi.soundcloud.com%2Ftracks%2F54664795&color=%2320f0ff&auto_play=false&hide_related=true&show_comments=false&show_user=true&show_reposts=false&show_teaser=false&visual=false',
+      'https://w.soundcloud.com/player/?url=https%3A%2F%2Fapi.soundcloud.com%2Ftracks%2F54664795&color=%2320f0ff&auto_play=true&buying=false&sharing=false&download=false&show_artwork=false&show_playcount=false&hide_related=true&show_comments=false&show_user=true&show_reposts=false&show_teaser=false&visual=false',
   },
   {
     id: 'aria-piano',
@@ -28,13 +28,19 @@ export const JUKEBOX_TRACKS = [
     trackUrl:
       'https://soundcloud.com/arialate/evangelion-tsubasa-wo-kudasai-only-piano',
     embedUrl:
-      'https://w.soundcloud.com/player/?url=https%3A%2F%2Fapi.soundcloud.com%2Ftracks%2F560812260&color=%2320f0ff&auto_play=false&hide_related=true&show_comments=false&show_user=true&show_reposts=false&show_teaser=false&visual=false',
+      'https://w.soundcloud.com/player/?url=https%3A%2F%2Fapi.soundcloud.com%2Ftracks%2F560812260&color=%2320f0ff&auto_play=true&buying=false&sharing=false&download=false&show_artwork=false&show_playcount=false&hide_related=true&show_comments=false&show_user=true&show_reposts=false&show_teaser=false&visual=false',
   },
 ] as const;
 
 export type JukeboxTrackId = (typeof JUKEBOX_TRACKS)[number]['id'];
 
 export const DEFAULT_JUKEBOX_TRACK_ID: JukeboxTrackId = 'michelle-vocal';
+export const JUKEBOX_PANEL_WIDTH_PX = 390;
+export const SOUNDCLOUD_NATIVE_PLAYER_HEIGHT_PX = 166;
+export const SOUNDCLOUD_PLAYER_SCALE = 0.72;
+export const JUKEBOX_PLAYER_HEIGHT_PX = Math.ceil(
+  SOUNDCLOUD_NATIVE_PLAYER_HEIGHT_PX * SOUNDCLOUD_PLAYER_SCALE,
+);
 
 const PANEL_ID = 'cknerv-jukebox-player';
 const CYAN = 'var(--hud-cyanWire, #20F0FF)';
@@ -49,17 +55,18 @@ const panelStyle: CSSProperties = {
   bottom: 'max(14px, env(safe-area-inset-bottom, 0px))',
   zIndex: 20,
   width:
-    'min(510px, calc(100vw - 28px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)))',
+    `min(${JUKEBOX_PANEL_WIDTH_PX}px, calc(100vw - 28px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)))`,
   maxHeight:
     'calc(100vh - 28px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px))',
   overflowY: 'auto',
   boxSizing: 'border-box',
-  padding: 7,
+  padding: 6,
   border: '1px solid rgba(32,240,255,.24)',
   background:
     'linear-gradient(180deg,rgba(3,10,18,.97),rgba(0,0,0,.94))',
   boxShadow:
-    '0 16px 42px rgba(0,0,0,.64), inset 0 0 28px rgba(32,240,255,.035)',
+    '0 14px 36px rgba(0,0,0,.68), inset 0 0 24px rgba(32,240,255,.04)',
+  backdropFilter: 'blur(8px)',
   pointerEvents: 'auto',
 };
 
@@ -153,10 +160,10 @@ export default function Jukebox() {
         aria-expanded={open}
         aria-label={open
           ? 'Close Jukebox and stop playback'
-          : 'Open Jukebox; loads SoundCloud player'}
+          : 'Open Jukebox and play default SoundCloud track'}
         title={open
           ? 'Close Jukebox and stop playback'
-          : 'Open Jukebox — loads SoundCloud only on request'}
+          : 'Open Jukebox — load SoundCloud and request playback'}
         onClick={() => {
           if (open) {
             close();
@@ -203,6 +210,7 @@ export default function Jukebox() {
           aria-label="SoundCloud Jukebox"
           data-jukebox-panel
           data-jukebox-provider="soundcloud"
+          data-jukebox-autoplay="requested"
           data-jukebox-selected-track={selectedTrackId}
           data-jukebox-frame-ready={frameReady ? 'true' : 'false'}
           style={panelStyle}
@@ -244,7 +252,7 @@ export default function Jukebox() {
                 whiteSpace: 'nowrap',
               }}
             >
-              OPEN ON SOUNDCLOUD ↗
+              SOUNDCLOUD ↗
             </a>
             <button
               type="button"
@@ -346,22 +354,24 @@ export default function Jukebox() {
             style={{
               position: 'relative',
               width: '100%',
-              height: 166,
+              height: JUKEBOX_PLAYER_HEIGHT_PX,
               overflow: 'hidden',
               border: '1px solid rgba(32,240,255,.12)',
               boxSizing: 'border-box',
-              background: '#000',
+              background: '#03080d',
+              boxShadow:
+                'inset 0 0 20px rgba(32,240,255,.035), 0 0 0 1px rgba(0,0,0,.7)',
             }}
           >
             <iframe
               key={selectedTrack.id}
               src={selectedTrack.embedUrl}
               title={selectedTrack.frameTitle}
-              width="100%"
-              height="100%"
+              width={`${100 / SOUNDCLOUD_PLAYER_SCALE}%`}
+              height={SOUNDCLOUD_NATIVE_PLAYER_HEIGHT_PX}
               frameBorder="0"
               allow="autoplay; encrypted-media"
-              loading="lazy"
+              loading="eager"
               scrolling="no"
               referrerPolicy="strict-origin-when-cross-origin"
               onLoad={() => setReadyTrackId(selectedTrack.id)}
@@ -369,10 +379,14 @@ export default function Jukebox() {
                 position: 'absolute',
                 inset: 0,
                 display: 'block',
-                width: '100%',
-                height: '100%',
+                width: `${100 / SOUNDCLOUD_PLAYER_SCALE}%`,
+                height: SOUNDCLOUD_NATIVE_PLAYER_HEIGHT_PX,
                 border: 0,
                 background: '#000',
+                filter:
+                  'invert(0.9) hue-rotate(180deg) saturate(0.85) brightness(0.82) contrast(1.08)',
+                transform: `scale(${SOUNDCLOUD_PLAYER_SCALE})`,
+                transformOrigin: 'top left',
               }}
             />
           </div>
