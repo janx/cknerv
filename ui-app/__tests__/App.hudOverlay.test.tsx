@@ -76,8 +76,20 @@ describe('HudOverlay wiring', () => {
     expect(APP_SOURCE).toContain(
       'cellCausalNavigation={selectedCausalNavigation}',
     );
-    expect(APP_SOURCE).toContain('causalLens={selectedCausalLens}');
     expect(APP_SOURCE).toContain('onBack: navigateCausalBack');
     expect(APP_SOURCE).toContain('onForward: navigateCausalForward');
+  });
+
+  it('keeps Cell detail selection independent from camera automation', () => {
+    const cameraWiring = APP_SOURCE.match(
+      /<ConsensusRouteCamera[\s\S]*?\/>/,
+    )?.[0];
+
+    expect(cameraWiring).toBeDefined();
+    expect(cameraWiring).not.toContain('inspectionCellId');
+    expect(cameraWiring).not.toContain('causalLens');
+    expect(cameraWiring).not.toContain('recordSwitchPending');
+    expect(cameraWiring).not.toContain('selectedCell');
+    expect(cameraWiring).toContain('recordTraceReadout={memoryTraceReadout}');
   });
 });
