@@ -29,13 +29,15 @@ describe('NetworkColony Cell-inspection context', () => {
     const edges = source('ColonyEdges.tsx');
 
     expect(edges).toContain('uniform float uContextEnergy');
+    expect(edges).toContain('float passiveShape = base + ambient');
     expect(edges).toContain(
-      'float passive = (base + ambient) * uContextEnergy',
+      'float passive = passiveShape * uContextEnergy',
     );
-    expect(edges).toContain('float intensity = passive + surge');
+    expect(edges).toContain('float intensity = passiveShape + surge');
     expect(edges).toContain(
       'vec3 col = uColor * passive + uSurgeColor * surge',
     );
+    expect(edges).not.toContain('float intensity = passive + surge');
     expect(edges).not.toContain('surge * uContextEnergy');
   });
 
@@ -44,6 +46,13 @@ describe('NetworkColony Cell-inspection context', () => {
     const material = materialSource('peerNodeMaterial.ts');
 
     expect(material).toContain('uDim * uContextEnergy');
+    expect(material).toContain('float passiveShape = shape * eventScale');
+    expect(material).toContain(
+      'return vec4(color, passiveShape + eventAlpha)',
+    );
+    expect(material).not.toContain(
+      'return vec4(color, passive + eventAlpha)',
+    );
     expect(material).toContain('shape * alphaExtra * eventScale');
     expect(nodes).toContain(
       'selected ? 1 : contextEnergyRef?.current ?? 1',
