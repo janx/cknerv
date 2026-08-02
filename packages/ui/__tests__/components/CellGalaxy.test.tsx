@@ -147,6 +147,14 @@ describe('CellGalaxy', () => {
     expect(source).toContain("g.setAttribute('aInspectionRole'");
   });
 
+  it('uses the live expanded-braid detail for a forgiving pick surface', () => {
+    const source = readFileSync(CELL_GALAXY_SOURCE, 'utf8');
+
+    expect(source).toContain('cellPickRadiusPx(');
+    expect(source).toContain('detailArray[i] ?? 0');
+    expect(source).toContain('detailAttr={cellDetailAttr}');
+  });
+
   it('shares explicit memory focus between the route overlay and Cell body', () => {
     const source = readFileSync(CELL_GALAXY_SOURCE, 'utf8');
 

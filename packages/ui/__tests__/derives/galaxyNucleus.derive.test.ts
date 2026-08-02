@@ -12,6 +12,7 @@ import {
   type GalaxyNucleusCursor,
 } from '../../src/derives/galaxyNucleus.derive';
 import { consensusMemoryEvidenceBindings } from '../../src/derives/consensusMemoryEvidence.derive';
+import { CELL_HOVER_FOCUS } from '../../src/derives/cellInteraction.derive';
 
 const CELL: Cell = {
   id: 17,
@@ -139,6 +140,35 @@ describe('galaxy consensus braid LOD', () => {
     expect(nearBuffers.nodeAlpha[0]).toBeGreaterThan(0);
     expect(deadBuffers.nodeAlpha[0]).toBeLessThan(nearBuffers.nodeAlpha[0]);
     expect(deadBuffers.lineCol[0]).toBeLessThan(nearBuffers.lineCol[0]);
+  });
+
+  it('carries hover focus through the expanded contributor paths', () => {
+    const braid = deriveGalaxyConsensusBraid(CELL);
+    const baseline = buffersFor(braid.segments.length / 3, braid.knots.length);
+    const hovered = buffersFor(braid.segments.length / 3, braid.knots.length);
+
+    writeGalaxyConsensusBraidBuffers(
+      CELL,
+      braid,
+      0.3,
+      0.3,
+      baseline,
+      emptyCursor(),
+    );
+    writeGalaxyConsensusBraidBuffers(
+      CELL,
+      braid,
+      0.3,
+      0.3,
+      hovered,
+      emptyCursor(),
+      null,
+      CELL_HOVER_FOCUS,
+    );
+
+    expect(hovered.linePos).toEqual(baseline.linePos);
+    expect(hovered.lineCol.reduce((sum, channel) => sum + channel, 0))
+      .toBeGreaterThan(baseline.lineCol.reduce((sum, channel) => sum + channel, 0));
   });
 
   it('scans expanded paths and resolves real agreement knots during recall', () => {
