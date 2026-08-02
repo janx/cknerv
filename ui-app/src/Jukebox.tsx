@@ -41,17 +41,17 @@ export const JUKEBOX_TRACKS = [
     loopAtMs: KOMM_VOCAL_LOOP_AT_MS,
   },
   {
-    id: 'aria-piano',
+    id: 'joseto-arc-piano',
     name: 'Piano A',
     kind: 'PIANO',
-    artist: 'ARIALATE',
-    duration: '04:36',
+    artist: 'JOSETO ARC',
+    duration: '04:09',
     selectorLabel: 'Select Piano A',
-    frameTitle: 'SoundCloud player: 翼をください — AriaLate piano',
+    frameTitle: 'SoundCloud player: 翼をください — Joseto Arc piano',
     trackUrl:
-      'https://soundcloud.com/arialate/evangelion-tsubasa-wo-kudasai-only-piano',
+      'https://soundcloud.com/joseto-arc/evangelion-tsubasa-wo-kudasai?utm_source=clipboard&utm_medium=text&utm_campaign=social_sharing',
     embedUrl:
-      'https://w.soundcloud.com/player/?url=https%3A%2F%2Fapi.soundcloud.com%2Ftracks%2F560812260&color=%2320f0ff&auto_play=true&buying=false&sharing=false&download=false&show_artwork=false&show_playcount=false&hide_related=true&show_comments=false&show_user=true&show_reposts=false&show_teaser=false&visual=false',
+      'https://w.soundcloud.com/player/?url=https%3A%2F%2Fapi.soundcloud.com%2Ftracks%2F499687749&color=%2320f0ff&auto_play=true&buying=false&sharing=false&download=false&show_artwork=false&show_playcount=false&hide_related=true&show_comments=false&show_user=true&show_reposts=false&show_teaser=false&visual=false',
   },
   {
     id: 'sheet-music-boss-piano',
