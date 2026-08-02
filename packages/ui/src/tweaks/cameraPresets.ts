@@ -1,3 +1,5 @@
+import { CELLS_Y } from '../layout';
+
 export type CameraPresetName = 'default' | 'top' | 'side' | 'iso';
 
 export interface CameraPresetValue {
@@ -6,7 +8,7 @@ export interface CameraPresetValue {
 }
 
 export const CAMERA_PRESETS: Record<CameraPresetName, CameraPresetValue> = {
-  default: { position: [110, 108, 110], target: [0, 18, 0] },
+  default: { position: [110, 108, 110], target: [0, CELLS_Y, 0] },
   top:     { position: [0, 200, 0.1],  target: [0, 0, 0] },
   side:    { position: [200, 0, 0],    target: [0, 0, 0] },
   iso:     { position: [150, 100, 150], target: [0, 0, 0] },

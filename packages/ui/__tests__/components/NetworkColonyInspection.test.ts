@@ -15,8 +15,12 @@ describe('NetworkColony Cell-inspection context', () => {
     const network = source('NetworkColony.tsx');
 
     expect(network).toContain('cellInspectionActive?: boolean');
+    expect(network).toContain('cellDetailViewFocusRef?:');
+    expect(network).toContain('cellDetailPeerContextEnergy(');
+    expect(network).toContain('useFrame((_, deltaSeconds) =>');
     expect(network).toContain('dampCellInspectionFieldScale(');
     expect(network).toContain('CELL_INSPECTION_BACKGROUND_ENERGY');
+    expect(network).toContain('Math.min(detailContext, inspectionContext)');
     expect(network.match(/contextEnergyRef=\{contextEnergyRef\}/g))
       .toHaveLength(2);
   });
@@ -45,5 +49,13 @@ describe('NetworkColony Cell-inspection context', () => {
       'selected ? 1 : contextEnergyRef?.current ?? 1',
     );
     expect(nodes).toContain('contextEnergyRef={contextEnergyRef}');
+  });
+
+  it('keeps peer-only inspection from inheriting the Cell close-view fade', () => {
+    const network = source('NetworkColony.tsx');
+
+    expect(network).toContain(
+      'selectedId === null || cellInspectionActive',
+    );
   });
 });

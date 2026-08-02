@@ -187,6 +187,8 @@ interface NeuralNetworkProps {
   /** Shared with CellGalaxy so body points and passive fibres read one field
    * without duplicating the neighbour graph or triggering React frame state. */
   inspectionFieldRef?: React.MutableRefObject<CellInspectionField | null>;
+  /** Shared camera-distance focus; affects only the passive fabric layer. */
+  cellDetailViewFocusRef?: { readonly current: number };
   /** Explicit user-requested replay of one retained historical link. */
   traceRequest?: ConsensusMemoryTraceRequest | null;
   /** Optional recall-only route cap; live traffic keeps its own pulse budget. */
@@ -244,6 +246,7 @@ export default function NeuralNetwork({
   livePulseDelayS = 0,
   inspectionCellId = null,
   inspectionFieldRef,
+  cellDetailViewFocusRef,
   traceRequest = null,
   traceMaxPulses,
   traceHoldForRecordSwitch = false,
@@ -1481,7 +1484,10 @@ export default function NeuralNetwork({
 
   return (
     <>
-      <NeuralFabric onReady={onFabricReady} />
+      <NeuralFabric
+        onReady={onFabricReady}
+        cellDetailViewFocusRef={cellDetailViewFocusRef}
+      />
       <primitive object={spikePool.mesh} />
       <ConsensusMemoryMarkers
         focus={departingTraceFocus}

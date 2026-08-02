@@ -59,6 +59,17 @@ describe('HudOverlay wiring', () => {
     );
   });
 
+  it('shares one camera-distance focus between Cell fabric and passive peers', () => {
+    expect(APP_SOURCE).toContain(
+      'const DEFAULT_CAMERA_TARGET: [number, number, number] = [0, CELLS_Y, 0]',
+    );
+    expect(APP_SOURCE).toContain('function CellDetailViewTracker(');
+    expect(APP_SOURCE).toContain('cellDetailViewFocus(Math.hypot(');
+    expect(APP_SOURCE.match(
+      /cellDetailViewFocusRef=\{cellDetailViewFocusRef\}/g,
+    )).toHaveLength(2);
+  });
+
   it('shares one real causal-lens model between the HUD and scene', () => {
     expect(APP_SOURCE).toContain('deriveCellCausalLens(');
     expect(APP_SOURCE).toContain(

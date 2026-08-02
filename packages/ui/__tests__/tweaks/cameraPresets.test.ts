@@ -1,16 +1,17 @@
 import { describe, expect, it } from 'vitest';
 
 import { CAMERA_PRESETS, getCameraPreset } from '../../src/tweaks/cameraPresets';
+import { CELLS_Y } from '../../src/layout';
 
 describe('cameraPresets', () => {
   it('exposes 4 presets', () => {
     expect(Object.keys(CAMERA_PRESETS)).toEqual(['default', 'top', 'side', 'iso']);
   });
 
-  it('default preset frames the cells galaxy diagonally at 30° elevation', () => {
+  it('default preset targets the Cell canopy rather than the peer plane', () => {
     expect(getCameraPreset('default')).toEqual({
       position: [110, 108, 110],
-      target: [0, 18, 0],
+      target: [0, CELLS_Y, 0],
     });
   });
 

@@ -39,8 +39,8 @@
 // NetworkColony keeps `cf`/`blockPulseAtMs`/`backfillActive` to feed the peer
 // effects and to stamp its own `pulseRef` for delivery into the Cell field.
 import { useEffect, useMemo, useRef } from 'react';
+import { useFrame } from '@react-three/fiber';
 import { useSimClock } from '../tweaks/SimClockScope';
-import { useSimFrame } from '../tweaks/useSimFrame';
 import { useCellGalaxyOptional } from '../hooks/cellGalaxyContext';
 import type { NetworkTopology, Vec3 } from '../types';
 import type { ColonyFlood } from '../derives/networkFlood.derive';
@@ -53,6 +53,7 @@ import {
   CELL_INSPECTION_BACKGROUND_ENERGY,
   dampCellInspectionFieldScale,
 } from '../nerve/cellInspectionField';
+import { cellDetailPeerContextEnergy } from '../derives/sceneView.derive';
 
 interface NetworkColonyProps {
   topology: NetworkTopology;
@@ -70,6 +71,8 @@ interface NetworkColonyProps {
   localVersion: string;
   /** A Cell inspection subdues only passive P2P context, never block traffic. */
   cellInspectionActive?: boolean;
+  /** Shared camera-distance focus. Optional keeps standalone scenes unchanged. */
+  cellDetailViewFocusRef?: { readonly current: number };
 }
 
 export default function NetworkColony({
@@ -82,6 +85,7 @@ export default function NetworkColony({
   flashDirtyRef,
   localVersion,
   cellInspectionActive = false,
+  cellDetailViewFocusRef,
 }: NetworkColonyProps) {
   const simClock = useSimClock();
   // Calm catch-up signal (same flag beams/nerves already respect). Read via the
@@ -91,12 +95,23 @@ export default function NetworkColony({
   const cellsCache = useCellGalaxyOptional();
   const backfillActive = !!cellsCache?.backfill;
   const contextEnergyRef = useRef(1);
-  useSimFrame((_, deltaSeconds) => {
-    // Passive P2P context shares the Cell field's readable observation floor;
-    // real block surges and couriers bypass this multiplier below.
+  useFrame((_, deltaSeconds) => {
+    // Camera navigation is input, not simulation. In a close Cell view, passive
+    // P2P structure recedes while block surges/couriers retain full event energy.
+    // A peer-only selection keeps its own link context; simultaneous Cell
+    // inspection still gives the Cell field priority while the selected node's
+    // material remains independently legible.
+    const detailContext = (
+      selectedId === null || cellInspectionActive
+    )
+      ? cellDetailPeerContextEnergy(cellDetailViewFocusRef?.current ?? 0)
+      : 1;
+    const inspectionContext = cellInspectionActive
+      ? CELL_INSPECTION_BACKGROUND_ENERGY
+      : 1;
     contextEnergyRef.current = dampCellInspectionFieldScale(
       contextEnergyRef.current,
-      cellInspectionActive ? CELL_INSPECTION_BACKGROUND_ENERGY : 1,
+      Math.min(detailContext, inspectionContext),
       deltaSeconds,
     );
   });
