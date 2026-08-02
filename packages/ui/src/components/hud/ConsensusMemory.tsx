@@ -31,6 +31,7 @@ import {
   deriveConsensusBraidTopology,
   type ConsensusBraidField,
   type ConsensusBraidSpec,
+  type ConsensusBraidVisual,
 } from '../../derives/consensusBraid.derive';
 import {
   consensusMemoryEvidenceFocusScale,
@@ -185,8 +186,32 @@ export default function ConsensusMemory({
   const recallConvergenceRef = useRef(0);
   const recallPhaseRef = useRef(0);
   const visual = useMemo(() => deriveCellVisual(cell), [cell]);
+  const structureVisual = useMemo<ConsensusBraidVisual>(() => ({
+    assetClass: visual.assetClass,
+    lockClass: visual.lockClass,
+    mass: visual.mass,
+    payload: visual.payload,
+    seeds: [
+      visual.seeds[0],
+      visual.seeds[1],
+      visual.seeds[2],
+      visual.seeds[3],
+    ],
+  }), [
+    visual.assetClass,
+    visual.lockClass,
+    visual.mass,
+    visual.payload,
+    visual.seeds[0],
+    visual.seeds[1],
+    visual.seeds[2],
+    visual.seeds[3],
+  ]);
   const built = useMemo(() => {
-    const topology = deriveConsensusBraidTopology(visual, cell.birth_block);
+    const topology = deriveConsensusBraidTopology(
+      structureVisual,
+      cell.birth_block,
+    );
     const specs = topology.specs;
     const count = specs.length;
     const ribbonPositions: number[] = [];
@@ -219,7 +244,7 @@ export default function ConsensusMemory({
     const mid0 = new THREE.Vector3();
     const mid1 = new THREE.Vector3();
     const steps = 208;
-    const width = 0.012 + visual.payload * 0.01;
+    const width = 0.012 + structureVisual.payload * 0.01;
 
     const frame = (
       spec: ConsensusBraidSpec,
@@ -267,7 +292,10 @@ export default function ConsensusMemory({
         else color.copy(cyan).lerp(violet, 0.42);
         streamColors.push(color.r, color.g, color.b, color.r, color.g, color.b);
 
-        const stitchPeriod = Math.max(8, 18 - Math.round(visual.payload * 8));
+        const stitchPeriod = Math.max(
+          8,
+          18 - Math.round(structureVisual.payload * 8),
+        );
         if ((segment + strand * 3) % stitchPeriod === 0) {
           stitchPositions.push(...left0.toArray(), ...right0.toArray());
           color.copy(gold).lerp(paleGold, segment % 2 ? 0.22 : 0.65);
@@ -459,7 +487,7 @@ export default function ConsensusMemory({
       packetGeometry,
       packetMaterial,
     };
-  }, [cell.birth_block, visual]);
+  }, [cell.birth_block, structureVisual]);
 
   // Every live Cell has at least one ledger packet even when data_hex is empty;
   // additional packets encode observed payload density.

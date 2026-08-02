@@ -74,6 +74,11 @@ describe('CellNucleusPortrait production language', () => {
     expect(MEMORY_SOURCE).not.toContain('readHeadsRef');
     expect(MEMORY_SOURCE).not.toContain('READ_HEAD_TRAIL');
     expect(MEMORY_SOURCE).toContain('streamFlowGlow.computeLineDistances()');
+    expect(MEMORY_SOURCE).toContain(
+      'const structureVisual = useMemo<ConsensusBraidVisual>',
+    );
+    expect(MEMORY_SOURCE).toContain('[cell.birth_block, structureVisual]');
+    expect(MEMORY_SOURCE).not.toContain('[cell.birth_block, visual]');
     expect(MEMORY_SOURCE).toContain('streamFlowGlowMaterial.dashOffset');
     expect(MEMORY_SOURCE).toContain('streamFlowCoreMaterial.dashOffset');
     expect(MEMORY_SOURCE).toContain('streamTraceGlowMaterial.dashOffset');

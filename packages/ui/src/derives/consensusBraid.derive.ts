@@ -15,6 +15,13 @@ export const CONSENSUS_BRAID_FIELDS = [
 
 export type ConsensusBraidField = (typeof CONSENSUS_BRAID_FIELDS)[number];
 
+/** Only immutable structure-bearing Cell fields participate in A topology.
+ * Runtime accents and lifecycle metadata must not rebuild its GPU resources. */
+export type ConsensusBraidVisual = Pick<
+  CellVisualDescriptor,
+  'assetClass' | 'lockClass' | 'mass' | 'payload' | 'seeds'
+>;
+
 export const CONSENSUS_BRAID_PALETTE = {
   deepCyan: [0.035, 0.28, 0.62],
   gold: [0.86, 0.61, 0.25],
@@ -76,7 +83,7 @@ export function consensusBraidStrandCount(lockClass: number): number {
 
 /** Intended agreement-node count used by the full A portrait. */
 export function consensusBraidAgreementTarget(
-  visual: CellVisualDescriptor,
+  visual: ConsensusBraidVisual,
 ): number {
   const contributorPairs = Math.max(0, consensusBraidStrandCount(visual.lockClass) - 1);
   return contributorPairs * (1 + Math.round(visual.payload * 2));
@@ -228,7 +235,7 @@ export function consensusBraidLayerOpacity(
 
 /** Canonical A mapping shared by the portrait and the galaxy LOD. */
 export function consensusBraidSpecs(
-  visual: CellVisualDescriptor,
+  visual: ConsensusBraidVisual,
 ): ConsensusBraidSpec[] {
   const [a, b, c] = consensusBraidFrequencies(visual.assetClass);
   const count = consensusBraidStrandCount(visual.lockClass);
@@ -268,7 +275,7 @@ function circularSampleDistance(left: number, right: number): number {
  * constellation, capacity scale and ledger phase never do.
  */
 export function deriveConsensusBraidTopology(
-  visual: CellVisualDescriptor,
+  visual: ConsensusBraidVisual,
   birthBlock: number,
 ): ConsensusBraidTopology {
   const specs = consensusBraidSpecs(visual);
