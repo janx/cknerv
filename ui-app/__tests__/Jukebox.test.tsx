@@ -1,4 +1,10 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import Jukebox, {
   DEFAULT_JUKEBOX_TRACK_ID,
@@ -6,23 +12,90 @@ import Jukebox, {
   JUKEBOX_PANEL_WIDTH_PX,
   JUKEBOX_PLAYER_HEIGHT_PX,
   JUKEBOX_TRACKS,
+  KOMM_VOCAL_FADE_START_MS,
+  KOMM_VOCAL_LOOP_AT_MS,
   SOUNDCLOUD_NATIVE_PLAYER_HEIGHT_PX,
   SOUNDCLOUD_PLAYER_SCALE,
+  SOUNDCLOUD_WIDGET_API_SRC,
 } from '../src/Jukebox';
 
 const MICHELLE_TRACK = JUKEBOX_TRACKS[0];
 const ARIA_PIANO_TRACK = JUKEBOX_TRACKS[1];
+const ARIANNE_TRACK = JUKEBOX_TRACKS[2];
+const SHEET_MUSIC_BOSS_TRACK = JUKEBOX_TRACKS[3];
 
-afterEach(() => cleanup());
+type WidgetEvent = { currentPosition?: number };
+type WidgetListener = (event?: WidgetEvent) => void;
+
+function installWidgetMock(volume = 80) {
+  const listeners = new Map<string, WidgetListener>();
+  const widget = {
+    bind: vi.fn((eventName: string, listener: WidgetListener) => {
+      listeners.set(eventName, listener);
+    }),
+    unbind: vi.fn((eventName: string) => listeners.delete(eventName)),
+    getPosition: vi.fn((callback: (position: number) => void) => callback(0)),
+    getVolume: vi.fn((callback: (value: number) => void) => callback(volume)),
+    pause: vi.fn(),
+    play: vi.fn(),
+    seekTo: vi.fn(),
+    setVolume: vi.fn(),
+  };
+  const Events = {
+    FINISH: 'finish',
+    PLAY: 'play',
+    PLAY_PROGRESS: 'play-progress',
+    SEEK: 'seek',
+  };
+  const factory = Object.assign(vi.fn(() => widget), { Events });
+  Object.defineProperty(window, 'SC', {
+    configurable: true,
+    value: { Widget: factory },
+  });
+  return { Events, factory, listeners, widget };
+}
+
+afterEach(() => {
+  cleanup();
+  document
+    .querySelector('script[data-cknerv-soundcloud-widget-api="true"]')
+    ?.remove();
+  delete window.SC;
+});
 
 describe('Jukebox', () => {
-  it('loads no third-party content until clicked, then requests Michelle autoplay', () => {
+  it('keeps the original pair and appends the requested Komm tracks', () => {
+    expect(JUKEBOX_TRACKS.map((track) => track.id)).toEqual([
+      'michelle-vocal',
+      'aria-piano',
+      'arianne-vocal',
+      'sheet-music-boss-piano',
+    ]);
+    expect(ARIANNE_TRACK.trackUrl).toBe(
+      'https://soundcloud.com/wisdomdawn/25-komm-susser-tod-come-sweet-death-arianne',
+    );
+    expect(ARIANNE_TRACK.embedUrl).toContain('tracks%2F9463141');
+    expect(ARIANNE_TRACK.fadeStartMs).toBe(KOMM_VOCAL_FADE_START_MS);
+    expect(ARIANNE_TRACK.loopAtMs).toBe(KOMM_VOCAL_LOOP_AT_MS);
+    expect(SHEET_MUSIC_BOSS_TRACK.trackUrl).toBe(
+      'https://soundcloud.com/makka-pakka-915586059/komm-suesser-tod-the-end-of',
+    );
+    expect(SHEET_MUSIC_BOSS_TRACK.embedUrl).toContain(
+      'tracks%2F1921367153',
+    );
+  });
+
+  it('loads no third-party content until clicked, then requests default autoplay', () => {
     const { container } = render(<Jukebox />);
     const opener = screen.getByRole('button', {
       name: 'Open Jukebox and play default SoundCloud track',
     });
 
     expect(DEFAULT_JUKEBOX_TRACK_ID).toBe(MICHELLE_TRACK.id);
+    expect(JUKEBOX_TRACKS).toHaveLength(4);
+    expect(JUKEBOX_TRACKS.every((track) => (
+      track.embedUrl.includes('auto_play=true')
+    ))).toBe(true);
     expect(opener.getAttribute('aria-expanded')).toBe('false');
     expect(opener.textContent).toBe('');
     expect(container.querySelector('.cknerv-top-bar-action-label')).toBeNull();
@@ -56,6 +129,7 @@ describe('Jukebox', () => {
     expect(frame.getAttribute('src')).toContain('show_playcount=false');
     expect(frame.getAttribute('src')).toContain('sharing=false');
     expect(panel.getAttribute('data-jukebox-autoplay')).toBe('requested');
+    expect(panel.getAttribute('data-jukebox-loop')).toBe('infinite');
     expect(frame.getAttribute('src')).toContain('visual=false');
     expect(frame.getAttribute('src')).toContain('show_comments=false');
     expect(frame.getAttribute('src')).not.toContain('youtube.com');
@@ -68,6 +142,72 @@ describe('Jukebox', () => {
     expect(screen.getByRole('button', {
       name: ARIA_PIANO_TRACK.selectorLabel,
     }).getAttribute('aria-pressed')).toBe('false');
+    expect(screen.getByRole('button', {
+      name: ARIANNE_TRACK.selectorLabel,
+    }).getAttribute('aria-pressed')).toBe('false');
+    expect(screen.getByRole('button', {
+      name: SHEET_MUSIC_BOSS_TRACK.selectorLabel,
+    }).getAttribute('aria-pressed')).toBe('false');
+  });
+
+  it('loads the widget controller lazily and loops a finished track', async () => {
+    const { Events, factory, listeners, widget } = installWidgetMock();
+    render(<Jukebox />);
+
+    expect(document.querySelector(`script[src="${SOUNDCLOUD_WIDGET_API_SRC}"]`))
+      .toBeNull();
+    fireEvent.click(screen.getByRole('button', {
+      name: 'Open Jukebox and play default SoundCloud track',
+    }));
+    const frame = screen.getByTitle(MICHELLE_TRACK.frameTitle);
+    fireEvent.load(frame);
+
+    await waitFor(() => expect(factory).toHaveBeenCalledWith(frame));
+    listeners.get(Events.PLAY)?.();
+    listeners.get(Events.FINISH)?.();
+
+    expect(widget.pause).toHaveBeenCalledTimes(1);
+    expect(widget.setVolume).toHaveBeenNthCalledWith(1, 0);
+    expect(widget.seekTo).toHaveBeenCalledWith(0);
+    expect(widget.setVolume).toHaveBeenNthCalledWith(2, 80);
+    expect(widget.play).toHaveBeenCalledTimes(1);
+  });
+
+  it('fades the Arianne track from 5:55 and loops it at 6:00', async () => {
+    const { Events, factory, listeners, widget } = installWidgetMock(80);
+    render(<Jukebox />);
+    fireEvent.click(screen.getByRole('button', {
+      name: 'Open Jukebox and play default SoundCloud track',
+    }));
+    fireEvent.click(screen.getByRole('button', {
+      name: ARIANNE_TRACK.selectorLabel,
+    }));
+
+    const panel = screen.getByRole('dialog', { name: 'SoundCloud Jukebox' });
+    const frame = screen.getByTitle(ARIANNE_TRACK.frameTitle);
+    expect(panel.getAttribute('data-jukebox-fade-start-ms')).toBe(
+      String(KOMM_VOCAL_FADE_START_MS),
+    );
+    expect(panel.getAttribute('data-jukebox-loop-at-ms')).toBe(
+      String(KOMM_VOCAL_LOOP_AT_MS),
+    );
+    fireEvent.load(frame);
+    await waitFor(() => expect(factory).toHaveBeenCalledWith(frame));
+
+    listeners.get(Events.PLAY_PROGRESS)?.({
+      currentPosition: KOMM_VOCAL_FADE_START_MS,
+    });
+    listeners.get(Events.PLAY_PROGRESS)?.({ currentPosition: 357_500 });
+    expect(widget.setVolume).toHaveBeenLastCalledWith(40);
+
+    listeners.get(Events.PLAY_PROGRESS)?.({
+      currentPosition: KOMM_VOCAL_LOOP_AT_MS,
+    });
+    expect(widget.pause).toHaveBeenCalledTimes(1);
+    expect(widget.setVolume).toHaveBeenCalledWith(0);
+    expect(widget.seekTo).toHaveBeenCalledWith(0);
+    expect(widget.setVolume).toHaveBeenLastCalledWith(80);
+    expect(widget.play).toHaveBeenCalledTimes(1);
   });
 
   it('switches to the piano version by replacing, not stacking, players', () => {

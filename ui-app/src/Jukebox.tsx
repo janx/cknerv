@@ -6,6 +6,11 @@ import {
   type CSSProperties,
 } from 'react';
 
+export const SOUNDCLOUD_WIDGET_API_SRC =
+  'https://w.soundcloud.com/player/api.js';
+export const KOMM_VOCAL_FADE_START_MS = 355_000;
+export const KOMM_VOCAL_LOOP_AT_MS = 360_000;
+
 export const JUKEBOX_TRACKS = [
   {
     id: 'michelle-vocal',
@@ -30,6 +35,36 @@ export const JUKEBOX_TRACKS = [
     embedUrl:
       'https://w.soundcloud.com/player/?url=https%3A%2F%2Fapi.soundcloud.com%2Ftracks%2F560812260&color=%2320f0ff&auto_play=true&buying=false&sharing=false&download=false&show_artwork=false&show_playcount=false&hide_related=true&show_comments=false&show_user=true&show_reposts=false&show_teaser=false&visual=false',
   },
+  {
+    id: 'arianne-vocal',
+    kind: 'VOCAL',
+    artist: 'ARIANNE',
+    duration: '06:00',
+    selectorLabel:
+      'Select Arianne vocal version, fading at 5:55 and looping at 6:00',
+    frameTitle:
+      'SoundCloud player: Komm, süsser Tod — Arianne vocal upload',
+    trackUrl:
+      'https://soundcloud.com/wisdomdawn/25-komm-susser-tod-come-sweet-death-arianne',
+    embedUrl:
+      'https://w.soundcloud.com/player/?url=https%3A%2F%2Fapi.soundcloud.com%2Ftracks%2F9463141&color=%2320f0ff&auto_play=true&buying=false&sharing=false&download=false&show_artwork=false&show_playcount=false&hide_related=true&show_comments=false&show_user=true&show_reposts=false&show_teaser=false&visual=false',
+    fadeStartMs: KOMM_VOCAL_FADE_START_MS,
+    loopAtMs: KOMM_VOCAL_LOOP_AT_MS,
+  },
+  {
+    id: 'sheet-music-boss-piano',
+    kind: 'PIANO',
+    artist: 'SHEET MUSIC BOSS',
+    duration: '06:39',
+    selectorLabel:
+      'Select Komm, süsser Tod piano version by Sheet Music Boss',
+    frameTitle:
+      'SoundCloud player: Komm, süsser Tod — Sheet Music Boss piano upload',
+    trackUrl:
+      'https://soundcloud.com/makka-pakka-915586059/komm-suesser-tod-the-end-of',
+    embedUrl:
+      'https://w.soundcloud.com/player/?url=https%3A%2F%2Fapi.soundcloud.com%2Ftracks%2F1921367153&color=%2320f0ff&auto_play=true&buying=false&sharing=false&download=false&show_artwork=false&show_playcount=false&hide_related=true&show_comments=false&show_user=true&show_reposts=false&show_teaser=false&visual=false',
+  },
 ] as const;
 
 export type JukeboxTrackId = (typeof JUKEBOX_TRACKS)[number]['id'];
@@ -50,6 +85,92 @@ const ORANGE = 'var(--hud-orange, #FF9830)';
 const INK = 'var(--hud-ink, #E8E8E8)';
 const DIM = 'var(--hud-dim, #7C8794)';
 const MONO = "'Share Tech Mono', ui-monospace, monospace";
+
+interface SoundCloudWidgetEvent {
+  currentPosition?: number;
+}
+
+interface SoundCloudWidget {
+  bind: (
+    eventName: string,
+    listener: (event?: SoundCloudWidgetEvent) => void,
+  ) => void;
+  unbind: (eventName: string) => void;
+  getPosition: (callback: (position: number) => void) => void;
+  getVolume: (callback: (volume: number) => void) => void;
+  pause: () => void;
+  play: () => void;
+  seekTo: (milliseconds: number) => void;
+  setVolume: (volume: number) => void;
+}
+
+interface SoundCloudWidgetFactory {
+  (iframe: HTMLIFrameElement): SoundCloudWidget;
+  Events: {
+    FINISH: string;
+    PLAY: string;
+    PLAY_PROGRESS: string;
+    SEEK: string;
+  };
+}
+
+declare global {
+  interface Window {
+    SC?: {
+      Widget: SoundCloudWidgetFactory;
+    };
+  }
+}
+
+let soundCloudWidgetApiPromise: Promise<SoundCloudWidgetFactory> | null = null;
+
+function soundCloudWidgetFactory() {
+  return window.SC?.Widget;
+}
+
+function loadSoundCloudWidgetApi(): Promise<SoundCloudWidgetFactory> {
+  const loadedFactory = soundCloudWidgetFactory();
+  if (loadedFactory) return Promise.resolve(loadedFactory);
+
+  const selector = 'script[data-cknerv-soundcloud-widget-api="true"]';
+  const existingScript = document.querySelector<HTMLScriptElement>(selector);
+  if (soundCloudWidgetApiPromise && existingScript) {
+    return soundCloudWidgetApiPromise;
+  }
+
+  const script = existingScript ?? document.createElement('script');
+  const request = new Promise<SoundCloudWidgetFactory>((resolve, reject) => {
+    const onLoad = () => {
+      const factory = soundCloudWidgetFactory();
+      if (factory) {
+        resolve(factory);
+      } else {
+        reject(new Error('SoundCloud Widget API loaded without SC.Widget'));
+      }
+    };
+    const onError = () => {
+      script.remove();
+      reject(new Error('Unable to load SoundCloud Widget API'));
+    };
+
+    script.addEventListener('load', onLoad, { once: true });
+    script.addEventListener('error', onError, { once: true });
+    if (!existingScript) {
+      script.async = true;
+      script.src = SOUNDCLOUD_WIDGET_API_SRC;
+      script.dataset.cknervSoundcloudWidgetApi = 'true';
+      document.head.appendChild(script);
+    }
+  });
+
+  soundCloudWidgetApiPromise = request;
+  void request.catch(() => {
+    if (soundCloudWidgetApiPromise === request) {
+      soundCloudWidgetApiPromise = null;
+    }
+  });
+  return request;
+}
 
 const floatingStyle: CSSProperties = {
   position: 'fixed',
@@ -126,9 +247,16 @@ export default function Jukebox() {
   const [readyTrackId, setReadyTrackId] = useState<JukeboxTrackId | null>(null);
   const toggleRef = useRef<HTMLButtonElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
+  const frameRef = useRef<HTMLIFrameElement>(null);
   const restoreFocusRef = useRef(false);
   const selectedTrack = getTrack(selectedTrackId);
   const frameReady = readyTrackId === selectedTrackId;
+  const fadeStartMs = 'fadeStartMs' in selectedTrack
+    ? selectedTrack.fadeStartMs
+    : null;
+  const loopAtMs = 'loopAtMs' in selectedTrack
+    ? selectedTrack.loopAtMs
+    : null;
 
   const close = useCallback(() => {
     restoreFocusRef.current = true;
@@ -157,6 +285,141 @@ export default function Jukebox() {
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [close, open]);
+
+  useEffect(() => {
+    if (!open || !frameReady || !frameRef.current) return;
+
+    const iframe = frameRef.current;
+    let disposed = false;
+    let widget: SoundCloudWidget | null = null;
+    let boundEvents: string[] = [];
+
+    void loadSoundCloudWidgetApi().then((factory) => {
+      if (disposed) return;
+
+      widget = factory(iframe);
+      const events = factory.Events;
+      let normalVolume = 100;
+      let fadeBaseVolume: number | null = null;
+      let resolvingFadeVolume = false;
+      let restarting = false;
+      let lastPosition = 0;
+
+      const clampVolume = (volume: number) => (
+        Number.isFinite(volume)
+          ? Math.min(100, Math.max(0, volume))
+          : 100
+      );
+
+      const restoreFadeVolume = () => {
+        const restoreVolume = fadeBaseVolume ?? normalVolume;
+        widget?.setVolume(restoreVolume);
+        normalVolume = restoreVolume;
+        fadeBaseVolume = null;
+        resolvingFadeVolume = false;
+      };
+
+      const performRestart = (restoreVolume: number) => {
+        if (!widget || disposed) return;
+        widget.pause();
+        widget.setVolume(0);
+        widget.seekTo(0);
+        widget.setVolume(restoreVolume);
+        widget.play();
+        normalVolume = restoreVolume;
+        fadeBaseVolume = null;
+        resolvingFadeVolume = false;
+      };
+
+      const restart = () => {
+        if (!widget || restarting) return;
+        restarting = true;
+        if (fadeBaseVolume !== null) {
+          performRestart(fadeBaseVolume);
+          return;
+        }
+        widget.getVolume((volume) => {
+          if (!disposed) performRestart(clampVolume(volume));
+        });
+      };
+
+      const applyPosition = (position: number) => {
+        if (!widget || disposed || !Number.isFinite(position)) return;
+        lastPosition = position;
+
+        if (restarting) {
+          if (position <= 1_000) {
+            restarting = false;
+          } else {
+            return;
+          }
+        }
+
+        if (loopAtMs !== null && position >= loopAtMs) {
+          restart();
+          return;
+        }
+
+        if (fadeStartMs === null || loopAtMs === null) return;
+        if (position < fadeStartMs) {
+          if (fadeBaseVolume !== null) restoreFadeVolume();
+          return;
+        }
+
+        if (fadeBaseVolume === null) {
+          if (resolvingFadeVolume) return;
+          resolvingFadeVolume = true;
+          widget.getVolume((volume) => {
+            if (disposed || !widget) return;
+            resolvingFadeVolume = false;
+            fadeBaseVolume = clampVolume(volume);
+            normalVolume = fadeBaseVolume;
+            applyPosition(lastPosition);
+          });
+          return;
+        }
+
+        const fadeProgress = (position - fadeStartMs)
+          / (loopAtMs - fadeStartMs);
+        widget.setVolume(Math.round(
+          fadeBaseVolume * Math.max(0, 1 - fadeProgress),
+        ));
+      };
+
+      const onProgress = (event?: SoundCloudWidgetEvent) => {
+        if (typeof event?.currentPosition !== 'number') return;
+        applyPosition(event.currentPosition);
+      };
+      const onPlay = () => {
+        widget?.getPosition(applyPosition);
+        if (fadeBaseVolume !== null) return;
+        widget?.getVolume((volume) => {
+          if (!disposed && fadeBaseVolume === null) {
+            normalVolume = clampVolume(volume);
+          }
+        });
+      };
+
+      widget.bind(events.PLAY_PROGRESS, onProgress);
+      widget.bind(events.SEEK, onProgress);
+      widget.bind(events.PLAY, onPlay);
+      widget.bind(events.FINISH, restart);
+      boundEvents = [
+        events.PLAY_PROGRESS,
+        events.SEEK,
+        events.PLAY,
+        events.FINISH,
+      ];
+    }).catch(() => {
+      // The native player remains usable if its optional controller is blocked.
+    });
+
+    return () => {
+      disposed = true;
+      if (!widget) return;
+      boundEvents.forEach((eventName) => widget?.unbind(eventName));
+    };
+  }, [fadeStartMs, frameReady, loopAtMs, open, selectedTrackId]);
 
   return (
     <div
@@ -209,8 +472,11 @@ export default function Jukebox() {
           data-jukebox-panel
           data-jukebox-provider="soundcloud"
           data-jukebox-autoplay="requested"
+          data-jukebox-loop="infinite"
           data-jukebox-selected-track={selectedTrackId}
           data-jukebox-frame-ready={frameReady ? 'true' : 'false'}
+          data-jukebox-fade-start-ms={fadeStartMs ?? undefined}
+          data-jukebox-loop-at-ms={loopAtMs ?? undefined}
           style={panelStyle}
         >
           <div
@@ -364,6 +630,7 @@ export default function Jukebox() {
           >
             <iframe
               key={selectedTrack.id}
+              ref={frameRef}
               src={selectedTrack.embedUrl}
               title={selectedTrack.frameTitle}
               width={`${100 / SOUNDCLOUD_PLAYER_SCALE}%`}
