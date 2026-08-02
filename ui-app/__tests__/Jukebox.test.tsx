@@ -261,6 +261,38 @@ describe('Jukebox', () => {
     expect(panel.textContent).toContain('SOUNDCLOUD READY');
   });
 
+  it('contains SoundCloud teardown errors while switching tracks', async () => {
+    const { factory, widget } = installWidgetMock();
+    const iframeConnectionStates: boolean[] = [];
+    const { container } = render(<Jukebox />);
+    fireEvent.click(screen.getByRole('button', {
+      name: 'Open Jukebox and play default SoundCloud track',
+    }));
+
+    const michelleFrame = screen.getByTitle(MICHELLE_TRACK.frameTitle);
+    fireEvent.load(michelleFrame);
+    await waitFor(() => expect(factory).toHaveBeenCalledWith(michelleFrame));
+    widget.unbind.mockImplementation(() => {
+      iframeConnectionStates.push(michelleFrame.isConnected);
+      throw new TypeError(
+        "Cannot read properties of null (reading 'postMessage')",
+      );
+    });
+
+    fireEvent.click(screen.getByRole('button', {
+      name: ARIANNE_TRACK.selectorLabel,
+    }));
+
+    const panel = screen.getByRole('dialog', { name: 'SoundCloud Jukebox' });
+    expect(iframeConnectionStates).toEqual([true, true, true, true]);
+    expect(widget.unbind).toHaveBeenCalledTimes(4);
+    expect(panel.getAttribute('data-jukebox-selected-track')).toBe(
+      ARIANNE_TRACK.id,
+    );
+    expect(container.querySelectorAll('iframe')).toHaveLength(1);
+    expect(screen.getByTitle(ARIANNE_TRACK.frameTitle)).toBeTruthy();
+  });
+
   it('reports readiness without claiming that playback started', () => {
     render(<Jukebox />);
     fireEvent.click(screen.getByRole('button', {

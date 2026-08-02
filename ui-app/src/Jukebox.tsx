@@ -250,6 +250,7 @@ export default function Jukebox() {
   const toggleRef = useRef<HTMLButtonElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const frameRef = useRef<HTMLIFrameElement>(null);
+  const widgetTeardownRef = useRef<(() => void) | null>(null);
   const restoreFocusRef = useRef(false);
   const selectedTrack = getTrack(selectedTrackId);
   const frameReady = readyTrackId === selectedTrackId;
@@ -260,11 +261,18 @@ export default function Jukebox() {
     ? selectedTrack.loopAtMs
     : null;
 
+  const teardownWidget = useCallback(() => {
+    const teardown = widgetTeardownRef.current;
+    widgetTeardownRef.current = null;
+    teardown?.();
+  }, []);
+
   const close = useCallback(() => {
+    teardownWidget();
     restoreFocusRef.current = true;
     setOpen(false);
     setReadyTrackId(null);
-  }, []);
+  }, [teardownWidget]);
 
   useEffect(() => {
     if (open) {
@@ -295,6 +303,30 @@ export default function Jukebox() {
     let disposed = false;
     let widget: SoundCloudWidget | null = null;
     let boundEvents: string[] = [];
+
+    const teardown = () => {
+      if (disposed) return;
+      disposed = true;
+
+      const activeWidget = widget;
+      widget = null;
+      if (
+        !activeWidget
+        || !iframe.isConnected
+        || iframe.contentWindow === null
+      ) return;
+
+      boundEvents.forEach((eventName) => {
+        try {
+          activeWidget.unbind(eventName);
+        } catch {
+          // SoundCloud may detach its iframe window during teardown. Its
+          // controller must never be allowed to unmount the React app.
+        }
+      });
+    };
+
+    widgetTeardownRef.current = teardown;
 
     void loadSoundCloudWidgetApi().then((factory) => {
       if (disposed) return;
@@ -417,9 +449,10 @@ export default function Jukebox() {
     });
 
     return () => {
-      disposed = true;
-      if (!widget) return;
-      boundEvents.forEach((eventName) => widget?.unbind(eventName));
+      teardown();
+      if (widgetTeardownRef.current === teardown) {
+        widgetTeardownRef.current = null;
+      }
     };
   }, [fadeStartMs, frameReady, loopAtMs, open, selectedTrackId]);
 
@@ -566,6 +599,7 @@ export default function Jukebox() {
                   aria-pressed={selected}
                   onClick={() => {
                     if (selected) return;
+                    teardownWidget();
                     setReadyTrackId(null);
                     setSelectedTrackId(track.id);
                   }}
