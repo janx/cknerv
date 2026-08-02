@@ -40,12 +40,16 @@ const PEER_SHOCKWAVE_RESPONSE_GLSL = /* glsl */ `
       min(1.0, shock * 0.85)
     );
     float wash = halo * shock * uShockwaveTrailBoost * eventScale;
+    float passiveShape = shape * eventScale;
     float passive = shape * passiveEnergy;
     float eventAlpha = shape * alphaExtra * eventScale + wash;
     vec3 color = baseColor * passive
       + shockTint * shape * colorExtra * eventScale
       + waveColor * wash;
-    return vec4(color, passive + eventAlpha);
+    // AdditiveBlending applies alpha to RGB again. The passive context weight
+    // therefore belongs in color only; retaining the unscaled shape in alpha
+    // makes the requested context energy linear and leaves events untouched.
+    return vec4(color, passiveShape + eventAlpha);
   }
 `;
 

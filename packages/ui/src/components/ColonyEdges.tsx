@@ -221,8 +221,12 @@ export default function ColonyEdges({
               surge = uSurgeAmp * bump(vParam, center, uSurgeSigma) * env;
             }
 
-            float passive = (base + ambient) * uContextEnergy;
-            float intensity = passive + surge;
+            // AdditiveBlending applies source alpha to RGB once more. Keep the
+            // unscaled passive shape in alpha so uContextEnergy controls screen
+            // contribution linearly instead of being squared into invisibility.
+            float passiveShape = base + ambient;
+            float passive = passiveShape * uContextEnergy;
+            float intensity = passiveShape + surge;
             vec3 col = uColor * passive + uSurgeColor * surge;
             gl_FragColor = vec4(col, intensity);
           }

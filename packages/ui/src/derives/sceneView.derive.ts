@@ -38,7 +38,7 @@ export function cellDetailFabricWidthScale(focus: number): number {
   return 1 + (CELL_DETAIL_VIEW_FABRIC_WIDTH_SCALE - 1) * detail;
 }
 
-/** Passive peer base/ambient energy. Block surges and selected nodes bypass it. */
+/** Passive peer screen contribution. Block surges and selected nodes bypass it. */
 export function cellDetailPeerContextEnergy(focus: number): number {
   const detail = clamp01(focus);
   return 1 - (1 - CELL_DETAIL_VIEW_PEER_CONTEXT_FLOOR) * detail;
