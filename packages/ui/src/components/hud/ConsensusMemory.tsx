@@ -76,7 +76,6 @@ const LINE_MATERIAL_DASH_DISCARD =
 const LINE_MATERIAL_ALPHA = 'float alpha = opacity;';
 
 function softenFlowLineMaterial(material: LineMaterial): LineMaterial {
-  material.vertexColors = false;
   material.worldUnits = false;
   material.onBeforeCompile = (shader) => {
     // Replace LineMaterial's hard-edged dash with a soft luminance envelope.
@@ -115,9 +114,10 @@ function makeAmbientFlowMaterial(profile: FlowLineProfile): LineMaterial {
     ? AMBIENT_FLOW_GLOW_DASH
     : AMBIENT_FLOW_CORE_DASH;
   const material = new LineMaterial({
-    color: profile === 'glow'
-      ? new THREE.Color(1, 0.18, 0.02)
-      : new THREE.Color(1, 0.82, 0.32),
+    // White is a neutral gain: LineMaterial multiplies it by the stream's
+    // interpolated vertex colour, so every moving highlight keeps the hue of
+    // the exact contributor path beneath it.
+    color: 0xffffff,
     linewidth: profile === 'glow' ? 5.2 : 1.4,
     opacity: 0,
     transparent: true,
@@ -129,8 +129,9 @@ function makeAmbientFlowMaterial(profile: FlowLineProfile): LineMaterial {
     gapSize: CONSENSUS_MEMORY_AMBIENT_FLOW_PERIOD - dashSize,
     alphaToCoverage: true,
   });
-  // A saturated ember carrier separates living ambient conduction from both
-  // the contributor colours beneath it and the cool historical read scan.
+  material.vertexColors = true;
+  // Ambient conduction is the contributor path itself brightening; the cool
+  // historical read scan remains a separate, semantically fixed overlay.
   return softenFlowLineMaterial(material);
 }
 

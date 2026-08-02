@@ -66,8 +66,8 @@ export function consensusMemoryPortraitLayerOpacity(
       base.streamGlow * (1 - recall * 0.56),
       readEnergy * 0.045,
     ),
-    // Warm ambient conduction remains legible while the cool evidence scan is
-    // active. Its distinct colour keeps the two roles separate,
+    // Contributor-coloured ambient conduction remains legible while the cool
+    // evidence scan is active. Their distinct motion keeps the roles separate,
     // while a partial yield gives the observed read visual priority.
     streamFlow: base.streamFlow * (1 - recall * 0.2),
     streamCore: Math.max(

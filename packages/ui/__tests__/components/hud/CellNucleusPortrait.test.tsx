@@ -83,7 +83,11 @@ describe('CellNucleusPortrait production language', () => {
     expect(MEMORY_SOURCE).toContain('float flowEnvelope = smoothstep(');
     expect(MEMORY_SOURCE).toContain('alpha *= flowEnvelope');
     expect(MEMORY_SOURCE).toContain('const AMBIENT_FLOW_GLOW_DASH = 0.9');
-    expect(MEMORY_SOURCE).toContain('new THREE.Color(1, 0.18, 0.02)');
+    expect(MEMORY_SOURCE).toContain('streamGeometry.setColors(streamColors)');
+    expect(MEMORY_SOURCE).toContain('color: 0xffffff');
+    expect(MEMORY_SOURCE).toContain('material.vertexColors = true');
+    expect(MEMORY_SOURCE).not.toContain('material.vertexColors = false');
+    expect(MEMORY_SOURCE).not.toContain('new THREE.Color(1, 0.18, 0.02)');
     expect(MEMORY_SOURCE).toContain('ambientFlowOpacity * 4.8');
     expect(MEMORY_SOURCE).toContain('<primitive object={built.streamFlowGlow} />');
     expect(MEMORY_SOURCE).toContain('<primitive object={built.streamFlowCore} />');
