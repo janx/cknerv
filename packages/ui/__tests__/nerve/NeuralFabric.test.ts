@@ -159,4 +159,11 @@ describe('NeuralFabric living-mesh handles', () => {
     // shared depth relationship and visibly reintroduces centre clipping.
     expect(SRC).not.toContain('mesh.renderOrder');
   });
+
+  it('uploads only the populated dynamic segment range', () => {
+    expect(SRC).toContain('setUsage(THREE.DynamicDrawUsage)');
+    expect(SRC).toContain('const usedFloats = layer.count * 6');
+    expect(SRC).toContain('addUpdateRange(0, usedFloats)');
+    expect(SRC).toContain('clearUpdateRanges()');
+  });
 });

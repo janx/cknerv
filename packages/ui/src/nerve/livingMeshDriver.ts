@@ -1,6 +1,6 @@
 // Pure logic for the living-mesh driver. The driver EFFECT lives in
 // NeuralNetwork.tsx (Canvas-bound); everything testable lives here:
-// ripple stagger, reconcile cadence, dead-end resolution, and the full
+// ripple stagger, dead-end resolution, and the full
 // per-diff orchestration (planMeshUpdate) that mutates the graph and builds
 // the fabric instruction maps.
 
@@ -12,10 +12,6 @@ import { fabricEdgeKey } from './fabricOrder';
 
 export function staggerBornAt(nowSec: number, index: number, _count: number, stepMs: number): number {
   return nowSec + (index * stepMs) / 1000;
-}
-
-export function shouldReconcile(blockCount: number, everyN: number): boolean {
-  return blockCount > 0 && blockCount % everyN === 0;
 }
 
 export function deadEndFor(edgeKey: string, deadCellId: number): 'from' | 'to' {

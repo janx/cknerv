@@ -42,16 +42,37 @@ export function addCell(
   const maxLen = opts?.maxEdgeLength ?? MAX_EDGE_LENGTH;
   const maxLenSq = maxLen * maxLen;
 
-  // O(N) scan for the k nearest LIVE others.
-  const near: { id: number; dSq: number }[] = [];
+  // O(N × k) fixed-size selection for the k nearest LIVE others. The former
+  // collect-all + full sort path allocated and sorted thousands of candidates
+  // once per birth, which amplified high-output blocks into seconds of work.
+  const near: { id: number; dSq: number; order: number }[] = [];
   let lifeline: { id: number; dSq: number } | null = null;
+  let order = 0;
   for (const [id, c] of cells) {
     if (id === cellId || c.death_at_ms != null) continue;
     const dSq = distSq(self, c);
     if (lifeline === null || dSq < lifeline.dSq) lifeline = { id, dSq };
-    if (dSq <= maxLenSq) near.push({ id, dSq });
+    if (dSq <= maxLenSq && k > 0) {
+      const candidate = { id, dSq, order };
+      if (near.length < k) {
+        near.push(candidate);
+      } else {
+        let worst = 0;
+        for (let i = 1; i < near.length; i += 1) {
+          if (
+            near[i].dSq > near[worst].dSq
+            || (
+              near[i].dSq === near[worst].dSq
+              && near[i].order > near[worst].order
+            )
+          ) worst = i;
+        }
+        if (dSq < near[worst].dSq) near[worst] = candidate;
+      }
+    }
+    order += 1;
   }
-  near.sort((a, b) => a.dSq - b.dSq);
+  near.sort((a, b) => a.dSq - b.dSq || a.order - b.order);
 
   const addedEdges: NeighborEdge[] = [];
   if (near.length === 0) {

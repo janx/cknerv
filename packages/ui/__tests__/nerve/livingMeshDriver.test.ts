@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Cell } from '@cknerv/types';
 import { emptyNeighborGraph } from '../../src/geometry/neighborGraph';
 import { fabricEdgeKey } from '../../src/nerve/fabricOrder';
-import { staggerBornAt, shouldReconcile, deadEndFor, planMeshUpdate } from '../../src/nerve/livingMeshDriver';
+import { staggerBornAt, deadEndFor, planMeshUpdate } from '../../src/nerve/livingMeshDriver';
 
 function cell(id: number, x: number, z: number): Cell {
   return { id, born_at_ms: 0, death_at_ms: null, birth_block: 1, tag: null,
@@ -14,11 +14,6 @@ describe('livingMeshDriver helpers', () => {
   it('staggers bornAt by arrival index (ripple)', () => {
     expect(staggerBornAt(10, 0, 4, 60)).toBeCloseTo(10, 6);
     expect(staggerBornAt(10, 2, 4, 60)).toBeCloseTo(10 + 0.12, 6); // 2*60ms
-  });
-  it('reconciles every N blocks (not block 0)', () => {
-    expect(shouldReconcile(0, 5)).toBe(false);
-    expect(shouldReconcile(5, 5)).toBe(true);
-    expect(shouldReconcile(6, 5)).toBe(false);
   });
   it('maps the dead cell to the from/to end of a canonical key', () => {
     expect(deadEndFor('3|7', 3)).toBe('from');

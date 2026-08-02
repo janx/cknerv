@@ -347,6 +347,8 @@ function makeFatLineLayer(
   const colors = new Float32Array(maxSegments * 6);
   const posBuf = new THREE.InstancedInterleavedBuffer(positions, 6, 1);
   const colBuf = new THREE.InstancedInterleavedBuffer(colors, 6, 1);
+  posBuf.setUsage(THREE.DynamicDrawUsage);
+  colBuf.setUsage(THREE.DynamicDrawUsage);
   const geometry = new LineSegmentsGeometry();
   geometry.setAttribute('instanceStart', new THREE.InterleavedBufferAttribute(posBuf, 3, 0));
   geometry.setAttribute('instanceEnd', new THREE.InterleavedBufferAttribute(posBuf, 3, 3));
@@ -434,8 +436,18 @@ function pushSegmentGradient(
 }
 
 function commitLayer(layer: FatLineLayer): void {
-  layer.posBuf.needsUpdate = true;
-  layer.colBuf.needsUpdate = true;
+  const usedFloats = layer.count * 6;
+  layer.posBuf.clearUpdateRanges();
+  layer.colBuf.clearUpdateRanges();
+  if (usedFloats > 0) {
+    // Three uploads the complete backing array when no range is supplied.
+    // The passive layer reserves three edge generations, so that old path
+    // moved 4.39 MiB per dirty frame even when only one generation was drawn.
+    layer.posBuf.addUpdateRange(0, usedFloats);
+    layer.colBuf.addUpdateRange(0, usedFloats);
+    layer.posBuf.needsUpdate = true;
+    layer.colBuf.needsUpdate = true;
+  }
   layer.geometry.instanceCount = layer.count;
 }
 
