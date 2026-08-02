@@ -94,6 +94,7 @@ describe('consensusMemoryPortraitResponse', () => {
     const locked = consensusMemoryPortraitLayerOpacity(base, 1, 1);
 
     expect(reading.ribbon).toBeLessThan(base.ribbon);
+    expect(reading.streamFlow).toBeLessThan(base.streamFlow);
     expect(reading.streamCore).toBeLessThan(base.streamCore);
     expect(reading.packet).toBeLessThan(base.packet);
     expect(locked.agreementCore).toBeGreaterThan(reading.agreementCore);

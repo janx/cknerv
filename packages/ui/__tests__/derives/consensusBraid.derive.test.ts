@@ -139,7 +139,9 @@ describe('canonical consensus braid mapping', () => {
 
     expect(capacity.ribbon).toBeGreaterThan(capacity.streamCore);
     expect(asset.streamCore).toBeGreaterThan(asset.ribbon);
+    expect(asset.streamFlow).toBeGreaterThan(normal.streamFlow);
     expect(lock.streamCore).toBeGreaterThan(lock.agreementCore);
+    expect(lock.streamFlow).toBeGreaterThan(data.streamFlow);
     expect(data.stitchCore).toBeGreaterThan(data.ribbon);
     expect(data.knotCore).toBeGreaterThan(data.streamCore);
     expect(born.packet).toBeGreaterThan(born.streamCore);
