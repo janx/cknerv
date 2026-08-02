@@ -50,19 +50,6 @@ const PACKET_TANGENT = new THREE.Vector3();
 const PACKET_QUATERNION = new THREE.Quaternion();
 const PACKET_SCALE = new THREE.Vector3();
 const X_AXIS = new THREE.Vector3(1, 0, 0);
-const READ_HEAD_TRAIL = 5;
-const READ_HEAD_MATRIX = new THREE.Matrix4();
-const READ_HEAD_POSITION = new THREE.Vector3();
-const READ_HEAD_TANGENT = new THREE.Vector3();
-const READ_HEAD_QUATERNION = new THREE.Quaternion();
-const READ_HEAD_SCALE = new THREE.Vector3();
-const AMBIENT_FLOW_HEAD_TRAIL = 5;
-const MAX_AMBIENT_FLOW_HEADS = 5 * AMBIENT_FLOW_HEAD_TRAIL;
-const AMBIENT_FLOW_HEAD_MATRIX = new THREE.Matrix4();
-const AMBIENT_FLOW_HEAD_POSITION = new THREE.Vector3();
-const AMBIENT_FLOW_HEAD_TANGENT = new THREE.Vector3();
-const AMBIENT_FLOW_HEAD_QUATERNION = new THREE.Quaternion();
-const AMBIENT_FLOW_HEAD_SCALE = new THREE.Vector3();
 
 function makeLineMaterial(width: number, opacity: number): LineMaterial {
   const material = new LineMaterial({
@@ -78,12 +65,51 @@ function makeLineMaterial(width: number, opacity: number): LineMaterial {
   return material;
 }
 
-type AmbientFlowProfile = 'glow' | 'core';
+type FlowLineProfile = 'glow' | 'core';
 
-const AMBIENT_FLOW_GLOW_DASH = 0.32;
-const AMBIENT_FLOW_CORE_DASH = 0.1;
+const AMBIENT_FLOW_GLOW_DASH = 0.46;
+const AMBIENT_FLOW_CORE_DASH = 0.22;
+const TRACE_FLOW_GLOW_DASH = 0.56;
+const TRACE_FLOW_CORE_DASH = 0.28;
+const LINE_MATERIAL_DASH_DISCARD =
+  'if ( mod( vLineDistance + dashOffset, dashSize + gapSize ) > dashSize ) discard; // todo - FIX';
+const LINE_MATERIAL_ALPHA = 'float alpha = opacity;';
 
-function makeAmbientFlowMaterial(profile: AmbientFlowProfile): LineMaterial {
+function softenFlowLineMaterial(material: LineMaterial): LineMaterial {
+  material.vertexColors = false;
+  material.worldUnits = false;
+  material.onBeforeCompile = (shader) => {
+    // Replace LineMaterial's hard-edged dash with a soft luminance envelope.
+    // The geometry never thickens into a travelling object: only the existing
+    // path pixels brighten, peak, and recede as dashOffset advances.
+    shader.fragmentShader = shader.fragmentShader
+      .replace(LINE_MATERIAL_DASH_DISCARD, `
+        float flowPosition = mod(
+          vLineDistance + dashOffset,
+          dashSize + gapSize
+        );
+        float flowFeather = dashSize * 0.32;
+        float flowEnvelope = smoothstep(
+          0.0,
+          flowFeather,
+          flowPosition
+        ) * ( 1.0 - smoothstep(
+          dashSize - flowFeather,
+          dashSize,
+          flowPosition
+        ) );
+      `)
+      .replace(LINE_MATERIAL_ALPHA, `
+        float alpha = opacity;
+        #ifdef USE_DASH
+          alpha *= flowEnvelope;
+        #endif
+      `);
+  };
+  return material;
+}
+
+function makeAmbientFlowMaterial(profile: FlowLineProfile): LineMaterial {
   const dashSize = profile === 'glow'
     ? AMBIENT_FLOW_GLOW_DASH
     : AMBIENT_FLOW_CORE_DASH;
@@ -91,7 +117,7 @@ function makeAmbientFlowMaterial(profile: AmbientFlowProfile): LineMaterial {
     color: profile === 'glow'
       ? new THREE.Color(...CONSENSUS_BRAID_PALETTE.gold)
       : new THREE.Color(1, 0.95, 0.78),
-    linewidth: profile === 'glow' ? 6.4 : 1.4,
+    linewidth: profile === 'glow' ? 4.6 : 1.1,
     opacity: 0,
     transparent: true,
     blending: THREE.AdditiveBlending,
@@ -104,9 +130,31 @@ function makeAmbientFlowMaterial(profile: AmbientFlowProfile): LineMaterial {
   });
   // A constant warm carrier separates the moving glint from the contributor
   // colours beneath it. Real historical read-heads remain cool cyan/violet.
-  material.vertexColors = false;
-  material.worldUnits = false;
-  return material;
+  return softenFlowLineMaterial(material);
+}
+
+function makeTraceFlowMaterial(
+  profile: FlowLineProfile,
+  period: number,
+): LineMaterial {
+  const dashSize = profile === 'glow'
+    ? TRACE_FLOW_GLOW_DASH
+    : TRACE_FLOW_CORE_DASH;
+  return softenFlowLineMaterial(new LineMaterial({
+    color: profile === 'glow'
+      ? new THREE.Color(...CONSENSUS_BRAID_PALETTE.cyan)
+      : new THREE.Color(...CONSENSUS_BRAID_PALETTE.pale),
+    linewidth: profile === 'glow' ? 3.6 : 1,
+    opacity: 0,
+    transparent: true,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    toneMapped: false,
+    dashed: true,
+    dashSize,
+    gapSize: Math.max(0.01, period - dashSize),
+    alphaToCoverage: true,
+  }));
 }
 
 /** Multiple contributor streams become one stable record only at their knots. */
@@ -127,8 +175,6 @@ export default function ConsensusMemory({
 }) {
   const rootRef = useRef<THREE.Group>(null);
   const packetsRef = useRef<THREE.InstancedMesh>(null);
-  const ambientFlowHeadsRef = useRef<THREE.InstancedMesh>(null);
-  const readHeadsRef = useRef<THREE.InstancedMesh>(null);
   const focusedKnotRef = useRef<THREE.Group>(null);
   const focusedKnotOuterMaterialRef = useRef<THREE.MeshBasicMaterial>(null);
   const focusedKnotInnerMaterialRef = useRef<THREE.MeshBasicMaterial>(null);
@@ -280,14 +326,41 @@ export default function ConsensusMemory({
       streamFlowCoreMaterial,
     );
     streamFlowGlow.computeLineDistances();
+    const streamDistanceEnds = streamGeometry.getAttribute(
+      'instanceDistanceEnd',
+    ) as THREE.InterleavedBufferAttribute;
+    const streamDistance = Math.max(
+      TRACE_FLOW_GLOW_DASH + 0.01,
+      streamDistanceEnds.getX(streamDistanceEnds.count - 1),
+    );
+    const streamTraceGlowMaterial = makeTraceFlowMaterial(
+      'glow',
+      streamDistance,
+    );
+    const streamTraceCoreMaterial = makeTraceFlowMaterial(
+      'core',
+      streamDistance,
+    );
+    const streamTraceGlow = new LineSegments2(
+      streamGeometry,
+      streamTraceGlowMaterial,
+    );
+    const streamTraceCore = new LineSegments2(
+      streamGeometry,
+      streamTraceCoreMaterial,
+    );
     streamGlow.frustumCulled = false;
     streamCore.frustumCulled = false;
     streamFlowGlow.frustumCulled = false;
     streamFlowCore.frustumCulled = false;
+    streamTraceGlow.frustumCulled = false;
+    streamTraceCore.frustumCulled = false;
     streamGlow.renderOrder = 1;
     streamFlowGlow.renderOrder = 2;
     streamFlowCore.renderOrder = 3;
     streamCore.renderOrder = 4;
+    streamTraceGlow.renderOrder = 5;
+    streamTraceCore.renderOrder = 6;
     const stitchGeometry = new LineSegmentsGeometry();
     stitchGeometry.setPositions(stitchPositions);
     stitchGeometry.setColors(stitchColors);
@@ -343,25 +416,6 @@ export default function ConsensusMemory({
       depthWrite: false,
       toneMapped: false,
     });
-    const readHeadGeometry = new THREE.OctahedronGeometry(0.048, 0);
-    const readHeadMaterial = new THREE.MeshBasicMaterial({
-      color: new THREE.Color(...CONSENSUS_BRAID_PALETTE.cyan),
-      transparent: true,
-      opacity: 0,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-      toneMapped: false,
-    });
-    const ambientFlowHeadGeometry = new THREE.OctahedronGeometry(0.03, 0);
-    const ambientFlowHeadMaterial = new THREE.MeshBasicMaterial({
-      color: new THREE.Color(1, 0.66, 0.18),
-      transparent: true,
-      opacity: 0,
-      blending: THREE.AdditiveBlending,
-      depthTest: false,
-      depthWrite: false,
-      toneMapped: false,
-    });
     return {
       specs,
       agreementMidpoints: topology.agreements.map((agreement) => (
@@ -376,10 +430,15 @@ export default function ConsensusMemory({
       streamCoreMaterial,
       streamFlowGlowMaterial,
       streamFlowCoreMaterial,
+      streamTraceGlowMaterial,
+      streamTraceCoreMaterial,
+      streamDistance,
       streamGlow,
       streamCore,
       streamFlowGlow,
       streamFlowCore,
+      streamTraceGlow,
+      streamTraceCore,
       stitchGeometry,
       stitchGlowMaterial,
       stitchCoreMaterial,
@@ -397,10 +456,6 @@ export default function ConsensusMemory({
       knotCoreMaterial,
       packetGeometry,
       packetMaterial,
-      readHeadGeometry,
-      readHeadMaterial,
-      ambientFlowHeadGeometry,
-      ambientFlowHeadMaterial,
     };
   }, [cell.birth_block, visual]);
 
@@ -450,6 +505,8 @@ export default function ConsensusMemory({
       built.streamGlowMaterial,
       built.streamFlowGlowMaterial,
       built.streamFlowCoreMaterial,
+      built.streamTraceGlowMaterial,
+      built.streamTraceCoreMaterial,
       built.streamCoreMaterial,
       built.stitchGlowMaterial,
       built.stitchCoreMaterial,
@@ -530,6 +587,10 @@ export default function ConsensusMemory({
     built.streamFlowGlowMaterial.dashOffset = ambientFlow.dashOffset;
     built.streamFlowCoreMaterial.dashOffset = ambientFlow.dashOffset
       - (AMBIENT_FLOW_GLOW_DASH - AMBIENT_FLOW_CORE_DASH) * 0.5;
+    const traceDashOffset = -recallPhaseRef.current * built.streamDistance;
+    built.streamTraceGlowMaterial.dashOffset = traceDashOffset;
+    built.streamTraceCoreMaterial.dashOffset = traceDashOffset
+      - (TRACE_FLOW_GLOW_DASH - TRACE_FLOW_CORE_DASH) * 0.5;
     const approach = (material: { opacity: number }, opacity: number) => {
       material.opacity += (opacity - material.opacity) * blend;
     };
@@ -539,11 +600,17 @@ export default function ConsensusMemory({
     approach(built.streamFlowGlowMaterial, ambientFlowOpacity);
     approach(
       built.streamFlowCoreMaterial,
-      Math.min(0.86, ambientFlowOpacity * 3.4),
+      Math.min(0.76, ambientFlowOpacity * 2.8),
+    );
+    const scanEnergy = coreEnergy.reading
+      * (traceEvidenceFocusSourceId === null ? 1 : 0.22);
+    approach(
+      built.streamTraceGlowMaterial,
+      Math.min(0.28, scanEnergy * 0.24),
     );
     approach(
-      built.ambientFlowHeadMaterial,
-      Math.min(0.95, ambientFlowOpacity * 4.6),
+      built.streamTraceCoreMaterial,
+      Math.min(0.92, scanEnergy * 0.88),
     );
     approach(built.streamCoreMaterial, target.streamCore * life);
     approach(built.stitchGlowMaterial, target.stitchGlow * life);
@@ -661,89 +728,6 @@ export default function ConsensusMemory({
       1 + coreEnergy.reading * 0.18 + coreEnergy.retained * 0.82
     );
 
-    // One warm, non-data-bearing head per contributor makes the slow line
-    // conduction trackable at portrait scale. A short scaled trail preserves
-    // direction without borrowing the cool identity of a real recall read.
-    const ambientFlowHeads = ambientFlowHeadsRef.current;
-    if (ambientFlowHeads && built.specs.length > 0) {
-      let instance = 0;
-      for (let strand = 0; strand < built.specs.length; strand += 1) {
-        const spec = built.specs[strand];
-        for (let trail = 0; trail < AMBIENT_FLOW_HEAD_TRAIL; trail += 1) {
-          const unit = (
-            ambientFlow.headPhase
-            + strand * 0.173
-            - trail * 0.009
-            + 1
-          ) % 1;
-          const t = unit * TAU;
-          consensusBraidPoint(spec, t, AMBIENT_FLOW_HEAD_POSITION);
-          consensusBraidPoint(spec, t + 0.003, AMBIENT_FLOW_HEAD_TANGENT)
-            .sub(AMBIENT_FLOW_HEAD_POSITION)
-            .normalize();
-          AMBIENT_FLOW_HEAD_QUATERNION.setFromUnitVectors(
-            X_AXIS,
-            AMBIENT_FLOW_HEAD_TANGENT,
-          );
-          const tailScale = 1 - trail / (AMBIENT_FLOW_HEAD_TRAIL + 0.25);
-          AMBIENT_FLOW_HEAD_SCALE
-            .set(3, 0.84, 0.84)
-            .multiplyScalar(tailScale);
-          AMBIENT_FLOW_HEAD_MATRIX.compose(
-            AMBIENT_FLOW_HEAD_POSITION,
-            AMBIENT_FLOW_HEAD_QUATERNION,
-            AMBIENT_FLOW_HEAD_SCALE,
-          );
-          ambientFlowHeads.setMatrixAt(instance, AMBIENT_FLOW_HEAD_MATRIX);
-          instance += 1;
-        }
-      }
-      ambientFlowHeads.count = instance;
-      ambientFlowHeads.instanceMatrix.needsUpdate = true;
-    } else if (ambientFlowHeads) {
-      ambientFlowHeads.count = 0;
-    }
-
-    // One flattened read head traverses the same contributor order used by
-    // the production buffer writer. A short lozenge trail makes the scan
-    // legible at portrait scale without adding a second topology.
-    const readHeads = readHeadsRef.current;
-    const scanEnergy = coreEnergy.reading
-      * (traceEvidenceFocusSourceId === null ? 1 : 0.22);
-    if (readHeads && built.specs.length > 0 && scanEnergy > 0.01) {
-      readHeads.count = READ_HEAD_TRAIL;
-      built.readHeadMaterial.opacity = Math.min(1, scanEnergy * 0.96);
-      for (let trail = 0; trail < READ_HEAD_TRAIL; trail += 1) {
-        const unit = (
-          recallPhaseRef.current - trail * 0.012 + 1
-        ) % 1;
-        const flattened = unit * built.specs.length;
-        const strand = Math.min(
-          built.specs.length - 1,
-          Math.floor(flattened),
-        );
-        const t = (flattened - strand) * TAU;
-        const spec = built.specs[strand];
-        consensusBraidPoint(spec, t, READ_HEAD_POSITION);
-        consensusBraidPoint(spec, t + 0.003, READ_HEAD_TANGENT)
-          .sub(READ_HEAD_POSITION)
-          .normalize();
-        READ_HEAD_QUATERNION.setFromUnitVectors(X_AXIS, READ_HEAD_TANGENT);
-        const tailScale = 1 - trail / (READ_HEAD_TRAIL + 0.25);
-        READ_HEAD_SCALE.set(2.15, 0.72, 0.72).multiplyScalar(tailScale);
-        READ_HEAD_MATRIX.compose(
-          READ_HEAD_POSITION,
-          READ_HEAD_QUATERNION,
-          READ_HEAD_SCALE,
-        );
-        readHeads.setMatrixAt(trail, READ_HEAD_MATRIX);
-      }
-      readHeads.instanceMatrix.needsUpdate = true;
-    } else if (readHeads) {
-      readHeads.count = 0;
-      built.readHeadMaterial.opacity = 0;
-    }
-
     if (rootRef.current) {
       rootRef.current.rotation.y = (visual.seeds[2] - 0.5) * 0.34
         + Math.sin(time * 0.12) * 0.12;
@@ -784,6 +768,8 @@ export default function ConsensusMemory({
     built.streamGlowMaterial.dispose();
     built.streamFlowGlowMaterial.dispose();
     built.streamFlowCoreMaterial.dispose();
+    built.streamTraceGlowMaterial.dispose();
+    built.streamTraceCoreMaterial.dispose();
     built.streamCoreMaterial.dispose();
     built.stitchGeometry.dispose();
     built.stitchGlowMaterial.dispose();
@@ -796,10 +782,6 @@ export default function ConsensusMemory({
     disposeConsensusMemoryKnotMaterial(built.knotCoreMaterial);
     built.packetGeometry.dispose();
     built.packetMaterial.dispose();
-    built.readHeadGeometry.dispose();
-    built.readHeadMaterial.dispose();
-    built.ambientFlowHeadGeometry.dispose();
-    built.ambientFlowHeadMaterial.dispose();
   }, [built]);
 
   return (
@@ -813,6 +795,8 @@ export default function ConsensusMemory({
       <primitive object={built.streamFlowGlow} />
       <primitive object={built.streamFlowCore} />
       <primitive object={built.streamCore} />
+      <primitive object={built.streamTraceGlow} />
+      <primitive object={built.streamTraceCore} />
       <primitive object={built.stitchGlow} />
       <primitive object={built.stitchCore} />
       <primitive object={built.agreementGlow} />
@@ -834,22 +818,6 @@ export default function ConsensusMemory({
         args={[built.packetGeometry, built.packetMaterial, MAX_PACKETS]}
         frustumCulled={false}
         renderOrder={8}
-      />
-      <instancedMesh
-        ref={ambientFlowHeadsRef}
-        args={[
-          built.ambientFlowHeadGeometry,
-          built.ambientFlowHeadMaterial,
-          MAX_AMBIENT_FLOW_HEADS,
-        ]}
-        frustumCulled={false}
-        renderOrder={10}
-      />
-      <instancedMesh
-        ref={readHeadsRef}
-        args={[built.readHeadGeometry, built.readHeadMaterial, READ_HEAD_TRAIL]}
-        frustumCulled={false}
-        renderOrder={9}
       />
       {focusedEvidenceBinding ? (
         <group

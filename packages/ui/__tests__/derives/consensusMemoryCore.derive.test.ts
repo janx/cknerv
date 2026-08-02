@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import {
-  CONSENSUS_MEMORY_AMBIENT_HEAD_CYCLE_S,
   CONSENSUS_MEMORY_AMBIENT_FLOW_PERIOD,
   CONSENSUS_MEMORY_AMBIENT_FLOW_SPEED,
   consensusMemoryAmbientFlowFrame,
@@ -62,20 +61,15 @@ describe('consensusMemoryAmbientFlowFrame', () => {
     );
 
     expect(initial.dashOffset).toBeCloseTo(-0.5);
-    expect(initial.headPhase).toBeCloseTo(0.25);
-    expect(legible.headPhase).toBeGreaterThan(initial.headPhase);
     expect(Math.abs(legible.dashOffset - initial.dashOffset))
-      .toBeGreaterThan(0.1);
+      .toBeGreaterThan(0.08);
     expect(moving.dashOffset).toBeLessThan(initial.dashOffset);
     expect(wrapped.dashOffset).toBeCloseTo(initial.dashOffset);
-    expect(consensusMemoryAmbientFlowFrame(
-      CONSENSUS_MEMORY_AMBIENT_HEAD_CYCLE_S,
-      0.25,
-      true,
-      false,
-    ).headPhase).toBeCloseTo(initial.headPhase);
     expect(CONSENSUS_MEMORY_AMBIENT_FLOW_PERIOD).toBeGreaterThanOrEqual(2);
-    expect(CONSENSUS_MEMORY_AMBIENT_FLOW_SPEED).toBeGreaterThanOrEqual(0.08);
+    expect(
+      CONSENSUS_MEMORY_AMBIENT_FLOW_PERIOD
+        / CONSENSUS_MEMORY_AMBIENT_FLOW_SPEED,
+    ).toBeGreaterThan(40);
     expect(moving.opacityScale).toBeGreaterThanOrEqual(0.8);
     expect(moving.opacityScale).toBeLessThanOrEqual(1);
   });
@@ -87,7 +81,6 @@ describe('consensusMemoryAmbientFlowFrame', () => {
 
     expect(reducedLater).toEqual(reduced);
     expect(spent.dashOffset).toBe(reduced.dashOffset);
-    expect(spent.headPhase).toBe(reduced.headPhase);
     expect(spent.opacityScale).toBeLessThan(reduced.opacityScale);
   });
 

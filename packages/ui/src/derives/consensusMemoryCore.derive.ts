@@ -8,18 +8,14 @@ export interface ConsensusMemoryCoreEnergy {
 export interface ConsensusMemoryAmbientFlowFrame {
   /** Wrapped LineMaterial distance offset for one deterministic Cell phase. */
   dashOffset: number;
-  /** Normalised position of the warm ambient head on every contributor path. */
-  headPhase: number;
   /** Bounded multiplier applied to the semantic stream-flow opacity. */
   opacityScale: number;
 }
 
 /** Model-space cadence: deliberately slower than packets and trace read-heads. */
-export const CONSENSUS_MEMORY_AMBIENT_FLOW_SPEED = 0.08;
+export const CONSENSUS_MEMORY_AMBIENT_FLOW_SPEED = 0.045;
 /** One sparse highlight followed by a long unlit interval. */
 export const CONSENSUS_MEMORY_AMBIENT_FLOW_PERIOD = 2;
-/** A head takes one quiet minute to traverse a complete contributor path. */
-export const CONSENSUS_MEMORY_AMBIENT_HEAD_CYCLE_S = 60;
 
 /** A faint moving read remains so the stored structure keeps its provenance. */
 export const CONSENSUS_MEMORY_CORE_READ_FLOOR = 0.1;
@@ -52,9 +48,6 @@ export function consensusMemoryAmbientFlowFrame(
   const phase = wrapUnit(stablePhase);
   const elapsed = Number.isFinite(elapsedS) ? Math.max(0, elapsedS) : 0;
   const moving = live && !reducedMotion;
-  const headPhase = wrapUnit(
-    phase + (moving ? elapsed / CONSENSUS_MEMORY_AMBIENT_HEAD_CYCLE_S : 0),
-  );
   const distance = phase * CONSENSUS_MEMORY_AMBIENT_FLOW_PERIOD
     + (moving ? elapsed * CONSENSUS_MEMORY_AMBIENT_FLOW_SPEED : 0);
   const wrappedDistance = (
@@ -63,14 +56,14 @@ export function consensusMemoryAmbientFlowFrame(
   ) % CONSENSUS_MEMORY_AMBIENT_FLOW_PERIOD;
 
   if (!live) {
-    return { dashOffset: -wrappedDistance, headPhase, opacityScale: 0.18 };
+    return { dashOffset: -wrappedDistance, opacityScale: 0.18 };
   }
   if (reducedMotion) {
-    return { dashOffset: -wrappedDistance, headPhase, opacityScale: 0.62 };
+    return { dashOffset: -wrappedDistance, opacityScale: 0.62 };
   }
 
   const breath = 0.9 + Math.sin(elapsed * 0.38 + phase * Math.PI * 2) * 0.1;
-  return { dashOffset: -wrappedDistance, headPhase, opacityScale: breath };
+  return { dashOffset: -wrappedDistance, opacityScale: breath };
 }
 
 /**
