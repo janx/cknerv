@@ -934,16 +934,17 @@ export default function App({
             cellInspectionActive={selectedCell !== null}
           />
 
+          {/* Opening or switching Cell detail is camera-passive. Only explicit
+              memory recall / route-lock state may drive this controller; the
+              unfiltered readout also keeps an active frame stable while the
+              user inspects a different Cell. */}
           <ConsensusRouteCamera
             focus={memoryRouteHopLock}
             controlsRef={orbitControlsRef}
             manualRevision={orbitInteractionRevision}
-            inspectionCellId={selectedCell?.id ?? null}
-            causalLens={selectedCausalLens}
             recordIdentity={memoryRecordIdentity}
             recordTargetCellId={memoryTraceRequest?.targetCellId ?? null}
-            recordTraceReadout={selectedMemoryTraceReadout}
-            recordSwitchPending={memoryRecordSwitchPending}
+            recordTraceReadout={memoryTraceReadout}
           />
 
           <OrbitControls
