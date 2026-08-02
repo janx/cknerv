@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { consensusMemoryCoreEnergy } from '../../src/derives/consensusMemoryCore.derive';
+import {
+  CONSENSUS_MEMORY_AMBIENT_FLOW_PERIOD,
+  CONSENSUS_MEMORY_AMBIENT_FLOW_SPEED,
+  consensusMemoryAmbientFlowFrame,
+  consensusMemoryCoreEnergy,
+} from '../../src/derives/consensusMemoryCore.derive';
 
 describe('consensusMemoryCoreEnergy', () => {
   it('hands energy from the moving read into retained agreement', () => {
@@ -39,5 +44,44 @@ describe('consensusMemoryCoreEnergy', () => {
       reading: 1,
       retained: 0,
     });
+  });
+});
+
+describe('consensusMemoryAmbientFlowFrame', () => {
+  it('moves a live Cell slowly from its stable phase and wraps seamlessly', () => {
+    const initial = consensusMemoryAmbientFlowFrame(0, 0.25, true, false);
+    const moving = consensusMemoryAmbientFlowFrame(4, 0.25, true, false);
+    const wrapped = consensusMemoryAmbientFlowFrame(
+      CONSENSUS_MEMORY_AMBIENT_FLOW_PERIOD
+        / CONSENSUS_MEMORY_AMBIENT_FLOW_SPEED,
+      0.25,
+      true,
+      false,
+    );
+
+    expect(initial.dashOffset).toBeCloseTo(-0.25);
+    expect(moving.dashOffset).toBeLessThan(initial.dashOffset);
+    expect(wrapped.dashOffset).toBeCloseTo(initial.dashOffset);
+    expect(moving.opacityScale).toBeGreaterThanOrEqual(0.68);
+    expect(moving.opacityScale).toBeLessThanOrEqual(1);
+  });
+
+  it('freezes a reduced-motion Cell and leaves only spent afterglow', () => {
+    const reduced = consensusMemoryAmbientFlowFrame(0, 0.4, true, true);
+    const reducedLater = consensusMemoryAmbientFlowFrame(99, 0.4, true, true);
+    const spent = consensusMemoryAmbientFlowFrame(99, 0.4, false, false);
+
+    expect(reducedLater).toEqual(reduced);
+    expect(spent.dashOffset).toBe(reduced.dashOffset);
+    expect(spent.opacityScale).toBeLessThan(reduced.opacityScale);
+  });
+
+  it('sanitizes malformed clocks and phases deterministically', () => {
+    expect(consensusMemoryAmbientFlowFrame(
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      true,
+      false,
+    )).toEqual(consensusMemoryAmbientFlowFrame(0, 0, true, false));
   });
 });

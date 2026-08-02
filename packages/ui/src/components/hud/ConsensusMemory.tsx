@@ -11,7 +11,10 @@ import {
   consensusMemoryPortraitLayerOpacity,
   consensusMemoryPortraitResponse,
 } from '../../derives/consensusMemoryPortrait.derive';
-import { consensusMemoryCoreEnergy } from '../../derives/consensusMemoryCore.derive';
+import {
+  consensusMemoryAmbientFlowFrame,
+  consensusMemoryCoreEnergy,
+} from '../../derives/consensusMemoryCore.derive';
 import {
   consensusMemoryEvidenceBindings,
   consensusMemoryEvidenceColor,
@@ -61,6 +64,24 @@ function makeLineMaterial(width: number, opacity: number): LineMaterial {
     blending: THREE.AdditiveBlending,
     depthWrite: false,
     toneMapped: false,
+  });
+  material.vertexColors = true;
+  material.worldUnits = false;
+  return material;
+}
+
+function makeAmbientFlowMaterial(): LineMaterial {
+  const material = new LineMaterial({
+    linewidth: 2.6,
+    opacity: 0,
+    transparent: true,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    toneMapped: false,
+    dashed: true,
+    dashSize: 0.18,
+    gapSize: 0.82,
+    alphaToCoverage: true,
   });
   material.vertexColors = true;
   material.worldUnits = false;
@@ -224,12 +245,17 @@ export default function ConsensusMemory({
     streamGeometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1.1);
     const streamGlowMaterial = makeLineMaterial(4.8, 0.045);
     const streamCoreMaterial = makeLineMaterial(0.72, 0.74 - (count - 3) * 0.1);
+    const streamFlowMaterial = makeAmbientFlowMaterial();
     const streamGlow = new LineSegments2(streamGeometry, streamGlowMaterial);
     const streamCore = new LineSegments2(streamGeometry, streamCoreMaterial);
+    const streamFlow = new LineSegments2(streamGeometry, streamFlowMaterial);
+    streamFlow.computeLineDistances();
     streamGlow.frustumCulled = false;
     streamCore.frustumCulled = false;
+    streamFlow.frustumCulled = false;
     streamGlow.renderOrder = 1;
-    streamCore.renderOrder = 2;
+    streamFlow.renderOrder = 2;
+    streamCore.renderOrder = 3;
     const stitchGeometry = new LineSegmentsGeometry();
     stitchGeometry.setPositions(stitchPositions);
     stitchGeometry.setColors(stitchColors);
@@ -306,8 +332,10 @@ export default function ConsensusMemory({
       streamGeometry,
       streamGlowMaterial,
       streamCoreMaterial,
+      streamFlowMaterial,
       streamGlow,
       streamCore,
+      streamFlow,
       stitchGeometry,
       stitchGlowMaterial,
       stitchCoreMaterial,
@@ -338,7 +366,8 @@ export default function ConsensusMemory({
   );
   const presence = built.presenceScale;
   const birthPhase = built.birthPhase;
-  const life = cell.death_at_ms === null ? 1 : 0.52;
+  const live = cell.death_at_ms === null;
+  const life = live ? 1 : 0.52;
   const evidenceBindings = useMemo(() => consensusMemoryEvidenceBindings(
     cell.content_hash,
     traceReadout?.targetCellId === cell.id ? traceReadout.evidence : [],
@@ -373,6 +402,7 @@ export default function ConsensusMemory({
     const time = reducedMotion ? 0 : state.clock.elapsedTime;
     for (const material of [
       built.streamGlowMaterial,
+      built.streamFlowMaterial,
       built.streamCoreMaterial,
       built.stitchGlowMaterial,
       built.stitchCoreMaterial,
@@ -444,11 +474,22 @@ export default function ConsensusMemory({
       recallStrength,
       recallConvergence,
     );
+    const ambientFlow = consensusMemoryAmbientFlowFrame(
+      time,
+      visual.seeds[1],
+      live,
+      reducedMotion,
+    );
+    built.streamFlowMaterial.dashOffset = ambientFlow.dashOffset;
     const approach = (material: { opacity: number }, opacity: number) => {
       material.opacity += (opacity - material.opacity) * blend;
     };
     approach(built.ribbonMaterial, target.ribbon * life);
     approach(built.streamGlowMaterial, target.streamGlow * life);
+    approach(
+      built.streamFlowMaterial,
+      target.streamFlow * ambientFlow.opacityScale,
+    );
     approach(built.streamCoreMaterial, target.streamCore * life);
     approach(built.stitchGlowMaterial, target.stitchGlow * life);
     approach(built.stitchCoreMaterial, target.stitchCore * life);
@@ -643,6 +684,7 @@ export default function ConsensusMemory({
     built.ribbonMaterial.dispose();
     built.streamGeometry.dispose();
     built.streamGlowMaterial.dispose();
+    built.streamFlowMaterial.dispose();
     built.streamCoreMaterial.dispose();
     built.stitchGeometry.dispose();
     built.stitchGlowMaterial.dispose();
@@ -667,6 +709,7 @@ export default function ConsensusMemory({
         frustumCulled={false}
       />
       <primitive object={built.streamGlow} />
+      <primitive object={built.streamFlow} />
       <primitive object={built.streamCore} />
       <primitive object={built.stitchGlow} />
       <primitive object={built.stitchCore} />
