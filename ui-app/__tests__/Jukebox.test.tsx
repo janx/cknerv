@@ -20,8 +20,8 @@ import Jukebox, {
 } from '../src/Jukebox';
 
 const MICHELLE_TRACK = JUKEBOX_TRACKS[0];
-const ARIA_PIANO_TRACK = JUKEBOX_TRACKS[1];
-const ARIANNE_TRACK = JUKEBOX_TRACKS[2];
+const ARIANNE_TRACK = JUKEBOX_TRACKS[1];
+const ARIA_PIANO_TRACK = JUKEBOX_TRACKS[2];
 const SHEET_MUSIC_BOSS_TRACK = JUKEBOX_TRACKS[3];
 
 type WidgetEvent = { currentPosition?: number };
@@ -64,12 +64,18 @@ afterEach(() => {
 });
 
 describe('Jukebox', () => {
-  it('keeps the original pair and appends the requested Komm tracks', () => {
+  it('defines the four named tracks and preserves their sources', () => {
     expect(JUKEBOX_TRACKS.map((track) => track.id)).toEqual([
       'michelle-vocal',
-      'aria-piano',
       'arianne-vocal',
+      'aria-piano',
       'sheet-music-boss-piano',
+    ]);
+    expect(JUKEBOX_TRACKS.map((track) => track.name)).toEqual([
+      'Vocal A',
+      'Vocal B',
+      'Piano A',
+      'Piano B',
     ]);
     expect(ARIANNE_TRACK.trackUrl).toBe(
       'https://soundcloud.com/wisdomdawn/25-komm-susser-tod-come-sweet-death-arianne',
@@ -104,6 +110,12 @@ describe('Jukebox', () => {
     fireEvent.click(opener);
 
     const panel = screen.getByRole('dialog', { name: 'SoundCloud Jukebox' });
+    for (const track of JUKEBOX_TRACKS) {
+      expect(screen.getByText(track.name)).toBeTruthy();
+      expect(screen.getByRole('button', {
+        name: `Select ${track.name}`,
+      })).toBeTruthy();
+    }
     const frame = screen.getByTitle(
       MICHELLE_TRACK.frameTitle,
     ) as HTMLIFrameElement;

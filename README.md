@@ -94,9 +94,10 @@ to `http://localhost:7001`. Release builds embed `ui-app/dist` into the
 
 ### Optional Jukebox
 
-The dashboard includes an optional four-track SoundCloud Jukebox for vocal and
-piano versions of `TSUBASA WO KUDASAI` and `Komm, süsser Tod`, collapsed into a
-small floating button in the bottom-right corner. SoundCloud is not contacted
+The dashboard includes an optional four-track SoundCloud Jukebox labeled
+`Vocal A`, `Vocal B`, `Piano A`, and `Piano B` for versions of
+`TSUBASA WO KUDASAI` and `Komm, süsser Tod`, collapsed into a small floating
+button in the bottom-right corner. SoundCloud is not contacted
 and no audio is loaded during dashboard startup. Clicking the button replaces it
 with SoundCloud's official HTML5 player and requests playback of the selected
 track; browser autoplay policy may still require a second tap, especially on

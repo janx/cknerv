@@ -14,34 +14,23 @@ export const KOMM_VOCAL_LOOP_AT_MS = 360_000;
 export const JUKEBOX_TRACKS = [
   {
     id: 'michelle-vocal',
+    name: 'Vocal A',
     kind: 'VOCAL',
     artist: 'MICHELLE ♥',
     duration: '05:24',
-    selectorLabel: 'Select vocal version uploaded by Michelle',
+    selectorLabel: 'Select Vocal A',
     frameTitle: 'SoundCloud player: 翼をください — Michelle vocal upload',
     trackUrl: 'https://soundcloud.com/nuraminmi/tsubasa-wo-kudasai',
     embedUrl:
       'https://w.soundcloud.com/player/?url=https%3A%2F%2Fapi.soundcloud.com%2Ftracks%2F54664795&color=%2320f0ff&auto_play=true&buying=false&sharing=false&download=false&show_artwork=false&show_playcount=false&hide_related=true&show_comments=false&show_user=true&show_reposts=false&show_teaser=false&visual=false',
   },
   {
-    id: 'aria-piano',
-    kind: 'PIANO',
-    artist: 'ARIALATE',
-    duration: '04:36',
-    selectorLabel: 'Select piano version by AriaLate',
-    frameTitle: 'SoundCloud player: 翼をください — AriaLate piano',
-    trackUrl:
-      'https://soundcloud.com/arialate/evangelion-tsubasa-wo-kudasai-only-piano',
-    embedUrl:
-      'https://w.soundcloud.com/player/?url=https%3A%2F%2Fapi.soundcloud.com%2Ftracks%2F560812260&color=%2320f0ff&auto_play=true&buying=false&sharing=false&download=false&show_artwork=false&show_playcount=false&hide_related=true&show_comments=false&show_user=true&show_reposts=false&show_teaser=false&visual=false',
-  },
-  {
     id: 'arianne-vocal',
+    name: 'Vocal B',
     kind: 'VOCAL',
     artist: 'ARIANNE',
     duration: '06:00',
-    selectorLabel:
-      'Select Arianne vocal version, fading at 5:55 and looping at 6:00',
+    selectorLabel: 'Select Vocal B',
     frameTitle:
       'SoundCloud player: Komm, süsser Tod — Arianne vocal upload',
     trackUrl:
@@ -52,12 +41,25 @@ export const JUKEBOX_TRACKS = [
     loopAtMs: KOMM_VOCAL_LOOP_AT_MS,
   },
   {
+    id: 'aria-piano',
+    name: 'Piano A',
+    kind: 'PIANO',
+    artist: 'ARIALATE',
+    duration: '04:36',
+    selectorLabel: 'Select Piano A',
+    frameTitle: 'SoundCloud player: 翼をください — AriaLate piano',
+    trackUrl:
+      'https://soundcloud.com/arialate/evangelion-tsubasa-wo-kudasai-only-piano',
+    embedUrl:
+      'https://w.soundcloud.com/player/?url=https%3A%2F%2Fapi.soundcloud.com%2Ftracks%2F560812260&color=%2320f0ff&auto_play=true&buying=false&sharing=false&download=false&show_artwork=false&show_playcount=false&hide_related=true&show_comments=false&show_user=true&show_reposts=false&show_teaser=false&visual=false',
+  },
+  {
     id: 'sheet-music-boss-piano',
+    name: 'Piano B',
     kind: 'PIANO',
     artist: 'SHEET MUSIC BOSS',
     duration: '06:39',
-    selectorLabel:
-      'Select Komm, süsser Tod piano version by Sheet Music Boss',
+    selectorLabel: 'Select Piano B',
     frameTitle:
       'SoundCloud player: Komm, süsser Tod — Sheet Music Boss piano upload',
     trackUrl:
@@ -570,7 +572,7 @@ export default function Jukebox() {
                   style={{
                     appearance: 'none',
                     display: 'grid',
-                    gridTemplateColumns: 'auto 1fr auto',
+                    gridTemplateColumns: '1fr auto',
                     alignItems: 'center',
                     minWidth: 0,
                     minHeight: 29,
@@ -591,20 +593,16 @@ export default function Jukebox() {
                     cursor: 'pointer',
                   }}
                 >
-                  <span style={{ color: selected ? ORANGE : DIM }}>
-                    {track.kind}
-                  </span>
                   <span
                     style={{
                       minWidth: 0,
-                      marginLeft: 7,
                       overflow: 'hidden',
-                      color: selected ? INK : DIM,
+                      color: selected ? ORANGE : DIM,
                       textOverflow: 'ellipsis',
                       whiteSpace: 'nowrap',
                     }}
                   >
-                    {track.artist}
+                    {track.name}
                   </span>
                   <span style={{ marginLeft: 7, opacity: .72 }}>
                     {track.duration}
