@@ -4,6 +4,11 @@ export const CELL_SELECTED_FOCUS = 1;
 export const CELL_INSPECTION_GALAXY_ROTATION_SCALE = 0.12;
 export const CONSENSUS_BRAID_BASE_SCALE = 0.3;
 export const CONSENSUS_BRAID_LOCAL_RADIUS = 0.55;
+/** Fine expanded braids need a small screen-space acquisition area: their
+ * luminous lines are readable before their exact pixels are easy to acquire. */
+export const CELL_EXPANDED_PICK_MIN_RADIUS_PX = 14;
+export const CELL_EXPANDED_PICK_PADDING_PX = 5;
+export const CELL_EXPANDED_DETAIL_THRESHOLD = 0.02;
 /** Camera-distance LOD is perceptual state, not motion. Sampling it at 12 Hz
  *  keeps rotation/animation on the render clock while avoiding a full Cell
  *  field transform + GPU attribute upload on every frame. */
@@ -72,6 +77,36 @@ export function cellCanvasCursor(
   return !cellPickerOwnsCursor && !causalNavigationOwnsCursor
     ? ''
     : 'pointer';
+}
+
+/**
+ * Resolve a Cell's screen-space acquisition radius.
+ *
+ * Compact lights retain their exact visible footprint so dense far-field
+ * Cells do not steal one another's pointer. Once the canonical braid is
+ * actually rendered, give its fine lines a bounded pixel pad and a modest
+ * minimum target. Closest-screen-centre selection still resolves overlaps.
+ */
+export function cellPickRadiusPx(
+  pointRadiusPx: number,
+  braidRadiusPx: number,
+  detail: number,
+): number {
+  const pointRadius = Number.isFinite(pointRadiusPx)
+    ? Math.max(0, pointRadiusPx)
+    : 0;
+  const braidRadius = Number.isFinite(braidRadiusPx)
+    ? Math.max(0, braidRadiusPx)
+    : 0;
+  const visibleRadius = Math.max(pointRadius, braidRadius);
+  if (!Number.isFinite(detail) || detail <= CELL_EXPANDED_DETAIL_THRESHOLD) {
+    return visibleRadius;
+  }
+  return Math.max(
+    visibleRadius,
+    CELL_EXPANDED_PICK_MIN_RADIUS_PX,
+    braidRadius + CELL_EXPANDED_PICK_PADDING_PX,
+  );
 }
 
 /** Frame-rate-independent focus easing with a quicker attack than release. */

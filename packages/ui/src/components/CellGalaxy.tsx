@@ -45,6 +45,7 @@ import {
   cellCanvasCursor,
   cellGalaxyRotationScaleTarget,
   cellFocusTarget,
+  cellPickRadiusPx,
   consensusBraidRenderScale,
   dampCellGalaxyRotationScale,
   selectedCellNumericId,
@@ -658,12 +659,14 @@ export function CkbSelectionReticle({ size }: { size: number }) {
 //
 // Pick radius is synced with the visible cell footprint — never a fixed
 // number. For every cell, on every click:
-//   pickRadius_px = max(cellPointHalfExtent_px, braidCircumradius_px)
+//   compact:  pickRadius_px = max(pointHalfExtent_px, braidCircumradius_px)
+//   expanded: pickRadius_px also gets one bounded fine-line acquisition pad
 // where both terms come from the live shaders' world→screen mapping:
 //   gl_PointSize ≈ aSize × 2 × (viewportHeight/2) / viewZ   (hybrid core sprite)
 //   braidR_world = the production A LOD's interaction-aware screen radius
 // Zoom in → cells appear bigger → pick radius grows the same way.
-// No constant slop term — what you see is what you click.
+// The pad applies only while the real braid geometry is actually visible;
+// compact lights keep their exact footprint in the dense far field.
 //
 // Performance: O(N) projections per click, no per-frame cost. N ≤ 20,000
 // (INSTANCE_CAPACITY); each iteration is a couple of Vector3 mul+project
@@ -672,6 +675,7 @@ export function CkbSelectionReticle({ size }: { size: number }) {
 interface CellPickerProps {
   cellsListRef: React.MutableRefObject<Cell[]>;
   drawCountRef: React.MutableRefObject<number>;
+  detailAttr: THREE.BufferAttribute;
   selectedCellIdRef: React.MutableRefObject<number | null>;
   hoveredCellIdRef: React.MutableRefObject<number | null>;
   inspectionFieldRef?: React.RefObject<CellInspectionField | null>;
@@ -697,6 +701,7 @@ export function cellPointerGestureIsClick(delta: number): boolean {
 function CellPicker({
   cellsListRef,
   drawCountRef,
+  detailAttr,
   selectedCellIdRef,
   hoveredCellIdRef,
   inspectionFieldRef,
@@ -723,6 +728,7 @@ function CellPicker({
       const cells = cellsListRef.current;
       const count = Math.min(drawCountRef.current, cells.length);
       if (count === 0) return;
+      const detailArray = detailAttr.array as Float32Array;
       const inspectionField = inspectionFieldRef?.current ?? null;
       const camera = raycaster.camera;
       if (!camera) return;
@@ -756,14 +762,15 @@ function CellPicker({
         const viewZ = -cellView.z;
         if (viewZ <= 0) continue; // behind camera
 
-        // Per-cell pick radius synced to the visible footprint.
+        // Per-cell pick radius synced to the visible footprint. Expanded
+        // braids get a bounded CSS-pixel acquisition pad because their thin
+        // contributor lines are readable before they are easy to acquire.
         //   cell point half-extent (px) = aSize × halfH / viewZ
         //     — matches the hybrid shader's gl_PointSize formula
         //     (aSize × 2 × depthToPx); the sprite quad is what the user
         //     sees as the core/glow.
         //   braid circumradius (px) = BRAID_PICK_RADIUS × halfH / viewZ.
-        // Take the larger so neither layer can leak outside the
-        // clickable area. No constant slop — strictly visual.
+        // Take the larger visual layer, then apply the expanded-only pad.
         const baseCellPointAsize = cellPointSize(c);
         const navigationSizeScale = cellInspectionDirectNavigationRole(
           inspectionField,
@@ -790,7 +797,11 @@ function CellPicker({
           * braidScale
           * camera.projectionMatrix.elements[5]
           * depthToPx;
-        const pickPxR = cellPointPxR > braidPxR ? cellPointPxR : braidPxR;
+        const pickPxR = cellPickRadiusPx(
+          cellPointPxR,
+          braidPxR,
+          detailArray[i] ?? 0,
+        );
         const pickPxRSq = pickPxR * pickPxR;
 
         cellNdc.copy(cellWorld).project(camera);
@@ -837,6 +848,7 @@ function CellPicker({
     };
   }, [
     cellsListRef,
+    detailAttr,
     drawCountRef,
     hoveredCellIdRef,
     inspectionFieldRef,
@@ -1573,6 +1585,7 @@ export default function CellGalaxy({
         <CellPicker
           cellsListRef={cellsListRef}
           drawCountRef={drawCountRef}
+          detailAttr={cellDetailAttr}
           selectedCellIdRef={selectedCellIdRef}
           hoveredCellIdRef={hoveredCellIdRef}
           inspectionFieldRef={inspectionFieldRef}

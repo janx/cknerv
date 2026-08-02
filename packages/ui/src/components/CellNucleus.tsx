@@ -20,6 +20,7 @@ import {
   type GalaxyNucleusCursor,
 } from '../derives/galaxyNucleus.derive';
 import {
+  CELL_EXPANDED_DETAIL_THRESHOLD,
   cellNucleusLodRefreshDue,
   cellFocusTarget,
   consensusBraidRenderScale,
@@ -333,7 +334,7 @@ export default function CellNucleus({
         // actual camera proximity remains the only route to full micro-detail.
         const interactionDetail = focus * (0.68 + cameraDetail * 0.32);
         const detail = Math.max(cameraDetail, interactionDetail);
-        if (detail > 0.02) {
+        if (detail > CELL_EXPANDED_DETAIL_THRESHOLD) {
           near.current.push({
             cell,
             index,
@@ -371,7 +372,7 @@ export default function CellNucleus({
         const focus = Math.max(userFocus, recallDetailFocus);
         const interactionDetail = focus * (0.68 + cameraDetail * 0.32);
         const detail = Math.max(cameraDetail, interactionDetail);
-        if (detail > 0.02) {
+        if (detail > CELL_EXPANDED_DETAIL_THRESHOLD) {
           near.current.push({
             cell,
             index: routeHopIndex,
@@ -467,6 +468,7 @@ export default function CellNucleus({
         buffers,
         writeCursor,
         entry.recall,
+        entry.userFocus,
       );
     }
 

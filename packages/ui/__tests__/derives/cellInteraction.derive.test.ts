@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   CELL_HOVER_FOCUS,
+  CELL_EXPANDED_DETAIL_THRESHOLD,
+  CELL_EXPANDED_PICK_MIN_RADIUS_PX,
+  CELL_EXPANDED_PICK_PADDING_PX,
   CELL_INSPECTION_GALAXY_ROTATION_SCALE,
   CELL_NUCLEUS_LOD_REFRESH_INTERVAL_S,
   CELL_SELECTED_FOCUS,
@@ -8,6 +11,7 @@ import {
   cellGalaxyRotationScaleTarget,
   cellCanvasCursor,
   cellFocusTarget,
+  cellPickRadiusPx,
   cellNucleusLodRefreshDue,
   consensusBraidRenderScale,
   dampCellGalaxyRotationScale,
@@ -37,6 +41,24 @@ describe('cell interaction derivation', () => {
     expect(cellCanvasCursor(true, false)).toBe('pointer');
     expect(cellCanvasCursor(false, true)).toBe('pointer');
     expect(cellCanvasCursor(true, true)).toBe('pointer');
+  });
+
+  it('adds bounded acquisition room only after the real braid expands', () => {
+    expect(cellPickRadiusPx(4, 6, 0)).toBe(6);
+    expect(cellPickRadiusPx(4, 6, CELL_EXPANDED_DETAIL_THRESHOLD)).toBe(6);
+    expect(cellPickRadiusPx(
+      4,
+      6,
+      CELL_EXPANDED_DETAIL_THRESHOLD + 0.001,
+    )).toBe(
+      CELL_EXPANDED_PICK_MIN_RADIUS_PX,
+    );
+    expect(cellPickRadiusPx(4, 18, 1)).toBe(
+      18 + CELL_EXPANDED_PICK_PADDING_PX,
+    );
+    expect(cellPickRadiusPx(Number.NaN, -4, 1)).toBe(
+      CELL_EXPANDED_PICK_MIN_RADIUS_PX,
+    );
   });
 
   it('eases the galaxy into a slower inspection tempo and back out', () => {

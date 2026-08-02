@@ -16,6 +16,10 @@ import {
 import { consensusMemoryEvidenceFocusScale } from '../nerve/consensusMemoryTrace';
 import { consensusMemoryCoreEnergy } from './consensusMemoryCore.derive';
 import { consensusMemoryExpandedVisibility } from './consensusMemoryLod.derive';
+import {
+  CELL_EXPANDED_DETAIL_THRESHOLD,
+  CELL_HOVER_FOCUS,
+} from './cellInteraction.derive';
 
 export interface GalaxyNucleusBuffers {
   linePos: Float32Array;
@@ -175,6 +179,7 @@ export function writeGalaxyConsensusBraidBuffers(
   buffers: GalaxyNucleusBuffers,
   cursor: GalaxyNucleusCursor,
   recall: GalaxyNucleusRecallResponse | null = null,
+  interactionFocus = 0,
 ): GalaxyNucleusCursor {
   let lineVertices = cursor.lineVertices;
   let nodes = cursor.nodes;
@@ -188,13 +193,24 @@ export function writeGalaxyConsensusBraidBuffers(
     buffers.nodeAlpha.length,
     buffers.nodeResolve.length,
   );
-  const midVisibility = smoothstep(0.02, 0.7, detail);
+  const midVisibility = smoothstep(CELL_EXPANDED_DETAIL_THRESHOLD, 0.7, detail);
   const nearVisibility = consensusMemoryExpandedVisibility(detail);
   const life = cell.death_at_ms === null ? 1 : 0.56;
   const [originX, originY, originZ] = cell.pos_seed;
   const recallStrength = Math.max(0, Math.min(1, recall?.strength ?? 0));
   const recallPhase = ((recall?.phase ?? 0) % 1 + 1) % 1;
   const recallConvergence = Math.max(0, Math.min(1, recall?.convergence ?? 0));
+  const focus = Number.isFinite(interactionFocus)
+    ? Math.max(0, Math.min(1, interactionFocus))
+    : 0;
+  // The compact core already owns an interrupted focus ring. When camera LOD
+  // has handed the Cell over to its real braid, carry that same interaction
+  // directly through the contributor paths so hover cannot disappear with the
+  // softened light. Hover reaches full signal at the shared 0.46 focus target;
+  // selection adds a restrained lock increment instead of changing topology.
+  const hoverSignal = smoothstep(0.02, CELL_HOVER_FOCUS, focus);
+  const selectionSignal = smoothstep(CELL_HOVER_FOCUS, 1, focus);
+  const interactionStrength = hoverSignal * 0.42 + selectionSignal * 0.18;
   const coreEnergy = consensusMemoryCoreEnergy(
     recallStrength,
     recallConvergence,
@@ -244,6 +260,20 @@ export function writeGalaxyConsensusBraidBuffers(
       : recall?.role === 'source'
         ? CONSENSUS_BRAID_PALETTE.violet
         : CONSENSUS_BRAID_PALETTE.cyan;
+    // Keep the resting 12 Hz LOD rewrite on its previous cheap path: the
+    // interrupted phase work is paid only while hover/selection is active.
+    const interactionEnergy = interactionStrength === 0
+      ? 0
+      : interactionStrength * (
+        0.38 + 0.62 * smoothstep(
+          -0.3,
+          0.66,
+          Math.sin(segmentPhase * Math.PI * 4 + cell.id * 0.17),
+        )
+      ) * midVisibility * life;
+    const interactionTint = segmentPhase < 0.5
+      ? CONSENSUS_BRAID_PALETTE.paleGold
+      : CONSENSUS_BRAID_PALETTE.cyan;
     for (let endpoint = 0; endpoint < 2; endpoint += 1) {
       const source = sourceOffset + endpoint * 3;
       const target = lineVertices * 3;
@@ -252,13 +282,16 @@ export function writeGalaxyConsensusBraidBuffers(
       buffers.linePos[target + 2] = originZ + braid.segments[source + 2] * scale;
       buffers.lineCol[target] = braid.colors[source]
         * baseVisibility * baseVisibilityScale
-        + memoryTint[0] * memoryEnergy;
+        + memoryTint[0] * memoryEnergy
+        + interactionTint[0] * interactionEnergy;
       buffers.lineCol[target + 1] = braid.colors[source + 1]
         * baseVisibility * baseVisibilityScale
-        + memoryTint[1] * memoryEnergy;
+        + memoryTint[1] * memoryEnergy
+        + interactionTint[1] * interactionEnergy;
       buffers.lineCol[target + 2] = braid.colors[source + 2]
         * baseVisibility * baseVisibilityScale
-        + memoryTint[2] * memoryEnergy;
+        + memoryTint[2] * memoryEnergy
+        + interactionTint[2] * interactionEnergy;
       lineVertices += 1;
     }
   }
