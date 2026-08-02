@@ -1,7 +1,7 @@
 // CellNucleusPortrait — dedicated detail Canvas for the selected consensus
 // record. The portrait renders the chosen code-native core directly; no legacy
 // specimen/anatomy graph is layered behind it. `focusField` is the readable A
-// grammar used by CellDetailPanel's scan and row selection.
+// grammar used only by explicit CellDetailPanel row selection.
 import { useMemo, useState } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';

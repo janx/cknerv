@@ -209,8 +209,9 @@ export default function CellDetailPanel({
     born: { label: 'COMMIT', value: `#${cell.birth_block}` },
   };
 
-  // Scan state for THIS render. During decoding it walks the six visible A
-  // layers; after classification, clicking a row becomes the focus source.
+  // Scan state for THIS render. It reveals the six decoded readout rows while
+  // leaving the portrait stable; only an explicit row action focuses one of
+  // A's layers after classification.
   const activeClock = scanClock.cellId === cell.id
     ? scanClock
     : { cellId: cell.id, epochMs: scanClock.nowMs, nowMs: scanClock.nowMs };
@@ -227,14 +228,12 @@ export default function CellDetailPanel({
       : `READING IDENTITY ${p.pct}%`;
   const statusColor = p.classified ? HUD_COLORS.nominal : HUD_COLORS.cyanWire;
   const interactive = p.classified;
-  const focusField = interactive
-    ? selectedField
-    : order[Math.min(p.activeIndex, order.length - 1)] ?? null;
+  const focusField = interactive ? selectedField : null;
 
   // All seven readout rows remain mounted and opacity-gated. The six encoded
-  // rows resolve in the same order that the portrait emphasizes their layers;
-  // AGE is temporal context and always shown. Immutable address + content
-  // identity have moved into the consensus-memory plate below.
+  // rows resolve in field order without driving auxiliary portrait lines; AGE
+  // is temporal context and always shown. Immutable address + content identity
+  // have moved into the consensus-memory plate below.
   const rows: Array<RowDecode & { on: boolean; field?: Field }> = [
     ...order.map((field, index) => ({
       ...DECODE[field],
@@ -258,7 +257,7 @@ export default function CellDetailPanel({
     }}>
       <CloseButton onClose={onClose} />
       <PanelHeader en="CELL" cjk="共识细胞" idx={`0x${cell.content_hash.slice(2, 10)}`} accent={HUD_COLORS.orange} />
-      {/* The scan now acts on A itself: each phase emphasizes one encoded layer. */}
+      {/* Entry decoding leaves A stable; explicit row selection owns focus. */}
       <div style={{ position: 'relative', marginBottom: 10 }}>
         <CellNucleusPortrait
           cell={cell}
