@@ -293,8 +293,11 @@ export function buildNeighborGraph(
     const component: number[] = [];
     const queue = [start];
     unvisited.delete(start);
-    while (queue.length > 0) {
-      const id = queue.shift()!;
+    // Cursor traversal keeps this pass linear. Array.shift() moves the whole
+    // remaining queue and turns a connected 20K graph into an accidental
+    // O(N²) main-thread pause during canonical reconciliation.
+    for (let head = 0; head < queue.length; head += 1) {
+      const id = queue[head];
       component.push(id);
       for (const nb of adjacency.get(id) ?? []) {
         if (!unvisited.has(nb)) continue;

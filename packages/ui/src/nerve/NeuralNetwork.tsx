@@ -33,7 +33,11 @@ import {
 } from '../tweaks/cellDisplay';
 import { buildNeighborGraph, emptyNeighborGraph, type NeighborGraph } from '../geometry/neighborGraph';
 import { buildPassiveNeighborGraph } from '../geometry/passiveNeighborGraph';
-import { cellRenderList, cellRenderMap } from '../geometry/cellRenderSet';
+import {
+  cellRenderList,
+  cellRenderMap,
+  sameCellRenderTopology,
+} from '../geometry/cellRenderSet';
 import { type Pulse, type PulsePlanningOptions } from './pulseRunner';
 import {
   planLinkBatch,
@@ -43,7 +47,7 @@ import {
 } from './pulseBatch';
 import { pulseStats } from './pulseStats';
 import { diffCells, snapshotCells, type CellSnapshotEntry } from './cellsDelta';
-import { planMeshUpdate, shouldReconcile } from './livingMeshDriver';
+import { planMeshUpdate } from './livingMeshDriver';
 import NeuralFabric, { type NeuralFabricHandles } from './NeuralFabric';
 import { bezierAt, bezierControl, fabricEdgeSeed } from '../geometry/edgeBezier';
 import { consensusRouteHopWorldPosition } from '../derives/consensusRouteCamera.derive';
@@ -156,7 +160,6 @@ const MEMORY_ROUTE_HOP_LOCK_PULSE_TAIL_DECAY = 6.5;
 const MEMORY_SOURCE_HANDOFF_FLARE_BRIGHT = 1.18;
 const MEMORY_SOURCE_HANDOFF_FLARE_TAIL_DECAY = 0.42;
 const RIPPLE_STAGGER_MS = 60;      // per-birth grow-in delay within a block
-const RECONCILE_EVERY_N_BLOCKS = 6; // canonical drift repair cadence
 
 interface NeuralNetworkProps {
   /** Server projection cap used by CellGalaxy's AUTO display budget. Passive
@@ -273,18 +276,21 @@ export default function NeuralNetwork({
   // plus a small deterministic cross-link sample. Hidden cache
   // entries therefore cannot leave visible fibres behind.
   //
-  // The add-only incremental path never grows the symmetric in-edges an
-  // existing cell would gain from a newcomer, so every RECONCILE_EVERY_N_BLOCKS
-  // blocks' worth of births we rebuild the canonical routing graph.
+  // Live changes stay incremental. A full 20K canonical rebuild is reserved
+  // for bootstrap or an explicit topology-option change; doing it on a birth
+  // cadence blocks the render thread during the event it is meant to show.
   const graphRef = useRef<NeighborGraph>(emptyNeighborGraph());
   const passiveGraphRef = useRef<NeighborGraph>(emptyNeighborGraph());
+  const displayGraphRef = useRef<NeighborGraph>(emptyNeighborGraph());
   const displayCellsRef = useRef<Map<number, Cell>>(new Map());
   const fabricHandlesRef = useRef<NeuralFabricHandles | null>(null);
   const inspectionFieldSnapshotRef = useRef<CellInspectionField | null>(null);
   const prevCellsRef = useRef<Map<number, CellSnapshotEntry>>(new Map());
   const bootstrappedRef = useRef(false);
-  const blockCountRef = useRef(0);
   const routingTopologyRef = useRef('');
+  const displayTopologyRef = useRef('');
+  const displayInspectionCellIdRef = useRef<number | null>(null);
+  const displayBootstrappedRef = useRef(false);
 
   const syncDisplayFabric = useCallback(() => {
     const visibleCells = cellRenderList(
@@ -293,26 +299,56 @@ export default function NeuralNetwork({
       inspectionCellId,
       inspectionFieldSnapshotRef.current,
     );
-    const displayCells = cellRenderMap(visibleCells);
-    const displayGraph = buildNeighborGraph(displayCells, {
-      k: topology?.neighborK,
-      maxEdgeLength: topology?.maxEdgeLength,
-    });
-    const passiveGraph = buildPassiveNeighborGraph(displayGraph, {
-      preferredEdges: passiveGraphRef.current.edges,
-    });
+    const topologyKey = `${topology?.neighborK ?? ''}:${topology?.maxEdgeLength ?? ''}`;
+    const topologyChanged = (
+      !displayBootstrappedRef.current
+      || displayTopologyRef.current !== topologyKey
+      || !sameCellRenderTopology(displayCellsRef.current, visibleCells)
+    );
+    const inspectionChanged = (
+      displayInspectionCellIdRef.current !== inspectionCellId
+    );
+
+    // New births append behind the bounded visible prefix in the usual 20K
+    // cache. They still join the complete routing graph below, but must not
+    // rebuild the unchanged 6K display graph or restart every fibre lifecycle.
+    if (!topologyChanged && !inspectionChanged) {
+      if (inspectionFieldRef) {
+        inspectionFieldRef.current = inspectionFieldSnapshotRef.current;
+      }
+      return;
+    }
+
+    let displayGraph = displayGraphRef.current;
+    if (topologyChanged) {
+      const displayCells = cellRenderMap(visibleCells);
+      displayGraph = buildNeighborGraph(displayCells, {
+        k: topology?.neighborK,
+        maxEdgeLength: topology?.maxEdgeLength,
+      });
+      const passiveGraph = buildPassiveNeighborGraph(displayGraph, {
+        preferredEdges: passiveGraphRef.current.edges,
+      });
+      displayCellsRef.current = displayCells;
+      displayGraphRef.current = displayGraph;
+      passiveGraphRef.current = passiveGraph;
+      displayTopologyRef.current = topologyKey;
+      displayBootstrappedRef.current = true;
+      fabricHandlesRef.current?.setFabric(
+        passiveGraph,
+        displayCells,
+        simClock.elapsedSec,
+      );
+    }
     const next = deriveCellInspectionField(
       displayGraph,
       inspectionCellId,
     );
 
-    displayCellsRef.current = displayCells;
-    passiveGraphRef.current = passiveGraph;
+    displayInspectionCellIdRef.current = inspectionCellId;
     inspectionFieldSnapshotRef.current = next;
     if (inspectionFieldRef) inspectionFieldRef.current = next;
-    const handles = fabricHandlesRef.current;
-    handles?.setFabric(passiveGraph, displayCells, simClock.elapsedSec);
-    handles?.setInspectionField(next);
+    fabricHandlesRef.current?.setInspectionField(next);
   }, [
     cellDisplayLimit,
     cellsCache.cells,
@@ -341,7 +377,6 @@ export default function NeuralNetwork({
       graphRef.current = buildNeighborGraph(cells, opts);
       prevCellsRef.current = snapshotCells(cells);
       routingTopologyRef.current = topologyKey;
-      blockCountRef.current = 0;
       return;
     }
 
@@ -369,14 +404,7 @@ export default function NeuralNetwork({
       );
     }
 
-    // Periodic canonical reconciliation (off the race path).
-    blockCountRef.current += diff.born.length; // proxy: births ≈ per-block activity
-    if (shouldReconcile(blockCountRef.current, RECONCILE_EVERY_N_BLOCKS)) {
-      blockCountRef.current = 0;
-      graphRef.current = buildNeighborGraph(cells, opts);
-    }
   }, [
-    cellsCache.revision,
     cellsCache.cells,
     topology?.neighborK,
     topology?.maxEdgeLength,

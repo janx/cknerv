@@ -163,16 +163,49 @@ export function fromCellsSnapshot(
   };
 }
 
-/** Shallow working copy whose mutable collections are fresh so in-place
- *  mutation never leaks into the caller's cache. Primitive fields ride along
- *  via spread. */
-function cloneForMutation(prev: CellGalaxyCache): CellGalaxyCache {
+/** Copy-on-write cache draft. Projection frames contain many deltas that do
+ *  not touch Cell membership (pulse/stats/link/backfill). Keeping `cells`
+ *  referentially stable for those frames lets renderers skip their expensive
+ *  topology/static-buffer paths, while the first real Cell mutation in a
+ *  batch still takes exactly one defensive Map copy. */
+interface CellGalaxyDraft {
+  value: CellGalaxyCache;
+  cellsOwned: boolean;
+  recentLinksOwned: boolean;
+  pulseLinksOwned: boolean;
+}
+
+function createDraft(prev: CellGalaxyCache): CellGalaxyDraft {
   return {
-    ...prev,
-    cells: new Map(prev.cells),
-    recentLinks: prev.recentLinks.slice(),
-    pulseLinks: prev.pulseLinks.slice(),
+    value: { ...prev },
+    cellsOwned: false,
+    recentLinksOwned: false,
+    pulseLinksOwned: false,
   };
+}
+
+function writableCells(draft: CellGalaxyDraft): Map<number, Cell> {
+  if (!draft.cellsOwned) {
+    draft.value.cells = new Map(draft.value.cells);
+    draft.cellsOwned = true;
+  }
+  return draft.value.cells;
+}
+
+function writableRecentLinks(draft: CellGalaxyDraft): CellLink[] {
+  if (!draft.recentLinksOwned) {
+    draft.value.recentLinks = draft.value.recentLinks.slice();
+    draft.recentLinksOwned = true;
+  }
+  return draft.value.recentLinks;
+}
+
+function writablePulseLinks(draft: CellGalaxyDraft): CellLink[] {
+  if (!draft.pulseLinksOwned) {
+    draft.value.pulseLinks = draft.value.pulseLinks.slice();
+    draft.pulseLinksOwned = true;
+  }
+  return draft.value.pulseLinks;
 }
 
 function appendBounded<T>(items: T[], item: T, capacity: number): void {
@@ -190,29 +223,31 @@ function appendBounded<T>(items: T[], item: T, capacity: number): void {
  *  (death/tag of a missing cell are no-ops). Shared by the pure single-delta
  *  `applyCellDelta` and the batched `applyRevisionedCellDeltas`. */
 function mutateCellDelta(
-  c: CellGalaxyCache,
+  draft: CellGalaxyDraft,
   d: CellDelta,
   opts: CellsReducerOptions,
 ): boolean {
+  const c = draft.value;
   switch (d.type) {
     case 'birth': {
-      c.cells.set(d.cell.id, d.cell);
+      writableCells(draft).set(d.cell.id, d.cell);
       return true;
     }
     case 'death': {
       const existing = c.cells.get(d.id);
       if (!existing) return false;
-      c.cells.set(d.id, { ...existing, death_at_ms: d.at_ms });
+      writableCells(draft).set(d.id, { ...existing, death_at_ms: d.at_ms });
       return true;
     }
     case 'tag': {
       const existing = c.cells.get(d.id);
       if (!existing) return false;
-      c.cells.set(d.id, { ...existing, tag: d.tag });
+      writableCells(draft).set(d.id, { ...existing, tag: d.tag });
       return true;
     }
     case 'gc': {
-      for (const id of d.ids) c.cells.delete(id);
+      const cells = writableCells(draft);
+      for (const id of d.ids) cells.delete(id);
       return true;
     }
     case 'pulse': {
@@ -240,6 +275,8 @@ function mutateCellDelta(
       }
       c.recentLinks = c.recentLinks.filter((link) => link.block < d.from_block);
       c.pulseLinks = c.pulseLinks.filter((link) => link.block < d.from_block);
+      draft.recentLinksOwned = true;
+      draft.pulseLinksOwned = true;
       // Never rewind linksSeq: replacement-chain links must receive fresh
       // identities so stale cursors and recall requests cannot alias them.
       c.linkPrune = { fromBlock: d.from_block, invalidatedCells };
@@ -258,8 +295,16 @@ function mutateCellDelta(
         tag: d.tag,
         at_ms: d.at_ms,
       };
-      appendBounded(c.recentLinks, link, recentLinksCapacity(opts));
-      appendBounded(c.pulseLinks, link, linkRingCapacity(opts));
+      appendBounded(
+        writableRecentLinks(draft),
+        link,
+        recentLinksCapacity(opts),
+      );
+      appendBounded(
+        writablePulseLinks(draft),
+        link,
+        linkRingCapacity(opts),
+      );
       c.linksSeq = nextSeq;
       return true;
     }
@@ -283,8 +328,8 @@ export function applyCellDelta(
   d: CellDelta,
   opts: CellsReducerOptions = {},
 ): CellGalaxyCache {
-  const next = cloneForMutation(prev);
-  return mutateCellDelta(next, d, opts) ? next : prev;
+  const draft = createDraft(prev);
+  return mutateCellDelta(draft, d, opts) ? draft.value : prev;
 }
 
 export function applyRevisionedCellDeltas(
@@ -293,16 +338,17 @@ export function applyRevisionedCellDeltas(
   opts: CellsReducerOptions = {},
 ): CellGalaxyCache {
   if (deltas.length === 0) return prev;
-  // One clone for the whole batch — every delta mutates this single working
-  // copy, so a flood of N deltas costs one Map copy, not N.
-  const next = cloneForMutation(prev);
+  // One copy-on-write draft for the whole batch. A flood of N Cell deltas
+  // costs one Map copy; a batch containing only event/counter deltas costs no
+  // Map copy at all.
+  const draft = createDraft(prev);
   let changed = false;
   let maxRev = prev.revision;
   for (const rd of deltas) {
-    if (mutateCellDelta(next, rd.delta, opts)) changed = true;
+    if (mutateCellDelta(draft, rd.delta, opts)) changed = true;
     if (rd.revision > maxRev) maxRev = rd.revision;
   }
   if (!changed && maxRev === prev.revision) return prev;
-  next.revision = maxRev;
-  return next;
+  draft.value.revision = maxRev;
+  return draft.value;
 }

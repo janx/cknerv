@@ -108,6 +108,28 @@ describe('applyCellDelta', () => {
     expect(c.totalDeaths).toBe(17);
   });
 
+  it('preserves the Cell Map for event-only deltas', () => {
+    const populated = applyCellDelta(emptyCellsCache(), {
+      type: 'birth',
+      cell: cell(1),
+    });
+    const cells = populated.cells;
+
+    const pulsed = applyCellDelta(populated, { type: 'pulse', at_ms: 12345 });
+    const stats = applyCellDelta(pulsed, {
+      type: 'stats',
+      total_births: 1,
+      total_deaths: 0,
+    });
+    const linked = applyCellDelta(stats, linkDelta('0xtx', 1));
+
+    expect(pulsed.cells).toBe(cells);
+    expect(stats.cells).toBe(cells);
+    expect(linked.cells).toBe(cells);
+    expect(linked.recentLinks).not.toBe(stats.recentLinks);
+    expect(linked.pulseLinks).not.toBe(stats.pulseLinks);
+  });
+
   it('link appends with a fresh monotonic seq', () => {
     let c = emptyCellsCache();
     c = applyCellDelta(c, {
@@ -306,6 +328,23 @@ describe('applyRevisionedCellDeltas (batched)', () => {
     expect(out.recentLinks.map((l) => l.seq)).toEqual([1, 2]);
     expect(out.recentLinks.map((l) => l.tx_hash)).toEqual(['0xa', '0xb']);
     expect(out.pulseLinks.map((l) => l.tx_hash)).toEqual(['0xa', '0xb']);
+  });
+
+  it('keeps collection identities lazy across an event-only batch', () => {
+    const start = applyCellDelta(emptyCellsCache(), {
+      type: 'birth',
+      cell: cell(1),
+    });
+    const out = applyRevisionedCellDeltas(start, [
+      rd(2, { type: 'pulse', at_ms: 2000 }),
+      rd(3, { type: 'stats', total_births: 1, total_deaths: 0 }),
+    ]);
+
+    expect(out).not.toBe(start);
+    expect(out.revision).toBe(3);
+    expect(out.cells).toBe(start.cells);
+    expect(out.recentLinks).toBe(start.recentLinks);
+    expect(out.pulseLinks).toBe(start.pulseLinks);
   });
 
   it('keeps the prune event one-shot while replacement links receive fresh seq values', () => {

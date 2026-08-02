@@ -45,6 +45,22 @@ describe('addCell', () => {
     g.adjacency.set(2, new Set());
     expect(addCell(g, 2, cells, { k: 2 }).addedEdges).toEqual([]);
   });
+
+  it('selects only the nearest k entries from a dense candidate field', () => {
+    const cells = new Map<number, Cell>();
+    cells.set(1, cell(1, 0, 0));
+    for (let id = 2; id <= 100; id += 1) {
+      cells.set(id, cell(id, id - 1, 0));
+    }
+    const g = emptyNeighborGraph();
+
+    const { addedEdges } = addCell(g, 1, cells, {
+      k: 4,
+      maxEdgeLength: 200,
+    });
+
+    expect(addedEdges.map((edge) => edge.to)).toEqual([2, 3, 4, 5]);
+  });
 });
 
 describe('removeCell', () => {

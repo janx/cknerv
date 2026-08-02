@@ -44,6 +44,11 @@ export interface ProjectionStreamHandle {
   disconnect: () => void;
 }
 
+/** RAF is the natural batching boundary for render-facing projection state.
+ *  The timeout keeps an inactive/hidden document from leaving its reconnect
+ *  cursor behind indefinitely while RAF is suspended. */
+const DELTA_BATCH_FALLBACK_MS = 50;
+
 /**
  * Generic projection-stream connect helper. The caller supplies:
  *  - `fromSnapshot(rev, payload)` → fresh Cache value
@@ -74,6 +79,44 @@ export function connectProjectionStream<Cache, Snapshot, Delta>(
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let cache: Cache = initial;
   let needsResync = false;
+  let pendingDeltas: { revision: number; delta: Delta }[] = [];
+  let cancelDeltaFlush: (() => void) | null = null;
+
+  const flushPendingDeltas = () => {
+    const cancel = cancelDeltaFlush;
+    cancelDeltaFlush = null;
+    cancel?.();
+    if (stopped || pendingDeltas.length === 0) return;
+    const deltas = pendingDeltas;
+    pendingDeltas = [];
+    cache = hooks.applyDeltas(cache, deltas);
+    onChange(cache);
+  };
+
+  const discardPendingDeltas = () => {
+    pendingDeltas = [];
+    const cancel = cancelDeltaFlush;
+    cancelDeltaFlush = null;
+    cancel?.();
+  };
+
+  const scheduleDeltaFlush = () => {
+    if (cancelDeltaFlush !== null) return;
+    if (typeof requestAnimationFrame === 'function') {
+      const frameId = requestAnimationFrame(flushPendingDeltas);
+      const timeoutId = setTimeout(
+        flushPendingDeltas,
+        DELTA_BATCH_FALLBACK_MS,
+      );
+      cancelDeltaFlush = () => {
+        cancelAnimationFrame(frameId);
+        clearTimeout(timeoutId);
+      };
+      return;
+    }
+    const timeoutId = setTimeout(flushPendingDeltas, 0);
+    cancelDeltaFlush = () => clearTimeout(timeoutId);
+  };
 
   const health = createStreamHealthTracker(opts, () => {
     try {
@@ -110,16 +153,22 @@ export function connectProjectionStream<Cache, Snapshot, Delta>(
       if (frame.kind === 'heartbeat') {
         health.message(needsResync);
       } else if (frame.kind === 'snapshot') {
+        // A snapshot is authoritative at its exact point in the ordered
+        // stream. Any uncommitted older deltas must not apply after it.
+        discardPendingDeltas();
         cache = hooks.fromSnapshot(frame.revision, frame.snapshot);
         needsResync = false;
         health.message();
         onChange(cache);
       } else if (frame.kind === 'delta') {
-        cache = hooks.applyDeltas(cache, frame.deltas);
         needsResync = false;
         health.message();
-        onChange(cache);
+        if (frame.deltas.length > 0) {
+          pendingDeltas.push(...frame.deltas);
+          scheduleDeltaFlush();
+        }
       } else if (frame.kind === 'lagged') {
+        discardPendingDeltas();
         needsResync = true;
         health.resyncing();
         cache = hooks.markLagged(cache);
@@ -134,6 +183,10 @@ export function connectProjectionStream<Cache, Snapshot, Delta>(
     const onClose = () => {
       if (stopped) return;
       if (reconnectTimer !== null) return;
+      // Commit every frame received before an ordinary transport close so
+      // reconnect resumes from the newest applied revision. A lagged frame
+      // already discarded the unsafe batch and reset the cursor above.
+      flushPendingDeltas();
       health.closed(needsResync);
       reconnectTimer = setTimeout(() => {
         reconnectTimer = null;
@@ -150,6 +203,7 @@ export function connectProjectionStream<Cache, Snapshot, Delta>(
     disconnect: () => {
       stopped = true;
       health.stop();
+      discardPendingDeltas();
       if (reconnectTimer !== null) {
         clearTimeout(reconnectTimer);
         reconnectTimer = null;

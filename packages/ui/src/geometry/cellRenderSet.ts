@@ -117,3 +117,28 @@ export function cellRenderList(
 export function cellRenderMap(cells: readonly Cell[]): Map<number, Cell> {
   return new Map(cells.map((cell) => [cell.id, cell]));
 }
+
+/** Whether a newly resolved display list would produce the same neighbour
+ *  topology as the previous one. Tags and other payload fields deliberately
+ *  do not participate: graph construction depends only on ordered membership,
+ *  live/dead status, and position. */
+export function sameCellRenderTopology(
+  previous: ReadonlyMap<number, Cell>,
+  next: readonly Cell[],
+): boolean {
+  if (previous.size !== next.length) return false;
+  const previousCells = previous.values();
+  for (const cell of next) {
+    const entry = previousCells.next();
+    if (entry.done) return false;
+    const prior = entry.value;
+    if (
+      prior.id !== cell.id
+      || (prior.death_at_ms === null) !== (cell.death_at_ms === null)
+      || prior.pos_seed[0] !== cell.pos_seed[0]
+      || prior.pos_seed[1] !== cell.pos_seed[1]
+      || prior.pos_seed[2] !== cell.pos_seed[2]
+    ) return false;
+  }
+  return previousCells.next().done === true;
+}

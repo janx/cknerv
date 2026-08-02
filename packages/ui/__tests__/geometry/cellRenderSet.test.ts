@@ -3,6 +3,7 @@ import type { Cell } from '@cknerv/types';
 import {
   cellRenderList,
   cellRenderMap,
+  sameCellRenderTopology,
 } from '../../src/geometry/cellRenderSet';
 import type { CellInspectionField } from '../../src/nerve/cellInspectionField';
 
@@ -43,5 +44,25 @@ describe('cellRenderList', () => {
     expect(rendered).toHaveLength(4);
     expect(renderedMap.size).toBe(4);
     expect([...renderedMap.keys()]).toEqual(expect.arrayContaining([7, 8, 9]));
+  });
+});
+
+describe('sameCellRenderTopology', () => {
+  it('ignores payload-only changes but detects structural display changes', () => {
+    const previous = cellRenderMap([cell(1), cell(2)]);
+
+    expect(sameCellRenderTopology(previous, [
+      { ...cell(1), tag: 'dex' },
+      cell(2),
+    ])).toBe(true);
+    expect(sameCellRenderTopology(previous, [cell(2), cell(1)])).toBe(false);
+    expect(sameCellRenderTopology(previous, [
+      { ...cell(1), death_at_ms: 5000 },
+      cell(2),
+    ])).toBe(false);
+    expect(sameCellRenderTopology(previous, [
+      { ...cell(1), pos_seed: [99, 0, 0] },
+      cell(2),
+    ])).toBe(false);
   });
 });
