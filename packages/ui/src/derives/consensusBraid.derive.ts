@@ -136,7 +136,7 @@ export function consensusBraidLayerOpacity(
   const normal: ConsensusBraidLayerOpacity = {
     ribbon: Math.max(0.25, 0.38 - (strandCount - 3) * 0.05),
     streamGlow: 0.045,
-    streamFlow: 0.14,
+    streamFlow: 0.18,
     streamCore: 0.74 - (strandCount - 3) * 0.1,
     stitchGlow: 0.055,
     stitchCore: 0.72,
@@ -150,7 +150,7 @@ export function consensusBraidLayerOpacity(
     return {
       ribbon: 0.56,
       streamGlow: 0.025,
-      streamFlow: 0.025,
+      streamFlow: 0.06,
       streamCore: 0.22,
       stitchGlow: 0.018,
       stitchCore: 0.12,
@@ -165,7 +165,7 @@ export function consensusBraidLayerOpacity(
     return {
       ribbon: 0.14,
       streamGlow: 0.1,
-      streamFlow: 0.2,
+      streamFlow: 0.28,
       streamCore: 0.98,
       stitchGlow: 0.02,
       stitchCore: 0.16,
@@ -180,7 +180,7 @@ export function consensusBraidLayerOpacity(
     return {
       ribbon: 0.42,
       streamGlow: 0.07,
-      streamFlow: 0.17,
+      streamFlow: 0.24,
       streamCore: 0.86,
       stitchGlow: 0.035,
       stitchCore: 0.28,
@@ -195,7 +195,7 @@ export function consensusBraidLayerOpacity(
     return {
       ribbon: 0.1,
       streamGlow: 0.025,
-      streamFlow: 0.055,
+      streamFlow: 0.1,
       streamCore: 0.2,
       stitchGlow: 0.12,
       stitchCore: 0.92,
@@ -210,7 +210,7 @@ export function consensusBraidLayerOpacity(
     return {
       ribbon: 0.08,
       streamGlow: 0.02,
-      streamFlow: 0.025,
+      streamFlow: 0.06,
       streamCore: 0.14,
       stitchGlow: 0.018,
       stitchCore: 0.12,

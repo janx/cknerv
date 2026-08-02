@@ -12,6 +12,7 @@ import {
   consensusMemoryPortraitResponse,
 } from '../../derives/consensusMemoryPortrait.derive';
 import {
+  CONSENSUS_MEMORY_AMBIENT_FLOW_PERIOD,
   consensusMemoryAmbientFlowFrame,
   consensusMemoryCoreEnergy,
 } from '../../derives/consensusMemoryCore.derive';
@@ -55,6 +56,13 @@ const READ_HEAD_POSITION = new THREE.Vector3();
 const READ_HEAD_TANGENT = new THREE.Vector3();
 const READ_HEAD_QUATERNION = new THREE.Quaternion();
 const READ_HEAD_SCALE = new THREE.Vector3();
+const AMBIENT_FLOW_HEAD_TRAIL = 5;
+const MAX_AMBIENT_FLOW_HEADS = 5 * AMBIENT_FLOW_HEAD_TRAIL;
+const AMBIENT_FLOW_HEAD_MATRIX = new THREE.Matrix4();
+const AMBIENT_FLOW_HEAD_POSITION = new THREE.Vector3();
+const AMBIENT_FLOW_HEAD_TANGENT = new THREE.Vector3();
+const AMBIENT_FLOW_HEAD_QUATERNION = new THREE.Quaternion();
+const AMBIENT_FLOW_HEAD_SCALE = new THREE.Vector3();
 
 function makeLineMaterial(width: number, opacity: number): LineMaterial {
   const material = new LineMaterial({
@@ -70,20 +78,33 @@ function makeLineMaterial(width: number, opacity: number): LineMaterial {
   return material;
 }
 
-function makeAmbientFlowMaterial(): LineMaterial {
+type AmbientFlowProfile = 'glow' | 'core';
+
+const AMBIENT_FLOW_GLOW_DASH = 0.32;
+const AMBIENT_FLOW_CORE_DASH = 0.1;
+
+function makeAmbientFlowMaterial(profile: AmbientFlowProfile): LineMaterial {
+  const dashSize = profile === 'glow'
+    ? AMBIENT_FLOW_GLOW_DASH
+    : AMBIENT_FLOW_CORE_DASH;
   const material = new LineMaterial({
-    linewidth: 2.6,
+    color: profile === 'glow'
+      ? new THREE.Color(...CONSENSUS_BRAID_PALETTE.gold)
+      : new THREE.Color(1, 0.95, 0.78),
+    linewidth: profile === 'glow' ? 6.4 : 1.4,
     opacity: 0,
     transparent: true,
     blending: THREE.AdditiveBlending,
     depthWrite: false,
     toneMapped: false,
     dashed: true,
-    dashSize: 0.18,
-    gapSize: 0.82,
+    dashSize,
+    gapSize: CONSENSUS_MEMORY_AMBIENT_FLOW_PERIOD - dashSize,
     alphaToCoverage: true,
   });
-  material.vertexColors = true;
+  // A constant warm carrier separates the moving glint from the contributor
+  // colours beneath it. Real historical read-heads remain cool cyan/violet.
+  material.vertexColors = false;
   material.worldUnits = false;
   return material;
 }
@@ -106,6 +127,7 @@ export default function ConsensusMemory({
 }) {
   const rootRef = useRef<THREE.Group>(null);
   const packetsRef = useRef<THREE.InstancedMesh>(null);
+  const ambientFlowHeadsRef = useRef<THREE.InstancedMesh>(null);
   const readHeadsRef = useRef<THREE.InstancedMesh>(null);
   const focusedKnotRef = useRef<THREE.Group>(null);
   const focusedKnotOuterMaterialRef = useRef<THREE.MeshBasicMaterial>(null);
@@ -245,17 +267,27 @@ export default function ConsensusMemory({
     streamGeometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1.1);
     const streamGlowMaterial = makeLineMaterial(4.8, 0.045);
     const streamCoreMaterial = makeLineMaterial(0.72, 0.74 - (count - 3) * 0.1);
-    const streamFlowMaterial = makeAmbientFlowMaterial();
+    const streamFlowGlowMaterial = makeAmbientFlowMaterial('glow');
+    const streamFlowCoreMaterial = makeAmbientFlowMaterial('core');
     const streamGlow = new LineSegments2(streamGeometry, streamGlowMaterial);
     const streamCore = new LineSegments2(streamGeometry, streamCoreMaterial);
-    const streamFlow = new LineSegments2(streamGeometry, streamFlowMaterial);
-    streamFlow.computeLineDistances();
+    const streamFlowGlow = new LineSegments2(
+      streamGeometry,
+      streamFlowGlowMaterial,
+    );
+    const streamFlowCore = new LineSegments2(
+      streamGeometry,
+      streamFlowCoreMaterial,
+    );
+    streamFlowGlow.computeLineDistances();
     streamGlow.frustumCulled = false;
     streamCore.frustumCulled = false;
-    streamFlow.frustumCulled = false;
+    streamFlowGlow.frustumCulled = false;
+    streamFlowCore.frustumCulled = false;
     streamGlow.renderOrder = 1;
-    streamFlow.renderOrder = 2;
-    streamCore.renderOrder = 3;
+    streamFlowGlow.renderOrder = 2;
+    streamFlowCore.renderOrder = 3;
+    streamCore.renderOrder = 4;
     const stitchGeometry = new LineSegmentsGeometry();
     stitchGeometry.setPositions(stitchPositions);
     stitchGeometry.setColors(stitchColors);
@@ -320,6 +352,16 @@ export default function ConsensusMemory({
       depthWrite: false,
       toneMapped: false,
     });
+    const ambientFlowHeadGeometry = new THREE.OctahedronGeometry(0.03, 0);
+    const ambientFlowHeadMaterial = new THREE.MeshBasicMaterial({
+      color: new THREE.Color(1, 0.66, 0.18),
+      transparent: true,
+      opacity: 0,
+      blending: THREE.AdditiveBlending,
+      depthTest: false,
+      depthWrite: false,
+      toneMapped: false,
+    });
     return {
       specs,
       agreementMidpoints: topology.agreements.map((agreement) => (
@@ -332,10 +374,12 @@ export default function ConsensusMemory({
       streamGeometry,
       streamGlowMaterial,
       streamCoreMaterial,
-      streamFlowMaterial,
+      streamFlowGlowMaterial,
+      streamFlowCoreMaterial,
       streamGlow,
       streamCore,
-      streamFlow,
+      streamFlowGlow,
+      streamFlowCore,
       stitchGeometry,
       stitchGlowMaterial,
       stitchCoreMaterial,
@@ -355,6 +399,8 @@ export default function ConsensusMemory({
       packetMaterial,
       readHeadGeometry,
       readHeadMaterial,
+      ambientFlowHeadGeometry,
+      ambientFlowHeadMaterial,
     };
   }, [cell.birth_block, visual]);
 
@@ -402,7 +448,8 @@ export default function ConsensusMemory({
     const time = reducedMotion ? 0 : state.clock.elapsedTime;
     for (const material of [
       built.streamGlowMaterial,
-      built.streamFlowMaterial,
+      built.streamFlowGlowMaterial,
+      built.streamFlowCoreMaterial,
       built.streamCoreMaterial,
       built.stitchGlowMaterial,
       built.stitchCoreMaterial,
@@ -480,15 +527,23 @@ export default function ConsensusMemory({
       live,
       reducedMotion,
     );
-    built.streamFlowMaterial.dashOffset = ambientFlow.dashOffset;
+    built.streamFlowGlowMaterial.dashOffset = ambientFlow.dashOffset;
+    built.streamFlowCoreMaterial.dashOffset = ambientFlow.dashOffset
+      - (AMBIENT_FLOW_GLOW_DASH - AMBIENT_FLOW_CORE_DASH) * 0.5;
     const approach = (material: { opacity: number }, opacity: number) => {
       material.opacity += (opacity - material.opacity) * blend;
     };
     approach(built.ribbonMaterial, target.ribbon * life);
     approach(built.streamGlowMaterial, target.streamGlow * life);
+    const ambientFlowOpacity = target.streamFlow * ambientFlow.opacityScale;
+    approach(built.streamFlowGlowMaterial, ambientFlowOpacity);
     approach(
-      built.streamFlowMaterial,
-      target.streamFlow * ambientFlow.opacityScale,
+      built.streamFlowCoreMaterial,
+      Math.min(0.86, ambientFlowOpacity * 3.4),
+    );
+    approach(
+      built.ambientFlowHeadMaterial,
+      Math.min(0.95, ambientFlowOpacity * 4.6),
     );
     approach(built.streamCoreMaterial, target.streamCore * life);
     approach(built.stitchGlowMaterial, target.stitchGlow * life);
@@ -606,6 +661,49 @@ export default function ConsensusMemory({
       1 + coreEnergy.reading * 0.18 + coreEnergy.retained * 0.82
     );
 
+    // One warm, non-data-bearing head per contributor makes the slow line
+    // conduction trackable at portrait scale. A short scaled trail preserves
+    // direction without borrowing the cool identity of a real recall read.
+    const ambientFlowHeads = ambientFlowHeadsRef.current;
+    if (ambientFlowHeads && built.specs.length > 0) {
+      let instance = 0;
+      for (let strand = 0; strand < built.specs.length; strand += 1) {
+        const spec = built.specs[strand];
+        for (let trail = 0; trail < AMBIENT_FLOW_HEAD_TRAIL; trail += 1) {
+          const unit = (
+            ambientFlow.headPhase
+            + strand * 0.173
+            - trail * 0.009
+            + 1
+          ) % 1;
+          const t = unit * TAU;
+          consensusBraidPoint(spec, t, AMBIENT_FLOW_HEAD_POSITION);
+          consensusBraidPoint(spec, t + 0.003, AMBIENT_FLOW_HEAD_TANGENT)
+            .sub(AMBIENT_FLOW_HEAD_POSITION)
+            .normalize();
+          AMBIENT_FLOW_HEAD_QUATERNION.setFromUnitVectors(
+            X_AXIS,
+            AMBIENT_FLOW_HEAD_TANGENT,
+          );
+          const tailScale = 1 - trail / (AMBIENT_FLOW_HEAD_TRAIL + 0.25);
+          AMBIENT_FLOW_HEAD_SCALE
+            .set(3, 0.84, 0.84)
+            .multiplyScalar(tailScale);
+          AMBIENT_FLOW_HEAD_MATRIX.compose(
+            AMBIENT_FLOW_HEAD_POSITION,
+            AMBIENT_FLOW_HEAD_QUATERNION,
+            AMBIENT_FLOW_HEAD_SCALE,
+          );
+          ambientFlowHeads.setMatrixAt(instance, AMBIENT_FLOW_HEAD_MATRIX);
+          instance += 1;
+        }
+      }
+      ambientFlowHeads.count = instance;
+      ambientFlowHeads.instanceMatrix.needsUpdate = true;
+    } else if (ambientFlowHeads) {
+      ambientFlowHeads.count = 0;
+    }
+
     // One flattened read head traverses the same contributor order used by
     // the production buffer writer. A short lozenge trail makes the scan
     // legible at portrait scale without adding a second topology.
@@ -684,7 +782,8 @@ export default function ConsensusMemory({
     built.ribbonMaterial.dispose();
     built.streamGeometry.dispose();
     built.streamGlowMaterial.dispose();
-    built.streamFlowMaterial.dispose();
+    built.streamFlowGlowMaterial.dispose();
+    built.streamFlowCoreMaterial.dispose();
     built.streamCoreMaterial.dispose();
     built.stitchGeometry.dispose();
     built.stitchGlowMaterial.dispose();
@@ -699,6 +798,8 @@ export default function ConsensusMemory({
     built.packetMaterial.dispose();
     built.readHeadGeometry.dispose();
     built.readHeadMaterial.dispose();
+    built.ambientFlowHeadGeometry.dispose();
+    built.ambientFlowHeadMaterial.dispose();
   }, [built]);
 
   return (
@@ -709,7 +810,8 @@ export default function ConsensusMemory({
         frustumCulled={false}
       />
       <primitive object={built.streamGlow} />
-      <primitive object={built.streamFlow} />
+      <primitive object={built.streamFlowGlow} />
+      <primitive object={built.streamFlowCore} />
       <primitive object={built.streamCore} />
       <primitive object={built.stitchGlow} />
       <primitive object={built.stitchCore} />
@@ -732,6 +834,16 @@ export default function ConsensusMemory({
         args={[built.packetGeometry, built.packetMaterial, MAX_PACKETS]}
         frustumCulled={false}
         renderOrder={8}
+      />
+      <instancedMesh
+        ref={ambientFlowHeadsRef}
+        args={[
+          built.ambientFlowHeadGeometry,
+          built.ambientFlowHeadMaterial,
+          MAX_AMBIENT_FLOW_HEADS,
+        ]}
+        frustumCulled={false}
+        renderOrder={10}
       />
       <instancedMesh
         ref={readHeadsRef}
