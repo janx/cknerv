@@ -72,6 +72,23 @@ export const JUKEBOX_TRACKS = [
 export type JukeboxTrackId = (typeof JUKEBOX_TRACKS)[number]['id'];
 
 export const DEFAULT_JUKEBOX_TRACK_ID: JukeboxTrackId = 'michelle-vocal';
+export const JUKEBOX_PLAYBACK_MODES = [
+  {
+    id: 'single',
+    label: 'SINGLE ∞',
+    selectorLabel: 'Repeat selected track indefinitely',
+  },
+  {
+    id: 'random',
+    label: 'RANDOM ∞',
+    selectorLabel: 'Play tracks randomly indefinitely',
+  },
+] as const;
+
+export type JukeboxPlaybackMode =
+  (typeof JUKEBOX_PLAYBACK_MODES)[number]['id'];
+
+export const DEFAULT_JUKEBOX_PLAYBACK_MODE: JukeboxPlaybackMode = 'single';
 // Match the CELL MESH panel's 302px content width plus 15px inline padding.
 export const JUKEBOX_PANEL_WIDTH_PX = 332;
 export const JUKEBOX_BUTTON_SIZE_PX = 32;
@@ -209,6 +226,25 @@ function getTrack(trackId: JukeboxTrackId) {
     ?? JUKEBOX_TRACKS[0];
 }
 
+export function getRandomJukeboxTrackId(
+  currentTrackId: JukeboxTrackId,
+  random = Math.random,
+): JukeboxTrackId {
+  const candidates = JUKEBOX_TRACKS.filter(
+    (track) => track.id !== currentTrackId,
+  );
+  if (candidates.length === 0) return currentTrackId;
+
+  const sample = random();
+  const index = Number.isFinite(sample)
+    ? Math.min(
+      candidates.length - 1,
+      Math.max(0, Math.floor(sample * candidates.length)),
+    )
+    : 0;
+  return candidates[index].id;
+}
+
 function JukeboxGlyph({ active }: { active: boolean }) {
   const color = active ? CYAN : DIM;
   return (
@@ -246,11 +282,17 @@ export default function Jukebox() {
   const [open, setOpen] = useState(false);
   const [selectedTrackId, setSelectedTrackId] =
     useState<JukeboxTrackId>(DEFAULT_JUKEBOX_TRACK_ID);
+  const [playbackMode, setPlaybackMode] = useState<JukeboxPlaybackMode>(
+    DEFAULT_JUKEBOX_PLAYBACK_MODE,
+  );
   const [readyTrackId, setReadyTrackId] = useState<JukeboxTrackId | null>(null);
   const toggleRef = useRef<HTMLButtonElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const frameRef = useRef<HTMLIFrameElement>(null);
   const widgetTeardownRef = useRef<(() => void) | null>(null);
+  const playbackModeRef = useRef<JukeboxPlaybackMode>(
+    DEFAULT_JUKEBOX_PLAYBACK_MODE,
+  );
   const restoreFocusRef = useRef(false);
   const selectedTrack = getTrack(selectedTrackId);
   const frameReady = readyTrackId === selectedTrackId;
@@ -266,6 +308,12 @@ export default function Jukebox() {
     widgetTeardownRef.current = null;
     teardown?.();
   }, []);
+
+  const selectTrack = useCallback((trackId: JukeboxTrackId) => {
+    teardownWidget();
+    setReadyTrackId(null);
+    setSelectedTrackId(trackId);
+  }, [teardownWidget]);
 
   const close = useCallback(() => {
     teardownWidget();
@@ -377,6 +425,20 @@ export default function Jukebox() {
         });
       };
 
+      const finishTrack = () => {
+        if (!widget || disposed) return;
+        if (playbackModeRef.current === 'single') {
+          restart();
+          return;
+        }
+
+        if (fadeBaseVolume !== null) {
+          widget.setVolume(fadeBaseVolume);
+        }
+        widget.pause();
+        selectTrack(getRandomJukeboxTrackId(selectedTrackId));
+      };
+
       const applyPosition = (position: number) => {
         if (!widget || disposed || !Number.isFinite(position)) return;
         lastPosition = position;
@@ -390,7 +452,7 @@ export default function Jukebox() {
         }
 
         if (loopAtMs !== null && position >= loopAtMs) {
-          restart();
+          finishTrack();
           return;
         }
 
@@ -437,7 +499,7 @@ export default function Jukebox() {
       widget.bind(events.PLAY_PROGRESS, onProgress);
       widget.bind(events.SEEK, onProgress);
       widget.bind(events.PLAY, onPlay);
-      widget.bind(events.FINISH, restart);
+      widget.bind(events.FINISH, finishTrack);
       boundEvents = [
         events.PLAY_PROGRESS,
         events.SEEK,
@@ -454,7 +516,14 @@ export default function Jukebox() {
         widgetTeardownRef.current = null;
       }
     };
-  }, [fadeStartMs, frameReady, loopAtMs, open, selectedTrackId]);
+  }, [
+    fadeStartMs,
+    frameReady,
+    loopAtMs,
+    open,
+    selectTrack,
+    selectedTrackId,
+  ]);
 
   return (
     <div
@@ -508,6 +577,7 @@ export default function Jukebox() {
           data-jukebox-provider="soundcloud"
           data-jukebox-autoplay="requested"
           data-jukebox-loop="infinite"
+          data-jukebox-playback-mode={playbackMode}
           data-jukebox-selected-track={selectedTrackId}
           data-jukebox-frame-ready={frameReady ? 'true' : 'false'}
           data-jukebox-fade-start-ms={fadeStartMs ?? undefined}
@@ -579,6 +649,55 @@ export default function Jukebox() {
 
           <div
             role="group"
+            aria-label="Choose Jukebox playback mode"
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+              gap: 5,
+              marginBottom: 5,
+            }}
+          >
+            {JUKEBOX_PLAYBACK_MODES.map((mode) => {
+              const selected = mode.id === playbackMode;
+              return (
+                <button
+                  key={mode.id}
+                  type="button"
+                  className="cknerv-hud-control-button"
+                  data-jukebox-mode={mode.id}
+                  aria-label={mode.selectorLabel}
+                  aria-pressed={selected}
+                  onClick={() => {
+                    playbackModeRef.current = mode.id;
+                    setPlaybackMode(mode.id);
+                  }}
+                  style={{
+                    appearance: 'none',
+                    minHeight: 23,
+                    padding: '3px 7px',
+                    border: selected
+                      ? '1px solid rgba(255,152,48,.5)'
+                      : '1px solid rgba(124,135,148,.2)',
+                    background: selected
+                      ? 'linear-gradient(90deg,rgba(255,152,48,.1),rgba(255,152,48,.025))'
+                      : 'rgba(0,0,0,.28)',
+                    boxShadow: selected
+                      ? 'inset 0 0 15px rgba(255,152,48,.04)'
+                      : 'none',
+                    color: selected ? ORANGE : DIM,
+                    font: `400 8.5px/15px ${MONO}`,
+                    letterSpacing: 1,
+                    cursor: 'pointer',
+                  }}
+                >
+                  {mode.label}
+                </button>
+              );
+            })}
+          </div>
+
+          <div
+            role="group"
             aria-label="Choose Jukebox track"
             style={{
               display: 'grid',
@@ -599,9 +718,7 @@ export default function Jukebox() {
                   aria-pressed={selected}
                   onClick={() => {
                     if (selected) return;
-                    teardownWidget();
-                    setReadyTrackId(null);
-                    setSelectedTrackId(track.id);
+                    selectTrack(track.id);
                   }}
                   style={{
                     appearance: 'none',

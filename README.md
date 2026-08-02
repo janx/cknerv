@@ -101,12 +101,15 @@ button in the bottom-right corner. SoundCloud is not contacted
 and no audio is loaded during dashboard startup. Clicking the button replaces it
 with SoundCloud's official HTML5 player and requests playback of the selected
 track; browser autoplay policy may still require a second tap, especially on
-mobile. The selected track loops until the listener pauses it, chooses another
-track, or closes the Jukebox. The Arianne vocal upload fades from `05:55` to
-`06:00`, then returns to the beginning; this is parent-page playback control, so
-the native SoundCloud timeline still reflects the source recording's full
-length. The visible player is scaled and darkened inside a compact cknerv HUD
-shell, while its native controls and SoundCloud attribution remain intact.
+mobile. The Jukebox offers `SINGLE ∞` and `RANDOM ∞` playback modes and
+defaults to single-track repeat. Single mode repeats the selected track forever;
+random mode chooses a different random track after each song and continues
+forever. The Arianne vocal upload fades from `05:55` to `06:00`, then either
+returns to the beginning in single mode or advances to a random track; this is
+parent-page playback control, so the native SoundCloud timeline still reflects
+the source recording's full length. The visible player is scaled and darkened
+inside a compact cknerv HUD shell, while its native controls and SoundCloud
+attribution remain intact.
 Closing the Jukebox removes the player, stops playback, and restores the floating
 button. The feature requires internet access, remains independent of chain
 events and visual timing, and is subject to SoundCloud's terms and regional

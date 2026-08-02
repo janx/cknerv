@@ -1,4 +1,5 @@
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -7,10 +8,12 @@ import {
 } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import Jukebox, {
+  DEFAULT_JUKEBOX_PLAYBACK_MODE,
   DEFAULT_JUKEBOX_TRACK_ID,
   JUKEBOX_BUTTON_SIZE_PX,
   JUKEBOX_PANEL_WIDTH_PX,
   JUKEBOX_PLAYER_HEIGHT_PX,
+  JUKEBOX_PLAYBACK_MODES,
   JUKEBOX_TRACKS,
   KOMM_VOCAL_FADE_START_MS,
   KOMM_VOCAL_LOOP_AT_MS,
@@ -57,6 +60,7 @@ function installWidgetMock(volume = 80) {
 
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
   document
     .querySelector('script[data-cknerv-soundcloud-widget-api="true"]')
     ?.remove();
@@ -142,6 +146,18 @@ describe('Jukebox', () => {
     expect(frame.getAttribute('src')).toContain('sharing=false');
     expect(panel.getAttribute('data-jukebox-autoplay')).toBe('requested');
     expect(panel.getAttribute('data-jukebox-loop')).toBe('infinite');
+    expect(DEFAULT_JUKEBOX_PLAYBACK_MODE).toBe('single');
+    expect(panel.getAttribute('data-jukebox-playback-mode')).toBe('single');
+    expect(JUKEBOX_PLAYBACK_MODES.map((mode) => mode.id)).toEqual([
+      'single',
+      'random',
+    ]);
+    expect(screen.getByRole('button', {
+      name: 'Repeat selected track indefinitely',
+    }).getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByRole('button', {
+      name: 'Play tracks randomly indefinitely',
+    }).getAttribute('aria-pressed')).toBe('false');
     expect(frame.getAttribute('src')).toContain('visual=false');
     expect(frame.getAttribute('src')).toContain('show_comments=false');
     expect(frame.getAttribute('src')).not.toContain('youtube.com');
@@ -185,6 +201,43 @@ describe('Jukebox', () => {
     expect(widget.play).toHaveBeenCalledTimes(1);
   });
 
+  it('plays a different random track after every finish', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    const { Events, factory, listeners, widget } = installWidgetMock();
+    render(<Jukebox />);
+    fireEvent.click(screen.getByRole('button', {
+      name: 'Open Jukebox and play default SoundCloud track',
+    }));
+    fireEvent.click(screen.getByRole('button', {
+      name: 'Play tracks randomly indefinitely',
+    }));
+
+    const panel = screen.getByRole('dialog', { name: 'SoundCloud Jukebox' });
+    const michelleFrame = screen.getByTitle(MICHELLE_TRACK.frameTitle);
+    fireEvent.load(michelleFrame);
+    await waitFor(() => expect(factory).toHaveBeenCalledWith(michelleFrame));
+
+    act(() => listeners.get(Events.FINISH)?.());
+
+    expect(panel.getAttribute('data-jukebox-playback-mode')).toBe('random');
+    expect(panel.getAttribute('data-jukebox-selected-track')).toBe(
+      ARIANNE_TRACK.id,
+    );
+    expect(widget.pause).toHaveBeenCalledTimes(1);
+    expect(widget.seekTo).not.toHaveBeenCalled();
+
+    const arianneFrame = screen.getByTitle(ARIANNE_TRACK.frameTitle);
+    fireEvent.load(arianneFrame);
+    await waitFor(() => expect(factory).toHaveBeenCalledWith(arianneFrame));
+    act(() => listeners.get(Events.FINISH)?.());
+
+    expect(panel.getAttribute('data-jukebox-selected-track')).toBe(
+      MICHELLE_TRACK.id,
+    );
+    expect(widget.pause).toHaveBeenCalledTimes(2);
+    expect(widget.seekTo).not.toHaveBeenCalled();
+  });
+
   it('fades the Arianne track from 5:55 and loops it at 6:00', async () => {
     const { Events, factory, listeners, widget } = installWidgetMock(80);
     render(<Jukebox />);
@@ -220,6 +273,41 @@ describe('Jukebox', () => {
     expect(widget.seekTo).toHaveBeenCalledWith(0);
     expect(widget.setVolume).toHaveBeenLastCalledWith(80);
     expect(widget.play).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses the Arianne cutoff as the next-track point in random mode', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    const { Events, factory, listeners, widget } = installWidgetMock(80);
+    render(<Jukebox />);
+    fireEvent.click(screen.getByRole('button', {
+      name: 'Open Jukebox and play default SoundCloud track',
+    }));
+    fireEvent.click(screen.getByRole('button', {
+      name: ARIANNE_TRACK.selectorLabel,
+    }));
+    fireEvent.click(screen.getByRole('button', {
+      name: 'Play tracks randomly indefinitely',
+    }));
+
+    const panel = screen.getByRole('dialog', { name: 'SoundCloud Jukebox' });
+    const frame = screen.getByTitle(ARIANNE_TRACK.frameTitle);
+    fireEvent.load(frame);
+    await waitFor(() => expect(factory).toHaveBeenCalledWith(frame));
+
+    act(() => listeners.get(Events.PLAY_PROGRESS)?.({
+      currentPosition: KOMM_VOCAL_FADE_START_MS,
+    }));
+    act(() => listeners.get(Events.PLAY_PROGRESS)?.({
+      currentPosition: KOMM_VOCAL_LOOP_AT_MS,
+    }));
+
+    expect(panel.getAttribute('data-jukebox-selected-track')).toBe(
+      MICHELLE_TRACK.id,
+    );
+    expect(widget.setVolume).toHaveBeenLastCalledWith(80);
+    expect(widget.pause).toHaveBeenCalledTimes(1);
+    expect(widget.seekTo).not.toHaveBeenCalled();
+    expect(widget.play).not.toHaveBeenCalled();
   });
 
   it('switches to the piano version by replacing, not stacking, players', () => {
