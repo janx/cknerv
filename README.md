@@ -94,16 +94,21 @@ to `http://localhost:7001`. Release builds embed `ui-app/dist` into the
 
 ### Optional Jukebox
 
-The dashboard includes an optional SoundCloud Jukebox for `TSUBASA WO KUDASAI`,
-collapsed into a small floating button in the bottom-right corner. SoundCloud is
-not contacted and no audio is loaded during dashboard startup. Clicking the
-button replaces it with SoundCloud's official HTML5 player and requests playback
-of the selected track; browser autoplay policy may still require a second tap,
-especially on mobile. The visible player is scaled and darkened inside a compact
-cknerv HUD shell, while its native controls and SoundCloud attribution remain
-intact. Closing the Jukebox removes the player, stops playback, and restores the
-floating button. The feature requires internet access, remains independent of
-chain events and visual timing, and is subject to SoundCloud's terms and regional
+The dashboard includes an optional four-track SoundCloud Jukebox for vocal and
+piano versions of `TSUBASA WO KUDASAI` and `Komm, süsser Tod`, collapsed into a
+small floating button in the bottom-right corner. SoundCloud is not contacted
+and no audio is loaded during dashboard startup. Clicking the button replaces it
+with SoundCloud's official HTML5 player and requests playback of the selected
+track; browser autoplay policy may still require a second tap, especially on
+mobile. The selected track loops until the listener pauses it, chooses another
+track, or closes the Jukebox. The Arianne vocal upload fades from `05:55` to
+`06:00`, then returns to the beginning; this is parent-page playback control, so
+the native SoundCloud timeline still reflects the source recording's full
+length. The visible player is scaled and darkened inside a compact cknerv HUD
+shell, while its native controls and SoundCloud attribution remain intact.
+Closing the Jukebox removes the player, stops playback, and restores the floating
+button. The feature requires internet access, remains independent of chain
+events and visual timing, and is subject to SoundCloud's terms and regional
 availability.
 
 ## Tech Stack
