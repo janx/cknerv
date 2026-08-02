@@ -67,8 +67,8 @@ function makeLineMaterial(width: number, opacity: number): LineMaterial {
 
 type FlowLineProfile = 'glow' | 'core';
 
-const AMBIENT_FLOW_GLOW_DASH = 0.46;
-const AMBIENT_FLOW_CORE_DASH = 0.22;
+const AMBIENT_FLOW_GLOW_DASH = 0.9;
+const AMBIENT_FLOW_CORE_DASH = 0.48;
 const TRACE_FLOW_GLOW_DASH = 0.56;
 const TRACE_FLOW_CORE_DASH = 0.28;
 const LINE_MATERIAL_DASH_DISCARD =
@@ -88,13 +88,14 @@ function softenFlowLineMaterial(material: LineMaterial): LineMaterial {
           vLineDistance + dashOffset,
           dashSize + gapSize
         );
-        float flowFeather = dashSize * 0.32;
+        float flowAttack = dashSize * 0.12;
+        float flowTailStart = dashSize * 0.32;
         float flowEnvelope = smoothstep(
           0.0,
-          flowFeather,
+          flowAttack,
           flowPosition
         ) * ( 1.0 - smoothstep(
-          dashSize - flowFeather,
+          flowTailStart,
           dashSize,
           flowPosition
         ) );
@@ -115,9 +116,9 @@ function makeAmbientFlowMaterial(profile: FlowLineProfile): LineMaterial {
     : AMBIENT_FLOW_CORE_DASH;
   const material = new LineMaterial({
     color: profile === 'glow'
-      ? new THREE.Color(...CONSENSUS_BRAID_PALETTE.gold)
-      : new THREE.Color(1, 0.95, 0.78),
-    linewidth: profile === 'glow' ? 4.6 : 1.1,
+      ? new THREE.Color(1, 0.18, 0.02)
+      : new THREE.Color(1, 0.82, 0.32),
+    linewidth: profile === 'glow' ? 5.2 : 1.4,
     opacity: 0,
     transparent: true,
     blending: THREE.AdditiveBlending,
@@ -128,8 +129,8 @@ function makeAmbientFlowMaterial(profile: FlowLineProfile): LineMaterial {
     gapSize: CONSENSUS_MEMORY_AMBIENT_FLOW_PERIOD - dashSize,
     alphaToCoverage: true,
   });
-  // A constant warm carrier separates the moving glint from the contributor
-  // colours beneath it. Real historical read-heads remain cool cyan/violet.
+  // A saturated ember carrier separates living ambient conduction from both
+  // the contributor colours beneath it and the cool historical read scan.
   return softenFlowLineMaterial(material);
 }
 
@@ -597,10 +598,13 @@ export default function ConsensusMemory({
     approach(built.ribbonMaterial, target.ribbon * life);
     approach(built.streamGlowMaterial, target.streamGlow * life);
     const ambientFlowOpacity = target.streamFlow * ambientFlow.opacityScale;
-    approach(built.streamFlowGlowMaterial, ambientFlowOpacity);
+    approach(
+      built.streamFlowGlowMaterial,
+      Math.min(0.95, ambientFlowOpacity * 4.8),
+    );
     approach(
       built.streamFlowCoreMaterial,
-      Math.min(0.76, ambientFlowOpacity * 2.8),
+      Math.min(1, ambientFlowOpacity * 6),
     );
     const scanEnergy = coreEnergy.reading
       * (traceEvidenceFocusSourceId === null ? 1 : 0.22);

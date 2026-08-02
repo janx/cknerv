@@ -60,16 +60,17 @@ describe('consensusMemoryAmbientFlowFrame', () => {
       false,
     );
 
-    expect(initial.dashOffset).toBeCloseTo(-0.5);
+    expect(initial.dashOffset).toBeCloseTo(-0.6);
     expect(Math.abs(legible.dashOffset - initial.dashOffset))
-      .toBeGreaterThan(0.08);
+      .toBeGreaterThan(0.2);
     expect(moving.dashOffset).toBeLessThan(initial.dashOffset);
     expect(wrapped.dashOffset).toBeCloseTo(initial.dashOffset);
-    expect(CONSENSUS_MEMORY_AMBIENT_FLOW_PERIOD).toBeGreaterThanOrEqual(2);
-    expect(
+    const cycleSeconds = (
       CONSENSUS_MEMORY_AMBIENT_FLOW_PERIOD
-        / CONSENSUS_MEMORY_AMBIENT_FLOW_SPEED,
-    ).toBeGreaterThan(40);
+        / CONSENSUS_MEMORY_AMBIENT_FLOW_SPEED
+    );
+    expect(cycleSeconds).toBeGreaterThanOrEqual(15);
+    expect(cycleSeconds).toBeLessThanOrEqual(25);
     expect(moving.opacityScale).toBeGreaterThanOrEqual(0.8);
     expect(moving.opacityScale).toBeLessThanOrEqual(1);
   });

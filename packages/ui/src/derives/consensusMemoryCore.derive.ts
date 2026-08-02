@@ -12,10 +12,10 @@ export interface ConsensusMemoryAmbientFlowFrame {
   opacityScale: number;
 }
 
-/** Model-space cadence: deliberately slower than packets and trace read-heads. */
-export const CONSENSUS_MEMORY_AMBIENT_FLOW_SPEED = 0.045;
+/** Model-space cadence: deliberately slower than packets and trace scans. */
+export const CONSENSUS_MEMORY_AMBIENT_FLOW_SPEED = 0.12;
 /** One sparse highlight followed by a long unlit interval. */
-export const CONSENSUS_MEMORY_AMBIENT_FLOW_PERIOD = 2;
+export const CONSENSUS_MEMORY_AMBIENT_FLOW_PERIOD = 2.4;
 
 /** A faint moving read remains so the stored structure keeps its provenance. */
 export const CONSENSUS_MEMORY_CORE_READ_FLOOR = 0.1;
