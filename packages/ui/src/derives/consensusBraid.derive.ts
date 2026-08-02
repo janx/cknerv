@@ -136,7 +136,7 @@ export function consensusBraidLayerOpacity(
   const normal: ConsensusBraidLayerOpacity = {
     ribbon: Math.max(0.25, 0.38 - (strandCount - 3) * 0.05),
     streamGlow: 0.045,
-    streamFlow: 0.18,
+    streamFlow: 0.24,
     streamCore: 0.74 - (strandCount - 3) * 0.1,
     stitchGlow: 0.055,
     stitchCore: 0.72,

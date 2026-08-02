@@ -138,7 +138,7 @@ describe('canonical consensus braid mapping', () => {
     const born = consensusBraidLayerOpacity('born', 3);
 
     expect(capacity.ribbon).toBeGreaterThan(capacity.streamCore);
-    expect(normal.streamFlow).toBeGreaterThanOrEqual(0.18);
+    expect(normal.streamFlow).toBeGreaterThanOrEqual(0.24);
     expect(asset.streamCore).toBeGreaterThan(asset.ribbon);
     expect(asset.streamFlow).toBeGreaterThan(normal.streamFlow);
     expect(lock.streamCore).toBeGreaterThan(lock.agreementCore);
