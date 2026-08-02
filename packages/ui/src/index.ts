@@ -82,6 +82,7 @@ export * from './derives/networkTopology.derive';
 export * from './derives/networkFlood.derive';
 export * from './derives/canonicalRewrite.derive';
 export * from './derives/streamHealth.derive';
+export * from './derives/sceneView.derive';
 
 // ── Hooks ──────────────────────────────────────────────────────────
 export {

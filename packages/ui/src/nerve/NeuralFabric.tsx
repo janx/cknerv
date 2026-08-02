@@ -17,9 +17,9 @@
 // DECAY_MS, length stays). Endpoint positions + control point are
 // snapshotted at birth, so a dying edge can outlive its endpoint cell.
 
-import { useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
-import { useThree } from '@react-three/fiber';
+import { useFrame, useThree } from '@react-three/fiber';
 import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js';
 import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js';
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
@@ -54,6 +54,10 @@ import {
   cellInspectionFieldTransitionScaleAt,
   type CellInspectionField,
 } from './cellInspectionField';
+import {
+  cellDetailFabricEnergyGain,
+  cellDetailFabricWidthScale,
+} from '../derives/sceneView.derive';
 
 // Dense-mesh baseline energy (the `cell.fabricAlpha` tweak, default 0.12).
 // Passive fibres use bounded screen accumulation plus spatial compression;
@@ -173,6 +177,8 @@ export interface NeuralFabricHandles {
 
 export interface NeuralFabricProps {
   onReady: (handles: NeuralFabricHandles) => void;
+  /** Shared camera-distance focus. Optional keeps standalone scenes unchanged. */
+  cellDetailViewFocusRef?: { readonly current: number };
 }
 
 interface FatLineLayer {
@@ -451,7 +457,10 @@ function commitLayer(layer: FatLineLayer): void {
   layer.geometry.instanceCount = layer.count;
 }
 
-export default function NeuralFabric({ onReady }: NeuralFabricProps) {
+export default function NeuralFabric({
+  onReady,
+  cellDetailViewFocusRef,
+}: NeuralFabricProps) {
   const simClock = useSimClock();
   const { size } = useThree();
   const { effective: quality } = useQualityRuntime();
@@ -477,6 +486,18 @@ export default function NeuralFabric({ onReady }: NeuralFabricProps) {
     ),
     [],
   );
+
+  const applyPassiveViewWeight = useCallback(() => {
+    const focus = cellDetailViewFocusRef?.current ?? 0;
+    const energyGain = cellDetailFabricEnergyGain(focus);
+    fabric.material.color.setRGB(energyGain, energyGain, energyGain);
+    fabric.material.linewidth = LIVE.cell.fabricWidth
+      * cellDetailFabricWidthScale(focus);
+  }, [cellDetailViewFocusRef, fabric.material]);
+
+  // Camera navigation is input, not simulation. Keep the passive Cell fabric's
+  // close-view weight responsive even when the chain animation clock is paused.
+  useFrame(applyPassiveViewWeight);
 
   // Persistent across handle re-creations so Canvas remounts and quality-view
   // reconciliation never drop an edge's growth/decay lifecycle state.
@@ -775,7 +796,7 @@ export default function NeuralFabric({ onReady }: NeuralFabricProps) {
         // Live line widths. LineMaterial.linewidth is runtime-settable, so
         // pushing it on every real draw (after the early-return) picks up
         // any width-knob change — including on the forced redraw above.
-        fabric.material.linewidth = LIVE.cell.fabricWidth;
+        applyPassiveViewWeight();
         active.material.linewidth = LIVE.cell.activeWidth;
         const states = edgeStatesRef.current;
         fabric.count = 0;
@@ -1013,6 +1034,7 @@ export default function NeuralFabric({ onReady }: NeuralFabricProps) {
     active,
     memory,
     routeHopPulse,
+    applyPassiveViewWeight,
     onReady,
     activeSamplesPerHop,
   ]);

@@ -160,6 +160,19 @@ describe('NeuralFabric living-mesh handles', () => {
     expect(SRC).not.toContain('mesh.renderOrder');
   });
 
+  it('raises only passive fabric screen weight in a close Cell view', () => {
+    expect(SRC).toContain('cellDetailViewFocusRef?:');
+    expect(SRC).toContain('cellDetailFabricEnergyGain(focus)');
+    expect(SRC).toContain('cellDetailFabricWidthScale(focus)');
+    expect(SRC).toContain('fabric.material.color.setRGB(');
+    expect(SRC).toContain('useFrame(applyPassiveViewWeight)');
+    const activeImplementation = SRC.slice(
+      SRC.lastIndexOf('pushActiveHop(hop, cells)'),
+    );
+    expect(activeImplementation).not.toContain('cellDetailFabricEnergyGain');
+    expect(activeImplementation).not.toContain('cellDetailFabricWidthScale');
+  });
+
   it('uploads only the populated dynamic segment range', () => {
     expect(SRC).toContain('setUsage(THREE.DynamicDrawUsage)');
     expect(SRC).toContain('const usedFloats = layer.count * 6');

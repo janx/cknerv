@@ -16,12 +16,14 @@ import {
   useState,
   type ElementRef,
 } from 'react';
-import { Canvas } from '@react-three/fiber';
+import { Canvas, useFrame } from '@react-three/fiber';
 import { OrbitControls, Stars } from '@react-three/drei';
 import {
   aggregateCellsStats,
   AdaptiveQualityController,
+  CELLS_Y,
   CELL_SELECTION_PREFIX,
+  cellDetailViewFocus,
   cellFieldContactDelayS,
   chainNodeWorldPosition,
   canRecallConsensusMemory,
@@ -126,8 +128,29 @@ interface AppProps {
   initialCellsRevision: number;
 }
 
-const DEFAULT_CAMERA_TARGET: [number, number, number] = [0, 18, 0];
+const DEFAULT_CAMERA_TARGET: [number, number, number] = [0, CELLS_Y, 0];
 const STREAM_STALE_AFTER_MS = 15_000;
+
+function CellDetailViewTracker({
+  controlsRef,
+  focusRef,
+}: {
+  controlsRef: { readonly current: ElementRef<typeof OrbitControls> | null };
+  focusRef: { current: number };
+}) {
+  useFrame(({ camera }) => {
+    const target = controlsRef.current?.target;
+    const targetX = target?.x ?? DEFAULT_CAMERA_TARGET[0];
+    const targetY = target?.y ?? DEFAULT_CAMERA_TARGET[1];
+    const targetZ = target?.z ?? DEFAULT_CAMERA_TARGET[2];
+    focusRef.current = cellDetailViewFocus(Math.hypot(
+      camera.position.x - targetX,
+      camera.position.y - targetY,
+      camera.position.z - targetZ,
+    ));
+  });
+  return null;
+}
 
 function initialStreamHealth(): StreamHealth {
   return {
@@ -158,6 +181,7 @@ export default function App({
   const qualityRuntime = useQualityRuntime();
   const qualityCascade = QUALITY_PRESETS[qualityRuntime.effective];
   const orbitControlsRef = useRef<ElementRef<typeof OrbitControls>>(null);
+  const cellDetailViewFocusRef = useRef(0);
   const [orbitInteractionRevision, noteOrbitInteraction] = useReducer(
     (revision: number) => revision + 1,
     0,
@@ -841,6 +865,10 @@ export default function App({
               NeuralNetwork, NetworkColony) actually plays. Must live
               under the r3f context; mount exactly once. */}
           <SimClockTicker />
+          <CellDetailViewTracker
+            controlsRef={orbitControlsRef}
+            focusRef={cellDetailViewFocusRef}
+          />
           {/* Auto mode samples raw frame time with long hysteresis. Manual
               high/med/low in the backtick panel overrides it immediately. */}
           {qualityOverride ? null : <AdaptiveQualityController />}
@@ -899,6 +927,7 @@ export default function App({
                   livePulseDelayS={livePulseDelayS}
                   inspectionCellId={selectedCell?.id ?? null}
                   inspectionFieldRef={cellInspectionFieldRef}
+                  cellDetailViewFocusRef={cellDetailViewFocusRef}
                   traceRequest={memoryTraceRequest}
                   traceMaxPulses={CELL_MEMORY_RECALL_MAX_PULSES}
                   traceHoldForRecordSwitch={memoryRecordSwitchPending}
@@ -932,6 +961,7 @@ export default function App({
             flashDirtyRef={flashDirtyRef}
             localVersion={localNode?.version ?? ''}
             cellInspectionActive={selectedCell !== null}
+            cellDetailViewFocusRef={cellDetailViewFocusRef}
           />
 
           {/* Opening or switching Cell detail is camera-passive. Only explicit
@@ -953,9 +983,9 @@ export default function App({
             dampingFactor={0.08}
             minDistance={4}
             maxDistance={400}
-            // Aim at the content's vertical center (chain plane y=22, cell
-            // canopy y=38) instead of the world origin, so the scene sits
-            // centered rather than pushed to the top. Matches CAMERA_PRESETS.default.
+            // Dolly toward the Cell canopy, the scene's primary inspection
+            // surface. The peer plane remains visible below in the overview.
+            // Matches CAMERA_PRESETS.default.
             target={DEFAULT_CAMERA_TARGET}
             onStart={beginOrbitInteraction}
             onChange={changeOrbitInteraction}
