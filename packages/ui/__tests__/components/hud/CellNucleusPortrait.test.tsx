@@ -71,17 +71,23 @@ describe('CellNucleusPortrait production language', () => {
   it('mirrors only the selected target response on canonical agreements', () => {
     expect(MEMORY_SOURCE).toContain('frameTarget?.targetCellId === cell.id');
     expect(MEMORY_SOURCE).toContain('consensusBraidAgreementResolution(');
-    expect(MEMORY_SOURCE).toContain('readHeadsRef');
+    expect(MEMORY_SOURCE).not.toContain('readHeadsRef');
+    expect(MEMORY_SOURCE).not.toContain('READ_HEAD_TRAIL');
     expect(MEMORY_SOURCE).toContain('streamFlowGlow.computeLineDistances()');
     expect(MEMORY_SOURCE).toContain('streamFlowGlowMaterial.dashOffset');
     expect(MEMORY_SOURCE).toContain('streamFlowCoreMaterial.dashOffset');
-    expect(MEMORY_SOURCE).toContain('ambientFlowHeadsRef');
-    expect(MEMORY_SOURCE).toContain('ambientFlow.headPhase');
+    expect(MEMORY_SOURCE).toContain('streamTraceGlowMaterial.dashOffset');
+    expect(MEMORY_SOURCE).toContain('streamTraceCoreMaterial.dashOffset');
+    expect(MEMORY_SOURCE).not.toContain('ambientFlowHeadsRef');
+    expect(MEMORY_SOURCE).not.toContain('ambientFlowHeadGeometry');
+    expect(MEMORY_SOURCE).toContain('float flowEnvelope = smoothstep(');
+    expect(MEMORY_SOURCE).toContain('alpha *= flowEnvelope');
     expect(MEMORY_SOURCE).toContain('<primitive object={built.streamFlowGlow} />');
     expect(MEMORY_SOURCE).toContain('<primitive object={built.streamFlowCore} />');
+    expect(MEMORY_SOURCE).toContain('<primitive object={built.streamTraceGlow} />');
+    expect(MEMORY_SOURCE).toContain('<primitive object={built.streamTraceCore} />');
     expect(MEMORY_SOURCE).toContain('built.streamFlowGlowMaterial.dispose()');
     expect(MEMORY_SOURCE).toContain('built.streamFlowCoreMaterial.dispose()');
-    expect(MEMORY_SOURCE).toContain('built.ambientFlowHeadMaterial.dispose()');
     expect(MEMORY_SOURCE).toContain('CONSENSUS_BRAID_PALETTE.paleGold');
     expect(MEMORY_SOURCE).toContain('consensusMemoryEvidenceBindings(');
     expect(MEMORY_SOURCE).toContain('data-memory-knot-evidence');
