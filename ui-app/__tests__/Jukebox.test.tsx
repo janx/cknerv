@@ -24,7 +24,7 @@ import Jukebox, {
 
 const MICHELLE_TRACK = JUKEBOX_TRACKS[0];
 const ARIANNE_TRACK = JUKEBOX_TRACKS[1];
-const ARIA_PIANO_TRACK = JUKEBOX_TRACKS[2];
+const JOSETO_ARC_PIANO_TRACK = JUKEBOX_TRACKS[2];
 const SHEET_MUSIC_BOSS_TRACK = JUKEBOX_TRACKS[3];
 
 type WidgetEvent = { currentPosition?: number };
@@ -72,7 +72,7 @@ describe('Jukebox', () => {
     expect(JUKEBOX_TRACKS.map((track) => track.id)).toEqual([
       'michelle-vocal',
       'arianne-vocal',
-      'aria-piano',
+      'joseto-arc-piano',
       'sheet-music-boss-piano',
     ]);
     expect(JUKEBOX_TRACKS.map((track) => track.name)).toEqual([
@@ -87,6 +87,12 @@ describe('Jukebox', () => {
     expect(ARIANNE_TRACK.embedUrl).toContain('tracks%2F9463141');
     expect(ARIANNE_TRACK.fadeStartMs).toBe(KOMM_VOCAL_FADE_START_MS);
     expect(ARIANNE_TRACK.loopAtMs).toBe(KOMM_VOCAL_LOOP_AT_MS);
+    expect(JOSETO_ARC_PIANO_TRACK.trackUrl).toBe(
+      'https://soundcloud.com/joseto-arc/evangelion-tsubasa-wo-kudasai?utm_source=clipboard&utm_medium=text&utm_campaign=social_sharing',
+    );
+    expect(JOSETO_ARC_PIANO_TRACK.embedUrl).toContain(
+      'tracks%2F499687749',
+    );
     expect(SHEET_MUSIC_BOSS_TRACK.trackUrl).toBe(
       'https://soundcloud.com/makka-pakka-915586059/komm-suesser-tod-the-end-of',
     );
@@ -168,7 +174,7 @@ describe('Jukebox', () => {
       name: MICHELLE_TRACK.selectorLabel,
     }).getAttribute('aria-pressed')).toBe('true');
     expect(screen.getByRole('button', {
-      name: ARIA_PIANO_TRACK.selectorLabel,
+      name: JOSETO_ARC_PIANO_TRACK.selectorLabel,
     }).getAttribute('aria-pressed')).toBe('false');
     expect(screen.getByRole('button', {
       name: ARIANNE_TRACK.selectorLabel,
@@ -322,17 +328,19 @@ describe('Jukebox', () => {
     expect(panel.getAttribute('data-jukebox-frame-ready')).toBe('true');
 
     fireEvent.click(screen.getByRole('button', {
-      name: ARIA_PIANO_TRACK.selectorLabel,
+      name: JOSETO_ARC_PIANO_TRACK.selectorLabel,
     }));
 
     const pianoFrame = screen.getByTitle(
-      ARIA_PIANO_TRACK.frameTitle,
+      JOSETO_ARC_PIANO_TRACK.frameTitle,
     ) as HTMLIFrameElement;
     expect(michelleFrame.isConnected).toBe(false);
     expect(container.querySelectorAll('iframe')).toHaveLength(1);
-    expect(pianoFrame.getAttribute('src')).toBe(ARIA_PIANO_TRACK.embedUrl);
+    expect(pianoFrame.getAttribute('src')).toBe(
+      JOSETO_ARC_PIANO_TRACK.embedUrl,
+    );
     expect(panel.getAttribute('data-jukebox-selected-track')).toBe(
-      ARIA_PIANO_TRACK.id,
+      JOSETO_ARC_PIANO_TRACK.id,
     );
     expect(panel.getAttribute('data-jukebox-frame-ready')).toBe('false');
     expect(panel.textContent).toContain('SOUNDCLOUD CONNECTING');
@@ -341,7 +349,7 @@ describe('Jukebox', () => {
       name: MICHELLE_TRACK.selectorLabel,
     }).getAttribute('aria-pressed')).toBe('false');
     expect(screen.getByRole('button', {
-      name: ARIA_PIANO_TRACK.selectorLabel,
+      name: JOSETO_ARC_PIANO_TRACK.selectorLabel,
     }).getAttribute('aria-pressed')).toBe('true');
 
     fireEvent.load(pianoFrame);
@@ -466,7 +474,7 @@ describe('Jukebox', () => {
       name: 'Open Jukebox and play default SoundCloud track',
     }));
     fireEvent.click(screen.getByRole('button', {
-      name: ARIA_PIANO_TRACK.selectorLabel,
+      name: JOSETO_ARC_PIANO_TRACK.selectorLabel,
     }));
     fireEvent.click(screen.getByRole('button', {
       name: 'Close Jukebox player',
@@ -476,7 +484,7 @@ describe('Jukebox', () => {
     }));
 
     expect(container.querySelector('iframe')?.getAttribute('src')).toBe(
-      ARIA_PIANO_TRACK.embedUrl,
+      JOSETO_ARC_PIANO_TRACK.embedUrl,
     );
   });
 
@@ -494,11 +502,11 @@ describe('Jukebox', () => {
     expect(michelleLink.getAttribute('rel')).toBe('noopener noreferrer');
 
     fireEvent.click(screen.getByRole('button', {
-      name: ARIA_PIANO_TRACK.selectorLabel,
+      name: JOSETO_ARC_PIANO_TRACK.selectorLabel,
     }));
     expect(screen.getByRole('link', {
-      name: 'Open piano version by ARIALATE on SoundCloud',
-    }).getAttribute('href')).toBe(ARIA_PIANO_TRACK.trackUrl);
+      name: 'Open piano version by JOSETO ARC on SoundCloud',
+    }).getAttribute('href')).toBe(JOSETO_ARC_PIANO_TRACK.trackUrl);
   });
 
   it('keeps Jukebox interactions inside the floating control', () => {
@@ -513,7 +521,7 @@ describe('Jukebox', () => {
       name: 'Open Jukebox and play default SoundCloud track',
     }));
     fireEvent.click(screen.getByRole('button', {
-      name: ARIA_PIANO_TRACK.selectorLabel,
+      name: JOSETO_ARC_PIANO_TRACK.selectorLabel,
     }));
     expect(onParentClick).not.toHaveBeenCalled();
   });
