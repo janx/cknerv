@@ -11,18 +11,18 @@ function materialSource(file: string): string {
 }
 
 describe('NetworkColony Cell-inspection context', () => {
-  it('eases one shared passive-context value for edges and nodes', () => {
+  it('eases separate passive-context values for links and nodes', () => {
     const network = source('NetworkColony.tsx');
 
     expect(network).toContain('cellInspectionActive?: boolean');
     expect(network).toContain('cellDetailViewFocusRef?:');
     expect(network).toContain('cellDetailPeerContextEnergy(');
+    expect(network).toContain('cellDetailPeerLinkContextEnergy(');
     expect(network).toContain('useFrame((_, deltaSeconds) =>');
     expect(network).toContain('dampCellInspectionFieldScale(');
     expect(network).toContain('CELL_INSPECTION_BACKGROUND_ENERGY');
-    expect(network).toContain('Math.min(detailContext, inspectionContext)');
-    expect(network.match(/contextEnergyRef=\{contextEnergyRef\}/g))
-      .toHaveLength(2);
+    expect(network).toContain('contextEnergyRef={linkContextEnergyRef}');
+    expect(network).toContain('contextEnergyRef={nodeContextEnergyRef}');
   });
 
   it('subdues ambient P2P fibres but preserves real block surges', () => {

@@ -53,7 +53,10 @@ import {
   CELL_INSPECTION_BACKGROUND_ENERGY,
   dampCellInspectionFieldScale,
 } from '../nerve/cellInspectionField';
-import { cellDetailPeerContextEnergy } from '../derives/sceneView.derive';
+import {
+  cellDetailPeerContextEnergy,
+  cellDetailPeerLinkContextEnergy,
+} from '../derives/sceneView.derive';
 
 interface NetworkColonyProps {
   topology: NetworkTopology;
@@ -94,24 +97,36 @@ export default function NetworkColony({
   // is deliberately optional-context; a throwing read here would defeat that.
   const cellsCache = useCellGalaxyOptional();
   const backfillActive = !!cellsCache?.backfill;
-  const contextEnergyRef = useRef(1);
+  const nodeContextEnergyRef = useRef(1);
+  const linkContextEnergyRef = useRef(1);
   useFrame((_, deltaSeconds) => {
     // Camera navigation is input, not simulation. In a close Cell view, passive
     // P2P structure recedes while block surges/couriers retain full event energy.
     // A peer-only selection keeps its own link context; simultaneous Cell
     // inspection still gives the Cell field priority while the selected node's
     // material remains independently legible.
-    const detailContext = (
+    const detailFocus = (
       selectedId === null || cellInspectionActive
     )
-      ? cellDetailPeerContextEnergy(cellDetailViewFocusRef?.current ?? 0)
-      : 1;
+      ? cellDetailViewFocusRef?.current ?? 0
+      : 0;
     const inspectionContext = cellInspectionActive
       ? CELL_INSPECTION_BACKGROUND_ENERGY
       : 1;
-    contextEnergyRef.current = dampCellInspectionFieldScale(
-      contextEnergyRef.current,
-      Math.min(detailContext, inspectionContext),
+    nodeContextEnergyRef.current = dampCellInspectionFieldScale(
+      nodeContextEnergyRef.current,
+      Math.min(
+        cellDetailPeerContextEnergy(detailFocus),
+        inspectionContext,
+      ),
+      deltaSeconds,
+    );
+    linkContextEnergyRef.current = dampCellInspectionFieldScale(
+      linkContextEnergyRef.current,
+      Math.min(
+        cellDetailPeerLinkContextEnergy(detailFocus),
+        inspectionContext,
+      ),
       deltaSeconds,
     );
   });
@@ -165,7 +180,7 @@ export default function NetworkColony({
         cf={cf}
         blockPulseAtMs={blockPulseAtMs}
         backfillActive={backfillActive}
-        contextEnergyRef={contextEnergyRef}
+        contextEnergyRef={linkContextEnergyRef}
       />
       <ColonyNodes
         topology={topology}
@@ -175,7 +190,7 @@ export default function NetworkColony({
         selectedId={selectedId}
         onSelect={onSelect}
         localVersion={localVersion}
-        contextEnergyRef={contextEnergyRef}
+        contextEnergyRef={nodeContextEnergyRef}
       />
       <ColonyCourierLayer
         cf={cf}
