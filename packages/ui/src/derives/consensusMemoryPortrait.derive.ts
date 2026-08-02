@@ -66,9 +66,10 @@ export function consensusMemoryPortraitLayerOpacity(
       base.streamGlow * (1 - recall * 0.56),
       readEnergy * 0.045,
     ),
-    // Ambient conduction yields to the evidence read-head instead of looking
-    // like a second, unobserved chain event.
-    streamFlow: base.streamFlow * (1 - recall * 0.72),
+    // Warm ambient conduction remains legible while the cool evidence
+    // read-head is active. Its distinct colour keeps the two roles separate,
+    // while a partial yield gives the observed read visual priority.
+    streamFlow: base.streamFlow * (1 - recall * 0.45),
     streamCore: Math.max(
       base.streamCore * (1 - recall * 0.72),
       readEnergy * 0.28,
