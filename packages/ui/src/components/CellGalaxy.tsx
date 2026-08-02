@@ -200,6 +200,47 @@ export function writeFlashSlots(
   }
 }
 
+/** One contiguous run of visible Cell slots whose static GPU attributes need
+ * to be refreshed. Block deltas usually touch only a handful of these runs. */
+export interface CellBufferRange {
+  start: number;
+  count: number;
+}
+
+export interface CellBufferDiff {
+  ranges: CellBufferRange[];
+  /** True only when visible ids/order changed, not for an in-place Cell value
+   * replacement such as death/tag metadata. */
+  membershipChanged: boolean;
+}
+
+/** Compare the last rendered prefix with the next one by immutable Cell
+ * identity and coalesce adjacent changes into upload-friendly ranges. */
+export function diffCellBufferSlots(
+  previous: readonly Cell[],
+  next: readonly Cell[],
+): CellBufferDiff {
+  const ranges: CellBufferRange[] = [];
+  let rangeStart = -1;
+  let membershipChanged = previous.length !== next.length;
+
+  for (let index = 0; index < next.length; index += 1) {
+    const before = previous[index];
+    const after = next[index];
+    if (before?.id !== after.id) membershipChanged = true;
+    if (before !== after) {
+      if (rangeStart < 0) rangeStart = index;
+    } else if (rangeStart >= 0) {
+      ranges.push({ start: rangeStart, count: index - rangeStart });
+      rangeStart = -1;
+    }
+  }
+  if (rangeStart >= 0) {
+    ranges.push({ start: rangeStart, count: next.length - rangeStart });
+  }
+  return { ranges, membershipChanged };
+}
+
 /** Write the static graph-distance target for each currently visible Cell.
  * The render loop eases a separate GPU attribute toward these values. */
 export function writeCellInspectionTargets(
@@ -207,9 +248,14 @@ export function writeCellInspectionTargets(
   count: number,
   field: CellInspectionField | null,
   targetArr: Float32Array,
+  ranges?: readonly CellBufferRange[],
 ): void {
-  for (let i = 0; i < count; i += 1) {
-    targetArr[i] = cellInspectionFieldScale(field, cells[i].id);
+  const activeRanges = ranges ?? [{ start: 0, count }];
+  for (const range of activeRanges) {
+    const end = Math.min(count, range.start + range.count);
+    for (let i = Math.max(0, range.start); i < end; i += 1) {
+      targetArr[i] = cellInspectionFieldScale(field, cells[i].id);
+    }
   }
 }
 
@@ -221,9 +267,14 @@ export function writeCellInspectionNavigationRoles(
   count: number,
   field: CellInspectionField | null,
   roleArr: Float32Array,
+  ranges?: readonly CellBufferRange[],
 ): void {
-  for (let i = 0; i < count; i += 1) {
-    roleArr[i] = cellInspectionDirectNavigationRole(field, cells[i].id);
+  const activeRanges = ranges ?? [{ start: 0, count }];
+  for (const range of activeRanges) {
+    const end = Math.min(count, range.start + range.count);
+    for (let i = Math.max(0, range.start); i < end; i += 1) {
+      roleArr[i] = cellInspectionDirectNavigationRole(field, cells[i].id);
+    }
   }
 }
 
@@ -239,11 +290,33 @@ export interface CellBufferTargets {
   memorySeedArr: Float32Array;
 }
 
-/**
- * Write all per-cell static + flash data into the supplied buffers. Pure:
- * mutates the typed-array fields of `targets`. Caller owns the geometry
- * attribute `needsUpdate` flags — this function never touches them.
- */
+export interface CellBufferPresentation {
+  color: readonly [number, number, number];
+  size: number;
+  memoryIdentity: readonly [number, number, number, number];
+  memorySeed: number;
+}
+
+function cellBufferPresentation(
+  cell: Cell,
+  cache?: WeakMap<Cell, CellBufferPresentation>,
+): CellBufferPresentation {
+  const cached = cache?.get(cell);
+  if (cached) return cached;
+  const visual = deriveCellVisual(cell);
+  const identity = consensusMemoryCoreIdentity(visual);
+  const presentation: CellBufferPresentation = {
+    color: consensusCellColor(visual, hasCellTagAccent(cell.tag)),
+    size: cellPointSize(cell),
+    memoryIdentity: identity.semantic,
+    memorySeed: identity.hashSeed,
+  };
+  cache?.set(cell, presentation);
+  return presentation;
+}
+
+/** Write all visible Cell buffers, or only the supplied changed ranges for a
+ * live block delta. Caller owns GPU update ranges and `needsUpdate` flags. */
 export function writeCellBuffers(
   cells: Cell[],
   count: number,
@@ -251,32 +324,61 @@ export function writeCellBuffers(
   flashMap: Map<number, number>,
   targets: CellBufferTargets,
   bornAtOverrides?: ReadonlyMap<number, number>,
+  ranges?: readonly CellBufferRange[],
+  presentationCache?: WeakMap<Cell, CellBufferPresentation>,
 ): void {
-  for (let i = 0; i < count; i += 1) {
-    const c = cells[i];
-    const bornAtS = bornAtOverrides?.get(c.id)
-      ?? toSceneSeconds(c.born_at_ms) + BLOCK_HIGHLIGHT_DELAY_S;
-    const deathAtS = c.death_at_ms === null
-      ? 1e9
-      : toSceneSeconds(c.death_at_ms) + BLOCK_HIGHLIGHT_DELAY_S;
-    const flashAtS = flashMap.get(c.id) ?? -1e9;
+  const activeRanges = ranges ?? [{ start: 0, count }];
+  for (const range of activeRanges) {
+    const end = Math.min(count, cells.length, range.start + range.count);
+    for (let i = Math.max(0, range.start); i < end; i += 1) {
+      const c = cells[i];
+      const bornAtS = bornAtOverrides?.get(c.id)
+        ?? toSceneSeconds(c.born_at_ms) + BLOCK_HIGHLIGHT_DELAY_S;
+      const deathAtS = c.death_at_ms === null
+        ? 1e9
+        : toSceneSeconds(c.death_at_ms) + BLOCK_HIGHLIGHT_DELAY_S;
+      const flashAtS = flashMap.get(c.id) ?? -1e9;
 
-    const visual = deriveCellVisual(c);
-    const color = consensusCellColor(visual, hasCellTagAccent(c.tag));
-    const memoryIdentity = consensusMemoryCoreIdentity(visual);
-    targets.posArr[i * 3 + 0]   = c.pos_seed[0];
-    targets.posArr[i * 3 + 1]   = c.pos_seed[1];
-    targets.posArr[i * 3 + 2]   = c.pos_seed[2];
-    targets.colorArr[i * 3 + 0] = color[0];
-    targets.colorArr[i * 3 + 1] = color[1];
-    targets.colorArr[i * 3 + 2] = color[2];
-    targets.bornArr[i]          = bornAtS;
-    targets.deathArr[i]         = deathAtS;
-    targets.flashArr[i]         = flashAtS;
-    targets.sizeArr[i]          = cellPointSize(c);
-    targets.memoryIdentityArr.set(memoryIdentity.semantic, i * 4);
-    targets.memorySeedArr[i]    = memoryIdentity.hashSeed;
+      const presentation = cellBufferPresentation(c, presentationCache);
+      targets.posArr[i * 3 + 0]   = c.pos_seed[0];
+      targets.posArr[i * 3 + 1]   = c.pos_seed[1];
+      targets.posArr[i * 3 + 2]   = c.pos_seed[2];
+      targets.colorArr[i * 3 + 0] = presentation.color[0];
+      targets.colorArr[i * 3 + 1] = presentation.color[1];
+      targets.colorArr[i * 3 + 2] = presentation.color[2];
+      targets.bornArr[i]          = bornAtS;
+      targets.deathArr[i]         = deathAtS;
+      targets.flashArr[i]         = flashAtS;
+      targets.sizeArr[i]          = presentation.size;
+      targets.memoryIdentityArr.set(presentation.memoryIdentity, i * 4);
+      targets.memorySeedArr[i]    = presentation.memorySeed;
+    }
   }
+}
+
+const MAX_CELL_BUFFER_UPLOAD_RANGES = 8;
+
+/** Tell Three.js to upload only changed scalar runs. Highly fragmented block
+ * updates fall back to one upload while retaining the cheaper partial CPU
+ * derivation above. */
+function markCellBufferUpdateRanges(
+  attribute: THREE.BufferAttribute,
+  ranges: readonly CellBufferRange[],
+  visibleCount: number,
+): void {
+  if (ranges.length === 0 || visibleCount <= 0) return;
+  attribute.clearUpdateRanges();
+  const uploadRanges = ranges.length <= MAX_CELL_BUFFER_UPLOAD_RANGES
+    ? ranges
+    : [{ start: 0, count: visibleCount }];
+  for (const range of uploadRanges) {
+    if (range.count <= 0) continue;
+    attribute.addUpdateRange(
+      range.start * attribute.itemSize,
+      range.count * attribute.itemSize,
+    );
+  }
+  attribute.needsUpdate = true;
 }
 
 // ---------------------------------------------------------------------------
@@ -840,9 +942,9 @@ export default function CellGalaxy({
   const simClock = useSimClock();
   const groupRef = useRef<THREE.Group>(null);
   // Server-driven cell list. The component is now a pure visual layer:
-  // it reads cells from the cache and writes their xyz / born / death
-  // attributes into the Points BufferGeometry each frame. Birth / death / tag
-  // are reduced server-side in `simulator/src/dashboard/projections/cells.rs`.
+  // it reads cells from the cache and patches changed xyz / born / death
+  // slots in the Points BufferGeometry. Birth / death / tag are reduced
+  // server-side before they reach this renderer.
   const cellsCache = useCellGalaxy();
   const identityProofCell = identityProof
     ? cellsCache.cells.get(identityProof.cellId) ?? null
@@ -867,16 +969,18 @@ export default function CellGalaxy({
    *  hitbox's `e.instanceId` did, so the `cell:${id}` selection
    *  contract is preserved. */
   const cellsListRef = useRef<Cell[]>([]);
+  /** Unchanged immutable Cell objects retain their expensive hash/taxonomy
+   * presentation even when GC moves them to a different visible slot. */
+  const cellBufferPresentationCacheRef = useRef(
+    new WeakMap<Cell, CellBufferPresentation>(),
+  );
   const selectedCellIdRef = useRef<number | null>(null);
   const hoveredCellIdRef = useRef<number | null>(null);
   selectedCellIdRef.current = selectedCellNumericId(selectedCellId);
-  /** Identity of the cells Map last seen by useSimFrame. When
-   *  cellsCache.cells === lastCellsRef.current, no birth/death/tag/gc
-   *  delta has landed since our previous frame, so the static per-cell
-   *  buffers (positions, colors, lifecycle, size, memory identity) are still
-   *  valid — we skip writeCellBuffers and the matching needsUpdate
-   *  flags. Pulse-only frames (which mutate lastPulseAtMs but leave
-   *  the cells Map identity-stable) ride the skip path. */
+  /** Identity of the cells Map last seen by useSimFrame. A new map is diffed
+   *  against the retained render prefix so ordinary block deltas derive and
+   *  upload only changed slots; an identical map skips even that comparison.
+   *  Pulse-only frames leave the map identity stable and ride the fast path. */
   const lastCellsRef = useRef<Map<number, Cell> | null>(null);
   /** Receipt-time lifecycle overrides for records arriving during a canonical
    * suffix rewrite. Replayed chain timestamps are historical, so without this
@@ -1095,8 +1199,8 @@ export default function CellGalaxy({
       rewriteArrivalUntilRef.current = now + 1.0;
     }
 
-    // 1. Skip-or-rewrite the static per-cell buffers based on cells Map identity
-    //    or quality/selection/inspection-prefix change.
+    // 1. Diff the visible prefix only when its structural inputs change, then
+    //    derive and upload the coalesced Cell slots touched by that diff.
     const inputsChanged =
       cellsCache.cells !== lastCellsRef.current ||
       cellDisplayLimit !== lastCellDisplayLimitRef.current ||
@@ -1104,6 +1208,8 @@ export default function CellGalaxy({
       inspectionField !== lastPinnedInspectionFieldRef.current;
     let cellsList = cellsListRef.current;
     let count = drawCountRef.current;
+    let cellBufferRanges: CellBufferRange[] = [];
+    let renderMembershipChanged = false;
     if (inputsChanged) {
       for (const [id, bornAt] of rewriteBirthAtRef.current) {
         if (now - bornAt > 2) rewriteBirthAtRef.current.delete(id);
@@ -1125,14 +1231,23 @@ export default function CellGalaxy({
           flashDirtyRef.current = true;
         }
       }
-      cellsList = cellRenderList(
+      const nextCellsList = cellRenderList(
         cellsCache.cells,
         cellDisplayLimit,
         selectedCellIdRef.current,
         inspectionField,
       );
-      count = cellsList.length;
-      cellsListRef.current = cellsList;
+      const listDiff = diffCellBufferSlots(cellsListRef.current, nextCellsList);
+      cellBufferRanges = listDiff.ranges;
+      renderMembershipChanged = listDiff.membershipChanged;
+      count = nextCellsList.length;
+      if (
+        cellsListRef.current.length !== nextCellsList.length
+        || cellBufferRanges.length > 0
+      ) {
+        cellsList = nextCellsList;
+        cellsListRef.current = nextCellsList;
+      }
       drawCountRef.current = count;
       const flashMap = cellFlashRef.current;
 
@@ -1152,6 +1267,8 @@ export default function CellGalaxy({
           memorySeedArr: cellMemorySeedAttr.array as Float32Array,
         },
         rewriteBirthAtRef.current,
+        cellBufferRanges,
+        cellBufferPresentationCacheRef.current,
       );
 
       // Opportunistic prune: keep flashMap from leaking entries for cells
@@ -1164,14 +1281,22 @@ export default function CellGalaxy({
       }
 
       cellGeometry.setDrawRange(0, count);
-      cellPosAttr.needsUpdate = true;
-      cellColorAttr.needsUpdate = true;
-      cellBornAtAttr.needsUpdate = true;
-      cellDeathAtAttr.needsUpdate = true;
-      cellFlashAtAttr.needsUpdate = true;
-      cellSizeAttr.needsUpdate = true;
-      cellMemoryIdentityAttr.needsUpdate = true;
-      cellMemorySeedAttr.needsUpdate = true;
+      markCellBufferUpdateRanges(cellPosAttr, cellBufferRanges, count);
+      markCellBufferUpdateRanges(cellColorAttr, cellBufferRanges, count);
+      markCellBufferUpdateRanges(cellBornAtAttr, cellBufferRanges, count);
+      markCellBufferUpdateRanges(cellDeathAtAttr, cellBufferRanges, count);
+      markCellBufferUpdateRanges(cellFlashAtAttr, cellBufferRanges, count);
+      markCellBufferUpdateRanges(cellSizeAttr, cellBufferRanges, count);
+      markCellBufferUpdateRanges(
+        cellMemoryIdentityAttr,
+        cellBufferRanges,
+        count,
+      );
+      markCellBufferUpdateRanges(
+        cellMemorySeedAttr,
+        cellBufferRanges,
+        count,
+      );
 
       lastCellsRef.current = cellsCache.cells;
       lastCellDisplayLimitRef.current = cellDisplayLimit;
@@ -1184,22 +1309,35 @@ export default function CellGalaxy({
     // short easing interval, then return to a zero-cost steady state.
     const inspectionFieldChanged =
       inspectionField !== lastInspectionFieldRef.current;
-    if (inputsChanged || inspectionFieldChanged) {
+    const inspectionRanges = inspectionFieldChanged
+      ? [{ start: 0, count }]
+      : renderMembershipChanged
+        ? cellBufferRanges
+        : [];
+    if (inspectionRanges.length > 0) {
       writeCellInspectionTargets(
         cellsList,
         count,
         inspectionField,
         cellInspectionTargetArr,
+        inspectionRanges,
       );
       writeCellInspectionNavigationRoles(
         cellsList,
         count,
         inspectionField,
         cellInspectionRoleAttr.array as Float32Array,
+        inspectionRanges,
       );
-      cellInspectionRoleAttr.needsUpdate = true;
-      lastInspectionFieldRef.current = inspectionField;
+      markCellBufferUpdateRanges(
+        cellInspectionRoleAttr,
+        inspectionRanges,
+        count,
+      );
       inspectionAnimatingRef.current = true;
+    }
+    if (inspectionFieldChanged) {
+      lastInspectionFieldRef.current = inspectionField;
     }
     if (inspectionAnimatingRef.current) {
       const inspectionValues = cellInspectionAttr.array as Float32Array;
@@ -1218,22 +1356,21 @@ export default function CellGalaxy({
       if (inspectionNeedsWrite) cellInspectionAttr.needsUpdate = true;
     }
 
-    // 3. Flash-only rewrite. When cells didn't change but a block event or
-    //    spike arrival wrote into cellFlashRef, push the new values into
-    //    the cell flash slots without redoing positions / colors / sizes.
-    if (!inputsChanged && flashDirtyRef.current) {
+    // 3. Flash-only rewrite. A dirty flash map may coincide with a partial
+    //    static update, so refresh every visible flash slot without forcing
+    //    positions / colours / identity back through the expensive path.
+    if (flashDirtyRef.current) {
       writeFlashSlots(
         cellsListRef.current,
         drawCountRef.current,
         cellFlashRef.current,
         cellFlashAtAttr.array as Float32Array,
       );
+      // A partial static write may already have registered narrow ranges on
+      // this attribute earlier in the frame. The flash map rewrite touched the
+      // whole visible prefix, so force Three.js back to a full upload here.
+      cellFlashAtAttr.clearUpdateRanges();
       cellFlashAtAttr.needsUpdate = true;
-      flashDirtyRef.current = false;
-    }
-    if (inputsChanged) {
-      // writeCellBuffers above already wrote flash slots; clear the dirty
-      // flag so we don't double-write on the next frame.
       flashDirtyRef.current = false;
     }
 

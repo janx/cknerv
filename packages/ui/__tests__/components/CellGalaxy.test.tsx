@@ -9,6 +9,8 @@ import {
   ckbNodeAnchorPresentation,
   cellPointerGestureIsClick,
   cellPointSize,
+  diffCellBufferSlots,
+  type CellBufferPresentation,
   writeFlashSlots,
   writeCellBuffers,
   writeCellInspectionNavigationRoles,
@@ -128,7 +130,7 @@ describe('CellGalaxy', () => {
     expect(source).toMatch(
       /cellRenderList\(\s*cellsCache\.cells,\s*cellDisplayLimit,/,
     );
-    expect(source).toContain('count = cellsList.length');
+    expect(source).toContain('count = nextCellsList.length');
   });
 
   it('turns direct inspection neighbours into the bounded pick surface', () => {
@@ -404,6 +406,20 @@ describe('writeCellInspectionTargets', () => {
 
     expect([...targets]).toEqual([1, 1, 0]);
   });
+
+  it('patches only changed membership ranges during a block update', () => {
+    const targets = new Float32Array([0.25, 0.25, 0.25]);
+
+    writeCellInspectionTargets(
+      [mkCell(1), mkCell(2), mkCell(3)],
+      3,
+      null,
+      targets,
+      [{ start: 1, count: 1 }],
+    );
+
+    expect([...targets]).toEqual([0.25, 1, 0.25]);
+  });
 });
 
 describe('writeCellInspectionNavigationRoles', () => {
@@ -440,6 +456,20 @@ describe('writeCellInspectionNavigationRoles', () => {
     );
 
     expect([...roles]).toEqual([0, 0, 1]);
+  });
+
+  it('patches only changed navigation slots during a block update', () => {
+    const roles = new Float32Array([1, 1, 1]);
+
+    writeCellInspectionNavigationRoles(
+      [mkCell(1), mkCell(2), mkCell(3)],
+      3,
+      null,
+      roles,
+      [{ start: 1, count: 1 }],
+    );
+
+    expect([...roles]).toEqual([1, 0, 1]);
   });
 });
 
@@ -560,6 +590,74 @@ describe('pinCellInspectionFieldInVisiblePrefix', () => {
 });
 
 describe('writeCellBuffers', () => {
+  it('coalesces only changed immutable Cell slots after a block delta', () => {
+    const first = mkCell(1);
+    const second = mkCell(2);
+    const third = mkCell(3);
+    const taggedSecond = { ...second, tag: 'wallet' as const };
+
+    expect(diffCellBufferSlots([], [first, second, third])).toEqual({
+      ranges: [{ start: 0, count: 3 }],
+      membershipChanged: true,
+    });
+    expect(diffCellBufferSlots(
+      [first, second, third],
+      [first, taggedSecond, third],
+    )).toEqual({
+      ranges: [{ start: 1, count: 1 }],
+      membershipChanged: false,
+    });
+    expect(diffCellBufferSlots(
+      [first, second],
+      [first, second, third],
+    )).toEqual({
+      ranges: [{ start: 2, count: 1 }],
+      membershipChanged: true,
+    });
+    expect(diffCellBufferSlots(
+      [first, second, third],
+      [first, second, third],
+    )).toEqual({ ranges: [], membershipChanged: false });
+  });
+
+  it('derives only requested Cell buffer ranges', () => {
+    const cells = [mkCell(1), mkCell(2), mkCell(3)];
+    const presentationCache = new WeakMap<Cell, CellBufferPresentation>();
+    const t = {
+      posArr: new Float32Array(9).fill(-99),
+      colorArr: new Float32Array(9).fill(-99),
+      bornArr: new Float32Array(3).fill(-99),
+      deathArr: new Float32Array(3).fill(-99),
+      flashArr: new Float32Array(3).fill(-99),
+      sizeArr: new Float32Array(3).fill(-99),
+      memoryIdentityArr: new Float32Array(12).fill(-99),
+      memorySeedArr: new Float32Array(3).fill(-99),
+    };
+
+    writeCellBuffers(
+      cells,
+      cells.length,
+      (ms: number) => ms / 1000,
+      new Map(),
+      t,
+      undefined,
+      [{ start: 1, count: 1 }],
+      presentationCache,
+    );
+
+    expect(t.posArr[0]).toBe(-99);
+    expect(t.posArr[3]).toBe(cells[1].pos_seed[0]);
+    expect(t.posArr[6]).toBe(-99);
+    expect(t.bornArr[0]).toBe(-99);
+    expect(t.bornArr[1]).not.toBe(-99);
+    expect(t.bornArr[2]).toBe(-99);
+    expect(t.memoryIdentityArr[4]).not.toBe(-99);
+    expect(t.memoryIdentityArr[8]).toBe(-99);
+    expect(presentationCache.has(cells[0])).toBe(false);
+    expect(presentationCache.has(cells[1])).toBe(true);
+    expect(presentationCache.has(cells[2])).toBe(false);
+  });
+
   it('writes position, color, born/death and flash for each cell', () => {
     const cells: Cell[] = [
       {
@@ -652,12 +750,8 @@ describe('writeCellBuffers', () => {
   });
 });
 
-describe('CellGalaxy useSimFrame skip behavior', () => {
-  it('writeCellBuffers writes only when cellsList identity changes', () => {
-    // Documents the contract used by the dirty-flag call site in
-    // CellGalaxy.useSimFrame: calling writeCellBuffers twice with the
-    // same input produces deterministic output, so it's safe for the
-    // call site to skip the second call without altering buffer state.
+describe('CellGalaxy useSimFrame buffer behavior', () => {
+  it('keeps full buffer writes deterministic for snapshot hydration', () => {
     const cells = [mkCell(1)];
     const t = {
       posArr:   new Float32Array(3),
@@ -673,5 +767,15 @@ describe('CellGalaxy useSimFrame skip behavior', () => {
     const snapshotColor = t.colorArr[0];
     writeCellBuffers(cells, 1, (ms: number) => ms / 1000, new Map(), t);
     expect(t.colorArr[0]).toBe(snapshotColor);
+  });
+
+  it('routes live block changes through partial CPU and GPU ranges', () => {
+    const source = readFileSync(CELL_GALAXY_SOURCE, 'utf8');
+
+    expect(source).toContain(
+      'diffCellBufferSlots(cellsListRef.current, nextCellsList)',
+    );
+    expect(source).toContain('cellBufferRanges,');
+    expect(source).toContain('markCellBufferUpdateRanges(');
   });
 });
