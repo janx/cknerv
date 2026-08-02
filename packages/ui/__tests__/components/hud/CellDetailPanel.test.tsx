@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render } from '@testing-library/react';
+import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 import type { Cell, CellLink } from '@cknerv/types';
 import type { ConsensusMemoryTraceReadout } from '../../../src/nerve/consensusMemoryTrace';
@@ -6,6 +6,7 @@ import type {
   CellIdentityBindingPhase,
   CellIdentityProofBinding,
 } from '../../../src/derives/cellIdentityProof.derive';
+import { PROBE_STEP_S } from '../../../src/components/hud/probeScan';
 
 // The embedded portrait spins a real WebGL context — stub it in jsdom.
 vi.mock('../../../src/components/hud/CellNucleusPortrait', () => ({
@@ -136,9 +137,25 @@ describe('CellDetailPanel', () => {
     expect(t).toContain('CONTENT');
     expect(t).toContain('ANCHOR');
     expect(t).not.toContain('WRITE OBSERVED');
-    expect(getByTestId('portrait').getAttribute('data-focus')).toBe('capacity');
+    expect(getByTestId('portrait').getAttribute('data-focus')).toBe('');
     expect((container.firstElementChild as HTMLElement).style.animation)
       .toContain('cknerv-cell-consensus-enter');
+  });
+
+  it('keeps auxiliary portrait focus off while the entry decoder advances', () => {
+    const performanceNow = vi.spyOn(performance, 'now').mockReturnValue(0);
+    const { container, getByTestId } = render(
+      <CellDetailPanel cell={base} onClose={() => {}} />,
+    );
+
+    expect(getByTestId('portrait').getAttribute('data-focus')).toBe('');
+    performanceNow.mockReturnValue(PROBE_STEP_S * 2.5 * 1000);
+    act(() => {
+      vi.advanceTimersByTime(80);
+    });
+    expect(container.textContent).toContain('READING IDENTITY');
+    expect(getByTestId('portrait').getAttribute('data-focus')).toBe('');
+    performanceNow.mockRestore();
   });
 
   it('reduced motion freezes decoding: mapped identity + stable fingerprint, all rows shown', () => {
