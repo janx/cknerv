@@ -11,7 +11,10 @@ export const CELL_DETAIL_VIEW_NEAR_DISTANCE = 82;
 export const CELL_DETAIL_VIEW_FAR_DISTANCE = 148;
 export const CELL_DETAIL_VIEW_FABRIC_ENERGY_GAIN = 1.48;
 export const CELL_DETAIL_VIEW_FABRIC_WIDTH_SCALE = 1.22;
+/** Peer nodes can recede strongly; their glow remains readable as points. */
 export const CELL_DETAIL_VIEW_PEER_CONTEXT_FLOOR = 0.28;
+/** Links need a higher floor to preserve the topology as continuous structure. */
+export const CELL_DETAIL_VIEW_PEER_LINK_CONTEXT_FLOOR = 0.56;
 
 const clamp01 = (value: number): number => Math.max(0, Math.min(1, value));
 
@@ -42,4 +45,10 @@ export function cellDetailFabricWidthScale(focus: number): number {
 export function cellDetailPeerContextEnergy(focus: number): number {
   const detail = clamp01(focus);
   return 1 - (1 - CELL_DETAIL_VIEW_PEER_CONTEXT_FLOOR) * detail;
+}
+
+/** Passive peer-link contribution; stays legible while node glow recedes. */
+export function cellDetailPeerLinkContextEnergy(focus: number): number {
+  const detail = clamp01(focus);
+  return 1 - (1 - CELL_DETAIL_VIEW_PEER_LINK_CONTEXT_FLOOR) * detail;
 }
