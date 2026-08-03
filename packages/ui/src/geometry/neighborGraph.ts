@@ -9,7 +9,6 @@
 // component-stitch pass adds the minimum extra long fibres needed to
 // make the whole field one connected neural network.
 
-import type { Cell } from '@cknerv/types';
 import { buildArborForest } from './arborForest';
 
 /** Default k for the nearest-neighbour query. k=4 gives the main
@@ -55,11 +54,20 @@ export interface NeighborGraphOptions {
   maxEdgeLength?: number;
 }
 
+/** Minimal Cell shape required by topology construction. Keeping this seam
+ * compact lets the browser Worker reconstruct only id/lifecycle/position
+ * data instead of cloning complete Cell payloads across threads. */
+export interface NeighborGraphCell {
+  id: number;
+  death_at_ms: number | null;
+  pos_seed: readonly [number, number, number];
+}
+
 export function emptyNeighborGraph(): NeighborGraph {
   return { adjacency: new Map(), edges: [] };
 }
 
-function distSq(a: Cell, b: Cell): number {
+function distSq(a: NeighborGraphCell, b: NeighborGraphCell): number {
   const dx = a.pos_seed[0] - b.pos_seed[0];
   const dy = a.pos_seed[1] - b.pos_seed[1];
   const dz = a.pos_seed[2] - b.pos_seed[2];
@@ -83,7 +91,7 @@ function edgeKey(a: number, b: number): string {
 function edgeFromIds(
   aId: number,
   bId: number,
-  byId: ReadonlyMap<number, Cell>,
+  byId: ReadonlyMap<number, NeighborGraphCell>,
 ): NeighborEdge {
   const a = byId.get(aId)!;
   const b = byId.get(bId)!;
@@ -117,7 +125,7 @@ function bucketKeyNum(bx: number, bz: number): number {
  * deltas leave the graph identical.
  */
 export function buildNeighborGraph(
-  cells: ReadonlyMap<number, Cell>,
+  cells: ReadonlyMap<number, NeighborGraphCell>,
   optionsOrK: NeighborGraphOptions | number = DEFAULT_K,
 ): NeighborGraph {
   const k =
@@ -138,7 +146,9 @@ export function buildNeighborGraph(
     return { adjacency: new Map([[cellArr[0].id, new Set()]]), edges: [] };
   }
 
-  const byId = new Map<number, Cell>(cellArr.map((c) => [c.id, c]));
+  const byId = new Map<number, NeighborGraphCell>(
+    cellArr.map((c) => [c.id, c]),
+  );
 
   // Pre-allocated parallel scratch buffers for top-k. Avoids the
   // per-iteration object alloc that the previous implementation hit
@@ -150,7 +160,7 @@ export function buildNeighborGraph(
   // 2D spatial-hash bucketing cells by xz coords. k-NN scans only the
   // 9-bucket neighbourhood per cell. Numeric key avoids per-cell and
   // per-bucket-scan string allocations.
-  const buckets = new Map<number, Cell[]>();
+  const buckets = new Map<number, NeighborGraphCell[]>();
   for (const c of cellArr) {
     const bx = Math.floor(c.pos_seed[0] / BUCKET_SIZE);
     const bz = Math.floor(c.pos_seed[2] / BUCKET_SIZE);

@@ -19,7 +19,12 @@ describe('NeuralNetwork drop instrumentation wiring', () => {
   it('consumes reducer Cell changes without rebuilding a lifecycle snapshot', () => {
     expect(NETWORK_SOURCE).toContain('const diff = cellsCache.cellChanges');
     expect(NETWORK_SOURCE).toContain('diff.baseToken !== routedCellsTokenRef.current');
-    expect(NETWORK_SOURCE).toContain('graphRef.current = buildNeighborGraph(cells, opts)');
+    expect(NETWORK_SOURCE).toContain('createNeighborGraphBuilder');
+    expect(NETWORK_SOURCE).toContain('scheduleRoutingGraphBuild');
+    expect(NETWORK_SOURCE).toContain('if (!routingGraphReadyRef.current) return');
+    expect(NETWORK_SOURCE).toContain('routingGraphBuilder.cancel()');
+    expect(NETWORK_SOURCE).not.toContain('routingGraphBuilder.dispose()');
+    expect(NETWORK_SOURCE).not.toContain('buildNeighborGraph(cells, opts)');
     expect(NETWORK_SOURCE).not.toContain('diffAndSnapshotCells');
     expect(NETWORK_SOURCE).not.toContain('snapshotCells');
     expect(NETWORK_SOURCE).not.toContain('prevCellsRef');

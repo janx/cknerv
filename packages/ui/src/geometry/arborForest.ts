@@ -15,7 +15,7 @@
 // Pure + deterministic: output is a function of the cell set + adjacency only.
 
 export interface ArborCell {
-  pos_seed: [number, number, number];
+  pos_seed: readonly [number, number, number];
 }
 
 export interface ArborForestOptions {
