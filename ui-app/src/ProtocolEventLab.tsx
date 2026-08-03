@@ -391,6 +391,7 @@ export default function ProtocolEventLab({ snapshot }: { snapshot: CellGalaxySna
   const burstArrivalRef = useRef<
     Map<number, { firedAt: number; color: [number, number, number] }>
   >(new Map());
+  const writtenCellIdsRef = useRef<Set<number>>(new Set());
   const didStart = useRef(false);
   const modeAfterPrime = useRef<'playing' | 'seeking'>('playing');
 
@@ -402,6 +403,7 @@ export default function ProtocolEventLab({ snapshot }: { snapshot: CellGalaxySna
     const nextClock = createSimClock();
     cellFlashRef.current.clear();
     burstArrivalRef.current.clear();
+    writtenCellIdsRef.current.clear();
     flashDirtyRef.current = false;
     modeAfterPrime.current = destination;
     setReviewClock(nextClock);
@@ -516,7 +518,7 @@ export default function ProtocolEventLab({ snapshot }: { snapshot: CellGalaxySna
     }
     return null;
   }, [cache.cells, cache.recentLinks]);
-  const writtenCellIds = [...burstArrivalRef.current.keys()];
+  const writtenCellIds = [...writtenCellIdsRef.current];
   const focusCell = cache.cells.get(writtenCellIds[0]) ?? plannedFocusCell;
   const focusWorld = useMemo<ProtocolReviewVec3 | null>(() => (
     focusCell
@@ -672,7 +674,7 @@ export default function ProtocolEventLab({ snapshot }: { snapshot: CellGalaxySna
             boxShadow: `0 0 10px ${carrierCss}`,
           }} />
           <span style={{ color: '#64748b', fontSize: 8, letterSpacing: '0.1em' }}>
-            BLOCK {String(serial).padStart(2, '0')} · {Math.min(elapsedS, 9.9).toFixed(1)}S · LINKS {String(observedTemplates.length).padStart(2, '0')} · WRITES {String(burstArrivalRef.current.size).padStart(2, '0')} · CELL {focusCell ? `#${focusCell.id}` : 'FIELD'}
+            BLOCK {String(serial).padStart(2, '0')} · {Math.min(elapsedS, 9.9).toFixed(1)}S · LINKS {String(observedTemplates.length).padStart(2, '0')} · WRITES {String(writtenCellIdsRef.current.size).padStart(2, '0')} · CELL {focusCell ? `#${focusCell.id}` : 'FIELD'}
           </span>
         </div>
       </aside>
@@ -842,7 +844,10 @@ export default function ProtocolEventLab({ snapshot }: { snapshot: CellGalaxySna
                       ? PROTOCOL_EVENT_MEMORY_TRACE_PULSES
                       : undefined}
                   />
-                  <ConsensusWriteSeal arrivalRef={burstArrivalRef} />
+                  <ConsensusWriteSeal
+                    arrivalRef={burstArrivalRef}
+                    consumedCellIdsRef={writtenCellIdsRef}
+                  />
                 </>
               )}
             />

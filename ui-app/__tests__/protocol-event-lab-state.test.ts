@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { Cell, CellGalaxySnapshot } from '@cknerv/types';
 import { fromCellsSnapshot } from '@cknerv/cache';
@@ -14,6 +16,11 @@ import {
   protocolEventReviewTarget,
   protocolEventStage,
 } from '../src/protocol-event-lab-state';
+
+const LAB_SOURCE = readFileSync(
+  resolve(process.cwd(), 'src/ProtocolEventLab.tsx'),
+  'utf8',
+);
 
 function cell(id: number, alive = true): Cell {
   return {
@@ -47,6 +54,13 @@ const snapshot = (cells: Cell[]): CellGalaxySnapshot => ({
 });
 
 describe('protocol event lab state', () => {
+  it('keeps diagnostic write history separate from the consumed render queue', () => {
+    expect(LAB_SOURCE).toContain('const writtenCellIdsRef = useRef<Set<number>>');
+    expect(LAB_SOURCE).toContain('consumedCellIdsRef={writtenCellIdsRef}');
+    expect(LAB_SOURCE).toContain('writtenCellIdsRef.current.clear()');
+    expect(LAB_SOURCE).not.toContain('[...burstArrivalRef.current.keys()]');
+  });
+
   it('keeps a bounded real live-Cell field and resets only the review clock', () => {
     const selected = protocolEventLabSnapshot(
       snapshot([cell(1, false), cell(2), cell(3), cell(4)]),

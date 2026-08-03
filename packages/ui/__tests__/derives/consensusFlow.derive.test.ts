@@ -4,6 +4,8 @@ import {
   consensusBlockColor,
   consensusCellColor,
   consensusChromaIntensity,
+  compactConsensusWriteSealSlots,
+  drainConsensusWriteSealArrivals,
   consensusPacketColor,
   consensusRouteGoldMix,
   consensusRouteColors,
@@ -112,5 +114,43 @@ describe('A consensus-flow visual contract', () => {
     expect(latched.core).toBeGreaterThan(0.3);
     expect(latched.memory).toBeGreaterThan(0.9);
     expect(late.opacity).toBeLessThan(latched.opacity);
+  });
+
+  it('drains write arrivals once and retains only the newest bounded slots', () => {
+    const slots = [{
+      cellId: 9,
+      firedAt: 9.5,
+      color: [1, 0, 0] as [number, number, number],
+    }];
+    const arrivals = new Map([
+      [1, { firedAt: 9.7, color: [0, 1, 0] as [number, number, number] }],
+      [2, { firedAt: 1, color: [0, 0, 1] as [number, number, number] }],
+      [3, { firedAt: 10.2, color: [1, 1, 0] as [number, number, number] }],
+    ]);
+    const consumedCellIds = new Set<number>();
+
+    expect(drainConsensusWriteSealArrivals(
+      arrivals,
+      slots,
+      10,
+      2,
+      CONSENSUS_WRITE_SEAL_LIFETIME_S,
+      consumedCellIds,
+    )).toBe(2);
+    expect(arrivals.size).toBe(0);
+    expect(slots.map(({ cellId }) => cellId)).toEqual([1, 3]);
+    expect([...consumedCellIds]).toEqual([1, 3]);
+  });
+
+  it('compacts expired and missing write seals in place', () => {
+    const slots = [
+      { cellId: 1, firedAt: 9, color: [1, 0, 0] as [number, number, number] },
+      { cellId: 2, firedAt: 1, color: [0, 1, 0] as [number, number, number] },
+      { cellId: 3, firedAt: 9, color: [0, 0, 1] as [number, number, number] },
+    ];
+    const cells = new Map<number, unknown>([[1, {}], [2, {}]]);
+
+    expect(compactConsensusWriteSealSlots(slots, 10, cells, 2)).toBe(1);
+    expect(slots.map(({ cellId }) => cellId)).toEqual([1]);
   });
 });

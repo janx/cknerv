@@ -1156,7 +1156,8 @@ export default function CellGalaxy({
   const cellFlashAtAttr = useMemo(() => {
     const arr = new Float32Array(INSTANCE_CAPACITY);
     arr.fill(-1e9);
-    return new THREE.BufferAttribute(arr, 1);
+    return new THREE.BufferAttribute(arr, 1)
+      .setUsage(THREE.DynamicDrawUsage);
   }, []);
   const cellSizeAttr = useMemo(
     () => new THREE.BufferAttribute(new Float32Array(INSTANCE_CAPACITY), 1),
@@ -1175,24 +1176,28 @@ export default function CellGalaxy({
   // LOD detail factor per cell (0 = far/unchanged glow, →1 = camera-near, peak
   // suppressed so the nucleus shows). Written each frame by <CellNucleus>.
   const cellDetailAttr = useMemo(
-    () => new THREE.BufferAttribute(new Float32Array(INSTANCE_CAPACITY), 1),
+    () => new THREE.BufferAttribute(new Float32Array(INSTANCE_CAPACITY), 1)
+      .setUsage(THREE.DynamicDrawUsage),
     [],
   );
   // Smooth hover/selection envelope. CellNucleus owns the easing and writes
   // this shared attribute so the far point and the expanded braid stay in sync.
   const cellFocusAttr = useMemo(
-    () => new THREE.BufferAttribute(new Float32Array(INSTANCE_CAPACITY), 1),
+    () => new THREE.BufferAttribute(new Float32Array(INSTANCE_CAPACITY), 1)
+      .setUsage(THREE.DynamicDrawUsage),
     [],
   );
   // Signed recall energy: negative = evidence source, positive = retained
   // target. Resolution is separate so the target can lock only after its real
   // witnesses arrive. Both buffers stay idle at zero outside explicit recall.
   const cellRecallAttr = useMemo(
-    () => new THREE.BufferAttribute(new Float32Array(INSTANCE_CAPACITY), 1),
+    () => new THREE.BufferAttribute(new Float32Array(INSTANCE_CAPACITY), 1)
+      .setUsage(THREE.DynamicDrawUsage),
     [],
   );
   const cellRecallStateAttr = useMemo(
-    () => new THREE.BufferAttribute(new Float32Array(INSTANCE_CAPACITY), 1),
+    () => new THREE.BufferAttribute(new Float32Array(INSTANCE_CAPACITY), 1)
+      .setUsage(THREE.DynamicDrawUsage),
     [],
   );
   // One eased topology-energy scalar per body point. The target lives in a
@@ -1201,7 +1206,8 @@ export default function CellGalaxy({
   const cellInspectionAttr = useMemo(() => {
     const arr = new Float32Array(INSTANCE_CAPACITY);
     arr.fill(1);
-    return new THREE.BufferAttribute(arr, 1);
+    return new THREE.BufferAttribute(arr, 1)
+      .setUsage(THREE.DynamicDrawUsage);
   }, []);
   const cellInspectionTargetArr = useMemo(() => {
     const arr = new Float32Array(INSTANCE_CAPACITY);
@@ -1212,7 +1218,8 @@ export default function CellGalaxy({
   // not cross-fade: the shader affordance and CellPicker eligibility always
   // describe the same current graph snapshot.
   const cellInspectionRoleAttr = useMemo(
-    () => new THREE.BufferAttribute(new Float32Array(INSTANCE_CAPACITY), 1),
+    () => new THREE.BufferAttribute(new Float32Array(INSTANCE_CAPACITY), 1)
+      .setUsage(THREE.DynamicDrawUsage),
     [],
   );
   const lastInspectionFieldRef = useRef<CellInspectionField | null>(null);
