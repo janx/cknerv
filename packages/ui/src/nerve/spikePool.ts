@@ -24,6 +24,23 @@ import * as THREE from 'three';
 
 import type { Vec3 } from '../types';
 
+function streamAttribute(
+  array: Float32Array,
+  itemSize: number,
+): THREE.BufferAttribute {
+  return new THREE.BufferAttribute(array, itemSize)
+    .setUsage(THREE.StreamDrawUsage);
+}
+
+function markWrittenRange(
+  attribute: THREE.BufferAttribute,
+  writtenCount: number,
+): void {
+  attribute.clearUpdateRanges();
+  attribute.addUpdateRange(0, writtenCount * attribute.itemSize);
+  attribute.needsUpdate = true;
+}
+
 export interface SpikeSlotWrite {
   position: Vec3;
   color: Vec3;
@@ -52,6 +69,7 @@ export class SpikePool {
   private readonly alphas: Float32Array;
   private readonly whiteBias: Float32Array;
   private readonly glyphModes: Float32Array;
+  private readonly dynamicAttributes: THREE.BufferAttribute[];
   private writtenCount = 0;
 
   constructor(capacity: number) {
@@ -63,13 +81,28 @@ export class SpikePool {
     this.whiteBias = new Float32Array(capacity);
     this.glyphModes = new Float32Array(capacity);
 
+    const positionAttribute = streamAttribute(this.positions, 3);
+    const colorAttribute = streamAttribute(this.colors, 3);
+    const sizeAttribute = streamAttribute(this.sizes, 1);
+    const alphaAttribute = streamAttribute(this.alphas, 1);
+    const whiteBiasAttribute = streamAttribute(this.whiteBias, 1);
+    const glyphModeAttribute = streamAttribute(this.glyphModes, 1);
+    this.dynamicAttributes = [
+      positionAttribute,
+      colorAttribute,
+      sizeAttribute,
+      alphaAttribute,
+      whiteBiasAttribute,
+      glyphModeAttribute,
+    ];
+
     this.geometry = new THREE.BufferGeometry();
-    this.geometry.setAttribute('position', new THREE.BufferAttribute(this.positions, 3));
-    this.geometry.setAttribute('aColor', new THREE.BufferAttribute(this.colors, 3));
-    this.geometry.setAttribute('aSize', new THREE.BufferAttribute(this.sizes, 1));
-    this.geometry.setAttribute('aAlpha', new THREE.BufferAttribute(this.alphas, 1));
-    this.geometry.setAttribute('aWhiteBias', new THREE.BufferAttribute(this.whiteBias, 1));
-    this.geometry.setAttribute('aGlyphMode', new THREE.BufferAttribute(this.glyphModes, 1));
+    this.geometry.setAttribute('position', positionAttribute);
+    this.geometry.setAttribute('aColor', colorAttribute);
+    this.geometry.setAttribute('aSize', sizeAttribute);
+    this.geometry.setAttribute('aAlpha', alphaAttribute);
+    this.geometry.setAttribute('aWhiteBias', whiteBiasAttribute);
+    this.geometry.setAttribute('aGlyphMode', glyphModeAttribute);
     this.geometry.setDrawRange(0, 0);
     this.geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0, 0), 500);
 
@@ -198,17 +231,15 @@ export class SpikePool {
     return true;
   }
 
-  /** Mark dirty + finalize draw range. */
+  /** Finalize the draw range and upload only the slots written this frame. */
   endFrame(viewportHeight: number, pixelRatio: number): void {
     this.material.uniforms.uViewportHeight.value = viewportHeight;
     this.material.uniforms.uPixelRatio.value = pixelRatio;
     this.geometry.setDrawRange(0, this.writtenCount);
-    (this.geometry.getAttribute('position') as THREE.BufferAttribute).needsUpdate = true;
-    (this.geometry.getAttribute('aColor') as THREE.BufferAttribute).needsUpdate = true;
-    (this.geometry.getAttribute('aSize') as THREE.BufferAttribute).needsUpdate = true;
-    (this.geometry.getAttribute('aAlpha') as THREE.BufferAttribute).needsUpdate = true;
-    (this.geometry.getAttribute('aWhiteBias') as THREE.BufferAttribute).needsUpdate = true;
-    (this.geometry.getAttribute('aGlyphMode') as THREE.BufferAttribute).needsUpdate = true;
+    if (this.writtenCount === 0) return;
+    for (const attribute of this.dynamicAttributes) {
+      markWrittenRange(attribute, this.writtenCount);
+    }
   }
 
   dispose(): void {

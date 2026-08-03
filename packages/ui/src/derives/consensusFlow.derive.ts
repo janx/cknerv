@@ -32,6 +32,86 @@ export const CONSENSUS_MEMORY_PHASE_S = 6.0;
 export const CONSENSUS_WRITE_SEAL_LIFETIME_S =
   CONSENSUS_WRITE_PHASE_S + CONSENSUS_MEMORY_PHASE_S;
 
+export interface ConsensusWriteSealArrival {
+  firedAt: number;
+  color: ConsensusFlowColor;
+}
+
+export interface ConsensusWriteSealSlot extends ConsensusWriteSealArrival {
+  cellId: number;
+}
+
+function normalizeWriteSealCapacity(capacity: number): number {
+  return Number.isFinite(capacity)
+    ? Math.max(0, Math.floor(capacity))
+    : 0;
+}
+
+/** Drain the imperative arrival map exactly once. The producer already keeps
+ * only the newest write per Cell between frames, so clearing after consumption
+ * turns the shared Map into a bounded event queue instead of an ever-growing
+ * history that every animation frame must rescan. */
+export function drainConsensusWriteSealArrivals(
+  arrivals: Map<number, ConsensusWriteSealArrival>,
+  slots: ConsensusWriteSealSlot[],
+  nowSec: number,
+  capacity: number,
+  lifetimeSec = CONSENSUS_WRITE_SEAL_LIFETIME_S,
+  consumedCellIds?: Set<number>,
+): number {
+  const limit = normalizeWriteSealCapacity(capacity);
+  let added = 0;
+  if (limit > 0 && Number.isFinite(nowSec) && Number.isFinite(lifetimeSec)) {
+    for (const [cellId, entry] of arrivals) {
+      if (
+        Number.isFinite(entry.firedAt)
+        && entry.firedAt >= nowSec - Math.max(0, lifetimeSec)
+      ) {
+        slots.push({ cellId, firedAt: entry.firedAt, color: entry.color });
+        consumedCellIds?.add(cellId);
+        added += 1;
+      }
+    }
+  }
+  arrivals.clear();
+
+  if (slots.length > limit) {
+    // Retain newest insertion-order entries without allocating a sliced copy.
+    slots.copyWithin(0, slots.length - limit);
+    slots.length = limit;
+  }
+  return added;
+}
+
+/** Compact active write seals in place. Missing/expired records can never
+ * become visible again, so retaining them would only keep the frame loop busy. */
+export function compactConsensusWriteSealSlots(
+  slots: ConsensusWriteSealSlot[],
+  nowSec: number,
+  cells?: ReadonlyMap<number, unknown>,
+  lifetimeSec = CONSENSUS_WRITE_SEAL_LIFETIME_S,
+): number {
+  if (
+    !Number.isFinite(nowSec)
+    || !Number.isFinite(lifetimeSec)
+    || lifetimeSec <= 0
+  ) {
+    slots.length = 0;
+    return 0;
+  }
+
+  let write = 0;
+  for (const slot of slots) {
+    if (!Number.isFinite(slot.firedAt)) continue;
+    if (nowSec - slot.firedAt >= lifetimeSec) continue;
+    if (cells && !cells.has(slot.cellId)) continue;
+    slots[write] = slot;
+    write += 1;
+  }
+  slots.length = write;
+  return write;
+}
+
 const mixColor = (
   from: readonly [number, number, number],
   to: readonly [number, number, number],

@@ -39,6 +39,10 @@ import {
   consensusMemoryRouteHopCellFocus,
   type ConsensusMemoryCellResponse,
 } from '../nerve/consensusMemoryTrace';
+import {
+  writeSparseScalarAttribute,
+  type ScalarAttributeSlotWrite,
+} from '../geometry/sparseScalarAttribute';
 
 const NEAR_DIST = 2.5;
 const FAR_DIST = 9.5;
@@ -191,6 +195,11 @@ export default function CellNucleus({
     dist: number;
   }[]>([]);
   const focusByCell = useRef<Map<number, number>>(new Map());
+  const visibleIndexByCell = useRef<Map<number, number>>(new Map());
+  const detailSlots = useRef<number[]>([]);
+  const focusSlots = useRef<number[]>([]);
+  const recallSlots = useRef<number[]>([]);
+  const recallStateSlots = useRef<number[]>([]);
   const cursor = useRef<GalaxyNucleusCursor>({ lineVertices: 0, nodes: 0 });
   const lodElapsedS = useRef(Number.POSITIVE_INFINITY);
   const lastCellsList = useRef<Cell[] | null>(null);
@@ -207,10 +216,6 @@ export default function CellNucleus({
     const group = groupRef.current;
     const cells = cellsListRef.current;
     const count = Math.min(drawCountRef.current ?? 0, cells?.length ?? 0);
-    const detailArray = detailAttr.array as Float32Array;
-    const focusArray = focusAttr.array as Float32Array;
-    const recallArray = recallAttr.array as Float32Array;
-    const recallStateArray = recallStateAttr.array as Float32Array;
     if (!group || !cells || count === 0) {
       lineGeometry.instanceCount = 0;
       nodeGeometry.setDrawRange(0, 0);
@@ -267,7 +272,6 @@ export default function CellNucleus({
       || recallChanged;
     lastSelectedCellId.current = selectedCellId;
     lastHoveredCellId.current = hoveredCellId;
-    const focusPreviouslyActive = focusByCell.current.size > 0;
     if (selectedCellId !== null && !focusByCell.current.has(selectedCellId)) {
       focusByCell.current.set(selectedCellId, 0);
     }
@@ -280,6 +284,7 @@ export default function CellNucleus({
     ) {
       focusByCell.current.set(routeHopFocus.cellId, 0);
     }
+    let focusEnvelopeChanged = false;
     for (const [cellId, current] of focusByCell.current) {
       const target = Math.max(
         cellFocusTarget(cellId, selectedCellId, hoveredCellId),
@@ -290,21 +295,31 @@ export default function CellNucleus({
         ),
       );
       const next = dampCellFocus(current, target, deltaSeconds);
+      if (next !== current) focusEnvelopeChanged = true;
       if (next === 0 && target === 0) focusByCell.current.delete(cellId);
       else focusByCell.current.set(cellId, next);
     }
-    const focusNeedsWrite = focusPreviouslyActive || focusByCell.current.size > 0;
 
     lodElapsedS.current += Math.max(0, deltaSeconds);
     const qualityBudgetChanged = nucleusNearCap !== lastNearCap.current;
-    const cellsChanged = cells !== lastCellsList.current
-      || count !== lastCount.current
-      || qualityBudgetChanged;
+    const renderCellsChanged = cells !== lastCellsList.current
+      || count !== lastCount.current;
+    const cellsChanged = renderCellsChanged || qualityBudgetChanged;
+    const focusNeedsWrite = focusEnvelopeChanged
+      || (renderCellsChanged && focusByCell.current.size > 0);
+    if (renderCellsChanged) {
+      const indices = visibleIndexByCell.current;
+      indices.clear();
+      for (let index = 0; index < count; index += 1) {
+        indices.set(cells[index].id, index);
+      }
+    }
     const refreshLod = cellNucleusLodRefreshDue(
       lodElapsedS.current,
       cellsChanged,
       interactionChanged,
     );
+    let rewriteDetailAttribute = false;
 
     if (refreshLod) {
       lodElapsedS.current = 0;
@@ -320,7 +335,6 @@ export default function CellNucleus({
         .copy(cameraPosition)
         .applyMatrix4(groupWorldInverse);
 
-      detailArray.fill(0, 0, count);
       near.current.length = 0;
       for (let index = 0; index < count; index += 1) {
         const cell = cells[index];
@@ -408,10 +422,7 @@ export default function CellNucleus({
         || left.dist - right.dist
       ));
       if (near.current.length > nucleusNearCap) near.current.length = nucleusNearCap;
-      for (const entry of near.current) {
-        if (entry.index < count) detailArray[entry.index] = entry.detail;
-      }
-      detailAttr.needsUpdate = true;
+      rewriteDetailAttribute = true;
     } else if (focusNeedsWrite || recallNeedsWrite) {
       // Camera selection is cached between LOD ticks, but the semantic focus
       // envelope remains full-rate so hover/selection never feels quantized.
@@ -424,37 +435,59 @@ export default function CellNucleus({
         entry.focus = Math.max(entry.userFocus, recallDetailFocus);
         const interactionDetail = entry.focus * (0.68 + entry.cameraDetail * 0.32);
         entry.detail = Math.max(entry.cameraDetail, interactionDetail);
-        if (entry.index < count) detailArray[entry.index] = entry.detail;
       }
-      detailAttr.needsUpdate = true;
+      rewriteDetailAttribute = true;
+    }
+
+    if (rewriteDetailAttribute) {
+      const writes: ScalarAttributeSlotWrite[] = [];
+      for (const entry of near.current) {
+        if (entry.index < count) {
+          writes.push({ index: entry.index, value: entry.detail });
+        }
+      }
+      writeSparseScalarAttribute(detailAttr, detailSlots.current, writes);
     }
 
     // The focus buffer is entirely idle in the resting state. Clear and upload
     // it only while an envelope is active, plus one final frame on release.
     if (focusNeedsWrite) {
-      focusArray.fill(0, 0, count);
+      const writes: ScalarAttributeSlotWrite[] = [];
       for (const entry of near.current) {
-        if (entry.index < count) focusArray[entry.index] = entry.userFocus;
+        if (entry.index < count && entry.userFocus !== 0) {
+          writes.push({ index: entry.index, value: entry.userFocus });
+        }
       }
-      focusAttr.needsUpdate = true;
+      writeSparseScalarAttribute(focusAttr, focusSlots.current, writes);
     }
 
     // Recall buffers are dormant outside an explicit user request. The final
     // release frame clears both arrays, so a historical read never leaves a
     // persistent mark or masquerades as a new chain write.
     if (recallNeedsWrite) {
-      recallArray.fill(0, 0, count);
-      recallStateArray.fill(0, 0, count);
-      for (let index = 0; index < count; index += 1) {
-        const response = recallByCell.get(cells[index].id);
-        if (!response) continue;
-        recallArray[index] = response.role === 'target'
-          ? response.strength
-          : -response.strength;
-        recallStateArray[index] = response.convergence;
+      const recallWrites: ScalarAttributeSlotWrite[] = [];
+      const stateWrites: ScalarAttributeSlotWrite[] = [];
+      for (const [cellId, response] of recallByCell) {
+        const index = visibleIndexByCell.current.get(cellId);
+        if (index === undefined) continue;
+        recallWrites.push({
+          index,
+          value: response.role === 'target'
+            ? response.strength
+            : -response.strength,
+        });
+        stateWrites.push({ index, value: response.convergence });
       }
-      recallAttr.needsUpdate = true;
-      recallStateAttr.needsUpdate = true;
+      writeSparseScalarAttribute(
+        recallAttr,
+        recallSlots.current,
+        recallWrites,
+      );
+      writeSparseScalarAttribute(
+        recallStateAttr,
+        recallStateSlots.current,
+        stateWrites,
+      );
     }
 
     // Geometry is stable in the rotating group's local frame. Only rewrite it

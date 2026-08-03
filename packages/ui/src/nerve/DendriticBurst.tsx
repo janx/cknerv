@@ -7,10 +7,9 @@
 // memory latch that shows the written information remains part of the field.
 //
 // The component owns a small Points pool (64 slots). The flow orchestrator writes
-// the most-recent arrival timestamp per target cell into a shared
-// `arrivalRef: Map<cellId, sceneSeconds>`; this component drains the
-// map each frame, allocates a slot per fresh entry, and lets the burst
-// run its course.
+// the most-recent arrival per target cell into a shared Map. This component
+// consumes and clears that bounded event queue, then lets each seal run its
+// course without retaining an ever-growing history of Cell ids.
 //
 // Distinct from `cellFlashRef`: the seal records completed protocol work in
 // space, while the Cell flash is only a brief energy response.
@@ -23,45 +22,62 @@ import * as THREE from 'three';
 import { useCellGalaxy } from '../hooks/cellGalaxyContext';
 import {
   CONSENSUS_WRITE_SEAL_LIFETIME_S,
+  compactConsensusWriteSealSlots,
   consensusWriteSealState,
+  drainConsensusWriteSealArrivals,
+  type ConsensusWriteSealArrival,
+  type ConsensusWriteSealSlot,
 } from '../derives/consensusFlow.derive';
 
 const BURST_PEAK_RADIUS = 1.9;
 const BURST_POOL_CAP = 64;
 
-interface BurstSlot {
-  cellId: number;
-  firedAt: number;
-  /** RGB identity shared with the source packet and traversed route. */
-  color: [number, number, number];
+function streamAttribute(length: number, itemSize: number): THREE.BufferAttribute {
+  return new THREE.BufferAttribute(
+    new Float32Array(length),
+    itemSize,
+  ).setUsage(THREE.StreamDrawUsage);
+}
+
+function markSealAttributeRange(
+  attribute: THREE.BufferAttribute,
+  written: number,
+): void {
+  attribute.clearUpdateRanges();
+  attribute.addUpdateRange(0, written * attribute.itemSize);
+  attribute.needsUpdate = true;
 }
 
 export interface ConsensusWriteSealProps {
-  /** Map cell.id → most-recent scene-seconds at which a packet
-   *  arrived at this Cell. Written by the flow orchestrator each frame; this
-   *  component diffs against `lastSeenRef` to detect fresh arrivals. */
-  arrivalRef: React.RefObject<Map<number, { firedAt: number; color: [number, number, number] }>>;
+  /** One-frame event queue keyed by Cell id. The consumer clears entries after
+   * scheduling them, so producers can overwrite duplicate arrivals cheaply. */
+  arrivalRef: React.RefObject<Map<number, ConsensusWriteSealArrival>>;
+  /** Optional diagnostic history. Production leaves this unset; review routes
+   * own and reset the Set explicitly instead of retaining queue entries. */
+  consumedCellIdsRef?: React.RefObject<Set<number>>;
 }
 
 /** Legacy public type kept while consumers move to ConsensusWriteSeal. */
 export type DendriticBurstProps = ConsensusWriteSealProps;
 
-export default function ConsensusWriteSeal({ arrivalRef }: ConsensusWriteSealProps) {
+export default function ConsensusWriteSeal({
+  arrivalRef,
+  consumedCellIdsRef,
+}: ConsensusWriteSealProps) {
   const simClock = useSimClock();
   const cellsCache = useCellGalaxy();
   const meshRef = useRef<THREE.Points>(null);
-  const slotsRef = useRef<BurstSlot[]>([]);
-  const lastSeenRef = useRef<Map<number, number>>(new Map());
+  const slotsRef = useRef<ConsensusWriteSealSlot[]>([]);
 
   const geometry = useMemo(() => {
     const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(BURST_POOL_CAP * 3), 3));
-    g.setAttribute('aColor', new THREE.BufferAttribute(new Float32Array(BURST_POOL_CAP * 3), 3));
-    g.setAttribute('aRadius', new THREE.BufferAttribute(new Float32Array(BURST_POOL_CAP), 1));
-    g.setAttribute('aAlpha', new THREE.BufferAttribute(new Float32Array(BURST_POOL_CAP), 1));
-    g.setAttribute('aCore', new THREE.BufferAttribute(new Float32Array(BURST_POOL_CAP), 1));
-    g.setAttribute('aSpin', new THREE.BufferAttribute(new Float32Array(BURST_POOL_CAP), 1));
-    g.setAttribute('aMemory', new THREE.BufferAttribute(new Float32Array(BURST_POOL_CAP), 1));
+    g.setAttribute('position', streamAttribute(BURST_POOL_CAP * 3, 3));
+    g.setAttribute('aColor', streamAttribute(BURST_POOL_CAP * 3, 3));
+    g.setAttribute('aRadius', streamAttribute(BURST_POOL_CAP, 1));
+    g.setAttribute('aAlpha', streamAttribute(BURST_POOL_CAP, 1));
+    g.setAttribute('aCore', streamAttribute(BURST_POOL_CAP, 1));
+    g.setAttribute('aSpin', streamAttribute(BURST_POOL_CAP, 1));
+    g.setAttribute('aMemory', streamAttribute(BURST_POOL_CAP, 1));
     g.setDrawRange(0, 0);
     g.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0, 0), 200);
     return g;
@@ -179,33 +195,29 @@ export default function ConsensusWriteSeal({ arrivalRef }: ConsensusWriteSealPro
     if (!mesh) return;
     const now = simClock.elapsedSec;
 
-    // 1. Drain fresh arrivals from arrivalRef into our slot pool.
+    // 1. Consume fresh arrivals exactly once, then compact active slots in
+    // place. Both the queue and the animation pool remain bounded.
     const arrivalMap = arrivalRef.current;
-    const lastSeen = lastSeenRef.current;
     if (arrivalMap) {
-      for (const [cellId, entry] of arrivalMap) {
-        const prev = lastSeen.get(cellId) ?? -1;
-        if (entry.firedAt > prev) {
-          lastSeen.set(cellId, entry.firedAt);
-          // Only schedule if it's a fresh future arrival (or just-fired).
-          if (entry.firedAt >= now - CONSENSUS_WRITE_SEAL_LIFETIME_S) {
-            slotsRef.current.push({
-              cellId,
-              firedAt: entry.firedAt,
-              color: entry.color,
-            });
-          }
-        }
-      }
+      drainConsensusWriteSealArrivals(
+        arrivalMap,
+        slotsRef.current,
+        now,
+        BURST_POOL_CAP,
+        CONSENSUS_WRITE_SEAL_LIFETIME_S,
+        consumedCellIdsRef?.current ?? undefined,
+      );
     }
-    // Cap pool: drop oldest if over capacity.
-    if (slotsRef.current.length > BURST_POOL_CAP) {
-      slotsRef.current = slotsRef.current.slice(-BURST_POOL_CAP);
-    }
-    // Evict expired.
-    slotsRef.current = slotsRef.current.filter(
-      (s) => now - s.firedAt < CONSENSUS_WRITE_SEAL_LIFETIME_S,
+    const slots = slotsRef.current;
+    compactConsensusWriteSealSlots(
+      slots,
+      now,
+      cellsCache.cells,
     );
+    if (slots.length === 0) {
+      if (geometry.drawRange.count !== 0) geometry.setDrawRange(0, 0);
+      return;
+    }
 
     // 2. Write per-active-seal point attributes.
     const posArr = geometry.attributes.position.array as Float32Array;
@@ -217,7 +229,7 @@ export default function ConsensusWriteSeal({ arrivalRef }: ConsensusWriteSealPro
     const memoryArr = geometry.attributes.aMemory.array as Float32Array;
     const cellsMap = cellsCache.cells;
     let written = 0;
-    for (const slot of slotsRef.current) {
+    for (const slot of slots) {
       if (written >= BURST_POOL_CAP) break;
       const cell = cellsMap.get(slot.cellId);
       if (!cell) continue;
@@ -239,13 +251,36 @@ export default function ConsensusWriteSeal({ arrivalRef }: ConsensusWriteSealPro
       written += 1;
     }
     geometry.setDrawRange(0, written);
-    (geometry.attributes.position as THREE.BufferAttribute).needsUpdate = true;
-    (geometry.attributes.aColor as THREE.BufferAttribute).needsUpdate = true;
-    (geometry.attributes.aRadius as THREE.BufferAttribute).needsUpdate = true;
-    (geometry.attributes.aAlpha as THREE.BufferAttribute).needsUpdate = true;
-    (geometry.attributes.aCore as THREE.BufferAttribute).needsUpdate = true;
-    (geometry.attributes.aSpin as THREE.BufferAttribute).needsUpdate = true;
-    (geometry.attributes.aMemory as THREE.BufferAttribute).needsUpdate = true;
+    if (written > 0) {
+      markSealAttributeRange(
+        geometry.attributes.position as THREE.BufferAttribute,
+        written,
+      );
+      markSealAttributeRange(
+        geometry.attributes.aColor as THREE.BufferAttribute,
+        written,
+      );
+      markSealAttributeRange(
+        geometry.attributes.aRadius as THREE.BufferAttribute,
+        written,
+      );
+      markSealAttributeRange(
+        geometry.attributes.aAlpha as THREE.BufferAttribute,
+        written,
+      );
+      markSealAttributeRange(
+        geometry.attributes.aCore as THREE.BufferAttribute,
+        written,
+      );
+      markSealAttributeRange(
+        geometry.attributes.aSpin as THREE.BufferAttribute,
+        written,
+      );
+      markSealAttributeRange(
+        geometry.attributes.aMemory as THREE.BufferAttribute,
+        written,
+      );
+    }
 
     material.uniforms.uViewportHeight.value = state.size.height;
     material.uniforms.uPixelRatio.value = state.viewport.dpr ?? 1;
