@@ -160,6 +160,10 @@ interface CellGalaxyProps {
   /** Shared topology field published by the overlay's NeuralNetwork. The
    * Cell body reads it directly so selection never rebuilds the graph here. */
   inspectionFieldRef?: React.RefObject<CellInspectionField | null>;
+  /** Optional live interaction gate. Consumers with camera controls can
+   * suspend the O(N) screen-space picker after a real drag begins while still
+   * allowing the pointer-down and click raycasts that preserve R3F semantics. */
+  pickingSuspendedRef?: React.RefObject<boolean>;
   /** Seconds after the block pulse at which the LOCAL node applies the block —
    *  i.e. when it hears the block from the network (caller-supplied delay). The
    *  whole ledger reaction is delayed by this, so the canonical ripple never
@@ -486,9 +490,18 @@ function CkbNodeAnchor({
     m.uniforms.uPhase.value = phaseFor(id);
     return m;
   }, [palette, id]);
+  const wireGeometry = useMemo(() => {
+    const source = new THREE.IcosahedronGeometry(ANCHOR_BODY_RADIUS, 0);
+    const edges = new THREE.EdgesGeometry(source);
+    source.dispose();
+    return edges;
+  }, []);
   const intensityRef = useRef(presentation.haloIntensity);
 
-  useEffect(() => () => haloMat.dispose(), [haloMat]);
+  useEffect(() => () => {
+    haloMat.dispose();
+    wireGeometry.dispose();
+  }, [haloMat, wireGeometry]);
 
   useSimFrame((_, dt) => {
     if (bodyRef.current) {
@@ -534,9 +547,7 @@ function CkbNodeAnchor({
       </Billboard>
       <group ref={bodyRef}>
         <lineSegments>
-          <edgesGeometry
-            args={[new THREE.IcosahedronGeometry(ANCHOR_BODY_RADIUS, 0)]}
-          />
+          <primitive object={wireGeometry} attach="geometry" />
           <lineBasicMaterial
             color="#7df9ff"
             toneMapped={false}
@@ -668,9 +679,10 @@ export function CkbSelectionReticle({ size }: { size: number }) {
 // The pad applies only while the real braid geometry is actually visible;
 // compact lights keep their exact footprint in the dense far field.
 //
-// Performance: O(N) projections per click, no per-frame cost. N ≤ 20,000
-// (INSTANCE_CAPACITY); each iteration is a couple of Vector3 mul+project
-// operations, keeping the work bounded to an explicit interaction.
+// Performance: O(N) projections per eligible pointer event. Camera-drag
+// consumers suspend the picker after the first real movement, avoiding the
+// expensive path throughout OrbitControls interaction while preserving click
+// hit testing. N remains explicitly bounded by INSTANCE_CAPACITY.
 
 interface CellPickerProps {
   cellsListRef: React.MutableRefObject<Cell[]>;
@@ -679,6 +691,7 @@ interface CellPickerProps {
   selectedCellIdRef: React.MutableRefObject<number | null>;
   hoveredCellIdRef: React.MutableRefObject<number | null>;
   inspectionFieldRef?: React.RefObject<CellInspectionField | null>;
+  pickingSuspendedRef?: React.RefObject<boolean>;
   onSelect: (id: string | null) => void;
 }
 
@@ -705,9 +718,11 @@ function CellPicker({
   selectedCellIdRef,
   hoveredCellIdRef,
   inspectionFieldRef,
+  pickingSuspendedRef,
   onSelect,
 }: CellPickerProps) {
   const ref = useRef<THREE.Object3D>(null);
+  const forcePreciseRaycastRef = useRef(false);
   const { gl, size } = useThree();
   // Live viewport ref keeps the raycast closure current without rebinding.
   const sizeRef = useRef(size);
@@ -723,8 +738,19 @@ function CellPicker({
     const cellNdc = new THREE.Vector3();
     const rayNdc = new THREE.Vector3();
     const bestPoint = new THREE.Vector3();
+    let raycastUsedThisFrame = false;
+    let resetRaycastFrame = 0;
+    let cachedHit: {
+      index: number;
+      cellId: number;
+      centerNdcX: number;
+      centerNdcY: number;
+      pickPxRSq: number;
+      point: THREE.Vector3;
+    } | null = null;
 
     node.raycast = function raycastCells(raycaster, intersects) {
+      if (pickingSuspendedRef?.current) return;
       const cells = cellsListRef.current;
       const count = Math.min(drawCountRef.current, cells.length);
       if (count === 0) return;
@@ -744,10 +770,47 @@ function CellPicker({
       const halfW = width * 0.5;
       const halfH = height * 0.5;
 
+      // Pointer devices can dispatch multiple move events between rendered
+      // frames. Reuse the current hit (or miss) for the remainder of that
+      // frame, while pointer-down/up/click explicitly bypass this gate below.
+      const forcePrecise = forcePreciseRaycastRef.current;
+      forcePreciseRaycastRef.current = false;
+      if (!forcePrecise && raycastUsedThisFrame) {
+        const hit = cachedHit;
+        const cachedCell = hit ? cells[hit.index] : undefined;
+        if (
+          hit
+          && cachedCell?.id === hit.cellId
+          && cellInspectionNavigationTarget(inspectionField, hit.cellId)
+        ) {
+          const dx = (hit.centerNdcX - clickNdcX) * halfW;
+          const dy = (hit.centerNdcY - clickNdcY) * halfH;
+          if (dx * dx + dy * dy <= hit.pickPxRSq) {
+            intersects.push({
+              distance: ray.origin.distanceTo(hit.point),
+              point: hit.point.clone(),
+              object: this,
+              instanceId: hit.index,
+            });
+          }
+        }
+        return;
+      }
+      raycastUsedThisFrame = true;
+      if (resetRaycastFrame === 0) {
+        resetRaycastFrame = window.requestAnimationFrame(() => {
+          raycastUsedThisFrame = false;
+          resetRaycastFrame = 0;
+        });
+      }
+
       const matrix = this.matrixWorld;
       let bestIdx = -1;
       let bestPxSq = Infinity;
       let bestDepth = Infinity;
+      let bestCenterNdcX = 0;
+      let bestCenterNdcY = 0;
+      let bestPickPxRSq = 0;
 
       for (let i = 0; i < count; i++) {
         const c = cells[i];
@@ -822,18 +885,33 @@ function CellPicker({
           bestPxSq = pxSq;
           bestDepth = cellNdc.z;
           bestIdx = i;
+          bestCenterNdcX = cellNdc.x;
+          bestCenterNdcY = cellNdc.y;
+          bestPickPxRSq = pickPxRSq;
           bestPoint.copy(cellWorld);
         }
       }
 
-      if (bestIdx < 0) return;
+      if (bestIdx < 0) {
+        cachedHit = null;
+        return;
+      }
+
+      cachedHit = {
+        index: bestIdx,
+        cellId: cells[bestIdx].id,
+        centerNdcX: bestCenterNdcX,
+        centerNdcY: bestCenterNdcY,
+        pickPxRSq: bestPickPxRSq,
+        point: bestPoint.clone(),
+      };
 
       intersects.push({
         // World distance from the ray origin (camera) to the picked
         // cell's pos_seed. r3f sorts intersects by this when multiple
         // objects (e.g. chain icosahedra) compete for the same click.
-        distance: ray.origin.distanceTo(bestPoint),
-        point: bestPoint.clone(),
+        distance: ray.origin.distanceTo(cachedHit.point),
+        point: cachedHit.point.clone(),
         object: this,
         // r3f surfaces this on the synthetic event as `e.instanceId`;
         // the onClick handler below indexes back into cellsListRef.
@@ -842,6 +920,9 @@ function CellPicker({
     };
 
     return () => {
+      if (resetRaycastFrame !== 0) {
+        window.cancelAnimationFrame(resetRaycastFrame);
+      }
       // Plain Object3D.raycast is a no-op; restore on unmount so a
       // future remount doesn't carry a stale closure.
       node.raycast = THREE.Object3D.prototype.raycast;
@@ -852,8 +933,26 @@ function CellPicker({
     drawCountRef,
     hoveredCellIdRef,
     inspectionFieldRef,
+    pickingSuspendedRef,
     selectedCellIdRef,
   ]);
+
+  useEffect(() => {
+    const canvas = gl.domElement;
+    const forcePreciseRaycast = () => {
+      forcePreciseRaycastRef.current = true;
+    };
+    // Capture runs before R3F's delegated bubble handler, so click lifecycle
+    // raycasts never reuse a hover result from earlier in the same frame.
+    canvas.addEventListener('pointerdown', forcePreciseRaycast, true);
+    canvas.addEventListener('pointerup', forcePreciseRaycast, true);
+    canvas.addEventListener('click', forcePreciseRaycast, true);
+    return () => {
+      canvas.removeEventListener('pointerdown', forcePreciseRaycast, true);
+      canvas.removeEventListener('pointerup', forcePreciseRaycast, true);
+      canvas.removeEventListener('click', forcePreciseRaycast, true);
+    };
+  }, [gl]);
 
   useEffect(() => () => {
     delete gl.domElement.dataset.cellPickerHover;
@@ -949,6 +1048,7 @@ export default function CellGalaxy({
   flashDirtyRef,
   overlay,
   inspectionFieldRef,
+  pickingSuspendedRef,
   localReceiveDelayS = 0,
 }: CellGalaxyProps) {
   const simClock = useSimClock();
@@ -1589,6 +1689,7 @@ export default function CellGalaxy({
           selectedCellIdRef={selectedCellIdRef}
           hoveredCellIdRef={hoveredCellIdRef}
           inspectionFieldRef={inspectionFieldRef}
+          pickingSuspendedRef={pickingSuspendedRef}
           onSelect={onSelect}
         />
       </group>

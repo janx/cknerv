@@ -30,6 +30,39 @@ describe('cellRenderList', () => {
   it('uses the bounded cache prefix when no semantic Cell is selected', () => {
     expect(cellRenderList(cells, 4, null, null).map(({ id }) => id))
       .toEqual([0, 1, 2, 3]);
+    expect(cellRenderList(cells, Number.NaN, null, null)).toEqual([]);
+  });
+
+  it('stops iterating once the resting display budget is filled', () => {
+    let visited = 0;
+    const instrumented = new Map(cells);
+    const values = instrumented.values.bind(instrumented);
+    instrumented.values = function* instrumentedValues() {
+      for (const value of values()) {
+        visited += 1;
+        yield value;
+      }
+    } as typeof instrumented.values;
+
+    expect(cellRenderList(instrumented, 4, null, null).map(({ id }) => id))
+      .toEqual([0, 1, 2, 3]);
+    expect(visited).toBe(4);
+  });
+
+  it('pins a selected Cell without scanning the hidden tail when no field is active', () => {
+    let visited = 0;
+    const instrumented = new Map(cells);
+    const values = instrumented.values.bind(instrumented);
+    instrumented.values = function* instrumentedValues() {
+      for (const value of values()) {
+        visited += 1;
+        yield value;
+      }
+    } as typeof instrumented.values;
+
+    expect(cellRenderList(instrumented, 4, 9, null).map(({ id }) => id))
+      .toEqual([0, 1, 2, 9]);
+    expect(visited).toBe(4);
   });
 
   it('pins selected graph context without exceeding the shared budget', () => {

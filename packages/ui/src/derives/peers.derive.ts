@@ -172,33 +172,95 @@ export function bolusIngest(t: number): BolusIngest {
   };
 }
 
+interface NearestCellCandidate {
+  id: number;
+  d2: number;
+  order: number;
+}
+
+/** Max-heap ordering: farther candidates are worse; input order breaks exact
+ * distance ties so the result preserves the stable ordering of the previous
+ * full-sort implementation. */
+function nearestCandidateWorse(
+  left: NearestCellCandidate,
+  right: NearestCellCandidate,
+): boolean {
+  return left.d2 > right.d2
+    || (left.d2 === right.d2 && left.order > right.order);
+}
+
+function siftNearestCandidateDown(
+  heap: NearestCellCandidate[],
+  start: number,
+): void {
+  let index = start;
+  while (true) {
+    const left = index * 2 + 1;
+    if (left >= heap.length) return;
+    const right = left + 1;
+    const worseChild = right < heap.length
+      && nearestCandidateWorse(heap[right], heap[left])
+      ? right
+      : left;
+    if (!nearestCandidateWorse(heap[worseChild], heap[index])) return;
+    [heap[index], heap[worseChild]] = [heap[worseChild], heap[index]];
+    index = worseChild;
+  }
+}
+
 /** The `k` Cell ids nearest (in the xz plane) to a carrier `landing`,
  *  nearest first. Cells live in the galaxy group's rotating LOCAL frame
  *  (`pos_seed`), so the world landing is projected back through the group's
  *  `rotationY` before comparing. Used to illuminate the Cells a carrier reaches so
  *  the galaxy visibly RECEIVES each delivery (sparse-rim-safe: "nearest k"
- *  always finds cells, unlike a fixed radius). Pure. O(n) — called per block,
- *  not per frame. */
+ *  always finds cells, unlike a fixed radius). Pure. O(n log min(k,n)) time
+ *  and O(min(k,n)) memory — called per block, not per frame. */
 export function nearestCellIds(
   landing: [number, number],
   rotationY: number,
   cells: Iterable<{ id: number; pos_seed: [number, number, number] }>,
   k: number,
 ): number[] {
-  if (k <= 0) return [];
+  const limit = Number.isFinite(k)
+    ? Math.max(0, Math.floor(k))
+    : k === Number.POSITIVE_INFINITY
+      ? Number.MAX_SAFE_INTEGER
+      : 0;
+  if (limit === 0) return [];
   // Inverse-rotate the world landing into the cells' local frame.
   const c = Math.cos(-rotationY);
   const s = Math.sin(-rotationY);
   const lx = landing[0] * c - landing[1] * s;
   const lz = landing[0] * s + landing[1] * c;
-  const scored: { id: number; d2: number }[] = [];
+  const nearest: NearestCellCandidate[] = [];
+  let order = 0;
   for (const cell of cells) {
     const dx = cell.pos_seed[0] - lx;
     const dz = cell.pos_seed[2] - lz;
-    scored.push({ id: cell.id, d2: dx * dx + dz * dz });
+    const d2 = dx * dx + dz * dz;
+    if (nearest.length < limit) {
+      nearest.push({ id: cell.id, d2, order });
+      let index = nearest.length - 1;
+      while (index > 0) {
+        const parent = Math.floor((index - 1) / 2);
+        if (!nearestCandidateWorse(nearest[index], nearest[parent])) break;
+        [nearest[index], nearest[parent]] = [nearest[parent], nearest[index]];
+        index = parent;
+      }
+    } else {
+      const worst = nearest[0];
+      if (d2 < worst.d2 || (d2 === worst.d2 && order < worst.order)) {
+        // Reuse the bounded heap slot instead of allocating once per Cell.
+        worst.id = cell.id;
+        worst.d2 = d2;
+        worst.order = order;
+        siftNearestCandidateDown(nearest, 0);
+      }
+    }
+    order += 1;
   }
-  scored.sort((a, b) => a.d2 - b.d2);
-  return scored.slice(0, k).map((e) => e.id);
+  nearest.sort((a, b) => a.d2 - b.d2 || a.order - b.order);
+  return nearest.map((entry) => entry.id);
 }
 
 export type PeerColorKind = PeerDirection | 'version';

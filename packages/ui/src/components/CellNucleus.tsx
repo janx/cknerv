@@ -50,6 +50,11 @@ const BRAID_GLOW_WIDTH_PX = 2.7;
 const BRAID_CORE_WIDTH_PX = 0.78;
 const BRAID_GLOW_OPACITY = 0.11;
 const BRAID_CORE_OPACITY = 0.86;
+const FAR_DIST_SQ = FAR_DIST * FAR_DIST;
+const EMPTY_RECALL_BY_CELL: ReadonlyMap<
+  number,
+  ConsensusMemoryCellResponse
+> = new Map();
 
 interface Props {
   cellsListRef: { readonly current: Cell[] };
@@ -194,8 +199,9 @@ export default function CellNucleus({
   const lastHoveredCellId = useRef<number | null>(null);
   const lastRecallKey = useRef<string | null>(null);
   const lastNearCap = useRef(-1);
-  const localPosition = useMemo(() => new THREE.Vector3(), []);
   const cameraPosition = useMemo(() => new THREE.Vector3(), []);
+  const cameraLocalPosition = useMemo(() => new THREE.Vector3(), []);
+  const groupWorldInverse = useMemo(() => new THREE.Matrix4(), []);
 
   useFrame((state, deltaSeconds) => {
     const group = groupRef.current;
@@ -239,8 +245,9 @@ export default function CellNucleus({
     const recallChanged = recallKey !== previousRecallKey;
     const recallNeedsWrite = recallFocus !== null || previousRecallKey !== null;
     lastRecallKey.current = recallKey;
-    const recallByCell = new Map<number, ConsensusMemoryCellResponse>();
+    let recallByCell = EMPTY_RECALL_BY_CELL;
     if (recallFocus) {
+      const responses = new Map<number, ConsensusMemoryCellResponse>();
       const endpointIds = new Set([
         ...recallFocus.sources.map((source) => source.id),
         ...recallFocus.targetIds,
@@ -251,8 +258,9 @@ export default function CellNucleus({
           cellId,
           simClock.elapsedSec,
         );
-        if (response) recallByCell.set(cellId, response);
+        if (response) responses.set(cellId, response);
       }
+      recallByCell = responses;
     }
     const interactionChanged = selectedCellId !== lastSelectedCellId.current
       || hoveredCellId !== lastHoveredCellId.current
@@ -307,20 +315,15 @@ export default function CellNucleus({
       // CellGalaxy rotates the parent in its frame callback. Refresh its world
       // matrix only on the 12 Hz selection tick, not for every rendered frame.
       group.updateWorldMatrix(true, false);
-      const groupMatrix = group.matrixWorld;
+      groupWorldInverse.copy(group.matrixWorld).invert();
+      cameraLocalPosition
+        .copy(cameraPosition)
+        .applyMatrix4(groupWorldInverse);
 
       detailArray.fill(0, 0, count);
       near.current.length = 0;
       for (let index = 0; index < count; index += 1) {
         const cell = cells[index];
-        localPosition
-          .set(cell.pos_seed[0], cell.pos_seed[1], cell.pos_seed[2])
-          .applyMatrix4(groupMatrix);
-        const dist = localPosition.distanceTo(cameraPosition);
-        const cameraDetail = Math.max(
-          0,
-          Math.min(1, (FAR_DIST - dist) / (FAR_DIST - NEAR_DIST)),
-        );
         const userFocus = focusByCell.current.get(cell.id) ?? 0;
         const recall = recallByCell.get(cell.id) ?? null;
         // Only the retained record expands its canonical structure at a
@@ -328,6 +331,19 @@ export default function CellNucleus({
         // bounded address-rail signal on the shared Cell body.
         const recallDetailFocus = recall?.role === 'target' ? recall.strength : 0;
         const focus = Math.max(userFocus, recallDetailFocus);
+        const dx = cell.pos_seed[0] - cameraLocalPosition.x;
+        const dy = cell.pos_seed[1] - cameraLocalPosition.y;
+        const dz = cell.pos_seed[2] - cameraLocalPosition.z;
+        const distSq = dx * dx + dy * dy + dz * dz;
+        // Resting Cells outside the LOD radius cannot contribute. Avoid both
+        // a square root and the former per-Cell world-matrix transform for the
+        // overwhelmingly common far-field path.
+        if (focus <= 0 && distSq >= FAR_DIST_SQ) continue;
+        const dist = Math.sqrt(distSq);
+        const cameraDetail = Math.max(
+          0,
+          Math.min(1, (FAR_DIST - dist) / (FAR_DIST - NEAR_DIST)),
+        );
         // Interaction reveals the identity at any distance, but it does not
         // pretend a 20 px far-field mark can carry every microscopic stitch.
         // Hover = contributor paths; selected = paths + partial agreements;
@@ -358,10 +374,10 @@ export default function CellNucleus({
         ));
       if (routeHopIndex >= count) {
         const cell = cells[routeHopIndex];
-        localPosition
-          .set(cell.pos_seed[0], cell.pos_seed[1], cell.pos_seed[2])
-          .applyMatrix4(groupMatrix);
-        const dist = localPosition.distanceTo(cameraPosition);
+        const dx = cell.pos_seed[0] - cameraLocalPosition.x;
+        const dy = cell.pos_seed[1] - cameraLocalPosition.y;
+        const dz = cell.pos_seed[2] - cameraLocalPosition.z;
+        const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
         const cameraDetail = Math.max(
           0,
           Math.min(1, (FAR_DIST - dist) / (FAR_DIST - NEAR_DIST)),

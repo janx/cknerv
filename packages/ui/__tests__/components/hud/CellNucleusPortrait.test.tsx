@@ -1,6 +1,11 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import {
+  PORTRAIT_IDLE_FPS,
+  PORTRAIT_INTERACTION_FPS,
+  resolvePortraitCanvasDpr,
+} from '../../../src/components/hud/CellNucleusPortrait';
 
 const SOURCE = readFileSync(
   resolve(process.cwd(), 'src/components/hud/CellNucleusPortrait.tsx'),
@@ -20,6 +25,10 @@ const ADDRESS_SOURCE = readFileSync(
 );
 const PROOF_READER_SOURCE = readFileSync(
   resolve(process.cwd(), 'src/components/hud/CellIdentityProofReader.tsx'),
+  'utf8',
+);
+const HUD_SOURCE = readFileSync(
+  resolve(process.cwd(), 'src/components/hud/HudOverlay.tsx'),
   'utf8',
 );
 
@@ -118,5 +127,32 @@ describe('CellNucleusPortrait production language', () => {
     expect(SOURCE).toContain('enablePan={false}');
     expect(SOURCE).toContain('enableZoom={false}');
     expect(SOURCE).toContain('enableDamping={!reducedMotion}');
+  });
+
+  it('shares the adaptive DPR ceiling and renders idle animation at a bounded cadence', () => {
+    expect(resolvePortraitCanvasDpr(3, 2)).toBe(2);
+    expect(resolvePortraitCanvasDpr(3, 1.5)).toBe(1.5);
+    expect(resolvePortraitCanvasDpr(0.5, 2)).toBe(1);
+    expect(resolvePortraitCanvasDpr(Number.NaN, Number.NaN)).toBe(1);
+    expect(PORTRAIT_IDLE_FPS).toBeLessThan(PORTRAIT_INTERACTION_FPS);
+    expect(SOURCE).toContain('dpr={portraitDpr}');
+    expect(SOURCE).toContain('frameloop="demand"');
+    expect(SOURCE).toContain('<PortraitFrameDriver');
+  });
+
+  it('retains the portrait Canvas while switching selected Cells', () => {
+    expect(HUD_SOURCE).not.toContain('key={selectedCell.id}');
+    expect(CORE_SOURCE).toContain('key={cell.id}');
+  });
+
+  it('updates line resolution on viewport changes and settles color uploads', () => {
+    expect(MEMORY_SOURCE).toContain(
+      'material.resolution.set(viewportWidth, viewportHeight)',
+    );
+    expect(MEMORY_SOURCE).not.toContain(
+      'material.resolution.set(state.size.width, state.size.height)',
+    );
+    expect(MEMORY_SOURCE).toContain('if (agreementColorsChanged)');
+    expect(MEMORY_SOURCE).toContain('if (knotColorsChanged)');
   });
 });

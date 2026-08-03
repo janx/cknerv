@@ -260,6 +260,40 @@ describe('peers.derive', () => {
       expect(nearestCellIds([0, 0], 0, [], 3)).toEqual([]);
       expect(nearestCellIds([0, 0], 0, grid, 0)).toEqual([]);
     });
+
+    it('preserves iterable order for equal-distance candidates', () => {
+      const tied = [
+        { id: 7, pos_seed: [-1, 0, 0] as [number, number, number] },
+        { id: 8, pos_seed: [1, 0, 0] as [number, number, number] },
+        { id: 9, pos_seed: [0, 0, -1] as [number, number, number] },
+      ];
+      expect(nearestCellIds([0, 0], 0, tied, 2)).toEqual([7, 8]);
+    });
+
+    it('matches a stable full-sort reference while keeping only a bounded top-k', () => {
+      const many = Array.from({ length: 2000 }, (_, index) => ({
+        id: index,
+        pos_seed: [
+          ((index * 37) % 211) - 105,
+          index % 7,
+          ((index * 61) % 223) - 111,
+        ] as [number, number, number],
+      }));
+      const landing: [number, number] = [13, -17];
+      const expected = many
+        .map((cell, order) => {
+          const dx = cell.pos_seed[0] - landing[0];
+          const dz = cell.pos_seed[2] - landing[1];
+          return { id: cell.id, d2: dx * dx + dz * dz, order };
+        })
+        .sort((a, b) => a.d2 - b.d2 || a.order - b.order)
+        .slice(0, 9)
+        .map(({ id }) => id);
+
+      expect(nearestCellIds(landing, 0, many, 9)).toEqual(expected);
+      expect(nearestCellIds(landing, 0, many, Number.NaN)).toEqual([]);
+      expect(nearestCellIds(landing, 0, many, 0.9)).toEqual([]);
+    });
   });
 
   describe('planDeliveries', () => {

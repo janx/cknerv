@@ -67,6 +67,7 @@ export default function CellCoreArtwork({
     </Suspense>
   ) : (
     <ConsensusMemory
+      key={cell.id}
       cell={cell}
       reducedMotion={reducedMotion}
       focusField={focusField}

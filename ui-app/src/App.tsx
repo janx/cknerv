@@ -187,13 +187,22 @@ export default function App({
     0,
   );
   const orbitGestureRef = useRef(createOrbitGestureState());
+  // CellPicker still raycasts pointer-down/click for correct R3F selection,
+  // then skips its O(N) screen projections once OrbitControls reports real
+  // camera movement. This ref changes outside React's render path.
+  const orbitPickingSuspendedRef = useRef(false);
   const beginOrbitInteraction = useCallback(() => {
+    orbitPickingSuspendedRef.current = false;
     beginOrbitGesture(orbitGestureRef.current);
   }, []);
   const changeOrbitInteraction = useCallback(() => {
+    if (orbitGestureRef.current.active) {
+      orbitPickingSuspendedRef.current = true;
+    }
     if (changeOrbitGesture(orbitGestureRef.current)) noteOrbitInteraction();
   }, []);
   const endOrbitInteraction = useCallback(() => {
+    orbitPickingSuspendedRef.current = false;
     endOrbitGesture(orbitGestureRef.current, performance.now());
   }, []);
   const forceRenderStats = useMemo(() => (
@@ -904,6 +913,7 @@ export default function App({
             cellFlashRef={cellFlashRef}
             flashDirtyRef={flashDirtyRef}
             inspectionFieldRef={cellInspectionFieldRef}
+            pickingSuspendedRef={orbitPickingSuspendedRef}
             overlay={
               <>
                 {selectedCausalLens ? (

@@ -87,6 +87,7 @@ describe('makeCellHybridMaterial', () => {
     expect(m.fragmentShader).toContain('navigationNotch');
     expect(m.fragmentShader.indexOf('navigationSignal'))
       .toBeLessThan(m.fragmentShader.indexOf('focusSignal'));
+    expect(m.fragmentShader).toContain('if (vInspectionRole > 0.0001)');
   });
 
   it('renders hover and selection as an interrupted braid interference signal', () => {
@@ -98,6 +99,7 @@ describe('makeCellHybridMaterial', () => {
     expect(m.fragmentShader).toContain('focusArc');
     expect(m.fragmentShader).toContain('focusGold');
     expect(m.fragmentShader).toContain('focusCyan');
+    expect(m.fragmentShader).toContain('if (vFocus > 0.0001)');
   });
 
   it('reads recalled evidence through address rails and a resolved record latch', () => {
@@ -113,6 +115,7 @@ describe('makeCellHybridMaterial', () => {
     expect(m.fragmentShader).toContain('recordLatch');
     expect(m.fragmentShader).toContain('recordKnot');
     expect(m.fragmentShader).toContain('departureRail');
+    expect(m.fragmentShader).toContain('if (abs(vRecall) > 0.0001)');
     expect(m.fragmentShader.indexOf('recordLatch')).toBeLessThan(
       m.fragmentShader.indexOf('retireMix'),
     );

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import type { EcgCondition } from '../../derives/ecgCondition';
 import { reconstructArrivals, drawStripChart } from './ecgTrace';
@@ -9,6 +9,7 @@ const COND_COLOR: Record<EcgCondition, string> = {
   FINE: HUD_COLORS.nominal, CAUTION: HUD_COLORS.caution, DANGER: HUD_COLORS.danger,
   FLATLINE: HUD_COLORS.danger, SYNCING: HUD_COLORS.cyanWire,
 };
+const ECG_DRAW_FPS = 30;
 
 function fmtS(ms: number | null | undefined): string {
   if (ms == null || !Number.isFinite(ms)) return '—';
@@ -33,15 +34,16 @@ export default function BlockCadenceEcg({
   const color = COND_COLOR[condition];
   const rate = avgMs && avgMs > 0 ? Math.round(60000 / avgMs) : null;
   const [heroMs, setHeroMs] = useState<number>(gapMs);
+  const arrivals = useMemo(
+    () => reconstructArrivals(intervalsMs, lastBlockTsMs),
+    [intervalsMs, lastBlockTsMs],
+  );
 
-  // Latest draw inputs, read by the animation loop each frame. Writing a ref on
-  // every render is cheap and — crucially — does NOT re-create the rAF loop. The
-  // chain entity is re-cloned upstream on every tx/mempool/sync delta (dozens per
-  // second), so a dep-driven effect would tear the loop down that often and the
-  // trace would stutter on the delta cadence instead of animating at 60fps. One
-  // persistent loop reads `live.current` instead.
-  const live = useRef({ intervalsMs, sizes, txCounts, lastBlockTsMs, targetMs, gapMs, color });
-  live.current = { intervalsMs, sizes, txCounts, lastBlockTsMs, targetMs, gapMs, color };
+  // Latest draw inputs, read by one persistent animation loop. Arrival history
+  // is reconstructed only when chain input changes; the 30 Hz scroll redraw no
+  // longer allocates and filters a new history array on every frame.
+  const live = useRef({ arrivals, sizes, txCounts, lastBlockTsMs, targetMs, gapMs, color });
+  live.current = { arrivals, sizes, txCounts, lastBlockTsMs, targetMs, gapMs, color };
 
   useEffect(() => {
     const cv = cvs.current; if (!cv) return;
@@ -51,15 +53,22 @@ export default function BlockCadenceEcg({
     const W = cv.width, H = cv.height;
     const draw = (nowMs: number) => {
       const s = live.current;
-      const arrivals = reconstructArrivals(s.intervalsMs, s.lastBlockTsMs);
       // clamp >=0: last_block_ts_ms (fresh receive time) can sit just ahead of a
       // throttled clock, which would otherwise paint a negative gap.
       const gap = Math.max(0, s.lastBlockTsMs != null ? nowMs - s.lastBlockTsMs : s.gapMs);
-      drawStripChart(ctx, { width: W, height: H, arrivals, nowMs, targetMs: s.targetMs, gapMs: gap, color: s.color, sizes: s.sizes, txCounts: s.txCounts });
+      drawStripChart(ctx, { width: W, height: H, arrivals: s.arrivals, nowMs, targetMs: s.targetMs, gapMs: gap, color: s.color, sizes: s.sizes, txCounts: s.txCounts });
     };
     draw(Date.now());
     if (reducedMotion || typeof requestAnimationFrame !== 'function') return; // static trace; test-safe
-    let raf = requestAnimationFrame(function loop() { draw(Date.now()); raf = requestAnimationFrame(loop); });
+    const drawIntervalMs = 1000 / ECG_DRAW_FPS;
+    let previousDrawAt = Number.NEGATIVE_INFINITY;
+    let raf = requestAnimationFrame(function loop(frameAt) {
+      if (frameAt - previousDrawAt >= drawIntervalMs - 0.5) {
+        previousDrawAt = frameAt;
+        draw(Date.now());
+      }
+      raf = requestAnimationFrame(loop);
+    });
     return () => cancelAnimationFrame(raf);
   }, [reducedMotion]);
 

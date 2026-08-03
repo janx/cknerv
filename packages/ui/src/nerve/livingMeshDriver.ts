@@ -10,6 +10,24 @@ import type { CellsDiff } from './cellsDelta';
 import { addCell, removeCell } from './incrementalGraph';
 import { fabricEdgeKey } from './fabricOrder';
 
+/** Above this estimated birth-to-existing-Cell comparison count, one spatial
+ * bulk rebuild is cheaper than scanning the complete map once per birth. */
+export const MAX_INCREMENTAL_BIRTH_COMPARISONS = 250_000;
+
+export function shouldBulkRebuildRoutingGraph(
+  birthCount: number,
+  cellCount: number,
+): boolean {
+  const births = Number.isFinite(birthCount)
+    ? Math.max(0, Math.floor(birthCount))
+    : 0;
+  const cells = Number.isFinite(cellCount)
+    ? Math.max(0, Math.floor(cellCount))
+    : 0;
+  return births > 1
+    && births * cells >= MAX_INCREMENTAL_BIRTH_COMPARISONS;
+}
+
 export function staggerBornAt(nowSec: number, index: number, _count: number, stepMs: number): number {
   return nowSec + (index * stepMs) / 1000;
 }

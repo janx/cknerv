@@ -101,11 +101,36 @@ export function cellRenderList(
   selectedCellId: number | null,
   field: CellInspectionField | null,
 ): Cell[] {
-  const allCells = Array.from(cells.values());
+  const requestedCount = Number.isFinite(visibleCount)
+    ? Math.max(0, Math.floor(visibleCount))
+    : visibleCount === Number.POSITIVE_INFINITY
+      ? cells.size
+      : 0;
   const count = Math.min(
-    allCells.length,
-    Math.max(0, Math.floor(visibleCount)),
+    cells.size,
+    requestedCount,
   );
+  if (count === 0) return [];
+
+  // The resting field and a selection without an active topology field need
+  // only the visible prefix. Stop at the display budget instead of
+  // materialising every retained Cell during backfill or a live delta.
+  if (field?.selectedCellId !== selectedCellId) {
+    const visible: Cell[] = [];
+    for (const cell of cells.values()) {
+      visible.push(cell);
+      if (visible.length === count) break;
+    }
+    if (selectedCellId === null) return visible;
+    const selected = cells.get(selectedCellId);
+    if (!selected || visible.some((cell) => cell.id === selectedCellId)) {
+      return visible;
+    }
+    visible[count - 1] = selected;
+    return visible;
+  }
+
+  const allCells = Array.from(cells.values());
   return pinCellInspectionFieldInVisiblePrefix(
     allCells,
     count,
