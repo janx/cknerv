@@ -33,6 +33,11 @@ describe('NeuralNetwork drop instrumentation wiring', () => {
     expect(NETWORK_SOURCE).not.toContain('sameCellRenderTopology(');
   });
 
+  it('journals exact Cell ids for sparse flash-buffer uploads', () => {
+    expect(NETWORK_SOURCE).toContain('flashDirtyIdsRef?: CellFlashDirtyIdsRef');
+    expect(NETWORK_SOURCE.match(/markCellFlashDirty\(/g)).toHaveLength(2);
+  });
+
   // Integration mount-safety test — the level this jsdom harness supports
   // (same precedent as __tests__/components/CellGalaxy.test.tsx). r3f v8's
   // <Canvas> never mounts its children at 0×0 (the no-op ResizeObserver in

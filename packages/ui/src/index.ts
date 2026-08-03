@@ -115,6 +115,12 @@ export {
   makeCanonicalRewriteEchoMaterial,
 } from './components/CanonicalRewriteEcho';
 export type { BlockEventTrigger, CellBufferTargets } from './components/CellGalaxy';
+export {
+  markCellFlashDirty,
+  mergeCellFlashRanges,
+  writeDirtyCellFlashSlots,
+  type CellFlashDirtyIdsRef,
+} from './components/cellFlash';
 export type {
   CellIdentityBindingPhase,
   CellIdentityProofBinding,

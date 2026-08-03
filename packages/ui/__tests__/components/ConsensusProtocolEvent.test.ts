@@ -52,6 +52,15 @@ describe('A protocol event relay', () => {
     expect(delivery).not.toContain('registry.current');
   });
 
+  it('journals delivered Cell ids for sparse galaxy flash uploads', () => {
+    const colony = source('NetworkColony.tsx');
+    const delivery = source('BlockDeliveryLayer.tsx');
+
+    expect(colony).toContain('flashDirtyIdsRef={flashDirtyIdsRef}');
+    expect(delivery).toContain('flashDirtyIdsRef?: CellFlashDirtyIdsRef');
+    expect(delivery.match(/markCellFlashDirty\(/g)).toHaveLength(1);
+  });
+
   it('hands the same hue to the peer-network shockwave instead of bleaching it white', () => {
     const nodes = source('ColonyNodes.tsx');
     expect(nodes).toContain('consensusBlockColor(blockPulseAtMs)');

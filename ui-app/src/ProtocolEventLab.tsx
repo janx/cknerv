@@ -388,6 +388,7 @@ export default function ProtocolEventLab({ snapshot }: { snapshot: CellGalaxySna
   const [reviewReady, setReviewReady] = useState(false);
   const cellFlashRef = useRef<Map<number, number>>(new Map());
   const flashDirtyRef = useRef(false);
+  const flashDirtyIdsRef = useRef<Set<number>>(new Set());
   const burstArrivalRef = useRef<
     Map<number, { firedAt: number; color: [number, number, number] }>
   >(new Map());
@@ -402,6 +403,7 @@ export default function ProtocolEventLab({ snapshot }: { snapshot: CellGalaxySna
   ) => {
     const nextClock = createSimClock();
     cellFlashRef.current.clear();
+    flashDirtyIdsRef.current.clear();
     burstArrivalRef.current.clear();
     writtenCellIdsRef.current.clear();
     flashDirtyRef.current = false;
@@ -826,11 +828,13 @@ export default function ProtocolEventLab({ snapshot }: { snapshot: CellGalaxySna
               onSelect={() => undefined}
               cellFlashRef={cellFlashRef}
               flashDirtyRef={flashDirtyRef}
+              flashDirtyIdsRef={flashDirtyIdsRef}
               overlay={(
                 <>
                   <NeuralNetwork
                     cellFlashRef={cellFlashRef}
                     flashDirtyRef={flashDirtyRef}
+                    flashDirtyIdsRef={flashDirtyIdsRef}
                     burstArrivalRef={burstArrivalRef}
                     topology={{ neighborK: 3, maxEdgeLength: 28, maxHops: 24 }}
                     livePulseDelayS={livePulseDelayS}
@@ -859,6 +863,7 @@ export default function ProtocolEventLab({ snapshot }: { snapshot: CellGalaxySna
               onSelect={() => undefined}
               cellFlashRef={cellFlashRef}
               flashDirtyRef={flashDirtyRef}
+              flashDirtyIdsRef={flashDirtyIdsRef}
               localVersion=""
             />
             <OrbitControls

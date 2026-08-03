@@ -92,6 +92,7 @@ export default function CellFormLab({ snapshot }: { snapshot: CellGalaxySnapshot
   const cache = useMemo(() => fromCellsSnapshot(1, fieldSnapshot), [fieldSnapshot]);
   const cellFlashRef = useRef<Map<number, number>>(new Map());
   const flashDirtyRef = useRef(false);
+  const flashDirtyIdsRef = useRef<Set<number>>(new Set());
   const burstArrivalRef = useRef<Map<number, { firedAt: number; color: [number, number, number] }>>(new Map());
   const handleSelect = useCallback((id: string | null) => {
     if (!id?.startsWith('cell:')) return;
@@ -293,11 +294,13 @@ export default function CellFormLab({ snapshot }: { snapshot: CellGalaxySnapshot
               onSelect={handleSelect}
               cellFlashRef={cellFlashRef}
               flashDirtyRef={flashDirtyRef}
+              flashDirtyIdsRef={flashDirtyIdsRef}
               overlay={(
                 <>
                   <NeuralNetwork
                     cellFlashRef={cellFlashRef}
                     flashDirtyRef={flashDirtyRef}
+                    flashDirtyIdsRef={flashDirtyIdsRef}
                     burstArrivalRef={burstArrivalRef}
                     topology={{ neighborK: 3, maxEdgeLength: 28, maxHops: 24 }}
                     pulses={{ maxActivePulses: 32, maxPulsesPerLink: 2, maxSourcesPerParent: 1 }}

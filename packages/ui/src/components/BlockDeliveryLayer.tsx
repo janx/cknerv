@@ -25,6 +25,10 @@ import { BEAM_GROW_DUR_S, BEAM_CHARGE_DUR_S } from '../ui/topologyConstants';
 import { CONSENSUS_BRAID_PALETTE } from '../derives/consensusBraid.derive';
 import type { ConsensusFlowColor } from '../derives/consensusFlow.derive';
 import { makeProtocolCarrierGeometry } from '../geometry/protocolCarrier';
+import {
+  markCellFlashDirty,
+  type CellFlashDirtyIdsRef,
+} from './cellFlash';
 
 // BlockDeliveryLayer — the network→Cell-field handoff in the A visual language.
 // Every real measured node keeps its own timing and transform, but the renderer
@@ -86,6 +90,8 @@ export interface BlockDeliveryLayerProps {
   cellFlashRef: MutableRefObject<Map<number, number>>;
   /** Set true when we add a flash CellGalaxy hasn't pushed to the GPU yet. */
   flashDirtyRef: MutableRefObject<boolean>;
+  /** Exact dirty ids used by CellGalaxy's sparse flash upload path. */
+  flashDirtyIdsRef?: CellFlashDirtyIdsRef;
 }
 
 function makeSpriteBatchMaterial(map: THREE.Texture): THREE.MeshBasicMaterial {
@@ -166,6 +172,7 @@ export default function BlockDeliveryLayer({
   pulseRef,
   cellFlashRef,
   flashDirtyRef,
+  flashDirtyIdsRef,
 }: BlockDeliveryLayerProps) {
   const simClock = useSimClock();
   const cellsCache = useCellGalaxyOptional();
@@ -317,7 +324,11 @@ export default function BlockDeliveryLayer({
           const previous = cellFlashRef.current.get(ids[index]) ?? -1e9;
           if (flashAt > previous) {
             cellFlashRef.current.set(ids[index], flashAt);
-            flashDirtyRef.current = true;
+            markCellFlashDirty(
+              ids[index],
+              flashDirtyRef,
+              flashDirtyIdsRef,
+            );
           }
           budget -= 1;
         }

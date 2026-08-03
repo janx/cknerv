@@ -159,6 +159,7 @@ function ProofPanel({
   const clock = useMemo(() => createSimClock(), []);
   const cellFlashRef = useRef<Map<number, number>>(new Map());
   const flashDirtyRef = useRef(false);
+  const flashDirtyIdsRef = useRef<Set<number>>(new Set());
 
   return (
     <article
@@ -258,6 +259,7 @@ function ProofPanel({
                 onSelect={() => undefined}
                 cellFlashRef={cellFlashRef}
                 flashDirtyRef={flashDirtyRef}
+                flashDirtyIdsRef={flashDirtyIdsRef}
               />
             </SimClockScope>
           </Canvas>

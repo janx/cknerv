@@ -134,6 +134,17 @@ describe('CellGalaxy', () => {
     expect(source).toContain('const count = cellsList.length');
   });
 
+  it('uploads exact dirty flash slots while retaining the legacy fallback', () => {
+    const source = readFileSync(CELL_GALAXY_SOURCE, 'utf8');
+
+    expect(source).toContain('writeDirtyCellFlashSlots(');
+    expect(source).toContain('cellRenderSetRef.current.indexById');
+    expect(source).toContain('mergeCellFlashRanges(');
+    expect(source).toContain('dirtyFlashIds?.clear()');
+    expect(source).toContain('writeFlashSlots(');
+    expect(source.match(/markCellFlashDirty\(/g)).toHaveLength(3);
+  });
+
   it('turns direct inspection neighbours into the bounded pick surface', () => {
     const source = readFileSync(CELL_GALAXY_SOURCE, 'utf8');
 

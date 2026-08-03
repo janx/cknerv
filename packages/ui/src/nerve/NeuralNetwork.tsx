@@ -23,6 +23,10 @@ import { useFrame, useThree } from '@react-three/fiber';
 import { useCellGalaxy } from '../hooks/cellGalaxyContext';
 import { useConsensusMemoryFocusRef } from '../hooks/consensusMemoryFocusContext';
 import { useReducedMotion } from '../components/hud/useReducedMotion';
+import {
+  markCellFlashDirty,
+  type CellFlashDirtyIdsRef,
+} from '../components/cellFlash';
 import { useSimFrame } from '../tweaks/useSimFrame';
 import { useSimClock } from '../tweaks/SimClockScope';
 import { galaxyFrame } from '../tweaks/galaxyFrame';
@@ -169,6 +173,7 @@ interface NeuralNetworkProps {
   cellCapacity?: number;
   cellFlashRef?: React.RefObject<Map<number, number>>;
   flashDirtyRef?: React.MutableRefObject<boolean>;
+  flashDirtyIdsRef?: CellFlashDirtyIdsRef;
   burstArrivalRef?: React.RefObject<Map<number, { firedAt: number; color: Vec3 }>>;
   topology?: {
     neighborK?: number;
@@ -242,6 +247,7 @@ export default function NeuralNetwork({
   cellCapacity,
   cellFlashRef,
   flashDirtyRef,
+  flashDirtyIdsRef,
   burstArrivalRef,
   topology,
   pulses,
@@ -1422,7 +1428,7 @@ export default function NeuralNetwork({
           const prev = cellFlashRef.current.get(term) ?? -1e9;
           if (arriveAt > prev) {
             cellFlashRef.current.set(term, arriveAt);
-            if (flashDirtyRef) flashDirtyRef.current = true;
+            markCellFlashDirty(term, flashDirtyRef, flashDirtyIdsRef);
           }
         }
         continue; // pulse done
@@ -1527,7 +1533,11 @@ export default function NeuralNetwork({
         const prev = cellFlashRef.current.get(arrivingCellId) ?? -1e9;
         if (arriveAt > prev) {
           cellFlashRef.current.set(arrivingCellId, arriveAt);
-          if (flashDirtyRef) flashDirtyRef.current = true;
+          markCellFlashDirty(
+            arrivingCellId,
+            flashDirtyRef,
+            flashDirtyIdsRef,
+          );
         }
       }
     }
