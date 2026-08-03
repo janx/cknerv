@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef } from 'react';
-import { useFrame } from '@react-three/fiber';
+import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
+import { useFrame, useThree } from '@react-three/fiber';
 import { Html } from '@react-three/drei';
 import * as THREE from 'three';
 import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js';
@@ -51,6 +51,17 @@ const PACKET_TANGENT = new THREE.Vector3();
 const PACKET_QUATERNION = new THREE.Quaternion();
 const PACKET_SCALE = new THREE.Vector3();
 const X_AXIS = new THREE.Vector3(1, 0, 0);
+const COLOR_SETTLE_EPSILON = 1e-4;
+
+function dampSettledColor(
+  current: number,
+  target: number,
+  blend: number,
+): number {
+  const difference = target - current;
+  if (Math.abs(difference) <= COLOR_SETTLE_EPSILON) return current;
+  return current + difference * blend;
+}
 
 function makeLineMaterial(width: number, opacity: number): LineMaterial {
   const material = new LineMaterial({
@@ -176,6 +187,9 @@ export default function ConsensusMemory({
   traceResponseRef?: ConsensusMemoryCellResponseRef;
   traceEvidenceFocusSourceId?: number | null;
 }) {
+  const { width: viewportWidth, height: viewportHeight } = useThree(
+    (state) => state.size,
+  );
   const rootRef = useRef<THREE.Group>(null);
   const packetsRef = useRef<THREE.InstancedMesh>(null);
   const focusedKnotRef = useRef<THREE.Group>(null);
@@ -489,6 +503,25 @@ export default function ConsensusMemory({
     };
   }, [cell.birth_block, structureVisual]);
 
+  // LineMaterial resolution changes only with the portrait viewport. Writing
+  // all ten uniforms every animation frame added redundant CPU work.
+  useLayoutEffect(() => {
+    for (const material of [
+      built.streamGlowMaterial,
+      built.streamFlowGlowMaterial,
+      built.streamFlowCoreMaterial,
+      built.streamTraceGlowMaterial,
+      built.streamTraceCoreMaterial,
+      built.streamCoreMaterial,
+      built.stitchGlowMaterial,
+      built.stitchCoreMaterial,
+      built.agreementGlowMaterial,
+      built.agreementCoreMaterial,
+    ]) {
+      material.resolution.set(viewportWidth, viewportHeight);
+    }
+  }, [built, viewportHeight, viewportWidth]);
+
   // Every live Cell has at least one ledger packet even when data_hex is empty;
   // additional packets encode observed payload density.
   const packetCount = Math.min(
@@ -531,21 +564,6 @@ export default function ConsensusMemory({
 
   useFrame((state, deltaSeconds) => {
     const time = reducedMotion ? 0 : state.clock.elapsedTime;
-    for (const material of [
-      built.streamGlowMaterial,
-      built.streamFlowGlowMaterial,
-      built.streamFlowCoreMaterial,
-      built.streamTraceGlowMaterial,
-      built.streamTraceCoreMaterial,
-      built.streamCoreMaterial,
-      built.stitchGlowMaterial,
-      built.stitchCoreMaterial,
-      built.agreementGlowMaterial,
-      built.agreementCoreMaterial,
-    ]) {
-      material.resolution.set(state.size.width, state.size.height);
-    }
-
     const blend = reducedMotion
       ? 1
       : 1 - Math.exp(-Math.min(0.1, deltaSeconds) * 11);
@@ -668,6 +686,7 @@ export default function ConsensusMemory({
       && agreementColors
       && agreementColors.length === built.agreementBaseColors.length
     ) {
+      let agreementColorsChanged = false;
       for (let index = 0; index < agreementCount; index += 1) {
         const binding = evidenceBindings.find(
           (candidate) => candidate.knotIndex === index,
@@ -704,11 +723,18 @@ export default function ConsensusMemory({
             const baseline = built.agreementBaseColors[offset] * structureScale;
             const colorTarget = baseline
               + (memoryColor - baseline) * memoryMix;
-            agreementColors[offset] += (colorTarget - agreementColors[offset]) * blend;
+            const previous = agreementColors[offset];
+            const next = dampSettledColor(previous, colorTarget, blend);
+            if (next !== previous) {
+              agreementColors[offset] = next;
+              agreementColorsChanged = true;
+            }
           }
         }
       }
-      agreementColorAttribute.data.needsUpdate = true;
+      if (agreementColorsChanged) {
+        agreementColorAttribute.data.needsUpdate = true;
+      }
     }
 
     const knotColorAttribute = built.knotGeometry.getAttribute(
@@ -716,6 +742,7 @@ export default function ConsensusMemory({
     ) as THREE.BufferAttribute;
     const knotColors = knotColorAttribute.array as Float32Array;
     const knotCount = Math.floor(built.knotBaseColors.length / 3);
+    let knotColorsChanged = false;
     for (let index = 0; index < knotCount; index += 1) {
       const binding = evidenceBindings.find(
         (candidate) => candidate.knotIndex === index,
@@ -750,10 +777,15 @@ export default function ConsensusMemory({
         const memoryColor = cold + (gold - cold) * resolved;
         const baseline = built.knotBaseColors[offset] * structureScale;
         const colorTarget = baseline + (memoryColor - baseline) * memoryMix;
-        knotColors[offset] += (colorTarget - knotColors[offset]) * blend;
+        const previous = knotColors[offset];
+        const next = dampSettledColor(previous, colorTarget, blend);
+        if (next !== previous) {
+          knotColors[offset] = next;
+          knotColorsChanged = true;
+        }
       }
     }
-    knotColorAttribute.needsUpdate = knotCount > 0;
+    if (knotColorsChanged) knotColorAttribute.needsUpdate = true;
     built.knotGlowMaterial.size = 0.058 * (
       1 + coreEnergy.reading * 0.1 + coreEnergy.retained * 0.42
     );

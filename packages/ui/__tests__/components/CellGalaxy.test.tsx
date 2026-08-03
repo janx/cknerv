@@ -155,6 +155,23 @@ describe('CellGalaxy', () => {
     expect(source).toContain('detailAttr={cellDetailAttr}');
   });
 
+  it('can suspend full-field picking during camera drags', () => {
+    const source = readFileSync(CELL_GALAXY_SOURCE, 'utf8');
+
+    expect(source).toContain('pickingSuspendedRef?: React.RefObject<boolean>');
+    expect(source).toContain('if (pickingSuspendedRef?.current) return;');
+  });
+
+  it('coalesces hover scans per frame without reusing them for clicks', () => {
+    const source = readFileSync(CELL_GALAXY_SOURCE, 'utf8');
+
+    expect(source).toContain('raycastUsedThisFrame');
+    expect(source).toContain('window.requestAnimationFrame');
+    expect(source).toContain("canvas.addEventListener('pointerdown'");
+    expect(source).toContain("canvas.addEventListener('click'");
+    expect(source).toContain('forcePreciseRaycastRef.current');
+  });
+
   it('shares explicit memory focus between the route overlay and Cell body', () => {
     const source = readFileSync(CELL_GALAXY_SOURCE, 'utf8');
 

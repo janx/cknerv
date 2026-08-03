@@ -2,7 +2,13 @@ import { describe, expect, it } from 'vitest';
 import type { Cell } from '@cknerv/types';
 import { emptyNeighborGraph } from '../../src/geometry/neighborGraph';
 import { fabricEdgeKey } from '../../src/nerve/fabricOrder';
-import { staggerBornAt, deadEndFor, planMeshUpdate } from '../../src/nerve/livingMeshDriver';
+import {
+  MAX_INCREMENTAL_BIRTH_COMPARISONS,
+  staggerBornAt,
+  deadEndFor,
+  planMeshUpdate,
+  shouldBulkRebuildRoutingGraph,
+} from '../../src/nerve/livingMeshDriver';
 
 function cell(id: number, x: number, z: number): Cell {
   return { id, born_at_ms: 0, death_at_ms: null, birth_block: 1, tag: null,
@@ -18,6 +24,12 @@ describe('livingMeshDriver helpers', () => {
   it('maps the dead cell to the from/to end of a canonical key', () => {
     expect(deadEndFor('3|7', 3)).toBe('from');
     expect(deadEndFor('3|7', 7)).toBe('to');
+  });
+  it('switches large birth batches to one routing-graph rebuild', () => {
+    expect(shouldBulkRebuildRoutingGraph(1, 1_000_000)).toBe(false);
+    expect(shouldBulkRebuildRoutingGraph(12, 20_000)).toBe(false);
+    expect(shouldBulkRebuildRoutingGraph(13, 20_000)).toBe(true);
+    expect(MAX_INCREMENTAL_BIRTH_COMPARISONS).toBe(250_000);
   });
 });
 

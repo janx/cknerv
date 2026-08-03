@@ -2,8 +2,8 @@
 // record. The portrait renders the chosen code-native core directly; no legacy
 // specimen/anatomy graph is layered behind it. `focusField` is the readable A
 // grammar used only by explicit CellDetailPanel row selection.
-import { useMemo, useState } from 'react';
-import { Canvas } from '@react-three/fiber';
+import { useEffect, useMemo, useState } from 'react';
+import { Canvas, useThree } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import type { Cell } from '@cknerv/types';
 import type { ConsensusBraidField } from '../../derives/consensusBraid.derive';
@@ -18,9 +18,52 @@ import type {
   ConsensusMemoryCellResponseRef,
   ConsensusMemoryTraceReadout,
 } from '../../nerve/consensusMemoryTrace';
+import { QUALITY_PRESETS, useQualityRuntime } from '../../tweaks/qualityPresets';
 import CellCoreArtwork, { type CellCoreDirection } from './CellCoreArtwork';
 
 export const SCAN_PERIOD_S = 4.2;
+export const PORTRAIT_IDLE_FPS = 30;
+export const PORTRAIT_INTERACTION_FPS = 60;
+
+/** Mirror the main dashboard's quality DPR ceiling for this independent
+ * renderer. The portrait previously stayed at R3F's default DPR after the
+ * primary Canvas had already downgraded. */
+export function resolvePortraitCanvasDpr(
+  devicePixelRatio: number,
+  maxDpr: number,
+): number {
+  const deviceDpr = Number.isFinite(devicePixelRatio)
+    ? Math.max(1, devicePixelRatio)
+    : 1;
+  const ceiling = Number.isFinite(maxDpr) ? Math.max(1, maxDpr) : 1;
+  return Math.min(deviceDpr, ceiling);
+}
+
+/** Keep the detail renderer demand-driven and invalidate at a bounded cadence.
+ * Pointer interaction temporarily restores full refresh rate; background tabs
+ * inherit requestAnimationFrame throttling without a second timer loop. */
+function PortraitFrameDriver({ fps }: { fps: number }) {
+  const invalidate = useThree((state) => state.invalidate);
+
+  useEffect(() => {
+    const intervalMs = 1000 / Math.max(1, fps);
+    let frameId = 0;
+    let previousAt = Number.NEGATIVE_INFINITY;
+    const tick = (at: number) => {
+      // Browser RAF timestamps drift by fractions of a millisecond; the small
+      // tolerance prevents a nominal 30 Hz cadence from falling to 20 Hz.
+      if (at - previousAt >= intervalMs - 0.5) {
+        previousAt = at;
+        invalidate();
+      }
+      frameId = window.requestAnimationFrame(tick);
+    };
+    frameId = window.requestAnimationFrame(tick);
+    return () => window.cancelAnimationFrame(frameId);
+  }, [fps, invalidate]);
+
+  return null;
+}
 
 /** @deprecated Production portraits no longer project specimen landmarks. */
 export interface ProbeScreen {
@@ -93,6 +136,11 @@ export default function CellNucleusPortrait({
   scanEpochMs?: number;
 }) {
   const [dragging, setDragging] = useState(false);
+  const { effective: quality } = useQualityRuntime();
+  const portraitDpr = resolvePortraitCanvasDpr(
+    typeof window === 'undefined' ? 1 : window.devicePixelRatio,
+    QUALITY_PRESETS[quality].maxDpr,
+  );
   const addressEncoding = useMemo(
     () => deriveCellContentAddressEncoding(cell.content_hash),
     [cell.content_hash],
@@ -156,14 +204,20 @@ export default function CellNucleusPortrait({
     >
       <Canvas
         gl={{ alpha: true, antialias: true }}
+        dpr={portraitDpr}
         camera={{ position: [0, 0, 3], fov: 40, near: 0.1, far: 20 }}
         style={{
           background: 'transparent',
           cursor: dragging ? 'grabbing' : 'grab',
           touchAction: 'none',
         }}
-        frameloop={reducedMotion ? 'demand' : 'always'}
+        frameloop="demand"
       >
+        {!reducedMotion ? (
+          <PortraitFrameDriver
+            fps={dragging ? PORTRAIT_INTERACTION_FPS : PORTRAIT_IDLE_FPS}
+          />
+        ) : null}
         <ConsensusScene
           cell={cell}
           direction={direction}

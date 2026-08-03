@@ -11,11 +11,13 @@ export const BIRTH_DEATH_GLSL = /* glsl */ `
   float deathEase(float r) { return pow(r, 3.0); }
 `;
 
-// Returns 0 outside the [0, 0.5s) flash window so callers do not have to
+export const CELL_FLASH_DURATION_S = 0.5;
+
+// Returns 0 outside the flash window so callers do not have to
 // gate on age themselves. Inside the window: attack × decay.
 export const FLASH_ENV_GLSL = /* glsl */ `
   float flashEnv(float age) {
-    if (age < 0.0 || age >= 0.5) return 0.0;
+    if (age < 0.0 || age >= ${CELL_FLASH_DURATION_S.toFixed(1)}) return 0.0;
     return smoothstep(0.0, 0.035, age) * exp(-age * 7.0);
   }
 `;

@@ -158,8 +158,13 @@ export default function CellDetailPanel({
   const agreementTarget = consensusBraidAgreementTarget(visual);
 
   // After decoding, a row directly focuses its corresponding A layer.
-  const [selectedField, setSelectedField] = useState<Field | null>(null);
-  useEffect(() => setSelectedField(null), [cell.id]);
+  const [selectedFieldState, setSelectedFieldState] = useState<{
+    cellId: number;
+    field: Field | null;
+  }>(() => ({ cellId: cell.id, field: null }));
+  const selectedField = selectedFieldState.cellId === cell.id
+    ? selectedFieldState.field
+    : null;
   useEffect(() => {
     if (reduced) return;
     const epochMs = nowPerf();
@@ -179,7 +184,12 @@ export default function CellDetailPanel({
       window.clearTimeout(stop);
     };
   }, [cell.id, reduced, order.length]);
-  const selectField = (f: Field) => setSelectedField((cur) => (cur === f ? null : f));
+  const selectField = (field: Field) => setSelectedFieldState((current) => ({
+    cellId: cell.id,
+    field: current.cellId === cell.id && current.field === field
+      ? null
+      : field,
+  }));
 
   const DECODE: Record<Field, RowDecode> = {
     capacity: {

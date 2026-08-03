@@ -1,5 +1,10 @@
 import * as THREE from 'three';
-import { HASH11_GLSL, BIRTH_DEATH_GLSL, FLASH_ENV_GLSL } from './cellEnvelope.glsl';
+import {
+  BIRTH_DEATH_GLSL,
+  CELL_FLASH_DURATION_S,
+  FLASH_ENV_GLSL,
+  HASH11_GLSL,
+} from './cellEnvelope.glsl';
 import { CELL_GALAXY_PALETTE } from '../visualPalette';
 
 /** Default contributor-rail count (overridden per-frame by the quality preset). */
@@ -64,6 +69,19 @@ export function makeCellFlareMaterial(): THREE.ShaderMaterial {
         vDeathRamp = deathRamp;
         vFlashAge  = uTime - aFlashAt;
         vSeed      = float(gl_VertexID) * 0.61803 + aBornAt * 0.137;
+
+        // The flare geometry shares all Cell slots with the resting body, but
+        // only a sparse subset has a live write. Clip inactive vertices before
+        // model/view projection so they produce no point-sprite fragments.
+        if (
+          vFlashAge < 0.0
+          || vFlashAge >= ${CELL_FLASH_DURATION_S.toFixed(1)}
+          || scale <= 0.0
+        ) {
+          gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+          gl_PointSize = 1.0;
+          return;
+        }
 
         vec4 viewPos = viewMatrix * modelMatrix * vec4(position, 1.0);
         gl_Position  = projectionMatrix * viewPos;

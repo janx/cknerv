@@ -46,8 +46,15 @@ import {
   tickBlockIfAdvanced,
 } from './pulseBatch';
 import { pulseStats } from './pulseStats';
-import { diffCells, snapshotCells, type CellSnapshotEntry } from './cellsDelta';
-import { planMeshUpdate } from './livingMeshDriver';
+import {
+  diffAndSnapshotCells,
+  snapshotCells,
+  type CellSnapshotEntry,
+} from './cellsDelta';
+import {
+  planMeshUpdate,
+  shouldBulkRebuildRoutingGraph,
+} from './livingMeshDriver';
 import NeuralFabric, { type NeuralFabricHandles } from './NeuralFabric';
 import { bezierAt, bezierControl, fabricEdgeSeed } from '../geometry/edgeBezier';
 import { consensusRouteHopWorldPosition } from '../derives/consensusRouteCamera.derive';
@@ -383,21 +390,32 @@ export default function NeuralNetwork({
       return;
     }
 
-    const diff = diffCells(prevCellsRef.current, cells);
-    prevCellsRef.current = snapshotCells(cells);
+    const diffResult = diffAndSnapshotCells(prevCellsRef.current, cells);
+    const { diff } = diffResult;
+    prevCellsRef.current = diffResult.snapshot;
     if (diff.born.length === 0 && diff.died.length === 0 && diff.evicted.length === 0) return;
 
     // The pure driver mutates the routing graph immediately, closing the
     // stale-graph window for pulses. Passive fibres are reconciled below from
     // the authoritative display subset in one animated setFabric diff.
+    const bulkRebuild = shouldBulkRebuildRoutingGraph(
+      diff.born.length,
+      cells.size,
+    );
     const update = planMeshUpdate(
-      diff,
+      bulkRebuild ? { ...diff, born: [] } : diff,
       graphRef.current,
       cells,
       now,
       opts,
       RIPPLE_STAGGER_MS,
     );
+    if (bulkRebuild) {
+      // Backfill/high-output batches otherwise scan the entire retained map
+      // once per birth. Preserve death keys from the old graph above, then
+      // replace routing state with one canonical spatial rebuild.
+      graphRef.current = buildNeighborGraph(cells, opts);
+    }
     if (update.deathKeys.length > 0) {
       fabricHandlesRef.current?.killEdges(
         update.deathKeys,

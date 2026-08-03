@@ -34,6 +34,19 @@ describe('makeCellFlareMaterial', () => {
     expect(m.vertexShader).toContain('vFlashAge');
   });
 
+  it('clips inactive write vertices before they generate point fragments', () => {
+    const m = makeCellFlareMaterial();
+
+    expect(m.vertexShader).toContain('vFlashAge < 0.0');
+    expect(m.vertexShader).toContain('vFlashAge >= 0.5');
+    expect(m.vertexShader).toContain(
+      'gl_Position = vec4(2.0, 2.0, 2.0, 1.0)',
+    );
+    expect(m.vertexShader.indexOf('vFlashAge >= 0.5')).toBeLessThan(
+      m.vertexShader.indexOf('viewMatrix * modelMatrix'),
+    );
+  });
+
   it('carries no cloud or peer-network shockwave', () => {
     const m = makeCellFlareMaterial();
     expect(m.fragmentShader).not.toContain('vec4 cloud(');

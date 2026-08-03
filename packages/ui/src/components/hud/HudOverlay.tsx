@@ -222,7 +222,6 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats, cellCo
         {meshZone(
           selectedCell ? (
             <CellDetailPanel
-              key={selectedCell.id}
               cell={selectedCell}
               routeCellById={cellRecordsById}
               recentLinks={recentCellLinks}

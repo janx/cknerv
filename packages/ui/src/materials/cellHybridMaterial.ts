@@ -245,54 +245,58 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
         // without wrapping the Cell in a generic UI ring or adding per-Cell
         // geometry. The role changes atomically with the pick surface; the
         // eased inspection energy only softens its arrival.
-        float navigationAngle = atan(uv.y, uv.x);
-        float navigationPhase = vSeed * 0.19 + uTime * 0.16;
-        float navigationRing = exp(
-          -pow((length(uv) - 0.405) / 0.027, 2.0)
-        );
-        float navigationArc = smoothstep(
-          0.42,
-          0.88,
-          cos(navigationAngle * 3.0 + navigationPhase)
-        );
-        float navigationNotch = exp(
-          -pow((length(uv) - 0.315) / 0.021, 2.0)
-        ) * smoothstep(
-          0.72,
-          0.96,
-          cos(navigationAngle * 3.0 + navigationPhase + 1.28)
-        );
-        float navigationReveal = smoothstep(0.18, 0.76, vInspection);
-        float navigationSignal = vInspectionRole
-          * navigationReveal
-          * (navigationRing * navigationArc + navigationNotch * 0.56)
-          * (1.0 - vDeathRamp);
-        vec3 navigationCyan = vec3(0.16, 0.86, 1.0);
-        vec3 navigationGold = vec3(0.94, 0.68, 0.28);
-        float navigationPolarity = 0.5 + 0.5 * sin(
-          navigationAngle + navigationPhase * 0.34
-        );
-        col += mix(
-          navigationCyan,
-          navigationGold,
-          navigationPolarity * 0.36
-        ) * navigationSignal * 1.18;
-        a += navigationSignal * 0.52;
+        if (vInspectionRole > 0.0001) {
+          float navigationAngle = atan(uv.y, uv.x);
+          float navigationPhase = vSeed * 0.19 + uTime * 0.16;
+          float navigationRing = exp(
+            -pow((length(uv) - 0.405) / 0.027, 2.0)
+          );
+          float navigationArc = smoothstep(
+            0.42,
+            0.88,
+            cos(navigationAngle * 3.0 + navigationPhase)
+          );
+          float navigationNotch = exp(
+            -pow((length(uv) - 0.315) / 0.021, 2.0)
+          ) * smoothstep(
+            0.72,
+            0.96,
+            cos(navigationAngle * 3.0 + navigationPhase + 1.28)
+          );
+          float navigationReveal = smoothstep(0.18, 0.76, vInspection);
+          float navigationSignal = vInspectionRole
+            * navigationReveal
+            * (navigationRing * navigationArc + navigationNotch * 0.56)
+            * (1.0 - vDeathRamp);
+          vec3 navigationCyan = vec3(0.16, 0.86, 1.0);
+          vec3 navigationGold = vec3(0.94, 0.68, 0.28);
+          float navigationPolarity = 0.5 + 0.5 * sin(
+            navigationAngle + navigationPhase * 0.34
+          );
+          col += mix(
+            navigationCyan,
+            navigationGold,
+            navigationPolarity * 0.36
+          ) * navigationSignal * 1.18;
+          a += navigationSignal * 0.52;
+        }
 
         // Interaction feedback uses an interrupted two-fold interference ring,
         // echoing the contributor crossings of A instead of adding a generic
         // solid selection circle. Hover reveals it partially; selection closes
         // the signal and hands visual emphasis to the expanded braid.
-        float focusAngle = atan(uv.y, uv.x);
-        float focusRing = exp(-pow((length(uv) - 0.34) / 0.045, 2.0));
-        float focusArc = 0.35 + 0.65
-          * smoothstep(-0.35, 0.72, sin(focusAngle * 2.0 + vSeed * 0.21));
-        float focusSignal = focusRing * focusArc * vFocus * (1.0 - vDeathRamp);
-        vec3 focusGold = vec3(0.86, 0.61, 0.25);
-        vec3 focusCyan = vec3(0.10, 0.82, 1.00);
-        vec3 focusTint = mix(focusGold, focusCyan, hash11(vSeed + 3.1));
-        col += focusTint * focusSignal * 1.35;
-        a += focusSignal * 0.62;
+        if (vFocus > 0.0001) {
+          float focusAngle = atan(uv.y, uv.x);
+          float focusRing = exp(-pow((length(uv) - 0.34) / 0.045, 2.0));
+          float focusArc = 0.35 + 0.65
+            * smoothstep(-0.35, 0.72, sin(focusAngle * 2.0 + vSeed * 0.21));
+          float focusSignal = focusRing * focusArc * vFocus * (1.0 - vDeathRamp);
+          vec3 focusGold = vec3(0.86, 0.61, 0.25);
+          vec3 focusCyan = vec3(0.10, 0.82, 1.00);
+          vec3 focusTint = mix(focusGold, focusCyan, hash11(vSeed + 3.1));
+          col += focusTint * focusSignal * 1.35;
+          a += focusSignal * 0.62;
+        }
 
         // Historical recall reads the Cell's record; it does not replay a
         // write flash. Sources emit two bounded address rails. The retained
@@ -300,126 +304,128 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
         // checksum lanes and one central agreement knot only as its real
         // witness arrivals converge. The knot outlasts the route aperture but
         // clears exactly when the explicit historical read ends.
-        float recallAmount = clamp(abs(vRecall), 0.0, 1.0);
-        float recallTarget = step(0.0, vRecall);
-        float recallSource = 1.0 - recallTarget;
-        float recallResolved = smoothstep(
-          0.0,
-          1.0,
-          clamp(vRecallState, 0.0, 1.0)
-        );
-        float readEnergy = recallAmount * (
-          1.0 - recallResolved
-            * (1.0 - ${CONSENSUS_MEMORY_CORE_READ_FLOOR.toFixed(1)})
-        );
-        float compactVisibility = 1.0 - smoothstep(
-          ${CONSENSUS_MEMORY_HANDOFF_START.toFixed(2)},
-          ${CONSENSUS_MEMORY_HANDOFF_END.toFixed(2)},
-          clamp(vDetail, 0.0, 1.0)
-        );
-        float retainedEnergy = pow(
-          recallAmount,
-          ${CONSENSUS_MEMORY_CORE_RELEASE_EXPONENT.toFixed(1)}
-        )
-          * recallResolved
-          * recallTarget
-          * compactVisibility;
-        float readPhase = fract(uTime * 0.38 + hash11(vSeed + 9.7) * 0.15);
-        float scanY = mix(-0.28, 0.28, readPhase);
-        float scanAperture = exp(-pow((uv.y - scanY) / 0.018, 2.0));
-        float scanWindow = 1.0 - smoothstep(0.18, 0.32, abs(uv.x));
-        float addressCell = floor((uv.x + 0.36) * 18.0);
-        float addressGate = 0.28 + 0.72 * step(
-          0.42,
-          hash11(addressCell + floor(readPhase * 16.0) + vSeed)
-        );
-        float targetRead = scanAperture * scanWindow * addressGate
-          * readEnergy * recallTarget
-          * compactVisibility
-          * uMemorySignalEnergy;
+        if (abs(vRecall) > 0.0001) {
+          float recallAmount = clamp(abs(vRecall), 0.0, 1.0);
+          float recallTarget = step(0.0, vRecall);
+          float recallSource = 1.0 - recallTarget;
+          float recallResolved = smoothstep(
+            0.0,
+            1.0,
+            clamp(vRecallState, 0.0, 1.0)
+          );
+          float readEnergy = recallAmount * (
+            1.0 - recallResolved
+              * (1.0 - ${CONSENSUS_MEMORY_CORE_READ_FLOOR.toFixed(1)})
+          );
+          float compactVisibility = 1.0 - smoothstep(
+            ${CONSENSUS_MEMORY_HANDOFF_START.toFixed(2)},
+            ${CONSENSUS_MEMORY_HANDOFF_END.toFixed(2)},
+            clamp(vDetail, 0.0, 1.0)
+          );
+          float retainedEnergy = pow(
+            recallAmount,
+            ${CONSENSUS_MEMORY_CORE_RELEASE_EXPONENT.toFixed(1)}
+          )
+            * recallResolved
+            * recallTarget
+            * compactVisibility;
+          float readPhase = fract(uTime * 0.38 + hash11(vSeed + 9.7) * 0.15);
+          float scanY = mix(-0.28, 0.28, readPhase);
+          float scanAperture = exp(-pow((uv.y - scanY) / 0.018, 2.0));
+          float scanWindow = 1.0 - smoothstep(0.18, 0.32, abs(uv.x));
+          float addressCell = floor((uv.x + 0.36) * 18.0);
+          float addressGate = 0.28 + 0.72 * step(
+            0.42,
+            hash11(addressCell + floor(readPhase * 16.0) + vSeed)
+          );
+          float targetRead = scanAperture * scanWindow * addressGate
+            * readEnergy * recallTarget
+            * compactVisibility
+            * uMemorySignalEnergy;
 
         // Far retained-core identity is the compact LOD of canonical A:
         // asset rotates the record axis, lock changes its gate cadence, data
         // opens 1/3/5 checksum lanes, capacity sizes the central knot, and the
         // content hash chooses stable gaps. Gold remains the shared agreement
         // state instead of turning taxonomy into an activity colour code.
-        float recordAngle = (vMemoryIdentity.x - 0.5) * 0.9;
-        float recordCos = cos(recordAngle);
-        float recordSin = sin(recordAngle);
-        vec2 recordUv = mat2(
-          recordCos, -recordSin,
-          recordSin, recordCos
-        ) * uv;
-        float memoryUvPerPx = 1.0 / max(vPointCssPx, 1.0);
-        float checksumWidth = max(
-          0.0125,
-          uMemoryLinePx * memoryUvPerPx
-        );
-        float checksumLaneStep = max(0.056, 1.34 * memoryUvPerPx);
-        float recordPayload = clamp(vMemoryIdentity.z, 0.0, 1.0);
-        float recordSpan = max(
-          mix(0.11, 0.2, recordPayload),
-          checksumLaneStep * 2.34
-        );
-        float recordWindow = 1.0 - smoothstep(
-          recordSpan * 0.72,
-          recordSpan,
-          abs(recordUv.x)
-        );
-        float checksumCenter = exp(-pow(recordUv.y / checksumWidth, 2.0));
-        float checksumInner = (
-          exp(-pow((recordUv.y + checksumLaneStep) / checksumWidth, 2.0))
-          + exp(-pow((recordUv.y - checksumLaneStep) / checksumWidth, 2.0))
-        ) * smoothstep(0.04, 0.22, recordPayload);
-        float checksumOuter = (
-          exp(-pow((recordUv.y + checksumLaneStep * 2.0) / checksumWidth, 2.0))
-          + exp(-pow((recordUv.y - checksumLaneStep * 2.0) / checksumWidth, 2.0))
-        ) * smoothstep(0.42, 0.78, recordPayload);
-        float checksumLanes = (
-          checksumCenter + checksumInner + checksumOuter
-        ) * recordWindow;
-        float lockCadence = mix(15.0, 29.0, vMemoryIdentity.y);
-        float checksumCell = floor(
-          (recordUv.x + recordSpan) * lockCadence
-        );
-        float checksumGate = 0.4 + 0.6 * step(
-          0.32,
-          hash11(
-            checksumCell
-              + floor(vMemoryIdentity.y * 4.01) * 17.0
-              + vSeed
-          )
-        );
-        float recordLatch = checksumLanes * checksumGate * retainedEnergy
-          * uMemorySignalEnergy;
-        float recordKnotRadius = max(
-          mix(0.03, 0.044, vMemoryIdentity.w),
-          uMemoryLinePx * 1.45 * memoryUvPerPx
-        );
-        float recordKnot = exp(-pow(length(uv) / recordKnotRadius, 2.0))
-          * retainedEnergy
-          * uMemorySignalEnergy;
+          float recordAngle = (vMemoryIdentity.x - 0.5) * 0.9;
+          float recordCos = cos(recordAngle);
+          float recordSin = sin(recordAngle);
+          vec2 recordUv = mat2(
+            recordCos, -recordSin,
+            recordSin, recordCos
+          ) * uv;
+          float memoryUvPerPx = 1.0 / max(vPointCssPx, 1.0);
+          float checksumWidth = max(
+            0.0125,
+            uMemoryLinePx * memoryUvPerPx
+          );
+          float checksumLaneStep = max(0.056, 1.34 * memoryUvPerPx);
+          float recordPayload = clamp(vMemoryIdentity.z, 0.0, 1.0);
+          float recordSpan = max(
+            mix(0.11, 0.2, recordPayload),
+            checksumLaneStep * 2.34
+          );
+          float recordWindow = 1.0 - smoothstep(
+            recordSpan * 0.72,
+            recordSpan,
+            abs(recordUv.x)
+          );
+          float checksumCenter = exp(-pow(recordUv.y / checksumWidth, 2.0));
+          float checksumInner = (
+            exp(-pow((recordUv.y + checksumLaneStep) / checksumWidth, 2.0))
+            + exp(-pow((recordUv.y - checksumLaneStep) / checksumWidth, 2.0))
+          ) * smoothstep(0.04, 0.22, recordPayload);
+          float checksumOuter = (
+            exp(-pow((recordUv.y + checksumLaneStep * 2.0) / checksumWidth, 2.0))
+            + exp(-pow((recordUv.y - checksumLaneStep * 2.0) / checksumWidth, 2.0))
+          ) * smoothstep(0.42, 0.78, recordPayload);
+          float checksumLanes = (
+            checksumCenter + checksumInner + checksumOuter
+          ) * recordWindow;
+          float lockCadence = mix(15.0, 29.0, vMemoryIdentity.y);
+          float checksumCell = floor(
+            (recordUv.x + recordSpan) * lockCadence
+          );
+          float checksumGate = 0.4 + 0.6 * step(
+            0.32,
+            hash11(
+              checksumCell
+                + floor(vMemoryIdentity.y * 4.01) * 17.0
+                + vSeed
+            )
+          );
+          float recordLatch = checksumLanes * checksumGate * retainedEnergy
+            * uMemorySignalEnergy;
+          float recordKnotRadius = max(
+            mix(0.03, 0.044, vMemoryIdentity.w),
+            uMemoryLinePx * 1.45 * memoryUvPerPx
+          );
+          float recordKnot = exp(-pow(length(uv) / recordKnotRadius, 2.0))
+            * retainedEnergy
+            * uMemorySignalEnergy;
 
-        float departureX = mix(
-          0.06,
-          0.34,
-          clamp(vRecallState, 0.0, 1.0)
-        );
-        float departureRail = exp(-pow((abs(uv.x) - departureX) / 0.02, 2.0))
-          * (1.0 - smoothstep(0.1, 0.29, abs(uv.y)))
-          * recallAmount * recallSource;
-        vec3 recallCyan = vec3(0.22, 0.9, 1.0);
-        vec3 recallPale = vec3(0.78, 0.97, 1.0);
-        vec3 recallViolet = vec3(0.54, 0.38, 1.0);
-        vec3 recallGold = vec3(1.0, 0.78, 0.34);
-        col += recallCyan * targetRead * 1.35;
-        col += mix(recallPale, recallGold, 0.48) * recordLatch * 1.62;
-        col += recallGold * recordKnot * 1.18;
-        col += recallViolet * departureRail * 0.72;
-        a += targetRead * 0.54
-          + recordLatch * 0.72
-          + recordKnot * 0.48
-          + departureRail * 0.28;
+          float departureX = mix(
+            0.06,
+            0.34,
+            clamp(vRecallState, 0.0, 1.0)
+          );
+          float departureRail = exp(-pow((abs(uv.x) - departureX) / 0.02, 2.0))
+            * (1.0 - smoothstep(0.1, 0.29, abs(uv.y)))
+            * recallAmount * recallSource;
+          vec3 recallCyan = vec3(0.22, 0.9, 1.0);
+          vec3 recallPale = vec3(0.78, 0.97, 1.0);
+          vec3 recallViolet = vec3(0.54, 0.38, 1.0);
+          vec3 recallGold = vec3(1.0, 0.78, 0.34);
+          col += recallCyan * targetRead * 1.35;
+          col += mix(recallPale, recallGold, 0.48) * recordLatch * 1.62;
+          col += recallGold * recordKnot * 1.18;
+          col += recallViolet * departureRail * 0.72;
+          a += targetRead * 0.54
+            + recordLatch * 0.72
+            + recordKnot * 0.48
+            + departureRail * 0.28;
+        }
 
         // A real on-chain Cell consumption is not agreement: transition the
         // fading body toward the retirement signal before it disappears. GC
