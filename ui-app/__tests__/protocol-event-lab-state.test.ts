@@ -88,6 +88,8 @@ describe('protocol event lab state', () => {
     expect(next.pulseLinks).toEqual(next.recentLinks);
     expect(cache.recentLinks).toEqual([]);
     expect(cache.pulseLinks).toEqual([]);
+    expect(next.cellsToken).toBe(cache.cellsToken);
+    expect(next.cellChanges).toMatchObject({ reset: false, baseToken: null });
   });
 
   it('labels the network, carrier, commit, and settled review windows', () => {

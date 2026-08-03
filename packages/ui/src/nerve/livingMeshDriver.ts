@@ -6,9 +6,15 @@
 
 import type { Cell } from '@cknerv/types';
 import type { NeighborGraph, NeighborEdge } from '../geometry/neighborGraph';
-import type { CellsDiff } from './cellsDelta';
 import { addCell, removeCell } from './incrementalGraph';
 import { fabricEdgeKey } from './fabricOrder';
+
+/** Lifecycle subset consumed from the cache reducer's compact Cell journal. */
+export interface CellsDiff {
+  readonly born: readonly number[];
+  readonly died: readonly number[];
+  readonly evicted: readonly number[];
+}
 
 /** Above this estimated birth-to-existing-Cell comparison count, one spatial
  * bulk rebuild is cheaper than scanning the complete map once per birth. */

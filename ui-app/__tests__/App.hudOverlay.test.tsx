@@ -10,6 +10,12 @@ describe('HudOverlay wiring', () => {
     expect(typeof HudOverlay).toBe('function');
   });
 
+  it('hydrates the initial Cell cache once and shares it with the stream', () => {
+    expect(APP_SOURCE.match(/fromCellsSnapshot\(/g)).toHaveLength(1);
+    expect(APP_SOURCE).toContain('initialCellsCacheRef.current = initialCellsCache');
+    expect(APP_SOURCE).toContain("'/api/projections/cells/stream',\n      initialCellsCache,");
+  });
+
   it('owns the SoundCloud Jukebox as a floating app control', () => {
     expect(APP_SOURCE).toContain("import Jukebox from './Jukebox'");
     expect(APP_SOURCE).toContain('      <Jukebox />');

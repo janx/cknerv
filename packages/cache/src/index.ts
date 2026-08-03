@@ -11,9 +11,11 @@ export {
   applyRevisionedCellDeltas,
   DEFAULT_RECENT_LINKS_CAPACITY,
   DEFAULT_LINK_RING_CAPACITY,
+  NO_CELL_CHANGES,
   type ActiveReplayProgress,
   type CanonicalRewriteEcho,
   type CanonicalRewriteMarker,
+  type CellChangeSet,
   type CellGalaxyCache,
   type CellsReducerOptions,
 } from './cellsReducer';
