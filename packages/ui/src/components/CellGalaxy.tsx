@@ -82,6 +82,12 @@ import {
   type CellInspectionField,
 } from '../nerve/cellInspectionField';
 import { deriveCanonicalRewriteArrivals } from '../derives/canonicalRewrite.derive';
+import {
+  markCellFlashDirty,
+  mergeCellFlashRanges,
+  writeDirtyCellFlashSlots,
+  type CellFlashDirtyIdsRef,
+} from './cellFlash';
 
 /** Cyan palette for the structural chain anchor (CKB icosahedron).
  *  The chain anchor reads as "structural backbone / chain truth" and
@@ -157,6 +163,9 @@ interface CellGalaxyProps {
    *  flash-only updates bypass the cells-identity skip in useSimFrame
    *  without forcing a full per-cell rewrite. */
   flashDirtyRef: React.MutableRefObject<boolean>;
+  /** Exact Cell ids changed since the last GPU commit. When omitted,
+   *  CellGalaxy preserves the legacy full-visible-buffer fallback. */
+  flashDirtyIdsRef?: CellFlashDirtyIdsRef;
   /** Optional overlay rendered inside the cell galaxy's rotating
    *  world-space group. Used by consumers to add domain-specific
    *  animations (e.g. consensus routes + write seals) atop the
@@ -1032,6 +1041,7 @@ export default function CellGalaxy({
   onSelect,
   cellFlashRef,
   flashDirtyRef,
+  flashDirtyIdsRef,
   overlay,
   inspectionFieldRef,
   pickingSuspendedRef,
@@ -1322,7 +1332,7 @@ export default function CellGalaxy({
         for (const id of arrivals) {
           rewriteBirthAtRef.current.set(id, now);
           cellFlashRef.current.set(id, now);
-          flashDirtyRef.current = true;
+          markCellFlashDirty(id, flashDirtyRef, flashDirtyIdsRef);
         }
       }
       lastCellsRef.current = cellsCache.cells;
@@ -1377,7 +1387,6 @@ export default function CellGalaxy({
       markCellBufferUpdateRanges(cellColorAttr, cellBufferRanges, count);
       markCellBufferUpdateRanges(cellBornAtAttr, cellBufferRanges, count);
       markCellBufferUpdateRanges(cellDeathAtAttr, cellBufferRanges, count);
-      markCellBufferUpdateRanges(cellFlashAtAttr, cellBufferRanges, count);
       markCellBufferUpdateRanges(cellSizeAttr, cellBufferRanges, count);
       markCellBufferUpdateRanges(
         cellMemoryIdentityAttr,
@@ -1453,22 +1462,48 @@ export default function CellGalaxy({
       if (inspectionNeedsWrite) cellInspectionAttr.needsUpdate = true;
     }
 
-    // 3. Flash-only rewrite. A dirty flash map may coincide with a partial
-    //    static update, so refresh every visible flash slot without forcing
-    //    positions / colours / identity back through the expensive path.
-    if (flashDirtyRef.current) {
-      writeFlashSlots(
-        cellsListRef.current,
-        drawCountRef.current,
-        cellFlashRef.current,
-        cellFlashAtAttr.array as Float32Array,
-      );
-      // A partial static write may already have registered narrow ranges on
-      // this attribute earlier in the frame. The flash map rewrite touched the
-      // whole visible prefix, so force Three.js back to a full upload here.
-      cellFlashAtAttr.clearUpdateRanges();
-      cellFlashAtAttr.needsUpdate = true;
+    // 3. Flash-only rewrite. Production callers publish exact dirty ids, so
+    //    both the CPU write and GPU upload stay proportional to visible Cell
+    //    arrivals. Callers without that journal retain the full-prefix path.
+    const dirtyFlashIds = flashDirtyIdsRef?.current;
+    const flashMapDirty = flashDirtyRef.current
+      || (dirtyFlashIds?.size ?? 0) > 0;
+    let flashBufferRanges: readonly CellBufferRange[] = cellBufferRanges;
+    let flashNeedsFullUpload = false;
+    if (flashMapDirty) {
+      if (dirtyFlashIds && dirtyFlashIds.size > 0) {
+        const dirtyFlashRanges = writeDirtyCellFlashSlots(
+          dirtyFlashIds,
+          cellRenderSetRef.current.indexById,
+          drawCountRef.current,
+          cellFlashRef.current,
+          cellFlashAtAttr.array as Float32Array,
+        );
+        flashBufferRanges = mergeCellFlashRanges(
+          cellBufferRanges,
+          dirtyFlashRanges,
+          count,
+        );
+      } else {
+        writeFlashSlots(
+          cellsListRef.current,
+          drawCountRef.current,
+          cellFlashRef.current,
+          cellFlashAtAttr.array as Float32Array,
+        );
+        cellFlashAtAttr.clearUpdateRanges();
+        cellFlashAtAttr.needsUpdate = true;
+        flashNeedsFullUpload = true;
+      }
+      dirtyFlashIds?.clear();
       flashDirtyRef.current = false;
+    }
+    if (!flashNeedsFullUpload) {
+      markCellBufferUpdateRanges(
+        cellFlashAtAttr,
+        flashBufferRanges,
+        count,
+      );
     }
 
     // 4. Material uniforms.
@@ -1556,7 +1591,7 @@ export default function CellGalaxy({
             const prev = cellFlashRef.current.get(cellId) ?? -1e9;
             if (flashAtS > prev) {
               cellFlashRef.current.set(cellId, flashAtS);
-              flashDirtyRef.current = true;
+              markCellFlashDirty(cellId, flashDirtyRef, flashDirtyIdsRef);
             }
             highlights += 1;
           }
@@ -1580,7 +1615,7 @@ export default function CellGalaxy({
           const dist = Math.sqrt(distSq);
           const flashAtS = strikeSceneS + dist / LOCAL_IGNITION_SPEED;
           cellFlashRef.current.set(cell.id, flashAtS);
-          flashDirtyRef.current = true;
+          markCellFlashDirty(cell.id, flashDirtyRef, flashDirtyIdsRef);
           ignited += 1;
         }
       }

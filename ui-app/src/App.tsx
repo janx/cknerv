@@ -418,6 +418,7 @@ export default function App({
   // reads. burstArrivalRef carries terminal arrivals to ConsensusWriteSeal.
   const cellFlashRef = useRef<Map<number, number>>(new Map());
   const flashDirtyRef = useRef<boolean>(false);
+  const flashDirtyIdsRef = useRef<Set<number>>(new Set());
   const cellInspectionFieldRef = useRef<CellInspectionField | null>(null);
   const burstArrivalRef = useRef<
     Map<number, { firedAt: number; color: [number, number, number] }>
@@ -913,6 +914,7 @@ export default function App({
             onSelect={handleSelect}
             cellFlashRef={cellFlashRef}
             flashDirtyRef={flashDirtyRef}
+            flashDirtyIdsRef={flashDirtyIdsRef}
             inspectionFieldRef={cellInspectionFieldRef}
             pickingSuspendedRef={orbitPickingSuspendedRef}
             overlay={
@@ -932,6 +934,7 @@ export default function App({
                   cellCapacity={galaxyConfig.cellCap}
                   cellFlashRef={cellFlashRef}
                   flashDirtyRef={flashDirtyRef}
+                  flashDirtyIdsRef={flashDirtyIdsRef}
                   burstArrivalRef={burstArrivalRef}
                   topology={galaxyConfig.topology}
                   pulses={galaxyConfig.pulses}
@@ -970,6 +973,7 @@ export default function App({
             onSelect={handleSelect}
             cellFlashRef={cellFlashRef}
             flashDirtyRef={flashDirtyRef}
+            flashDirtyIdsRef={flashDirtyIdsRef}
             localVersion={localNode?.version ?? ''}
             cellInspectionActive={selectedCell !== null}
             cellDetailViewFocusRef={cellDetailViewFocusRef}

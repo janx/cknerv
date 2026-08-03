@@ -57,6 +57,7 @@ import {
   cellDetailPeerContextEnergy,
   cellDetailPeerLinkContextEnergy,
 } from '../derives/sceneView.derive';
+import type { CellFlashDirtyIdsRef } from './cellFlash';
 
 interface NetworkColonyProps {
   topology: NetworkTopology;
@@ -70,6 +71,7 @@ interface NetworkColonyProps {
    *  visibly RECEIVES the delivery through its existing flare path. */
   cellFlashRef: React.MutableRefObject<Map<number, number>>;
   flashDirtyRef: React.MutableRefObject<boolean>;
+  flashDirtyIdsRef?: CellFlashDirtyIdsRef;
   /** Local node version — drives measured version-mismatch coloring (violet). */
   localVersion: string;
   /** A Cell inspection subdues only passive P2P context, never block traffic. */
@@ -86,6 +88,7 @@ export default function NetworkColony({
   onSelect,
   cellFlashRef,
   flashDirtyRef,
+  flashDirtyIdsRef,
   localVersion,
   cellInspectionActive = false,
   cellDetailViewFocusRef,
@@ -206,6 +209,7 @@ export default function NetworkColony({
         pulseRef={pulseRef}
         cellFlashRef={cellFlashRef}
         flashDirtyRef={flashDirtyRef}
+        flashDirtyIdsRef={flashDirtyIdsRef}
       />
     </group>
   );
