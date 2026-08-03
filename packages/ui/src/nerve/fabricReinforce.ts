@@ -1,9 +1,9 @@
 // Usage-driven self-organization (自发秩序) for the cell fabric.
 //
 // Each fabric edge carries a `usage` weight. A pulse traversing the edge bumps
-// it (`reinforceUsage`); idle time fades it (`decayUsage`); the weight boosts
-// the edge's rendered brightness on top of ①'s arbor baseline
-// (`usageBrightnessBoost`). Frequently-travelled veins therefore glow and
+// it (`reinforceUsage`); idle time fades it (`decayUsage`); a sparse overlay
+// adds only the incremental brightness above ①'s arbor baseline
+// (`warmRouteBrightnessGain`). Frequently-travelled veins therefore glow and
 // persist while cold ones relax back to the resting venation — the network
 // self-organizes toward where real block/tx activity flows.
 //
@@ -49,4 +49,14 @@ export function decayUsage(
  *  (saturated). Linear in normalized usage; `gain` defaults to shipped. */
 export function usageBrightnessBoost(usage: number, gain = USAGE_GAIN): number {
   return 1 + gain * (usage / USAGE_CAP);
+}
+
+/** Incremental route energy rendered above the immutable passive baseline.
+ * Exactly zero for a cold edge, so an idle warm-route layer emits no geometry
+ * and cannot force the complete fabric through another GPU upload. */
+export function warmRouteBrightnessGain(
+  usage: number,
+  gain = USAGE_GAIN,
+): number {
+  return Math.max(0, usageBrightnessBoost(usage, gain) - 1);
 }

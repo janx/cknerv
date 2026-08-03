@@ -4,6 +4,7 @@ import {
   FABRIC_SAMPLES_PER_EDGE,
   MAX_FABRIC_SEGMENTS,
   MAX_PASSIVE_EDGE_GENERATIONS,
+  MAX_WARM_FABRIC_SEGMENTS,
 } from '../../src/nerve/fabricCapacity';
 
 describe('fabric capacity', () => {
@@ -18,5 +19,12 @@ describe('fabric capacity', () => {
       * MAX_PASSIVE_EDGE_GENERATIONS
       * FABRIC_SAMPLES_PER_EDGE,
     );
+  });
+
+  it('bounds the sparse warm overlay to one live graph generation', () => {
+    expect(MAX_WARM_FABRIC_SEGMENTS).toBe(
+      PASSIVE_EDGE_BUDGET * FABRIC_SAMPLES_PER_EDGE,
+    );
+    expect(MAX_WARM_FABRIC_SEGMENTS).toBeLessThan(MAX_FABRIC_SEGMENTS);
   });
 });

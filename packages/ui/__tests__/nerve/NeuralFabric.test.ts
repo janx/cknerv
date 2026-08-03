@@ -137,7 +137,7 @@ describe('NeuralFabric living-mesh handles', () => {
     expect(SRC).toContain('FABRIC_SAMPLES_PER_EDGE');
     expect(SRC).not.toContain('fabricSamplesPerEdge');
     expect(SRC).toContain('activeSamplesPerHop');
-    expect(SRC).toMatch(/i\s*<=\s*FABRIC_SAMPLES_PER_EDGE/);
+    expect(SRC).toMatch(/index\s*<=\s*FABRIC_SAMPLES_PER_EDGE/);
   });
 
   it('compresses only passive core energy while semantic routes reclaim contrast', () => {
@@ -165,6 +165,7 @@ describe('NeuralFabric living-mesh handles', () => {
     expect(SRC).toContain('cellDetailFabricEnergyGain(focus)');
     expect(SRC).toContain('cellDetailFabricWidthScale(focus)');
     expect(SRC).toContain('fabric.material.color.setRGB(');
+    expect(SRC).toContain('warmRoutes.material.color.setRGB(');
     expect(SRC).toContain('useFrame(applyPassiveViewWeight)');
     const activeImplementation = SRC.slice(
       SRC.lastIndexOf('pushActiveHop(hop, cells)'),
@@ -178,5 +179,29 @@ describe('NeuralFabric living-mesh handles', () => {
     expect(SRC).toContain('const usedFloats = layer.count * 6');
     expect(SRC).toContain('addUpdateRange(0, usedFloats)');
     expect(SRC).toContain('clearUpdateRanges()');
+  });
+
+  it('decays and uploads reinforcement through a sparse warm-route layer', () => {
+    expect(SRC).toContain('MAX_WARM_FABRIC_SEGMENTS');
+    expect(SRC).toContain('warmRouteKeysRef');
+    expect(SRC).toContain('warmRouteBrightnessGain(');
+    expect(SRC).toContain('commitLayer(warmRoutes)');
+    expect(SRC).toContain('<primitive object={warmRoutes.mesh} />');
+
+    const reinforceImplementation = SRC.slice(
+      SRC.indexOf('reinforce(fromCellId, toCellId) {'),
+      SRC.indexOf('emitFabric(now) {'),
+    );
+    expect(reinforceImplementation).toContain(
+      'warmRouteKeysRef.current.add(key)',
+    );
+    expect(reinforceImplementation).not.toContain('emitDirtyRef.current');
+
+    const passiveLoop = SRC.slice(
+      SRC.indexOf('for (const key of renderOrderRef.current)'),
+      SRC.indexOf('commitLayer(fabric)'),
+    );
+    expect(passiveLoop).not.toContain('decayUsage(');
+    expect(passiveLoop).not.toContain('st.usage');
   });
 });

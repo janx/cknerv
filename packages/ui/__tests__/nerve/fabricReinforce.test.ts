@@ -3,6 +3,7 @@ import {
   reinforceUsage,
   decayUsage,
   usageBrightnessBoost,
+  warmRouteBrightnessGain,
   REINFORCE_AMOUNT,
   USAGE_CAP,
   USAGE_GAIN,
@@ -51,6 +52,16 @@ describe('fabricReinforce — usage-driven self-organization', () => {
     });
     it('honors a live-tuned gain', () => {
       expect(usageBrightnessBoost(USAGE_CAP, 3)).toBeCloseTo(4, 6);
+    });
+  });
+
+  describe('warmRouteBrightnessGain', () => {
+    it('emits no overlay energy for a cold edge', () => {
+      expect(warmRouteBrightnessGain(0)).toBe(0);
+    });
+    it('contains only the incremental gain above the passive baseline', () => {
+      expect(warmRouteBrightnessGain(USAGE_CAP)).toBeCloseTo(USAGE_GAIN, 6);
+      expect(warmRouteBrightnessGain(0.5, 3)).toBeCloseTo(1.5, 6);
     });
   });
 });
