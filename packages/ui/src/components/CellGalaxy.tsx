@@ -19,7 +19,12 @@ import {
   DEATH_DURATION_MS,
   INSTANCE_CAPACITY,
 } from '../geometry/cellPositions';
-import { cellRenderList } from '../geometry/cellRenderSet';
+import {
+  createCellRenderSetState,
+  diffCellRenderSlots,
+  syncCellRenderSet,
+  type CellRenderRange,
+} from '../geometry/cellRenderSet';
 export {
   pinCellInspectionFieldInVisiblePrefix,
   pinSelectedCellInVisiblePrefix,
@@ -207,10 +212,9 @@ export function writeFlashSlots(
 
 /** One contiguous run of visible Cell slots whose static GPU attributes need
  * to be refreshed. Block deltas usually touch only a handful of these runs. */
-export interface CellBufferRange {
-  start: number;
-  count: number;
-}
+export type CellBufferRange = CellRenderRange;
+
+const EMPTY_CELL_BUFFER_RANGES: CellBufferRange[] = [];
 
 export interface CellBufferDiff {
   ranges: CellBufferRange[];
@@ -225,25 +229,7 @@ export function diffCellBufferSlots(
   previous: readonly Cell[],
   next: readonly Cell[],
 ): CellBufferDiff {
-  const ranges: CellBufferRange[] = [];
-  let rangeStart = -1;
-  let membershipChanged = previous.length !== next.length;
-
-  for (let index = 0; index < next.length; index += 1) {
-    const before = previous[index];
-    const after = next[index];
-    if (before?.id !== after.id) membershipChanged = true;
-    if (before !== after) {
-      if (rangeStart < 0) rangeStart = index;
-    } else if (rangeStart >= 0) {
-      ranges.push({ start: rangeStart, count: index - rangeStart });
-      rangeStart = -1;
-    }
-  }
-  if (rangeStart >= 0) {
-    ranges.push({ start: rangeStart, count: next.length - rangeStart });
-  }
-  return { ranges, membershipChanged };
+  return diffCellRenderSlots(previous, next);
 }
 
 /** Write the static graph-distance target for each currently visible Cell.
@@ -1081,6 +1067,10 @@ export default function CellGalaxy({
    *  hitbox's `e.instanceId` did, so the `cell:${id}` selection
    *  contract is preserved. */
   const cellsListRef = useRef<Cell[]>([]);
+  /** Reducer-journal cursor for the visible prefix. Ordinary retained Cell
+   * replacements patch indexed slots, and births beyond the display cap leave
+   * this array untouched. */
+  const cellRenderSetRef = useRef(createCellRenderSetState());
   /** Unchanged immutable Cell objects retain their expensive hash/taxonomy
    * presentation even when GC moves them to a different visible slot. */
   const cellBufferPresentationCacheRef = useRef(
@@ -1089,10 +1079,9 @@ export default function CellGalaxy({
   const selectedCellIdRef = useRef<number | null>(null);
   const hoveredCellIdRef = useRef<number | null>(null);
   selectedCellIdRef.current = selectedCellNumericId(selectedCellId);
-  /** Identity of the cells Map last seen by useSimFrame. A new map is diffed
-   *  against the retained render prefix so ordinary block deltas derive and
-   *  upload only changed slots; an identical map skips even that comparison.
-   *  Pulse-only frames leave the map identity stable and ride the fast path. */
+  /** Identity of the cells Map last seen by useSimFrame. Retained separately
+   * from the journal cursor because canonical rewrite arrivals compare the
+   * exact previous and current authoritative maps. */
   const lastCellsRef = useRef<Map<number, Cell> | null>(null);
   /** Receipt-time lifecycle overrides for records arriving during a canonical
    * suffix rewrite. Replayed chain timestamps are historical, so without this
@@ -1101,15 +1090,8 @@ export default function CellGalaxy({
   const rewriteBirthAtRef = useRef<Map<number, number>>(new Map());
   const handledRewriteRef = useRef(cellsCache.linkPrune);
   const rewriteArrivalUntilRef = useRef(-1e9);
-  /** Last-seen resolved display cap. AUTO owns one stable structural budget;
-   *  the top-bar slider can own it independently. Including it in the change
-   *  predicate keeps drawRange current while the Cell map is stable. */
-  const lastCellDisplayLimitRef = useRef<number>(0);
-  const lastPinnedCellIdRef = useRef<number | null>(null);
-  const lastPinnedInspectionFieldRef = useRef<CellInspectionField | null>(null);
-  /** Per-frame mirror of the cell draw count. Written in the
-   *  inputsChanged path; read by the flash-only fast path so neither
-   *  path needs to recompute the clamp. */
+  /** Per-frame mirror of the cell draw count. Written by the journal cursor;
+   * read by the flash-only fast path so neither path recomputes the clamp. */
   const drawCountRef = useRef<number>(0);
   const lastPulseAtMsRef = useRef<number>(0);
   /** Per-icosahedron flash trigger — written on each new block for the
@@ -1318,18 +1300,11 @@ export default function CellGalaxy({
       rewriteArrivalUntilRef.current = now + 1.0;
     }
 
-    // 1. Diff the visible prefix only when its structural inputs change, then
-    //    derive and upload the coalesced Cell slots touched by that diff.
-    const inputsChanged =
-      cellsCache.cells !== lastCellsRef.current ||
-      cellDisplayLimit !== lastCellDisplayLimitRef.current ||
-      selectedCellIdRef.current !== lastPinnedCellIdRef.current ||
-      inspectionField !== lastPinnedInspectionFieldRef.current;
-    let cellsList = cellsListRef.current;
-    let count = drawCountRef.current;
-    let cellBufferRanges: CellBufferRange[] = [];
-    let renderMembershipChanged = false;
-    if (inputsChanged) {
+    // 1. Advance the reducer-journal cursor. The ordinary path patches only
+    //    changed visible slots; snapshots, skipped journals, GC/order changes,
+    //    and semantic-pinning changes resolve through one canonical rebuild.
+    const cellsMapChanged = cellsCache.cells !== lastCellsRef.current;
+    if (cellsMapChanged) {
       for (const [id, bornAt] of rewriteBirthAtRef.current) {
         if (now - bornAt > 2) rewriteBirthAtRef.current.delete(id);
       }
@@ -1350,26 +1325,33 @@ export default function CellGalaxy({
           flashDirtyRef.current = true;
         }
       }
-      const nextCellsList = cellRenderList(
-        cellsCache.cells,
+      lastCellsRef.current = cellsCache.cells;
+    }
+
+    const renderSet = cellRenderSetRef.current;
+    const renderNeedsSync = renderSet.cellsToken !== cellsCache.cellsToken
+      || renderSet.displayBudget !== cellDisplayLimit
+      || renderSet.selectedCellId !== selectedCellIdRef.current
+      || renderSet.inspectionField !== inspectionField;
+    const renderUpdate = renderNeedsSync
+      ? syncCellRenderSet(
+        renderSet,
+        cellsCache,
         cellDisplayLimit,
         selectedCellIdRef.current,
         inspectionField,
-      );
-      const listDiff = diffCellBufferSlots(cellsListRef.current, nextCellsList);
-      cellBufferRanges = listDiff.ranges;
-      renderMembershipChanged = listDiff.membershipChanged;
-      count = nextCellsList.length;
-      if (
-        cellsListRef.current.length !== nextCellsList.length
-        || cellBufferRanges.length > 0
-      ) {
-        cellsList = nextCellsList;
-        cellsListRef.current = nextCellsList;
-      }
-      drawCountRef.current = count;
-      const flashMap = cellFlashRef.current;
+      )
+      : null;
+    const cellsList = renderUpdate?.cells ?? renderSet.cells;
+    const count = cellsList.length;
+    const cellBufferRanges = renderUpdate?.ranges ?? EMPTY_CELL_BUFFER_RANGES;
+    const renderMembershipChanged = renderUpdate?.membershipChanged ?? false;
+    const drawCountChanged = count !== drawCountRef.current;
+    cellsListRef.current = cellsList;
+    drawCountRef.current = count;
+    const flashMap = cellFlashRef.current;
 
+    if (cellBufferRanges.length > 0 || drawCountChanged) {
       writeCellBuffers(
         cellsList,
         count,
@@ -1390,15 +1372,6 @@ export default function CellGalaxy({
         cellBufferPresentationCacheRef.current,
       );
 
-      // Opportunistic prune: keep flashMap from leaking entries for cells
-      // that have been GC'd from the cells cache.
-      if (flashMap.size > count * 2 + 100) {
-        const liveIds = new Set(cellsList.map((c) => c.id));
-        for (const id of flashMap.keys()) {
-          if (!liveIds.has(id)) flashMap.delete(id);
-        }
-      }
-
       cellGeometry.setDrawRange(0, count);
       markCellBufferUpdateRanges(cellPosAttr, cellBufferRanges, count);
       markCellBufferUpdateRanges(cellColorAttr, cellBufferRanges, count);
@@ -1416,11 +1389,16 @@ export default function CellGalaxy({
         cellBufferRanges,
         count,
       );
+    }
 
-      lastCellsRef.current = cellsCache.cells;
-      lastCellDisplayLimitRef.current = cellDisplayLimit;
-      lastPinnedCellIdRef.current = selectedCellIdRef.current;
-      lastPinnedInspectionFieldRef.current = inspectionField;
+    // Opportunistic prune: keep flashMap from leaking entries for cells that
+    // have been GC'd. Run only when the authoritative map advances; hidden
+    // births no longer enter the static-buffer path above.
+    if (cellsMapChanged && flashMap.size > count * 2 + 100) {
+      const liveIds = new Set(cellsList.map((c) => c.id));
+      for (const id of flashMap.keys()) {
+        if (!liveIds.has(id)) flashMap.delete(id);
+      }
     }
 
     // 2. Topology-distance field. Its immutable snapshot changes only when
