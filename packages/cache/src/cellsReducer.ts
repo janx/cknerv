@@ -46,6 +46,11 @@ export interface CellChangeSet {
    * back to one canonical rebuild instead of applying an unsafe partial diff. */
   readonly baseToken: object | null;
   readonly reset: boolean;
+  /** True when a batch deleted at least one existing Map entry. Deletion can
+   * shift the insertion-ordered render prefix, including when the same id is
+   * reinserted later in the batch, so incremental prefix consumers must fall
+   * back to one canonical rebuild. */
+  readonly orderInvalidated: boolean;
   readonly born: readonly number[];
   readonly died: readonly number[];
   readonly evicted: readonly number[];
@@ -60,6 +65,7 @@ const EMPTY_CELL_IDS: readonly number[] = Object.freeze([] as number[]);
 export const NO_CELL_CHANGES: CellChangeSet = Object.freeze({
   baseToken: null,
   reset: false,
+  orderInvalidated: false,
   born: EMPTY_CELL_IDS,
   died: EMPTY_CELL_IDS,
   evicted: EMPTY_CELL_IDS,
@@ -218,6 +224,7 @@ interface CellGalaxyDraft {
   recentLinksOwned: boolean;
   pulseLinksOwned: boolean;
   touchedCellIds: Set<number>;
+  cellOrderInvalidated: boolean;
 }
 
 function createDraft(prev: CellGalaxyCache): CellGalaxyDraft {
@@ -227,6 +234,7 @@ function createDraft(prev: CellGalaxyCache): CellGalaxyDraft {
     recentLinksOwned: false,
     pulseLinksOwned: false,
     touchedCellIds: new Set(),
+    cellOrderInvalidated: false,
   };
 }
 
@@ -243,6 +251,7 @@ function summarizeCellChanges(
   next: ReadonlyMap<number, Cell>,
   touchedCellIds: ReadonlySet<number>,
   baseToken: object,
+  orderInvalidated: boolean,
 ): CellChangeSet {
   if (previous === next) return NO_CELL_CHANGES;
 
@@ -275,6 +284,7 @@ function summarizeCellChanges(
   return {
     baseToken,
     reset: false,
+    orderInvalidated,
     born,
     died,
     evicted,
@@ -350,7 +360,9 @@ function mutateCellDelta(
     case 'gc': {
       for (const id of d.ids) touchCell(draft, id);
       const cells = writableCells(draft);
-      for (const id of d.ids) cells.delete(id);
+      for (const id of d.ids) {
+        if (cells.delete(id)) draft.cellOrderInvalidated = true;
+      }
       return true;
     }
     case 'pulse': {
@@ -438,6 +450,7 @@ export function applyCellDelta(
     draft.value.cells,
     draft.touchedCellIds,
     prev.cellsToken,
+    draft.cellOrderInvalidated,
   );
   return draft.value;
 }
@@ -465,6 +478,7 @@ export function applyRevisionedCellDeltas(
     draft.value.cells,
     draft.touchedCellIds,
     prev.cellsToken,
+    draft.cellOrderInvalidated,
   );
   return draft.value;
 }

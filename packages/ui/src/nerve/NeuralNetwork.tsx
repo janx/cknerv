@@ -34,9 +34,9 @@ import {
 import { emptyNeighborGraph, type NeighborGraph } from '../geometry/neighborGraph';
 import { createNeighborGraphBuilder } from '../geometry/neighborGraphBuilder';
 import {
-  cellRenderList,
   cellRenderMap,
-  sameCellRenderTopology,
+  createCellRenderSetState,
+  syncCellRenderSet,
 } from '../geometry/cellRenderSet';
 import { type Pulse, type PulsePlanningOptions } from './pulseRunner';
 import {
@@ -289,6 +289,7 @@ export default function NeuralNetwork({
   const passiveGraphRef = useRef<NeighborGraph>(emptyNeighborGraph());
   const displayGraphRef = useRef<NeighborGraph>(emptyNeighborGraph());
   const displayCellsRef = useRef<Map<number, Cell>>(new Map());
+  const displayRenderSetRef = useRef(createCellRenderSetState());
   const fabricHandlesRef = useRef<NeuralFabricHandles | null>(null);
   const inspectionFieldSnapshotRef = useRef<CellInspectionField | null>(null);
   const bootstrappedRef = useRef(false);
@@ -296,6 +297,7 @@ export default function NeuralNetwork({
   const routedCellsTokenRef = useRef<object | null>(null);
   const routingTopologyRef = useRef('');
   const displayTopologyRef = useRef('');
+  const displayTopologyVersionRef = useRef(-1);
   const displayInspectionCellIdRef = useRef<number | null>(null);
   const displayBootstrappedRef = useRef(false);
   const routingBuildGenerationRef = useRef(0);
@@ -306,6 +308,7 @@ export default function NeuralNetwork({
   const latestInspectionFieldRef = useRef(inspectionFieldRef);
   const displayRequestedCellsRef = useRef<Map<number, Cell> | null>(null);
   const displayRequestedTopologyRef = useRef('');
+  const displayRequestedTopologyVersionRef = useRef(-1);
   const routingGraphBuilder = useMemo(() => createNeighborGraphBuilder(), []);
   const displayGraphBuilder = useMemo(() => createNeighborGraphBuilder(), []);
   const [routingGraphVersion, setRoutingGraphVersion] = useState(0);
@@ -323,6 +326,7 @@ export default function NeuralNetwork({
     routingGraphBuilder.cancel();
     displayGraphBuilder.cancel();
     displayRequestedCellsRef.current = null;
+    displayRequestedTopologyVersionRef.current = -1;
   }, [displayGraphBuilder, routingGraphBuilder]);
 
   const scheduleRoutingGraphBuild = useCallback((
@@ -363,16 +367,18 @@ export default function NeuralNetwork({
   ]);
 
   const syncDisplayFabric = useCallback(() => {
-    const visibleCells = cellRenderList(
-      cellsCache.cells,
+    const renderUpdate = syncCellRenderSet(
+      displayRenderSetRef.current,
+      cellsCache,
       cellDisplayLimit,
       inspectionCellId,
       inspectionFieldSnapshotRef.current,
     );
+    const visibleCells = renderUpdate.cells;
     const topologyChanged = (
       !displayBootstrappedRef.current
       || displayTopologyRef.current !== topologyKey
-      || !sameCellRenderTopology(displayCellsRef.current, visibleCells)
+      || displayTopologyVersionRef.current !== renderUpdate.topologyVersion
     );
     const inspectionChanged = (
       displayInspectionCellIdRef.current !== inspectionCellId
@@ -393,13 +399,16 @@ export default function NeuralNetwork({
       const requestMatches = (
         requestedCells !== null
         && displayRequestedTopologyRef.current === topologyKey
-        && sameCellRenderTopology(requestedCells, visibleCells)
+        && displayRequestedTopologyVersionRef.current
+          === renderUpdate.topologyVersion
       );
       if (requestMatches) return;
 
       const displayCells = cellRenderMap(visibleCells);
+      const requestedTopologyVersion = renderUpdate.topologyVersion;
       displayRequestedCellsRef.current = displayCells;
       displayRequestedTopologyRef.current = topologyKey;
+      displayRequestedTopologyVersionRef.current = requestedTopologyVersion;
       const generation = displayBuildGenerationRef.current + 1;
       displayBuildGenerationRef.current = generation;
       void displayGraphBuilder.build(displayCells, {
@@ -415,13 +424,17 @@ export default function NeuralNetwork({
           || displayBuildGenerationRef.current !== generation
           || displayRequestedCellsRef.current !== displayCells
           || displayRequestedTopologyRef.current !== topologyKey
+          || displayRequestedTopologyVersionRef.current
+            !== requestedTopologyVersion
         ) return;
         const passiveGraph = result.passiveGraph ?? emptyNeighborGraph();
         displayRequestedCellsRef.current = null;
+        displayRequestedTopologyVersionRef.current = -1;
         displayGraphRef.current = result.graph;
         passiveGraphRef.current = passiveGraph;
         displayCellsRef.current = displayCells;
         displayTopologyRef.current = topologyKey;
+        displayTopologyVersionRef.current = requestedTopologyVersion;
         displayBootstrappedRef.current = true;
         fabricHandlesRef.current?.setFabric(
           passiveGraph,
@@ -439,6 +452,7 @@ export default function NeuralNetwork({
       }).catch((error: unknown) => {
         if (displayBuildGenerationRef.current !== generation) return;
         displayRequestedCellsRef.current = null;
+        displayRequestedTopologyVersionRef.current = -1;
         console.error('failed to build Cell display topology', error);
       });
       return;
@@ -447,6 +461,7 @@ export default function NeuralNetwork({
     if (displayRequestedCellsRef.current !== null) {
       displayBuildGenerationRef.current += 1;
       displayRequestedCellsRef.current = null;
+      displayRequestedTopologyVersionRef.current = -1;
       displayGraphBuilder.cancel();
     }
     const next = deriveCellInspectionField(
@@ -460,7 +475,9 @@ export default function NeuralNetwork({
     fabricHandlesRef.current?.setInspectionField(next);
   }, [
     cellDisplayLimit,
+    cellsCache.cellChanges,
     cellsCache.cells,
+    cellsCache.cellsToken,
     displayGraphBuilder,
     inspectionCellId,
     inspectionFieldRef,

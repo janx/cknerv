@@ -66,6 +66,7 @@ describe('applyCellDelta', () => {
     expect(c.cells.get(1)?.id).toBe(1);
     expect(c.cellChanges).toMatchObject({
       reset: false,
+      orderInvalidated: false,
       born: [1],
       died: [],
       evicted: [],
@@ -112,6 +113,26 @@ describe('applyCellDelta', () => {
     expect(c.cells.get(2)?.id).toBe(2);
     expect(c.cellChanges.evicted).toEqual([1, 3]);
     expect(c.cellChanges.updated).toEqual([]);
+    expect(c.cellChanges.orderInvalidated).toBe(true);
+  });
+
+  it('invalidates insertion order when gc removes then reinserts an id', () => {
+    let start = emptyCellsCache();
+    start = applyCellDelta(start, { type: 'birth', cell: cell(1) });
+    start = applyCellDelta(start, { type: 'birth', cell: cell(2) });
+
+    const out = applyRevisionedCellDeltas(start, [
+      { revision: 1, delta: { type: 'gc', ids: [1] } },
+      { revision: 2, delta: { type: 'birth', cell: cell(1) } },
+    ]);
+
+    expect([...out.cells.keys()]).toEqual([2, 1]);
+    expect(out.cellChanges).toMatchObject({
+      orderInvalidated: true,
+      born: [],
+      evicted: [],
+      updated: [1],
+    });
   });
 
   it('pulse advances lastPulseAtMs', () => {

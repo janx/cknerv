@@ -19,6 +19,8 @@ describe('NeuralNetwork drop instrumentation wiring', () => {
   it('consumes reducer Cell changes without rebuilding a lifecycle snapshot', () => {
     expect(NETWORK_SOURCE).toContain('const diff = cellsCache.cellChanges');
     expect(NETWORK_SOURCE).toContain('diff.baseToken !== routedCellsTokenRef.current');
+    expect(NETWORK_SOURCE).toContain('syncCellRenderSet(');
+    expect(NETWORK_SOURCE).toContain('displayTopologyVersionRef.current');
     expect(NETWORK_SOURCE).toContain('createNeighborGraphBuilder');
     expect(NETWORK_SOURCE).toContain('scheduleRoutingGraphBuild');
     expect(NETWORK_SOURCE).toContain('if (!routingGraphReadyRef.current) return');
@@ -28,6 +30,7 @@ describe('NeuralNetwork drop instrumentation wiring', () => {
     expect(NETWORK_SOURCE).not.toContain('diffAndSnapshotCells');
     expect(NETWORK_SOURCE).not.toContain('snapshotCells');
     expect(NETWORK_SOURCE).not.toContain('prevCellsRef');
+    expect(NETWORK_SOURCE).not.toContain('sameCellRenderTopology(');
   });
 
   // Integration mount-safety test — the level this jsdom harness supports

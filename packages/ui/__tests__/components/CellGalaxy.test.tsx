@@ -127,10 +127,11 @@ describe('CellGalaxy', () => {
     expect(source).toMatch(
       /resolveCellDisplayLimit\(\s*cellDisplay,\s*quality,\s*cellCapacity,\s*\)/,
     );
+    expect(source).toContain('createCellRenderSetState()');
     expect(source).toMatch(
-      /cellRenderList\(\s*cellsCache\.cells,\s*cellDisplayLimit,/,
+      /syncCellRenderSet\(\s*renderSet,\s*cellsCache,\s*cellDisplayLimit,/,
     );
-    expect(source).toContain('count = nextCellsList.length');
+    expect(source).toContain('const count = cellsList.length');
   });
 
   it('turns direct inspection neighbours into the bounded pick surface', () => {
@@ -797,8 +798,10 @@ describe('CellGalaxy useSimFrame buffer behavior', () => {
   it('routes live block changes through partial CPU and GPU ranges', () => {
     const source = readFileSync(CELL_GALAXY_SOURCE, 'utf8');
 
+    expect(source).toContain('const renderUpdate = renderNeedsSync');
+    expect(source).toContain('? syncCellRenderSet(');
     expect(source).toContain(
-      'diffCellBufferSlots(cellsListRef.current, nextCellsList)',
+      'const cellBufferRanges = renderUpdate?.ranges',
     );
     expect(source).toContain('cellBufferRanges,');
     expect(source).toContain('markCellBufferUpdateRanges(');
