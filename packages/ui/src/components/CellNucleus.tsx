@@ -43,6 +43,7 @@ import {
   writeSparseScalarAttribute,
   type ScalarAttributeSlotWrite,
 } from '../geometry/sparseScalarAttribute';
+import { markPopulatedBufferUpdate } from '../geometry/populatedBufferAttribute';
 
 const NEAR_DIST = 2.5;
 const FAR_DIST = 9.5;
@@ -79,10 +80,22 @@ function makePointGeometry(
   resolve: Float32Array,
 ): THREE.BufferGeometry {
   const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.BufferAttribute(position, 3));
-  geometry.setAttribute('aSize', new THREE.BufferAttribute(size, 1));
-  geometry.setAttribute('aAlpha', new THREE.BufferAttribute(alpha, 1));
-  geometry.setAttribute('aResolve', new THREE.BufferAttribute(resolve, 1));
+  geometry.setAttribute(
+    'position',
+    new THREE.BufferAttribute(position, 3).setUsage(THREE.DynamicDrawUsage),
+  );
+  geometry.setAttribute(
+    'aSize',
+    new THREE.BufferAttribute(size, 1).setUsage(THREE.DynamicDrawUsage),
+  );
+  geometry.setAttribute(
+    'aAlpha',
+    new THREE.BufferAttribute(alpha, 1).setUsage(THREE.DynamicDrawUsage),
+  );
+  geometry.setAttribute(
+    'aResolve',
+    new THREE.BufferAttribute(resolve, 1).setUsage(THREE.DynamicDrawUsage),
+  );
   geometry.setDrawRange(0, 0);
   geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e6);
   return geometry;
@@ -139,6 +152,14 @@ export default function CellNucleus({
     const geometry = new LineSegmentsGeometry();
     geometry.setPositions(linePos);
     geometry.setColors(lineCol);
+    const positionAttribute = geometry.getAttribute(
+      'instanceStart',
+    ) as THREE.InterleavedBufferAttribute;
+    const colorAttribute = geometry.getAttribute(
+      'instanceColorStart',
+    ) as THREE.InterleavedBufferAttribute;
+    positionAttribute.data.setUsage(THREE.DynamicDrawUsage);
+    colorAttribute.data.setUsage(THREE.DynamicDrawUsage);
     geometry.instanceCount = 0;
     geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e6);
     return geometry;
@@ -201,6 +222,7 @@ export default function CellNucleus({
   const recallSlots = useRef<number[]>([]);
   const recallStateSlots = useRef<number[]>([]);
   const cursor = useRef<GalaxyNucleusCursor>({ lineVertices: 0, nodes: 0 });
+  const committedDrawCounts = useRef({ lineSegments: 0, nodes: 0 });
   const lodElapsedS = useRef(Number.POSITIVE_INFINITY);
   const lastCellsList = useRef<Cell[] | null>(null);
   const lastCount = useRef(-1);
@@ -217,8 +239,15 @@ export default function CellNucleus({
     const cells = cellsListRef.current;
     const count = Math.min(drawCountRef.current ?? 0, cells?.length ?? 0);
     if (!group || !cells || count === 0) {
-      lineGeometry.instanceCount = 0;
-      nodeGeometry.setDrawRange(0, 0);
+      const committed = committedDrawCounts.current;
+      if (committed.lineSegments !== 0) {
+        lineGeometry.instanceCount = 0;
+        committed.lineSegments = 0;
+      }
+      if (committed.nodes !== 0) {
+        nodeGeometry.setDrawRange(0, 0);
+        committed.nodes = 0;
+      }
       return;
     }
 
@@ -521,21 +550,45 @@ export default function CellNucleus({
       );
     }
 
-    lineGeometry.instanceCount = writeCursor.lineVertices / 2;
+    const lineFloatCount = writeCursor.lineVertices * 3;
+    const lineSegmentCount = writeCursor.lineVertices / 2;
+    const committed = committedDrawCounts.current;
+    if (lineSegmentCount !== committed.lineSegments) {
+      lineGeometry.instanceCount = lineSegmentCount;
+      committed.lineSegments = lineSegmentCount;
+    }
     const positionAttribute = lineGeometry.getAttribute(
       'instanceStart',
     ) as THREE.InterleavedBufferAttribute;
     const colorAttribute = lineGeometry.getAttribute(
       'instanceColorStart',
     ) as THREE.InterleavedBufferAttribute;
-    positionAttribute.data.needsUpdate = true;
-    colorAttribute.data.needsUpdate = true;
+    markPopulatedBufferUpdate(positionAttribute.data, lineFloatCount);
+    markPopulatedBufferUpdate(colorAttribute.data, lineFloatCount);
 
-    nodeGeometry.setDrawRange(0, writeCursor.nodes);
-    (nodeGeometry.getAttribute('position') as THREE.BufferAttribute).needsUpdate = true;
-    (nodeGeometry.getAttribute('aSize') as THREE.BufferAttribute).needsUpdate = true;
-    (nodeGeometry.getAttribute('aAlpha') as THREE.BufferAttribute).needsUpdate = true;
-    (nodeGeometry.getAttribute('aResolve') as THREE.BufferAttribute).needsUpdate = true;
+    if (writeCursor.nodes !== committed.nodes) {
+      nodeGeometry.setDrawRange(0, writeCursor.nodes);
+      committed.nodes = writeCursor.nodes;
+    }
+    const nodePositionAttribute = nodeGeometry.getAttribute(
+      'position',
+    ) as THREE.BufferAttribute;
+    const nodeSizeAttribute = nodeGeometry.getAttribute(
+      'aSize',
+    ) as THREE.BufferAttribute;
+    const nodeAlphaAttribute = nodeGeometry.getAttribute(
+      'aAlpha',
+    ) as THREE.BufferAttribute;
+    const nodeResolveAttribute = nodeGeometry.getAttribute(
+      'aResolve',
+    ) as THREE.BufferAttribute;
+    markPopulatedBufferUpdate(
+      nodePositionAttribute,
+      writeCursor.nodes * nodePositionAttribute.itemSize,
+    );
+    markPopulatedBufferUpdate(nodeSizeAttribute, writeCursor.nodes);
+    markPopulatedBufferUpdate(nodeAlphaAttribute, writeCursor.nodes);
+    markPopulatedBufferUpdate(nodeResolveAttribute, writeCursor.nodes);
   });
 
   return (
