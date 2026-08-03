@@ -1,6 +1,7 @@
 // Persistent renderer for the spatial consensus graph + separate per-frame
-// layers for live writes, explicitly recalled historical routes, and the
-// bounded optical acknowledgement of one click-locked route Cell.
+// layers for sparse warm routes, live writes, explicitly recalled historical
+// routes, and the bounded optical acknowledgement of one click-locked route
+// Cell.
 //
 // Each logical edge is a quadratic Bezier with a perpendicular xz
 // offset on the control point (deterministic per edge), so the
@@ -27,13 +28,22 @@ import type { Cell } from '@cknerv/types';
 import type { NeighborGraph, NeighborEdge } from '../geometry/neighborGraph';
 import { bezierAtInto, bezierControlInto, fabricEdgeSeed } from '../geometry/edgeBezier';
 import { fabricEdgeKey, orderFabricStateKeys } from './fabricOrder';
-import { FABRIC_SAMPLES_PER_EDGE, MAX_FABRIC_SEGMENTS } from './fabricCapacity';
+import {
+  FABRIC_SAMPLES_PER_EDGE,
+  MAX_FABRIC_SEGMENTS,
+  MAX_WARM_FABRIC_SEGMENTS,
+} from './fabricCapacity';
 import {
   fabricEdgeRenderState,
   GROWTH_MS,
   type DeathKind,
+  type EdgeRender,
 } from './fabricEdgeRender';
-import { reinforceUsage, decayUsage, usageBrightnessBoost } from './fabricReinforce';
+import {
+  reinforceUsage,
+  decayUsage,
+  warmRouteBrightnessGain,
+} from './fabricReinforce';
 import { passiveFabricEnergyScale } from './fabricLuminance';
 import { useSimClock } from '../tweaks/SimClockScope';
 import { LIVE } from '../tweaks/liveTweaks';
@@ -231,9 +241,9 @@ interface EdgeState {
   fromR: number; fromG: number; fromB: number;
   toR: number; toG: number; toB: number;
   /** ② Self-organization: activity weight in [0, USAGE_CAP]. Pulse
-   *  traversals bump it (`reinforce`), each frame decays it, and it boosts
-   *  the rendered brightness on top of `brightnessMul`. 0 in the resting
-   *  state → boost ×1 → byte-identical to ①. */
+   *  traversals bump it (`reinforce`); while positive it lives in the sparse
+   *  warm-route set, decays each frame, and adds brightness over
+   *  `brightnessMul`. 0 in the resting state → no overlay → ① unchanged. */
   usage: number;
 }
 
@@ -344,6 +354,170 @@ function arborBrightness(w: number | undefined, seed: number): number {
   return TWIG_MIN + 0.10 * (((seed >>> 16) & 0xff) / 0xff);
 }
 
+/** Emit one passive-language edge into either the immutable resting fabric or
+ * the sparse warm-route overlay. `usage` changes route colour/spatial energy;
+ * `brightnessGain` selects the complete baseline (1) or only reinforcement's
+ * incremental contribution (>0). Keeping one sampler prevents the overlay
+ * from drifting away from lifecycle, aperture, inspection, or taper semantics. */
+function writeFabricEdgeSegments(
+  layer: FatLineLayer,
+  st: EdgeState,
+  render: EdgeRender,
+  sample: Float32Array,
+  now: number,
+  usage: number,
+  brightnessGain: number,
+  recallAperture: RecallApertureState,
+  inspectionField: InspectionFieldTransition,
+): void {
+  if (!render.visible || render.alphaMul <= 0 || brightnessGain <= 0) return;
+
+  const hierarchy = Math.max(
+    0,
+    Math.min(1, (st.brightnessMul - TWIG_MIN) / (1 - TWIG_MIN)),
+  );
+  const goldMix = consensusRouteGoldMix(hierarchy, usage);
+  const gold = CONSENSUS_BRAID_PALETTE.gold;
+  const retire = CONSENSUS_BRAID_PALETTE.retire;
+  const flash = render.flash;
+  const fromSemanticR = (
+    st.fromR + (gold[0] - st.fromR) * goldMix
+  ) * (1 - flash) + retire[0] * flash;
+  const fromSemanticG = (
+    st.fromG + (gold[1] - st.fromG) * goldMix
+  ) * (1 - flash) + retire[1] * flash;
+  const fromSemanticB = (
+    st.fromB + (gold[2] - st.fromB) * goldMix
+  ) * (1 - flash) + retire[2] * flash;
+  const toSemanticR = (
+    st.toR + (gold[0] - st.toR) * goldMix
+  ) * (1 - flash) + retire[0] * flash;
+  const toSemanticG = (
+    st.toG + (gold[1] - st.toG) * goldMix
+  ) * (1 - flash) + retire[1] * flash;
+  const toSemanticB = (
+    st.toB + (gold[2] - st.toB) * goldMix
+  ) * (1 - flash) + retire[2] * flash;
+  const energy = LIVE.cell.fabricAlpha
+    * render.alphaMul
+    * st.brightnessMul
+    * brightnessGain;
+
+  const tStart = render.tStart;
+  const tEnd = render.tEnd;
+  bezierAtInto(
+    sample,
+    st.fromX, st.fromY, st.fromZ,
+    st.ctrlX, st.ctrlY, st.ctrlZ,
+    st.toX, st.toY, st.toZ,
+    tStart,
+  );
+  let prevX = sample[0];
+  let prevY = sample[1];
+  let prevZ = sample[2];
+  const startTaper = taper(tStart);
+  const prevSpatial = passiveFabricEnergyScale(
+    prevX,
+    prevZ,
+    hierarchy,
+    usage,
+    flash,
+    LIVE.cell.centerDim,
+  );
+  const prevAperture = recallApertureScaleAt(
+    recallAperture,
+    prevX,
+    prevZ,
+    flash,
+    now,
+  );
+  const prevInspection = inspectionFieldScaleAt(
+    inspectionField,
+    st.fromCellId,
+    st.toCellId,
+    tStart,
+    flash,
+  );
+  const startEnergy = energy
+    * startTaper
+    * prevSpatial
+    * prevAperture
+    * prevInspection;
+  let prevR = (
+    fromSemanticR + (toSemanticR - fromSemanticR) * tStart
+  ) * startEnergy;
+  let prevG = (
+    fromSemanticG + (toSemanticG - fromSemanticG) * tStart
+  ) * startEnergy;
+  let prevB = (
+    fromSemanticB + (toSemanticB - fromSemanticB) * tStart
+  ) * startEnergy;
+
+  for (let index = 1; index <= FABRIC_SAMPLES_PER_EDGE; index += 1) {
+    const rawT = tStart
+      + (tEnd - tStart) * (index / FABRIC_SAMPLES_PER_EDGE);
+    const t = rawT > tEnd ? tEnd : rawT;
+    bezierAtInto(
+      sample,
+      st.fromX, st.fromY, st.fromZ,
+      st.ctrlX, st.ctrlY, st.ctrlZ,
+      st.toX, st.toY, st.toZ,
+      t,
+    );
+    const endTaper = taper(t);
+    const endSpatial = passiveFabricEnergyScale(
+      sample[0],
+      sample[2],
+      hierarchy,
+      usage,
+      flash,
+      LIVE.cell.centerDim,
+    );
+    const endAperture = recallApertureScaleAt(
+      recallAperture,
+      sample[0],
+      sample[2],
+      flash,
+      now,
+    );
+    const endInspection = inspectionFieldScaleAt(
+      inspectionField,
+      st.fromCellId,
+      st.toCellId,
+      t,
+      flash,
+    );
+    const endEnergy = energy
+      * endTaper
+      * endSpatial
+      * endAperture
+      * endInspection;
+    const endR = (
+      fromSemanticR + (toSemanticR - fromSemanticR) * t
+    ) * endEnergy;
+    const endG = (
+      fromSemanticG + (toSemanticG - fromSemanticG) * t
+    ) * endEnergy;
+    const endB = (
+      fromSemanticB + (toSemanticB - fromSemanticB) * t
+    ) * endEnergy;
+    pushSegmentGradient(
+      layer,
+      prevX, prevY, prevZ,
+      sample[0], sample[1], sample[2],
+      prevR, prevG, prevB,
+      endR, endG, endB,
+    );
+    prevX = sample[0];
+    prevY = sample[1];
+    prevZ = sample[2];
+    prevR = endR;
+    prevG = endG;
+    prevB = endB;
+    if (t >= tEnd) break;
+  }
+}
+
 function makeFatLineLayer(
   maxSegments: number,
   widthPx: number,
@@ -447,8 +621,9 @@ function commitLayer(layer: FatLineLayer): void {
   layer.colBuf.clearUpdateRanges();
   if (usedFloats > 0) {
     // Three uploads the complete backing array when no range is supplied.
-    // The passive layer reserves three edge generations, so that old path
-    // moved 4.39 MiB per dirty frame even when only one generation was drawn.
+    // Upload only each layer's populated prefix. The passive layer reserves
+    // three edge generations, so the old full-range path moved 4.39 MiB per
+    // dirty frame even when only one generation was drawn.
     layer.posBuf.addUpdateRange(0, usedFloats);
     layer.colBuf.addUpdateRange(0, usedFloats);
     layer.posBuf.needsUpdate = true;
@@ -468,6 +643,14 @@ export default function NeuralFabric({
 
   const fabric = useMemo(
     () => makeFatLineLayer(MAX_FABRIC_SEGMENTS, LIVE.cell.fabricWidth, 'screen'),
+    [],
+  );
+  const warmRoutes = useMemo(
+    () => makeFatLineLayer(
+      MAX_WARM_FABRIC_SEGMENTS,
+      LIVE.cell.fabricWidth,
+      'screen',
+    ),
     [],
   );
   const active = useMemo(
@@ -491,9 +674,12 @@ export default function NeuralFabric({
     const focus = cellDetailViewFocusRef?.current ?? 0;
     const energyGain = cellDetailFabricEnergyGain(focus);
     fabric.material.color.setRGB(energyGain, energyGain, energyGain);
+    warmRoutes.material.color.setRGB(energyGain, energyGain, energyGain);
     fabric.material.linewidth = LIVE.cell.fabricWidth
       * cellDetailFabricWidthScale(focus);
-  }, [cellDetailViewFocusRef, fabric.material]);
+    warmRoutes.material.linewidth = LIVE.cell.fabricWidth
+      * cellDetailFabricWidthScale(focus);
+  }, [cellDetailViewFocusRef, fabric.material, warmRoutes.material]);
 
   // Camera navigation is input, not simulation. Keep the passive Cell fabric's
   // close-view weight responsive even when the chain animation clock is paused.
@@ -502,6 +688,9 @@ export default function NeuralFabric({
   // Persistent across handle re-creations so Canvas remounts and quality-view
   // reconciliation never drop an edge's growth/decay lifecycle state.
   const edgeStatesRef = useRef<Map<string, EdgeState>>(new Map());
+  /** Only edges with positive usage live here. Reinforcement updates this
+   * sparse set without dirtying the complete passive-fabric prefix. */
+  const warmRouteKeysRef = useRef<Set<string>>(new Set());
   /** True when there's pending work to emit: either the edge map
    *  was just mutated by `setFabric`, or at least one edge is in
    *  growth/decay and its appearance changes per frame. Flipped
@@ -519,9 +708,8 @@ export default function NeuralFabric({
     b: LIVE.cell.activeColorB, fw: LIVE.cell.fabricWidth, aw: LIVE.cell.activeWidth,
     cd: LIVE.cell.centerDim,
   });
-  // Wall/sim-seconds of the previous emitFabric, for the ② usage-decay dt.
-  // Advanced every frame (even on early-return) so a redraw resuming after an
-  // idle stretch decays by one frame, not the whole idle gap.
+  // Sim-seconds of the previous emitFabric, used by sparse warm-route decay and
+  // lifecycle transitions. Advanced even when the passive base is clean.
   const prevEmitSecRef = useRef<number | null>(null);
   const recallApertureRef = useRef<RecallApertureState>({
     active: null,
@@ -538,12 +726,14 @@ export default function NeuralFabric({
 
   useEffect(() => {
     fabric.material.resolution.set(size.width, size.height);
+    warmRoutes.material.resolution.set(size.width, size.height);
     active.material.resolution.set(size.width, size.height);
     memory.material.resolution.set(size.width, size.height);
     routeHopPulse.material.resolution.set(size.width, size.height);
   }, [
     size,
     fabric.material,
+    warmRoutes.material,
     active.material,
     memory.material,
     routeHopPulse.material,
@@ -552,13 +742,15 @@ export default function NeuralFabric({
   useEffect(() => () => {
     fabric.geometry.dispose();
     fabric.material.dispose();
+    warmRoutes.geometry.dispose();
+    warmRoutes.material.dispose();
     active.geometry.dispose();
     active.material.dispose();
     memory.geometry.dispose();
     memory.material.dispose();
     routeHopPulse.geometry.dispose();
     routeHopPulse.material.dispose();
-  }, [fabric, active, memory, routeHopPulse]);
+  }, [fabric, warmRoutes, active, memory, routeHopPulse]);
 
   useEffect(() => {
     // Reused 3-element scratch buffers — the hot-loop fabric/active
@@ -739,14 +931,15 @@ export default function NeuralFabric({
         emitDirtyRef.current = true;
       },
       reinforce(fromCellId, toCellId) {
-        const st = edgeStatesRef.current.get(fabricEdgeKey(fromCellId, toCellId));
+        const key = fabricEdgeKey(fromCellId, toCellId);
+        const st = edgeStatesRef.current.get(key);
         if (!st) return;
         st.usage = reinforceUsage(st.usage, LIVE.cell.reinforceAmount);
-        emitDirtyRef.current = true;
+        if (st.usage > 0) warmRouteKeysRef.current.add(key);
       },
       emitFabric(now) {
-        // ② usage-decay dt, advanced every frame (even when we early-return
-        // below) so decay never sees a stale multi-second idle gap.
+        // The sparse warm-route layer and structural lifecycle share one
+        // bounded simulation delta. The passive base may still early-return.
         const prevEmit = prevEmitSecRef.current;
         const dt = prevEmit === null ? 0 : Math.max(0, now - prevEmit);
         prevEmitSecRef.current = now;
@@ -792,13 +985,68 @@ export default function NeuralFabric({
           emitDirtyRef.current = true;
         }
         apertureAnimationRef.current = apertureAnimating;
+
+        const states = edgeStatesRef.current;
+        const warmRouteKeys = warmRouteKeysRef.current;
+        const warmLayerWasVisible = warmRoutes.geometry.instanceCount > 0;
+        if (
+          warmRouteKeys.size > 0
+          || warmLayerWasVisible
+          || emitDirtyRef.current
+        ) {
+          applyPassiveViewWeight();
+        }
+
+        // ② Reinforcement is deliberately absent from the complete passive
+        // walk below. Only recently traversed edges are sampled and uploaded;
+        // when the last usage value settles, one empty commit hides the layer
+        // and subsequent frames return to zero buffer work.
+        if (warmRouteKeys.size > 0 || warmLayerWasVisible) {
+          warmRoutes.count = 0;
+          for (const key of warmRouteKeys) {
+            const st = states.get(key);
+            if (!st) {
+              warmRouteKeys.delete(key);
+              continue;
+            }
+            st.usage = decayUsage(
+              st.usage,
+              dt,
+              LIVE.cell.reinforceHalfLife,
+            );
+            if (st.usage <= 0) {
+              warmRouteKeys.delete(key);
+              continue;
+            }
+            const render = fabricEdgeRenderState(st, now);
+            if (render.reap) {
+              st.usage = 0;
+              warmRouteKeys.delete(key);
+              continue;
+            }
+            writeFabricEdgeSegments(
+              warmRoutes,
+              st,
+              render,
+              sample,
+              now,
+              st.usage,
+              warmRouteBrightnessGain(
+                st.usage,
+                LIVE.cell.reinforceGain,
+              ),
+              recallAperture,
+              inspectionField,
+            );
+          }
+          commitLayer(warmRoutes);
+        }
+
         if (!emitDirtyRef.current) return;
         // Live line widths. LineMaterial.linewidth is runtime-settable, so
         // pushing it on every real draw (after the early-return) picks up
         // any width-knob change — including on the forced redraw above.
-        applyPassiveViewWeight();
         active.material.linewidth = LIVE.cell.activeWidth;
-        const states = edgeStatesRef.current;
         fabric.count = 0;
         let stillAnimating = 0;
         // Reap list deferred so we don't mutate the map mid-iteration.
@@ -814,136 +1062,26 @@ export default function NeuralFabric({
           // flash, and reap/animating flags — this loop just draws it.
           const rs = fabricEdgeRenderState(st, now);
           if (rs.reap) { (toReap ??= []).push(key); continue; }
-          // ② A vein still warm from recent traffic keeps decaying, and keeps
-          // the fabric emitting each frame until it relaxes back to baseline.
-          let animating = rs.animating;
-          if (st.usage > 0) {
-            st.usage = decayUsage(st.usage, dt, LIVE.cell.reinforceHalfLife);
-            if (st.usage > 0) animating = true;
-          }
-          if (animating) stillAnimating += 1;
-          if (!rs.visible || rs.alphaMul <= 0) continue;
-
-          // Route energy BEFORE per-vertex taper. Resting routes stay vascular
-          // crimson; hierarchy and recent real traffic reclaim gold. Brightness
-          // falls toward the middle so Cells remain the agreement anchors. A
-          // real Cell death resolves toward the retirement colour, never the
-          // pale light reserved for successful agreement.
-          // Usage boost multiplies the hierarchy baseline — exactly ×1 when
-          // the route is cold.
-          const boost = usageBrightnessBoost(st.usage, LIVE.cell.reinforceGain);
-          const fl = rs.flash;
-          const energy = LIVE.cell.fabricAlpha * rs.alphaMul * st.brightnessMul * boost;
-          const hierarchy = Math.max(
-            0,
-            Math.min(1, (st.brightnessMul - TWIG_MIN) / (1 - TWIG_MIN)),
-          );
-          const goldMix = consensusRouteGoldMix(hierarchy, st.usage);
-          const gold = CONSENSUS_BRAID_PALETTE.gold;
-          const retire = CONSENSUS_BRAID_PALETTE.retire;
-          const fromSemanticR = (st.fromR + (gold[0] - st.fromR) * goldMix) * (1 - fl) + retire[0] * fl;
-          const fromSemanticG = (st.fromG + (gold[1] - st.fromG) * goldMix) * (1 - fl) + retire[1] * fl;
-          const fromSemanticB = (st.fromB + (gold[2] - st.fromB) * goldMix) * (1 - fl) + retire[2] * fl;
-          const toSemanticR = (st.toR + (gold[0] - st.toR) * goldMix) * (1 - fl) + retire[0] * fl;
-          const toSemanticG = (st.toG + (gold[1] - st.toG) * goldMix) * (1 - fl) + retire[1] * fl;
-          const toSemanticB = (st.toB + (gold[2] - st.toB) * goldMix) * (1 - fl) + retire[2] * fl;
-
-          // Walk sub-segments uniformly over the drawn interval
-          // [tStart, tEnd]. This covers every lifecycle case: stable
-          // [0,1], grow-in [0,p] or [1-p,1] (growDir), and death retract
-          // (dead end recedes toward the survivor). taper(t) uses the
-          // true t so a partial tendril tip near the shaft midpoint is
-          // correctly dim.
-          const tStart = rs.tStart, tEnd = rs.tEnd;
-          bezierAtInto(sample, st.fromX, st.fromY, st.fromZ, st.ctrlX, st.ctrlY, st.ctrlZ, st.toX, st.toY, st.toZ, tStart);
-          let prevX = sample[0], prevY = sample[1], prevZ = sample[2];
-          const startTaper = taper(tStart);
-          const prevSpatial = passiveFabricEnergyScale(
-            prevX,
-            prevZ,
-            hierarchy,
-            st.usage,
-            fl,
-            LIVE.cell.centerDim,
-          );
-          const prevAperture = recallApertureScaleAt(
-            recallAperture,
-            prevX,
-            prevZ,
-            fl,
+          if (rs.animating) stillAnimating += 1;
+          writeFabricEdgeSegments(
+            fabric,
+            st,
+            rs,
+            sample,
             now,
-          );
-          const prevInspection = inspectionFieldScaleAt(
+            0,
+            1,
+            recallAperture,
             inspectionField,
-            st.fromCellId,
-            st.toCellId,
-            tStart,
-            fl,
           );
-          const startEnergy = energy
-            * startTaper
-            * prevSpatial
-            * prevAperture
-            * prevInspection;
-          let prevR = (fromSemanticR + (toSemanticR - fromSemanticR) * tStart)
-            * startEnergy;
-          let prevG = (fromSemanticG + (toSemanticG - fromSemanticG) * tStart)
-            * startEnergy;
-          let prevB = (fromSemanticB + (toSemanticB - fromSemanticB) * tStart)
-            * startEnergy;
-          for (let i = 1; i <= FABRIC_SAMPLES_PER_EDGE; i++) {
-            const tRaw = tStart + (tEnd - tStart) * (i / FABRIC_SAMPLES_PER_EDGE);
-            const t = tRaw > tEnd ? tEnd : tRaw;
-            bezierAtInto(sample, st.fromX, st.fromY, st.fromZ, st.ctrlX, st.ctrlY, st.ctrlZ, st.toX, st.toY, st.toZ, t);
-            const endTaper = taper(t);
-            const endSpatial = passiveFabricEnergyScale(
-              sample[0],
-              sample[2],
-              hierarchy,
-              st.usage,
-              fl,
-              LIVE.cell.centerDim,
-            );
-            const endAperture = recallApertureScaleAt(
-              recallAperture,
-              sample[0],
-              sample[2],
-              fl,
-              now,
-            );
-            const endInspection = inspectionFieldScaleAt(
-              inspectionField,
-              st.fromCellId,
-              st.toCellId,
-              t,
-              fl,
-            );
-            const endEnergy = energy
-              * endTaper
-              * endSpatial
-              * endAperture
-              * endInspection;
-            const endR = (fromSemanticR + (toSemanticR - fromSemanticR) * t)
-              * endEnergy;
-            const endG = (fromSemanticG + (toSemanticG - fromSemanticG) * t)
-              * endEnergy;
-            const endB = (fromSemanticB + (toSemanticB - fromSemanticB) * t)
-              * endEnergy;
-            pushSegmentGradient(
-              fabric,
-              prevX, prevY, prevZ, sample[0], sample[1], sample[2],
-              prevR, prevG, prevB,
-              endR, endG, endB,
-            );
-            prevX = sample[0]; prevY = sample[1]; prevZ = sample[2];
-            prevR = endR; prevG = endG; prevB = endB;
-            if (t >= tEnd) break;
-          }
         }
 
         if (toReap) {
           const reapSet = new Set(toReap);
-          for (const key of toReap) states.delete(key);
+          for (const key of toReap) {
+            states.delete(key);
+            warmRouteKeys.delete(key);
+          }
           renderOrderRef.current = renderOrderRef.current.filter((key) => !reapSet.has(key));
         }
 
@@ -1031,6 +1169,7 @@ export default function NeuralFabric({
     onReady(handles);
   }, [
     fabric,
+    warmRoutes,
     active,
     memory,
     routeHopPulse,
@@ -1042,6 +1181,7 @@ export default function NeuralFabric({
   return (
     <>
       <primitive object={fabric.mesh} />
+      <primitive object={warmRoutes.mesh} />
       <primitive object={active.mesh} />
       <primitive object={memory.mesh} />
       <primitive object={routeHopPulse.mesh} />

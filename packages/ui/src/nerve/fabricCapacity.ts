@@ -18,3 +18,9 @@ export const MAX_FABRIC_SEGMENTS =
   PASSIVE_EDGE_BUDGET
   * MAX_PASSIVE_EDGE_GENERATIONS
   * FABRIC_SAMPLES_PER_EDGE;
+
+/** Reinforcement is a sparse overlay bounded to one live graph's maximum
+ * segment count. Superseded warm afterimages may clip under adversarial churn
+ * instead of expanding the permanent GPU allocation. */
+export const MAX_WARM_FABRIC_SEGMENTS =
+  PASSIVE_EDGE_BUDGET * FABRIC_SAMPLES_PER_EDGE;
