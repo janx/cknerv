@@ -31,8 +31,8 @@ import {
   resolveCellDisplayLimit,
   useCellDisplayRuntime,
 } from '../tweaks/cellDisplay';
-import { buildNeighborGraph, emptyNeighborGraph, type NeighborGraph } from '../geometry/neighborGraph';
-import { buildPassiveNeighborGraph } from '../geometry/passiveNeighborGraph';
+import { emptyNeighborGraph, type NeighborGraph } from '../geometry/neighborGraph';
+import { createNeighborGraphBuilder } from '../geometry/neighborGraphBuilder';
 import {
   cellRenderList,
   cellRenderMap,
@@ -274,6 +274,7 @@ export default function NeuralNetwork({
     cellCapacity,
   );
   const particleCapMul = QUALITY_PRESETS[quality].particleCapMul;
+  const topologyKey = `${topology?.neighborK ?? ''}:${topology?.maxEdgeLength ?? ''}`;
 
   // The complete neighbour graph is maintained incrementally for causal pulse
   // routing. Passive rendering is deliberately separate: it is rebuilt over
@@ -281,9 +282,9 @@ export default function NeuralNetwork({
   // plus a small deterministic cross-link sample. Hidden cache
   // entries therefore cannot leave visible fibres behind.
   //
-  // Live changes stay incremental. A full 20K canonical rebuild is reserved
-  // for bootstrap or an explicit topology-option change; doing it on a birth
-  // cadence blocks the render thread during the event it is meant to show.
+  // Live changes stay incremental. Full canonical rebuilds run in a latest-
+  // only Worker for bootstrap, recovery, or explicit topology changes; doing
+  // them on every birth would continually cancel useful topology work.
   const graphRef = useRef<NeighborGraph>(emptyNeighborGraph());
   const passiveGraphRef = useRef<NeighborGraph>(emptyNeighborGraph());
   const displayGraphRef = useRef<NeighborGraph>(emptyNeighborGraph());
@@ -291,11 +292,75 @@ export default function NeuralNetwork({
   const fabricHandlesRef = useRef<NeuralFabricHandles | null>(null);
   const inspectionFieldSnapshotRef = useRef<CellInspectionField | null>(null);
   const bootstrappedRef = useRef(false);
+  const routingGraphReadyRef = useRef(false);
   const routedCellsTokenRef = useRef<object | null>(null);
   const routingTopologyRef = useRef('');
   const displayTopologyRef = useRef('');
   const displayInspectionCellIdRef = useRef<number | null>(null);
   const displayBootstrappedRef = useRef(false);
+  const routingBuildGenerationRef = useRef(0);
+  const displayBuildGenerationRef = useRef(0);
+  const latestCellsTokenRef = useRef(cellsCache.cellsToken);
+  const latestRoutingTopologyRef = useRef(topologyKey);
+  const latestInspectionCellIdRef = useRef(inspectionCellId);
+  const latestInspectionFieldRef = useRef(inspectionFieldRef);
+  const displayRequestedCellsRef = useRef<Map<number, Cell> | null>(null);
+  const displayRequestedTopologyRef = useRef('');
+  const routingGraphBuilder = useMemo(() => createNeighborGraphBuilder(), []);
+  const displayGraphBuilder = useMemo(() => createNeighborGraphBuilder(), []);
+  const [routingGraphVersion, setRoutingGraphVersion] = useState(0);
+
+  latestCellsTokenRef.current = cellsCache.cellsToken;
+  latestRoutingTopologyRef.current = topologyKey;
+  latestInspectionCellIdRef.current = inspectionCellId;
+  latestInspectionFieldRef.current = inspectionFieldRef;
+
+  useEffect(() => () => {
+    routingBuildGenerationRef.current += 1;
+    displayBuildGenerationRef.current += 1;
+    // `cancel` releases Workers while remaining reusable for React Strict
+    // Mode's development-only setup→cleanup→setup effect replay.
+    routingGraphBuilder.cancel();
+    displayGraphBuilder.cancel();
+    displayRequestedCellsRef.current = null;
+  }, [displayGraphBuilder, routingGraphBuilder]);
+
+  const scheduleRoutingGraphBuild = useCallback((
+    cells: ReadonlyMap<number, Cell>,
+    cellsToken: object,
+    nextTopologyKey: string,
+  ) => {
+    const generation = routingBuildGenerationRef.current + 1;
+    routingBuildGenerationRef.current = generation;
+    routingGraphReadyRef.current = false;
+    void routingGraphBuilder.build(cells, {
+      topology: {
+        k: topology?.neighborK,
+        maxEdgeLength: topology?.maxEdgeLength,
+      },
+    }).then((result) => {
+      if (
+        result === null
+        || routingBuildGenerationRef.current !== generation
+        || latestCellsTokenRef.current !== cellsToken
+        || latestRoutingTopologyRef.current !== nextTopologyKey
+      ) return;
+      graphRef.current = result.graph;
+      routedCellsTokenRef.current = cellsToken;
+      routingTopologyRef.current = nextTopologyKey;
+      bootstrappedRef.current = true;
+      routingGraphReadyRef.current = true;
+      setRoutingGraphVersion((version) => version + 1);
+    }).catch((error: unknown) => {
+      if (routingBuildGenerationRef.current !== generation) return;
+      routingGraphReadyRef.current = false;
+      console.error('failed to build Cell routing topology', error);
+    });
+  }, [
+    routingGraphBuilder,
+    topology?.neighborK,
+    topology?.maxEdgeLength,
+  ]);
 
   const syncDisplayFabric = useCallback(() => {
     const visibleCells = cellRenderList(
@@ -304,7 +369,6 @@ export default function NeuralNetwork({
       inspectionCellId,
       inspectionFieldSnapshotRef.current,
     );
-    const topologyKey = `${topology?.neighborK ?? ''}:${topology?.maxEdgeLength ?? ''}`;
     const topologyChanged = (
       !displayBootstrappedRef.current
       || displayTopologyRef.current !== topologyKey
@@ -324,29 +388,69 @@ export default function NeuralNetwork({
       return;
     }
 
-    let displayGraph = displayGraphRef.current;
     if (topologyChanged) {
-      const displayCells = cellRenderMap(visibleCells);
-      displayGraph = buildNeighborGraph(displayCells, {
-        k: topology?.neighborK,
-        maxEdgeLength: topology?.maxEdgeLength,
-      });
-      const passiveGraph = buildPassiveNeighborGraph(displayGraph, {
-        preferredEdges: passiveGraphRef.current.edges,
-      });
-      displayCellsRef.current = displayCells;
-      displayGraphRef.current = displayGraph;
-      passiveGraphRef.current = passiveGraph;
-      displayTopologyRef.current = topologyKey;
-      displayBootstrappedRef.current = true;
-      fabricHandlesRef.current?.setFabric(
-        passiveGraph,
-        displayCells,
-        simClock.elapsedSec,
+      const requestedCells = displayRequestedCellsRef.current;
+      const requestMatches = (
+        requestedCells !== null
+        && displayRequestedTopologyRef.current === topologyKey
+        && sameCellRenderTopology(requestedCells, visibleCells)
       );
+      if (requestMatches) return;
+
+      const displayCells = cellRenderMap(visibleCells);
+      displayRequestedCellsRef.current = displayCells;
+      displayRequestedTopologyRef.current = topologyKey;
+      const generation = displayBuildGenerationRef.current + 1;
+      displayBuildGenerationRef.current = generation;
+      void displayGraphBuilder.build(displayCells, {
+        topology: {
+          k: topology?.neighborK,
+          maxEdgeLength: topology?.maxEdgeLength,
+        },
+        includePassive: true,
+        preferredEdges: passiveGraphRef.current.edges,
+      }).then((result) => {
+        if (
+          result === null
+          || displayBuildGenerationRef.current !== generation
+          || displayRequestedCellsRef.current !== displayCells
+          || displayRequestedTopologyRef.current !== topologyKey
+        ) return;
+        const passiveGraph = result.passiveGraph ?? emptyNeighborGraph();
+        displayRequestedCellsRef.current = null;
+        displayGraphRef.current = result.graph;
+        passiveGraphRef.current = passiveGraph;
+        displayCellsRef.current = displayCells;
+        displayTopologyRef.current = topologyKey;
+        displayBootstrappedRef.current = true;
+        fabricHandlesRef.current?.setFabric(
+          passiveGraph,
+          displayCells,
+          simClock.elapsedSec,
+        );
+        const selectedCellId = latestInspectionCellIdRef.current;
+        const next = deriveCellInspectionField(result.graph, selectedCellId);
+        displayInspectionCellIdRef.current = selectedCellId;
+        inspectionFieldSnapshotRef.current = next;
+        const targetRef = latestInspectionFieldRef.current;
+        if (targetRef) targetRef.current = next;
+        fabricHandlesRef.current?.setInspectionField(next);
+        invalidate();
+      }).catch((error: unknown) => {
+        if (displayBuildGenerationRef.current !== generation) return;
+        displayRequestedCellsRef.current = null;
+        console.error('failed to build Cell display topology', error);
+      });
+      return;
+    }
+
+    if (displayRequestedCellsRef.current !== null) {
+      displayBuildGenerationRef.current += 1;
+      displayRequestedCellsRef.current = null;
+      displayGraphBuilder.cancel();
     }
     const next = deriveCellInspectionField(
-      displayGraph,
+      displayGraphRef.current,
       inspectionCellId,
     );
 
@@ -357,8 +461,11 @@ export default function NeuralNetwork({
   }, [
     cellDisplayLimit,
     cellsCache.cells,
+    displayGraphBuilder,
     inspectionCellId,
     inspectionFieldRef,
+    invalidate,
+    topologyKey,
     topology?.neighborK,
     topology?.maxEdgeLength,
   ]);
@@ -367,14 +474,17 @@ export default function NeuralNetwork({
     const cells = cellsCache.cells;
     const now = simClock.elapsedSec;
     const opts = { k: topology?.neighborK, maxEdgeLength: topology?.maxEdgeLength };
-    const topologyKey = `${opts.k ?? ''}:${opts.maxEdgeLength ?? ''}`;
 
     if (!bootstrappedRef.current) {
-      if (cells.size === 0) return; // wait for first populated frame
-      graphRef.current = buildNeighborGraph(cells, opts);
-      bootstrappedRef.current = true;
-      routedCellsTokenRef.current = cellsCache.cellsToken;
-      routingTopologyRef.current = topologyKey;
+      if (cells.size === 0) {
+        // An authoritative empty snapshot can supersede a populated bootstrap
+        // request before it completes. Stop that stale CPU work, then wait for
+        // the first populated frame as before.
+        routingBuildGenerationRef.current += 1;
+        routingGraphBuilder.cancel();
+        return;
+      }
+      scheduleRoutingGraphBuild(cells, cellsCache.cellsToken, topologyKey);
       return;
     }
 
@@ -382,25 +492,23 @@ export default function NeuralNetwork({
       cellsCache.cellChanges.reset
       || routingTopologyRef.current !== topologyKey
     ) {
-      graphRef.current = buildNeighborGraph(cells, opts);
-      routedCellsTokenRef.current = cellsCache.cellsToken;
-      routingTopologyRef.current = topologyKey;
+      scheduleRoutingGraphBuild(cells, cellsCache.cellsToken, topologyKey);
       return;
     }
 
     const diff = cellsCache.cellChanges;
     if (routedCellsTokenRef.current === cellsCache.cellsToken) return;
-    if (diff.baseToken !== routedCellsTokenRef.current) {
+    if (
+      !routingGraphReadyRef.current
+      || diff.baseToken !== routedCellsTokenRef.current
+    ) {
       // React may coalesce multiple external-store updates. A journal is safe
       // only when it starts from the exact Cell Map already represented by the
       // live graph; otherwise rebuild once instead of applying a partial diff
       // across a skipped cache state.
-      graphRef.current = buildNeighborGraph(cells, opts);
-      routedCellsTokenRef.current = cellsCache.cellsToken;
+      scheduleRoutingGraphBuild(cells, cellsCache.cellsToken, topologyKey);
       return;
     }
-    routedCellsTokenRef.current = cellsCache.cellsToken;
-    if (diff.born.length === 0 && diff.died.length === 0 && diff.evicted.length === 0) return;
 
     // The pure driver mutates the routing graph immediately, closing the
     // stale-graph window for pulses. Passive fibres are reconciled below from
@@ -420,8 +528,10 @@ export default function NeuralNetwork({
     if (bulkRebuild) {
       // Backfill/high-output batches otherwise scan the entire retained map
       // once per birth. Preserve death keys from the old graph above, then
-      // replace routing state with one canonical spatial rebuild.
-      graphRef.current = buildNeighborGraph(cells, opts);
+      // replace routing state with one canonical off-thread spatial rebuild.
+      scheduleRoutingGraphBuild(cells, cellsCache.cellsToken, topologyKey);
+    } else {
+      routedCellsTokenRef.current = cellsCache.cellsToken;
     }
     if (update.deathKeys.length > 0) {
       fabricHandlesRef.current?.killEdges(
@@ -436,6 +546,9 @@ export default function NeuralNetwork({
     cellsCache.cellChanges,
     cellsCache.cells,
     cellsCache.cellsToken,
+    routingGraphBuilder,
+    scheduleRoutingGraphBuild,
+    topologyKey,
     topology?.neighborK,
     topology?.maxEdgeLength,
   ]);
@@ -466,6 +579,9 @@ export default function NeuralNetwork({
       lastLinksSeqRef.current = cellsCache.linksSeq;
       return;
     }
+    // Do not consume the bounded event queue against an obsolete/empty graph.
+    // The build completion version reruns this effect with the latest queue.
+    if (!routingGraphReadyRef.current) return;
     const newestPulseSeq = cellsCache.pulseLinks.at(-1)?.seq ?? 0;
     if (newestPulseSeq < lastLinksSeqRef.current) {
       // A full snapshot can re-sequence the local evidence archive. WebSocket
@@ -523,6 +639,7 @@ export default function NeuralNetwork({
     pulses?.maxActivePulses,
     livePulseDelayS,
     particleCapMul,
+    routingGraphVersion,
   ]);
 
   // User-driven historical recall. It prefers retained spent inputs and falls
@@ -823,6 +940,10 @@ export default function NeuralNetwork({
       }
       return;
     }
+    // Preserve the request until the canonical graph is ready. Marking it
+    // unavailable against the bootstrap graph would prevent the same key from
+    // being retried when the Worker completes.
+    if (!routingGraphReadyRef.current) return;
     const key = consensusMemoryTraceRequestKey(traceRequest);
     const link = cellsCache.recentLinks.find(
       (candidate) => candidate.seq === traceRequest.linkSeq,
@@ -938,6 +1059,7 @@ export default function NeuralNetwork({
     publishTraceTargetResponse,
     reducedMotion,
     releaseMemoryPulses,
+    routingGraphVersion,
     sharedTraceFocusRef,
     traceDisplayRouteHopLock,
   ]);
