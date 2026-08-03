@@ -36,6 +36,41 @@ export interface ActiveReplayProgress {
   phase: ReplayPhase;
 }
 
+/** Net Cell changes carried by one cache transition. Reducers already see the
+ * exact projection deltas, so publishing this compact journal lets renderers
+ * update topology without scanning and snapshotting the complete retained Map
+ * a second time. `reset` marks an authoritative snapshot replacement. */
+export interface CellChangeSet {
+  /** Opaque identity of the Cell Map this journal applies after. A renderer
+   * that skipped an intermediate React state can detect the mismatch and fall
+   * back to one canonical rebuild instead of applying an unsafe partial diff. */
+  readonly baseToken: object | null;
+  readonly reset: boolean;
+  readonly born: readonly number[];
+  readonly died: readonly number[];
+  readonly evicted: readonly number[];
+  /** Retained Cell objects whose final value differs from the previous cache.
+   * Includes births and metadata/lifecycle replacements, but not removals. */
+  readonly updated: readonly number[];
+}
+
+const EMPTY_CELL_IDS: readonly number[] = Object.freeze([] as number[]);
+
+/** Stable no-op journal for event/counter-only cache transitions. */
+export const NO_CELL_CHANGES: CellChangeSet = Object.freeze({
+  baseToken: null,
+  reset: false,
+  born: EMPTY_CELL_IDS,
+  died: EMPTY_CELL_IDS,
+  evicted: EMPTY_CELL_IDS,
+  updated: EMPTY_CELL_IDS,
+});
+
+const RESET_CELL_CHANGES: CellChangeSet = Object.freeze({
+  ...NO_CELL_CHANGES,
+  reset: true,
+});
+
 /** Compact visual evidence captured at the exact canonical invalidation
  * boundary. Deliberately excludes the Cell payload (`data_hex`, scripts,
  * capacity, ...): renderers need only the real retained position and stable
@@ -80,6 +115,11 @@ export interface CellGalaxyCache {
    *  order, which the visual layer relies on (newest cells last → tag-newest
    *  semantics). */
   cells: Map<number, Cell>;
+  /** Opaque identity that changes exactly when `cells` changes. */
+  cellsToken: object;
+  /** Changes from the immediately previous cache value. Browser-only reducer
+   * metadata; this is not part of the Rust/TypeScript wire contract. */
+  cellChanges: CellChangeSet;
   lastPulseAtMs: number;
   /** Authoritative recent causal evidence used by inspection, identity, and
    *  memory recall. Snapshot history hydrates this FIFO in full up to the
@@ -112,6 +152,8 @@ export function emptyCellsCache(): CellGalaxyCache {
   return {
     revision: 0,
     cells: new Map(),
+    cellsToken: {},
+    cellChanges: RESET_CELL_CHANGES,
     lastPulseAtMs: 0,
     recentLinks: [],
     pulseLinks: [],
@@ -152,6 +194,8 @@ export function fromCellsSnapshot(
   return {
     revision: rev,
     cells,
+    cellsToken: {},
+    cellChanges: RESET_CELL_CHANGES,
     lastPulseAtMs: snap.last_pulse_at_ms,
     recentLinks,
     pulseLinks: [],
@@ -173,20 +217,75 @@ interface CellGalaxyDraft {
   cellsOwned: boolean;
   recentLinksOwned: boolean;
   pulseLinksOwned: boolean;
+  touchedCellIds: Set<number>;
 }
 
 function createDraft(prev: CellGalaxyCache): CellGalaxyDraft {
   return {
-    value: { ...prev },
+    value: { ...prev, cellChanges: NO_CELL_CHANGES },
     cellsOwned: false,
     recentLinksOwned: false,
     pulseLinksOwned: false,
+    touchedCellIds: new Set(),
+  };
+}
+
+function touchCell(draft: CellGalaxyDraft, id: number): void {
+  draft.touchedCellIds.add(id);
+}
+
+/** Derive the same net lifecycle semantics as comparing the previous and final
+ * Maps, but inspect only ids touched by this reducer batch. Intermediate
+ * birth/death/gc combinations therefore collapse exactly as the old full-map
+ * diff did. */
+function summarizeCellChanges(
+  previous: ReadonlyMap<number, Cell>,
+  next: ReadonlyMap<number, Cell>,
+  touchedCellIds: ReadonlySet<number>,
+  baseToken: object,
+): CellChangeSet {
+  if (previous === next) return NO_CELL_CHANGES;
+
+  const born: number[] = [];
+  const died: number[] = [];
+  const evicted: number[] = [];
+  const updated: number[] = [];
+  for (const id of touchedCellIds) {
+    const hadBefore = previous.has(id);
+    const hasAfter = next.has(id);
+    const before = previous.get(id);
+    const after = next.get(id);
+
+    if (!hadBefore && hasAfter) born.push(id);
+    else if (
+      hadBefore
+      && hasAfter
+      && before?.death_at_ms === null
+      && after?.death_at_ms !== null
+    ) died.push(id);
+    else if (
+      hadBefore
+      && !hasAfter
+      && before?.death_at_ms === null
+    ) evicted.push(id);
+
+    if (hasAfter && (!hadBefore || before !== after)) updated.push(id);
+  }
+
+  return {
+    baseToken,
+    reset: false,
+    born,
+    died,
+    evicted,
+    updated,
   };
 }
 
 function writableCells(draft: CellGalaxyDraft): Map<number, Cell> {
   if (!draft.cellsOwned) {
     draft.value.cells = new Map(draft.value.cells);
+    draft.value.cellsToken = {};
     draft.cellsOwned = true;
   }
   return draft.value.cells;
@@ -230,22 +329,26 @@ function mutateCellDelta(
   const c = draft.value;
   switch (d.type) {
     case 'birth': {
+      touchCell(draft, d.cell.id);
       writableCells(draft).set(d.cell.id, d.cell);
       return true;
     }
     case 'death': {
       const existing = c.cells.get(d.id);
       if (!existing) return false;
+      touchCell(draft, d.id);
       writableCells(draft).set(d.id, { ...existing, death_at_ms: d.at_ms });
       return true;
     }
     case 'tag': {
       const existing = c.cells.get(d.id);
       if (!existing) return false;
+      touchCell(draft, d.id);
       writableCells(draft).set(d.id, { ...existing, tag: d.tag });
       return true;
     }
     case 'gc': {
+      for (const id of d.ids) touchCell(draft, id);
       const cells = writableCells(draft);
       for (const id of d.ids) cells.delete(id);
       return true;
@@ -329,7 +432,14 @@ export function applyCellDelta(
   opts: CellsReducerOptions = {},
 ): CellGalaxyCache {
   const draft = createDraft(prev);
-  return mutateCellDelta(draft, d, opts) ? draft.value : prev;
+  if (!mutateCellDelta(draft, d, opts)) return prev;
+  draft.value.cellChanges = summarizeCellChanges(
+    prev.cells,
+    draft.value.cells,
+    draft.touchedCellIds,
+    prev.cellsToken,
+  );
+  return draft.value;
 }
 
 export function applyRevisionedCellDeltas(
@@ -350,5 +460,11 @@ export function applyRevisionedCellDeltas(
   }
   if (!changed && maxRev === prev.revision) return prev;
   draft.value.revision = maxRev;
+  draft.value.cellChanges = summarizeCellChanges(
+    prev.cells,
+    draft.value.cells,
+    draft.touchedCellIds,
+    prev.cellsToken,
+  );
   return draft.value;
 }

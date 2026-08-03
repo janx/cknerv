@@ -1,5 +1,5 @@
 import type { CellGalaxySnapshot, CellLink, CellLinkRecord } from '@cknerv/types';
-import type { CellGalaxyCache } from '@cknerv/cache';
+import { NO_CELL_CHANGES, type CellGalaxyCache } from '@cknerv/cache';
 import {
   buildNeighborGraph,
   planPulses,
@@ -251,6 +251,7 @@ export function advanceProtocolEventLab(
     return {
       ...cache,
       revision: cache.revision + 1,
+      cellChanges: NO_CELL_CHANGES,
       lastPulseAtMs: nonce,
     };
   }
@@ -266,6 +267,7 @@ export function advanceProtocolEventLab(
   return {
     ...cache,
     revision: cache.revision + 1,
+    cellChanges: NO_CELL_CHANGES,
     lastPulseAtMs: nonce,
     recentLinks: [...cache.recentLinks.slice(-23), link],
     pulseLinks: [...cache.pulseLinks.slice(-23), link],

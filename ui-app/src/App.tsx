@@ -225,11 +225,15 @@ export default function App({
     // peers_updated delta keeps this live thereafter.
     peers: initialPeers,
   }));
-  const [cellsCache, setCellsCache] = useState<CellGalaxyCache>(() =>
-    fromCellsSnapshot(initialCellsRevision, initialCells, {
+  const initialCellsCacheRef = useRef<CellGalaxyCache | null>(null);
+  const initialCellsCache = initialCellsCacheRef.current
+    ?? fromCellsSnapshot(initialCellsRevision, initialCells, {
       recentLinksCapacity: galaxyConfig.recentLinksCap,
       linkRingCapacity: galaxyConfig.pulses.linkRingCapacity,
-    }),
+    });
+  initialCellsCacheRef.current = initialCellsCache;
+  const [cellsCache, setCellsCache] = useState<CellGalaxyCache>(
+    initialCellsCache,
   );
   const [chainStreamHealth, setChainStreamHealth] = useState<StreamHealth>(
     initialStreamHealth,
@@ -382,10 +386,7 @@ export default function App({
     );
     const cells = connectCellsStream(
       '/api/projections/cells/stream',
-      fromCellsSnapshot(initialCellsRevision, initialCells, {
-        recentLinksCapacity: galaxyConfig.recentLinksCap,
-        linkRingCapacity: galaxyConfig.pulses.linkRingCapacity,
-      }),
+      initialCellsCache,
       setCellsCache,
       {
         recentLinksCapacity: galaxyConfig.recentLinksCap,

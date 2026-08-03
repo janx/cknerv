@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { render } from '@testing-library/react';
 import { Canvas } from '@react-three/fiber';
@@ -6,9 +8,23 @@ import { CellGalaxyProvider } from '../../src/hooks/cellGalaxyContext';
 import { emptyCellsCache } from '@cknerv/cache';
 import { resetPulseStats } from '../../src/nerve/pulseStats';
 
+const NETWORK_SOURCE = readFileSync(
+  resolve(process.cwd(), 'src/nerve/NeuralNetwork.tsx'),
+  'utf8',
+);
+
 beforeEach(() => resetPulseStats());
 
 describe('NeuralNetwork drop instrumentation wiring', () => {
+  it('consumes reducer Cell changes without rebuilding a lifecycle snapshot', () => {
+    expect(NETWORK_SOURCE).toContain('const diff = cellsCache.cellChanges');
+    expect(NETWORK_SOURCE).toContain('diff.baseToken !== routedCellsTokenRef.current');
+    expect(NETWORK_SOURCE).toContain('graphRef.current = buildNeighborGraph(cells, opts)');
+    expect(NETWORK_SOURCE).not.toContain('diffAndSnapshotCells');
+    expect(NETWORK_SOURCE).not.toContain('snapshotCells');
+    expect(NETWORK_SOURCE).not.toContain('prevCellsRef');
+  });
+
   // Integration mount-safety test — the level this jsdom harness supports
   // (same precedent as __tests__/components/CellGalaxy.test.tsx). r3f v8's
   // <Canvas> never mounts its children at 0×0 (the no-op ResizeObserver in

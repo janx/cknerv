@@ -57,18 +57,30 @@ function linkDelta(txHash: string, block: number): CellDelta {
 
 describe('applyCellDelta', () => {
   it('birth inserts the cell into the map', () => {
-    const c = applyCellDelta(emptyCellsCache(), {
+    const before = emptyCellsCache();
+    const c = applyCellDelta(before, {
       type: 'birth',
       cell: cell(1),
     });
     expect(c.cells.size).toBe(1);
     expect(c.cells.get(1)?.id).toBe(1);
+    expect(c.cellChanges).toMatchObject({
+      reset: false,
+      born: [1],
+      died: [],
+      evicted: [],
+      updated: [1],
+    });
+    expect(c.cellChanges.baseToken).toBe(before.cellsToken);
+    expect(c.cellsToken).not.toBe(before.cellsToken);
   });
 
   it('death marks the existing cell with death_at_ms', () => {
     let c = applyCellDelta(emptyCellsCache(), { type: 'birth', cell: cell(1) });
     c = applyCellDelta(c, { type: 'death', id: 1, at_ms: 5000 });
     expect(c.cells.get(1)?.death_at_ms).toBe(5000);
+    expect(c.cellChanges.died).toEqual([1]);
+    expect(c.cellChanges.updated).toEqual([1]);
   });
 
   it('death is a no-op when the cell is missing', () => {
@@ -81,6 +93,13 @@ describe('applyCellDelta', () => {
     let c = applyCellDelta(emptyCellsCache(), { type: 'birth', cell: cell(1) });
     c = applyCellDelta(c, { type: 'tag', id: 1, tag: 'dex' });
     expect(c.cells.get(1)?.tag).toBe('dex');
+    expect(c.cellChanges).toMatchObject({
+      reset: false,
+      born: [],
+      died: [],
+      evicted: [],
+      updated: [1],
+    });
   });
 
   it('gc removes the listed ids', () => {
@@ -91,6 +110,8 @@ describe('applyCellDelta', () => {
     c = applyCellDelta(c, { type: 'gc', ids: [1, 3] });
     expect(c.cells.size).toBe(1);
     expect(c.cells.get(2)?.id).toBe(2);
+    expect(c.cellChanges.evicted).toEqual([1, 3]);
+    expect(c.cellChanges.updated).toEqual([]);
   });
 
   it('pulse advances lastPulseAtMs', () => {
@@ -128,6 +149,15 @@ describe('applyCellDelta', () => {
     expect(linked.cells).toBe(cells);
     expect(linked.recentLinks).not.toBe(stats.recentLinks);
     expect(linked.pulseLinks).not.toBe(stats.pulseLinks);
+    expect(pulsed.cellChanges).toMatchObject({
+      reset: false,
+      born: [],
+      died: [],
+      evicted: [],
+      updated: [],
+    });
+    expect(stats.cellChanges).toBe(pulsed.cellChanges);
+    expect(linked.cellChanges).toBe(pulsed.cellChanges);
   });
 
   it('link appends with a fresh monotonic seq', () => {
@@ -343,8 +373,59 @@ describe('applyRevisionedCellDeltas (batched)', () => {
     expect(out).not.toBe(start);
     expect(out.revision).toBe(3);
     expect(out.cells).toBe(start.cells);
+    expect(out.cellsToken).toBe(start.cellsToken);
     expect(out.recentLinks).toBe(start.recentLinks);
     expect(out.pulseLinks).toBe(start.pulseLinks);
+    expect(start.cellChanges.born).toEqual([1]);
+    expect(out.cellChanges).toMatchObject({
+      reset: false,
+      born: [],
+      died: [],
+      evicted: [],
+      updated: [],
+    });
+  });
+
+  it('publishes only net lifecycle changes for ids touched by the batch', () => {
+    let start = emptyCellsCache();
+    start = applyCellDelta(start, { type: 'birth', cell: cell(1) });
+    start = applyCellDelta(start, {
+      type: 'birth',
+      cell: cell(2, { death_at_ms: 900 }),
+    });
+    start = applyCellDelta(start, { type: 'birth', cell: cell(5) });
+
+    const out = applyRevisionedCellDeltas(start, [
+      rd(4, { type: 'death', id: 1, at_ms: 5000 }),
+      rd(5, { type: 'gc', ids: [2, 5] }),
+      rd(6, { type: 'birth', cell: cell(3) }),
+      rd(7, { type: 'tag', id: 3, tag: 'dex' }),
+      rd(8, { type: 'birth', cell: cell(4) }),
+      rd(9, { type: 'gc', ids: [4] }),
+    ]);
+
+    expect(out.cellChanges).toMatchObject({
+      reset: false,
+      born: [3],
+      died: [1],
+      evicted: [5],
+      updated: [1, 3],
+    });
+  });
+
+  it('chains Cell journal tokens across consecutive membership batches', () => {
+    const start = emptyCellsCache();
+    const first = applyRevisionedCellDeltas(start, [
+      rd(1, { type: 'birth', cell: cell(1) }),
+    ]);
+    const second = applyRevisionedCellDeltas(first, [
+      rd(2, { type: 'birth', cell: cell(2) }),
+    ]);
+
+    expect(first.cellChanges.baseToken).toBe(start.cellsToken);
+    expect(second.cellChanges.baseToken).toBe(first.cellsToken);
+    expect(second.cellChanges.baseToken).not.toBe(start.cellsToken);
+    expect(second.cellsToken).not.toBe(first.cellsToken);
   });
 
   it('keeps the prune event one-shot while replacement links receive fresh seq values', () => {
@@ -457,6 +538,13 @@ describe('fromCellsSnapshot', () => {
     expect(c.pulseLinks).toEqual([]);
     expect(c.linksSeq).toBe(1);
     expect(c.lastPulseAtMs).toBe(1234);
+    expect(c.cellChanges).toMatchObject({
+      reset: true,
+      born: [],
+      died: [],
+      evicted: [],
+      updated: [],
+    });
   });
 
   it('hydrates the evidence window without replaying snapshot links as pulses', () => {

@@ -47,11 +47,6 @@ import {
 } from './pulseBatch';
 import { pulseStats } from './pulseStats';
 import {
-  diffAndSnapshotCells,
-  snapshotCells,
-  type CellSnapshotEntry,
-} from './cellsDelta';
-import {
   planMeshUpdate,
   shouldBulkRebuildRoutingGraph,
 } from './livingMeshDriver';
@@ -295,8 +290,8 @@ export default function NeuralNetwork({
   const displayCellsRef = useRef<Map<number, Cell>>(new Map());
   const fabricHandlesRef = useRef<NeuralFabricHandles | null>(null);
   const inspectionFieldSnapshotRef = useRef<CellInspectionField | null>(null);
-  const prevCellsRef = useRef<Map<number, CellSnapshotEntry>>(new Map());
   const bootstrappedRef = useRef(false);
+  const routedCellsTokenRef = useRef<object | null>(null);
   const routingTopologyRef = useRef('');
   const displayTopologyRef = useRef('');
   const displayInspectionCellIdRef = useRef<number | null>(null);
@@ -377,22 +372,34 @@ export default function NeuralNetwork({
     if (!bootstrappedRef.current) {
       if (cells.size === 0) return; // wait for first populated frame
       graphRef.current = buildNeighborGraph(cells, opts);
-      prevCellsRef.current = snapshotCells(cells);
       bootstrappedRef.current = true;
+      routedCellsTokenRef.current = cellsCache.cellsToken;
       routingTopologyRef.current = topologyKey;
       return;
     }
 
-    if (routingTopologyRef.current !== topologyKey) {
+    if (
+      cellsCache.cellChanges.reset
+      || routingTopologyRef.current !== topologyKey
+    ) {
       graphRef.current = buildNeighborGraph(cells, opts);
-      prevCellsRef.current = snapshotCells(cells);
+      routedCellsTokenRef.current = cellsCache.cellsToken;
       routingTopologyRef.current = topologyKey;
       return;
     }
 
-    const diffResult = diffAndSnapshotCells(prevCellsRef.current, cells);
-    const { diff } = diffResult;
-    prevCellsRef.current = diffResult.snapshot;
+    const diff = cellsCache.cellChanges;
+    if (routedCellsTokenRef.current === cellsCache.cellsToken) return;
+    if (diff.baseToken !== routedCellsTokenRef.current) {
+      // React may coalesce multiple external-store updates. A journal is safe
+      // only when it starts from the exact Cell Map already represented by the
+      // live graph; otherwise rebuild once instead of applying a partial diff
+      // across a skipped cache state.
+      graphRef.current = buildNeighborGraph(cells, opts);
+      routedCellsTokenRef.current = cellsCache.cellsToken;
+      return;
+    }
+    routedCellsTokenRef.current = cellsCache.cellsToken;
     if (diff.born.length === 0 && diff.died.length === 0 && diff.evicted.length === 0) return;
 
     // The pure driver mutates the routing graph immediately, closing the
@@ -426,7 +433,9 @@ export default function NeuralNetwork({
     }
 
   }, [
+    cellsCache.cellChanges,
     cellsCache.cells,
+    cellsCache.cellsToken,
     topology?.neighborK,
     topology?.maxEdgeLength,
   ]);
