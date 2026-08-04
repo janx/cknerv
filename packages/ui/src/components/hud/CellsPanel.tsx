@@ -1,9 +1,11 @@
 import type { CSSProperties } from 'react';
+import type { AssetEcosystemRecord, EnrichmentSourceStatus } from '@cknerv/types';
 import type { CellsStats } from '../../derives/cellsStats.derive';
 import type { ChurnRates } from '../../derives/cellChurn';
 import { HUD_COLORS, HUD_FONTS } from './hudTheme';
 import { LOCK_COLORS, ASSET_COLORS } from './cellFormat';
 import { HudPanel, PanelHeader, StatRow } from './primitives';
+import AssetEcosystemReadout from './AssetEcosystemReadout';
 
 const fmt = (n: number) => n.toLocaleString('en-US');
 const fmtSigned = (n: number) => `${n >= 0 ? '+' : ''}${n.toFixed(1)}`;
@@ -47,8 +49,13 @@ function FlowRow({ label, color, width, value }: { label: string; color: string;
   );
 }
 
-export default function CellsPanel({ stats, churn, reducedMotion = false, style }: {
-  stats: CellsStats; churn: ChurnRates; reducedMotion?: boolean; style?: CSSProperties;
+export default function CellsPanel({ stats, churn, enrichmentSource, assetEcosystem, reducedMotion = false, style }: {
+  stats: CellsStats;
+  churn: ChurnRates;
+  enrichmentSource?: EnrichmentSourceStatus;
+  assetEcosystem?: AssetEcosystemRecord | null;
+  reducedMotion?: boolean;
+  style?: CSSProperties;
 }) {
   const maxRate = Math.max(churn.bornPerBlock, churn.spentPerBlock, 0.001);
   const bornW = `${Math.min(100, (churn.bornPerBlock / maxRate) * 100)}%`;
@@ -92,6 +99,7 @@ export default function CellsPanel({ stats, churn, reducedMotion = false, style 
           { key: 'other', label: '?', color: LOCK_COLORS.other, count: stats.byLock.other },
         ]} />
       </div>
+      <AssetEcosystemReadout source={enrichmentSource} record={assetEcosystem} />
     </HudPanel>
   );
 }

@@ -60,6 +60,7 @@ export * from './derives/cellShell.derive';
 export * from './derives/cellVisual.derive';
 export * from './derives/cellInteraction.derive';
 export * from './derives/cellSemantics.derive';
+export * from './derives/assetEcosystem.derive';
 export * from './derives/cellConsensusIdentity.derive';
 export * from './derives/cellCausalLens.derive';
 export * from './derives/cellCausalLabel.derive';
@@ -150,6 +151,7 @@ export {
   formatSemanticAssetAmount,
   type CellSemanticsPhase,
 } from './components/hud/CellSemanticsReadout';
+export { default as AssetEcosystemReadout } from './components/hud/AssetEcosystemReadout';
 export type {
   CellCausalNavigationReadout,
 } from './components/hud/CellCausalLensReadout';

@@ -41,6 +41,7 @@ const MUTATION_PIPELINE_CAPACITY: usize = 4096;
 const ENRICHMENT_PIPELINE_CAPACITY: usize = 256;
 const ENRICHMENT_PROBE_INTERVAL: Duration = Duration::from_secs(5);
 const ENRICHMENT_STATUS_REFRESH: Duration = Duration::from_secs(60);
+const ENRICHMENT_ECOSYSTEM_REFRESH: Duration = Duration::from_secs(30);
 
 /// Type-erased projection registration callback. Boxed so a single
 /// `Vec<...>` can hold many heterogeneous projections.
@@ -213,6 +214,7 @@ impl ServerBuilder {
                 let mut last_publish = Instant::now()
                     .checked_sub(ENRICHMENT_STATUS_REFRESH)
                     .unwrap_or_else(Instant::now);
+                let mut last_ecosystem_refresh: Option<Instant> = None;
                 loop {
                     tokio::select! {
                         _ = interval.tick() => {
@@ -229,8 +231,43 @@ impl ServerBuilder {
                                 {
                                     break;
                                 }
-                                last_status = Some(status);
+                                last_status = Some(status.clone());
                                 last_publish = Instant::now();
+                            }
+                            let ecosystem_ready = status.validated_anchor.is_some()
+                                && matches!(
+                                    status.status,
+                                    cknerv_core::EnrichmentSourceState::Ready
+                                        | cknerv_core::EnrichmentSourceState::Stale
+                                )
+                                && status
+                                    .capabilities
+                                    .iter()
+                                    .any(|capability| capability == "asset_ecosystem");
+                            let ecosystem_due = last_ecosystem_refresh
+                                .is_none_or(|last| last.elapsed() >= ENRICHMENT_ECOSYSTEM_REFRESH);
+                            if !ecosystem_ready {
+                                last_ecosystem_refresh = None;
+                            } else if ecosystem_due {
+                                last_ecosystem_refresh = Some(Instant::now());
+                                match source.enrich_asset_ecosystem(&context).await {
+                                    Ok(Some(asset_ecosystem)) => {
+                                        if source_out
+                                            .send(EnrichmentEvent::AssetEcosystemReplace(
+                                                asset_ecosystem,
+                                            ))
+                                            .await
+                                            .is_err()
+                                        {
+                                            break;
+                                        }
+                                    }
+                                    Ok(None) => {}
+                                    Err(error) => tracing::warn!(
+                                        target: "cknerv-server",
+                                        "optional asset-ecosystem refresh failed: {error}"
+                                    ),
+                                }
                             }
                         }
                         changed = source_shutdown.changed() => {

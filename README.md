@@ -122,7 +122,7 @@ availability.
 | CLI | Rust, clap, rust-embed | Workdir commands, config merge, embedded dashboard server |
 | Server | Rust, axum, tokio | HTTP/WS API, mutation reducer, projection registry, persistence |
 | CKB adapter | Rust, reqwest, CKB JSON-RPC types | Read-only node polling, boot backfill, block/tx normalization |
-| ckbadger enrichment | Rust, reqwest | Optional indexed Cell/script/asset and origin-transaction context with canonical-anchor validation |
+| ckbadger enrichment | Rust, reqwest | Optional indexed Cell/script/asset, origin-transaction, and bounded ecosystem context with canonical-anchor validation |
 | Types/cache | TypeScript, Vitest | Wire-type twins, pure reducers, WebSocket clients |
 | UI | React 18, Vite, React Three Fiber, drei, three.js | 3D cell galaxy, HUDs, cell-life detail panels, nerve overlays |
 
@@ -193,7 +193,7 @@ contracts remain normalized and source-agnostic.
 | `crates/cknerv-core/` | Chain-generic wire types, `Mutation`, `Projection`, `CellGalaxy`, deterministic helix positioning, and bounded replay ring. |
 | `crates/cknerv-server/` | axum HTTP/WS server, `Adapter` trait, `ServerBuilder`, entity store, projection registry, replay streams, and persistence. |
 | `crates/cknerv-adapter-ckb/` | `CkbDirectAdapter`: read-only CKB JSON-RPC polling, boot backfill, block/tx normalization, content hash parity. |
-| `crates/cknerv-adapter-ckbadger/` | Optional `EnrichmentSource`: ckbadger health/lag probing, canonical block-hash validation, and lazy Cell/script/asset semantics. |
+| `crates/cknerv-adapter-ckbadger/` | Optional `EnrichmentSource`: ckbadger health/lag probing, canonical block-hash validation, lazy Cell/script/asset semantics, and bounded ecosystem aggregates. |
 | `crates/cknerv-cli/` | `cknerv` binary, clap CLI, config/workdir commands, embedded SPA serving, runtime config injection, browser auto-open. |
 | `packages/types/` | `@cknerv/types`: TypeScript twins of the Rust wire shapes. |
 | `packages/cache/` | `@cknerv/cache`: pure reducers plus entity/projection WebSocket clients. |
@@ -227,7 +227,7 @@ fall back to the SPA.
 | `WS` | `/api/entities/chain/stream?since=<rev>` | snapshot, delta, lagged, or heartbeat frames |
 | `GET` | `/api/projections/cells/snapshot` | `{ revision, snapshot }` where `snapshot.cells` is the live cell set |
 | `WS` | `/api/projections/cells/stream?since=<rev>` | snapshot, delta, lagged, or heartbeat frames |
-| `GET` | `/api/projections/semantics/snapshot` | Optional source health plus bounded Cell/transaction semantics; present even when disabled |
+| `GET` | `/api/projections/semantics/snapshot` | Optional source health plus bounded Cell/transaction and asset-ecosystem semantics; present even when disabled |
 | `WS` | `/api/projections/semantics/stream?since=<rev>` | Independent optional semantics snapshot/delta stream |
 | `GET` | `/api/enrichment/cells/:tx_hash/:output_index` | Lazily resolve one selected Cell through the configured source; `404 enrichment_disabled` when absent |
 | `GET` | `/api/enrichment/transactions/:tx_hash` | Lazily resolve that Cell's origin transaction, participant capacity deltas, and proposal/commit lifecycle |
@@ -251,6 +251,17 @@ canonical Cell: its inner CAP/LOCK/TYPE/DATA arcs are proportional to the exact
 occupied-byte breakdown, while an outer notched arc marks a resolved asset.
 No background Cell sweep or base-Galaxy retaxonomization is performed. A stale
 source dims the orbit, and an invalid/missing anchor suppresses it entirely.
+
+When ckbadger advertises `asset_ecosystem`, cknerv also refreshes its one bounded
+aggregate response at most once every 30 seconds after a usable source probe.
+The semantics stream carries exact capacities normalized to shannons,
+whole-byte knowledge size, basis-point category shares, and a bounded list of
+top indexed assets. `CELL MESH` renders this as a separate **INDEXED CHAIN
+CAPACITY** section, never as an extrapolation of the retained Cell reservoir.
+The section is absent in CKB-only mode, dims when its validated source is stale
+or its own refresh is more than 90 seconds old, and is suppressed when its
+source/anchor is unusable. An aggregate-only failure therefore cannot degrade
+selected-Cell or transaction enrichment.
 
 Before ckbadger data is accepted, cknerv reads its indexed tip, chooses a block
 inside cknerv's retained canonical evidence window, and requires ckbadger to
@@ -448,12 +459,14 @@ twin, the fixtures, and both sides of the tests together.
 - ckbadger enrichment currently uses existing REST endpoints for source health,
   block-hash anchors, selected-Cell detail, script identity, data analysis,
   DAO/code-cell context, occupied-capacity composition, deterministic UDT
-  amount plus token identity, and the selected Cell's origin-transaction
-  detail/lifecycle. Transaction participants expose exact capacity deltas only
-  when every attributed input/output includes capacity. Parsed protocol
-  activities and the global census remain unpopulated because ckbadger does not
-  expose an efficient per-transaction activity lookup or one bounded census
-  response; cknerv deliberately avoids N+1 background scraping.
+  amount plus token identity, the selected Cell's origin-transaction
+  detail/lifecycle, and the bounded asset-ecosystem aggregate. Transaction
+  participants expose exact capacity deltas only when every attributed
+  input/output includes capacity. Parsed protocol activities and the exact
+  global Cell census remain unpopulated because ckbadger does not expose an
+  efficient per-transaction activity lookup or one bounded current-census
+  response; cknerv deliberately avoids N+1 background scraping and does not
+  relabel historical chart points as current chain truth.
 
 ## License
 

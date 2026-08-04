@@ -166,4 +166,11 @@ fn enrichment_samples_match_wire_shape() {
         canonicalize(&samples["deltas"]["transaction_remove"]),
         canonicalize(&serde_json::to_value(transaction_remove).unwrap())
     );
+    let asset_ecosystem = SemanticsDelta::AssetEcosystemReplace {
+        asset_ecosystem: snapshot.asset_ecosystem.clone().unwrap(),
+    };
+    assert_eq!(
+        canonicalize(&samples["deltas"]["asset_ecosystem_replace"]),
+        canonicalize(&serde_json::to_value(asset_ecosystem).unwrap())
+    );
 }

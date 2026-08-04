@@ -382,6 +382,7 @@ fn event_anchor_is_current(event: &EnrichmentEvent, recent_blocks: &[RecentBlock
         EnrichmentEvent::CellUpsert(record) => Some(&record.as_of),
         EnrichmentEvent::TransactionUpsert(record) => Some(&record.as_of),
         EnrichmentEvent::CensusReplace(census) => Some(&census.as_of),
+        EnrichmentEvent::AssetEcosystemReplace(asset_ecosystem) => Some(&asset_ecosystem.as_of),
         EnrichmentEvent::SourceStatus(_) | EnrichmentEvent::Clear => None,
     };
     anchor.is_none_or(|anchor| {

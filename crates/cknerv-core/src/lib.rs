@@ -24,10 +24,11 @@ pub mod rng;
 pub mod taxonomy;
 
 pub use enrichment::{
-    CellSemanticRecord, ChainAnchor, ChainCensus, CommonKnowledgeBreakdown, EnrichmentEvent,
-    EnrichmentProjection, EnrichmentSourceState, EnrichmentSourceStatus, SemanticAsset,
-    SemanticAttribute, SemanticFacet, SemanticScript, SemanticsDelta, SemanticsProjection,
-    SemanticsSnapshot, TransactionParticipantSemantic, TransactionSemanticRecord,
+    AssetEcosystemCategory, AssetEcosystemLeader, AssetEcosystemRecord, CellSemanticRecord,
+    ChainAnchor, ChainCensus, CommonKnowledgeBreakdown, EnrichmentEvent, EnrichmentProjection,
+    EnrichmentSourceState, EnrichmentSourceStatus, SemanticAsset, SemanticAttribute, SemanticFacet,
+    SemanticScript, SemanticsDelta, SemanticsProjection, SemanticsSnapshot,
+    TransactionParticipantSemantic, TransactionSemanticRecord,
 };
 pub use entity::{
     Chain, ChainNode, EpochInfo, MempoolStats, Peer, PeerDirection, RecentBlock, RecentTx,

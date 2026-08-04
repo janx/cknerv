@@ -114,11 +114,39 @@ export interface ChainCensus {
   dead_cells?: number;
 }
 
+export interface AssetEcosystemCategory {
+  category: string;
+  /** Exact capacity in shannons. */
+  capacity_shannons: string;
+  /** Share of total live capacity in basis points (`10_000 == 100%`). */
+  share_bps: number;
+}
+
+export interface AssetEcosystemLeader {
+  type_script_hash: string;
+  name?: string;
+  symbol?: string;
+  holders_count: number;
+  /** Exact capacity in shannons. */
+  total_capacity_shannons: string;
+}
+
+export interface AssetEcosystemRecord {
+  source: string;
+  as_of: ChainAnchor;
+  updated_at_ms: number;
+  total_live_capacity_shannons: string;
+  total_knowledge_bytes: number;
+  capacity_breakdown: AssetEcosystemCategory[];
+  top_assets: AssetEcosystemLeader[];
+}
+
 export interface SemanticsSnapshot {
   source: EnrichmentSourceStatus;
   cells: CellSemanticRecord[];
   transactions: TransactionSemanticRecord[];
   census?: ChainCensus;
+  asset_ecosystem?: AssetEcosystemRecord;
 }
 
 export type SemanticsDelta =
@@ -128,6 +156,7 @@ export type SemanticsDelta =
   | { type: 'transaction_upsert'; transaction: TransactionSemanticRecord }
   | { type: 'transaction_remove'; tx_hash: string }
   | { type: 'census_replace'; census: ChainCensus }
+  | { type: 'asset_ecosystem_replace'; asset_ecosystem: AssetEcosystemRecord }
   | { type: 'prune'; from_block: number }
   | { type: 'clear' };
 
