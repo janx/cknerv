@@ -3,7 +3,7 @@
     "source": {
       "source": "ckbadger",
       "status": "ready",
-      "capabilities": ["cell_detail", "script_identity", "data_analysis", "asset_identity", "asset_ecosystem", "activity_feed", "transaction_detail", "transaction_lifecycle"],
+      "capabilities": ["cell_detail", "script_identity", "data_analysis", "asset_identity", "asset_ecosystem", "activity_feed", "network_atlas", "transaction_detail", "transaction_lifecycle"],
       "indexed_tip": 100,
       "lag_blocks": 1,
       "validated_anchor": {
@@ -169,6 +169,45 @@
           "participant_count": 2
         }
       ]
+    },
+    "network_atlas": {
+      "source": "ckbadger",
+      "as_of": {
+        "block": 100,
+        "hash": "0xblock100"
+      },
+      "updated_at_ms": 1700000000006,
+      "crawl_round": 7,
+      "crawl_finished_at_s": 1700000000,
+      "total_known": 42,
+      "last_round_dialed": 12,
+      "last_round_reachable": 9,
+      "new_nodes": 3,
+      "frontier_drained": true,
+      "sample_size": 3,
+      "sample_reachable": 2,
+      "sample_truncated": true,
+      "median_rtt_ms": 24,
+      "countries": [
+        {
+          "label": "SG",
+          "count": 2
+        },
+        {
+          "label": "Unknown",
+          "count": 1
+        }
+      ],
+      "versions": [
+        {
+          "label": "0.119.0",
+          "count": 2
+        },
+        {
+          "label": "0.118.0",
+          "count": 1
+        }
+      ]
     }
   },
   "deltas": {
@@ -177,7 +216,7 @@
       "source": {
         "source": "ckbadger",
         "status": "ready",
-        "capabilities": ["cell_detail", "script_identity", "data_analysis", "asset_identity", "asset_ecosystem", "activity_feed", "transaction_detail", "transaction_lifecycle"],
+        "capabilities": ["cell_detail", "script_identity", "data_analysis", "asset_identity", "asset_ecosystem", "activity_feed", "network_atlas", "transaction_detail", "transaction_lifecycle"],
         "indexed_tip": 100,
         "lag_blocks": 1,
         "validated_anchor": {
@@ -329,6 +368,51 @@
           }
         ]
       }
+    },
+    "network_atlas_replace": {
+      "type": "network_atlas_replace",
+      "network_atlas": {
+        "source": "ckbadger",
+        "as_of": {
+          "block": 100,
+          "hash": "0xblock100"
+        },
+        "updated_at_ms": 1700000000006,
+        "crawl_round": 7,
+        "crawl_finished_at_s": 1700000000,
+        "total_known": 42,
+        "last_round_dialed": 12,
+        "last_round_reachable": 9,
+        "new_nodes": 3,
+        "frontier_drained": true,
+        "sample_size": 3,
+        "sample_reachable": 2,
+        "sample_truncated": true,
+        "median_rtt_ms": 24,
+        "countries": [
+          {
+            "label": "SG",
+            "count": 2
+          },
+          {
+            "label": "Unknown",
+            "count": 1
+          }
+        ],
+        "versions": [
+          {
+            "label": "0.119.0",
+            "count": 2
+          },
+          {
+            "label": "0.118.0",
+            "count": 1
+          }
+        ]
+      }
+    },
+    "network_atlas_clear": {
+      "type": "network_atlas_clear"
     },
     "prune": {
       "type": "prune",

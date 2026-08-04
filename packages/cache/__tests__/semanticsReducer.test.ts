@@ -5,6 +5,7 @@ import type {
   AssetEcosystemRecord,
   CellSemanticRecord,
   EnrichmentSourceStatus,
+  NetworkAtlasRecord,
 } from '@cknerv/types';
 import {
   applyRevisionedSemanticsDeltas,
@@ -59,6 +60,27 @@ function activityFeed(block: number): ActivityFeedRecord {
       label: 'Example Script',
       participant_count: 1,
     }],
+  };
+}
+
+function networkAtlas(block: number): NetworkAtlasRecord {
+  return {
+    source: 'ckbadger',
+    as_of: { block, hash: `0xblock${block}` },
+    updated_at_ms: block,
+    crawl_round: 7,
+    crawl_finished_at_s: block,
+    total_known: 42,
+    last_round_dialed: 12,
+    last_round_reachable: 9,
+    new_nodes: 3,
+    frontier_drained: true,
+    sample_size: 2,
+    sample_reachable: 1,
+    sample_truncated: true,
+    median_rtt_ms: 24,
+    countries: [{ label: 'SG', count: 2 }],
+    versions: [{ label: '0.119.0', count: 2 }],
   };
 }
 
@@ -117,6 +139,36 @@ describe('semantics reducer', () => {
       delta: { type: 'prune', from_block: 10 },
     }]);
     expect(next.activityFeed).toBeNull();
+  });
+
+  it('replaces and prunes the bounded network atlas independently', () => {
+    const record = networkAtlas(10);
+    const seeded = applyRevisionedSemanticsDeltas(emptySemanticsCache(), [{
+      revision: 1,
+      delta: { type: 'network_atlas_replace', network_atlas: record },
+    }]);
+    expect(seeded.networkAtlas).toBe(record);
+
+    const next = applyRevisionedSemanticsDeltas(seeded, [{
+      revision: 2,
+      delta: { type: 'prune', from_block: 10 },
+    }]);
+    expect(next.networkAtlas).toBeNull();
+  });
+
+  it('clears only network atlas when the crawler is disabled', () => {
+    const record = networkAtlas(10);
+    const seeded = applyRevisionedSemanticsDeltas(emptySemanticsCache(), [{
+      revision: 1,
+      delta: { type: 'network_atlas_replace', network_atlas: record },
+    }]);
+    const next = applyRevisionedSemanticsDeltas(seeded, [{
+      revision: 2,
+      delta: { type: 'network_atlas_clear' },
+    }]);
+
+    expect(next.networkAtlas).toBeNull();
+    expect(next.cells).toBe(seeded.cells);
   });
 
   it('clear does not erase source health', () => {

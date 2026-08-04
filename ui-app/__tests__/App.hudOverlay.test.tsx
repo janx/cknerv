@@ -116,6 +116,12 @@ describe('HudOverlay wiring', () => {
     expect(APP_SOURCE).not.toContain('<ActivityFeedOrbit');
   });
 
+  it('routes the bounded optional network atlas only through the HUD', () => {
+    expect(APP_SOURCE).toContain('networkAtlas={enrichmentConfig.enabled');
+    expect(APP_SOURCE).toContain('? semanticsCache.networkAtlas');
+    expect(APP_SOURCE).not.toContain('<NetworkAtlasOrbit');
+  });
+
   it('keeps Cell detail selection independent from camera automation', () => {
     const cameraWiring = APP_SOURCE.match(
       /<ConsensusRouteCamera[\s\S]*?\/>/,

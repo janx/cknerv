@@ -10,6 +10,48 @@ pub(crate) struct NetworkStats {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct NetworkCrawlerSummaryResponse {
+    pub enabled: bool,
+    pub has_data: bool,
+    pub last_round: Option<NetworkCrawlerRoundResponse>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct NetworkCrawlerRoundResponse {
+    pub round_id: u64,
+    pub started: u64,
+    pub finished: u64,
+    pub dialed: u64,
+    pub reachable: u64,
+    pub unreachable: u64,
+    pub foreign_dropped: u64,
+    pub new_nodes: u64,
+    pub total_known: u64,
+    pub frontier_drained: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct NetworkNodesPageResponse {
+    #[serde(default)]
+    pub items: Vec<NetworkNodeSummaryResponse>,
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct NetworkNodeSummaryResponse {
+    pub peer_id: String,
+    pub version: String,
+    pub country: String,
+    pub reachable: bool,
+    pub last_seen: u64,
+    pub rtt_ms: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct AssetEcosystemResponse {
     #[serde(default)]
     pub top_tokens: Vec<AssetEcosystemToken>,

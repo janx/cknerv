@@ -158,6 +158,31 @@ export interface ActivityFeedRecord {
   activities: ActivityFeedItem[];
 }
 
+export interface NetworkAtlasBucket {
+  label: string;
+  count: number;
+}
+
+/** Bounded latest-node sample plus the source's latest crawl summary. */
+export interface NetworkAtlasRecord {
+  source: string;
+  as_of: ChainAnchor;
+  updated_at_ms: number;
+  crawl_round: number;
+  crawl_finished_at_s: number;
+  total_known: number;
+  last_round_dialed: number;
+  last_round_reachable: number;
+  new_nodes: number;
+  frontier_drained: boolean;
+  sample_size: number;
+  sample_reachable: number;
+  sample_truncated: boolean;
+  median_rtt_ms?: number;
+  countries: NetworkAtlasBucket[];
+  versions: NetworkAtlasBucket[];
+}
+
 export interface SemanticsSnapshot {
   source: EnrichmentSourceStatus;
   cells: CellSemanticRecord[];
@@ -165,6 +190,7 @@ export interface SemanticsSnapshot {
   census?: ChainCensus;
   asset_ecosystem?: AssetEcosystemRecord;
   activity_feed?: ActivityFeedRecord;
+  network_atlas?: NetworkAtlasRecord;
 }
 
 export type SemanticsDelta =
@@ -176,6 +202,8 @@ export type SemanticsDelta =
   | { type: 'census_replace'; census: ChainCensus }
   | { type: 'asset_ecosystem_replace'; asset_ecosystem: AssetEcosystemRecord }
   | { type: 'activity_feed_replace'; activity_feed: ActivityFeedRecord }
+  | { type: 'network_atlas_replace'; network_atlas: NetworkAtlasRecord }
+  | { type: 'network_atlas_clear' }
   | { type: 'prune'; from_block: number }
   | { type: 'clear' };
 

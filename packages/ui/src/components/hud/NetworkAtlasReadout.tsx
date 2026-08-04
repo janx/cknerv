@@ -1,0 +1,105 @@
+import type {
+  EnrichmentSourceStatus,
+  NetworkAtlasBucket,
+  NetworkAtlasRecord,
+} from '@cknerv/types';
+import {
+  deriveNetworkAtlasVisual,
+  networkAtlasVisualState,
+} from '../../derives/networkAtlas.derive';
+import { HUD_COLORS, HUD_FONTS, rgba } from './hudTheme';
+import { StatRow } from './primitives';
+
+const fmt = (value: number) => value.toLocaleString('en-US');
+
+function legend(buckets: NetworkAtlasBucket[]): string {
+  const visible = buckets.slice(0, 4).map((bucket) => `${bucket.label} ${bucket.count}`);
+  if (buckets.length > 4) visible.push(`+${buckets.length - 4} groups`);
+  return visible.join(' · ');
+}
+
+function BucketStrip({ label, buckets, total }: {
+  label: string;
+  buckets: Array<NetworkAtlasBucket & { color: string }>;
+  total: number;
+}) {
+  if (total === 0) return null;
+  return (
+    <div style={{ marginTop: 6 }}>
+      <div style={{ fontFamily: HUD_FONTS.tech, fontSize: 7.5, letterSpacing: 1.2, color: HUD_COLORS.dim, marginBottom: 2 }}>
+        {label}
+      </div>
+      <div
+        title={buckets.map((bucket) => `${bucket.label} ${bucket.count}`).join(' · ')}
+        style={{ display: 'flex', height: 6, background: '#0a0a0a', border: `1px solid ${rgba(HUD_COLORS.peerWire, 0.14)}` }}
+      >
+        {buckets.map((bucket) => (
+          <span
+            key={bucket.label}
+            style={{
+              width: `${(bucket.count / total) * 100}%`,
+              background: bucket.color,
+              boxShadow: `0 0 5px ${rgba(bucket.color, 0.25)}`,
+            }}
+          />
+        ))}
+      </div>
+      <div style={{ fontFamily: HUD_FONTS.mono, fontSize: 8, color: '#9fb0bd', marginTop: 3, lineHeight: 1.45 }}>
+        {legend(buckets)}
+      </div>
+    </div>
+  );
+}
+
+export default function NetworkAtlasReadout({ source, record }: {
+  source?: EnrichmentSourceStatus;
+  record?: NetworkAtlasRecord | null;
+}) {
+  if (!source || !record) return null;
+  const visualState = networkAtlasVisualState(source, record);
+  const visual = deriveNetworkAtlasVisual(record);
+  if (!visualState || !visual) return null;
+  const stale = visualState === 'stale';
+  const accent = stale ? HUD_COLORS.caution : HUD_COLORS.peerWire;
+
+  return (
+    <section
+      aria-label="Indexed network atlas"
+      data-network-atlas-state={visualState}
+      style={{
+        marginTop: 11,
+        paddingTop: 9,
+        borderTop: `1px solid ${rgba(accent, 0.16)}`,
+        opacity: stale ? 0.68 : 1,
+      }}
+    >
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 5,
+        fontFamily: HUD_FONTS.tech,
+        fontSize: 7.5,
+        letterSpacing: 1.25,
+        color: accent,
+        textTransform: 'uppercase',
+        marginBottom: 5,
+      }}>
+        <span style={{ width: 5, height: 5, borderRadius: '50%', background: accent, boxShadow: `0 0 6px ${accent}` }} />
+        INDEXED NETWORK ATLAS · R{fmt(record.crawl_round)} · #{fmt(record.as_of.block)}
+        {stale ? ' · STALE' : ''}
+      </div>
+      <div style={{ fontFamily: HUD_FONTS.mono, fontSize: 7.5, color: HUD_COLORS.dim, letterSpacing: 0.35, marginBottom: 4 }}>
+        CKBADGER CRAWLER · LATEST {fmt(record.sample_size)} SAMPLE{record.sample_truncated ? ' · BOUNDED' : ''}
+      </div>
+      <StatRow label="Known nodes">{fmt(record.total_known)}</StatRow>
+      <StatRow label="Last crawl">{fmt(record.last_round_reachable)} reachable / {fmt(record.last_round_dialed)} dialed</StatRow>
+      <StatRow label="Latest sample">{fmt(record.sample_reachable)} reachable / {fmt(record.sample_size)} nodes</StatRow>
+      <StatRow label="Median RTT">{record.median_rtt_ms == null ? '—' : `${fmt(record.median_rtt_ms)}ms`}</StatRow>
+      <div style={{ fontFamily: HUD_FONTS.mono, fontSize: 8, color: HUD_COLORS.dim, marginTop: 3 }}>
+        +{fmt(record.new_nodes)} NEW · {record.frontier_drained ? 'FRONTIER DRAINED' : 'FRONTIER ACTIVE'}
+      </div>
+      <BucketStrip label="SAMPLE COUNTRIES" buckets={visual.countries} total={record.sample_size} />
+      <BucketStrip label="SAMPLE CLIENT VERSIONS" buckets={visual.versions} total={record.sample_size} />
+    </section>
+  );
+}
