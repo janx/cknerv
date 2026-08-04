@@ -9,21 +9,22 @@ use url::Url;
 
 use cknerv_core::{
     CellSemanticRecord, ChainAnchor, CommonKnowledgeBreakdown, EnrichmentSourceState,
-    EnrichmentSourceStatus, OutPoint, SemanticAttribute, SemanticFacet, SemanticScript,
-    TransactionParticipantSemantic, TransactionSemanticRecord,
+    EnrichmentSourceStatus, OutPoint, SemanticAsset, SemanticAttribute, SemanticFacet,
+    SemanticScript, TransactionParticipantSemantic, TransactionSemanticRecord,
 };
 use cknerv_server::{CanonicalContext, EnrichmentSource};
 
 use crate::dto::{
-    BlockResponse, CellDataAnalysis, CellDetailResponse, DaoInfo, LookupScriptsRequest,
-    NetworkStats, ScriptLookupInfo, ScriptLookupResponse, ScriptResponse,
-    TransactionDetailResponse, TransactionLifecycleResponse,
+    BlockResponse, CellDataAnalysis, CellDetailResponse, CommonKnowledgeSizeBreakdown, DaoInfo,
+    LookupScriptsRequest, NetworkStats, ScriptLookupInfo, ScriptLookupResponse, ScriptResponse,
+    TokenResponse, TransactionDetailResponse, TransactionLifecycleResponse,
 };
 
 const CAPABILITIES: &[&str] = &[
     "cell_detail",
     "script_identity",
     "data_analysis",
+    "asset_identity",
     "transaction_detail",
     "transaction_lifecycle",
 ];
@@ -190,11 +191,70 @@ impl CkbadgerEnrichmentSource {
         }
     }
 
+    async fn token_asset(&self, cell: &CellDetailResponse) -> Option<SemanticAsset> {
+        match self.fetch_token_asset(cell).await {
+            Ok(asset) => asset,
+            Err(error) => {
+                tracing::debug!(
+                    target: "cknerv-adapter-ckbadger",
+                    "ckbadger token identity unavailable: {error}"
+                );
+                None
+            }
+        }
+    }
+
+    async fn fetch_token_asset(
+        &self,
+        cell: &CellDetailResponse,
+    ) -> anyhow::Result<Option<SemanticAsset>> {
+        let Some((type_script_hash, amount)) = udt_asset_request(cell)? else {
+            return Ok(None);
+        };
+        let url = self.endpoint(&format!("tokens/{type_script_hash}"))?;
+        let response = self
+            .client
+            .get(url)
+            .send()
+            .await
+            .context("fetch ckbadger token identity")?;
+        if response.status() == StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        if !response.status().is_success() {
+            return Err(anyhow!(
+                "ckbadger token identity returned HTTP {}",
+                response.status()
+            ));
+        }
+        let token: TokenResponse = response
+            .json()
+            .await
+            .context("decode ckbadger token identity")?;
+        if token.type_script_hash != type_script_hash {
+            return Err(anyhow!("ckbadger returned a different token identity"));
+        }
+        let decimals = token
+            .decimals
+            .map(u8::try_from)
+            .transpose()
+            .context("ckbadger returned invalid token decimals")?;
+        Ok(Some(SemanticAsset {
+            type_script_hash,
+            standard: nonempty(token.standard),
+            name: token.name.and_then(nonempty),
+            symbol: token.symbol.and_then(nonempty),
+            amount: Some(amount),
+            decimals,
+        }))
+    }
+
     fn to_record(
         &self,
         cell: CellDetailResponse,
         anchor: ChainAnchor,
         lookups: &ScriptLookupResponse,
+        asset: Option<SemanticAsset>,
     ) -> anyhow::Result<CellSemanticRecord> {
         let created_at_block = u64::try_from(cell.created_at_block)
             .map_err(|_| anyhow!("ckbadger returned a negative Cell creation block"))?;
@@ -211,25 +271,7 @@ impl CkbadgerEnrichmentSource {
             .type_script
             .zip(cell.type_script_hash)
             .map(|(script, script_hash)| map_script(script, script_hash, lookups));
-        let common_knowledge = Some(CommonKnowledgeBreakdown {
-            total_bytes: nonnegative(
-                cell.common_knowledge_size_breakdown.total_bytes,
-                "totalBytes",
-            )?,
-            capacity_field_bytes: nonnegative(
-                cell.common_knowledge_size_breakdown.capacity_field_bytes,
-                "capacityFieldBytes",
-            )?,
-            lock_script_bytes: nonnegative(
-                cell.common_knowledge_size_breakdown.lock_script_bytes,
-                "lockScriptBytes",
-            )?,
-            type_script_bytes: nonnegative(
-                cell.common_knowledge_size_breakdown.type_script_bytes,
-                "typeScriptBytes",
-            )?,
-            data_bytes: nonnegative(cell.common_knowledge_size_breakdown.data_bytes, "dataBytes")?,
-        });
+        let common_knowledge = Some(map_common_knowledge(cell.common_knowledge_size_breakdown)?);
         let mut facets = data_facets(cell.data_analysis);
         if cell.is_dep_group {
             let mut attributes = Vec::new();
@@ -289,7 +331,7 @@ impl CkbadgerEnrichmentSource {
             cell_type: cell.cell_type,
             lock_script,
             type_script,
-            asset: None,
+            asset,
             common_knowledge,
             facets,
         })
@@ -543,8 +585,8 @@ impl EnrichmentSource for CkbadgerEnrichmentSource {
         if cell.tx_hash != out_point.tx_hash || cell.output_index != requested_index {
             return Err(anyhow!("ckbadger returned a different outpoint"));
         }
-        let lookups = self.script_lookups(&cell).await;
-        self.to_record(cell, anchor, &lookups).map(Some)
+        let (lookups, asset) = tokio::join!(self.script_lookups(&cell), self.token_asset(&cell));
+        self.to_record(cell, anchor, &lookups, asset).map(Some)
     }
 
     async fn enrich_transaction(
@@ -865,6 +907,66 @@ fn signed_capacity(value: &str, field: &str) -> anyhow::Result<i128> {
         })
 }
 
+fn nonempty(value: impl Into<String>) -> Option<String> {
+    let value = value.into();
+    let value = value.trim();
+    (!value.is_empty()).then(|| value.to_string())
+}
+
+fn udt_asset_request(cell: &CellDetailResponse) -> anyhow::Result<Option<(String, String)>> {
+    let Some(decoded) = cell
+        .data_analysis
+        .as_ref()
+        .and_then(|analysis| analysis.deterministic.as_ref())
+        .filter(|decoded| decoded.kind == "udt_amount")
+    else {
+        return Ok(None);
+    };
+    let amount = decoded
+        .segments
+        .iter()
+        .find(|segment| segment.label == "amount")
+        .map(|segment| segment.human_value.clone())
+        .ok_or_else(|| anyhow!("ckbadger UDT decode has no amount segment"))?;
+    unsigned_decimal(&amount, "UDT amount")?;
+    let type_script_hash = cell
+        .type_script_hash
+        .clone()
+        .ok_or_else(|| anyhow!("ckbadger UDT decode has no type-script hash"))?;
+    if !is_hash32(&type_script_hash) {
+        return Err(anyhow!(
+            "ckbadger UDT decode has an invalid type-script hash"
+        ));
+    }
+    Ok(Some((type_script_hash, amount)))
+}
+
+fn map_common_knowledge(
+    breakdown: CommonKnowledgeSizeBreakdown,
+) -> anyhow::Result<CommonKnowledgeBreakdown> {
+    let mapped = CommonKnowledgeBreakdown {
+        total_bytes: nonnegative(breakdown.total_bytes, "totalBytes")?,
+        capacity_field_bytes: nonnegative(breakdown.capacity_field_bytes, "capacityFieldBytes")?,
+        lock_script_bytes: nonnegative(breakdown.lock_script_bytes, "lockScriptBytes")?,
+        type_script_bytes: nonnegative(breakdown.type_script_bytes, "typeScriptBytes")?,
+        data_bytes: nonnegative(breakdown.data_bytes, "dataBytes")?,
+    };
+    let component_total = mapped
+        .capacity_field_bytes
+        .checked_add(mapped.lock_script_bytes)
+        .and_then(|value| value.checked_add(mapped.type_script_bytes))
+        .and_then(|value| value.checked_add(mapped.data_bytes))
+        .ok_or_else(|| anyhow!("ckbadger common-knowledge breakdown overflows"))?;
+    if component_total != mapped.total_bytes {
+        return Err(anyhow!(
+            "ckbadger common-knowledge breakdown totals {} bytes, expected {}",
+            component_total,
+            mapped.total_bytes
+        ));
+    }
+    Ok(mapped)
+}
+
 fn map_script(
     script: ScriptResponse,
     script_hash: String,
@@ -1009,6 +1111,10 @@ mod tests {
     use cknerv_core::RecentBlock;
 
     const TX_HASH: &str = "0x1111111111111111111111111111111111111111111111111111111111111111";
+    const ASSET_TX_HASH: &str =
+        "0x3333333333333333333333333333333333333333333333333333333333333333";
+    const ASSET_TYPE_HASH: &str =
+        "0x2222222222222222222222222222222222222222222222222222222222222222";
     const TX_BLOCK_HASH: &str =
         "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
@@ -1040,10 +1146,49 @@ mod tests {
             )
             .route(
                 "/api/v1/cells/:tx_hash/:output_index",
-                get(|| async {
+                get(|axum::extract::Path((tx_hash, output_index)): axum::extract::Path<(String, i32)>| async move {
+                    if tx_hash == ASSET_TX_HASH {
+                        return Json(serde_json::json!({
+                            "txHash": ASSET_TX_HASH,
+                            "outputIndex": output_index,
+                            "lockScriptHash": "0xlockscript",
+                            "typeScriptHash": ASSET_TYPE_HASH,
+                            "address": "ckt1qyqasset",
+                            "createdAtBlock": 93,
+                            "lock": {
+                                "codeHash": "0xlockcode",
+                                "hashType": "type",
+                                "args": "0x01"
+                            },
+                            "type": {
+                                "codeHash": "0x4444444444444444444444444444444444444444444444444444444444444444",
+                                "hashType": "type",
+                                "args": "0x02"
+                            },
+                            "commonKnowledgeSizeBreakdown": {
+                                "capacityFieldBytes": 8,
+                                "lockScriptBytes": 54,
+                                "typeScriptBytes": 34,
+                                "dataBytes": 16,
+                                "totalBytes": 112
+                            },
+                            "dataAnalysis": {
+                                "deterministic": {
+                                    "kind": "udt_amount",
+                                    "summary": "xUDT amount",
+                                    "segments": [{
+                                        "label": "amount",
+                                        "humanValue": "12345000000"
+                                    }]
+                                },
+                                "heuristicGuesses": []
+                            },
+                            "isDepGroup": false
+                        }));
+                    }
                     Json(serde_json::json!({
-                        "txHash": "0x1111111111111111111111111111111111111111111111111111111111111111",
-                        "outputIndex": 1,
+                        "txHash": TX_HASH,
+                        "outputIndex": output_index,
                         "lockScriptHash": "0xlockscript",
                         "typeScriptHash": "0xtypescript",
                         "address": "ckt1qyqexample",
@@ -1082,6 +1227,18 @@ mod tests {
                             "daoStatus": "deposit",
                             "depositBlockNumber": 92
                         }
+                    }))
+                }),
+            )
+            .route(
+                "/api/v1/tokens/:type_hash",
+                get(|axum::extract::Path(type_hash): axum::extract::Path<String>| async move {
+                    Json(serde_json::json!({
+                        "typeScriptHash": type_hash,
+                        "standard": "xUDT",
+                        "name": "Nervos Test Token",
+                        "symbol": "NTT",
+                        "decimals": 8
                     }))
                 }),
             )
@@ -1229,6 +1386,7 @@ mod tests {
         assert!(status
             .capabilities
             .contains(&"transaction_detail".to_string()));
+        assert!(status.capabilities.contains(&"asset_identity".to_string()));
 
         let record = source
             .enrich_cell(
@@ -1250,8 +1408,28 @@ mod tests {
             Some("dao")
         );
         assert_eq!(record.common_knowledge.as_ref().unwrap().total_bytes, 102);
+        assert!(record.asset.is_none());
         assert!(record.facets.iter().any(|facet| facet.kind == "dao"));
         assert!(record.facets.iter().any(|facet| facet.kind == "dao_cell"));
+
+        let asset_record = source
+            .enrich_cell(
+                &OutPoint {
+                    tx_hash: ASSET_TX_HASH.to_string(),
+                    index: 0,
+                },
+                &context(),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        let asset = asset_record.asset.as_ref().unwrap();
+        assert_eq!(asset.type_script_hash, ASSET_TYPE_HASH);
+        assert_eq!(asset.standard.as_deref(), Some("xUDT"));
+        assert_eq!(asset.name.as_deref(), Some("Nervos Test Token"));
+        assert_eq!(asset.symbol.as_deref(), Some("NTT"));
+        assert_eq!(asset.amount.as_deref(), Some("12345000000"));
+        assert_eq!(asset.decimals, Some(8));
 
         let transaction = source
             .enrich_transaction(TX_HASH, &context())
@@ -1295,5 +1473,19 @@ mod tests {
         assert!(status.validated_anchor.is_none());
 
         server.abort();
+    }
+
+    #[test]
+    fn inconsistent_common_knowledge_breakdown_is_rejected() {
+        let error = map_common_knowledge(CommonKnowledgeSizeBreakdown {
+            capacity_field_bytes: 8,
+            lock_script_bytes: 54,
+            type_script_bytes: 33,
+            data_bytes: 7,
+            total_bytes: 101,
+        })
+        .unwrap_err();
+
+        assert!(error.to_string().contains("totals 102 bytes, expected 101"));
     }
 }

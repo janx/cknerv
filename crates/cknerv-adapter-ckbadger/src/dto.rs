@@ -147,6 +147,16 @@ pub(crate) type ScriptLookupResponse = HashMap<String, ScriptLookupInfo>;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct TokenResponse {
+    pub type_script_hash: String,
+    pub standard: String,
+    pub name: Option<String>,
+    pub symbol: Option<String>,
+    pub decimals: Option<i16>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct TransactionDetailResponse {
     pub hash: String,
     pub status: String,

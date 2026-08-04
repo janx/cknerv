@@ -59,6 +59,7 @@ export * from './geometry/truncatedOctahedron';
 export * from './derives/cellShell.derive';
 export * from './derives/cellVisual.derive';
 export * from './derives/cellInteraction.derive';
+export * from './derives/cellSemantics.derive';
 export * from './derives/cellConsensusIdentity.derive';
 export * from './derives/cellCausalLens.derive';
 export * from './derives/cellCausalLabel.derive';
@@ -134,6 +135,7 @@ export {
 export {
   default as CellIdentityProofMarker,
 } from './components/CellIdentityProofMarker';
+export { default as CellSemanticOrbit } from './components/CellSemanticOrbit';
 export { default as CellShell } from './components/CellShell';
 export { default as CellOrganism } from './components/CellOrganism';
 export {
@@ -145,6 +147,7 @@ export { default as HudOverlay } from './components/hud/HudOverlay';
 export { default as CellDetailPanel } from './components/hud/CellDetailPanel';
 export {
   default as CellSemanticsReadout,
+  formatSemanticAssetAmount,
   type CellSemanticsPhase,
 } from './components/hud/CellSemanticsReadout';
 export type {

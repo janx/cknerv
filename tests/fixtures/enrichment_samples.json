@@ -3,7 +3,7 @@
     "source": {
       "source": "ckbadger",
       "status": "ready",
-      "capabilities": ["cell_detail", "script_identity", "data_analysis"],
+      "capabilities": ["cell_detail", "script_identity", "data_analysis", "asset_identity", "transaction_detail", "transaction_lifecycle"],
       "indexed_tip": 100,
       "lag_blocks": 1,
       "validated_anchor": {
@@ -44,6 +44,14 @@
           "name": "Nervos DAO",
           "family": "dao",
           "deprecated": false
+        },
+        "asset": {
+          "type_script_hash": "0xtypescript",
+          "standard": "xUDT",
+          "name": "Nervos Test Token",
+          "symbol": "NTT",
+          "amount": "12345000000",
+          "decimals": 8
         },
         "common_knowledge": {
           "total_bytes": 102,
@@ -108,7 +116,7 @@
       "source": {
         "source": "ckbadger",
         "status": "ready",
-        "capabilities": ["cell_detail", "script_identity", "data_analysis"],
+        "capabilities": ["cell_detail", "script_identity", "data_analysis", "asset_identity", "transaction_detail", "transaction_lifecycle"],
         "indexed_tip": 100,
         "lag_blocks": 1,
         "validated_anchor": {
@@ -151,6 +159,14 @@
           "name": "Nervos DAO",
           "family": "dao",
           "deprecated": false
+        },
+        "asset": {
+          "type_script_hash": "0xtypescript",
+          "standard": "xUDT",
+          "name": "Nervos Test Token",
+          "symbol": "NTT",
+          "amount": "12345000000",
+          "decimals": 8
         },
         "common_knowledge": {
           "total_bytes": 102,

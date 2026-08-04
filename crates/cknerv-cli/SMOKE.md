@@ -92,8 +92,10 @@ After selecting or copying a retained Cell outpoint, both lazy routes should
 return anchored records. The transaction response should include its block,
 fee/cycles when available, a `transaction_io` action, and a
 `transaction_lifecycle` action when the ckbadger lifecycle endpoint is
-available. The semantics snapshot should then contain both records without
-changing the chain snapshot revision.
+available. A deterministically decoded UDT Cell should additionally include an
+`asset` with the same type-script hash plus its exact raw amount and available
+standard/name/symbol/decimals. The semantics snapshot should then contain both
+records without changing the chain snapshot revision.
 
 Each route emits a `{"kind":"heartbeat","revision":N}` frame after roughly
 five seconds without a data frame. A heartbeat confirms browser transport
@@ -221,6 +223,10 @@ With a local ckbadger service configured:
 - [ ] A same-height block hash mismatch shows `INCOMPATIBLE`; chain/cells keep moving
 - [ ] Clicking a Cell lazily adds address, script names, occupied-byte
       composition, and available DAO/code-cell/data facets
+- [ ] The selected Cell gains one CAP/LOCK/TYPE/DATA composition orbit; it is
+      absent before semantics resolve and visibly dimmer while ckbadger is stale
+- [ ] Selecting a deterministically decoded UDT Cell shows its token
+      name/symbol/amount and adds the outer asset notch without scanning other Cells
 - [ ] Stopping ckbadger changes only the optional source state; the galaxy,
       chain stream, cells stream, and required bootstrap remain operational
 - [ ] Removing `[ckbadger]` restores the original HUD with no source chip or

@@ -132,6 +132,8 @@ describe('wire-shape parity (TS twin of cknerv-core)', () => {
 
     expect(sample.snapshot.source.status).toBe('ready');
     expect(sample.snapshot.cells[0].lock_script?.name).toBe('Default Lock');
+    expect(sample.snapshot.cells[0].asset?.symbol).toBe('NTT');
+    expect(sample.snapshot.cells[0].asset?.amount).toBe('12345000000');
     expect(sample.snapshot.cells[0].common_knowledge?.total_bytes).toBe(102);
     expect(sample.deltas.cell_upsert.type).toBe('cell_upsert');
     expect(sample.deltas.prune).toEqual({ type: 'prune', from_block: 100 });

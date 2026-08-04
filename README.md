@@ -122,7 +122,7 @@ availability.
 | CLI | Rust, clap, rust-embed | Workdir commands, config merge, embedded dashboard server |
 | Server | Rust, axum, tokio | HTTP/WS API, mutation reducer, projection registry, persistence |
 | CKB adapter | Rust, reqwest, CKB JSON-RPC types | Read-only node polling, boot backfill, block/tx normalization |
-| ckbadger enrichment | Rust, reqwest | Optional indexed Cell/script and origin-transaction context with canonical-anchor validation |
+| ckbadger enrichment | Rust, reqwest | Optional indexed Cell/script/asset and origin-transaction context with canonical-anchor validation |
 | Types/cache | TypeScript, Vitest | Wire-type twins, pure reducers, WebSocket clients |
 | UI | React 18, Vite, React Three Fiber, drei, three.js | 3D cell galaxy, HUDs, cell-life detail panels, nerve overlays |
 
@@ -193,7 +193,7 @@ contracts remain normalized and source-agnostic.
 | `crates/cknerv-core/` | Chain-generic wire types, `Mutation`, `Projection`, `CellGalaxy`, deterministic helix positioning, and bounded replay ring. |
 | `crates/cknerv-server/` | axum HTTP/WS server, `Adapter` trait, `ServerBuilder`, entity store, projection registry, replay streams, and persistence. |
 | `crates/cknerv-adapter-ckb/` | `CkbDirectAdapter`: read-only CKB JSON-RPC polling, boot backfill, block/tx normalization, content hash parity. |
-| `crates/cknerv-adapter-ckbadger/` | Optional `EnrichmentSource`: ckbadger health/lag probing, canonical block-hash validation, and lazy Cell/script semantics. |
+| `crates/cknerv-adapter-ckbadger/` | Optional `EnrichmentSource`: ckbadger health/lag probing, canonical block-hash validation, and lazy Cell/script/asset semantics. |
 | `crates/cknerv-cli/` | `cknerv` binary, clap CLI, config/workdir commands, embedded SPA serving, runtime config injection, browser auto-open. |
 | `packages/types/` | `@cknerv/types`: TypeScript twins of the Rust wire shapes. |
 | `packages/cache/` | `@cknerv/cache`: pure reducers plus entity/projection WebSocket clients. |
@@ -241,6 +241,16 @@ changes. The SPA never includes this optional stream in its required bootstrap
 `Promise.all`; when no source is configured it does not connect or render the
 extra HUD elements. When configured, the browser still talks only to cknerv,
 not directly to ckbadger.
+
+Selecting a Cell resolves its indexed context on demand. A deterministic
+`udt_amount` decode permits one parallel token-identity lookup for that selected
+outpoint; ordinary, DAO, dep-group, and code Cells do not trigger it. The HUD
+then shows the exact raw amount with the indexed decimals/name/symbol when
+available. The scene adds one billboarded semantic orbit around that selected
+canonical Cell: its inner CAP/LOCK/TYPE/DATA arcs are proportional to the exact
+occupied-byte breakdown, while an outer notched arc marks a resolved asset.
+No background Cell sweep or base-Galaxy retaxonomization is performed. A stale
+source dims the orbit, and an invalid/missing anchor suppresses it entirely.
 
 Before ckbadger data is accepted, cknerv reads its indexed tip, chooses a block
 inside cknerv's retained canonical evidence window, and requires ckbadger to
@@ -437,12 +447,13 @@ twin, the fixtures, and both sides of the tests together.
   indexer, or transaction submitter.
 - ckbadger enrichment currently uses existing REST endpoints for source health,
   block-hash anchors, selected-Cell detail, script identity, data analysis,
-  DAO/code-cell context, occupied-capacity composition, and the selected Cell's
-  origin-transaction detail/lifecycle. Transaction participants expose exact
-  capacity deltas only when every attributed input/output includes capacity.
-  Parsed protocol activities and the global census remain unpopulated because
-  ckbadger does not expose an efficient per-transaction activity lookup or one
-  bounded census response; cknerv deliberately avoids N+1 background scraping.
+  DAO/code-cell context, occupied-capacity composition, deterministic UDT
+  amount plus token identity, and the selected Cell's origin-transaction
+  detail/lifecycle. Transaction participants expose exact capacity deltas only
+  when every attributed input/output includes capacity. Parsed protocol
+  activities and the global census remain unpopulated because ckbadger does not
+  expose an efficient per-transaction activity lookup or one bounded census
+  response; cknerv deliberately avoids N+1 background scraping.
 
 ## License
 

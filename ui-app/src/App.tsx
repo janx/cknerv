@@ -39,6 +39,7 @@ import {
   CellGalaxy,
   CellGalaxyProvider,
   CellCausalLensLayer,
+  CellSemanticOrbit,
   ConsensusRouteCamera,
   ConsensusWriteSeal,
   HudOverlay,
@@ -1147,6 +1148,13 @@ export default function App({
             pickingSuspendedRef={orbitPickingSuspendedRef}
             overlay={
               <>
+                {selectedCell && selectedCellSemantics ? (
+                  <CellSemanticOrbit
+                    cell={selectedCell}
+                    record={selectedCellSemantics}
+                    source={semanticsCache.source}
+                  />
+                ) : null}
                 {selectedCausalLens ? (
                   <CellCausalLensLayer
                     key={selectedCausalLens.key}

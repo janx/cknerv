@@ -169,6 +169,14 @@ describe('CellDetailPanel', () => {
             args: '0x',
             name: 'Default Lock',
           },
+          asset: {
+            type_script_hash: `0x${'22'.repeat(32)}`,
+            standard: 'xUDT',
+            name: 'Nervos Test Token',
+            symbol: 'NTT',
+            amount: '12345000000',
+            decimals: 8,
+          },
           common_knowledge: {
             total_bytes: 100,
             capacity_field_bytes: 8,
@@ -233,6 +241,8 @@ describe('CellDetailPanel', () => {
     expect(readout).not.toBeNull();
     expect(readout?.textContent).toContain('CKBADGER · READY · 1 BLOCK LAG');
     expect(readout?.textContent).toContain('Default Lock');
+    expect(readout?.textContent).toContain('NTT · Nervos Test Token · xUDT');
+    expect(readout?.textContent).toContain('123.45 NTT');
     expect(readout?.textContent).toContain('100 bytes occupied');
     expect(readout?.textContent).toContain('DAO · DEPOSIT');
     expect(readout?.textContent).toContain('ORIGIN TRANSACTION');
