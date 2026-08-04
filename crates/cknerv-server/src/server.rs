@@ -43,6 +43,7 @@ const ENRICHMENT_PROBE_INTERVAL: Duration = Duration::from_secs(5);
 const ENRICHMENT_STATUS_REFRESH: Duration = Duration::from_secs(60);
 const ENRICHMENT_ECOSYSTEM_REFRESH: Duration = Duration::from_secs(30);
 const ENRICHMENT_ACTIVITY_REFRESH: Duration = Duration::from_secs(15);
+const ENRICHMENT_NETWORK_ATLAS_REFRESH: Duration = Duration::from_secs(60);
 
 /// Type-erased projection registration callback. Boxed so a single
 /// `Vec<...>` can hold many heterogeneous projections.
@@ -217,6 +218,8 @@ impl ServerBuilder {
                     .unwrap_or_else(Instant::now);
                 let mut last_ecosystem_refresh: Option<Instant> = None;
                 let mut last_activity_refresh: Option<Instant> = None;
+                let mut last_network_atlas_refresh: Option<Instant> = None;
+                let mut network_atlas_present = false;
                 loop {
                     tokio::select! {
                         _ = interval.tick() => {
@@ -303,6 +306,53 @@ impl ServerBuilder {
                                     Err(error) => tracing::warn!(
                                         target: "cknerv-server",
                                         "optional activity-feed refresh failed: {error}"
+                                    ),
+                                }
+                            }
+                            let network_atlas_ready = status.validated_anchor.is_some()
+                                && matches!(
+                                    status.status,
+                                    cknerv_core::EnrichmentSourceState::Ready
+                                        | cknerv_core::EnrichmentSourceState::Stale
+                                )
+                                && status
+                                    .capabilities
+                                    .iter()
+                                    .any(|capability| capability == "network_atlas");
+                            let network_atlas_due = last_network_atlas_refresh.is_none_or(|last| {
+                                last.elapsed() >= ENRICHMENT_NETWORK_ATLAS_REFRESH
+                            });
+                            if !network_atlas_ready {
+                                last_network_atlas_refresh = None;
+                            } else if network_atlas_due {
+                                last_network_atlas_refresh = Some(Instant::now());
+                                match source.enrich_network_atlas(&context).await {
+                                    Ok(Some(network_atlas)) => {
+                                        if source_out
+                                            .send(EnrichmentEvent::NetworkAtlasReplace(
+                                                network_atlas,
+                                            ))
+                                            .await
+                                            .is_err()
+                                        {
+                                            break;
+                                        }
+                                        network_atlas_present = true;
+                                    }
+                                    Ok(None) if network_atlas_present => {
+                                        if source_out
+                                            .send(EnrichmentEvent::NetworkAtlasClear)
+                                            .await
+                                            .is_err()
+                                        {
+                                            break;
+                                        }
+                                        network_atlas_present = false;
+                                    }
+                                    Ok(None) => {}
+                                    Err(error) => tracing::warn!(
+                                        target: "cknerv-server",
+                                        "optional network-atlas refresh failed: {error}"
                                     ),
                                 }
                             }

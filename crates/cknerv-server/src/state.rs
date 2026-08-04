@@ -384,7 +384,10 @@ fn event_anchor_is_current(event: &EnrichmentEvent, recent_blocks: &[RecentBlock
         EnrichmentEvent::CensusReplace(census) => Some(&census.as_of),
         EnrichmentEvent::AssetEcosystemReplace(asset_ecosystem) => Some(&asset_ecosystem.as_of),
         EnrichmentEvent::ActivityFeedReplace(activity_feed) => Some(&activity_feed.as_of),
-        EnrichmentEvent::SourceStatus(_) | EnrichmentEvent::Clear => None,
+        EnrichmentEvent::NetworkAtlasReplace(network_atlas) => Some(&network_atlas.as_of),
+        EnrichmentEvent::SourceStatus(_)
+        | EnrichmentEvent::NetworkAtlasClear
+        | EnrichmentEvent::Clear => None,
     };
     anchor.is_none_or(|anchor| {
         recent_blocks

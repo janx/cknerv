@@ -10,16 +10,18 @@ use url::Url;
 use cknerv_core::{
     ActivityFeedItem, ActivityFeedRecord, AssetEcosystemCategory, AssetEcosystemLeader,
     AssetEcosystemRecord, CellSemanticRecord, ChainAnchor, CommonKnowledgeBreakdown,
-    EnrichmentSourceState, EnrichmentSourceStatus, OutPoint, SemanticAsset, SemanticAttribute,
-    SemanticFacet, SemanticScript, TransactionParticipantSemantic, TransactionSemanticRecord,
+    EnrichmentSourceState, EnrichmentSourceStatus, NetworkAtlasBucket, NetworkAtlasRecord,
+    OutPoint, SemanticAsset, SemanticAttribute, SemanticFacet, SemanticScript,
+    TransactionParticipantSemantic, TransactionSemanticRecord,
 };
 use cknerv_server::{CanonicalContext, EnrichmentSource};
 
 use crate::dto::{
     AssetEcosystemResponse, BlockResponse, CellDataAnalysis, CellDetailResponse,
     CommonKnowledgeSizeBreakdown, DaoInfo, LatestActivityResponse, LookupScriptsRequest,
-    NetworkStats, ScriptLookupInfo, ScriptLookupResponse, ScriptResponse, TokenResponse,
-    TransactionDetailResponse, TransactionLifecycleResponse,
+    NetworkCrawlerSummaryResponse, NetworkNodesPageResponse, NetworkStats, ScriptLookupInfo,
+    ScriptLookupResponse, ScriptResponse, TokenResponse, TransactionDetailResponse,
+    TransactionLifecycleResponse,
 };
 
 const CAPABILITIES: &[&str] = &[
@@ -29,6 +31,7 @@ const CAPABILITIES: &[&str] = &[
     "asset_identity",
     "asset_ecosystem",
     "activity_feed",
+    "network_atlas",
     "transaction_detail",
     "transaction_lifecycle",
 ];
@@ -39,6 +42,9 @@ const ACTIVITY_FEED_LIMIT: usize = 8;
 const MAX_ACTIVITY_PARTICIPANTS: usize = 512;
 const MAX_ACTIVITY_NESTED_ITEMS: usize = 512;
 const MAX_ACTIVITY_LABEL_CHARS: usize = 96;
+const NETWORK_ATLAS_LIMIT: usize = 64;
+const MAX_NETWORK_LABEL_CHARS: usize = 96;
+const MAX_PEER_ID_HEX_CHARS: usize = 256;
 const SHANNONS_PER_CKB: u128 = 100_000_000;
 const MAX_WIRE_SAFE_U64: u64 = 9_007_199_254_740_991;
 
@@ -695,6 +701,202 @@ impl EnrichmentSource for CkbadgerEnrichmentSource {
             .context("decode ckbadger latest activities")?;
         map_activity_feed(activities, anchor).map(Some)
     }
+
+    async fn enrich_network_atlas(
+        &self,
+        context: &CanonicalContext,
+    ) -> anyhow::Result<Option<NetworkAtlasRecord>> {
+        let anchor = self.current_anchor(context)?;
+        let summary_url = self.endpoint("network/summary")?;
+        let response = self
+            .client
+            .get(summary_url)
+            .send()
+            .await
+            .context("fetch ckbadger network summary")?;
+        if response.status() == StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        if !response.status().is_success() {
+            return Err(anyhow!(
+                "ckbadger network summary returned HTTP {}",
+                response.status()
+            ));
+        }
+        let summary: NetworkCrawlerSummaryResponse = response
+            .json()
+            .await
+            .context("decode ckbadger network summary")?;
+        if !summary.enabled || !summary.has_data || summary.last_round.is_none() {
+            return Ok(None);
+        }
+
+        let mut nodes_url = self.endpoint("network/nodes")?;
+        nodes_url
+            .query_pairs_mut()
+            .append_pair("limit", &NETWORK_ATLAS_LIMIT.to_string());
+        let response = self
+            .client
+            .get(nodes_url)
+            .send()
+            .await
+            .context("fetch ckbadger bounded network nodes")?;
+        if response.status() == StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        if !response.status().is_success() {
+            return Err(anyhow!(
+                "ckbadger bounded network nodes returned HTTP {}",
+                response.status()
+            ));
+        }
+        let nodes: NetworkNodesPageResponse = response
+            .json()
+            .await
+            .context("decode ckbadger bounded network nodes")?;
+        map_network_atlas(summary, nodes, anchor).map(Some)
+    }
+}
+
+fn map_network_atlas(
+    summary: NetworkCrawlerSummaryResponse,
+    nodes: NetworkNodesPageResponse,
+    anchor: ChainAnchor,
+) -> anyhow::Result<NetworkAtlasRecord> {
+    let round = summary
+        .last_round
+        .ok_or_else(|| anyhow!("ckbadger network summary omitted its last round"))?;
+    if !summary.enabled || !summary.has_data {
+        return Err(anyhow!("ckbadger network crawler has no usable data"));
+    }
+    for (value, field) in [
+        (round.round_id, "network roundId"),
+        (round.started, "network round started"),
+        (round.finished, "network round finished"),
+        (round.dialed, "network round dialed"),
+        (round.reachable, "network round reachable"),
+        (round.unreachable, "network round unreachable"),
+        (round.foreign_dropped, "network round foreignDropped"),
+        (round.new_nodes, "network round newNodes"),
+        (round.total_known, "network round totalKnown"),
+    ] {
+        wire_safe_u64(value, field)?;
+    }
+    if round.finished < round.started {
+        return Err(anyhow!("ckbadger network round finished before it started"));
+    }
+    if round.reachable > round.dialed {
+        return Err(anyhow!(
+            "ckbadger network round reachable count exceeds dialed count"
+        ));
+    }
+    if round.new_nodes > round.total_known {
+        return Err(anyhow!(
+            "ckbadger network round new-node count exceeds total known"
+        ));
+    }
+    if nodes.items.len() > NETWORK_ATLAS_LIMIT {
+        return Err(anyhow!(
+            "ckbadger network nodes exceeded the requested limit"
+        ));
+    }
+
+    let mut peer_ids = HashSet::new();
+    let mut countries = BTreeMap::<String, u32>::new();
+    let mut versions = BTreeMap::<String, u32>::new();
+    let mut rtts = Vec::new();
+    let mut sample_reachable = 0_u32;
+    let mut previous_last_seen = None;
+    for node in nodes.items {
+        validate_network_peer_id(&node.peer_id)?;
+        if !peer_ids.insert(node.peer_id) {
+            return Err(anyhow!("ckbadger network nodes returned a duplicate peer"));
+        }
+        wire_safe_u64(node.last_seen, "network node lastSeen")?;
+        if previous_last_seen.is_some_and(|previous| node.last_seen > previous) {
+            return Err(anyhow!(
+                "ckbadger network nodes were not ordered newest first"
+            ));
+        }
+        previous_last_seen = Some(node.last_seen);
+        let country = bounded_network_label(&node.country, "network node country")?;
+        let version = bounded_network_label(&node.version, "network node version")?;
+        *countries.entry(country).or_default() += 1;
+        *versions.entry(version).or_default() += 1;
+        if node.reachable {
+            sample_reachable = sample_reachable.saturating_add(1);
+        }
+        if let Some(rtt) = node.rtt_ms {
+            rtts.push(rtt);
+        }
+    }
+    rtts.sort_unstable();
+    let median_rtt_ms = match rtts.len() {
+        0 => None,
+        len if len % 2 == 1 => Some(rtts[len / 2]),
+        len => {
+            let left = u64::from(rtts[len / 2 - 1]);
+            let right = u64::from(rtts[len / 2]);
+            Some(((left + right) / 2) as u32)
+        }
+    };
+    let sample_size =
+        u32::try_from(peer_ids.len()).context("ckbadger network sample size is outside u32")?;
+
+    Ok(NetworkAtlasRecord {
+        source: "ckbadger".to_string(),
+        as_of: anchor,
+        updated_at_ms: now_ms(),
+        crawl_round: round.round_id,
+        crawl_finished_at_s: round.finished,
+        total_known: round.total_known,
+        last_round_dialed: round.dialed,
+        last_round_reachable: round.reachable,
+        new_nodes: round.new_nodes,
+        frontier_drained: round.frontier_drained,
+        sample_size,
+        sample_reachable,
+        sample_truncated: nodes.next_cursor.is_some(),
+        median_rtt_ms,
+        countries: network_buckets(countries),
+        versions: network_buckets(versions),
+    })
+}
+
+fn network_buckets(counts: BTreeMap<String, u32>) -> Vec<NetworkAtlasBucket> {
+    let mut buckets: Vec<_> = counts
+        .into_iter()
+        .map(|(label, count)| NetworkAtlasBucket { label, count })
+        .collect();
+    buckets.sort_by(|left, right| {
+        right
+            .count
+            .cmp(&left.count)
+            .then_with(|| left.label.cmp(&right.label))
+    });
+    buckets
+}
+
+fn bounded_network_label(value: &str, field: &str) -> anyhow::Result<String> {
+    let label = value.trim();
+    if label.is_empty() {
+        return Ok("Unknown".to_string());
+    }
+    if label.chars().count() > MAX_NETWORK_LABEL_CHARS || label.chars().any(char::is_control) {
+        return Err(anyhow!("ckbadger returned an invalid {field}"));
+    }
+    Ok(label.to_string())
+}
+
+fn validate_network_peer_id(value: &str) -> anyhow::Result<()> {
+    let valid = !value.is_empty()
+        && value.len() <= MAX_PEER_ID_HEX_CHARS
+        && value.len().is_multiple_of(2)
+        && value.as_bytes().iter().all(u8::is_ascii_hexdigit);
+    if !valid {
+        return Err(anyhow!("ckbadger network node returned an invalid peerId"));
+    }
+    Ok(())
 }
 
 fn map_activity_feed(
@@ -1513,6 +1715,8 @@ mod tests {
     use axum::routing::{get, post};
     use axum::{Json, Router};
     use cknerv_core::RecentBlock;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
 
     const TX_HASH: &str = "0x1111111111111111111111111111111111111111111111111111111111111111";
     const ASSET_TX_HASH: &str =
@@ -1533,6 +1737,71 @@ mod tests {
                             "isSyncing": false,
                             "syncedBlock": 100
                         }
+                    }))
+                }),
+            )
+            .route(
+                "/api/v1/network/summary",
+                get(|| async {
+                    Json(serde_json::json!({
+                        "enabled": true,
+                        "hasData": true,
+                        "lastRound": {
+                            "roundId": 7,
+                            "started": 1699999990,
+                            "finished": 1700000000,
+                            "dialed": 12,
+                            "reachable": 9,
+                            "unreachable": 2,
+                            "foreignDropped": 1,
+                            "newNodes": 3,
+                            "totalKnown": 42,
+                            "frontierDrained": true
+                        }
+                    }))
+                }),
+            )
+            .route(
+                "/api/v1/network/nodes",
+                get(|axum::extract::Query(query): axum::extract::Query<HashMap<String, String>>| async move {
+                    assert_eq!(query.get("limit").map(String::as_str), Some("64"));
+                    Json(serde_json::json!({
+                        "items": [
+                            {
+                                "peerId": "7065657241",
+                                "addr": "/ip4/127.0.0.1/tcp/8115",
+                                "version": "0.119.0",
+                                "country": "SG",
+                                "asn": "AS1 Example",
+                                "reachable": true,
+                                "lastSeen": 30,
+                                "lastReachableAt": 30,
+                                "rttMs": 12
+                            },
+                            {
+                                "peerId": "7065657242",
+                                "addr": "/ip4/127.0.0.2/tcp/8115",
+                                "version": "0.119.0",
+                                "country": "SG",
+                                "asn": "AS1 Example",
+                                "reachable": false,
+                                "lastSeen": 20,
+                                "lastReachableAt": 10,
+                                "rttMs": null
+                            },
+                            {
+                                "peerId": "7065657243",
+                                "addr": "/ip4/127.0.0.3/tcp/8115",
+                                "version": "0.118.0",
+                                "country": "US",
+                                "asn": "AS2 Example",
+                                "reachable": true,
+                                "lastSeen": 10,
+                                "lastReachableAt": 10,
+                                "rttMs": 24
+                            }
+                        ],
+                        "nextCursor": "7065657243"
                     }))
                 }),
             )
@@ -1839,6 +2108,65 @@ mod tests {
         )
     }
 
+    async fn spawn_disabled_crawler_api() -> (Url, tokio::task::JoinHandle<()>, Arc<AtomicUsize>) {
+        let node_requests = Arc::new(AtomicUsize::new(0));
+        let counted_requests = node_requests.clone();
+        let app = Router::new()
+            .route(
+                "/api/v1/statistics/network",
+                get(|| async {
+                    Json(serde_json::json!({
+                        "syncStatus": {
+                            "isSyncing": false,
+                            "syncedBlock": 100
+                        }
+                    }))
+                }),
+            )
+            .route(
+                "/api/v1/blocks/:number",
+                get(|| async {
+                    Json(serde_json::json!({
+                        "number": 100,
+                        "hash": "0xblock100"
+                    }))
+                }),
+            )
+            .route(
+                "/api/v1/network/summary",
+                get(|| async {
+                    Json(serde_json::json!({
+                        "enabled": false,
+                        "hasData": false,
+                        "lastRound": null
+                    }))
+                }),
+            )
+            .route(
+                "/api/v1/network/nodes",
+                get(move || {
+                    let node_requests = counted_requests.clone();
+                    async move {
+                        node_requests.fetch_add(1, Ordering::Relaxed);
+                        Json(serde_json::json!({
+                            "items": [],
+                            "nextCursor": null
+                        }))
+                    }
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let handle = tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        (
+            Url::parse(&format!("http://{address}/api/v1")).unwrap(),
+            handle,
+            node_requests,
+        )
+    }
+
     fn context() -> CanonicalContext {
         CanonicalContext {
             tip: 101,
@@ -1892,6 +2220,7 @@ mod tests {
         assert!(status.capabilities.contains(&"asset_identity".to_string()));
         assert!(status.capabilities.contains(&"asset_ecosystem".to_string()));
         assert!(status.capabilities.contains(&"activity_feed".to_string()));
+        assert!(status.capabilities.contains(&"network_atlas".to_string()));
 
         let ecosystem = source
             .enrich_asset_ecosystem(&context())
@@ -1926,6 +2255,22 @@ mod tests {
             activity_feed.activities[2].label.as_deref(),
             Some(".bit Time Info")
         );
+
+        let network_atlas = source
+            .enrich_network_atlas(&context())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(network_atlas.as_of.block, 100);
+        assert_eq!(network_atlas.crawl_round, 7);
+        assert_eq!(network_atlas.total_known, 42);
+        assert_eq!(network_atlas.sample_size, 3);
+        assert_eq!(network_atlas.sample_reachable, 2);
+        assert!(network_atlas.sample_truncated);
+        assert_eq!(network_atlas.median_rtt_ms, Some(18));
+        assert_eq!(network_atlas.countries[0].label, "SG");
+        assert_eq!(network_atlas.countries[0].count, 2);
+        assert_eq!(network_atlas.versions[0].label, "0.119.0");
 
         let record = source
             .enrich_cell(
@@ -2011,6 +2356,22 @@ mod tests {
         assert_eq!(status.status, EnrichmentSourceState::Incompatible);
         assert!(status.validated_anchor.is_none());
 
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn disabled_crawler_returns_no_atlas_without_fetching_nodes() {
+        let (api_base, server, node_requests) = spawn_disabled_crawler_api().await;
+        let source = CkbadgerEnrichmentSource::new(api_base).unwrap();
+        assert_eq!(
+            source.probe(&context()).await.status,
+            EnrichmentSourceState::Ready
+        );
+
+        let atlas = source.enrich_network_atlas(&context()).await.unwrap();
+
+        assert!(atlas.is_none());
+        assert_eq!(node_requests.load(Ordering::Relaxed), 0);
         server.abort();
     }
 

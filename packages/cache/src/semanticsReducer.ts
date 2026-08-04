@@ -4,6 +4,7 @@ import type {
   CellSemanticRecord,
   ChainCensus,
   EnrichmentSourceStatus,
+  NetworkAtlasRecord,
   OutPoint,
   RevisionedSemanticsDelta,
   SemanticsDelta,
@@ -19,6 +20,7 @@ export interface SemanticsCache {
   census: ChainCensus | null;
   assetEcosystem: AssetEcosystemRecord | null;
   activityFeed: ActivityFeedRecord | null;
+  networkAtlas: NetworkAtlasRecord | null;
 }
 
 export function outPointKey(outPoint: OutPoint): string {
@@ -38,6 +40,7 @@ export function emptySemanticsCache(): SemanticsCache {
     census: null,
     assetEcosystem: null,
     activityFeed: null,
+    networkAtlas: null,
   };
 }
 
@@ -55,6 +58,7 @@ export function fromSemanticsSnapshot(
     census: snapshot.census ?? null,
     assetEcosystem: snapshot.asset_ecosystem ?? null,
     activityFeed: snapshot.activity_feed ?? null,
+    networkAtlas: snapshot.network_atlas ?? null,
   };
 }
 
@@ -90,6 +94,10 @@ function reduceDelta(prev: SemanticsCache, delta: SemanticsDelta): SemanticsCach
       return { ...prev, assetEcosystem: delta.asset_ecosystem };
     case 'activity_feed_replace':
       return { ...prev, activityFeed: delta.activity_feed };
+    case 'network_atlas_replace':
+      return { ...prev, networkAtlas: delta.network_atlas };
+    case 'network_atlas_clear':
+      return { ...prev, networkAtlas: null };
     case 'prune': {
       const cells = new Map(
         [...prev.cells].filter(([, cell]) => cell.as_of.block < delta.from_block),
@@ -115,6 +123,11 @@ function reduceDelta(prev: SemanticsCache, delta: SemanticsDelta): SemanticsCach
         && prev.activityFeed.as_of.block >= delta.from_block
           ? null
           : prev.activityFeed;
+      const networkAtlas =
+        prev.networkAtlas
+        && prev.networkAtlas.as_of.block >= delta.from_block
+          ? null
+          : prev.networkAtlas;
       return {
         ...prev,
         cells,
@@ -122,6 +135,7 @@ function reduceDelta(prev: SemanticsCache, delta: SemanticsDelta): SemanticsCach
         census,
         assetEcosystem,
         activityFeed,
+        networkAtlas,
       };
     }
     case 'clear':
@@ -132,6 +146,7 @@ function reduceDelta(prev: SemanticsCache, delta: SemanticsDelta): SemanticsCach
         census: null,
         assetEcosystem: null,
         activityFeed: null,
+        networkAtlas: null,
       };
   }
 }

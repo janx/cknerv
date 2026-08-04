@@ -180,4 +180,15 @@ fn enrichment_samples_match_wire_shape() {
         canonicalize(&samples["deltas"]["activity_feed_replace"]),
         canonicalize(&serde_json::to_value(activity_feed).unwrap())
     );
+    let network_atlas = SemanticsDelta::NetworkAtlasReplace {
+        network_atlas: snapshot.network_atlas.clone().unwrap(),
+    };
+    assert_eq!(
+        canonicalize(&samples["deltas"]["network_atlas_replace"]),
+        canonicalize(&serde_json::to_value(network_atlas).unwrap())
+    );
+    assert_eq!(
+        canonicalize(&samples["deltas"]["network_atlas_clear"]),
+        canonicalize(&serde_json::to_value(SemanticsDelta::NetworkAtlasClear).unwrap())
+    );
 }

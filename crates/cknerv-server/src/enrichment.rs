@@ -8,8 +8,8 @@
 use async_trait::async_trait;
 
 use cknerv_core::{
-    ActivityFeedRecord, AssetEcosystemRecord, CellSemanticRecord, EnrichmentSourceStatus, OutPoint,
-    RecentBlock, RecentTx, TransactionSemanticRecord,
+    ActivityFeedRecord, AssetEcosystemRecord, CellSemanticRecord, EnrichmentSourceStatus,
+    NetworkAtlasRecord, OutPoint, RecentBlock, RecentTx, TransactionSemanticRecord,
 };
 
 /// Bounded canonical evidence supplied to an enrichment source when it
@@ -74,6 +74,15 @@ pub trait EnrichmentSource: Send + Sync + 'static {
         &self,
         _context: &CanonicalContext,
     ) -> anyhow::Result<Option<ActivityFeedRecord>> {
+        Ok(None)
+    }
+
+    /// Refresh crawler context from an explicitly bounded node page. Sources
+    /// without a bounded network endpoint leave this unsupported.
+    async fn enrich_network_atlas(
+        &self,
+        _context: &CanonicalContext,
+    ) -> anyhow::Result<Option<NetworkAtlasRecord>> {
         Ok(None)
     }
 }

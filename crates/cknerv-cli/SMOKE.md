@@ -100,6 +100,11 @@ Once the source is ready, the semantics snapshot should also gain an
 `activity_feed` containing at most eight newest-first, anchor-bounded compact
 signatures. It is refreshed independently and must not contain participant
 addresses or arbitrary protocol metadata.
+If ckbadger's network crawler is enabled and has completed a round, the snapshot
+should additionally gain `network_atlas`. Its `sample_size` must be at most 64;
+country/version bucket totals must each equal that sample size; and no peer ID
+or address should appear. With the crawler disabled, `network_atlas` stays
+absent while all other configured enrichment capabilities continue normally.
 
 Each route emits a `{"kind":"heartbeat","revision":N}` frame after roughly
 five seconds without a data frame. A heartbeat confirms browser transport
@@ -228,10 +233,16 @@ With a local ckbadger service configured:
       shannon capacities, byte knowledge size, and basis-point shares
 - [ ] The semantics snapshot gains an `activity_feed` of at most eight
       newest-first entries whose blocks do not exceed its validated anchor
+- [ ] With ckbadger's crawler enabled, the semantics snapshot gains a
+      `network_atlas` whose sample is at most 64 and contains no peer identities
+- [ ] With the crawler disabled, `network_atlas` remains absent while source
+      health, Cell detail, ecosystem, and activity enrichment still work
 - [ ] `COMMON KNOWLEDGE BASE` shows a separately labeled
       `INDEXED ACTIVITY · LATEST N` fingerprint and recent activity rows
 - [ ] `CELL MESH` shows a separately labeled `INDEXED CHAIN CAPACITY` bar and
       bounded top-asset list; retained Cell taxonomy/counts remain unchanged
+- [ ] `PEER MESH` shows `INDEXED NETWORK ATLAS · LATEST N SAMPLE` below the
+      direct-peer telemetry without adding crawler nodes or edges to the scene
 - [ ] A same-height block hash mismatch shows `INCOMPATIBLE`; chain/cells keep moving
 - [ ] Clicking a Cell lazily adds address, script names, occupied-byte
       composition, and available DAO/code-cell/data facets
@@ -242,7 +253,7 @@ With a local ckbadger service configured:
 - [ ] Stopping ckbadger changes only the optional source state; the galaxy,
       chain stream, cells stream, and required bootstrap remain operational
 - [ ] Removing `[ckbadger]` restores the original HUD with no source chip or
-      indexed-context/ecosystem/activity section and requires no prune
+      indexed-context/ecosystem/activity/network-atlas section and requires no prune
 
 ## Canonical correction checklist (disposable devnet or mock only)
 

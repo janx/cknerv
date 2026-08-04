@@ -287,6 +287,40 @@ pub struct ActivityFeedRecord {
     pub activities: Vec<ActivityFeedItem>,
 }
 
+/// One display-safe label count derived from a bounded network-node sample.
+/// Individual peer identities and addresses never cross this contract.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct NetworkAtlasBucket {
+    pub label: String,
+    pub count: u32,
+}
+
+/// Bounded context from an optional network crawler. The crawl summary can
+/// describe the source's whole known set, while countries, versions, and RTT
+/// are derived only from the explicitly limited latest-node sample.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct NetworkAtlasRecord {
+    pub source: String,
+    pub as_of: ChainAnchor,
+    pub updated_at_ms: u64,
+    pub crawl_round: u64,
+    pub crawl_finished_at_s: u64,
+    pub total_known: u64,
+    pub last_round_dialed: u64,
+    pub last_round_reachable: u64,
+    pub new_nodes: u64,
+    pub frontier_drained: bool,
+    pub sample_size: u32,
+    pub sample_reachable: u32,
+    pub sample_truncated: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub median_rtt_ms: Option<u32>,
+    #[serde(default)]
+    pub countries: Vec<NetworkAtlasBucket>,
+    #[serde(default)]
+    pub versions: Vec<NetworkAtlasBucket>,
+}
+
 /// Source events entering the semantics projection.  They use a separate
 /// server-side pipeline from canonical [`crate::Mutation`] values.
 #[derive(Clone, Debug, PartialEq)]
@@ -297,6 +331,8 @@ pub enum EnrichmentEvent {
     CensusReplace(ChainCensus),
     AssetEcosystemReplace(AssetEcosystemRecord),
     ActivityFeedReplace(ActivityFeedRecord),
+    NetworkAtlasReplace(NetworkAtlasRecord),
+    NetworkAtlasClear,
     Clear,
 }
 
@@ -311,6 +347,8 @@ pub struct SemanticsSnapshot {
     pub asset_ecosystem: Option<AssetEcosystemRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub activity_feed: Option<ActivityFeedRecord>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network_atlas: Option<NetworkAtlasRecord>,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq)]
@@ -340,6 +378,10 @@ pub enum SemanticsDelta {
     ActivityFeedReplace {
         activity_feed: ActivityFeedRecord,
     },
+    NetworkAtlasReplace {
+        network_atlas: NetworkAtlasRecord,
+    },
+    NetworkAtlasClear,
     Prune {
         from_block: u64,
     },
@@ -360,6 +402,7 @@ pub struct SemanticsProjection {
     census: Option<ChainCensus>,
     asset_ecosystem: Option<AssetEcosystemRecord>,
     activity_feed: Option<ActivityFeedRecord>,
+    network_atlas: Option<NetworkAtlasRecord>,
     next_sequence: u64,
     cell_cap: usize,
     transaction_cap: usize,
@@ -378,6 +421,7 @@ impl SemanticsProjection {
             census: None,
             asset_ecosystem: None,
             activity_feed: None,
+            network_atlas: None,
             next_sequence: 0,
             cell_cap: 512,
             transaction_cap: 2048,
@@ -435,6 +479,7 @@ impl SemanticsProjection {
         self.census = None;
         self.asset_ecosystem = None;
         self.activity_feed = None;
+        self.network_atlas = None;
     }
 
     fn invalidate_source_anchor(&mut self, message: &str) -> Option<SemanticsDelta> {
@@ -489,6 +534,7 @@ impl Projection for SemanticsProjection {
             census: self.census.clone(),
             asset_ecosystem: self.asset_ecosystem.clone(),
             activity_feed: self.activity_feed.clone(),
+            network_atlas: self.network_atlas.clone(),
         }
     }
 
@@ -520,6 +566,13 @@ impl Projection for SemanticsProjection {
                     .is_some_and(|feed| feed.as_of.block >= *from_block)
                 {
                     self.activity_feed = None;
+                }
+                if self
+                    .network_atlas
+                    .as_ref()
+                    .is_some_and(|atlas| atlas.as_of.block >= *from_block)
+                {
+                    self.network_atlas = None;
                 }
                 let mut deltas = vec![SemanticsDelta::Prune {
                     from_block: *from_block,
@@ -607,6 +660,16 @@ impl EnrichmentProjection for SemanticsProjection {
                     activity_feed: activity_feed.clone(),
                 }]
             }
+            EnrichmentEvent::NetworkAtlasReplace(network_atlas) => {
+                self.network_atlas = Some(network_atlas.clone());
+                vec![SemanticsDelta::NetworkAtlasReplace {
+                    network_atlas: network_atlas.clone(),
+                }]
+            }
+            EnrichmentEvent::NetworkAtlasClear => {
+                self.network_atlas = None;
+                vec![SemanticsDelta::NetworkAtlasClear]
+            }
             EnrichmentEvent::Clear => {
                 self.clear_records();
                 vec![SemanticsDelta::Clear]
@@ -680,6 +743,36 @@ mod tests {
         }
     }
 
+    fn network_atlas(block: u64) -> NetworkAtlasRecord {
+        NetworkAtlasRecord {
+            source: "ckbadger".into(),
+            as_of: ChainAnchor {
+                block,
+                hash: format!("0xblock{block}"),
+            },
+            updated_at_ms: block,
+            crawl_round: 7,
+            crawl_finished_at_s: block,
+            total_known: 42,
+            last_round_dialed: 12,
+            last_round_reachable: 9,
+            new_nodes: 3,
+            frontier_drained: true,
+            sample_size: 2,
+            sample_reachable: 1,
+            sample_truncated: true,
+            median_rtt_ms: Some(24),
+            countries: vec![NetworkAtlasBucket {
+                label: "SG".into(),
+                count: 2,
+            }],
+            versions: vec![NetworkAtlasBucket {
+                label: "0.119.0".into(),
+                count: 2,
+            }],
+        }
+    }
+
     #[test]
     fn reorg_prunes_only_records_at_or_above_boundary() {
         let mut projection = SemanticsProjection::new(Some(("ckbadger", vec![])));
@@ -718,11 +811,26 @@ mod tests {
         let mut projection = SemanticsProjection::new(Some(("ckbadger", vec![])));
         projection.apply_enrichment(&EnrichmentEvent::AssetEcosystemReplace(ecosystem(10)));
         projection.apply_enrichment(&EnrichmentEvent::ActivityFeedReplace(activity_feed(10)));
+        projection.apply_enrichment(&EnrichmentEvent::NetworkAtlasReplace(network_atlas(10)));
 
         projection.apply_mutation(&Mutation::ChainReorganized { from_block: 10 });
 
         assert!(projection.snapshot().asset_ecosystem.is_none());
         assert!(projection.snapshot().activity_feed.is_none());
+        assert!(projection.snapshot().network_atlas.is_none());
+    }
+
+    #[test]
+    fn crawler_disable_clears_only_the_network_atlas() {
+        let mut projection = SemanticsProjection::new(Some(("ckbadger", vec![])));
+        projection.apply_enrichment(&EnrichmentEvent::AssetEcosystemReplace(ecosystem(10)));
+        projection.apply_enrichment(&EnrichmentEvent::NetworkAtlasReplace(network_atlas(10)));
+
+        let deltas = projection.apply_enrichment(&EnrichmentEvent::NetworkAtlasClear);
+
+        assert!(projection.snapshot().network_atlas.is_none());
+        assert!(projection.snapshot().asset_ecosystem.is_some());
+        assert!(matches!(deltas[0], SemanticsDelta::NetworkAtlasClear));
     }
 
     #[test]

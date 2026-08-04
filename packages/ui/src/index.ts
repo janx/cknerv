@@ -62,6 +62,7 @@ export * from './derives/cellInteraction.derive';
 export * from './derives/cellSemantics.derive';
 export * from './derives/assetEcosystem.derive';
 export * from './derives/activityFeed.derive';
+export * from './derives/networkAtlas.derive';
 export * from './derives/cellConsensusIdentity.derive';
 export * from './derives/cellCausalLens.derive';
 export * from './derives/cellCausalLabel.derive';
@@ -154,6 +155,7 @@ export {
 } from './components/hud/CellSemanticsReadout';
 export { default as AssetEcosystemReadout } from './components/hud/AssetEcosystemReadout';
 export { default as ActivityFeedReadout } from './components/hud/ActivityFeedReadout';
+export { default as NetworkAtlasReadout } from './components/hud/NetworkAtlasReadout';
 export type {
   CellCausalNavigationReadout,
 } from './components/hud/CellCausalLensReadout';

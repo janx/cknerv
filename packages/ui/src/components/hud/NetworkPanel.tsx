@@ -1,16 +1,21 @@
 import type { CSSProperties } from 'react';
+import type { EnrichmentSourceStatus, NetworkAtlasRecord } from '@cknerv/types';
 import type { NetworkSummary } from '../../derives/peers.derive';
 import type { FleetConsensus, PingStats, VersionSpread } from '../../derives/fleetTelemetry';
 import { HUD_COLORS, HUD_FONTS } from './hudTheme';
 import { HudPanel, PanelHeader, StatRow, Gauge } from './primitives';
+import NetworkAtlasReadout from './NetworkAtlasReadout';
 
 const fmt = (n: number) => n.toLocaleString('en-US');
 
-export default function NetworkPanel({ summary, consensus, ping, vers, syncRatio, colonyCount, style }: {
+export default function NetworkPanel({ summary, consensus, ping, vers, syncRatio, colonyCount, enrichmentSource, networkAtlas, style }: {
   summary: NetworkSummary; consensus: FleetConsensus; ping: PingStats | null; vers: VersionSpread; syncRatio: number;
   /** Whole-colony node count (measured + inferred + local) for the honest
    *  "inferred" footnote below the measured stats. Omitted ⇒ line not shown. */
-  colonyCount?: number; style?: CSSProperties;
+  colonyCount?: number;
+  enrichmentSource?: EnrichmentSourceStatus;
+  networkAtlas?: NetworkAtlasRecord | null;
+  style?: CSSProperties;
 }) {
   const total = Math.max(1, consensus.total);
   const seg = (n: number) => `${(n / total) * 100}%`;
@@ -40,6 +45,7 @@ export default function NetworkPanel({ summary, consensus, ping, vers, syncRatio
           colony ~ {fmt(colonyCount)} nodes (inferred)
         </div>
       )}
+      <NetworkAtlasReadout source={enrichmentSource} record={networkAtlas} />
     </HudPanel>
   );
 }

@@ -1028,6 +1028,9 @@ export default function App({
         activityFeed={enrichmentConfig.enabled
           ? semanticsCache.activityFeed
           : undefined}
+        networkAtlas={enrichmentConfig.enabled
+          ? semanticsCache.networkAtlas
+          : undefined}
         selectedCell={selectedCell}
         selectedCellSemantics={selectedCellSemantics}
         selectedCellSemanticsPhase={enrichmentConfig.enabled
