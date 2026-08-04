@@ -284,6 +284,53 @@ pub struct DaoStateRecord {
     pub depositors_change_24h: Option<i32>,
 }
 
+/// Classification of one indexed canonical-fork event.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ForkWatchEventKind {
+    Reorg,
+    Deep,
+}
+
+/// Fixed summary of the newest fork event while it remains inside the
+/// source's explicitly stated recent window.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ForkWatchReorg {
+    pub detected_at_ms: u64,
+    pub fork_point: u64,
+    pub old_tip: u64,
+    pub new_tip: u64,
+    pub depth: u32,
+    pub orphaned_blocks: u64,
+    pub orphaned_transactions: u64,
+    pub kind: ForkWatchEventKind,
+}
+
+/// Active deep-fork disagreement reported by an optional index. `indexed_tip`
+/// is the source's persisted database view; `chain_tip` is its live-node view.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ForkWatchDeepFork {
+    pub detected_at_ms: u64,
+    pub fork_point: u64,
+    pub indexed_tip: u64,
+    pub chain_tip: u64,
+    pub depth: u32,
+}
+
+/// Fixed-work fork monitor from an optional index. It supplements, but never
+/// changes, cknerv's canonical reorg detection and cumulative reorg counter.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ForkWatchRecord {
+    pub source: String,
+    pub as_of: ChainAnchor,
+    pub updated_at_ms: u64,
+    pub recent_window_seconds: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recent_reorg: Option<ForkWatchReorg>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deep_fork: Option<ForkWatchDeepFork>,
+}
+
 /// One compact transaction signature from a bounded recent-activity feed.
 /// The category and label are display-safe adapter normalizations; raw source
 /// JSON and participant addresses never cross the shared contract.
@@ -353,6 +400,7 @@ pub enum EnrichmentEvent {
     CensusReplace(ChainCensus),
     AssetEcosystemReplace(AssetEcosystemRecord),
     DaoStateReplace(DaoStateRecord),
+    ForkWatchReplace(ForkWatchRecord),
     ActivityFeedReplace(ActivityFeedRecord),
     NetworkAtlasReplace(NetworkAtlasRecord),
     NetworkAtlasClear,
@@ -370,6 +418,8 @@ pub struct SemanticsSnapshot {
     pub asset_ecosystem: Option<AssetEcosystemRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dao_state: Option<DaoStateRecord>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fork_watch: Option<ForkWatchRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub activity_feed: Option<ActivityFeedRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -403,6 +453,9 @@ pub enum SemanticsDelta {
     DaoStateReplace {
         dao_state: DaoStateRecord,
     },
+    ForkWatchReplace {
+        fork_watch: ForkWatchRecord,
+    },
     ActivityFeedReplace {
         activity_feed: ActivityFeedRecord,
     },
@@ -430,6 +483,7 @@ pub struct SemanticsProjection {
     census: Option<ChainCensus>,
     asset_ecosystem: Option<AssetEcosystemRecord>,
     dao_state: Option<DaoStateRecord>,
+    fork_watch: Option<ForkWatchRecord>,
     activity_feed: Option<ActivityFeedRecord>,
     network_atlas: Option<NetworkAtlasRecord>,
     next_sequence: u64,
@@ -450,6 +504,7 @@ impl SemanticsProjection {
             census: None,
             asset_ecosystem: None,
             dao_state: None,
+            fork_watch: None,
             activity_feed: None,
             network_atlas: None,
             next_sequence: 0,
@@ -509,6 +564,7 @@ impl SemanticsProjection {
         self.census = None;
         self.asset_ecosystem = None;
         self.dao_state = None;
+        self.fork_watch = None;
         self.activity_feed = None;
         self.network_atlas = None;
     }
@@ -565,6 +621,7 @@ impl Projection for SemanticsProjection {
             census: self.census.clone(),
             asset_ecosystem: self.asset_ecosystem.clone(),
             dao_state: self.dao_state.clone(),
+            fork_watch: self.fork_watch.clone(),
             activity_feed: self.activity_feed.clone(),
             network_atlas: self.network_atlas.clone(),
         }
@@ -598,6 +655,13 @@ impl Projection for SemanticsProjection {
                     .is_some_and(|dao| dao.as_of.block >= *from_block)
                 {
                     self.dao_state = None;
+                }
+                if self
+                    .fork_watch
+                    .as_ref()
+                    .is_some_and(|watch| watch.as_of.block >= *from_block)
+                {
+                    self.fork_watch = None;
                 }
                 if self
                     .activity_feed
@@ -642,9 +706,10 @@ impl EnrichmentProjection for SemanticsProjection {
     fn apply_enrichment(&mut self, event: &EnrichmentEvent) -> Vec<Self::Delta> {
         match event {
             EnrichmentEvent::SourceStatus(source) => {
+                let was_incompatible = self.source.status == EnrichmentSourceState::Incompatible;
                 self.source = source.clone();
                 let mut deltas = Vec::new();
-                if source.status == EnrichmentSourceState::Incompatible {
+                if source.status == EnrichmentSourceState::Incompatible && !was_incompatible {
                     self.clear_records();
                     deltas.push(SemanticsDelta::Clear);
                 }
@@ -697,6 +762,12 @@ impl EnrichmentProjection for SemanticsProjection {
                 self.dao_state = Some(dao_state.clone());
                 vec![SemanticsDelta::DaoStateReplace {
                     dao_state: dao_state.clone(),
+                }]
+            }
+            EnrichmentEvent::ForkWatchReplace(fork_watch) => {
+                self.fork_watch = Some(fork_watch.clone());
+                vec![SemanticsDelta::ForkWatchReplace {
+                    fork_watch: fork_watch.clone(),
                 }]
             }
             EnrichmentEvent::ActivityFeedReplace(activity_feed) => {
@@ -808,6 +879,35 @@ mod tests {
         }
     }
 
+    fn fork_watch(block: u64) -> ForkWatchRecord {
+        ForkWatchRecord {
+            source: "ckbadger".into(),
+            as_of: ChainAnchor {
+                block,
+                hash: format!("0xblock{block}"),
+            },
+            updated_at_ms: block,
+            recent_window_seconds: 86_400,
+            recent_reorg: Some(ForkWatchReorg {
+                detected_at_ms: block,
+                fork_point: block.saturating_sub(3),
+                old_tip: block.saturating_sub(1),
+                new_tip: block,
+                depth: 2,
+                orphaned_blocks: 2,
+                orphaned_transactions: 7,
+                kind: ForkWatchEventKind::Deep,
+            }),
+            deep_fork: Some(ForkWatchDeepFork {
+                detected_at_ms: block,
+                fork_point: block.saturating_sub(3),
+                indexed_tip: block.saturating_sub(1),
+                chain_tip: block,
+                depth: 2,
+            }),
+        }
+    }
+
     fn network_atlas(block: u64) -> NetworkAtlasRecord {
         NetworkAtlasRecord {
             source: "ckbadger".into(),
@@ -872,10 +972,26 @@ mod tests {
     }
 
     #[test]
+    fn repeated_incompatible_status_keeps_fresh_deep_fork_diagnostics() {
+        let mut projection = SemanticsProjection::new(Some(("ckbadger", vec![])));
+        let mut status = EnrichmentSourceStatus::connecting("ckbadger", vec![]);
+        status.status = EnrichmentSourceState::Incompatible;
+        projection.apply_enrichment(&EnrichmentEvent::SourceStatus(status.clone()));
+        projection.apply_enrichment(&EnrichmentEvent::ForkWatchReplace(fork_watch(10)));
+
+        let deltas = projection.apply_enrichment(&EnrichmentEvent::SourceStatus(status));
+
+        assert!(projection.snapshot().fork_watch.is_some());
+        assert_eq!(deltas.len(), 1);
+        assert!(matches!(deltas[0], SemanticsDelta::SourceStatus { .. }));
+    }
+
+    #[test]
     fn reorg_prunes_aggregate_records_at_the_invalidated_anchor() {
         let mut projection = SemanticsProjection::new(Some(("ckbadger", vec![])));
         projection.apply_enrichment(&EnrichmentEvent::AssetEcosystemReplace(ecosystem(10)));
         projection.apply_enrichment(&EnrichmentEvent::DaoStateReplace(dao_state(10)));
+        projection.apply_enrichment(&EnrichmentEvent::ForkWatchReplace(fork_watch(10)));
         projection.apply_enrichment(&EnrichmentEvent::ActivityFeedReplace(activity_feed(10)));
         projection.apply_enrichment(&EnrichmentEvent::NetworkAtlasReplace(network_atlas(10)));
 
@@ -883,6 +999,7 @@ mod tests {
 
         assert!(projection.snapshot().asset_ecosystem.is_none());
         assert!(projection.snapshot().dao_state.is_none());
+        assert!(projection.snapshot().fork_watch.is_none());
         assert!(projection.snapshot().activity_feed.is_none());
         assert!(projection.snapshot().network_atlas.is_none());
     }

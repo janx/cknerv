@@ -9,7 +9,7 @@ use async_trait::async_trait;
 
 use cknerv_core::{
     ActivityFeedRecord, AssetEcosystemRecord, CellSemanticRecord, DaoStateRecord,
-    EnrichmentSourceStatus, NetworkAtlasRecord, OutPoint, RecentBlock, RecentTx,
+    EnrichmentSourceStatus, ForkWatchRecord, NetworkAtlasRecord, OutPoint, RecentBlock, RecentTx,
     TransactionSemanticRecord,
 };
 
@@ -74,6 +74,15 @@ pub trait EnrichmentSource: Send + Sync + 'static {
         &self,
         _context: &CanonicalContext,
     ) -> anyhow::Result<Option<DaoStateRecord>> {
+        Ok(None)
+    }
+
+    /// Refresh fixed-work recent/deep-fork context. This supplements canonical
+    /// reorg handling and must never drive rollback itself.
+    async fn enrich_fork_watch(
+        &self,
+        _context: &CanonicalContext,
+    ) -> anyhow::Result<Option<ForkWatchRecord>> {
         Ok(None)
     }
 

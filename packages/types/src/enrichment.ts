@@ -157,6 +157,36 @@ export interface DaoStateRecord {
   depositors_change_24h?: number;
 }
 
+export type ForkWatchEventKind = 'reorg' | 'deep';
+
+export interface ForkWatchReorg {
+  detected_at_ms: number;
+  fork_point: number;
+  old_tip: number;
+  new_tip: number;
+  depth: number;
+  orphaned_blocks: number;
+  orphaned_transactions: number;
+  kind: ForkWatchEventKind;
+}
+
+export interface ForkWatchDeepFork {
+  detected_at_ms: number;
+  fork_point: number;
+  indexed_tip: number;
+  chain_tip: number;
+  depth: number;
+}
+
+export interface ForkWatchRecord {
+  source: string;
+  as_of: ChainAnchor;
+  updated_at_ms: number;
+  recent_window_seconds: number;
+  recent_reorg?: ForkWatchReorg;
+  deep_fork?: ForkWatchDeepFork;
+}
+
 export interface ActivityFeedItem {
   tx_hash: string;
   block: number;
@@ -206,6 +236,7 @@ export interface SemanticsSnapshot {
   census?: ChainCensus;
   asset_ecosystem?: AssetEcosystemRecord;
   dao_state?: DaoStateRecord;
+  fork_watch?: ForkWatchRecord;
   activity_feed?: ActivityFeedRecord;
   network_atlas?: NetworkAtlasRecord;
 }
@@ -219,6 +250,7 @@ export type SemanticsDelta =
   | { type: 'census_replace'; census: ChainCensus }
   | { type: 'asset_ecosystem_replace'; asset_ecosystem: AssetEcosystemRecord }
   | { type: 'dao_state_replace'; dao_state: DaoStateRecord }
+  | { type: 'fork_watch_replace'; fork_watch: ForkWatchRecord }
   | { type: 'activity_feed_replace'; activity_feed: ActivityFeedRecord }
   | { type: 'network_atlas_replace'; network_atlas: NetworkAtlasRecord }
   | { type: 'network_atlas_clear' }

@@ -44,6 +44,7 @@ const ENRICHMENT_STATUS_REFRESH: Duration = Duration::from_secs(60);
 const ENRICHMENT_ECOSYSTEM_REFRESH: Duration = Duration::from_secs(30);
 const ENRICHMENT_DAO_STATE_REFRESH: Duration = Duration::from_secs(60);
 const ENRICHMENT_ACTIVITY_REFRESH: Duration = Duration::from_secs(15);
+const ENRICHMENT_FORK_WATCH_REFRESH: Duration = Duration::from_secs(15);
 const ENRICHMENT_NETWORK_ATLAS_REFRESH: Duration = Duration::from_secs(60);
 
 /// Type-erased projection registration callback. Boxed so a single
@@ -220,6 +221,7 @@ impl ServerBuilder {
                 let mut last_ecosystem_refresh: Option<Instant> = None;
                 let mut last_dao_state_refresh: Option<Instant> = None;
                 let mut last_activity_refresh: Option<Instant> = None;
+                let mut last_fork_watch_refresh: Option<Instant> = None;
                 let mut last_network_atlas_refresh: Option<Instant> = None;
                 let mut network_atlas_present = false;
                 loop {
@@ -341,6 +343,41 @@ impl ServerBuilder {
                                     Err(error) => tracing::warn!(
                                         target: "cknerv-server",
                                         "optional activity-feed refresh failed: {error}"
+                                    ),
+                                }
+                            }
+                            let fork_watch_ready = (status.validated_anchor.is_some()
+                                && matches!(
+                                    status.status,
+                                    cknerv_core::EnrichmentSourceState::Ready
+                                        | cknerv_core::EnrichmentSourceState::Stale
+                                )
+                                || status.status
+                                    == cknerv_core::EnrichmentSourceState::Incompatible)
+                                && status
+                                    .capabilities
+                                    .iter()
+                                    .any(|capability| capability == "fork_watch");
+                            let fork_watch_due = last_fork_watch_refresh
+                                .is_none_or(|last| last.elapsed() >= ENRICHMENT_FORK_WATCH_REFRESH);
+                            if !fork_watch_ready {
+                                last_fork_watch_refresh = None;
+                            } else if fork_watch_due {
+                                last_fork_watch_refresh = Some(Instant::now());
+                                match source.enrich_fork_watch(&context).await {
+                                    Ok(Some(fork_watch)) => {
+                                        if source_out
+                                            .send(EnrichmentEvent::ForkWatchReplace(fork_watch))
+                                            .await
+                                            .is_err()
+                                        {
+                                            break;
+                                        }
+                                    }
+                                    Ok(None) => {}
+                                    Err(error) => tracing::warn!(
+                                        target: "cknerv-server",
+                                        "optional fork-watch refresh failed: {error}"
                                     ),
                                 }
                             }
