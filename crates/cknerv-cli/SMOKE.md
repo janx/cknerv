@@ -220,6 +220,10 @@ Open `http://localhost:7001` (or whatever `--port` you used):
 With a local ckbadger service configured:
 
 - [ ] The top strip shows `CKBADGER` with ready/syncing/stale state and lag
+- [ ] Once ready, the semantics snapshot gains `asset_ecosystem` with exact
+      shannon capacities, byte knowledge size, and basis-point shares
+- [ ] `CELL MESH` shows a separately labeled `INDEXED CHAIN CAPACITY` bar and
+      bounded top-asset list; retained Cell taxonomy/counts remain unchanged
 - [ ] A same-height block hash mismatch shows `INCOMPATIBLE`; chain/cells keep moving
 - [ ] Clicking a Cell lazily adds address, script names, occupied-byte
       composition, and available DAO/code-cell/data facets
@@ -230,7 +234,7 @@ With a local ckbadger service configured:
 - [ ] Stopping ckbadger changes only the optional source state; the galaxy,
       chain stream, cells stream, and required bootstrap remain operational
 - [ ] Removing `[ckbadger]` restores the original HUD with no source chip or
-      indexed-context section and requires no prune
+      indexed-context/ecosystem section and requires no prune
 
 ## Canonical correction checklist (disposable devnet or mock only)
 

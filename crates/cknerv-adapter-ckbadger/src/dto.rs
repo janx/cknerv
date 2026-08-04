@@ -10,6 +10,35 @@ pub(crate) struct NetworkStats {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct AssetEcosystemResponse {
+    #[serde(default)]
+    pub top_tokens: Vec<AssetEcosystemToken>,
+    #[serde(default)]
+    pub capacity_breakdown: Vec<AssetEcosystemCategory>,
+    pub total_live_capacity_ckb: String,
+    pub total_knowledge_size_ckb: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AssetEcosystemToken {
+    pub type_script_hash: String,
+    pub name: Option<String>,
+    pub symbol: Option<String>,
+    pub holders_count: i64,
+    pub total_capacity_ckb: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AssetEcosystemCategory {
+    pub category: String,
+    pub capacity_ckb: String,
+    pub percentage: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct SyncStatus {
     pub is_syncing: bool,
     pub synced_block: i64,

@@ -6,8 +6,9 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use cknerv_core::{
-    CellGalaxy, CellSemanticRecord, ChainAnchor, EnrichmentSourceState, EnrichmentSourceStatus,
-    Mutation, OutPoint, ReplayPhase, SemanticsProjection, TransactionSemanticRecord,
+    AssetEcosystemCategory, AssetEcosystemRecord, CellGalaxy, CellSemanticRecord, ChainAnchor,
+    EnrichmentSourceState, EnrichmentSourceStatus, Mutation, OutPoint, ReplayPhase,
+    SemanticsProjection, TransactionSemanticRecord,
 };
 use cknerv_server::{Adapter, CanonicalContext, EnrichmentSource, ServerBuilder};
 use tokio::sync::{mpsc, watch};
@@ -23,7 +24,10 @@ impl EnrichmentSource for TransactionFixtureSource {
     }
 
     fn capabilities(&self) -> Vec<String> {
-        vec!["transaction_detail".to_string()]
+        vec![
+            "transaction_detail".to_string(),
+            "asset_ecosystem".to_string(),
+        ]
     }
 
     async fn probe(&self, context: &CanonicalContext) -> EnrichmentSourceStatus {
@@ -76,6 +80,31 @@ impl EnrichmentSource for TransactionFixtureSource {
             participants: Vec::new(),
             fee: Some("1000".to_string()),
             cycles: Some(123),
+        }))
+    }
+
+    async fn enrich_asset_ecosystem(
+        &self,
+        context: &CanonicalContext,
+    ) -> anyhow::Result<Option<AssetEcosystemRecord>> {
+        let Some(block) = context.recent_blocks.last() else {
+            return Ok(None);
+        };
+        Ok(Some(AssetEcosystemRecord {
+            source: self.name().to_string(),
+            as_of: ChainAnchor {
+                block: block.number,
+                hash: block.hash.clone(),
+            },
+            updated_at_ms: 1,
+            total_live_capacity_shannons: "100000000000000".to_string(),
+            total_knowledge_bytes: 12_345,
+            capacity_breakdown: vec![AssetEcosystemCategory {
+                category: "dao".to_string(),
+                capacity_shannons: "25000000000000".to_string(),
+                share_bps: 2_500,
+            }],
+            top_assets: Vec::new(),
         }))
     }
 }

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type {
+  AssetEcosystemRecord,
   CellSemanticRecord,
   EnrichmentSourceStatus,
 } from '@cknerv/types';
@@ -25,6 +26,22 @@ function cell(block: number, txHash: string): CellSemanticRecord {
     observed_at_block: block,
     updated_at_ms: block,
     facets: [],
+  };
+}
+
+function ecosystem(block: number): AssetEcosystemRecord {
+  return {
+    source: 'ckbadger',
+    as_of: { block, hash: `0xblock${block}` },
+    updated_at_ms: block,
+    total_live_capacity_shannons: '100000000000000',
+    total_knowledge_bytes: 12345,
+    capacity_breakdown: [{
+      category: 'dao',
+      capacity_shannons: '25000000000000',
+      share_bps: 2500,
+    }],
+    top_assets: [],
   };
 }
 
@@ -53,6 +70,21 @@ describe('semantics reducer', () => {
     ]);
 
     expect([...next.cells.keys()]).toEqual([outPointKey(old.out_point)]);
+  });
+
+  it('replaces and prunes the bounded asset ecosystem independently', () => {
+    const record = ecosystem(10);
+    const seeded = applyRevisionedSemanticsDeltas(emptySemanticsCache(), [{
+      revision: 1,
+      delta: { type: 'asset_ecosystem_replace', asset_ecosystem: record },
+    }]);
+    expect(seeded.assetEcosystem).toBe(record);
+
+    const next = applyRevisionedSemanticsDeltas(seeded, [{
+      revision: 2,
+      delta: { type: 'prune', from_block: 10 },
+    }]);
+    expect(next.assetEcosystem).toBeNull();
   });
 
   it('clear does not erase source health', () => {

@@ -8,8 +8,8 @@
 use async_trait::async_trait;
 
 use cknerv_core::{
-    CellSemanticRecord, EnrichmentSourceStatus, OutPoint, RecentBlock, RecentTx,
-    TransactionSemanticRecord,
+    AssetEcosystemRecord, CellSemanticRecord, EnrichmentSourceStatus, OutPoint, RecentBlock,
+    RecentTx, TransactionSemanticRecord,
 };
 
 /// Bounded canonical evidence supplied to an enrichment source when it
@@ -54,6 +54,16 @@ pub trait EnrichmentSource: Send + Sync + 'static {
         _tx_hash: &str,
         _context: &CanonicalContext,
     ) -> anyhow::Result<Option<TransactionSemanticRecord>> {
+        Ok(None)
+    }
+
+    /// Refresh one bounded whole-chain asset/capacity sample. Sources without
+    /// an efficient aggregate endpoint leave this unsupported; implementations
+    /// must never synthesize it with a per-Cell crawl.
+    async fn enrich_asset_ecosystem(
+        &self,
+        _context: &CanonicalContext,
+    ) -> anyhow::Result<Option<AssetEcosystemRecord>> {
         Ok(None)
     }
 }

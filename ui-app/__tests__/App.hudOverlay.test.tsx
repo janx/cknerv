@@ -104,6 +104,12 @@ describe('HudOverlay wiring', () => {
     expect(APP_SOURCE).toContain('selectedCell && selectedCellSemantics');
   });
 
+  it('routes the bounded optional ecosystem sample only through the HUD', () => {
+    expect(APP_SOURCE).toContain('assetEcosystem={enrichmentConfig.enabled');
+    expect(APP_SOURCE).toContain('? semanticsCache.assetEcosystem');
+    expect(APP_SOURCE).not.toContain('<AssetEcosystemOrbit');
+  });
+
   it('keeps Cell detail selection independent from camera automation', () => {
     const cameraWiring = APP_SOURCE.match(
       /<ConsensusRouteCamera[\s\S]*?\/>/,

@@ -223,6 +223,45 @@ pub struct ChainCensus {
     pub dead_cells: Option<u64>,
 }
 
+/// One exact capacity bucket from a bounded indexed ecosystem sample.
+/// Capacity is encoded in shannons so adapters cannot leak display-unit
+/// rounding into the shared wire contract.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AssetEcosystemCategory {
+    pub category: String,
+    pub capacity_shannons: String,
+    /// Share of total live capacity in basis points (`10_000 == 100%`).
+    pub share_bps: u16,
+}
+
+/// One bounded, index-ranked asset from an ecosystem sample.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AssetEcosystemLeader {
+    pub type_script_hash: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub symbol: Option<String>,
+    pub holders_count: u64,
+    pub total_capacity_shannons: String,
+}
+
+/// Bounded whole-chain asset/capacity context from an optional indexed
+/// source. `as_of` proves chain compatibility; this record never changes the
+/// canonical Cell reservoir or its locally observed counters.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AssetEcosystemRecord {
+    pub source: String,
+    pub as_of: ChainAnchor,
+    pub updated_at_ms: u64,
+    pub total_live_capacity_shannons: String,
+    pub total_knowledge_bytes: u64,
+    #[serde(default)]
+    pub capacity_breakdown: Vec<AssetEcosystemCategory>,
+    #[serde(default)]
+    pub top_assets: Vec<AssetEcosystemLeader>,
+}
+
 /// Source events entering the semantics projection.  They use a separate
 /// server-side pipeline from canonical [`crate::Mutation`] values.
 #[derive(Clone, Debug, PartialEq)]
@@ -231,6 +270,7 @@ pub enum EnrichmentEvent {
     CellUpsert(Box<CellSemanticRecord>),
     TransactionUpsert(Box<TransactionSemanticRecord>),
     CensusReplace(ChainCensus),
+    AssetEcosystemReplace(AssetEcosystemRecord),
     Clear,
 }
 
@@ -241,6 +281,8 @@ pub struct SemanticsSnapshot {
     pub transactions: Vec<TransactionSemanticRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub census: Option<ChainCensus>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asset_ecosystem: Option<AssetEcosystemRecord>,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq)]
@@ -264,6 +306,9 @@ pub enum SemanticsDelta {
     CensusReplace {
         census: ChainCensus,
     },
+    AssetEcosystemReplace {
+        asset_ecosystem: AssetEcosystemRecord,
+    },
     Prune {
         from_block: u64,
     },
@@ -282,6 +327,7 @@ pub struct SemanticsProjection {
     cells: HashMap<OutPoint, (u64, CellSemanticRecord)>,
     transactions: HashMap<String, (u64, TransactionSemanticRecord)>,
     census: Option<ChainCensus>,
+    asset_ecosystem: Option<AssetEcosystemRecord>,
     next_sequence: u64,
     cell_cap: usize,
     transaction_cap: usize,
@@ -298,6 +344,7 @@ impl SemanticsProjection {
             cells: HashMap::new(),
             transactions: HashMap::new(),
             census: None,
+            asset_ecosystem: None,
             next_sequence: 0,
             cell_cap: 512,
             transaction_cap: 2048,
@@ -353,6 +400,7 @@ impl SemanticsProjection {
         self.cells.clear();
         self.transactions.clear();
         self.census = None;
+        self.asset_ecosystem = None;
     }
 
     fn invalidate_source_anchor(&mut self, message: &str) -> Option<SemanticsDelta> {
@@ -405,6 +453,7 @@ impl Projection for SemanticsProjection {
             cells,
             transactions,
             census: self.census.clone(),
+            asset_ecosystem: self.asset_ecosystem.clone(),
         }
     }
 
@@ -422,6 +471,13 @@ impl Projection for SemanticsProjection {
                     .is_some_and(|census| census.as_of.block >= *from_block)
                 {
                     self.census = None;
+                }
+                if self
+                    .asset_ecosystem
+                    .as_ref()
+                    .is_some_and(|ecosystem| ecosystem.as_of.block >= *from_block)
+                {
+                    self.asset_ecosystem = None;
                 }
                 let mut deltas = vec![SemanticsDelta::Prune {
                     from_block: *from_block,
@@ -497,6 +553,12 @@ impl EnrichmentProjection for SemanticsProjection {
                     census: census.clone(),
                 }]
             }
+            EnrichmentEvent::AssetEcosystemReplace(asset_ecosystem) => {
+                self.asset_ecosystem = Some(asset_ecosystem.clone());
+                vec![SemanticsDelta::AssetEcosystemReplace {
+                    asset_ecosystem: asset_ecosystem.clone(),
+                }]
+            }
             EnrichmentEvent::Clear => {
                 self.clear_records();
                 vec![SemanticsDelta::Clear]
@@ -532,6 +594,25 @@ mod tests {
         }
     }
 
+    fn ecosystem(block: u64) -> AssetEcosystemRecord {
+        AssetEcosystemRecord {
+            source: "ckbadger".into(),
+            as_of: ChainAnchor {
+                block,
+                hash: format!("0xblock{block}"),
+            },
+            updated_at_ms: block,
+            total_live_capacity_shannons: "100000000000000".into(),
+            total_knowledge_bytes: 12_345,
+            capacity_breakdown: vec![AssetEcosystemCategory {
+                category: "dao".into(),
+                capacity_shannons: "25000000000000".into(),
+                share_bps: 2_500,
+            }],
+            top_assets: Vec::new(),
+        }
+    }
+
     #[test]
     fn reorg_prunes_only_records_at_or_above_boundary() {
         let mut projection = SemanticsProjection::new(Some(("ckbadger", vec![])));
@@ -563,6 +644,16 @@ mod tests {
 
         assert!(projection.snapshot().cells.is_empty());
         assert!(matches!(deltas[0], SemanticsDelta::Clear));
+    }
+
+    #[test]
+    fn reorg_prunes_asset_ecosystem_at_the_invalidated_anchor() {
+        let mut projection = SemanticsProjection::new(Some(("ckbadger", vec![])));
+        projection.apply_enrichment(&EnrichmentEvent::AssetEcosystemReplace(ecosystem(10)));
+
+        projection.apply_mutation(&Mutation::ChainReorganized { from_block: 10 });
+
+        assert!(projection.snapshot().asset_ecosystem.is_none());
     }
 
     #[test]

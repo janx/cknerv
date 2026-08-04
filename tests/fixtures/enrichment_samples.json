@@ -3,7 +3,7 @@
     "source": {
       "source": "ckbadger",
       "status": "ready",
-      "capabilities": ["cell_detail", "script_identity", "data_analysis", "asset_identity", "transaction_detail", "transaction_lifecycle"],
+      "capabilities": ["cell_detail", "script_identity", "data_analysis", "asset_identity", "asset_ecosystem", "transaction_detail", "transaction_lifecycle"],
       "indexed_tip": 100,
       "lag_blocks": 1,
       "validated_anchor": {
@@ -108,6 +108,42 @@
       "live_cells": 123456,
       "total_cells": 234567,
       "dead_cells": 111111
+    },
+    "asset_ecosystem": {
+      "source": "ckbadger",
+      "as_of": {
+        "block": 100,
+        "hash": "0xblock100"
+      },
+      "updated_at_ms": 1700000000004,
+      "total_live_capacity_shannons": "100000000000000",
+      "total_knowledge_bytes": 12345,
+      "capacity_breakdown": [
+        {
+          "category": "dao",
+          "capacity_shannons": "25000000000000",
+          "share_bps": 2500
+        },
+        {
+          "category": "tokens",
+          "capacity_shannons": "1000050000000",
+          "share_bps": 100
+        },
+        {
+          "category": "other",
+          "capacity_shannons": "73999950000000",
+          "share_bps": 7400
+        }
+      ],
+      "top_assets": [
+        {
+          "type_script_hash": "0x2222222222222222222222222222222222222222222222222222222222222222",
+          "name": "Nervos Test Token",
+          "symbol": "NTT",
+          "holders_count": 42,
+          "total_capacity_shannons": "123450000000"
+        }
+      ]
     }
   },
   "deltas": {
@@ -116,7 +152,7 @@
       "source": {
         "source": "ckbadger",
         "status": "ready",
-        "capabilities": ["cell_detail", "script_identity", "data_analysis", "asset_identity", "transaction_detail", "transaction_lifecycle"],
+        "capabilities": ["cell_detail", "script_identity", "data_analysis", "asset_identity", "asset_ecosystem", "transaction_detail", "transaction_lifecycle"],
         "indexed_tip": 100,
         "lag_blocks": 1,
         "validated_anchor": {
@@ -201,6 +237,45 @@
     "transaction_remove": {
       "type": "transaction_remove",
       "tx_hash": "0xtx100"
+    },
+    "asset_ecosystem_replace": {
+      "type": "asset_ecosystem_replace",
+      "asset_ecosystem": {
+        "source": "ckbadger",
+        "as_of": {
+          "block": 100,
+          "hash": "0xblock100"
+        },
+        "updated_at_ms": 1700000000004,
+        "total_live_capacity_shannons": "100000000000000",
+        "total_knowledge_bytes": 12345,
+        "capacity_breakdown": [
+          {
+            "category": "dao",
+            "capacity_shannons": "25000000000000",
+            "share_bps": 2500
+          },
+          {
+            "category": "tokens",
+            "capacity_shannons": "1000050000000",
+            "share_bps": 100
+          },
+          {
+            "category": "other",
+            "capacity_shannons": "73999950000000",
+            "share_bps": 7400
+          }
+        ],
+        "top_assets": [
+          {
+            "type_script_hash": "0x2222222222222222222222222222222222222222222222222222222222222222",
+            "name": "Nervos Test Token",
+            "symbol": "NTT",
+            "holders_count": 42,
+            "total_capacity_shannons": "123450000000"
+          }
+        ]
+      }
     },
     "prune": {
       "type": "prune",

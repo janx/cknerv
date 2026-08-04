@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::RwLock;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -8,16 +8,18 @@ use reqwest::StatusCode;
 use url::Url;
 
 use cknerv_core::{
-    CellSemanticRecord, ChainAnchor, CommonKnowledgeBreakdown, EnrichmentSourceState,
-    EnrichmentSourceStatus, OutPoint, SemanticAsset, SemanticAttribute, SemanticFacet,
-    SemanticScript, TransactionParticipantSemantic, TransactionSemanticRecord,
+    AssetEcosystemCategory, AssetEcosystemLeader, AssetEcosystemRecord, CellSemanticRecord,
+    ChainAnchor, CommonKnowledgeBreakdown, EnrichmentSourceState, EnrichmentSourceStatus, OutPoint,
+    SemanticAsset, SemanticAttribute, SemanticFacet, SemanticScript,
+    TransactionParticipantSemantic, TransactionSemanticRecord,
 };
 use cknerv_server::{CanonicalContext, EnrichmentSource};
 
 use crate::dto::{
-    BlockResponse, CellDataAnalysis, CellDetailResponse, CommonKnowledgeSizeBreakdown, DaoInfo,
-    LookupScriptsRequest, NetworkStats, ScriptLookupInfo, ScriptLookupResponse, ScriptResponse,
-    TokenResponse, TransactionDetailResponse, TransactionLifecycleResponse,
+    AssetEcosystemResponse, BlockResponse, CellDataAnalysis, CellDetailResponse,
+    CommonKnowledgeSizeBreakdown, DaoInfo, LookupScriptsRequest, NetworkStats, ScriptLookupInfo,
+    ScriptLookupResponse, ScriptResponse, TokenResponse, TransactionDetailResponse,
+    TransactionLifecycleResponse,
 };
 
 const CAPABILITIES: &[&str] = &[
@@ -25,10 +27,15 @@ const CAPABILITIES: &[&str] = &[
     "script_identity",
     "data_analysis",
     "asset_identity",
+    "asset_ecosystem",
     "transaction_detail",
     "transaction_lifecycle",
 ];
 const DEFAULT_MAX_LAG_BLOCKS: u64 = 12;
+const MAX_ECOSYSTEM_CATEGORIES: usize = 16;
+const MAX_ECOSYSTEM_ASSETS: usize = 16;
+const SHANNONS_PER_CKB: u128 = 100_000_000;
+const MAX_WIRE_SAFE_U64: u64 = 9_007_199_254_740_991;
 
 /// Read-only client for a direct or orchestrator-proxied ckbadger API base.
 pub struct CkbadgerEnrichmentSource {
@@ -625,6 +632,159 @@ impl EnrichmentSource for CkbadgerEnrichmentSource {
         self.to_transaction_record(transaction, lifecycle, anchor)
             .map(Some)
     }
+
+    async fn enrich_asset_ecosystem(
+        &self,
+        context: &CanonicalContext,
+    ) -> anyhow::Result<Option<AssetEcosystemRecord>> {
+        let anchor = self.current_anchor(context)?;
+        let url = self.endpoint("statistics/asset-ecosystem")?;
+        let response = self
+            .client
+            .get(url)
+            .send()
+            .await
+            .context("fetch ckbadger asset ecosystem")?;
+        if response.status() == StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        if !response.status().is_success() {
+            return Err(anyhow!(
+                "ckbadger asset ecosystem returned HTTP {}",
+                response.status()
+            ));
+        }
+        let ecosystem: AssetEcosystemResponse = response
+            .json()
+            .await
+            .context("decode ckbadger asset ecosystem")?;
+        map_asset_ecosystem(ecosystem, anchor).map(Some)
+    }
+}
+
+fn map_asset_ecosystem(
+    ecosystem: AssetEcosystemResponse,
+    anchor: ChainAnchor,
+) -> anyhow::Result<AssetEcosystemRecord> {
+    if ecosystem.capacity_breakdown.len() > MAX_ECOSYSTEM_CATEGORIES {
+        return Err(anyhow!(
+            "ckbadger asset ecosystem returned too many capacity categories"
+        ));
+    }
+    if ecosystem.top_tokens.len() > MAX_ECOSYSTEM_ASSETS {
+        return Err(anyhow!(
+            "ckbadger asset ecosystem returned too many top assets"
+        ));
+    }
+
+    let total_live_capacity = ckb_decimal_to_shannons(
+        &ecosystem.total_live_capacity_ckb,
+        "asset ecosystem totalLiveCapacityCkb",
+    )?;
+    let total_knowledge_shannons = ckb_decimal_to_shannons(
+        &ecosystem.total_knowledge_size_ckb,
+        "asset ecosystem totalKnowledgeSizeCkb",
+    )?;
+    if total_knowledge_shannons % SHANNONS_PER_CKB != 0 {
+        return Err(anyhow!(
+            "ckbadger asset ecosystem returned fractional knowledge bytes"
+        ));
+    }
+    if total_knowledge_shannons > total_live_capacity {
+        return Err(anyhow!(
+            "ckbadger asset ecosystem knowledge exceeds total live capacity"
+        ));
+    }
+    let total_knowledge_bytes = u64::try_from(total_knowledge_shannons / SHANNONS_PER_CKB)
+        .context("ckbadger asset ecosystem knowledge size is outside u64")?;
+    wire_safe_u64(
+        total_knowledge_bytes,
+        "asset ecosystem total knowledge bytes",
+    )?;
+
+    let mut category_keys = HashSet::<String>::new();
+    let mut category_capacity_sum = 0u128;
+    let mut category_share_sum = 0u32;
+    let mut capacity_breakdown = Vec::with_capacity(ecosystem.capacity_breakdown.len());
+    for category in ecosystem.capacity_breakdown {
+        let key = nonempty(category.category)
+            .ok_or_else(|| anyhow!("ckbadger asset ecosystem returned an empty category"))?;
+        if !category_keys.insert(key.clone()) {
+            return Err(anyhow!(
+                "ckbadger asset ecosystem returned duplicate category {key}"
+            ));
+        }
+        let capacity = ckb_decimal_to_shannons(
+            &category.capacity_ckb,
+            "asset ecosystem category capacityCkb",
+        )?;
+        category_capacity_sum = category_capacity_sum
+            .checked_add(capacity)
+            .ok_or_else(|| anyhow!("ckbadger asset ecosystem category capacity overflows"))?;
+        let share_bps =
+            percentage_to_bps(&category.percentage, "asset ecosystem category percentage")?;
+        category_share_sum = category_share_sum
+            .checked_add(u32::from(share_bps))
+            .ok_or_else(|| anyhow!("ckbadger asset ecosystem category share overflows"))?;
+        capacity_breakdown.push(AssetEcosystemCategory {
+            category: key,
+            capacity_shannons: capacity.to_string(),
+            share_bps,
+        });
+    }
+    if category_capacity_sum > total_live_capacity {
+        return Err(anyhow!(
+            "ckbadger asset ecosystem categories exceed total live capacity"
+        ));
+    }
+    if category_share_sum > 10_000 {
+        return Err(anyhow!(
+            "ckbadger asset ecosystem category shares exceed 100%"
+        ));
+    }
+
+    let mut asset_hashes = HashSet::<String>::new();
+    let mut top_assets = Vec::with_capacity(ecosystem.top_tokens.len());
+    for asset in ecosystem.top_tokens {
+        if !is_hash32(&asset.type_script_hash) {
+            return Err(anyhow!(
+                "ckbadger asset ecosystem returned an invalid type-script hash"
+            ));
+        }
+        if !asset_hashes.insert(asset.type_script_hash.clone()) {
+            return Err(anyhow!(
+                "ckbadger asset ecosystem returned a duplicate top asset"
+            ));
+        }
+        let capacity = ckb_decimal_to_shannons(
+            &asset.total_capacity_ckb,
+            "asset ecosystem token totalCapacityCkb",
+        )?;
+        if capacity > total_live_capacity {
+            return Err(anyhow!(
+                "ckbadger asset ecosystem asset capacity exceeds total live capacity"
+            ));
+        }
+        let holders_count = nonnegative(asset.holders_count, "asset ecosystem holdersCount")?;
+        wire_safe_u64(holders_count, "asset ecosystem holdersCount")?;
+        top_assets.push(AssetEcosystemLeader {
+            type_script_hash: asset.type_script_hash,
+            name: asset.name.and_then(nonempty),
+            symbol: asset.symbol.and_then(nonempty),
+            holders_count,
+            total_capacity_shannons: capacity.to_string(),
+        });
+    }
+
+    Ok(AssetEcosystemRecord {
+        source: "ckbadger".to_string(),
+        as_of: anchor,
+        updated_at_ms: now_ms(),
+        total_live_capacity_shannons: total_live_capacity.to_string(),
+        total_knowledge_bytes,
+        capacity_breakdown,
+        top_assets,
+    })
 }
 
 struct ParticipantCapacity {
@@ -896,6 +1056,56 @@ fn unsigned_decimal(value: &str, field: &str) -> anyhow::Result<u128> {
         .with_context(|| format!("ckbadger returned invalid {field}"))
 }
 
+fn fixed_decimal_to_scaled(value: &str, scale: usize, field: &str) -> anyhow::Result<u128> {
+    let (whole, fraction) = value.split_once('.').unwrap_or((value, ""));
+    if whole.is_empty()
+        || !whole.as_bytes().iter().all(u8::is_ascii_digit)
+        || !fraction.as_bytes().iter().all(u8::is_ascii_digit)
+        || value.matches('.').count() > 1
+    {
+        return Err(anyhow!("ckbadger returned invalid {field}"));
+    }
+    let (kept_fraction, extra_fraction) = if fraction.len() > scale {
+        fraction.split_at(scale)
+    } else {
+        (fraction, "")
+    };
+    if extra_fraction.bytes().any(|digit| digit != b'0') {
+        return Err(anyhow!("ckbadger returned over-precise {field}"));
+    }
+    let factor = 10u128
+        .checked_pow(u32::try_from(scale).context("decimal scale exceeds u32")?)
+        .ok_or_else(|| anyhow!("decimal scale overflows"))?;
+    let whole = whole
+        .parse::<u128>()
+        .with_context(|| format!("ckbadger returned invalid {field}"))?;
+    let mut padded_fraction = kept_fraction.to_string();
+    padded_fraction.extend(std::iter::repeat_n('0', scale - kept_fraction.len()));
+    let fraction = if padded_fraction.is_empty() {
+        0
+    } else {
+        padded_fraction
+            .parse::<u128>()
+            .with_context(|| format!("ckbadger returned invalid {field}"))?
+    };
+    whole
+        .checked_mul(factor)
+        .and_then(|value| value.checked_add(fraction))
+        .ok_or_else(|| anyhow!("ckbadger {field} overflows"))
+}
+
+fn ckb_decimal_to_shannons(value: &str, field: &str) -> anyhow::Result<u128> {
+    fixed_decimal_to_scaled(value, 8, field)
+}
+
+fn percentage_to_bps(value: &str, field: &str) -> anyhow::Result<u16> {
+    let bps = fixed_decimal_to_scaled(value, 2, field)?;
+    if bps > 10_000 {
+        return Err(anyhow!("ckbadger returned {field} above 100%"));
+    }
+    u16::try_from(bps).with_context(|| format!("ckbadger returned invalid {field}"))
+}
+
 fn signed_capacity(value: &str, field: &str) -> anyhow::Result<i128> {
     value
         .parse::<i128>()
@@ -1088,6 +1298,12 @@ fn nonnegative(value: i64, field: &str) -> anyhow::Result<u64> {
     u64::try_from(value).with_context(|| format!("ckbadger returned negative {field}"))
 }
 
+fn wire_safe_u64(value: u64, field: &str) -> anyhow::Result<u64> {
+    (value <= MAX_WIRE_SAFE_U64)
+        .then_some(value)
+        .ok_or_else(|| anyhow!("ckbadger returned {field} outside the JSON safe-integer range"))
+}
+
 fn is_hash32(value: &str) -> bool {
     value.len() == 66
         && value.starts_with("0x")
@@ -1142,6 +1358,39 @@ mod tests {
                             "hash": hash
                         }))
                     }
+                }),
+            )
+            .route(
+                "/api/v1/statistics/asset-ecosystem",
+                get(|| async {
+                    Json(serde_json::json!({
+                        "topTokens": [{
+                            "typeScriptHash": ASSET_TYPE_HASH,
+                            "name": "Nervos Test Token",
+                            "symbol": "NTT",
+                            "holdersCount": 42,
+                            "totalCapacityCkb": "1234.50000000"
+                        }],
+                        "capacityBreakdown": [
+                            {
+                                "category": "dao",
+                                "capacityCkb": "250000.00000000",
+                                "percentage": "25.00"
+                            },
+                            {
+                                "category": "tokens",
+                                "capacityCkb": "10000.50000000",
+                                "percentage": "1.00"
+                            },
+                            {
+                                "category": "other",
+                                "capacityCkb": "739999.50000000",
+                                "percentage": "74.00"
+                            }
+                        ],
+                        "totalLiveCapacityCkb": "1000000.00000000",
+                        "totalKnowledgeSizeCkb": "12345"
+                    }))
                 }),
             )
             .route(
@@ -1387,6 +1636,22 @@ mod tests {
             .capabilities
             .contains(&"transaction_detail".to_string()));
         assert!(status.capabilities.contains(&"asset_identity".to_string()));
+        assert!(status.capabilities.contains(&"asset_ecosystem".to_string()));
+
+        let ecosystem = source
+            .enrich_asset_ecosystem(&context())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(ecosystem.as_of.block, 100);
+        assert_eq!(ecosystem.total_live_capacity_shannons, "100000000000000");
+        assert_eq!(ecosystem.total_knowledge_bytes, 12_345);
+        assert_eq!(ecosystem.capacity_breakdown[0].share_bps, 2_500);
+        assert_eq!(ecosystem.top_assets[0].holders_count, 42);
+        assert_eq!(
+            ecosystem.top_assets[0].total_capacity_shannons,
+            "123450000000"
+        );
 
         let record = source
             .enrich_cell(
@@ -1487,5 +1752,16 @@ mod tests {
         .unwrap_err();
 
         assert!(error.to_string().contains("totals 102 bytes, expected 101"));
+    }
+
+    #[test]
+    fn fixed_ckb_decimals_convert_without_floating_point() {
+        assert_eq!(
+            ckb_decimal_to_shannons("57763209638.48791674", "capacity").unwrap(),
+            5_776_320_963_848_791_674
+        );
+        assert_eq!(percentage_to_bps("14.50", "share").unwrap(), 1_450);
+        assert!(ckb_decimal_to_shannons("1.000000001", "capacity").is_err());
+        assert!(percentage_to_bps("100.01", "share").is_err());
     }
 }

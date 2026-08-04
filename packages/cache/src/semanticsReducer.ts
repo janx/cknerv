@@ -1,4 +1,5 @@
 import type {
+  AssetEcosystemRecord,
   CellSemanticRecord,
   ChainCensus,
   EnrichmentSourceStatus,
@@ -15,6 +16,7 @@ export interface SemanticsCache {
   cells: Map<string, CellSemanticRecord>;
   transactions: Map<string, TransactionSemanticRecord>;
   census: ChainCensus | null;
+  assetEcosystem: AssetEcosystemRecord | null;
 }
 
 export function outPointKey(outPoint: OutPoint): string {
@@ -32,6 +34,7 @@ export function emptySemanticsCache(): SemanticsCache {
     cells: new Map(),
     transactions: new Map(),
     census: null,
+    assetEcosystem: null,
   };
 }
 
@@ -47,6 +50,7 @@ export function fromSemanticsSnapshot(
       snapshot.transactions.map((transaction) => [transaction.tx_hash, transaction]),
     ),
     census: snapshot.census ?? null,
+    assetEcosystem: snapshot.asset_ecosystem ?? null,
   };
 }
 
@@ -78,6 +82,8 @@ function reduceDelta(prev: SemanticsCache, delta: SemanticsDelta): SemanticsCach
     }
     case 'census_replace':
       return { ...prev, census: delta.census };
+    case 'asset_ecosystem_replace':
+      return { ...prev, assetEcosystem: delta.asset_ecosystem };
     case 'prune': {
       const cells = new Map(
         [...prev.cells].filter(([, cell]) => cell.as_of.block < delta.from_block),
@@ -93,10 +99,21 @@ function reduceDelta(prev: SemanticsCache, delta: SemanticsDelta): SemanticsCach
         prev.census && prev.census.as_of.block >= delta.from_block
           ? null
           : prev.census;
-      return { ...prev, cells, transactions, census };
+      const assetEcosystem =
+        prev.assetEcosystem
+        && prev.assetEcosystem.as_of.block >= delta.from_block
+          ? null
+          : prev.assetEcosystem;
+      return { ...prev, cells, transactions, census, assetEcosystem };
     }
     case 'clear':
-      return { ...prev, cells: new Map(), transactions: new Map(), census: null };
+      return {
+        ...prev,
+        cells: new Map(),
+        transactions: new Map(),
+        census: null,
+        assetEcosystem: null,
+      };
   }
 }
 

@@ -1022,6 +1022,9 @@ export default function App({
         cellCount={cellsCache.cells.size}
         cellCapacity={galaxyConfig.cellCap}
         enrichmentSource={enrichmentConfig.enabled ? semanticsCache.source : undefined}
+        assetEcosystem={enrichmentConfig.enabled
+          ? semanticsCache.assetEcosystem
+          : undefined}
         selectedCell={selectedCell}
         selectedCellSemantics={selectedCellSemantics}
         selectedCellSemanticsPhase={enrichmentConfig.enabled
