@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type {
+  ActivityFeedRecord,
   AssetEcosystemRecord,
   CellSemanticRecord,
   EnrichmentSourceStatus,
@@ -45,6 +46,22 @@ function ecosystem(block: number): AssetEcosystemRecord {
   };
 }
 
+function activityFeed(block: number): ActivityFeedRecord {
+  return {
+    source: 'ckbadger',
+    as_of: { block, hash: `0xblock${block}` },
+    updated_at_ms: block,
+    activities: [{
+      tx_hash: '0xactivity',
+      block,
+      timestamp_ms: block,
+      category: 'script',
+      label: 'Example Script',
+      participant_count: 1,
+    }],
+  };
+}
+
 describe('semantics reducer', () => {
   it('keeps its own revision and upserts selected Cell context', () => {
     const record = cell(10, '0xcell');
@@ -85,6 +102,21 @@ describe('semantics reducer', () => {
       delta: { type: 'prune', from_block: 10 },
     }]);
     expect(next.assetEcosystem).toBeNull();
+  });
+
+  it('replaces and prunes the bounded activity feed independently', () => {
+    const record = activityFeed(10);
+    const seeded = applyRevisionedSemanticsDeltas(emptySemanticsCache(), [{
+      revision: 1,
+      delta: { type: 'activity_feed_replace', activity_feed: record },
+    }]);
+    expect(seeded.activityFeed).toBe(record);
+
+    const next = applyRevisionedSemanticsDeltas(seeded, [{
+      revision: 2,
+      delta: { type: 'prune', from_block: 10 },
+    }]);
+    expect(next.activityFeed).toBeNull();
   });
 
   it('clear does not erase source health', () => {

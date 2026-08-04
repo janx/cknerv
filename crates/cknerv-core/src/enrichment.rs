@@ -262,6 +262,31 @@ pub struct AssetEcosystemRecord {
     pub top_assets: Vec<AssetEcosystemLeader>,
 }
 
+/// One compact transaction signature from a bounded recent-activity feed.
+/// The category and label are display-safe adapter normalizations; raw source
+/// JSON and participant addresses never cross the shared contract.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ActivityFeedItem {
+    pub tx_hash: String,
+    pub block: u64,
+    pub timestamp_ms: u64,
+    pub category: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    pub participant_count: u32,
+}
+
+/// A small, index-ranked view of the newest canonical transaction activity.
+/// This is a sample, not a transaction count or historical activity census.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ActivityFeedRecord {
+    pub source: String,
+    pub as_of: ChainAnchor,
+    pub updated_at_ms: u64,
+    #[serde(default)]
+    pub activities: Vec<ActivityFeedItem>,
+}
+
 /// Source events entering the semantics projection.  They use a separate
 /// server-side pipeline from canonical [`crate::Mutation`] values.
 #[derive(Clone, Debug, PartialEq)]
@@ -271,6 +296,7 @@ pub enum EnrichmentEvent {
     TransactionUpsert(Box<TransactionSemanticRecord>),
     CensusReplace(ChainCensus),
     AssetEcosystemReplace(AssetEcosystemRecord),
+    ActivityFeedReplace(ActivityFeedRecord),
     Clear,
 }
 
@@ -283,6 +309,8 @@ pub struct SemanticsSnapshot {
     pub census: Option<ChainCensus>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub asset_ecosystem: Option<AssetEcosystemRecord>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activity_feed: Option<ActivityFeedRecord>,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq)]
@@ -309,6 +337,9 @@ pub enum SemanticsDelta {
     AssetEcosystemReplace {
         asset_ecosystem: AssetEcosystemRecord,
     },
+    ActivityFeedReplace {
+        activity_feed: ActivityFeedRecord,
+    },
     Prune {
         from_block: u64,
     },
@@ -328,6 +359,7 @@ pub struct SemanticsProjection {
     transactions: HashMap<String, (u64, TransactionSemanticRecord)>,
     census: Option<ChainCensus>,
     asset_ecosystem: Option<AssetEcosystemRecord>,
+    activity_feed: Option<ActivityFeedRecord>,
     next_sequence: u64,
     cell_cap: usize,
     transaction_cap: usize,
@@ -345,6 +377,7 @@ impl SemanticsProjection {
             transactions: HashMap::new(),
             census: None,
             asset_ecosystem: None,
+            activity_feed: None,
             next_sequence: 0,
             cell_cap: 512,
             transaction_cap: 2048,
@@ -401,6 +434,7 @@ impl SemanticsProjection {
         self.transactions.clear();
         self.census = None;
         self.asset_ecosystem = None;
+        self.activity_feed = None;
     }
 
     fn invalidate_source_anchor(&mut self, message: &str) -> Option<SemanticsDelta> {
@@ -454,6 +488,7 @@ impl Projection for SemanticsProjection {
             transactions,
             census: self.census.clone(),
             asset_ecosystem: self.asset_ecosystem.clone(),
+            activity_feed: self.activity_feed.clone(),
         }
     }
 
@@ -478,6 +513,13 @@ impl Projection for SemanticsProjection {
                     .is_some_and(|ecosystem| ecosystem.as_of.block >= *from_block)
                 {
                     self.asset_ecosystem = None;
+                }
+                if self
+                    .activity_feed
+                    .as_ref()
+                    .is_some_and(|feed| feed.as_of.block >= *from_block)
+                {
+                    self.activity_feed = None;
                 }
                 let mut deltas = vec![SemanticsDelta::Prune {
                     from_block: *from_block,
@@ -559,6 +601,12 @@ impl EnrichmentProjection for SemanticsProjection {
                     asset_ecosystem: asset_ecosystem.clone(),
                 }]
             }
+            EnrichmentEvent::ActivityFeedReplace(activity_feed) => {
+                self.activity_feed = Some(activity_feed.clone());
+                vec![SemanticsDelta::ActivityFeedReplace {
+                    activity_feed: activity_feed.clone(),
+                }]
+            }
             EnrichmentEvent::Clear => {
                 self.clear_records();
                 vec![SemanticsDelta::Clear]
@@ -613,6 +661,25 @@ mod tests {
         }
     }
 
+    fn activity_feed(block: u64) -> ActivityFeedRecord {
+        ActivityFeedRecord {
+            source: "ckbadger".into(),
+            as_of: ChainAnchor {
+                block,
+                hash: format!("0xblock{block}"),
+            },
+            updated_at_ms: block,
+            activities: vec![ActivityFeedItem {
+                tx_hash: "0xactivity".into(),
+                block,
+                timestamp_ms: block,
+                category: "script".into(),
+                label: Some("Example Script".into()),
+                participant_count: 1,
+            }],
+        }
+    }
+
     #[test]
     fn reorg_prunes_only_records_at_or_above_boundary() {
         let mut projection = SemanticsProjection::new(Some(("ckbadger", vec![])));
@@ -647,13 +714,15 @@ mod tests {
     }
 
     #[test]
-    fn reorg_prunes_asset_ecosystem_at_the_invalidated_anchor() {
+    fn reorg_prunes_aggregate_records_at_the_invalidated_anchor() {
         let mut projection = SemanticsProjection::new(Some(("ckbadger", vec![])));
         projection.apply_enrichment(&EnrichmentEvent::AssetEcosystemReplace(ecosystem(10)));
+        projection.apply_enrichment(&EnrichmentEvent::ActivityFeedReplace(activity_feed(10)));
 
         projection.apply_mutation(&Mutation::ChainReorganized { from_block: 10 });
 
         assert!(projection.snapshot().asset_ecosystem.is_none());
+        assert!(projection.snapshot().activity_feed.is_none());
     }
 
     #[test]

@@ -96,6 +96,10 @@ available. A deterministically decoded UDT Cell should additionally include an
 `asset` with the same type-script hash plus its exact raw amount and available
 standard/name/symbol/decimals. The semantics snapshot should then contain both
 records without changing the chain snapshot revision.
+Once the source is ready, the semantics snapshot should also gain an
+`activity_feed` containing at most eight newest-first, anchor-bounded compact
+signatures. It is refreshed independently and must not contain participant
+addresses or arbitrary protocol metadata.
 
 Each route emits a `{"kind":"heartbeat","revision":N}` frame after roughly
 five seconds without a data frame. A heartbeat confirms browser transport
@@ -222,6 +226,10 @@ With a local ckbadger service configured:
 - [ ] The top strip shows `CKBADGER` with ready/syncing/stale state and lag
 - [ ] Once ready, the semantics snapshot gains `asset_ecosystem` with exact
       shannon capacities, byte knowledge size, and basis-point shares
+- [ ] The semantics snapshot gains an `activity_feed` of at most eight
+      newest-first entries whose blocks do not exceed its validated anchor
+- [ ] `COMMON KNOWLEDGE BASE` shows a separately labeled
+      `INDEXED ACTIVITY · LATEST N` fingerprint and recent activity rows
 - [ ] `CELL MESH` shows a separately labeled `INDEXED CHAIN CAPACITY` bar and
       bounded top-asset list; retained Cell taxonomy/counts remain unchanged
 - [ ] A same-height block hash mismatch shows `INCOMPATIBLE`; chain/cells keep moving
@@ -234,7 +242,7 @@ With a local ckbadger service configured:
 - [ ] Stopping ckbadger changes only the optional source state; the galaxy,
       chain stream, cells stream, and required bootstrap remain operational
 - [ ] Removing `[ckbadger]` restores the original HUD with no source chip or
-      indexed-context/ecosystem section and requires no prune
+      indexed-context/ecosystem/activity section and requires no prune
 
 ## Canonical correction checklist (disposable devnet or mock only)
 

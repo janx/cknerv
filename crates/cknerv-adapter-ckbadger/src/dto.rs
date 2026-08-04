@@ -39,6 +39,48 @@ pub(crate) struct AssetEcosystemCategory {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct LatestActivityResponse {
+    pub tx_hash: String,
+    pub block_number: i64,
+    pub timestamp: String,
+    pub is_cellbase: bool,
+    #[serde(default)]
+    pub protocol_actions: Vec<ActivityProtocolAction>,
+    #[serde(default)]
+    pub type_calls: Vec<ActivityScriptCall>,
+    #[serde(default)]
+    pub lock_calls: Vec<ActivityScriptCall>,
+    #[serde(default)]
+    pub participants: Vec<ActivityParticipant>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ActivityProtocolAction {
+    pub protocol: String,
+    pub action: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ActivityScriptCall {
+    pub script_name: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ActivityParticipant {
+    #[serde(default)]
+    pub item_deltas: Vec<ActivityItemDelta>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct ActivityItemDelta {
+    pub kind: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct SyncStatus {
     pub is_syncing: bool,
     pub synced_block: i64,

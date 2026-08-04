@@ -6,9 +6,9 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use cknerv_core::{
-    AssetEcosystemCategory, AssetEcosystemRecord, CellGalaxy, CellSemanticRecord, ChainAnchor,
-    EnrichmentSourceState, EnrichmentSourceStatus, Mutation, OutPoint, ReplayPhase,
-    SemanticsProjection, TransactionSemanticRecord,
+    ActivityFeedItem, ActivityFeedRecord, AssetEcosystemCategory, AssetEcosystemRecord, CellGalaxy,
+    CellSemanticRecord, ChainAnchor, EnrichmentSourceState, EnrichmentSourceStatus, Mutation,
+    OutPoint, ReplayPhase, SemanticsProjection, TransactionSemanticRecord,
 };
 use cknerv_server::{Adapter, CanonicalContext, EnrichmentSource, ServerBuilder};
 use tokio::sync::{mpsc, watch};
@@ -27,6 +27,7 @@ impl EnrichmentSource for TransactionFixtureSource {
         vec![
             "transaction_detail".to_string(),
             "asset_ecosystem".to_string(),
+            "activity_feed".to_string(),
         ]
     }
 
@@ -105,6 +106,31 @@ impl EnrichmentSource for TransactionFixtureSource {
                 share_bps: 2_500,
             }],
             top_assets: Vec::new(),
+        }))
+    }
+
+    async fn enrich_activity_feed(
+        &self,
+        context: &CanonicalContext,
+    ) -> anyhow::Result<Option<ActivityFeedRecord>> {
+        let Some(block) = context.recent_blocks.last() else {
+            return Ok(None);
+        };
+        Ok(Some(ActivityFeedRecord {
+            source: self.name().to_string(),
+            as_of: ChainAnchor {
+                block: block.number,
+                hash: block.hash.clone(),
+            },
+            updated_at_ms: 1,
+            activities: vec![ActivityFeedItem {
+                tx_hash: format!("0x{}", "22".repeat(32)),
+                block: block.number,
+                timestamp_ms: 1,
+                category: "transfer".to_string(),
+                label: None,
+                participant_count: 2,
+            }],
         }))
     }
 }

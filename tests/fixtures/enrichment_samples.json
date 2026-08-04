@@ -3,7 +3,7 @@
     "source": {
       "source": "ckbadger",
       "status": "ready",
-      "capabilities": ["cell_detail", "script_identity", "data_analysis", "asset_identity", "asset_ecosystem", "transaction_detail", "transaction_lifecycle"],
+      "capabilities": ["cell_detail", "script_identity", "data_analysis", "asset_identity", "asset_ecosystem", "activity_feed", "transaction_detail", "transaction_lifecycle"],
       "indexed_tip": 100,
       "lag_blocks": 1,
       "validated_anchor": {
@@ -144,6 +144,31 @@
           "total_capacity_shannons": "123450000000"
         }
       ]
+    },
+    "activity_feed": {
+      "source": "ckbadger",
+      "as_of": {
+        "block": 100,
+        "hash": "0xblock100"
+      },
+      "updated_at_ms": 1700000000005,
+      "activities": [
+        {
+          "tx_hash": "0x4444444444444444444444444444444444444444444444444444444444444444",
+          "block": 100,
+          "timestamp_ms": 1700000000000,
+          "category": "dao",
+          "label": "dao · deposit",
+          "participant_count": 1
+        },
+        {
+          "tx_hash": "0x5555555555555555555555555555555555555555555555555555555555555555",
+          "block": 99,
+          "timestamp_ms": 1699999999000,
+          "category": "token",
+          "participant_count": 2
+        }
+      ]
     }
   },
   "deltas": {
@@ -152,7 +177,7 @@
       "source": {
         "source": "ckbadger",
         "status": "ready",
-        "capabilities": ["cell_detail", "script_identity", "data_analysis", "asset_identity", "asset_ecosystem", "transaction_detail", "transaction_lifecycle"],
+        "capabilities": ["cell_detail", "script_identity", "data_analysis", "asset_identity", "asset_ecosystem", "activity_feed", "transaction_detail", "transaction_lifecycle"],
         "indexed_tip": 100,
         "lag_blocks": 1,
         "validated_anchor": {
@@ -273,6 +298,34 @@
             "symbol": "NTT",
             "holders_count": 42,
             "total_capacity_shannons": "123450000000"
+          }
+        ]
+      }
+    },
+    "activity_feed_replace": {
+      "type": "activity_feed_replace",
+      "activity_feed": {
+        "source": "ckbadger",
+        "as_of": {
+          "block": 100,
+          "hash": "0xblock100"
+        },
+        "updated_at_ms": 1700000000005,
+        "activities": [
+          {
+            "tx_hash": "0x4444444444444444444444444444444444444444444444444444444444444444",
+            "block": 100,
+            "timestamp_ms": 1700000000000,
+            "category": "dao",
+            "label": "dao · deposit",
+            "participant_count": 1
+          },
+          {
+            "tx_hash": "0x5555555555555555555555555555555555555555555555555555555555555555",
+            "block": 99,
+            "timestamp_ms": 1699999999000,
+            "category": "token",
+            "participant_count": 2
           }
         ]
       }

@@ -1025,6 +1025,9 @@ export default function App({
         assetEcosystem={enrichmentConfig.enabled
           ? semanticsCache.assetEcosystem
           : undefined}
+        activityFeed={enrichmentConfig.enabled
+          ? semanticsCache.activityFeed
+          : undefined}
         selectedCell={selectedCell}
         selectedCellSemantics={selectedCellSemantics}
         selectedCellSemanticsPhase={enrichmentConfig.enabled

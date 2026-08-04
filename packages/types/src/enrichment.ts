@@ -141,12 +141,30 @@ export interface AssetEcosystemRecord {
   top_assets: AssetEcosystemLeader[];
 }
 
+export interface ActivityFeedItem {
+  tx_hash: string;
+  block: number;
+  timestamp_ms: number;
+  category: string;
+  label?: string;
+  participant_count: number;
+}
+
+/** Explicitly bounded newest-activity sample, not a historical census. */
+export interface ActivityFeedRecord {
+  source: string;
+  as_of: ChainAnchor;
+  updated_at_ms: number;
+  activities: ActivityFeedItem[];
+}
+
 export interface SemanticsSnapshot {
   source: EnrichmentSourceStatus;
   cells: CellSemanticRecord[];
   transactions: TransactionSemanticRecord[];
   census?: ChainCensus;
   asset_ecosystem?: AssetEcosystemRecord;
+  activity_feed?: ActivityFeedRecord;
 }
 
 export type SemanticsDelta =
@@ -157,6 +175,7 @@ export type SemanticsDelta =
   | { type: 'transaction_remove'; tx_hash: string }
   | { type: 'census_replace'; census: ChainCensus }
   | { type: 'asset_ecosystem_replace'; asset_ecosystem: AssetEcosystemRecord }
+  | { type: 'activity_feed_replace'; activity_feed: ActivityFeedRecord }
   | { type: 'prune'; from_block: number }
   | { type: 'clear' };
 

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 import type {
+  ActivityFeedRecord,
   AssetEcosystemRecord,
   ChainEntry,
   Peer,
@@ -72,7 +73,7 @@ const MESH_RAIL_STYLE: CSSProperties = { position: 'absolute', top: 42, right: 1
 const MESH_ZONE_COL: CSSProperties = { display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'flex-end' };
 const PANEL_FLOW: CSSProperties = { position: 'relative' };
 
-export default function HudOverlay({ chain, peers, localNode, cellsStats, cellCount, cellCapacity, enrichmentSource, assetEcosystem, selectedCell, selectedCellSemantics, selectedCellSemanticsPhase, selectedCellSemanticsMessage, selectedTransactionSemantics, selectedTransactionSemanticsPhase, selectedTransactionSemanticsMessage, cellRecordsById, recentCellLinks, cellCausalLens, cellCausalNavigation, tracedCellWriteSeq, cellTraceSource, cellTraceReadout, cellTraceResponseRef, cellTraceEvidenceFocusSourceId, cellTraceEvidencePreviewSourceId, onCellTraceEvidenceFocusChange, cellTraceRouteHopFocus, onCellTraceRouteHopFocusChange, cellTraceRouteHopLock, onCellTraceRouteHopLockChange, cellIdentityProofBinding, onTraceCellWrite, onCellIdentityProofRead, selectedNode, selectedPeer, onClearSelection, onClearCell, onClearNet, backfill, streamHealth, build, topBarActions, colonyCount }: {
+export default function HudOverlay({ chain, peers, localNode, cellsStats, cellCount, cellCapacity, enrichmentSource, assetEcosystem, activityFeed, selectedCell, selectedCellSemantics, selectedCellSemanticsPhase, selectedCellSemanticsMessage, selectedTransactionSemantics, selectedTransactionSemanticsPhase, selectedTransactionSemanticsMessage, cellRecordsById, recentCellLinks, cellCausalLens, cellCausalNavigation, tracedCellWriteSeq, cellTraceSource, cellTraceReadout, cellTraceResponseRef, cellTraceEvidenceFocusSourceId, cellTraceEvidencePreviewSourceId, onCellTraceEvidenceFocusChange, cellTraceRouteHopFocus, onCellTraceRouteHopFocusChange, cellTraceRouteHopLock, onCellTraceRouteHopLockChange, cellIdentityProofBinding, onTraceCellWrite, onCellIdentityProofRead, selectedNode, selectedPeer, onClearSelection, onClearCell, onClearNet, backfill, streamHealth, build, topBarActions, colonyCount }: {
   chain: ChainEntry; peers: Peer[]; localNode: ChainNode | undefined; cellsStats: CellsStats;
   /** Records available to CellGalaxy before the top-bar display cap. */
   cellCount?: number;
@@ -80,6 +81,7 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats, cellCo
   cellCapacity?: number;
   enrichmentSource?: EnrichmentSourceStatus;
   assetEcosystem?: AssetEcosystemRecord | null;
+  activityFeed?: ActivityFeedRecord | null;
   selectedCell?: Cell | null;
   selectedCellSemantics?: CellSemanticRecord | null;
   selectedCellSemanticsPhase?: CellSemanticsPhase;
@@ -233,7 +235,12 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats, cellCo
         <StreamHealthBanner summary={streamSummary} reducedMotion={reduced} />
       ) : null}
       <WarningBar level={alert.level} trigger={alert.trigger} reducedMotion={reduced} top={streamInterrupted ? 60 : 30} />
-      <BlockchainReadout chain={chain} style={{ left: 14, top: contentTop }} />
+      <BlockchainReadout
+        chain={chain}
+        enrichmentSource={enrichmentSource}
+        activityFeed={activityFeed}
+        style={{ left: 14, top: contentTop }}
+      />
       {/* MESH RAIL — the two mesh panels juxtaposed as a pair, each with its
           detail docked alongside. CELL zone (galaxy) over PEER zone (colony);
           within a zone the selected entity's detail fans LEFT of its own mesh.

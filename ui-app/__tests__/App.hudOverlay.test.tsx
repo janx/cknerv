@@ -110,6 +110,12 @@ describe('HudOverlay wiring', () => {
     expect(APP_SOURCE).not.toContain('<AssetEcosystemOrbit');
   });
 
+  it('routes the bounded optional activity feed only through the HUD', () => {
+    expect(APP_SOURCE).toContain('activityFeed={enrichmentConfig.enabled');
+    expect(APP_SOURCE).toContain('? semanticsCache.activityFeed');
+    expect(APP_SOURCE).not.toContain('<ActivityFeedOrbit');
+  });
+
   it('keeps Cell detail selection independent from camera automation', () => {
     const cameraWiring = APP_SOURCE.match(
       /<ConsensusRouteCamera[\s\S]*?\/>/,

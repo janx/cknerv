@@ -61,6 +61,7 @@ export * from './derives/cellVisual.derive';
 export * from './derives/cellInteraction.derive';
 export * from './derives/cellSemantics.derive';
 export * from './derives/assetEcosystem.derive';
+export * from './derives/activityFeed.derive';
 export * from './derives/cellConsensusIdentity.derive';
 export * from './derives/cellCausalLens.derive';
 export * from './derives/cellCausalLabel.derive';
@@ -152,6 +153,7 @@ export {
   type CellSemanticsPhase,
 } from './components/hud/CellSemanticsReadout';
 export { default as AssetEcosystemReadout } from './components/hud/AssetEcosystemReadout';
+export { default as ActivityFeedReadout } from './components/hud/ActivityFeedReadout';
 export type {
   CellCausalNavigationReadout,
 } from './components/hud/CellCausalLensReadout';

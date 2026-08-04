@@ -1,4 +1,5 @@
 import type {
+  ActivityFeedRecord,
   AssetEcosystemRecord,
   CellSemanticRecord,
   ChainCensus,
@@ -17,6 +18,7 @@ export interface SemanticsCache {
   transactions: Map<string, TransactionSemanticRecord>;
   census: ChainCensus | null;
   assetEcosystem: AssetEcosystemRecord | null;
+  activityFeed: ActivityFeedRecord | null;
 }
 
 export function outPointKey(outPoint: OutPoint): string {
@@ -35,6 +37,7 @@ export function emptySemanticsCache(): SemanticsCache {
     transactions: new Map(),
     census: null,
     assetEcosystem: null,
+    activityFeed: null,
   };
 }
 
@@ -51,6 +54,7 @@ export function fromSemanticsSnapshot(
     ),
     census: snapshot.census ?? null,
     assetEcosystem: snapshot.asset_ecosystem ?? null,
+    activityFeed: snapshot.activity_feed ?? null,
   };
 }
 
@@ -84,6 +88,8 @@ function reduceDelta(prev: SemanticsCache, delta: SemanticsDelta): SemanticsCach
       return { ...prev, census: delta.census };
     case 'asset_ecosystem_replace':
       return { ...prev, assetEcosystem: delta.asset_ecosystem };
+    case 'activity_feed_replace':
+      return { ...prev, activityFeed: delta.activity_feed };
     case 'prune': {
       const cells = new Map(
         [...prev.cells].filter(([, cell]) => cell.as_of.block < delta.from_block),
@@ -104,7 +110,19 @@ function reduceDelta(prev: SemanticsCache, delta: SemanticsDelta): SemanticsCach
         && prev.assetEcosystem.as_of.block >= delta.from_block
           ? null
           : prev.assetEcosystem;
-      return { ...prev, cells, transactions, census, assetEcosystem };
+      const activityFeed =
+        prev.activityFeed
+        && prev.activityFeed.as_of.block >= delta.from_block
+          ? null
+          : prev.activityFeed;
+      return {
+        ...prev,
+        cells,
+        transactions,
+        census,
+        assetEcosystem,
+        activityFeed,
+      };
     }
     case 'clear':
       return {
@@ -113,6 +131,7 @@ function reduceDelta(prev: SemanticsCache, delta: SemanticsDelta): SemanticsCach
         transactions: new Map(),
         census: null,
         assetEcosystem: null,
+        activityFeed: null,
       };
   }
 }

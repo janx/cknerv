@@ -137,8 +137,11 @@ describe('wire-shape parity (TS twin of cknerv-core)', () => {
     expect(sample.snapshot.cells[0].common_knowledge?.total_bytes).toBe(102);
     expect(sample.snapshot.asset_ecosystem?.capacity_breakdown[0].share_bps).toBe(2500);
     expect(sample.snapshot.asset_ecosystem?.top_assets[0].symbol).toBe('NTT');
+    expect(sample.snapshot.activity_feed?.activities[0].category).toBe('dao');
+    expect(sample.snapshot.activity_feed?.activities[1].participant_count).toBe(2);
     expect(sample.deltas.cell_upsert.type).toBe('cell_upsert');
     expect(sample.deltas.asset_ecosystem_replace.type).toBe('asset_ecosystem_replace');
+    expect(sample.deltas.activity_feed_replace.type).toBe('activity_feed_replace');
     expect(sample.deltas.prune).toEqual({ type: 'prune', from_block: 100 });
   });
 });
