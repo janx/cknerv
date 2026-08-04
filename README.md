@@ -122,7 +122,7 @@ availability.
 | CLI | Rust, clap, rust-embed | Workdir commands, config merge, embedded dashboard server |
 | Server | Rust, axum, tokio | HTTP/WS API, mutation reducer, projection registry, persistence |
 | CKB adapter | Rust, reqwest, CKB JSON-RPC types | Read-only node polling, boot backfill, block/tx normalization |
-| ckbadger enrichment | Rust, reqwest | Optional indexed Cell/script/asset, origin-transaction, fixed DAO state, bounded ecosystem/activity, and network-crawler context with canonical-anchor validation |
+| ckbadger enrichment | Rust, reqwest | Optional indexed Cell/script/asset, origin-transaction, recent-fork, fixed DAO, bounded ecosystem/activity, and network-crawler context with canonical-anchor validation |
 | Types/cache | TypeScript, Vitest | Wire-type twins, pure reducers, WebSocket clients |
 | UI | React 18, Vite, React Three Fiber, drei, three.js | 3D cell galaxy, HUDs, cell-life detail panels, nerve overlays |
 
@@ -193,7 +193,7 @@ contracts remain normalized and source-agnostic.
 | `crates/cknerv-core/` | Chain-generic wire types, `Mutation`, `Projection`, `CellGalaxy`, deterministic helix positioning, and bounded replay ring. |
 | `crates/cknerv-server/` | axum HTTP/WS server, `Adapter` trait, `ServerBuilder`, entity store, projection registry, replay streams, and persistence. |
 | `crates/cknerv-adapter-ckb/` | `CkbDirectAdapter`: read-only CKB JSON-RPC polling, boot backfill, block/tx normalization, content hash parity. |
-| `crates/cknerv-adapter-ckbadger/` | Optional `EnrichmentSource`: ckbadger health/lag probing, canonical block-hash validation, lazy Cell/script/asset semantics, fixed DAO state, bounded ecosystem/activity samples, and privacy-preserving network-crawler aggregates. |
+| `crates/cknerv-adapter-ckbadger/` | Optional `EnrichmentSource`: ckbadger health/lag probing, canonical block-hash validation, lazy Cell/script/asset semantics, fixed fork/DAO state, bounded ecosystem/activity samples, and privacy-preserving network-crawler aggregates. |
 | `crates/cknerv-cli/` | `cknerv` binary, clap CLI, config/workdir commands, embedded SPA serving, runtime config injection, browser auto-open. |
 | `packages/types/` | `@cknerv/types`: TypeScript twins of the Rust wire shapes. |
 | `packages/cache/` | `@cknerv/cache`: pure reducers plus entity/projection WebSocket clients. |
@@ -227,7 +227,7 @@ fall back to the SPA.
 | `WS` | `/api/entities/chain/stream?since=<rev>` | snapshot, delta, lagged, or heartbeat frames |
 | `GET` | `/api/projections/cells/snapshot` | `{ revision, snapshot }` where `snapshot.cells` is the live cell set |
 | `WS` | `/api/projections/cells/stream?since=<rev>` | snapshot, delta, lagged, or heartbeat frames |
-| `GET` | `/api/projections/semantics/snapshot` | Optional source health plus bounded Cell/transaction, asset-ecosystem, fixed DAO-state, recent-activity, and network-atlas semantics; present even when disabled |
+| `GET` | `/api/projections/semantics/snapshot` | Optional source health plus bounded Cell/transaction, asset-ecosystem, fork-watch, fixed DAO-state, recent-activity, and network-atlas semantics; present even when disabled |
 | `WS` | `/api/projections/semantics/stream?since=<rev>` | Independent optional semantics snapshot/delta stream |
 | `GET` | `/api/enrichment/cells/:tx_hash/:output_index` | Lazily resolve one selected Cell through the configured source; `404 enrichment_disabled` when absent |
 | `GET` | `/api/enrichment/transactions/:tx_hash` | Lazily resolve that Cell's origin transaction, participant capacity deltas, and proposal/commit lifecycle |
@@ -278,6 +278,24 @@ source proof, and dims when the source is stale or three minute refreshes have
 been missed. DAO refresh errors remain isolated from canonical data and every
 other enrichment capability.
 
+When ckbadger advertises `fork_watch`, cknerv refreshes its fixed-shape
+`forks/recent` response at most once every 15 seconds. Only the newest persisted
+event inside ckbadger's explicit recent window and the matching active
+deep-fork status cross the adapter boundary. An ordinary event's fork point and
+new canonical tip must be covered by the block/hash anchor already proven by
+cknerv; its old orphaned tip may be higher. Because an active deep fork makes
+the indexed database incompatible by definition, that one diagnostic is
+instead admitted only when ckbadger's reported live-chain tip/hash exactly
+matches cknerv's retained canonical evidence. All other incompatible-source
+semantics remain cleared. `COMMON KNOWLEDGE BASE` renders the result directly
+below the canonical `Reorgs` count as a
+separately labeled **INDEXED FORK WATCH** with clear, recent, recent-deep, or
+active-deep state. This historical/indexed context never increments the
+canonical counter, triggers rollback, changes chain revision, or creates scene
+objects. It disappears with an unusable anchor and dims when the source is
+stale or its own refresh is more than 45 seconds old. Fork-watch failures stay
+isolated from canonical data and every other enrichment capability.
+
 When ckbadger advertises `activity_feed`, cknerv also requests exactly eight
 entries from its bounded latest-activity endpoint at most once every 15
 seconds. The adapter validates newest-first block order, canonical-anchor
@@ -288,10 +306,12 @@ cross the wire boundary. If the chain advances between probe and fetch, the
 unanchored leading prefix is withheld until a later probe proves its block
 hash. `COMMON KNOWLEDGE BASE` renders the sample as a
 separately labeled **INDEXED ACTIVITY · LATEST N** fingerprint plus four recent
-rows. It is not a global activity distribution: it disappears with an unusable
-anchor and dims when the source is stale or its own refresh is more than 45
-seconds old. Refresh failures remain isolated from every canonical route and
-from the other enrichment capabilities.
+rows. On viewports at most 860 pixels high, the category fingerprint remains
+while those rows fold away so the left rail cannot overlap the pulse panel. It
+is not a global activity distribution: it disappears with an unusable anchor
+and dims when the source is stale or its own refresh is more than 45 seconds
+old. Refresh failures remain isolated from every canonical route and from the
+other enrichment capabilities.
 
 When ckbadger advertises `network_atlas`, cknerv checks its crawler summary at
 most once every 60 seconds. A usable crawl triggers exactly one
@@ -505,8 +525,8 @@ twin, the fixtures, and both sides of the tests together.
   DAO/code-cell context, occupied-capacity composition, deterministic UDT
   amount plus token identity, the selected Cell's origin-transaction
   detail/lifecycle, the bounded asset-ecosystem aggregate, fixed-shape DAO
-  statistics, an explicitly eight-entry latest-activity sample, and a
-  latest-64 network-crawler sample.
+  statistics, the fixed recent/deep-fork monitor, an explicitly eight-entry
+  latest-activity sample, and a latest-64 network-crawler sample.
   Transaction
   participants expose exact capacity deltas only when every attributed
   input/output includes capacity. Selected-transaction protocol activities and
@@ -519,7 +539,9 @@ twin, the fixtures, and both sides of the tests together.
   cumulative and unbounded rather than a fixed-size current view. The 24-hour
   activity summary is not polled either: although its hourly window is fixed,
   its `scriptCounts` map has no explicit entry bound. cknerv uses the separately
-  bounded latest-activity endpoint instead.
+  bounded latest-activity endpoint instead. Fiber aggregate statistics are not
+  polled because the current endpoint scans every indexed channel per request;
+  cknerv can add them when ckbadger exposes a pre-aggregated bounded singleton.
 
 ## License
 

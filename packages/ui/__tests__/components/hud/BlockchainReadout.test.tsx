@@ -5,6 +5,7 @@ import type {
   ChainEntry,
   DaoStateRecord,
   EnrichmentSourceStatus,
+  ForkWatchRecord,
 } from '@cknerv/types';
 import BlockchainReadout from '../../../src/components/hud/BlockchainReadout';
 
@@ -21,7 +22,7 @@ const chain: ChainEntry = {
 const source: EnrichmentSourceStatus = {
   source: 'ckbadger',
   status: 'ready',
-  capabilities: ['dao_state', 'activity_feed'],
+  capabilities: ['dao_state', 'activity_feed', 'fork_watch'],
   validated_anchor: { block: 100, hash: '0xblock100' },
 };
 
@@ -63,6 +64,23 @@ const daoState: DaoStateRecord = {
   depositors_change_24h: 5,
 };
 
+const forkWatch: ForkWatchRecord = {
+  source: 'ckbadger',
+  as_of: { block: 100, hash: '0xblock100' },
+  updated_at_ms: Date.now(),
+  recent_window_seconds: 86_400,
+  recent_reorg: {
+    detected_at_ms: Date.now() - 30 * 60 * 1_000 - 5_000,
+    fork_point: 97,
+    old_tip: 98,
+    new_tip: 99,
+    depth: 1,
+    orphaned_blocks: 1,
+    orphaned_transactions: 3,
+    kind: 'reorg',
+  },
+};
+
 describe('BlockchainReadout', () => {
   it('renders the tip and key chain stats', () => {
     const { container } = render(<BlockchainReadout chain={chain} />);
@@ -71,8 +89,27 @@ describe('BlockchainReadout', () => {
     expect(container.textContent).toContain('312 · 64');
     expect(container.textContent).toContain('COMMON KNOWLEDGE BASE');
     expect(container.textContent).toContain('共识记忆');
+    expect(container.textContent).not.toContain('INDEXED FORK WATCH');
     expect(container.textContent).not.toContain('INDEXED NERVOS DAO');
     expect(container.textContent).not.toContain('INDEXED ACTIVITY');
+  });
+
+  it('renders optional recent fork history without changing canonical reorgs', () => {
+    const { container } = render(
+      <BlockchainReadout
+        chain={chain}
+        enrichmentSource={source}
+        forkWatch={forkWatch}
+      />,
+    );
+    const text = container.textContent ?? '';
+    expect(text).toContain('Reorgs0');
+    expect(text).toContain('INDEXED FORK WATCH · RECENT REORG');
+    expect(text).toContain('24H WINDOW · ANCHOR #100');
+    expect(text).toContain('30m ago');
+    expect(text).toContain('#98 → #99');
+    expect(text).toContain('1 blk · 3 tx');
+    expect(container.querySelector('[data-fork-watch-signal="recent"]')).not.toBeNull();
   });
 
   it('renders optional fixed-shape DAO context without inventing a ratio', () => {
@@ -111,5 +148,21 @@ describe('BlockchainReadout', () => {
     expect(container.querySelector<HTMLElement>(
       '[data-activity-category="script"]',
     )?.style.width).toBe('50%');
+  });
+
+  it('keeps the activity fingerprint but folds rows in a short viewport', () => {
+    const { container } = render(
+      <BlockchainReadout
+        chain={chain}
+        enrichmentSource={source}
+        activityFeed={activityFeed}
+        compactActivity
+      />,
+    );
+    const text = container.textContent ?? '';
+    expect(text).toContain('INDEXED ACTIVITY · LATEST 2 · #100');
+    expect(text).toContain('SCRIPT 1 · CKB 1');
+    expect(text).not.toContain('.bit Time Info');
+    expect(container.querySelector('[data-activity-feed-compact="true"]')).not.toBeNull();
   });
 });

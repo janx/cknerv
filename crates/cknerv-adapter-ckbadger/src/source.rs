@@ -10,8 +10,9 @@ use url::Url;
 use cknerv_core::{
     ActivityFeedItem, ActivityFeedRecord, AssetEcosystemCategory, AssetEcosystemLeader,
     AssetEcosystemRecord, CellSemanticRecord, ChainAnchor, CommonKnowledgeBreakdown,
-    DaoStateRecord, EnrichmentSourceState, EnrichmentSourceStatus, NetworkAtlasBucket,
-    NetworkAtlasRecord, OutPoint, SemanticAsset, SemanticAttribute, SemanticFacet, SemanticScript,
+    DaoStateRecord, EnrichmentSourceState, EnrichmentSourceStatus, ForkWatchDeepFork,
+    ForkWatchEventKind, ForkWatchRecord, ForkWatchReorg, NetworkAtlasBucket, NetworkAtlasRecord,
+    OutPoint, SemanticAsset, SemanticAttribute, SemanticFacet, SemanticScript,
     TransactionParticipantSemantic, TransactionSemanticRecord,
 };
 use cknerv_server::{CanonicalContext, EnrichmentSource};
@@ -20,8 +21,8 @@ use crate::dto::{
     AssetEcosystemResponse, BlockResponse, CellDataAnalysis, CellDetailResponse,
     CommonKnowledgeSizeBreakdown, DaoInfo, DaoStatisticsResponse, LatestActivityResponse,
     LookupScriptsRequest, NetworkCrawlerSummaryResponse, NetworkNodesPageResponse, NetworkStats,
-    ScriptLookupInfo, ScriptLookupResponse, ScriptResponse, TokenResponse,
-    TransactionDetailResponse, TransactionLifecycleResponse,
+    RecentReorgResponse, ReorgEventResponse, ScriptLookupInfo, ScriptLookupResponse,
+    ScriptResponse, TokenResponse, TransactionDetailResponse, TransactionLifecycleResponse,
 };
 
 const CAPABILITIES: &[&str] = &[
@@ -32,6 +33,7 @@ const CAPABILITIES: &[&str] = &[
     "asset_ecosystem",
     "dao_state",
     "activity_feed",
+    "fork_watch",
     "network_atlas",
     "transaction_detail",
     "transaction_lifecycle",
@@ -43,6 +45,7 @@ const ACTIVITY_FEED_LIMIT: usize = 8;
 const MAX_ACTIVITY_PARTICIPANTS: usize = 512;
 const MAX_ACTIVITY_NESTED_ITEMS: usize = 512;
 const MAX_ACTIVITY_LABEL_CHARS: usize = 96;
+const MAX_FORK_WATCH_WINDOW_SECONDS: u32 = 31 * 24 * 60 * 60;
 const NETWORK_ATLAS_LIMIT: usize = 64;
 const MAX_NETWORK_LABEL_CHARS: usize = 96;
 const MAX_PEER_ID_HEX_CHARS: usize = 256;
@@ -701,6 +704,48 @@ impl EnrichmentSource for CkbadgerEnrichmentSource {
         map_dao_state(statistics, anchor)
     }
 
+    async fn enrich_fork_watch(
+        &self,
+        context: &CanonicalContext,
+    ) -> anyhow::Result<Option<ForkWatchRecord>> {
+        let url = self.endpoint("forks/recent")?;
+        let response = self
+            .client
+            .get(url)
+            .send()
+            .await
+            .context("fetch ckbadger fork watch")?;
+        if response.status() == StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        if !response.status().is_success() {
+            return Err(anyhow!(
+                "ckbadger fork watch returned HTTP {}",
+                response.status()
+            ));
+        }
+        let watch: RecentReorgResponse = response
+            .json()
+            .await
+            .context("decode ckbadger fork watch")?;
+        let anchor = if watch.deep_fork.detected {
+            let Some(anchor) = deep_fork_canonical_anchor(&watch, context)? else {
+                return Ok(None);
+            };
+            anchor
+        } else {
+            // Ordinary recent history remains coupled to the source's normal
+            // compatibility proof. An active deep fork is different: the
+            // index is expected to be incompatible, so its live-chain hash is
+            // validated directly above instead.
+            let Ok(anchor) = self.current_anchor(context) else {
+                return Ok(None);
+            };
+            anchor
+        };
+        map_fork_watch(watch, anchor)
+    }
+
     async fn enrich_activity_feed(
         &self,
         context: &CanonicalContext,
@@ -785,6 +830,229 @@ impl EnrichmentSource for CkbadgerEnrichmentSource {
             .context("decode ckbadger bounded network nodes")?;
         map_network_atlas(summary, nodes, anchor).map(Some)
     }
+}
+
+struct MappedForkWatchReorg {
+    record: ForkWatchReorg,
+    old_tip_hash: String,
+    new_tip_hash: String,
+}
+
+fn map_fork_watch(
+    watch: RecentReorgResponse,
+    anchor: ChainAnchor,
+) -> anyhow::Result<Option<ForkWatchRecord>> {
+    let recent_window_seconds = u32::try_from(watch.recent_window_seconds)
+        .context("ckbadger returned invalid fork-watch recentWindowSeconds")?;
+    if recent_window_seconds == 0 || recent_window_seconds > MAX_FORK_WATCH_WINDOW_SECONDS {
+        return Err(anyhow!(
+            "ckbadger returned an unsupported fork-watch recent window"
+        ));
+    }
+    if watch.deep_fork.detected && !watch.has_recent_reorg {
+        return Err(anyhow!(
+            "ckbadger reported an active deep fork without a recent fork signal"
+        ));
+    }
+
+    let recent_event = if watch.has_recent_reorg {
+        let event = watch
+            .reorg
+            .ok_or_else(|| anyhow!("ckbadger fork watch omitted its recent event"))?;
+        let event = map_fork_watch_reorg(event)?;
+        if event.record.fork_point > anchor.block || event.record.new_tip > anchor.block {
+            return Ok(None);
+        }
+        Some(event)
+    } else {
+        None
+    };
+
+    let deep_fork = if watch.deep_fork.detected {
+        let event = recent_event
+            .as_ref()
+            .ok_or_else(|| anyhow!("ckbadger deep fork omitted its event"))?;
+        if event.record.kind != ForkWatchEventKind::Deep {
+            return Err(anyhow!(
+                "ckbadger active deep fork was not backed by a deep event"
+            ));
+        }
+        let indexed_tip =
+            required_nonnegative(watch.deep_fork.db_tip, "fork-watch deepFork dbTip")?;
+        let indexed_tip_hash = required_hash32(
+            watch.deep_fork.db_tip_hash.as_deref(),
+            "fork-watch deepFork dbTipHash",
+        )?;
+        let chain_tip =
+            required_nonnegative(watch.deep_fork.chain_tip, "fork-watch deepFork chainTip")?;
+        let chain_tip_hash = required_hash32(
+            watch.deep_fork.chain_tip_hash.as_deref(),
+            "fork-watch deepFork chainTipHash",
+        )?;
+        let fork_point =
+            required_nonnegative(watch.deep_fork.fork_point, "fork-watch deepFork forkPoint")?;
+        let depth = u32::try_from(
+            watch
+                .deep_fork
+                .depth
+                .ok_or_else(|| anyhow!("ckbadger fork-watch deepFork omitted depth"))?,
+        )
+        .context("ckbadger returned invalid fork-watch deepFork depth")?;
+        if depth == 0 || indexed_tip < fork_point || chain_tip < fork_point {
+            return Err(anyhow!("ckbadger returned inconsistent deep-fork bounds"));
+        }
+        for (value, field) in [
+            (indexed_tip, "fork-watch deepFork dbTip"),
+            (chain_tip, "fork-watch deepFork chainTip"),
+            (fork_point, "fork-watch deepFork forkPoint"),
+        ] {
+            wire_safe_u64(value, field)?;
+        }
+        if chain_tip != anchor.block
+            || chain_tip_hash != anchor.hash.as_str()
+            || fork_point > anchor.block
+        {
+            return Ok(None);
+        }
+        if fork_point != event.record.fork_point
+            || depth != event.record.depth
+            || indexed_tip != event.record.old_tip
+            || indexed_tip_hash != event.old_tip_hash.as_str()
+            || chain_tip != event.record.new_tip
+            || chain_tip_hash != event.new_tip_hash.as_str()
+        {
+            return Err(anyhow!(
+                "ckbadger deep-fork status disagrees with its persisted event"
+            ));
+        }
+        Some(ForkWatchDeepFork {
+            detected_at_ms: event.record.detected_at_ms,
+            fork_point,
+            indexed_tip,
+            chain_tip,
+            depth,
+        })
+    } else {
+        if watch.deep_fork.db_tip.is_some()
+            || watch.deep_fork.db_tip_hash.is_some()
+            || watch.deep_fork.chain_tip.is_some()
+            || watch.deep_fork.chain_tip_hash.is_some()
+            || watch.deep_fork.depth.is_some()
+            || watch.deep_fork.fork_point.is_some()
+        {
+            return Err(anyhow!(
+                "ckbadger inactive deep-fork status retained detail fields"
+            ));
+        }
+        None
+    };
+
+    Ok(Some(ForkWatchRecord {
+        source: "ckbadger".to_string(),
+        as_of: anchor,
+        updated_at_ms: now_ms(),
+        recent_window_seconds,
+        recent_reorg: recent_event.map(|event| event.record),
+        deep_fork,
+    }))
+}
+
+fn map_fork_watch_reorg(event: ReorgEventResponse) -> anyhow::Result<MappedForkWatchReorg> {
+    let detected_at_ms = nonnegative(event.id, "fork-watch event id")?;
+    let fork_point = nonnegative(event.fork_point_number, "fork-watch event forkPointNumber")?;
+    let old_tip = nonnegative(event.old_tip_number, "fork-watch event oldTipNumber")?;
+    let new_tip = nonnegative(event.new_tip_number, "fork-watch event newTipNumber")?;
+    let depth =
+        u32::try_from(event.depth).context("ckbadger returned invalid fork-watch event depth")?;
+    let orphaned_blocks = nonnegative(
+        event.orphaned_blocks_count,
+        "fork-watch event orphanedBlocksCount",
+    )?;
+    let orphaned_transactions = nonnegative(
+        event.orphaned_txs_count,
+        "fork-watch event orphanedTxsCount",
+    )?;
+    for (hash, field) in [
+        (&event.fork_point_hash, "fork-watch event forkPointHash"),
+        (&event.old_tip_hash, "fork-watch event oldTipHash"),
+        (&event.new_tip_hash, "fork-watch event newTipHash"),
+    ] {
+        if !is_hash32(hash) {
+            return Err(anyhow!("ckbadger returned invalid {field}"));
+        }
+    }
+    if depth == 0 || old_tip < fork_point || new_tip < fork_point {
+        return Err(anyhow!("ckbadger returned inconsistent fork-event bounds"));
+    }
+    for (value, field) in [
+        (detected_at_ms, "fork-watch event id"),
+        (fork_point, "fork-watch event forkPointNumber"),
+        (old_tip, "fork-watch event oldTipNumber"),
+        (new_tip, "fork-watch event newTipNumber"),
+        (orphaned_blocks, "fork-watch event orphanedBlocksCount"),
+        (orphaned_transactions, "fork-watch event orphanedTxsCount"),
+    ] {
+        wire_safe_u64(value, field)?;
+    }
+    let kind = match event.event_type.as_str() {
+        "reorg" => ForkWatchEventKind::Reorg,
+        "deep" => ForkWatchEventKind::Deep,
+        other => {
+            return Err(anyhow!(
+                "ckbadger returned unsupported fork event type {other:?}"
+            ))
+        }
+    };
+    Ok(MappedForkWatchReorg {
+        old_tip_hash: event.old_tip_hash,
+        new_tip_hash: event.new_tip_hash,
+        record: ForkWatchReorg {
+            detected_at_ms,
+            fork_point,
+            old_tip,
+            new_tip,
+            depth,
+            orphaned_blocks,
+            orphaned_transactions,
+            kind,
+        },
+    })
+}
+
+fn required_nonnegative(value: Option<i64>, field: &str) -> anyhow::Result<u64> {
+    nonnegative(
+        value.ok_or_else(|| anyhow!("ckbadger {field} was omitted"))?,
+        field,
+    )
+}
+
+fn required_hash32<'a>(value: Option<&'a str>, field: &str) -> anyhow::Result<&'a str> {
+    let value = value.ok_or_else(|| anyhow!("ckbadger {field} was omitted"))?;
+    if !is_hash32(value) {
+        return Err(anyhow!("ckbadger returned invalid {field}"));
+    }
+    Ok(value)
+}
+
+fn deep_fork_canonical_anchor(
+    watch: &RecentReorgResponse,
+    context: &CanonicalContext,
+) -> anyhow::Result<Option<ChainAnchor>> {
+    let chain_tip =
+        required_nonnegative(watch.deep_fork.chain_tip, "fork-watch deepFork chainTip")?;
+    wire_safe_u64(chain_tip, "fork-watch deepFork chainTip")?;
+    let chain_tip_hash = required_hash32(
+        watch.deep_fork.chain_tip_hash.as_deref(),
+        "fork-watch deepFork chainTipHash",
+    )?;
+    Ok(context
+        .recent_blocks
+        .iter()
+        .find(|block| block.number == chain_tip && block.hash == chain_tip_hash)
+        .map(|block| ChainAnchor {
+            block: block.number,
+            hash: block.hash.clone(),
+        }))
 }
 
 fn map_dao_state(
@@ -1987,6 +2255,43 @@ mod tests {
                 }),
             )
             .route(
+                "/api/v1/forks/recent",
+                get(|| async {
+                    Json(serde_json::json!({
+                        "hasRecentReorg": true,
+                        "reorg": {
+                            "id": 1700000000008_i64,
+                            "detectedAt": "2023-11-14T22:13:20+00:00",
+                            "forkPointNumber": 97,
+                            "forkPointHash": format!("0x{}", "11".repeat(32)),
+                            "oldTipNumber": 98,
+                            "oldTipHash": format!("0x{}", "22".repeat(32)),
+                            "newTipNumber": 99,
+                            "newTipHash": format!("0x{}", "33".repeat(32)),
+                            "depth": 1,
+                            "orphanedBlocksCount": 1,
+                            "orphanedTxsCount": 3,
+                            "eventType": "reorg",
+                            "resolvedAt": null,
+                            "resolvedBy": null,
+                            "resolutionAction": null,
+                            "resolutionNotes": null
+                        },
+                        "recentWindowSeconds": 86400,
+                        "deepFork": {
+                            "detected": false,
+                            "detectedAt": null,
+                            "dbTip": null,
+                            "dbTipHash": null,
+                            "chainTip": null,
+                            "chainTipHash": null,
+                            "depth": null,
+                            "forkPoint": null
+                        }
+                    }))
+                }),
+            )
+            .route(
                 "/api/v1/activities/latest",
                 get(|| async {
                     Json(serde_json::json!([
@@ -2316,6 +2621,35 @@ mod tests {
         }
     }
 
+    fn active_deep_watch() -> RecentReorgResponse {
+        RecentReorgResponse {
+            has_recent_reorg: true,
+            reorg: Some(ReorgEventResponse {
+                id: 1_700_000_000_000,
+                fork_point_number: 97,
+                fork_point_hash: format!("0x{}", "11".repeat(32)),
+                old_tip_number: 99,
+                old_tip_hash: format!("0x{}", "22".repeat(32)),
+                new_tip_number: 100,
+                new_tip_hash: format!("0x{}", "33".repeat(32)),
+                depth: 2,
+                orphaned_blocks_count: 0,
+                orphaned_txs_count: 0,
+                event_type: "deep".to_string(),
+            }),
+            recent_window_seconds: 86_400,
+            deep_fork: crate::dto::DeepForkStatusResponse {
+                detected: true,
+                db_tip: Some(99),
+                db_tip_hash: Some(format!("0x{}", "22".repeat(32))),
+                chain_tip: Some(100),
+                chain_tip_hash: Some(format!("0x{}", "33".repeat(32))),
+                depth: Some(2),
+                fork_point: Some(97),
+            },
+        }
+    }
+
     #[test]
     fn api_base_is_normalized_before_relative_joins() {
         let source =
@@ -2357,6 +2691,7 @@ mod tests {
         assert!(status.capabilities.contains(&"asset_ecosystem".to_string()));
         assert!(status.capabilities.contains(&"dao_state".to_string()));
         assert!(status.capabilities.contains(&"activity_feed".to_string()));
+        assert!(status.capabilities.contains(&"fork_watch".to_string()));
         assert!(status.capabilities.contains(&"network_atlas".to_string()));
 
         let ecosystem = source
@@ -2386,6 +2721,16 @@ mod tests {
             Some("141530599353229")
         );
         assert_eq!(dao_state.depositors_change_24h, Some(5));
+
+        let fork_watch = source.enrich_fork_watch(&context()).await.unwrap().unwrap();
+        assert_eq!(fork_watch.as_of.block, 100);
+        assert_eq!(fork_watch.recent_window_seconds, 86_400);
+        let reorg = fork_watch.recent_reorg.as_ref().unwrap();
+        assert_eq!(reorg.fork_point, 97);
+        assert_eq!(reorg.depth, 1);
+        assert_eq!(reorg.orphaned_transactions, 3);
+        assert_eq!(reorg.kind, ForkWatchEventKind::Reorg);
+        assert!(fork_watch.deep_fork.is_none());
 
         let activity_feed = source
             .enrich_activity_feed(&context())
@@ -2583,6 +2928,133 @@ mod tests {
         .unwrap();
 
         assert!(state.is_none());
+    }
+
+    #[test]
+    fn fork_watch_maps_an_active_deep_fork_as_fixed_context() {
+        let watch = active_deep_watch();
+
+        let record = map_fork_watch(
+            watch,
+            ChainAnchor {
+                block: 100,
+                hash: format!("0x{}", "33".repeat(32)),
+            },
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(record.recent_reorg.unwrap().kind, ForkWatchEventKind::Deep);
+        assert_eq!(record.deep_fork.unwrap().indexed_tip, 99);
+    }
+
+    #[test]
+    fn active_deep_fork_uses_direct_canonical_tip_proof() {
+        let mut canonical = context();
+        canonical.recent_blocks[0].hash = format!("0x{}", "33".repeat(32));
+
+        let anchor = deep_fork_canonical_anchor(&active_deep_watch(), &canonical)
+            .unwrap()
+            .unwrap();
+        assert_eq!(anchor.block, 100);
+        assert_eq!(anchor.hash, canonical.recent_blocks[0].hash);
+
+        canonical.recent_blocks[0].hash = format!("0x{}", "44".repeat(32));
+        assert!(deep_fork_canonical_anchor(&active_deep_watch(), &canonical)
+            .unwrap()
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn active_deep_fork_does_not_require_a_compatible_index_anchor() {
+        let app = Router::new().route(
+            "/api/v1/forks/recent",
+            get(|| async {
+                Json(serde_json::json!({
+                    "hasRecentReorg": true,
+                    "reorg": {
+                        "id": 1_700_000_000_000_i64,
+                        "forkPointNumber": 97,
+                        "forkPointHash": format!("0x{}", "11".repeat(32)),
+                        "oldTipNumber": 102,
+                        "oldTipHash": format!("0x{}", "22".repeat(32)),
+                        "newTipNumber": 100,
+                        "newTipHash": format!("0x{}", "33".repeat(32)),
+                        "depth": 5,
+                        "orphanedBlocksCount": 0,
+                        "orphanedTxsCount": 0,
+                        "eventType": "deep"
+                    },
+                    "recentWindowSeconds": 86400,
+                    "deepFork": {
+                        "detected": true,
+                        "dbTip": 102,
+                        "dbTipHash": format!("0x{}", "22".repeat(32)),
+                        "chainTip": 100,
+                        "chainTipHash": format!("0x{}", "33".repeat(32)),
+                        "depth": 5,
+                        "forkPoint": 97
+                    }
+                }))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        let source =
+            CkbadgerEnrichmentSource::new(Url::parse(&format!("http://{address}/api/v1")).unwrap())
+                .unwrap();
+        let mut canonical = context();
+        canonical.recent_blocks[0].hash = format!("0x{}", "33".repeat(32));
+
+        let record = source.enrich_fork_watch(&canonical).await.unwrap().unwrap();
+
+        assert_eq!(record.as_of.block, 100);
+        assert_eq!(record.deep_fork.unwrap().indexed_tip, 102);
+        server.abort();
+    }
+
+    #[test]
+    fn fork_watch_waits_when_a_recent_event_is_ahead_of_its_anchor() {
+        let watch = RecentReorgResponse {
+            has_recent_reorg: true,
+            reorg: Some(ReorgEventResponse {
+                id: 1_700_000_000_000,
+                fork_point_number: 99,
+                fork_point_hash: format!("0x{}", "11".repeat(32)),
+                old_tip_number: 100,
+                old_tip_hash: format!("0x{}", "22".repeat(32)),
+                new_tip_number: 101,
+                new_tip_hash: format!("0x{}", "33".repeat(32)),
+                depth: 1,
+                orphaned_blocks_count: 1,
+                orphaned_txs_count: 3,
+                event_type: "reorg".to_string(),
+            }),
+            recent_window_seconds: 86_400,
+            deep_fork: crate::dto::DeepForkStatusResponse {
+                detected: false,
+                db_tip: None,
+                db_tip_hash: None,
+                chain_tip: None,
+                chain_tip_hash: None,
+                depth: None,
+                fork_point: None,
+            },
+        };
+
+        let record = map_fork_watch(
+            watch,
+            ChainAnchor {
+                block: 100,
+                hash: "0xblock100".to_string(),
+            },
+        )
+        .unwrap();
+
+        assert!(record.is_none());
     }
 
     #[test]

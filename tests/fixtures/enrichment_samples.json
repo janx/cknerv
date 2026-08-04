@@ -3,7 +3,7 @@
     "source": {
       "source": "ckbadger",
       "status": "ready",
-      "capabilities": ["cell_detail", "script_identity", "data_analysis", "asset_identity", "asset_ecosystem", "dao_state", "activity_feed", "network_atlas", "transaction_detail", "transaction_lifecycle"],
+      "capabilities": ["cell_detail", "script_identity", "data_analysis", "asset_identity", "asset_ecosystem", "dao_state", "activity_feed", "fork_watch", "network_atlas", "transaction_detail", "transaction_lifecycle"],
       "indexed_tip": 100,
       "lag_blocks": 1,
       "validated_anchor": {
@@ -162,6 +162,32 @@
       "deposit_change_24h_shannons": "141530599353229",
       "depositors_change_24h": 5
     },
+    "fork_watch": {
+      "source": "ckbadger",
+      "as_of": {
+        "block": 100,
+        "hash": "0xblock100"
+      },
+      "updated_at_ms": 1700000000008,
+      "recent_window_seconds": 86400,
+      "recent_reorg": {
+        "detected_at_ms": 1700000000008,
+        "fork_point": 97,
+        "old_tip": 99,
+        "new_tip": 100,
+        "depth": 2,
+        "orphaned_blocks": 2,
+        "orphaned_transactions": 7,
+        "kind": "deep"
+      },
+      "deep_fork": {
+        "detected_at_ms": 1700000000008,
+        "fork_point": 97,
+        "indexed_tip": 99,
+        "chain_tip": 100,
+        "depth": 2
+      }
+    },
     "activity_feed": {
       "source": "ckbadger",
       "as_of": {
@@ -233,7 +259,7 @@
       "source": {
         "source": "ckbadger",
         "status": "ready",
-        "capabilities": ["cell_detail", "script_identity", "data_analysis", "asset_identity", "asset_ecosystem", "dao_state", "activity_feed", "network_atlas", "transaction_detail", "transaction_lifecycle"],
+        "capabilities": ["cell_detail", "script_identity", "data_analysis", "asset_identity", "asset_ecosystem", "dao_state", "activity_feed", "fork_watch", "network_atlas", "transaction_detail", "transaction_lifecycle"],
         "indexed_tip": 100,
         "lag_blocks": 1,
         "validated_anchor": {
@@ -376,6 +402,35 @@
         "estimated_apc_bps": 201,
         "deposit_change_24h_shannons": "141530599353229",
         "depositors_change_24h": 5
+      }
+    },
+    "fork_watch_replace": {
+      "type": "fork_watch_replace",
+      "fork_watch": {
+        "source": "ckbadger",
+        "as_of": {
+          "block": 100,
+          "hash": "0xblock100"
+        },
+        "updated_at_ms": 1700000000008,
+        "recent_window_seconds": 86400,
+        "recent_reorg": {
+          "detected_at_ms": 1700000000008,
+          "fork_point": 97,
+          "old_tip": 99,
+          "new_tip": 100,
+          "depth": 2,
+          "orphaned_blocks": 2,
+          "orphaned_transactions": 7,
+          "kind": "deep"
+        },
+        "deep_fork": {
+          "detected_at_ms": 1700000000008,
+          "fork_point": 97,
+          "indexed_tip": 99,
+          "chain_tip": 100,
+          "depth": 2
+        }
       }
     },
     "activity_feed_replace": {

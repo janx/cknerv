@@ -101,6 +101,12 @@ Once the source is ready, the semantics snapshot should also gain an
 not exceed its `as_of.block`; capacities and optional signed 24-hour change are
 exact shannon strings, while estimated APC is in basis points. It refreshes
 independently from every other aggregate.
+The snapshot should also gain `fork_watch`. A clear source window has neither
+`recent_reorg` nor `deep_fork`; otherwise every fork point and tip must be at or
+below `as_of.block`, except that an old/indexed branch tip may be higher. An
+active deep fork must match its persisted deep event, while its live-chain tip
+and hash must equal `as_of`. This indexed history refreshes independently and
+must not change the canonical chain revision or `reorgs` count.
 The semantics snapshot should also gain an
 `activity_feed` containing at most eight newest-first, anchor-bounded compact
 signatures. It is refreshed independently and must not contain participant
@@ -238,6 +244,8 @@ With a local ckbadger service configured:
       shannon capacities, byte knowledge size, and basis-point shares
 - [ ] The semantics snapshot gains `dao_state` with a statistics block no
       newer than its validated anchor, exact shannon values, and basis-point APC
+- [ ] The semantics snapshot gains `fork_watch`; any recent/deep event is
+      canonical-tip anchored, and a clear recent window replaces an older event
 - [ ] The semantics snapshot gains an `activity_feed` of at most eight
       newest-first entries whose blocks do not exceed its validated anchor
 - [ ] With ckbadger's crawler enabled, the semantics snapshot gains a
@@ -246,8 +254,12 @@ With a local ckbadger service configured:
       health, Cell detail, ecosystem, DAO, and activity enrichment still work
 - [ ] `COMMON KNOWLEDGE BASE` shows `INDEXED NERVOS DAO` with its statistics
       block, anchor, fixed DAO totals, APC, and available 24-hour deltas
+- [ ] Directly below canonical `Reorgs`, `INDEXED FORK WATCH` shows clear,
+      recent, or deep context without changing the canonical count or alert
 - [ ] `COMMON KNOWLEDGE BASE` shows a separately labeled
       `INDEXED ACTIVITY · LATEST N` fingerprint and recent activity rows
+- [ ] At 768px viewport height, the activity fingerprint remains but its rows
+      fold away; `COMMON KNOWLEDGE BASE` does not overlap `PULSE`
 - [ ] `CELL MESH` shows a separately labeled `INDEXED CHAIN CAPACITY` bar and
       bounded top-asset list; retained Cell taxonomy/counts remain unchanged
 - [ ] `PEER MESH` shows `INDEXED NETWORK ATLAS · LATEST N SAMPLE` below the
@@ -262,8 +274,8 @@ With a local ckbadger service configured:
 - [ ] Stopping ckbadger changes only the optional source state; the galaxy,
       chain stream, cells stream, and required bootstrap remain operational
 - [ ] Removing `[ckbadger]` restores the original HUD with no source chip or
-      indexed-context/ecosystem/DAO/activity/network-atlas section and requires
-      no prune
+      indexed-context/ecosystem/fork-watch/DAO/activity/network-atlas section
+      and requires no prune
 
 ## Canonical correction checklist (disposable devnet or mock only)
 

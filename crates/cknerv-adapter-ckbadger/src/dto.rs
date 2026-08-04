@@ -97,6 +97,43 @@ pub(crate) struct DaoStatisticsResponse {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct RecentReorgResponse {
+    pub has_recent_reorg: bool,
+    pub reorg: Option<ReorgEventResponse>,
+    pub recent_window_seconds: i64,
+    pub deep_fork: DeepForkStatusResponse,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ReorgEventResponse {
+    pub id: i64,
+    pub fork_point_number: i64,
+    pub fork_point_hash: String,
+    pub old_tip_number: i64,
+    pub old_tip_hash: String,
+    pub new_tip_number: i64,
+    pub new_tip_hash: String,
+    pub depth: i32,
+    pub orphaned_blocks_count: i64,
+    pub orphaned_txs_count: i64,
+    pub event_type: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DeepForkStatusResponse {
+    pub detected: bool,
+    pub db_tip: Option<i64>,
+    pub db_tip_hash: Option<String>,
+    pub chain_tip: Option<i64>,
+    pub chain_tip_hash: Option<String>,
+    pub depth: Option<i32>,
+    pub fork_point: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct LatestActivityResponse {
     pub tx_hash: String,
     pub block_number: i64,

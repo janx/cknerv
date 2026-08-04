@@ -5,6 +5,7 @@ import type {
   ChainCensus,
   DaoStateRecord,
   EnrichmentSourceStatus,
+  ForkWatchRecord,
   NetworkAtlasRecord,
   OutPoint,
   RevisionedSemanticsDelta,
@@ -21,6 +22,7 @@ export interface SemanticsCache {
   census: ChainCensus | null;
   assetEcosystem: AssetEcosystemRecord | null;
   daoState: DaoStateRecord | null;
+  forkWatch: ForkWatchRecord | null;
   activityFeed: ActivityFeedRecord | null;
   networkAtlas: NetworkAtlasRecord | null;
 }
@@ -42,6 +44,7 @@ export function emptySemanticsCache(): SemanticsCache {
     census: null,
     assetEcosystem: null,
     daoState: null,
+    forkWatch: null,
     activityFeed: null,
     networkAtlas: null,
   };
@@ -61,6 +64,7 @@ export function fromSemanticsSnapshot(
     census: snapshot.census ?? null,
     assetEcosystem: snapshot.asset_ecosystem ?? null,
     daoState: snapshot.dao_state ?? null,
+    forkWatch: snapshot.fork_watch ?? null,
     activityFeed: snapshot.activity_feed ?? null,
     networkAtlas: snapshot.network_atlas ?? null,
   };
@@ -98,6 +102,8 @@ function reduceDelta(prev: SemanticsCache, delta: SemanticsDelta): SemanticsCach
       return { ...prev, assetEcosystem: delta.asset_ecosystem };
     case 'dao_state_replace':
       return { ...prev, daoState: delta.dao_state };
+    case 'fork_watch_replace':
+      return { ...prev, forkWatch: delta.fork_watch };
     case 'activity_feed_replace':
       return { ...prev, activityFeed: delta.activity_feed };
     case 'network_atlas_replace':
@@ -128,6 +134,10 @@ function reduceDelta(prev: SemanticsCache, delta: SemanticsDelta): SemanticsCach
         prev.daoState && prev.daoState.as_of.block >= delta.from_block
           ? null
           : prev.daoState;
+      const forkWatch =
+        prev.forkWatch && prev.forkWatch.as_of.block >= delta.from_block
+          ? null
+          : prev.forkWatch;
       const activityFeed =
         prev.activityFeed
         && prev.activityFeed.as_of.block >= delta.from_block
@@ -145,6 +155,7 @@ function reduceDelta(prev: SemanticsCache, delta: SemanticsDelta): SemanticsCach
         census,
         assetEcosystem,
         daoState,
+        forkWatch,
         activityFeed,
         networkAtlas,
       };
@@ -157,6 +168,7 @@ function reduceDelta(prev: SemanticsCache, delta: SemanticsDelta): SemanticsCach
         census: null,
         assetEcosystem: null,
         daoState: null,
+        forkWatch: null,
         activityFeed: null,
         networkAtlas: null,
       };

@@ -5,6 +5,7 @@ import type {
   AssetEcosystemRecord,
   CellSemanticRecord,
   DaoStateRecord,
+  ForkWatchRecord,
   EnrichmentSourceStatus,
   NetworkAtlasRecord,
 } from '@cknerv/types';
@@ -78,6 +79,32 @@ function daoState(block: number): DaoStateRecord {
     estimated_apc_bps: 201,
     deposit_change_24h_shannons: '141530599353229',
     depositors_change_24h: 5,
+  };
+}
+
+function forkWatch(block: number): ForkWatchRecord {
+  return {
+    source: 'ckbadger',
+    as_of: { block, hash: `0xblock${block}` },
+    updated_at_ms: block,
+    recent_window_seconds: 86400,
+    recent_reorg: {
+      detected_at_ms: block,
+      fork_point: block - 3,
+      old_tip: block - 1,
+      new_tip: block,
+      depth: 2,
+      orphaned_blocks: 2,
+      orphaned_transactions: 7,
+      kind: 'deep',
+    },
+    deep_fork: {
+      detected_at_ms: block,
+      fork_point: block - 3,
+      indexed_tip: block - 1,
+      chain_tip: block,
+      depth: 2,
+    },
   };
 }
 
@@ -157,6 +184,21 @@ describe('semantics reducer', () => {
       delta: { type: 'prune', from_block: 10 },
     }]);
     expect(next.daoState).toBeNull();
+  });
+
+  it('replaces and prunes the fixed fork watch independently', () => {
+    const record = forkWatch(10);
+    const seeded = applyRevisionedSemanticsDeltas(emptySemanticsCache(), [{
+      revision: 1,
+      delta: { type: 'fork_watch_replace', fork_watch: record },
+    }]);
+    expect(seeded.forkWatch).toBe(record);
+
+    const next = applyRevisionedSemanticsDeltas(seeded, [{
+      revision: 2,
+      delta: { type: 'prune', from_block: 10 },
+    }]);
+    expect(next.forkWatch).toBeNull();
   });
 
   it('replaces and prunes the bounded activity feed independently', () => {

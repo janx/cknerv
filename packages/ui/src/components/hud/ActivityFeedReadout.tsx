@@ -23,9 +23,11 @@ function shortHash(hash: string): string {
   return `${hash.slice(0, 8)}…${hash.slice(-4)}`;
 }
 
-export default function ActivityFeedReadout({ source, record }: {
+export default function ActivityFeedReadout({ source, record, compact = false }: {
   source?: EnrichmentSourceStatus;
   record?: ActivityFeedRecord | null;
+  /** Keep the bounded category fingerprint but omit rows on short viewports. */
+  compact?: boolean;
 }) {
   if (!source || !record) return null;
   const visualState = activityFeedVisualState(source, record);
@@ -39,9 +41,10 @@ export default function ActivityFeedReadout({ source, record }: {
     <section
       aria-label="Indexed recent activity"
       data-activity-feed-state={visualState}
+      data-activity-feed-compact={compact ? 'true' : undefined}
       style={{
-        marginTop: 10,
-        paddingTop: 8,
+        marginTop: compact ? 6 : 10,
+        paddingTop: compact ? 5 : 8,
         borderTop: `1px solid ${rgba(accent, 0.16)}`,
         opacity: stale ? 0.68 : 1,
       }}
@@ -55,7 +58,7 @@ export default function ActivityFeedReadout({ source, record }: {
         letterSpacing: 1.35,
         color: accent,
         textTransform: 'uppercase',
-        marginBottom: 5,
+        marginBottom: compact ? 3 : 5,
       }}>
         <span style={{ width: 5, height: 5, borderRadius: '50%', background: accent, boxShadow: `0 0 6px ${accent}` }} />
         INDEXED ACTIVITY · LATEST {total} · #{record.as_of.block.toLocaleString('en-US')}
@@ -79,12 +82,12 @@ export default function ActivityFeedReadout({ source, record }: {
               />
             ))}
           </div>
-          <div style={{ fontFamily: HUD_FONTS.mono, fontSize: 8, color: '#9fb0bd', marginTop: 3, lineHeight: 1.45 }}>
+          <div style={{ fontFamily: HUD_FONTS.mono, fontSize: 8, color: '#9fb0bd', marginTop: compact ? 2 : 3, lineHeight: 1.45 }}>
             {visual.buckets
               .map((bucket) => `${CATEGORY_LABELS[bucket.category] ?? bucket.category.toUpperCase()} ${bucket.count}`)
               .join(' · ')}
           </div>
-          <div style={{ marginTop: 6 }}>
+          {!compact ? <div style={{ marginTop: 6 }}>
             {visual.items.slice(0, 4).map((item) => {
               const category = item.category.trim().toLowerCase();
               const color = activityCategoryColor(category);
@@ -111,7 +114,7 @@ export default function ActivityFeedReadout({ source, record }: {
                 </div>
               );
             })}
-          </div>
+          </div> : null}
         </>
       ) : (
         <div style={{ fontFamily: HUD_FONTS.mono, fontSize: 8, color: HUD_COLORS.dim }}>

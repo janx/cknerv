@@ -116,6 +116,12 @@ describe('HudOverlay wiring', () => {
     expect(APP_SOURCE).not.toContain('<DaoStateOrbit');
   });
 
+  it('routes fixed-work optional fork watch only through the HUD', () => {
+    expect(APP_SOURCE).toContain('forkWatch={enrichmentConfig.enabled');
+    expect(APP_SOURCE).toContain('? semanticsCache.forkWatch');
+    expect(APP_SOURCE).not.toContain('<ForkWatchOrbit');
+  });
+
   it('routes the bounded optional activity feed only through the HUD', () => {
     expect(APP_SOURCE).toContain('activityFeed={enrichmentConfig.enabled');
     expect(APP_SOURCE).toContain('? semanticsCache.activityFeed');
