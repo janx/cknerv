@@ -4,6 +4,7 @@ import type {
   ActivityFeedRecord,
   AssetEcosystemRecord,
   CellSemanticRecord,
+  DaoStateRecord,
   EnrichmentSourceStatus,
   NetworkAtlasRecord,
 } from '@cknerv/types';
@@ -60,6 +61,23 @@ function activityFeed(block: number): ActivityFeedRecord {
       label: 'Example Script',
       participant_count: 1,
     }],
+  };
+}
+
+function daoState(block: number): DaoStateRecord {
+  return {
+    source: 'ckbadger',
+    as_of: { block, hash: `0xblock${block}` },
+    statistics_block: block - 1,
+    updated_at_ms: block,
+    total_deposited_shannons: '837703738002110308',
+    total_depositors: 16740,
+    active_deposits: 22659,
+    pending_withdrawal_shannons: '77523020877862416',
+    unclaimed_compensation_shannons: '81345902996799859',
+    estimated_apc_bps: 201,
+    deposit_change_24h_shannons: '141530599353229',
+    depositors_change_24h: 5,
   };
 }
 
@@ -124,6 +142,21 @@ describe('semantics reducer', () => {
       delta: { type: 'prune', from_block: 10 },
     }]);
     expect(next.assetEcosystem).toBeNull();
+  });
+
+  it('replaces and prunes the fixed DAO state independently', () => {
+    const record = daoState(10);
+    const seeded = applyRevisionedSemanticsDeltas(emptySemanticsCache(), [{
+      revision: 1,
+      delta: { type: 'dao_state_replace', dao_state: record },
+    }]);
+    expect(seeded.daoState).toBe(record);
+
+    const next = applyRevisionedSemanticsDeltas(seeded, [{
+      revision: 2,
+      delta: { type: 'prune', from_block: 10 },
+    }]);
+    expect(next.daoState).toBeNull();
   });
 
   it('replaces and prunes the bounded activity feed independently', () => {

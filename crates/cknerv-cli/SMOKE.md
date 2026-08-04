@@ -97,6 +97,11 @@ available. A deterministically decoded UDT Cell should additionally include an
 standard/name/symbol/decimals. The semantics snapshot should then contain both
 records without changing the chain snapshot revision.
 Once the source is ready, the semantics snapshot should also gain an
+`asset_ecosystem` and a `dao_state`. The DAO record's `statistics_block` must
+not exceed its `as_of.block`; capacities and optional signed 24-hour change are
+exact shannon strings, while estimated APC is in basis points. It refreshes
+independently from every other aggregate.
+The semantics snapshot should also gain an
 `activity_feed` containing at most eight newest-first, anchor-bounded compact
 signatures. It is refreshed independently and must not contain participant
 addresses or arbitrary protocol metadata.
@@ -231,12 +236,16 @@ With a local ckbadger service configured:
 - [ ] The top strip shows `CKBADGER` with ready/syncing/stale state and lag
 - [ ] Once ready, the semantics snapshot gains `asset_ecosystem` with exact
       shannon capacities, byte knowledge size, and basis-point shares
+- [ ] The semantics snapshot gains `dao_state` with a statistics block no
+      newer than its validated anchor, exact shannon values, and basis-point APC
 - [ ] The semantics snapshot gains an `activity_feed` of at most eight
       newest-first entries whose blocks do not exceed its validated anchor
 - [ ] With ckbadger's crawler enabled, the semantics snapshot gains a
       `network_atlas` whose sample is at most 64 and contains no peer identities
 - [ ] With the crawler disabled, `network_atlas` remains absent while source
-      health, Cell detail, ecosystem, and activity enrichment still work
+      health, Cell detail, ecosystem, DAO, and activity enrichment still work
+- [ ] `COMMON KNOWLEDGE BASE` shows `INDEXED NERVOS DAO` with its statistics
+      block, anchor, fixed DAO totals, APC, and available 24-hour deltas
 - [ ] `COMMON KNOWLEDGE BASE` shows a separately labeled
       `INDEXED ACTIVITY · LATEST N` fingerprint and recent activity rows
 - [ ] `CELL MESH` shows a separately labeled `INDEXED CHAIN CAPACITY` bar and
@@ -253,7 +262,8 @@ With a local ckbadger service configured:
 - [ ] Stopping ckbadger changes only the optional source state; the galaxy,
       chain stream, cells stream, and required bootstrap remain operational
 - [ ] Removing `[ckbadger]` restores the original HUD with no source chip or
-      indexed-context/ecosystem/activity/network-atlas section and requires no prune
+      indexed-context/ecosystem/DAO/activity/network-atlas section and requires
+      no prune
 
 ## Canonical correction checklist (disposable devnet or mock only)
 

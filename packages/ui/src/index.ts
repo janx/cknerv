@@ -61,6 +61,7 @@ export * from './derives/cellVisual.derive';
 export * from './derives/cellInteraction.derive';
 export * from './derives/cellSemantics.derive';
 export * from './derives/assetEcosystem.derive';
+export * from './derives/daoState.derive';
 export * from './derives/activityFeed.derive';
 export * from './derives/networkAtlas.derive';
 export * from './derives/cellConsensusIdentity.derive';
@@ -154,6 +155,7 @@ export {
   type CellSemanticsPhase,
 } from './components/hud/CellSemanticsReadout';
 export { default as AssetEcosystemReadout } from './components/hud/AssetEcosystemReadout';
+export { default as DaoStateReadout } from './components/hud/DaoStateReadout';
 export { default as ActivityFeedReadout } from './components/hud/ActivityFeedReadout';
 export { default as NetworkAtlasReadout } from './components/hud/NetworkAtlasReadout';
 export type {

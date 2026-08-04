@@ -110,6 +110,12 @@ describe('HudOverlay wiring', () => {
     expect(APP_SOURCE).not.toContain('<AssetEcosystemOrbit');
   });
 
+  it('routes fixed-shape optional DAO state only through the HUD', () => {
+    expect(APP_SOURCE).toContain('daoState={enrichmentConfig.enabled');
+    expect(APP_SOURCE).toContain('? semanticsCache.daoState');
+    expect(APP_SOURCE).not.toContain('<DaoStateOrbit');
+  });
+
   it('routes the bounded optional activity feed only through the HUD', () => {
     expect(APP_SOURCE).toContain('activityFeed={enrichmentConfig.enabled');
     expect(APP_SOURCE).toContain('? semanticsCache.activityFeed');
