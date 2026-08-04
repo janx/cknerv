@@ -183,6 +183,49 @@ describe('CellDetailPanel', () => {
             attributes: [],
           }],
         }}
+        semanticTransactionPhase="ready"
+        semanticTransactionRecord={{
+          tx_hash: base.out_point.tx_hash,
+          block: base.birth_block,
+          source: 'ckbadger',
+          as_of: { block: base.birth_block, hash: '0xanchor' },
+          updated_at_ms: 1,
+          actions: [
+            {
+              namespace: 'ckb',
+              kind: 'transaction_io',
+              state: 'committed',
+              attributes: [
+                { key: 'inputs', value: '2' },
+                { key: 'outputs', value: '3' },
+              ],
+            },
+            {
+              namespace: 'ckb',
+              kind: 'transaction_lifecycle',
+              state: 'committed',
+              attributes: [
+                { key: 'proposed_block', value: '16204798' },
+                { key: 'committed_block', value: '16204800' },
+                { key: 'commitment_distance', value: '2', unit: 'blocks' },
+              ],
+            },
+          ],
+          participants: [
+            {
+              address: 'ckt1aliceparticipant',
+              capacity_delta: '4999999000',
+              facets: [],
+            },
+            {
+              address: 'ckt1bobparticipant',
+              capacity_delta: '-20000000000',
+              facets: [],
+            },
+          ],
+          fee: '1000',
+          cycles: 12345,
+        }}
       />,
     );
 
@@ -192,6 +235,12 @@ describe('CellDetailPanel', () => {
     expect(readout?.textContent).toContain('Default Lock');
     expect(readout?.textContent).toContain('100 bytes occupied');
     expect(readout?.textContent).toContain('DAO · DEPOSIT');
+    expect(readout?.textContent).toContain('ORIGIN TRANSACTION');
+    expect(readout?.textContent).toContain('2 → 3 CELLS');
+    expect(readout?.textContent).toContain('#16204798 → #16204800 · 2 BLOCKS');
+    expect(readout?.textContent).toContain('1000 sh');
+    expect(readout?.textContent).toContain('12,345');
+    expect(readout?.textContent).toContain('+49.99999 CKB');
   });
 
   it('keeps auxiliary portrait focus off while the entry decoder advances', () => {

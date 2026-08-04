@@ -53,7 +53,7 @@ export {
   type SemanticsCache,
 } from './semanticsReducer';
 
-export { fetchCellSemantics } from './semanticsClient';
+export { fetchCellSemantics, fetchTransactionSemantics } from './semanticsClient';
 
 export {
   createStreamHealthTracker,

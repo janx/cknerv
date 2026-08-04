@@ -86,7 +86,9 @@ export interface CellSemanticRecord {
 
 export interface TransactionParticipantSemantic {
   address: string;
+  /** Exact signed shannon delta; absent when participant attribution is partial. */
   capacity_delta?: string;
+  /** Exact signed occupied-byte delta when supplied by the source. */
   common_knowledge_delta?: string;
   facets: SemanticFacet[];
 }

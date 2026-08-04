@@ -5,11 +5,80 @@
 use std::time::Duration;
 
 use async_trait::async_trait;
-use cknerv_core::{CellGalaxy, Mutation, ReplayPhase};
-use cknerv_server::{Adapter, ServerBuilder};
+use cknerv_core::{
+    CellGalaxy, CellSemanticRecord, ChainAnchor, EnrichmentSourceState, EnrichmentSourceStatus,
+    Mutation, OutPoint, ReplayPhase, SemanticsProjection, TransactionSemanticRecord,
+};
+use cknerv_server::{Adapter, CanonicalContext, EnrichmentSource, ServerBuilder};
 use tokio::sync::{mpsc, watch};
 
 struct CompletedBootReplayAdapter;
+
+struct TransactionFixtureSource;
+
+#[async_trait]
+impl EnrichmentSource for TransactionFixtureSource {
+    fn name(&self) -> &'static str {
+        "fixture"
+    }
+
+    fn capabilities(&self) -> Vec<String> {
+        vec!["transaction_detail".to_string()]
+    }
+
+    async fn probe(&self, context: &CanonicalContext) -> EnrichmentSourceStatus {
+        let validated_anchor = context.recent_blocks.last().map(|block| ChainAnchor {
+            block: block.number,
+            hash: block.hash.clone(),
+        });
+        EnrichmentSourceStatus {
+            source: self.name().to_string(),
+            status: if validated_anchor.is_some() {
+                EnrichmentSourceState::Ready
+            } else {
+                EnrichmentSourceState::Connecting
+            },
+            capabilities: self.capabilities(),
+            indexed_tip: Some(context.tip),
+            lag_blocks: Some(0),
+            validated_anchor,
+            last_success_at_ms: Some(1),
+            message: None,
+        }
+    }
+
+    async fn enrich_cell(
+        &self,
+        _out_point: &OutPoint,
+        _context: &CanonicalContext,
+    ) -> anyhow::Result<Option<CellSemanticRecord>> {
+        Ok(None)
+    }
+
+    async fn enrich_transaction(
+        &self,
+        tx_hash: &str,
+        context: &CanonicalContext,
+    ) -> anyhow::Result<Option<TransactionSemanticRecord>> {
+        let Some(block) = context.recent_blocks.last() else {
+            return Ok(None);
+        };
+        Ok(Some(TransactionSemanticRecord {
+            tx_hash: tx_hash.to_string(),
+            block: block.number,
+            source: self.name().to_string(),
+            as_of: ChainAnchor {
+                block: block.number,
+                hash: block.hash.clone(),
+            },
+            updated_at_ms: 1,
+            actions: Vec::new(),
+            participants: Vec::new(),
+            fee: Some("1000".to_string()),
+            cycles: Some(123),
+        }))
+    }
+}
 
 #[async_trait]
 impl Adapter for CompletedBootReplayAdapter {
@@ -131,10 +200,72 @@ async fn disabled_enrichment_route_is_an_isolated_404() {
     .expect("GET succeeds");
     assert_eq!(resp.status(), 404);
 
+    let transaction = reqwest::get(format!(
+        "http://{addr}/api/enrichment/transactions/0x{}",
+        "11".repeat(32)
+    ))
+    .await
+    .expect("GET succeeds");
+    assert_eq!(transaction.status(), 404);
+
     let canonical = reqwest::get(format!("http://{addr}/api/entities/chain/snapshot"))
         .await
         .expect("canonical route remains available");
     assert_eq!(canonical.status(), 200);
+
+    handle.shutdown().await;
+    server_task.abort();
+}
+
+#[tokio::test]
+async fn lazy_transaction_enrichment_updates_only_semantics_projection() {
+    let (router, handle) = ServerBuilder::new()
+        .add_adapter(CompletedBootReplayAdapter)
+        .add_enrichment_projection(SemanticsProjection::default())
+        .enrichment_source(TransactionFixtureSource)
+        .build()
+        .expect("build");
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server_task = tokio::spawn(async move {
+        let _ = axum::serve(listener, router).await;
+    });
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let canonical_before: serde_json::Value =
+        reqwest::get(format!("http://{addr}/api/entities/chain/snapshot"))
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+    let tx_hash = format!("0x{}", "11".repeat(32));
+    let response = reqwest::get(format!(
+        "http://{addr}/api/enrichment/transactions/{tx_hash}"
+    ))
+    .await
+    .expect("transaction enrichment succeeds");
+    assert_eq!(response.status(), 200);
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["transaction"]["tx_hash"], tx_hash);
+
+    let semantics: serde_json::Value =
+        reqwest::get(format!("http://{addr}/api/projections/semantics/snapshot"))
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+    assert_eq!(semantics["snapshot"]["transactions"][0]["fee"], "1000");
+    let canonical_after: serde_json::Value =
+        reqwest::get(format!("http://{addr}/api/entities/chain/snapshot"))
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+    assert_eq!(canonical_after["revision"], canonical_before["revision"]);
 
     handle.shutdown().await;
     server_task.abort();
