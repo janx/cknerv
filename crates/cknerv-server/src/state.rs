@@ -16,17 +16,18 @@
 //!     released before the per-projection broadcast send. We never hold a
 //!     sync lock across an `.await`.
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::{broadcast, mpsc, watch};
 
 use cknerv_core::{
-    Chain, ChainNode, MempoolStats, Mutation, Peer, RecentBlock, RecentTx, ReplayPhase,
-    RevisionedMutation, Ring,
+    Chain, ChainNode, EnrichmentEvent, EnrichmentSourceState, MempoolStats, Mutation, Peer,
+    RecentBlock, RecentTx, ReplayPhase, RevisionedMutation, Ring,
 };
 
+use crate::enrichment::CanonicalContext;
 use crate::projection_registry::Registry;
 
 /// Capacity of the structural mutation ring. Sized to cover dozens of
@@ -78,6 +79,7 @@ pub struct ServerState {
     /// separate from `mutation_tx` avoids cloning every historical block/tx
     /// payload into a subscriber that only needs the terminal boot marker.
     boot_replay_complete_tx: watch::Sender<bool>,
+    replay_active: AtomicBool,
     pub(crate) projections: RwLock<Registry>,
     /// Coordination lock making (state, revision) snapshot-atomic. The
     /// reducer takes the write side around its full apply sequence
@@ -97,6 +99,7 @@ impl ServerState {
             mutation_tx,
             mutation_ring: Ring::with_capacity(MUTATION_RING_CAP),
             boot_replay_complete_tx,
+            replay_active: AtomicBool::new(false),
             projections: RwLock::new(Registry::new()),
             coord: RwLock::new(()),
         }
@@ -131,6 +134,21 @@ impl ServerState {
         })
     }
 
+    /// Canonical evidence available to optional enrichment sources. The
+    /// retained recent block hashes are the only anchors an external index is
+    /// allowed to validate against.
+    pub fn canonical_context(&self) -> CanonicalContext {
+        let _coord = self.coord.read().unwrap();
+        let store = self.entity_store.read().unwrap();
+        CanonicalContext {
+            tip: store.chain.tip,
+            chain_name: store.chain.chain_name.clone(),
+            recent_blocks: store.chain.recent_blocks.clone(),
+            recent_transactions: store.chain.recent_tx_hashes.clone(),
+            replay_active: self.replay_active.load(Ordering::Relaxed),
+        }
+    }
+
     /// Apply a mutation. Holds the coord write lock for the full sequence
     /// (entity-store update + revision bump + ring push + broadcast +
     /// projection fan-out) so concurrent `snapshot()` readers observe
@@ -150,6 +168,9 @@ impl ServerState {
         //    coord write lock so the snapshot read side sees a
         //    consistent (state, revision) pair.
         let _coord = self.coord.write().unwrap();
+        if let Mutation::BackfillProgress { active, .. } = &m {
+            self.replay_active.store(*active, Ordering::Relaxed);
+        }
         {
             let mut store = self.entity_store.write().unwrap();
             apply_entity_mutation(&mut store, &m);
@@ -188,6 +209,50 @@ impl ServerState {
         }
 
         revision
+    }
+
+    /// Apply one optional enrichment event without touching the canonical
+    /// revision or mutation stream. Anchored records are rejected if a reorg
+    /// raced the source request and the claimed block/hash is no longer in
+    /// the retained canonical evidence window.
+    pub fn apply_enrichment(&self, event: EnrichmentEvent) -> bool {
+        let _coord = self.coord.read().unwrap();
+        let store = self.entity_store.read().unwrap();
+
+        let event = match event {
+            EnrichmentEvent::SourceStatus(mut status) => {
+                if status.validated_anchor.as_ref().is_some_and(|anchor| {
+                    !store
+                        .chain
+                        .recent_blocks
+                        .iter()
+                        .any(|block| block.number == anchor.block && block.hash == anchor.hash)
+                }) {
+                    status.status = EnrichmentSourceState::Syncing;
+                    status.validated_anchor = None;
+                    status.message = Some(
+                        "source anchor is outside the retained canonical evidence window"
+                            .to_string(),
+                    );
+                }
+                EnrichmentEvent::SourceStatus(status)
+            }
+            anchored if !event_anchor_is_current(&anchored, &store.chain.recent_blocks) => {
+                tracing::warn!(
+                    target: "cknerv-server",
+                    "discarded enrichment event with a non-canonical or expired anchor"
+                );
+                return false;
+            }
+            other => other,
+        };
+        drop(store);
+
+        let registry = self.projections.read().unwrap();
+        for writer in registry.enrichment_writers() {
+            writer.apply_enrichment(&event);
+        }
+        true
     }
 
     /// Serialize the Chain entity + chain_nodes + revision into a JSON
@@ -249,6 +314,30 @@ impl ServerState {
         })
     }
 
+    /// Spawn the independent optional-enrichment reducer. Closing or failing
+    /// this pipeline has no effect on canonical adapter processing.
+    pub fn spawn_enrichment_reducer(
+        self: Arc<Self>,
+        mut enrichment_rx: mpsc::Receiver<EnrichmentEvent>,
+        mut shutdown: watch::Receiver<bool>,
+    ) -> tokio::task::JoinHandle<()> {
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = shutdown.changed() => {
+                        if *shutdown.borrow() {
+                            break;
+                        }
+                    }
+                    maybe = enrichment_rx.recv() => match maybe {
+                        Some(event) => { self.apply_enrichment(event); }
+                        None => break,
+                    }
+                }
+            }
+        })
+    }
+
     /// Spawn a parallel projection runtime task subscribed to the
     /// mutation broadcast. Not used in the default wiring (`spawn_reducer`
     /// fans projections inline), but provided for adapters that want a
@@ -286,6 +375,20 @@ impl ServerState {
             }
         })
     }
+}
+
+fn event_anchor_is_current(event: &EnrichmentEvent, recent_blocks: &[RecentBlock]) -> bool {
+    let anchor = match event {
+        EnrichmentEvent::CellUpsert(record) => Some(&record.as_of),
+        EnrichmentEvent::TransactionUpsert(record) => Some(&record.as_of),
+        EnrichmentEvent::CensusReplace(census) => Some(&census.as_of),
+        EnrichmentEvent::SourceStatus(_) | EnrichmentEvent::Clear => None,
+    };
+    anchor.is_none_or(|anchor| {
+        recent_blocks
+            .iter()
+            .any(|block| block.number == anchor.block && block.hash == anchor.hash)
+    })
 }
 
 impl Default for ServerState {
@@ -929,5 +1032,63 @@ mod tests {
         assert_eq!(snap["chain"]["tip"], 99);
         assert_eq!(snap["chain"]["total_blocks"], 1);
         assert_eq!(snap["revision"], 1);
+    }
+
+    #[test]
+    fn enrichment_anchor_guard_never_changes_canonical_revision() {
+        let state = ServerState::new();
+        state
+            .projections
+            .write()
+            .unwrap()
+            .register_enrichment(cknerv_core::SemanticsProjection::default());
+        state.apply_mutation(Mutation::BlockMined {
+            number: 10,
+            hash: "0xcanonical".to_string(),
+            tx_count: 0,
+            size: 0,
+            at: 10,
+        });
+        let record = cknerv_core::CellSemanticRecord {
+            out_point: cknerv_core::OutPoint {
+                tx_hash: "0xcell".to_string(),
+                index: 0,
+            },
+            source: "test".to_string(),
+            as_of: cknerv_core::ChainAnchor {
+                block: 10,
+                hash: "0xorphan".to_string(),
+            },
+            observed_at_block: 10,
+            updated_at_ms: 10,
+            address: None,
+            cell_type: None,
+            lock_script: None,
+            type_script: None,
+            asset: None,
+            common_knowledge: None,
+            facets: Vec::new(),
+        };
+
+        assert!(!state.apply_enrichment(EnrichmentEvent::CellUpsert(Box::new(record.clone()))));
+        let runtime = state
+            .projections
+            .read()
+            .unwrap()
+            .lookup("semantics")
+            .unwrap();
+        assert!(runtime.snapshot_json().1["cells"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+
+        let mut canonical = record;
+        canonical.as_of.hash = "0xcanonical".to_string();
+        assert!(state.apply_enrichment(EnrichmentEvent::CellUpsert(Box::new(canonical))));
+        assert_eq!(
+            runtime.snapshot_json().1["cells"].as_array().unwrap().len(),
+            1
+        );
+        assert_eq!(state.snapshot()["revision"], 1);
     }
 }

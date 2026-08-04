@@ -16,6 +16,9 @@ use axum::routing::get;
 use axum::{Json, Router};
 use tokio::sync::watch;
 
+use cknerv_core::{EnrichmentEvent, OutPoint};
+
+use crate::enrichment::EnrichmentSource;
 use crate::state::ServerState;
 
 /// Composite router state: shared `ServerState` + the shutdown receiver
@@ -25,15 +28,28 @@ use crate::state::ServerState;
 pub struct RouterState {
     pub state: Arc<ServerState>,
     pub shutdown_rx: watch::Receiver<bool>,
+    pub enrichment_source: Option<Arc<dyn EnrichmentSource>>,
 }
 
-pub fn build_router(state: Arc<ServerState>, shutdown_rx: watch::Receiver<bool>) -> Router {
+pub fn build_router(
+    state: Arc<ServerState>,
+    shutdown_rx: watch::Receiver<bool>,
+    enrichment_source: Option<Arc<dyn EnrichmentSource>>,
+) -> Router {
     Router::new()
         .route("/api/entities/chain/snapshot", get(entities_chain_snapshot))
         .route("/api/entities/chain/stream", get(entities_chain_stream))
         .route("/api/projections/:name/snapshot", get(projection_snapshot))
         .route("/api/projections/:name/stream", get(projection_stream))
-        .with_state(RouterState { state, shutdown_rx })
+        .route(
+            "/api/enrichment/cells/:tx_hash/:output_index",
+            get(enrich_cell),
+        )
+        .with_state(RouterState {
+            state,
+            shutdown_rx,
+            enrichment_source,
+        })
 }
 
 async fn entities_chain_snapshot(State(s): State<RouterState>) -> Json<serde_json::Value> {
@@ -46,7 +62,9 @@ async fn entities_chain_stream(
     State(s): State<RouterState>,
 ) -> impl IntoResponse {
     let since: Option<u64> = params.get("since").and_then(|s| s.parse().ok());
-    let RouterState { state, shutdown_rx } = s;
+    let RouterState {
+        state, shutdown_rx, ..
+    } = s;
     ws.on_upgrade(move |socket| crate::ws::handle_chain_stream(state, socket, since, shutdown_rx))
 }
 
@@ -86,4 +104,59 @@ async fn projection_stream(
         crate::ws::handle_projection_stream(runner, socket, since, shutdown_rx)
     })
     .into_response()
+}
+
+async fn enrich_cell(
+    Path((tx_hash, output_index)): Path<(String, u32)>,
+    State(router): State<RouterState>,
+) -> impl IntoResponse {
+    let Some(source) = router.enrichment_source else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "error": "enrichment_disabled",
+                "message": "no enrichment source is configured"
+            })),
+        )
+            .into_response();
+    };
+    let out_point = OutPoint {
+        tx_hash,
+        index: output_index,
+    };
+    let context = router.state.canonical_context();
+    match source.enrich_cell(&out_point, &context).await {
+        Ok(Some(record)) => {
+            if !router
+                .state
+                .apply_enrichment(EnrichmentEvent::CellUpsert(Box::new(record.clone())))
+            {
+                return (
+                    StatusCode::CONFLICT,
+                    Json(serde_json::json!({
+                        "error": "anchor_expired",
+                        "message": "the canonical chain changed while enrichment was loading"
+                    })),
+                )
+                    .into_response();
+            }
+            Json(serde_json::json!({ "cell": record })).into_response()
+        }
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "error": "cell_not_indexed",
+                "message": "the enrichment source has no record for this outpoint"
+            })),
+        )
+            .into_response(),
+        Err(error) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({
+                "error": "enrichment_unavailable",
+                "message": error.to_string()
+            })),
+        )
+            .into_response(),
+    }
 }

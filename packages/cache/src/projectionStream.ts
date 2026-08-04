@@ -13,6 +13,9 @@ import type {
   CellDelta,
   CellGalaxySnapshot,
   RevisionedCellDelta,
+  RevisionedSemanticsDelta,
+  SemanticsDelta,
+  SemanticsSnapshot,
 } from '@cknerv/types';
 
 import {
@@ -21,6 +24,12 @@ import {
   fromCellsSnapshot,
   type CellGalaxyCache,
 } from './cellsReducer';
+import {
+  applyRevisionedSemanticsDeltas,
+  emptySemanticsCache,
+  fromSemanticsSnapshot,
+  type SemanticsCache,
+} from './semanticsReducer';
 import {
   createStreamHealthTracker,
   type StreamHealthOptions,
@@ -248,6 +257,33 @@ export function connectCellsStream(
         applyRevisionedCellDeltas(prev, deltas as RevisionedCellDelta[], opts),
       getRevision: (c) => c.revision,
       markLagged: (c) => ({ ...c, revision: 0 }),
+    },
+    onChange,
+    opts,
+  );
+}
+
+/** Optional semantics projection connector. Callers decide whether to create
+ * it from runtime config; the required chain/cells boot path never depends on
+ * this stream. */
+export function connectSemanticsStream(
+  streamUrl: string,
+  initial: SemanticsCache | undefined,
+  onChange: (next: SemanticsCache) => void,
+  opts: ProjectionStreamOptions = {},
+): ProjectionStreamHandle {
+  return connectProjectionStream<SemanticsCache, SemanticsSnapshot, SemanticsDelta>(
+    streamUrl,
+    initial ?? emptySemanticsCache(),
+    {
+      fromSnapshot: fromSemanticsSnapshot,
+      applyDeltas: (prev, deltas) =>
+        applyRevisionedSemanticsDeltas(
+          prev,
+          deltas as RevisionedSemanticsDelta[],
+        ),
+      getRevision: (cache) => cache.revision,
+      markLagged: (cache) => ({ ...cache, revision: 0 }),
     },
     onChange,
     opts,

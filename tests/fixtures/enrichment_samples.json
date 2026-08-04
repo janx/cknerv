@@ -1,0 +1,197 @@
+{
+  "snapshot": {
+    "source": {
+      "source": "ckbadger",
+      "status": "ready",
+      "capabilities": ["cell_detail", "script_identity", "data_analysis"],
+      "indexed_tip": 100,
+      "lag_blocks": 1,
+      "validated_anchor": {
+        "block": 100,
+        "hash": "0xblock100"
+      },
+      "last_success_at_ms": 1700000000000
+    },
+    "cells": [
+      {
+        "out_point": {
+          "tx_hash": "0xcelltx",
+          "index": 1
+        },
+        "source": "ckbadger",
+        "as_of": {
+          "block": 100,
+          "hash": "0xblock100"
+        },
+        "observed_at_block": 92,
+        "updated_at_ms": 1700000000001,
+        "address": "ckt1qyqexample",
+        "cell_type": "dao",
+        "lock_script": {
+          "script_hash": "0xlockscript",
+          "code_hash": "0xlockcode",
+          "hash_type": "type",
+          "args": "0x01",
+          "name": "Default Lock",
+          "family": "lock",
+          "deprecated": false
+        },
+        "type_script": {
+          "script_hash": "0xtypescript",
+          "code_hash": "0xdaocode",
+          "hash_type": "type",
+          "args": "0x",
+          "name": "Nervos DAO",
+          "family": "dao",
+          "deprecated": false
+        },
+        "common_knowledge": {
+          "total_bytes": 102,
+          "capacity_field_bytes": 8,
+          "lock_script_bytes": 54,
+          "type_script_bytes": 33,
+          "data_bytes": 7
+        },
+        "facets": [
+          {
+            "namespace": "ckb",
+            "kind": "dao",
+            "state": "deposit",
+            "attributes": [
+              {
+                "key": "deposit_block",
+                "value": "92",
+                "unit": "block"
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "transactions": [
+      {
+        "tx_hash": "0xtx100",
+        "block": 100,
+        "source": "ckbadger",
+        "as_of": {
+          "block": 100,
+          "hash": "0xblock100"
+        },
+        "updated_at_ms": 1700000000002,
+        "actions": [
+          {
+            "namespace": "ckb",
+            "kind": "transfer",
+            "attributes": []
+          }
+        ],
+        "participants": [],
+        "fee": "1000",
+        "cycles": 12345
+      }
+    ],
+    "census": {
+      "source": "ckbadger",
+      "as_of": {
+        "block": 100,
+        "hash": "0xblock100"
+      },
+      "updated_at_ms": 1700000000003,
+      "live_cells": 123456,
+      "total_cells": 234567,
+      "dead_cells": 111111
+    }
+  },
+  "deltas": {
+    "source_status": {
+      "type": "source_status",
+      "source": {
+        "source": "ckbadger",
+        "status": "ready",
+        "capabilities": ["cell_detail", "script_identity", "data_analysis"],
+        "indexed_tip": 100,
+        "lag_blocks": 1,
+        "validated_anchor": {
+          "block": 100,
+          "hash": "0xblock100"
+        },
+        "last_success_at_ms": 1700000000000
+      }
+    },
+    "cell_upsert": {
+      "type": "cell_upsert",
+      "cell": {
+        "out_point": {
+          "tx_hash": "0xcelltx",
+          "index": 1
+        },
+        "source": "ckbadger",
+        "as_of": {
+          "block": 100,
+          "hash": "0xblock100"
+        },
+        "observed_at_block": 92,
+        "updated_at_ms": 1700000000001,
+        "address": "ckt1qyqexample",
+        "cell_type": "dao",
+        "lock_script": {
+          "script_hash": "0xlockscript",
+          "code_hash": "0xlockcode",
+          "hash_type": "type",
+          "args": "0x01",
+          "name": "Default Lock",
+          "family": "lock",
+          "deprecated": false
+        },
+        "type_script": {
+          "script_hash": "0xtypescript",
+          "code_hash": "0xdaocode",
+          "hash_type": "type",
+          "args": "0x",
+          "name": "Nervos DAO",
+          "family": "dao",
+          "deprecated": false
+        },
+        "common_knowledge": {
+          "total_bytes": 102,
+          "capacity_field_bytes": 8,
+          "lock_script_bytes": 54,
+          "type_script_bytes": 33,
+          "data_bytes": 7
+        },
+        "facets": [
+          {
+            "namespace": "ckb",
+            "kind": "dao",
+            "state": "deposit",
+            "attributes": [
+              {
+                "key": "deposit_block",
+                "value": "92",
+                "unit": "block"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "cell_remove": {
+      "type": "cell_remove",
+      "out_point": {
+        "tx_hash": "0xcelltx",
+        "index": 1
+      }
+    },
+    "transaction_remove": {
+      "type": "transaction_remove",
+      "tx_hash": "0xtx100"
+    },
+    "prune": {
+      "type": "prune",
+      "from_block": 100
+    },
+    "clear": {
+      "type": "clear"
+    }
+  }
+}

@@ -17,12 +17,18 @@ export interface GalaxyRuntimeConfig {
   };
 }
 
+export interface EnrichmentRuntimeConfig {
+  enabled: boolean;
+  source?: string;
+}
+
 export interface CknervRuntimeConfig {
   buildVersion?: string;
   galaxy?: Partial<Omit<GalaxyRuntimeConfig, 'topology' | 'pulses'>> & {
     topology?: Partial<GalaxyRuntimeConfig['topology']>;
     pulses?: Partial<GalaxyRuntimeConfig['pulses']>;
   };
+  enrichment?: Partial<EnrichmentRuntimeConfig>;
 }
 
 declare global {
@@ -32,6 +38,9 @@ declare global {
 }
 
 export const DEFAULT_BUILD_VERSION = 'dev';
+export const DEFAULT_ENRICHMENT_CONFIG: EnrichmentRuntimeConfig = {
+  enabled: false,
+};
 export const DEFAULT_GALAXY_CONFIG: GalaxyRuntimeConfig = {
   profile: 'auto',
   cellCap: 20_000,
@@ -68,6 +77,17 @@ export function resolveBuildVersion(
   return configured && configured.length > 0
     ? configured
     : DEFAULT_BUILD_VERSION;
+}
+
+export function resolveEnrichmentConfig(
+  config: CknervRuntimeConfig = runtimeConfigFromWindow() ?? {},
+): EnrichmentRuntimeConfig {
+  if (config.enrichment?.enabled !== true) return DEFAULT_ENRICHMENT_CONFIG;
+  const source = config.enrichment.source?.trim();
+  return {
+    enabled: true,
+    ...(source ? { source } : {}),
+  };
 }
 
 export const CKNERV_REPOSITORY_URL = 'https://github.com/janx/cknerv';

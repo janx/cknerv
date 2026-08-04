@@ -13,9 +13,17 @@ pub struct FileConfig {
     #[serde(default)]
     pub ckb: CkbSection,
     #[serde(default)]
+    pub ckbadger: Option<CkbadgerSection>,
+    #[serde(default)]
     pub dashboard: DashboardSection,
     #[serde(default)]
     pub galaxy: GalaxySection,
+}
+
+#[derive(Debug, Default, serde::Deserialize)]
+pub struct CkbadgerSection {
+    pub api_url: Option<String>,
+    pub max_lag_blocks: Option<u64>,
 }
 
 #[derive(Debug, Default, serde::Deserialize)]
@@ -101,7 +109,15 @@ pub struct ResolvedConfig {
     /// Optional one-run hard limit for Cell hydration. `None` uses the
     /// target-driven policy derived from `galaxy.cell_cap`.
     pub backfill_blocks: Option<u64>,
+    /// Optional local indexed context. Section absence keeps enrichment off.
+    pub ckbadger: Option<ResolvedCkbadgerConfig>,
     pub galaxy: ResolvedGalaxyConfig,
+}
+
+#[derive(Debug, Clone)]
+pub struct ResolvedCkbadgerConfig {
+    pub api_url: Url,
+    pub max_lag_blocks: u64,
 }
 
 const DEFAULT_RPC: &str = "http://localhost:8114";
@@ -202,6 +218,27 @@ pub fn resolve(
     // value is deliberately not defaulted: when present it is a one-run hard
     // block-window override for diagnostics.
     let backfill_blocks = cli_backfill;
+    let ckbadger = file
+        .ckbadger
+        .as_ref()
+        .map(|section| {
+            let raw = section
+                .api_url
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("cknerv.toml [ckbadger] requires api_url"))?;
+            let api_url = Url::parse(raw)
+                .map_err(|e| anyhow::anyhow!("cknerv.toml [ckbadger] api_url {raw:?}: {e}"))?;
+            if !matches!(api_url.scheme(), "http" | "https") {
+                return Err(anyhow::anyhow!(
+                    "cknerv.toml [ckbadger] api_url must use http or https"
+                ));
+            }
+            Ok(ResolvedCkbadgerConfig {
+                api_url,
+                max_lag_blocks: section.max_lag_blocks.unwrap_or(12),
+            })
+        })
+        .transpose()?;
     let mut galaxy = ResolvedGalaxyConfig::for_profile(profile);
     if let Some(v) = file.galaxy.cell_cap {
         galaxy.cell_cap = v;
@@ -235,6 +272,7 @@ pub fn resolve(
         port,
         open,
         backfill_blocks,
+        ckbadger,
         galaxy,
     })
 }
@@ -245,6 +283,14 @@ pub const CKNERV_TOML_TEMPLATE: &str = r#"# cknerv configuration. Priority: CLI 
 [ckb]
 # CKB JSON-RPC endpoint.
 rpc_url = "http://localhost:8114"
+
+# Optional indexed semantics. Leave this section commented out and cknerv
+# behaves exactly as a direct CKB-only dashboard.
+#[ckbadger]
+# Direct per-network API: http://127.0.0.1:8101/api/v1
+# Orchestrator proxy:      http://127.0.0.1:8100/api/mainnet/v1
+#api_url = "http://127.0.0.1:8101/api/v1"
+#max_lag_blocks = 12
 
 [dashboard]
 # HTTP/WS port for the dashboard SPA.
@@ -299,8 +345,25 @@ mod tests {
         assert_eq!(r.port, 7001);
         assert!(r.open);
         assert_eq!(r.backfill_blocks, None);
+        assert!(r.ckbadger.is_none());
         assert_eq!(r.galaxy.cell_cap, 20_000);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn ckbadger_section_is_optional_and_validated() {
+        let file: FileConfig = toml::from_str(
+            "[ckbadger]\napi_url = \"http://127.0.0.1:8101/api/v1\"\nmax_lag_blocks = 24\n",
+        )
+        .unwrap();
+        let resolved = resolve(None, None, false, None, &file).unwrap();
+        let ckbadger = resolved.ckbadger.expect("configured ckbadger");
+
+        assert_eq!(ckbadger.api_url.as_str(), "http://127.0.0.1:8101/api/v1");
+        assert_eq!(ckbadger.max_lag_blocks, 24);
+
+        let missing_url: FileConfig = toml::from_str("[ckbadger]\nmax_lag_blocks = 2\n").unwrap();
+        assert!(resolve(None, None, false, None, &missing_url).is_err());
     }
 
     #[test]

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { ReactNode } from 'react';
+import type { EnrichmentSourceStatus } from '@cknerv/types';
 import { useControls } from 'leva';
 import type { AlertLevel } from '../../derives/alertLevel';
 import type { StreamHealthSummary } from '../../derives/streamHealth.derive';
@@ -82,6 +83,43 @@ const STREAM_COLOR: Record<StreamHealthSummary['phase'], string> = {
   resyncing: HUD_COLORS.rebuild,
   stale: HUD_COLORS.danger,
 };
+
+const ENRICHMENT_COLOR: Record<EnrichmentSourceStatus['status'], string> = {
+  disabled: HUD_COLORS.dim,
+  connecting: HUD_COLORS.cyanWire,
+  syncing: HUD_COLORS.cyanWire,
+  ready: HUD_COLORS.nominal,
+  stale: HUD_COLORS.caution,
+  incompatible: HUD_COLORS.danger,
+  error: HUD_COLORS.danger,
+};
+
+function EnrichmentChip({ source }: { source: EnrichmentSourceStatus }) {
+  const color = ENRICHMENT_COLOR[source.status];
+  const lag = source.lag_blocks == null ? '' : ` ${source.lag_blocks}↓`;
+  return (
+    <span
+      data-enrichment-chip
+      data-enrichment-status={source.status}
+      title={source.message ?? `Validated indexed context from ${source.source}`}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 5,
+        padding: '2px 7px',
+        border: `1px solid ${rgba(color, 0.25)}`,
+        color,
+        fontFamily: HUD_FONTS.mono,
+        fontSize: 8.5,
+        letterSpacing: 0.75,
+        whiteSpace: 'nowrap',
+      }}
+    >
+      <span style={{ width: 4, height: 4, borderRadius: '50%', background: color, boxShadow: `0 0 5px ${color}` }} />
+      {source.source.toUpperCase()} {source.status.toUpperCase()}{lag}
+    </span>
+  );
+}
 
 const QUALITY_MODES = ['auto', 'high', 'med', 'low'] as const satisfies readonly QualityMode[];
 const CELL_TRACK_TICKS = [0, 25, 50, 75, 100] as const;
@@ -549,6 +587,7 @@ export default function StatusStrip({
   stream,
   cellCount,
   cellCapacity,
+  enrichmentSource,
   actions,
 }: {
   level: AlertLevel;
@@ -559,6 +598,8 @@ export default function StatusStrip({
   cellCount?: number;
   /** Resolved server projection cap used by AUTO and capacity disclosure. */
   cellCapacity?: number;
+  /** Optional indexed-context health. Omitted when no source is configured. */
+  enrichmentSource?: EnrichmentSourceStatus;
   /** Product-specific controls rendered without coupling the shared HUD to them. */
   actions?: ReactNode;
 }) {
@@ -576,6 +617,7 @@ export default function StatusStrip({
         capacity={cellCapacity}
       />
       <RenderQualityControl />
+      {enrichmentSource ? <EnrichmentChip source={enrichmentSource} /> : null}
       {actions ? (
         <div
           data-status-actions

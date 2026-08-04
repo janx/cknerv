@@ -17,6 +17,8 @@ import type {
   CellDelta,
   ChainEntry,
   CellGalaxySnapshot,
+  SemanticsDelta,
+  SemanticsSnapshot,
 } from '../src';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -120,5 +122,18 @@ describe('wire-shape parity (TS twin of cknerv-core)', () => {
         }
       }
     }
+  });
+
+  it('enrichment_samples.json mirrors optional semantics shapes', () => {
+    const sample = fixture<{
+      snapshot: SemanticsSnapshot;
+      deltas: Record<string, SemanticsDelta>;
+    }>('enrichment_samples.json');
+
+    expect(sample.snapshot.source.status).toBe('ready');
+    expect(sample.snapshot.cells[0].lock_script?.name).toBe('Default Lock');
+    expect(sample.snapshot.cells[0].common_knowledge?.total_bytes).toBe(102);
+    expect(sample.deltas.cell_upsert.type).toBe('cell_upsert');
+    expect(sample.deltas.prune).toEqual({ type: 'prune', from_block: 100 });
   });
 });

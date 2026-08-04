@@ -7,11 +7,12 @@
 //! projection registry that dispatches each mutation into every registered
 //! [`cknerv_core::Projection`] (e.g. `CellGalaxy`).
 //!
-//! Data sources implement the [`Adapter`] trait; the server `tokio::spawn`s
-//! each registered adapter and merges their mutation streams into the
-//! reducer task. Phase C ships `cknerv-adapter-ckb` (ckb-direct RPC) and
-//! `cknerv-adapter-ckbadger` (peer-relay observer). Phase B7 wires the
-//! simulator's existing telemetry bus through a `SimulatorAdapter`.
+//! Canonical data sources implement the [`Adapter`] trait; the server
+//! `tokio::spawn`s each registered adapter and merges their mutation streams
+//! into the reducer task. Optional indexed context implements
+//! [`EnrichmentSource`] and uses a separate event pipeline with independent
+//! projection revisions. Phase B7 wires the simulator's existing telemetry
+//! bus through a `SimulatorAdapter`.
 //!
 //! Routes hosted (matching what `@cknerv/cache` consumes in PR B5):
 //!   * `GET /api/entities/chain/snapshot` — full Chain entity snapshot.
@@ -20,8 +21,11 @@
 //!   * `GET /api/projections/:name/snapshot` — projection snapshot by name.
 //!   * `GET /api/projections/:name/stream`   — WS delta stream by name,
 //!     resumable via `?since=<revision>`.
+//!   * `GET /api/enrichment/cells/:tx_hash/:output_index` — optional lazy
+//!     indexed context for one selected canonical Cell.
 
 pub mod adapter;
+pub mod enrichment;
 pub mod persistence;
 pub mod projection_registry;
 pub mod routes;
@@ -30,6 +34,7 @@ pub mod state;
 pub mod ws;
 
 pub use adapter::Adapter;
+pub use enrichment::{CanonicalContext, EnrichmentSource};
 pub use persistence::{peek_restored_chain_cursor, peek_restored_tip, RestoredChainCursor};
 pub use server::{ServerBuilder, ServerHandle};
 pub use state::ServerState;

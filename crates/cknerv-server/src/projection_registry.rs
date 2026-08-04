@@ -20,12 +20,12 @@
 //! so we never hold a sync lock across an `.await`.
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 
 use serde_json::Value;
 use tokio::sync::broadcast;
 
-use cknerv_core::{Projection, RevisionedMutation, Ring};
+use cknerv_core::{EnrichmentEvent, EnrichmentProjection, Projection, RevisionedMutation, Ring};
 
 /// Per-projection broadcast capacity. Matches the simulator's
 /// `PROJECTION_CHANNEL_CAPACITY`.
@@ -69,6 +69,11 @@ pub trait ProjectionRuntime: Send + Sync {
 /// projection.
 pub trait ApplyMutation: Send + Sync {
     fn apply(&self, rm: &RevisionedMutation);
+}
+
+/// Write-side handle for the optional, non-canonical enrichment stream.
+pub trait ApplyEnrichment: Send + Sync {
+    fn apply_enrichment(&self, event: &EnrichmentEvent);
 }
 
 /// Concrete adapter: wraps a `Projection` with the per-projection
@@ -166,11 +171,109 @@ impl<P: Projection> ApplyMutation for ProjectionRunner<P> {
     }
 }
 
+/// Runner for a projection that consumes both canonical invalidation events
+/// and optional enrichment events. Its revision is local to the projection:
+/// canonical mutations that do not emit semantics deltas do not advance it.
+pub struct EnrichmentProjectionRunner<P: EnrichmentProjection> {
+    name: &'static str,
+    inner: RwLock<P>,
+    event_coord: Mutex<()>,
+    revision: AtomicU64,
+    delta_seq: AtomicU64,
+    tx: broadcast::Sender<DeltaEntry>,
+    ring: Ring<DeltaEntry>,
+}
+
+impl<P: EnrichmentProjection> EnrichmentProjectionRunner<P> {
+    fn new(projection: P) -> Self {
+        let (tx, _) = broadcast::channel(PROJECTION_CHANNEL_CAPACITY);
+        let name = projection.name();
+        Self {
+            name,
+            inner: RwLock::new(projection),
+            event_coord: Mutex::new(()),
+            revision: AtomicU64::new(0),
+            delta_seq: AtomicU64::new(0),
+            tx,
+            ring: Ring::with_capacity(PROJECTION_DELTA_RING_CAP),
+        }
+    }
+
+    fn publish(&self, deltas: Vec<P::Delta>) {
+        if deltas.is_empty() {
+            return;
+        }
+        for delta in deltas {
+            // Enrichment owns its cursor, so each independently applicable
+            // delta gets a revision. A reconnect can never resume midway
+            // through a multi-delta event and accidentally skip its tail.
+            let revision = self.revision.fetch_add(1, Ordering::Relaxed) + 1;
+            let value = serde_json::to_value(&delta).unwrap_or(Value::Null);
+            let seq = self.delta_seq.fetch_add(1, Ordering::Relaxed) + 1;
+            let entry = DeltaEntry {
+                seq,
+                rev: revision,
+                value,
+            };
+            self.ring.push(entry.clone());
+            let _ = self.tx.send(entry);
+        }
+    }
+}
+
+impl<P: EnrichmentProjection> ProjectionRuntime for EnrichmentProjectionRunner<P> {
+    fn name(&self) -> &'static str {
+        self.name
+    }
+
+    fn snapshot_json(&self) -> (u64, Value) {
+        let _coord = self.event_coord.lock().unwrap();
+        let snapshot = self.inner.read().unwrap().snapshot();
+        let value = serde_json::to_value(snapshot).unwrap_or(Value::Null);
+        (self.revision.load(Ordering::Relaxed), value)
+    }
+
+    fn delta_ring_snapshot(&self) -> Vec<DeltaEntry> {
+        self.ring.snapshot()
+    }
+
+    fn subscribe(&self) -> broadcast::Receiver<DeltaEntry> {
+        self.tx.subscribe()
+    }
+
+    fn save_state(&self) -> Value {
+        let _coord = self.event_coord.lock().unwrap();
+        self.inner.read().unwrap().save()
+    }
+
+    fn load_state(&self, value: Value) -> Result<(), String> {
+        let _coord = self.event_coord.lock().unwrap();
+        self.inner.write().unwrap().load(value)
+    }
+}
+
+impl<P: EnrichmentProjection> ApplyMutation for EnrichmentProjectionRunner<P> {
+    fn apply(&self, rm: &RevisionedMutation) {
+        let _coord = self.event_coord.lock().unwrap();
+        let deltas = self.inner.write().unwrap().apply_mutation(&rm.mutation);
+        self.publish(deltas);
+    }
+}
+
+impl<P: EnrichmentProjection> ApplyEnrichment for EnrichmentProjectionRunner<P> {
+    fn apply_enrichment(&self, event: &EnrichmentEvent) {
+        let _coord = self.event_coord.lock().unwrap();
+        let deltas = self.inner.write().unwrap().apply_enrichment(event);
+        self.publish(deltas);
+    }
+}
+
 /// Holds the registered projections. Routes look up by name via `lookup`;
 /// the reducer task drains `writers()` per mutation.
 pub struct Registry {
     read_runtimes: Vec<Arc<dyn ProjectionRuntime>>,
     writers: Vec<Arc<dyn ApplyMutation>>,
+    enrichment_writers: Vec<Arc<dyn ApplyEnrichment>>,
 }
 
 impl Registry {
@@ -178,6 +281,7 @@ impl Registry {
         Self {
             read_runtimes: Vec::new(),
             writers: Vec::new(),
+            enrichment_writers: Vec::new(),
         }
     }
 
@@ -186,6 +290,15 @@ impl Registry {
         self.read_runtimes
             .push(runner.clone() as Arc<dyn ProjectionRuntime>);
         self.writers.push(runner.clone() as Arc<dyn ApplyMutation>);
+    }
+
+    pub fn register_enrichment<P: EnrichmentProjection>(&mut self, projection: P) {
+        let runner = Arc::new(EnrichmentProjectionRunner::new(projection));
+        self.read_runtimes
+            .push(runner.clone() as Arc<dyn ProjectionRuntime>);
+        self.writers.push(runner.clone() as Arc<dyn ApplyMutation>);
+        self.enrichment_writers
+            .push(runner as Arc<dyn ApplyEnrichment>);
     }
 
     pub fn lookup(&self, name: &str) -> Option<Arc<dyn ProjectionRuntime>> {
@@ -197,6 +310,10 @@ impl Registry {
 
     pub fn writers(&self) -> Vec<Arc<dyn ApplyMutation>> {
         self.writers.clone()
+    }
+
+    pub fn enrichment_writers(&self) -> Vec<Arc<dyn ApplyEnrichment>> {
+        self.enrichment_writers.clone()
     }
 
     /// Save every registered projection's state into a `{name → value}`
@@ -250,7 +367,10 @@ impl Default for Registry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cknerv_core::{CellGalaxy, Mutation, OutPoint, TxOutputInfo};
+    use cknerv_core::{
+        CellGalaxy, EnrichmentEvent, EnrichmentSourceState, EnrichmentSourceStatus, Mutation,
+        OutPoint, SemanticsProjection, TxOutputInfo,
+    };
 
     fn output(capacity: u64) -> TxOutputInfo {
         TxOutputInfo {
@@ -390,5 +510,44 @@ mod tests {
             .expect("recent_links array")
             .iter()
             .all(|link| link["block"].as_u64().is_some_and(|block| block < 2)));
+    }
+
+    #[test]
+    fn enrichment_projection_owns_an_independent_revision() {
+        let mut registry = Registry::new();
+        registry.register_enrichment(SemanticsProjection::new(Some(("ckbadger", vec![]))));
+        let runtime = registry.lookup("semantics").expect("semantics runtime");
+        let canonical = registry.writers().into_iter().next().unwrap();
+        let enrichment = registry.enrichment_writers().into_iter().next().unwrap();
+
+        canonical.apply(&RevisionedMutation {
+            revision: 41,
+            mutation: Mutation::BlockMined {
+                number: 9,
+                hash: "0xblock9".to_string(),
+                tx_count: 0,
+                size: 0,
+                at: 9,
+            },
+        });
+        assert_eq!(runtime.snapshot_json().0, 0);
+
+        let mut status = EnrichmentSourceStatus::connecting("ckbadger", vec![]);
+        status.status = EnrichmentSourceState::Ready;
+        enrichment.apply_enrichment(&EnrichmentEvent::SourceStatus(status));
+        assert_eq!(runtime.snapshot_json().0, 1);
+
+        canonical.apply(&RevisionedMutation {
+            revision: 42,
+            mutation: Mutation::ChainReorganized { from_block: 9 },
+        });
+        let (revision, snapshot) = runtime.snapshot_json();
+        assert_eq!(revision, 3);
+        assert_eq!(snapshot["source"]["status"], "syncing");
+        let ring = runtime.delta_ring_snapshot();
+        assert_eq!(ring[1].rev, 2);
+        assert_eq!(ring[1].value["type"], "prune");
+        assert_eq!(ring[2].rev, 3);
+        assert_eq!(ring[2].value["type"], "source_status");
     }
 }

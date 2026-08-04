@@ -64,9 +64,14 @@ import {
 import {
   connectCellsStream,
   connectEntityStream,
+  connectSemanticsStream,
+  emptySemanticsCache,
+  fetchCellSemantics,
   fromCellsSnapshot,
+  outPointKey,
   type CellGalaxyCache,
   type ChainCache,
+  type SemanticsCache,
   type StreamHealth,
 } from '@cknerv/cache';
 import type {
@@ -74,6 +79,7 @@ import type {
   ChainEntry,
   ChainNode,
   Peer,
+  CellSemanticRecord,
 } from '@cknerv/types';
 import Tweaks from './Tweaks';
 import Jukebox from './Jukebox';
@@ -109,7 +115,12 @@ import {
   resolveCanvasDpr,
   resolveQualityOverride,
 } from './render-quality';
-import { resolveBuildVersion, buildCommitHref, resolveGalaxyConfig } from './runtime-config';
+import {
+  resolveBuildVersion,
+  buildCommitHref,
+  resolveEnrichmentConfig,
+  resolveGalaxyConfig,
+} from './runtime-config';
 
 interface AppProps {
   /** Initial Chain entity from `/api/entities/chain/snapshot`. */
@@ -170,6 +181,7 @@ export default function App({
   initialCellsRevision,
 }: AppProps) {
   const galaxyConfig = resolveGalaxyConfig();
+  const enrichmentConfig = resolveEnrichmentConfig();
   const qualityOverride = useMemo(() => (
     typeof window === 'undefined'
       ? null
@@ -234,6 +246,24 @@ export default function App({
   initialCellsCacheRef.current = initialCellsCache;
   const [cellsCache, setCellsCache] = useState<CellGalaxyCache>(
     initialCellsCache,
+  );
+  const initialSemanticsCacheRef = useRef<SemanticsCache | null>(null);
+  if (initialSemanticsCacheRef.current === null) {
+    const initial = emptySemanticsCache();
+    initialSemanticsCacheRef.current = enrichmentConfig.enabled
+      ? {
+        ...initial,
+        source: {
+          source: enrichmentConfig.source ?? 'enrichment',
+          status: 'connecting',
+          capabilities: [],
+        },
+      }
+      : initial;
+  }
+  const initialSemanticsCache = initialSemanticsCacheRef.current;
+  const [semanticsCache, setSemanticsCache] = useState<SemanticsCache>(
+    initialSemanticsCache,
   );
   const [chainStreamHealth, setChainStreamHealth] = useState<StreamHealth>(
     initialStreamHealth,
@@ -395,9 +425,17 @@ export default function App({
         staleAfterMs: STREAM_STALE_AFTER_MS,
       },
     );
+    const semantics = enrichmentConfig.enabled
+      ? connectSemanticsStream(
+        '/api/projections/semantics/stream',
+        initialSemanticsCache,
+        setSemanticsCache,
+      )
+      : null;
     return () => {
       entity.disconnect();
       cells.disconnect();
+      semantics?.disconnect();
     };
     // Seeds are mount-time constants; subscribe exactly once.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -501,6 +539,94 @@ export default function App({
     const id = Number(selectedCellId.slice(CELL_SELECTION_PREFIX.length));
     return Number.isFinite(id) ? cellsCache.cells.get(id) ?? null : null;
   }, [selectedCellId, cellsCache.cells]);
+  const cachedSelectedCellSemantics = selectedCell
+    ? semanticsCache.cells.get(outPointKey(selectedCell.out_point)) ?? null
+    : null;
+  const [selectedSemanticsLookup, setSelectedSemanticsLookup] = useState<{
+    key: string | null;
+    phase: 'waiting' | 'loading' | 'ready' | 'unavailable' | 'error';
+    record: CellSemanticRecord | null;
+    message: string | null;
+  }>({ key: null, phase: 'waiting', record: null, message: null });
+  const selectedOutPointKey = selectedCell
+    ? outPointKey(selectedCell.out_point)
+    : null;
+  useEffect(() => {
+    if (!enrichmentConfig.enabled || !selectedCell || !selectedOutPointKey) {
+      setSelectedSemanticsLookup({
+        key: null,
+        phase: 'waiting',
+        record: null,
+        message: null,
+      });
+      return;
+    }
+    if (cachedSelectedCellSemantics) {
+      setSelectedSemanticsLookup({
+        key: selectedOutPointKey,
+        phase: 'ready',
+        record: cachedSelectedCellSemantics,
+        message: null,
+      });
+      return;
+    }
+    const source = semanticsCache.source;
+    if (!source.validated_anchor) {
+      const hardFailure = source.status === 'error'
+        || source.status === 'incompatible';
+      setSelectedSemanticsLookup({
+        key: selectedOutPointKey,
+        phase: hardFailure ? 'error' : 'waiting',
+        record: null,
+        message: source.message ?? null,
+      });
+      return;
+    }
+
+    const controller = new AbortController();
+    setSelectedSemanticsLookup({
+      key: selectedOutPointKey,
+      phase: 'loading',
+      record: null,
+      message: null,
+    });
+    void fetchCellSemantics(selectedCell.out_point, {
+      signal: controller.signal,
+    }).then((record) => {
+      if (controller.signal.aborted) return;
+      setSelectedSemanticsLookup({
+        key: selectedOutPointKey,
+        phase: record ? 'ready' : 'unavailable',
+        record,
+        message: record ? null : 'ckbadger has not indexed this Cell',
+      });
+    }).catch((error: unknown) => {
+      if (controller.signal.aborted) return;
+      setSelectedSemanticsLookup({
+        key: selectedOutPointKey,
+        phase: 'error',
+        record: null,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    });
+    return () => controller.abort();
+  }, [
+    cachedSelectedCellSemantics,
+    enrichmentConfig.enabled,
+    selectedCell,
+    selectedOutPointKey,
+    semanticsCache.source.message,
+    semanticsCache.source.status,
+    semanticsCache.source.validated_anchor,
+  ]);
+  const selectedCellSemantics = selectedSemanticsLookup.key === selectedOutPointKey
+    ? selectedSemanticsLookup.record
+    : cachedSelectedCellSemantics;
+  const selectedCellSemanticsPhase = selectedSemanticsLookup.key === selectedOutPointKey
+    ? selectedSemanticsLookup.phase
+    : cachedSelectedCellSemantics
+      ? 'ready'
+      : 'waiting';
   const selectedCausalLens = useMemo(
     () => selectedCell
       ? deriveCellCausalLens(
@@ -803,7 +929,13 @@ export default function App({
         cellsStats={cellsStats}
         cellCount={cellsCache.cells.size}
         cellCapacity={galaxyConfig.cellCap}
+        enrichmentSource={enrichmentConfig.enabled ? semanticsCache.source : undefined}
         selectedCell={selectedCell}
+        selectedCellSemantics={selectedCellSemantics}
+        selectedCellSemanticsPhase={enrichmentConfig.enabled
+          ? selectedCellSemanticsPhase
+          : undefined}
+        selectedCellSemanticsMessage={selectedSemanticsLookup.message}
         cellRecordsById={cellsCache.cells}
         recentCellLinks={cellsCache.recentLinks}
         cellCausalLens={selectedCausalLens}

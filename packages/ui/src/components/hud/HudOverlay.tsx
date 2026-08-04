@@ -1,6 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
-import type { ChainEntry, Peer, ChainNode, Cell, CellLink } from '@cknerv/types';
+import type {
+  ChainEntry,
+  Peer,
+  ChainNode,
+  Cell,
+  CellLink,
+  CellSemanticRecord,
+  EnrichmentSourceStatus,
+} from '@cknerv/types';
 import type { ActiveReplayProgress } from '@cknerv/cache';
 import type {
   ConsensusMemoryCellResponseRef,
@@ -40,6 +48,7 @@ import {
   type StreamHealthChannels,
 } from '../../derives/streamHealth.derive';
 import StreamHealthBanner from './StreamHealthBanner';
+import type { CellSemanticsPhase } from './CellSemanticsReadout';
 
 // We're "syncing" (catching up, benign) if the node is in IBD, our tip trails the
 // network best-known by more than a couple of blocks, or most peers are ahead of us.
@@ -61,13 +70,17 @@ const MESH_RAIL_STYLE: CSSProperties = { position: 'absolute', top: 42, right: 1
 const MESH_ZONE_COL: CSSProperties = { display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'flex-end' };
 const PANEL_FLOW: CSSProperties = { position: 'relative' };
 
-export default function HudOverlay({ chain, peers, localNode, cellsStats, cellCount, cellCapacity, selectedCell, cellRecordsById, recentCellLinks, cellCausalLens, cellCausalNavigation, tracedCellWriteSeq, cellTraceSource, cellTraceReadout, cellTraceResponseRef, cellTraceEvidenceFocusSourceId, cellTraceEvidencePreviewSourceId, onCellTraceEvidenceFocusChange, cellTraceRouteHopFocus, onCellTraceRouteHopFocusChange, cellTraceRouteHopLock, onCellTraceRouteHopLockChange, cellIdentityProofBinding, onTraceCellWrite, onCellIdentityProofRead, selectedNode, selectedPeer, onClearSelection, onClearCell, onClearNet, backfill, streamHealth, build, topBarActions, colonyCount }: {
+export default function HudOverlay({ chain, peers, localNode, cellsStats, cellCount, cellCapacity, enrichmentSource, selectedCell, selectedCellSemantics, selectedCellSemanticsPhase, selectedCellSemanticsMessage, cellRecordsById, recentCellLinks, cellCausalLens, cellCausalNavigation, tracedCellWriteSeq, cellTraceSource, cellTraceReadout, cellTraceResponseRef, cellTraceEvidenceFocusSourceId, cellTraceEvidencePreviewSourceId, onCellTraceEvidenceFocusChange, cellTraceRouteHopFocus, onCellTraceRouteHopFocusChange, cellTraceRouteHopLock, onCellTraceRouteHopLockChange, cellIdentityProofBinding, onTraceCellWrite, onCellIdentityProofRead, selectedNode, selectedPeer, onClearSelection, onClearCell, onClearNet, backfill, streamHealth, build, topBarActions, colonyCount }: {
   chain: ChainEntry; peers: Peer[]; localNode: ChainNode | undefined; cellsStats: CellsStats;
   /** Records available to CellGalaxy before the top-bar display cap. */
   cellCount?: number;
   /** Resolved server live-Cell cap exposed to the top-bar controller. */
   cellCapacity?: number;
+  enrichmentSource?: EnrichmentSourceStatus;
   selectedCell?: Cell | null;
+  selectedCellSemantics?: CellSemanticRecord | null;
+  selectedCellSemanticsPhase?: CellSemanticsPhase;
+  selectedCellSemanticsMessage?: string | null;
   /** Current Cell projection records for exact route-hop inspection. */
   cellRecordsById?: ReadonlyMap<number, Cell>;
   /** Retained causal links used only to prove an exact selected-Cell origin. */
@@ -207,6 +220,7 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats, cellCo
         stream={streamSummary}
         cellCount={cellCount ?? cellsStats.inView}
         cellCapacity={cellCapacity}
+        enrichmentSource={enrichmentSource}
         actions={topBarActions}
       />
       {streamSummary ? (
@@ -241,6 +255,10 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats, cellCo
               identityProofBinding={cellIdentityProofBinding}
               onTraceWrite={onTraceCellWrite}
               onIdentityProofRead={onCellIdentityProofRead}
+              semanticSource={enrichmentSource}
+              semanticPhase={selectedCellSemanticsPhase}
+              semanticRecord={selectedCellSemantics}
+              semanticMessage={selectedCellSemanticsMessage}
               onClose={clearCell}
               style={PANEL_FLOW}
             />

@@ -122,13 +122,16 @@ availability.
 | CLI | Rust, clap, rust-embed | Workdir commands, config merge, embedded dashboard server |
 | Server | Rust, axum, tokio | HTTP/WS API, mutation reducer, projection registry, persistence |
 | CKB adapter | Rust, reqwest, CKB JSON-RPC types | Read-only node polling, boot backfill, block/tx normalization |
+| ckbadger enrichment | Rust, reqwest | Optional indexed Cell/script context with canonical-anchor validation |
 | Types/cache | TypeScript, Vitest | Wire-type twins, pure reducers, WebSocket clients |
 | UI | React 18, Vite, React Three Fiber, drei, three.js | 3D cell galaxy, HUDs, cell-life detail panels, nerve overlays |
 
 ## Architecture
 
 cknerv keeps source-specific chain ingestion separate from the chain-generic
-dashboard pipeline.
+dashboard pipeline. The direct CKB adapter remains the sole producer of
+structural chain truth. An optional ckbadger source enters through a second,
+additive pipeline and can never create, spend, or replace a canonical Cell.
 
 ```text
 CKB node JSON-RPC
@@ -154,6 +157,17 @@ HTTP/WS API
       |
       v
 @cknerv/ui React + R3F cell galaxy
+
+optional ckbadger HTTP API
+      |
+      v
+EnrichmentSource -- block-height/hash validation
+      |
+      v
+independent EnrichmentEvent stream
+      |
+      v
+SemanticsProjection --> the same HTTP/WS boundary
 ```
 
 Two public seams matter most:
@@ -162,10 +176,15 @@ Two public seams matter most:
   `cknerv_core::Mutation` values.
 - Server projections implement `cknerv_core::Projection` and expose snapshots
   plus deltas through `/api/projections/:name/...`.
+- Optional indexed sources implement `cknerv_server::EnrichmentSource`.
+  Enrichment-aware projections own an independent revision/ring, while
+  canonical reorg/rebuild mutations only invalidate their anchored records.
 
 The current workspace ships `CkbDirectAdapter`, which polls CKB JSON-RPC and
-emits chain-generic mutations. A ckbadger adapter is planned but deferred until
-its feed schema is available.
+emits chain-generic mutations, plus `CkbadgerEnrichmentSource`, which uses
+ckbadger's read-only REST API only when `[ckbadger]` is present. Source-specific
+camelCase DTOs stay inside `crates/cknerv-adapter-ckbadger/`; core/server/UI
+contracts remain normalized and source-agnostic.
 
 ## Repository Layout
 
@@ -174,6 +193,7 @@ its feed schema is available.
 | `crates/cknerv-core/` | Chain-generic wire types, `Mutation`, `Projection`, `CellGalaxy`, deterministic helix positioning, and bounded replay ring. |
 | `crates/cknerv-server/` | axum HTTP/WS server, `Adapter` trait, `ServerBuilder`, entity store, projection registry, replay streams, and persistence. |
 | `crates/cknerv-adapter-ckb/` | `CkbDirectAdapter`: read-only CKB JSON-RPC polling, boot backfill, block/tx normalization, content hash parity. |
+| `crates/cknerv-adapter-ckbadger/` | Optional `EnrichmentSource`: ckbadger health/lag probing, canonical block-hash validation, and lazy Cell/script semantics. |
 | `crates/cknerv-cli/` | `cknerv` binary, clap CLI, config/workdir commands, embedded SPA serving, runtime config injection, browser auto-open. |
 | `packages/types/` | `@cknerv/types`: TypeScript twins of the Rust wire shapes. |
 | `packages/cache/` | `@cknerv/cache`: pure reducers plus entity/projection WebSocket clients. |
@@ -207,9 +227,28 @@ fall back to the SPA.
 | `WS` | `/api/entities/chain/stream?since=<rev>` | snapshot, delta, lagged, or heartbeat frames |
 | `GET` | `/api/projections/cells/snapshot` | `{ revision, snapshot }` where `snapshot.cells` is the live cell set |
 | `WS` | `/api/projections/cells/stream?since=<rev>` | snapshot, delta, lagged, or heartbeat frames |
+| `GET` | `/api/projections/semantics/snapshot` | Optional source health plus bounded Cell/transaction semantics; present even when disabled |
+| `WS` | `/api/projections/semantics/stream?since=<rev>` | Independent optional semantics snapshot/delta stream |
+| `GET` | `/api/enrichment/cells/:tx_hash/:output_index` | Lazily resolve one selected Cell through the configured source; `404 enrichment_disabled` when absent |
 
 The projection route name for the cell galaxy is literally `cells`
 (`CellGalaxy::name()`).
+
+The semantics projection route name is `semantics`. Its revision does not track
+the chain/cells revision: it advances only when semantics or source health
+changes. The SPA never includes this optional stream in its required bootstrap
+`Promise.all`; when no source is configured it does not connect or render the
+extra HUD elements. When configured, the browser still talks only to cknerv,
+not directly to ckbadger.
+
+Before ckbadger data is accepted, cknerv reads its indexed tip, chooses a block
+inside cknerv's retained canonical evidence window, and requires ckbadger to
+return the same hash for that height. A mismatch marks the source
+`incompatible`; lag/reachability are reported as `syncing`, `stale`, or
+`error`, without affecting the CKB adapter. Each lazy Cell response is checked
+again against the current block/hash window, closing the race where a reorg
+occurs during the HTTP request. Canonical reorg/rebuild events prune or clear
+unsafe semantic records before the source can revalidate.
 
 Both WebSocket routes emit
 `{"kind":"heartbeat","revision":<last-confirmed-revision>}` every five seconds
@@ -271,6 +310,13 @@ as `boot`.
 [ckb]
 rpc_url = "http://localhost:8114"
 
+# Optional. Omit the section for the original CKB-only behavior.
+[ckbadger]
+# Direct per-network API; an orchestrator URL such as
+# http://127.0.0.1:8100/api/mainnet/v1 also works.
+api_url = "http://127.0.0.1:8101/api/v1"
+max_lag_blocks = 12
+
 [dashboard]
 port = 7001
 open = true
@@ -291,6 +337,14 @@ max_pulses_per_link = 6
 max_sources_per_parent = 2
 max_active_pulses = 256
 ```
+
+`[ckbadger]` is enabled by section presence and requires `api_url`. The API base
+must already include `/api/v1` (direct service) or `/api/<network>/v1`
+(orchestrator proxy). `max_lag_blocks` controls when a hash-compatible,
+non-syncing source is labeled `stale`; stale anchored data remains explicitly
+marked rather than being treated as canonical. The generated template keeps
+the entire section commented out. Runtime config exposes only
+`{ enabled, source }` to the SPA and never publishes the private API URL.
 
 Profile defaults are resolved in `crates/cknerv-cli/src/config.rs`. `devnet`
 targets 2,000 retained live Cells; the other profiles target 20,000. At an
@@ -345,6 +399,10 @@ Persistence schema v3 adds durable Cell-link endpoint anchors. Existing
 schema-v2 state is incompatible; run `cknerv prune --confirm` before the first
 v3 launch, then let cknerv rebuild the derived state from the configured node.
 
+Optional semantics are intentionally not persisted. They are bounded in memory
+and rehydrated from the configured source, so enabling or disabling ckbadger
+does not change the persistence schema and does not require `cknerv prune`.
+
 ## Build and Test
 
 ```bash
@@ -376,8 +434,12 @@ twin, the fixtures, and both sides of the tests together.
   window.
 - The CKB adapter is read-only JSON-RPC polling. There is no bundled CKB node,
   indexer, or transaction submitter.
-- The ckbadger adapter is deferred until ckbadger publishes a stable feed
-  schema.
+- ckbadger enrichment currently uses existing REST endpoints for source health,
+  block-hash anchors, selected-Cell detail, script identity, data analysis,
+  DAO/code-cell context, and occupied-capacity composition. The generic
+  transaction/census semantics contract is reserved, but those records are not
+  populated until ckbadger offers efficient transaction-activity and batch
+  lookup endpoints; cknerv deliberately avoids N+1 background scraping.
 
 ## License
 

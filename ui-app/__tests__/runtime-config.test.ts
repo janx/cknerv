@@ -4,6 +4,8 @@ import {
   DEFAULT_BUILD_VERSION,
   DEFAULT_GALAXY_CONFIG,
   resolveGalaxyConfig,
+  resolveEnrichmentConfig,
+  DEFAULT_ENRICHMENT_CONFIG,
   resolveBuildVersion,
   buildCommitHref,
   CKNERV_REPOSITORY_URL,
@@ -24,6 +26,20 @@ describe('resolveBuildVersion', () => {
     expect(resolveBuildVersion({ buildVersion: '   ' })).toBe(
       DEFAULT_BUILD_VERSION,
     );
+  });
+});
+
+describe('resolveEnrichmentConfig', () => {
+  it('is disabled unless explicitly enabled by server runtime config', () => {
+    expect(resolveEnrichmentConfig({})).toEqual(DEFAULT_ENRICHMENT_CONFIG);
+    expect(resolveEnrichmentConfig({ enrichment: { source: 'ckbadger' } }))
+      .toEqual(DEFAULT_ENRICHMENT_CONFIG);
+  });
+
+  it('exposes only the source identity, never its private API URL', () => {
+    expect(resolveEnrichmentConfig({
+      enrichment: { enabled: true, source: ' ckbadger ' },
+    })).toEqual({ enabled: true, source: 'ckbadger' });
   });
 });
 

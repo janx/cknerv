@@ -31,12 +31,29 @@ pub const BUILD_VERSION: &str = env!("CKNERV_BUILD_VERSION");
 struct RuntimeConfigPayload<'a> {
     build_version: &'a str,
     galaxy: &'a ResolvedGalaxyConfig,
+    enrichment: RuntimeEnrichmentPayload<'a>,
 }
 
-pub fn runtime_config_body(build_version: &str, galaxy: &ResolvedGalaxyConfig) -> String {
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RuntimeEnrichmentPayload<'a> {
+    enabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source: Option<&'a str>,
+}
+
+pub fn runtime_config_body(
+    build_version: &str,
+    galaxy: &ResolvedGalaxyConfig,
+    enrichment_source: Option<&str>,
+) -> String {
     let payload = serde_json::to_string(&RuntimeConfigPayload {
         build_version,
         galaxy,
+        enrichment: RuntimeEnrichmentPayload {
+            enabled: enrichment_source.is_some(),
+            source: enrichment_source,
+        },
     })
     .expect("failed to serialize cknerv runtime config");
     format!(
@@ -47,7 +64,11 @@ pub fn runtime_config_body(build_version: &str, galaxy: &ResolvedGalaxyConfig) -
     )
 }
 
-pub fn runtime_config_response(build_version: &str, galaxy: ResolvedGalaxyConfig) -> Response {
+pub fn runtime_config_response(
+    build_version: &str,
+    galaxy: ResolvedGalaxyConfig,
+    enrichment_source: Option<&str>,
+) -> Response {
     (
         StatusCode::OK,
         [
@@ -57,7 +78,7 @@ pub fn runtime_config_response(build_version: &str, galaxy: ResolvedGalaxyConfig
             ),
             (header::CACHE_CONTROL, "no-cache"),
         ],
-        runtime_config_body(build_version, &galaxy),
+        runtime_config_body(build_version, &galaxy, enrichment_source),
     )
         .into_response()
 }
@@ -93,12 +114,14 @@ mod tests {
         let body = runtime_config_body(
             "61922ba@20260630",
             &crate::config::ResolvedGalaxyConfig::for_profile(crate::config::GalaxyProfile::Devnet),
+            Some("ckbadger"),
         );
 
         assert!(body.contains("window.__CKNERV_RUNTIME_CONFIG__"));
         assert!(body.contains("\"buildVersion\":\"61922ba@20260630\""));
         assert!(body.contains("\"profile\":\"devnet\""));
         assert!(body.contains("\"neighborK\":5"));
+        assert!(body.contains("\"enrichment\":{\"enabled\":true,\"source\":\"ckbadger\"}"));
     }
 
     #[test]
@@ -106,6 +129,7 @@ mod tests {
         let body = runtime_config_body(
             "61\"922ba@20260630",
             &crate::config::ResolvedGalaxyConfig::for_profile(crate::config::GalaxyProfile::Auto),
+            None,
         );
 
         assert!(body.contains("\"buildVersion\":\"61\\\"922ba@20260630\""));
@@ -116,6 +140,7 @@ mod tests {
         let response = runtime_config_response(
             "61922ba@20260630",
             crate::config::ResolvedGalaxyConfig::for_profile(crate::config::GalaxyProfile::Auto),
+            None,
         );
 
         assert_eq!(response.status(), axum::http::StatusCode::OK);
