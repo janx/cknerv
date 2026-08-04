@@ -414,12 +414,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "cknerv-adapter-ckbadger"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "axum",
+ "cknerv-core",
+ "cknerv-server",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "url",
+]
+
+[[package]]
 name = "cknerv-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
  "cknerv-adapter-ckb",
+ "cknerv-adapter-ckbadger",
  "cknerv-core",
  "cknerv-server",
  "clap",

@@ -7,3 +7,4 @@ export * from './entity';
 export * from './outpoint';
 export * from './mutation';
 export * from './cell';
+export * from './enrichment';

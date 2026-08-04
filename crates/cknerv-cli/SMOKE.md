@@ -71,10 +71,21 @@ The cell set lives under `snapshot.cells`; cumulative counters are
 (The projection name in the route path is literally `cells` — it is
 `CellGalaxy::name()`.)
 
-The corresponding WebSocket routes are:
+The corresponding required WebSocket routes are:
 
 - `/api/entities/chain/stream?since=<revision>`
 - `/api/projections/cells/stream?since=<revision>`
+
+`GET /api/projections/semantics/snapshot` is always available when the CLI
+registers its built-in optional projection. With no `[ckbadger]` section its
+source status is `disabled`, and
+`GET /api/enrichment/cells/:tx_hash/:output_index` returns
+`404 enrichment_disabled`. Neither condition affects the required routes.
+
+When `[ckbadger]` is configured, the additional WebSocket route is
+`/api/projections/semantics/stream?since=<revision>`. Its revision is independent
+from chain/cells and source health should settle to `ready`, `syncing`, `stale`,
+`incompatible`, or `error` without interrupting either required stream.
 
 Each route emits a `{"kind":"heartbeat","revision":N}` frame after roughly
 five seconds without a data frame. A heartbeat confirms browser transport
@@ -195,6 +206,17 @@ Open `http://localhost:7001` (or whatever `--port` you used):
 - [ ] Restart cknerv on the same port: both streams reconnect and return to
       `DATA LIVE` without reloading the page
 - [ ] CKB node sync/IBD state remains visually separate from transport health
+
+With a local ckbadger service configured:
+
+- [ ] The top strip shows `CKBADGER` with ready/syncing/stale state and lag
+- [ ] A same-height block hash mismatch shows `INCOMPATIBLE`; chain/cells keep moving
+- [ ] Clicking a Cell lazily adds address, script names, occupied-byte
+      composition, and available DAO/code-cell/data facets
+- [ ] Stopping ckbadger changes only the optional source state; the galaxy,
+      chain stream, cells stream, and required bootstrap remain operational
+- [ ] Removing `[ckbadger]` restores the original HUD with no source chip or
+      indexed-context section and requires no prune
 
 ## Canonical correction checklist (disposable devnet or mock only)
 

@@ -20,13 +20,15 @@
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use axum::Router;
 use tokio::sync::{mpsc, watch};
 
-use cknerv_core::{Mutation, Projection};
+use cknerv_core::{EnrichmentEvent, Mutation, Projection};
 
 use crate::adapter::Adapter;
+use crate::enrichment::EnrichmentSource;
 use crate::projection_registry::Registry;
 use crate::state::ServerState;
 
@@ -35,6 +37,10 @@ use crate::state::ServerState;
 /// reject mutations from a fast adapter; the broadcast bus downstream
 /// uses the same capacity.
 const MUTATION_PIPELINE_CAPACITY: usize = 4096;
+
+const ENRICHMENT_PIPELINE_CAPACITY: usize = 256;
+const ENRICHMENT_PROBE_INTERVAL: Duration = Duration::from_secs(5);
+const ENRICHMENT_STATUS_REFRESH: Duration = Duration::from_secs(60);
 
 /// Type-erased projection registration callback. Boxed so a single
 /// `Vec<...>` can hold many heterogeneous projections.
@@ -77,6 +83,8 @@ impl<A: Adapter> AdapterRunner for AdapterBox<A> {
 pub struct ServerBuilder {
     adapters: Vec<Box<dyn AdapterRunner>>,
     projections: Vec<ProjectionInstaller>,
+    enrichment_projections: Vec<ProjectionInstaller>,
+    enrichment_source: Option<Arc<dyn EnrichmentSource>>,
     workdir: Option<PathBuf>,
     restore_persisted: bool,
 }
@@ -86,6 +94,8 @@ impl ServerBuilder {
         Self {
             adapters: Vec::new(),
             projections: Vec::new(),
+            enrichment_projections: Vec::new(),
+            enrichment_source: None,
             workdir: None,
             restore_persisted: true,
         }
@@ -102,6 +112,29 @@ impl ServerBuilder {
     {
         self.projections
             .push(Box::new(move |reg: &mut Registry| reg.register(projection)));
+        self
+    }
+
+    /// Register a projection that consumes the independent enrichment stream
+    /// in addition to canonical reorg/rebuild invalidations.
+    pub fn add_enrichment_projection<P>(mut self, projection: P) -> Self
+    where
+        P: cknerv_core::EnrichmentProjection,
+    {
+        self.enrichment_projections
+            .push(Box::new(move |registry: &mut Registry| {
+                registry.register_enrichment(projection)
+            }));
+        self
+    }
+
+    /// Configure one optional read-only enrichment source. Omitting this call
+    /// leaves every canonical route and projection fully operational.
+    pub fn enrichment_source<S>(mut self, source: S) -> Self
+    where
+        S: EnrichmentSource,
+    {
+        self.enrichment_source = Some(Arc::new(source));
         self
     }
 
@@ -136,6 +169,9 @@ impl ServerBuilder {
             for install in self.projections {
                 install(&mut registry);
             }
+            for install in self.enrichment_projections {
+                install(&mut registry);
+            }
         }
 
         // 2. Hydrate from disk if a workdir was provided. Must happen
@@ -149,6 +185,8 @@ impl ServerBuilder {
 
         // 3. Pipeline channels.
         let (mutation_tx, mutation_rx) = mpsc::channel::<Mutation>(MUTATION_PIPELINE_CAPACITY);
+        let (enrichment_tx, enrichment_rx) =
+            mpsc::channel::<EnrichmentEvent>(ENRICHMENT_PIPELINE_CAPACITY);
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
         let save_lock = Arc::new(Mutex::new(()));
 
@@ -156,6 +194,54 @@ impl ServerBuilder {
         let reducer_handle = state
             .clone()
             .spawn_reducer(mutation_rx, shutdown_rx.clone());
+        let enrichment_reducer_handle = state
+            .clone()
+            .spawn_enrichment_reducer(enrichment_rx, shutdown_rx.clone());
+
+        // The optional source is supervised independently. Probe failures are
+        // expressed as source status and never signal canonical shutdown.
+        let enrichment_source = self.enrichment_source.clone();
+        let enrichment_source_handle = enrichment_source.as_ref().map(|source| {
+            let source = source.clone();
+            let source_state = state.clone();
+            let source_out = enrichment_tx.clone();
+            let mut source_shutdown = shutdown_rx.clone();
+            tokio::spawn(async move {
+                let mut interval = tokio::time::interval(ENRICHMENT_PROBE_INTERVAL);
+                interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                let mut last_status = None;
+                let mut last_publish = Instant::now()
+                    .checked_sub(ENRICHMENT_STATUS_REFRESH)
+                    .unwrap_or_else(Instant::now);
+                loop {
+                    tokio::select! {
+                        _ = interval.tick() => {
+                            let context = source_state.canonical_context();
+                            let status = source.probe(&context).await;
+                            let changed = last_status.as_ref().is_none_or(|previous| {
+                                status_materially_changed(previous, &status)
+                            });
+                            if changed || last_publish.elapsed() >= ENRICHMENT_STATUS_REFRESH {
+                                if source_out
+                                    .send(EnrichmentEvent::SourceStatus(status.clone()))
+                                    .await
+                                    .is_err()
+                                {
+                                    break;
+                                }
+                                last_status = Some(status);
+                                last_publish = Instant::now();
+                            }
+                        }
+                        changed = source_shutdown.changed() => {
+                            if changed.is_err() || *source_shutdown.borrow() {
+                                break;
+                            }
+                        }
+                    }
+                }
+            })
+        });
 
         // Persist the first usable derived snapshot as soon as boot replay
         // closes. This task listens to a lightweight watch signal rather than
@@ -217,7 +303,7 @@ impl ServerBuilder {
         }
         drop(mutation_tx);
 
-        let router = crate::routes::build_router(state.clone(), shutdown_rx);
+        let router = crate::routes::build_router(state.clone(), shutdown_rx, enrichment_source);
         let handle = ServerHandle {
             state,
             workdir: self.workdir,
@@ -225,11 +311,26 @@ impl ServerBuilder {
             shutdown_tx,
             adapter_handles,
             reducer_handle,
+            enrichment_reducer_handle,
+            enrichment_source_handle,
             checkpoint_handle,
         };
 
         Ok((router, handle))
     }
+}
+
+fn status_materially_changed(
+    previous: &cknerv_core::EnrichmentSourceStatus,
+    current: &cknerv_core::EnrichmentSourceStatus,
+) -> bool {
+    previous.source != current.source
+        || previous.status != current.status
+        || previous.capabilities != current.capabilities
+        || previous.indexed_tip != current.indexed_tip
+        || previous.lag_blocks != current.lag_blocks
+        || previous.validated_anchor != current.validated_anchor
+        || previous.message != current.message
 }
 
 impl Default for ServerBuilder {
@@ -249,6 +350,8 @@ pub struct ServerHandle {
     shutdown_tx: watch::Sender<bool>,
     adapter_handles: Vec<tokio::task::JoinHandle<anyhow::Result<()>>>,
     reducer_handle: tokio::task::JoinHandle<()>,
+    enrichment_reducer_handle: tokio::task::JoinHandle<()>,
+    enrichment_source_handle: Option<tokio::task::JoinHandle<()>>,
     checkpoint_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
@@ -277,6 +380,19 @@ impl ServerHandle {
     /// watch channel — repeated calls have no further effect.
     pub async fn shutdown(self) {
         let _ = self.shutdown_tx.send(true);
+        if let Some(handle) = self.enrichment_source_handle {
+            let abort = handle.abort_handle();
+            if tokio::time::timeout(Duration::from_secs(2), handle)
+                .await
+                .is_err()
+            {
+                tracing::warn!(
+                    target: "cknerv-server",
+                    "enrichment source did not exit within 2s; aborting"
+                );
+                abort.abort();
+            }
+        }
         if let Some(handle) = self.checkpoint_handle {
             let abort = handle.abort_handle();
             if tokio::time::timeout(std::time::Duration::from_secs(2), handle)
@@ -311,6 +427,17 @@ impl ServerHandle {
             tracing::warn!(
                 target: "cknerv-server",
                 "reducer did not exit within 2s of shutdown signal; aborting"
+            );
+            abort.abort();
+        }
+        let abort = self.enrichment_reducer_handle.abort_handle();
+        if tokio::time::timeout(Duration::from_secs(2), self.enrichment_reducer_handle)
+            .await
+            .is_err()
+        {
+            tracing::warn!(
+                target: "cknerv-server",
+                "enrichment reducer did not exit within 2s; aborting"
             );
             abort.abort();
         }

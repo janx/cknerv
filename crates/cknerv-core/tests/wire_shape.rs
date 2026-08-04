@@ -11,7 +11,10 @@
 
 use std::path::PathBuf;
 
-use cknerv_core::{Cell, CellDelta, CellGalaxySnapshot, Chain, Mutation, ReplayPhase};
+use cknerv_core::{
+    Cell, CellDelta, CellGalaxySnapshot, Chain, Mutation, ReplayPhase, SemanticsDelta,
+    SemanticsSnapshot,
+};
 
 fn fixture(name: &str) -> serde_json::Value {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -119,4 +122,48 @@ fn cell_samples_round_trip() {
             "cell[{i}] round-trip"
         );
     }
+}
+
+#[test]
+fn enrichment_samples_match_wire_shape() {
+    let samples = fixture("enrichment_samples.json");
+    let snapshot_value = samples["snapshot"].clone();
+    let snapshot: SemanticsSnapshot = serde_json::from_value(snapshot_value.clone())
+        .unwrap_or_else(|e| panic!("deserialize SemanticsSnapshot: {e}"));
+    let serialized = serde_json::to_value(&snapshot).expect("serialize SemanticsSnapshot");
+    assert_eq!(canonicalize(&snapshot_value), canonicalize(&serialized));
+
+    let source_status = SemanticsDelta::SourceStatus {
+        source: snapshot.source.clone(),
+    };
+    assert_eq!(
+        canonicalize(&samples["deltas"]["source_status"]),
+        canonicalize(&serde_json::to_value(source_status).unwrap())
+    );
+    let cell_upsert = SemanticsDelta::CellUpsert {
+        cell: Box::new(snapshot.cells[0].clone()),
+    };
+    assert_eq!(
+        canonicalize(&samples["deltas"]["cell_upsert"]),
+        canonicalize(&serde_json::to_value(cell_upsert).unwrap())
+    );
+    let prune = SemanticsDelta::Prune { from_block: 100 };
+    assert_eq!(
+        canonicalize(&samples["deltas"]["prune"]),
+        canonicalize(&serde_json::to_value(prune).unwrap())
+    );
+    let cell_remove = SemanticsDelta::CellRemove {
+        out_point: snapshot.cells[0].out_point.clone(),
+    };
+    assert_eq!(
+        canonicalize(&samples["deltas"]["cell_remove"]),
+        canonicalize(&serde_json::to_value(cell_remove).unwrap())
+    );
+    let transaction_remove = SemanticsDelta::TransactionRemove {
+        tx_hash: snapshot.transactions[0].tx_hash.clone(),
+    };
+    assert_eq!(
+        canonicalize(&samples["deltas"]["transaction_remove"]),
+        canonicalize(&serde_json::to_value(transaction_remove).unwrap())
+    );
 }

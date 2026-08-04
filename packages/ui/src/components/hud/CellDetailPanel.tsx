@@ -1,5 +1,10 @@
 import { type CSSProperties, useEffect, useMemo, useState } from 'react';
-import type { Cell, CellLink } from '@cknerv/types';
+import type {
+  Cell,
+  CellLink,
+  CellSemanticRecord,
+  EnrichmentSourceStatus,
+} from '@cknerv/types';
 import {
   formatCkb, formatAge, formatDataSize,
   formatLockKind, formatAssetKind, LOCK_COLORS, ASSET_COLORS,
@@ -37,6 +42,9 @@ import {
   type CellIdentityProofBinding,
   type CellIdentityProofKind,
 } from '../../derives/cellIdentityProof.derive';
+import CellSemanticsReadout, {
+  type CellSemanticsPhase,
+} from './CellSemanticsReadout';
 
 const BRACKET = 9; // corner bracket arm length (px)
 const AMBER = HUD_COLORS.orange;
@@ -78,6 +86,10 @@ export default function CellDetailPanel({
   identityProofBinding = null,
   onTraceWrite,
   onIdentityProofRead,
+  semanticSource,
+  semanticPhase,
+  semanticRecord,
+  semanticMessage,
   onClose,
   style,
 }: {
@@ -111,6 +123,10 @@ export default function CellDetailPanel({
     cellId: number,
     reducedMotion: boolean,
   ) => void;
+  semanticSource?: EnrichmentSourceStatus;
+  semanticPhase?: CellSemanticsPhase;
+  semanticRecord?: CellSemanticRecord | null;
+  semanticMessage?: string | null;
   onClose: () => void;
   style?: CSSProperties;
 }) {
@@ -306,6 +322,14 @@ export default function CellDetailPanel({
           );
         })}
       </div>
+      {semanticSource && semanticPhase ? (
+        <CellSemanticsReadout
+          source={semanticSource}
+          phase={semanticPhase}
+          record={semanticRecord}
+          message={semanticMessage}
+        />
+      ) : null}
       <ConsensusIdentityPlate
         identity={identity}
         causalLens={resolvedCausalLens}

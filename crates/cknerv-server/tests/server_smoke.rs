@@ -113,6 +113,34 @@ async fn unknown_projection_returns_404() {
 }
 
 #[tokio::test]
+async fn disabled_enrichment_route_is_an_isolated_404() {
+    let (router, handle) = ServerBuilder::new().build().expect("build");
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server_task = tokio::spawn(async move {
+        let _ = axum::serve(listener, router).await;
+    });
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let resp = reqwest::get(format!(
+        "http://{addr}/api/enrichment/cells/0x{}/0",
+        "00".repeat(32)
+    ))
+    .await
+    .expect("GET succeeds");
+    assert_eq!(resp.status(), 404);
+
+    let canonical = reqwest::get(format!("http://{addr}/api/entities/chain/snapshot"))
+        .await
+        .expect("canonical route remains available");
+    assert_eq!(canonical.status(), 200);
+
+    handle.shutdown().await;
+    server_task.abort();
+}
+
+#[tokio::test]
 async fn registered_projection_snapshot_returns_200() {
     let (router, handle) = ServerBuilder::new()
         .add_projection(CellGalaxy::new())

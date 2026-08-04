@@ -143,6 +143,10 @@ export {
 export { default as CkbNetworkHud } from './components/CkbNetworkHud';
 export { default as HudOverlay } from './components/hud/HudOverlay';
 export { default as CellDetailPanel } from './components/hud/CellDetailPanel';
+export {
+  default as CellSemanticsReadout,
+  type CellSemanticsPhase,
+} from './components/hud/CellSemanticsReadout';
 export type {
   CellCausalNavigationReadout,
 } from './components/hud/CellCausalLensReadout';

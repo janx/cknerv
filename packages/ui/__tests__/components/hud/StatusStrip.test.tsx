@@ -108,6 +108,27 @@ describe('StatusStrip', () => {
     expect(container.textContent).not.toContain('DATA LIVE');
   });
 
+  it('shows optional indexed-context freshness without changing chain status', () => {
+    const { container } = render(
+      <StatusStrip
+        level="nominal"
+        uptimeMs={0}
+        enrichmentSource={{
+          source: 'ckbadger',
+          status: 'stale',
+          capabilities: ['cell_detail'],
+          lag_blocks: 18,
+          message: 'index is behind',
+        }}
+      />,
+    );
+
+    const chip = container.querySelector('[data-enrichment-chip]') as HTMLElement;
+    expect(chip.dataset.enrichmentStatus).toBe('stale');
+    expect(chip.textContent).toContain('CKBADGER STALE 18↓');
+    expect(container.textContent).toContain('NOMINAL');
+  });
+
   it('renders product-owned actions without coupling them to status semantics', () => {
     const { container } = render(
       <StatusStrip

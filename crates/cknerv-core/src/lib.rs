@@ -13,6 +13,7 @@
 //! - [`projection`] — `Projection` trait + the `CellGalaxy` projection.
 //! - [`ring`] — bounded ring buffer used by the server's event replay.
 
+pub mod enrichment;
 pub mod entity;
 pub mod helix;
 pub mod mutation;
@@ -22,6 +23,12 @@ pub mod ring;
 pub mod rng;
 pub mod taxonomy;
 
+pub use enrichment::{
+    CellSemanticRecord, ChainAnchor, ChainCensus, CommonKnowledgeBreakdown, EnrichmentEvent,
+    EnrichmentProjection, EnrichmentSourceState, EnrichmentSourceStatus, SemanticAsset,
+    SemanticAttribute, SemanticFacet, SemanticScript, SemanticsDelta, SemanticsProjection,
+    SemanticsSnapshot, TransactionParticipantSemantic, TransactionSemanticRecord,
+};
 pub use entity::{
     Chain, ChainNode, EpochInfo, MempoolStats, Peer, PeerDirection, RecentBlock, RecentTx,
 };

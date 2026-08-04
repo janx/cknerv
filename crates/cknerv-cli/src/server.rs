@@ -12,8 +12,9 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use cknerv_adapter_ckb::CkbDirectAdapter;
-use cknerv_core::{CellGalaxy, DEFAULT_REORG_WINDOW_BLOCKS};
-use cknerv_server::ServerBuilder;
+use cknerv_adapter_ckbadger::CkbadgerEnrichmentSource;
+use cknerv_core::{CellGalaxy, SemanticsProjection, DEFAULT_REORG_WINDOW_BLOCKS};
+use cknerv_server::{EnrichmentSource, ServerBuilder};
 
 use axum::routing::get;
 
@@ -32,13 +33,16 @@ pub async fn run(workdir: PathBuf, cfg: ResolvedConfig) -> Result<()> {
     std::fs::create_dir_all(&state_dir)?;
 
     tracing::info!(
-        "cknerv starting: rpc={}, port={}, workdir={}, cell_target={}, replay_block_override={:?}, exact_reorg_blocks={}",
+        "cknerv starting: rpc={}, port={}, workdir={}, cell_target={}, replay_block_override={:?}, exact_reorg_blocks={}, enrichment={}",
         cfg.rpc_url,
         cfg.port,
         workdir.display(),
         cfg.galaxy.cell_cap,
         cfg.backfill_blocks,
         DEFAULT_REORG_WINDOW_BLOCKS,
+        cfg.ckbadger
+            .as_ref()
+            .map_or("disabled", |_| "ckbadger"),
     );
 
     // Restore only when the saved reservoir is known to satisfy the current
@@ -90,17 +94,33 @@ pub async fn run(workdir: PathBuf, cfg: ResolvedConfig) -> Result<()> {
         reorg_window_blocks: DEFAULT_REORG_WINDOW_BLOCKS,
     };
     let runtime_galaxy = cfg.galaxy.clone();
+    let runtime_enrichment_source = cfg.ckbadger.as_ref().map(|_| "ckbadger");
+    let ckbadger_source = cfg
+        .ckbadger
+        .as_ref()
+        .map(|ckbadger| {
+            CkbadgerEnrichmentSource::new(ckbadger.api_url.clone())
+                .map(|source| source.with_max_lag_blocks(ckbadger.max_lag_blocks))
+        })
+        .transpose()?;
+    let configured_semantics_source = ckbadger_source
+        .as_ref()
+        .map(|source| (source.name(), source.capabilities()));
 
-    let (cknerv_router, handle) = ServerBuilder::new()
+    let mut builder = ServerBuilder::new()
         .add_adapter(adapter)
         .add_projection(CellGalaxy::with_config(galaxy_config))
+        .add_enrichment_projection(SemanticsProjection::new(configured_semantics_source))
         .workdir(state_dir.clone())
-        .restore_persisted(restore_persisted)
-        .build()?;
+        .restore_persisted(restore_persisted);
+    if let Some(source) = ckbadger_source {
+        builder = builder.enrichment_source(source);
+    }
+    let (cknerv_router, handle) = builder.build()?;
 
     let runtime_config_route = get(move || {
         let runtime_galaxy = runtime_galaxy.clone();
-        async move { runtime_config_response(BUILD_VERSION, runtime_galaxy) }
+        async move { runtime_config_response(BUILD_VERSION, runtime_galaxy, runtime_enrichment_source) }
     });
     let app = cknerv_router
         .route("/runtime-config.js", runtime_config_route)

@@ -39,9 +39,21 @@ export {
 export {
   connectProjectionStream,
   connectCellsStream,
+  connectSemanticsStream,
   type ProjectionStreamHandle,
   type ProjectionStreamOptions,
 } from './projectionStream';
+
+export {
+  emptySemanticsCache,
+  fromSemanticsSnapshot,
+  applySemanticsDelta,
+  applyRevisionedSemanticsDeltas,
+  outPointKey,
+  type SemanticsCache,
+} from './semanticsReducer';
+
+export { fetchCellSemantics } from './semanticsClient';
 
 export {
   createStreamHealthTracker,

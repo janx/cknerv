@@ -142,6 +142,58 @@ describe('CellDetailPanel', () => {
       .toContain('cknerv-cell-consensus-enter');
   });
 
+  it('adds indexed semantics only when the optional source is present', () => {
+    const { container } = render(
+      <CellDetailPanel
+        cell={base}
+        onClose={() => {}}
+        semanticSource={{
+          source: 'ckbadger',
+          status: 'ready',
+          capabilities: ['cell_detail'],
+          lag_blocks: 1,
+        }}
+        semanticPhase="ready"
+        semanticRecord={{
+          out_point: base.out_point,
+          source: 'ckbadger',
+          as_of: { block: base.birth_block, hash: '0xanchor' },
+          observed_at_block: base.birth_block,
+          updated_at_ms: 1,
+          address: 'ckt1qyqindexedaddress0000000000',
+          cell_type: 'dao',
+          lock_script: {
+            script_hash: '0xlock',
+            code_hash: '0xcode',
+            hash_type: 'type',
+            args: '0x',
+            name: 'Default Lock',
+          },
+          common_knowledge: {
+            total_bytes: 100,
+            capacity_field_bytes: 8,
+            lock_script_bytes: 52,
+            type_script_bytes: 33,
+            data_bytes: 7,
+          },
+          facets: [{
+            namespace: 'ckb',
+            kind: 'dao',
+            state: 'deposit',
+            attributes: [],
+          }],
+        }}
+      />,
+    );
+
+    const readout = container.querySelector('[data-cell-semantics-phase="ready"]');
+    expect(readout).not.toBeNull();
+    expect(readout?.textContent).toContain('CKBADGER · READY · 1 BLOCK LAG');
+    expect(readout?.textContent).toContain('Default Lock');
+    expect(readout?.textContent).toContain('100 bytes occupied');
+    expect(readout?.textContent).toContain('DAO · DEPOSIT');
+  });
+
   it('keeps auxiliary portrait focus off while the entry decoder advances', () => {
     const performanceNow = vi.spyOn(performance, 'now').mockReturnValue(0);
     const { container, getByTestId } = render(
