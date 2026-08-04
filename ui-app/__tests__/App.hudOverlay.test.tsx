@@ -97,6 +97,13 @@ describe('HudOverlay wiring', () => {
     expect(APP_SOURCE).toContain('onForward: navigateCausalForward');
   });
 
+  it('adds validated optional semantics as one selected-Cell scene orbit', () => {
+    expect(APP_SOURCE).toContain('<CellSemanticOrbit');
+    expect(APP_SOURCE).toContain('record={selectedCellSemantics}');
+    expect(APP_SOURCE).toContain('source={semanticsCache.source}');
+    expect(APP_SOURCE).toContain('selectedCell && selectedCellSemantics');
+  });
+
   it('keeps Cell detail selection independent from camera automation', () => {
     const cameraWiring = APP_SOURCE.match(
       /<ConsensusRouteCamera[\s\S]*?\/>/,

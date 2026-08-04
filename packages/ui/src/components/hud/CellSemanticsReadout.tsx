@@ -100,6 +100,28 @@ function formatShannons(value: string, signed = false): string {
   }
 }
 
+export function formatSemanticAssetAmount(
+  value: string,
+  decimals?: number,
+): string {
+  try {
+    const amount = BigInt(value);
+    if (decimals == null || decimals === 0) return amount.toString();
+    if (!Number.isSafeInteger(decimals) || decimals < 0 || decimals > 255) {
+      return value;
+    }
+    const negative = amount < 0n;
+    const digits = (negative ? -amount : amount)
+      .toString()
+      .padStart(decimals + 1, '0');
+    const whole = digits.slice(0, -decimals);
+    const fraction = digits.slice(-decimals).replace(/0+$/, '');
+    return `${negative ? '−' : ''}${whole}${fraction ? `.${fraction}` : ''}`;
+  } catch {
+    return value;
+  }
+}
+
 function TransactionReadout({
   phase,
   record,
@@ -252,6 +274,28 @@ export default function CellSemanticsReadout({
               label="TYPE"
               value={record.type_script.name ?? record.type_script.family ?? compact(record.type_script.code_hash)}
             />
+          ) : null}
+          {record.asset ? (
+            <>
+              <ValueRow
+                label="ASSET"
+                value={[
+                  record.asset.symbol,
+                  record.asset.name,
+                  record.asset.standard,
+                ].filter(Boolean).join(' · ') || compact(record.asset.type_script_hash)}
+                color={HUD_COLORS.caution}
+              />
+              {record.asset.amount != null ? (
+                <ValueRow
+                  label="AMOUNT"
+                  value={`${formatSemanticAssetAmount(
+                    record.asset.amount,
+                    record.asset.decimals,
+                  )}${record.asset.symbol ? ` ${record.asset.symbol}` : ''}`}
+                />
+              ) : null}
+            </>
           ) : null}
           <KnowledgeBar record={record} />
           {record.facets.length > 0 ? (
