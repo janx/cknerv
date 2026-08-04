@@ -42,6 +42,7 @@ const ENRICHMENT_PIPELINE_CAPACITY: usize = 256;
 const ENRICHMENT_PROBE_INTERVAL: Duration = Duration::from_secs(5);
 const ENRICHMENT_STATUS_REFRESH: Duration = Duration::from_secs(60);
 const ENRICHMENT_ECOSYSTEM_REFRESH: Duration = Duration::from_secs(30);
+const ENRICHMENT_DAO_STATE_REFRESH: Duration = Duration::from_secs(60);
 const ENRICHMENT_ACTIVITY_REFRESH: Duration = Duration::from_secs(15);
 const ENRICHMENT_NETWORK_ATLAS_REFRESH: Duration = Duration::from_secs(60);
 
@@ -217,6 +218,7 @@ impl ServerBuilder {
                     .checked_sub(ENRICHMENT_STATUS_REFRESH)
                     .unwrap_or_else(Instant::now);
                 let mut last_ecosystem_refresh: Option<Instant> = None;
+                let mut last_dao_state_refresh: Option<Instant> = None;
                 let mut last_activity_refresh: Option<Instant> = None;
                 let mut last_network_atlas_refresh: Option<Instant> = None;
                 let mut network_atlas_present = false;
@@ -271,6 +273,39 @@ impl ServerBuilder {
                                     Err(error) => tracing::warn!(
                                         target: "cknerv-server",
                                         "optional asset-ecosystem refresh failed: {error}"
+                                    ),
+                                }
+                            }
+                            let dao_state_ready = status.validated_anchor.is_some()
+                                && matches!(
+                                    status.status,
+                                    cknerv_core::EnrichmentSourceState::Ready
+                                        | cknerv_core::EnrichmentSourceState::Stale
+                                )
+                                && status
+                                    .capabilities
+                                    .iter()
+                                    .any(|capability| capability == "dao_state");
+                            let dao_state_due = last_dao_state_refresh
+                                .is_none_or(|last| last.elapsed() >= ENRICHMENT_DAO_STATE_REFRESH);
+                            if !dao_state_ready {
+                                last_dao_state_refresh = None;
+                            } else if dao_state_due {
+                                last_dao_state_refresh = Some(Instant::now());
+                                match source.enrich_dao_state(&context).await {
+                                    Ok(Some(dao_state)) => {
+                                        if source_out
+                                            .send(EnrichmentEvent::DaoStateReplace(dao_state))
+                                            .await
+                                            .is_err()
+                                        {
+                                            break;
+                                        }
+                                    }
+                                    Ok(None) => {}
+                                    Err(error) => tracing::warn!(
+                                        target: "cknerv-server",
+                                        "optional DAO-state refresh failed: {error}"
                                     ),
                                 }
                             }

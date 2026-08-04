@@ -137,12 +137,16 @@ describe('wire-shape parity (TS twin of cknerv-core)', () => {
     expect(sample.snapshot.cells[0].common_knowledge?.total_bytes).toBe(102);
     expect(sample.snapshot.asset_ecosystem?.capacity_breakdown[0].share_bps).toBe(2500);
     expect(sample.snapshot.asset_ecosystem?.top_assets[0].symbol).toBe('NTT');
+    expect(sample.snapshot.dao_state?.statistics_block).toBe(99);
+    expect(sample.snapshot.dao_state?.total_deposited_shannons).toBe('837703738002110308');
+    expect(sample.snapshot.dao_state?.estimated_apc_bps).toBe(201);
     expect(sample.snapshot.activity_feed?.activities[0].category).toBe('dao');
     expect(sample.snapshot.activity_feed?.activities[1].participant_count).toBe(2);
     expect(sample.snapshot.network_atlas?.sample_size).toBe(3);
     expect(sample.snapshot.network_atlas?.countries[0].label).toBe('SG');
     expect(sample.deltas.cell_upsert.type).toBe('cell_upsert');
     expect(sample.deltas.asset_ecosystem_replace.type).toBe('asset_ecosystem_replace');
+    expect(sample.deltas.dao_state_replace.type).toBe('dao_state_replace');
     expect(sample.deltas.activity_feed_replace.type).toBe('activity_feed_replace');
     expect(sample.deltas.network_atlas_replace.type).toBe('network_atlas_replace');
     expect(sample.deltas.network_atlas_clear.type).toBe('network_atlas_clear');

@@ -10,18 +10,18 @@ use url::Url;
 use cknerv_core::{
     ActivityFeedItem, ActivityFeedRecord, AssetEcosystemCategory, AssetEcosystemLeader,
     AssetEcosystemRecord, CellSemanticRecord, ChainAnchor, CommonKnowledgeBreakdown,
-    EnrichmentSourceState, EnrichmentSourceStatus, NetworkAtlasBucket, NetworkAtlasRecord,
-    OutPoint, SemanticAsset, SemanticAttribute, SemanticFacet, SemanticScript,
+    DaoStateRecord, EnrichmentSourceState, EnrichmentSourceStatus, NetworkAtlasBucket,
+    NetworkAtlasRecord, OutPoint, SemanticAsset, SemanticAttribute, SemanticFacet, SemanticScript,
     TransactionParticipantSemantic, TransactionSemanticRecord,
 };
 use cknerv_server::{CanonicalContext, EnrichmentSource};
 
 use crate::dto::{
     AssetEcosystemResponse, BlockResponse, CellDataAnalysis, CellDetailResponse,
-    CommonKnowledgeSizeBreakdown, DaoInfo, LatestActivityResponse, LookupScriptsRequest,
-    NetworkCrawlerSummaryResponse, NetworkNodesPageResponse, NetworkStats, ScriptLookupInfo,
-    ScriptLookupResponse, ScriptResponse, TokenResponse, TransactionDetailResponse,
-    TransactionLifecycleResponse,
+    CommonKnowledgeSizeBreakdown, DaoInfo, DaoStatisticsResponse, LatestActivityResponse,
+    LookupScriptsRequest, NetworkCrawlerSummaryResponse, NetworkNodesPageResponse, NetworkStats,
+    ScriptLookupInfo, ScriptLookupResponse, ScriptResponse, TokenResponse,
+    TransactionDetailResponse, TransactionLifecycleResponse,
 };
 
 const CAPABILITIES: &[&str] = &[
@@ -30,6 +30,7 @@ const CAPABILITIES: &[&str] = &[
     "data_analysis",
     "asset_identity",
     "asset_ecosystem",
+    "dao_state",
     "activity_feed",
     "network_atlas",
     "transaction_detail",
@@ -672,6 +673,34 @@ impl EnrichmentSource for CkbadgerEnrichmentSource {
         map_asset_ecosystem(ecosystem, anchor).map(Some)
     }
 
+    async fn enrich_dao_state(
+        &self,
+        context: &CanonicalContext,
+    ) -> anyhow::Result<Option<DaoStateRecord>> {
+        let anchor = self.current_anchor(context)?;
+        let url = self.endpoint("dao/statistics")?;
+        let response = self
+            .client
+            .get(url)
+            .send()
+            .await
+            .context("fetch ckbadger DAO statistics")?;
+        if response.status() == StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        if !response.status().is_success() {
+            return Err(anyhow!(
+                "ckbadger DAO statistics returned HTTP {}",
+                response.status()
+            ));
+        }
+        let statistics: DaoStatisticsResponse = response
+            .json()
+            .await
+            .context("decode ckbadger DAO statistics")?;
+        map_dao_state(statistics, anchor)
+    }
+
     async fn enrich_activity_feed(
         &self,
         context: &CanonicalContext,
@@ -756,6 +785,63 @@ impl EnrichmentSource for CkbadgerEnrichmentSource {
             .context("decode ckbadger bounded network nodes")?;
         map_network_atlas(summary, nodes, anchor).map(Some)
     }
+}
+
+fn map_dao_state(
+    statistics: DaoStatisticsResponse,
+    anchor: ChainAnchor,
+) -> anyhow::Result<Option<DaoStateRecord>> {
+    let statistics_block =
+        nonnegative(statistics.tip_block_number, "DAO statistics tipBlockNumber")?;
+    wire_safe_u64(statistics_block, "DAO statistics tipBlockNumber")?;
+    // The index can commit another batch between the compatibility probe and
+    // this request. Withhold that newer singleton until a later probe proves
+    // its canonical block hash.
+    if statistics_block > anchor.block {
+        return Ok(None);
+    }
+
+    let total_deposited =
+        unsigned_decimal(&statistics.total_deposited, "DAO statistics totalDeposited")?;
+    let pending_withdrawal = unsigned_decimal(
+        &statistics.pending_withdrawal_capacity,
+        "DAO statistics pendingWithdrawalCapacity",
+    )?;
+    let unclaimed_compensation = unsigned_decimal(
+        &statistics.unclaimed_compensation,
+        "DAO statistics unclaimedCompensation",
+    )?;
+    let total_depositors = u32::try_from(statistics.total_depositors)
+        .context("ckbadger returned invalid DAO statistics totalDepositors")?;
+    let active_deposits = u32::try_from(statistics.active_deposits)
+        .context("ckbadger returned invalid DAO statistics activeDeposits")?;
+    let estimated_apc_bps = u32::from(percentage_to_bps(
+        &statistics.estimated_apc,
+        "DAO statistics estimatedApc",
+    )?);
+    let deposit_change_24h_shannons = statistics
+        .deposit_change_24h
+        .as_deref()
+        .map(|value| {
+            signed_ckb_decimal_to_shannons(value, "DAO statistics depositChange24h")
+                .map(|value| value.to_string())
+        })
+        .transpose()?;
+
+    Ok(Some(DaoStateRecord {
+        source: "ckbadger".to_string(),
+        as_of: anchor,
+        statistics_block,
+        updated_at_ms: now_ms(),
+        total_deposited_shannons: total_deposited.to_string(),
+        total_depositors,
+        active_deposits,
+        pending_withdrawal_shannons: pending_withdrawal.to_string(),
+        unclaimed_compensation_shannons: unclaimed_compensation.to_string(),
+        estimated_apc_bps,
+        deposit_change_24h_shannons,
+        depositors_change_24h: statistics.depositors_change_24h,
+    }))
 }
 
 fn map_network_atlas(
@@ -1488,6 +1574,28 @@ fn ckb_decimal_to_shannons(value: &str, field: &str) -> anyhow::Result<u128> {
     fixed_decimal_to_scaled(value, 8, field)
 }
 
+fn signed_fixed_decimal_to_scaled(value: &str, scale: usize, field: &str) -> anyhow::Result<i128> {
+    let (negative, magnitude) = if let Some(value) = value.strip_prefix('-') {
+        (true, value)
+    } else {
+        (false, value.strip_prefix('+').unwrap_or(value))
+    };
+    let magnitude = fixed_decimal_to_scaled(magnitude, scale, field)?;
+    let magnitude =
+        i128::try_from(magnitude).with_context(|| format!("ckbadger {field} is outside i128"))?;
+    if negative {
+        magnitude
+            .checked_neg()
+            .ok_or_else(|| anyhow!("ckbadger {field} overflows"))
+    } else {
+        Ok(magnitude)
+    }
+}
+
+fn signed_ckb_decimal_to_shannons(value: &str, field: &str) -> anyhow::Result<i128> {
+    signed_fixed_decimal_to_scaled(value, 8, field)
+}
+
 fn percentage_to_bps(value: &str, field: &str) -> anyhow::Result<u16> {
     let bps = fixed_decimal_to_scaled(value, 2, field)?;
     if bps > 10_000 {
@@ -1847,6 +1955,34 @@ mod tests {
                         ],
                         "totalLiveCapacityCkb": "1000000.00000000",
                         "totalKnowledgeSizeCkb": "12345"
+                    }))
+                }),
+            )
+            .route(
+                "/api/v1/dao/statistics",
+                get(|| async {
+                    Json(serde_json::json!({
+                        "tipBlockNumber": 99,
+                        "totalDeposited": "837703738002110308",
+                        "totalDepositedCkb": "8377037380.02110308",
+                        "totalDepositors": 16740,
+                        "activeDeposits": 22659,
+                        "totalCompensationPaid": "74401943107226997",
+                        "totalCompensationPaidCkb": "744019431.07226997",
+                        "unclaimedCompensation": "81345902996799859",
+                        "unclaimedCompensationCkb": "813459029.96799859",
+                        "averageDepositDays": "411.75",
+                        "estimatedApc": "2.01",
+                        "miningReward": "0",
+                        "miningRewardCkb": "0.00000000",
+                        "depositCompensation": "0",
+                        "depositCompensationCkb": "0.00000000",
+                        "burnt": "0",
+                        "burntCkb": "0.00000000",
+                        "pendingWithdrawalCapacity": "77523020877862416",
+                        "pendingWithdrawalCapacityCkb": "775230208.77862416",
+                        "depositChange24h": "1415305.99353229",
+                        "depositorsChange24h": 5
                     }))
                 }),
             )
@@ -2219,6 +2355,7 @@ mod tests {
             .contains(&"transaction_detail".to_string()));
         assert!(status.capabilities.contains(&"asset_identity".to_string()));
         assert!(status.capabilities.contains(&"asset_ecosystem".to_string()));
+        assert!(status.capabilities.contains(&"dao_state".to_string()));
         assert!(status.capabilities.contains(&"activity_feed".to_string()));
         assert!(status.capabilities.contains(&"network_atlas".to_string()));
 
@@ -2236,6 +2373,19 @@ mod tests {
             ecosystem.top_assets[0].total_capacity_shannons,
             "123450000000"
         );
+
+        let dao_state = source.enrich_dao_state(&context()).await.unwrap().unwrap();
+        assert_eq!(dao_state.as_of.block, 100);
+        assert_eq!(dao_state.statistics_block, 99);
+        assert_eq!(dao_state.total_deposited_shannons, "837703738002110308");
+        assert_eq!(dao_state.total_depositors, 16_740);
+        assert_eq!(dao_state.active_deposits, 22_659);
+        assert_eq!(dao_state.estimated_apc_bps, 201);
+        assert_eq!(
+            dao_state.deposit_change_24h_shannons.as_deref(),
+            Some("141530599353229")
+        );
+        assert_eq!(dao_state.depositors_change_24h, Some(5));
 
         let activity_feed = source
             .enrich_activity_feed(&context())
@@ -2396,8 +2546,43 @@ mod tests {
             5_776_320_963_848_791_674
         );
         assert_eq!(percentage_to_bps("14.50", "share").unwrap(), 1_450);
+        assert_eq!(
+            signed_ckb_decimal_to_shannons("-1.25000000", "delta").unwrap(),
+            -125_000_000
+        );
+        assert_eq!(
+            signed_ckb_decimal_to_shannons("+0.00000001", "delta").unwrap(),
+            1
+        );
         assert!(ckb_decimal_to_shannons("1.000000001", "capacity").is_err());
+        assert!(signed_ckb_decimal_to_shannons("-1.000000001", "delta").is_err());
         assert!(percentage_to_bps("100.01", "share").is_err());
+    }
+
+    #[test]
+    fn dao_state_waits_for_a_validated_anchor_that_covers_its_statistics() {
+        let statistics = DaoStatisticsResponse {
+            tip_block_number: 101,
+            total_deposited: "1".to_string(),
+            total_depositors: 1,
+            active_deposits: 1,
+            unclaimed_compensation: "0".to_string(),
+            estimated_apc: "2.01".to_string(),
+            pending_withdrawal_capacity: "0".to_string(),
+            deposit_change_24h: Some("-1.00000000".to_string()),
+            depositors_change_24h: Some(-1),
+        };
+
+        let state = map_dao_state(
+            statistics,
+            ChainAnchor {
+                block: 100,
+                hash: "0xblock100".to_string(),
+            },
+        )
+        .unwrap();
+
+        assert!(state.is_none());
     }
 
     #[test]

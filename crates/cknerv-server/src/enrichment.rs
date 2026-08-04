@@ -8,8 +8,9 @@
 use async_trait::async_trait;
 
 use cknerv_core::{
-    ActivityFeedRecord, AssetEcosystemRecord, CellSemanticRecord, EnrichmentSourceStatus,
-    NetworkAtlasRecord, OutPoint, RecentBlock, RecentTx, TransactionSemanticRecord,
+    ActivityFeedRecord, AssetEcosystemRecord, CellSemanticRecord, DaoStateRecord,
+    EnrichmentSourceStatus, NetworkAtlasRecord, OutPoint, RecentBlock, RecentTx,
+    TransactionSemanticRecord,
 };
 
 /// Bounded canonical evidence supplied to an enrichment source when it
@@ -64,6 +65,15 @@ pub trait EnrichmentSource: Send + Sync + 'static {
         &self,
         _context: &CanonicalContext,
     ) -> anyhow::Result<Option<AssetEcosystemRecord>> {
+        Ok(None)
+    }
+
+    /// Refresh fixed-shape, whole-chain Nervos DAO statistics. Sources without
+    /// an efficient aggregate endpoint leave this unsupported.
+    async fn enrich_dao_state(
+        &self,
+        _context: &CanonicalContext,
+    ) -> anyhow::Result<Option<DaoStateRecord>> {
         Ok(None)
     }
 

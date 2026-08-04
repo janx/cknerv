@@ -3,7 +3,7 @@
     "source": {
       "source": "ckbadger",
       "status": "ready",
-      "capabilities": ["cell_detail", "script_identity", "data_analysis", "asset_identity", "asset_ecosystem", "activity_feed", "network_atlas", "transaction_detail", "transaction_lifecycle"],
+      "capabilities": ["cell_detail", "script_identity", "data_analysis", "asset_identity", "asset_ecosystem", "dao_state", "activity_feed", "network_atlas", "transaction_detail", "transaction_lifecycle"],
       "indexed_tip": 100,
       "lag_blocks": 1,
       "validated_anchor": {
@@ -145,6 +145,23 @@
         }
       ]
     },
+    "dao_state": {
+      "source": "ckbadger",
+      "as_of": {
+        "block": 100,
+        "hash": "0xblock100"
+      },
+      "statistics_block": 99,
+      "updated_at_ms": 1700000000007,
+      "total_deposited_shannons": "837703738002110308",
+      "total_depositors": 16740,
+      "active_deposits": 22659,
+      "pending_withdrawal_shannons": "77523020877862416",
+      "unclaimed_compensation_shannons": "81345902996799859",
+      "estimated_apc_bps": 201,
+      "deposit_change_24h_shannons": "141530599353229",
+      "depositors_change_24h": 5
+    },
     "activity_feed": {
       "source": "ckbadger",
       "as_of": {
@@ -216,7 +233,7 @@
       "source": {
         "source": "ckbadger",
         "status": "ready",
-        "capabilities": ["cell_detail", "script_identity", "data_analysis", "asset_identity", "asset_ecosystem", "activity_feed", "network_atlas", "transaction_detail", "transaction_lifecycle"],
+        "capabilities": ["cell_detail", "script_identity", "data_analysis", "asset_identity", "asset_ecosystem", "dao_state", "activity_feed", "network_atlas", "transaction_detail", "transaction_lifecycle"],
         "indexed_tip": 100,
         "lag_blocks": 1,
         "validated_anchor": {
@@ -339,6 +356,26 @@
             "total_capacity_shannons": "123450000000"
           }
         ]
+      }
+    },
+    "dao_state_replace": {
+      "type": "dao_state_replace",
+      "dao_state": {
+        "source": "ckbadger",
+        "as_of": {
+          "block": 100,
+          "hash": "0xblock100"
+        },
+        "statistics_block": 99,
+        "updated_at_ms": 1700000000007,
+        "total_deposited_shannons": "837703738002110308",
+        "total_depositors": 16740,
+        "active_deposits": 22659,
+        "pending_withdrawal_shannons": "77523020877862416",
+        "unclaimed_compensation_shannons": "81345902996799859",
+        "estimated_apc_bps": 201,
+        "deposit_change_24h_shannons": "141530599353229",
+        "depositors_change_24h": 5
       }
     },
     "activity_feed_replace": {

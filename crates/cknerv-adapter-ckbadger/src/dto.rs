@@ -79,6 +79,22 @@ pub(crate) struct AssetEcosystemCategory {
     pub percentage: String,
 }
 
+/// Fixed-shape subset of ckbadger's global DAO statistics response. Fields
+/// that cknerv does not publish are intentionally ignored by serde.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DaoStatisticsResponse {
+    pub tip_block_number: i64,
+    pub total_deposited: String,
+    pub total_depositors: i32,
+    pub active_deposits: i32,
+    pub unclaimed_compensation: String,
+    pub estimated_apc: String,
+    pub pending_withdrawal_capacity: String,
+    pub deposit_change_24h: Option<String>,
+    pub depositors_change_24h: Option<i32>,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct LatestActivityResponse {

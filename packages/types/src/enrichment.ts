@@ -141,6 +141,22 @@ export interface AssetEcosystemRecord {
   top_assets: AssetEcosystemLeader[];
 }
 
+export interface DaoStateRecord {
+  source: string;
+  as_of: ChainAnchor;
+  statistics_block: number;
+  updated_at_ms: number;
+  total_deposited_shannons: string;
+  total_depositors: number;
+  active_deposits: number;
+  pending_withdrawal_shannons: string;
+  unclaimed_compensation_shannons: string;
+  /** Estimated annual percentage compensation in basis points. */
+  estimated_apc_bps: number;
+  deposit_change_24h_shannons?: string;
+  depositors_change_24h?: number;
+}
+
 export interface ActivityFeedItem {
   tx_hash: string;
   block: number;
@@ -189,6 +205,7 @@ export interface SemanticsSnapshot {
   transactions: TransactionSemanticRecord[];
   census?: ChainCensus;
   asset_ecosystem?: AssetEcosystemRecord;
+  dao_state?: DaoStateRecord;
   activity_feed?: ActivityFeedRecord;
   network_atlas?: NetworkAtlasRecord;
 }
@@ -201,6 +218,7 @@ export type SemanticsDelta =
   | { type: 'transaction_remove'; tx_hash: string }
   | { type: 'census_replace'; census: ChainCensus }
   | { type: 'asset_ecosystem_replace'; asset_ecosystem: AssetEcosystemRecord }
+  | { type: 'dao_state_replace'; dao_state: DaoStateRecord }
   | { type: 'activity_feed_replace'; activity_feed: ActivityFeedRecord }
   | { type: 'network_atlas_replace'; network_atlas: NetworkAtlasRecord }
   | { type: 'network_atlas_clear' }

@@ -262,6 +262,28 @@ pub struct AssetEcosystemRecord {
     pub top_assets: Vec<AssetEcosystemLeader>,
 }
 
+/// Fixed-shape, whole-chain Nervos DAO context from an optional index. Values
+/// remain exact integer shannons; the source's own statistics block is kept
+/// separate from the canonical compatibility anchor.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DaoStateRecord {
+    pub source: String,
+    pub as_of: ChainAnchor,
+    pub statistics_block: u64,
+    pub updated_at_ms: u64,
+    pub total_deposited_shannons: String,
+    pub total_depositors: u32,
+    pub active_deposits: u32,
+    pub pending_withdrawal_shannons: String,
+    pub unclaimed_compensation_shannons: String,
+    /// Estimated annual percentage compensation in basis points.
+    pub estimated_apc_bps: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deposit_change_24h_shannons: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub depositors_change_24h: Option<i32>,
+}
+
 /// One compact transaction signature from a bounded recent-activity feed.
 /// The category and label are display-safe adapter normalizations; raw source
 /// JSON and participant addresses never cross the shared contract.
@@ -330,6 +352,7 @@ pub enum EnrichmentEvent {
     TransactionUpsert(Box<TransactionSemanticRecord>),
     CensusReplace(ChainCensus),
     AssetEcosystemReplace(AssetEcosystemRecord),
+    DaoStateReplace(DaoStateRecord),
     ActivityFeedReplace(ActivityFeedRecord),
     NetworkAtlasReplace(NetworkAtlasRecord),
     NetworkAtlasClear,
@@ -345,6 +368,8 @@ pub struct SemanticsSnapshot {
     pub census: Option<ChainCensus>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub asset_ecosystem: Option<AssetEcosystemRecord>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dao_state: Option<DaoStateRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub activity_feed: Option<ActivityFeedRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -375,6 +400,9 @@ pub enum SemanticsDelta {
     AssetEcosystemReplace {
         asset_ecosystem: AssetEcosystemRecord,
     },
+    DaoStateReplace {
+        dao_state: DaoStateRecord,
+    },
     ActivityFeedReplace {
         activity_feed: ActivityFeedRecord,
     },
@@ -401,6 +429,7 @@ pub struct SemanticsProjection {
     transactions: HashMap<String, (u64, TransactionSemanticRecord)>,
     census: Option<ChainCensus>,
     asset_ecosystem: Option<AssetEcosystemRecord>,
+    dao_state: Option<DaoStateRecord>,
     activity_feed: Option<ActivityFeedRecord>,
     network_atlas: Option<NetworkAtlasRecord>,
     next_sequence: u64,
@@ -420,6 +449,7 @@ impl SemanticsProjection {
             transactions: HashMap::new(),
             census: None,
             asset_ecosystem: None,
+            dao_state: None,
             activity_feed: None,
             network_atlas: None,
             next_sequence: 0,
@@ -478,6 +508,7 @@ impl SemanticsProjection {
         self.transactions.clear();
         self.census = None;
         self.asset_ecosystem = None;
+        self.dao_state = None;
         self.activity_feed = None;
         self.network_atlas = None;
     }
@@ -533,6 +564,7 @@ impl Projection for SemanticsProjection {
             transactions,
             census: self.census.clone(),
             asset_ecosystem: self.asset_ecosystem.clone(),
+            dao_state: self.dao_state.clone(),
             activity_feed: self.activity_feed.clone(),
             network_atlas: self.network_atlas.clone(),
         }
@@ -559,6 +591,13 @@ impl Projection for SemanticsProjection {
                     .is_some_and(|ecosystem| ecosystem.as_of.block >= *from_block)
                 {
                     self.asset_ecosystem = None;
+                }
+                if self
+                    .dao_state
+                    .as_ref()
+                    .is_some_and(|dao| dao.as_of.block >= *from_block)
+                {
+                    self.dao_state = None;
                 }
                 if self
                     .activity_feed
@@ -654,6 +693,12 @@ impl EnrichmentProjection for SemanticsProjection {
                     asset_ecosystem: asset_ecosystem.clone(),
                 }]
             }
+            EnrichmentEvent::DaoStateReplace(dao_state) => {
+                self.dao_state = Some(dao_state.clone());
+                vec![SemanticsDelta::DaoStateReplace {
+                    dao_state: dao_state.clone(),
+                }]
+            }
             EnrichmentEvent::ActivityFeedReplace(activity_feed) => {
                 self.activity_feed = Some(activity_feed.clone());
                 vec![SemanticsDelta::ActivityFeedReplace {
@@ -743,6 +788,26 @@ mod tests {
         }
     }
 
+    fn dao_state(block: u64) -> DaoStateRecord {
+        DaoStateRecord {
+            source: "ckbadger".into(),
+            as_of: ChainAnchor {
+                block,
+                hash: format!("0xblock{block}"),
+            },
+            statistics_block: block.saturating_sub(1),
+            updated_at_ms: block,
+            total_deposited_shannons: "837703738002110308".into(),
+            total_depositors: 16_740,
+            active_deposits: 22_659,
+            pending_withdrawal_shannons: "77523020877862416".into(),
+            unclaimed_compensation_shannons: "81345902996799859".into(),
+            estimated_apc_bps: 201,
+            deposit_change_24h_shannons: Some("141530599353229".into()),
+            depositors_change_24h: Some(5),
+        }
+    }
+
     fn network_atlas(block: u64) -> NetworkAtlasRecord {
         NetworkAtlasRecord {
             source: "ckbadger".into(),
@@ -810,12 +875,14 @@ mod tests {
     fn reorg_prunes_aggregate_records_at_the_invalidated_anchor() {
         let mut projection = SemanticsProjection::new(Some(("ckbadger", vec![])));
         projection.apply_enrichment(&EnrichmentEvent::AssetEcosystemReplace(ecosystem(10)));
+        projection.apply_enrichment(&EnrichmentEvent::DaoStateReplace(dao_state(10)));
         projection.apply_enrichment(&EnrichmentEvent::ActivityFeedReplace(activity_feed(10)));
         projection.apply_enrichment(&EnrichmentEvent::NetworkAtlasReplace(network_atlas(10)));
 
         projection.apply_mutation(&Mutation::ChainReorganized { from_block: 10 });
 
         assert!(projection.snapshot().asset_ecosystem.is_none());
+        assert!(projection.snapshot().dao_state.is_none());
         assert!(projection.snapshot().activity_feed.is_none());
         assert!(projection.snapshot().network_atlas.is_none());
     }

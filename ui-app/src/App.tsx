@@ -1025,6 +1025,9 @@ export default function App({
         assetEcosystem={enrichmentConfig.enabled
           ? semanticsCache.assetEcosystem
           : undefined}
+        daoState={enrichmentConfig.enabled
+          ? semanticsCache.daoState
+          : undefined}
         activityFeed={enrichmentConfig.enabled
           ? semanticsCache.activityFeed
           : undefined}
