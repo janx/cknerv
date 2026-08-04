@@ -1,13 +1,23 @@
 import type { CSSProperties } from 'react';
-import type { ChainEntry } from '@cknerv/types';
+import type {
+  ActivityFeedRecord,
+  ChainEntry,
+  EnrichmentSourceStatus,
+} from '@cknerv/types';
 import { computeRollingStats } from '../CkbNetworkHud';
 import { HUD_COLORS, HUD_FONTS } from './hudTheme';
 import { HudPanel, PanelHeader, StatRow } from './primitives';
+import ActivityFeedReadout from './ActivityFeedReadout';
 
 const fmt = (n: number) => n.toLocaleString('en-US');
 function fmtInterval(ms: number): string { return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.round(ms)}ms`; }
 
-export default function BlockchainReadout({ chain, style }: { chain: ChainEntry; style?: CSSProperties }) {
+export default function BlockchainReadout({ chain, enrichmentSource, activityFeed, style }: {
+  chain: ChainEntry;
+  enrichmentSource?: EnrichmentSourceStatus;
+  activityFeed?: ActivityFeedRecord | null;
+  style?: CSSProperties;
+}) {
   const { tps, intervalAvgMs, intervalLastMs } = computeRollingStats(chain);
   const ep = chain.epoch;
   return (
@@ -21,6 +31,7 @@ export default function BlockchainReadout({ chain, style }: { chain: ChainEntry;
       <StatRow label="Interval">{fmtInterval(intervalAvgMs)} · {intervalLastMs != null ? fmtInterval(intervalLastMs) : '—'}</StatRow>
       <StatRow label="Mempool">{chain.mempool.pending} · {chain.mempool.proposed}</StatRow>
       <StatRow label="Reorgs" valueColor={chain.reorgs > 0 ? HUD_COLORS.danger : undefined}>{chain.reorgs}</StatRow>
+      <ActivityFeedReadout source={enrichmentSource} record={activityFeed} />
     </HudPanel>
   );
 }

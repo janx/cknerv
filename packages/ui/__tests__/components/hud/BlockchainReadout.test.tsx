@@ -1,6 +1,10 @@
 import { cleanup, render } from '@testing-library/react';
 import { afterEach, describe, it, expect } from 'vitest';
-import type { ChainEntry } from '@cknerv/types';
+import type {
+  ActivityFeedRecord,
+  ChainEntry,
+  EnrichmentSourceStatus,
+} from '@cknerv/types';
 import BlockchainReadout from '../../../src/components/hud/BlockchainReadout';
 
 afterEach(cleanup);
@@ -13,6 +17,36 @@ const chain: ChainEntry = {
   ibd: false, best_known_block: 16204887,
 };
 
+const source: EnrichmentSourceStatus = {
+  source: 'ckbadger',
+  status: 'ready',
+  capabilities: ['activity_feed'],
+  validated_anchor: { block: 100, hash: '0xblock100' },
+};
+
+const activityFeed: ActivityFeedRecord = {
+  source: 'ckbadger',
+  as_of: { block: 100, hash: '0xblock100' },
+  updated_at_ms: Date.now(),
+  activities: [
+    {
+      tx_hash: `0x${'11'.repeat(32)}`,
+      block: 100,
+      timestamp_ms: Date.now(),
+      category: 'script',
+      label: '.bit Time Info',
+      participant_count: 1,
+    },
+    {
+      tx_hash: `0x${'22'.repeat(32)}`,
+      block: 99,
+      timestamp_ms: Date.now(),
+      category: 'transfer',
+      participant_count: 2,
+    },
+  ],
+};
+
 describe('BlockchainReadout', () => {
   it('renders the tip and key chain stats', () => {
     const { container } = render(<BlockchainReadout chain={chain} />);
@@ -21,5 +55,24 @@ describe('BlockchainReadout', () => {
     expect(container.textContent).toContain('312 · 64');
     expect(container.textContent).toContain('COMMON KNOWLEDGE BASE');
     expect(container.textContent).toContain('共识记忆');
+    expect(container.textContent).not.toContain('INDEXED ACTIVITY');
+  });
+
+  it('renders an optional bounded activity fingerprint', () => {
+    const { container } = render(
+      <BlockchainReadout
+        chain={chain}
+        enrichmentSource={source}
+        activityFeed={activityFeed}
+      />,
+    );
+    const text = container.textContent ?? '';
+    expect(text).toContain('INDEXED ACTIVITY · LATEST 2 · #100');
+    expect(text).toContain('SCRIPT 1 · CKB 1');
+    expect(text).toContain('.bit Time Info');
+    expect(text).toContain('2P');
+    expect(container.querySelector<HTMLElement>(
+      '[data-activity-category="script"]',
+    )?.style.width).toBe('50%');
   });
 });

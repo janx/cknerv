@@ -8,8 +8,8 @@
 use async_trait::async_trait;
 
 use cknerv_core::{
-    AssetEcosystemRecord, CellSemanticRecord, EnrichmentSourceStatus, OutPoint, RecentBlock,
-    RecentTx, TransactionSemanticRecord,
+    ActivityFeedRecord, AssetEcosystemRecord, CellSemanticRecord, EnrichmentSourceStatus, OutPoint,
+    RecentBlock, RecentTx, TransactionSemanticRecord,
 };
 
 /// Bounded canonical evidence supplied to an enrichment source when it
@@ -64,6 +64,16 @@ pub trait EnrichmentSource: Send + Sync + 'static {
         &self,
         _context: &CanonicalContext,
     ) -> anyhow::Result<Option<AssetEcosystemRecord>> {
+        Ok(None)
+    }
+
+    /// Refresh one explicitly bounded sample of recent indexed activity.
+    /// Sources without a fixed-size endpoint leave this unsupported; this must
+    /// not be implemented as transaction-by-transaction background lookups.
+    async fn enrich_activity_feed(
+        &self,
+        _context: &CanonicalContext,
+    ) -> anyhow::Result<Option<ActivityFeedRecord>> {
         Ok(None)
     }
 }

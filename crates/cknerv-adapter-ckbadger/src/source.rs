@@ -8,18 +8,18 @@ use reqwest::StatusCode;
 use url::Url;
 
 use cknerv_core::{
-    AssetEcosystemCategory, AssetEcosystemLeader, AssetEcosystemRecord, CellSemanticRecord,
-    ChainAnchor, CommonKnowledgeBreakdown, EnrichmentSourceState, EnrichmentSourceStatus, OutPoint,
-    SemanticAsset, SemanticAttribute, SemanticFacet, SemanticScript,
-    TransactionParticipantSemantic, TransactionSemanticRecord,
+    ActivityFeedItem, ActivityFeedRecord, AssetEcosystemCategory, AssetEcosystemLeader,
+    AssetEcosystemRecord, CellSemanticRecord, ChainAnchor, CommonKnowledgeBreakdown,
+    EnrichmentSourceState, EnrichmentSourceStatus, OutPoint, SemanticAsset, SemanticAttribute,
+    SemanticFacet, SemanticScript, TransactionParticipantSemantic, TransactionSemanticRecord,
 };
 use cknerv_server::{CanonicalContext, EnrichmentSource};
 
 use crate::dto::{
     AssetEcosystemResponse, BlockResponse, CellDataAnalysis, CellDetailResponse,
-    CommonKnowledgeSizeBreakdown, DaoInfo, LookupScriptsRequest, NetworkStats, ScriptLookupInfo,
-    ScriptLookupResponse, ScriptResponse, TokenResponse, TransactionDetailResponse,
-    TransactionLifecycleResponse,
+    CommonKnowledgeSizeBreakdown, DaoInfo, LatestActivityResponse, LookupScriptsRequest,
+    NetworkStats, ScriptLookupInfo, ScriptLookupResponse, ScriptResponse, TokenResponse,
+    TransactionDetailResponse, TransactionLifecycleResponse,
 };
 
 const CAPABILITIES: &[&str] = &[
@@ -28,12 +28,17 @@ const CAPABILITIES: &[&str] = &[
     "data_analysis",
     "asset_identity",
     "asset_ecosystem",
+    "activity_feed",
     "transaction_detail",
     "transaction_lifecycle",
 ];
 const DEFAULT_MAX_LAG_BLOCKS: u64 = 12;
 const MAX_ECOSYSTEM_CATEGORIES: usize = 16;
 const MAX_ECOSYSTEM_ASSETS: usize = 16;
+const ACTIVITY_FEED_LIMIT: usize = 8;
+const MAX_ACTIVITY_PARTICIPANTS: usize = 512;
+const MAX_ACTIVITY_NESTED_ITEMS: usize = 512;
+const MAX_ACTIVITY_LABEL_CHARS: usize = 96;
 const SHANNONS_PER_CKB: u128 = 100_000_000;
 const MAX_WIRE_SAFE_U64: u64 = 9_007_199_254_740_991;
 
@@ -660,6 +665,189 @@ impl EnrichmentSource for CkbadgerEnrichmentSource {
             .context("decode ckbadger asset ecosystem")?;
         map_asset_ecosystem(ecosystem, anchor).map(Some)
     }
+
+    async fn enrich_activity_feed(
+        &self,
+        context: &CanonicalContext,
+    ) -> anyhow::Result<Option<ActivityFeedRecord>> {
+        let anchor = self.current_anchor(context)?;
+        let mut url = self.endpoint("activities/latest")?;
+        url.query_pairs_mut()
+            .append_pair("limit", &ACTIVITY_FEED_LIMIT.to_string());
+        let response = self
+            .client
+            .get(url)
+            .send()
+            .await
+            .context("fetch ckbadger latest activities")?;
+        if response.status() == StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        if !response.status().is_success() {
+            return Err(anyhow!(
+                "ckbadger latest activities returned HTTP {}",
+                response.status()
+            ));
+        }
+        let activities: Vec<LatestActivityResponse> = response
+            .json()
+            .await
+            .context("decode ckbadger latest activities")?;
+        map_activity_feed(activities, anchor).map(Some)
+    }
+}
+
+fn map_activity_feed(
+    activities: Vec<LatestActivityResponse>,
+    anchor: ChainAnchor,
+) -> anyhow::Result<ActivityFeedRecord> {
+    if activities.len() > ACTIVITY_FEED_LIMIT {
+        return Err(anyhow!(
+            "ckbadger latest activities exceeded the requested limit"
+        ));
+    }
+
+    let mut tx_hashes = HashSet::new();
+    let mut previous_block = None;
+    let mut mapped = Vec::with_capacity(activities.len());
+    for activity in activities {
+        if activity.is_cellbase {
+            return Err(anyhow!(
+                "ckbadger latest activities unexpectedly included cellbase"
+            ));
+        }
+        if !is_hash32(&activity.tx_hash) {
+            return Err(anyhow!(
+                "ckbadger latest activities returned an invalid transaction hash"
+            ));
+        }
+        if !tx_hashes.insert(activity.tx_hash.clone()) {
+            return Err(anyhow!(
+                "ckbadger latest activities returned a duplicate transaction"
+            ));
+        }
+        let block = nonnegative(activity.block_number, "activity blockNumber")?;
+        wire_safe_u64(block, "activity blockNumber")?;
+        if previous_block.is_some_and(|previous| block > previous) {
+            return Err(anyhow!(
+                "ckbadger latest activities were not ordered newest first"
+            ));
+        }
+        previous_block = Some(block);
+        // The chain may advance between the source probe and this bounded
+        // request. Keep validating response order, but publish only the safe
+        // suffix already covered by the validated anchor. A later probe will
+        // admit the leading entries once their block hash is proven.
+        if block > anchor.block {
+            continue;
+        }
+        let timestamp_ms = unsigned_decimal(&activity.timestamp, "activity timestamp")?;
+        let timestamp_ms =
+            u64::try_from(timestamp_ms).context("ckbadger activity timestamp is outside u64")?;
+        wire_safe_u64(timestamp_ms, "activity timestamp")?;
+        if activity.participants.len() > MAX_ACTIVITY_PARTICIPANTS {
+            return Err(anyhow!("ckbadger activity returned too many participants"));
+        }
+        let participant_count = u32::try_from(activity.participants.len())
+            .context("ckbadger activity participant count is outside u32")?;
+        let (category, label) = classify_activity(&activity)?;
+        mapped.push(ActivityFeedItem {
+            tx_hash: activity.tx_hash,
+            block,
+            timestamp_ms,
+            category,
+            label,
+            participant_count,
+        });
+    }
+
+    Ok(ActivityFeedRecord {
+        source: "ckbadger".to_string(),
+        as_of: anchor,
+        updated_at_ms: now_ms(),
+        activities: mapped,
+    })
+}
+
+fn classify_activity(
+    activity: &LatestActivityResponse,
+) -> anyhow::Result<(String, Option<String>)> {
+    let nested_items = activity
+        .protocol_actions
+        .len()
+        .checked_add(activity.type_calls.len())
+        .and_then(|count| count.checked_add(activity.lock_calls.len()))
+        .and_then(|count| {
+            activity
+                .participants
+                .iter()
+                .try_fold(count, |total, participant| {
+                    total.checked_add(participant.item_deltas.len())
+                })
+        })
+        .ok_or_else(|| anyhow!("ckbadger activity nested item count overflows"))?;
+    if nested_items > MAX_ACTIVITY_NESTED_ITEMS {
+        return Err(anyhow!("ckbadger activity returned too many nested items"));
+    }
+
+    let mut protocol_label = None;
+    let mut protocol_category = None;
+    for action in &activity.protocol_actions {
+        let protocol = bounded_activity_label(&action.protocol, "activity protocol")?
+            .ok_or_else(|| anyhow!("ckbadger activity returned an empty protocol"))?;
+        let action = bounded_activity_label(&action.action, "activity action")?
+            .ok_or_else(|| anyhow!("ckbadger activity returned an empty action"))?;
+        if protocol_label.is_none() || protocol.eq_ignore_ascii_case("dao") {
+            protocol_category = Some(if protocol.eq_ignore_ascii_case("dao") {
+                "dao"
+            } else {
+                "protocol"
+            });
+            protocol_label = Some(format!("{protocol} · {action}"));
+        }
+    }
+    if let Some(category) = protocol_category {
+        return Ok((category.to_string(), protocol_label));
+    }
+
+    let mut item_category = None;
+    for participant in &activity.participants {
+        for item in &participant.item_deltas {
+            let kind = item.kind.trim();
+            if !matches!(kind, "token" | "object" | "identity") {
+                return Err(anyhow!(
+                    "ckbadger activity returned unsupported item kind {kind:?}"
+                ));
+            }
+            item_category.get_or_insert_with(|| kind.to_string());
+        }
+    }
+    if let Some(category) = item_category {
+        return Ok((category, None));
+    }
+
+    let mut script_label = None;
+    for call in activity.type_calls.iter().chain(&activity.lock_calls) {
+        if let Some(name) = call.script_name.as_deref() {
+            let name = bounded_activity_label(name, "activity script name")?;
+            if script_label.is_none() {
+                script_label = name;
+            }
+        }
+    }
+    if !activity.type_calls.is_empty() || !activity.lock_calls.is_empty() {
+        return Ok(("script".to_string(), script_label));
+    }
+
+    Ok(("transfer".to_string(), None))
+}
+
+fn bounded_activity_label(value: &str, field: &str) -> anyhow::Result<Option<String>> {
+    let value = value.trim();
+    if value.chars().count() > MAX_ACTIVITY_LABEL_CHARS {
+        return Err(anyhow!("ckbadger returned an overlong {field}"));
+    }
+    Ok((!value.is_empty()).then(|| value.to_string()))
 }
 
 fn map_asset_ecosystem(
@@ -1394,6 +1582,72 @@ mod tests {
                 }),
             )
             .route(
+                "/api/v1/activities/latest",
+                get(|| async {
+                    Json(serde_json::json!([
+                        {
+                            "txHash": format!("0x{}", "44".repeat(32)),
+                            "blockNumber": 100,
+                            "txIndex": 2,
+                            "timestamp": "1700000000000",
+                            "isCellbase": false,
+                            "protocolActions": [{
+                                "protocol": "dao",
+                                "action": "deposit",
+                                "metadata": {}
+                            }],
+                            "typeCalls": [],
+                            "lockCalls": [],
+                            "participants": [{
+                                "address": "ckt1dao",
+                                "ckbDelta": "-10000000000",
+                                "usedDelta": "102",
+                                "itemDeltas": [],
+                                "tags": 1
+                            }]
+                        },
+                        {
+                            "txHash": format!("0x{}", "55".repeat(32)),
+                            "blockNumber": 99,
+                            "txIndex": 1,
+                            "timestamp": "1699999999000",
+                            "isCellbase": false,
+                            "protocolActions": [],
+                            "typeCalls": [],
+                            "lockCalls": [],
+                            "participants": [{
+                                "address": "ckt1token",
+                                "ckbDelta": "0",
+                                "usedDelta": "0",
+                                "itemDeltas": [{
+                                    "kind": "token",
+                                    "typeScriptHash": ASSET_TYPE_HASH,
+                                    "delta": "42"
+                                }],
+                                "tags": 2
+                            }]
+                        },
+                        {
+                            "txHash": format!("0x{}", "66".repeat(32)),
+                            "blockNumber": 98,
+                            "txIndex": 1,
+                            "timestamp": "1699999998000",
+                            "isCellbase": false,
+                            "protocolActions": [],
+                            "typeCalls": [{
+                                "typeCodeHash": format!("0x{}", "77".repeat(32)),
+                                "typeHashType": "type",
+                                "typeArgs": "0x",
+                                "scriptHash": format!("0x{}", "88".repeat(32)),
+                                "scriptName": ".bit Time Info"
+                            }],
+                            "lockCalls": [],
+                            "participants": []
+                        }
+                    ]))
+                }),
+            )
+            .route(
                 "/api/v1/cells/:tx_hash/:output_index",
                 get(|axum::extract::Path((tx_hash, output_index)): axum::extract::Path<(String, i32)>| async move {
                     if tx_hash == ASSET_TX_HASH {
@@ -1637,6 +1891,7 @@ mod tests {
             .contains(&"transaction_detail".to_string()));
         assert!(status.capabilities.contains(&"asset_identity".to_string()));
         assert!(status.capabilities.contains(&"asset_ecosystem".to_string()));
+        assert!(status.capabilities.contains(&"activity_feed".to_string()));
 
         let ecosystem = source
             .enrich_asset_ecosystem(&context())
@@ -1651,6 +1906,25 @@ mod tests {
         assert_eq!(
             ecosystem.top_assets[0].total_capacity_shannons,
             "123450000000"
+        );
+
+        let activity_feed = source
+            .enrich_activity_feed(&context())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(activity_feed.as_of.block, 100);
+        assert_eq!(activity_feed.activities.len(), 3);
+        assert_eq!(activity_feed.activities[0].category, "dao");
+        assert_eq!(
+            activity_feed.activities[0].label.as_deref(),
+            Some("dao · deposit")
+        );
+        assert_eq!(activity_feed.activities[1].category, "token");
+        assert_eq!(activity_feed.activities[2].category, "script");
+        assert_eq!(
+            activity_feed.activities[2].label.as_deref(),
+            Some(".bit Time Info")
         );
 
         let record = source
@@ -1763,5 +2037,34 @@ mod tests {
         assert_eq!(percentage_to_bps("14.50", "share").unwrap(), 1_450);
         assert!(ckb_decimal_to_shannons("1.000000001", "capacity").is_err());
         assert!(percentage_to_bps("100.01", "share").is_err());
+    }
+
+    #[test]
+    fn activity_feed_filters_only_the_unanchored_leading_prefix() {
+        fn transfer(block: i64, byte: &str) -> LatestActivityResponse {
+            LatestActivityResponse {
+                tx_hash: format!("0x{}", byte.repeat(32)),
+                block_number: block,
+                timestamp: "1700000000000".to_string(),
+                is_cellbase: false,
+                protocol_actions: Vec::new(),
+                type_calls: Vec::new(),
+                lock_calls: Vec::new(),
+                participants: Vec::new(),
+            }
+        }
+
+        let feed = map_activity_feed(
+            vec![transfer(101, "11"), transfer(100, "22")],
+            ChainAnchor {
+                block: 100,
+                hash: "0xblock100".to_string(),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(feed.activities.len(), 1);
+        assert_eq!(feed.activities[0].block, 100);
+        assert_eq!(feed.activities[0].tx_hash, format!("0x{}", "22".repeat(32)));
     }
 }

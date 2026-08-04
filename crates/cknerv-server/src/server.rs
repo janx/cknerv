@@ -42,6 +42,7 @@ const ENRICHMENT_PIPELINE_CAPACITY: usize = 256;
 const ENRICHMENT_PROBE_INTERVAL: Duration = Duration::from_secs(5);
 const ENRICHMENT_STATUS_REFRESH: Duration = Duration::from_secs(60);
 const ENRICHMENT_ECOSYSTEM_REFRESH: Duration = Duration::from_secs(30);
+const ENRICHMENT_ACTIVITY_REFRESH: Duration = Duration::from_secs(15);
 
 /// Type-erased projection registration callback. Boxed so a single
 /// `Vec<...>` can hold many heterogeneous projections.
@@ -215,6 +216,7 @@ impl ServerBuilder {
                     .checked_sub(ENRICHMENT_STATUS_REFRESH)
                     .unwrap_or_else(Instant::now);
                 let mut last_ecosystem_refresh: Option<Instant> = None;
+                let mut last_activity_refresh: Option<Instant> = None;
                 loop {
                     tokio::select! {
                         _ = interval.tick() => {
@@ -266,6 +268,41 @@ impl ServerBuilder {
                                     Err(error) => tracing::warn!(
                                         target: "cknerv-server",
                                         "optional asset-ecosystem refresh failed: {error}"
+                                    ),
+                                }
+                            }
+                            let activity_ready = status.validated_anchor.is_some()
+                                && matches!(
+                                    status.status,
+                                    cknerv_core::EnrichmentSourceState::Ready
+                                        | cknerv_core::EnrichmentSourceState::Stale
+                                )
+                                && status
+                                    .capabilities
+                                    .iter()
+                                    .any(|capability| capability == "activity_feed");
+                            let activity_due = last_activity_refresh
+                                .is_none_or(|last| last.elapsed() >= ENRICHMENT_ACTIVITY_REFRESH);
+                            if !activity_ready {
+                                last_activity_refresh = None;
+                            } else if activity_due {
+                                last_activity_refresh = Some(Instant::now());
+                                match source.enrich_activity_feed(&context).await {
+                                    Ok(Some(activity_feed)) => {
+                                        if source_out
+                                            .send(EnrichmentEvent::ActivityFeedReplace(
+                                                activity_feed,
+                                            ))
+                                            .await
+                                            .is_err()
+                                        {
+                                            break;
+                                        }
+                                    }
+                                    Ok(None) => {}
+                                    Err(error) => tracing::warn!(
+                                        target: "cknerv-server",
+                                        "optional activity-feed refresh failed: {error}"
                                     ),
                                 }
                             }

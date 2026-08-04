@@ -173,4 +173,11 @@ fn enrichment_samples_match_wire_shape() {
         canonicalize(&samples["deltas"]["asset_ecosystem_replace"]),
         canonicalize(&serde_json::to_value(asset_ecosystem).unwrap())
     );
+    let activity_feed = SemanticsDelta::ActivityFeedReplace {
+        activity_feed: snapshot.activity_feed.clone().unwrap(),
+    };
+    assert_eq!(
+        canonicalize(&samples["deltas"]["activity_feed_replace"]),
+        canonicalize(&serde_json::to_value(activity_feed).unwrap())
+    );
 }
