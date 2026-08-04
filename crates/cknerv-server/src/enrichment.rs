@@ -7,7 +7,10 @@
 
 use async_trait::async_trait;
 
-use cknerv_core::{CellSemanticRecord, EnrichmentSourceStatus, OutPoint, RecentBlock, RecentTx};
+use cknerv_core::{
+    CellSemanticRecord, EnrichmentSourceStatus, OutPoint, RecentBlock, RecentTx,
+    TransactionSemanticRecord,
+};
 
 /// Bounded canonical evidence supplied to an enrichment source when it
 /// validates its indexed view or resolves a lazy detail request.
@@ -42,4 +45,15 @@ pub trait EnrichmentSource: Send + Sync + 'static {
         out_point: &OutPoint,
         context: &CanonicalContext,
     ) -> anyhow::Result<Option<CellSemanticRecord>>;
+
+    /// Resolve additive detail for one transaction reached through a selected
+    /// canonical Cell. Implementations must not turn this into an unbounded
+    /// background scan.
+    async fn enrich_transaction(
+        &self,
+        _tx_hash: &str,
+        _context: &CanonicalContext,
+    ) -> anyhow::Result<Option<TransactionSemanticRecord>> {
+        Ok(None)
+    }
 }

@@ -144,3 +144,81 @@ pub(crate) struct ScriptLookupInfo {
 }
 
 pub(crate) type ScriptLookupResponse = HashMap<String, ScriptLookupInfo>;
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct TransactionDetailResponse {
+    pub hash: String,
+    pub status: String,
+    pub block_number: Option<i64>,
+    pub block_hash: Option<String>,
+    pub inputs_count: i32,
+    pub outputs_count: i32,
+    pub fee: String,
+    pub fee_rate: Option<String>,
+    pub tx_size: Option<i32>,
+    pub cycles: Option<i64>,
+    pub confirmations: Option<i64>,
+    pub is_cellbase: bool,
+    pub inputs_capacity: Option<String>,
+    pub outputs_capacity: Option<String>,
+    #[serde(rename = "inputsCommonKnowledgeSize")]
+    pub inputs_common_knowledge_size: Option<String>,
+    #[serde(rename = "outputsCommonKnowledgeSize")]
+    pub outputs_common_knowledge_size: Option<String>,
+    #[serde(default)]
+    pub inputs: Vec<TransactionInputResponse>,
+    #[serde(default)]
+    pub outputs: Vec<TransactionOutputResponse>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct TransactionInputResponse {
+    pub capacity: Option<String>,
+    pub address: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct TransactionOutputResponse {
+    pub capacity: String,
+    #[serde(rename = "commonKnowledgeSize")]
+    pub common_knowledge_size: i64,
+    pub address: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct TransactionLifecycleResponse {
+    pub hash: String,
+    pub phase: String,
+    pub proposal_id: String,
+    pub proposed_in: Option<LifecycleBlockInfo>,
+    pub proposed_in_uncle: Option<LifecycleUncleInfo>,
+    pub committed_in: Option<LifecycleBlockInfo>,
+    pub commitment_distance: Option<i64>,
+    pub commitment_window: CommitmentWindow,
+    pub is_cellbase: bool,
+    pub confirmations: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct LifecycleBlockInfo {
+    pub block_number: i64,
+    pub block_hash: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct LifecycleUncleInfo {
+    pub block_number: i64,
+    pub block_hash: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct CommitmentWindow {
+    pub close: i64,
+    pub far: i64,
+}

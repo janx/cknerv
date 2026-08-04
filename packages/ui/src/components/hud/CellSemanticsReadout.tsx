@@ -2,6 +2,8 @@ import type { CSSProperties } from 'react';
 import type {
   CellSemanticRecord,
   EnrichmentSourceStatus,
+  SemanticFacet,
+  TransactionSemanticRecord,
 } from '@cknerv/types';
 import { HUD_COLORS, HUD_FONTS, rgba } from './hudTheme';
 
@@ -77,17 +79,126 @@ function KnowledgeBar({ record }: { record: CellSemanticRecord }) {
   );
 }
 
+function facetAttribute(facet: SemanticFacet | undefined, key: string): string | undefined {
+  return facet?.attributes.find((attribute) => attribute.key === key)?.value;
+}
+
+function formatShannons(value: string, signed = false): string {
+  try {
+    const amount = BigInt(value);
+    const sign = amount < 0n ? '−' : signed && amount > 0n ? '+' : '';
+    const absolute = amount < 0n ? -amount : amount;
+    if (absolute < 1_000_000n) return `${sign}${absolute} sh`;
+    const whole = absolute / 100_000_000n;
+    const fraction = ((absolute % 100_000_000n) / 1_000n)
+      .toString()
+      .padStart(5, '0')
+      .replace(/0+$/, '');
+    return `${sign}${whole}${fraction ? `.${fraction}` : ''} CKB`;
+  } catch {
+    return `${value} sh`;
+  }
+}
+
+function TransactionReadout({
+  phase,
+  record,
+  message,
+}: {
+  phase: CellSemanticsPhase;
+  record?: TransactionSemanticRecord | null;
+  message?: string | null;
+}) {
+  const io = record?.actions.find((facet) => facet.kind === 'transaction_io');
+  const lifecycle = record?.actions.find(
+    (facet) => facet.kind === 'transaction_lifecycle',
+  );
+  const proposed = facetAttribute(lifecycle, 'proposed_block');
+  const committed = facetAttribute(lifecycle, 'committed_block');
+  const distance = facetAttribute(lifecycle, 'commitment_distance');
+  const status = phase === 'loading'
+    ? 'RESOLVING ORIGIN TRANSACTION…'
+    : phase === 'waiting'
+      ? 'WAITING FOR TRANSACTION CAPABILITY'
+      : phase === 'unavailable'
+        ? (message ?? 'NO INDEXED TRANSACTION CONTEXT')
+        : phase === 'error'
+          ? (message ?? 'TRANSACTION CONTEXT UNAVAILABLE')
+          : null;
+  return (
+    <div
+      data-transaction-semantics-phase={phase}
+      style={{ marginTop: 7, paddingTop: 6, borderTop: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.14)}` }}
+    >
+      <div style={{ color: HUD_COLORS.orange, fontSize: 7.5, letterSpacing: 1.1, marginBottom: 3 }}>
+        ORIGIN TRANSACTION
+      </div>
+      {status && !record ? (
+        <div style={{ color: phase === 'error' ? HUD_COLORS.danger : HUD_COLORS.dim, fontSize: 8 }}>
+          {status}
+        </div>
+      ) : null}
+      {record ? (
+        <>
+          <ValueRow label="TX" value={compact(record.tx_hash, 12, 9)} />
+          <ValueRow
+            label="FLOW"
+            value={`${facetAttribute(io, 'inputs') ?? '?'} → ${facetAttribute(io, 'outputs') ?? '?'} CELLS`}
+          />
+          <ValueRow
+            label="COMMIT"
+            value={proposed && committed
+              ? `#${proposed} → #${committed}${distance ? ` · ${distance} BLOCKS` : ''}`
+              : `#${record.block}`}
+            color={HUD_COLORS.nominal}
+          />
+          {record.fee ? <ValueRow label="FEE" value={formatShannons(record.fee)} /> : null}
+          {record.cycles != null ? (
+            <ValueRow label="CYCLES" value={record.cycles.toLocaleString()} />
+          ) : null}
+          {record.participants.length > 0 ? (
+            <div style={{ marginTop: 4 }}>
+              {record.participants.slice(0, 4).map((participant) => (
+                <div
+                  key={participant.address}
+                  title={participant.address}
+                  style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 6, padding: '1px 0', fontSize: 7.5 }}
+                >
+                  <span style={{ color: HUD_COLORS.dim, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {compact(participant.address, 9, 6)}
+                  </span>
+                  <span style={{ color: participant.capacity_delta?.startsWith('-') ? HUD_COLORS.danger : HUD_COLORS.nominal }}>
+                    {participant.capacity_delta == null
+                      ? 'PARTIAL'
+                      : formatShannons(participant.capacity_delta, true)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </>
+      ) : null}
+    </div>
+  );
+}
+
 export default function CellSemanticsReadout({
   source,
   phase,
   record,
   message,
+  transactionPhase,
+  transactionRecord,
+  transactionMessage,
   style,
 }: {
   source: EnrichmentSourceStatus;
   phase: CellSemanticsPhase;
   record?: CellSemanticRecord | null;
   message?: string | null;
+  transactionPhase?: CellSemanticsPhase;
+  transactionRecord?: TransactionSemanticRecord | null;
+  transactionMessage?: string | null;
   style?: CSSProperties;
 }) {
   const color = sourceColor(source.status);
@@ -169,6 +280,13 @@ export default function CellSemanticsReadout({
             </div>
           ) : null}
         </>
+      ) : null}
+      {transactionPhase ? (
+        <TransactionReadout
+          phase={transactionPhase}
+          record={transactionRecord}
+          message={transactionMessage}
+        />
       ) : null}
     </section>
   );

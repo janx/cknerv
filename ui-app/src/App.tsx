@@ -67,6 +67,7 @@ import {
   connectSemanticsStream,
   emptySemanticsCache,
   fetchCellSemantics,
+  fetchTransactionSemantics,
   fromCellsSnapshot,
   outPointKey,
   type CellGalaxyCache,
@@ -80,6 +81,7 @@ import type {
   ChainNode,
   Peer,
   CellSemanticRecord,
+  TransactionSemanticRecord,
 } from '@cknerv/types';
 import Tweaks from './Tweaks';
 import Jukebox from './Jukebox';
@@ -627,6 +629,95 @@ export default function App({
     : cachedSelectedCellSemantics
       ? 'ready'
       : 'waiting';
+  const selectedTransactionHash = selectedCell?.out_point.tx_hash ?? null;
+  const transactionSemanticsEnabled = enrichmentConfig.enabled
+    && semanticsCache.source.capabilities.includes('transaction_detail');
+  const cachedSelectedTransactionSemantics = selectedTransactionHash
+    ? semanticsCache.transactions.get(selectedTransactionHash) ?? null
+    : null;
+  const [selectedTransactionLookup, setSelectedTransactionLookup] = useState<{
+    key: string | null;
+    phase: 'waiting' | 'loading' | 'ready' | 'unavailable' | 'error';
+    record: TransactionSemanticRecord | null;
+    message: string | null;
+  }>({ key: null, phase: 'waiting', record: null, message: null });
+  useEffect(() => {
+    if (!transactionSemanticsEnabled || !selectedTransactionHash) {
+      setSelectedTransactionLookup({
+        key: null,
+        phase: 'waiting',
+        record: null,
+        message: null,
+      });
+      return;
+    }
+    if (cachedSelectedTransactionSemantics) {
+      setSelectedTransactionLookup({
+        key: selectedTransactionHash,
+        phase: 'ready',
+        record: cachedSelectedTransactionSemantics,
+        message: null,
+      });
+      return;
+    }
+    const source = semanticsCache.source;
+    if (!source.validated_anchor) {
+      const hardFailure = source.status === 'error'
+        || source.status === 'incompatible';
+      setSelectedTransactionLookup({
+        key: selectedTransactionHash,
+        phase: hardFailure ? 'error' : 'waiting',
+        record: null,
+        message: source.message ?? null,
+      });
+      return;
+    }
+
+    const controller = new AbortController();
+    setSelectedTransactionLookup({
+      key: selectedTransactionHash,
+      phase: 'loading',
+      record: null,
+      message: null,
+    });
+    void fetchTransactionSemantics(selectedTransactionHash, {
+      signal: controller.signal,
+    }).then((record) => {
+      if (controller.signal.aborted) return;
+      setSelectedTransactionLookup({
+        key: selectedTransactionHash,
+        phase: record ? 'ready' : 'unavailable',
+        record,
+        message: record ? null : 'the indexed source has no transaction context',
+      });
+    }).catch((error: unknown) => {
+      if (controller.signal.aborted) return;
+      setSelectedTransactionLookup({
+        key: selectedTransactionHash,
+        phase: 'error',
+        record: null,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    });
+    return () => controller.abort();
+  }, [
+    cachedSelectedTransactionSemantics,
+    selectedTransactionHash,
+    semanticsCache.source.message,
+    semanticsCache.source.status,
+    semanticsCache.source.validated_anchor,
+    transactionSemanticsEnabled,
+  ]);
+  const selectedTransactionSemantics =
+    selectedTransactionLookup.key === selectedTransactionHash
+      ? selectedTransactionLookup.record
+      : cachedSelectedTransactionSemantics;
+  const selectedTransactionSemanticsPhase =
+    selectedTransactionLookup.key === selectedTransactionHash
+      ? selectedTransactionLookup.phase
+      : cachedSelectedTransactionSemantics
+        ? 'ready'
+        : 'waiting';
   const selectedCausalLens = useMemo(
     () => selectedCell
       ? deriveCellCausalLens(
@@ -936,6 +1027,11 @@ export default function App({
           ? selectedCellSemanticsPhase
           : undefined}
         selectedCellSemanticsMessage={selectedSemanticsLookup.message}
+        selectedTransactionSemantics={selectedTransactionSemantics}
+        selectedTransactionSemanticsPhase={transactionSemanticsEnabled
+          ? selectedTransactionSemanticsPhase
+          : undefined}
+        selectedTransactionSemanticsMessage={selectedTransactionLookup.message}
         cellRecordsById={cellsCache.cells}
         recentCellLinks={cellsCache.recentLinks}
         cellCausalLens={selectedCausalLens}

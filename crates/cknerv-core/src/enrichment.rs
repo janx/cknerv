@@ -179,8 +179,11 @@ pub struct CellSemanticRecord {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TransactionParticipantSemantic {
     pub address: String,
+    /// Signed shannon delta when every input/output attributed to this address
+    /// exposed an exact capacity.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub capacity_delta: Option<String>,
+    /// Signed occupied-byte delta when the source can attribute it exactly.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub common_knowledge_delta: Option<String>,
     #[serde(default)]

@@ -4,6 +4,7 @@ import type {
   CellLink,
   CellSemanticRecord,
   EnrichmentSourceStatus,
+  TransactionSemanticRecord,
 } from '@cknerv/types';
 import {
   formatCkb, formatAge, formatDataSize,
@@ -90,6 +91,9 @@ export default function CellDetailPanel({
   semanticPhase,
   semanticRecord,
   semanticMessage,
+  semanticTransactionPhase,
+  semanticTransactionRecord,
+  semanticTransactionMessage,
   onClose,
   style,
 }: {
@@ -127,6 +131,9 @@ export default function CellDetailPanel({
   semanticPhase?: CellSemanticsPhase;
   semanticRecord?: CellSemanticRecord | null;
   semanticMessage?: string | null;
+  semanticTransactionPhase?: CellSemanticsPhase;
+  semanticTransactionRecord?: TransactionSemanticRecord | null;
+  semanticTransactionMessage?: string | null;
   onClose: () => void;
   style?: CSSProperties;
 }) {
@@ -328,6 +335,9 @@ export default function CellDetailPanel({
           phase={semanticPhase}
           record={semanticRecord}
           message={semanticMessage}
+          transactionPhase={semanticTransactionPhase}
+          transactionRecord={semanticTransactionRecord}
+          transactionMessage={semanticTransactionMessage}
         />
       ) : null}
       <ConsensusIdentityPlate

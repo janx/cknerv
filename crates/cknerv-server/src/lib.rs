@@ -23,6 +23,8 @@
 //!     resumable via `?since=<revision>`.
 //!   * `GET /api/enrichment/cells/:tx_hash/:output_index` — optional lazy
 //!     indexed context for one selected canonical Cell.
+//!   * `GET /api/enrichment/transactions/:tx_hash` — optional lazy indexed
+//!     context for that Cell's origin transaction.
 
 pub mod adapter;
 pub mod enrichment;

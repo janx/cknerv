@@ -80,12 +80,20 @@ The corresponding required WebSocket routes are:
 registers its built-in optional projection. With no `[ckbadger]` section its
 source status is `disabled`, and
 `GET /api/enrichment/cells/:tx_hash/:output_index` returns
-`404 enrichment_disabled`. Neither condition affects the required routes.
+`404 enrichment_disabled`, as does
+`GET /api/enrichment/transactions/:tx_hash`. Neither condition affects the
+required routes.
 
 When `[ckbadger]` is configured, the additional WebSocket route is
 `/api/projections/semantics/stream?since=<revision>`. Its revision is independent
 from chain/cells and source health should settle to `ready`, `syncing`, `stale`,
 `incompatible`, or `error` without interrupting either required stream.
+After selecting or copying a retained Cell outpoint, both lazy routes should
+return anchored records. The transaction response should include its block,
+fee/cycles when available, a `transaction_io` action, and a
+`transaction_lifecycle` action when the ckbadger lifecycle endpoint is
+available. The semantics snapshot should then contain both records without
+changing the chain snapshot revision.
 
 Each route emits a `{"kind":"heartbeat","revision":N}` frame after roughly
 five seconds without a data frame. A heartbeat confirms browser transport

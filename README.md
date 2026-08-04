@@ -122,7 +122,7 @@ availability.
 | CLI | Rust, clap, rust-embed | Workdir commands, config merge, embedded dashboard server |
 | Server | Rust, axum, tokio | HTTP/WS API, mutation reducer, projection registry, persistence |
 | CKB adapter | Rust, reqwest, CKB JSON-RPC types | Read-only node polling, boot backfill, block/tx normalization |
-| ckbadger enrichment | Rust, reqwest | Optional indexed Cell/script context with canonical-anchor validation |
+| ckbadger enrichment | Rust, reqwest | Optional indexed Cell/script and origin-transaction context with canonical-anchor validation |
 | Types/cache | TypeScript, Vitest | Wire-type twins, pure reducers, WebSocket clients |
 | UI | React 18, Vite, React Three Fiber, drei, three.js | 3D cell galaxy, HUDs, cell-life detail panels, nerve overlays |
 
@@ -230,6 +230,7 @@ fall back to the SPA.
 | `GET` | `/api/projections/semantics/snapshot` | Optional source health plus bounded Cell/transaction semantics; present even when disabled |
 | `WS` | `/api/projections/semantics/stream?since=<rev>` | Independent optional semantics snapshot/delta stream |
 | `GET` | `/api/enrichment/cells/:tx_hash/:output_index` | Lazily resolve one selected Cell through the configured source; `404 enrichment_disabled` when absent |
+| `GET` | `/api/enrichment/transactions/:tx_hash` | Lazily resolve that Cell's origin transaction, participant capacity deltas, and proposal/commit lifecycle |
 
 The projection route name for the cell galaxy is literally `cells`
 (`CellGalaxy::name()`).
@@ -245,10 +246,10 @@ Before ckbadger data is accepted, cknerv reads its indexed tip, chooses a block
 inside cknerv's retained canonical evidence window, and requires ckbadger to
 return the same hash for that height. A mismatch marks the source
 `incompatible`; lag/reachability are reported as `syncing`, `stale`, or
-`error`, without affecting the CKB adapter. Each lazy Cell response is checked
-again against the current block/hash window, closing the race where a reorg
-occurs during the HTTP request. Canonical reorg/rebuild events prune or clear
-unsafe semantic records before the source can revalidate.
+`error`, without affecting the CKB adapter. Each lazy Cell or transaction
+response is checked again against the current block/hash window, closing the
+race where a reorg occurs during the HTTP request. Canonical reorg/rebuild
+events prune or clear unsafe semantic records before the source can revalidate.
 
 Both WebSocket routes emit
 `{"kind":"heartbeat","revision":<last-confirmed-revision>}` every five seconds
@@ -436,10 +437,12 @@ twin, the fixtures, and both sides of the tests together.
   indexer, or transaction submitter.
 - ckbadger enrichment currently uses existing REST endpoints for source health,
   block-hash anchors, selected-Cell detail, script identity, data analysis,
-  DAO/code-cell context, and occupied-capacity composition. The generic
-  transaction/census semantics contract is reserved, but those records are not
-  populated until ckbadger offers efficient transaction-activity and batch
-  lookup endpoints; cknerv deliberately avoids N+1 background scraping.
+  DAO/code-cell context, occupied-capacity composition, and the selected Cell's
+  origin-transaction detail/lifecycle. Transaction participants expose exact
+  capacity deltas only when every attributed input/output includes capacity.
+  Parsed protocol activities and the global census remain unpopulated because
+  ckbadger does not expose an efficient per-transaction activity lookup or one
+  bounded census response; cknerv deliberately avoids N+1 background scraping.
 
 ## License
 

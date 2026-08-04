@@ -45,6 +45,10 @@ pub fn build_router(
             "/api/enrichment/cells/:tx_hash/:output_index",
             get(enrich_cell),
         )
+        .route(
+            "/api/enrichment/transactions/:tx_hash",
+            get(enrich_transaction),
+        )
         .with_state(RouterState {
             state,
             shutdown_rx,
@@ -147,6 +151,57 @@ async fn enrich_cell(
             Json(serde_json::json!({
                 "error": "cell_not_indexed",
                 "message": "the enrichment source has no record for this outpoint"
+            })),
+        )
+            .into_response(),
+        Err(error) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({
+                "error": "enrichment_unavailable",
+                "message": error.to_string()
+            })),
+        )
+            .into_response(),
+    }
+}
+
+async fn enrich_transaction(
+    Path(tx_hash): Path<String>,
+    State(router): State<RouterState>,
+) -> impl IntoResponse {
+    let Some(source) = router.enrichment_source else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "error": "enrichment_disabled",
+                "message": "no enrichment source is configured"
+            })),
+        )
+            .into_response();
+    };
+    let context = router.state.canonical_context();
+    match source.enrich_transaction(&tx_hash, &context).await {
+        Ok(Some(record)) => {
+            if !router
+                .state
+                .apply_enrichment(EnrichmentEvent::TransactionUpsert(Box::new(record.clone())))
+            {
+                return (
+                    StatusCode::CONFLICT,
+                    Json(serde_json::json!({
+                        "error": "anchor_expired",
+                        "message": "the canonical chain changed while enrichment was loading"
+                    })),
+                )
+                    .into_response();
+            }
+            Json(serde_json::json!({ "transaction": record })).into_response()
+        }
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "error": "transaction_not_indexed",
+                "message": "the enrichment source has no record for this transaction"
             })),
         )
             .into_response(),
