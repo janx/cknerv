@@ -45,6 +45,7 @@ const ENRICHMENT_ECOSYSTEM_REFRESH: Duration = Duration::from_secs(30);
 const ENRICHMENT_DAO_STATE_REFRESH: Duration = Duration::from_secs(60);
 const ENRICHMENT_PROTOCOL_ERA_REFRESH: Duration = Duration::from_secs(5 * 60);
 const ENRICHMENT_ACTIVITY_REFRESH: Duration = Duration::from_secs(15);
+const ENRICHMENT_TRANSACTION_HORIZON_REFRESH: Duration = Duration::from_secs(60);
 const ENRICHMENT_FORK_WATCH_REFRESH: Duration = Duration::from_secs(15);
 const ENRICHMENT_NETWORK_ATLAS_REFRESH: Duration = Duration::from_secs(60);
 
@@ -223,6 +224,7 @@ impl ServerBuilder {
                 let mut last_dao_state_refresh: Option<Instant> = None;
                 let mut last_protocol_era_refresh: Option<Instant> = None;
                 let mut last_activity_refresh: Option<Instant> = None;
+                let mut last_transaction_horizon_refresh: Option<Instant> = None;
                 let mut last_fork_watch_refresh: Option<Instant> = None;
                 let mut last_network_atlas_refresh: Option<Instant> = None;
                 let mut network_atlas_present = false;
@@ -381,6 +383,43 @@ impl ServerBuilder {
                                     Err(error) => tracing::warn!(
                                         target: "cknerv-server",
                                         "optional activity-feed refresh failed: {error}"
+                                    ),
+                                }
+                            }
+                            let transaction_horizon_ready = status.validated_anchor.is_some()
+                                && matches!(
+                                    status.status,
+                                    cknerv_core::EnrichmentSourceState::Ready
+                                        | cknerv_core::EnrichmentSourceState::Stale
+                                )
+                                && status
+                                    .capabilities
+                                    .iter()
+                                    .any(|capability| capability == "transaction_horizon");
+                            let transaction_horizon_due = last_transaction_horizon_refresh
+                                .is_none_or(|last| {
+                                    last.elapsed() >= ENRICHMENT_TRANSACTION_HORIZON_REFRESH
+                                });
+                            if !transaction_horizon_ready {
+                                last_transaction_horizon_refresh = None;
+                            } else if transaction_horizon_due {
+                                last_transaction_horizon_refresh = Some(Instant::now());
+                                match source.enrich_transaction_horizon(&context).await {
+                                    Ok(Some(transaction_horizon)) => {
+                                        if source_out
+                                            .send(EnrichmentEvent::TransactionHorizonReplace(
+                                                transaction_horizon,
+                                            ))
+                                            .await
+                                            .is_err()
+                                        {
+                                            break;
+                                        }
+                                    }
+                                    Ok(None) => {}
+                                    Err(error) => tracing::warn!(
+                                        target: "cknerv-server",
+                                        "optional transaction-horizon refresh failed: {error}"
                                     ),
                                 }
                             }

@@ -13,7 +13,8 @@ use cknerv_core::{
     DaoStateRecord, EnrichmentSourceState, EnrichmentSourceStatus, ForkWatchDeepFork,
     ForkWatchEventKind, ForkWatchRecord, ForkWatchReorg, NetworkAtlasBucket, NetworkAtlasRecord,
     OutPoint, ProtocolEra, ProtocolEraRecord, SemanticAsset, SemanticAttribute, SemanticFacet,
-    SemanticScript, TransactionParticipantSemantic, TransactionSemanticRecord,
+    SemanticScript, TransactionHorizonRecord, TransactionParticipantSemantic,
+    TransactionSemanticRecord,
 };
 use cknerv_server::{CanonicalContext, EnrichmentSource};
 
@@ -23,7 +24,8 @@ use crate::dto::{
     HardforkTimelineResponse, LatestActivityResponse, LookupScriptsRequest,
     NetworkCrawlerSummaryResponse, NetworkNodesPageResponse, NetworkStats, RecentReorgResponse,
     ReorgEventResponse, ScriptLookupInfo, ScriptLookupResponse, ScriptResponse, TokenResponse,
-    TransactionDetailResponse, TransactionLifecycleResponse,
+    TransactionDetailResponse, TransactionLifecycleResponse, TransactionStatsPoint,
+    TransactionStatsResponse,
 };
 
 const CAPABILITIES: &[&str] = &[
@@ -35,6 +37,7 @@ const CAPABILITIES: &[&str] = &[
     "dao_state",
     "protocol_era",
     "activity_feed",
+    "transaction_horizon",
     "fork_watch",
     "network_atlas",
     "transaction_detail",
@@ -47,6 +50,8 @@ const ACTIVITY_FEED_LIMIT: usize = 8;
 const MAX_ACTIVITY_PARTICIPANTS: usize = 512;
 const MAX_ACTIVITY_NESTED_ITEMS: usize = 512;
 const MAX_ACTIVITY_LABEL_CHARS: usize = 96;
+const MAX_TRANSACTION_HOURLY_BUCKETS: usize = 24;
+const MAX_TRANSACTION_DAILY_BUCKETS: usize = 14;
 const MAX_FORK_WATCH_WINDOW_SECONDS: u32 = 31 * 24 * 60 * 60;
 const MAX_PROTOCOL_ERAS: usize = 16;
 const MAX_PROTOCOL_LABEL_CHARS: usize = 64;
@@ -814,6 +819,89 @@ impl EnrichmentSource for CkbadgerEnrichmentSource {
         map_activity_feed(activities, anchor).map(Some)
     }
 
+    async fn enrich_transaction_horizon(
+        &self,
+        context: &CanonicalContext,
+    ) -> anyhow::Result<Option<TransactionHorizonRecord>> {
+        let anchor = self.current_anchor(context)?;
+        let statistics_url = self.endpoint("statistics/tx-stats")?;
+        let response = self
+            .client
+            .get(statistics_url)
+            .send()
+            .await
+            .context("fetch ckbadger transaction horizon")?;
+        if matches!(
+            response.status(),
+            StatusCode::NOT_FOUND | StatusCode::BAD_REQUEST
+        ) {
+            return Ok(None);
+        }
+        if !response.status().is_success() {
+            return Err(anyhow!(
+                "ckbadger transaction horizon returned HTTP {}",
+                response.status()
+            ));
+        }
+        let statistics: TransactionStatsResponse = response
+            .json()
+            .await
+            .context("decode ckbadger transaction horizon")?;
+
+        // The summary itself has no tip field and statistics/network is
+        // cached independently. Prove the fresh upper bound directly instead:
+        // the validated block must still match, and its successor must not yet
+        // exist in ckbadger's indexed store.
+        let block_url = self.endpoint(&format!("blocks/{}", anchor.block))?;
+        let response = self
+            .client
+            .get(block_url)
+            .send()
+            .await
+            .context("recheck ckbadger transaction-horizon block anchor")?;
+        if !response.status().is_success() {
+            return Err(anyhow!(
+                "ckbadger transaction-horizon block recheck returned HTTP {}",
+                response.status()
+            ));
+        }
+        let indexed_block: BlockResponse = response
+            .json()
+            .await
+            .context("decode ckbadger transaction-horizon block recheck")?;
+        let anchor_block = i64::try_from(anchor.block)
+            .context("validated transaction-horizon anchor exceeds ckbadger block range")?;
+        if indexed_block.number != anchor_block || indexed_block.hash != anchor.hash {
+            self.clear_anchor();
+            return Err(anyhow!(
+                "ckbadger transaction-horizon anchor changed during refresh"
+            ));
+        }
+
+        let successor = anchor
+            .block
+            .checked_add(1)
+            .ok_or_else(|| anyhow!("validated transaction-horizon anchor has no successor"))?;
+        let successor_url = self.endpoint(&format!("blocks/{successor}"))?;
+        let response = self
+            .client
+            .get(successor_url)
+            .send()
+            .await
+            .context("check ckbadger transaction-horizon upper bound")?;
+        if response.status().is_success() {
+            return Ok(None);
+        }
+        if response.status() != StatusCode::NOT_FOUND {
+            return Err(anyhow!(
+                "ckbadger transaction-horizon upper-bound check returned HTTP {}",
+                response.status()
+            ));
+        }
+
+        map_transaction_horizon(statistics, anchor).map(Some)
+    }
+
     async fn enrich_network_atlas(
         &self,
         context: &CanonicalContext,
@@ -1425,6 +1513,100 @@ fn validate_network_peer_id(value: &str) -> anyhow::Result<()> {
         return Err(anyhow!("ckbadger network node returned an invalid peerId"));
     }
     Ok(())
+}
+
+fn map_transaction_horizon(
+    statistics: TransactionStatsResponse,
+    anchor: ChainAnchor,
+) -> anyhow::Result<TransactionHorizonRecord> {
+    let current_hour = transaction_count(statistics.current_hour, "currentHour")?;
+    let current_day = transaction_count(statistics.current_day, "currentDay")?;
+    let hourly_counts = transaction_buckets(
+        statistics.hourly_data,
+        MAX_TRANSACTION_HOURLY_BUCKETS,
+        "hourlyData",
+        valid_hour_bucket_label,
+    )?;
+    let daily_counts = transaction_buckets(
+        statistics.daily_data,
+        MAX_TRANSACTION_DAILY_BUCKETS,
+        "dailyData",
+        valid_day_bucket_label,
+    )?;
+
+    Ok(TransactionHorizonRecord {
+        source: "ckbadger".to_string(),
+        as_of: anchor,
+        updated_at_ms: now_ms(),
+        current_hour,
+        current_day,
+        hourly_counts,
+        daily_counts,
+    })
+}
+
+fn transaction_buckets(
+    points: Vec<TransactionStatsPoint>,
+    limit: usize,
+    field: &str,
+    valid_label: fn(&str) -> bool,
+) -> anyhow::Result<Vec<u64>> {
+    if points.len() > limit {
+        return Err(anyhow!(
+            "ckbadger transaction horizon exceeded {field} bound"
+        ));
+    }
+    let mut labels = HashSet::with_capacity(points.len());
+    points
+        .into_iter()
+        .map(|point| {
+            if !valid_label(&point.label) {
+                return Err(anyhow!(
+                    "ckbadger transaction horizon returned invalid {field} label"
+                ));
+            }
+            if !labels.insert(point.label) {
+                return Err(anyhow!(
+                    "ckbadger transaction horizon returned duplicate {field} label"
+                ));
+            }
+            transaction_count(point.value, field)
+        })
+        .collect()
+}
+
+fn transaction_count(value: i64, field: &str) -> anyhow::Result<u64> {
+    wire_safe_u64(nonnegative(value, field)?, field)
+}
+
+fn valid_hour_bucket_label(label: &str) -> bool {
+    let bytes = label.as_bytes();
+    if bytes.len() != 5
+        || !bytes[0].is_ascii_digit()
+        || !bytes[1].is_ascii_digit()
+        || bytes[2] != b':'
+        || bytes[3] != b'0'
+        || bytes[4] != b'0'
+    {
+        return false;
+    }
+    (bytes[0] - b'0') * 10 + (bytes[1] - b'0') <= 23
+}
+
+fn valid_day_bucket_label(label: &str) -> bool {
+    let bytes = label.as_bytes();
+    if bytes.len() != 5
+        || !bytes[0].is_ascii_digit()
+        || !bytes[1].is_ascii_digit()
+        || bytes[2] != b'/'
+        || !bytes[3].is_ascii_digit()
+        || !bytes[4].is_ascii_digit()
+    {
+        return false;
+    }
+    let month = (bytes[0] - b'0') * 10 + (bytes[1] - b'0');
+    let day = (bytes[3] - b'0') * 10 + (bytes[4] - b'0');
+    (1..=12).contains(&month) && (1..=31).contains(&day)
 }
 
 fn map_activity_feed(
@@ -2291,6 +2473,25 @@ mod tests {
                 }),
             )
             .route(
+                "/api/v1/statistics/tx-stats",
+                get(|| async {
+                    Json(serde_json::json!({
+                        "currentHour": 12,
+                        "currentDay": 345,
+                        "hourlyData": [
+                            { "label": "10:00", "value": 7 },
+                            { "label": "11:00", "value": 9 },
+                            { "label": "12:00", "value": 12 }
+                        ],
+                        "dailyData": [
+                            { "label": "08/03", "value": 300 },
+                            { "label": "08/04", "value": 321 },
+                            { "label": "08/05", "value": 345 }
+                        ]
+                    }))
+                }),
+            )
+            .route(
                 "/api/v1/network/summary",
                 get(|| async {
                     Json(serde_json::json!({
@@ -2357,13 +2558,25 @@ mod tests {
             )
             .route(
                 "/api/v1/blocks/:number",
-                get(move || {
+                get(move |axum::extract::Path(number): axum::extract::Path<i64>| {
                     let hash = response_hash.clone();
                     async move {
-                        Json(serde_json::json!({
-                            "number": 100,
-                            "hash": hash
-                        }))
+                        if number == 100 {
+                            (
+                                StatusCode::OK,
+                                Json(serde_json::json!({
+                                    "number": 100,
+                                    "hash": hash
+                                })),
+                            )
+                        } else {
+                            (
+                                StatusCode::NOT_FOUND,
+                                Json(serde_json::json!({
+                                    "error": "block not found"
+                                })),
+                            )
+                        }
                     }
                 }),
             )
@@ -2810,6 +3023,108 @@ mod tests {
         )
     }
 
+    async fn spawn_advancing_transaction_horizon_api() -> (Url, tokio::task::JoinHandle<()>) {
+        let app = Router::new()
+            .route(
+                "/api/v1/statistics/network",
+                get(|| async {
+                    Json(serde_json::json!({
+                        "syncStatus": {
+                            "isSyncing": false,
+                            "syncedBlock": 100
+                        }
+                    }))
+                }),
+            )
+            .route(
+                "/api/v1/statistics/tx-stats",
+                get(|| async {
+                    Json(serde_json::json!({
+                        "currentHour": 1,
+                        "currentDay": 1,
+                        "hourlyData": [{ "label": "12:00", "value": 1 }],
+                        "dailyData": [{ "label": "08/05", "value": 1 }]
+                    }))
+                }),
+            )
+            .route(
+                "/api/v1/blocks/:number",
+                get(
+                    |axum::extract::Path(number): axum::extract::Path<i64>| async move {
+                        Json(serde_json::json!({
+                            "number": number,
+                            "hash": if number == 100 { "0xblock100" } else { "0xblock101" }
+                        }))
+                    },
+                ),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let handle = tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        (
+            Url::parse(&format!("http://{address}/api/v1")).unwrap(),
+            handle,
+        )
+    }
+
+    async fn spawn_reorganized_transaction_horizon_api() -> (Url, tokio::task::JoinHandle<()>) {
+        let block_requests = Arc::new(AtomicUsize::new(0));
+        let counted_requests = block_requests.clone();
+        let app = Router::new()
+            .route(
+                "/api/v1/statistics/network",
+                get(|| async {
+                    Json(serde_json::json!({
+                        "syncStatus": {
+                            "isSyncing": false,
+                            "syncedBlock": 100
+                        }
+                    }))
+                }),
+            )
+            .route(
+                "/api/v1/statistics/tx-stats",
+                get(|| async {
+                    Json(serde_json::json!({
+                        "currentHour": 1,
+                        "currentDay": 1,
+                        "hourlyData": [{ "label": "12:00", "value": 1 }],
+                        "dailyData": [{ "label": "08/05", "value": 1 }]
+                    }))
+                }),
+            )
+            .route(
+                "/api/v1/blocks/:number",
+                get(
+                    move |axum::extract::Path(number): axum::extract::Path<i64>| {
+                        let requests = counted_requests.clone();
+                        async move {
+                            let hash = if requests.fetch_add(1, Ordering::Relaxed) == 0 {
+                                "0xblock100"
+                            } else {
+                                "0xreplacement100"
+                            };
+                            Json(serde_json::json!({
+                                "number": number,
+                                "hash": hash
+                            }))
+                        }
+                    },
+                ),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let handle = tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        (
+            Url::parse(&format!("http://{address}/api/v1")).unwrap(),
+            handle,
+        )
+    }
+
     fn context() -> CanonicalContext {
         CanonicalContext {
             tip: 101,
@@ -2921,6 +3236,9 @@ mod tests {
         assert!(status.capabilities.contains(&"dao_state".to_string()));
         assert!(status.capabilities.contains(&"protocol_era".to_string()));
         assert!(status.capabilities.contains(&"activity_feed".to_string()));
+        assert!(status
+            .capabilities
+            .contains(&"transaction_horizon".to_string()));
         assert!(status.capabilities.contains(&"fork_watch".to_string()));
         assert!(status.capabilities.contains(&"network_atlas".to_string()));
 
@@ -2996,6 +3314,17 @@ mod tests {
             activity_feed.activities[2].label.as_deref(),
             Some(".bit Time Info")
         );
+
+        let transaction_horizon = source
+            .enrich_transaction_horizon(&context())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(transaction_horizon.as_of.block, 100);
+        assert_eq!(transaction_horizon.current_hour, 12);
+        assert_eq!(transaction_horizon.current_day, 345);
+        assert_eq!(transaction_horizon.hourly_counts, vec![7, 9, 12]);
+        assert_eq!(transaction_horizon.daily_counts, vec![300, 321, 345]);
 
         let network_atlas = source
             .enrich_network_atlas(&context())
@@ -3116,6 +3445,40 @@ mod tests {
         server.abort();
     }
 
+    #[tokio::test]
+    async fn transaction_horizon_waits_when_source_advances_after_fetch() {
+        let (api_base, server) = spawn_advancing_transaction_horizon_api().await;
+        let source = CkbadgerEnrichmentSource::new(api_base).unwrap();
+        assert_eq!(
+            source.probe(&context()).await.status,
+            EnrichmentSourceState::Ready
+        );
+
+        let horizon = source.enrich_transaction_horizon(&context()).await.unwrap();
+
+        assert!(horizon.is_none());
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn transaction_horizon_rejects_same_height_anchor_change() {
+        let (api_base, server) = spawn_reorganized_transaction_horizon_api().await;
+        let source = CkbadgerEnrichmentSource::new(api_base).unwrap();
+        assert_eq!(
+            source.probe(&context()).await.status,
+            EnrichmentSourceState::Ready
+        );
+
+        let error = source
+            .enrich_transaction_horizon(&context())
+            .await
+            .unwrap_err();
+
+        assert!(error.to_string().contains("anchor changed"));
+        assert!(source.current_anchor(&context()).is_err());
+        server.abort();
+    }
+
     #[test]
     fn inconsistent_common_knowledge_breakdown_is_rejected() {
         let error = map_common_knowledge(CommonKnowledgeSizeBreakdown {
@@ -3148,6 +3511,83 @@ mod tests {
         assert!(ckb_decimal_to_shannons("1.000000001", "capacity").is_err());
         assert!(signed_ckb_decimal_to_shannons("-1.000000001", "delta").is_err());
         assert!(percentage_to_bps("100.01", "share").is_err());
+    }
+
+    #[test]
+    fn transaction_horizon_keeps_only_bounded_counts() {
+        let record = map_transaction_horizon(
+            TransactionStatsResponse {
+                current_hour: 12,
+                current_day: 345,
+                hourly_data: vec![
+                    TransactionStatsPoint {
+                        label: "10:00".to_string(),
+                        value: 7,
+                    },
+                    TransactionStatsPoint {
+                        label: "11:00".to_string(),
+                        value: 9,
+                    },
+                ],
+                daily_data: vec![TransactionStatsPoint {
+                    label: "08/05".to_string(),
+                    value: 345,
+                }],
+            },
+            ChainAnchor {
+                block: 100,
+                hash: "0xblock100".to_string(),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(record.current_hour, 12);
+        assert_eq!(record.current_day, 345);
+        assert_eq!(record.hourly_counts, vec![7, 9]);
+        assert_eq!(record.daily_counts, vec![345]);
+    }
+
+    #[test]
+    fn transaction_horizon_rejects_invalid_labels_counts_and_bounds() {
+        let anchor = || ChainAnchor {
+            block: 100,
+            hash: "0xblock100".to_string(),
+        };
+        let response = |hourly_data| TransactionStatsResponse {
+            current_hour: 1,
+            current_day: 1,
+            hourly_data,
+            daily_data: Vec::new(),
+        };
+
+        assert!(map_transaction_horizon(
+            response(vec![TransactionStatsPoint {
+                label: "24:00".to_string(),
+                value: 1,
+            }]),
+            anchor(),
+        )
+        .is_err());
+        assert!(map_transaction_horizon(
+            response(vec![TransactionStatsPoint {
+                label: "12:00".to_string(),
+                value: -1,
+            }]),
+            anchor(),
+        )
+        .is_err());
+        assert!(map_transaction_horizon(
+            response(
+                (0..=MAX_TRANSACTION_HOURLY_BUCKETS)
+                    .map(|index| TransactionStatsPoint {
+                        label: format!("{:02}:00", index % 24),
+                        value: 1,
+                    })
+                    .collect(),
+            ),
+            anchor(),
+        )
+        .is_err());
     }
 
     #[test]

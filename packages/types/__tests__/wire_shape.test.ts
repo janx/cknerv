@@ -146,6 +146,8 @@ describe('wire-shape parity (TS twin of cknerv-core)', () => {
     expect(sample.snapshot.fork_watch?.deep_fork?.indexed_tip).toBe(99);
     expect(sample.snapshot.activity_feed?.activities[0].category).toBe('dao');
     expect(sample.snapshot.activity_feed?.activities[1].participant_count).toBe(2);
+    expect(sample.snapshot.transaction_horizon?.current_day).toBe(345);
+    expect(sample.snapshot.transaction_horizon?.hourly_counts).toEqual([7, 9, 12]);
     expect(sample.snapshot.network_atlas?.sample_size).toBe(3);
     expect(sample.snapshot.network_atlas?.countries[0].label).toBe('SG');
     expect(sample.deltas.cell_upsert.type).toBe('cell_upsert');
@@ -154,6 +156,7 @@ describe('wire-shape parity (TS twin of cknerv-core)', () => {
     expect(sample.deltas.protocol_era_replace.type).toBe('protocol_era_replace');
     expect(sample.deltas.fork_watch_replace.type).toBe('fork_watch_replace');
     expect(sample.deltas.activity_feed_replace.type).toBe('activity_feed_replace');
+    expect(sample.deltas.transaction_horizon_replace.type).toBe('transaction_horizon_replace');
     expect(sample.deltas.network_atlas_replace.type).toBe('network_atlas_replace');
     expect(sample.deltas.network_atlas_clear.type).toBe('network_atlas_clear');
     expect(sample.deltas.prune).toEqual({ type: 'prune', from_block: 100 });

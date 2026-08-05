@@ -64,6 +64,7 @@ export * from './derives/assetEcosystem.derive';
 export * from './derives/daoState.derive';
 export * from './derives/forkWatch.derive';
 export * from './derives/activityFeed.derive';
+export * from './derives/transactionHorizon.derive';
 export * from './derives/networkAtlas.derive';
 export * from './derives/cellConsensusIdentity.derive';
 export * from './derives/cellCausalLens.derive';
@@ -160,6 +161,7 @@ export { default as DaoStateReadout } from './components/hud/DaoStateReadout';
 export { default as ProtocolEraBadge } from './components/hud/ProtocolEraBadge';
 export { default as ForkWatchReadout } from './components/hud/ForkWatchReadout';
 export { default as ActivityFeedReadout } from './components/hud/ActivityFeedReadout';
+export { default as TransactionHorizonReadout } from './components/hud/TransactionHorizonReadout';
 export { default as NetworkAtlasReadout } from './components/hud/NetworkAtlasReadout';
 export type {
   CellCausalNavigationReadout,

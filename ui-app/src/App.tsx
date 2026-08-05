@@ -1037,6 +1037,9 @@ export default function App({
         activityFeed={enrichmentConfig.enabled
           ? semanticsCache.activityFeed
           : undefined}
+        transactionHorizon={enrichmentConfig.enabled
+          ? semanticsCache.transactionHorizon
+          : undefined}
         networkAtlas={enrichmentConfig.enabled
           ? semanticsCache.networkAtlas
           : undefined}

@@ -122,7 +122,7 @@ availability.
 | CLI | Rust, clap, rust-embed | Workdir commands, config merge, embedded dashboard server |
 | Server | Rust, axum, tokio | HTTP/WS API, mutation reducer, projection registry, persistence |
 | CKB adapter | Rust, reqwest, CKB JSON-RPC types | Read-only node polling, boot backfill, block/tx normalization |
-| ckbadger enrichment | Rust, reqwest | Optional indexed Cell/script/asset, origin-transaction, protocol-era, recent-fork, fixed DAO, bounded ecosystem/activity, and network-crawler context with canonical-anchor validation |
+| ckbadger enrichment | Rust, reqwest | Optional indexed Cell/script/asset, origin-transaction, protocol-era, recent-fork, fixed DAO, bounded ecosystem/activity/transaction-horizon, and network-crawler context with canonical-anchor validation |
 | Types/cache | TypeScript, Vitest | Wire-type twins, pure reducers, WebSocket clients |
 | UI | React 18, Vite, React Three Fiber, drei, three.js | 3D cell galaxy, HUDs, cell-life detail panels, nerve overlays |
 
@@ -193,7 +193,7 @@ contracts remain normalized and source-agnostic.
 | `crates/cknerv-core/` | Chain-generic wire types, `Mutation`, `Projection`, `CellGalaxy`, deterministic helix positioning, and bounded replay ring. |
 | `crates/cknerv-server/` | axum HTTP/WS server, `Adapter` trait, `ServerBuilder`, entity store, projection registry, replay streams, and persistence. |
 | `crates/cknerv-adapter-ckb/` | `CkbDirectAdapter`: read-only CKB JSON-RPC polling, boot backfill, block/tx normalization, content hash parity. |
-| `crates/cknerv-adapter-ckbadger/` | Optional `EnrichmentSource`: ckbadger health/lag probing, canonical block-hash validation, lazy Cell/script/asset semantics, fixed protocol/fork/DAO state, bounded ecosystem/activity samples, and privacy-preserving network-crawler aggregates. |
+| `crates/cknerv-adapter-ckbadger/` | Optional `EnrichmentSource`: ckbadger health/lag probing, canonical block-hash validation, lazy Cell/script/asset semantics, fixed protocol/fork/DAO state, bounded ecosystem/activity/transaction-horizon samples, and privacy-preserving network-crawler aggregates. |
 | `crates/cknerv-cli/` | `cknerv` binary, clap CLI, config/workdir commands, embedded SPA serving, runtime config injection, browser auto-open. |
 | `packages/types/` | `@cknerv/types`: TypeScript twins of the Rust wire shapes. |
 | `packages/cache/` | `@cknerv/cache`: pure reducers plus entity/projection WebSocket clients. |
@@ -227,7 +227,7 @@ fall back to the SPA.
 | `WS` | `/api/entities/chain/stream?since=<rev>` | snapshot, delta, lagged, or heartbeat frames |
 | `GET` | `/api/projections/cells/snapshot` | `{ revision, snapshot }` where `snapshot.cells` is the live cell set |
 | `WS` | `/api/projections/cells/stream?since=<rev>` | snapshot, delta, lagged, or heartbeat frames |
-| `GET` | `/api/projections/semantics/snapshot` | Optional source health plus bounded Cell/transaction, asset-ecosystem, fork-watch, fixed DAO-state, recent-activity, and network-atlas semantics; present even when disabled |
+| `GET` | `/api/projections/semantics/snapshot` | Optional source health plus bounded Cell/transaction, asset-ecosystem, fork-watch, fixed DAO-state, recent-activity, transaction-horizon, and network-atlas semantics; present even when disabled |
 | `WS` | `/api/projections/semantics/stream?since=<rev>` | Independent optional semantics snapshot/delta stream |
 | `GET` | `/api/enrichment/cells/:tx_hash/:output_index` | Lazily resolve one selected Cell through the configured source; `404 enrichment_disabled` when absent |
 | `GET` | `/api/enrichment/transactions/:tx_hash` | Lazily resolve that Cell's origin transaction, participant capacity deltas, and proposal/commit lifecycle |
@@ -329,6 +329,24 @@ is not a global activity distribution: it disappears with an unusable anchor
 and dims when the source is stale or its own refresh is more than 45 seconds
 old. Refresh failures remain isolated from every canonical route and from the
 other enrichment capabilities.
+
+When ckbadger advertises `transaction_horizon`, cknerv refreshes the cached
+`statistics/tx-stats` summary at most once every 60 seconds. Only non-negative,
+JSON-safe counts from at most 24 hourly and 14 daily buckets cross the shared
+wire boundary, ordered oldest-to-newest; ckbadger's localized bucket labels and
+timezone text do not. Current-hour/day values remain explicitly indexed,
+source-defined buckets rather than being converted to browser-local time.
+Because the summary carries no block coordinate
+and the network summary has its own cache, the adapter directly re-reads the
+validated block after each fetch and requires its successor to remain absent
+from ckbadger's indexed store. It otherwise waits for a later proof. On taller
+viewports, `COMMON KNOWLEDGE BASE` renders a separately labeled **INDEXED TX
+HORIZON · N/24H** bar fingerprint with exact current-hour/current-day counts.
+At 860 pixels high or below it folds into an **IDX H…/D…** badge inside the
+existing direct `Tps 60s` row, adding no panel height. It never replaces direct
+TPS or cumulative transaction totals, disappears in CKB-only mode, and dims
+after three missed refreshes. Its failures remain isolated from canonical data
+and every other enrichment capability.
 
 When ckbadger advertises `network_atlas`, cknerv checks its crawler summary at
 most once every 60 seconds. A usable crawl triggers exactly one
@@ -543,8 +561,9 @@ twin, the fixtures, and both sides of the tests together.
   amount plus token identity, the selected Cell's origin-transaction
   detail/lifecycle, the bounded asset-ecosystem aggregate, fixed-shape DAO
   statistics, the fixed protocol-edition timeline, the fixed recent/deep-fork
-  monitor, an explicitly eight-entry latest-activity sample, and a latest-64
-  network-crawler sample.
+  monitor, an explicitly eight-entry latest-activity sample, a bounded
+  24-hour/14-day transaction-count summary, and a latest-64 network-crawler
+  sample.
   Transaction
   participants expose exact capacity deltas only when every attributed
   input/output includes capacity. Selected-transaction protocol activities and

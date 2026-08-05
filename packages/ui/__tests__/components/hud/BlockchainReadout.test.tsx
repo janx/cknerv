@@ -7,6 +7,7 @@ import type {
   EnrichmentSourceStatus,
   ForkWatchRecord,
   ProtocolEraRecord,
+  TransactionHorizonRecord,
 } from '@cknerv/types';
 import BlockchainReadout from '../../../src/components/hud/BlockchainReadout';
 
@@ -23,7 +24,7 @@ const chain: ChainEntry = {
 const source: EnrichmentSourceStatus = {
   source: 'ckbadger',
   status: 'ready',
-  capabilities: ['dao_state', 'protocol_era', 'activity_feed', 'fork_watch'],
+  capabilities: ['dao_state', 'protocol_era', 'activity_feed', 'transaction_horizon', 'fork_watch'],
   validated_anchor: { block: 100, hash: '0xblock100' },
 };
 
@@ -97,6 +98,16 @@ const protocolEra: ProtocolEraRecord = {
   },
 };
 
+const transactionHorizon: TransactionHorizonRecord = {
+  source: 'ckbadger',
+  as_of: { block: 100, hash: '0xblock100' },
+  updated_at_ms: Date.now(),
+  current_hour: 12,
+  current_day: 345,
+  hourly_counts: [0, 6, 12],
+  daily_counts: [300, 321, 345],
+};
+
 describe('BlockchainReadout', () => {
   it('renders the tip and key chain stats', () => {
     const { container } = render(<BlockchainReadout chain={chain} />);
@@ -108,6 +119,7 @@ describe('BlockchainReadout', () => {
     expect(container.textContent).not.toContain('INDEXED FORK WATCH');
     expect(container.textContent).not.toContain('INDEXED NERVOS DAO');
     expect(container.textContent).not.toContain('INDEXED ACTIVITY');
+    expect(container.textContent).not.toContain('INDEXED TX HORIZON');
     expect(container.querySelector('[data-protocol-era-state]')).toBeNull();
   });
 
@@ -197,5 +209,38 @@ describe('BlockchainReadout', () => {
     expect(text).toContain('SCRIPT 1 · CKB 1');
     expect(text).not.toContain('.bit Time Info');
     expect(container.querySelector('[data-activity-feed-compact="true"]')).not.toBeNull();
+  });
+
+  it('renders the indexed hourly fingerprint without replacing direct TPS', () => {
+    const { container } = render(
+      <BlockchainReadout
+        chain={chain}
+        enrichmentSource={source}
+        transactionHorizon={transactionHorizon}
+      />,
+    );
+    const text = container.textContent ?? '';
+    expect(text).toContain('Tps 60s0.33');
+    expect(text).toContain('INDEXED TX HORIZON · 3/24H · A#100');
+    expect(text).toContain('HOUR 12');
+    expect(text).toContain('DAY 345');
+    expect(text).toContain('PEAK/H 12');
+    expect(container.querySelectorAll('[data-transaction-hour-count]')).toHaveLength(3);
+  });
+
+  it('folds the indexed horizon into the direct TPS row on short viewports', () => {
+    const { container } = render(
+      <BlockchainReadout
+        chain={chain}
+        enrichmentSource={source}
+        transactionHorizon={transactionHorizon}
+        compactActivity
+      />,
+    );
+    const text = container.textContent ?? '';
+    expect(text).toContain('Tps 60s0.33· IDX H12/D345');
+    expect(text).not.toContain('INDEXED TX HORIZON');
+    expect(container.querySelector('[data-transaction-horizon-state="ready"]')).not.toBeNull();
+    expect(container.querySelectorAll('[data-transaction-hour-count]')).toHaveLength(0);
   });
 });
