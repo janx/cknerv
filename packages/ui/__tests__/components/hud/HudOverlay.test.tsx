@@ -75,9 +75,61 @@ describe('HudOverlay', () => {
     expect(t).toContain('PULSE');                 // ecg
     expect(t).toContain('PEER MESH');    // peer mesh
     expect(t).toContain('CELL MESH');    // cell mesh
+    const leftRail = container.querySelector('[data-hud-left-rail]') as HTMLElement;
+    const chainScroll = container.querySelector('[data-chain-panel-scroll]') as HTMLElement;
     const meshRail = container.querySelector('.cknerv-mesh-rail') as HTMLElement;
+    expect(leftRail.textContent).toContain('COMMON KNOWLEDGE BASE');
+    expect(leftRail.textContent).toContain('GALAXY WINDOW');
+    expect(leftRail.textContent).toContain('PULSE');
+    expect(leftRail.style.flexDirection).toBe('column');
+    expect(chainScroll.style.flex).toBe('0 1 auto');
+    expect(chainScroll.style.overflowY).toBe('auto');
+    expect(meshRail.textContent).not.toContain('GALAXY WINDOW');
     expect(meshRail.style.top).toBe('42px');
     expect(meshRail.style.bottom).toBe('');
+  });
+
+  it('hides and restores all main panels from the top-bar toggle', () => {
+    const { container, getByRole } = render(
+      <HudOverlay chain={chain} peers={peers} localNode={localNode} cellsStats={cellsStats} />,
+    );
+    const hide = getByRole('button', { name: 'Hide HUD panels' });
+
+    expect(hide.getAttribute('aria-pressed')).toBe('true');
+    fireEvent.click(hide);
+
+    expect(container.querySelector('[data-hud-left-rail]')).toBeNull();
+    expect(container.querySelector('.cknerv-mesh-rail')).toBeNull();
+    expect(container.textContent).not.toContain('COMMON KNOWLEDGE BASE');
+    expect(container.textContent).not.toContain('CELL MESH');
+    expect(container.textContent).not.toContain('PEER MESH');
+    expect(container.textContent).not.toContain('PULSE');
+    expect(container.textContent).toContain('CKNERV');
+
+    fireEvent.click(getByRole('button', { name: 'Show HUD panels' }));
+    expect(container.querySelector('[data-hud-left-rail]')).not.toBeNull();
+    expect(container.querySelector('.cknerv-mesh-rail')).not.toBeNull();
+  });
+
+  it('uses a two-row top bar and offsets both panel rails on narrow screens', () => {
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: query.includes('max-width: 1100px'),
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }));
+    const { container } = render(
+      <HudOverlay chain={chain} peers={peers} localNode={localNode} cellsStats={cellsStats} />,
+    );
+    const status = container.querySelector('.cknerv-status-strip') as HTMLElement;
+    const leftRail = container.querySelector('[data-hud-left-rail]') as HTMLElement;
+    const meshRail = container.querySelector('.cknerv-mesh-rail') as HTMLElement;
+
+    expect(status.dataset.statusLayout).toBe('compact');
+    expect(status.style.height).toBe('54px');
+    expect(container.querySelector('[data-status-controls]')).not.toBeNull();
+    expect(leftRail.style.top).toBe('66px');
+    expect(meshRail.style.top).toBe('66px');
+    expect(meshRail.style.maxHeight).toBe('calc(100vh - 80px)');
   });
 
   it('marks frozen browser data without changing nominal chain telemetry', () => {
@@ -114,6 +166,45 @@ describe('HudOverlay', () => {
     const meshRail = container.querySelector('.cknerv-mesh-rail') as HTMLElement;
     expect(meshRail.style.top).toBe('72px');
     expect(meshRail.style.bottom).toBe('');
+  });
+
+  it('places stream interruption UI below the two-row narrow top bar', () => {
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: query.includes('max-width'),
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }));
+    const now = Date.now();
+    const { container } = render(
+      <HudOverlay
+        chain={chain}
+        peers={peers}
+        localNode={localNode}
+        cellsStats={cellsStats}
+        streamHealth={{
+          chain: {
+            phase: 'live',
+            attempt: 0,
+            lastMessageAtMs: now - 1_000,
+            reason: null,
+          },
+          cells: {
+            phase: 'stale',
+            attempt: 2,
+            lastMessageAtMs: now - 17_000,
+            reason: 'heartbeat_timeout',
+          },
+        }}
+      />,
+    );
+    const banner = container.querySelector('[data-stream-health-banner]') as HTMLElement;
+    const leftRail = container.querySelector('[data-hud-left-rail]') as HTMLElement;
+    const meshRail = container.querySelector('.cknerv-mesh-rail') as HTMLElement;
+
+    expect(banner.style.top).toBe('54px');
+    expect(leftRail.style.top).toBe('96px');
+    expect(meshRail.style.top).toBe('96px');
+    expect(meshRail.style.maxHeight).toBe('calc(100vh - 110px)');
   });
 
   it('shows the cell detail and a node detail at the same time (independent axes)', () => {

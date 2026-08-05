@@ -71,6 +71,10 @@ const SCAN_STYLE: CSSProperties = { position: 'absolute', inset: 0, pointerEvent
 // self-positioning. Container shrink-wraps and pins its right edge, so the meshes
 // never shift when a detail appears — the row just grows leftward.
 const MESH_RAIL_STYLE: CSSProperties = { position: 'absolute', top: 42, right: 14, display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'flex-end' };
+// Left-side chain rail: the chain readout may grow with optional context, while
+// PULSE is a fixed vital sign. Flex shrinking gives the chain panel the remaining
+// height and makes only that panel scroll, so the two can never overlap.
+const CHAIN_RAIL_STYLE: CSSProperties = { position: 'absolute', left: 14, bottom: 14, display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'flex-start', minHeight: 0 };
 // Narrow: the selected detail owns the immediately visible rail area; its mesh
 // follows below. This keeps the consensus-memory readout in the first viewport
 // instead of spending that space on the summary that opened it.
@@ -156,7 +160,12 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats, cellCo
   // Below ~1100px the left-fanning detail would reach the left-hand panels, so
   // dock it below its mesh instead (stays on the right edge). Tunable breakpoint.
   const narrowRail = useMediaQuery('(max-width: 1100px)');
+  // The control-dense top bar needs to reflow before the panel rail itself does;
+  // this also leaves headroom for transient stream/source chips.
+  const compactTopBarWidth = useMediaQuery('(max-width: 1280px)');
+  const compactTopBar = narrowRail || compactTopBarWidth;
   const shortViewport = useMediaQuery('(max-height: 860px)');
+  const [panelsVisible, setPanelsVisible] = useState(true);
   // A rail zone: the MESH panel defines the zone's box. WIDE — its detail fans
   // LEFT of the mesh via ABSOLUTE positioning, so a tall detail (the specimen
   // portrait!) never inflates the zone height and never pushes the stacked meshes
@@ -188,9 +197,10 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats, cellCo
     ? deriveStreamHealthSummary(streamHealth, now)
     : null;
   const streamInterrupted = !!streamSummary && streamSummary.phase !== 'live';
-  const contentTop = streamInterrupted ? 72 : 42;
+  const topBarHeight = compactTopBar ? 54 : 30;
+  const contentTop = topBarHeight + (streamInterrupted ? 42 : 12);
   const railStyle: CSSProperties = narrowRail
-    ? { ...MESH_RAIL_STYLE, top: contentTop, maxHeight: 'calc(100vh - 56px)', overflowX: 'hidden', overflowY: 'auto', pointerEvents: railScrolls ? 'auto' : 'none', scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,152,48,.35) transparent' }
+    ? { ...MESH_RAIL_STYLE, top: contentTop, maxHeight: `calc(100vh - ${contentTop + 14}px)`, overflowX: 'hidden', overflowY: 'auto', pointerEvents: railScrolls ? 'auto' : 'none', scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,152,48,.35) transparent' }
     : { ...MESH_RAIL_STYLE, top: contentTop };
 
   // Re-measure rail overflow on mode / selection change and each 1s tick (the
@@ -199,7 +209,7 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats, cellCo
   useEffect(() => {
     const el = railRef.current;
     setRailScrolls(!!el && narrowRail && el.scrollHeight > el.clientHeight + 1);
-  }, [narrowRail, selectedCell, selectedNode, selectedPeer, now]);
+  }, [narrowRail, panelsVisible, selectedCell, selectedNode, selectedPeer, now]);
 
   // reorg delta across renders
   const prevReorgs = useRef(chain.reorgs);
@@ -239,90 +249,122 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats, cellCo
         cellCapacity={cellCapacity}
         enrichmentSource={enrichmentSource}
         actions={topBarActions}
+        panelsVisible={panelsVisible}
+        onPanelsVisibleChange={setPanelsVisible}
+        compact={compactTopBar}
       />
       {streamSummary ? (
-        <StreamHealthBanner summary={streamSummary} reducedMotion={reduced} />
+        <StreamHealthBanner
+          summary={streamSummary}
+          reducedMotion={reduced}
+          top={topBarHeight}
+        />
       ) : null}
-      <WarningBar level={alert.level} trigger={alert.trigger} reducedMotion={reduced} top={streamInterrupted ? 60 : 30} />
-      <BlockchainReadout
-        chain={chain}
-        enrichmentSource={enrichmentSource}
-        protocolEra={protocolEra}
-        daoState={daoState}
-        activityFeed={activityFeed}
-        transactionHorizon={transactionHorizon}
-        compactActivity={shortViewport}
-        style={{ left: 14, top: contentTop }}
-      />
-      {/* MESH RAIL — the two mesh panels juxtaposed as a pair, each with its
-          detail docked alongside. CELL zone (galaxy) over PEER zone (colony);
-          within a zone the selected entity's detail fans LEFT of its own mesh.
-          The local NODE and remote PEER details both belong to the PEER zone. */}
-      <div ref={railRef} className="cknerv-mesh-rail" style={railStyle}>
-        {meshZone(
-          selectedCell ? (
-            <CellDetailPanel
-              cell={selectedCell}
-              routeCellById={cellRecordsById}
-              recentLinks={recentCellLinks}
-              causalLens={cellCausalLens}
-              causalNavigation={cellCausalNavigation}
-              tracedWriteSeq={tracedCellWriteSeq}
-              traceSource={cellTraceSource}
-              traceReadout={cellTraceReadout}
-              traceResponseRef={cellTraceResponseRef}
-              traceEvidenceFocusSourceId={cellTraceEvidenceFocusSourceId}
-              traceEvidencePreviewSourceId={cellTraceEvidencePreviewSourceId}
-              onTraceEvidenceFocusChange={onCellTraceEvidenceFocusChange}
-              traceRouteHopFocus={cellTraceRouteHopFocus}
-              onTraceRouteHopFocusChange={onCellTraceRouteHopFocusChange}
-              traceRouteHopLock={cellTraceRouteHopLock}
-              onTraceRouteHopLockChange={onCellTraceRouteHopLockChange}
-              identityProofBinding={cellIdentityProofBinding}
-              onTraceWrite={onTraceCellWrite}
-              onIdentityProofRead={onCellIdentityProofRead}
-              semanticSource={enrichmentSource}
-              semanticPhase={selectedCellSemanticsPhase}
-              semanticRecord={selectedCellSemantics}
-              semanticMessage={selectedCellSemanticsMessage}
-              semanticTransactionPhase={selectedTransactionSemanticsPhase}
-              semanticTransactionRecord={selectedTransactionSemantics}
-              semanticTransactionMessage={selectedTransactionSemanticsMessage}
-              onClose={clearCell}
-              style={PANEL_FLOW}
+      <WarningBar level={alert.level} trigger={alert.trigger} reducedMotion={reduced} top={topBarHeight + (streamInterrupted ? 30 : 0)} />
+      {panelsVisible ? (
+        <>
+          <div
+            data-hud-left-rail
+            style={{ ...CHAIN_RAIL_STYLE, top: contentTop, maxWidth: 'calc(100vw - 28px)' }}
+          >
+            <div
+              className="cknerv-chain-panel-scroll"
+              data-chain-panel-scroll
+              style={{
+                flex: '0 1 auto',
+                minHeight: 0,
+                maxWidth: '100%',
+                overflowX: 'hidden',
+                overflowY: 'auto',
+                overscrollBehavior: 'contain',
+                scrollbarWidth: 'thin',
+                scrollbarColor: 'rgba(255,152,48,.35) transparent',
+                pointerEvents: 'auto',
+              }}
+            >
+              <BlockchainReadout
+                chain={chain}
+                cellsStats={cellsStats}
+                enrichmentSource={enrichmentSource}
+                assetEcosystem={assetEcosystem}
+                protocolEra={protocolEra}
+                daoState={daoState}
+                activityFeed={activityFeed}
+                transactionHorizon={transactionHorizon}
+                compactActivity={shortViewport}
+                style={{ ...PANEL_FLOW, width: 'min(340px, calc(100vw - 58px))' }}
+              />
+            </div>
+            <BlockCadenceEcg
+              intervalsMs={chain.recent_block_intervals_ms}
+              sizes={chain.recent_block_sizes}
+              txCounts={chain.recent_block_tx_counts}
+              lastBlockTsMs={chain.last_block_ts_ms ?? null}
+              targetMs={targetMs}
+              avgMs={avgMs}
+              gapMs={msSinceLast}
+              condition={condition}
+              reducedMotion={reduced}
+              style={{ ...PANEL_FLOW, flex: '0 0 auto', width: 'min(430px, calc(100vw - 58px))' }}
             />
-          ) : null,
-          <CellsPanel
-            stats={cellsStats}
-            churn={churn}
-            enrichmentSource={enrichmentSource}
-            assetEcosystem={assetEcosystem}
-            reducedMotion={reduced}
-            style={PANEL_FLOW}
-          />,
-        )}
-        {meshZone(
-          selectedNode ? <NodeDetailPanel node={selectedNode} chain={chain} onClose={clearNet} style={PANEL_FLOW} />
-            : selectedPeer ? <PeerDetailPanel peer={selectedPeer} chain={chain} onClose={clearNet} style={PANEL_FLOW} />
-            : null,
-          <NetworkPanel summary={summary} consensus={consensus} ping={ping} vers={vers} syncRatio={syncRatio} colonyCount={colonyCount} enrichmentSource={enrichmentSource} networkAtlas={networkAtlas} style={PANEL_FLOW} />,
-        )}
-      </div>
-      <BlockCadenceEcg
-        intervalsMs={chain.recent_block_intervals_ms}
-        sizes={chain.recent_block_sizes}
-        txCounts={chain.recent_block_tx_counts}
-        lastBlockTsMs={chain.last_block_ts_ms ?? null}
-        targetMs={targetMs}
-        avgMs={avgMs}
-        gapMs={msSinceLast}
-        condition={condition}
-        reducedMotion={reduced}
-        style={{ left: 14, bottom: 14 }}
-      />
+          </div>
+          {/* MESH RAIL — the two mesh panels juxtaposed as a pair, each with its
+              detail docked alongside. CELL zone (galaxy) over PEER zone (colony);
+              within a zone the selected entity's detail fans LEFT of its own mesh.
+              The local NODE and remote PEER details both belong to the PEER zone. */}
+          <div ref={railRef} className="cknerv-mesh-rail" style={railStyle}>
+            {meshZone(
+              selectedCell ? (
+                <CellDetailPanel
+                  cell={selectedCell}
+                  routeCellById={cellRecordsById}
+                  recentLinks={recentCellLinks}
+                  causalLens={cellCausalLens}
+                  causalNavigation={cellCausalNavigation}
+                  tracedWriteSeq={tracedCellWriteSeq}
+                  traceSource={cellTraceSource}
+                  traceReadout={cellTraceReadout}
+                  traceResponseRef={cellTraceResponseRef}
+                  traceEvidenceFocusSourceId={cellTraceEvidenceFocusSourceId}
+                  traceEvidencePreviewSourceId={cellTraceEvidencePreviewSourceId}
+                  onTraceEvidenceFocusChange={onCellTraceEvidenceFocusChange}
+                  traceRouteHopFocus={cellTraceRouteHopFocus}
+                  onTraceRouteHopFocusChange={onCellTraceRouteHopFocusChange}
+                  traceRouteHopLock={cellTraceRouteHopLock}
+                  onTraceRouteHopLockChange={onCellTraceRouteHopLockChange}
+                  identityProofBinding={cellIdentityProofBinding}
+                  onTraceWrite={onTraceCellWrite}
+                  onIdentityProofRead={onCellIdentityProofRead}
+                  semanticSource={enrichmentSource}
+                  semanticPhase={selectedCellSemanticsPhase}
+                  semanticRecord={selectedCellSemantics}
+                  semanticMessage={selectedCellSemanticsMessage}
+                  semanticTransactionPhase={selectedTransactionSemanticsPhase}
+                  semanticTransactionRecord={selectedTransactionSemantics}
+                  semanticTransactionMessage={selectedTransactionSemanticsMessage}
+                  onClose={clearCell}
+                  style={PANEL_FLOW}
+                />
+              ) : null,
+              <CellsPanel
+                stats={cellsStats}
+                churn={churn}
+                reducedMotion={reduced}
+                style={PANEL_FLOW}
+              />,
+            )}
+            {meshZone(
+              selectedNode ? <NodeDetailPanel node={selectedNode} chain={chain} onClose={clearNet} style={PANEL_FLOW} />
+                : selectedPeer ? <PeerDetailPanel peer={selectedPeer} chain={chain} onClose={clearNet} style={PANEL_FLOW} />
+                : null,
+              <NetworkPanel summary={summary} consensus={consensus} ping={ping} vers={vers} syncRatio={syncRatio} colonyCount={colonyCount} enrichmentSource={enrichmentSource} networkAtlas={networkAtlas} style={PANEL_FLOW} />,
+            )}
+          </div>
+        </>
+      ) : null}
       <BackfillBar
         backfill={backfill ?? null}
-        style={streamInterrupted ? { top: 70 } : undefined}
+        style={{ top: topBarHeight + (streamInterrupted ? 40 : 10) }}
       />
     </div>
   );

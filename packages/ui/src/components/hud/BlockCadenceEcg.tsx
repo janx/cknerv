@@ -95,7 +95,7 @@ export default function BlockCadenceEcg({
           <span style={{ fontFamily: HUD_FONTS.mono, fontWeight: 700, fontSize: 26, lineHeight: 1, color, textShadow: `0 0 11px ${color}` }}>{fmtS(heroMs)}</span>
           <span style={{ fontFamily: HUD_FONTS.mono, fontSize: 8, letterSpacing: 2, color: HUD_COLORS.dim, marginTop: 4 }}>SINCE LAST</span>
         </div>
-        <canvas ref={cvs} width={300} height={58} style={{ display: 'block', flex: 1, width: '100%', height: 58, background: '#0a0a0a', border: `1px solid ${rgba(HUD_COLORS.orange, 0.2)}` }} />
+        <canvas ref={cvs} width={300} height={58} style={{ display: 'block', flex: 1, minWidth: 0, width: '100%', height: 58, background: '#0a0a0a', border: `1px solid ${rgba(HUD_COLORS.orange, 0.2)}` }} />
       </div>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 14, marginTop: 8, fontFamily: HUD_FONTS.mono, fontSize: 8.5, color: HUD_COLORS.dim, letterSpacing: 1 }}>
         <span style={{ color, letterSpacing: 2, textShadow: `0 0 7px ${color}` }}>● {condition}</span>

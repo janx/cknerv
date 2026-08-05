@@ -70,6 +70,54 @@ describe('StatusStrip', () => {
     expect(queryByRole('link')).toBeNull();
   });
 
+  it('places the panel visibility toggle immediately after the build version', () => {
+    const onPanelsVisibleChange = vi.fn();
+    const { container } = render(
+      <StatusStrip
+        level="nominal"
+        uptimeMs={0}
+        build={{ version: '20260630@61922ba', href: 'https://github.com/janx/cknerv/commit/61922ba' }}
+        panelsVisible
+        onPanelsVisibleChange={onPanelsVisibleChange}
+      />,
+    );
+    const primary = container.querySelector('[data-status-primary]') as HTMLElement;
+    const build = screen.getByRole('link', { name: '20260630@61922ba' });
+    const toggle = screen.getByRole('button', { name: 'Hide HUD panels' });
+
+    expect(build.nextElementSibling).toBe(toggle);
+    expect(primary.contains(toggle)).toBe(true);
+    expect(toggle.getAttribute('aria-pressed')).toBe('true');
+    fireEvent.click(toggle);
+    expect(onPanelsVisibleChange).toHaveBeenCalledWith(false);
+  });
+
+  it('uses a prioritized two-row layout when horizontal space is constrained', () => {
+    const { container } = render(
+      <StatusStrip
+        level="nominal"
+        uptimeMs={3_000}
+        build={{ version: '20260630@61922ba', href: 'https://github.com/janx/cknerv/commit/61922ba' }}
+        panelsVisible
+        onPanelsVisibleChange={() => {}}
+        compact
+      />,
+    );
+    const root = container.firstElementChild as HTMLElement;
+    const controls = container.querySelector('[data-status-controls]') as HTMLElement;
+
+    expect(root.dataset.statusLayout).toBe('compact');
+    expect(root.style.display).toBe('grid');
+    expect(root.style.height).toBe('54px');
+    expect(controls.style.overflowX).toBe('auto');
+    expect(container.querySelector('[data-status-summary]')?.textContent).toContain('NOMINAL');
+    expect(screen.getByRole('link', { name: '20260630@61922ba' }).textContent).toBe('20260630');
+    expect(screen.getByRole('button', { name: 'Hide HUD panels' })).not.toBeNull();
+    expect(screen.getByRole('group', { name: 'Cell display count' })).not.toBeNull();
+    expect(screen.getByRole('group', { name: 'Render quality' })).not.toBeNull();
+    expect(container.textContent).not.toContain('UP 00:00:03');
+  });
+
   it('shows transport freshness independently from the chain alert level', () => {
     const { container } = render(
       <StatusStrip

@@ -44,7 +44,7 @@ function fmtUptime(ms: number): string {
 // display — the leading segment reads bright, the `@…` tail dim — and fall back
 // to a single bright run when there's no `@`. The whole capsule is a commit
 // deep-link that warms to an orange glow on hover.
-function BuildChip({ build }: { build: BuildInfo }) {
+function BuildChip({ build, compact = false }: { build: BuildInfo; compact?: boolean }) {
   const [hot, setHot] = useState(false);
   const at = build.version.indexOf('@');
   const head = at >= 0 ? build.version.slice(0, at) : build.version;
@@ -55,13 +55,16 @@ function BuildChip({ build }: { build: BuildInfo }) {
       target="_blank"
       rel="noreferrer"
       aria-label={build.version}
+      title={build.version}
       onClick={(e) => e.stopPropagation()}
       onPointerDown={(e) => e.stopPropagation()}
       onMouseEnter={() => setHot(true)}
       onMouseLeave={() => setHot(false)}
       style={{
         display: 'inline-flex', alignItems: 'center',
-        padding: '2px 8px', borderRadius: 999,
+        maxWidth: compact ? 74 : undefined,
+        overflow: 'hidden',
+        padding: compact ? '2px 5px' : '2px 8px', borderRadius: 999,
         border: `1px solid ${rgba(HUD_COLORS.orange, hot ? 0.55 : 0.22)}`,
         background: rgba(HUD_COLORS.orange, hot ? 0.1 : 0.045),
         boxShadow: hot ? `0 0 10px ${rgba(HUD_COLORS.orange, 0.35)}` : 'none',
@@ -70,9 +73,54 @@ function BuildChip({ build }: { build: BuildInfo }) {
         transition: 'border-color .18s, background .18s, box-shadow .18s',
       }}
     >
-      <span style={{ color: hot ? HUD_COLORS.orange : HUD_COLORS.ink, textShadow: hot ? `0 0 6px ${rgba(HUD_COLORS.orange, 0.5)}` : 'none', transition: 'color .18s, text-shadow .18s' }}>{head}</span>
-      {tail ? <span style={{ color: hot ? rgba(HUD_COLORS.orange, 0.6) : HUD_COLORS.dim, transition: 'color .18s' }}>{tail}</span> : null}
+      <span style={{ color: hot ? HUD_COLORS.orange : HUD_COLORS.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textShadow: hot ? `0 0 6px ${rgba(HUD_COLORS.orange, 0.5)}` : 'none', transition: 'color .18s, text-shadow .18s' }}>{head}</span>
+      {!compact && tail ? <span style={{ color: hot ? rgba(HUD_COLORS.orange, 0.6) : HUD_COLORS.dim, transition: 'color .18s' }}>{tail}</span> : null}
     </a>
+  );
+}
+
+function PanelVisibilityControl({ visible, onChange, compact = false }: {
+  visible: boolean;
+  onChange: (visible: boolean) => void;
+  compact?: boolean;
+}) {
+  const color = visible ? HUD_COLORS.cyanWire : HUD_COLORS.orange;
+  return (
+    <button
+      type="button"
+      className="cknerv-hud-control-button"
+      aria-label={visible ? 'Hide HUD panels' : 'Show HUD panels'}
+      aria-pressed={visible}
+      data-panel-visibility-toggle
+      data-panels-visible={visible ? 'true' : 'false'}
+      onPointerDown={(event) => event.stopPropagation()}
+      onClick={(event) => {
+        event.stopPropagation();
+        onChange(!visible);
+      }}
+      style={{
+        appearance: 'none',
+        display: 'inline-flex',
+        alignItems: 'center',
+        flexShrink: 0,
+        gap: compact ? 4 : 5,
+        height: 20,
+        padding: compact ? '0 5px' : '0 7px',
+        border: `1px solid ${rgba(color, visible ? 0.26 : 0.42)}`,
+        background: rgba(color, visible ? 0.045 : 0.09),
+        color,
+        font: `400 ${compact ? 8 : 8.5}px/18px ${HUD_FONTS.mono}`,
+        letterSpacing: compact ? 0.45 : 0.7,
+        textShadow: `0 0 6px ${rgba(color, 0.38)}`,
+        cursor: 'pointer',
+      }}
+    >
+      <span aria-hidden style={{ fontSize: 9 }}>{visible ? '▦' : '□'}</span>
+      <span className="cknerv-panel-toggle-label">PANELS</span>
+      <span style={{ color: visible ? HUD_COLORS.dim : color }}>
+        {visible ? 'ON' : 'OFF'}
+      </span>
+    </button>
   );
 }
 
@@ -589,6 +637,9 @@ export default function StatusStrip({
   cellCapacity,
   enrichmentSource,
   actions,
+  panelsVisible,
+  onPanelsVisibleChange,
+  compact = false,
 }: {
   level: AlertLevel;
   uptimeMs: number;
@@ -602,62 +653,160 @@ export default function StatusStrip({
   enrichmentSource?: EnrichmentSourceStatus;
   /** Product-specific controls rendered without coupling the shared HUD to them. */
   actions?: ReactNode;
+  /** Visibility of the main dashboard panels; status/navigation stays visible. */
+  panelsVisible?: boolean;
+  onPanelsVisibleChange?: (visible: boolean) => void;
+  /** Two-row navigation layout used when horizontal space is constrained. */
+  compact?: boolean;
 }) {
   const color = LEVEL_COLOR[level];
   const streamColor = stream && stream.phase !== 'live'
     ? STREAM_COLOR[stream.phase]
     : null;
-  return (
-    <div style={{ position: 'absolute', left: 0, right: 0, top: 0, height: 30, display: 'flex', alignItems: 'center', gap: 14, padding: '0 14px', borderBottom: '1px solid rgba(255,152,48,.18)', background: 'linear-gradient(180deg,rgba(255,152,48,.05),transparent)' }}>
-      <span style={{ fontFamily: HUD_FONTS.display, fontWeight: 700, fontSize: 12, letterSpacing: 5, color: HUD_COLORS.orange, textShadow: '0 0 8px rgba(255,152,48,.5)' }}>CKNERV</span>
-      {build ? <BuildChip build={build} /> : null}
-      <span style={{ flex: 1 }} />
+  const primary = (
+    <div
+      data-status-primary
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        minWidth: 0,
+        gap: compact ? 6 : 14,
+        overflow: 'hidden',
+      }}
+    >
+      <span style={{ flexShrink: 0, fontFamily: HUD_FONTS.display, fontWeight: 700, fontSize: compact ? 10.5 : 12, letterSpacing: compact ? 2.5 : 5, color: HUD_COLORS.orange, textShadow: '0 0 8px rgba(255,152,48,.5)' }}>CKNERV</span>
+      {build ? <BuildChip build={build} compact={compact} /> : null}
+      {onPanelsVisibleChange ? (
+        <PanelVisibilityControl
+          visible={panelsVisible ?? true}
+          onChange={onPanelsVisibleChange}
+          compact={compact}
+        />
+      ) : null}
+    </div>
+  );
+  const actionsSlot = actions ? (
+    <div
+      data-status-actions
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        flexShrink: 0,
+        pointerEvents: 'auto',
+      }}
+    >
+      {actions}
+    </div>
+  ) : null;
+  const streamChip = stream && streamColor ? (
+    <span
+      data-stream-chip
+      data-stream-phase={stream.phase}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        flexShrink: 0,
+        gap: 6,
+        padding: '2px 7px',
+        border: `1px solid ${rgba(streamColor, 0.28)}`,
+        fontFamily: HUD_FONTS.mono,
+        fontSize: 9,
+        letterSpacing: 1,
+        color: streamColor,
+      }}
+    >
+      <span style={{ width: 4, height: 4, borderRadius: '50%', background: streamColor, boxShadow: `0 0 6px ${streamColor}` }} />
+      DATA {stream.phase.toUpperCase()}
+      <span style={{ color: HUD_COLORS.dim }}>{formatStreamAge(stream.lastMessageAgeMs)}</span>
+    </span>
+  ) : null;
+  const statusIndicator = (
+    <span
+      data-status-indicator
+      style={{ display: 'flex', flexShrink: 0, alignItems: 'center', gap: compact ? 5 : 7, fontFamily: HUD_FONTS.tech, fontWeight: 600, fontSize: compact ? 8.5 : 10, letterSpacing: compact ? 1 : 2, color }}
+    >
+      {!compact ? <span style={{ fontFamily: HUD_FONTS.cjk, color: HUD_COLORS.dim }}>状态</span> : null}
+      <span data-dot data-level={level} style={{ width: 6, height: 6, borderRadius: '50%', background: color, boxShadow: `0 0 8px ${color}` }} />
+      {level.toUpperCase()}
+    </span>
+  );
+  const runtimeControls = (
+    <>
       <CellDisplayControl
         availableCells={cellCount}
         capacity={cellCapacity}
       />
       <RenderQualityControl />
       {enrichmentSource ? <EnrichmentChip source={enrichmentSource} /> : null}
-      {actions ? (
-        <div
-          data-status-actions
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            flexShrink: 0,
-            pointerEvents: 'auto',
-          }}
-        >
-          {actions}
+      {actionsSlot}
+      {streamChip}
+    </>
+  );
+
+  if (compact) {
+    return (
+      <div
+        className="cknerv-status-strip"
+        role="navigation"
+        aria-label="Dashboard controls"
+        data-status-layout="compact"
+        style={{
+          position: 'absolute',
+          left: 0,
+          right: 0,
+          top: 0,
+          height: 54,
+          boxSizing: 'border-box',
+          display: 'grid',
+          gridTemplateColumns: 'minmax(0,1fr) auto',
+          gridTemplateRows: '27px 27px',
+          columnGap: 8,
+          padding: '0 8px',
+          overflow: 'hidden',
+          borderBottom: '1px solid rgba(255,152,48,.18)',
+          background: 'linear-gradient(180deg,rgba(255,152,48,.07),rgba(0,0,0,.24))',
+        }}
+      >
+        {primary}
+        <div data-status-summary style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', minWidth: 0 }}>
+          {statusIndicator}
         </div>
-      ) : null}
-      {stream && streamColor ? (
-        <span
-          data-stream-chip
-          data-stream-phase={stream.phase}
+        <div
+          className="cknerv-status-controls"
+          data-status-controls
           style={{
-            display: 'inline-flex',
+            gridColumn: '1 / -1',
+            display: 'flex',
             alignItems: 'center',
-            gap: 6,
-            padding: '2px 7px',
-            border: `1px solid ${rgba(streamColor, 0.28)}`,
-            fontFamily: HUD_FONTS.mono,
-            fontSize: 9,
-            letterSpacing: 1,
-            color: streamColor,
+            gap: 8,
+            minWidth: 0,
+            overflowX: 'auto',
+            overflowY: 'hidden',
+            overscrollBehaviorX: 'contain',
+            scrollbarWidth: 'none',
+            pointerEvents: 'auto',
+            borderTop: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.06)}`,
           }}
         >
-          <span style={{ width: 4, height: 4, borderRadius: '50%', background: streamColor, boxShadow: `0 0 6px ${streamColor}` }} />
-          DATA {stream.phase.toUpperCase()}
-          <span style={{ color: HUD_COLORS.dim }}>{formatStreamAge(stream.lastMessageAgeMs)}</span>
-        </span>
-      ) : null}
-      <span style={{ display: 'flex', alignItems: 'center', gap: 7, fontFamily: HUD_FONTS.tech, fontWeight: 600, fontSize: 10, letterSpacing: 2, color }}>
-        <span style={{ fontFamily: HUD_FONTS.cjk, color: HUD_COLORS.dim }}>状态</span>
-        <span data-dot data-level={level} style={{ width: 6, height: 6, borderRadius: '50%', background: color, boxShadow: `0 0 8px ${color}` }} />
-        {level.toUpperCase()}
-      </span>
-      <span style={{ fontFamily: HUD_FONTS.mono, fontSize: 10, color: HUD_COLORS.dim, letterSpacing: 1 }}>{fmtUptime(uptimeMs)}</span>
+          {runtimeControls}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="cknerv-status-strip"
+      role="navigation"
+      aria-label="Dashboard controls"
+      data-status-layout="wide"
+      style={{ position: 'absolute', left: 0, right: 0, top: 0, height: 30, display: 'flex', alignItems: 'center', gap: 14, padding: '0 14px', borderBottom: '1px solid rgba(255,152,48,.18)', background: 'linear-gradient(180deg,rgba(255,152,48,.05),transparent)' }}
+    >
+      {primary}
+      <span style={{ flex: 1 }} />
+      {runtimeControls}
+      {statusIndicator}
+      <span style={{ flexShrink: 0, fontFamily: HUD_FONTS.mono, fontSize: 10, color: HUD_COLORS.dim, letterSpacing: 1 }}>{fmtUptime(uptimeMs)}</span>
     </div>
   );
 }
