@@ -4,7 +4,6 @@ import type {
   ActivityFeedRecord,
   AssetEcosystemRecord,
   ChainEntry,
-  DaoStateRecord,
   EnrichmentSourceStatus,
   ProtocolEraRecord,
   TransactionHorizonRecord,
@@ -77,21 +76,6 @@ const activityFeed: ActivityFeedRecord = {
   ],
 };
 
-const daoState: DaoStateRecord = {
-  source: 'ckbadger',
-  as_of: { block: 100, hash: '0xblock100' },
-  statistics_block: 99,
-  updated_at_ms: Date.now(),
-  total_deposited_shannons: '837703738002110308',
-  total_depositors: 16_740,
-  active_deposits: 22_659,
-  pending_withdrawal_shannons: '77523020877862416',
-  unclaimed_compensation_shannons: '81345902996799859',
-  estimated_apc_bps: 201,
-  deposit_change_24h_shannons: '141530599353229',
-  depositors_change_24h: 5,
-};
-
 const protocolEra: ProtocolEraRecord = {
   source: 'ckbadger',
   as_of: { block: 100, hash: '0xblock100' },
@@ -154,28 +138,6 @@ describe('BlockchainReadout', () => {
     expect(container.textContent).not.toContain('PROTOCOL ERA');
   });
 
-  it('renders optional fixed-shape DAO context without inventing a ratio', () => {
-    const { container } = render(
-      <BlockchainReadout
-        chain={chain}
-        cellsStats={cellsStats}
-        enrichmentSource={source}
-        daoState={daoState}
-      />,
-    );
-    const text = container.textContent ?? '';
-    expect(text).toContain('NERVOS DAO');
-    expect(text).toContain('SNAPSHOT #99');
-    expect(text).toContain('VALIDATED AT #100');
-    expect(text).toContain('8.38 B CKB');
-    expect(text).toContain('22,659');
-    expect(text).toContain('2.01%');
-    expect(text).toContain('+1.42 M CKB');
-    expect(text).toContain('+5');
-    expect(container.querySelector('[data-dao-state="ready"]')).not.toBeNull();
-    expect(container.querySelector('[data-fill]')).toBeNull();
-  });
-
   it('renders an optional bounded activity fingerprint', () => {
     const { container } = render(
       <BlockchainReadout
@@ -233,13 +195,12 @@ describe('BlockchainReadout', () => {
     expect(container.querySelectorAll('[data-transaction-hour-count]')).toHaveLength(3);
   });
 
-  it('keeps a compact horizon in the third section on short viewports', () => {
+  it('keeps a compact horizon before activity on short viewports', () => {
     const { container } = render(
       <BlockchainReadout
         chain={chain}
         cellsStats={cellsStats}
         enrichmentSource={source}
-        daoState={daoState}
         transactionHorizon={transactionHorizon}
         activityFeed={activityFeed}
         compactActivity
@@ -249,8 +210,8 @@ describe('BlockchainReadout', () => {
     expect(text).toContain('Tps 60s0.33');
     expect(text).toContain('TX HORIZON');
     expect(text).toContain('H12/D345 · AS OF #100');
-    expect(text.indexOf('NERVOS DAO')).toBeLessThan(text.indexOf('TX HORIZON'));
     expect(text.indexOf('TX HORIZON')).toBeLessThan(text.indexOf('ACTIVITY'));
+    expect(text).not.toContain('NERVOS DAO');
     expect(text).not.toContain('INDEXED');
     expect(text).not.toContain('IDX');
     expect(text).not.toContain('CKBADGER');
@@ -258,14 +219,13 @@ describe('BlockchainReadout', () => {
     expect(container.querySelectorAll('[data-transaction-hour-count]')).toHaveLength(0);
   });
 
-  it('orders capacity before DAO, horizon, and activity', () => {
+  it('orders capacity before horizon and activity', () => {
     const { container } = render(
       <BlockchainReadout
         chain={chain}
         cellsStats={cellsStats}
         enrichmentSource={source}
         assetEcosystem={assetEcosystem}
-        daoState={daoState}
         transactionHorizon={transactionHorizon}
         activityFeed={activityFeed}
       />,
@@ -274,15 +234,14 @@ describe('BlockchainReadout', () => {
     const canonicalAt = text.indexOf('Reorgs');
     const chainCapacityAt = text.indexOf('CHAIN CAPACITY');
     const galaxyWindowAt = text.indexOf('GALAXY WINDOW');
-    const daoAt = text.indexOf('NERVOS DAO');
     const horizonAt = text.indexOf('TX HORIZON');
     const activityAt = text.indexOf('ACTIVITY');
 
     expect(canonicalAt).toBeGreaterThanOrEqual(0);
     expect(canonicalAt).toBeLessThan(chainCapacityAt);
     expect(chainCapacityAt).toBeLessThan(galaxyWindowAt);
-    expect(galaxyWindowAt).toBeLessThan(daoAt);
-    expect(daoAt).toBeLessThan(horizonAt);
+    expect(galaxyWindowAt).toBeLessThan(horizonAt);
     expect(horizonAt).toBeLessThan(activityAt);
+    expect(text).not.toContain('NERVOS DAO');
   });
 });

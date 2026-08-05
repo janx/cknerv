@@ -3,7 +3,6 @@ import type {
   ActivityFeedRecord,
   AssetEcosystemRecord,
   ChainEntry,
-  DaoStateRecord,
   EnrichmentSourceStatus,
   ProtocolEraRecord,
   TransactionHorizonRecord,
@@ -13,20 +12,18 @@ import { computeRollingStats } from '../CkbNetworkHud';
 import { HUD_COLORS, HUD_FONTS } from './hudTheme';
 import { HudPanel, PanelHeader, StatRow } from './primitives';
 import ActivityFeedReadout from './ActivityFeedReadout';
-import DaoStateReadout from './DaoStateReadout';
 import ProtocolEraBadge from './ProtocolEraBadge';
 import TransactionHorizonReadout from './TransactionHorizonReadout';
 import ChainCapacityReadout from './ChainCapacityReadout';
 
 const fmt = (n: number) => n.toLocaleString('en-US');
 
-export default function BlockchainReadout({ chain, cellsStats, enrichmentSource, assetEcosystem, protocolEra, daoState, activityFeed, transactionHorizon, compactActivity = false, style }: {
+export default function BlockchainReadout({ chain, cellsStats, enrichmentSource, assetEcosystem, protocolEra, activityFeed, transactionHorizon, compactActivity = false, style }: {
   chain: ChainEntry;
   cellsStats: CellsStats;
   enrichmentSource?: EnrichmentSourceStatus;
   assetEcosystem?: AssetEcosystemRecord | null;
   protocolEra?: ProtocolEraRecord | null;
-  daoState?: DaoStateRecord | null;
   activityFeed?: ActivityFeedRecord | null;
   transactionHorizon?: TransactionHorizonRecord | null;
   compactActivity?: boolean;
@@ -54,7 +51,6 @@ export default function BlockchainReadout({ chain, cellsStats, enrichmentSource,
         source={enrichmentSource}
         record={assetEcosystem}
       />
-      <DaoStateReadout source={enrichmentSource} record={daoState} />
       <TransactionHorizonReadout
         source={enrichmentSource}
         record={transactionHorizon}

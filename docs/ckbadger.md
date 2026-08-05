@@ -139,8 +139,8 @@ once every 30 seconds after a usable source probe. The semantics stream carries
 exact capacities normalized to shannons, whole-byte knowledge size,
 basis-point category shares, and a bounded list of top indexed assets.
 
-`COMMON KNOWLEDGE BASE` owns one capacity-detail slot immediately above
-**NERVOS DAO**; `CELL MESH` remains focused on Cell metabolism and lifecycle
+`COMMON KNOWLEDGE BASE` owns one capacity-detail slot beneath its canonical
+chain rows; `CELL MESH` remains focused on Cell metabolism and lifecycle
 counts. In CKB-only mode the capacity slot shows **GALAXY WINDOW** with retained
 capacity plus the retained asset/lock taxonomy. A valid ckbadger record upgrades
 that slot into one scoped hierarchy: **CHAIN CAPACITY** gives the whole-chain
@@ -161,11 +161,12 @@ fetch, the newer singleton is withheld until the next successful probe.
 
 The normalized record keeps locked, pending-withdrawal,
 unclaimed-compensation, and optional signed 24-hour change values as exact
-integer shannons, with estimated APC in basis points. `COMMON KNOWLEDGE BASE`
-renders a **NERVOS DAO** snapshot with both the statistics block and
-compatibility anchor. It does not reinterpret the values as retained Galaxy
-counts or invent a gauge denominator. The section is absent with unusable proof
-and dims after three missed minute refreshes.
+integer shannons, with estimated APC in basis points. A validated record renders
+as the independent `DAO·05` **NERVOS DAO** panel immediately to the right of
+`CKB·01`, with both the statistics block and compatibility anchor. It does not
+reinterpret the values as retained Galaxy counts or invent a gauge denominator.
+The panel is absent with unusable proof, dims after three missed minute
+refreshes, and can be controlled independently from the top-bar `PANELS` menu.
 
 ### Protocol Era
 
@@ -240,9 +241,9 @@ final admission fence. Otherwise the summary waits for a later proof.
 
 On taller viewports, `COMMON KNOWLEDGE BASE` renders **TX HORIZON · N/24H**
 with exact current-hour and current-day counts. At 860 pixels or less it folds
-to an independent header-only **TX HORIZON · H…/D…** section so the panel order
-remains canonical chain data, **NERVOS DAO**, **TX HORIZON**, then **ACTIVITY**.
-It never replaces direct TPS or cumulative transaction totals, disappears in
+to a header-only **TX HORIZON · H…/D…** section so the CKB panel order remains
+canonical chain data, fused capacity, **TX HORIZON**, then **ACTIVITY**. It
+never replaces direct TPS or cumulative transaction totals, disappears in
 CKB-only mode, and dims after three missed refreshes.
 
 ### Network Atlas

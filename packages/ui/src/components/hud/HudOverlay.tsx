@@ -37,9 +37,14 @@ import type {
   CellCausalNavigationReadout,
 } from './CellCausalLensReadout';
 import { injectHudTheme } from './hudTheme';
-import StatusStrip, { type BuildInfo } from './StatusStrip';
+import StatusStrip, {
+  type BuildInfo,
+  type HudPanelControl,
+} from './StatusStrip';
 import BlockchainReadout from './BlockchainReadout';
 import BlockCadenceEcg from './BlockCadenceEcg';
+import DaoStatePanel from './DaoStatePanel';
+import { canRenderDaoStateReadout } from './DaoStateReadout';
 import NetworkPanel from './NetworkPanel';
 import CellDetailPanel from './CellDetailPanel';
 import NodeDetailPanel from './NodeDetailPanel';
@@ -71,15 +76,31 @@ const SCAN_STYLE: CSSProperties = { position: 'absolute', inset: 0, pointerEvent
 // self-positioning. Container shrink-wraps and pins its right edge, so the meshes
 // never shift when a detail appears — the row just grows leftward.
 const MESH_RAIL_STYLE: CSSProperties = { position: 'absolute', top: 42, right: 14, display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'flex-end' };
-// Left-side chain rail: the chain readout may grow with optional context, while
-// PULSE is a fixed vital sign. Flex shrinking gives the chain panel the remaining
-// height and makes only that panel scroll, so the two can never overlap.
-const CHAIN_RAIL_STYLE: CSSProperties = { position: 'absolute', left: 14, bottom: 14, display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'flex-start', minHeight: 0 };
+// Left HUD layout: the upper information cluster may scroll, while PULSE uses an
+// auto margin as a true bottom-left anchor. The two regions share one bounded
+// flex column, so an unusually tall CKB/DAO readout can never overlap ECG·04.
+const LEFT_HUD_STYLE: CSSProperties = { position: 'absolute', left: 14, bottom: 14, display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'flex-start', minHeight: 0 };
+const CHAIN_CLUSTER_STYLE: CSSProperties = { display: 'flex', flex: '1 1 auto', flexDirection: 'row', gap: 12, alignItems: 'flex-start', minHeight: 0, maxWidth: '100%', overflowX: 'auto', overflowY: 'hidden', overscrollBehavior: 'contain', scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,152,48,.35) transparent', pointerEvents: 'auto' };
 // Narrow: the selected detail owns the immediately visible rail area; its mesh
 // follows below. This keeps the consensus-memory readout in the first viewport
 // instead of spending that space on the summary that opened it.
 const MESH_ZONE_COL: CSSProperties = { display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'flex-end' };
 const PANEL_FLOW: CSSProperties = { position: 'relative' };
+
+const HUD_PANEL_IDS = ['chain', 'dao', 'pulse', 'cells', 'peers'] as const;
+type HudPanelId = typeof HUD_PANEL_IDS[number];
+type HudPanelVisibility = Record<HudPanelId, boolean>;
+const DEFAULT_PANEL_VISIBILITY: HudPanelVisibility = {
+  chain: true,
+  dao: true,
+  pulse: true,
+  cells: true,
+  peers: true,
+};
+
+function isHudPanelId(id: string): id is HudPanelId {
+  return (HUD_PANEL_IDS as readonly string[]).includes(id);
+}
 
 export default function HudOverlay({ chain, peers, localNode, cellsStats, cellCount, cellCapacity, enrichmentSource, assetEcosystem, protocolEra, daoState, activityFeed, transactionHorizon, networkAtlas, selectedCell, selectedCellSemantics, selectedCellSemanticsPhase, selectedCellSemanticsMessage, selectedTransactionSemantics, selectedTransactionSemanticsPhase, selectedTransactionSemanticsMessage, cellRecordsById, recentCellLinks, cellCausalLens, cellCausalNavigation, tracedCellWriteSeq, cellTraceSource, cellTraceReadout, cellTraceResponseRef, cellTraceEvidenceFocusSourceId, cellTraceEvidencePreviewSourceId, onCellTraceEvidenceFocusChange, cellTraceRouteHopFocus, onCellTraceRouteHopFocusChange, cellTraceRouteHopLock, onCellTraceRouteHopLockChange, cellIdentityProofBinding, onTraceCellWrite, onCellIdentityProofRead, selectedNode, selectedPeer, onClearSelection, onClearCell, onClearNet, backfill, streamHealth, build, topBarActions, colonyCount }: {
   chain: ChainEntry; peers: Peer[]; localNode: ChainNode | undefined; cellsStats: CellsStats;
@@ -165,7 +186,46 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats, cellCo
   const compactTopBarWidth = useMediaQuery('(max-width: 1280px)');
   const compactTopBar = narrowRail || compactTopBarWidth;
   const shortViewport = useMediaQuery('(max-height: 860px)');
-  const [panelsVisible, setPanelsVisible] = useState(true);
+  const [panelVisibility, setPanelVisibility] = useState<HudPanelVisibility>(
+    DEFAULT_PANEL_VISIBILITY,
+  );
+  const daoPanelAvailable = canRenderDaoStateReadout(enrichmentSource, daoState);
+  const panelControls: HudPanelControl[] = [
+    {
+      id: 'chain',
+      code: 'CKB·01',
+      label: 'COMMON KNOWLEDGE BASE',
+      visible: panelVisibility.chain,
+    },
+    ...(daoPanelAvailable ? [{
+      id: 'dao',
+      code: 'DAO·05',
+      label: 'NERVOS DAO',
+      visible: panelVisibility.dao,
+    }] : []),
+    {
+      id: 'pulse',
+      code: 'ECG·04',
+      label: 'PULSE',
+      visible: panelVisibility.pulse,
+    },
+    {
+      id: 'cells',
+      code: 'MESH·03',
+      label: 'CELL MESH',
+      visible: panelVisibility.cells,
+    },
+    {
+      id: 'peers',
+      code: 'MESH·02',
+      label: 'PEER MESH',
+      visible: panelVisibility.peers,
+    },
+  ];
+  const setPanelVisible = (id: string, visible: boolean) => {
+    if (!isHudPanelId(id)) return;
+    setPanelVisibility((current) => ({ ...current, [id]: visible }));
+  };
   // A rail zone: the MESH panel defines the zone's box. WIDE — its detail fans
   // LEFT of the mesh via ABSOLUTE positioning, so a tall detail (the specimen
   // portrait!) never inflates the zone height and never pushes the stacked meshes
@@ -209,7 +269,7 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats, cellCo
   useEffect(() => {
     const el = railRef.current;
     setRailScrolls(!!el && narrowRail && el.scrollHeight > el.clientHeight + 1);
-  }, [narrowRail, panelsVisible, selectedCell, selectedNode, selectedPeer, now]);
+  }, [narrowRail, panelVisibility.cells, panelVisibility.peers, selectedCell, selectedNode, selectedPeer, now]);
 
   // reorg delta across renders
   const prevReorgs = useRef(chain.reorgs);
@@ -249,8 +309,8 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats, cellCo
         cellCapacity={cellCapacity}
         enrichmentSource={enrichmentSource}
         actions={topBarActions}
-        panelsVisible={panelsVisible}
-        onPanelsVisibleChange={setPanelsVisible}
+        panelControls={panelControls}
+        onPanelVisibilityChange={setPanelVisible}
         compact={compactTopBar}
       />
       {streamSummary ? (
@@ -261,106 +321,151 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats, cellCo
         />
       ) : null}
       <WarningBar level={alert.level} trigger={alert.trigger} reducedMotion={reduced} top={topBarHeight + (streamInterrupted ? 30 : 0)} />
-      {panelsVisible ? (
-        <>
-          <div
-            data-hud-left-rail
-            style={{ ...CHAIN_RAIL_STYLE, top: contentTop, maxWidth: 'calc(100vw - 28px)' }}
-          >
+      {panelVisibility.chain
+      || (panelVisibility.dao && daoPanelAvailable)
+      || panelVisibility.pulse ? (
+        <div
+          data-hud-left-rail
+          style={{ ...LEFT_HUD_STYLE, top: contentTop, maxWidth: 'calc(100vw - 28px)' }}
+        >
+          {panelVisibility.chain || (panelVisibility.dao && daoPanelAvailable) ? (
             <div
-              className="cknerv-chain-panel-scroll"
-              data-chain-panel-scroll
-              style={{
-                flex: '0 1 auto',
-                minHeight: 0,
-                maxWidth: '100%',
-                overflowX: 'hidden',
-                overflowY: 'auto',
-                overscrollBehavior: 'contain',
-                scrollbarWidth: 'thin',
-                scrollbarColor: 'rgba(255,152,48,.35) transparent',
-                pointerEvents: 'auto',
-              }}
+              className="cknerv-chain-cluster"
+              data-hud-chain-cluster
+              style={CHAIN_CLUSTER_STYLE}
             >
-              <BlockchainReadout
-                chain={chain}
-                cellsStats={cellsStats}
-                enrichmentSource={enrichmentSource}
-                assetEcosystem={assetEcosystem}
-                protocolEra={protocolEra}
-                daoState={daoState}
-                activityFeed={activityFeed}
-                transactionHorizon={transactionHorizon}
-                compactActivity={shortViewport}
-                style={{ ...PANEL_FLOW, width: 'min(340px, calc(100vw - 58px))' }}
+              {panelVisibility.chain ? (
+                <div
+                  className="cknerv-chain-panel-scroll"
+                  data-hud-panel="chain"
+                  data-chain-panel-scroll
+                  style={{
+                    flex: '0 0 auto',
+                    minHeight: 0,
+                    maxHeight: '100%',
+                    overflowX: 'hidden',
+                    overflowY: 'auto',
+                    overscrollBehavior: 'contain',
+                    scrollbarWidth: 'thin',
+                    scrollbarColor: 'rgba(255,152,48,.35) transparent',
+                  }}
+                >
+                  <BlockchainReadout
+                    chain={chain}
+                    cellsStats={cellsStats}
+                    enrichmentSource={enrichmentSource}
+                    assetEcosystem={assetEcosystem}
+                    protocolEra={protocolEra}
+                    activityFeed={activityFeed}
+                    transactionHorizon={transactionHorizon}
+                    compactActivity={shortViewport}
+                    style={{ ...PANEL_FLOW, width: 'min(340px, calc(100vw - 58px))' }}
+                  />
+                </div>
+              ) : null}
+              {panelVisibility.dao && daoPanelAvailable ? (
+                <div
+                  className="cknerv-chain-panel-scroll"
+                  data-hud-panel="dao"
+                  style={{
+                    flex: '0 0 auto',
+                    minHeight: 0,
+                    maxHeight: '100%',
+                    overflowX: 'hidden',
+                    overflowY: 'auto',
+                    overscrollBehavior: 'contain',
+                    scrollbarWidth: 'thin',
+                    scrollbarColor: 'rgba(255,152,48,.35) transparent',
+                  }}
+                >
+                  <DaoStatePanel
+                    source={enrichmentSource}
+                    record={daoState}
+                    style={{ ...PANEL_FLOW, width: 'min(300px, calc(100vw - 58px))' }}
+                  />
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+          {panelVisibility.pulse ? (
+            <div
+              data-hud-panel="pulse"
+              data-hud-pulse-anchor
+              style={{ position: 'relative', flex: '0 0 auto', marginTop: 'auto', maxWidth: '100%' }}
+            >
+              <BlockCadenceEcg
+                intervalsMs={chain.recent_block_intervals_ms}
+                sizes={chain.recent_block_sizes}
+                txCounts={chain.recent_block_tx_counts}
+                lastBlockTsMs={chain.last_block_ts_ms ?? null}
+                targetMs={targetMs}
+                avgMs={avgMs}
+                gapMs={msSinceLast}
+                condition={condition}
+                reducedMotion={reduced}
+                style={{ ...PANEL_FLOW, width: 'min(430px, calc(100vw - 58px))' }}
               />
             </div>
-            <BlockCadenceEcg
-              intervalsMs={chain.recent_block_intervals_ms}
-              sizes={chain.recent_block_sizes}
-              txCounts={chain.recent_block_tx_counts}
-              lastBlockTsMs={chain.last_block_ts_ms ?? null}
-              targetMs={targetMs}
-              avgMs={avgMs}
-              gapMs={msSinceLast}
-              condition={condition}
-              reducedMotion={reduced}
-              style={{ ...PANEL_FLOW, flex: '0 0 auto', width: 'min(430px, calc(100vw - 58px))' }}
-            />
-          </div>
-          {/* MESH RAIL — the two mesh panels juxtaposed as a pair, each with its
-              detail docked alongside. CELL zone (galaxy) over PEER zone (colony);
-              within a zone the selected entity's detail fans LEFT of its own mesh.
-              The local NODE and remote PEER details both belong to the PEER zone. */}
-          <div ref={railRef} className="cknerv-mesh-rail" style={railStyle}>
-            {meshZone(
-              selectedCell ? (
-                <CellDetailPanel
-                  cell={selectedCell}
-                  routeCellById={cellRecordsById}
-                  recentLinks={recentCellLinks}
-                  causalLens={cellCausalLens}
-                  causalNavigation={cellCausalNavigation}
-                  tracedWriteSeq={tracedCellWriteSeq}
-                  traceSource={cellTraceSource}
-                  traceReadout={cellTraceReadout}
-                  traceResponseRef={cellTraceResponseRef}
-                  traceEvidenceFocusSourceId={cellTraceEvidenceFocusSourceId}
-                  traceEvidencePreviewSourceId={cellTraceEvidencePreviewSourceId}
-                  onTraceEvidenceFocusChange={onCellTraceEvidenceFocusChange}
-                  traceRouteHopFocus={cellTraceRouteHopFocus}
-                  onTraceRouteHopFocusChange={onCellTraceRouteHopFocusChange}
-                  traceRouteHopLock={cellTraceRouteHopLock}
-                  onTraceRouteHopLockChange={onCellTraceRouteHopLockChange}
-                  identityProofBinding={cellIdentityProofBinding}
-                  onTraceWrite={onTraceCellWrite}
-                  onIdentityProofRead={onCellIdentityProofRead}
-                  semanticSource={enrichmentSource}
-                  semanticPhase={selectedCellSemanticsPhase}
-                  semanticRecord={selectedCellSemantics}
-                  semanticMessage={selectedCellSemanticsMessage}
-                  semanticTransactionPhase={selectedTransactionSemanticsPhase}
-                  semanticTransactionRecord={selectedTransactionSemantics}
-                  semanticTransactionMessage={selectedTransactionSemanticsMessage}
-                  onClose={clearCell}
-                  style={PANEL_FLOW}
-                />
-              ) : null,
+          ) : null}
+        </div>
+      ) : null}
+      {/* MESH RAIL — the two mesh panels juxtaposed as a pair, each with its
+          detail docked alongside. CELL zone (galaxy) over PEER zone (colony);
+          within a zone the selected entity's detail fans LEFT of its own mesh.
+          The local NODE and remote PEER details both belong to the PEER zone. */}
+      {panelVisibility.cells || panelVisibility.peers ? (
+        <div ref={railRef} className="cknerv-mesh-rail" style={railStyle}>
+          {panelVisibility.cells ? meshZone(
+            selectedCell ? (
+              <CellDetailPanel
+                cell={selectedCell}
+                routeCellById={cellRecordsById}
+                recentLinks={recentCellLinks}
+                causalLens={cellCausalLens}
+                causalNavigation={cellCausalNavigation}
+                tracedWriteSeq={tracedCellWriteSeq}
+                traceSource={cellTraceSource}
+                traceReadout={cellTraceReadout}
+                traceResponseRef={cellTraceResponseRef}
+                traceEvidenceFocusSourceId={cellTraceEvidenceFocusSourceId}
+                traceEvidencePreviewSourceId={cellTraceEvidencePreviewSourceId}
+                onTraceEvidenceFocusChange={onCellTraceEvidenceFocusChange}
+                traceRouteHopFocus={cellTraceRouteHopFocus}
+                onTraceRouteHopFocusChange={onCellTraceRouteHopFocusChange}
+                traceRouteHopLock={cellTraceRouteHopLock}
+                onTraceRouteHopLockChange={onCellTraceRouteHopLockChange}
+                identityProofBinding={cellIdentityProofBinding}
+                onTraceWrite={onTraceCellWrite}
+                onIdentityProofRead={onCellIdentityProofRead}
+                semanticSource={enrichmentSource}
+                semanticPhase={selectedCellSemanticsPhase}
+                semanticRecord={selectedCellSemantics}
+                semanticMessage={selectedCellSemanticsMessage}
+                semanticTransactionPhase={selectedTransactionSemanticsPhase}
+                semanticTransactionRecord={selectedTransactionSemantics}
+                semanticTransactionMessage={selectedTransactionSemanticsMessage}
+                onClose={clearCell}
+                style={PANEL_FLOW}
+              />
+            ) : null,
+            <div data-hud-panel="cells">
               <CellsPanel
                 stats={cellsStats}
                 churn={churn}
                 reducedMotion={reduced}
                 style={PANEL_FLOW}
-              />,
-            )}
-            {meshZone(
-              selectedNode ? <NodeDetailPanel node={selectedNode} chain={chain} onClose={clearNet} style={PANEL_FLOW} />
-                : selectedPeer ? <PeerDetailPanel peer={selectedPeer} chain={chain} onClose={clearNet} style={PANEL_FLOW} />
-                : null,
-              <NetworkPanel summary={summary} consensus={consensus} ping={ping} vers={vers} syncRatio={syncRatio} colonyCount={colonyCount} enrichmentSource={enrichmentSource} networkAtlas={networkAtlas} style={PANEL_FLOW} />,
-            )}
-          </div>
-        </>
+              />
+            </div>,
+          ) : null}
+          {panelVisibility.peers ? meshZone(
+            selectedNode ? <NodeDetailPanel node={selectedNode} chain={chain} onClose={clearNet} style={PANEL_FLOW} />
+              : selectedPeer ? <PeerDetailPanel peer={selectedPeer} chain={chain} onClose={clearNet} style={PANEL_FLOW} />
+              : null,
+            <div data-hud-panel="peers">
+              <NetworkPanel summary={summary} consensus={consensus} ping={ping} vers={vers} syncRatio={syncRatio} colonyCount={colonyCount} enrichmentSource={enrichmentSource} networkAtlas={networkAtlas} style={PANEL_FLOW} />
+            </div>,
+          ) : null}
+        </div>
       ) : null}
       <BackfillBar
         backfill={backfill ?? null}

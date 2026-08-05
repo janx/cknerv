@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { EnrichmentSourceStatus } from '@cknerv/types';
 import { useControls } from 'leva';
@@ -25,6 +25,12 @@ import {
 import { HUD_COLORS, HUD_FONTS, rgba } from './hudTheme';
 
 export type BuildInfo = { version: string; href: string };
+export type HudPanelControl = {
+  id: string;
+  code: string;
+  label: string;
+  visible: boolean;
+};
 
 const LEVEL_COLOR: Record<AlertLevel, string> = {
   nominal: HUD_COLORS.nominal, syncing: HUD_COLORS.cyanWire, caution: HUD_COLORS.caution,
@@ -79,48 +85,168 @@ function BuildChip({ build, compact = false }: { build: BuildInfo; compact?: boo
   );
 }
 
-function PanelVisibilityControl({ visible, onChange, compact = false }: {
-  visible: boolean;
-  onChange: (visible: boolean) => void;
+function PanelVisibilityControl({ panels, onChange, compact = false }: {
+  panels: readonly HudPanelControl[];
+  onChange: (id: string, visible: boolean) => void;
   compact?: boolean;
 }) {
-  const color = visible ? HUD_COLORS.cyanWire : HUD_COLORS.orange;
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const visibleCount = panels.filter((panel) => panel.visible).length;
+  const color = visibleCount === panels.length
+    ? HUD_COLORS.cyanWire
+    : visibleCount === 0
+      ? HUD_COLORS.orange
+      : HUD_COLORS.caution;
+
+  useEffect(() => {
+    if (!open) return;
+    const closeOutside = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('pointerdown', closeOutside);
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('pointerdown', closeOutside);
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [open]);
+
   return (
-    <button
-      type="button"
-      className="cknerv-hud-control-button"
-      aria-label={visible ? 'Hide HUD panels' : 'Show HUD panels'}
-      aria-pressed={visible}
-      data-panel-visibility-toggle
-      data-panels-visible={visible ? 'true' : 'false'}
-      onPointerDown={(event) => event.stopPropagation()}
-      onClick={(event) => {
-        event.stopPropagation();
-        onChange(!visible);
-      }}
+    <div
+      ref={rootRef}
+      data-panel-visibility-control
       style={{
-        appearance: 'none',
-        display: 'inline-flex',
-        alignItems: 'center',
+        position: 'relative',
         flexShrink: 0,
-        gap: compact ? 4 : 5,
-        height: 20,
-        padding: compact ? '0 5px' : '0 7px',
-        border: `1px solid ${rgba(color, visible ? 0.26 : 0.42)}`,
-        background: rgba(color, visible ? 0.045 : 0.09),
-        color,
-        font: `400 ${compact ? 8 : 8.5}px/18px ${HUD_FONTS.mono}`,
-        letterSpacing: compact ? 0.45 : 0.7,
-        textShadow: `0 0 6px ${rgba(color, 0.38)}`,
-        cursor: 'pointer',
+        pointerEvents: 'auto',
       }}
     >
-      <span aria-hidden style={{ fontSize: 9 }}>{visible ? '▦' : '□'}</span>
-      <span className="cknerv-panel-toggle-label">PANELS</span>
-      <span style={{ color: visible ? HUD_COLORS.dim : color }}>
-        {visible ? 'ON' : 'OFF'}
-      </span>
-    </button>
+      <button
+        type="button"
+        className="cknerv-hud-control-button"
+        aria-label={`Configure HUD panels, ${visibleCount} of ${panels.length} visible`}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        data-panel-visibility-toggle
+        onPointerDown={(event) => event.stopPropagation()}
+        onClick={(event) => {
+          event.stopPropagation();
+          setOpen((current) => !current);
+        }}
+        style={{
+          appearance: 'none',
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: compact ? 4 : 5,
+          height: 20,
+          padding: compact ? '0 5px' : '0 7px',
+          border: `1px solid ${rgba(color, 0.34)}`,
+          background: rgba(color, 0.065),
+          color,
+          font: `400 ${compact ? 8 : 8.5}px/18px ${HUD_FONTS.mono}`,
+          letterSpacing: compact ? 0.45 : 0.7,
+          textShadow: `0 0 6px ${rgba(color, 0.38)}`,
+          cursor: 'pointer',
+        }}
+      >
+        <span aria-hidden style={{ fontSize: 9 }}>▦</span>
+        <span className="cknerv-panel-toggle-label">PANELS</span>
+        <span>{visibleCount}/{panels.length}</span>
+        <span aria-hidden style={{ color: HUD_COLORS.dim, fontSize: 7 }}>{open ? '▲' : '▼'}</span>
+      </button>
+      {open ? (
+        <div
+          role="menu"
+          aria-label="HUD panels"
+          data-panel-visibility-menu
+          onPointerDown={(event) => event.stopPropagation()}
+          style={{
+            position: 'fixed',
+            zIndex: 60,
+            top: compact ? 54 : 30,
+            left: compact ? 8 : 108,
+            width: 244,
+            maxWidth: 'calc(100vw - 16px)',
+            boxSizing: 'border-box',
+            padding: '7px 8px 8px',
+            border: `1px solid ${rgba(HUD_COLORS.orange, 0.34)}`,
+            background: 'rgba(2,5,8,.96)',
+            boxShadow: `0 8px 28px rgba(0,0,0,.72), 0 0 18px ${rgba(HUD_COLORS.orange, 0.08)}`,
+            fontFamily: HUD_FONTS.mono,
+          }}
+        >
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'baseline',
+              margin: '0 3px 5px',
+              color: HUD_COLORS.orange,
+              fontSize: 8,
+              letterSpacing: 1.4,
+            }}
+          >
+            PANEL DISPLAY
+            <span style={{ marginLeft: 'auto', color: HUD_COLORS.dim, letterSpacing: 0.6 }}>
+              {visibleCount}/{panels.length} ACTIVE
+            </span>
+          </div>
+          {panels.map((panel) => {
+            const panelColor = panel.visible ? HUD_COLORS.cyanWire : HUD_COLORS.dim;
+            return (
+              <button
+                key={panel.id}
+                type="button"
+                role="menuitemcheckbox"
+                aria-checked={panel.visible}
+                aria-label={`${panel.label} panel`}
+                data-panel-control={panel.id}
+                className="cknerv-hud-control-button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onChange(panel.id, !panel.visible);
+                }}
+                style={{
+                  appearance: 'none',
+                  display: 'grid',
+                  gridTemplateColumns: '58px minmax(0,1fr) auto',
+                  alignItems: 'center',
+                  width: '100%',
+                  height: 27,
+                  padding: '0 5px',
+                  border: 0,
+                  borderTop: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.08)}`,
+                  background: panel.visible ? rgba(HUD_COLORS.cyanWire, 0.035) : 'transparent',
+                  color: panelColor,
+                  font: `400 8.5px/1 ${HUD_FONTS.mono}`,
+                  textAlign: 'left',
+                  cursor: 'pointer',
+                }}
+              >
+                <span style={{ color: panel.visible ? panelColor : HUD_COLORS.dim, letterSpacing: 0.6 }}>
+                  {panel.code}
+                </span>
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', letterSpacing: 0.8 }}>
+                  {panel.label}
+                </span>
+                <span
+                  style={{
+                    color: panel.visible ? HUD_COLORS.nominal : HUD_COLORS.dim,
+                    fontSize: 7.5,
+                    letterSpacing: 0.7,
+                  }}
+                >
+                  {panel.visible ? 'ON' : 'OFF'}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -637,8 +763,8 @@ export default function StatusStrip({
   cellCapacity,
   enrichmentSource,
   actions,
-  panelsVisible,
-  onPanelsVisibleChange,
+  panelControls,
+  onPanelVisibilityChange,
   compact = false,
 }: {
   level: AlertLevel;
@@ -653,9 +779,9 @@ export default function StatusStrip({
   enrichmentSource?: EnrichmentSourceStatus;
   /** Product-specific controls rendered without coupling the shared HUD to them. */
   actions?: ReactNode;
-  /** Visibility of the main dashboard panels; status/navigation stays visible. */
-  panelsVisible?: boolean;
-  onPanelsVisibleChange?: (visible: boolean) => void;
+  /** Individually configurable dashboard panels; status/navigation stays visible. */
+  panelControls?: readonly HudPanelControl[];
+  onPanelVisibilityChange?: (id: string, visible: boolean) => void;
   /** Two-row navigation layout used when horizontal space is constrained. */
   compact?: boolean;
 }) {
@@ -671,15 +797,15 @@ export default function StatusStrip({
         alignItems: 'center',
         minWidth: 0,
         gap: compact ? 6 : 14,
-        overflow: 'hidden',
+        overflow: 'visible',
       }}
     >
       <span style={{ flexShrink: 0, fontFamily: HUD_FONTS.display, fontWeight: 700, fontSize: compact ? 10.5 : 12, letterSpacing: compact ? 2.5 : 5, color: HUD_COLORS.orange, textShadow: '0 0 8px rgba(255,152,48,.5)' }}>CKNERV</span>
       {build ? <BuildChip build={build} compact={compact} /> : null}
-      {onPanelsVisibleChange ? (
+      {onPanelVisibilityChange && panelControls?.length ? (
         <PanelVisibilityControl
-          visible={panelsVisible ?? true}
-          onChange={onPanelsVisibleChange}
+          panels={panelControls}
+          onChange={onPanelVisibilityChange}
           compact={compact}
         />
       ) : null}
@@ -762,7 +888,7 @@ export default function StatusStrip({
           gridTemplateRows: '27px 27px',
           columnGap: 8,
           padding: '0 8px',
-          overflow: 'hidden',
+          overflow: 'visible',
           borderBottom: '1px solid rgba(255,152,48,.18)',
           background: 'linear-gradient(180deg,rgba(255,152,48,.07),rgba(0,0,0,.24))',
         }}

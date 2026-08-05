@@ -54,9 +54,20 @@ function deltaColor(value: bigint | number): string {
   return HUD_COLORS.dim;
 }
 
-export default function DaoStateReadout({ source, record }: {
+export function canRenderDaoStateReadout(
+  source?: EnrichmentSourceStatus,
+  record?: DaoStateRecord | null,
+): boolean {
+  return !!source
+    && !!record
+    && daoStateVisualState(source, record) !== null
+    && deriveDaoStateVisual(record) !== null;
+}
+
+export default function DaoStateReadout({ source, record, variant = 'section' }: {
   source?: EnrichmentSourceStatus;
   record?: DaoStateRecord | null;
+  variant?: 'section' | 'panel';
 }) {
   if (!source || !record) return null;
   const visualState = daoStateVisualState(source, record);
@@ -64,26 +75,31 @@ export default function DaoStateReadout({ source, record }: {
   if (!visualState || !visual) return null;
   const stale = visualState === 'stale';
   const accent = stale ? HUD_COLORS.caution : HUD_COLORS.orange;
+  const panelVariant = variant === 'panel';
 
   return (
     <section
       aria-label="Nervos DAO state"
       data-dao-state={visualState}
       style={{
-        marginTop: 10,
-        paddingTop: 8,
-        borderTop: `1px solid ${rgba(accent, 0.16)}`,
+        marginTop: panelVariant ? 0 : 10,
+        paddingTop: panelVariant ? 0 : 8,
+        borderTop: panelVariant ? undefined : `1px solid ${rgba(accent, 0.16)}`,
         opacity: stale ? 0.68 : 1,
       }}
     >
-      <ReadoutHeader
-        title="NERVOS DAO"
-        meta={`SNAPSHOT #${record.statistics_block.toLocaleString('en-US')}`}
-        accent={accent}
-        stale={stale}
-      />
+      {panelVariant ? null : (
+        <ReadoutHeader
+          title="NERVOS DAO"
+          meta={`SNAPSHOT #${record.statistics_block.toLocaleString('en-US')}`}
+          accent={accent}
+          stale={stale}
+        />
+      )}
       <div style={{ fontFamily: HUD_FONTS.mono, fontSize: 7.5, color: HUD_COLORS.dim, letterSpacing: 0.35, marginBottom: 4 }}>
-        VALIDATED AT #{record.as_of.block.toLocaleString('en-US')}
+        {panelVariant
+          ? `SNAPSHOT #${record.statistics_block.toLocaleString('en-US')} · VALIDATED AT #${record.as_of.block.toLocaleString('en-US')}`
+          : `VALIDATED AT #${record.as_of.block.toLocaleString('en-US')}`}
       </div>
       <StatRow label="DAO locked">{formatCkb(visual.totalDepositedShannons)}</StatRow>
       <StatRow label="Active deposits">{record.active_deposits.toLocaleString('en-US')}</StatRow>

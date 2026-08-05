@@ -1,6 +1,14 @@
 import { cleanup, fireEvent, render } from '@testing-library/react';
 import { afterEach, describe, it, expect, vi } from 'vitest';
-import type { ChainEntry, Peer, ChainNode, Cell, CellLink } from '@cknerv/types';
+import type {
+  Cell,
+  CellLink,
+  ChainEntry,
+  ChainNode,
+  DaoStateRecord,
+  EnrichmentSourceStatus,
+  Peer,
+} from '@cknerv/types';
 
 // The embedded portrait spins a real WebGL context — stub it in jsdom.
 vi.mock('../../../src/components/hud/CellNucleusPortrait', () => ({
@@ -48,6 +56,24 @@ const chain: ChainEntry = {
 const peers: Peer[] = [{ node_id: 'n', addr: 'a', direction: 'outbound', version: '0.201.0', latency_ms: 84, best_known: 16204887, connected_ms: 1000 }];
 const localNode: ChainNode = { id: 'ckb:local', label: 'local', is_miner: false, version: '0.201.0', connections: 47 };
 const cellsStats: CellsStats = { born: 28431, live: 19204, dead: 9227, byKind: { wallet: 11302, dex: 4118, cf: 2401, ckbloom: 1383, generic: 0 }, capacityShannons: 0, inView: 19204, dataBearing: 0, byLock: { sighash: 0, multisig: 0, acp: 0, omnilock: 0, other: 0 }, byAsset: { native: 0, sudt: 0, xudt: 0, dao: 0, spore: 0, other: 0 } };
+const enrichmentSource: EnrichmentSourceStatus = {
+  source: 'ckbadger',
+  status: 'ready',
+  capabilities: ['dao_state'],
+  validated_anchor: { block: 100, hash: '0xblock100' },
+};
+const daoState: DaoStateRecord = {
+  source: 'ckbadger',
+  as_of: { block: 100, hash: '0xblock100' },
+  statistics_block: 99,
+  updated_at_ms: Date.now(),
+  total_deposited_shannons: '837703738002110308',
+  total_depositors: 16_740,
+  active_deposits: 22_659,
+  pending_withdrawal_shannons: '77523020877862416',
+  unclaimed_compensation_shannons: '81345902996799859',
+  estimated_apc_bps: 201,
+};
 
 function identityBinding(
   cellId: number,
@@ -76,39 +102,92 @@ describe('HudOverlay', () => {
     expect(t).toContain('PEER MESH');    // peer mesh
     expect(t).toContain('CELL MESH');    // cell mesh
     const leftRail = container.querySelector('[data-hud-left-rail]') as HTMLElement;
+    const chainCluster = container.querySelector('[data-hud-chain-cluster]') as HTMLElement;
     const chainScroll = container.querySelector('[data-chain-panel-scroll]') as HTMLElement;
+    const pulse = container.querySelector('[data-hud-pulse-anchor]') as HTMLElement;
     const meshRail = container.querySelector('.cknerv-mesh-rail') as HTMLElement;
     expect(leftRail.textContent).toContain('COMMON KNOWLEDGE BASE');
     expect(leftRail.textContent).toContain('GALAXY WINDOW');
     expect(leftRail.textContent).toContain('PULSE');
     expect(leftRail.style.flexDirection).toBe('column');
-    expect(chainScroll.style.flex).toBe('0 1 auto');
+    expect(leftRail.style.bottom).toBe('14px');
+    expect(chainCluster.style.flexDirection).toBe('row');
+    expect(chainCluster.style.flex).toBe('1 1 auto');
+    expect(chainScroll.style.flex).toBe('0 0 auto');
     expect(chainScroll.style.overflowY).toBe('auto');
+    expect(pulse.style.marginTop).toBe('auto');
     expect(meshRail.textContent).not.toContain('GALAXY WINDOW');
     expect(meshRail.style.top).toBe('42px');
     expect(meshRail.style.bottom).toBe('');
   });
 
-  it('hides and restores all main panels from the top-bar toggle', () => {
+  it('controls each main panel independently from the top-bar menu', () => {
     const { container, getByRole } = render(
       <HudOverlay chain={chain} peers={peers} localNode={localNode} cellsStats={cellsStats} />,
     );
-    const hide = getByRole('button', { name: 'Hide HUD panels' });
+    const menuToggle = getByRole('button', {
+      name: 'Configure HUD panels, 4 of 4 visible',
+    });
 
-    expect(hide.getAttribute('aria-pressed')).toBe('true');
-    fireEvent.click(hide);
+    fireEvent.click(menuToggle);
+    fireEvent.click(getByRole('menuitemcheckbox', {
+      name: 'COMMON KNOWLEDGE BASE panel',
+    }));
 
-    expect(container.querySelector('[data-hud-left-rail]')).toBeNull();
-    expect(container.querySelector('.cknerv-mesh-rail')).toBeNull();
-    expect(container.textContent).not.toContain('COMMON KNOWLEDGE BASE');
-    expect(container.textContent).not.toContain('CELL MESH');
-    expect(container.textContent).not.toContain('PEER MESH');
-    expect(container.textContent).not.toContain('PULSE');
-    expect(container.textContent).toContain('CKNERV');
+    expect(container.querySelector('[data-hud-panel="chain"]')).toBeNull();
+    expect(container.querySelector('[data-hud-panel="pulse"]')).not.toBeNull();
+    expect(container.querySelector('[data-hud-panel="cells"]')).not.toBeNull();
+    expect(container.querySelector('[data-hud-panel="peers"]')).not.toBeNull();
+    expect(container.querySelector('[data-hud-pulse-anchor]')).not.toBeNull();
+    expect(container.querySelector('[data-hud-chain-cluster]')).toBeNull();
+    expect((container.querySelector('[data-hud-left-rail]') as HTMLElement).style.bottom).toBe('14px');
+    expect(getByRole('button', {
+      name: 'Configure HUD panels, 3 of 4 visible',
+    })).not.toBeNull();
 
-    fireEvent.click(getByRole('button', { name: 'Show HUD panels' }));
-    expect(container.querySelector('[data-hud-left-rail]')).not.toBeNull();
+    fireEvent.click(getByRole('menuitemcheckbox', { name: 'CELL MESH panel' }));
+    expect(container.querySelector('[data-hud-panel="cells"]')).toBeNull();
+    expect(container.querySelector('[data-hud-panel="peers"]')).not.toBeNull();
     expect(container.querySelector('.cknerv-mesh-rail')).not.toBeNull();
+
+    fireEvent.click(getByRole('menuitemcheckbox', { name: 'PULSE panel' }));
+    expect(container.querySelector('[data-hud-left-rail]')).toBeNull();
+    expect(container.querySelector('[data-hud-panel="peers"]')).not.toBeNull();
+
+    fireEvent.click(getByRole('menuitemcheckbox', { name: 'PEER MESH panel' }));
+    expect(container.querySelector('.cknerv-mesh-rail')).toBeNull();
+    expect(container.querySelector('[data-panel-visibility-menu]')).not.toBeNull();
+    expect(container.textContent).toContain('CKNERV');
+  });
+
+  it('places a validated DAO panel immediately to the right of CKB·01', () => {
+    const { container, getByRole } = render(
+      <HudOverlay
+        chain={chain}
+        peers={peers}
+        localNode={localNode}
+        cellsStats={cellsStats}
+        enrichmentSource={enrichmentSource}
+        daoState={daoState}
+      />,
+    );
+    const cluster = container.querySelector('[data-hud-chain-cluster]') as HTMLElement;
+    const chainPanel = cluster.querySelector('[data-hud-panel="chain"]') as HTMLElement;
+    const daoPanel = cluster.querySelector('[data-hud-panel="dao"]') as HTMLElement;
+
+    expect(cluster.style.flexDirection).toBe('row');
+    expect(cluster.children[0]).toBe(chainPanel);
+    expect(cluster.children[1]).toBe(daoPanel);
+    expect(chainPanel.textContent).not.toContain('NERVOS DAO');
+    expect(daoPanel.textContent).toContain('NERVOS DAO');
+    expect(daoPanel.textContent).toContain('DAO·05');
+
+    fireEvent.click(getByRole('button', {
+      name: 'Configure HUD panels, 5 of 5 visible',
+    }));
+    fireEvent.click(getByRole('menuitemcheckbox', { name: 'NERVOS DAO panel' }));
+    expect(container.querySelector('[data-hud-panel="dao"]')).toBeNull();
+    expect(container.querySelector('[data-hud-panel="chain"]')).not.toBeNull();
   });
 
   it('uses a two-row top bar and offsets both panel rails on narrow screens', () => {
