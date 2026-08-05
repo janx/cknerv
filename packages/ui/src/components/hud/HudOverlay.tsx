@@ -38,6 +38,7 @@ import type {
 } from './CellCausalLensReadout';
 import { injectHudTheme } from './hudTheme';
 import StatusStrip, {
+  STATUS_STRIP_HEIGHTS,
   type BuildInfo,
   type HudPanelControl,
 } from './StatusStrip';
@@ -184,7 +185,10 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats, cellCo
   // The control-dense top bar needs to reflow before the panel rail itself does;
   // this also leaves headroom for transient stream/source chips.
   const compactTopBarWidth = useMediaQuery('(max-width: 1280px)');
-  const compactTopBar = narrowRail || compactTopBarWidth;
+  // Phones get a third priority row so display/quality controls never depend
+  // on an initially hidden horizontal-scroll position.
+  const mobileTopBar = useMediaQuery('(max-width: 560px)');
+  const compactTopBar = mobileTopBar || narrowRail || compactTopBarWidth;
   const shortViewport = useMediaQuery('(max-height: 860px)');
   const [panelVisibility, setPanelVisibility] = useState<HudPanelVisibility>(
     DEFAULT_PANEL_VISIBILITY,
@@ -257,7 +261,16 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats, cellCo
     ? deriveStreamHealthSummary(streamHealth, now)
     : null;
   const streamInterrupted = !!streamSummary && streamSummary.phase !== 'live';
-  const topBarHeight = compactTopBar ? 54 : 30;
+  const mobileBarHasContext = Boolean(
+    enrichmentSource || topBarActions,
+  );
+  const topBarHeight = mobileTopBar
+    ? mobileBarHasContext
+      ? STATUS_STRIP_HEIGHTS.mobileContext
+      : STATUS_STRIP_HEIGHTS.mobile
+    : compactTopBar
+      ? STATUS_STRIP_HEIGHTS.compact
+      : STATUS_STRIP_HEIGHTS.wide;
   const contentTop = topBarHeight + (streamInterrupted ? 42 : 12);
   const railStyle: CSSProperties = narrowRail
     ? { ...MESH_RAIL_STYLE, top: contentTop, maxHeight: `calc(100vh - ${contentTop + 14}px)`, overflowX: 'hidden', overflowY: 'auto', pointerEvents: railScrolls ? 'auto' : 'none', scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,152,48,.35) transparent' }
@@ -304,7 +317,6 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats, cellCo
         level={alert.level}
         uptimeMs={now - mountAt.current}
         build={build}
-        stream={streamSummary}
         cellCount={cellCount ?? cellsStats.inView}
         cellCapacity={cellCapacity}
         enrichmentSource={enrichmentSource}
@@ -312,6 +324,7 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats, cellCo
         panelControls={panelControls}
         onPanelVisibilityChange={setPanelVisible}
         compact={compactTopBar}
+        mobile={mobileTopBar}
       />
       {streamSummary ? (
         <StreamHealthBanner
