@@ -8,6 +8,7 @@ import type {
   ForkWatchRecord,
   EnrichmentSourceStatus,
   NetworkAtlasRecord,
+  ProtocolEraRecord,
 } from '@cknerv/types';
 import {
   applyRevisionedSemanticsDeltas,
@@ -108,6 +109,23 @@ function forkWatch(block: number): ForkWatchRecord {
   };
 }
 
+function protocolEra(block: number): ProtocolEraRecord {
+  return {
+    source: 'ckbadger',
+    as_of: { block, hash: `0xblock${block}` },
+    updated_at_ms: block,
+    network: 'mainnet',
+    indexed_tip_block: block,
+    indexed_tip_epoch: 12_300,
+    current: {
+      name: 'Meepo',
+      edition_year: 2024,
+      activation_epoch: 12_293,
+      activation_block: block - 1,
+    },
+  };
+}
+
 function networkAtlas(block: number): NetworkAtlasRecord {
   return {
     source: 'ckbadger',
@@ -199,6 +217,21 @@ describe('semantics reducer', () => {
       delta: { type: 'prune', from_block: 10 },
     }]);
     expect(next.forkWatch).toBeNull();
+  });
+
+  it('replaces and prunes fixed protocol-era context independently', () => {
+    const record = protocolEra(10);
+    const seeded = applyRevisionedSemanticsDeltas(emptySemanticsCache(), [{
+      revision: 1,
+      delta: { type: 'protocol_era_replace', protocol_era: record },
+    }]);
+    expect(seeded.protocolEra).toBe(record);
+
+    const next = applyRevisionedSemanticsDeltas(seeded, [{
+      revision: 2,
+      delta: { type: 'prune', from_block: 10 },
+    }]);
+    expect(next.protocolEra).toBeNull();
   });
 
   it('replaces and prunes the bounded activity feed independently', () => {

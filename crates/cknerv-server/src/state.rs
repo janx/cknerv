@@ -142,6 +142,7 @@ impl ServerState {
         let store = self.entity_store.read().unwrap();
         CanonicalContext {
             tip: store.chain.tip,
+            epoch_number: store.chain.epoch.number,
             chain_name: store.chain.chain_name.clone(),
             recent_blocks: store.chain.recent_blocks.clone(),
             recent_transactions: store.chain.recent_tx_hashes.clone(),
@@ -384,6 +385,7 @@ fn event_anchor_is_current(event: &EnrichmentEvent, recent_blocks: &[RecentBlock
         EnrichmentEvent::CensusReplace(census) => Some(&census.as_of),
         EnrichmentEvent::AssetEcosystemReplace(asset_ecosystem) => Some(&asset_ecosystem.as_of),
         EnrichmentEvent::DaoStateReplace(dao_state) => Some(&dao_state.as_of),
+        EnrichmentEvent::ProtocolEraReplace(protocol_era) => Some(&protocol_era.as_of),
         EnrichmentEvent::ForkWatchReplace(fork_watch) => Some(&fork_watch.as_of),
         EnrichmentEvent::ActivityFeedReplace(activity_feed) => Some(&activity_feed.as_of),
         EnrichmentEvent::NetworkAtlasReplace(network_atlas) => Some(&network_atlas.as_of),
@@ -948,6 +950,26 @@ mod tests {
         let snap = s.snapshot();
         assert_eq!(snap["chain"]["ibd"], true);
         assert_eq!(snap["chain"]["best_known_block"], 777);
+    }
+
+    #[test]
+    fn canonical_context_exposes_the_direct_chain_epoch() {
+        let s = ServerState::new();
+        s.apply_mutation(Mutation::ChainInfoUpdated {
+            epoch: cknerv_core::EpochInfo {
+                number: 12_300,
+                index: 42,
+                length: 1_800,
+            },
+            median_time_ms: 1,
+            difficulty: "0x1".into(),
+            chain_name: "ckb".into(),
+        });
+
+        let context = s.canonical_context();
+
+        assert_eq!(context.epoch_number, 12_300);
+        assert_eq!(context.chain_name, "ckb");
     }
 
     #[test]

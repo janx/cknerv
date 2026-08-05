@@ -6,6 +6,7 @@ import type {
   DaoStateRecord,
   EnrichmentSourceStatus,
   ForkWatchRecord,
+  ProtocolEraRecord,
 } from '@cknerv/types';
 import BlockchainReadout from '../../../src/components/hud/BlockchainReadout';
 
@@ -22,7 +23,7 @@ const chain: ChainEntry = {
 const source: EnrichmentSourceStatus = {
   source: 'ckbadger',
   status: 'ready',
-  capabilities: ['dao_state', 'activity_feed', 'fork_watch'],
+  capabilities: ['dao_state', 'protocol_era', 'activity_feed', 'fork_watch'],
   validated_anchor: { block: 100, hash: '0xblock100' },
 };
 
@@ -81,6 +82,21 @@ const forkWatch: ForkWatchRecord = {
   },
 };
 
+const protocolEra: ProtocolEraRecord = {
+  source: 'ckbadger',
+  as_of: { block: 100, hash: '0xblock100' },
+  updated_at_ms: Date.now(),
+  network: 'mainnet',
+  indexed_tip_block: 100,
+  indexed_tip_epoch: 11_042,
+  current: {
+    name: 'Mirana',
+    edition_year: 2021,
+    activation_epoch: 5_414,
+    activation_block: 70,
+  },
+};
+
 describe('BlockchainReadout', () => {
   it('renders the tip and key chain stats', () => {
     const { container } = render(<BlockchainReadout chain={chain} />);
@@ -92,6 +108,23 @@ describe('BlockchainReadout', () => {
     expect(container.textContent).not.toContain('INDEXED FORK WATCH');
     expect(container.textContent).not.toContain('INDEXED NERVOS DAO');
     expect(container.textContent).not.toContain('INDEXED ACTIVITY');
+    expect(container.querySelector('[data-protocol-era-state]')).toBeNull();
+  });
+
+  it('adds indexed protocol context inside the canonical Epoch row', () => {
+    const { container } = render(
+      <BlockchainReadout
+        chain={chain}
+        enrichmentSource={source}
+        protocolEra={protocolEra}
+      />,
+    );
+    const badge = container.querySelector<HTMLElement>('[data-protocol-era-state="ready"]');
+
+    expect(container.textContent).toContain('11042.842/1800· IDX MIRANA·21');
+    expect(badge?.dataset.protocolEraLabel).toBe('MIRANA·21');
+    expect(badge?.title).toContain('epoch 5,414, block #70');
+    expect(container.textContent).not.toContain('PROTOCOL ERA');
   });
 
   it('renders optional recent fork history without changing canonical reorgs', () => {

@@ -116,6 +116,12 @@ describe('HudOverlay wiring', () => {
     expect(APP_SOURCE).not.toContain('<DaoStateOrbit');
   });
 
+  it('routes fixed-shape optional protocol era only through the HUD', () => {
+    expect(APP_SOURCE).toContain('protocolEra={enrichmentConfig.enabled');
+    expect(APP_SOURCE).toContain('? semanticsCache.protocolEra');
+    expect(APP_SOURCE).not.toContain('<ProtocolEraOrbit');
+  });
+
   it('routes fixed-work optional fork watch only through the HUD', () => {
     expect(APP_SOURCE).toContain('forkWatch={enrichmentConfig.enabled');
     expect(APP_SOURCE).toContain('? semanticsCache.forkWatch');

@@ -180,6 +180,13 @@ fn enrichment_samples_match_wire_shape() {
         canonicalize(&samples["deltas"]["dao_state_replace"]),
         canonicalize(&serde_json::to_value(dao_state).unwrap())
     );
+    let protocol_era = SemanticsDelta::ProtocolEraReplace {
+        protocol_era: snapshot.protocol_era.clone().unwrap(),
+    };
+    assert_eq!(
+        canonicalize(&samples["deltas"]["protocol_era_replace"]),
+        canonicalize(&serde_json::to_value(protocol_era).unwrap())
+    );
     let fork_watch = SemanticsDelta::ForkWatchReplace {
         fork_watch: snapshot.fork_watch.clone().unwrap(),
     };

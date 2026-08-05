@@ -8,6 +8,7 @@ import type {
   ForkWatchRecord,
   NetworkAtlasRecord,
   OutPoint,
+  ProtocolEraRecord,
   RevisionedSemanticsDelta,
   SemanticsDelta,
   SemanticsSnapshot,
@@ -22,6 +23,7 @@ export interface SemanticsCache {
   census: ChainCensus | null;
   assetEcosystem: AssetEcosystemRecord | null;
   daoState: DaoStateRecord | null;
+  protocolEra: ProtocolEraRecord | null;
   forkWatch: ForkWatchRecord | null;
   activityFeed: ActivityFeedRecord | null;
   networkAtlas: NetworkAtlasRecord | null;
@@ -44,6 +46,7 @@ export function emptySemanticsCache(): SemanticsCache {
     census: null,
     assetEcosystem: null,
     daoState: null,
+    protocolEra: null,
     forkWatch: null,
     activityFeed: null,
     networkAtlas: null,
@@ -64,6 +67,7 @@ export function fromSemanticsSnapshot(
     census: snapshot.census ?? null,
     assetEcosystem: snapshot.asset_ecosystem ?? null,
     daoState: snapshot.dao_state ?? null,
+    protocolEra: snapshot.protocol_era ?? null,
     forkWatch: snapshot.fork_watch ?? null,
     activityFeed: snapshot.activity_feed ?? null,
     networkAtlas: snapshot.network_atlas ?? null,
@@ -102,6 +106,8 @@ function reduceDelta(prev: SemanticsCache, delta: SemanticsDelta): SemanticsCach
       return { ...prev, assetEcosystem: delta.asset_ecosystem };
     case 'dao_state_replace':
       return { ...prev, daoState: delta.dao_state };
+    case 'protocol_era_replace':
+      return { ...prev, protocolEra: delta.protocol_era };
     case 'fork_watch_replace':
       return { ...prev, forkWatch: delta.fork_watch };
     case 'activity_feed_replace':
@@ -134,6 +140,10 @@ function reduceDelta(prev: SemanticsCache, delta: SemanticsDelta): SemanticsCach
         prev.daoState && prev.daoState.as_of.block >= delta.from_block
           ? null
           : prev.daoState;
+      const protocolEra =
+        prev.protocolEra && prev.protocolEra.as_of.block >= delta.from_block
+          ? null
+          : prev.protocolEra;
       const forkWatch =
         prev.forkWatch && prev.forkWatch.as_of.block >= delta.from_block
           ? null
@@ -155,6 +165,7 @@ function reduceDelta(prev: SemanticsCache, delta: SemanticsDelta): SemanticsCach
         census,
         assetEcosystem,
         daoState,
+        protocolEra,
         forkWatch,
         activityFeed,
         networkAtlas,
@@ -168,6 +179,7 @@ function reduceDelta(prev: SemanticsCache, delta: SemanticsDelta): SemanticsCach
         census: null,
         assetEcosystem: null,
         daoState: null,
+        protocolEra: null,
         forkWatch: null,
         activityFeed: null,
         networkAtlas: null,

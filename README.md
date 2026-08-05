@@ -122,7 +122,7 @@ availability.
 | CLI | Rust, clap, rust-embed | Workdir commands, config merge, embedded dashboard server |
 | Server | Rust, axum, tokio | HTTP/WS API, mutation reducer, projection registry, persistence |
 | CKB adapter | Rust, reqwest, CKB JSON-RPC types | Read-only node polling, boot backfill, block/tx normalization |
-| ckbadger enrichment | Rust, reqwest | Optional indexed Cell/script/asset, origin-transaction, recent-fork, fixed DAO, bounded ecosystem/activity, and network-crawler context with canonical-anchor validation |
+| ckbadger enrichment | Rust, reqwest | Optional indexed Cell/script/asset, origin-transaction, protocol-era, recent-fork, fixed DAO, bounded ecosystem/activity, and network-crawler context with canonical-anchor validation |
 | Types/cache | TypeScript, Vitest | Wire-type twins, pure reducers, WebSocket clients |
 | UI | React 18, Vite, React Three Fiber, drei, three.js | 3D cell galaxy, HUDs, cell-life detail panels, nerve overlays |
 
@@ -193,7 +193,7 @@ contracts remain normalized and source-agnostic.
 | `crates/cknerv-core/` | Chain-generic wire types, `Mutation`, `Projection`, `CellGalaxy`, deterministic helix positioning, and bounded replay ring. |
 | `crates/cknerv-server/` | axum HTTP/WS server, `Adapter` trait, `ServerBuilder`, entity store, projection registry, replay streams, and persistence. |
 | `crates/cknerv-adapter-ckb/` | `CkbDirectAdapter`: read-only CKB JSON-RPC polling, boot backfill, block/tx normalization, content hash parity. |
-| `crates/cknerv-adapter-ckbadger/` | Optional `EnrichmentSource`: ckbadger health/lag probing, canonical block-hash validation, lazy Cell/script/asset semantics, fixed fork/DAO state, bounded ecosystem/activity samples, and privacy-preserving network-crawler aggregates. |
+| `crates/cknerv-adapter-ckbadger/` | Optional `EnrichmentSource`: ckbadger health/lag probing, canonical block-hash validation, lazy Cell/script/asset semantics, fixed protocol/fork/DAO state, bounded ecosystem/activity samples, and privacy-preserving network-crawler aggregates. |
 | `crates/cknerv-cli/` | `cknerv` binary, clap CLI, config/workdir commands, embedded SPA serving, runtime config injection, browser auto-open. |
 | `packages/types/` | `@cknerv/types`: TypeScript twins of the Rust wire shapes. |
 | `packages/cache/` | `@cknerv/cache`: pure reducers plus entity/projection WebSocket clients. |
@@ -277,6 +277,23 @@ gauge denominator. The section is absent in CKB-only mode or with unusable
 source proof, and dims when the source is stale or three minute refreshes have
 been missed. DAO refresh errors remain isolated from canonical data and every
 other enrichment capability.
+
+When ckbadger advertises `protocol_era`, cknerv refreshes the fixed-size
+`hardforks` timeline at most once every five minutes. The adapter maps the
+direct CKB chain name to ckbadger's mainnet/testnet vocabulary, rejects a
+different response network, and validates bounded unique events in strictly
+increasing activation-epoch order. Only the newest activated edition and the
+earliest upcoming edition cross the shared wire boundary; summaries, dates,
+resource links, and the full source catalogue do not. Both ckbadger's timeline
+tip block and tip epoch must be covered by cknerv's validated block anchor and
+direct canonical epoch. A timeline that advances between probe and fetch is
+withheld until the next proof. `COMMON KNOWLEDGE BASE` appends a compact
+**IDX MEEPO·24**-style badge to the existing canonical `Epoch` row, with exact
+activation coordinates in its accessible tooltip. It never replaces the
+direct epoch value, adds panel height, or creates scene objects. The badge is
+absent in CKB-only and custom/devnet modes, is suppressed with unusable proof,
+and dims after three missed refresh windows. Protocol-era failures remain
+isolated from canonical data and every other enrichment capability.
 
 When ckbadger advertises `fork_watch`, cknerv refreshes its fixed-shape
 `forks/recent` response at most once every 15 seconds. Only the newest persisted
@@ -525,8 +542,9 @@ twin, the fixtures, and both sides of the tests together.
   DAO/code-cell context, occupied-capacity composition, deterministic UDT
   amount plus token identity, the selected Cell's origin-transaction
   detail/lifecycle, the bounded asset-ecosystem aggregate, fixed-shape DAO
-  statistics, the fixed recent/deep-fork monitor, an explicitly eight-entry
-  latest-activity sample, and a latest-64 network-crawler sample.
+  statistics, the fixed protocol-edition timeline, the fixed recent/deep-fork
+  monitor, an explicitly eight-entry latest-activity sample, and a latest-64
+  network-crawler sample.
   Transaction
   participants expose exact capacity deltas only when every attributed
   input/output includes capacity. Selected-transaction protocol activities and

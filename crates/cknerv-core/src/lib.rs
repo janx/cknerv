@@ -28,9 +28,9 @@ pub use enrichment::{
     AssetEcosystemRecord, CellSemanticRecord, ChainAnchor, ChainCensus, CommonKnowledgeBreakdown,
     DaoStateRecord, EnrichmentEvent, EnrichmentProjection, EnrichmentSourceState,
     EnrichmentSourceStatus, ForkWatchDeepFork, ForkWatchEventKind, ForkWatchRecord, ForkWatchReorg,
-    NetworkAtlasBucket, NetworkAtlasRecord, SemanticAsset, SemanticAttribute, SemanticFacet,
-    SemanticScript, SemanticsDelta, SemanticsProjection, SemanticsSnapshot,
-    TransactionParticipantSemantic, TransactionSemanticRecord,
+    NetworkAtlasBucket, NetworkAtlasRecord, ProtocolEra, ProtocolEraRecord, SemanticAsset,
+    SemanticAttribute, SemanticFacet, SemanticScript, SemanticsDelta, SemanticsProjection,
+    SemanticsSnapshot, TransactionParticipantSemantic, TransactionSemanticRecord,
 };
 pub use entity::{
     Chain, ChainNode, EpochInfo, MempoolStats, Peer, PeerDirection, RecentBlock, RecentTx,

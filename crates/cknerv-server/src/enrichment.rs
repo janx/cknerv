@@ -9,8 +9,8 @@ use async_trait::async_trait;
 
 use cknerv_core::{
     ActivityFeedRecord, AssetEcosystemRecord, CellSemanticRecord, DaoStateRecord,
-    EnrichmentSourceStatus, ForkWatchRecord, NetworkAtlasRecord, OutPoint, RecentBlock, RecentTx,
-    TransactionSemanticRecord,
+    EnrichmentSourceStatus, ForkWatchRecord, NetworkAtlasRecord, OutPoint, ProtocolEraRecord,
+    RecentBlock, RecentTx, TransactionSemanticRecord,
 };
 
 /// Bounded canonical evidence supplied to an enrichment source when it
@@ -18,6 +18,7 @@ use cknerv_core::{
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CanonicalContext {
     pub tip: u64,
+    pub epoch_number: u64,
     pub chain_name: String,
     pub recent_blocks: Vec<RecentBlock>,
     pub recent_transactions: Vec<RecentTx>,
@@ -74,6 +75,15 @@ pub trait EnrichmentSource: Send + Sync + 'static {
         &self,
         _context: &CanonicalContext,
     ) -> anyhow::Result<Option<DaoStateRecord>> {
+        Ok(None)
+    }
+
+    /// Refresh fixed-shape protocol-edition context. Sources without a
+    /// bounded current/upcoming-edition endpoint leave this unsupported.
+    async fn enrich_protocol_era(
+        &self,
+        _context: &CanonicalContext,
+    ) -> anyhow::Result<Option<ProtocolEraRecord>> {
         Ok(None)
     }
 

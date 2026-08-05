@@ -3,7 +3,7 @@
     "source": {
       "source": "ckbadger",
       "status": "ready",
-      "capabilities": ["cell_detail", "script_identity", "data_analysis", "asset_identity", "asset_ecosystem", "dao_state", "activity_feed", "fork_watch", "network_atlas", "transaction_detail", "transaction_lifecycle"],
+      "capabilities": ["cell_detail", "script_identity", "data_analysis", "asset_identity", "asset_ecosystem", "dao_state", "protocol_era", "activity_feed", "fork_watch", "network_atlas", "transaction_detail", "transaction_lifecycle"],
       "indexed_tip": 100,
       "lag_blocks": 1,
       "validated_anchor": {
@@ -162,6 +162,23 @@
       "deposit_change_24h_shannons": "141530599353229",
       "depositors_change_24h": 5
     },
+    "protocol_era": {
+      "source": "ckbadger",
+      "as_of": {
+        "block": 100,
+        "hash": "0xblock100"
+      },
+      "updated_at_ms": 1700000000009,
+      "network": "mainnet",
+      "indexed_tip_block": 100,
+      "indexed_tip_epoch": 12293,
+      "current": {
+        "name": "Meepo",
+        "edition_year": 2024,
+        "activation_epoch": 12293,
+        "activation_block": 99
+      }
+    },
     "fork_watch": {
       "source": "ckbadger",
       "as_of": {
@@ -259,7 +276,7 @@
       "source": {
         "source": "ckbadger",
         "status": "ready",
-        "capabilities": ["cell_detail", "script_identity", "data_analysis", "asset_identity", "asset_ecosystem", "dao_state", "activity_feed", "fork_watch", "network_atlas", "transaction_detail", "transaction_lifecycle"],
+        "capabilities": ["cell_detail", "script_identity", "data_analysis", "asset_identity", "asset_ecosystem", "dao_state", "protocol_era", "activity_feed", "fork_watch", "network_atlas", "transaction_detail", "transaction_lifecycle"],
         "indexed_tip": 100,
         "lag_blocks": 1,
         "validated_anchor": {
@@ -402,6 +419,26 @@
         "estimated_apc_bps": 201,
         "deposit_change_24h_shannons": "141530599353229",
         "depositors_change_24h": 5
+      }
+    },
+    "protocol_era_replace": {
+      "type": "protocol_era_replace",
+      "protocol_era": {
+        "source": "ckbadger",
+        "as_of": {
+          "block": 100,
+          "hash": "0xblock100"
+        },
+        "updated_at_ms": 1700000000009,
+        "network": "mainnet",
+        "indexed_tip_block": 100,
+        "indexed_tip_epoch": 12293,
+        "current": {
+          "name": "Meepo",
+          "edition_year": 2024,
+          "activation_epoch": 12293,
+          "activation_block": 99
+        }
       }
     },
     "fork_watch_replace": {
