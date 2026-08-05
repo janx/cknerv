@@ -259,6 +259,9 @@ With a local ckbadger service configured:
       `network_atlas` whose sample is at most 64 and contains no peer identities
 - [ ] With the crawler disabled, `network_atlas` remains absent while source
       health, Cell detail, ecosystem, DAO, and activity enrichment still work
+- [ ] Delaying or failing one aggregate endpoint leaves the source probe and
+      other due aggregate refreshes responsive; no capability overlaps its own
+      in-flight request
 - [ ] `COMMON KNOWLEDGE BASE` shows `INDEXED NERVOS DAO` with its statistics
       block, anchor, fixed DAO totals, APC, and available 24-hour deltas
 - [ ] Directly below canonical `Reorgs`, `INDEXED FORK WATCH` shows clear,
@@ -273,6 +276,9 @@ With a local ckbadger service configured:
 - [ ] `PEER MESH` shows `INDEXED NETWORK ATLAS · LATEST N SAMPLE` below the
       direct-peer telemetry without adding crawler nodes or edges to the scene
 - [ ] A same-height block hash mismatch shows `INCOMPATIBLE`; chain/cells keep moving
+- [ ] A same-height replacement that occurs after an enrichment payload is
+      fetched is rejected by the final anchor check and never appears in the
+      semantics snapshot
 - [ ] Clicking a Cell lazily adds address, script names, occupied-byte
       composition, and available DAO/code-cell/data facets
 - [ ] The selected Cell gains one CAP/LOCK/TYPE/DATA composition orbit; it is

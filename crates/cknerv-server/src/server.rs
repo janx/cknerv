@@ -20,7 +20,7 @@
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use axum::Router;
 use tokio::sync::{mpsc, watch};
@@ -39,16 +39,6 @@ use crate::state::ServerState;
 const MUTATION_PIPELINE_CAPACITY: usize = 4096;
 
 const ENRICHMENT_PIPELINE_CAPACITY: usize = 256;
-const ENRICHMENT_PROBE_INTERVAL: Duration = Duration::from_secs(5);
-const ENRICHMENT_STATUS_REFRESH: Duration = Duration::from_secs(60);
-const ENRICHMENT_ECOSYSTEM_REFRESH: Duration = Duration::from_secs(30);
-const ENRICHMENT_DAO_STATE_REFRESH: Duration = Duration::from_secs(60);
-const ENRICHMENT_PROTOCOL_ERA_REFRESH: Duration = Duration::from_secs(5 * 60);
-const ENRICHMENT_ACTIVITY_REFRESH: Duration = Duration::from_secs(15);
-const ENRICHMENT_TRANSACTION_HORIZON_REFRESH: Duration = Duration::from_secs(60);
-const ENRICHMENT_FORK_WATCH_REFRESH: Duration = Duration::from_secs(15);
-const ENRICHMENT_NETWORK_ATLAS_REFRESH: Duration = Duration::from_secs(60);
-
 /// Type-erased projection registration callback. Boxed so a single
 /// `Vec<...>` can hold many heterogeneous projections.
 type ProjectionInstaller = Box<dyn FnOnce(&mut Registry) + Send>;
@@ -207,313 +197,16 @@ impl ServerBuilder {
 
         // The optional source is supervised independently. Probe failures are
         // expressed as source status and never signal canonical shutdown.
+        // Bounded aggregate refreshes use their own due times and limited
+        // concurrency so a slow capability cannot delay source health.
         let enrichment_source = self.enrichment_source.clone();
         let enrichment_source_handle = enrichment_source.as_ref().map(|source| {
-            let source = source.clone();
-            let source_state = state.clone();
-            let source_out = enrichment_tx.clone();
-            let mut source_shutdown = shutdown_rx.clone();
-            tokio::spawn(async move {
-                let mut interval = tokio::time::interval(ENRICHMENT_PROBE_INTERVAL);
-                interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-                let mut last_status = None;
-                let mut last_publish = Instant::now()
-                    .checked_sub(ENRICHMENT_STATUS_REFRESH)
-                    .unwrap_or_else(Instant::now);
-                let mut last_ecosystem_refresh: Option<Instant> = None;
-                let mut last_dao_state_refresh: Option<Instant> = None;
-                let mut last_protocol_era_refresh: Option<Instant> = None;
-                let mut last_activity_refresh: Option<Instant> = None;
-                let mut last_transaction_horizon_refresh: Option<Instant> = None;
-                let mut last_fork_watch_refresh: Option<Instant> = None;
-                let mut last_network_atlas_refresh: Option<Instant> = None;
-                let mut network_atlas_present = false;
-                loop {
-                    tokio::select! {
-                        _ = interval.tick() => {
-                            let context = source_state.canonical_context();
-                            let status = source.probe(&context).await;
-                            let changed = last_status.as_ref().is_none_or(|previous| {
-                                status_materially_changed(previous, &status)
-                            });
-                            if changed || last_publish.elapsed() >= ENRICHMENT_STATUS_REFRESH {
-                                if source_out
-                                    .send(EnrichmentEvent::SourceStatus(status.clone()))
-                                    .await
-                                    .is_err()
-                                {
-                                    break;
-                                }
-                                last_status = Some(status.clone());
-                                last_publish = Instant::now();
-                            }
-                            let ecosystem_ready = status.validated_anchor.is_some()
-                                && matches!(
-                                    status.status,
-                                    cknerv_core::EnrichmentSourceState::Ready
-                                        | cknerv_core::EnrichmentSourceState::Stale
-                                )
-                                && status
-                                    .capabilities
-                                    .iter()
-                                    .any(|capability| capability == "asset_ecosystem");
-                            let ecosystem_due = last_ecosystem_refresh
-                                .is_none_or(|last| last.elapsed() >= ENRICHMENT_ECOSYSTEM_REFRESH);
-                            if !ecosystem_ready {
-                                last_ecosystem_refresh = None;
-                            } else if ecosystem_due {
-                                last_ecosystem_refresh = Some(Instant::now());
-                                match source.enrich_asset_ecosystem(&context).await {
-                                    Ok(Some(asset_ecosystem)) => {
-                                        if source_out
-                                            .send(EnrichmentEvent::AssetEcosystemReplace(
-                                                asset_ecosystem,
-                                            ))
-                                            .await
-                                            .is_err()
-                                        {
-                                            break;
-                                        }
-                                    }
-                                    Ok(None) => {}
-                                    Err(error) => tracing::warn!(
-                                        target: "cknerv-server",
-                                        "optional asset-ecosystem refresh failed: {error}"
-                                    ),
-                                }
-                            }
-                            let dao_state_ready = status.validated_anchor.is_some()
-                                && matches!(
-                                    status.status,
-                                    cknerv_core::EnrichmentSourceState::Ready
-                                        | cknerv_core::EnrichmentSourceState::Stale
-                                )
-                                && status
-                                    .capabilities
-                                    .iter()
-                                    .any(|capability| capability == "dao_state");
-                            let dao_state_due = last_dao_state_refresh
-                                .is_none_or(|last| last.elapsed() >= ENRICHMENT_DAO_STATE_REFRESH);
-                            if !dao_state_ready {
-                                last_dao_state_refresh = None;
-                            } else if dao_state_due {
-                                last_dao_state_refresh = Some(Instant::now());
-                                match source.enrich_dao_state(&context).await {
-                                    Ok(Some(dao_state)) => {
-                                        if source_out
-                                            .send(EnrichmentEvent::DaoStateReplace(dao_state))
-                                            .await
-                                            .is_err()
-                                        {
-                                            break;
-                                        }
-                                    }
-                                    Ok(None) => {}
-                                    Err(error) => tracing::warn!(
-                                        target: "cknerv-server",
-                                        "optional DAO-state refresh failed: {error}"
-                                    ),
-                                }
-                            }
-                            let protocol_era_ready = status.validated_anchor.is_some()
-                                && matches!(
-                                    status.status,
-                                    cknerv_core::EnrichmentSourceState::Ready
-                                        | cknerv_core::EnrichmentSourceState::Stale
-                                )
-                                && status
-                                    .capabilities
-                                    .iter()
-                                    .any(|capability| capability == "protocol_era");
-                            let protocol_era_due = last_protocol_era_refresh.is_none_or(|last| {
-                                last.elapsed() >= ENRICHMENT_PROTOCOL_ERA_REFRESH
-                            });
-                            if !protocol_era_ready {
-                                last_protocol_era_refresh = None;
-                            } else if protocol_era_due {
-                                last_protocol_era_refresh = Some(Instant::now());
-                                match source.enrich_protocol_era(&context).await {
-                                    Ok(Some(protocol_era)) => {
-                                        if source_out
-                                            .send(EnrichmentEvent::ProtocolEraReplace(
-                                                protocol_era,
-                                            ))
-                                            .await
-                                            .is_err()
-                                        {
-                                            break;
-                                        }
-                                    }
-                                    Ok(None) => {}
-                                    Err(error) => tracing::warn!(
-                                        target: "cknerv-server",
-                                        "optional protocol-era refresh failed: {error}"
-                                    ),
-                                }
-                            }
-                            let activity_ready = status.validated_anchor.is_some()
-                                && matches!(
-                                    status.status,
-                                    cknerv_core::EnrichmentSourceState::Ready
-                                        | cknerv_core::EnrichmentSourceState::Stale
-                                )
-                                && status
-                                    .capabilities
-                                    .iter()
-                                    .any(|capability| capability == "activity_feed");
-                            let activity_due = last_activity_refresh
-                                .is_none_or(|last| last.elapsed() >= ENRICHMENT_ACTIVITY_REFRESH);
-                            if !activity_ready {
-                                last_activity_refresh = None;
-                            } else if activity_due {
-                                last_activity_refresh = Some(Instant::now());
-                                match source.enrich_activity_feed(&context).await {
-                                    Ok(Some(activity_feed)) => {
-                                        if source_out
-                                            .send(EnrichmentEvent::ActivityFeedReplace(
-                                                activity_feed,
-                                            ))
-                                            .await
-                                            .is_err()
-                                        {
-                                            break;
-                                        }
-                                    }
-                                    Ok(None) => {}
-                                    Err(error) => tracing::warn!(
-                                        target: "cknerv-server",
-                                        "optional activity-feed refresh failed: {error}"
-                                    ),
-                                }
-                            }
-                            let transaction_horizon_ready = status.validated_anchor.is_some()
-                                && matches!(
-                                    status.status,
-                                    cknerv_core::EnrichmentSourceState::Ready
-                                        | cknerv_core::EnrichmentSourceState::Stale
-                                )
-                                && status
-                                    .capabilities
-                                    .iter()
-                                    .any(|capability| capability == "transaction_horizon");
-                            let transaction_horizon_due = last_transaction_horizon_refresh
-                                .is_none_or(|last| {
-                                    last.elapsed() >= ENRICHMENT_TRANSACTION_HORIZON_REFRESH
-                                });
-                            if !transaction_horizon_ready {
-                                last_transaction_horizon_refresh = None;
-                            } else if transaction_horizon_due {
-                                last_transaction_horizon_refresh = Some(Instant::now());
-                                match source.enrich_transaction_horizon(&context).await {
-                                    Ok(Some(transaction_horizon)) => {
-                                        if source_out
-                                            .send(EnrichmentEvent::TransactionHorizonReplace(
-                                                transaction_horizon,
-                                            ))
-                                            .await
-                                            .is_err()
-                                        {
-                                            break;
-                                        }
-                                    }
-                                    Ok(None) => {}
-                                    Err(error) => tracing::warn!(
-                                        target: "cknerv-server",
-                                        "optional transaction-horizon refresh failed: {error}"
-                                    ),
-                                }
-                            }
-                            let fork_watch_ready = (status.validated_anchor.is_some()
-                                && matches!(
-                                    status.status,
-                                    cknerv_core::EnrichmentSourceState::Ready
-                                        | cknerv_core::EnrichmentSourceState::Stale
-                                )
-                                || status.status
-                                    == cknerv_core::EnrichmentSourceState::Incompatible)
-                                && status
-                                    .capabilities
-                                    .iter()
-                                    .any(|capability| capability == "fork_watch");
-                            let fork_watch_due = last_fork_watch_refresh
-                                .is_none_or(|last| last.elapsed() >= ENRICHMENT_FORK_WATCH_REFRESH);
-                            if !fork_watch_ready {
-                                last_fork_watch_refresh = None;
-                            } else if fork_watch_due {
-                                last_fork_watch_refresh = Some(Instant::now());
-                                match source.enrich_fork_watch(&context).await {
-                                    Ok(Some(fork_watch)) => {
-                                        if source_out
-                                            .send(EnrichmentEvent::ForkWatchReplace(fork_watch))
-                                            .await
-                                            .is_err()
-                                        {
-                                            break;
-                                        }
-                                    }
-                                    Ok(None) => {}
-                                    Err(error) => tracing::warn!(
-                                        target: "cknerv-server",
-                                        "optional fork-watch refresh failed: {error}"
-                                    ),
-                                }
-                            }
-                            let network_atlas_ready = status.validated_anchor.is_some()
-                                && matches!(
-                                    status.status,
-                                    cknerv_core::EnrichmentSourceState::Ready
-                                        | cknerv_core::EnrichmentSourceState::Stale
-                                )
-                                && status
-                                    .capabilities
-                                    .iter()
-                                    .any(|capability| capability == "network_atlas");
-                            let network_atlas_due = last_network_atlas_refresh.is_none_or(|last| {
-                                last.elapsed() >= ENRICHMENT_NETWORK_ATLAS_REFRESH
-                            });
-                            if !network_atlas_ready {
-                                last_network_atlas_refresh = None;
-                            } else if network_atlas_due {
-                                last_network_atlas_refresh = Some(Instant::now());
-                                match source.enrich_network_atlas(&context).await {
-                                    Ok(Some(network_atlas)) => {
-                                        if source_out
-                                            .send(EnrichmentEvent::NetworkAtlasReplace(
-                                                network_atlas,
-                                            ))
-                                            .await
-                                            .is_err()
-                                        {
-                                            break;
-                                        }
-                                        network_atlas_present = true;
-                                    }
-                                    Ok(None) if network_atlas_present => {
-                                        if source_out
-                                            .send(EnrichmentEvent::NetworkAtlasClear)
-                                            .await
-                                            .is_err()
-                                        {
-                                            break;
-                                        }
-                                        network_atlas_present = false;
-                                    }
-                                    Ok(None) => {}
-                                    Err(error) => tracing::warn!(
-                                        target: "cknerv-server",
-                                        "optional network-atlas refresh failed: {error}"
-                                    ),
-                                }
-                            }
-                        }
-                        changed = source_shutdown.changed() => {
-                            if changed.is_err() || *source_shutdown.borrow() {
-                                break;
-                            }
-                        }
-                    }
-                }
-            })
+            crate::enrichment_supervisor::spawn(
+                source.clone(),
+                state.clone(),
+                enrichment_tx.clone(),
+                shutdown_rx.clone(),
+            )
         });
 
         // Persist the first usable derived snapshot as soon as boot replay
@@ -591,19 +284,6 @@ impl ServerBuilder {
 
         Ok((router, handle))
     }
-}
-
-fn status_materially_changed(
-    previous: &cknerv_core::EnrichmentSourceStatus,
-    current: &cknerv_core::EnrichmentSourceStatus,
-) -> bool {
-    previous.source != current.source
-        || previous.status != current.status
-        || previous.capabilities != current.capabilities
-        || previous.indexed_tip != current.indexed_tip
-        || previous.lag_blocks != current.lag_blocks
-        || previous.validated_anchor != current.validated_anchor
-        || previous.message != current.message
 }
 
 impl Default for ServerBuilder {
