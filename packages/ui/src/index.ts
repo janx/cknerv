@@ -158,6 +158,7 @@ export {
 } from './components/hud/CellSemanticsReadout';
 export { default as AssetEcosystemReadout } from './components/hud/AssetEcosystemReadout';
 export { default as DaoStateReadout } from './components/hud/DaoStateReadout';
+export { default as DaoStatePanel } from './components/hud/DaoStatePanel';
 export { default as ProtocolEraBadge } from './components/hud/ProtocolEraBadge';
 export { default as ActivityFeedReadout } from './components/hud/ActivityFeedReadout';
 export { default as TransactionHorizonReadout } from './components/hud/TransactionHorizonReadout';

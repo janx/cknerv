@@ -22,6 +22,13 @@ vi.mock('leva', () => ({
 
 import StatusStrip from '../../../src/components/hud/StatusStrip';
 
+const panelControls = [
+  { id: 'chain', code: 'CKB·01', label: 'COMMON KNOWLEDGE BASE', visible: true },
+  { id: 'pulse', code: 'ECG·04', label: 'PULSE', visible: true },
+  { id: 'cells', code: 'MESH·03', label: 'CELL MESH', visible: true },
+  { id: 'peers', code: 'MESH·02', label: 'PEER MESH', visible: true },
+];
+
 beforeEach(() => {
   setQualityMode('auto');
   setAdaptiveQuality('high');
@@ -70,26 +77,37 @@ describe('StatusStrip', () => {
     expect(queryByRole('link')).toBeNull();
   });
 
-  it('places the panel visibility toggle immediately after the build version', () => {
-    const onPanelsVisibleChange = vi.fn();
+  it('places the panel menu after the build and controls panels independently', () => {
+    const onPanelVisibilityChange = vi.fn();
     const { container } = render(
       <StatusStrip
         level="nominal"
         uptimeMs={0}
         build={{ version: '20260630@61922ba', href: 'https://github.com/janx/cknerv/commit/61922ba' }}
-        panelsVisible
-        onPanelsVisibleChange={onPanelsVisibleChange}
+        panelControls={panelControls}
+        onPanelVisibilityChange={onPanelVisibilityChange}
       />,
     );
     const primary = container.querySelector('[data-status-primary]') as HTMLElement;
     const build = screen.getByRole('link', { name: '20260630@61922ba' });
-    const toggle = screen.getByRole('button', { name: 'Hide HUD panels' });
+    const control = container.querySelector('[data-panel-visibility-control]') as HTMLElement;
+    const toggle = screen.getByRole('button', {
+      name: 'Configure HUD panels, 4 of 4 visible',
+    });
 
-    expect(build.nextElementSibling).toBe(toggle);
+    expect(build.nextElementSibling).toBe(control);
     expect(primary.contains(toggle)).toBe(true);
-    expect(toggle.getAttribute('aria-pressed')).toBe('true');
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
     fireEvent.click(toggle);
-    expect(onPanelsVisibleChange).toHaveBeenCalledWith(false);
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getByRole('menu', { name: 'HUD panels' })).not.toBeNull();
+
+    const chainToggle = screen.getByRole('menuitemcheckbox', {
+      name: 'COMMON KNOWLEDGE BASE panel',
+    });
+    expect(chainToggle.getAttribute('aria-checked')).toBe('true');
+    fireEvent.click(chainToggle);
+    expect(onPanelVisibilityChange).toHaveBeenCalledWith('chain', false);
   });
 
   it('uses a prioritized two-row layout when horizontal space is constrained', () => {
@@ -98,8 +116,8 @@ describe('StatusStrip', () => {
         level="nominal"
         uptimeMs={3_000}
         build={{ version: '20260630@61922ba', href: 'https://github.com/janx/cknerv/commit/61922ba' }}
-        panelsVisible
-        onPanelsVisibleChange={() => {}}
+        panelControls={panelControls}
+        onPanelVisibilityChange={() => {}}
         compact
       />,
     );
@@ -112,7 +130,9 @@ describe('StatusStrip', () => {
     expect(controls.style.overflowX).toBe('auto');
     expect(container.querySelector('[data-status-summary]')?.textContent).toContain('NOMINAL');
     expect(screen.getByRole('link', { name: '20260630@61922ba' }).textContent).toBe('20260630');
-    expect(screen.getByRole('button', { name: 'Hide HUD panels' })).not.toBeNull();
+    expect(screen.getByRole('button', {
+      name: 'Configure HUD panels, 4 of 4 visible',
+    })).not.toBeNull();
     expect(screen.getByRole('group', { name: 'Cell display count' })).not.toBeNull();
     expect(screen.getByRole('group', { name: 'Render quality' })).not.toBeNull();
     expect(container.textContent).not.toContain('UP 00:00:03');
