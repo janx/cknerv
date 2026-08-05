@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { ReactNode } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 import type { EnrichmentSourceStatus } from '@cknerv/types';
 import { useControls } from 'leva';
 import type { AlertLevel } from '../../derives/alertLevel';
@@ -32,6 +32,23 @@ export type HudPanelControl = {
   visible: boolean;
 };
 
+export const STATUS_STRIP_HEIGHTS = {
+  wide: 36,
+  compact: 64,
+  mobile: 59,
+  mobileContext: 88,
+} as const;
+
+const NAV_MODULE_STYLE: CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  flexShrink: 0,
+  height: 24,
+  boxSizing: 'border-box',
+  borderLeft: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.14)}`,
+  background: `linear-gradient(90deg,${rgba(HUD_COLORS.cyanWire, 0.035)},transparent 78%)`,
+};
+
 const LEVEL_COLOR: Record<AlertLevel, string> = {
   nominal: HUD_COLORS.nominal, syncing: HUD_COLORS.cyanWire, caution: HUD_COLORS.caution,
   warning: HUD_COLORS.warning, danger: HUD_COLORS.danger, crit: HUD_COLORS.danger,
@@ -45,16 +62,13 @@ function fmtUptime(ms: number): string {
   return `UP ${hh}:${mm}:${ss}`;
 }
 
-// Build tag rendered as a hairline capsule right after the wordmark. `version`
-// is opaque (built in ui-app); we split on the first `@` only for two-tone
-// display — the leading segment reads bright, the `@…` tail dim — and fall back
-// to a single bright run when there's no `@`. The whole capsule is a commit
-// deep-link that warms to an orange glow on hover.
+// Build identity sits on the same angular rail as the other HUD modules. The
+// date suffix remains available in the tooltip; the commit-sized head is the
+// useful, scannable identifier in the bar itself.
 function BuildChip({ build, compact = false }: { build: BuildInfo; compact?: boolean }) {
   const [hot, setHot] = useState(false);
   const at = build.version.indexOf('@');
   const head = at >= 0 ? build.version.slice(0, at) : build.version;
-  const tail = at >= 0 ? build.version.slice(at) : '';
   return (
     <a
       href={build.href}
@@ -66,29 +80,34 @@ function BuildChip({ build, compact = false }: { build: BuildInfo; compact?: boo
       onPointerDown={(e) => e.stopPropagation()}
       onMouseEnter={() => setHot(true)}
       onMouseLeave={() => setHot(false)}
+      data-build-chip
       style={{
-        display: 'inline-flex', alignItems: 'center',
-        maxWidth: compact ? 74 : undefined,
+        ...NAV_MODULE_STYLE,
+        gap: 5,
+        maxWidth: compact ? 86 : 112,
         overflow: 'hidden',
-        padding: compact ? '2px 5px' : '2px 8px', borderRadius: 999,
-        border: `1px solid ${rgba(HUD_COLORS.orange, hot ? 0.55 : 0.22)}`,
-        background: rgba(HUD_COLORS.orange, hot ? 0.1 : 0.045),
-        boxShadow: hot ? `0 0 10px ${rgba(HUD_COLORS.orange, 0.35)}` : 'none',
-        fontFamily: HUD_FONTS.mono, fontSize: 9.5, letterSpacing: 0.5, lineHeight: 1,
+        height: 22,
+        padding: compact ? '0 6px' : '0 8px',
+        borderLeftColor: rgba(HUD_COLORS.orange, hot ? 0.56 : 0.24),
+        borderBottom: `1px solid ${rgba(HUD_COLORS.orange, hot ? 0.34 : 0.1)}`,
+        background: `linear-gradient(90deg,${rgba(HUD_COLORS.orange, hot ? 0.09 : 0.035)},transparent)`,
+        boxShadow: hot ? `inset 0 -1px 8px ${rgba(HUD_COLORS.orange, 0.1)}` : 'none',
+        fontFamily: HUD_FONTS.mono, fontSize: 9, letterSpacing: 0.55, lineHeight: 1,
         textDecoration: 'none', pointerEvents: 'auto',
         transition: 'border-color .18s, background .18s, box-shadow .18s',
       }}
     >
+      <span className="cknerv-build-label" style={{ color: HUD_COLORS.dim, fontSize: 7, letterSpacing: 1 }}>BUILD</span>
       <span style={{ color: hot ? HUD_COLORS.orange : HUD_COLORS.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textShadow: hot ? `0 0 6px ${rgba(HUD_COLORS.orange, 0.5)}` : 'none', transition: 'color .18s, text-shadow .18s' }}>{head}</span>
-      {!compact && tail ? <span style={{ color: hot ? rgba(HUD_COLORS.orange, 0.6) : HUD_COLORS.dim, transition: 'color .18s' }}>{tail}</span> : null}
     </a>
   );
 }
 
-function PanelVisibilityControl({ panels, onChange, compact = false }: {
+function PanelVisibilityControl({ panels, onChange, compact = false, menuOffset = 34 }: {
   panels: readonly HudPanelControl[];
   onChange: (id: string, visible: boolean) => void;
   compact?: boolean;
+  menuOffset?: number;
 }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -139,15 +158,19 @@ function PanelVisibilityControl({ panels, onChange, compact = false }: {
         }}
         style={{
           appearance: 'none',
+          ...NAV_MODULE_STYLE,
           display: 'inline-flex',
           alignItems: 'center',
           gap: compact ? 4 : 5,
-          height: 20,
+          height: 22,
           padding: compact ? '0 5px' : '0 7px',
-          border: `1px solid ${rgba(color, 0.34)}`,
-          background: rgba(color, 0.065),
+          borderTop: 0,
+          borderRight: 0,
+          borderLeft: `1px solid ${rgba(color, 0.3)}`,
+          borderBottom: `1px solid ${rgba(color, 0.12)}`,
+          background: `linear-gradient(90deg,${rgba(color, 0.055)},transparent)`,
           color,
-          font: `400 ${compact ? 8 : 8.5}px/18px ${HUD_FONTS.mono}`,
+          font: `400 ${compact ? 8 : 8.5}px/20px ${HUD_FONTS.mono}`,
           letterSpacing: compact ? 0.45 : 0.7,
           textShadow: `0 0 6px ${rgba(color, 0.38)}`,
           cursor: 'pointer',
@@ -165,10 +188,10 @@ function PanelVisibilityControl({ panels, onChange, compact = false }: {
           data-panel-visibility-menu
           onPointerDown={(event) => event.stopPropagation()}
           style={{
-            position: 'fixed',
+            position: 'absolute',
             zIndex: 60,
-            top: compact ? 54 : 30,
-            left: compact ? 8 : 108,
+            top: menuOffset,
+            left: 0,
             width: 244,
             maxWidth: 'calc(100vw - 16px)',
             boxSizing: 'border-box',
@@ -179,6 +202,8 @@ function PanelVisibilityControl({ panels, onChange, compact = false }: {
             fontFamily: HUD_FONTS.mono,
           }}
         >
+          <span aria-hidden style={{ position: 'absolute', left: -1, top: -1, width: 10, height: 10, borderLeft: `1px solid ${HUD_COLORS.orange}`, borderTop: `1px solid ${HUD_COLORS.orange}` }} />
+          <span aria-hidden style={{ position: 'absolute', right: -1, bottom: -1, width: 10, height: 10, borderRight: `1px solid ${HUD_COLORS.orange}`, borderBottom: `1px solid ${HUD_COLORS.orange}` }} />
           <div
             style={{
               display: 'flex',
@@ -268,21 +293,26 @@ const ENRICHMENT_COLOR: Record<EnrichmentSourceStatus['status'], string> = {
   error: HUD_COLORS.danger,
 };
 
-function EnrichmentChip({ source }: { source: EnrichmentSourceStatus }) {
+function EnrichmentChip({ source, compact = false }: {
+  source: EnrichmentSourceStatus;
+  compact?: boolean;
+}) {
   const color = ENRICHMENT_COLOR[source.status];
   const lag = source.lag_blocks == null ? '' : ` ${source.lag_blocks}↓`;
   return (
     <span
       data-enrichment-chip
       data-enrichment-status={source.status}
-      title={source.message ?? `Validated indexed context from ${source.source}`}
+      aria-label={`${source.source} ${source.status}${lag}`}
+      title={source.message ?? `Enhanced context from ${source.source}`}
       style={{
+        ...NAV_MODULE_STYLE,
         display: 'inline-flex',
         alignItems: 'center',
-        gap: 5,
-        padding: '2px 7px',
-        border: `1px solid ${rgba(color, 0.25)}`,
-        color,
+        gap: compact ? 4 : 5,
+        height: 24,
+        padding: compact ? '0 7px' : '0 9px',
+        borderLeftColor: rgba(color, 0.25),
         fontFamily: HUD_FONTS.mono,
         fontSize: 8.5,
         letterSpacing: 0.75,
@@ -290,13 +320,14 @@ function EnrichmentChip({ source }: { source: EnrichmentSourceStatus }) {
       }}
     >
       <span style={{ width: 4, height: 4, borderRadius: '50%', background: color, boxShadow: `0 0 5px ${color}` }} />
-      {source.source.toUpperCase()} {source.status.toUpperCase()}{lag}
+      <span style={{ color: HUD_COLORS.dim }}>{source.source.toUpperCase()}</span>
+      <span style={{ color, textShadow: `0 0 6px ${rgba(color, 0.34)}` }}>{source.status.toUpperCase()}{lag}</span>
     </span>
   );
 }
 
 const QUALITY_MODES = ['auto', 'high', 'med', 'low'] as const satisfies readonly QualityMode[];
-const CELL_TRACK_TICKS = [0, 25, 50, 75, 100] as const;
+const CELL_TRACK_TICKS = [0, 50, 100] as const;
 
 function fmtCellCount(count: number): string {
   if (count < 1_000) return String(count);
@@ -307,9 +338,11 @@ function fmtCellCount(count: number): string {
 function CellDisplayControl({
   availableCells,
   capacity = CELL_DISPLAY_MAX,
+  compact = false,
 }: {
   availableCells?: number;
   capacity?: number;
+  compact?: boolean;
 }) {
   const quality = useQualityRuntime();
   const display = useCellDisplayRuntime();
@@ -363,13 +396,10 @@ function CellDisplayControl({
       onPointerDown={(event) => event.stopPropagation()}
       onKeyDown={(event) => event.stopPropagation()}
       style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: 7,
-        flexShrink: 0,
-        height: 20,
-        paddingLeft: 12,
-        borderLeft: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.1)}`,
+        ...NAV_MODULE_STYLE,
+        gap: compact ? 5 : 7,
+        height: 24,
+        padding: compact ? '0 7px' : '0 10px',
         pointerEvents: 'auto',
         fontFamily: HUD_FONTS.mono,
       }}
@@ -391,10 +421,9 @@ function CellDisplayControl({
         style={{
           display: 'inline-flex',
           alignItems: 'baseline',
-          gap: 3,
-          minWidth: 61,
+          minWidth: compact ? 27 : 34,
           color: HUD_COLORS.cyanWire,
-          fontSize: 9,
+          fontSize: 10,
           fontVariantNumeric: 'tabular-nums',
           letterSpacing: 0.55,
           whiteSpace: 'nowrap',
@@ -402,17 +431,6 @@ function CellDisplayControl({
         }}
       >
         <span>{fmtCellCount(visible)}</span>
-        <span
-          aria-hidden="true"
-          style={{
-            color: HUD_COLORS.dim,
-            fontSize: 7,
-            letterSpacing: 0.8,
-            textShadow: 'none',
-          }}
-        >
-          SHOWN
-        </span>
       </output>
       <button
         type="button"
@@ -430,9 +448,9 @@ function CellDisplayControl({
           appearance: 'none',
           display: 'inline-flex',
           alignItems: 'center',
-          gap: 5,
+          gap: 4,
           height: 18,
-          padding: '0 2px',
+          padding: '0 1px',
           border: 0,
           background: 'transparent',
           color: accent,
@@ -462,7 +480,7 @@ function CellDisplayControl({
         style={{
           position: 'relative',
           display: 'inline-block',
-          width: 76,
+          width: compact ? 44 : 64,
           height: 18,
           flexShrink: 0,
         }}
@@ -590,8 +608,8 @@ function CellDisplayControl({
         style={{
           display: 'inline-flex',
           alignItems: 'baseline',
-          gap: 3,
-          minWidth: 54,
+          gap: 2,
+          minWidth: compact ? 28 : 34,
           fontVariantNumeric: 'tabular-nums',
           whiteSpace: 'nowrap',
         }}
@@ -604,7 +622,7 @@ function CellDisplayControl({
             letterSpacing: 0.8,
           }}
         >
-          CAP
+          /
         </span>
         <span
           style={{
@@ -621,7 +639,7 @@ function CellDisplayControl({
   );
 }
 
-function RenderQualityControl() {
+function RenderQualityControl({ compact = false }: { compact?: boolean }) {
   const quality = useQualityRuntime();
   const [, setLevaQuality] = useControls('Time', () => QUALITY_MODE_CONTROL, []);
   const accent = quality.mode === 'auto' ? HUD_COLORS.cyanWire : HUD_COLORS.orange;
@@ -644,13 +662,10 @@ function RenderQualityControl() {
       data-quality-effective={quality.effective}
       onPointerDown={(event) => event.stopPropagation()}
       style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: 7,
-        flexShrink: 0,
-        height: 20,
-        paddingLeft: 12,
-        borderLeft: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.1)}`,
+        ...NAV_MODULE_STYLE,
+        gap: compact ? 4 : 7,
+        height: 24,
+        padding: compact ? '0 6px' : '0 9px',
         pointerEvents: 'auto',
         fontFamily: HUD_FONTS.mono,
       }}
@@ -674,7 +689,8 @@ function RenderQualityControl() {
           display: 'inline-flex',
           alignItems: 'center',
           height: 18,
-          padding: '0 1px',
+          padding: '0 1px 1px',
+          background: `linear-gradient(90deg,transparent,${rgba(HUD_COLORS.cyanWire, 0.08)},transparent) left bottom/100% 1px no-repeat`,
         }}
       >
         {QUALITY_MODES.map((mode, index) => {
@@ -700,9 +716,9 @@ function RenderQualityControl() {
               style={{
                 appearance: 'none',
                 position: 'relative',
-                minWidth: mode === 'auto' ? 43 : 32,
+                minWidth: mode === 'auto' ? 40 : 23,
                 height: 18,
-                padding: '0 5px 2px',
+                padding: '0 3px 2px',
                 border: 0,
                 background: 'transparent',
                 color: active ? accent : HUD_COLORS.dim,
@@ -729,7 +745,7 @@ function RenderQualityControl() {
                   }}
                 />
               ) : null}
-              {mode.toUpperCase()}{autoSuffix}
+              {mode === 'auto' ? 'AUTO' : mode[0].toUpperCase()}{autoSuffix}
               {active ? (
                 <span
                   aria-hidden="true"
@@ -766,6 +782,7 @@ export default function StatusStrip({
   panelControls,
   onPanelVisibilityChange,
   compact = false,
+  mobile = false,
 }: {
   level: AlertLevel;
   uptimeMs: number;
@@ -784,11 +801,37 @@ export default function StatusStrip({
   onPanelVisibilityChange?: (id: string, visible: boolean) => void;
   /** Two-row navigation layout used when horizontal space is constrained. */
   compact?: boolean;
+  /** Three-row priority layout that keeps primary controls visible on phones. */
+  mobile?: boolean;
 }) {
+  const layout = mobile ? 'mobile' : compact ? 'compact' : 'wide';
+  const dense = layout !== 'wide';
   const color = LEVEL_COLOR[level];
   const streamColor = stream && stream.phase !== 'live'
     ? STREAM_COLOR[stream.phase]
     : null;
+  const mobileHasContext = layout === 'mobile'
+    && Boolean(enrichmentSource || actions || streamColor);
+  const barHeight = mobileHasContext
+    ? STATUS_STRIP_HEIGHTS.mobileContext
+    : STATUS_STRIP_HEIGHTS[layout];
+  const accentRail = (
+    <span
+      data-status-accent-rail
+      aria-hidden="true"
+      style={{
+        position: 'absolute',
+        zIndex: 1,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        height: 1,
+        background: `linear-gradient(90deg,${rgba(HUD_COLORS.orange, 0.42)} 0%,${rgba(HUD_COLORS.orange, 0.1)} 24%,${rgba(HUD_COLORS.cyanWire, 0.2)} 72%,${rgba(HUD_COLORS.cyanWire, 0.42)} 100%)`,
+        boxShadow: `0 1px 7px ${rgba(HUD_COLORS.cyanWire, 0.08)}`,
+        pointerEvents: 'none',
+      }}
+    />
+  );
   const primary = (
     <div
       data-status-primary
@@ -796,17 +839,33 @@ export default function StatusStrip({
         display: 'inline-flex',
         alignItems: 'center',
         minWidth: 0,
-        gap: compact ? 6 : 14,
+        height: '100%',
+        gap: dense ? 5 : 7,
         overflow: 'visible',
       }}
     >
-      <span style={{ flexShrink: 0, fontFamily: HUD_FONTS.display, fontWeight: 700, fontSize: compact ? 10.5 : 12, letterSpacing: compact ? 2.5 : 5, color: HUD_COLORS.orange, textShadow: '0 0 8px rgba(255,152,48,.5)' }}>CKNERV</span>
-      {build ? <BuildChip build={build} compact={compact} /> : null}
+      <span
+        data-status-brand
+        style={{
+          flexShrink: 0,
+          paddingRight: dense ? 3 : 7,
+          fontFamily: HUD_FONTS.display,
+          fontWeight: 700,
+          fontSize: dense ? 10.5 : 12,
+          letterSpacing: dense ? 2.6 : 4.2,
+          color: HUD_COLORS.orange,
+          textShadow: `0 0 9px ${rgba(HUD_COLORS.orange, 0.46)}`,
+        }}
+      >
+        CKNERV
+      </span>
+      {build ? <BuildChip build={build} compact={dense} /> : null}
       {onPanelVisibilityChange && panelControls?.length ? (
         <PanelVisibilityControl
           panels={panelControls}
           onChange={onPanelVisibilityChange}
-          compact={compact}
+          compact={dense}
+          menuOffset={barHeight - (layout === 'wide' ? 3 : 1)}
         />
       ) : null}
     </div>
@@ -828,48 +887,122 @@ export default function StatusStrip({
     <span
       data-stream-chip
       data-stream-phase={stream.phase}
+      aria-label={`Data ${stream.phase}, ${formatStreamAge(stream.lastMessageAgeMs)}`}
       style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        flexShrink: 0,
-        gap: 6,
-        padding: '2px 7px',
-        border: `1px solid ${rgba(streamColor, 0.28)}`,
+        ...NAV_MODULE_STYLE,
+        gap: dense ? 4 : 6,
+        height: 24,
+        padding: dense ? '0 7px' : '0 9px',
+        borderLeftColor: rgba(streamColor, 0.25),
         fontFamily: HUD_FONTS.mono,
-        fontSize: 9,
-        letterSpacing: 1,
-        color: streamColor,
+        fontSize: 8.5,
+        letterSpacing: 0.75,
       }}
     >
       <span style={{ width: 4, height: 4, borderRadius: '50%', background: streamColor, boxShadow: `0 0 6px ${streamColor}` }} />
-      DATA {stream.phase.toUpperCase()}
-      <span style={{ color: HUD_COLORS.dim }}>{formatStreamAge(stream.lastMessageAgeMs)}</span>
+      <span style={{ color: HUD_COLORS.dim }}>DATA</span>
+      <span style={{ color: streamColor, textShadow: `0 0 6px ${rgba(streamColor, 0.34)}` }}>{stream.phase.toUpperCase()}</span>
+      {!dense ? <span style={{ color: HUD_COLORS.dim }}>{formatStreamAge(stream.lastMessageAgeMs)}</span> : null}
     </span>
   ) : null;
   const statusIndicator = (
     <span
       data-status-indicator
-      style={{ display: 'flex', flexShrink: 0, alignItems: 'center', gap: compact ? 5 : 7, fontFamily: HUD_FONTS.tech, fontWeight: 600, fontSize: compact ? 8.5 : 10, letterSpacing: compact ? 1 : 2, color }}
+      style={{ display: 'flex', flexShrink: 0, alignItems: 'center', gap: dense ? 5 : 7, fontFamily: HUD_FONTS.tech, fontWeight: 600, fontSize: dense ? 8.5 : 9.5, letterSpacing: dense ? 1 : 1.6, color }}
     >
-      {!compact ? <span style={{ fontFamily: HUD_FONTS.cjk, color: HUD_COLORS.dim }}>状态</span> : null}
+      {!dense ? <span style={{ fontFamily: HUD_FONTS.cjk, color: HUD_COLORS.dim }}>状态</span> : null}
       <span data-dot data-level={level} style={{ width: 6, height: 6, borderRadius: '50%', background: color, boxShadow: `0 0 8px ${color}` }} />
       {level.toUpperCase()}
     </span>
   );
-  const runtimeControls = (
+  const performanceControls = (
     <>
       <CellDisplayControl
         availableCells={cellCount}
         capacity={cellCapacity}
+        compact={dense}
       />
-      <RenderQualityControl />
-      {enrichmentSource ? <EnrichmentChip source={enrichmentSource} /> : null}
+      <RenderQualityControl compact={layout === 'mobile'} />
+    </>
+  );
+  const contextControls = (
+    <>
+      {enrichmentSource ? <EnrichmentChip source={enrichmentSource} compact={dense} /> : null}
       {actionsSlot}
       {streamChip}
     </>
   );
 
-  if (compact) {
+  if (layout === 'mobile') {
+    return (
+      <div
+        className="cknerv-status-strip"
+        role="navigation"
+        aria-label="Dashboard controls"
+        data-status-layout="mobile"
+        style={{
+          position: 'absolute',
+          left: 0,
+          right: 0,
+          top: 0,
+          height: barHeight,
+          boxSizing: 'border-box',
+          display: 'grid',
+          gridTemplateColumns: 'minmax(0,1fr) auto',
+          gridTemplateRows: mobileHasContext ? '30px 29px 29px' : '30px 29px',
+          columnGap: 6,
+          padding: '0 8px',
+          overflow: 'visible',
+          background: 'linear-gradient(180deg,rgba(4,7,12,.985),rgba(0,3,8,.965))',
+          boxShadow: '0 7px 22px rgba(0,0,0,.36)',
+        }}
+      >
+        {primary}
+        <div data-status-summary style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', minWidth: 0 }}>
+          {statusIndicator}
+        </div>
+        <div
+          className="cknerv-status-controls"
+          data-status-controls
+          data-status-performance
+          style={{
+            gridColumn: '1 / -1',
+            display: 'flex',
+            alignItems: 'center',
+            minWidth: 0,
+            overflow: 'hidden',
+            pointerEvents: 'auto',
+            borderTop: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.07)}`,
+          }}
+        >
+          {performanceControls}
+        </div>
+        {mobileHasContext ? (
+          <div
+            className="cknerv-status-context"
+            data-status-context
+            style={{
+              gridColumn: '1 / -1',
+              display: 'flex',
+              alignItems: 'center',
+              minWidth: 0,
+              overflowX: 'auto',
+              overflowY: 'hidden',
+              overscrollBehaviorX: 'contain',
+              scrollbarWidth: 'none',
+              pointerEvents: 'auto',
+              borderTop: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.055)}`,
+            }}
+          >
+            {contextControls}
+          </div>
+        ) : null}
+        {accentRail}
+      </div>
+    );
+  }
+
+  if (layout === 'compact') {
     return (
       <div
         className="cknerv-status-strip"
@@ -881,16 +1014,16 @@ export default function StatusStrip({
           left: 0,
           right: 0,
           top: 0,
-          height: 54,
+          height: barHeight,
           boxSizing: 'border-box',
           display: 'grid',
           gridTemplateColumns: 'minmax(0,1fr) auto',
-          gridTemplateRows: '27px 27px',
+          gridTemplateRows: '32px 32px',
           columnGap: 8,
           padding: '0 8px',
           overflow: 'visible',
-          borderBottom: '1px solid rgba(255,152,48,.18)',
-          background: 'linear-gradient(180deg,rgba(255,152,48,.07),rgba(0,0,0,.24))',
+          background: 'linear-gradient(180deg,rgba(4,7,12,.985),rgba(0,3,8,.96))',
+          boxShadow: '0 7px 22px rgba(0,0,0,.32)',
         }}
       >
         {primary}
@@ -904,7 +1037,7 @@ export default function StatusStrip({
             gridColumn: '1 / -1',
             display: 'flex',
             alignItems: 'center',
-            gap: 8,
+            gap: 0,
             minWidth: 0,
             overflowX: 'auto',
             overflowY: 'hidden',
@@ -914,8 +1047,10 @@ export default function StatusStrip({
             borderTop: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.06)}`,
           }}
         >
-          {runtimeControls}
+          {performanceControls}
+          {contextControls}
         </div>
+        {accentRail}
       </div>
     );
   }
@@ -926,13 +1061,20 @@ export default function StatusStrip({
       role="navigation"
       aria-label="Dashboard controls"
       data-status-layout="wide"
-      style={{ position: 'absolute', left: 0, right: 0, top: 0, height: 30, display: 'flex', alignItems: 'center', gap: 14, padding: '0 14px', borderBottom: '1px solid rgba(255,152,48,.18)', background: 'linear-gradient(180deg,rgba(255,152,48,.05),transparent)' }}
+      style={{ position: 'absolute', left: 0, right: 0, top: 0, height: barHeight, boxSizing: 'border-box', display: 'flex', alignItems: 'center', gap: 4, padding: '0 12px', overflow: 'visible', background: 'linear-gradient(180deg,rgba(4,7,12,.985),rgba(0,3,8,.955))', boxShadow: '0 7px 22px rgba(0,0,0,.28)' }}
     >
       {primary}
       <span style={{ flex: 1 }} />
-      {runtimeControls}
-      {statusIndicator}
-      <span style={{ flexShrink: 0, fontFamily: HUD_FONTS.mono, fontSize: 10, color: HUD_COLORS.dim, letterSpacing: 1 }}>{fmtUptime(uptimeMs)}</span>
+      {performanceControls}
+      {contextControls}
+      <span
+        data-status-health
+        style={{ ...NAV_MODULE_STYLE, gap: 9, padding: '0 1px 0 10px' }}
+      >
+        {statusIndicator}
+        <span style={{ flexShrink: 0, fontFamily: HUD_FONTS.mono, fontSize: 8.5, color: HUD_COLORS.dim, letterSpacing: 0.7 }}>{fmtUptime(uptimeMs)}</span>
+      </span>
+      {accentRail}
     </div>
   );
 }

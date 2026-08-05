@@ -33,7 +33,10 @@ describe('hudTheme', () => {
     expect(css).toContain('.cknerv-hud-control-button:focus-visible');
     expect(css).toContain('.cknerv-cell-display-track:focus-within');
     expect(css).toContain(
-      '.cknerv-quality-label,.cknerv-top-bar-action-label{display:none}',
+      '@media (max-width:1100px){.cknerv-top-bar-action-label{display:none}',
+    );
+    expect(css).toContain(
+      '@media (max-width:380px){.cknerv-cell-display-label,.cknerv-quality-label,.cknerv-panel-toggle-label{display:none}',
     );
     expect(css).toContain('.cknerv-memory-route-ledger');
     expect(css).toContain('max-height:100px');

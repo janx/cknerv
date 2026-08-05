@@ -117,7 +117,7 @@ describe('HudOverlay', () => {
     expect(chainScroll.style.overflowY).toBe('auto');
     expect(pulse.style.marginTop).toBe('auto');
     expect(meshRail.textContent).not.toContain('GALAXY WINDOW');
-    expect(meshRail.style.top).toBe('42px');
+    expect(meshRail.style.top).toBe('48px');
     expect(meshRail.style.bottom).toBe('');
   });
 
@@ -204,11 +204,62 @@ describe('HudOverlay', () => {
     const meshRail = container.querySelector('.cknerv-mesh-rail') as HTMLElement;
 
     expect(status.dataset.statusLayout).toBe('compact');
-    expect(status.style.height).toBe('54px');
+    expect(status.style.height).toBe('64px');
     expect(container.querySelector('[data-status-controls]')).not.toBeNull();
-    expect(leftRail.style.top).toBe('66px');
-    expect(meshRail.style.top).toBe('66px');
-    expect(meshRail.style.maxHeight).toBe('calc(100vh - 80px)');
+    expect(leftRail.style.top).toBe('76px');
+    expect(meshRail.style.top).toBe('76px');
+    expect(meshRail.style.maxHeight).toBe('calc(100vh - 90px)');
+  });
+
+  it('keeps a CKB-only phone bar to two priority rows', () => {
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: query.includes('max-width: 560px')
+        || query.includes('max-width: 1100px')
+        || query.includes('max-width: 1280px'),
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }));
+    const { container } = render(
+      <HudOverlay chain={chain} peers={peers} localNode={localNode} cellsStats={cellsStats} />,
+    );
+    const status = container.querySelector('.cknerv-status-strip') as HTMLElement;
+    const leftRail = container.querySelector('[data-hud-left-rail]') as HTMLElement;
+    const meshRail = container.querySelector('.cknerv-mesh-rail') as HTMLElement;
+
+    expect(status.dataset.statusLayout).toBe('mobile');
+    expect(status.style.height).toBe('59px');
+    expect(container.querySelector('[data-status-performance]')).not.toBeNull();
+    expect(container.querySelector('[data-status-context]')).toBeNull();
+    expect(leftRail.style.top).toBe('71px');
+    expect(meshRail.style.top).toBe('71px');
+    expect(meshRail.style.maxHeight).toBe('calc(100vh - 85px)');
+  });
+
+  it('adds the mobile context row only when enhanced status is present', () => {
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: query.includes('max-width: 560px')
+        || query.includes('max-width: 1100px')
+        || query.includes('max-width: 1280px'),
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }));
+    const { container } = render(
+      <HudOverlay
+        chain={chain}
+        peers={peers}
+        localNode={localNode}
+        cellsStats={cellsStats}
+        enrichmentSource={enrichmentSource}
+      />,
+    );
+    const status = container.querySelector('.cknerv-status-strip') as HTMLElement;
+    const leftRail = container.querySelector('[data-hud-left-rail]') as HTMLElement;
+
+    expect(status.dataset.statusLayout).toBe('mobile');
+    expect(status.style.height).toBe('88px');
+    expect(container.querySelector('[data-status-context]')?.textContent)
+      .toContain('CKBADGERREADY');
+    expect(leftRail.style.top).toBe('100px');
   });
 
   it('marks frozen browser data without changing nominal chain telemetry', () => {
@@ -239,17 +290,19 @@ describe('HudOverlay', () => {
     const root = container.firstElementChild as HTMLElement;
     expect(root.dataset.streamPhase).toBe('stale');
     expect(container.querySelector('[data-stream-stale-frame]')).not.toBeNull();
+    expect(container.querySelector('[data-stream-chip]')).toBeNull();
     expect(container.textContent).toContain('DATA FROZEN');
     expect(container.textContent).toContain('CELLS');
     expect(container.textContent).toContain('NOMINAL');
     const meshRail = container.querySelector('.cknerv-mesh-rail') as HTMLElement;
-    expect(meshRail.style.top).toBe('72px');
+    expect(meshRail.style.top).toBe('78px');
     expect(meshRail.style.bottom).toBe('');
   });
 
   it('places stream interruption UI below the two-row narrow top bar', () => {
     vi.stubGlobal('matchMedia', (query: string) => ({
-      matches: query.includes('max-width'),
+      matches: query.includes('max-width: 1100px')
+        || query.includes('max-width: 1280px'),
       addEventListener: () => {},
       removeEventListener: () => {},
     }));
@@ -280,10 +333,10 @@ describe('HudOverlay', () => {
     const leftRail = container.querySelector('[data-hud-left-rail]') as HTMLElement;
     const meshRail = container.querySelector('.cknerv-mesh-rail') as HTMLElement;
 
-    expect(banner.style.top).toBe('54px');
-    expect(leftRail.style.top).toBe('96px');
-    expect(meshRail.style.top).toBe('96px');
-    expect(meshRail.style.maxHeight).toBe('calc(100vh - 110px)');
+    expect(banner.style.top).toBe('64px');
+    expect(leftRail.style.top).toBe('106px');
+    expect(meshRail.style.top).toBe('106px');
+    expect(meshRail.style.maxHeight).toBe('calc(100vh - 120px)');
   });
 
   it('shows the cell detail and a node detail at the same time (independent axes)', () => {
@@ -602,7 +655,9 @@ describe('HudOverlay', () => {
         build={{ version: '61922ba@20260630', href: 'https://github.com/janx/cknerv/commit/61922ba' }}
       />,
     );
-    expect(container.textContent).toContain('61922ba@20260630');
+    const build = container.querySelector('[data-build-chip]');
+    expect(build?.getAttribute('aria-label')).toBe('61922ba@20260630');
+    expect(build?.textContent).toBe('BUILD61922ba');
   });
 
   it('passes product-owned actions through the shared top bar slot', () => {
