@@ -175,6 +175,7 @@ impl RefreshKind {
 struct RefreshTracker {
     last_started: HashMap<RefreshKind, Instant>,
     in_flight: HashSet<RefreshKind>,
+    published: HashSet<RefreshKind>,
 }
 
 impl RefreshTracker {
@@ -186,6 +187,7 @@ impl RefreshTracker {
     ) -> bool {
         if !kind.ready(status) {
             self.last_started.remove(&kind);
+            self.published.remove(&kind);
             return false;
         }
         !self.in_flight.contains(&kind)
@@ -200,8 +202,18 @@ impl RefreshTracker {
         self.in_flight.insert(kind);
     }
 
-    fn finished(&mut self, kind: RefreshKind) {
+    fn finished(&mut self, kind: RefreshKind, published: bool) {
         self.in_flight.remove(&kind);
+        if published {
+            self.published.insert(kind);
+        } else if kind == RefreshKind::DaoState && !self.published.contains(&kind) {
+            // A DAO singleton can advance between the compatibility probe and
+            // its aggregate request. The source deliberately withholds that
+            // unproven record as `None`; until the first usable snapshot is
+            // published, retry on the next probe instead of hiding DAO·05 for
+            // the full steady-state minute cadence.
+            self.last_started.remove(&kind);
+        }
     }
 }
 
@@ -280,7 +292,7 @@ async fn run(
                 };
                 match completion {
                     Ok(RefreshCompletion { kind, result }) => {
-                        tracker.finished(kind);
+                        tracker.finished(kind, matches!(&result, Ok(Some(_))));
                         match result {
                             Ok(Some(event)) => {
                                 if out.send(event).await.is_err() {
@@ -346,7 +358,8 @@ mod tests {
 
     use async_trait::async_trait;
     use cknerv_core::{
-        ActivityFeedItem, ActivityFeedRecord, AssetEcosystemRecord, ChainAnchor, Mutation,
+        ActivityFeedItem, ActivityFeedRecord, AssetEcosystemRecord, ChainAnchor, DaoStateRecord,
+        Mutation,
     };
 
     use super::*;
@@ -354,6 +367,10 @@ mod tests {
     struct SlowAggregateSource {
         probes: Arc<AtomicUsize>,
         ecosystem_calls: Arc<AtomicUsize>,
+    }
+
+    struct InitiallyWithheldDaoSource {
+        dao_calls: Arc<AtomicUsize>,
     }
 
     #[async_trait]
@@ -425,6 +442,69 @@ mod tests {
         }
     }
 
+    #[async_trait]
+    impl EnrichmentSource for InitiallyWithheldDaoSource {
+        fn name(&self) -> &'static str {
+            "dao-fixture"
+        }
+
+        fn capabilities(&self) -> Vec<String> {
+            vec!["dao_state".to_string()]
+        }
+
+        async fn probe(&self, context: &CanonicalContext) -> EnrichmentSourceStatus {
+            let block = context.recent_blocks.last().expect("canonical block");
+            EnrichmentSourceStatus {
+                source: self.name().to_string(),
+                status: EnrichmentSourceState::Ready,
+                capabilities: self.capabilities(),
+                indexed_tip: Some(context.tip),
+                lag_blocks: Some(0),
+                validated_anchor: Some(ChainAnchor {
+                    block: block.number,
+                    hash: block.hash.clone(),
+                }),
+                last_success_at_ms: Some(1),
+                message: None,
+            }
+        }
+
+        async fn enrich_cell(
+            &self,
+            _out_point: &cknerv_core::OutPoint,
+            _context: &CanonicalContext,
+        ) -> anyhow::Result<Option<cknerv_core::CellSemanticRecord>> {
+            Ok(None)
+        }
+
+        async fn enrich_dao_state(
+            &self,
+            context: &CanonicalContext,
+        ) -> anyhow::Result<Option<DaoStateRecord>> {
+            if self.dao_calls.fetch_add(1, Ordering::Relaxed) == 0 {
+                return Ok(None);
+            }
+            let block = context.recent_blocks.last().expect("canonical block");
+            Ok(Some(DaoStateRecord {
+                source: self.name().to_string(),
+                as_of: ChainAnchor {
+                    block: block.number,
+                    hash: block.hash.clone(),
+                },
+                statistics_block: block.number,
+                updated_at_ms: 1,
+                total_deposited_shannons: "1".to_string(),
+                total_depositors: 1,
+                active_deposits: 1,
+                pending_withdrawal_shannons: "0".to_string(),
+                unclaimed_compensation_shannons: "0".to_string(),
+                estimated_apc_bps: 201,
+                deposit_change_24h_shannons: None,
+                depositors_change_24h: None,
+            }))
+        }
+    }
+
     #[tokio::test]
     async fn slow_aggregate_does_not_block_another_capability_or_health_probe() {
         let state = Arc::new(ServerState::new());
@@ -480,6 +560,65 @@ mod tests {
             ecosystem_calls.load(Ordering::Relaxed),
             1,
             "one capability must not overlap its own in-flight refresh"
+        );
+
+        shutdown.send(true).unwrap();
+        tokio::time::timeout(Duration::from_secs(1), handle)
+            .await
+            .expect("supervisor stops")
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn dao_state_retries_on_probe_cadence_until_first_record() {
+        let state = Arc::new(ServerState::new());
+        state.apply_mutation(Mutation::BlockMined {
+            number: 7,
+            hash: "0xblock7".to_string(),
+            tx_count: 1,
+            size: 1,
+            at: 1,
+        });
+
+        let dao_calls = Arc::new(AtomicUsize::new(0));
+        let source: Arc<dyn EnrichmentSource> = Arc::new(InitiallyWithheldDaoSource {
+            dao_calls: dao_calls.clone(),
+        });
+        let (out, mut events) = mpsc::channel(16);
+        let (shutdown, shutdown_rx) = watch::channel(false);
+        let cadence = RefreshCadence {
+            probe: Duration::from_millis(20),
+            status: Duration::from_secs(1),
+            ecosystem: Duration::from_secs(1),
+            dao_state: Duration::from_secs(1),
+            protocol_era: Duration::from_secs(1),
+            activity: Duration::from_secs(1),
+            transaction_horizon: Duration::from_secs(1),
+            fork_watch: Duration::from_secs(1),
+            network_atlas: Duration::from_secs(1),
+            max_concurrent: 1,
+        };
+        let handle = tokio::spawn(run(source, state, out, shutdown_rx, cadence));
+
+        tokio::time::timeout(Duration::from_millis(250), async {
+            loop {
+                if matches!(
+                    events.recv().await,
+                    Some(EnrichmentEvent::DaoStateReplace(_))
+                ) {
+                    break;
+                }
+            }
+        })
+        .await
+        .expect("withheld initial DAO state retries before its minute cadence");
+        assert_eq!(dao_calls.load(Ordering::Relaxed), 2);
+
+        tokio::time::sleep(Duration::from_millis(60)).await;
+        assert_eq!(
+            dao_calls.load(Ordering::Relaxed),
+            2,
+            "a published DAO state returns to its steady-state cadence"
         );
 
         shutdown.send(true).unwrap();
