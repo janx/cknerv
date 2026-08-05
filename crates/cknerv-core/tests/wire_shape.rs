@@ -201,6 +201,13 @@ fn enrichment_samples_match_wire_shape() {
         canonicalize(&samples["deltas"]["activity_feed_replace"]),
         canonicalize(&serde_json::to_value(activity_feed).unwrap())
     );
+    let transaction_horizon = SemanticsDelta::TransactionHorizonReplace {
+        transaction_horizon: snapshot.transaction_horizon.clone().unwrap(),
+    };
+    assert_eq!(
+        canonicalize(&samples["deltas"]["transaction_horizon_replace"]),
+        canonicalize(&serde_json::to_value(transaction_horizon).unwrap())
+    );
     let network_atlas = SemanticsDelta::NetworkAtlasReplace {
         network_atlas: snapshot.network_atlas.clone().unwrap(),
     };

@@ -10,7 +10,7 @@ use async_trait::async_trait;
 use cknerv_core::{
     ActivityFeedRecord, AssetEcosystemRecord, CellSemanticRecord, DaoStateRecord,
     EnrichmentSourceStatus, ForkWatchRecord, NetworkAtlasRecord, OutPoint, ProtocolEraRecord,
-    RecentBlock, RecentTx, TransactionSemanticRecord,
+    RecentBlock, RecentTx, TransactionHorizonRecord, TransactionSemanticRecord,
 };
 
 /// Bounded canonical evidence supplied to an enrichment source when it
@@ -103,6 +103,15 @@ pub trait EnrichmentSource: Send + Sync + 'static {
         &self,
         _context: &CanonicalContext,
     ) -> anyhow::Result<Option<ActivityFeedRecord>> {
+        Ok(None)
+    }
+
+    /// Refresh bounded hourly/daily indexed transaction counts. Sources
+    /// without a fixed-size summary endpoint leave this unsupported.
+    async fn enrich_transaction_horizon(
+        &self,
+        _context: &CanonicalContext,
+    ) -> anyhow::Result<Option<TransactionHorizonRecord>> {
         Ok(None)
     }
 

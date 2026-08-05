@@ -30,7 +30,8 @@ pub use enrichment::{
     EnrichmentSourceStatus, ForkWatchDeepFork, ForkWatchEventKind, ForkWatchRecord, ForkWatchReorg,
     NetworkAtlasBucket, NetworkAtlasRecord, ProtocolEra, ProtocolEraRecord, SemanticAsset,
     SemanticAttribute, SemanticFacet, SemanticScript, SemanticsDelta, SemanticsProjection,
-    SemanticsSnapshot, TransactionParticipantSemantic, TransactionSemanticRecord,
+    SemanticsSnapshot, TransactionHorizonRecord, TransactionParticipantSemantic,
+    TransactionSemanticRecord,
 };
 pub use entity::{
     Chain, ChainNode, EpochInfo, MempoolStats, Peer, PeerDirection, RecentBlock, RecentTx,

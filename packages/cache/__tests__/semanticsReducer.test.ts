@@ -9,6 +9,7 @@ import type {
   EnrichmentSourceStatus,
   NetworkAtlasRecord,
   ProtocolEraRecord,
+  TransactionHorizonRecord,
 } from '@cknerv/types';
 import {
   applyRevisionedSemanticsDeltas,
@@ -63,6 +64,18 @@ function activityFeed(block: number): ActivityFeedRecord {
       label: 'Example Script',
       participant_count: 1,
     }],
+  };
+}
+
+function transactionHorizon(block: number): TransactionHorizonRecord {
+  return {
+    source: 'ckbadger',
+    as_of: { block, hash: `0xblock${block}` },
+    updated_at_ms: block,
+    current_hour: 12,
+    current_day: 345,
+    hourly_counts: [7, 9, 12],
+    daily_counts: [300, 321, 345],
   };
 }
 
@@ -247,6 +260,24 @@ describe('semantics reducer', () => {
       delta: { type: 'prune', from_block: 10 },
     }]);
     expect(next.activityFeed).toBeNull();
+  });
+
+  it('replaces and prunes the bounded transaction horizon independently', () => {
+    const record = transactionHorizon(10);
+    const seeded = applyRevisionedSemanticsDeltas(emptySemanticsCache(), [{
+      revision: 1,
+      delta: {
+        type: 'transaction_horizon_replace',
+        transaction_horizon: record,
+      },
+    }]);
+    expect(seeded.transactionHorizon).toBe(record);
+
+    const next = applyRevisionedSemanticsDeltas(seeded, [{
+      revision: 2,
+      delta: { type: 'prune', from_block: 10 },
+    }]);
+    expect(next.transactionHorizon).toBeNull();
   });
 
   it('replaces and prunes the bounded network atlas independently', () => {

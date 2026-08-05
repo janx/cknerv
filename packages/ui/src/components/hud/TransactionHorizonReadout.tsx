@@ -1,0 +1,120 @@
+import type {
+  EnrichmentSourceStatus,
+  TransactionHorizonRecord,
+} from '@cknerv/types';
+import {
+  deriveTransactionHorizonVisual,
+  transactionHorizonVisualState,
+} from '../../derives/transactionHorizon.derive';
+import { HUD_COLORS, HUD_FONTS, rgba } from './hudTheme';
+
+function compactCount(value: number): string {
+  if (value < 1_000) return value.toLocaleString('en-US');
+  if (value < 1_000_000) return `${(value / 1_000).toFixed(value < 10_000 ? 1 : 0)}K`;
+  return `${(value / 1_000_000).toFixed(value < 10_000_000 ? 1 : 0)}M`;
+}
+
+export default function TransactionHorizonReadout({ source, record, compact = false }: {
+  source?: EnrichmentSourceStatus;
+  record?: TransactionHorizonRecord | null;
+  /** Inline zero-height-growth summary for short viewports. */
+  compact?: boolean;
+}) {
+  if (!source || !record) return null;
+  const visualState = transactionHorizonVisualState(source, record);
+  const visual = deriveTransactionHorizonVisual(record);
+  if (!visualState || !visual) return null;
+  const stale = visualState === 'stale';
+  const accent = stale ? HUD_COLORS.caution : HUD_COLORS.cyanWire;
+
+  if (compact) {
+    return (
+      <span
+        aria-label={visual.title}
+        title={visual.title}
+        data-transaction-horizon-state={visualState}
+        style={{
+          marginLeft: 5,
+          fontFamily: HUD_FONTS.tech,
+          fontSize: 7.5,
+          letterSpacing: 0.65,
+          color: accent,
+          opacity: stale ? 0.68 : 0.9,
+        }}
+      >
+        · IDX H{compactCount(visual.currentHour)}/D{compactCount(visual.currentDay)}
+      </span>
+    );
+  }
+
+  return (
+    <section
+      aria-label="Indexed transaction horizon"
+      title={visual.title}
+      data-transaction-horizon-state={visualState}
+      style={{
+        marginTop: 8,
+        paddingTop: 7,
+        borderTop: `1px solid ${rgba(accent, 0.16)}`,
+        opacity: stale ? 0.68 : 1,
+      }}
+    >
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 5,
+        fontFamily: HUD_FONTS.tech,
+        fontSize: 7.5,
+        letterSpacing: 1.2,
+        color: accent,
+        textTransform: 'uppercase',
+        marginBottom: 4,
+      }}>
+        <span style={{ width: 5, height: 5, borderRadius: '50%', background: accent, boxShadow: `0 0 6px ${accent}` }} />
+        INDEXED TX HORIZON · {visual.hourlyCounts.length}/24H · A#{record.as_of.block.toLocaleString('en-US')}
+        {stale ? ' · STALE' : ''}
+      </div>
+      <div
+        aria-hidden="true"
+        style={{
+          height: 16,
+          display: 'flex',
+          alignItems: 'flex-end',
+          gap: 2,
+          padding: '2px 3px',
+          background: '#080d10',
+          border: `1px solid ${rgba(accent, 0.14)}`,
+        }}
+      >
+        {visual.hourlyRatios.map((ratio, index) => (
+          <span
+            // Position is the stable identity of a fixed ordered time bucket.
+            // eslint-disable-next-line react/no-array-index-key
+            key={index}
+            data-transaction-hour-count={visual.hourlyCounts[index]}
+            style={{
+              flex: 1,
+              minWidth: 1,
+              height: `${Math.max(1, ratio * 100)}%`,
+              background: accent,
+              boxShadow: ratio > 0.65 ? `0 0 4px ${rgba(accent, 0.38)}` : undefined,
+              opacity: ratio === 0 ? 0.16 : 0.32 + ratio * 0.68,
+            }}
+          />
+        ))}
+      </div>
+      <div style={{
+        display: 'flex',
+        justifyContent: 'space-between',
+        marginTop: 3,
+        fontFamily: HUD_FONTS.mono,
+        fontSize: 8,
+        color: HUD_COLORS.dim,
+      }}>
+        <span>HOUR <b style={{ color: HUD_COLORS.ink, fontWeight: 400 }}>{visual.currentHour.toLocaleString('en-US')}</b></span>
+        <span>DAY <b style={{ color: HUD_COLORS.ink, fontWeight: 400 }}>{visual.currentDay.toLocaleString('en-US')}</b></span>
+        <span>PEAK/H <b style={{ color: HUD_COLORS.ink, fontWeight: 400 }}>{visual.maxHourly.toLocaleString('en-US')}</b></span>
+      </div>
+    </section>
+  );
+}

@@ -388,6 +388,9 @@ fn event_anchor_is_current(event: &EnrichmentEvent, recent_blocks: &[RecentBlock
         EnrichmentEvent::ProtocolEraReplace(protocol_era) => Some(&protocol_era.as_of),
         EnrichmentEvent::ForkWatchReplace(fork_watch) => Some(&fork_watch.as_of),
         EnrichmentEvent::ActivityFeedReplace(activity_feed) => Some(&activity_feed.as_of),
+        EnrichmentEvent::TransactionHorizonReplace(transaction_horizon) => {
+            Some(&transaction_horizon.as_of)
+        }
         EnrichmentEvent::NetworkAtlasReplace(network_atlas) => Some(&network_atlas.as_of),
         EnrichmentEvent::SourceStatus(_)
         | EnrichmentEvent::NetworkAtlasClear

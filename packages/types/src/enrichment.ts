@@ -223,6 +223,17 @@ export interface ActivityFeedRecord {
   activities: ActivityFeedItem[];
 }
 
+/** Bounded oldest-to-newest indexed counts; never a canonical total or TPS. */
+export interface TransactionHorizonRecord {
+  source: string;
+  as_of: ChainAnchor;
+  updated_at_ms: number;
+  current_hour: number;
+  current_day: number;
+  hourly_counts: number[];
+  daily_counts: number[];
+}
+
 export interface NetworkAtlasBucket {
   label: string;
   count: number;
@@ -258,6 +269,7 @@ export interface SemanticsSnapshot {
   protocol_era?: ProtocolEraRecord;
   fork_watch?: ForkWatchRecord;
   activity_feed?: ActivityFeedRecord;
+  transaction_horizon?: TransactionHorizonRecord;
   network_atlas?: NetworkAtlasRecord;
 }
 
@@ -273,6 +285,7 @@ export type SemanticsDelta =
   | { type: 'protocol_era_replace'; protocol_era: ProtocolEraRecord }
   | { type: 'fork_watch_replace'; fork_watch: ForkWatchRecord }
   | { type: 'activity_feed_replace'; activity_feed: ActivityFeedRecord }
+  | { type: 'transaction_horizon_replace'; transaction_horizon: TransactionHorizonRecord }
   | { type: 'network_atlas_replace'; network_atlas: NetworkAtlasRecord }
   | { type: 'network_atlas_clear' }
   | { type: 'prune'; from_block: number }

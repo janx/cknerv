@@ -12,6 +12,7 @@ import type {
   RevisionedSemanticsDelta,
   SemanticsDelta,
   SemanticsSnapshot,
+  TransactionHorizonRecord,
   TransactionSemanticRecord,
 } from '@cknerv/types';
 
@@ -26,6 +27,7 @@ export interface SemanticsCache {
   protocolEra: ProtocolEraRecord | null;
   forkWatch: ForkWatchRecord | null;
   activityFeed: ActivityFeedRecord | null;
+  transactionHorizon: TransactionHorizonRecord | null;
   networkAtlas: NetworkAtlasRecord | null;
 }
 
@@ -49,6 +51,7 @@ export function emptySemanticsCache(): SemanticsCache {
     protocolEra: null,
     forkWatch: null,
     activityFeed: null,
+    transactionHorizon: null,
     networkAtlas: null,
   };
 }
@@ -70,6 +73,7 @@ export function fromSemanticsSnapshot(
     protocolEra: snapshot.protocol_era ?? null,
     forkWatch: snapshot.fork_watch ?? null,
     activityFeed: snapshot.activity_feed ?? null,
+    transactionHorizon: snapshot.transaction_horizon ?? null,
     networkAtlas: snapshot.network_atlas ?? null,
   };
 }
@@ -112,6 +116,8 @@ function reduceDelta(prev: SemanticsCache, delta: SemanticsDelta): SemanticsCach
       return { ...prev, forkWatch: delta.fork_watch };
     case 'activity_feed_replace':
       return { ...prev, activityFeed: delta.activity_feed };
+    case 'transaction_horizon_replace':
+      return { ...prev, transactionHorizon: delta.transaction_horizon };
     case 'network_atlas_replace':
       return { ...prev, networkAtlas: delta.network_atlas };
     case 'network_atlas_clear':
@@ -153,6 +159,11 @@ function reduceDelta(prev: SemanticsCache, delta: SemanticsDelta): SemanticsCach
         && prev.activityFeed.as_of.block >= delta.from_block
           ? null
           : prev.activityFeed;
+      const transactionHorizon =
+        prev.transactionHorizon
+        && prev.transactionHorizon.as_of.block >= delta.from_block
+          ? null
+          : prev.transactionHorizon;
       const networkAtlas =
         prev.networkAtlas
         && prev.networkAtlas.as_of.block >= delta.from_block
@@ -168,6 +179,7 @@ function reduceDelta(prev: SemanticsCache, delta: SemanticsDelta): SemanticsCach
         protocolEra,
         forkWatch,
         activityFeed,
+        transactionHorizon,
         networkAtlas,
       };
     }
@@ -182,6 +194,7 @@ function reduceDelta(prev: SemanticsCache, delta: SemanticsDelta): SemanticsCach
         protocolEra: null,
         forkWatch: null,
         activityFeed: null,
+        transactionHorizon: null,
         networkAtlas: null,
       };
   }

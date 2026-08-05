@@ -386,6 +386,26 @@ pub struct ActivityFeedRecord {
     pub activities: Vec<ActivityFeedItem>,
 }
 
+/// Bounded indexed transaction-count context. Hourly and daily buckets are
+/// ordered oldest-to-newest and intentionally carry counts only: source-local
+/// presentation labels do not cross the shared wire contract, and no timezone
+/// is inferred from their absence. Current-hour/day values retain their
+/// explicitly indexed, source-defined bucket meaning. This supplements the
+/// direct adapter's short rolling TPS window; it never replaces canonical
+/// transaction totals.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TransactionHorizonRecord {
+    pub source: String,
+    pub as_of: ChainAnchor,
+    pub updated_at_ms: u64,
+    pub current_hour: u64,
+    pub current_day: u64,
+    #[serde(default)]
+    pub hourly_counts: Vec<u64>,
+    #[serde(default)]
+    pub daily_counts: Vec<u64>,
+}
+
 /// One display-safe label count derived from a bounded network-node sample.
 /// Individual peer identities and addresses never cross this contract.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -433,6 +453,7 @@ pub enum EnrichmentEvent {
     ProtocolEraReplace(ProtocolEraRecord),
     ForkWatchReplace(ForkWatchRecord),
     ActivityFeedReplace(ActivityFeedRecord),
+    TransactionHorizonReplace(TransactionHorizonRecord),
     NetworkAtlasReplace(NetworkAtlasRecord),
     NetworkAtlasClear,
     Clear,
@@ -455,6 +476,8 @@ pub struct SemanticsSnapshot {
     pub fork_watch: Option<ForkWatchRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub activity_feed: Option<ActivityFeedRecord>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transaction_horizon: Option<TransactionHorizonRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub network_atlas: Option<NetworkAtlasRecord>,
 }
@@ -495,6 +518,9 @@ pub enum SemanticsDelta {
     ActivityFeedReplace {
         activity_feed: ActivityFeedRecord,
     },
+    TransactionHorizonReplace {
+        transaction_horizon: TransactionHorizonRecord,
+    },
     NetworkAtlasReplace {
         network_atlas: NetworkAtlasRecord,
     },
@@ -522,6 +548,7 @@ pub struct SemanticsProjection {
     protocol_era: Option<ProtocolEraRecord>,
     fork_watch: Option<ForkWatchRecord>,
     activity_feed: Option<ActivityFeedRecord>,
+    transaction_horizon: Option<TransactionHorizonRecord>,
     network_atlas: Option<NetworkAtlasRecord>,
     next_sequence: u64,
     cell_cap: usize,
@@ -544,6 +571,7 @@ impl SemanticsProjection {
             protocol_era: None,
             fork_watch: None,
             activity_feed: None,
+            transaction_horizon: None,
             network_atlas: None,
             next_sequence: 0,
             cell_cap: 512,
@@ -605,6 +633,7 @@ impl SemanticsProjection {
         self.protocol_era = None;
         self.fork_watch = None;
         self.activity_feed = None;
+        self.transaction_horizon = None;
         self.network_atlas = None;
     }
 
@@ -663,6 +692,7 @@ impl Projection for SemanticsProjection {
             protocol_era: self.protocol_era.clone(),
             fork_watch: self.fork_watch.clone(),
             activity_feed: self.activity_feed.clone(),
+            transaction_horizon: self.transaction_horizon.clone(),
             network_atlas: self.network_atlas.clone(),
         }
     }
@@ -716,6 +746,13 @@ impl Projection for SemanticsProjection {
                     .is_some_and(|feed| feed.as_of.block >= *from_block)
                 {
                     self.activity_feed = None;
+                }
+                if self
+                    .transaction_horizon
+                    .as_ref()
+                    .is_some_and(|horizon| horizon.as_of.block >= *from_block)
+                {
+                    self.transaction_horizon = None;
                 }
                 if self
                     .network_atlas
@@ -829,6 +866,12 @@ impl EnrichmentProjection for SemanticsProjection {
                     activity_feed: activity_feed.clone(),
                 }]
             }
+            EnrichmentEvent::TransactionHorizonReplace(transaction_horizon) => {
+                self.transaction_horizon = Some(transaction_horizon.clone());
+                vec![SemanticsDelta::TransactionHorizonReplace {
+                    transaction_horizon: transaction_horizon.clone(),
+                }]
+            }
             EnrichmentEvent::NetworkAtlasReplace(network_atlas) => {
                 self.network_atlas = Some(network_atlas.clone());
                 vec![SemanticsDelta::NetworkAtlasReplace {
@@ -909,6 +952,21 @@ mod tests {
                 label: Some("Example Script".into()),
                 participant_count: 1,
             }],
+        }
+    }
+
+    fn transaction_horizon(block: u64) -> TransactionHorizonRecord {
+        TransactionHorizonRecord {
+            source: "ckbadger".into(),
+            as_of: ChainAnchor {
+                block,
+                hash: format!("0xblock{block}"),
+            },
+            updated_at_ms: block,
+            current_hour: 12,
+            current_day: 345,
+            hourly_counts: vec![7, 9, 12],
+            daily_counts: vec![300, 321, 345],
         }
     }
 
@@ -1068,6 +1126,9 @@ mod tests {
         projection.apply_enrichment(&EnrichmentEvent::ProtocolEraReplace(protocol_era(10)));
         projection.apply_enrichment(&EnrichmentEvent::ForkWatchReplace(fork_watch(10)));
         projection.apply_enrichment(&EnrichmentEvent::ActivityFeedReplace(activity_feed(10)));
+        projection.apply_enrichment(&EnrichmentEvent::TransactionHorizonReplace(
+            transaction_horizon(10),
+        ));
         projection.apply_enrichment(&EnrichmentEvent::NetworkAtlasReplace(network_atlas(10)));
 
         projection.apply_mutation(&Mutation::ChainReorganized { from_block: 10 });
@@ -1077,6 +1138,7 @@ mod tests {
         assert!(projection.snapshot().protocol_era.is_none());
         assert!(projection.snapshot().fork_watch.is_none());
         assert!(projection.snapshot().activity_feed.is_none());
+        assert!(projection.snapshot().transaction_horizon.is_none());
         assert!(projection.snapshot().network_atlas.is_none());
     }
 

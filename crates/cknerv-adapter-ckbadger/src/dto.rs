@@ -8,6 +8,26 @@ pub(crate) struct NetworkStats {
     pub sync_status: SyncStatus,
 }
 
+/// Fixed-size subset of ckbadger's indexed transaction statistics. Source
+/// labels are validated by the adapter but intentionally discarded before the
+/// shared wire boundary.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct TransactionStatsResponse {
+    pub current_hour: i64,
+    pub current_day: i64,
+    #[serde(default)]
+    pub hourly_data: Vec<TransactionStatsPoint>,
+    #[serde(default)]
+    pub daily_data: Vec<TransactionStatsPoint>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct TransactionStatsPoint {
+    pub label: String,
+    pub value: i64,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct NetworkCrawlerSummaryResponse {

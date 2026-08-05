@@ -15,6 +15,7 @@ import type {
   NetworkAtlasRecord,
   ProtocolEraRecord,
   TransactionSemanticRecord,
+  TransactionHorizonRecord,
 } from '@cknerv/types';
 import type { ActiveReplayProgress } from '@cknerv/cache';
 import type {
@@ -77,7 +78,7 @@ const MESH_RAIL_STYLE: CSSProperties = { position: 'absolute', top: 42, right: 1
 const MESH_ZONE_COL: CSSProperties = { display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'flex-end' };
 const PANEL_FLOW: CSSProperties = { position: 'relative' };
 
-export default function HudOverlay({ chain, peers, localNode, cellsStats, cellCount, cellCapacity, enrichmentSource, assetEcosystem, protocolEra, forkWatch, daoState, activityFeed, networkAtlas, selectedCell, selectedCellSemantics, selectedCellSemanticsPhase, selectedCellSemanticsMessage, selectedTransactionSemantics, selectedTransactionSemanticsPhase, selectedTransactionSemanticsMessage, cellRecordsById, recentCellLinks, cellCausalLens, cellCausalNavigation, tracedCellWriteSeq, cellTraceSource, cellTraceReadout, cellTraceResponseRef, cellTraceEvidenceFocusSourceId, cellTraceEvidencePreviewSourceId, onCellTraceEvidenceFocusChange, cellTraceRouteHopFocus, onCellTraceRouteHopFocusChange, cellTraceRouteHopLock, onCellTraceRouteHopLockChange, cellIdentityProofBinding, onTraceCellWrite, onCellIdentityProofRead, selectedNode, selectedPeer, onClearSelection, onClearCell, onClearNet, backfill, streamHealth, build, topBarActions, colonyCount }: {
+export default function HudOverlay({ chain, peers, localNode, cellsStats, cellCount, cellCapacity, enrichmentSource, assetEcosystem, protocolEra, forkWatch, daoState, activityFeed, transactionHorizon, networkAtlas, selectedCell, selectedCellSemantics, selectedCellSemanticsPhase, selectedCellSemanticsMessage, selectedTransactionSemantics, selectedTransactionSemanticsPhase, selectedTransactionSemanticsMessage, cellRecordsById, recentCellLinks, cellCausalLens, cellCausalNavigation, tracedCellWriteSeq, cellTraceSource, cellTraceReadout, cellTraceResponseRef, cellTraceEvidenceFocusSourceId, cellTraceEvidencePreviewSourceId, onCellTraceEvidenceFocusChange, cellTraceRouteHopFocus, onCellTraceRouteHopFocusChange, cellTraceRouteHopLock, onCellTraceRouteHopLockChange, cellIdentityProofBinding, onTraceCellWrite, onCellIdentityProofRead, selectedNode, selectedPeer, onClearSelection, onClearCell, onClearNet, backfill, streamHealth, build, topBarActions, colonyCount }: {
   chain: ChainEntry; peers: Peer[]; localNode: ChainNode | undefined; cellsStats: CellsStats;
   /** Records available to CellGalaxy before the top-bar display cap. */
   cellCount?: number;
@@ -89,6 +90,7 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats, cellCo
   forkWatch?: ForkWatchRecord | null;
   daoState?: DaoStateRecord | null;
   activityFeed?: ActivityFeedRecord | null;
+  transactionHorizon?: TransactionHorizonRecord | null;
   networkAtlas?: NetworkAtlasRecord | null;
   selectedCell?: Cell | null;
   selectedCellSemantics?: CellSemanticRecord | null;
@@ -251,6 +253,7 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats, cellCo
         forkWatch={forkWatch}
         daoState={daoState}
         activityFeed={activityFeed}
+        transactionHorizon={transactionHorizon}
         compactActivity={shortViewport}
         style={{ left: 14, top: contentTop }}
       />
