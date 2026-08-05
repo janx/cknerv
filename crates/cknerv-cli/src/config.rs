@@ -284,13 +284,13 @@ pub const CKNERV_TOML_TEMPLATE: &str = r#"# cknerv configuration. Priority: CLI 
 # CKB JSON-RPC endpoint.
 rpc_url = "http://localhost:8114"
 
-# Optional indexed semantics. Leave this section commented out and cknerv
-# behaves exactly as a direct CKB-only dashboard.
-#[ckbadger]
-# Direct per-network API: http://127.0.0.1:8101/api/v1
-# Orchestrator proxy:      http://127.0.0.1:8100/api/mainnet/v1
-#api_url = "http://127.0.0.1:8101/api/v1"
-#max_lag_blocks = 12
+# Optional indexed semantics. Uncomment the three configuration lines below
+# to enable ckbadger. See docs/ckbadger.md for endpoint options and behavior.
+# Direct API example:       http://127.0.0.1:8101/api/v1
+# Orchestrator API example: http://127.0.0.1:8100/api/mainnet/v1
+# [ckbadger]
+# api_url = "http://127.0.0.1:8101/api/v1"
+# max_lag_blocks = 12
 
 [dashboard]
 # HTTP/WS port for the dashboard SPA.
@@ -448,12 +448,16 @@ mod tests {
     #[test]
     fn template_parses_to_documented_defaults() {
         assert!(!CKNERV_TOML_TEMPLATE.contains("[backfill]"));
+        assert!(CKNERV_TOML_TEMPLATE.contains(
+            "# [ckbadger]\n# api_url = \"http://127.0.0.1:8101/api/v1\"\n# max_lag_blocks = 12"
+        ));
         let file: FileConfig = toml::from_str(CKNERV_TOML_TEMPLATE).unwrap();
         let r = resolve(None, None, false, None, &file).unwrap();
         assert_eq!(r.rpc_url.as_str(), "http://localhost:8114/");
         assert_eq!(r.port, 7001);
         assert!(r.open);
         assert_eq!(r.backfill_blocks, None);
+        assert!(r.ckbadger.is_none());
         assert_eq!(r.galaxy.cell_cap, 20_000);
     }
 
