@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import type {
   EnrichmentSourceStatus,
   NetworkAtlasBucket,
@@ -51,20 +52,23 @@ function BucketStrip({ label, buckets, total }: {
   );
 }
 
-export default function NetworkAtlasReadout({ source, record }: {
+export default function NetworkAtlasReadout({ source, record, fallback = null }: {
   source?: EnrichmentSourceStatus;
   record?: NetworkAtlasRecord | null;
+  /** Direct-node detail shown until a valid indexed atlas record exists. */
+  fallback?: ReactNode;
 }) {
-  if (!source || !record) return null;
+  if (!source || !record) return fallback;
   const visualState = networkAtlasVisualState(source, record);
   const visual = deriveNetworkAtlasVisual(record);
-  if (!visualState || !visual) return null;
+  if (!visualState || !visual) return fallback;
   const stale = visualState === 'stale';
   const accent = stale ? HUD_COLORS.caution : HUD_COLORS.peerWire;
 
   return (
     <section
       aria-label="Indexed network atlas"
+      data-network-detail-mode="indexed"
       data-network-atlas-state={visualState}
       style={{
         marginTop: 11,

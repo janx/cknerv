@@ -264,17 +264,19 @@ With a local ckbadger service configured:
       in-flight request
 - [ ] `COMMON KNOWLEDGE BASE` shows `INDEXED NERVOS DAO` with its statistics
       block, anchor, fixed DAO totals, APC, and available 24-hour deltas
-- [ ] Directly below canonical `Reorgs`, `INDEXED FORK WATCH` shows clear,
-      recent, or deep context without changing the canonical count or alert
+- [ ] `COMMON KNOWLEDGE BASE` keeps only the canonical `Reorgs` count;
+      `fork_watch` remains available through semantics without changing it
 - [ ] `COMMON KNOWLEDGE BASE` shows a separately labeled
       `INDEXED ACTIVITY · LATEST N` fingerprint and recent activity rows
 - [ ] At 768px viewport height, the activity fingerprint remains but its rows
       fold away, and the transaction horizon folds into `IDX H…/D…` inside the
       direct TPS row; `COMMON KNOWLEDGE BASE` does not overlap `PULSE`
-- [ ] `CELL MESH` shows a separately labeled `INDEXED CHAIN CAPACITY` bar and
-      bounded top-asset list; retained Cell taxonomy/counts remain unchanged
-- [ ] `PEER MESH` shows `INDEXED NETWORK ATLAS · LATEST N SAMPLE` below the
-      direct-peer telemetry without adding crawler nodes or edges to the scene
+- [ ] `CELL MESH` replaces its retained-capacity detail with a labeled
+      `INDEXED CHAIN CAPACITY` bar and bounded top-asset list, without showing
+      duplicate capacity views
+- [ ] `PEER MESH` replaces local version/ping detail with
+      `INDEXED NETWORK ATLAS · LATEST N SAMPLE` while retaining direct peer
+      count, head consensus, and sync ratio and adding no crawler scene objects
 - [ ] A same-height block hash mismatch shows `INCOMPATIBLE`; chain/cells keep moving
 - [ ] A same-height replacement that occurs after an enrichment payload is
       fetched is rejected by the final anchor check and never appears in the

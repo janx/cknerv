@@ -122,9 +122,9 @@ describe('HudOverlay wiring', () => {
     expect(APP_SOURCE).not.toContain('<ProtocolEraOrbit');
   });
 
-  it('routes fixed-work optional fork watch only through the HUD', () => {
-    expect(APP_SOURCE).toContain('forkWatch={enrichmentConfig.enabled');
-    expect(APP_SOURCE).toContain('? semanticsCache.forkWatch');
+  it('does not route optional fork watch into the default dashboard', () => {
+    expect(APP_SOURCE).not.toContain('forkWatch=');
+    expect(APP_SOURCE).not.toContain('semanticsCache.forkWatch');
     expect(APP_SOURCE).not.toContain('<ForkWatchOrbit');
   });
 

@@ -4,7 +4,6 @@ import type {
   ChainEntry,
   DaoStateRecord,
   EnrichmentSourceStatus,
-  ForkWatchRecord,
   ProtocolEraRecord,
   TransactionHorizonRecord,
 } from '@cknerv/types';
@@ -13,25 +12,22 @@ import { HUD_COLORS, HUD_FONTS } from './hudTheme';
 import { HudPanel, PanelHeader, StatRow } from './primitives';
 import ActivityFeedReadout from './ActivityFeedReadout';
 import DaoStateReadout from './DaoStateReadout';
-import ForkWatchReadout from './ForkWatchReadout';
 import ProtocolEraBadge from './ProtocolEraBadge';
 import TransactionHorizonReadout from './TransactionHorizonReadout';
 
 const fmt = (n: number) => n.toLocaleString('en-US');
-function fmtInterval(ms: number): string { return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.round(ms)}ms`; }
 
-export default function BlockchainReadout({ chain, enrichmentSource, protocolEra, forkWatch, daoState, activityFeed, transactionHorizon, compactActivity = false, style }: {
+export default function BlockchainReadout({ chain, enrichmentSource, protocolEra, daoState, activityFeed, transactionHorizon, compactActivity = false, style }: {
   chain: ChainEntry;
   enrichmentSource?: EnrichmentSourceStatus;
   protocolEra?: ProtocolEraRecord | null;
-  forkWatch?: ForkWatchRecord | null;
   daoState?: DaoStateRecord | null;
   activityFeed?: ActivityFeedRecord | null;
   transactionHorizon?: TransactionHorizonRecord | null;
   compactActivity?: boolean;
   style?: CSSProperties;
 }) {
-  const { tps, intervalAvgMs, intervalLastMs } = computeRollingStats(chain);
+  const { tps } = computeRollingStats(chain);
   const ep = chain.epoch;
   return (
     <HudPanel style={{ width: 340, ...style }}>
@@ -53,10 +49,8 @@ export default function BlockchainReadout({ chain, enrichmentSource, protocolEra
           />
         ) : null}
       </StatRow>
-      <StatRow label="Interval">{fmtInterval(intervalAvgMs)} · {intervalLastMs != null ? fmtInterval(intervalLastMs) : '—'}</StatRow>
       <StatRow label="Mempool">{chain.mempool.pending} · {chain.mempool.proposed}</StatRow>
       <StatRow label="Reorgs" valueColor={chain.reorgs > 0 ? HUD_COLORS.danger : undefined}>{chain.reorgs}</StatRow>
-      <ForkWatchReadout source={enrichmentSource} record={forkWatch} />
       {!compactActivity ? (
         <TransactionHorizonReadout
           source={enrichmentSource}

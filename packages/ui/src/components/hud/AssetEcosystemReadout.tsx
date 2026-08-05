@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import type {
   AssetEcosystemRecord,
   EnrichmentSourceStatus,
@@ -42,20 +43,23 @@ function shareLabel(bps: number): string {
   return Number.isInteger(percent) ? `${percent}%` : `${percent.toFixed(2).replace(/0$/, '')}%`;
 }
 
-export default function AssetEcosystemReadout({ source, record }: {
+export default function AssetEcosystemReadout({ source, record, fallback = null }: {
   source?: EnrichmentSourceStatus;
   record?: AssetEcosystemRecord | null;
+  /** Base CKB-only capacity view used until a valid indexed record exists. */
+  fallback?: ReactNode;
 }) {
-  if (!source || !record) return null;
+  if (!source || !record) return fallback;
   const visualState = assetEcosystemVisualState(source, record);
   const buckets = deriveAssetEcosystemBuckets(record);
-  if (!visualState || !buckets) return null;
+  if (!visualState || !buckets) return fallback;
   const stale = visualState === 'stale';
   const accent = stale ? HUD_COLORS.caution : HUD_COLORS.nominal;
 
   return (
     <section
       aria-label="Indexed asset ecosystem"
+      data-cell-capacity-mode="indexed"
       data-asset-ecosystem-state={visualState}
       style={{
         marginTop: 11,
