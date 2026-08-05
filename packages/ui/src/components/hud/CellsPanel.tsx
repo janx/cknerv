@@ -49,6 +49,37 @@ function FlowRow({ label, color, width, value }: { label: string; color: string;
   );
 }
 
+function RetainedCapacityReadout({ stats }: { stats: CellsStats }) {
+  return (
+    <section
+      aria-label="Retained Cell capacity"
+      data-cell-capacity-mode="retained"
+      style={{ marginTop: 11, paddingTop: 9, borderTop: '1px solid rgba(255,152,48,.12)' }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontFamily: HUD_FONTS.tech, fontSize: 7.5, letterSpacing: 1.5, color: '#5f7384', textTransform: 'uppercase', marginBottom: 5 }}>
+        <span style={{ width: 5, height: 5, borderRadius: '50%', background: HUD_COLORS.cyanWire, boxShadow: `0 0 6px ${HUD_COLORS.cyanWire}` }} />
+        Retained · {fmt(stats.inView)} cells
+      </div>
+      <StatRow label="Capacity">{formatStateBytes(stats.capacityShannons)} state</StatRow>
+      <TaxonomyBar title="ASSETS" buckets={[
+        { key: 'native', label: 'CKB', color: ASSET_COLORS.native, count: stats.byAsset.native },
+        { key: 'sudt', label: 'sUDT', color: ASSET_COLORS.sudt, count: stats.byAsset.sudt },
+        { key: 'xudt', label: 'xUDT', color: ASSET_COLORS.xudt, count: stats.byAsset.xudt },
+        { key: 'dao', label: 'DAO', color: ASSET_COLORS.dao, count: stats.byAsset.dao },
+        { key: 'spore', label: 'NFT', color: ASSET_COLORS.spore, count: stats.byAsset.spore },
+        { key: 'other', label: '?', color: ASSET_COLORS.other, count: stats.byAsset.other },
+      ]} />
+      <TaxonomyBar title="LOCKS" buckets={[
+        { key: 'sighash', label: 'sighash', color: LOCK_COLORS.sighash, count: stats.byLock.sighash },
+        { key: 'multisig', label: 'multisig', color: LOCK_COLORS.multisig, count: stats.byLock.multisig },
+        { key: 'acp', label: 'ACP', color: LOCK_COLORS.acp, count: stats.byLock.acp },
+        { key: 'omnilock', label: 'omni', color: LOCK_COLORS.omnilock, count: stats.byLock.omnilock },
+        { key: 'other', label: '?', color: LOCK_COLORS.other, count: stats.byLock.other },
+      ]} />
+    </section>
+  );
+}
+
 export default function CellsPanel({ stats, churn, enrichmentSource, assetEcosystem, reducedMotion = false, style }: {
   stats: CellsStats;
   churn: ChurnRates;
@@ -77,29 +108,11 @@ export default function CellsPanel({ stats, churn, enrichmentSource, assetEcosys
         <StatRow label="Total observed">{fmt(stats.born)}</StatRow>
         <StatRow label="Dead" valueColor={HUD_COLORS.danger}>{fmt(stats.dead)}</StatRow>
       </div>
-      <div style={{ marginTop: 11, paddingTop: 9, borderTop: '1px solid rgba(255,152,48,.12)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontFamily: HUD_FONTS.tech, fontSize: 7.5, letterSpacing: 1.5, color: '#5f7384', textTransform: 'uppercase', marginBottom: 5 }}>
-          <span style={{ width: 5, height: 5, borderRadius: '50%', background: HUD_COLORS.cyanWire, boxShadow: `0 0 6px ${HUD_COLORS.cyanWire}` }} />
-          Retained · {fmt(stats.inView)} cells
-        </div>
-        <StatRow label="Capacity">{formatStateBytes(stats.capacityShannons)} state</StatRow>
-        <TaxonomyBar title="ASSETS" buckets={[
-          { key: 'native', label: 'CKB', color: ASSET_COLORS.native, count: stats.byAsset.native },
-          { key: 'sudt', label: 'sUDT', color: ASSET_COLORS.sudt, count: stats.byAsset.sudt },
-          { key: 'xudt', label: 'xUDT', color: ASSET_COLORS.xudt, count: stats.byAsset.xudt },
-          { key: 'dao', label: 'DAO', color: ASSET_COLORS.dao, count: stats.byAsset.dao },
-          { key: 'spore', label: 'NFT', color: ASSET_COLORS.spore, count: stats.byAsset.spore },
-          { key: 'other', label: '?', color: ASSET_COLORS.other, count: stats.byAsset.other },
-        ]} />
-        <TaxonomyBar title="LOCKS" buckets={[
-          { key: 'sighash', label: 'sighash', color: LOCK_COLORS.sighash, count: stats.byLock.sighash },
-          { key: 'multisig', label: 'multisig', color: LOCK_COLORS.multisig, count: stats.byLock.multisig },
-          { key: 'acp', label: 'ACP', color: LOCK_COLORS.acp, count: stats.byLock.acp },
-          { key: 'omnilock', label: 'omni', color: LOCK_COLORS.omnilock, count: stats.byLock.omnilock },
-          { key: 'other', label: '?', color: LOCK_COLORS.other, count: stats.byLock.other },
-        ]} />
-      </div>
-      <AssetEcosystemReadout source={enrichmentSource} record={assetEcosystem} />
+      <AssetEcosystemReadout
+        source={enrichmentSource}
+        record={assetEcosystem}
+        fallback={<RetainedCapacityReadout stats={stats} />}
+      />
     </HudPanel>
   );
 }

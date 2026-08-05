@@ -8,6 +8,24 @@ import NetworkAtlasReadout from './NetworkAtlasReadout';
 
 const fmt = (n: number) => n.toLocaleString('en-US');
 
+function LocalPeerDetails({ ping, vers, colonyCount }: {
+  ping: PingStats | null;
+  vers: VersionSpread;
+  colonyCount?: number;
+}) {
+  return (
+    <section data-network-detail-mode="local" aria-label="Direct peer details">
+      <StatRow label="Version">{vers.majorityVersion} ×{vers.majorityCount}{vers.otherCount > 0 ? ` · ×${vers.otherCount} other` : ''}</StatRow>
+      <StatRow label="Ping">{ping ? `${ping.medianMs}ms med · ${ping.minMs}–${ping.maxMs}` : '—'}</StatRow>
+      {colonyCount != null && (
+        <div style={{ marginTop: 5, fontFamily: HUD_FONTS.mono, fontSize: 8.5, letterSpacing: 0.4, color: HUD_COLORS.peerWire, opacity: 0.85 }}>
+          colony ~ {fmt(colonyCount)} nodes (inferred)
+        </div>
+      )}
+    </section>
+  );
+}
+
 export default function NetworkPanel({ summary, consensus, ping, vers, syncRatio, colonyCount, enrichmentSource, networkAtlas, style }: {
   summary: NetworkSummary; consensus: FleetConsensus; ping: PingStats | null; vers: VersionSpread; syncRatio: number;
   /** Whole-colony node count (measured + inferred + local) for the honest
@@ -37,15 +55,11 @@ export default function NetworkPanel({ summary, consensus, ping, vers, syncRatio
       </div>
       <StatRow label="Sync ratio">{(syncRatio * 100).toFixed(1)}%</StatRow>
       <Gauge ratio={syncRatio} color={HUD_COLORS.nominal} />
-      <StatRow label="Version">{vers.majorityVersion} ×{vers.majorityCount}{vers.otherCount > 0 ? ` · ×${vers.otherCount} other` : ''}</StatRow>
-      <StatRow label="Ping">{ping ? `${ping.medianMs}ms med · ${ping.minMs}–${ping.maxMs}` : '—'}</StatRow>
-      <StatRow label="Best">#{fmt(summary.bestKnown)}</StatRow>
-      {colonyCount != null && (
-        <div style={{ marginTop: 5, fontFamily: HUD_FONTS.mono, fontSize: 8.5, letterSpacing: 0.4, color: HUD_COLORS.peerWire, opacity: 0.85 }}>
-          colony ~ {fmt(colonyCount)} nodes (inferred)
-        </div>
-      )}
-      <NetworkAtlasReadout source={enrichmentSource} record={networkAtlas} />
+      <NetworkAtlasReadout
+        source={enrichmentSource}
+        record={networkAtlas}
+        fallback={<LocalPeerDetails ping={ping} vers={vers} colonyCount={colonyCount} />}
+      />
     </HudPanel>
   );
 }

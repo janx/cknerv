@@ -159,7 +159,6 @@ export {
 export { default as AssetEcosystemReadout } from './components/hud/AssetEcosystemReadout';
 export { default as DaoStateReadout } from './components/hud/DaoStateReadout';
 export { default as ProtocolEraBadge } from './components/hud/ProtocolEraBadge';
-export { default as ForkWatchReadout } from './components/hud/ForkWatchReadout';
 export { default as ActivityFeedReadout } from './components/hud/ActivityFeedReadout';
 export { default as TransactionHorizonReadout } from './components/hud/TransactionHorizonReadout';
 export { default as NetworkAtlasReadout } from './components/hud/NetworkAtlasReadout';

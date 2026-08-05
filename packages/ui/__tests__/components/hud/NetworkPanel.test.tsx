@@ -51,9 +51,11 @@ describe('NetworkPanel', () => {
     expect(t).toContain('×3 other');    // version spread
     expect(t).toContain('84ms');        // ping median
     expect(t).toContain('12');          // ping min
+    expect(container.querySelector('[data-network-detail-mode="local"]')).not.toBeNull();
+    expect(container.querySelectorAll('[data-network-detail-mode]')).toHaveLength(1);
   });
 
-  it('adds crawler context as a clearly separate bounded sample', () => {
+  it('replaces local diagnostics with the indexed crawler view', () => {
     const { getByLabelText, container } = render(
       <NetworkPanel
         {...props}
@@ -70,12 +72,18 @@ describe('NetworkPanel', () => {
     expect(text).toContain('CKBADGER CRAWLER · LATEST 3 SAMPLE · BOUNDED');
     expect(text).toContain('9 reachable / 12 dialed');
     expect(text).toContain('SG 2 · US 1');
+    expect(text).not.toContain('0.201.0');
+    expect(text).not.toContain('84ms');
+    expect(container.querySelector('[data-network-detail-mode="local"]')).toBeNull();
+    expect(container.querySelectorAll('[data-network-detail-mode]')).toHaveLength(1);
   });
 
-  it('keeps the current peer panel unchanged without an atlas record', () => {
-    const { queryByLabelText } = render(
+  it('keeps direct peer diagnostics without a usable atlas record', () => {
+    const { queryByLabelText, container } = render(
       <NetworkPanel {...props} enrichmentSource={enrichmentSource} />,
     );
     expect(queryByLabelText('Indexed network atlas')).toBeNull();
+    expect(container.querySelector('[data-network-detail-mode="local"]')).not.toBeNull();
+    expect(container.textContent).toContain('0.201.0');
   });
 });

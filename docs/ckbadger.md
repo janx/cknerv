@@ -2,9 +2,9 @@
 
 ckbadger is an optional, read-only indexed enrichment source for cknerv. It
 adds bounded Cell, transaction, asset, DAO, protocol, fork, activity, history,
-and network context to the dashboard. The direct CKB JSON-RPC adapter remains
-the only source of structural chain truth: ckbadger data cannot create, spend,
-or replace a canonical Cell.
+and network context to the semantics pipeline. The direct CKB JSON-RPC adapter
+remains the only source of structural chain truth: ckbadger data cannot create,
+spend, or replace a canonical Cell.
 
 ## Configuration
 
@@ -134,10 +134,13 @@ once every 30 seconds after a usable source probe. The semantics stream carries
 exact capacities normalized to shannons, whole-byte knowledge size,
 basis-point category shares, and a bounded list of top indexed assets.
 
-`CELL MESH` renders a separate **INDEXED CHAIN CAPACITY** section. It is never
-an extrapolation of the retained Cell reservoir. The section is absent in
-CKB-only mode, dims when the source is stale or its own refresh is more than 90
-seconds old, and is suppressed when the source or anchor is unusable.
+`CELL MESH` has one capacity-detail slot. In CKB-only mode it shows retained
+Galaxy capacity plus the retained asset/lock taxonomy. A valid ckbadger record
+upgrades that same slot to **INDEXED CHAIN CAPACITY** instead of appending a
+second capacity view. Indexed totals are never extrapolated from the retained
+Cell reservoir. The enhanced view dims when the source is stale or its own
+refresh is more than 90 seconds old; until the source and anchor are usable,
+the base retained view remains visible.
 
 ### DAO State
 
@@ -187,11 +190,12 @@ that diagnostic is admitted only when ckbadger's reported live-chain tip and
 hash exactly match cknerv's retained canonical evidence. All other semantics
 from an incompatible source remain cleared.
 
-`COMMON KNOWLEDGE BASE` renders **INDEXED FORK WATCH** directly below the
-canonical `Reorgs` count, with clear, recent, recent-deep, or active-deep state.
-It never increments the canonical counter, triggers rollback, changes chain
-revision, or creates scene objects. It disappears with an unusable anchor and
-dims when the source is stale or its refresh is more than 45 seconds old.
+Fork-watch records remain available through the optional semantics snapshot and
+stream for diagnostics, but the default dashboard does not render an indexed
+fork panel. `COMMON KNOWLEDGE BASE` keeps only the direct adapter's canonical
+`Reorgs` count, avoiding a second fork summary with different scope. Indexed
+records never increment that canonical counter, trigger rollback, change chain
+revision, or create scene objects.
 
 ### Recent Activity
 
@@ -239,11 +243,14 @@ The adapter validates the counters and newest-first sample, then reduces it to
 country and version buckets, reachable count, and median RTT. Peer IDs and
 addresses never enter the shared wire contract.
 
-`PEER MESH` keeps the local CKB node's directly measured peers as primary truth
-and adds a separate **INDEXED NETWORK ATLAS** section with explicit `LATEST N
-SAMPLE` and `BOUNDED` labels. It creates no scene nodes or edges. The section is
-absent when unconfigured or empty, is removed independently if the crawler is
-disabled, and dims after three missed minute refreshes.
+`PEER MESH` always keeps the local CKB node's directly measured peer count,
+head consensus, and sync ratio as primary truth. Its detail slot shows local
+version, ping, and inferred-colony diagnostics in CKB-only mode. A valid atlas
+record upgrades that slot to **INDEXED NETWORK ATLAS**, with explicit `LATEST N
+SAMPLE` and `BOUNDED` labels, instead of appending a second network summary. It
+creates no scene nodes or edges. The base detail returns when the crawler is
+unconfigured, empty, disabled, or canonically unusable; stale indexed detail
+dims after three missed minute refreshes.
 
 ## Persistence
 

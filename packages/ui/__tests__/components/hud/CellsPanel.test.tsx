@@ -58,6 +58,8 @@ describe('CellsPanel', () => {
     expect(t).toContain('Retained');
     expect(t).toContain('4,983');
     expect(t).toContain('1.21 GB');   // capacity
+    expect(container.querySelector('[data-cell-capacity-mode="retained"]')).not.toBeNull();
+    expect(container.querySelectorAll('[data-cell-capacity-mode]')).toHaveLength(1);
   });
   it('renders the asset + lock taxonomy bars', () => {
     const { container } = render(<CellsPanel stats={stats} churn={churn} reducedMotion />);
@@ -72,7 +74,7 @@ describe('CellsPanel', () => {
     const { container } = render(<CellsPanel stats={stats} churn={churn} reducedMotion />);
     expect(container.querySelectorAll('path').length).toBe(0);
   });
-  it('keeps the indexed whole-chain sample separate from retained taxonomy', () => {
+  it('replaces retained capacity with the indexed whole-chain view', () => {
     const { container } = render(
       <CellsPanel
         stats={stats}
@@ -89,6 +91,11 @@ describe('CellsPanel', () => {
     expect(t).toContain('159.9 MB');
     expect(t).toContain('OTTER');
     expect(t).toContain('34,386 HOLDERS');
+    expect(t).not.toContain('Retained');
+    expect(t).not.toContain('1.21 GB');
+    expect(t).not.toContain('LOCKS');
+    expect(container.querySelector('[data-cell-capacity-mode="retained"]')).toBeNull();
+    expect(container.querySelectorAll('[data-cell-capacity-mode]')).toHaveLength(1);
     const daoBucket = container.querySelector<HTMLElement>(
       '[data-asset-capacity-category="dao"]',
     );
@@ -96,6 +103,21 @@ describe('CellsPanel', () => {
   });
   it('does not add indexed ecosystem UI without the optional source', () => {
     const { container } = render(<CellsPanel stats={stats} churn={churn} reducedMotion />);
+    expect(container.textContent).not.toContain('INDEXED CHAIN CAPACITY');
+  });
+
+  it('keeps the base capacity view while ckbadger has no usable record', () => {
+    const { container } = render(
+      <CellsPanel
+        stats={stats}
+        churn={churn}
+        enrichmentSource={{ ...enrichmentSource, status: 'connecting' }}
+        assetEcosystem={assetEcosystem}
+        reducedMotion
+      />,
+    );
+
+    expect(container.querySelector('[data-cell-capacity-mode="retained"]')).not.toBeNull();
     expect(container.textContent).not.toContain('INDEXED CHAIN CAPACITY');
   });
 });

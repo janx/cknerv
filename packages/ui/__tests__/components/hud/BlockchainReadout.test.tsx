@@ -5,7 +5,6 @@ import type {
   ChainEntry,
   DaoStateRecord,
   EnrichmentSourceStatus,
-  ForkWatchRecord,
   ProtocolEraRecord,
   TransactionHorizonRecord,
 } from '@cknerv/types';
@@ -66,23 +65,6 @@ const daoState: DaoStateRecord = {
   depositors_change_24h: 5,
 };
 
-const forkWatch: ForkWatchRecord = {
-  source: 'ckbadger',
-  as_of: { block: 100, hash: '0xblock100' },
-  updated_at_ms: Date.now(),
-  recent_window_seconds: 86_400,
-  recent_reorg: {
-    detected_at_ms: Date.now() - 30 * 60 * 1_000 - 5_000,
-    fork_point: 97,
-    old_tip: 98,
-    new_tip: 99,
-    depth: 1,
-    orphaned_blocks: 1,
-    orphaned_transactions: 3,
-    kind: 'reorg',
-  },
-};
-
 const protocolEra: ProtocolEraRecord = {
   source: 'ckbadger',
   as_of: { block: 100, hash: '0xblock100' },
@@ -116,6 +98,7 @@ describe('BlockchainReadout', () => {
     expect(container.textContent).toContain('312 · 64');
     expect(container.textContent).toContain('COMMON KNOWLEDGE BASE');
     expect(container.textContent).toContain('共识记忆');
+    expect(container.textContent).not.toContain('Interval');
     expect(container.textContent).not.toContain('INDEXED FORK WATCH');
     expect(container.textContent).not.toContain('INDEXED NERVOS DAO');
     expect(container.textContent).not.toContain('INDEXED ACTIVITY');
@@ -137,24 +120,6 @@ describe('BlockchainReadout', () => {
     expect(badge?.dataset.protocolEraLabel).toBe('MIRANA·21');
     expect(badge?.title).toContain('epoch 5,414, block #70');
     expect(container.textContent).not.toContain('PROTOCOL ERA');
-  });
-
-  it('renders optional recent fork history without changing canonical reorgs', () => {
-    const { container } = render(
-      <BlockchainReadout
-        chain={chain}
-        enrichmentSource={source}
-        forkWatch={forkWatch}
-      />,
-    );
-    const text = container.textContent ?? '';
-    expect(text).toContain('Reorgs0');
-    expect(text).toContain('INDEXED FORK WATCH · RECENT REORG');
-    expect(text).toContain('24H WINDOW · ANCHOR #100');
-    expect(text).toContain('30m ago');
-    expect(text).toContain('#98 → #99');
-    expect(text).toContain('1 blk · 3 tx');
-    expect(container.querySelector('[data-fork-watch-signal="recent"]')).not.toBeNull();
   });
 
   it('renders optional fixed-shape DAO context without inventing a ratio', () => {
