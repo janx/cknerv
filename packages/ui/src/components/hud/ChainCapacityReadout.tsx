@@ -54,6 +54,7 @@ function GalaxyWindow({ stats }: { stats: CellsStats }) {
       meta={`${fmt(stats.inView)} RETAINED CELLS`}
       accent={HUD_COLORS.cyanWire}
       terminal
+      flush
     >
       <div aria-label="Retained Cell capacity" data-retained-capacity-context>
         <StatRow label="Window capacity">{formatStateBytes(stats.capacityShannons)} state</StatRow>

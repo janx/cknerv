@@ -123,7 +123,11 @@ dep-group, and code Cells do not trigger that token lookup.
 The HUD displays the exact raw token amount with validated decimals, name, and
 symbol when available. Its source-neutral **CELL CONTEXT** header reports
 availability, lag, and freshness; source health remains in the global status
-strip. One billboarded semantic orbit appears around the selected canonical
+strip. In the enhanced detail panel, context facts use a compact two-column
+grid and the origin transaction uses one summary rail; the portrait and
+consensus-memory plate also adopt compact density. This preserves every base
+and validated field without stacking a second full-size detail card or
+repeating AGE as a separate row. One billboarded semantic orbit appears around the selected canonical
 Cell: inner CAP/LOCK/TYPE/DATA arcs show its occupied-byte breakdown, and an
 outer notched arc marks a resolved asset. There is no background Cell sweep or
 base-Galaxy retaxonomization. A stale source dims the orbit, while an invalid or
@@ -150,7 +154,9 @@ capacity panels. Indexed totals are never extrapolated from the retained Cell
 reservoir. Only the whole-chain scope dims when the source is stale or its own
 refresh is more than 90 seconds old; direct-node Galaxy data remains at full
 strength. Until the source and anchor are usable, the standalone base view
-remains visible.
+remains visible. Both capacity scopes share the canonical CKB label/value
+columns; their hierarchy rail sits outside those columns instead of indenting
+the data differently from the rows above and below.
 
 ### DAO State
 

@@ -75,6 +75,7 @@ export default function AssetEcosystemReadout({ source, record, fallback = null,
         meta={`AS OF #${record.as_of.block.toLocaleString('en-US')}${stale ? ' · STALE' : ''}`}
         accent={accent}
         terminal={retainedContext == null}
+        flush
         style={{ opacity: stale ? 0.68 : 1 }}
       >
         <StatRow label="Live capacity">{formatCapacity(record.total_live_capacity_shannons)}</StatRow>

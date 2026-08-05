@@ -864,6 +864,7 @@ function memoryRow({
   title,
   active,
   onActivate,
+  compact = false,
 }: {
   label: string;
   value: string;
@@ -871,13 +872,14 @@ function memoryRow({
   title?: string;
   active?: boolean;
   onActivate?: () => void;
+  compact?: boolean;
 }) {
   const content = (
     <>
-      <span style={{ fontFamily: HUD_FONTS.tech, fontSize: 7.8, fontWeight: 500, letterSpacing: 1.35, color: HUD_COLORS.dim }}>
+      <span style={{ fontFamily: HUD_FONTS.tech, fontSize: compact ? 7.2 : 7.8, fontWeight: 500, letterSpacing: compact ? 1.1 : 1.35, color: HUD_COLORS.dim }}>
         {label}
       </span>
-      <span title={title} style={{ minWidth: 0, textAlign: 'right', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis', fontFamily: HUD_FONTS.mono, fontSize: 9.5, letterSpacing: 0.3, color }}>
+      <span title={title} style={{ minWidth: 0, textAlign: 'right', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis', fontFamily: HUD_FONTS.mono, fontSize: compact ? 8.8 : 9.5, letterSpacing: 0.3, color }}>
         {value}
       </span>
     </>
@@ -887,7 +889,7 @@ function memoryRow({
     gridTemplateColumns: '58px minmax(0,1fr)',
     alignItems: 'baseline',
     width: '100%',
-    minHeight: 17,
+    minHeight: compact ? 15 : 17,
     margin: 0,
     padding: 0,
     border: 0,
@@ -911,11 +913,13 @@ function IdentityBraid({
   reducedMotion,
   traceSelected,
   identityProofBinding,
+  compact = false,
 }: {
   identity: CellConsensusIdentity;
   reducedMotion: boolean;
   traceSelected: boolean;
   identityProofBinding: CellIdentityProofBinding | null;
+  compact?: boolean;
 }) {
   const nibbles = fingerprintBody(identity.contentHash)
     .slice(0, 12)
@@ -943,7 +947,7 @@ function IdentityBraid({
       aria-hidden="true"
       viewBox="0 0 238 42"
       preserveAspectRatio="none"
-      style={{ display: 'block', width: '100%', height: 42, overflow: 'visible' }}
+      style={{ display: 'block', width: '100%', height: compact ? 32 : 42, overflow: 'visible' }}
     >
       {/* Content-derived register marks: identity, not an activity meter. */}
       {nibbles.map((value, index) => {
@@ -1470,6 +1474,7 @@ export default function ConsensusIdentityPlate({
   onTraceRouteHopLockChange,
   routeCellById,
   agreementCount,
+  compact = false,
 }: {
   identity: CellConsensusIdentity;
   causalLens?: CellCausalLens | null;
@@ -1501,6 +1506,7 @@ export default function ConsensusIdentityPlate({
   ) => void;
   routeCellById?: ReadonlyMap<number, Cell>;
   agreementCount: number;
+  compact?: boolean;
 }) {
   const observed = identity.observedWrite;
   const selectedIdentityProofBinding = identityProofBinding;
@@ -1516,8 +1522,8 @@ export default function ConsensusIdentityPlate({
   const fingerprint = fingerprintReadout(identity.contentHash, reveal);
   const shell: CSSProperties = {
     position: 'relative',
-    marginTop: 9,
-    padding: '8px 9px 7px',
+    marginTop: compact ? 6 : 9,
+    padding: compact ? '6px 7px 5px' : '8px 9px 7px',
     overflow: 'visible',
     borderTop: `1px solid ${CYAN}30`,
     borderBottom: `1px solid ${VIOLET}26`,
@@ -1527,7 +1533,11 @@ export default function ConsensusIdentityPlate({
   };
 
   return (
-    <div data-consensus-memory="true" style={shell}>
+    <div
+      data-consensus-memory="true"
+      data-consensus-memory-density={compact ? 'compact' : 'standard'}
+      style={shell}
+    >
       <span style={{ position: 'absolute', left: 0, top: 0, width: 8, height: 8, borderLeft: `1px solid ${CYAN}99`, borderTop: `1px solid ${CYAN}99` }} />
       <span style={{ position: 'absolute', right: 0, bottom: 0, width: 8, height: 8, borderRight: `1px solid ${VIOLET}88`, borderBottom: `1px solid ${VIOLET}88` }} />
 
@@ -1548,6 +1558,7 @@ export default function ConsensusIdentityPlate({
         reducedMotion={reducedMotion}
         traceSelected={traceSelected}
         identityProofBinding={selectedIdentityProofBinding}
+        compact={compact}
       />
 
       {memoryRow({
@@ -1557,6 +1568,7 @@ export default function ConsensusIdentityPlate({
         title: `${identity.txHash}#${identity.outPointIndex}`,
         active: focusedField === 'state',
         onActivate: onInspectAddress,
+        compact,
       })}
       {memoryRow({
         label: 'CONTENT',
@@ -1565,6 +1577,7 @@ export default function ConsensusIdentityPlate({
         title: identity.contentHash,
         active: focusedField === 'data',
         onActivate: onInspectContent,
+        compact,
       })}
       {memoryRow({
         label: 'ANCHOR',
@@ -1572,6 +1585,7 @@ export default function ConsensusIdentityPlate({
         color: '#C9F8FF',
         active: focusedField === 'born',
         onActivate: onInspectAnchor,
+        compact,
       })}
 
       {causalLens ? (
@@ -1579,6 +1593,7 @@ export default function ConsensusIdentityPlate({
           lens={causalLens}
           reveal={reveal}
           navigation={causalNavigation}
+          compact={compact}
         />
       ) : null}
 
@@ -1596,8 +1611,8 @@ export default function ConsensusIdentityPlate({
           gridTemplateColumns: 'repeat(3, minmax(0, 1fr)) auto',
           alignItems: 'baseline',
           gap: 5,
-          marginTop: 5,
-          paddingTop: 5,
+          marginTop: compact ? 4 : 5,
+          paddingTop: compact ? 4 : 5,
           borderTop: `1px solid ${CYAN}18`,
           fontFamily: HUD_FONTS.mono,
           fontSize: 6.5,
@@ -1652,7 +1667,7 @@ export default function ConsensusIdentityPlate({
         </span>
       </div>
 
-      <div style={{ marginTop: 5, paddingTop: 5, borderTop: `1px solid ${CYAN}18` }}>
+      <div style={{ marginTop: compact ? 4 : 5, paddingTop: compact ? 4 : 5, borderTop: `1px solid ${CYAN}18` }}>
         <span style={{ fontFamily: HUD_FONTS.mono, fontSize: 8.3, letterSpacing: 0.45, color: statusColor, textShadow: `0 0 6px ${statusColor}55` }}>
           {statusText}
         </span>

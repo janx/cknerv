@@ -140,6 +140,8 @@ export default function CellDetailPanel({
   const reduced = useReducedMotion();
   const live = cell.death_at_ms === null;
   const now = Date.now();
+  const enhancedDetail = Boolean(semanticSource && semanticPhase);
+  const age = formatAge(cell.born_at_ms, now);
   // One scan epoch per selected Cell. Epoch + current time reset together when
   // the effect actually mounts, so a busy main thread cannot skip unseen scan
   // phases between render and first paint. The short-lived 12.5 fps ticker
@@ -236,7 +238,7 @@ export default function CellDetailPanel({
     },
     state: {
       label: 'STATE',
-      value: live ? '● LIVE' : '◇ SPENT',
+      value: `${live ? '● LIVE' : '◇ SPENT'}${enhancedDetail ? ` · ${age}` : ''}`,
       color: live ? HUD_COLORS.nominal : HUD_COLORS.caution,
     },
     born: { label: 'COMMIT', value: `#${cell.birth_block}` },
@@ -263,24 +265,27 @@ export default function CellDetailPanel({
   const interactive = p.classified;
   const focusField = interactive ? selectedField : null;
 
-  // All seven readout rows remain mounted and opacity-gated. The six encoded
-  // rows resolve in field order without driving auxiliary portrait lines; AGE
-  // is temporal context and always shown. Immutable address + content identity
-  // have moved into the consensus-memory plate below.
+  // The six encoded rows remain mounted and opacity-gated. They resolve in
+  // field order without driving auxiliary portrait lines. Standard mode keeps
+  // AGE on its own row; enhanced mode folds it into STATE to avoid repeating
+  // temporal context across the taller semantic stack. Immutable address and
+  // content identity live in the consensus-memory plate below.
   const rows: Array<RowDecode & { on: boolean; field?: Field }> = [
     ...order.map((field, index) => ({
       ...DECODE[field],
-      on: index < p.reveal,
+      on: index < p.reveal || (enhancedDetail && field === 'state'),
       field,
     })),
-    { label: 'AGE', value: formatAge(cell.born_at_ms, now), on: true },
+    ...(enhancedDetail ? [] : [{ label: 'AGE', value: age, on: true }]),
   ];
 
   return (
     <HudPanel style={{
       width: 270,
       pointerEvents: 'auto',
-      background: 'linear-gradient(180deg, rgba(0,2,9,.88) 0%, rgba(0,3,11,.78) 58%, rgba(1,4,12,.86) 100%)',
+      background: enhancedDetail
+        ? 'linear-gradient(180deg, rgba(0,2,9,.97) 0%, rgba(0,3,11,.94) 58%, rgba(1,4,12,.96) 100%)'
+        : 'linear-gradient(180deg, rgba(0,2,9,.88) 0%, rgba(0,3,11,.78) 58%, rgba(1,4,12,.86) 100%)',
       boxShadow: `-14px 0 30px rgba(0,0,0,.2), inset 0 0 34px ${HUD_COLORS.cyanWire}08`,
       transformOrigin: 'right top',
       animation: reduced
@@ -291,7 +296,16 @@ export default function CellDetailPanel({
       <CloseButton onClose={onClose} />
       <PanelHeader en="CELL" cjk="共识细胞" idx={`0x${cell.content_hash.slice(2, 10)}`} accent={HUD_COLORS.orange} />
       {/* Entry decoding leaves A stable; explicit row selection owns focus. */}
-      <div style={{ position: 'relative', marginBottom: 10 }}>
+      <div
+        data-cell-portrait-frame
+        data-cell-detail-density={enhancedDetail ? 'compact' : 'standard'}
+        style={{
+          position: 'relative',
+          width: enhancedDetail ? 196 : '100%',
+          maxWidth: '100%',
+          margin: enhancedDetail ? '0 auto 9px' : '0 0 10px',
+        }}
+      >
         <CellNucleusPortrait
           cell={cell}
           reducedMotion={reduced}
@@ -369,6 +383,7 @@ export default function CellDetailPanel({
         onTraceRouteHopLockChange={onTraceRouteHopLockChange}
         routeCellById={inspectedCellById}
         agreementCount={agreementTarget}
+        compact={enhancedDetail}
       />
     </HudPanel>
   );

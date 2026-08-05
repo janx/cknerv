@@ -79,10 +79,12 @@ export default function CellCausalLensReadout({
   lens,
   reveal = 1,
   navigation = null,
+  compact = false,
 }: {
   lens: CellCausalLens;
   reveal?: number;
   navigation?: CellCausalNavigationReadout | null;
+  compact?: boolean;
 }) {
   const meta = statusMeta(lens);
   const anchoredInputs = lens.inputs.filter((item) => item.anchor).length;
@@ -159,8 +161,8 @@ export default function CellCausalLensReadout({
       data-causal-endpoints-archived={archivedEndpoints}
       style={{
         position: 'relative',
-        marginTop: 6,
-        padding: '6px 7px 5px',
+        marginTop: compact ? 4 : 6,
+        padding: compact ? '4px 5px 4px' : '6px 7px 5px',
         border: `1px solid ${meta.color}26`,
         borderLeftColor: `${meta.color}8f`,
         background: `linear-gradient(90deg, ${meta.color}0f, rgba(1,4,12,.22) 58%, transparent)`,
@@ -185,7 +187,7 @@ export default function CellCausalLensReadout({
       }}>
         <span style={{
           color: '#D9FAFF',
-          fontSize: 7.8,
+          fontSize: compact ? 7.3 : 7.8,
           fontWeight: 700,
           letterSpacing: 1.18,
         }}>
@@ -206,7 +208,7 @@ export default function CellCausalLensReadout({
       <div
         title={lens.txHash}
         style={{
-          marginTop: 3,
+          marginTop: compact ? 2 : 3,
           color: HUD_COLORS.ink,
           fontFamily: HUD_FONTS.mono,
           fontSize: 7.1,
@@ -225,7 +227,7 @@ export default function CellCausalLensReadout({
         gridTemplateColumns: 'minmax(0,1fr) auto minmax(0,1fr)',
         alignItems: 'center',
         gap: 5,
-        marginTop: 4,
+        marginTop: compact ? 2 : 4,
       }}>
         <span style={{ ...flowCell, color: '#BBA8FF' }}>
           {endpointCount(anchoredInputs, lens.inputCount, 'INPUTS')}
@@ -250,8 +252,8 @@ export default function CellCausalLensReadout({
         display: 'flex',
         alignItems: 'baseline',
         gap: 6,
-        marginTop: 4,
-        paddingTop: 3,
+        marginTop: compact ? 2 : 4,
+        paddingTop: compact ? 2 : 3,
         borderTop: `1px solid ${meta.color}18`,
         color: meta.color,
         fontFamily: HUD_FONTS.mono,
@@ -282,8 +284,8 @@ export default function CellCausalLensReadout({
             gridTemplateColumns: 'minmax(0,1fr) auto minmax(0,1fr)',
             alignItems: 'center',
             gap: 5,
-            marginTop: 4,
-            paddingTop: 4,
+            marginTop: compact ? 3 : 4,
+            paddingTop: compact ? 3 : 4,
             borderTop: `1px solid ${meta.color}18`,
           }}
         >

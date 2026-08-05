@@ -38,6 +38,7 @@ describe('DaoStatePanel', () => {
     const text = container.textContent ?? '';
 
     expect(text).toContain('NERVOS DAO');
+    expect(text).toContain('道');
     expect(text).toContain('DAO·05');
     expect(text).toContain('SNAPSHOT #99 · VALIDATED AT #100');
     expect(text).toContain('8.38 B CKB');
