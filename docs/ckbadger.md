@@ -84,12 +84,24 @@ same hash at that height. A mismatch marks the source `incompatible`.
 Lag and reachability are reported separately as `syncing`, `stale`, or `error`
 without affecting the direct CKB adapter.
 
-Each lazy Cell or transaction response is checked again against the current
-block/hash window. This closes the race in which a reorg occurs during an HTTP
-request. Canonical reorg and rebuild events prune or clear unsafe semantic
-records before the source can revalidate. Aggregate refresh failures are
-isolated by capability and cannot degrade canonical routes or unrelated
-enrichment data.
+Every successful lazy or aggregate result re-reads the exact validated
+ckbadger block immediately before admission and requires its height and hash to
+remain unchanged. The server then checks that anchor against its current direct
+CKB evidence before applying the event. Together these fences close both a
+same-height source reorg during the HTTP fetch and a direct-chain reorg racing
+the result. Canonical reorg and rebuild events also prune or clear unsafe
+semantic records. Active deep-fork diagnostics are the deliberate exception:
+because the index is incompatible by definition, they prove ckbadger's
+reported live-chain tip/hash directly instead of reusing the normal indexed
+anchor.
+
+Source health keeps its own five-second probe cadence. Aggregate capabilities
+have independent due times, allow at most one request in flight per capability,
+and share a three-request concurrency bound. A slow or failing aggregate
+therefore cannot delay health probing, serialize unrelated due aggregates, or
+degrade canonical routes. Work that cannot start within the bound waits for a
+later probe so it receives fresh canonical context rather than queueing a stale
+one.
 
 ## Capabilities
 
@@ -209,9 +221,9 @@ remain explicitly source-defined indexed buckets rather than being converted
 to browser-local time.
 
 Because this summary has no block coordinate and its network summary has a
-separate cache, the adapter re-reads the validated block after each fetch and
-requires its successor to remain absent from the indexed store. Otherwise the
-summary waits for a later proof.
+separate cache, the adapter first requires the validated block's successor to
+remain absent from the indexed store, then re-reads the validated block as the
+final admission fence. Otherwise the summary waits for a later proof.
 
 On taller viewports, `COMMON KNOWLEDGE BASE` renders **INDEXED TX HORIZON ·
 N/24H** with exact current-hour and current-day counts. At 860 pixels or less it

@@ -119,6 +119,40 @@ impl CkbadgerEnrichmentSource {
         *self.validated_anchor.write().unwrap() = None;
     }
 
+    fn clear_anchor_if(&self, expected: &ChainAnchor) {
+        let mut anchor = self.validated_anchor.write().unwrap();
+        if anchor.as_ref() == Some(expected) {
+            *anchor = None;
+        }
+    }
+
+    async fn revalidate_anchor(&self, anchor: &ChainAnchor, subject: &str) -> anyhow::Result<()> {
+        let url = self.endpoint(&format!("blocks/{}", anchor.block))?;
+        let response = self
+            .client
+            .get(url)
+            .send()
+            .await
+            .with_context(|| format!("recheck ckbadger {subject} anchor"))?;
+        if !response.status().is_success() {
+            return Err(anyhow!(
+                "ckbadger {subject} anchor recheck returned HTTP {}",
+                response.status()
+            ));
+        }
+        let indexed_block: BlockResponse = response
+            .json()
+            .await
+            .with_context(|| format!("decode ckbadger {subject} anchor recheck"))?;
+        let anchor_block = i64::try_from(anchor.block)
+            .with_context(|| format!("validated {subject} anchor exceeds ckbadger block range"))?;
+        if indexed_block.number != anchor_block || indexed_block.hash != anchor.hash {
+            self.clear_anchor_if(anchor);
+            return Err(anyhow!("ckbadger {subject} anchor changed during fetch"));
+        }
+        Ok(())
+    }
+
     fn current_anchor(&self, context: &CanonicalContext) -> anyhow::Result<ChainAnchor> {
         let anchor = self
             .validated_anchor
@@ -617,7 +651,9 @@ impl EnrichmentSource for CkbadgerEnrichmentSource {
             return Err(anyhow!("ckbadger returned a different outpoint"));
         }
         let (lookups, asset) = tokio::join!(self.script_lookups(&cell), self.token_asset(&cell));
-        self.to_record(cell, anchor, &lookups, asset).map(Some)
+        let record = self.to_record(cell, anchor.clone(), &lookups, asset)?;
+        self.revalidate_anchor(&anchor, "Cell detail").await?;
+        Ok(Some(record))
     }
 
     async fn enrich_transaction(
@@ -653,8 +689,10 @@ impl EnrichmentSource for CkbadgerEnrichmentSource {
             return Err(anyhow!("ckbadger returned a different transaction"));
         }
         let lifecycle = self.transaction_lifecycle(tx_hash).await;
-        self.to_transaction_record(transaction, lifecycle, anchor)
-            .map(Some)
+        let record = self.to_transaction_record(transaction, lifecycle, anchor.clone())?;
+        self.revalidate_anchor(&anchor, "transaction detail")
+            .await?;
+        Ok(Some(record))
     }
 
     async fn enrich_asset_ecosystem(
@@ -682,7 +720,9 @@ impl EnrichmentSource for CkbadgerEnrichmentSource {
             .json()
             .await
             .context("decode ckbadger asset ecosystem")?;
-        map_asset_ecosystem(ecosystem, anchor).map(Some)
+        let record = map_asset_ecosystem(ecosystem, anchor.clone())?;
+        self.revalidate_anchor(&anchor, "asset ecosystem").await?;
+        Ok(Some(record))
     }
 
     async fn enrich_dao_state(
@@ -710,7 +750,11 @@ impl EnrichmentSource for CkbadgerEnrichmentSource {
             .json()
             .await
             .context("decode ckbadger DAO statistics")?;
-        map_dao_state(statistics, anchor)
+        let record = map_dao_state(statistics, anchor.clone())?;
+        if record.is_some() {
+            self.revalidate_anchor(&anchor, "DAO state").await?;
+        }
+        Ok(record)
     }
 
     async fn enrich_protocol_era(
@@ -744,7 +788,16 @@ impl EnrichmentSource for CkbadgerEnrichmentSource {
             .json()
             .await
             .context("decode ckbadger hardfork timeline")?;
-        map_protocol_era(timeline, expected_network, anchor, context.epoch_number)
+        let record = map_protocol_era(
+            timeline,
+            expected_network,
+            anchor.clone(),
+            context.epoch_number,
+        )?;
+        if record.is_some() {
+            self.revalidate_anchor(&anchor, "protocol era").await?;
+        }
+        Ok(record)
     }
 
     async fn enrich_fork_watch(
@@ -771,22 +824,25 @@ impl EnrichmentSource for CkbadgerEnrichmentSource {
             .json()
             .await
             .context("decode ckbadger fork watch")?;
-        let anchor = if watch.deep_fork.detected {
+        if watch.deep_fork.detected {
             let Some(anchor) = deep_fork_canonical_anchor(&watch, context)? else {
                 return Ok(None);
             };
-            anchor
-        } else {
-            // Ordinary recent history remains coupled to the source's normal
-            // compatibility proof. An active deep fork is different: the
-            // index is expected to be incompatible, so its live-chain hash is
-            // validated directly above instead.
-            let Ok(anchor) = self.current_anchor(context) else {
-                return Ok(None);
-            };
-            anchor
+            return map_fork_watch(watch, anchor);
+        }
+
+        // Ordinary recent history remains coupled to the source's normal
+        // compatibility proof. An active deep fork is different: the index is
+        // expected to be incompatible, so its live-chain hash is validated
+        // directly above instead.
+        let Ok(anchor) = self.current_anchor(context) else {
+            return Ok(None);
         };
-        map_fork_watch(watch, anchor)
+        let record = map_fork_watch(watch, anchor.clone())?;
+        if record.is_some() {
+            self.revalidate_anchor(&anchor, "fork watch").await?;
+        }
+        Ok(record)
     }
 
     async fn enrich_activity_feed(
@@ -816,7 +872,9 @@ impl EnrichmentSource for CkbadgerEnrichmentSource {
             .json()
             .await
             .context("decode ckbadger latest activities")?;
-        map_activity_feed(activities, anchor).map(Some)
+        let record = map_activity_feed(activities, anchor.clone())?;
+        self.revalidate_anchor(&anchor, "activity feed").await?;
+        Ok(Some(record))
     }
 
     async fn enrich_transaction_horizon(
@@ -849,35 +907,9 @@ impl EnrichmentSource for CkbadgerEnrichmentSource {
             .context("decode ckbadger transaction horizon")?;
 
         // The summary itself has no tip field and statistics/network is
-        // cached independently. Prove the fresh upper bound directly instead:
-        // the validated block must still match, and its successor must not yet
-        // exist in ckbadger's indexed store.
-        let block_url = self.endpoint(&format!("blocks/{}", anchor.block))?;
-        let response = self
-            .client
-            .get(block_url)
-            .send()
-            .await
-            .context("recheck ckbadger transaction-horizon block anchor")?;
-        if !response.status().is_success() {
-            return Err(anyhow!(
-                "ckbadger transaction-horizon block recheck returned HTTP {}",
-                response.status()
-            ));
-        }
-        let indexed_block: BlockResponse = response
-            .json()
-            .await
-            .context("decode ckbadger transaction-horizon block recheck")?;
-        let anchor_block = i64::try_from(anchor.block)
-            .context("validated transaction-horizon anchor exceeds ckbadger block range")?;
-        if indexed_block.number != anchor_block || indexed_block.hash != anchor.hash {
-            self.clear_anchor();
-            return Err(anyhow!(
-                "ckbadger transaction-horizon anchor changed during refresh"
-            ));
-        }
-
+        // cached independently. Prove that the source has not advanced beyond
+        // the validated upper bound, then perform the shared final anchor
+        // proof immediately before admitting the result.
         let successor = anchor
             .block
             .checked_add(1)
@@ -899,7 +931,10 @@ impl EnrichmentSource for CkbadgerEnrichmentSource {
             ));
         }
 
-        map_transaction_horizon(statistics, anchor).map(Some)
+        let record = map_transaction_horizon(statistics, anchor.clone())?;
+        self.revalidate_anchor(&anchor, "transaction horizon")
+            .await?;
+        Ok(Some(record))
     }
 
     async fn enrich_network_atlas(
@@ -954,7 +989,9 @@ impl EnrichmentSource for CkbadgerEnrichmentSource {
             .json()
             .await
             .context("decode ckbadger bounded network nodes")?;
-        map_network_atlas(summary, nodes, anchor).map(Some)
+        let record = map_network_atlas(summary, nodes, anchor.clone())?;
+        self.revalidate_anchor(&anchor, "network atlas").await?;
+        Ok(Some(record))
     }
 }
 
@@ -3096,20 +3133,35 @@ mod tests {
                 }),
             )
             .route(
+                "/api/v1/activities/latest",
+                get(|| async { Json(serde_json::json!([])) }),
+            )
+            .route(
                 "/api/v1/blocks/:number",
                 get(
                     move |axum::extract::Path(number): axum::extract::Path<i64>| {
                         let requests = counted_requests.clone();
                         async move {
+                            if number != 100 {
+                                return (
+                                    StatusCode::NOT_FOUND,
+                                    Json(serde_json::json!({
+                                        "error": "block not found"
+                                    })),
+                                );
+                            }
                             let hash = if requests.fetch_add(1, Ordering::Relaxed) == 0 {
                                 "0xblock100"
                             } else {
                                 "0xreplacement100"
                             };
-                            Json(serde_json::json!({
-                                "number": number,
-                                "hash": hash
-                            }))
+                            (
+                                StatusCode::OK,
+                                Json(serde_json::json!({
+                                    "number": number,
+                                    "hash": hash
+                                })),
+                            )
                         }
                     },
                 ),
@@ -3204,6 +3256,31 @@ mod tests {
             source.endpoint("statistics/network").unwrap().as_str(),
             "http://127.0.0.1:8101/api/v1/statistics/network"
         );
+    }
+
+    #[test]
+    fn stale_refresh_cannot_clear_a_newer_probe_anchor() {
+        let source =
+            CkbadgerEnrichmentSource::new(Url::parse("http://127.0.0.1:8101/api/v1").unwrap())
+                .unwrap();
+        let old = ChainAnchor {
+            block: 100,
+            hash: "0xblock100".to_string(),
+        };
+        let newer = ChainAnchor {
+            block: 101,
+            hash: "0xblock101".to_string(),
+        };
+        *source.validated_anchor.write().unwrap() = Some(newer.clone());
+
+        source.clear_anchor_if(&old);
+        assert_eq!(
+            source.validated_anchor.read().unwrap().as_ref(),
+            Some(&newer)
+        );
+
+        source.clear_anchor_if(&newer);
+        assert!(source.validated_anchor.read().unwrap().is_none());
     }
 
     #[test]
@@ -3475,6 +3552,22 @@ mod tests {
             .unwrap_err();
 
         assert!(error.to_string().contains("anchor changed"));
+        assert!(source.current_anchor(&context()).is_err());
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn activity_feed_rejects_same_height_anchor_change() {
+        let (api_base, server) = spawn_reorganized_transaction_horizon_api().await;
+        let source = CkbadgerEnrichmentSource::new(api_base).unwrap();
+        assert_eq!(
+            source.probe(&context()).await.status,
+            EnrichmentSourceState::Ready
+        );
+
+        let error = source.enrich_activity_feed(&context()).await.unwrap_err();
+
+        assert!(error.to_string().contains("activity feed anchor changed"));
         assert!(source.current_anchor(&context()).is_err());
         server.abort();
     }

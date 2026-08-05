@@ -168,6 +168,9 @@ The primary public seams are:
 - Optional indexed sources implement `cknerv_server::EnrichmentSource`.
   Enrichment-aware projections own an independent revision/ring, while
   canonical reorg/rebuild mutations only invalidate their anchored records.
+  Source health probing runs independently from bounded per-capability
+  refreshes, and every successful ckbadger result must re-prove its validated
+  block/hash anchor immediately before it enters the semantics projection.
 
 The current workspace ships `CkbDirectAdapter`, which polls CKB JSON-RPC and
 emits chain-generic mutations. It also includes optional ckbadger enrichment;

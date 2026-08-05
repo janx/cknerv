@@ -28,6 +28,7 @@
 
 pub mod adapter;
 pub mod enrichment;
+mod enrichment_supervisor;
 pub mod persistence;
 pub mod projection_registry;
 pub mod routes;
