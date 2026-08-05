@@ -119,7 +119,7 @@ describe('CellDetailPanel', () => {
     expect(t).toContain('细胞');
     expect(t).toContain('共识细胞');       // CJK title
     expect(getByTestId('portrait').getAttribute('data-hash')).toBe(base.content_hash);
-    expect(t).toContain('omnilock');       // LOCK
+    expect(t).toContain('Omnilock');       // LOCK
     expect(t).toContain('xUDT');           // ASSET
     expect(t).toContain('123.00 CKB');     // CAPACITY
     expect(t).toContain('LIVE');           // STATE
@@ -127,9 +127,11 @@ describe('CellDetailPanel', () => {
     expect(t).toContain('#16204800');      // COMMIT / block anchor
     expect(t).toContain('#2');             // immutable address index
     expect(t).toContain('11 B');           // DATA — 22 hex chars = 11 bytes
-    expect(t).toContain('ƒ3:4:7');         // ASSET → frequency family
-    expect(t).toContain('5 paths');        // LOCK → contributor paths
-    expect(t).toContain('8 knots');        // DATA → agreement-node target
+    expect(t).not.toContain('ƒ');          // portrait frequencies stay visual-only
+    expect(t).not.toContain('paths');      // portrait strands stay visual-only
+    expect(t).not.toContain('knots');      // portrait joins stay visual-only
+    expect(container.querySelector('[data-cell-detail-field="capacity"]')
+      ?.textContent).toBe('CAPACITY123.00 CKB');
     expect(t).toContain('共识细胞');       // CJK title stays (no re-subset)
     expect(t).toContain('CONSENSUS MEMORY');
     expect(t).toContain('共识记忆');
@@ -143,6 +145,24 @@ describe('CellDetailPanel', () => {
     expect((container.querySelector('[data-cell-portrait-frame]') as HTMLElement).dataset.cellDetailDensity).toBe('standard');
     expect((container.querySelector('[data-cell-portrait-frame]') as HTMLElement).style.width).toBe('100%');
     expect((container.querySelector('[data-consensus-memory]') as HTMLElement).dataset.consensusMemoryDensity).toBe('standard');
+  });
+
+  it('turns base taxonomy into useful Cell facts without visual parameters', () => {
+    const native = {
+      ...base,
+      asset_kind: 'native' as const,
+      lock_kind: 'sighash' as const,
+      data_hex: '0x',
+    };
+    const { container } = render(
+      <CellDetailPanel cell={native} onClose={() => {}} />,
+    );
+
+    const text = container.textContent ?? '';
+    expect(text).toContain('Native CKB');
+    expect(text).toContain('Sighash');
+    expect(text).toContain('Empty');
+    expect(text).not.toMatch(/ƒ\d|\d+ paths|\d+ knots|\d\.\d{2}×/);
   });
 
   it('adds indexed semantics only when the optional source is present', () => {
@@ -297,7 +317,7 @@ describe('CellDetailPanel', () => {
     const t = container.textContent ?? '';
     expect(t).toContain('CONTENT IDENTITY MAPPED');
     expect(t).toContain('1111111111111111 · 1111111111');
-    expect(t).toContain('omnilock');                              // decoded rows still present
+    expect(t).toContain('Omnilock');                              // decoded rows still present
     expect(t).toContain('11 B');
     expect((container.firstElementChild as HTMLElement).style.animation).toBe('');
   });
@@ -308,7 +328,7 @@ describe('CellDetailPanel', () => {
       <CellDetailPanel cell={base} onClose={() => {}} />,
     );
 
-    fireEvent.click(getByText(/xUDT · ƒ3:4:7/));
+    fireEvent.click(getByText('xUDT'));
     expect(getByTestId('portrait').getAttribute('data-focus')).toBe('asset');
   });
 
@@ -1222,10 +1242,13 @@ describe('CellDetailPanel', () => {
     expect(container.querySelector('[data-trace-source="witness"]')).not.toBeNull();
   });
 
-  it('tolerates missing lock/asset with an em dash', () => {
+  it('labels missing lock/asset taxonomy as unknown', () => {
     const bare = { ...base, lock_kind: undefined, asset_kind: undefined };
     const { container } = render(<CellDetailPanel cell={bare} onClose={() => {}} />);
-    expect(container.textContent ?? '').toContain('—');
+    expect(container.querySelector('[data-cell-detail-field="asset"]')
+      ?.textContent).toBe('ASSETUnknown');
+    expect(container.querySelector('[data-cell-detail-field="lock"]')
+      ?.textContent).toBe('LOCKUnknown');
   });
 
   it('close button fires onClose', () => {

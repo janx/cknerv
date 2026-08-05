@@ -49,17 +49,26 @@ export function formatDataSize(hex: string): string {
 }
 
 const LOCK_LABEL: Record<string, string> = {
-  sighash: 'sighash', multisig: 'multisig', acp: 'acp', omnilock: 'omnilock', other: 'other',
+  sighash: 'Sighash',
+  multisig: 'Multisig',
+  acp: 'Anyone Can Pay',
+  omnilock: 'Omnilock',
+  other: 'Custom lock',
 };
 const ASSET_LABEL: Record<string, string> = {
-  native: 'native', sudt: 'sUDT', xudt: 'xUDT', dao: 'DAO', spore: 'Spore', other: 'other',
+  native: 'Native CKB',
+  sudt: 'sUDT',
+  xudt: 'xUDT',
+  dao: 'Nervos DAO',
+  spore: 'Spore',
+  other: 'Custom type',
 };
 
 export function formatLockKind(k: Cell['lock_kind']): string {
-  return k ? (LOCK_LABEL[k] ?? k) : '—';
+  return k ? (LOCK_LABEL[k] ?? k) : 'Unknown';
 }
 export function formatAssetKind(k: Cell['asset_kind']): string {
-  return k ? (ASSET_LABEL[k] ?? k) : '—';
+  return k ? (ASSET_LABEL[k] ?? k) : 'Unknown';
 }
 
 // Shared lock/asset family palette — the SINGLE source used by BOTH the CELLS

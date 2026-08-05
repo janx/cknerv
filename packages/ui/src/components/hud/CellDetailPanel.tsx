@@ -34,8 +34,6 @@ import type {
 import {
   CONSENSUS_BRAID_FIELDS,
   consensusBraidAgreementTarget,
-  consensusBraidFrequencies,
-  consensusBraidStrandCount,
   type ConsensusBraidField,
 } from '../../derives/consensusBraid.derive';
 import {
@@ -60,12 +58,18 @@ function cornerBracket(corner: 'tl' | 'tr' | 'bl' | 'br'): CSSProperties {
   return { position: 'absolute', width: BRACKET, height: BRACKET, borderColor: AMBER, borderStyle: 'solid', borderWidth: bw, opacity: 0.75, ...vy, ...hx };
 }
 
-// Consensus field → decoded readout. These six rows are the readable grammar of
-// A, not an anatomical classification layered over the Cell.
+// On-chain field → user-facing fact. A row may focus the matching portrait
+// layer, but renderer-only topology values never leak into the readout.
 type RowDecode = { label: string; value: string; color?: string };
 type Field = ConsensusBraidField;
 
 const nowPerf = () => (typeof performance !== 'undefined' ? performance.now() : 0);
+
+function formatCellData(dataHex: string): string {
+  const size = formatDataSize(dataHex);
+  if (size === '0 B') return 'Empty';
+  return dataHex.endsWith('…') ? `${size} observed` : size;
+}
 
 export default function CellDetailPanel({
   cell,
@@ -178,8 +182,6 @@ export default function CellDetailPanel({
     [causalLens, cell, inspectedCellById, recentLinks],
   );
   const order = CONSENSUS_BRAID_FIELDS;
-  const frequencies = consensusBraidFrequencies(visual.assetClass);
-  const strandCount = consensusBraidStrandCount(visual.lockClass);
   const agreementTarget = consensusBraidAgreementTarget(visual);
 
   // After decoding, a row directly focuses its corresponding A layer.
@@ -219,21 +221,21 @@ export default function CellDetailPanel({
   const DECODE: Record<Field, RowDecode> = {
     capacity: {
       label: 'CAPACITY',
-      value: `${formatCkb(cell.capacity)} · ${visual.mass.toFixed(2)}×`,
+      value: formatCkb(cell.capacity),
     },
     asset: {
       label: 'ASSET',
-      value: `${formatAssetKind(cell.asset_kind)} · ƒ${frequencies.join(':')}`,
+      value: formatAssetKind(cell.asset_kind),
       color: cell.asset_kind ? ASSET_COLORS[cell.asset_kind] : HUD_COLORS.dim,
     },
     lock: {
       label: 'LOCK',
-      value: `${formatLockKind(cell.lock_kind)} · ${strandCount} paths`,
+      value: formatLockKind(cell.lock_kind),
       color: cell.lock_kind ? LOCK_COLORS[cell.lock_kind] : HUD_COLORS.dim,
     },
     data: {
       label: 'DATA',
-      value: `${formatDataSize(cell.data_hex)} · ${agreementTarget} knots`,
+      value: formatCellData(cell.data_hex),
       color: HUD_COLORS.nominal,
     },
     state: {
@@ -265,7 +267,7 @@ export default function CellDetailPanel({
   const interactive = p.classified;
   const focusField = interactive ? selectedField : null;
 
-  // The six encoded rows remain mounted and opacity-gated. They resolve in
+  // The six fact rows remain mounted and opacity-gated. They resolve in
   // field order without driving auxiliary portrait lines. Standard mode keeps
   // AGE on its own row; enhanced mode folds it into STATE to avoid repeating
   // temporal context across the taller semantic stack. Immutable address and
@@ -329,6 +331,7 @@ export default function CellDetailPanel({
           return (
             <div
               key={row.label}
+              data-cell-detail-field={row.field}
               onClick={clickable ? () => selectField(row.field!) : undefined}
               style={{
                 opacity: reduced || row.on ? 1 : 0.16,
