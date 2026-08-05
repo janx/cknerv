@@ -1,5 +1,5 @@
 import type { CSSProperties, ReactNode } from 'react';
-import { HUD_COLORS, HUD_FONTS } from './hudTheme';
+import { HUD_COLORS, HUD_FONTS, rgba } from './hudTheme';
 
 export function HudPanel({ style, children }: { style?: CSSProperties; children: ReactNode }) {
   return (
@@ -39,6 +39,44 @@ export function StatRow({ label, children, valueColor }: { label: string; childr
     <div style={{ display: 'flex', alignItems: 'baseline', height: 17, whiteSpace: 'nowrap' }}>
       <span style={{ fontFamily: HUD_FONTS.tech, fontWeight: 500, fontSize: 8.5, letterSpacing: 1.6, color: HUD_COLORS.dim, textTransform: 'uppercase' }}>{label}</span>
       <span style={{ marginLeft: 'auto', fontFamily: HUD_FONTS.mono, fontSize: 11, color: valueColor ?? HUD_COLORS.ink }}>{children}</span>
+    </div>
+  );
+}
+
+/** One step in a base-to-enhanced information scope. The rail makes source
+ * expansion read as one hierarchy instead of independent panels stacked
+ * together. */
+export function ScopeStage({ id, label, meta, accent, terminal = false, style, children }: {
+  id: string;
+  label: string;
+  meta?: ReactNode;
+  accent: string;
+  terminal?: boolean;
+  style?: CSSProperties;
+  children: ReactNode;
+}) {
+  return (
+    <div
+      data-scope-stage={id}
+      style={{ display: 'grid', gridTemplateColumns: '10px minmax(0,1fr)', columnGap: 7, ...style }}
+    >
+      <span aria-hidden="true" style={{ position: 'relative', minHeight: 18 }}>
+        <span style={{ position: 'absolute', left: 2, top: 5, width: 5, height: 5, border: `1px solid ${accent}`, background: rgba(accent, 0.18), boxShadow: `0 0 6px ${rgba(accent, 0.55)}`, transform: 'rotate(45deg)' }} />
+        {!terminal ? (
+          <span data-scope-connector style={{ position: 'absolute', left: 4.5, top: 12, bottom: -8, width: 1, background: `linear-gradient(180deg,${rgba(accent, 0.55)},${rgba(accent, 0.1)})` }} />
+        ) : null}
+      </span>
+      <div style={{ minWidth: 0, paddingBottom: terminal ? 0 : 9 }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, minWidth: 0, marginBottom: 4, fontFamily: HUD_FONTS.tech, fontSize: 7.5, letterSpacing: 1.2, textTransform: 'uppercase' }}>
+          <span style={{ color: accent, whiteSpace: 'nowrap' }}>{label}</span>
+          {meta != null ? (
+            <span style={{ marginLeft: 'auto', color: HUD_COLORS.dim, fontFamily: HUD_FONTS.mono, fontSize: 7.5, letterSpacing: 0.35, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {meta}
+            </span>
+          ) : null}
+        </div>
+        {children}
+      </div>
     </div>
   );
 }

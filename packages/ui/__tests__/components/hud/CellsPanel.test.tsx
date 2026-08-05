@@ -74,7 +74,7 @@ describe('CellsPanel', () => {
     const { container } = render(<CellsPanel stats={stats} churn={churn} reducedMotion />);
     expect(container.querySelectorAll('path').length).toBe(0);
   });
-  it('replaces retained capacity with the indexed whole-chain view', () => {
+  it('enhances retained capacity with a whole-chain-to-Galaxy scope', () => {
     const { container } = render(
       <CellsPanel
         stats={stats}
@@ -91,11 +91,18 @@ describe('CellsPanel', () => {
     expect(t).toContain('159.9 MB');
     expect(t).toContain('OTTER');
     expect(t).toContain('34,386 HOLDERS');
-    expect(t).not.toContain('Retained');
-    expect(t).not.toContain('1.21 GB');
-    expect(t).not.toContain('LOCKS');
+    // Every useful base datum remains inside the nested Galaxy window.
+    expect(t).toContain('4,983 RETAINED CELLS');
+    expect(t).toContain('1.21 GB');
+    expect(t).toContain('WINDOW ASSETS');
+    expect(t).toContain('WINDOW LOCKS');
+    expect(t).toContain('sighash');
+    expect(container.querySelector('[data-retained-capacity-context]')).not.toBeNull();
     expect(container.querySelector('[data-cell-capacity-mode="retained"]')).toBeNull();
     expect(container.querySelectorAll('[data-cell-capacity-mode]')).toHaveLength(1);
+    expect(Array.from(container.querySelectorAll('[data-scope-stage]')).map(
+      (stage) => stage.getAttribute('data-scope-stage'),
+    )).toEqual(['indexed-chain', 'galaxy-window']);
     const daoBucket = container.querySelector<HTMLElement>(
       '[data-asset-capacity-category="dao"]',
     );
@@ -119,5 +126,20 @@ describe('CellsPanel', () => {
 
     expect(container.querySelector('[data-cell-capacity-mode="retained"]')).not.toBeNull();
     expect(container.textContent).not.toContain('INDEXED CHAIN CAPACITY');
+  });
+
+  it('dims stale indexed scope without dimming direct Galaxy data', () => {
+    const { container } = render(
+      <CellsPanel
+        stats={stats}
+        churn={churn}
+        enrichmentSource={{ ...enrichmentSource, status: 'stale' }}
+        assetEcosystem={assetEcosystem}
+        reducedMotion
+      />,
+    );
+
+    expect((container.querySelector('[data-scope-stage="indexed-chain"]') as HTMLElement).style.opacity).toBe('0.68');
+    expect((container.querySelector('[data-scope-stage="galaxy-window"]') as HTMLElement).style.opacity).toBe('');
   });
 });

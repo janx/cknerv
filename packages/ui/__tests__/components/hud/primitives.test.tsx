@@ -1,6 +1,6 @@
 import { cleanup, render } from '@testing-library/react';
 import { afterEach, describe, it, expect } from 'vitest';
-import { HudPanel, PanelHeader, StatRow, Gauge } from '../../../src/components/hud/primitives';
+import { Gauge, HudPanel, PanelHeader, ScopeStage, StatRow } from '../../../src/components/hud/primitives';
 
 afterEach(cleanup);
 
@@ -30,5 +30,19 @@ describe('hud primitives', () => {
   it('Gauge clamps out-of-range ratios to 100%', () => {
     const { container } = render(<Gauge ratio={2} color="#27FF5A" />);
     expect((container.querySelector('[data-fill]') as HTMLElement).style.width).toBe('100%');
+  });
+  it('ScopeStage connects progressive scopes but terminates the final stage', () => {
+    const { container } = render(
+      <>
+        <ScopeStage id="local" label="Local" meta="Direct" accent="#69e7ff">base</ScopeStage>
+        <ScopeStage id="global" label="Global" accent="#78f2b3" terminal>enhanced</ScopeStage>
+      </>,
+    );
+    const local = container.querySelector('[data-scope-stage="local"]');
+    const global = container.querySelector('[data-scope-stage="global"]');
+    expect(local?.textContent).toContain('LocalDirectbase');
+    expect(local?.querySelector('[data-scope-connector]')).not.toBeNull();
+    expect(global?.textContent).toContain('Globalenhanced');
+    expect(global?.querySelector('[data-scope-connector]')).toBeNull();
   });
 });

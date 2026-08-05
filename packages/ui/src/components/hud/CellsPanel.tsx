@@ -4,7 +4,7 @@ import type { CellsStats } from '../../derives/cellsStats.derive';
 import type { ChurnRates } from '../../derives/cellChurn';
 import { HUD_COLORS, HUD_FONTS } from './hudTheme';
 import { LOCK_COLORS, ASSET_COLORS } from './cellFormat';
-import { HudPanel, PanelHeader, StatRow } from './primitives';
+import { HudPanel, PanelHeader, ScopeStage, StatRow } from './primitives';
 import AssetEcosystemReadout from './AssetEcosystemReadout';
 
 const fmt = (n: number) => n.toLocaleString('en-US');
@@ -49,7 +49,32 @@ function FlowRow({ label, color, width, value }: { label: string; color: string;
   );
 }
 
-function RetainedCapacityReadout({ stats }: { stats: CellsStats }) {
+function RetainedCapacityReadout({ stats, embedded = false }: { stats: CellsStats; embedded?: boolean }) {
+  const contents = (
+    <>
+      <StatRow label={embedded ? 'Window capacity' : 'Capacity'}>{formatStateBytes(stats.capacityShannons)} state</StatRow>
+      <TaxonomyBar title={embedded ? 'WINDOW ASSETS' : 'ASSETS'} buckets={[
+        { key: 'native', label: 'CKB', color: ASSET_COLORS.native, count: stats.byAsset.native },
+        { key: 'sudt', label: 'sUDT', color: ASSET_COLORS.sudt, count: stats.byAsset.sudt },
+        { key: 'xudt', label: 'xUDT', color: ASSET_COLORS.xudt, count: stats.byAsset.xudt },
+        { key: 'dao', label: 'DAO', color: ASSET_COLORS.dao, count: stats.byAsset.dao },
+        { key: 'spore', label: 'NFT', color: ASSET_COLORS.spore, count: stats.byAsset.spore },
+        { key: 'other', label: '?', color: ASSET_COLORS.other, count: stats.byAsset.other },
+      ]} />
+      <TaxonomyBar title={embedded ? 'WINDOW LOCKS' : 'LOCKS'} buckets={[
+        { key: 'sighash', label: 'sighash', color: LOCK_COLORS.sighash, count: stats.byLock.sighash },
+        { key: 'multisig', label: 'multisig', color: LOCK_COLORS.multisig, count: stats.byLock.multisig },
+        { key: 'acp', label: 'ACP', color: LOCK_COLORS.acp, count: stats.byLock.acp },
+        { key: 'omnilock', label: 'omni', color: LOCK_COLORS.omnilock, count: stats.byLock.omnilock },
+        { key: 'other', label: '?', color: LOCK_COLORS.other, count: stats.byLock.other },
+      ]} />
+    </>
+  );
+
+  if (embedded) {
+    return <div aria-label="Retained Cell capacity" data-retained-capacity-context>{contents}</div>;
+  }
+
   return (
     <section
       aria-label="Retained Cell capacity"
@@ -60,22 +85,7 @@ function RetainedCapacityReadout({ stats }: { stats: CellsStats }) {
         <span style={{ width: 5, height: 5, borderRadius: '50%', background: HUD_COLORS.cyanWire, boxShadow: `0 0 6px ${HUD_COLORS.cyanWire}` }} />
         Retained · {fmt(stats.inView)} cells
       </div>
-      <StatRow label="Capacity">{formatStateBytes(stats.capacityShannons)} state</StatRow>
-      <TaxonomyBar title="ASSETS" buckets={[
-        { key: 'native', label: 'CKB', color: ASSET_COLORS.native, count: stats.byAsset.native },
-        { key: 'sudt', label: 'sUDT', color: ASSET_COLORS.sudt, count: stats.byAsset.sudt },
-        { key: 'xudt', label: 'xUDT', color: ASSET_COLORS.xudt, count: stats.byAsset.xudt },
-        { key: 'dao', label: 'DAO', color: ASSET_COLORS.dao, count: stats.byAsset.dao },
-        { key: 'spore', label: 'NFT', color: ASSET_COLORS.spore, count: stats.byAsset.spore },
-        { key: 'other', label: '?', color: ASSET_COLORS.other, count: stats.byAsset.other },
-      ]} />
-      <TaxonomyBar title="LOCKS" buckets={[
-        { key: 'sighash', label: 'sighash', color: LOCK_COLORS.sighash, count: stats.byLock.sighash },
-        { key: 'multisig', label: 'multisig', color: LOCK_COLORS.multisig, count: stats.byLock.multisig },
-        { key: 'acp', label: 'ACP', color: LOCK_COLORS.acp, count: stats.byLock.acp },
-        { key: 'omnilock', label: 'omni', color: LOCK_COLORS.omnilock, count: stats.byLock.omnilock },
-        { key: 'other', label: '?', color: LOCK_COLORS.other, count: stats.byLock.other },
-      ]} />
+      {contents}
     </section>
   );
 }
@@ -112,6 +122,17 @@ export default function CellsPanel({ stats, churn, enrichmentSource, assetEcosys
         source={enrichmentSource}
         record={assetEcosystem}
         fallback={<RetainedCapacityReadout stats={stats} />}
+        retainedContext={(
+          <ScopeStage
+            id="galaxy-window"
+            label="GALAXY WINDOW"
+            meta={`${fmt(stats.inView)} RETAINED CELLS`}
+            accent={HUD_COLORS.cyanWire}
+            terminal
+          >
+            <RetainedCapacityReadout stats={stats} embedded />
+          </ScopeStage>
+        )}
       />
     </HudPanel>
   );
