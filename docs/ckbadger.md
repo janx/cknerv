@@ -160,10 +160,12 @@ the data differently from the rows above and below.
 
 ### DAO State
 
-With `dao_state`, cknerv refreshes the fixed-shape `dao/statistics` singleton at
-most once every 60 seconds. Its `statistics_block` cannot be ahead of the last
-block/hash anchor proven by cknerv. If ckbadger advances between probe and
-fetch, the newer singleton is withheld until the next successful probe.
+With `dao_state`, cknerv refreshes the fixed-shape `dao/statistics` singleton
+once every 60 seconds after the first valid snapshot. Its `statistics_block`
+cannot be ahead of the last block/hash anchor proven by cknerv. If ckbadger
+advances between probe and fetch, the newer singleton is withheld; while no
+valid snapshot is available yet, cknerv retries it on the five-second source
+probe cadence so `DAO·05` does not inherit a full cold-start refresh delay.
 
 The normalized record keeps locked, pending-withdrawal,
 unclaimed-compensation, and optional signed 24-hour change values as exact
