@@ -12,17 +12,18 @@ use cknerv_core::{
     AssetEcosystemRecord, CellSemanticRecord, ChainAnchor, CommonKnowledgeBreakdown,
     DaoStateRecord, EnrichmentSourceState, EnrichmentSourceStatus, ForkWatchDeepFork,
     ForkWatchEventKind, ForkWatchRecord, ForkWatchReorg, NetworkAtlasBucket, NetworkAtlasRecord,
-    OutPoint, SemanticAsset, SemanticAttribute, SemanticFacet, SemanticScript,
-    TransactionParticipantSemantic, TransactionSemanticRecord,
+    OutPoint, ProtocolEra, ProtocolEraRecord, SemanticAsset, SemanticAttribute, SemanticFacet,
+    SemanticScript, TransactionParticipantSemantic, TransactionSemanticRecord,
 };
 use cknerv_server::{CanonicalContext, EnrichmentSource};
 
 use crate::dto::{
     AssetEcosystemResponse, BlockResponse, CellDataAnalysis, CellDetailResponse,
-    CommonKnowledgeSizeBreakdown, DaoInfo, DaoStatisticsResponse, LatestActivityResponse,
-    LookupScriptsRequest, NetworkCrawlerSummaryResponse, NetworkNodesPageResponse, NetworkStats,
-    RecentReorgResponse, ReorgEventResponse, ScriptLookupInfo, ScriptLookupResponse,
-    ScriptResponse, TokenResponse, TransactionDetailResponse, TransactionLifecycleResponse,
+    CommonKnowledgeSizeBreakdown, DaoInfo, DaoStatisticsResponse, HardforkEventResponse,
+    HardforkTimelineResponse, LatestActivityResponse, LookupScriptsRequest,
+    NetworkCrawlerSummaryResponse, NetworkNodesPageResponse, NetworkStats, RecentReorgResponse,
+    ReorgEventResponse, ScriptLookupInfo, ScriptLookupResponse, ScriptResponse, TokenResponse,
+    TransactionDetailResponse, TransactionLifecycleResponse,
 };
 
 const CAPABILITIES: &[&str] = &[
@@ -32,6 +33,7 @@ const CAPABILITIES: &[&str] = &[
     "asset_identity",
     "asset_ecosystem",
     "dao_state",
+    "protocol_era",
     "activity_feed",
     "fork_watch",
     "network_atlas",
@@ -46,6 +48,8 @@ const MAX_ACTIVITY_PARTICIPANTS: usize = 512;
 const MAX_ACTIVITY_NESTED_ITEMS: usize = 512;
 const MAX_ACTIVITY_LABEL_CHARS: usize = 96;
 const MAX_FORK_WATCH_WINDOW_SECONDS: u32 = 31 * 24 * 60 * 60;
+const MAX_PROTOCOL_ERAS: usize = 16;
+const MAX_PROTOCOL_LABEL_CHARS: usize = 64;
 const NETWORK_ATLAS_LIMIT: usize = 64;
 const MAX_NETWORK_LABEL_CHARS: usize = 96;
 const MAX_PEER_ID_HEX_CHARS: usize = 256;
@@ -704,6 +708,40 @@ impl EnrichmentSource for CkbadgerEnrichmentSource {
         map_dao_state(statistics, anchor)
     }
 
+    async fn enrich_protocol_era(
+        &self,
+        context: &CanonicalContext,
+    ) -> anyhow::Result<Option<ProtocolEraRecord>> {
+        let Some(expected_network) = ckbadger_network(&context.chain_name) else {
+            return Ok(None);
+        };
+        let anchor = self.current_anchor(context)?;
+        let url = self.endpoint("hardforks")?;
+        let response = self
+            .client
+            .get(url)
+            .send()
+            .await
+            .context("fetch ckbadger hardfork timeline")?;
+        if matches!(
+            response.status(),
+            StatusCode::NOT_FOUND | StatusCode::BAD_REQUEST
+        ) {
+            return Ok(None);
+        }
+        if !response.status().is_success() {
+            return Err(anyhow!(
+                "ckbadger hardfork timeline returned HTTP {}",
+                response.status()
+            ));
+        }
+        let timeline: HardforkTimelineResponse = response
+            .json()
+            .await
+            .context("decode ckbadger hardfork timeline")?;
+        map_protocol_era(timeline, expected_network, anchor, context.epoch_number)
+    }
+
     async fn enrich_fork_watch(
         &self,
         context: &CanonicalContext,
@@ -830,6 +868,142 @@ impl EnrichmentSource for CkbadgerEnrichmentSource {
             .context("decode ckbadger bounded network nodes")?;
         map_network_atlas(summary, nodes, anchor).map(Some)
     }
+}
+
+fn ckbadger_network(chain_name: &str) -> Option<&'static str> {
+    match chain_name {
+        "ckb" => Some("mainnet"),
+        "ckb_testnet" => Some("testnet"),
+        _ => None,
+    }
+}
+
+fn map_protocol_era(
+    timeline: HardforkTimelineResponse,
+    expected_network: &str,
+    anchor: ChainAnchor,
+    canonical_epoch: u64,
+) -> anyhow::Result<Option<ProtocolEraRecord>> {
+    if timeline.network != expected_network {
+        return Err(anyhow!(
+            "ckbadger hardfork network {:?} does not match canonical network {expected_network:?}",
+            timeline.network
+        ));
+    }
+    if timeline.events.is_empty() || timeline.events.len() > MAX_PROTOCOL_ERAS {
+        return Err(anyhow!(
+            "ckbadger returned an unsupported number of hardfork events"
+        ));
+    }
+
+    let indexed_tip_block = nonnegative(timeline.tip_block, "hardfork tipBlock")?;
+    let indexed_tip_epoch = nonnegative(timeline.tip_epoch, "hardfork tipEpoch")?;
+    wire_safe_u64(indexed_tip_block, "hardfork tipBlock")?;
+    wire_safe_u64(indexed_tip_epoch, "hardfork tipEpoch")?;
+    // ckbadger can advance between the compatibility probe and this request.
+    // Wait for the next probe rather than admitting unproven block/epoch data.
+    if indexed_tip_block > anchor.block || indexed_tip_epoch > canonical_epoch {
+        return Ok(None);
+    }
+
+    let mut ids = HashSet::new();
+    let mut previous_activation_epoch = None;
+    let mut current = None;
+    let mut upcoming = None;
+    for event in timeline.events {
+        let id = bounded_protocol_label(&event.id, "hardfork event id")?;
+        if !ids.insert(id) {
+            return Err(anyhow!("ckbadger returned a duplicate hardfork event"));
+        }
+        let era = map_protocol_era_event(
+            event,
+            indexed_tip_block,
+            indexed_tip_epoch,
+            previous_activation_epoch,
+        )?;
+        previous_activation_epoch = Some(era.activation_epoch);
+        if era.activation_epoch <= indexed_tip_epoch {
+            current = Some(era);
+        } else if upcoming.is_none() {
+            upcoming = Some(era);
+        }
+    }
+
+    Ok(Some(ProtocolEraRecord {
+        source: "ckbadger".to_string(),
+        as_of: anchor,
+        updated_at_ms: now_ms(),
+        network: expected_network.to_string(),
+        indexed_tip_block,
+        indexed_tip_epoch,
+        current,
+        upcoming,
+    }))
+}
+
+fn map_protocol_era_event(
+    event: HardforkEventResponse,
+    indexed_tip_block: u64,
+    indexed_tip_epoch: u64,
+    previous_activation_epoch: Option<u64>,
+) -> anyhow::Result<ProtocolEra> {
+    let name = bounded_protocol_label(&event.short_name, "hardfork shortName")?;
+    let edition_year = u16::try_from(event.edition_year)
+        .context("ckbadger returned invalid hardfork editionYear")?;
+    if edition_year == 0 {
+        return Err(anyhow!("ckbadger returned an invalid hardfork editionYear"));
+    }
+    let activation_epoch = nonnegative(event.activation_epoch, "hardfork activationEpoch")?;
+    wire_safe_u64(activation_epoch, "hardfork activationEpoch")?;
+    if previous_activation_epoch.is_some_and(|previous| activation_epoch <= previous) {
+        return Err(anyhow!(
+            "ckbadger hardfork events were not ordered by unique activation epoch"
+        ));
+    }
+    let activation_block = event
+        .activation_block
+        .map(|value| nonnegative(value, "hardfork activationBlock"))
+        .transpose()?;
+    if let Some(block) = activation_block {
+        wire_safe_u64(block, "hardfork activationBlock")?;
+    }
+
+    let activated = activation_epoch <= indexed_tip_epoch;
+    let expected_status = if activated { "activated" } else { "upcoming" };
+    if event.status != expected_status {
+        return Err(anyhow!(
+            "ckbadger hardfork status {:?} disagrees with tip epoch {indexed_tip_epoch}",
+            event.status
+        ));
+    }
+    if activated && activation_block.is_some_and(|block| block > indexed_tip_block) {
+        return Err(anyhow!(
+            "ckbadger activated hardfork block is ahead of its indexed tip"
+        ));
+    }
+    if !activated && activation_block.is_some() {
+        return Err(anyhow!(
+            "ckbadger upcoming hardfork unexpectedly has an activation block"
+        ));
+    }
+
+    Ok(ProtocolEra {
+        name,
+        edition_year,
+        activation_epoch,
+        activation_block,
+    })
+}
+
+fn bounded_protocol_label(value: &str, field: &str) -> anyhow::Result<String> {
+    let value = value.trim();
+    if value.is_empty()
+        || value.chars().count() > MAX_PROTOCOL_LABEL_CHARS
+        || value.chars().any(char::is_control)
+    {
+        return Err(anyhow!("ckbadger returned an invalid {field}"));
+    }
+    Ok(value.to_string())
 }
 
 struct MappedForkWatchReorg {
@@ -2255,6 +2429,34 @@ mod tests {
                 }),
             )
             .route(
+                "/api/v1/hardforks",
+                get(|| async {
+                    Json(serde_json::json!({
+                        "network": "mainnet",
+                        "tipEpoch": 12300,
+                        "tipBlock": 100,
+                        "events": [
+                            {
+                                "id": "mirana-2021",
+                                "shortName": "Mirana",
+                                "editionYear": 2021,
+                                "activationEpoch": 5414,
+                                "activationBlock": 70,
+                                "status": "activated"
+                            },
+                            {
+                                "id": "meepo-2024",
+                                "shortName": "Meepo",
+                                "editionYear": 2024,
+                                "activationEpoch": 12293,
+                                "activationBlock": 99,
+                                "status": "activated"
+                            }
+                        ]
+                    }))
+                }),
+            )
+            .route(
                 "/api/v1/forks/recent",
                 get(|| async {
                     Json(serde_json::json!({
@@ -2611,6 +2813,7 @@ mod tests {
     fn context() -> CanonicalContext {
         CanonicalContext {
             tip: 101,
+            epoch_number: 12_300,
             chain_name: "ckb".to_string(),
             recent_blocks: vec![RecentBlock {
                 number: 100,
@@ -2647,6 +2850,32 @@ mod tests {
                 depth: Some(2),
                 fork_point: Some(97),
             },
+        }
+    }
+
+    fn hardfork_timeline() -> HardforkTimelineResponse {
+        HardforkTimelineResponse {
+            network: "mainnet".to_string(),
+            tip_epoch: 12_000,
+            tip_block: 100,
+            events: vec![
+                HardforkEventResponse {
+                    id: "mirana-2021".to_string(),
+                    short_name: "Mirana".to_string(),
+                    edition_year: 2021,
+                    activation_epoch: 5_414,
+                    activation_block: Some(70),
+                    status: "activated".to_string(),
+                },
+                HardforkEventResponse {
+                    id: "meepo-2024".to_string(),
+                    short_name: "Meepo".to_string(),
+                    edition_year: 2024,
+                    activation_epoch: 12_293,
+                    activation_block: None,
+                    status: "upcoming".to_string(),
+                },
+            ],
         }
     }
 
@@ -2690,6 +2919,7 @@ mod tests {
         assert!(status.capabilities.contains(&"asset_identity".to_string()));
         assert!(status.capabilities.contains(&"asset_ecosystem".to_string()));
         assert!(status.capabilities.contains(&"dao_state".to_string()));
+        assert!(status.capabilities.contains(&"protocol_era".to_string()));
         assert!(status.capabilities.contains(&"activity_feed".to_string()));
         assert!(status.capabilities.contains(&"fork_watch".to_string()));
         assert!(status.capabilities.contains(&"network_atlas".to_string()));
@@ -2721,6 +2951,22 @@ mod tests {
             Some("141530599353229")
         );
         assert_eq!(dao_state.depositors_change_24h, Some(5));
+
+        let protocol_era = source
+            .enrich_protocol_era(&context())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(protocol_era.as_of.block, 100);
+        assert_eq!(protocol_era.network, "mainnet");
+        assert_eq!(protocol_era.indexed_tip_block, 100);
+        assert_eq!(protocol_era.indexed_tip_epoch, 12_300);
+        let current = protocol_era.current.unwrap();
+        assert_eq!(current.name, "Meepo");
+        assert_eq!(current.edition_year, 2024);
+        assert_eq!(current.activation_epoch, 12_293);
+        assert_eq!(current.activation_block, Some(99));
+        assert!(protocol_era.upcoming.is_none());
 
         let fork_watch = source.enrich_fork_watch(&context()).await.unwrap().unwrap();
         assert_eq!(fork_watch.as_of.block, 100);
@@ -2902,6 +3148,112 @@ mod tests {
         assert!(ckb_decimal_to_shannons("1.000000001", "capacity").is_err());
         assert!(signed_ckb_decimal_to_shannons("-1.000000001", "delta").is_err());
         assert!(percentage_to_bps("100.01", "share").is_err());
+    }
+
+    #[test]
+    fn protocol_era_keeps_only_the_current_and_next_editions() {
+        let record = map_protocol_era(
+            hardfork_timeline(),
+            "mainnet",
+            ChainAnchor {
+                block: 100,
+                hash: "0xblock100".to_string(),
+            },
+            12_000,
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(record.current.unwrap().name, "Mirana");
+        assert_eq!(record.upcoming.unwrap().name, "Meepo");
+    }
+
+    #[test]
+    fn protocol_era_waits_for_a_probe_that_covers_block_and_epoch_tips() {
+        let mut timeline = hardfork_timeline();
+        timeline.tip_block = 101;
+        assert!(map_protocol_era(
+            timeline,
+            "mainnet",
+            ChainAnchor {
+                block: 100,
+                hash: "0xblock100".to_string(),
+            },
+            12_000,
+        )
+        .unwrap()
+        .is_none());
+
+        let mut timeline = hardfork_timeline();
+        timeline.tip_epoch = 12_001;
+        assert!(map_protocol_era(
+            timeline,
+            "mainnet",
+            ChainAnchor {
+                block: 100,
+                hash: "0xblock100".to_string(),
+            },
+            12_000,
+        )
+        .unwrap()
+        .is_none());
+    }
+
+    #[test]
+    fn protocol_era_rejects_network_status_and_order_disagreement() {
+        let mut timeline = hardfork_timeline();
+        timeline.network = "testnet".to_string();
+        assert!(map_protocol_era(
+            timeline,
+            "mainnet",
+            ChainAnchor {
+                block: 100,
+                hash: "0xblock100".to_string(),
+            },
+            12_000,
+        )
+        .is_err());
+
+        let mut timeline = hardfork_timeline();
+        timeline.events[1].status = "activated".to_string();
+        assert!(map_protocol_era(
+            timeline,
+            "mainnet",
+            ChainAnchor {
+                block: 100,
+                hash: "0xblock100".to_string(),
+            },
+            12_000,
+        )
+        .is_err());
+
+        let mut timeline = hardfork_timeline();
+        timeline.events.swap(0, 1);
+        assert!(map_protocol_era(
+            timeline,
+            "mainnet",
+            ChainAnchor {
+                block: 100,
+                hash: "0xblock100".to_string(),
+            },
+            12_000,
+        )
+        .is_err());
+    }
+
+    #[tokio::test]
+    async fn protocol_era_is_unsupported_on_a_custom_canonical_network() {
+        let source =
+            CkbadgerEnrichmentSource::new(Url::parse("http://127.0.0.1:9/api/v1").unwrap())
+                .unwrap();
+        let mut canonical = context();
+        canonical.chain_name = "ckb_dev".to_string();
+
+        assert!(source
+            .enrich_protocol_era(&canonical)
+            .await
+            .unwrap()
+            .is_none());
     }
 
     #[test]

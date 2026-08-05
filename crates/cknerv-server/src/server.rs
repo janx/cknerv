@@ -43,6 +43,7 @@ const ENRICHMENT_PROBE_INTERVAL: Duration = Duration::from_secs(5);
 const ENRICHMENT_STATUS_REFRESH: Duration = Duration::from_secs(60);
 const ENRICHMENT_ECOSYSTEM_REFRESH: Duration = Duration::from_secs(30);
 const ENRICHMENT_DAO_STATE_REFRESH: Duration = Duration::from_secs(60);
+const ENRICHMENT_PROTOCOL_ERA_REFRESH: Duration = Duration::from_secs(5 * 60);
 const ENRICHMENT_ACTIVITY_REFRESH: Duration = Duration::from_secs(15);
 const ENRICHMENT_FORK_WATCH_REFRESH: Duration = Duration::from_secs(15);
 const ENRICHMENT_NETWORK_ATLAS_REFRESH: Duration = Duration::from_secs(60);
@@ -220,6 +221,7 @@ impl ServerBuilder {
                     .unwrap_or_else(Instant::now);
                 let mut last_ecosystem_refresh: Option<Instant> = None;
                 let mut last_dao_state_refresh: Option<Instant> = None;
+                let mut last_protocol_era_refresh: Option<Instant> = None;
                 let mut last_activity_refresh: Option<Instant> = None;
                 let mut last_fork_watch_refresh: Option<Instant> = None;
                 let mut last_network_atlas_refresh: Option<Instant> = None;
@@ -308,6 +310,42 @@ impl ServerBuilder {
                                     Err(error) => tracing::warn!(
                                         target: "cknerv-server",
                                         "optional DAO-state refresh failed: {error}"
+                                    ),
+                                }
+                            }
+                            let protocol_era_ready = status.validated_anchor.is_some()
+                                && matches!(
+                                    status.status,
+                                    cknerv_core::EnrichmentSourceState::Ready
+                                        | cknerv_core::EnrichmentSourceState::Stale
+                                )
+                                && status
+                                    .capabilities
+                                    .iter()
+                                    .any(|capability| capability == "protocol_era");
+                            let protocol_era_due = last_protocol_era_refresh.is_none_or(|last| {
+                                last.elapsed() >= ENRICHMENT_PROTOCOL_ERA_REFRESH
+                            });
+                            if !protocol_era_ready {
+                                last_protocol_era_refresh = None;
+                            } else if protocol_era_due {
+                                last_protocol_era_refresh = Some(Instant::now());
+                                match source.enrich_protocol_era(&context).await {
+                                    Ok(Some(protocol_era)) => {
+                                        if source_out
+                                            .send(EnrichmentEvent::ProtocolEraReplace(
+                                                protocol_era,
+                                            ))
+                                            .await
+                                            .is_err()
+                                        {
+                                            break;
+                                        }
+                                    }
+                                    Ok(None) => {}
+                                    Err(error) => tracing::warn!(
+                                        target: "cknerv-server",
+                                        "optional protocol-era refresh failed: {error}"
                                     ),
                                 }
                             }

@@ -1031,6 +1031,9 @@ export default function App({
         daoState={enrichmentConfig.enabled
           ? semanticsCache.daoState
           : undefined}
+        protocolEra={enrichmentConfig.enabled
+          ? semanticsCache.protocolEra
+          : undefined}
         activityFeed={enrichmentConfig.enabled
           ? semanticsCache.activityFeed
           : undefined}

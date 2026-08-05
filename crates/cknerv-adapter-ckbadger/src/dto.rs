@@ -95,6 +95,29 @@ pub(crate) struct DaoStatisticsResponse {
     pub depositors_change_24h: Option<i32>,
 }
 
+/// Bounded subset of ckbadger's static hardfork timeline. Resource links,
+/// summaries, and dates are deliberately excluded from cknerv's adapter DTO.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct HardforkTimelineResponse {
+    pub network: String,
+    pub tip_epoch: i64,
+    pub tip_block: i64,
+    #[serde(default)]
+    pub events: Vec<HardforkEventResponse>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct HardforkEventResponse {
+    pub id: String,
+    pub short_name: String,
+    pub edition_year: i32,
+    pub activation_epoch: i64,
+    pub activation_block: Option<i64>,
+    pub status: String,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RecentReorgResponse {

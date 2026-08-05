@@ -157,6 +157,25 @@ export interface DaoStateRecord {
   depositors_change_24h?: number;
 }
 
+export interface ProtocolEra {
+  name: string;
+  edition_year: number;
+  activation_epoch: number;
+  activation_block?: number;
+}
+
+/** Fixed latest/current protocol edition context, not a resource catalogue. */
+export interface ProtocolEraRecord {
+  source: string;
+  as_of: ChainAnchor;
+  updated_at_ms: number;
+  network: string;
+  indexed_tip_block: number;
+  indexed_tip_epoch: number;
+  current?: ProtocolEra;
+  upcoming?: ProtocolEra;
+}
+
 export type ForkWatchEventKind = 'reorg' | 'deep';
 
 export interface ForkWatchReorg {
@@ -236,6 +255,7 @@ export interface SemanticsSnapshot {
   census?: ChainCensus;
   asset_ecosystem?: AssetEcosystemRecord;
   dao_state?: DaoStateRecord;
+  protocol_era?: ProtocolEraRecord;
   fork_watch?: ForkWatchRecord;
   activity_feed?: ActivityFeedRecord;
   network_atlas?: NetworkAtlasRecord;
@@ -250,6 +270,7 @@ export type SemanticsDelta =
   | { type: 'census_replace'; census: ChainCensus }
   | { type: 'asset_ecosystem_replace'; asset_ecosystem: AssetEcosystemRecord }
   | { type: 'dao_state_replace'; dao_state: DaoStateRecord }
+  | { type: 'protocol_era_replace'; protocol_era: ProtocolEraRecord }
   | { type: 'fork_watch_replace'; fork_watch: ForkWatchRecord }
   | { type: 'activity_feed_replace'; activity_feed: ActivityFeedRecord }
   | { type: 'network_atlas_replace'; network_atlas: NetworkAtlasRecord }

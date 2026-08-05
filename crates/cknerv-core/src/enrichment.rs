@@ -284,6 +284,36 @@ pub struct DaoStateRecord {
     pub depositors_change_24h: Option<i32>,
 }
 
+/// One normalized CKB edition activation from an optional protocol index.
+/// The short display name is source-owned context; activation coordinates
+/// remain exact chain positions.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProtocolEra {
+    pub name: String,
+    pub edition_year: u16,
+    pub activation_epoch: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activation_block: Option<u64>,
+}
+
+/// Fixed-shape protocol-era context from an optional index. The record keeps
+/// only the newest activated edition and earliest upcoming edition, never the
+/// source's full resource catalogue. `as_of` proves compatibility with the
+/// canonical chain while indexed tip fields describe the source snapshot.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProtocolEraRecord {
+    pub source: String,
+    pub as_of: ChainAnchor,
+    pub updated_at_ms: u64,
+    pub network: String,
+    pub indexed_tip_block: u64,
+    pub indexed_tip_epoch: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current: Option<ProtocolEra>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upcoming: Option<ProtocolEra>,
+}
+
 /// Classification of one indexed canonical-fork event.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -400,6 +430,7 @@ pub enum EnrichmentEvent {
     CensusReplace(ChainCensus),
     AssetEcosystemReplace(AssetEcosystemRecord),
     DaoStateReplace(DaoStateRecord),
+    ProtocolEraReplace(ProtocolEraRecord),
     ForkWatchReplace(ForkWatchRecord),
     ActivityFeedReplace(ActivityFeedRecord),
     NetworkAtlasReplace(NetworkAtlasRecord),
@@ -418,6 +449,8 @@ pub struct SemanticsSnapshot {
     pub asset_ecosystem: Option<AssetEcosystemRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dao_state: Option<DaoStateRecord>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub protocol_era: Option<ProtocolEraRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fork_watch: Option<ForkWatchRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -453,6 +486,9 @@ pub enum SemanticsDelta {
     DaoStateReplace {
         dao_state: DaoStateRecord,
     },
+    ProtocolEraReplace {
+        protocol_era: ProtocolEraRecord,
+    },
     ForkWatchReplace {
         fork_watch: ForkWatchRecord,
     },
@@ -483,6 +519,7 @@ pub struct SemanticsProjection {
     census: Option<ChainCensus>,
     asset_ecosystem: Option<AssetEcosystemRecord>,
     dao_state: Option<DaoStateRecord>,
+    protocol_era: Option<ProtocolEraRecord>,
     fork_watch: Option<ForkWatchRecord>,
     activity_feed: Option<ActivityFeedRecord>,
     network_atlas: Option<NetworkAtlasRecord>,
@@ -504,6 +541,7 @@ impl SemanticsProjection {
             census: None,
             asset_ecosystem: None,
             dao_state: None,
+            protocol_era: None,
             fork_watch: None,
             activity_feed: None,
             network_atlas: None,
@@ -564,6 +602,7 @@ impl SemanticsProjection {
         self.census = None;
         self.asset_ecosystem = None;
         self.dao_state = None;
+        self.protocol_era = None;
         self.fork_watch = None;
         self.activity_feed = None;
         self.network_atlas = None;
@@ -621,6 +660,7 @@ impl Projection for SemanticsProjection {
             census: self.census.clone(),
             asset_ecosystem: self.asset_ecosystem.clone(),
             dao_state: self.dao_state.clone(),
+            protocol_era: self.protocol_era.clone(),
             fork_watch: self.fork_watch.clone(),
             activity_feed: self.activity_feed.clone(),
             network_atlas: self.network_atlas.clone(),
@@ -655,6 +695,13 @@ impl Projection for SemanticsProjection {
                     .is_some_and(|dao| dao.as_of.block >= *from_block)
                 {
                     self.dao_state = None;
+                }
+                if self
+                    .protocol_era
+                    .as_ref()
+                    .is_some_and(|era| era.as_of.block >= *from_block)
+                {
+                    self.protocol_era = None;
                 }
                 if self
                     .fork_watch
@@ -762,6 +809,12 @@ impl EnrichmentProjection for SemanticsProjection {
                 self.dao_state = Some(dao_state.clone());
                 vec![SemanticsDelta::DaoStateReplace {
                     dao_state: dao_state.clone(),
+                }]
+            }
+            EnrichmentEvent::ProtocolEraReplace(protocol_era) => {
+                self.protocol_era = Some(protocol_era.clone());
+                vec![SemanticsDelta::ProtocolEraReplace {
+                    protocol_era: protocol_era.clone(),
                 }]
             }
             EnrichmentEvent::ForkWatchReplace(fork_watch) => {
@@ -879,6 +932,27 @@ mod tests {
         }
     }
 
+    fn protocol_era(block: u64) -> ProtocolEraRecord {
+        ProtocolEraRecord {
+            source: "ckbadger".into(),
+            as_of: ChainAnchor {
+                block,
+                hash: format!("0xblock{block}"),
+            },
+            updated_at_ms: block,
+            network: "mainnet".into(),
+            indexed_tip_block: block,
+            indexed_tip_epoch: 12_300,
+            current: Some(ProtocolEra {
+                name: "Meepo".into(),
+                edition_year: 2024,
+                activation_epoch: 12_293,
+                activation_block: Some(block.saturating_sub(1)),
+            }),
+            upcoming: None,
+        }
+    }
+
     fn fork_watch(block: u64) -> ForkWatchRecord {
         ForkWatchRecord {
             source: "ckbadger".into(),
@@ -991,6 +1065,7 @@ mod tests {
         let mut projection = SemanticsProjection::new(Some(("ckbadger", vec![])));
         projection.apply_enrichment(&EnrichmentEvent::AssetEcosystemReplace(ecosystem(10)));
         projection.apply_enrichment(&EnrichmentEvent::DaoStateReplace(dao_state(10)));
+        projection.apply_enrichment(&EnrichmentEvent::ProtocolEraReplace(protocol_era(10)));
         projection.apply_enrichment(&EnrichmentEvent::ForkWatchReplace(fork_watch(10)));
         projection.apply_enrichment(&EnrichmentEvent::ActivityFeedReplace(activity_feed(10)));
         projection.apply_enrichment(&EnrichmentEvent::NetworkAtlasReplace(network_atlas(10)));
@@ -999,6 +1074,7 @@ mod tests {
 
         assert!(projection.snapshot().asset_ecosystem.is_none());
         assert!(projection.snapshot().dao_state.is_none());
+        assert!(projection.snapshot().protocol_era.is_none());
         assert!(projection.snapshot().fork_watch.is_none());
         assert!(projection.snapshot().activity_feed.is_none());
         assert!(projection.snapshot().network_atlas.is_none());

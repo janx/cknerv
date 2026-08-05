@@ -140,6 +140,8 @@ describe('wire-shape parity (TS twin of cknerv-core)', () => {
     expect(sample.snapshot.dao_state?.statistics_block).toBe(99);
     expect(sample.snapshot.dao_state?.total_deposited_shannons).toBe('837703738002110308');
     expect(sample.snapshot.dao_state?.estimated_apc_bps).toBe(201);
+    expect(sample.snapshot.protocol_era?.current?.name).toBe('Meepo');
+    expect(sample.snapshot.protocol_era?.indexed_tip_epoch).toBe(12293);
     expect(sample.snapshot.fork_watch?.recent_reorg?.kind).toBe('deep');
     expect(sample.snapshot.fork_watch?.deep_fork?.indexed_tip).toBe(99);
     expect(sample.snapshot.activity_feed?.activities[0].category).toBe('dao');
@@ -149,6 +151,7 @@ describe('wire-shape parity (TS twin of cknerv-core)', () => {
     expect(sample.deltas.cell_upsert.type).toBe('cell_upsert');
     expect(sample.deltas.asset_ecosystem_replace.type).toBe('asset_ecosystem_replace');
     expect(sample.deltas.dao_state_replace.type).toBe('dao_state_replace');
+    expect(sample.deltas.protocol_era_replace.type).toBe('protocol_era_replace');
     expect(sample.deltas.fork_watch_replace.type).toBe('fork_watch_replace');
     expect(sample.deltas.activity_feed_replace.type).toBe('activity_feed_replace');
     expect(sample.deltas.network_atlas_replace.type).toBe('network_atlas_replace');
