@@ -9,7 +9,7 @@ describe('hudTheme', () => {
     expect(HUD_COLORS.peerWire).toBe('#1AD1FF');
     expect(HUD_COLORS.nominal).toBe('#27FF5A');
     expect(HUD_COLORS.danger).toBe('#FF3030');
-    expect(HUD_FONTS.cjk).toContain('Huiwen-mincho');
+    expect(HUD_FONTS.cjk).toMatch(/^'Huiwen-mincho'/);
     expect(HUD_FONTS.cjk).toContain('Noto Serif CJK SC');
   });
 
@@ -27,6 +27,7 @@ describe('hudTheme', () => {
     const css = els[0].textContent ?? '';
     expect(css).toContain('@font-face');
     expect(css).toContain("font-family:'Huiwen-mincho'");
+    expect(css).not.toContain("font-family:'Cknerv-dao-serif'");
     expect(css).toContain('--hud-orange:#FF9830');
     expect(css).toContain('@keyframes cknerv-route-hop-lock-pulse');
     expect(css).toContain('var(--route-hop-pulse-color');

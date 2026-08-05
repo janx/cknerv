@@ -394,6 +394,7 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats, cellCo
                   <DaoStatePanel
                     source={enrichmentSource}
                     record={daoState}
+                    nowMs={now}
                     style={{ ...PANEL_FLOW, width: 'min(300px, calc(100vw - 58px))' }}
                   />
                 </div>
