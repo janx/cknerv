@@ -85,6 +85,11 @@ describe('ChainCapacityReadout', () => {
     expect(Array.from(container.querySelectorAll('[data-scope-stage]')).map(
       (stage) => stage.getAttribute('data-scope-stage'),
     )).toEqual(['indexed-chain', 'galaxy-window']);
+    expect(Array.from(container.querySelectorAll<HTMLElement>('[data-scope-stage]')).map(
+      (stage) => stage.dataset.scopeLayout,
+    )).toEqual(['flush', 'flush']);
+    expect(container.querySelectorAll('[data-scope-header]')).toHaveLength(2);
+    expect(container.querySelectorAll('[data-scope-content]')).toHaveLength(2);
     expect(container.querySelector<HTMLElement>(
       '[data-asset-capacity-category="dao"]',
     )?.style.width).toBe('14.5%');

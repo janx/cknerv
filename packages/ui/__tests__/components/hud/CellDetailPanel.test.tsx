@@ -140,6 +140,9 @@ describe('CellDetailPanel', () => {
     expect(getByTestId('portrait').getAttribute('data-focus')).toBe('');
     expect((container.firstElementChild as HTMLElement).style.animation)
       .toContain('cknerv-cell-consensus-enter');
+    expect((container.querySelector('[data-cell-portrait-frame]') as HTMLElement).dataset.cellDetailDensity).toBe('standard');
+    expect((container.querySelector('[data-cell-portrait-frame]') as HTMLElement).style.width).toBe('100%');
+    expect((container.querySelector('[data-consensus-memory]') as HTMLElement).dataset.consensusMemoryDensity).toBe('standard');
   });
 
   it('adds indexed semantics only when the optional source is present', () => {
@@ -238,7 +241,18 @@ describe('CellDetailPanel', () => {
     );
 
     const readout = container.querySelector('[data-cell-semantics-phase="ready"]');
+    const portrait = container.querySelector('[data-cell-portrait-frame]') as HTMLElement;
+    const memory = container.querySelector('[data-consensus-memory]') as HTMLElement;
     expect(readout).not.toBeNull();
+    expect(readout?.getAttribute('data-cell-semantics-density')).toBe('compact');
+    expect((readout?.querySelector('[data-cell-context-facts]') as HTMLElement).style.gridTemplateColumns).toContain('repeat(2');
+    expect(readout?.querySelector('[data-cell-context-fact="owner"]')).not.toBeNull();
+    expect(readout?.querySelector('[data-transaction-semantics-summary]')).not.toBeNull();
+    expect(readout?.querySelector('[data-transaction-participants]')).not.toBeNull();
+    expect(portrait.dataset.cellDetailDensity).toBe('compact');
+    expect(portrait.style.width).toBe('196px');
+    expect(memory.dataset.consensusMemoryDensity).toBe('compact');
+    expect((container.firstElementChild as HTMLElement).style.background).toContain('.97');
     expect(readout?.textContent).toContain('CELL CONTEXT · READY · 1 BLOCK LAG');
     expect(readout?.textContent).not.toContain('INDEXED');
     expect(readout?.textContent).not.toContain('IDX');
@@ -254,6 +268,10 @@ describe('CellDetailPanel', () => {
     expect(readout?.textContent).toContain('1000 sh');
     expect(readout?.textContent).toContain('12,345');
     expect(readout?.textContent).toContain('+49.99999 CKB');
+    expect(container.textContent).toContain('3h 12m');
+    expect(Array.from(container.querySelectorAll('span')).some(
+      (span) => span.textContent === 'AGE',
+    )).toBe(false);
   });
 
   it('keeps auxiliary portrait focus off while the entry decoder advances', () => {

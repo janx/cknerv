@@ -32,17 +32,23 @@ function sourceColor(status: EnrichmentSourceStatus['status']): string {
   }
 }
 
-function ValueRow({ label, value, color }: {
+function ContextFact({ label, value, color, wide = false }: {
   label: string;
   value: string;
   color?: string;
+  wide?: boolean;
 }) {
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '64px 1fr', gap: 7, padding: '2px 0' }}>
-      <span style={{ color: HUD_COLORS.dim, fontSize: 8, letterSpacing: 0.9 }}>{label}</span>
+    <div
+      data-cell-context-fact={label.toLowerCase()}
+      style={{ gridColumn: wide ? '1 / -1' : undefined, minWidth: 0, padding: '1px 0 2px' }}
+    >
+      <span style={{ display: 'block', color: HUD_COLORS.dim, fontSize: 6.6, letterSpacing: 0.9, lineHeight: 1.2 }}>
+        {label}
+      </span>
       <span
         title={value}
-        style={{ color: color ?? HUD_COLORS.ink, fontSize: 8.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+        style={{ display: 'block', color: color ?? HUD_COLORS.ink, fontSize: 8.2, lineHeight: 1.35, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
       >
         {value}
       </span>
@@ -60,9 +66,18 @@ function KnowledgeBar({ record }: { record: CellSemanticRecord }) {
     ['DATA', knowledge.data_bytes, HUD_COLORS.caution],
   ] as const;
   return (
-    <div title={segments.map(([name, bytes]) => `${name} ${bytes}B`).join(' · ')}>
-      <ValueRow label="KNOWLEDGE" value={`${knowledge.total_bytes} bytes occupied`} />
-      <div style={{ display: 'flex', height: 3, gap: 1, margin: '2px 0 5px' }}>
+    <div
+      data-cell-context-fact="knowledge"
+      title={segments.map(([name, bytes]) => `${name} ${bytes}B`).join(' · ')}
+      style={{ gridColumn: '1 / -1', minWidth: 0, marginTop: 1 }}
+    >
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+        <span style={{ color: HUD_COLORS.dim, fontSize: 6.6, letterSpacing: 0.9 }}>KNOWLEDGE</span>
+        <span style={{ marginLeft: 'auto', color: HUD_COLORS.ink, fontSize: 8.2 }}>
+          {knowledge.total_bytes} bytes occupied
+        </span>
+      </div>
+      <div style={{ display: 'flex', height: 3, gap: 1, marginTop: 2 }}>
         {segments.map(([name, bytes, color]) => (
           <span
             key={name}
@@ -147,44 +162,61 @@ function TransactionReadout({
         : phase === 'error'
           ? (message ?? 'TRANSACTION CONTEXT UNAVAILABLE')
           : null;
+  const flow = record
+    ? `${facetAttribute(io, 'inputs') ?? '?'} → ${facetAttribute(io, 'outputs') ?? '?'} CELLS`
+    : null;
+  const commit = record
+    ? proposed && committed
+      ? `#${proposed} → #${committed}${distance ? ` · ${distance} BLOCKS` : ''}`
+      : null
+    : null;
+  const metric = (label: string, value: string, color?: string) => (
+    <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 4, minWidth: 0, whiteSpace: 'nowrap' }}>
+      <span style={{ color: HUD_COLORS.dim, fontSize: 6.4, letterSpacing: 0.72 }}>{label}</span>
+      <span style={{ color: color ?? HUD_COLORS.ink, fontSize: 7.8 }}>{value}</span>
+    </span>
+  );
   return (
     <div
       data-transaction-semantics-phase={phase}
-      style={{ marginTop: 7, paddingTop: 6, borderTop: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.14)}` }}
+      style={{ marginTop: 5, paddingTop: 5, borderTop: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.14)}` }}
     >
-      <div style={{ color: HUD_COLORS.orange, fontSize: 7.5, letterSpacing: 1.1, marginBottom: 3 }}>
-        ORIGIN TRANSACTION
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, minWidth: 0 }}>
+        <span style={{ color: HUD_COLORS.orange, fontSize: 7.2, letterSpacing: 1.05 }}>
+          ORIGIN TRANSACTION
+        </span>
+        {record ? (
+          <span title={record.tx_hash} style={{ marginLeft: 'auto', minWidth: 0, color: HUD_COLORS.dim, fontSize: 7, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {compact(record.tx_hash, 10, 7)}
+          </span>
+        ) : null}
       </div>
       {status && !record ? (
-        <div style={{ color: phase === 'error' ? HUD_COLORS.danger : HUD_COLORS.dim, fontSize: 8 }}>
+        <div style={{ marginTop: 3, color: phase === 'error' ? HUD_COLORS.danger : HUD_COLORS.dim, fontSize: 8 }}>
           {status}
         </div>
       ) : null}
       {record ? (
         <>
-          <ValueRow label="TX" value={compact(record.tx_hash, 12, 9)} />
-          <ValueRow
-            label="FLOW"
-            value={`${facetAttribute(io, 'inputs') ?? '?'} → ${facetAttribute(io, 'outputs') ?? '?'} CELLS`}
-          />
-          <ValueRow
-            label="COMMIT"
-            value={proposed && committed
-              ? `#${proposed} → #${committed}${distance ? ` · ${distance} BLOCKS` : ''}`
-              : `#${record.block}`}
-            color={HUD_COLORS.nominal}
-          />
-          {record.fee ? <ValueRow label="FEE" value={formatShannons(record.fee)} /> : null}
-          {record.cycles != null ? (
-            <ValueRow label="CYCLES" value={record.cycles.toLocaleString()} />
-          ) : null}
+          <div
+            data-transaction-semantics-summary
+            style={{ display: 'flex', flexWrap: 'wrap', columnGap: 10, rowGap: 2, marginTop: 3 }}
+          >
+            {metric('FLOW', flow!)}
+            {commit ? metric('COMMIT', commit, HUD_COLORS.nominal) : null}
+            {record.fee ? metric('FEE', formatShannons(record.fee)) : null}
+            {record.cycles != null ? metric('CYCLES', record.cycles.toLocaleString()) : null}
+          </div>
           {record.participants.length > 0 ? (
-            <div style={{ marginTop: 4 }}>
+            <div
+              data-transaction-participants
+              style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '2px 8px', marginTop: 4 }}
+            >
               {record.participants.slice(0, 4).map((participant) => (
                 <div
                   key={participant.address}
                   title={participant.address}
-                  style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 6, padding: '1px 0', fontSize: 7.5 }}
+                  style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) auto', gap: 5, minWidth: 0, fontSize: 7.1 }}
                 >
                   <span style={{ color: HUD_COLORS.dim, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {compact(participant.address, 9, 6)}
@@ -239,16 +271,18 @@ export default function CellSemanticsReadout({
     <section
       aria-label="Cell context"
       data-cell-semantics-phase={phase}
+      data-cell-semantics-density="compact"
       style={{
-        margin: '8px 0 10px',
-        padding: '7px 8px 6px',
-        border: `1px solid ${rgba(color, 0.2)}`,
-        background: `linear-gradient(90deg,${rgba(color, 0.055)},transparent)`,
+        margin: '7px 0 8px',
+        padding: '6px 7px 5px',
+        borderTop: `1px solid ${rgba(color, 0.24)}`,
+        borderBottom: `1px solid ${rgba(color, 0.14)}`,
+        background: `linear-gradient(90deg,${rgba(color, 0.07)},rgba(1,4,12,.42) 52%,transparent)`,
         fontFamily: HUD_FONTS.mono,
         ...style,
       }}
     >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: record ? 5 : 0 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: record ? 4 : 0 }}>
         <span style={{ width: 4, height: 4, borderRadius: '50%', background: color, boxShadow: `0 0 6px ${color}` }} />
         <span style={{ color, fontSize: 8, letterSpacing: 1.15 }}>
           CELL CONTEXT · {source.status.toUpperCase()}{lag}
@@ -261,23 +295,26 @@ export default function CellSemanticsReadout({
       ) : null}
       {record ? (
         <>
-          {record.cell_type ? <ValueRow label="SEMANTIC" value={record.cell_type.toUpperCase()} color={HUD_COLORS.nominal} /> : null}
-          {record.address ? <ValueRow label="ADDRESS" value={compact(record.address, 12, 9)} /> : null}
-          {record.lock_script ? (
-            <ValueRow
-              label="LOCK"
-              value={record.lock_script.name ?? record.lock_script.family ?? compact(record.lock_script.code_hash)}
-            />
-          ) : null}
-          {record.type_script ? (
-            <ValueRow
-              label="TYPE"
-              value={record.type_script.name ?? record.type_script.family ?? compact(record.type_script.code_hash)}
-            />
-          ) : null}
-          {record.asset ? (
-            <>
-              <ValueRow
+          <div
+            data-cell-context-facts
+            style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', columnGap: 9, rowGap: 1 }}
+          >
+            {record.cell_type ? <ContextFact label="SEMANTIC" value={record.cell_type.toUpperCase()} color={HUD_COLORS.nominal} /> : null}
+            {record.address ? <ContextFact label="OWNER" value={compact(record.address, 12, 9)} /> : null}
+            {record.lock_script ? (
+              <ContextFact
+                label="LOCK SCRIPT"
+                value={record.lock_script.name ?? record.lock_script.family ?? compact(record.lock_script.code_hash)}
+              />
+            ) : null}
+            {record.type_script ? (
+              <ContextFact
+                label="TYPE SCRIPT"
+                value={record.type_script.name ?? record.type_script.family ?? compact(record.type_script.code_hash)}
+              />
+            ) : null}
+            {record.asset ? (
+              <ContextFact
                 label="ASSET"
                 value={[
                   record.asset.symbol,
@@ -285,44 +322,45 @@ export default function CellSemanticsReadout({
                   record.asset.standard,
                 ].filter(Boolean).join(' · ') || compact(record.asset.type_script_hash)}
                 color={HUD_COLORS.caution}
+                wide
               />
-              {record.asset.amount != null ? (
-                <ValueRow
-                  label="AMOUNT"
-                  value={`${formatSemanticAssetAmount(
-                    record.asset.amount,
-                    record.asset.decimals,
-                  )}${record.asset.symbol ? ` ${record.asset.symbol}` : ''}`}
-                />
-              ) : null}
-            </>
-          ) : null}
-          <KnowledgeBar record={record} />
-          {record.facets.length > 0 ? (
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3, marginTop: 4 }}>
-              {record.facets.slice(0, 5).map((facet, index) => {
-                const text = `${facet.kind}${facet.state ? ` · ${facet.state}` : ''}`;
-                return (
-                  <span
-                    key={`${facet.namespace}:${facet.kind}:${index}`}
-                    title={`${facet.namespace} · ${text}`}
-                    style={{
-                      maxWidth: '100%',
-                      padding: '2px 4px',
-                      border: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.18)}`,
-                      color: HUD_COLORS.cyanWire,
-                      fontSize: 7.5,
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap',
-                    }}
-                  >
-                    {text.toUpperCase()}
-                  </span>
-                );
-              })}
-            </div>
-          ) : null}
+            ) : null}
+            {record.asset?.amount != null ? (
+              <ContextFact
+                label="AMOUNT"
+                value={`${formatSemanticAssetAmount(
+                  record.asset.amount,
+                  record.asset.decimals,
+                )}${record.asset.symbol ? ` ${record.asset.symbol}` : ''}`}
+              />
+            ) : null}
+            <KnowledgeBar record={record} />
+            {record.facets.length > 0 ? (
+              <div style={{ gridColumn: '1 / -1', display: 'flex', flexWrap: 'wrap', gap: 3, marginTop: 2 }}>
+                {record.facets.slice(0, 5).map((facet, index) => {
+                  const text = `${facet.kind}${facet.state ? ` · ${facet.state}` : ''}`;
+                  return (
+                    <span
+                      key={`${facet.namespace}:${facet.kind}:${index}`}
+                      title={`${facet.namespace} · ${text}`}
+                      style={{
+                        maxWidth: '100%',
+                        padding: '1px 4px',
+                        border: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.18)}`,
+                        color: HUD_COLORS.cyanWire,
+                        fontSize: 6.8,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {text.toUpperCase()}
+                    </span>
+                  );
+                })}
+              </div>
+            ) : null}
+          </div>
         </>
       ) : null}
       {transactionPhase ? (

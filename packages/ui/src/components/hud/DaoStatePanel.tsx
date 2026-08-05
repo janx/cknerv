@@ -15,7 +15,7 @@ export default function DaoStatePanel({ source, record, style }: {
 
   return (
     <HudPanel style={{ width: 300, ...style }}>
-      <PanelHeader en="NERVOS DAO" cjk="共识" idx="DAO·05" />
+      <PanelHeader en="NERVOS DAO" cjk="道" idx="DAO·05" />
       <DaoStateReadout source={source} record={record} variant="panel" />
     </HudPanel>
   );

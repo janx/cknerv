@@ -10,6 +10,7 @@ describe('hudTheme', () => {
     expect(HUD_COLORS.nominal).toBe('#27FF5A');
     expect(HUD_COLORS.danger).toBe('#FF3030');
     expect(HUD_FONTS.cjk).toContain('Huiwen-mincho');
+    expect(HUD_FONTS.cjk).toContain('Noto Serif CJK SC');
   });
 
   it('rgba() expands a palette hex to an rgba() string (byte-identical to the old literals)', () => {

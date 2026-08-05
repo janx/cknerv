@@ -27,7 +27,7 @@ export const HUD_FONTS = {
   display: "'Saira', system-ui, sans-serif",
   tech: "'Chakra Petch', system-ui, sans-serif",
   mono: "'Share Tech Mono', ui-monospace, monospace",
-  cjk: "'Huiwen-mincho', 'Noto Serif SC', serif",
+  cjk: "'Huiwen-mincho', 'Noto Serif CJK SC', 'Noto Serif SC', 'Songti SC', SimSun, serif",
 } as const;
 
 /** A `#RRGGBB` palette color as an `rgba(r,g,b,a)` string — single source for
@@ -40,7 +40,9 @@ export function rgba(hex: string, alpha: number): string {
 
 // Self-hosted, subset webfonts — no third-party CDN at runtime. Latin faces are
 // Google's latin-range woff2; the CJK face is Huiwen-mincho (public domain)
-// subset to the 21 glyphs the HUD uses (共识记忆细胞状态脉搏警告节点对端播种网络全).
+// subset to the original 21 HUD glyphs (共识记忆细胞状态脉搏警告节点对端播种网络全).
+// Deliberate one-off labels outside that set (currently 道) use the platform's
+// CJK serif fallback rather than silently rendering as a missing glyph.
 const FONT_FACES = [
   `@font-face{font-family:'Saira';font-weight:100 900;font-display:swap;src:url("${sairaUrl}") format("woff2")}`,
   `@font-face{font-family:'Chakra Petch';font-weight:500;font-display:swap;src:url("${chakra500Url}") format("woff2")}`,
