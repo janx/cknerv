@@ -85,7 +85,7 @@ describe('CellsPanel', () => {
       />,
     );
     const t = container.textContent ?? '';
-    expect(t).toContain('INDEXED CHAIN CAPACITY');
+    expect(t).toContain('CHAIN CAPACITY');
     expect(t).toContain('#100');
     expect(t).toContain('57,763,209,638.48 CKB');
     expect(t).toContain('159.9 MB');
@@ -97,6 +97,8 @@ describe('CellsPanel', () => {
     expect(t).toContain('WINDOW ASSETS');
     expect(t).toContain('WINDOW LOCKS');
     expect(t).toContain('sighash');
+    expect(t).not.toContain('INDEXED');
+    expect(t).not.toContain('CKBADGER');
     expect(container.querySelector('[data-retained-capacity-context]')).not.toBeNull();
     expect(container.querySelector('[data-cell-capacity-mode="retained"]')).toBeNull();
     expect(container.querySelectorAll('[data-cell-capacity-mode]')).toHaveLength(1);
@@ -110,7 +112,7 @@ describe('CellsPanel', () => {
   });
   it('does not add indexed ecosystem UI without the optional source', () => {
     const { container } = render(<CellsPanel stats={stats} churn={churn} reducedMotion />);
-    expect(container.textContent).not.toContain('INDEXED CHAIN CAPACITY');
+    expect(container.textContent).not.toContain('CHAIN CAPACITY');
   });
 
   it('keeps the base capacity view while ckbadger has no usable record', () => {
@@ -125,7 +127,7 @@ describe('CellsPanel', () => {
     );
 
     expect(container.querySelector('[data-cell-capacity-mode="retained"]')).not.toBeNull();
-    expect(container.textContent).not.toContain('INDEXED CHAIN CAPACITY');
+    expect(container.textContent).not.toContain('CHAIN CAPACITY');
   });
 
   it('dims stale indexed scope without dimming direct Galaxy data', () => {

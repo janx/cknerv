@@ -7,7 +7,7 @@ import {
   deriveDaoStateVisual,
 } from '../../derives/daoState.derive';
 import { HUD_COLORS, HUD_FONTS, rgba } from './hudTheme';
-import { StatRow } from './primitives';
+import { ReadoutHeader, StatRow } from './primitives';
 
 const SHANNONS_PER_CKB = 100_000_000n;
 
@@ -67,7 +67,7 @@ export default function DaoStateReadout({ source, record }: {
 
   return (
     <section
-      aria-label="Indexed Nervos DAO state"
+      aria-label="Nervos DAO state"
       data-dao-state={visualState}
       style={{
         marginTop: 10,
@@ -76,23 +76,14 @@ export default function DaoStateReadout({ source, record }: {
         opacity: stale ? 0.68 : 1,
       }}
     >
-      <div style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 5,
-        fontFamily: HUD_FONTS.tech,
-        fontSize: 7.5,
-        letterSpacing: 1.25,
-        color: accent,
-        textTransform: 'uppercase',
-        marginBottom: 5,
-      }}>
-        <span style={{ width: 5, height: 5, borderRadius: '50%', background: accent, boxShadow: `0 0 6px ${accent}` }} />
-        INDEXED NERVOS DAO · #{record.statistics_block.toLocaleString('en-US')}
-        {stale ? ' · STALE' : ''}
-      </div>
+      <ReadoutHeader
+        title="NERVOS DAO"
+        meta={`SNAPSHOT #${record.statistics_block.toLocaleString('en-US')}`}
+        accent={accent}
+        stale={stale}
+      />
       <div style={{ fontFamily: HUD_FONTS.mono, fontSize: 7.5, color: HUD_COLORS.dim, letterSpacing: 0.35, marginBottom: 4 }}>
-        FIXED SNAPSHOT · ANCHOR #{record.as_of.block.toLocaleString('en-US')}
+        VALIDATED AT #{record.as_of.block.toLocaleString('en-US')}
       </div>
       <StatRow label="DAO locked">{formatCkb(visual.totalDepositedShannons)}</StatRow>
       <StatRow label="Active deposits">{record.active_deposits.toLocaleString('en-US')}</StatRow>

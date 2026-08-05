@@ -60,7 +60,7 @@ export default function AssetEcosystemReadout({ source, record, fallback = null,
 
   return (
     <section
-      aria-label="Indexed asset ecosystem"
+      aria-label="Asset ecosystem"
       data-cell-capacity-mode="indexed"
       data-asset-ecosystem-state={visualState}
       style={{
@@ -71,8 +71,8 @@ export default function AssetEcosystemReadout({ source, record, fallback = null,
     >
       <ScopeStage
         id="indexed-chain"
-        label="INDEXED CHAIN CAPACITY"
-        meta={`#${record.as_of.block.toLocaleString('en-US')} · CKBADGER${stale ? ' · STALE' : ''}`}
+        label="CHAIN CAPACITY"
+        meta={`AS OF #${record.as_of.block.toLocaleString('en-US')}${stale ? ' · STALE' : ''}`}
         accent={accent}
         terminal={retainedContext == null}
         style={{ opacity: stale ? 0.68 : 1 }}
@@ -108,7 +108,7 @@ export default function AssetEcosystemReadout({ source, record, fallback = null,
         {record.top_assets.length > 0 ? (
           <div style={{ marginTop: 6 }}>
             <div style={{ fontFamily: HUD_FONTS.tech, fontSize: 7.5, letterSpacing: 1.2, color: HUD_COLORS.dim, marginBottom: 2 }}>
-              TOP INDEXED ASSETS
+              TOP ASSETS
             </div>
             {record.top_assets.slice(0, 3).map((asset) => (
               <div

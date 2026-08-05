@@ -239,7 +239,10 @@ describe('CellDetailPanel', () => {
 
     const readout = container.querySelector('[data-cell-semantics-phase="ready"]');
     expect(readout).not.toBeNull();
-    expect(readout?.textContent).toContain('CKBADGER · READY · 1 BLOCK LAG');
+    expect(readout?.textContent).toContain('CELL CONTEXT · READY · 1 BLOCK LAG');
+    expect(readout?.textContent).not.toContain('INDEXED');
+    expect(readout?.textContent).not.toContain('IDX');
+    expect(readout?.textContent).not.toContain('CKBADGER');
     expect(readout?.textContent).toContain('Default Lock');
     expect(readout?.textContent).toContain('NTT · Nervos Test Token · xUDT');
     expect(readout?.textContent).toContain('123.45 NTT');

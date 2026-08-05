@@ -62,7 +62,7 @@ export function deriveTransactionHorizonVisual(
   const hourlyRatios = hourlyCounts.map((count) => (
     maxHourly === 0 ? 0 : count / maxHourly
   ));
-  const title = `Indexed transaction counts compatible with anchor #${record.as_of.block.toLocaleString('en-US')}: source current hour ${record.current_hour.toLocaleString('en-US')}, source current day ${record.current_day.toLocaleString('en-US')}; ${hourlyCounts.length} oldest-to-newest hourly buckets, up to 24 hours`;
+  const title = `Transaction counts validated at block #${record.as_of.block.toLocaleString('en-US')}: current hour ${record.current_hour.toLocaleString('en-US')}, current day ${record.current_day.toLocaleString('en-US')}; ${hourlyCounts.length} oldest-to-newest hourly buckets, up to 24 hours`;
 
   return {
     currentHour: record.current_hour,

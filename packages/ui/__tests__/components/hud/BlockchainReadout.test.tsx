@@ -99,14 +99,13 @@ describe('BlockchainReadout', () => {
     expect(container.textContent).toContain('COMMON KNOWLEDGE BASE');
     expect(container.textContent).toContain('共识记忆');
     expect(container.textContent).not.toContain('Interval');
-    expect(container.textContent).not.toContain('INDEXED FORK WATCH');
-    expect(container.textContent).not.toContain('INDEXED NERVOS DAO');
-    expect(container.textContent).not.toContain('INDEXED ACTIVITY');
-    expect(container.textContent).not.toContain('INDEXED TX HORIZON');
+    expect(container.textContent).not.toContain('NERVOS DAO');
+    expect(container.textContent).not.toContain('ACTIVITY');
+    expect(container.textContent).not.toContain('TX HORIZON');
     expect(container.querySelector('[data-protocol-era-state]')).toBeNull();
   });
 
-  it('adds indexed protocol context inside the canonical Epoch row', () => {
+  it('fuses protocol context into the canonical Epoch row', () => {
     const { container } = render(
       <BlockchainReadout
         chain={chain}
@@ -116,7 +115,8 @@ describe('BlockchainReadout', () => {
     );
     const badge = container.querySelector<HTMLElement>('[data-protocol-era-state="ready"]');
 
-    expect(container.textContent).toContain('11042.842/1800· IDX MIRANA·21');
+    expect(container.textContent).toContain('11042.842/1800· MIRANA·21');
+    expect(container.textContent).not.toContain('IDX');
     expect(badge?.dataset.protocolEraLabel).toBe('MIRANA·21');
     expect(badge?.title).toContain('epoch 5,414, block #70');
     expect(container.textContent).not.toContain('PROTOCOL ERA');
@@ -131,8 +131,9 @@ describe('BlockchainReadout', () => {
       />,
     );
     const text = container.textContent ?? '';
-    expect(text).toContain('INDEXED NERVOS DAO · #99');
-    expect(text).toContain('FIXED SNAPSHOT · ANCHOR #100');
+    expect(text).toContain('NERVOS DAO');
+    expect(text).toContain('SNAPSHOT #99');
+    expect(text).toContain('VALIDATED AT #100');
     expect(text).toContain('8.38 B CKB');
     expect(text).toContain('22,659');
     expect(text).toContain('2.01%');
@@ -151,7 +152,8 @@ describe('BlockchainReadout', () => {
       />,
     );
     const text = container.textContent ?? '';
-    expect(text).toContain('INDEXED ACTIVITY · LATEST 2 · #100');
+    expect(text).toContain('ACTIVITY');
+    expect(text).toContain('LATEST 2 · AS OF #100');
     expect(text).toContain('SCRIPT 1 · CKB 1');
     expect(text).toContain('.bit Time Info');
     expect(text).toContain('2P');
@@ -170,13 +172,14 @@ describe('BlockchainReadout', () => {
       />,
     );
     const text = container.textContent ?? '';
-    expect(text).toContain('INDEXED ACTIVITY · LATEST 2 · #100');
+    expect(text).toContain('ACTIVITY');
+    expect(text).toContain('LATEST 2 · AS OF #100');
     expect(text).toContain('SCRIPT 1 · CKB 1');
     expect(text).not.toContain('.bit Time Info');
     expect(container.querySelector('[data-activity-feed-compact="true"]')).not.toBeNull();
   });
 
-  it('renders the indexed hourly fingerprint without replacing direct TPS', () => {
+  it('renders the hourly horizon without replacing direct TPS', () => {
     const { container } = render(
       <BlockchainReadout
         chain={chain}
@@ -186,26 +189,57 @@ describe('BlockchainReadout', () => {
     );
     const text = container.textContent ?? '';
     expect(text).toContain('Tps 60s0.33');
-    expect(text).toContain('INDEXED TX HORIZON · 3/24H · A#100');
+    expect(text).toContain('TX HORIZON');
+    expect(text).toContain('3/24H · AS OF #100');
     expect(text).toContain('HOUR 12');
     expect(text).toContain('DAY 345');
     expect(text).toContain('PEAK/H 12');
     expect(container.querySelectorAll('[data-transaction-hour-count]')).toHaveLength(3);
   });
 
-  it('folds the indexed horizon into the direct TPS row on short viewports', () => {
+  it('keeps a compact horizon in the third section on short viewports', () => {
     const { container } = render(
       <BlockchainReadout
         chain={chain}
         enrichmentSource={source}
+        daoState={daoState}
         transactionHorizon={transactionHorizon}
+        activityFeed={activityFeed}
         compactActivity
       />,
     );
     const text = container.textContent ?? '';
-    expect(text).toContain('Tps 60s0.33· IDX H12/D345');
-    expect(text).not.toContain('INDEXED TX HORIZON');
+    expect(text).toContain('Tps 60s0.33');
+    expect(text).toContain('TX HORIZON');
+    expect(text).toContain('H12/D345 · AS OF #100');
+    expect(text.indexOf('NERVOS DAO')).toBeLessThan(text.indexOf('TX HORIZON'));
+    expect(text.indexOf('TX HORIZON')).toBeLessThan(text.indexOf('ACTIVITY'));
+    expect(text).not.toContain('INDEXED');
+    expect(text).not.toContain('IDX');
+    expect(text).not.toContain('CKBADGER');
     expect(container.querySelector('[data-transaction-horizon-state="ready"]')).not.toBeNull();
     expect(container.querySelectorAll('[data-transaction-hour-count]')).toHaveLength(0);
+  });
+
+  it('orders fused enhancements after canonical data as DAO, horizon, activity', () => {
+    const { container } = render(
+      <BlockchainReadout
+        chain={chain}
+        enrichmentSource={source}
+        daoState={daoState}
+        transactionHorizon={transactionHorizon}
+        activityFeed={activityFeed}
+      />,
+    );
+    const text = container.textContent ?? '';
+    const canonicalAt = text.indexOf('Reorgs');
+    const daoAt = text.indexOf('NERVOS DAO');
+    const horizonAt = text.indexOf('TX HORIZON');
+    const activityAt = text.indexOf('ACTIVITY');
+
+    expect(canonicalAt).toBeGreaterThanOrEqual(0);
+    expect(canonicalAt).toBeLessThan(daoAt);
+    expect(daoAt).toBeLessThan(horizonAt);
+    expect(horizonAt).toBeLessThan(activityAt);
   });
 });

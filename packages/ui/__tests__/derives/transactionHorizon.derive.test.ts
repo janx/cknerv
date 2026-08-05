@@ -28,13 +28,16 @@ const source: EnrichmentSourceStatus = {
 
 describe('transaction horizon visual derivation', () => {
   it('normalizes the bounded oldest-to-newest hourly fingerprint', () => {
-    expect(deriveTransactionHorizonVisual(record)).toMatchObject({
+    const visual = deriveTransactionHorizonVisual(record);
+    expect(visual).toMatchObject({
       currentHour: 12,
       currentDay: 345,
       hourlyCounts: [0, 6, 12],
       hourlyRatios: [0, 0.5, 1],
       maxHourly: 12,
     });
+    expect(visual?.title).toContain('validated at block #100');
+    expect(visual?.title).not.toContain('Indexed');
   });
 
   it('rejects unsafe counts and source-sized arrays', () => {

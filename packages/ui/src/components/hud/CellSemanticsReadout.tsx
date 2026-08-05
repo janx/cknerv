@@ -143,7 +143,7 @@ function TransactionReadout({
     : phase === 'waiting'
       ? 'WAITING FOR TRANSACTION CAPABILITY'
       : phase === 'unavailable'
-        ? (message ?? 'NO INDEXED TRANSACTION CONTEXT')
+        ? (message ?? 'NO ORIGIN TRANSACTION CONTEXT')
         : phase === 'error'
           ? (message ?? 'TRANSACTION CONTEXT UNAVAILABLE')
           : null;
@@ -228,16 +228,16 @@ export default function CellSemanticsReadout({
   const statusMessage = phase === 'loading'
     ? 'RESOLVING SELECTED CELL…'
     : phase === 'waiting'
-      ? (message ?? 'WAITING FOR A VALIDATED INDEX ANCHOR')
+      ? (message ?? 'WAITING FOR VALIDATED CHAIN CONTEXT')
       : phase === 'unavailable'
-        ? (message ?? 'NO INDEXED CONTEXT FOR THIS CELL')
+        ? (message ?? 'NO CONTEXT FOR THIS CELL')
         : phase === 'error'
-          ? (message ?? 'INDEXED CONTEXT UNAVAILABLE')
+          ? (message ?? 'CELL CONTEXT UNAVAILABLE')
           : null;
 
   return (
     <section
-      aria-label="Indexed Cell context"
+      aria-label="Cell context"
       data-cell-semantics-phase={phase}
       style={{
         margin: '8px 0 10px',
@@ -251,7 +251,7 @@ export default function CellSemanticsReadout({
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: record ? 5 : 0 }}>
         <span style={{ width: 4, height: 4, borderRadius: '50%', background: color, boxShadow: `0 0 6px ${color}` }} />
         <span style={{ color, fontSize: 8, letterSpacing: 1.15 }}>
-          {source.source.toUpperCase()} · {source.status.toUpperCase()}{lag}
+          CELL CONTEXT · {source.status.toUpperCase()}{lag}
         </span>
       </div>
       {statusMessage ? (

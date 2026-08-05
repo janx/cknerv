@@ -113,9 +113,9 @@ export function deriveProtocolEraVisual(
     ? editionLabel(current)
     : `PRE-${editionLabel(upcoming!)}`;
   const era = current
-    ? `Current indexed edition ${activationLabel(current)}`
-    : `No indexed edition activated; next ${activationLabel(upcoming!)}`;
+    ? `Current protocol edition ${activationLabel(current)}`
+    : `No protocol edition activated; next ${activationLabel(upcoming!)}`;
   const next = current && upcoming ? `; next ${activationLabel(upcoming)}` : '';
-  const title = `${era}${next}; ckbadger tip epoch ${record.indexed_tip_epoch.toLocaleString('en-US')}, block #${record.indexed_tip_block.toLocaleString('en-US')}`;
+  const title = `${era}${next}; validated through epoch ${record.indexed_tip_epoch.toLocaleString('en-US')}, block #${record.indexed_tip_block.toLocaleString('en-US')}`;
   return { current, upcoming, label, title };
 }

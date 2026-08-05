@@ -41,23 +41,15 @@ export default function BlockchainReadout({ chain, enrichmentSource, protocolEra
       <StatRow label="Txs">{fmt(chain.total_txs)}</StatRow>
       <StatRow label="Tps 60s">
         {tps.toFixed(2)}
-        {compactActivity ? (
-          <TransactionHorizonReadout
-            source={enrichmentSource}
-            record={transactionHorizon}
-            compact
-          />
-        ) : null}
       </StatRow>
       <StatRow label="Mempool">{chain.mempool.pending} · {chain.mempool.proposed}</StatRow>
       <StatRow label="Reorgs" valueColor={chain.reorgs > 0 ? HUD_COLORS.danger : undefined}>{chain.reorgs}</StatRow>
-      {!compactActivity ? (
-        <TransactionHorizonReadout
-          source={enrichmentSource}
-          record={transactionHorizon}
-        />
-      ) : null}
       <DaoStateReadout source={enrichmentSource} record={daoState} />
+      <TransactionHorizonReadout
+        source={enrichmentSource}
+        record={transactionHorizon}
+        compact={compactActivity}
+      />
       <ActivityFeedReadout source={enrichmentSource} record={activityFeed} compact={compactActivity} />
     </HudPanel>
   );
