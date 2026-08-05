@@ -74,6 +74,10 @@ mod tests {
         cmd_init(&dir).unwrap();
         assert!(dir.join("cknerv.toml").exists());
         assert!(dir.join("data").is_dir());
+        let generated = std::fs::read_to_string(dir.join("cknerv.toml")).unwrap();
+        assert!(generated.contains(
+            "# [ckbadger]\n# api_url = \"http://127.0.0.1:8101/api/v1\"\n# max_lag_blocks = 12"
+        ));
 
         std::fs::write(dir.join("cknerv.toml"), "rpc_url = \"keepme\"\n").unwrap();
         cmd_init(&dir).unwrap();

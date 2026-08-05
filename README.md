@@ -122,7 +122,7 @@ availability.
 | CLI | Rust, clap, rust-embed | Workdir commands, config merge, embedded dashboard server |
 | Server | Rust, axum, tokio | HTTP/WS API, mutation reducer, projection registry, persistence |
 | CKB adapter | Rust, reqwest, CKB JSON-RPC types | Read-only node polling, boot backfill, block/tx normalization |
-| ckbadger enrichment | Rust, reqwest | Optional indexed Cell/script/asset, origin-transaction, protocol-era, recent-fork, fixed DAO, bounded ecosystem/activity/transaction-horizon, and network-crawler context with canonical-anchor validation |
+| Optional enrichment | Rust, reqwest | Canonically anchored indexed context from ckbadger; see [`docs/ckbadger.md`](docs/ckbadger.md) |
 | Types/cache | TypeScript, Vitest | Wire-type twins, pure reducers, WebSocket clients |
 | UI | React 18, Vite, React Three Fiber, drei, three.js | 3D cell galaxy, HUDs, cell-life detail panels, nerve overlays |
 
@@ -130,8 +130,8 @@ availability.
 
 cknerv keeps source-specific chain ingestion separate from the chain-generic
 dashboard pipeline. The direct CKB adapter remains the sole producer of
-structural chain truth. An optional ckbadger source enters through a second,
-additive pipeline and can never create, spend, or replace a canonical Cell.
+structural chain truth. Optional indexed enrichment is additive and can never
+create, spend, or replace a canonical Cell.
 
 ```text
 CKB node JSON-RPC
@@ -157,20 +157,9 @@ HTTP/WS API
       |
       v
 @cknerv/ui React + R3F cell galaxy
-
-optional ckbadger HTTP API
-      |
-      v
-EnrichmentSource -- block-height/hash validation
-      |
-      v
-independent EnrichmentEvent stream
-      |
-      v
-SemanticsProjection --> the same HTTP/WS boundary
 ```
 
-Two public seams matter most:
+The primary public seams are:
 
 - Data sources implement `cknerv_server::Adapter` and emit
   `cknerv_core::Mutation` values.
@@ -181,10 +170,9 @@ Two public seams matter most:
   canonical reorg/rebuild mutations only invalidate their anchored records.
 
 The current workspace ships `CkbDirectAdapter`, which polls CKB JSON-RPC and
-emits chain-generic mutations, plus `CkbadgerEnrichmentSource`, which uses
-ckbadger's read-only REST API only when `[ckbadger]` is present. Source-specific
-camelCase DTOs stay inside `crates/cknerv-adapter-ckbadger/`; core/server/UI
-contracts remain normalized and source-agnostic.
+emits chain-generic mutations. It also includes optional ckbadger enrichment;
+its architecture, trust boundary, capabilities, and limits are documented in
+[`docs/ckbadger.md`](docs/ckbadger.md).
 
 ## Repository Layout
 
@@ -193,7 +181,7 @@ contracts remain normalized and source-agnostic.
 | `crates/cknerv-core/` | Chain-generic wire types, `Mutation`, `Projection`, `CellGalaxy`, deterministic helix positioning, and bounded replay ring. |
 | `crates/cknerv-server/` | axum HTTP/WS server, `Adapter` trait, `ServerBuilder`, entity store, projection registry, replay streams, and persistence. |
 | `crates/cknerv-adapter-ckb/` | `CkbDirectAdapter`: read-only CKB JSON-RPC polling, boot backfill, block/tx normalization, content hash parity. |
-| `crates/cknerv-adapter-ckbadger/` | Optional `EnrichmentSource`: ckbadger health/lag probing, canonical block-hash validation, lazy Cell/script/asset semantics, fixed protocol/fork/DAO state, bounded ecosystem/activity/transaction-horizon samples, and privacy-preserving network-crawler aggregates. |
+| `crates/cknerv-adapter-ckbadger/` | Optional read-only indexed enrichment adapter; see [`docs/ckbadger.md`](docs/ckbadger.md). |
 | `crates/cknerv-cli/` | `cknerv` binary, clap CLI, config/workdir commands, embedded SPA serving, runtime config injection, browser auto-open. |
 | `packages/types/` | `@cknerv/types`: TypeScript twins of the Rust wire shapes. |
 | `packages/cache/` | `@cknerv/cache`: pure reducers plus entity/projection WebSocket clients. |
@@ -227,149 +215,17 @@ fall back to the SPA.
 | `WS` | `/api/entities/chain/stream?since=<rev>` | snapshot, delta, lagged, or heartbeat frames |
 | `GET` | `/api/projections/cells/snapshot` | `{ revision, snapshot }` where `snapshot.cells` is the live cell set |
 | `WS` | `/api/projections/cells/stream?since=<rev>` | snapshot, delta, lagged, or heartbeat frames |
-| `GET` | `/api/projections/semantics/snapshot` | Optional source health plus bounded Cell/transaction, asset-ecosystem, fork-watch, fixed DAO-state, recent-activity, transaction-horizon, and network-atlas semantics; present even when disabled |
+| `GET` | `/api/projections/semantics/snapshot` | Optional indexed-enrichment snapshot; present even when disabled |
 | `WS` | `/api/projections/semantics/stream?since=<rev>` | Independent optional semantics snapshot/delta stream |
-| `GET` | `/api/enrichment/cells/:tx_hash/:output_index` | Lazily resolve one selected Cell through the configured source; `404 enrichment_disabled` when absent |
-| `GET` | `/api/enrichment/transactions/:tx_hash` | Lazily resolve that Cell's origin transaction, participant capacity deltas, and proposal/commit lifecycle |
+| `GET` | `/api/enrichment/cells/:tx_hash/:output_index` | Lazily resolve one selected Cell; `404 enrichment_disabled` when absent |
+| `GET` | `/api/enrichment/transactions/:tx_hash` | Lazily resolve one origin transaction |
 
 The projection route name for the cell galaxy is literally `cells`
 (`CellGalaxy::name()`).
 
-The semantics projection route name is `semantics`. Its revision does not track
-the chain/cells revision: it advances only when semantics or source health
-changes. The SPA never includes this optional stream in its required bootstrap
-`Promise.all`; when no source is configured it does not connect or render the
-extra HUD elements. When configured, the browser still talks only to cknerv,
-not directly to ckbadger.
-
-Selecting a Cell resolves its indexed context on demand. A deterministic
-`udt_amount` decode permits one parallel token-identity lookup for that selected
-outpoint; ordinary, DAO, dep-group, and code Cells do not trigger it. The HUD
-then shows the exact raw amount with the indexed decimals/name/symbol when
-available. The scene adds one billboarded semantic orbit around that selected
-canonical Cell: its inner CAP/LOCK/TYPE/DATA arcs are proportional to the exact
-occupied-byte breakdown, while an outer notched arc marks a resolved asset.
-No background Cell sweep or base-Galaxy retaxonomization is performed. A stale
-source dims the orbit, and an invalid/missing anchor suppresses it entirely.
-
-When ckbadger advertises `asset_ecosystem`, cknerv also refreshes its one bounded
-aggregate response at most once every 30 seconds after a usable source probe.
-The semantics stream carries exact capacities normalized to shannons,
-whole-byte knowledge size, basis-point category shares, and a bounded list of
-top indexed assets. `CELL MESH` renders this as a separate **INDEXED CHAIN
-CAPACITY** section, never as an extrapolation of the retained Cell reservoir.
-The section is absent in CKB-only mode, dims when its validated source is stale
-or its own refresh is more than 90 seconds old, and is suppressed when its
-source/anchor is unusable. An aggregate-only failure therefore cannot degrade
-selected-Cell or transaction enrichment.
-
-When ckbadger advertises `dao_state`, cknerv refreshes the fixed-shape
-`dao/statistics` singleton at most once every 60 seconds. Its own
-`statistics_block` must not be ahead of the last block/hash anchor proven by
-cknerv; if ckbadger advances between probe and fetch, the newer singleton is
-withheld until the next successful probe. The normalized record keeps locked,
-pending-withdrawal, unclaimed-compensation, and optional signed 24-hour change
-values as exact integer shannons, with estimated APC in basis points.
-`COMMON KNOWLEDGE BASE` renders these values as a separate **INDEXED NERVOS
-DAO** fixed snapshot, including both the statistics block and compatibility
-anchor. It does not reinterpret the data as retained-Galaxy counts or invent a
-gauge denominator. The section is absent in CKB-only mode or with unusable
-source proof, and dims when the source is stale or three minute refreshes have
-been missed. DAO refresh errors remain isolated from canonical data and every
-other enrichment capability.
-
-When ckbadger advertises `protocol_era`, cknerv refreshes the fixed-size
-`hardforks` timeline at most once every five minutes. The adapter maps the
-direct CKB chain name to ckbadger's mainnet/testnet vocabulary, rejects a
-different response network, and validates bounded unique events in strictly
-increasing activation-epoch order. Only the newest activated edition and the
-earliest upcoming edition cross the shared wire boundary; summaries, dates,
-resource links, and the full source catalogue do not. Both ckbadger's timeline
-tip block and tip epoch must be covered by cknerv's validated block anchor and
-direct canonical epoch. A timeline that advances between probe and fetch is
-withheld until the next proof. `COMMON KNOWLEDGE BASE` appends a compact
-**IDX MEEPO·24**-style badge to the existing canonical `Epoch` row, with exact
-activation coordinates in its accessible tooltip. It never replaces the
-direct epoch value, adds panel height, or creates scene objects. The badge is
-absent in CKB-only and custom/devnet modes, is suppressed with unusable proof,
-and dims after three missed refresh windows. Protocol-era failures remain
-isolated from canonical data and every other enrichment capability.
-
-When ckbadger advertises `fork_watch`, cknerv refreshes its fixed-shape
-`forks/recent` response at most once every 15 seconds. Only the newest persisted
-event inside ckbadger's explicit recent window and the matching active
-deep-fork status cross the adapter boundary. An ordinary event's fork point and
-new canonical tip must be covered by the block/hash anchor already proven by
-cknerv; its old orphaned tip may be higher. Because an active deep fork makes
-the indexed database incompatible by definition, that one diagnostic is
-instead admitted only when ckbadger's reported live-chain tip/hash exactly
-matches cknerv's retained canonical evidence. All other incompatible-source
-semantics remain cleared. `COMMON KNOWLEDGE BASE` renders the result directly
-below the canonical `Reorgs` count as a
-separately labeled **INDEXED FORK WATCH** with clear, recent, recent-deep, or
-active-deep state. This historical/indexed context never increments the
-canonical counter, triggers rollback, changes chain revision, or creates scene
-objects. It disappears with an unusable anchor and dims when the source is
-stale or its own refresh is more than 45 seconds old. Fork-watch failures stay
-isolated from canonical data and every other enrichment capability.
-
-When ckbadger advertises `activity_feed`, cknerv also requests exactly eight
-entries from its bounded latest-activity endpoint at most once every 15
-seconds. The adapter validates newest-first block order, canonical-anchor
-bounds, transaction hashes, timestamps, participant/nested-item limits, and
-normalizes each entry to a compact transfer/DAO/token/object/identity/script/
-protocol signature. Participant addresses and arbitrary source JSON do not
-cross the wire boundary. If the chain advances between probe and fetch, the
-unanchored leading prefix is withheld until a later probe proves its block
-hash. `COMMON KNOWLEDGE BASE` renders the sample as a
-separately labeled **INDEXED ACTIVITY · LATEST N** fingerprint plus four recent
-rows. On viewports at most 860 pixels high, the category fingerprint remains
-while those rows fold away so the left rail cannot overlap the pulse panel. It
-is not a global activity distribution: it disappears with an unusable anchor
-and dims when the source is stale or its own refresh is more than 45 seconds
-old. Refresh failures remain isolated from every canonical route and from the
-other enrichment capabilities.
-
-When ckbadger advertises `transaction_horizon`, cknerv refreshes the cached
-`statistics/tx-stats` summary at most once every 60 seconds. Only non-negative,
-JSON-safe counts from at most 24 hourly and 14 daily buckets cross the shared
-wire boundary, ordered oldest-to-newest; ckbadger's localized bucket labels and
-timezone text do not. Current-hour/day values remain explicitly indexed,
-source-defined buckets rather than being converted to browser-local time.
-Because the summary carries no block coordinate
-and the network summary has its own cache, the adapter directly re-reads the
-validated block after each fetch and requires its successor to remain absent
-from ckbadger's indexed store. It otherwise waits for a later proof. On taller
-viewports, `COMMON KNOWLEDGE BASE` renders a separately labeled **INDEXED TX
-HORIZON · N/24H** bar fingerprint with exact current-hour/current-day counts.
-At 860 pixels high or below it folds into an **IDX H…/D…** badge inside the
-existing direct `Tps 60s` row, adding no panel height. It never replaces direct
-TPS or cumulative transaction totals, disappears in CKB-only mode, and dims
-after three missed refreshes. Its failures remain isolated from canonical data
-and every other enrichment capability.
-
-When ckbadger advertises `network_atlas`, cknerv checks its crawler summary at
-most once every 60 seconds. A usable crawl triggers exactly one
-`network/nodes?limit=64` request. The adapter validates the crawl counters and
-newest-first sample, then reduces it to country/version buckets, reachable
-count, and median RTT; peer IDs and addresses never enter the shared wire
-contract. `PEER MESH` keeps the local CKB node's directly measured peers as its
-primary truth and renders the crawler result below them as a separate
-**INDEXED NETWORK ATLAS** with explicit `LATEST N SAMPLE`/`BOUNDED` labels. It
-does not create scene nodes or edges. The section is absent when ckbadger is
-unconfigured or its crawler has no data, is independently removed if that
-crawler is disabled, and dims after three missed minute refreshes. Network
-atlas failures cannot affect the direct peer view or another enrichment
-capability.
-
-Before ckbadger data is accepted, cknerv reads its indexed tip, chooses a block
-inside cknerv's retained canonical evidence window, and requires ckbadger to
-return the same hash for that height. A mismatch marks the source
-`incompatible`; lag/reachability are reported as `syncing`, `stale`, or
-`error`, without affecting the CKB adapter. Each lazy Cell or transaction
-response is checked again against the current block/hash window, closing the
-race where a reorg occurs during the HTTP request. Canonical reorg/rebuild
-events prune or clear unsafe semantic records before the source can revalidate.
+The optional `semantics` projection and lazy enrichment routes are documented
+in [`docs/ckbadger.md`](docs/ckbadger.md), including their independent revision,
+canonical-anchor checks, refresh intervals, UI behavior, and failure isolation.
 
 Both WebSocket routes emit
 `{"kind":"heartbeat","revision":<last-confirmed-revision>}` every five seconds
@@ -431,12 +287,11 @@ as `boot`.
 [ckb]
 rpc_url = "http://localhost:8114"
 
-# Optional. Omit the section for the original CKB-only behavior.
-[ckbadger]
-# Direct per-network API; an orchestrator URL such as
-# http://127.0.0.1:8100/api/mainnet/v1 also works.
-api_url = "http://127.0.0.1:8101/api/v1"
-max_lag_blocks = 12
+# Optional indexed semantics; disabled in the generated file.
+# See docs/ckbadger.md before enabling.
+# [ckbadger]
+# api_url = "http://127.0.0.1:8101/api/v1"
+# max_lag_blocks = 12
 
 [dashboard]
 port = 7001
@@ -459,13 +314,9 @@ max_sources_per_parent = 2
 max_active_pulses = 256
 ```
 
-`[ckbadger]` is enabled by section presence and requires `api_url`. The API base
-must already include `/api/v1` (direct service) or `/api/<network>/v1`
-(orchestrator proxy). `max_lag_blocks` controls when a hash-compatible,
-non-syncing source is labeled `stale`; stale anchored data remains explicitly
-marked rather than being treated as canonical. The generated template keeps
-the entire section commented out. Runtime config exposes only
-`{ enabled, source }` to the SPA and never publishes the private API URL.
+The generated ckbadger block is fully commented out, so a new work directory
+keeps the direct CKB-only behavior. Setup and endpoint details live in
+[`docs/ckbadger.md`](docs/ckbadger.md).
 
 Profile defaults are resolved in `crates/cknerv-cli/src/config.rs`. `devnet`
 targets 2,000 retained live Cells; the other profiles target 20,000. At an
@@ -521,8 +372,8 @@ schema-v2 state is incompatible; run `cknerv prune --confirm` before the first
 v3 launch, then let cknerv rebuild the derived state from the configured node.
 
 Optional semantics are intentionally not persisted. They are bounded in memory
-and rehydrated from the configured source, so enabling or disabling ckbadger
-does not change the persistence schema and does not require `cknerv prune`.
+and rehydrated from the configured source, so changing optional enrichment does
+not change the persistence schema or require `cknerv prune`.
 
 ## Build and Test
 
@@ -555,30 +406,9 @@ twin, the fixtures, and both sides of the tests together.
   window.
 - The CKB adapter is read-only JSON-RPC polling. There is no bundled CKB node,
   indexer, or transaction submitter.
-- ckbadger enrichment currently uses existing REST endpoints for source health,
-  block-hash anchors, selected-Cell detail, script identity, data analysis,
-  DAO/code-cell context, occupied-capacity composition, deterministic UDT
-  amount plus token identity, the selected Cell's origin-transaction
-  detail/lifecycle, the bounded asset-ecosystem aggregate, fixed-shape DAO
-  statistics, the fixed protocol-edition timeline, the fixed recent/deep-fork
-  monitor, an explicitly eight-entry latest-activity sample, a bounded
-  24-hour/14-day transaction-count summary, and a latest-64 network-crawler
-  sample.
-  Transaction
-  participants expose exact capacity deltas only when every attributed
-  input/output includes capacity. Selected-transaction protocol activities and
-  the exact global Cell census
-  remain unpopulated because ckbadger does not expose an efficient
-  per-transaction activity lookup or one bounded current-census response;
-  cknerv deliberately avoids N+1 background scraping and does not relabel the
-  separate latest samples or historical chart points as current chain truth.
-  The script-utilization chart is likewise not polled because its response is
-  cumulative and unbounded rather than a fixed-size current view. The 24-hour
-  activity summary is not polled either: although its hourly window is fixed,
-  its `scriptCounts` map has no explicit entry bound. cknerv uses the separately
-  bounded latest-activity endpoint instead. Fiber aggregate statistics are not
-  polled because the current endpoint scans every indexed channel per request;
-  cknerv can add them when ckbadger exposes a pre-aggregated bounded singleton.
+
+ckbadger-specific capability limits are documented in
+[`docs/ckbadger.md`](docs/ckbadger.md#known-limits).
 
 ## License
 
