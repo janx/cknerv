@@ -140,6 +140,8 @@ function PanelVisibilityControl({ panels, onChange, compact = false, menuOffset 
       data-panel-visibility-control
       style={{
         position: 'relative',
+        display: 'flex',
+        alignItems: 'center',
         flexShrink: 0,
         pointerEvents: 'auto',
       }}

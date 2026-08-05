@@ -103,6 +103,8 @@ describe('StatusStrip', () => {
 
     expect(build.nextElementSibling).toBe(control);
     expect(primary.contains(toggle)).toBe(true);
+    expect(control.style.display).toBe('flex');
+    expect(control.style.alignItems).toBe('center');
     expect(toggle.getAttribute('aria-expanded')).toBe('false');
     fireEvent.click(toggle);
     expect(toggle.getAttribute('aria-expanded')).toBe('true');
