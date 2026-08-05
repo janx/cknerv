@@ -341,6 +341,15 @@ hydration target is too small, so the next launch automatically rebuilds the
 larger reservoir. Legacy fixed-window checkpoints are treated the same way. No
 manual prune is needed.
 
+The top bar keeps a `PANELS` visibility toggle immediately after the build
+version. It hides or restores the four main HUD panels while leaving transport,
+source-health, warning, and replay status visible. At widths of 1,280 pixels or
+less the bar becomes two rows: identity and status stay in the first row, while
+runtime controls occupy a horizontally scrollable second row. The left HUD uses
+one bounded vertical rail; `PULSE` stays pinned at its bottom and the CKB readout
+scrolls only when its fused capacity, DAO, horizon, and activity sections exceed
+the remaining height, so the panels cannot overlap.
+
 `recent_links_cap` retains authoritative causal evidence for inspection and
 memory recall. `pulses.link_ring_capacity` bounds only newly-arrived animation
 events; snapshot history is never replayed as live traffic.

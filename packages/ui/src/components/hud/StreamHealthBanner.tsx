@@ -19,9 +19,11 @@ const PRESENTATION: Record<
 export default function StreamHealthBanner({
   summary,
   reducedMotion = false,
+  top = 30,
 }: {
   summary: StreamHealthSummary;
   reducedMotion?: boolean;
+  top?: number;
 }) {
   if (summary.phase === 'live') return null;
   const visual = PRESENTATION[summary.phase];
@@ -42,7 +44,7 @@ export default function StreamHealthBanner({
         style={{
           position: 'absolute',
           zIndex: 3,
-          top: 30,
+          top,
           left: 0,
           right: 0,
           height: 30,

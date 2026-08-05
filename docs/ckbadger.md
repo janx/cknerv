@@ -139,16 +139,18 @@ once every 30 seconds after a usable source probe. The semantics stream carries
 exact capacities normalized to shannons, whole-byte knowledge size,
 basis-point category shares, and a bounded list of top indexed assets.
 
-`CELL MESH` has one capacity-detail slot. In CKB-only mode it shows retained
-Galaxy capacity plus the retained asset/lock taxonomy. A valid ckbadger record
-upgrades that slot into one scoped hierarchy: **CHAIN CAPACITY** gives the
-whole-chain overview, then **GALAXY WINDOW** nests every base retained datum
-beneath it. This keeps the enhanced view a semantic superset without presenting
-two independent capacity panels. Indexed totals are never extrapolated from the
-retained Cell reservoir. Only the whole-chain scope dims when the source is
-stale or its own refresh is more than 90 seconds old; direct-node Galaxy data
-remains at full strength. Until the source and anchor are usable, the standalone
-base view remains visible.
+`COMMON KNOWLEDGE BASE` owns one capacity-detail slot immediately above
+**NERVOS DAO**; `CELL MESH` remains focused on Cell metabolism and lifecycle
+counts. In CKB-only mode the capacity slot shows **GALAXY WINDOW** with retained
+capacity plus the retained asset/lock taxonomy. A valid ckbadger record upgrades
+that slot into one scoped hierarchy: **CHAIN CAPACITY** gives the whole-chain
+overview, then **GALAXY WINDOW** nests every base retained datum beneath it. This
+keeps the enhanced view a semantic superset without presenting two independent
+capacity panels. Indexed totals are never extrapolated from the retained Cell
+reservoir. Only the whole-chain scope dims when the source is stale or its own
+refresh is more than 90 seconds old; direct-node Galaxy data remains at full
+strength. Until the source and anchor are usable, the standalone base view
+remains visible.
 
 ### DAO State
 

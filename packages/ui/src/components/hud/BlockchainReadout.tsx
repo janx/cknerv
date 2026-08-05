@@ -1,12 +1,14 @@
 import type { CSSProperties } from 'react';
 import type {
   ActivityFeedRecord,
+  AssetEcosystemRecord,
   ChainEntry,
   DaoStateRecord,
   EnrichmentSourceStatus,
   ProtocolEraRecord,
   TransactionHorizonRecord,
 } from '@cknerv/types';
+import type { CellsStats } from '../../derives/cellsStats.derive';
 import { computeRollingStats } from '../CkbNetworkHud';
 import { HUD_COLORS, HUD_FONTS } from './hudTheme';
 import { HudPanel, PanelHeader, StatRow } from './primitives';
@@ -14,12 +16,15 @@ import ActivityFeedReadout from './ActivityFeedReadout';
 import DaoStateReadout from './DaoStateReadout';
 import ProtocolEraBadge from './ProtocolEraBadge';
 import TransactionHorizonReadout from './TransactionHorizonReadout';
+import ChainCapacityReadout from './ChainCapacityReadout';
 
 const fmt = (n: number) => n.toLocaleString('en-US');
 
-export default function BlockchainReadout({ chain, enrichmentSource, protocolEra, daoState, activityFeed, transactionHorizon, compactActivity = false, style }: {
+export default function BlockchainReadout({ chain, cellsStats, enrichmentSource, assetEcosystem, protocolEra, daoState, activityFeed, transactionHorizon, compactActivity = false, style }: {
   chain: ChainEntry;
+  cellsStats: CellsStats;
   enrichmentSource?: EnrichmentSourceStatus;
+  assetEcosystem?: AssetEcosystemRecord | null;
   protocolEra?: ProtocolEraRecord | null;
   daoState?: DaoStateRecord | null;
   activityFeed?: ActivityFeedRecord | null;
@@ -44,6 +49,11 @@ export default function BlockchainReadout({ chain, enrichmentSource, protocolEra
       </StatRow>
       <StatRow label="Mempool">{chain.mempool.pending} · {chain.mempool.proposed}</StatRow>
       <StatRow label="Reorgs" valueColor={chain.reorgs > 0 ? HUD_COLORS.danger : undefined}>{chain.reorgs}</StatRow>
+      <ChainCapacityReadout
+        stats={cellsStats}
+        source={enrichmentSource}
+        record={assetEcosystem}
+      />
       <DaoStateReadout source={enrichmentSource} record={daoState} />
       <TransactionHorizonReadout
         source={enrichmentSource}

@@ -1,41 +1,11 @@
 import type { CSSProperties } from 'react';
-import type { AssetEcosystemRecord, EnrichmentSourceStatus } from '@cknerv/types';
 import type { CellsStats } from '../../derives/cellsStats.derive';
 import type { ChurnRates } from '../../derives/cellChurn';
 import { HUD_COLORS, HUD_FONTS } from './hudTheme';
-import { LOCK_COLORS, ASSET_COLORS } from './cellFormat';
-import { HudPanel, PanelHeader, ScopeStage, StatRow } from './primitives';
-import AssetEcosystemReadout from './AssetEcosystemReadout';
+import { HudPanel, PanelHeader, StatRow } from './primitives';
 
 const fmt = (n: number) => n.toLocaleString('en-US');
 const fmtSigned = (n: number) => `${n >= 0 ? '+' : ''}${n.toFixed(1)}`;
-
-function formatStateBytes(shannons: number): string {
-  const b = shannons / 1e8; // 1 CKByte of capacity = 1 byte of on-chain state
-  if (b >= 1e9) return `${(b / 1e9).toFixed(2)} GB`;
-  if (b >= 1e6) return `${(b / 1e6).toFixed(1)} MB`;
-  if (b >= 1e3) return `${(b / 1e3).toFixed(1)} KB`;
-  return `${Math.round(b)} B`;
-}
-
-type Bucket = { key: string; label: string; color: string; count: number };
-
-function TaxonomyBar({ title, buckets }: { title: string; buckets: Bucket[] }) {
-  const total = buckets.reduce((s, b) => s + b.count, 0);
-  if (total <= 0) return null;
-  const nonZero = buckets.filter((b) => b.count > 0);
-  return (
-    <div style={{ marginTop: 7 }}>
-      <div style={{ fontFamily: HUD_FONTS.tech, fontSize: 7.5, letterSpacing: 1.5, color: '#6b7f8e', textTransform: 'uppercase', marginBottom: 4 }}>{title}</div>
-      <div style={{ display: 'flex', height: 6, border: '1px solid rgba(255,152,48,.2)', background: '#0a0a0a' }}>
-        {buckets.map((b) => b.count > 0 ? <span key={b.key} style={{ width: `${(b.count / total) * 100}%`, background: b.color }} /> : null)}
-      </div>
-      <div style={{ fontFamily: HUD_FONTS.mono, fontSize: 8.5, color: '#9fb0bd', marginTop: 3, lineHeight: 1.5 }}>
-        {nonZero.map((b) => `${b.label} ${Math.round((b.count / total) * 100)}%`).join(' · ')}
-      </div>
-    </div>
-  );
-}
 
 function FlowRow({ label, color, width, value }: { label: string; color: string; width: string; value: number }) {
   return (
@@ -49,52 +19,9 @@ function FlowRow({ label, color, width, value }: { label: string; color: string;
   );
 }
 
-function RetainedCapacityReadout({ stats, embedded = false }: { stats: CellsStats; embedded?: boolean }) {
-  const contents = (
-    <>
-      <StatRow label={embedded ? 'Window capacity' : 'Capacity'}>{formatStateBytes(stats.capacityShannons)} state</StatRow>
-      <TaxonomyBar title={embedded ? 'WINDOW ASSETS' : 'ASSETS'} buckets={[
-        { key: 'native', label: 'CKB', color: ASSET_COLORS.native, count: stats.byAsset.native },
-        { key: 'sudt', label: 'sUDT', color: ASSET_COLORS.sudt, count: stats.byAsset.sudt },
-        { key: 'xudt', label: 'xUDT', color: ASSET_COLORS.xudt, count: stats.byAsset.xudt },
-        { key: 'dao', label: 'DAO', color: ASSET_COLORS.dao, count: stats.byAsset.dao },
-        { key: 'spore', label: 'NFT', color: ASSET_COLORS.spore, count: stats.byAsset.spore },
-        { key: 'other', label: '?', color: ASSET_COLORS.other, count: stats.byAsset.other },
-      ]} />
-      <TaxonomyBar title={embedded ? 'WINDOW LOCKS' : 'LOCKS'} buckets={[
-        { key: 'sighash', label: 'sighash', color: LOCK_COLORS.sighash, count: stats.byLock.sighash },
-        { key: 'multisig', label: 'multisig', color: LOCK_COLORS.multisig, count: stats.byLock.multisig },
-        { key: 'acp', label: 'ACP', color: LOCK_COLORS.acp, count: stats.byLock.acp },
-        { key: 'omnilock', label: 'omni', color: LOCK_COLORS.omnilock, count: stats.byLock.omnilock },
-        { key: 'other', label: '?', color: LOCK_COLORS.other, count: stats.byLock.other },
-      ]} />
-    </>
-  );
-
-  if (embedded) {
-    return <div aria-label="Retained Cell capacity" data-retained-capacity-context>{contents}</div>;
-  }
-
-  return (
-    <section
-      aria-label="Retained Cell capacity"
-      data-cell-capacity-mode="retained"
-      style={{ marginTop: 11, paddingTop: 9, borderTop: '1px solid rgba(255,152,48,.12)' }}
-    >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontFamily: HUD_FONTS.tech, fontSize: 7.5, letterSpacing: 1.5, color: '#5f7384', textTransform: 'uppercase', marginBottom: 5 }}>
-        <span style={{ width: 5, height: 5, borderRadius: '50%', background: HUD_COLORS.cyanWire, boxShadow: `0 0 6px ${HUD_COLORS.cyanWire}` }} />
-        Retained · {fmt(stats.inView)} cells
-      </div>
-      {contents}
-    </section>
-  );
-}
-
-export default function CellsPanel({ stats, churn, enrichmentSource, assetEcosystem, reducedMotion = false, style }: {
+export default function CellsPanel({ stats, churn, reducedMotion = false, style }: {
   stats: CellsStats;
   churn: ChurnRates;
-  enrichmentSource?: EnrichmentSourceStatus;
-  assetEcosystem?: AssetEcosystemRecord | null;
   reducedMotion?: boolean;
   style?: CSSProperties;
 }) {
@@ -118,22 +45,6 @@ export default function CellsPanel({ stats, churn, enrichmentSource, assetEcosys
         <StatRow label="Total observed">{fmt(stats.born)}</StatRow>
         <StatRow label="Dead" valueColor={HUD_COLORS.danger}>{fmt(stats.dead)}</StatRow>
       </div>
-      <AssetEcosystemReadout
-        source={enrichmentSource}
-        record={assetEcosystem}
-        fallback={<RetainedCapacityReadout stats={stats} />}
-        retainedContext={(
-          <ScopeStage
-            id="galaxy-window"
-            label="GALAXY WINDOW"
-            meta={`${fmt(stats.inView)} RETAINED CELLS`}
-            accent={HUD_COLORS.cyanWire}
-            terminal
-          >
-            <RetainedCapacityReadout stats={stats} embedded />
-          </ScopeStage>
-        )}
-      />
     </HudPanel>
   );
 }
