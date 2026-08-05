@@ -41,11 +41,13 @@ describe('cellFormat — new helpers', () => {
     expect(formatDataSize('0xdeadbeef…')).toBe('4 B+'); // upstream-truncated
   });
   it('formatLockKind / formatAssetKind label families with fallbacks', () => {
-    expect(formatLockKind('omnilock')).toBe('omnilock');
-    expect(formatLockKind(undefined)).toBe('—');
+    expect(formatLockKind('omnilock')).toBe('Omnilock');
+    expect(formatLockKind('acp')).toBe('Anyone Can Pay');
+    expect(formatLockKind(undefined)).toBe('Unknown');
     expect(formatAssetKind('xudt')).toBe('xUDT');
-    expect(formatAssetKind('native')).toBe('native');
-    expect(formatAssetKind(undefined)).toBe('—');
+    expect(formatAssetKind('native')).toBe('Native CKB');
+    expect(formatAssetKind('dao')).toBe('Nervos DAO');
+    expect(formatAssetKind(undefined)).toBe('Unknown');
   });
   it('color maps cover every family key', () => {
     for (const k of ['sighash','multisig','acp','omnilock','other']) expect(LOCK_COLORS[k]).toMatch(/^#/);
