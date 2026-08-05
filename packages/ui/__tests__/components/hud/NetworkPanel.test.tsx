@@ -55,10 +55,11 @@ describe('NetworkPanel', () => {
     expect(container.querySelectorAll('[data-network-detail-mode]')).toHaveLength(1);
   });
 
-  it('replaces local diagnostics with the indexed crawler view', () => {
+  it('extends complete local diagnostics into the indexed crawler scope', () => {
     const { getByLabelText, container } = render(
       <NetworkPanel
         {...props}
+        colonyCount={128}
         enrichmentSource={enrichmentSource}
         networkAtlas={networkAtlas}
       />,
@@ -72,10 +73,19 @@ describe('NetworkPanel', () => {
     expect(text).toContain('CKBADGER CRAWLER · LATEST 3 SAMPLE · BOUNDED');
     expect(text).toContain('9 reachable / 12 dialed');
     expect(text).toContain('SG 2 · US 1');
-    expect(text).not.toContain('0.201.0');
-    expect(text).not.toContain('84ms');
+    // Direct-node detail remains available and is explicitly scoped as local.
+    expect(text).toContain('LOCAL NODE VIEW');
+    expect(text).toContain('0.201.0');
+    expect(text).toContain('×3 other');
+    expect(text).toContain('84ms');
+    expect(text).toContain('12–210');
+    expect(text).toContain('~128 nodes · inferred');
+    expect(container.querySelector('[data-network-local-context]')).not.toBeNull();
     expect(container.querySelector('[data-network-detail-mode="local"]')).toBeNull();
     expect(container.querySelectorAll('[data-network-detail-mode]')).toHaveLength(1);
+    expect(Array.from(container.querySelectorAll('[data-scope-stage]')).map(
+      (stage) => stage.getAttribute('data-scope-stage'),
+    )).toEqual(['local-node', 'indexed-atlas']);
   });
 
   it('keeps direct peer diagnostics without a usable atlas record', () => {
@@ -85,5 +95,18 @@ describe('NetworkPanel', () => {
     expect(queryByLabelText('Indexed network atlas')).toBeNull();
     expect(container.querySelector('[data-network-detail-mode="local"]')).not.toBeNull();
     expect(container.textContent).toContain('0.201.0');
+  });
+
+  it('dims stale atlas data without dimming direct-node diagnostics', () => {
+    const { container } = render(
+      <NetworkPanel
+        {...props}
+        enrichmentSource={{ ...enrichmentSource, status: 'stale' }}
+        networkAtlas={networkAtlas}
+      />,
+    );
+
+    expect((container.querySelector('[data-scope-stage="local-node"]') as HTMLElement).style.opacity).toBe('');
+    expect((container.querySelector('[data-scope-stage="indexed-atlas"]') as HTMLElement).style.opacity).toBe('0.68');
   });
 });

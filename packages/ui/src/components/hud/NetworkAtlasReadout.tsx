@@ -9,7 +9,7 @@ import {
   networkAtlasVisualState,
 } from '../../derives/networkAtlas.derive';
 import { HUD_COLORS, HUD_FONTS, rgba } from './hudTheme';
-import { StatRow } from './primitives';
+import { ScopeStage, StatRow } from './primitives';
 
 const fmt = (value: number) => value.toLocaleString('en-US');
 
@@ -52,11 +52,13 @@ function BucketStrip({ label, buckets, total }: {
   );
 }
 
-export default function NetworkAtlasReadout({ source, record, fallback = null }: {
+export default function NetworkAtlasReadout({ source, record, fallback = null, localContext = null }: {
   source?: EnrichmentSourceStatus;
   record?: NetworkAtlasRecord | null;
   /** Direct-node detail shown until a valid indexed atlas record exists. */
   fallback?: ReactNode;
+  /** Complete local diagnostics shown as the first step of enhanced scope. */
+  localContext?: ReactNode;
 }) {
   if (!source || !record) return fallback;
   const visualState = networkAtlasVisualState(source, record);
@@ -73,37 +75,31 @@ export default function NetworkAtlasReadout({ source, record, fallback = null }:
       style={{
         marginTop: 11,
         paddingTop: 9,
-        borderTop: `1px solid ${rgba(accent, 0.16)}`,
-        opacity: stale ? 0.68 : 1,
+        borderTop: `1px solid ${rgba(HUD_COLORS.peerWire, 0.14)}`,
       }}
     >
-      <div style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 5,
-        fontFamily: HUD_FONTS.tech,
-        fontSize: 7.5,
-        letterSpacing: 1.25,
-        color: accent,
-        textTransform: 'uppercase',
-        marginBottom: 5,
-      }}>
-        <span style={{ width: 5, height: 5, borderRadius: '50%', background: accent, boxShadow: `0 0 6px ${accent}` }} />
-        INDEXED NETWORK ATLAS · R{fmt(record.crawl_round)} · #{fmt(record.as_of.block)}
-        {stale ? ' · STALE' : ''}
-      </div>
-      <div style={{ fontFamily: HUD_FONTS.mono, fontSize: 7.5, color: HUD_COLORS.dim, letterSpacing: 0.35, marginBottom: 4 }}>
-        CKBADGER CRAWLER · LATEST {fmt(record.sample_size)} SAMPLE{record.sample_truncated ? ' · BOUNDED' : ''}
-      </div>
-      <StatRow label="Known nodes">{fmt(record.total_known)}</StatRow>
-      <StatRow label="Last crawl">{fmt(record.last_round_reachable)} reachable / {fmt(record.last_round_dialed)} dialed</StatRow>
-      <StatRow label="Latest sample">{fmt(record.sample_reachable)} reachable / {fmt(record.sample_size)} nodes</StatRow>
-      <StatRow label="Median RTT">{record.median_rtt_ms == null ? '—' : `${fmt(record.median_rtt_ms)}ms`}</StatRow>
-      <div style={{ fontFamily: HUD_FONTS.mono, fontSize: 8, color: HUD_COLORS.dim, marginTop: 3 }}>
-        +{fmt(record.new_nodes)} NEW · {record.frontier_drained ? 'FRONTIER DRAINED' : 'FRONTIER ACTIVE'}
-      </div>
-      <BucketStrip label="SAMPLE COUNTRIES" buckets={visual.countries} total={record.sample_size} />
-      <BucketStrip label="SAMPLE CLIENT VERSIONS" buckets={visual.versions} total={record.sample_size} />
+      {localContext}
+      <ScopeStage
+        id="indexed-atlas"
+        label="INDEXED NETWORK ATLAS"
+        meta={`R${fmt(record.crawl_round)} · #${fmt(record.as_of.block)}${stale ? ' · STALE' : ''}`}
+        accent={accent}
+        terminal
+        style={{ opacity: stale ? 0.68 : 1 }}
+      >
+        <div style={{ fontFamily: HUD_FONTS.mono, fontSize: 7.5, color: HUD_COLORS.dim, letterSpacing: 0.35, marginBottom: 4 }}>
+          CKBADGER CRAWLER · LATEST {fmt(record.sample_size)} SAMPLE{record.sample_truncated ? ' · BOUNDED' : ''}
+        </div>
+        <StatRow label="Known nodes">{fmt(record.total_known)}</StatRow>
+        <StatRow label="Last crawl">{fmt(record.last_round_reachable)} reachable / {fmt(record.last_round_dialed)} dialed</StatRow>
+        <StatRow label="Latest sample">{fmt(record.sample_reachable)} reachable / {fmt(record.sample_size)} nodes</StatRow>
+        <StatRow label="Median RTT">{record.median_rtt_ms == null ? '—' : `${fmt(record.median_rtt_ms)}ms`}</StatRow>
+        <div style={{ fontFamily: HUD_FONTS.mono, fontSize: 8, color: HUD_COLORS.dim, marginTop: 3 }}>
+          +{fmt(record.new_nodes)} NEW · {record.frontier_drained ? 'FRONTIER DRAINED' : 'FRONTIER ACTIVE'}
+        </div>
+        <BucketStrip label="SAMPLE COUNTRIES" buckets={visual.countries} total={record.sample_size} />
+        <BucketStrip label="SAMPLE CLIENT VERSIONS" buckets={visual.versions} total={record.sample_size} />
+      </ScopeStage>
     </section>
   );
 }

@@ -3,20 +3,32 @@ import type { EnrichmentSourceStatus, NetworkAtlasRecord } from '@cknerv/types';
 import type { NetworkSummary } from '../../derives/peers.derive';
 import type { FleetConsensus, PingStats, VersionSpread } from '../../derives/fleetTelemetry';
 import { HUD_COLORS, HUD_FONTS } from './hudTheme';
-import { HudPanel, PanelHeader, StatRow, Gauge } from './primitives';
+import { HudPanel, PanelHeader, ScopeStage, StatRow, Gauge } from './primitives';
 import NetworkAtlasReadout from './NetworkAtlasReadout';
 
 const fmt = (n: number) => n.toLocaleString('en-US');
 
-function LocalPeerDetails({ ping, vers, colonyCount }: {
+function LocalPeerDetails({ ping, vers, colonyCount, embedded = false }: {
   ping: PingStats | null;
   vers: VersionSpread;
   colonyCount?: number;
+  embedded?: boolean;
 }) {
+  const version = <>{vers.majorityVersion} ×{vers.majorityCount}{vers.otherCount > 0 ? ` · ×${vers.otherCount} other` : ''}</>;
+  const latency = ping ? `${ping.medianMs}ms med · ${ping.minMs}–${ping.maxMs}` : '—';
+  if (embedded) {
+    return (
+      <div aria-label="Direct peer details" data-network-local-context>
+        <StatRow label="Client">{version}</StatRow>
+        <StatRow label="Peer RTT">{latency}</StatRow>
+        {colonyCount != null ? <StatRow label="Scene colony">~{fmt(colonyCount)} nodes · inferred</StatRow> : null}
+      </div>
+    );
+  }
   return (
     <section data-network-detail-mode="local" aria-label="Direct peer details">
-      <StatRow label="Version">{vers.majorityVersion} ×{vers.majorityCount}{vers.otherCount > 0 ? ` · ×${vers.otherCount} other` : ''}</StatRow>
-      <StatRow label="Ping">{ping ? `${ping.medianMs}ms med · ${ping.minMs}–${ping.maxMs}` : '—'}</StatRow>
+      <StatRow label="Version">{version}</StatRow>
+      <StatRow label="Ping">{latency}</StatRow>
       {colonyCount != null && (
         <div style={{ marginTop: 5, fontFamily: HUD_FONTS.mono, fontSize: 8.5, letterSpacing: 0.4, color: HUD_COLORS.peerWire, opacity: 0.85 }}>
           colony ~ {fmt(colonyCount)} nodes (inferred)
@@ -59,6 +71,16 @@ export default function NetworkPanel({ summary, consensus, ping, vers, syncRatio
         source={enrichmentSource}
         record={networkAtlas}
         fallback={<LocalPeerDetails ping={ping} vers={vers} colonyCount={colonyCount} />}
+        localContext={(
+          <ScopeStage
+            id="local-node"
+            label="LOCAL NODE VIEW"
+            meta="DIRECT CKB"
+            accent={HUD_COLORS.peerWire}
+          >
+            <LocalPeerDetails ping={ping} vers={vers} colonyCount={colonyCount} embedded />
+          </ScopeStage>
+        )}
       />
     </HudPanel>
   );

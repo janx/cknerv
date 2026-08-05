@@ -136,11 +136,14 @@ basis-point category shares, and a bounded list of top indexed assets.
 
 `CELL MESH` has one capacity-detail slot. In CKB-only mode it shows retained
 Galaxy capacity plus the retained asset/lock taxonomy. A valid ckbadger record
-upgrades that same slot to **INDEXED CHAIN CAPACITY** instead of appending a
-second capacity view. Indexed totals are never extrapolated from the retained
-Cell reservoir. The enhanced view dims when the source is stale or its own
-refresh is more than 90 seconds old; until the source and anchor are usable,
-the base retained view remains visible.
+upgrades that slot into one scoped hierarchy: **INDEXED CHAIN CAPACITY** gives
+the whole-chain overview, then **GALAXY WINDOW** nests every base retained
+datum beneath it. This keeps the enhanced view a semantic superset without
+presenting two independent capacity panels. Indexed totals are never
+extrapolated from the retained Cell reservoir. Only the indexed scope dims when
+the source is stale or its own refresh is more than 90 seconds old; direct-node
+Galaxy data remains at full strength. Until the source and anchor are usable,
+the standalone base view remains visible.
 
 ### DAO State
 
@@ -246,11 +249,14 @@ addresses never enter the shared wire contract.
 `PEER MESH` always keeps the local CKB node's directly measured peer count,
 head consensus, and sync ratio as primary truth. Its detail slot shows local
 version, ping, and inferred-colony diagnostics in CKB-only mode. A valid atlas
-record upgrades that slot to **INDEXED NETWORK ATLAS**, with explicit `LATEST N
-SAMPLE` and `BOUNDED` labels, instead of appending a second network summary. It
-creates no scene nodes or edges. The base detail returns when the crawler is
-unconfigured, empty, disabled, or canonically unusable; stale indexed detail
-dims after three missed minute refreshes.
+record turns that slot into a **LOCAL NODE VIEW → INDEXED NETWORK ATLAS** scope
+rail. All direct-node diagnostics remain visible, while the indexed stage adds
+known-node, crawl, RTT, country, and client-version context with explicit
+`LATEST N SAMPLE` and `BOUNDED` labels. This is one progressive information
+flow rather than two adjacent network panels, and it creates no scene nodes or
+edges. The standalone base detail returns when the crawler is unconfigured,
+empty, disabled, or canonically unusable. Staleness dims only the indexed stage
+after three missed minute refreshes.
 
 ## Persistence
 
