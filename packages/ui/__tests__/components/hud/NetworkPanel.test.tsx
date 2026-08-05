@@ -44,7 +44,7 @@ describe('NetworkPanel', () => {
     const { container } = render(<NetworkPanel {...props} />);
     const t = container.textContent ?? '';
     expect(t).toContain('PEER MESH');
-    expect(t).toContain('全节点网络');
+    expect(t).toContain('对等节点网络');
     expect(t).toContain('47');
     expect(t).toContain('44 / 47');     // head consensus
     expect(t).toContain('0.201.0');     // majority version
