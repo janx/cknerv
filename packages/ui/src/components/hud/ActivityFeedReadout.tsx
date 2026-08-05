@@ -8,6 +8,7 @@ import {
   deriveActivityFeedVisual,
 } from '../../derives/activityFeed.derive';
 import { HUD_COLORS, HUD_FONTS, rgba } from './hudTheme';
+import { ReadoutHeader } from './primitives';
 
 const CATEGORY_LABELS: Record<string, string> = {
   transfer: 'CKB',
@@ -39,7 +40,7 @@ export default function ActivityFeedReadout({ source, record, compact = false }:
 
   return (
     <section
-      aria-label="Indexed recent activity"
+      aria-label="Recent activity"
       data-activity-feed-state={visualState}
       data-activity-feed-compact={compact ? 'true' : undefined}
       style={{
@@ -49,21 +50,13 @@ export default function ActivityFeedReadout({ source, record, compact = false }:
         opacity: stale ? 0.68 : 1,
       }}
     >
-      <div style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 5,
-        fontFamily: HUD_FONTS.tech,
-        fontSize: 7.5,
-        letterSpacing: 1.35,
-        color: accent,
-        textTransform: 'uppercase',
-        marginBottom: compact ? 3 : 5,
-      }}>
-        <span style={{ width: 5, height: 5, borderRadius: '50%', background: accent, boxShadow: `0 0 6px ${accent}` }} />
-        INDEXED ACTIVITY · LATEST {total} · #{record.as_of.block.toLocaleString('en-US')}
-        {stale ? ' · STALE' : ''}
-      </div>
+      <ReadoutHeader
+        title="ACTIVITY"
+        meta={`LATEST ${total} · AS OF #${record.as_of.block.toLocaleString('en-US')}`}
+        accent={accent}
+        stale={stale}
+        compact={compact}
+      />
       {total > 0 ? (
         <>
           <div
@@ -118,7 +111,7 @@ export default function ActivityFeedReadout({ source, record, compact = false }:
         </>
       ) : (
         <div style={{ fontFamily: HUD_FONTS.mono, fontSize: 8, color: HUD_COLORS.dim }}>
-          NO INDEXED ACTIVITY
+          NO RECENT ACTIVITY
         </div>
       )}
     </section>

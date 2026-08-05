@@ -601,7 +601,7 @@ export default function App({
         key: selectedOutPointKey,
         phase: record ? 'ready' : 'unavailable',
         record,
-        message: record ? null : 'ckbadger has not indexed this Cell',
+        message: record ? null : 'no semantic context is available for this Cell',
       });
     }).catch((error: unknown) => {
       if (controller.signal.aborted) return;
@@ -689,7 +689,7 @@ export default function App({
         key: selectedTransactionHash,
         phase: record ? 'ready' : 'unavailable',
         record,
-        message: record ? null : 'the indexed source has no transaction context',
+        message: record ? null : 'no origin transaction context is available',
       });
     }).catch((error: unknown) => {
       if (controller.signal.aborted) return;

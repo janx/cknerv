@@ -69,7 +69,7 @@ export default function NetworkAtlasReadout({ source, record, fallback = null, l
 
   return (
     <section
-      aria-label="Indexed network atlas"
+      aria-label="Network atlas"
       data-network-detail-mode="indexed"
       data-network-atlas-state={visualState}
       style={{
@@ -81,14 +81,14 @@ export default function NetworkAtlasReadout({ source, record, fallback = null, l
       {localContext}
       <ScopeStage
         id="indexed-atlas"
-        label="INDEXED NETWORK ATLAS"
-        meta={`R${fmt(record.crawl_round)} · #${fmt(record.as_of.block)}${stale ? ' · STALE' : ''}`}
+        label="NETWORK ATLAS"
+        meta={`ROUND ${fmt(record.crawl_round)} · AS OF #${fmt(record.as_of.block)}${stale ? ' · STALE' : ''}`}
         accent={accent}
         terminal
         style={{ opacity: stale ? 0.68 : 1 }}
       >
         <div style={{ fontFamily: HUD_FONTS.mono, fontSize: 7.5, color: HUD_COLORS.dim, letterSpacing: 0.35, marginBottom: 4 }}>
-          CKBADGER CRAWLER · LATEST {fmt(record.sample_size)} SAMPLE{record.sample_truncated ? ' · BOUNDED' : ''}
+          LATEST {fmt(record.sample_size)} NODE SAMPLE{record.sample_truncated ? ' · BOUNDED' : ''}
         </div>
         <StatRow label="Known nodes">{fmt(record.total_known)}</StatRow>
         <StatRow label="Last crawl">{fmt(record.last_round_reachable)} reachable / {fmt(record.last_round_dialed)} dialed</StatRow>

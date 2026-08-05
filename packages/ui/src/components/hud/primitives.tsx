@@ -43,6 +43,39 @@ export function StatRow({ label, children, valueColor }: { label: string; childr
   );
 }
 
+/** Shared heading for fused domain readouts. Provenance stays in transport
+ * health; the heading carries only the domain, freshness, and useful scope. */
+export function ReadoutHeader({ title, meta, accent, stale = false, compact = false }: {
+  title: string;
+  meta?: ReactNode;
+  accent: string;
+  stale?: boolean;
+  compact?: boolean;
+}) {
+  return (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        flexWrap: 'wrap',
+        columnGap: 5,
+        rowGap: 1,
+        fontFamily: HUD_FONTS.tech,
+        fontSize: 7.5,
+        letterSpacing: 1.25,
+        color: accent,
+        textTransform: 'uppercase',
+        marginBottom: compact ? 3 : 5,
+      }}
+    >
+      <span style={{ width: 5, height: 5, flex: '0 0 auto', borderRadius: '50%', background: accent, boxShadow: `0 0 6px ${accent}` }} />
+      <span data-readout-title>{title}</span>
+      {meta != null ? <span data-readout-meta style={{ color: HUD_COLORS.dim }}>· {meta}</span> : null}
+      {stale ? <span data-readout-stale>· STALE</span> : null}
+    </div>
+  );
+}
+
 /** One step in a base-to-enhanced information scope. The rail makes source
  * expansion read as one hierarchy instead of independent panels stacked
  * together. */

@@ -1,6 +1,6 @@
 import { cleanup, render } from '@testing-library/react';
 import { afterEach, describe, it, expect } from 'vitest';
-import { Gauge, HudPanel, PanelHeader, ScopeStage, StatRow } from '../../../src/components/hud/primitives';
+import { Gauge, HudPanel, PanelHeader, ReadoutHeader, ScopeStage, StatRow } from '../../../src/components/hud/primitives';
 
 afterEach(cleanup);
 
@@ -30,6 +30,15 @@ describe('hud primitives', () => {
   it('Gauge clamps out-of-range ratios to 100%', () => {
     const { container } = render(<Gauge ratio={2} color="#27FF5A" />);
     expect((container.querySelector('[data-fill]') as HTMLElement).style.width).toBe('100%');
+  });
+  it('ReadoutHeader presents domain and freshness without source provenance', () => {
+    const { container } = render(
+      <ReadoutHeader title="TX HORIZON" meta="AS OF #100" accent="#20F0FF" stale />,
+    );
+    expect(container.querySelector('[data-readout-title]')?.textContent).toBe('TX HORIZON');
+    expect(container.querySelector('[data-readout-meta]')?.textContent).toBe('· AS OF #100');
+    expect(container.querySelector('[data-readout-stale]')?.textContent).toBe('· STALE');
+    expect(container.textContent).not.toContain('INDEXED');
   });
   it('ScopeStage connects progressive scopes but terminates the final stage', () => {
     const { container } = render(

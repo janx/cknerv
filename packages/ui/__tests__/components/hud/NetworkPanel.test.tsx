@@ -65,12 +65,12 @@ describe('NetworkPanel', () => {
       />,
     );
 
-    expect(getByLabelText('Indexed network atlas').getAttribute(
+    expect(getByLabelText('Network atlas').getAttribute(
       'data-network-atlas-state',
     )).toBe('ready');
     const text = container.textContent ?? '';
-    expect(text).toContain('INDEXED NETWORK ATLAS');
-    expect(text).toContain('CKBADGER CRAWLER · LATEST 3 SAMPLE · BOUNDED');
+    expect(text).toContain('NETWORK ATLAS');
+    expect(text).toContain('LATEST 3 NODE SAMPLE · BOUNDED');
     expect(text).toContain('9 reachable / 12 dialed');
     expect(text).toContain('SG 2 · US 1');
     // Direct-node detail remains available and is explicitly scoped as local.
@@ -80,6 +80,8 @@ describe('NetworkPanel', () => {
     expect(text).toContain('84ms');
     expect(text).toContain('12–210');
     expect(text).toContain('~128 nodes · inferred');
+    expect(text).not.toContain('INDEXED');
+    expect(text).not.toContain('CKBADGER');
     expect(container.querySelector('[data-network-local-context]')).not.toBeNull();
     expect(container.querySelector('[data-network-detail-mode="local"]')).toBeNull();
     expect(container.querySelectorAll('[data-network-detail-mode]')).toHaveLength(1);
@@ -92,7 +94,7 @@ describe('NetworkPanel', () => {
     const { queryByLabelText, container } = render(
       <NetworkPanel {...props} enrichmentSource={enrichmentSource} />,
     );
-    expect(queryByLabelText('Indexed network atlas')).toBeNull();
+    expect(queryByLabelText('Network atlas')).toBeNull();
     expect(container.querySelector('[data-network-detail-mode="local"]')).not.toBeNull();
     expect(container.textContent).toContain('0.201.0');
   });

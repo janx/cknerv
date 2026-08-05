@@ -105,9 +105,12 @@ one.
 
 ## Capabilities
 
-Capabilities are used only when ckbadger advertises them. Every indexed view is
-labeled separately from direct node observations; cknerv does not reinterpret
-bounded samples as global chain truth.
+Capabilities are used only when ckbadger advertises them. The dashboard fuses
+validated fields into domain readouts instead of prefixing titles with the data
+source. Scope labels distinguish local or retained-Galaxy observations from
+whole-chain and whole-network context, while the global source-health chip
+retains operational provenance. cknerv does not reinterpret bounded samples as
+global chain truth.
 
 ### Selected Cell and Origin Transaction
 
@@ -117,12 +120,14 @@ capacity composition when available. A deterministic `udt_amount` decode can
 trigger one parallel token-identity lookup for that outpoint. Ordinary, DAO,
 dep-group, and code Cells do not trigger that token lookup.
 
-The HUD displays the exact raw token amount with indexed decimals, name, and
-symbol when available. One billboarded semantic orbit appears around the
-selected canonical Cell: inner CAP/LOCK/TYPE/DATA arcs show its occupied-byte
-breakdown, and an outer notched arc marks a resolved asset. There is no
-background Cell sweep or base-Galaxy retaxonomization. A stale source dims the
-orbit, while an invalid or missing anchor suppresses it.
+The HUD displays the exact raw token amount with validated decimals, name, and
+symbol when available. Its source-neutral **CELL CONTEXT** header reports
+availability, lag, and freshness; source health remains in the global status
+strip. One billboarded semantic orbit appears around the selected canonical
+Cell: inner CAP/LOCK/TYPE/DATA arcs show its occupied-byte breakdown, and an
+outer notched arc marks a resolved asset. There is no background Cell sweep or
+base-Galaxy retaxonomization. A stale source dims the orbit, while an invalid or
+missing anchor suppresses it.
 
 The transaction route adds the selected Cell's origin transaction, participant
 capacity deltas, and proposal/commit lifecycle when the source provides them.
@@ -136,14 +141,14 @@ basis-point category shares, and a bounded list of top indexed assets.
 
 `CELL MESH` has one capacity-detail slot. In CKB-only mode it shows retained
 Galaxy capacity plus the retained asset/lock taxonomy. A valid ckbadger record
-upgrades that slot into one scoped hierarchy: **INDEXED CHAIN CAPACITY** gives
-the whole-chain overview, then **GALAXY WINDOW** nests every base retained
-datum beneath it. This keeps the enhanced view a semantic superset without
-presenting two independent capacity panels. Indexed totals are never
-extrapolated from the retained Cell reservoir. Only the indexed scope dims when
-the source is stale or its own refresh is more than 90 seconds old; direct-node
-Galaxy data remains at full strength. Until the source and anchor are usable,
-the standalone base view remains visible.
+upgrades that slot into one scoped hierarchy: **CHAIN CAPACITY** gives the
+whole-chain overview, then **GALAXY WINDOW** nests every base retained datum
+beneath it. This keeps the enhanced view a semantic superset without presenting
+two independent capacity panels. Indexed totals are never extrapolated from the
+retained Cell reservoir. Only the whole-chain scope dims when the source is
+stale or its own refresh is more than 90 seconds old; direct-node Galaxy data
+remains at full strength. Until the source and anchor are usable, the standalone
+base view remains visible.
 
 ### DAO State
 
@@ -155,10 +160,10 @@ fetch, the newer singleton is withheld until the next successful probe.
 The normalized record keeps locked, pending-withdrawal,
 unclaimed-compensation, and optional signed 24-hour change values as exact
 integer shannons, with estimated APC in basis points. `COMMON KNOWLEDGE BASE`
-renders a separate **INDEXED NERVOS DAO** snapshot with both the statistics
-block and compatibility anchor. It does not reinterpret the values as retained
-Galaxy counts or invent a gauge denominator. The section is absent with
-unusable proof and dims after three missed minute refreshes.
+renders a **NERVOS DAO** snapshot with both the statistics block and
+compatibility anchor. It does not reinterpret the values as retained Galaxy
+counts or invent a gauge denominator. The section is absent with unusable proof
+and dims after three missed minute refreshes.
 
 ### Protocol Era
 
@@ -174,11 +179,11 @@ catalogue do not. Both the timeline tip block and tip epoch must be covered by
 cknerv's validated block anchor and direct canonical epoch. A timeline that
 advances between probe and fetch is withheld until the next proof.
 
-`COMMON KNOWLEDGE BASE` adds a compact **IDX MEEPO·24**-style badge to the
-canonical `Epoch` row, with exact activation coordinates in its accessible
-tooltip. It never replaces the direct epoch value, adds panel height, or
-creates scene objects. The badge is absent in CKB-only and custom/devnet modes,
-is suppressed with unusable proof, and dims after three missed refresh windows.
+`COMMON KNOWLEDGE BASE` adds a compact **MEEPO·24**-style badge to the canonical
+`Epoch` row, with exact activation coordinates in its accessible tooltip. It
+never replaces the direct epoch value, adds panel height, or creates scene
+objects. The badge is absent in CKB-only and custom/devnet modes, is suppressed
+with unusable proof, and dims after three missed refresh windows.
 
 ### Fork Watch
 
@@ -211,11 +216,10 @@ Participant addresses and arbitrary source JSON do not cross the wire boundary.
 
 If the chain advances between probe and fetch, an unanchored leading prefix is
 withheld until a later probe proves its block hash. `COMMON KNOWLEDGE BASE`
-renders **INDEXED ACTIVITY · LATEST N** with a fingerprint and four recent
-rows. At viewport heights of 860 pixels or less, the rows fold away while the
-fingerprint remains. This is a latest sample, not a global distribution. It
-disappears with an unusable anchor and dims when stale or more than 45 seconds
-old.
+renders **ACTIVITY · LATEST N** with a fingerprint and four recent rows. At
+viewport heights of 860 pixels or less, the rows fold away while the fingerprint
+remains. This is a latest sample, not a global distribution. It disappears with
+an unusable anchor and dims when stale or more than 45 seconds old.
 
 ### Transaction Horizon
 
@@ -232,11 +236,12 @@ separate cache, the adapter first requires the validated block's successor to
 remain absent from the indexed store, then re-reads the validated block as the
 final admission fence. Otherwise the summary waits for a later proof.
 
-On taller viewports, `COMMON KNOWLEDGE BASE` renders **INDEXED TX HORIZON ·
-N/24H** with exact current-hour and current-day counts. At 860 pixels or less it
-folds into an **IDX H…/D…** badge in the direct `Tps 60s` row. It never replaces
-direct TPS or cumulative transaction totals, disappears in CKB-only mode, and
-dims after three missed refreshes.
+On taller viewports, `COMMON KNOWLEDGE BASE` renders **TX HORIZON · N/24H**
+with exact current-hour and current-day counts. At 860 pixels or less it folds
+to an independent header-only **TX HORIZON · H…/D…** section so the panel order
+remains canonical chain data, **NERVOS DAO**, **TX HORIZON**, then **ACTIVITY**.
+It never replaces direct TPS or cumulative transaction totals, disappears in
+CKB-only mode, and dims after three missed refreshes.
 
 ### Network Atlas
 
@@ -249,13 +254,13 @@ addresses never enter the shared wire contract.
 `PEER MESH` always keeps the local CKB node's directly measured peer count,
 head consensus, and sync ratio as primary truth. Its detail slot shows local
 version, ping, and inferred-colony diagnostics in CKB-only mode. A valid atlas
-record turns that slot into a **LOCAL NODE VIEW → INDEXED NETWORK ATLAS** scope
-rail. All direct-node diagnostics remain visible, while the indexed stage adds
+record turns that slot into a **LOCAL NODE VIEW → NETWORK ATLAS** scope rail.
+All direct-node diagnostics remain visible, while the network-wide stage adds
 known-node, crawl, RTT, country, and client-version context with explicit
-`LATEST N SAMPLE` and `BOUNDED` labels. This is one progressive information
-flow rather than two adjacent network panels, and it creates no scene nodes or
-edges. The standalone base detail returns when the crawler is unconfigured,
-empty, disabled, or canonically unusable. Staleness dims only the indexed stage
+`LATEST N SAMPLE` and `BOUNDED` labels. This is one progressive information flow
+rather than two adjacent network panels, and it creates no scene nodes or edges.
+The standalone base detail returns when the crawler is unconfigured, empty,
+disabled, or canonically unusable. Staleness dims only the network-wide stage
 after three missed minute refreshes.
 
 ## Persistence

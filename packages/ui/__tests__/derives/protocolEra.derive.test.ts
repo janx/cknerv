@@ -65,7 +65,8 @@ describe('protocol-era visual derivation', () => {
     expect(visual?.label).toBe('MEEPO·24');
     expect(visual?.current?.activation_epoch).toBe(12_293);
     expect(visual?.title).toContain('epoch 12,293, block #99');
-    expect(visual?.title).toContain('ckbadger tip epoch 12,300');
+    expect(visual?.title).toContain('validated through epoch 12,300');
+    expect(visual?.title).not.toContain('ckbadger');
   });
 
   it('represents a pre-edition network without treating the next era as active', () => {

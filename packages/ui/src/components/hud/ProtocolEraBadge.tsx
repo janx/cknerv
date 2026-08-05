@@ -23,7 +23,7 @@ export default function ProtocolEraBadge({ chain, source, record }: {
 
   return (
     <span
-      aria-label={`Indexed protocol era ${visual.label}${stale ? ', stale' : ''}`}
+      aria-label={`Protocol era ${visual.label}${stale ? ', stale' : ''}`}
       data-protocol-era-state={state}
       data-protocol-era-label={visual.label}
       title={title}
@@ -41,7 +41,7 @@ export default function ProtocolEraBadge({ chain, source, record }: {
       }}
     >
       <span aria-hidden="true" style={{ color: HUD_COLORS.dim }}>· </span>
-      IDX {visual.label}
+      {visual.label}
     </span>
   );
 }

@@ -7,6 +7,7 @@ import {
   transactionHorizonVisualState,
 } from '../../derives/transactionHorizon.derive';
 import { HUD_COLORS, HUD_FONTS, rgba } from './hudTheme';
+import { ReadoutHeader } from './primitives';
 
 function compactCount(value: number): string {
   if (value < 1_000) return value.toLocaleString('en-US');
@@ -17,7 +18,7 @@ function compactCount(value: number): string {
 export default function TransactionHorizonReadout({ source, record, compact = false }: {
   source?: EnrichmentSourceStatus;
   record?: TransactionHorizonRecord | null;
-  /** Inline zero-height-growth summary for short viewports. */
+  /** Header-only summary that preserves section order on short viewports. */
   compact?: boolean;
 }) {
   if (!source || !record) return null;
@@ -29,27 +30,31 @@ export default function TransactionHorizonReadout({ source, record, compact = fa
 
   if (compact) {
     return (
-      <span
-        aria-label={visual.title}
+      <section
+        aria-label="Transaction horizon"
         title={visual.title}
         data-transaction-horizon-state={visualState}
         style={{
-          marginLeft: 5,
-          fontFamily: HUD_FONTS.tech,
-          fontSize: 7.5,
-          letterSpacing: 0.65,
-          color: accent,
+          marginTop: 6,
+          paddingTop: 5,
+          borderTop: `1px solid ${rgba(accent, 0.16)}`,
           opacity: stale ? 0.68 : 0.9,
         }}
       >
-        · IDX H{compactCount(visual.currentHour)}/D{compactCount(visual.currentDay)}
-      </span>
+        <ReadoutHeader
+          title="TX HORIZON"
+          meta={`H${compactCount(visual.currentHour)}/D${compactCount(visual.currentDay)} · AS OF #${record.as_of.block.toLocaleString('en-US')}`}
+          accent={accent}
+          stale={stale}
+          compact
+        />
+      </section>
     );
   }
 
   return (
     <section
-      aria-label="Indexed transaction horizon"
+      aria-label="Transaction horizon"
       title={visual.title}
       data-transaction-horizon-state={visualState}
       style={{
@@ -59,21 +64,13 @@ export default function TransactionHorizonReadout({ source, record, compact = fa
         opacity: stale ? 0.68 : 1,
       }}
     >
-      <div style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 5,
-        fontFamily: HUD_FONTS.tech,
-        fontSize: 7.5,
-        letterSpacing: 1.2,
-        color: accent,
-        textTransform: 'uppercase',
-        marginBottom: 4,
-      }}>
-        <span style={{ width: 5, height: 5, borderRadius: '50%', background: accent, boxShadow: `0 0 6px ${accent}` }} />
-        INDEXED TX HORIZON · {visual.hourlyCounts.length}/24H · A#{record.as_of.block.toLocaleString('en-US')}
-        {stale ? ' · STALE' : ''}
-      </div>
+      <ReadoutHeader
+        title="TX HORIZON"
+        meta={`${visual.hourlyCounts.length}/24H · AS OF #${record.as_of.block.toLocaleString('en-US')}`}
+        accent={accent}
+        stale={stale}
+        compact
+      />
       <div
         aria-hidden="true"
         style={{
