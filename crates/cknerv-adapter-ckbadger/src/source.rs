@@ -12,8 +12,9 @@ use cknerv_core::{
     AssetEcosystemRecord, CellSemanticRecord, ChainAnchor, CommonKnowledgeBreakdown,
     DaoStateRecord, EnrichmentSourceState, EnrichmentSourceStatus, ForkWatchDeepFork,
     ForkWatchEventKind, ForkWatchRecord, ForkWatchReorg, NetworkAtlasBucket, NetworkAtlasRecord,
-    OutPoint, ProtocolEra, ProtocolEraRecord, SemanticAsset, SemanticAttribute, SemanticFacet,
-    SemanticScript, TransactionHorizonRecord, TransactionParticipantSemantic,
+    OutPoint, ProtocolEra, ProtocolEraRecord, SemanticAsset, SemanticAttribute,
+    SemanticCellContent, SemanticContentDecode, SemanticContentGuess, SemanticContentSegment,
+    SemanticFacet, SemanticScript, TransactionHorizonRecord, TransactionParticipantSemantic,
     TransactionSemanticRecord,
 };
 use cknerv_server::{CanonicalContext, EnrichmentSource};
@@ -58,6 +59,9 @@ const MAX_PROTOCOL_LABEL_CHARS: usize = 64;
 const NETWORK_ATLAS_LIMIT: usize = 64;
 const MAX_NETWORK_LABEL_CHARS: usize = 96;
 const MAX_PEER_ID_HEX_CHARS: usize = 256;
+const MAX_CELL_CONTENT_PREVIEW_BYTES: usize = 4 * 1024;
+const MAX_CELL_CONTENT_SEGMENTS: usize = 64;
+const MAX_CELL_CONTENT_GUESSES: usize = 16;
 const SHANNONS_PER_CKB: u128 = 100_000_000;
 const MAX_WIRE_SAFE_U64: u64 = 9_007_199_254_740_991;
 
@@ -336,8 +340,16 @@ impl CkbadgerEnrichmentSource {
             .type_script
             .zip(cell.type_script_hash)
             .map(|(script, script_hash)| map_script(script, script_hash, lookups));
-        let common_knowledge = Some(map_common_knowledge(cell.common_knowledge_size_breakdown)?);
-        let mut facets = data_facets(cell.data_analysis);
+        let common_knowledge = map_common_knowledge(cell.common_knowledge_size_breakdown)?;
+        let content = map_cell_content(cell.data_size, cell.data, cell.data_analysis)?;
+        if common_knowledge.data_bytes != content.total_bytes {
+            return Err(anyhow!(
+                "ckbadger Cell dataSize is {} bytes, but occupied-capacity dataBytes is {}",
+                content.total_bytes,
+                common_knowledge.data_bytes
+            ));
+        }
+        let mut facets = Vec::new();
         if cell.is_dep_group {
             let mut attributes = Vec::new();
             if let Some(items) = cell.dep_group_items {
@@ -397,7 +409,8 @@ impl CkbadgerEnrichmentSource {
             lock_script,
             type_script,
             asset,
-            common_knowledge,
+            common_knowledge: Some(common_knowledge),
+            content: Some(content),
             facets,
         })
     }
@@ -2360,55 +2373,109 @@ fn script_family(info: &ScriptLookupInfo) -> Option<String> {
         .or_else(|| (info.resolution_state != "resolved").then(|| info.resolution_state.clone()))
 }
 
-fn data_facets(analysis: Option<CellDataAnalysis>) -> Vec<SemanticFacet> {
-    let Some(analysis) = analysis else {
-        return Vec::new();
-    };
-    let mut facets = Vec::new();
-    if let Some(decoded) = analysis.deterministic {
-        facets.push(SemanticFacet {
-            namespace: "cell_data".to_string(),
-            kind: decoded.kind,
-            state: Some(decoded.summary),
-            attributes: decoded
-                .segments
-                .into_iter()
-                .map(|segment| SemanticAttribute {
-                    key: segment.label,
-                    value: segment.human_value,
-                    unit: None,
+fn map_cell_content(
+    data_size: i64,
+    data: Option<String>,
+    analysis: Option<CellDataAnalysis>,
+) -> anyhow::Result<SemanticCellContent> {
+    let total_bytes = nonnegative(data_size, "Cell dataSize")?;
+    let (data_hex, data_complete) = map_cell_data_preview(data, total_bytes)?;
+    let (deterministic, heuristics) = match analysis {
+        Some(analysis) => {
+            if analysis.heuristic_guesses.len() > MAX_CELL_CONTENT_GUESSES {
+                return Err(anyhow!(
+                    "ckbadger returned {} Cell-data guesses, limit is {MAX_CELL_CONTENT_GUESSES}",
+                    analysis.heuristic_guesses.len()
+                ));
+            }
+            let deterministic = analysis
+                .deterministic
+                .map(|decoded| {
+                    if decoded.segments.len() > MAX_CELL_CONTENT_SEGMENTS {
+                        return Err(anyhow!(
+                            "ckbadger returned {} Cell-data segments, limit is {MAX_CELL_CONTENT_SEGMENTS}",
+                            decoded.segments.len()
+                        ));
+                    }
+                    let segments = decoded
+                        .segments
+                        .into_iter()
+                        .map(|segment| {
+                            let start_byte = nonnegative(segment.start, "Cell data segment start")?;
+                            let end_byte = nonnegative(segment.end, "Cell data segment end")?;
+                            if start_byte > end_byte || end_byte > total_bytes {
+                                return Err(anyhow!(
+                                    "ckbadger Cell-data segment {:?} has invalid range {start_byte}..{end_byte} for {total_bytes} bytes",
+                                    segment.label
+                                ));
+                            }
+                            Ok(SemanticContentSegment {
+                                label: segment.label,
+                                start_byte,
+                                end_byte,
+                                meaning: segment.meaning,
+                                value: segment.human_value,
+                            })
+                        })
+                        .collect::<anyhow::Result<Vec<_>>>()?;
+                    Ok(SemanticContentDecode {
+                        kind: decoded.kind,
+                        summary: decoded.summary,
+                        segments,
+                    })
                 })
-                .collect(),
-        });
+                .transpose()?;
+            let heuristics = analysis
+                .heuristic_guesses
+                .into_iter()
+                .map(|guess| SemanticContentGuess {
+                    kind: guess.kind,
+                    confidence: guess.confidence,
+                    reason: guess.reason,
+                    mime_type: guess.mime_type,
+                    value: guess.human_value,
+                })
+                .collect();
+            (deterministic, heuristics)
+        }
+        None => (None, Vec::new()),
+    };
+    Ok(SemanticCellContent {
+        total_bytes,
+        data_hex,
+        data_complete,
+        deterministic,
+        heuristics,
+    })
+}
+
+fn map_cell_data_preview(
+    data: Option<String>,
+    total_bytes: u64,
+) -> anyhow::Result<(Option<String>, bool)> {
+    let Some(data) = data else {
+        return Ok((None, false));
+    };
+    let body = data
+        .strip_prefix("0x")
+        .ok_or_else(|| anyhow!("ckbadger Cell data is not 0x-prefixed hex"))?;
+    if body.len() % 2 != 0 || !body.as_bytes().iter().all(u8::is_ascii_hexdigit) {
+        return Err(anyhow!("ckbadger Cell data is not whole-byte hex"));
     }
-    facets.extend(analysis.heuristic_guesses.into_iter().map(|guess| {
-        let mut attributes = vec![SemanticAttribute {
-            key: "reason".to_string(),
-            value: guess.reason,
-            unit: None,
-        }];
-        if let Some(mime_type) = guess.mime_type {
-            attributes.push(SemanticAttribute {
-                key: "mime_type".to_string(),
-                value: mime_type,
-                unit: None,
-            });
-        }
-        if let Some(value) = guess.human_value {
-            attributes.push(SemanticAttribute {
-                key: "value".to_string(),
-                value,
-                unit: None,
-            });
-        }
-        SemanticFacet {
-            namespace: "cell_data".to_string(),
-            kind: guess.kind,
-            state: Some(guess.confidence),
-            attributes,
-        }
-    }));
-    facets
+    let actual_bytes = u64::try_from(body.len() / 2)
+        .context("ckbadger Cell data length exceeds the platform range")?;
+    if actual_bytes != total_bytes {
+        return Err(anyhow!(
+            "ckbadger Cell data contains {actual_bytes} bytes, expected {total_bytes}"
+        ));
+    }
+    let preview_chars = body.len().min(MAX_CELL_CONTENT_PREVIEW_BYTES * 2);
+    let complete = preview_chars == body.len();
+    let suffix = if complete { "" } else { "…" };
+    Ok((
+        Some(format!("0x{}{suffix}", &body[..preview_chars])),
+        complete,
+    ))
 }
 
 fn dao_facet(dao: DaoInfo) -> anyhow::Result<SemanticFacet> {
@@ -2816,6 +2883,8 @@ mod tests {
                         return Json(serde_json::json!({
                             "txHash": ASSET_TX_HASH,
                             "outputIndex": output_index,
+                            "dataSize": 16,
+                            "data": format!("0x{}", "00".repeat(16)),
                             "lockScriptHash": "0xlockscript",
                             "typeScriptHash": ASSET_TYPE_HASH,
                             "address": "ckt1qyqasset",
@@ -2843,6 +2912,9 @@ mod tests {
                                     "summary": "xUDT amount",
                                     "segments": [{
                                         "label": "amount",
+                                        "start": 0,
+                                        "end": 16,
+                                        "meaning": "xUDT amount in little-endian u128",
                                         "humanValue": "12345000000"
                                     }]
                                 },
@@ -2854,6 +2926,8 @@ mod tests {
                     Json(serde_json::json!({
                         "txHash": TX_HASH,
                         "outputIndex": output_index,
+                        "dataSize": 7,
+                        "data": format!("0x{}", "00".repeat(7)),
                         "lockScriptHash": "0xlockscript",
                         "typeScriptHash": "0xtypescript",
                         "address": "ckt1qyqexample",
@@ -2882,6 +2956,9 @@ mod tests {
                                 "summary": "DAO deposit",
                                 "segments": [{
                                     "label": "deposit_block",
+                                    "start": 0,
+                                    "end": 7,
+                                    "meaning": "DAO deposit block marker",
                                     "humanValue": "92"
                                 }]
                             },
@@ -3441,7 +3518,15 @@ mod tests {
         assert_eq!(record.common_knowledge.as_ref().unwrap().total_bytes, 102);
         assert!(record.asset.is_none());
         assert!(record.facets.iter().any(|facet| facet.kind == "dao"));
-        assert!(record.facets.iter().any(|facet| facet.kind == "dao_cell"));
+        let content = record.content.as_ref().unwrap();
+        assert_eq!(content.total_bytes, 7);
+        assert_eq!(content.data_hex.as_deref(), Some("0x00000000000000"));
+        assert!(content.data_complete);
+        let decoded = content.deterministic.as_ref().unwrap();
+        assert_eq!(decoded.kind, "dao_cell");
+        assert_eq!(decoded.segments[0].start_byte, 0);
+        assert_eq!(decoded.segments[0].end_byte, 7);
+        assert_eq!(decoded.segments[0].meaning, "DAO deposit block marker");
 
         let asset_record = source
             .enrich_cell(
@@ -3461,6 +3546,14 @@ mod tests {
         assert_eq!(asset.symbol.as_deref(), Some("NTT"));
         assert_eq!(asset.amount.as_deref(), Some("12345000000"));
         assert_eq!(asset.decimals, Some(8));
+        assert_eq!(
+            asset_record
+                .content
+                .as_ref()
+                .and_then(|content| content.deterministic.as_ref())
+                .map(|decoded| decoded.kind.as_str()),
+            Some("udt_amount")
+        );
 
         let transaction = source
             .enrich_transaction(TX_HASH, &context())
@@ -3584,6 +3677,90 @@ mod tests {
         .unwrap_err();
 
         assert!(error.to_string().contains("totals 102 bytes, expected 101"));
+    }
+
+    #[test]
+    fn cell_content_keeps_exact_decode_ranges_and_bounds_raw_preview() {
+        let total = MAX_CELL_CONTENT_PREVIEW_BYTES + 2;
+        let content = map_cell_content(
+            i64::try_from(total).unwrap(),
+            Some(format!("0x{}", "ab".repeat(total))),
+            Some(crate::dto::CellDataAnalysis {
+                deterministic: Some(crate::dto::CellDeterministicDecode {
+                    kind: "binary_envelope".to_string(),
+                    summary: "deterministic header".to_string(),
+                    segments: vec![
+                        crate::dto::CellDataSegment {
+                            label: "header".to_string(),
+                            start: 0,
+                            end: 2,
+                            meaning: "two-byte header".to_string(),
+                            human_value: "0xabab".to_string(),
+                        },
+                        crate::dto::CellDataSegment {
+                            label: "empty_field".to_string(),
+                            start: 2,
+                            end: 2,
+                            meaning: "present but empty field".to_string(),
+                            human_value: "empty".to_string(),
+                        },
+                    ],
+                }),
+                heuristic_guesses: vec![crate::dto::CellDataGuess {
+                    kind: "magic_number".to_string(),
+                    confidence: "medium".to_string(),
+                    reason: "header resembles a known envelope".to_string(),
+                    mime_type: Some("application/octet-stream".to_string()),
+                    human_value: None,
+                }],
+            }),
+        )
+        .unwrap();
+
+        assert_eq!(content.total_bytes, u64::try_from(total).unwrap());
+        assert!(!content.data_complete);
+        let preview = content.data_hex.as_deref().unwrap();
+        assert!(preview.ends_with('…'));
+        assert_eq!(
+            preview.len(),
+            2 + MAX_CELL_CONTENT_PREVIEW_BYTES * 2 + '…'.len_utf8()
+        );
+        let segment = &content.deterministic.as_ref().unwrap().segments[0];
+        assert_eq!((segment.start_byte, segment.end_byte), (0, 2));
+        assert_eq!(segment.meaning, "two-byte header");
+        assert_eq!(segment.value, "0xabab");
+        let empty = &content.deterministic.as_ref().unwrap().segments[1];
+        assert_eq!((empty.start_byte, empty.end_byte), (2, 2));
+        assert_eq!(empty.value, "empty");
+        assert_eq!(
+            content.heuristics[0].mime_type.as_deref(),
+            Some("application/octet-stream")
+        );
+    }
+
+    #[test]
+    fn cell_content_rejects_ranges_outside_the_actual_payload() {
+        let error = map_cell_content(
+            1,
+            Some("0xaa".to_string()),
+            Some(crate::dto::CellDataAnalysis {
+                deterministic: Some(crate::dto::CellDeterministicDecode {
+                    kind: "invalid".to_string(),
+                    summary: "invalid range".to_string(),
+                    segments: vec![crate::dto::CellDataSegment {
+                        label: "overflow".to_string(),
+                        start: 0,
+                        end: 2,
+                        meaning: "outside payload".to_string(),
+                        human_value: "?".to_string(),
+                    }],
+                }),
+                heuristic_guesses: Vec::new(),
+            }),
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("invalid range 0..2 for 1 bytes"));
     }
 
     #[test]

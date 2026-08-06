@@ -115,8 +115,12 @@ global chain truth.
 ### Selected Cell and Origin Transaction
 
 Selecting a Cell resolves its indexed context on demand, including script and
-asset identity, data analysis, DAO/code-cell context, and exact occupied
-capacity composition when available. A deterministic `udt_amount` decode can
+asset identity, actual output-data bytes, deterministic content analysis,
+DAO/code-cell context, and exact occupied-capacity composition when available.
+The normalized content record preserves the exact data size, a bounded raw-byte
+preview, whether that preview is complete, deterministic decode kind and
+summary, byte-exact half-open segment ranges with meanings and human values,
+and a bounded set of source heuristics. A deterministic `udt_amount` decode can
 trigger one parallel token-identity lookup for that outpoint. Ordinary, DAO,
 dep-group, and code Cells do not trigger that token lookup.
 
@@ -137,15 +141,28 @@ spaced satellites rather than one continuous panel. Every satellite follows the
 same projected point, flips as a constellation around viewport edges, and stays
 connected to the Cell. Ambient HUD rails dim while the scan is active so the
 Cell remains the single visual focus. The selected-Cell satellites are
-deliberately no-scroll summaries. **CONSENSUS MEMORY** keeps the address,
-content identity, birth anchor, and a one-glance causal provenance line;
-activating recall temporarily opens **MEMORY TRACE** as a separate evidence
-satellite. The scan's **INDEX LAYER** keeps owner, creation and proof anchors,
-resolved asset identity, lock/type script identity with code hash type and args,
-occupied-byte composition, and only the primary semantic facet. It does not
-stack every decoded facet or origin-transaction field into the spatial
-inspection view. Values remain bounded by the shared wire types; arbitrary
-source JSON does not enter the browser.
+deliberately no-scroll summaries. **CONSENSUS MEMORY** is content-first. Without
+an optional source it renders the direct CKB node's real data prefix as bytes
+and conservative printable ASCII, including exact observed size or explicit
+truncation; it does not invent local content guesses. With validated indexed
+content it upgrades in place to **INDEX ANALYSIS**, preferring indexed bytes,
+showing the full logical size and completeness, and making deterministic
+segments navigable while moving the paged raw-byte window to and highlighting
+their exact byte ranges. The same bounded window keeps every retained raw byte
+inspectable. Deterministic meanings and values, heuristic evidence, protocol
+roles, and resolved asset value remain independently labeled. If an indexed
+record has analysis but no raw payload, the direct-node prefix stays visible
+and is explicitly labeled as such.
+
+The same memory satellite retains address, content identity, birth anchor, and
+a one-glance causal provenance line; activating recall temporarily opens
+**MEMORY TRACE** as a separate evidence satellite. The scan's **INDEX LAYER**
+keeps owner, creation and proof anchors, resolved asset identity, lock/type
+script identity with code hash type and args, occupied-byte composition, and
+only the primary protocol facet. It does not duplicate content analysis or
+stack every decoded facet or origin-transaction field into the scan window.
+Values remain bounded by the shared wire types; arbitrary source JSON does not
+enter the browser.
 
 One billboarded semantic orbit appears around the selected canonical Cell:
 inner CAP/LOCK/TYPE/DATA arcs show its occupied-byte breakdown, and an outer
@@ -305,6 +322,11 @@ ckbadger does not alter the persistence schema and does not require
 
 ## Known Limits
 
+- Direct CKB ingestion retains at most the first 1,024 Cell-data bytes. The
+  indexed content record retains at most the first 4,096 bytes while preserving
+  the exact total size and an explicit completeness flag. Larger payloads can
+  therefore be analyzed by ckbadger but are not transferred in full to the
+  dashboard.
 - Transaction participants expose exact capacity deltas only when every
   attributed input and output includes capacity.
 - Selected-transaction protocol activities and an exact global Cell census are

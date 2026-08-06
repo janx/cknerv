@@ -60,6 +60,32 @@
           "type_script_bytes": 33,
           "data_bytes": 7
         },
+        "content": {
+          "total_bytes": 7,
+          "data_hex": "0x5c000000000000",
+          "data_complete": true,
+          "deterministic": {
+            "kind": "dao_cell",
+            "summary": "DAO deposit block encoded in Cell data",
+            "segments": [
+              {
+                "label": "deposit_block",
+                "start_byte": 0,
+                "end_byte": 7,
+                "meaning": "DAO deposit block marker",
+                "value": "92"
+              }
+            ]
+          },
+          "heuristics": [
+            {
+              "kind": "numeric_pattern",
+              "confidence": "medium",
+              "reason": "Payload resembles a little-endian integer",
+              "value": "92"
+            }
+          ]
+        },
         "facets": [
           {
             "namespace": "ckb",
@@ -346,6 +372,32 @@
           "lock_script_bytes": 54,
           "type_script_bytes": 33,
           "data_bytes": 7
+        },
+        "content": {
+          "total_bytes": 7,
+          "data_hex": "0x5c000000000000",
+          "data_complete": true,
+          "deterministic": {
+            "kind": "dao_cell",
+            "summary": "DAO deposit block encoded in Cell data",
+            "segments": [
+              {
+                "label": "deposit_block",
+                "start_byte": 0,
+                "end_byte": 7,
+                "meaning": "DAO deposit block marker",
+                "value": "92"
+              }
+            ]
+          },
+          "heuristics": [
+            {
+              "kind": "numeric_pattern",
+              "confidence": "medium",
+              "reason": "Payload resembles a little-endian integer",
+              "value": "92"
+            }
+          ]
         },
         "facets": [
           {

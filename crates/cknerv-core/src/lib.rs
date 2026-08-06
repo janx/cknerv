@@ -29,7 +29,8 @@ pub use enrichment::{
     DaoStateRecord, EnrichmentEvent, EnrichmentProjection, EnrichmentSourceState,
     EnrichmentSourceStatus, ForkWatchDeepFork, ForkWatchEventKind, ForkWatchRecord, ForkWatchReorg,
     NetworkAtlasBucket, NetworkAtlasRecord, ProtocolEra, ProtocolEraRecord, SemanticAsset,
-    SemanticAttribute, SemanticFacet, SemanticScript, SemanticsDelta, SemanticsProjection,
+    SemanticAttribute, SemanticCellContent, SemanticContentDecode, SemanticContentGuess,
+    SemanticContentSegment, SemanticFacet, SemanticScript, SemanticsDelta, SemanticsProjection,
     SemanticsSnapshot, TransactionHorizonRecord, TransactionParticipantSemantic,
     TransactionSemanticRecord,
 };

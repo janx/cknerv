@@ -69,6 +69,41 @@ export interface CommonKnowledgeBreakdown {
   data_bytes: number;
 }
 
+/** Half-open byte range inside a deterministic interpretation. */
+export interface SemanticContentSegment {
+  label: string;
+  start_byte: number;
+  end_byte: number;
+  meaning: string;
+  value: string;
+}
+
+export interface SemanticContentDecode {
+  kind: string;
+  summary: string;
+  segments: SemanticContentSegment[];
+}
+
+export interface SemanticContentGuess {
+  kind: string;
+  confidence: string;
+  reason: string;
+  mime_type?: string;
+  value?: string;
+}
+
+/**
+ * Display-safe evidence for the Cell's actual output data. `data_hex` is a
+ * bounded prefix and may end in `…`; all sizes/ranges refer to the full data.
+ */
+export interface SemanticCellContent {
+  total_bytes: number;
+  data_hex?: string;
+  data_complete: boolean;
+  deterministic?: SemanticContentDecode;
+  heuristics: SemanticContentGuess[];
+}
+
 export interface CellSemanticRecord {
   out_point: OutPoint;
   source: string;
@@ -81,6 +116,7 @@ export interface CellSemanticRecord {
   type_script?: SemanticScript;
   asset?: SemanticAsset;
   common_knowledge?: CommonKnowledgeBreakdown;
+  content?: SemanticCellContent;
   facets: SemanticFacet[];
 }
 

@@ -375,7 +375,7 @@ export default function CellDetailPanel({
   const bottomTop = enhancedDetail
     ? verticalLayout ? 452 : 388
     : verticalLayout ? 288 : 380;
-  const bottomHeight = verticalLayout ? 212 : enhancedDetail ? 212 : 220;
+  const bottomHeight = verticalLayout ? 212 : 260;
   const rootHeight = bottomTop + bottomHeight;
   const identityLeft = enhancedDetail ? 180 : 140;
   const identityWidth = rootWidth - identityLeft;
@@ -622,6 +622,11 @@ export default function CellDetailPanel({
         <div data-cell-detail-readable-scale="true" style={{ width: readableWidth, zoom: readableScale }}>
           <ConsensusIdentityPlate
             identity={identity}
+            dataHex={cell.data_hex}
+            semanticSource={semanticSource}
+            semanticPhase={semanticPhase}
+            semanticRecord={semanticRecord}
+            semanticMessage={semanticMessage}
             causalLens={resolvedCausalLens}
             causalNavigation={causalNavigation}
             reveal={scan.classified ? 1 : scan.pct / 100}
@@ -651,6 +656,7 @@ export default function CellDetailPanel({
             agreementCount={agreementTarget}
             compact
             spatial
+            contentWide={verticalLayout}
           />
         </div>
       </section>

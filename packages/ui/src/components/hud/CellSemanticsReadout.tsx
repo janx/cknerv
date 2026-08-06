@@ -6,7 +6,10 @@ import type {
   SemanticScript,
   TransactionSemanticRecord,
 } from '@cknerv/types';
+import { formatSemanticAssetAmount } from './cellFormat';
 import { HUD_COLORS, HUD_FONTS, rgba } from './hudTheme';
+
+export { formatSemanticAssetAmount } from './cellFormat';
 
 export type CellSemanticsPhase =
   | 'waiting'
@@ -518,28 +521,6 @@ function formatShannons(value: string, signed = false): string {
 function formatInteger(value: string): string {
   try {
     return BigInt(value).toLocaleString('en-US');
-  } catch {
-    return value;
-  }
-}
-
-export function formatSemanticAssetAmount(
-  value: string,
-  decimals?: number,
-): string {
-  try {
-    const amount = BigInt(value);
-    if (decimals == null || decimals === 0) return amount.toString();
-    if (!Number.isSafeInteger(decimals) || decimals < 0 || decimals > 255) {
-      return value;
-    }
-    const negative = amount < 0n;
-    const digits = (negative ? -amount : amount)
-      .toString()
-      .padStart(decimals + 1, '0');
-    const whole = digits.slice(0, -decimals);
-    const fraction = digits.slice(-decimals).replace(/0+$/, '');
-    return `${negative ? '−' : ''}${whole}${fraction ? `.${fraction}` : ''}`;
   } catch {
     return value;
   }
