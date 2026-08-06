@@ -13,9 +13,9 @@
 //     dimmed glow-mote flung node→node along the shortest-path tree, timed by the
 //     flood arrivals. The edge surge traces the actual route while the node
 //     shockwave supplies the broad network response.
-//   • BlockDeliveryLayer — one woven protocol carrier per measured worker
-//     (timed by cf.arrivals) plus the local source, delivered into the Cell
-//     field and resolved in place into real Cell illumination.
+//   • BlockDeliveryLayer — one octagonal energy-field carrier per measured
+//     worker (timed by cf.arrivals) plus the local source, delivered into the
+//     Cell field and resolved in place into real Cell illumination.
 //
 // Block wiring (ported from the retired hub-and-spoke layer): on each new block
 // pulse we stamp `pulseRef` with { at: simClock.elapsedSec, entryId: cf.entryId };

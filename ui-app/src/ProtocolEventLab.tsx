@@ -87,11 +87,11 @@ const STAGE_META: Record<ProtocolEventStage, {
   },
   carrier: {
     code: '01',
-    name: 'WOVEN CARRIER',
-    cjk: '编织载体',
+    name: 'OCTAGON FIELD',
+    cjk: '八角力场',
     thesis: 'AGREED INFORMATION ENTERS THE CELL FIELD',
-    accent: '#f5c66c',
-    glow: 'rgba(245, 198, 108, 0.14)',
+    accent: '#ff9a32',
+    glow: 'rgba(255, 74, 12, 0.16)',
     glowAt: '58% 54%',
   },
   commit: {

@@ -2,7 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import * as THREE from 'three';
-import { makeProtocolCarrierGeometry } from '../../src/geometry/protocolCarrier';
+import {
+  makeProtocolCarrierGeometry,
+  PROTOCOL_FIELD_RING_RADII,
+  PROTOCOL_FIELD_SIDES,
+} from '../../src/geometry/protocolCarrier';
 
 const source = (file: string): string => readFileSync(
   resolve(process.cwd(), `src/components/${file}`),
@@ -10,15 +14,24 @@ const source = (file: string): string => readFileSync(
 );
 
 describe('A protocol event relay', () => {
-  it('uses a woven open carrier instead of a cube or solid crystal', () => {
+  it('uses a layered octagonal energy field instead of a cube or solid crystal', () => {
     const geometry = makeProtocolCarrierGeometry();
     const positions = geometry.getAttribute('position');
+    const depths = new Set<number>();
+    for (let vertex = 0; vertex < positions.count; vertex += 1) {
+      depths.add(Number(positions.getZ(vertex).toFixed(3)));
+    }
 
     expect(geometry).toBeInstanceOf(THREE.BufferGeometry);
-    expect(positions.count).toBeGreaterThan(120);
+    expect(PROTOCOL_FIELD_SIDES).toBe(8);
+    expect(PROTOCOL_FIELD_RING_RADII).toEqual([0.96, 0.78, 0.53, 0.25]);
+    expect(positions.count).toBeGreaterThan(200);
+    expect(depths.size).toBeGreaterThanOrEqual(6);
     expect(geometry.index).toBeNull();
     expect(source('BlockDeliveryLayer.tsx')).not.toContain('BoxGeometry');
     expect(source('BlockDeliveryLayer.tsx')).not.toContain('makeProtocolLandingTexture');
+    expect(source('BlockDeliveryLayer.tsx')).toContain('_bodyQuaternion.copy(_cameraQuaternion)');
+    expect(source('BlockDeliveryLayer.tsx')).not.toContain('TUMBLE_RATE');
     geometry.dispose();
   });
 
@@ -43,7 +56,7 @@ describe('A protocol event relay', () => {
 
     expect(delivery.match(/<instancedMesh/g)).toHaveLength(3);
     expect(delivery.match(/<lineSegments/g)).toHaveLength(1);
-    expect(delivery).toContain('therefore changes instance/vertex counts, not draw calls.');
+    expect(delivery).toContain('Delivery count changes instance/vertex counts, never draw-call count.');
     expect(delivery).toContain('delivery.to[0]');
     expect(delivery).not.toContain('ingestPull');
     expect(delivery).not.toContain('sealBatch');

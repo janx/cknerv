@@ -8,16 +8,28 @@ import {
 } from '../../src/materials/deliveryTextures';
 
 describe('deliveryTextures', () => {
-  it('bakes the screen-space woven carrier texture', () => {
-    expect(makeProtocolCarrierTexture()).toBeInstanceOf(THREE.Texture);
+  it('bakes the screen-space octagonal energy-field membrane', () => {
+    const texture = makeProtocolCarrierTexture();
+    expect(texture).toBeInstanceOf(THREE.Texture);
+    expect((texture.image as HTMLCanvasElement).width).toBe(192);
+    texture.dispose();
   });
-  it('keeps the legacy bloom export mapped to the woven carrier', () => {
-    expect(makeBolusBloomTexture()).toBeInstanceOf(THREE.Texture);
+  it('keeps the legacy bloom export mapped to the octagonal carrier', () => {
+    const texture = makeBolusBloomTexture();
+    expect(texture).toBeInstanceOf(THREE.Texture);
+    expect((texture.image as HTMLCanvasElement).height).toBe(192);
+    texture.dispose();
   });
   it('bakes an ingest flash texture', () => {
-    expect(makeIngestFlashTexture()).toBeInstanceOf(THREE.Texture);
+    const texture = makeIngestFlashTexture();
+    expect(texture).toBeInstanceOf(THREE.Texture);
+    expect((texture.image as HTMLCanvasElement).width).toBe(128);
+    texture.dispose();
   });
-  it('bakes the segmented three-rail carrier trace', () => {
-    expect(makeBolusTrailTexture()).toBeInstanceOf(THREE.Texture);
+  it('bakes the segmented ember wake with field fragments', () => {
+    const texture = makeBolusTrailTexture();
+    expect(texture).toBeInstanceOf(THREE.Texture);
+    expect((texture.image as HTMLCanvasElement).height).toBe(256);
+    texture.dispose();
   });
 });

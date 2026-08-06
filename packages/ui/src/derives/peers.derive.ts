@@ -159,9 +159,10 @@ export interface BolusIngest {
 }
 
 /** Per-frame field-commit envelope for the protocol carrier (t∈[0,1]).
- *  The compatibility export name remains `bolusIngest`, but the visual is an
- *  open woven glyph: it contracts at the field contact while the agreement flash
- *  resolves from the block's stable warm hue to pale consensus. Pure. */
+ *  The compatibility export name remains `bolusIngest`, but the visual is a
+ *  layered octagonal energy field: it contracts at field contact while the
+ *  agreement flash resolves from the block's stable warm hue to pale consensus.
+ *  Pure. */
 export function bolusIngest(t: number): BolusIngest {
   const k = 1 - t; // 1 → 0 collapse factor
   return {
