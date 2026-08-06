@@ -8,6 +8,21 @@ import type {
 } from '../../../src/derives/cellIdentityProof.derive';
 import { PROBE_STEP_S } from '../../../src/components/hud/probeScan';
 
+vi.mock('../../../src/components/hud/CellNucleusPortrait', () => ({
+  default: ({ focusField, onIdentityProofRead }: {
+    focusField?: string | null;
+    onIdentityProofRead?: (kind: 'content') => void;
+  }) => (
+    <div data-testid="cell-nucleus-portrait" data-focus-field={focusField ?? ''}>
+      <button
+        type="button"
+        data-testid="portrait-content-proof"
+        onClick={() => onIdentityProofRead?.('content')}
+      />
+    </div>
+  ),
+}));
+
 import CellDetailPanel from '../../../src/components/hud/CellDetailPanel';
 
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); });
@@ -76,7 +91,7 @@ function traceReadout(
 describe('CellDetailPanel', () => {
   beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(new Date(3 * 3600_000 + 12 * 60_000)); });
 
-  it('renders one transparent scan field with anatomy and lineage directly visible', () => {
+  it('renders separate readable satellites with the magnified Cell scan restored', () => {
     const { container } = render(<CellDetailPanel cell={base} onClose={() => {}} />);
     const t = container.textContent ?? '';
     expect(t).toContain('CELL');
@@ -105,7 +120,11 @@ describe('CellDetailPanel', () => {
     expect((container.firstElementChild as HTMLElement).style.animation)
       .toContain('cknerv-cell-consensus-enter');
     expect(container.querySelector('[data-cell-detail-scan-field="true"]')).not.toBeNull();
-    expect(container.querySelector('[data-cell-portrait-frame]')).toBeNull();
+    expect(container.querySelector('[data-cell-portrait-frame]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="cell-nucleus-portrait"]')).not.toBeNull();
+    expect(container.querySelector('[data-cell-specimen-scan-light]')).not.toBeNull();
+    expect(container.querySelectorAll('[data-cell-inspection-satellite]')).toHaveLength(4);
+    expect((container.querySelector('[data-cell-detail-readable-scale]') as HTMLElement).style.zoom).toBe('1.35');
     expect(container.querySelector('[role="tablist"]')).toBeNull();
     expect(container.querySelector('[data-cell-detail-module="anatomy"]')?.hasAttribute('hidden')).toBe(false);
     expect(container.querySelector('[data-cell-detail-module="lineage"]')?.hasAttribute('hidden')).toBe(false);
@@ -299,7 +318,8 @@ describe('CellDetailPanel', () => {
     expect(readout?.querySelector('[data-cell-context-fact="owner"]')).not.toBeNull();
     expect(readout?.querySelector('[data-transaction-semantics-summary]')).not.toBeNull();
     expect(readout?.querySelector('[data-transaction-participants]')).not.toBeNull();
-    expect(container.querySelector('[data-cell-portrait-frame]')).toBeNull();
+    expect(container.querySelector('[data-cell-portrait-frame]')).not.toBeNull();
+    expect(container.querySelectorAll('[data-cell-inspection-satellite]')).toHaveLength(5);
     expect(memory.dataset.consensusMemoryDensity).toBe('spatial');
     expect(container.querySelector('[data-cell-detail-module="context"]')?.hasAttribute('hidden')).toBe(false);
     expect(container.querySelector('[data-cell-detail-module="anatomy"]')?.hasAttribute('hidden')).toBe(false);
@@ -390,7 +410,28 @@ describe('CellDetailPanel', () => {
     fireEvent.click(container.querySelector('[data-cell-detail-field="asset"]')!);
     expect(container.querySelector('[data-cell-detail-field="asset"]')
       ?.getAttribute('aria-pressed')).toBe('true');
+    expect(container.querySelector('[data-testid="cell-nucleus-portrait"]')
+      ?.getAttribute('data-focus-field')).toBe('asset');
     expect(onInspectionFieldChange).toHaveBeenLastCalledWith('asset');
+  });
+
+  it('keeps identity-proof interaction active on the restored specimen scan', () => {
+    vi.stubGlobal('matchMedia', () => ({
+      matches: true,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }));
+    const onIdentityProofRead = vi.fn();
+    const { getByTestId } = render(
+      <CellDetailPanel
+        cell={base}
+        onIdentityProofRead={onIdentityProofRead}
+        onClose={() => {}}
+      />,
+    );
+
+    fireEvent.click(getByTestId('portrait-content-proof'));
+    expect(onIdentityProofRead).toHaveBeenCalledWith('content', base.id, true);
   });
 
   it('maps memory facets back onto the matching A layers', () => {
