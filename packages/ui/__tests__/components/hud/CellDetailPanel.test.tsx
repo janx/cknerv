@@ -113,6 +113,10 @@ describe('CellDetailPanel', () => {
     expect(t).toContain('共识细胞');       // CJK title stays (no re-subset)
     expect(t).toContain('CONSENSUS MEMORY');
     expect(t).toContain('共识记忆');
+    expect(t).toContain('CELL CONTENT');
+    expect(t).toContain('细胞内容');
+    expect(t).toContain('DIRECT NODE · RAW');
+    expect(t).toContain('DEADBEEFCAFE1234567890');
     expect(t).toContain('ADDRESS');
     expect(t).toContain('CONTENT');
     expect(t).toContain('ANCHOR');
@@ -137,7 +141,10 @@ describe('CellDetailPanel', () => {
     expect(container.querySelector('[data-cell-detail-module="anatomy"]')?.hasAttribute('hidden')).toBe(false);
     expect(container.querySelector('[data-cell-detail-module="lineage"]')?.hasAttribute('hidden')).toBe(false);
     expect((container.querySelector('[data-consensus-memory]') as HTMLElement).dataset.consensusMemoryDensity).toBe('spatial');
-    expect((container.firstElementChild as HTMLElement).style.height).toBe('600px');
+    expect(container.querySelector('[data-cell-content-memory-mode="direct"]')).not.toBeNull();
+    expect(container.querySelector('[data-cell-content-byte-origin="direct"]')).not.toBeNull();
+    expect(container.querySelectorAll('[data-cell-content-byte]')).toHaveLength(11);
+    expect((container.firstElementChild as HTMLElement).style.height).toBe('640px');
     expect((container.querySelector('[data-cell-scan-shard="lineage"]') as HTMLElement).style.overflow)
       .toBe('hidden');
   });
@@ -157,7 +164,32 @@ describe('CellDetailPanel', () => {
     expect(text).toContain('Native CKB');
     expect(text).toContain('Sighash');
     expect(text).toContain('Empty');
+    expect(text).toContain('NO OUTPUT DATA');
+    expect(container.querySelector('[data-cell-content-empty="true"]')).not.toBeNull();
     expect(text).not.toMatch(/ƒ\d|\d+ paths|\d+ knots|\d\.\d{2}×/);
+  });
+
+  it('keeps every retained direct byte inspectable through bounded windows', () => {
+    const longData = Array.from(
+      { length: 40 },
+      (_, index) => index.toString(16).padStart(2, '0'),
+    ).join('');
+    const { container } = render(
+      <CellDetailPanel
+        cell={{ ...base, data_hex: `0x${longData}` }}
+        onClose={() => {}}
+      />,
+    );
+
+    expect(container.querySelectorAll('[data-cell-content-byte]')).toHaveLength(28);
+    expect(container.querySelector('[data-cell-content-byte="0"]')?.textContent)
+      .toBe('00');
+    expect(container.textContent).toContain('W 1/2');
+    fireEvent.click(container.querySelector('[aria-label="next raw byte window"]')!);
+    expect(container.querySelectorAll('[data-cell-content-byte]')).toHaveLength(12);
+    expect(container.querySelector('[data-cell-content-byte="28"]')?.textContent)
+      .toBe('1C');
+    expect(container.textContent).toContain('W 2/2');
   });
 
   it('keeps scan and lineage in one direct reading field', () => {
@@ -202,6 +234,10 @@ describe('CellDetailPanel', () => {
     expect(memory.style.width).toBe('100%');
     expect(container.querySelector('[data-cell-semantics-placement="scan"]'))
       .not.toBeNull();
+    expect(container.querySelector('[data-cell-content-memory-mode="indexed"]'))
+      .not.toBeNull();
+    expect(container.textContent).toContain('INDEX ANALYSIS · RESOLVING');
+    expect(container.textContent).toContain('RESOLVING INDEXED CONTENT ANALYSIS');
     expect(container.querySelector('[data-cell-detail-module="context"]'))
       .toBeNull();
     expect(container.querySelector('[data-cell-scan-drag-affordance]')
@@ -209,6 +245,7 @@ describe('CellDetailPanel', () => {
   });
 
   it('adds indexed semantics only when the optional source is present', () => {
+    const indexedData = `0x7b2261223a317d${'00'.repeat(33)}`;
     const { container } = render(
       <CellDetailPanel
         cell={base}
@@ -255,22 +292,54 @@ describe('CellDetailPanel', () => {
             decimals: 8,
           },
           common_knowledge: {
-            total_bytes: 100,
+            total_bytes: 133,
             capacity_field_bytes: 8,
             lock_script_bytes: 52,
             type_script_bytes: 33,
-            data_bytes: 7,
+            data_bytes: 40,
           },
-          facets: [
-            {
-              namespace: 'cell_data',
+          content: {
+            total_bytes: 40,
+            data_hex: indexedData,
+            data_complete: true,
+            deterministic: {
               kind: 'json_document',
-              state: 'deterministic decode',
-              attributes: [
-                { key: 'mime_type', value: 'application/json' },
-                { key: 'schema', value: 'profile.v1' },
+              summary: 'UTF-8 JSON object decoded from Cell data',
+              segments: [
+                {
+                  label: 'object_start',
+                  start_byte: 0,
+                  end_byte: 1,
+                  meaning: 'JSON object opening delimiter',
+                  value: '{',
+                },
+                {
+                  label: 'document_body',
+                  start_byte: 1,
+                  end_byte: 7,
+                  meaning: 'UTF-8 JSON object body',
+                  value: '"a":1}',
+                },
+                {
+                  label: 'extension_payload',
+                  start_byte: 28,
+                  end_byte: 40,
+                  meaning: 'Trailing protocol extension bytes',
+                  value: '12 zero bytes',
+                },
               ],
             },
+            heuristics: [
+              {
+                kind: 'text_encoding',
+                confidence: 'high',
+                reason: 'Payload is valid printable UTF-8',
+                mime_type: 'application/json',
+                value: '{"a":1}',
+              },
+            ],
+          },
+          facets: [
             {
               namespace: 'ckb',
               kind: 'dao',
@@ -360,6 +429,7 @@ describe('CellDetailPanel', () => {
     const readout = container.querySelector('[data-cell-semantics-phase="ready"]');
     const scanWindow = container.querySelector('[data-cell-detail-module="anatomy"]');
     const memory = container.querySelector('[data-consensus-memory]') as HTMLElement;
+    const contentMemory = container.querySelector('[data-cell-content-memory="true"]');
     expect(readout).not.toBeNull();
     expect(readout?.getAttribute('data-cell-semantics-density')).toBe('scan');
     expect(readout?.getAttribute('data-cell-semantics-policy')).toBe('essential');
@@ -380,6 +450,31 @@ describe('CellDetailPanel', () => {
       .toBe('280px');
     expect(container.querySelectorAll('[data-cell-inspection-satellite]')).toHaveLength(4);
     expect(memory.dataset.consensusMemoryDensity).toBe('spatial');
+    expect(contentMemory?.getAttribute('data-cell-content-memory-mode')).toBe('indexed');
+    expect(contentMemory?.getAttribute('data-cell-content-byte-origin')).toBe('indexed');
+    expect(contentMemory?.getAttribute('data-cell-content-complete')).toBe('true');
+    expect(contentMemory?.textContent).toContain('INDEX ANALYSIS · DETERMINISTIC');
+    expect(contentMemory?.textContent).toContain('123.45 NTT');
+    expect(contentMemory?.textContent).toContain('DECODE · JSON DOCUMENT');
+    expect(contentMemory?.textContent).toContain('UTF-8 JSON object decoded from Cell data');
+    expect(contentMemory?.textContent).toContain('OBJECT START');
+    expect(contentMemory?.textContent).toContain('[0..1)');
+    expect(contentMemory?.textContent).toContain('JSON object opening delimiter');
+    expect(contentMemory?.textContent).toContain('H1/1 · HIGH');
+    expect(contentMemory?.textContent).toContain('application/json');
+    expect(contentMemory?.textContent).toContain('ROLE 1/3');
+    expect(contentMemory?.textContent).toContain('DAO · DEPOSIT');
+    expect(contentMemory?.querySelector('[data-cell-content-byte="0"]')?.textContent)
+      .toBe('7B');
+    fireEvent.click(container.querySelector('[aria-label="next decoded segment"]')!);
+    expect(contentMemory?.textContent).toContain('DOCUMENT BODY');
+    expect(contentMemory?.textContent).toContain('[1..7)');
+    fireEvent.click(container.querySelector('[aria-label="next decoded segment"]')!);
+    expect(contentMemory?.textContent).toContain('EXTENSION PAYLOAD');
+    expect(contentMemory?.textContent).toContain('[28..40)');
+    expect(contentMemory?.textContent).toContain('W 2/2');
+    expect(contentMemory?.querySelector('[data-cell-content-byte="28"]')?.textContent)
+      .toBe('00');
     expect(container.querySelector('[data-cell-detail-module="context"]')).toBeNull();
     expect(container.querySelector('[data-cell-detail-module="anatomy"]')?.hasAttribute('hidden')).toBe(false);
     expect((scanWindow as HTMLElement).style.width).toBe('500px');
@@ -400,7 +495,7 @@ describe('CellDetailPanel', () => {
     expect(readout?.textContent).toContain('0xabcd');
     expect(readout?.textContent).toContain('NTT · Nervos Test Token · xUDT');
     expect(readout?.textContent).toContain('123.45 NTT');
-    expect(readout?.textContent).toContain('OCCUPIED100 B');
+    expect(readout?.textContent).toContain('OCCUPIED133 B');
     expect(readout?.textContent).toContain('DAO POSITION');
     expect(readout?.textContent).toContain('DEPOSIT');
     expect(readout?.textContent).toContain('1.25 CKB');

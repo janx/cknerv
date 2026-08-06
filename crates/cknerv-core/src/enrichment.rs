@@ -151,6 +151,56 @@ pub struct CommonKnowledgeBreakdown {
     pub data_bytes: u64,
 }
 
+/// One exact byte range inside a deterministic Cell-data interpretation.
+/// Ranges are half-open (`start_byte..end_byte`) and refer to the complete
+/// payload, even when [`SemanticCellContent::data_hex`] carries only a bounded
+/// prefix.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SemanticContentSegment {
+    pub label: String,
+    pub start_byte: u64,
+    pub end_byte: u64,
+    pub meaning: String,
+    pub value: String,
+}
+
+/// A source-provided deterministic interpretation of canonical Cell data.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SemanticContentDecode {
+    pub kind: String,
+    pub summary: String,
+    #[serde(default)]
+    pub segments: Vec<SemanticContentSegment>,
+}
+
+/// One explicitly non-deterministic interpretation of canonical Cell data.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SemanticContentGuess {
+    pub kind: String,
+    pub confidence: String,
+    pub reason: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<String>,
+}
+
+/// Display-safe content evidence for one canonical Cell. `data_hex` is an
+/// optional bounded prefix and follows the canonical Cell convention of a
+/// trailing `…` when truncated. `total_bytes` and interpretation ranges always
+/// describe the complete payload.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SemanticCellContent {
+    pub total_bytes: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data_hex: Option<String>,
+    pub data_complete: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deterministic: Option<SemanticContentDecode>,
+    #[serde(default)]
+    pub heuristics: Vec<SemanticContentGuess>,
+}
+
 /// Additive context for one canonical outpoint.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CellSemanticRecord {
@@ -171,6 +221,8 @@ pub struct CellSemanticRecord {
     pub asset: Option<SemanticAsset>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub common_knowledge: Option<CommonKnowledgeBreakdown>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content: Option<SemanticCellContent>,
     #[serde(default)]
     pub facets: Vec<SemanticFacet>,
 }
@@ -913,6 +965,7 @@ mod tests {
             type_script: None,
             asset: None,
             common_knowledge: None,
+            content: None,
             facets: Vec::new(),
         }
     }

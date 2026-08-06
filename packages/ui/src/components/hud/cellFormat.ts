@@ -48,6 +48,29 @@ export function formatDataSize(hex: string): string {
   return `${bytes} B${truncated ? '+' : ''}`;
 }
 
+/** Format one exact integer token amount with validated decimal places. */
+export function formatSemanticAssetAmount(
+  value: string,
+  decimals?: number,
+): string {
+  try {
+    const amount = BigInt(value);
+    if (decimals == null || decimals === 0) return amount.toString();
+    if (!Number.isSafeInteger(decimals) || decimals < 0 || decimals > 255) {
+      return value;
+    }
+    const negative = amount < 0n;
+    const digits = (negative ? -amount : amount)
+      .toString()
+      .padStart(decimals + 1, '0');
+    const whole = digits.slice(0, -decimals);
+    const fraction = digits.slice(-decimals).replace(/0+$/, '');
+    return `${negative ? '−' : ''}${whole}${fraction ? `.${fraction}` : ''}`;
+  } catch {
+    return value;
+  }
+}
+
 const LOCK_LABEL: Record<string, string> = {
   sighash: 'Sighash',
   multisig: 'Multisig',

@@ -1,5 +1,9 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
-import type { Cell } from '@cknerv/types';
+import type {
+  Cell,
+  CellSemanticRecord,
+  EnrichmentSourceStatus,
+} from '@cknerv/types';
 import type { CellConsensusIdentity } from '../../derives/cellConsensusIdentity.derive';
 import type { CellCausalLens } from '../../derives/cellCausalLens.derive';
 import type { ConsensusBraidField } from '../../derives/consensusBraid.derive';
@@ -36,6 +40,8 @@ import { formatOutpoint } from './cellFormat';
 import CellCausalLensReadout, {
   type CellCausalNavigationReadout,
 } from './CellCausalLensReadout';
+import CellContentMemory from './CellContentMemory';
+import type { CellSemanticsPhase } from './CellSemanticsReadout';
 import { HUD_COLORS, HUD_FONTS } from './hudTheme';
 
 const CYAN = HUD_COLORS.cyanWire;
@@ -1467,6 +1473,11 @@ export function ConsensusMemoryTracePlate({
 
 export default function ConsensusIdentityPlate({
   identity,
+  dataHex,
+  semanticSource,
+  semanticPhase,
+  semanticRecord,
+  semanticMessage,
   causalLens = null,
   causalNavigation = null,
   reveal,
@@ -1494,8 +1505,14 @@ export default function ConsensusIdentityPlate({
   agreementCount,
   compact = false,
   spatial = false,
+  contentWide = false,
 }: {
   identity: CellConsensusIdentity;
+  dataHex: string;
+  semanticSource?: EnrichmentSourceStatus;
+  semanticPhase?: CellSemanticsPhase;
+  semanticRecord?: CellSemanticRecord | null;
+  semanticMessage?: string | null;
   causalLens?: CellCausalLens | null;
   causalNavigation?: CellCausalNavigationReadout | null;
   reveal: number;
@@ -1528,6 +1545,8 @@ export default function ConsensusIdentityPlate({
   compact?: boolean;
   /** Transparent scan-field treatment instead of a self-contained HUD card. */
   spatial?: boolean;
+  /** Places indexed content analysis beside identity proof on wide layouts. */
+  contentWide?: boolean;
 }) {
   const observed = identity.observedWrite;
   const selectedIdentityProofBinding = identityProofBinding;
@@ -1588,65 +1607,89 @@ export default function ConsensusIdentityPlate({
         </span>
       </div>
 
-      <IdentityBraid
-        identity={identity}
-        reducedMotion={reducedMotion}
-        traceSelected={traceSelected}
-        identityProofBinding={selectedIdentityProofBinding}
-        compact={compact}
-      />
+      {!spatial ? (
+        <IdentityBraid
+          identity={identity}
+          reducedMotion={reducedMotion}
+          traceSelected={traceSelected}
+          identityProofBinding={selectedIdentityProofBinding}
+          compact={compact}
+        />
+      ) : null}
 
       <div
-        data-consensus-memory-identity-grid="true"
-        data-memory-identity-binding={spatial ? 'true' : undefined}
-        data-memory-identity-phase={spatial
-          ? selectedIdentityProofBinding?.phase ?? 'collecting'
-          : undefined}
-        data-memory-identity-count={spatial ? identityProofCount : undefined}
-        data-memory-identity-complete={spatial
-          ? identityProofComplete ? 'true' : 'false'
-          : undefined}
-        style={{
+        data-consensus-memory-primary="true"
+        style={spatial && contentWide ? {
           display: 'grid',
-          gap: 2,
-          marginTop: 4,
-          padding: '4px 6px 5px',
-          borderLeft: `1px solid ${CYAN}28`,
-          background: `linear-gradient(90deg,${CYAN}08,transparent 78%)`,
-        }}
+          gridTemplateColumns: 'minmax(0,1.35fr) minmax(0,.65fr)',
+          alignItems: 'start',
+          gap: 8,
+          minWidth: 0,
+        } : undefined}
       >
-        {memoryRow({
-          label: 'ADDRESS',
-          value: address,
-          color: HUD_COLORS.ink,
-          title: `${identity.txHash}#${identity.outPointIndex}`,
-          active: focusedField === 'state',
-          onActivate: onInspectAddress,
-          compact,
-          proofKind: spatial ? 'address' : undefined,
-          proofResolved: proofResolved('address'),
-        })}
-        {memoryRow({
-          label: 'CONTENT',
-          value: fingerprint,
-          color: CYAN,
-          title: identity.contentHash,
-          active: focusedField === 'data',
-          onActivate: onInspectContent,
-          compact,
-          proofKind: spatial ? 'content' : undefined,
-          proofResolved: proofResolved('content'),
-        })}
-        {memoryRow({
-          label: 'ANCHOR',
-          value: `BLOCK #${identity.anchorBlock}`,
-          color: '#C9F8FF',
-          active: focusedField === 'born',
-          onActivate: onInspectAnchor,
-          compact,
-          proofKind: spatial ? 'anchor' : undefined,
-          proofResolved: proofResolved('anchor'),
-        })}
+        {spatial ? (
+          <CellContentMemory
+            dataHex={dataHex}
+            source={semanticSource}
+            phase={semanticPhase}
+            record={semanticRecord}
+            message={semanticMessage}
+            wide={contentWide}
+          />
+        ) : null}
+        <div
+          data-consensus-memory-identity-grid="true"
+          data-memory-identity-binding={spatial ? 'true' : undefined}
+          data-memory-identity-phase={spatial
+            ? selectedIdentityProofBinding?.phase ?? 'collecting'
+            : undefined}
+          data-memory-identity-count={spatial ? identityProofCount : undefined}
+          data-memory-identity-complete={spatial
+            ? identityProofComplete ? 'true' : 'false'
+            : undefined}
+          style={{
+            display: 'grid',
+            gap: 2,
+            minWidth: 0,
+            marginTop: 4,
+            padding: '4px 6px 5px',
+            borderLeft: `1px solid ${CYAN}28`,
+            background: `linear-gradient(90deg,${CYAN}08,transparent 78%)`,
+          }}
+        >
+          {memoryRow({
+            label: 'ADDRESS',
+            value: address,
+            color: HUD_COLORS.ink,
+            title: `${identity.txHash}#${identity.outPointIndex}`,
+            active: focusedField === 'state',
+            onActivate: onInspectAddress,
+            compact,
+            proofKind: spatial ? 'address' : undefined,
+            proofResolved: proofResolved('address'),
+          })}
+          {memoryRow({
+            label: 'CONTENT',
+            value: fingerprint,
+            color: CYAN,
+            title: identity.contentHash,
+            active: focusedField === 'data',
+            onActivate: onInspectContent,
+            compact,
+            proofKind: spatial ? 'content' : undefined,
+            proofResolved: proofResolved('content'),
+          })}
+          {memoryRow({
+            label: 'ANCHOR',
+            value: `BLOCK #${identity.anchorBlock}`,
+            color: '#C9F8FF',
+            active: focusedField === 'born',
+            onActivate: onInspectAnchor,
+            compact,
+            proofKind: spatial ? 'anchor' : undefined,
+            proofResolved: proofResolved('anchor'),
+          })}
+        </div>
       </div>
 
       {causalLens ? (

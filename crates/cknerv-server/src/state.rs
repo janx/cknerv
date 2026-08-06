@@ -1120,6 +1120,7 @@ mod tests {
             type_script: None,
             asset: None,
             common_knowledge: None,
+            content: None,
             facets: Vec::new(),
         };
 

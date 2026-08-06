@@ -236,6 +236,8 @@ pub(crate) struct BlockResponse {
 pub(crate) struct CellDetailResponse {
     pub tx_hash: String,
     pub output_index: i32,
+    pub data_size: i64,
+    pub data: Option<String>,
     pub lock_script_hash: String,
     pub type_script_hash: Option<String>,
     pub address: Option<String>,
@@ -296,6 +298,9 @@ pub(crate) struct CellDeterministicDecode {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct CellDataSegment {
     pub label: String,
+    pub start: i64,
+    pub end: i64,
+    pub meaning: String,
     pub human_value: String,
 }
 
