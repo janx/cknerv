@@ -3,6 +3,7 @@ import type {
   CellSemanticRecord,
   EnrichmentSourceStatus,
   SemanticFacet,
+  SemanticScript,
   TransactionSemanticRecord,
 } from '@cknerv/types';
 import { HUD_COLORS, HUD_FONTS, rgba } from './hudTheme';
@@ -32,9 +33,10 @@ function sourceColor(status: EnrichmentSourceStatus['status']): string {
   }
 }
 
-function ContextFact({ label, value, color, wide = false }: {
+function ContextFact({ label, value, displayValue, color, wide = false }: {
   label: string;
   value: string;
+  displayValue?: string;
   color?: string;
   wide?: boolean;
 }) {
@@ -50,7 +52,7 @@ function ContextFact({ label, value, color, wide = false }: {
         title={value}
         style={{ display: 'block', color: color ?? HUD_COLORS.ink, fontSize: 8.2, lineHeight: 1.35, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
       >
-        {value}
+        {displayValue ?? value}
       </span>
     </div>
   );
@@ -94,6 +96,93 @@ function KnowledgeBar({ record }: { record: CellSemanticRecord }) {
   );
 }
 
+function ScriptFact({ role, script }: {
+  role: 'LOCK' | 'TYPE';
+  script: SemanticScript;
+}) {
+  const identity = script.name ?? script.family ?? compact(script.code_hash);
+  const state = script.deprecated === true
+    ? 'DEPRECATED'
+    : script.deprecated === false
+      ? 'ACTIVE'
+      : null;
+  const stateColor = script.deprecated ? HUD_COLORS.danger : HUD_COLORS.nominal;
+  return (
+    <div
+      data-cell-context-script={role.toLowerCase()}
+      style={{ gridColumn: '1 / -1', minWidth: 0, padding: '4px 6px', border: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.12)}`, background: rgba(HUD_COLORS.cyanWire, 0.025) }}
+    >
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, minWidth: 0 }}>
+        <span style={{ color: HUD_COLORS.dim, fontSize: 6.6, letterSpacing: 0.9 }}>{role} SCRIPT</span>
+        <span title={identity} style={{ minWidth: 0, color: HUD_COLORS.ink, fontSize: 8.2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{identity}</span>
+        {state ? <span style={{ marginLeft: 'auto', color: stateColor, fontSize: 6.4, letterSpacing: 0.75 }}>{state}</span> : null}
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'auto minmax(0, 1fr)', gap: '1px 7px', marginTop: 3, fontSize: 6.8, lineHeight: 1.35 }}>
+        <span style={{ color: HUD_COLORS.dim }}>SCRIPT</span>
+        <span title={script.script_hash} style={{ color: HUD_COLORS.cyanWire, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{compact(script.script_hash, 12, 9)}</span>
+        <span style={{ color: HUD_COLORS.dim }}>CODE · {script.hash_type.toUpperCase()}</span>
+        <span title={script.code_hash} style={{ color: HUD_COLORS.cyanWire, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{compact(script.code_hash, 12, 9)}</span>
+        <span style={{ color: HUD_COLORS.dim }}>ARGS</span>
+        <span title={script.args} style={{ color: HUD_COLORS.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{compact(script.args, 14, 10)}</span>
+      </div>
+    </div>
+  );
+}
+
+function facetTitle(facet: SemanticFacet): string {
+  switch (facet.kind) {
+    case 'dao': return 'DAO POSITION';
+    case 'dep_group': return 'DEP GROUP';
+    case 'code_cell': return 'CODE CELL';
+    default: return facet.namespace === 'cell_data'
+      ? `DATA · ${facet.kind.replaceAll('_', ' ')}`
+      : facet.kind.replaceAll('_', ' ');
+  }
+}
+
+function facetAttributeLabel(key: string): string {
+  return key.replace(/^member_/, 'member ').replaceAll('_', ' ').toUpperCase();
+}
+
+function FacetDetail({ facet, index }: {
+  facet: SemanticFacet;
+  index: number;
+}) {
+  const attributes = facet.attributes.slice(0, facet.kind === 'dep_group' ? 4 : 6);
+  return (
+    <div
+      data-cell-context-facet={`${facet.namespace}:${facet.kind}`}
+      style={{ minWidth: 0, padding: '4px 6px 5px', borderLeft: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.24)}`, background: index % 2 === 0 ? rgba(HUD_COLORS.cyanWire, 0.025) : 'transparent' }}
+    >
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, minWidth: 0 }}>
+        <span style={{ color: HUD_COLORS.cyanWire, fontSize: 7, letterSpacing: 0.85 }}>{facetTitle(facet).toUpperCase()}</span>
+        {facet.state ? (
+          <span title={facet.state} style={{ marginLeft: 'auto', maxWidth: '58%', color: HUD_COLORS.caution, fontSize: 7, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {' · '}{facet.state.toUpperCase()}
+          </span>
+        ) : null}
+      </div>
+      {attributes.length > 0 ? (
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(70px, auto) minmax(0, 1fr)', gap: '2px 7px', marginTop: 4 }}>
+          {attributes.map((attribute) => (
+            <div key={attribute.key} style={{ display: 'contents' }}>
+              <span style={{ color: HUD_COLORS.dim, fontSize: 6.4, letterSpacing: 0.5 }}>{facetAttributeLabel(attribute.key)}</span>
+              <span title={attribute.value} style={{ color: HUD_COLORS.ink, fontSize: 7.2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {attribute.value}{attribute.unit ? ` ${attribute.unit}` : ''}
+              </span>
+            </div>
+          ))}
+        </div>
+      ) : null}
+      {facet.attributes.length > attributes.length ? (
+        <div style={{ marginTop: 3, color: HUD_COLORS.dim, fontSize: 6.3 }}>
+          +{facet.attributes.length - attributes.length} MORE INDEXED FIELDS
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function facetAttribute(facet: SemanticFacet | undefined, key: string): string | undefined {
   return facet?.attributes.find((attribute) => attribute.key === key)?.value;
 }
@@ -112,6 +201,14 @@ function formatShannons(value: string, signed = false): string {
     return `${sign}${whole}${fraction ? `.${fraction}` : ''} CKB`;
   } catch {
     return `${value} sh`;
+  }
+}
+
+function formatInteger(value: string): string {
+  try {
+    return BigInt(value).toLocaleString('en-US');
+  } catch {
+    return value;
   }
 }
 
@@ -170,6 +267,17 @@ function TransactionReadout({
       ? `#${proposed} → #${committed}${distance ? ` · ${distance} BLOCKS` : ''}`
       : null
     : null;
+  const feeRate = facetAttribute(io, 'fee_rate');
+  const size = facetAttribute(io, 'size');
+  const confirmations = facetAttribute(io, 'confirmations')
+    ?? facetAttribute(lifecycle, 'confirmations');
+  const inputCapacity = facetAttribute(io, 'inputs_capacity');
+  const outputCapacity = facetAttribute(io, 'outputs_capacity');
+  const inputKnowledge = facetAttribute(io, 'inputs_common_knowledge');
+  const outputKnowledge = facetAttribute(io, 'outputs_common_knowledge');
+  const windowClose = facetAttribute(lifecycle, 'window_close');
+  const windowFar = facetAttribute(lifecycle, 'window_far');
+  const proposedUncle = facetAttribute(lifecycle, 'proposed_uncle_block');
   const metric = (label: string, value: string, color?: string) => (
     <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 4, minWidth: 0, whiteSpace: 'nowrap' }}>
       <span style={{ color: HUD_COLORS.dim, fontSize: 6.4, letterSpacing: 0.72 }}>{label}</span>
@@ -204,9 +312,33 @@ function TransactionReadout({
           >
             {metric('FLOW', flow!)}
             {commit ? metric('COMMIT', commit, HUD_COLORS.nominal) : null}
+            {proposedUncle ? metric('UNCLE PROPOSAL', `#${proposedUncle}`, HUD_COLORS.caution) : null}
             {record.fee ? metric('FEE', formatShannons(record.fee)) : null}
+            {feeRate ? metric('FEE RATE', `${feeRate} sh/kB`) : null}
+            {size ? metric('SIZE', `${formatInteger(size)} B`) : null}
             {record.cycles != null ? metric('CYCLES', record.cycles.toLocaleString()) : null}
+            {confirmations ? metric('CONFIRMED', `${formatInteger(confirmations)}×`) : null}
+            {windowClose && windowFar ? metric('WINDOW', `${windowClose}–${windowFar} BLOCKS`) : null}
           </div>
+          {inputCapacity || outputCapacity || inputKnowledge || outputKnowledge ? (
+            <div
+              data-transaction-semantics-flow
+              style={{ display: 'grid', gridTemplateColumns: 'auto minmax(0,1fr)', gap: '2px 8px', marginTop: 5, padding: '4px 6px', border: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.1)}`, fontSize: 7.1 }}
+            >
+              {inputCapacity || outputCapacity ? (
+                <>
+                  <span style={{ color: HUD_COLORS.dim, letterSpacing: 0.55 }}>CAPACITY</span>
+                  <span style={{ color: HUD_COLORS.ink }}>{inputCapacity ? formatShannons(inputCapacity) : '?'} → {outputCapacity ? formatShannons(outputCapacity) : '?'}</span>
+                </>
+              ) : null}
+              {inputKnowledge || outputKnowledge ? (
+                <>
+                  <span style={{ color: HUD_COLORS.dim, letterSpacing: 0.55 }}>OCCUPIED</span>
+                  <span style={{ color: HUD_COLORS.ink }}>{inputKnowledge ?? '?'} B → {outputKnowledge ?? '?'} B</span>
+                </>
+              ) : null}
+            </div>
+          ) : null}
           {record.participants.length > 0 ? (
             <div
               data-transaction-participants
@@ -225,6 +357,9 @@ function TransactionReadout({
                     {participant.capacity_delta == null
                       ? 'PARTIAL'
                       : formatShannons(participant.capacity_delta, true)}
+                    {participant.common_knowledge_delta != null
+                      ? ` · ${participant.common_knowledge_delta.startsWith('-') ? '' : '+'}${participant.common_knowledge_delta} B`
+                      : ''}
                   </span>
                 </div>
               ))}
@@ -300,19 +435,9 @@ export default function CellSemanticsReadout({
             style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', columnGap: 9, rowGap: 1 }}
           >
             {record.cell_type ? <ContextFact label="SEMANTIC" value={record.cell_type.toUpperCase()} color={HUD_COLORS.nominal} /> : null}
-            {record.address ? <ContextFact label="OWNER" value={compact(record.address, 12, 9)} /> : null}
-            {record.lock_script ? (
-              <ContextFact
-                label="LOCK SCRIPT"
-                value={record.lock_script.name ?? record.lock_script.family ?? compact(record.lock_script.code_hash)}
-              />
-            ) : null}
-            {record.type_script ? (
-              <ContextFact
-                label="TYPE SCRIPT"
-                value={record.type_script.name ?? record.type_script.family ?? compact(record.type_script.code_hash)}
-              />
-            ) : null}
+            {record.address ? <ContextFact label="OWNER" value={record.address} displayValue={compact(record.address, 12, 9)} /> : null}
+            <ContextFact label="CREATED" value={`#${record.observed_at_block.toLocaleString()}`} />
+            <ContextFact label="PROOF ANCHOR" value={`#${record.as_of.block.toLocaleString()}`} color={HUD_COLORS.cyanWire} />
             {record.asset ? (
               <ContextFact
                 label="ASSET"
@@ -334,30 +459,21 @@ export default function CellSemanticsReadout({
                 )}${record.asset.symbol ? ` ${record.asset.symbol}` : ''}`}
               />
             ) : null}
+            {record.lock_script ? <ScriptFact role="LOCK" script={record.lock_script} /> : null}
+            {record.type_script ? <ScriptFact role="TYPE" script={record.type_script} /> : null}
             <KnowledgeBar record={record} />
             {record.facets.length > 0 ? (
-              <div style={{ gridColumn: '1 / -1', display: 'flex', flexWrap: 'wrap', gap: 3, marginTop: 2 }}>
-                {record.facets.slice(0, 5).map((facet, index) => {
-                  const text = `${facet.kind}${facet.state ? ` · ${facet.state}` : ''}`;
-                  return (
-                    <span
-                      key={`${facet.namespace}:${facet.kind}:${index}`}
-                      title={`${facet.namespace} · ${text}`}
-                      style={{
-                        maxWidth: '100%',
-                        padding: '1px 4px',
-                        border: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.18)}`,
-                        color: HUD_COLORS.cyanWire,
-                        fontSize: 6.8,
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
-                      }}
-                    >
-                      {text.toUpperCase()}
-                    </span>
-                  );
-                })}
+              <div
+                data-cell-context-facets
+                style={{ gridColumn: '1 / -1', display: 'grid', gap: 3, marginTop: 4 }}
+              >
+                {record.facets.slice(0, 6).map((facet, index) => (
+                  <FacetDetail
+                    key={`${facet.namespace}:${facet.kind}:${index}`}
+                    facet={facet}
+                    index={index}
+                  />
+                ))}
               </div>
             ) : null}
           </div>

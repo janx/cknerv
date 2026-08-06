@@ -3,8 +3,8 @@
 // fills in and block pulses fire as the chain advances. Renders a 3D
 // canvas (CellGalaxy canopy) alongside the DOM `HudOverlay` (a sibling of
 // the canvas) that carries the always-on telemetry panels (blockchain /
-// network / cells stats) plus the selection-detail panels (cell / node /
-// peer) and the backfill/seeding indicator. The leva knobs panel is hidden
+// network / cells stats) plus node / peer detail and the backfill/seeding
+// indicator. Cell detail is tethered to the selected scene Cell. The leva knobs panel is hidden
 // by default (toggle with backtick) — see Tweaks.
 
 import {
@@ -39,6 +39,7 @@ import {
   CellGalaxy,
   CellGalaxyProvider,
   CellCausalLensLayer,
+  CellInspectionOverlay,
   CellSemanticOrbit,
   ConsensusRouteCamera,
   ConsensusWriteSeal,
@@ -279,8 +280,8 @@ export default function App({
   // Two independent selections so a cell (galaxy axis) and a network entity
   // (node/peer axis) can be inspected side-by-side. Clicks route by id prefix:
   // `cell:` → cell axis; a node id / `peer:` → net axis (node and peer share it,
-  // one network entity at a time). The axes drive the two HUD detail zones
-  // independently.
+  // one network entity at a time). Cell detail follows the scene object while
+  // network detail remains in the HUD rail; the axes stay independent.
   const [selectedCellId, setSelectedCellId] = useState<string | null>(null);
   const [selectedNetId, setSelectedNetId] = useState<string | null>(null);
   const [cellCausalNavigation, dispatchCellCausalNavigation] = useReducer(
@@ -1007,6 +1008,15 @@ export default function App({
     return peers.find((p) => p.node_id === id) ?? null;
   }, [selectedNetId, peers]);
 
+  const clearCellSelection = useCallback(() => {
+    memoryRouteHopAnchorRef.current = null;
+    setCellIdentityProof(null);
+    dispatchCellIdentityJourney({ type: 'clear' });
+    dispatchCellCausalNavigation({ type: 'clear' });
+    setSelectedCellId(null);
+    dispatchMemoryRecall({ type: 'cancel' });
+  }, []);
+
   const buildVersion = resolveBuildVersion();
   const build = { version: buildVersion, href: buildCommitHref(buildVersion) };
 
@@ -1040,50 +1050,8 @@ export default function App({
         networkAtlas={enrichmentConfig.enabled
           ? semanticsCache.networkAtlas
           : undefined}
-        selectedCell={selectedCell}
-        selectedCellSemantics={selectedCellSemantics}
-        selectedCellSemanticsPhase={enrichmentConfig.enabled
-          ? selectedCellSemanticsPhase
-          : undefined}
-        selectedCellSemanticsMessage={selectedSemanticsLookup.message}
-        selectedTransactionSemantics={selectedTransactionSemantics}
-        selectedTransactionSemanticsPhase={transactionSemanticsEnabled
-          ? selectedTransactionSemanticsPhase
-          : undefined}
-        selectedTransactionSemanticsMessage={selectedTransactionLookup.message}
-        cellRecordsById={cellsCache.cells}
-        recentCellLinks={cellsCache.recentLinks}
-        cellCausalLens={selectedCausalLens}
-        cellCausalNavigation={selectedCausalNavigation}
-        tracedCellWriteSeq={cellMemoryRecallWriteSeqForTarget(
-          memoryTraceRequest,
-          selectedCell?.id,
-        )}
-        cellTraceSource={selectedOriginTrace?.sourceKind ?? 'none'}
-        cellTraceReadout={selectedMemoryTraceReadout}
-        cellTraceResponseRef={memoryTraceTargetResponseRef}
-        cellTraceEvidenceFocusSourceId={memoryEvidenceFocusSourceId}
-        cellTraceEvidencePreviewSourceId={memoryAgreementPreviewSourceId}
-        onCellTraceEvidenceFocusChange={focusMemoryTraceEvidence}
-        cellTraceRouteHopFocus={memoryRouteHopFocus}
-        onCellTraceRouteHopFocusChange={focusMemoryTraceRouteHop}
-        cellTraceRouteHopLock={memoryRouteHopLock}
-        onCellTraceRouteHopLockChange={lockMemoryTraceRouteHop}
-        cellIdentityProofBinding={cellIdentityProofBinding}
-        onTraceCellWrite={selectedOriginTraceable
-          ? recallSelectedCellOrigin
-          : undefined}
-        onCellIdentityProofRead={confirmCellIdentityProof}
         selectedNode={selectedNode}
         selectedPeer={selectedPeer}
-        onClearCell={() => {
-          memoryRouteHopAnchorRef.current = null;
-          setCellIdentityProof(null);
-          dispatchCellIdentityJourney({ type: 'clear' });
-          dispatchCellCausalNavigation({ type: 'clear' });
-          setSelectedCellId(null);
-          dispatchMemoryRecall({ type: 'cancel' });
-        }}
         onClearNet={() => setSelectedNetId(null)}
         backfill={cellsCache.backfill}
         streamHealth={{
@@ -1109,13 +1077,8 @@ export default function App({
               orbitGestureRef.current,
               performance.now(),
             )) return;
-            memoryRouteHopAnchorRef.current = null;
-            setCellIdentityProof(null);
-            dispatchCellIdentityJourney({ type: 'clear' });
-            dispatchCellCausalNavigation({ type: 'clear' });
-            setSelectedCellId(null);
+            clearCellSelection();
             setSelectedNetId(null);
-            dispatchMemoryRecall({ type: 'cancel' });
           }}
         >
           {/* Advances the module-level simClock once per frame so every
@@ -1166,6 +1129,49 @@ export default function App({
             pickingSuspendedRef={orbitPickingSuspendedRef}
             overlay={
               <>
+                {selectedCell ? (
+                  <CellInspectionOverlay
+                    key={selectedCell.id}
+                    cell={selectedCell}
+                    routeCellById={cellsCache.cells}
+                    recentLinks={cellsCache.recentLinks}
+                    causalLens={selectedCausalLens}
+                    causalNavigation={selectedCausalNavigation}
+                    tracedWriteSeq={cellMemoryRecallWriteSeqForTarget(
+                      memoryTraceRequest,
+                      selectedCell.id,
+                    )}
+                    traceSource={selectedOriginTrace?.sourceKind ?? 'none'}
+                    traceReadout={selectedMemoryTraceReadout}
+                    traceResponseRef={memoryTraceTargetResponseRef}
+                    traceEvidenceFocusSourceId={memoryEvidenceFocusSourceId}
+                    traceEvidencePreviewSourceId={memoryAgreementPreviewSourceId}
+                    onTraceEvidenceFocusChange={focusMemoryTraceEvidence}
+                    traceRouteHopFocus={memoryRouteHopFocus}
+                    onTraceRouteHopFocusChange={focusMemoryTraceRouteHop}
+                    traceRouteHopLock={memoryRouteHopLock}
+                    onTraceRouteHopLockChange={lockMemoryTraceRouteHop}
+                    identityProofBinding={cellIdentityProofBinding}
+                    onTraceWrite={selectedOriginTraceable
+                      ? recallSelectedCellOrigin
+                      : undefined}
+                    onIdentityProofRead={confirmCellIdentityProof}
+                    semanticSource={enrichmentConfig.enabled
+                      ? semanticsCache.source
+                      : undefined}
+                    semanticPhase={enrichmentConfig.enabled
+                      ? selectedCellSemanticsPhase
+                      : undefined}
+                    semanticRecord={selectedCellSemantics}
+                    semanticMessage={selectedSemanticsLookup.message}
+                    semanticTransactionPhase={transactionSemanticsEnabled
+                      ? selectedTransactionSemanticsPhase
+                      : undefined}
+                    semanticTransactionRecord={selectedTransactionSemantics}
+                    semanticTransactionMessage={selectedTransactionLookup.message}
+                    onClose={clearCellSelection}
+                  />
+                ) : null}
                 {selectedCell && selectedCellSemantics ? (
                   <CellSemanticOrbit
                     cell={selectedCell}

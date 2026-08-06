@@ -6,36 +6,18 @@ import type {
   ChainEntry,
   Peer,
   ChainNode,
-  Cell,
-  CellLink,
-  CellSemanticRecord,
   DaoStateRecord,
   EnrichmentSourceStatus,
   NetworkAtlasRecord,
   ProtocolEraRecord,
-  TransactionSemanticRecord,
   TransactionHorizonRecord,
 } from '@cknerv/types';
 import type { ActiveReplayProgress } from '@cknerv/cache';
-import type {
-  ConsensusMemoryCellResponseRef,
-  ConsensusMemoryRouteHopFocus,
-  ConsensusMemoryTraceReadout,
-  ConsensusMemoryTraceSource,
-} from '../../nerve/consensusMemoryTrace';
 import { summarizeNetwork } from '../../derives/peers.derive';
 import { fleetConsensus, pingStats, versionSpread } from '../../derives/fleetTelemetry';
 import { ecgCondition, expectedBlockMs, windowMeanMs, ECG_WINDOW, type EcgCondition } from '../../derives/ecgCondition';
 import { alertLevel } from '../../derives/alertLevel';
 import type { CellsStats } from '../../derives/cellsStats.derive';
-import type {
-  CellIdentityProofBinding,
-  CellIdentityProofKind,
-} from '../../derives/cellIdentityProof.derive';
-import type { CellCausalLens } from '../../derives/cellCausalLens.derive';
-import type {
-  CellCausalNavigationReadout,
-} from './CellCausalLensReadout';
 import { injectHudTheme } from './hudTheme';
 import StatusStrip, {
   STATUS_STRIP_HEIGHTS,
@@ -47,7 +29,6 @@ import BlockCadenceEcg from './BlockCadenceEcg';
 import DaoStatePanel from './DaoStatePanel';
 import { canRenderDaoStateReadout } from './DaoStateReadout';
 import NetworkPanel from './NetworkPanel';
-import CellDetailPanel from './CellDetailPanel';
 import NodeDetailPanel from './NodeDetailPanel';
 import PeerDetailPanel from './PeerDetailPanel';
 import BackfillBar from './BackfillBar';
@@ -61,7 +42,6 @@ import {
   type StreamHealthChannels,
 } from '../../derives/streamHealth.derive';
 import StreamHealthBanner from './StreamHealthBanner';
-import type { CellSemanticsPhase } from './CellSemanticsReadout';
 
 // We're "syncing" (catching up, benign) if the node is in IBD, our tip trails the
 // network best-known by more than a couple of blocks, or most peers are ahead of us.
@@ -71,7 +51,7 @@ const SYNC_AHEAD_RATIO = 0.5; // fraction of peers ahead of our tip = we're behi
 const ROOT_STYLE: CSSProperties = { position: 'fixed', inset: 0, zIndex: 15, pointerEvents: 'none', overflow: 'hidden' };
 const SCAN_STYLE: CSSProperties = { position: 'absolute', inset: 0, pointerEvents: 'none', background: 'repeating-linear-gradient(0deg,rgba(255,255,255,.035) 0 1px,transparent 1px 3px)', mixBlendMode: 'overlay', opacity: 0.5 };
 // Right-edge MESH RAIL: the CELL zone stacked over the PEER zone, right-anchored.
-// Each zone is a flex row [detail | mesh] (detail fans LEFT of its own mesh); the
+// Each zone is a flex row [detail | mesh] (network detail fans LEFT of its mesh); the
 // rail is a flex column so the zones stack and details top-align to their mesh
 // with no height math. Panels flow via PANEL_FLOW (position:relative) instead of
 // self-positioning. Container shrink-wraps and pins its right edge, so the meshes
@@ -82,9 +62,8 @@ const MESH_RAIL_STYLE: CSSProperties = { position: 'absolute', top: 42, right: 1
 // flex column, so an unusually tall CKB/DAO readout can never overlap ECG·04.
 const LEFT_HUD_STYLE: CSSProperties = { position: 'absolute', left: 14, bottom: 14, display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'flex-start', minHeight: 0 };
 const CHAIN_CLUSTER_STYLE: CSSProperties = { display: 'flex', flex: '1 1 auto', flexDirection: 'row', gap: 12, alignItems: 'flex-start', minHeight: 0, maxWidth: '100%', overflowX: 'auto', overflowY: 'hidden', overscrollBehavior: 'contain', scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,152,48,.35) transparent', pointerEvents: 'auto' };
-// Narrow: the selected detail owns the immediately visible rail area; its mesh
-// follows below. This keeps the consensus-memory readout in the first viewport
-// instead of spending that space on the summary that opened it.
+// Narrow: the selected network detail owns the immediately visible rail area;
+// its mesh follows below.
 const MESH_ZONE_COL: CSSProperties = { display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'flex-end' };
 const PANEL_FLOW: CSSProperties = { position: 'relative' };
 
@@ -103,7 +82,7 @@ function isHudPanelId(id: string): id is HudPanelId {
   return (HUD_PANEL_IDS as readonly string[]).includes(id);
 }
 
-export default function HudOverlay({ chain, peers, localNode, cellsStats, cellCount, cellCapacity, enrichmentSource, assetEcosystem, protocolEra, daoState, activityFeed, transactionHorizon, networkAtlas, selectedCell, selectedCellSemantics, selectedCellSemanticsPhase, selectedCellSemanticsMessage, selectedTransactionSemantics, selectedTransactionSemanticsPhase, selectedTransactionSemanticsMessage, cellRecordsById, recentCellLinks, cellCausalLens, cellCausalNavigation, tracedCellWriteSeq, cellTraceSource, cellTraceReadout, cellTraceResponseRef, cellTraceEvidenceFocusSourceId, cellTraceEvidencePreviewSourceId, onCellTraceEvidenceFocusChange, cellTraceRouteHopFocus, onCellTraceRouteHopFocusChange, cellTraceRouteHopLock, onCellTraceRouteHopLockChange, cellIdentityProofBinding, onTraceCellWrite, onCellIdentityProofRead, selectedNode, selectedPeer, onClearSelection, onClearCell, onClearNet, backfill, streamHealth, build, topBarActions, colonyCount }: {
+export default function HudOverlay({ chain, peers, localNode, cellsStats, cellCount, cellCapacity, enrichmentSource, assetEcosystem, protocolEra, daoState, activityFeed, transactionHorizon, networkAtlas, selectedNode, selectedPeer, onClearSelection, onClearNet, backfill, streamHealth, build, topBarActions, colonyCount }: {
   chain: ChainEntry; peers: Peer[]; localNode: ChainNode | undefined; cellsStats: CellsStats;
   /** Records available to CellGalaxy before the top-bar display cap. */
   cellCount?: number;
@@ -116,50 +95,10 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats, cellCo
   activityFeed?: ActivityFeedRecord | null;
   transactionHorizon?: TransactionHorizonRecord | null;
   networkAtlas?: NetworkAtlasRecord | null;
-  selectedCell?: Cell | null;
-  selectedCellSemantics?: CellSemanticRecord | null;
-  selectedCellSemanticsPhase?: CellSemanticsPhase;
-  selectedCellSemanticsMessage?: string | null;
-  selectedTransactionSemantics?: TransactionSemanticRecord | null;
-  selectedTransactionSemanticsPhase?: CellSemanticsPhase;
-  selectedTransactionSemanticsMessage?: string | null;
-  /** Current Cell projection records for exact route-hop inspection. */
-  cellRecordsById?: ReadonlyMap<number, Cell>;
-  /** Retained causal links used only to prove an exact selected-Cell origin. */
-  recentCellLinks?: readonly CellLink[];
-  /** Shared selected-Cell causal evidence rendered in both HUD and scene. */
-  cellCausalLens?: CellCausalLens | null;
-  /** Local back/forward path through explicitly visited causal endpoints. */
-  cellCausalNavigation?: CellCausalNavigationReadout | null;
-  tracedCellWriteSeq?: number | null;
-  cellTraceSource?: ConsensusMemoryTraceSource;
-  cellTraceReadout?: ConsensusMemoryTraceReadout | null;
-  cellTraceResponseRef?: ConsensusMemoryCellResponseRef;
-  cellTraceEvidenceFocusSourceId?: number | null;
-  cellTraceEvidencePreviewSourceId?: number | null;
-  onCellTraceEvidenceFocusChange?: (sourceId: number | null) => void;
-  cellTraceRouteHopFocus?: ConsensusMemoryRouteHopFocus | null;
-  onCellTraceRouteHopFocusChange?: (
-    focus: ConsensusMemoryRouteHopFocus | null,
-  ) => void;
-  cellTraceRouteHopLock?: ConsensusMemoryRouteHopFocus | null;
-  onCellTraceRouteHopLockChange?: (
-    focus: ConsensusMemoryRouteHopFocus | null,
-  ) => void;
-  cellIdentityProofBinding?: CellIdentityProofBinding | null;
-  onTraceCellWrite?: (linkSeq: number) => void;
-  onCellIdentityProofRead?: (
-    kind: CellIdentityProofKind,
-    cellId: number,
-    reducedMotion: boolean,
-  ) => void;
   selectedNode?: ChainNode | null; selectedPeer?: Peer | null;
-  /** Clear-all fallback (cell + net). Kept for the shared @cknerv/ui API. */
+  /** Clear-all fallback for shared consumers with one network selection axis. */
   onClearSelection?: () => void;
-  /** Clear just the cell / just the network selection — the two detail panels
-   *  can now show at once (cell + node/peer), so each × clears its own axis.
-   *  Each falls back to onClearSelection when not provided. */
-  onClearCell?: () => void; onClearNet?: () => void;
+  onClearNet?: () => void;
   backfill?: ActiveReplayProgress | null;
   /** Browser transport health for the independent chain and cells streams.
    * Kept separate from node sync/IBD so a frozen dashboard cannot look
@@ -173,9 +112,7 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats, cellCo
 }) {
   useEffect(() => { injectHudTheme(document); }, []);
 
-  // Per-axis clear for the two independent detail panels; fall back to the
-  // single onClearSelection (shared @cknerv/ui API / non-split callers).
-  const clearCell = onClearCell ?? onClearSelection ?? (() => {});
+  // Cell inspection is scene-anchored; only node / peer detail remains here.
   const clearNet = onClearNet ?? onClearSelection ?? (() => {});
 
   const reduced = useReducedMotion();
@@ -230,11 +167,9 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats, cellCo
     if (!isHudPanelId(id)) return;
     setPanelVisibility((current) => ({ ...current, [id]: visible }));
   };
-  // A rail zone: the MESH panel defines the zone's box. WIDE — its detail fans
-  // LEFT of the mesh via ABSOLUTE positioning, so a tall detail (the specimen
-  // portrait!) never inflates the zone height and never pushes the stacked meshes
-  // apart (that was the "cell detail appears → PEER MESH shoved down + big gap"
-  // bug). NARROW — selected detail comes first, then its mesh (the rail scrolls).
+  // A rail zone: the MESH panel defines the zone's box. WIDE — network detail
+  // fans left via absolute positioning. NARROW — detail comes first, then its
+  // mesh, and the rail scrolls only when needed.
   const meshZone = (detail: ReactNode, mesh: ReactNode): ReactNode =>
     narrowRail ? (
       <div style={MESH_ZONE_COL}>{detail}{mesh}</div>
@@ -282,7 +217,7 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats, cellCo
   useEffect(() => {
     const el = railRef.current;
     setRailScrolls(!!el && narrowRail && el.scrollHeight > el.clientHeight + 1);
-  }, [narrowRail, panelVisibility.cells, panelVisibility.peers, selectedCell, selectedNode, selectedPeer, now]);
+  }, [narrowRail, panelVisibility.cells, panelVisibility.peers, selectedNode, selectedPeer, now]);
 
   // reorg delta across renders
   const prevReorgs = useRef(chain.reorgs);
@@ -423,45 +358,13 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats, cellCo
           ) : null}
         </div>
       ) : null}
-      {/* MESH RAIL — the two mesh panels juxtaposed as a pair, each with its
-          detail docked alongside. CELL zone (galaxy) over PEER zone (colony);
-          within a zone the selected entity's detail fans LEFT of its own mesh.
-          The local NODE and remote PEER details both belong to the PEER zone. */}
+      {/* MESH RAIL — fixed summary telemetry only. Cell inspection now follows
+          the selected Cell in scene space; node / peer detail stays with the
+          PEER zone because those entities belong to the network rail. */}
       {panelVisibility.cells || panelVisibility.peers ? (
         <div ref={railRef} className="cknerv-mesh-rail" style={railStyle}>
           {panelVisibility.cells ? meshZone(
-            selectedCell ? (
-              <CellDetailPanel
-                cell={selectedCell}
-                routeCellById={cellRecordsById}
-                recentLinks={recentCellLinks}
-                causalLens={cellCausalLens}
-                causalNavigation={cellCausalNavigation}
-                tracedWriteSeq={tracedCellWriteSeq}
-                traceSource={cellTraceSource}
-                traceReadout={cellTraceReadout}
-                traceResponseRef={cellTraceResponseRef}
-                traceEvidenceFocusSourceId={cellTraceEvidenceFocusSourceId}
-                traceEvidencePreviewSourceId={cellTraceEvidencePreviewSourceId}
-                onTraceEvidenceFocusChange={onCellTraceEvidenceFocusChange}
-                traceRouteHopFocus={cellTraceRouteHopFocus}
-                onTraceRouteHopFocusChange={onCellTraceRouteHopFocusChange}
-                traceRouteHopLock={cellTraceRouteHopLock}
-                onTraceRouteHopLockChange={onCellTraceRouteHopLockChange}
-                identityProofBinding={cellIdentityProofBinding}
-                onTraceWrite={onTraceCellWrite}
-                onIdentityProofRead={onCellIdentityProofRead}
-                semanticSource={enrichmentSource}
-                semanticPhase={selectedCellSemanticsPhase}
-                semanticRecord={selectedCellSemantics}
-                semanticMessage={selectedCellSemanticsMessage}
-                semanticTransactionPhase={selectedTransactionSemanticsPhase}
-                semanticTransactionRecord={selectedTransactionSemantics}
-                semanticTransactionMessage={selectedTransactionSemanticsMessage}
-                onClose={clearCell}
-                style={PANEL_FLOW}
-              />
-            ) : null,
+            null,
             <div data-hud-panel="cells">
               <CellsPanel
                 stats={cellsStats}

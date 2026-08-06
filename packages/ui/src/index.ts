@@ -142,6 +142,12 @@ export {
   default as CellIdentityProofMarker,
 } from './components/CellIdentityProofMarker';
 export { default as CellSemanticOrbit } from './components/CellSemanticOrbit';
+export {
+  default as CellInspectionOverlay,
+  cellInspectorPlacement,
+  type CellInspectorPlacement,
+  type CellInspectorPlacementSide,
+} from './components/CellInspectionOverlay';
 export { default as CellShell } from './components/CellShell';
 export { default as CellOrganism } from './components/CellOrganism';
 export {
@@ -150,7 +156,10 @@ export {
 } from './components/CellsHud';
 export { default as CkbNetworkHud } from './components/CkbNetworkHud';
 export { default as HudOverlay } from './components/hud/HudOverlay';
-export { default as CellDetailPanel } from './components/hud/CellDetailPanel';
+export {
+  default as CellDetailPanel,
+  type CellDetailPanelProps,
+} from './components/hud/CellDetailPanel';
 export {
   default as CellSemanticsReadout,
   formatSemanticAssetAmount,

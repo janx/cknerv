@@ -22,8 +22,8 @@ describe('HudOverlay wiring', () => {
     expect(APP_SOURCE).not.toContain('topBarActions={<Jukebox />}');
   });
 
-  it('routes each resolved identity proof back to the matching galaxy Cell', () => {
-    expect(APP_SOURCE).toContain('onCellIdentityProofRead={confirmCellIdentityProof}');
+  it('routes each resolved identity proof from the scene inspector to the matching galaxy Cell', () => {
+    expect(APP_SOURCE).toContain('onIdentityProofRead={confirmCellIdentityProof}');
     expect(APP_SOURCE).toContain('identityProof={cellIdentityProof}');
     expect(APP_SOURCE).toContain('kind,');
     expect(APP_SOURCE).toContain('const emittedAtMs = performance.now()');
@@ -36,12 +36,9 @@ describe('HudOverlay wiring', () => {
     expect(APP_SOURCE).toContain('cellIdentityProofBindingComplete(');
     expect(APP_SOURCE).toContain("type: 'recall-start'");
     expect(APP_SOURCE).toContain("type: 'recall-retained'");
-    expect(APP_SOURCE).toContain(
-      'cellIdentityProofBinding={cellIdentityProofBinding}',
-    );
-    expect(APP_SOURCE).toContain(
-      'identityProofBinding={cellIdentityProofBinding}',
-    );
+    expect(APP_SOURCE.match(
+      /identityProofBinding=\{cellIdentityProofBinding\}/g,
+    )).toHaveLength(2);
     expect(APP_SOURCE).toContain(
       'inspectionCellId={selectedCell?.id ?? null}',
     );
@@ -76,10 +73,10 @@ describe('HudOverlay wiring', () => {
     )).toHaveLength(2);
   });
 
-  it('shares one real causal-lens model between the HUD and scene', () => {
+  it('shares one real causal-lens model between the Cell-tethered inspector and scene', () => {
     expect(APP_SOURCE).toContain('deriveCellCausalLens(');
     expect(APP_SOURCE).toContain(
-      'cellCausalLens={selectedCausalLens}',
+      'causalLens={selectedCausalLens}',
     );
     expect(APP_SOURCE).toContain('<CellCausalLensLayer');
     expect(APP_SOURCE).toContain('lens={selectedCausalLens}');
@@ -91,10 +88,27 @@ describe('HudOverlay wiring', () => {
     );
     expect(APP_SOURCE).toContain('cellCausalNavigationReducer');
     expect(APP_SOURCE).toContain(
-      'cellCausalNavigation={selectedCausalNavigation}',
+      'causalNavigation={selectedCausalNavigation}',
     );
     expect(APP_SOURCE).toContain('onBack: navigateCausalBack');
     expect(APP_SOURCE).toContain('onForward: navigateCausalForward');
+  });
+
+  it('keeps Cell detail out of the fixed HUD and anchors it inside CellGalaxy', () => {
+    const hudWiring = APP_SOURCE.match(/<HudOverlay[\s\S]*?\/>/)?.[0];
+    const inspectorWiring = APP_SOURCE.match(
+      /<CellInspectionOverlay[\s\S]*?\/>/,
+    )?.[0];
+
+    expect(hudWiring).toBeDefined();
+    expect(hudWiring).not.toContain('selectedCell=');
+    expect(hudWiring).not.toContain('onClearCell=');
+    expect(inspectorWiring).toBeDefined();
+    expect(inspectorWiring).toContain('cell={selectedCell}');
+    expect(inspectorWiring).toContain('onClose={clearCellSelection}');
+    expect(APP_SOURCE.indexOf('<CellInspectionOverlay')).toBeGreaterThan(
+      APP_SOURCE.indexOf('overlay={'),
+    );
   });
 
   it('adds validated optional semantics as one selected-Cell scene orbit', () => {
