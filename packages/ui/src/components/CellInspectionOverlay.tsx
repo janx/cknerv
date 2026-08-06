@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  type RefObject,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { Html } from '@react-three/drei';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
@@ -23,6 +30,38 @@ export interface CellInspectorPlacement {
   side: CellInspectorPlacementSide;
   x: number;
   y: number;
+}
+
+/** Treat only the rendered detail satellites as the active inspection region.
+ * Gaps between them remain part of the Galaxy and dismiss the inspection. */
+export function useCellInspectionDismiss(
+  boundaryRef: RefObject<HTMLElement>,
+  onDismiss: () => void,
+): void {
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const dismissOutside = (event: PointerEvent) => {
+      if (event.button !== 0) return;
+      const boundary = boundaryRef.current;
+      const target = event.target;
+      if (boundary && target instanceof Node && boundary.contains(target)) {
+        return;
+      }
+      onDismiss();
+    };
+    const dismissOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      event.stopPropagation();
+      onDismiss();
+    };
+    document.addEventListener('pointerdown', dismissOutside, true);
+    document.addEventListener('keydown', dismissOnEscape, true);
+    return () => {
+      document.removeEventListener('pointerdown', dismissOutside, true);
+      document.removeEventListener('keydown', dismissOnEscape, true);
+    };
+  }, [boundaryRef, onDismiss]);
 }
 
 export function cellInspectorPlacement({
@@ -259,7 +298,7 @@ function SelectedCellScanField({
  * flips around viewport edges, and stays outside both fixed HUD rails.
  */
 export default function CellInspectionOverlay(props: CellDetailPanelProps) {
-  const { cell, onInspectionFieldChange } = props;
+  const { cell, onClose, onInspectionFieldChange } = props;
   const anchorRef = useRef<THREE.Group>(null);
   const cardRef = useRef<HTMLDivElement>(null);
   const leaderRef = useRef<HTMLSpanElement>(null);
@@ -277,6 +316,7 @@ export default function CellInspectionOverlay(props: CellDetailPanelProps) {
     setFocusField(field);
     onInspectionFieldChange?.(field);
   }, [onInspectionFieldChange]);
+  useCellInspectionDismiss(cardRef, onClose);
 
   useEffect(() => {
     const card = cardRef.current;
@@ -369,7 +409,10 @@ export default function CellInspectionOverlay(props: CellDetailPanelProps) {
         <div
           ref={cardRef}
           data-cell-inspection-overlay
+          data-cell-inspection-dismiss-boundary="true"
           data-cell-id={cell.id}
+          role="region"
+          aria-label={`Cell ${cell.id} details`}
           style={{
             position: 'absolute',
             opacity: 0,

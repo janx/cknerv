@@ -130,6 +130,8 @@ describe('CellDetailPanel', () => {
     expect((container.querySelector('[data-cell-detail-readable-scale]') as HTMLElement).style.zoom).toBe('1.2');
     expect(t).toContain('CELL SCAN');
     expect(t).toContain('DRAG TO ORBIT');
+    expect(t).toContain('A-LATTICE');
+    expect(t).not.toContain('结构扫描');
     expect(t).not.toContain('流光标本扫描');
     expect(container.querySelector('[role="tablist"]')).toBeNull();
     expect(container.querySelector('[data-cell-detail-module="anatomy"]')?.hasAttribute('hidden')).toBe(false);
@@ -158,7 +160,7 @@ describe('CellDetailPanel', () => {
     expect(text).not.toMatch(/ƒ\d|\d+ paths|\d+ knots|\d\.\d{2}×/);
   });
 
-  it('keeps scan, lineage, and optional context in one direct reading field', () => {
+  it('keeps scan and lineage in one direct reading field', () => {
     const { container } = render(
       <CellDetailPanel cell={base} onClose={() => {}} />,
     );
@@ -168,6 +170,42 @@ describe('CellDetailPanel', () => {
     expect(container.querySelector('[data-cell-detail-module="anatomy"]')).not.toBeNull();
     expect(container.querySelector('[data-cell-detail-module="lineage"]')).not.toBeNull();
     expect(container.querySelector('[data-cell-detail-module="context"]')).toBeNull();
+  });
+
+  it('uses the bounded stacked constellation for a narrow enhanced placement', () => {
+    const { container } = render(
+      <CellDetailPanel
+        cell={base}
+        layoutSide="below"
+        semanticSource={{
+          source: 'ckbadger',
+          status: 'syncing',
+          capabilities: ['cell_detail'],
+          lag_blocks: 2,
+        }}
+        semanticPhase="loading"
+        onClose={() => {}}
+      />,
+    );
+    const root = container.firstElementChild as HTMLElement;
+    const scanWindow = container.querySelector(
+      '[data-cell-detail-module="anatomy"]',
+    ) as HTMLElement;
+    const memory = container.querySelector(
+      '[data-cell-detail-module="lineage"]',
+    ) as HTMLElement;
+
+    expect(root.style.height).toBe('664px');
+    expect(scanWindow.style.width).toBe('47%');
+    expect(scanWindow.style.height).toBe('364px');
+    expect(memory.style.top).toBe('452px');
+    expect(memory.style.width).toBe('100%');
+    expect(container.querySelector('[data-cell-semantics-placement="scan"]'))
+      .not.toBeNull();
+    expect(container.querySelector('[data-cell-detail-module="context"]'))
+      .toBeNull();
+    expect(container.querySelector('[data-cell-scan-drag-affordance]')
+      ?.textContent).toBe('ORBIT ↔');
   });
 
   it('adds indexed semantics only when the optional source is present', () => {
@@ -320,14 +358,19 @@ describe('CellDetailPanel', () => {
     );
 
     const readout = container.querySelector('[data-cell-semantics-phase="ready"]');
+    const scanWindow = container.querySelector('[data-cell-detail-module="anatomy"]');
     const memory = container.querySelector('[data-consensus-memory]') as HTMLElement;
     expect(readout).not.toBeNull();
-    expect(readout?.getAttribute('data-cell-semantics-density')).toBe('spatial');
+    expect(readout?.getAttribute('data-cell-semantics-density')).toBe('scan');
     expect(readout?.getAttribute('data-cell-semantics-policy')).toBe('essential');
-    expect((readout?.querySelector('[data-cell-context-facts]') as HTMLElement).style.gridTemplateColumns).toContain('repeat(2');
-    expect((readout?.querySelector('[data-cell-context-fact="owner"]') as HTMLElement).style.gridColumn).toBe('1 / -1');
+    expect(readout?.getAttribute('data-cell-semantics-placement')).toBe('scan');
+    expect(readout?.querySelector('[data-cell-context-presentation="scan"]')).not.toBeNull();
+    expect(scanWindow?.contains(readout)).toBe(true);
+    expect((readout?.querySelector('[data-cell-context-facts]') as HTMLElement).style.gridTemplateColumns).toContain('1.35fr');
+    expect((readout?.querySelector('[data-cell-context-fact="owner"]') as HTMLElement).style.gridColumn).toBe('');
     expect(readout?.querySelector('[data-cell-context-header="true"]')).not.toBeNull();
     expect(readout?.querySelector('[data-cell-context-scripts="true"]')).not.toBeNull();
+    expect((readout?.querySelector('[data-cell-context-scripts="true"]') as HTMLElement).style.gridTemplateColumns).toContain('repeat(2');
     expect(readout?.querySelector('[data-cell-context-script-evidence]')?.textContent)
       .toContain('CODE·TYPE');
     expect(readout?.querySelector('[data-transaction-semantics-summary]')).toBeNull();
@@ -335,15 +378,17 @@ describe('CellDetailPanel', () => {
     expect(container.querySelector('[data-cell-portrait-frame]')).not.toBeNull();
     expect((container.querySelector('[data-cell-portrait-frame]') as HTMLElement).style.width)
       .toBe('280px');
-    expect(container.querySelectorAll('[data-cell-inspection-satellite]')).toHaveLength(5);
+    expect(container.querySelectorAll('[data-cell-inspection-satellite]')).toHaveLength(4);
     expect(memory.dataset.consensusMemoryDensity).toBe('spatial');
-    expect(container.querySelector('[data-cell-detail-module="context"]')?.hasAttribute('hidden')).toBe(false);
-    expect((container.querySelector('[data-cell-detail-module="context"]') as HTMLElement).style.overflow)
-      .toBe('hidden');
+    expect(container.querySelector('[data-cell-detail-module="context"]')).toBeNull();
     expect(container.querySelector('[data-cell-detail-module="anatomy"]')?.hasAttribute('hidden')).toBe(false);
+    expect((scanWindow as HTMLElement).style.width).toBe('500px');
+    expect((scanWindow as HTMLElement).style.height).toBe('280px');
     expect(container.querySelector('[data-cell-detail-module="lineage"]')?.hasAttribute('hidden')).toBe(false);
+    expect((container.querySelector('[data-cell-detail-module="lineage"]') as HTMLElement).style.width).toBe('560px');
     expect((container.firstElementChild as HTMLElement).style.background).toBe('');
-    expect(readout?.textContent).toContain('CELL CONTEXT · READY · 1 BLOCK LAG');
+    expect(readout?.textContent).toContain('INDEX LAYER · READY · 1 BLOCK LAG');
+    expect(readout?.textContent).not.toContain('CELL CONTEXT');
     expect(readout?.textContent).not.toContain('INDEXED');
     expect(readout?.textContent).not.toContain('IDX');
     expect(readout?.textContent).not.toContain('CKBADGER');
@@ -355,7 +400,7 @@ describe('CellDetailPanel', () => {
     expect(readout?.textContent).toContain('0xabcd');
     expect(readout?.textContent).toContain('NTT · Nervos Test Token · xUDT');
     expect(readout?.textContent).toContain('123.45 NTT');
-    expect(readout?.textContent).toContain('100 bytes occupied');
+    expect(readout?.textContent).toContain('OCCUPIED100 B');
     expect(readout?.textContent).toContain('DAO POSITION');
     expect(readout?.textContent).toContain('DEPOSIT');
     expect(readout?.textContent).toContain('1.25 CKB');
