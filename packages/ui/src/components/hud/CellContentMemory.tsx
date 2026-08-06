@@ -316,7 +316,9 @@ export default function CellContentMemory({
     && selectedSegment.start_byte >= model.observedBytes;
   const tone = analysisTone(source);
   const state = analysisState({ phase, record, source });
-  const byteOrigin = model.origin === 'indexed' ? 'INDEX BYTES' : 'DIRECT BYTES';
+  const contentStatus = enhanced
+    ? `INDEX ANALYSIS · ${state}${model.origin === 'direct' ? ' · DIRECT BYTES' : ''}`
+    : 'DIRECT NODE · RAW';
   const statusMessage = phase === 'loading'
     ? 'RESOLVING INDEXED CONTENT ANALYSIS…'
     : phase === 'waiting'
@@ -331,35 +333,22 @@ export default function CellContentMemory({
 
   return (
     <section
-      aria-label="Cell content memory"
+      aria-label="Consensus memory content"
       data-cell-content-memory="true"
       data-cell-content-memory-mode={enhanced ? 'indexed' : 'direct'}
       data-cell-content-byte-origin={model.origin}
       data-cell-content-complete={model.complete ? 'true' : 'false'}
       style={{
         minWidth: 0,
-        marginTop: 4,
-        padding: '4px 6px 5px',
-        borderLeft: `1px solid ${rgba(enhanced ? tone : HUD_COLORS.cyanWire, 0.5)}`,
-        borderTop: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.13)}`,
-        background: `linear-gradient(100deg,${rgba(enhanced ? tone : HUD_COLORS.cyanWire, 0.065)},rgba(2,6,16,.28) 62%,transparent)`,
+        marginTop: 6,
         fontFamily: HUD_FONTS.mono,
       }}
     >
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, minWidth: 0 }}>
-        <span style={{ color: '#D9FAFF', fontFamily: HUD_FONTS.tech, fontSize: 7.4, fontWeight: 700, letterSpacing: 1.05, whiteSpace: 'nowrap' }}>
-          CELL CONTENT
-        </span>
-        <span style={{ marginLeft: 'auto', color: enhanced ? tone : HUD_COLORS.dim, fontSize: 6.3, letterSpacing: 0.62, whiteSpace: 'nowrap' }}>
-          {enhanced ? `INDEX ANALYSIS · ${state}` : 'DIRECT NODE · RAW'}
-        </span>
-      </div>
-
-      <div style={{ display: 'grid', gridTemplateColumns: wide && enhanced ? 'minmax(0,1.02fr) minmax(0,.98fr)' : 'minmax(0,1fr)', gap: wide && enhanced ? 8 : 3, minWidth: 0, marginTop: 3 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: wide && enhanced ? 'minmax(0,1.02fr) minmax(0,.98fr)' : 'minmax(0,1fr)', gap: wide && enhanced ? 8 : 3, minWidth: 0 }}>
         <div data-cell-content-raw="true" style={{ minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 5 }}>
-            <span style={{ color: model.origin === 'indexed' ? tone : HUD_COLORS.cyanWire, fontSize: 6.2, letterSpacing: 0.52 }}>
-              {byteOrigin}
+            <span style={{ minWidth: 0, color: model.origin === 'indexed' ? tone : HUD_COLORS.cyanWire, fontSize: 6.2, letterSpacing: 0.52, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {contentStatus}
             </span>
             {bytePageCount > 1 ? (
               <span data-cell-content-byte-window={`${previewStart}:${previewEnd}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 3, color: HUD_COLORS.dim, fontSize: 6.1 }}>

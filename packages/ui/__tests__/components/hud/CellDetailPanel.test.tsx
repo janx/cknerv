@@ -103,7 +103,6 @@ describe('CellDetailPanel', () => {
     expect(t).toContain('LIVE');           // STATE
     expect(t).toContain('3h 12m');         // AGE
     expect(t).toContain('#16204800');      // COMMIT / block anchor
-    expect(t).toContain('#2');             // immutable address index
     expect(t).toContain('11 B');           // DATA — 22 hex chars = 11 bytes
     expect(t).not.toContain('ƒ');          // portrait frequencies stay visual-only
     expect(t).not.toContain('paths');      // portrait strands stay visual-only
@@ -113,13 +112,10 @@ describe('CellDetailPanel', () => {
     expect(t).toContain('共识细胞');       // CJK title stays (no re-subset)
     expect(t).toContain('CONSENSUS MEMORY');
     expect(t).toContain('共识记忆');
-    expect(t).toContain('CELL CONTENT');
+    expect(t).not.toContain('CELL CONTENT');
     expect(t).not.toContain('细胞内容');
     expect(t).toContain('DIRECT NODE · RAW');
     expect(t).toContain('DEADBEEFCAFE1234567890');
-    expect(t).toContain('ADDRESS');
-    expect(t).toContain('CONTENT');
-    expect(t).toContain('ANCHOR');
     expect(t).not.toContain('WRITE OBSERVED');
     expect((container.firstElementChild as HTMLElement).style.animation)
       .toContain('cknerv-cell-consensus-enter');
@@ -141,10 +137,19 @@ describe('CellDetailPanel', () => {
     expect(container.querySelector('[data-cell-detail-module="anatomy"]')?.hasAttribute('hidden')).toBe(false);
     expect(container.querySelector('[data-cell-detail-module="lineage"]')?.hasAttribute('hidden')).toBe(false);
     expect((container.querySelector('[data-consensus-memory]') as HTMLElement).dataset.consensusMemoryDensity).toBe('spatial');
-    expect(container.querySelector('[data-cell-content-memory-mode="direct"]')).not.toBeNull();
+    const memoryContent = container.querySelector(
+      '[data-cell-content-memory-mode="direct"]',
+    ) as HTMLElement;
+    expect(memoryContent).not.toBeNull();
+    expect(memoryContent.getAttribute('aria-label')).toBe('Consensus memory content');
+    expect(memoryContent.style.borderLeft).toBe('');
+    expect(memoryContent.style.background).toBe('');
+    expect(container.querySelector('[data-consensus-memory-identity-grid]')).toBeNull();
     expect(container.querySelector('[data-cell-content-byte-origin="direct"]')).not.toBeNull();
     expect(container.querySelectorAll('[data-cell-content-byte]')).toHaveLength(11);
-    expect((container.firstElementChild as HTMLElement).style.height).toBe('640px');
+    expect((container.firstElementChild as HTMLElement).style.height).toBe('612px');
+    expect((container.querySelector('[data-cell-detail-module="lineage"]') as HTMLElement)
+      .style.height).toBe('232px');
     expect((container.querySelector('[data-cell-scan-shard="lineage"]') as HTMLElement).style.overflow)
       .toBe('hidden');
   });
@@ -451,9 +456,9 @@ describe('CellDetailPanel', () => {
       .toBe('280px');
     expect(container.querySelectorAll('[data-cell-inspection-satellite]')).toHaveLength(4);
     expect(memory.dataset.consensusMemoryDensity).toBe('spatial');
-    expect((container.firstElementChild as HTMLElement).style.height).toBe('788px');
+    expect((container.firstElementChild as HTMLElement).style.height).toBe('724px');
     expect((container.querySelector('[data-cell-detail-module="lineage"]') as HTMLElement)
-      .style.height).toBe('400px');
+      .style.height).toBe('336px');
     expect(contentMemory?.getAttribute('data-cell-content-memory-mode')).toBe('indexed');
     expect(contentMemory?.getAttribute('data-cell-content-byte-origin')).toBe('indexed');
     expect(contentMemory?.getAttribute('data-cell-content-complete')).toBe('true');
@@ -533,13 +538,13 @@ describe('CellDetailPanel', () => {
     performanceNow.mockRestore();
   });
 
-  it('reduced motion freezes decoding: mapped identity + stable fingerprint, all rows shown', () => {
+  it('reduced motion freezes decoding while keeping all scan facts visible', () => {
     // stub matchMedia so useReducedMotion() reports reduced — deterministic path
     vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener: () => {}, removeEventListener: () => {} }));
     const { container } = render(<CellDetailPanel cell={base} onClose={() => {}} />);
     const t = container.textContent ?? '';
     expect(t).toContain('CONTENT IDENTITY MAPPED');
-    expect(t).toContain('1111111111111111 · 1111111111');
+    expect(t).not.toContain('1111111111111111 · 1111111111');
     expect(t).toContain('Omnilock');                              // decoded rows still present
     expect(t).toContain('11 B');
     expect((container.firstElementChild as HTMLElement).style.animation).toBe('');
@@ -583,10 +588,10 @@ describe('CellDetailPanel', () => {
     expect(onIdentityProofRead).toHaveBeenCalledWith('content', base.id, true);
   });
 
-  it('maps memory facets back onto the matching A layers', () => {
+  it('keeps identity proof controls in Cell Scan instead of repeating them in memory', () => {
     vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener: () => {}, removeEventListener: () => {} }));
     const onInspectionFieldChange = vi.fn();
-    const { getByRole } = render(
+    const { container } = render(
       <CellDetailPanel
         cell={base}
         onInspectionFieldChange={onInspectionFieldChange}
@@ -594,11 +599,15 @@ describe('CellDetailPanel', () => {
       />,
     );
 
-    fireEvent.click(getByRole('button', { name: 'inspect content' }));
+    const memory = container.querySelector('[data-consensus-memory]')!;
+    expect(memory.querySelector('[data-consensus-memory-identity-grid]')).toBeNull();
+    expect(memory.querySelector('[data-memory-identity-proof]')).toBeNull();
+
+    fireEvent.click(container.querySelector('[data-cell-detail-field="data"]')!);
     expect(onInspectionFieldChange).toHaveBeenLastCalledWith('data');
-    fireEvent.click(getByRole('button', { name: 'inspect anchor' }));
+    fireEvent.click(container.querySelector('[data-cell-detail-field="born"]')!);
     expect(onInspectionFieldChange).toHaveBeenLastCalledWith('born');
-    fireEvent.click(getByRole('button', { name: 'inspect address' }));
+    fireEvent.click(container.querySelector('[data-cell-detail-field="state"]')!);
     expect(onInspectionFieldChange).toHaveBeenLastCalledWith('state');
   });
 
@@ -609,7 +618,7 @@ describe('CellDetailPanel', () => {
       removeEventListener: () => {},
     }));
     const onIdentityProofRead = vi.fn();
-    const { getByRole } = render(
+    const { container } = render(
       <CellDetailPanel
         cell={base}
         onIdentityProofRead={onIdentityProofRead}
@@ -617,8 +626,10 @@ describe('CellDetailPanel', () => {
       />,
     );
 
-    for (const kind of ['address', 'content', 'anchor'] as const) {
-      fireEvent.click(getByRole('button', { name: `inspect ${kind}` }));
+    for (const field of ['state', 'data', 'born'] as const) {
+      fireEvent.click(container.querySelector(
+        `[data-cell-detail-field="${field}"]`,
+      )!);
     }
     expect(onIdentityProofRead.mock.calls).toEqual([
       ['address', base.id, true],
@@ -667,10 +678,8 @@ describe('CellDetailPanel', () => {
     expect((recall as HTMLButtonElement).disabled).toBe(true);
     expect(container.querySelector('[data-memory-identity-binding="true"]')
       ?.getAttribute('data-memory-identity-count')).toBe('1');
-    expect(container.querySelector('[data-memory-identity-proof="address"]')
-      ?.getAttribute('data-memory-identity-proof-state')).toBe('resolved');
-    expect(container.querySelector('[data-memory-identity-proof="content"]')
-      ?.getAttribute('data-memory-identity-proof-state')).toBe('pending');
+    expect(container.querySelector('[data-consensus-memory-identity-grid]')).toBeNull();
+    expect(container.querySelector('[data-memory-identity-proof]')).toBeNull();
     expect(container.textContent).toContain('VERIFY IDENTITY');
 
     rerender(

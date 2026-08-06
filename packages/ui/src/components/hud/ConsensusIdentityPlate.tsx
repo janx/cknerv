@@ -6,7 +6,6 @@ import type {
 } from '@cknerv/types';
 import type { CellConsensusIdentity } from '../../derives/cellConsensusIdentity.derive';
 import type { CellCausalLens } from '../../derives/cellCausalLens.derive';
-import type { ConsensusBraidField } from '../../derives/consensusBraid.derive';
 import {
   CELL_IDENTITY_PROOF_KINDS,
   cellIdentityProofBindingComplete,
@@ -143,15 +142,6 @@ const MEMORY_READ_STAGES: ReadonlyArray<{
 
 function fingerprintBody(hash: string): string {
   return hash.replace(/^0x/i, '').toUpperCase();
-}
-
-/** Compact but stable readout: the full value remains available as a title. */
-function fingerprintReadout(hash: string, reveal: number): string {
-  const body = fingerprintBody(hash);
-  const progress = Math.max(0, Math.min(1, reveal));
-  if (progress >= 1) return `${body.slice(0, 16)} · ${body.slice(-10)}`;
-  const visible = Math.floor(progress * 16);
-  return `${body.slice(0, visible)}${'·'.repeat(16 - visible)} · ${'·'.repeat(10)}`;
 }
 
 function routeDurationReadout(durationMs: number): string {
@@ -863,75 +853,6 @@ function EvidenceRouteLedger({
   );
 }
 
-function memoryRow({
-  label,
-  value,
-  color,
-  title,
-  active,
-  onActivate,
-  compact = false,
-  proofKind,
-  proofResolved = false,
-}: {
-  label: string;
-  value: string;
-  color: string;
-  title?: string;
-  active?: boolean;
-  onActivate?: () => void;
-  compact?: boolean;
-  proofKind?: CellIdentityProofKind;
-  proofResolved?: boolean;
-}) {
-  const proof = proofKind ? IDENTITY_PROOF_META[proofKind] : null;
-  const content = (
-    <>
-      <span style={{ fontFamily: HUD_FONTS.tech, fontSize: compact ? 7.2 : 7.8, fontWeight: 500, letterSpacing: proof ? 0.55 : compact ? 1.1 : 1.35, color: proof && proofResolved ? proof.color : HUD_COLORS.dim, whiteSpace: 'nowrap' }}>
-        {proof ? `${proofResolved ? '◆' : '◇'} ${proof.code} · ${label}` : label}
-      </span>
-      <span title={title} style={{ minWidth: 0, textAlign: 'right', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis', fontFamily: HUD_FONTS.mono, fontSize: compact ? 8.8 : 9.5, letterSpacing: 0.3, color }}>
-        {value}
-      </span>
-    </>
-  );
-  const style: CSSProperties = {
-    display: 'grid',
-    gridTemplateColumns: proof ? '88px minmax(0,1fr)' : '58px minmax(0,1fr)',
-    alignItems: 'baseline',
-    width: '100%',
-    minHeight: compact ? 15 : 17,
-    margin: 0,
-    padding: 0,
-    border: 0,
-    borderRadius: 0,
-    background: active ? `${CYAN}12` : 'transparent',
-    boxShadow: active ? `inset 1px 0 0 ${CYAN}99` : undefined,
-    cursor: onActivate ? 'pointer' : 'default',
-    textAlign: 'left',
-  };
-  return onActivate ? (
-    <button
-      type="button"
-      aria-label={`inspect ${label.toLowerCase()}`}
-      data-memory-identity-proof={proofKind}
-      data-memory-identity-proof-state={proof ? proofResolved ? 'resolved' : 'pending' : undefined}
-      onClick={onActivate}
-      style={style}
-    >
-      {content}
-    </button>
-  ) : (
-    <div
-      data-memory-identity-proof={proofKind}
-      data-memory-identity-proof-state={proof ? proofResolved ? 'resolved' : 'pending' : undefined}
-      style={style}
-    >
-      {content}
-    </div>
-  );
-}
-
 function IdentityBraid({
   identity,
   reducedMotion,
@@ -1484,11 +1405,7 @@ export default function ConsensusIdentityPlate({
   statusText,
   statusColor,
   reducedMotion,
-  focusedField,
   identityProofBinding = null,
-  onInspectAddress,
-  onInspectContent,
-  onInspectAnchor,
   onRecallWrite,
   recallEnabled = true,
   traceSource = 'none',
@@ -1519,11 +1436,7 @@ export default function ConsensusIdentityPlate({
   statusText: string;
   statusColor: string;
   reducedMotion: boolean;
-  focusedField?: ConsensusBraidField | null;
   identityProofBinding?: CellIdentityProofBinding | null;
-  onInspectAddress?: () => void;
-  onInspectContent?: () => void;
-  onInspectAnchor?: () => void;
   onRecallWrite?: () => void;
   recallEnabled?: boolean;
   traceSource?: ConsensusMemoryTraceSource;
@@ -1545,7 +1458,7 @@ export default function ConsensusIdentityPlate({
   compact?: boolean;
   /** Transparent scan-field treatment instead of a self-contained HUD card. */
   spatial?: boolean;
-  /** Places indexed content analysis beside identity proof on wide layouts. */
+  /** Places raw bytes beside indexed analysis on wide layouts. */
   contentWide?: boolean;
 }) {
   const observed = identity.observedWrite;
@@ -1555,14 +1468,9 @@ export default function ConsensusIdentityPlate({
   );
   const identityProofCount =
     selectedIdentityProofBinding?.resolvedKinds.length ?? 0;
-  const proofResolved = (kind: CellIdentityProofKind): boolean => (
-    selectedIdentityProofBinding?.resolvedKinds.includes(kind) ?? false
-  );
   const lifecycleColor = identity.lifecycle === 'live'
     ? HUD_COLORS.nominal
     : HUD_COLORS.caution;
-  const address = formatOutpoint(identity.txHash, identity.outPointIndex);
-  const fingerprint = fingerprintReadout(identity.contentHash, reveal);
   const spatialTraceState = !traceSelected
     ? !identityProofComplete
       ? 'VERIFY IDENTITY'
@@ -1590,6 +1498,14 @@ export default function ConsensusIdentityPlate({
     <div
       data-consensus-memory="true"
       data-consensus-memory-density={spatial ? 'spatial' : compact ? 'compact' : 'standard'}
+      data-memory-identity-binding={spatial ? 'true' : undefined}
+      data-memory-identity-phase={spatial
+        ? selectedIdentityProofBinding?.phase ?? 'collecting'
+        : undefined}
+      data-memory-identity-count={spatial ? identityProofCount : undefined}
+      data-memory-identity-complete={spatial
+        ? identityProofComplete ? 'true' : 'false'
+        : undefined}
       style={shell}
     >
       <span style={{ position: 'absolute', left: 0, top: 0, width: 8, height: 8, borderLeft: `1px solid ${CYAN}99`, borderTop: `1px solid ${CYAN}99` }} />
@@ -1619,13 +1535,7 @@ export default function ConsensusIdentityPlate({
 
       <div
         data-consensus-memory-primary="true"
-        style={spatial && contentWide ? {
-          display: 'grid',
-          gridTemplateColumns: 'minmax(0,1.35fr) minmax(0,.65fr)',
-          alignItems: 'start',
-          gap: 8,
-          minWidth: 0,
-        } : undefined}
+        style={{ minWidth: 0 }}
       >
         {spatial ? (
           <CellContentMemory
@@ -1637,59 +1547,6 @@ export default function ConsensusIdentityPlate({
             wide={contentWide}
           />
         ) : null}
-        <div
-          data-consensus-memory-identity-grid="true"
-          data-memory-identity-binding={spatial ? 'true' : undefined}
-          data-memory-identity-phase={spatial
-            ? selectedIdentityProofBinding?.phase ?? 'collecting'
-            : undefined}
-          data-memory-identity-count={spatial ? identityProofCount : undefined}
-          data-memory-identity-complete={spatial
-            ? identityProofComplete ? 'true' : 'false'
-            : undefined}
-          style={{
-            display: 'grid',
-            gap: 2,
-            minWidth: 0,
-            marginTop: 4,
-            padding: '4px 6px 5px',
-            borderLeft: `1px solid ${CYAN}28`,
-            background: `linear-gradient(90deg,${CYAN}08,transparent 78%)`,
-          }}
-        >
-          {memoryRow({
-            label: 'ADDRESS',
-            value: address,
-            color: HUD_COLORS.ink,
-            title: `${identity.txHash}#${identity.outPointIndex}`,
-            active: focusedField === 'state',
-            onActivate: onInspectAddress,
-            compact,
-            proofKind: spatial ? 'address' : undefined,
-            proofResolved: proofResolved('address'),
-          })}
-          {memoryRow({
-            label: 'CONTENT',
-            value: fingerprint,
-            color: CYAN,
-            title: identity.contentHash,
-            active: focusedField === 'data',
-            onActivate: onInspectContent,
-            compact,
-            proofKind: spatial ? 'content' : undefined,
-            proofResolved: proofResolved('content'),
-          })}
-          {memoryRow({
-            label: 'ANCHOR',
-            value: `BLOCK #${identity.anchorBlock}`,
-            color: '#C9F8FF',
-            active: focusedField === 'born',
-            onActivate: onInspectAnchor,
-            compact,
-            proofKind: spatial ? 'anchor' : undefined,
-            proofResolved: proofResolved('anchor'),
-          })}
-        </div>
       </div>
 
       {causalLens ? (

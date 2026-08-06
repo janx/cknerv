@@ -375,12 +375,12 @@ export default function CellDetailPanel({
   const bottomTop = enhancedDetail
     ? verticalLayout ? 452 : 388
     : verticalLayout ? 288 : 380;
-  // Indexed content adds deterministic decode, heuristic, and role rows to the
-  // no-scroll memory satellite. Keep enough bounded space for those rows plus
-  // the narrower recall/trace state instead of clipping them at the old height.
+  // The no-scroll memory satellite is content-first. These bounds include the
+  // richest indexed decode, recall control, and causal-navigation row without
+  // retaining space for the removed duplicate identity/card frames.
   const bottomHeight = enhancedDetail
-    ? verticalLayout ? 232 : 400
-    : verticalLayout ? 212 : 260;
+    ? verticalLayout ? 232 : 336
+    : verticalLayout ? 180 : 232;
   const rootHeight = bottomTop + bottomHeight;
   const identityLeft = enhancedDetail ? 180 : 140;
   const identityWidth = rootWidth - identityLeft;
@@ -638,11 +638,7 @@ export default function CellDetailPanel({
             statusText={statusText}
             statusColor={statusColor}
             reducedMotion={reduced}
-            focusedField={selectedField}
             identityProofBinding={selectedIdentityProofBinding}
-            onInspectAddress={scan.classified ? () => activateField('state') : undefined}
-            onInspectContent={scan.classified ? () => activateField('data') : undefined}
-            onInspectAnchor={scan.classified ? () => activateField('born') : undefined}
             onRecallWrite={identity.observedWrite && onTraceWrite
               ? () => onTraceWrite(identity.observedWrite!.seq)
               : undefined}
