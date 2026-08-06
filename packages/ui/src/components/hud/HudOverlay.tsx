@@ -60,7 +60,6 @@ const MESH_RAIL_STYLE: CSSProperties = { position: 'absolute', top: 42, right: 1
 const LEFT_PANEL_GAP_PX = 12;
 const CHAIN_PANEL_WIDTH_PX = 340;
 const DAO_PANEL_WIDTH_PX = 300;
-const PULSE_ONLY_WIDTH_PX = 430;
 // Left HUD layout: the upper information cluster may scroll, while PULSE uses an
 // auto margin as a true bottom-left anchor. The two regions share one bounded
 // flex column, so an unusually tall CKB/DAO readout can never overlap ECG·04.
@@ -139,12 +138,10 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats, cellCo
   const daoPanelAvailable = canRenderDaoStateReadout(enrichmentSource, daoState);
   const chainPanelVisible = panelVisibility.chain;
   const daoPanelVisible = panelVisibility.dao && daoPanelAvailable;
-  const upperPanelWidthPx = (chainPanelVisible ? CHAIN_PANEL_WIDTH_PX : 0)
-    + (daoPanelVisible ? DAO_PANEL_WIDTH_PX : 0)
-    + (chainPanelVisible && daoPanelVisible ? LEFT_PANEL_GAP_PX : 0);
-  const pulsePanelWidth = upperPanelWidthPx > 0
-    ? `min(${upperPanelWidthPx}px, calc(100vw - ${chainPanelVisible && daoPanelVisible ? 28 : 58}px))`
-    : `min(${PULSE_ONLY_WIDTH_PX}px, calc(100vw - 58px))`;
+  // ECG·04 is the lower companion to CKB·01, not a footer for the whole
+  // CKB + DAO cluster. Keep their outer edges aligned even when DAO·05 is
+  // visible or CKB·01 is temporarily hidden from the panel menu.
+  const pulsePanelWidth = `min(${CHAIN_PANEL_WIDTH_PX}px, calc(100vw - 58px))`;
   const panelControls: HudPanelControl[] = [
     {
       id: 'chain',
