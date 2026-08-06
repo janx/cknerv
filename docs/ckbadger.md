@@ -196,7 +196,10 @@ spaced satellites rather than one continuous panel. Every satellite follows the
 same projected point, flips as a constellation around viewport edges, and stays
 connected to the Cell. Ambient HUD rails dim while the scan is active so the
 Cell remains the single visual focus. The selected-Cell satellites are
-deliberately no-scroll summaries. **CONSENSUS MEMORY** is content-first. Without
+deliberately no-scroll summaries. The Cell Scan and portrait own the exact
+WHERE / WHAT / WHEN identity proofs; **CONSENSUS MEMORY** does not repeat their
+outpoint, content-hash, and birth-anchor rows. It presents the remembered Cell
+content directly, without a nested **CELL CONTENT** frame. Without
 an optional source it renders the direct CKB node's real data prefix as bytes
 and conservative printable ASCII, including exact observed size or explicit
 truncation; it does not invent local content guesses. With validated indexed
@@ -209,9 +212,9 @@ roles, and resolved asset value remain independently labeled. If an indexed
 record has analysis but no raw payload, the direct-node prefix stays visible
 and is explicitly labeled as such.
 
-The same memory satellite retains address, content identity, birth anchor, and
-a one-glance causal provenance line; activating recall temporarily opens
-**MEMORY TRACE** as a separate evidence satellite. The scan's **INDEX LAYER**
+The same memory satellite retains a one-glance causal provenance line;
+activating recall temporarily opens **MEMORY TRACE** as a separate evidence
+satellite. The scan's **INDEX LAYER**
 keeps owner, creation and proof anchors, resolved asset identity, lock/type
 script identity with code hash type and args, occupied-byte composition, and
 only the primary protocol facet. It does not duplicate content analysis or
