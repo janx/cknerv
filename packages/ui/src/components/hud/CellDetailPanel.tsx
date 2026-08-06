@@ -127,7 +127,7 @@ export interface CellDetailPanelProps {
   semanticTransactionPhase?: CellSemanticsPhase;
   semanticTransactionRecord?: TransactionSemanticRecord | null;
   semanticTransactionMessage?: string | null;
-  /** Mirrors a selected readout facet into the real scene Cell scan field. */
+  /** Mirrors a selected readout facet into the scene-to-detail connector. */
   onInspectionFieldChange?: (field: CellInspectionFacet | null) => void;
   /** Spatial fan direction selected by the scene-anchor placement solver. */
   layoutSide?: CellDetailLayoutSide;

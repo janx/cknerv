@@ -2,7 +2,6 @@ import {
   type RefObject,
   useCallback,
   useEffect,
-  useMemo,
   useRef,
   useState,
 } from 'react';
@@ -127,11 +126,12 @@ export function cellInspectorPlacement({
 
 function updateLeader(
   line: HTMLSpanElement,
-  dot: HTMLSpanElement,
+  anchor: HTMLSpanElement,
   placement: CellInspectorPlacement,
   panelWidth: number,
   panelHeight: number,
   gap: number,
+  accent: string,
 ): void {
   const horizontal = placement.side === 'left' || placement.side === 'right';
   line.style.width = horizontal ? `${gap}px` : '1px';
@@ -140,39 +140,43 @@ function updateLeader(
   line.style.right = '';
   line.style.top = '';
   line.style.bottom = '';
-  dot.style.left = '';
-  dot.style.right = '';
-  dot.style.top = '';
-  dot.style.bottom = '';
+  anchor.style.left = '';
+  anchor.style.right = '';
+  anchor.style.top = '';
+  anchor.style.bottom = '';
+  anchor.style.borderColor = accent;
+  anchor.style.boxShadow = `0 0 9px ${accent}99`;
+  line.style.boxShadow = `0 0 7px ${accent}55`;
+  line.dataset.cellInspectorConnectorDirection = placement.side;
 
   if (placement.side === 'right') {
-    line.style.background = `linear-gradient(90deg,${HUD_COLORS.orange}bb,${HUD_COLORS.cyanWire}24)`;
+    line.style.background = `linear-gradient(90deg,${accent}dd,${HUD_COLORS.cyanWire}38)`;
     const top = Math.max(15, Math.min(panelHeight - 15, -placement.y));
     line.style.left = `${-gap}px`;
     line.style.top = `${top}px`;
-    dot.style.left = `${-gap - 2}px`;
-    dot.style.top = `${top - 2}px`;
+    anchor.style.left = `${-gap - 4}px`;
+    anchor.style.top = `${top - 4}px`;
   } else if (placement.side === 'left') {
-    line.style.background = `linear-gradient(90deg,${HUD_COLORS.cyanWire}24,${HUD_COLORS.orange}bb)`;
+    line.style.background = `linear-gradient(90deg,${HUD_COLORS.cyanWire}38,${accent}dd)`;
     const top = Math.max(15, Math.min(panelHeight - 15, -placement.y));
     line.style.right = `${-gap}px`;
     line.style.top = `${top}px`;
-    dot.style.right = `${-gap - 2}px`;
-    dot.style.top = `${top - 2}px`;
+    anchor.style.right = `${-gap - 4}px`;
+    anchor.style.top = `${top - 4}px`;
   } else if (placement.side === 'below') {
-    line.style.background = `linear-gradient(180deg,${HUD_COLORS.orange}bb,${HUD_COLORS.cyanWire}24)`;
+    line.style.background = `linear-gradient(180deg,${accent}dd,${HUD_COLORS.cyanWire}38)`;
     const left = Math.max(15, Math.min(panelWidth - 15, -placement.x));
     line.style.left = `${left}px`;
     line.style.top = `${-gap}px`;
-    dot.style.left = `${left - 2}px`;
-    dot.style.top = `${-gap - 2}px`;
+    anchor.style.left = `${left - 4}px`;
+    anchor.style.top = `${-gap - 4}px`;
   } else {
-    line.style.background = `linear-gradient(180deg,${HUD_COLORS.cyanWire}24,${HUD_COLORS.orange}bb)`;
+    line.style.background = `linear-gradient(180deg,${HUD_COLORS.cyanWire}38,${accent}dd)`;
     const left = Math.max(15, Math.min(panelWidth - 15, -placement.x));
     line.style.left = `${left}px`;
     line.style.bottom = `${-gap}px`;
-    dot.style.left = `${left - 2}px`;
-    dot.style.bottom = `${-gap - 2}px`;
+    anchor.style.left = `${left - 4}px`;
+    anchor.style.bottom = `${-gap - 4}px`;
   }
 }
 
@@ -191,114 +195,14 @@ export function selectedCellScanAccent(
   return cell.asset_kind ? ASSET_COLORS[cell.asset_kind] : HUD_COLORS.cyanWire;
 }
 
-function scanBracketGeometry(): THREE.BufferGeometry {
-  const radius = 5.1;
-  const arm = 1.15;
-  const y = 2.4;
-  const positions: number[] = [];
-  for (const sy of [-1, 1]) {
-    for (const sx of [-1, 1]) {
-      const px = sx * radius;
-      const py = sy * y;
-      positions.push(
-        px, py, 0, px - sx * arm, py, 0,
-        px, py, 0, px, py - sy * arm, 0,
-      );
-    }
-  }
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-  return geometry;
-}
-
-/** Physical inspection apparatus around the canonical scene Cell. The real
- * Cell braid remains at the centre; rings, scan plane and acquisition brackets
- * are instrumentation, not a duplicate specimen or inferred chain state. */
-function SelectedCellScanField({
-  cell,
-  focusField,
-}: Pick<CellDetailPanelProps, 'cell'> & {
-  focusField: CellInspectionFacet | null;
-}) {
-  const reduced = useReducedMotion();
-  const rootRef = useRef<THREE.Group>(null);
-  const orbitRef = useRef<THREE.Mesh>(null);
-  const crossOrbitRef = useRef<THREE.Mesh>(null);
-  const scanPlaneRef = useRef<THREE.Mesh>(null);
-  const cageRef = useRef<THREE.Mesh>(null);
-  const mountedAtRef = useRef<number | null>(null);
-  const brackets = useMemo(scanBracketGeometry, []);
-  const accent = selectedCellScanAccent({ cell }, focusField);
-
-  useEffect(() => () => brackets.dispose(), [brackets]);
-
-  useFrame(({ clock }, delta) => {
-    const root = rootRef.current;
-    const orbit = orbitRef.current;
-    const crossOrbit = crossOrbitRef.current;
-    const scanPlane = scanPlaneRef.current;
-    const cage = cageRef.current;
-    if (!root || !orbit || !crossOrbit || !scanPlane || !cage) return;
-    const now = clock.elapsedTime;
-    mountedAtRef.current ??= now;
-    const entered = reduced
-      ? 1
-      : Math.min(1, (now - mountedAtRef.current) / 0.38);
-    const ease = 1 - (1 - entered) ** 3;
-    root.scale.setScalar(0.35 + ease * 0.65);
-    root.rotation.y += reduced ? 0 : delta * 0.16;
-    orbit.rotation.z += reduced ? 0 : delta * 0.38;
-    crossOrbit.rotation.x += reduced ? 0 : delta * 0.22;
-    cage.rotation.y -= reduced ? 0 : delta * 0.11;
-    scanPlane.position.y = reduced
-      ? 0
-      : -2.5 + ((now - mountedAtRef.current) * 1.55 % 5);
-    const planeMaterial = scanPlane.material as THREE.MeshBasicMaterial;
-    planeMaterial.opacity = reduced
-      ? 0.2
-      : 0.11 + Math.sin(now * 4.2) * 0.035;
-  });
-
-  return (
-    <group
-      ref={rootRef}
-      name={`cell-inspection-field-${cell.id}`}
-      renderOrder={18}
-    >
-      <mesh ref={orbitRef} rotation={[0.34, 0.18, 0]} renderOrder={18}>
-        <torusGeometry args={[4.25, 0.045, 5, 96]} />
-        <meshBasicMaterial color={accent} transparent opacity={0.58} depthWrite={false} depthTest={false} blending={THREE.AdditiveBlending} toneMapped={false} />
-      </mesh>
-      <mesh ref={crossOrbitRef} rotation={[Math.PI / 2.4, 0.52, 0]} renderOrder={18}>
-        <torusGeometry args={[3.25, 0.032, 4, 80]} />
-        <meshBasicMaterial color={HUD_COLORS.orange} transparent opacity={0.44} depthWrite={false} depthTest={false} blending={THREE.AdditiveBlending} toneMapped={false} />
-      </mesh>
-      <mesh ref={cageRef} renderOrder={17}>
-        <cylinderGeometry args={[3.75, 3.75, 5.2, 32, 3, true]} />
-        <meshBasicMaterial color={accent} transparent opacity={0.045} wireframe depthWrite={false} depthTest={false} blending={THREE.AdditiveBlending} toneMapped={false} />
-      </mesh>
-      <mesh ref={scanPlaneRef} rotation={[-Math.PI / 2, 0, 0]} renderOrder={19}>
-        <ringGeometry args={[0.45, 3.65, 64]} />
-        <meshBasicMaterial color={accent} transparent opacity={0.14} side={THREE.DoubleSide} depthWrite={false} depthTest={false} blending={THREE.AdditiveBlending} toneMapped={false} />
-      </mesh>
-      <lineSegments geometry={brackets} renderOrder={20}>
-        <lineBasicMaterial color={accent} transparent opacity={0.72} depthWrite={false} depthTest={false} blending={THREE.AdditiveBlending} toneMapped={false} />
-      </lineSegments>
-      <mesh renderOrder={20}>
-        <octahedronGeometry args={[0.62, 1]} />
-        <meshBasicMaterial color={accent} transparent opacity={0.2} wireframe depthWrite={false} depthTest={false} blending={THREE.AdditiveBlending} toneMapped={false} />
-      </mesh>
-    </group>
-  );
-}
-
 /**
- * Cell-centred inspection field. Its physical apparatus surrounds the real
- * scene Cell while the decoded evidence follows that same projected point,
- * flips around viewport edges, and stays outside both fixed HUD rails.
+ * Cell-centred detail constellation. The selected scene Cell remains visually
+ * intact; one screen-space connector makes it the explicit source of the
+ * decoded windows, flips around viewport edges, and avoids both fixed rails.
  */
 export default function CellInspectionOverlay(props: CellDetailPanelProps) {
   const { cell, onClose, onInspectionFieldChange } = props;
+  const reduced = useReducedMotion();
   const anchorRef = useRef<THREE.Group>(null);
   const cardRef = useRef<HTMLDivElement>(null);
   const leaderRef = useRef<HTMLSpanElement>(null);
@@ -310,6 +214,7 @@ export default function CellInspectionOverlay(props: CellDetailPanelProps) {
   const lastFrameKeyRef = useRef('');
   const projected = useRef(new THREE.Vector3());
   const [focusField, setFocusField] = useState<CellInspectionFacet | null>(null);
+  const accent = selectedCellScanAccent({ cell }, focusField);
   const layoutSideRef = useRef<CellDetailLayoutSide>('left');
   const [layoutSide, setLayoutSide] = useState<CellDetailLayoutSide>('left');
   const handleInspectionFieldChange = useCallback((field: CellInspectionFacet | null) => {
@@ -389,17 +294,25 @@ export default function CellInspectionOverlay(props: CellDetailPanelProps) {
       placement.y.toFixed(1),
       width,
       height,
+      accent,
     ].join(':');
     if (frameKey === lastFrameKeyRef.current) return;
     lastFrameKeyRef.current = frameKey;
     card.dataset.cellInspectorPlacement = placement.side;
     card.style.transform = `translate3d(${placement.x}px, ${placement.y}px, 0)`;
-    updateLeader(leader, leaderDot, placement, width, height, INSPECTOR_GAP_PX);
+    updateLeader(
+      leader,
+      leaderDot,
+      placement,
+      width,
+      height,
+      INSPECTOR_GAP_PX,
+      accent,
+    );
   });
 
   return (
     <group ref={anchorRef} position={cell.pos_seed}>
-      <SelectedCellScanField cell={cell} focusField={focusField} />
       <Html
         occlude={false}
         zIndexRange={[40, 40]}
@@ -426,6 +339,7 @@ export default function CellInspectionOverlay(props: CellDetailPanelProps) {
             ref={leaderRef}
             aria-hidden="true"
             data-cell-inspector-leader
+            data-cell-detail-connector
             style={{
               position: 'absolute',
               zIndex: 2,
@@ -437,15 +351,21 @@ export default function CellInspectionOverlay(props: CellDetailPanelProps) {
           <span
             ref={leaderDotRef}
             aria-hidden="true"
+            data-cell-detail-anchor
             style={{
               position: 'absolute',
               zIndex: 2,
-              width: 5,
-              height: 5,
+              width: 9,
+              height: 9,
+              boxSizing: 'border-box',
               borderRadius: '50%',
-              background: HUD_COLORS.orange,
+              border: `1px solid ${HUD_COLORS.orange}`,
+              background: 'rgba(1,5,13,.78)',
               boxShadow: `0 0 9px ${HUD_COLORS.orange}`,
               pointerEvents: 'none',
+              animation: reduced
+                ? undefined
+                : 'cknerv-cell-detail-anchor-enter 360ms cubic-bezier(.2,.82,.2,1) both',
             }}
           />
           <CellDetailPanel

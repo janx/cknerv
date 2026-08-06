@@ -4,7 +4,7 @@
 // canvas (CellGalaxy canopy) alongside the DOM `HudOverlay` (a sibling of
 // the canvas) that carries the always-on telemetry panels (blockchain /
 // network / cells stats) plus node / peer detail and the backfill/seeding
-// indicator. Cell inspection forms one holographic scan field around the
+// indicator. Cell inspection opens one detail constellation tethered to the
 // selected scene Cell. The leva knobs panel is hidden by default (toggle with
 // backtick) — see Tweaks.
 
@@ -283,7 +283,7 @@ export default function App({
   retainedCellRecordsRef.current = cellsCache.cells;
   // Cell and network ids retain separate state shapes because their scene
   // layers use different records. Selection itself is exclusive: entering a
-  // Cell scan clears node/peer detail, while choosing a network entity closes
+  // Cell detail clears node/peer detail, while choosing a network entity closes
   // the Cell field so the scene always has one primary inspection target.
   const [selectedCellId, setSelectedCellId] = useState<string | null>(null);
   const [selectedNetId, setSelectedNetId] = useState<string | null>(null);

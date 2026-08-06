@@ -1,11 +1,18 @@
 import { cleanup, renderHook } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Cell } from '@cknerv/types';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import {
   cellInspectorPlacement,
   selectedCellScanAccent,
   useCellInspectionDismiss,
 } from '../../src/components/CellInspectionOverlay';
+
+const INSPECTION_OVERLAY_SOURCE = readFileSync(resolve(
+  process.cwd(),
+  'src/components/CellInspectionOverlay.tsx',
+), 'utf8');
 
 afterEach(() => {
   cleanup();
@@ -89,7 +96,7 @@ describe('cellInspectorPlacement', () => {
     expect(above).toEqual({ side: 'above', x: -181, y: -342 });
   });
 
-  it('changes the physical scan field accent with the focused Cell facet', () => {
+  it('changes the detail connector accent with the focused Cell facet', () => {
     const resting = selectedCellScanAccent({ cell: selected }, null);
     const lock = selectedCellScanAccent({ cell: selected }, 'lock');
     const data = selectedCellScanAccent({ cell: selected }, 'data');
@@ -99,6 +106,18 @@ describe('cellInspectorPlacement', () => {
     expect(selectedCellScanAccent({
       cell: { ...selected, death_at_ms: 1 },
     }, 'state')).not.toBe(selectedCellScanAccent({ cell: selected }, 'state'));
+  });
+
+  it('tethers details without rebuilding a scanning apparatus around the Cell', () => {
+    expect(INSPECTION_OVERLAY_SOURCE).toContain('data-cell-detail-connector');
+    expect(INSPECTION_OVERLAY_SOURCE).toContain('data-cell-detail-anchor');
+    expect(INSPECTION_OVERLAY_SOURCE).toContain(
+      'cknerv-cell-detail-anchor-enter',
+    );
+    expect(INSPECTION_OVERLAY_SOURCE).not.toContain('scanPlaneRef');
+    expect(INSPECTION_OVERLAY_SOURCE).not.toContain('<torusGeometry');
+    expect(INSPECTION_OVERLAY_SOURCE).not.toContain('<cylinderGeometry');
+    expect(INSPECTION_OVERLAY_SOURCE).not.toContain('<octahedronGeometry');
   });
 });
 
