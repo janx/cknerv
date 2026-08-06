@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, Context};
@@ -11,13 +11,13 @@ use cknerv_core::{
     ActivityFeedItem, ActivityFeedRecord, AssetEcosystemCategory, AssetEcosystemLeader,
     AssetEcosystemRecord, CellSemanticRecord, ChainAnchor, CommonKnowledgeBreakdown,
     DaoStateRecord, EnrichmentSourceState, EnrichmentSourceStatus, ForkWatchDeepFork,
-    ForkWatchEventKind, ForkWatchRecord, ForkWatchReorg, NetworkAtlasBucket, NetworkAtlasRecord,
-    OutPoint, ProtocolEra, ProtocolEraRecord, SemanticAsset, SemanticAttribute,
-    SemanticCellContent, SemanticContentDecode, SemanticContentGuess, SemanticContentSegment,
-    SemanticFacet, SemanticScript, TransactionHorizonRecord, TransactionParticipantSemantic,
-    TransactionSemanticRecord,
+    ForkWatchEventKind, ForkWatchRecord, ForkWatchReorg, GalaxyCompositionRecord,
+    NetworkAtlasBucket, NetworkAtlasRecord, OutPoint, ProtocolEra, ProtocolEraRecord,
+    SemanticAsset, SemanticAttribute, SemanticCellContent, SemanticContentDecode,
+    SemanticContentGuess, SemanticContentSegment, SemanticFacet, SemanticScript,
+    TransactionHorizonRecord, TransactionParticipantSemantic, TransactionSemanticRecord,
 };
-use cknerv_server::{CanonicalContext, EnrichmentSource};
+use cknerv_server::{CanonicalContext, EnrichmentSource, GalaxyCompositionHydrator};
 
 use crate::dto::{
     AssetEcosystemResponse, BlockResponse, CellDataAnalysis, CellDetailResponse,
@@ -28,6 +28,7 @@ use crate::dto::{
     TransactionDetailResponse, TransactionLifecycleResponse, TransactionStatsPoint,
     TransactionStatsResponse,
 };
+use crate::galaxy_composition::discover as discover_galaxy_composition;
 
 const CAPABILITIES: &[&str] = &[
     "cell_detail",
@@ -64,6 +65,7 @@ const MAX_CELL_CONTENT_SEGMENTS: usize = 64;
 const MAX_CELL_CONTENT_GUESSES: usize = 16;
 const SHANNONS_PER_CKB: u128 = 100_000_000;
 const MAX_WIRE_SAFE_U64: u64 = 9_007_199_254_740_991;
+const MAX_GALAXY_COMPOSITION_TARGET: usize = 6_000;
 
 /// Read-only client for a direct or orchestrator-proxied ckbadger API base.
 pub struct CkbadgerEnrichmentSource {
@@ -71,6 +73,8 @@ pub struct CkbadgerEnrichmentSource {
     client: reqwest::Client,
     max_lag_blocks: u64,
     validated_anchor: RwLock<Option<ChainAnchor>>,
+    galaxy_hydrator: Option<Arc<dyn GalaxyCompositionHydrator>>,
+    galaxy_composition_target: usize,
 }
 
 impl CkbadgerEnrichmentSource {
@@ -88,11 +92,25 @@ impl CkbadgerEnrichmentSource {
             client,
             max_lag_blocks: DEFAULT_MAX_LAG_BLOCKS,
             validated_anchor: RwLock::new(None),
+            galaxy_hydrator: None,
+            galaxy_composition_target: 0,
         })
     }
 
     pub fn with_max_lag_blocks(mut self, max_lag_blocks: u64) -> Self {
         self.max_lag_blocks = max_lag_blocks;
+        self
+    }
+
+    /// Enable bounded indexed discovery backed by canonical CKB hydration.
+    /// The cap matches the browser's automatic visible-cell budget; larger
+    /// canonical reservoirs remain available to live pulse routing.
+    pub fn with_galaxy_composition_hydrator<H>(mut self, hydrator: H, target: usize) -> Self
+    where
+        H: GalaxyCompositionHydrator,
+    {
+        self.galaxy_hydrator = Some(Arc::new(hydrator));
+        self.galaxy_composition_target = target.min(MAX_GALAXY_COMPOSITION_TARGET);
         self
     }
 
@@ -482,10 +500,14 @@ impl EnrichmentSource for CkbadgerEnrichmentSource {
     }
 
     fn capabilities(&self) -> Vec<String> {
-        CAPABILITIES
+        let mut capabilities: Vec<_> = CAPABILITIES
             .iter()
             .map(|value| (*value).to_string())
-            .collect()
+            .collect();
+        if self.galaxy_hydrator.is_some() && self.galaxy_composition_target > 0 {
+            capabilities.push("galaxy_composition".to_string());
+        }
+        capabilities
     }
 
     async fn probe(&self, context: &CanonicalContext) -> EnrichmentSourceStatus {
@@ -1004,6 +1026,41 @@ impl EnrichmentSource for CkbadgerEnrichmentSource {
             .context("decode ckbadger bounded network nodes")?;
         let record = map_network_atlas(summary, nodes, anchor.clone())?;
         self.revalidate_anchor(&anchor, "network atlas").await?;
+        Ok(Some(record))
+    }
+
+    async fn enrich_galaxy_composition(
+        &self,
+        context: &CanonicalContext,
+    ) -> anyhow::Result<Option<GalaxyCompositionRecord>> {
+        let Some(hydrator) = self.galaxy_hydrator.as_ref() else {
+            return Ok(None);
+        };
+        if self.galaxy_composition_target == 0 {
+            return Ok(None);
+        }
+
+        let anchor = self.current_anchor(context)?;
+        let candidates = discover_galaxy_composition(
+            &self.client,
+            &self.api_base,
+            anchor.clone(),
+            self.galaxy_composition_target,
+            now_ms(),
+        )
+        .await?;
+        // Avoid a large canonical RPC batch if the indexed view moved while
+        // the bounded discovery requests were in flight.
+        self.revalidate_anchor(&anchor, "CellGalaxy composition discovery")
+            .await?;
+        let record = hydrator.hydrate_galaxy_composition(candidates).await?;
+        if record.source != self.name() || record.as_of != anchor {
+            return Err(anyhow!(
+                "CellGalaxy composition hydrator changed its source anchor"
+            ));
+        }
+        self.revalidate_anchor(&anchor, "CellGalaxy composition")
+            .await?;
         Ok(Some(record))
     }
 }
@@ -3395,6 +3452,9 @@ mod tests {
             .contains(&"transaction_horizon".to_string()));
         assert!(status.capabilities.contains(&"fork_watch".to_string()));
         assert!(status.capabilities.contains(&"network_atlas".to_string()));
+        assert!(!status
+            .capabilities
+            .contains(&"galaxy_composition".to_string()));
 
         let ecosystem = source
             .enrich_asset_ecosystem(&context())

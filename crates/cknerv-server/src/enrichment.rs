@@ -9,8 +9,9 @@ use async_trait::async_trait;
 
 use cknerv_core::{
     ActivityFeedRecord, AssetEcosystemRecord, CellSemanticRecord, DaoStateRecord,
-    EnrichmentSourceStatus, ForkWatchRecord, NetworkAtlasRecord, OutPoint, ProtocolEraRecord,
-    RecentBlock, RecentTx, TransactionHorizonRecord, TransactionSemanticRecord,
+    EnrichmentSourceStatus, ForkWatchRecord, GalaxyCompositionCandidates, GalaxyCompositionRecord,
+    NetworkAtlasRecord, OutPoint, ProtocolEraRecord, RecentBlock, RecentTx,
+    TransactionHorizonRecord, TransactionSemanticRecord,
 };
 
 /// Bounded canonical evidence supplied to an enrichment source when it
@@ -23,6 +24,18 @@ pub struct CanonicalContext {
     pub recent_blocks: Vec<RecentBlock>,
     pub recent_transactions: Vec<RecentTx>,
     pub replay_active: bool,
+}
+
+/// Source-agnostic validation seam between indexed discovery and structural
+/// chain truth. A source may rank outpoints, but only a canonical adapter can
+/// turn them into displayable Cells. The resulting record remains outside the
+/// canonical mutation/projection stream.
+#[async_trait]
+pub trait GalaxyCompositionHydrator: Send + Sync + 'static {
+    async fn hydrate_galaxy_composition(
+        &self,
+        candidates: GalaxyCompositionCandidates,
+    ) -> anyhow::Result<GalaxyCompositionRecord>;
 }
 
 /// Optional read-only source of indexed semantics.
@@ -121,6 +134,16 @@ pub trait EnrichmentSource: Send + Sync + 'static {
         &self,
         _context: &CanonicalContext,
     ) -> anyhow::Result<Option<NetworkAtlasRecord>> {
+        Ok(None)
+    }
+
+    /// Refresh a bounded, canonically validated CellGalaxy background. Indexed
+    /// sources discover/rank candidates; implementations without a canonical
+    /// hydrator must leave this unsupported.
+    async fn enrich_galaxy_composition(
+        &self,
+        _context: &CanonicalContext,
+    ) -> anyhow::Result<Option<GalaxyCompositionRecord>> {
         Ok(None)
     }
 }

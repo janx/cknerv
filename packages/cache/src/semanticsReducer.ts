@@ -6,6 +6,7 @@ import type {
   DaoStateRecord,
   EnrichmentSourceStatus,
   ForkWatchRecord,
+  GalaxyCompositionRecord,
   NetworkAtlasRecord,
   OutPoint,
   ProtocolEraRecord,
@@ -29,6 +30,7 @@ export interface SemanticsCache {
   activityFeed: ActivityFeedRecord | null;
   transactionHorizon: TransactionHorizonRecord | null;
   networkAtlas: NetworkAtlasRecord | null;
+  galaxyComposition: GalaxyCompositionRecord | null;
 }
 
 export function outPointKey(outPoint: OutPoint): string {
@@ -53,6 +55,7 @@ export function emptySemanticsCache(): SemanticsCache {
     activityFeed: null,
     transactionHorizon: null,
     networkAtlas: null,
+    galaxyComposition: null,
   };
 }
 
@@ -75,6 +78,7 @@ export function fromSemanticsSnapshot(
     activityFeed: snapshot.activity_feed ?? null,
     transactionHorizon: snapshot.transaction_horizon ?? null,
     networkAtlas: snapshot.network_atlas ?? null,
+    galaxyComposition: snapshot.galaxy_composition ?? null,
   };
 }
 
@@ -122,6 +126,8 @@ function reduceDelta(prev: SemanticsCache, delta: SemanticsDelta): SemanticsCach
       return { ...prev, networkAtlas: delta.network_atlas };
     case 'network_atlas_clear':
       return { ...prev, networkAtlas: null };
+    case 'galaxy_composition_replace':
+      return { ...prev, galaxyComposition: delta.galaxy_composition };
     case 'prune': {
       const cells = new Map(
         [...prev.cells].filter(([, cell]) => cell.as_of.block < delta.from_block),
@@ -169,6 +175,11 @@ function reduceDelta(prev: SemanticsCache, delta: SemanticsDelta): SemanticsCach
         && prev.networkAtlas.as_of.block >= delta.from_block
           ? null
           : prev.networkAtlas;
+      const galaxyComposition =
+        prev.galaxyComposition
+        && prev.galaxyComposition.as_of.block >= delta.from_block
+          ? null
+          : prev.galaxyComposition;
       return {
         ...prev,
         cells,
@@ -181,6 +192,7 @@ function reduceDelta(prev: SemanticsCache, delta: SemanticsDelta): SemanticsCach
         activityFeed,
         transactionHorizon,
         networkAtlas,
+        galaxyComposition,
       };
     }
     case 'clear':
@@ -196,6 +208,7 @@ function reduceDelta(prev: SemanticsCache, delta: SemanticsDelta): SemanticsCach
         activityFeed: null,
         transactionHorizon: null,
         networkAtlas: null,
+        galaxyComposition: null,
       };
   }
 }

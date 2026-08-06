@@ -40,6 +40,7 @@ import { createNeighborGraphBuilder } from '../geometry/neighborGraphBuilder';
 import {
   cellRenderMap,
   createCellRenderSetState,
+  currentActivityCellIds,
   syncCellRenderSet,
 } from '../geometry/cellRenderSet';
 import { type Pulse, type PulsePlanningOptions } from './pulseRunner';
@@ -126,7 +127,7 @@ import {
   deriveCellInspectionField,
   type CellInspectionField,
 } from './cellInspectionField';
-import type { Cell } from '@cknerv/types';
+import type { Cell, GalaxyCompositionRecord } from '@cknerv/types';
 
 const SPIKE_POOL_CAPACITY = 1024;
 
@@ -171,6 +172,9 @@ interface NeuralNetworkProps {
   /** Server projection cap used by CellGalaxy's AUTO display budget. Passive
    * fibres resolve the same budget so hidden Cells never leave visible hair. */
   cellCapacity?: number;
+  /** Same additive resting reservoir consumed by CellGalaxy. Active pulse
+   * planning and route geometry continue to use the canonical cache. */
+  galaxyComposition?: GalaxyCompositionRecord | null;
   cellFlashRef?: React.RefObject<Map<number, number>>;
   flashDirtyRef?: React.MutableRefObject<boolean>;
   flashDirtyIdsRef?: CellFlashDirtyIdsRef;
@@ -245,6 +249,7 @@ interface ActivePulse extends Pulse {
 
 export default function NeuralNetwork({
   cellCapacity,
+  galaxyComposition = null,
   cellFlashRef,
   flashDirtyRef,
   flashDirtyIdsRef,
@@ -278,6 +283,10 @@ export default function NeuralNetwork({
     cellDisplayRuntime,
     quality,
     cellCapacity,
+  );
+  const activityCellIds = useMemo(
+    () => galaxyComposition ? currentActivityCellIds(cellsCache) : [],
+    [cellsCache.pulseLinks, galaxyComposition],
   );
   const particleCapMul = QUALITY_PRESETS[quality].particleCapMul;
   const topologyKey = `${topology?.neighborK ?? ''}:${topology?.maxEdgeLength ?? ''}`;
@@ -379,6 +388,8 @@ export default function NeuralNetwork({
       cellDisplayLimit,
       inspectionCellId,
       inspectionFieldSnapshotRef.current,
+      galaxyComposition,
+      activityCellIds,
     );
     const visibleCells = renderUpdate.cells;
     const topologyChanged = (
@@ -484,6 +495,8 @@ export default function NeuralNetwork({
     cellsCache.cellChanges,
     cellsCache.cells,
     cellsCache.cellsToken,
+    galaxyComposition,
+    activityCellIds,
     displayGraphBuilder,
     inspectionCellId,
     inspectionFieldRef,

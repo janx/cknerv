@@ -413,6 +413,7 @@ fn event_anchor_is_current(event: &EnrichmentEvent, recent_blocks: &[RecentBlock
             Some(&transaction_horizon.as_of)
         }
         EnrichmentEvent::NetworkAtlasReplace(network_atlas) => Some(&network_atlas.as_of),
+        EnrichmentEvent::GalaxyCompositionReplace(composition) => Some(&composition.as_of),
         EnrichmentEvent::SourceStatus(_)
         | EnrichmentEvent::NetworkAtlasClear
         | EnrichmentEvent::Clear => None,
@@ -1090,17 +1091,17 @@ mod tests {
     #[test]
     fn enrichment_anchor_guard_never_changes_canonical_revision() {
         let state = ServerState::new();
-        state
-            .projections
-            .write()
-            .unwrap()
-            .register_enrichment(cknerv_core::SemanticsProjection::default());
+        {
+            let mut projections = state.projections.write().unwrap();
+            projections.register(cknerv_core::CellGalaxy::default());
+            projections.register_enrichment(cknerv_core::SemanticsProjection::default());
+        }
         state.apply_mutation(Mutation::BlockMined {
             number: 10,
             hash: "0xcanonical".to_string(),
             tx_count: 0,
             size: 0,
-            at: 10,
+            at: 1_000,
         });
         let record = cknerv_core::CellSemanticRecord {
             out_point: cknerv_core::OutPoint {
@@ -1142,6 +1143,27 @@ mod tests {
         assert_eq!(
             runtime.snapshot_json().1["cells"].as_array().unwrap().len(),
             1
+        );
+        let cells_runtime = state.projections.read().unwrap().lookup("cells").unwrap();
+        let pulse_before = cells_runtime.snapshot_json().1["last_pulse_at_ms"].clone();
+        assert!(
+            state.apply_enrichment(EnrichmentEvent::GalaxyCompositionReplace(
+                cknerv_core::GalaxyCompositionRecord {
+                    source: "test".to_string(),
+                    as_of: cknerv_core::ChainAnchor {
+                        block: 10,
+                        hash: "0xcanonical".to_string(),
+                    },
+                    updated_at_ms: 1_001,
+                    dao: Vec::new(),
+                    typed: Vec::new(),
+                    plain: Vec::new(),
+                }
+            ))
+        );
+        assert_eq!(
+            cells_runtime.snapshot_json().1["last_pulse_at_ms"],
+            pulse_before
         );
         assert_eq!(state.snapshot()["revision"], 1);
     }

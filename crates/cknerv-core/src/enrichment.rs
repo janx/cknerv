@@ -10,7 +10,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{Mutation, OutPoint, Projection};
+use crate::{Cell, Mutation, OutPoint, Projection};
 
 /// A canonical block used to prove what chain an indexed observation belongs
 /// to.  Consumers must treat an enrichment as stale when this anchor is no
@@ -275,6 +275,77 @@ pub struct ChainCensus {
     pub dead_cells: Option<u64>,
 }
 
+/// Fixed CellGalaxy composition contract. The record remains enrichment-only:
+/// indexed candidates are admitted only after a canonical adapter validates
+/// each live outpoint, and they never enter the structural Cell projection or
+/// its Birth/Death/Link/Pulse stream.
+pub const GALAXY_COMPOSITION_DAO_BPS: u16 = 3_000;
+pub const GALAXY_COMPOSITION_TYPED_BPS: u16 = 4_000;
+pub const GALAXY_COMPOSITION_PLAIN_BPS: u16 = 3_000;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct GalaxyCompositionTarget {
+    pub dao: usize,
+    pub typed: usize,
+    pub plain: usize,
+}
+
+impl GalaxyCompositionTarget {
+    pub fn for_total(total: usize) -> Self {
+        let dao = total.saturating_mul(GALAXY_COMPOSITION_DAO_BPS as usize) / 10_000;
+        let typed = total.saturating_mul(GALAXY_COMPOSITION_TYPED_BPS as usize) / 10_000;
+        Self {
+            dao,
+            typed,
+            plain: total.saturating_sub(dao).saturating_sub(typed),
+        }
+    }
+
+    pub fn total(self) -> usize {
+        self.dao
+            .saturating_add(self.typed)
+            .saturating_add(self.plain)
+    }
+}
+
+/// One ckbadger-discovered live-outpoint candidate. Capacity and birth height
+/// are discovery hints only; a canonical hydrator must re-read the live Cell
+/// and reject mismatches before it can cross the shared wire boundary.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GalaxyCellCandidate {
+    pub out_point: OutPoint,
+    pub capacity: u64,
+    pub birth_block: u64,
+}
+
+/// Source-private handoff from indexed discovery to canonical validation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GalaxyCompositionCandidates {
+    pub source: String,
+    pub as_of: ChainAnchor,
+    pub updated_at_ms: u64,
+    pub target: GalaxyCompositionTarget,
+    pub dao: Vec<GalaxyCellCandidate>,
+    pub typed: Vec<GalaxyCellCandidate>,
+    pub plain: Vec<GalaxyCellCandidate>,
+}
+
+/// Canonically validated background Cell set used to compose the resting
+/// galaxy. It is deliberately separate from `CellGalaxySnapshot`: replacing
+/// this record cannot synthesize chain activity or disturb live nerve routing.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct GalaxyCompositionRecord {
+    pub source: String,
+    pub as_of: ChainAnchor,
+    pub updated_at_ms: u64,
+    #[serde(default)]
+    pub dao: Vec<Cell>,
+    #[serde(default)]
+    pub typed: Vec<Cell>,
+    #[serde(default)]
+    pub plain: Vec<Cell>,
+}
+
 /// One exact capacity bucket from a bounded indexed ecosystem sample.
 /// Capacity is encoded in shannons so adapters cannot leak display-unit
 /// rounding into the shared wire contract.
@@ -508,6 +579,7 @@ pub enum EnrichmentEvent {
     TransactionHorizonReplace(TransactionHorizonRecord),
     NetworkAtlasReplace(NetworkAtlasRecord),
     NetworkAtlasClear,
+    GalaxyCompositionReplace(GalaxyCompositionRecord),
     Clear,
 }
 
@@ -532,6 +604,8 @@ pub struct SemanticsSnapshot {
     pub transaction_horizon: Option<TransactionHorizonRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub network_atlas: Option<NetworkAtlasRecord>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub galaxy_composition: Option<GalaxyCompositionRecord>,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq)]
@@ -577,6 +651,9 @@ pub enum SemanticsDelta {
         network_atlas: NetworkAtlasRecord,
     },
     NetworkAtlasClear,
+    GalaxyCompositionReplace {
+        galaxy_composition: GalaxyCompositionRecord,
+    },
     Prune {
         from_block: u64,
     },
@@ -602,6 +679,7 @@ pub struct SemanticsProjection {
     activity_feed: Option<ActivityFeedRecord>,
     transaction_horizon: Option<TransactionHorizonRecord>,
     network_atlas: Option<NetworkAtlasRecord>,
+    galaxy_composition: Option<GalaxyCompositionRecord>,
     next_sequence: u64,
     cell_cap: usize,
     transaction_cap: usize,
@@ -625,6 +703,7 @@ impl SemanticsProjection {
             activity_feed: None,
             transaction_horizon: None,
             network_atlas: None,
+            galaxy_composition: None,
             next_sequence: 0,
             cell_cap: 512,
             transaction_cap: 2048,
@@ -687,6 +766,7 @@ impl SemanticsProjection {
         self.activity_feed = None;
         self.transaction_horizon = None;
         self.network_atlas = None;
+        self.galaxy_composition = None;
     }
 
     fn invalidate_source_anchor(&mut self, message: &str) -> Option<SemanticsDelta> {
@@ -746,6 +826,7 @@ impl Projection for SemanticsProjection {
             activity_feed: self.activity_feed.clone(),
             transaction_horizon: self.transaction_horizon.clone(),
             network_atlas: self.network_atlas.clone(),
+            galaxy_composition: self.galaxy_composition.clone(),
         }
     }
 
@@ -812,6 +893,13 @@ impl Projection for SemanticsProjection {
                     .is_some_and(|atlas| atlas.as_of.block >= *from_block)
                 {
                     self.network_atlas = None;
+                }
+                if self
+                    .galaxy_composition
+                    .as_ref()
+                    .is_some_and(|composition| composition.as_of.block >= *from_block)
+                {
+                    self.galaxy_composition = None;
                 }
                 let mut deltas = vec![SemanticsDelta::Prune {
                     from_block: *from_block,
@@ -933,6 +1021,12 @@ impl EnrichmentProjection for SemanticsProjection {
             EnrichmentEvent::NetworkAtlasClear => {
                 self.network_atlas = None;
                 vec![SemanticsDelta::NetworkAtlasClear]
+            }
+            EnrichmentEvent::GalaxyCompositionReplace(galaxy_composition) => {
+                self.galaxy_composition = Some(galaxy_composition.clone());
+                vec![SemanticsDelta::GalaxyCompositionReplace {
+                    galaxy_composition: galaxy_composition.clone(),
+                }]
             }
             EnrichmentEvent::Clear => {
                 self.clear_records();
@@ -1123,6 +1217,69 @@ mod tests {
         }
     }
 
+    fn galaxy_cell(id: u64, asset_kind: crate::AssetKind) -> Cell {
+        Cell {
+            id,
+            born_at_ms: 0,
+            death_at_ms: None,
+            birth_block: 1,
+            tag: None,
+            pos_seed: crate::helix_seed_for(id),
+            out_point: OutPoint {
+                tx_hash: format!("0x{id:064x}"),
+                index: 0,
+            },
+            capacity: id,
+            data_hex: "0x".into(),
+            content_hash: format!("0x{:064x}", id + 1),
+            lock_kind: crate::LockKind::Sighash,
+            asset_kind,
+        }
+    }
+
+    fn galaxy_composition(block: u64) -> GalaxyCompositionRecord {
+        GalaxyCompositionRecord {
+            source: "ckbadger".into(),
+            as_of: ChainAnchor {
+                block,
+                hash: format!("0xblock{block}"),
+            },
+            updated_at_ms: block,
+            dao: vec![galaxy_cell(1, crate::AssetKind::Dao)],
+            typed: vec![galaxy_cell(2, crate::AssetKind::Xudt)],
+            plain: vec![galaxy_cell(3, crate::AssetKind::Native)],
+        }
+    }
+
+    #[test]
+    fn galaxy_composition_target_is_exact_30_40_30() {
+        assert_eq!(
+            GalaxyCompositionTarget::for_total(6_000),
+            GalaxyCompositionTarget {
+                dao: 1_800,
+                typed: 2_400,
+                plain: 1_800,
+            }
+        );
+        assert_eq!(GalaxyCompositionTarget::for_total(7).total(), 7);
+    }
+
+    #[test]
+    fn galaxy_composition_replaces_only_enrichment_state() {
+        let mut projection =
+            SemanticsProjection::new(Some(("ckbadger", vec!["galaxy_composition".into()])));
+        let record = galaxy_composition(10);
+
+        let deltas =
+            projection.apply_enrichment(&EnrichmentEvent::GalaxyCompositionReplace(record.clone()));
+
+        assert_eq!(projection.snapshot().galaxy_composition, Some(record));
+        assert!(matches!(
+            &deltas[..],
+            [SemanticsDelta::GalaxyCompositionReplace { .. }]
+        ));
+    }
+
     #[test]
     fn reorg_prunes_only_records_at_or_above_boundary() {
         let mut projection = SemanticsProjection::new(Some(("ckbadger", vec![])));
@@ -1183,6 +1340,9 @@ mod tests {
             transaction_horizon(10),
         ));
         projection.apply_enrichment(&EnrichmentEvent::NetworkAtlasReplace(network_atlas(10)));
+        projection.apply_enrichment(&EnrichmentEvent::GalaxyCompositionReplace(
+            galaxy_composition(10),
+        ));
 
         projection.apply_mutation(&Mutation::ChainReorganized { from_block: 10 });
 
@@ -1193,6 +1353,7 @@ mod tests {
         assert!(projection.snapshot().activity_feed.is_none());
         assert!(projection.snapshot().transaction_horizon.is_none());
         assert!(projection.snapshot().network_atlas.is_none());
+        assert!(projection.snapshot().galaxy_composition.is_none());
     }
 
     #[test]

@@ -121,6 +121,11 @@ should additionally gain `network_atlas`. Its `sample_size` must be at most 64;
 country/version bucket totals must each equal that sample size; and no peer ID
 or address should appear. With the crawler disabled, `network_atlas` stays
 absent while all other configured enrichment capabilities continue normally.
+The snapshot should also gain `galaxy_composition`. With the default 6,000
+visible budget and sufficient indexed candidates it contains 1,800 `dao`,
+2,400 `typed`, and 1,800 `plain` Cells. Every entry must carry a real outpoint,
+node-derived content hash, and matching asset taxonomy. Replacing this record
+must not change the canonical cells projection revision or counters.
 
 Each route emits a `{"kind":"heartbeat","revision":N}` frame after roughly
 five seconds without a data frame. A heartbeat confirms browser transport
@@ -259,6 +264,12 @@ With a local ckbadger service configured:
       `network_atlas` whose sample is at most 64 and contains no peer identities
 - [ ] With the crawler disabled, `network_atlas` remains absent while source
       health, Cell detail, ecosystem, DAO, and activity enrichment still work
+- [ ] The semantics snapshot gains an anchored `galaxy_composition`; at the
+      default visible budget its DAO:typed:plain lengths are 1800:2400:1800
+- [ ] The resting Cell points and passive fibres use that composition, while a
+      new block still advances `last_pulse_at_ms`, emits its network pulse, and
+      produces live nerve routes over canonical Cells; newest link endpoints
+      remain visible inside their class quotas
 - [ ] Delaying or failing one aggregate endpoint leaves the source probe and
       other due aggregate refreshes responsive; no capability overlaps its own
       in-flight request

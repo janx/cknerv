@@ -21,6 +21,7 @@ import {
 } from '../geometry/cellPositions';
 import {
   createCellRenderSetState,
+  currentActivityCellIds,
   diffCellRenderSlots,
   syncCellRenderSet,
   type CellRenderRange,
@@ -29,7 +30,7 @@ export {
   pinCellInspectionFieldInVisiblePrefix,
   pinSelectedCellInVisiblePrefix,
 } from '../geometry/cellRenderSet';
-import type { Cell } from '@cknerv/types';
+import type { Cell, GalaxyCompositionRecord } from '@cknerv/types';
 import { useCellGalaxy } from '../hooks/cellGalaxyContext';
 import { ConsensusMemoryFocusScope } from '../hooks/consensusMemoryFocusContext';
 import {
@@ -132,6 +133,9 @@ interface CellGalaxyProps {
   /** Resolved server projection cap. The shared renderer hard ceiling still
    * bounds allocations, while smaller profiles keep AUTO honest. */
   cellCapacity?: number;
+  /** Optional canonically validated resting reservoir. It changes only the
+   * visible composition; canonical block activity remains in CellGalaxyCache. */
+  galaxyComposition?: GalaxyCompositionRecord | null;
   /** Subset of `ckbNodeIds` whose chain node runs a miner. Miner pulses
    *  only fire from these positions. Falls back to all node ids when empty
    *  (e.g. tests / placeholder profile). */
@@ -1031,6 +1035,7 @@ function CellPicker({
 export default function CellGalaxy({
   ckbNodeIds,
   cellCapacity,
+  galaxyComposition = null,
   minerCkbNodeIds,
   universeSeed,
   selectedId,
@@ -1054,11 +1059,25 @@ export default function CellGalaxy({
   // slots in the Points BufferGeometry. Birth / death / tag are reduced
   // server-side before they reach this renderer.
   const cellsCache = useCellGalaxy();
+  const compositionCellsById = useMemo(() => {
+    const cells = new Map<number, Cell>();
+    if (!galaxyComposition) return cells;
+    for (const cell of [
+      ...galaxyComposition.dao,
+      ...galaxyComposition.typed,
+      ...galaxyComposition.plain,
+    ]) cells.set(cell.id, cell);
+    return cells;
+  }, [galaxyComposition]);
   const identityProofCell = identityProof
-    ? cellsCache.cells.get(identityProof.cellId) ?? null
+    ? cellsCache.cells.get(identityProof.cellId)
+      ?? compositionCellsById.get(identityProof.cellId)
+      ?? null
     : null;
   const identityProofBindingCell = identityProofBinding
-    ? cellsCache.cells.get(identityProofBinding.cellId) ?? null
+    ? cellsCache.cells.get(identityProofBinding.cellId)
+      ?? compositionCellsById.get(identityProofBinding.cellId)
+      ?? null
     : null;
   const { effective: quality } = useQualityRuntime();
   const cellDisplay = useCellDisplayRuntime();
@@ -1339,10 +1358,16 @@ export default function CellGalaxy({
     }
 
     const renderSet = cellRenderSetRef.current;
+    const activityCellIds = galaxyComposition
+      ? currentActivityCellIds(cellsCache)
+      : [];
+    const activityKey = galaxyComposition ? activityCellIds.join(':') : '';
     const renderNeedsSync = renderSet.cellsToken !== cellsCache.cellsToken
       || renderSet.displayBudget !== cellDisplayLimit
       || renderSet.selectedCellId !== selectedCellIdRef.current
-      || renderSet.inspectionField !== inspectionField;
+      || renderSet.inspectionField !== inspectionField
+      || renderSet.compositionToken !== galaxyComposition
+      || renderSet.activityKey !== activityKey;
     const renderUpdate = renderNeedsSync
       ? syncCellRenderSet(
         renderSet,
@@ -1350,6 +1375,8 @@ export default function CellGalaxy({
         cellDisplayLimit,
         selectedCellIdRef.current,
         inspectionField,
+        galaxyComposition,
+        activityCellIds,
       )
       : null;
     const cellsList = renderUpdate?.cells ?? renderSet.cells;

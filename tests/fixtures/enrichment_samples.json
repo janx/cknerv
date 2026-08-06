@@ -3,7 +3,7 @@
     "source": {
       "source": "ckbadger",
       "status": "ready",
-      "capabilities": ["cell_detail", "script_identity", "data_analysis", "asset_identity", "asset_ecosystem", "dao_state", "protocol_era", "activity_feed", "transaction_horizon", "fork_watch", "network_atlas", "transaction_detail", "transaction_lifecycle"],
+      "capabilities": ["cell_detail", "script_identity", "data_analysis", "asset_identity", "asset_ecosystem", "dao_state", "protocol_era", "activity_feed", "transaction_horizon", "fork_watch", "network_atlas", "transaction_detail", "transaction_lifecycle", "galaxy_composition"],
       "indexed_tip": 100,
       "lag_blocks": 1,
       "validated_anchor": {
@@ -306,6 +306,17 @@
           "count": 1
         }
       ]
+    },
+    "galaxy_composition": {
+      "source": "ckbadger",
+      "as_of": {
+        "block": 100,
+        "hash": "0xblock100"
+      },
+      "updated_at_ms": 1700000000011,
+      "dao": [],
+      "typed": [],
+      "plain": []
     }
   },
   "deltas": {
@@ -314,7 +325,7 @@
       "source": {
         "source": "ckbadger",
         "status": "ready",
-        "capabilities": ["cell_detail", "script_identity", "data_analysis", "asset_identity", "asset_ecosystem", "dao_state", "protocol_era", "activity_feed", "transaction_horizon", "fork_watch", "network_atlas", "transaction_detail", "transaction_lifecycle"],
+        "capabilities": ["cell_detail", "script_identity", "data_analysis", "asset_identity", "asset_ecosystem", "dao_state", "protocol_era", "activity_feed", "transaction_horizon", "fork_watch", "network_atlas", "transaction_detail", "transaction_lifecycle", "galaxy_composition"],
         "indexed_tip": 100,
         "lag_blocks": 1,
         "validated_anchor": {
@@ -621,6 +632,20 @@
     },
     "network_atlas_clear": {
       "type": "network_atlas_clear"
+    },
+    "galaxy_composition_replace": {
+      "type": "galaxy_composition_replace",
+      "galaxy_composition": {
+        "source": "ckbadger",
+        "as_of": {
+          "block": 100,
+          "hash": "0xblock100"
+        },
+        "updated_at_ms": 1700000000011,
+        "dao": [],
+        "typed": [],
+        "plain": []
+      }
     },
     "prune": {
       "type": "prune",
