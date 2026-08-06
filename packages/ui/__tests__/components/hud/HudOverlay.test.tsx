@@ -96,6 +96,8 @@ describe('HudOverlay', () => {
     expect(chainScroll.style.flex).toBe('0 0 auto');
     expect(chainScroll.style.overflowY).toBe('auto');
     expect(pulse.style.marginTop).toBe('auto');
+    expect((pulse.firstElementChild as HTMLElement).style.width)
+      .toMatch(/340px.*58px/);
     expect(meshRail.textContent).not.toContain('GALAXY WINDOW');
     expect(meshRail.style.top).toBe('48px');
     expect(meshRail.style.bottom).toBe('');
@@ -179,6 +181,9 @@ describe('HudOverlay', () => {
     expect(chainPanel.textContent).not.toContain('NERVOS DAO');
     expect(daoPanel.textContent).toContain('NERVOS DAO');
     expect(daoPanel.textContent).toContain('DAO·05');
+    expect((container.querySelector('[data-hud-pulse-anchor]')
+      ?.firstElementChild as HTMLElement).style.width)
+      .toMatch(/652px.*28px/);
 
     fireEvent.click(getByRole('button', {
       name: 'Configure HUD panels, 5 of 5 visible',

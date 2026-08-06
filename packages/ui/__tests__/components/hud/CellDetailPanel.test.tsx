@@ -114,7 +114,7 @@ describe('CellDetailPanel', () => {
     expect(t).toContain('CONSENSUS MEMORY');
     expect(t).toContain('共识记忆');
     expect(t).toContain('CELL CONTENT');
-    expect(t).toContain('细胞内容');
+    expect(t).not.toContain('细胞内容');
     expect(t).toContain('DIRECT NODE · RAW');
     expect(t).toContain('DEADBEEFCAFE1234567890');
     expect(t).toContain('ADDRESS');
@@ -227,11 +227,12 @@ describe('CellDetailPanel', () => {
       '[data-cell-detail-module="lineage"]',
     ) as HTMLElement;
 
-    expect(root.style.height).toBe('664px');
+    expect(root.style.height).toBe('684px');
     expect(scanWindow.style.width).toBe('47%');
     expect(scanWindow.style.height).toBe('364px');
     expect(memory.style.top).toBe('452px');
     expect(memory.style.width).toBe('100%');
+    expect(memory.style.height).toBe('232px');
     expect(container.querySelector('[data-cell-semantics-placement="scan"]'))
       .not.toBeNull();
     expect(container.querySelector('[data-cell-content-memory-mode="indexed"]'))
@@ -450,6 +451,9 @@ describe('CellDetailPanel', () => {
       .toBe('280px');
     expect(container.querySelectorAll('[data-cell-inspection-satellite]')).toHaveLength(4);
     expect(memory.dataset.consensusMemoryDensity).toBe('spatial');
+    expect((container.firstElementChild as HTMLElement).style.height).toBe('788px');
+    expect((container.querySelector('[data-cell-detail-module="lineage"]') as HTMLElement)
+      .style.height).toBe('400px');
     expect(contentMemory?.getAttribute('data-cell-content-memory-mode')).toBe('indexed');
     expect(contentMemory?.getAttribute('data-cell-content-byte-origin')).toBe('indexed');
     expect(contentMemory?.getAttribute('data-cell-content-complete')).toBe('true');

@@ -375,7 +375,12 @@ export default function CellDetailPanel({
   const bottomTop = enhancedDetail
     ? verticalLayout ? 452 : 388
     : verticalLayout ? 288 : 380;
-  const bottomHeight = verticalLayout ? 212 : 260;
+  // Indexed content adds deterministic decode, heuristic, and role rows to the
+  // no-scroll memory satellite. Keep enough bounded space for those rows plus
+  // the narrower recall/trace state instead of clipping them at the old height.
+  const bottomHeight = enhancedDetail
+    ? verticalLayout ? 232 : 400
+    : verticalLayout ? 212 : 260;
   const rootHeight = bottomTop + bottomHeight;
   const identityLeft = enhancedDetail ? 180 : 140;
   const identityWidth = rootWidth - identityLeft;
