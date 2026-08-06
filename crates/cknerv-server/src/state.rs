@@ -79,6 +79,11 @@ pub struct ServerState {
     /// separate from `mutation_tx` avoids cloning every historical block/tx
     /// payload into a subscriber that only needs the terminal boot marker.
     boot_replay_complete_tx: watch::Sender<bool>,
+    /// Coalesced signal for changes to the canonical evidence used by
+    /// optional enrichment. This lets a withheld cold-start aggregate retry
+    /// as soon as a newer block anchor is available without subscribing to
+    /// and cloning the full structural mutation stream.
+    canonical_evidence_tx: watch::Sender<u64>,
     replay_active: AtomicBool,
     pub(crate) projections: RwLock<Registry>,
     /// Coordination lock making (state, revision) snapshot-atomic. The
@@ -93,12 +98,14 @@ impl ServerState {
     pub fn new() -> Self {
         let (mutation_tx, _) = broadcast::channel(MUTATION_CHANNEL_CAPACITY);
         let (boot_replay_complete_tx, _) = watch::channel(false);
+        let (canonical_evidence_tx, _) = watch::channel(0);
         Self {
             entity_store: RwLock::new(EntityStore::new()),
             revision: AtomicU64::new(0),
             mutation_tx,
             mutation_ring: Ring::with_capacity(MUTATION_RING_CAP),
             boot_replay_complete_tx,
+            canonical_evidence_tx,
             replay_active: AtomicBool::new(false),
             projections: RwLock::new(Registry::new()),
             coord: RwLock::new(()),
@@ -112,6 +119,10 @@ impl ServerState {
 
     pub(crate) fn subscribe_boot_replay_completion(&self) -> watch::Receiver<bool> {
         self.boot_replay_complete_tx.subscribe()
+    }
+
+    pub(crate) fn subscribe_canonical_evidence(&self) -> watch::Receiver<u64> {
+        self.canonical_evidence_tx.subscribe()
     }
 
     /// Snapshot of the mutation ring contents (oldest → newest revision).
@@ -163,6 +174,13 @@ impl ServerState {
                 ..
             }
         );
+        let canonical_evidence_changed = matches!(
+            &m,
+            Mutation::BlockMined { .. }
+                | Mutation::ChainReorganized { .. }
+                | Mutation::ChainRebuild { .. }
+                | Mutation::BackfillProgress { .. }
+        );
 
         // 1. Apply the mutation to the entity store (chain-side arms
         //    only; `CellTagged` is projection-only). Done under the
@@ -205,6 +223,9 @@ impl ServerState {
         //    subscribers errors — ignore it, the ring still holds the
         //    record for catch-up.
         let _ = self.mutation_tx.send(rev);
+        if canonical_evidence_changed && !self.replay_active.load(Ordering::Relaxed) {
+            self.canonical_evidence_tx.send_replace(revision);
+        }
         if boot_replay_completed {
             self.boot_replay_complete_tx.send_replace(true);
         }
