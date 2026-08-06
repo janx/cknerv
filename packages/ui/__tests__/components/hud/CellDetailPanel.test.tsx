@@ -121,14 +121,23 @@ describe('CellDetailPanel', () => {
       .toContain('cknerv-cell-consensus-enter');
     expect(container.querySelector('[data-cell-detail-scan-field="true"]')).not.toBeNull();
     expect(container.querySelector('[data-cell-portrait-frame]')).not.toBeNull();
+    expect((container.querySelector('[data-cell-portrait-frame]') as HTMLElement).style.width)
+      .toBe('260px');
     expect(container.querySelector('[data-testid="cell-nucleus-portrait"]')).not.toBeNull();
     expect(container.querySelector('[data-cell-specimen-scan-light]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="Interactive Cell scan"]')).not.toBeNull();
     expect(container.querySelectorAll('[data-cell-inspection-satellite]')).toHaveLength(4);
-    expect((container.querySelector('[data-cell-detail-readable-scale]') as HTMLElement).style.zoom).toBe('1.35');
+    expect((container.querySelector('[data-cell-detail-readable-scale]') as HTMLElement).style.zoom).toBe('1.2');
+    expect(t).toContain('CELL SCAN');
+    expect(t).toContain('DRAG TO ORBIT');
+    expect(t).not.toContain('流光标本扫描');
     expect(container.querySelector('[role="tablist"]')).toBeNull();
     expect(container.querySelector('[data-cell-detail-module="anatomy"]')?.hasAttribute('hidden')).toBe(false);
     expect(container.querySelector('[data-cell-detail-module="lineage"]')?.hasAttribute('hidden')).toBe(false);
     expect((container.querySelector('[data-consensus-memory]') as HTMLElement).dataset.consensusMemoryDensity).toBe('spatial');
+    expect((container.firstElementChild as HTMLElement).style.height).toBe('600px');
+    expect(container.querySelector('[data-cell-scan-shard="lineage"]')?.className)
+      .toContain('cknerv-cell-inspection-scroll-lineage');
   });
 
   it('turns base taxonomy into useful Cell facts without visual parameters', () => {
@@ -315,13 +324,21 @@ describe('CellDetailPanel', () => {
     expect(readout).not.toBeNull();
     expect(readout?.getAttribute('data-cell-semantics-density')).toBe('spatial');
     expect((readout?.querySelector('[data-cell-context-facts]') as HTMLElement).style.gridTemplateColumns).toContain('repeat(2');
-    expect(readout?.querySelector('[data-cell-context-fact="owner"]')).not.toBeNull();
+    expect((readout?.querySelector('[data-cell-context-fact="owner"]') as HTMLElement).style.gridColumn).toBe('1 / -1');
+    expect(readout?.querySelector('[data-cell-context-header="true"]')).not.toBeNull();
+    expect(readout?.querySelector('[data-cell-context-scripts="true"]')).not.toBeNull();
+    expect(readout?.querySelector('[data-cell-context-script-evidence]')?.textContent)
+      .toContain('IDENTITY');
     expect(readout?.querySelector('[data-transaction-semantics-summary]')).not.toBeNull();
     expect(readout?.querySelector('[data-transaction-participants]')).not.toBeNull();
     expect(container.querySelector('[data-cell-portrait-frame]')).not.toBeNull();
+    expect((container.querySelector('[data-cell-portrait-frame]') as HTMLElement).style.width)
+      .toBe('280px');
     expect(container.querySelectorAll('[data-cell-inspection-satellite]')).toHaveLength(5);
     expect(memory.dataset.consensusMemoryDensity).toBe('spatial');
     expect(container.querySelector('[data-cell-detail-module="context"]')?.hasAttribute('hidden')).toBe(false);
+    expect(container.querySelector('[data-cell-detail-module="context"]')?.className)
+      .toContain('cknerv-cell-inspection-scroll-context');
     expect(container.querySelector('[data-cell-detail-module="anatomy"]')?.hasAttribute('hidden')).toBe(false);
     expect(container.querySelector('[data-cell-detail-module="lineage"]')?.hasAttribute('hidden')).toBe(false);
     expect((container.firstElementChild as HTMLElement).style.background).toBe('');

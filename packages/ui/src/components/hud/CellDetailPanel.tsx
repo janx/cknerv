@@ -359,12 +359,15 @@ export default function CellDetailPanel({
 
   const verticalLayout = layoutSide === 'above' || layoutSide === 'below';
   const rootWidth = enhancedDetail ? 800 : 700;
-  const rootHeight = verticalLayout ? 448 : 520;
-  const anatomyWidth = enhancedDetail ? 520 : 450;
-  const identityLeft = enhancedDetail ? 250 : 180;
-  const identityWidth = enhancedDetail ? 540 : 510;
-  const portraitLeft = enhancedDetail ? 570 : 480;
-  const lineageWidth = enhancedDetail ? 440 : 450;
+  const rootHeight = verticalLayout ? 448 : 600;
+  const portraitWidth = enhancedDetail ? 280 : 260;
+  const portraitLeft = rootWidth - portraitWidth;
+  const anatomyWidth = enhancedDetail ? 490 : 410;
+  const identityLeft = enhancedDetail ? 180 : 140;
+  const identityWidth = rootWidth - identityLeft;
+  const lineageWidth = enhancedDetail ? 420 : 480;
+  const readableScale = verticalLayout ? 1 : 1.2;
+  const readableWidth = `${(100 / readableScale).toFixed(2)}%`;
   const fromFanEdge = (left: number): CSSProperties => (
     layoutSide === 'right' ? { right: left } : { left }
   );
@@ -407,23 +410,23 @@ export default function CellDetailPanel({
           <span
             aria-hidden="true"
             data-cell-inspection-orbit-path="identity"
-            style={{ position: 'absolute', zIndex: 0, left: fanCoordinate(portraitLeft + 110), top: 57, width: 1, height: 25, background: `linear-gradient(180deg,${rgba(HUD_COLORS.orange, 0.14)},${rgba(HUD_COLORS.orange, 0.7)})`, boxShadow: `0 0 6px ${rgba(HUD_COLORS.orange, 0.28)}` }}
+            style={{ position: 'absolute', zIndex: 0, left: fanCoordinate(portraitLeft + portraitWidth / 2), top: 57, width: 1, height: 31, background: `linear-gradient(180deg,${rgba(HUD_COLORS.orange, 0.14)},${rgba(HUD_COLORS.orange, 0.7)})`, boxShadow: `0 0 6px ${rgba(HUD_COLORS.orange, 0.28)}` }}
           />
           <span
             aria-hidden="true"
             data-cell-inspection-orbit-path="anatomy"
-            style={{ position: 'absolute', zIndex: 0, left: layoutSide === 'right' ? rootWidth - portraitLeft : anatomyWidth, top: 174, width: portraitLeft - anatomyWidth, height: 1, background: `linear-gradient(90deg,${rgba(HUD_COLORS.cyanWire, 0.65)},${rgba(HUD_COLORS.cyanWire, 0.12)})`, boxShadow: `0 0 6px ${rgba(HUD_COLORS.cyanWire, 0.22)}` }}
+            style={{ position: 'absolute', zIndex: 0, left: layoutSide === 'right' ? rootWidth - portraitLeft : anatomyWidth, top: 192, width: portraitLeft - anatomyWidth, height: 1, background: `linear-gradient(90deg,${rgba(HUD_COLORS.cyanWire, 0.65)},${rgba(HUD_COLORS.cyanWire, 0.12)})`, boxShadow: `0 0 6px ${rgba(HUD_COLORS.cyanWire, 0.22)}` }}
           />
           <span
             aria-hidden="true"
             data-cell-inspection-orbit-path="lineage"
-            style={{ position: 'absolute', zIndex: 0, left: fanCoordinate(72), top: 256, width: 1, height: 34, background: `linear-gradient(180deg,${rgba('#AA88FF', 0.16)},${rgba('#AA88FF', 0.68)})`, boxShadow: `0 0 6px ${rgba('#AA88FF', 0.24)}` }}
+            style={{ position: 'absolute', zIndex: 0, left: fanCoordinate(72), top: 288, width: 1, height: 92, background: `linear-gradient(180deg,${rgba('#AA88FF', 0.16)},${rgba('#AA88FF', 0.68)})`, boxShadow: `0 0 6px ${rgba('#AA88FF', 0.24)}` }}
           />
           {enhancedDetail ? (
             <span
               aria-hidden="true"
               data-cell-inspection-orbit-path="context"
-              style={{ position: 'absolute', zIndex: 0, left: fanCoordinate(portraitLeft + 110), top: 298, width: 1, height: 32, background: `linear-gradient(180deg,${rgba(HUD_COLORS.cyanWire, 0.62)},${rgba(HUD_COLORS.cyanWire, 0.12)})`, boxShadow: `0 0 6px ${rgba(HUD_COLORS.cyanWire, 0.22)}` }}
+              style={{ position: 'absolute', zIndex: 0, left: fanCoordinate(portraitLeft + portraitWidth / 2), top: 368, width: 1, height: 12, background: `linear-gradient(180deg,${rgba(HUD_COLORS.cyanWire, 0.62)},${rgba(HUD_COLORS.cyanWire, 0.12)})`, boxShadow: `0 0 6px ${rgba(HUD_COLORS.cyanWire, 0.22)}` }}
             />
           ) : null}
         </>
@@ -471,15 +474,15 @@ export default function CellDetailPanel({
       </section>
 
       <section
-        aria-label="Magnified Cell specimen"
+        aria-label="Interactive Cell scan"
         data-cell-detail-module="specimen"
         data-cell-inspection-satellite="specimen"
         data-cell-portrait-frame
         style={{
           ...satelliteBase,
           ...(verticalLayout
-            ? { left: 0, top: 72, width: '44%', maxWidth: 174 }
-            : { ...fromFanEdge(portraitLeft), top: 82, width: 220 }),
+            ? { left: 0, top: 72, width: '50%', maxWidth: 190 }
+            : { ...fromFanEdge(portraitLeft), top: 88, width: portraitWidth }),
           aspectRatio: '1 / 1',
           overflow: 'hidden',
           border: `1px solid ${rgba(HUD_COLORS.orange, 0.24)}`,
@@ -487,9 +490,9 @@ export default function CellDetailPanel({
           boxShadow: `inset 0 0 26px ${rgba(HUD_COLORS.cyanWire, 0.08)},0 0 20px ${rgba(HUD_COLORS.orange, 0.06)}`,
         }}
       >
-        <div style={{ position: 'absolute', zIndex: 3, left: 10, top: 8, right: 10, display: 'flex', alignItems: 'baseline', gap: 7, pointerEvents: 'none' }}>
-          <span style={{ color: HUD_COLORS.orange, fontFamily: HUD_FONTS.tech, fontSize: 10, fontWeight: 700, letterSpacing: 1.4 }}>CELL SPECIMEN</span>
-          <span style={{ color: HUD_COLORS.dim, fontFamily: HUD_FONTS.cjk, fontSize: 9 }}>流光标本扫描</span>
+        <div style={{ position: 'absolute', zIndex: 3, left: 12, top: 10, right: 12, display: 'flex', alignItems: 'baseline', gap: 8, pointerEvents: 'none' }}>
+          <span style={{ color: HUD_COLORS.orange, fontFamily: HUD_FONTS.tech, fontSize: 12, fontWeight: 700, letterSpacing: 1.65 }}>CELL SCAN</span>
+          <span data-cell-scan-drag-affordance style={{ marginLeft: 'auto', color: HUD_COLORS.dim, fontFamily: HUD_FONTS.mono, fontSize: 8.5, letterSpacing: 0.8 }}>DRAG TO ORBIT ↔</span>
         </div>
         <CellNucleusPortrait
           cell={cell}
@@ -522,8 +525,8 @@ export default function CellDetailPanel({
         style={{
           ...satelliteBase,
           ...(verticalLayout
-            ? { right: 0, top: 72, width: '52%', height: 202 }
-            : { ...fromFanEdge(0), top: 78, width: anatomyWidth, height: 178 }),
+            ? { right: 0, top: 72, width: '47%', height: 202 }
+            : { ...fromFanEdge(0), top: 88, width: anatomyWidth, height: 200 }),
           overflow: 'hidden',
           padding: '12px 12px 10px 18px',
           borderTop: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.22)}`,
@@ -562,6 +565,7 @@ export default function CellDetailPanel({
 
       <section
         aria-label="Cell lineage"
+        className="cknerv-cell-inspection-scroll cknerv-cell-inspection-scroll-lineage"
         data-cell-detail-module="lineage"
         data-cell-inspection-satellite="lineage"
         data-cell-scan-shard="lineage"
@@ -569,18 +573,21 @@ export default function CellDetailPanel({
           ...satelliteBase,
           ...(verticalLayout
             ? { left: 0, top: 288, width: enhancedDetail ? '49%' : '100%', height: 160 }
-            : { ...fromFanEdge(0), top: 290, width: lineageWidth, height: 230 }),
+            : { ...fromFanEdge(0), top: 380, width: lineageWidth, height: 220 }),
           overflowX: 'hidden',
           overflowY: 'auto',
+          overscrollBehavior: 'contain',
           padding: '8px 10px 11px 12px',
           borderLeft: `1px solid ${rgba('#AA88FF', 0.42)}`,
-          background: `linear-gradient(105deg,rgba(4,3,15,.9),rgba(5,4,17,.66) 78%,${rgba('#AA88FF', 0.03)})`,
+          borderTop: `1px solid ${rgba('#AA88FF', 0.16)}`,
+          borderBottom: `1px solid ${rgba('#AA88FF', 0.1)}`,
+          background: `linear-gradient(105deg,rgba(3,3,13,.97),rgba(4,4,16,.92) 78%,${rgba('#AA88FF', 0.045)})`,
           clipPath: 'polygon(0 0,calc(100% - 11px) 0,100% 11px,100% 100%,0 100%)',
           scrollbarWidth: 'thin',
           scrollbarColor: `${rgba('#AA88FF', 0.3)} transparent`,
         }}
       >
-        <div data-cell-detail-readable-scale="true" style={{ width: '74.1%', zoom: 1.35 }}>
+        <div data-cell-detail-readable-scale="true" style={{ width: readableWidth, zoom: readableScale }}>
           <ConsensusIdentityPlate
             identity={identity}
             causalLens={resolvedCausalLens}
@@ -619,6 +626,7 @@ export default function CellDetailPanel({
       {semanticSource && semanticPhase ? (
         <section
           aria-label="Cell indexed context"
+          className="cknerv-cell-inspection-scroll cknerv-cell-inspection-scroll-context"
           data-cell-detail-module="context"
           data-cell-inspection-satellite="context"
           data-cell-scan-shard="context"
@@ -626,18 +634,21 @@ export default function CellDetailPanel({
             ...satelliteBase,
             ...(verticalLayout
               ? { right: 0, top: 288, width: '49%', height: 160 }
-              : { ...fromFanEdge(460), top: 330, width: 330, height: 190 }),
+              : { ...fromFanEdge(440), top: 380, width: 360, height: 220 }),
             overflowX: 'hidden',
             overflowY: 'auto',
+            overscrollBehavior: 'contain',
             padding: '8px 10px 11px 12px',
             borderLeft: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.42)}`,
-            background: `linear-gradient(105deg,rgba(1,6,15,.9),rgba(2,9,20,.66) 78%,${rgba(HUD_COLORS.cyanWire, 0.03)})`,
+            borderTop: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.16)}`,
+            borderBottom: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.1)}`,
+            background: `linear-gradient(105deg,rgba(1,5,13,.97),rgba(2,8,18,.92) 78%,${rgba(HUD_COLORS.cyanWire, 0.045)})`,
             clipPath: 'polygon(0 0,calc(100% - 11px) 0,100% 11px,100% 100%,0 100%)',
             scrollbarWidth: 'thin',
             scrollbarColor: `${rgba(HUD_COLORS.cyanWire, 0.3)} transparent`,
           }}
         >
-          <div data-cell-detail-readable-scale="true" style={{ width: '74.1%', zoom: 1.35 }}>
+          <div data-cell-detail-readable-scale="true" style={{ width: readableWidth, zoom: readableScale }}>
             <CellSemanticsReadout
               source={semanticSource}
               phase={semanticPhase}

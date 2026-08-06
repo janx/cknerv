@@ -34,6 +34,8 @@ describe('hudTheme', () => {
     expect(css).toContain('var(--route-hop-pulse-color');
     expect(css).toContain('.cknerv-hud-control-button:focus-visible');
     expect(css).toContain('.cknerv-cell-display-track:focus-within');
+    expect(css).toContain('.cknerv-cell-inspection-scroll::-webkit-scrollbar{width:3px}');
+    expect(css).toContain('.cknerv-cell-inspection-scroll-context::-webkit-scrollbar-thumb');
     expect(css).toContain(
       '@media (max-width:1100px){.cknerv-top-bar-action-label{display:none}',
     );

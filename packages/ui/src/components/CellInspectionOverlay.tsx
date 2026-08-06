@@ -15,7 +15,7 @@ const INSPECTOR_GAP_PX = 42;
 const INSPECTOR_EDGE_PX = 14;
 const INSPECTOR_SAFE_TOP_PX = 104;
 const DEFAULT_PANEL_WIDTH_PX = 800;
-const DEFAULT_PANEL_HEIGHT_PX = 520;
+const DEFAULT_PANEL_HEIGHT_PX = 600;
 
 export type CellInspectorPlacementSide = CellDetailLayoutSide;
 

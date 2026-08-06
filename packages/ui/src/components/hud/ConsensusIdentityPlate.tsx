@@ -1566,32 +1566,44 @@ export default function ConsensusIdentityPlate({
         compact={compact}
       />
 
-      {memoryRow({
-        label: 'ADDRESS',
-        value: address,
-        color: HUD_COLORS.ink,
-        title: `${identity.txHash}#${identity.outPointIndex}`,
-        active: focusedField === 'state',
-        onActivate: onInspectAddress,
-        compact,
-      })}
-      {memoryRow({
-        label: 'CONTENT',
-        value: fingerprint,
-        color: CYAN,
-        title: identity.contentHash,
-        active: focusedField === 'data',
-        onActivate: onInspectContent,
-        compact,
-      })}
-      {memoryRow({
-        label: 'ANCHOR',
-        value: `BLOCK #${identity.anchorBlock}`,
-        color: '#C9F8FF',
-        active: focusedField === 'born',
-        onActivate: onInspectAnchor,
-        compact,
-      })}
+      <div
+        data-consensus-memory-identity-grid="true"
+        style={{
+          display: 'grid',
+          gap: 2,
+          marginTop: 4,
+          padding: '4px 6px 5px',
+          borderLeft: `1px solid ${CYAN}28`,
+          background: `linear-gradient(90deg,${CYAN}08,transparent 78%)`,
+        }}
+      >
+        {memoryRow({
+          label: 'ADDRESS',
+          value: address,
+          color: HUD_COLORS.ink,
+          title: `${identity.txHash}#${identity.outPointIndex}`,
+          active: focusedField === 'state',
+          onActivate: onInspectAddress,
+          compact,
+        })}
+        {memoryRow({
+          label: 'CONTENT',
+          value: fingerprint,
+          color: CYAN,
+          title: identity.contentHash,
+          active: focusedField === 'data',
+          onActivate: onInspectContent,
+          compact,
+        })}
+        {memoryRow({
+          label: 'ANCHOR',
+          value: `BLOCK #${identity.anchorBlock}`,
+          color: '#C9F8FF',
+          active: focusedField === 'born',
+          onActivate: onInspectAnchor,
+          compact,
+        })}
+      </div>
 
       {causalLens ? (
         <CellCausalLensReadout

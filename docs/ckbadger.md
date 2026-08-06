@@ -125,13 +125,14 @@ name, and symbol when available. Its source-neutral **CELL CONTEXT** header
 reports availability, lag, and freshness; source health remains in the global
 status strip. Cell inspection is not docked in a fixed HUD rail and has no tab
 or popup shell. A physical cage, moving scan plane, and semantic orbits surround
-the selected canonical Cell. A separate magnified specimen reuses the same
-code-native Cell artwork with its flowing-light scan, while identity, structural
-facts, indexed context, and lineage render as independently spaced satellites
-rather than one continuous panel. Every satellite follows the same projected
-point, flips as a constellation around viewport edges, and stays connected to
-the Cell. Ambient HUD rails dim while the scan is active so the Cell remains the
-single visual focus.
+the selected canonical Cell. A larger **CELL SCAN** reuses the same code-native
+Cell artwork with its flowing-light scan and supports pointer-drag orbiting for
+inspection from different angles. Identity, structural facts, indexed context,
+and lineage render as independently spaced satellites rather than one
+continuous panel. Every satellite follows the same projected point, flips as a
+constellation around viewport edges, and stays connected to the Cell. Ambient
+HUD rails dim while the scan is active so the Cell remains the single visual
+focus.
 
 **CONTEXT** exposes the normalized ckbadger detail already admitted through the
 canonical anchor: exact script args and hash type, known/deprecated script

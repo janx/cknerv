@@ -193,7 +193,10 @@ export default function CellNucleusPortrait({
       data-memory-portrait-anchor-block={anchorEncoding.block}
       data-memory-portrait-anchor-hex={anchorEncoding.hexadecimal}
       data-cell-portrait-interactive="true"
-      title="Drag to rotate"
+      data-cell-portrait-dragging={dragging ? 'true' : 'false'}
+      role="application"
+      aria-label="Interactive Cell scan. Drag to orbit around the Cell."
+      title="Drag to orbit around the Cell"
       style={{
         width: '100%',
         aspectRatio: '1 / 1',
