@@ -80,11 +80,14 @@ export default function CellCausalLensReadout({
   reveal = 1,
   navigation = null,
   compact = false,
+  summary = false,
 }: {
   lens: CellCausalLens;
   reveal?: number;
   navigation?: CellCausalNavigationReadout | null;
   compact?: boolean;
+  /** One-glance origin evidence used by the no-scroll Cell detail satellite. */
+  summary?: boolean;
 }) {
   const meta = statusMeta(lens);
   const anchoredInputs = lens.inputs.filter((item) => item.anchor).length;
@@ -96,6 +99,15 @@ export default function CellCausalLensReadout({
     ? null
     : Math.max(0, lens.outputCount - 1);
   const opacity = 0.68 + clampUnit(reveal) * 0.32;
+  const missingAnchors = lens.missingInputIds.length
+    + lens.missingOutputIds.length;
+  const summaryNote = lens.status === 'unavailable'
+    ? 'IDENTITY ONLY · LINK NOT RETAINED'
+    : lens.status === 'partial'
+      ? `${missingAnchors} ANCHOR${missingAnchors === 1 ? '' : 'S'} MISSING`
+      : archivedEndpoints > 0
+        ? `${archivedEndpoints} ARCHIVED · ANCHORS PROVEN`
+        : 'ALL ENDPOINTS PROVEN';
   const flowCell: CSSProperties = {
     minWidth: 0,
     fontFamily: HUD_FONTS.mono,
@@ -145,6 +157,77 @@ export default function CellCausalLensReadout({
       </button>
     );
   };
+
+  if (summary) {
+    return (
+      <div
+        data-cell-causal-lens="true"
+        data-causal-density="summary"
+        data-causal-status={lens.status}
+        data-causal-provenance={meta.provenance}
+        data-causal-tx={lens.txHash}
+        data-causal-block={lens.block}
+        data-causal-link-seq={lens.linkSeq ?? ''}
+        data-causal-inputs-anchored={anchoredInputs}
+        data-causal-inputs-total={lens.inputCount ?? ''}
+        data-causal-outputs-anchored={anchoredOutputs}
+        data-causal-outputs-total={lens.outputCount ?? ''}
+        data-causal-endpoints-archived={archivedEndpoints}
+        style={{
+          position: 'relative',
+          marginTop: 5,
+          padding: '5px 6px 5px',
+          borderLeft: `1px solid ${meta.color}8f`,
+          borderTop: `1px solid ${meta.color}22`,
+          background: `linear-gradient(90deg,${meta.color}0d,transparent 88%)`,
+          opacity,
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, minWidth: 0 }}>
+          <span style={{ color: '#D9FAFF', fontFamily: HUD_FONTS.tech, fontSize: 7.5, fontWeight: 700, letterSpacing: 1.05 }}>
+            CAUSAL LENS
+          </span>
+          <span style={{ color: meta.color, fontFamily: HUD_FONTS.mono, fontSize: 6.8, letterSpacing: 0.66 }}>
+            {meta.label}
+          </span>
+          <span style={{ marginLeft: 'auto', color: HUD_COLORS.ink, fontFamily: HUD_FONTS.mono, fontSize: 7, whiteSpace: 'nowrap' }}>
+            {endpointCount(anchoredInputs, lens.inputCount, 'IN')} · {endpointCount(anchoredOutputs, lens.outputCount, 'OUT')}
+          </span>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) auto', alignItems: 'baseline', gap: 7, marginTop: 3, fontFamily: HUD_FONTS.mono }}>
+          <span title={lens.txHash} style={{ minWidth: 0, color: HUD_COLORS.dim, fontSize: 6.8, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            TX {shortHash(lens.txHash)} · #{lens.block}
+          </span>
+          <span
+            data-causal-summary-note="true"
+            style={{ color: meta.color, fontSize: 6.4, letterSpacing: 0.34, whiteSpace: 'nowrap' }}
+          >
+            {summaryNote}
+          </span>
+        </div>
+        {navigation && navigation.total > 1 ? (
+          <div
+            data-causal-navigation="true"
+            data-causal-navigation-position={navigation.position}
+            data-causal-navigation-total={navigation.total}
+            data-causal-navigation-back={navigation.backCellId ?? ''}
+            data-causal-navigation-forward={navigation.forwardCellId ?? ''}
+            style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) auto minmax(0,1fr)', alignItems: 'center', gap: 5, marginTop: 4, paddingTop: 4, borderTop: `1px solid ${meta.color}18` }}
+          >
+            {navigationButton(navigation.backCellId, 'back', navigation.onBack)}
+            <span style={{ color: HUD_COLORS.dim, fontFamily: HUD_FONTS.mono, fontSize: 6.1, whiteSpace: 'nowrap' }}>
+              PATH {navigation.position}/{navigation.total}
+            </span>
+            {navigationButton(
+              navigation.forwardCellId,
+              'forward',
+              navigation.onForward,
+            )}
+          </div>
+        ) : null}
+      </div>
+    );
+  }
 
   return (
     <div

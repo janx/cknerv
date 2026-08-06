@@ -121,6 +121,7 @@ export default function CellNucleusPortrait({
   traceEvidenceFocusSourceId = null,
   identityProofBinding = null,
   onIdentityProofRead,
+  onInteractionChange,
 }: {
   cell: Cell;
   direction?: CellCoreDirection;
@@ -132,6 +133,7 @@ export default function CellNucleusPortrait({
   traceEvidenceFocusSourceId?: number | null;
   identityProofBinding?: CellIdentityProofBinding | null;
   onIdentityProofRead?: (kind: CellIdentityProofKind) => void;
+  onInteractionChange?: (active: boolean) => void;
   /** Compatibility input for callers that share a scan epoch with the panel. */
   scanEpochMs?: number;
 }) {
@@ -156,6 +158,7 @@ export default function CellNucleusPortrait({
     () => deriveCellBirthAnchorEncoding(cell.birth_block),
     [cell.birth_block],
   );
+  useEffect(() => () => onInteractionChange?.(false), [onInteractionChange]);
   const proofFocus = focusField === 'state'
     ? 'address'
     : focusField === 'data'
@@ -197,6 +200,9 @@ export default function CellNucleusPortrait({
       role="application"
       aria-label="Interactive Cell scan. Drag to orbit around the Cell."
       title="Drag to orbit around the Cell"
+      onClick={(event) => event.stopPropagation()}
+      onPointerDown={(event) => event.stopPropagation()}
+      onWheel={(event) => event.stopPropagation()}
       style={{
         width: '100%',
         aspectRatio: '1 / 1',
@@ -243,8 +249,14 @@ export default function CellNucleusPortrait({
           enableZoom={false}
           rotateSpeed={0.65}
           target={[0, 0, 0]}
-          onStart={() => setDragging(true)}
-          onEnd={() => setDragging(false)}
+          onStart={() => {
+            setDragging(true);
+            onInteractionChange?.(true);
+          }}
+          onEnd={() => {
+            setDragging(false);
+            onInteractionChange?.(false);
+          }}
         />
       </Canvas>
     </div>

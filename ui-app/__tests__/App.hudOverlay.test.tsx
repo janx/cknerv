@@ -109,6 +109,10 @@ describe('HudOverlay wiring', () => {
     expect(inspectorWiring).toBeDefined();
     expect(inspectorWiring).toContain('cell={selectedCell}');
     expect(inspectorWiring).toContain('onClose={clearCellSelection}');
+    expect(inspectorWiring).toContain(
+      'onScanInteractionChange={setCellScanInteractionActive}',
+    );
+    expect(APP_SOURCE).toContain('enabled={!cellScanInteractionActive}');
     expect(APP_SOURCE.indexOf('<CellInspectionOverlay')).toBeGreaterThan(
       APP_SOURCE.indexOf('overlay={'),
     );

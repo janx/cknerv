@@ -865,6 +865,8 @@ function memoryRow({
   active,
   onActivate,
   compact = false,
+  proofKind,
+  proofResolved = false,
 }: {
   label: string;
   value: string;
@@ -873,11 +875,14 @@ function memoryRow({
   active?: boolean;
   onActivate?: () => void;
   compact?: boolean;
+  proofKind?: CellIdentityProofKind;
+  proofResolved?: boolean;
 }) {
+  const proof = proofKind ? IDENTITY_PROOF_META[proofKind] : null;
   const content = (
     <>
-      <span style={{ fontFamily: HUD_FONTS.tech, fontSize: compact ? 7.2 : 7.8, fontWeight: 500, letterSpacing: compact ? 1.1 : 1.35, color: HUD_COLORS.dim }}>
-        {label}
+      <span style={{ fontFamily: HUD_FONTS.tech, fontSize: compact ? 7.2 : 7.8, fontWeight: 500, letterSpacing: proof ? 0.55 : compact ? 1.1 : 1.35, color: proof && proofResolved ? proof.color : HUD_COLORS.dim, whiteSpace: 'nowrap' }}>
+        {proof ? `${proofResolved ? '◆' : '◇'} ${proof.code} · ${label}` : label}
       </span>
       <span title={title} style={{ minWidth: 0, textAlign: 'right', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis', fontFamily: HUD_FONTS.mono, fontSize: compact ? 8.8 : 9.5, letterSpacing: 0.3, color }}>
         {value}
@@ -886,7 +891,7 @@ function memoryRow({
   );
   const style: CSSProperties = {
     display: 'grid',
-    gridTemplateColumns: '58px minmax(0,1fr)',
+    gridTemplateColumns: proof ? '88px minmax(0,1fr)' : '58px minmax(0,1fr)',
     alignItems: 'baseline',
     width: '100%',
     minHeight: compact ? 15 : 17,
@@ -900,11 +905,24 @@ function memoryRow({
     textAlign: 'left',
   };
   return onActivate ? (
-    <button type="button" aria-label={`inspect ${label.toLowerCase()}`} onClick={onActivate} style={style}>
+    <button
+      type="button"
+      aria-label={`inspect ${label.toLowerCase()}`}
+      data-memory-identity-proof={proofKind}
+      data-memory-identity-proof-state={proof ? proofResolved ? 'resolved' : 'pending' : undefined}
+      onClick={onActivate}
+      style={style}
+    >
       {content}
     </button>
   ) : (
-    <div style={style}>{content}</div>
+    <div
+      data-memory-identity-proof={proofKind}
+      data-memory-identity-proof-state={proof ? proofResolved ? 'resolved' : 'pending' : undefined}
+      style={style}
+    >
+      {content}
+    </div>
   );
 }
 
@@ -1321,7 +1339,7 @@ function EvidenceLedger({
   );
 }
 
-function MemoryReadState({
+export function ConsensusMemoryTracePlate({
   readout,
   reducedMotion,
   targetContentHash,
@@ -1518,11 +1536,23 @@ export default function ConsensusIdentityPlate({
   );
   const identityProofCount =
     selectedIdentityProofBinding?.resolvedKinds.length ?? 0;
+  const proofResolved = (kind: CellIdentityProofKind): boolean => (
+    selectedIdentityProofBinding?.resolvedKinds.includes(kind) ?? false
+  );
   const lifecycleColor = identity.lifecycle === 'live'
     ? HUD_COLORS.nominal
     : HUD_COLORS.caution;
   const address = formatOutpoint(identity.txHash, identity.outPointIndex);
   const fingerprint = fingerprintReadout(identity.contentHash, reveal);
+  const spatialTraceState = !traceSelected
+    ? !identityProofComplete
+      ? 'VERIFY IDENTITY'
+      : `${traceSource === 'witness' ? 'WITNESS' : traceSource === 'input' ? 'CAUSAL' : 'TRACE'} ${selectedIdentityProofBinding?.phase === 'retained' ? 'RETAINED' : 'READY'}`
+    : traceReadout?.stage === 'converging'
+      ? `${traceReadout.arrivedSourceCount}/${traceReadout.sourceCount} ARRIVED`
+      : traceReadout?.stage === 'locked'
+        ? `${traceReadout.resolvedSourceCount}/${traceReadout.sourceCount} VERIFIED`
+        : (traceReadout?.stage ?? 'PLANNING').toUpperCase();
   const shell: CSSProperties = {
     position: 'relative',
     marginTop: spatial ? 0 : compact ? 6 : 9,
@@ -1568,6 +1598,14 @@ export default function ConsensusIdentityPlate({
 
       <div
         data-consensus-memory-identity-grid="true"
+        data-memory-identity-binding={spatial ? 'true' : undefined}
+        data-memory-identity-phase={spatial
+          ? selectedIdentityProofBinding?.phase ?? 'collecting'
+          : undefined}
+        data-memory-identity-count={spatial ? identityProofCount : undefined}
+        data-memory-identity-complete={spatial
+          ? identityProofComplete ? 'true' : 'false'
+          : undefined}
         style={{
           display: 'grid',
           gap: 2,
@@ -1585,6 +1623,8 @@ export default function ConsensusIdentityPlate({
           active: focusedField === 'state',
           onActivate: onInspectAddress,
           compact,
+          proofKind: spatial ? 'address' : undefined,
+          proofResolved: proofResolved('address'),
         })}
         {memoryRow({
           label: 'CONTENT',
@@ -1594,6 +1634,8 @@ export default function ConsensusIdentityPlate({
           active: focusedField === 'data',
           onActivate: onInspectContent,
           compact,
+          proofKind: spatial ? 'content' : undefined,
+          proofResolved: proofResolved('content'),
         })}
         {memoryRow({
           label: 'ANCHOR',
@@ -1602,6 +1644,8 @@ export default function ConsensusIdentityPlate({
           active: focusedField === 'born',
           onActivate: onInspectAnchor,
           compact,
+          proofKind: spatial ? 'anchor' : undefined,
+          proofResolved: proofResolved('anchor'),
         })}
       </div>
 
@@ -1611,10 +1655,11 @@ export default function ConsensusIdentityPlate({
           reveal={reveal}
           navigation={causalNavigation}
           compact={compact}
+          summary={spatial}
         />
       ) : null}
 
-      <div
+      {!spatial ? <div
         data-memory-identity-binding="true"
         data-memory-identity-phase={
           selectedIdentityProofBinding?.phase ?? 'collecting'
@@ -1682,14 +1727,14 @@ export default function ConsensusIdentityPlate({
                 ? 'IDENTITY BOUND · MEMORY ROUTE READY'
                 : 'RESOLVE ALL IDENTITY FACETS TO RECALL'}
         </span>
-      </div>
+      </div> : null}
 
-      <div style={{ marginTop: compact ? 4 : 5, paddingTop: compact ? 4 : 5, borderTop: `1px solid ${CYAN}18` }}>
-        <span style={{ fontFamily: HUD_FONTS.mono, fontSize: 8.3, letterSpacing: 0.45, color: statusColor, textShadow: `0 0 6px ${statusColor}55` }}>
+      {!spatial || observed ? <div style={{ marginTop: compact ? 4 : 5, paddingTop: spatial ? 2 : compact ? 4 : 5, borderTop: `1px solid ${CYAN}18` }}>
+        {!spatial ? <span style={{ fontFamily: HUD_FONTS.mono, fontSize: 8.3, letterSpacing: 0.45, color: statusColor, textShadow: `0 0 6px ${statusColor}55` }}>
           {statusText}
-        </span>
-        {traceSelected && traceReadout ? (
-          <MemoryReadState
+        </span> : null}
+        {!spatial && traceSelected && traceReadout ? (
+          <ConsensusMemoryTracePlate
             readout={traceReadout}
             reducedMotion={reducedMotion}
             targetContentHash={identity.contentHash}
@@ -1717,13 +1762,13 @@ export default function ConsensusIdentityPlate({
             title={observed.txHash}
             onClick={onRecallWrite}
             disabled={!recallEnabled}
-            style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', alignItems: 'baseline', gap: '2px 8px', width: '100%', margin: '4px 0 0', padding: '3px 0 2px', border: 0, borderTop: `1px solid ${traceSelected ? VIOLET : GOLD}24`, background: traceSelected ? `${VIOLET}12` : 'transparent', fontFamily: HUD_FONTS.mono, fontSize: 8.1, letterSpacing: 0.35, color: traceSelected ? '#C7B9FF' : GOLD, textShadow: `0 0 6px ${traceSelected ? VIOLET : GOLD}55`, whiteSpace: 'nowrap', cursor: recallEnabled ? 'pointer' : 'default', textAlign: 'left', opacity: recallEnabled ? 1 : 0.62 }}
+            style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', alignItems: 'baseline', gap: '2px 8px', width: '100%', margin: spatial ? 0 : '4px 0 0', padding: spatial ? '3px 2px' : '3px 0 2px', border: 0, borderTop: spatial ? 0 : `1px solid ${traceSelected ? VIOLET : GOLD}24`, background: traceSelected ? `${VIOLET}12` : 'transparent', fontFamily: HUD_FONTS.mono, fontSize: 8.1, letterSpacing: 0.35, color: traceSelected ? '#C7B9FF' : GOLD, textShadow: `0 0 6px ${traceSelected ? VIOLET : GOLD}55`, whiteSpace: 'nowrap', cursor: recallEnabled ? 'pointer' : 'default', textAlign: 'left', opacity: recallEnabled ? 1 : 0.62 }}
           >
-            <span>WRITE OBSERVED</span>
+            <span>{spatial ? 'MEMORY TRACE' : 'WRITE OBSERVED'}</span>
             <span style={{ marginLeft: 'auto', color: '#FFD29A' }}>
-              #{observed.block} · {observed.inputCount}→{observed.outputCount}
+              #{observed.block} · {observed.inputCount}→{observed.outputCount}{spatial ? ` · ${spatialTraceState}` : ''}
             </span>
-            <span style={{ gridColumn: '1 / -1', color: traceSelected ? VIOLET : CYAN, letterSpacing: 0.8 }}>
+            {!spatial ? <span style={{ gridColumn: '1 / -1', color: traceSelected ? VIOLET : CYAN, letterSpacing: 0.8 }}>
               {recallActionCopy({
                 enabled: recallEnabled,
                 identityComplete: identityProofComplete,
@@ -1732,7 +1777,7 @@ export default function ConsensusIdentityPlate({
                 traceReadout,
                 traceSource,
               })}
-            </span>
+            </span> : null}
           </button>
         ) : observed ? (
           <div
@@ -1740,13 +1785,13 @@ export default function ConsensusIdentityPlate({
             title={observed.txHash}
             style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginTop: 4, fontFamily: HUD_FONTS.mono, fontSize: 8.1, letterSpacing: 0.35, color: GOLD, textShadow: `0 0 6px ${GOLD}55`, whiteSpace: 'nowrap' }}
           >
-            <span>WRITE OBSERVED</span>
+            <span>{spatial ? 'MEMORY TRACE' : 'WRITE OBSERVED'}</span>
             <span style={{ marginLeft: 'auto', color: '#FFD29A' }}>
               #{observed.block} · {observed.inputCount}→{observed.outputCount}
             </span>
           </div>
         ) : null}
-      </div>
+      </div> : null}
     </div>
   );
 }

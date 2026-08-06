@@ -58,7 +58,13 @@ function ContextFact({ label, value, displayValue, color, wide = false }: {
   );
 }
 
-function KnowledgeBar({ record }: { record: CellSemanticRecord }) {
+function KnowledgeBar({
+  record,
+  summary = false,
+}: {
+  record: CellSemanticRecord;
+  summary?: boolean;
+}) {
   const knowledge = record.common_knowledge;
   if (!knowledge || knowledge.total_bytes <= 0) return null;
   const segments = [
@@ -71,15 +77,15 @@ function KnowledgeBar({ record }: { record: CellSemanticRecord }) {
     <div
       data-cell-context-fact="knowledge"
       title={segments.map(([name, bytes]) => `${name} ${bytes}B`).join(' · ')}
-      style={{ minWidth: 0, marginTop: 8, paddingTop: 7, borderTop: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.13)}` }}
+      style={{ minWidth: 0, marginTop: summary ? 5 : 8, paddingTop: summary ? 4 : 7, borderTop: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.13)}` }}
     >
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
-        <span style={{ color: HUD_COLORS.dim, fontSize: 6.6, letterSpacing: 0.9 }}>KNOWLEDGE</span>
+        <span style={{ color: HUD_COLORS.dim, fontSize: summary ? 6.8 : 6.6, letterSpacing: 0.9 }}>KNOWLEDGE</span>
         <span style={{ marginLeft: 'auto', color: HUD_COLORS.ink, fontSize: 8.2 }}>
           {knowledge.total_bytes} bytes occupied
         </span>
       </div>
-      <div style={{ display: 'flex', height: 3, gap: 1, marginTop: 2 }}>
+      <div style={{ display: 'flex', height: summary ? 2 : 3, gap: 1, marginTop: 2 }}>
         {segments.map(([name, bytes, color]) => (
           <span
             key={name}
@@ -124,6 +130,75 @@ function ScriptFact({ role, script }: {
         <span title={script.code_hash} style={{ color: HUD_COLORS.cyanWire, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{compact(script.code_hash, 12, 9)}</span>
         <span style={{ color: HUD_COLORS.dim }}>ARGS</span>
         <span title={script.args} style={{ color: HUD_COLORS.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{compact(script.args, 14, 10)}</span>
+      </div>
+    </div>
+  );
+}
+
+function SpatialContextFact({
+  label,
+  value,
+  displayValue,
+  color,
+  wide = false,
+}: {
+  label: string;
+  value: string;
+  displayValue?: string;
+  color?: string;
+  wide?: boolean;
+}) {
+  return (
+    <div
+      data-cell-context-fact={label.toLowerCase()}
+      style={{
+        gridColumn: wide ? '1 / -1' : undefined,
+        display: 'grid',
+        gridTemplateColumns: 'auto minmax(0,1fr)',
+        alignItems: 'baseline',
+        gap: 6,
+        minWidth: 0,
+      }}
+    >
+      <span style={{ color: HUD_COLORS.dim, fontSize: 6.6, letterSpacing: 0.72, whiteSpace: 'nowrap' }}>
+        {label}
+      </span>
+      <span title={value} style={{ minWidth: 0, color: color ?? HUD_COLORS.ink, fontSize: 8.2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        {displayValue ?? value}
+      </span>
+    </div>
+  );
+}
+
+function SpatialScriptFact({ role, script }: {
+  role: 'LOCK' | 'TYPE';
+  script: SemanticScript;
+}) {
+  const identity = script.name ?? script.family ?? compact(script.code_hash);
+  const state = script.deprecated === true
+    ? 'DEPRECATED'
+    : script.deprecated === false
+      ? 'ACTIVE'
+      : null;
+  const stateColor = script.deprecated ? HUD_COLORS.danger : HUD_COLORS.nominal;
+  return (
+    <div
+      data-cell-context-script={role.toLowerCase()}
+      style={{ minWidth: 0, padding: '4px 6px', borderLeft: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.22)}`, background: `linear-gradient(90deg,${rgba(HUD_COLORS.cyanWire, 0.035)},transparent)` }}
+    >
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, minWidth: 0 }}>
+        <span style={{ color: HUD_COLORS.dim, fontSize: 6.6, letterSpacing: 0.75, whiteSpace: 'nowrap' }}>{role}</span>
+        <span title={script.script_hash} style={{ minWidth: 0, color: HUD_COLORS.ink, fontSize: 8.2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{identity}</span>
+        {state ? <span style={{ marginLeft: 'auto', color: stateColor, fontSize: 6.2, letterSpacing: 0.62 }}>{state}</span> : null}
+      </div>
+      <div
+        data-cell-context-script-evidence
+        style={{ display: 'grid', gridTemplateColumns: 'auto minmax(0,1fr) auto minmax(0,.72fr)', gap: 5, marginTop: 2, minWidth: 0, fontSize: 6.5 }}
+      >
+        <span style={{ color: HUD_COLORS.dim }}>CODE·{script.hash_type.toUpperCase()}</span>
+        <span title={script.code_hash} style={{ color: HUD_COLORS.cyanWire, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{compact(script.code_hash, 7, 5)}</span>
+        <span style={{ color: HUD_COLORS.dim }}>ARGS</span>
+        <span title={script.args} style={{ color: HUD_COLORS.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{compact(script.args, 6, 4)}</span>
       </div>
     </div>
   );
@@ -179,6 +254,114 @@ function FacetDetail({ facet, index }: {
           +{facet.attributes.length - attributes.length} MORE INDEXED FIELDS
         </div>
       ) : null}
+    </div>
+  );
+}
+
+function primaryFacet(record: CellSemanticRecord): SemanticFacet | null {
+  const matchingType = record.cell_type
+    ? record.facets.find((facet) => facet.kind === record.cell_type)
+    : undefined;
+  if (matchingType) return matchingType;
+  const priority = ['dao', 'dep_group', 'code_cell'];
+  for (const kind of priority) {
+    const match = record.facets.find((facet) => facet.kind === kind);
+    if (match) return match;
+  }
+  return record.facets[0] ?? null;
+}
+
+function SpatialFacetSummary({ facet }: { facet: SemanticFacet }) {
+  const attributes = facet.attributes.slice(0, 2);
+  return (
+    <div
+      data-cell-context-facets="essential"
+      data-cell-context-facet={`${facet.namespace}:${facet.kind}`}
+      style={{ marginTop: 5, padding: '4px 5px 0', borderTop: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.13)}`, minWidth: 0 }}
+    >
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, minWidth: 0 }}>
+        <span style={{ color: HUD_COLORS.cyanWire, fontSize: 7, letterSpacing: 0.75, whiteSpace: 'nowrap' }}>
+          {facetTitle(facet).toUpperCase()}
+        </span>
+        {facet.state ? (
+          <span title={facet.state} style={{ color: HUD_COLORS.caution, fontSize: 6.7, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            · {facet.state.toUpperCase()}
+          </span>
+        ) : null}
+        <span style={{ marginLeft: 'auto', color: HUD_COLORS.dim, fontSize: 6.1, whiteSpace: 'nowrap' }}>
+          PRIMARY FACET
+        </span>
+      </div>
+      {attributes.length > 0 ? (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,minmax(0,1fr))', gap: 7, marginTop: 2, minWidth: 0 }}>
+          {attributes.map((attribute) => (
+            <span key={attribute.key} title={`${facetAttributeLabel(attribute.key)} · ${attribute.value}${attribute.unit ? ` ${attribute.unit}` : ''}`} style={{ minWidth: 0, color: HUD_COLORS.ink, fontSize: 6.8, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              <span style={{ color: HUD_COLORS.dim }}>{facetAttributeLabel(attribute.key)} </span>
+              {attribute.value}{attribute.unit ? ` ${attribute.unit}` : ''}
+            </span>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function SpatialContextSummary({ record }: { record: CellSemanticRecord }) {
+  const facet = primaryFacet(record);
+  const assetIdentity = record.asset
+    ? [record.asset.symbol, record.asset.name, record.asset.standard]
+      .filter(Boolean)
+      .join(' · ') || compact(record.asset.type_script_hash)
+    : null;
+  const assetAmount = record.asset?.amount == null
+    ? null
+    : `${formatSemanticAssetAmount(
+      record.asset.amount,
+      record.asset.decimals,
+    )}${record.asset.symbol ? ` ${record.asset.symbol}` : ''}`;
+  return (
+    <div data-cell-context-policy="essential">
+      <div
+        data-cell-context-facts
+        style={{ display: 'grid', gridTemplateColumns: 'repeat(2,minmax(0,1fr))', columnGap: 10, rowGap: 4 }}
+      >
+        {record.address ? (
+          <SpatialContextFact
+            label="OWNER"
+            value={record.address}
+            displayValue={compact(record.address, 15, 10)}
+            wide
+          />
+        ) : null}
+        <SpatialContextFact
+          label="CREATED"
+          value={`#${record.observed_at_block.toLocaleString()}`}
+        />
+        <SpatialContextFact
+          label="PROOF"
+          value={`#${record.as_of.block.toLocaleString()}`}
+          color={HUD_COLORS.cyanWire}
+        />
+        {assetIdentity ? (
+          <SpatialContextFact
+            label="ASSET"
+            value={`${assetIdentity}${assetAmount ? ` · ${assetAmount}` : ''}`}
+            color={HUD_COLORS.caution}
+            wide
+          />
+        ) : null}
+      </div>
+      {record.lock_script || record.type_script ? (
+        <div
+          data-cell-context-scripts="true"
+          style={{ display: 'grid', gap: 3, marginTop: 6 }}
+        >
+          {record.lock_script ? <SpatialScriptFact role="LOCK" script={record.lock_script} /> : null}
+          {record.type_script ? <SpatialScriptFact role="TYPE" script={record.type_script} /> : null}
+        </div>
+      ) : null}
+      <KnowledgeBar record={record} summary />
+      {facet ? <SpatialFacetSummary facet={facet} /> : null}
     </div>
   );
 }
@@ -410,6 +593,7 @@ export default function CellSemanticsReadout({
       aria-label="Cell context"
       data-cell-semantics-phase={phase}
       data-cell-semantics-density={spatial ? 'spatial' : 'compact'}
+      data-cell-semantics-policy={spatial ? 'essential' : 'complete'}
       style={{
         margin: spatial ? 0 : '7px 0 8px',
         padding: spatial ? '4px 4px 8px 0' : '6px 7px 5px',
@@ -424,7 +608,7 @@ export default function CellSemanticsReadout({
     >
       <div
         data-cell-context-header="true"
-        style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '3px 6px', marginBottom: record ? 8 : 0 }}
+        style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '3px 6px', marginBottom: record ? spatial ? 5 : 8 : 0 }}
       >
         <span style={{ width: 4, height: 4, borderRadius: '50%', background: color, boxShadow: `0 0 6px ${color}` }} />
         <span style={{ color, fontSize: 8, letterSpacing: 1.15, whiteSpace: 'nowrap' }}>
@@ -453,7 +637,7 @@ export default function CellSemanticsReadout({
         </div>
       ) : null}
       {record ? (
-        <>
+        spatial ? <SpatialContextSummary record={record} /> : <>
           <div
             data-cell-context-facts
             style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', columnGap: 12, rowGap: 3 }}
@@ -510,7 +694,7 @@ export default function CellSemanticsReadout({
           ) : null}
         </>
       ) : null}
-      {transactionPhase ? (
+      {!spatial && transactionPhase ? (
         <TransactionReadout
           phase={transactionPhase}
           record={transactionRecord}

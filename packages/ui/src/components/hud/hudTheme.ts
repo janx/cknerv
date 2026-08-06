@@ -76,10 +76,6 @@ export function injectHudTheme(doc: Document = document): void {
     + `\n.cknerv-chain-panel-scroll::-webkit-scrollbar{width:5px}`
     + `\n.cknerv-chain-panel-scroll::-webkit-scrollbar-thumb{background:rgba(255,152,48,.35);border-radius:3px}`
     + `\n.cknerv-chain-panel-scroll::-webkit-scrollbar-track{background:transparent}`
-    + `\n.cknerv-cell-inspection-scroll::-webkit-scrollbar{width:3px}`
-    + `\n.cknerv-cell-inspection-scroll::-webkit-scrollbar-track{background:transparent}`
-    + `\n.cknerv-cell-inspection-scroll-lineage::-webkit-scrollbar-thumb{background:rgba(170,136,255,.3);box-shadow:0 0 5px rgba(170,136,255,.22)}`
-    + `\n.cknerv-cell-inspection-scroll-context::-webkit-scrollbar-thumb{background:rgba(32,240,255,.3);box-shadow:0 0 5px rgba(32,240,255,.22)}`
     + `\n.cknerv-status-controls::-webkit-scrollbar{display:none}`
     + `\n.cknerv-status-context::-webkit-scrollbar{display:none}`
     + `\n.cknerv-memory-route-ledger{position:absolute;right:calc(100% + 30px);top:-1px;width:230px}`

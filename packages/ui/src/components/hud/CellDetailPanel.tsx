@@ -18,7 +18,9 @@ import {
 import { HUD_COLORS, HUD_FONTS, rgba } from './hudTheme';
 import { useReducedMotion } from './useReducedMotion';
 import CellNucleusPortrait from './CellNucleusPortrait';
-import ConsensusIdentityPlate from './ConsensusIdentityPlate';
+import ConsensusIdentityPlate, {
+  ConsensusMemoryTracePlate,
+} from './ConsensusIdentityPlate';
 import type {
   CellCausalNavigationReadout,
 } from './CellCausalLensReadout';
@@ -116,6 +118,8 @@ export interface CellDetailPanelProps {
     cellId: number,
     reducedMotion: boolean,
   ) => void;
+  /** Owns pointer orbit gestures inside the nested Cell Scan renderer. */
+  onScanInteractionChange?: (active: boolean) => void;
   semanticSource?: EnrichmentSourceStatus;
   semanticPhase?: CellSemanticsPhase;
   semanticRecord?: CellSemanticRecord | null;
@@ -222,6 +226,7 @@ export default function CellDetailPanel({
   identityProofBinding = null,
   onTraceWrite,
   onIdentityProofRead,
+  onScanInteractionChange,
   semanticSource,
   semanticPhase,
   semanticRecord,
@@ -255,6 +260,8 @@ export default function CellDetailPanel({
     () => deriveCellConsensusIdentity(cell, recentLinks),
     [cell, recentLinks],
   );
+  const traceSelected = identity.observedWrite?.seq === tracedWriteSeq;
+  const showTracePlate = Boolean(traceSelected && traceReadout);
   const selectedIdentityProofBinding = identityProofBinding?.cellId === cell.id
     ? identityProofBinding
     : null;
@@ -359,13 +366,15 @@ export default function CellDetailPanel({
 
   const verticalLayout = layoutSide === 'above' || layoutSide === 'below';
   const rootWidth = enhancedDetail ? 800 : 700;
-  const rootHeight = verticalLayout ? 448 : 600;
+  const rootHeight = verticalLayout ? 500 : 600;
   const portraitWidth = enhancedDetail ? 280 : 260;
   const portraitLeft = rootWidth - portraitWidth;
   const anatomyWidth = enhancedDetail ? 490 : 410;
   const identityLeft = enhancedDetail ? 180 : 140;
   const identityWidth = rootWidth - identityLeft;
-  const lineageWidth = enhancedDetail ? 420 : 480;
+  const secondaryLeft = enhancedDetail ? 440 : 340;
+  const secondaryWidth = rootWidth - secondaryLeft;
+  const lineageWidth = enhancedDetail ? 420 : showTracePlate ? 320 : 480;
   const readableScale = verticalLayout ? 1 : 1.2;
   const readableWidth = `${(100 / readableScale).toFixed(2)}%`;
   const fromFanEdge = (left: number): CSSProperties => (
@@ -422,10 +431,10 @@ export default function CellDetailPanel({
             data-cell-inspection-orbit-path="lineage"
             style={{ position: 'absolute', zIndex: 0, left: fanCoordinate(72), top: 288, width: 1, height: 92, background: `linear-gradient(180deg,${rgba('#AA88FF', 0.16)},${rgba('#AA88FF', 0.68)})`, boxShadow: `0 0 6px ${rgba('#AA88FF', 0.24)}` }}
           />
-          {enhancedDetail ? (
+          {enhancedDetail || showTracePlate ? (
             <span
               aria-hidden="true"
-              data-cell-inspection-orbit-path="context"
+              data-cell-inspection-orbit-path={showTracePlate ? 'trace' : 'context'}
               style={{ position: 'absolute', zIndex: 0, left: fanCoordinate(portraitLeft + portraitWidth / 2), top: 368, width: 1, height: 12, background: `linear-gradient(180deg,${rgba(HUD_COLORS.cyanWire, 0.62)},${rgba(HUD_COLORS.cyanWire, 0.12)})`, boxShadow: `0 0 6px ${rgba(HUD_COLORS.cyanWire, 0.22)}` }}
             />
           ) : null}
@@ -506,6 +515,7 @@ export default function CellDetailPanel({
           onIdentityProofRead={onIdentityProofRead
             ? (kind) => onIdentityProofRead(kind, cell.id, reduced)
             : undefined}
+          onInteractionChange={onScanInteractionChange}
         />
         <span
           aria-hidden="true"
@@ -565,26 +575,21 @@ export default function CellDetailPanel({
 
       <section
         aria-label="Cell lineage"
-        className="cknerv-cell-inspection-scroll cknerv-cell-inspection-scroll-lineage"
         data-cell-detail-module="lineage"
         data-cell-inspection-satellite="lineage"
         data-cell-scan-shard="lineage"
         style={{
           ...satelliteBase,
           ...(verticalLayout
-            ? { left: 0, top: 288, width: enhancedDetail ? '49%' : '100%', height: 160 }
+            ? { left: 0, top: 288, width: enhancedDetail || showTracePlate ? '49%' : '100%', height: 212 }
             : { ...fromFanEdge(0), top: 380, width: lineageWidth, height: 220 }),
-          overflowX: 'hidden',
-          overflowY: 'auto',
-          overscrollBehavior: 'contain',
+          overflow: 'hidden',
           padding: '8px 10px 11px 12px',
           borderLeft: `1px solid ${rgba('#AA88FF', 0.42)}`,
           borderTop: `1px solid ${rgba('#AA88FF', 0.16)}`,
           borderBottom: `1px solid ${rgba('#AA88FF', 0.1)}`,
           background: `linear-gradient(105deg,rgba(3,3,13,.97),rgba(4,4,16,.92) 78%,${rgba('#AA88FF', 0.045)})`,
           clipPath: 'polygon(0 0,calc(100% - 11px) 0,100% 11px,100% 100%,0 100%)',
-          scrollbarWidth: 'thin',
-          scrollbarColor: `${rgba('#AA88FF', 0.3)} transparent`,
         }}
       >
         <div data-cell-detail-readable-scale="true" style={{ width: readableWidth, zoom: readableScale }}>
@@ -606,7 +611,7 @@ export default function CellDetailPanel({
               : undefined}
             recallEnabled={scan.classified && identityProofComplete}
             traceSource={traceSource}
-            traceSelected={identity.observedWrite?.seq === tracedWriteSeq}
+            traceSelected={traceSelected}
             traceReadout={traceReadout}
             traceEvidenceFocusSourceId={traceEvidenceFocusSourceId}
             traceEvidencePreviewSourceId={traceEvidencePreviewSourceId}
@@ -623,29 +628,69 @@ export default function CellDetailPanel({
         </div>
       </section>
 
-      {semanticSource && semanticPhase ? (
+      {showTracePlate && traceReadout ? (
+        <section
+          aria-label="Consensus memory trace"
+          data-cell-detail-module="trace"
+          data-cell-inspection-satellite="trace"
+          data-cell-scan-shard="trace"
+          style={{
+            ...satelliteBase,
+            ...(verticalLayout
+              ? { right: 0, top: 288, width: '49%', height: 212 }
+              : { ...fromFanEdge(secondaryLeft), top: 380, width: secondaryWidth, height: 220 }),
+            overflow: 'visible',
+            padding: '8px 10px 10px 12px',
+            borderLeft: `1px solid ${rgba('#AA88FF', 0.5)}`,
+            borderTop: `1px solid ${rgba('#AA88FF', 0.2)}`,
+            borderBottom: `1px solid ${rgba('#AA88FF', 0.12)}`,
+            background: 'linear-gradient(105deg,rgba(4,3,14,.98),rgba(7,5,18,.94) 78%,rgba(170,136,255,.055))',
+            clipPath: 'polygon(0 0,calc(100% - 11px) 0,100% 11px,100% 100%,0 100%)',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 7, color: '#C7B9FF', fontFamily: HUD_FONTS.tech, fontSize: 8.4, fontWeight: 700, letterSpacing: 1.2 }}>
+            <span>MEMORY TRACE</span>
+            <span style={{ marginLeft: 'auto', color: HUD_COLORS.dim, fontFamily: HUD_FONTS.mono, fontSize: 6.8, fontWeight: 400, letterSpacing: 0.55 }}>
+              LIVE EVIDENCE
+            </span>
+          </div>
+          <div data-cell-detail-readable-scale="true" style={{ width: readableWidth, zoom: readableScale }}>
+            <ConsensusMemoryTracePlate
+              readout={traceReadout}
+              reducedMotion={reduced}
+              targetContentHash={identity.contentHash}
+              agreementCount={agreementTarget}
+              focusedSourceId={traceEvidenceFocusSourceId}
+              previewSourceId={traceEvidencePreviewSourceId}
+              onFocusChange={onTraceEvidenceFocusChange}
+              focusedHop={traceRouteHopFocus}
+              onHopFocusChange={onTraceRouteHopFocusChange}
+              lockedHop={traceRouteHopLock}
+              onHopLockChange={onTraceRouteHopLockChange}
+              routeCellById={inspectedCellById}
+            />
+          </div>
+        </section>
+      ) : null}
+
+      {semanticSource && semanticPhase && !showTracePlate ? (
         <section
           aria-label="Cell indexed context"
-          className="cknerv-cell-inspection-scroll cknerv-cell-inspection-scroll-context"
           data-cell-detail-module="context"
           data-cell-inspection-satellite="context"
           data-cell-scan-shard="context"
           style={{
             ...satelliteBase,
             ...(verticalLayout
-              ? { right: 0, top: 288, width: '49%', height: 160 }
-              : { ...fromFanEdge(440), top: 380, width: 360, height: 220 }),
-            overflowX: 'hidden',
-            overflowY: 'auto',
-            overscrollBehavior: 'contain',
+              ? { right: 0, top: 288, width: '49%', height: 212 }
+              : { ...fromFanEdge(secondaryLeft), top: 380, width: secondaryWidth, height: 220 }),
+            overflow: 'hidden',
             padding: '8px 10px 11px 12px',
             borderLeft: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.42)}`,
             borderTop: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.16)}`,
             borderBottom: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.1)}`,
             background: `linear-gradient(105deg,rgba(1,5,13,.97),rgba(2,8,18,.92) 78%,${rgba(HUD_COLORS.cyanWire, 0.045)})`,
             clipPath: 'polygon(0 0,calc(100% - 11px) 0,100% 11px,100% 100%,0 100%)',
-            scrollbarWidth: 'thin',
-            scrollbarColor: `${rgba(HUD_COLORS.cyanWire, 0.3)} transparent`,
           }}
         >
           <div data-cell-detail-readable-scale="true" style={{ width: readableWidth, zoom: readableScale }}>

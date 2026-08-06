@@ -136,8 +136,8 @@ describe('CellDetailPanel', () => {
     expect(container.querySelector('[data-cell-detail-module="lineage"]')?.hasAttribute('hidden')).toBe(false);
     expect((container.querySelector('[data-consensus-memory]') as HTMLElement).dataset.consensusMemoryDensity).toBe('spatial');
     expect((container.firstElementChild as HTMLElement).style.height).toBe('600px');
-    expect(container.querySelector('[data-cell-scan-shard="lineage"]')?.className)
-      .toContain('cknerv-cell-inspection-scroll-lineage');
+    expect((container.querySelector('[data-cell-scan-shard="lineage"]') as HTMLElement).style.overflow)
+      .toBe('hidden');
   });
 
   it('turns base taxonomy into useful Cell facts without visual parameters', () => {
@@ -323,22 +323,23 @@ describe('CellDetailPanel', () => {
     const memory = container.querySelector('[data-consensus-memory]') as HTMLElement;
     expect(readout).not.toBeNull();
     expect(readout?.getAttribute('data-cell-semantics-density')).toBe('spatial');
+    expect(readout?.getAttribute('data-cell-semantics-policy')).toBe('essential');
     expect((readout?.querySelector('[data-cell-context-facts]') as HTMLElement).style.gridTemplateColumns).toContain('repeat(2');
     expect((readout?.querySelector('[data-cell-context-fact="owner"]') as HTMLElement).style.gridColumn).toBe('1 / -1');
     expect(readout?.querySelector('[data-cell-context-header="true"]')).not.toBeNull();
     expect(readout?.querySelector('[data-cell-context-scripts="true"]')).not.toBeNull();
     expect(readout?.querySelector('[data-cell-context-script-evidence]')?.textContent)
-      .toContain('IDENTITY');
-    expect(readout?.querySelector('[data-transaction-semantics-summary]')).not.toBeNull();
-    expect(readout?.querySelector('[data-transaction-participants]')).not.toBeNull();
+      .toContain('CODE·TYPE');
+    expect(readout?.querySelector('[data-transaction-semantics-summary]')).toBeNull();
+    expect(readout?.querySelector('[data-transaction-participants]')).toBeNull();
     expect(container.querySelector('[data-cell-portrait-frame]')).not.toBeNull();
     expect((container.querySelector('[data-cell-portrait-frame]') as HTMLElement).style.width)
       .toBe('280px');
     expect(container.querySelectorAll('[data-cell-inspection-satellite]')).toHaveLength(5);
     expect(memory.dataset.consensusMemoryDensity).toBe('spatial');
     expect(container.querySelector('[data-cell-detail-module="context"]')?.hasAttribute('hidden')).toBe(false);
-    expect(container.querySelector('[data-cell-detail-module="context"]')?.className)
-      .toContain('cknerv-cell-inspection-scroll-context');
+    expect((container.querySelector('[data-cell-detail-module="context"]') as HTMLElement).style.overflow)
+      .toBe('hidden');
     expect(container.querySelector('[data-cell-detail-module="anatomy"]')?.hasAttribute('hidden')).toBe(false);
     expect(container.querySelector('[data-cell-detail-module="lineage"]')?.hasAttribute('hidden')).toBe(false);
     expect((container.firstElementChild as HTMLElement).style.background).toBe('');
@@ -355,26 +356,13 @@ describe('CellDetailPanel', () => {
     expect(readout?.textContent).toContain('NTT · Nervos Test Token · xUDT');
     expect(readout?.textContent).toContain('123.45 NTT');
     expect(readout?.textContent).toContain('100 bytes occupied');
-    expect(readout?.textContent).toContain('DATA · JSON DOCUMENT · DETERMINISTIC DECODE');
-    expect(readout?.textContent).toContain('application/json');
-    expect(readout?.textContent).toContain('DAO POSITION · DEPOSIT');
+    expect(readout?.textContent).toContain('DAO POSITION');
+    expect(readout?.textContent).toContain('DEPOSIT');
     expect(readout?.textContent).toContain('1.25 CKB');
-    expect(readout?.textContent).toContain('DEP GROUP');
-    expect(readout?.textContent).toContain('0xdep0:0');
-    expect(readout?.textContent).toContain('CODE CELL · TYPE ID');
-    expect(readout?.textContent).toContain('ORIGIN TRANSACTION');
-    expect(readout?.textContent).toContain('2 → 3 CELLS');
-    expect(readout?.textContent).toContain('#16204798 → #16204800 · 2 BLOCKS');
-    expect(readout?.textContent).toContain('1000 sh');
-    expect(readout?.textContent).toContain('1250 sh/kB');
-    expect(readout?.textContent).toContain('456 B');
-    expect(readout?.textContent).toContain('24×');
-    expect(readout?.textContent).toContain('200 CKB → 199.99999 CKB');
-    expect(readout?.textContent).toContain('122 B → 128 B');
-    expect(readout?.textContent).toContain('2–10 BLOCKS');
-    expect(readout?.textContent).toContain('12,345');
-    expect(readout?.textContent).toContain('+49.99999 CKB');
-    expect(readout?.textContent).toContain('+6 B');
+    expect(readout?.textContent).not.toContain('DATA · JSON DOCUMENT');
+    expect(readout?.textContent).not.toContain('DEP GROUP');
+    expect(readout?.textContent).not.toContain('CODE CELL');
+    expect(readout?.textContent).not.toContain('ORIGIN TRANSACTION');
     expect(container.textContent).toContain('3h 12m');
     expect(container.textContent).toContain('AGE 3h 12m');
     expect(Array.from(container.querySelectorAll('span')).filter(
@@ -539,9 +527,7 @@ describe('CellDetailPanel', () => {
       ?.getAttribute('data-memory-identity-proof-state')).toBe('resolved');
     expect(container.querySelector('[data-memory-identity-proof="content"]')
       ?.getAttribute('data-memory-identity-proof-state')).toBe('pending');
-    expect(container.textContent).toContain(
-      'VERIFY WHERE / WHAT / WHEN TO RECALL',
-    );
+    expect(container.textContent).toContain('VERIFY IDENTITY');
 
     rerender(
       <CellDetailPanel
@@ -552,9 +538,7 @@ describe('CellDetailPanel', () => {
     expect((
       getByRole('button', { name: 'recall causal path' }) as HTMLButtonElement
     ).disabled).toBe(false);
-    expect(container.textContent).toContain(
-      'IDENTITY BOUND · MEMORY ROUTE READY',
-    );
+    expect(container.textContent).toContain('CAUSAL READY');
     fireEvent.click(getByRole('button', { name: 'recall causal path' }));
     expect(onTraceWrite).toHaveBeenCalledWith(origin.seq);
 
@@ -564,9 +548,7 @@ describe('CellDetailPanel', () => {
         identityProofBinding={identityBinding('retained')}
       />,
     );
-    expect(container.textContent).toContain(
-      'RETAINED MEMORY · REPLAY CAUSAL PATH',
-    );
+    expect(container.textContent).toContain('CAUSAL RETAINED');
   });
 
   it('shows SPENT for a consumed cell without biological death language', () => {
@@ -593,7 +575,7 @@ describe('CellDetailPanel', () => {
       <CellDetailPanel cell={base} recentLinks={[origin]} onClose={() => {}} />,
     );
     const t = container.textContent ?? '';
-    expect(t).toContain('WRITE OBSERVED');
+    expect(t).toContain('MEMORY TRACE');
     expect(t).toContain(`#${base.birth_block} · 2→1`);
     expect(container.querySelector('[data-write-observed="true"]')).not.toBeNull();
   });
@@ -621,13 +603,29 @@ describe('CellDetailPanel', () => {
         traceReadout={traceReadout()}
         identityProofBinding={identityBinding('recalling')}
         onTraceWrite={onTraceWrite}
+        semanticSource={{
+          source: 'ckbadger',
+          status: 'ready',
+          capabilities: ['cell_detail'],
+          lag_blocks: 0,
+        }}
+        semanticPhase="ready"
+        semanticRecord={{
+          out_point: base.out_point,
+          source: 'ckbadger',
+          as_of: { block: base.birth_block, hash: '0xanchor' },
+          observed_at_block: base.birth_block,
+          updated_at_ms: 1,
+          facets: [],
+        }}
         onClose={() => {}}
       />,
     );
 
     fireEvent.click(getByRole('button', { name: 'exit causal recall' }));
     expect(onTraceWrite).toHaveBeenCalledWith(origin.seq);
-    expect(container.textContent).toContain('READING RETAINED RECORD · EXIT');
+    expect(container.querySelector('[data-write-observed="true"]')?.textContent)
+      .toContain('READING');
     expect(container.textContent).toContain('SCANNING RETAINED RECORD');
     expect(container.textContent).toContain('EVIDENCE 0/2');
     const trace = container.querySelector('[data-trace-selected="true"]');
@@ -635,6 +633,8 @@ describe('CellDetailPanel', () => {
     expect(trace?.getAttribute('data-trace-source')).toBe('input');
     expect(trace?.getAttribute('data-trace-state')).toBe('active');
     expect(trace?.getAttribute('data-trace-stage')).toBe('reading');
+    expect(container.querySelector('[data-cell-detail-module="trace"]')).not.toBeNull();
+    expect(container.querySelector('[data-cell-detail-module="context"]')).toBeNull();
     expect(container.querySelector('[data-memory-read-state="reading"]')).not.toBeNull();
     expect(container.querySelectorAll('[data-memory-evidence]')).toHaveLength(2);
     expect(container.textContent).toContain('EVIDENCE → AGREEMENT');
@@ -677,7 +677,8 @@ describe('CellDetailPanel', () => {
     />);
     expect(container.textContent).toContain('RECONCILING EVIDENCE');
     expect(container.textContent).toContain('ARRIVED 1/2');
-    expect(container.textContent).toContain('CONVERGING 1/2 EVIDENCE · EXIT');
+    expect(container.querySelector('[data-write-observed="true"]')?.textContent)
+      .toContain('1/2 ARRIVED');
     expect(container.querySelector('[data-memory-stage="reading"]')
       ?.getAttribute('data-memory-stage-state')).toBe('past');
     expect(container.querySelector('[data-memory-stage="converging"]')
@@ -699,7 +700,8 @@ describe('CellDetailPanel', () => {
     />);
     expect(container.textContent).toContain('CONSENSUS RECORD RESOLVED');
     expect(container.textContent).toContain('VERIFIED 2/2');
-    expect(container.textContent).toContain('CONSENSUS LOCKED · EXIT');
+    expect(container.querySelector('[data-write-observed="true"]')?.textContent)
+      .toContain('2/2 VERIFIED');
     expect(container.querySelector('[data-memory-stage="locked"]')
       ?.getAttribute('data-memory-stage-state')).toBe('active');
     expect(container.querySelector('[data-memory-read-state="locked"]')
@@ -1352,7 +1354,7 @@ describe('CellDetailPanel', () => {
       />,
     );
 
-    expect(container.textContent).toContain('RECALL LINEAGE WITNESS');
+    expect(container.textContent).toContain('WITNESS READY');
     expect(container.querySelector('[data-trace-source="witness"]')).not.toBeNull();
   });
 

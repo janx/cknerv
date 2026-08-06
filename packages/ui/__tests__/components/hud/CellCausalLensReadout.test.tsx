@@ -90,6 +90,28 @@ describe('CellCausalLensReadout', () => {
     expect(root.textContent).toContain('2 ARCHIVED ANCHORS');
   });
 
+  it('reduces the spatial lens to one no-scroll provenance summary', () => {
+    const records = new Map([
+      [1, cell(1)],
+      [2, cell(2)],
+      [8, cell(8)],
+      [9, selected],
+    ]);
+    const { container } = render(
+      <CellCausalLensReadout
+        lens={deriveCellCausalLens(selected, [link], records)}
+        summary
+      />,
+    );
+    const root = container.querySelector('[data-cell-causal-lens]')!;
+
+    expect(root.getAttribute('data-causal-density')).toBe('summary');
+    expect(root.textContent).toContain('2/2 IN · 2/2 OUT');
+    expect(root.textContent).toContain('ALL ENDPOINTS PROVEN');
+    expect(root.querySelector('[data-causal-summary-note="true"]')).not.toBeNull();
+    expect(root.textContent).not.toContain('SIBLINGS');
+  });
+
   it('reports exactly how many observed endpoint anchors are missing', () => {
     const records = new Map([[1, cell(1)], [9, selected]]);
     const partialLink: CellLink = {
