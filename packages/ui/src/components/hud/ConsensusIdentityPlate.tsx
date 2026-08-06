@@ -1475,6 +1475,7 @@ export default function ConsensusIdentityPlate({
   routeCellById,
   agreementCount,
   compact = false,
+  spatial = false,
 }: {
   identity: CellConsensusIdentity;
   causalLens?: CellCausalLens | null;
@@ -1507,6 +1508,8 @@ export default function ConsensusIdentityPlate({
   routeCellById?: ReadonlyMap<number, Cell>;
   agreementCount: number;
   compact?: boolean;
+  /** Transparent scan-field treatment instead of a self-contained HUD card. */
+  spatial?: boolean;
 }) {
   const observed = identity.observedWrite;
   const selectedIdentityProofBinding = identityProofBinding;
@@ -1522,20 +1525,22 @@ export default function ConsensusIdentityPlate({
   const fingerprint = fingerprintReadout(identity.contentHash, reveal);
   const shell: CSSProperties = {
     position: 'relative',
-    marginTop: compact ? 6 : 9,
-    padding: compact ? '6px 7px 5px' : '8px 9px 7px',
+    marginTop: spatial ? 0 : compact ? 6 : 9,
+    padding: spatial ? '4px 5px 7px 0' : compact ? '6px 7px 5px' : '8px 9px 7px',
     overflow: 'visible',
-    borderTop: `1px solid ${CYAN}30`,
-    borderBottom: `1px solid ${VIOLET}26`,
-    backgroundColor: 'rgba(1,4,12,.84)',
-    backgroundImage: `radial-gradient(circle at 50% 34%, ${CYAN}12 0, transparent 37%), linear-gradient(90deg, transparent, ${VIOLET}0b 48%, transparent)`,
-    boxShadow: `inset 0 0 18px ${CYAN}08`,
+    borderTop: spatial ? 0 : `1px solid ${CYAN}30`,
+    borderBottom: spatial ? 0 : `1px solid ${VIOLET}26`,
+    backgroundColor: spatial ? 'transparent' : 'rgba(1,4,12,.84)',
+    backgroundImage: spatial
+      ? `linear-gradient(90deg,${VIOLET}08,transparent 76%)`
+      : `radial-gradient(circle at 50% 34%, ${CYAN}12 0, transparent 37%), linear-gradient(90deg, transparent, ${VIOLET}0b 48%, transparent)`,
+    boxShadow: spatial ? undefined : `inset 0 0 18px ${CYAN}08`,
   };
 
   return (
     <div
       data-consensus-memory="true"
-      data-consensus-memory-density={compact ? 'compact' : 'standard'}
+      data-consensus-memory-density={spatial ? 'spatial' : compact ? 'compact' : 'standard'}
       style={shell}
     >
       <span style={{ position: 'absolute', left: 0, top: 0, width: 8, height: 8, borderLeft: `1px solid ${CYAN}99`, borderTop: `1px solid ${CYAN}99` }} />

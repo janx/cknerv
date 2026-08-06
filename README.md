@@ -124,7 +124,7 @@ availability.
 | CKB adapter | Rust, reqwest, CKB JSON-RPC types | Read-only node polling, boot backfill, block/tx normalization |
 | Optional enrichment | Rust, reqwest | Canonically anchored indexed context from ckbadger; see [`docs/ckbadger.md`](docs/ckbadger.md) |
 | Types/cache | TypeScript, Vitest | Wire-type twins, pure reducers, WebSocket clients |
-| UI | React 18, Vite, React Three Fiber, drei, three.js | 3D cell galaxy, HUDs, scene-tethered Cell inspectors, nerve overlays |
+| UI | React 18, Vite, React Three Fiber, drei, three.js | 3D cell galaxy, HUDs, Cell-centred holographic scan fields, nerve overlays |
 
 ## Architecture
 

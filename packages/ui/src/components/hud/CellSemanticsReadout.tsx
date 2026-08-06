@@ -379,6 +379,7 @@ export default function CellSemanticsReadout({
   transactionPhase,
   transactionRecord,
   transactionMessage,
+  spatial = false,
   style,
 }: {
   source: EnrichmentSourceStatus;
@@ -388,6 +389,8 @@ export default function CellSemanticsReadout({
   transactionPhase?: CellSemanticsPhase;
   transactionRecord?: TransactionSemanticRecord | null;
   transactionMessage?: string | null;
+  /** Removes the card-like shell when the readout is part of a scene scan. */
+  spatial?: boolean;
   style?: CSSProperties;
 }) {
   const color = sourceColor(source.status);
@@ -406,13 +409,15 @@ export default function CellSemanticsReadout({
     <section
       aria-label="Cell context"
       data-cell-semantics-phase={phase}
-      data-cell-semantics-density="compact"
+      data-cell-semantics-density={spatial ? 'spatial' : 'compact'}
       style={{
-        margin: '7px 0 8px',
-        padding: '6px 7px 5px',
-        borderTop: `1px solid ${rgba(color, 0.24)}`,
-        borderBottom: `1px solid ${rgba(color, 0.14)}`,
-        background: `linear-gradient(90deg,${rgba(color, 0.07)},rgba(1,4,12,.42) 52%,transparent)`,
+        margin: spatial ? 0 : '7px 0 8px',
+        padding: spatial ? '4px 4px 8px 0' : '6px 7px 5px',
+        borderTop: spatial ? 0 : `1px solid ${rgba(color, 0.24)}`,
+        borderBottom: spatial ? 0 : `1px solid ${rgba(color, 0.14)}`,
+        background: spatial
+          ? `linear-gradient(90deg,${rgba(color, 0.035)},transparent 82%)`
+          : `linear-gradient(90deg,${rgba(color, 0.07)},rgba(1,4,12,.42) 52%,transparent)`,
         fontFamily: HUD_FONTS.mono,
         ...style,
       }}

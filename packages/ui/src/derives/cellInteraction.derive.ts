@@ -120,7 +120,7 @@ export function dampCellFocus(current: number, target: number, deltaSeconds: num
 /**
  * Keep an interacted braid legible in screen space without turning it into a
  * giant world-space object. Nearby Cells retain the canonical physical scale;
- * distant hover/selection states grow only enough to reach a 13–19 px radius.
+ * distant hover/selection states grow only enough to reach a 13–24 px radius.
  */
 export function focusedBraidScale(
   viewDistance: number,
@@ -130,7 +130,7 @@ export function focusedBraidScale(
 ): number {
   const amount = clamp01(focus);
   if (amount === 0) return CONSENSUS_BRAID_BASE_SCALE;
-  const targetRadiusPx = 8 + amount * 11;
+  const targetRadiusPx = 8 + amount * 16;
   const pixelsPerScale = (
     Math.max(1, viewportHeight) * 0.5
     * Math.max(0.001, projectionY)

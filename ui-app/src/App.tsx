@@ -4,8 +4,9 @@
 // canvas (CellGalaxy canopy) alongside the DOM `HudOverlay` (a sibling of
 // the canvas) that carries the always-on telemetry panels (blockchain /
 // network / cells stats) plus node / peer detail and the backfill/seeding
-// indicator. Cell detail is tethered to the selected scene Cell. The leva knobs panel is hidden
-// by default (toggle with backtick) — see Tweaks.
+// indicator. Cell inspection forms one holographic scan field around the
+// selected scene Cell. The leva knobs panel is hidden by default (toggle with
+// backtick) — see Tweaks.
 
 import {
   useCallback,
@@ -277,11 +278,10 @@ export default function App({
   );
   const retainedCellRecordsRef = useRef(cellsCache.cells);
   retainedCellRecordsRef.current = cellsCache.cells;
-  // Two independent selections so a cell (galaxy axis) and a network entity
-  // (node/peer axis) can be inspected side-by-side. Clicks route by id prefix:
-  // `cell:` → cell axis; a node id / `peer:` → net axis (node and peer share it,
-  // one network entity at a time). Cell detail follows the scene object while
-  // network detail remains in the HUD rail; the axes stay independent.
+  // Cell and network ids retain separate state shapes because their scene
+  // layers use different records. Selection itself is exclusive: entering a
+  // Cell scan clears node/peer detail, while choosing a network entity closes
+  // the Cell field so the scene always has one primary inspection target.
   const [selectedCellId, setSelectedCellId] = useState<string | null>(null);
   const [selectedNetId, setSelectedNetId] = useState<string | null>(null);
   const [cellCausalNavigation, dispatchCellCausalNavigation] = useReducer(
@@ -320,6 +320,14 @@ export default function App({
   const memoryTraceTargetResponseRef = useRef<
     ConsensusMemoryTargetResponse | null
   >(null);
+  const clearCellSelection = useCallback(() => {
+    memoryRouteHopAnchorRef.current = null;
+    setCellIdentityProof(null);
+    dispatchCellIdentityJourney({ type: 'clear' });
+    dispatchCellCausalNavigation({ type: 'clear' });
+    setSelectedCellId(null);
+    dispatchMemoryRecall({ type: 'cancel' });
+  }, []);
   const inspectCell = useCallback((nextCellId: number) => {
     if (!Number.isSafeInteger(nextCellId) || nextCellId < 0) return;
     const selectionId = `${CELL_SELECTION_PREFIX}${nextCellId}`;
@@ -351,12 +359,14 @@ export default function App({
     if (id.startsWith(CELL_SELECTION_PREFIX)) {
       const nextCellId = Number(id.slice(CELL_SELECTION_PREFIX.length));
       if (!Number.isSafeInteger(nextCellId) || nextCellId < 0) return;
+      setSelectedNetId(null);
       dispatchCellCausalNavigation({ type: 'select', cellId: nextCellId });
       inspectCell(nextCellId);
     } else {
+      clearCellSelection();
       setSelectedNetId(id);
     }
-  }, [inspectCell]);
+  }, [clearCellSelection, inspectCell]);
   const navigateCausalCell = useCallback((cellId: number) => {
     if (orbitGestureSuppressesPointerAction(
       orbitGestureRef.current,
@@ -1008,15 +1018,6 @@ export default function App({
     return peers.find((p) => p.node_id === id) ?? null;
   }, [selectedNetId, peers]);
 
-  const clearCellSelection = useCallback(() => {
-    memoryRouteHopAnchorRef.current = null;
-    setCellIdentityProof(null);
-    dispatchCellIdentityJourney({ type: 'clear' });
-    dispatchCellCausalNavigation({ type: 'clear' });
-    setSelectedCellId(null);
-    dispatchMemoryRecall({ type: 'cancel' });
-  }, []);
-
   const buildVersion = resolveBuildVersion();
   const build = { version: buildVersion, href: buildCommitHref(buildVersion) };
 
@@ -1050,6 +1051,7 @@ export default function App({
         networkAtlas={enrichmentConfig.enabled
           ? semanticsCache.networkAtlas
           : undefined}
+        cellInspectionActive={selectedCell !== null}
         selectedNode={selectedNode}
         selectedPeer={selectedPeer}
         onClearNet={() => setSelectedNetId(null)}

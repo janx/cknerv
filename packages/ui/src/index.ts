@@ -145,6 +145,7 @@ export { default as CellSemanticOrbit } from './components/CellSemanticOrbit';
 export {
   default as CellInspectionOverlay,
   cellInspectorPlacement,
+  selectedCellScanAccent,
   type CellInspectorPlacement,
   type CellInspectorPlacementSide,
 } from './components/CellInspectionOverlay';
@@ -159,6 +160,7 @@ export { default as HudOverlay } from './components/hud/HudOverlay';
 export {
   default as CellDetailPanel,
   type CellDetailPanelProps,
+  type CellInspectionFacet,
 } from './components/hud/CellDetailPanel';
 export {
   default as CellSemanticsReadout,

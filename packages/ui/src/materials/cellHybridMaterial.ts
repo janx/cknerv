@@ -136,7 +136,7 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
           ${CELL_INSPECTION_NAVIGATION_SIZE_SCALE.toFixed(2)},
           step(0.5, aInspectionRole)
         );
-        gl_PointSize  = aSize * ${HYBRID_BASE_PX_PER_WU.toFixed(1)} * inspectionNavigationScale * (1.0 + vFocus * 0.18) * (1.0 + abs(vRecall) * 0.06 + retainedCore * retainedSizeBoost) * scale * (uViewportHeight * 0.5 / max(-viewPos.z, 0.001));
+        gl_PointSize  = aSize * ${HYBRID_BASE_PX_PER_WU.toFixed(1)} * inspectionNavigationScale * (1.0 + vFocus * 0.32) * (1.0 + abs(vRecall) * 0.06 + retainedCore * retainedSizeBoost) * scale * (uViewportHeight * 0.5 / max(-viewPos.z, 0.001));
         // Retained records have a semantic CSS-pixel floor so 1/3/5 checksum
         // lanes survive every quality DPR. The floor recedes by the exact
         // complement used when the expanded braid takes over.

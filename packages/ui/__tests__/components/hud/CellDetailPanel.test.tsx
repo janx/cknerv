@@ -8,42 +8,6 @@ import type {
 } from '../../../src/derives/cellIdentityProof.derive';
 import { PROBE_STEP_S } from '../../../src/components/hud/probeScan';
 
-// The embedded portrait spins a real WebGL context — stub it in jsdom.
-vi.mock('../../../src/components/hud/CellNucleusPortrait', () => ({
-  default: ({ cell, focusField, traceReadout, traceResponseRef, traceEvidenceFocusSourceId, identityProofBinding, onIdentityProofRead }: {
-    cell: { content_hash: string };
-    focusField?: string | null;
-    traceReadout?: { stage: string } | null;
-    traceResponseRef?: { current: unknown };
-    traceEvidenceFocusSourceId?: number | null;
-    identityProofBinding?: CellIdentityProofBinding | null;
-    onIdentityProofRead?: (
-      kind: 'address' | 'content' | 'anchor',
-    ) => void;
-  }) => (
-    <div
-      data-testid="portrait"
-      data-hash={cell.content_hash}
-      data-focus={focusField ?? ''}
-      data-trace-stage={traceReadout?.stage ?? ''}
-      data-response-ref={traceResponseRef ? 'true' : 'false'}
-      data-evidence-focus-source={traceEvidenceFocusSourceId ?? ''}
-      data-identity-phase={identityProofBinding?.phase ?? 'idle'}
-      data-identity-count={identityProofBinding?.resolvedKinds.length ?? 0}
-    >
-      {(['address', 'content', 'anchor'] as const).map((kind) => (
-        <button
-          key={kind}
-          type="button"
-          data-testid={`${kind}-proof-read-resolved`}
-          onClick={() => onIdentityProofRead?.(kind)}
-        />
-      ))}
-    </div>
-  ),
-  SCAN_PERIOD_S: 4.2,
-}));
-
 import CellDetailPanel from '../../../src/components/hud/CellDetailPanel';
 
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); });
@@ -109,20 +73,15 @@ function traceReadout(
   };
 }
 
-function openLineage(getByRole: ReturnType<typeof render>['getByRole']): void {
-  fireEvent.click(getByRole('tab', { name: /LINEAGE/ }));
-}
-
 describe('CellDetailPanel', () => {
   beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(new Date(3 * 3600_000 + 12 * 60_000)); });
 
-  it('renders header, portrait, and real decoded fields', () => {
-    const { container, getByTestId } = render(<CellDetailPanel cell={base} onClose={() => {}} />);
+  it('renders one transparent scan field with anatomy and lineage directly visible', () => {
+    const { container } = render(<CellDetailPanel cell={base} onClose={() => {}} />);
     const t = container.textContent ?? '';
     expect(t).toContain('CELL');
     expect(t).toContain('细胞');
     expect(t).toContain('共识细胞');       // CJK title
-    expect(getByTestId('portrait').getAttribute('data-hash')).toBe(base.content_hash);
     expect(t).toContain('Omnilock');       // LOCK
     expect(t).toContain('xUDT');           // ASSET
     expect(t).toContain('123.00 CKB');     // CAPACITY
@@ -143,12 +102,14 @@ describe('CellDetailPanel', () => {
     expect(t).toContain('CONTENT');
     expect(t).toContain('ANCHOR');
     expect(t).not.toContain('WRITE OBSERVED');
-    expect(getByTestId('portrait').getAttribute('data-focus')).toBe('');
     expect((container.firstElementChild as HTMLElement).style.animation)
       .toContain('cknerv-cell-consensus-enter');
-    expect((container.querySelector('[data-cell-portrait-frame]') as HTMLElement).dataset.cellDetailDensity).toBe('contextual');
-    expect((container.querySelector('[data-cell-portrait-frame]') as HTMLElement).style.width).toBe('100%');
-    expect((container.querySelector('[data-consensus-memory]') as HTMLElement).dataset.consensusMemoryDensity).toBe('standard');
+    expect(container.querySelector('[data-cell-detail-scan-field="true"]')).not.toBeNull();
+    expect(container.querySelector('[data-cell-portrait-frame]')).toBeNull();
+    expect(container.querySelector('[role="tablist"]')).toBeNull();
+    expect(container.querySelector('[data-cell-detail-module="anatomy"]')?.hasAttribute('hidden')).toBe(false);
+    expect(container.querySelector('[data-cell-detail-module="lineage"]')?.hasAttribute('hidden')).toBe(false);
+    expect((container.querySelector('[data-consensus-memory]') as HTMLElement).dataset.consensusMemoryDensity).toBe('spatial');
   });
 
   it('turns base taxonomy into useful Cell facts without visual parameters', () => {
@@ -169,23 +130,16 @@ describe('CellDetailPanel', () => {
     expect(text).not.toMatch(/ƒ\d|\d+ paths|\d+ knots|\d\.\d{2}×/);
   });
 
-  it('uses keyboard-accessible progressive disclosure for anatomy and lineage', () => {
-    const { container, getByRole } = render(
+  it('keeps scan, lineage, and optional context in one direct reading field', () => {
+    const { container } = render(
       <CellDetailPanel cell={base} onClose={() => {}} />,
     );
-    const anatomy = getByRole('tab', { name: /ANATOMY/ });
-    const lineage = getByRole('tab', { name: /LINEAGE/ });
 
-    expect(anatomy.getAttribute('aria-selected')).toBe('true');
-    expect(lineage.getAttribute('tabindex')).toBe('-1');
-    expect(container.querySelector('[data-cell-detail-module="lineage"]')
-      ?.hasAttribute('hidden')).toBe(true);
-
-    fireEvent.keyDown(anatomy, { key: 'ArrowRight' });
-    expect(lineage.getAttribute('aria-selected')).toBe('true');
-    expect(lineage.getAttribute('tabindex')).toBe('0');
-    expect(container.querySelector('[data-cell-detail-module="lineage"]')
-      ?.hasAttribute('hidden')).toBe(false);
+    expect(container.querySelector('[role="tab"]')).toBeNull();
+    expect(container.querySelector('[data-cellular-scan-state]')).not.toBeNull();
+    expect(container.querySelector('[data-cell-detail-module="anatomy"]')).not.toBeNull();
+    expect(container.querySelector('[data-cell-detail-module="lineage"]')).not.toBeNull();
+    expect(container.querySelector('[data-cell-detail-module="context"]')).toBeNull();
   });
 
   it('adds indexed semantics only when the optional source is present', () => {
@@ -338,20 +292,19 @@ describe('CellDetailPanel', () => {
     );
 
     const readout = container.querySelector('[data-cell-semantics-phase="ready"]');
-    const portrait = container.querySelector('[data-cell-portrait-frame]') as HTMLElement;
     const memory = container.querySelector('[data-consensus-memory]') as HTMLElement;
     expect(readout).not.toBeNull();
-    expect(readout?.getAttribute('data-cell-semantics-density')).toBe('compact');
+    expect(readout?.getAttribute('data-cell-semantics-density')).toBe('spatial');
     expect((readout?.querySelector('[data-cell-context-facts]') as HTMLElement).style.gridTemplateColumns).toContain('repeat(2');
     expect(readout?.querySelector('[data-cell-context-fact="owner"]')).not.toBeNull();
     expect(readout?.querySelector('[data-transaction-semantics-summary]')).not.toBeNull();
     expect(readout?.querySelector('[data-transaction-participants]')).not.toBeNull();
-    expect(portrait.dataset.cellDetailDensity).toBe('contextual');
-    expect(portrait.style.width).toBe('100%');
-    expect(memory.dataset.consensusMemoryDensity).toBe('compact');
+    expect(container.querySelector('[data-cell-portrait-frame]')).toBeNull();
+    expect(memory.dataset.consensusMemoryDensity).toBe('spatial');
     expect(container.querySelector('[data-cell-detail-module="context"]')?.hasAttribute('hidden')).toBe(false);
-    expect(container.querySelector('[data-cell-detail-module="anatomy"]')?.hasAttribute('hidden')).toBe(true);
-    expect((container.firstElementChild as HTMLElement).style.background).toContain('.97');
+    expect(container.querySelector('[data-cell-detail-module="anatomy"]')?.hasAttribute('hidden')).toBe(false);
+    expect(container.querySelector('[data-cell-detail-module="lineage"]')?.hasAttribute('hidden')).toBe(false);
+    expect((container.firstElementChild as HTMLElement).style.background).toBe('');
     expect(readout?.textContent).toContain('CELL CONTEXT · READY · 1 BLOCK LAG');
     expect(readout?.textContent).not.toContain('INDEXED');
     expect(readout?.textContent).not.toContain('IDX');
@@ -386,24 +339,28 @@ describe('CellDetailPanel', () => {
     expect(readout?.textContent).toContain('+49.99999 CKB');
     expect(readout?.textContent).toContain('+6 B');
     expect(container.textContent).toContain('3h 12m');
+    expect(container.textContent).toContain('AGE 3h 12m');
     expect(Array.from(container.querySelectorAll('span')).filter(
       (span) => span.textContent === 'AGE',
-    )).toHaveLength(1);
+    )).toHaveLength(0);
   });
 
-  it('keeps auxiliary portrait focus off while the entry decoder advances', () => {
+  it('advances the scan beam without hiding any evidence module', () => {
     const performanceNow = vi.spyOn(performance, 'now').mockReturnValue(0);
-    const { container, getByTestId } = render(
+    const { container } = render(
       <CellDetailPanel cell={base} onClose={() => {}} />,
     );
 
-    expect(getByTestId('portrait').getAttribute('data-focus')).toBe('');
+    expect(container.querySelector('[data-cellular-scan-progress]')
+      ?.getAttribute('data-cellular-scan-progress')).toBe('0');
     performanceNow.mockReturnValue(PROBE_STEP_S * 2.5 * 1000);
     act(() => {
       vi.advanceTimersByTime(80);
     });
-    expect(container.textContent).toContain('READING IDENTITY');
-    expect(getByTestId('portrait').getAttribute('data-focus')).toBe('');
+    expect(container.textContent).toContain('CELLULAR SCAN');
+    expect(Number(container.querySelector('[data-cellular-scan-progress]')
+      ?.getAttribute('data-cellular-scan-progress'))).toBeGreaterThan(0);
+    expect(container.querySelector('[data-cell-detail-module="lineage"]')).not.toBeNull();
     performanceNow.mockRestore();
   });
 
@@ -419,41 +376,50 @@ describe('CellDetailPanel', () => {
     expect((container.firstElementChild as HTMLElement).style.animation).toBe('');
   });
 
-  it('lets decoded rows directly focus the corresponding A layer', () => {
+  it('lets decoded rows focus the real scene scan field', () => {
     vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener: () => {}, removeEventListener: () => {} }));
-    const { container, getByTestId } = render(
-      <CellDetailPanel cell={base} onClose={() => {}} />,
+    const onInspectionFieldChange = vi.fn();
+    const { container } = render(
+      <CellDetailPanel
+        cell={base}
+        onInspectionFieldChange={onInspectionFieldChange}
+        onClose={() => {}}
+      />,
     );
 
     fireEvent.click(container.querySelector('[data-cell-detail-field="asset"]')!);
-    expect(getByTestId('portrait').getAttribute('data-focus')).toBe('asset');
+    expect(container.querySelector('[data-cell-detail-field="asset"]')
+      ?.getAttribute('aria-pressed')).toBe('true');
+    expect(onInspectionFieldChange).toHaveBeenLastCalledWith('asset');
   });
 
   it('maps memory facets back onto the matching A layers', () => {
     vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener: () => {}, removeEventListener: () => {} }));
-    const { getByTestId, getByRole } = render(
-      <CellDetailPanel cell={base} onClose={() => {}} />,
+    const onInspectionFieldChange = vi.fn();
+    const { getByRole } = render(
+      <CellDetailPanel
+        cell={base}
+        onInspectionFieldChange={onInspectionFieldChange}
+        onClose={() => {}}
+      />,
     );
 
-    openLineage(getByRole);
     fireEvent.click(getByRole('button', { name: 'inspect content' }));
-    expect(getByTestId('portrait').getAttribute('data-focus')).toBe('data');
-    openLineage(getByRole);
+    expect(onInspectionFieldChange).toHaveBeenLastCalledWith('data');
     fireEvent.click(getByRole('button', { name: 'inspect anchor' }));
-    expect(getByTestId('portrait').getAttribute('data-focus')).toBe('born');
-    openLineage(getByRole);
+    expect(onInspectionFieldChange).toHaveBeenLastCalledWith('born');
     fireEvent.click(getByRole('button', { name: 'inspect address' }));
-    expect(getByTestId('portrait').getAttribute('data-focus')).toBe('state');
+    expect(onInspectionFieldChange).toHaveBeenLastCalledWith('state');
   });
 
-  it('reports each exact Cell proof only after the portrait resolves it', () => {
+  it('reports each exact Cell proof from the direct scan facet', () => {
     vi.stubGlobal('matchMedia', () => ({
       matches: true,
       addEventListener: () => {},
       removeEventListener: () => {},
     }));
     const onIdentityProofRead = vi.fn();
-    const { getByRole, getByTestId } = render(
+    const { getByRole } = render(
       <CellDetailPanel
         cell={base}
         onIdentityProofRead={onIdentityProofRead}
@@ -462,9 +428,7 @@ describe('CellDetailPanel', () => {
     );
 
     for (const kind of ['address', 'content', 'anchor'] as const) {
-      openLineage(getByRole);
       fireEvent.click(getByRole('button', { name: `inspect ${kind}` }));
-      fireEvent.click(getByTestId(`${kind}-proof-read-resolved`));
     }
     expect(onIdentityProofRead.mock.calls).toEqual([
       ['address', base.id, true],
@@ -505,11 +469,10 @@ describe('CellDetailPanel', () => {
       onTraceWrite,
       onClose: () => {},
     };
-    const { container, getByRole, getByTestId, rerender } = render(
+    const { container, getByRole, rerender } = render(
       <CellDetailPanel {...props} identityProofBinding={partial} />,
     );
 
-    openLineage(getByRole);
     const recall = getByRole('button', { name: 'recall causal path' });
     expect((recall as HTMLButtonElement).disabled).toBe(true);
     expect(container.querySelector('[data-memory-identity-binding="true"]')
@@ -521,7 +484,6 @@ describe('CellDetailPanel', () => {
     expect(container.textContent).toContain(
       'VERIFY WHERE / WHAT / WHEN TO RECALL',
     );
-    expect(getByTestId('portrait').getAttribute('data-identity-count')).toBe('1');
 
     rerender(
       <CellDetailPanel
@@ -605,7 +567,6 @@ describe('CellDetailPanel', () => {
       />,
     );
 
-    openLineage(getByRole);
     fireEvent.click(getByRole('button', { name: 'exit causal recall' }));
     expect(onTraceWrite).toHaveBeenCalledWith(origin.seq);
     expect(container.textContent).toContain('READING RETAINED RECORD · EXIT');
@@ -663,10 +624,6 @@ describe('CellDetailPanel', () => {
       ?.getAttribute('data-memory-stage-state')).toBe('past');
     expect(container.querySelector('[data-memory-stage="converging"]')
       ?.getAttribute('data-memory-stage-state')).toBe('active');
-    expect(container.querySelector('[data-testid="portrait"]')
-      ?.getAttribute('data-trace-stage')).toBe('converging');
-    expect(container.querySelector('[data-testid="portrait"]')
-      ?.getAttribute('data-response-ref')).toBe('true');
     expect(container.querySelector('[data-memory-evidence="1"]')
       ?.getAttribute('data-memory-evidence-state')).toBe('arrived');
     expect(container.querySelector('[data-memory-evidence="2"]')
@@ -689,14 +646,12 @@ describe('CellDetailPanel', () => {
       ?.getAttribute('data-memory-stage-state')).toBe('active');
     expect(container.querySelector('[data-memory-read-state="locked"]')
       ?.getAttribute('data-memory-resolved')).toBe('2');
-    expect(container.querySelector('[data-testid="portrait"]')
-      ?.getAttribute('data-trace-stage')).toBe('locked');
     expect(Array.from(container.querySelectorAll('[data-memory-evidence]')).every(
       (node) => node.getAttribute('data-memory-evidence-state') === 'resolved',
     )).toBe(true);
   });
 
-  it('focuses one real evidence source by pointer or keyboard and forwards it to the portrait', () => {
+  it('focuses one real evidence source by pointer or keyboard in the spatial ledger', () => {
     vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener: () => {}, removeEventListener: () => {} }));
     const origin: CellLink = {
       seq: 18,
@@ -725,7 +680,7 @@ describe('CellDetailPanel', () => {
       onTraceRouteHopLockChange,
       onClose: () => {},
     };
-    const { container, rerender, getByTestId } = render(
+    const { container, rerender } = render(
       <CellDetailPanel {...props} />,
     );
     const first = container.querySelector<HTMLElement>('[data-memory-evidence="1"]')!;
@@ -741,7 +696,6 @@ describe('CellDetailPanel', () => {
       ?.getAttribute('data-memory-evidence-focus')).toBe('active');
     expect(container.querySelector('[data-memory-evidence="2"]')
       ?.getAttribute('data-memory-evidence-focus')).toBe('passive');
-    expect(getByTestId('portrait').getAttribute('data-evidence-focus-source')).toBe('11');
     const proof = container.querySelector('[data-memory-evidence-route-proof="true"]');
     expect(proof?.textContent).toContain('CELL #11 → #4242');
     expect(proof?.textContent).toContain('02 HOPS · 520 MS');
@@ -865,7 +819,7 @@ describe('CellDetailPanel', () => {
       onTraceWrite: () => {},
       onClose: () => {},
     };
-    const { container, getByTestId, rerender } = render(
+    const { container, rerender } = render(
       <CellDetailPanel {...props} traceEvidencePreviewSourceId={12} />,
     );
     const locked = container.querySelector<HTMLElement>(
@@ -886,7 +840,6 @@ describe('CellDetailPanel', () => {
     expect(preview.getAttribute('aria-pressed')).toBe('false');
     expect(preview.getAttribute('aria-expanded')).toBe('false');
     expect(preview.textContent).toContain('INSPECT');
-    expect(getByTestId('portrait').getAttribute('data-evidence-focus-source')).toBe('11');
 
     rerender(<CellDetailPanel {...props} traceEvidencePreviewSourceId={11} />);
     expect(container.querySelector('[data-memory-evidence="1"]')
