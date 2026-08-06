@@ -17,6 +17,7 @@ import {
 } from './cellFormat';
 import { HUD_COLORS, HUD_FONTS, rgba } from './hudTheme';
 import { useReducedMotion } from './useReducedMotion';
+import CellNucleusPortrait from './CellNucleusPortrait';
 import ConsensusIdentityPlate from './ConsensusIdentityPlate';
 import type {
   CellCausalNavigationReadout,
@@ -49,9 +50,40 @@ import CellSemanticsReadout, {
 } from './CellSemanticsReadout';
 
 const EMPTY_RECENT_LINKS: readonly CellLink[] = [];
+const PORTRAIT_BRACKET_PX = 12;
 
 type RowDecode = { label: string; value: string; color?: string };
 export type CellInspectionFacet = ConsensusBraidField;
+export type CellDetailLayoutSide = 'left' | 'right' | 'above' | 'below';
+
+function portraitBracket(corner: 'tl' | 'tr' | 'bl' | 'br'): CSSProperties {
+  const vertical: CSSProperties = corner[0] === 't'
+    ? { top: 0 }
+    : { bottom: 0 };
+  const horizontal: CSSProperties = corner[1] === 'l'
+    ? { left: 0 }
+    : { right: 0 };
+  const borderWidth = corner === 'tl'
+    ? '1px 0 0 1px'
+    : corner === 'tr'
+      ? '1px 1px 0 0'
+      : corner === 'bl'
+        ? '0 0 1px 1px'
+        : '0 1px 1px 0';
+  return {
+    position: 'absolute',
+    zIndex: 4,
+    width: PORTRAIT_BRACKET_PX,
+    height: PORTRAIT_BRACKET_PX,
+    borderColor: HUD_COLORS.orange,
+    borderStyle: 'solid',
+    borderWidth,
+    opacity: 0.82,
+    pointerEvents: 'none',
+    ...vertical,
+    ...horizontal,
+  };
+}
 
 export interface CellDetailPanelProps {
   cell: Cell;
@@ -93,6 +125,8 @@ export interface CellDetailPanelProps {
   semanticTransactionMessage?: string | null;
   /** Mirrors a selected readout facet into the real scene Cell scan field. */
   onInspectionFieldChange?: (field: CellInspectionFacet | null) => void;
+  /** Spatial fan direction selected by the scene-anchor placement solver. */
+  layoutSide?: CellDetailLayoutSide;
   onClose: () => void;
   style?: CSSProperties;
 }
@@ -133,9 +167,9 @@ function CellScanFact({
       style={{
         position: 'relative',
         minWidth: 0,
-        minHeight: 34,
+        minHeight: 43,
         margin: 0,
-        padding: '4px 5px 4px 9px',
+        padding: '6px 7px 5px 10px',
         border: 0,
         borderLeft: `1px solid ${selected ? accent : rgba(accent, 0.34)}`,
         background: selected
@@ -151,12 +185,12 @@ function CellScanFact({
         pointerEvents: interactive ? 'auto' : 'none',
       }}
     >
-      <span style={{ display: 'block', fontSize: 6.5, letterSpacing: 1.1, color: HUD_COLORS.dim }}>
+      <span style={{ display: 'block', fontSize: 9, letterSpacing: 1.2, color: HUD_COLORS.dim }}>
         {label}
       </span>
       <span
         title={value}
-        style={{ display: 'block', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 8.5, color: selected ? accent : color ?? HUD_COLORS.ink }}
+        style={{ display: 'block', marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 11.5, lineHeight: 1.2, color: selected ? accent : color ?? HUD_COLORS.ink }}
       >
         {value}
       </span>
@@ -196,6 +230,7 @@ export default function CellDetailPanel({
   semanticTransactionRecord,
   semanticTransactionMessage,
   onInspectionFieldChange,
+  layoutSide = 'left',
   onClose,
   style,
 }: CellDetailPanelProps) {
@@ -322,71 +357,175 @@ export default function CellDetailPanel({
     if (proofKind) onIdentityProofRead?.(proofKind, cell.id, reduced);
   };
 
+  const verticalLayout = layoutSide === 'above' || layoutSide === 'below';
+  const rootWidth = enhancedDetail ? 800 : 700;
+  const rootHeight = verticalLayout ? 448 : 520;
+  const anatomyWidth = enhancedDetail ? 520 : 450;
+  const identityLeft = enhancedDetail ? 250 : 180;
+  const identityWidth = enhancedDetail ? 540 : 510;
+  const portraitLeft = enhancedDetail ? 570 : 480;
+  const lineageWidth = enhancedDetail ? 440 : 450;
+  const fromFanEdge = (left: number): CSSProperties => (
+    layoutSide === 'right' ? { right: left } : { left }
+  );
+  const satelliteBase: CSSProperties = {
+    position: 'absolute',
+    zIndex: 1,
+    minWidth: 0,
+    boxSizing: 'border-box',
+    pointerEvents: 'auto',
+    filter: 'drop-shadow(0 8px 16px rgba(0,0,0,.56))',
+  };
+  const fanCoordinate = (coordinate: number): number => (
+    layoutSide === 'right' ? rootWidth - coordinate : coordinate
+  );
+
   return (
     <div
       data-cell-detail-scan-field="true"
       data-cell-detail-enhanced={enhancedDetail ? 'true' : 'false'}
+      data-cell-detail-layout={verticalLayout ? 'vertical' : layoutSide}
+      data-cell-detail-readability="large"
       style={{
         position: 'relative',
-        width: enhancedDetail ? 500 : 470,
+        width: rootWidth,
+        height: rootHeight,
         maxWidth: 'calc(100vw - 28px)',
         boxSizing: 'border-box',
         pointerEvents: 'none',
         color: HUD_COLORS.ink,
         fontFamily: HUD_FONTS.mono,
-        filter: `drop-shadow(0 8px 18px rgba(0,0,0,.62)) drop-shadow(0 0 12px ${rgba(HUD_COLORS.cyanWire, 0.08)})`,
+        filter: `drop-shadow(0 0 14px ${rgba(HUD_COLORS.cyanWire, 0.06)})`,
         animation: reduced
           ? undefined
           : 'cknerv-cell-consensus-enter 280ms cubic-bezier(.2,.82,.2,1) both',
         ...style,
       }}
     >
-      <span
-        aria-hidden="true"
-        style={{ position: 'absolute', left: 0, top: 14, width: 42, height: 1, background: `linear-gradient(90deg,${HUD_COLORS.orange},transparent)` }}
-      />
-      <div
+      {!verticalLayout ? (
+        <>
+          <span
+            aria-hidden="true"
+            data-cell-inspection-orbit-path="identity"
+            style={{ position: 'absolute', zIndex: 0, left: fanCoordinate(portraitLeft + 110), top: 57, width: 1, height: 25, background: `linear-gradient(180deg,${rgba(HUD_COLORS.orange, 0.14)},${rgba(HUD_COLORS.orange, 0.7)})`, boxShadow: `0 0 6px ${rgba(HUD_COLORS.orange, 0.28)}` }}
+          />
+          <span
+            aria-hidden="true"
+            data-cell-inspection-orbit-path="anatomy"
+            style={{ position: 'absolute', zIndex: 0, left: layoutSide === 'right' ? rootWidth - portraitLeft : anatomyWidth, top: 174, width: portraitLeft - anatomyWidth, height: 1, background: `linear-gradient(90deg,${rgba(HUD_COLORS.cyanWire, 0.65)},${rgba(HUD_COLORS.cyanWire, 0.12)})`, boxShadow: `0 0 6px ${rgba(HUD_COLORS.cyanWire, 0.22)}` }}
+          />
+          <span
+            aria-hidden="true"
+            data-cell-inspection-orbit-path="lineage"
+            style={{ position: 'absolute', zIndex: 0, left: fanCoordinate(72), top: 256, width: 1, height: 34, background: `linear-gradient(180deg,${rgba('#AA88FF', 0.16)},${rgba('#AA88FF', 0.68)})`, boxShadow: `0 0 6px ${rgba('#AA88FF', 0.24)}` }}
+          />
+          {enhancedDetail ? (
+            <span
+              aria-hidden="true"
+              data-cell-inspection-orbit-path="context"
+              style={{ position: 'absolute', zIndex: 0, left: fanCoordinate(portraitLeft + 110), top: 298, width: 1, height: 32, background: `linear-gradient(180deg,${rgba(HUD_COLORS.cyanWire, 0.62)},${rgba(HUD_COLORS.cyanWire, 0.12)})`, boxShadow: `0 0 6px ${rgba(HUD_COLORS.cyanWire, 0.22)}` }}
+            />
+          ) : null}
+        </>
+      ) : null}
+
+      <section
+        data-cell-inspection-satellite="identity"
         data-cell-scan-identity
         style={{
+          ...satelliteBase,
+          ...(verticalLayout
+            ? { left: 0, top: 0, width: '100%', minHeight: 56 }
+            : { ...fromFanEdge(identityLeft), top: 0, width: identityWidth, minHeight: 58 }),
           display: 'flex',
           alignItems: 'baseline',
-          gap: 8,
+          flexWrap: 'wrap',
+          gap: '3px 10px',
           minWidth: 0,
-          padding: '5px 30px 5px 50px',
-          background: 'linear-gradient(90deg,rgba(1,5,13,.86),rgba(1,5,13,.58) 72%,transparent)',
+          padding: '9px 38px 8px 16px',
+          borderLeft: `1px solid ${rgba(HUD_COLORS.orange, 0.5)}`,
+          background: 'linear-gradient(100deg,rgba(7,5,11,.94),rgba(6,7,15,.72) 76%,transparent)',
+          clipPath: 'polygon(0 0,calc(100% - 12px) 0,100% 12px,100% 100%,0 100%)',
         }}
       >
-        <span style={{ color: HUD_COLORS.orange, fontFamily: HUD_FONTS.tech, fontSize: 9.5, fontWeight: 700, letterSpacing: 1.8 }}>
+        <span style={{ color: HUD_COLORS.orange, fontFamily: HUD_FONTS.tech, fontSize: 13, fontWeight: 700, letterSpacing: 2 }}>
           CELL // #{cell.id}
         </span>
-        <span style={{ color: HUD_COLORS.orange, fontFamily: HUD_FONTS.cjk, fontSize: 8, opacity: 0.72 }}>
+        <span style={{ color: HUD_COLORS.orange, fontFamily: HUD_FONTS.cjk, fontSize: 11, opacity: 0.78 }}>
           共识细胞
         </span>
-        <span title={cell.content_hash} style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: HUD_COLORS.dim, fontSize: 7.3, letterSpacing: 0.75 }}>
+        <span title={cell.content_hash} style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: HUD_COLORS.dim, fontSize: 9.5, letterSpacing: 0.8 }}>
           {cell.content_hash.slice(2, 10)}:{cell.out_point.index}
         </span>
-        <span style={{ marginLeft: 'auto', color: live ? HUD_COLORS.nominal : HUD_COLORS.caution, fontSize: 7.8, letterSpacing: 0.8 }}>
+        <span style={{ marginLeft: 'auto', color: live ? HUD_COLORS.nominal : HUD_COLORS.caution, fontSize: 10.5, letterSpacing: 0.9 }}>
           {live ? '● LIVE' : '◇ SPENT'} · AGE {age}
         </span>
-      </div>
-      <button
-        type="button"
-        aria-label="close"
-        onClick={onClose}
-        style={{ position: 'absolute', top: 1, right: 0, width: 24, height: 24, padding: 0, border: 0, background: 'transparent', color: HUD_COLORS.dim, font: `10px ${HUD_FONTS.mono}`, cursor: 'crosshair', pointerEvents: 'auto' }}
+        <button
+          type="button"
+          aria-label="close"
+          onClick={onClose}
+          style={{ position: 'absolute', top: 5, right: 8, width: 28, height: 28, padding: 0, border: 0, background: 'transparent', color: HUD_COLORS.dim, font: `15px ${HUD_FONTS.mono}`, cursor: 'crosshair', pointerEvents: 'auto' }}
+        >
+          ×
+        </button>
+      </section>
+
+      <section
+        aria-label="Magnified Cell specimen"
+        data-cell-detail-module="specimen"
+        data-cell-inspection-satellite="specimen"
+        data-cell-portrait-frame
+        style={{
+          ...satelliteBase,
+          ...(verticalLayout
+            ? { left: 0, top: 72, width: '44%', maxWidth: 174 }
+            : { ...fromFanEdge(portraitLeft), top: 82, width: 220 }),
+          aspectRatio: '1 / 1',
+          overflow: 'hidden',
+          border: `1px solid ${rgba(HUD_COLORS.orange, 0.24)}`,
+          background: `radial-gradient(circle at 50% 52%,${rgba(HUD_COLORS.cyanWire, 0.075)},rgba(1,4,12,.72) 55%,rgba(1,3,9,.22) 76%,transparent)`,
+          boxShadow: `inset 0 0 26px ${rgba(HUD_COLORS.cyanWire, 0.08)},0 0 20px ${rgba(HUD_COLORS.orange, 0.06)}`,
+        }}
       >
-        ×
-      </button>
+        <div style={{ position: 'absolute', zIndex: 3, left: 10, top: 8, right: 10, display: 'flex', alignItems: 'baseline', gap: 7, pointerEvents: 'none' }}>
+          <span style={{ color: HUD_COLORS.orange, fontFamily: HUD_FONTS.tech, fontSize: 10, fontWeight: 700, letterSpacing: 1.4 }}>CELL SPECIMEN</span>
+          <span style={{ color: HUD_COLORS.dim, fontFamily: HUD_FONTS.cjk, fontSize: 9 }}>流光标本扫描</span>
+        </div>
+        <CellNucleusPortrait
+          cell={cell}
+          reducedMotion={reduced}
+          scanEpochMs={activeClock.epochMs}
+          focusField={scan.classified ? selectedField : null}
+          traceReadout={traceReadout}
+          traceResponseRef={traceResponseRef}
+          traceEvidenceFocusSourceId={traceEvidenceFocusSourceId}
+          identityProofBinding={selectedIdentityProofBinding}
+          onIdentityProofRead={onIdentityProofRead
+            ? (kind) => onIdentityProofRead(kind, cell.id, reduced)
+            : undefined}
+        />
+        <span
+          aria-hidden="true"
+          data-cell-specimen-scan-light
+          style={{ position: 'absolute', zIndex: 2, left: 5, right: 5, top: 0, height: 1, background: `linear-gradient(90deg,transparent,${rgba(HUD_COLORS.cyanWire, 0.85)},${rgba(HUD_COLORS.orange, 0.46)},transparent)`, boxShadow: `0 0 9px ${rgba(HUD_COLORS.cyanWire, 0.7)}`, opacity: 0.8, animation: reduced ? undefined : 'cknerv-cell-specimen-sweep 2.8s linear infinite', pointerEvents: 'none' }}
+        />
+        <span style={portraitBracket('tl')} /><span style={portraitBracket('tr')} />
+        <span style={portraitBracket('bl')} /><span style={portraitBracket('br')} />
+      </section>
 
       <section
         aria-label="Cellular scan"
         data-cell-detail-module="anatomy"
+        data-cell-inspection-satellite="anatomy"
         data-cellular-scan-state={scan.classified ? 'locked' : 'scanning'}
         data-cellular-scan-progress={scan.pct}
         style={{
-          position: 'relative',
-          marginTop: 2,
-          padding: '8px 10px 8px 18px',
+          ...satelliteBase,
+          ...(verticalLayout
+            ? { right: 0, top: 72, width: '52%', height: 202 }
+            : { ...fromFanEdge(0), top: 78, width: anatomyWidth, height: 178 }),
+          overflow: 'hidden',
+          padding: '12px 12px 10px 18px',
           borderTop: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.22)}`,
           borderBottom: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.12)}`,
           background: `linear-gradient(100deg,rgba(1,6,15,.9),rgba(2,10,21,.72) 72%,${rgba(HUD_COLORS.cyanWire, 0.035)})`,
@@ -398,15 +537,15 @@ export default function CellDetailPanel({
           data-cellular-scan-beam
           style={{ position: 'absolute', zIndex: 2, left: `${scan.pct}%`, top: 0, bottom: 0, width: 1, background: `linear-gradient(180deg,transparent,${HUD_COLORS.cyanWire},transparent)`, boxShadow: `0 0 12px ${HUD_COLORS.cyanWire}`, opacity: scan.classified ? 0.18 : 0.7, transition: reduced ? undefined : 'left 80ms linear, opacity 220ms ease', pointerEvents: 'none' }}
         />
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 5 }}>
-          <span style={{ color: statusColor, fontSize: 7.3, letterSpacing: 1.05, textShadow: `0 0 7px ${rgba(statusColor, 0.42)}` }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: '3px 9px', marginBottom: 7 }}>
+          <span style={{ color: statusColor, fontSize: 10, letterSpacing: 1.1, textShadow: `0 0 7px ${rgba(statusColor, 0.42)}` }}>
             {statusText}
           </span>
-          <span style={{ marginLeft: 'auto', color: HUD_COLORS.dim, fontSize: 6.3, letterSpacing: 0.65 }}>
+          <span style={{ marginLeft: 'auto', color: HUD_COLORS.dim, fontSize: 8.4, letterSpacing: 0.7 }}>
             A-LATTICE / 结构扫描 · {scan.reveal}/{order.length}
           </span>
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '3px 8px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: verticalLayout ? 'repeat(2, minmax(0, 1fr))' : 'repeat(3, minmax(0, 1fr))', gap: '4px 10px' }}>
           {order.map((field, index) => (
             <CellScanFact
               key={field}
@@ -421,28 +560,27 @@ export default function CellDetailPanel({
         </div>
       </section>
 
-      <div
-        data-cell-detail-evidence-field
-        style={{ display: 'grid', gridTemplateColumns: enhancedDetail ? 'repeat(2, minmax(0, 1fr))' : '1fr', gap: '8px 12px', alignItems: 'start', marginTop: 7 }}
+      <section
+        aria-label="Cell lineage"
+        data-cell-detail-module="lineage"
+        data-cell-inspection-satellite="lineage"
+        data-cell-scan-shard="lineage"
+        style={{
+          ...satelliteBase,
+          ...(verticalLayout
+            ? { left: 0, top: 288, width: enhancedDetail ? '49%' : '100%', height: 160 }
+            : { ...fromFanEdge(0), top: 290, width: lineageWidth, height: 230 }),
+          overflowX: 'hidden',
+          overflowY: 'auto',
+          padding: '8px 10px 11px 12px',
+          borderLeft: `1px solid ${rgba('#AA88FF', 0.42)}`,
+          background: `linear-gradient(105deg,rgba(4,3,15,.9),rgba(5,4,17,.66) 78%,${rgba('#AA88FF', 0.03)})`,
+          clipPath: 'polygon(0 0,calc(100% - 11px) 0,100% 11px,100% 100%,0 100%)',
+          scrollbarWidth: 'thin',
+          scrollbarColor: `${rgba('#AA88FF', 0.3)} transparent`,
+        }}
       >
-        <section
-          aria-label="Cell lineage"
-          data-cell-detail-module="lineage"
-          data-cell-scan-shard="lineage"
-          style={{
-            minWidth: 0,
-            maxHeight: enhancedDetail ? 245 : 320,
-            overflowX: 'hidden',
-            overflowY: 'auto',
-            padding: '6px 8px 9px 10px',
-            borderLeft: `1px solid ${rgba('#AA88FF', 0.36)}`,
-            background: `linear-gradient(105deg,rgba(4,3,15,.88),rgba(5,4,17,.62) 78%,${rgba('#AA88FF', 0.025)})`,
-            clipPath: 'polygon(0 0,calc(100% - 9px) 0,100% 9px,100% 100%,0 100%)',
-            scrollbarWidth: 'none',
-            maskImage: 'linear-gradient(180deg,#000 0,#000 calc(100% - 12px),transparent 100%)',
-            pointerEvents: 'auto',
-          }}
-        >
+        <div data-cell-detail-readable-scale="true" style={{ width: '74.1%', zoom: 1.35 }}>
           <ConsensusIdentityPlate
             identity={identity}
             causalLens={resolvedCausalLens}
@@ -475,27 +613,31 @@ export default function CellDetailPanel({
             compact
             spatial
           />
-        </section>
+        </div>
+      </section>
 
-        {semanticSource && semanticPhase ? (
-          <section
-            aria-label="Cell indexed context"
-            data-cell-detail-module="context"
-            data-cell-scan-shard="context"
-            style={{
-              minWidth: 0,
-              maxHeight: 245,
-              overflowX: 'hidden',
-              overflowY: 'auto',
-              padding: '6px 8px 9px 10px',
-              borderLeft: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.36)}`,
-              background: `linear-gradient(105deg,rgba(1,6,15,.88),rgba(2,9,20,.62) 78%,${rgba(HUD_COLORS.cyanWire, 0.025)})`,
-              clipPath: 'polygon(0 0,calc(100% - 9px) 0,100% 9px,100% 100%,0 100%)',
-              scrollbarWidth: 'none',
-              maskImage: 'linear-gradient(180deg,#000 0,#000 calc(100% - 12px),transparent 100%)',
-              pointerEvents: 'auto',
-            }}
-          >
+      {semanticSource && semanticPhase ? (
+        <section
+          aria-label="Cell indexed context"
+          data-cell-detail-module="context"
+          data-cell-inspection-satellite="context"
+          data-cell-scan-shard="context"
+          style={{
+            ...satelliteBase,
+            ...(verticalLayout
+              ? { right: 0, top: 288, width: '49%', height: 160 }
+              : { ...fromFanEdge(460), top: 330, width: 330, height: 190 }),
+            overflowX: 'hidden',
+            overflowY: 'auto',
+            padding: '8px 10px 11px 12px',
+            borderLeft: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.42)}`,
+            background: `linear-gradient(105deg,rgba(1,6,15,.9),rgba(2,9,20,.66) 78%,${rgba(HUD_COLORS.cyanWire, 0.03)})`,
+            clipPath: 'polygon(0 0,calc(100% - 11px) 0,100% 11px,100% 100%,0 100%)',
+            scrollbarWidth: 'thin',
+            scrollbarColor: `${rgba(HUD_COLORS.cyanWire, 0.3)} transparent`,
+          }}
+        >
+          <div data-cell-detail-readable-scale="true" style={{ width: '74.1%', zoom: 1.35 }}>
             <CellSemanticsReadout
               source={semanticSource}
               phase={semanticPhase}
@@ -507,9 +649,9 @@ export default function CellDetailPanel({
               spatial
               style={{ margin: 0 }}
             />
-          </section>
-        ) : null}
-      </div>
+          </div>
+        </section>
+      ) : null}
     </div>
   );
 }

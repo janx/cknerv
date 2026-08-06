@@ -3,6 +3,7 @@ import { Html } from '@react-three/drei';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import CellDetailPanel, {
+  type CellDetailLayoutSide,
   type CellInspectionFacet,
   type CellDetailPanelProps,
 } from './hud/CellDetailPanel';
@@ -13,10 +14,10 @@ import { useReducedMotion } from './hud/useReducedMotion';
 const INSPECTOR_GAP_PX = 42;
 const INSPECTOR_EDGE_PX = 14;
 const INSPECTOR_SAFE_TOP_PX = 104;
-const DEFAULT_PANEL_WIDTH_PX = 500;
-const DEFAULT_PANEL_HEIGHT_PX = 410;
+const DEFAULT_PANEL_WIDTH_PX = 800;
+const DEFAULT_PANEL_HEIGHT_PX = 520;
 
-export type CellInspectorPlacementSide = 'left' | 'right' | 'above' | 'below';
+export type CellInspectorPlacementSide = CellDetailLayoutSide;
 
 export interface CellInspectorPlacement {
   side: CellInspectorPlacementSide;
@@ -270,6 +271,8 @@ export default function CellInspectionOverlay(props: CellDetailPanelProps) {
   const lastFrameKeyRef = useRef('');
   const projected = useRef(new THREE.Vector3());
   const [focusField, setFocusField] = useState<CellInspectionFacet | null>(null);
+  const layoutSideRef = useRef<CellDetailLayoutSide>('left');
+  const [layoutSide, setLayoutSide] = useState<CellDetailLayoutSide>('left');
   const handleInspectionFieldChange = useCallback((field: CellInspectionFacet | null) => {
     setFocusField(field);
     onInspectionFieldChange?.(field);
@@ -336,6 +339,10 @@ export default function CellInspectionOverlay(props: CellDetailPanelProps) {
       viewportWidth: size.width,
       viewportHeight: size.height,
     });
+    if (layoutSideRef.current !== placement.side) {
+      layoutSideRef.current = placement.side;
+      setLayoutSide(placement.side);
+    }
     const frameKey = [
       placement.side,
       placement.x.toFixed(1),
@@ -400,6 +407,7 @@ export default function CellInspectionOverlay(props: CellDetailPanelProps) {
           />
           <CellDetailPanel
             {...props}
+            layoutSide={layoutSide}
             onInspectionFieldChange={handleInspectionFieldChange}
           />
         </div>
