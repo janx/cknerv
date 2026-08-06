@@ -343,10 +343,10 @@ export default function CellDetailPanel({
     reduced,
   );
   const statusText = scan.classified
-    ? 'SCAN LOCKED · CONTENT IDENTITY MAPPED'
+    ? 'CELL IDENTITY LOCKED'
     : scan.status === 'unidentified'
-      ? 'IDENTITY UNRESOLVED'
-      : `CELLULAR SCAN ${scan.pct}%`;
+      ? 'CELL IDENTITY SCANNING'
+      : `CELL IDENTITY ${scan.pct}%`;
   const statusColor = scan.classified ? HUD_COLORS.nominal : HUD_COLORS.cyanWire;
   const activateField = (field: CellInspectionFacet) => {
     if (!scan.classified) return;
@@ -375,17 +375,9 @@ export default function CellDetailPanel({
   const bottomTop = enhancedDetail
     ? verticalLayout ? 452 : 388
     : verticalLayout ? 288 : 380;
-  // The no-scroll memory satellite is content-first. These bounds include the
-  // richest indexed decode, recall control, and causal-navigation row without
-  // retaining space for the removed duplicate identity/card frames.
-  const bottomHeight = enhancedDetail
-    ? verticalLayout ? 232 : 336
-    : verticalLayout ? 180 : 232;
-  const rootHeight = bottomTop + bottomHeight;
   const identityLeft = enhancedDetail ? 180 : 140;
   const identityWidth = rootWidth - identityLeft;
-  const secondaryLeft = enhancedDetail ? 440 : 340;
-  const secondaryWidth = rootWidth - secondaryLeft;
+  const secondaryWidth = 360;
   const lineageWidth = showTracePlate
     ? enhancedDetail ? 420 : 320
     : enhancedDetail ? 560 : 480;
@@ -405,6 +397,21 @@ export default function CellDetailPanel({
   const fanCoordinate = (coordinate: number): number => (
     layoutSide === 'right' ? rootWidth - coordinate : coordinate
   );
+  const bottomGridColumns = verticalLayout
+    ? showTracePlate
+      ? 'repeat(2, minmax(0, 1fr))'
+      : 'minmax(0, 1fr)'
+    : showTracePlate
+      ? layoutSide === 'right'
+        ? `${secondaryWidth}px 20px ${lineageWidth}px`
+        : `${lineageWidth}px 20px ${secondaryWidth}px`
+      : `${lineageWidth}px`;
+  const lineageGridColumn = !verticalLayout
+    && showTracePlate
+    && layoutSide === 'right'
+    ? 3
+    : 1;
+  const traceGridColumn = verticalLayout || layoutSide !== 'right' ? 2 : 1;
 
   return (
     <div
@@ -415,7 +422,6 @@ export default function CellDetailPanel({
       style={{
         position: 'relative',
         width: rootWidth,
-        height: rootHeight,
         maxWidth: 'calc(100vw - 28px)',
         boxSizing: 'border-box',
         pointerEvents: 'none',
@@ -565,12 +571,19 @@ export default function CellDetailPanel({
           data-cellular-scan-beam
           style={{ position: 'absolute', zIndex: 2, left: `${scan.pct}%`, top: 0, bottom: 0, width: 1, background: `linear-gradient(180deg,transparent,${HUD_COLORS.cyanWire},transparent)`, boxShadow: `0 0 12px ${HUD_COLORS.cyanWire}`, opacity: scan.classified ? 0.18 : 0.7, transition: reduced ? undefined : 'left 80ms linear, opacity 220ms ease', pointerEvents: 'none' }}
         />
-        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: '3px 9px', marginBottom: 7 }}>
-          <span style={{ color: statusColor, fontSize: 10, letterSpacing: 1.1, textShadow: `0 0 7px ${rgba(statusColor, 0.42)}` }}>
-            {statusText}
+        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: '3px 7px', marginBottom: 7 }}>
+          <span style={{ color: '#C9F8FF', fontFamily: HUD_FONTS.tech, fontSize: 10.5, fontWeight: 700, letterSpacing: 1.35 }}>
+            CELL IDENTITY
           </span>
-          <span style={{ marginLeft: 'auto', color: HUD_COLORS.dim, fontSize: 8.4, letterSpacing: 0.7 }}>
-            A-LATTICE · {scan.reveal}/{order.length}
+          <span style={{ color: HUD_COLORS.cyanWire, fontFamily: HUD_FONTS.cjk, fontSize: 8.5, opacity: 0.72 }}>
+            细胞身份
+          </span>
+          <span
+            data-cell-identity-scan-status="true"
+            style={{ marginLeft: 'auto', color: statusColor, fontSize: 8.2, letterSpacing: 0.72, textShadow: `0 0 7px ${rgba(statusColor, 0.42)}` }}
+          >
+            {scan.classified ? 'LOCKED' : `SCANNING ${scan.pct}%`}
+            {' · '}A-LATTICE {scan.reveal}/{order.length}
           </span>
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: verticalLayout ? 'repeat(2, minmax(0, 1fr))' : 'repeat(3, minmax(0, 1fr))', gap: '4px 10px' }}>
@@ -605,107 +618,127 @@ export default function CellDetailPanel({
         ) : null}
       </section>
 
-      <section
-        aria-label="Cell lineage"
-        data-cell-detail-module="lineage"
-        data-cell-inspection-satellite="lineage"
-        data-cell-scan-shard="lineage"
+      <div
+        data-cell-detail-bottom-widgets="true"
         style={{
-          ...satelliteBase,
-          ...(verticalLayout
-            ? { left: 0, top: bottomTop, width: showTracePlate ? '49%' : '100%', height: bottomHeight }
-            : { ...fromFanEdge(0), top: bottomTop, width: lineageWidth, height: bottomHeight }),
-          overflow: 'hidden',
-          padding: '8px 10px 11px 12px',
-          borderLeft: `1px solid ${rgba('#AA88FF', 0.42)}`,
-          borderTop: `1px solid ${rgba('#AA88FF', 0.16)}`,
-          borderBottom: `1px solid ${rgba('#AA88FF', 0.1)}`,
-          background: `linear-gradient(105deg,rgba(3,3,13,.97),rgba(4,4,16,.92) 78%,${rgba('#AA88FF', 0.045)})`,
-          clipPath: 'polygon(0 0,calc(100% - 11px) 0,100% 11px,100% 100%,0 100%)',
+          position: 'relative',
+          zIndex: 1,
+          display: 'grid',
+          gridTemplateColumns: bottomGridColumns,
+          columnGap: verticalLayout && showTracePlate ? '2%' : 0,
+          alignItems: 'start',
+          justifyContent: !verticalLayout && !showTracePlate && layoutSide === 'right'
+            ? 'end'
+            : 'start',
+          minWidth: 0,
+          paddingTop: bottomTop,
+          pointerEvents: 'none',
         }}
       >
-        <div data-cell-detail-readable-scale="true" style={{ width: readableWidth, zoom: readableScale }}>
-          <ConsensusIdentityPlate
-            identity={identity}
-            dataHex={cell.data_hex}
-            semanticSource={semanticSource}
-            semanticPhase={semanticPhase}
-            semanticRecord={semanticRecord}
-            semanticMessage={semanticMessage}
-            causalLens={resolvedCausalLens}
-            causalNavigation={causalNavigation}
-            reveal={scan.classified ? 1 : scan.pct / 100}
-            statusText={statusText}
-            statusColor={statusColor}
-            reducedMotion={reduced}
-            identityProofBinding={selectedIdentityProofBinding}
-            onRecallWrite={identity.observedWrite && onTraceWrite
-              ? () => onTraceWrite(identity.observedWrite!.seq)
-              : undefined}
-            recallEnabled={scan.classified && identityProofComplete}
-            traceSource={traceSource}
-            traceSelected={traceSelected}
-            traceReadout={traceReadout}
-            traceEvidenceFocusSourceId={traceEvidenceFocusSourceId}
-            traceEvidencePreviewSourceId={traceEvidencePreviewSourceId}
-            onTraceEvidenceFocusChange={onTraceEvidenceFocusChange}
-            traceRouteHopFocus={traceRouteHopFocus}
-            onTraceRouteHopFocusChange={onTraceRouteHopFocusChange}
-            traceRouteHopLock={traceRouteHopLock}
-            onTraceRouteHopLockChange={onTraceRouteHopLockChange}
-            routeCellById={inspectedCellById}
-            agreementCount={agreementTarget}
-            compact
-            spatial
-            contentWide={verticalLayout}
-          />
-        </div>
-      </section>
-
-      {showTracePlate && traceReadout ? (
         <section
-          aria-label="Consensus memory trace"
-          data-cell-detail-module="trace"
-          data-cell-inspection-satellite="trace"
-          data-cell-scan-shard="trace"
+          aria-label="Consensus memory"
+          data-cell-detail-module="lineage"
+          data-cell-inspection-satellite="lineage"
+          data-cell-scan-shard="lineage"
+          data-cell-detail-size="content"
           style={{
             ...satelliteBase,
-            ...(verticalLayout
-              ? { right: 0, top: bottomTop, width: '49%', height: bottomHeight }
-              : { ...fromFanEdge(secondaryLeft), top: bottomTop, width: secondaryWidth, height: bottomHeight }),
+            position: 'relative',
+            gridColumn: lineageGridColumn,
+            width: 'auto',
             overflow: 'visible',
-            padding: '8px 10px 10px 12px',
-            borderLeft: `1px solid ${rgba('#AA88FF', 0.5)}`,
-            borderTop: `1px solid ${rgba('#AA88FF', 0.2)}`,
-            borderBottom: `1px solid ${rgba('#AA88FF', 0.12)}`,
-            background: 'linear-gradient(105deg,rgba(4,3,14,.98),rgba(7,5,18,.94) 78%,rgba(170,136,255,.055))',
+            padding: '8px 10px 11px 12px',
+            borderLeft: `1px solid ${rgba('#AA88FF', 0.42)}`,
+            borderTop: `1px solid ${rgba('#AA88FF', 0.16)}`,
+            borderBottom: `1px solid ${rgba('#AA88FF', 0.1)}`,
+            background: `linear-gradient(105deg,rgba(3,3,13,.97),rgba(4,4,16,.92) 78%,${rgba('#AA88FF', 0.045)})`,
             clipPath: 'polygon(0 0,calc(100% - 11px) 0,100% 11px,100% 100%,0 100%)',
           }}
         >
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: 7, color: '#C7B9FF', fontFamily: HUD_FONTS.tech, fontSize: 8.4, fontWeight: 700, letterSpacing: 1.2 }}>
-            <span>MEMORY TRACE</span>
-            <span style={{ marginLeft: 'auto', color: HUD_COLORS.dim, fontFamily: HUD_FONTS.mono, fontSize: 6.8, fontWeight: 400, letterSpacing: 0.55 }}>
-              LIVE EVIDENCE
-            </span>
-          </div>
           <div data-cell-detail-readable-scale="true" style={{ width: readableWidth, zoom: readableScale }}>
-            <ConsensusMemoryTracePlate
-              readout={traceReadout}
+            <ConsensusIdentityPlate
+              identity={identity}
+              dataHex={cell.data_hex}
+              semanticSource={semanticSource}
+              semanticPhase={semanticPhase}
+              semanticRecord={semanticRecord}
+              semanticMessage={semanticMessage}
+              causalLens={resolvedCausalLens}
+              causalNavigation={causalNavigation}
+              reveal={scan.classified ? 1 : scan.pct / 100}
+              statusText={statusText}
+              statusColor={statusColor}
               reducedMotion={reduced}
-              targetContentHash={identity.contentHash}
-              agreementCount={agreementTarget}
-              focusedSourceId={traceEvidenceFocusSourceId}
-              previewSourceId={traceEvidencePreviewSourceId}
-              onFocusChange={onTraceEvidenceFocusChange}
-              focusedHop={traceRouteHopFocus}
-              onHopFocusChange={onTraceRouteHopFocusChange}
-              lockedHop={traceRouteHopLock}
-              onHopLockChange={onTraceRouteHopLockChange}
+              identityProofBinding={selectedIdentityProofBinding}
+              onRecallWrite={identity.observedWrite && onTraceWrite
+                ? () => onTraceWrite(identity.observedWrite!.seq)
+                : undefined}
+              recallEnabled={scan.classified && identityProofComplete}
+              traceSource={traceSource}
+              traceSelected={traceSelected}
+              traceReadout={traceReadout}
+              traceEvidenceFocusSourceId={traceEvidenceFocusSourceId}
+              traceEvidencePreviewSourceId={traceEvidencePreviewSourceId}
+              onTraceEvidenceFocusChange={onTraceEvidenceFocusChange}
+              traceRouteHopFocus={traceRouteHopFocus}
+              onTraceRouteHopFocusChange={onTraceRouteHopFocusChange}
+              traceRouteHopLock={traceRouteHopLock}
+              onTraceRouteHopLockChange={onTraceRouteHopLockChange}
               routeCellById={inspectedCellById}
+              agreementCount={agreementTarget}
+              compact
+              spatial
+              contentWide={verticalLayout}
             />
           </div>
         </section>
-      ) : null}
+
+        {showTracePlate && traceReadout ? (
+          <section
+            aria-label="Consensus memory trace"
+            data-cell-detail-module="trace"
+            data-cell-inspection-satellite="trace"
+            data-cell-scan-shard="trace"
+            data-cell-detail-size="content"
+            style={{
+              ...satelliteBase,
+              position: 'relative',
+              gridColumn: traceGridColumn,
+              width: 'auto',
+              overflow: 'visible',
+              padding: '8px 10px 10px 12px',
+              borderLeft: `1px solid ${rgba('#AA88FF', 0.5)}`,
+              borderTop: `1px solid ${rgba('#AA88FF', 0.2)}`,
+              borderBottom: `1px solid ${rgba('#AA88FF', 0.12)}`,
+              background: 'linear-gradient(105deg,rgba(4,3,14,.98),rgba(7,5,18,.94) 78%,rgba(170,136,255,.055))',
+              clipPath: 'polygon(0 0,calc(100% - 11px) 0,100% 11px,100% 100%,0 100%)',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 7, color: '#C7B9FF', fontFamily: HUD_FONTS.tech, fontSize: 8.4, fontWeight: 700, letterSpacing: 1.2 }}>
+              <span>MEMORY TRACE</span>
+              <span style={{ marginLeft: 'auto', color: HUD_COLORS.dim, fontFamily: HUD_FONTS.mono, fontSize: 6.8, fontWeight: 400, letterSpacing: 0.55 }}>
+                LIVE EVIDENCE
+              </span>
+            </div>
+            <div data-cell-detail-readable-scale="true" style={{ width: readableWidth, zoom: readableScale }}>
+              <ConsensusMemoryTracePlate
+                readout={traceReadout}
+                reducedMotion={reduced}
+                targetContentHash={identity.contentHash}
+                agreementCount={agreementTarget}
+                focusedSourceId={traceEvidenceFocusSourceId}
+                previewSourceId={traceEvidencePreviewSourceId}
+                onFocusChange={onTraceEvidenceFocusChange}
+                focusedHop={traceRouteHopFocus}
+                onHopFocusChange={onTraceRouteHopFocusChange}
+                lockedHop={traceRouteHopLock}
+                onHopLockChange={onTraceRouteHopLockChange}
+                routeCellById={inspectedCellById}
+              />
+            </div>
+          </section>
+        ) : null}
+      </div>
 
     </div>
   );
