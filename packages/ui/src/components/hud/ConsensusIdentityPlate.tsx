@@ -144,6 +144,11 @@ function fingerprintBody(hash: string): string {
   return hash.replace(/^0x/i, '').toUpperCase();
 }
 
+function clampUnit(value: number): number {
+  if (!Number.isFinite(value)) return 1;
+  return Math.max(0, Math.min(1, value));
+}
+
 function routeDurationReadout(durationMs: number): string {
   const clamped = Number.isFinite(durationMs) ? Math.max(0, durationMs) : 0;
   return clamped < 1_000
@@ -1471,6 +1476,12 @@ export default function ConsensusIdentityPlate({
   const lifecycleColor = identity.lifecycle === 'live'
     ? HUD_COLORS.nominal
     : HUD_COLORS.caution;
+  const memoryProgress = reducedMotion ? 1 : clampUnit(reveal);
+  const contentReveal = clampUnit(memoryProgress / 0.72);
+  const causalRevealed = memoryProgress >= 0.76;
+  const traceRevealed = memoryProgress >= 0.9;
+  const memoryLocked = memoryProgress >= 1;
+  const memoryStatusColor = memoryLocked ? lifecycleColor : CYAN;
   const spatialTraceState = !traceSelected
     ? !identityProofComplete
       ? 'VERIFY IDENTITY'
@@ -1498,6 +1509,8 @@ export default function ConsensusIdentityPlate({
     <div
       data-consensus-memory="true"
       data-consensus-memory-density={spatial ? 'spatial' : compact ? 'compact' : 'standard'}
+      data-consensus-memory-state={memoryLocked ? 'locked' : 'scanning'}
+      data-consensus-memory-progress={Math.round(memoryProgress * 100)}
       data-memory-identity-binding={spatial ? 'true' : undefined}
       data-memory-identity-phase={spatial
         ? selectedIdentityProofBinding?.phase ?? 'collecting'
@@ -1518,8 +1531,9 @@ export default function ConsensusIdentityPlate({
         <span style={{ flex: '0 0 auto', whiteSpace: 'nowrap', fontFamily: HUD_FONTS.cjk, fontSize: 8, color: VIOLET, opacity: 0.78 }}>
           共识记忆
         </span>
-        <span style={{ flex: '0 0 auto', marginLeft: 'auto', whiteSpace: 'nowrap', fontFamily: HUD_FONTS.mono, fontSize: 8, letterSpacing: 0.8, color: lifecycleColor, textShadow: `0 0 6px ${lifecycleColor}66` }}>
-          {identity.lifecycle === 'live' ? 'LIVE RECORD' : 'SPENT RECORD'}
+        <span style={{ flex: '0 0 auto', marginLeft: 'auto', whiteSpace: 'nowrap', fontFamily: HUD_FONTS.mono, fontSize: 8, letterSpacing: 0.8, color: memoryStatusColor, textShadow: `0 0 6px ${memoryStatusColor}66` }}>
+          {memoryLocked ? 'LOCKED' : `READING ${Math.round(memoryProgress * 100)}%`}
+          {' · '}{identity.lifecycle === 'live' ? 'LIVE RECORD' : 'SPENT RECORD'}
         </span>
       </div>
 
@@ -1545,18 +1559,27 @@ export default function ConsensusIdentityPlate({
             record={semanticRecord}
             message={semanticMessage}
             wide={contentWide}
+            reveal={contentReveal}
           />
         ) : null}
       </div>
 
       {causalLens ? (
-        <CellCausalLensReadout
-          lens={causalLens}
-          reveal={reveal}
-          navigation={causalNavigation}
-          compact={compact}
-          summary={spatial}
-        />
+        <div
+          data-consensus-memory-reveal="causal"
+          data-consensus-memory-reveal-state={causalRevealed
+            ? 'resolved'
+            : 'scanning'}
+          style={{ display: causalRevealed ? 'block' : 'none' }}
+        >
+          <CellCausalLensReadout
+            lens={causalLens}
+            reveal={memoryProgress}
+            navigation={causalNavigation}
+            compact={compact}
+            summary={spatial}
+          />
+        </div>
       ) : null}
 
       {!spatial ? <div
@@ -1629,7 +1652,13 @@ export default function ConsensusIdentityPlate({
         </span>
       </div> : null}
 
-      {!spatial || observed ? <div style={{ marginTop: compact ? 4 : 5, paddingTop: spatial ? 2 : compact ? 4 : 5, borderTop: `1px solid ${CYAN}18` }}>
+      {!spatial || observed ? <div
+        data-consensus-memory-reveal="trace"
+        data-consensus-memory-reveal-state={!spatial || traceRevealed
+          ? 'resolved'
+          : 'scanning'}
+        style={{ display: !spatial || traceRevealed ? 'block' : 'none', marginTop: compact ? 4 : 5, paddingTop: spatial ? 2 : compact ? 4 : 5, borderTop: `1px solid ${CYAN}18` }}
+      >
         {!spatial ? <span style={{ fontFamily: HUD_FONTS.mono, fontSize: 8.3, letterSpacing: 0.45, color: statusColor, textShadow: `0 0 6px ${statusColor}55` }}>
           {statusText}
         </span> : null}

@@ -93,6 +93,11 @@ function cycleIndex(
   return (current + direction + length) % length;
 }
 
+function clampUnit(value: number): number {
+  if (!Number.isFinite(value)) return 1;
+  return Math.max(0, Math.min(1, value));
+}
+
 function SegmentReadout({
   segment,
   index,
@@ -248,6 +253,7 @@ export default function CellContentMemory({
   record,
   message,
   wide = false,
+  reveal = 1,
 }: {
   dataHex: string;
   source?: EnrichmentSourceStatus;
@@ -255,6 +261,8 @@ export default function CellContentMemory({
   record?: CellSemanticRecord | null;
   message?: string | null;
   wide?: boolean;
+  /** Shared Cell scan progress; present content is decoded in source order. */
+  reveal?: number;
 }) {
   const enhanced = Boolean(source && phase);
   const content = record?.content;
@@ -330,6 +338,37 @@ export default function CellContentMemory({
           : record && !content
             ? 'INDEX HAS NO CONTENT PAYLOAD FOR THIS CELL'
             : null;
+  const revealStages = [
+    'summary',
+    'bytes',
+    ...(previewBytes.length > 0 ? ['ascii'] : []),
+    ...(enhanced && record?.asset ? ['asset'] : []),
+    ...(enhanced ? ['decode'] : []),
+    ...(enhanced && selectedGuess ? ['heuristic'] : []),
+    ...(enhanced && selectedRole ? ['role'] : []),
+  ];
+  const revealProgress = clampUnit(reveal);
+  // Match the landmark scan: the first item resolves shortly after travel,
+  // then each item joins the layout in sequence. The final frame is stable.
+  const revealedStageCount = revealProgress >= 1
+    ? revealStages.length
+    : Math.min(
+      revealStages.length,
+      Math.floor(revealProgress * revealStages.length + 0.45),
+    );
+  const stageRevealed = (stage: string): boolean => {
+    const index = revealStages.indexOf(stage);
+    return index >= 0 && index < revealedStageCount;
+  };
+  const summaryRevealed = stageRevealed('summary');
+  const bytesRevealed = stageRevealed('bytes');
+  const asciiRevealed = stageRevealed('ascii');
+  const analysisRevealed = [
+    'asset',
+    'decode',
+    'heuristic',
+    'role',
+  ].some(stageRevealed);
 
   return (
     <section
@@ -338,15 +377,25 @@ export default function CellContentMemory({
       data-cell-content-memory-mode={enhanced ? 'indexed' : 'direct'}
       data-cell-content-byte-origin={model.origin}
       data-cell-content-complete={model.complete ? 'true' : 'false'}
+      data-cell-content-reveal-state={revealedStageCount === revealStages.length
+        ? 'resolved'
+        : 'scanning'}
+      data-cell-content-reveal-count={revealedStageCount}
+      data-cell-content-reveal-total={revealStages.length}
       style={{
+        display: revealedStageCount > 0 ? 'block' : 'none',
         minWidth: 0,
         marginTop: 6,
         fontFamily: HUD_FONTS.mono,
       }}
     >
-      <div style={{ display: 'grid', gridTemplateColumns: wide && enhanced ? 'minmax(0,1.02fr) minmax(0,.98fr)' : 'minmax(0,1fr)', gap: wide && enhanced ? 8 : 3, minWidth: 0 }}>
-        <div data-cell-content-raw="true" style={{ minWidth: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: 5 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: wide && enhanced && analysisRevealed ? 'minmax(0,1.02fr) minmax(0,.98fr)' : 'minmax(0,1fr)', gap: wide && enhanced && analysisRevealed ? 8 : 3, minWidth: 0 }}>
+        <div data-cell-content-raw="true" style={{ display: summaryRevealed || bytesRevealed || asciiRevealed ? 'block' : 'none', minWidth: 0 }}>
+          <div
+            data-cell-content-reveal-item="summary"
+            data-cell-content-reveal-item-state={summaryRevealed ? 'resolved' : 'scanning'}
+            style={{ display: summaryRevealed ? 'flex' : 'none', alignItems: 'baseline', gap: 5 }}
+          >
             <span style={{ minWidth: 0, color: model.origin === 'indexed' ? tone : HUD_COLORS.cyanWire, fontSize: 6.2, letterSpacing: 0.52, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {contentStatus}
             </span>
@@ -378,19 +427,21 @@ export default function CellContentMemory({
             </span>
           </div>
           {!model.valid ? (
-            <div data-cell-content-invalid="true" style={{ marginTop: 4, color: HUD_COLORS.danger, fontSize: 7 }}>
+            <div data-cell-content-invalid="true" data-cell-content-reveal-item="bytes" data-cell-content-reveal-item-state={bytesRevealed ? 'resolved' : 'scanning'} style={{ display: bytesRevealed ? 'block' : 'none', marginTop: 4, color: HUD_COLORS.danger, fontSize: 7 }}>
               INVALID CONTENT HEX
             </div>
           ) : previewBytes.length === 0 ? (
-            <div data-cell-content-empty="true" style={{ marginTop: 4, padding: '3px 5px', border: `1px solid ${rgba(HUD_COLORS.dim, 0.14)}`, color: HUD_COLORS.dim, fontSize: 6.8, letterSpacing: 0.7 }}>
+            <div data-cell-content-empty="true" data-cell-content-reveal-item="bytes" data-cell-content-reveal-item-state={bytesRevealed ? 'resolved' : 'scanning'} style={{ display: bytesRevealed ? 'block' : 'none', marginTop: 4, padding: '3px 5px', border: `1px solid ${rgba(HUD_COLORS.dim, 0.14)}`, color: HUD_COLORS.dim, fontSize: 6.8, letterSpacing: 0.7 }}>
               ∅ NO OUTPUT DATA
             </div>
           ) : (
             <>
               <div
                 data-cell-content-bytes="true"
+                data-cell-content-reveal-item="bytes"
+                data-cell-content-reveal-item-state={bytesRevealed ? 'resolved' : 'scanning'}
                 title={content?.data_hex ?? dataHex}
-                style={{ display: 'flex', flexWrap: 'wrap', gap: '1px 3px', minWidth: 0, marginTop: 3, padding: '3px 4px', border: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.12)}`, background: 'rgba(0,3,10,.38)' }}
+                style={{ display: bytesRevealed ? 'flex' : 'none', flexWrap: 'wrap', gap: '1px 3px', minWidth: 0, marginTop: 3, padding: '3px 4px', border: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.12)}`, background: 'rgba(0,3,10,.38)' }}
               >
                 {previewBytes.map((byte, localIndex) => {
                   const index = previewStart + localIndex;
@@ -419,7 +470,7 @@ export default function CellContentMemory({
                   <span style={{ color: HUD_COLORS.dim, fontSize: 6.6 }}>…</span>
                 ) : null}
               </div>
-              <div data-cell-content-ascii="true" title={model.ascii} style={{ minWidth: 0, marginTop: 2, color: HUD_COLORS.dim, fontSize: 6.2, letterSpacing: 0.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              <div data-cell-content-ascii="true" data-cell-content-reveal-item="ascii" data-cell-content-reveal-item-state={asciiRevealed ? 'resolved' : 'scanning'} title={model.ascii} style={{ display: asciiRevealed ? 'block' : 'none', minWidth: 0, marginTop: 2, color: HUD_COLORS.dim, fontSize: 6.2, letterSpacing: 0.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 ASCII [{previewStart}..{previewEnd}) · {model.ascii.slice(previewStart, previewEnd)}
                 {selectedRangeOutsidePreview ? ' · DECODE RANGE OUTSIDE RETAINED BYTES' : ''}
               </div>
@@ -428,9 +479,9 @@ export default function CellContentMemory({
         </div>
 
         {enhanced ? (
-          <div data-cell-content-analysis="true" style={{ minWidth: 0, paddingTop: wide ? 0 : 2, borderTop: wide ? 0 : `1px solid ${rgba(tone, 0.13)}`, borderLeft: wide ? `1px solid ${rgba(tone, 0.16)}` : 0, paddingLeft: wide ? 7 : 0 }}>
+          <div data-cell-content-analysis="true" style={{ display: analysisRevealed ? 'block' : 'none', minWidth: 0, paddingTop: wide ? 0 : 2, borderTop: wide ? 0 : `1px solid ${rgba(tone, 0.13)}`, borderLeft: wide ? `1px solid ${rgba(tone, 0.16)}` : 0, paddingLeft: wide ? 7 : 0 }}>
             {record?.asset ? (
-              <div data-cell-content-asset="true" title={record.asset.type_script_hash} style={{ display: 'flex', alignItems: 'baseline', gap: 5, minWidth: 0, color: HUD_COLORS.caution, fontSize: 6.5 }}>
+              <div data-cell-content-asset="true" data-cell-content-reveal-item="asset" data-cell-content-reveal-item-state={stageRevealed('asset') ? 'resolved' : 'scanning'} title={record.asset.type_script_hash} style={{ display: stageRevealed('asset') ? 'flex' : 'none', alignItems: 'baseline', gap: 5, minWidth: 0, color: HUD_COLORS.caution, fontSize: 6.5 }}>
                 <span style={{ color: HUD_COLORS.dim }}>VALUE</span>
                 <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {[record.asset.symbol, record.asset.name, record.asset.standard].filter(Boolean).join(' · ') || record.asset.type_script_hash}
@@ -439,7 +490,7 @@ export default function CellContentMemory({
               </div>
             ) : null}
             {content?.deterministic ? (
-              <div data-cell-content-deterministic="true" style={{ minWidth: 0, marginTop: record?.asset ? 2 : 0 }}>
+              <div data-cell-content-deterministic="true" data-cell-content-reveal-item="decode" data-cell-content-reveal-item-state={stageRevealed('decode') ? 'resolved' : 'scanning'} style={{ display: stageRevealed('decode') ? 'block' : 'none', minWidth: 0, marginTop: record?.asset ? 2 : 0 }}>
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: 5, minWidth: 0 }}>
                   <span style={{ color: HUD_COLORS.nominal, fontSize: 6.2, letterSpacing: 0.56, whiteSpace: 'nowrap' }}>
                     DECODE · {readableKind(content.deterministic.kind)}
@@ -460,33 +511,37 @@ export default function CellContentMemory({
                 ) : null}
               </div>
             ) : statusMessage ? (
-              <div title={statusMessage} style={{ marginTop: 2, color: phase === 'error' ? HUD_COLORS.danger : HUD_COLORS.dim, fontSize: 6.6, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              <div data-cell-content-reveal-item="decode" data-cell-content-reveal-item-state={stageRevealed('decode') ? 'resolved' : 'scanning'} title={statusMessage} style={{ display: stageRevealed('decode') ? 'block' : 'none', marginTop: 2, color: phase === 'error' ? HUD_COLORS.danger : HUD_COLORS.dim, fontSize: 6.6, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {statusMessage}
               </div>
             ) : (
-              <div style={{ marginTop: 2, color: HUD_COLORS.dim, fontSize: 6.5 }}>
+              <div data-cell-content-reveal-item="decode" data-cell-content-reveal-item-state={stageRevealed('decode') ? 'resolved' : 'scanning'} style={{ display: stageRevealed('decode') ? 'block' : 'none', marginTop: 2, color: HUD_COLORS.dim, fontSize: 6.5 }}>
                 NO DETERMINISTIC DECODE
               </div>
             )}
             {selectedGuess && selectedGuessIndex !== null ? (
-              <GuessReadout
-                guess={selectedGuess}
-                index={selectedGuessIndex}
-                count={guesses.length}
-                onStep={(direction) => setGuessIndex((current) => (
-                  cycleIndex(current, guesses.length, direction)
-                ))}
-              />
+              <div data-cell-content-reveal-item="heuristic" data-cell-content-reveal-item-state={stageRevealed('heuristic') ? 'resolved' : 'scanning'} style={{ display: stageRevealed('heuristic') ? 'block' : 'none' }}>
+                <GuessReadout
+                  guess={selectedGuess}
+                  index={selectedGuessIndex}
+                  count={guesses.length}
+                  onStep={(direction) => setGuessIndex((current) => (
+                    cycleIndex(current, guesses.length, direction)
+                  ))}
+                />
+              </div>
             ) : null}
             {selectedRole && selectedRoleIndex !== null ? (
-              <FacetReadout
-                facet={selectedRole}
-                index={selectedRoleIndex}
-                count={roles.length}
-                onStep={(direction) => setRoleIndex((current) => (
-                  cycleIndex(current, roles.length, direction)
-                ))}
-              />
+              <div data-cell-content-reveal-item="role" data-cell-content-reveal-item-state={stageRevealed('role') ? 'resolved' : 'scanning'} style={{ display: stageRevealed('role') ? 'block' : 'none' }}>
+                <FacetReadout
+                  facet={selectedRole}
+                  index={selectedRoleIndex}
+                  count={roles.length}
+                  onStep={(direction) => setRoleIndex((current) => (
+                    cycleIndex(current, roles.length, direction)
+                  ))}
+                />
+              </div>
             ) : null}
           </div>
         ) : null}

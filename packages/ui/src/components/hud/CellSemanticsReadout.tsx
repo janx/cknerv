@@ -698,21 +698,21 @@ export default function CellSemanticsReadout({
     ? 'RESOLVING SELECTED CELL…'
     : phase === 'waiting'
       ? (message ?? (scanIntegrated
-        ? 'WAITING FOR VALIDATED INDEX'
+        ? 'WAITING FOR VALIDATED CONTEXT'
         : 'WAITING FOR VALIDATED CHAIN CONTEXT'))
       : phase === 'unavailable'
         ? (message ?? (scanIntegrated
-          ? 'NO INDEX RECORD FOR THIS CELL'
+          ? 'NO VALIDATED RECORD FOR THIS CELL'
           : 'NO CONTEXT FOR THIS CELL'))
         : phase === 'error'
           ? (message ?? (scanIntegrated
-            ? 'INDEX LAYER UNAVAILABLE'
+            ? 'CELL IDENTITY CONTEXT UNAVAILABLE'
             : 'CELL CONTEXT UNAVAILABLE'))
           : null;
 
   return (
     <section
-      aria-label={scanIntegrated ? 'Indexed Cell scan context' : 'Cell context'}
+      aria-label={scanIntegrated ? 'Cell identity context' : 'Cell context'}
       data-cell-semantics-phase={phase}
       data-cell-semantics-density={scanIntegrated ? 'scan' : spatial ? 'spatial' : 'compact'}
       data-cell-semantics-policy={essential ? 'essential' : 'complete'}
@@ -737,31 +737,33 @@ export default function CellSemanticsReadout({
         ...style,
       }}
     >
-      <div
-        data-cell-context-header="true"
-        style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '3px 6px', marginBottom: record ? scanIntegrated ? 4 : spatial ? 5 : 8 : 0 }}
-      >
-        <span style={{ width: 4, height: 4, borderRadius: '50%', background: color, boxShadow: `0 0 6px ${color}` }} />
-        <span style={{ color, fontSize: 8, letterSpacing: 1.15, whiteSpace: 'nowrap' }}>
-          {scanIntegrated ? 'INDEX LAYER' : 'CELL CONTEXT'}
-        </span>
-        <span style={{ color, fontSize: 7.2, letterSpacing: 0.85, whiteSpace: 'nowrap' }}>
-          {' · '}{source.status.toUpperCase()}
-        </span>
-        {lag ? (
-          <span style={{ color: HUD_COLORS.dim, fontSize: 6.8, letterSpacing: 0.7, whiteSpace: 'nowrap' }}>
-            {lag}
+      {!scanIntegrated ? (
+        <div
+          data-cell-context-header="true"
+          style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '3px 6px', marginBottom: record ? spatial ? 5 : 8 : 0 }}
+        >
+          <span style={{ width: 4, height: 4, borderRadius: '50%', background: color, boxShadow: `0 0 6px ${color}` }} />
+          <span style={{ color, fontSize: 8, letterSpacing: 1.15, whiteSpace: 'nowrap' }}>
+            CELL CONTEXT
           </span>
-        ) : null}
-        {record?.cell_type ? (
-          <span
-            data-cell-context-type={record.cell_type}
-            style={{ marginLeft: 'auto', padding: '1px 4px', border: `1px solid ${rgba(HUD_COLORS.nominal, 0.22)}`, color: HUD_COLORS.nominal, fontSize: 6.6, letterSpacing: 0.75, whiteSpace: 'nowrap' }}
-          >
-            {record.cell_type.toUpperCase()}
+          <span style={{ color, fontSize: 7.2, letterSpacing: 0.85, whiteSpace: 'nowrap' }}>
+            {' · '}{source.status.toUpperCase()}
           </span>
-        ) : null}
-      </div>
+          {lag ? (
+            <span style={{ color: HUD_COLORS.dim, fontSize: 6.8, letterSpacing: 0.7, whiteSpace: 'nowrap' }}>
+              {lag}
+            </span>
+          ) : null}
+          {record?.cell_type ? (
+            <span
+              data-cell-context-type={record.cell_type}
+              style={{ marginLeft: 'auto', padding: '1px 4px', border: `1px solid ${rgba(HUD_COLORS.nominal, 0.22)}`, color: HUD_COLORS.nominal, fontSize: 6.6, letterSpacing: 0.75, whiteSpace: 'nowrap' }}
+            >
+              {record.cell_type.toUpperCase()}
+            </span>
+          ) : null}
+        </div>
+      ) : null}
       {statusMessage ? (
         <div title={statusMessage} style={{ color: phase === 'error' ? HUD_COLORS.danger : HUD_COLORS.dim, fontSize: 8, lineHeight: 1.45 }}>
           {statusMessage}
