@@ -121,6 +121,8 @@ describe('CellNucleusPortrait production language', () => {
   it('lets the selected Cell portrait rotate without taking over panel scroll', () => {
     expect(SOURCE).toContain("import { OrbitControls } from '@react-three/drei'");
     expect(SOURCE).toContain('data-cell-portrait-interactive="true"');
+    expect(SOURCE).toContain("data-cell-portrait-dragging={dragging ? 'true' : 'false'}");
+    expect(SOURCE).toContain('Interactive Cell scan. Drag to orbit around the Cell.');
     expect(SOURCE).toContain("pointerEvents: 'auto'");
     expect(SOURCE).toContain("cursor: dragging ? 'grabbing' : 'grab'");
     expect(SOURCE).toContain('<OrbitControls');

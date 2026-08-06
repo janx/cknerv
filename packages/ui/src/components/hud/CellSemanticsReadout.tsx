@@ -43,7 +43,7 @@ function ContextFact({ label, value, displayValue, color, wide = false }: {
   return (
     <div
       data-cell-context-fact={label.toLowerCase()}
-      style={{ gridColumn: wide ? '1 / -1' : undefined, minWidth: 0, padding: '1px 0 2px' }}
+      style={{ gridColumn: wide ? '1 / -1' : undefined, minWidth: 0, padding: '2px 0 3px' }}
     >
       <span style={{ display: 'block', color: HUD_COLORS.dim, fontSize: 6.6, letterSpacing: 0.9, lineHeight: 1.2 }}>
         {label}
@@ -71,7 +71,7 @@ function KnowledgeBar({ record }: { record: CellSemanticRecord }) {
     <div
       data-cell-context-fact="knowledge"
       title={segments.map(([name, bytes]) => `${name} ${bytes}B`).join(' · ')}
-      style={{ gridColumn: '1 / -1', minWidth: 0, marginTop: 1 }}
+      style={{ minWidth: 0, marginTop: 8, paddingTop: 7, borderTop: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.13)}` }}
     >
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
         <span style={{ color: HUD_COLORS.dim, fontSize: 6.6, letterSpacing: 0.9 }}>KNOWLEDGE</span>
@@ -110,15 +110,15 @@ function ScriptFact({ role, script }: {
   return (
     <div
       data-cell-context-script={role.toLowerCase()}
-      style={{ gridColumn: '1 / -1', minWidth: 0, padding: '4px 6px', border: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.12)}`, background: rgba(HUD_COLORS.cyanWire, 0.025) }}
+      style={{ minWidth: 0, padding: '6px 8px 7px', border: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.16)}`, background: `linear-gradient(90deg,${rgba(HUD_COLORS.cyanWire, 0.045)},transparent)` }}
     >
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, minWidth: 0 }}>
         <span style={{ color: HUD_COLORS.dim, fontSize: 6.6, letterSpacing: 0.9 }}>{role} SCRIPT</span>
         <span title={identity} style={{ minWidth: 0, color: HUD_COLORS.ink, fontSize: 8.2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{identity}</span>
         {state ? <span style={{ marginLeft: 'auto', color: stateColor, fontSize: 6.4, letterSpacing: 0.75 }}>{state}</span> : null}
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'auto minmax(0, 1fr)', gap: '1px 7px', marginTop: 3, fontSize: 6.8, lineHeight: 1.35 }}>
-        <span style={{ color: HUD_COLORS.dim }}>SCRIPT</span>
+      <div data-cell-context-script-evidence style={{ display: 'grid', gridTemplateColumns: 'auto minmax(0, 1fr)', gap: '2px 9px', marginTop: 5, paddingTop: 4, borderTop: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.08)}`, fontSize: 6.8, lineHeight: 1.4 }}>
+        <span style={{ color: HUD_COLORS.dim }}>IDENTITY</span>
         <span title={script.script_hash} style={{ color: HUD_COLORS.cyanWire, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{compact(script.script_hash, 12, 9)}</span>
         <span style={{ color: HUD_COLORS.dim }}>CODE · {script.hash_type.toUpperCase()}</span>
         <span title={script.code_hash} style={{ color: HUD_COLORS.cyanWire, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{compact(script.code_hash, 12, 9)}</span>
@@ -422,11 +422,30 @@ export default function CellSemanticsReadout({
         ...style,
       }}
     >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: record ? 4 : 0 }}>
+      <div
+        data-cell-context-header="true"
+        style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '3px 6px', marginBottom: record ? 8 : 0 }}
+      >
         <span style={{ width: 4, height: 4, borderRadius: '50%', background: color, boxShadow: `0 0 6px ${color}` }} />
-        <span style={{ color, fontSize: 8, letterSpacing: 1.15 }}>
-          CELL CONTEXT · {source.status.toUpperCase()}{lag}
+        <span style={{ color, fontSize: 8, letterSpacing: 1.15, whiteSpace: 'nowrap' }}>
+          CELL CONTEXT
         </span>
+        <span style={{ color, fontSize: 7.2, letterSpacing: 0.85, whiteSpace: 'nowrap' }}>
+          {' · '}{source.status.toUpperCase()}
+        </span>
+        {lag ? (
+          <span style={{ color: HUD_COLORS.dim, fontSize: 6.8, letterSpacing: 0.7, whiteSpace: 'nowrap' }}>
+            {lag}
+          </span>
+        ) : null}
+        {record?.cell_type ? (
+          <span
+            data-cell-context-type={record.cell_type}
+            style={{ marginLeft: 'auto', padding: '1px 4px', border: `1px solid ${rgba(HUD_COLORS.nominal, 0.22)}`, color: HUD_COLORS.nominal, fontSize: 6.6, letterSpacing: 0.75, whiteSpace: 'nowrap' }}
+          >
+            {record.cell_type.toUpperCase()}
+          </span>
+        ) : null}
       </div>
       {statusMessage ? (
         <div title={statusMessage} style={{ color: phase === 'error' ? HUD_COLORS.danger : HUD_COLORS.dim, fontSize: 8, lineHeight: 1.45 }}>
@@ -437,10 +456,9 @@ export default function CellSemanticsReadout({
         <>
           <div
             data-cell-context-facts
-            style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', columnGap: 9, rowGap: 1 }}
+            style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', columnGap: 12, rowGap: 3 }}
           >
-            {record.cell_type ? <ContextFact label="SEMANTIC" value={record.cell_type.toUpperCase()} color={HUD_COLORS.nominal} /> : null}
-            {record.address ? <ContextFact label="OWNER" value={record.address} displayValue={compact(record.address, 12, 9)} /> : null}
+            {record.address ? <ContextFact label="OWNER" value={record.address} displayValue={compact(record.address, 14, 10)} wide /> : null}
             <ContextFact label="CREATED" value={`#${record.observed_at_block.toLocaleString()}`} />
             <ContextFact label="PROOF ANCHOR" value={`#${record.as_of.block.toLocaleString()}`} color={HUD_COLORS.cyanWire} />
             {record.asset ? (
@@ -462,26 +480,34 @@ export default function CellSemanticsReadout({
                   record.asset.amount,
                   record.asset.decimals,
                 )}${record.asset.symbol ? ` ${record.asset.symbol}` : ''}`}
+                wide
               />
             ) : null}
-            {record.lock_script ? <ScriptFact role="LOCK" script={record.lock_script} /> : null}
-            {record.type_script ? <ScriptFact role="TYPE" script={record.type_script} /> : null}
-            <KnowledgeBar record={record} />
-            {record.facets.length > 0 ? (
-              <div
-                data-cell-context-facets
-                style={{ gridColumn: '1 / -1', display: 'grid', gap: 3, marginTop: 4 }}
-              >
-                {record.facets.slice(0, 6).map((facet, index) => (
-                  <FacetDetail
-                    key={`${facet.namespace}:${facet.kind}:${index}`}
-                    facet={facet}
-                    index={index}
-                  />
-                ))}
-              </div>
-            ) : null}
           </div>
+          {record.lock_script || record.type_script ? (
+            <div
+              data-cell-context-scripts="true"
+              style={{ display: 'grid', gap: 6, marginTop: 8 }}
+            >
+              {record.lock_script ? <ScriptFact role="LOCK" script={record.lock_script} /> : null}
+              {record.type_script ? <ScriptFact role="TYPE" script={record.type_script} /> : null}
+            </div>
+          ) : null}
+          <KnowledgeBar record={record} />
+          {record.facets.length > 0 ? (
+            <div
+              data-cell-context-facets
+              style={{ display: 'grid', gap: 5, marginTop: 8, paddingTop: 7, borderTop: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.13)}` }}
+            >
+              {record.facets.slice(0, 6).map((facet, index) => (
+                <FacetDetail
+                  key={`${facet.namespace}:${facet.kind}:${index}`}
+                  facet={facet}
+                  index={index}
+                />
+              ))}
+            </div>
+          ) : null}
         </>
       ) : null}
       {transactionPhase ? (

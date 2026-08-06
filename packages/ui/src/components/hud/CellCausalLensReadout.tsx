@@ -222,55 +222,80 @@ export default function CellCausalLensReadout({
         <span style={{ color: HUD_COLORS.dim }}> · BLOCK #{lens.block}</span>
       </div>
 
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: 'minmax(0,1fr) auto minmax(0,1fr)',
-        alignItems: 'center',
-        gap: 5,
-        marginTop: compact ? 2 : 4,
-      }}>
-        <span style={{ ...flowCell, color: '#BBA8FF' }}>
-          {endpointCount(anchoredInputs, lens.inputCount, 'INPUTS')}
-        </span>
-        <span
-          aria-hidden="true"
+      {lens.status === 'unavailable' ? (
+        <div
+          data-causal-unavailable-summary="true"
           style={{
-            color: meta.color,
+            display: 'grid',
+            gridTemplateColumns: 'minmax(0,1fr) auto',
+            alignItems: 'baseline',
+            gap: 8,
+            marginTop: compact ? 4 : 6,
+            paddingTop: compact ? 4 : 5,
+            borderTop: `1px solid ${meta.color}20`,
             fontFamily: HUD_FONTS.mono,
-            fontSize: 8,
-            textShadow: `0 0 6px ${meta.color}55`,
           }}
         >
-          ─◇ TX ◆─
-        </span>
-        <span style={{ ...flowCell, color: '#FFD29A', textAlign: 'right' }}>
-          {endpointCount(anchoredOutputs, lens.outputCount, 'OUTPUTS')}
-        </span>
-      </div>
+          <span style={{ minWidth: 0, color: meta.color, fontSize: 6.8, letterSpacing: 0.48 }}>
+            IDENTITY ONLY · LINK NOT RETAINED
+          </span>
+          <span style={{ color: HUD_COLORS.dim, fontSize: 6.4, letterSpacing: 0.36, whiteSpace: 'nowrap' }}>
+            {endpointCount(anchoredInputs, lens.inputCount, 'INPUTS')} · {endpointCount(anchoredOutputs, lens.outputCount, 'OUTPUTS')}
+          </span>
+        </div>
+      ) : (
+        <>
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'minmax(0,1fr) auto minmax(0,1fr)',
+            alignItems: 'center',
+            gap: 5,
+            marginTop: compact ? 2 : 4,
+          }}>
+            <span style={{ ...flowCell, color: '#BBA8FF' }}>
+              {endpointCount(anchoredInputs, lens.inputCount, 'INPUTS')}
+            </span>
+            <span
+              aria-hidden="true"
+              style={{
+                color: meta.color,
+                fontFamily: HUD_FONTS.mono,
+                fontSize: 8,
+                textShadow: `0 0 6px ${meta.color}55`,
+              }}
+            >
+              ─◇ TX ◆─
+            </span>
+            <span style={{ ...flowCell, color: '#FFD29A', textAlign: 'right' }}>
+              {endpointCount(anchoredOutputs, lens.outputCount, 'OUTPUTS')}
+            </span>
+          </div>
 
-      <div style={{
-        display: 'flex',
-        alignItems: 'baseline',
-        gap: 6,
-        marginTop: compact ? 2 : 4,
-        paddingTop: compact ? 2 : 3,
-        borderTop: `1px solid ${meta.color}18`,
-        color: meta.color,
-        fontFamily: HUD_FONTS.mono,
-        fontSize: 6.4,
-        letterSpacing: 0.4,
-      }}>
-        <span>{meta.note}</span>
-        <span style={{
-          marginLeft: 'auto',
-          color: HUD_COLORS.dim,
-          whiteSpace: 'nowrap',
-        }}>
-          {siblings === null
-            ? '1 SELECTED · SIBLINGS ?'
-            : `1 SELECTED · ${siblings} SIBLING${siblings === 1 ? '' : 'S'}`}
-        </span>
-      </div>
+          <div style={{
+            display: 'flex',
+            alignItems: 'baseline',
+            gap: 6,
+            marginTop: compact ? 2 : 4,
+            paddingTop: compact ? 2 : 3,
+            borderTop: `1px solid ${meta.color}18`,
+            color: meta.color,
+            fontFamily: HUD_FONTS.mono,
+            fontSize: 6.4,
+            letterSpacing: 0.4,
+          }}>
+            <span>{meta.note}</span>
+            <span style={{
+              marginLeft: 'auto',
+              color: HUD_COLORS.dim,
+              whiteSpace: 'nowrap',
+            }}>
+              {siblings === null
+                ? '1 SELECTED · SIBLINGS ?'
+                : `1 SELECTED · ${siblings} SIBLING${siblings === 1 ? '' : 'S'}`}
+            </span>
+          </div>
+        </>
+      )}
 
       {navigation && navigation.total > 1 ? (
         <div

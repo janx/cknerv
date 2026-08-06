@@ -123,7 +123,9 @@ describe('CellCausalLensReadout', () => {
     expect(root.textContent).toContain('? INPUTS');
     expect(root.textContent).toContain('1+ OUTPUTS');
     expect(root.textContent).toContain('IDENTITY ONLY');
-    expect(root.textContent).toContain('LINK OUTSIDE RETAINED WINDOW');
+    expect(root.textContent).toContain('LINK NOT RETAINED');
+    expect(root.querySelector('[data-causal-unavailable-summary="true"]'))
+      .not.toBeNull();
   });
 
   it('exposes browser-like back and forward controls for a causal path', () => {

@@ -61,7 +61,7 @@ export function injectHudTheme(doc: Document = document): void {
     `\n@keyframes cknerv-hud-flash{50%{opacity:.45}}`
     + `\n@keyframes cknerv-hud-breathe{0%,100%{opacity:.82}50%{opacity:1}}`
     + `\n@keyframes cknerv-cell-consensus-enter{0%{opacity:0;transform:translate3d(12px,-2px,0) scale(.985)}55%{opacity:1}100%{opacity:1;transform:translate3d(0,0,0) scale(1)}}`
-    + `\n@keyframes cknerv-cell-specimen-sweep{0%{transform:translateY(22px);opacity:0}12%{opacity:.82}88%{opacity:.72}100%{transform:translateY(198px);opacity:0}}`
+    + `\n@keyframes cknerv-cell-specimen-sweep{0%{top:9%;opacity:0}12%{opacity:.82}88%{opacity:.72}100%{top:91%;opacity:0}}`
     + `\n@keyframes cknerv-route-hop-lock-pulse{0%{filter:brightness(1) drop-shadow(0 0 0 transparent)}18%{filter:brightness(1.58) drop-shadow(0 0 7px var(--route-hop-pulse-color,rgba(255,215,161,.76)))}52%{filter:brightness(1.16) drop-shadow(0 0 3px var(--route-hop-pulse-color,rgba(255,215,161,.42)))}100%{filter:brightness(1) drop-shadow(0 0 0 transparent)}}`
     + `\n.cknerv-hud-control-button:hover{filter:brightness(1.35)}`
     + `\n.cknerv-hud-control-button:focus-visible{outline:1px solid rgba(32,240,255,.55);outline-offset:1px}`
@@ -76,6 +76,10 @@ export function injectHudTheme(doc: Document = document): void {
     + `\n.cknerv-chain-panel-scroll::-webkit-scrollbar{width:5px}`
     + `\n.cknerv-chain-panel-scroll::-webkit-scrollbar-thumb{background:rgba(255,152,48,.35);border-radius:3px}`
     + `\n.cknerv-chain-panel-scroll::-webkit-scrollbar-track{background:transparent}`
+    + `\n.cknerv-cell-inspection-scroll::-webkit-scrollbar{width:3px}`
+    + `\n.cknerv-cell-inspection-scroll::-webkit-scrollbar-track{background:transparent}`
+    + `\n.cknerv-cell-inspection-scroll-lineage::-webkit-scrollbar-thumb{background:rgba(170,136,255,.3);box-shadow:0 0 5px rgba(170,136,255,.22)}`
+    + `\n.cknerv-cell-inspection-scroll-context::-webkit-scrollbar-thumb{background:rgba(32,240,255,.3);box-shadow:0 0 5px rgba(32,240,255,.22)}`
     + `\n.cknerv-status-controls::-webkit-scrollbar{display:none}`
     + `\n.cknerv-status-context::-webkit-scrollbar{display:none}`
     + `\n.cknerv-memory-route-ledger{position:absolute;right:calc(100% + 30px);top:-1px;width:230px}`
