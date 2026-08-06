@@ -1,9 +1,22 @@
-import { describe, expect, it } from 'vitest';
+import { cleanup, renderHook } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Cell } from '@cknerv/types';
 import {
   cellInspectorPlacement,
   selectedCellScanAccent,
+  useCellInspectionDismiss,
 } from '../../src/components/CellInspectionOverlay';
+
+afterEach(() => {
+  cleanup();
+  document.body.innerHTML = '';
+});
+
+function pointerDown(target: Element, button: number): void {
+  const event = new Event('pointerdown', { bubbles: true, cancelable: true });
+  Object.defineProperty(event, 'button', { value: button });
+  target.dispatchEvent(event);
+}
 
 const selected: Cell = {
   id: 7,
@@ -86,5 +99,42 @@ describe('cellInspectorPlacement', () => {
     expect(selectedCellScanAccent({
       cell: { ...selected, death_at_ms: 1 },
     }, 'state')).not.toBe(selectedCellScanAccent({ cell: selected }, 'state'));
+  });
+});
+
+describe('Cell inspection dismissal', () => {
+  it('keeps pointer interaction inside a detail window and closes outside it', () => {
+    const boundary = document.createElement('div');
+    const inside = document.createElement('button');
+    const outside = document.createElement('button');
+    boundary.append(inside);
+    document.body.append(boundary, outside);
+    const onDismiss = vi.fn();
+
+    renderHook(() => useCellInspectionDismiss({ current: boundary }, onDismiss));
+
+    pointerDown(inside, 0);
+    expect(onDismiss).not.toHaveBeenCalled();
+    pointerDown(outside, 2);
+    expect(onDismiss).not.toHaveBeenCalled();
+    pointerDown(outside, 0);
+    expect(onDismiss).toHaveBeenCalledOnce();
+  });
+
+  it('closes the complete details view on Escape', () => {
+    const boundary = document.createElement('div');
+    document.body.append(boundary);
+    const onDismiss = vi.fn();
+    renderHook(() => useCellInspectionDismiss({ current: boundary }, onDismiss));
+    const escape = new KeyboardEvent('keydown', {
+      key: 'Escape',
+      bubbles: true,
+      cancelable: true,
+    });
+
+    document.dispatchEvent(escape);
+
+    expect(onDismiss).toHaveBeenCalledOnce();
+    expect(escape.defaultPrevented).toBe(true);
   });
 });

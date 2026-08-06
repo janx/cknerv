@@ -121,27 +121,29 @@ trigger one parallel token-identity lookup for that outpoint. Ordinary, DAO,
 dep-group, and code Cells do not trigger that token lookup.
 
 The scan field displays the exact raw token amount with validated decimals,
-name, and symbol when available. Its source-neutral **CELL CONTEXT** header
-reports availability, lag, and freshness; source health remains in the global
-status strip. Cell inspection is not docked in a fixed HUD rail and has no tab
-or popup shell. A physical cage, moving scan plane, and semantic orbits surround
-the selected canonical Cell. A larger **CELL SCAN** reuses the same code-native
-Cell artwork with its flowing-light scan and supports pointer-drag orbiting for
-inspection from different angles. That nested gesture owns the pointer until
-release: the Cell Scan camera moves while the Galaxy camera remains fixed.
-Identity, structural facts, indexed context, and lineage render as independently
+name, and symbol when available. A source-neutral **INDEX LAYER** inside the
+same scan window reports availability and lag; source health remains in the
+global status strip. Cell inspection is not docked in a fixed HUD rail and has
+no tab or popup shell. A physical cage, moving scan plane, and semantic orbits
+surround the selected canonical Cell. A larger **CELL SCAN** reuses the same
+code-native Cell artwork with its flowing-light scan and supports pointer-drag
+orbiting for inspection from different angles. That nested gesture owns the
+pointer until release: the Cell Scan camera moves while the Galaxy camera
+remains fixed. Clicking beyond the rendered detail satellites or pressing
+Escape exits inspection.
+
+Identity, the combined scan/index evidence, and lineage render as independently
 spaced satellites rather than one continuous panel. Every satellite follows the
 same projected point, flips as a constellation around viewport edges, and stays
 connected to the Cell. Ambient HUD rails dim while the scan is active so the
-Cell remains the single visual focus.
-
-The selected-Cell satellites are deliberately no-scroll summaries. **CONSENSUS
-MEMORY** keeps the address, content identity, birth anchor, and a one-glance
-causal provenance line; activating recall temporarily opens **MEMORY TRACE** as
-a separate evidence satellite. **CELL CONTEXT** keeps owner, creation and proof
-anchors, resolved asset identity, lock/type script identity with code hash type
-and args, occupied-byte composition, and only the primary semantic facet. It
-does not stack every decoded facet or origin-transaction field into the spatial
+Cell remains the single visual focus. The selected-Cell satellites are
+deliberately no-scroll summaries. **CONSENSUS MEMORY** keeps the address,
+content identity, birth anchor, and a one-glance causal provenance line;
+activating recall temporarily opens **MEMORY TRACE** as a separate evidence
+satellite. The scan's **INDEX LAYER** keeps owner, creation and proof anchors,
+resolved asset identity, lock/type script identity with code hash type and args,
+occupied-byte composition, and only the primary semantic facet. It does not
+stack every decoded facet or origin-transaction field into the spatial
 inspection view. Values remain bounded by the shared wire types; arbitrary
 source JSON does not enter the browser.
 
