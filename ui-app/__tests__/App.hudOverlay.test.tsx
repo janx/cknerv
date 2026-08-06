@@ -103,12 +103,20 @@ describe('HudOverlay wiring', () => {
     expect(hudWiring).toBeDefined();
     expect(hudWiring).not.toContain('selectedCell=');
     expect(hudWiring).not.toContain('onClearCell=');
+    expect(hudWiring).toContain(
+      'cellInspectionActive={selectedCell !== null}',
+    );
     expect(inspectorWiring).toBeDefined();
     expect(inspectorWiring).toContain('cell={selectedCell}');
     expect(inspectorWiring).toContain('onClose={clearCellSelection}');
     expect(APP_SOURCE.indexOf('<CellInspectionOverlay')).toBeGreaterThan(
       APP_SOURCE.indexOf('overlay={'),
     );
+  });
+
+  it('keeps one primary scene inspection target at a time', () => {
+    expect(APP_SOURCE).toContain('setSelectedNetId(null);');
+    expect(APP_SOURCE).toContain('clearCellSelection();\n      setSelectedNetId(id);');
   });
 
   it('adds validated optional semantics as one selected-Cell scene orbit', () => {

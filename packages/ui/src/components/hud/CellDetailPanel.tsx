@@ -7,13 +7,16 @@ import type {
   TransactionSemanticRecord,
 } from '@cknerv/types';
 import {
-  formatCkb, formatAge, formatDataSize,
-  formatLockKind, formatAssetKind, LOCK_COLORS, ASSET_COLORS,
+  formatCkb,
+  formatAge,
+  formatDataSize,
+  formatLockKind,
+  formatAssetKind,
+  LOCK_COLORS,
+  ASSET_COLORS,
 } from './cellFormat';
-import { HUD_COLORS } from './hudTheme';
-import { HudPanel, PanelHeader, StatRow, CloseButton } from './primitives';
+import { HUD_COLORS, HUD_FONTS, rgba } from './hudTheme';
 import { useReducedMotion } from './useReducedMotion';
-import CellNucleusPortrait from './CellNucleusPortrait';
 import ConsensusIdentityPlate from './ConsensusIdentityPlate';
 import type {
   CellCausalNavigationReadout,
@@ -45,24 +48,10 @@ import CellSemanticsReadout, {
   type CellSemanticsPhase,
 } from './CellSemanticsReadout';
 
-const BRACKET = 9; // corner bracket arm length (px)
-const AMBER = HUD_COLORS.orange;
 const EMPTY_RECENT_LINKS: readonly CellLink[] = [];
 
-function cornerBracket(corner: 'tl' | 'tr' | 'bl' | 'br'): CSSProperties {
-  const vy: CSSProperties = corner[0] === 't' ? { top: 0 } : { bottom: 0 };
-  const hx: CSSProperties = corner[1] === 'l' ? { left: 0 } : { right: 0 };
-  const bw =
-    corner === 'tl' ? '1px 0 0 1px' : corner === 'tr' ? '1px 1px 0 0' :
-    corner === 'bl' ? '0 0 1px 1px' : '0 1px 1px 0';
-  return { position: 'absolute', width: BRACKET, height: BRACKET, borderColor: AMBER, borderStyle: 'solid', borderWidth: bw, opacity: 0.75, ...vy, ...hx };
-}
-
-// On-chain field → user-facing fact. A row may focus the matching portrait
-// layer, but renderer-only topology values never leak into the readout.
 type RowDecode = { label: string; value: string; color?: string };
-type Field = ConsensusBraidField;
-type DetailSection = 'anatomy' | 'context' | 'lineage';
+export type CellInspectionFacet = ConsensusBraidField;
 
 export interface CellDetailPanelProps {
   cell: Cell;
@@ -102,6 +91,8 @@ export interface CellDetailPanelProps {
   semanticTransactionPhase?: CellSemanticsPhase;
   semanticTransactionRecord?: TransactionSemanticRecord | null;
   semanticTransactionMessage?: string | null;
+  /** Mirrors a selected readout facet into the real scene Cell scan field. */
+  onInspectionFieldChange?: (field: CellInspectionFacet | null) => void;
   onClose: () => void;
   style?: CSSProperties;
 }
@@ -112,6 +103,69 @@ function formatCellData(dataHex: string): string {
   const size = formatDataSize(dataHex);
   if (size === '0 B') return 'Empty';
   return dataHex.endsWith('…') ? `${size} observed` : size;
+}
+
+function CellScanFact({
+  field,
+  label,
+  value,
+  color,
+  revealed,
+  selected,
+  interactive,
+  onActivate,
+}: RowDecode & {
+  field: CellInspectionFacet;
+  revealed: boolean;
+  selected: boolean;
+  interactive: boolean;
+  onActivate: () => void;
+}) {
+  const accent = color ?? HUD_COLORS.cyanWire;
+  return (
+    <button
+      type="button"
+      data-cell-detail-field={field}
+      data-cell-detail-field-state={selected ? 'focused' : revealed ? 'resolved' : 'scanning'}
+      aria-pressed={selected}
+      disabled={!interactive}
+      onClick={onActivate}
+      style={{
+        position: 'relative',
+        minWidth: 0,
+        minHeight: 34,
+        margin: 0,
+        padding: '4px 5px 4px 9px',
+        border: 0,
+        borderLeft: `1px solid ${selected ? accent : rgba(accent, 0.34)}`,
+        background: selected
+          ? `linear-gradient(90deg,${rgba(accent, 0.17)},transparent 88%)`
+          : 'transparent',
+        boxShadow: selected ? `-3px 0 10px ${rgba(accent, 0.22)}` : undefined,
+        color: accent,
+        font: 'inherit',
+        textAlign: 'left',
+        cursor: interactive ? 'crosshair' : 'default',
+        opacity: revealed ? 1 : 0.18,
+        transition: 'opacity 260ms ease, background 160ms ease, box-shadow 160ms ease',
+        pointerEvents: interactive ? 'auto' : 'none',
+      }}
+    >
+      <span style={{ display: 'block', fontSize: 6.5, letterSpacing: 1.1, color: HUD_COLORS.dim }}>
+        {label}
+      </span>
+      <span
+        title={value}
+        style={{ display: 'block', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 8.5, color: selected ? accent : color ?? HUD_COLORS.ink }}
+      >
+        {value}
+      </span>
+      <span
+        aria-hidden="true"
+        style={{ position: 'absolute', left: -2, top: 5, width: 3, height: 3, background: revealed ? accent : 'transparent', boxShadow: revealed ? `0 0 6px ${accent}` : undefined }}
+      />
+    </button>
+  );
 }
 
 export default function CellDetailPanel({
@@ -141,52 +195,40 @@ export default function CellDetailPanel({
   semanticTransactionPhase,
   semanticTransactionRecord,
   semanticTransactionMessage,
+  onInspectionFieldChange,
   onClose,
   style,
 }: CellDetailPanelProps) {
   const reduced = useReducedMotion();
   const live = cell.death_at_ms === null;
-  const now = Date.now();
   const enhancedDetail = Boolean(semanticSource && semanticPhase);
-  const age = formatAge(cell.born_at_ms, now);
-  const defaultSection: DetailSection = enhancedDetail ? 'context' : 'anatomy';
-  const [sectionState, setSectionState] = useState<{
-    cellId: number;
-    section: DetailSection;
-  }>(() => ({ cellId: cell.id, section: defaultSection }));
-  const storedSection = sectionState.cellId === cell.id
-    ? sectionState.section
-    : defaultSection;
-  const activeSection = storedSection === 'context' && !enhancedDetail
-    ? 'anatomy'
-    : storedSection;
-  const selectSection = (section: DetailSection) => {
-    setSectionState({ cellId: cell.id, section });
-  };
-  // One scan epoch per selected Cell. Epoch + current time reset together when
-  // the effect actually mounts, so a busy main thread cannot skip unseen scan
-  // phases between render and first paint. The short-lived 12.5 fps ticker
-  // advances only the six-field pass and stops after classification.
+  const age = formatAge(cell.born_at_ms, Date.now());
   const [scanClock, setScanClock] = useState(() => {
     const atMs = nowPerf();
     return { cellId: cell.id, epochMs: atMs, nowMs: atMs };
   });
+  const [selectedFieldState, setSelectedFieldState] = useState<{
+    cellId: number;
+    field: CellInspectionFacet | null;
+  }>(() => ({ cellId: cell.id, field: null }));
+  const selectedField = selectedFieldState.cellId === cell.id
+    ? selectedFieldState.field
+    : null;
 
   const visual = useMemo(() => deriveCellVisual(cell), [cell]);
   const identity = useMemo(
     () => deriveCellConsensusIdentity(cell, recentLinks),
     [cell, recentLinks],
   );
-  const selectedIdentityProofBinding =
-    identityProofBinding?.cellId === cell.id ? identityProofBinding : null;
+  const selectedIdentityProofBinding = identityProofBinding?.cellId === cell.id
+    ? identityProofBinding
+    : null;
   const identityProofComplete = cellIdentityProofBindingComplete(
     selectedIdentityProofBinding,
   );
   const inspectedCellById = useMemo(() => {
     if (routeCellById?.get(cell.id) === cell) return routeCellById;
     const cells = new Map(routeCellById);
-    // The selected target is authoritative even when callers omit routeCellById
-    // or pass a snapshot that predates the current detail selection.
     cells.set(cell.id, cell);
     return cells;
   }, [cell, routeCellById]);
@@ -201,14 +243,10 @@ export default function CellDetailPanel({
   const order = CONSENSUS_BRAID_FIELDS;
   const agreementTarget = consensusBraidAgreementTarget(visual);
 
-  // After decoding, a row directly focuses its corresponding A layer.
-  const [selectedFieldState, setSelectedFieldState] = useState<{
-    cellId: number;
-    field: Field | null;
-  }>(() => ({ cellId: cell.id, field: null }));
-  const selectedField = selectedFieldState.cellId === cell.id
-    ? selectedFieldState.field
-    : null;
+  useEffect(() => {
+    onInspectionFieldChange?.(selectedField);
+  }, [onInspectionFieldChange, selectedField]);
+
   useEffect(() => {
     if (reduced) return;
     const epochMs = nowPerf();
@@ -228,18 +266,9 @@ export default function CellDetailPanel({
       window.clearTimeout(stop);
     };
   }, [cell.id, reduced, order.length]);
-  const selectField = (field: Field) => setSelectedFieldState((current) => ({
-    cellId: cell.id,
-    field: current.cellId === cell.id && current.field === field
-      ? null
-      : field,
-  }));
 
-  const DECODE: Record<Field, RowDecode> = {
-    capacity: {
-      label: 'CAPACITY',
-      value: formatCkb(cell.capacity),
-    },
+  const DECODE: Record<CellInspectionFacet, RowDecode> = {
+    capacity: { label: 'CAPACITY', value: formatCkb(cell.capacity) },
     asset: {
       label: 'ASSET',
       value: formatAssetKind(cell.asset_kind),
@@ -257,276 +286,180 @@ export default function CellDetailPanel({
     },
     state: {
       label: 'STATE',
-      value: `${live ? '● LIVE' : '◇ SPENT'}${enhancedDetail ? ` · ${age}` : ''}`,
+      value: live ? '● LIVE' : '◇ SPENT',
       color: live ? HUD_COLORS.nominal : HUD_COLORS.caution,
     },
     born: { label: 'COMMIT', value: `#${cell.birth_block}` },
   };
-
-  // Scan state for THIS render. It reveals the six decoded readout rows while
-  // leaving the portrait stable; only an explicit row action focuses one of
-  // A's layers after classification.
   const activeClock = scanClock.cellId === cell.id
     ? scanClock
     : { cellId: cell.id, epochMs: scanClock.nowMs, nowMs: scanClock.nowMs };
-  const p = probeScan(
+  const scan = probeScan(
     activeClock.epochMs,
     reduced ? 0 : activeClock.nowMs,
     order.length,
     reduced,
   );
-  const statusText = p.classified
-    ? '✓ CONTENT IDENTITY MAPPED'
-    : p.status === 'unidentified'
+  const statusText = scan.classified
+    ? 'SCAN LOCKED · CONTENT IDENTITY MAPPED'
+    : scan.status === 'unidentified'
       ? 'IDENTITY UNRESOLVED'
-      : `READING IDENTITY ${p.pct}%`;
-  const statusColor = p.classified ? HUD_COLORS.nominal : HUD_COLORS.cyanWire;
-  const interactive = p.classified;
-  const focusField = interactive ? selectedField : null;
-
-  // The six fact rows remain mounted and opacity-gated. They resolve in
-  // field order without driving auxiliary portrait lines. Standard mode keeps
-  // AGE on its own row; enhanced mode folds it into STATE to avoid repeating
-  // temporal context across the taller semantic stack. Immutable address and
-  // content identity live in the consensus-memory plate below.
-  const rows: Array<RowDecode & { on: boolean; field?: Field }> = [
-    ...order.map((field, index) => ({
-      ...DECODE[field],
-      on: index < p.reveal || (enhancedDetail && field === 'state'),
-      field,
-    })),
-    ...(enhancedDetail ? [] : [{ label: 'AGE', value: age, on: true }]),
-  ];
-
-  const tabs: Array<{ id: DetailSection; label: string; meta: string }> = [
-    { id: 'anatomy', label: 'ANATOMY', meta: '结构' },
-    ...(enhancedDetail
-      ? [{ id: 'context' as const, label: 'CONTEXT', meta: '语义' }]
-      : []),
-    { id: 'lineage', label: 'LINEAGE', meta: '因果' },
-  ];
-  const inspectField = (field: Field) => {
-    selectField(field);
-    selectSection('anatomy');
+      : `CELLULAR SCAN ${scan.pct}%`;
+  const statusColor = scan.classified ? HUD_COLORS.nominal : HUD_COLORS.cyanWire;
+  const activateField = (field: CellInspectionFacet) => {
+    if (!scan.classified) return;
+    setSelectedFieldState((current) => ({
+      cellId: cell.id,
+      field: current.cellId === cell.id && current.field === field ? null : field,
+    }));
+    const proofKind: CellIdentityProofKind | null = field === 'state'
+      ? 'address'
+      : field === 'data'
+        ? 'content'
+        : field === 'born'
+          ? 'anchor'
+          : null;
+    if (proofKind) onIdentityProofRead?.(proofKind, cell.id, reduced);
   };
 
   return (
-    <HudPanel style={{
-      position: 'relative',
-      display: 'flex',
-      flexDirection: 'column',
-      width: 500,
-      maxWidth: 'calc(100vw - 28px)',
-      maxHeight: 'calc(100vh - 124px)',
-      boxSizing: 'border-box',
-      padding: '12px 14px 14px',
-      pointerEvents: 'auto',
-      overflow: 'hidden',
-      background: 'linear-gradient(145deg, rgba(0,2,9,.975) 0%, rgba(0,5,14,.95) 58%, rgba(2,5,13,.975) 100%)',
-      border: `1px solid ${HUD_COLORS.cyanWire}18`,
-      boxShadow: `0 18px 55px rgba(0,0,0,.46), 0 0 26px ${HUD_COLORS.cyanWire}0b, inset 0 0 34px ${HUD_COLORS.cyanWire}08`,
-      transformOrigin: 'center center',
-      animation: reduced
-        ? undefined
-        : 'cknerv-cell-consensus-enter 280ms cubic-bezier(.2,.82,.2,1) both',
-      ...style,
-    }}>
-      <CloseButton onClose={onClose} />
-      <PanelHeader
-        en="CELL"
-        cjk="共识细胞"
-        idx={`#${cell.id} · ${cell.content_hash.slice(2, 10)}`}
-        accent={live ? HUD_COLORS.nominal : HUD_COLORS.caution}
+    <div
+      data-cell-detail-scan-field="true"
+      data-cell-detail-enhanced={enhancedDetail ? 'true' : 'false'}
+      style={{
+        position: 'relative',
+        width: enhancedDetail ? 500 : 470,
+        maxWidth: 'calc(100vw - 28px)',
+        boxSizing: 'border-box',
+        pointerEvents: 'none',
+        color: HUD_COLORS.ink,
+        fontFamily: HUD_FONTS.mono,
+        filter: `drop-shadow(0 8px 18px rgba(0,0,0,.62)) drop-shadow(0 0 12px ${rgba(HUD_COLORS.cyanWire, 0.08)})`,
+        animation: reduced
+          ? undefined
+          : 'cknerv-cell-consensus-enter 280ms cubic-bezier(.2,.82,.2,1) both',
+        ...style,
+      }}
+    >
+      <span
+        aria-hidden="true"
+        style={{ position: 'absolute', left: 0, top: 14, width: 42, height: 1, background: `linear-gradient(90deg,${HUD_COLORS.orange},transparent)` }}
       />
-
-      {/* Selection stays visually tied to one canonical Cell. These four facts
-          remain visible while the deeper modules switch underneath. */}
       <div
-        data-cell-detail-summary
+        data-cell-scan-identity
         style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
-          gap: 1,
-          margin: '-2px 0 8px',
-          border: `1px solid ${HUD_COLORS.cyanWire}12`,
-          background: `${HUD_COLORS.cyanWire}05`,
+          display: 'flex',
+          alignItems: 'baseline',
+          gap: 8,
+          minWidth: 0,
+          padding: '5px 30px 5px 50px',
+          background: 'linear-gradient(90deg,rgba(1,5,13,.86),rgba(1,5,13,.58) 72%,transparent)',
         }}
       >
-        {[
-          ['STATE', live ? '● LIVE' : '◇ SPENT', live ? HUD_COLORS.nominal : HUD_COLORS.caution],
-          ['CAPACITY', formatCkb(cell.capacity), HUD_COLORS.ink],
-          ['ASSET', formatAssetKind(cell.asset_kind), cell.asset_kind ? ASSET_COLORS[cell.asset_kind] : HUD_COLORS.dim],
-          ['AGE', age, HUD_COLORS.ink],
-        ].map(([label, value, color]) => (
-          <div
-            key={label}
-            style={{ minWidth: 0, padding: '5px 6px 4px', borderRight: label === 'AGE' ? undefined : `1px solid ${HUD_COLORS.cyanWire}0d` }}
-          >
-            <span style={{ display: 'block', color: HUD_COLORS.dim, fontSize: 6.5, letterSpacing: 1.05 }}>{label}</span>
-            <span title={value} style={{ display: 'block', marginTop: 2, color, fontSize: 8.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{value}</span>
-          </div>
-        ))}
+        <span style={{ color: HUD_COLORS.orange, fontFamily: HUD_FONTS.tech, fontSize: 9.5, fontWeight: 700, letterSpacing: 1.8 }}>
+          CELL // #{cell.id}
+        </span>
+        <span style={{ color: HUD_COLORS.orange, fontFamily: HUD_FONTS.cjk, fontSize: 8, opacity: 0.72 }}>
+          共识细胞
+        </span>
+        <span title={cell.content_hash} style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: HUD_COLORS.dim, fontSize: 7.3, letterSpacing: 0.75 }}>
+          {cell.content_hash.slice(2, 10)}:{cell.out_point.index}
+        </span>
+        <span style={{ marginLeft: 'auto', color: live ? HUD_COLORS.nominal : HUD_COLORS.caution, fontSize: 7.8, letterSpacing: 0.8 }}>
+          {live ? '● LIVE' : '◇ SPENT'} · AGE {age}
+        </span>
       </div>
-
-      <div
-        role="tablist"
-        aria-label="Cell detail sections"
-        data-cell-detail-sections
-        style={{ display: 'flex', flex: '0 0 auto', gap: 3, marginBottom: 8 }}
+      <button
+        type="button"
+        aria-label="close"
+        onClick={onClose}
+        style={{ position: 'absolute', top: 1, right: 0, width: 24, height: 24, padding: 0, border: 0, background: 'transparent', color: HUD_COLORS.dim, font: `10px ${HUD_FONTS.mono}`, cursor: 'crosshair', pointerEvents: 'auto' }}
       >
-        {tabs.map((tab, index) => {
-          const selected = activeSection === tab.id;
-          return (
-            <button
-              key={tab.id}
-              type="button"
-              role="tab"
-              id={`cell-detail-tab-${tab.id}`}
-              aria-selected={selected}
-              aria-controls={`cell-detail-${tab.id}`}
-              tabIndex={selected ? 0 : -1}
-              onClick={() => selectSection(tab.id)}
-              onKeyDown={(event) => {
-                if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
-                event.preventDefault();
-                const buttons = Array.from(
-                  event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]') ?? [],
-                );
-                const current = buttons.indexOf(event.currentTarget);
-                if (current < 0 || buttons.length === 0) return;
-                const direction = event.key === 'ArrowRight' ? 1 : -1;
-                const next = buttons[(current + direction + buttons.length) % buttons.length];
-                next?.click();
-                next?.focus();
-              }}
-              style={{
-                flex: '1 1 0',
-                minWidth: 0,
-                height: 24,
-                border: `1px solid ${selected ? HUD_COLORS.orange : `${HUD_COLORS.cyanWire}18`}`,
-                background: selected ? `${HUD_COLORS.orange}16` : 'rgba(1,4,12,.48)',
-                color: selected ? HUD_COLORS.orange : HUD_COLORS.dim,
-                cursor: 'pointer',
-                font: 'inherit',
-                fontSize: 7.2,
-                letterSpacing: 1.05,
-              }}
-            >
-              <span>{String(index + 1).padStart(2, '0')} · {tab.label}</span>
-              <span style={{ marginLeft: 5, opacity: 0.55 }}>{tab.meta}</span>
-            </button>
-          );
-        })}
-      </div>
+        ×
+      </button>
 
-      <div
-        data-cell-detail-module-viewport
-        style={{ minHeight: 0, overflowX: 'hidden', overflowY: 'auto', scrollbarWidth: 'thin', scrollbarColor: 'rgba(125,249,255,.24) transparent' }}
+      <section
+        aria-label="Cellular scan"
+        data-cell-detail-module="anatomy"
+        data-cellular-scan-state={scan.classified ? 'locked' : 'scanning'}
+        data-cellular-scan-progress={scan.pct}
+        style={{
+          position: 'relative',
+          marginTop: 2,
+          padding: '8px 10px 8px 18px',
+          borderTop: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.22)}`,
+          borderBottom: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.12)}`,
+          background: `linear-gradient(100deg,rgba(1,6,15,.9),rgba(2,10,21,.72) 72%,${rgba(HUD_COLORS.cyanWire, 0.035)})`,
+          clipPath: 'polygon(0 0,calc(100% - 12px) 0,100% 12px,100% 100%,0 100%)',
+        }}
       >
-        <section
-          id="cell-detail-anatomy"
-          role="tabpanel"
-          aria-label="Cell anatomy"
-          aria-labelledby="cell-detail-tab-anatomy"
-          hidden={activeSection !== 'anatomy'}
-          data-cell-detail-module="anatomy"
-        >
-          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(150px, .82fr) minmax(180px, 1fr)', gap: 12, alignItems: 'start' }}>
-            {/* Entry decoding leaves A stable; explicit row selection owns focus. */}
-            <div
-              data-cell-portrait-frame
-              data-cell-detail-density="contextual"
-              style={{ position: 'relative', width: '100%', maxWidth: '100%', margin: 0 }}
-            >
-              <CellNucleusPortrait
-                cell={cell}
-                reducedMotion={reduced}
-                scanEpochMs={activeClock.epochMs}
-                focusField={focusField}
-                traceReadout={traceReadout}
-                traceResponseRef={traceResponseRef}
-                traceEvidenceFocusSourceId={traceEvidenceFocusSourceId}
-                identityProofBinding={selectedIdentityProofBinding}
-                onIdentityProofRead={onIdentityProofRead
-                  ? (kind) => onIdentityProofRead(kind, cell.id, reduced)
-                  : undefined}
-              />
-              <span style={cornerBracket('tl')} /><span style={cornerBracket('tr')} />
-              <span style={cornerBracket('bl')} /><span style={cornerBracket('br')} />
-            </div>
-            <div key={cell.id}>
-              <div style={{ marginBottom: 4, color: statusColor, fontSize: 7, letterSpacing: 1 }}>{statusText}</div>
-              {rows.map((row) => {
-                const clickable = interactive && !!row.field;
-                const sel = !!row.field && row.field === selectedField;
-                return (
-                  <div
-                    key={row.label}
-                    data-cell-detail-field={row.field}
-                    onClick={clickable ? () => selectField(row.field!) : undefined}
-                    style={{
-                      opacity: reduced || row.on ? 1 : 0.16,
-                      transition: reduced ? undefined : 'opacity 320ms ease',
-                      cursor: clickable ? 'pointer' : undefined,
-                      background: sel ? `${HUD_COLORS.cyanWire}1f` : undefined,
-                      boxShadow: sel ? `inset 2px 0 0 ${HUD_COLORS.cyanWire}` : undefined,
-                    }}
-                  >
-                    <StatRow label={row.label} valueColor={row.color}>{row.value}</StatRow>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        </section>
-
-        {semanticSource && semanticPhase ? (
-          <section
-            id="cell-detail-context"
-            role="tabpanel"
-            aria-label="Cell indexed context"
-            aria-labelledby="cell-detail-tab-context"
-            hidden={activeSection !== 'context'}
-            data-cell-detail-module="context"
-          >
-            <CellSemanticsReadout
-              source={semanticSource}
-              phase={semanticPhase}
-              record={semanticRecord}
-              message={semanticMessage}
-              transactionPhase={semanticTransactionPhase}
-              transactionRecord={semanticTransactionRecord}
-              transactionMessage={semanticTransactionMessage}
-              style={{ margin: 0 }}
+        <span
+          aria-hidden="true"
+          data-cellular-scan-beam
+          style={{ position: 'absolute', zIndex: 2, left: `${scan.pct}%`, top: 0, bottom: 0, width: 1, background: `linear-gradient(180deg,transparent,${HUD_COLORS.cyanWire},transparent)`, boxShadow: `0 0 12px ${HUD_COLORS.cyanWire}`, opacity: scan.classified ? 0.18 : 0.7, transition: reduced ? undefined : 'left 80ms linear, opacity 220ms ease', pointerEvents: 'none' }}
+        />
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 5 }}>
+          <span style={{ color: statusColor, fontSize: 7.3, letterSpacing: 1.05, textShadow: `0 0 7px ${rgba(statusColor, 0.42)}` }}>
+            {statusText}
+          </span>
+          <span style={{ marginLeft: 'auto', color: HUD_COLORS.dim, fontSize: 6.3, letterSpacing: 0.65 }}>
+            A-LATTICE / 结构扫描 · {scan.reveal}/{order.length}
+          </span>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '3px 8px' }}>
+          {order.map((field, index) => (
+            <CellScanFact
+              key={field}
+              field={field}
+              {...DECODE[field]}
+              revealed={reduced || index < scan.reveal}
+              selected={field === selectedField}
+              interactive={scan.classified}
+              onActivate={() => activateField(field)}
             />
-          </section>
-        ) : null}
+          ))}
+        </div>
+      </section>
 
+      <div
+        data-cell-detail-evidence-field
+        style={{ display: 'grid', gridTemplateColumns: enhancedDetail ? 'repeat(2, minmax(0, 1fr))' : '1fr', gap: '8px 12px', alignItems: 'start', marginTop: 7 }}
+      >
         <section
-          id="cell-detail-lineage"
-          role="tabpanel"
           aria-label="Cell lineage"
-          aria-labelledby="cell-detail-tab-lineage"
-          hidden={activeSection !== 'lineage'}
           data-cell-detail-module="lineage"
+          data-cell-scan-shard="lineage"
+          style={{
+            minWidth: 0,
+            maxHeight: enhancedDetail ? 245 : 320,
+            overflowX: 'hidden',
+            overflowY: 'auto',
+            padding: '6px 8px 9px 10px',
+            borderLeft: `1px solid ${rgba('#AA88FF', 0.36)}`,
+            background: `linear-gradient(105deg,rgba(4,3,15,.88),rgba(5,4,17,.62) 78%,${rgba('#AA88FF', 0.025)})`,
+            clipPath: 'polygon(0 0,calc(100% - 9px) 0,100% 9px,100% 100%,0 100%)',
+            scrollbarWidth: 'none',
+            maskImage: 'linear-gradient(180deg,#000 0,#000 calc(100% - 12px),transparent 100%)',
+            pointerEvents: 'auto',
+          }}
         >
           <ConsensusIdentityPlate
             identity={identity}
             causalLens={resolvedCausalLens}
             causalNavigation={causalNavigation}
-            reveal={p.classified ? 1 : p.pct / 100}
+            reveal={scan.classified ? 1 : scan.pct / 100}
             statusText={statusText}
             statusColor={statusColor}
             reducedMotion={reduced}
             focusedField={selectedField}
             identityProofBinding={selectedIdentityProofBinding}
-            onInspectAddress={interactive ? () => inspectField('state') : undefined}
-            onInspectContent={interactive ? () => inspectField('data') : undefined}
-            onInspectAnchor={interactive ? () => inspectField('born') : undefined}
+            onInspectAddress={scan.classified ? () => activateField('state') : undefined}
+            onInspectContent={scan.classified ? () => activateField('data') : undefined}
+            onInspectAnchor={scan.classified ? () => activateField('born') : undefined}
             onRecallWrite={identity.observedWrite && onTraceWrite
               ? () => onTraceWrite(identity.observedWrite!.seq)
               : undefined}
-            recallEnabled={interactive && identityProofComplete}
+            recallEnabled={scan.classified && identityProofComplete}
             traceSource={traceSource}
             traceSelected={identity.observedWrite?.seq === tracedWriteSeq}
             traceReadout={traceReadout}
@@ -539,10 +472,44 @@ export default function CellDetailPanel({
             onTraceRouteHopLockChange={onTraceRouteHopLockChange}
             routeCellById={inspectedCellById}
             agreementCount={agreementTarget}
-            compact={enhancedDetail}
+            compact
+            spatial
           />
         </section>
+
+        {semanticSource && semanticPhase ? (
+          <section
+            aria-label="Cell indexed context"
+            data-cell-detail-module="context"
+            data-cell-scan-shard="context"
+            style={{
+              minWidth: 0,
+              maxHeight: 245,
+              overflowX: 'hidden',
+              overflowY: 'auto',
+              padding: '6px 8px 9px 10px',
+              borderLeft: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.36)}`,
+              background: `linear-gradient(105deg,rgba(1,6,15,.88),rgba(2,9,20,.62) 78%,${rgba(HUD_COLORS.cyanWire, 0.025)})`,
+              clipPath: 'polygon(0 0,calc(100% - 9px) 0,100% 9px,100% 100%,0 100%)',
+              scrollbarWidth: 'none',
+              maskImage: 'linear-gradient(180deg,#000 0,#000 calc(100% - 12px),transparent 100%)',
+              pointerEvents: 'auto',
+            }}
+          >
+            <CellSemanticsReadout
+              source={semanticSource}
+              phase={semanticPhase}
+              record={semanticRecord}
+              message={semanticMessage}
+              transactionPhase={semanticTransactionPhase}
+              transactionRecord={semanticTransactionRecord}
+              transactionMessage={semanticTransactionMessage}
+              spatial
+              style={{ margin: 0 }}
+            />
+          </section>
+        ) : null}
       </div>
-    </HudPanel>
+    </div>
   );
 }
