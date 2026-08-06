@@ -109,6 +109,10 @@ function traceReadout(
   };
 }
 
+function openLineage(getByRole: ReturnType<typeof render>['getByRole']): void {
+  fireEvent.click(getByRole('tab', { name: /LINEAGE/ }));
+}
+
 describe('CellDetailPanel', () => {
   beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(new Date(3 * 3600_000 + 12 * 60_000)); });
 
@@ -142,7 +146,7 @@ describe('CellDetailPanel', () => {
     expect(getByTestId('portrait').getAttribute('data-focus')).toBe('');
     expect((container.firstElementChild as HTMLElement).style.animation)
       .toContain('cknerv-cell-consensus-enter');
-    expect((container.querySelector('[data-cell-portrait-frame]') as HTMLElement).dataset.cellDetailDensity).toBe('standard');
+    expect((container.querySelector('[data-cell-portrait-frame]') as HTMLElement).dataset.cellDetailDensity).toBe('contextual');
     expect((container.querySelector('[data-cell-portrait-frame]') as HTMLElement).style.width).toBe('100%');
     expect((container.querySelector('[data-consensus-memory]') as HTMLElement).dataset.consensusMemoryDensity).toBe('standard');
   });
@@ -163,6 +167,25 @@ describe('CellDetailPanel', () => {
     expect(text).toContain('Sighash');
     expect(text).toContain('Empty');
     expect(text).not.toMatch(/ƒ\d|\d+ paths|\d+ knots|\d\.\d{2}×/);
+  });
+
+  it('uses keyboard-accessible progressive disclosure for anatomy and lineage', () => {
+    const { container, getByRole } = render(
+      <CellDetailPanel cell={base} onClose={() => {}} />,
+    );
+    const anatomy = getByRole('tab', { name: /ANATOMY/ });
+    const lineage = getByRole('tab', { name: /LINEAGE/ });
+
+    expect(anatomy.getAttribute('aria-selected')).toBe('true');
+    expect(lineage.getAttribute('tabindex')).toBe('-1');
+    expect(container.querySelector('[data-cell-detail-module="lineage"]')
+      ?.hasAttribute('hidden')).toBe(true);
+
+    fireEvent.keyDown(anatomy, { key: 'ArrowRight' });
+    expect(lineage.getAttribute('aria-selected')).toBe('true');
+    expect(lineage.getAttribute('tabindex')).toBe('0');
+    expect(container.querySelector('[data-cell-detail-module="lineage"]')
+      ?.hasAttribute('hidden')).toBe(false);
   });
 
   it('adds indexed semantics only when the optional source is present', () => {
@@ -189,8 +212,19 @@ describe('CellDetailPanel', () => {
             script_hash: '0xlock',
             code_hash: '0xcode',
             hash_type: 'type',
-            args: '0x',
+            args: '0x1234',
             name: 'Default Lock',
+            family: 'lock',
+            deprecated: false,
+          },
+          type_script: {
+            script_hash: '0xtype',
+            code_hash: '0xdaocode',
+            hash_type: 'data1',
+            args: '0xabcd',
+            name: 'Legacy DAO Script',
+            family: 'dao',
+            deprecated: true,
           },
           asset: {
             type_script_hash: `0x${'22'.repeat(32)}`,
@@ -207,12 +241,45 @@ describe('CellDetailPanel', () => {
             type_script_bytes: 33,
             data_bytes: 7,
           },
-          facets: [{
-            namespace: 'ckb',
-            kind: 'dao',
-            state: 'deposit',
-            attributes: [],
-          }],
+          facets: [
+            {
+              namespace: 'cell_data',
+              kind: 'json_document',
+              state: 'deterministic decode',
+              attributes: [
+                { key: 'mime_type', value: 'application/json' },
+                { key: 'schema', value: 'profile.v1' },
+              ],
+            },
+            {
+              namespace: 'ckb',
+              kind: 'dao',
+              state: 'deposit',
+              attributes: [
+                { key: 'deposit_block', value: '16204800', unit: 'block' },
+                { key: 'compensation', value: '1.25', unit: 'CKB' },
+                { key: 'estimated_apc', value: '2.01%' },
+              ],
+            },
+            {
+              namespace: 'ckb',
+              kind: 'dep_group',
+              attributes: [
+                { key: 'members', value: '2' },
+                { key: 'member_0', value: '0xdep0:0' },
+                { key: 'member_1', value: '0xdep1:1' },
+              ],
+            },
+            {
+              namespace: 'ckb',
+              kind: 'code_cell',
+              state: 'Type ID',
+              attributes: [
+                { key: 'code_hash', value: '0xlinkedcode' },
+                { key: 'hash_type', value: 'type' },
+              ],
+            },
+          ],
         }}
         semanticTransactionPhase="ready"
         semanticTransactionRecord={{
@@ -229,6 +296,13 @@ describe('CellDetailPanel', () => {
               attributes: [
                 { key: 'inputs', value: '2' },
                 { key: 'outputs', value: '3' },
+                { key: 'fee_rate', value: '1250', unit: 'shannons/kB' },
+                { key: 'size', value: '456', unit: 'bytes' },
+                { key: 'confirmations', value: '24' },
+                { key: 'inputs_capacity', value: '20000000000', unit: 'shannons' },
+                { key: 'outputs_capacity', value: '19999999000', unit: 'shannons' },
+                { key: 'inputs_common_knowledge', value: '122', unit: 'bytes' },
+                { key: 'outputs_common_knowledge', value: '128', unit: 'bytes' },
               ],
             },
             {
@@ -239,6 +313,8 @@ describe('CellDetailPanel', () => {
                 { key: 'proposed_block', value: '16204798' },
                 { key: 'committed_block', value: '16204800' },
                 { key: 'commitment_distance', value: '2', unit: 'blocks' },
+                { key: 'window_close', value: '2', unit: 'blocks' },
+                { key: 'window_far', value: '10', unit: 'blocks' },
               ],
             },
           ],
@@ -246,6 +322,7 @@ describe('CellDetailPanel', () => {
             {
               address: 'ckt1aliceparticipant',
               capacity_delta: '4999999000',
+              common_knowledge_delta: '6',
               facets: [],
             },
             {
@@ -269,29 +346,49 @@ describe('CellDetailPanel', () => {
     expect(readout?.querySelector('[data-cell-context-fact="owner"]')).not.toBeNull();
     expect(readout?.querySelector('[data-transaction-semantics-summary]')).not.toBeNull();
     expect(readout?.querySelector('[data-transaction-participants]')).not.toBeNull();
-    expect(portrait.dataset.cellDetailDensity).toBe('compact');
-    expect(portrait.style.width).toBe('196px');
+    expect(portrait.dataset.cellDetailDensity).toBe('contextual');
+    expect(portrait.style.width).toBe('100%');
     expect(memory.dataset.consensusMemoryDensity).toBe('compact');
+    expect(container.querySelector('[data-cell-detail-module="context"]')?.hasAttribute('hidden')).toBe(false);
+    expect(container.querySelector('[data-cell-detail-module="anatomy"]')?.hasAttribute('hidden')).toBe(true);
     expect((container.firstElementChild as HTMLElement).style.background).toContain('.97');
     expect(readout?.textContent).toContain('CELL CONTEXT · READY · 1 BLOCK LAG');
     expect(readout?.textContent).not.toContain('INDEXED');
     expect(readout?.textContent).not.toContain('IDX');
     expect(readout?.textContent).not.toContain('CKBADGER');
     expect(readout?.textContent).toContain('Default Lock');
+    expect(readout?.textContent).toContain('ACTIVE');
+    expect(readout?.textContent).toContain('0x1234');
+    expect(readout?.textContent).toContain('Legacy DAO Script');
+    expect(readout?.textContent).toContain('DEPRECATED');
+    expect(readout?.textContent).toContain('0xabcd');
     expect(readout?.textContent).toContain('NTT · Nervos Test Token · xUDT');
     expect(readout?.textContent).toContain('123.45 NTT');
     expect(readout?.textContent).toContain('100 bytes occupied');
-    expect(readout?.textContent).toContain('DAO · DEPOSIT');
+    expect(readout?.textContent).toContain('DATA · JSON DOCUMENT · DETERMINISTIC DECODE');
+    expect(readout?.textContent).toContain('application/json');
+    expect(readout?.textContent).toContain('DAO POSITION · DEPOSIT');
+    expect(readout?.textContent).toContain('1.25 CKB');
+    expect(readout?.textContent).toContain('DEP GROUP');
+    expect(readout?.textContent).toContain('0xdep0:0');
+    expect(readout?.textContent).toContain('CODE CELL · TYPE ID');
     expect(readout?.textContent).toContain('ORIGIN TRANSACTION');
     expect(readout?.textContent).toContain('2 → 3 CELLS');
     expect(readout?.textContent).toContain('#16204798 → #16204800 · 2 BLOCKS');
     expect(readout?.textContent).toContain('1000 sh');
+    expect(readout?.textContent).toContain('1250 sh/kB');
+    expect(readout?.textContent).toContain('456 B');
+    expect(readout?.textContent).toContain('24×');
+    expect(readout?.textContent).toContain('200 CKB → 199.99999 CKB');
+    expect(readout?.textContent).toContain('122 B → 128 B');
+    expect(readout?.textContent).toContain('2–10 BLOCKS');
     expect(readout?.textContent).toContain('12,345');
     expect(readout?.textContent).toContain('+49.99999 CKB');
+    expect(readout?.textContent).toContain('+6 B');
     expect(container.textContent).toContain('3h 12m');
-    expect(Array.from(container.querySelectorAll('span')).some(
+    expect(Array.from(container.querySelectorAll('span')).filter(
       (span) => span.textContent === 'AGE',
-    )).toBe(false);
+    )).toHaveLength(1);
   });
 
   it('keeps auxiliary portrait focus off while the entry decoder advances', () => {
@@ -324,11 +421,11 @@ describe('CellDetailPanel', () => {
 
   it('lets decoded rows directly focus the corresponding A layer', () => {
     vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener: () => {}, removeEventListener: () => {} }));
-    const { getByTestId, getByText } = render(
+    const { container, getByTestId } = render(
       <CellDetailPanel cell={base} onClose={() => {}} />,
     );
 
-    fireEvent.click(getByText('xUDT'));
+    fireEvent.click(container.querySelector('[data-cell-detail-field="asset"]')!);
     expect(getByTestId('portrait').getAttribute('data-focus')).toBe('asset');
   });
 
@@ -338,10 +435,13 @@ describe('CellDetailPanel', () => {
       <CellDetailPanel cell={base} onClose={() => {}} />,
     );
 
+    openLineage(getByRole);
     fireEvent.click(getByRole('button', { name: 'inspect content' }));
     expect(getByTestId('portrait').getAttribute('data-focus')).toBe('data');
+    openLineage(getByRole);
     fireEvent.click(getByRole('button', { name: 'inspect anchor' }));
     expect(getByTestId('portrait').getAttribute('data-focus')).toBe('born');
+    openLineage(getByRole);
     fireEvent.click(getByRole('button', { name: 'inspect address' }));
     expect(getByTestId('portrait').getAttribute('data-focus')).toBe('state');
   });
@@ -362,6 +462,7 @@ describe('CellDetailPanel', () => {
     );
 
     for (const kind of ['address', 'content', 'anchor'] as const) {
+      openLineage(getByRole);
       fireEvent.click(getByRole('button', { name: `inspect ${kind}` }));
       fireEvent.click(getByTestId(`${kind}-proof-read-resolved`));
     }
@@ -408,6 +509,7 @@ describe('CellDetailPanel', () => {
       <CellDetailPanel {...props} identityProofBinding={partial} />,
     );
 
+    openLineage(getByRole);
     const recall = getByRole('button', { name: 'recall causal path' });
     expect((recall as HTMLButtonElement).disabled).toBe(true);
     expect(container.querySelector('[data-memory-identity-binding="true"]')
@@ -503,6 +605,7 @@ describe('CellDetailPanel', () => {
       />,
     );
 
+    openLineage(getByRole);
     fireEvent.click(getByRole('button', { name: 'exit causal recall' }));
     expect(onTraceWrite).toHaveBeenCalledWith(origin.seq);
     expect(container.textContent).toContain('READING RETAINED RECORD · EXIT');

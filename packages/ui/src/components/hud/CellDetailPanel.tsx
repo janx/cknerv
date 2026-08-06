@@ -62,45 +62,9 @@ function cornerBracket(corner: 'tl' | 'tr' | 'bl' | 'br'): CSSProperties {
 // layer, but renderer-only topology values never leak into the readout.
 type RowDecode = { label: string; value: string; color?: string };
 type Field = ConsensusBraidField;
+type DetailSection = 'anatomy' | 'context' | 'lineage';
 
-const nowPerf = () => (typeof performance !== 'undefined' ? performance.now() : 0);
-
-function formatCellData(dataHex: string): string {
-  const size = formatDataSize(dataHex);
-  if (size === '0 B') return 'Empty';
-  return dataHex.endsWith('…') ? `${size} observed` : size;
-}
-
-export default function CellDetailPanel({
-  cell,
-  recentLinks = EMPTY_RECENT_LINKS,
-  routeCellById,
-  causalLens = null,
-  causalNavigation = null,
-  tracedWriteSeq = null,
-  traceSource = 'none',
-  traceReadout = null,
-  traceResponseRef,
-  traceEvidenceFocusSourceId = null,
-  traceEvidencePreviewSourceId = null,
-  onTraceEvidenceFocusChange,
-  traceRouteHopFocus = null,
-  onTraceRouteHopFocusChange,
-  traceRouteHopLock = null,
-  onTraceRouteHopLockChange,
-  identityProofBinding = null,
-  onTraceWrite,
-  onIdentityProofRead,
-  semanticSource,
-  semanticPhase,
-  semanticRecord,
-  semanticMessage,
-  semanticTransactionPhase,
-  semanticTransactionRecord,
-  semanticTransactionMessage,
-  onClose,
-  style,
-}: {
+export interface CellDetailPanelProps {
   cell: Cell;
   recentLinks?: readonly CellLink[];
   /** Current projection records used to explain exact route-hop identities. */
@@ -140,12 +104,65 @@ export default function CellDetailPanel({
   semanticTransactionMessage?: string | null;
   onClose: () => void;
   style?: CSSProperties;
-}) {
+}
+
+const nowPerf = () => (typeof performance !== 'undefined' ? performance.now() : 0);
+
+function formatCellData(dataHex: string): string {
+  const size = formatDataSize(dataHex);
+  if (size === '0 B') return 'Empty';
+  return dataHex.endsWith('…') ? `${size} observed` : size;
+}
+
+export default function CellDetailPanel({
+  cell,
+  recentLinks = EMPTY_RECENT_LINKS,
+  routeCellById,
+  causalLens = null,
+  causalNavigation = null,
+  tracedWriteSeq = null,
+  traceSource = 'none',
+  traceReadout = null,
+  traceResponseRef,
+  traceEvidenceFocusSourceId = null,
+  traceEvidencePreviewSourceId = null,
+  onTraceEvidenceFocusChange,
+  traceRouteHopFocus = null,
+  onTraceRouteHopFocusChange,
+  traceRouteHopLock = null,
+  onTraceRouteHopLockChange,
+  identityProofBinding = null,
+  onTraceWrite,
+  onIdentityProofRead,
+  semanticSource,
+  semanticPhase,
+  semanticRecord,
+  semanticMessage,
+  semanticTransactionPhase,
+  semanticTransactionRecord,
+  semanticTransactionMessage,
+  onClose,
+  style,
+}: CellDetailPanelProps) {
   const reduced = useReducedMotion();
   const live = cell.death_at_ms === null;
   const now = Date.now();
   const enhancedDetail = Boolean(semanticSource && semanticPhase);
   const age = formatAge(cell.born_at_ms, now);
+  const defaultSection: DetailSection = enhancedDetail ? 'context' : 'anatomy';
+  const [sectionState, setSectionState] = useState<{
+    cellId: number;
+    section: DetailSection;
+  }>(() => ({ cellId: cell.id, section: defaultSection }));
+  const storedSection = sectionState.cellId === cell.id
+    ? sectionState.section
+    : defaultSection;
+  const activeSection = storedSection === 'context' && !enhancedDetail
+    ? 'anatomy'
+    : storedSection;
+  const selectSection = (section: DetailSection) => {
+    setSectionState({ cellId: cell.id, section });
+  };
   // One scan epoch per selected Cell. Epoch + current time reset together when
   // the effect actually mounts, so a busy main thread cannot skip unseen scan
   // phases between render and first paint. The short-lived 12.5 fps ticker
@@ -281,113 +298,251 @@ export default function CellDetailPanel({
     ...(enhancedDetail ? [] : [{ label: 'AGE', value: age, on: true }]),
   ];
 
+  const tabs: Array<{ id: DetailSection; label: string; meta: string }> = [
+    { id: 'anatomy', label: 'ANATOMY', meta: '结构' },
+    ...(enhancedDetail
+      ? [{ id: 'context' as const, label: 'CONTEXT', meta: '语义' }]
+      : []),
+    { id: 'lineage', label: 'LINEAGE', meta: '因果' },
+  ];
+  const inspectField = (field: Field) => {
+    selectField(field);
+    selectSection('anatomy');
+  };
+
   return (
     <HudPanel style={{
-      width: 270,
+      position: 'relative',
+      display: 'flex',
+      flexDirection: 'column',
+      width: 500,
+      maxWidth: 'calc(100vw - 28px)',
+      maxHeight: 'calc(100vh - 124px)',
+      boxSizing: 'border-box',
+      padding: '12px 14px 14px',
       pointerEvents: 'auto',
-      background: enhancedDetail
-        ? 'linear-gradient(180deg, rgba(0,2,9,.97) 0%, rgba(0,3,11,.94) 58%, rgba(1,4,12,.96) 100%)'
-        : 'linear-gradient(180deg, rgba(0,2,9,.88) 0%, rgba(0,3,11,.78) 58%, rgba(1,4,12,.86) 100%)',
-      boxShadow: `-14px 0 30px rgba(0,0,0,.2), inset 0 0 34px ${HUD_COLORS.cyanWire}08`,
-      transformOrigin: 'right top',
+      overflow: 'hidden',
+      background: 'linear-gradient(145deg, rgba(0,2,9,.975) 0%, rgba(0,5,14,.95) 58%, rgba(2,5,13,.975) 100%)',
+      border: `1px solid ${HUD_COLORS.cyanWire}18`,
+      boxShadow: `0 18px 55px rgba(0,0,0,.46), 0 0 26px ${HUD_COLORS.cyanWire}0b, inset 0 0 34px ${HUD_COLORS.cyanWire}08`,
+      transformOrigin: 'center center',
       animation: reduced
         ? undefined
         : 'cknerv-cell-consensus-enter 280ms cubic-bezier(.2,.82,.2,1) both',
       ...style,
     }}>
       <CloseButton onClose={onClose} />
-      <PanelHeader en="CELL" cjk="共识细胞" idx={`0x${cell.content_hash.slice(2, 10)}`} accent={HUD_COLORS.orange} />
-      {/* Entry decoding leaves A stable; explicit row selection owns focus. */}
+      <PanelHeader
+        en="CELL"
+        cjk="共识细胞"
+        idx={`#${cell.id} · ${cell.content_hash.slice(2, 10)}`}
+        accent={live ? HUD_COLORS.nominal : HUD_COLORS.caution}
+      />
+
+      {/* Selection stays visually tied to one canonical Cell. These four facts
+          remain visible while the deeper modules switch underneath. */}
       <div
-        data-cell-portrait-frame
-        data-cell-detail-density={enhancedDetail ? 'compact' : 'standard'}
+        data-cell-detail-summary
         style={{
-          position: 'relative',
-          width: enhancedDetail ? 196 : '100%',
-          maxWidth: '100%',
-          margin: enhancedDetail ? '0 auto 9px' : '0 0 10px',
+          display: 'grid',
+          gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
+          gap: 1,
+          margin: '-2px 0 8px',
+          border: `1px solid ${HUD_COLORS.cyanWire}12`,
+          background: `${HUD_COLORS.cyanWire}05`,
         }}
       >
-        <CellNucleusPortrait
-          cell={cell}
-          reducedMotion={reduced}
-          scanEpochMs={activeClock.epochMs}
-          focusField={focusField}
-          traceReadout={traceReadout}
-          traceResponseRef={traceResponseRef}
-          traceEvidenceFocusSourceId={traceEvidenceFocusSourceId}
-          identityProofBinding={selectedIdentityProofBinding}
-          onIdentityProofRead={onIdentityProofRead
-            ? (kind) => onIdentityProofRead(kind, cell.id, reduced)
-            : undefined}
-        />
-        <span style={cornerBracket('tl')} /><span style={cornerBracket('tr')} />
-        <span style={cornerBracket('bl')} /><span style={cornerBracket('br')} />
+        {[
+          ['STATE', live ? '● LIVE' : '◇ SPENT', live ? HUD_COLORS.nominal : HUD_COLORS.caution],
+          ['CAPACITY', formatCkb(cell.capacity), HUD_COLORS.ink],
+          ['ASSET', formatAssetKind(cell.asset_kind), cell.asset_kind ? ASSET_COLORS[cell.asset_kind] : HUD_COLORS.dim],
+          ['AGE', age, HUD_COLORS.ink],
+        ].map(([label, value, color]) => (
+          <div
+            key={label}
+            style={{ minWidth: 0, padding: '5px 6px 4px', borderRight: label === 'AGE' ? undefined : `1px solid ${HUD_COLORS.cyanWire}0d` }}
+          >
+            <span style={{ display: 'block', color: HUD_COLORS.dim, fontSize: 6.5, letterSpacing: 1.05 }}>{label}</span>
+            <span title={value} style={{ display: 'block', marginTop: 2, color, fontSize: 8.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{value}</span>
+          </div>
+        ))}
       </div>
-      <div key={cell.id}>
-        {rows.map((row) => {
-          const clickable = interactive && !!row.field;
-          const sel = !!row.field && row.field === selectedField;
+
+      <div
+        role="tablist"
+        aria-label="Cell detail sections"
+        data-cell-detail-sections
+        style={{ display: 'flex', flex: '0 0 auto', gap: 3, marginBottom: 8 }}
+      >
+        {tabs.map((tab, index) => {
+          const selected = activeSection === tab.id;
           return (
-            <div
-              key={row.label}
-              data-cell-detail-field={row.field}
-              onClick={clickable ? () => selectField(row.field!) : undefined}
+            <button
+              key={tab.id}
+              type="button"
+              role="tab"
+              id={`cell-detail-tab-${tab.id}`}
+              aria-selected={selected}
+              aria-controls={`cell-detail-${tab.id}`}
+              tabIndex={selected ? 0 : -1}
+              onClick={() => selectSection(tab.id)}
+              onKeyDown={(event) => {
+                if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+                event.preventDefault();
+                const buttons = Array.from(
+                  event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]') ?? [],
+                );
+                const current = buttons.indexOf(event.currentTarget);
+                if (current < 0 || buttons.length === 0) return;
+                const direction = event.key === 'ArrowRight' ? 1 : -1;
+                const next = buttons[(current + direction + buttons.length) % buttons.length];
+                next?.click();
+                next?.focus();
+              }}
               style={{
-                opacity: reduced || row.on ? 1 : 0.16,
-                transition: reduced ? undefined : 'opacity 320ms ease',
-                cursor: clickable ? 'pointer' : undefined,
-                background: sel ? `${HUD_COLORS.cyanWire}1f` : undefined,
-                boxShadow: sel ? `inset 2px 0 0 ${HUD_COLORS.cyanWire}` : undefined,
+                flex: '1 1 0',
+                minWidth: 0,
+                height: 24,
+                border: `1px solid ${selected ? HUD_COLORS.orange : `${HUD_COLORS.cyanWire}18`}`,
+                background: selected ? `${HUD_COLORS.orange}16` : 'rgba(1,4,12,.48)',
+                color: selected ? HUD_COLORS.orange : HUD_COLORS.dim,
+                cursor: 'pointer',
+                font: 'inherit',
+                fontSize: 7.2,
+                letterSpacing: 1.05,
               }}
             >
-              <StatRow label={row.label} valueColor={row.color}>{row.value}</StatRow>
-            </div>
+              <span>{String(index + 1).padStart(2, '0')} · {tab.label}</span>
+              <span style={{ marginLeft: 5, opacity: 0.55 }}>{tab.meta}</span>
+            </button>
           );
         })}
       </div>
-      {semanticSource && semanticPhase ? (
-        <CellSemanticsReadout
-          source={semanticSource}
-          phase={semanticPhase}
-          record={semanticRecord}
-          message={semanticMessage}
-          transactionPhase={semanticTransactionPhase}
-          transactionRecord={semanticTransactionRecord}
-          transactionMessage={semanticTransactionMessage}
-        />
-      ) : null}
-      <ConsensusIdentityPlate
-        identity={identity}
-        causalLens={resolvedCausalLens}
-        causalNavigation={causalNavigation}
-        reveal={p.classified ? 1 : p.pct / 100}
-        statusText={statusText}
-        statusColor={statusColor}
-        reducedMotion={reduced}
-        focusedField={selectedField}
-        identityProofBinding={selectedIdentityProofBinding}
-        onInspectAddress={interactive ? () => selectField('state') : undefined}
-        onInspectContent={interactive ? () => selectField('data') : undefined}
-        onInspectAnchor={interactive ? () => selectField('born') : undefined}
-        onRecallWrite={identity.observedWrite && onTraceWrite
-          ? () => onTraceWrite(identity.observedWrite!.seq)
-          : undefined}
-        recallEnabled={interactive && identityProofComplete}
-        traceSource={traceSource}
-        traceSelected={identity.observedWrite?.seq === tracedWriteSeq}
-        traceReadout={traceReadout}
-        traceEvidenceFocusSourceId={traceEvidenceFocusSourceId}
-        traceEvidencePreviewSourceId={traceEvidencePreviewSourceId}
-        onTraceEvidenceFocusChange={onTraceEvidenceFocusChange}
-        traceRouteHopFocus={traceRouteHopFocus}
-        onTraceRouteHopFocusChange={onTraceRouteHopFocusChange}
-        traceRouteHopLock={traceRouteHopLock}
-        onTraceRouteHopLockChange={onTraceRouteHopLockChange}
-        routeCellById={inspectedCellById}
-        agreementCount={agreementTarget}
-        compact={enhancedDetail}
-      />
+
+      <div
+        data-cell-detail-module-viewport
+        style={{ minHeight: 0, overflowX: 'hidden', overflowY: 'auto', scrollbarWidth: 'thin', scrollbarColor: 'rgba(125,249,255,.24) transparent' }}
+      >
+        <section
+          id="cell-detail-anatomy"
+          role="tabpanel"
+          aria-label="Cell anatomy"
+          aria-labelledby="cell-detail-tab-anatomy"
+          hidden={activeSection !== 'anatomy'}
+          data-cell-detail-module="anatomy"
+        >
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(150px, .82fr) minmax(180px, 1fr)', gap: 12, alignItems: 'start' }}>
+            {/* Entry decoding leaves A stable; explicit row selection owns focus. */}
+            <div
+              data-cell-portrait-frame
+              data-cell-detail-density="contextual"
+              style={{ position: 'relative', width: '100%', maxWidth: '100%', margin: 0 }}
+            >
+              <CellNucleusPortrait
+                cell={cell}
+                reducedMotion={reduced}
+                scanEpochMs={activeClock.epochMs}
+                focusField={focusField}
+                traceReadout={traceReadout}
+                traceResponseRef={traceResponseRef}
+                traceEvidenceFocusSourceId={traceEvidenceFocusSourceId}
+                identityProofBinding={selectedIdentityProofBinding}
+                onIdentityProofRead={onIdentityProofRead
+                  ? (kind) => onIdentityProofRead(kind, cell.id, reduced)
+                  : undefined}
+              />
+              <span style={cornerBracket('tl')} /><span style={cornerBracket('tr')} />
+              <span style={cornerBracket('bl')} /><span style={cornerBracket('br')} />
+            </div>
+            <div key={cell.id}>
+              <div style={{ marginBottom: 4, color: statusColor, fontSize: 7, letterSpacing: 1 }}>{statusText}</div>
+              {rows.map((row) => {
+                const clickable = interactive && !!row.field;
+                const sel = !!row.field && row.field === selectedField;
+                return (
+                  <div
+                    key={row.label}
+                    data-cell-detail-field={row.field}
+                    onClick={clickable ? () => selectField(row.field!) : undefined}
+                    style={{
+                      opacity: reduced || row.on ? 1 : 0.16,
+                      transition: reduced ? undefined : 'opacity 320ms ease',
+                      cursor: clickable ? 'pointer' : undefined,
+                      background: sel ? `${HUD_COLORS.cyanWire}1f` : undefined,
+                      boxShadow: sel ? `inset 2px 0 0 ${HUD_COLORS.cyanWire}` : undefined,
+                    }}
+                  >
+                    <StatRow label={row.label} valueColor={row.color}>{row.value}</StatRow>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </section>
+
+        {semanticSource && semanticPhase ? (
+          <section
+            id="cell-detail-context"
+            role="tabpanel"
+            aria-label="Cell indexed context"
+            aria-labelledby="cell-detail-tab-context"
+            hidden={activeSection !== 'context'}
+            data-cell-detail-module="context"
+          >
+            <CellSemanticsReadout
+              source={semanticSource}
+              phase={semanticPhase}
+              record={semanticRecord}
+              message={semanticMessage}
+              transactionPhase={semanticTransactionPhase}
+              transactionRecord={semanticTransactionRecord}
+              transactionMessage={semanticTransactionMessage}
+              style={{ margin: 0 }}
+            />
+          </section>
+        ) : null}
+
+        <section
+          id="cell-detail-lineage"
+          role="tabpanel"
+          aria-label="Cell lineage"
+          aria-labelledby="cell-detail-tab-lineage"
+          hidden={activeSection !== 'lineage'}
+          data-cell-detail-module="lineage"
+        >
+          <ConsensusIdentityPlate
+            identity={identity}
+            causalLens={resolvedCausalLens}
+            causalNavigation={causalNavigation}
+            reveal={p.classified ? 1 : p.pct / 100}
+            statusText={statusText}
+            statusColor={statusColor}
+            reducedMotion={reduced}
+            focusedField={selectedField}
+            identityProofBinding={selectedIdentityProofBinding}
+            onInspectAddress={interactive ? () => inspectField('state') : undefined}
+            onInspectContent={interactive ? () => inspectField('data') : undefined}
+            onInspectAnchor={interactive ? () => inspectField('born') : undefined}
+            onRecallWrite={identity.observedWrite && onTraceWrite
+              ? () => onTraceWrite(identity.observedWrite!.seq)
+              : undefined}
+            recallEnabled={interactive && identityProofComplete}
+            traceSource={traceSource}
+            traceSelected={identity.observedWrite?.seq === tracedWriteSeq}
+            traceReadout={traceReadout}
+            traceEvidenceFocusSourceId={traceEvidenceFocusSourceId}
+            traceEvidencePreviewSourceId={traceEvidencePreviewSourceId}
+            onTraceEvidenceFocusChange={onTraceEvidenceFocusChange}
+            traceRouteHopFocus={traceRouteHopFocus}
+            onTraceRouteHopFocusChange={onTraceRouteHopFocusChange}
+            traceRouteHopLock={traceRouteHopLock}
+            onTraceRouteHopLockChange={onTraceRouteHopLockChange}
+            routeCellById={inspectedCellById}
+            agreementCount={agreementTarget}
+            compact={enhancedDetail}
+          />
+        </section>
+      </div>
     </HudPanel>
   );
 }

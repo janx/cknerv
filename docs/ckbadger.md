@@ -123,13 +123,24 @@ dep-group, and code Cells do not trigger that token lookup.
 The HUD displays the exact raw token amount with validated decimals, name, and
 symbol when available. Its source-neutral **CELL CONTEXT** header reports
 availability, lag, and freshness; source health remains in the global status
-strip. In the enhanced detail panel, context facts use a compact two-column
-grid and the origin transaction uses one summary rail; the portrait and
-consensus-memory plate also adopt compact density. This preserves every base
-and validated field without stacking a second full-size detail card or
-repeating AGE as a separate row. One billboarded semantic orbit appears around the selected canonical
-Cell: inner CAP/LOCK/TYPE/DATA arcs show its occupied-byte breakdown, and an
-outer notched arc marks a resolved asset. There is no background Cell sweep or
+strip. Cell inspection is not docked in a fixed HUD rail: one screen-space
+inspector follows the selected canonical Cell, flips around viewport edges,
+and stays connected to that Cell with a leader. Capacity, state, asset, and age
+remain visible while **ANATOMY**, **CONTEXT**, and **LINEAGE** progressively
+disclose structural facts, indexed meaning, and causal evidence.
+
+**CONTEXT** exposes the normalized ckbadger detail already admitted through the
+canonical anchor: exact script args and hash type, known/deprecated script
+state, deterministic or heuristic data-analysis fields, DAO lifecycle facts,
+dep-group members, code-cell associations, and occupied-byte composition. The
+origin transaction readout also uses its available size, fee rate,
+confirmations, capacity/occupied-byte flow, commitment window, and participant
+deltas. Values remain bounded by the shared wire types; arbitrary source JSON
+does not enter the browser.
+
+One billboarded semantic orbit appears around the selected canonical Cell:
+inner CAP/LOCK/TYPE/DATA arcs show its occupied-byte breakdown, and an outer
+notched arc marks a resolved asset. There is no background Cell sweep or
 base-Galaxy retaxonomization. A stale source dims the orbit, while an invalid or
 missing anchor suppresses it.
 

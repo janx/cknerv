@@ -1,8 +1,6 @@
 import { cleanup, fireEvent, render } from '@testing-library/react';
 import { afterEach, describe, it, expect, vi } from 'vitest';
 import type {
-  Cell,
-  CellLink,
   ChainEntry,
   ChainNode,
   DaoStateRecord,
@@ -40,9 +38,6 @@ vi.mock('../../../src/components/hud/CellNucleusPortrait', () => ({
 
 import HudOverlay from '../../../src/components/hud/HudOverlay';
 import type { CellsStats } from '../../../src/derives/cellsStats.derive';
-import type {
-  CellIdentityProofBinding,
-} from '../../../src/derives/cellIdentityProof.derive';
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
@@ -74,21 +69,6 @@ const daoState: DaoStateRecord = {
   unclaimed_compensation_shannons: '81345902996799859',
   estimated_apc_bps: 201,
 };
-
-function identityBinding(
-  cellId: number,
-  phase: CellIdentityProofBinding['phase'] = 'verified',
-): CellIdentityProofBinding {
-  return {
-    cellId,
-    resolvedKinds: ['address', 'content', 'anchor'],
-    phase,
-    revision: 4,
-    changedAtMs: 100,
-    lastResolvedKind: 'anchor',
-    reducedMotion: true,
-  };
-}
 
 describe('HudOverlay', () => {
   it('mounts a non-interactive overlay containing every panel', () => {
@@ -339,292 +319,44 @@ describe('HudOverlay', () => {
     expect(meshRail.style.maxHeight).toBe('calc(100vh - 120px)');
   });
 
-  it('shows the cell detail and a node detail at the same time (independent axes)', () => {
-    const mockCell: Cell = {
-      id: 7, born_at_ms: 1, death_at_ms: null, birth_block: 16204800, tag: 'wallet',
-      pos_seed: [0, 0, 0], out_point: { tx_hash: '0x' + 'ab'.repeat(32), index: 0 },
-      capacity: 6_100_000_000, data_hex: '0x', content_hash: '0x' + 'cd'.repeat(32),
-    };
+  it('keeps Cell inspection out of the fixed HUD while network detail remains', () => {
     const { container } = render(
-      <HudOverlay
-        chain={chain} peers={peers} localNode={localNode} cellsStats={cellsStats}
-        selectedCell={mockCell} selectedNode={localNode}
-      />,
-    );
-    const t = container.textContent ?? '';
-    expect(t).toContain('CAPACITY'); // CELL detail (galaxy axis) is present…
-    expect(t).toContain('OBSERVER'); // …AND the NODE detail (network axis) at the same time
-  });
-
-  it('forwards a resolved identity proof from the selected Cell detail', () => {
-    vi.stubGlobal('matchMedia', () => ({
-      matches: true,
-      addEventListener: () => {},
-      removeEventListener: () => {},
-    }));
-    const mockCell: Cell = {
-      id: 7, born_at_ms: 1, death_at_ms: null, birth_block: 16204800, tag: 'wallet',
-      pos_seed: [0, 0, 0], out_point: { tx_hash: `0x${'ab'.repeat(32)}`, index: 0 },
-      capacity: 6_100_000_000, data_hex: '0x', content_hash: `0x${'cd'.repeat(32)}`,
-    };
-    const onCellIdentityProofRead = vi.fn();
-    const { getByRole, getByTestId } = render(
       <HudOverlay
         chain={chain}
         peers={peers}
         localNode={localNode}
         cellsStats={cellsStats}
-        selectedCell={mockCell}
-        onCellIdentityProofRead={onCellIdentityProofRead}
+        selectedNode={localNode}
       />,
     );
+    const meshRail = container.querySelector('.cknerv-mesh-rail')!;
 
-    fireEvent.click(getByRole('button', { name: 'inspect content' }));
-    fireEvent.click(getByTestId('content-address-read-resolved'));
-    expect(onCellIdentityProofRead).toHaveBeenCalledWith(
-      'content',
-      mockCell.id,
-      true,
-    );
+    expect(meshRail.textContent).toContain('CELL MESH');
+    expect(meshRail.textContent).toContain('OBSERVER');
+    expect(meshRail.textContent).not.toContain('CONSENSUS MEMORY');
+    expect(container.querySelector('[data-cell-inspection-overlay]')).toBeNull();
   });
 
-  it('keeps the selected Cell detail first in the narrow scroll rail', () => {
+  it('keeps the narrow Cell zone summary-only', () => {
     vi.stubGlobal('matchMedia', (query: string) => ({
       matches: query.includes('max-width: 1100px'),
       addEventListener: () => {},
       removeEventListener: () => {},
     }));
-    const mockCell: Cell = {
-      id: 7, born_at_ms: 1, death_at_ms: null, birth_block: 16204800, tag: 'wallet',
-      pos_seed: [0, 0, 0], out_point: { tx_hash: `0x${'ab'.repeat(32)}`, index: 0 },
-      capacity: 6_100_000_000, data_hex: '0x', content_hash: `0x${'cd'.repeat(32)}`,
-    };
     const { container } = render(
       <HudOverlay
         chain={chain}
         peers={peers}
         localNode={localNode}
         cellsStats={cellsStats}
-        selectedCell={mockCell}
       />,
     );
     const rail = container.querySelector('.cknerv-mesh-rail')!;
     const cellZone = rail.firstElementChild as HTMLElement;
 
     expect(cellZone.style.flexDirection).toBe('column');
-    expect(cellZone.firstElementChild?.textContent).toContain('CAPACITY');
-    expect(cellZone.children[1]?.textContent).toContain('CELL MESH');
-  });
-
-  it('threads retained Cell origin evidence into the detail memory plate', () => {
-    vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener: () => {}, removeEventListener: () => {} }));
-    const mockCell: Cell = {
-      id: 7, born_at_ms: 1, death_at_ms: null, birth_block: 16204800, tag: 'wallet',
-      pos_seed: [0, 0, 0], out_point: { tx_hash: `0x${'ab'.repeat(32)}`, index: 0 },
-      capacity: 6_100_000_000, data_hex: '0x', content_hash: `0x${'cd'.repeat(32)}`,
-    };
-    const origin: CellLink = {
-      seq: 3, tx_hash: mockCell.out_point.tx_hash, block: mockCell.birth_block,
-      from_ids: [1], to_ids: [mockCell.id], parents: [], tag: null, at_ms: 10,
-      endpoint_anchors: [],
-    };
-    const onTraceCellWrite = vi.fn();
-    const { container, getByRole } = render(
-      <HudOverlay
-        chain={chain} peers={peers} localNode={localNode} cellsStats={cellsStats}
-        selectedCell={mockCell} recentCellLinks={[origin]}
-        cellTraceSource="input"
-        cellIdentityProofBinding={identityBinding(mockCell.id)}
-        onTraceCellWrite={onTraceCellWrite}
-      />,
-    );
-    expect(container.textContent).toContain('WRITE OBSERVED');
-    fireEvent.click(getByRole('button', { name: 'recall causal path' }));
-    expect(onTraceCellWrite).toHaveBeenCalledWith(origin.seq);
-  });
-
-  it('renders the selected Cell causal neighbourhood from exact retained records', () => {
-    vi.stubGlobal('matchMedia', () => ({
-      matches: true,
-      addEventListener: () => {},
-      removeEventListener: () => {},
-    }));
-    const target: Cell = {
-      id: 7, born_at_ms: 1, death_at_ms: null, birth_block: 16204800, tag: 'wallet',
-      pos_seed: [0, 0, 0], out_point: { tx_hash: `0x${'ab'.repeat(32)}`, index: 0 },
-      capacity: 6_100_000_000, data_hex: '0x', content_hash: `0x${'cd'.repeat(32)}`,
-    };
-    const input: Cell = {
-      ...target,
-      id: 1,
-      death_at_ms: 12,
-      out_point: { tx_hash: `0x${'11'.repeat(32)}`, index: 1 },
-    };
-    const sibling: Cell = {
-      ...target,
-      id: 8,
-      out_point: { tx_hash: target.out_point.tx_hash, index: 1 },
-    };
-    const origin: CellLink = {
-      seq: 3,
-      tx_hash: target.out_point.tx_hash,
-      block: target.birth_block,
-      from_ids: [input.id],
-      to_ids: [target.id, sibling.id],
-      endpoint_anchors: [],
-      parents: [input.out_point.tx_hash],
-      tag: null,
-      at_ms: 10,
-    };
-    const { container } = render(
-      <HudOverlay
-        chain={chain}
-        peers={peers}
-        localNode={localNode}
-        cellsStats={cellsStats}
-        selectedCell={target}
-        cellRecordsById={new Map([
-          [input.id, input],
-          [target.id, target],
-          [sibling.id, sibling],
-        ])}
-        recentCellLinks={[origin]}
-      />,
-    );
-    const causal = container.querySelector('[data-cell-causal-lens]')!;
-
-    expect(causal.getAttribute('data-causal-status')).toBe('exact');
-    expect(causal.getAttribute('data-causal-provenance')).toBe('observed');
-    expect(causal.textContent).toContain('1/1 INPUTS');
-    expect(causal.textContent).toContain('2/2 OUTPUTS');
-    expect(causal.textContent).toContain('1 SELECTED · 1 SIBLING');
-  });
-
-  it('threads the authoritative recall stage into the selected Cell detail', () => {
-    vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener: () => {}, removeEventListener: () => {} }));
-    const mockCell: Cell = {
-      id: 7, born_at_ms: 1, death_at_ms: null, birth_block: 16204800, tag: 'wallet',
-      pos_seed: [0, 0, 0], out_point: { tx_hash: `0x${'ab'.repeat(32)}`, index: 0 },
-      capacity: 6_100_000_000, data_hex: '0x', content_hash: `0x${'cd'.repeat(32)}`,
-    };
-    const transitCell: Cell = {
-      ...mockCell,
-      id: 4,
-      birth_block: 16204796,
-      out_point: { tx_hash: `0x${'44'.repeat(32)}`, index: 0 },
-      content_hash: `0x${'44'.repeat(32)}`,
-    };
-    const origin: CellLink = {
-      seq: 3, tx_hash: mockCell.out_point.tx_hash, block: mockCell.birth_block,
-      from_ids: [1, 2], to_ids: [mockCell.id], parents: [], tag: null, at_ms: 10,
-      endpoint_anchors: [],
-    };
-    const onCellTraceRouteHopFocusChange = vi.fn();
-    const onCellTraceRouteHopLockChange = vi.fn();
-    const routeHopFocus = {
-      traceKey: '3:7:1',
-      sourceId: 2,
-      targetCellId: 7,
-      cellId: 4,
-      hopIndex: 1,
-    };
-    const { container } = render(
-      <HudOverlay
-        chain={chain}
-        peers={peers}
-        localNode={localNode}
-        cellsStats={cellsStats}
-        selectedCell={mockCell}
-        cellRecordsById={new Map([
-          [transitCell.id, transitCell],
-          [mockCell.id, mockCell],
-        ])}
-        recentCellLinks={[origin]}
-        tracedCellWriteSeq={origin.seq}
-        cellTraceSource="input"
-        cellIdentityProofBinding={identityBinding(mockCell.id, 'recalling')}
-        cellTraceReadout={{
-          key: '3:7:1',
-          targetCellId: 7,
-          sourceKind: 'input',
-          stage: 'converging',
-          sourceCount: 2,
-          arrivedSourceCount: 1,
-          resolvedSourceCount: 0,
-          evidence: [
-            {
-              sourceId: 1,
-              ordinal: 1,
-              contentHash: `0x${'1'.repeat(64)}`,
-              state: 'arrived',
-              sourceOutPoint: { tx_hash: `0x${'1'.repeat(64)}`, index: 0 },
-              sourceBirthBlock: 16204798,
-              route: [1, 7],
-              hopCount: 1,
-              routeDurationMs: 420,
-            },
-            {
-              sourceId: 2,
-              ordinal: 2,
-              contentHash: `0x${'2'.repeat(64)}`,
-              state: 'routing',
-              sourceOutPoint: { tx_hash: `0x${'2'.repeat(64)}`, index: 1 },
-              sourceBirthBlock: 16204799,
-              route: [2, 4, 7],
-              hopCount: 2,
-              routeDurationMs: 780,
-            },
-          ],
-        }}
-        cellTraceResponseRef={{ current: null }}
-        cellTraceEvidenceFocusSourceId={2}
-        cellTraceEvidencePreviewSourceId={1}
-        onCellTraceEvidenceFocusChange={() => {}}
-        cellTraceRouteHopFocus={routeHopFocus}
-        onCellTraceRouteHopFocusChange={onCellTraceRouteHopFocusChange}
-        cellTraceRouteHopLock={routeHopFocus}
-        onCellTraceRouteHopLockChange={onCellTraceRouteHopLockChange}
-      />,
-    );
-
-    expect(container.querySelector('[data-memory-read-state="converging"]')).not.toBeNull();
-    expect(container.textContent).toContain('ARRIVED 1/2');
-    expect(container.querySelector('[data-testid="portrait"]')
-      ?.getAttribute('data-trace-stage')).toBe('converging');
-    expect(container.querySelector('[data-testid="portrait"]')
-      ?.getAttribute('data-response-ref')).toBe('true');
-    expect(container.querySelector('[data-testid="portrait"]')
-      ?.getAttribute('data-evidence-focus-source')).toBe('2');
-    expect(container.querySelector('[data-memory-evidence="2"]')
-      ?.getAttribute('data-memory-evidence-focus')).toBe('retained');
-    expect(container.querySelector('[data-memory-evidence="2"]')
-      ?.getAttribute('aria-pressed')).toBe('true');
-    expect(container.querySelector('[data-memory-evidence="2"]')
-      ?.getAttribute('aria-expanded')).toBe('true');
-    expect(container.querySelector('[data-memory-evidence="1"]')
-      ?.getAttribute('data-memory-evidence-focus')).toBe('preview');
-    expect(container.querySelector('[data-memory-evidence="1"]')
-      ?.getAttribute('data-memory-evidence-scene-preview')).toBe('true');
-    expect(container.querySelector('[data-memory-evidence="1"]')
-      ?.getAttribute('aria-pressed')).toBe('false');
-    const routeHop = container.querySelector<HTMLElement>(
-      '[data-memory-evidence-route-cell="4"]',
-    )!;
-    expect(routeHop.getAttribute('data-memory-evidence-route-focus')).toBe('locked');
-    expect(routeHop.getAttribute('aria-pressed')).toBe('true');
-    expect(container.querySelector(
-      '[data-memory-evidence-route-hop-inspector="true"]',
-    )?.textContent).toContain('4444444·4444');
-    fireEvent.pointerEnter(routeHop);
-    expect(onCellTraceRouteHopFocusChange).toHaveBeenLastCalledWith({
-      traceKey: '3:7:1',
-      sourceId: 2,
-      targetCellId: 7,
-      cellId: 4,
-      hopIndex: 1,
-    });
-    fireEvent.click(routeHop);
-    expect(onCellTraceRouteHopLockChange).toHaveBeenLastCalledWith(null);
+    expect(cellZone.children).toHaveLength(1);
+    expect(cellZone.firstElementChild?.textContent).toContain('CELL MESH');
   });
 
   it('does not raise CAUTION when blocks merely run slower than the 8s target', () => {
