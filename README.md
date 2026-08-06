@@ -171,6 +171,9 @@ The primary public seams are:
   Source health probing runs independently from bounded per-capability
   refreshes, and every successful ckbadger result must re-prove its validated
   block/hash anchor immediately before it enters the semantics projection.
+  CellGalaxy composition additionally uses ckbadger only to discover/rank
+  outpoints, then batch-validates and materializes every displayed candidate
+  through the local CKB node's read-only `get_live_cell` RPC.
 
 The current workspace ships `CkbDirectAdapter`, which polls CKB JSON-RPC and
 emits chain-generic mutations. It also includes optional ckbadger enrichment;
@@ -418,6 +421,12 @@ twin, the fixtures, and both sides of the tests together.
   impose a smaller diagnostic hard limit. After a deep-reorg rebuild, Cell
   TOTAL/DEAD counters are likewise reconstructed from the hydrated observation
   window.
+- With optional ckbadger enrichment, the resting visible subset can instead be
+  composed as DAO:typed:plain = 30:40:30 (up to the 6,000-Cell AUTO budget).
+  This is an additive, node-revalidated display reservoir: canonical Cells and
+  the complete canonical neighbour graph still own new-block pulses, live nerve
+  routes, counters, and reorg behavior. See
+  [`docs/ckbadger.md`](docs/ckbadger.md#cellgalaxy-composition).
 - The CKB adapter is read-only JSON-RPC polling. There is no bundled CKB node,
   indexer, or transaction submitter.
 

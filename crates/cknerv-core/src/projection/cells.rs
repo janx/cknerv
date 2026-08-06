@@ -56,7 +56,7 @@ impl Default for CellGalaxyConfig {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Cell {
     pub id: u64,
     pub born_at_ms: u64,

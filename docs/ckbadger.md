@@ -2,7 +2,7 @@
 
 ckbadger is an optional, read-only indexed enrichment source for cknerv. It
 adds bounded Cell, transaction, asset, DAO, protocol, fork, activity, history,
-and network context to the semantics pipeline. The direct CKB JSON-RPC adapter
+network, and CellGalaxy-composition context to the semantics pipeline. The direct CKB JSON-RPC adapter
 remains the only source of structural chain truth: ckbadger data cannot create,
 spend, or replace a canonical Cell.
 
@@ -63,6 +63,15 @@ The implementation lives in
 Source-specific camelCase DTOs stay inside that crate. Core, server, cache, and
 UI contracts remain normalized and source-agnostic.
 
+CellGalaxy composition has one additional trust fence. ckbadger discovers and
+ranks bounded outpoint candidates, then `CkbGalaxyCompositionHydrator` batch
+reads every candidate with the local node's read-only `get_live_cell` RPC. A
+candidate is admitted only when it is still live, its capacity matches the
+indexed hint, and its node-derived type-script taxonomy matches its requested
+class. The node also supplies the real output data, content hash, lock class,
+and deterministic position seed. No ckbadger payload is converted directly
+into a displayable Cell.
+
 ## HTTP and WebSocket Routes
 
 | Method | Path | Behavior |
@@ -111,6 +120,52 @@ source. Scope labels distinguish local or retained-Galaxy observations from
 whole-chain and whole-network context, while the global source-health chip
 retains operational provenance. cknerv does not reinterpret bounded samples as
 global chain truth.
+
+### CellGalaxy Composition
+
+With `galaxy_composition`, cknerv refreshes one non-persisted resting display
+reservoir at most once every 15 minutes. Its target is
+`min(galaxy.cell_cap, 6000)`, matching the browser's automatic visible-Cell
+budget. At the default target the requested classes are exactly:
+
+- 1,800 active Nervos DAO deposit Cells (30%).
+- 2,400 non-DAO Cells with a non-empty type script (40%).
+- 1,800 plain Cells without a type script (30%).
+
+ckbadger's existing APIs provide the bounded discovery work:
+
+- DAO candidates come from paginated `dao/deposits?status=0` results and are
+  ranked by capacity after validating the deposited state.
+- Typed candidates start from `assets` sorted by owned capacity. cknerv samples
+  up to three pages of `cells/live?type_script_hash=...` for each of 64 leading
+  assets, ranks Cells by individual capacity, and interleaves asset groups so a
+  single script cannot monopolize the Galaxy.
+- Plain candidates start from both `addresses/top` and 30-day
+  `addresses/active` results. Bounded `cells/live?lock_script_hash=...` pages
+  are filtered to null type scripts, ranked within each address, and
+  interleaved across addresses.
+
+Candidate discovery deliberately uses the index for the work a CKB node cannot
+perform efficiently. Final Cell materialization deliberately uses the node for
+the authority the index must not own. If one class is sparse after live-cell
+validation, the UI fills that shortage from matching canonical retained Cells,
+then spills remaining vacancies toward DAO and typed Cells. With sufficient
+candidates, the visible result remains exactly 30:40:30.
+
+This record changes only the shared Cell/body and passive-fibre display subset.
+It never enters `CellGalaxySnapshot`, never increments Cell counters, and never
+emits `birth`, `death`, `link`, or `pulse` deltas. The complete canonical Cell
+map and neighbour graph continue to plan and render live nerve routes. Endpoints
+from the newest canonical block temporarily replace resting entries inside
+their own class quota, so exact Cell flashes remain visible without changing
+the ratio. The broad new-block pulse still follows the canonical
+`BlockMined -> CellDelta::Pulse -> lastPulseAtMs` path and is independent of
+composition refreshes.
+
+When ckbadger is disabled, unavailable, or has not completed the first
+composition refresh, CellGalaxy retains its original canonical-prefix display
+behavior. A failed refresh leaves the last good anchored record in place; a
+canonical reorg prunes it through the normal semantics anchor guard.
 
 ### Selected Cell and Origin Transaction
 
@@ -164,11 +219,13 @@ stack every decoded facet or origin-transaction field into the scan window.
 Values remain bounded by the shared wire types; arbitrary source JSON does not
 enter the browser.
 
-One billboarded semantic orbit appears around the selected canonical Cell:
+One billboarded semantic orbit appears around the selected canonically
+validated Cell:
 inner CAP/LOCK/TYPE/DATA arcs show its occupied-byte breakdown, and an outer
-notched arc marks a resolved asset. There is no background Cell sweep or
-base-Galaxy retaxonomization. A stale source dims the orbit, while an invalid or
-missing anchor suppresses it.
+notched arc marks a resolved asset. Composition refresh does not prefetch these
+details: the selected outpoint still resolves lazily through the existing Cell
+detail endpoint. A stale source dims the orbit, while an invalid or missing
+anchor suppresses it.
 
 The transaction route adds the selected Cell's origin transaction, participant
 capacity deltas, and proposal/commit lifecycle when the source provides them.
@@ -342,3 +399,7 @@ ckbadger does not alter the persistence schema and does not require
 - Fiber aggregate statistics are not polled because the current endpoint scans
   every indexed channel per request. cknerv can add them when ckbadger exposes
   a pre-aggregated bounded singleton.
+- `cells/live` is creation-position ordered and exposes no per-Cell capacity
+  sort. Typed composition therefore ranks a bounded three-page sample from each
+  of the 64 highest-capacity asset groups; it is deliberately a diverse ranked
+  display sample, not a claim to contain the globally largest typed Cells.

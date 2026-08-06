@@ -6,6 +6,7 @@ import type {
   CellSemanticRecord,
   DaoStateRecord,
   ForkWatchRecord,
+  GalaxyCompositionRecord,
   EnrichmentSourceStatus,
   NetworkAtlasRecord,
   ProtocolEraRecord,
@@ -160,6 +161,17 @@ function networkAtlas(block: number): NetworkAtlasRecord {
   };
 }
 
+function galaxyComposition(block: number): GalaxyCompositionRecord {
+  return {
+    source: 'ckbadger',
+    as_of: { block, hash: `0xblock${block}` },
+    updated_at_ms: block,
+    dao: [],
+    typed: [],
+    plain: [],
+  };
+}
+
 describe('semantics reducer', () => {
   it('keeps its own revision and upserts selected Cell context', () => {
     const record = cell(10, '0xcell');
@@ -308,6 +320,24 @@ describe('semantics reducer', () => {
 
     expect(next.networkAtlas).toBeNull();
     expect(next.cells).toBe(seeded.cells);
+  });
+
+  it('replaces and prunes the additive CellGalaxy composition', () => {
+    const record = galaxyComposition(10);
+    const seeded = applyRevisionedSemanticsDeltas(emptySemanticsCache(), [{
+      revision: 1,
+      delta: {
+        type: 'galaxy_composition_replace',
+        galaxy_composition: record,
+      },
+    }]);
+    expect(seeded.galaxyComposition).toBe(record);
+
+    const next = applyRevisionedSemanticsDeltas(seeded, [{
+      revision: 2,
+      delta: { type: 'prune', from_block: 10 },
+    }]);
+    expect(next.galaxyComposition).toBeNull();
   });
 
   it('clear does not erase source health', () => {

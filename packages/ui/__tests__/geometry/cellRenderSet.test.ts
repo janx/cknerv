@@ -1,16 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import type { Cell } from '@cknerv/types';
+import type { AssetKind, Cell, GalaxyCompositionRecord } from '@cknerv/types';
 import {
   cellRenderList,
   cellRenderMap,
   createCellRenderSetState,
+  currentActivityCellIds,
   sameCellRenderTopology,
   syncCellRenderSet,
 } from '../../src/geometry/cellRenderSet';
 import type { CellInspectionField } from '../../src/nerve/cellInspectionField';
 import { applyCellDelta, emptyCellsCache } from '@cknerv/cache';
 
-function cell(id: number): Cell {
+function cell(id: number, assetKind?: AssetKind): Cell {
   return {
     id,
     born_at_ms: 0,
@@ -22,6 +23,22 @@ function cell(id: number): Cell {
     capacity: 0,
     data_hex: '0x',
     content_hash: `0x${'00'.repeat(32)}`,
+    asset_kind: assetKind,
+  };
+}
+
+function composition(
+  dao: Cell[],
+  typed: Cell[],
+  plain: Cell[],
+): GalaxyCompositionRecord {
+  return {
+    source: 'ckbadger',
+    as_of: { block: 10, hash: '0xblock10' },
+    updated_at_ms: 1,
+    dao,
+    typed,
+    plain,
   };
 }
 
@@ -80,6 +97,75 @@ describe('cellRenderList', () => {
     expect(rendered).toHaveLength(4);
     expect(renderedMap.size).toBe(4);
     expect([...renderedMap.keys()]).toEqual(expect.arrayContaining([7, 8, 9]));
+  });
+
+  it('composes the 6000-cell resting field at exactly 30:40:30', () => {
+    const record = composition(
+      Array.from({ length: 1_800 }, (_, index) => cell(10_000 + index, 'dao')),
+      Array.from({ length: 2_400 }, (_, index) => cell(20_000 + index, 'xudt')),
+      Array.from({ length: 1_800 }, (_, index) => cell(30_000 + index, 'native')),
+    );
+
+    const rendered = cellRenderList(new Map(), 6_000, null, null, record);
+    const counts = rendered.reduce((acc, entry) => {
+      if (entry.asset_kind === 'dao') acc.dao += 1;
+      else if (entry.asset_kind === 'native') acc.plain += 1;
+      else acc.typed += 1;
+      return acc;
+    }, { dao: 0, typed: 0, plain: 0 });
+
+    expect(rendered).toHaveLength(6_000);
+    expect(counts).toEqual({ dao: 1_800, typed: 2_400, plain: 1_800 });
+  });
+
+  it('pins newest canonical activity inside its class quota', () => {
+    const record = composition(
+      [cell(101, 'dao'), cell(102, 'dao'), cell(103, 'dao')],
+      [cell(201, 'xudt'), cell(202, 'xudt'), cell(203, 'xudt'), cell(204, 'xudt')],
+      [cell(301, 'native'), cell(302, 'native'), cell(303, 'native')],
+    );
+    const active = cell(999, 'xudt');
+    const canonical = new Map([[active.id, active]]);
+
+    const rendered = cellRenderList(canonical, 10, null, null, record, [active.id]);
+
+    expect(rendered.map(({ id }) => id)).toContain(active.id);
+    expect(rendered.filter(({ asset_kind }) => asset_kind === 'dao')).toHaveLength(3);
+    expect(rendered.filter(({ asset_kind }) => asset_kind === 'native')).toHaveLength(3);
+    expect(rendered.filter(({ asset_kind }) => asset_kind === 'xudt')).toHaveLength(4);
+    expect(canonical.size).toBe(1);
+    expect(canonical.get(active.id)).toBe(active);
+  });
+
+  it('prefers a canonical Cell over an indexed copy of the same outpoint', () => {
+    const indexed = cell(101, 'dao');
+    const canonical = { ...cell(1, 'dao'), out_point: indexed.out_point };
+    const record = composition(
+      [indexed, cell(102, 'dao'), cell(103, 'dao')],
+      [cell(201, 'xudt'), cell(202, 'xudt'), cell(203, 'xudt'), cell(204, 'xudt')],
+      [cell(301, 'native'), cell(302, 'native'), cell(303, 'native')],
+    );
+
+    const rendered = cellRenderList(
+      new Map([[canonical.id, canonical]]),
+      10,
+      null,
+      null,
+      record,
+    );
+
+    expect(rendered.map(({ id }) => id)).toContain(canonical.id);
+    expect(rendered.map(({ id }) => id)).not.toContain(indexed.id);
+  });
+
+  it('extracts activity endpoints only from the newest block', () => {
+    const pulseLinks = [
+      { block: 9, from_ids: [1], to_ids: [2] },
+      { block: 10, from_ids: [3], to_ids: [4] },
+      { block: 10, from_ids: [4], to_ids: [5] },
+    ] as Parameters<typeof currentActivityCellIds>[0]['pulseLinks'];
+
+    expect(currentActivityCellIds({ pulseLinks })).toEqual([4, 5, 3]);
   });
 });
 

@@ -5,6 +5,7 @@
 //! canonical mutations.
 
 mod dto;
+mod galaxy_composition;
 mod source;
 
 pub use source::CkbadgerEnrichmentSource;

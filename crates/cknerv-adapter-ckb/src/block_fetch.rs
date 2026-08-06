@@ -197,51 +197,55 @@ fn parse_outputs(tx: &Value, tx_hash: &str) -> Result<Vec<TxOutputInfo>> {
         .unwrap_or(&[]);
     let mut outputs = Vec::with_capacity(outputs_json.len());
     for (i, o) in outputs_json.iter().enumerate() {
-        let capacity = parse_hex_u64(
-            &o["capacity"],
-            &format!("tx {tx_hash} output[{i}].capacity"),
-        )?;
         let raw_data_str = outputs_data
             .get(i)
             .and_then(|d| d.as_str())
             .ok_or_else(|| anyhow!("tx {tx_hash} output[{i}]: missing outputs_data entry"))?;
-        let raw_data_body = raw_data_str.strip_prefix("0x").unwrap_or(raw_data_str);
-        let raw_data_bytes = hex::decode(raw_data_body)
-            .map_err(|e| anyhow!("tx {tx_hash} output[{i}]: outputs_data not valid hex: {e}"))?;
-
-        // Lock + (optional) type → ckb_jsonrpc_types::Script → packed::Script
-        let lock_json: ckb_jsonrpc_types::Script = serde_json::from_value(o["lock"].clone())
-            .map_err(|e| anyhow!("tx {tx_hash} output[{i}].lock: {e}"))?;
-        let type_json: Option<ckb_jsonrpc_types::Script> = match o.get("type") {
-            Some(serde_json::Value::Null) | None => None,
-            Some(v) => Some(
-                serde_json::from_value(v.clone())
-                    .map_err(|e| anyhow!("tx {tx_hash} output[{i}].type: {e}"))?,
-            ),
-        };
-        let lock: packed::Script = lock_json.into();
-        let type_: Option<packed::Script> = type_json.map(|t| t.into());
-        // Classify BEFORE `lock`/`type_` are moved into the CellOutput builder.
-        let lock_kind = crate::script_taxonomy::classify_lock(&lock);
-        let asset_kind = crate::script_taxonomy::classify_asset(type_.as_ref());
-        let capacity_packed: packed::Uint64 = capacity.pack();
-        let cell_output = packed::CellOutput::new_builder()
-            .capacity(capacity_packed)
-            .lock(lock)
-            .type_(type_.pack())
-            .build();
-        let content_hash = compute_content_hash(&cell_output, &raw_data_bytes);
-
-        let data_hex = truncate_hex(raw_data_str, DATA_HEX_CAP_BYTES);
-        outputs.push(TxOutputInfo {
-            capacity,
-            data_hex,
-            content_hash,
-            lock_kind,
-            asset_kind,
-        });
+        outputs.push(parse_output_info(
+            o,
+            raw_data_str,
+            &format!("tx {tx_hash} output[{i}]"),
+        )?);
     }
     Ok(outputs)
+}
+
+pub(crate) fn parse_output_info(
+    output: &Value,
+    raw_data_str: &str,
+    context: &str,
+) -> Result<TxOutputInfo> {
+    let capacity = parse_hex_u64(&output["capacity"], &format!("{context}.capacity"))?;
+    let raw_data_body = raw_data_str.strip_prefix("0x").unwrap_or(raw_data_str);
+    let raw_data_bytes = hex::decode(raw_data_body)
+        .map_err(|error| anyhow!("{context}: output data is not valid hex: {error}"))?;
+
+    let lock_json: ckb_jsonrpc_types::Script = serde_json::from_value(output["lock"].clone())
+        .map_err(|error| anyhow!("{context}.lock: {error}"))?;
+    let type_json: Option<ckb_jsonrpc_types::Script> = match output.get("type") {
+        Some(Value::Null) | None => None,
+        Some(value) => Some(
+            serde_json::from_value(value.clone())
+                .map_err(|error| anyhow!("{context}.type: {error}"))?,
+        ),
+    };
+    let lock: packed::Script = lock_json.into();
+    let type_: Option<packed::Script> = type_json.map(Into::into);
+    let lock_kind = crate::script_taxonomy::classify_lock(&lock);
+    let asset_kind = crate::script_taxonomy::classify_asset(type_.as_ref());
+    let cell_output = packed::CellOutput::new_builder()
+        .capacity(capacity)
+        .lock(lock)
+        .type_(type_.pack())
+        .build();
+
+    Ok(TxOutputInfo {
+        capacity,
+        data_hex: truncate_hex(raw_data_str, DATA_HEX_CAP_BYTES),
+        content_hash: compute_content_hash(&cell_output, &raw_data_bytes),
+        lock_kind,
+        asset_kind,
+    })
 }
 
 fn parse_hex_u64(v: &Value, field: &str) -> Result<u64> {

@@ -1,4 +1,4 @@
-import type { Cell } from '@cknerv/types';
+import type { Cell, GalaxyCompositionRecord } from '@cknerv/types';
 import type { CellGalaxyCache } from '@cknerv/cache';
 import type { CellInspectionField } from '../nerve/cellInspectionField';
 
@@ -28,6 +28,8 @@ export interface CellRenderSetState {
   displayBudget: number | null;
   selectedCellId: number | null;
   inspectionField: CellInspectionField | null;
+  compositionToken: GalaxyCompositionRecord | null;
+  activityKey: string;
   topologyVersion: number;
 }
 
@@ -50,6 +52,8 @@ export function createCellRenderSetState(): CellRenderSetState {
     displayBudget: null,
     selectedCellId: null,
     inspectionField: null,
+    compositionToken: null,
+    activityKey: '',
     topologyVersion: 0,
   };
 }
@@ -203,13 +207,213 @@ export function pinSelectedCellInVisiblePrefix(
   );
 }
 
+type CompositionBucket = 'dao' | 'typed' | 'plain';
+
+const COMPOSITION_INTERLEAVE: readonly CompositionBucket[] = [
+  'dao', 'typed', 'plain', 'typed', 'dao',
+  'typed', 'plain', 'dao', 'typed', 'plain',
+];
+
+function compositionBucket(cell: Cell): CompositionBucket {
+  if (cell.asset_kind === 'dao') return 'dao';
+  if (cell.asset_kind === 'native') return 'plain';
+  return 'typed';
+}
+
+function compositionTargets(total: number): Record<CompositionBucket, number> {
+  const dao = Math.floor(total * 0.3);
+  const typed = Math.floor(total * 0.4);
+  return { dao, typed, plain: total - dao - typed };
+}
+
+function renderOutPointKey(cell: Cell): string {
+  return `${cell.out_point.tx_hash}:${cell.out_point.index}`;
+}
+
+/**
+ * Real endpoints from the newest observed block. They are display pins only:
+ * live pulse planning continues to consume the full canonical Cell map.
+ */
+export function currentActivityCellIds(
+  cache: Pick<CellGalaxyCache, 'pulseLinks'>,
+  maxIds = 512,
+): number[] {
+  const newest = cache.pulseLinks.at(-1);
+  if (!newest || maxIds <= 0) return [];
+  const ids = new Set<number>();
+  for (let index = cache.pulseLinks.length - 1; index >= 0; index -= 1) {
+    const link = cache.pulseLinks[index];
+    if (link.block !== newest.block) break;
+    for (const id of [...link.from_ids, ...link.to_ids]) {
+      ids.add(id);
+      if (ids.size >= maxIds) return [...ids];
+    }
+  }
+  return [...ids];
+}
+
+function composedCellRenderList(
+  canonicalCells: ReadonlyMap<number, Cell>,
+  visibleCount: number,
+  selectedCellId: number | null,
+  field: CellInspectionField | null,
+  composition: GalaxyCompositionRecord,
+  activityCellIds: readonly number[],
+): Cell[] {
+  const requestedCount = normalizeCellDisplayBudget(visibleCount);
+  if (requestedCount === 0) return [];
+
+  const canonicalByOutPoint = new Map<string, Cell>();
+  for (const cell of canonicalCells.values()) {
+    canonicalByOutPoint.set(renderOutPointKey(cell), cell);
+  }
+  const compositionById = new Map<number, Cell>();
+  for (const cell of [
+    ...composition.dao,
+    ...composition.typed,
+    ...composition.plain,
+  ]) {
+    compositionById.set(cell.id, cell);
+  }
+
+  const buckets: Record<CompositionBucket, Cell[]> = {
+    dao: [],
+    typed: [],
+    plain: [],
+  };
+  const admittedIds = new Set<number>();
+  const admittedOutPoints = new Set<string>();
+  const admit = (cell: Cell | undefined, expected?: CompositionBucket) => {
+    if (!cell) return;
+    const bucket = compositionBucket(cell);
+    if (expected !== undefined && bucket !== expected) return;
+    const outPoint = renderOutPointKey(cell);
+    if (admittedIds.has(cell.id) || admittedOutPoints.has(outPoint)) return;
+    admittedIds.add(cell.id);
+    admittedOutPoints.add(outPoint);
+    buckets[bucket].push(cell);
+  };
+  const cellById = (id: number) => canonicalCells.get(id) ?? compositionById.get(id);
+
+  // Selection/topology context and newest canonical activity lead each class;
+  // the indexed resting reservoir fills the remainder of that class's quota.
+  admit(selectedCellId === null ? undefined : cellById(selectedCellId));
+  if (field?.selectedCellId === selectedCellId) {
+    const fieldIds = [...field.hopsByCellId]
+      .filter(([, hop]) => Number.isFinite(hop) && hop >= 0 && hop <= field.maxHops)
+      .sort(([leftId, leftHop], [rightId, rightHop]) => (
+        leftHop - rightHop || leftId - rightId
+      ));
+    for (const [id] of fieldIds) admit(cellById(id));
+  }
+  for (const id of activityCellIds) admit(canonicalCells.get(id));
+
+  const admitCompositionBucket = (
+    expected: CompositionBucket,
+    cells: readonly Cell[],
+  ) => {
+    for (const indexedCell of cells) {
+      const resolved = canonicalByOutPoint.get(renderOutPointKey(indexedCell))
+        ?? indexedCell;
+      admit(resolved, expected);
+    }
+  };
+  admitCompositionBucket('dao', composition.dao);
+  admitCompositionBucket('typed', composition.typed);
+  admitCompositionBucket('plain', composition.plain);
+
+  // Canonical fallback keeps the requested proportions usable while one
+  // indexed class is sparse or a just-spent candidate awaits refresh.
+  for (const cell of canonicalCells.values()) admit(cell);
+
+  const available = buckets.dao.length + buckets.typed.length + buckets.plain.length;
+  const count = Math.min(requestedCount, available);
+  if (count === 0) return [];
+  const targets = compositionTargets(count);
+
+  // A direct selection is never sacrificed to rounding on very small test or
+  // manually constrained budgets. Normal AUTO budgets retain exact 30:40:30.
+  const selected = selectedCellId === null ? undefined : cellById(selectedCellId);
+  if (selected) {
+    const selectedBucket = compositionBucket(selected);
+    if (targets[selectedBucket] === 0) {
+      const donor = (['plain', 'typed', 'dao'] as const).find(
+        (bucket) => bucket !== selectedBucket && targets[bucket] > 0,
+      );
+      if (donor) {
+        targets[donor] -= 1;
+        targets[selectedBucket] += 1;
+      }
+    }
+  }
+
+  const chosen: Record<CompositionBucket, Cell[]> = {
+    dao: buckets.dao.slice(0, targets.dao),
+    typed: buckets.typed.slice(0, targets.typed),
+    plain: buckets.plain.slice(0, targets.plain),
+  };
+  let chosenCount = chosen.dao.length + chosen.typed.length + chosen.plain.length;
+  const nextIndex = {
+    dao: chosen.dao.length,
+    typed: chosen.typed.length,
+    plain: chosen.plain.length,
+  };
+  while (chosenCount < count) {
+    let progressed = false;
+    // Scarcity spills toward non-trivial Cells first.
+    for (const bucket of ['dao', 'typed', 'plain'] as const) {
+      const cell = buckets[bucket][nextIndex[bucket]];
+      if (!cell) continue;
+      chosen[bucket].push(cell);
+      nextIndex[bucket] += 1;
+      chosenCount += 1;
+      progressed = true;
+      if (chosenCount === count) break;
+    }
+    if (!progressed) break;
+  }
+
+  const rendered: Cell[] = [];
+  const cursors = { dao: 0, typed: 0, plain: 0 };
+  while (rendered.length < chosenCount) {
+    let progressed = false;
+    for (const preferred of COMPOSITION_INTERLEAVE) {
+      let bucket: CompositionBucket | undefined = preferred;
+      if (cursors[bucket] >= chosen[bucket].length) {
+        bucket = (['dao', 'typed', 'plain'] as const).find(
+          (candidate) => cursors[candidate] < chosen[candidate].length,
+        );
+      }
+      if (!bucket) break;
+      rendered.push(chosen[bucket][cursors[bucket]]);
+      cursors[bucket] += 1;
+      progressed = true;
+      if (rendered.length === chosenCount) break;
+    }
+    if (!progressed) break;
+  }
+  return rendered;
+}
+
 /** Build the one authoritative display subset shared by Cells and fibres. */
 export function cellRenderList(
   cells: ReadonlyMap<number, Cell>,
   visibleCount: number,
   selectedCellId: number | null,
   field: CellInspectionField | null,
+  composition: GalaxyCompositionRecord | null = null,
+  activityCellIds: readonly number[] = [],
 ): Cell[] {
+  if (composition) {
+    return composedCellRenderList(
+      cells,
+      visibleCount,
+      selectedCellId,
+      field,
+      composition,
+      activityCellIds,
+    );
+  }
   const requestedCount = normalizeCellDisplayBudget(visibleCount);
   const count = Math.min(
     cells.size,
@@ -283,6 +487,8 @@ function rebuildCellRenderSet(
   displayBudget: number,
   selectedCellId: number | null,
   inspectionField: CellInspectionField | null,
+  composition: GalaxyCompositionRecord | null = null,
+  activityCellIds: readonly number[] = [],
 ): CellRenderSetUpdate {
   const previous = state.cells;
   const resolved = cellRenderList(
@@ -290,6 +496,8 @@ function rebuildCellRenderSet(
     displayBudget,
     selectedCellId,
     inspectionField,
+    composition,
+    activityCellIds,
   );
   const diff = diffCellRenderSlots(previous, resolved);
   const topologyChanged = !sameCellRenderListTopology(previous, resolved);
@@ -303,6 +511,8 @@ function rebuildCellRenderSet(
   state.displayBudget = displayBudget;
   state.selectedCellId = selectedCellId;
   state.inspectionField = inspectionField;
+  state.compositionToken = composition;
+  state.activityKey = composition ? activityCellIds.join(':') : '';
   if (topologyChanged) state.topologyVersion += 1;
 
   return {
@@ -329,11 +539,16 @@ export function syncCellRenderSet(
   visibleCount: number,
   selectedCellId: number | null,
   inspectionField: CellInspectionField | null,
+  composition: GalaxyCompositionRecord | null = null,
+  activityCellIds: readonly number[] = [],
 ): CellRenderSetUpdate {
   const displayBudget = normalizeCellDisplayBudget(visibleCount);
+  const activityKey = composition ? activityCellIds.join(':') : '';
   const structuralInputsMatch = state.displayBudget === displayBudget
     && state.selectedCellId === selectedCellId
-    && state.inspectionField === inspectionField;
+    && state.inspectionField === inspectionField
+    && state.compositionToken === composition
+    && state.activityKey === activityKey;
 
   if (state.cellsToken === cache.cellsToken && structuralInputsMatch) {
     return {
@@ -348,7 +563,8 @@ export function syncCellRenderSet(
 
   const changes = cache.cellChanges;
   if (
-    !structuralInputsMatch
+    composition !== null
+    || !structuralInputsMatch
     || state.cellsToken === null
     || changes.reset
     || changes.orderInvalidated
@@ -360,6 +576,8 @@ export function syncCellRenderSet(
       displayBudget,
       selectedCellId,
       inspectionField,
+      composition,
+      activityCellIds,
     );
   }
 

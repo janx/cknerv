@@ -26,6 +26,7 @@ const ENRICHMENT_ACTIVITY_REFRESH: Duration = Duration::from_secs(15);
 const ENRICHMENT_TRANSACTION_HORIZON_REFRESH: Duration = Duration::from_secs(60);
 const ENRICHMENT_FORK_WATCH_REFRESH: Duration = Duration::from_secs(15);
 const ENRICHMENT_NETWORK_ATLAS_REFRESH: Duration = Duration::from_secs(60);
+const ENRICHMENT_GALAXY_COMPOSITION_REFRESH: Duration = Duration::from_secs(15 * 60);
 const MAX_CONCURRENT_REFRESHES: usize = 3;
 
 #[derive(Clone, Copy)]
@@ -39,6 +40,7 @@ struct RefreshCadence {
     transaction_horizon: Duration,
     fork_watch: Duration,
     network_atlas: Duration,
+    galaxy_composition: Duration,
     max_concurrent: usize,
 }
 
@@ -54,6 +56,7 @@ impl Default for RefreshCadence {
             transaction_horizon: ENRICHMENT_TRANSACTION_HORIZON_REFRESH,
             fork_watch: ENRICHMENT_FORK_WATCH_REFRESH,
             network_atlas: ENRICHMENT_NETWORK_ATLAS_REFRESH,
+            galaxy_composition: ENRICHMENT_GALAXY_COMPOSITION_REFRESH,
             max_concurrent: MAX_CONCURRENT_REFRESHES,
         }
     }
@@ -68,9 +71,10 @@ enum RefreshKind {
     TransactionHorizon,
     ForkWatch,
     NetworkAtlas,
+    GalaxyComposition,
 }
 
-const REFRESH_KINDS: [RefreshKind; 7] = [
+const REFRESH_KINDS: [RefreshKind; 8] = [
     RefreshKind::AssetEcosystem,
     RefreshKind::DaoState,
     RefreshKind::ProtocolEra,
@@ -78,6 +82,7 @@ const REFRESH_KINDS: [RefreshKind; 7] = [
     RefreshKind::TransactionHorizon,
     RefreshKind::ForkWatch,
     RefreshKind::NetworkAtlas,
+    RefreshKind::GalaxyComposition,
 ];
 
 impl RefreshKind {
@@ -90,6 +95,7 @@ impl RefreshKind {
             Self::TransactionHorizon => "transaction_horizon",
             Self::ForkWatch => "fork_watch",
             Self::NetworkAtlas => "network_atlas",
+            Self::GalaxyComposition => "galaxy_composition",
         }
     }
 
@@ -102,6 +108,7 @@ impl RefreshKind {
             Self::TransactionHorizon => cadence.transaction_horizon,
             Self::ForkWatch => cadence.fork_watch,
             Self::NetworkAtlas => cadence.network_atlas,
+            Self::GalaxyComposition => cadence.galaxy_composition,
         }
     }
 
@@ -170,6 +177,10 @@ impl RefreshKind {
                 .enrich_network_atlas(context)
                 .await
                 .map(|record| record.map(EnrichmentEvent::NetworkAtlasReplace)),
+            Self::GalaxyComposition => source
+                .enrich_galaxy_composition(context)
+                .await
+                .map(|record| record.map(EnrichmentEvent::GalaxyCompositionReplace)),
         }
     }
 }
@@ -570,6 +581,7 @@ mod tests {
             transaction_horizon: Duration::from_secs(60),
             fork_watch: Duration::from_secs(60),
             network_atlas: Duration::from_secs(60),
+            galaxy_composition: Duration::from_secs(60),
             max_concurrent: 1,
         }
     }
@@ -603,6 +615,7 @@ mod tests {
             transaction_horizon: Duration::from_secs(1),
             fork_watch: Duration::from_secs(1),
             network_atlas: Duration::from_secs(1),
+            galaxy_composition: Duration::from_secs(1),
             max_concurrent: 2,
         };
         let handle = tokio::spawn(run(source, state, out, shutdown_rx, cadence));

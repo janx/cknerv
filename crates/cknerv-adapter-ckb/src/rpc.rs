@@ -8,8 +8,10 @@
 //! the slice of fields cknerv consumes.
 
 use anyhow::{anyhow, Result};
+use cknerv_core::OutPoint;
 use serde::Serialize;
 use serde_json::Value;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use url::Url;
 
@@ -135,5 +137,85 @@ impl RpcClient {
 
     pub async fn sync_state(&self) -> Result<Value> {
         self.call("sync_state", Value::Array(vec![])).await
+    }
+
+    /// Batch `get_live_cell` while preserving request order. Individual RPC
+    /// errors and non-live outpoints become `None`; transport or malformed
+    /// batch responses fail the refresh so callers can retain their last good
+    /// composition instead of publishing a partial transport accident.
+    pub async fn get_live_cells(
+        &self,
+        out_points: &[OutPoint],
+        with_data: bool,
+    ) -> Result<Vec<Option<Value>>> {
+        if out_points.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let first_id = self
+            .id_counter
+            .fetch_add(out_points.len() as u64, Ordering::SeqCst);
+        let requests: Vec<_> = out_points
+            .iter()
+            .enumerate()
+            .map(|(offset, out_point)| Req {
+                jsonrpc: "2.0",
+                method: "get_live_cell",
+                params: serde_json::json!([{
+                    "tx_hash": out_point.tx_hash,
+                    "index": format!("0x{:x}", out_point.index),
+                }, with_data]),
+                id: first_id + offset as u64,
+            })
+            .collect();
+        let resp_bytes = self
+            .http
+            .post(self.base_url.clone())
+            .json(&requests)
+            .send()
+            .await?
+            .bytes()
+            .await?;
+        let responses: Vec<Value> = serde_json::from_slice(&resp_bytes).map_err(|error| {
+            anyhow!(
+                "parse get_live_cell batch response: {error}; body: {}",
+                String::from_utf8_lossy(&resp_bytes)
+            )
+        })?;
+        let mut by_id = HashMap::with_capacity(responses.len());
+        for mut response in responses {
+            let Some(id) = response.get("id").and_then(Value::as_u64) else {
+                return Err(anyhow!(
+                    "malformed get_live_cell batch response: missing id"
+                ));
+            };
+            if by_id.insert(id, std::mem::take(&mut response)).is_some() {
+                return Err(anyhow!(
+                    "malformed get_live_cell batch response: duplicate id {id}"
+                ));
+            }
+        }
+
+        let mut ordered = Vec::with_capacity(out_points.len());
+        for offset in 0..out_points.len() {
+            let id = first_id + offset as u64;
+            let response = by_id
+                .remove(&id)
+                .ok_or_else(|| anyhow!("get_live_cell batch response omitted id {id}"))?;
+            if response.get("error").is_some_and(|value| !value.is_null()) {
+                ordered.push(None);
+                continue;
+            }
+            let result = response
+                .get("result")
+                .cloned()
+                .ok_or_else(|| anyhow!("get_live_cell batch id {id}: missing result"))?;
+            if result.get("status").and_then(Value::as_str) != Some("live") {
+                ordered.push(None);
+                continue;
+            }
+            ordered.push(Some(result));
+        }
+        Ok(ordered)
     }
 }

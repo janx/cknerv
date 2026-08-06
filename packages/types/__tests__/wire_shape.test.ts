@@ -159,6 +159,8 @@ describe('wire-shape parity (TS twin of cknerv-core)', () => {
     expect(sample.snapshot.transaction_horizon?.hourly_counts).toEqual([7, 9, 12]);
     expect(sample.snapshot.network_atlas?.sample_size).toBe(3);
     expect(sample.snapshot.network_atlas?.countries[0].label).toBe('SG');
+    expect(sample.snapshot.galaxy_composition?.source).toBe('ckbadger');
+    expect(sample.snapshot.galaxy_composition?.typed).toEqual([]);
     expect(sample.deltas.cell_upsert.type).toBe('cell_upsert');
     expect(sample.deltas.asset_ecosystem_replace.type).toBe('asset_ecosystem_replace');
     expect(sample.deltas.dao_state_replace.type).toBe('dao_state_replace');
@@ -168,6 +170,8 @@ describe('wire-shape parity (TS twin of cknerv-core)', () => {
     expect(sample.deltas.transaction_horizon_replace.type).toBe('transaction_horizon_replace');
     expect(sample.deltas.network_atlas_replace.type).toBe('network_atlas_replace');
     expect(sample.deltas.network_atlas_clear.type).toBe('network_atlas_clear');
+    expect(sample.deltas.galaxy_composition_replace.type)
+      .toBe('galaxy_composition_replace');
     expect(sample.deltas.prune).toEqual({ type: 'prune', from_block: 100 });
   });
 });

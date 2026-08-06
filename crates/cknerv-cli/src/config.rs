@@ -284,8 +284,8 @@ pub const CKNERV_TOML_TEMPLATE: &str = r#"# cknerv configuration. Priority: CLI 
 # CKB JSON-RPC endpoint.
 rpc_url = "http://localhost:8114"
 
-# Optional indexed semantics. Uncomment the three configuration lines below
-# to enable ckbadger. See docs/ckbadger.md for endpoint options and behavior.
+# Optional indexed semantics and CellGalaxy composition. Uncomment the three
+# configuration lines below to enable ckbadger. See docs/ckbadger.md.
 # Direct API example:       http://127.0.0.1:8101/api/v1
 # Orchestrator API example: http://127.0.0.1:8100/api/mainnet/v1
 # [ckbadger]

@@ -19,9 +19,11 @@ pub mod adapter;
 mod backfill;
 pub mod block_fetch;
 pub mod content_hash;
+mod galaxy_composition;
 mod network;
 pub mod poll;
 pub mod rpc;
 mod script_taxonomy;
 
 pub use adapter::CkbDirectAdapter;
+pub use galaxy_composition::CkbGalaxyCompositionHydrator;

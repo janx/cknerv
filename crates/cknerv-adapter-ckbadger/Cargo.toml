@@ -10,6 +10,7 @@ cknerv-core = { path = "../cknerv-core" }
 cknerv-server = { path = "../cknerv-server" }
 anyhow.workspace = true
 async-trait.workspace = true
+futures = "0.3"
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true

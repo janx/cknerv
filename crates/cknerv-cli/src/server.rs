@@ -11,7 +11,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 
 use anyhow::Result;
-use cknerv_adapter_ckb::CkbDirectAdapter;
+use cknerv_adapter_ckb::{CkbDirectAdapter, CkbGalaxyCompositionHydrator};
 use cknerv_adapter_ckbadger::CkbadgerEnrichmentSource;
 use cknerv_core::{CellGalaxy, SemanticsProjection, DEFAULT_REORG_WINDOW_BLOCKS};
 use cknerv_server::{EnrichmentSource, ServerBuilder};
@@ -95,12 +95,20 @@ pub async fn run(workdir: PathBuf, cfg: ResolvedConfig) -> Result<()> {
     };
     let runtime_galaxy = cfg.galaxy.clone();
     let runtime_enrichment_source = cfg.ckbadger.as_ref().map(|_| "ckbadger");
+    let composition_rpc_url = cfg.rpc_url.clone();
+    let composition_target = cfg.galaxy.cell_cap;
     let ckbadger_source = cfg
         .ckbadger
         .as_ref()
         .map(|ckbadger| {
-            CkbadgerEnrichmentSource::new(ckbadger.api_url.clone())
-                .map(|source| source.with_max_lag_blocks(ckbadger.max_lag_blocks))
+            CkbadgerEnrichmentSource::new(ckbadger.api_url.clone()).map(|source| {
+                source
+                    .with_max_lag_blocks(ckbadger.max_lag_blocks)
+                    .with_galaxy_composition_hydrator(
+                        CkbGalaxyCompositionHydrator::new(composition_rpc_url.clone()),
+                        composition_target,
+                    )
+            })
         })
         .transpose()?;
     let configured_semantics_source = ckbadger_source
