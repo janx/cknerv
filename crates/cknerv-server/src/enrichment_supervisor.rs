@@ -105,12 +105,15 @@ impl RefreshKind {
         }
     }
 
-    fn ready(self, status: &EnrichmentSourceStatus) -> bool {
-        if !status
+    fn supported(self, status: &EnrichmentSourceStatus) -> bool {
+        status
             .capabilities
             .iter()
             .any(|capability| capability == self.capability())
-        {
+    }
+
+    fn ready(self, status: &EnrichmentSourceStatus) -> bool {
+        if !self.supported(status) {
             return false;
         }
 
@@ -176,6 +179,7 @@ struct RefreshTracker {
     last_started: HashMap<RefreshKind, Instant>,
     in_flight: HashSet<RefreshKind>,
     published: HashSet<RefreshKind>,
+    initial_dao_retry_pending: bool,
 }
 
 impl RefreshTracker {
@@ -188,6 +192,9 @@ impl RefreshTracker {
         if !kind.ready(status) {
             self.last_started.remove(&kind);
             self.published.remove(&kind);
+            if kind == RefreshKind::DaoState {
+                self.initial_dao_retry_pending = kind.supported(status);
+            }
             return false;
         }
         !self.in_flight.contains(&kind)
@@ -200,20 +207,35 @@ impl RefreshTracker {
     fn started(&mut self, kind: RefreshKind) {
         self.last_started.insert(kind, Instant::now());
         self.in_flight.insert(kind);
+        if kind == RefreshKind::DaoState {
+            self.initial_dao_retry_pending = false;
+        }
     }
 
     fn finished(&mut self, kind: RefreshKind, published: bool) {
         self.in_flight.remove(&kind);
         if published {
             self.published.insert(kind);
+            if kind == RefreshKind::DaoState {
+                self.initial_dao_retry_pending = false;
+            }
         } else if kind == RefreshKind::DaoState && !self.published.contains(&kind) {
             // A DAO singleton can advance between the compatibility probe and
             // its aggregate request. The source deliberately withholds that
             // unproven record as `None`; until the first usable snapshot is
-            // published, retry on the next probe instead of hiding DAO·05 for
-            // the full steady-state minute cadence.
+            // published, make it due again and let newer canonical evidence
+            // wake the probe immediately.
             self.last_started.remove(&kind);
+            self.initial_dao_retry_pending = true;
         }
+    }
+
+    fn awaiting_initial_dao_retry(&self) -> bool {
+        self.initial_dao_retry_pending && !self.in_flight.contains(&RefreshKind::DaoState)
+    }
+
+    fn canonical_retry_scheduled(&mut self) {
+        self.initial_dao_retry_pending = false;
     }
 }
 
@@ -240,6 +262,7 @@ async fn run(
 ) {
     let mut interval = tokio::time::interval(cadence.probe);
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut canonical_evidence = state.subscribe_canonical_evidence();
     let mut last_status = None;
     let mut last_publish = Instant::now()
         .checked_sub(cadence.status)
@@ -285,6 +308,25 @@ async fn run(
                         }
                     });
                 }
+            }
+            changed = canonical_evidence.changed(), if tracker.awaiting_initial_dao_retry() => {
+                if changed.is_err() {
+                    // ServerState outlives this supervisor in normal wiring.
+                    // If its signal ever closes, retain the periodic probe
+                    // without spinning on a permanently-ready error.
+                    tracker.canonical_retry_scheduled();
+                    continue;
+                }
+                let context = state.canonical_context();
+                if context.replay_active || context.recent_blocks.is_empty() {
+                    continue;
+                }
+
+                // Coalesce any canonical movement observed while the DAO
+                // request was in flight, then reuse the ordinary probe path
+                // immediately with a fresh context and proof.
+                tracker.canonical_retry_scheduled();
+                interval.reset_immediately();
             }
             completion = refreshes.join_next(), if !refreshes.is_empty() => {
                 let Some(completion) = completion else {
@@ -359,7 +401,7 @@ mod tests {
     use async_trait::async_trait;
     use cknerv_core::{
         ActivityFeedItem, ActivityFeedRecord, AssetEcosystemRecord, ChainAnchor, DaoStateRecord,
-        Mutation,
+        Mutation, ReplayPhase,
     };
 
     use super::*;
@@ -369,8 +411,9 @@ mod tests {
         ecosystem_calls: Arc<AtomicUsize>,
     }
 
-    struct InitiallyWithheldDaoSource {
+    struct DaoFixtureSource {
         dao_calls: Arc<AtomicUsize>,
+        withhold_first: bool,
     }
 
     #[async_trait]
@@ -443,7 +486,7 @@ mod tests {
     }
 
     #[async_trait]
-    impl EnrichmentSource for InitiallyWithheldDaoSource {
+    impl EnrichmentSource for DaoFixtureSource {
         fn name(&self) -> &'static str {
             "dao-fixture"
         }
@@ -453,7 +496,18 @@ mod tests {
         }
 
         async fn probe(&self, context: &CanonicalContext) -> EnrichmentSourceStatus {
-            let block = context.recent_blocks.last().expect("canonical block");
+            let Some(block) = context.recent_blocks.last() else {
+                return EnrichmentSourceStatus {
+                    source: self.name().to_string(),
+                    status: EnrichmentSourceState::Syncing,
+                    capabilities: self.capabilities(),
+                    indexed_tip: Some(context.tip),
+                    lag_blocks: Some(0),
+                    validated_anchor: None,
+                    last_success_at_ms: None,
+                    message: Some("waiting for canonical block evidence".to_string()),
+                };
+            };
             EnrichmentSourceStatus {
                 source: self.name().to_string(),
                 status: EnrichmentSourceState::Ready,
@@ -481,7 +535,7 @@ mod tests {
             &self,
             context: &CanonicalContext,
         ) -> anyhow::Result<Option<DaoStateRecord>> {
-            if self.dao_calls.fetch_add(1, Ordering::Relaxed) == 0 {
+            if self.dao_calls.fetch_add(1, Ordering::Relaxed) == 0 && self.withhold_first {
                 return Ok(None);
             }
             let block = context.recent_blocks.last().expect("canonical block");
@@ -502,6 +556,21 @@ mod tests {
                 deposit_change_24h_shannons: None,
                 depositors_change_24h: None,
             }))
+        }
+    }
+
+    fn cold_start_cadence() -> RefreshCadence {
+        RefreshCadence {
+            probe: Duration::from_secs(10),
+            status: Duration::from_secs(60),
+            ecosystem: Duration::from_secs(60),
+            dao_state: Duration::from_secs(60),
+            protocol_era: Duration::from_secs(60),
+            activity: Duration::from_secs(60),
+            transaction_horizon: Duration::from_secs(60),
+            fork_watch: Duration::from_secs(60),
+            network_atlas: Duration::from_secs(60),
+            max_concurrent: 1,
         }
     }
 
@@ -570,7 +639,86 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn dao_state_retries_on_probe_cadence_until_first_record() {
+    async fn dao_state_starts_when_first_canonical_evidence_arrives() {
+        let state = Arc::new(ServerState::new());
+        let dao_calls = Arc::new(AtomicUsize::new(0));
+        let source: Arc<dyn EnrichmentSource> = Arc::new(DaoFixtureSource {
+            dao_calls: dao_calls.clone(),
+            withhold_first: false,
+        });
+        let (out, mut events) = mpsc::channel(16);
+        let (shutdown, shutdown_rx) = watch::channel(false);
+        let handle = tokio::spawn(run(
+            source,
+            state.clone(),
+            out,
+            shutdown_rx,
+            cold_start_cadence(),
+        ));
+
+        tokio::time::timeout(Duration::from_millis(250), async {
+            loop {
+                if matches!(
+                    events.recv().await,
+                    Some(EnrichmentEvent::SourceStatus(EnrichmentSourceStatus {
+                        status: EnrichmentSourceState::Syncing,
+                        ..
+                    }))
+                ) {
+                    break;
+                }
+            }
+        })
+        .await
+        .expect("initial probe reports that canonical evidence is missing");
+
+        state.apply_mutation(Mutation::BackfillProgress {
+            done: 0,
+            total: 1,
+            active: true,
+            phase: ReplayPhase::Boot,
+        });
+        state.apply_mutation(Mutation::BlockMined {
+            number: 7,
+            hash: "0xblock7".to_string(),
+            tx_count: 1,
+            size: 1,
+            at: 1,
+        });
+        tokio::time::sleep(Duration::from_millis(30)).await;
+        assert_eq!(
+            dao_calls.load(Ordering::Relaxed),
+            0,
+            "DAO refresh stays gated while canonical replay is active"
+        );
+        state.apply_mutation(Mutation::BackfillProgress {
+            done: 1,
+            total: 1,
+            active: false,
+            phase: ReplayPhase::Boot,
+        });
+
+        let dao = tokio::time::timeout(Duration::from_millis(250), async {
+            loop {
+                if let Some(EnrichmentEvent::DaoStateReplace(dao)) = events.recv().await {
+                    break dao;
+                }
+            }
+        })
+        .await
+        .expect("canonical evidence wakes the initial DAO refresh");
+        assert_eq!(dao.statistics_block, 7);
+        assert_eq!(dao_calls.load(Ordering::Relaxed), 1);
+
+        shutdown.send(true).unwrap();
+        tokio::time::timeout(Duration::from_secs(1), handle)
+            .await
+            .expect("supervisor stops")
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn withheld_dao_state_retries_when_canonical_evidence_advances() {
         let state = Arc::new(ServerState::new());
         state.apply_mutation(Mutation::BlockMined {
             number: 7,
@@ -581,39 +729,55 @@ mod tests {
         });
 
         let dao_calls = Arc::new(AtomicUsize::new(0));
-        let source: Arc<dyn EnrichmentSource> = Arc::new(InitiallyWithheldDaoSource {
+        let source: Arc<dyn EnrichmentSource> = Arc::new(DaoFixtureSource {
             dao_calls: dao_calls.clone(),
+            withhold_first: true,
         });
         let (out, mut events) = mpsc::channel(16);
         let (shutdown, shutdown_rx) = watch::channel(false);
-        let cadence = RefreshCadence {
-            probe: Duration::from_millis(20),
-            status: Duration::from_secs(1),
-            ecosystem: Duration::from_secs(1),
-            dao_state: Duration::from_secs(1),
-            protocol_era: Duration::from_secs(1),
-            activity: Duration::from_secs(1),
-            transaction_horizon: Duration::from_secs(1),
-            fork_watch: Duration::from_secs(1),
-            network_atlas: Duration::from_secs(1),
-            max_concurrent: 1,
-        };
-        let handle = tokio::spawn(run(source, state, out, shutdown_rx, cadence));
+        let handle = tokio::spawn(run(
+            source,
+            state.clone(),
+            out,
+            shutdown_rx,
+            cold_start_cadence(),
+        ));
 
         tokio::time::timeout(Duration::from_millis(250), async {
+            while dao_calls.load(Ordering::Relaxed) == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("initial DAO request completes");
+
+        state.apply_mutation(Mutation::BlockMined {
+            number: 8,
+            hash: "0xblock8".to_string(),
+            tx_count: 1,
+            size: 1,
+            at: 2,
+        });
+
+        let dao = tokio::time::timeout(Duration::from_millis(250), async {
             loop {
-                if matches!(
-                    events.recv().await,
-                    Some(EnrichmentEvent::DaoStateReplace(_))
-                ) {
-                    break;
+                if let Some(EnrichmentEvent::DaoStateReplace(dao)) = events.recv().await {
+                    break dao;
                 }
             }
         })
         .await
-        .expect("withheld initial DAO state retries before its minute cadence");
+        .expect("new canonical evidence retries the withheld DAO state");
+        assert_eq!(dao.statistics_block, 8);
         assert_eq!(dao_calls.load(Ordering::Relaxed), 2);
 
+        state.apply_mutation(Mutation::BlockMined {
+            number: 9,
+            hash: "0xblock9".to_string(),
+            tx_count: 1,
+            size: 1,
+            at: 3,
+        });
         tokio::time::sleep(Duration::from_millis(60)).await;
         assert_eq!(
             dao_calls.load(Ordering::Relaxed),

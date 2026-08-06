@@ -178,9 +178,11 @@ the data differently from the rows above and below.
 With `dao_state`, cknerv refreshes the fixed-shape `dao/statistics` singleton
 once every 60 seconds after the first valid snapshot. Its `statistics_block`
 cannot be ahead of the last block/hash anchor proven by cknerv. If ckbadger
-advances between probe and fetch, the newer singleton is withheld; while no
-valid snapshot is available yet, cknerv retries it on the five-second source
-probe cadence so `DAO·05` does not inherit a full cold-start refresh delay.
+advances between probe and fetch, the newer singleton is withheld. While no
+valid snapshot is available yet, newer canonical block evidence wakes an
+immediate probe and DAO retry; the five-second source probe remains the
+fallback when no chain update arrives. `DAO·05` therefore does not inherit a
+fixed cold-start delay or the full steady-state minute cadence.
 
 The normalized record keeps locked, pending-withdrawal,
 unclaimed-compensation, and optional signed 24-hour change values as exact
