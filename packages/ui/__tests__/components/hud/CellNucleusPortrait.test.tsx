@@ -123,6 +123,11 @@ describe('CellNucleusPortrait production language', () => {
     expect(SOURCE).toContain('data-cell-portrait-interactive="true"');
     expect(SOURCE).toContain("data-cell-portrait-dragging={dragging ? 'true' : 'false'}");
     expect(SOURCE).toContain('Interactive Cell scan. Drag to orbit around the Cell.');
+    expect(SOURCE).toContain('onInteractionChange?.(true)');
+    expect(SOURCE).toContain('onInteractionChange?.(false)');
+    expect(SOURCE).toContain('onPointerDown={(event) => event.stopPropagation()}');
+    expect(SOURCE).not.toContain('onPointerUp={(event) => event.stopPropagation()}');
+    expect(SOURCE).not.toContain('onPointerMove={(event) => event.stopPropagation()}');
     expect(SOURCE).toContain("pointerEvents: 'auto'");
     expect(SOURCE).toContain("cursor: dragging ? 'grabbing' : 'grab'");
     expect(SOURCE).toContain('<OrbitControls');

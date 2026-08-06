@@ -127,21 +127,23 @@ status strip. Cell inspection is not docked in a fixed HUD rail and has no tab
 or popup shell. A physical cage, moving scan plane, and semantic orbits surround
 the selected canonical Cell. A larger **CELL SCAN** reuses the same code-native
 Cell artwork with its flowing-light scan and supports pointer-drag orbiting for
-inspection from different angles. Identity, structural facts, indexed context,
-and lineage render as independently spaced satellites rather than one
-continuous panel. Every satellite follows the same projected point, flips as a
-constellation around viewport edges, and stays connected to the Cell. Ambient
-HUD rails dim while the scan is active so the Cell remains the single visual
-focus.
+inspection from different angles. That nested gesture owns the pointer until
+release: the Cell Scan camera moves while the Galaxy camera remains fixed.
+Identity, structural facts, indexed context, and lineage render as independently
+spaced satellites rather than one continuous panel. Every satellite follows the
+same projected point, flips as a constellation around viewport edges, and stays
+connected to the Cell. Ambient HUD rails dim while the scan is active so the
+Cell remains the single visual focus.
 
-**CONTEXT** exposes the normalized ckbadger detail already admitted through the
-canonical anchor: exact script args and hash type, known/deprecated script
-state, deterministic or heuristic data-analysis fields, DAO lifecycle facts,
-dep-group members, code-cell associations, and occupied-byte composition. The
-origin transaction readout also uses its available size, fee rate,
-confirmations, capacity/occupied-byte flow, commitment window, and participant
-deltas. Values remain bounded by the shared wire types; arbitrary source JSON
-does not enter the browser.
+The selected-Cell satellites are deliberately no-scroll summaries. **CONSENSUS
+MEMORY** keeps the address, content identity, birth anchor, and a one-glance
+causal provenance line; activating recall temporarily opens **MEMORY TRACE** as
+a separate evidence satellite. **CELL CONTEXT** keeps owner, creation and proof
+anchors, resolved asset identity, lock/type script identity with code hash type
+and args, occupied-byte composition, and only the primary semantic facet. It
+does not stack every decoded facet or origin-transaction field into the spatial
+inspection view. Values remain bounded by the shared wire types; arbitrary
+source JSON does not enter the browser.
 
 One billboarded semantic orbit appears around the selected canonical Cell:
 inner CAP/LOCK/TYPE/DATA arcs show its occupied-byte breakdown, and an outer

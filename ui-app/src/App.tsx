@@ -198,6 +198,9 @@ export default function App({
   const qualityRuntime = useQualityRuntime();
   const qualityCascade = QUALITY_PRESETS[qualityRuntime.effective];
   const orbitControlsRef = useRef<ElementRef<typeof OrbitControls>>(null);
+  const [cellScanInteractionActive, setCellScanInteractionActive] = useState(
+    false,
+  );
   const cellDetailViewFocusRef = useRef(0);
   const [orbitInteractionRevision, noteOrbitInteraction] = useReducer(
     (revision: number) => revision + 1,
@@ -1171,6 +1174,7 @@ export default function App({
                       : undefined}
                     semanticTransactionRecord={selectedTransactionSemantics}
                     semanticTransactionMessage={selectedTransactionLookup.message}
+                    onScanInteractionChange={setCellScanInteractionActive}
                     onClose={clearCellSelection}
                   />
                 ) : null}
@@ -1256,6 +1260,7 @@ export default function App({
 
           <OrbitControls
             ref={orbitControlsRef}
+            enabled={!cellScanInteractionActive}
             enableDamping
             dampingFactor={0.08}
             minDistance={4}
