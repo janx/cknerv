@@ -57,11 +57,15 @@ const SCAN_STYLE: CSSProperties = { position: 'absolute', inset: 0, pointerEvent
 // self-positioning. Container shrink-wraps and pins its right edge, so the meshes
 // never shift when a detail appears — the row just grows leftward.
 const MESH_RAIL_STYLE: CSSProperties = { position: 'absolute', top: 42, right: 14, display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'flex-end' };
+const LEFT_PANEL_GAP_PX = 12;
+const CHAIN_PANEL_WIDTH_PX = 340;
+const DAO_PANEL_WIDTH_PX = 300;
+const PULSE_ONLY_WIDTH_PX = 430;
 // Left HUD layout: the upper information cluster may scroll, while PULSE uses an
 // auto margin as a true bottom-left anchor. The two regions share one bounded
 // flex column, so an unusually tall CKB/DAO readout can never overlap ECG·04.
 const LEFT_HUD_STYLE: CSSProperties = { position: 'absolute', left: 14, bottom: 14, display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'flex-start', minHeight: 0 };
-const CHAIN_CLUSTER_STYLE: CSSProperties = { display: 'flex', flex: '1 1 auto', flexDirection: 'row', gap: 12, alignItems: 'flex-start', minHeight: 0, maxWidth: '100%', overflowX: 'auto', overflowY: 'hidden', overscrollBehavior: 'contain', scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,152,48,.35) transparent', pointerEvents: 'auto' };
+const CHAIN_CLUSTER_STYLE: CSSProperties = { display: 'flex', flex: '1 1 auto', flexDirection: 'row', gap: LEFT_PANEL_GAP_PX, alignItems: 'flex-start', minHeight: 0, maxWidth: '100%', overflowX: 'auto', overflowY: 'hidden', overscrollBehavior: 'contain', scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,152,48,.35) transparent', pointerEvents: 'auto' };
 // Narrow: the selected network detail owns the immediately visible rail area;
 // its mesh follows below.
 const MESH_ZONE_COL: CSSProperties = { display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'flex-end' };
@@ -133,6 +137,14 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats, cellCo
     DEFAULT_PANEL_VISIBILITY,
   );
   const daoPanelAvailable = canRenderDaoStateReadout(enrichmentSource, daoState);
+  const chainPanelVisible = panelVisibility.chain;
+  const daoPanelVisible = panelVisibility.dao && daoPanelAvailable;
+  const upperPanelWidthPx = (chainPanelVisible ? CHAIN_PANEL_WIDTH_PX : 0)
+    + (daoPanelVisible ? DAO_PANEL_WIDTH_PX : 0)
+    + (chainPanelVisible && daoPanelVisible ? LEFT_PANEL_GAP_PX : 0);
+  const pulsePanelWidth = upperPanelWidthPx > 0
+    ? `min(${upperPanelWidthPx}px, calc(100vw - ${chainPanelVisible && daoPanelVisible ? 28 : 58}px))`
+    : `min(${PULSE_ONLY_WIDTH_PX}px, calc(100vw - 58px))`;
   const panelControls: HudPanelControl[] = [
     {
       id: 'chain',
@@ -276,20 +288,20 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats, cellCo
         />
       ) : null}
       <WarningBar level={alert.level} trigger={alert.trigger} reducedMotion={reduced} top={topBarHeight + (streamInterrupted ? 30 : 0)} />
-      {panelVisibility.chain
-      || (panelVisibility.dao && daoPanelAvailable)
+      {chainPanelVisible
+      || daoPanelVisible
       || panelVisibility.pulse ? (
         <div
           data-hud-left-rail
           style={{ ...LEFT_HUD_STYLE, ...ambientHudStyle, top: contentTop, maxWidth: 'calc(100vw - 28px)' }}
         >
-          {panelVisibility.chain || (panelVisibility.dao && daoPanelAvailable) ? (
+          {chainPanelVisible || daoPanelVisible ? (
             <div
               className="cknerv-chain-cluster"
               data-hud-chain-cluster
               style={CHAIN_CLUSTER_STYLE}
             >
-              {panelVisibility.chain ? (
+              {chainPanelVisible ? (
                 <div
                   className="cknerv-chain-panel-scroll"
                   data-hud-panel="chain"
@@ -314,11 +326,11 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats, cellCo
                     activityFeed={activityFeed}
                     transactionHorizon={transactionHorizon}
                     compactActivity={shortViewport}
-                    style={{ ...PANEL_FLOW, width: 'min(340px, calc(100vw - 58px))' }}
+                    style={{ ...PANEL_FLOW, width: `min(${CHAIN_PANEL_WIDTH_PX}px, calc(100vw - 58px))` }}
                   />
                 </div>
               ) : null}
-              {panelVisibility.dao && daoPanelAvailable ? (
+              {daoPanelVisible ? (
                 <div
                   className="cknerv-chain-panel-scroll"
                   data-hud-panel="dao"
@@ -337,7 +349,7 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats, cellCo
                     source={enrichmentSource}
                     record={daoState}
                     nowMs={now}
-                    style={{ ...PANEL_FLOW, width: 'min(300px, calc(100vw - 58px))' }}
+                    style={{ ...PANEL_FLOW, width: `min(${DAO_PANEL_WIDTH_PX}px, calc(100vw - 58px))` }}
                   />
                 </div>
               ) : null}
@@ -359,7 +371,7 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats, cellCo
                 gapMs={msSinceLast}
                 condition={condition}
                 reducedMotion={reduced}
-                style={{ ...PANEL_FLOW, width: 'min(430px, calc(100vw - 58px))' }}
+                style={{ ...PANEL_FLOW, width: pulsePanelWidth }}
               />
             </div>
           ) : null}

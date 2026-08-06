@@ -350,9 +350,6 @@ export default function CellContentMemory({
         <span style={{ color: '#D9FAFF', fontFamily: HUD_FONTS.tech, fontSize: 7.4, fontWeight: 700, letterSpacing: 1.05, whiteSpace: 'nowrap' }}>
           CELL CONTENT
         </span>
-        <span style={{ color: '#BFAAFF', fontFamily: HUD_FONTS.cjk, fontSize: 6.8, opacity: 0.78, whiteSpace: 'nowrap' }}>
-          细胞内容
-        </span>
         <span style={{ marginLeft: 'auto', color: enhanced ? tone : HUD_COLORS.dim, fontSize: 6.3, letterSpacing: 0.62, whiteSpace: 'nowrap' }}>
           {enhanced ? `INDEX ANALYSIS · ${state}` : 'DIRECT NODE · RAW'}
         </span>
