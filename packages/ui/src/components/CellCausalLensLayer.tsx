@@ -4,10 +4,9 @@ import {
   useMemo,
   useRef,
   useState,
-  type CSSProperties,
   type RefObject,
 } from 'react';
-import { Billboard, Html } from '@react-three/drei';
+import { Html } from '@react-three/drei';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js';
@@ -120,12 +119,6 @@ function buildLinework(
   };
 }
 
-function cssStatusColor(lens: CellCausalLens): string {
-  if (lens.status === 'exact') return '#91F7FF';
-  if (lens.status === 'partial') return '#FFD48C';
-  return '#9D7BD8';
-}
-
 function endpointCssColor(
   role: CellCausalArcRole,
   identityOnly: boolean,
@@ -137,12 +130,6 @@ function endpointCssColor(
 
 function navigationRoleLabel(role: CellCausalArcRole): string {
   return role === 'input' ? 'INPUT CELL' : 'SIBLING OUTPUT';
-}
-
-function shortHash(value: string): string {
-  return value.length <= 14
-    ? value
-    : `${value.slice(0, 8)}…${value.slice(-4)}`;
 }
 
 function canvasLocalRect(
@@ -159,13 +146,11 @@ function canvasLocalRect(
 
 function visibleCanvasOcclusions(
   canvasRect: DOMRect,
-  hubLabel: HTMLDivElement | null,
 ): CellCausalScreenRect[] {
   if (typeof document === 'undefined') return [];
   const candidates: HTMLElement[] = Array.from(
     document.querySelectorAll<HTMLElement>('[data-hud-occlusion="true"]'),
   );
-  if (hubLabel) candidates.push(hubLabel);
   return candidates.flatMap((element) => {
     const rect = canvasLocalRect(element.getBoundingClientRect(), canvasRect);
     const clipped: CellCausalScreenRect = {
@@ -183,7 +168,6 @@ function visibleCanvasOcclusions(
 function CellCausalNavigationLabel({
   color,
   hubRef,
-  hubLabelRef,
   laneCount,
   laneIndex,
   navigationTargetId,
@@ -191,7 +175,6 @@ function CellCausalNavigationLabel({
 }: {
   color: string;
   hubRef: RefObject<THREE.Group | null>;
-  hubLabelRef: RefObject<HTMLDivElement | null>;
   laneCount: number;
   laneIndex: number;
   navigationTargetId: number;
@@ -242,10 +225,7 @@ function CellCausalNavigationLabel({
         width: label.offsetWidth,
         height: label.offsetHeight,
       },
-      occlusions: visibleCanvasOcclusions(
-        canvasRect,
-        hubLabelRef.current,
-      ),
+      occlusions: visibleCanvasOcclusions(canvasRect),
       gap: ENDPOINT_LABEL_GAP_PX,
       margin: ENDPOINT_LABEL_VIEWPORT_MARGIN_PX,
     });
@@ -490,8 +470,6 @@ function CellCausalLensLayer({
   const gl = useThree((state) => state.gl);
   const reducedMotion = useReducedMotion();
   const hubAnchorRef = useRef<THREE.Group>(null);
-  const hubGlyphRef = useRef<THREE.Group>(null);
-  const hubLabelRef = useRef<HTMLDivElement>(null);
   const startedAtRef = useRef<number | null>(null);
   const [hoveredNavigationTargetId, setHoveredNavigationTargetId] = useState<
     number | null
@@ -502,24 +480,6 @@ function CellCausalLensLayer({
     () => buildLinework(layout.arcs, identityOnly),
     [identityOnly, layout],
   );
-  const statusColor = cssStatusColor(lens);
-  const labelStyle = useMemo<CSSProperties>(() => ({
-    minWidth: 104,
-    padding: '3px 6px 3px',
-    border: `1px solid ${statusColor}55`,
-    borderLeftColor: statusColor,
-    background: 'linear-gradient(90deg,rgba(1,5,15,.94),rgba(2,7,18,.76))',
-    boxShadow: `0 0 13px ${statusColor}20, inset 0 0 9px ${statusColor}10`,
-    color: statusColor,
-    fontFamily: "'Share Tech Mono', ui-monospace, monospace",
-    fontSize: 8,
-    letterSpacing: 0.68,
-    lineHeight: 1.15,
-    whiteSpace: 'nowrap',
-    pointerEvents: 'none',
-    opacity: 0,
-  }), [statusColor]);
-
   useEffect(() => {
     built.glowMaterial.resolution.set(size.width, size.height);
     built.coreMaterial.resolution.set(size.width, size.height);
@@ -539,9 +499,9 @@ function CellCausalLensLayer({
   useEffect(() => {
     if (hoveredNavigationTargetId === null) return undefined;
     // CellPicker occupies the same screen point and may receive a synthetic
-    // pointer-out after this nearer marker stops propagation. Reassert cursor
-    // ownership after the hover state commits so that farther-layer cleanup
-    // cannot erase the causal affordance.
+    // pointer-out after the endpoint picker stops propagation. Reassert cursor
+    // ownership after the hover state commits so farther-layer cleanup cannot
+    // erase the causal affordance.
     gl.domElement.dataset.cellCausalNavigationHover = String(
       hoveredNavigationTargetId,
     );
@@ -566,15 +526,6 @@ function CellCausalLensLayer({
     const completeness = lens.status === 'partial' ? 0.78 : 1;
     built.glowMaterial.opacity = 0.19 * intro * completeness;
     built.coreMaterial.opacity = 0.86 * intro * completeness;
-    if (hubGlyphRef.current) {
-      hubGlyphRef.current.rotation.z = reducedMotion
-        ? Math.PI * 0.25
-        : Math.PI * 0.25 + Math.min(1, age / 0.8) * Math.PI * 0.5;
-      hubGlyphRef.current.scale.setScalar(0.82 + intro * 0.18);
-    }
-    if (hubLabelRef.current) {
-      hubLabelRef.current.style.opacity = intro.toFixed(3);
-    }
   });
 
   return (
@@ -619,54 +570,17 @@ function CellCausalLensLayer({
         />
       ) : null}
 
-      <group ref={hubAnchorRef} position={layout.hub}>
-        <Billboard follow>
-          <group ref={hubGlyphRef}>
-            <mesh renderOrder={15}>
-              <circleGeometry args={[0.42, 32]} />
-              <meshBasicMaterial
-                color="#01040B"
-                transparent
-                opacity={0.94}
-                depthTest={false}
-                depthWrite={false}
-                toneMapped={false}
-              />
-            </mesh>
-            <mesh renderOrder={16}>
-              <ringGeometry args={[0.46, 0.58, 4, 1]} />
-              <meshBasicMaterial
-                color={statusColor}
-                transparent
-                opacity={lens.status === 'partial' ? 0.72 : 0.94}
-                blending={THREE.AdditiveBlending}
-                depthTest={false}
-                depthWrite={false}
-                toneMapped={false}
-              />
-            </mesh>
-            <mesh rotation={[0, 0, Math.PI * 0.25]} renderOrder={16}>
-              <ringGeometry args={[0.22, 0.27, 4, 1]} />
-              <meshBasicMaterial
-                color={identityOnly ? '#9D7BD8' : '#FFD48C'}
-                transparent
-                opacity={0.9}
-                blending={THREE.AdditiveBlending}
-                depthTest={false}
-                depthWrite={false}
-                toneMapped={false}
-              />
-            </mesh>
-          </group>
-        </Billboard>
-      </group>
+      {/* The transaction hub remains an invisible semantic anchor for line
+          layout and endpoint-label direction. Its former purple glyph and
+          summary box duplicated the detail window's Causal Lens readout. */}
+      <group ref={hubAnchorRef} position={layout.hub} />
 
       {layout.arcs.map((arc) => {
         const at = arc.role === 'input' ? arc.from : arc.to;
         const color = endpointCssColor(arc.role, identityOnly);
-        const selected = arc.role === 'selected-output';
         const navigationTargetId = arc.navigationTargetId;
-        const archived = !selected && navigationTargetId === null;
+        const archived = arc.role !== 'selected-output'
+          && navigationTargetId === null;
         const navigable = (
           navigationTargetId !== null
           && onNavigateCell !== undefined
@@ -693,53 +607,13 @@ function CellCausalLensLayer({
               cellCausalArcTo: [...arc.to],
             }}
           >
-            <Billboard follow>
-              <group scale={hovered ? 1.16 : 1}>
-                <mesh rotation={[0, 0, Math.PI * 0.25]} renderOrder={14}>
-                  <ringGeometry args={[
-                    selected ? 0.26 : 0.16,
-                    selected ? 0.34 : 0.23,
-                    4,
-                    1,
-                  ]} />
-                  <meshBasicMaterial
-                    color={color}
-                    transparent
-                    opacity={
-                      selected ? 0.94 : hovered ? 1 : archived ? 0.52 : 0.76
-                    }
-                    blending={THREE.AdditiveBlending}
-                    depthTest={false}
-                    depthWrite={false}
-                    toneMapped={false}
-                  />
-                </mesh>
-                {navigable ? (
-                  <>
-                    <mesh
-                      rotation={[0, 0, Math.PI * 0.25]}
-                      renderOrder={14}
-                    >
-                      <ringGeometry args={[0.29, 0.315, 4, 1]} />
-                      <meshBasicMaterial
-                        color={color}
-                        transparent
-                        opacity={hovered ? 0.92 : 0.27}
-                        blending={THREE.AdditiveBlending}
-                        depthTest={false}
-                        depthWrite={false}
-                        toneMapped={false}
-                      />
-                    </mesh>
-                  </>
-                ) : null}
-              </group>
-            </Billboard>
+            {/* Causal arcs now terminate directly in the real Cell bodies.
+                The invisible bounded picker retains endpoint navigation; its
+                hover label supplies the explicit interaction affordance. */}
             {hovered && navigationTargetId !== null ? (
               <CellCausalNavigationLabel
                 color={color}
                 hubRef={hubAnchorRef}
-                hubLabelRef={hubLabelRef}
                 laneCount={arc.laneCount}
                 laneIndex={arc.laneIndex}
                 navigationTargetId={navigationTargetId}
@@ -749,40 +623,6 @@ function CellCausalLensLayer({
           </group>
         );
       })}
-
-      <Html
-        position={[layout.hub[0], layout.hub[1] + 0.88, layout.hub[2]]}
-        center
-        zIndexRange={[7, 7]}
-        occlude={false}
-        style={{ pointerEvents: 'none' }}
-      >
-        <div
-          ref={hubLabelRef}
-          aria-hidden="true"
-          data-cell-causal-lens-label="true"
-          data-causal-status={lens.status}
-          data-causal-provenance={identityOnly ? 'identity-only' : 'observed'}
-          data-causal-tx={lens.txHash}
-          style={labelStyle}
-        >
-          <div style={{ display: 'flex', gap: 7, alignItems: 'baseline' }}>
-            <span>
-              {identityOnly
-                ? 'TX IDENTITY'
-                : lens.status === 'partial'
-                  ? 'OBSERVED TX · PARTIAL'
-                  : 'OBSERVED TX'}
-            </span>
-            <span style={{ marginLeft: 'auto', color: '#E8E8E8', opacity: 0.68 }}>
-              #{lens.block}
-            </span>
-          </div>
-          <div style={{ marginTop: 2, color: '#E8E8E8', opacity: 0.76 }}>
-            {shortHash(lens.txHash)}
-          </div>
-        </div>
-      </Html>
     </group>
   );
 }

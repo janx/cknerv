@@ -61,6 +61,7 @@ export function injectHudTheme(doc: Document = document): void {
     `\n@keyframes cknerv-hud-flash{50%{opacity:.45}}`
     + `\n@keyframes cknerv-hud-breathe{0%,100%{opacity:.82}50%{opacity:1}}`
     + `\n@keyframes cknerv-cell-consensus-enter{0%{opacity:0;transform:translate3d(12px,-2px,0) scale(.985)}55%{opacity:1}100%{opacity:1;transform:translate3d(0,0,0) scale(1)}}`
+    + `\n@keyframes cknerv-cell-detail-anchor-enter{0%{opacity:0;transform:scale(.35)}65%{opacity:1;transform:scale(1.18)}100%{opacity:1;transform:scale(1)}}`
     + `\n@keyframes cknerv-cell-specimen-sweep{0%{top:9%;opacity:0}12%{opacity:.82}88%{opacity:.72}100%{top:91%;opacity:0}}`
     + `\n@keyframes cknerv-route-hop-lock-pulse{0%{filter:brightness(1) drop-shadow(0 0 0 transparent)}18%{filter:brightness(1.58) drop-shadow(0 0 7px var(--route-hop-pulse-color,rgba(255,215,161,.76)))}52%{filter:brightness(1.16) drop-shadow(0 0 3px var(--route-hop-pulse-color,rgba(255,215,161,.42)))}100%{filter:brightness(1) drop-shadow(0 0 0 transparent)}}`
     + `\n.cknerv-hud-control-button:hover{filter:brightness(1.35)}`
