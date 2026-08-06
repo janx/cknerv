@@ -139,6 +139,9 @@ describe('HudOverlay', () => {
     expect(container.querySelector('[data-hud-panel="cells"]')).not.toBeNull();
     expect(container.querySelector('[data-hud-panel="peers"]')).not.toBeNull();
     expect(container.querySelector('[data-hud-pulse-anchor]')).not.toBeNull();
+    expect((container.querySelector('[data-hud-pulse-anchor]')
+      ?.firstElementChild as HTMLElement).style.width)
+      .toMatch(/340px.*58px/);
     expect(container.querySelector('[data-hud-chain-cluster]')).toBeNull();
     expect((container.querySelector('[data-hud-left-rail]') as HTMLElement).style.bottom).toBe('14px');
     expect(getByRole('button', {
@@ -183,7 +186,7 @@ describe('HudOverlay', () => {
     expect(daoPanel.textContent).toContain('DAO·05');
     expect((container.querySelector('[data-hud-pulse-anchor]')
       ?.firstElementChild as HTMLElement).style.width)
-      .toMatch(/652px.*28px/);
+      .toMatch(/340px.*58px/);
 
     fireEvent.click(getByRole('button', {
       name: 'Configure HUD panels, 5 of 5 visible',
