@@ -26,6 +26,7 @@ import {
   syncCellRenderSet,
   type CellRenderRange,
 } from '../geometry/cellRenderSet';
+import { ScreenSpaceHitIndex } from '../geometry/screenSpaceHitIndex';
 export {
   pinCellInspectionFieldInVisiblePrefix,
   pinSelectedCellInVisiblePrefix,
@@ -678,10 +679,10 @@ export function CkbSelectionReticle({ size }: { size: number }) {
 // The pad applies only while the real braid geometry is actually visible;
 // compact lights keep their exact footprint in the dense far field.
 //
-// Performance: O(N) projections per eligible pointer event. Camera-drag
-// consumers suspend the picker after the first real movement, avoiding the
-// expensive path throughout OrbitControls interaction while preserving click
-// hit testing. N remains explicitly bounded by INSTANCE_CAPACITY.
+// Performance: one O(N) projection refresh feeds an allocation-stable
+// screen-space grid; hover queries are then local bucket lookups. Refreshes are
+// capped at 20 Hz while the pointer moves, and click lifecycle events request a
+// current index. Camera-drag consumers suspend the picker entirely.
 
 interface CellPickerProps {
   cellsListRef: React.MutableRefObject<Cell[]>;
@@ -698,6 +699,8 @@ interface CellPickerProps {
  * to missed clicks. Successful raycast hits must reject drag-generated clicks
  * explicitly. */
 export const CELL_CLICK_MAX_POINTER_DELTA_PX = 2;
+export const CELL_PICKER_HOVER_INDEX_INTERVAL_MS = 50;
+const CELL_PICKER_PRECISE_INDEX_MAX_AGE_MS = 8;
 
 export function cellPointerGestureIsClick(delta: number): boolean {
   return Number.isFinite(delta)
@@ -706,8 +709,8 @@ export function cellPointerGestureIsClick(delta: number): boolean {
 }
 
 /** Custom Object3D that participates in r3f's raycast pipeline. Its
- *  `raycast()` projects every live cell's pos_seed to screen and pushes
- *  an intersect for the cell whose own visual radius covers the click.
+ *  `raycast()` refreshes a bounded-cadence screen index, then pushes an
+ *  intersect for the cell whose own visual radius covers the pointer.
  *  The intersect carries `instanceId` so the existing `cell:${id}`
  *  selection contract is preserved. */
 function CellPicker({
@@ -737,16 +740,13 @@ function CellPicker({
     const cellNdc = new THREE.Vector3();
     const rayNdc = new THREE.Vector3();
     const bestPoint = new THREE.Vector3();
-    let raycastUsedThisFrame = false;
-    let resetRaycastFrame = 0;
-    let cachedHit: {
-      index: number;
-      cellId: number;
-      centerNdcX: number;
-      centerNdcY: number;
-      pickPxRSq: number;
-      point: THREE.Vector3;
-    } | null = null;
+    const screenIndex = new ScreenSpaceHitIndex(INSTANCE_CAPACITY);
+    let indexedAtMs = -Infinity;
+    let indexedCells: Cell[] | null = null;
+    let indexedCount = -1;
+    let indexedInspectionField: CellInspectionField | null = null;
+    let indexedWidth = -1;
+    let indexedHeight = -1;
 
     node.raycast = function raycastCells(raycaster, intersects) {
       if (pickingSuspendedRef?.current) return;
@@ -768,160 +768,109 @@ function CellPicker({
       const { width, height } = sizeRef.current;
       const halfW = width * 0.5;
       const halfH = height * 0.5;
-
-      // Pointer devices can dispatch multiple move events between rendered
-      // frames. Reuse the current hit (or miss) for the remainder of that
-      // frame, while pointer-down/up/click explicitly bypass this gate below.
       const forcePrecise = forcePreciseRaycastRef.current;
       forcePreciseRaycastRef.current = false;
-      if (!forcePrecise && raycastUsedThisFrame) {
-        const hit = cachedHit;
-        const cachedCell = hit ? cells[hit.index] : undefined;
-        if (
-          hit
-          && cachedCell?.id === hit.cellId
-          && cellInspectionNavigationTarget(inspectionField, hit.cellId)
-        ) {
-          const dx = (hit.centerNdcX - clickNdcX) * halfW;
-          const dy = (hit.centerNdcY - clickNdcY) * halfH;
-          if (dx * dx + dy * dy <= hit.pickPxRSq) {
-            intersects.push({
-              distance: ray.origin.distanceTo(hit.point),
-              point: hit.point.clone(),
-              object: this,
-              instanceId: hit.index,
-            });
-          }
-        }
-        return;
-      }
-      raycastUsedThisFrame = true;
-      if (resetRaycastFrame === 0) {
-        resetRaycastFrame = window.requestAnimationFrame(() => {
-          raycastUsedThisFrame = false;
-          resetRaycastFrame = 0;
-        });
-      }
-
       const matrix = this.matrixWorld;
-      let bestIdx = -1;
-      let bestPxSq = Infinity;
-      let bestDepth = Infinity;
-      let bestCenterNdcX = 0;
-      let bestCenterNdcY = 0;
-      let bestPickPxRSq = 0;
+      const nowMs = window.performance.now();
+      const structuralIndexChange = indexedCells !== cells
+        || indexedCount !== count
+        || indexedInspectionField !== inspectionField
+        || indexedWidth !== width
+        || indexedHeight !== height;
+      const indexMaxAgeMs = forcePrecise
+        ? CELL_PICKER_PRECISE_INDEX_MAX_AGE_MS
+        : CELL_PICKER_HOVER_INDEX_INTERVAL_MS;
+      if (structuralIndexChange || nowMs - indexedAtMs >= indexMaxAgeMs) {
+        screenIndex.begin(width, height);
+        for (let i = 0; i < count; i += 1) {
+          const c = cells[i];
+          if (!cellInspectionNavigationTarget(inspectionField, c.id)) continue;
+          cellWorld
+            .set(c.pos_seed[0], c.pos_seed[1], c.pos_seed[2])
+            .applyMatrix4(matrix);
 
-      for (let i = 0; i < count; i++) {
-        const c = cells[i];
-        if (!cellInspectionNavigationTarget(inspectionField, c.id)) continue;
-        cellWorld
-          .set(c.pos_seed[0], c.pos_seed[1], c.pos_seed[2])
-          .applyMatrix4(matrix);
+          // View-space depth feeds both visual footprint and frustum rejection.
+          cellView.copy(cellWorld).applyMatrix4(camera.matrixWorldInverse);
+          const viewZ = -cellView.z;
+          if (viewZ <= 0) continue;
+          const navigationSizeScale = cellInspectionDirectNavigationRole(
+            inspectionField,
+            c.id,
+          ) > 0
+            ? CELL_INSPECTION_NAVIGATION_SIZE_SCALE
+            : 1;
+          const depthToPx = halfH / viewZ;
+          const cellPointPxR = cellPointSize(c)
+            * navigationSizeScale
+            * depthToPx;
+          const focus = cellFocusTarget(
+            c.id,
+            selectedCellIdRef.current,
+            hoveredCellIdRef.current,
+          );
+          const braidScale = consensusBraidRenderScale(
+            viewZ,
+            height,
+            camera.projectionMatrix.elements[5],
+            focus,
+            consensusBraidPresenceScale(capacityMass(c.capacity)),
+          );
+          const braidPxR = CONSENSUS_BRAID_LOCAL_RADIUS
+            * braidScale
+            * camera.projectionMatrix.elements[5]
+            * depthToPx;
+          const pickPxR = cellPickRadiusPx(
+            cellPointPxR,
+            braidPxR,
+            detailArray[i] ?? 0,
+          );
 
-        // View-space depth — feeds both the cell's per-pixel size and
-        // the frustum-skip below.
-        cellView.copy(cellWorld).applyMatrix4(camera.matrixWorldInverse);
-        const viewZ = -cellView.z;
-        if (viewZ <= 0) continue; // behind camera
-
-        // Per-cell pick radius synced to the visible footprint. Expanded
-        // braids get a bounded CSS-pixel acquisition pad because their thin
-        // contributor lines are readable before they are easy to acquire.
-        //   cell point half-extent (px) = aSize × halfH / viewZ
-        //     — matches the hybrid shader's gl_PointSize formula
-        //     (aSize × 2 × depthToPx); the sprite quad is what the user
-        //     sees as the core/glow.
-        //   braid circumradius (px) = BRAID_PICK_RADIUS × halfH / viewZ.
-        // Take the larger visual layer, then apply the expanded-only pad.
-        const baseCellPointAsize = cellPointSize(c);
-        const navigationSizeScale = cellInspectionDirectNavigationRole(
-          inspectionField,
-          c.id,
-        ) > 0
-          ? CELL_INSPECTION_NAVIGATION_SIZE_SCALE
-          : 1;
-        const cellPointAsize = baseCellPointAsize * navigationSizeScale;
-        const depthToPx = halfH / viewZ;
-        const cellPointPxR = cellPointAsize * depthToPx;
-        const focus = cellFocusTarget(
-          c.id,
-          selectedCellIdRef.current,
-          hoveredCellIdRef.current,
-        );
-        const braidScale = consensusBraidRenderScale(
-          viewZ,
-          height,
-          camera.projectionMatrix.elements[5],
-          focus,
-          consensusBraidPresenceScale(capacityMass(c.capacity)),
-        );
-        const braidPxR = CONSENSUS_BRAID_LOCAL_RADIUS
-          * braidScale
-          * camera.projectionMatrix.elements[5]
-          * depthToPx;
-        const pickPxR = cellPickRadiusPx(
-          cellPointPxR,
-          braidPxR,
-          detailArray[i] ?? 0,
-        );
-        const pickPxRSq = pickPxR * pickPxR;
-
-        cellNdc.copy(cellWorld).project(camera);
-        if (cellNdc.z < -1 || cellNdc.z > 1) continue;
-
-        const dx = (cellNdc.x - clickNdcX) * halfW;
-        const dy = (cellNdc.y - clickNdcY) * halfH;
-        const pxSq = dx * dx + dy * dy;
-        if (pxSq > pickPxRSq) continue;
-
-        // Closest screen-space wins; tie-break by depth (closer to
-        // camera = smaller NDC z) so when two cells coincide on screen
-        // the front-facing one is picked.
-        if (
-          pxSq < bestPxSq - 0.5 ||
-          (Math.abs(pxSq - bestPxSq) <= 0.5 && cellNdc.z < bestDepth)
-        ) {
-          bestPxSq = pxSq;
-          bestDepth = cellNdc.z;
-          bestIdx = i;
-          bestCenterNdcX = cellNdc.x;
-          bestCenterNdcY = cellNdc.y;
-          bestPickPxRSq = pickPxRSq;
-          bestPoint.copy(cellWorld);
+          cellNdc.copy(cellWorld).project(camera);
+          if (cellNdc.z < -1 || cellNdc.z > 1) continue;
+          screenIndex.insert(
+            i,
+            (cellNdc.x + 1) * halfW,
+            (1 - cellNdc.y) * halfH,
+            pickPxR,
+            cellNdc.z,
+          );
         }
+        indexedAtMs = nowMs;
+        indexedCells = cells;
+        indexedCount = count;
+        indexedInspectionField = inspectionField;
+        indexedWidth = width;
+        indexedHeight = height;
       }
 
-      if (bestIdx < 0) {
-        cachedHit = null;
-        return;
-      }
-
-      cachedHit = {
-        index: bestIdx,
-        cellId: cells[bestIdx].id,
-        centerNdcX: bestCenterNdcX,
-        centerNdcY: bestCenterNdcY,
-        pickPxRSq: bestPickPxRSq,
-        point: bestPoint.clone(),
-      };
+      const hit = screenIndex.find(
+        (clickNdcX + 1) * halfW,
+        (1 - clickNdcY) * halfH,
+      );
+      if (!hit) return;
+      const hitCell = cells[hit.index];
+      if (
+        !hitCell
+        || !cellInspectionNavigationTarget(inspectionField, hitCell.id)
+      ) return;
+      bestPoint
+        .set(hitCell.pos_seed[0], hitCell.pos_seed[1], hitCell.pos_seed[2])
+        .applyMatrix4(matrix);
 
       intersects.push({
         // World distance from the ray origin (camera) to the picked
         // cell's pos_seed. r3f sorts intersects by this when multiple
         // objects (e.g. chain icosahedra) compete for the same click.
-        distance: ray.origin.distanceTo(cachedHit.point),
-        point: cachedHit.point.clone(),
+        distance: ray.origin.distanceTo(bestPoint),
+        point: bestPoint.clone(),
         object: this,
         // r3f surfaces this on the synthetic event as `e.instanceId`;
         // the onClick handler below indexes back into cellsListRef.
-        instanceId: bestIdx,
+        instanceId: hit.index,
       });
     };
 
     return () => {
-      if (resetRaycastFrame !== 0) {
-        window.cancelAnimationFrame(resetRaycastFrame);
-      }
       // Plain Object3D.raycast is a no-op; restore on unmount so a
       // future remount doesn't carry a stale closure.
       node.raycast = THREE.Object3D.prototype.raycast;
@@ -1059,6 +1008,14 @@ export default function CellGalaxy({
   // slots in the Points BufferGeometry. Birth / death / tag are reduced
   // server-side before they reach this renderer.
   const cellsCache = useCellGalaxy();
+  const activityCellIds = useMemo(
+    () => galaxyComposition ? currentActivityCellIds(cellsCache) : [],
+    [cellsCache.pulseLinks, galaxyComposition],
+  );
+  const activityKey = useMemo(
+    () => galaxyComposition ? activityCellIds.join(':') : '',
+    [activityCellIds, galaxyComposition],
+  );
   const compositionCellsById = useMemo(() => {
     const cells = new Map<number, Cell>();
     if (!galaxyComposition) return cells;
@@ -1358,10 +1315,6 @@ export default function CellGalaxy({
     }
 
     const renderSet = cellRenderSetRef.current;
-    const activityCellIds = galaxyComposition
-      ? currentActivityCellIds(cellsCache)
-      : [];
-    const activityKey = galaxyComposition ? activityCellIds.join(':') : '';
     const renderNeedsSync = renderSet.cellsToken !== cellsCache.cellsToken
       || renderSet.displayBudget !== cellDisplayLimit
       || renderSet.selectedCellId !== selectedCellIdRef.current

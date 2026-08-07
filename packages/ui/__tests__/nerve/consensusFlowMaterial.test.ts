@@ -28,7 +28,7 @@ describe('consensus packet glyph', () => {
     };
     pool.beginFrame();
     pool.push({ ...slot, glyph: 'packet' });
-    pool.push({ ...slot, glyph: 'memory' });
+    pool.pushValues(0, 0, 0, slot.color, 1, 1, 0.5, 'memory');
     pool.endFrame(900, 1);
     const glyphs = pool.mesh.geometry.getAttribute('aGlyphMode').array;
     expect(Array.from(glyphs.slice(0, 2))).toEqual([0, 1]);

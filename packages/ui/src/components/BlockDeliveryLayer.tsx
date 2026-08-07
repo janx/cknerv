@@ -13,7 +13,8 @@ import {
   deliveryPhase,
   easeInLob,
   bolusIngest,
-  nearestCellIds,
+  buildCellNearestIndex,
+  nearestCellIdsFromIndex,
   type DeliveryPhaseConfig,
 } from '../derives/peers.derive';
 import {
@@ -194,6 +195,14 @@ export default function BlockDeliveryLayer({
   );
   const capacity = Math.max(1, deliveries.length);
   const ignitedPulseAtRef = useRef<number | null>(null);
+  const cellsToken = cellsCache?.cellsToken ?? null;
+  const nearestCellIndex = useMemo(
+    () => buildCellNearestIndex(cellsCache?.cells.values() ?? []),
+    // The cache publishes a fresh token exactly when Cell membership/position
+    // changes, so peer deliveries share one index without rebuilding per peer.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [cellsToken],
+  );
 
   const bodyPositions = useMemo(
     () => new Float32Array(capacity * CARRIER_VERTEX_COUNT * 3),
@@ -315,7 +324,6 @@ export default function BlockDeliveryLayer({
     if (cellsCache && ignitedPulseAtRef.current !== pulse.at) {
       ignitedPulseAtRef.current = pulse.at;
       const rotY = galaxyFrame.rotationY;
-      const cells = cellsCache.cells;
       let budget = LIVE.delivery.igniteMax;
       for (const delivery of deliveries) {
         if (budget <= 0) break;
@@ -323,10 +331,10 @@ export default function BlockDeliveryLayer({
           delivery.hero ? LIVE.delivery.igniteKHero : LIVE.delivery.igniteKPeer,
           budget,
         );
-        const ids = nearestCellIds(
+        const ids = nearestCellIdsFromIndex(
           [delivery.to[0], delivery.to[2]],
           rotY,
-          cells.values(),
+          nearestCellIndex,
           k,
         );
         const ingestSceneS = pulse.at + delivery.startAge + LOB_DUR_S;

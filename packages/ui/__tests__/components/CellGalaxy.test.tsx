@@ -174,14 +174,30 @@ describe('CellGalaxy', () => {
     expect(source).toContain('if (pickingSuspendedRef?.current) return;');
   });
 
-  it('coalesces hover scans per frame without reusing them for clicks', () => {
+  it('indexes hover scans at bounded cadence without reusing stale clicks', () => {
     const source = readFileSync(CELL_GALAXY_SOURCE, 'utf8');
 
-    expect(source).toContain('raycastUsedThisFrame');
-    expect(source).toContain('window.requestAnimationFrame');
+    expect(source).toContain('ScreenSpaceHitIndex');
+    expect(source).toContain('CELL_PICKER_HOVER_INDEX_INTERVAL_MS');
+    expect(source).toContain('CELL_PICKER_PRECISE_INDEX_MAX_AGE_MS');
+    expect(source).toContain('screenIndex.find(');
     expect(source).toContain("canvas.addEventListener('pointerdown'");
     expect(source).toContain("canvas.addEventListener('click'");
     expect(source).toContain('forcePreciseRaycastRef.current');
+  });
+
+  it('memoizes composition activity pins outside the frame loop', () => {
+    const source = readFileSync(CELL_GALAXY_SOURCE, 'utf8');
+    const componentStart = source.indexOf('export default function CellGalaxy');
+    const frameStart = source.indexOf('useSimFrame(', componentStart);
+    const activityDerive = source.indexOf(
+      'currentActivityCellIds(cellsCache)',
+      componentStart,
+    );
+
+    expect(activityDerive).toBeGreaterThan(0);
+    expect(activityDerive).toBeLessThan(frameStart);
+    expect(source).toContain('[cellsCache.pulseLinks, galaxyComposition]');
   });
 
   it('shares explicit memory focus between the route overlay and Cell body', () => {

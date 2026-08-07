@@ -80,6 +80,7 @@ describe('neighbor graph Worker protocol', () => {
     const expectedGraph = buildNeighborGraph(cells, options);
     const preferredEdges = expectedGraph.edges.slice(-3);
     const expectedPassive = buildPassiveNeighborGraph(expectedGraph, {
+      edgeBudget: 4,
       preferredEdges,
     });
 
@@ -89,6 +90,7 @@ describe('neighbor graph Worker protocol', () => {
       cells: packTopologyCells(cells),
       options,
       includePassive: true,
+      passiveEdgeBudget: 4,
       preferredEdges: packPreferredEdges(preferredEdges),
     });
 
