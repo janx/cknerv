@@ -201,7 +201,12 @@ export function selectedCellScanAccent(
  * decoded windows, flips around viewport edges, and avoids both fixed rails.
  */
 export default function CellInspectionOverlay(props: CellDetailPanelProps) {
-  const { cell, onClose, onInspectionFieldChange } = props;
+  const {
+    cell,
+    onClose,
+    onInspectionFieldChange,
+    onScanInteractionChange,
+  } = props;
   const reduced = useReducedMotion();
   const anchorRef = useRef<THREE.Group>(null);
   const cardRef = useRef<HTMLDivElement>(null);
@@ -222,6 +227,15 @@ export default function CellInspectionOverlay(props: CellDetailPanelProps) {
     onInspectionFieldChange?.(field);
   }, [onInspectionFieldChange]);
   useCellInspectionDismiss(cardRef, onClose);
+
+  // The portrait owns a second pointer/renderer boundary. Reset the parent
+  // interaction lock at the overlay boundary as well as inside the portrait,
+  // so a close during pointer capture cannot leave Galaxy controls disabled
+  // while the nested R3F root finishes unmounting.
+  useEffect(() => () => {
+    onInspectionFieldChange?.(null);
+    onScanInteractionChange?.(false);
+  }, [onInspectionFieldChange, onScanInteractionChange]);
 
   useEffect(() => {
     const card = cardRef.current;

@@ -48,7 +48,7 @@ import StreamHealthBanner from './StreamHealthBanner';
 const SYNC_LAG_THRESHOLD = 2; // blocks behind best-known before we count as syncing
 const SYNC_AHEAD_RATIO = 0.5; // fraction of peers ahead of our tip = we're behind
 
-const ROOT_STYLE: CSSProperties = { position: 'fixed', inset: 0, zIndex: 15, pointerEvents: 'none', overflow: 'hidden' };
+const ROOT_STYLE: CSSProperties = { position: 'fixed', inset: 0, zIndex: 15, pointerEvents: 'none', userSelect: 'none', overflow: 'hidden' };
 const SCAN_STYLE: CSSProperties = { position: 'absolute', inset: 0, pointerEvents: 'none', background: 'repeating-linear-gradient(0deg,rgba(255,255,255,.035) 0 1px,transparent 1px 3px)', mixBlendMode: 'overlay', opacity: 0.5 };
 // Right-edge MESH RAIL: the CELL zone stacked over the PEER zone, right-anchored.
 // Each zone is a flex row [detail | mesh] (network detail fans LEFT of its mesh); the

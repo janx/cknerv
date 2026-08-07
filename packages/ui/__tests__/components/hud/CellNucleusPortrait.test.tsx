@@ -2,8 +2,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
-  PORTRAIT_IDLE_FPS,
-  PORTRAIT_INTERACTION_FPS,
+  cellPortraitFrameloop,
   resolvePortraitCanvasDpr,
 } from '../../../src/components/hud/CellNucleusPortrait';
 
@@ -56,6 +55,9 @@ describe('CellNucleusPortrait production language', () => {
     expect(ADDRESS_SOURCE).toContain('deriveCellContentAddressSegments(');
     expect(ADDRESS_SOURCE).toContain('cellContentAddressReadFrame(');
     expect(ADDRESS_SOURCE).toContain('onReadResolvedRef.current?.()');
+    expect(ADDRESS_SOURCE).toContain(
+      "if (frame.state === 'reading') invalidate();",
+    );
     expect(ADDRESS_SOURCE).toContain('memoryPortraitAddressActiveLane');
     expect(ADDRESS_SOURCE).toContain('new LineSegments2(');
     expect(ADDRESS_SOURCE).toContain('THREE.AdditiveBlending');
@@ -69,6 +71,9 @@ describe('CellNucleusPortrait production language', () => {
     expect(PROOF_READER_SOURCE).toContain("onReadResolvedRef.current?.('address')");
     expect(PROOF_READER_SOURCE).toContain("onReadResolvedRef.current?.('anchor')");
     expect(PROOF_READER_SOURCE).toContain('settledRef.current = true');
+    expect(PROOF_READER_SOURCE.match(
+      /if \(frame\.state === 'reading'\) invalidate\(\);/g,
+    )).toHaveLength(2);
     expect(SOURCE).toContain('onIdentityProofRead={onIdentityProofRead}');
     expect(SOURCE).toContain('identityProofBinding={');
     expect(SOURCE).toContain('data-memory-portrait-state');
@@ -136,15 +141,18 @@ describe('CellNucleusPortrait production language', () => {
     expect(SOURCE).toContain('enableDamping={!reducedMotion}');
   });
 
-  it('shares the adaptive DPR ceiling and renders idle animation at a bounded cadence', () => {
+  it('shares the adaptive DPR ceiling and idles without a competing render loop', () => {
     expect(resolvePortraitCanvasDpr(3, 2)).toBe(2);
     expect(resolvePortraitCanvasDpr(3, 1.5)).toBe(1.5);
     expect(resolvePortraitCanvasDpr(0.5, 2)).toBe(1);
     expect(resolvePortraitCanvasDpr(Number.NaN, Number.NaN)).toBe(1);
-    expect(PORTRAIT_IDLE_FPS).toBeLessThan(PORTRAIT_INTERACTION_FPS);
+    expect(cellPortraitFrameloop(false)).toBe('demand');
+    expect(cellPortraitFrameloop(true)).toBe('always');
     expect(SOURCE).toContain('dpr={portraitDpr}');
-    expect(SOURCE).toContain('frameloop="demand"');
-    expect(SOURCE).toContain('<PortraitFrameDriver');
+    expect(SOURCE).toContain('frameloop={cellPortraitFrameloop(dragging)}');
+    expect(SOURCE).toContain('export default memo(CellNucleusPortrait)');
+    expect(SOURCE).not.toContain('requestAnimationFrame');
+    expect(SOURCE).not.toContain('<PortraitFrameDriver');
   });
 
   it('retains the portrait Canvas while switching selected Cells', () => {

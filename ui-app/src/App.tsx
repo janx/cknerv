@@ -325,6 +325,10 @@ export default function App({
     ConsensusMemoryTargetResponse | null
   >(null);
   const clearCellSelection = useCallback(() => {
+    // Closing is also an interaction-boundary reset. The nested Cell Scan can
+    // disappear while it owns pointer capture, before its delayed R3F teardown
+    // reports onEnd; never let that keep the main OrbitControls disabled.
+    setCellScanInteractionActive(false);
     memoryRouteHopAnchorRef.current = null;
     setCellIdentityProof(null);
     dispatchCellIdentityJourney({ type: 'clear' });

@@ -190,6 +190,9 @@ export default function CellContentAddressHalo({
       resolvedNotifiedRef.current = true;
       onReadResolvedRef.current?.();
     }
+    // Demand-render only while this bounded proof is progressing. The old
+    // portrait-wide frame driver kept the second WebGL renderer drawing.
+    if (frame.state === 'reading') invalidate();
   });
 
   useEffect(() => () => {
