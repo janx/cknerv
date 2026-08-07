@@ -152,9 +152,10 @@ export function buildNeighborGraph(
 
   // Pre-allocated parallel scratch buffers for top-k. Avoids the
   // per-iteration object alloc that the previous implementation hit
-  // ~N²/k times.
+  // ~N²/k times. Ids must be Float64: galaxy-composition Cells carry
+  // 2^52-range ids that an Int32Array would wrap into phantom nodes.
   const SCRATCH_CAP = Math.max(64, k * 16);
-  const scratchId = new Int32Array(SCRATCH_CAP);
+  const scratchId = new Float64Array(SCRATCH_CAP);
   const scratchDSq = new Float32Array(SCRATCH_CAP);
 
   // 2D spatial-hash bucketing cells by xz coords. k-NN scans only the
