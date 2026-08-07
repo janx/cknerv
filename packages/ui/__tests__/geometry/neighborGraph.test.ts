@@ -264,6 +264,28 @@ describe('buildNeighborGraph', () => {
     expect(keysOf(buildNeighborGraph(forward, DEFAULT_K)))
       .toEqual(keysOf(buildNeighborGraph(reverse, DEFAULT_K)));
   });
+
+  it('keeps 2^52-range galaxy-composition ids intact in the edge set', () => {
+    // Composition Cells carry ids in [2^52, 2^52 + 2^51). Any 32-bit
+    // truncation in the k-NN path invents phantom node ids, which the
+    // skeleton pass then dereferences and crashes on.
+    const base = 2 ** 52;
+    const cells = new Map<number, Cell>();
+    for (let i = 0; i < 24; i += 1) {
+      const id = i % 2 === 0 ? i + 1 : base + i * 3;
+      cells.set(id, mkCell(id, Math.cos(i) * 6, (i % 3) * 0.4, Math.sin(i) * 6));
+    }
+
+    const g = buildNeighborGraph(cells, DEFAULT_K);
+    for (const edge of g.edges) {
+      expect(cells.has(edge.from)).toBe(true);
+      expect(cells.has(edge.to)).toBe(true);
+    }
+    for (const id of g.adjacency.keys()) {
+      expect(cells.has(id)).toBe(true);
+    }
+    expect(g.adjacency.size).toBe(cells.size);
+  });
 });
 
 function liveCell(id: number, x: number, z: number, death: number | null = null): Cell {
