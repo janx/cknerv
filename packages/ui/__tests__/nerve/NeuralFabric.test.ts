@@ -132,24 +132,18 @@ describe('NeuralFabric living-mesh handles', () => {
     expect(activeImplementation).not.toContain('inspectionFieldScaleAt');
   });
 
-  it('keeps at least two passive Bezier samples while both layers adapt', () => {
+  it('keeps the full four-sample passive Bezier at every quality preset', () => {
     expect(SRC).toContain('useQualityRuntime');
     expect(SRC).toContain('FABRIC_SAMPLES_PER_EDGE');
-    expect(SRC).toContain('passiveSamplesPerEdge');
-    expect(SRC).toContain('configuredPassiveSamplesPerEdge');
     expect(SRC).toContain('activeSamplesPerHop');
-    expect(SRC).toMatch(/index\s*<=\s*samplesPerEdge/);
-    expect(SRC).toMatch(/Math\.max\(\s*2,/);
+    expect(SRC).toMatch(/index\s*<=\s*FABRIC_SAMPLES_PER_EDGE/);
+    expect(SRC).not.toContain('passiveSamplesPerEdge');
   });
 
-  it('rate-limits passive CPU rebuilds without throttling active writes', () => {
-    expect(SRC).toContain('passiveAnimationFps');
-    expect(SRC).toContain('lastPassiveCommitSecRef');
-    expect(SRC).toContain('forcePassiveCommitRef');
-    const activeImplementation = SRC.slice(
-      SRC.lastIndexOf('pushActiveHop(hop, cells)'),
-    );
-    expect(activeImplementation).not.toContain('minPassiveCommitInterval');
+  it('does not rate-limit passive lifecycle or mask animation frames', () => {
+    expect(SRC).not.toContain('passiveAnimationFps');
+    expect(SRC).not.toContain('lastPassiveCommitSecRef');
+    expect(SRC).not.toContain('minPassiveCommitInterval');
   });
 
   it('stops active Bezier sampling as soon as its GPU layer is full', () => {
@@ -175,11 +169,25 @@ describe('NeuralFabric living-mesh handles', () => {
     expect(SRC).toContain("'screen' | 'additive'");
     expect(SRC).toContain('THREE.CustomBlending');
     expect(SRC).toContain('THREE.OneMinusSrcColorFactor');
-    expect(SRC).toContain("LIVE.cell.fabricWidth, 'screen'");
+    expect(SRC).toMatch(/LIVE\.cell\.fabricWidth,\s*'screen'/);
     expect(SRC).toContain("LIVE.cell.activeWidth, 'additive'");
     // Do not force passive routes ahead of Cell bodies: that destroys their
     // shared depth relationship and visibly reintroduces centre clipping.
     expect(SRC).not.toContain('mesh.renderOrder');
+  });
+
+  it('uses the two-triangle capsule only for passive screen layers', () => {
+    expect(SRC).toContain('makeScreenSpaceCapsuleGeometry');
+    expect(SRC).toContain('optimizeScreenSpaceCapsuleMaterial');
+    expect(SRC).toContain('syncScreenSpaceCapsuleViewport');
+    expect(SRC).toContain('renderer.getPixelRatio()');
+    expect(SRC).toContain('renderer.getViewport(viewport)');
+    expect(SRC).toContain("accumulation === 'screen'");
+    expect(SRC).toContain('&& optimizePassiveGeometry');
+    expect(SRC).toMatch(
+      /MAX_FABRIC_SEGMENTS,[\s\S]*?'screen',[\s\S]*?true,/,
+    );
+    expect(SRC).toContain(': new LineSegmentsGeometry()');
   });
 
   it('raises only passive fabric screen weight in a close Cell view', () => {

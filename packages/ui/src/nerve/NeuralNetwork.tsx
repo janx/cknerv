@@ -292,13 +292,8 @@ export default function NeuralNetwork({
     () => galaxyComposition ? currentActivityCellIds(cellsCache) : [],
     [cellsCache.pulseLinks, galaxyComposition],
   );
-  const qualityPreset = QUALITY_PRESETS[quality];
-  const particleCapMul = qualityPreset.particleCapMul;
-  const passiveEdgeBudget = qualityPreset.passiveEdgeCap;
+  const particleCapMul = QUALITY_PRESETS[quality].particleCapMul;
   const topologyKey = `${topology?.neighborK ?? ''}:${topology?.maxEdgeLength ?? ''}`;
-  // Quality changes only the deterministic resting-fibre sample. Cell
-  // membership and the complete routing topology remain stable.
-  const displayTopologyKey = `${topologyKey}:passive-${passiveEdgeBudget}`;
 
   // The complete neighbour graph is maintained incrementally for causal pulse
   // routing. Passive rendering is deliberately separate: it is rebuilt over
@@ -403,7 +398,7 @@ export default function NeuralNetwork({
     const visibleCells = renderUpdate.cells;
     const topologyChanged = (
       !displayBootstrappedRef.current
-      || displayTopologyRef.current !== displayTopologyKey
+      || displayTopologyRef.current !== topologyKey
       || displayTopologyVersionRef.current !== renderUpdate.topologyVersion
     );
     const inspectionChanged = (
@@ -424,7 +419,7 @@ export default function NeuralNetwork({
       const requestedCells = displayRequestedCellsRef.current;
       const requestMatches = (
         requestedCells !== null
-        && displayRequestedTopologyRef.current === displayTopologyKey
+        && displayRequestedTopologyRef.current === topologyKey
         && displayRequestedTopologyVersionRef.current
           === renderUpdate.topologyVersion
       );
@@ -433,7 +428,7 @@ export default function NeuralNetwork({
       const displayCells = cellRenderMap(visibleCells);
       const requestedTopologyVersion = renderUpdate.topologyVersion;
       displayRequestedCellsRef.current = displayCells;
-      displayRequestedTopologyRef.current = displayTopologyKey;
+      displayRequestedTopologyRef.current = topologyKey;
       displayRequestedTopologyVersionRef.current = requestedTopologyVersion;
       const generation = displayBuildGenerationRef.current + 1;
       displayBuildGenerationRef.current = generation;
@@ -443,14 +438,13 @@ export default function NeuralNetwork({
           maxEdgeLength: topology?.maxEdgeLength,
         },
         includePassive: true,
-        passiveEdgeBudget,
         preferredEdges: passiveGraphRef.current.edges,
       }).then((result) => {
         if (
           result === null
           || displayBuildGenerationRef.current !== generation
           || displayRequestedCellsRef.current !== displayCells
-          || displayRequestedTopologyRef.current !== displayTopologyKey
+          || displayRequestedTopologyRef.current !== topologyKey
           || displayRequestedTopologyVersionRef.current
             !== requestedTopologyVersion
         ) return;
@@ -460,7 +454,7 @@ export default function NeuralNetwork({
         displayGraphRef.current = result.graph;
         passiveGraphRef.current = passiveGraph;
         displayCellsRef.current = displayCells;
-        displayTopologyRef.current = displayTopologyKey;
+        displayTopologyRef.current = topologyKey;
         displayTopologyVersionRef.current = requestedTopologyVersion;
         displayBootstrappedRef.current = true;
         fabricHandlesRef.current?.setFabric(
@@ -508,12 +502,10 @@ export default function NeuralNetwork({
     galaxyComposition,
     activityCellIds,
     displayGraphBuilder,
-    displayTopologyKey,
     inspectionCellId,
     inspectionFieldRef,
     invalidate,
     topologyKey,
-    passiveEdgeBudget,
     topology?.neighborK,
     topology?.maxEdgeLength,
   ]);

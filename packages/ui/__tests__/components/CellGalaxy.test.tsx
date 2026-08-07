@@ -174,12 +174,16 @@ describe('CellGalaxy', () => {
     expect(source).toContain('if (pickingSuspendedRef?.current) return;');
   });
 
-  it('indexes hover scans at bounded cadence without reusing stale clicks', () => {
+  it('shares one exact screen index per rendered frame without stale clicks', () => {
     const source = readFileSync(CELL_GALAXY_SOURCE, 'utf8');
 
     expect(source).toContain('ScreenSpaceHitIndex');
-    expect(source).toContain('CELL_PICKER_HOVER_INDEX_INTERVAL_MS');
-    expect(source).toContain('CELL_PICKER_PRECISE_INDEX_MAX_AGE_MS');
+    expect(source).toContain('indexFreshThisFrame');
+    expect(source).toContain('indexedMatrixWorld.equals(matrix)');
+    expect(source).toContain('indexedCameraView.equals(camera.matrixWorldInverse)');
+    expect(source).toContain('indexedProjection.equals(camera.projectionMatrix)');
+    expect(source).toContain('indexedDetailVersion !== detailAttr.version');
+    expect(source).toContain('window.requestAnimationFrame');
     expect(source).toContain('screenIndex.find(');
     expect(source).toContain("canvas.addEventListener('pointerdown'");
     expect(source).toContain("canvas.addEventListener('click'");

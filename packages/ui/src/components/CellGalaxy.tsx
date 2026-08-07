@@ -679,10 +679,10 @@ export function CkbSelectionReticle({ size }: { size: number }) {
 // The pad applies only while the real braid geometry is actually visible;
 // compact lights keep their exact footprint in the dense far field.
 //
-// Performance: one O(N) projection refresh feeds an allocation-stable
-// screen-space grid; hover queries are then local bucket lookups. Refreshes are
-// capped at 20 Hz while the pointer moves, and click lifecycle events request a
-// current index. Camera-drag consumers suspend the picker entirely.
+// Performance: one O(N) projection refresh per rendered frame feeds an
+// allocation-stable screen-space grid; all pointer queries in that frame are
+// then local bucket lookups. Transform, focus, detail, and click lifecycle
+// changes invalidate immediately. Camera drags suspend the picker entirely.
 
 interface CellPickerProps {
   cellsListRef: React.MutableRefObject<Cell[]>;
@@ -699,8 +699,6 @@ interface CellPickerProps {
  * to missed clicks. Successful raycast hits must reject drag-generated clicks
  * explicitly. */
 export const CELL_CLICK_MAX_POINTER_DELTA_PX = 2;
-export const CELL_PICKER_HOVER_INDEX_INTERVAL_MS = 50;
-const CELL_PICKER_PRECISE_INDEX_MAX_AGE_MS = 8;
 
 export function cellPointerGestureIsClick(delta: number): boolean {
   return Number.isFinite(delta)
@@ -709,7 +707,7 @@ export function cellPointerGestureIsClick(delta: number): boolean {
 }
 
 /** Custom Object3D that participates in r3f's raycast pipeline. Its
- *  `raycast()` refreshes a bounded-cadence screen index, then pushes an
+ *  `raycast()` refreshes a current-frame screen index, then pushes an
  *  intersect for the cell whose own visual radius covers the pointer.
  *  The intersect carries `instanceId` so the existing `cell:${id}`
  *  selection contract is preserved. */
@@ -740,11 +738,19 @@ function CellPicker({
     const cellNdc = new THREE.Vector3();
     const rayNdc = new THREE.Vector3();
     const bestPoint = new THREE.Vector3();
+    const modelView = new THREE.Matrix4();
     const screenIndex = new ScreenSpaceHitIndex(INSTANCE_CAPACITY);
-    let indexedAtMs = -Infinity;
+    const indexedMatrixWorld = new THREE.Matrix4();
+    const indexedCameraView = new THREE.Matrix4();
+    const indexedProjection = new THREE.Matrix4();
+    let indexFreshThisFrame = false;
+    let resetIndexFrame = 0;
     let indexedCells: Cell[] | null = null;
     let indexedCount = -1;
     let indexedInspectionField: CellInspectionField | null = null;
+    let indexedSelectedCellId: number | null = null;
+    let indexedHoveredCellId: number | null = null;
+    let indexedDetailVersion = -1;
     let indexedWidth = -1;
     let indexedHeight = -1;
 
@@ -771,26 +777,31 @@ function CellPicker({
       const forcePrecise = forcePreciseRaycastRef.current;
       forcePreciseRaycastRef.current = false;
       const matrix = this.matrixWorld;
-      const nowMs = window.performance.now();
       const structuralIndexChange = indexedCells !== cells
         || indexedCount !== count
         || indexedInspectionField !== inspectionField
+        || indexedSelectedCellId !== selectedCellIdRef.current
+        || indexedHoveredCellId !== hoveredCellIdRef.current
+        || indexedDetailVersion !== detailAttr.version
         || indexedWidth !== width
-        || indexedHeight !== height;
-      const indexMaxAgeMs = forcePrecise
-        ? CELL_PICKER_PRECISE_INDEX_MAX_AGE_MS
-        : CELL_PICKER_HOVER_INDEX_INTERVAL_MS;
-      if (structuralIndexChange || nowMs - indexedAtMs >= indexMaxAgeMs) {
+        || indexedHeight !== height
+        || !indexedMatrixWorld.equals(matrix)
+        || !indexedCameraView.equals(camera.matrixWorldInverse)
+        || !indexedProjection.equals(camera.projectionMatrix);
+      if (forcePrecise || structuralIndexChange || !indexFreshThisFrame) {
         screenIndex.begin(width, height);
+        modelView.multiplyMatrices(camera.matrixWorldInverse, matrix);
+        const projectionScaleY = camera.projectionMatrix.elements[5];
+        const selectedCellId = selectedCellIdRef.current;
+        const hoveredCellId = hoveredCellIdRef.current;
         for (let i = 0; i < count; i += 1) {
           const c = cells[i];
           if (!cellInspectionNavigationTarget(inspectionField, c.id)) continue;
-          cellWorld
+          cellView
             .set(c.pos_seed[0], c.pos_seed[1], c.pos_seed[2])
-            .applyMatrix4(matrix);
+            .applyMatrix4(modelView);
 
           // View-space depth feeds both visual footprint and frustum rejection.
-          cellView.copy(cellWorld).applyMatrix4(camera.matrixWorldInverse);
           const viewZ = -cellView.z;
           if (viewZ <= 0) continue;
           const navigationSizeScale = cellInspectionDirectNavigationRole(
@@ -805,19 +816,19 @@ function CellPicker({
             * depthToPx;
           const focus = cellFocusTarget(
             c.id,
-            selectedCellIdRef.current,
-            hoveredCellIdRef.current,
+            selectedCellId,
+            hoveredCellId,
           );
           const braidScale = consensusBraidRenderScale(
             viewZ,
             height,
-            camera.projectionMatrix.elements[5],
+            projectionScaleY,
             focus,
             consensusBraidPresenceScale(capacityMass(c.capacity)),
           );
           const braidPxR = CONSENSUS_BRAID_LOCAL_RADIUS
             * braidScale
-            * camera.projectionMatrix.elements[5]
+            * projectionScaleY
             * depthToPx;
           const pickPxR = cellPickRadiusPx(
             cellPointPxR,
@@ -825,7 +836,9 @@ function CellPicker({
             detailArray[i] ?? 0,
           );
 
-          cellNdc.copy(cellWorld).project(camera);
+          // Reuse the view-space result instead of applying the camera inverse
+          // a second time through Vector3.project().
+          cellNdc.copy(cellView).applyMatrix4(camera.projectionMatrix);
           if (cellNdc.z < -1 || cellNdc.z > 1) continue;
           screenIndex.insert(
             i,
@@ -835,12 +848,24 @@ function CellPicker({
             cellNdc.z,
           );
         }
-        indexedAtMs = nowMs;
+        indexFreshThisFrame = true;
+        if (resetIndexFrame === 0) {
+          resetIndexFrame = window.requestAnimationFrame(() => {
+            indexFreshThisFrame = false;
+            resetIndexFrame = 0;
+          });
+        }
         indexedCells = cells;
         indexedCount = count;
         indexedInspectionField = inspectionField;
+        indexedSelectedCellId = selectedCellIdRef.current;
+        indexedHoveredCellId = hoveredCellIdRef.current;
+        indexedDetailVersion = detailAttr.version;
         indexedWidth = width;
         indexedHeight = height;
+        indexedMatrixWorld.copy(matrix);
+        indexedCameraView.copy(camera.matrixWorldInverse);
+        indexedProjection.copy(camera.projectionMatrix);
       }
 
       const hit = screenIndex.find(
@@ -871,6 +896,9 @@ function CellPicker({
     };
 
     return () => {
+      if (resetIndexFrame !== 0) {
+        window.cancelAnimationFrame(resetIndexFrame);
+      }
       // Plain Object3D.raycast is a no-op; restore on unmount so a
       // future remount doesn't carry a stale closure.
       node.raycast = THREE.Object3D.prototype.raycast;

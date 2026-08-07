@@ -45,6 +45,11 @@ import {
   warmRouteBrightnessGain,
 } from './fabricReinforce';
 import { passiveFabricEnergyScale } from './fabricLuminance';
+import {
+  makeScreenSpaceCapsuleGeometry,
+  optimizeScreenSpaceCapsuleMaterial,
+  syncScreenSpaceCapsuleViewport,
+} from '../geometry/screenSpaceCapsuleLine';
 import { useSimClock } from '../tweaks/SimClockScope';
 import { LIVE } from '../tweaks/liveTweaks';
 import { QUALITY_PRESETS, useQualityRuntime } from '../tweaks/qualityPresets';
@@ -364,7 +369,6 @@ function writeFabricEdgeSegments(
   st: EdgeState,
   render: EdgeRender,
   sample: Float32Array,
-  samplesPerEdge: number,
   now: number,
   usage: number,
   brightnessGain: number,
@@ -454,9 +458,9 @@ function writeFabricEdgeSegments(
     fromSemanticB + (toSemanticB - fromSemanticB) * tStart
   ) * startEnergy;
 
-  for (let index = 1; index <= samplesPerEdge; index += 1) {
+  for (let index = 1; index <= FABRIC_SAMPLES_PER_EDGE; index += 1) {
     const rawT = tStart
-      + (tEnd - tStart) * (index / samplesPerEdge);
+      + (tEnd - tStart) * (index / FABRIC_SAMPLES_PER_EDGE);
     const t = rawT > tEnd ? tEnd : rawT;
     bezierAtInto(
       sample,
@@ -523,6 +527,7 @@ function makeFatLineLayer(
   maxSegments: number,
   widthPx: number,
   accumulation: 'screen' | 'additive',
+  optimizePassiveGeometry = false,
 ): FatLineLayer {
   const positions = new Float32Array(maxSegments * 6);
   const colors = new Float32Array(maxSegments * 6);
@@ -530,7 +535,11 @@ function makeFatLineLayer(
   const colBuf = new THREE.InstancedInterleavedBuffer(colors, 6, 1);
   posBuf.setUsage(THREE.DynamicDrawUsage);
   colBuf.setUsage(THREE.DynamicDrawUsage);
-  const geometry = new LineSegmentsGeometry();
+  const useScreenCapsule = accumulation === 'screen'
+    && optimizePassiveGeometry;
+  const geometry = useScreenCapsule
+    ? makeScreenSpaceCapsuleGeometry()
+    : new LineSegmentsGeometry();
   geometry.setAttribute('instanceStart', new THREE.InterleavedBufferAttribute(posBuf, 3, 0));
   geometry.setAttribute('instanceEnd', new THREE.InterleavedBufferAttribute(posBuf, 3, 3));
   geometry.setAttribute('instanceColorStart', new THREE.InterleavedBufferAttribute(colBuf, 3, 0));
@@ -548,6 +557,9 @@ function makeFatLineLayer(
     worldUnits: false,
     toneMapped: false,
   });
+  if (useScreenCapsule) {
+    optimizeScreenSpaceCapsuleMaterial(material);
+  }
   if (accumulation === 'screen') {
     // Passive structure must approach the display ceiling asymptotically when
     // thousands of fibres overlap. Activity keeps ordinary additive blending
@@ -560,6 +572,20 @@ function makeFatLineLayer(
     material.blendDstAlpha = THREE.OneMinusSrcAlphaFactor;
   }
   const mesh = new LineSegments2(geometry, material);
+  if (useScreenCapsule) {
+    const viewport = new THREE.Vector4();
+    const updateLineResolution = mesh.onBeforeRender.bind(mesh);
+    mesh.onBeforeRender = (renderer) => {
+      updateLineResolution(renderer);
+      renderer.getViewport(viewport);
+      syncScreenSpaceCapsuleViewport(
+        material,
+        renderer.getPixelRatio(),
+        viewport.x,
+        viewport.y,
+      );
+    };
+  }
   return { positions, colors, posBuf, colBuf, geometry, material, mesh, count: 0 };
 }
 
@@ -640,18 +666,15 @@ export default function NeuralFabric({
   const simClock = useSimClock();
   const { size } = useThree();
   const { effective: quality } = useQualityRuntime();
-  const {
-    activeSamplesPerHop,
-    passiveSamplesPerEdge: configuredPassiveSamplesPerEdge,
-    passiveAnimationFps,
-  } = QUALITY_PRESETS[quality];
-  const passiveSamplesPerEdge = Math.max(
-    2,
-    Math.min(FABRIC_SAMPLES_PER_EDGE, configuredPassiveSamplesPerEdge),
-  );
+  const { activeSamplesPerHop } = QUALITY_PRESETS[quality];
 
   const fabric = useMemo(
-    () => makeFatLineLayer(MAX_FABRIC_SEGMENTS, LIVE.cell.fabricWidth, 'screen'),
+    () => makeFatLineLayer(
+      MAX_FABRIC_SEGMENTS,
+      LIVE.cell.fabricWidth,
+      'screen',
+      true,
+    ),
     [],
   );
   const warmRoutes = useMemo(
@@ -705,10 +728,6 @@ export default function NeuralFabric({
    *  growth/decay and its appearance changes per frame. Flipped
    *  off after a final emit settles everything into stable state. */
   const emitDirtyRef = useRef<boolean>(false);
-  /** Structural changes commit immediately. Subsequent CPU-generated mask and
-   * lifecycle frames use the quality cadence below. */
-  const forcePassiveCommitRef = useRef(true);
-  const lastPassiveCommitSecRef = useRef<number | null>(null);
   const renderOrderRef = useRef<string[]>([]);
   // Snapshot of the last-applied Cell-mesh tweak values, seeded from the
   // schema defaults so a closed/untouched panel matches on the first
@@ -781,7 +800,6 @@ export default function NeuralFabric({
         transition.to = field;
         transition.progress = 0;
         emitDirtyRef.current = true;
-        forcePassiveCommitRef.current = true;
       },
       setRecallAperture(
         activeAperture,
@@ -802,14 +820,11 @@ export default function NeuralFabric({
           && Math.abs(previous.activeStrength - nextActiveStrength) < 1e-4
           && Math.abs(previous.departingStrength - nextDepartingStrength) < 1e-4
         ) return;
-        const apertureIdentityChanged = previous.active !== activeAperture
-          || previous.departing !== departingAperture;
         previous.active = activeAperture;
         previous.activeStrength = nextActiveStrength;
         previous.departing = departingAperture;
         previous.departingStrength = nextDepartingStrength;
         emitDirtyRef.current = true;
-        if (apertureIdentityChanged) forcePassiveCommitRef.current = true;
       },
       setMemoryRouteWidthScale(scale) {
         const safeScale = Number.isFinite(scale) && scale > 0 ? scale : 1;
@@ -884,7 +899,6 @@ export default function NeuralFabric({
           if (st.dyingAt === null) { st.dyingAt = now; st.deathKind = 'gc'; }
         }
         emitDirtyRef.current = true;
-        forcePassiveCommitRef.current = true;
       },
       growEdges(edges, cells, bornAtByKey, dirByKey) {
         // `now` is read from the shared sim clock so callers don't have
@@ -934,7 +948,6 @@ export default function NeuralFabric({
           renderOrderRef.current.push(key); // append; emitFabric reaps
         }
         emitDirtyRef.current = true;
-        forcePassiveCommitRef.current = true;
       },
       killEdges(keys, dyingAt, kind, deadEndByKey) {
         const states = edgeStatesRef.current;
@@ -948,7 +961,6 @@ export default function NeuralFabric({
           st.deadEnd = kind === 'death' ? (deadEndByKey?.get(key) ?? 'from') : null;
         }
         emitDirtyRef.current = true;
-        forcePassiveCommitRef.current = true;
       },
       reinforce(fromCellId, toCellId) {
         const key = fabricEdgeKey(fromCellId, toCellId);
@@ -977,7 +989,6 @@ export default function NeuralFabric({
           lc.b = ct.activeColorB; lc.fw = ct.fabricWidth; lc.aw = ct.activeWidth;
           lc.cd = ct.centerDim;
           emitDirtyRef.current = true; // force one redraw with the new values
-          forcePassiveCommitRef.current = true;
         }
         const inspectionField = inspectionFieldRef.current;
         if (inspectionField.progress < 1) {
@@ -1050,7 +1061,6 @@ export default function NeuralFabric({
               st,
               render,
               sample,
-              passiveSamplesPerEdge,
               now,
               st.usage,
               warmRouteBrightnessGain(
@@ -1065,16 +1075,6 @@ export default function NeuralFabric({
         }
 
         if (!emitDirtyRef.current) return;
-        const previousPassiveCommit = lastPassiveCommitSecRef.current;
-        const minPassiveCommitInterval = 1 / passiveAnimationFps;
-        if (
-          !forcePassiveCommitRef.current
-          && previousPassiveCommit !== null
-          && now >= previousPassiveCommit
-          && now - previousPassiveCommit < minPassiveCommitInterval
-        ) return;
-        forcePassiveCommitRef.current = false;
-        lastPassiveCommitSecRef.current = now;
         // Live line widths. LineMaterial.linewidth is runtime-settable, so
         // pushing it on every real draw (after the early-return) picks up
         // any width-knob change — including on the forced redraw above.
@@ -1100,7 +1100,6 @@ export default function NeuralFabric({
             st,
             rs,
             sample,
-            passiveSamplesPerEdge,
             now,
             0,
             1,
@@ -1215,8 +1214,6 @@ export default function NeuralFabric({
     applyPassiveViewWeight,
     onReady,
     activeSamplesPerHop,
-    passiveAnimationFps,
-    passiveSamplesPerEdge,
   ]);
 
   return (
