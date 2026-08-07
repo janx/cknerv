@@ -218,6 +218,8 @@ export {
   cellInspectionEdgeScaleAt,
   cellInspectionFieldScale,
   cellInspectionFieldTransitionScaleAt,
+  cellInspectionBodyTransitionBlend,
+  CELL_INSPECTION_BODY_TRANSITION_SECONDS,
   dampCellInspectionFieldScale,
   deriveCellInspectionField,
   type CellInspectionField,

@@ -46,6 +46,7 @@ import {
 } from './fabricReinforce';
 import { passiveFabricEnergyScale } from './fabricLuminance';
 import {
+  enableLineInspectionTransitionMaterial,
   makeScreenSpaceCapsuleGeometry,
   optimizeScreenSpaceCapsuleMaterial,
   syncScreenSpaceCapsuleViewport,
@@ -66,7 +67,7 @@ import {
   type ConsensusMemoryAperture,
 } from './consensusMemoryAperture';
 import {
-  cellInspectionFieldTransitionScaleAt,
+  cellInspectionEdgeScaleAt,
   type CellInspectionField,
 } from './cellInspectionField';
 import {
@@ -199,8 +200,12 @@ export interface NeuralFabricProps {
 interface FatLineLayer {
   positions: Float32Array;
   colors: Float32Array;
+  inspectionFrom?: Float32Array;
+  inspectionTo?: Float32Array;
   posBuf: THREE.InstancedInterleavedBuffer;
   colBuf: THREE.InstancedInterleavedBuffer;
+  inspectionFromBuf?: THREE.InstancedInterleavedBuffer;
+  inspectionToBuf?: THREE.InstancedInterleavedBuffer;
   geometry: LineSegmentsGeometry;
   material: LineMaterial;
   mesh: LineSegments2;
@@ -269,17 +274,15 @@ interface InspectionFieldTransition {
  * different Cell's graph-distance hierarchy never pops into existence. */
 const INSPECTION_FIELD_TRANSITION_SECONDS = 0.34;
 
-function inspectionFieldScaleAt(
-  state: InspectionFieldTransition,
+function inspectionFieldEndpointScaleAt(
+  field: CellInspectionField | null,
   fromCellId: number,
   toCellId: number,
   edgeT: number,
   lifecycleFlash: number,
 ): number {
-  const fieldScale = cellInspectionFieldTransitionScaleAt(
-    state.from,
-    state.to,
-    state.progress,
+  const fieldScale = cellInspectionEdgeScaleAt(
+    field,
     fromCellId,
     toCellId,
     edgeT,
@@ -437,8 +440,15 @@ function writeFabricEdgeSegments(
     flash,
     now,
   );
-  const prevInspection = inspectionFieldScaleAt(
-    inspectionField,
+  let prevInspectionFrom = inspectionFieldEndpointScaleAt(
+    inspectionField.from,
+    st.fromCellId,
+    st.toCellId,
+    tStart,
+    flash,
+  );
+  let prevInspectionTo = inspectionFieldEndpointScaleAt(
+    inspectionField.to,
     st.fromCellId,
     st.toCellId,
     tStart,
@@ -447,8 +457,7 @@ function writeFabricEdgeSegments(
   const startEnergy = energy
     * startTaper
     * prevSpatial
-    * prevAperture
-    * prevInspection;
+    * prevAperture;
   let prevR = (
     fromSemanticR + (toSemanticR - fromSemanticR) * tStart
   ) * startEnergy;
@@ -486,8 +495,15 @@ function writeFabricEdgeSegments(
       flash,
       now,
     );
-    const endInspection = inspectionFieldScaleAt(
-      inspectionField,
+    const endInspectionFrom = inspectionFieldEndpointScaleAt(
+      inspectionField.from,
+      st.fromCellId,
+      st.toCellId,
+      t,
+      flash,
+    );
+    const endInspectionTo = inspectionFieldEndpointScaleAt(
+      inspectionField.to,
       st.fromCellId,
       st.toCellId,
       t,
@@ -496,8 +512,7 @@ function writeFabricEdgeSegments(
     const endEnergy = energy
       * endTaper
       * endSpatial
-      * endAperture
-      * endInspection;
+      * endAperture;
     const endR = (
       fromSemanticR + (toSemanticR - fromSemanticR) * t
     ) * endEnergy;
@@ -513,6 +528,8 @@ function writeFabricEdgeSegments(
       sample[0], sample[1], sample[2],
       prevR, prevG, prevB,
       endR, endG, endB,
+      prevInspectionFrom, endInspectionFrom,
+      prevInspectionTo, endInspectionTo,
       writePositions,
     );
     prevX = sample[0];
@@ -521,6 +538,68 @@ function writeFabricEdgeSegments(
     prevR = endR;
     prevG = endG;
     prevB = endB;
+    prevInspectionFrom = endInspectionFrom;
+    prevInspectionTo = endInspectionTo;
+    if (t >= tEnd) break;
+  }
+}
+
+/** Rewrite only the two inspection snapshots for stable passive geometry.
+ * Selection does not change an edge, its Bezier, semantic colour, taper, or
+ * aperture, so walking those paths again would be pure duplicate work. */
+function writeFabricEdgeInspectionSegments(
+  layer: FatLineLayer,
+  st: EdgeState,
+  render: EdgeRender,
+  inspectionField: InspectionFieldTransition,
+): void {
+  if (!render.visible || render.alphaMul <= 0) return;
+  const inspectionFrom = layer.inspectionFrom;
+  const inspectionTo = layer.inspectionTo;
+  if (!inspectionFrom || !inspectionTo) return;
+  const tStart = render.tStart;
+  const tEnd = render.tEnd;
+  let startFrom = inspectionFieldEndpointScaleAt(
+    inspectionField.from,
+    st.fromCellId,
+    st.toCellId,
+    tStart,
+    render.flash,
+  );
+  let startTo = inspectionFieldEndpointScaleAt(
+    inspectionField.to,
+    st.fromCellId,
+    st.toCellId,
+    tStart,
+    render.flash,
+  );
+  for (let index = 1; index <= FABRIC_SAMPLES_PER_EDGE; index += 1) {
+    if (layer.count >= layer.positions.length / 6) return;
+    const rawT = tStart
+      + (tEnd - tStart) * (index / FABRIC_SAMPLES_PER_EDGE);
+    const t = rawT > tEnd ? tEnd : rawT;
+    const endFrom = inspectionFieldEndpointScaleAt(
+      inspectionField.from,
+      st.fromCellId,
+      st.toCellId,
+      t,
+      render.flash,
+    );
+    const endTo = inspectionFieldEndpointScaleAt(
+      inspectionField.to,
+      st.fromCellId,
+      st.toCellId,
+      t,
+      render.flash,
+    );
+    const offset = layer.count * 2;
+    inspectionFrom[offset] = startFrom;
+    inspectionFrom[offset + 1] = endFrom;
+    inspectionTo[offset] = startTo;
+    inspectionTo[offset + 1] = endTo;
+    layer.count += 1;
+    startFrom = endFrom;
+    startTo = endTo;
     if (t >= tEnd) break;
   }
 }
@@ -530,13 +609,28 @@ function makeFatLineLayer(
   widthPx: number,
   accumulation: 'screen' | 'additive',
   optimizePassiveGeometry = false,
+  inspectionTransition = false,
 ): FatLineLayer {
   const positions = new Float32Array(maxSegments * 6);
   const colors = new Float32Array(maxSegments * 6);
+  const inspectionFrom = inspectionTransition
+    ? new Float32Array(maxSegments * 2).fill(1)
+    : undefined;
+  const inspectionTo = inspectionTransition
+    ? new Float32Array(maxSegments * 2).fill(1)
+    : undefined;
   const posBuf = new THREE.InstancedInterleavedBuffer(positions, 6, 1);
   const colBuf = new THREE.InstancedInterleavedBuffer(colors, 6, 1);
+  const inspectionFromBuf = inspectionFrom
+    ? new THREE.InstancedInterleavedBuffer(inspectionFrom, 2, 1)
+    : undefined;
+  const inspectionToBuf = inspectionTo
+    ? new THREE.InstancedInterleavedBuffer(inspectionTo, 2, 1)
+    : undefined;
   posBuf.setUsage(THREE.DynamicDrawUsage);
   colBuf.setUsage(THREE.DynamicDrawUsage);
+  inspectionFromBuf?.setUsage(THREE.DynamicDrawUsage);
+  inspectionToBuf?.setUsage(THREE.DynamicDrawUsage);
   const useScreenCapsule = accumulation === 'screen'
     && optimizePassiveGeometry;
   const geometry = useScreenCapsule
@@ -546,6 +640,24 @@ function makeFatLineLayer(
   geometry.setAttribute('instanceEnd', new THREE.InterleavedBufferAttribute(posBuf, 3, 3));
   geometry.setAttribute('instanceColorStart', new THREE.InterleavedBufferAttribute(colBuf, 3, 0));
   geometry.setAttribute('instanceColorEnd', new THREE.InterleavedBufferAttribute(colBuf, 3, 3));
+  if (inspectionFromBuf && inspectionToBuf) {
+    geometry.setAttribute(
+      'instanceInspectionFromStart',
+      new THREE.InterleavedBufferAttribute(inspectionFromBuf, 1, 0),
+    );
+    geometry.setAttribute(
+      'instanceInspectionFromEnd',
+      new THREE.InterleavedBufferAttribute(inspectionFromBuf, 1, 1),
+    );
+    geometry.setAttribute(
+      'instanceInspectionToStart',
+      new THREE.InterleavedBufferAttribute(inspectionToBuf, 1, 0),
+    );
+    geometry.setAttribute(
+      'instanceInspectionToEnd',
+      new THREE.InterleavedBufferAttribute(inspectionToBuf, 1, 1),
+    );
+  }
   geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0, 0), 120);
   geometry.instanceCount = 0;
   const material = new LineMaterial({
@@ -559,6 +671,9 @@ function makeFatLineLayer(
     worldUnits: false,
     toneMapped: false,
   });
+  if (inspectionTransition) {
+    enableLineInspectionTransitionMaterial(material);
+  }
   if (useScreenCapsule) {
     optimizeScreenSpaceCapsuleMaterial(material);
   }
@@ -588,7 +703,20 @@ function makeFatLineLayer(
       );
     };
   }
-  return { positions, colors, posBuf, colBuf, geometry, material, mesh, count: 0 };
+  return {
+    positions,
+    colors,
+    inspectionFrom,
+    inspectionTo,
+    posBuf,
+    colBuf,
+    inspectionFromBuf,
+    inspectionToBuf,
+    geometry,
+    material,
+    mesh,
+    count: 0,
+  };
 }
 
 function pushSegment(
@@ -626,6 +754,8 @@ function pushSegmentGradient(
   bx: number, by: number, bz: number,
   rA: number, gA: number, bA: number,
   rB: number, gB: number, bB: number,
+  inspectionFromA: number, inspectionFromB: number,
+  inspectionToA: number, inspectionToB: number,
   writePositions: boolean,
 ): void {
   if (layer.count >= layer.positions.length / 6) return;
@@ -644,6 +774,13 @@ function pushSegmentGradient(
   layer.colors[off + 3] = rB;
   layer.colors[off + 4] = gB;
   layer.colors[off + 5] = bB;
+  const inspectionOffset = layer.count * 2;
+  if (layer.inspectionFrom && layer.inspectionTo) {
+    layer.inspectionFrom[inspectionOffset] = inspectionFromA;
+    layer.inspectionFrom[inspectionOffset + 1] = inspectionFromB;
+    layer.inspectionTo[inspectionOffset] = inspectionToA;
+    layer.inspectionTo[inspectionOffset + 1] = inspectionToB;
+  }
   layer.count += 1;
 }
 
@@ -651,10 +788,13 @@ function commitLayer(
   layer: FatLineLayer,
   updatePositions = true,
   updateColors = true,
+  updateInspections = true,
 ): void {
   const usedFloats = layer.count * 6;
   layer.posBuf.clearUpdateRanges();
   layer.colBuf.clearUpdateRanges();
+  layer.inspectionFromBuf?.clearUpdateRanges();
+  layer.inspectionToBuf?.clearUpdateRanges();
   if (usedFloats > 0) {
     // Three uploads the complete backing array when no range is supplied.
     // Upload only each layer's populated prefix. The passive layer reserves
@@ -667,6 +807,17 @@ function commitLayer(
     if (updateColors) {
       layer.colBuf.addUpdateRange(0, usedFloats);
       layer.colBuf.needsUpdate = true;
+    }
+    const usedInspectionFloats = layer.count * 2;
+    if (
+      updateInspections
+      && layer.inspectionFromBuf
+      && layer.inspectionToBuf
+    ) {
+      layer.inspectionFromBuf.addUpdateRange(0, usedInspectionFloats);
+      layer.inspectionFromBuf.needsUpdate = true;
+      layer.inspectionToBuf.addUpdateRange(0, usedInspectionFloats);
+      layer.inspectionToBuf.needsUpdate = true;
     }
   }
   layer.geometry.instanceCount = layer.count;
@@ -687,6 +838,7 @@ export default function NeuralFabric({
       LIVE.cell.fabricWidth,
       'screen',
       true,
+      true,
     ),
     [],
   );
@@ -695,6 +847,8 @@ export default function NeuralFabric({
       MAX_WARM_FABRIC_SEGMENTS,
       LIVE.cell.fabricWidth,
       'screen',
+      false,
+      true,
     ),
     [],
   );
@@ -741,9 +895,11 @@ export default function NeuralFabric({
    *  growth/decay and its appearance changes per frame. Flipped
    *  off after a final emit settles everything into stable state. */
   const emitDirtyRef = useRef<boolean>(false);
-  /** Structural/lifecycle changes alter sampled endpoints. Inspection,
-   * aperture, and energy transitions alter only colours at those same four
-   * samples, so their frames retain the existing position buffer. */
+  /** A field selection changes only the two static inspection snapshots. */
+  const inspectionOnlyDirtyRef = useRef(false);
+  /** Structural/lifecycle changes alter sampled endpoints. Inspection uses
+   * static endpoint attributes plus a shader uniform; aperture and energy
+   * changes alter only colours, so all three retain the position buffer. */
   const passivePositionsDirtyRef = useRef<boolean>(true);
   const renderOrderRef = useRef<string[]>([]);
   // Snapshot of the last-applied Cell-mesh tweak values, seeded from the
@@ -816,6 +972,9 @@ export default function NeuralFabric({
         transition.from = transition.to;
         transition.to = field;
         transition.progress = 0;
+        fabric.material.uniforms.inspectionTransitionProgress.value = 0;
+        warmRoutes.material.uniforms.inspectionTransitionProgress.value = 0;
+        inspectionOnlyDirtyRef.current = true;
         emitDirtyRef.current = true;
       },
       setRecallAperture(
@@ -841,6 +1000,7 @@ export default function NeuralFabric({
         previous.activeStrength = nextActiveStrength;
         previous.departing = departingAperture;
         previous.departingStrength = nextDepartingStrength;
+        inspectionOnlyDirtyRef.current = false;
         emitDirtyRef.current = true;
       },
       setMemoryRouteWidthScale(scale) {
@@ -1008,6 +1168,7 @@ export default function NeuralFabric({
           lc.alpha = ct.fabricAlpha; lc.r = ct.activeColorR; lc.g = ct.activeColorG;
           lc.b = ct.activeColorB; lc.fw = ct.fabricWidth; lc.aw = ct.activeWidth;
           lc.cd = ct.centerDim;
+          inspectionOnlyDirtyRef.current = false;
           emitDirtyRef.current = true; // force one redraw with the new values
         }
         const inspectionField = inspectionFieldRef.current;
@@ -1017,7 +1178,10 @@ export default function NeuralFabric({
             inspectionField.progress
               + dt / INSPECTION_FIELD_TRANSITION_SECONDS,
           );
-          emitDirtyRef.current = true;
+          fabric.material.uniforms.inspectionTransitionProgress.value =
+            inspectionField.progress;
+          warmRoutes.material.uniforms.inspectionTransitionProgress.value =
+            inspectionField.progress;
           if (inspectionField.progress >= 1) {
             inspectionField.from = inspectionField.to;
           }
@@ -1034,6 +1198,7 @@ export default function NeuralFabric({
         // wavefront or targetward closure is moving. One final redraw after
         // the interval restores every released fibre to its exact baseline.
         if (apertureAnimating || apertureAnimationRef.current) {
+          inspectionOnlyDirtyRef.current = false;
           emitDirtyRef.current = true;
         }
         apertureAnimationRef.current = apertureAnimating;
@@ -1095,6 +1260,26 @@ export default function NeuralFabric({
         }
 
         if (!emitDirtyRef.current) return;
+        if (
+          inspectionOnlyDirtyRef.current
+          && !passivePositionsDirtyRef.current
+        ) {
+          fabric.count = 0;
+          for (const key of renderOrderRef.current) {
+            const st = states.get(key);
+            if (!st) continue;
+            writeFabricEdgeInspectionSegments(
+              fabric,
+              st,
+              fabricEdgeRenderState(st, now),
+              inspectionField,
+            );
+          }
+          commitLayer(fabric, false, false, true);
+          inspectionOnlyDirtyRef.current = false;
+          emitDirtyRef.current = false;
+          return;
+        }
         const writePassivePositions = passivePositionsDirtyRef.current;
         // Live line widths. LineMaterial.linewidth is runtime-settable, so
         // pushing it on every real draw (after the early-return) picks up
@@ -1140,6 +1325,7 @@ export default function NeuralFabric({
         }
 
         commitLayer(fabric, writePassivePositions, true);
+        inspectionOnlyDirtyRef.current = false;
         // Continue emitting next frame while any edge is animating.
         // Once everything's stable, this frame's emit captured the
         // final state — leave the buffer alone until the next diff.

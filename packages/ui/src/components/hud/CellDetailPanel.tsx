@@ -1,5 +1,6 @@
 import {
   type CSSProperties,
+  memo,
   useCallback,
   useEffect,
   useMemo,
@@ -149,7 +150,15 @@ function formatCellData(dataHex: string): string {
   return dataHex.endsWith('…') ? `${size} observed` : size;
 }
 
-function CellScanFact({
+type CellScanFactProps = RowDecode & {
+  field: CellInspectionFacet;
+  revealed: boolean;
+  selected: boolean;
+  interactive: boolean;
+  onActivate: () => void;
+};
+
+const CellScanFact = memo(function CellScanFact({
   field,
   label,
   value,
@@ -158,13 +167,7 @@ function CellScanFact({
   selected,
   interactive,
   onActivate,
-}: RowDecode & {
-  field: CellInspectionFacet;
-  revealed: boolean;
-  selected: boolean;
-  interactive: boolean;
-  onActivate: () => void;
-}) {
+}: CellScanFactProps) {
   const accent = color ?? HUD_COLORS.cyanWire;
   return (
     <button
@@ -210,7 +213,15 @@ function CellScanFact({
       />
     </button>
   );
-}
+}, (previous, next) => (
+  previous.field === next.field
+  && previous.label === next.label
+  && previous.value === next.value
+  && previous.color === next.color
+  && previous.revealed === next.revealed
+  && previous.selected === next.selected
+  && previous.interactive === next.interactive
+));
 
 export default function CellDetailPanel({
   cell,
@@ -394,6 +405,12 @@ export default function CellDetailPanel({
     : enhancedDetail ? 560 : 480;
   const readableScale = verticalLayout ? 1 : 1.2;
   const readableWidth = `${(100 / readableScale).toFixed(2)}%`;
+  const semanticScanStyle = useMemo<CSSProperties>(
+    () => verticalLayout
+      ? { marginTop: 7 }
+      : { marginTop: 7, width: '76.92%', zoom: 1.3 },
+    [verticalLayout],
+  );
   const fromFanEdge = (left: number): CSSProperties => (
     layoutSide === 'right' ? { right: left } : { left }
   );
@@ -403,7 +420,6 @@ export default function CellDetailPanel({
     minWidth: 0,
     boxSizing: 'border-box',
     pointerEvents: 'auto',
-    filter: 'drop-shadow(0 8px 16px rgba(0,0,0,.56))',
   };
   const fanCoordinate = (coordinate: number): number => (
     layoutSide === 'right' ? rootWidth - coordinate : coordinate
@@ -438,7 +454,9 @@ export default function CellDetailPanel({
         pointerEvents: 'none',
         color: HUD_COLORS.ink,
         fontFamily: HUD_FONTS.mono,
-        filter: `drop-shadow(0 0 14px ${rgba(HUD_COLORS.cyanWire, 0.06)})`,
+        // One composited shadow around the constellation replaces a separate
+        // filter surface for every satellite.
+        filter: `drop-shadow(0 8px 16px rgba(0,0,0,.56)) drop-shadow(0 0 14px ${rgba(HUD_COLORS.cyanWire, 0.06)})`,
         animation: reduced
           ? undefined
           : 'cknerv-cell-consensus-enter 280ms cubic-bezier(.2,.82,.2,1) both',
@@ -560,10 +578,13 @@ export default function CellDetailPanel({
           onInteractionChange={onScanInteractionChange}
         />
         <span
+          key={cell.id}
           aria-hidden="true"
           data-cell-specimen-scan-light
-          style={{ position: 'absolute', zIndex: 2, left: 5, right: 5, top: 0, height: 1, background: `linear-gradient(90deg,transparent,${rgba(HUD_COLORS.cyanWire, 0.85)},${rgba(HUD_COLORS.orange, 0.46)},transparent)`, boxShadow: `0 0 9px ${rgba(HUD_COLORS.cyanWire, 0.7)}`, opacity: 0.8, animation: reduced ? undefined : 'cknerv-cell-specimen-sweep 2.8s linear infinite', pointerEvents: 'none' }}
-        />
+          style={{ position: 'absolute', zIndex: 2, left: 5, right: 5, top: '9%', height: '82%', opacity: scan.classified ? 0 : 0.8, transform: scan.classified ? 'translate3d(0,100%,0)' : undefined, animation: reduced || scan.classified ? undefined : `cknerv-cell-specimen-sweep ${order.length * PROBE_STEP_S}s linear 1 both`, pointerEvents: 'none', willChange: reduced || scan.classified ? undefined : 'transform, opacity' }}
+        >
+          <span style={{ position: 'absolute', left: 0, right: 0, top: 0, height: 1, background: `linear-gradient(90deg,transparent,${rgba(HUD_COLORS.cyanWire, 0.85)},${rgba(HUD_COLORS.orange, 0.46)},transparent)`, boxShadow: `0 0 9px ${rgba(HUD_COLORS.cyanWire, 0.7)}` }} />
+        </span>
         <span style={portraitBracket('tl')} /><span style={portraitBracket('tr')} />
         <span style={portraitBracket('bl')} /><span style={portraitBracket('br')} />
       </section>
@@ -590,8 +611,10 @@ export default function CellDetailPanel({
         <span
           aria-hidden="true"
           data-cellular-scan-beam
-          style={{ position: 'absolute', zIndex: 2, left: `${scan.pct}%`, top: 0, bottom: 0, width: 1, background: `linear-gradient(180deg,transparent,${HUD_COLORS.cyanWire},transparent)`, boxShadow: `0 0 12px ${HUD_COLORS.cyanWire}`, opacity: scan.classified ? 0.18 : 0.7, transition: reduced ? undefined : 'left 80ms linear, opacity 220ms ease', pointerEvents: 'none' }}
-        />
+          style={{ position: 'absolute', zIndex: 2, left: 0, top: 0, bottom: 0, width: '100%', transform: `translate3d(${scan.pct}%,0,0)`, opacity: scan.classified ? 0.18 : 0.7, transition: reduced ? undefined : 'transform 80ms linear, opacity 220ms ease', pointerEvents: 'none', willChange: reduced || scan.classified ? undefined : 'transform, opacity' }}
+        >
+          <span style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 1, background: `linear-gradient(180deg,transparent,${HUD_COLORS.cyanWire},transparent)`, boxShadow: `0 0 12px ${HUD_COLORS.cyanWire}` }} />
+        </span>
         <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: '3px 7px', marginBottom: 7 }}>
           <span style={{ color: '#C9F8FF', fontFamily: HUD_FONTS.tech, fontSize: 10.5, fontWeight: 700, letterSpacing: 1.35 }}>
             CELL IDENTITY
@@ -632,9 +655,7 @@ export default function CellDetailPanel({
             spatial
             scanIntegrated
             scanNarrow={verticalLayout}
-            style={verticalLayout
-              ? { marginTop: 7 }
-              : { marginTop: 7, width: '76.92%', zoom: 1.3 }}
+            style={semanticScanStyle}
           />
         ) : null}
       </section>
