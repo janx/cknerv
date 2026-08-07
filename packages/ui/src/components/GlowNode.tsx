@@ -6,6 +6,10 @@ import * as THREE from 'three';
 
 import type { AnimationHint, GraphNode, Vec3 } from '../types';
 
+// Hint flash tints, parsed once (the frame loop re-asserts uColor per frame).
+const FLASH_GREEN_COLOR = new THREE.Color('#bbf7d0');
+const FLASH_RED_COLOR = new THREE.Color('#fecaca');
+
 export interface Palette {
   /** Wireframe + halo tint. */
   edge: string;
@@ -116,6 +120,12 @@ export default function GlowNode({
 
   const phase = useMemo(() => phaseFor(node.id), [node.id]);
   const rate = useMemo(() => 0.7 + 0.6 * rateFor(node.id), [node.id]);
+  // Pre-parsed rest tint: the frame loop below re-asserts the halo colour
+  // every frame, and THREE's CSS-string parse is measurable at that rate.
+  const restHaloColor = useMemo(
+    () => new THREE.Color(palette.halo),
+    [palette.halo],
+  );
 
   const rotationRef = useRef<THREE.Group>(null);
   const intensityRef = useRef(1);
@@ -144,11 +154,11 @@ export default function GlowNode({
     const breathe = 0.85 + 0.15 * Math.sin(t * rate + phase);
     haloMat.uniforms.uIntensity.value = intensityRef.current * breathe;
     if (hint?.type === 'flash_green') {
-      haloMat.uniforms.uColor.value.set('#bbf7d0');
+      haloMat.uniforms.uColor.value.copy(FLASH_GREEN_COLOR);
     } else if (hint?.type === 'flash_red') {
-      haloMat.uniforms.uColor.value.set('#fecaca');
+      haloMat.uniforms.uColor.value.copy(FLASH_RED_COLOR);
     } else {
-      haloMat.uniforms.uColor.value.set(palette.halo);
+      haloMat.uniforms.uColor.value.copy(restHaloColor);
     }
   });
 

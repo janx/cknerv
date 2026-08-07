@@ -69,7 +69,9 @@ describe('A protocol event relay', () => {
     expect(source('NetworkColony.tsx')).toContain('consensusBlockColor(blockPulseAtMs)');
     expect(source('ColonyEdges.tsx')).toContain('consensusBlockColor(blockPulseAtMs)');
     expect(source('ColonyCourierLayer.tsx')).toContain('consensusBlockColor(blockPulseAtMs)');
-    expect(source('BlockDeliveryLayer.tsx')).toContain('CARRIER_COLOR.setRGB(...pulse.color)');
+    expect(source('BlockDeliveryLayer.tsx')).toContain(
+      'CARRIER_COLOR.setRGB(pulse.color[0], pulse.color[1], pulse.color[2])',
+    );
   });
 
   it('submits every concurrent colony courier in two fixed GPU batches', () => {

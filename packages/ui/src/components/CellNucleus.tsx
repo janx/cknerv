@@ -230,6 +230,12 @@ export default function CellNucleus({
   const lastHoveredCellId = useRef<number | null>(null);
   const lastRecallKey = useRef<string | null>(null);
   const lastNearCap = useRef(-1);
+  const routeHopIndexCache = useRef({
+    cells: null as Cell[] | null,
+    count: -1,
+    cellId: -1,
+    index: -1,
+  });
   const cameraPosition = useMemo(() => new THREE.Vector3(), []);
   const cameraLocalPosition = useMemo(() => new THREE.Vector3(), []);
   const groupWorldInverse = useMemo(() => new THREE.Matrix4(), []);
@@ -410,11 +416,25 @@ export default function CellNucleus({
       // A verified ledger hop still gets its canonical A braid even when its
       // base sprite falls outside that prefix; this does not increase the
       // shared Points draw range or invent a surrogate Cell.
-      const routeHopIndex = routeHopFocus === null
-        ? -1
-        : cells.findIndex((cell, index) => (
-          index >= count && cell.id === routeHopFocus.cellId
-        ));
+      // The beyond-prefix scan is O(all retained cells); cache it per
+      // (cells list, prefix, hop cell) so steady LOD ticks skip the walk.
+      let routeHopIndex = -1;
+      if (routeHopFocus !== null) {
+        const cached = routeHopIndexCache.current;
+        if (
+          cached.cells !== cells
+          || cached.count !== count
+          || cached.cellId !== routeHopFocus.cellId
+        ) {
+          cached.cells = cells;
+          cached.count = count;
+          cached.cellId = routeHopFocus.cellId;
+          cached.index = cells.findIndex((cell, index) => (
+            index >= count && cell.id === routeHopFocus.cellId
+          ));
+        }
+        routeHopIndex = cached.index;
+      }
       if (routeHopIndex >= count) {
         const cell = cells[routeHopIndex];
         const dx = cell.pos_seed[0] - cameraLocalPosition.x;
