@@ -280,3 +280,4 @@ export {
   type ConsensusPulseMode,
 } from './nerve/consensusMemoryTrace';
 export * from './nerve/pulseStats';
+export * from './nerve/fabricStats';

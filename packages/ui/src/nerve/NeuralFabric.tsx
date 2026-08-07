@@ -51,6 +51,7 @@ import {
   warmRouteBrightnessGain,
 } from './fabricReinforce';
 import { passiveFabricEnergyScale } from './fabricLuminance';
+import { fabricStats, type FabricFullWalkReason } from './fabricStats';
 import {
   enableLineInspectionTransitionMaterial,
   makeScreenSpaceCapsuleGeometry,
@@ -1120,6 +1121,10 @@ export default function NeuralFabric({
         const states = edgeStatesRef.current;
         const { order, liveKeys } = orderFabricStateKeys(graph.edges, states.keys());
         renderOrderRef.current = order;
+        let statsAdded = 0;
+        let statsRevived = 0;
+        let statsStable = 0;
+        let statsDying = 0;
         // Two-pass diff. Pass 1: walk new edges, add fresh ones in
         // growing phase, revive any that were dying. Track seen keys
         // so pass 2 can flag the removed ones.
@@ -1138,12 +1143,16 @@ export default function NeuralFabric({
             if (existing.dyingAt !== null) {
               existing.dyingAt = null;
               existing.bornAt = now - GROWTH_MS / 1000;
+              statsRevived += 1;
+            } else {
+              statsStable += 1;
             }
             continue;
           }
           const a = cells.get(e.from);
           const c = cells.get(e.to);
           if (!a || !c) continue;
+          statsAdded += 1;
           const seed = fabricEdgeSeed(e.from, e.to);
           const routeColors = consensusRouteColors(seed);
           bezierControlInto(
@@ -1179,8 +1188,21 @@ export default function NeuralFabric({
         // same death window.
         for (const [key, st] of states) {
           if (liveKeys.has(key)) continue;
-          if (st.dyingAt === null) { st.dyingAt = now; st.deathKind = 'gc'; }
+          if (st.dyingAt === null) {
+            st.dyingAt = now;
+            st.deathKind = 'gc';
+            statsDying += 1;
+          }
         }
+        fabricStats.observeDiff({
+          atSec: now,
+          kind: 'setFabric',
+          added: statsAdded,
+          revived: statsRevived,
+          dying: statsDying,
+          stable: statsStable,
+          totalStates: states.size,
+        });
         emitDirtyRef.current = true;
         passivePositionsDirtyRef.current = true;
       },
@@ -1190,6 +1212,8 @@ export default function NeuralFabric({
         // sim-seconds against the same clock (a future value staggers).
         const now = simClock.elapsedSec;
         const states = edgeStatesRef.current;
+        let statsAdded = 0;
+        let statsRevived = 0;
         for (const e of edges) {
           const key = fabricEdgeKey(e.from, e.to);
           const existing = states.get(key);
@@ -1200,11 +1224,13 @@ export default function NeuralFabric({
             existing.deathKind = null;
             existing.deadEnd = null;
             existing.bornAt = now - GROWTH_MS / 1000;
+            statsRevived += 1;
             continue;
           }
           const a = cells.get(e.from);
           const c = cells.get(e.to);
           if (!a || !c) continue;
+          statsAdded += 1;
           const seed = fabricEdgeSeed(e.from, e.to);
           const routeColors = consensusRouteColors(seed);
           bezierControlInto(
@@ -1231,11 +1257,21 @@ export default function NeuralFabric({
           });
           renderOrderRef.current.push(key); // append; emitFabric reaps
         }
+        fabricStats.observeDiff({
+          atSec: now,
+          kind: 'growEdges',
+          added: statsAdded,
+          revived: statsRevived,
+          dying: 0,
+          stable: 0,
+          totalStates: states.size,
+        });
         emitDirtyRef.current = true;
         passivePositionsDirtyRef.current = true;
       },
       killEdges(keys, dyingAt, kind, deadEndByKey) {
         const states = edgeStatesRef.current;
+        let statsDying = 0;
         for (const key of keys) {
           const st = states.get(key);
           // Skip unknown or already-dying edges — the latter keeps the
@@ -1244,7 +1280,17 @@ export default function NeuralFabric({
           st.dyingAt = dyingAt;
           st.deathKind = kind;
           st.deadEnd = kind === 'death' ? (deadEndByKey?.get(key) ?? 'from') : null;
+          statsDying += 1;
         }
+        fabricStats.observeDiff({
+          atSec: dyingAt,
+          kind: 'killEdges',
+          added: 0,
+          revived: 0,
+          dying: statsDying,
+          stable: 0,
+          totalStates: states.size,
+        });
         emitDirtyRef.current = true;
         passivePositionsDirtyRef.current = true;
       },
@@ -1367,7 +1413,10 @@ export default function NeuralFabric({
           commitLayer(warmRoutes);
         }
 
-        if (!emitDirtyRef.current) return;
+        if (!emitDirtyRef.current) {
+          fabricStats.observeSkipFrame();
+          return;
+        }
         const animatingKeys = animatingKeysRef.current;
         if (
           inspectionOnlyDirtyRef.current
@@ -1400,6 +1449,7 @@ export default function NeuralFabric({
           commitLayer(fabric, false, false, true);
           inspectionOnlyDirtyRef.current = false;
           emitDirtyRef.current = false;
+          fabricStats.observeInspectionOnlyFrame();
           return;
         }
         // Live line widths. LineMaterial.linewidth is runtime-settable, so
@@ -1413,6 +1463,7 @@ export default function NeuralFabric({
         // buffer, and only the merged dirty slot ranges upload. This replaces
         // the historical whole-fabric rewrite that ran every frame while ANY
         // edge was growing or dying.
+        let incrementalReapHit = false;
         if (
           !passivePositionsDirtyRef.current
           && !globalRepaintRef.current
@@ -1465,14 +1516,28 @@ export default function NeuralFabric({
             fabric.count = usedSlotCountRef.current * FABRIC_SLOT_SEGMENTS;
             commitFabricSlotRanges(fabric, mergeFabricSlotRanges(dirtySlots));
             emitDirtyRef.current = animatingKeys.size > 0;
+            fabricStats.observeIncrementalFrame(
+              dirtySlots.length,
+              animatingKeys.size,
+            );
             return;
           }
+          incrementalReapHit = true;
         }
 
         // Full walk: structural change, global colour change, or a reap that
         // requires slot compaction. Positions rewrite when the slot layout
         // moved or any edge geometry is mid-animation; a settled global
         // repaint (aperture release / knob drag) stays colours-only.
+        const fullWalkReason: FabricFullWalkReason = incrementalReapHit
+          ? 'reap'
+          : passivePositionsDirtyRef.current
+            ? 'structural'
+            : globalRepaintRef.current
+              ? 'global-repaint'
+              : inspectionOnlyDirtyRef.current
+                ? 'inspection-during-animation'
+                : 'mass-churn-guard';
         const writePassivePositions = passivePositionsDirtyRef.current
           || animatingKeys.size > 0;
         const slots = slotByKeyRef.current;
@@ -1536,6 +1601,11 @@ export default function NeuralFabric({
         // Animating edges continue through the incremental slot path above;
         // once everything settles the buffer rests until the next diff.
         emitDirtyRef.current = animatingKeys.size > 0;
+        fabricStats.observeFullWalk(
+          fullWalkReason,
+          slotIndex,
+          animatingKeys.size,
+        );
       },
       pushActiveHop(hop, cells) {
         const layer = hop.mode === 'memory'
