@@ -43,6 +43,11 @@ export interface StreamHealthTracker {
   stop: () => void;
 }
 
+/** Throttle for data/heartbeat freshness publishes (lifecycle transitions
+ *  always publish immediately). HUD staleness reads at 1 Hz, so a finer
+ *  cadence is invisible. */
+const MESSAGE_PUBLISH_MIN_INTERVAL_MS = 1000;
+
 /** Owns only lifecycle timing; the caller still owns the WebSocket itself. */
 export function createStreamHealthTracker(
   opts: StreamHealthOptions,
@@ -61,8 +66,11 @@ export function createStreamHealthTracker(
     reason: 'initial',
   };
 
+  let lastPublishAtMs = -Infinity;
+
   const publish = (next: StreamHealth) => {
     health = next;
+    lastPublishAtMs = now();
     opts.onHealth?.({ ...next });
   };
 
@@ -132,12 +140,27 @@ export function createStreamHealthTracker(
       const receivedAtMs = now();
       everOpened = true;
       freshnessBaseMs = receivedAtMs;
-      publish({
+      const next: StreamHealth = {
         phase: resyncing ? 'resyncing' : 'live',
         attempt: 0,
         lastMessageAtMs: receivedAtMs,
         reason: resyncing ? 'lagged' : null,
-      });
+      };
+      // A live stream receives many frames per second; each publish lands in
+      // React state and re-renders every health consumer. When only the
+      // freshness stamp advanced, track it internally (the stale watchdog
+      // reads `health` directly) and publish at most once per second.
+      const lifecycleChanged = next.phase !== health.phase
+        || next.attempt !== health.attempt
+        || next.reason !== health.reason;
+      if (
+        lifecycleChanged
+        || receivedAtMs - lastPublishAtMs >= MESSAGE_PUBLISH_MIN_INTERVAL_MS
+      ) {
+        publish(next);
+      } else {
+        health = next;
+      }
       armStaleTimer();
     },
     resyncing: () => {

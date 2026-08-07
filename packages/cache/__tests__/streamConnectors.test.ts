@@ -160,3 +160,67 @@ describe('stream connector health frames', () => {
     handle.disconnect();
   });
 });
+
+describe('entity stream delta batching', () => {
+  it('coalesces live entity frames at one render boundary and skips no-op frames', () => {
+    vi.stubGlobal('WebSocket', MockWebSocket);
+    const scheduled: { flush?: FrameRequestCallback } = {};
+    const requestFrame = vi.fn((callback: FrameRequestCallback) => {
+      scheduled.flush = callback;
+      return 11;
+    });
+    vi.stubGlobal('requestAnimationFrame', requestFrame);
+    vi.stubGlobal('cancelAnimationFrame', vi.fn());
+    const changes = vi.fn();
+    const initial = emptyChainEntityCache();
+    initial.chainNodes = [
+      { id: 'ckb:local', label: 'ckb-local', is_miner: false, version: '0.116.1', connections: 8 },
+    ];
+    const handle = connectEntityStream(
+      'ws://localhost/api/entities/chain/stream',
+      initial,
+      changes,
+    );
+    const socket = MockWebSocket.instances[0];
+
+    socket.message({
+      kind: 'delta',
+      revision: 1,
+      mutations: [
+        { revision: 1, mutation: { type: 'block_mined', number: 1, hash: '0xb1', tx_count: 0, at: 1000 } },
+      ],
+    });
+    socket.message({
+      kind: 'delta',
+      revision: 2,
+      mutations: [
+        { revision: 2, mutation: { type: 'tx_landed', tx_hash: '0xt1', block: 1 } },
+      ],
+    });
+
+    expect(requestFrame).toHaveBeenCalledTimes(1);
+    expect(changes).not.toHaveBeenCalled();
+    if (!scheduled.flush) throw new Error('entity delta flush was not scheduled');
+    scheduled.flush(16);
+
+    expect(changes).toHaveBeenCalledTimes(1);
+    expect(changes.mock.calls[0][0]).toMatchObject({ revision: 2 });
+    expect(changes.mock.calls[0][0].chain.tip).toBe(1);
+
+    // An unchanged node-info poll re-broadcast advances only the revision
+    // cursor; it must not reach React at all.
+    scheduled.flush = undefined;
+    socket.message({
+      kind: 'delta',
+      revision: 3,
+      mutations: [
+        { revision: 3, mutation: { type: 'chain_node_info_updated', id: 'ckb:local', version: '0.116.1', connections: 8 } },
+      ],
+    });
+    const noopFlush = (scheduled as { flush?: FrameRequestCallback }).flush;
+    if (!noopFlush) throw new Error('no-op delta flush was not scheduled');
+    noopFlush(32);
+    expect(changes).toHaveBeenCalledTimes(1);
+    handle.disconnect();
+  });
+});

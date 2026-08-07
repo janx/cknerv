@@ -86,6 +86,14 @@ function applyNodePeerDeltas(
       nextPeers = m.peers;
     } else if (m.type === 'chain_node_registered') {
       const i = nodes.findIndex((n) => n.id === m.id);
+      // The adapter re-registers on every poll; an unchanged row must keep
+      // the array identity so downstream memos (node ids → icosahedra layout
+      // → P2P topology) don't rebuild on a no-op frame.
+      if (
+        i >= 0
+        && nodes[i].label === m.label
+        && nodes[i].is_miner === m.is_miner
+      ) continue;
       const row: ChainNode = {
         id: m.id,
         label: m.label,
@@ -98,7 +106,11 @@ function applyNodePeerDeltas(
         : [...nodes, row];
     } else if (m.type === 'chain_node_info_updated') {
       const i = nodes.findIndex((n) => n.id === m.id);
-      if (i >= 0) {
+      if (
+        i >= 0
+        && (nodes[i].version !== m.version
+          || nodes[i].connections !== m.connections)
+      ) {
         nodes = nodes.map((n, j) =>
           j === i ? { ...n, version: m.version, connections: m.connections } : n,
         );
@@ -150,6 +162,10 @@ export interface EntityStreamHandle {
   disconnect: () => void;
 }
 
+/** Hidden tabs stop delivering animation frames; a short timeout keeps the
+ *  cache advancing there. Matches projectionStream's delta batcher. */
+const DELTA_BATCH_FALLBACK_MS = 50;
+
 /**
  * Open a WebSocket to `streamUrl` (relative or absolute ws://) and
  * apply incoming frames to the chain-entity cache. Calls `onChange(cache)`
@@ -171,6 +187,53 @@ export function connectEntityStream(
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let cache: ChainCache = initial ?? emptyChainEntityCache();
   let needsResync = false;
+  // Delta frames coalesce to one reducer apply + one onChange per animation
+  // frame (mirrors projectionStream): the server ships one frame per
+  // mutation, and per-frame React commits are pure overhead.
+  let pendingMutations: RevisionedMutation[] = [];
+  let cancelDeltaFlush: (() => void) | null = null;
+
+  const flushPendingDeltas = () => {
+    const cancel = cancelDeltaFlush;
+    cancelDeltaFlush = null;
+    cancel?.();
+    if (stopped || pendingMutations.length === 0) return;
+    const mutations = pendingMutations;
+    pendingMutations = [];
+    const prev = cache;
+    cache = applyEntityDelta(prev, mutations);
+    // Revision-only advances (e.g. an unchanged poll re-broadcast) update the
+    // internal `?since=` cursor but carry no observable state: skip the React
+    // publish entirely so no-op frames cost nothing downstream.
+    if (
+      cache.chain === prev.chain
+      && cache.chainNodes === prev.chainNodes
+      && cache.peers === prev.peers
+    ) return;
+    onChange(cache);
+  };
+
+  const discardPendingDeltas = () => {
+    pendingMutations = [];
+    const cancel = cancelDeltaFlush;
+    cancelDeltaFlush = null;
+    cancel?.();
+  };
+
+  const scheduleDeltaFlush = () => {
+    if (cancelDeltaFlush !== null) return;
+    if (typeof requestAnimationFrame === 'function') {
+      const frameId = requestAnimationFrame(flushPendingDeltas);
+      const timeoutId = setTimeout(flushPendingDeltas, DELTA_BATCH_FALLBACK_MS);
+      cancelDeltaFlush = () => {
+        cancelAnimationFrame(frameId);
+        clearTimeout(timeoutId);
+      };
+      return;
+    }
+    const timeoutId = setTimeout(flushPendingDeltas, 0);
+    cancelDeltaFlush = () => clearTimeout(timeoutId);
+  };
 
   const health = createStreamHealthTracker(opts, () => {
     try {
@@ -201,18 +264,24 @@ export function connectEntityStream(
       if (frame.kind === 'heartbeat') {
         health.message(needsResync);
       } else if (frame.kind === 'snapshot') {
+        // A snapshot is authoritative at its exact point in the ordered
+        // stream. Any uncommitted older deltas must not apply after it.
+        discardPendingDeltas();
         cache = fromEntitiesSnapshot(frame.revision, frame.entities);
         needsResync = false;
         health.message();
         onChange(cache);
       } else if (frame.kind === 'delta') {
-        cache = applyEntityDelta(cache, frame.mutations);
         needsResync = false;
         health.message();
-        onChange(cache);
+        if (frame.mutations.length > 0) {
+          pendingMutations.push(...frame.mutations);
+          scheduleDeltaFlush();
+        }
       } else if (frame.kind === 'lagged') {
         // Stream lost mutations; force a re-snapshot on reconnect by
         // zeroing our revision. Then drop the connection.
+        discardPendingDeltas();
         needsResync = true;
         health.resyncing();
         cache = { ...cache, revision: 0 };
@@ -246,6 +315,7 @@ export function connectEntityStream(
     disconnect: () => {
       stopped = true;
       health.stop();
+      discardPendingDeltas();
       if (reconnectTimer !== null) {
         clearTimeout(reconnectTimer);
         reconnectTimer = null;
