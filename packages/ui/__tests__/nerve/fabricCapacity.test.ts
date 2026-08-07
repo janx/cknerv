@@ -6,17 +6,10 @@ import {
   MAX_PASSIVE_EDGE_GENERATIONS,
   MAX_WARM_FABRIC_SEGMENTS,
 } from '../../src/nerve/fabricCapacity';
-import { QUALITY_PRESETS } from '../../src/tweaks/qualityPresets';
 
 describe('fabric capacity', () => {
   it('preserves enough samples for an organic passive-fabric curve', () => {
-    expect(FABRIC_SAMPLES_PER_EDGE).toBeGreaterThanOrEqual(4);
-    for (const preset of Object.values(QUALITY_PRESETS)) {
-      expect(preset.passiveSamplesPerEdge).toBeGreaterThanOrEqual(2);
-      expect(preset.passiveSamplesPerEdge)
-        .toBeLessThanOrEqual(FABRIC_SAMPLES_PER_EDGE);
-      expect(preset.passiveEdgeCap).toBeLessThanOrEqual(PASSIVE_EDGE_BUDGET);
-    }
+    expect(FABRIC_SAMPLES_PER_EDGE).toBe(4);
   });
 
   it('holds the live passive graph plus bounded fading generations', () => {

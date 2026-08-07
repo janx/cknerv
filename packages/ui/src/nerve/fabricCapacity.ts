@@ -2,9 +2,7 @@
 
 import { PASSIVE_EDGE_BUDGET } from '../geometry/passiveNeighborGraph';
 
-/** Allocation ceiling per edge. Runtime quality presets use two or three
- * samples; keeping four slots preserves headroom for diagnostics and fading
- * generations created by older visual policies. */
+/** Four samples preserve the quadratic silhouette of one organic fibre. */
 export const FABRIC_SAMPLES_PER_EDGE = 4;
 
 /** The current graph plus two rapidly superseded generations may coexist

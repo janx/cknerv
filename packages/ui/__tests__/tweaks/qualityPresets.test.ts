@@ -15,9 +15,6 @@ describe('QUALITY_PRESETS', () => {
       particleCapMul: 1,
       dischargeArms: 3,
       activeSamplesPerHop: 12,
-      passiveEdgeCap: 3000,
-      passiveSamplesPerEdge: 3,
-      passiveAnimationFps: 30,
       nucleusNearCap: 12,
       memorySignal: {
         coreMinPx: 24,
@@ -35,11 +32,9 @@ describe('QUALITY_PRESETS', () => {
     expect(QUALITY_PRESETS.med).not.toHaveProperty('cellGalaxyMul');
     expect(QUALITY_PRESETS.med.dischargeArms).toBe(2);
     expect(QUALITY_PRESETS.med.activeSamplesPerHop).toBeGreaterThanOrEqual(10);
-    expect(QUALITY_PRESETS.med.passiveEdgeCap)
-      .toBeLessThan(QUALITY_PRESETS.high.passiveEdgeCap);
-    expect(QUALITY_PRESETS.med.passiveSamplesPerEdge).toBeGreaterThanOrEqual(2);
-    expect(QUALITY_PRESETS.med.passiveAnimationFps)
-      .toBeLessThan(QUALITY_PRESETS.high.passiveAnimationFps);
+    expect(QUALITY_PRESETS.med).not.toHaveProperty('passiveEdgeCap');
+    expect(QUALITY_PRESETS.med).not.toHaveProperty('passiveSamplesPerEdge');
+    expect(QUALITY_PRESETS.med).not.toHaveProperty('passiveAnimationFps');
     expect(QUALITY_PRESETS.med.nucleusNearCap).toBe(8);
     expect(QUALITY_PRESETS.med.memorySignal).toEqual({
       coreMinPx: 24,
@@ -56,11 +51,9 @@ describe('QUALITY_PRESETS', () => {
     expect(QUALITY_PRESETS.low).not.toHaveProperty('cellGalaxyMul');
     expect(QUALITY_PRESETS.low.dischargeArms).toBe(1);
     expect(QUALITY_PRESETS.low.activeSamplesPerHop).toBeGreaterThanOrEqual(8);
-    expect(QUALITY_PRESETS.low.passiveEdgeCap)
-      .toBeLessThan(QUALITY_PRESETS.med.passiveEdgeCap);
-    expect(QUALITY_PRESETS.low.passiveSamplesPerEdge).toBeGreaterThanOrEqual(2);
-    expect(QUALITY_PRESETS.low.passiveAnimationFps)
-      .toBeLessThan(QUALITY_PRESETS.med.passiveAnimationFps);
+    expect(QUALITY_PRESETS.low).not.toHaveProperty('passiveEdgeCap');
+    expect(QUALITY_PRESETS.low).not.toHaveProperty('passiveSamplesPerEdge');
+    expect(QUALITY_PRESETS.low).not.toHaveProperty('passiveAnimationFps');
     expect(QUALITY_PRESETS.low.nucleusNearCap).toBe(4);
     expect(QUALITY_PRESETS.low.memorySignal).toEqual({
       coreMinPx: 24,
