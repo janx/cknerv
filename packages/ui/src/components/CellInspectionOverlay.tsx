@@ -2,6 +2,7 @@ import {
   type RefObject,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
 } from 'react';
@@ -22,6 +23,12 @@ const INSPECTOR_EDGE_PX = 14;
 const INSPECTOR_SAFE_TOP_PX = 104;
 const DEFAULT_PANEL_WIDTH_PX = 800;
 const DEFAULT_PANEL_HEIGHT_PX = 600;
+
+// Drei's Html normally projects its Object3D and writes its wrapper transform
+// every frame. The inspector already has to project the Cell to solve edge
+// placement, so pin the wrapper to the canvas origin and perform that work once
+// below instead of running two independent projection/style paths.
+const CELL_INSPECTOR_HTML_ORIGIN = (): [number, number] => [0, 0];
 
 export type CellInspectorPlacementSide = CellDetailLayoutSide;
 
@@ -217,6 +224,7 @@ export default function CellInspectionOverlay(props: CellDetailPanelProps) {
     height: DEFAULT_PANEL_HEIGHT_PX,
   });
   const lastFrameKeyRef = useRef('');
+  const lastVisibleRef = useRef(false);
   const projected = useRef(new THREE.Vector3());
   const [focusField, setFocusField] = useState<CellInspectionFacet | null>(null);
   const accent = selectedCellScanAccent({ cell }, focusField);
@@ -237,19 +245,26 @@ export default function CellInspectionOverlay(props: CellDetailPanelProps) {
     onScanInteractionChange?.(false);
   }, [onInspectionFieldChange, onScanInteractionChange]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const card = cardRef.current;
     if (!card) return;
-    const measure = () => {
+    const commitMeasurement = (width: number, height: number) => {
       measuredRef.current = {
-        width: card.offsetWidth || DEFAULT_PANEL_WIDTH_PX,
-        height: card.offsetHeight || DEFAULT_PANEL_HEIGHT_PX,
+        width: width || DEFAULT_PANEL_WIDTH_PX,
+        height: height || DEFAULT_PANEL_HEIGHT_PX,
       };
       lastFrameKeyRef.current = '';
     };
-    measure();
+    const initialRect = card.getBoundingClientRect();
+    commitMeasurement(initialRect.width, initialRect.height);
     if (typeof ResizeObserver === 'undefined') return;
-    const observer = new ResizeObserver(measure);
+    const observer = new ResizeObserver(([entry]) => {
+      const borderBox = entry.borderBoxSize?.[0];
+      commitMeasurement(
+        borderBox?.inlineSize ?? entry.contentRect.width,
+        borderBox?.blockSize ?? entry.contentRect.height,
+      );
+    });
     observer.observe(card);
     return () => observer.disconnect();
   }, [cell.id]);
@@ -269,26 +284,14 @@ export default function CellInspectionOverlay(props: CellDetailPanelProps) {
       && projected.current.z <= 1
       && Math.abs(projected.current.x) <= 1.08
       && Math.abs(projected.current.y) <= 1.08;
-    card.style.opacity = visible ? '1' : '0';
-    // The constellation has no panel surface: blank space must keep orbit and
-    // Cell picking available. Explicit buttons/readout controls opt back in.
-    card.style.pointerEvents = 'none';
+    if (visible !== lastVisibleRef.current) {
+      lastVisibleRef.current = visible;
+      card.style.opacity = visible ? '1' : '0';
+    }
     if (!visible) return;
 
     const anchorX = (projected.current.x * 0.5 + 0.5) * size.width;
     const anchorY = (-projected.current.y * 0.5 + 0.5) * size.height;
-    // Read the live box as well as observing it. The inspector modules have
-    // different heights, and a tab switch can be committed between observer
-    // deliveries; using the current box keeps the edge clamp correct on that
-    // very frame (most visibly on phone-sized canvases).
-    const renderedWidth = card.offsetWidth;
-    const renderedHeight = card.offsetHeight;
-    if (renderedWidth > 0 && renderedHeight > 0) {
-      measuredRef.current = {
-        width: renderedWidth,
-        height: renderedHeight,
-      };
-    }
     const { width, height } = measuredRef.current;
     const placement = cellInspectorPlacement({
       anchorX,
@@ -302,10 +305,12 @@ export default function CellInspectionOverlay(props: CellDetailPanelProps) {
       layoutSideRef.current = placement.side;
       setLayoutSide(placement.side);
     }
+    const cardX = anchorX + placement.x;
+    const cardY = anchorY + placement.y;
     const frameKey = [
       placement.side,
-      placement.x.toFixed(1),
-      placement.y.toFixed(1),
+      cardX.toFixed(1),
+      cardY.toFixed(1),
       width,
       height,
       accent,
@@ -313,7 +318,7 @@ export default function CellInspectionOverlay(props: CellDetailPanelProps) {
     if (frameKey === lastFrameKeyRef.current) return;
     lastFrameKeyRef.current = frameKey;
     card.dataset.cellInspectorPlacement = placement.side;
-    card.style.transform = `translate3d(${placement.x}px, ${placement.y}px, 0)`;
+    card.style.transform = `translate3d(${cardX}px, ${cardY}px, 0)`;
     updateLeader(
       leader,
       leaderDot,
@@ -331,6 +336,7 @@ export default function CellInspectionOverlay(props: CellDetailPanelProps) {
         occlude={false}
         zIndexRange={[40, 40]}
         pointerEvents="none"
+        calculatePosition={CELL_INSPECTOR_HTML_ORIGIN}
         style={{ pointerEvents: 'none', userSelect: 'none' }}
       >
         <div

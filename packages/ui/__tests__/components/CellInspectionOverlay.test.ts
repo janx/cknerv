@@ -119,6 +119,18 @@ describe('cellInspectorPlacement', () => {
     expect(INSPECTION_OVERLAY_SOURCE).not.toContain('<cylinderGeometry');
     expect(INSPECTION_OVERLAY_SOURCE).not.toContain('<octahedronGeometry');
   });
+
+  it('projects once from cached ResizeObserver measurements', () => {
+    expect(INSPECTION_OVERLAY_SOURCE).toContain(
+      'calculatePosition={CELL_INSPECTOR_HTML_ORIGIN}',
+    );
+    expect(INSPECTION_OVERLAY_SOURCE).toContain('new ResizeObserver');
+    expect(INSPECTION_OVERLAY_SOURCE).toContain(
+      'const cardX = anchorX + placement.x',
+    );
+    expect(INSPECTION_OVERLAY_SOURCE).not.toContain('card.offsetWidth');
+    expect(INSPECTION_OVERLAY_SOURCE).not.toContain('card.offsetHeight');
+  });
 });
 
 describe('Cell inspection dismissal', () => {

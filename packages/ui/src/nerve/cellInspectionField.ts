@@ -13,6 +13,13 @@ export const CELL_INSPECTION_MAX_HOPS = 2;
  */
 export const CELL_INSPECTION_HOP_ENERGY = [1, 0.9, 0.72] as const;
 export const CELL_INSPECTION_BACKGROUND_ENERGY = 0.46;
+export const CELL_INSPECTION_DAMP_RATE = 9;
+export const CELL_INSPECTION_DAMP_SNAP = 0.002;
+/** The longest possible body-energy transition before the old CPU damper
+ * snapped to its target. A scalar shader blend now covers the same envelope. */
+export const CELL_INSPECTION_BODY_TRANSITION_SECONDS = Math.log(
+  (1 - CELL_INSPECTION_BACKGROUND_ENERGY) / CELL_INSPECTION_DAMP_SNAP,
+) / CELL_INSPECTION_DAMP_RATE;
 /** Only the inspected Cell and its direct renderer-neighbours are topology
  * navigation targets. The second ring remains visual context, not a shortcut. */
 export const CELL_INSPECTION_NAVIGATION_MAX_HOP = 1;
@@ -168,6 +175,20 @@ export function dampCellInspectionFieldScale(
     : 1;
   if (!Number.isFinite(deltaSeconds) || deltaSeconds <= 0) return safeCurrent;
   const next = safeCurrent
-    + (safeTarget - safeCurrent) * (1 - Math.exp(-deltaSeconds * 9));
-  return Math.abs(next - safeTarget) < 0.002 ? safeTarget : next;
+    + (safeTarget - safeCurrent)
+      * (1 - Math.exp(-deltaSeconds * CELL_INSPECTION_DAMP_RATE));
+  return Math.abs(next - safeTarget) < CELL_INSPECTION_DAMP_SNAP
+    ? safeTarget
+    : next;
+}
+
+/** Closed-form equivalent of repeatedly applying the body damper. Keeping the
+ * per-Cell endpoints in static attributes and advancing this one scalar avoids
+ * rewriting the complete visible Cell buffer on every transition frame. */
+export function cellInspectionBodyTransitionBlend(
+  elapsedSeconds: number,
+): number {
+  if (!Number.isFinite(elapsedSeconds) || elapsedSeconds <= 0) return 0;
+  if (elapsedSeconds >= CELL_INSPECTION_BODY_TRANSITION_SECONDS) return 1;
+  return 1 - Math.exp(-elapsedSeconds * CELL_INSPECTION_DAMP_RATE);
 }

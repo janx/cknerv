@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest';
 import type { NeighborGraph } from '../../src/geometry/neighborGraph';
 import {
   CELL_INSPECTION_BACKGROUND_ENERGY,
+  CELL_INSPECTION_BODY_TRANSITION_SECONDS,
   CELL_INSPECTION_HOP_ENERGY,
   CELL_INSPECTION_NAVIGATION_MAX_HOP,
   cellInspectionDirectNavigationRole,
+  cellInspectionBodyTransitionBlend,
   cellInspectionEdgeScaleAt,
   cellInspectionFieldScale,
   cellInspectionFieldTransitionScaleAt,
@@ -167,6 +169,29 @@ describe('Cell inspection information field', () => {
       1,
       0,
     )).toBe(CELL_INSPECTION_BACKGROUND_ENERGY);
+  });
+
+  it('matches repeated body damping with one closed-form GPU blend', () => {
+    const stepSeconds = 1 / 60;
+    const steps = 12;
+    let repeated = 1;
+    for (let index = 0; index < steps; index += 1) {
+      repeated = dampCellInspectionFieldScale(
+        repeated,
+        CELL_INSPECTION_BACKGROUND_ENERGY,
+        stepSeconds,
+      );
+    }
+    const blend = cellInspectionBodyTransitionBlend(stepSeconds * steps);
+    const closedForm = 1 + (
+      CELL_INSPECTION_BACKGROUND_ENERGY - 1
+    ) * blend;
+
+    expect(closedForm).toBeCloseTo(repeated, 6);
+    expect(cellInspectionBodyTransitionBlend(0)).toBe(0);
+    expect(cellInspectionBodyTransitionBlend(
+      CELL_INSPECTION_BODY_TRANSITION_SECONDS,
+    )).toBe(1);
   });
 
   it('rejects invalid selections instead of creating synthetic field roots', () => {

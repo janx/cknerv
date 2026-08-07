@@ -148,6 +148,23 @@ describe('CellDetailPanel', () => {
       .toBe('260px');
     expect(container.querySelector('[data-testid="cell-nucleus-portrait"]')).not.toBeNull();
     expect(container.querySelector('[data-cell-specimen-scan-light]')).not.toBeNull();
+    const specimenScan = container.querySelector(
+      '[data-cell-specimen-scan-light]',
+    ) as HTMLElement;
+    expect(specimenScan.style.top).toBe('9%');
+    expect(specimenScan.style.height).toBe('82%');
+    expect(specimenScan.style.willChange).toContain('transform');
+    expect(specimenScan.style.animation).toContain(
+      `cknerv-cell-specimen-sweep ${6 * PROBE_STEP_S}s linear 1 both`,
+    );
+    expect(specimenScan.style.animation).not.toContain('infinite');
+    const cellularBeam = container.querySelector(
+      '[data-cellular-scan-beam]',
+    ) as HTMLElement;
+    expect(cellularBeam.style.left).toBe('0px');
+    expect(cellularBeam.style.transform).toContain('translate3d(');
+    expect(cellularBeam.style.transition).toContain('transform 80ms linear');
+    expect(cellularBeam.style.transition).not.toContain('left 80ms linear');
     expect(container.querySelector('[aria-label="Interactive Cell scan"]')).not.toBeNull();
     expect(container.querySelectorAll('[data-cell-inspection-satellite]')).toHaveLength(4);
     expect((container.querySelector('[data-cell-detail-readable-scale]') as HTMLElement).style.zoom).toBe('1.2');
@@ -590,6 +607,12 @@ describe('CellDetailPanel', () => {
     });
     expect(memory.dataset.consensusMemoryState).toBe('locked');
     expect(content.dataset.cellContentRevealState).toBe('resolved');
+    const settledSpecimenScan = container.querySelector(
+      '[data-cell-specimen-scan-light]',
+    ) as HTMLElement;
+    expect(settledSpecimenScan.style.animation).toBe('');
+    expect(settledSpecimenScan.style.willChange).toBe('');
+    expect(settledSpecimenScan.style.opacity).toBe('0');
     expect((container.querySelector('[data-consensus-memory-reveal="causal"]') as HTMLElement)
       .style.display).toBe('block');
     performanceNow.mockRestore();

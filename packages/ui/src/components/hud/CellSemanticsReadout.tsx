@@ -1,4 +1,4 @@
-import type { CSSProperties } from 'react';
+import { memo, type CSSProperties } from 'react';
 import type {
   CellSemanticRecord,
   EnrichmentSourceStatus,
@@ -663,7 +663,7 @@ function TransactionReadout({
   );
 }
 
-export default function CellSemanticsReadout({
+function CellSemanticsReadout({
   source,
   phase,
   record,
@@ -839,3 +839,8 @@ export default function CellSemanticsReadout({
     </section>
   );
 }
+
+// The surrounding Cell scan publishes progress every 80 ms. Enrichment facts
+// are immutable throughout that scan, so keep this comparatively large static
+// subtree out of those progress-only reconciliations.
+export default memo(CellSemanticsReadout);

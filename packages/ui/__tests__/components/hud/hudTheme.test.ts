@@ -31,6 +31,8 @@ describe('hudTheme', () => {
     expect(css).toContain('--hud-orange:#FF9830');
     expect(css).toContain('@keyframes cknerv-cell-detail-anchor-enter');
     expect(css).toContain('@keyframes cknerv-cell-specimen-sweep');
+    expect(css).toContain('transform:translate3d(0,100%,0)');
+    expect(css).not.toContain('100%{top:91%');
     expect(css).toContain('@keyframes cknerv-route-hop-lock-pulse');
     expect(css).toContain('var(--route-hop-pulse-color');
     expect(css).toContain('.cknerv-hud-control-button:focus-visible');

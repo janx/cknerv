@@ -186,20 +186,25 @@ describe('CellGalaxy', () => {
     expect(source).toContain('if (pickingSuspendedRef?.current) return;');
   });
 
-  it('shares one exact screen index per rendered frame without stale clicks', () => {
+  it('reuses one exact screen index until a projection input changes', () => {
     const source = readFileSync(CELL_GALAXY_SOURCE, 'utf8');
+    const picker = source.slice(
+      source.indexOf('function CellPicker('),
+      source.indexOf('export default function CellGalaxy'),
+    );
 
-    expect(source).toContain('ScreenSpaceHitIndex');
-    expect(source).toContain('indexFreshThisFrame');
-    expect(source).toContain('indexedMatrixWorld.equals(matrix)');
-    expect(source).toContain('indexedCameraView.equals(camera.matrixWorldInverse)');
-    expect(source).toContain('indexedProjection.equals(camera.projectionMatrix)');
-    expect(source).toContain('indexedDetailVersion !== detailAttr.version');
-    expect(source).toContain('window.requestAnimationFrame');
-    expect(source).toContain('screenIndex.find(');
-    expect(source).toContain("canvas.addEventListener('pointerdown'");
-    expect(source).toContain("canvas.addEventListener('click'");
-    expect(source).toContain('forcePreciseRaycastRef.current');
+    expect(picker).toContain('ScreenSpaceHitIndex');
+    expect(picker).toContain('indexedMatrixWorld.equals(matrix)');
+    expect(picker).toContain('indexedCameraView.equals(camera.matrixWorldInverse)');
+    expect(picker).toContain('indexedProjection.equals(camera.projectionMatrix)');
+    expect(picker).toContain('indexedDetailVersion !== detailAttr.version');
+    expect(picker).toContain('screenIndex.find(');
+    expect(picker).toContain("canvas.addEventListener('pointerdown'");
+    expect(picker).not.toContain("canvas.addEventListener('pointerup'");
+    expect(picker).not.toContain("canvas.addEventListener('click'");
+    expect(picker).not.toContain('window.requestAnimationFrame');
+    expect(picker).not.toContain('indexFreshThisFrame');
+    expect(picker).toContain('forcePreciseRaycastRef.current');
   });
 
   it('memoizes composition activity pins outside the frame loop', () => {
@@ -848,7 +853,10 @@ describe('CellGalaxy useSimFrame buffer behavior', () => {
     );
     expect(source).toContain('cellBufferRanges,');
     expect(source).toContain('markCellBufferUpdateRanges(');
-    expect(source).toContain(
+    expect(source).toContain('cellInspectionFromAttr');
+    expect(source).toContain('cellInspectionToAttr');
+    expect(source).toContain('uInspectionBlend.value');
+    expect(source).not.toContain(
       'markPopulatedBufferUpdate(cellInspectionAttr, count)',
     );
   });

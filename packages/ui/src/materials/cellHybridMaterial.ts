@@ -46,6 +46,7 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
       uMemoryMinPointPx: { value: 24 },
       uMemoryLinePx:    { value: 0.55 },
       uMemorySignalEnergy: { value: 1 },
+      uInspectionBlend: { value: 1 },
       uWarmth:          { value: 0.12 }, // living rose body → ember bias; set live from LIVE.cell.warmth
       uCenterDim:       { value: 0.3 }, // shared centre-energy floor; passive fabric applies its stronger squared form
     },
@@ -73,7 +74,8 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
       attribute float aFocus;   // eased interaction: 0 resting, ~0.46 hover, 1 selected
       attribute float aRecall;  // signed historical read: source < 0, retained target > 0
       attribute float aRecallState; // source travel / target witness resolution
-      attribute float aInspection; // eased real-adjacency energy; 1 outside inspection
+      attribute float aInspectionFrom; // previous real-adjacency energy
+      attribute float aInspectionTo; // next real-adjacency energy
       attribute float aInspectionRole; // 1 = direct, navigable renderer-neighbour
 
       uniform float uTime;
@@ -84,6 +86,7 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
       uniform float uMemoryMinPointPx;
       uniform float uWarmth;
       uniform float uCenterDim;
+      uniform float uInspectionBlend;
 
       varying float vDeathRamp;
       varying float vSeed;
@@ -111,7 +114,11 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
         vFocus = aFocus;
         vRecall = aRecall;
         vRecallState = aRecallState;
-        vInspection = aInspection;
+        vInspection = mix(
+          aInspectionFrom,
+          aInspectionTo,
+          clamp(uInspectionBlend, 0.0, 1.0)
+        );
         vInspectionRole = aInspectionRole;
         float birthRamp = clamp((uTime - aBornAt) / uBirthDurS, 0.0, 1.0);
         float deathRamp = clamp((uTime - aDeathAt) / uDeathDurS, 0.0, 1.0);

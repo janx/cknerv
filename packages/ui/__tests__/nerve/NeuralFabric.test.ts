@@ -120,16 +120,24 @@ describe('NeuralFabric living-mesh handles', () => {
 
   it('grades passive fibres by real selected-Cell topology without dimming events', () => {
     expect(SRC).toContain('setInspectionField');
-    expect(SRC).toContain('cellInspectionFieldTransitionScaleAt');
+    expect(SRC).toContain('cellInspectionEdgeScaleAt');
     expect(SRC).toContain('st.fromCellId');
     expect(SRC).toContain('st.toCellId');
-    expect(SRC).toContain('* prevInspection');
-    expect(SRC).toContain('* endInspection');
+    expect(SRC).toContain('instanceInspectionFromStart');
+    expect(SRC).toContain('instanceInspectionToEnd');
+    expect(SRC).toContain('inspectionTransitionProgress.value');
     expect(SRC).toContain('(1 - fieldScale) * lifecycleFlash');
+    const transitionAdvance = SRC.slice(
+      SRC.indexOf('if (inspectionField.progress < 1)'),
+      SRC.indexOf('const recallAperture =', SRC.indexOf(
+        'if (inspectionField.progress < 1)',
+      )),
+    );
+    expect(transitionAdvance).not.toContain('emitDirtyRef.current = true');
     const activeImplementation = SRC.slice(
       SRC.lastIndexOf('pushActiveHop(hop, cells)'),
     );
-    expect(activeImplementation).not.toContain('inspectionFieldScaleAt');
+    expect(activeImplementation).not.toContain('inspectionFieldEndpointScaleAt');
   });
 
   it('keeps the full four-sample passive Bezier at every quality preset', () => {

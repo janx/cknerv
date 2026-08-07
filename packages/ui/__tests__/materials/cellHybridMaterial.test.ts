@@ -29,6 +29,7 @@ describe('makeCellHybridMaterial', () => {
     expect(m.uniforms.uMemoryMinPointPx.value).toBe(24);
     expect(m.uniforms.uMemoryLinePx.value).toBe(0.55);
     expect(m.uniforms.uMemorySignalEnergy.value).toBe(1);
+    expect(m.uniforms.uInspectionBlend.value).toBe(1);
     expect(m.uniforms.uWarmth.value).toBe(0.12);
     expect(m.uniforms.uCenterDim.value).toBe(0.3);
 
@@ -77,8 +78,10 @@ describe('makeCellHybridMaterial', () => {
   it('applies topology inspection only to the resting Cell body', () => {
     const m = makeCellHybridMaterial();
 
-    expect(m.vertexShader).toContain('attribute float aInspection');
-    expect(m.vertexShader).toContain('vInspection = aInspection');
+    expect(m.vertexShader).toContain('attribute float aInspectionFrom');
+    expect(m.vertexShader).toContain('attribute float aInspectionTo');
+    expect(m.vertexShader).toContain('uniform float uInspectionBlend');
+    expect(m.vertexShader).toContain('vInspection = mix(');
     expect(m.fragmentShader).toContain(
       'base.a *= vCenterDim * vInspection',
     );
