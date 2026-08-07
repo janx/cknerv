@@ -226,8 +226,60 @@ function compositionTargets(total: number): Record<CompositionBucket, number> {
   return { dao, typed, plain: total - dao - typed };
 }
 
+// Cells are immutable cache values, so their derived keys/indexes can be
+// cached on object identity. Composition rebuilds run per link batch (the
+// activity pins change every block) and previously re-walked the full 20K
+// canonical map — and re-built one string per cell — on each of them, twice
+// (CellGalaxy and NeuralNetwork keep separate render-set states but share
+// the same canonical map and composition record).
+const outPointKeyByCell = new WeakMap<Cell, string>();
+
 function renderOutPointKey(cell: Cell): string {
-  return `${cell.out_point.tx_hash}:${cell.out_point.index}`;
+  const cached = outPointKeyByCell.get(cell);
+  if (cached !== undefined) return cached;
+  const key = `${cell.out_point.tx_hash}:${cell.out_point.index}`;
+  outPointKeyByCell.set(cell, key);
+  return key;
+}
+
+const canonicalByOutPointCache = new WeakMap<
+  ReadonlyMap<number, Cell>,
+  Map<string, Cell>
+>();
+
+function canonicalCellsByOutPoint(
+  canonicalCells: ReadonlyMap<number, Cell>,
+): Map<string, Cell> {
+  const cached = canonicalByOutPointCache.get(canonicalCells);
+  if (cached) return cached;
+  const index = new Map<string, Cell>();
+  for (const cell of canonicalCells.values()) {
+    index.set(renderOutPointKey(cell), cell);
+  }
+  canonicalByOutPointCache.set(canonicalCells, index);
+  return index;
+}
+
+const compositionByIdCache = new WeakMap<
+  GalaxyCompositionRecord,
+  Map<number, Cell>
+>();
+
+function compositionCellsById(
+  composition: GalaxyCompositionRecord,
+): Map<number, Cell> {
+  const cached = compositionByIdCache.get(composition);
+  if (cached) return cached;
+  const index = new Map<number, Cell>();
+  for (const cell of [
+    ...composition.dao,
+    ...composition.typed,
+    ...composition.plain,
+  ]) {
+    index.set(cell.id, cell);
+  }
+  compositionByIdCache.set(composition, index);
+  return index;
 }
 
 /**
@@ -263,18 +315,8 @@ function composedCellRenderList(
   const requestedCount = normalizeCellDisplayBudget(visibleCount);
   if (requestedCount === 0) return [];
 
-  const canonicalByOutPoint = new Map<string, Cell>();
-  for (const cell of canonicalCells.values()) {
-    canonicalByOutPoint.set(renderOutPointKey(cell), cell);
-  }
-  const compositionById = new Map<number, Cell>();
-  for (const cell of [
-    ...composition.dao,
-    ...composition.typed,
-    ...composition.plain,
-  ]) {
-    compositionById.set(cell.id, cell);
-  }
+  const canonicalByOutPoint = canonicalCellsByOutPoint(canonicalCells);
+  const compositionById = compositionCellsById(composition);
 
   const buckets: Record<CompositionBucket, Cell[]> = {
     dao: [],
