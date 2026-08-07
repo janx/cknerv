@@ -234,9 +234,10 @@ describe('NeuralFabric living-mesh handles', () => {
     );
     expect(SRC).toContain('if (updatePositions)');
     expect(SRC).toContain('if (writePositions)');
-    expect(SRC).toContain(
-      'passivePositionsDirtyRef.current = stillAnimating > 0',
-    );
+    // Positions rewrite while the slot layout moves (structural) or any edge
+    // geometry is mid-animation; the structural flag resolves with the walk.
+    expect(SRC).toContain('|| animatingKeys.size > 0');
+    expect(SRC).toContain('passivePositionsDirtyRef.current = false');
   });
 
   it('decays and uploads reinforcement through a sparse warm-route layer', () => {
