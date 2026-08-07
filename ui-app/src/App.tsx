@@ -1047,8 +1047,17 @@ export default function App({
     return peers.find((p) => p.node_id === id) ?? null;
   }, [selectedNetId, peers]);
 
-  const buildVersion = resolveBuildVersion();
-  const build = { version: buildVersion, href: buildCommitHref(buildVersion) };
+  // Stable identities: HudOverlay is memoized, so its object/callback props
+  // must not be re-created per App render.
+  const build = useMemo(() => {
+    const buildVersion = resolveBuildVersion();
+    return { version: buildVersion, href: buildCommitHref(buildVersion) };
+  }, []);
+  const hudStreamHealth = useMemo(
+    () => ({ chain: chainStreamHealth, cells: cellsStreamHealth }),
+    [chainStreamHealth, cellsStreamHealth],
+  );
+  const clearNetSelection = useCallback(() => setSelectedNetId(null), []);
 
   return (
     <>
@@ -1083,12 +1092,9 @@ export default function App({
         cellInspectionActive={selectedCell !== null}
         selectedNode={selectedNode}
         selectedPeer={selectedPeer}
-        onClearNet={() => setSelectedNetId(null)}
+        onClearNet={clearNetSelection}
         backfill={cellsCache.backfill}
-        streamHealth={{
-          chain: chainStreamHealth,
-          cells: cellsStreamHealth,
-        }}
+        streamHealth={hudStreamHealth}
         build={build}
         colonyCount={topology.nodes.length}
       />

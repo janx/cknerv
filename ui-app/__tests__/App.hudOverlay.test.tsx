@@ -7,7 +7,12 @@ const APP_SOURCE = readFileSync(resolve(process.cwd(), 'src/App.tsx'), 'utf8');
 
 describe('HudOverlay wiring', () => {
   it('is importable from @cknerv/ui', () => {
-    expect(typeof HudOverlay).toBe('function');
+    // Accept a plain function component or a React.memo wrapper (an exotic
+    // component object whose `type` is the inner render function).
+    const renderFn = typeof HudOverlay === 'function'
+      ? HudOverlay
+      : (HudOverlay as unknown as { type?: unknown }).type;
+    expect(typeof renderFn).toBe('function');
   });
 
   it('hydrates the initial Cell cache once and shares it with the stream', () => {
