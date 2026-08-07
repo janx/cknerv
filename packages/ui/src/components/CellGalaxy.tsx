@@ -102,6 +102,9 @@ import { markPopulatedBufferUpdate } from '../geometry/populatedBufferAttribute'
  *  block's A-lane hue. Kept in sync with the `ckb`
  *  entry of `_rcg/glowNodePalette.ts` — tune both together. */
 const CHAIN_ANCHOR_PALETTE = { edge: '#7df9ff', halo: '#22d3ee', fill: '#0e7490' };
+// Pre-parsed rest halo: the anchor frame loop re-asserts uColor every frame,
+// and THREE's CSS-string parse is measurable at that rate.
+const CHAIN_ANCHOR_HALO_COLOR = new THREE.Color(CHAIN_ANCHOR_PALETTE.halo);
 import CellNucleus from './CellNucleus';
 
 // ---------------------------------------------------------------------------
@@ -520,12 +523,16 @@ function CkbNodeAnchor({
       const age = simClock.elapsedSec - trigger.firedAt;
       if (age >= 0 && age < ANCHOR_FLASH_DURATION_S) {
         flashActive = true;
-        haloMat.uniforms.uColor.value.setRGB(...trigger.color);
+        haloMat.uniforms.uColor.value.setRGB(
+          trigger.color[0],
+          trigger.color[1],
+          trigger.color[2],
+        );
       } else {
-        haloMat.uniforms.uColor.value.set(palette.halo);
+        haloMat.uniforms.uColor.value.copy(CHAIN_ANCHOR_HALO_COLOR);
       }
     } else {
-      haloMat.uniforms.uColor.value.set(palette.halo);
+      haloMat.uniforms.uColor.value.copy(CHAIN_ANCHOR_HALO_COLOR);
     }
     const target = ckbNodeAnchorHaloTarget(selected, flashActive);
     intensityRef.current += (target - intensityRef.current) * Math.min(1, dt * 12);

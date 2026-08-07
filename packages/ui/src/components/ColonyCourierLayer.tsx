@@ -198,8 +198,9 @@ export default function ColonyCourierLayer({
 
     // The courier is only a moving sample of the edge surge, so both its knot
     // and trace inherit the same block carrier instead of introducing white.
-    plumeMat.color.setRGB(...pulse.color);
-    bloomMat.color.setRGB(...pulse.color);
+    // Three-arg setRGB: the spread form allocates an arguments array per frame.
+    plumeMat.color.setRGB(pulse.color[0], pulse.color[1], pulse.color[2]);
+    bloomMat.color.setRGB(pulse.color[0], pulse.color[1], pulse.color[2]);
 
     const age = simClock.elapsedSec - pulse.at;
     state.camera.getWorldPosition(_camPos);

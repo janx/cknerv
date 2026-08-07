@@ -353,7 +353,8 @@ export default function BlockDeliveryLayer({
     }
 
     const age = now - pulse.at;
-    CARRIER_COLOR.setRGB(...pulse.color);
+    // Three-arg setRGB: the spread form allocates an arguments array per frame.
+    CARRIER_COLOR.setRGB(pulse.color[0], pulse.color[1], pulse.color[2]);
     state.camera.getWorldPosition(_cameraPosition);
     const fieldRotation = now * FIELD_SPIN_RATE;
     _bodySpinQuaternion.setFromAxisAngle(FIELD_NORMAL, fieldRotation);

@@ -869,15 +869,22 @@ export default function NeuralFabric({
     [],
   );
 
+  // (focus, width) value gate: the raw-frame reassertion below runs every
+  // frame, but its outputs are pure functions of these two numbers, which
+  // settle whenever the camera is idle and the width knob is untouched.
+  const lastViewWeightRef = useRef({ focus: Number.NaN, width: Number.NaN });
   const applyPassiveViewWeight = useCallback(() => {
     const focus = cellDetailViewFocusRef?.current ?? 0;
+    const width = LIVE.cell.fabricWidth;
+    const last = lastViewWeightRef.current;
+    if (last.focus === focus && last.width === width) return;
+    last.focus = focus;
+    last.width = width;
     const energyGain = cellDetailFabricEnergyGain(focus);
     fabric.material.color.setRGB(energyGain, energyGain, energyGain);
     warmRoutes.material.color.setRGB(energyGain, energyGain, energyGain);
-    fabric.material.linewidth = LIVE.cell.fabricWidth
-      * cellDetailFabricWidthScale(focus);
-    warmRoutes.material.linewidth = LIVE.cell.fabricWidth
-      * cellDetailFabricWidthScale(focus);
+    fabric.material.linewidth = width * cellDetailFabricWidthScale(focus);
+    warmRoutes.material.linewidth = width * cellDetailFabricWidthScale(focus);
   }, [cellDetailViewFocusRef, fabric.material, warmRoutes.material]);
 
   // Camera navigation is input, not simulation. Keep the passive Cell fabric's
