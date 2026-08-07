@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { Cell } from '@cknerv/types';
 import { emptyNeighborGraph } from '../../src/geometry/neighborGraph';
-import { addCell, removeCell } from '../../src/nerve/incrementalGraph';
+import {
+  addCell,
+  removeCell,
+  removeCells,
+} from '../../src/nerve/incrementalGraph';
 
 function cell(id: number, x: number, z: number, death: number | null = null): Cell {
   return { id, born_at_ms: 0, death_at_ms: death, birth_block: 1, tag: null,
@@ -73,5 +77,36 @@ describe('removeCell', () => {
     expect(g.adjacency.get(2)!.has(1)).toBe(false);
     expect(g.edges.length).toBe(0);
     expect(removedEdgeKeys.sort()).toEqual(['1|2', '1|3']);
+  });
+
+  it('removes a lifecycle batch while preserving first-removed edge ownership', () => {
+    const g = emptyNeighborGraph();
+    g.adjacency.set(1, new Set([2, 4]));
+    g.adjacency.set(2, new Set([1, 3]));
+    g.adjacency.set(3, new Set([2, 4]));
+    g.adjacency.set(4, new Set([1, 3, 5]));
+    g.adjacency.set(5, new Set([4]));
+    g.edges.push(
+      { from: 1, to: 2, d: 1 },
+      { from: 2, to: 3, d: 1 },
+      { from: 3, to: 4, d: 1 },
+      { from: 1, to: 4, d: 1 },
+      { from: 4, to: 5, d: 1 },
+    );
+
+    const removals = removeCells(g, [2, 3]);
+
+    expect(removals).toEqual([
+      { removedEdgeKeys: ['1|2', '2|3'] },
+      { removedEdgeKeys: ['3|4'] },
+    ]);
+    expect(g.edges).toEqual([
+      { from: 1, to: 4, d: 1 },
+      { from: 4, to: 5, d: 1 },
+    ]);
+    expect(g.adjacency.has(2)).toBe(false);
+    expect(g.adjacency.has(3)).toBe(false);
+    expect([...g.adjacency.get(1)!]).toEqual([4]);
+    expect([...g.adjacency.get(4)!]).toEqual([1, 5]);
   });
 });

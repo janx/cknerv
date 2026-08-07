@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { Cell } from '@cknerv/types';
-import { emptyNeighborGraph } from '../../src/geometry/neighborGraph';
+import {
+  emptyNeighborGraph,
+  type NeighborEdge,
+  type NeighborGraph,
+} from '../../src/geometry/neighborGraph';
 import { fabricEdgeKey } from '../../src/nerve/fabricOrder';
 import {
   MAX_INCREMENTAL_BIRTH_COMPARISONS,
@@ -64,5 +68,59 @@ describe('planMeshUpdate (orchestration)', () => {
     const u = planMeshUpdate({ born: [], died: [], evicted: [1] }, g, cells, 10, { k: 4 }, 60);
     expect(u.evictKeys).toEqual(['1|5']);
     expect(u.deathKeys).toEqual([]);
+  });
+
+  it('filters dense edge storage once for a mixed lifecycle batch', () => {
+    const adjacency = new Map<number, Set<number>>([
+      [1, new Set([2, 4])],
+      [2, new Set([1, 3])],
+      [3, new Set([2, 4])],
+      [4, new Set([1, 3, 5])],
+      [5, new Set([4])],
+    ]);
+    let edges: NeighborEdge[] = [
+      { from: 1, to: 2, d: 1 },
+      { from: 2, to: 3, d: 1 },
+      { from: 3, to: 4, d: 1 },
+      { from: 1, to: 4, d: 1 },
+      { from: 4, to: 5, d: 1 },
+    ];
+    let edgeArrayReplacements = 0;
+    const graph = { adjacency } as NeighborGraph;
+    Object.defineProperty(graph, 'edges', {
+      configurable: true,
+      enumerable: true,
+      get: () => edges,
+      set: (next: NeighborEdge[]) => {
+        edgeArrayReplacements += 1;
+        edges = next;
+      },
+    });
+    const cells = new Map<number, Cell>([
+      [1, cell(1, 0, 0)],
+      [2, cell(2, 1, 0)],
+      [3, cell(3, 2, 0)],
+      [4, cell(4, 3, 0)],
+      [5, cell(5, 4, 0)],
+    ]);
+
+    const update = planMeshUpdate(
+      { born: [], died: [2, 3], evicted: [4] },
+      graph,
+      cells,
+      10,
+      { k: 4 },
+      60,
+    );
+
+    expect(edgeArrayReplacements).toBe(1);
+    expect(update.deathKeys).toEqual(['1|2', '2|3', '3|4']);
+    expect(update.deathEndByKey).toEqual(new Map([
+      ['1|2', 'to'],
+      ['2|3', 'from'],
+      ['3|4', 'from'],
+    ]));
+    expect(update.evictKeys).toEqual(['1|4', '4|5']);
+    expect(edges).toEqual([]);
   });
 });
