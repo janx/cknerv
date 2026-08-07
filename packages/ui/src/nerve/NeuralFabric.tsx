@@ -1266,6 +1266,9 @@ export default function NeuralFabric({
           stable: 0,
           totalStates: states.size,
         });
+        // Every requested edge already existed as stable: no state moved, so
+        // don't arm a structural full walk over the untouched fabric.
+        if (statsAdded === 0 && statsRevived === 0) return;
         emitDirtyRef.current = true;
         passivePositionsDirtyRef.current = true;
       },
@@ -1291,6 +1294,10 @@ export default function NeuralFabric({
           stable: 0,
           totalStates: states.size,
         });
+        // Every key was unknown or already dying: nothing changed, so don't
+        // arm a structural full walk over the untouched fabric. (Live data
+        // shows steady-state killEdges calls are usually exactly this no-op.)
+        if (statsDying === 0) return;
         emitDirtyRef.current = true;
         passivePositionsDirtyRef.current = true;
       },
