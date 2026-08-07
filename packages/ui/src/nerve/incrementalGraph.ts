@@ -92,18 +92,53 @@ export function removeCell(
   graph: NeighborGraph,
   cellId: number,
 ): { removedEdgeKeys: string[] } {
-  const nbrs = graph.adjacency.get(cellId);
-  const removedEdgeKeys: string[] = [];
-  if (nbrs) {
-    for (const n of nbrs) {
-      graph.adjacency.get(n)?.delete(cellId);
-      removedEdgeKeys.push(fabricEdgeKey(cellId, n));
+  return removeCells(graph, [cellId])[0] ?? { removedEdgeKeys: [] };
+}
+
+export interface RemovedCellEdges {
+  removedEdgeKeys: string[];
+}
+
+/**
+ * Remove one lifecycle batch while filtering the complete edge array once.
+ *
+ * Results retain `cellIds` order. Adjacency is detached in that same order, so
+ * when both endpoints of one edge disappear in a batch the first Cell owns the
+ * returned edge key exactly as repeated `removeCell` calls did. The expensive
+ * dense edge storage is compacted only after every adjacency change, reducing
+ * block application from O(removed Cells × graph edges) to O(graph edges plus
+ * removed degrees).
+ */
+export function removeCells(
+  graph: NeighborGraph,
+  cellIds: readonly number[],
+): RemovedCellEdges[] {
+  if (cellIds.length === 0) return [];
+
+  const removedIds = new Set<number>();
+  const removals: RemovedCellEdges[] = [];
+  let removedAnyEdge = false;
+
+  for (const cellId of cellIds) {
+    const nbrs = graph.adjacency.get(cellId);
+    const removedEdgeKeys: string[] = [];
+    if (nbrs) {
+      for (const neighbourId of nbrs) {
+        graph.adjacency.get(neighbourId)?.delete(cellId);
+        removedEdgeKeys.push(fabricEdgeKey(cellId, neighbourId));
+      }
+      graph.adjacency.delete(cellId);
     }
-    graph.adjacency.delete(cellId);
+    if (removedEdgeKeys.length > 0) removedAnyEdge = true;
+    removedIds.add(cellId);
+    removals.push({ removedEdgeKeys });
   }
-  if (removedEdgeKeys.length > 0) {
-    const kill = new Set(removedEdgeKeys);
-    graph.edges = graph.edges.filter((e) => !kill.has(fabricEdgeKey(e.from, e.to)));
+
+  if (removedAnyEdge) {
+    graph.edges = graph.edges.filter(
+      (edge) => !removedIds.has(edge.from) && !removedIds.has(edge.to),
+    );
   }
-  return { removedEdgeKeys };
+
+  return removals;
 }

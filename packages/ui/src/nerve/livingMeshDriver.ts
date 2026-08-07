@@ -6,7 +6,7 @@
 
 import type { Cell } from '@cknerv/types';
 import type { NeighborGraph, NeighborEdge } from '../geometry/neighborGraph';
-import { addCell, removeCell } from './incrementalGraph';
+import { addCell, removeCells } from './incrementalGraph';
 import { fabricEdgeKey } from './fabricOrder';
 
 /** Lifecycle subset consumed from the cache reducer's compact Cell journal. */
@@ -81,13 +81,15 @@ export function planMeshUpdate(
   });
   const deathKeys: string[] = [];
   const deathEndByKey = new Map<string, 'from' | 'to'>();
-  for (const id of diff.died) {
-    const { removedEdgeKeys } = removeCell(graph, id);
+  const removedCells = removeCells(graph, [...diff.died, ...diff.evicted]);
+  for (let index = 0; index < diff.died.length; index += 1) {
+    const id = diff.died[index];
+    const { removedEdgeKeys } = removedCells[index];
     for (const k of removedEdgeKeys) { deathKeys.push(k); deathEndByKey.set(k, deadEndFor(k, id)); }
   }
   const evictKeys: string[] = [];
-  for (const id of diff.evicted) {
-    const { removedEdgeKeys } = removeCell(graph, id);
+  for (let index = 0; index < diff.evicted.length; index += 1) {
+    const { removedEdgeKeys } = removedCells[diff.died.length + index];
     for (const k of removedEdgeKeys) evictKeys.push(k);
   }
   return { addedEdges, bornAtByKey, dirByKey, deathKeys, deathEndByKey, evictKeys };
