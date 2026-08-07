@@ -50,8 +50,16 @@ describe('screen-space capsule line', () => {
       'if ( capsuleDistanceSq > capsuleRadiusSq ) discard',
     );
     expect(material.fragmentShader).toContain(
-      'capsuleEndWeight = capsuleT / vCapsuleEndW',
+      ') * vCapsuleInvLengthSq',
     );
+    expect(material.vertexShader).toContain(
+      'vCapsuleStartInvW = 1.0 / clipStart.w',
+    );
+    expect(material.fragmentShader).toContain(
+      'capsuleEndWeight = capsuleT * vCapsuleEndInvW',
+    );
+    expect(material.fragmentShader).not.toContain('/ capsuleLengthSq');
+    expect(material.fragmentShader).not.toContain('/ vCapsuleEndW');
     expect(material.fragmentShader).toContain(
       'mix(\n\t\t\t\t\tvCapsuleColorStart,',
     );

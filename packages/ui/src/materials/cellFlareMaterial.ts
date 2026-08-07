@@ -38,7 +38,6 @@ export function makeCellFlareMaterial(): THREE.ShaderMaterial {
     blending: THREE.AdditiveBlending,
     toneMapped: false,
     vertexShader: /* glsl */ `
-      attribute vec3  aColor;
       attribute float aBornAt;
       attribute float aDeathAt;
       attribute float aFlashAt;
@@ -49,7 +48,6 @@ export function makeCellFlareMaterial(): THREE.ShaderMaterial {
       uniform float uDeathDurS;
       uniform float uViewportHeight; // drawing-buffer height (CSS height × DPR)
 
-      varying vec3  vColor;
       varying float vBirthRamp;
       varying float vDeathRamp;
       varying float vFlashAge;
@@ -58,7 +56,6 @@ export function makeCellFlareMaterial(): THREE.ShaderMaterial {
       ${BIRTH_DEATH_GLSL}
 
       void main() {
-        vColor = aColor;
         float birthRamp = clamp((uTime - aBornAt) / uBirthDurS, 0.0, 1.0);
         float deathRamp = clamp((uTime - aDeathAt) / uDeathDurS, 0.0, 1.0);
         float bEase = birthEase(birthRamp);
@@ -96,7 +93,6 @@ export function makeCellFlareMaterial(): THREE.ShaderMaterial {
       uniform float uTime;
       uniform float uDischargeArms;
 
-      varying vec3  vColor;
       varying float vBirthRamp;
       varying float vDeathRamp;
       varying float vFlashAge;

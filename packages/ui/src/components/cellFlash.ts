@@ -101,3 +101,50 @@ export function mergeCellFlashRanges(
   merged.push({ start, count: end - start });
   return merged;
 }
+
+export interface ActiveCellFlashIndexWrite {
+  count: number;
+  changed: boolean;
+}
+
+/** Compact visible flash slots into an indexed Points draw. The shader keeps
+ * its exact birth/death/age gates; this list only removes vertices that are
+ * provably outside the same half-open flash interval. */
+export function writeActiveCellFlashIndices(
+  flashArray: Float32Array,
+  visibleCount: number,
+  nowSeconds: number,
+  durationSeconds: number,
+  indexArray: Uint16Array | Uint32Array,
+  previousCount: number,
+): ActiveCellFlashIndexWrite {
+  const count = Math.min(
+    flashArray.length,
+    Number.isFinite(visibleCount)
+      ? Math.max(0, Math.floor(visibleCount))
+      : 0,
+  );
+  if (
+    !Number.isFinite(nowSeconds)
+    || !Number.isFinite(durationSeconds)
+    || durationSeconds <= 0
+  ) {
+    return { count: 0, changed: previousCount !== 0 };
+  }
+
+  let written = 0;
+  let changed = false;
+  for (let slot = 0; slot < count && written < indexArray.length; slot += 1) {
+    const age = nowSeconds - flashArray[slot];
+    if (age < 0 || age >= durationSeconds) continue;
+    if (indexArray[written] !== slot) {
+      indexArray[written] = slot;
+      changed = true;
+    }
+    written += 1;
+  }
+  return {
+    count: written,
+    changed: changed || written !== previousCount,
+  };
+}

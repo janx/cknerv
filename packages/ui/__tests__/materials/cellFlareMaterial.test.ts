@@ -32,6 +32,8 @@ describe('makeCellFlareMaterial', () => {
     expect(m.fragmentShader).toContain('flashEnv');
     expect(m.vertexShader).toContain('attribute float aFlashAt;');
     expect(m.vertexShader).toContain('vFlashAge');
+    expect(m.vertexShader).not.toContain('attribute vec3  aColor');
+    expect(m.fragmentShader).not.toContain('varying vec3  vColor');
   });
 
   it('clips inactive write vertices before they generate point fragments', () => {

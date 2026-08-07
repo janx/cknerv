@@ -66,8 +66,13 @@ const NDC_CAPSULE_ENDPOINTS = `${NDC_ENDPOINTS}
 				* capsuleViewportPx + capsuleViewportOriginPx;
 			vCapsuleEndPx = ( ndcEnd.xy * 0.5 + 0.5 )
 				* capsuleViewportPx + capsuleViewportOriginPx;
-			vCapsuleStartW = clipStart.w;
-			vCapsuleEndW = clipEnd.w;`;
+			vec2 capsuleDeltaPx = vCapsuleEndPx - vCapsuleStartPx;
+			float capsuleLengthSq = dot( capsuleDeltaPx, capsuleDeltaPx );
+			vCapsuleInvLengthSq = capsuleLengthSq > 1e-8
+				? 1.0 / capsuleLengthSq
+				: 0.0;
+			vCapsuleStartInvW = 1.0 / clipStart.w;
+			vCapsuleEndInvW = 1.0 / clipEnd.w;`;
 
 const SCREEN_CAP_TEST = `
 			#else
@@ -108,10 +113,10 @@ const SCREEN_CAPSULE_TEST = `
 				// The two-triangle quad spans both caps. Recover the exact capsule
 				// from the current fragment and the projected real endpoints.
 				vec2 capsuleDelta = vCapsuleEndPx - vCapsuleStartPx;
-				float capsuleLengthSq = dot( capsuleDelta, capsuleDelta );
-				float capsuleLinearT = capsuleLengthSq > 1e-8
-					? dot( gl_FragCoord.xy - vCapsuleStartPx, capsuleDelta ) / capsuleLengthSq
-					: 0.0;
+				float capsuleLinearT = dot(
+					gl_FragCoord.xy - vCapsuleStartPx,
+					capsuleDelta
+				) * vCapsuleInvLengthSq;
 				float capsuleT = clamp( capsuleLinearT, 0.0, 1.0 );
 				vec2 capsuleClosest = vCapsuleStartPx + capsuleDelta * capsuleT;
 				float capsuleRadius = max(
@@ -146,8 +151,9 @@ const CAPSULE_COLOR_FRAGMENT = `
 
 				// Match the original body's perspective-correct interpolation, but
 				// clamp both caps to their endpoint colours.
-				float capsuleStartWeight = ( 1.0 - capsuleT ) / vCapsuleStartW;
-				float capsuleEndWeight = capsuleT / vCapsuleEndW;
+				float capsuleStartWeight = ( 1.0 - capsuleT )
+					* vCapsuleStartInvW;
+				float capsuleEndWeight = capsuleT * vCapsuleEndInvW;
 				float capsuleColorT = capsuleEndWeight
 					/ ( capsuleStartWeight + capsuleEndWeight );
 				diffuseColor.rgb *= mix(
@@ -181,8 +187,9 @@ export function optimizeScreenSpaceCapsuleMaterial(
 
 		varying vec2 vCapsuleStartPx;
 		varying vec2 vCapsuleEndPx;
-		varying float vCapsuleStartW;
-		varying float vCapsuleEndW;
+		varying float vCapsuleInvLengthSq;
+		varying float vCapsuleStartInvW;
+		varying float vCapsuleEndInvW;
 		uniform float capsulePixelRatio;
 		uniform vec2 capsuleViewportOrigin;
 		#ifdef USE_COLOR
@@ -211,8 +218,9 @@ export function optimizeScreenSpaceCapsuleMaterial(
 
 		varying vec2 vCapsuleStartPx;
 		varying vec2 vCapsuleEndPx;
-		varying float vCapsuleStartW;
-		varying float vCapsuleEndW;
+		varying float vCapsuleInvLengthSq;
+		varying float vCapsuleStartInvW;
+		varying float vCapsuleEndInvW;
 		uniform float capsulePixelRatio;
 		#ifdef USE_COLOR
 			varying vec3 vCapsuleColorStart;

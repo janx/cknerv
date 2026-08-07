@@ -374,6 +374,7 @@ function writeFabricEdgeSegments(
   brightnessGain: number,
   recallAperture: RecallApertureState,
   inspectionField: InspectionFieldTransition,
+  writePositions = true,
 ): void {
   if (!render.visible || render.alphaMul <= 0 || brightnessGain <= 0) return;
 
@@ -512,6 +513,7 @@ function writeFabricEdgeSegments(
       sample[0], sample[1], sample[2],
       prevR, prevG, prevB,
       endR, endG, endB,
+      writePositions,
     );
     prevX = sample[0];
     prevY = sample[1];
@@ -624,15 +626,18 @@ function pushSegmentGradient(
   bx: number, by: number, bz: number,
   rA: number, gA: number, bA: number,
   rB: number, gB: number, bB: number,
+  writePositions: boolean,
 ): void {
   if (layer.count >= layer.positions.length / 6) return;
   const off = layer.count * 6;
-  layer.positions[off + 0] = ax;
-  layer.positions[off + 1] = ay;
-  layer.positions[off + 2] = az;
-  layer.positions[off + 3] = bx;
-  layer.positions[off + 4] = by;
-  layer.positions[off + 5] = bz;
+  if (writePositions) {
+    layer.positions[off + 0] = ax;
+    layer.positions[off + 1] = ay;
+    layer.positions[off + 2] = az;
+    layer.positions[off + 3] = bx;
+    layer.positions[off + 4] = by;
+    layer.positions[off + 5] = bz;
+  }
   layer.colors[off + 0] = rA;
   layer.colors[off + 1] = gA;
   layer.colors[off + 2] = bA;
@@ -642,7 +647,11 @@ function pushSegmentGradient(
   layer.count += 1;
 }
 
-function commitLayer(layer: FatLineLayer): void {
+function commitLayer(
+  layer: FatLineLayer,
+  updatePositions = true,
+  updateColors = true,
+): void {
   const usedFloats = layer.count * 6;
   layer.posBuf.clearUpdateRanges();
   layer.colBuf.clearUpdateRanges();
@@ -651,10 +660,14 @@ function commitLayer(layer: FatLineLayer): void {
     // Upload only each layer's populated prefix. The passive layer reserves
     // three edge generations, so the old full-range path moved 4.39 MiB per
     // dirty frame even when only one generation was drawn.
-    layer.posBuf.addUpdateRange(0, usedFloats);
-    layer.colBuf.addUpdateRange(0, usedFloats);
-    layer.posBuf.needsUpdate = true;
-    layer.colBuf.needsUpdate = true;
+    if (updatePositions) {
+      layer.posBuf.addUpdateRange(0, usedFloats);
+      layer.posBuf.needsUpdate = true;
+    }
+    if (updateColors) {
+      layer.colBuf.addUpdateRange(0, usedFloats);
+      layer.colBuf.needsUpdate = true;
+    }
   }
   layer.geometry.instanceCount = layer.count;
 }
@@ -728,6 +741,10 @@ export default function NeuralFabric({
    *  growth/decay and its appearance changes per frame. Flipped
    *  off after a final emit settles everything into stable state. */
   const emitDirtyRef = useRef<boolean>(false);
+  /** Structural/lifecycle changes alter sampled endpoints. Inspection,
+   * aperture, and energy transitions alter only colours at those same four
+   * samples, so their frames retain the existing position buffer. */
+  const passivePositionsDirtyRef = useRef<boolean>(true);
   const renderOrderRef = useRef<string[]>([]);
   // Snapshot of the last-applied Cell-mesh tweak values, seeded from the
   // schema defaults so a closed/untouched panel matches on the first
@@ -899,6 +916,7 @@ export default function NeuralFabric({
           if (st.dyingAt === null) { st.dyingAt = now; st.deathKind = 'gc'; }
         }
         emitDirtyRef.current = true;
+        passivePositionsDirtyRef.current = true;
       },
       growEdges(edges, cells, bornAtByKey, dirByKey) {
         // `now` is read from the shared sim clock so callers don't have
@@ -948,6 +966,7 @@ export default function NeuralFabric({
           renderOrderRef.current.push(key); // append; emitFabric reaps
         }
         emitDirtyRef.current = true;
+        passivePositionsDirtyRef.current = true;
       },
       killEdges(keys, dyingAt, kind, deadEndByKey) {
         const states = edgeStatesRef.current;
@@ -961,6 +980,7 @@ export default function NeuralFabric({
           st.deadEnd = kind === 'death' ? (deadEndByKey?.get(key) ?? 'from') : null;
         }
         emitDirtyRef.current = true;
+        passivePositionsDirtyRef.current = true;
       },
       reinforce(fromCellId, toCellId) {
         const key = fabricEdgeKey(fromCellId, toCellId);
@@ -1075,6 +1095,7 @@ export default function NeuralFabric({
         }
 
         if (!emitDirtyRef.current) return;
+        const writePassivePositions = passivePositionsDirtyRef.current;
         // Live line widths. LineMaterial.linewidth is runtime-settable, so
         // pushing it on every real draw (after the early-return) picks up
         // any width-knob change — including on the forced redraw above.
@@ -1105,6 +1126,7 @@ export default function NeuralFabric({
             1,
             recallAperture,
             inspectionField,
+            writePassivePositions,
           );
         }
 
@@ -1117,11 +1139,12 @@ export default function NeuralFabric({
           renderOrderRef.current = renderOrderRef.current.filter((key) => !reapSet.has(key));
         }
 
-        commitLayer(fabric);
+        commitLayer(fabric, writePassivePositions, true);
         // Continue emitting next frame while any edge is animating.
         // Once everything's stable, this frame's emit captured the
         // final state — leave the buffer alone until the next diff.
         emitDirtyRef.current = stillAnimating > 0;
+        passivePositionsDirtyRef.current = stillAnimating > 0;
       },
       pushActiveHop(hop, cells) {
         const layer = hop.mode === 'memory'
