@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 
 export const PROTOCOL_FIELD_SIDES = 8;
-export const PROTOCOL_FIELD_RING_RADII = [0.96, 0.66, 0.24] as const;
+export const PROTOCOL_FIELD_RING_RADII = [0.96, 0.24] as const;
 
 const TAU = Math.PI * 2;
 const FIELD_ROTATION = Math.PI / PROTOCOL_FIELD_SIDES;
@@ -14,6 +14,11 @@ export function setProtocolFieldFacing(
   direction: THREE.Vector3,
 ): THREE.Quaternion {
   return target.setFromUnitVectors(FIELD_LOCAL_NORMAL, direction);
+}
+
+/** 0→1 umbrella opening used by the carrier's jellyfish-like swim cycle. */
+export function protocolCarrierBellPulse(phase: number): number {
+  return 0.5 + 0.5 * Math.sin(phase);
 }
 
 function fieldPoint(
@@ -59,14 +64,14 @@ function appendPolygon(
 }
 
 /**
- * Compact octagonal energy membrane for the block handoff between the peer
- * network and Cell field. Three clean rings and eight spars retain the
- * A.T.-Field reading without the previous honeycomb/facet noise. Small depth
- * offsets keep the membrane dimensional when it is viewed obliquely.
+ * Minimal octagonal energy bell for the block handoff between the peer network
+ * and Cell field. One rim, one aperture, and four spars retain the A.T.-Field
+ * reading. Their forward/back depth offset makes a shallow jellyfish umbrella
+ * instead of another flat targeting glyph.
  */
 export function makeProtocolCarrierGeometry(): THREE.BufferGeometry {
   const positions: number[] = [];
-  const ringDepths = [-0.035, 0, 0.035] as const;
+  const ringDepths = [-0.14, 0.10] as const;
 
   for (let ring = 0; ring < PROTOCOL_FIELD_RING_RADII.length; ring += 1) {
     appendPolygon(
@@ -78,14 +83,14 @@ export function makeProtocolCarrierGeometry(): THREE.BufferGeometry {
     );
   }
 
-  for (let sector = 0; sector < PROTOCOL_FIELD_SIDES; sector += 1) {
+  for (let sector = 0; sector < PROTOCOL_FIELD_SIDES; sector += 2) {
     const angle = FIELD_ROTATION + sector / PROTOCOL_FIELD_SIDES * TAU;
 
-    // Eight depth-crossing spars are enough to read as a pressure membrane;
-    // leaving the sectors open keeps the moving carrier light and simple.
+    // Four depth-crossing spars suggest the umbrella's load-bearing ribs while
+    // leaving most of the membrane open and translucent.
     appendSegment(
       positions,
-      fieldPoint(PROTOCOL_FIELD_RING_RADII[2], angle, ringDepths[2]),
+      fieldPoint(PROTOCOL_FIELD_RING_RADII[1], angle, ringDepths[1]),
       fieldPoint(PROTOCOL_FIELD_RING_RADII[0], angle, ringDepths[0]),
     );
   }
