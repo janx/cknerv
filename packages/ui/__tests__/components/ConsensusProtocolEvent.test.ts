@@ -6,6 +6,7 @@ import {
   makeProtocolCarrierGeometry,
   PROTOCOL_FIELD_RING_RADII,
   PROTOCOL_FIELD_SIDES,
+  protocolCarrierBellPulse,
   setProtocolFieldFacing,
 } from '../../src/geometry/protocolCarrier';
 
@@ -15,7 +16,7 @@ const source = (file: string): string => readFileSync(
 );
 
 describe('A protocol event relay', () => {
-  it('uses a compact octagonal energy field instead of a cube or solid crystal', () => {
+  it('uses a minimal octagonal jellyfish bell instead of a solid carrier', () => {
     const geometry = makeProtocolCarrierGeometry();
     const positions = geometry.getAttribute('position');
     const depths = new Set<number>();
@@ -25,10 +26,9 @@ describe('A protocol event relay', () => {
 
     expect(geometry).toBeInstanceOf(THREE.BufferGeometry);
     expect(PROTOCOL_FIELD_SIDES).toBe(8);
-    expect(PROTOCOL_FIELD_RING_RADII).toEqual([0.96, 0.66, 0.24]);
-    expect(positions.count).toBeGreaterThanOrEqual(64);
-    expect(positions.count).toBeLessThan(100);
-    expect(depths.size).toBe(3);
+    expect(PROTOCOL_FIELD_RING_RADII).toEqual([0.96, 0.24]);
+    expect(positions.count).toBe(40);
+    expect(depths.size).toBe(2);
     expect(geometry.index).toBeNull();
     expect(source('BlockDeliveryLayer.tsx')).not.toContain('BoxGeometry');
     expect(source('BlockDeliveryLayer.tsx')).not.toContain('makeProtocolLandingTexture');
@@ -38,6 +38,17 @@ describe('A protocol event relay', () => {
     expect(source('BlockDeliveryLayer.tsx')).not.toContain('getWorldQuaternion');
     expect(source('BlockDeliveryLayer.tsx')).not.toContain('TUMBLE_RATE');
     geometry.dispose();
+  });
+
+  it('opens the bell while its five tentacles stretch in the opposite phase', () => {
+    const delivery = source('BlockDeliveryLayer.tsx');
+
+    expect(protocolCarrierBellPulse(Math.PI / 2)).toBe(1);
+    expect(protocolCarrierBellPulse(Math.PI * 1.5)).toBe(0);
+    expect(delivery).toContain('makeJellyfishWakeTexture()');
+    expect(delivery).toContain('JELLY_TENTACLE_STRETCH_AMOUNT * (1 - bellPulse)');
+    expect(delivery).toContain('bodyScale * bellDepthScale');
+    expect(delivery).not.toContain('_scale.setScalar(bodyScale)');
   });
 
   it('aims the field and expanding impact wave at the Cell galaxy', () => {

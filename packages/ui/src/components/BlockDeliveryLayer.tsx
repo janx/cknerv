@@ -20,13 +20,14 @@ import {
 import {
   makeProtocolCarrierTexture,
   makeIngestFlashTexture,
-  makeBolusTrailTexture,
+  makeJellyfishWakeTexture,
 } from '../materials/deliveryTextures';
 import { BEAM_GROW_DUR_S, BEAM_CHARGE_DUR_S } from '../ui/topologyConstants';
 import { CONSENSUS_BRAID_PALETTE } from '../derives/consensusBraid.derive';
 import type { ConsensusFlowColor } from '../derives/consensusFlow.derive';
 import {
   makeProtocolCarrierGeometry,
+  protocolCarrierBellPulse,
   setProtocolFieldFacing,
 } from '../geometry/protocolCarrier';
 import {
@@ -36,12 +37,11 @@ import {
 
 // BlockDeliveryLayer — the network→Cell-field handoff in the A visual language.
 // Every real measured node keeps its own timing and transform, but the renderer
-// submits the whole event as four semantic batches: one merged octagonal-field
-// body, plus instanced energy membrane, wake rails, and contact wave. The
-// compact A.T.-Field-inspired barrier keeps its normal on the peer→Cell travel
-// axis, so its face is physically aimed at the galaxy instead of billboarding
-// toward the camera. At contact it recoils while an octagonal pressure wave
-// spreads over the Cell plane and disappears.
+// submits the whole event as four semantic batches: one merged octagonal-bell
+// body, plus instanced umbrella membrane, jellyfish tentacles, and contact wave.
+// The minimal A.T.-Field face stays aimed along the peer→Cell travel axis. Its
+// shallow bell opens and contracts while five soft tendrils stretch behind it;
+// at contact the carrier recoils into an octagonal pressure wave.
 // Delivery count changes instance/vertex counts, never draw-call count.
 
 const CARRIER_GEOM = makeProtocolCarrierGeometry();
@@ -49,8 +49,15 @@ const CARRIER_BASE_POSITION = CARRIER_GEOM.getAttribute('position') as THREE.Buf
 const CARRIER_VERTEX_COUNT = CARRIER_BASE_POSITION.count;
 const LOB_DUR_S = BEAM_GROW_DUR_S;
 const FIELD_SPIN_RATE = 0.34;
-const FIELD_BREATH_RATE = 8.5;
-const FIELD_BREATH_AMOUNT = 0.045;
+const JELLY_BELL_PULSE_RATE = 7.2;
+const JELLY_BELL_OPEN_MIN = 0.92;
+const JELLY_BELL_OPEN_AMOUNT = 0.14;
+const JELLY_BELL_DEPTH_MAX = 1.28;
+const JELLY_BELL_DEPTH_SWING = 0.34;
+const JELLY_TENTACLE_STRETCH_MIN = 0.93;
+const JELLY_TENTACLE_STRETCH_AMOUNT = 0.22;
+const JELLY_TENTACLE_WIDTH_MIN = 2.10;
+const JELLY_TENTACLE_WIDTH_AMOUNT = 0.35;
 const PALE_CONSENSUS = new THREE.Color().setRGB(...CONSENSUS_BRAID_PALETTE.pale);
 const CARRIER_COLOR = new THREE.Color();
 const WHITE = new THREE.Color(1, 1, 1);
@@ -278,7 +285,7 @@ export default function BlockDeliveryLayer({
 
   const bloomTex = useMemo(() => makeProtocolCarrierTexture(), []);
   const flashTex = useMemo(() => makeIngestFlashTexture(), []);
-  const trailTex = useMemo(() => makeBolusTrailTexture(), []);
+  const trailTex = useMemo(() => makeJellyfishWakeTexture(), []);
   const spriteGeometry = useMemo(() => new THREE.PlaneGeometry(1, 1), []);
   const bloomMaterial = useMemo(() => makeSpriteBatchMaterial(bloomTex), [bloomTex]);
   const trailMaterial = useMemo(() => makeSpriteBatchMaterial(trailTex), [trailTex]);
@@ -417,9 +424,17 @@ export default function BlockDeliveryLayer({
       let bodyScale = 0;
       let bodyOpacity = 0;
       let bloomScale = 0;
-      const fieldBreath = 1 + FIELD_BREATH_AMOUNT * Math.sin(
-        now * FIELD_BREATH_RATE + delivery.startAge * 11,
+      const bellPulse = protocolCarrierBellPulse(
+        now * JELLY_BELL_PULSE_RATE + delivery.startAge * 5.3,
       );
+      const bellOpenScale = JELLY_BELL_OPEN_MIN
+        + JELLY_BELL_OPEN_AMOUNT * bellPulse;
+      const bellDepthScale = JELLY_BELL_DEPTH_MAX
+        - JELLY_BELL_DEPTH_SWING * bellPulse;
+      const tentacleStretch = JELLY_TENTACLE_STRETCH_MIN
+        + JELLY_TENTACLE_STRETCH_AMOUNT * (1 - bellPulse);
+      const tentacleWidthScale = JELLY_TENTACLE_WIDTH_MIN
+        + JELLY_TENTACLE_WIDTH_AMOUNT * bellPulse;
 
       if (inFlight) {
         const progress = phase.phase === 'lob' ? easeInLob(phase.t) : 0;
@@ -431,14 +446,14 @@ export default function BlockDeliveryLayer({
         const grow = phase.phase === 'gather' ? phase.t : 1;
         bodyScale = (
           delivery.hero ? LIVE.delivery.heroSize : LIVE.delivery.peerSize
-        ) * grow * fieldBreath;
+        ) * grow;
         bodyOpacity = 1;
-        bloomScale = LIVE.delivery.bolusBloom * punch * grow * fieldBreath;
+        bloomScale = LIVE.delivery.bolusBloom * punch * grow * bellOpenScale;
 
         if (phase.phase === 'lob') {
           const length = (
             LIVE.delivery.trailLenBase + LIVE.delivery.trailLenGain * lobSpeed(phase.t)
-          ) * punch;
+          ) * punch * tentacleStretch;
           _trailPosition.copy(_position).addScaledVector(_flightDirection, -length / 2);
           setWakeQuaternion(
             _flightDirection,
@@ -450,10 +465,10 @@ export default function BlockDeliveryLayer({
             trailBatch,
             trailCount,
             _trailPosition,
-            LIVE.delivery.trailWidth * punch,
+            LIVE.delivery.trailWidth * punch * tentacleWidthScale,
             length,
             CARRIER_COLOR,
-            LIVE.delivery.trailOpacity,
+            LIVE.delivery.trailOpacity * (0.84 + 0.16 * (1 - bellPulse)),
             _wakeQuaternion,
           );
           trailCount += 1;
@@ -473,13 +488,13 @@ export default function BlockDeliveryLayer({
         );
         bodyScale = (
           delivery.hero ? LIVE.delivery.heroSize : LIVE.delivery.peerSize
-        ) * ingest.bodyScale * recoil * fieldBreath;
+        ) * ingest.bodyScale * recoil;
         bodyOpacity = ingest.bodyOpacity;
         bloomScale = LIVE.delivery.bolusBloom
           * punch
           * ingest.bodyScale
           * recoil
-          * fieldBreath;
+          * bellOpenScale;
 
         if (ingest.flashOpacity > 0.001) {
           _flashColor.copy(CARRIER_COLOR).lerp(PALE_CONSENSUS, ingest.colorT);
@@ -500,7 +515,13 @@ export default function BlockDeliveryLayer({
       }
 
       if (bodyScale > 0.001 && bodyOpacity > 0.001) {
-        _scale.setScalar(bodyScale);
+        // Local XY opens/closes the umbrella; local Z (the flight axis) moves
+        // inversely, giving the wireframe bell a soft jellyfish contraction.
+        _scale.set(
+          bodyScale * bellOpenScale,
+          bodyScale * bellOpenScale,
+          bodyScale * bellDepthScale,
+        );
         _matrix.compose(_position, _bodyQuaternion, _scale);
         bodyVertexCount = writeCarrierBody(
           bodyPositions,

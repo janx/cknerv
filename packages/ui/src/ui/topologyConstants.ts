@@ -7,8 +7,8 @@
  *  rename is deferred since they're load-bearing across CellGalaxy + the delivery
  *  layer + tests. Sub-phases, relative to a node's own arrival:
  *
- *    t = −BEAM_CHARGE_DUR_S             field gather — the octagonal carrier
- *                                       forms at the node. Arrival is scheduled
+ *    t = −BEAM_CHARGE_DUR_S             field gather — the octagonal bell forms
+ *                                       at the node. Arrival is scheduled
  *                                       in the future, so this fills the idle window.
  *    t = 0                              the carrier launches toward the Cell field.
  *    t = BEAM_GROW_DUR_S                the carrier reaches the field boundary and
@@ -24,8 +24,8 @@ export const BEAM_GROW_DUR_S = 1.00;
 export const BEAM_STRIKE_DUR_S = 1.20;
 /** Pre-roll gather window (s) before a carrier launches. Arrival (`firedAt`) is
  *  scheduled in the future (latency-derived), so this renders in the idle
- *  window age ∈ [−BEAM_CHARGE_DUR_S, 0): the energy-field plates form at the
- *  node, then launch at age 0. With no lead time (firedAt ≈ now), it is skipped. */
+ *  window age ∈ [−BEAM_CHARGE_DUR_S, 0): the field-bell forms at the node,
+ *  then launches at age 0. With no lead time (firedAt ≈ now), it is skipped. */
 export const BEAM_CHARGE_DUR_S = 0.4;
 export const BLOCK_COMMIT_DELAY_S = BEAM_GROW_DUR_S + BEAM_STRIKE_DUR_S;
 /** Legacy public name retained for downstream compatibility. The visible

@@ -162,9 +162,9 @@ export interface BolusIngest {
 
 /** Per-frame field-commit envelope for the protocol carrier (t∈[0,1]).
  *  The compatibility export name remains `bolusIngest`, but the visual is a
- *  compact octagonal energy field: the carrier recoils and dissolves at contact
- *  while an impact wave spreads across the Cell plane and fades from the
- *  block's stable warm hue to pale consensus. Pure. */
+ *  compact octagonal energy bell: the jellyfish-like carrier recoils and
+ *  dissolves at contact while an impact wave spreads across the Cell plane and
+ *  fades from the block's stable warm hue to pale consensus. Pure. */
 export function bolusIngest(t: number): BolusIngest {
   const u = Math.max(0, Math.min(1, t));
   const k = 1 - u;
