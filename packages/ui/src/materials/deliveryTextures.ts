@@ -34,10 +34,10 @@ function strokeRegularPolygon(
 }
 
 /**
- * Screen-space membrane behind the 3D carrier. The baked ember/orange spectrum
- * is multiplied by the block's hash-stable warm colour at runtime, preserving
- * event identity while producing an A.T.-Field-inspired octagonal barrier:
- * nested plates, radial braces, and a ring of honeycomb energy facets.
+ * Soft membrane behind the 3D carrier. The baked ember spectrum is multiplied
+ * by the block's hash-stable colour at runtime. A double octagon, open sectors,
+ * and a small aperture preserve the A.T.-Field silhouette without decorative
+ * honeycomb noise.
  */
 export function makeProtocolCarrierTexture(): THREE.Texture {
   const size = 192;
@@ -50,64 +50,34 @@ export function makeProtocolCarrierTexture(): THREE.Texture {
   ctx.lineJoin = 'miter';
 
   const glow = ctx.createRadialGradient(c, c, 0, c, c, size / 2);
-  glow.addColorStop(0.0, 'rgba(255,226,132,0.34)');
-  glow.addColorStop(0.22, 'rgba(255,139,38,0.20)');
-  glow.addColorStop(0.58, 'rgba(255,66,10,0.085)');
-  glow.addColorStop(0.82, 'rgba(255,35,4,0.035)');
+  glow.addColorStop(0.0, 'rgba(255,236,168,0.30)');
+  glow.addColorStop(0.28, 'rgba(255,139,38,0.15)');
+  glow.addColorStop(0.68, 'rgba(255,58,8,0.055)');
   glow.addColorStop(1.0, 'rgba(255,24,0,0.0)');
   ctx.fillStyle = glow;
   ctx.fillRect(0, 0, size, size);
 
   const rotation = Math.PI / 8;
-  strokeRegularPolygon(ctx, c, c, 74, 8, rotation, 'rgba(255,52,6,0.94)', 4.2);
-  strokeRegularPolygon(ctx, c, c, 68, 8, rotation, 'rgba(255,128,18,0.74)', 1.3);
-  strokeRegularPolygon(ctx, c, c, 57, 8, rotation, 'rgba(255,87,7,0.86)', 2.6);
-  strokeRegularPolygon(ctx, c, c, 40, 8, rotation, 'rgba(255,176,42,0.82)', 2.1);
-  strokeRegularPolygon(ctx, c, c, 19, 8, rotation, 'rgba(255,222,112,0.96)', 2.4);
+  strokeRegularPolygon(ctx, c, c, 73, 8, rotation, 'rgba(255,66,7,0.94)', 4.0);
+  strokeRegularPolygon(ctx, c, c, 64, 8, rotation, 'rgba(255,158,32,0.72)', 1.8);
+  strokeRegularPolygon(ctx, c, c, 22, 8, rotation, 'rgba(255,228,130,0.92)', 2.2);
 
   for (let sector = 0; sector < 8; sector += 1) {
     const angle = rotation + sector / 8 * TAU;
-    const nextAngle = rotation + (sector + 1) / 8 * TAU;
-    const midpointAngle = (angle + nextAngle) / 2;
-
-    // Depth braces on the 3D glyph are echoed here so the barrier remains
-    // legible at long camera distances.
+    // The eight open spars echo the line geometry and keep the membrane
+    // readable at distance without filling every sector with a facet.
     ctx.strokeStyle = sector % 2 === 0
-      ? 'rgba(255,205,72,0.78)'
-      : 'rgba(255,82,8,0.68)';
-    ctx.lineWidth = sector % 2 === 0 ? 1.8 : 1.15;
+      ? 'rgba(255,211,91,0.64)'
+      : 'rgba(255,91,9,0.48)';
+    ctx.lineWidth = sector % 2 === 0 ? 1.65 : 1.05;
     ctx.beginPath();
-    ctx.moveTo(c + Math.cos(angle) * 19, c + Math.sin(angle) * 19);
-    ctx.lineTo(c + Math.cos(angle) * 74, c + Math.sin(angle) * 74);
-    ctx.stroke();
-
-    const facetCenterX = c + Math.cos(midpointAngle) * 49;
-    const facetCenterY = c + Math.sin(midpointAngle) * 49;
-    strokeRegularPolygon(
-      ctx,
-      facetCenterX,
-      facetCenterY,
-      8.5,
-      6,
-      midpointAngle + Math.PI / 6,
-      'rgba(255,119,17,0.66)',
-      1.25,
-    );
-
-    // Short exterior discharge marks keep the silhouette energetic without a
-    // circular halo that would hide its characteristic eight-sided profile.
-    ctx.strokeStyle = 'rgba(255,173,46,0.64)';
-    ctx.lineWidth = 1.2;
-    ctx.beginPath();
-    ctx.moveTo(c + Math.cos(midpointAngle) * 79, c + Math.sin(midpointAngle) * 79);
-    ctx.lineTo(c + Math.cos(midpointAngle) * 87, c + Math.sin(midpointAngle) * 87);
+    ctx.moveTo(c + Math.cos(angle) * 22, c + Math.sin(angle) * 22);
+    ctx.lineTo(c + Math.cos(angle) * 64, c + Math.sin(angle) * 64);
     ctx.stroke();
   }
 
-  // A hot central aperture anchors the otherwise translucent membrane.
-  strokeRegularPolygon(ctx, c, c, 10, 8, rotation, 'rgba(255,245,194,0.98)', 2.0);
-  ctx.fillStyle = 'rgba(255,232,136,0.92)';
-  ctx.fillRect(c - 2, c - 2, 4, 4);
+  ctx.fillStyle = 'rgba(255,239,164,0.88)';
+  ctx.fillRect(c - 1.5, c - 1.5, 3, 3);
   return finish(canvas);
 }
 
@@ -116,7 +86,11 @@ export function makeBolusBloomTexture(): THREE.Texture {
   return makeProtocolCarrierTexture();
 }
 
-/** Octagonal contact flare, tinted at runtime from carrier → pale consensus. */
+/**
+ * Octagonal contact wave, tinted at runtime from carrier → pale consensus.
+ * The bright outer band and quiet middle make scale-up read as energy spreading
+ * across the Cell field instead of as a growing solid sprite.
+ */
 export function makeIngestFlashTexture(): THREE.Texture {
   const size = 128;
   const canvas = document.createElement('canvas');
@@ -127,14 +101,17 @@ export function makeIngestFlashTexture(): THREE.Texture {
   ctx.globalCompositeOperation = 'lighter';
   const glow = ctx.createRadialGradient(c, c, 0, c, c, size / 2);
   glow.addColorStop(0.0, 'rgba(255,255,255,1.0)');
-  glow.addColorStop(0.24, 'rgba(255,220,150,0.74)');
-  glow.addColorStop(0.62, 'rgba(255,91,15,0.18)');
+  glow.addColorStop(0.12, 'rgba(255,224,158,0.46)');
+  glow.addColorStop(0.34, 'rgba(255,112,20,0.055)');
+  glow.addColorStop(0.62, 'rgba(255,65,8,0.02)');
+  glow.addColorStop(0.76, 'rgba(255,117,18,0.42)');
+  glow.addColorStop(0.84, 'rgba(255,231,143,0.92)');
+  glow.addColorStop(0.92, 'rgba(255,72,8,0.24)');
   glow.addColorStop(1.0, 'rgba(255,38,2,0.0)');
   ctx.fillStyle = glow;
   ctx.fillRect(0, 0, size, size);
-  strokeRegularPolygon(ctx, c, c, 49, 8, Math.PI / 8, 'rgba(255,82,9,0.78)', 2.4);
-  strokeRegularPolygon(ctx, c, c, 36, 8, Math.PI / 8, 'rgba(255,178,49,0.72)', 1.6);
-  strokeRegularPolygon(ctx, c, c, 18, 8, Math.PI / 8, 'rgba(255,244,192,0.88)', 1.25);
+  strokeRegularPolygon(ctx, c, c, 53, 8, Math.PI / 8, 'rgba(255,99,10,0.88)', 2.6);
+  strokeRegularPolygon(ctx, c, c, 47, 8, Math.PI / 8, 'rgba(255,221,112,0.64)', 1.25);
   return finish(canvas);
 }
 

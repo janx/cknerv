@@ -25,7 +25,10 @@ import {
 import { BEAM_GROW_DUR_S, BEAM_CHARGE_DUR_S } from '../ui/topologyConstants';
 import { CONSENSUS_BRAID_PALETTE } from '../derives/consensusBraid.derive';
 import type { ConsensusFlowColor } from '../derives/consensusFlow.derive';
-import { makeProtocolCarrierGeometry } from '../geometry/protocolCarrier';
+import {
+  makeProtocolCarrierGeometry,
+  setProtocolFieldFacing,
+} from '../geometry/protocolCarrier';
 import {
   markCellFlashDirty,
   type CellFlashDirtyIdsRef,
@@ -34,11 +37,12 @@ import {
 // BlockDeliveryLayer — the network→Cell-field handoff in the A visual language.
 // Every real measured node keeps its own timing and transform, but the renderer
 // submits the whole event as four semantic batches: one merged octagonal-field
-// body, plus instanced energy membrane, wake rails, and contact flash. The
-// A.T.-Field-inspired barrier remains camera-legible while its nested plates
-// counter-rotate. At contact it contracts in place; subsequent motion belongs
-// to real Cells and their maintained network, not a free-floating landing
-// emblem. Delivery count changes instance/vertex counts, never draw-call count.
+// body, plus instanced energy membrane, wake rails, and contact wave. The
+// compact A.T.-Field-inspired barrier keeps its normal on the peer→Cell travel
+// axis, so its face is physically aimed at the galaxy instead of billboarding
+// toward the camera. At contact it recoils while an octagonal pressure wave
+// spreads over the Cell plane and disappears.
+// Delivery count changes instance/vertex counts, never draw-call count.
 
 const CARRIER_GEOM = makeProtocolCarrierGeometry();
 const CARRIER_BASE_POSITION = CARRIER_GEOM.getAttribute('position') as THREE.BufferAttribute;
@@ -52,6 +56,9 @@ const CARRIER_COLOR = new THREE.Color();
 const WHITE = new THREE.Color(1, 1, 1);
 const BLACK = new THREE.Color(0, 0, 0);
 const FIELD_NORMAL = new THREE.Vector3(0, 0, 1);
+const FIELD_FALLBACK_DIRECTION = new THREE.Vector3(0, 1, 0);
+const WAKE_FALLBACK_NORMAL = new THREE.Vector3(0, 0, 1);
+const WAKE_SECONDARY_NORMAL = new THREE.Vector3(1, 0, 0);
 
 const CFG: DeliveryPhaseConfig = {
   chargeDur: BEAM_CHARGE_DUR_S,
@@ -66,12 +73,18 @@ const lobSpeed = (t: number) => 0.15 + 1.7 * t;
 // into a GPU attribute immediately, so no per-frame object allocation is needed.
 const _position = new THREE.Vector3();
 const _trailPosition = new THREE.Vector3();
+const _flightDirection = new THREE.Vector3();
+const _cameraPosition = new THREE.Vector3();
+const _wakeNormal = new THREE.Vector3();
+const _wakeRight = new THREE.Vector3();
 const _scale = new THREE.Vector3();
 const _bodyQuaternion = new THREE.Quaternion();
+const _fieldFacingQuaternion = new THREE.Quaternion();
 const _bodySpinQuaternion = new THREE.Quaternion();
-const _cameraQuaternion = new THREE.Quaternion();
+const _wakeQuaternion = new THREE.Quaternion();
 const _spriteQuaternion = new THREE.Quaternion();
 const _spriteSpinQuaternion = new THREE.Quaternion();
+const _wakeBasis = new THREE.Matrix4();
 const _matrix = new THREE.Matrix4();
 const _batchColor = new THREE.Color();
 const _flashColor = new THREE.Color();
@@ -110,7 +123,30 @@ function makeSpriteBatchMaterial(map: THREE.Texture): THREE.MeshBasicMaterial {
     depthWrite: false,
     blending: THREE.AdditiveBlending,
     toneMapped: false,
+    side: THREE.DoubleSide,
   });
+}
+
+/** Billboard a wake only around its travel axis. Local +Y follows the carrier
+ * path, while local +Z faces the camera as closely as that constraint allows. */
+function setWakeQuaternion(
+  axis: THREE.Vector3,
+  position: THREE.Vector3,
+  cameraPosition: THREE.Vector3,
+  target: THREE.Quaternion,
+): void {
+  _wakeNormal.subVectors(cameraPosition, position);
+  _wakeNormal.addScaledVector(axis, -_wakeNormal.dot(axis));
+  if (_wakeNormal.lengthSq() < 1e-8) {
+    const fallback = Math.abs(axis.dot(WAKE_FALLBACK_NORMAL)) < 0.98
+      ? WAKE_FALLBACK_NORMAL
+      : WAKE_SECONDARY_NORMAL;
+    _wakeNormal.copy(fallback).addScaledVector(axis, -fallback.dot(axis));
+  }
+  _wakeNormal.normalize();
+  _wakeRight.crossVectors(axis, _wakeNormal).normalize();
+  _wakeBasis.makeBasis(_wakeRight, axis, _wakeNormal);
+  target.setFromRotationMatrix(_wakeBasis);
 }
 
 /** Additive blending makes RGB×opacity exactly equivalent to one material
@@ -124,11 +160,11 @@ function writeSpriteInstance(
   height: number,
   color: THREE.Color,
   opacity: number,
-  cameraQuaternion: THREE.Quaternion,
+  basisQuaternion: THREE.Quaternion,
   rotationZ = 0,
 ): void {
   _scale.set(width, height, 1);
-  _spriteQuaternion.copy(cameraQuaternion);
+  _spriteQuaternion.copy(basisQuaternion);
   if (rotationZ !== 0) {
     _spriteSpinQuaternion.setFromAxisAngle(FIELD_NORMAL, rotationZ);
     _spriteQuaternion.multiply(_spriteSpinQuaternion);
@@ -311,12 +347,9 @@ export default function BlockDeliveryLayer({
 
     const age = now - pulse.at;
     CARRIER_COLOR.setRGB(...pulse.color);
-    state.camera.getWorldQuaternion(_cameraQuaternion);
+    state.camera.getWorldPosition(_cameraPosition);
     const fieldRotation = now * FIELD_SPIN_RATE;
     _bodySpinQuaternion.setFromAxisAngle(FIELD_NORMAL, fieldRotation);
-    // The field is a planar barrier, so preserve its silhouette instead of
-    // tumbling it edge-on. A slow in-plane rotation supplies 3D energy motion.
-    _bodyQuaternion.copy(_cameraQuaternion).multiply(_bodySpinQuaternion);
 
     // Galaxy RECEIVES the wave: once per real block, schedule a flare on the
     // Cells nearest each real delivery landing. Batching never changes this data
@@ -363,6 +396,22 @@ export default function BlockDeliveryLayer({
       const phase = deliveryPhase(age - delivery.startAge, CFG);
       if (phase.phase === 'idle' || phase.phase === 'done') continue;
 
+      // Local +Z is the membrane face. Align it with the actual peer→galaxy
+      // path, then rotate only inside that plane. Camera motion never changes
+      // what the carrier is aimed at.
+      _flightDirection.set(
+        delivery.to[0] - delivery.from[0],
+        delivery.to[1] - delivery.from[1],
+        delivery.to[2] - delivery.from[2],
+      );
+      if (_flightDirection.lengthSq() < 1e-8) {
+        _flightDirection.copy(FIELD_FALLBACK_DIRECTION);
+      } else {
+        _flightDirection.normalize();
+      }
+      setProtocolFieldFacing(_fieldFacingQuaternion, _flightDirection);
+      _bodyQuaternion.copy(_fieldFacingQuaternion).multiply(_bodySpinQuaternion);
+
       const punch = delivery.hero ? 1 : LIVE.delivery.peerPunchScale;
       const inFlight = phase.phase === 'gather' || phase.phase === 'lob';
       let bodyScale = 0;
@@ -390,7 +439,13 @@ export default function BlockDeliveryLayer({
           const length = (
             LIVE.delivery.trailLenBase + LIVE.delivery.trailLenGain * lobSpeed(phase.t)
           ) * punch;
-          _trailPosition.set(_position.x, _position.y - length / 2, _position.z);
+          _trailPosition.copy(_position).addScaledVector(_flightDirection, -length / 2);
+          setWakeQuaternion(
+            _flightDirection,
+            _trailPosition,
+            _cameraPosition,
+            _wakeQuaternion,
+          );
           writeSpriteInstance(
             trailBatch,
             trailCount,
@@ -399,34 +454,36 @@ export default function BlockDeliveryLayer({
             length,
             CARRIER_COLOR,
             LIVE.delivery.trailOpacity,
-            _cameraQuaternion,
+            _wakeQuaternion,
           );
           trailCount += 1;
         }
       } else {
         const ingest = bolusIngest(phase.t);
         // Contact is an event boundary, not another travelling object. Keep the
-        // carrier and flash pinned to the real field landing while they resolve;
-        // nearby Cells carry every post-impact spatial response.
+        // carrier and pressure wave pinned to the real landing while the wave
+        // spreads across the field and nearby Cells flare in response.
         _position.set(
           delivery.to[0],
           delivery.to[1],
           delivery.to[2],
         );
+        const recoil = 1 + LIVE.delivery.recoil * Math.sin(
+          Math.min(1, phase.t / 0.32) * Math.PI,
+        );
         bodyScale = (
           delivery.hero ? LIVE.delivery.heroSize : LIVE.delivery.peerSize
-        ) * ingest.bodyScale * fieldBreath;
+        ) * ingest.bodyScale * recoil * fieldBreath;
         bodyOpacity = ingest.bodyOpacity;
         bloomScale = LIVE.delivery.bolusBloom
           * punch
           * ingest.bodyScale
+          * recoil
           * fieldBreath;
 
         if (ingest.flashOpacity > 0.001) {
-          const swell = 1 + LIVE.delivery.recoil
-            * Math.sin(Math.min(1, phase.t * 3) * Math.PI);
           _flashColor.copy(CARRIER_COLOR).lerp(PALE_CONSENSUS, ingest.colorT);
-          const size = LIVE.delivery.flashSize * punch * swell;
+          const size = LIVE.delivery.flashSize * punch * ingest.impactScale;
           writeSpriteInstance(
             flashBatch,
             flashCount,
@@ -435,7 +492,7 @@ export default function BlockDeliveryLayer({
             size,
             _flashColor,
             ingest.flashOpacity,
-            _cameraQuaternion,
+            _fieldFacingQuaternion,
             -fieldRotation * 0.45,
           );
           flashCount += 1;
@@ -463,7 +520,7 @@ export default function BlockDeliveryLayer({
           bloomScale,
           CARRIER_COLOR,
           bodyOpacity,
-          _cameraQuaternion,
+          _fieldFacingQuaternion,
           -fieldRotation * 0.7,
         );
         bloomCount += 1;

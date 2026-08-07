@@ -1,10 +1,20 @@
 import * as THREE from 'three';
 
 export const PROTOCOL_FIELD_SIDES = 8;
-export const PROTOCOL_FIELD_RING_RADII = [0.96, 0.78, 0.53, 0.25] as const;
+export const PROTOCOL_FIELD_RING_RADII = [0.96, 0.66, 0.24] as const;
 
 const TAU = Math.PI * 2;
 const FIELD_ROTATION = Math.PI / PROTOCOL_FIELD_SIDES;
+const FIELD_LOCAL_NORMAL = new THREE.Vector3(0, 0, 1);
+
+/** Align the membrane's local face with a normalized peer→galaxy direction.
+ * The caller owns `target` and `direction`, so the frame loop allocates nothing. */
+export function setProtocolFieldFacing(
+  target: THREE.Quaternion,
+  direction: THREE.Vector3,
+): THREE.Quaternion {
+  return target.setFromUnitVectors(FIELD_LOCAL_NORMAL, direction);
+}
 
 function fieldPoint(
   radius: number,
@@ -49,15 +59,14 @@ function appendPolygon(
 }
 
 /**
- * Layered octagonal energy membrane for the block handoff between the peer
- * network and Cell field. Concentric plates, radial braces, and small hexagonal
- * facets create the unmistakable orange sci-fi barrier silhouette once the
- * runtime carrier colour and screen-space glow are applied. The slight depth
- * offsets keep it dimensional without allowing the plane to turn edge-on.
+ * Compact octagonal energy membrane for the block handoff between the peer
+ * network and Cell field. Three clean rings and eight spars retain the
+ * A.T.-Field reading without the previous honeycomb/facet noise. Small depth
+ * offsets keep the membrane dimensional when it is viewed obliquely.
  */
 export function makeProtocolCarrierGeometry(): THREE.BufferGeometry {
   const positions: number[] = [];
-  const ringDepths = [-0.045, -0.01, 0.035, 0.08] as const;
+  const ringDepths = [-0.035, 0, 0.035] as const;
 
   for (let ring = 0; ring < PROTOCOL_FIELD_RING_RADII.length; ring += 1) {
     appendPolygon(
@@ -69,52 +78,15 @@ export function makeProtocolCarrierGeometry(): THREE.BufferGeometry {
     );
   }
 
-  // An outer echo makes the shield read as a membrane rather than one wire
-  // polygon, even when the billboard bloom is partially occluded by Cells.
-  appendPolygon(
-    positions,
-    PROTOCOL_FIELD_SIDES,
-    0.89,
-    FIELD_ROTATION,
-    -0.025,
-  );
-
   for (let sector = 0; sector < PROTOCOL_FIELD_SIDES; sector += 1) {
     const angle = FIELD_ROTATION + sector / PROTOCOL_FIELD_SIDES * TAU;
-    const nextAngle = FIELD_ROTATION + (sector + 1) / PROTOCOL_FIELD_SIDES * TAU;
-    const midpointAngle = (angle + nextAngle) / 2;
 
-    // Eight depth-crossing ribs hold the concentric plates together.
-    appendSegment(
-      positions,
-      fieldPoint(PROTOCOL_FIELD_RING_RADII[3], angle, ringDepths[3]),
-      fieldPoint(PROTOCOL_FIELD_RING_RADII[0], angle, ringDepths[0]),
-    );
-
-    // Alternating triangular braces break up the rings into energetic facets.
+    // Eight depth-crossing spars are enough to read as a pressure membrane;
+    // leaving the sectors open keeps the moving carrier light and simple.
     appendSegment(
       positions,
       fieldPoint(PROTOCOL_FIELD_RING_RADII[2], angle, ringDepths[2]),
-      fieldPoint(PROTOCOL_FIELD_RING_RADII[1], midpointAngle, ringDepths[1]),
-    );
-    appendSegment(
-      positions,
-      fieldPoint(PROTOCOL_FIELD_RING_RADII[1], midpointAngle, ringDepths[1]),
-      fieldPoint(PROTOCOL_FIELD_RING_RADII[2], nextAngle, ringDepths[2]),
-    );
-
-    // Small honeycomb cells in the annulus make the field feel like a tiled
-    // barrier instead of a targeting reticle.
-    const facetRadius = 0.655;
-    const facetCenter = fieldPoint(facetRadius, midpointAngle, 0.018);
-    appendPolygon(
-      positions,
-      6,
-      0.105,
-      midpointAngle + Math.PI / 6,
-      facetCenter.z + (sector % 2 === 0 ? 0.012 : -0.012),
-      facetCenter.x,
-      facetCenter.y,
+      fieldPoint(PROTOCOL_FIELD_RING_RADII[0], angle, ringDepths[0]),
     );
   }
 
