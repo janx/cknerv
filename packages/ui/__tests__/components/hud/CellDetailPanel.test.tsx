@@ -8,20 +8,28 @@ import type {
 } from '../../../src/derives/cellIdentityProof.derive';
 import { PROBE_STEP_S } from '../../../src/components/hud/probeScan';
 
-vi.mock('../../../src/components/hud/CellNucleusPortrait', () => ({
-  default: ({ focusField, onIdentityProofRead }: {
-    focusField?: string | null;
-    onIdentityProofRead?: (kind: 'content') => void;
-  }) => (
-    <div data-testid="cell-nucleus-portrait" data-focus-field={focusField ?? ''}>
-      <button
-        type="button"
-        data-testid="portrait-content-proof"
-        onClick={() => onIdentityProofRead?.('content')}
-      />
-    </div>
-  ),
-}));
+const { portraitRender } = vi.hoisted(() => ({ portraitRender: vi.fn() }));
+
+vi.mock('../../../src/components/hud/CellNucleusPortrait', async () => {
+  const { memo } = await import('react');
+  return {
+    default: memo(({ focusField, onIdentityProofRead }: {
+      focusField?: string | null;
+      onIdentityProofRead?: (kind: 'content') => void;
+    }) => {
+      portraitRender();
+      return (
+        <div data-testid="cell-nucleus-portrait" data-focus-field={focusField ?? ''}>
+          <button
+            type="button"
+            data-testid="portrait-content-proof"
+            onClick={() => onIdentityProofRead?.('content')}
+          />
+        </div>
+      );
+    }),
+  };
+});
 
 import CellDetailPanel from '../../../src/components/hud/CellDetailPanel';
 
@@ -89,7 +97,22 @@ function traceReadout(
 }
 
 describe('CellDetailPanel', () => {
-  beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(new Date(3 * 3600_000 + 12 * 60_000)); });
+  beforeEach(() => {
+    portraitRender.mockClear();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(3 * 3600_000 + 12 * 60_000));
+  });
+
+  it('keeps the demand-rendered portrait stable while the DOM scan clock advances', () => {
+    render(<CellDetailPanel cell={base} onClose={() => {}} />);
+
+    const rendersAfterScanReset = portraitRender.mock.calls.length;
+    expect(rendersAfterScanReset).toBeGreaterThan(0);
+    act(() => {
+      vi.advanceTimersByTime(400);
+    });
+    expect(portraitRender).toHaveBeenCalledTimes(rendersAfterScanReset);
+  });
 
   it('renders separate readable satellites with the magnified Cell scan restored', () => {
     const { container } = render(<CellDetailPanel cell={base} onClose={() => {}} />);

@@ -75,6 +75,7 @@ describe('HudOverlay', () => {
     const { container } = render(<HudOverlay chain={chain} peers={peers} localNode={localNode} cellsStats={cellsStats} />);
     const root = container.firstElementChild as HTMLElement;
     expect(root.style.pointerEvents).toBe('none');
+    expect(root.style.userSelect).toBe('none');
     const t = container.textContent ?? '';
     expect(t).toContain('CKNERV');       // status strip
     expect(t).toContain('COMMON KNOWLEDGE BASE'); // readout

@@ -1,4 +1,10 @@
-import { type CSSProperties, useEffect, useMemo, useState } from 'react';
+import {
+  type CSSProperties,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from 'react';
 import type {
   Cell,
   CellLink,
@@ -268,6 +274,11 @@ export default function CellDetailPanel({
   const identityProofComplete = cellIdentityProofBindingComplete(
     selectedIdentityProofBinding,
   );
+  const handlePortraitIdentityProofRead = useCallback((
+    kind: CellIdentityProofKind,
+  ) => {
+    onIdentityProofRead?.(kind, cell.id, reduced);
+  }, [cell.id, onIdentityProofRead, reduced]);
   const inspectedCellById = useMemo(() => {
     if (routeCellById?.get(cell.id) === cell) return routeCellById;
     const cells = new Map(routeCellById);
@@ -496,7 +507,17 @@ export default function CellDetailPanel({
           type="button"
           aria-label="close"
           title="Close · ESC or click outside"
-          onClick={onClose}
+          onPointerDown={(event) => {
+            if (event.button !== 0) return;
+            event.preventDefault();
+            event.stopPropagation();
+            onClose();
+          }}
+          onClick={(event) => {
+            event.stopPropagation();
+            // Keyboard activation has no preceding pointerdown.
+            if (event.detail === 0) onClose();
+          }}
           style={{ position: 'absolute', top: 5, right: 8, width: 28, height: 28, padding: 0, border: 0, background: 'transparent', color: HUD_COLORS.dim, font: `15px ${HUD_FONTS.mono}`, cursor: 'crosshair', pointerEvents: 'auto' }}
         >
           ×
@@ -534,7 +555,7 @@ export default function CellDetailPanel({
           traceEvidenceFocusSourceId={traceEvidenceFocusSourceId}
           identityProofBinding={selectedIdentityProofBinding}
           onIdentityProofRead={onIdentityProofRead
-            ? (kind) => onIdentityProofRead(kind, cell.id, reduced)
+            ? handlePortraitIdentityProofRead
             : undefined}
           onInteractionChange={onScanInteractionChange}
         />

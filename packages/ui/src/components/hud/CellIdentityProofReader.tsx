@@ -216,6 +216,7 @@ function OutpointLocatorRead({
       onReadResolvedRef.current?.('address');
       settledRef.current = true;
     }
+    if (frame.state === 'reading') invalidate();
   });
 
   useEffect(() => () => {
@@ -356,6 +357,7 @@ function BirthAnchorRead({
       onReadResolvedRef.current?.('anchor');
       settledRef.current = true;
     }
+    if (frame.state === 'reading') invalidate();
   });
 
   useEffect(() => () => {
