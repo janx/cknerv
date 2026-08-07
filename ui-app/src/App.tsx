@@ -487,10 +487,17 @@ export default function App({
   // ckb node ids drive the icosahedra scatter inside the cell canopy. The
   // CkbDirectAdapter registers `ckb:local` on boot; fall back to a single
   // anchor so the galaxy always has one even before the registry arrives.
+  // Keyed on the id CONTENT, not the chainNodes array identity: node-info
+  // polls (version/connections) replace the array without changing the id
+  // set, and this list feeds localCkbPos → the whole P2P topology memo.
+  const ckbNodeIdsSig = useMemo(
+    () => chainNodes.map((n) => n.id).join(' '),
+    [chainNodes],
+  );
   const ckbNodeIds = useMemo(() => {
-    const ids = chainNodes.map((n) => n.id);
+    const ids = ckbNodeIdsSig.length > 0 ? ckbNodeIdsSig.split(' ') : [];
     return ids.length > 0 ? ids : ['ckb:local'];
-  }, [chainNodes]);
+  }, [ckbNodeIdsSig]);
 
   // Single seed source for chain-node placement, fed to BOTH CellGalaxy and
   // NetworkColony so carrier launch points and the galaxy stay locked to the

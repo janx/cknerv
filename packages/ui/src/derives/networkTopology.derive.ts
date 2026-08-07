@@ -95,35 +95,31 @@ export function buildAdjacency(
   return adj;
 }
 
-export function inferredTopology(
-  peers: Peer[], seed: number, localId: string = LOCAL_ID_FALLBACK, localPos?: Vec3,
-): NetworkTopology {
-  const nodes: NetworkNode[] = [];
+/** The seed-only half of the colony: inferred nodes plus their internal
+ *  edges. Immutable and shared across `inferredTopology` calls. */
+interface InferredScaffold {
+  nodes: readonly NetworkNode[];
+  edges: readonly NetworkEdge[];
+}
 
-  // 1) local anchor. When a `localPos` is supplied (App pins it onto the galaxy's
-  //    labeled CkbNodeAnchor so there's a single "you"), it IS the local node's
-  //    position AND the anchor the measured peers scatter around. Otherwise fall
-  //    back to the seed-only localAnchor(seed) — preserving every existing caller.
-  //    NB: this only moves the local + measured core; the inferred scaffold below
-  //    stays seed-ONLY, so the ⭐ churn-stability invariant holds regardless of
-  //    peers OR localPos.
-  const anchor = localPos ?? localAnchor(seed);
-  nodes.push({ id: localId, kind: 'local', pos: anchor });
-  const localIdx = 0;
+// Single-slot memo: the scaffold is a pure function of `seed`, the app uses
+// one seed for its lifetime, and rebuilding it is the O(V² log V) part of the
+// topology (scatter rejection sampling + per-node kNN sorts). Latency-driven
+// rebuilds of the measured overlay reuse the cached scaffold untouched.
+let scaffoldCacheSeed: number | null = null;
+let scaffoldCache: InferredScaffold | null = null;
 
-  // 2) measured core overlaid (peer-dependent)
-  const measuredIdx: number[] = [];
-  for (const p of peers) {
-    measuredIdx.push(nodes.length);
-    nodes.push({ id: p.node_id, kind: 'measured', pos: measuredPeerPos(anchor, p), peer: p });
-  }
-
-  // 3) inferred scaffold (seed-only)
-  const infStart = nodes.length;
+/** Build (or reuse) the seed-only inferred scaffold. The construction order —
+ *  kNN edges, long-range links, connectivity bridges — and the rng stream are
+ *  byte-identical to the pre-cache inline build, so every downstream layout
+ *  and the ⭐ churn-stability invariant are preserved exactly. */
+function inferredScaffold(seed: number): InferredScaffold {
+  if (scaffoldCache !== null && scaffoldCacheSeed === seed) return scaffoldCache;
   const infPts = scatterInferred(seed);
-  infPts.forEach((pos, n) => nodes.push({ id: `inf:${n}`, kind: 'inferred', pos }));
+  const nodes: NetworkNode[] = infPts.map((pos, n) => (
+    { id: `inf:${n}`, kind: 'inferred', pos }
+  ));
 
-  // --- edges ---
   const edges: NetworkEdge[] = [];
   const seen = new Set<string>();
   const key = (i: number, j: number) => (i < j ? `${i}:${j}` : `${j}:${i}`);
@@ -135,29 +131,70 @@ export function inferredTopology(
     edges.push({ a: nodes[i].id, b: nodes[j].id, kind, weight: Math.sqrt(dist2(nodes[i].pos, nodes[j].pos)) });
   };
 
-  // 3a) inferred↔inferred: kNN base over ONLY the inferred scaffold (seed-only)
+  // kNN base degree over the scaffold.
   const rng = mulberry32((seed ^ 0x85ebca77) >>> 0);
-  const infNodes = nodes.slice(infStart);
   const kNearestInf = (localI: number, k: number): number[] => {
     const ds: { j: number; d: number }[] = [];
-    for (let j = 0; j < infNodes.length; j++) if (j !== localI) ds.push({ j, d: dist2(infNodes[localI].pos, infNodes[j].pos) });
+    for (let j = 0; j < nodes.length; j++) if (j !== localI) ds.push({ j, d: dist2(nodes[localI].pos, nodes[j].pos) });
     ds.sort((a, b) => a.d - b.d);
     return ds.slice(0, k).map((o) => o.j);
   };
-  for (let i = 0; i < infNodes.length; i++) {
-    for (const j of kNearestInf(i, COLONY_KNN)) add(infStart + i, infStart + j, 'inferred');
+  for (let i = 0; i < nodes.length; i++) {
+    for (const j of kNearestInf(i, COLONY_KNN)) add(i, j, 'inferred');
   }
-  // 3b) inferred long-range small-world links (seed-only)
-  for (let i = 0; i < infNodes.length; i++) {
-    if (rng() < COLONY_LONGRANGE_PROB && infNodes.length > 1) {
-      add(infStart + i, infStart + Math.floor(rng() * infNodes.length), 'inferred');
+  // Long-range small-world links.
+  for (let i = 0; i < nodes.length; i++) {
+    if (rng() < COLONY_LONGRANGE_PROB && nodes.length > 1) {
+      add(i, Math.floor(rng() * nodes.length), 'inferred');
     }
   }
-  // 3c) connectivity: bridge any island of the inferred scaffold to its nearest earlier node
-  ensureConnectedFrom(nodes, infStart, buildAdjacency(nodes, edges), add);
+  // Connectivity: bridge any island to its nearest node in component 0.
+  ensureConnectedFrom(nodes, 0, buildAdjacency(nodes, edges), add);
 
-  // 4) measured edges local↔peer (observed) + stitch core into the scaffold
-  for (const mi of measuredIdx) add(localIdx, mi, 'measured');
+  scaffoldCacheSeed = seed;
+  scaffoldCache = { nodes, edges };
+  return scaffoldCache;
+}
+
+export function inferredTopology(
+  peers: Peer[], seed: number, localId: string = LOCAL_ID_FALLBACK, localPos?: Vec3,
+): NetworkTopology {
+  // 1) local anchor. When a `localPos` is supplied (App pins it onto the galaxy's
+  //    labeled CkbNodeAnchor so there's a single "you"), it IS the local node's
+  //    position AND the anchor the measured peers scatter around. Otherwise fall
+  //    back to the seed-only localAnchor(seed) — preserving every existing caller.
+  //    NB: this only moves the local + measured core; the inferred scaffold
+  //    stays seed-ONLY (and cached), so the ⭐ churn-stability invariant holds
+  //    regardless of peers OR localPos.
+  const anchor = localPos ?? localAnchor(seed);
+  const nodes: NetworkNode[] = [{ id: localId, kind: 'local', pos: anchor }];
+  const localIdx = 0;
+
+  // 2) measured core overlaid (peer-dependent)
+  const measuredIdx: number[] = [];
+  for (const p of peers) {
+    measuredIdx.push(nodes.length);
+    nodes.push({ id: p.node_id, kind: 'measured', pos: measuredPeerPos(anchor, p), peer: p });
+  }
+
+  // 3) inferred scaffold (seed-only, cached): shared immutable node/edge
+  //    objects appended after the measured core, preserving the historical
+  //    node order (local, measured…, inferred…) and edge order (inferred
+  //    internals first, then measured spokes, then relay stitches).
+  const infStart = nodes.length;
+  const scaffold = inferredScaffold(seed);
+  for (const n of scaffold.nodes) nodes.push(n);
+  const edges: NetworkEdge[] = scaffold.edges.slice();
+
+  // 4) measured edges local↔peer (observed) + stitch core into the scaffold.
+  //    These pairs (local/measured ↔ anything) cannot collide with the
+  //    scaffold's inf↔inf set, and each is constructed at most once below,
+  //    so no cross-set dedup is needed.
+  const addEdge = (i: number, j: number, kind: EdgeKind) => {
+    if (i === j) return;
+    edges.push({ a: nodes[i].id, b: nodes[j].id, kind, weight: Math.sqrt(dist2(nodes[i].pos, nodes[j].pos)) });
+  };
+  for (const mi of measuredIdx) addEdge(localIdx, mi, 'measured');
   const nearestInferred = (i: number): number => {
     let best = -1, bestD = Infinity;
     for (let j = infStart; j < nodes.length; j++) {
@@ -168,7 +205,7 @@ export function inferredTopology(
   };
   for (const i of [localIdx, ...measuredIdx]) {
     const j = nearestInferred(i);
-    if (j >= 0) add(i, j, 'inferred'); // relay edge into the colony (not "observed")
+    if (j >= 0) addEdge(i, j, 'inferred'); // relay edge into the colony (not "observed")
   }
 
   return { provenance: 'inferred', localId, nodes, edges, adjacency: buildAdjacency(nodes, edges) };

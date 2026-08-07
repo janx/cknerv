@@ -44,12 +44,9 @@ import {
 const MEASURED_SIZE = 1.4;
 const MEASURED_BRIGHTNESS = 1.6;
 
-/** Measured node tint = the real peer palette: version-mismatch (violet) wins,
- *  else connection direction — single-sourced via peerColorKind. */
-function measuredColor(node: NetworkNode, localVersion: string): THREE.Color {
-  const [r, g, b] = PEER_COLORS[peerColorKind(node.peer!, localVersion)];
-  return new THREE.Color(r, g, b);
-}
+// Measured node tint = the real peer palette: version-mismatch (violet) wins,
+// else connection direction — single-sourced via peerColorKind (see the
+// value-keyed memo in MeasuredNode).
 
 /**
  * The inferred scaffold as a single additive point cloud. `position` is
@@ -130,7 +127,14 @@ function MeasuredNode({
   shockwaveUniforms: ShockwaveUniforms;
 }) {
   const simClock = useSimClock();
-  const color = useMemo(() => measuredColor(node, localVersion), [node, localVersion]);
+  // Key the tint on its VALUE inputs, not the node object: the topology memo
+  // hands MeasuredNode a fresh `node` per latency poll, and a fresh Color here
+  // would rebuild the ShaderMaterial (program-cache churn) every rebuild.
+  const colorKind = peerColorKind(node.peer!, localVersion);
+  const color = useMemo(
+    () => new THREE.Color(...PEER_COLORS[colorKind]),
+    [colorKind],
+  );
   const haloMat = useMemo(() => {
     const m = makePeerHaloMaterial(color, shockwaveUniforms);
     // Per-node phase so the shader's secondary breathe isn't synced colony-wide

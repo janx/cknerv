@@ -246,3 +246,25 @@ describe('ensureConnectedFrom (multi-island bridge branch)', () => {
     expect(added).toEqual([]); // single component → early return, nothing bridged
   });
 });
+
+describe('scaffold reuse across measured-overlay rebuilds', () => {
+  it('reuses the exact inferred node/edge objects when only latencies change', () => {
+    const before = inferredTopology([peer({ node_id: 'A', latency_ms: 40 })], 0xc0ffee, 'ckb:local');
+    const after = inferredTopology([peer({ node_id: 'A', latency_ms: 220 })], 0xc0ffee, 'ckb:local');
+    const infNodes = (t: ReturnType<typeof inferredTopology>) => t.nodes.filter((n) => n.kind === 'inferred');
+    const infEdges = (t: ReturnType<typeof inferredTopology>) => t.edges.filter(
+      (e) => e.a.startsWith('inf:') && e.b.startsWith('inf:'),
+    );
+    const nodesA = infNodes(before);
+    const nodesB = infNodes(after);
+    expect(nodesB).toHaveLength(nodesA.length);
+    for (let i = 0; i < nodesA.length; i++) expect(nodesB[i]).toBe(nodesA[i]); // same objects, not copies
+    const edgesA = infEdges(before);
+    const edgesB = infEdges(after);
+    expect(edgesB).toHaveLength(edgesA.length);
+    for (let i = 0; i < edgesA.length; i++) expect(edgesB[i]).toBe(edgesA[i]);
+    // …while the measured overlay genuinely moved with the new latency.
+    expect(before.nodes.find((n) => n.id === 'A')!.pos)
+      .not.toEqual(after.nodes.find((n) => n.id === 'A')!.pos);
+  });
+});
