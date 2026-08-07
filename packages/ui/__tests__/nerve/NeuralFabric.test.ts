@@ -140,6 +140,11 @@ describe('NeuralFabric living-mesh handles', () => {
     expect(SRC).not.toContain('passiveSamplesPerEdge');
   });
 
+  it('keeps weak and mid-curve resting nerves visibly present', () => {
+    expect(SRC).toContain('const TAPER_MIN = 0.44;');
+    expect(SRC).toContain('const TWIG_MIN = 0.34;');
+  });
+
   it('does not rate-limit passive lifecycle or mask animation frames', () => {
     expect(SRC).not.toContain('passiveAnimationFps');
     expect(SRC).not.toContain('lastPassiveCommitSecRef');

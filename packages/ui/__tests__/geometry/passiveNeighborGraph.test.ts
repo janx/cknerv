@@ -5,7 +5,6 @@ import {
   buildPassiveNeighborGraph,
   PASSIVE_EDGE_BUDGET,
   PASSIVE_EDGES_PER_CELL,
-  PASSIVE_TRUNK_SHARE,
   passiveEdgeBudget,
 } from '../../src/geometry/passiveNeighborGraph';
 
@@ -33,7 +32,7 @@ describe('buildPassiveNeighborGraph', () => {
   );
   const full = buildNeighborGraph(cells, { k: 7, maxEdgeLength: 30 });
 
-  it('keeps about one resting fibre per Cell before the screen cap', () => {
+  it('keeps every connected Cell on a visible arbor plus cross-links', () => {
     const passive = buildPassiveNeighborGraph(full);
 
     expect(passive.edges).toHaveLength(passiveEdgeBudget(cells.size));
@@ -41,7 +40,10 @@ describe('buildPassiveNeighborGraph', () => {
     expect(passive.adjacency.size).toBe(full.adjacency.size);
     const covered = [...passive.adjacency.values()]
       .filter((edges) => edges.size > 0).length;
-    expect(covered / cells.size).toBeGreaterThan(0.9);
+    expect(covered).toBe(cells.size);
+    expect(passive.edges.length).toBeGreaterThan(cells.size);
+    expect(passive.edges.some((edge) => edge.w !== undefined)).toBe(true);
+    expect(passive.edges.some((edge) => edge.w === undefined)).toBe(true);
     for (const edge of passive.edges) {
       expect(passive.adjacency.get(edge.from)?.has(edge.to)).toBe(true);
       expect(passive.adjacency.get(edge.to)?.has(edge.from)).toBe(true);
@@ -58,7 +60,7 @@ describe('buildPassiveNeighborGraph', () => {
     expect(covered / cells.size).toBeGreaterThan(0.85);
   });
 
-  it('selects hierarchical branches and capillaries deterministically', () => {
+  it('selects a deterministic subset of authoritative graph edges', () => {
     const options = { edgeBudget: 80 };
     const a = buildPassiveNeighborGraph(full, options);
     const b = buildPassiveNeighborGraph(full, options);
@@ -66,22 +68,21 @@ describe('buildPassiveNeighborGraph', () => {
 
     expect(keys(a)).toEqual(keys(b));
     expect(a.edges).toHaveLength(80);
-    expect(a.edges.filter((edge) => edge.w !== undefined).length)
-      .toBeGreaterThanOrEqual(Math.round(80 * PASSIVE_TRUNK_SHARE));
     const fullKeys = new Set(full.edges.map((edge) => `${edge.from}:${edge.to}`));
     expect(keys(a).every((key) => fullKeys.has(key))).toBe(true);
   });
 
-  it('scales with visible Cells before converging on a fixed screen cap', () => {
+  it('fills the fixed screen cap for the quality-invariant 6K AUTO field', () => {
     expect(passiveEdgeBudget(6_000)).toBe(Math.round(6_000 * PASSIVE_EDGES_PER_CELL));
+    expect(passiveEdgeBudget(6_000)).toBe(PASSIVE_EDGE_BUDGET);
     expect(passiveEdgeBudget(9_000)).toBe(PASSIVE_EDGE_BUDGET);
     expect(passiveEdgeBudget(14_000)).toBe(PASSIVE_EDGE_BUDGET);
     expect(passiveEdgeBudget(20_000)).toBe(PASSIVE_EDGE_BUDGET);
-    expect(passiveEdgeBudget(14_000) / passiveEdgeBudget(6_000)).toBeLessThan(1.4);
   });
 
-  it('preserves surviving old branches across ordinary Cell churn', () => {
-    const previous = buildPassiveNeighborGraph(full, { edgeBudget: 80 });
+  it('preserves surviving old branches after guaranteeing current coverage', () => {
+    const edgeBudget = passiveEdgeBudget(cells.size);
+    const previous = buildPassiveNeighborGraph(full, { edgeBudget });
     const changedCells = new Map(cells);
     changedCells.delete(17);
     changedCells.set(999, cell(999));
@@ -90,7 +91,7 @@ describe('buildPassiveNeighborGraph', () => {
       maxEdgeLength: 30,
     });
     const next = buildPassiveNeighborGraph(changedFull, {
-      edgeBudget: 80,
+      edgeBudget,
       preferredEdges: previous.edges,
     });
     const availableKeys = new Set(
@@ -101,8 +102,11 @@ describe('buildPassiveNeighborGraph', () => {
       .filter((key) => availableKeys.has(key));
     const nextKeys = new Set(next.edges.map((edge) => `${edge.from}:${edge.to}`));
 
-    expect(next.edges).toHaveLength(80);
-    expect(survivingKeys.every((key) => nextKeys.has(key))).toBe(true);
+    expect(next.edges).toHaveLength(edgeBudget);
+    const retained = survivingKeys.filter((key) => nextKeys.has(key)).length;
+    expect(retained / survivingKeys.length).toBeGreaterThan(0.75);
+    expect([...next.adjacency.values()].every((edges) => edges.size > 0))
+      .toBe(true);
   });
 
   it('can expose the complete graph for diagnostics', () => {

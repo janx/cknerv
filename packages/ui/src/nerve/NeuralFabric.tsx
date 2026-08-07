@@ -74,7 +74,7 @@ import {
   cellDetailFabricWidthScale,
 } from '../derives/sceneView.derive';
 
-// Dense-mesh baseline energy (the `cell.fabricAlpha` tweak, default 0.12).
+// Dense-mesh baseline energy (the `cell.fabricAlpha` tweak, default 0.15).
 // Passive fibres use bounded screen accumulation plus spatial compression;
 // active writes keep additive blending in a separate layer. The per-edge
 // brightness hierarchy and taper still multiply this baseline. Read live as
@@ -331,7 +331,7 @@ function recallApertureScaleAt(
  *  cell down to TAPER_MIN at the shaft midpoint, then back to 1.0 at
  *  the other cell — a parabolic profile that lets each Cell read as a
  *  bright agreement endpoint rather than a uniform vessel. */
-const TAPER_MIN = 0.38;
+const TAPER_MIN = 0.44;
 
 /** Returns the per-vertex brightness multiplier along a fabric edge at
  *  parameter t ∈ [0, 1]. Parabolic in (2t − 1)² so it's exactly
@@ -343,7 +343,7 @@ function taper(t: number): number {
 }
 
 /** Floor brightness — twigs / non-forest cross-links sit here. */
-const TWIG_MIN = 0.28;
+const TWIG_MIN = 0.34;
 
 /** Per-edge brightness multiplier ∈ [TWIG_MIN, 1.0], the fabric's trunk/branch
  *  hierarchy. Forest edges scale by their arbor weight `w` (normalized subtree
