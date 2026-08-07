@@ -223,6 +223,17 @@ describe('peers.derive', () => {
       expect(bolusIngest(1).flashOpacity).toBe(0); // clean end, no leftover pop
     });
 
+    it('expands the contact wave across the Cell plane while it fades', () => {
+      expect(bolusIngest(0).impactScale).toBeCloseTo(0.7, 6);
+      expect(bolusIngest(0.5).impactScale).toBeGreaterThan(2.5);
+      expect(bolusIngest(1).impactScale).toBeCloseTo(3.6, 6);
+      for (let i = 1; i < samples.length; i += 1) {
+        expect(bolusIngest(samples[i]).impactScale).toBeGreaterThanOrEqual(
+          bolusIngest(samples[i - 1]).impactScale - 1e-9,
+        );
+      }
+    });
+
     it('colour resolves moving carrier hue → pale agreement across ingest', () => {
       expect(bolusIngest(0).colorT).toBe(0);
       expect(bolusIngest(1).colorT).toBeCloseTo(1, 6);

@@ -12,7 +12,8 @@
  *                                       in the future, so this fills the idle window.
  *    t = 0                              the carrier launches toward the Cell field.
  *    t = BEAM_GROW_DUR_S                the carrier reaches the field boundary and
- *                                       commits (contracts + illuminates nearby Cells).
+ *                                       commits (recoils + spreads an impact wave
+ *                                       while illuminating nearby Cells).
  *    t = BLOCK_COMMIT_DELAY_S
  *      = BEAM_GROW_DUR_S + BEAM_STRIKE_DUR_S
  *                                       the Cell ledger acknowledges the block.

@@ -29,7 +29,7 @@ real Cell snapshot:
 | Stage | Time | Composition | Expected evidence |
 |---|---:|---|---|
 | network | 0.30 s | Distributed wide view | Propagation across independent witnesses |
-| carrier | 1.10 s | Local handoff close-up | Orange-red layered octagonal field approaching the Cell field |
+| carrier | 1.10 s | Local handoff close-up | Compact orange-red octagonal field facing and approaching the Cell field |
 | commit | 3.40 s | Target Cell close-up | Verified write label and expanding agreement seal |
 | settled | 6.20 s | Memory-latch close-up | Same Cell/content identity with persistent seal |
 

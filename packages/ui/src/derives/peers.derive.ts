@@ -152,24 +152,30 @@ export interface BolusIngest {
   bodyScale: number;
   /** Body + bloom opacity: 1 at impact → 0. */
   bodyOpacity: number;
-  /** Agreement flash opacity: bright at contact, resolved at t=1. */
+  /** Contact-wave opacity: bright at impact, resolved at t=1. */
   flashOpacity: number;
+  /** Contact-wave scale: compact strike → broad Cell-field diffusion. */
+  impactScale: number;
   /** Hash-stable carrier hue → pale agreement lerp param, 0→1. */
   colorT: number;
 }
 
 /** Per-frame field-commit envelope for the protocol carrier (t∈[0,1]).
  *  The compatibility export name remains `bolusIngest`, but the visual is a
- *  layered octagonal energy field: it contracts at field contact while the
- *  agreement flash resolves from the block's stable warm hue to pale consensus.
- *  Pure. */
+ *  compact octagonal energy field: the carrier recoils and dissolves at contact
+ *  while an impact wave spreads across the Cell plane and fades from the
+ *  block's stable warm hue to pale consensus. Pure. */
 export function bolusIngest(t: number): BolusIngest {
-  const k = 1 - t; // 1 → 0 collapse factor
+  const u = Math.max(0, Math.min(1, t));
+  const k = 1 - u;
   return {
-    bodyScale: k * k, // fast initial dissolve, exactly 0 at t=1
-    bodyOpacity: k, // linear fade, exactly 0 at t=1
-    flashOpacity: Math.exp(-3.0 * t) * k, // bright strike → pale agreement tail; ×k pins a clean 0 at t=1
-    colorT: easeOutCubic(t), // moving carrier hue → pale committed information
+    // The slower scale envelope leaves room for the renderer's short recoil;
+    // opacity still clears the field before the phase ends.
+    bodyScale: Math.pow(k, 0.85),
+    bodyOpacity: Math.pow(k, 1.15),
+    flashOpacity: Math.pow(k, 1.7),
+    impactScale: 0.7 + 2.9 * easeOutCubic(u),
+    colorT: easeOutCubic(u),
   };
 }
 

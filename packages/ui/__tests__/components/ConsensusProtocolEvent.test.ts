@@ -6,6 +6,7 @@ import {
   makeProtocolCarrierGeometry,
   PROTOCOL_FIELD_RING_RADII,
   PROTOCOL_FIELD_SIDES,
+  setProtocolFieldFacing,
 } from '../../src/geometry/protocolCarrier';
 
 const source = (file: string): string => readFileSync(
@@ -14,7 +15,7 @@ const source = (file: string): string => readFileSync(
 );
 
 describe('A protocol event relay', () => {
-  it('uses a layered octagonal energy field instead of a cube or solid crystal', () => {
+  it('uses a compact octagonal energy field instead of a cube or solid crystal', () => {
     const geometry = makeProtocolCarrierGeometry();
     const positions = geometry.getAttribute('position');
     const depths = new Set<number>();
@@ -24,15 +25,33 @@ describe('A protocol event relay', () => {
 
     expect(geometry).toBeInstanceOf(THREE.BufferGeometry);
     expect(PROTOCOL_FIELD_SIDES).toBe(8);
-    expect(PROTOCOL_FIELD_RING_RADII).toEqual([0.96, 0.78, 0.53, 0.25]);
-    expect(positions.count).toBeGreaterThan(200);
-    expect(depths.size).toBeGreaterThanOrEqual(6);
+    expect(PROTOCOL_FIELD_RING_RADII).toEqual([0.96, 0.66, 0.24]);
+    expect(positions.count).toBeGreaterThanOrEqual(64);
+    expect(positions.count).toBeLessThan(100);
+    expect(depths.size).toBe(3);
     expect(geometry.index).toBeNull();
     expect(source('BlockDeliveryLayer.tsx')).not.toContain('BoxGeometry');
     expect(source('BlockDeliveryLayer.tsx')).not.toContain('makeProtocolLandingTexture');
-    expect(source('BlockDeliveryLayer.tsx')).toContain('_bodyQuaternion.copy(_cameraQuaternion)');
+    expect(source('BlockDeliveryLayer.tsx')).toContain(
+      'setProtocolFieldFacing(_fieldFacingQuaternion, _flightDirection)',
+    );
+    expect(source('BlockDeliveryLayer.tsx')).not.toContain('getWorldQuaternion');
     expect(source('BlockDeliveryLayer.tsx')).not.toContain('TUMBLE_RATE');
     geometry.dispose();
+  });
+
+  it('aims the field and expanding impact wave at the Cell galaxy', () => {
+    const delivery = source('BlockDeliveryLayer.tsx');
+    const direction = new THREE.Vector3(0.25, 1, -0.4).normalize();
+    const facing = setProtocolFieldFacing(new THREE.Quaternion(), direction);
+    const transformedNormal = new THREE.Vector3(0, 0, 1).applyQuaternion(facing);
+
+    expect(transformedNormal.distanceTo(direction)).toBeLessThan(1e-9);
+    expect(delivery).toContain('delivery.to[1] - delivery.from[1]');
+    expect(delivery).toContain('_bodyQuaternion.copy(_fieldFacingQuaternion)');
+    expect(delivery).toContain('ingest.impactScale');
+    expect(delivery).toContain('_fieldFacingQuaternion,\n            -fieldRotation * 0.45');
+    expect(delivery).toContain('side: THREE.DoubleSide');
   });
 
   it('keeps one block carrier hue across P2P surge, courier, and delivery', () => {
