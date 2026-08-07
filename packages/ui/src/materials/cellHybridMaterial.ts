@@ -82,9 +82,9 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
       uniform float uViewportHeight;
       uniform float uPixelRatio;
       uniform float uMemoryMinPointPx;
+      uniform float uWarmth;
       uniform float uCenterDim;
 
-      varying vec3  vColor;
       varying float vDeathRamp;
       varying float vSeed;
       varying vec4  vMemoryIdentity;
@@ -96,11 +96,16 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
       varying float vInspectionRole;
       varying float vCenterDim;
       varying float vPointCssPx;
+      varying vec3  vBodyColor;
+      varying vec3  vHotColor;
+      // x = inverse breathing sigma squared; y = peak LOD gain;
+      // z = outer-wash LOD gain. All three are constant across one point.
+      varying vec3  vCloudParams;
 
       ${BIRTH_DEATH_GLSL}
+      ${HASH11_GLSL}
 
       void main() {
-        vColor = aColor;
         vMemoryIdentity = aMemoryIdentity;
         vDetail = aDetail;
         vFocus = aFocus;
@@ -117,6 +122,28 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
         vDeathRamp = deathRamp;
         vSeed      = aMemorySeed * 91.73
           + dot(position, vec3(0.071, 0.113, 0.173));
+
+        // These values depend on the Cell and frame, never on gl_PointCoord.
+        // Evaluate them once per Cell instead of once per covered fragment.
+        float breathRate = 0.7 + 0.6 * hash11(vSeed + 7.7);
+        float breath = 1.0 + 0.08 * sin(uTime * breathRate + vSeed);
+        float sigma = 0.10 * breath;
+        vec3 ember = mix(
+          aColor,
+          vec3(${CELL_GALAXY_PALETTE.ember.join(', ')}),
+          0.55
+        );
+        vBodyColor = mix(aColor, ember, uWarmth);
+        vHotColor = mix(
+          vBodyColor,
+          vec3(${CELL_GALAXY_PALETTE.warmWhite.join(', ')}),
+          0.72
+        );
+        vCloudParams = vec3(
+          1.0 / (sigma * sigma),
+          1.0 - aDetail * 0.92,
+          0.18 * (1.0 - aDetail * 0.45)
+        );
 
         vec4 worldPos = modelMatrix * vec4(position, 1.0);
         // Fade resting brightness down toward the galaxy centre so the
@@ -158,11 +185,9 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
       precision highp float;
 
       uniform float uTime;
-      uniform float uWarmth;
       uniform float uMemoryLinePx;
       uniform float uMemorySignalEnergy;
 
-      varying vec3  vColor;
       varying float vDeathRamp;
       varying float vSeed;
       varying vec4  vMemoryIdentity;
@@ -174,6 +199,9 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
       varying float vInspectionRole;
       varying float vCenterDim;
       varying float vPointCssPx;
+      varying vec3  vBodyColor;
+      varying vec3  vHotColor;
+      varying vec3  vCloudParams;
 
       // hash11 — small deterministic scrambler. Used for per-cell decorrelation.
       ${HASH11_GLSL}
@@ -184,54 +212,31 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
       // continuous: cell glow and fiber glow are both Gaussian, so they
       // meet at the same point and form one bright knot.
       //
-      // Per-cell variation comes from per-tag color (vColor) and sprite size
-      // (aSize).
-      vec4 cloud(vec2 uv, float t) {
-        float dC = length(uv);
-
-        // Breath: non-translating sigma pulsation so the cell feels alive
-        // without the centroid moving. Amplitude small enough that the
-        // sprite's brightest pixel stays clearly at center.
-        float br     = 0.7 + 0.6 * hash11(vSeed + 7.7);
-        float breath = 1.0 + 0.08 * sin(t * br + vSeed);
-        float sigma  = 0.10 * breath;
+      // Per-cell variation comes from the vertex-derived tag colors and
+      // sprite size (aSize).
+      vec4 cloud(float radiusSquared) {
         // LOD peak suppression: near cells (vDetail→1) lose the white-hot core so
         // the nucleus reads; far cells (vDetail=0) are byte-identical to before.
-        float peak   = exp(-pow(dC / sigma, 2.0)) * (1.0 - vDetail * 0.92);
-
-        // Living Cell body: rose tissue warms toward ember while the centre
-        // resolves to a soft warm-white nucleus. The colour stays visually
-        // separate from the peer network's synthetic blue data plane.
-        vec3 ember = mix(
-          vColor,
-          vec3(${CELL_GALAXY_PALETTE.ember.join(', ')}),
-          0.55
-        );
-        vec3 body = mix(vColor, ember, uWarmth);
-        vec3 hot  = mix(
-          body,
-          vec3(${CELL_GALAXY_PALETTE.warmWhite.join(', ')}),
-          0.72
-        );
-        vec3 col   = mix(body, hot, peak);
+        float peak = exp(-radiusSquared * vCloudParams.x) * vCloudParams.y;
+        vec3 col = mix(vBodyColor, vHotColor, peak);
 
         // Outer halo wash for boundary continuity — very faint full-sprite
         // glow that anchors the cell's footprint when peak alone is too
         // tight at distance.
-        float wash = exp(-pow(dC / 0.32, 2.0)) * 0.18 * (1.0 - vDetail * 0.45);
-        col += body * wash;
+        float wash = exp(-radiusSquared / (0.32 * 0.32)) * vCloudParams.z;
+        col += vBodyColor * wash;
 
         return vec4(col, peak + wash);
       }
 
       void main() {
         vec2 uv = gl_PointCoord - 0.5;
-        if (length(uv) > 0.5) discard;
+        float radiusSquared = dot(uv, uv);
+        if (radiusSquared > 0.25) discard;
 
-        float t = uTime;
         if (vDeathRamp >= 1.0) discard;
 
-        vec4 base = cloud(uv, t);
+        vec4 base = cloud(radiusSquared);
         // Both density compression and graph-distance inspection apply only to
         // the resting body. Focus, write, and recall signals below can still
         // reclaim headroom because they describe real events.

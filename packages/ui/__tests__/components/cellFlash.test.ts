@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   markCellFlashDirty,
   mergeCellFlashRanges,
+  writeActiveCellFlashIndices,
   writeDirtyCellFlashSlots,
 } from '../../src/components/cellFlash';
 
@@ -56,5 +57,44 @@ describe('cell flash dirty journal', () => {
       { start: 1, count: 5 },
       { start: 7, count: 2 },
     ]);
+  });
+
+  it('indexes only slots inside the exact half-open flash interval', () => {
+    const indices = new Uint16Array(8);
+    const write = writeActiveCellFlashIndices(
+      new Float32Array([9.5, 9.75, 10, 10.1, -1e9]),
+      5,
+      10,
+      0.5,
+      indices,
+      0,
+    );
+
+    // Age 0.5 is complete; age 0 and the two younger positive ages are live.
+    expect(write).toEqual({ count: 2, changed: true });
+    expect([...indices.slice(0, write.count)]).toEqual([1, 2]);
+  });
+
+  it('reports index identity changes independently from draw-count changes', () => {
+    const indices = new Uint16Array([1, 2, 0, 0]);
+
+    expect(writeActiveCellFlashIndices(
+      new Float32Array([-1e9, 9.8, 9.7]),
+      3,
+      10,
+      0.5,
+      indices,
+      2,
+    )).toEqual({ count: 2, changed: false });
+
+    expect(writeActiveCellFlashIndices(
+      new Float32Array([9.8, -1e9, 9.7]),
+      3,
+      10,
+      0.5,
+      indices,
+      2,
+    )).toEqual({ count: 2, changed: true });
+    expect([...indices.slice(0, 2)]).toEqual([0, 2]);
   });
 });

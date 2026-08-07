@@ -211,6 +211,21 @@ describe('NeuralFabric living-mesh handles', () => {
     expect(SRC).toContain('clearUpdateRanges()');
   });
 
+  it('retains passive positions during colour-only mask transitions', () => {
+    expect(SRC).toContain('passivePositionsDirtyRef');
+    expect(SRC).toContain(
+      'const writePassivePositions = passivePositionsDirtyRef.current',
+    );
+    expect(SRC).toContain(
+      'commitLayer(fabric, writePassivePositions, true)',
+    );
+    expect(SRC).toContain('if (updatePositions)');
+    expect(SRC).toContain('if (writePositions)');
+    expect(SRC).toContain(
+      'passivePositionsDirtyRef.current = stillAnimating > 0',
+    );
+  });
+
   it('decays and uploads reinforcement through a sparse warm-route layer', () => {
     expect(SRC).toContain('MAX_WARM_FABRIC_SEGMENTS');
     expect(SRC).toContain('warmRouteKeysRef');

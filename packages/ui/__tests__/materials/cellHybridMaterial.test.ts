@@ -45,9 +45,24 @@ describe('makeCellHybridMaterial', () => {
     const m = makeCellHybridMaterial();
     expect(m.fragmentShader).toContain('vec4 cloud(');
     expect(m.fragmentShader).toContain('hash11');
-    expect(m.fragmentShader).toContain('vec3 ember');
-    expect(m.fragmentShader).toContain('vec3 hot');
+    expect(m.vertexShader).toContain('vec3 ember');
+    expect(m.vertexShader).toContain('vHotColor');
     expect(m.fragmentShader).not.toContain('vec4 discharge(');
+  });
+
+  it('evaluates per-Cell cloud invariants in the vertex shader', () => {
+    const m = makeCellHybridMaterial();
+
+    expect(m.vertexShader).toContain('float breathRate');
+    expect(m.vertexShader).toContain('sin(uTime * breathRate + vSeed)');
+    expect(m.vertexShader).toContain('vBodyColor =');
+    expect(m.vertexShader).toContain('vCloudParams = vec3(');
+    expect(m.fragmentShader).toContain('float radiusSquared = dot(uv, uv)');
+    expect(m.fragmentShader).toContain(
+      'exp(-radiusSquared * vCloudParams.x)',
+    );
+    expect(m.fragmentShader).not.toContain('hash11(vSeed + 7.7)');
+    expect(m.fragmentShader).not.toContain('length(uv) > 0.5');
   });
 
   it('reserves centre compression for the resting body before event accents', () => {

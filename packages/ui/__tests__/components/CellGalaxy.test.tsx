@@ -145,6 +145,18 @@ describe('CellGalaxy', () => {
     expect(source.match(/markCellFlashDirty\(/g)).toHaveLength(3);
   });
 
+  it('submits only currently active protocol-write slots to the flare draw', () => {
+    const source = readFileSync(CELL_GALAXY_SOURCE, 'utf8');
+
+    expect(source).toContain('writeActiveCellFlashIndices(');
+    expect(source).toContain('new Uint16Array(INSTANCE_CAPACITY)');
+    expect(source).toContain('g.setIndex(cellFlareIndexAttr)');
+    expect(source).toContain(
+      'cellFlareGeometry.setDrawRange(0, flareIndexWrite.count)',
+    );
+    expect(source).toContain('geometry={cellFlareGeometry}');
+  });
+
   it('turns direct inspection neighbours into the bounded pick surface', () => {
     const source = readFileSync(CELL_GALAXY_SOURCE, 'utf8');
 
@@ -836,5 +848,8 @@ describe('CellGalaxy useSimFrame buffer behavior', () => {
     );
     expect(source).toContain('cellBufferRanges,');
     expect(source).toContain('markCellBufferUpdateRanges(');
+    expect(source).toContain(
+      'markPopulatedBufferUpdate(cellInspectionAttr, count)',
+    );
   });
 });

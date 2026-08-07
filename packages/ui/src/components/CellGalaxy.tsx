@@ -62,6 +62,7 @@ import {
   makeCellHybridMaterial,
 } from '../materials/cellHybridMaterial';
 import { makeCellFlareMaterial } from '../materials/cellFlareMaterial';
+import { CELL_FLASH_DURATION_S } from '../materials/cellEnvelope.glsl';
 import {
   pointSpriteDeviceViewportHeight,
   resolvePointSpritePixelRatio,
@@ -87,9 +88,11 @@ import { deriveCanonicalRewriteArrivals } from '../derives/canonicalRewrite.deri
 import {
   markCellFlashDirty,
   mergeCellFlashRanges,
+  writeActiveCellFlashIndices,
   writeDirtyCellFlashSlots,
   type CellFlashDirtyIdsRef,
 } from './cellFlash';
+import { markPopulatedBufferUpdate } from '../geometry/populatedBufferAttribute';
 
 /** Cyan palette for the structural chain anchor (CKB icosahedron).
  *  The chain anchor reads as "structural backbone / chain truth" and
@@ -1107,6 +1110,7 @@ export default function CellGalaxy({
   /** Per-frame mirror of the cell draw count. Written by the journal cursor;
    * read by the flash-only fast path so neither path recomputes the clamp. */
   const drawCountRef = useRef<number>(0);
+  const flareDrawCountRef = useRef<number>(0);
   const lastPulseAtMsRef = useRef<number>(0);
   /** Per-icosahedron flash trigger — written on each new block for the
    *  miner anchor that sourced it. CkbNodeAnchor reads its own slot
@@ -1155,6 +1159,13 @@ export default function CellGalaxy({
     return new THREE.BufferAttribute(arr, 1)
       .setUsage(THREE.DynamicDrawUsage);
   }, []);
+  const cellFlareIndexAttr = useMemo(
+    () => new THREE.BufferAttribute(
+      new Uint16Array(INSTANCE_CAPACITY),
+      1,
+    ).setUsage(THREE.DynamicDrawUsage),
+    [],
+  );
   const cellSizeAttr = useMemo(
     () => new THREE.BufferAttribute(new Float32Array(INSTANCE_CAPACITY), 1),
     [],
@@ -1263,6 +1274,29 @@ export default function CellGalaxy({
     cellInspectionRoleAttr,
   ]);
 
+  const cellFlareGeometry = useMemo(() => {
+    const g = new THREE.BufferGeometry();
+    // Share the authoritative Cell attributes. Only the small element array is
+    // flare-specific, so active writes do not duplicate position/lifecycle
+    // buffers or change the resting body draw.
+    g.setAttribute('position', cellPosAttr);
+    g.setAttribute('aBornAt', cellBornAtAttr);
+    g.setAttribute('aDeathAt', cellDeathAtAttr);
+    g.setAttribute('aFlashAt', cellFlashAtAttr);
+    g.setAttribute('aSize', cellSizeAttr);
+    g.setIndex(cellFlareIndexAttr);
+    g.setDrawRange(0, 0);
+    g.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0, 0), 120);
+    return g;
+  }, [
+    cellPosAttr,
+    cellBornAtAttr,
+    cellDeathAtAttr,
+    cellFlashAtAttr,
+    cellSizeAttr,
+    cellFlareIndexAttr,
+  ]);
+
   // Bind the duration uniforms once. The wall→scene-seconds conversion
   // basis is derived per-frame from (Date.now(), simClock.elapsedSec) so
   // it survives any Canvas remount because simClock is module-owned.
@@ -1278,11 +1312,13 @@ export default function CellGalaxy({
       hybridMaterial.dispose();
       flareMaterial.dispose();
       cellGeometry.dispose();
+      cellFlareGeometry.dispose();
     };
   }, [
     hybridMaterial,
     flareMaterial,
     cellGeometry,
+    cellFlareGeometry,
   ]);
 
   useSimFrame((state, dt) => {
@@ -1467,7 +1503,9 @@ export default function CellGalaxy({
         if (next !== target) inspectionStillAnimating = true;
       }
       inspectionAnimatingRef.current = inspectionStillAnimating;
-      if (inspectionNeedsWrite) cellInspectionAttr.needsUpdate = true;
+      if (inspectionNeedsWrite) {
+        markPopulatedBufferUpdate(cellInspectionAttr, count);
+      }
     }
 
     // 3. Flash-only rewrite. Production callers publish exact dirty ids, so
@@ -1512,6 +1550,25 @@ export default function CellGalaxy({
         flashBufferRanges,
         count,
       );
+    }
+
+    // The additive write layer shares all Cell attributes but submits only
+    // slots whose exact aFlashAt age can produce fragments this frame.
+    const flareIndexWrite = writeActiveCellFlashIndices(
+      cellFlashAtAttr.array as Float32Array,
+      count,
+      now,
+      CELL_FLASH_DURATION_S,
+      cellFlareIndexAttr.array as Uint16Array,
+      flareDrawCountRef.current,
+    );
+    if (flareIndexWrite.changed) {
+      markPopulatedBufferUpdate(
+        cellFlareIndexAttr,
+        flareIndexWrite.count,
+      );
+      cellFlareGeometry.setDrawRange(0, flareIndexWrite.count);
+      flareDrawCountRef.current = flareIndexWrite.count;
     }
 
     // 4. Material uniforms.
@@ -1661,7 +1718,7 @@ export default function CellGalaxy({
             per-frame aFlashAt writes feed it for free) and renders only the
             contributor rails + agreement loops over a steady cell body. */}
         <points
-          geometry={cellGeometry}
+          geometry={cellFlareGeometry}
           material={flareMaterial}
           frustumCulled={false}
           renderOrder={1}
