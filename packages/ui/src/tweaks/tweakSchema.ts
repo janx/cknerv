@@ -79,7 +79,7 @@ export const peerSchema = {
 } satisfies FolderSchema;
 
 export const cellSchema = {
-  fabricAlpha: { value: 0.12, min: 0, max: 1, step: 0.01, label: 'fabric alpha' },
+  fabricAlpha: { value: 0.15, min: 0, max: 1, step: 0.01, label: 'fabric alpha' },
   // Restore the living rose body used by the earlier brain-like galaxy.
   // `warmth` adds only a restrained ember bias; real packet traffic remains the
   // brighter synaptic signal.

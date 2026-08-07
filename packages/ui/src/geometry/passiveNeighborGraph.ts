@@ -1,12 +1,15 @@
 import { fabricEdgeSeed } from './edgeBezier';
 import type { NeighborEdge, NeighborGraph } from './neighborGraph';
 
-/** Hard screen-composition budget. This is large enough for the displayed
- * tissue to read as a neural network, but remains far below the complete k-NN
- * graph that previously collapsed dense views into uniform hair. */
+/** Hard screen-composition budget. AUTO's 6K Cell field reaches this ceiling,
+ * which leaves room for the complete spanning arbor plus visible cross-links
+ * without returning to the complete k-NN graph's uniform hair. */
 export const PASSIVE_EDGE_BUDGET = 8_000;
-/** Keep roughly one resting fibre per visible Cell until the screen cap. */
-export const PASSIVE_EDGES_PER_CELL = 1.0;
+/** Admit enough resting fibres to keep every connected Cell on the visible
+ * arbor and still retain capillary cross-links. This policy is deliberately
+ * independent of render quality: High/Med/Low change raster/transient costs,
+ * never the Cell nervous system. */
+export const PASSIVE_EDGES_PER_CELL = 4 / 3;
 /** Most screen energy belongs to coherent carrying branches. */
 export const PASSIVE_TRUNK_SHARE = 0.72;
 /** A minority of lower-order arbor edges break up clean top-weight contours. */
@@ -34,7 +37,39 @@ function canonicalEdgeOrder(a: NeighborEdge, b: NeighborEdge): number {
   return a.from - b.from || a.to - b.to;
 }
 
-/** Stable, sub-linear passive-fibre budget for a visible Cell population. */
+/** Select a deterministic spanning forest from the authoritative graph order.
+ * `buildNeighborGraph` puts its connectivity skeleton first, so this retains
+ * that local shape without coupling the passive view to builder internals.
+ * The union check also keeps this correct for synthetic/custom graphs. */
+function spanningCoverageEdges(graph: NeighborGraph): NeighborEdge[] {
+  const parent = new Map<number, number>();
+  for (const id of graph.adjacency.keys()) parent.set(id, id);
+
+  const find = (id: number): number => {
+    if (!parent.has(id)) parent.set(id, id);
+    let root = parent.get(id)!;
+    while (parent.get(root) !== root) root = parent.get(root)!;
+    let cursor = id;
+    while (parent.get(cursor) !== root) {
+      const next = parent.get(cursor)!;
+      parent.set(cursor, root);
+      cursor = next;
+    }
+    return root;
+  };
+
+  const coverage: NeighborEdge[] = [];
+  for (const edge of graph.edges) {
+    const fromRoot = find(edge.from);
+    const toRoot = find(edge.to);
+    if (fromRoot === toRoot) continue;
+    parent.set(toRoot, fromRoot);
+    coverage.push(edge);
+  }
+  return coverage;
+}
+
+/** Stable, bounded passive-fibre budget for a visible Cell population. */
 export function passiveEdgeBudget(nodeCount: number): number {
   if (!Number.isFinite(nodeCount) || nodeCount <= 1) return 0;
   return Math.min(
@@ -59,12 +94,13 @@ function graphFromEdges(
 /**
  * Derive the resting biological silhouette without changing authoritative
  * routing. The full graph stays connected for pulse planning; this layer is a
- * bounded arbor drawing and may intentionally leave quiet Cells unconnected.
+ * bounded arbor drawing that keeps every Cell attached whenever its spanning
+ * forest fits the screen cap (including the default 6K AUTO field).
  *
  * Selection is deterministic and hierarchical:
- *  1. highest-subtree arbor edges form coherent trunks;
- *  2. hash-scattered lower arbor edges form irregular terminal growth;
- *  3. a small hash sample of non-arbor links supplies capillary cross-links.
+ *  1. a spanning forest keeps every connected Cell on a visible nerve;
+ *  2. still-valid prior edges preserve local visual continuity;
+ *  3. hierarchy-ranked branches and hash-scattered cross-links fill the cap.
  */
 export function buildPassiveNeighborGraph(
   graph: NeighborGraph,
@@ -121,6 +157,7 @@ export function buildPassiveNeighborGraph(
       || canonicalEdgeOrder(a, b));
 
   const availableByKey = new Map(graph.edges.map((edge) => [edgeKey(edge), edge]));
+  const coverage = spanningCoverageEdges(graph);
   const kept: NeighborEdge[] = [];
   const keptKeys = new Set<string>();
   const keep = (edge: NeighborEdge) => {
@@ -131,13 +168,16 @@ export function buildPassiveNeighborGraph(
     kept.push(edge);
   };
 
+  // Connectivity is the visual contract. In the normal AUTO field its
+  // spanning forest fits below the 8K cap, so every Cell is visibly attached
+  // before continuity and decorative cross-links compete for the remainder.
+  for (const edge of coverage) keep(edge);
   for (const previous of options.preferredEdges ?? []) {
     const current = availableByKey.get(edgeKey(previous));
     if (current) keep(current);
   }
 
-  // The initial build follows the hierarchy quotas. Later builds begin with
-  // surviving previous edges, then use this same order only to heal gaps.
+  // The initial and incremental builds share the same hierarchy fill order.
   for (const edge of trunks) keep(edge);
   for (const edge of twigs) keep(edge);
   for (const edge of extras) keep(edge);
