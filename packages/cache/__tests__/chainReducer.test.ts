@@ -376,3 +376,61 @@ describe('cross-language wire-shape parity', () => {
     expect(c.mempool.min_fee_rate).toBe(1000);
   });
 });
+
+describe('ring identity preservation', () => {
+  function seeded(): ChainEntry {
+    let c = applyChainMutation(emptyChainCache(), {
+      type: 'block_mined', number: 1, hash: '0xb1', tx_count: 2, at: 1_000,
+    });
+    c = applyChainMutation(c, {
+      type: 'tx_landed', tx_hash: '0xt1', block: 1, at: 1_100, inputs: [], outputs: [],
+    });
+    return c;
+  }
+
+  it('sync/mempool-only batches keep every ring identity', () => {
+    const prev = seeded();
+    const next = applyRevisionedChainMutations(prev, [
+      rm(10, { type: 'chain_sync_updated', ibd: false, best_known_block: 7 }),
+      rm(11, {
+        type: 'chain_mempool_updated',
+        pending: 1, proposed: 0, orphan: 0,
+        total_tx_size: 100, total_tx_cycles: 10, min_fee_rate: 1000,
+      }),
+    ]);
+    expect(next).not.toBe(prev);
+    expect(next.best_known_block).toBe(7);
+    expect(next.recent_blocks).toBe(prev.recent_blocks);
+    expect(next.recent_tx_hashes).toBe(prev.recent_tx_hashes);
+    expect(next.recent_block_intervals_ms).toBe(prev.recent_block_intervals_ms);
+    expect(next.recent_block_tx_counts).toBe(prev.recent_block_tx_counts);
+    expect(next.recent_block_sizes).toBe(prev.recent_block_sizes);
+  });
+
+  it('tx_landed copies only the tx ring', () => {
+    const prev = seeded();
+    const next = applyRevisionedChainMutations(prev, [
+      rm(12, { type: 'tx_landed', tx_hash: '0xt2', block: 1, at: 1_200, inputs: [], outputs: [] }),
+    ]);
+    expect(next.recent_tx_hashes).not.toBe(prev.recent_tx_hashes);
+    expect(prev.recent_tx_hashes).toHaveLength(1); // prev untouched
+    expect(next.recent_tx_hashes).toHaveLength(2);
+    expect(next.recent_blocks).toBe(prev.recent_blocks);
+    expect(next.recent_block_intervals_ms).toBe(prev.recent_block_intervals_ms);
+    expect(next.recent_block_tx_counts).toBe(prev.recent_block_tx_counts);
+    expect(next.recent_block_sizes).toBe(prev.recent_block_sizes);
+  });
+
+  it('block_mined leaves the tx ring identity untouched and never leaks into prev', () => {
+    const prev = seeded();
+    const prevBlocks = prev.recent_blocks.slice();
+    const next = applyRevisionedChainMutations(prev, [
+      rm(13, { type: 'block_mined', number: 2, hash: '0xb2', tx_count: 1, at: 2_000 }),
+    ]);
+    expect(next.recent_tx_hashes).toBe(prev.recent_tx_hashes);
+    expect(next.recent_blocks).not.toBe(prev.recent_blocks);
+    expect(prev.recent_blocks).toEqual(prevBlocks); // prev untouched
+    expect(next.recent_block_intervals_ms).not.toBe(prev.recent_block_intervals_ms);
+    expect(next.recent_block_intervals_ms).toEqual([1_000]);
+  });
+});

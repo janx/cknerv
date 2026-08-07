@@ -104,3 +104,35 @@ describe('createStreamHealthTracker', () => {
     expect(states.at(-2)?.reason).toBe('lagged');
   });
 });
+
+describe('freshness publish throttling', () => {
+  it('publishes same-phase freshness at most once per second, transitions immediately', () => {
+    const states: StreamHealth[] = [];
+    let now = 1_000;
+    const tracker = createStreamHealthTracker({
+      now: () => now,
+      onHealth: (health) => states.push(health),
+    }, () => {});
+
+    tracker.startAttempt();
+    tracker.opened();
+    tracker.message(); // connecting → live: publishes
+    const livePublishes = () => states.filter((s) => s.phase === 'live');
+    expect(livePublishes()).toHaveLength(1);
+
+    now = 1_200;
+    tracker.message(); // same-phase freshness within 1s: suppressed
+    now = 1_400;
+    tracker.message(); // still suppressed
+    expect(livePublishes()).toHaveLength(1);
+
+    now = 2_100;
+    tracker.message(); // ≥1s since last publish: freshness republished
+    expect(livePublishes()).toHaveLength(2);
+    expect(livePublishes().at(-1)?.lastMessageAtMs).toBe(2_100);
+
+    now = 2_150;
+    tracker.closed(); // lifecycle transition publishes immediately
+    expect(states.at(-1)?.phase).toBe('retrying');
+  });
+});
