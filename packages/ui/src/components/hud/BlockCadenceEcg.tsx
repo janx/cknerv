@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import type { CSSProperties } from 'react';
 import type { EcgCondition } from '../../derives/ecgCondition';
 import { reconstructArrivals, drawStripChart } from './ecgTrace';
@@ -33,7 +33,7 @@ export default function BlockCadenceEcg({
   const cvs = useRef<HTMLCanvasElement | null>(null);
   const color = COND_COLOR[condition];
   const rate = avgMs && avgMs > 0 ? Math.round(60000 / avgMs) : null;
-  const [heroMs, setHeroMs] = useState<number>(gapMs);
+  const heroRef = useRef<HTMLSpanElement | null>(null);
   const arrivals = useMemo(
     () => reconstructArrivals(intervalsMs, lastBlockTsMs),
     [intervalsMs, lastBlockTsMs],
@@ -72,13 +72,19 @@ export default function BlockCadenceEcg({
     return () => cancelAnimationFrame(raf);
   }, [reducedMotion]);
 
-  // "Since last" hero updates at 0.1s resolution: a small timer recomputes the live
-  // gap from current time (reduced motion → ~1s). Kept off the rAF loop so the
-  // tenths keep ticking between block deltas.
+  // "Since last" hero updates at 0.1s resolution: a small timer recomputes the
+  // live gap and writes the span's textContent DIRECTLY (same cadence + values
+  // as the former setState, without a 10 Hz React re-render of the panel).
+  // Kept off the rAF loop so the tenths keep ticking between block deltas.
   useEffect(() => {
+    let lastText: string | null = null;
     const tick = () => {
       const s = live.current;
-      setHeroMs(Math.max(0, s.lastBlockTsMs != null ? Date.now() - s.lastBlockTsMs : s.gapMs));
+      const gap = Math.max(0, s.lastBlockTsMs != null ? Date.now() - s.lastBlockTsMs : s.gapMs);
+      const text = fmtS(gap);
+      if (text === lastText) return;
+      lastText = text;
+      if (heroRef.current) heroRef.current.textContent = text;
     };
     tick();
     if (typeof setInterval !== 'function') return; // test-safe
@@ -91,8 +97,9 @@ export default function BlockCadenceEcg({
       <PanelHeader en="PULSE" cjk="脉搏" idx="ECG·04" />
       <div style={{ display: 'flex', gap: 12 }}>
         <div style={{ flex: '0 0 96px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-          {/* hero ticks at 0.1s via the heroMs timer; condition/avg/tgt live in the vitals row below */}
-          <span style={{ fontFamily: HUD_FONTS.mono, fontWeight: 700, fontSize: 26, lineHeight: 1, color, textShadow: `0 0 11px ${color}` }}>{fmtS(heroMs)}</span>
+          {/* hero ticks at 0.1s via the timer above (direct textContent writes);
+              a data re-render repaints the same live value here. */}
+          <span ref={heroRef} style={{ fontFamily: HUD_FONTS.mono, fontWeight: 700, fontSize: 26, lineHeight: 1, color, textShadow: `0 0 11px ${color}` }}>{fmtS(Math.max(0, lastBlockTsMs != null ? Date.now() - lastBlockTsMs : gapMs))}</span>
           <span style={{ fontFamily: HUD_FONTS.mono, fontSize: 8, letterSpacing: 2, color: HUD_COLORS.dim, marginTop: 4 }}>SINCE LAST</span>
         </div>
         <canvas ref={cvs} width={300} height={58} style={{ display: 'block', flex: 1, minWidth: 0, width: '100%', height: 58, background: '#0a0a0a', border: `1px solid ${rgba(HUD_COLORS.orange, 0.2)}` }} />

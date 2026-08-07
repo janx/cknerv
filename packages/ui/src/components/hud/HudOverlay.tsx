@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 import type {
   ActivityFeedRecord,
@@ -85,7 +85,7 @@ function isHudPanelId(id: string): id is HudPanelId {
   return (HUD_PANEL_IDS as readonly string[]).includes(id);
 }
 
-export default function HudOverlay({ chain, peers, localNode, cellsStats, cellCount, cellCapacity, enrichmentSource, assetEcosystem, protocolEra, daoState, activityFeed, transactionHorizon, networkAtlas, cellInspectionActive = false, selectedNode, selectedPeer, onClearSelection, onClearNet, backfill, streamHealth, build, topBarActions, colonyCount }: {
+function HudOverlay({ chain, peers, localNode, cellsStats, cellCount, cellCapacity, enrichmentSource, assetEcosystem, protocolEra, daoState, activityFeed, transactionHorizon, networkAtlas, cellInspectionActive = false, selectedNode, selectedPeer, onClearSelection, onClearNet, backfill, streamHealth, build, topBarActions, colonyCount }: {
   chain: ChainEntry; peers: Peer[]; localNode: ChainNode | undefined; cellsStats: CellsStats;
   /** Records available to CellGalaxy before the top-bar display cap. */
   cellCount?: number;
@@ -239,10 +239,19 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats, cellCo
   const prevReorgs = useRef(chain.reorgs);
   const reorgDepth = Math.max(0, chain.reorgs - prevReorgs.current);
 
-  const summary = summarizeNetwork(peers, chain, localNode);
-  const consensus = fleetConsensus(peers, chain.tip);
-  const ping = pingStats(peers);
-  const vers = versionSpread(peers);
+  // These four walk `peers` (with allocations/sorts); the 1 Hz uptime tick
+  // re-renders this component with unchanged data, so key them on their
+  // actual inputs instead of recomputing per render.
+  const summary = useMemo(
+    () => summarizeNetwork(peers, chain, localNode),
+    [peers, chain, localNode],
+  );
+  const consensus = useMemo(
+    () => fleetConsensus(peers, chain.tip),
+    [peers, chain.tip],
+  );
+  const ping = useMemo(() => pingStats(peers), [peers]);
+  const vers = useMemo(() => versionSpread(peers), [peers]);
   const targetMs = expectedBlockMs(chain.epoch.length);
   // clamp >=0: last_block_ts_ms is fresh receive time but `now` only re-ticks once
   // a second, so right after a block `now - last` is briefly negative (negative hero).
@@ -407,3 +416,9 @@ export default function HudOverlay({ chain, peers, localNode, cellsStats, cellCo
     </div>
   );
 }
+
+// Memoized: App re-renders on selection/scene state that never reaches the
+// HUD; with the App-side props held stable (build / streamHealth / onClearNet),
+// this shallow compare limits HUD re-renders to genuine data changes plus the
+// internal 1 Hz uptime tick.
+export default memo(HudOverlay);
