@@ -20,6 +20,9 @@ export const DEFAULT_TOPOLOGY_WORKER_MIN_CELLS = 512;
 export interface NeighborGraphBuildOptions {
   topology?: NeighborGraphOptions;
   includePassive?: boolean;
+  /** Visual-only cap for the passive graph. The complete graph remains
+   * untouched for routing. */
+  passiveEdgeBudget?: number;
   preferredEdges?: readonly NeighborEdge[];
 }
 
@@ -59,6 +62,7 @@ function buildSynchronously(
     graph,
     passiveGraph: options.includePassive
       ? buildPassiveNeighborGraph(graph, {
+        edgeBudget: options.passiveEdgeBudget,
         preferredEdges: options.preferredEdges,
       })
       : null,
@@ -154,6 +158,7 @@ export function createNeighborGraphBuilder(
         cells: packedCells,
         options: options.topology ?? {},
         includePassive: options.includePassive ?? false,
+        passiveEdgeBudget: options.passiveEdgeBudget ?? null,
         preferredEdges,
       };
 

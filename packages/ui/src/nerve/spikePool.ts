@@ -215,18 +215,42 @@ export class SpikePool {
    * important.
    */
   push(slot: SpikeSlotWrite): boolean {
+    return this.pushValues(
+      slot.position[0],
+      slot.position[1],
+      slot.position[2],
+      slot.color,
+      slot.size,
+      slot.alpha,
+      slot.whiteBias,
+      slot.glyph,
+    );
+  }
+
+  /** Allocation-free hot-path form for callers that already hold sampled
+   * coordinates in scratch buffers. */
+  pushValues(
+    x: number,
+    y: number,
+    z: number,
+    color: Vec3,
+    size: number,
+    alpha: number,
+    whiteBias: number,
+    glyph: 'packet' | 'memory',
+  ): boolean {
     if (this.writtenCount >= this.capacity) return false;
     const i = this.writtenCount;
-    this.positions[i * 3 + 0] = slot.position[0];
-    this.positions[i * 3 + 1] = slot.position[1];
-    this.positions[i * 3 + 2] = slot.position[2];
-    this.colors[i * 3 + 0]    = slot.color[0];
-    this.colors[i * 3 + 1]    = slot.color[1];
-    this.colors[i * 3 + 2]    = slot.color[2];
-    this.sizes[i]             = slot.size;
-    this.alphas[i]            = slot.alpha;
-    this.whiteBias[i]         = slot.whiteBias;
-    this.glyphModes[i]        = slot.glyph === 'memory' ? 1 : 0;
+    this.positions[i * 3 + 0] = x;
+    this.positions[i * 3 + 1] = y;
+    this.positions[i * 3 + 2] = z;
+    this.colors[i * 3 + 0]    = color[0];
+    this.colors[i * 3 + 1]    = color[1];
+    this.colors[i * 3 + 2]    = color[2];
+    this.sizes[i]             = size;
+    this.alphas[i]            = alpha;
+    this.whiteBias[i]         = whiteBias;
+    this.glyphModes[i]        = glyph === 'memory' ? 1 : 0;
     this.writtenCount += 1;
     return true;
   }

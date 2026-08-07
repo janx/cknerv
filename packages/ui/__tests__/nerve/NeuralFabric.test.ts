@@ -132,12 +132,34 @@ describe('NeuralFabric living-mesh handles', () => {
     expect(activeImplementation).not.toContain('inspectionFieldScaleAt');
   });
 
-  it('keeps passive Bezier curvature fixed while active writes adapt', () => {
+  it('keeps at least two passive Bezier samples while both layers adapt', () => {
     expect(SRC).toContain('useQualityRuntime');
     expect(SRC).toContain('FABRIC_SAMPLES_PER_EDGE');
-    expect(SRC).not.toContain('fabricSamplesPerEdge');
+    expect(SRC).toContain('passiveSamplesPerEdge');
+    expect(SRC).toContain('configuredPassiveSamplesPerEdge');
     expect(SRC).toContain('activeSamplesPerHop');
-    expect(SRC).toMatch(/index\s*<=\s*FABRIC_SAMPLES_PER_EDGE/);
+    expect(SRC).toMatch(/index\s*<=\s*samplesPerEdge/);
+    expect(SRC).toMatch(/Math\.max\(\s*2,/);
+  });
+
+  it('rate-limits passive CPU rebuilds without throttling active writes', () => {
+    expect(SRC).toContain('passiveAnimationFps');
+    expect(SRC).toContain('lastPassiveCommitSecRef');
+    expect(SRC).toContain('forcePassiveCommitRef');
+    const activeImplementation = SRC.slice(
+      SRC.lastIndexOf('pushActiveHop(hop, cells)'),
+    );
+    expect(activeImplementation).not.toContain('minPassiveCommitInterval');
+  });
+
+  it('stops active Bezier sampling as soon as its GPU layer is full', () => {
+    const activeImplementation = SRC.slice(
+      SRC.lastIndexOf('pushActiveHop(hop, cells)'),
+    );
+    expect(activeImplementation).toContain('const layerCapacity');
+    expect(activeImplementation).toMatch(
+      /if \(layer\.count >= layerCapacity\) (?:return|break)/,
+    );
   });
 
   it('compresses only passive core energy while semantic routes reclaim contrast', () => {

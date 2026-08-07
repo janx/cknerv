@@ -83,12 +83,14 @@ describe('createNeighborGraphBuilder', () => {
     const pending = builder.build(cells(), {
       topology: { k: 2 },
       includePassive: true,
+      passiveEdgeBudget: 3,
     });
     worker.onerror?.(new ErrorEvent('error'));
     const result = await pending;
 
     expect(result?.graph.adjacency.size).toBe(6);
     expect(result?.passiveGraph).not.toBeNull();
+    expect(result?.passiveGraph?.edges).toHaveLength(3);
     expect(worker.terminated).toBe(true);
     builder.dispose();
   });

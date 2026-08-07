@@ -179,6 +179,76 @@ interface NearestCellCandidate {
   order: number;
 }
 
+interface IndexedNearestCell {
+  id: number;
+  pos_seed: readonly [number, number, number];
+}
+
+export interface CellNearestIndex {
+  readonly bucketSize: number;
+  readonly cells: readonly IndexedNearestCell[];
+  readonly next: readonly number[];
+  readonly rows: ReadonlyMap<number, ReadonlyMap<number, number>>;
+  readonly count: number;
+  readonly minBx: number;
+  readonly maxBx: number;
+  readonly minBz: number;
+  readonly maxBz: number;
+}
+
+const CELL_NEAREST_BUCKET_SIZE = 6;
+
+/** Build once per Cell-set revision, then serve every peer/local delivery from
+ * the same exact xz index. Input order is retained for deterministic ties. */
+export function buildCellNearestIndex(
+  cells: Iterable<{
+    id: number;
+    pos_seed: readonly [number, number, number];
+  }>,
+  bucketSize = CELL_NEAREST_BUCKET_SIZE,
+): CellNearestIndex {
+  const safeBucketSize = Number.isFinite(bucketSize) && bucketSize > 0
+    ? bucketSize
+    : CELL_NEAREST_BUCKET_SIZE;
+  const rows = new Map<number, Map<number, number>>();
+  const indexedCells: IndexedNearestCell[] = [];
+  const next: number[] = [];
+  let minBx = Infinity;
+  let maxBx = -Infinity;
+  let minBz = Infinity;
+  let maxBz = -Infinity;
+  for (const cell of cells) {
+    const x = cell.pos_seed[0];
+    const z = cell.pos_seed[2];
+    const bx = Math.floor(x / safeBucketSize);
+    const bz = Math.floor(z / safeBucketSize);
+    let row = rows.get(bx);
+    if (!row) {
+      row = new Map();
+      rows.set(bx, row);
+    }
+    const order = indexedCells.length;
+    indexedCells.push(cell);
+    next.push(row.get(bz) ?? -1);
+    row.set(bz, order);
+    minBx = Math.min(minBx, bx);
+    maxBx = Math.max(maxBx, bx);
+    minBz = Math.min(minBz, bz);
+    maxBz = Math.max(maxBz, bz);
+  }
+  return {
+    bucketSize: safeBucketSize,
+    cells: indexedCells,
+    next,
+    rows,
+    count: indexedCells.length,
+    minBx,
+    maxBx,
+    minBz,
+    maxBz,
+  };
+}
+
 /** Max-heap ordering: farther candidates are worse; input order breaks exact
  * distance ties so the result preserves the stable ordering of the previous
  * full-sort implementation. */
@@ -209,6 +279,130 @@ function siftNearestCandidateDown(
   }
 }
 
+function considerNearestCandidate(
+  nearest: NearestCellCandidate[],
+  limit: number,
+  candidate: IndexedNearestCell,
+  order: number,
+  lx: number,
+  lz: number,
+): void {
+  const dx = candidate.pos_seed[0] - lx;
+  const dz = candidate.pos_seed[2] - lz;
+  const d2 = dx * dx + dz * dz;
+  if (nearest.length < limit) {
+    nearest.push({ id: candidate.id, d2, order });
+    let index = nearest.length - 1;
+    while (index > 0) {
+      const parent = Math.floor((index - 1) / 2);
+      if (!nearestCandidateWorse(nearest[index], nearest[parent])) break;
+      [nearest[index], nearest[parent]] = [nearest[parent], nearest[index]];
+      index = parent;
+    }
+    return;
+  }
+  const worst = nearest[0];
+  if (d2 < worst.d2 || (d2 === worst.d2 && order < worst.order)) {
+    worst.id = candidate.id;
+    worst.d2 = d2;
+    worst.order = order;
+    siftNearestCandidateDown(nearest, 0);
+  }
+}
+
+function visitNearestBucket(
+  index: CellNearestIndex,
+  bx: number,
+  bz: number,
+  nearest: NearestCellCandidate[],
+  limit: number,
+  lx: number,
+  lz: number,
+): void {
+  let candidateIndex = index.rows.get(bx)?.get(bz) ?? -1;
+  while (candidateIndex >= 0) {
+    considerNearestCandidate(
+      nearest,
+      limit,
+      index.cells[candidateIndex],
+      candidateIndex,
+      lx,
+      lz,
+    );
+    candidateIndex = index.next[candidateIndex];
+  }
+}
+
+/** Exact nearest-k query over expanding spatial-hash rings. Once the current
+ * worst candidate is nearer than every point outside the scanned rectangle,
+ * later buckets cannot affect the result. */
+export function nearestCellIdsFromIndex(
+  landing: [number, number],
+  rotationY: number,
+  index: CellNearestIndex,
+  k: number,
+): number[] {
+  const limit = Number.isFinite(k)
+    ? Math.min(index.count, Math.max(0, Math.floor(k)))
+    : k === Number.POSITIVE_INFINITY
+      ? index.count
+      : 0;
+  if (limit === 0 || index.count === 0) return [];
+
+  const c = Math.cos(-rotationY);
+  const s = Math.sin(-rotationY);
+  const lx = landing[0] * c - landing[1] * s;
+  const lz = landing[0] * s + landing[1] * c;
+  const originBx = Math.floor(lx / index.bucketSize);
+  const originBz = Math.floor(lz / index.bucketSize);
+  const maxRadius = Math.max(
+    Math.abs(originBx - index.minBx),
+    Math.abs(originBx - index.maxBx),
+    Math.abs(originBz - index.minBz),
+    Math.abs(originBz - index.maxBz),
+  );
+  const nearest: NearestCellCandidate[] = [];
+
+  for (let radius = 0; radius <= maxRadius; radius += 1) {
+    if (radius === 0) {
+      visitNearestBucket(
+        index, originBx, originBz, nearest, limit, lx, lz,
+      );
+    } else {
+      const minBx = originBx - radius;
+      const maxBx = originBx + radius;
+      const minBz = originBz - radius;
+      const maxBz = originBz + radius;
+      for (let bx = minBx; bx <= maxBx; bx += 1) {
+        visitNearestBucket(index, bx, minBz, nearest, limit, lx, lz);
+        visitNearestBucket(index, bx, maxBz, nearest, limit, lx, lz);
+      }
+      for (let bz = minBz + 1; bz < maxBz; bz += 1) {
+        visitNearestBucket(index, minBx, bz, nearest, limit, lx, lz);
+        visitNearestBucket(index, maxBx, bz, nearest, limit, lx, lz);
+      }
+    }
+
+    if (nearest.length < limit) continue;
+    const left = (originBx - radius) * index.bucketSize;
+    const right = (originBx + radius + 1) * index.bucketSize;
+    const bottom = (originBz - radius) * index.bucketSize;
+    const top = (originBz + radius + 1) * index.bucketSize;
+    const outsideDistance = Math.min(
+      lx - left,
+      right - lx,
+      lz - bottom,
+      top - lz,
+    );
+    // Strict comparison preserves input-order tie semantics for points exactly
+    // on the next ring's boundary.
+    if (outsideDistance * outsideDistance > nearest[0].d2) break;
+  }
+
+  nearest.sort((a, b) => a.d2 - b.d2 || a.order - b.order);
+  return nearest.map((entry) => entry.id);
+}
+
 /** The `k` Cell ids nearest (in the xz plane) to a carrier `landing`,
  *  nearest first. Cells live in the galaxy group's rotating LOCAL frame
  *  (`pos_seed`), so the world landing is projected back through the group's
@@ -222,46 +416,12 @@ export function nearestCellIds(
   cells: Iterable<{ id: number; pos_seed: [number, number, number] }>,
   k: number,
 ): number[] {
-  const limit = Number.isFinite(k)
-    ? Math.max(0, Math.floor(k))
-    : k === Number.POSITIVE_INFINITY
-      ? Number.MAX_SAFE_INTEGER
-      : 0;
-  if (limit === 0) return [];
-  // Inverse-rotate the world landing into the cells' local frame.
-  const c = Math.cos(-rotationY);
-  const s = Math.sin(-rotationY);
-  const lx = landing[0] * c - landing[1] * s;
-  const lz = landing[0] * s + landing[1] * c;
-  const nearest: NearestCellCandidate[] = [];
-  let order = 0;
-  for (const cell of cells) {
-    const dx = cell.pos_seed[0] - lx;
-    const dz = cell.pos_seed[2] - lz;
-    const d2 = dx * dx + dz * dz;
-    if (nearest.length < limit) {
-      nearest.push({ id: cell.id, d2, order });
-      let index = nearest.length - 1;
-      while (index > 0) {
-        const parent = Math.floor((index - 1) / 2);
-        if (!nearestCandidateWorse(nearest[index], nearest[parent])) break;
-        [nearest[index], nearest[parent]] = [nearest[parent], nearest[index]];
-        index = parent;
-      }
-    } else {
-      const worst = nearest[0];
-      if (d2 < worst.d2 || (d2 === worst.d2 && order < worst.order)) {
-        // Reuse the bounded heap slot instead of allocating once per Cell.
-        worst.id = cell.id;
-        worst.d2 = d2;
-        worst.order = order;
-        siftNearestCandidateDown(nearest, 0);
-      }
-    }
-    order += 1;
-  }
-  nearest.sort((a, b) => a.d2 - b.d2 || a.order - b.order);
-  return nearest.map((entry) => entry.id);
+  return nearestCellIdsFromIndex(
+    landing,
+    rotationY,
+    buildCellNearestIndex(cells),
+    k,
+  );
 }
 
 export type PeerColorKind = PeerDirection | 'version';

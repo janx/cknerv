@@ -9,10 +9,16 @@ export interface QualityCascade {
   starsCount: number;
   particleCapMul: number;
   dischargeArms: number;
-  /** Active writes can shed tessellation under pressure. Passive fabric
-   * curvature is intentionally fixed in `fabricCapacity.ts`: collapsing a
-   * quadratic Bezier to one segment erases its control point and visual
-   * identity. */
+  /** Resting fibres are a visual sampling of the complete routing graph. The
+   * Cell display set stays stable while lower presets submit fewer transparent
+   * fat-line triangles. */
+  passiveEdgeCap: number;
+  /** Two samples are the minimum that preserves a quadratic fibre's bend. */
+  passiveSamplesPerEdge: number;
+  /** Expensive CPU-side lifecycle/mask rebuilds do not need display refresh
+   * cadence; active packet layers remain frame-rate driven. */
+  passiveAnimationFps: number;
+  /** Active writes shed tessellation separately from the resting fabric. */
   activeSamplesPerHop: number;
   /** Expanded A-braid identities admitted around the camera. Focused Cells are
    * sorted ahead of this cap and therefore remain visible at every preset. */
@@ -28,13 +34,15 @@ export interface QualityCascade {
   };
 }
 
-/** High preserves the production capacity budget (Canvas' default DPR cap and
- * 2,000 stars). Med/low reduce only visual capacity, never chain data or the
- * minimum readable footprint of a retained record. */
+/** High preserves the production DPR and ambience ceiling. Every preset trims
+ * only visual sampling, never chain data, Cell membership, or the minimum
+ * readable footprint of a retained record. */
 export const QUALITY_PRESETS: Record<QualityPreset, QualityCascade> = {
   high: {
     maxDpr: 2, starsCount: 2000, particleCapMul: 1,
     dischargeArms: 3, activeSamplesPerHop: 12,
+    passiveEdgeCap: 3000, passiveSamplesPerEdge: 3,
+    passiveAnimationFps: 30,
     nucleusNearCap: 12,
     memorySignal: {
       coreMinPx: 24, compactLinePx: 0.55, energyScale: 1,
@@ -44,6 +52,8 @@ export const QUALITY_PRESETS: Record<QualityPreset, QualityCascade> = {
   med: {
     maxDpr: 1.5, starsCount: 600, particleCapMul: 0.5,
     dischargeArms: 2, activeSamplesPerHop: 10,
+    passiveEdgeCap: 1600, passiveSamplesPerEdge: 2,
+    passiveAnimationFps: 24,
     nucleusNearCap: 8,
     memorySignal: {
       coreMinPx: 24, compactLinePx: 0.62, energyScale: 0.94,
@@ -53,6 +63,8 @@ export const QUALITY_PRESETS: Record<QualityPreset, QualityCascade> = {
   low: {
     maxDpr: 1, starsCount: 200, particleCapMul: 0.25,
     dischargeArms: 1, activeSamplesPerHop: 8,
+    passiveEdgeCap: 800, passiveSamplesPerEdge: 2,
+    passiveAnimationFps: 15,
     nucleusNearCap: 4,
     memorySignal: {
       coreMinPx: 24, compactLinePx: 0.72, energyScale: 0.86,

@@ -13,7 +13,9 @@ import {
   planDeliveries,
   deliveryPhase,
   bolusIngest,
+  buildCellNearestIndex,
   nearestCellIds,
+  nearestCellIdsFromIndex,
   PEER_COLORS,
 } from '../src/derives/peers.derive';
 import { emptyChainCache } from '@cknerv/cache';
@@ -293,6 +295,50 @@ describe('peers.derive', () => {
       expect(nearestCellIds(landing, 0, many, 9)).toEqual(expected);
       expect(nearestCellIds(landing, 0, many, Number.NaN)).toEqual([]);
       expect(nearestCellIds(landing, 0, many, 0.9)).toEqual([]);
+    });
+
+    it('reuses one exact spatial index across delivery landings', () => {
+      const index = buildCellNearestIndex(grid, 4);
+      expect(nearestCellIdsFromIndex([9, 0], 0, index, 3))
+        .toEqual(nearestCellIds([9, 0], 0, grid, 3));
+      expect(nearestCellIdsFromIndex([0, 10], Math.PI / 2, index, 4))
+        .toEqual(nearestCellIds([0, 10], Math.PI / 2, grid, 4));
+      expect(nearestCellIdsFromIndex([500, -300], 0, index, 2))
+        .toEqual(nearestCellIds([500, -300], 0, grid, 2));
+    });
+
+    it('matches a full-sort reference across rotated spatial buckets', () => {
+      const many = Array.from({ length: 800 }, (_, order) => ({
+        id: order + 100,
+        pos_seed: [
+          ((order * 47) % 251) - 125,
+          0,
+          ((order * 73) % 263) - 131,
+        ] as [number, number, number],
+      }));
+      const index = buildCellNearestIndex(many, 6);
+      for (let query = 0; query < 24; query += 1) {
+        const landing: [number, number] = [
+          ((query * 31) % 181) - 90,
+          ((query * 43) % 193) - 96,
+        ];
+        const rotation = (query - 12) * 0.11;
+        const cos = Math.cos(-rotation);
+        const sin = Math.sin(-rotation);
+        const lx = landing[0] * cos - landing[1] * sin;
+        const lz = landing[0] * sin + landing[1] * cos;
+        const expected = many
+          .map((cell, order) => {
+            const dx = cell.pos_seed[0] - lx;
+            const dz = cell.pos_seed[2] - lz;
+            return { id: cell.id, d2: dx * dx + dz * dz, order };
+          })
+          .sort((a, b) => a.d2 - b.d2 || a.order - b.order)
+          .slice(0, 7)
+          .map(({ id }) => id);
+        expect(nearestCellIdsFromIndex(landing, rotation, index, 7))
+          .toEqual(expected);
+      }
     });
   });
 

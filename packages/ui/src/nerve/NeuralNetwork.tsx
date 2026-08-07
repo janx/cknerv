@@ -56,7 +56,11 @@ import {
   shouldBulkRebuildRoutingGraph,
 } from './livingMeshDriver';
 import NeuralFabric, { type NeuralFabricHandles } from './NeuralFabric';
-import { bezierAt, bezierControl, fabricEdgeSeed } from '../geometry/edgeBezier';
+import {
+  bezierAtInto,
+  bezierControlInto,
+  fabricEdgeSeed,
+} from '../geometry/edgeBezier';
 import { consensusRouteHopWorldPosition } from '../derives/consensusRouteCamera.derive';
 import { SpikePool } from './spikePool';
 import type { Vec3 } from '../types';
@@ -288,8 +292,13 @@ export default function NeuralNetwork({
     () => galaxyComposition ? currentActivityCellIds(cellsCache) : [],
     [cellsCache.pulseLinks, galaxyComposition],
   );
-  const particleCapMul = QUALITY_PRESETS[quality].particleCapMul;
+  const qualityPreset = QUALITY_PRESETS[quality];
+  const particleCapMul = qualityPreset.particleCapMul;
+  const passiveEdgeBudget = qualityPreset.passiveEdgeCap;
   const topologyKey = `${topology?.neighborK ?? ''}:${topology?.maxEdgeLength ?? ''}`;
+  // Quality changes only the deterministic resting-fibre sample. Cell
+  // membership and the complete routing topology remain stable.
+  const displayTopologyKey = `${topologyKey}:passive-${passiveEdgeBudget}`;
 
   // The complete neighbour graph is maintained incrementally for causal pulse
   // routing. Passive rendering is deliberately separate: it is rebuilt over
@@ -394,7 +403,7 @@ export default function NeuralNetwork({
     const visibleCells = renderUpdate.cells;
     const topologyChanged = (
       !displayBootstrappedRef.current
-      || displayTopologyRef.current !== topologyKey
+      || displayTopologyRef.current !== displayTopologyKey
       || displayTopologyVersionRef.current !== renderUpdate.topologyVersion
     );
     const inspectionChanged = (
@@ -415,7 +424,7 @@ export default function NeuralNetwork({
       const requestedCells = displayRequestedCellsRef.current;
       const requestMatches = (
         requestedCells !== null
-        && displayRequestedTopologyRef.current === topologyKey
+        && displayRequestedTopologyRef.current === displayTopologyKey
         && displayRequestedTopologyVersionRef.current
           === renderUpdate.topologyVersion
       );
@@ -424,7 +433,7 @@ export default function NeuralNetwork({
       const displayCells = cellRenderMap(visibleCells);
       const requestedTopologyVersion = renderUpdate.topologyVersion;
       displayRequestedCellsRef.current = displayCells;
-      displayRequestedTopologyRef.current = topologyKey;
+      displayRequestedTopologyRef.current = displayTopologyKey;
       displayRequestedTopologyVersionRef.current = requestedTopologyVersion;
       const generation = displayBuildGenerationRef.current + 1;
       displayBuildGenerationRef.current = generation;
@@ -434,13 +443,14 @@ export default function NeuralNetwork({
           maxEdgeLength: topology?.maxEdgeLength,
         },
         includePassive: true,
+        passiveEdgeBudget,
         preferredEdges: passiveGraphRef.current.edges,
       }).then((result) => {
         if (
           result === null
           || displayBuildGenerationRef.current !== generation
           || displayRequestedCellsRef.current !== displayCells
-          || displayRequestedTopologyRef.current !== topologyKey
+          || displayRequestedTopologyRef.current !== displayTopologyKey
           || displayRequestedTopologyVersionRef.current
             !== requestedTopologyVersion
         ) return;
@@ -450,7 +460,7 @@ export default function NeuralNetwork({
         displayGraphRef.current = result.graph;
         passiveGraphRef.current = passiveGraph;
         displayCellsRef.current = displayCells;
-        displayTopologyRef.current = topologyKey;
+        displayTopologyRef.current = displayTopologyKey;
         displayTopologyVersionRef.current = requestedTopologyVersion;
         displayBootstrappedRef.current = true;
         fabricHandlesRef.current?.setFabric(
@@ -498,10 +508,12 @@ export default function NeuralNetwork({
     galaxyComposition,
     activityCellIds,
     displayGraphBuilder,
+    displayTopologyKey,
     inspectionCellId,
     inspectionFieldRef,
     invalidate,
     topologyKey,
+    passiveEdgeBudget,
     topology?.neighborK,
     topology?.maxEdgeLength,
   ]);
@@ -605,6 +617,7 @@ export default function NeuralNetwork({
   // Pulse queue. Pulses are removed when their head reaches the
   // terminal cell (or after a generous fallback lifetime).
   const pulsesRef = useRef<ActivePulse[]>([]);
+  const sparePulsesRef = useRef<ActivePulse[]>([]);
   const handledLinkPruneRef = useRef(cellsCache.linkPrune);
   const lastLinksSeqRef = useRef<number>(cellsCache.linksSeq);
   useEffect(() => {
@@ -1115,6 +1128,8 @@ export default function NeuralNetwork({
 
   // One batched glyph pool for the moving protocol packets.
   const spikePool = useMemo(() => new SpikePool(SPIKE_POOL_CAPACITY), []);
+  const spikeControl = useMemo(() => new Float32Array(3), []);
+  const spikePosition = useMemo(() => new Float32Array(3), []);
   useEffect(() => () => spikePool.dispose(), [spikePool]);
 
   // NeuralFabric hands us imperative draw handles via onReady.
@@ -1325,8 +1340,10 @@ export default function NeuralNetwork({
     // the same adjacency the fabric layer is rendering, so the
     // active layer can never light up a fibre that isn't there.
     const adjacency = graphRef.current.adjacency;
-    const stillActive: ActivePulse[] = [];
-    for (const pulse of pulsesRef.current) {
+    const framePulses = pulsesRef.current;
+    const stillActive = sparePulsesRef.current;
+    stillActive.length = 0;
+    for (const pulse of framePulses) {
       const policy = CONSENSUS_PULSE_POLICY[pulse.mode];
       const releaseScale = pulse.mode === 'memory'
         ? consensusMemoryTraceReleaseStrength(pulse.release, now)
@@ -1513,28 +1530,32 @@ export default function NeuralNetwork({
       const toCell = cells.get(pulse.path[headHop + 1]);
       if (fromCell && toCell) {
         const seed = fabricEdgeSeed(pulse.path[headHop], pulse.path[headHop + 1]);
-        const [cx, cy, cz] = bezierControl(
+        bezierControlInto(
+          spikeControl,
           fromCell.pos_seed[0], fromCell.pos_seed[1], fromCell.pos_seed[2],
           toCell.pos_seed[0], toCell.pos_seed[1], toCell.pos_seed[2],
           seed,
         );
-        const [x, y, z] = bezierAt(
+        bezierAtInto(
+          spikePosition,
           fromCell.pos_seed[0], fromCell.pos_seed[1], fromCell.pos_seed[2],
-          cx, cy, cz,
+          spikeControl[0], spikeControl[1], spikeControl[2],
           toCell.pos_seed[0], toCell.pos_seed[1], toCell.pos_seed[2],
           subT,
         );
-        spikePool.push({
-          position: [x, y, z],
-          color: pulse.color,
-          size: pulse.mode === 'memory'
+        spikePool.pushValues(
+          spikePosition[0],
+          spikePosition[1],
+          spikePosition[2],
+          pulse.color,
+          pulse.mode === 'memory'
             ? SPIKE_SIZE * 0.74 * distancePresentation.spikeScale
             : SPIKE_SIZE,
-          alpha: (pulse.mode === 'memory' ? SPIKE_ALPHA * 0.72 : SPIKE_ALPHA)
+          (pulse.mode === 'memory' ? SPIKE_ALPHA * 0.72 : SPIKE_ALPHA)
             * routeActivityScale,
-          whiteBias: pulse.mode === 'memory' ? 0.5 : 0.95,
-          glyph: pulse.mode === 'memory' ? 'memory' : 'packet',
-        });
+          pulse.mode === 'memory' ? 0.5 : 0.95,
+          pulse.mode === 'memory' ? 'memory' : 'packet',
+        );
       }
 
       // Cell flash on the cell we *arrive at* during this hop. Schedule
@@ -1555,6 +1576,8 @@ export default function NeuralNetwork({
       }
     }
     pulsesRef.current = stillActive;
+    framePulses.length = 0;
+    sparePulsesRef.current = framePulses;
 
     // A route-ledger hover reads the exact retained route independently of
     // packet progress. Only the one or two live graph edges adjacent to that

@@ -27,6 +27,8 @@ export interface NeighborGraphWorkerRequest {
   cells: Float64Array;
   options: NeighborGraphOptions;
   includePassive: boolean;
+  /** Visual-only edge cap; null selects the canonical population-derived cap. */
+  passiveEdgeBudget: number | null;
   /** Repeated `[from, to]` keys retained from the current passive fabric. */
   preferredEdges: Float64Array | null;
 }
@@ -203,6 +205,7 @@ export function executeNeighborGraphWorkerRequest(
   const graph = buildNeighborGraph(cells, request.options);
   const passiveGraph = request.includePassive
     ? buildPassiveNeighborGraph(graph, {
+      edgeBudget: request.passiveEdgeBudget ?? undefined,
       preferredEdges: unpackPreferredEdges(request.preferredEdges),
     })
     : null;
