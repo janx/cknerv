@@ -1,5 +1,9 @@
 # Visual Review Labs
 
+This file defines the deterministic capture workflow. The requirements those
+captures validate live in
+[`docs/canvas-rendering.md`](../docs/canvas-rendering.md).
+
 ## Protocol Event
 
 Use the protocol-event Lab to review the selected A visual language against a

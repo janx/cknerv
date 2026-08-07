@@ -92,6 +92,9 @@ The Vite dev server uses port `5181` and proxies `/api` plus WebSocket traffic
 to `http://localhost:7001`. Release builds embed `ui-app/dist` into the
 `cknerv` binary via `crates/cknerv-cli/build.rs`.
 
+The normative Canvas visual, quality, performance, and acceptance contract is
+documented in [`docs/canvas-rendering.md`](docs/canvas-rendering.md).
+
 ### Optional Jukebox
 
 The dashboard includes an optional four-track SoundCloud Jukebox labeled
