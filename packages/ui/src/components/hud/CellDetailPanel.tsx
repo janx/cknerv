@@ -555,7 +555,13 @@ export default function CellDetailPanel({
           aspectRatio: '1 / 1',
           overflow: 'hidden',
           border: `1px solid ${rgba(HUD_COLORS.orange, 0.24)}`,
-          background: `radial-gradient(circle at 50% 52%,${rgba(HUD_COLORS.cyanWire, 0.075)},rgba(1,4,12,.72) 55%,rgba(1,3,9,.22) 76%,transparent)`,
+          // Directional plate, matching the sibling satellites — NOT a radial
+          // field. The circular idiom in this viewport belongs to the content
+          // address halo (the one ring that reads as data); a second concentric
+          // gradient ring competed with it, put its heaviest ink on the empty
+          // margin instead of behind the additive core, and dissolved the four
+          // corners the square chrome still draws.
+          background: `linear-gradient(100deg,rgba(1,5,13,.95),rgba(2,8,18,.88) 74%,${rgba(HUD_COLORS.cyanWire, 0.04)})`,
           boxShadow: `inset 0 0 26px ${rgba(HUD_COLORS.cyanWire, 0.08)},0 0 20px ${rgba(HUD_COLORS.orange, 0.06)}`,
         }}
       >
