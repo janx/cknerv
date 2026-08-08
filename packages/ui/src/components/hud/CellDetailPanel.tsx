@@ -16,6 +16,7 @@ import type {
 import {
   formatCkb,
   formatAge,
+  formatBlockRef,
   formatDataSize,
   formatLockKind,
   formatAssetKind,
@@ -259,7 +260,11 @@ export default function CellDetailPanel({
   const reduced = useReducedMotion();
   const live = cell.death_at_ms === null;
   const enhancedDetail = Boolean(semanticSource && semanticPhase);
-  const age = formatAge(cell.born_at_ms, Date.now());
+  // Composition backfill emits born_at_ms 0 for records born before the
+  // retained window — an epoch-relative age would read as decades.
+  const lifetime = cell.born_at_ms > 0
+    ? `AGE ${formatAge(cell.born_at_ms, Date.now())}`
+    : `SINCE ${formatBlockRef(cell.birth_block)}`;
   const [scanClock, setScanClock] = useState(() => {
     const atMs = nowPerf();
     return { cellId: cell.id, epochMs: atMs, nowMs: atMs };
@@ -353,7 +358,7 @@ export default function CellDetailPanel({
       value: live ? '● LIVE' : '◇ SPENT',
       color: live ? HUD_COLORS.nominal : HUD_COLORS.caution,
     },
-    born: { label: 'COMMIT', value: `#${cell.birth_block}` },
+    born: { label: 'COMMIT', value: formatBlockRef(cell.birth_block) },
   };
   const activeClock = scanClock.cellId === cell.id
     ? scanClock
@@ -519,7 +524,7 @@ export default function CellDetailPanel({
           {cell.content_hash.slice(2, 10)}:{cell.out_point.index}
         </span>
         <span style={{ marginLeft: 'auto', color: live ? HUD_COLORS.nominal : HUD_COLORS.caution, fontSize: 10.5, letterSpacing: 0.9 }}>
-          {live ? '● LIVE' : '◇ SPENT'} · AGE {age}
+          {live ? '● LIVE' : '◇ SPENT'} · {lifetime}
         </span>
         <button
           type="button"
@@ -658,6 +663,7 @@ export default function CellDetailPanel({
             source={semanticSource}
             phase={semanticPhase}
             record={semanticRecord}
+            birthBlock={cell.birth_block}
             message={semanticMessage}
             transactionPhase={semanticTransactionPhase}
             transactionRecord={semanticTransactionRecord}

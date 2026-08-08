@@ -35,7 +35,7 @@ import {
   CONSENSUS_ROUTE_HOP_PULSE_MS,
   consensusMemoryRouteHopPulseKey,
 } from '../../nerve/consensusRouteHopPulse';
-import { formatOutpoint } from './cellFormat';
+import { formatBlockRef, formatOutpoint } from './cellFormat';
 import CellCausalLensReadout, {
   type CellCausalNavigationReadout,
 } from './CellCausalLensReadout';
@@ -269,7 +269,7 @@ function RouteHopInspector({
     : 'UNAVAILABLE';
   const anchor = anchorBlock === null
     ? recordState
-    : `BLOCK #${anchorBlock} · ${recordState}`;
+    : `BLOCK ${formatBlockRef(anchorBlock)} · ${recordState}`;
   const recordTitle = record
     ? `${record.out_point.tx_hash}#${record.out_point.index}`
     : evidenceFallback
