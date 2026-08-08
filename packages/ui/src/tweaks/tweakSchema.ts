@@ -25,6 +25,13 @@ import {
   USAGE_GAIN,
   USAGE_DECAY_HALF_LIFE_S,
 } from '../nerve/fabricReinforce';
+// Oversized-diff cohort staggering defaults live in fabricCohorts.ts — same
+// single-authority rule (the planner owns the numbers; knobs expose them).
+import {
+  FABRIC_STAGGER_THRESHOLD,
+  FABRIC_COHORT_SIZE,
+  FABRIC_COHORT_INTERVAL_S,
+} from '../nerve/fabricCohorts';
 
 export interface KnobDef {
   value: number;
@@ -98,6 +105,11 @@ export const cellSchema = {
   reinforceAmount: { value: REINFORCE_AMOUNT, min: 0, max: 1, step: 0.02, label: 'reinforce amount' },
   reinforceGain: { value: USAGE_GAIN, min: 0, max: 5, step: 0.1, label: 'reinforce gain' },
   reinforceHalfLife: { value: USAGE_DECAY_HALF_LIFE_S, min: 0.2, max: 20, step: 0.2, label: 'reinforce half-life s' },
+  // Oversized reconciliation diffs (composition/reorg replacements) admit in
+  // delayed cohorts so the animating set and per-frame uploads stay bounded.
+  fabricStaggerThreshold: { value: FABRIC_STAGGER_THRESHOLD, min: 200, max: 10000, step: 100, label: 'stagger threshold' },
+  fabricCohortSize: { value: FABRIC_COHORT_SIZE, min: 100, max: 4000, step: 50, label: 'cohort size' },
+  fabricCohortInterval: { value: FABRIC_COHORT_INTERVAL_S, min: 0.05, max: 1, step: 0.05, label: 'cohort interval s' },
 } satisfies FolderSchema;
 
 export const FOLDER_LABELS = {

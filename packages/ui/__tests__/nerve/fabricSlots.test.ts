@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
   FABRIC_SLOT_FILLER_Y,
   FABRIC_SLOT_SEGMENTS,
+  FABRIC_UPLOAD_GAP_MAX_SLOTS,
+  FABRIC_UPLOAD_MAX_RANGES,
   mergeFabricSlotRanges,
+  type FabricSlotRange,
 } from '../../src/nerve/fabricSlots';
 import {
   fillFabricSlotRemainder,
@@ -53,9 +56,32 @@ function edge(overrides: Partial<EdgeState>): EdgeState {
   };
 }
 
+/** Every dirty slot's segments must fall inside exactly one range, and the
+ * ranges must come back sorted and non-overlapping — upload correctness. */
+function expectCoverage(slots: number[], ranges: FabricSlotRange[]): void {
+  for (let i = 1; i < ranges.length; i += 1) {
+    expect(ranges[i].start).toBeGreaterThan(
+      ranges[i - 1].start + ranges[i - 1].count - 1,
+    );
+  }
+  for (const slot of slots) {
+    const segStart = slot * FABRIC_SLOT_SEGMENTS;
+    const covering = ranges.filter(
+      (r) => segStart >= r.start && segStart + FABRIC_SLOT_SEGMENTS <= r.start + r.count,
+    );
+    expect(covering, `slot ${slot}`).toHaveLength(1);
+  }
+}
+
 describe('mergeFabricSlotRanges', () => {
   it('returns nothing for no dirty slots', () => {
     expect(mergeFabricSlotRanges([])).toEqual([]);
+  });
+
+  it('emits a single slot as a single slot-sized range', () => {
+    expect(mergeFabricSlotRanges([7])).toEqual([
+      { start: 7 * FABRIC_SLOT_SEGMENTS, count: 1 * FABRIC_SLOT_SEGMENTS },
+    ]);
   });
 
   it('merges contiguous and deduped slots into segment runs', () => {
@@ -64,17 +90,69 @@ describe('mergeFabricSlotRanges', () => {
     ]);
   });
 
-  it('keeps disjoint runs separate', () => {
-    expect(mergeFabricSlotRanges([9, 1, 6, 5])).toEqual([
+  it('keeps disjoint runs separate when gap bridging is disabled', () => {
+    expect(mergeFabricSlotRanges([9, 1, 6, 5], 32, 0)).toEqual([
       { start: 1 * FABRIC_SLOT_SEGMENTS, count: 1 * FABRIC_SLOT_SEGMENTS },
       { start: 5 * FABRIC_SLOT_SEGMENTS, count: 2 * FABRIC_SLOT_SEGMENTS },
       { start: 9 * FABRIC_SLOT_SEGMENTS, count: 1 * FABRIC_SLOT_SEGMENTS },
     ]);
   });
 
-  it('collapses excessive fragmentation into one spanning range', () => {
-    const slots = [0, 2, 4, 6];
-    expect(mergeFabricSlotRanges(slots, 3)).toEqual([
+  it('bridges gaps of at most FABRIC_UPLOAD_GAP_MAX_SLOTS parked slots', () => {
+    const atLimit = FABRIC_UPLOAD_GAP_MAX_SLOTS + 1; // gap == max → merge
+    expect(mergeFabricSlotRanges([0, atLimit])).toEqual([
+      { start: 0, count: (atLimit + 1) * FABRIC_SLOT_SEGMENTS },
+    ]);
+    const pastLimit = FABRIC_UPLOAD_GAP_MAX_SLOTS + 2; // gap == max+1 → keep
+    expect(mergeFabricSlotRanges([0, pastLimit])).toEqual([
+      { start: 0, count: 1 * FABRIC_SLOT_SEGMENTS },
+      { start: pastLimit * FABRIC_SLOT_SEGMENTS, count: 1 * FABRIC_SLOT_SEGMENTS },
+    ]);
+  });
+
+  it('NEVER collapses a scattered dirty set into one spanning prefix', () => {
+    // The historical strategy collapsed >32 fragments into first..last —
+    // a near-whole-prefix multi-MB upload. Scattered runs must now stay
+    // separate (well under the range cap) with zero overshoot.
+    const slots: number[] = [];
+    for (let i = 0; i < 40; i += 1) slots.push(i * 1000);
+    const ranges = mergeFabricSlotRanges(slots);
+    expect(ranges).toHaveLength(40);
+    expectCoverage(slots, ranges);
+    const totalSegments = ranges.reduce((sum, r) => sum + r.count, 0);
+    expect(totalSegments).toBe(40 * FABRIC_SLOT_SEGMENTS);
+  });
+
+  it('enforces the range cap by bridging the smallest gaps first', () => {
+    // Runs at 0..0, 10..10, 100..100, 1000..1000 — gaps 9, 89, 899.
+    const slots = [0, 10, 100, 1000];
+    expect(mergeFabricSlotRanges(slots, 3, 0)).toEqual([
+      { start: 0, count: 11 * FABRIC_SLOT_SEGMENTS },          // bridged gap 9
+      { start: 100 * FABRIC_SLOT_SEGMENTS, count: 1 * FABRIC_SLOT_SEGMENTS },
+      { start: 1000 * FABRIC_SLOT_SEGMENTS, count: 1 * FABRIC_SLOT_SEGMENTS },
+    ]);
+    expect(mergeFabricSlotRanges(slots, 2, 0)).toEqual([
+      { start: 0, count: 101 * FABRIC_SLOT_SEGMENTS },         // + gap 89
+      { start: 1000 * FABRIC_SLOT_SEGMENTS, count: 1 * FABRIC_SLOT_SEGMENTS },
+    ]);
+    // The largest gap (899) is only bridged when the cap forces it.
+    expect(mergeFabricSlotRanges(slots, 1, 0)).toEqual([
+      { start: 0, count: 1001 * FABRIC_SLOT_SEGMENTS },
+    ]);
+  });
+
+  it('caps heavy fragmentation at FABRIC_UPLOAD_MAX_RANGES with coverage intact', () => {
+    const slots: number[] = [];
+    for (let i = 0; i < 300; i += 1) slots.push(i * 1000);
+    const ranges = mergeFabricSlotRanges(slots);
+    expect(ranges).toHaveLength(FABRIC_UPLOAD_MAX_RANGES);
+    expectCoverage(slots, ranges);
+  });
+
+  it('still merges tightly interleaved fragmentation into one small span', () => {
+    // Every gap here is 1 parked slot — bridging them all is the cheap
+    // and correct outcome (7 slots total, one bufferSubData call).
+    expect(mergeFabricSlotRanges([0, 2, 4, 6], 3)).toEqual([
       { start: 0, count: 7 * FABRIC_SLOT_SEGMENTS },
     ]);
   });

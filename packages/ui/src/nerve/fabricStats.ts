@@ -32,6 +32,32 @@ export type FabricFullWalkReason =
   | 'inspection-during-animation'
   | 'mass-churn-guard';
 
+/** Which interleaved buffers one passive-fabric commit actually flags for
+ *  upload. Positions and colours are 6 floats per segment each; every
+ *  inspection buffer present adds 2 floats per segment (the fabric layer
+ *  carries two — from/to — other layers none). */
+export interface FabricUploadBuffers {
+  positions: boolean;
+  colors: boolean;
+  /** Count of inspection interleaved buffers uploaded (0 or 2). */
+  inspection: number;
+}
+
+/** Bytes gl.bufferSubData will move for `segments` segment entries across
+ *  the buffers a commit actually uploads: 6 floats × 4 B per flagged
+ *  position/colour buffer, plus 2 floats × 4 B per inspection buffer —
+ *  e.g. one 4-segment fabric slot with all four buffers = 256 B. */
+export function fabricUploadBytes(
+  segments: number,
+  buffers: FabricUploadBuffers,
+): number {
+  if (segments <= 0) return 0;
+  const floatsPerSegment = (buffers.positions ? 6 : 0)
+    + (buffers.colors ? 6 : 0)
+    + buffers.inspection * 2;
+  return segments * floatsPerSegment * 4;
+}
+
 export interface FabricStatsSnapshot {
   diffCalls: Record<FabricDiffKind, number>;
   /** Totals across every diff. */
@@ -59,6 +85,13 @@ export interface FabricStatsSnapshot {
   animatingMax: number;
   /** Slot count of the last full walk (≈ renderOrder length). */
   usedSlotsLast: number;
+  /** Passive-fabric bytes handed to bufferSubData (Σ across every commit —
+   *  incremental slot ranges and full-walk/inspection prefix uploads). */
+  uploadedBytes: number;
+  /** Bytes of the most recent uploading fabric commit. */
+  uploadedBytesLast: number;
+  /** Largest single-commit upload observed. */
+  uploadedBytesMax: number;
 }
 
 const RECENT_DIFF_CAP = 32;
@@ -90,6 +123,9 @@ interface FabricStatsState {
   animatingLast: number;
   animatingMax: number;
   usedSlotsLast: number;
+  uploadedBytes: number;
+  uploadedBytesLast: number;
+  uploadedBytesMax: number;
   observeDiff(sample: FabricDiffSample): void;
   observeSkipFrame(): void;
   observeInspectionOnlyFrame(): void;
@@ -100,6 +136,7 @@ interface FabricStatsState {
     edgesWritten: number,
     animating: number,
   ): void;
+  observeUpload(bytes: number): void;
   snapshot(): FabricStatsSnapshot;
   reset(): void;
 }
@@ -123,6 +160,9 @@ export const fabricStats: FabricStatsState = {
   animatingLast: 0,
   animatingMax: 0,
   usedSlotsLast: 0,
+  uploadedBytes: 0,
+  uploadedBytesLast: 0,
+  uploadedBytesMax: 0,
 
   observeDiff(sample) {
     this.diffCalls[sample.kind] += 1;
@@ -153,6 +193,14 @@ export const fabricStats: FabricStatsState = {
     this.usedSlotsLast = edgesWritten;
     noteAnimating(this, animating);
   },
+  observeUpload(bytes) {
+    // Empty commits (no flagged buffer / zero prefix) upload nothing and
+    // must not clobber the "last uploading commit" reading.
+    if (bytes <= 0) return;
+    this.uploadedBytes += bytes;
+    this.uploadedBytesLast = bytes;
+    if (bytes > this.uploadedBytesMax) this.uploadedBytesMax = bytes;
+  },
 
   snapshot() {
     return {
@@ -169,6 +217,9 @@ export const fabricStats: FabricStatsState = {
       animatingLast: this.animatingLast,
       animatingMax: this.animatingMax,
       usedSlotsLast: this.usedSlotsLast,
+      uploadedBytes: this.uploadedBytes,
+      uploadedBytesLast: this.uploadedBytesLast,
+      uploadedBytesMax: this.uploadedBytesMax,
     };
   },
 
@@ -186,6 +237,9 @@ export const fabricStats: FabricStatsState = {
     this.animatingLast = 0;
     this.animatingMax = 0;
     this.usedSlotsLast = 0;
+    this.uploadedBytes = 0;
+    this.uploadedBytesLast = 0;
+    this.uploadedBytesMax = 0;
   },
 };
 

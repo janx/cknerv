@@ -39,6 +39,7 @@ import {
   mergeFabricSlotRanges,
   type FabricSlotRange,
 } from './fabricSlots';
+import { planFabricCohorts, type FabricCohortSlice } from './fabricCohorts';
 import {
   fabricEdgeRenderState,
   GROWTH_MS,
@@ -51,7 +52,11 @@ import {
   warmRouteBrightnessGain,
 } from './fabricReinforce';
 import { passiveFabricEnergyScale } from './fabricLuminance';
-import { fabricStats, type FabricFullWalkReason } from './fabricStats';
+import {
+  fabricStats,
+  fabricUploadBytes,
+  type FabricFullWalkReason,
+} from './fabricStats';
 import {
   enableLineInspectionTransitionMaterial,
   makeScreenSpaceCapsuleGeometry,
@@ -280,6 +285,33 @@ interface InspectionFieldTransition {
   from: CellInspectionField | null;
   to: CellInspectionField | null;
   progress: number;
+}
+
+/** One deferred add candidate of a staggered setFabric diff. */
+interface PendingFabricAdd {
+  key: string;
+  edge: NeighborEdge;
+}
+
+/** Deferred remainder of ONE oversized setFabric diff (cohort staggering —
+ *  see fabricCohorts.ts). At most one pending set ever exists: a newer
+ *  authoritative graph flushes it before diffing, so diff semantics always
+ *  run against complete edge states. Queued entries cost nothing per frame
+ *  until admitted (unlike future-bornAt staggering, which would keep every
+ *  key in the animating set from t0). */
+interface PendingFabricCohorts {
+  /** Cell snapshot from the queuing setFabric call, so a deferred
+   *  admission runs the exact insertion maths the immediate path ran
+   *  (pos_seed is a pure function of cell id — see memory: never
+   *  32-bit-pack or freeze-derive a cell id). */
+  cells: ReadonlyMap<number, Cell>;
+  adds: PendingFabricAdd[];
+  /** Keys still alive in edgeStates whose gc-fade is scheduled later.
+   *  Until their slice comes due they stay untouched — alive. */
+  kills: string[];
+  cohorts: FabricCohortSlice[];
+  /** Next unadmitted cohort index (slices before it are already in). */
+  next: number;
 }
 
 /** Short enough to feel directly attached to selection, long enough that a
@@ -904,7 +936,9 @@ function commitFabricSlotRanges(
   layer.colBuf.clearUpdateRanges();
   layer.inspectionFromBuf?.clearUpdateRanges();
   layer.inspectionToBuf?.clearUpdateRanges();
+  let rangeSegments = 0;
   for (const range of ranges) {
+    rangeSegments += range.count;
     layer.posBuf.addUpdateRange(range.start * 6, range.count * 6);
     layer.colBuf.addUpdateRange(range.start * 6, range.count * 6);
     layer.inspectionFromBuf?.addUpdateRange(range.start * 2, range.count * 2);
@@ -915,6 +949,14 @@ function commitFabricSlotRanges(
   if (layer.inspectionFromBuf) layer.inspectionFromBuf.needsUpdate = true;
   if (layer.inspectionToBuf) layer.inspectionToBuf.needsUpdate = true;
   layer.geometry.instanceCount = layer.count;
+  // This path serves only the passive fabric layer; its upload volume is
+  // the number the range-governance and cohort staggering exist to bound.
+  fabricStats.observeUpload(fabricUploadBytes(rangeSegments, {
+    positions: true,
+    colors: true,
+    inspection: (layer.inspectionFromBuf ? 1 : 0)
+      + (layer.inspectionToBuf ? 1 : 0),
+  }));
 }
 
 export default function NeuralFabric({
@@ -1021,6 +1063,10 @@ export default function NeuralFabric({
    * both renderOrder consumers skip missing states, so tombstones only cost
    * iteration time. */
   const renderOrderTombstonesRef = useRef(0);
+  /** Deferred remainder of one oversized setFabric diff. The emitFabric
+   * pump admits due cohorts; a newer setFabric flushes the rest first.
+   * Persistent across handle re-creations, like the edge states. */
+  const pendingCohortsRef = useRef<PendingFabricCohorts | null>(null);
   // Snapshot of the last-applied Cell-mesh tweak values, seeded from the
   // schema defaults so a closed/untouched panel matches on the first
   // frame and forces NO spurious redraw (zero-drift). The change-detector
@@ -1105,6 +1151,53 @@ export default function NeuralFabric({
       return slot;
     };
 
+    /** Shared state-insertion body for a NEW fabric edge — the exact
+     * historical setFabric pass-1 block: claim a slot, arm the animating
+     * set, snapshot endpoints/control/colours, register the state. The
+     * immediate diff path, the cohort pump, and the consistency flush all
+     * run THIS, so a deferred admission cannot drift from an immediate
+     * one. Returns 'missing-cell' (skipped — a caller `continue`),
+     * 'slotted', or 'unslotted' (slot space exhausted; the caller
+     * escalates to a compacting full walk). renderOrder membership is the
+     * caller's job: the three call sites differ on it by design. */
+    const admitFabricEdge = (
+      key: string,
+      e: NeighborEdge,
+      cells: ReadonlyMap<number, Cell>,
+      bornAt: number,
+    ): 'missing-cell' | 'slotted' | 'unslotted' => {
+      const a = cells.get(e.from);
+      const c = cells.get(e.to);
+      if (!a || !c) return 'missing-cell';
+      const slotted = allocateFabricSlot(key) !== undefined;
+      animatingKeysRef.current.add(key);
+      const seed = fabricEdgeSeed(e.from, e.to);
+      const routeColors = consensusRouteColors(seed);
+      bezierControlInto(
+        ctrl,
+        a.pos_seed[0], a.pos_seed[1], a.pos_seed[2],
+        c.pos_seed[0], c.pos_seed[1], c.pos_seed[2],
+        seed,
+      );
+      edgeStatesRef.current.set(key, {
+        fromCellId: e.from,
+        toCellId: e.to,
+        fromX: a.pos_seed[0], fromY: a.pos_seed[1], fromZ: a.pos_seed[2],
+        toX: c.pos_seed[0], toY: c.pos_seed[1], toZ: c.pos_seed[2],
+        ctrlX: ctrl[0], ctrlY: ctrl[1], ctrlZ: ctrl[2],
+        bornAt,
+        dyingAt: null,
+        deathKind: null,
+        deadEnd: null,
+        growDir: 1,
+        brightnessMul: arborBrightness(e.w, seed),
+        fromR: routeColors.from[0], fromG: routeColors.from[1], fromB: routeColors.from[2],
+        toR: routeColors.to[0], toG: routeColors.to[1], toB: routeColors.to[2],
+        usage: 0,
+      });
+      return slotted ? 'slotted' : 'unslotted';
+    };
+
     const handles: NeuralFabricHandles = {
       setInspectionField(field) {
         const transition = inspectionFieldRef.current;
@@ -1154,17 +1247,60 @@ export default function NeuralFabric({
       setFabric(graph, cells, now) {
         const states = edgeStatesRef.current;
         const animatingKeys = animatingKeysRef.current;
-        const liveKeys = new Set<string>();
+        // Boot guard for the stagger below: a first population from an
+        // empty set keeps the historical mass-churn-guard fast forming.
+        const wasPopulated = states.size > 0;
         let overflowed = false;
+        // A NEW authoritative graph supersedes any still-queued cohorts of
+        // the previous one, and the diff below must run against COMPLETE
+        // states. Flush first: deferred adds are admitted as fully-grown
+        // stable edges (their grow-in moment has passed — no animation
+        // reset, just one incremental snap write each); deferred kills are
+        // simply dropped, because every queued-kill edge is still alive in
+        // `states`, so pass 2 re-derives its fate against the NEW graph —
+        // it dies at `now` if still absent, or stays quietly stable if it
+        // returned (better than a kill+revive alpha pop).
+        let flushAdmitted = 0;
+        const pendingFlush = pendingCohortsRef.current;
+        if (pendingFlush) {
+          pendingCohortsRef.current = null;
+          const grownBornAt = now - GROWTH_MS / 1000;
+          for (
+            let cohortIdx = pendingFlush.next;
+            cohortIdx < pendingFlush.cohorts.length;
+            cohortIdx += 1
+          ) {
+            const slice = pendingFlush.cohorts[cohortIdx];
+            for (let i = slice.addStart; i < slice.addEnd; i += 1) {
+              const { key, edge } = pendingFlush.adds[i];
+              // growEdges may have raced the key in; keep fresher state.
+              if (states.has(key)) continue;
+              const admitted = admitFabricEdge(
+                key,
+                edge,
+                pendingFlush.cells,
+                grownBornAt,
+              );
+              if (admitted === 'missing-cell') continue;
+              flushAdmitted += 1;
+              if (admitted === 'unslotted') overflowed = true;
+              else renderOrderRef.current.push(key);
+            }
+          }
+        }
+        const liveKeys = new Set<string>();
         let statsAdded = 0;
         let statsRevived = 0;
         let statsStable = 0;
         let statsDying = 0;
-        // Two-pass diff over PERSISTENT slots. Pass 1: walk new edges, add
-        // fresh ones in growing phase (each claiming a recycled or high-water
-        // slot), revive any that were dying. Surviving edges keep their slot
-        // untouched, so a per-block reconciliation rides the incremental
-        // path — no structural full walk, no slot reassignment.
+        // Two-pass diff over PERSISTENT slots. Pass 1: walk new edges,
+        // collecting fresh ones as ADD CANDIDATES (admitted below — all of
+        // them synchronously on the historical path, or a threshold prefix
+        // now + the rest in delayed cohorts), and revive any that were
+        // dying. Surviving edges keep their slot untouched, so a per-block
+        // reconciliation rides the incremental path — no structural full
+        // walk, no slot reassignment.
+        const addCandidates = new Map<string, NeighborEdge>();
         for (const e of graph.edges) {
           const key = fabricEdgeKey(e.from, e.to);
           liveKeys.add(key);
@@ -1189,54 +1325,87 @@ export default function NeuralFabric({
             }
             continue;
           }
+          // A duplicate graph edge would have found the state just created
+          // by its first occurrence on the historical inline path — count
+          // it stable exactly as before.
+          if (addCandidates.has(key)) {
+            statsStable += 1;
+            continue;
+          }
           const a = cells.get(e.from);
           const c = cells.get(e.to);
           if (!a || !c) continue;
-          statsAdded += 1;
-          if (allocateFabricSlot(key) === undefined) overflowed = true;
-          else renderOrderRef.current.push(key);
-          animatingKeys.add(key);
-          const seed = fabricEdgeSeed(e.from, e.to);
-          const routeColors = consensusRouteColors(seed);
-          bezierControlInto(
-            ctrl,
-            a.pos_seed[0], a.pos_seed[1], a.pos_seed[2],
-            c.pos_seed[0], c.pos_seed[1], c.pos_seed[2],
-            seed,
-          );
-          states.set(key, {
-            fromCellId: e.from,
-            toCellId: e.to,
-            fromX: a.pos_seed[0], fromY: a.pos_seed[1], fromZ: a.pos_seed[2],
-            toX: c.pos_seed[0], toY: c.pos_seed[1], toZ: c.pos_seed[2],
-            ctrlX: ctrl[0], ctrlY: ctrl[1], ctrlZ: ctrl[2],
-            bornAt: now,
-            dyingAt: null,
-            deathKind: null,
-            deadEnd: null,
-            growDir: 1,
-            brightnessMul: arborBrightness(e.w, seed),
-            fromR: routeColors.from[0], fromG: routeColors.from[1], fromB: routeColors.from[2],
-            toR: routeColors.to[0], toG: routeColors.to[1], toB: routeColors.to[2],
-            usage: 0,
-          });
+          addCandidates.set(key, e);
         }
-        // Pass 2: any state not in the new graph enters dying phase,
-        // tagged 'gc' — a full-length quiet fade. This path is
-        // reconciliation / legacy whole-graph corrections, NOT a real
-        // chain cell death (those are driven per-edge via killEdges with
-        // kind 'death', which retracts + flashes). Idempotent: if it was
-        // already dying we keep the original dyingAt/deathKind, so the
-        // clock doesn't reset on repeated setFabric calls during the
-        // same death window.
+        // Pass 2: any state not in the new graph is a DYING CANDIDATE for
+        // the 'gc' fade — reconciliation, NOT a real chain cell death
+        // (those are driven per-edge via killEdges with kind 'death',
+        // which retracts + flashes). Idempotent: already-dying edges keep
+        // their original dyingAt/deathKind, so the clock doesn't reset on
+        // repeated setFabric calls during the same death window.
+        const dyingCandidates: { key: string; st: EdgeState }[] = [];
         for (const [key, st] of states) {
           if (liveKeys.has(key)) continue;
-          if (st.dyingAt === null) {
+          if (st.dyingAt === null) dyingCandidates.push({ key, st });
+        }
+        // Oversized churn (composition/reorg whole-graph replacement) is
+        // staggered: a threshold prefix applies now, the remainder queues
+        // as delayed cohorts the emitFabric pump admits. At or below the
+        // threshold `plan` is null and every candidate applies here,
+        // byte-identical to the historical path.
+        const plan = wasPopulated
+          ? planFabricCohorts(
+            addCandidates.size,
+            dyingCandidates.length,
+            now,
+            {
+              staggerThreshold: LIVE.cell.fabricStaggerThreshold,
+              cohortSize: LIVE.cell.fabricCohortSize,
+              cohortIntervalS: LIVE.cell.fabricCohortInterval,
+            },
+          )
+          : null;
+        const immediateAdds = plan ? plan.immediateAdds : addCandidates.size;
+        const immediateKills = plan
+          ? plan.immediateKills
+          : dyingCandidates.length;
+        let deferredAdds: PendingFabricAdd[] | null = null;
+        let addIndex = 0;
+        for (const [key, e] of addCandidates) {
+          if (addIndex < immediateAdds) {
+            const admitted = admitFabricEdge(key, e, cells, now);
+            if (admitted !== 'missing-cell') {
+              statsAdded += 1;
+              if (admitted === 'unslotted') overflowed = true;
+              else renderOrderRef.current.push(key);
+            }
+          } else {
+            (deferredAdds ??= []).push({ key, edge: e });
+            statsAdded += 1;
+          }
+          addIndex += 1;
+        }
+        let deferredKills: string[] | null = null;
+        for (let i = 0; i < dyingCandidates.length; i += 1) {
+          const { key, st } = dyingCandidates[i];
+          if (i < immediateKills) {
             st.dyingAt = now;
             st.deathKind = 'gc';
             statsDying += 1;
             animatingKeys.add(key);
+          } else {
+            (deferredKills ??= []).push(key);
+            statsDying += 1;
           }
+        }
+        if (plan && (deferredAdds || deferredKills)) {
+          pendingCohortsRef.current = {
+            cells,
+            adds: deferredAdds ?? [],
+            kills: deferredKills ?? [],
+            cohorts: plan.cohorts,
+            next: 0,
+          };
         }
         fabricStats.observeDiff({
           atSec: now,
@@ -1247,14 +1416,28 @@ export default function NeuralFabric({
           stable: statsStable,
           totalStates: states.size,
         });
-        // Identical selection: nothing moved, the settled buffer stays.
-        if (statsAdded === 0 && statsRevived === 0 && statsDying === 0) return;
+        // Identical selection over no pending backlog: nothing moved, the
+        // settled buffer stays. (flushAdmitted is always 0 when no cohorts
+        // were queued, so the historical guard is unchanged there.)
+        if (
+          statsAdded === 0 && statsRevived === 0 && statsDying === 0
+          && flushAdmitted === 0
+        ) return;
         emitDirtyRef.current = true;
         if (overflowed) {
           // The persistent slot space cannot absorb this diff. Re-establish
           // the clip-priority order (current edges first, afterimages last)
-          // and let a compacting full walk reassign every slot.
-          const { order } = orderFabricStateKeys(graph.edges, states.keys());
+          // and let a compacting full walk reassign every slot. Deferred
+          // candidates have no state yet — keep them out of the rebuilt
+          // order (the pump pushes each key exactly once on admission;
+          // including them here would leave a stateless entry that turns
+          // into a permanent double-draw duplicate after admission).
+          const orderEdges = deferredAdds
+            ? graph.edges.filter(
+              (e) => states.has(fabricEdgeKey(e.from, e.to)),
+            )
+            : graph.edges;
+          const { order } = orderFabricStateKeys(orderEdges, states.keys());
           renderOrderRef.current = order;
           renderOrderTombstonesRef.current = 0;
           passivePositionsDirtyRef.current = true;
@@ -1373,6 +1556,62 @@ export default function NeuralFabric({
         if (st.usage > 0) warmRouteKeysRef.current.add(key);
       },
       emitFabric(now) {
+        // Deferred-cohort pump: admit any due slices of a staggered
+        // oversized diff through the SAME insertion body the immediate
+        // path uses. Runs before the dirty gate below so a due cohort
+        // wakes the fabric by itself; a null queue costs one compare.
+        const pendingCohorts = pendingCohortsRef.current;
+        if (pendingCohorts) {
+          const pumpStates = edgeStatesRef.current;
+          let cohortChanged = false;
+          let cohortOverflowed = false;
+          while (
+            pendingCohorts.next < pendingCohorts.cohorts.length
+            && pendingCohorts.cohorts[pendingCohorts.next].startAt <= now
+          ) {
+            const slice = pendingCohorts.cohorts[pendingCohorts.next];
+            pendingCohorts.next += 1;
+            for (let i = slice.addStart; i < slice.addEnd; i += 1) {
+              const { key, edge } = pendingCohorts.adds[i];
+              // growEdges may have raced this key in — keep fresher state.
+              if (pumpStates.has(key)) continue;
+              // Admission time IS the birth time: a queued edge grows the
+              // moment it enters, so no future-bornAt values exist on this
+              // path (growEdges' documented future-stagger contract stays
+              // its own).
+              const admitted = admitFabricEdge(
+                key,
+                edge,
+                pendingCohorts.cells,
+                now,
+              );
+              if (admitted === 'missing-cell') continue;
+              cohortChanged = true;
+              // Always joined (even unslotted) so the compacting walk can
+              // find — and eventually reap — the state.
+              renderOrderRef.current.push(key);
+              if (admitted === 'unslotted') cohortOverflowed = true;
+            }
+            for (let i = slice.killStart; i < slice.killEnd; i += 1) {
+              const key = pendingCohorts.kills[i];
+              const st = pumpStates.get(key);
+              // Unknown or already dying (a real killEdges beat us):
+              // keep the existing clock — killEdges idempotency.
+              if (!st || st.dyingAt !== null) continue;
+              st.dyingAt = now;
+              st.deathKind = 'gc';
+              animatingKeysRef.current.add(key);
+              cohortChanged = true;
+            }
+          }
+          if (pendingCohorts.next >= pendingCohorts.cohorts.length) {
+            pendingCohortsRef.current = null;
+          }
+          if (cohortChanged) emitDirtyRef.current = true;
+          // Slot-space exhaustion mid-stagger follows the growEdges
+          // convention: arm the compacting structural walk.
+          if (cohortOverflowed) passivePositionsDirtyRef.current = true;
+        }
         // The sparse warm-route layer and structural lifecycle share one
         // bounded simulation delta. The passive base may still early-return.
         const prevEmit = prevEmitSecRef.current;
@@ -1517,6 +1756,12 @@ export default function NeuralFabric({
             );
           }
           fabric.count = usedSlotCountRef.current * FABRIC_SLOT_SEGMENTS;
+          fabricStats.observeUpload(fabricUploadBytes(fabric.count, {
+            positions: false,
+            colors: false,
+            inspection: (fabric.inspectionFromBuf ? 1 : 0)
+              + (fabric.inspectionToBuf ? 1 : 0),
+          }));
           commitLayer(fabric, false, false, true);
           inspectionOnlyDirtyRef.current = false;
           emitDirtyRef.current = false;
@@ -1685,6 +1930,12 @@ export default function NeuralFabric({
         }
         renderOrderTombstonesRef.current = 0;
 
+        fabricStats.observeUpload(fabricUploadBytes(fabric.count, {
+          positions: writePassivePositions,
+          colors: true,
+          inspection: (fabric.inspectionFromBuf ? 1 : 0)
+            + (fabric.inspectionToBuf ? 1 : 0),
+        }));
         commitLayer(fabric, writePassivePositions, true);
         inspectionOnlyDirtyRef.current = false;
         globalRepaintRef.current = false;
