@@ -36,6 +36,7 @@ import {
   consensusMemoryRouteHopPulseKey,
 } from '../../nerve/consensusRouteHopPulse';
 import { formatBlockRef, formatOutpoint } from './cellFormat';
+import { SpatialPlateHeader } from './primitives';
 import CellCausalLensReadout, {
   type CellCausalNavigationReadout,
 } from './CellCausalLensReadout';
@@ -1524,18 +1525,18 @@ export default function ConsensusIdentityPlate({
       <span style={{ position: 'absolute', left: 0, top: 0, width: 8, height: 8, borderLeft: `1px solid ${CYAN}99`, borderTop: `1px solid ${CYAN}99` }} />
       <span style={{ position: 'absolute', right: 0, bottom: 0, width: 8, height: 8, borderRight: `1px solid ${VIOLET}88`, borderBottom: `1px solid ${VIOLET}88` }} />
 
-      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: '2px 6px' }}>
-        <span style={{ flex: '0 0 auto', whiteSpace: 'nowrap', fontFamily: HUD_FONTS.tech, fontSize: 8.2, fontWeight: 700, letterSpacing: 1.45, color: '#C9F8FF' }}>
-          CONSENSUS MEMORY
-        </span>
-        <span style={{ flex: '0 0 auto', whiteSpace: 'nowrap', fontFamily: HUD_FONTS.cjk, fontSize: 8, color: VIOLET, opacity: 0.78 }}>
-          共识记忆
-        </span>
-        <span style={{ flex: '0 0 auto', marginLeft: 'auto', whiteSpace: 'nowrap', fontFamily: HUD_FONTS.mono, fontSize: 8, letterSpacing: 0.8, color: memoryStatusColor, textShadow: `0 0 6px ${memoryStatusColor}66` }}>
-          {memoryLocked ? 'LOCKED' : `READING ${Math.round(memoryProgress * 100)}%`}
-          {' · '}{identity.lifecycle === 'live' ? 'LIVE RECORD' : 'SPENT RECORD'}
-        </span>
-      </div>
+      <SpatialPlateHeader
+        en="CONSENSUS MEMORY"
+        cjk="共识记忆"
+        accent={VIOLET}
+        marginBottom={0}
+        status={(
+          <span style={{ whiteSpace: 'nowrap', fontFamily: HUD_FONTS.mono, fontSize: 8, letterSpacing: 0.8, color: memoryStatusColor, textShadow: `0 0 6px ${memoryStatusColor}66` }}>
+            {memoryLocked ? 'LOCKED' : `READING ${Math.round(memoryProgress * 100)}%`}
+            {' · '}{identity.lifecycle === 'live' ? 'LIVE RECORD' : 'SPENT RECORD'}
+          </span>
+        )}
+      />
 
       {!spatial ? (
         <IdentityBraid
