@@ -18,6 +18,8 @@ import type {
   TransactionSemanticRecord,
 } from '@cknerv/types';
 
+import { cellContentEquals } from './cellsReducer';
+
 export interface SemanticsCache {
   revision: number;
   source: EnrichmentSourceStatus;
@@ -96,29 +98,6 @@ export function fromSemanticsSnapshot(
 // record identity outright — deliberately freezing the previous
 // `as_of`/`updated_at_ms` freshness anchors, which stay semantically valid
 // while the content they anchor is byte-identical.
-
-/** Content equality over every `Cell` field (nested `out_point` and the
- *  `pos_seed` tuple compared element-wise; never mistake this for a
- *  reference check). */
-function cellContentEquals(a: Cell, b: Cell): boolean {
-  return (
-    a.id === b.id
-    && a.born_at_ms === b.born_at_ms
-    && a.death_at_ms === b.death_at_ms
-    && a.birth_block === b.birth_block
-    && a.tag === b.tag
-    && a.pos_seed[0] === b.pos_seed[0]
-    && a.pos_seed[1] === b.pos_seed[1]
-    && a.pos_seed[2] === b.pos_seed[2]
-    && a.out_point.tx_hash === b.out_point.tx_hash
-    && a.out_point.index === b.out_point.index
-    && a.capacity === b.capacity
-    && a.data_hex === b.data_hex
-    && a.content_hash === b.content_hash
-    && a.lock_kind === b.lock_kind
-    && a.asset_kind === b.asset_kind
-  );
-}
 
 /** Rebuild one composition bucket, reusing the previous Cell object for
  *  every incoming Cell whose content is unchanged. Returns the previous

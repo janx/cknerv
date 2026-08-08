@@ -171,13 +171,52 @@ export function emptyCellsCache(): CellGalaxyCache {
   };
 }
 
+/** Content equality over every `Cell` field (nested `out_point` and the
+ *  `pos_seed` tuple compared element-wise; never mistake this for a
+ *  reference check). Reorg/resync replays re-deliver records whose content
+ *  the cache already retains as freshly parsed objects; this comparator is
+ *  what lets those upserts keep the retained object identity that
+ *  downstream identity-keyed consumers (WeakMap presentation caches,
+ *  render-slot diffs, mesh reconciles) depend on. */
+export function cellContentEquals(a: Cell, b: Cell): boolean {
+  return (
+    a.id === b.id
+    && a.born_at_ms === b.born_at_ms
+    && a.death_at_ms === b.death_at_ms
+    && a.birth_block === b.birth_block
+    && a.tag === b.tag
+    && a.pos_seed[0] === b.pos_seed[0]
+    && a.pos_seed[1] === b.pos_seed[1]
+    && a.pos_seed[2] === b.pos_seed[2]
+    && a.out_point.tx_hash === b.out_point.tx_hash
+    && a.out_point.index === b.out_point.index
+    && a.capacity === b.capacity
+    && a.data_hex === b.data_hex
+    && a.content_hash === b.content_hash
+    && a.lock_kind === b.lock_kind
+    && a.asset_kind === b.asset_kind
+  );
+}
+
 export function fromCellsSnapshot(
   rev: number,
   snap: CellGalaxySnapshot,
   opts: CellsReducerOptions = {},
+  /** Previous cache, when this snapshot replaces live state (lagged resync,
+   *  reconnect fallback). Membership, insertion order, token, and the reset
+   *  journal stay authoritative from the snapshot; only the per-Cell object
+   *  identity of content-identical records is reused so identity-keyed
+   *  downstream caches survive the reset. */
+  prev?: Pick<CellGalaxyCache, 'cells'>,
 ): CellGalaxyCache {
   const cells = new Map<number, Cell>();
-  for (const c of snap.cells) cells.set(c.id, c);
+  for (const c of snap.cells) {
+    const retained = prev?.cells.get(c.id);
+    cells.set(
+      c.id,
+      retained !== undefined && cellContentEquals(retained, c) ? retained : c,
+    );
+  }
   // Hydrate the authoritative evidence history from snapshot records,
   // assigning sequential seq numbers in chronological order. Historical
   // records deliberately do not enter `pulseLinks`: loading a page is not a
@@ -339,6 +378,15 @@ function mutateCellDelta(
   const c = draft.value;
   switch (d.type) {
     case 'birth': {
+      // Reorg suffix rewrites and reconnect catch-up can replay a birth whose
+      // content this cache already retains. A byte-identical upsert is a pure
+      // no-op: the retained object keeps its identity, no journal entry is
+      // published, and (when the whole batch is no-op) `cells`/`cellsToken`
+      // stay referentially stable. Any real field difference still replaces.
+      const existing = c.cells.get(d.cell.id);
+      if (existing !== undefined && cellContentEquals(existing, d.cell)) {
+        return false;
+      }
       touchCell(draft, d.cell.id);
       writableCells(draft).set(d.cell.id, d.cell);
       return true;
@@ -346,6 +394,8 @@ function mutateCellDelta(
     case 'death': {
       const existing = c.cells.get(d.id);
       if (!existing) return false;
+      // Replayed death already recorded at this exact timestamp: no-op.
+      if (existing.death_at_ms === d.at_ms) return false;
       touchCell(draft, d.id);
       writableCells(draft).set(d.id, { ...existing, death_at_ms: d.at_ms });
       return true;
@@ -353,14 +403,20 @@ function mutateCellDelta(
     case 'tag': {
       const existing = c.cells.get(d.id);
       if (!existing) return false;
+      // Replayed tag with the value already applied: no-op.
+      if (existing.tag === d.tag) return false;
       touchCell(draft, d.id);
       writableCells(draft).set(d.id, { ...existing, tag: d.tag });
       return true;
     }
     case 'gc': {
-      for (const id of d.ids) touchCell(draft, id);
+      // Replayed GC for ids this cache never retained (or already removed)
+      // must not cost a defensive Map copy or a token turnover.
+      const present = d.ids.filter((id) => c.cells.has(id));
+      if (present.length === 0) return false;
+      for (const id of present) touchCell(draft, id);
       const cells = writableCells(draft);
-      for (const id of d.ids) {
+      for (const id of present) {
         if (cells.delete(id)) draft.cellOrderInvalidated = true;
       }
       return true;
