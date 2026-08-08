@@ -26,6 +26,11 @@ import {
   consensusBraidRenderScale,
   dampCellFocus,
 } from '../derives/cellInteraction.derive';
+import {
+  cellNucleusFarFieldSkip,
+  ensureCellFieldBounds,
+  makeCellFieldBoundsCache,
+} from '../derives/cellNucleusFarField.derive';
 import { makeNucleusPointMaterial } from '../materials/cellNucleusMaterial';
 import {
   pointSpriteDeviceViewportHeight,
@@ -239,6 +244,7 @@ export default function CellNucleus({
   const cameraPosition = useMemo(() => new THREE.Vector3(), []);
   const cameraLocalPosition = useMemo(() => new THREE.Vector3(), []);
   const groupWorldInverse = useMemo(() => new THREE.Matrix4(), []);
+  const fieldBounds = useMemo(makeCellFieldBoundsCache, []);
 
   useFrame((state, deltaSeconds) => {
     const group = groupRef.current;
@@ -371,7 +377,30 @@ export default function CellNucleus({
         .applyMatrix4(groupWorldInverse);
 
       near.current.length = 0;
-      for (let index = 0; index < count; index += 1) {
+      // Whole-field early-out. Identity is a zoom-in detail: under the
+      // resting overview camera every Cell is beyond FAR_DIST and no
+      // focus / recall / route-hop envelope is alive, so the O(count) walk
+      // below cannot admit anything. Proving that from one cached
+      // bounding-sphere distance (same group-local camera math, same 12 Hz
+      // tick) drops `lodWalkCount` to 0: the walk body never runs, the
+      // beyond-prefix route-hop block is already inert (its veto is part of
+      // the predicate), the sort and cap see an empty array, and the cleared
+      // `near` set flows through the existing sparse zeroing writes. When
+      // the predicate declines, the walk runs exactly as before.
+      const bounds = ensureCellFieldBounds(fieldBounds, cells, count);
+      const lodWalkCount = cellNucleusFarFieldSkip(
+        cameraLocalPosition.x,
+        cameraLocalPosition.y,
+        cameraLocalPosition.z,
+        bounds,
+        FAR_DIST,
+        focusByCell.current.size,
+        recallFocus !== null,
+        routeHopFocus !== null,
+      )
+        ? 0
+        : count;
+      for (let index = 0; index < lodWalkCount; index += 1) {
         const cell = cells[index];
         const userFocus = focusByCell.current.get(cell.id) ?? 0;
         const recall = recallByCell.get(cell.id) ?? null;
