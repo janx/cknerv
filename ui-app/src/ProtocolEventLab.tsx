@@ -87,8 +87,8 @@ const STAGE_META: Record<ProtocolEventStage, {
   },
   carrier: {
     code: '01',
-    name: 'OCTAGON FIELD',
-    cjk: '八角力场',
+    name: 'JELLYFISH PULSE',
+    cjk: '水母脉冲',
     thesis: 'AGREED INFORMATION ENTERS THE CELL FIELD',
     accent: '#ff9a32',
     glow: 'rgba(255, 74, 12, 0.16)',
@@ -96,8 +96,8 @@ const STAGE_META: Record<ProtocolEventStage, {
   },
   commit: {
     code: '02',
-    name: 'FIELD COMMIT',
-    cjk: '场写入',
+    name: 'SHOCKWAVE COMMIT',
+    cjk: '冲击波写入',
     thesis: 'CONSENSUS RESOLVES INTO REAL CELL STATE',
     accent: '#c8fbff',
     glow: 'rgba(77, 237, 255, 0.14)',

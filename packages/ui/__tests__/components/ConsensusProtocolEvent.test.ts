@@ -3,11 +3,13 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import * as THREE from 'three';
 import {
+  JELLYFISH_BELL_PROFILE,
+  JELLYFISH_BELL_RIBS,
+  JELLYFISH_BELL_SEGMENTS,
   makeProtocolCarrierGeometry,
-  PROTOCOL_FIELD_RING_RADII,
-  PROTOCOL_FIELD_SIDES,
   protocolCarrierBellPulse,
-  setProtocolFieldFacing,
+  protocolCarrierShockwaveProgress,
+  setProtocolCarrierFacing,
 } from '../../src/geometry/protocolCarrier';
 
 const source = (file: string): string => readFileSync(
@@ -16,52 +18,71 @@ const source = (file: string): string => readFileSync(
 );
 
 describe('A protocol event relay', () => {
-  it('uses a minimal octagonal jellyfish bell instead of a solid carrier', () => {
+  it('uses a rounded, scalloped jellyfish dome instead of a field barrier', () => {
     const geometry = makeProtocolCarrierGeometry();
     const positions = geometry.getAttribute('position');
     const depths = new Set<number>();
+    const skirtRadii = new Set<number>();
     for (let vertex = 0; vertex < positions.count; vertex += 1) {
       depths.add(Number(positions.getZ(vertex).toFixed(3)));
+      if (vertex < JELLYFISH_BELL_SEGMENTS * 2) {
+        skirtRadii.add(Number(Math.hypot(
+          positions.getX(vertex),
+          positions.getY(vertex),
+        ).toFixed(3)));
+      }
     }
 
     expect(geometry).toBeInstanceOf(THREE.BufferGeometry);
-    expect(PROTOCOL_FIELD_SIDES).toBe(8);
-    expect(PROTOCOL_FIELD_RING_RADII).toEqual([0.96, 0.24]);
-    expect(positions.count).toBe(40);
-    expect(depths.size).toBe(2);
+    expect(JELLYFISH_BELL_SEGMENTS).toBe(24);
+    expect(JELLYFISH_BELL_RIBS).toBe(7);
+    expect(JELLYFISH_BELL_PROFILE.map(({ radius, depth }) => [radius, depth])).toEqual([
+      [0.98, -0.20],
+      [0.78, 0.01],
+      [0.48, 0.22],
+      [0.16, 0.36],
+    ]);
+    expect(positions.count).toBe(234);
+    expect(depths.size).toBe(4);
+    expect(skirtRadii.size).toBeGreaterThan(8);
     expect(geometry.index).toBeNull();
     expect(source('BlockDeliveryLayer.tsx')).not.toContain('BoxGeometry');
     expect(source('BlockDeliveryLayer.tsx')).not.toContain('makeProtocolLandingTexture');
     expect(source('BlockDeliveryLayer.tsx')).toContain(
-      'setProtocolFieldFacing(_fieldFacingQuaternion, _flightDirection)',
+      'setProtocolCarrierFacing(_carrierFacingQuaternion, _flightDirection)',
     );
+    expect(source('BlockDeliveryLayer.tsx')).not.toMatch(/A\.T\.-Field|octagon/i);
     expect(source('BlockDeliveryLayer.tsx')).not.toContain('getWorldQuaternion');
     expect(source('BlockDeliveryLayer.tsx')).not.toContain('TUMBLE_RATE');
     geometry.dispose();
   });
 
-  it('opens the bell while its five tentacles stretch in the opposite phase', () => {
+  it('opens the bell, counter-stretches five tentacles, and sheds a propulsion wave', () => {
     const delivery = source('BlockDeliveryLayer.tsx');
 
     expect(protocolCarrierBellPulse(Math.PI / 2)).toBe(1);
     expect(protocolCarrierBellPulse(Math.PI * 1.5)).toBe(0);
+    expect(protocolCarrierShockwaveProgress(Math.PI * 1.5)).toBe(0);
+    expect(protocolCarrierShockwaveProgress(Math.PI * 2.5)).toBeCloseTo(0.5);
     expect(delivery).toContain('makeJellyfishWakeTexture()');
     expect(delivery).toContain('JELLY_TENTACLE_STRETCH_AMOUNT * (1 - bellPulse)');
     expect(delivery).toContain('bodyScale * bellDepthScale');
+    expect(delivery).toContain('protocolCarrierShockwaveProgress(swimPhase)');
+    expect(delivery).toContain('_wavePosition.copy(_position).addScaledVector(');
     expect(delivery).not.toContain('_scale.setScalar(bodyScale)');
   });
 
-  it('aims the field and expanding impact wave at the Cell galaxy', () => {
+  it('aims the swimming bell and expanding shockwave at the Cell galaxy', () => {
     const delivery = source('BlockDeliveryLayer.tsx');
     const direction = new THREE.Vector3(0.25, 1, -0.4).normalize();
-    const facing = setProtocolFieldFacing(new THREE.Quaternion(), direction);
+    const facing = setProtocolCarrierFacing(new THREE.Quaternion(), direction);
     const transformedNormal = new THREE.Vector3(0, 0, 1).applyQuaternion(facing);
 
     expect(transformedNormal.distanceTo(direction)).toBeLessThan(1e-9);
     expect(delivery).toContain('delivery.to[1] - delivery.from[1]');
-    expect(delivery).toContain('_bodyQuaternion.copy(_fieldFacingQuaternion)');
+    expect(delivery).toContain('_bodyQuaternion.copy(_carrierFacingQuaternion)');
     expect(delivery).toContain('ingest.impactScale');
-    expect(delivery).toContain('_fieldFacingQuaternion,\n            -fieldRotation * 0.45');
+    expect(delivery).toContain('_carrierFacingQuaternion,\n            -bellRoll * 0.45');
     expect(delivery).toContain('side: THREE.DoubleSide');
   });
 
