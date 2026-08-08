@@ -6,7 +6,7 @@ import type {
   SemanticScript,
   TransactionSemanticRecord,
 } from '@cknerv/types';
-import { formatSemanticAssetAmount } from './cellFormat';
+import { formatBlockRef, formatSemanticAssetAmount } from './cellFormat';
 import { HUD_COLORS, HUD_FONTS, rgba } from './hudTheme';
 
 export { formatSemanticAssetAmount } from './cellFormat';
@@ -325,8 +325,18 @@ function SpatialFacetSummary({
   );
 }
 
-function SpatialContextSummary({ record }: { record: CellSemanticRecord }) {
+function SpatialContextSummary({
+  record,
+  birthBlock,
+}: {
+  record: CellSemanticRecord;
+  birthBlock?: number | null;
+}) {
   const facet = primaryFacet(record);
+  // The scan facts grid already prints this block as COMMIT; repeat CREATED
+  // only when the enrichment record genuinely disagrees with it.
+  const createdDiffers = birthBlock == null
+    || record.observed_at_block !== birthBlock;
   const assetIdentity = record.asset
     ? [record.asset.symbol, record.asset.name, record.asset.standard]
       .filter(Boolean)
@@ -352,13 +362,15 @@ function SpatialContextSummary({ record }: { record: CellSemanticRecord }) {
             wide
           />
         ) : null}
-        <SpatialContextFact
-          label="CREATED"
-          value={`#${record.observed_at_block.toLocaleString()}`}
-        />
+        {createdDiffers ? (
+          <SpatialContextFact
+            label="CREATED"
+            value={formatBlockRef(record.observed_at_block)}
+          />
+        ) : null}
         <SpatialContextFact
           label="PROOF"
-          value={`#${record.as_of.block.toLocaleString()}`}
+          value={formatBlockRef(record.as_of.block)}
           color={HUD_COLORS.cyanWire}
         />
         {assetIdentity ? (
@@ -387,12 +399,16 @@ function SpatialContextSummary({ record }: { record: CellSemanticRecord }) {
 
 function ScanContextSummary({
   record,
+  birthBlock,
   narrow,
 }: {
   record: CellSemanticRecord;
+  birthBlock?: number | null;
   narrow: boolean;
 }) {
   const facet = primaryFacet(record);
+  const createdDiffers = birthBlock == null
+    || record.observed_at_block !== birthBlock;
   const assetIdentity = record.asset
     ? [record.asset.symbol, record.asset.name, record.asset.standard]
       .filter(Boolean)
@@ -446,13 +462,15 @@ function ScanContextSummary({
             wide={narrow}
           />
         ) : null}
-        <SpatialContextFact
-          label="CREATED"
-          value={`#${record.observed_at_block.toLocaleString()}`}
-        />
+        {createdDiffers ? (
+          <SpatialContextFact
+            label="CREATED"
+            value={formatBlockRef(record.observed_at_block)}
+          />
+        ) : null}
         <SpatialContextFact
           label="PROOF"
-          value={`#${record.as_of.block.toLocaleString()}`}
+          value={formatBlockRef(record.as_of.block)}
           color={HUD_COLORS.cyanWire}
         />
       </div>
@@ -667,6 +685,7 @@ function CellSemanticsReadout({
   source,
   phase,
   record,
+  birthBlock,
   message,
   transactionPhase,
   transactionRecord,
@@ -679,6 +698,9 @@ function CellSemanticsReadout({
   source: EnrichmentSourceStatus;
   phase: CellSemanticsPhase;
   record?: CellSemanticRecord | null;
+  /** Selected Cell's birth block — lets CREATED collapse when it just
+   *  restates the COMMIT fact already on the scan grid. */
+  birthBlock?: number | null;
   message?: string | null;
   transactionPhase?: CellSemanticsPhase;
   transactionRecord?: TransactionSemanticRecord | null;
@@ -771,15 +793,15 @@ function CellSemanticsReadout({
       ) : null}
       {record ? (
         scanIntegrated
-          ? <ScanContextSummary record={record} narrow={scanNarrow} />
-          : spatial ? <SpatialContextSummary record={record} /> : <>
+          ? <ScanContextSummary record={record} birthBlock={birthBlock} narrow={scanNarrow} />
+          : spatial ? <SpatialContextSummary record={record} birthBlock={birthBlock} /> : <>
           <div
             data-cell-context-facts
             style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', columnGap: 12, rowGap: 3 }}
           >
             {record.address ? <ContextFact label="OWNER" value={record.address} displayValue={compact(record.address, 14, 10)} wide /> : null}
-            <ContextFact label="CREATED" value={`#${record.observed_at_block.toLocaleString()}`} />
-            <ContextFact label="PROOF ANCHOR" value={`#${record.as_of.block.toLocaleString()}`} color={HUD_COLORS.cyanWire} />
+            <ContextFact label="CREATED" value={formatBlockRef(record.observed_at_block)} />
+            <ContextFact label="PROOF ANCHOR" value={formatBlockRef(record.as_of.block)} color={HUD_COLORS.cyanWire} />
             {record.asset ? (
               <ContextFact
                 label="ASSET"

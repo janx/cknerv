@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   formatCkb, midTruncate, formatOutpoint, formatDataHex, formatCellKind,
-  formatAge, formatDataSize, formatLockKind, formatAssetKind,
+  formatAge, formatBlockRef, formatDataSize, formatLockKind, formatAssetKind,
   LOCK_COLORS, ASSET_COLORS,
 } from '../../../src/components/hud/cellFormat';
 
@@ -29,6 +29,10 @@ describe('cellFormat — moved formatters', () => {
 });
 
 describe('cellFormat — new helpers', () => {
+  it('formatBlockRef groups block numbers in the pinned en-US style', () => {
+    expect(formatBlockRef(16204800)).toBe('#16,204,800');
+    expect(formatBlockRef(42)).toBe('#42');
+  });
   it('formatAge humanizes an elapsed span', () => {
     expect(formatAge(0, 3 * 3600_000 + 12 * 60_000)).toBe('3h 12m');
     expect(formatAge(0, 45 * 1000)).toBe('45s');

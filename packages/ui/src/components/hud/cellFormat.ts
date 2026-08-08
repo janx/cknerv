@@ -26,6 +26,12 @@ export function formatCellKind(k: Cell['tag']): string {
 }
 
 /** Humanized elapsed span, largest-two-units. Clamps negatives to 0s. */
+/** Chain block reference in the HUD's grouped house style (`#20,100,194`).
+ *  Locale pinned so grouping cannot drift with the viewer's runtime. */
+export function formatBlockRef(block: number): string {
+  return `#${block.toLocaleString('en-US')}`;
+}
+
 export function formatAge(bornAtMs: number, nowMs: number): string {
   const ms = Math.max(0, nowMs - bornAtMs);
   const s = Math.floor(ms / 1000);

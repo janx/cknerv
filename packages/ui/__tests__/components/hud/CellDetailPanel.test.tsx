@@ -114,6 +114,14 @@ describe('CellDetailPanel', () => {
     expect(portraitRender).toHaveBeenCalledTimes(rendersAfterScanReset);
   });
 
+  it('shows a real elapsed AGE when the birth timestamp is known', () => {
+    const { container } = render(
+      <CellDetailPanel cell={{ ...base, born_at_ms: 12 * 60_000 }} onClose={() => {}} />,
+    );
+    expect(container.textContent).toContain('AGE 3h 0m');
+    expect(container.textContent).not.toContain('SINCE #');
+  });
+
   it('renders separate readable satellites with the magnified Cell scan restored', () => {
     const { container } = render(<CellDetailPanel cell={base} onClose={() => {}} />);
     const t = container.textContent ?? '';
@@ -124,8 +132,10 @@ describe('CellDetailPanel', () => {
     expect(t).toContain('xUDT');           // ASSET
     expect(t).toContain('123.00 CKB');     // CAPACITY
     expect(t).toContain('LIVE');           // STATE
-    expect(t).toContain('3h 12m');         // AGE
-    expect(t).toContain('#16204800');      // COMMIT / block anchor
+    // born_at_ms 0 is the composition-backfill sentinel — the header falls
+    // back to the birth block instead of an epoch-relative age.
+    expect(t).toContain('SINCE #16,204,800');
+    expect(t).toContain('#16,204,800');    // COMMIT / block anchor (grouped)
     expect(t).toContain('11 B');           // DATA — 22 hex chars = 11 bytes
     expect(t).not.toContain('ƒ');          // portrait frequencies stay visual-only
     expect(t).not.toContain('paths');      // portrait strands stay visual-only
@@ -562,8 +572,7 @@ describe('CellDetailPanel', () => {
     expect(readout?.textContent).not.toContain('DEP GROUP');
     expect(readout?.textContent).not.toContain('CODE CELL');
     expect(readout?.textContent).not.toContain('ORIGIN TRANSACTION');
-    expect(container.textContent).toContain('3h 12m');
-    expect(container.textContent).toContain('AGE 3h 12m');
+    expect(container.textContent).toContain('SINCE #16,204,800');
     expect(Array.from(container.querySelectorAll('span')).filter(
       (span) => span.textContent === 'AGE',
     )).toHaveLength(0);
@@ -1443,7 +1452,7 @@ describe('CellDetailPanel', () => {
     expect(inspector.textContent).toContain('DISPLAY CARRIER');
     expect(inspector.textContent).toContain('VISUAL LANE · NO CAUSAL CLAIM');
     expect(inspector.textContent).toContain('5555555·5555');
-    expect(inspector.textContent).toContain('BLOCK #16200020 · SPENT');
+    expect(inspector.textContent).toContain('BLOCK #16,200,020 · SPENT');
 
     Object.defineProperties(ledgerScroll!, {
       clientHeight: { configurable: true, value: 72 },
@@ -1555,7 +1564,7 @@ describe('CellDetailPanel', () => {
       .toBe('available');
     expect(targetInspector.textContent).toContain('MAINTAINED RECORD');
     expect(targetInspector.textContent).toContain('REAL TARGET RECORD');
-    expect(targetInspector.textContent).toContain('BLOCK #16204800 · LIVE');
+    expect(targetInspector.textContent).toContain('BLOCK #16,204,800 · LIVE');
 
     rerender(panel(lockedFocus, new Map()));
     const missingInspector = container.querySelector<HTMLElement>(
