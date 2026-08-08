@@ -141,8 +141,8 @@ function updateLeader(
   accent: string,
 ): void {
   const horizontal = placement.side === 'left' || placement.side === 'right';
-  line.style.width = horizontal ? `${gap}px` : '1px';
-  line.style.height = horizontal ? '1px' : `${gap}px`;
+  line.style.width = horizontal ? `${gap}px` : '2px';
+  line.style.height = horizontal ? '2px' : `${gap}px`;
   line.style.left = '';
   line.style.right = '';
   line.style.top = '';
