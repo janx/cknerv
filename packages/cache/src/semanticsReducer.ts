@@ -1,6 +1,7 @@
 import type {
   ActivityFeedRecord,
   AssetEcosystemRecord,
+  Cell,
   CellSemanticRecord,
   ChainCensus,
   DaoStateRecord,
@@ -82,6 +83,90 @@ export function fromSemanticsSnapshot(
   };
 }
 
+// ── CellGalaxy composition identity reuse ───────────────────────────────
+//
+// The enrichment source re-emits `galaxy_composition_replace` on every
+// refresh (~15 min) even when the composition content is unchanged. A naive
+// replace hands every Cell a fresh object identity, forcing identity-keyed
+// consumers downstream (WeakMap presentation caches, render-set journal,
+// k-NN display graph, fabric reconcile) into a full rebuild. These helpers
+// reconcile the incoming record against the previous one instead: a Cell
+// whose content is unchanged keeps its old object identity, an untouched
+// bucket keeps its array identity, and a content-identical record keeps the
+// record identity outright — deliberately freezing the previous
+// `as_of`/`updated_at_ms` freshness anchors, which stay semantically valid
+// while the content they anchor is byte-identical.
+
+/** Content equality over every `Cell` field (nested `out_point` and the
+ *  `pos_seed` tuple compared element-wise; never mistake this for a
+ *  reference check). */
+function cellContentEquals(a: Cell, b: Cell): boolean {
+  return (
+    a.id === b.id
+    && a.born_at_ms === b.born_at_ms
+    && a.death_at_ms === b.death_at_ms
+    && a.birth_block === b.birth_block
+    && a.tag === b.tag
+    && a.pos_seed[0] === b.pos_seed[0]
+    && a.pos_seed[1] === b.pos_seed[1]
+    && a.pos_seed[2] === b.pos_seed[2]
+    && a.out_point.tx_hash === b.out_point.tx_hash
+    && a.out_point.index === b.out_point.index
+    && a.capacity === b.capacity
+    && a.data_hex === b.data_hex
+    && a.content_hash === b.content_hash
+    && a.lock_kind === b.lock_kind
+    && a.asset_kind === b.asset_kind
+  );
+}
+
+/** Rebuild one composition bucket, reusing the previous Cell object for
+ *  every incoming Cell whose content is unchanged. Returns the previous
+ *  array itself when the whole bucket is order- and content-identical. */
+function reconcileCompositionBucket(
+  prevBucket: Cell[],
+  nextBucket: Cell[],
+  prevById: Map<number, Cell>,
+): Cell[] {
+  let changed = prevBucket.length !== nextBucket.length;
+  const merged = new Array<Cell>(nextBucket.length);
+  for (let i = 0; i < nextBucket.length; i += 1) {
+    const incoming = nextBucket[i];
+    const previous = prevById.get(incoming.id);
+    const kept =
+      previous !== undefined && cellContentEquals(previous, incoming)
+        ? previous
+        : incoming;
+    merged[i] = kept;
+    if (!changed && kept !== prevBucket[i]) changed = true;
+  }
+  return changed ? merged : prevBucket;
+}
+
+/** Reconcile an incoming composition against the previous one so unchanged
+ *  content keeps its object identity at every level (record → bucket array
+ *  → Cell). Record equality ignores the `as_of`/`updated_at_ms` freshness
+ *  anchors, which advance on every refresh regardless of content. */
+function reconcileGalaxyComposition(
+  prev: GalaxyCompositionRecord | null,
+  next: GalaxyCompositionRecord,
+): GalaxyCompositionRecord {
+  if (prev === null) return next;
+  const prevById = new Map<number, Cell>();
+  for (const bucket of [prev.dao, prev.typed, prev.plain]) {
+    for (const cell of bucket) prevById.set(cell.id, cell);
+  }
+  const dao = reconcileCompositionBucket(prev.dao, next.dao, prevById);
+  const typed = reconcileCompositionBucket(prev.typed, next.typed, prevById);
+  const plain = reconcileCompositionBucket(prev.plain, next.plain, prevById);
+  const contentIdentical =
+    dao === prev.dao
+    && typed === prev.typed
+    && plain === prev.plain
+    && next.source === prev.source;
+  return contentIdentical ? prev : { ...next, dao, typed, plain };
+}
+
 function reduceDelta(prev: SemanticsCache, delta: SemanticsDelta): SemanticsCache {
   switch (delta.type) {
     case 'source_status':
@@ -126,8 +211,15 @@ function reduceDelta(prev: SemanticsCache, delta: SemanticsDelta): SemanticsCach
       return { ...prev, networkAtlas: delta.network_atlas };
     case 'network_atlas_clear':
       return { ...prev, networkAtlas: null };
-    case 'galaxy_composition_replace':
-      return { ...prev, galaxyComposition: delta.galaxy_composition };
+    case 'galaxy_composition_replace': {
+      const galaxyComposition = reconcileGalaxyComposition(
+        prev.galaxyComposition,
+        delta.galaxy_composition,
+      );
+      return galaxyComposition === prev.galaxyComposition
+        ? prev
+        : { ...prev, galaxyComposition };
+    }
     case 'prune': {
       const cells = new Map(
         [...prev.cells].filter(([, cell]) => cell.as_of.block < delta.from_block),
