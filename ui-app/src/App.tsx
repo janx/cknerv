@@ -1109,7 +1109,14 @@ export default function App({
           gl={{ antialias: true, alpha: true }}
           dpr={canvasDpr}
           style={{ background: '#02030a' }}
-          onPointerMissed={() => {
+          onPointerMissed={(event) => {
+            // Clicks inside the scene-anchored inspection card bubble through
+            // the Canvas container and register here as misses; they are
+            // interactions with the selection, not dismissals of it.
+            if (
+              event.target instanceof Element
+              && event.target.closest('[data-cell-inspection-overlay]')
+            ) return;
             if (orbitGestureSuppressesPointerAction(
               orbitGestureRef.current,
               performance.now(),
