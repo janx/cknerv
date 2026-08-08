@@ -5,19 +5,25 @@ import type {
   AssetEcosystemRecord,
   Cell,
   CellSemanticRecord,
+  ChainAnchor,
+  ChainCensus,
   DaoStateRecord,
   ForkWatchRecord,
   GalaxyCompositionRecord,
   EnrichmentSourceStatus,
   NetworkAtlasRecord,
   ProtocolEraRecord,
+  SemanticsDelta,
   TransactionHorizonRecord,
+  TransactionSemanticRecord,
 } from '@cknerv/types';
 import {
   applyRevisionedSemanticsDeltas,
   applySemanticsDelta,
+  deepEqualsIgnoringAnchors,
   emptySemanticsCache,
   outPointKey,
+  type SemanticsCache,
 } from '../src/semanticsReducer';
 
 const ready: EnrichmentSourceStatus = {
@@ -36,6 +42,43 @@ function cell(block: number, txHash: string): CellSemanticRecord {
     updated_at_ms: block,
     facets: [],
   };
+}
+
+function census(block: number): ChainCensus {
+  return {
+    source: 'ckbadger',
+    as_of: { block, hash: `0xblock${block}` },
+    updated_at_ms: block,
+    live_cells: 2_400_000,
+    total_cells: 3_000_000,
+    dead_cells: 600_000,
+  };
+}
+
+function transaction(block: number, txHash: string): TransactionSemanticRecord {
+  return {
+    tx_hash: txHash,
+    block,
+    source: 'ckbadger',
+    as_of: { block, hash: `0xblock${block}` },
+    updated_at_ms: block,
+    actions: [{ namespace: 'core', kind: 'transfer', attributes: [] }],
+    participants: [],
+    fee: '1000',
+  };
+}
+
+/** Model the enrichment source's periodic re-emit: a structurally fresh
+ *  record with identical content whose freshness anchors advanced. */
+function reanchored<T extends { as_of: ChainAnchor; updated_at_ms: number }>(
+  record: T,
+  block: number,
+): T {
+  const clone = structuredClone(record);
+  const anchors: { as_of: ChainAnchor; updated_at_ms: number } = clone;
+  anchors.as_of = { block, hash: `0xblock${block}` };
+  anchors.updated_at_ms = block;
+  return clone;
 }
 
 function ecosystem(block: number): AssetEcosystemRecord {
@@ -474,5 +517,315 @@ describe('galaxy composition identity reuse', () => {
       galaxy_composition: restored,
     });
     expect(next.galaxyComposition).toBe(restored);
+  });
+});
+
+interface RefreshArm {
+  name: string;
+  /** Delta whose record content matches the seed, re-anchored at `block`. */
+  make: (block: number) => SemanticsDelta;
+  /** Delta re-anchored at `block` with one real content field changed. */
+  makeChanged: (block: number) => SemanticsDelta;
+  read: (cache: SemanticsCache) => { as_of: ChainAnchor } | null;
+}
+
+const refreshArms: RefreshArm[] = [
+  {
+    name: 'census_replace',
+    make: (block) => ({
+      type: 'census_replace',
+      census: reanchored(census(10), block),
+    }),
+    makeChanged: (block) => ({
+      type: 'census_replace',
+      census: { ...reanchored(census(10), block), live_cells: 2_400_001 },
+    }),
+    read: (cache) => cache.census,
+  },
+  {
+    name: 'asset_ecosystem_replace',
+    make: (block) => ({
+      type: 'asset_ecosystem_replace',
+      asset_ecosystem: reanchored(ecosystem(10), block),
+    }),
+    makeChanged: (block) => {
+      const record = reanchored(ecosystem(10), block);
+      record.capacity_breakdown[0].share_bps = 2600;
+      return { type: 'asset_ecosystem_replace', asset_ecosystem: record };
+    },
+    read: (cache) => cache.assetEcosystem,
+  },
+  {
+    name: 'dao_state_replace',
+    make: (block) => ({
+      type: 'dao_state_replace',
+      dao_state: reanchored(daoState(10), block),
+    }),
+    makeChanged: (block) => {
+      const record = reanchored(daoState(10), block);
+      record.total_depositors += 1;
+      return { type: 'dao_state_replace', dao_state: record };
+    },
+    read: (cache) => cache.daoState,
+  },
+  {
+    name: 'protocol_era_replace',
+    make: (block) => ({
+      type: 'protocol_era_replace',
+      protocol_era: reanchored(protocolEra(10), block),
+    }),
+    makeChanged: (block) => {
+      const record = reanchored(protocolEra(10), block);
+      record.indexed_tip_epoch += 1;
+      return { type: 'protocol_era_replace', protocol_era: record };
+    },
+    read: (cache) => cache.protocolEra,
+  },
+  {
+    name: 'fork_watch_replace',
+    make: (block) => ({
+      type: 'fork_watch_replace',
+      fork_watch: reanchored(forkWatch(10), block),
+    }),
+    makeChanged: (block) => {
+      const record = reanchored(forkWatch(10), block);
+      // Nested content change: the deep walk must see through sub-objects.
+      record.recent_reorg!.depth = 5;
+      return { type: 'fork_watch_replace', fork_watch: record };
+    },
+    read: (cache) => cache.forkWatch,
+  },
+  {
+    name: 'activity_feed_replace',
+    make: (block) => ({
+      type: 'activity_feed_replace',
+      activity_feed: reanchored(activityFeed(10), block),
+    }),
+    makeChanged: (block) => {
+      const record = reanchored(activityFeed(10), block);
+      record.activities[0].label = 'Renamed Script';
+      return { type: 'activity_feed_replace', activity_feed: record };
+    },
+    read: (cache) => cache.activityFeed,
+  },
+  {
+    name: 'transaction_horizon_replace',
+    make: (block) => ({
+      type: 'transaction_horizon_replace',
+      transaction_horizon: reanchored(transactionHorizon(10), block),
+    }),
+    makeChanged: (block) => {
+      const record = reanchored(transactionHorizon(10), block);
+      record.hourly_counts[2] += 1;
+      return { type: 'transaction_horizon_replace', transaction_horizon: record };
+    },
+    read: (cache) => cache.transactionHorizon,
+  },
+  {
+    name: 'network_atlas_replace',
+    make: (block) => ({
+      type: 'network_atlas_replace',
+      network_atlas: reanchored(networkAtlas(10), block),
+    }),
+    makeChanged: (block) => {
+      const record = reanchored(networkAtlas(10), block);
+      record.countries[0].count += 1;
+      return { type: 'network_atlas_replace', network_atlas: record };
+    },
+    read: (cache) => cache.networkAtlas,
+  },
+];
+
+describe('periodic refresh dedup', () => {
+  // Only census dedups among the *_replace arms. The other seven feed HUD
+  // staleness derives that read `nowMs - record.updated_at_ms` as a
+  // liveness clock, so an anchor-only re-emit MUST adopt the fresh record —
+  // freezing it would misreport a healthy poll with plateaued content as
+  // STALE and erase the per-capability outage signal.
+  const dedupedArms = new Set(['census_replace']);
+  for (const arm of refreshArms) {
+    if (dedupedArms.has(arm.name)) {
+      it(`${arm.name}: anchor-only re-emit keeps the cache; content change replaces`, () => {
+        const seeded = applySemanticsDelta(emptySemanticsCache(), arm.make(10));
+        expect(arm.read(seeded)?.as_of.block).toBe(10);
+
+        const next = applySemanticsDelta(seeded, arm.make(20));
+        expect(next).toBe(seeded);
+        // The frozen anchor stays semantically valid: this exact content
+        // was already anchored at block 10.
+        expect(arm.read(next)?.as_of.block).toBe(10);
+
+        const changed = applySemanticsDelta(seeded, arm.makeChanged(30));
+        expect(changed).not.toBe(seeded);
+        expect(arm.read(changed)?.as_of.block).toBe(30);
+      });
+    } else {
+      it(`${arm.name}: anchor-only re-emit still adopts the fresh record (staleness clock)`, () => {
+        const seeded = applySemanticsDelta(emptySemanticsCache(), arm.make(10));
+        expect(arm.read(seeded)?.as_of.block).toBe(10);
+
+        const next = applySemanticsDelta(seeded, arm.make(20));
+        expect(next).not.toBe(seeded);
+        expect(arm.read(next)?.as_of.block).toBe(20);
+
+        const changed = applySemanticsDelta(next, arm.makeChanged(30));
+        expect(arm.read(changed)?.as_of.block).toBe(30);
+      });
+    }
+  }
+
+  it('advances only the revision through the revisioned stream path', () => {
+    const seeded = applySemanticsDelta(emptySemanticsCache(), {
+      type: 'census_replace',
+      census: census(10),
+    });
+    const bumped = applyRevisionedSemanticsDeltas(seeded, [{
+      revision: 7,
+      delta: { type: 'census_replace', census: reanchored(census(10), 20) },
+    }]);
+    expect(bumped.revision).toBe(7);
+    expect(bumped.census).toBe(seeded.census);
+  });
+
+  it('cell_upsert with retained content skips the Map copy', () => {
+    const record = cell(10, '0xcell');
+    const seeded = applySemanticsDelta(emptySemanticsCache(), {
+      type: 'cell_upsert',
+      cell: record,
+    });
+    const next = applySemanticsDelta(seeded, {
+      type: 'cell_upsert',
+      cell: reanchored(cell(10, '0xcell'), 20),
+    });
+    expect(next).toBe(seeded);
+    expect(next.cells).toBe(seeded.cells);
+    expect(next.cells.get(outPointKey(record.out_point))).toBe(record);
+
+    // A content change (here: the observation block) still replaces.
+    const moved = applySemanticsDelta(seeded, {
+      type: 'cell_upsert',
+      cell: { ...reanchored(cell(10, '0xcell'), 20), observed_at_block: 20 },
+    });
+    expect(moved).not.toBe(seeded);
+    expect(
+      moved.cells.get(outPointKey(record.out_point))?.observed_at_block,
+    ).toBe(20);
+  });
+
+  it('transaction_upsert with retained content skips the Map copy', () => {
+    const record = transaction(10, '0xtx');
+    const seeded = applySemanticsDelta(emptySemanticsCache(), {
+      type: 'transaction_upsert',
+      transaction: record,
+    });
+    const next = applySemanticsDelta(seeded, {
+      type: 'transaction_upsert',
+      transaction: reanchored(transaction(10, '0xtx'), 20),
+    });
+    expect(next).toBe(seeded);
+    expect(next.transactions).toBe(seeded.transactions);
+    expect(next.transactions.get('0xtx')).toBe(record);
+
+    const changed = applySemanticsDelta(seeded, {
+      type: 'transaction_upsert',
+      transaction: { ...reanchored(transaction(10, '0xtx'), 20), fee: '2000' },
+    });
+    expect(changed).not.toBe(seeded);
+    expect(changed.transactions.get('0xtx')?.fee).toBe('2000');
+  });
+
+  it('source_status re-broadcast keeps the cache; liveness change replaces', () => {
+    const seeded = applySemanticsDelta(emptySemanticsCache(), {
+      type: 'source_status',
+      source: ready,
+    });
+    const next = applySemanticsDelta(seeded, {
+      type: 'source_status',
+      source: structuredClone(ready),
+    });
+    expect(next).toBe(seeded);
+    expect(next.source).toBe(ready);
+
+    // `last_success_at_ms` is liveness content, not a freshness anchor: a
+    // heartbeat-only status update must still replace.
+    const heartbeat = { ...structuredClone(ready), last_success_at_ms: 1234 };
+    const alive = applySemanticsDelta(seeded, {
+      type: 'source_status',
+      source: heartbeat,
+    });
+    expect(alive).not.toBe(seeded);
+    expect(alive.source).toBe(heartbeat);
+  });
+
+  it('prune applies to the frozen anchor exactly as if never re-emitted', () => {
+    const seeded = applySemanticsDelta(emptySemanticsCache(), {
+      type: 'census_replace',
+      census: census(10),
+    });
+    const deduped = applySemanticsDelta(seeded, {
+      type: 'census_replace',
+      census: reanchored(census(10), 20),
+    });
+    expect(deduped).toBe(seeded);
+
+    // The retained anchor is block 10: a reorg above it keeps the record…
+    const kept = applySemanticsDelta(deduped, { type: 'prune', from_block: 15 });
+    expect(kept.census).toBe(seeded.census);
+    // …and a reorg at/below it clears, same as before the re-emit.
+    const cleared = applySemanticsDelta(deduped, { type: 'prune', from_block: 10 });
+    expect(cleared.census).toBeNull();
+  });
+
+  it('replace lands again after prune and clear, even with identical content', () => {
+    const seeded = applySemanticsDelta(emptySemanticsCache(), {
+      type: 'census_replace',
+      census: census(10),
+    });
+    const pruned = applySemanticsDelta(seeded, { type: 'prune', from_block: 10 });
+    expect(pruned.census).toBeNull();
+    const restored = reanchored(census(10), 20);
+    const afterPrune = applySemanticsDelta(pruned, {
+      type: 'census_replace',
+      census: restored,
+    });
+    expect(afterPrune.census).toBe(restored);
+
+    const clearedAll = applySemanticsDelta(afterPrune, { type: 'clear' });
+    expect(clearedAll.census).toBeNull();
+    const again = reanchored(census(10), 30);
+    expect(
+      applySemanticsDelta(clearedAll, { type: 'census_replace', census: again })
+        .census,
+    ).toBe(again);
+  });
+});
+
+describe('deepEqualsIgnoringAnchors', () => {
+  it('skips anchor keys at every depth but compares all content', () => {
+    expect(deepEqualsIgnoringAnchors(
+      { as_of: { block: 1, hash: '0xa' }, updated_at_ms: 1, rows: [{ n: 1 }] },
+      { as_of: { block: 2, hash: '0xb' }, updated_at_ms: 2, rows: [{ n: 1 }] },
+    )).toBe(true);
+    expect(deepEqualsIgnoringAnchors(
+      { rows: [{ updated_at_ms: 5, n: 1 }] },
+      { rows: [{ updated_at_ms: 9, n: 1 }] },
+    )).toBe(true);
+    expect(deepEqualsIgnoringAnchors(
+      { rows: [{ n: 1 }] },
+      { rows: [{ n: 2 }] },
+    )).toBe(false);
+  });
+
+  it('is order-sensitive for arrays and strict about extra content keys', () => {
+    expect(deepEqualsIgnoringAnchors({ v: [1, 2] }, { v: [2, 1] })).toBe(false);
+    expect(deepEqualsIgnoringAnchors({ v: [1, 2] }, { v: [1, 2, 3] })).toBe(false);
+    expect(deepEqualsIgnoringAnchors({ n: 1 }, { n: 1, m: 2 })).toBe(false);
+    expect(deepEqualsIgnoringAnchors({ n: 1, m: 2 }, { n: 1 })).toBe(false);
+  });
+
+  it('treats undefined-valued optionals as absent (JSON wire parity)', () => {
+    expect(deepEqualsIgnoringAnchors({ n: 1, opt: undefined }, { n: 1 })).toBe(true);
+    expect(deepEqualsIgnoringAnchors({ n: 1 }, { n: 1, opt: undefined })).toBe(true);
+    expect(deepEqualsIgnoringAnchors({ n: 1, opt: 0 }, { n: 1 })).toBe(false);
   });
 });

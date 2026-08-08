@@ -146,13 +146,104 @@ function reconcileGalaxyComposition(
   return contentIdentical ? prev : { ...next, dao, typed, plain };
 }
 
+// ── Periodic-refresh dedup for selected semantic records ────────────────
+//
+// The same refresh loop that motivates the composition reconcile above also
+// re-emits other record arms and re-upserts cell/transaction records whose
+// content the cache already retains — often only the freshness anchors
+// advance. A naive `{ ...prev, X: delta.X }` hands the record a fresh
+// identity each time, breaking record-keyed React memoization downstream.
+// Guards below return `prev` outright when the incoming content is
+// unchanged, freezing the previous `as_of`/`updated_at_ms` like the
+// composition reconcile does.
+//
+// DELIBERATELY UNGUARDED: the seven records whose HUD derives read
+// `nowMs - record.updated_at_ms` as a staleness signal (assetEcosystem,
+// activityFeed, networkAtlas, daoState, forkWatch, protocolEra,
+// transactionHorizon — see packages/ui/src/derives/*). For those, a frozen
+// anchor would misreport "healthy poll, unchanged content" as STALE on any
+// content plateau (fork watch sits unchanged for hours), and it would erase
+// the one user-visible signal of a per-capability refresh outage. Their
+// panel re-renders are cheap; dedup there buys identity nobody keys on.
+// Guard one of them only after its derive stops treating `updated_at_ms`
+// as a liveness clock.
+//
+// Cost trade-off: the multi-thousand-Cell galaxy composition gets the
+// dedicated per-field comparator (`cellContentEquals`) plus per-bucket
+// reconcile above because a generic deep walk at that scale on every
+// refresh would be wasteful. Every record below is tiny — census is a
+// handful of scalars, cell/transaction records are single rows — so one
+// generic recursive comparison per refresh is negligible and stays correct
+// as record shapes evolve.
+
+/** Freshness-anchor keys skipped at every depth of the comparison.
+ *  Verified against `packages/types/src/enrichment.ts`: all eleven record
+ *  types spell their anchors exactly `as_of` / `updated_at_ms`; no aliases
+ *  exist. Deliberately NOT ignored (content, not freshness):
+ *  `observed_at_block`, `statistics_block`, `detected_at_ms` (fork events),
+ *  `timestamp_ms` (activity rows), `crawl_finished_at_s` (atlas crawl),
+ *  `last_success_at_ms` (source liveness). */
+const IGNORED_ANCHOR_KEYS = new Set(['as_of', 'updated_at_ms']);
+
+/** Recursive structural equality over plain JSON wire data, skipping
+ *  `IGNORED_ANCHOR_KEYS` at every depth. Arrays are order-sensitive; a key
+ *  valued `undefined` counts as absent (JSON cannot carry the difference). */
+export function deepEqualsIgnoringAnchors(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (Array.isArray(a) || Array.isArray(b)) {
+    if (!Array.isArray(a) || !Array.isArray(b)) return false;
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i += 1) {
+      if (!deepEqualsIgnoringAnchors(a[i], b[i])) return false;
+    }
+    return true;
+  }
+  if (
+    typeof a !== 'object'
+    || typeof b !== 'object'
+    || a === null
+    || b === null
+  ) {
+    return false;
+  }
+  const left = a as Record<string, unknown>;
+  const right = b as Record<string, unknown>;
+  for (const key of Object.keys(left)) {
+    if (IGNORED_ANCHOR_KEYS.has(key)) continue;
+    if (left[key] === undefined) continue;
+    if (right[key] === undefined) return false;
+    if (!deepEqualsIgnoringAnchors(left[key], right[key])) return false;
+  }
+  for (const key of Object.keys(right)) {
+    if (IGNORED_ANCHOR_KEYS.has(key)) continue;
+    if (right[key] !== undefined && left[key] === undefined) return false;
+  }
+  return true;
+}
+
 function reduceDelta(prev: SemanticsCache, delta: SemanticsDelta): SemanticsCache {
   switch (delta.type) {
     case 'source_status':
-      return { ...prev, source: delta.source };
+      // `EnrichmentSourceStatus` carries no anchor keys, so this guard is a
+      // plain deep equality: `last_success_at_ms` and the tip/lag fields are
+      // liveness content, and any change still replaces. Only a literal
+      // re-broadcast of an identical status is dropped.
+      return deepEqualsIgnoringAnchors(prev.source, delta.source)
+        ? prev
+        : { ...prev, source: delta.source };
     case 'cell_upsert': {
+      const key = outPointKey(delta.cell.out_point);
+      const existing = prev.cells.get(key);
+      // Refresh re-delivery of already-retained content: keep the record
+      // and the Map identity outright (no defensive copy).
+      if (
+        existing !== undefined
+        && deepEqualsIgnoringAnchors(existing, delta.cell)
+      ) {
+        return prev;
+      }
       const cells = new Map(prev.cells);
-      cells.set(outPointKey(delta.cell.out_point), delta.cell);
+      cells.set(key, delta.cell);
       return { ...prev, cells };
     }
     case 'cell_remove': {
@@ -162,6 +253,13 @@ function reduceDelta(prev: SemanticsCache, delta: SemanticsDelta): SemanticsCach
       return { ...prev, cells };
     }
     case 'transaction_upsert': {
+      const existing = prev.transactions.get(delta.transaction.tx_hash);
+      if (
+        existing !== undefined
+        && deepEqualsIgnoringAnchors(existing, delta.transaction)
+      ) {
+        return prev;
+      }
       const transactions = new Map(prev.transactions);
       transactions.set(delta.transaction.tx_hash, delta.transaction);
       return { ...prev, transactions };
@@ -172,8 +270,15 @@ function reduceDelta(prev: SemanticsCache, delta: SemanticsDelta): SemanticsCach
       transactions.delete(delta.tx_hash);
       return { ...prev, transactions };
     }
+    // `census_replace` is the one *_replace arm with a dedup guard: no HUD
+    // derive reads its `updated_at_ms`, so keeping the record identity on a
+    // content-identical re-emit is free. The seven arms below it stay plain
+    // replacements — see the DELIBERATELY UNGUARDED note above. A cleared
+    // (null) slot never dedups: content arriving after prune/clear lands.
     case 'census_replace':
-      return { ...prev, census: delta.census };
+      return deepEqualsIgnoringAnchors(prev.census, delta.census)
+        ? prev
+        : { ...prev, census: delta.census };
     case 'asset_ecosystem_replace':
       return { ...prev, assetEcosystem: delta.asset_ecosystem };
     case 'dao_state_replace':
