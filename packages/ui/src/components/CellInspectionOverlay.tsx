@@ -346,6 +346,11 @@ export default function CellInspectionOverlay(props: CellDetailPanelProps) {
           data-cell-id={cell.id}
           role="region"
           aria-label={`Cell ${cell.id} details`}
+          // This drei Html subtree lives inside the Canvas container, so any
+          // click that bubbles out of it reaches the R3F root with zero 3D
+          // intersections and fires onPointerMissed — which clears the whole
+          // selection. Satellite controls must consume their clicks here.
+          onClick={(event) => event.stopPropagation()}
           style={{
             position: 'absolute',
             opacity: 0,
