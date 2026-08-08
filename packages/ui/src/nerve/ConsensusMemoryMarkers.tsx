@@ -114,6 +114,14 @@ interface MarkerRecord {
   sourceIndex: number;
 }
 
+/** Label anchor point and copy box, measured on the throttled hud cadence. */
+interface MarkerScreenMeasurement {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 export type ConsensusMemoryRecordTransition =
   | 'native'
   | 'departing'
@@ -147,6 +155,8 @@ export default function ConsensusMemoryMarkers({
   const targetContentRefs = useRef<Array<HTMLDivElement | null>>([]);
   const hudRectsRef = useRef<ConsensusMemoryScreenRect[]>([]);
   const hudMeasureRef = useRef({ atMs: Number.NEGATIVE_INFINITY, width: -1, height: -1 });
+  const markerMeasurementsRef = useRef<Array<MarkerScreenMeasurement | null>>([]);
+  const measuredMarkersRef = useRef<MarkerRecord[] | null>(null);
   const markers = useMemo<MarkerRecord[]>(() => {
     if (!focus) return [];
     const result: MarkerRecord[] = [];
@@ -216,6 +226,7 @@ export default function ConsensusMemoryMarkers({
       typeof document !== 'undefined'
       && (viewportWidth !== hudMeasure.width
         || viewportHeight !== hudMeasure.height
+        || measuredMarkersRef.current !== markers
         || layoutNowMs - hudMeasure.atMs >= 250)
     ) {
       hudRectsRef.current = Array.from(
@@ -226,6 +237,30 @@ export default function ConsensusMemoryMarkers({
           ? [{ left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom }]
           : [];
       });
+      // Endpoint rect reads share this throttled cadence: per-frame reads
+      // force a synchronous layout pass whenever HUD React work has dirtied
+      // styles. Marker FOLLOWING stays per-frame via the drei Html transform;
+      // these rects only steer side/shift/leader decisions, which may trail by
+      // ≤250ms. A marker-set change forces an immediate remeasure so a stale
+      // array can never be indexed against different markers.
+      markerMeasurementsRef.current = markers.map((marker, index) => {
+        const node = markerRefs.current[index];
+        if (!node) return null;
+        const rect = node.getBoundingClientRect();
+        const copyRect = copyRefs.current[index]?.getBoundingClientRect();
+        const currentSide = node.dataset.memoryLabelSide === 'right'
+          ? 'right'
+          : node.dataset.memoryLabelSide === 'left'
+            ? 'left'
+            : marker.role === 'source' ? 'left' : 'right';
+        return {
+          x: currentSide === 'right' ? rect.left + 17 : rect.right - 17,
+          y: rect.top + rect.height / 2,
+          width: copyRect?.width ?? rect.width,
+          height: copyRect?.height ?? rect.height,
+        };
+      });
+      measuredMarkersRef.current = markers;
       hudMeasureRef.current = {
         atMs: layoutNowMs,
         width: viewportWidth,
@@ -233,23 +268,7 @@ export default function ConsensusMemoryMarkers({
       };
     }
     const obstacles = hudRectsRef.current;
-    const measurements = markers.map((marker, index) => {
-      const node = markerRefs.current[index];
-      if (!node) return null;
-      const rect = node.getBoundingClientRect();
-      const copyRect = copyRefs.current[index]?.getBoundingClientRect();
-      const currentSide = node.dataset.memoryLabelSide === 'right'
-        ? 'right'
-        : node.dataset.memoryLabelSide === 'left'
-          ? 'left'
-          : marker.role === 'source' ? 'left' : 'right';
-      return {
-        x: currentSide === 'right' ? rect.left + 17 : rect.right - 17,
-        y: rect.top + rect.height / 2,
-        width: copyRect?.width ?? rect.width,
-        height: copyRect?.height ?? rect.height,
-      };
-    });
+    const measurements = markerMeasurementsRef.current;
     const targetIndex = markers.findIndex((marker) => marker.role === 'target');
     const targetMeasurement = targetIndex >= 0 ? measurements[targetIndex] : null;
     const targetX = targetMeasurement?.x ?? null;

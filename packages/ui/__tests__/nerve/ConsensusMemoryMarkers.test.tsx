@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import type { Cell } from '@cknerv/types';
 import { emptyCellsCache } from '@cknerv/cache';
 import { act, render } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CellGalaxyProvider } from '../../src/hooks/cellGalaxyContext';
 import ConsensusMemoryMarkers from '../../src/nerve/ConsensusMemoryMarkers';
 import type {
@@ -91,6 +91,71 @@ function focus(overrides: Partial<ConsensusMemoryTraceFocus> = {}): ConsensusMem
 }
 
 describe('ConsensusMemoryMarkers', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('throttles endpoint rect reads to the shared 250ms hud measure cadence', () => {
+    const cache = emptyCellsCache();
+    cache.cells.set(8, cell(8, 'a'));
+    cache.cells.set(5, cell(5, 'b'));
+    const nowSpy = vi.spyOn(performance, 'now').mockReturnValue(10_000);
+    const rectSpy = vi.spyOn(Element.prototype, 'getBoundingClientRect');
+
+    render(
+      <CellGalaxyProvider value={cache}>
+        <ConsensusMemoryMarkers focus={focus()} />
+      </CellGalaxyProvider>,
+    );
+    act(() => simFrameMock.callback?.());
+    const measuredCalls = rectSpy.mock.calls.length;
+    expect(measuredCalls).toBeGreaterThan(0);
+
+    // Frames inside the 250ms window reuse cached rects: the frame loop
+    // itself performs zero layout reads.
+    act(() => simFrameMock.callback?.());
+    act(() => simFrameMock.callback?.());
+    expect(rectSpy.mock.calls.length).toBe(measuredCalls);
+
+    nowSpy.mockReturnValue(10_250);
+    act(() => simFrameMock.callback?.());
+    expect(rectSpy.mock.calls.length).toBeGreaterThan(measuredCalls);
+  });
+
+  it('remeasures immediately when the marker set changes inside the window', () => {
+    const cache = emptyCellsCache();
+    cache.cells.set(8, cell(8, 'a'));
+    cache.cells.set(9, cell(9, 'c'));
+    cache.cells.set(5, cell(5, 'b'));
+    vi.spyOn(performance, 'now').mockReturnValue(20_000);
+    const rectSpy = vi.spyOn(Element.prototype, 'getBoundingClientRect');
+
+    const view = render(
+      <CellGalaxyProvider value={cache}>
+        <ConsensusMemoryMarkers focus={focus()} />
+      </CellGalaxyProvider>,
+    );
+    act(() => simFrameMock.callback?.());
+    const measuredCalls = rectSpy.mock.calls.length;
+
+    // Same viewport, same frozen clock — only the marker set changed. Stale
+    // rects must never be indexed against a different marker array.
+    view.rerender(
+      <CellGalaxyProvider value={cache}>
+        <ConsensusMemoryMarkers focus={focus({
+          key: '8:1',
+          sources: [
+            focusSource(8, 'a', 1.1, 1.8),
+            focusSource(9, 'c', 1.32, 2.02),
+          ],
+          routedSourceCount: 2,
+        })} />
+      </CellGalaxyProvider>,
+    );
+    act(() => simFrameMock.callback?.());
+    expect(rectSpy.mock.calls.length).toBeGreaterThan(measuredCalls);
+  });
+
   it('binds honest source and record labels to retained Cell endpoints', () => {
     const cache = emptyCellsCache();
     cache.cells.set(8, cell(8, 'a'));
