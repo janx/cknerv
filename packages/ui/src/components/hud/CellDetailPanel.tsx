@@ -400,16 +400,6 @@ export default function CellDetailPanel({
   const verticalLayout = layoutSide === 'above' || layoutSide === 'below';
   const rootWidth = enhancedDetail ? 800 : 700;
   const portraitWidth = enhancedDetail ? 280 : 260;
-  const portraitLeft = rootWidth - portraitWidth;
-  const anatomyWidth = enhancedDetail ? 500 : 410;
-  const anatomyHeight = enhancedDetail
-    ? verticalLayout ? 364 : 280
-    : verticalLayout ? 202 : 200;
-  const bottomTop = enhancedDetail
-    ? verticalLayout ? 452 : 388
-    : verticalLayout ? 288 : 380;
-  const identityLeft = enhancedDetail ? 180 : 140;
-  const identityWidth = rootWidth - identityLeft;
   const secondaryWidth = 360;
   const lineageWidth = showTracePlate
     ? enhancedDetail ? 420 : 320
@@ -422,19 +412,26 @@ export default function CellDetailPanel({
       : { marginTop: 7, width: '76.92%', zoom: 1.3 },
     [verticalLayout],
   );
-  const fromFanEdge = (left: number): CSSProperties => (
-    layoutSide === 'right' ? { right: left } : { left }
-  );
   const satelliteBase: CSSProperties = {
-    position: 'absolute',
+    position: 'relative',
     zIndex: 1,
     minWidth: 0,
     boxSizing: 'border-box',
     pointerEvents: 'auto',
   };
-  const fanCoordinate = (coordinate: number): number => (
-    layoutSide === 'right' ? rootWidth - coordinate : coordinate
-  );
+  // One shared grid: a text column and a portrait column under a full-width
+  // header, the bottom shard spanning both. Mirroring for a right-side fan is
+  // column order, not per-satellite coordinate math — the portrait column
+  // always sits on the edge nearest the inspected Cell.
+  const portraitFirst = verticalLayout || layoutSide === 'right';
+  const constellationColumns = verticalLayout
+    ? '190px minmax(0, 1fr)'
+    : portraitFirst
+      ? `${portraitWidth}px minmax(0, 1fr)`
+      : `minmax(0, 1fr) ${portraitWidth}px`;
+  const constellationAreas = portraitFirst
+    ? '"header header" "portrait anatomy" "bottom bottom"'
+    : '"header header" "anatomy portrait" "bottom bottom"';
   const bottomGridColumns = verticalLayout
     ? showTracePlate
       ? 'repeat(2, minmax(0, 1fr))'
@@ -459,6 +456,12 @@ export default function CellDetailPanel({
       data-cell-detail-readability="large"
       style={{
         position: 'relative',
+        display: 'grid',
+        gridTemplateColumns: constellationColumns,
+        gridTemplateAreas: constellationAreas,
+        columnGap: verticalLayout ? 14 : 20,
+        rowGap: 12,
+        alignItems: 'start',
         width: rootWidth,
         maxWidth: 'calc(100vw - 28px)',
         boxSizing: 'border-box',
@@ -474,41 +477,13 @@ export default function CellDetailPanel({
         ...style,
       }}
     >
-      {!verticalLayout ? (
-        <>
-          <span
-            aria-hidden="true"
-            data-cell-inspection-orbit-path="identity"
-            style={{ position: 'absolute', zIndex: 0, left: fanCoordinate(portraitLeft + portraitWidth / 2), top: 57, width: 1, height: 31, background: `linear-gradient(180deg,${rgba(HUD_COLORS.orange, 0.14)},${rgba(HUD_COLORS.orange, 0.7)})`, boxShadow: `0 0 6px ${rgba(HUD_COLORS.orange, 0.28)}` }}
-          />
-          <span
-            aria-hidden="true"
-            data-cell-inspection-orbit-path="anatomy"
-            style={{ position: 'absolute', zIndex: 0, left: layoutSide === 'right' ? rootWidth - portraitLeft : anatomyWidth, top: 88 + anatomyHeight / 2, width: portraitLeft - anatomyWidth, height: 1, background: `linear-gradient(90deg,${rgba(HUD_COLORS.cyanWire, 0.65)},${rgba(HUD_COLORS.cyanWire, 0.12)})`, boxShadow: `0 0 6px ${rgba(HUD_COLORS.cyanWire, 0.22)}` }}
-          />
-          <span
-            aria-hidden="true"
-            data-cell-inspection-orbit-path="lineage"
-            style={{ position: 'absolute', zIndex: 0, left: fanCoordinate(72), top: 88 + anatomyHeight, width: 1, height: bottomTop - 88 - anatomyHeight, background: `linear-gradient(180deg,${rgba('#AA88FF', 0.16)},${rgba('#AA88FF', 0.68)})`, boxShadow: `0 0 6px ${rgba('#AA88FF', 0.24)}` }}
-          />
-          {showTracePlate ? (
-            <span
-              aria-hidden="true"
-              data-cell-inspection-orbit-path="trace"
-              style={{ position: 'absolute', zIndex: 0, left: fanCoordinate(portraitLeft + portraitWidth / 2), top: 88 + portraitWidth, width: 1, height: bottomTop - 88 - portraitWidth, background: `linear-gradient(180deg,${rgba(HUD_COLORS.cyanWire, 0.62)},${rgba(HUD_COLORS.cyanWire, 0.12)})`, boxShadow: `0 0 6px ${rgba(HUD_COLORS.cyanWire, 0.22)}` }}
-            />
-          ) : null}
-        </>
-      ) : null}
-
       <section
         data-cell-inspection-satellite="identity"
         data-cell-scan-identity
         style={{
           ...satelliteBase,
-          ...(verticalLayout
-            ? { left: 0, top: 0, width: '100%', minHeight: 56 }
-            : { ...fromFanEdge(identityLeft), top: 0, width: identityWidth, minHeight: 58 }),
+          gridArea: 'header',
+          minHeight: verticalLayout ? 56 : 58,
           display: 'flex',
           alignItems: 'baseline',
           flexWrap: 'wrap',
@@ -543,9 +518,8 @@ export default function CellDetailPanel({
         data-cell-portrait-frame
         style={{
           ...satelliteBase,
-          ...(verticalLayout
-            ? { left: 0, top: 72, width: '50%', maxWidth: 190 }
-            : { ...fromFanEdge(portraitLeft), top: 88, width: portraitWidth }),
+          gridArea: 'portrait',
+          width: '100%',
           aspectRatio: '1 / 1',
           overflow: 'hidden',
           border: `1px solid ${rgba(HUD_COLORS.orange, 0.24)}`,
@@ -598,9 +572,9 @@ export default function CellDetailPanel({
         data-cellular-scan-progress={scan.pct}
         style={{
           ...satelliteBase,
-          ...(verticalLayout
-            ? { right: 0, top: 72, width: '47%', height: anatomyHeight }
-            : { ...fromFanEdge(0), top: 88, width: anatomyWidth, height: anatomyHeight }),
+          gridArea: 'anatomy',
+          alignSelf: 'stretch',
+          minHeight: verticalLayout ? 202 : 200,
           overflow: 'hidden',
           padding: '12px 12px 10px 18px',
           ...spatialPlate(HUD_COLORS.cyanWire),
@@ -662,6 +636,7 @@ export default function CellDetailPanel({
         data-cell-detail-bottom-widgets="true"
         style={{
           position: 'relative',
+          gridArea: 'bottom',
           zIndex: 1,
           display: 'grid',
           gridTemplateColumns: bottomGridColumns,
@@ -671,7 +646,6 @@ export default function CellDetailPanel({
             ? 'end'
             : 'start',
           minWidth: 0,
-          paddingTop: bottomTop,
           pointerEvents: 'none',
         }}
       >

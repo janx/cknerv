@@ -154,8 +154,10 @@ describe('CellDetailPanel', () => {
       .toContain('cknerv-cell-consensus-enter');
     expect(container.querySelector('[data-cell-detail-scan-field="true"]')).not.toBeNull();
     expect(container.querySelector('[data-cell-portrait-frame]')).not.toBeNull();
-    expect((container.querySelector('[data-cell-portrait-frame]') as HTMLElement).style.width)
-      .toBe('260px');
+    expect((container.querySelector('[data-cell-portrait-frame]') as HTMLElement).style.gridArea)
+      .toBe('portrait');
+    expect((container.firstElementChild as HTMLElement).style.gridTemplateColumns)
+      .toBe('minmax(0, 1fr) 260px');
     expect(container.querySelector('[data-testid="cell-nucleus-portrait"]')).not.toBeNull();
     expect(container.querySelector('[data-cell-specimen-scan-light]')).not.toBeNull();
     const specimenScan = container.querySelector(
@@ -208,8 +210,9 @@ describe('CellDetailPanel', () => {
       .toBe('visible');
     expect(container.querySelector('[data-cell-detail-module="lineage"]')
       ?.getAttribute('data-cell-detail-size')).toBe('content');
-    expect((container.querySelector('[data-cell-detail-bottom-widgets="true"]') as HTMLElement)
-      .style.paddingTop).toBe('380px');
+    const bottomWidgets = container.querySelector('[data-cell-detail-bottom-widgets="true"]') as HTMLElement;
+    expect(bottomWidgets.style.gridArea).toBe('bottom');
+    expect(bottomWidgets.style.paddingTop).toBe('');
   });
 
   it('turns base taxonomy into useful Cell facts without visual parameters', () => {
@@ -291,13 +294,14 @@ describe('CellDetailPanel', () => {
     ) as HTMLElement;
 
     expect(root.style.height).toBe('');
-    expect(scanWindow.style.width).toBe('47%');
-    expect(scanWindow.style.height).toBe('364px');
+    expect(root.style.gridTemplateColumns).toBe('190px minmax(0, 1fr)');
+    expect(scanWindow.style.gridArea).toBe('anatomy');
+    expect(scanWindow.style.height).toBe('');
     expect(memory.style.top).toBe('');
     expect(memory.style.width).toBe('auto');
     expect(memory.style.height).toBe('');
     expect((container.querySelector('[data-cell-detail-bottom-widgets="true"]') as HTMLElement)
-      .style.paddingTop).toBe('452px');
+      .style.paddingTop).toBe('');
     expect(container.querySelector('[data-cell-semantics-placement="scan"]'))
       .not.toBeNull();
     expect(container.querySelector('[data-cell-content-memory-mode="indexed"]'))
@@ -512,8 +516,8 @@ describe('CellDetailPanel', () => {
     expect(readout?.querySelector('[data-transaction-semantics-summary]')).toBeNull();
     expect(readout?.querySelector('[data-transaction-participants]')).toBeNull();
     expect(container.querySelector('[data-cell-portrait-frame]')).not.toBeNull();
-    expect((container.querySelector('[data-cell-portrait-frame]') as HTMLElement).style.width)
-      .toBe('280px');
+    expect((container.firstElementChild as HTMLElement).style.gridTemplateColumns)
+      .toBe('minmax(0, 1fr) 280px');
     expect(container.querySelectorAll('[data-cell-inspection-satellite]')).toHaveLength(4);
     expect(memory.dataset.consensusMemoryDensity).toBe('spatial');
     expect((container.firstElementChild as HTMLElement).style.height).toBe('');
@@ -546,8 +550,8 @@ describe('CellDetailPanel', () => {
       .toBe('00');
     expect(container.querySelector('[data-cell-detail-module="context"]')).toBeNull();
     expect(container.querySelector('[data-cell-detail-module="anatomy"]')?.hasAttribute('hidden')).toBe(false);
-    expect((scanWindow as HTMLElement).style.width).toBe('500px');
-    expect((scanWindow as HTMLElement).style.height).toBe('280px');
+    expect((scanWindow as HTMLElement).style.gridArea).toBe('anatomy');
+    expect((scanWindow as HTMLElement).style.height).toBe('');
     expect(container.querySelector('[data-cell-detail-module="lineage"]')?.hasAttribute('hidden')).toBe(false);
     expect((container.querySelector('[data-cell-detail-module="lineage"]') as HTMLElement).style.width).toBe('auto');
     expect((container.firstElementChild as HTMLElement).style.background).toBe('');
