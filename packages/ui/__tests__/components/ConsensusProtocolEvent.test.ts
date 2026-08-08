@@ -3,9 +3,11 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import * as THREE from 'three';
 import {
-  JELLYFISH_BELL_PROFILE,
-  JELLYFISH_BELL_RIBS,
-  JELLYFISH_BELL_SEGMENTS,
+  JELLYFISH_BELL_ARCHES,
+  JELLYFISH_BELL_ARCH_SEGMENTS,
+  JELLYFISH_BELL_CROWN_DEPTH,
+  JELLYFISH_BELL_RIM_DEPTH,
+  JELLYFISH_BELL_SIDES,
   makeProtocolCarrierGeometry,
   protocolCarrierBellPulse,
   protocolCarrierShockwaveProgress,
@@ -18,33 +20,21 @@ const source = (file: string): string => readFileSync(
 );
 
 describe('A protocol event relay', () => {
-  it('uses a rounded, scalloped jellyfish dome instead of a field barrier', () => {
+  it('uses one sparse low-poly jellyfish canopy instead of a field barrier', () => {
     const geometry = makeProtocolCarrierGeometry();
     const positions = geometry.getAttribute('position');
     const depths = new Set<number>();
-    const skirtRadii = new Set<number>();
     for (let vertex = 0; vertex < positions.count; vertex += 1) {
       depths.add(Number(positions.getZ(vertex).toFixed(3)));
-      if (vertex < JELLYFISH_BELL_SEGMENTS * 2) {
-        skirtRadii.add(Number(Math.hypot(
-          positions.getX(vertex),
-          positions.getY(vertex),
-        ).toFixed(3)));
-      }
     }
 
     expect(geometry).toBeInstanceOf(THREE.BufferGeometry);
-    expect(JELLYFISH_BELL_SEGMENTS).toBe(24);
-    expect(JELLYFISH_BELL_RIBS).toBe(7);
-    expect(JELLYFISH_BELL_PROFILE.map(({ radius, depth }) => [radius, depth])).toEqual([
-      [0.98, -0.20],
-      [0.78, 0.01],
-      [0.48, 0.22],
-      [0.16, 0.36],
-    ]);
-    expect(positions.count).toBe(234);
+    expect(JELLYFISH_BELL_SIDES).toBe(12);
+    expect(JELLYFISH_BELL_ARCHES).toBe(3);
+    expect(JELLYFISH_BELL_ARCH_SEGMENTS).toBe(6);
+    expect(JELLYFISH_BELL_CROWN_DEPTH - JELLYFISH_BELL_RIM_DEPTH).toBeCloseTo(0.6);
+    expect(positions.count).toBe(54);
     expect(depths.size).toBe(4);
-    expect(skirtRadii.size).toBeGreaterThan(8);
     expect(geometry.index).toBeNull();
     expect(source('BlockDeliveryLayer.tsx')).not.toContain('BoxGeometry');
     expect(source('BlockDeliveryLayer.tsx')).not.toContain('makeProtocolLandingTexture');
@@ -57,7 +47,7 @@ describe('A protocol event relay', () => {
     geometry.dispose();
   });
 
-  it('opens the bell, counter-stretches five tentacles, and sheds a propulsion wave', () => {
+  it('opens the bell, counter-stretches three tentacles, and sheds a propulsion wave', () => {
     const delivery = source('BlockDeliveryLayer.tsx');
 
     expect(protocolCarrierBellPulse(Math.PI / 2)).toBe(1);

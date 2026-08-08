@@ -1,9 +1,10 @@
 import * as THREE from 'three';
 
 const TAU = Math.PI * 2;
-const TEXTURE_CURVE_SEGMENTS = 96;
-export const JELLYFISH_TENTACLE_COUNT = 5;
-export const JELLYFISH_TENTACLE_SEGMENTS = 14;
+export const GEOMETRIC_SHOCKWAVE_SIDES = 12;
+export const GEOMETRIC_SHOCKWAVE_GAPS = 3;
+export const JELLYFISH_TENTACLE_COUNT = 3;
+export const JELLYFISH_TENTACLE_SEGMENTS = 6;
 
 function finish(canvas: HTMLCanvasElement): THREE.Texture {
   const tex = new THREE.CanvasTexture(canvas);
@@ -13,93 +14,54 @@ function finish(canvas: HTMLCanvasElement): THREE.Texture {
   return tex;
 }
 
-function strokeFluidLoop(
+function strokeSegmentedRing(
   ctx: CanvasRenderingContext2D,
   cx: number,
   cy: number,
   radius: number,
-  ripple: number,
-  lobes: number,
-  phase: number,
   color: string,
   lineWidth: number,
 ): void {
+  const gapEvery = GEOMETRIC_SHOCKWAVE_SIDES / GEOMETRIC_SHOCKWAVE_GAPS;
   ctx.strokeStyle = color;
   ctx.lineWidth = lineWidth;
-  ctx.beginPath();
-  for (let segment = 0; segment <= TEXTURE_CURVE_SEGMENTS; segment += 1) {
-    const angle = segment / TEXTURE_CURVE_SEGMENTS * TAU;
-    const fluidRadius = radius + ripple * Math.cos(angle * lobes + phase);
-    const x = cx + Math.cos(angle) * fluidRadius;
-    const y = cy + Math.sin(angle) * fluidRadius;
-    if (segment === 0) ctx.moveTo(x, y);
-    else ctx.lineTo(x, y);
+  for (let side = 0; side < GEOMETRIC_SHOCKWAVE_SIDES; side += 1) {
+    if (side % gapEvery === gapEvery - 1) continue;
+    const fromAngle = side / GEOMETRIC_SHOCKWAVE_SIDES * TAU;
+    const toAngle = (side + 1) / GEOMETRIC_SHOCKWAVE_SIDES * TAU;
+    ctx.beginPath();
+    ctx.moveTo(
+      cx + Math.cos(fromAngle) * radius,
+      cy + Math.sin(fromAngle) * radius,
+    );
+    ctx.lineTo(
+      cx + Math.cos(toAngle) * radius,
+      cy + Math.sin(toAngle) * radius,
+    );
+    ctx.stroke();
   }
-  ctx.stroke();
-}
-
-function strokeFluidArc(
-  ctx: CanvasRenderingContext2D,
-  cx: number,
-  cy: number,
-  radius: number,
-  start: number,
-  span: number,
-  bend: number,
-  color: string,
-  lineWidth: number,
-): void {
-  const segments = 28;
-  ctx.strokeStyle = color;
-  ctx.lineWidth = lineWidth;
-  ctx.beginPath();
-  for (let segment = 0; segment <= segments; segment += 1) {
-    const t = segment / segments;
-    const angle = start + span * t;
-    const fluidRadius = radius + Math.sin(t * Math.PI) * bend;
-    const x = cx + Math.cos(angle) * fluidRadius;
-    const y = cy + Math.sin(angle) * fluidRadius;
-    if (segment === 0) ctx.moveTo(x, y);
-    else ctx.lineTo(x, y);
-  }
-  ctx.stroke();
 }
 
 /**
- * Soft front membrane for the 3D jellyfish bell. A subtly scalloped skirt and
- * drifting caustic arcs reinforce the rounded dome without a central aperture,
- * radial spokes, or a hard polygonal boundary. Runtime tint supplies the exact
- * block-carrier hue.
+ * Unmarked light membrane for the low-poly bell. Geometry owns the silhouette;
+ * the texture contributes only a compact falloff, avoiding nested rings,
+ * caustic decoration, or any second glyph competing with the wire canopy.
  */
 export function makeJellyfishBellTexture(): THREE.Texture {
-  const size = 192;
+  const size = 128;
   const canvas = document.createElement('canvas');
   canvas.width = size;
   canvas.height = size;
   const ctx = canvas.getContext('2d')!;
   const c = size / 2;
-  ctx.globalCompositeOperation = 'lighter';
-  ctx.lineCap = 'round';
-  ctx.lineJoin = 'round';
 
-  const glow = ctx.createRadialGradient(c, c - 4, 0, c, c, size / 2);
-  glow.addColorStop(0.0, 'rgba(255,255,255,0.42)');
-  glow.addColorStop(0.24, 'rgba(255,255,255,0.22)');
-  glow.addColorStop(0.58, 'rgba(255,255,255,0.075)');
-  glow.addColorStop(0.86, 'rgba(255,255,255,0.025)');
+  const glow = ctx.createRadialGradient(c, c - 3, 0, c, c, size / 2);
+  glow.addColorStop(0.0, 'rgba(255,255,255,0.34)');
+  glow.addColorStop(0.30, 'rgba(255,255,255,0.16)');
+  glow.addColorStop(0.68, 'rgba(255,255,255,0.045)');
   glow.addColorStop(1.0, 'rgba(255,255,255,0.0)');
   ctx.fillStyle = glow;
   ctx.fillRect(0, 0, size, size);
-
-  // The broad under-stroke reads as a living, translucent skirt rather than a
-  // wire barrier; the narrow crest stays crisp at galaxy camera distance.
-  strokeFluidLoop(ctx, c, c, 72, 2.8, 7, 0.35, 'rgba(255,255,255,0.13)', 9.0);
-  strokeFluidLoop(ctx, c, c, 72, 2.8, 7, 0.35, 'rgba(255,255,255,0.88)', 2.8);
-  strokeFluidLoop(ctx, c, c - 1, 58, 1.2, 7, 1.10, 'rgba(255,255,255,0.28)', 1.4);
-
-  strokeFluidArc(ctx, c, c - 2, 48, -2.72, 1.12, 4.5, 'rgba(255,255,255,0.30)', 1.3);
-  strokeFluidArc(ctx, c, c - 2, 51, -0.82, 1.20, -3.0, 'rgba(255,255,255,0.24)', 1.1);
-  strokeFluidArc(ctx, c, c - 3, 36, 0.72, 1.38, 3.5, 'rgba(255,255,255,0.20)', 1.0);
   return finish(canvas);
 }
 
@@ -114,9 +76,8 @@ export function makeBolusBloomTexture(): THREE.Texture {
 }
 
 /**
- * Fluid pressure ring used both for the bell's faint propulsion pulse and its
- * larger Cell-galaxy contact wave. The quiet centre and round double crest make
- * scale-up read as a travelling shockwave, never as another solid object.
+ * One interrupted twelve-sided pressure crest. The three gaps echo the open
+ * bell skirt and make expansion legible without adding a second concentric ring.
  */
 export function makeIngestShockwaveTexture(): THREE.Texture {
   const size = 128;
@@ -126,23 +87,20 @@ export function makeIngestShockwaveTexture(): THREE.Texture {
   const ctx = canvas.getContext('2d')!;
   const c = size / 2;
   ctx.globalCompositeOperation = 'lighter';
-  ctx.lineCap = 'round';
+  ctx.lineCap = 'butt';
+  ctx.lineJoin = 'miter';
 
   const glow = ctx.createRadialGradient(c, c, 0, c, c, size / 2);
-  glow.addColorStop(0.0, 'rgba(255,255,255,0.18)');
-  glow.addColorStop(0.16, 'rgba(255,255,255,0.10)');
-  glow.addColorStop(0.42, 'rgba(255,255,255,0.025)');
-  glow.addColorStop(0.66, 'rgba(255,255,255,0.02)');
-  glow.addColorStop(0.78, 'rgba(255,255,255,0.48)');
-  glow.addColorStop(0.85, 'rgba(255,255,255,0.94)');
-  glow.addColorStop(0.93, 'rgba(255,255,255,0.20)');
+  glow.addColorStop(0.0, 'rgba(255,255,255,0.08)');
+  glow.addColorStop(0.58, 'rgba(255,255,255,0.015)');
+  glow.addColorStop(0.80, 'rgba(255,255,255,0.025)');
+  glow.addColorStop(0.92, 'rgba(255,255,255,0.04)');
   glow.addColorStop(1.0, 'rgba(255,255,255,0.0)');
   ctx.fillStyle = glow;
   ctx.fillRect(0, 0, size, size);
 
-  strokeFluidLoop(ctx, c, c, 53, 0, 1, 0, 'rgba(255,255,255,0.24)', 7.0);
-  strokeFluidLoop(ctx, c, c, 53, 0, 1, 0, 'rgba(255,255,255,0.92)', 2.2);
-  strokeFluidLoop(ctx, c, c, 46, 0, 1, 0, 'rgba(255,255,255,0.42)', 1.1);
+  strokeSegmentedRing(ctx, c, c, 53, 'rgba(255,255,255,0.20)', 6.0);
+  strokeSegmentedRing(ctx, c, c, 53, 'rgba(255,255,255,0.92)', 1.8);
   return finish(canvas);
 }
 
@@ -152,9 +110,9 @@ export function makeIngestFlashTexture(): THREE.Texture {
 }
 
 /**
- * Five soft energy tentacles rooted below the rounded umbrella. Unequal
- * lengths, taper, and phase-offset curves keep the wake biological while
- * runtime tint ties the whole jellyfish to one observed block identity.
+ * Three angular energy filaments below the bell. Six tapered straight sections
+ * per filament preserve the jellyfish reading with far less visual noise than
+ * the former five continuously waving strands.
  */
 export function makeJellyfishWakeTexture(): THREE.Texture {
   const width = 128;
@@ -164,40 +122,41 @@ export function makeJellyfishWakeTexture(): THREE.Texture {
   canvas.height = height;
   const ctx = canvas.getContext('2d')!;
   ctx.globalCompositeOperation = 'lighter';
-  ctx.lineCap = 'round';
+  ctx.lineCap = 'butt';
+  ctx.lineJoin = 'miter';
 
-  const rootGlow = ctx.createRadialGradient(width / 2, 14, 0, width / 2, 14, 48);
-  rootGlow.addColorStop(0, 'rgba(255,255,255,0.54)');
-  rootGlow.addColorStop(0.45, 'rgba(255,255,255,0.16)');
+  const rootGlow = ctx.createRadialGradient(width / 2, 13, 0, width / 2, 13, 34);
+  rootGlow.addColorStop(0, 'rgba(255,255,255,0.42)');
+  rootGlow.addColorStop(0.48, 'rgba(255,255,255,0.11)');
   rootGlow.addColorStop(1, 'rgba(255,255,255,0)');
   ctx.fillStyle = rootGlow;
-  ctx.fillRect(0, 0, width, 70);
+  ctx.fillRect(20, 0, width - 40, 54);
 
-  const roots = [-33, -17, 0, 17, 33] as const;
-  const lengths = [0.78, 0.94, 1, 0.90, 0.75] as const;
+  const roots = [-25, 0, 25] as const;
+  const lengths = [0.84, 1, 0.88] as const;
   for (let tentacle = 0; tentacle < JELLYFISH_TENTACLE_COUNT; tentacle += 1) {
     const root = roots[tentacle];
-    const phase = tentacle * 1.37;
-    const point = (t: number): [number, number] => {
-      const sway = Math.sin(t * TAU * 1.28 + phase) * (3 + t * 10);
-      const drift = (tentacle - 2) * t * 1.1;
+    const lane = tentacle - 1;
+    const point = (step: number): [number, number] => {
+      const t = step / JELLYFISH_TENTACLE_SEGMENTS;
+      const direction = step % 2 === 0 ? 1 : -1;
+      const kink = step === 0
+        ? 0
+        : direction * (2.0 + t * 5.0) * (tentacle === 1 ? 0.62 : 1);
       return [
-        width / 2 + root * (1 - t * 0.24) + sway + drift,
-        14 + t * (height - 26) * lengths[tentacle],
+        width / 2 + root * (1 - t * 0.20) + lane * t * 5 + kink,
+        13 + t * (height - 28) * lengths[tentacle],
       ];
     };
 
     for (let segment = 0; segment < JELLYFISH_TENTACLE_SEGMENTS; segment += 1) {
-      const t0 = segment / JELLYFISH_TENTACLE_SEGMENTS;
-      const t1 = (segment + 1) / JELLYFISH_TENTACLE_SEGMENTS;
-      const [x0, y0] = point(t0);
-      const [x1, y1] = point(t1);
-      const strength = Math.pow(1 - t0, 0.58);
-      const centerGain = tentacle === 2 ? 1 : 0.84;
-      ctx.strokeStyle = tentacle === 2
-        ? `rgba(255,255,255,${0.90 * strength})`
-        : `rgba(255,255,255,${0.78 * strength})`;
-      ctx.lineWidth = 0.40 + 2.5 * strength * centerGain;
+      const [x0, y0] = point(segment);
+      const [x1, y1] = point(segment + 1);
+      const strength = Math.pow(1 - segment / JELLYFISH_TENTACLE_SEGMENTS, 0.72);
+      ctx.strokeStyle = `rgba(255,255,255,${
+        (tentacle === 1 ? 0.88 : 0.68) * strength
+      })`;
+      ctx.lineWidth = 0.55 + 2.1 * strength * (tentacle === 1 ? 1 : 0.82);
       ctx.beginPath();
       ctx.moveTo(x0, y0);
       ctx.lineTo(x1, y1);
