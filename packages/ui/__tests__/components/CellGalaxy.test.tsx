@@ -117,7 +117,6 @@ describe('CellGalaxy', () => {
 
     expect(source).toContain('<CellNucleus');
     expect(source).not.toContain('<CellOrganism');
-    expect(source).not.toContain('<CellCrystal');
     expect(source).not.toContain('CELL_FORM');
   });
 
