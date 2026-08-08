@@ -264,3 +264,58 @@ describe('NeuralFabric living-mesh handles', () => {
     expect(passiveLoop).not.toContain('st.usage');
   });
 });
+
+describe('NeuralFabric oversized-diff cohort staggering', () => {
+  it('staggers via the pure planner as a DELAYED-INSERTION queue', () => {
+    expect(SRC).toContain('planFabricCohorts(');
+    expect(SRC).toContain('pendingCohortsRef');
+    // Delayed insertion, not future-bornAt: queued adds are admitted with
+    // the pump frame's `now` (see fabricCohorts.ts for why).
+    expect(SRC).not.toContain('bornAt: slice.startAt');
+    expect(SRC).not.toContain('bornAt: cohort.startAt');
+  });
+
+  it('shares ONE insertion body between immediate, flush, and pump admissions', () => {
+    // The extracted helper's three call sites (immediate pass-1, setFabric
+    // flush, emitFabric pump) — a deferred admission cannot drift from an
+    // immediate one.
+    expect(SRC).toContain('const admitFabricEdge = (');
+    const admitCalls = SRC.match(/admitFabricEdge\(\n?/g) ?? [];
+    expect(admitCalls.length).toBe(3);
+  });
+
+  it('flushes pending cohorts before diffing a new authoritative graph', () => {
+    const setFabricBody = SRC.slice(
+      SRC.indexOf('setFabric(graph, cells, now) {'),
+      SRC.indexOf('growEdges(edges, cells, bornAtByKey, dirByKey) {'),
+    );
+    // The flush (queue cleared, remainder admitted fully-grown) must come
+    // before pass 1 so the diff always runs against complete states.
+    const flushAt = setFabricBody.indexOf('pendingCohortsRef.current = null');
+    const passOneAt = setFabricBody.indexOf('for (const e of graph.edges)');
+    expect(flushAt).toBeGreaterThan(-1);
+    expect(passOneAt).toBeGreaterThan(flushAt);
+    // Flushed adds join fully grown — no animation restart on flush.
+    expect(setFabricBody).toContain('const grownBornAt = now - GROWTH_MS / 1000');
+  });
+
+  it('pumps due cohorts at the emitFabric entry, ahead of the dirty gate', () => {
+    const emitBody = SRC.slice(SRC.indexOf('emitFabric(now) {'));
+    const pumpAt = emitBody.indexOf('pendingCohortsRef.current');
+    const dirtyGateAt = emitBody.indexOf('if (!emitDirtyRef.current)');
+    expect(pumpAt).toBeGreaterThan(-1);
+    expect(dirtyGateAt).toBeGreaterThan(pumpAt);
+    // Cohort gc-fades keep the deaths-at-now invariant and killEdges
+    // idempotency (never reset an in-flight death clock).
+    const pump = emitBody.slice(0, dirtyGateAt);
+    expect(pump).toContain('st.dyingAt = now');
+    expect(pump).toContain('if (!st || st.dyingAt !== null) continue');
+  });
+
+  it('meters passive-fabric uploads through fabricUploadBytes', () => {
+    expect(SRC).toContain('fabricUploadBytes');
+    const observeCalls = SRC.match(/fabricStats\.observeUpload\(/g) ?? [];
+    // Incremental slot ranges + full walk + inspection-only prefix.
+    expect(observeCalls.length).toBe(3);
+  });
+});
