@@ -60,7 +60,10 @@ const DELTA_BATCH_FALLBACK_MS = 50;
 
 /**
  * Generic projection-stream connect helper. The caller supplies:
- *  - `fromSnapshot(rev, payload)` → fresh Cache value
+ *  - `fromSnapshot(rev, payload, prev)` → fresh Cache value. `prev` is the
+ *    cache the snapshot replaces, so resync snapshots can reuse the object
+ *    identity of content-identical retained records instead of handing every
+ *    record a fresh identity.
  *  - `applyDeltas(prev, [{revision, delta}, ...])` → next Cache value
  *  - `getRevision(cache)` → current revision (for ?since= reconnect cursor)
  *  - `markLagged(cache)` → cache with revision reset to 0 (force resnap)
@@ -71,7 +74,7 @@ export function connectProjectionStream<Cache, Snapshot, Delta>(
   streamUrl: string,
   initial: Cache,
   hooks: {
-    fromSnapshot: (revision: number, payload: Snapshot) => Cache;
+    fromSnapshot: (revision: number, payload: Snapshot, prev: Cache) => Cache;
     applyDeltas: (
       prev: Cache,
       deltas: { revision: number; delta: Delta }[],
@@ -165,7 +168,7 @@ export function connectProjectionStream<Cache, Snapshot, Delta>(
         // A snapshot is authoritative at its exact point in the ordered
         // stream. Any uncommitted older deltas must not apply after it.
         discardPendingDeltas();
-        cache = hooks.fromSnapshot(frame.revision, frame.snapshot);
+        cache = hooks.fromSnapshot(frame.revision, frame.snapshot, cache);
         needsResync = false;
         health.message();
         onChange(cache);
@@ -252,7 +255,8 @@ export function connectCellsStream(
     streamUrl,
     initial ?? emptyCellsCache(),
     {
-      fromSnapshot: (rev, payload) => fromCellsSnapshot(rev, payload, opts),
+      fromSnapshot: (rev, payload, prev) =>
+        fromCellsSnapshot(rev, payload, opts, prev),
       applyDeltas: (prev, deltas) =>
         applyRevisionedCellDeltas(prev, deltas as RevisionedCellDelta[], opts),
       getRevision: (c) => c.revision,

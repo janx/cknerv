@@ -7,7 +7,7 @@ import {
 import {
   connectCellsStream,
 } from '../src/projectionStream';
-import { emptyCellsCache } from '../src/cellsReducer';
+import { emptyCellsCache, type CellGalaxyCache } from '../src/cellsReducer';
 import type { Cell } from '@cknerv/types';
 import type { StreamHealth } from '../src/streamHealth';
 
@@ -157,6 +157,58 @@ describe('stream connector health frames', () => {
     });
     expect(changes.mock.calls[0][0].cells.size).toBe(2);
     expect(cancelFrame).toHaveBeenCalledWith(7);
+    handle.disconnect();
+  });
+
+  it('a resync snapshot reuses retained Cell identities for unchanged records', () => {
+    vi.stubGlobal('WebSocket', MockWebSocket);
+    const scheduled: { flush?: FrameRequestCallback } = {};
+    vi.stubGlobal('requestAnimationFrame', vi.fn((callback: FrameRequestCallback) => {
+      scheduled.flush = callback;
+      return 3;
+    }));
+    vi.stubGlobal('cancelAnimationFrame', vi.fn());
+    const states: CellGalaxyCache[] = [];
+    const handle = connectCellsStream(
+      'ws://localhost/api/projections/cells/stream',
+      emptyCellsCache(),
+      (next) => states.push(next),
+    );
+    const socket = MockWebSocket.instances[0];
+
+    socket.message({
+      kind: 'delta',
+      revision: 2,
+      deltas: [
+        { revision: 1, delta: { type: 'birth', cell: cell(1) } },
+        { revision: 2, delta: { type: 'birth', cell: cell(2) } },
+      ],
+    });
+    if (!scheduled.flush) throw new Error('delta flush was not scheduled');
+    scheduled.flush(16);
+
+    const live = states.at(-1);
+    if (!live) throw new Error('no live cache published');
+    const retained = live.cells.get(1);
+
+    // Post-lag resync: the authoritative snapshot re-delivers cell 1
+    // byte-identically and cell 2 with a real content change.
+    socket.message({
+      kind: 'snapshot',
+      revision: 9,
+      snapshot: {
+        cells: [cell(1), { ...cell(2), capacity: 999 }],
+        last_pulse_at_ms: 0,
+      },
+    });
+
+    const resynced = states.at(-1);
+    if (!resynced) throw new Error('no resynced cache published');
+    expect(resynced.revision).toBe(9);
+    expect(resynced.cells.get(1)).toBe(retained);
+    expect(resynced.cells.get(2)).not.toBe(live.cells.get(2));
+    expect(resynced.cells.get(2)?.capacity).toBe(999);
+    expect(resynced.cellChanges.reset).toBe(true);
     handle.disconnect();
   });
 });

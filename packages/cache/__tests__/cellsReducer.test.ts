@@ -17,6 +17,7 @@ import {
   applyRevisionedCellDeltas,
   emptyCellsCache,
   fromCellsSnapshot,
+  NO_CELL_CHANGES,
 } from '../src/cellsReducer';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -503,6 +504,123 @@ describe('applyRevisionedCellDeltas (batched)', () => {
   });
 });
 
+describe('canonical suffix-rewrite replay identity reuse', () => {
+  const rd = (revision: number, delta: RevisionedCellDelta['delta']) =>
+    ({ revision, delta } as RevisionedCellDelta);
+
+  it('an identical rebirth is a pure no-op', () => {
+    const populated = applyCellDelta(emptyCellsCache(), {
+      type: 'birth',
+      cell: cell(1),
+    });
+    // Fresh object, byte-identical content — as produced by a replayed frame.
+    const replayed = applyCellDelta(populated, { type: 'birth', cell: cell(1) });
+    expect(replayed).toBe(populated);
+    expect(replayed.cells.get(1)).toBe(populated.cells.get(1));
+  });
+
+  it('keeps identity and journal silence for unchanged cells across a suffix-rewrite replay', () => {
+    // Retained field: 40 cells below the rewrite boundary + 8 in the suffix.
+    let start = emptyCellsCache();
+    const seed: RevisionedCellDelta[] = [];
+    for (let id = 1; id <= 48; id += 1) {
+      seed.push(rd(id, {
+        type: 'birth',
+        cell: cell(id, { birth_block: id <= 40 ? 1 : 50 + id }),
+      }));
+    }
+    start = applyRevisionedCellDeltas(start, seed);
+
+    // Suffix rewrite replay: the prune marker plus re-delivered births. All
+    // records arrive as fresh parsed objects; only two carry real changes.
+    const replay: RevisionedCellDelta[] = [
+      rd(100, { type: 'link_prune', from_block: 90 }),
+    ];
+    for (let id = 1; id <= 48; id += 1) {
+      if (id === 41) {
+        replay.push(rd(100 + id, {
+          type: 'birth',
+          cell: cell(id, { birth_block: 50 + id, capacity: 999 }),
+        }));
+      } else if (id === 42) {
+        replay.push(rd(100 + id, {
+          type: 'birth',
+          cell: cell(id, { birth_block: 50 + id, death_at_ms: 9000 }),
+        }));
+      } else {
+        replay.push(rd(100 + id, {
+          type: 'birth',
+          cell: cell(id, { birth_block: id <= 40 ? 1 : 50 + id }),
+        }));
+      }
+    }
+    const out = applyRevisionedCellDeltas(start, replay);
+
+    // Every content-identical record keeps its exact retained object.
+    for (let id = 1; id <= 48; id += 1) {
+      if (id === 41 || id === 42) continue;
+      expect(out.cells.get(id)).toBe(start.cells.get(id));
+    }
+    // The really-changed subset is replaced and is all the journal carries.
+    expect(out.cells.get(41)).not.toBe(start.cells.get(41));
+    expect(out.cells.get(41)?.capacity).toBe(999);
+    expect(out.cells.get(42)?.death_at_ms).toBe(9000);
+    expect(out.cellChanges).toMatchObject({
+      reset: false,
+      orderInvalidated: false,
+      born: [],
+      died: [42],
+      evicted: [],
+      updated: [41, 42],
+    });
+    expect(out.cellChanges.baseToken).toBe(start.cellsToken);
+    expect(out.cellsToken).not.toBe(start.cellsToken);
+  });
+
+  it('advances only the revision when every replayed record is unchanged', () => {
+    let start = emptyCellsCache();
+    start = applyRevisionedCellDeltas(start, [
+      rd(1, { type: 'birth', cell: cell(1) }),
+      rd(2, { type: 'birth', cell: cell(2) }),
+    ]);
+
+    const out = applyRevisionedCellDeltas(start, [
+      rd(3, { type: 'birth', cell: cell(1) }),
+      rd(4, { type: 'birth', cell: cell(2) }),
+    ]);
+
+    expect(out).not.toBe(start);
+    expect(out.revision).toBe(4);
+    expect(out.cells).toBe(start.cells);
+    expect(out.cellsToken).toBe(start.cellsToken);
+    expect(out.cellChanges).toBe(NO_CELL_CHANGES);
+  });
+
+  it('re-death at the recorded timestamp and re-tag with the applied tag are no-ops', () => {
+    let c = applyCellDelta(emptyCellsCache(), {
+      type: 'birth',
+      cell: cell(1, { tag: 'dex' }),
+    });
+    c = applyCellDelta(c, { type: 'death', id: 1, at_ms: 5000 });
+
+    const redeath = applyCellDelta(c, { type: 'death', id: 1, at_ms: 5000 });
+    expect(redeath).toBe(c);
+
+    const retag = applyCellDelta(c, { type: 'tag', id: 1, tag: 'dex' });
+    expect(retag).toBe(c);
+  });
+
+  it('gc of ids the cache never retained is a pure no-op', () => {
+    const populated = applyCellDelta(emptyCellsCache(), {
+      type: 'birth',
+      cell: cell(1),
+    });
+    const swept = applyCellDelta(populated, { type: 'gc', ids: [7, 9] });
+    expect(swept).toBe(populated);
+    expect(swept.cellsToken).toBe(populated.cellsToken);
+  });
+});
+
 describe('applyRevisionedCellDeltas', () => {
   it('advances revision to the max in the batch', () => {
     const after = applyRevisionedCellDeltas(emptyCellsCache(), [
@@ -619,6 +737,37 @@ describe('fromCellsSnapshot', () => {
     expect(c.recentLinks.map((l) => l.tx_hash)).toEqual(['0xtx1', '0xtx2']);
     expect(c.pulseLinks).toEqual([]);
     expect(c.linksSeq).toBe(2);
+  });
+
+  it('reuses content-identical retained Cell objects on a resync snapshot', () => {
+    let prev = emptyCellsCache();
+    prev = applyCellDelta(prev, { type: 'birth', cell: cell(1) });
+    prev = applyCellDelta(prev, { type: 'birth', cell: cell(2) });
+    prev = applyCellDelta(prev, { type: 'birth', cell: cell(3) });
+
+    // Resync snapshot: 1 unchanged, 2 really changed, 3 gone, 4 new.
+    const snap: CellGalaxySnapshot = {
+      cells: [cell(1), cell(2, { capacity: 777 }), cell(4)],
+      last_pulse_at_ms: 0,
+    };
+    const c = fromCellsSnapshot(9, snap, {}, prev);
+
+    expect(c.cells.get(1)).toBe(prev.cells.get(1));
+    expect(c.cells.get(2)).not.toBe(prev.cells.get(2));
+    expect(c.cells.get(2)?.capacity).toBe(777);
+    expect(c.cells.get(4)?.id).toBe(4);
+    // The snapshot stays authoritative for membership and insertion order.
+    expect(c.cells.has(3)).toBe(false);
+    expect([...c.cells.keys()]).toEqual([1, 2, 4]);
+    // Reset signalling is untouched: fresh token, reset journal.
+    expect(c.cellsToken).not.toBe(prev.cellsToken);
+    expect(c.cellChanges).toMatchObject({
+      reset: true,
+      born: [],
+      died: [],
+      evicted: [],
+      updated: [],
+    });
   });
 });
 
