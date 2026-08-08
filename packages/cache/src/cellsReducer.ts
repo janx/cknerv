@@ -198,6 +198,27 @@ export function cellContentEquals(a: Cell, b: Cell): boolean {
   );
 }
 
+/** Compile-time completeness anchor for `cellContentEquals`: one entry per
+ *  `Cell` field. Adding a field to `Cell` without teaching the comparator
+ *  (and this list) fails typecheck here instead of silently treating changed
+ *  records as content-identical; a removed or renamed field fails as an
+ *  excess key. */
+const comparedCellFields = {
+  id: true,
+  born_at_ms: true,
+  death_at_ms: true,
+  birth_block: true,
+  tag: true,
+  pos_seed: true,
+  out_point: true,
+  capacity: true,
+  data_hex: true,
+  content_hash: true,
+  lock_kind: true,
+  asset_kind: true,
+} as const satisfies Record<keyof Cell, true>;
+void comparedCellFields;
+
 export function fromCellsSnapshot(
   rev: number,
   snap: CellGalaxySnapshot,
