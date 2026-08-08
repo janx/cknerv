@@ -18,8 +18,8 @@ import {
   type DeliveryPhaseConfig,
 } from '../derives/peers.derive';
 import {
-  makeProtocolCarrierTexture,
-  makeIngestFlashTexture,
+  makeJellyfishBellTexture,
+  makeIngestShockwaveTexture,
   makeJellyfishWakeTexture,
 } from '../materials/deliveryTextures';
 import { BEAM_GROW_DUR_S, BEAM_CHARGE_DUR_S } from '../ui/topologyConstants';
@@ -28,7 +28,8 @@ import type { ConsensusFlowColor } from '../derives/consensusFlow.derive';
 import {
   makeProtocolCarrierGeometry,
   protocolCarrierBellPulse,
-  setProtocolFieldFacing,
+  protocolCarrierShockwaveProgress,
+  setProtocolCarrierFacing,
 } from '../geometry/protocolCarrier';
 import {
   markCellFlashDirty,
@@ -37,18 +38,18 @@ import {
 
 // BlockDeliveryLayer — the network→Cell-field handoff in the A visual language.
 // Every real measured node keeps its own timing and transform, but the renderer
-// submits the whole event as four semantic batches: one merged octagonal-bell
-// body, plus instanced umbrella membrane, jellyfish tentacles, and contact wave.
-// The minimal A.T.-Field face stays aimed along the peer→Cell travel axis. Its
-// shallow bell opens and contracts while five soft tendrils stretch behind it;
-// at contact the carrier recoils into an octagonal pressure wave.
+// submits the whole event as four semantic batches: one merged rounded-bell
+// body, plus instanced fluid membrane, jellyfish tentacles, and pressure waves.
+// The shallow umbrella swims head-first along the peer→Cell travel axis. Each
+// contraction sheds a faint propulsion ring; contact resolves the carrier into
+// a broad circular shockwave across the Cell boundary.
 // Delivery count changes instance/vertex counts, never draw-call count.
 
 const CARRIER_GEOM = makeProtocolCarrierGeometry();
 const CARRIER_BASE_POSITION = CARRIER_GEOM.getAttribute('position') as THREE.BufferAttribute;
 const CARRIER_VERTEX_COUNT = CARRIER_BASE_POSITION.count;
 const LOB_DUR_S = BEAM_GROW_DUR_S;
-const FIELD_SPIN_RATE = 0.34;
+const JELLY_BELL_ROLL_RATE = 0.24;
 const JELLY_BELL_PULSE_RATE = 7.2;
 const JELLY_BELL_OPEN_MIN = 0.92;
 const JELLY_BELL_OPEN_AMOUNT = 0.14;
@@ -62,8 +63,8 @@ const PALE_CONSENSUS = new THREE.Color().setRGB(...CONSENSUS_BRAID_PALETTE.pale)
 const CARRIER_COLOR = new THREE.Color();
 const WHITE = new THREE.Color(1, 1, 1);
 const BLACK = new THREE.Color(0, 0, 0);
-const FIELD_NORMAL = new THREE.Vector3(0, 0, 1);
-const FIELD_FALLBACK_DIRECTION = new THREE.Vector3(0, 1, 0);
+const CARRIER_LOCAL_FORWARD = new THREE.Vector3(0, 0, 1);
+const CARRIER_FALLBACK_DIRECTION = new THREE.Vector3(0, 1, 0);
 const WAKE_FALLBACK_NORMAL = new THREE.Vector3(0, 0, 1);
 const WAKE_SECONDARY_NORMAL = new THREE.Vector3(1, 0, 0);
 
@@ -80,17 +81,18 @@ const lobSpeed = (t: number) => 0.15 + 1.7 * t;
 // into a GPU attribute immediately, so no per-frame object allocation is needed.
 const _position = new THREE.Vector3();
 const _trailPosition = new THREE.Vector3();
+const _wavePosition = new THREE.Vector3();
 const _flightDirection = new THREE.Vector3();
 const _cameraPosition = new THREE.Vector3();
 const _wakeNormal = new THREE.Vector3();
 const _wakeRight = new THREE.Vector3();
 const _scale = new THREE.Vector3();
 const _bodyQuaternion = new THREE.Quaternion();
-const _fieldFacingQuaternion = new THREE.Quaternion();
-const _bodySpinQuaternion = new THREE.Quaternion();
+const _carrierFacingQuaternion = new THREE.Quaternion();
+const _bellRollQuaternion = new THREE.Quaternion();
 const _wakeQuaternion = new THREE.Quaternion();
 const _spriteQuaternion = new THREE.Quaternion();
-const _spriteSpinQuaternion = new THREE.Quaternion();
+const _spriteRollQuaternion = new THREE.Quaternion();
 const _wakeBasis = new THREE.Matrix4();
 const _matrix = new THREE.Matrix4();
 const _batchColor = new THREE.Color();
@@ -173,8 +175,8 @@ function writeSpriteInstance(
   _scale.set(width, height, 1);
   _spriteQuaternion.copy(basisQuaternion);
   if (rotationZ !== 0) {
-    _spriteSpinQuaternion.setFromAxisAngle(FIELD_NORMAL, rotationZ);
-    _spriteQuaternion.multiply(_spriteSpinQuaternion);
+    _spriteRollQuaternion.setFromAxisAngle(CARRIER_LOCAL_FORWARD, rotationZ);
+    _spriteQuaternion.multiply(_spriteRollQuaternion);
   }
   _matrix.compose(position, _spriteQuaternion, _scale);
   batch.setMatrixAt(index, _matrix);
@@ -283,23 +285,26 @@ export default function BlockDeliveryLayer({
     toneMapped: false,
   }), []);
 
-  const bloomTex = useMemo(() => makeProtocolCarrierTexture(), []);
-  const flashTex = useMemo(() => makeIngestFlashTexture(), []);
-  const trailTex = useMemo(() => makeJellyfishWakeTexture(), []);
+  const membraneTex = useMemo(() => makeJellyfishBellTexture(), []);
+  const impactTex = useMemo(() => makeIngestShockwaveTexture(), []);
+  const wakeTex = useMemo(() => makeJellyfishWakeTexture(), []);
   const spriteGeometry = useMemo(() => new THREE.PlaneGeometry(1, 1), []);
-  const bloomMaterial = useMemo(() => makeSpriteBatchMaterial(bloomTex), [bloomTex]);
-  const trailMaterial = useMemo(() => makeSpriteBatchMaterial(trailTex), [trailTex]);
-  const flashMaterial = useMemo(() => makeSpriteBatchMaterial(flashTex), [flashTex]);
+  const membraneMaterial = useMemo(
+    () => makeSpriteBatchMaterial(membraneTex),
+    [membraneTex],
+  );
+  const wakeMaterial = useMemo(() => makeSpriteBatchMaterial(wakeTex), [wakeTex]);
+  const impactMaterial = useMemo(() => makeSpriteBatchMaterial(impactTex), [impactTex]);
 
-  const bloomBatchRef = useRef<THREE.InstancedMesh>(null);
-  const trailBatchRef = useRef<THREE.InstancedMesh>(null);
-  const flashBatchRef = useRef<THREE.InstancedMesh>(null);
+  const membraneBatchRef = useRef<THREE.InstancedMesh>(null);
+  const wakeBatchRef = useRef<THREE.InstancedMesh>(null);
+  const impactBatchRef = useRef<THREE.InstancedMesh>(null);
 
   useLayoutEffect(() => {
     const batches = [
-      bloomBatchRef.current,
-      trailBatchRef.current,
-      flashBatchRef.current,
+      membraneBatchRef.current,
+      wakeBatchRef.current,
+      impactBatchRef.current,
     ];
     for (const batch of batches) {
       if (!batch) continue;
@@ -316,38 +321,38 @@ export default function BlockDeliveryLayer({
     bodyGeometry.dispose();
     bodyMaterial.dispose();
     spriteGeometry.dispose();
-    bloomMaterial.dispose();
-    trailMaterial.dispose();
-    flashMaterial.dispose();
-    bloomTex.dispose();
-    flashTex.dispose();
-    trailTex.dispose();
+    membraneMaterial.dispose();
+    wakeMaterial.dispose();
+    impactMaterial.dispose();
+    membraneTex.dispose();
+    impactTex.dispose();
+    wakeTex.dispose();
   }, [
     bodyGeometry,
     bodyMaterial,
     spriteGeometry,
-    bloomMaterial,
-    trailMaterial,
-    flashMaterial,
-    bloomTex,
-    flashTex,
-    trailTex,
+    membraneMaterial,
+    wakeMaterial,
+    impactMaterial,
+    membraneTex,
+    impactTex,
+    wakeTex,
   ]);
 
   useSimFrame((state) => {
-    const bloomBatch = bloomBatchRef.current;
-    const trailBatch = trailBatchRef.current;
-    const flashBatch = flashBatchRef.current;
-    if (!bloomBatch || !trailBatch || !flashBatch) return;
+    const membraneBatch = membraneBatchRef.current;
+    const wakeBatch = wakeBatchRef.current;
+    const impactBatch = impactBatchRef.current;
+    if (!membraneBatch || !wakeBatch || !impactBatch) return;
 
     const now = simClock.elapsedSec;
     CFG.ingestDur = LIVE.delivery.ingestDur;
     const pulse = pulseRef.current;
     if (!pulse) {
       bodyGeometry.setDrawRange(0, 0);
-      bloomBatch.count = 0;
-      trailBatch.count = 0;
-      flashBatch.count = 0;
+      membraneBatch.count = 0;
+      wakeBatch.count = 0;
+      impactBatch.count = 0;
       ignitedPulseAtRef.current = null;
       return;
     }
@@ -356,8 +361,8 @@ export default function BlockDeliveryLayer({
     // Three-arg setRGB: the spread form allocates an arguments array per frame.
     CARRIER_COLOR.setRGB(pulse.color[0], pulse.color[1], pulse.color[2]);
     state.camera.getWorldPosition(_cameraPosition);
-    const fieldRotation = now * FIELD_SPIN_RATE;
-    _bodySpinQuaternion.setFromAxisAngle(FIELD_NORMAL, fieldRotation);
+    const bellRoll = now * JELLY_BELL_ROLL_RATE;
+    _bellRollQuaternion.setFromAxisAngle(CARRIER_LOCAL_FORWARD, bellRoll);
 
     // Galaxy RECEIVES the wave: once per real block, schedule a flare on the
     // Cells nearest each real delivery landing. Batching never changes this data
@@ -396,38 +401,37 @@ export default function BlockDeliveryLayer({
     }
 
     let bodyVertexCount = 0;
-    let bloomCount = 0;
-    let trailCount = 0;
-    let flashCount = 0;
+    let membraneCount = 0;
+    let wakeCount = 0;
+    let impactCount = 0;
 
     for (const delivery of deliveries) {
       const phase = deliveryPhase(age - delivery.startAge, CFG);
       if (phase.phase === 'idle' || phase.phase === 'done') continue;
 
-      // Local +Z is the membrane face. Align it with the actual peer→galaxy
-      // path, then rotate only inside that plane. Camera motion never changes
-      // what the carrier is aimed at.
+      // Local +Z is the bell's swimming direction. Align it with the actual
+      // peer→galaxy path, then roll only around that axis. Camera motion never
+      // changes where the carrier is headed.
       _flightDirection.set(
         delivery.to[0] - delivery.from[0],
         delivery.to[1] - delivery.from[1],
         delivery.to[2] - delivery.from[2],
       );
       if (_flightDirection.lengthSq() < 1e-8) {
-        _flightDirection.copy(FIELD_FALLBACK_DIRECTION);
+        _flightDirection.copy(CARRIER_FALLBACK_DIRECTION);
       } else {
         _flightDirection.normalize();
       }
-      setProtocolFieldFacing(_fieldFacingQuaternion, _flightDirection);
-      _bodyQuaternion.copy(_fieldFacingQuaternion).multiply(_bodySpinQuaternion);
+      setProtocolCarrierFacing(_carrierFacingQuaternion, _flightDirection);
+      _bodyQuaternion.copy(_carrierFacingQuaternion).multiply(_bellRollQuaternion);
 
       const punch = delivery.hero ? 1 : LIVE.delivery.peerPunchScale;
       const inFlight = phase.phase === 'gather' || phase.phase === 'lob';
       let bodyScale = 0;
       let bodyOpacity = 0;
-      let bloomScale = 0;
-      const bellPulse = protocolCarrierBellPulse(
-        now * JELLY_BELL_PULSE_RATE + delivery.startAge * 5.3,
-      );
+      let membraneScale = 0;
+      const swimPhase = now * JELLY_BELL_PULSE_RATE + delivery.startAge * 5.3;
+      const bellPulse = protocolCarrierBellPulse(swimPhase);
       const bellOpenScale = JELLY_BELL_OPEN_MIN
         + JELLY_BELL_OPEN_AMOUNT * bellPulse;
       const bellDepthScale = JELLY_BELL_DEPTH_MAX
@@ -449,7 +453,7 @@ export default function BlockDeliveryLayer({
           delivery.hero ? LIVE.delivery.heroSize : LIVE.delivery.peerSize
         ) * grow;
         bodyOpacity = 1;
-        bloomScale = LIVE.delivery.bolusBloom * punch * grow * bellOpenScale;
+        membraneScale = LIVE.delivery.bolusBloom * punch * grow * bellOpenScale;
 
         if (phase.phase === 'lob') {
           const length = (
@@ -463,8 +467,8 @@ export default function BlockDeliveryLayer({
             _wakeQuaternion,
           );
           writeSpriteInstance(
-            trailBatch,
-            trailCount,
+            wakeBatch,
+            wakeCount,
             _trailPosition,
             LIVE.delivery.trailWidth * punch * tentacleWidthScale,
             length,
@@ -472,7 +476,32 @@ export default function BlockDeliveryLayer({
             LIVE.delivery.trailOpacity * (0.84 + 0.16 * (1 - bellPulse)),
             _wakeQuaternion,
           );
-          trailCount += 1;
+          wakeCount += 1;
+
+          // A contracted bell pushes water/energy backward. Reuse the pressure
+          // texture for one faint, expanding propulsion ring per carrier; the
+          // stronger instance at contact occupies this same fixed batch later.
+          const propulsionT = protocolCarrierShockwaveProgress(swimPhase);
+          const propulsionOpacity = 0.30 * Math.pow(1 - propulsionT, 2.4);
+          if (propulsionOpacity > 0.004) {
+            _wavePosition.copy(_position).addScaledVector(
+              _flightDirection,
+              -bodyScale * (0.20 + propulsionT * 0.55),
+            );
+            const propulsionScale = bodyScale * (1.10 + propulsionT * 1.65);
+            writeSpriteInstance(
+              impactBatch,
+              impactCount,
+              _wavePosition,
+              propulsionScale,
+              propulsionScale,
+              CARRIER_COLOR,
+              propulsionOpacity,
+              _carrierFacingQuaternion,
+              -bellRoll * 0.35,
+            );
+            impactCount += 1;
+          }
         }
       } else {
         const ingest = bolusIngest(phase.t);
@@ -491,7 +520,7 @@ export default function BlockDeliveryLayer({
           delivery.hero ? LIVE.delivery.heroSize : LIVE.delivery.peerSize
         ) * ingest.bodyScale * recoil;
         bodyOpacity = ingest.bodyOpacity;
-        bloomScale = LIVE.delivery.bolusBloom
+        membraneScale = LIVE.delivery.bolusBloom
           * punch
           * ingest.bodyScale
           * recoil
@@ -501,17 +530,17 @@ export default function BlockDeliveryLayer({
           _flashColor.copy(CARRIER_COLOR).lerp(PALE_CONSENSUS, ingest.colorT);
           const size = LIVE.delivery.flashSize * punch * ingest.impactScale;
           writeSpriteInstance(
-            flashBatch,
-            flashCount,
+            impactBatch,
+            impactCount,
             _position,
             size,
             size,
             _flashColor,
             ingest.flashOpacity,
-            _fieldFacingQuaternion,
-            -fieldRotation * 0.45,
+            _carrierFacingQuaternion,
+            -bellRoll * 0.45,
           );
-          flashCount += 1;
+          impactCount += 1;
         }
       }
 
@@ -533,19 +562,19 @@ export default function BlockDeliveryLayer({
           bodyOpacity,
         );
       }
-      if (bloomScale > 0.001 && bodyOpacity > 0.001) {
+      if (membraneScale > 0.001 && bodyOpacity > 0.001) {
         writeSpriteInstance(
-          bloomBatch,
-          bloomCount,
+          membraneBatch,
+          membraneCount,
           _position,
-          bloomScale,
-          bloomScale,
+          membraneScale,
+          membraneScale,
           CARRIER_COLOR,
           bodyOpacity,
-          _fieldFacingQuaternion,
-          -fieldRotation * 0.7,
+          _carrierFacingQuaternion,
+          -bellRoll * 0.7,
         );
-        bloomCount += 1;
+        membraneCount += 1;
       }
     }
 
@@ -554,9 +583,9 @@ export default function BlockDeliveryLayer({
       bodyPositionAttr.needsUpdate = true;
       bodyColorAttr.needsUpdate = true;
     }
-    commitInstanceBatch(bloomBatch, bloomCount);
-    commitInstanceBatch(trailBatch, trailCount);
-    commitInstanceBatch(flashBatch, flashCount);
+    commitInstanceBatch(membraneBatch, membraneCount);
+    commitInstanceBatch(wakeBatch, wakeCount);
+    commitInstanceBatch(impactBatch, impactCount);
   });
 
   return (
@@ -568,20 +597,20 @@ export default function BlockDeliveryLayer({
         renderOrder={1}
       />
       <instancedMesh
-        ref={bloomBatchRef}
-        args={[spriteGeometry, bloomMaterial, capacity]}
+        ref={membraneBatchRef}
+        args={[spriteGeometry, membraneMaterial, capacity]}
         frustumCulled={false}
         renderOrder={2}
       />
       <instancedMesh
-        ref={trailBatchRef}
-        args={[spriteGeometry, trailMaterial, capacity]}
+        ref={wakeBatchRef}
+        args={[spriteGeometry, wakeMaterial, capacity]}
         frustumCulled={false}
         renderOrder={3}
       />
       <instancedMesh
-        ref={flashBatchRef}
-        args={[spriteGeometry, flashMaterial, capacity]}
+        ref={impactBatchRef}
+        args={[spriteGeometry, impactMaterial, capacity]}
         frustumCulled={false}
         renderOrder={4}
       />

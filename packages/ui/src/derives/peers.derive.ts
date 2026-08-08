@@ -147,7 +147,7 @@ export function deliveryPhase(localAge: number, cfg: DeliveryPhaseConfig): Deliv
 }
 
 export interface BolusIngest {
-  /** Legacy API name; describes the carrier's field-commit envelope. */
+  /** Legacy API name; describes the carrier's Cell-contact envelope. */
   /** Carrier glyph scale multiplier: 1 at impact → 0 at commit. */
   bodyScale: number;
   /** Body + bloom opacity: 1 at impact → 0. */
@@ -160,11 +160,11 @@ export interface BolusIngest {
   colorT: number;
 }
 
-/** Per-frame field-commit envelope for the protocol carrier (t∈[0,1]).
+/** Per-frame Cell-commit envelope for the protocol carrier (t∈[0,1]).
  *  The compatibility export name remains `bolusIngest`, but the visual is a
- *  compact octagonal energy bell: the jellyfish-like carrier recoils and
- *  dissolves at contact while an impact wave spreads across the Cell plane and
- *  fades from the block's stable warm hue to pale consensus. Pure. */
+ *  rounded energy jellyfish: its bell recoils and dissolves at contact while a
+ *  circular shockwave spreads across the Cell plane and fades from the block's
+ *  stable warm hue to pale consensus. Pure. */
 export function bolusIngest(t: number): BolusIngest {
   const u = Math.max(0, Math.min(1, t));
   const k = 1 - u;

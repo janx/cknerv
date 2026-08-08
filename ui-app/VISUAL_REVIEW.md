@@ -29,7 +29,7 @@ real Cell snapshot:
 | Stage | Time | Composition | Expected evidence |
 |---|---:|---|---|
 | network | 0.30 s | Distributed wide view | Propagation across independent witnesses |
-| carrier | 1.10 s | Local handoff close-up | Pulsing octagonal jellyfish bell and soft tendrils facing the Cell field |
+| carrier | 1.10 s | Local handoff close-up | Rounded pulsing jellyfish bell, soft tendrils, and a faint propulsion ring facing the Cell field |
 | commit | 3.40 s | Target Cell close-up | Verified write label and expanding agreement seal |
 | settled | 6.20 s | Memory-latch close-up | Same Cell/content identity with persistent seal |
 

@@ -44,7 +44,7 @@ export const deliverySchema = {
   peerSize: { value: 0.46, min: 0.1, max: 1.5, step: 0.02, label: 'peer size' },
   ingestDur: { value: 0.7, min: 0.1, max: 1.5, step: 0.05, label: 'commit dur' },
   bolusBloom: { value: 3.0, min: 0.5, max: 5, step: 0.1, label: 'bell membrane' },
-  flashSize: { value: 3.6, min: 1, max: 10, step: 0.1, label: 'commit flash' },
+  flashSize: { value: 3.6, min: 1, max: 10, step: 0.1, label: 'contact shockwave' },
   trailWidth: { value: 0.7, min: 0.1, max: 3, step: 0.05, label: 'tentacle width' },
   trailLenBase: { value: 1.0, min: 0, max: 4, step: 0.1, label: 'tentacle len base' },
   trailLenGain: { value: 1.6, min: 0, max: 6, step: 0.1, label: 'tentacle len gain' },
