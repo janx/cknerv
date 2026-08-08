@@ -24,6 +24,7 @@ import {
   type CellCausalArc,
   type CellCausalArcRole,
 } from '../geometry/cellCausalLens';
+import { useCanvasClientRect } from '../hooks/useCanvasClientRect';
 import { useReducedMotion } from './hud/useReducedMotion';
 
 const ARC_SEGMENTS = 18;
@@ -188,23 +189,47 @@ function CellCausalNavigationLabel({
   const camera = useThree((state) => state.camera);
   const canvas = useThree((state) => state.gl.domElement);
   const fallbackSize = useThree((state) => state.size);
+  const canvasRectRef = useCanvasClientRect(canvas);
+  const hudMeasureRef = useRef({ atMs: Number.NEGATIVE_INFINITY, width: -1, height: -1 });
+  const hudRectsRef = useRef<CellCausalScreenRect[]>([]);
+  const labelSizeRef = useRef({ width: 0, height: 0 });
 
   useFrame(() => {
     const anchor = anchorRef.current;
     const hub = hubRef.current;
     const label = labelRef.current;
     if (!anchor || !hub || !label) return;
-    const measuredCanvasRect = canvas.getBoundingClientRect();
-    const width = measuredCanvasRect.width > 0
+    const measuredCanvasRect = canvasRectRef.current;
+    const width = measuredCanvasRect !== null && measuredCanvasRect.width > 0
       ? measuredCanvasRect.width
       : fallbackSize.width;
-    const height = measuredCanvasRect.height > 0
+    const height = measuredCanvasRect !== null && measuredCanvasRect.height > 0
       ? measuredCanvasRect.height
       : fallbackSize.height;
-    const canvasRect = measuredCanvasRect.width > 0
+    const canvasRect = measuredCanvasRect !== null
+      && measuredCanvasRect.width > 0
       && measuredCanvasRect.height > 0
       ? measuredCanvasRect
       : new DOMRect(0, 0, width, height);
+    // The remaining layout reads (label box + hud occlusion rects) refresh on
+    // the same 250ms cadence as ConsensusMemoryMarkers' hud measure. The
+    // world→screen projection below stays per-frame and never touches layout,
+    // so label following cannot lag; only occlusion-avoidance decisions may
+    // trail by ≤250ms.
+    const layoutNowMs = typeof performance === 'undefined' ? 0 : performance.now();
+    const hudMeasure = hudMeasureRef.current;
+    if (
+      width !== hudMeasure.width
+      || height !== hudMeasure.height
+      || layoutNowMs - hudMeasure.atMs >= 250
+    ) {
+      labelSizeRef.current = {
+        width: label.offsetWidth,
+        height: label.offsetHeight,
+      };
+      hudRectsRef.current = visibleCanvasOcclusions(canvasRect);
+      hudMeasureRef.current = { atMs: layoutNowMs, width, height };
+    }
     anchor.updateWorldMatrix(true, false);
     hub.updateWorldMatrix(true, false);
     const endpointWorld = anchor.getWorldPosition(endpointWorldRef.current);
@@ -221,11 +246,8 @@ function CellCausalNavigationLabel({
         y: (-hubWorld.y * 0.5 + 0.5) * height,
       },
       viewport: { width, height },
-      label: {
-        width: label.offsetWidth,
-        height: label.offsetHeight,
-      },
-      occlusions: visibleCanvasOcclusions(canvasRect),
+      label: labelSizeRef.current,
+      occlusions: hudRectsRef.current,
       gap: ENDPOINT_LABEL_GAP_PX,
       margin: ENDPOINT_LABEL_VIEWPORT_MARGIN_PX,
     });
