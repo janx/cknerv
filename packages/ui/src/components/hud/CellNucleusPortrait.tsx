@@ -3,7 +3,7 @@
 // specimen/anatomy graph is layered behind it. `focusField` is the readable A
 // grammar used only by explicit CellDetailPanel row selection.
 import { memo, useEffect, useMemo, useState } from 'react';
-import { Canvas } from '@react-three/fiber';
+import { Canvas, useThree } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import type { Cell } from '@cknerv/types';
 import type { ConsensusBraidField } from '../../derives/consensusBraid.derive';
@@ -23,6 +23,41 @@ import CellCoreArtwork, { type CellCoreDirection } from './CellCoreArtwork';
 
 export const SCAN_PERIOD_S = 4.2;
 
+/** Cadence for the heartbeat below. The core's motion is slow — a drifting
+ * weave, a knot turning at 0.28 rad/s, packets stepping at 2 Hz — so half the
+ * display rate is indistinguishable here and costs half as much beside the
+ * Galaxy. Raise toward 60 only if the packet flow ever reads as stepping. */
+export const PORTRAIT_HEARTBEAT_HZ = 30;
+
+export function portraitHeartbeatIntervalMs(hz: number): number {
+  return Math.max(1, Math.round(1000 / (hz > 0 ? hz : 1)));
+}
+
+/**
+ * The portrait Canvas runs on demand so it does not race the Galaxy for the
+ * main thread. That policy assumes a scene that is static when nothing is
+ * interacting with it — which the consensus core is NOT: its useFrame advances
+ * packet phase, knot rotation and weave drift off `clock.elapsedTime` forever.
+ * Nothing in that core requests frames, so it used to animate only as long as
+ * something else happened to wake the canvas (the panel's 80 ms scan clock, and
+ * the halo / proof reader while their reads were in flight) and then froze
+ * mid-flow once both stopped, a few seconds after opening.
+ *
+ * So drive it explicitly, at a throttled cadence rather than by surrendering to
+ * `frameloop="always"`. Reduced motion pins the core's clock to zero, so there
+ * is nothing to advance and no reason to tick.
+ */
+function PortraitHeartbeat({ enabled, hz }: { enabled: boolean; hz: number }) {
+  const invalidate = useThree((state) => state.invalidate);
+  useEffect(() => {
+    if (!enabled) return;
+    const period = portraitHeartbeatIntervalMs(hz);
+    const beat = window.setInterval(() => invalidate(), period);
+    return () => window.clearInterval(beat);
+  }, [enabled, hz, invalidate]);
+  return null;
+}
+
 /** Mirror the main dashboard's quality DPR ceiling for this independent
  * renderer. The portrait previously stayed at R3F's default DPR after the
  * primary Canvas had already downgraded. */
@@ -37,9 +72,10 @@ export function resolvePortraitCanvasDpr(
   return Math.min(deviceDpr, ceiling);
 }
 
-/** The independent portrait context stays dormant while idle. Pointer orbit
- * temporarily restores a live render loop; returning to demand mode prevents
- * the detail renderer from competing with the Galaxy. */
+/** Pointer orbit gets an unthrottled loop so dragging tracks the cursor;
+ * otherwise the portrait stays on demand, where PortraitHeartbeat paces it at
+ * PORTRAIT_HEARTBEAT_HZ. Demand is what keeps the detail renderer from
+ * competing with the Galaxy — note it no longer means dormant. */
 export function cellPortraitFrameloop(
   dragging: boolean,
 ): 'always' | 'demand' {
@@ -203,6 +239,10 @@ function CellNucleusPortrait({
         }}
         frameloop={cellPortraitFrameloop(dragging)}
       >
+        <PortraitHeartbeat
+          enabled={!reducedMotion}
+          hz={PORTRAIT_HEARTBEAT_HZ}
+        />
         <ConsensusScene
           cell={cell}
           direction={direction}

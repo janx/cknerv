@@ -3,7 +3,9 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   cellPortraitFrameloop,
+  portraitHeartbeatIntervalMs,
   resolvePortraitCanvasDpr,
+  PORTRAIT_HEARTBEAT_HZ,
 } from '../../../src/components/hud/CellNucleusPortrait';
 
 const SOURCE = readFileSync(
@@ -138,7 +140,7 @@ describe('CellNucleusPortrait production language', () => {
     expect(SOURCE).toContain('enableDamping={!reducedMotion}');
   });
 
-  it('shares the adaptive DPR ceiling and idles without a competing render loop', () => {
+  it('shares the adaptive DPR ceiling and paces the demand loop instead of racing the Galaxy', () => {
     expect(resolvePortraitCanvasDpr(3, 2)).toBe(2);
     expect(resolvePortraitCanvasDpr(3, 1.5)).toBe(1.5);
     expect(resolvePortraitCanvasDpr(0.5, 2)).toBe(1);
@@ -148,8 +150,33 @@ describe('CellNucleusPortrait production language', () => {
     expect(SOURCE).toContain('dpr={portraitDpr}');
     expect(SOURCE).toContain('frameloop={cellPortraitFrameloop(dragging)}');
     expect(SOURCE).toContain('export default memo(CellNucleusPortrait)');
+    // A paced heartbeat, never a raw rAF loop. That the idle canvas stays on
+    // demand is already pinned by the cellPortraitFrameloop assertions above.
     expect(SOURCE).not.toContain('requestAnimationFrame');
-    expect(SOURCE).not.toContain('<PortraitFrameDriver');
+  });
+
+  it('keeps the consensus core advancing after the panel scan clock stops', () => {
+    // The core animates off clock.elapsedTime forever but requests no frames of
+    // its own, so on a demand canvas it froze once the panel's 80 ms scan clock
+    // and the halo/proof reads went quiet. The heartbeat is that missing driver.
+    expect(MEMORY_SOURCE).toContain('state.clock.elapsedTime');
+    expect(MEMORY_SOURCE).not.toContain('invalidate');
+    expect(SOURCE).toContain('<PortraitHeartbeat');
+    expect(SOURCE).toContain('enabled={!reducedMotion}');
+    expect(SOURCE).toContain('hz={PORTRAIT_HEARTBEAT_HZ}');
+    expect(SOURCE).toContain('window.setInterval(() => invalidate(), period)');
+    expect(SOURCE).toContain('window.clearInterval(beat)');
+  });
+
+  it('paces the heartbeat below the display rate and survives absurd rates', () => {
+    expect(PORTRAIT_HEARTBEAT_HZ).toBe(30);
+    expect(portraitHeartbeatIntervalMs(PORTRAIT_HEARTBEAT_HZ)).toBe(33);
+    expect(portraitHeartbeatIntervalMs(60)).toBe(17);
+    expect(portraitHeartbeatIntervalMs(1)).toBe(1000);
+    // Never a zero/negative period — that would busy-loop the interval.
+    expect(portraitHeartbeatIntervalMs(0)).toBe(1000);
+    expect(portraitHeartbeatIntervalMs(-30)).toBe(1000);
+    expect(portraitHeartbeatIntervalMs(100000)).toBe(1);
   });
 
   it('retains the portrait Canvas while switching selected Cells', () => {
