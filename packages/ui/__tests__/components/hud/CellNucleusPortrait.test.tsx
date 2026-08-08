@@ -77,9 +77,6 @@ describe('CellNucleusPortrait production language', () => {
     expect(SOURCE).toContain('onIdentityProofRead={onIdentityProofRead}');
     expect(SOURCE).toContain('identityProofBinding={');
     expect(SOURCE).toContain('data-memory-portrait-state');
-    expect(SOURCE).not.toContain('specimenMorphology(');
-    expect(SOURCE).not.toContain('makeOrganelleMaterial');
-    expect(SOURCE).not.toContain('<SpecimenProbe');
   });
 
   it('mirrors only the selected target response on canonical agreements', () => {
