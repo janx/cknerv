@@ -25,6 +25,9 @@ describe('fabricStats', () => {
     fabricStats.observeInspectionOnlyFrame();
     fabricStats.observeIncrementalFrame(132, 132);
     fabricStats.observeIncrementalFrame(90, 90);
+    fabricStats.observeReapInPlace();
+    fabricStats.observeReapInPlace();
+    fabricStats.observeReapInPlace();
     fabricStats.observeFullWalk('structural', 8000, 200);
     fabricStats.observeFullWalk('mass-churn-guard', 8000, 5200);
 
@@ -39,6 +42,7 @@ describe('fabricStats', () => {
     expect(s.fullWalkReasons.structural).toBe(1);
     expect(s.fullWalkReasons['mass-churn-guard']).toBe(1);
     expect(s.incrementalSlotsWritten).toBe(222);
+    expect(s.reapsInPlace).toBe(3);
     expect(s.fullWalkEdgesWritten).toBe(16000);
     expect(s.animatingLast).toBe(5200);
     expect(s.animatingMax).toBe(5200);
@@ -59,6 +63,7 @@ describe('fabricStats', () => {
     expect(s.added).toBe(0);
     expect(s.recentDiffs).toHaveLength(0);
     expect(s.frames.fullWalk).toBe(0);
+    expect(s.reapsInPlace).toBe(0);
     expect(s.animatingMax).toBe(0);
   });
 

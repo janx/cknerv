@@ -98,6 +98,11 @@ const MAX_ACTIVE_SEGMENTS = 6000;
 /** Recall routes use their own layer so distance compensation cannot thicken
  * live protocol writes that happen behind an explicit historical inspection. */
 const MAX_MEMORY_SEGMENTS = 6000;
+/** Reaped-in-place keys tolerated in renderOrder before a lazy filter pass.
+ *  Tombstones cost only iteration time (every consumer skips missing
+ *  states), so the threshold just bounds slow growth between full walks. */
+const RENDER_ORDER_TOMBSTONE_MAX = 4096;
+
 /** One lock response can touch at most two route edges. */
 const ROUTE_HOP_PULSE_SAMPLES_PER_HOP = 24;
 const MAX_ROUTE_HOP_PULSE_SEGMENTS = ROUTE_HOP_PULSE_SAMPLES_PER_HOP * 2;
@@ -1000,14 +1005,22 @@ export default function NeuralFabric({
    * edge's colours need one full recompute, but slots stay in place. */
   const globalRepaintRef = useRef(false);
   const renderOrderRef = useRef<string[]>([]);
-  /** Fixed-slot bookkeeping: renderOrder position → segment slot, rebuilt by
-   * every full walk; the set of edges whose lifecycle is still animating
-   * (grow / gc-fade / death-retract / future-staggered) drives the
-   * incremental per-slot path in between. */
+  /** Fixed-slot bookkeeping. Slots are PERSISTENT: a surviving edge keeps its
+   * slot across graph diffs, fully-decayed edges free their slot in place
+   * (parked as invisible fillers) for reuse by later births, and only a full
+   * walk (boot, global repaint, capacity overflow) compacts the layout. The
+   * animating set (grow / gc-fade / death-retract / future-staggered) drives
+   * the incremental per-slot path in between. */
   const slotByKeyRef = useRef<Map<string, number>>(new Map());
   const animatingKeysRef = useRef<Set<string>>(new Set());
   const usedSlotCountRef = useRef(0);
   const dirtySlotScratchRef = useRef<number[]>([]);
+  /** Recycled slot indices from in-place reaps. Cleared by every full walk. */
+  const freeSlotsRef = useRef<number[]>([]);
+  /** renderOrder keys whose state has been reaped in place. Filtered lazily —
+   * both renderOrder consumers skip missing states, so tombstones only cost
+   * iteration time. */
+  const renderOrderTombstonesRef = useRef(0);
   // Snapshot of the last-applied Cell-mesh tweak values, seeded from the
   // schema defaults so a closed/untouched panel matches on the first
   // frame and forces NO spurious redraw (zero-drift). The change-detector
@@ -1071,6 +1084,27 @@ export default function NeuralFabric({
     const ctrl = new Float32Array(3);
     const sample = new Float32Array(3);
 
+    const fabricSlotCapacity = Math.floor(
+      fabric.positions.length / 6 / FABRIC_SLOT_SEGMENTS,
+    );
+    /** Persistent slot allocation: recycle a hole from an in-place reap, else
+     * grow the high-water mark. Newly claimed regions hold invisible content
+     * (fillers, or zero colours on a fresh buffer) until the next emit writes
+     * them — instanceCount only advances inside that same emit. Returns
+     * undefined at capacity; callers fall back to a compacting full walk. */
+    const allocateFabricSlot = (key: string): number | undefined => {
+      const free = freeSlotsRef.current;
+      let slot: number | undefined;
+      if (free.length > 0) {
+        slot = free.pop();
+      } else if (usedSlotCountRef.current < fabricSlotCapacity) {
+        slot = usedSlotCountRef.current;
+        usedSlotCountRef.current += 1;
+      }
+      if (slot !== undefined) slotByKeyRef.current.set(key, slot);
+      return slot;
+    };
+
     const handles: NeuralFabricHandles = {
       setInspectionField(field) {
         const transition = inspectionFieldRef.current;
@@ -1119,17 +1153,21 @@ export default function NeuralFabric({
       },
       setFabric(graph, cells, now) {
         const states = edgeStatesRef.current;
-        const { order, liveKeys } = orderFabricStateKeys(graph.edges, states.keys());
-        renderOrderRef.current = order;
+        const animatingKeys = animatingKeysRef.current;
+        const liveKeys = new Set<string>();
+        let overflowed = false;
         let statsAdded = 0;
         let statsRevived = 0;
         let statsStable = 0;
         let statsDying = 0;
-        // Two-pass diff. Pass 1: walk new edges, add fresh ones in
-        // growing phase, revive any that were dying. Track seen keys
-        // so pass 2 can flag the removed ones.
+        // Two-pass diff over PERSISTENT slots. Pass 1: walk new edges, add
+        // fresh ones in growing phase (each claiming a recycled or high-water
+        // slot), revive any that were dying. Surviving edges keep their slot
+        // untouched, so a per-block reconciliation rides the incremental
+        // path — no structural full walk, no slot reassignment.
         for (const e of graph.edges) {
           const key = fabricEdgeKey(e.from, e.to);
+          liveKeys.add(key);
           const existing = states.get(key);
           if (existing) {
             // Stable edge: leave alone. Revival of a dying edge:
@@ -1144,6 +1182,8 @@ export default function NeuralFabric({
               existing.dyingAt = null;
               existing.bornAt = now - GROWTH_MS / 1000;
               statsRevived += 1;
+              // One incremental rewrite snaps the slot back to stable.
+              animatingKeys.add(key);
             } else {
               statsStable += 1;
             }
@@ -1153,6 +1193,9 @@ export default function NeuralFabric({
           const c = cells.get(e.to);
           if (!a || !c) continue;
           statsAdded += 1;
+          if (allocateFabricSlot(key) === undefined) overflowed = true;
+          else renderOrderRef.current.push(key);
+          animatingKeys.add(key);
           const seed = fabricEdgeSeed(e.from, e.to);
           const routeColors = consensusRouteColors(seed);
           bezierControlInto(
@@ -1192,6 +1235,7 @@ export default function NeuralFabric({
             st.dyingAt = now;
             st.deathKind = 'gc';
             statsDying += 1;
+            animatingKeys.add(key);
           }
         }
         fabricStats.observeDiff({
@@ -1203,8 +1247,18 @@ export default function NeuralFabric({
           stable: statsStable,
           totalStates: states.size,
         });
+        // Identical selection: nothing moved, the settled buffer stays.
+        if (statsAdded === 0 && statsRevived === 0 && statsDying === 0) return;
         emitDirtyRef.current = true;
-        passivePositionsDirtyRef.current = true;
+        if (overflowed) {
+          // The persistent slot space cannot absorb this diff. Re-establish
+          // the clip-priority order (current edges first, afterimages last)
+          // and let a compacting full walk reassign every slot.
+          const { order } = orderFabricStateKeys(graph.edges, states.keys());
+          renderOrderRef.current = order;
+          renderOrderTombstonesRef.current = 0;
+          passivePositionsDirtyRef.current = true;
+        }
       },
       growEdges(edges, cells, bornAtByKey, dirByKey) {
         // `now` is read from the shared sim clock so callers don't have
@@ -1214,6 +1268,7 @@ export default function NeuralFabric({
         const states = edgeStatesRef.current;
         let statsAdded = 0;
         let statsRevived = 0;
+        let growOverflowed = false;
         for (const e of edges) {
           const key = fabricEdgeKey(e.from, e.to);
           const existing = states.get(key);
@@ -1225,12 +1280,16 @@ export default function NeuralFabric({
             existing.deadEnd = null;
             existing.bornAt = now - GROWTH_MS / 1000;
             statsRevived += 1;
+            // One incremental rewrite snaps the slot back to stable.
+            animatingKeysRef.current.add(key);
             continue;
           }
           const a = cells.get(e.from);
           const c = cells.get(e.to);
           if (!a || !c) continue;
           statsAdded += 1;
+          if (allocateFabricSlot(key) === undefined) growOverflowed = true;
+          animatingKeysRef.current.add(key);
           const seed = fabricEdgeSeed(e.from, e.to);
           const routeColors = consensusRouteColors(seed);
           bezierControlInto(
@@ -1255,7 +1314,7 @@ export default function NeuralFabric({
             toR: routeColors.to[0], toG: routeColors.to[1], toB: routeColors.to[2],
             usage: 0,
           });
-          renderOrderRef.current.push(key); // append; emitFabric reaps
+          renderOrderRef.current.push(key); // append; reaps clean up lazily
         }
         fabricStats.observeDiff({
           atSec: now,
@@ -1267,10 +1326,12 @@ export default function NeuralFabric({
           totalStates: states.size,
         });
         // Every requested edge already existed as stable: no state moved, so
-        // don't arm a structural full walk over the untouched fabric.
+        // don't arm any redraw over the untouched fabric.
         if (statsAdded === 0 && statsRevived === 0) return;
         emitDirtyRef.current = true;
-        passivePositionsDirtyRef.current = true;
+        // New tendrils ride their persistent slots through the incremental
+        // path; only slot-space exhaustion needs a compacting full walk.
+        if (growOverflowed) passivePositionsDirtyRef.current = true;
       },
       killEdges(keys, dyingAt, kind, deadEndByKey) {
         const states = edgeStatesRef.current;
@@ -1284,6 +1345,7 @@ export default function NeuralFabric({
           st.deathKind = kind;
           st.deadEnd = kind === 'death' ? (deadEndByKey?.get(key) ?? 'from') : null;
           statsDying += 1;
+          animatingKeysRef.current.add(key);
         }
         fabricStats.observeDiff({
           atSec: dyingAt,
@@ -1295,11 +1357,13 @@ export default function NeuralFabric({
           totalStates: states.size,
         });
         // Every key was unknown or already dying: nothing changed, so don't
-        // arm a structural full walk over the untouched fabric. (Live data
-        // shows steady-state killEdges calls are usually exactly this no-op.)
+        // arm any redraw over the untouched fabric. (Live data shows
+        // steady-state killEdges calls are usually exactly this no-op.)
         if (statsDying === 0) return;
+        // Dying edges animate inside their persistent slots — no structural
+        // walk; the retract/fade rides the incremental path until reap frees
+        // the slot in place.
         emitDirtyRef.current = true;
-        passivePositionsDirtyRef.current = true;
       },
       reinforce(fromCellId, toCellId) {
         const key = fabricEdgeKey(fromCellId, toCellId);
@@ -1470,7 +1534,6 @@ export default function NeuralFabric({
         // buffer, and only the merged dirty slot ranges upload. This replaces
         // the historical whole-fabric rewrite that ran every frame while ANY
         // edge was growing or dying.
-        let incrementalReapHit = false;
         if (
           !passivePositionsDirtyRef.current
           && !globalRepaintRef.current
@@ -1489,7 +1552,6 @@ export default function NeuralFabric({
           const slots = slotByKeyRef.current;
           const dirtySlots = dirtySlotScratchRef.current;
           dirtySlots.length = 0;
-          let reapEncountered = false;
           for (const key of animatingKeys) {
             const st = states.get(key);
             const slot = st ? slots.get(key) : undefined;
@@ -1499,9 +1561,19 @@ export default function NeuralFabric({
             }
             const rs = fabricEdgeRenderState(st, now);
             if (rs.reap) {
-              // Slot compaction needed — rebuild everything below instead.
-              reapEncountered = true;
-              break;
+              // Free the slot in place: park its segments as invisible
+              // fillers and recycle the index. No compaction, no full walk.
+              fabric.count = slot * FABRIC_SLOT_SEGMENTS;
+              fillFabricSlotRemainder(fabric, (slot + 1) * FABRIC_SLOT_SEGMENTS);
+              dirtySlots.push(slot);
+              states.delete(key);
+              warmRouteKeys.delete(key);
+              slots.delete(key);
+              freeSlotsRef.current.push(slot);
+              animatingKeys.delete(key);
+              renderOrderTombstonesRef.current += 1;
+              fabricStats.observeReapInPlace();
+              continue;
             }
             fabric.count = slot * FABRIC_SLOT_SEGMENTS;
             writeFabricEdgeSegments(
@@ -1519,32 +1591,36 @@ export default function NeuralFabric({
             dirtySlots.push(slot);
             if (!rs.animating) animatingKeys.delete(key);
           }
-          if (!reapEncountered) {
-            fabric.count = usedSlotCountRef.current * FABRIC_SLOT_SEGMENTS;
-            commitFabricSlotRanges(fabric, mergeFabricSlotRanges(dirtySlots));
-            emitDirtyRef.current = animatingKeys.size > 0;
-            fabricStats.observeIncrementalFrame(
-              dirtySlots.length,
-              animatingKeys.size,
+          // Tombstone hygiene: reaped keys linger in renderOrder (both
+          // consumers skip missing states); filter once they pile up.
+          if (renderOrderTombstonesRef.current > RENDER_ORDER_TOMBSTONE_MAX) {
+            renderOrderRef.current = renderOrderRef.current.filter(
+              (key) => states.has(key),
             );
-            return;
+            renderOrderTombstonesRef.current = 0;
           }
-          incrementalReapHit = true;
+          fabric.count = usedSlotCountRef.current * FABRIC_SLOT_SEGMENTS;
+          commitFabricSlotRanges(fabric, mergeFabricSlotRanges(dirtySlots));
+          emitDirtyRef.current = animatingKeys.size > 0;
+          fabricStats.observeIncrementalFrame(
+            dirtySlots.length,
+            animatingKeys.size,
+          );
+          return;
         }
 
-        // Full walk: structural change, global colour change, or a reap that
-        // requires slot compaction. Positions rewrite when the slot layout
-        // moved or any edge geometry is mid-animation; a settled global
-        // repaint (aperture release / knob drag) stays colours-only.
-        const fullWalkReason: FabricFullWalkReason = incrementalReapHit
-          ? 'reap'
-          : passivePositionsDirtyRef.current
-            ? 'structural'
-            : globalRepaintRef.current
-              ? 'global-repaint'
-              : inspectionOnlyDirtyRef.current
-                ? 'inspection-during-animation'
-                : 'mass-churn-guard';
+        // Full walk: structural change (slot-space overflow / boot), global
+        // colour change, or a selection snapshot landing mid-animation.
+        // Positions rewrite when the slot layout moved or any edge geometry
+        // is mid-animation; a settled global repaint (aperture release /
+        // knob drag) stays colours-only.
+        const fullWalkReason: FabricFullWalkReason = passivePositionsDirtyRef.current
+          ? 'structural'
+          : globalRepaintRef.current
+            ? 'global-repaint'
+            : inspectionOnlyDirtyRef.current
+              ? 'inspection-during-animation'
+              : 'mass-churn-guard';
         const writePassivePositions = passivePositionsDirtyRef.current
           || animatingKeys.size > 0;
         const slots = slotByKeyRef.current;
@@ -1593,13 +1669,21 @@ export default function NeuralFabric({
         fabric.count = slotIndex * FABRIC_SLOT_SEGMENTS;
 
         if (toReap) {
-          const reapSet = new Set(toReap);
           for (const key of toReap) {
             states.delete(key);
             warmRouteKeys.delete(key);
           }
-          renderOrderRef.current = renderOrderRef.current.filter((key) => !reapSet.has(key));
         }
+        // A full walk compacts the slot space: every surviving key was just
+        // reassigned sequentially, so recycled holes and renderOrder
+        // tombstones reset together.
+        freeSlotsRef.current.length = 0;
+        if (toReap || renderOrderTombstonesRef.current > 0) {
+          renderOrderRef.current = renderOrderRef.current.filter(
+            (key) => states.has(key),
+          );
+        }
+        renderOrderTombstonesRef.current = 0;
 
         commitLayer(fabric, writePassivePositions, true);
         inspectionOnlyDirtyRef.current = false;

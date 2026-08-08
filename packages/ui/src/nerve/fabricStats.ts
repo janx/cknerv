@@ -50,6 +50,8 @@ export interface FabricStatsSnapshot {
   fullWalkReasons: Record<FabricFullWalkReason, number>;
   /** Slots rewritten by the incremental path (Σ per-frame animating writes). */
   incrementalSlotsWritten: number;
+  /** Fully-decayed edges whose slot was freed in place (no compaction walk). */
+  reapsInPlace: number;
   /** Edges written by full walks (Σ per-walk slot count). */
   fullWalkEdgesWritten: number;
   /** Animating-set size: at the last emit, and the observed maximum. */
@@ -83,6 +85,7 @@ interface FabricStatsState {
   frames: FabricStatsSnapshot['frames'];
   fullWalkReasons: Record<FabricFullWalkReason, number>;
   incrementalSlotsWritten: number;
+  reapsInPlace: number;
   fullWalkEdgesWritten: number;
   animatingLast: number;
   animatingMax: number;
@@ -91,6 +94,7 @@ interface FabricStatsState {
   observeSkipFrame(): void;
   observeInspectionOnlyFrame(): void;
   observeIncrementalFrame(slotsWritten: number, animating: number): void;
+  observeReapInPlace(): void;
   observeFullWalk(
     reason: FabricFullWalkReason,
     edgesWritten: number,
@@ -114,6 +118,7 @@ export const fabricStats: FabricStatsState = {
   frames: { skip: 0, inspectionOnly: 0, incremental: 0, fullWalk: 0 },
   fullWalkReasons: zeroFullWalkReasons(),
   incrementalSlotsWritten: 0,
+  reapsInPlace: 0,
   fullWalkEdgesWritten: 0,
   animatingLast: 0,
   animatingMax: 0,
@@ -138,6 +143,9 @@ export const fabricStats: FabricStatsState = {
     this.incrementalSlotsWritten += slotsWritten;
     noteAnimating(this, animating);
   },
+  observeReapInPlace() {
+    this.reapsInPlace += 1;
+  },
   observeFullWalk(reason, edgesWritten, animating) {
     this.frames.fullWalk += 1;
     this.fullWalkReasons[reason] += 1;
@@ -156,6 +164,7 @@ export const fabricStats: FabricStatsState = {
       frames: { ...this.frames },
       fullWalkReasons: { ...this.fullWalkReasons },
       incrementalSlotsWritten: this.incrementalSlotsWritten,
+      reapsInPlace: this.reapsInPlace,
       fullWalkEdgesWritten: this.fullWalkEdgesWritten,
       animatingLast: this.animatingLast,
       animatingMax: this.animatingMax,
@@ -172,6 +181,7 @@ export const fabricStats: FabricStatsState = {
     this.frames = { skip: 0, inspectionOnly: 0, incremental: 0, fullWalk: 0 };
     this.fullWalkReasons = zeroFullWalkReasons();
     this.incrementalSlotsWritten = 0;
+    this.reapsInPlace = 0;
     this.fullWalkEdgesWritten = 0;
     this.animatingLast = 0;
     this.animatingMax = 0;
