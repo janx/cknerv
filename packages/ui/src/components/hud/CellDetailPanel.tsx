@@ -577,11 +577,15 @@ export default function CellDetailPanel({
             : undefined}
           onInteractionChange={onScanInteractionChange}
         />
+        {/* Ambient specimen sweep — it loops for as long as the panel is open
+          * and deliberately outlives the probe walk, so a classified specimen
+          * still reads as live instrumentation. It animates transform/opacity
+          * only (never `top`), which is what keeps it off the layout path. */}
         <span
           key={cell.id}
           aria-hidden="true"
           data-cell-specimen-scan-light
-          style={{ position: 'absolute', zIndex: 2, left: 5, right: 5, top: '9%', height: '82%', opacity: scan.classified ? 0 : 0.8, transform: scan.classified ? 'translate3d(0,100%,0)' : undefined, animation: reduced || scan.classified ? undefined : `cknerv-cell-specimen-sweep ${order.length * PROBE_STEP_S}s linear 1 both`, pointerEvents: 'none', willChange: reduced || scan.classified ? undefined : 'transform, opacity' }}
+          style={{ position: 'absolute', zIndex: 2, left: 5, right: 5, top: '9%', height: '82%', opacity: 0.8, animation: reduced ? undefined : 'cknerv-cell-specimen-sweep 2.8s linear infinite', pointerEvents: 'none', willChange: reduced ? undefined : 'transform, opacity' }}
         >
           <span style={{ position: 'absolute', left: 0, right: 0, top: 0, height: 1, background: `linear-gradient(90deg,transparent,${rgba(HUD_COLORS.cyanWire, 0.85)},${rgba(HUD_COLORS.orange, 0.46)},transparent)`, boxShadow: `0 0 9px ${rgba(HUD_COLORS.cyanWire, 0.7)}` }} />
         </span>

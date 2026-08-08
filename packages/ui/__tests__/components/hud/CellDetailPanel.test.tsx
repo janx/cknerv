@@ -154,10 +154,10 @@ describe('CellDetailPanel', () => {
     expect(specimenScan.style.top).toBe('9%');
     expect(specimenScan.style.height).toBe('82%');
     expect(specimenScan.style.willChange).toContain('transform');
+    // Ambient loop, not a one-shot tied to the probe walk.
     expect(specimenScan.style.animation).toContain(
-      `cknerv-cell-specimen-sweep ${6 * PROBE_STEP_S}s linear 1 both`,
+      'cknerv-cell-specimen-sweep 2.8s linear infinite',
     );
-    expect(specimenScan.style.animation).not.toContain('infinite');
     const cellularBeam = container.querySelector(
       '[data-cellular-scan-beam]',
     ) as HTMLElement;
@@ -610,9 +610,12 @@ describe('CellDetailPanel', () => {
     const settledSpecimenScan = container.querySelector(
       '[data-cell-specimen-scan-light]',
     ) as HTMLElement;
-    expect(settledSpecimenScan.style.animation).toBe('');
-    expect(settledSpecimenScan.style.willChange).toBe('');
-    expect(settledSpecimenScan.style.opacity).toBe('0');
+    // Classification ends the probe walk; the ambient sweep keeps looping.
+    expect(settledSpecimenScan.style.animation).toContain(
+      'cknerv-cell-specimen-sweep 2.8s linear infinite',
+    );
+    expect(settledSpecimenScan.style.willChange).toContain('transform');
+    expect(settledSpecimenScan.style.opacity).toBe('0.8');
     expect((container.querySelector('[data-consensus-memory-reveal="causal"]') as HTMLElement)
       .style.display).toBe('block');
     performanceNow.mockRestore();
