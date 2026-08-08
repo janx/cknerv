@@ -24,6 +24,12 @@ import {
   ASSET_COLORS,
 } from './cellFormat';
 import { HUD_COLORS, HUD_FONTS, rgba } from './hudTheme';
+import {
+  CloseButton,
+  SpatialPlateHeader,
+  spatialPlate,
+  spatialPlateBackground,
+} from './primitives';
 import { useReducedMotion } from './useReducedMotion';
 import CellNucleusPortrait from './CellNucleusPortrait';
 import ConsensusIdentityPlate, {
@@ -509,12 +515,10 @@ export default function CellDetailPanel({
           gap: '3px 10px',
           minWidth: 0,
           padding: '9px 38px 8px 16px',
-          borderLeft: `1px solid ${rgba(HUD_COLORS.orange, 0.5)}`,
-          background: 'linear-gradient(100deg,rgba(7,5,11,.94),rgba(6,7,15,.72) 76%,transparent)',
-          clipPath: 'polygon(0 0,calc(100% - 12px) 0,100% 12px,100% 100%,0 100%)',
+          ...spatialPlate(HUD_COLORS.orange),
         }}
       >
-        <span style={{ color: HUD_COLORS.orange, fontFamily: HUD_FONTS.tech, fontSize: 13, fontWeight: 700, letterSpacing: 2 }}>
+        <span style={{ color: HUD_COLORS.orange, fontFamily: HUD_FONTS.display, fontSize: 13, fontWeight: 600, letterSpacing: 2, textShadow: '0 0 9px rgba(255,152,48,.45)' }}>
           CELL // #{cell.id}
         </span>
         <span style={{ color: HUD_COLORS.orange, fontFamily: HUD_FONTS.cjk, fontSize: 11, opacity: 0.78 }}>
@@ -526,25 +530,10 @@ export default function CellDetailPanel({
         <span style={{ marginLeft: 'auto', color: live ? HUD_COLORS.nominal : HUD_COLORS.caution, fontSize: 10.5, letterSpacing: 0.9 }}>
           {live ? '● LIVE' : '◇ SPENT'} · {lifetime}
         </span>
-        <button
-          type="button"
-          aria-label="close"
-          title="Close · ESC or click outside"
-          onPointerDown={(event) => {
-            if (event.button !== 0) return;
-            event.preventDefault();
-            event.stopPropagation();
-            onClose();
-          }}
-          onClick={(event) => {
-            event.stopPropagation();
-            // Keyboard activation has no preceding pointerdown.
-            if (event.detail === 0) onClose();
-          }}
-          style={{ position: 'absolute', top: 5, right: 8, width: 28, height: 28, padding: 0, border: 0, background: 'transparent', color: HUD_COLORS.dim, font: `15px ${HUD_FONTS.mono}`, cursor: 'crosshair', pointerEvents: 'auto' }}
-        >
-          ×
-        </button>
+        <span style={{ position: 'absolute', top: 7, right: 30, fontFamily: HUD_FONTS.mono, fontSize: 8.5, letterSpacing: 1, color: '#5a6470' }}>
+          SCAN·06
+        </span>
+        <CloseButton onClose={onClose} title="Close · ESC or click outside" />
       </section>
 
       <section
@@ -562,11 +551,8 @@ export default function CellDetailPanel({
           border: `1px solid ${rgba(HUD_COLORS.orange, 0.24)}`,
           // Directional plate, matching the sibling satellites — NOT a radial
           // field. The circular idiom in this viewport belongs to the content
-          // address halo (the one ring that reads as data); a second concentric
-          // gradient ring competed with it, put its heaviest ink on the empty
-          // margin instead of behind the additive core, and dissolved the four
-          // corners the square chrome still draws.
-          background: `linear-gradient(100deg,rgba(1,5,13,.95),rgba(2,8,18,.88) 74%,${rgba(HUD_COLORS.cyanWire, 0.04)})`,
+          // address halo (the one ring that reads as data).
+          background: spatialPlateBackground(HUD_COLORS.cyanWire),
           boxShadow: `inset 0 0 26px ${rgba(HUD_COLORS.cyanWire, 0.08)},0 0 20px ${rgba(HUD_COLORS.orange, 0.06)}`,
         }}
       >
@@ -617,10 +603,7 @@ export default function CellDetailPanel({
             : { ...fromFanEdge(0), top: 88, width: anatomyWidth, height: anatomyHeight }),
           overflow: 'hidden',
           padding: '12px 12px 10px 18px',
-          borderTop: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.22)}`,
-          borderBottom: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.12)}`,
-          background: `linear-gradient(100deg,rgba(1,6,15,.9),rgba(2,10,21,.72) 72%,${rgba(HUD_COLORS.cyanWire, 0.035)})`,
-          clipPath: 'polygon(0 0,calc(100% - 12px) 0,100% 12px,100% 100%,0 100%)',
+          ...spatialPlate(HUD_COLORS.cyanWire),
         }}
       >
         <span
@@ -630,21 +613,20 @@ export default function CellDetailPanel({
         >
           <span style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 1, background: `linear-gradient(180deg,transparent,${HUD_COLORS.cyanWire},transparent)`, boxShadow: `0 0 12px ${HUD_COLORS.cyanWire}` }} />
         </span>
-        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: '3px 7px', marginBottom: 7 }}>
-          <span style={{ color: '#C9F8FF', fontFamily: HUD_FONTS.tech, fontSize: 10.5, fontWeight: 700, letterSpacing: 1.35 }}>
-            CELL IDENTITY
-          </span>
-          <span style={{ color: HUD_COLORS.cyanWire, fontFamily: HUD_FONTS.cjk, fontSize: 8.5, opacity: 0.72 }}>
-            细胞身份
-          </span>
-          <span
-            data-cell-identity-scan-status="true"
-            style={{ marginLeft: 'auto', color: statusColor, fontSize: 8.2, letterSpacing: 0.72, textShadow: `0 0 7px ${rgba(statusColor, 0.42)}` }}
-          >
-            {scan.classified ? 'LOCKED' : `SCANNING ${scan.pct}%`}
-            {' · '}A-LATTICE {scan.reveal}/{order.length}
-          </span>
-        </div>
+        <SpatialPlateHeader
+          en="CELL IDENTITY"
+          cjk="细胞身份"
+          accent={HUD_COLORS.cyanWire}
+          status={(
+            <span
+              data-cell-identity-scan-status="true"
+              style={{ color: statusColor, fontSize: 8.2, letterSpacing: 0.72, textShadow: `0 0 7px ${rgba(statusColor, 0.42)}` }}
+            >
+              {scan.classified ? 'LOCKED' : `SCANNING ${scan.pct}%`}
+              {' · '}A-LATTICE {scan.reveal}/{order.length}
+            </span>
+          )}
+        />
         <div style={{ display: 'grid', gridTemplateColumns: verticalLayout ? 'repeat(2, minmax(0, 1fr))' : 'repeat(3, minmax(0, 1fr))', gap: '4px 10px' }}>
           {order.map((field, index) => (
             <CellScanFact
@@ -706,11 +688,7 @@ export default function CellDetailPanel({
             width: 'auto',
             overflow: 'visible',
             padding: '8px 10px 11px 12px',
-            borderLeft: `1px solid ${rgba('#AA88FF', 0.42)}`,
-            borderTop: `1px solid ${rgba('#AA88FF', 0.16)}`,
-            borderBottom: `1px solid ${rgba('#AA88FF', 0.1)}`,
-            background: `linear-gradient(105deg,rgba(3,3,13,.97),rgba(4,4,16,.92) 78%,${rgba('#AA88FF', 0.045)})`,
-            clipPath: 'polygon(0 0,calc(100% - 11px) 0,100% 11px,100% 100%,0 100%)',
+            ...spatialPlate('#AA88FF'),
           }}
         >
           <div data-cell-detail-readable-scale="true" style={{ width: readableWidth, zoom: readableScale }}>
@@ -765,19 +743,20 @@ export default function CellDetailPanel({
               width: 'auto',
               overflow: 'visible',
               padding: '8px 10px 10px 12px',
-              borderLeft: `1px solid ${rgba('#AA88FF', 0.5)}`,
-              borderTop: `1px solid ${rgba('#AA88FF', 0.2)}`,
-              borderBottom: `1px solid ${rgba('#AA88FF', 0.12)}`,
-              background: 'linear-gradient(105deg,rgba(4,3,14,.98),rgba(7,5,18,.94) 78%,rgba(170,136,255,.055))',
-              clipPath: 'polygon(0 0,calc(100% - 11px) 0,100% 11px,100% 100%,0 100%)',
+              ...spatialPlate('#AA88FF'),
             }}
           >
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: 7, color: '#C7B9FF', fontFamily: HUD_FONTS.tech, fontSize: 8.4, fontWeight: 700, letterSpacing: 1.2 }}>
-              <span>MEMORY TRACE</span>
-              <span style={{ marginLeft: 'auto', color: HUD_COLORS.dim, fontFamily: HUD_FONTS.mono, fontSize: 6.8, fontWeight: 400, letterSpacing: 0.55 }}>
-                LIVE EVIDENCE
-              </span>
-            </div>
+            <SpatialPlateHeader
+              en="MEMORY TRACE"
+              accent="#AA88FF"
+              titleColor="#C7B9FF"
+              marginBottom={0}
+              status={(
+                <span style={{ color: HUD_COLORS.dim, fontFamily: HUD_FONTS.mono, fontSize: 6.8, letterSpacing: 0.55 }}>
+                  LIVE EVIDENCE
+                </span>
+              )}
+            />
             <div data-cell-detail-readable-scale="true" style={{ width: readableWidth, zoom: readableScale }}>
               <ConsensusMemoryTracePlate
                 readout={traceReadout}

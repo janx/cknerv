@@ -187,11 +187,12 @@ export function Gauge({ ratio, color }: { ratio: number; color: string }) {
   );
 }
 
-export function CloseButton({ onClose }: { onClose: () => void }) {
+export function CloseButton({ onClose, title }: { onClose: () => void; title?: string }) {
   return (
     <span
       role="button"
       aria-label="close"
+      title={title}
       onClick={(e) => { e.stopPropagation(); onClose(); }}
       onPointerDown={(e) => e.stopPropagation()}
       onMouseOver={(e) => { (e.currentTarget as HTMLElement).style.color = HUD_COLORS.danger; }}
@@ -201,5 +202,65 @@ export function CloseButton({ onClose }: { onClose: () => void }) {
         fontFamily: HUD_FONTS.mono, fontSize: 14, lineHeight: 1, color: HUD_COLORS.dim,
       }}
     >×</span>
+  );
+}
+
+// ——— Spatial instrument grammar ————————————————————————————————————————
+// The scene-anchored inspection satellites speak a directional-plate dialect
+// of the house language: a leading accent edge, a ~100° near-opaque gradient,
+// one cut corner. Single-sourced so every plate agrees — and so the trailing
+// edge can never thin out enough to let a dimmed HUD panel print through the
+// plate (the tail alpha floor is the load-bearing part).
+
+const SPATIAL_PLATE_CUT_PX = 12;
+
+/** Dark tail tinted faintly toward the accent — directional, never sheer. */
+function spatialPlateTail(accent: string): string {
+  const h = accent.replace('#', '');
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  return `rgba(${Math.round(4 + r * 0.055)},${Math.round(8 + g * 0.055)},${Math.round(14 + b * 0.055)},0.88)`;
+}
+
+export function spatialPlateBackground(accent: string): string {
+  return `linear-gradient(100deg,rgba(2,5,12,.96),rgba(3,8,17,.9) 72%,${spatialPlateTail(accent)})`;
+}
+
+export function spatialPlate(accent: string): CSSProperties {
+  return {
+    borderLeft: `1px solid ${rgba(accent, 0.46)}`,
+    borderTop: `1px solid ${rgba(accent, 0.15)}`,
+    borderBottom: `1px solid ${rgba(accent, 0.09)}`,
+    background: spatialPlateBackground(accent),
+    clipPath: `polygon(0 0,calc(100% - ${SPATIAL_PLATE_CUT_PX}px) 0,100% ${SPATIAL_PLATE_CUT_PX}px,100% 100%,0 100%)`,
+  };
+}
+
+/** Header row shared by the spatial plates: EN title, CJK companion, and a
+ *  right-aligned live status the caller renders (keeps its data attributes). */
+export function SpatialPlateHeader({ en, cjk, accent, titleColor = '#C9F8FF', status, marginBottom = 7 }: {
+  en: string;
+  cjk?: string;
+  /** Plate accent — tints the CJK companion. */
+  accent: string;
+  titleColor?: string;
+  status?: ReactNode;
+  marginBottom?: number;
+}) {
+  return (
+    <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: '3px 7px', marginBottom }}>
+      <span style={{ flex: '0 0 auto', whiteSpace: 'nowrap', color: titleColor, fontFamily: HUD_FONTS.tech, fontSize: 10.5, fontWeight: 700, letterSpacing: 1.35 }}>
+        {en}
+      </span>
+      {cjk ? (
+        <span style={{ flex: '0 0 auto', whiteSpace: 'nowrap', color: accent, fontFamily: HUD_FONTS.cjk, fontSize: 8.5, opacity: 0.72 }}>
+          {cjk}
+        </span>
+      ) : null}
+      {status != null ? (
+        <span style={{ marginLeft: 'auto', minWidth: 0, textAlign: 'right' }}>{status}</span>
+      ) : null}
+    </div>
   );
 }
