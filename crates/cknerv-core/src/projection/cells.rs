@@ -191,6 +191,13 @@ pub enum CellDelta {
         id: u64,
         tag: String,
     },
+    /// Remove retained cells without a death animation. Emitted by the
+    /// death-tail sweep, by `reset_for_rebuild`, and — deferred — for
+    /// rolled-back births that never re-appeared on a replacement chain
+    /// (`settle_reorg_limbo`). A reorg rollback itself no longer GCs the
+    /// orphaned births: their identities are parked and revived in place
+    /// when the replacement suffix re-includes the same outpoint, so
+    /// survivors never round-trip through removal on the client.
     Gc {
         ids: Vec<u64>,
     },
@@ -299,6 +306,24 @@ pub struct CellGalaxy {
     /// Bounded upstream by the reducer's 5-min pairing TTL, so even
     /// pathological out-of-order cases stay finite.
     pending_births_tag: std::collections::HashMap<OutPoint, String>,
+    /// Identities parked by a reorg rollback, keyed by the orphaned
+    /// outpoint. The replacement chain usually re-includes the same
+    /// transactions, so [`Self::handle_tx_landed`] first looks here and
+    /// revives the original id (→ same derived position, same birth time)
+    /// instead of allocating a fresh one — the client then sees an
+    /// in-place upsert, not a phantom death + birth at a new position.
+    /// Whatever never re-appears gets the GC that `rollback_from`
+    /// deferred, at [`Self::settle_reorg_limbo`] time. Never persisted: a
+    /// restart mid-reorg degrades to fresh ids, and reconnecting clients
+    /// resnapshot anyway. Bounded by one reorg window's births, same
+    /// order as `block_births`.
+    reorg_limbo: std::collections::HashMap<OutPoint, Cell>,
+    /// Settle watermark for rollbacks that are not followed by a
+    /// `ReplayPhase::Reorg` envelope (defensive; the CKB adapter always
+    /// envelopes). Holds the pre-rollback tip: once a live block lands
+    /// strictly beyond it, every replaced height has replayed and
+    /// leftover parked identities retire via the deferred GC.
+    limbo_backstop_height: Option<u64>,
     /// `Some` while a historical replay is in progress. Gates block pulse
     /// emission (see `handle_block_mined`) and is surfaced in the snapshot
     /// for clients connecting mid-backfill. Tx links still emit during
@@ -376,6 +401,8 @@ impl CellGalaxy {
             total_births: 0,
             total_deaths: 0,
             pending_births_tag: std::collections::HashMap::new(),
+            reorg_limbo: std::collections::HashMap::new(),
+            limbo_backstop_height: None,
             backfill: None,
             hydrated_cell_target: 0,
             hydration_floor: None,
@@ -453,6 +480,11 @@ impl CellGalaxy {
         self.total_births = p.total_births;
         self.total_deaths = p.total_deaths;
         self.pending_births_tag = p.pending_births_tag.into_iter().collect();
+        // Deliberately not persisted: parked reorg identities only matter to
+        // clients that watched the rollback live, and none survive a server
+        // restart. A restart mid-reorg replays the suffix with fresh ids.
+        self.reorg_limbo.clear();
+        self.limbo_backstop_height = None;
         self.hydrated_cell_target = p.hydrated_cell_target;
         self.hydration_floor = p.hydration_floor;
         self.refresh_derived_positions();
@@ -560,7 +592,11 @@ impl CellGalaxy {
     /// queued before the reset, and replayed historical blocks must not move
     /// the pulse clock backward.
     fn reset_for_rebuild(&mut self) -> Vec<CellDelta> {
-        let ids = self.cells.iter().map(|cell| cell.id).collect::<Vec<_>>();
+        let mut ids = self.cells.iter().map(|cell| cell.id).collect::<Vec<_>>();
+        // Parked reorg identities live outside `cells`; retire them with the
+        // same reset GC so no client retains a cell this rebuild abandons.
+        ids.extend(self.reorg_limbo.drain().map(|(_, cell)| cell.id));
+        self.limbo_backstop_height = None;
         self.cells.clear();
         self.outpoint_index.clear();
         self.block_hashes.clear();
@@ -693,15 +729,23 @@ impl CellGalaxy {
         // whose height was not present in `block_hashes`.
         self.recent_links.retain(|link| link.block < number);
 
+        let orphan_tip = *heights.last().expect("checked non-empty above");
         let mut counters_touched = false;
         for height in heights.into_iter().rev() {
-            let mut gc_ids = Vec::new();
             if let Some(births) = self.block_births.remove(&height) {
                 for outpoint in births {
                     self.outpoint_index.remove(&outpoint);
                     if let Some(pos) = self.cells.iter().position(|c| c.out_point == outpoint) {
+                        // Park the identity instead of emitting a GC. The
+                        // replacement chain usually re-includes the same tx
+                        // (same outpoint ⇒ same content — the tx hash covers
+                        // outputs and data), and the client can only keep the
+                        // cell alive in place if it never saw a removal.
+                        // Survivors are matched by outpoint in
+                        // `handle_tx_landed`; the rest get this deferred GC
+                        // at `settle_reorg_limbo` time.
                         let cell = self.cells.remove(pos);
-                        gc_ids.push(cell.id);
+                        self.reorg_limbo.insert(outpoint, cell);
                     }
                     // Strict 1:1 with the original `handle_tx_landed` increment:
                     // every recorded birth bumped `total_births` exactly once,
@@ -709,13 +753,12 @@ impl CellGalaxy {
                     // now (eviction or post-death-tail GC may have removed it).
                     // So decrement per recorded outpoint, not per actually
                     // removed cell, to keep the counter aligned with the
-                    // canonical-chain reality after the reorg.
+                    // canonical-chain reality after the reorg. Parked cells
+                    // decrement too: their revival in `handle_tx_landed`
+                    // re-increments, so a survivor nets zero.
                     self.total_births -= 1;
                     counters_touched = true;
                 }
-            }
-            if !gc_ids.is_empty() {
-                deltas.push(CellDelta::Gc { ids: gc_ids });
             }
 
             if let Some(deaths) = self.block_deaths.remove(&height) {
@@ -745,6 +788,17 @@ impl CellGalaxy {
 
             self.block_hashes.remove(&height);
         }
+
+        // Arm the envelope-less settle backstop (see `handle_block_mined`).
+        // `max` keeps the widest horizon when a second rollback lands while
+        // an earlier limbo is still waiting for its replacement suffix.
+        if !self.reorg_limbo.is_empty() {
+            self.limbo_backstop_height = Some(
+                self.limbo_backstop_height
+                    .map_or(orphan_tip, |w| w.max(orphan_tip)),
+            );
+        }
+
         if counters_touched {
             deltas.push(CellDelta::Stats {
                 total_births: self.total_births,
@@ -753,6 +807,20 @@ impl CellGalaxy {
         }
 
         deltas
+    }
+
+    /// Retire every parked reorg identity whose outpoint never re-appeared
+    /// on the replacement chain. Survivors were consumed by
+    /// [`Self::handle_tx_landed`]; whatever is still parked once the
+    /// replacement suffix has replayed is genuinely absent from the
+    /// canonical chain and gets the GC that `rollback_from` deferred.
+    fn settle_reorg_limbo(&mut self) -> Option<CellDelta> {
+        self.limbo_backstop_height = None;
+        if self.reorg_limbo.is_empty() {
+            return None;
+        }
+        let ids = self.reorg_limbo.drain().map(|(_, cell)| cell.id).collect();
+        Some(CellDelta::Gc { ids })
     }
 
     fn handle_block_mined(
@@ -772,6 +840,22 @@ impl CellGalaxy {
         }
         self.block_hashes.insert(number, hash.to_string());
         self.prune_reorg_journal();
+
+        // Envelope-less settle backstop (defensive: the CKB adapter always
+        // wraps a reorg replay in a `ReplayPhase::Reorg` envelope, which
+        // settles at its terminal instead — enveloped replays skip this via
+        // the `backfill` gate). A live block strictly beyond the pre-rollback
+        // tip means every replaced height has already replayed its txs
+        // (per-block mutation order is BlockMined first, then that block's
+        // TxLanded), so anything still parked either never re-appeared or
+        // moved beyond the old tip — both retire the parked identity.
+        if self.backfill.is_none()
+            && self
+                .limbo_backstop_height
+                .is_some_and(|watermark| number > watermark)
+        {
+            deltas.extend(self.settle_reorg_limbo());
+        }
 
         // A Cell alive at an intermediate historical prefix may still be
         // spent later in the same ordered replay. Enforcing the cap here can
@@ -856,14 +940,52 @@ impl CellGalaxy {
         let mut birthed_ids: Vec<u64> = Vec::with_capacity(outputs.len());
         let mut link_tag: Option<String> = None;
         for (i, out) in outputs.iter().enumerate() {
-            let id = self.next_id;
-            self.next_id += 1;
-            let pos_seed = helix_seed_for(id);
             let outpoint = OutPoint {
                 tx_hash: tx_hash.to_string(),
                 index: i as u32,
             };
-            let preset_tag = self.pending_births_tag.remove(&outpoint);
+            // Reorg-survivor revival: a replacement-chain replay that
+            // re-creates an outpoint parked by `rollback_from` keeps the
+            // original id (→ same helix position) and birth time, so the
+            // re-emitted Birth is an in-place upsert — byte-identical when
+            // the tx kept its height — instead of a phantom death + birth
+            // pair. Same tx_hash implies same output content on a real
+            // chain (the hash covers outputs and data); the field guard is
+            // a fail-open defense against synthetic sources. Steady-state
+            // cost is the `is_empty` check: the limbo only fills during a
+            // reorg window.
+            let parked = if self.reorg_limbo.is_empty() {
+                None
+            } else {
+                match self.reorg_limbo.remove(&outpoint) {
+                    Some(prev)
+                        if prev.capacity == out.capacity
+                            && prev.content_hash == out.content_hash
+                            && prev.lock_kind == out.lock_kind
+                            && prev.asset_kind == out.asset_kind =>
+                    {
+                        Some(prev)
+                    }
+                    Some(prev) => {
+                        // Content mismatch at a reused outpoint: retire the
+                        // parked identity now and fall through to a fresh
+                        // allocation.
+                        deltas.push(CellDelta::Gc { ids: vec![prev.id] });
+                        None
+                    }
+                    None => None,
+                }
+            };
+            let (id, born_at_ms, parked_tag) = match parked {
+                Some(prev) => (prev.id, prev.born_at_ms, prev.tag),
+                None => {
+                    let id = self.next_id;
+                    self.next_id += 1;
+                    (id, at_ms, None)
+                }
+            };
+            let pos_seed = helix_seed_for(id);
+            let preset_tag = self.pending_births_tag.remove(&outpoint).or(parked_tag);
             if link_tag.is_none() {
                 if let Some(t) = preset_tag.as_ref() {
                     link_tag = Some(t.clone());
@@ -871,7 +993,7 @@ impl CellGalaxy {
             }
             let cell = Cell {
                 id,
-                born_at_ms: at_ms,
+                born_at_ms,
                 death_at_ms: None,
                 birth_block: block,
                 tag: preset_tag,
@@ -1112,6 +1234,17 @@ impl Projection for CellGalaxy {
                     phase: *phase,
                 }];
                 if !active && was_active {
+                    // A replay envelope that closed with full coverage is
+                    // the canonical settle point for parked reorg
+                    // identities: the whole replacement suffix has replayed,
+                    // so whatever is still parked never re-appeared. An
+                    // incomplete close (hard error mid-replay, done < total)
+                    // keeps the limbo for the retry cycle that reopens the
+                    // envelope; the `handle_block_mined` backstop still
+                    // bounds its lifetime.
+                    if *done == *total {
+                        deltas.extend(self.settle_reorg_limbo());
+                    }
                     let at_ms = self
                         .cells
                         .iter()
@@ -2101,9 +2234,15 @@ mod tests {
             g.recent_links.iter().all(|link| link.block < 2),
             "orphaned causal evidence must leave the canonical snapshot"
         );
-        assert!(deltas
-            .iter()
-            .any(|d| matches!(d, CellDelta::Gc { ids } if !ids.is_empty())));
+        // The orphaned birth is parked, not GC'd: the replacement suffix
+        // usually re-includes the same tx, and the deferred GC only fires
+        // for outpoints that never re-appear (`settle_reorg_limbo`).
+        assert!(
+            !deltas.iter().any(|d| matches!(d, CellDelta::Gc { .. })),
+            "rollback must defer the orphan-birth GC; got {deltas:?}"
+        );
+        assert!(g.reorg_limbo.contains_key(&op("0xorphan", 0)));
+        assert_eq!(g.limbo_backstop_height, Some(2));
         assert!(deltas
             .iter()
             .any(|d| matches!(d, CellDelta::Birth { cell } if cell.out_point == base)));
@@ -2127,6 +2266,318 @@ mod tests {
         assert_eq!(g.cells[0].out_point, op("0xbase", 0));
         assert!(g.cells[0].death_at_ms.is_none());
         assert!(!g.block_hashes.contains_key(&2));
+        assert!(
+            g.reorg_limbo.contains_key(&op("0xorphan", 0)),
+            "orphan birth parks for the incoming replacement suffix"
+        );
+    }
+
+    #[test]
+    fn reorg_replay_revives_identity_for_a_re_included_outpoint() {
+        let mut g = make_galaxy();
+        g.handle_block_mined(1, "0xaaa", 1, 1_000);
+        g.handle_tx_landed("0xbase", 1, 1_000, &[], &[out(100, "0x")]);
+        g.handle_block_mined(2, "0xbbb", 1, 2_000);
+        g.handle_tx_landed("0xtx", 2, 2_000, &[], &[out(200, "0xdd")]);
+        let original = g
+            .cells
+            .iter()
+            .find(|c| c.out_point == op("0xtx", 0))
+            .expect("orphan-to-be output")
+            .clone();
+        let next_id_before = g.next_id;
+        assert_eq!(g.total_births, 2);
+
+        // Same-height replacement block: the rollback parks the birth…
+        let rollback = g.handle_block_mined(2, "0xccc", 1, 3_000);
+        assert!(
+            !rollback.iter().any(|d| matches!(d, CellDelta::Gc { .. })),
+            "rollback must defer the orphan-birth GC; got {rollback:?}"
+        );
+        assert_eq!(g.total_births, 1);
+
+        // …and the replayed identical tx revives the identity in place. The
+        // Birth is byte-identical to the original cell (same id → same
+        // derived position, original born_at_ms preserved), which the
+        // client-side reducer treats as a pure no-op upsert.
+        let replay = g.handle_tx_landed("0xtx", 2, 3_000, &[], &[out(200, "0xdd")]);
+        let reborn = replay
+            .iter()
+            .find_map(|d| match d {
+                CellDelta::Birth { cell } => Some(cell),
+                _ => None,
+            })
+            .expect("replayed birth");
+        assert_eq!(reborn, &original);
+        assert_eq!(g.next_id, next_id_before, "no fresh identity allocated");
+        assert!(g.reorg_limbo.is_empty());
+        assert_eq!(g.outpoint_index.get(&op("0xtx", 0)), Some(&original.id));
+        assert_eq!(g.total_births, 2, "survivor nets zero across the reorg");
+        assert!(g
+            .block_births
+            .get(&2)
+            .is_some_and(|births| births.contains(&op("0xtx", 0))));
+    }
+
+    #[test]
+    fn enveloped_reorg_replay_revives_identity_when_the_tx_moves_heights() {
+        let mut g = make_galaxy();
+        g.handle_block_mined(1, "0xaaa", 1, 1_000);
+        g.handle_tx_landed("0xbase", 1, 1_000, &[], &[out(100, "0x")]);
+        g.handle_block_mined(2, "0xbbb", 1, 2_000);
+        g.handle_tx_landed("0xtx", 2, 2_000, &[], &[out(200, "0xdd")]);
+        let original_id = g
+            .cells
+            .iter()
+            .find(|c| c.out_point == op("0xtx", 0))
+            .expect("orphan-to-be output")
+            .id;
+
+        g.apply_mutation(&Mutation::ChainReorganized { from_block: 2 });
+        g.apply_mutation(&Mutation::BackfillProgress {
+            done: 0,
+            total: 2,
+            active: true,
+            phase: ReplayPhase::Reorg,
+        });
+        // Replacement chain: empty block at 2, the tx re-included at 3. The
+        // enveloped replay must NOT trip the live-block backstop while
+        // heights beyond the old tip stream in.
+        g.handle_block_mined(2, "0xccc", 0, 3_000);
+        let mined = g.handle_block_mined(3, "0xddd", 1, 3_100);
+        assert!(
+            !mined.iter().any(|d| matches!(d, CellDelta::Gc { .. })),
+            "enveloped replay must not settle at a live-looking block"
+        );
+        assert!(!g.reorg_limbo.is_empty());
+
+        let replay = g.handle_tx_landed("0xtx", 3, 3_100, &[], &[out(200, "0xdd")]);
+        let reborn = replay
+            .iter()
+            .find_map(|d| match d {
+                CellDelta::Birth { cell } => Some(cell),
+                _ => None,
+            })
+            .expect("replayed birth");
+        assert_eq!(reborn.id, original_id);
+        assert_eq!(reborn.birth_block, 3, "honest height update");
+        assert_eq!(reborn.born_at_ms, 2_000, "original birth time preserved");
+
+        let terminal = g.apply_mutation(&Mutation::BackfillProgress {
+            done: 2,
+            total: 2,
+            active: false,
+            phase: ReplayPhase::Reorg,
+        });
+        assert!(!terminal.iter().any(|d| matches!(d, CellDelta::Gc { .. })));
+        assert!(g.reorg_limbo.is_empty());
+        assert!(g.limbo_backstop_height.is_none());
+    }
+
+    #[test]
+    fn unreplayed_orphan_birth_gc_defers_to_the_replay_terminal() {
+        let mut g = make_galaxy();
+        g.handle_block_mined(1, "0xaaa", 1, 1_000);
+        g.handle_tx_landed("0xbase", 1, 1_000, &[], &[out(100, "0x")]);
+        g.handle_block_mined(2, "0xbbb", 1, 2_000);
+        g.handle_tx_landed("0xorphan", 2, 2_000, &[], &[out(200, "0xdd")]);
+        let orphan_id = g
+            .cells
+            .iter()
+            .find(|c| c.out_point == op("0xorphan", 0))
+            .expect("orphan output")
+            .id;
+
+        g.apply_mutation(&Mutation::ChainReorganized { from_block: 2 });
+        g.apply_mutation(&Mutation::BackfillProgress {
+            done: 0,
+            total: 1,
+            active: true,
+            phase: ReplayPhase::Reorg,
+        });
+        // Replacement block does not re-include the orphan tx.
+        g.handle_block_mined(2, "0xccc", 0, 3_000);
+        let terminal = g.apply_mutation(&Mutation::BackfillProgress {
+            done: 1,
+            total: 1,
+            active: false,
+            phase: ReplayPhase::Reorg,
+        });
+        assert!(
+            terminal
+                .iter()
+                .any(|d| matches!(d, CellDelta::Gc { ids } if ids == &vec![orphan_id])),
+            "terminal must retire the unreplayed identity; got {terminal:?}"
+        );
+        assert!(g.reorg_limbo.is_empty());
+        assert!(g.limbo_backstop_height.is_none());
+        assert!(g.cells.iter().all(|c| c.id != orphan_id));
+    }
+
+    #[test]
+    fn incomplete_replay_terminal_keeps_parked_identities_for_the_retry() {
+        let mut g = make_galaxy();
+        g.handle_block_mined(1, "0xaaa", 1, 1_000);
+        g.handle_tx_landed("0xbase", 1, 1_000, &[], &[out(100, "0x")]);
+        g.handle_block_mined(2, "0xbbb", 1, 2_000);
+        g.handle_tx_landed("0xtx", 2, 2_000, &[], &[out(200, "0xdd")]);
+
+        g.apply_mutation(&Mutation::ChainReorganized { from_block: 2 });
+        g.apply_mutation(&Mutation::BackfillProgress {
+            done: 0,
+            total: 5,
+            active: true,
+            phase: ReplayPhase::Reorg,
+        });
+        // Hard error closed the envelope before covering the suffix: the
+        // poller's next cycle reopens it, so the limbo must survive.
+        let closed = g.apply_mutation(&Mutation::BackfillProgress {
+            done: 2,
+            total: 5,
+            active: false,
+            phase: ReplayPhase::Reorg,
+        });
+        assert!(!closed.iter().any(|d| matches!(d, CellDelta::Gc { .. })));
+        assert!(!g.reorg_limbo.is_empty());
+        assert_eq!(g.limbo_backstop_height, Some(2));
+    }
+
+    #[test]
+    fn implicit_replacement_settles_leftover_limbo_at_the_next_live_block() {
+        let mut g = make_galaxy();
+        g.handle_block_mined(1, "0xaaa", 1, 1_000);
+        g.handle_tx_landed("0xbase", 1, 1_000, &[], &[out(100, "0x")]);
+        g.handle_block_mined(2, "0xbbb", 2, 2_000);
+        g.handle_tx_landed("0xta", 2, 2_000, &[], &[out(200, "0xdd")]);
+        g.handle_tx_landed("0xtb", 2, 2_100, &[], &[out(300, "0xee")]);
+        let id_a = g.outpoint_index[&op("0xta", 0)];
+        let id_b = g.outpoint_index[&op("0xtb", 0)];
+
+        // Same-height replacement (no envelope): parks both, replays only A.
+        g.handle_block_mined(2, "0xccc", 1, 3_000);
+        let replay = g.handle_tx_landed("0xta", 2, 3_000, &[], &[out(200, "0xdd")]);
+        assert!(replay
+            .iter()
+            .any(|d| matches!(d, CellDelta::Birth { cell } if cell.id == id_a)));
+
+        // The first live block beyond the old tip retires the leftover.
+        let mined = g.handle_block_mined(3, "0xddd", 0, 4_000);
+        assert!(
+            mined
+                .iter()
+                .any(|d| matches!(d, CellDelta::Gc { ids } if ids == &vec![id_b])),
+            "backstop must retire only the unreplayed identity; got {mined:?}"
+        );
+        assert!(g.reorg_limbo.is_empty());
+        assert!(g.limbo_backstop_height.is_none());
+        assert!(g.cells.iter().any(|c| c.id == id_a));
+        assert!(g.cells.iter().all(|c| c.id != id_b));
+    }
+
+    #[test]
+    fn a_second_rollback_reparks_revived_identities_without_duplication() {
+        let mut g = make_galaxy();
+        g.handle_block_mined(1, "0xaaa", 1, 1_000);
+        g.handle_tx_landed("0xbase", 1, 1_000, &[], &[out(100, "0x")]);
+        g.handle_block_mined(2, "0xbbb", 1, 2_000);
+        g.handle_tx_landed("0xtx", 2, 2_000, &[], &[out(200, "0xdd")]);
+        let id = g.outpoint_index[&op("0xtx", 0)];
+
+        g.handle_block_mined(2, "0xccc", 1, 3_000);
+        g.handle_tx_landed("0xtx", 2, 3_000, &[], &[out(200, "0xdd")]);
+
+        // The revived birth was re-journaled, so a second replacement at the
+        // same height parks the same identity again — exactly once.
+        g.handle_block_mined(2, "0xddd", 1, 4_000);
+        assert_eq!(g.reorg_limbo.len(), 1);
+        assert_eq!(g.reorg_limbo[&op("0xtx", 0)].id, id);
+        assert!(g.cells.iter().all(|c| c.id != id));
+
+        let replay = g.handle_tx_landed("0xtx", 2, 4_100, &[], &[out(200, "0xdd")]);
+        assert!(replay
+            .iter()
+            .any(|d| matches!(d, CellDelta::Birth { cell } if cell.id == id)));
+        let settled = g.handle_block_mined(3, "0xeee", 0, 5_000);
+        assert!(
+            !settled.iter().any(|d| matches!(d, CellDelta::Gc { .. })),
+            "everything revived — nothing left to retire"
+        );
+        assert_eq!(g.cells.iter().filter(|c| c.id == id).count(), 1);
+    }
+
+    #[test]
+    fn limbo_content_mismatch_fails_open_to_a_fresh_identity() {
+        let mut g = make_galaxy();
+        g.handle_block_mined(1, "0xaaa", 1, 1_000);
+        g.handle_tx_landed("0xbase", 1, 1_000, &[], &[out(100, "0x")]);
+        g.handle_block_mined(2, "0xbbb", 1, 2_000);
+        g.handle_tx_landed("0xtx", 2, 2_000, &[], &[out(200, "0xdd")]);
+        let old_id = g.outpoint_index[&op("0xtx", 0)];
+        g.handle_block_mined(2, "0xccc", 1, 3_000);
+        let fresh_id = g.next_id;
+
+        // Impossible on a real chain (tx_hash covers output content); a
+        // synthetic source diverging here must not revive the identity.
+        let replay = g.handle_tx_landed("0xtx", 2, 3_000, &[], &[out(300, "0xdd")]);
+        assert!(replay
+            .iter()
+            .any(|d| matches!(d, CellDelta::Gc { ids } if ids == &vec![old_id])));
+        assert!(replay
+            .iter()
+            .any(|d| matches!(d, CellDelta::Birth { cell } if cell.id == fresh_id)));
+        assert!(g.reorg_limbo.is_empty());
+    }
+
+    #[test]
+    fn reset_for_rebuild_retires_parked_identities() {
+        let mut g = make_galaxy();
+        g.handle_block_mined(1, "0xaaa", 1, 1_000);
+        g.handle_tx_landed("0xbase", 1, 1_000, &[], &[out(100, "0x")]);
+        g.handle_block_mined(2, "0xbbb", 1, 2_000);
+        g.handle_tx_landed("0xorphan", 2, 2_000, &[], &[out(200, "0xdd")]);
+        let orphan_id = g.outpoint_index[&op("0xorphan", 0)];
+        g.apply_mutation(&Mutation::ChainReorganized { from_block: 2 });
+        assert!(!g.reorg_limbo.is_empty());
+
+        let deltas = g.apply_mutation(&Mutation::ChainRebuild { from_block: 20 });
+        let gc_ids = deltas
+            .iter()
+            .find_map(|d| match d {
+                CellDelta::Gc { ids } => Some(ids.clone()),
+                _ => None,
+            })
+            .expect("reset GC");
+        assert!(
+            gc_ids.contains(&orphan_id),
+            "parked identity joins the reset GC"
+        );
+        assert!(g.reorg_limbo.is_empty());
+        assert!(g.limbo_backstop_height.is_none());
+    }
+
+    #[test]
+    fn parked_identities_do_not_persist() {
+        let mut g = make_galaxy();
+        g.handle_block_mined(1, "0xaaa", 1, 1_000);
+        g.handle_tx_landed("0xbase", 1, 1_000, &[], &[out(100, "0x")]);
+        g.handle_block_mined(2, "0xbbb", 1, 2_000);
+        g.handle_tx_landed("0xtx", 2, 2_000, &[], &[out(200, "0xdd")]);
+        g.apply_mutation(&Mutation::ChainReorganized { from_block: 2 });
+        assert!(!g.reorg_limbo.is_empty());
+
+        let mut restored = CellGalaxy::new();
+        restored.restore_from(g.to_persisted());
+        assert!(restored.reorg_limbo.is_empty());
+        assert!(restored.limbo_backstop_height.is_none());
+
+        // Documented degradation: a post-restart replay births a fresh
+        // identity (reconnecting clients resnapshot, so nothing dangles).
+        let fresh_id = restored.next_id;
+        let replay = restored.handle_tx_landed("0xtx", 2, 4_000, &[], &[out(200, "0xdd")]);
+        assert!(replay
+            .iter()
+            .any(|d| matches!(d, CellDelta::Birth { cell } if cell.id == fresh_id)));
+        assert_eq!(restored.total_births, 2);
     }
 
     #[test]
