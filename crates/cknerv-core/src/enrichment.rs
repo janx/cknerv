@@ -346,6 +346,22 @@ pub struct GalaxyCompositionRecord {
     pub plain: Vec<Cell>,
 }
 
+impl GalaxyCompositionRecord {
+    /// Content equality ignoring the per-refresh freshness metadata
+    /// (`as_of`, `updated_at_ms`), which advance on every successful
+    /// revalidation regardless of whether the composed Cell set changed.
+    /// A refresh whose content matches the previously broadcast record is
+    /// a duplicate for wire purposes: subscribers key off the Cell
+    /// content, and the client reducer likewise keeps its previous record
+    /// (frozen anchors included) when content is unchanged.
+    pub fn content_matches(&self, other: &Self) -> bool {
+        self.source == other.source
+            && self.dao == other.dao
+            && self.typed == other.typed
+            && self.plain == other.plain
+    }
+}
+
 /// One exact capacity bucket from a bounded indexed ecosystem sample.
 /// Capacity is encoded in shannons so adapters cannot leak display-unit
 /// rounding into the shared wire contract.
@@ -1023,10 +1039,27 @@ impl EnrichmentProjection for SemanticsProjection {
                 vec![SemanticsDelta::NetworkAtlasClear]
             }
             EnrichmentEvent::GalaxyCompositionReplace(galaxy_composition) => {
-                self.galaxy_composition = Some(galaxy_composition.clone());
-                vec![SemanticsDelta::GalaxyCompositionReplace {
-                    galaxy_composition: galaxy_composition.clone(),
-                }]
+                let duplicate = self
+                    .galaxy_composition
+                    .as_ref()
+                    .is_some_and(|stored| stored.content_matches(galaxy_composition));
+                if duplicate {
+                    // Content-identical revalidation: broadcast nothing and
+                    // keep the stored record exactly as previously sent, so
+                    // new-subscriber snapshots match delta subscribers and
+                    // the reorg-prune predicate (`as_of.block >= from_block`)
+                    // evaluates identically on server and clients. Every
+                    // invalidation path (`Prune`/`Clear`/rebuild/incompatible
+                    // source) nulls the stored record, which re-arms the next
+                    // refresh broadcast — a client that nulled its copy can
+                    // never be starved by this dedup.
+                    Vec::new()
+                } else {
+                    self.galaxy_composition = Some(galaxy_composition.clone());
+                    vec![SemanticsDelta::GalaxyCompositionReplace {
+                        galaxy_composition: galaxy_composition.clone(),
+                    }]
+                }
             }
             EnrichmentEvent::Clear => {
                 self.clear_records();
@@ -1278,6 +1311,75 @@ mod tests {
             &deltas[..],
             [SemanticsDelta::GalaxyCompositionReplace { .. }]
         ));
+    }
+
+    #[test]
+    fn galaxy_composition_content_duplicate_is_suppressed_and_keeps_the_sent_record() {
+        let mut projection =
+            SemanticsProjection::new(Some(("ckbadger", vec!["galaxy_composition".into()])));
+        let first = galaxy_composition(10);
+        projection.apply_enrichment(&EnrichmentEvent::GalaxyCompositionReplace(first.clone()));
+
+        // Same content revalidated at a newer anchor + refresh timestamp
+        // (the helper derives both from the block).
+        let deltas = projection.apply_enrichment(&EnrichmentEvent::GalaxyCompositionReplace(
+            galaxy_composition(12),
+        ));
+
+        assert!(deltas.is_empty());
+        // The stored record must stay exactly what subscribers were sent so
+        // the server-side reorg-prune predicate matches every client's.
+        assert_eq!(projection.snapshot().galaxy_composition, Some(first));
+    }
+
+    #[test]
+    fn galaxy_composition_reemits_after_a_prune_nulls_the_stored_record() {
+        let mut projection =
+            SemanticsProjection::new(Some(("ckbadger", vec!["galaxy_composition".into()])));
+        projection.apply_enrichment(&EnrichmentEvent::GalaxyCompositionReplace(
+            galaxy_composition(10),
+        ));
+        assert!(projection
+            .apply_enrichment(&EnrichmentEvent::GalaxyCompositionReplace(
+                galaxy_composition(12),
+            ))
+            .is_empty());
+
+        // A reorg at the stored anchor prunes the record; clients null their
+        // copy on the same predicate.
+        projection.apply_mutation(&Mutation::ChainReorganized { from_block: 10 });
+        assert!(projection.snapshot().galaxy_composition.is_none());
+
+        // The next refresh must re-broadcast even though its content is
+        // identical, or pruned clients would stay null forever.
+        let record = galaxy_composition(14);
+        let deltas =
+            projection.apply_enrichment(&EnrichmentEvent::GalaxyCompositionReplace(record.clone()));
+        assert!(matches!(
+            &deltas[..],
+            [SemanticsDelta::GalaxyCompositionReplace { .. }]
+        ));
+        assert_eq!(projection.snapshot().galaxy_composition, Some(record));
+    }
+
+    #[test]
+    fn galaxy_composition_content_change_still_replaces() {
+        let mut projection =
+            SemanticsProjection::new(Some(("ckbadger", vec!["galaxy_composition".into()])));
+        projection.apply_enrichment(&EnrichmentEvent::GalaxyCompositionReplace(
+            galaxy_composition(10),
+        ));
+
+        let mut changed = galaxy_composition(12);
+        changed.plain.push(galaxy_cell(4, crate::AssetKind::Native));
+        let deltas = projection
+            .apply_enrichment(&EnrichmentEvent::GalaxyCompositionReplace(changed.clone()));
+
+        assert!(matches!(
+            &deltas[..],
+            [SemanticsDelta::GalaxyCompositionReplace { .. }]
+        ));
+        assert_eq!(projection.snapshot().galaxy_composition, Some(changed));
     }
 
     #[test]

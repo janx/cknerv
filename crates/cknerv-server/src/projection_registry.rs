@@ -264,6 +264,15 @@ impl<P: EnrichmentProjection> ApplyEnrichment for EnrichmentProjectionRunner<P> 
     fn apply_enrichment(&self, event: &EnrichmentEvent) {
         let _coord = self.event_coord.lock().unwrap();
         let deltas = self.inner.write().unwrap().apply_enrichment(event);
+        if deltas.is_empty() && matches!(event, EnrichmentEvent::GalaxyCompositionReplace(_)) {
+            // The projection deduplicated a content-identical refresh:
+            // no delta, no revision advance, snapshot unchanged.
+            tracing::debug!(
+                target: "cknerv-server",
+                projection = self.name,
+                "suppressed content-identical galaxy composition refresh"
+            );
+        }
         self.publish(deltas);
     }
 }
@@ -368,8 +377,9 @@ impl Default for Registry {
 mod tests {
     use super::*;
     use cknerv_core::{
-        CellGalaxy, EnrichmentEvent, EnrichmentSourceState, EnrichmentSourceStatus, Mutation,
-        OutPoint, SemanticsProjection, TxOutputInfo,
+        helix_seed_for, Cell, CellGalaxy, ChainAnchor, EnrichmentEvent, EnrichmentSourceState,
+        EnrichmentSourceStatus, GalaxyCompositionRecord, Mutation, OutPoint, SemanticsProjection,
+        TxOutputInfo,
     };
 
     fn output(capacity: u64) -> TxOutputInfo {
@@ -379,6 +389,43 @@ mod tests {
             content_hash: format!("0x{}", "00".repeat(32)),
             lock_kind: Default::default(),
             asset_kind: Default::default(),
+        }
+    }
+
+    fn galaxy_cell(id: u64) -> Cell {
+        Cell {
+            id,
+            born_at_ms: 0,
+            death_at_ms: None,
+            birth_block: 1,
+            tag: None,
+            pos_seed: helix_seed_for(id),
+            out_point: OutPoint {
+                tx_hash: format!("0x{id:064x}"),
+                index: 0,
+            },
+            capacity: id,
+            data_hex: "0x".into(),
+            content_hash: format!("0x{:064x}", id + 1),
+            lock_kind: Default::default(),
+            asset_kind: Default::default(),
+        }
+    }
+
+    /// Same composed content at every block; only the freshness metadata
+    /// (`as_of`, `updated_at_ms`) advances — the shape of a periodic
+    /// revalidation of an unchanged Cell set.
+    fn galaxy_composition(block: u64) -> GalaxyCompositionRecord {
+        GalaxyCompositionRecord {
+            source: "ckbadger".into(),
+            as_of: ChainAnchor {
+                block,
+                hash: format!("0xblock{block}"),
+            },
+            updated_at_ms: block,
+            dao: vec![galaxy_cell(1)],
+            typed: vec![galaxy_cell(2)],
+            plain: vec![galaxy_cell(3)],
         }
     }
 
@@ -549,5 +596,54 @@ mod tests {
         assert_eq!(ring[1].value["type"], "prune");
         assert_eq!(ring[2].rev, 3);
         assert_eq!(ring[2].value["type"], "source_status");
+    }
+
+    #[test]
+    fn duplicate_galaxy_composition_refresh_holds_the_semantics_cursor() {
+        let mut registry = Registry::new();
+        registry.register_enrichment(SemanticsProjection::new(Some((
+            "ckbadger",
+            vec!["galaxy_composition".into()],
+        ))));
+        let runtime = registry.lookup("semantics").expect("semantics runtime");
+        let canonical = registry.writers().into_iter().next().unwrap();
+        let enrichment = registry.enrichment_writers().into_iter().next().unwrap();
+
+        enrichment.apply_enrichment(&EnrichmentEvent::GalaxyCompositionReplace(
+            galaxy_composition(10),
+        ));
+        assert_eq!(runtime.snapshot_json().0, 1);
+        assert_eq!(runtime.delta_ring_snapshot().len(), 1);
+
+        // A content-identical revalidation at a newer anchor advances
+        // neither the revision cursor nor the delta ring: a `?since=`
+        // reconnect and a fresh snapshot stay in exact agreement.
+        enrichment.apply_enrichment(&EnrichmentEvent::GalaxyCompositionReplace(
+            galaxy_composition(12),
+        ));
+        let (revision, snapshot) = runtime.snapshot_json();
+        assert_eq!(revision, 1);
+        assert_eq!(runtime.delta_ring_snapshot().len(), 1);
+        // The snapshot still carries the previously broadcast anchor.
+        assert_eq!(snapshot["galaxy_composition"]["as_of"]["block"], 10);
+
+        // A reorg at the stored anchor prunes the record (rev 2: prune,
+        // rev 3: source_status). Clients null their copy on the same
+        // predicate, so the following content-identical refresh must
+        // broadcast again.
+        canonical.apply(&RevisionedMutation {
+            revision: 99,
+            mutation: Mutation::ChainReorganized { from_block: 10 },
+        });
+        enrichment.apply_enrichment(&EnrichmentEvent::GalaxyCompositionReplace(
+            galaxy_composition(14),
+        ));
+        let (revision, snapshot) = runtime.snapshot_json();
+        assert_eq!(revision, 4);
+        assert_eq!(snapshot["galaxy_composition"]["as_of"]["block"], 14);
+        let ring = runtime.delta_ring_snapshot();
+        assert_eq!(ring.len(), 4);
+        assert_eq!(ring[3].rev, 4);
+        assert_eq!(ring[3].value["type"], "galaxy_composition_replace");
     }
 }
