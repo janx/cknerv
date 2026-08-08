@@ -1,16 +1,14 @@
 import * as THREE from 'three';
 
-export const JELLYFISH_BELL_SEGMENTS = 24;
-export const JELLYFISH_BELL_RIBS = 7;
-export const JELLYFISH_BELL_PROFILE = [
-  { radius: 0.98, depth: -0.20, scallop: 0.055 },
-  { radius: 0.78, depth: 0.01, scallop: 0.025 },
-  { radius: 0.48, depth: 0.22, scallop: 0.010 },
-  { radius: 0.16, depth: 0.36, scallop: 0.000 },
-] as const;
+export const JELLYFISH_BELL_SIDES = 12;
+export const JELLYFISH_BELL_ARCHES = 3;
+export const JELLYFISH_BELL_ARCH_SEGMENTS = 6;
+export const JELLYFISH_BELL_RIM_RADIUS = 0.98;
+export const JELLYFISH_BELL_RIM_DEPTH = -0.20;
+export const JELLYFISH_BELL_CROWN_DEPTH = 0.40;
 
 const TAU = Math.PI * 2;
-const BELL_RIB_ROTATION = Math.PI / JELLYFISH_BELL_RIBS;
+const BELL_RIM_ROTATION = Math.PI / JELLYFISH_BELL_SIDES;
 const CARRIER_LOCAL_FORWARD = new THREE.Vector3(0, 0, 1);
 
 /** Align the bell's local forward axis with a normalized peer-to-galaxy path.
@@ -33,80 +31,79 @@ export function protocolCarrierShockwaveProgress(phase: number): number {
   return cyclesSinceContraction - Math.floor(cyclesSinceContraction);
 }
 
-function bellPoint(
-  radius: number,
-  depth: number,
-  scallop: number,
-  angle: number,
-): THREE.Vector3 {
-  const fluidRadius = radius * (
-    1 + scallop * Math.cos(angle * JELLYFISH_BELL_RIBS)
-  );
-  return new THREE.Vector3(
-    Math.cos(angle) * fluidRadius,
-    Math.sin(angle) * fluidRadius,
-    depth,
-  );
-}
-
 function appendSegment(
   positions: number[],
-  from: THREE.Vector3,
-  to: THREE.Vector3,
+  fromX: number,
+  fromY: number,
+  fromZ: number,
+  toX: number,
+  toY: number,
+  toZ: number,
 ): void {
-  positions.push(from.x, from.y, from.z, to.x, to.y, to.z);
+  positions.push(fromX, fromY, fromZ, toX, toY, toZ);
 }
 
-function appendBellRing(
-  positions: number[],
-  radius: number,
-  depth: number,
-  scallop: number,
-): void {
-  for (let segment = 0; segment < JELLYFISH_BELL_SEGMENTS; segment += 1) {
-    const fromAngle = segment / JELLYFISH_BELL_SEGMENTS * TAU;
-    const toAngle = (segment + 1) / JELLYFISH_BELL_SEGMENTS * TAU;
+function appendBrokenRim(positions: number[]): void {
+  for (let side = 0; side < JELLYFISH_BELL_SIDES; side += 1) {
+    // Three evenly spaced breathing gaps prevent the skirt from collapsing
+    // back into a closed shield silhouette.
+    if (side % 4 === 3) continue;
+    const fromAngle = BELL_RIM_ROTATION + side / JELLYFISH_BELL_SIDES * TAU;
+    const toAngle = BELL_RIM_ROTATION + (side + 1) / JELLYFISH_BELL_SIDES * TAU;
     appendSegment(
       positions,
-      bellPoint(radius, depth, scallop, fromAngle),
-      bellPoint(radius, depth, scallop, toAngle),
+      Math.cos(fromAngle) * JELLYFISH_BELL_RIM_RADIUS,
+      Math.sin(fromAngle) * JELLYFISH_BELL_RIM_RADIUS,
+      JELLYFISH_BELL_RIM_DEPTH,
+      Math.cos(toAngle) * JELLYFISH_BELL_RIM_RADIUS,
+      Math.sin(toAngle) * JELLYFISH_BELL_RIM_RADIUS,
+      JELLYFISH_BELL_RIM_DEPTH,
+    );
+  }
+}
+
+function appendDomeArch(positions: number[], angle: number): void {
+  const xAxis = Math.cos(angle);
+  const yAxis = Math.sin(angle);
+  for (let segment = 0; segment < JELLYFISH_BELL_ARCH_SEGMENTS; segment += 1) {
+    const fromSpan = -1 + 2 * segment / JELLYFISH_BELL_ARCH_SEGMENTS;
+    const toSpan = -1 + 2 * (segment + 1) / JELLYFISH_BELL_ARCH_SEGMENTS;
+    const fromDepth = JELLYFISH_BELL_RIM_DEPTH
+      + (JELLYFISH_BELL_CROWN_DEPTH - JELLYFISH_BELL_RIM_DEPTH)
+      * (1 - fromSpan * fromSpan);
+    const toDepth = JELLYFISH_BELL_RIM_DEPTH
+      + (JELLYFISH_BELL_CROWN_DEPTH - JELLYFISH_BELL_RIM_DEPTH)
+      * (1 - toSpan * toSpan);
+    appendSegment(
+      positions,
+      xAxis * fromSpan * JELLYFISH_BELL_RIM_RADIUS,
+      yAxis * fromSpan * JELLYFISH_BELL_RIM_RADIUS,
+      fromDepth,
+      xAxis * toSpan * JELLYFISH_BELL_RIM_RADIUS,
+      yAxis * toSpan * JELLYFISH_BELL_RIM_RADIUS,
+      toDepth,
     );
   }
 }
 
 /**
- * Rounded, shallow umbrella for the block handoff between the peer network and
- * Cell galaxy. Four smooth latitude loops describe the dome; seven curved ribs
- * follow its profile into a subtly scalloped skirt. There is no flat barrier,
- * central aperture, or polygonal shield silhouette.
+ * Minimal low-poly umbrella for the block handoff. One interrupted dodecagonal
+ * skirt and three six-segment arches carry the whole silhouette: the arches
+ * rise 0.6 world units out of the skirt plane, so the result remains a canopy
+ * instead of a flat field glyph. There are no nested rings or decorative ribs.
  */
 export function makeProtocolCarrierGeometry(): THREE.BufferGeometry {
   const positions: number[] = [];
-
-  for (const ring of JELLYFISH_BELL_PROFILE) {
-    appendBellRing(
+  appendBrokenRim(positions);
+  for (let arch = 0; arch < JELLYFISH_BELL_ARCHES; arch += 1) {
+    appendDomeArch(
       positions,
-      ring.radius,
-      ring.depth,
-      ring.scallop,
+      BELL_RIM_ROTATION + arch / JELLYFISH_BELL_ARCHES * Math.PI,
     );
-  }
-
-  for (let rib = 0; rib < JELLYFISH_BELL_RIBS; rib += 1) {
-    const angle = BELL_RIB_ROTATION + rib / JELLYFISH_BELL_RIBS * TAU;
-    for (let profile = 0; profile < JELLYFISH_BELL_PROFILE.length - 1; profile += 1) {
-      const outer = JELLYFISH_BELL_PROFILE[profile];
-      const inner = JELLYFISH_BELL_PROFILE[profile + 1];
-      appendSegment(
-        positions,
-        bellPoint(outer.radius, outer.depth, outer.scallop, angle),
-        bellPoint(inner.radius, inner.depth, inner.scallop, angle),
-      );
-    }
   }
 
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-  geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1.12);
+  geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1.05);
   return geometry;
 }

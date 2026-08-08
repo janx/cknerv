@@ -3,6 +3,8 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import * as THREE from 'three';
 import {
+  GEOMETRIC_SHOCKWAVE_GAPS,
+  GEOMETRIC_SHOCKWAVE_SIDES,
   makeBolusBloomTexture,
   makeJellyfishBellTexture,
   makeProtocolCarrierTexture,
@@ -20,41 +22,44 @@ const textureSource = readFileSync(
 );
 
 describe('deliveryTextures', () => {
-  it('bakes a soft organic jellyfish membrane with no polygon-field helper', () => {
+  it('keeps the low-poly silhouette in geometry and the membrane unmarked', () => {
     const texture = makeJellyfishBellTexture();
     expect(texture).toBeInstanceOf(THREE.Texture);
-    expect((texture.image as HTMLCanvasElement).width).toBe(192);
-    expect(textureSource).toContain('strokeFluidLoop');
+    expect((texture.image as HTMLCanvasElement).width).toBe(128);
+    expect(textureSource).not.toContain('strokeFluidLoop');
+    expect(textureSource).not.toContain('strokeFluidArc');
     expect(textureSource).not.toContain('strokeRegularPolygon');
     expect(textureSource).not.toMatch(/A\.T\.-Field|octagon/i);
     texture.dispose();
   });
 
-  it('keeps both legacy bell exports mapped to the organic membrane', () => {
+  it('keeps both legacy bell exports mapped to the unmarked membrane', () => {
     const textures = [makeProtocolCarrierTexture(), makeBolusBloomTexture()];
     for (const texture of textures) {
       expect(texture).toBeInstanceOf(THREE.Texture);
-      expect((texture.image as HTMLCanvasElement).height).toBe(192);
+      expect((texture.image as HTMLCanvasElement).height).toBe(128);
       texture.dispose();
     }
   });
 
-  it('bakes a circular shockwave for propulsion and Cell-field contact', () => {
+  it('bakes one segmented shockwave for propulsion and Cell-field contact', () => {
     const textures = [makeIngestShockwaveTexture(), makeIngestFlashTexture()];
     for (const texture of textures) {
       expect(texture).toBeInstanceOf(THREE.Texture);
       expect((texture.image as HTMLCanvasElement).width).toBe(128);
       texture.dispose();
     }
+    expect(GEOMETRIC_SHOCKWAVE_SIDES).toBe(12);
+    expect(GEOMETRIC_SHOCKWAVE_GAPS).toBe(3);
   });
 
-  it('bakes a five-tentacle jellyfish wake', () => {
+  it('bakes a three-tentacle geometric jellyfish wake', () => {
     const texture = makeJellyfishWakeTexture();
     expect(texture).toBeInstanceOf(THREE.Texture);
     expect((texture.image as HTMLCanvasElement).width).toBe(128);
     expect((texture.image as HTMLCanvasElement).height).toBe(256);
-    expect(JELLYFISH_TENTACLE_COUNT).toBe(5);
-    expect(JELLYFISH_TENTACLE_SEGMENTS).toBe(14);
+    expect(JELLYFISH_TENTACLE_COUNT).toBe(3);
+    expect(JELLYFISH_TENTACLE_SEGMENTS).toBe(6);
     texture.dispose();
   });
 

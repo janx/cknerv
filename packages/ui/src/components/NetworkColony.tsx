@@ -14,8 +14,8 @@
 //     flood arrivals. The edge surge traces the actual route while the node
 //     shockwave supplies the broad network response.
 //   • BlockDeliveryLayer — one galaxy-facing energy jellyfish per measured
-//     worker (timed by cf.arrivals) plus the local source. Its rounded bell,
-//     tendrils, and propulsion ripples resolve into a circular contact wave +
+//     worker (timed by cf.arrivals) plus the local source. Its sparse low-poly
+//     canopy and three angular tendrils resolve into a segmented contact wave +
 //     real Cell illumination.
 //
 // Block wiring (ported from the retired hub-and-spoke layer): on each new block

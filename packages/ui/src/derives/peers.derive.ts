@@ -162,9 +162,9 @@ export interface BolusIngest {
 
 /** Per-frame Cell-commit envelope for the protocol carrier (t∈[0,1]).
  *  The compatibility export name remains `bolusIngest`, but the visual is a
- *  rounded energy jellyfish: its bell recoils and dissolves at contact while a
- *  circular shockwave spreads across the Cell plane and fades from the block's
- *  stable warm hue to pale consensus. Pure. */
+ *  low-poly energy jellyfish: its canopy recoils and dissolves at contact while
+ *  one segmented shockwave spreads across the Cell plane and fades from the
+ *  block's stable warm hue to pale consensus. Pure. */
 export function bolusIngest(t: number): BolusIngest {
   const u = Math.max(0, Math.min(1, t));
   const k = 1 - u;

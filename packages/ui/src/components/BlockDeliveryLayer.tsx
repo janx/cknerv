@@ -38,27 +38,27 @@ import {
 
 // BlockDeliveryLayer — the network→Cell-field handoff in the A visual language.
 // Every real measured node keeps its own timing and transform, but the renderer
-// submits the whole event as four semantic batches: one merged rounded-bell
-// body, plus instanced fluid membrane, jellyfish tentacles, and pressure waves.
-// The shallow umbrella swims head-first along the peer→Cell travel axis. Each
-// contraction sheds a faint propulsion ring; contact resolves the carrier into
-// a broad circular shockwave across the Cell boundary.
+// submits the whole event as four semantic batches: one sparse low-poly canopy,
+// plus instanced unmarked membrane, three angular tentacles, and pressure rings.
+// The open dodecagonal skirt swims head-first along the peer→Cell travel axis.
+// Each restrained contraction sheds a segmented propulsion ring; contact
+// resolves the carrier into the same geometry at Cell-field scale.
 // Delivery count changes instance/vertex counts, never draw-call count.
 
 const CARRIER_GEOM = makeProtocolCarrierGeometry();
 const CARRIER_BASE_POSITION = CARRIER_GEOM.getAttribute('position') as THREE.BufferAttribute;
 const CARRIER_VERTEX_COUNT = CARRIER_BASE_POSITION.count;
 const LOB_DUR_S = BEAM_GROW_DUR_S;
-const JELLY_BELL_ROLL_RATE = 0.24;
+const JELLY_BELL_ROLL_RATE = 0.18;
 const JELLY_BELL_PULSE_RATE = 7.2;
-const JELLY_BELL_OPEN_MIN = 0.92;
-const JELLY_BELL_OPEN_AMOUNT = 0.14;
-const JELLY_BELL_DEPTH_MAX = 1.28;
-const JELLY_BELL_DEPTH_SWING = 0.34;
-const JELLY_TENTACLE_STRETCH_MIN = 0.93;
-const JELLY_TENTACLE_STRETCH_AMOUNT = 0.22;
-const JELLY_TENTACLE_WIDTH_MIN = 2.10;
-const JELLY_TENTACLE_WIDTH_AMOUNT = 0.35;
+const JELLY_BELL_OPEN_MIN = 0.96;
+const JELLY_BELL_OPEN_AMOUNT = 0.08;
+const JELLY_BELL_DEPTH_MAX = 1.20;
+const JELLY_BELL_DEPTH_SWING = 0.20;
+const JELLY_TENTACLE_STRETCH_MIN = 0.98;
+const JELLY_TENTACLE_STRETCH_AMOUNT = 0.12;
+const JELLY_TENTACLE_WIDTH_MIN = 1.65;
+const JELLY_TENTACLE_WIDTH_AMOUNT = 0.20;
 const PALE_CONSENSUS = new THREE.Color().setRGB(...CONSENSUS_BRAID_PALETTE.pale);
 const CARRIER_COLOR = new THREE.Color();
 const WHITE = new THREE.Color(1, 1, 1);
