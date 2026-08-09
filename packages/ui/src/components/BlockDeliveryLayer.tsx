@@ -188,8 +188,17 @@ function writeSpriteInstance(
 function commitInstanceBatch(batch: THREE.InstancedMesh, count: number): void {
   batch.count = count;
   if (count === 0) return;
-  batch.instanceMatrix.needsUpdate = true;
-  if (batch.instanceColor) batch.instanceColor.needsUpdate = true;
+  // Upload only the live prefix — slots past `count` are never sampled.
+  const matrixAttr = batch.instanceMatrix;
+  matrixAttr.clearUpdateRanges();
+  matrixAttr.addUpdateRange(0, count * 16);
+  matrixAttr.needsUpdate = true;
+  const colorAttr = batch.instanceColor;
+  if (colorAttr) {
+    colorAttr.clearUpdateRanges();
+    colorAttr.addUpdateRange(0, count * 3);
+    colorAttr.needsUpdate = true;
+  }
 }
 
 /** Append one transformed carrier to the shared line buffers. Vertex colour is
@@ -593,7 +602,11 @@ export default function BlockDeliveryLayer({
 
     bodyGeometry.setDrawRange(0, bodyVertexCount);
     if (bodyVertexCount > 0) {
+      bodyPositionAttr.clearUpdateRanges();
+      bodyPositionAttr.addUpdateRange(0, bodyVertexCount * 3);
       bodyPositionAttr.needsUpdate = true;
+      bodyColorAttr.clearUpdateRanges();
+      bodyColorAttr.addUpdateRange(0, bodyVertexCount * 3);
       bodyColorAttr.needsUpdate = true;
     }
     commitInstanceBatch(membraneBatch, membraneCount);

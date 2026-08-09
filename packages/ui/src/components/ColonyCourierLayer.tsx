@@ -289,12 +289,19 @@ export default function ColonyCourierLayer({
     }
 
     // `count` excludes every unused capacity slot without touching its matrix.
-    // Active matrices move each frame; an empty batch needs no buffer upload.
+    // Active matrices move each frame; an empty batch needs no buffer upload,
+    // and a populated one uploads only the live prefix, not the full pool.
     plumeBatch.count = slot;
     bloomBatch.count = slot;
     if (slot > 0) {
-      plumeBatch.instanceMatrix.needsUpdate = true;
-      bloomBatch.instanceMatrix.needsUpdate = true;
+      const plumeAttr = plumeBatch.instanceMatrix;
+      plumeAttr.clearUpdateRanges();
+      plumeAttr.addUpdateRange(0, slot * 16);
+      plumeAttr.needsUpdate = true;
+      const bloomAttr = bloomBatch.instanceMatrix;
+      bloomAttr.clearUpdateRanges();
+      bloomAttr.addUpdateRange(0, slot * 16);
+      bloomAttr.needsUpdate = true;
     }
   });
 
