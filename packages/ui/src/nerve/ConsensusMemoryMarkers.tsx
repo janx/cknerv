@@ -224,6 +224,11 @@ export default function ConsensusMemoryMarkers({
     const hudMeasure = hudMeasureRef.current;
     if (
       typeof document !== 'undefined'
+      // No markers → nobody consumes the rects, so skip the forced-layout reads
+      // entirely (a resting scene otherwise pays querySelectorAll + gBCR at the
+      // 250ms cadence forever). A marker-set change still remeasures instantly
+      // via the identity check below once markers exist.
+      && markers.length > 0
       && (viewportWidth !== hudMeasure.width
         || viewportHeight !== hudMeasure.height
         || measuredMarkersRef.current !== markers

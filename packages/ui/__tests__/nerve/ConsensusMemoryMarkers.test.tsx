@@ -122,6 +122,29 @@ describe('ConsensusMemoryMarkers', () => {
     expect(rectSpy.mock.calls.length).toBeGreaterThan(measuredCalls);
   });
 
+  it('a focusless resting view performs zero forced-layout reads', () => {
+    const cache = emptyCellsCache();
+    const nowSpy = vi.spyOn(performance, 'now').mockReturnValue(30_000);
+    const rectSpy = vi.spyOn(Element.prototype, 'getBoundingClientRect');
+    const querySpy = vi.spyOn(document, 'querySelectorAll');
+
+    render(
+      <CellGalaxyProvider value={cache}>
+        <ConsensusMemoryMarkers focus={null} />
+      </CellGalaxyProvider>,
+    );
+    const rectBaseline = rectSpy.mock.calls.length;
+    const queryBaseline = querySpy.mock.calls.length;
+
+    // Frames at rest — including one past the 250ms cadence — must not touch
+    // layout: with no markers, nobody consumes the measured rects.
+    act(() => simFrameMock.callback?.());
+    nowSpy.mockReturnValue(30_500);
+    act(() => simFrameMock.callback?.());
+    expect(rectSpy.mock.calls.length).toBe(rectBaseline);
+    expect(querySpy.mock.calls.length).toBe(queryBaseline);
+  });
+
   it('remeasures immediately when the marker set changes inside the window', () => {
     const cache = emptyCellsCache();
     cache.cells.set(8, cell(8, 'a'));
