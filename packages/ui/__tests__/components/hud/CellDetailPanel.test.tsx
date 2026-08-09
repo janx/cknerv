@@ -837,7 +837,11 @@ describe('CellDetailPanel', () => {
       ?.getAttribute('data-memory-identity-count')).toBe('1');
     expect(container.querySelector('[data-consensus-memory-identity-grid]')).toBeNull();
     expect(container.querySelector('[data-memory-identity-proof]')).toBeNull();
-    expect(container.textContent).toContain('VERIFY IDENTITY');
+    // The unlock is legible now: read-marks in proof order plus a count.
+    expect(container.textContent).toContain('VERIFY ◆◇◇ 1/3');
+    expect(container.querySelector('[data-cell-detail-field="state"] [data-cell-detail-proof-mark="read"]')).not.toBeNull();
+    expect(container.querySelector('[data-cell-detail-field="data"] [data-cell-detail-proof-mark="unread"]')).not.toBeNull();
+    expect(container.querySelector('[data-cell-detail-field="capacity"] [data-cell-detail-proof-mark]')).toBeNull();
 
     rerender(
       <CellDetailPanel
@@ -886,7 +890,7 @@ describe('CellDetailPanel', () => {
     );
     const t = container.textContent ?? '';
     expect(t).toContain('MEMORY TRACE');
-    expect(t).toContain(`#${base.birth_block} · 2→1`);
+    expect(t).toContain('#16,204,800 · 2→1');
     expect(container.querySelector('[data-write-observed="true"]')).not.toBeNull();
   });
 

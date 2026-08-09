@@ -162,6 +162,8 @@ type CellScanFactProps = RowDecode & {
   revealed: boolean;
   selected: boolean;
   interactive: boolean;
+  /** Identity-proof carrier state — only STATE / DATA / COMMIT bear one. */
+  proof?: { read: boolean };
   onActivate: () => void;
 };
 
@@ -173,6 +175,7 @@ const CellScanFact = memo(function CellScanFact({
   revealed,
   selected,
   interactive,
+  proof,
   onActivate,
 }: CellScanFactProps) {
   const accent = color ?? HUD_COLORS.cyanWire;
@@ -207,6 +210,17 @@ const CellScanFact = memo(function CellScanFact({
     >
       <span style={{ display: 'block', fontSize: HUD_TYPE.label, letterSpacing: 1.2, color: HUD_COLORS.dim }}>
         {label}
+        {proof ? (
+          <span
+            data-cell-detail-proof-mark={proof.read ? 'read' : 'unread'}
+            title={proof.read
+              ? 'IDENTITY PROOF · READ'
+              : 'IDENTITY PROOF · select to read — all three arm MEMORY TRACE'}
+            style={{ marginLeft: 5, color: proof.read ? HUD_COLORS.lockedGold : HUD_COLORS.dim, opacity: proof.read ? 1 : 0.75 }}
+          >
+            {proof.read ? '◆' : '◇'}
+          </span>
+        ) : null}
       </span>
       <span
         title={revealed ? value : undefined}
@@ -231,6 +245,7 @@ const CellScanFact = memo(function CellScanFact({
   && previous.revealed === next.revealed
   && previous.selected === next.selected
   && previous.interactive === next.interactive
+  && previous.proof?.read === next.proof?.read
 ));
 
 export default function CellDetailPanel({
@@ -614,17 +629,32 @@ export default function CellDetailPanel({
           )}
         />
         <div style={{ display: 'grid', gridTemplateColumns: verticalLayout ? 'repeat(2, minmax(0, 1fr))' : 'repeat(3, minmax(0, 1fr))', gap: '4px 10px' }}>
-          {order.map((field, index) => (
-            <CellScanFact
-              key={field}
-              field={field}
-              {...DECODE[field]}
-              revealed={reduced || index < scan.reveal}
-              selected={field === selectedField}
-              interactive={scan.classified}
-              onActivate={() => activateField(field)}
-            />
-          ))}
+          {order.map((field, index) => {
+            const proofKind = field === 'state'
+              ? 'address'
+              : field === 'data'
+                ? 'content'
+                : field === 'born'
+                  ? 'anchor'
+                  : null;
+            return (
+              <CellScanFact
+                key={field}
+                field={field}
+                {...DECODE[field]}
+                revealed={reduced || index < scan.reveal}
+                selected={field === selectedField}
+                interactive={scan.classified}
+                proof={proofKind
+                  ? {
+                    read: selectedIdentityProofBinding?.resolvedKinds
+                      .includes(proofKind) ?? false,
+                  }
+                  : undefined}
+                onActivate={() => activateField(field)}
+              />
+            );
+          })}
         </div>
         {semanticSource && semanticPhase ? (
           <CellSemanticsReadout

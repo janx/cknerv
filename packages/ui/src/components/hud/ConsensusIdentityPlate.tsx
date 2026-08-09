@@ -1483,9 +1483,16 @@ export default function ConsensusIdentityPlate({
   const traceRevealed = memoryProgress >= 0.9;
   const memoryLocked = memoryProgress >= 1;
   const memoryStatusColor = memoryLocked ? lifecycleColor : CYAN;
+  // WHERE / WHAT / WHEN read-marks in proof order — the same ◆/◇ the scan
+  // facts wear, so the unlock is legible instead of an unexplained ritual.
+  const proofGlyphs = (['address', 'content', 'anchor'] as const)
+    .map((kind) => (
+      selectedIdentityProofBinding?.resolvedKinds.includes(kind) ? '◆' : '◇'
+    ))
+    .join('');
   const spatialTraceState = !traceSelected
     ? !identityProofComplete
-      ? 'VERIFY IDENTITY'
+      ? `VERIFY ${proofGlyphs} ${identityProofCount}/3`
       : `${traceSource === 'witness' ? 'WITNESS' : traceSource === 'input' ? 'CAUSAL' : 'TRACE'} ${selectedIdentityProofBinding?.phase === 'retained' ? 'RETAINED' : 'READY'}`
     : traceReadout?.stage === 'converging'
       ? `${traceReadout.arrivedSourceCount}/${traceReadout.sourceCount} ARRIVED`
@@ -1689,14 +1696,16 @@ export default function ConsensusIdentityPlate({
             data-trace-selected={traceSelected ? 'true' : 'false'}
             data-trace-state={traceSelected ? 'active' : 'ready'}
             data-trace-stage={traceSelected ? traceReadout?.stage ?? 'planning' : 'ready'}
-            title={observed.txHash}
+            title={spatial && !identityProofComplete
+              ? 'ARM MEMORY TRACE · read the three identity proofs by selecting STATE (WHERE), DATA (WHAT) and COMMIT (WHEN) in CELL IDENTITY'
+              : observed.txHash}
             onClick={onRecallWrite}
             disabled={!recallEnabled}
             style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', alignItems: 'baseline', gap: '2px 8px', width: '100%', margin: spatial ? 0 : '4px 0 0', padding: spatial ? '3px 2px' : '3px 0 2px', border: 0, borderTop: spatial ? 0 : `1px solid ${traceSelected ? VIOLET : GOLD}24`, background: traceSelected ? `${VIOLET}12` : 'transparent', fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.label, letterSpacing: 0.35, color: traceSelected ? HUD_COLORS.memoryInk : GOLD, textShadow: `0 0 6px ${traceSelected ? VIOLET : GOLD}55`, whiteSpace: 'nowrap', cursor: recallEnabled ? 'pointer' : 'default', textAlign: 'left', opacity: recallEnabled ? 1 : 0.62 }}
           >
             <span>{spatial ? 'MEMORY TRACE' : 'WRITE OBSERVED'}</span>
             <span style={{ marginLeft: 'auto', color: HUD_COLORS.goldInk }}>
-              #{observed.block} · {observed.inputCount}→{observed.outputCount}{spatial ? ` · ${spatialTraceState}` : ''}
+              {formatBlockRef(observed.block)} · {observed.inputCount}→{observed.outputCount}{spatial ? ` · ${spatialTraceState}` : ''}
             </span>
             {!spatial ? <span style={{ gridColumn: '1 / -1', color: traceSelected ? VIOLET : CYAN, letterSpacing: 0.8 }}>
               {recallActionCopy({
@@ -1717,7 +1726,7 @@ export default function ConsensusIdentityPlate({
           >
             <span>{spatial ? 'MEMORY TRACE' : 'WRITE OBSERVED'}</span>
             <span style={{ marginLeft: 'auto', color: HUD_COLORS.goldInk }}>
-              #{observed.block} · {observed.inputCount}→{observed.outputCount}
+              {formatBlockRef(observed.block)} · {observed.inputCount}→{observed.outputCount}
             </span>
           </div>
         ) : null}
