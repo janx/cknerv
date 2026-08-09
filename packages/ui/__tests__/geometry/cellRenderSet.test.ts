@@ -169,6 +169,233 @@ describe('cellRenderList', () => {
   });
 });
 
+// ————— composed-path optimizations must be invisible in the output —————
+// Reference oracle: verbatim copy of the pre-optimization algorithm
+// (unconditional outpoint index + unbounded canonical fallback walk).
+function referenceComposedList(
+  canonicalCells: ReadonlyMap<number, Cell>,
+  visibleCount: number,
+  selectedCellId: number | null,
+  field: CellInspectionField | null,
+  record: GalaxyCompositionRecord,
+  activityCellIds: readonly number[],
+): Cell[] {
+  type Bucket = 'dao' | 'typed' | 'plain';
+  const INTERLEAVE: readonly Bucket[] = [
+    'dao', 'typed', 'plain', 'typed', 'dao',
+    'typed', 'plain', 'dao', 'typed', 'plain',
+  ];
+  const bucketOf = (c: Cell): Bucket =>
+    c.asset_kind === 'dao' ? 'dao' : c.asset_kind === 'native' ? 'plain' : 'typed';
+  const targetsOf = (total: number): Record<Bucket, number> => {
+    const dao = Math.floor(total * 0.3);
+    const typed = Math.floor(total * 0.4);
+    return { dao, typed, plain: total - dao - typed };
+  };
+  const opKey = (c: Cell) => `${c.out_point.tx_hash}:${c.out_point.index}`;
+  const requestedCount = Number.isFinite(visibleCount)
+    ? Math.max(0, Math.floor(visibleCount))
+    : visibleCount === Number.POSITIVE_INFINITY ? Number.POSITIVE_INFINITY : 0;
+  if (requestedCount === 0) return [];
+  const byOutPoint = new Map<string, Cell>();
+  for (const c of canonicalCells.values()) byOutPoint.set(opKey(c), c);
+  const byId = new Map<number, Cell>();
+  for (const c of [...record.dao, ...record.typed, ...record.plain]) byId.set(c.id, c);
+  const buckets: Record<Bucket, Cell[]> = { dao: [], typed: [], plain: [] };
+  const admittedIds = new Set<number>();
+  const admittedOps = new Set<string>();
+  const admit = (c: Cell | undefined, expected?: Bucket) => {
+    if (!c) return;
+    const bucket = bucketOf(c);
+    if (expected !== undefined && bucket !== expected) return;
+    const op = opKey(c);
+    if (admittedIds.has(c.id) || admittedOps.has(op)) return;
+    admittedIds.add(c.id);
+    admittedOps.add(op);
+    buckets[bucket].push(c);
+  };
+  const cellById = (id: number) => canonicalCells.get(id) ?? byId.get(id);
+  admit(selectedCellId === null ? undefined : cellById(selectedCellId));
+  if (field?.selectedCellId === selectedCellId) {
+    const fieldIds = [...field.hopsByCellId]
+      .filter(([, hop]) => Number.isFinite(hop) && hop >= 0 && hop <= field.maxHops)
+      .sort(([a, ah], [b, bh]) => ah - bh || a - b);
+    for (const [id] of fieldIds) admit(cellById(id));
+  }
+  for (const id of activityCellIds) admit(canonicalCells.get(id));
+  for (const bucket of ['dao', 'typed', 'plain'] as const) {
+    for (const c of record[bucket]) admit(byOutPoint.get(opKey(c)) ?? c, bucket);
+  }
+  for (const c of canonicalCells.values()) admit(c);
+  const available = buckets.dao.length + buckets.typed.length + buckets.plain.length;
+  const count = Math.min(requestedCount, available);
+  if (count === 0) return [];
+  const targets = targetsOf(count);
+  const selected = selectedCellId === null ? undefined : cellById(selectedCellId);
+  if (selected) {
+    const sb = bucketOf(selected);
+    if (targets[sb] === 0) {
+      const donor = (['plain', 'typed', 'dao'] as const).find(
+        (b) => b !== sb && targets[b] > 0,
+      );
+      if (donor) { targets[donor] -= 1; targets[sb] += 1; }
+    }
+  }
+  const chosen: Record<Bucket, Cell[]> = {
+    dao: buckets.dao.slice(0, targets.dao),
+    typed: buckets.typed.slice(0, targets.typed),
+    plain: buckets.plain.slice(0, targets.plain),
+  };
+  let chosenCount = chosen.dao.length + chosen.typed.length + chosen.plain.length;
+  const nextIndex = { dao: chosen.dao.length, typed: chosen.typed.length, plain: chosen.plain.length };
+  while (chosenCount < count) {
+    let progressed = false;
+    for (const bucket of ['dao', 'typed', 'plain'] as const) {
+      const c = buckets[bucket][nextIndex[bucket]];
+      if (!c) continue;
+      chosen[bucket].push(c);
+      nextIndex[bucket] += 1;
+      chosenCount += 1;
+      progressed = true;
+      if (chosenCount === count) break;
+    }
+    if (!progressed) break;
+  }
+  const rendered: Cell[] = [];
+  const cursors = { dao: 0, typed: 0, plain: 0 };
+  while (rendered.length < chosenCount) {
+    let progressed = false;
+    for (const preferred of INTERLEAVE) {
+      let bucket: Bucket | undefined = preferred;
+      if (cursors[bucket] >= chosen[bucket].length) {
+        bucket = (['dao', 'typed', 'plain'] as const).find(
+          (b) => cursors[b] < chosen[b].length,
+        );
+      }
+      if (!bucket) break;
+      rendered.push(chosen[bucket][cursors[bucket]]);
+      cursors[bucket] += 1;
+      progressed = true;
+      if (rendered.length === chosenCount) break;
+    }
+    if (!progressed) break;
+  }
+  return rendered;
+}
+
+describe('composed path equivalence and cost', () => {
+  function canonicalField(count: number): Map<number, Cell> {
+    const map = new Map<number, Cell>();
+    for (let id = 0; id < count; id += 1) {
+      const kind: AssetKind = id % 7 === 0 ? 'dao' : id % 3 === 0 ? 'xudt' : 'native';
+      map.set(id, cell(id, kind));
+    }
+    return map;
+  }
+
+  function expectEquivalent(
+    canonical: Map<number, Cell>,
+    budget: number,
+    selectedCellId: number | null,
+    field: CellInspectionField | null,
+    record: GalaxyCompositionRecord,
+    activity: number[],
+  ) {
+    const actual = cellRenderList(canonical, budget, selectedCellId, field, record, activity);
+    const expected = referenceComposedList(canonical, budget, selectedCellId, field, record, activity);
+    expect(actual.map((c) => c.id)).toEqual(expected.map((c) => c.id));
+    // Same retained-object resolution, not just the same ids.
+    for (let i = 0; i < actual.length; i += 1) expect(actual[i]).toBe(expected[i]);
+    return actual;
+  }
+
+  it('matches the reference when the composition covers every quota', () => {
+    const canonical = canonicalField(300);
+    const all = [...canonical.values()];
+    // Composition entries are id-stable copies of canonical records.
+    const record = composition(
+      all.filter((c) => c.asset_kind === 'dao').slice(0, 40).map((c) => ({ ...c })),
+      all.filter((c) => c.asset_kind === 'xudt').slice(0, 50).map((c) => ({ ...c })),
+      all.filter((c) => c.asset_kind === 'native').slice(0, 40).map((c) => ({ ...c })),
+    );
+    expectEquivalent(canonical, 60, null, null, record, [5, 11]);
+  });
+
+  it('matches the reference when sparse classes force the canonical fallback', () => {
+    const canonical = canonicalField(240);
+    const record = composition(
+      [cell(1_001, 'dao')],
+      [cell(2_001, 'xudt')],
+      [cell(3_001, 'native')],
+    );
+    expectEquivalent(canonical, 90, 3, null, record, [7]);
+  });
+
+  it('matches the reference through selection, field, and tiny donor budgets', () => {
+    const canonical = canonicalField(40);
+    const record = composition(
+      [cell(1_001, 'dao'), cell(1_002, 'dao')],
+      [cell(2_001, 'xudt')],
+      [cell(3_001, 'native')],
+    );
+    const field: CellInspectionField = {
+      selectedCellId: 14,
+      maxHops: 2,
+      hopsByCellId: new Map([[14, 0], [3, 1], [9, 2]]),
+    };
+    expectEquivalent(canonical, 12, 14, field, record, [6, 21]);
+    // Budget below the early-exit guard exercises the donor adjustment path.
+    expectEquivalent(canonical, 3, 14, field, record, []);
+  });
+
+  it('skips both the canonical walk and the outpoint index once quotas fill', () => {
+    const size = 3_000;
+    const canonical = canonicalField(size);
+    const all = [...canonical.values()];
+    const record = composition(
+      all.filter((c) => c.asset_kind === 'dao').slice(0, 40).map((c) => ({ ...c })),
+      all.filter((c) => c.asset_kind === 'xudt').slice(0, 50).map((c) => ({ ...c })),
+      all.filter((c) => c.asset_kind === 'native').slice(0, 60).map((c) => ({ ...c })),
+    );
+    let visited = 0;
+    const instrumented = new Map(canonical);
+    const values = instrumented.values.bind(instrumented);
+    instrumented.values = function* instrumentedValues() {
+      for (const value of values()) {
+        visited += 1;
+        yield value;
+      }
+    } as typeof instrumented.values;
+
+    const rendered = cellRenderList(instrumented, 30, null, null, record, []);
+    expect(rendered).toHaveLength(30);
+    // Id-verified resolution avoids building the outpoint index, and filled
+    // quotas stop the canonical fallback before it starts — nothing iterates
+    // the retained map.
+    expect(visited).toBe(0);
+  });
+
+  it('two render-set cursors share one composed resolution per input set', () => {
+    const canonical = canonicalField(120);
+    const record = composition(
+      Array.from({ length: 12 }, (_, i) => cell(1_000 + i, 'dao')),
+      Array.from({ length: 16 }, (_, i) => cell(2_000 + i, 'xudt')),
+      Array.from({ length: 12 }, (_, i) => cell(3_000 + i, 'native')),
+    );
+    const first = cellRenderList(canonical, 30, null, null, record, [1, 2]);
+    // Second caller passes a DIFFERENT activity array with the same content —
+    // exactly what the two components' independent useMemos produce.
+    const second = cellRenderList(canonical, 30, null, null, record, [1, 2]);
+    expect(second).toBe(first);
+    // A second input variant (selection open) occupies the other memo slot…
+    const variant = cellRenderList(canonical, 30, 5, null, record, [1, 2]);
+    expect(variant).not.toBe(first);
+    // …and neither evicts the other while the two disagree.
+    expect(cellRenderList(canonical, 30, null, null, record, [1, 2])).toBe(first);
+    expect(cellRenderList(canonical, 30, 5, null, record, [1, 2])).toBe(variant);
+  });
+});
+
 describe('sameCellRenderTopology', () => {
   it('ignores payload-only changes but detects structural display changes', () => {
     const previous = cellRenderMap([cell(1), cell(2)]);

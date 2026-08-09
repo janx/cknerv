@@ -315,7 +315,6 @@ function composedCellRenderList(
   const requestedCount = normalizeCellDisplayBudget(visibleCount);
   if (requestedCount === 0) return [];
 
-  const canonicalByOutPoint = canonicalCellsByOutPoint(canonicalCells);
   const compositionById = compositionCellsById(composition);
 
   const buckets: Record<CompositionBucket, Cell[]> = {
@@ -350,14 +349,29 @@ function composedCellRenderList(
   }
   for (const id of activityCellIds) admit(canonicalCells.get(id));
 
+  // Indexed entries resolve to the retained canonical object. Ids are
+  // outpoint-stable (reorg revival keeps them), so an id hit verified against
+  // the outpoint answers without any index; only a genuine miss (id drift
+  // across a deep rebuild, cross-id same-outpoint records) builds the
+  // per-cells-map outpoint index — which used to be built unconditionally,
+  // one full canonical walk plus a key string per cell per rebuild.
+  let canonicalByOutPoint: Map<string, Cell> | null = null;
+  const resolveIndexed = (indexedCell: Cell): Cell => {
+    const byId = canonicalCells.get(indexedCell.id);
+    if (
+      byId !== undefined
+      && byId.out_point.tx_hash === indexedCell.out_point.tx_hash
+      && byId.out_point.index === indexedCell.out_point.index
+    ) return byId;
+    canonicalByOutPoint ??= canonicalCellsByOutPoint(canonicalCells);
+    return canonicalByOutPoint.get(renderOutPointKey(indexedCell)) ?? indexedCell;
+  };
   const admitCompositionBucket = (
     expected: CompositionBucket,
     cells: readonly Cell[],
   ) => {
     for (const indexedCell of cells) {
-      const resolved = canonicalByOutPoint.get(renderOutPointKey(indexedCell))
-        ?? indexedCell;
-      admit(resolved, expected);
+      admit(resolveIndexed(indexedCell), expected);
     }
   };
   admitCompositionBucket('dao', composition.dao);
@@ -365,8 +379,27 @@ function composedCellRenderList(
   admitCompositionBucket('plain', composition.plain);
 
   // Canonical fallback keeps the requested proportions usable while one
-  // indexed class is sparse or a just-spent candidate awaits refresh.
-  for (const cell of canonicalCells.values()) admit(cell);
+  // indexed class is sparse or a just-spent candidate awaits refresh. Once
+  // every class already holds its full quota the sliced prefixes below can no
+  // longer change (targets sum exactly to the budget, so no spill runs
+  // either) — stop instead of admitting the whole retained map. The ≥10
+  // guard keeps every target non-zero, which also makes the selected-cell
+  // donor adjustment below unreachable on this path.
+  const fullTargets =
+    Number.isFinite(requestedCount) && requestedCount >= 10
+      ? compositionTargets(requestedCount)
+      : null;
+  const quotasSatisfied = () =>
+    fullTargets !== null
+    && buckets.dao.length >= fullTargets.dao
+    && buckets.typed.length >= fullTargets.typed
+    && buckets.plain.length >= fullTargets.plain;
+  if (!quotasSatisfied()) {
+    for (const cell of canonicalCells.values()) {
+      admit(cell);
+      if (quotasSatisfied()) break;
+    }
+  }
 
   const available = buckets.dao.length + buckets.typed.length + buckets.plain.length;
   const count = Math.min(requestedCount, available);
@@ -437,6 +470,65 @@ function composedCellRenderList(
   return rendered;
 }
 
+interface ComposedListMemoEntry {
+  cells: ReadonlyMap<number, Cell>;
+  visibleCount: number;
+  selectedCellId: number | null;
+  field: CellInspectionField | null;
+  composition: GalaxyCompositionRecord;
+  activityKey: string;
+  result: Cell[];
+}
+
+/** Two-slot MRU memo over the composed resolution. CellGalaxy and
+ * NeuralNetwork keep separate render-set cursors but resolve the same
+ * inputs each flush, so the second caller reuses the first caller's list
+ * (same array identity — both treat it as immutable). Two slots, not one,
+ * so the brief window where the two disagree on selection/inspection inputs
+ * cannot thrash the memo. */
+let composedListMemo: ComposedListMemoEntry[] = [];
+
+function memoizedComposedCellRenderList(
+  cells: ReadonlyMap<number, Cell>,
+  visibleCount: number,
+  selectedCellId: number | null,
+  field: CellInspectionField | null,
+  composition: GalaxyCompositionRecord,
+  activityCellIds: readonly number[],
+): Cell[] {
+  const activityKey = activityCellIds.join(':');
+  for (let slot = 0; slot < composedListMemo.length; slot += 1) {
+    const entry = composedListMemo[slot];
+    if (
+      entry.cells === cells
+      && entry.visibleCount === visibleCount
+      && entry.selectedCellId === selectedCellId
+      && entry.field === field
+      && entry.composition === composition
+      && entry.activityKey === activityKey
+    ) {
+      if (slot > 0) {
+        composedListMemo.splice(slot, 1);
+        composedListMemo.unshift(entry);
+      }
+      return entry.result;
+    }
+  }
+  const result = composedCellRenderList(
+    cells,
+    visibleCount,
+    selectedCellId,
+    field,
+    composition,
+    activityCellIds,
+  );
+  composedListMemo = [
+    { cells, visibleCount, selectedCellId, field, composition, activityKey, result },
+    ...composedListMemo.slice(0, 1),
+  ];
+  return result;
+}
+
 /** Build the one authoritative display subset shared by Cells and fibres. */
 export function cellRenderList(
   cells: ReadonlyMap<number, Cell>,
@@ -447,7 +539,7 @@ export function cellRenderList(
   activityCellIds: readonly number[] = [],
 ): Cell[] {
   if (composition) {
-    return composedCellRenderList(
+    return memoizedComposedCellRenderList(
       cells,
       visibleCount,
       selectedCellId,
