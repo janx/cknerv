@@ -103,7 +103,8 @@ describe('A protocol event relay', () => {
     expect(delivery).toContain('delivery.to[0]');
     expect(delivery).not.toContain('ingestPull');
     expect(delivery).not.toContain('sealBatch');
-    expect(delivery).toContain('batch.instanceColor.needsUpdate = true');
+    expect(delivery).toContain('colorAttr.addUpdateRange(0, count * 3)');
+    expect(delivery).toContain('colorAttr.needsUpdate = true');
     expect(delivery).not.toContain('<ProtocolCarrier');
     expect(delivery).not.toContain('registry.current');
   });
