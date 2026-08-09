@@ -87,9 +87,10 @@ import {
 } from '../nerve/cellInspectionField';
 import { deriveCanonicalRewriteArrivals } from '../derives/canonicalRewrite.derive';
 import {
+  collectCellFlashCandidates,
   markCellFlashDirty,
   mergeCellFlashRanges,
-  writeActiveCellFlashIndices,
+  writeActiveCellFlashIndicesFromCandidates,
   writeDirtyCellFlashSlots,
   type CellFlashDirtyIdsRef,
 } from './cellFlash';
@@ -1105,6 +1106,12 @@ export default function CellGalaxy({
    * read by the flash-only fast path so neither path recomputes the clamp. */
   const drawCountRef = useRef<number>(0);
   const flareDrawCountRef = useRef<number>(0);
+  // Flash-index candidates: slots whose aFlashAt window is open or still to
+  // open. Fed by every aFlashAt write path below; the resting frame then costs
+  // nothing instead of scanning every visible slot. Stale entries retire
+  // lazily by value, so the set never needs an explicit reset.
+  const flareCandidateSlotsRef = useRef<Set<number>>(new Set());
+  const flareScratchSlotsRef = useRef<number[]>([]);
   const lastPulseAtMsRef = useRef<number>(0);
   /** Per-icosahedron flash trigger — written on each new block for the
    *  miner anchor that sourced it. CkbNodeAnchor reads its own slot
@@ -1439,6 +1446,19 @@ export default function CellGalaxy({
         cellBufferRanges,
         count,
       );
+      // Rewritten slots may now hold a different cell's flash timestamp —
+      // re-admit any whose window is open or pending. Rides a frame that is
+      // already O(rewritten slots).
+      collectCellFlashCandidates(
+        cellBufferRanges.length > 0
+          ? cellBufferRanges
+          : [{ start: 0, count }],
+        cellFlashAtAttr.array as Float32Array,
+        count,
+        now,
+        CELL_FLASH_DURATION_S,
+        flareCandidateSlotsRef.current,
+      );
     }
 
     // Opportunistic prune: keep flashMap from leaking entries for cells that
@@ -1553,6 +1573,7 @@ export default function CellGalaxy({
           drawCountRef.current,
           cellFlashRef.current,
           cellFlashAtAttr.array as Float32Array,
+          flareCandidateSlotsRef.current,
         );
         flashBufferRanges = mergeCellFlashRanges(
           cellBufferRanges,
@@ -1569,6 +1590,14 @@ export default function CellGalaxy({
         cellFlashAtAttr.clearUpdateRanges();
         cellFlashAtAttr.needsUpdate = true;
         flashNeedsFullUpload = true;
+        collectCellFlashCandidates(
+          [{ start: 0, count: drawCountRef.current }],
+          cellFlashAtAttr.array as Float32Array,
+          drawCountRef.current,
+          now,
+          CELL_FLASH_DURATION_S,
+          flareCandidateSlotsRef.current,
+        );
       }
       dirtyFlashIds?.clear();
       flashDirtyRef.current = false;
@@ -1582,14 +1611,18 @@ export default function CellGalaxy({
     }
 
     // The additive write layer shares all Cell attributes but submits only
-    // slots whose exact aFlashAt age can produce fragments this frame.
-    const flareIndexWrite = writeActiveCellFlashIndices(
+    // slots whose exact aFlashAt age can produce fragments this frame. The
+    // candidate set makes this event-driven: a resting frame visits nothing
+    // instead of scanning every visible slot.
+    const flareIndexWrite = writeActiveCellFlashIndicesFromCandidates(
+      flareCandidateSlotsRef.current,
       cellFlashAtAttr.array as Float32Array,
       count,
       now,
       CELL_FLASH_DURATION_S,
       cellFlareIndexAttr.array as Uint16Array,
       flareDrawCountRef.current,
+      flareScratchSlotsRef.current,
     );
     if (flareIndexWrite.changed) {
       markPopulatedBufferUpdate(

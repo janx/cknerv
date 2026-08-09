@@ -46,6 +46,7 @@ export function writeDirtyCellFlashSlots(
   visibleCount: number,
   flashMap: ReadonlyMap<number, number>,
   flashArray: Float32Array,
+  candidateSlots?: Set<number>,
 ): CellRenderRange[] {
   const count = Math.min(
     flashArray.length,
@@ -59,6 +60,9 @@ export function writeDirtyCellFlashSlots(
     if (slot === undefined || slot < 0 || slot >= count) continue;
     flashArray[slot] = flashMap.get(cellId) ?? -1e9;
     slots.push(slot);
+    // Every rewritten slot is a flash-index candidate; stale timestamps are
+    // lazily retired on the next candidate visit.
+    candidateSlots?.add(slot);
   }
   slots.sort((a, b) => a - b);
   return rangesFromSortedSlots(slots);
@@ -105,6 +109,100 @@ export function mergeCellFlashRanges(
 export interface ActiveCellFlashIndexWrite {
   count: number;
   changed: boolean;
+}
+
+/**
+ * Feed the flash-candidate set from a batch of just-rewritten aFlashAt slots.
+ * A slot becomes a candidate iff its window can still open or is open
+ * (`timestamp + duration > now`) — future-scheduled flashes stay candidates
+ * until their window closes. Fed by the same paths that write aFlashAt (exact
+ * dirty slots, static range rewrites, the full-prefix fallback), membership is
+ * always a superset of the in-window slots, which is what keeps the compacted
+ * index list byte-identical to a full scan without paying O(visible) per frame.
+ */
+export function collectCellFlashCandidates(
+  ranges: readonly CellRenderRange[],
+  flashArray: Float32Array,
+  visibleCount: number,
+  nowSeconds: number,
+  durationSeconds: number,
+  candidates: Set<number>,
+): void {
+  const limit = Math.min(
+    flashArray.length,
+    Number.isFinite(visibleCount) ? Math.max(0, Math.floor(visibleCount)) : 0,
+  );
+  for (const range of ranges) {
+    const start = Math.max(0, Math.floor(range.start));
+    const end = Math.min(limit, Math.ceil(range.start + range.count));
+    for (let slot = start; slot < end; slot += 1) {
+      if (flashArray[slot] + durationSeconds > nowSeconds) candidates.add(slot);
+    }
+  }
+}
+
+/**
+ * Candidate-driven equivalent of `writeActiveCellFlashIndices`: emits the same
+ * ascending in-window slot list (the shader keeps its exact age gates) while
+ * visiting only candidates instead of every visible slot — an empty candidate
+ * set costs nothing, which is the resting state. Visits lazily retire
+ * candidates whose window has provably closed; future flashes and slots beyond
+ * the current draw prefix stay parked. `scratchSlots` is caller-owned reusable
+ * scratch so the frame loop never allocates.
+ */
+export function writeActiveCellFlashIndicesFromCandidates(
+  candidates: Set<number>,
+  flashArray: Float32Array,
+  visibleCount: number,
+  nowSeconds: number,
+  durationSeconds: number,
+  indexArray: Uint16Array | Uint32Array,
+  previousCount: number,
+  scratchSlots: number[],
+): ActiveCellFlashIndexWrite {
+  const count = Math.min(
+    flashArray.length,
+    Number.isFinite(visibleCount)
+      ? Math.max(0, Math.floor(visibleCount))
+      : 0,
+  );
+  if (
+    !Number.isFinite(nowSeconds)
+    || !Number.isFinite(durationSeconds)
+    || durationSeconds <= 0
+    || candidates.size === 0
+  ) {
+    return { count: 0, changed: previousCount !== 0 };
+  }
+
+  scratchSlots.length = 0;
+  for (const slot of candidates) scratchSlots.push(slot);
+  scratchSlots.sort((a, b) => a - b);
+
+  let written = 0;
+  let changed = false;
+  for (
+    let index = 0;
+    index < scratchSlots.length && written < indexArray.length;
+    index += 1
+  ) {
+    const slot = scratchSlots[index];
+    const age = nowSeconds - flashArray[slot];
+    if (age >= durationSeconds) {
+      candidates.delete(slot); // window closed for good (until rewritten)
+      continue;
+    }
+    if (age < 0 || slot >= count) continue; // future / beyond draw prefix
+    if (indexArray[written] !== slot) {
+      indexArray[written] = slot;
+      changed = true;
+    }
+    written += 1;
+  }
+  return {
+    count: written,
+    changed: changed || written !== previousCount,
+  };
 }
 
 /** Compact visible flash slots into an indexed Points draw. The shader keeps

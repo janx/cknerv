@@ -147,7 +147,8 @@ describe('CellGalaxy', () => {
   it('submits only currently active protocol-write slots to the flare draw', () => {
     const source = readFileSync(CELL_GALAXY_SOURCE, 'utf8');
 
-    expect(source).toContain('writeActiveCellFlashIndices(');
+    expect(source).toContain('writeActiveCellFlashIndicesFromCandidates(');
+    expect(source).toContain('collectCellFlashCandidates(');
     expect(source).toContain('new Uint16Array(INSTANCE_CAPACITY)');
     expect(source).toContain('g.setIndex(cellFlareIndexAttr)');
     expect(source).toContain(
