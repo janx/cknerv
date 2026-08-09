@@ -20,7 +20,6 @@ import {
 import { Canvas, useFrame } from '@react-three/fiber';
 import { OrbitControls, Stars } from '@react-three/drei';
 import {
-  aggregateCellsStats,
   AdaptiveQualityController,
   CELLS_Y,
   CELL_SELECTION_PREFIX,
@@ -563,15 +562,9 @@ export default function App({
   );
   const livePulseDelayS = cellFieldContactDelayS(cf.localReceiveDelayS);
 
-  const cellsStats = useMemo(
-    () =>
-      aggregateCellsStats(
-        cellsCache.cells,
-        cellsCache.totalBirths,
-        cellsCache.totalDeaths,
-      ),
-    [cellsCache.cells, cellsCache.totalBirths, cellsCache.totalDeaths],
-  );
+  // Maintained incrementally by the cells reducer (O(touched) per batch,
+  // identity-stable when unchanged) — never re-aggregated here.
+  const cellsStats = cellsCache.stats;
 
   const compositionCellsById = useMemo(() => {
     const cells = new Map<number, Cell>();

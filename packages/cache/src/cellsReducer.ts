@@ -14,6 +14,13 @@ import type {
   ReplayPhase,
   RevisionedCellDelta,
 } from '@cknerv/types';
+import {
+  adjustCellsStats,
+  aggregateCellsStats,
+  cloneCellsStats,
+  emptyCellsStats,
+  type CellsStats,
+} from './cellsStats';
 
 /** Causal evidence history retained for inspection and memory recall.
  *  Mirrors the backend's default `recent_links_cap`. */
@@ -152,6 +159,11 @@ export interface CellGalaxyCache {
    *  BackfillHud and (server-side) block-pulse suppression. Tx links still
    *  stream during backfill so nerves refill with cells. */
   backfill: ActiveReplayProgress | null;
+  /** Aggregate statistics over the retained Cell map, maintained
+   *  incrementally per batch (O(touched ids), never a full-map scan) and
+   *  identity-stable across batches that change nothing it reports. Always
+   *  equals `aggregateCellsStats(cells, totalBirths, totalDeaths)`. */
+  stats: CellsStats;
 }
 
 export function emptyCellsCache(): CellGalaxyCache {
@@ -168,6 +180,7 @@ export function emptyCellsCache(): CellGalaxyCache {
     totalBirths: 0,
     totalDeaths: 0,
     backfill: null,
+    stats: emptyCellsStats(),
   };
 }
 
@@ -270,6 +283,11 @@ export function fromCellsSnapshot(
     totalBirths: snap.total_births ?? 0,
     totalDeaths: snap.total_deaths ?? 0,
     backfill: snap.backfill ? normalizeReplayProgress(snap.backfill) : null,
+    stats: aggregateCellsStats(
+      cells,
+      snap.total_births ?? 0,
+      snap.total_deaths ?? 0,
+    ),
   };
 }
 
@@ -350,6 +368,33 @@ function summarizeCellChanges(
     evicted,
     updated,
   };
+}
+
+/** Advance the incremental stats across one batch: per touched id, swap the
+ * initial contribution for the final one, then mirror the (possibly updated)
+ * canonical counters. Identity-stable when nothing it reports changed, so
+ * memoized HUD consumers can bail on non-Cell batches. */
+function nextCellsStats(
+  prevStats: CellsStats,
+  previousCells: ReadonlyMap<number, Cell>,
+  nextCells: ReadonlyMap<number, Cell>,
+  touchedCellIds: ReadonlySet<number>,
+  totalBirths: number,
+  totalDeaths: number,
+): CellsStats {
+  const totalsChanged =
+    prevStats.born !== totalBirths || prevStats.dead !== totalDeaths;
+  if (previousCells === nextCells && !totalsChanged) return prevStats;
+  const stats = cloneCellsStats(prevStats);
+  if (previousCells !== nextCells) {
+    for (const id of touchedCellIds) {
+      adjustCellsStats(stats, previousCells.get(id), nextCells.get(id));
+    }
+  }
+  stats.born = totalBirths;
+  stats.live = totalBirths - totalDeaths;
+  stats.dead = totalDeaths;
+  return stats;
 }
 
 function writableCells(draft: CellGalaxyDraft): Map<number, Cell> {
@@ -529,6 +574,14 @@ export function applyCellDelta(
     prev.cellsToken,
     draft.cellOrderInvalidated,
   );
+  draft.value.stats = nextCellsStats(
+    prev.stats,
+    prev.cells,
+    draft.value.cells,
+    draft.touchedCellIds,
+    draft.value.totalBirths,
+    draft.value.totalDeaths,
+  );
   return draft.value;
 }
 
@@ -556,6 +609,14 @@ export function applyRevisionedCellDeltas(
     draft.touchedCellIds,
     prev.cellsToken,
     draft.cellOrderInvalidated,
+  );
+  draft.value.stats = nextCellsStats(
+    prev.stats,
+    prev.cells,
+    draft.value.cells,
+    draft.touchedCellIds,
+    draft.value.totalBirths,
+    draft.value.totalDeaths,
   );
   return draft.value;
 }

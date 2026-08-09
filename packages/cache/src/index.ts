@@ -22,6 +22,15 @@ export {
 } from './cellsReducer';
 
 export {
+  aggregateCellsStats,
+  cellKindKey,
+  cloneCellsStats,
+  emptyCellsStats,
+  type CellKindKey,
+  type CellsStats,
+} from './cellsStats';
+
+export {
   emptyChainCache,
   applyChainMutation,
   applyRevisionedChainMutations,
