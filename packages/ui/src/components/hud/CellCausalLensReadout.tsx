@@ -1,6 +1,6 @@
 import type { CSSProperties } from 'react';
 import type { CellCausalLens } from '../../derives/cellCausalLens.derive';
-import { HUD_COLORS, HUD_FONTS } from './hudTheme';
+import { HUD_COLORS, HUD_FONTS, HUD_TYPE } from './hudTheme';
 
 const EXACT = '#91F7FF';
 const PARTIAL = '#FFD48C';
@@ -111,7 +111,7 @@ export default function CellCausalLensReadout({
   const flowCell: CSSProperties = {
     minWidth: 0,
     fontFamily: HUD_FONTS.mono,
-    fontSize: 7.1,
+    fontSize: HUD_TYPE.micro,
     letterSpacing: 0.42,
     whiteSpace: 'nowrap',
   };
@@ -140,7 +140,7 @@ export default function CellCausalLensReadout({
           background: enabled ? `${meta.color}0c` : 'transparent',
           color: enabled ? meta.color : HUD_COLORS.dim,
           fontFamily: HUD_FONTS.mono,
-          fontSize: 6.4,
+          fontSize: HUD_TYPE.micro,
           letterSpacing: 0.32,
           lineHeight: 1.2,
           textAlign: isBack ? 'left' : 'right',
@@ -184,23 +184,23 @@ export default function CellCausalLensReadout({
         }}
       >
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, minWidth: 0 }}>
-          <span style={{ color: '#D9FAFF', fontFamily: HUD_FONTS.tech, fontSize: 7.5, fontWeight: 700, letterSpacing: 1.05 }}>
+          <span style={{ color: '#D9FAFF', fontFamily: HUD_FONTS.tech, fontSize: HUD_TYPE.label, fontWeight: 700, letterSpacing: 1.05 }}>
             CAUSAL LENS
           </span>
-          <span style={{ color: meta.color, fontFamily: HUD_FONTS.mono, fontSize: 6.8, letterSpacing: 0.66 }}>
+          <span style={{ color: meta.color, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.micro, letterSpacing: 0.66 }}>
             {meta.label}
           </span>
-          <span style={{ marginLeft: 'auto', color: HUD_COLORS.ink, fontFamily: HUD_FONTS.mono, fontSize: 7, whiteSpace: 'nowrap' }}>
+          <span style={{ marginLeft: 'auto', color: HUD_COLORS.ink, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.micro, whiteSpace: 'nowrap' }}>
             {endpointCount(anchoredInputs, lens.inputCount, 'IN')} · {endpointCount(anchoredOutputs, lens.outputCount, 'OUT')}
           </span>
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) auto', alignItems: 'baseline', gap: 7, marginTop: 3, fontFamily: HUD_FONTS.mono }}>
-          <span title={lens.txHash} style={{ minWidth: 0, color: HUD_COLORS.dim, fontSize: 6.8, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          <span title={lens.txHash} style={{ minWidth: 0, color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             TX {shortHash(lens.txHash)} · #{lens.block}
           </span>
           <span
             data-causal-summary-note="true"
-            style={{ color: meta.color, fontSize: 6.4, letterSpacing: 0.34, whiteSpace: 'nowrap' }}
+            style={{ color: meta.color, fontSize: HUD_TYPE.micro, letterSpacing: 0.34, whiteSpace: 'nowrap' }}
           >
             {summaryNote}
           </span>
@@ -215,7 +215,7 @@ export default function CellCausalLensReadout({
             style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) auto minmax(0,1fr)', alignItems: 'center', gap: 5, marginTop: 4, paddingTop: 4, borderTop: `1px solid ${meta.color}18` }}
           >
             {navigationButton(navigation.backCellId, 'back', navigation.onBack)}
-            <span style={{ color: HUD_COLORS.dim, fontFamily: HUD_FONTS.mono, fontSize: 6.1, whiteSpace: 'nowrap' }}>
+            <span style={{ color: HUD_COLORS.dim, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.micro, whiteSpace: 'nowrap' }}>
               PATH {navigation.position}/{navigation.total}
             </span>
             {navigationButton(
@@ -270,7 +270,7 @@ export default function CellCausalLensReadout({
       }}>
         <span style={{
           color: '#D9FAFF',
-          fontSize: compact ? 7.3 : 7.8,
+          fontSize: HUD_TYPE.micro,
           fontWeight: 700,
           letterSpacing: 1.18,
         }}>
@@ -280,7 +280,7 @@ export default function CellCausalLensReadout({
           marginLeft: 'auto',
           color: meta.color,
           fontFamily: HUD_FONTS.mono,
-          fontSize: 7,
+          fontSize: HUD_TYPE.micro,
           letterSpacing: 0.72,
           textShadow: `0 0 6px ${meta.color}66`,
         }}>
@@ -294,7 +294,7 @@ export default function CellCausalLensReadout({
           marginTop: compact ? 2 : 3,
           color: HUD_COLORS.ink,
           fontFamily: HUD_FONTS.mono,
-          fontSize: 7.1,
+          fontSize: HUD_TYPE.micro,
           letterSpacing: 0.28,
           whiteSpace: 'nowrap',
           overflow: 'hidden',
@@ -319,10 +319,10 @@ export default function CellCausalLensReadout({
             fontFamily: HUD_FONTS.mono,
           }}
         >
-          <span style={{ minWidth: 0, color: meta.color, fontSize: 6.8, letterSpacing: 0.48 }}>
+          <span style={{ minWidth: 0, color: meta.color, fontSize: HUD_TYPE.micro, letterSpacing: 0.48 }}>
             IDENTITY ONLY · LINK NOT RETAINED
           </span>
-          <span style={{ color: HUD_COLORS.dim, fontSize: 6.4, letterSpacing: 0.36, whiteSpace: 'nowrap' }}>
+          <span style={{ color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro, letterSpacing: 0.36, whiteSpace: 'nowrap' }}>
             {endpointCount(anchoredInputs, lens.inputCount, 'INPUTS')} · {endpointCount(anchoredOutputs, lens.outputCount, 'OUTPUTS')}
           </span>
         </div>
@@ -343,7 +343,7 @@ export default function CellCausalLensReadout({
               style={{
                 color: meta.color,
                 fontFamily: HUD_FONTS.mono,
-                fontSize: 8,
+                fontSize: HUD_TYPE.label,
                 textShadow: `0 0 6px ${meta.color}55`,
               }}
             >
@@ -363,7 +363,7 @@ export default function CellCausalLensReadout({
             borderTop: `1px solid ${meta.color}18`,
             color: meta.color,
             fontFamily: HUD_FONTS.mono,
-            fontSize: 6.4,
+            fontSize: HUD_TYPE.micro,
             letterSpacing: 0.4,
           }}>
             <span>{meta.note}</span>
@@ -405,7 +405,7 @@ export default function CellCausalLensReadout({
           <span style={{
             color: HUD_COLORS.dim,
             fontFamily: HUD_FONTS.mono,
-            fontSize: 6.1,
+            fontSize: HUD_TYPE.micro,
             letterSpacing: 0.48,
             whiteSpace: 'nowrap',
           }}>

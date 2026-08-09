@@ -10,7 +10,7 @@ import {
   contentSegmentAtByte,
   deriveCellContentMemory,
 } from '../../derives/cellContentMemory.derive';
-import { HUD_COLORS, HUD_FONTS, rgba } from './hudTheme';
+import { HUD_COLORS, HUD_FONTS, rgba, HUD_TYPE } from './hudTheme';
 import { formatSemanticAssetAmount } from './cellFormat';
 import type { CellSemanticsPhase } from './CellSemanticsReadout';
 
@@ -76,7 +76,7 @@ function navButtonStyle(enabled: boolean): CSSProperties {
     border: `1px solid ${enabled ? rgba(HUD_COLORS.cyanWire, 0.28) : rgba(HUD_COLORS.dim, 0.12)}`,
     background: enabled ? rgba(HUD_COLORS.cyanWire, 0.06) : 'transparent',
     color: enabled ? HUD_COLORS.cyanWire : HUD_COLORS.dim,
-    font: `8px ${HUD_FONTS.mono}`,
+    font: `9px ${HUD_FONTS.mono}`,
     lineHeight: 1,
     cursor: enabled ? 'pointer' : 'default',
     pointerEvents: enabled ? 'auto' : 'none',
@@ -126,13 +126,13 @@ function SegmentReadout({
         >
           ‹
         </button>
-        <span style={{ color, fontSize: 6.2, letterSpacing: 0.42, whiteSpace: 'nowrap' }}>
+        <span style={{ color, fontSize: HUD_TYPE.micro, letterSpacing: 0.42, whiteSpace: 'nowrap' }}>
           S{String(index + 1).padStart(2, '0')}/{String(count).padStart(2, '0')}
         </span>
-        <span title={segment.label} style={{ minWidth: 0, color: '#DDFBFF', fontSize: 7.1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        <span title={segment.label} style={{ minWidth: 0, color: '#DDFBFF', fontSize: HUD_TYPE.micro, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {readableKind(segment.label)}
         </span>
-        <span style={{ color: HUD_COLORS.dim, fontSize: 6.2, whiteSpace: 'nowrap' }}>
+        <span style={{ color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro, whiteSpace: 'nowrap' }}>
           [{segment.start_byte}..{segment.end_byte})
         </span>
         <button
@@ -146,10 +146,10 @@ function SegmentReadout({
         </button>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,.9fr) minmax(0,1.1fr)', gap: 6, marginTop: 2, minWidth: 0 }}>
-        <span title={segment.value} style={{ minWidth: 0, color, fontSize: 7.4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        <span title={segment.value} style={{ minWidth: 0, color, fontSize: HUD_TYPE.micro, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {segment.value}
         </span>
-        <span title={segment.meaning} style={{ minWidth: 0, color: HUD_COLORS.dim, fontSize: 6.4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        <span title={segment.meaning} style={{ minWidth: 0, color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {segment.meaning}
         </span>
       </div>
@@ -182,10 +182,10 @@ function GuessReadout({
       >
         ‹
       </button>
-      <span style={{ color: HUD_COLORS.caution, fontSize: 6.2, whiteSpace: 'nowrap' }}>
+      <span style={{ color: HUD_COLORS.caution, fontSize: HUD_TYPE.micro, whiteSpace: 'nowrap' }}>
         H{index + 1}/{count} · {guess.confidence.toUpperCase()}
       </span>
-      <span title={`${guess.reason}${guess.mime_type ? ` · ${guess.mime_type}` : ''}${guess.value ? ` · ${guess.value}` : ''}`} style={{ minWidth: 0, color: HUD_COLORS.ink, fontSize: 6.6, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+      <span title={`${guess.reason}${guess.mime_type ? ` · ${guess.mime_type}` : ''}${guess.value ? ` · ${guess.value}` : ''}`} style={{ minWidth: 0, color: HUD_COLORS.ink, fontSize: HUD_TYPE.micro, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         {readableKind(guess.kind)} · {guess.mime_type ?? guess.value ?? guess.reason}
       </span>
       <button
@@ -227,10 +227,10 @@ function FacetReadout({
       >
         ‹
       </button>
-      <span style={{ color: '#BFAAFF', fontSize: 6.2, whiteSpace: 'nowrap' }}>
+      <span style={{ color: '#BFAAFF', fontSize: HUD_TYPE.micro, whiteSpace: 'nowrap' }}>
         ROLE {index + 1}/{count}
       </span>
-      <span title={`${facet.kind}${facet.state ? ` · ${facet.state}` : ''}${first ? ` · ${first.key}: ${first.value}` : ''}`} style={{ minWidth: 0, color: HUD_COLORS.ink, fontSize: 6.6, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+      <span title={`${facet.kind}${facet.state ? ` · ${facet.state}` : ''}${first ? ` · ${first.key}: ${first.value}` : ''}`} style={{ minWidth: 0, color: HUD_COLORS.ink, fontSize: HUD_TYPE.micro, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         {readableKind(facet.kind)}{facet.state ? ` · ${facet.state.toUpperCase()}` : ''}{first ? ` · ${readableKind(first.key)} ${first.value}${first.unit ? ` ${first.unit}` : ''}` : ''}
       </span>
       <button
@@ -396,11 +396,11 @@ export default function CellContentMemory({
             data-cell-content-reveal-item-state={summaryRevealed ? 'resolved' : 'scanning'}
             style={{ display: summaryRevealed ? 'flex' : 'none', alignItems: 'baseline', gap: 5 }}
           >
-            <span style={{ minWidth: 0, color: model.origin === 'indexed' ? tone : HUD_COLORS.cyanWire, fontSize: 6.2, letterSpacing: 0.52, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <span style={{ minWidth: 0, color: model.origin === 'indexed' ? tone : HUD_COLORS.cyanWire, fontSize: HUD_TYPE.micro, letterSpacing: 0.52, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {contentStatus}
             </span>
             {bytePageCount > 1 ? (
-              <span data-cell-content-byte-window={`${previewStart}:${previewEnd}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 3, color: HUD_COLORS.dim, fontSize: 6.1 }}>
+              <span data-cell-content-byte-window={`${previewStart}:${previewEnd}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 3, color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro }}>
                 <button
                   type="button"
                   aria-label="previous raw byte window"
@@ -422,16 +422,16 @@ export default function CellContentMemory({
                 </button>
               </span>
             ) : null}
-            <span style={{ marginLeft: 'auto', color: model.complete ? HUD_COLORS.nominal : HUD_COLORS.caution, fontSize: 6.2, whiteSpace: 'nowrap' }}>
+            <span style={{ marginLeft: 'auto', color: model.complete ? HUD_COLORS.nominal : HUD_COLORS.caution, fontSize: HUD_TYPE.micro, whiteSpace: 'nowrap' }}>
               {byteCount(model.observedBytes, model.totalBytes, model.complete)}
             </span>
           </div>
           {!model.valid ? (
-            <div data-cell-content-invalid="true" data-cell-content-reveal-item="bytes" data-cell-content-reveal-item-state={bytesRevealed ? 'resolved' : 'scanning'} style={{ display: bytesRevealed ? 'block' : 'none', marginTop: 4, color: HUD_COLORS.danger, fontSize: 7 }}>
+            <div data-cell-content-invalid="true" data-cell-content-reveal-item="bytes" data-cell-content-reveal-item-state={bytesRevealed ? 'resolved' : 'scanning'} style={{ display: bytesRevealed ? 'block' : 'none', marginTop: 4, color: HUD_COLORS.danger, fontSize: HUD_TYPE.micro }}>
               INVALID CONTENT HEX
             </div>
           ) : previewBytes.length === 0 ? (
-            <div data-cell-content-empty="true" data-cell-content-reveal-item="bytes" data-cell-content-reveal-item-state={bytesRevealed ? 'resolved' : 'scanning'} style={{ display: bytesRevealed ? 'block' : 'none', marginTop: 4, padding: '3px 5px', border: `1px solid ${rgba(HUD_COLORS.dim, 0.14)}`, color: HUD_COLORS.dim, fontSize: 6.8, letterSpacing: 0.7 }}>
+            <div data-cell-content-empty="true" data-cell-content-reveal-item="bytes" data-cell-content-reveal-item-state={bytesRevealed ? 'resolved' : 'scanning'} style={{ display: bytesRevealed ? 'block' : 'none', marginTop: 4, padding: '3px 5px', border: `1px solid ${rgba(HUD_COLORS.dim, 0.14)}`, color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro, letterSpacing: 0.7 }}>
               ∅ NO OUTPUT DATA
             </div>
           ) : (
@@ -460,17 +460,17 @@ export default function CellContentMemory({
                       key={index}
                       data-cell-content-byte={index}
                       data-cell-content-byte-segment={byteSegmentIndex ?? undefined}
-                      style={{ color, fontSize: 6.6, lineHeight: 1.35, textShadow: active ? `0 0 5px ${color}` : undefined, opacity: selectedSegmentIndex === null || active || byteSegmentIndex === null ? 1 : 0.34 }}
+                      style={{ color, fontSize: HUD_TYPE.micro, lineHeight: 1.35, textShadow: active ? `0 0 5px ${color}` : undefined, opacity: selectedSegmentIndex === null || active || byteSegmentIndex === null ? 1 : 0.34 }}
                     >
                       {byte.toString(16).padStart(2, '0').toUpperCase()}
                     </span>
                   );
                 })}
                 {previewStart > 0 || previewEnd < model.observedBytes || model.truncated ? (
-                  <span style={{ color: HUD_COLORS.dim, fontSize: 6.6 }}>…</span>
+                  <span style={{ color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro }}>…</span>
                 ) : null}
               </div>
-              <div data-cell-content-ascii="true" data-cell-content-reveal-item="ascii" data-cell-content-reveal-item-state={asciiRevealed ? 'resolved' : 'scanning'} title={model.ascii} style={{ display: asciiRevealed ? 'block' : 'none', minWidth: 0, marginTop: 2, color: HUD_COLORS.dim, fontSize: 6.2, letterSpacing: 0.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              <div data-cell-content-ascii="true" data-cell-content-reveal-item="ascii" data-cell-content-reveal-item-state={asciiRevealed ? 'resolved' : 'scanning'} title={model.ascii} style={{ display: asciiRevealed ? 'block' : 'none', minWidth: 0, marginTop: 2, color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro, letterSpacing: 0.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 ASCII [{previewStart}..{previewEnd}) · {model.ascii.slice(previewStart, previewEnd)}
                 {selectedRangeOutsidePreview ? ' · DECODE RANGE OUTSIDE RETAINED BYTES' : ''}
               </div>
@@ -481,7 +481,7 @@ export default function CellContentMemory({
         {enhanced ? (
           <div data-cell-content-analysis="true" style={{ display: analysisRevealed ? 'block' : 'none', minWidth: 0, paddingTop: wide ? 0 : 2, borderTop: wide ? 0 : `1px solid ${rgba(tone, 0.13)}`, borderLeft: wide ? `1px solid ${rgba(tone, 0.16)}` : 0, paddingLeft: wide ? 7 : 0 }}>
             {record?.asset ? (
-              <div data-cell-content-asset="true" data-cell-content-reveal-item="asset" data-cell-content-reveal-item-state={stageRevealed('asset') ? 'resolved' : 'scanning'} title={record.asset.type_script_hash} style={{ display: stageRevealed('asset') ? 'flex' : 'none', alignItems: 'baseline', gap: 5, minWidth: 0, color: HUD_COLORS.caution, fontSize: 6.5 }}>
+              <div data-cell-content-asset="true" data-cell-content-reveal-item="asset" data-cell-content-reveal-item-state={stageRevealed('asset') ? 'resolved' : 'scanning'} title={record.asset.type_script_hash} style={{ display: stageRevealed('asset') ? 'flex' : 'none', alignItems: 'baseline', gap: 5, minWidth: 0, color: HUD_COLORS.caution, fontSize: HUD_TYPE.micro }}>
                 <span style={{ color: HUD_COLORS.dim }}>VALUE</span>
                 <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {[record.asset.symbol, record.asset.name, record.asset.standard].filter(Boolean).join(' · ') || record.asset.type_script_hash}
@@ -492,10 +492,10 @@ export default function CellContentMemory({
             {content?.deterministic ? (
               <div data-cell-content-deterministic="true" data-cell-content-reveal-item="decode" data-cell-content-reveal-item-state={stageRevealed('decode') ? 'resolved' : 'scanning'} style={{ display: stageRevealed('decode') ? 'block' : 'none', minWidth: 0, marginTop: record?.asset ? 2 : 0 }}>
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: 5, minWidth: 0 }}>
-                  <span style={{ color: HUD_COLORS.nominal, fontSize: 6.2, letterSpacing: 0.56, whiteSpace: 'nowrap' }}>
+                  <span style={{ color: HUD_COLORS.nominal, fontSize: HUD_TYPE.micro, letterSpacing: 0.56, whiteSpace: 'nowrap' }}>
                     DECODE · {readableKind(content.deterministic.kind)}
                   </span>
-                  <span title={content.deterministic.summary} style={{ minWidth: 0, marginLeft: 'auto', color: HUD_COLORS.ink, fontSize: 6.3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  <span title={content.deterministic.summary} style={{ minWidth: 0, marginLeft: 'auto', color: HUD_COLORS.ink, fontSize: HUD_TYPE.micro, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {content.deterministic.summary}
                   </span>
                 </div>
@@ -511,11 +511,11 @@ export default function CellContentMemory({
                 ) : null}
               </div>
             ) : statusMessage ? (
-              <div data-cell-content-reveal-item="decode" data-cell-content-reveal-item-state={stageRevealed('decode') ? 'resolved' : 'scanning'} title={statusMessage} style={{ display: stageRevealed('decode') ? 'block' : 'none', marginTop: 2, color: phase === 'error' ? HUD_COLORS.danger : HUD_COLORS.dim, fontSize: 6.6, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              <div data-cell-content-reveal-item="decode" data-cell-content-reveal-item-state={stageRevealed('decode') ? 'resolved' : 'scanning'} title={statusMessage} style={{ display: stageRevealed('decode') ? 'block' : 'none', marginTop: 2, color: phase === 'error' ? HUD_COLORS.danger : HUD_COLORS.dim, fontSize: HUD_TYPE.micro, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {statusMessage}
               </div>
             ) : (
-              <div data-cell-content-reveal-item="decode" data-cell-content-reveal-item-state={stageRevealed('decode') ? 'resolved' : 'scanning'} style={{ display: stageRevealed('decode') ? 'block' : 'none', marginTop: 2, color: HUD_COLORS.dim, fontSize: 6.5 }}>
+              <div data-cell-content-reveal-item="decode" data-cell-content-reveal-item-state={stageRevealed('decode') ? 'resolved' : 'scanning'} style={{ display: stageRevealed('decode') ? 'block' : 'none', marginTop: 2, color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro }}>
                 NO DETERMINISTIC DECODE
               </div>
             )}

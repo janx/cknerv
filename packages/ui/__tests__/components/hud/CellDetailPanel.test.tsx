@@ -179,7 +179,8 @@ describe('CellDetailPanel', () => {
     expect(cellularBeam.style.transition).not.toContain('left 80ms linear');
     expect(container.querySelector('[aria-label="Interactive Cell scan"]')).not.toBeNull();
     expect(container.querySelectorAll('[data-cell-inspection-satellite]')).toHaveLength(4);
-    expect((container.querySelector('[data-cell-detail-readable-scale]') as HTMLElement).style.zoom).toBe('1.2');
+    // The zoom magnifier is gone — sizes are authored on the HUD_TYPE scale.
+    expect(container.querySelector('[data-cell-detail-readable-scale]')).toBeNull();
     expect(t).toContain('CELL SCAN');
     expect(t).toContain('CELL IDENTITY');
     expect(t).toContain('细胞身份');

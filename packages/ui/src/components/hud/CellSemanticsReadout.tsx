@@ -7,7 +7,7 @@ import type {
   TransactionSemanticRecord,
 } from '@cknerv/types';
 import { formatBlockRef, formatSemanticAssetAmount } from './cellFormat';
-import { HUD_COLORS, HUD_FONTS, rgba } from './hudTheme';
+import { HUD_COLORS, HUD_FONTS, rgba, HUD_TYPE } from './hudTheme';
 
 export { formatSemanticAssetAmount } from './cellFormat';
 
@@ -48,12 +48,12 @@ function ContextFact({ label, value, displayValue, color, wide = false }: {
       data-cell-context-fact={label.toLowerCase()}
       style={{ gridColumn: wide ? '1 / -1' : undefined, minWidth: 0, padding: '2px 0 3px' }}
     >
-      <span style={{ display: 'block', color: HUD_COLORS.dim, fontSize: 6.6, letterSpacing: 0.9, lineHeight: 1.2 }}>
+      <span style={{ display: 'block', color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro, letterSpacing: 0.9, lineHeight: 1.2 }}>
         {label}
       </span>
       <span
         title={value}
-        style={{ display: 'block', color: color ?? HUD_COLORS.ink, fontSize: 8.2, lineHeight: 1.35, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+        style={{ display: 'block', color: color ?? HUD_COLORS.ink, fontSize: HUD_TYPE.label, lineHeight: 1.35, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
       >
         {displayValue ?? value}
       </span>
@@ -91,8 +91,8 @@ function KnowledgeBar({
       }}
     >
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
-        <span style={{ color: HUD_COLORS.dim, fontSize: summary ? 6.8 : 6.6, letterSpacing: 0.9, whiteSpace: 'nowrap' }}>{inline ? 'OCCUPIED' : 'KNOWLEDGE'}</span>
-        <span style={{ marginLeft: 'auto', color: HUD_COLORS.ink, fontSize: 8.2, whiteSpace: 'nowrap' }}>
+        <span style={{ color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro, letterSpacing: 0.9, whiteSpace: 'nowrap' }}>{inline ? 'OCCUPIED' : 'KNOWLEDGE'}</span>
+        <span style={{ marginLeft: 'auto', color: HUD_COLORS.ink, fontSize: HUD_TYPE.label, whiteSpace: 'nowrap' }}>
           {knowledge.total_bytes}{inline ? ' B' : ' bytes occupied'}
         </span>
       </div>
@@ -130,11 +130,11 @@ function ScriptFact({ role, script }: {
       style={{ minWidth: 0, padding: '6px 8px 7px', border: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.16)}`, background: `linear-gradient(90deg,${rgba(HUD_COLORS.cyanWire, 0.045)},transparent)` }}
     >
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, minWidth: 0 }}>
-        <span style={{ color: HUD_COLORS.dim, fontSize: 6.6, letterSpacing: 0.9 }}>{role} SCRIPT</span>
-        <span title={identity} style={{ minWidth: 0, color: HUD_COLORS.ink, fontSize: 8.2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{identity}</span>
-        {state ? <span style={{ marginLeft: 'auto', color: stateColor, fontSize: 6.4, letterSpacing: 0.75 }}>{state}</span> : null}
+        <span style={{ color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro, letterSpacing: 0.9 }}>{role} SCRIPT</span>
+        <span title={identity} style={{ minWidth: 0, color: HUD_COLORS.ink, fontSize: HUD_TYPE.label, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{identity}</span>
+        {state ? <span style={{ marginLeft: 'auto', color: stateColor, fontSize: HUD_TYPE.micro, letterSpacing: 0.75 }}>{state}</span> : null}
       </div>
-      <div data-cell-context-script-evidence style={{ display: 'grid', gridTemplateColumns: 'auto minmax(0, 1fr)', gap: '2px 9px', marginTop: 5, paddingTop: 4, borderTop: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.08)}`, fontSize: 6.8, lineHeight: 1.4 }}>
+      <div data-cell-context-script-evidence style={{ display: 'grid', gridTemplateColumns: 'auto minmax(0, 1fr)', gap: '2px 9px', marginTop: 5, paddingTop: 4, borderTop: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.08)}`, fontSize: HUD_TYPE.micro, lineHeight: 1.4 }}>
         <span style={{ color: HUD_COLORS.dim }}>IDENTITY</span>
         <span title={script.script_hash} style={{ color: HUD_COLORS.cyanWire, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{compact(script.script_hash, 12, 9)}</span>
         <span style={{ color: HUD_COLORS.dim }}>CODE · {script.hash_type.toUpperCase()}</span>
@@ -171,10 +171,10 @@ function SpatialContextFact({
         minWidth: 0,
       }}
     >
-      <span style={{ color: HUD_COLORS.dim, fontSize: 6.6, letterSpacing: 0.72, whiteSpace: 'nowrap' }}>
+      <span style={{ color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro, letterSpacing: 0.72, whiteSpace: 'nowrap' }}>
         {label}
       </span>
-      <span title={value} style={{ minWidth: 0, color: color ?? HUD_COLORS.ink, fontSize: 8.2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+      <span title={value} style={{ minWidth: 0, color: color ?? HUD_COLORS.ink, fontSize: HUD_TYPE.label, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         {displayValue ?? value}
       </span>
     </div>
@@ -198,13 +198,13 @@ function SpatialScriptFact({ role, script }: {
       style={{ minWidth: 0, padding: '4px 6px', borderLeft: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.22)}`, background: `linear-gradient(90deg,${rgba(HUD_COLORS.cyanWire, 0.035)},transparent)` }}
     >
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, minWidth: 0 }}>
-        <span style={{ color: HUD_COLORS.dim, fontSize: 6.6, letterSpacing: 0.75, whiteSpace: 'nowrap' }}>{role}</span>
-        <span title={script.script_hash} style={{ minWidth: 0, color: HUD_COLORS.ink, fontSize: 8.2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{identity}</span>
-        {state ? <span style={{ marginLeft: 'auto', color: stateColor, fontSize: 6.2, letterSpacing: 0.62 }}>{state}</span> : null}
+        <span style={{ color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro, letterSpacing: 0.75, whiteSpace: 'nowrap' }}>{role}</span>
+        <span title={script.script_hash} style={{ minWidth: 0, color: HUD_COLORS.ink, fontSize: HUD_TYPE.label, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{identity}</span>
+        {state ? <span style={{ marginLeft: 'auto', color: stateColor, fontSize: HUD_TYPE.micro, letterSpacing: 0.62 }}>{state}</span> : null}
       </div>
       <div
         data-cell-context-script-evidence
-        style={{ display: 'grid', gridTemplateColumns: 'auto minmax(0,1fr) auto minmax(0,.72fr)', gap: 5, marginTop: 2, minWidth: 0, fontSize: 6.5 }}
+        style={{ display: 'grid', gridTemplateColumns: 'auto minmax(0,1fr) auto minmax(0,.72fr)', gap: 5, marginTop: 2, minWidth: 0, fontSize: HUD_TYPE.micro }}
       >
         <span style={{ color: HUD_COLORS.dim }}>CODE·{script.hash_type.toUpperCase()}</span>
         <span title={script.code_hash} style={{ color: HUD_COLORS.cyanWire, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{compact(script.code_hash, 7, 5)}</span>
@@ -241,9 +241,9 @@ function FacetDetail({ facet, index }: {
       style={{ minWidth: 0, padding: '4px 6px 5px', borderLeft: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.24)}`, background: index % 2 === 0 ? rgba(HUD_COLORS.cyanWire, 0.025) : 'transparent' }}
     >
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, minWidth: 0 }}>
-        <span style={{ color: HUD_COLORS.cyanWire, fontSize: 7, letterSpacing: 0.85 }}>{facetTitle(facet).toUpperCase()}</span>
+        <span style={{ color: HUD_COLORS.cyanWire, fontSize: HUD_TYPE.micro, letterSpacing: 0.85 }}>{facetTitle(facet).toUpperCase()}</span>
         {facet.state ? (
-          <span title={facet.state} style={{ marginLeft: 'auto', maxWidth: '58%', color: HUD_COLORS.caution, fontSize: 7, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          <span title={facet.state} style={{ marginLeft: 'auto', maxWidth: '58%', color: HUD_COLORS.caution, fontSize: HUD_TYPE.micro, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {' · '}{facet.state.toUpperCase()}
           </span>
         ) : null}
@@ -252,8 +252,8 @@ function FacetDetail({ facet, index }: {
         <div style={{ display: 'grid', gridTemplateColumns: 'minmax(70px, auto) minmax(0, 1fr)', gap: '2px 7px', marginTop: 4 }}>
           {attributes.map((attribute) => (
             <div key={attribute.key} style={{ display: 'contents' }}>
-              <span style={{ color: HUD_COLORS.dim, fontSize: 6.4, letterSpacing: 0.5 }}>{facetAttributeLabel(attribute.key)}</span>
-              <span title={attribute.value} style={{ color: HUD_COLORS.ink, fontSize: 7.2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              <span style={{ color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro, letterSpacing: 0.5 }}>{facetAttributeLabel(attribute.key)}</span>
+              <span title={attribute.value} style={{ color: HUD_COLORS.ink, fontSize: HUD_TYPE.micro, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {attribute.value}{attribute.unit ? ` ${attribute.unit}` : ''}
               </span>
             </div>
@@ -261,7 +261,7 @@ function FacetDetail({ facet, index }: {
         </div>
       ) : null}
       {facet.attributes.length > attributes.length ? (
-        <div style={{ marginTop: 3, color: HUD_COLORS.dim, fontSize: 6.3 }}>
+        <div style={{ marginTop: 3, color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro }}>
           +{facet.attributes.length - attributes.length} MORE INDEXED FIELDS
         </div>
       ) : null}
@@ -297,16 +297,16 @@ function SpatialFacetSummary({
       style={{ marginTop: inline ? 0 : 5, padding: '4px 5px 0', borderTop: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.13)}`, minWidth: 0 }}
     >
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, minWidth: 0 }}>
-        <span style={{ color: HUD_COLORS.cyanWire, fontSize: 7, letterSpacing: 0.75, whiteSpace: 'nowrap' }}>
+        <span style={{ color: HUD_COLORS.cyanWire, fontSize: HUD_TYPE.micro, letterSpacing: 0.75, whiteSpace: 'nowrap' }}>
           {facetTitle(facet).toUpperCase()}
         </span>
         {facet.state ? (
-          <span title={facet.state} style={{ color: HUD_COLORS.caution, fontSize: 6.7, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          <span title={facet.state} style={{ color: HUD_COLORS.caution, fontSize: HUD_TYPE.micro, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             · {facet.state.toUpperCase()}
           </span>
         ) : null}
         {!inline ? (
-          <span style={{ marginLeft: 'auto', color: HUD_COLORS.dim, fontSize: 6.1, whiteSpace: 'nowrap' }}>
+          <span style={{ marginLeft: 'auto', color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro, whiteSpace: 'nowrap' }}>
             PRIMARY FACET
           </span>
         ) : null}
@@ -314,7 +314,7 @@ function SpatialFacetSummary({
       {attributes.length > 0 ? (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,minmax(0,1fr))', gap: 7, marginTop: 2, minWidth: 0 }}>
           {attributes.map((attribute) => (
-            <span key={attribute.key} title={`${facetAttributeLabel(attribute.key)} · ${attribute.value}${attribute.unit ? ` ${attribute.unit}` : ''}`} style={{ minWidth: 0, color: HUD_COLORS.ink, fontSize: 6.8, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <span key={attribute.key} title={`${facetAttributeLabel(attribute.key)} · ${attribute.value}${attribute.unit ? ` ${attribute.unit}` : ''}`} style={{ minWidth: 0, color: HUD_COLORS.ink, fontSize: HUD_TYPE.micro, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               <span style={{ color: HUD_COLORS.dim }}>{facetAttributeLabel(attribute.key)} </span>
               {attribute.value}{attribute.unit ? ` ${attribute.unit}` : ''}
             </span>
@@ -590,8 +590,8 @@ function TransactionReadout({
   const proposedUncle = facetAttribute(lifecycle, 'proposed_uncle_block');
   const metric = (label: string, value: string, color?: string) => (
     <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 4, minWidth: 0, whiteSpace: 'nowrap' }}>
-      <span style={{ color: HUD_COLORS.dim, fontSize: 6.4, letterSpacing: 0.72 }}>{label}</span>
-      <span style={{ color: color ?? HUD_COLORS.ink, fontSize: 7.8 }}>{value}</span>
+      <span style={{ color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro, letterSpacing: 0.72 }}>{label}</span>
+      <span style={{ color: color ?? HUD_COLORS.ink, fontSize: HUD_TYPE.label }}>{value}</span>
     </span>
   );
   return (
@@ -600,17 +600,17 @@ function TransactionReadout({
       style={{ marginTop: 5, paddingTop: 5, borderTop: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.14)}` }}
     >
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, minWidth: 0 }}>
-        <span style={{ color: HUD_COLORS.orange, fontSize: 7.2, letterSpacing: 1.05 }}>
+        <span style={{ color: HUD_COLORS.orange, fontSize: HUD_TYPE.micro, letterSpacing: 1.05 }}>
           ORIGIN TRANSACTION
         </span>
         {record ? (
-          <span title={record.tx_hash} style={{ marginLeft: 'auto', minWidth: 0, color: HUD_COLORS.dim, fontSize: 7, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          <span title={record.tx_hash} style={{ marginLeft: 'auto', minWidth: 0, color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {compact(record.tx_hash, 10, 7)}
           </span>
         ) : null}
       </div>
       {status && !record ? (
-        <div style={{ marginTop: 3, color: phase === 'error' ? HUD_COLORS.danger : HUD_COLORS.dim, fontSize: 8 }}>
+        <div style={{ marginTop: 3, color: phase === 'error' ? HUD_COLORS.danger : HUD_COLORS.dim, fontSize: HUD_TYPE.label }}>
           {status}
         </div>
       ) : null}
@@ -633,7 +633,7 @@ function TransactionReadout({
           {inputCapacity || outputCapacity || inputKnowledge || outputKnowledge ? (
             <div
               data-transaction-semantics-flow
-              style={{ display: 'grid', gridTemplateColumns: 'auto minmax(0,1fr)', gap: '2px 8px', marginTop: 5, padding: '4px 6px', border: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.1)}`, fontSize: 7.1 }}
+              style={{ display: 'grid', gridTemplateColumns: 'auto minmax(0,1fr)', gap: '2px 8px', marginTop: 5, padding: '4px 6px', border: `1px solid ${rgba(HUD_COLORS.cyanWire, 0.1)}`, fontSize: HUD_TYPE.micro }}
             >
               {inputCapacity || outputCapacity ? (
                 <>
@@ -658,7 +658,7 @@ function TransactionReadout({
                 <div
                   key={participant.address}
                   title={participant.address}
-                  style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) auto', gap: 5, minWidth: 0, fontSize: 7.1 }}
+                  style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) auto', gap: 5, minWidth: 0, fontSize: HUD_TYPE.micro }}
                 >
                   <span style={{ color: HUD_COLORS.dim, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {compact(participant.address, 9, 6)}
@@ -765,21 +765,21 @@ function CellSemanticsReadout({
           style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '3px 6px', marginBottom: record ? spatial ? 5 : 8 : 0 }}
         >
           <span style={{ width: 4, height: 4, borderRadius: '50%', background: color, boxShadow: `0 0 6px ${color}` }} />
-          <span style={{ color, fontSize: 8, letterSpacing: 1.15, whiteSpace: 'nowrap' }}>
+          <span style={{ color, fontSize: HUD_TYPE.label, letterSpacing: 1.15, whiteSpace: 'nowrap' }}>
             CELL CONTEXT
           </span>
-          <span style={{ color, fontSize: 7.2, letterSpacing: 0.85, whiteSpace: 'nowrap' }}>
+          <span style={{ color, fontSize: HUD_TYPE.micro, letterSpacing: 0.85, whiteSpace: 'nowrap' }}>
             {' · '}{source.status.toUpperCase()}
           </span>
           {lag ? (
-            <span style={{ color: HUD_COLORS.dim, fontSize: 6.8, letterSpacing: 0.7, whiteSpace: 'nowrap' }}>
+            <span style={{ color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro, letterSpacing: 0.7, whiteSpace: 'nowrap' }}>
               {lag}
             </span>
           ) : null}
           {record?.cell_type ? (
             <span
               data-cell-context-type={record.cell_type}
-              style={{ marginLeft: 'auto', padding: '1px 4px', border: `1px solid ${rgba(HUD_COLORS.nominal, 0.22)}`, color: HUD_COLORS.nominal, fontSize: 6.6, letterSpacing: 0.75, whiteSpace: 'nowrap' }}
+              style={{ marginLeft: 'auto', padding: '1px 4px', border: `1px solid ${rgba(HUD_COLORS.nominal, 0.22)}`, color: HUD_COLORS.nominal, fontSize: HUD_TYPE.micro, letterSpacing: 0.75, whiteSpace: 'nowrap' }}
             >
               {record.cell_type.toUpperCase()}
             </span>
@@ -787,7 +787,7 @@ function CellSemanticsReadout({
         </div>
       ) : null}
       {statusMessage ? (
-        <div title={statusMessage} style={{ color: phase === 'error' ? HUD_COLORS.danger : HUD_COLORS.dim, fontSize: 8, lineHeight: 1.45 }}>
+        <div title={statusMessage} style={{ color: phase === 'error' ? HUD_COLORS.danger : HUD_COLORS.dim, fontSize: HUD_TYPE.label, lineHeight: 1.45 }}>
           {statusMessage}
         </div>
       ) : null}

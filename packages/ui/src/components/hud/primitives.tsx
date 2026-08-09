@@ -1,5 +1,5 @@
 import type { CSSProperties, ReactNode } from 'react';
-import { HUD_COLORS, HUD_FONTS, rgba } from './hudTheme';
+import { HUD_COLORS, HUD_FONTS, HUD_TYPE, rgba } from './hudTheme';
 
 export function HudPanel({ style, children }: { style?: CSSProperties; children: ReactNode }) {
   return (
@@ -250,11 +250,11 @@ export function SpatialPlateHeader({ en, cjk, accent, titleColor = '#C9F8FF', st
 }) {
   return (
     <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: '3px 7px', marginBottom }}>
-      <span style={{ flex: '0 0 auto', whiteSpace: 'nowrap', color: titleColor, fontFamily: HUD_FONTS.tech, fontSize: 10.5, fontWeight: 700, letterSpacing: 1.35 }}>
+      <span style={{ flex: '0 0 auto', whiteSpace: 'nowrap', color: titleColor, fontFamily: HUD_FONTS.tech, fontSize: HUD_TYPE.section, fontWeight: 700, letterSpacing: 1.35 }}>
         {en}
       </span>
       {cjk ? (
-        <span style={{ flex: '0 0 auto', whiteSpace: 'nowrap', color: accent, fontFamily: HUD_FONTS.cjk, fontSize: 8.5, opacity: 0.72 }}>
+        <span style={{ flex: '0 0 auto', whiteSpace: 'nowrap', color: accent, fontFamily: HUD_FONTS.cjk, fontSize: HUD_TYPE.label, opacity: 0.72 }}>
           {cjk}
         </span>
       ) : null}

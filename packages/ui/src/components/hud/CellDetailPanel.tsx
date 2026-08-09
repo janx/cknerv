@@ -23,7 +23,7 @@ import {
   LOCK_COLORS,
   ASSET_COLORS,
 } from './cellFormat';
-import { HUD_COLORS, HUD_FONTS, rgba } from './hudTheme';
+import { HUD_COLORS, HUD_FONTS, rgba, HUD_TYPE } from './hudTheme';
 import {
   CloseButton,
   SpatialPlateHeader,
@@ -205,12 +205,12 @@ const CellScanFact = memo(function CellScanFact({
         pointerEvents: interactive ? 'auto' : 'none',
       }}
     >
-      <span style={{ display: 'block', fontSize: 9, letterSpacing: 1.2, color: HUD_COLORS.dim }}>
+      <span style={{ display: 'block', fontSize: HUD_TYPE.label, letterSpacing: 1.2, color: HUD_COLORS.dim }}>
         {label}
       </span>
       <span
         title={value}
-        style={{ display: 'block', marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 11.5, lineHeight: 1.2, color: selected ? accent : color ?? HUD_COLORS.ink }}
+        style={{ display: 'block', marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: HUD_TYPE.value, lineHeight: 1.2, color: selected ? accent : color ?? HUD_COLORS.ink }}
       >
         {value}
       </span>
@@ -404,13 +404,9 @@ export default function CellDetailPanel({
   const lineageWidth = showTracePlate
     ? enhancedDetail ? 420 : 320
     : enhancedDetail ? 560 : 480;
-  const readableScale = verticalLayout ? 1 : 1.2;
-  const readableWidth = `${(100 / readableScale).toFixed(2)}%`;
   const semanticScanStyle = useMemo<CSSProperties>(
-    () => verticalLayout
-      ? { marginTop: 7 }
-      : { marginTop: 7, width: '76.92%', zoom: 1.3 },
-    [verticalLayout],
+    () => ({ marginTop: 7 }),
+    [],
   );
   const satelliteBase: CSSProperties = {
     position: 'relative',
@@ -493,19 +489,19 @@ export default function CellDetailPanel({
           ...spatialPlate(HUD_COLORS.orange),
         }}
       >
-        <span style={{ color: HUD_COLORS.orange, fontFamily: HUD_FONTS.display, fontSize: 13, fontWeight: 600, letterSpacing: 2, textShadow: '0 0 9px rgba(255,152,48,.45)' }}>
+        <span style={{ color: HUD_COLORS.orange, fontFamily: HUD_FONTS.display, fontSize: HUD_TYPE.title, fontWeight: 600, letterSpacing: 2, textShadow: '0 0 9px rgba(255,152,48,.45)' }}>
           CELL // #{cell.id}
         </span>
-        <span style={{ color: HUD_COLORS.orange, fontFamily: HUD_FONTS.cjk, fontSize: 11, opacity: 0.78 }}>
+        <span style={{ color: HUD_COLORS.orange, fontFamily: HUD_FONTS.cjk, fontSize: HUD_TYPE.section, opacity: 0.78 }}>
           共识细胞
         </span>
-        <span title={cell.content_hash} style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: HUD_COLORS.dim, fontSize: 9.5, letterSpacing: 0.8 }}>
+        <span title={cell.content_hash} style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: HUD_COLORS.dim, fontSize: HUD_TYPE.label, letterSpacing: 0.8 }}>
           {cell.content_hash.slice(2, 10)}:{cell.out_point.index}
         </span>
-        <span style={{ marginLeft: 'auto', color: live ? HUD_COLORS.nominal : HUD_COLORS.caution, fontSize: 10.5, letterSpacing: 0.9 }}>
+        <span style={{ marginLeft: 'auto', color: live ? HUD_COLORS.nominal : HUD_COLORS.caution, fontSize: HUD_TYPE.section, letterSpacing: 0.9 }}>
           {live ? '● LIVE' : '◇ SPENT'} · {lifetime}
         </span>
-        <span style={{ position: 'absolute', top: 7, right: 30, fontFamily: HUD_FONTS.mono, fontSize: 8.5, letterSpacing: 1, color: '#5a6470' }}>
+        <span style={{ position: 'absolute', top: 7, right: 30, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.label, letterSpacing: 1, color: '#5a6470' }}>
           SCAN·06
         </span>
         <CloseButton onClose={onClose} title="Close · ESC or click outside" />
@@ -531,8 +527,8 @@ export default function CellDetailPanel({
         }}
       >
         <div style={{ position: 'absolute', zIndex: 3, left: 12, top: 10, right: 12, display: 'flex', alignItems: 'baseline', gap: 8, pointerEvents: 'none' }}>
-          <span style={{ color: HUD_COLORS.orange, fontFamily: HUD_FONTS.tech, fontSize: verticalLayout ? 10.5 : 12, fontWeight: 700, letterSpacing: verticalLayout ? 1.25 : 1.65, whiteSpace: 'nowrap' }}>CELL SCAN</span>
-          <span data-cell-scan-drag-affordance style={{ marginLeft: 'auto', color: HUD_COLORS.dim, fontFamily: HUD_FONTS.mono, fontSize: verticalLayout ? 7.2 : 8.5, letterSpacing: verticalLayout ? 0.5 : 0.8, whiteSpace: 'nowrap' }}>{verticalLayout ? 'ORBIT ↔' : 'DRAG TO ORBIT ↔'}</span>
+          <span style={{ color: HUD_COLORS.orange, fontFamily: HUD_FONTS.tech, fontSize: HUD_TYPE.section, fontWeight: 700, letterSpacing: 1.45, whiteSpace: 'nowrap' }}>CELL SCAN</span>
+          <span data-cell-scan-drag-affordance style={{ marginLeft: 'auto', color: HUD_COLORS.dim, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.label, letterSpacing: 0.8, whiteSpace: 'nowrap' }}>{verticalLayout ? 'ORBIT ↔' : 'DRAG TO ORBIT ↔'}</span>
         </div>
         <CellNucleusPortrait
           cell={cell}
@@ -573,7 +569,9 @@ export default function CellDetailPanel({
         style={{
           ...satelliteBase,
           gridArea: 'anatomy',
-          alignSelf: 'stretch',
+          // Enriched content fills the portrait row; the bare six-fact grid
+          // hugs its content instead of stretching into a half-empty plate.
+          alignSelf: enhancedDetail ? 'stretch' : 'start',
           minHeight: verticalLayout ? 202 : 200,
           overflow: 'hidden',
           padding: '12px 12px 10px 18px',
@@ -594,7 +592,7 @@ export default function CellDetailPanel({
           status={(
             <span
               data-cell-identity-scan-status="true"
-              style={{ color: statusColor, fontSize: 8.2, letterSpacing: 0.72, textShadow: `0 0 7px ${rgba(statusColor, 0.42)}` }}
+              style={{ color: statusColor, fontSize: HUD_TYPE.label, letterSpacing: 0.72, textShadow: `0 0 7px ${rgba(statusColor, 0.42)}` }}
             >
               {scan.classified ? 'LOCKED' : `SCANNING ${scan.pct}%`}
               {' · '}A-LATTICE {scan.reveal}/{order.length}
@@ -665,7 +663,7 @@ export default function CellDetailPanel({
             ...spatialPlate('#AA88FF'),
           }}
         >
-          <div data-cell-detail-readable-scale="true" style={{ width: readableWidth, zoom: readableScale }}>
+          <div style={{ minWidth: 0 }}>
             <ConsensusIdentityPlate
               identity={identity}
               dataHex={cell.data_hex}
@@ -726,12 +724,12 @@ export default function CellDetailPanel({
               titleColor="#C7B9FF"
               marginBottom={0}
               status={(
-                <span style={{ color: HUD_COLORS.dim, fontFamily: HUD_FONTS.mono, fontSize: 6.8, letterSpacing: 0.55 }}>
+                <span style={{ color: HUD_COLORS.dim, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.micro, letterSpacing: 0.55 }}>
                   LIVE EVIDENCE
                 </span>
               )}
             />
-            <div data-cell-detail-readable-scale="true" style={{ width: readableWidth, zoom: readableScale }}>
+            <div style={{ minWidth: 0 }}>
               <ConsensusMemoryTracePlate
                 readout={traceReadout}
                 reducedMotion={reduced}

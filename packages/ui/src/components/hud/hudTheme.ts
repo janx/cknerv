@@ -30,6 +30,18 @@ export const HUD_FONTS = {
   cjk: "'Huiwen-mincho', 'Noto Serif CJK SC', 'Noto Serif SC', 'Songti SC', SimSun, serif",
 } as const;
 
+/** The five-step type scale for detail/inspection surfaces. Every rendered
+ *  fontSize on those surfaces must be one of these steps — micro (7.5) is the
+ *  legibility floor, full stop; depth is expressed by stepping down the scale,
+ *  never by inventing sizes between its rungs. */
+export const HUD_TYPE = {
+  title: 13,
+  value: 11.5,
+  section: 10.5,
+  label: 9,
+  micro: 7.5,
+} as const;
+
 /** A `#RRGGBB` palette color as an `rgba(r,g,b,a)` string — single source for
  *  canvas/border tints that need an alpha the hex form can't carry. */
 export function rgba(hex: string, alpha: number): string {
@@ -79,8 +91,8 @@ export function injectHudTheme(doc: Document = document): void {
     + `\n.cknerv-chain-panel-scroll::-webkit-scrollbar-track{background:transparent}`
     + `\n.cknerv-status-controls::-webkit-scrollbar{display:none}`
     + `\n.cknerv-status-context::-webkit-scrollbar{display:none}`
-    + `\n.cknerv-memory-route-ledger{position:absolute;right:calc(100% + 30px);top:-1px;width:230px}`
-    + `\n.cknerv-memory-route-ledger-lens{width:268px}`
+    + `\n.cknerv-memory-route-ledger{position:absolute;right:calc(100% + 30px);top:-1px;width:272px}`
+    + `\n.cknerv-memory-route-ledger-lens{width:312px}`
     + `\n.cknerv-memory-route-ledger-viewport{position:relative;display:flex;flex:1 1 auto;min-height:0}`
     + `\n.cknerv-memory-route-ledger-scroll{position:relative;flex:1 1 auto;min-width:0;min-height:0;box-sizing:border-box}`
     + `\n.cknerv-memory-route-scroll-edge{position:absolute;left:0;right:9px;z-index:2;height:14px;pointer-events:none;opacity:0}`
