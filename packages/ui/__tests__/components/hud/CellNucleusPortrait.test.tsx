@@ -2,14 +2,27 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
-  cellPortraitFrameloop,
-  portraitHeartbeatIntervalMs,
-  resolvePortraitCanvasDpr,
-  PORTRAIT_HEARTBEAT_HZ,
+  resolveStandalonePortraitDpr,
 } from '../../../src/components/hud/CellNucleusPortrait';
+import {
+  CELL_PORTRAIT_INSET,
+  cellPortraitScissorRect,
+  clearCellPortraitCardOrigin,
+  registerCellPortraitElement,
+  setCellPortraitCardOrigin,
+  setCellPortraitOffset,
+  type CellPortraitScissorRect,
+} from '../../../src/components/hud/cellPortraitInsetChannel';
+import {
+  portraitPlateSize,
+} from '../../../src/components/hud/CellPortraitInset';
 
 const SOURCE = readFileSync(
   resolve(process.cwd(), 'src/components/hud/CellNucleusPortrait.tsx'),
+  'utf8',
+);
+const INSET_SOURCE = readFileSync(
+  resolve(process.cwd(), 'src/components/hud/CellPortraitInset.tsx'),
   'utf8',
 );
 const MEMORY_SOURCE = readFileSync(
@@ -26,10 +39,6 @@ const ADDRESS_SOURCE = readFileSync(
 );
 const PROOF_READER_SOURCE = readFileSync(
   resolve(process.cwd(), 'src/components/hud/CellIdentityProofReader.tsx'),
-  'utf8',
-);
-const HUD_SOURCE = readFileSync(
-  resolve(process.cwd(), 'src/components/hud/HudOverlay.tsx'),
   'utf8',
 );
 
@@ -77,7 +86,7 @@ describe('CellNucleusPortrait production language', () => {
       /if \(frame\.state === 'reading'\) invalidate\(\);/g,
     )).toHaveLength(2);
     expect(SOURCE).toContain('onIdentityProofRead={onIdentityProofRead}');
-    expect(SOURCE).toContain('identityProofBinding={');
+    expect(SOURCE).toContain('identityProofBinding={selectedBinding}');
     expect(SOURCE).toContain('data-memory-portrait-state');
   });
 
@@ -122,66 +131,96 @@ describe('CellNucleusPortrait production language', () => {
     expect(MEMORY_SOURCE).toContain('<ringGeometry args={[0.025, 0.032, 4]} />');
   });
 
-  it('lets the selected Cell portrait rotate without taking over panel scroll', () => {
-    expect(SOURCE).toContain("import { OrbitControls } from '@react-three/drei'");
-    expect(SOURCE).toContain('data-cell-portrait-interactive="true"');
-    expect(SOURCE).toContain("data-cell-portrait-dragging={dragging ? 'true' : 'false'}");
-    expect(SOURCE).toContain('Interactive Cell scan. Drag to orbit around the Cell.');
-    expect(SOURCE).toContain('onInteractionChange?.(true)');
-    expect(SOURCE).toContain('onInteractionChange?.(false)');
-    expect(SOURCE).toContain('onPointerDown={(event) => event.stopPropagation()}');
-    expect(SOURCE).not.toContain('onPointerUp={(event) => event.stopPropagation()}');
-    expect(SOURCE).not.toContain('onPointerMove={(event) => event.stopPropagation()}');
-    expect(SOURCE).toContain("pointerEvents: 'auto'");
-    expect(SOURCE).toContain("cursor: dragging ? 'grabbing' : 'grab'");
-    expect(SOURCE).toContain('<OrbitControls');
-    expect(SOURCE).toContain('enablePan={false}');
-    expect(SOURCE).toContain('enableZoom={false}');
-    expect(SOURCE).toContain('enableDamping={!reducedMotion}');
-  });
-
-  it('shares the adaptive DPR ceiling and paces the demand loop instead of racing the Galaxy', () => {
-    expect(resolvePortraitCanvasDpr(3, 2)).toBe(2);
-    expect(resolvePortraitCanvasDpr(3, 1.5)).toBe(1.5);
-    expect(resolvePortraitCanvasDpr(0.5, 2)).toBe(1);
-    expect(resolvePortraitCanvasDpr(Number.NaN, Number.NaN)).toBe(1);
-    expect(cellPortraitFrameloop(false)).toBe('demand');
-    expect(cellPortraitFrameloop(true)).toBe('always');
-    expect(SOURCE).toContain('dpr={portraitDpr}');
-    expect(SOURCE).toContain('frameloop={cellPortraitFrameloop(dragging)}');
+  it('draws the braid with the main renderer through a scissored inset', () => {
+    // One WebGL context: the inset takes over the loop, renders the Galaxy,
+    // then scissors the portrait square for the braid scene. No second
+    // Canvas, no heartbeat, no per-selection context churn.
+    expect(SOURCE).toContain('registerCellPortraitElement(');
+    expect(SOURCE).toContain('setCellPortraitOffset(');
+    expect(SOURCE).toContain('setCellPortraitContent(');
+    expect(SOURCE).toContain("host.closest<HTMLElement>('[data-cell-inspection-overlay]')");
     expect(SOURCE).toContain('export default memo(CellNucleusPortrait)');
-    // A paced heartbeat, never a raw rAF loop. That the idle canvas stays on
-    // demand is already pinned by the cellPortraitFrameloop assertions above.
+    expect(SOURCE).not.toContain('PortraitHeartbeat');
+    expect(SOURCE).not.toContain('frameloop');
     expect(SOURCE).not.toContain('requestAnimationFrame');
+    expect(INSET_SOURCE).toContain('renderer.render(state.scene, state.camera)');
+    expect(INSET_SOURCE).toContain('renderer.setScissorTest(true)');
+    expect(INSET_SOURCE).toContain('renderer.clearDepth()');
+    expect(INSET_SOURCE).toContain('renderer.render(braidScene, braidCamera)');
+    expect(INSET_SOURCE).toContain('}, 1);');
+    expect(INSET_SOURCE).not.toContain('new THREE.WebGLRenderer');
+    // RenderStatsSampler owns gl.info accounting; the inset must not fight
+    // its autoReset mode or wipe its sampling window.
+    expect(INSET_SOURCE).not.toContain('info.autoReset');
+    expect(INSET_SOURCE).not.toContain('info.reset()');
   });
 
-  it('keeps the consensus core advancing after the panel scan clock stops', () => {
-    // The core animates off clock.elapsedTime forever but requests no frames of
-    // its own, so on a demand canvas it froze once the panel's 80 ms scan clock
-    // and the halo/proof reads went quiet. The heartbeat is that missing driver.
-    expect(MEMORY_SOURCE).toContain('state.clock.elapsedTime');
-    expect(MEMORY_SOURCE).not.toContain('invalidate');
-    expect(SOURCE).toContain('<PortraitHeartbeat');
-    expect(SOURCE).toContain('enabled={!reducedMotion}');
-    expect(SOURCE).toContain('hz={PORTRAIT_HEARTBEAT_HZ}');
-    expect(SOURCE).toContain('window.setInterval(() => invalidate(), period)');
-    expect(SOURCE).toContain('window.clearInterval(beat)');
+  it('lets the selected Cell portrait rotate without racing the Galaxy camera', () => {
+    // Orbit binds three's OrbitControls to the DOM square while the braid
+    // camera lives in the main R3F tree.
+    expect(INSET_SOURCE).toContain(
+      "import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'",
+    );
+    expect(INSET_SOURCE).toContain('new OrbitControls(braidCamera, element)');
+    expect(INSET_SOURCE).toContain('controls.enablePan = false');
+    expect(INSET_SOURCE).toContain('controls.enableZoom = false');
+    expect(INSET_SOURCE).toContain('controls.enableDamping = !reduced');
+    expect(INSET_SOURCE).toContain('controls.dispose()');
+    expect(INSET_SOURCE).toContain("addEventListener('start'");
+    expect(INSET_SOURCE).toContain('onInteractionChange?.(active)');
+    expect(SOURCE).toContain('data-cell-portrait-interactive="true"');
+    expect(SOURCE).toContain('Interactive Cell scan. Drag to orbit around the Cell.');
+    expect(SOURCE).toContain("pointerEvents: 'auto'");
+    expect(SOURCE).toContain("touchAction: 'none'");
   });
 
-  it('paces the heartbeat below the display rate and survives absurd rates', () => {
-    expect(PORTRAIT_HEARTBEAT_HZ).toBe(30);
-    expect(portraitHeartbeatIntervalMs(PORTRAIT_HEARTBEAT_HZ)).toBe(33);
-    expect(portraitHeartbeatIntervalMs(60)).toBe(17);
-    expect(portraitHeartbeatIntervalMs(1)).toBe(1000);
-    // Never a zero/negative period — that would busy-loop the interval.
-    expect(portraitHeartbeatIntervalMs(0)).toBe(1000);
-    expect(portraitHeartbeatIntervalMs(-30)).toBe(1000);
-    expect(portraitHeartbeatIntervalMs(100000)).toBe(1);
+  it('composes the scissor rect without frame-loop layout reads', () => {
+    const out: CellPortraitScissorRect = { x: 0, y: 0, width: 0, height: 0 };
+    const offset = { dx: 30, dy: 40, width: 260, height: 260 };
+    expect(cellPortraitScissorRect(offset, true, 100, 200, 900, out)).toBe(true);
+    expect(out).toEqual({ x: 130, y: 900 - 240 - 260, width: 260, height: 260 });
+    // Hidden card or unmeasured square draws nothing.
+    expect(cellPortraitScissorRect(offset, false, 100, 200, 900, out)).toBe(false);
+    expect(cellPortraitScissorRect(null, true, 100, 200, 900, out)).toBe(false);
+    expect(cellPortraitScissorRect(
+      { dx: 0, dy: 0, width: 1, height: 1 },
+      true,
+      0,
+      0,
+      900,
+      out,
+    )).toBe(false);
+    // The channel wiring mirrors the pure composition.
+    setCellPortraitOffset(offset);
+    setCellPortraitCardOrigin(100, 200);
+    expect(CELL_PORTRAIT_INSET.cardOriginValid).toBe(true);
+    clearCellPortraitCardOrigin();
+    expect(CELL_PORTRAIT_INSET.cardOriginValid).toBe(false);
+    setCellPortraitOffset(null);
+    registerCellPortraitElement(null);
   });
 
-  it('retains the portrait Canvas while switching selected Cells', () => {
-    expect(HUD_SOURCE).not.toContain('key={selectedCell.id}');
+  it('keeps the standalone lab path self-contained', () => {
+    expect(SOURCE).toContain('standalone = false');
+    expect(SOURCE).toContain('{standalone ? (');
+    expect(SOURCE).toContain('<OrbitControls');
+    expect(SOURCE).toContain('enableDamping={!reducedMotion}');
+    expect(resolveStandalonePortraitDpr(3)).toBe(2);
+    expect(resolveStandalonePortraitDpr(1.5)).toBe(1.5);
+    expect(resolveStandalonePortraitDpr(0.5)).toBe(1);
+    expect(resolveStandalonePortraitDpr(Number.NaN)).toBe(1);
+  });
+
+  it('keeps braid identity rebuilds Cell-keyed with a screen-fixed plate', () => {
+    // Switching Cells rebuilds geometry (Cell-keyed core) but never the GL
+    // context; the backing plate rides the braid camera so it stays
+    // screen-fixed under orbit, replacing the card's DOM plate.
     expect(CORE_SOURCE).toContain('key={cell.id}');
+    expect(INSET_SOURCE).toContain('<primitive object={braidCamera}>');
+    expect(INSET_SOURCE).toContain('drawPortraitPlateGradient');
+    expect(INSET_SOURCE).toContain('spatialPlateTail(accent)');
+    expect(portraitPlateSize(40, 11)).toBeGreaterThan(8);
+    expect(portraitPlateSize(40, 11)).toBeLessThan(9);
   });
 
   it('updates line resolution on viewport changes and settles color uploads', () => {
@@ -193,5 +232,8 @@ describe('CellNucleusPortrait production language', () => {
     );
     expect(MEMORY_SOURCE).toContain('if (agreementColorsChanged)');
     expect(MEMORY_SOURCE).toContain('if (knotColorsChanged)');
+    // Labels ride the portrait square so their coordinates stay
+    // square-relative on the shared canvas.
+    expect(MEMORY_SOURCE).toContain('portal={CELL_PORTRAIT_LABEL_PORTAL');
   });
 });

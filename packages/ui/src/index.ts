@@ -182,6 +182,7 @@ export type {
   CellCausalNavigationReadout,
 } from './components/hud/CellCausalLensReadout';
 export { default as CellNucleusPortrait } from './components/hud/CellNucleusPortrait';
+export { default as CellPortraitInset } from './components/hud/CellPortraitInset';
 export {
   default as CellCoreArtwork,
   CELL_CORE_DIRECTIONS,

@@ -18,6 +18,10 @@ import CellDetailPanel, {
 import { ASSET_COLORS, LOCK_COLORS } from './hud/cellFormat';
 import { HUD_COLORS } from './hud/hudTheme';
 import { useReducedMotion } from './hud/useReducedMotion';
+import {
+  clearCellPortraitCardOrigin,
+  setCellPortraitCardOrigin,
+} from './hud/cellPortraitInsetChannel';
 
 const INSPECTOR_GAP_PX = 42;
 const INSPECTOR_EDGE_PX = 14;
@@ -261,6 +265,9 @@ export function CellInspectionAnchor({
   const anchorRef = useRef<THREE.Group>(null);
   const projected = useRef(new THREE.Vector3());
 
+  // The braid inset must not draw into a hidden or unmounted card.
+  useEffect(() => () => clearCellPortraitCardOrigin(), []);
+
   useFrame(({ camera, size }) => {
     const anchor = anchorRef.current;
     const card = handles.card;
@@ -280,7 +287,10 @@ export function CellInspectionAnchor({
       handles.visible = visible;
       card.style.opacity = visible ? '1' : '0';
     }
-    if (!visible) return;
+    if (!visible) {
+      clearCellPortraitCardOrigin();
+      return;
+    }
 
     // The card layer is viewport-fixed while `size` is the Canvas CSS box;
     // App keeps the Canvas full-viewport, so the two coordinate spaces match.
@@ -298,6 +308,7 @@ export function CellInspectionAnchor({
     setHandlesLayoutSide(handles, placement.side);
     const cardX = anchorX + placement.x;
     const cardY = anchorY + placement.y;
+    setCellPortraitCardOrigin(cardX, cardY);
     const frameKey = [
       placement.side,
       cardX.toFixed(1),

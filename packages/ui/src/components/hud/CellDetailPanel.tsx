@@ -28,7 +28,6 @@ import {
   CloseButton,
   SpatialPlateHeader,
   spatialPlate,
-  spatialPlateBackground,
 } from './primitives';
 import { useReducedMotion } from './useReducedMotion';
 import CellNucleusPortrait from './CellNucleusPortrait';
@@ -145,6 +144,9 @@ export interface CellDetailPanelProps {
   onInspectionFieldChange?: (field: CellInspectionFacet | null) => void;
   /** Spatial fan direction selected by the scene-anchor placement solver. */
   layoutSide?: CellDetailLayoutSide;
+  /** Review labs render the portrait as a self-contained Canvas instead of
+   * through the app's main-context inset pass. */
+  portraitStandalone?: boolean;
   onClose: () => void;
   style?: CSSProperties;
 }
@@ -278,6 +280,7 @@ export default function CellDetailPanel({
   semanticTransactionMessage,
   onInspectionFieldChange,
   layoutSide = 'left',
+  portraitStandalone = false,
   onClose,
   style,
 }: CellDetailPanelProps) {
@@ -548,10 +551,12 @@ export default function CellDetailPanel({
           aspectRatio: '1 / 1',
           overflow: 'hidden',
           border: `1px solid ${rgba(HUD_COLORS.orange, 0.24)}`,
-          // Directional plate, matching the sibling satellites — NOT a radial
-          // field. The circular idiom in this viewport belongs to the content
+          // The braid renders on the MAIN canvas beneath this card
+          // (CellPortraitInset), so the directional plate lives in that scene
+          // as its backing — a DOM background here would dim the braid. The
+          // circular idiom in this viewport still belongs to the content
           // address halo (the one ring that reads as data).
-          background: spatialPlateBackground(HUD_COLORS.cyanWire),
+          background: 'transparent',
           boxShadow: `inset 0 0 26px ${rgba(HUD_COLORS.cyanWire, 0.08)},0 0 20px ${rgba(HUD_COLORS.orange, 0.06)}`,
         }}
       >
@@ -563,6 +568,8 @@ export default function CellDetailPanel({
           cell={cell}
           reducedMotion={reduced}
           scanEpochMs={activeClock.epochMs}
+          layoutSide={layoutSide}
+          standalone={portraitStandalone}
           focusField={scan.classified ? selectedField : null}
           traceReadout={traceReadout}
           traceResponseRef={traceResponseRef}

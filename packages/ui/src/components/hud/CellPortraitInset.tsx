@@ -1,0 +1,222 @@
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal, useFrame, useThree } from '@react-three/fiber';
+import * as THREE from 'three';
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { HUD_COLORS } from './hudTheme';
+import { spatialPlateTail } from './primitives';
+import { useReducedMotion } from './useReducedMotion';
+import {
+  CELL_PORTRAIT_INSET,
+  cellPortraitScissorRect,
+  type CellPortraitScissorRect,
+  useCellPortraitRevision,
+} from './cellPortraitInsetChannel';
+
+const PORTRAIT_FOV_DEG = 40;
+const PORTRAIT_CAMERA_Z = 3;
+/** Camera-space depth of the backing plate; braid geometry stays within
+ * ~1.1 units of the origin, well in front of it. */
+const PLATE_DISTANCE = 11;
+
+/** CSS `linear-gradient(100deg, …)` reproduced on a 2D canvas so the braid
+ * keeps its dark directional plate now that it composites over the Galaxy
+ * instead of over the card's DOM background. Exported for tests. */
+export function drawPortraitPlateGradient(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  accent: string,
+): void {
+  const theta = (100 * Math.PI) / 180;
+  const dirX = Math.sin(theta);
+  const dirY = -Math.cos(theta);
+  const lineLength = Math.abs(width * dirX) + Math.abs(height * dirY);
+  const cx = width / 2;
+  const cy = height / 2;
+  const gradient = ctx.createLinearGradient(
+    cx - (dirX * lineLength) / 2,
+    cy - (dirY * lineLength) / 2,
+    cx + (dirX * lineLength) / 2,
+    cy + (dirY * lineLength) / 2,
+  );
+  gradient.addColorStop(0, 'rgba(2,5,12,.96)');
+  gradient.addColorStop(0.72, 'rgba(3,8,17,.9)');
+  gradient.addColorStop(1, spatialPlateTail(accent));
+  ctx.clearRect(0, 0, width, height);
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, width, height);
+}
+
+/** Plate plane size that fills the portrait frustum at PLATE_DISTANCE, with a
+ * small overscan against edge seams. The square viewport keeps aspect ≈ 1. */
+export function portraitPlateSize(fovDeg: number, distance: number): number {
+  return 2 * distance * Math.tan((fovDeg * Math.PI) / 360) * 1.03;
+}
+
+function makePlateMaterial(): THREE.MeshBasicMaterial {
+  const surface = document.createElement('canvas');
+  surface.width = 256;
+  surface.height = 256;
+  const ctx = surface.getContext('2d');
+  if (ctx) drawPortraitPlateGradient(ctx, 256, 256, HUD_COLORS.cyanWire);
+  const texture = new THREE.CanvasTexture(surface);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return new THREE.MeshBasicMaterial({
+    map: texture,
+    transparent: true,
+    depthWrite: false,
+    toneMapped: false,
+  });
+}
+
+const SCRATCH_SIZE = new THREE.Vector2();
+const SCRATCH_RECT: CellPortraitScissorRect = { x: 0, y: 0, width: 0, height: 0 };
+
+/**
+ * Renders the selected Cell's braid with the MAIN renderer: after the Galaxy
+ * pass it scissors the portrait square and draws the braid scene through its
+ * own camera — one WebGL context, shared program cache, no per-selection
+ * context churn. Mount only while a Cell is selected: with no priority-1
+ * subscriber R3F auto-renders and the closed-state pipeline is untouched.
+ */
+export default function CellPortraitInset({
+  onInteractionChange,
+}: {
+  /** Owns pointer orbit inside the portrait square (locks Galaxy controls). */
+  onInteractionChange?: (active: boolean) => void;
+}) {
+  useCellPortraitRevision();
+  const element = CELL_PORTRAIT_INSET.element;
+  const content = CELL_PORTRAIT_INSET.content;
+  const reduced = useReducedMotion();
+  const gl = useThree((state) => state.gl);
+  const controlsRef = useRef<OrbitControls | null>(null);
+  const braidScene = useMemo(() => new THREE.Scene(), []);
+  const braidCamera = useMemo(() => {
+    const camera = new THREE.PerspectiveCamera(PORTRAIT_FOV_DEG, 1, 0.1, 20);
+    camera.position.set(0, 0, PORTRAIT_CAMERA_Z);
+    return camera;
+  }, []);
+  const plateMaterial = useMemo(makePlateMaterial, []);
+  const plateSize = portraitPlateSize(PORTRAIT_FOV_DEG, PLATE_DISTANCE);
+  // Injected portal size feeds LineMaterial.resolution and the Html labels;
+  // it follows the measured square, which only changes on layout flips.
+  const [portalSize, setPortalSize] = useState({ width: 260, height: 260 });
+
+  useEffect(() => () => {
+    plateMaterial.map?.dispose();
+    plateMaterial.dispose();
+  }, [plateMaterial]);
+
+  useEffect(() => {
+    if (!element) return;
+    const controls = new OrbitControls(braidCamera, element);
+    controls.enableDamping = !reduced;
+    controls.dampingFactor = 0.08;
+    controls.enablePan = false;
+    controls.enableZoom = false;
+    controls.rotateSpeed = 0.65;
+    controls.target.set(0, 0, 0);
+    const setDragging = (active: boolean) => {
+      element.dataset.cellPortraitDragging = active ? 'true' : 'false';
+      element.style.cursor = active ? 'grabbing' : 'grab';
+      onInteractionChange?.(active);
+    };
+    const handleStart = () => setDragging(true);
+    const handleEnd = () => setDragging(false);
+    controls.addEventListener('start', handleStart);
+    controls.addEventListener('end', handleEnd);
+    controlsRef.current = controls;
+    return () => {
+      controls.removeEventListener('start', handleStart);
+      controls.removeEventListener('end', handleEnd);
+      controls.dispose();
+      controlsRef.current = null;
+      onInteractionChange?.(false);
+    };
+  }, [braidCamera, element, onInteractionChange, reduced]);
+
+  // gl.info stays untouched here: RenderStatsSampler owns info accounting
+  // (autoReset=false + per-window resets while sampling), and both passes
+  // below accumulate into its window like any other multi-pass frame.
+  useEffect(() => () => {
+    gl.autoClear = true;
+    gl.setScissorTest(false);
+  }, [gl]);
+
+  useFrame((state) => {
+    const renderer = state.gl;
+    renderer.autoClear = true;
+    renderer.render(state.scene, state.camera);
+
+    const inset = CELL_PORTRAIT_INSET;
+    renderer.getSize(SCRATCH_SIZE);
+    if (!cellPortraitScissorRect(
+      inset.offset,
+      inset.cardOriginValid,
+      inset.cardOriginX,
+      inset.cardOriginY,
+      SCRATCH_SIZE.y,
+      SCRATCH_RECT,
+    )) return;
+    controlsRef.current?.update();
+    if (
+      inset.offset
+      && (inset.offset.width !== portalSize.width
+        || inset.offset.height !== portalSize.height)
+    ) {
+      setPortalSize({
+        width: inset.offset.width,
+        height: inset.offset.height,
+      });
+    }
+    const aspect = SCRATCH_RECT.width / SCRATCH_RECT.height;
+    if (braidCamera.aspect !== aspect) {
+      braidCamera.aspect = aspect;
+      braidCamera.updateProjectionMatrix();
+    }
+    renderer.autoClear = false;
+    renderer.setScissorTest(true);
+    renderer.setScissor(
+      SCRATCH_RECT.x,
+      SCRATCH_RECT.y,
+      SCRATCH_RECT.width,
+      SCRATCH_RECT.height,
+    );
+    renderer.setViewport(
+      SCRATCH_RECT.x,
+      SCRATCH_RECT.y,
+      SCRATCH_RECT.width,
+      SCRATCH_RECT.height,
+    );
+    renderer.clearDepth();
+    renderer.render(braidScene, braidCamera);
+    renderer.setScissorTest(false);
+    renderer.setViewport(0, 0, SCRATCH_SIZE.x, SCRATCH_SIZE.y);
+    renderer.autoClear = true;
+  }, 1);
+
+  return createPortal(
+    <>
+      {/* Camera child: the plate stays screen-fixed under the braid while
+          the user orbits, exactly like the DOM plate it replaces. */}
+      <primitive object={braidCamera}>
+        <mesh position={[0, 0, -PLATE_DISTANCE]} renderOrder={-10}>
+          <planeGeometry args={[plateSize, plateSize]} />
+          <primitive object={plateMaterial} attach="material" />
+        </mesh>
+      </primitive>
+      {content}
+    </>,
+    braidScene,
+    {
+      camera: braidCamera,
+      size: {
+        width: portalSize.width,
+        height: portalSize.height,
+        top: 0,
+        left: 0,
+      },
+    },
+  );
+}

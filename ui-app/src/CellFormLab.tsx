@@ -208,6 +208,7 @@ export default function CellFormLab({ snapshot }: { snapshot: CellGalaxySnapshot
                     direction={item.id}
                     reducedMotion={!comparisonMoving}
                     scanEpochMs={0}
+                    standalone
                   />
                 </div>
               </div>
@@ -332,6 +333,7 @@ export default function CellFormLab({ snapshot }: { snapshot: CellGalaxySnapshot
             <CellDetailPanel
               cell={selected}
               onClose={() => undefined}
+              portraitStandalone
               style={{ position: 'relative' }}
             />
           </div>
@@ -344,6 +346,7 @@ export default function CellFormLab({ snapshot }: { snapshot: CellGalaxySnapshot
                 reducedMotion={false}
                 scanEpochMs={performance.now()}
                 focusField={semanticFocus}
+                standalone
               />
               <div style={{ position: 'absolute', left: 10, bottom: 8, pointerEvents: 'none', font: '10px "JetBrains Mono", monospace', color: '#8ba3b8', lineHeight: 1.65 }}>
                 <div style={{ color: '#a78bfa', letterSpacing: '0.16em' }}>{selectedKind.toUpperCase()}</div>
@@ -377,6 +380,7 @@ export default function CellFormLab({ snapshot }: { snapshot: CellGalaxySnapshot
                     direction={item.id}
                     reducedMotion
                     scanEpochMs={0}
+                    standalone
                   />
                   <span style={{ position: 'absolute', left: 6, bottom: 5, textAlign: 'left', font: '7px "JetBrains Mono", monospace', letterSpacing: '0.08em', color: item.id === direction ? '#7dd3fc' : '#64748b', pointerEvents: 'none', lineHeight: 1.45 }}>
                     {item.code} / {item.name}<br />{item.cjk}

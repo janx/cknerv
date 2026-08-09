@@ -1,4 +1,10 @@
-import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
+import {
+  type MutableRefObject,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+} from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import { Html } from '@react-three/drei';
 import * as THREE from 'three';
@@ -42,6 +48,7 @@ import {
   disposeConsensusMemoryKnotMaterial,
   makeConsensusMemoryKnotMaterial,
 } from '../../materials/consensusMemoryKnotMaterial';
+import { CELL_PORTRAIT_LABEL_PORTAL } from './cellPortraitInsetChannel';
 
 const TAU = CONSENSUS_BRAID_TAU;
 const MAX_PACKETS = 14;
@@ -942,6 +949,11 @@ export default function ConsensusMemory({
             position={built.agreementMidpoints[binding.knotIndex]}
             zIndexRange={[5, 5]}
             occlude={false}
+            // Rendered through the portrait inset on the main canvas: target
+            // the portrait square so label coordinates stay square-relative
+            // and their stacking stays inside the card. Falls back to the
+            // canvas parent when no square is registered (labs).
+            portal={CELL_PORTRAIT_LABEL_PORTAL as MutableRefObject<HTMLElement>}
             style={{ pointerEvents: 'none' }}
           >
             <div

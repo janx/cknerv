@@ -42,6 +42,7 @@ import {
   CellCausalLensLayer,
   CellInspectionAnchor,
   CellInspectionOverlay,
+  CellPortraitInset,
   createCellInspectionHandles,
   CellSemanticOrbit,
   ConsensusRouteCamera,
@@ -1140,6 +1141,14 @@ export default function App({
             controlsRef={orbitControlsRef}
             focusRef={cellDetailViewFocusRef}
           />
+          {/* Takes over the render loop (main pass + braid scissor pass on
+              the ONE shared context) only while a Cell is selected; closed
+              state keeps R3F's stock auto-render pipeline. */}
+          {selectedCell ? (
+            <CellPortraitInset
+              onInteractionChange={setCellScanInteractionActive}
+            />
+          ) : null}
           {/* Auto mode samples raw frame time with long hysteresis. Manual
               high/med/low in the backtick panel overrides it immediately. */}
           {qualityOverride ? null : <AdaptiveQualityController />}

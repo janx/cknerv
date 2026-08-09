@@ -215,7 +215,7 @@ export function CloseButton({ onClose, title }: { onClose: () => void; title?: s
 const SPATIAL_PLATE_CUT_PX = 12;
 
 /** Dark tail tinted faintly toward the accent — directional, never sheer. */
-function spatialPlateTail(accent: string): string {
+export function spatialPlateTail(accent: string): string {
   const h = accent.replace('#', '');
   const r = parseInt(h.slice(0, 2), 16);
   const g = parseInt(h.slice(2, 4), 16);
