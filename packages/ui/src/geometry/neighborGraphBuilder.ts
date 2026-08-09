@@ -8,7 +8,7 @@ import {
 import { buildPassiveNeighborGraph } from './passiveNeighborGraph';
 import {
   PACKED_TOPOLOGY_CELL_STRIDE,
-  deserializeNeighborGraph,
+  deserializeNeighborGraphInto,
   packPreferredEdges,
   packTopologyCells,
   type NeighborGraphWorkerRequest,
@@ -17,6 +17,29 @@ import {
 
 export const DEFAULT_TOPOLOGY_WORKER_MIN_CELLS = 512;
 
+/** Dev-observable counters for paths that used to fail silently. A sync
+ * fallback quietly re-runs the FULL topology build on the main thread — worth
+ * seeing in a profile session, not worth a hard failure. */
+export const neighborGraphBuilderStats = {
+  /** Worker error / postMessage / deserialize failures → main-thread build. */
+  workerFallbacks: 0,
+  /** Builds below the worker threshold (expected, small fields). */
+  belowThresholdBuilds: 0,
+};
+
+let workerFallbackWarned = false;
+
+function noteWorkerFallback(): void {
+  neighborGraphBuilderStats.workerFallbacks += 1;
+  if (!workerFallbackWarned) {
+    workerFallbackWarned = true;
+    console.warn(
+      'neighborGraphBuilder: worker path failed; building topology synchronously '
+      + 'on the main thread (counted in neighborGraphBuilderStats.workerFallbacks).',
+    );
+  }
+}
+
 export interface NeighborGraphBuildOptions {
   topology?: NeighborGraphOptions;
   includePassive?: boolean;
@@ -24,6 +47,13 @@ export interface NeighborGraphBuildOptions {
    * untouched for routing. */
   passiveEdgeBudget?: number;
   preferredEdges?: readonly NeighborEdge[];
+  /** Read at completion time; when provided, the worker CSR deserializes by
+   * patching against these graphs (unchanged nodes reuse their neighbour Set
+   * instances — the previous graphs must be discarded after the swap). */
+  reuseFrom?: () => {
+    graph: NeighborGraph | null;
+    passiveGraph: NeighborGraph | null;
+  };
 }
 
 export interface NeighborGraphBuildResult {
@@ -137,12 +167,14 @@ export function createNeighborGraphBuilder(
       );
       const fallback = () => buildSynchronously(cells, options);
       if (!canUseWorker) {
+        neighborGraphBuilderStats.belowThresholdBuilds += 1;
         return Promise.resolve().then(fallback);
       }
 
       try {
         worker ??= workerFactory();
       } catch {
+        noteWorkerFallback();
         terminateWorker();
         return Promise.resolve().then(fallback);
       }
@@ -170,14 +202,22 @@ export function createNeighborGraphBuilder(
             return;
           }
           if (response.kind === 'failed') {
+            noteWorkerFallback();
             fallbackActive(requestId);
             return;
           }
           try {
+            const reuse = options.reuseFrom?.() ?? null;
             const result: NeighborGraphBuildResult = {
-              graph: deserializeNeighborGraph(response.graph),
+              graph: deserializeNeighborGraphInto(
+                reuse?.graph ?? null,
+                response.graph,
+              ),
               passiveGraph: response.passiveGraph
-                ? deserializeNeighborGraph(response.passiveGraph)
+                ? deserializeNeighborGraphInto(
+                  reuse?.passiveGraph ?? null,
+                  response.passiveGraph,
+                )
                 : null,
             };
             active = null;
@@ -186,16 +226,24 @@ export function createNeighborGraphBuilder(
             worker!.onmessageerror = null;
             resolve(result);
           } catch {
+            noteWorkerFallback();
             fallbackActive(requestId);
           }
         };
-        worker!.onerror = () => fallbackActive(requestId);
-        worker!.onmessageerror = () => fallbackActive(requestId);
+        worker!.onerror = () => {
+          noteWorkerFallback();
+          fallbackActive(requestId);
+        };
+        worker!.onmessageerror = () => {
+          noteWorkerFallback();
+          fallbackActive(requestId);
+        };
         const transfer: Transferable[] = [packedCells.buffer];
         if (preferredEdges) transfer.push(preferredEdges.buffer);
         try {
           worker!.postMessage(request, transfer);
         } catch {
+          noteWorkerFallback();
           fallbackActive(requestId);
         }
       });

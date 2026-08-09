@@ -361,6 +361,10 @@ export default function NeuralNetwork({
         k: topology?.neighborK,
         maxEdgeLength: topology?.maxEdgeLength,
       },
+      // Patch-deserialize against the graph being replaced: unchanged nodes
+      // reuse their neighbour Sets, so a per-block completion costs
+      // O(changed) instead of O(V+E). The old graph is discarded on swap.
+      reuseFrom: () => ({ graph: graphRef.current, passiveGraph: null }),
     }).then((result) => {
       if (
         result === null
@@ -439,6 +443,13 @@ export default function NeuralNetwork({
         },
         includePassive: true,
         preferredEdges: passiveGraphRef.current.edges,
+        // Patch-deserialize both display CSRs against the graphs being
+        // replaced (read at completion): per-block churn touches a small
+        // fraction of nodes, so the Set/object churn collapses to O(changed).
+        reuseFrom: () => ({
+          graph: displayGraphRef.current,
+          passiveGraph: passiveGraphRef.current,
+        }),
       }).then((result) => {
         if (
           result === null

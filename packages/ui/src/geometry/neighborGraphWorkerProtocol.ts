@@ -154,6 +154,42 @@ export function serializeNeighborGraph(
 export function deserializeNeighborGraph(
   serialized: SerializedNeighborGraph,
 ): NeighborGraph {
+  return deserializeNeighborGraphInto(null, serialized);
+}
+
+/** Order-strict reuse probe: the previous Set is reusable only when its
+ * iteration order matches the CSR run exactly — the CSR preserves Set
+ * insertion order, and equal-hop routing determinism rides on it. */
+function reusableNeighbourSet(
+  previous: Set<number> | undefined,
+  adjacentNodeIds: Float64Array,
+  start: number,
+  end: number,
+): Set<number> | null {
+  if (previous === undefined || previous.size !== end - start) return null;
+  let cursor = start;
+  for (const neighbourId of previous) {
+    if (adjacentNodeIds[cursor] !== neighbourId) return null;
+    cursor += 1;
+  }
+  return previous;
+}
+
+/**
+ * Deserialize a worker CSR result, reusing the previous graph's per-node
+ * neighbour Sets (and positionally unchanged edge records) wherever the new
+ * payload is value-identical. Between consecutive per-block display builds
+ * almost every node is untouched, so the old path's fresh Set per node plus
+ * fresh object per edge — the dominant main-thread cost of a worker
+ * completion — collapses to O(changed). Reuse is decided purely by value
+ * comparison, so the result always deep-equals a fresh deserialize; the
+ * returned graph is a new object and the previous one must be discarded by
+ * the caller (they may now share Set instances).
+ */
+export function deserializeNeighborGraphInto(
+  previous: NeighborGraph | null,
+  serialized: SerializedNeighborGraph,
+): NeighborGraph {
   if (serialized.edges.length % PACKED_TOPOLOGY_EDGE_STRIDE !== 0) {
     throw new Error('invalid packed topology edge buffer');
   }
@@ -163,21 +199,37 @@ export function deserializeNeighborGraph(
   ) {
     throw new Error('invalid packed topology adjacency buffer');
   }
+  const previousAdjacency = previous?.adjacency ?? null;
   const adjacency = new Map<number, Set<number>>();
   for (let index = 0; index < serialized.nodeIds.length; index += 1) {
-    const neighbours = new Set<number>();
+    const nodeId = serialized.nodeIds[index];
     const start = serialized.adjacencyOffsets[index];
     const end = serialized.adjacencyOffsets[index + 1];
     if (end < start || end > serialized.adjacentNodeIds.length) {
       throw new Error('invalid packed topology adjacency offsets');
     }
+    const reused = previousAdjacency
+      ? reusableNeighbourSet(
+        previousAdjacency.get(nodeId),
+        serialized.adjacentNodeIds,
+        start,
+        end,
+      )
+      : null;
+    if (reused !== null) {
+      adjacency.set(nodeId, reused);
+      continue;
+    }
+    const neighbours = new Set<number>();
     for (let adjacentIndex = start; adjacentIndex < end; adjacentIndex += 1) {
       neighbours.add(serialized.adjacentNodeIds[adjacentIndex]);
     }
-    adjacency.set(serialized.nodeIds[index], neighbours);
+    adjacency.set(nodeId, neighbours);
   }
 
+  const previousEdges = previous?.edges ?? null;
   const edges: NeighborEdge[] = [];
+  let edgeIndex = 0;
   for (
     let offset = 0;
     offset < serialized.edges.length;
@@ -185,14 +237,26 @@ export function deserializeNeighborGraph(
   ) {
     const from = serialized.edges[offset];
     const to = serialized.edges[offset + 1];
+    const d = serialized.edges[offset + 2];
     const weight = serialized.edges[offset + 3];
-    const edge: NeighborEdge = {
-      from,
-      to,
-      d: serialized.edges[offset + 2],
-    };
-    if (!Number.isNaN(weight)) edge.w = weight;
-    edges.push(edge);
+    const hasWeight = !Number.isNaN(weight);
+    const candidate = previousEdges !== null && edgeIndex < previousEdges.length
+      ? previousEdges[edgeIndex]
+      : undefined;
+    if (
+      candidate !== undefined
+      && candidate.from === from
+      && candidate.to === to
+      && candidate.d === d
+      && (hasWeight ? candidate.w === weight : candidate.w === undefined)
+    ) {
+      edges.push(candidate);
+    } else {
+      const edge: NeighborEdge = { from, to, d };
+      if (hasWeight) edge.w = weight;
+      edges.push(edge);
+    }
+    edgeIndex += 1;
   }
   return { adjacency, edges };
 }

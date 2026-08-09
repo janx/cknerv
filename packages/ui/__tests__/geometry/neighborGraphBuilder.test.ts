@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { Cell } from '@cknerv/types';
-import { createNeighborGraphBuilder } from '../../src/geometry/neighborGraphBuilder';
+import {
+  createNeighborGraphBuilder,
+  neighborGraphBuilderStats,
+} from '../../src/geometry/neighborGraphBuilder';
 import {
   executeNeighborGraphWorkerRequest,
   type NeighborGraphWorkerRequest,
@@ -92,6 +95,49 @@ describe('createNeighborGraphBuilder', () => {
     expect(result?.passiveGraph).not.toBeNull();
     expect(result?.passiveGraph?.edges).toHaveLength(3);
     expect(worker.terminated).toBe(true);
+    builder.dispose();
+  });
+
+  it('counts worker fallbacks instead of failing silently', async () => {
+    const before = neighborGraphBuilderStats.workerFallbacks;
+    const worker = new FakeWorker();
+    const builder = createNeighborGraphBuilder({
+      minWorkerCells: 0,
+      workerFactory: () => worker as unknown as Worker,
+    });
+    const pending = builder.build(cells(), { topology: { k: 2 } });
+    worker.onerror?.(new ErrorEvent('error'));
+    await pending;
+    expect(neighborGraphBuilderStats.workerFallbacks).toBe(before + 1);
+    builder.dispose();
+  });
+
+  it('threads reuseFrom into the deserializer so unchanged Sets survive', async () => {
+    const workerA = new FakeWorker();
+    const workerB = new FakeWorker();
+    const workers = [workerA, workerB];
+    const builder = createNeighborGraphBuilder({
+      minWorkerCells: 0,
+      workerFactory: () => workers.shift() as unknown as Worker,
+    });
+
+    const firstPending = builder.build(cells(), { topology: { k: 2 } });
+    workerA.complete();
+    const first = await firstPending;
+    expect(first).not.toBeNull();
+
+    const secondPending = builder.build(cells(), {
+      topology: { k: 2 },
+      reuseFrom: () => ({ graph: first!.graph, passiveGraph: null }),
+    });
+    workerB.complete();
+    const second = await secondPending;
+
+    expect(second!.graph).not.toBe(first!.graph);
+    expect(second!.graph).toEqual(first!.graph);
+    for (const [id, neighbours] of first!.graph.adjacency) {
+      expect(second!.graph.adjacency.get(id)).toBe(neighbours);
+    }
     builder.dispose();
   });
 });

@@ -5,6 +5,7 @@ import { shortestPath } from '../../src/geometry/pathRouter';
 import { buildPassiveNeighborGraph } from '../../src/geometry/passiveNeighborGraph';
 import {
   deserializeNeighborGraph,
+  deserializeNeighborGraphInto,
   executeNeighborGraphWorkerRequest,
   packPreferredEdges,
   packTopologyCells,
@@ -99,5 +100,64 @@ describe('neighbor graph Worker protocol', () => {
     expect(response.passiveGraph).not.toBeNull();
     expect(deserializeNeighborGraph(response.passiveGraph!))
       .toEqual(expectedPassive);
+  });
+
+  describe('patch deserialization (deserializeNeighborGraphInto)', () => {
+    it('reuses every Set and edge when the payload is unchanged', () => {
+      const graph = buildNeighborGraph(fixtureCells(), { k: 2, maxEdgeLength: 8 });
+      const serialized = serializeNeighborGraph(graph);
+      const base = deserializeNeighborGraph(serialized);
+      const patched = deserializeNeighborGraphInto(base, serialized);
+
+      expect(patched).not.toBe(base);
+      expect(patched).toEqual(base);
+      for (const [id, neighbours] of base.adjacency) {
+        expect(patched.adjacency.get(id)).toBe(neighbours);
+      }
+      for (let index = 0; index < base.edges.length; index += 1) {
+        expect(patched.edges[index]).toBe(base.edges[index]);
+      }
+    });
+
+    it('patches only changed nodes and deep-equals a fresh deserialize', () => {
+      const cells = fixtureCells();
+      const before = buildNeighborGraph(cells, { k: 2, maxEdgeLength: 8 });
+      const base = deserializeNeighborGraph(serializeNeighborGraph(before));
+
+      // One new cell near the 1–4 cluster changes a few nodes' adjacency and
+      // appends edges; distant nodes keep their exact runs.
+      cells.set(9, cell(9, 1, 1));
+      const after = buildNeighborGraph(cells, { k: 2, maxEdgeLength: 8 });
+      const serializedAfter = serializeNeighborGraph(after);
+      const fresh = deserializeNeighborGraph(serializedAfter);
+      const patched = deserializeNeighborGraphInto(base, serializedAfter);
+
+      expect(patched).toEqual(fresh);
+      let reusedSets = 0;
+      for (const [id, neighbours] of patched.adjacency) {
+        if (base.adjacency.get(id) === neighbours) reusedSets += 1;
+        expect([...neighbours]).toEqual([...(fresh.adjacency.get(id) ?? [])]);
+      }
+      expect(reusedSets).toBeGreaterThan(0);
+      expect(reusedSets).toBeLessThan(patched.adjacency.size);
+    });
+
+    it('rejects a previous Set whose members match but whose order differs', () => {
+      const graph = buildNeighborGraph(fixtureCells(), { k: 2, maxEdgeLength: 8 });
+      const serialized = serializeNeighborGraph(graph);
+      const base = deserializeNeighborGraph(serialized);
+      // Reverse one node's Set order in the "previous" graph.
+      const someNode = [...base.adjacency.entries()]
+        .find(([, neighbours]) => neighbours.size >= 2);
+      expect(someNode).toBeDefined();
+      const [nodeId, neighbours] = someNode!;
+      base.adjacency.set(nodeId, new Set([...neighbours].reverse()));
+
+      const patched = deserializeNeighborGraphInto(base, serialized);
+      expect(patched.adjacency.get(nodeId)).not.toBe(base.adjacency.get(nodeId));
+      // CSR order wins — deterministic equal-hop routing depends on it.
+      expect([...patched.adjacency.get(nodeId)!])
+        .toEqual([...(deserializeNeighborGraph(serialized).adjacency.get(nodeId)!)]);
+    });
   });
 });
