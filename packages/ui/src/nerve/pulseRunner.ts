@@ -6,7 +6,7 @@
 import type { Cell, CellLink } from '@cknerv/types';
 import { fnv1a } from '../geometry/edgeBezier';
 import type { NeighborGraph } from '../geometry/neighborGraph';
-import { shortestPath, DEFAULT_MAX_HOPS } from '../geometry/pathRouter';
+import { shortestPathsToTargets, DEFAULT_MAX_HOPS } from '../geometry/pathRouter';
 import { consensusPacketColor } from '../derives/consensusFlow.derive';
 import type { PulseStatsSink } from './pulseStats';
 
@@ -55,6 +55,54 @@ export interface PulsePlanningOptions {
   maxHops?: number;
   maxPulsesPerLink?: number;
   maxSourcesPerParent?: number;
+  /** Shared per-batch source index (see `collectLinkSourceIndex`). When
+   *  present, planPulses selects sources from it instead of walking the whole
+   *  Cell map — same result, one O(cells) scan per batch instead of per link. */
+  sourceIndex?: LinkSourceIndex;
+}
+
+export interface LinkSourceIndex {
+  /** parent tx hash → candidate source Cell ids, in Cell-map scan order.
+   *  Buckets are UNCAPPED: per-parent caps and self-loop exclusion stay
+   *  per-link, because a later link may exclude an earlier candidate as one
+   *  of its own outputs. */
+  byTx: Map<string, number[]>;
+  /** Cell id → relative scan position, restoring the cross-parent
+   *  interleaving the original full-map walk produced. */
+  scanSeq: Map<number, number>;
+}
+
+/**
+ * One shared O(cells) prescan for a whole link batch. Replaces the full-map
+ * walk planPulses used to run per link (the dominant per-block main-thread
+ * cost on busy chains) with a single pass that buckets candidate sources by
+ * parent tx hash. Selection through the index is byte-identical to the
+ * original scan; an equivalence test locks the two paths together. Pure.
+ */
+export function collectLinkSourceIndex(
+  links: readonly CellLink[],
+  cells: ReadonlyMap<number, Cell>,
+): LinkSourceIndex {
+  const wanted = new Set<string>();
+  for (const link of links) {
+    if (link.to_ids.length === 0) continue;
+    for (const parentTx of link.parents) wanted.add(parentTx);
+  }
+  const byTx = new Map<string, number[]>();
+  const scanSeq = new Map<number, number>();
+  if (wanted.size === 0) return { byTx, scanSeq };
+  for (const [id, cell] of cells) {
+    const tx = cell.out_point.tx_hash;
+    if (!wanted.has(tx)) continue;
+    let bucket = byTx.get(tx);
+    if (!bucket) {
+      bucket = [];
+      byTx.set(tx, bucket);
+    }
+    bucket.push(id);
+    scanSeq.set(id, scanSeq.size);
+  }
+  return { byTx, scanSeq };
 }
 
 /** Derive pulse start delay + hop duration from a deterministic seed
@@ -105,6 +153,10 @@ export function planPulses(
     typeof optionsOrMaxHops === 'number'
       ? MAX_SOURCES_PER_PARENT
       : optionsOrMaxHops.maxSourcesPerParent ?? MAX_SOURCES_PER_PARENT;
+  const sourceIndex =
+    typeof optionsOrMaxHops === 'number'
+      ? undefined
+      : optionsOrMaxHops.sourceIndex;
   if (link.to_ids.length === 0) {
     stats?.bump('no-outputs');
     return [];
@@ -113,11 +165,29 @@ export function planPulses(
   const color = consensusPacketColor(link.tx_hash, link.tag);
 
   // Collect candidate source cells: alive cells whose birth tx_hash
-  // is one of the link's parent_tx_hashes.
+  // is one of the link's parent_tx_hashes. Selection semantics (Cell-map scan
+  // order, per-parent cap AFTER self-loop exclusion) are identical on both
+  // paths; the index path just skips the full-map walk.
   const sources: number[] = [];
-  if (link.parents.length > 0) {
+  if (link.parents.length > 0 && sourceIndex) {
+    const picked: Array<{ id: number; seq: number }> = [];
     const parentSet = new Set(link.parents);
-    let perParent = new Map<string, number>();
+    for (const parentTx of parentSet) {
+      const bucket = sourceIndex.byTx.get(parentTx);
+      if (!bucket) continue;
+      let used = 0;
+      for (const id of bucket) {
+        if (used >= maxSourcesPerParent) break;
+        if (link.to_ids.includes(id)) continue; // don't pulse from self-loops
+        picked.push({ id, seq: sourceIndex.scanSeq.get(id) ?? 0 });
+        used += 1;
+      }
+    }
+    picked.sort((a, b) => a.seq - b.seq);
+    for (const pick of picked) sources.push(pick.id);
+  } else if (link.parents.length > 0) {
+    const parentSet = new Set(link.parents);
+    const perParent = new Map<string, number>();
     for (const [id, cell] of cells) {
       if (link.to_ids.includes(id)) continue; // don't pulse from self-loops
       const tx = cell.out_point.tx_hash;
@@ -135,12 +205,16 @@ export function planPulses(
 
   const pulses: Pulse[] = [];
   outer: for (const src of sources) {
+    if (pulses.length >= maxPulsesPerLink) break;
+    // One BFS per source covers every output of this tx; per-target results
+    // are byte-identical to routing each (src, dst) pair separately.
+    const pathsByDst = shortestPathsToTargets(graph, src, link.to_ids, maxHops);
     for (const dst of link.to_ids) {
       if (pulses.length >= maxPulsesPerLink) break outer;
       if (src === dst) continue;
       const missing =
         !graph.adjacency.has(src) || !graph.adjacency.has(dst);
-      const path = shortestPath(graph, src, dst, maxHops);
+      const path = pathsByDst.get(dst) ?? null;
       if (!path || path.length < 2) {
         stats?.bumpPath(missing ? 'endpoint-missing' : 'no-path');
         continue;

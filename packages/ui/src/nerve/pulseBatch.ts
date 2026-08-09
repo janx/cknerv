@@ -8,7 +8,12 @@
 import type { Cell, CellLink } from '@cknerv/types';
 import type { NeighborGraph } from '../geometry/neighborGraph';
 import { advanceLinkCursor } from './linkCursor';
-import { planPulses, type Pulse, type PulsePlanningOptions } from './pulseRunner';
+import {
+  collectLinkSourceIndex,
+  planPulses,
+  type Pulse,
+  type PulsePlanningOptions,
+} from './pulseRunner';
 import type { PulseStatsSink } from './pulseStats';
 
 /** The stats surface `planLinkBatch` needs (superset of `PulseStatsSink`:
@@ -42,10 +47,19 @@ export function planLinkBatch(
   );
   if (suppressed > 0) stats.bump('backfill', suppressed);
   const planned: Pulse[] = [];
-  for (const link of toFire) {
-    const p = planPulses(link, cells, graph, opts, link.at_ms, stats);
-    stats.observeLink(link.block, p.length > 0);
-    for (const pulse of p) planned.push(pulse);
+  if (toFire.length > 0) {
+    // One shared Cell-map prescan for the whole batch replaces the full-map
+    // walk planPulses used to run per link. Built only for links that will
+    // actually fire (backfill-suppressed links never pay it).
+    const batchOpts: PulsePlanningOptions = {
+      ...opts,
+      sourceIndex: collectLinkSourceIndex(toFire, cells),
+    };
+    for (const link of toFire) {
+      const p = planPulses(link, cells, graph, batchOpts, link.at_ms, stats);
+      stats.observeLink(link.block, p.length > 0);
+      for (const pulse of p) planned.push(pulse);
+    }
   }
   return { planned, nextSeq };
 }

@@ -21,6 +21,64 @@ export const DEFAULT_MAX_HOPS = 40;
  * Path includes both endpoints, so a direct neighbour pair returns
  * `[source, target]` of length 2 (= 1 hop).
  */
+/**
+ * Shortest paths from one `source` to EVERY requested target in a single BFS
+ * traversal. Byte-identical per-target results to calling `shortestPath` once
+ * per target — the expansion order (and therefore each first-discovery parent
+ * chain) does not depend on the target set — but the frontier is walked once
+ * instead of once per target, which is what a multi-output tx costs today.
+ * Unreachable / missing / beyond-maxHops targets are simply absent from the
+ * returned map. Stops as soon as every reachable requested target is found.
+ */
+export function shortestPathsToTargets(
+  graph: NeighborGraph,
+  source: number,
+  targets: readonly number[],
+  maxHops: number = DEFAULT_MAX_HOPS,
+): Map<number, number[]> {
+  const found = new Map<number, number[]>();
+  const remaining = new Set<number>();
+  for (const target of targets) {
+    if (target === source) {
+      found.set(target, [source]);
+      continue;
+    }
+    if (graph.adjacency.has(target)) remaining.add(target);
+  }
+  if (!graph.adjacency.has(source) || remaining.size === 0) return found;
+
+  const visited = new Set<number>([source]);
+  const parent = new Map<number, number>();
+  let frontier: number[] = [source];
+  for (let depth = 0; depth < maxHops; depth++) {
+    const next: number[] = [];
+    for (const cur of frontier) {
+      const neighbours = graph.adjacency.get(cur);
+      if (!neighbours) continue;
+      for (const nb of neighbours) {
+        if (visited.has(nb)) continue;
+        visited.add(nb);
+        parent.set(nb, cur);
+        if (remaining.delete(nb)) {
+          const path = [nb];
+          let walk: number | undefined = nb;
+          while (walk !== undefined && walk !== source) {
+            walk = parent.get(walk);
+            if (walk !== undefined) path.push(walk);
+          }
+          path.reverse();
+          found.set(nb, path);
+          if (remaining.size === 0) return found;
+        }
+        next.push(nb);
+      }
+    }
+    if (next.length === 0) return found;
+    frontier = next;
+  }
+  return found;
+}
+
 export function shortestPath(
   graph: NeighborGraph,
   source: number,

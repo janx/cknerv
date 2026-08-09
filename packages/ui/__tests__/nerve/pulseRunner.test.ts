@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { Cell, CellLink } from '@cknerv/types';
 import type { NeighborGraph } from '../../src/geometry/neighborGraph';
-import { planPulses } from '../../src/nerve/pulseRunner';
+import { collectLinkSourceIndex, planPulses } from '../../src/nerve/pulseRunner';
 import { pulseStats, resetPulseStats } from '../../src/nerve/pulseStats';
 import { consensusPacketColor } from '../../src/derives/consensusFlow.derive';
 
@@ -101,5 +101,98 @@ describe('planPulses purity — the sink must not change the return value', () =
     const withSink = planPulses(link, cells, graph, undefined, 0, pulseStats);
     const without = planPulses(link, cells, graph, undefined, 0);
     expect(without).toEqual(withSink);
+  });
+});
+
+describe('batch source index — byte-identical to the full-map scan', () => {
+  // Interleaved insertion order across parent txs, more candidates than the
+  // per-parent cap, plus unrelated noise cells the scan must skip.
+  function fixtureCells(): Map<number, Cell> {
+    const cells = new Map<number, Cell>();
+    cells.set(11, mkCell(11, '0xA'));
+    cells.set(21, mkCell(21, '0xB'));
+    cells.set(12, mkCell(12, '0xA'));
+    cells.set(90, mkCell(90, '0xnoise'));
+    cells.set(13, mkCell(13, '0xA'));
+    cells.set(22, mkCell(22, '0xB'));
+    cells.set(31, mkCell(31, '0xC'));
+    cells.set(40, mkCell(40, '0xtx')); // an output cell of the link's own tx
+    cells.set(41, mkCell(41, '0xtx'));
+    return cells;
+  }
+  // Fully-connected chain so every source routes to every output.
+  function fixtureGraph(): NeighborGraph {
+    const ids = [11, 21, 12, 90, 13, 22, 31, 40, 41];
+    const edges: [number, number][] = [];
+    for (let i = 1; i < ids.length; i++) edges.push([ids[i - 1], ids[i]]);
+    return mkGraph(edges);
+  }
+
+  function expectIndexedEqualsScan(link: CellLink, opts?: {
+    maxPulsesPerLink?: number;
+    maxSourcesPerParent?: number;
+  }) {
+    const cells = fixtureCells();
+    const graph = fixtureGraph();
+    const sourceIndex = collectLinkSourceIndex([link], cells);
+    const scanned = planPulses(link, cells, graph, { ...opts }, 0);
+    const indexed = planPulses(link, cells, graph, { ...opts, sourceIndex }, 0);
+    expect(indexed).toEqual(scanned);
+    return indexed;
+  }
+
+  it('multi-parent links keep the cross-parent scan-order interleaving', () => {
+    const link = mkLink({
+      parents: ['0xA', '0xB'],
+      to_ids: [40, 41],
+      tx_hash: '0xtx',
+    });
+    const pulses = expectIndexedEqualsScan(link, { maxPulsesPerLink: 100 });
+    // Per-parent cap 2 keeps A→{11,12} and B→{21,22}; the emitted source
+    // order is their interleaved scan order 11, 21, 12, 22, each routing to
+    // both outputs.
+    expect(pulses.map((p) => p.path[0])).toEqual([11, 11, 21, 21, 12, 12, 22, 22]);
+  });
+
+  it('self-loop exclusion consumes no per-parent cap slot', () => {
+    const link = mkLink({
+      parents: ['0xA'],
+      // 11 is both an A-candidate and one of this link's outputs — the scan
+      // skips it WITHOUT counting it toward the cap, so 12 and 13 fire.
+      to_ids: [11, 40],
+      tx_hash: '0xtx',
+    });
+    const pulses = expectIndexedEqualsScan(link, { maxPulsesPerLink: 100 });
+    expect([...new Set(pulses.map((p) => p.path[0]))]).toEqual([12, 13]);
+  });
+
+  it('the pulse cap truncates the same pairs on both paths', () => {
+    const link = mkLink({
+      parents: ['0xA', '0xB', '0xC'],
+      to_ids: [40, 41],
+      tx_hash: '0xtx',
+    });
+    const pulses = expectIndexedEqualsScan(link); // default cap 6
+    expect(pulses).toHaveLength(6);
+  });
+
+  it('an absent bucket behaves exactly like a scan with no matches', () => {
+    const link = mkLink({ parents: ['0xmissing'], to_ids: [40] });
+    const cells = fixtureCells();
+    const graph = fixtureGraph();
+    const sourceIndex = collectLinkSourceIndex([link], cells);
+    resetPulseStats();
+    planPulses(link, cells, graph, { sourceIndex }, 0, pulseStats);
+    expect(pulseStats.linkReasons['no-source']).toBe(1);
+  });
+
+  it('the index only buckets txs the batch actually references', () => {
+    const cells = fixtureCells();
+    const index = collectLinkSourceIndex(
+      [mkLink({ parents: ['0xA'], to_ids: [40] })],
+      cells,
+    );
+    expect([...index.byTx.keys()]).toEqual(['0xA']);
+    expect(index.byTx.get('0xA')).toEqual([11, 12, 13]);
   });
 });
