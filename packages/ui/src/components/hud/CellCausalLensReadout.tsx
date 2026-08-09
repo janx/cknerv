@@ -1,5 +1,6 @@
 import type { CSSProperties } from 'react';
 import type { CellCausalLens } from '../../derives/cellCausalLens.derive';
+import { formatBlockRef } from './cellFormat';
 import { HUD_COLORS, HUD_FONTS, HUD_TYPE } from './hudTheme';
 
 const EXACT = HUD_COLORS.cyanInk;
@@ -183,28 +184,49 @@ export default function CellCausalLensReadout({
           opacity,
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, minWidth: 0 }}>
-          <span style={{ color: HUD_COLORS.cyanInk, fontFamily: HUD_FONTS.tech, fontSize: HUD_TYPE.label, fontWeight: 700, letterSpacing: 1.05 }}>
-            CAUSAL LENS
-          </span>
-          <span style={{ color: meta.color, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.micro, letterSpacing: 0.66 }}>
-            {meta.label}
-          </span>
-          <span style={{ marginLeft: 'auto', color: HUD_COLORS.ink, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.micro, whiteSpace: 'nowrap' }}>
-            {endpointCount(anchoredInputs, lens.inputCount, 'IN')} · {endpointCount(anchoredOutputs, lens.outputCount, 'OUT')}
-          </span>
-        </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) auto', alignItems: 'baseline', gap: 7, marginTop: 3, fontFamily: HUD_FONTS.mono }}>
-          <span title={lens.txHash} style={{ minWidth: 0, color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            TX {shortHash(lens.txHash)} · #{lens.block}
-          </span>
-          <span
-            data-causal-summary-note="true"
-            style={{ color: meta.color, fontSize: HUD_TYPE.micro, letterSpacing: 0.34, whiteSpace: 'nowrap' }}
-          >
-            {summaryNote}
-          </span>
-        </div>
+        {lens.status === 'unavailable' ? (
+          // No retained link, no endpoint counts worth printing — one line
+          // states the identity-only situation instead of a plate of "?"s.
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, minWidth: 0, fontFamily: HUD_FONTS.mono }}>
+            <span style={{ color: HUD_COLORS.cyanInk, fontFamily: HUD_FONTS.tech, fontSize: HUD_TYPE.label, fontWeight: 700, letterSpacing: 1.05 }}>
+              CAUSAL LENS
+            </span>
+            <span title={lens.txHash} style={{ minWidth: 0, color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              TX {shortHash(lens.txHash)} · {formatBlockRef(lens.block)}
+            </span>
+            <span
+              data-causal-summary-note="true"
+              style={{ marginLeft: 'auto', color: meta.color, fontSize: HUD_TYPE.micro, letterSpacing: 0.34, whiteSpace: 'nowrap' }}
+            >
+              {summaryNote}
+            </span>
+          </div>
+        ) : (
+          <>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, minWidth: 0 }}>
+              <span style={{ color: HUD_COLORS.cyanInk, fontFamily: HUD_FONTS.tech, fontSize: HUD_TYPE.label, fontWeight: 700, letterSpacing: 1.05 }}>
+                CAUSAL LENS
+              </span>
+              <span style={{ color: meta.color, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.micro, letterSpacing: 0.66 }}>
+                {meta.label}
+              </span>
+              <span style={{ marginLeft: 'auto', color: HUD_COLORS.ink, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.micro, whiteSpace: 'nowrap' }}>
+                {endpointCount(anchoredInputs, lens.inputCount, 'IN')} · {endpointCount(anchoredOutputs, lens.outputCount, 'OUT')}
+              </span>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) auto', alignItems: 'baseline', gap: 7, marginTop: 3, fontFamily: HUD_FONTS.mono }}>
+              <span title={lens.txHash} style={{ minWidth: 0, color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                TX {shortHash(lens.txHash)} · {formatBlockRef(lens.block)}
+              </span>
+              <span
+                data-causal-summary-note="true"
+                style={{ color: meta.color, fontSize: HUD_TYPE.micro, letterSpacing: 0.34, whiteSpace: 'nowrap' }}
+              >
+                {summaryNote}
+              </span>
+            </div>
+          </>
+        )}
         {navigation && navigation.total > 1 ? (
           <div
             data-causal-navigation="true"
@@ -302,7 +324,7 @@ export default function CellCausalLensReadout({
         }}
       >
         TX {shortHash(lens.txHash)}
-        <span style={{ color: HUD_COLORS.dim }}> · BLOCK #{lens.block}</span>
+        <span style={{ color: HUD_COLORS.dim }}> · BLOCK {formatBlockRef(lens.block)}</span>
       </div>
 
       {lens.status === 'unavailable' ? (

@@ -231,8 +231,13 @@ describe('CellDetailPanel', () => {
     expect(text).toContain('Native CKB');
     expect(text).toContain('Sighash');
     expect(text).toContain('Empty');
-    expect(text).toContain('NO OUTPUT DATA');
+    // A validly-empty output collapses to one line instead of a negatives
+    // stack (∅ box + byte count + decode fallbacks).
+    expect(text).toContain('CONTENT · EMPTY');
+    expect(text).not.toContain('NO OUTPUT DATA');
+    expect(text).not.toContain('NO DETERMINISTIC DECODE');
     expect(container.querySelector('[data-cell-content-empty="true"]')).not.toBeNull();
+    expect(container.querySelector('[data-cell-content-bytes="true"]')).toBeNull();
     expect(text).not.toMatch(/ƒ\d|\d+ paths|\d+ knots|\d\.\d{2}×/);
   });
 

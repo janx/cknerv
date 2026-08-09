@@ -370,6 +370,38 @@ export default function CellContentMemory({
     'role',
   ].some(stageRevealed);
 
+  // A validly-empty output earns one honest line — not the stack of negatives
+  // (∅ box, byte count, decode fallbacks) that all restate the same absence.
+  // Most Cells in view are plain transfers, so this is the common case.
+  if (model.valid && model.complete && model.observedBytes === 0) {
+    return (
+      <section
+        aria-label="Consensus memory content"
+        data-cell-content-memory="true"
+        data-cell-content-memory-mode={enhanced ? 'indexed' : 'direct'}
+        data-cell-content-empty="true"
+        data-cell-content-reveal-state={summaryRevealed ? 'resolved' : 'scanning'}
+        style={{
+          display: summaryRevealed ? 'flex' : 'none',
+          alignItems: 'baseline',
+          gap: 6,
+          minWidth: 0,
+          marginTop: 6,
+          padding: '3px 5px',
+          border: `1px solid ${rgba(HUD_COLORS.dim, 0.14)}`,
+          fontFamily: HUD_FONTS.mono,
+        }}
+      >
+        <span style={{ color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro, letterSpacing: 0.7 }}>
+          CONTENT · EMPTY
+        </span>
+        <span style={{ marginLeft: 'auto', color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro, whiteSpace: 'nowrap' }}>
+          0 B
+        </span>
+      </section>
+    );
+  }
+
   return (
     <section
       aria-label="Consensus memory content"
