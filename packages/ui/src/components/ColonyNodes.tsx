@@ -165,7 +165,9 @@ function MeasuredNode({
         </mesh>
       </Billboard>
       {/* Small invisible solid hit-target so the halo is clickable (a plane
-          raycasts poorly). */}
+          raycasts poorly). An invisible MATERIAL keeps the raycast (the
+          Raycaster never consults material.visible) while the renderer skips
+          the draw entirely. */}
       <mesh
         onClick={(e) => {
           e.stopPropagation();
@@ -173,7 +175,7 @@ function MeasuredNode({
         }}
       >
         <sphereGeometry args={[MEASURED_SIZE, 8, 8]} />
-        <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+        <meshBasicMaterial visible={false} />
       </mesh>
       {selected ? <CkbSelectionReticle size={MEASURED_SIZE * 2.4} /> : null}
     </group>

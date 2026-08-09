@@ -582,7 +582,9 @@ function CkbNodeAnchor({
         </mesh>
       </group>
       {/* The visible form is quieter, but the original click target remains
-          forgiving and follows the anchor rather than its DOM label. */}
+          forgiving and follows the anchor rather than its DOM label. An
+          invisible MATERIAL keeps the raycast (the Raycaster never consults
+          material.visible) while the renderer skips the draw entirely. */}
       <mesh
         onClick={(e) => {
           e.stopPropagation();
@@ -590,7 +592,7 @@ function CkbNodeAnchor({
         }}
       >
         <sphereGeometry args={[ANCHOR_HIT_RADIUS, 8, 8]} />
-        <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+        <meshBasicMaterial visible={false} />
       </mesh>
       <Html
         position={[0, -2.72, 0]}
