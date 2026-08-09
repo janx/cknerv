@@ -2,9 +2,9 @@ import type { CSSProperties } from 'react';
 import type { CellCausalLens } from '../../derives/cellCausalLens.derive';
 import { HUD_COLORS, HUD_FONTS, HUD_TYPE } from './hudTheme';
 
-const EXACT = '#91F7FF';
-const PARTIAL = '#FFD48C';
-const UNAVAILABLE = '#9D7BD8';
+const EXACT = HUD_COLORS.cyanInk;
+const PARTIAL = HUD_COLORS.goldInk;
+const UNAVAILABLE = HUD_COLORS.memory;
 
 export interface CellCausalNavigationReadout {
   position: number;
@@ -184,7 +184,7 @@ export default function CellCausalLensReadout({
         }}
       >
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, minWidth: 0 }}>
-          <span style={{ color: '#D9FAFF', fontFamily: HUD_FONTS.tech, fontSize: HUD_TYPE.label, fontWeight: 700, letterSpacing: 1.05 }}>
+          <span style={{ color: HUD_COLORS.cyanInk, fontFamily: HUD_FONTS.tech, fontSize: HUD_TYPE.label, fontWeight: 700, letterSpacing: 1.05 }}>
             CAUSAL LENS
           </span>
           <span style={{ color: meta.color, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.micro, letterSpacing: 0.66 }}>
@@ -269,7 +269,7 @@ export default function CellCausalLensReadout({
         fontFamily: HUD_FONTS.tech,
       }}>
         <span style={{
-          color: '#D9FAFF',
+          color: HUD_COLORS.cyanInk,
           fontSize: HUD_TYPE.micro,
           fontWeight: 700,
           letterSpacing: 1.18,
@@ -335,7 +335,7 @@ export default function CellCausalLensReadout({
             gap: 5,
             marginTop: compact ? 2 : 4,
           }}>
-            <span style={{ ...flowCell, color: '#BBA8FF' }}>
+            <span style={{ ...flowCell, color: HUD_COLORS.memoryInk }}>
               {endpointCount(anchoredInputs, lens.inputCount, 'INPUTS')}
             </span>
             <span
@@ -349,7 +349,7 @@ export default function CellCausalLensReadout({
             >
               ─◇ TX ◆─
             </span>
-            <span style={{ ...flowCell, color: '#FFD29A', textAlign: 'right' }}>
+            <span style={{ ...flowCell, color: HUD_COLORS.goldInk, textAlign: 'right' }}>
               {endpointCount(anchoredOutputs, lens.outputCount, 'OUTPUTS')}
             </span>
           </div>

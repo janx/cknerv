@@ -129,7 +129,7 @@ function SegmentReadout({
         <span style={{ color, fontSize: HUD_TYPE.micro, letterSpacing: 0.42, whiteSpace: 'nowrap' }}>
           S{String(index + 1).padStart(2, '0')}/{String(count).padStart(2, '0')}
         </span>
-        <span title={segment.label} style={{ minWidth: 0, color: '#DDFBFF', fontSize: HUD_TYPE.micro, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        <span title={segment.label} style={{ minWidth: 0, color: HUD_COLORS.cyanInk, fontSize: HUD_TYPE.micro, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {readableKind(segment.label)}
         </span>
         <span style={{ color: HUD_COLORS.dim, fontSize: HUD_TYPE.micro, whiteSpace: 'nowrap' }}>
@@ -227,7 +227,7 @@ function FacetReadout({
       >
         ‹
       </button>
-      <span style={{ color: '#BFAAFF', fontSize: HUD_TYPE.micro, whiteSpace: 'nowrap' }}>
+      <span style={{ color: HUD_COLORS.memoryInk, fontSize: HUD_TYPE.micro, whiteSpace: 'nowrap' }}>
         ROLE {index + 1}/{count}
       </span>
       <span title={`${facet.kind}${facet.state ? ` · ${facet.state}` : ''}${first ? ` · ${first.key}: ${first.value}` : ''}`} style={{ minWidth: 0, color: HUD_COLORS.ink, fontSize: HUD_TYPE.micro, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>

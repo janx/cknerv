@@ -239,7 +239,7 @@ export function spatialPlate(accent: string): CSSProperties {
 
 /** Header row shared by the spatial plates: EN title, CJK companion, and a
  *  right-aligned live status the caller renders (keeps its data attributes). */
-export function SpatialPlateHeader({ en, cjk, accent, titleColor = '#C9F8FF', status, marginBottom = 7 }: {
+export function SpatialPlateHeader({ en, cjk, accent, titleColor = HUD_COLORS.cyanInk, status, marginBottom = 7 }: {
   en: string;
   cjk?: string;
   /** Plate accent — tints the CJK companion. */

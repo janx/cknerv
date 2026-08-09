@@ -660,7 +660,7 @@ export default function CellDetailPanel({
             width: 'auto',
             overflow: 'visible',
             padding: '8px 10px 11px 12px',
-            ...spatialPlate('#AA88FF'),
+            ...spatialPlate(HUD_COLORS.memory),
           }}
         >
           <div style={{ minWidth: 0 }}>
@@ -715,13 +715,13 @@ export default function CellDetailPanel({
               width: 'auto',
               overflow: 'visible',
               padding: '8px 10px 10px 12px',
-              ...spatialPlate('#AA88FF'),
+              ...spatialPlate(HUD_COLORS.memory),
             }}
           >
             <SpatialPlateHeader
               en="MEMORY TRACE"
-              accent="#AA88FF"
-              titleColor="#C7B9FF"
+              accent={HUD_COLORS.memory}
+              titleColor={HUD_COLORS.memoryInk}
               marginBottom={0}
               status={(
                 <span style={{ color: HUD_COLORS.dim, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.micro, letterSpacing: 0.55 }}>

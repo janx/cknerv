@@ -45,9 +45,9 @@ import type { CellSemanticsPhase } from './CellSemanticsReadout';
 import { HUD_COLORS, HUD_FONTS, HUD_TYPE } from './hudTheme';
 
 const CYAN = HUD_COLORS.cyanWire;
-const VIOLET = '#9D7BD8';
+const VIOLET = HUD_COLORS.memory;
 const GOLD = HUD_COLORS.orange;
-const LOCKED_GOLD = '#FFD7A1';
+const LOCKED_GOLD = HUD_COLORS.lockedGold;
 const ROUTE_LENS_MIN_CELLS = 9;
 const ROUTE_SCROLL_EDGE_EPSILON_PX = 1;
 const ROUTE_SCROLL_ANCHOR_INSET_PX = 4;
@@ -55,9 +55,9 @@ const IDENTITY_PROOF_META: Record<CellIdentityProofKind, {
   code: 'WHERE' | 'WHAT' | 'WHEN';
   color: string;
 }> = {
-  address: { code: 'WHERE', color: '#9DF7FF' },
-  content: { code: 'WHAT', color: '#C7A7FF' },
-  anchor: { code: 'WHEN', color: '#FFD48C' },
+  address: { code: 'WHERE', color: HUD_COLORS.cyanInk },
+  content: { code: 'WHAT', color: HUD_COLORS.memoryInk },
+  anchor: { code: 'WHEN', color: HUD_COLORS.goldInk },
 };
 
 type RouteHopPulseStyle = CSSProperties & {
@@ -344,7 +344,7 @@ function RouteHopInspector({
         }}
       >
         <span style={{ color: HUD_COLORS.dim }}>OWN CONTENT</span>
-        <span title={contentHash ?? undefined} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign: 'right', color: contentHash ? '#C9F8FF' : HUD_COLORS.dim }}>
+        <span title={contentHash ?? undefined} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign: 'right', color: contentHash ? HUD_COLORS.cyanInk : HUD_COLORS.dim }}>
           {fingerprint}
         </span>
         <span style={{ color: HUD_COLORS.dim }}>CHAIN ANCHOR</span>
@@ -516,7 +516,7 @@ function EvidenceRouteLedger({
           title={focusedRouteHop
             ? `Hop ${focusedRouteHop.hopIndex}: Cell #${focusedRouteHop.cellId}`
             : undefined}
-          style={{ marginLeft: 'auto', fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.micro, letterSpacing: 0.35, color: focusedRouteHop ? '#E8FCFF' : '#C9F8FF' }}
+          style={{ marginLeft: 'auto', fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.micro, letterSpacing: 0.35, color: focusedRouteHop ? HUD_COLORS.ink : HUD_COLORS.cyanInk }}
         >
           {focusedRouteHop
             ? `${focusIsLocked ? 'LOCK ' : ''}H${String(focusedRouteHop.hopIndex).padStart(2, '0')} · CELL #${focusedRouteHop.cellId}`
@@ -668,7 +668,7 @@ function EvidenceRouteLedger({
           const nodeColor = role === 'source'
             ? sourceColor
             : role === 'target'
-              ? '#C9F8FF'
+              ? HUD_COLORS.cyanInk
               : HUD_COLORS.dim;
           const indexCopy = role === 'source'
             ? 'S'
@@ -784,7 +784,7 @@ function EvidenceRouteLedger({
                       : undefined,
                   font: 'inherit',
                   lineHeight: 'inherit',
-                  color: locked ? LOCKED_GOLD : active ? '#E8FCFF' : nodeColor,
+                  color: locked ? LOCKED_GOLD : active ? HUD_COLORS.ink : nodeColor,
                   cursor: onHopFocusChange || onHopLockChange
                     ? 'crosshair'
                     : 'default',
@@ -883,7 +883,7 @@ function IdentityBraid({
     : identityProofBinding?.phase === 'retained'
       ? GOLD
       : proofComplete
-        ? '#D9F8FF'
+        ? HUD_COLORS.cyanInk
         : observed
           ? GOLD
           : CYAN;
@@ -921,7 +921,7 @@ function IdentityBraid({
       {/* A's canonical grammar in miniature: independent cool paths agree at
           one content knot, then remain addressable as a persistent record. */}
       <path d="M4 7 C54 7 78 21 119 21 S184 35 234 35" fill="none" stroke={CYAN} strokeOpacity=".5" strokeWidth="1" />
-      <path d="M4 21 C58 21 84 21 119 21 S180 21 234 21" fill="none" stroke="#C9F8FF" strokeOpacity=".34" strokeWidth=".8" />
+      <path d="M4 21 C58 21 84 21 119 21 S180 21 234 21" fill="none" stroke={HUD_COLORS.cyanInk} strokeOpacity=".34" strokeWidth=".8" />
       <path d="M4 35 C54 35 78 21 119 21 S184 7 234 7" fill="none" stroke={VIOLET} strokeOpacity=".48" strokeWidth="1" />
       <path d="M4 7 C54 7 78 21 119 21" fill="none" stroke={CYAN} strokeOpacity=".1" strokeWidth="5" />
       <path d="M4 35 C54 35 78 21 119 21" fill="none" stroke={VIOLET} strokeOpacity=".1" strokeWidth="5" />
@@ -1048,7 +1048,7 @@ function EvidenceLedger({
         const evidenceStateColor = resolved
           ? LOCKED_GOLD
           : evidence.state === 'arrived'
-            ? '#C9F8FF'
+            ? HUD_COLORS.cyanInk
             : sourceColor;
         const active = focusedSourceId === evidence.sourceId;
         const previewed = scenePreviewSourceId === evidence.sourceId
@@ -1627,7 +1627,7 @@ export default function ConsensusIdentityPlate({
           );
         })}
         <span style={{
-          color: identityProofComplete ? '#D9F8FF' : HUD_COLORS.dim,
+          color: identityProofComplete ? HUD_COLORS.cyanInk : HUD_COLORS.dim,
           textAlign: 'right',
         }}>
           {identityProofCount}/3
@@ -1638,7 +1638,7 @@ export default function ConsensusIdentityPlate({
             color: identityProofComplete
               ? selectedIdentityProofBinding?.phase === 'retained'
                 ? GOLD
-                : '#BFEFFF'
+                : HUD_COLORS.cyanInk
               : HUD_COLORS.dim,
             letterSpacing: 0.62,
           }}
@@ -1692,10 +1692,10 @@ export default function ConsensusIdentityPlate({
             title={observed.txHash}
             onClick={onRecallWrite}
             disabled={!recallEnabled}
-            style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', alignItems: 'baseline', gap: '2px 8px', width: '100%', margin: spatial ? 0 : '4px 0 0', padding: spatial ? '3px 2px' : '3px 0 2px', border: 0, borderTop: spatial ? 0 : `1px solid ${traceSelected ? VIOLET : GOLD}24`, background: traceSelected ? `${VIOLET}12` : 'transparent', fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.label, letterSpacing: 0.35, color: traceSelected ? '#C7B9FF' : GOLD, textShadow: `0 0 6px ${traceSelected ? VIOLET : GOLD}55`, whiteSpace: 'nowrap', cursor: recallEnabled ? 'pointer' : 'default', textAlign: 'left', opacity: recallEnabled ? 1 : 0.62 }}
+            style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', alignItems: 'baseline', gap: '2px 8px', width: '100%', margin: spatial ? 0 : '4px 0 0', padding: spatial ? '3px 2px' : '3px 0 2px', border: 0, borderTop: spatial ? 0 : `1px solid ${traceSelected ? VIOLET : GOLD}24`, background: traceSelected ? `${VIOLET}12` : 'transparent', fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.label, letterSpacing: 0.35, color: traceSelected ? HUD_COLORS.memoryInk : GOLD, textShadow: `0 0 6px ${traceSelected ? VIOLET : GOLD}55`, whiteSpace: 'nowrap', cursor: recallEnabled ? 'pointer' : 'default', textAlign: 'left', opacity: recallEnabled ? 1 : 0.62 }}
           >
             <span>{spatial ? 'MEMORY TRACE' : 'WRITE OBSERVED'}</span>
-            <span style={{ marginLeft: 'auto', color: '#FFD29A' }}>
+            <span style={{ marginLeft: 'auto', color: HUD_COLORS.goldInk }}>
               #{observed.block} · {observed.inputCount}→{observed.outputCount}{spatial ? ` · ${spatialTraceState}` : ''}
             </span>
             {!spatial ? <span style={{ gridColumn: '1 / -1', color: traceSelected ? VIOLET : CYAN, letterSpacing: 0.8 }}>
@@ -1716,7 +1716,7 @@ export default function ConsensusIdentityPlate({
             style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginTop: 4, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.label, letterSpacing: 0.35, color: GOLD, textShadow: `0 0 6px ${GOLD}55`, whiteSpace: 'nowrap' }}
           >
             <span>{spatial ? 'MEMORY TRACE' : 'WRITE OBSERVED'}</span>
-            <span style={{ marginLeft: 'auto', color: '#FFD29A' }}>
+            <span style={{ marginLeft: 'auto', color: HUD_COLORS.goldInk }}>
               #{observed.block} · {observed.inputCount}→{observed.outputCount}
             </span>
           </div>

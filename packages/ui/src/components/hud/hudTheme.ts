@@ -13,6 +13,14 @@ export const HUD_COLORS = {
   cyanWire: '#20F0FF',
   peerWire: PEER_NETWORK_HEX.scaffold,
   rebuild: '#AE86FF',
+  // Consensus-memory family (the inspection surface's violet) — deliberately
+  // distinct from `rebuild`, which is the scene's replay/rebuild semantic.
+  memory: '#AA88FF',
+  memoryInk: '#C9BAFF',
+  // Bright text tiers of the wire families; chrome stays cyanWire / orange.
+  cyanInk: '#C9F8FF',
+  lockedGold: '#FFD7A1',
+  goldInk: '#FFD29A',
   ink: '#E8E8E8',
   dim: '#7C8794',
   nominal: '#27FF5A',
