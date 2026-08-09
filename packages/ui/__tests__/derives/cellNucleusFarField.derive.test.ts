@@ -1,5 +1,8 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
+  cellNucleusFarFieldBeyond,
   cellNucleusFarFieldSkip,
   ensureCellFieldBounds,
   makeCellFieldBoundsCache,
@@ -202,5 +205,74 @@ describe('cellNucleusFarFieldSkip', () => {
     }
     // The sweep must actually exercise the skip branch.
     expect(skips).toBeGreaterThan(0);
+  });
+});
+
+describe('cellNucleusFarFieldBeyond', () => {
+  const bounds = freshBounds(field);
+
+  it('is the pure distance predicate the skip composes with envelope gates', () => {
+    const beyondCamera: [number, number, number] = [
+      bounds.centerX + bounds.radius + FAR_DIST + 0.001,
+      bounds.centerY,
+      bounds.centerZ,
+    ];
+    const nearCamera: [number, number, number] = [
+      bounds.centerX + bounds.radius + FAR_DIST - 0.001,
+      bounds.centerY,
+      bounds.centerZ,
+    ];
+    expect(cellNucleusFarFieldBeyond(...beyondCamera, bounds, FAR_DIST))
+      .toBe(true);
+    expect(cellNucleusFarFieldBeyond(...nearCamera, bounds, FAR_DIST))
+      .toBe(false);
+    // Ignores focus entirely — the frame loop pairs it with an
+    // envelope-only walk instead of a veto…
+    expect(cellNucleusFarFieldSkip(
+      ...beyondCamera,
+      bounds,
+      FAR_DIST,
+      3,
+      false,
+      false,
+    )).toBe(false);
+    // …while the composed skip is exactly beyond ∧ no-envelope.
+    expect(cellNucleusFarFieldSkip(
+      ...beyondCamera,
+      bounds,
+      FAR_DIST,
+      0,
+      false,
+      false,
+    )).toBe(true);
+  });
+
+  it('fails open on an unknown radius', () => {
+    const unknown = {
+      centerX: 0,
+      centerY: 0,
+      centerZ: 0,
+      radius: Number.POSITIVE_INFINITY,
+    };
+    expect(cellNucleusFarFieldBeyond(1e6, 0, 0, unknown, FAR_DIST)).toBe(false);
+  });
+
+  it('keeps the far-camera selection walk on the envelope, not the field', () => {
+    // An open detail panel holds a focus envelope for its whole lifetime;
+    // that must not resurrect the O(count) per-Cell walk the far-field
+    // early-out exists to remove. Recall keeps the full walk (its response
+    // set spans endpoints beyond the envelope), and route-hop focus only
+    // exists while recall is active.
+    const NUCLEUS_SOURCE = readFileSync(
+      resolve(process.cwd(), 'src/components/CellNucleus.tsx'),
+      'utf8',
+    );
+    expect(NUCLEUS_SOURCE).toContain('const envelopeOnlyLod = recallFocus === null');
+    expect(NUCLEUS_SOURCE).toContain('cellNucleusFarFieldBeyond(');
+    expect(NUCLEUS_SOURCE).toContain('envelopeOnlyLod ? 0 : count');
+    expect(NUCLEUS_SOURCE).toContain(
+      'const index = visibleIndexByCell.current.get(cellId)',
+    );
+    expect(NUCLEUS_SOURCE).toContain('const detail = userFocus * 0.68');
   });
 });

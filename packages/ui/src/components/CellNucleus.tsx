@@ -27,7 +27,7 @@ import {
   dampCellFocus,
 } from '../derives/cellInteraction.derive';
 import {
-  cellNucleusFarFieldSkip,
+  cellNucleusFarFieldBeyond,
   ensureCellFieldBounds,
   makeCellFieldBoundsCache,
 } from '../derives/cellNucleusFarField.derive';
@@ -378,28 +378,53 @@ export default function CellNucleus({
 
       near.current.length = 0;
       // Whole-field early-out. Identity is a zoom-in detail: under the
-      // resting overview camera every Cell is beyond FAR_DIST and no
-      // focus / recall / route-hop envelope is alive, so the O(count) walk
-      // below cannot admit anything. Proving that from one cached
-      // bounding-sphere distance (same group-local camera math, same 12 Hz
-      // tick) drops `lodWalkCount` to 0: the walk body never runs, the
-      // beyond-prefix route-hop block is already inert (its veto is part of
-      // the predicate), the sort and cap see an empty array, and the cleared
-      // `near` set flows through the existing sparse zeroing writes. When
-      // the predicate declines, the walk runs exactly as before.
+      // resting overview camera every Cell is beyond FAR_DIST, so the
+      // O(count) walk below can admit nothing distance-wise. Proving that
+      // from one cached bounding-sphere distance (same group-local camera
+      // math, same 12 Hz tick) drops `lodWalkCount` to 0. Focus entries
+      // (selection / hover / route-hop cells) are the only far-camera
+      // admissions, and they are walked directly from the envelope below —
+      // an open detail panel must not resurrect the full per-Cell walk for
+      // the whole time it stays open. Recall keeps the full walk: its
+      // response set spans endpoint Cells beyond the envelope. When the
+      // distance predicate declines, the walk runs exactly as before.
       const bounds = ensureCellFieldBounds(fieldBounds, cells, count);
-      const lodWalkCount = cellNucleusFarFieldSkip(
-        cameraLocalPosition.x,
-        cameraLocalPosition.y,
-        cameraLocalPosition.z,
-        bounds,
-        FAR_DIST,
-        focusByCell.current.size,
-        recallFocus !== null,
-        routeHopFocus !== null,
-      )
-        ? 0
-        : count;
+      const envelopeOnlyLod = recallFocus === null
+        && cellNucleusFarFieldBeyond(
+          cameraLocalPosition.x,
+          cameraLocalPosition.y,
+          cameraLocalPosition.z,
+          bounds,
+          FAR_DIST,
+        );
+      const lodWalkCount = envelopeOnlyLod ? 0 : count;
+      if (envelopeOnlyLod && focusByCell.current.size > 0) {
+        for (const [cellId, userFocus] of focusByCell.current) {
+          if (userFocus <= 0) continue;
+          const index = visibleIndexByCell.current.get(cellId);
+          if (index === undefined || index >= count) continue;
+          const cell = cells[index];
+          const dx = cell.pos_seed[0] - cameraLocalPosition.x;
+          const dy = cell.pos_seed[1] - cameraLocalPosition.y;
+          const dz = cell.pos_seed[2] - cameraLocalPosition.z;
+          const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+          // Beyond-field cameraDetail is provably 0; the envelope term is
+          // the byte-identical interaction formula from the full walk.
+          const detail = userFocus * 0.68;
+          if (detail > CELL_EXPANDED_DETAIL_THRESHOLD) {
+            near.current.push({
+              cell,
+              index,
+              detail,
+              cameraDetail: 0,
+              focus: userFocus,
+              userFocus,
+              recall: null,
+              dist,
+            });
+          }
+        }
+      }
       for (let index = 0; index < lodWalkCount; index += 1) {
         const cell = cells[index];
         const userFocus = focusByCell.current.get(cell.id) ?? 0;

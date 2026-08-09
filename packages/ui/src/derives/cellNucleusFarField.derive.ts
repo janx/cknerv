@@ -106,14 +106,40 @@ export function ensureCellFieldBounds(
 }
 
 /**
+ * True when even the nearest possible Cell — the bounding sphere's closest
+ * surface point — is at least `farDist` away, the walk's own per-Cell
+ * rejection distance (`distSq >= FAR_DIST_SQ`). Under this condition every
+ * drawn Cell fails the walk's distance test, so only Cells with a live
+ * focus can be admitted. Camera coordinates must be the group-local values
+ * the walk itself would use, sampled on the same LOD tick. Any non-finite
+ * radius fails open.
+ */
+export function cellNucleusFarFieldBeyond(
+  cameraLocalX: number,
+  cameraLocalY: number,
+  cameraLocalZ: number,
+  bounds: Pick<
+    CellFieldBoundsCache,
+    'centerX' | 'centerY' | 'centerZ' | 'radius'
+  >,
+  farDist: number,
+): boolean {
+  if (!Number.isFinite(bounds.radius)) return false;
+  const dx = cameraLocalX - bounds.centerX;
+  const dy = cameraLocalY - bounds.centerY;
+  const dz = cameraLocalZ - bounds.centerZ;
+  const cameraDist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+  return cameraDist - bounds.radius >= farDist;
+}
+
+/**
  * True when the LOD walk provably cannot admit a single Cell this tick: no
  * focus / recall / route-hop envelope is alive (interaction reveals identity
- * at any distance, so any envelope vetoes the skip) and even the nearest
- * possible Cell — the bounding sphere's closest surface point — is at least
- * `farDist` away, the walk's own per-Cell rejection distance
- * (`distSq >= FAR_DIST_SQ`). Camera coordinates must be the group-local
- * values the walk itself would use, sampled on the same LOD tick, so a skip
- * is behaviour-equivalent to walking. Any non-finite input fails open.
+ * at any distance) and the whole field is beyond `farDist`. A skip is then
+ * behaviour-equivalent to walking. The frame loop also handles the
+ * far-camera-WITH-focus case itself: it walks just the envelope entries via
+ * the visible-index map instead of every drawn Cell, because
+ * `cellNucleusFarFieldBeyond` proves distance admits nothing else.
  */
 export function cellNucleusFarFieldSkip(
   cameraLocalX: number,
@@ -129,10 +155,11 @@ export function cellNucleusFarFieldSkip(
   routeHopActive: boolean,
 ): boolean {
   if (focusEnvelopeCount > 0 || recallActive || routeHopActive) return false;
-  if (!Number.isFinite(bounds.radius)) return false;
-  const dx = cameraLocalX - bounds.centerX;
-  const dy = cameraLocalY - bounds.centerY;
-  const dz = cameraLocalZ - bounds.centerZ;
-  const cameraDist = Math.sqrt(dx * dx + dy * dy + dz * dz);
-  return cameraDist - bounds.radius >= farDist;
+  return cellNucleusFarFieldBeyond(
+    cameraLocalX,
+    cameraLocalY,
+    cameraLocalZ,
+    bounds,
+    farDist,
+  );
 }
