@@ -425,6 +425,75 @@ export function nearestCellIdsFromIndex(
   return nearest.map((entry) => entry.id);
 }
 
+export interface CellWithinRadius {
+  id: number;
+  /** Exact xz distance from the query centre (already square-rooted). */
+  dist: number;
+}
+
+/**
+ * Every indexed Cell within `radius` of a LOCAL-frame xz centre, in Cell-map
+ * input order — the same set, order, and distances the old full-map walk
+ * produced, but visiting only the O(radius²/bucket²) covered buckets. Bucket
+ * chains iterate newest→oldest, so entries are re-sorted by input order to
+ * keep first-N-in-scan-order cap semantics byte-identical. Pure.
+ */
+export function cellIdsWithinRadiusFromIndex(
+  localX: number,
+  localZ: number,
+  radius: number,
+  index: CellNearestIndex,
+): CellWithinRadius[] {
+  if (!Number.isFinite(radius) || radius <= 0 || index.count === 0) return [];
+  const radiusSq = radius * radius;
+  const minBx = Math.max(index.minBx, Math.floor((localX - radius) / index.bucketSize));
+  const maxBx = Math.min(index.maxBx, Math.floor((localX + radius) / index.bucketSize));
+  const minBz = Math.max(index.minBz, Math.floor((localZ - radius) / index.bucketSize));
+  const maxBz = Math.min(index.maxBz, Math.floor((localZ + radius) / index.bucketSize));
+  const hits: Array<{ id: number; d2: number; order: number }> = [];
+  for (let bx = minBx; bx <= maxBx; bx += 1) {
+    const row = index.rows.get(bx);
+    if (!row) continue;
+    for (let bz = minBz; bz <= maxBz; bz += 1) {
+      let candidateIndex = row.get(bz) ?? -1;
+      while (candidateIndex >= 0) {
+        const candidate = index.cells[candidateIndex];
+        const dx = candidate.pos_seed[0] - localX;
+        const dz = candidate.pos_seed[2] - localZ;
+        const d2 = dx * dx + dz * dz;
+        if (d2 <= radiusSq) {
+          hits.push({ id: candidate.id, d2, order: candidateIndex });
+        }
+        candidateIndex = index.next[candidateIndex];
+      }
+    }
+  }
+  hits.sort((a, b) => a.order - b.order);
+  return hits.map((hit) => ({ id: hit.id, dist: Math.sqrt(hit.d2) }));
+}
+
+let sharedNearestIndexToken: unknown = Symbol('unset');
+let sharedNearestIndexValue: CellNearestIndex | null = null;
+
+/**
+ * One nearest-index build per Cell-set revision, shared across consumers
+ * (delivery ignition + galaxy local ignition today). Keyed on `cellsToken`,
+ * which the cache publishes exactly when Cell membership/positions change —
+ * the same freshness assumption BlockDeliveryLayer's per-component memo
+ * already relied on. Single-slot: alternating tokens rebuild, which no
+ * production scene does.
+ */
+export function sharedCellNearestIndex(
+  cellsToken: unknown,
+  cells: Iterable<{ id: number; pos_seed: readonly [number, number, number] }>,
+): CellNearestIndex {
+  if (sharedNearestIndexValue === null || sharedNearestIndexToken !== cellsToken) {
+    sharedNearestIndexValue = buildCellNearestIndex(cells);
+    sharedNearestIndexToken = cellsToken;
+  }
+  return sharedNearestIndexValue;
+}
+
 /** The `k` Cell ids nearest (in the xz plane) to a carrier `landing`,
  *  nearest first. Cells live in the galaxy group's rotating LOCAL frame
  *  (`pos_seed`), so the world landing is projected back through the group's

@@ -14,7 +14,7 @@ import {
   deliveryScheduleHorizon,
   easeInLob,
   bolusIngest,
-  buildCellNearestIndex,
+  sharedCellNearestIndex,
   nearestCellIdsFromIndex,
   type DeliveryPhaseConfig,
 } from '../derives/peers.derive';
@@ -252,9 +252,10 @@ export default function BlockDeliveryLayer({
   const ignitedPulseAtRef = useRef<number | null>(null);
   const cellsToken = cellsCache?.cellsToken ?? null;
   const nearestCellIndex = useMemo(
-    () => buildCellNearestIndex(cellsCache?.cells.values() ?? []),
+    () => sharedCellNearestIndex(cellsToken, cellsCache?.cells.values() ?? []),
     // The cache publishes a fresh token exactly when Cell membership/position
-    // changes, so peer deliveries share one index without rebuilding per peer.
+    // changes, so peer deliveries share one index without rebuilding per peer —
+    // and the galaxy's local-ignition pass shares the very same build.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [cellsToken],
   );

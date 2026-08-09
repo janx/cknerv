@@ -15,6 +15,8 @@ import {
   deliveryScheduleHorizon,
   bolusIngest,
   buildCellNearestIndex,
+  cellIdsWithinRadiusFromIndex,
+  sharedCellNearestIndex,
   nearestCellIds,
   nearestCellIdsFromIndex,
   PEER_COLORS,
@@ -403,6 +405,83 @@ describe('peers.derive', () => {
       ]);
       const d = planDeliveries([], 0, pos, { A: 1.0 }, 38);
       expect(d.map((x) => x.key)).toEqual(['peer:A']);
+    });
+  });
+
+  describe('cellIdsWithinRadiusFromIndex', () => {
+    // Deterministic pseudo-random scatter, including exact-boundary points.
+    function scatter(count: number): Array<{ id: number; pos_seed: [number, number, number] }> {
+      const cells: Array<{ id: number; pos_seed: [number, number, number] }> = [];
+      let s = 42;
+      const rnd = () => {
+        s = (s * 1103515245 + 12345) >>> 0;
+        return (s / 4294967296) * 60 - 30;
+      };
+      for (let i = 0; i < count; i++) {
+        cells.push({ id: 1000 + i, pos_seed: [rnd(), 0, rnd()] });
+      }
+      cells.push({ id: 1, pos_seed: [14, 0, 0] });  // exactly on the boundary
+      cells.push({ id: 2, pos_seed: [14.001, 0, 0] }); // just outside
+      return cells;
+    }
+
+    function bruteForce(
+      cells: Array<{ id: number; pos_seed: [number, number, number] }>,
+      lx: number,
+      lz: number,
+      radius: number,
+    ) {
+      const radiusSq = radius * radius;
+      const out: Array<{ id: number; dist: number }> = [];
+      for (const cell of cells) {
+        const dx = cell.pos_seed[0] - lx;
+        const dz = cell.pos_seed[2] - lz;
+        const d2 = dx * dx + dz * dz;
+        if (d2 > radiusSq) continue;
+        out.push({ id: cell.id, dist: Math.sqrt(d2) });
+      }
+      return out;
+    }
+
+    it('returns the exact set, order, and distances of the full walk', () => {
+      const cells = scatter(400);
+      const index = buildCellNearestIndex(cells);
+      for (const [lx, lz, radius] of [
+        [0, 0, 14], [10, -8, 14], [-25, 25, 6], [0, 0, 0.5], [29, 29, 14],
+      ] as const) {
+        expect(cellIdsWithinRadiusFromIndex(lx, lz, radius, index))
+          .toEqual(bruteForce(cells, lx, lz, radius));
+      }
+    });
+
+    it('includes the exact-radius boundary and excludes just-outside', () => {
+      const cells = scatter(0);
+      const index = buildCellNearestIndex(cells);
+      const ids = cellIdsWithinRadiusFromIndex(0, 0, 14, index).map((h) => h.id);
+      expect(ids).toContain(1);
+      expect(ids).not.toContain(2);
+    });
+
+    it('empty index and non-positive radius return nothing', () => {
+      expect(cellIdsWithinRadiusFromIndex(0, 0, 5, buildCellNearestIndex([]))).toEqual([]);
+      const index = buildCellNearestIndex(scatter(10));
+      expect(cellIdsWithinRadiusFromIndex(0, 0, 0, index)).toEqual([]);
+    });
+  });
+
+  describe('sharedCellNearestIndex', () => {
+    it('reuses one build per token and rebuilds on a token change', () => {
+      const cellsA = [{ id: 1, pos_seed: [0, 0, 0] as [number, number, number] }];
+      const cellsB = [
+        { id: 1, pos_seed: [0, 0, 0] as [number, number, number] },
+        { id: 2, pos_seed: [3, 0, 3] as [number, number, number] },
+      ];
+      const first = sharedCellNearestIndex('tok-a', cellsA);
+      // Same token: the iterable is not even consulted again.
+      expect(sharedCellNearestIndex('tok-a', cellsB)).toBe(first);
+      const second = sharedCellNearestIndex('tok-b', cellsB);
+      expect(second).not.toBe(first);
+      expect(second.count).toBe(2);
     });
   });
 });

@@ -87,6 +87,10 @@ import {
 } from '../nerve/cellInspectionField';
 import { deriveCanonicalRewriteArrivals } from '../derives/canonicalRewrite.derive';
 import {
+  cellIdsWithinRadiusFromIndex,
+  sharedCellNearestIndex,
+} from '../derives/peers.derive';
+import {
   collectCellFlashCandidates,
   markCellFlashDirty,
   mergeCellFlashRanges,
@@ -1730,20 +1734,23 @@ export default function CellGalaxy({
         // bridges the "carrier → cells" narrative: nearby Cells visibly receive
         // the delivered block at the field contact. It is deliberately bounded
         // to the landing area, while the broad wave stays in the peer network.
+        // The shared spatial index (one build per Cell-set revision, paid by
+        // the delivery layer already) replaces the old full-map distance walk;
+        // in-radius hits come back in Cell-map scan order, so the first-N cap
+        // selects exactly the cells the walk did.
         const strikeSceneS = blockTriggerSceneS + BEAM_GROW_DUR_S;
-        const radiusSq = LOCAL_IGNITION_RADIUS * LOCAL_IGNITION_RADIUS;
-        let ignited = 0;
-        for (const cell of cellsCache.cells.values()) {
-          if (ignited >= MAX_LOCAL_IGNITIONS) break;
-          const dx = cell.pos_seed[0] - originLocalX;
-          const dz = cell.pos_seed[2] - originLocalZ;
-          const distSq = dx * dx + dz * dz;
-          if (distSq > radiusSq) continue;
-          const dist = Math.sqrt(distSq);
+        const withinRadius = cellIdsWithinRadiusFromIndex(
+          originLocalX,
+          originLocalZ,
+          LOCAL_IGNITION_RADIUS,
+          sharedCellNearestIndex(cellsCache.cellsToken, cellsCache.cells.values()),
+        );
+        const ignitionCount = Math.min(withinRadius.length, MAX_LOCAL_IGNITIONS);
+        for (let hit = 0; hit < ignitionCount; hit += 1) {
+          const { id, dist } = withinRadius[hit];
           const flashAtS = strikeSceneS + dist / LOCAL_IGNITION_SPEED;
-          cellFlashRef.current.set(cell.id, flashAtS);
-          markCellFlashDirty(cell.id, flashDirtyRef, flashDirtyIdsRef);
-          ignited += 1;
+          cellFlashRef.current.set(id, flashAtS);
+          markCellFlashDirty(id, flashDirtyRef, flashDirtyIdsRef);
         }
       }
     }
