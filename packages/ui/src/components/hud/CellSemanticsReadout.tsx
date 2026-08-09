@@ -401,14 +401,21 @@ function ScanContextSummary({
   record,
   birthBlock,
   narrow,
+  reveal = 2,
 }: {
   record: CellSemanticRecord;
   birthBlock?: number | null;
   narrow: boolean;
+  /** Scan gate: 0 = identity still scanning, 1 = context facts, 2 = all. */
+  reveal?: number;
 }) {
   const facet = primaryFacet(record);
   const createdDiffers = birthBlock == null
     || record.observed_at_block !== birthBlock;
+  const stageStyle = (stage: number): CSSProperties => ({
+    opacity: reveal >= stage ? 1 : 0,
+    transition: 'opacity 260ms ease',
+  });
   const assetIdentity = record.asset
     ? [record.asset.symbol, record.asset.name, record.asset.standard]
       .filter(Boolean)
@@ -434,6 +441,7 @@ function ScanContextSummary({
     >
       <div
         data-cell-context-facts
+        data-cell-context-reveal-stage={reveal >= 1 ? 'lit' : 'pending'}
         style={{
           display: 'grid',
           gridTemplateColumns: narrow
@@ -444,6 +452,7 @@ function ScanContextSummary({
           columnGap: narrow ? 7 : 10,
           rowGap: 4,
           minWidth: 0,
+          ...stageStyle(1),
         }}
       >
         {record.address ? (
@@ -484,6 +493,7 @@ function ScanContextSummary({
               : 'repeat(2,minmax(0,1fr))',
             gap: 3,
             marginTop: 5,
+            ...stageStyle(2),
           }}
         >
           {record.lock_script ? (
@@ -505,6 +515,7 @@ function ScanContextSummary({
             gap: narrow ? 3 : 7,
             marginTop: 4,
             minWidth: 0,
+            ...stageStyle(2),
           }}
         >
           {hasKnowledge ? <KnowledgeBar record={record} summary inline /> : null}
@@ -686,6 +697,7 @@ function CellSemanticsReadout({
   phase,
   record,
   birthBlock,
+  reveal,
   message,
   transactionPhase,
   transactionRecord,
@@ -701,6 +713,9 @@ function CellSemanticsReadout({
   /** Selected Cell's birth block — lets CREATED collapse when it just
    *  restates the COMMIT fact already on the scan grid. */
   birthBlock?: number | null;
+  /** Scan-integrated gate: 0 hides everything, 1 lights the context facts,
+   *  2 lights scripts/knowledge — keeps enrichment on the probe's timeline. */
+  reveal?: number;
   message?: string | null;
   transactionPhase?: CellSemanticsPhase;
   transactionRecord?: TransactionSemanticRecord | null;
@@ -793,7 +808,7 @@ function CellSemanticsReadout({
       ) : null}
       {record ? (
         scanIntegrated
-          ? <ScanContextSummary record={record} birthBlock={birthBlock} narrow={scanNarrow} />
+          ? <ScanContextSummary record={record} birthBlock={birthBlock} narrow={scanNarrow} reveal={reveal} />
           : spatial ? <SpatialContextSummary record={record} birthBlock={birthBlock} /> : <>
           <div
             data-cell-context-facts

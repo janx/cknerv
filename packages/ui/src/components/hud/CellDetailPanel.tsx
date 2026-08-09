@@ -209,8 +209,11 @@ const CellScanFact = memo(function CellScanFact({
         {label}
       </span>
       <span
-        title={value}
-        style={{ display: 'block', marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: HUD_TYPE.value, lineHeight: 1.2, color: selected ? accent : color ?? HUD_COLORS.ink }}
+        title={revealed ? value : undefined}
+        // The value itself stays dark until the probe reaches this facet —
+        // a ghosted-but-readable value made the reveal read as sluggish UI
+        // instead of discovery.
+        style={{ display: 'block', marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: HUD_TYPE.value, lineHeight: 1.2, color: selected ? accent : color ?? HUD_COLORS.ink, opacity: revealed ? 1 : 0, transition: 'opacity 260ms ease' }}
       >
         {value}
       </span>
@@ -322,6 +325,11 @@ export default function CellDetailPanel({
     onInspectionFieldChange?.(selectedField);
   }, [onInspectionFieldChange, selectedField]);
 
+  // Enriched semantics join the same reveal timeline as the six identity
+  // facts — two extra steps after the lattice locks, so nothing deep is lit
+  // while something shallow still reads as undiscovered.
+  const revealSteps = order.length + (enhancedDetail ? 2 : 0);
+
   useEffect(() => {
     if (reduced) return;
     const epochMs = nowPerf();
@@ -335,12 +343,12 @@ export default function CellDetailPanel({
     const stop = window.setTimeout(() => {
       window.clearInterval(interval);
       update();
-    }, order.length * PROBE_STEP_S * 1000 + 80);
+    }, revealSteps * PROBE_STEP_S * 1000 + 80);
     return () => {
       window.clearInterval(interval);
       window.clearTimeout(stop);
     };
-  }, [cell.id, reduced, order.length]);
+  }, [cell.id, reduced, revealSteps]);
 
   const DECODE: Record<CellInspectionFacet, RowDecode> = {
     capacity: { label: 'CAPACITY', value: formatCkb(cell.capacity) },
@@ -375,6 +383,12 @@ export default function CellDetailPanel({
     order.length,
     reduced,
   );
+  // 0 = still scanning identity, 1 = context facts lit, 2 = full enrichment.
+  const semanticsReveal = reduced
+    ? 2
+    : Math.max(0, Math.min(2, Math.floor(
+      ((activeClock.nowMs - activeClock.epochMs) / 1000) / PROBE_STEP_S + 0.45,
+    ) - order.length));
   const statusText = scan.classified
     ? 'CELL IDENTITY LOCKED'
     : scan.status === 'unidentified'
@@ -625,6 +639,7 @@ export default function CellDetailPanel({
             spatial
             scanIntegrated
             scanNarrow={verticalLayout}
+            reveal={semanticsReveal}
             style={semanticScanStyle}
           />
         ) : null}

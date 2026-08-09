@@ -583,6 +583,60 @@ describe('CellDetailPanel', () => {
     )).toHaveLength(0);
   });
 
+  it('keeps enrichment on the probe timeline instead of lighting it early', () => {
+    const performanceNow = vi.spyOn(performance, 'now').mockReturnValue(0);
+    const { container } = render(
+      <CellDetailPanel
+        cell={base}
+        semanticSource={{
+          source: 'ckbadger',
+          status: 'ready',
+          capabilities: ['cell_detail'],
+          lag_blocks: 0,
+        }}
+        semanticPhase="ready"
+        semanticRecord={{
+          out_point: base.out_point,
+          source: 'ckbadger',
+          as_of: { block: 19000001, hash: '0xanchor' },
+          observed_at_block: 19000000,
+          updated_at_ms: 1,
+          address: 'ckt1qgatedaddress000000000000000',
+          lock_script: {
+            script_hash: '0xlock',
+            code_hash: '0xcode',
+            hash_type: 'type',
+            args: '0x1234',
+            name: 'Default Lock',
+            family: 'lock',
+            deprecated: false,
+          },
+          facets: [],
+        }}
+        onClose={() => {}}
+      />,
+    );
+
+    const facts = () => container.querySelector('[data-cell-context-facts]') as HTMLElement;
+    const scripts = () => container.querySelector('[data-cell-context-scripts="true"]') as HTMLElement;
+    // While the lattice is still scanning, the deeper enrichment stays dark.
+    expect(facts().dataset.cellContextRevealStage).toBe('pending');
+    expect(facts().style.opacity).toBe('0');
+    expect(scripts().style.opacity).toBe('0');
+    // One step after the sixth landmark: context facts light, scripts wait.
+    performanceNow.mockReturnValue(PROBE_STEP_S * 6.6 * 1000);
+    act(() => { vi.advanceTimersByTime(80); });
+    expect(facts().dataset.cellContextRevealStage).toBe('lit');
+    expect(facts().style.opacity).toBe('1');
+    expect(scripts().style.opacity).toBe('0');
+    // Two steps after: the whole enrichment block is lit.
+    performanceNow.mockReturnValue(PROBE_STEP_S * 7.7 * 1000);
+    act(() => { vi.advanceTimersByTime(80); });
+    expect(scripts().style.opacity).toBe('1');
+    // Unrevealed identity values stay dark mid-scan on a fresh mount.
+    performanceNow.mockReturnValue(0);
+  });
+
   it('advances the scan beam without hiding any evidence module', () => {
     const performanceNow = vi.spyOn(performance, 'now').mockReturnValue(0);
     const { container } = render(
