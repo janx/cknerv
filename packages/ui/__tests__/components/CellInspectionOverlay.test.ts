@@ -121,15 +121,26 @@ describe('cellInspectorPlacement', () => {
   });
 
   it('projects once from cached ResizeObserver measurements', () => {
-    expect(INSPECTION_OVERLAY_SOURCE).toContain(
-      'calculatePosition={CELL_INSPECTOR_HTML_ORIGIN}',
-    );
     expect(INSPECTION_OVERLAY_SOURCE).toContain('new ResizeObserver');
     expect(INSPECTION_OVERLAY_SOURCE).toContain(
       'const cardX = anchorX + placement.x',
     );
     expect(INSPECTION_OVERLAY_SOURCE).not.toContain('card.offsetWidth');
     expect(INSPECTION_OVERLAY_SOURCE).not.toContain('card.offsetHeight');
+  });
+
+  it('keeps the card DOM outside the Canvas container', () => {
+    // The card is a viewport-fixed Canvas sibling driven through the handles
+    // channel — no drei Html wrapper, no in-Canvas DOM, no click shims.
+    expect(INSPECTION_OVERLAY_SOURCE).not.toContain('@react-three/drei');
+    expect(INSPECTION_OVERLAY_SOURCE).toContain('data-cell-inspection-layer');
+    expect(INSPECTION_OVERLAY_SOURCE).toContain('createCellInspectionHandles');
+    expect(INSPECTION_OVERLAY_SOURCE).toContain('CellInspectionAnchor');
+    // The Escape handler still stops propagation; the card itself needs no
+    // click shim against the R3F root anymore.
+    expect(INSPECTION_OVERLAY_SOURCE).not.toContain(
+      'onClick={(event) => event.stopPropagation()}',
+    );
   });
 });
 

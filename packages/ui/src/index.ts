@@ -144,8 +144,12 @@ export {
 export { default as CellSemanticOrbit } from './components/CellSemanticOrbit';
 export {
   default as CellInspectionOverlay,
+  CellInspectionAnchor,
+  createCellInspectionHandles,
   cellInspectorPlacement,
   selectedCellScanAccent,
+  type CellInspectionHandles,
+  type CellInspectionOverlayProps,
   type CellInspectorPlacement,
   type CellInspectorPlacementSide,
 } from './components/CellInspectionOverlay';

@@ -5,10 +5,11 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  useSyncExternalStore,
 } from 'react';
-import { Html } from '@react-three/drei';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
+import type { Cell } from '@cknerv/types';
 import CellDetailPanel, {
   type CellDetailLayoutSide,
   type CellInspectionFacet,
@@ -24,18 +25,60 @@ const INSPECTOR_SAFE_TOP_PX = 104;
 const DEFAULT_PANEL_WIDTH_PX = 800;
 const DEFAULT_PANEL_HEIGHT_PX = 600;
 
-// Drei's Html normally projects its Object3D and writes its wrapper transform
-// every frame. The inspector already has to project the Cell to solve edge
-// placement, so pin the wrapper to the canvas origin and perform that work once
-// below instead of running two independent projection/style paths.
-const CELL_INSPECTOR_HTML_ORIGIN = (): [number, number] => [0, 0];
-
 export type CellInspectorPlacementSide = CellDetailLayoutSide;
 
 export interface CellInspectorPlacement {
   side: CellInspectorPlacementSide;
   x: number;
   y: number;
+}
+
+/**
+ * Mutable bridge between the two halves of the Cell inspector. The anchor
+ * lives in the R3F tree (it must inherit the Galaxy group transform to
+ * project the Cell), while the card is DOM outside the Canvas container.
+ * They run in different renderers, so the anchor writes styles through this
+ * channel instead of React state — nothing here may allocate per frame.
+ */
+export interface CellInspectionHandles {
+  card: HTMLDivElement | null;
+  leader: HTMLSpanElement | null;
+  leaderDot: HTMLSpanElement | null;
+  /** Focus accent, written by the card render, read by the anchor frame. */
+  accent: string;
+  /** Card size from ResizeObserver; never read layout in the frame loop. */
+  measured: { width: number; height: number };
+  /** Last committed frame signature — clearing forces a re-write. */
+  frameKey: string;
+  visible: boolean;
+  layoutSide: CellDetailLayoutSide;
+  layoutListeners: Set<() => void>;
+}
+
+export function createCellInspectionHandles(): CellInspectionHandles {
+  return {
+    card: null,
+    leader: null,
+    leaderDot: null,
+    accent: HUD_COLORS.cyanWire,
+    measured: {
+      width: DEFAULT_PANEL_WIDTH_PX,
+      height: DEFAULT_PANEL_HEIGHT_PX,
+    },
+    frameKey: '',
+    visible: false,
+    layoutSide: 'left',
+    layoutListeners: new Set(),
+  };
+}
+
+function setHandlesLayoutSide(
+  handles: CellInspectionHandles,
+  side: CellDetailLayoutSide,
+): void {
+  if (handles.layoutSide === side) return;
+  handles.layoutSide = side;
+  handles.layoutListeners.forEach((listener) => listener());
 }
 
 /** Treat only the rendered detail satellites as the active inspection region.
@@ -203,77 +246,26 @@ export function selectedCellScanAccent(
 }
 
 /**
- * Cell-centred detail constellation. The selected scene Cell remains visually
- * intact; one screen-space connector makes it the explicit source of the
- * decoded windows, flips around viewport edges, and avoids both fixed rails.
+ * Scene half of the inspector: an empty group at the Cell's seed position,
+ * rendered inside the Galaxy overlay so it inherits the Galaxy's transform.
+ * Each frame it projects that point and writes the card / connector styles
+ * through the handles channel. It renders no geometry of its own.
  */
-export default function CellInspectionOverlay(props: CellDetailPanelProps) {
-  const {
-    cell,
-    onClose,
-    onInspectionFieldChange,
-    onScanInteractionChange,
-  } = props;
-  const reduced = useReducedMotion();
+export function CellInspectionAnchor({
+  cell,
+  handles,
+}: {
+  cell: Cell;
+  handles: CellInspectionHandles;
+}) {
   const anchorRef = useRef<THREE.Group>(null);
-  const cardRef = useRef<HTMLDivElement>(null);
-  const leaderRef = useRef<HTMLSpanElement>(null);
-  const leaderDotRef = useRef<HTMLSpanElement>(null);
-  const measuredRef = useRef({
-    width: DEFAULT_PANEL_WIDTH_PX,
-    height: DEFAULT_PANEL_HEIGHT_PX,
-  });
-  const lastFrameKeyRef = useRef('');
-  const lastVisibleRef = useRef(false);
   const projected = useRef(new THREE.Vector3());
-  const [focusField, setFocusField] = useState<CellInspectionFacet | null>(null);
-  const accent = selectedCellScanAccent({ cell }, focusField);
-  const layoutSideRef = useRef<CellDetailLayoutSide>('left');
-  const [layoutSide, setLayoutSide] = useState<CellDetailLayoutSide>('left');
-  const handleInspectionFieldChange = useCallback((field: CellInspectionFacet | null) => {
-    setFocusField(field);
-    onInspectionFieldChange?.(field);
-  }, [onInspectionFieldChange]);
-  useCellInspectionDismiss(cardRef, onClose);
-
-  // The portrait owns a second pointer/renderer boundary. Reset the parent
-  // interaction lock at the overlay boundary as well as inside the portrait,
-  // so a close during pointer capture cannot leave Galaxy controls disabled
-  // while the nested R3F root finishes unmounting.
-  useEffect(() => () => {
-    onInspectionFieldChange?.(null);
-    onScanInteractionChange?.(false);
-  }, [onInspectionFieldChange, onScanInteractionChange]);
-
-  useLayoutEffect(() => {
-    const card = cardRef.current;
-    if (!card) return;
-    const commitMeasurement = (width: number, height: number) => {
-      measuredRef.current = {
-        width: width || DEFAULT_PANEL_WIDTH_PX,
-        height: height || DEFAULT_PANEL_HEIGHT_PX,
-      };
-      lastFrameKeyRef.current = '';
-    };
-    const initialRect = card.getBoundingClientRect();
-    commitMeasurement(initialRect.width, initialRect.height);
-    if (typeof ResizeObserver === 'undefined') return;
-    const observer = new ResizeObserver(([entry]) => {
-      const borderBox = entry.borderBoxSize?.[0];
-      commitMeasurement(
-        borderBox?.inlineSize ?? entry.contentRect.width,
-        borderBox?.blockSize ?? entry.contentRect.height,
-      );
-    });
-    observer.observe(card);
-    return () => observer.disconnect();
-  }, [cell.id]);
 
   useFrame(({ camera, size }) => {
     const anchor = anchorRef.current;
-    const card = cardRef.current;
-    const leader = leaderRef.current;
-    const leaderDot = leaderDotRef.current;
+    const card = handles.card;
+    const leader = handles.leader;
+    const leaderDot = handles.leaderDot;
     if (!anchor || !card || !leader || !leaderDot) return;
 
     anchor.updateWorldMatrix(true, false);
@@ -284,15 +276,17 @@ export default function CellInspectionOverlay(props: CellDetailPanelProps) {
       && projected.current.z <= 1
       && Math.abs(projected.current.x) <= 1.08
       && Math.abs(projected.current.y) <= 1.08;
-    if (visible !== lastVisibleRef.current) {
-      lastVisibleRef.current = visible;
+    if (visible !== handles.visible) {
+      handles.visible = visible;
       card.style.opacity = visible ? '1' : '0';
     }
     if (!visible) return;
 
+    // The card layer is viewport-fixed while `size` is the Canvas CSS box;
+    // App keeps the Canvas full-viewport, so the two coordinate spaces match.
     const anchorX = (projected.current.x * 0.5 + 0.5) * size.width;
     const anchorY = (-projected.current.y * 0.5 + 0.5) * size.height;
-    const { width, height } = measuredRef.current;
+    const { width, height } = handles.measured;
     const placement = cellInspectorPlacement({
       anchorX,
       anchorY,
@@ -301,10 +295,7 @@ export default function CellInspectionOverlay(props: CellDetailPanelProps) {
       viewportWidth: size.width,
       viewportHeight: size.height,
     });
-    if (layoutSideRef.current !== placement.side) {
-      layoutSideRef.current = placement.side;
-      setLayoutSide(placement.side);
-    }
+    setHandlesLayoutSide(handles, placement.side);
     const cardX = anchorX + placement.x;
     const cardY = anchorY + placement.y;
     const frameKey = [
@@ -313,10 +304,10 @@ export default function CellInspectionOverlay(props: CellDetailPanelProps) {
       cardY.toFixed(1),
       width,
       height,
-      accent,
+      handles.accent,
     ].join(':');
-    if (frameKey === lastFrameKeyRef.current) return;
-    lastFrameKeyRef.current = frameKey;
+    if (frameKey === handles.frameKey) return;
+    handles.frameKey = frameKey;
     card.dataset.cellInspectorPlacement = placement.side;
     card.style.transform = `translate3d(${cardX}px, ${cardY}px, 0)`;
     updateLeader(
@@ -326,80 +317,170 @@ export default function CellInspectionOverlay(props: CellDetailPanelProps) {
       width,
       height,
       INSPECTOR_GAP_PX,
-      accent,
+      handles.accent,
     );
   });
 
+  return <group ref={anchorRef} position={cell.pos_seed} />;
+}
+
+export type CellInspectionOverlayProps = CellDetailPanelProps & {
+  handles: CellInspectionHandles;
+};
+
+/**
+ * Cell-centred detail constellation — the DOM half. The selected scene Cell
+ * remains visually intact; one screen-space connector makes it the explicit
+ * source of the decoded windows, flips around viewport edges, and avoids both
+ * fixed rails. Rendered as a sibling of the Canvas: pointer events inside the
+ * card can never reach the R3F root, so no stopPropagation shims are needed
+ * and onPointerMissed only ever sees genuine scene clicks.
+ */
+export default function CellInspectionOverlay(props: CellInspectionOverlayProps) {
+  const {
+    handles,
+    ...panelProps
+  } = props;
+  const {
+    cell,
+    onClose,
+    onInspectionFieldChange,
+    onScanInteractionChange,
+  } = panelProps;
+  const reduced = useReducedMotion();
+  const cardRef = useRef<HTMLDivElement>(null);
+  const [focusField, setFocusField] = useState<CellInspectionFacet | null>(null);
+  // Render-time write into the mutable channel: the anchor folds the accent
+  // into its frame signature, so a focus change re-tints the connector on the
+  // next frame without any React coupling between the two trees.
+  handles.accent = selectedCellScanAccent({ cell }, focusField);
+  const subscribeLayoutSide = useCallback((listener: () => void) => {
+    handles.layoutListeners.add(listener);
+    return () => handles.layoutListeners.delete(listener);
+  }, [handles]);
+  const readLayoutSide = useCallback(
+    () => handles.layoutSide,
+    [handles],
+  );
+  const layoutSide = useSyncExternalStore(
+    subscribeLayoutSide,
+    readLayoutSide,
+    readLayoutSide,
+  );
+  const handleInspectionFieldChange = useCallback((field: CellInspectionFacet | null) => {
+    setFocusField(field);
+    onInspectionFieldChange?.(field);
+  }, [onInspectionFieldChange]);
+  useCellInspectionDismiss(cardRef, onClose);
+
+  // The portrait owns a second pointer boundary. Reset the parent interaction
+  // lock at the overlay boundary as well as inside the portrait, so a close
+  // during pointer capture cannot leave Galaxy controls disabled.
+  useEffect(() => () => {
+    onInspectionFieldChange?.(null);
+    onScanInteractionChange?.(false);
+  }, [onInspectionFieldChange, onScanInteractionChange]);
+
+  useLayoutEffect(() => {
+    const card = cardRef.current;
+    handles.card = card;
+    if (!card) return;
+    const commitMeasurement = (width: number, height: number) => {
+      handles.measured = {
+        width: width || DEFAULT_PANEL_WIDTH_PX,
+        height: height || DEFAULT_PANEL_HEIGHT_PX,
+      };
+      handles.frameKey = '';
+    };
+    const initialRect = card.getBoundingClientRect();
+    commitMeasurement(initialRect.width, initialRect.height);
+    const detach = () => {
+      if (handles.card === card) handles.card = null;
+      handles.frameKey = '';
+      handles.visible = false;
+    };
+    if (typeof ResizeObserver === 'undefined') return detach;
+    const observer = new ResizeObserver(([entry]) => {
+      const borderBox = entry.borderBoxSize?.[0];
+      commitMeasurement(
+        borderBox?.inlineSize ?? entry.contentRect.width,
+        borderBox?.blockSize ?? entry.contentRect.height,
+      );
+    });
+    observer.observe(card);
+    return () => {
+      observer.disconnect();
+      detach();
+    };
+  }, [cell.id, handles]);
+
   return (
-    <group ref={anchorRef} position={cell.pos_seed}>
-      <Html
-        occlude={false}
-        zIndexRange={[40, 40]}
-        pointerEvents="none"
-        calculatePosition={CELL_INSPECTOR_HTML_ORIGIN}
-        style={{ pointerEvents: 'none', userSelect: 'none' }}
+    <div
+      data-cell-inspection-layer
+      style={{
+        position: 'fixed',
+        inset: 0,
+        zIndex: 40,
+        overflow: 'hidden',
+        pointerEvents: 'none',
+        userSelect: 'none',
+      }}
+    >
+      <div
+        ref={cardRef}
+        data-cell-inspection-overlay
+        data-cell-inspection-dismiss-boundary="true"
+        data-cell-id={cell.id}
+        role="region"
+        aria-label={`Cell ${cell.id} details`}
+        style={{
+          position: 'absolute',
+          opacity: 0,
+          pointerEvents: 'none',
+          userSelect: 'text',
+          willChange: 'transform',
+          transition: 'opacity 120ms ease',
+        }}
       >
-        <div
-          ref={cardRef}
-          data-cell-inspection-overlay
-          data-cell-inspection-dismiss-boundary="true"
-          data-cell-id={cell.id}
-          role="region"
-          aria-label={`Cell ${cell.id} details`}
-          // This drei Html subtree lives inside the Canvas container, so any
-          // click that bubbles out of it reaches the R3F root with zero 3D
-          // intersections and fires onPointerMissed — which clears the whole
-          // selection. Satellite controls must consume their clicks here.
-          onClick={(event) => event.stopPropagation()}
+        <span
+          ref={(node) => { handles.leader = node; }}
+          aria-hidden="true"
+          data-cell-inspector-leader
+          data-cell-detail-connector
           style={{
             position: 'absolute',
-            opacity: 0,
+            zIndex: 2,
+            background: `linear-gradient(90deg,${HUD_COLORS.cyanWire}24,${HUD_COLORS.orange}bb)`,
+            boxShadow: `0 0 7px ${HUD_COLORS.cyanWire}55`,
             pointerEvents: 'none',
-            userSelect: 'text',
-            willChange: 'transform',
-            transition: 'opacity 120ms ease',
           }}
-        >
-          <span
-            ref={leaderRef}
-            aria-hidden="true"
-            data-cell-inspector-leader
-            data-cell-detail-connector
-            style={{
-              position: 'absolute',
-              zIndex: 2,
-              background: `linear-gradient(90deg,${HUD_COLORS.cyanWire}24,${HUD_COLORS.orange}bb)`,
-              boxShadow: `0 0 7px ${HUD_COLORS.cyanWire}55`,
-              pointerEvents: 'none',
-            }}
-          />
-          <span
-            ref={leaderDotRef}
-            aria-hidden="true"
-            data-cell-detail-anchor
-            style={{
-              position: 'absolute',
-              zIndex: 2,
-              width: 9,
-              height: 9,
-              boxSizing: 'border-box',
-              borderRadius: '50%',
-              border: `1px solid ${HUD_COLORS.orange}`,
-              background: 'rgba(1,5,13,.78)',
-              boxShadow: `0 0 9px ${HUD_COLORS.orange}`,
-              pointerEvents: 'none',
-              animation: reduced
-                ? undefined
-                : 'cknerv-cell-detail-anchor-enter 360ms cubic-bezier(.2,.82,.2,1) both',
-            }}
-          />
-          <CellDetailPanel
-            {...props}
-            layoutSide={layoutSide}
-            onInspectionFieldChange={handleInspectionFieldChange}
-          />
-        </div>
-      </Html>
-    </group>
+        />
+        <span
+          ref={(node) => { handles.leaderDot = node; }}
+          aria-hidden="true"
+          data-cell-detail-anchor
+          style={{
+            position: 'absolute',
+            zIndex: 2,
+            width: 9,
+            height: 9,
+            boxSizing: 'border-box',
+            borderRadius: '50%',
+            border: `1px solid ${HUD_COLORS.orange}`,
+            background: 'rgba(1,5,13,.78)',
+            boxShadow: `0 0 9px ${HUD_COLORS.orange}`,
+            pointerEvents: 'none',
+            animation: reduced
+              ? undefined
+              : 'cknerv-cell-detail-anchor-enter 360ms cubic-bezier(.2,.82,.2,1) both',
+          }}
+        />
+        <CellDetailPanel
+          {...panelProps}
+          layoutSide={layoutSide}
+          onInspectionFieldChange={handleInspectionFieldChange}
+        />
+      </div>
+    </div>
   );
 }

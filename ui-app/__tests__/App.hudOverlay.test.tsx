@@ -99,8 +99,11 @@ describe('HudOverlay wiring', () => {
     expect(APP_SOURCE).toContain('onForward: navigateCausalForward');
   });
 
-  it('keeps Cell detail out of the fixed HUD and anchors it inside CellGalaxy', () => {
+  it('keeps Cell detail out of the fixed HUD, tethered by an in-Galaxy anchor', () => {
     const hudWiring = APP_SOURCE.match(/<HudOverlay[\s\S]*?\/>/)?.[0];
+    const anchorWiring = APP_SOURCE.match(
+      /<CellInspectionAnchor[\s\S]*?\/>/,
+    )?.[0];
     const inspectorWiring = APP_SOURCE.match(
       /<CellInspectionOverlay[\s\S]*?\/>/,
     )?.[0];
@@ -111,17 +114,33 @@ describe('HudOverlay wiring', () => {
     expect(hudWiring).toContain(
       'cellInspectionActive={selectedCell !== null}',
     );
+    // The scene half projects from inside the Galaxy overlay…
+    expect(anchorWiring).toBeDefined();
+    expect(anchorWiring).toContain('cell={selectedCell}');
+    expect(anchorWiring).toContain('handles={cellInspectionHandles}');
+    expect(APP_SOURCE.indexOf('<CellInspectionAnchor')).toBeGreaterThan(
+      APP_SOURCE.indexOf('overlay={'),
+    );
+    expect(APP_SOURCE.indexOf('<CellInspectionAnchor')).toBeLessThan(
+      APP_SOURCE.indexOf('</Canvas>'),
+    );
+    // …while the card DOM is a Canvas sibling, so its clicks can never fire
+    // the R3F root's onPointerMissed.
     expect(inspectorWiring).toBeDefined();
     expect(inspectorWiring).toContain('cell={selectedCell}');
+    expect(inspectorWiring).toContain('handles={cellInspectionHandles}');
     expect(inspectorWiring).toContain('onClose={clearCellSelection}');
     expect(inspectorWiring).toContain(
       'onScanInteractionChange={setCellScanInteractionActive}',
     );
+    expect(APP_SOURCE.indexOf('<CellInspectionOverlay')).toBeGreaterThan(
+      APP_SOURCE.indexOf('</Canvas>'),
+    );
+    expect(APP_SOURCE).not.toContain(
+      "closest('[data-cell-inspection-overlay]')",
+    );
     expect(APP_SOURCE).toContain('setCellScanInteractionActive(false);');
     expect(APP_SOURCE).toContain('enabled={!cellScanInteractionActive}');
-    expect(APP_SOURCE.indexOf('<CellInspectionOverlay')).toBeGreaterThan(
-      APP_SOURCE.indexOf('overlay={'),
-    );
   });
 
   it('keeps one primary scene inspection target at a time', () => {

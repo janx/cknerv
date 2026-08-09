@@ -40,7 +40,9 @@ import {
   CellGalaxy,
   CellGalaxyProvider,
   CellCausalLensLayer,
+  CellInspectionAnchor,
   CellInspectionOverlay,
+  createCellInspectionHandles,
   CellSemanticOrbit,
   ConsensusRouteCamera,
   ConsensusWriteSeal,
@@ -61,6 +63,7 @@ import {
   type ConsensusMemoryRouteHopFocus,
   type ConsensusMemoryTargetResponse,
   type CellInspectionField,
+  type CellInspectionHandles,
   type CellIdentityProofEvent,
   type CellIdentityProofKind,
 } from '@cknerv/ui';
@@ -203,6 +206,14 @@ export default function App({
     false,
   );
   const cellDetailViewFocusRef = useRef(0);
+  // One channel for the split Cell inspector: the in-Canvas anchor writes
+  // card/connector styles through it, the DOM card registers its nodes into
+  // it. Created once for the app's lifetime.
+  const cellInspectionHandlesRef = useRef<CellInspectionHandles | null>(null);
+  if (cellInspectionHandlesRef.current === null) {
+    cellInspectionHandlesRef.current = createCellInspectionHandles();
+  }
+  const cellInspectionHandles = cellInspectionHandlesRef.current;
   const [orbitInteractionRevision, noteOrbitInteraction] = useReducer(
     (revision: number) => revision + 1,
     0,
@@ -1109,14 +1120,9 @@ export default function App({
           gl={{ antialias: true, alpha: true }}
           dpr={canvasDpr}
           style={{ background: '#02030a' }}
-          onPointerMissed={(event) => {
-            // Clicks inside the scene-anchored inspection card bubble through
-            // the Canvas container and register here as misses; they are
-            // interactions with the selection, not dismissals of it.
-            if (
-              event.target instanceof Element
-              && event.target.closest('[data-cell-inspection-overlay]')
-            ) return;
+          onPointerMissed={() => {
+            // The inspection card is a Canvas sibling, so its clicks can no
+            // longer surface here as scene misses.
             if (orbitGestureSuppressesPointerAction(
               orbitGestureRef.current,
               performance.now(),
@@ -1175,47 +1181,10 @@ export default function App({
             overlay={
               <>
                 {selectedCell ? (
-                  <CellInspectionOverlay
+                  <CellInspectionAnchor
                     key={selectedCell.id}
                     cell={selectedCell}
-                    routeCellById={cellsCache.cells}
-                    recentLinks={cellsCache.recentLinks}
-                    causalLens={selectedCausalLens}
-                    causalNavigation={selectedCausalNavigation}
-                    tracedWriteSeq={cellMemoryRecallWriteSeqForTarget(
-                      memoryTraceRequest,
-                      selectedCell.id,
-                    )}
-                    traceSource={selectedOriginTrace?.sourceKind ?? 'none'}
-                    traceReadout={selectedMemoryTraceReadout}
-                    traceResponseRef={memoryTraceTargetResponseRef}
-                    traceEvidenceFocusSourceId={memoryEvidenceFocusSourceId}
-                    traceEvidencePreviewSourceId={memoryAgreementPreviewSourceId}
-                    onTraceEvidenceFocusChange={focusMemoryTraceEvidence}
-                    traceRouteHopFocus={memoryRouteHopFocus}
-                    onTraceRouteHopFocusChange={focusMemoryTraceRouteHop}
-                    traceRouteHopLock={memoryRouteHopLock}
-                    onTraceRouteHopLockChange={lockMemoryTraceRouteHop}
-                    identityProofBinding={cellIdentityProofBinding}
-                    onTraceWrite={selectedOriginTraceable
-                      ? recallSelectedCellOrigin
-                      : undefined}
-                    onIdentityProofRead={confirmCellIdentityProof}
-                    semanticSource={enrichmentConfig.enabled
-                      ? semanticsCache.source
-                      : undefined}
-                    semanticPhase={enrichmentConfig.enabled
-                      ? selectedCellSemanticsPhase
-                      : undefined}
-                    semanticRecord={selectedCellSemantics}
-                    semanticMessage={selectedSemanticsLookup.message}
-                    semanticTransactionPhase={transactionSemanticsEnabled
-                      ? selectedTransactionSemanticsPhase
-                      : undefined}
-                    semanticTransactionRecord={selectedTransactionSemantics}
-                    semanticTransactionMessage={selectedTransactionLookup.message}
-                    onScanInteractionChange={setCellScanInteractionActive}
-                    onClose={clearCellSelection}
+                    handles={cellInspectionHandles}
                   />
                 ) : null}
                 {selectedCell && selectedCellSemantics ? (
@@ -1316,6 +1285,54 @@ export default function App({
           />
         </Canvas>
       </CellGalaxyProvider>
+
+      {/* DOM half of the Cell inspector — a Canvas sibling, positioned each
+          frame by the CellInspectionAnchor inside the Galaxy overlay. */}
+      {selectedCell ? (
+        <CellInspectionOverlay
+          key={selectedCell.id}
+          handles={cellInspectionHandles}
+          cell={selectedCell}
+          routeCellById={cellsCache.cells}
+          recentLinks={cellsCache.recentLinks}
+          causalLens={selectedCausalLens}
+          causalNavigation={selectedCausalNavigation}
+          tracedWriteSeq={cellMemoryRecallWriteSeqForTarget(
+            memoryTraceRequest,
+            selectedCell.id,
+          )}
+          traceSource={selectedOriginTrace?.sourceKind ?? 'none'}
+          traceReadout={selectedMemoryTraceReadout}
+          traceResponseRef={memoryTraceTargetResponseRef}
+          traceEvidenceFocusSourceId={memoryEvidenceFocusSourceId}
+          traceEvidencePreviewSourceId={memoryAgreementPreviewSourceId}
+          onTraceEvidenceFocusChange={focusMemoryTraceEvidence}
+          traceRouteHopFocus={memoryRouteHopFocus}
+          onTraceRouteHopFocusChange={focusMemoryTraceRouteHop}
+          traceRouteHopLock={memoryRouteHopLock}
+          onTraceRouteHopLockChange={lockMemoryTraceRouteHop}
+          identityProofBinding={cellIdentityProofBinding}
+          onTraceWrite={selectedOriginTraceable
+            ? recallSelectedCellOrigin
+            : undefined}
+          onIdentityProofRead={confirmCellIdentityProof}
+          semanticSource={enrichmentConfig.enabled
+            ? semanticsCache.source
+            : undefined}
+          semanticPhase={enrichmentConfig.enabled
+            ? selectedCellSemanticsPhase
+            : undefined}
+          semanticRecord={selectedCellSemantics}
+          semanticMessage={selectedSemanticsLookup.message}
+          semanticTransactionPhase={transactionSemanticsEnabled
+            ? selectedTransactionSemanticsPhase
+            : undefined}
+          semanticTransactionRecord={selectedTransactionSemantics}
+          semanticTransactionMessage={selectedTransactionLookup.message}
+          onScanInteractionChange={setCellScanInteractionActive}
+          onClose={clearCellSelection}
+        />
+      ) : null}
     </>
   );
 }
