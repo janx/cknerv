@@ -11,6 +11,7 @@ import { CELLS_Y } from '../layout';
 import {
   planDeliveries,
   deliveryPhase,
+  deliveryScheduleHorizon,
   easeInLob,
   bolusIngest,
   buildCellNearestIndex,
@@ -358,6 +359,18 @@ export default function BlockDeliveryLayer({
     }
 
     const age = now - pulse.at;
+    if (age >= deliveryScheduleHorizon(deliveries, CFG)) {
+      // Every carrier is past `done` — retire the pulse (this layer is the
+      // ref's only reader) so the resting frame pays one null check instead of
+      // walking every delivery + committing empty batches forever.
+      pulseRef.current = null;
+      bodyGeometry.setDrawRange(0, 0);
+      membraneBatch.count = 0;
+      wakeBatch.count = 0;
+      impactBatch.count = 0;
+      ignitedPulseAtRef.current = null;
+      return;
+    }
     // Three-arg setRGB: the spread form allocates an arguments array per frame.
     CARRIER_COLOR.setRGB(pulse.color[0], pulse.color[1], pulse.color[2]);
     state.camera.getWorldPosition(_cameraPosition);

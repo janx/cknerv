@@ -28,7 +28,10 @@ import { useSimClock } from '../tweaks/SimClockScope';
 import { LIVE } from '../tweaks/liveTweaks';
 import type { Vec3 } from '../types';
 import type { ColonyFlood } from '../derives/networkFlood.derive';
-import { colonyCourierSchedule } from '../derives/colonyCourier.derive';
+import {
+  colonyCourierSchedule,
+  courierScheduleHorizon,
+} from '../derives/colonyCourier.derive';
 import { easeOutCubic } from '../derives/peers.derive';
 import { makeCourierPlumeTexture, makeCourierBloomTexture } from '../materials/courierFlameTexture';
 import {
@@ -94,6 +97,7 @@ export default function ColonyCourierLayer({
   // The node→node throws for this block's tree. Pure; recomputed only when the
   // flood (new block / new origin) or the positions (topology) change.
   const schedule = useMemo(() => colonyCourierSchedule(cf, posById), [cf, posById]);
+  const scheduleHorizon = useMemo(() => courierScheduleHorizon(schedule), [schedule]);
 
   // Two fixed GPU batches replace 128 independently submitted scene objects.
   // Per-hop semantics still live in the matrices written below.
@@ -196,13 +200,22 @@ export default function ColonyCourierLayer({
       return;
     }
 
+    const age = simClock.elapsedSec - pulse.at;
+    if (age >= scheduleHorizon) {
+      // Every hop has arrived — retire the pulse so the resting frame pays one
+      // null check instead of walking the whole tree schedule forever.
+      pulseRef.current = null;
+      plumeBatch.count = 0;
+      bloomBatch.count = 0;
+      return;
+    }
+
     // The courier is only a moving sample of the edge surge, so both its knot
     // and trace inherit the same block carrier instead of introducing white.
     // Three-arg setRGB: the spread form allocates an arguments array per frame.
     plumeMat.color.setRGB(pulse.color[0], pulse.color[1], pulse.color[2]);
     bloomMat.color.setRGB(pulse.color[0], pulse.color[1], pulse.color[2]);
 
-    const age = simClock.elapsedSec - pulse.at;
     state.camera.getWorldPosition(_camPos);
     state.camera.getWorldQuaternion(_camQuat);
 

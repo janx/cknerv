@@ -146,6 +146,22 @@ export function deliveryPhase(localAge: number, cfg: DeliveryPhaseConfig): Deliv
   return { phase: 'done', t: 1 };
 }
 
+/**
+ * Age (s since pulse) at which EVERY delivery has reached `done`. deliveryPhase
+ * windows are contiguous and end at `startAge + lobDur + ingestDur`, and ages
+ * only advance, so past this horizon the pulse can never render another carrier
+ * and the layer may retire it. 0 for an empty plan → retire immediately. Pure.
+ */
+export function deliveryScheduleHorizon(
+  deliveries: Delivery[],
+  cfg: DeliveryPhaseConfig,
+): number {
+  if (deliveries.length === 0) return 0;
+  let maxStart = -Infinity;
+  for (const d of deliveries) maxStart = Math.max(maxStart, d.startAge);
+  return maxStart + cfg.lobDur + cfg.ingestDur;
+}
+
 export interface BolusIngest {
   /** Legacy API name; describes the carrier's Cell-contact envelope. */
   /** Carrier glyph scale multiplier: 1 at impact → 0 at commit. */

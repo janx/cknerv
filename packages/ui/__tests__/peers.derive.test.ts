@@ -12,6 +12,7 @@ import {
   easeInLob,
   planDeliveries,
   deliveryPhase,
+  deliveryScheduleHorizon,
   bolusIngest,
   buildCellNearestIndex,
   nearestCellIds,
@@ -186,6 +187,32 @@ describe('peers.derive', () => {
       const c = { chargeDur: 0, lobDur: 1, ingestDur: 0.3 };
       expect(deliveryPhase(-0.001, c)).toEqual({ phase: 'idle', t: 0 });
       expect(deliveryPhase(0, c)).toEqual({ phase: 'lob', t: 0 });
+    });
+  });
+
+  describe('deliveryScheduleHorizon', () => {
+    const CFG = { chargeDur: 0.4, lobDur: 1.0, ingestDur: 0.3 };
+    const d = (startAge: number) => ({
+      key: `k${startAge}`,
+      from: [0, 0, 0] as [number, number, number],
+      to: [0, 1, 0] as [number, number, number],
+      startAge, hero: false,
+    });
+
+    it('is the last start plus lob+ingest — the exact age deliveryPhase goes done', () => {
+      const deliveries = [d(0), d(0.8), d(0.25)];
+      const horizon = deliveryScheduleHorizon(deliveries, CFG);
+      expect(horizon).toBeCloseTo(0.8 + 1.0 + 0.3, 6);
+      // Just before the horizon the latest delivery is still rendering…
+      expect(deliveryPhase(horizon - 0.001 - 0.8, CFG).phase).toBe('ingest');
+      // …and at the horizon every delivery is done.
+      for (const dv of deliveries) {
+        expect(deliveryPhase(horizon - dv.startAge, CFG).phase).toBe('done');
+      }
+    });
+
+    it('empty plan retires immediately', () => {
+      expect(deliveryScheduleHorizon([], CFG)).toBe(0);
     });
   });
 

@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { colonyCourierSchedule } from '../src/derives/colonyCourier.derive';
+import {
+  colonyCourierSchedule,
+  courierScheduleHorizon,
+} from '../src/derives/colonyCourier.derive';
 import type { ColonyFlood } from '../src/derives/networkFlood.derive';
 import type { Vec3 } from '../src/types';
 
@@ -41,5 +44,18 @@ describe('colonyCourierSchedule', () => {
     const partial = new Map<string, Vec3>([['A', p(0)], ['B', p(1)]]); // C, D absent
     const hops = colonyCourierSchedule(cf, partial);
     expect(hops.map((h) => h.id)).toEqual(['B']);
+  });
+});
+
+describe('courierScheduleHorizon', () => {
+  it('is the latest arrival — every hop window ends at its arriveAge', () => {
+    const hops = colonyCourierSchedule(cf, posById);
+    const horizon = courierScheduleHorizon(hops);
+    expect(horizon).toBe(1.2); // C, the deepest node
+    for (const h of hops) expect(h.arriveAge).toBeLessThanOrEqual(horizon);
+  });
+
+  it('empty schedule retires immediately', () => {
+    expect(courierScheduleHorizon([])).toBe(0);
   });
 });

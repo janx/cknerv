@@ -33,3 +33,16 @@ export function colonyCourierSchedule(cf: ColonyFlood, posById: Map<string, Vec3
   }
   return out;
 }
+
+/**
+ * Latest arrival age across the schedule. A hop is in flight only before its
+ * `arriveAge` (the MIN-visibility stretch in the layer moves a window's START
+ * earlier, never its end), so past this age the pulse can never render another
+ * courier and the layer may retire it. 0 for an empty schedule → retire
+ * immediately. Pure.
+ */
+export function courierScheduleHorizon(schedule: CourierHop[]): number {
+  let horizon = 0;
+  for (const hop of schedule) horizon = Math.max(horizon, hop.arriveAge);
+  return horizon;
+}
