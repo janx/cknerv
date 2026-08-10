@@ -76,14 +76,27 @@ language change and requires browser review.
 
 ### Visible membership
 
-- Instanced Cell layers have a hard capacity of 20,000 records.
-- AUTO uses one stable structural budget of 6,000 visible Cells, or every Cell
-  when the retained field is smaller.
-- High, Med, and Low use the same AUTO membership. Adaptive quality must not
-  add or remove Cells because doing so rebuilds topology and creates a visible
-  density feedback loop.
+- Instanced Cell layers have a hard capacity of 50,000 records.
+- AUTO resolves its structural budget from the effective quality tier
+  (explicit product decision, 2026-08-10): High 50,000, Med 20,000,
+  Low 6,000 — or every Cell when the retained field is smaller. Low
+  preserves the historical single stable budget, so the weakest hardware
+  keeps its long-proven behavior.
+- Tier membership is nested and deterministic: a lower tier's visible set is
+  a subset of a higher tier's, resolved by the same selection rules from the
+  same retained cache. A tier change is one canonical render-set rebuild —
+  exactly the path a manual budget change already takes.
+- Tier changes ride the adaptive-quality hysteresis (evidence windows plus
+  switch cooldown). The density feedback loop that previously justified a
+  single fixed budget is bounded by that hysteresis and by the journal-driven
+  O(churn) rebuild economics.
+- Quality-driven reveal/conceal is not a biological event. Cells entering the
+  visible set render in their time-parametric lifecycle state (typically
+  settled — born long ago); they must not fire birth or death choreography,
+  and HUD counters keep reporting the retained totals, never the display
+  budget.
 - Manual Cell count remains independent from render quality and may request up
-  to the 20,000-Cell renderer ceiling.
+  to the 50,000-Cell renderer ceiling.
 - The selected Cell, its bounded inspection neighborhood, and current activity
   endpoints are pinned into the visible prefix when required. A visible nerve
   must never terminate at a quality-hidden Cell.
@@ -95,7 +108,8 @@ when no new block is arriving.
 
 - The passive budget is
   `min(8000, round(visible_cells * 4 / 3))`.
-- The default 6,000-Cell AUTO field therefore submits 8,000 resting nerves.
+- Any AUTO field of 6,000 Cells or more therefore submits 8,000 resting
+  nerves; the Low tier's 6,000-Cell field sits exactly at that ceiling.
 - A deterministic spanning forest is selected first. In the default AUTO
   field this keeps every connected visible Cell attached to the rendered
   nervous system.
@@ -179,8 +193,9 @@ they must not drop checksum lanes or the focused record.
 
 The following remain identical across High, Med, and Low:
 
-- AUTO visible Cell membership and ordering;
-- passive edge selection and 8,000-edge AUTO ceiling;
+- the visible-membership selection rules and ordering (the per-tier budgets
+  above change how many Cells render, never which rules pick them);
+- passive edge selection and the 8,000-edge AUTO ceiling;
 - four passive samples per edge;
 - passive curve shape, width baseline, energy hierarchy, and animation cadence;
 - event identity, route, start/end times, and terminal response; and
@@ -195,8 +210,8 @@ immediately.
 
 | Budget | Current value | Owner |
 |---|---:|---|
-| Instanced Cell capacity | 20,000 | `geometry/cellPositions.ts` |
-| AUTO visible Cells | 6,000 | `tweaks/cellDisplay.ts` |
+| Instanced Cell capacity | 50,000 | `geometry/cellPositions.ts` |
+| AUTO visible Cells | High 50,000 / Med 20,000 / Low 6,000 | `tweaks/cellDisplay.ts` |
 | Passive nerves | 8,000 maximum | `geometry/passiveNeighborGraph.ts` |
 | Passive curve samples | 4 per edge | `nerve/fabricCapacity.ts` |
 | Passive lifecycle generations | 3 | `nerve/fabricCapacity.ts` |
@@ -239,12 +254,17 @@ A performance-only change must not:
 
 - introduce quality-dependent passive edge caps, passive samples, or passive
   animation FPS;
-- reduce AUTO Cell membership by quality;
+- shrink a tier's visible membership below its sanctioned AUTO budget, change
+  the selection rules per tier, or add membership rungs outside the Visible
+  membership section (the tiered budgets themselves are a signed product
+  decision, not a precedent for further quality-driven trimming);
 - shorten, skip, or coalesce a semantic animation so that an observed event is
   no longer visible;
 - replace a real route with a cheaper synthetic route;
 - lower passive width/energy until the resting nervous system stops reading;
-- rebuild the Cell set or topology in response to adaptive quality alone;
+- rebuild the Cell set or topology in response to adaptive quality alone
+  (a tier change's single canonical render-set rebuild is the sanctioned
+  exception);
 - remove focused identity/evidence or make it sub-pixel; or
 - claim a gain from a hidden/throttled browser tab.
 

@@ -24,6 +24,6 @@ export function helixSeedFor(id: number): [number, number, number] {
 /** Hard visual ceiling shared by every instanced Cell layer. The default
  * server projection uses the same live-cell cap; a short death tail can remain
  * in the browser cache without overflowing because draw ranges clamp here. */
-export const INSTANCE_CAPACITY = 20_000;
+export const INSTANCE_CAPACITY = 50_000;
 export const BIRTH_DURATION_MS = 500;
 export const DEATH_DURATION_MS = 600;

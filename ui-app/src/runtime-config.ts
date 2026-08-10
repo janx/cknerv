@@ -43,7 +43,7 @@ export const DEFAULT_ENRICHMENT_CONFIG: EnrichmentRuntimeConfig = {
 };
 export const DEFAULT_GALAXY_CONFIG: GalaxyRuntimeConfig = {
   profile: 'auto',
-  cellCap: 20_000,
+  cellCap: 50_000,
   recentLinksCap: 2048,
   topology: {
     // Densified live to bridge the inter-arm gaps: sparse gap cells whose 4

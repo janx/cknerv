@@ -18,12 +18,21 @@ export const CELL_DISPLAY_STEP = 100;
 export const CELL_DISPLAY_FINE_MAX = 5_000;
 export const CELL_DISPLAY_COARSE_STEP = 250;
 /**
- * Stable structural budget for AUTO mode. Adaptive quality may change DPR and
- * transient effect sampling, but it must not add/remove thousands of Cells:
- * doing so rebuilds the passive topology and creates a visible density loop.
- * Smaller retained fields still show every Cell.
+ * Per-quality structural budgets for AUTO mode (explicit product decision,
+ * 2026-08-10: quality MAY adjust Galaxy membership within these rungs).
+ * `low` preserves the historical single stable budget, so the weakest
+ * hardware keeps its long-proven behavior; higher tiers spend measured
+ * headroom on field density. Rung changes ride the adaptive-quality
+ * hysteresis (evidence windows + switch cooldown), and the render set
+ * treats a budget change as one canonical rebuild — cells revealed this
+ * way render in their settled lifecycle state (born long ago), never as
+ * fake births. Smaller retained fields still show every Cell.
  */
-export const AUTO_CELL_DISPLAY_BUDGET = 6_000;
+export const AUTO_CELL_DISPLAY_BUDGETS: Record<QualityPreset, number> = {
+  low: 6_000,
+  med: 20_000,
+  high: 50_000,
+};
 
 const listeners = new Set<() => void>();
 let runtimeSnapshot: CellDisplayRuntimeSnapshot = {
@@ -121,16 +130,16 @@ export function cellDisplayLimitToSliderValue(
   );
 }
 
-/** AUTO owns one stable structural budget for the lifetime of the dashboard.
- * `quality` remains in the signature because callers already resolve the two
- * controls together, but it deliberately cannot change Galaxy membership.
- * The complete browser cache remains intact. */
+/** AUTO resolves the display budget from the effective quality tier —
+ * membership varies between the tier rungs by explicit product decision
+ * (see AUTO_CELL_DISPLAY_BUDGETS). The complete browser cache remains
+ * intact at every tier; the budget only bounds what the Galaxy renders. */
 export function automaticCellDisplayLimit(
-  _quality: QualityPreset,
+  quality: QualityPreset,
   capacity = CELL_DISPLAY_MAX,
 ): number {
   const maximum = normalizeCellDisplayCapacity(capacity);
-  return Math.min(maximum, AUTO_CELL_DISPLAY_BUDGET);
+  return Math.min(maximum, AUTO_CELL_DISPLAY_BUDGETS[quality]);
 }
 
 /** AUTO stays within both its stable visual budget and the server's retained

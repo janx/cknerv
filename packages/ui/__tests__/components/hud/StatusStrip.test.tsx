@@ -262,7 +262,7 @@ describe('StatusStrip', () => {
     expect(container.textContent).toContain('NOMINAL');
   });
 
-  it('offers a stable AUTO Cell cap with an immediate manual slider override', () => {
+  it('offers a tiered AUTO Cell cap with an immediate manual slider override', () => {
     const { container } = render(
       <StatusStrip level="nominal" uptimeMs={0} cellCount={5_000} />,
     );
@@ -277,10 +277,11 @@ describe('StatusStrip', () => {
     ) as HTMLInputElement;
 
     expect(automatic.getAttribute('aria-pressed')).toBe('true');
-    expect(slider.value).toBe('53');
-    expect(slider.max).toBe('109');
-    expect(slider.getAttribute('aria-valuetext')).toContain('6,000 Cells');
-    expect(control.getAttribute('data-cell-display-capacity')).toBe('20000');
+    // Default effective quality is `high`, whose AUTO rung is the full 50K.
+    expect(slider.value).toBe('229');
+    expect(slider.max).toBe('229');
+    expect(slider.getAttribute('aria-valuetext')).toContain('50,000 Cells');
+    expect(control.getAttribute('data-cell-display-capacity')).toBe('50000');
     expect(control.getAttribute('data-cell-display-count')).toBe('5000');
     expect(control.getAttribute('data-cell-display-available')).toBe('5000');
     expect(control.querySelector('[data-cell-display-track]')).not.toBeNull();
@@ -292,7 +293,7 @@ describe('StatusStrip', () => {
     ).not.toContain('SHOWN');
     expect(
       control.querySelector('[data-cell-display-cap]')?.textContent,
-    ).toContain('/6K');
+    ).toContain('/50K');
     expect(automatic.textContent).toContain('AUTO');
 
     fireEvent.change(slider, { target: { value: '29' } });
@@ -317,7 +318,7 @@ describe('StatusStrip', () => {
     expect(automatic.textContent).toContain('AUTO');
   });
 
-  it('keeps a 20K manual range while AUTO respects a smaller server cap', () => {
+  it('keeps a 50K manual range while AUTO respects a smaller server cap', () => {
     render(
       <StatusStrip
         level="nominal"
@@ -332,26 +333,26 @@ describe('StatusStrip', () => {
       { name: 'Displayed cell limit' },
     ) as HTMLInputElement;
 
-    expect(slider.max).toBe('109');
+    expect(slider.max).toBe('229');
     expect(slider.value).toBe('19');
     expect(slider.getAttribute('aria-valuetext')).toContain('2,000 Cells');
-    expect(control.getAttribute('data-cell-display-capacity')).toBe('20000');
+    expect(control.getAttribute('data-cell-display-capacity')).toBe('50000');
     expect(control.getAttribute('data-cell-display-source-capacity')).toBe('2000');
 
-    fireEvent.change(slider, { target: { value: '109' } });
+    fireEvent.change(slider, { target: { value: '229' } });
 
     expect(getCellDisplayRuntimeSnapshot()).toEqual({
       mode: 'manual',
-      manualLimit: 20_000,
+      manualLimit: 50_000,
     });
-    expect(control.getAttribute('data-cell-display-limit')).toBe('20000');
+    expect(control.getAttribute('data-cell-display-limit')).toBe('50000');
     expect(control.getAttribute('data-cell-display-count')).toBe('2000');
     expect(
       control.querySelector('[data-cell-display-shown]')?.textContent,
     ).toContain('2K');
     expect(
       control.querySelector('[data-cell-display-cap]')?.textContent,
-    ).toContain('/20K');
+    ).toContain('/50K');
     expect(control.getAttribute('title')).toContain(
       'server currently retains 2,000',
     );

@@ -28,7 +28,7 @@ use crate::projection::Projection;
 use crate::{AssetKind, LockKind};
 
 // ── visual / behavior constants — mirror cellGalaxy.ts ───────────────
-pub const CELL_CAP: usize = 20_000;
+pub const CELL_CAP: usize = 50_000;
 pub const DEFAULT_RECENT_LINKS_CAP: usize = 2048;
 /// Canonical block journals retained for exact reorg rollback. This stays
 /// intentionally smaller than the historical replay window: deeper changes

@@ -69,7 +69,7 @@ describe('resolveGalaxyConfig', () => {
 
   it('falls back to bundled defaults when galaxy config is missing', () => {
     expect(resolveGalaxyConfig({})).toEqual(DEFAULT_GALAXY_CONFIG);
-    expect(resolveGalaxyConfig({}).cellCap).toBe(20_000);
+    expect(resolveGalaxyConfig({}).cellCap).toBe(50_000);
   });
 });
 
