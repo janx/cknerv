@@ -54,9 +54,13 @@ describe('NetworkColony Cell-inspection context', () => {
       'return vec4(color, passive + eventAlpha)',
     );
     expect(material).toContain('shape * alphaExtra * eventScale');
-    expect(nodes).toContain(
-      'selected ? 1 : contextEnergyRef?.current ?? 1',
+    // The selection exemption moved with the instanced halo merge: the
+    // per-peer flag rides aPeerSelected and the shader restores full context
+    // energy for the selected peer.
+    expect(material).toContain(
+      'float contextEnergy = mix(uContextEnergy, 1.0, vPeerSelected);',
     );
+    expect(nodes).toContain("selectedId === `peer:${node.peer!.node_id}` ? 1 : 0");
     expect(nodes).toContain('contextEnergyRef={contextEnergyRef}');
   });
 

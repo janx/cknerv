@@ -19,7 +19,6 @@
 // field keeps only delivery/commit feedback; the broad wave belongs here.
 import { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
-import { Billboard } from '@react-three/drei';
 import { useSimFrame } from '../tweaks/useSimFrame';
 import { useSimClock } from '../tweaks/SimClockScope';
 import { LIVE } from '../tweaks/liveTweaks';
@@ -36,13 +35,12 @@ import {
   type ShockwaveUniforms,
 } from '../materials/shockwaveMaterial';
 import {
+  makeMeasuredPeerHalosMaterial,
   makePeerCloudMaterial,
-  makePeerHaloMaterial,
 } from '../materials/peerNodeMaterial';
 
 // Measured core: bright, saturated, larger than the ghost haze.
 const MEASURED_SIZE = 1.4;
-const MEASURED_BRIGHTNESS = 1.6;
 
 // Measured node tint = the real peer palette: version-mismatch (violet) wins,
 // else connection direction — single-sourced via peerColorKind (see the
@@ -105,69 +103,135 @@ function InferredCloud({
 }
 
 /**
- * One measured peer as a glow-node: the same core+halo shader (makeHaloMaterial)
- * on a camera-facing plane — bright, saturated, larger than the ghost haze, and
- * gently modulating (per-node phase/rate so the colony reads distributed, not synced).
- * A small invisible solid sphere sits underneath as the hit-target so the halo is
- * clickable (a billboarded plane raycasts poorly). Selection draws the reticle.
+ * EVERY measured peer's glow-halo in one instanced draw. Replaces the
+ * per-peer drei Billboard + single-quad mesh (two frame subscribers and a
+ * fresh Euler per peer per frame): the shader rebuilds the camera-facing
+ * quad from the view matrix and evaluates the per-node breathe from
+ * instanced rate/phase against one shared clock. Per-peer identity (tint,
+ * phase, rate, selection) rides instanced attributes rewritten only when
+ * the measured set or the selection changes.
  */
-function MeasuredNode({
-  node,
+function MeasuredPeerHalos({
+  measured,
   localVersion,
-  selected,
-  onSelect,
+  selectedId,
   contextEnergyRef,
   shockwaveUniforms,
 }: {
-  node: NetworkNode;
+  measured: NetworkNode[];
   localVersion: string;
-  selected: boolean;
-  onSelect: (id: string | null) => void;
+  selectedId: string | null;
   contextEnergyRef?: { readonly current: number };
   shockwaveUniforms: ShockwaveUniforms;
 }) {
   const simClock = useSimClock();
-  // Key the tint on its VALUE inputs, not the node object: the topology memo
-  // hands MeasuredNode a fresh `node` per latency poll, and a fresh Color here
-  // would rebuild the ShaderMaterial (program-cache churn) every rebuild.
-  const colorKind = peerColorKind(node.peer!, localVersion);
-  const color = useMemo(
-    () => new THREE.Color(...PEER_COLORS[colorKind]),
-    [colorKind],
+  const meshRef = useRef<THREE.InstancedMesh>(null);
+  const material = useMemo(
+    () => makeMeasuredPeerHalosMaterial(shockwaveUniforms),
+    [shockwaveUniforms],
   );
-  const haloMat = useMemo(() => {
-    const m = makePeerHaloMaterial(color, shockwaveUniforms);
-    // Per-node phase so the shader's secondary breathe isn't synced colony-wide
-    // (defaults to 0 → a phantom colony-wide pulse). Matches GlowNode/CrystalGlow.
-    m.uniforms.uPhase.value = phaseFor(node.id);
-    return m;
-  }, [color, node.id, shockwaveUniforms]);
-  const phase = useMemo(() => phaseFor(node.id), [node.id]);
-  const rate = useMemo(() => 0.7 + 0.6 * rateFor(node.id), [node.id]);
+  const geometry = useMemo(() => {
+    const plane = new THREE.PlaneGeometry(MEASURED_SIZE * 6, MEASURED_SIZE * 6);
+    return plane;
+  }, []);
+  const capacity = Math.max(1, measured.length);
 
+  // Static per-peer identity: rebuilt only when the measured set (or a
+  // version tint input) changes — the topology memo is churn-stable.
+  const identity = useMemo(() => {
+    const color = new Float32Array(capacity * 3);
+    const phase = new Float32Array(capacity);
+    const rate = new Float32Array(capacity);
+    measured.forEach((node, index) => {
+      const [r, g, b] = PEER_COLORS[peerColorKind(node.peer!, localVersion)];
+      color[index * 3] = r;
+      color[index * 3 + 1] = g;
+      color[index * 3 + 2] = b;
+      phase[index] = phaseFor(node.id);
+      rate[index] = 0.7 + 0.6 * rateFor(node.id);
+    });
+    return { color, phase, rate };
+  }, [capacity, measured, localVersion]);
+  const selectedArray = useMemo(
+    () => new Float32Array(capacity),
+    [capacity],
+  );
+
+  useEffect(() => {
+    const mesh = meshRef.current;
+    if (!mesh) return;
+    mesh.count = measured.length;
+    measured.forEach((node, index) => {
+      SCRATCH_MATRIX.makeTranslation(node.pos[0], node.pos[1], node.pos[2]);
+      mesh.setMatrixAt(index, SCRATCH_MATRIX);
+    });
+    mesh.instanceMatrix.needsUpdate = true;
+    mesh.geometry.setAttribute(
+      'aPeerColor',
+      new THREE.InstancedBufferAttribute(identity.color, 3),
+    );
+    mesh.geometry.setAttribute(
+      'aPeerPhase',
+      new THREE.InstancedBufferAttribute(identity.phase, 1),
+    );
+    mesh.geometry.setAttribute(
+      'aPeerRate',
+      new THREE.InstancedBufferAttribute(identity.rate, 1),
+    );
+  }, [identity, measured]);
+
+  useEffect(() => {
+    const mesh = meshRef.current;
+    if (!mesh) return;
+    measured.forEach((node, index) => {
+      selectedArray[index] =
+        selectedId === `peer:${node.peer!.node_id}` ? 1 : 0;
+    });
+    const attribute = new THREE.InstancedBufferAttribute(selectedArray, 1);
+    mesh.geometry.setAttribute('aPeerSelected', attribute);
+    attribute.needsUpdate = true;
+  }, [measured, selectedArray, selectedId]);
+
+  useEffect(() => () => {
+    geometry.dispose();
+    material.dispose();
+  }, [geometry, material]);
+
+  // The single frame subscriber the whole measured belt now costs.
   useSimFrame(() => {
-    const t = simClock.elapsedSec;
-    haloMat.uniforms.uTime.value = t;
-    haloMat.uniforms.uIntensity.value =
-      MEASURED_BRIGHTNESS
-      * (0.85 + 0.15 * Math.sin(t * rate + phase));
-    haloMat.uniforms.uContextEnergy.value =
-      selected ? 1 : contextEnergyRef?.current ?? 1;
+    material.uniforms.uTime.value = simClock.elapsedSec;
+    material.uniforms.uContextEnergy.value = contextEnergyRef?.current ?? 1;
   });
 
-  useEffect(() => () => haloMat.dispose(), [haloMat]);
+  return (
+    <instancedMesh
+      ref={meshRef}
+      args={[geometry, material, capacity]}
+      frustumCulled={false}
+    />
+  );
+}
 
+const SCRATCH_MATRIX = new THREE.Matrix4();
+
+/**
+ * One measured peer's INTERACTION surface: the invisible solid hit-target
+ * (a camera-facing plane raycasts poorly) and the selection reticle. The
+ * visible halo itself is drawn by MeasuredPeerHalos in one instanced pass.
+ */
+function MeasuredNode({
+  node,
+  selected,
+  onSelect,
+}: {
+  node: NetworkNode;
+  selected: boolean;
+  onSelect: (id: string | null) => void;
+}) {
   return (
     <group position={node.pos}>
-      <Billboard follow lockX={false} lockY={false} lockZ={false}>
-        <mesh material={haloMat}>
-          <planeGeometry args={[MEASURED_SIZE * 6, MEASURED_SIZE * 6]} />
-        </mesh>
-      </Billboard>
-      {/* Small invisible solid hit-target so the halo is clickable (a plane
-          raycasts poorly). An invisible MATERIAL keeps the raycast (the
-          Raycaster never consults material.visible) while the renderer skips
-          the draw entirely. */}
+      {/* An invisible MATERIAL keeps the raycast (the Raycaster never
+          consults material.visible) while the renderer skips the draw. */}
       <mesh
         onClick={(e) => {
           e.stopPropagation();
@@ -266,15 +330,19 @@ export default function ColonyNodes({
         contextEnergyRef={contextEnergyRef}
         shockwaveUniforms={shockwaveUniforms}
       />
+      <MeasuredPeerHalos
+        measured={measured}
+        localVersion={localVersion}
+        selectedId={selectedId}
+        contextEnergyRef={contextEnergyRef}
+        shockwaveUniforms={shockwaveUniforms}
+      />
       {measured.map((n) => (
         <MeasuredNode
           key={n.id}
           node={n}
           selected={selectedId === `peer:${n.peer!.node_id}`}
           onSelect={onSelect}
-          localVersion={localVersion}
-          contextEnergyRef={contextEnergyRef}
-          shockwaveUniforms={shockwaveUniforms}
         />
       ))}
     </group>

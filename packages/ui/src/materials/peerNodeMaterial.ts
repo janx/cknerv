@@ -215,3 +215,117 @@ export function makePeerHaloMaterial(
     `,
   });
 }
+
+/** Injected so the instanced port and the historical per-node CPU loop share
+ * one definition of the measured core's brightness envelope. */
+export const MEASURED_PEER_BRIGHTNESS = 1.6;
+
+/**
+ * Every measured peer halo in ONE instanced draw. Replaces one drei Billboard
+ * plus one single-quad mesh (and two frame subscribers) per peer: the
+ * billboard is rebuilt from the view matrix's camera axes — exactly the
+ * orientation the follow-Billboard's camera quaternion produced — and the
+ * per-node breathe (rate/phase) plus intensity envelope move from per-material
+ * uniforms into instanced attributes evaluated against one shared uTime.
+ * Selection keeps its context-energy exemption through aPeerSelected.
+ */
+export function makeMeasuredPeerHalosMaterial(
+  uniforms?: ShockwaveUniforms,
+): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    uniforms: {
+      uTime: { value: 0 },
+      uContextEnergy: { value: 1 },
+      ...sharedShockwave(uniforms),
+    },
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    toneMapped: false,
+    vertexShader: /* glsl */ `
+      attribute vec3 aPeerColor;
+      attribute float aPeerPhase;
+      attribute float aPeerRate;
+      attribute float aPeerSelected;
+
+      varying vec2 vUv;
+      varying float vShockwave;
+      varying vec3 vShockwaveCarrier;
+      varying vec3 vPeerColor;
+      varying float vPeerPhase;
+      varying float vPeerRate;
+      varying float vPeerSelected;
+
+      uniform float uTime;
+      ${SHOCKWAVE_UNIFORMS_GLSL}
+
+      ${SHOCKWAVE_SIGNAL_GLSL}
+
+      void main() {
+        vUv = uv;
+        vPeerColor = aPeerColor;
+        vPeerPhase = aPeerPhase;
+        vPeerRate = aPeerRate;
+        vPeerSelected = aPeerSelected;
+        vec4 origin = modelMatrix
+          * instanceMatrix
+          * vec4(0.0, 0.0, 0.0, 1.0);
+        vec4 wave = shockwaveSignalAt(origin.xz);
+        vShockwave = wave.a;
+        vShockwaveCarrier = wave.rgb;
+        float expand = 1.0 + min(1.0, vShockwave) * uShockwaveSizeBoost;
+        // The follow-Billboard applied the camera's world quaternion; the
+        // view matrix's row axes are that same frame, so the silhouette is
+        // identical with zero per-frame CPU.
+        vec3 cameraRight = vec3(
+          viewMatrix[0][0], viewMatrix[1][0], viewMatrix[2][0]
+        );
+        vec3 cameraUp = vec3(
+          viewMatrix[0][1], viewMatrix[1][1], viewMatrix[2][1]
+        );
+        vec3 world = origin.xyz
+          + (cameraRight * position.x + cameraUp * position.y) * expand;
+        gl_Position = projectionMatrix * viewMatrix * vec4(world, 1.0);
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      precision highp float;
+
+      varying vec2 vUv;
+      varying float vShockwave;
+      varying vec3 vShockwaveCarrier;
+      varying vec3 vPeerColor;
+      varying float vPeerPhase;
+      varying float vPeerRate;
+      varying float vPeerSelected;
+
+      uniform float uTime;
+      uniform float uContextEnergy;
+      ${SHOCKWAVE_UNIFORMS_GLSL}
+
+      ${PEER_SHOCKWAVE_RESPONSE_GLSL}
+
+      void main() {
+        float r = length(vUv - 0.5) * 2.0;
+        if (r > 1.0) discard;
+        float core = pow(1.0 - r, 4.0);
+        float halo = pow(1.0 - r, 1.6) * 0.42;
+        // The historical CPU envelope, verbatim: intensity uniform carried
+        // MEASURED_PEER_BRIGHTNESS * (0.85 + 0.15 * sin(t * rate + phase)).
+        float envelope = ${MEASURED_PEER_BRIGHTNESS.toFixed(1)}
+          * (0.85 + 0.15 * sin(uTime * vPeerRate + vPeerPhase));
+        float breathe = 0.78 + 0.22 * sin(uTime * 1.2 + vPeerPhase);
+        float intensity = envelope * breathe;
+        float contextEnergy = mix(uContextEnergy, 1.0, vPeerSelected);
+        vec4 signal = peerShockwaveResponse(
+          vPeerColor,
+          core + halo,
+          halo,
+          intensity * contextEnergy,
+          intensity
+        );
+        gl_FragColor = signal;
+      }
+    `,
+  });
+}
