@@ -483,6 +483,9 @@ export default function App({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Historical replay is not renderer evidence for adaptive quality.
+  const hydrationActiveRef = useRef(false);
+  hydrationActiveRef.current = cellsCache.backfill !== null;
   const chain = chainCache.chain;
   const chainNodes = chainCache.chainNodes;
   const peers = chainCache.peers;
@@ -1153,7 +1156,9 @@ export default function App({
           ) : null}
           {/* Auto mode samples raw frame time with long hysteresis. Manual
               high/med/low in the backtick panel overrides it immediately. */}
-          {qualityOverride ? null : <AdaptiveQualityController />}
+          {qualityOverride ? null : (
+            <AdaptiveQualityController hydrationActiveRef={hydrationActiveRef} />
+          )}
           {/* Mirrors the backtick leva panel into the LIVE tuning store.
               Re-renders only on knob drag (no per-frame cost); mount once. */}
           <TweakSync />

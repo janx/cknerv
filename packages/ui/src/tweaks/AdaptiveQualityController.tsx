@@ -16,15 +16,26 @@ import {
 
 const MAX_VALID_WINDOW_MS = ADAPTIVE_SAMPLE_WINDOW_MS * 4;
 
+export interface AdaptiveQualityControllerProps {
+  /** True while historical hydration/replay is in flight (cells backfill).
+   * Replay is not renderer evidence — same rule as hidden tabs: frames
+   * rendered under a catch-up storm say nothing about steady capability,
+   * and counting them locks weak-looking boots into a lower tier. */
+  hydrationActiveRef?: { readonly current: boolean };
+}
+
 /** Always-on, low-overhead frame-time controller. It samples window averages,
  * never gl.info, and runs on raw render time so pause/time-scale cannot disguise
  * performance. React state changes only when the effective preset changes. */
-export default function AdaptiveQualityController(): null {
+export default function AdaptiveQualityController({
+  hydrationActiveRef,
+}: AdaptiveQualityControllerProps = {}): null {
   const { quality } = useControls('Time', QUALITY_MODE_CONTROL);
   const mode = quality as QualityMode;
   const adaptiveState = useRef(createAdaptiveQualityState());
   const frames = useRef(0);
   const lastAt = useRef(0);
+  const hydrationSeen = useRef(false);
 
   useEffect(() => {
     setQualityMode(mode);
@@ -38,6 +49,23 @@ export default function AdaptiveQualityController(): null {
   useFrame(() => {
     if (mode !== 'auto') return;
     if (typeof document !== 'undefined' && document.hidden) {
+      frames.current = 0;
+      lastAt.current = 0;
+      return;
+    }
+    if (hydrationActiveRef?.current) {
+      hydrationSeen.current = true;
+      frames.current = 0;
+      lastAt.current = 0;
+      return;
+    }
+    if (hydrationSeen.current) {
+      // Replay just finished: restart with a fresh warmup so the settle
+      // frames right after hydration do not count as evidence either.
+      hydrationSeen.current = false;
+      adaptiveState.current = createAdaptiveQualityState(
+        getQualityRuntimeSnapshot().effective,
+      );
       frames.current = 0;
       lastAt.current = 0;
       return;

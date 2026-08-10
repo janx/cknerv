@@ -211,8 +211,10 @@ The following remain identical across High, Med, and Low:
 
 AUTO quality samples raw frame time with warmup, hysteresis, and cooldown.
 Hidden tabs, debugger pauses, and delayed callbacks are not renderer evidence
-and must not trigger a quality change. Manual High/Med/Low takes ownership
-immediately.
+and must not trigger a quality change; neither is historical hydration/replay
+(the cells backfill window and a fresh warmup after it) — catch-up storms say
+nothing about steady rendering capability. Manual High/Med/Low takes
+ownership immediately.
 
 ## Reference Budgets
 
