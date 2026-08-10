@@ -29,15 +29,31 @@ export interface NeighborGraphWorkerRequest {
   includePassive: boolean;
   /** Visual-only edge cap; null selects the canonical population-derived cap. */
   passiveEdgeBudget: number | null;
-  /** Repeated `[from, to]` keys retained from the current passive fabric. */
+  /** Repeated `[from, to]` keys retained from the current passive fabric.
+   * Only consulted when the worker session has no retained selection of its
+   * own (first build after a fresh worker); a stateful session prefers its
+   * previous passive result. */
   preferredEdges: Float64Array | null;
 }
 
 export interface NeighborGraphWorkerSuccess {
   kind: 'built';
   requestId: number;
+  /** Monotonic per-session build counter. The main thread only trusts the
+   * incremental hints below when generations chain without a gap; otherwise
+   * it falls back to the full order-strict probe, which is always correct. */
+  generation: number;
   graph: SerializedNeighborGraph;
   passiveGraph: SerializedNeighborGraph | null;
+  /** Ids (new graph) whose adjacency differs from this session's PREVIOUS
+   * graph — compared in the worker with the same order-strict probe the main
+   * thread would run. Null = no previous build in this session. */
+  changedNodeIds: Float64Array | null;
+  /** Passive-selection delta vs this session's previous selection, packed
+   * `[from, to, d, w(NaN=none)]` / `[from, to]`. Null when no previous
+   * selection exists (consumer must treat passiveGraph as a full set). */
+  passiveAdded: Float64Array | null;
+  passiveRemoved: Float64Array | null;
 }
 
 export interface NeighborGraphWorkerFailure {
@@ -261,22 +277,198 @@ export function deserializeNeighborGraphInto(
   return { adjacency, edges };
 }
 
-/** Pure Worker entry point, also exercised directly by protocol tests. */
+const PACKED_DELTA_EDGE_STRIDE = 4;
+
+function packEdgeList(edges: readonly NeighborEdge[]): Float64Array {
+  const packed = new Float64Array(edges.length * PACKED_DELTA_EDGE_STRIDE);
+  let offset = 0;
+  for (const edge of edges) {
+    packed[offset] = edge.from;
+    packed[offset + 1] = edge.to;
+    packed[offset + 2] = edge.d;
+    packed[offset + 3] = edge.w ?? Number.NaN;
+    offset += PACKED_DELTA_EDGE_STRIDE;
+  }
+  return packed;
+}
+
+/** Unpack a `[from,to,d,w]` delta edge list (shared by tests + consumers). */
+export function unpackDeltaEdges(packed: Float64Array | null): NeighborEdge[] {
+  if (packed === null) return [];
+  if (packed.length % PACKED_DELTA_EDGE_STRIDE !== 0) {
+    throw new Error('invalid packed delta edge buffer');
+  }
+  const edges: NeighborEdge[] = [];
+  for (let offset = 0; offset < packed.length; offset += PACKED_DELTA_EDGE_STRIDE) {
+    const edge: NeighborEdge = {
+      from: packed[offset],
+      to: packed[offset + 1],
+      d: packed[offset + 2],
+    };
+    const weight = packed[offset + 3];
+    if (!Number.isNaN(weight)) edge.w = weight;
+    edges.push(edge);
+  }
+  return edges;
+}
+
+function edgeSetKey(edge: NeighborEdge): string {
+  return `${edge.from}:${edge.to}`;
+}
+
+/** Worker-side diff of the new graph against the session's previous one,
+ * using the SAME order-strict comparison the main thread's reuse probe runs
+ * — so "unchanged" here is exactly "the main thread may adopt its previous
+ * Set instance without probing". */
+function collectChangedNodeIds(
+  previous: NeighborGraph,
+  next: NeighborGraph,
+): Float64Array {
+  const changed: number[] = [];
+  for (const [id, neighbours] of next.adjacency) {
+    const before = previous.adjacency.get(id);
+    if (before === undefined || before.size !== neighbours.size) {
+      changed.push(id);
+      continue;
+    }
+    const iterator = before.values();
+    let same = true;
+    for (const neighbourId of neighbours) {
+      if (iterator.next().value !== neighbourId) {
+        same = false;
+        break;
+      }
+    }
+    if (!same) changed.push(id);
+  }
+  return Float64Array.from(changed);
+}
+
+export interface NeighborGraphWorkerSession {
+  execute(request: NeighborGraphWorkerRequest): NeighborGraphWorkerSuccess;
+}
+
+/** Stateful worker session: retains the previous build so each response can
+ * carry incremental hints (changed nodes, passive-selection delta) computed
+ * OFF the main thread, and reuses its own previous passive selection as the
+ * continuity preference instead of having the main thread pack it back. */
+export function createNeighborGraphWorkerSession(): NeighborGraphWorkerSession {
+  let generation = 0;
+  let lastGraph: NeighborGraph | null = null;
+  let lastPassiveEdges: NeighborEdge[] | null = null;
+
+  return {
+    execute(request) {
+      const cells = unpackTopologyCells(request.cells);
+      const graph = buildNeighborGraph(cells, request.options);
+      const passiveGraph = request.includePassive
+        ? buildPassiveNeighborGraph(graph, {
+          edgeBudget: request.passiveEdgeBudget ?? undefined,
+          preferredEdges:
+            lastPassiveEdges ?? unpackPreferredEdges(request.preferredEdges),
+        })
+        : null;
+
+      const changedNodeIds = lastGraph !== null
+        ? collectChangedNodeIds(lastGraph, graph)
+        : null;
+
+      let passiveAdded: Float64Array | null = null;
+      let passiveRemoved: Float64Array | null = null;
+      if (passiveGraph !== null && lastPassiveEdges !== null) {
+        const beforeByKey = new Map(
+          lastPassiveEdges.map((edge) => [edgeSetKey(edge), edge]),
+        );
+        const added: NeighborEdge[] = [];
+        const afterKeys = new Set<string>();
+        for (const edge of passiveGraph.edges) {
+          const key = edgeSetKey(edge);
+          afterKeys.add(key);
+          if (!beforeByKey.has(key)) added.push(edge);
+        }
+        const removed: NeighborEdge[] = [];
+        for (const edge of lastPassiveEdges) {
+          if (!afterKeys.has(edgeSetKey(edge))) removed.push(edge);
+        }
+        passiveAdded = packEdgeList(added);
+        passiveRemoved = packEdgeList(removed);
+      }
+
+      generation += 1;
+      lastGraph = graph;
+      lastPassiveEdges = passiveGraph ? [...passiveGraph.edges] : null;
+
+      return {
+        kind: 'built',
+        requestId: request.requestId,
+        generation,
+        graph: serializeNeighborGraph(graph),
+        passiveGraph: passiveGraph ? serializeNeighborGraph(passiveGraph) : null,
+        changedNodeIds,
+        passiveAdded,
+        passiveRemoved,
+      };
+    },
+  };
+}
+
+/** Stateless entry point retained for tests and one-shot use. */
 export function executeNeighborGraphWorkerRequest(
   request: NeighborGraphWorkerRequest,
 ): NeighborGraphWorkerSuccess {
-  const cells = unpackTopologyCells(request.cells);
-  const graph = buildNeighborGraph(cells, request.options);
-  const passiveGraph = request.includePassive
-    ? buildPassiveNeighborGraph(graph, {
-      edgeBudget: request.passiveEdgeBudget ?? undefined,
-      preferredEdges: unpackPreferredEdges(request.preferredEdges),
-    })
-    : null;
-  return {
-    kind: 'built',
-    requestId: request.requestId,
-    graph: serializeNeighborGraph(graph),
-    passiveGraph: passiveGraph ? serializeNeighborGraph(passiveGraph) : null,
-  };
+  return createNeighborGraphWorkerSession().execute(request);
+}
+
+/**
+ * Hint-guided variant of `deserializeNeighborGraphInto`: nodes absent from
+ * `changedNodeIds` adopt the previous graph's Set instance WITHOUT the
+ * per-neighbour probe (the worker already ran the identical order-strict
+ * comparison against the same previous build). Callers must only pass hints
+ * whose generation chains from the previously applied response; with null
+ * hints this is exactly the probing deserialize.
+ */
+export function deserializeNeighborGraphWithHints(
+  previous: NeighborGraph | null,
+  serialized: SerializedNeighborGraph,
+  changedNodeIds: Float64Array | null,
+): NeighborGraph {
+  if (previous === null || changedNodeIds === null) {
+    return deserializeNeighborGraphInto(previous, serialized);
+  }
+  if (
+    serialized.adjacencyOffsets.length !== serialized.nodeIds.length + 1
+    || serialized.adjacencyOffsets.at(-1) !== serialized.adjacentNodeIds.length
+  ) {
+    throw new Error('invalid packed topology adjacency buffer');
+  }
+  const changed = new Set(changedNodeIds);
+  const adjacency = new Map<number, Set<number>>();
+  for (let index = 0; index < serialized.nodeIds.length; index += 1) {
+    const nodeId = serialized.nodeIds[index];
+    const start = serialized.adjacencyOffsets[index];
+    const end = serialized.adjacencyOffsets[index + 1];
+    if (end < start || end > serialized.adjacentNodeIds.length) {
+      throw new Error('invalid packed topology adjacency offsets');
+    }
+    if (!changed.has(nodeId)) {
+      const before = previous.adjacency.get(nodeId);
+      // Defensive: a missing/mis-sized previous Set means the hint cannot
+      // be honored for this node; rebuilding is always correct.
+      if (before !== undefined && before.size === end - start) {
+        adjacency.set(nodeId, before);
+        continue;
+      }
+    }
+    const neighbours = new Set<number>();
+    for (let adjacentIndex = start; adjacentIndex < end; adjacentIndex += 1) {
+      neighbours.add(serialized.adjacentNodeIds[adjacentIndex]);
+    }
+    adjacency.set(nodeId, neighbours);
+  }
+  // Edge records keep the positional value-reuse of the probing path.
+  const edgesOnly = deserializeNeighborGraphInto(
+    previous === null ? null : { adjacency: new Map(), edges: previous.edges },
+    serialized,
+  );
+  return { adjacency, edges: edgesOnly.edges };
 }

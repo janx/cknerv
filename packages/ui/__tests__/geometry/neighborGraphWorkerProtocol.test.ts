@@ -4,12 +4,15 @@ import { buildNeighborGraph } from '../../src/geometry/neighborGraph';
 import { shortestPath } from '../../src/geometry/pathRouter';
 import { buildPassiveNeighborGraph } from '../../src/geometry/passiveNeighborGraph';
 import {
+  createNeighborGraphWorkerSession,
   deserializeNeighborGraph,
   deserializeNeighborGraphInto,
+  deserializeNeighborGraphWithHints,
   executeNeighborGraphWorkerRequest,
   packPreferredEdges,
   packTopologyCells,
   serializeNeighborGraph,
+  unpackDeltaEdges,
   unpackTopologyCells,
 } from '../../src/geometry/neighborGraphWorkerProtocol';
 
@@ -159,5 +162,82 @@ describe('neighbor graph Worker protocol', () => {
       expect([...patched.adjacency.get(nodeId)!])
         .toEqual([...(deserializeNeighborGraph(serialized).adjacency.get(nodeId)!)]);
     });
+  });
+});
+
+describe('createNeighborGraphWorkerSession (stateful increments)', () => {
+  function packedCells(ids: number[]): Float64Array {
+    const packed = new Float64Array(ids.length * 4);
+    ids.forEach((id, i) => {
+      packed[i * 4] = id;
+      packed[i * 4 + 1] = (id % 7) * 3;
+      packed[i * 4 + 2] = 0;
+      packed[i * 4 + 3] = (id % 5) * 2;
+    });
+    return packed;
+  }
+  const request = (ids: number[], requestId: number) => ({
+    kind: 'build' as const,
+    requestId,
+    cells: packedCells(ids),
+    options: { k: 3 },
+    includePassive: true,
+    passiveEdgeBudget: null,
+    preferredEdges: null,
+  });
+
+  it('reports changed nodes and passive deltas that reproduce a full build', () => {
+    const session = createNeighborGraphWorkerSession();
+    const ids = Array.from({ length: 40 }, (_, i) => i + 1);
+    const first = session.execute(request(ids, 1));
+    expect(first.generation).toBe(1);
+    expect(first.changedNodeIds).toBeNull();
+    expect(first.passiveAdded).toBeNull();
+
+    const ids2 = [...ids.filter((id) => id !== 17), 99];
+    const second = session.execute(request(ids2, 2));
+    expect(second.generation).toBe(2);
+    expect(second.changedNodeIds).not.toBeNull();
+
+    // Oracle: hints must reproduce exactly what the probing path builds.
+    const firstGraph = deserializeNeighborGraph(first.graph);
+    const viaHints = deserializeNeighborGraphWithHints(
+      firstGraph,
+      second.graph,
+      second.changedNodeIds,
+    );
+    const viaProbe = deserializeNeighborGraph(second.graph);
+    expect(viaHints.adjacency.size).toBe(viaProbe.adjacency.size);
+    for (const [id, neighbours] of viaProbe.adjacency) {
+      expect([...viaHints.adjacency.get(id)!]).toEqual([...neighbours]);
+    }
+    // Unchanged nodes adopt the previous Set instance without a probe.
+    const changed = new Set(second.changedNodeIds!);
+    let adopted = 0;
+    for (const [id, neighbours] of viaHints.adjacency) {
+      if (!changed.has(id) && firstGraph.adjacency.get(id) === neighbours) {
+        adopted += 1;
+      }
+    }
+    expect(adopted).toBeGreaterThan(0);
+
+    // Passive delta oracle: previous selection + delta === new selection.
+    const before = new Set(
+      deserializeNeighborGraph(first.passiveGraph!).edges.map(
+        (edge) => `${edge.from}:${edge.to}`,
+      ),
+    );
+    for (const edge of unpackDeltaEdges(second.passiveRemoved)) {
+      before.delete(`${edge.from}:${edge.to}`);
+    }
+    for (const edge of unpackDeltaEdges(second.passiveAdded)) {
+      before.add(`${edge.from}:${edge.to}`);
+    }
+    const after = new Set(
+      deserializeNeighborGraph(second.passiveGraph!).edges.map(
+        (edge) => `${edge.from}:${edge.to}`,
+      ),
+    );
+    expect([...before].sort()).toEqual([...after].sort());
   });
 });

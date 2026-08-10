@@ -53,7 +53,7 @@ class FakeWorker {
 }
 
 describe('createNeighborGraphBuilder', () => {
-  it('terminates and resolves a superseded build as null', async () => {
+  it('resolves a superseded build null and keeps the worker alive', async () => {
     const workers: FakeWorker[] = [];
     const builder = createNeighborGraphBuilder({
       minWorkerCells: 0,
@@ -68,12 +68,15 @@ describe('createNeighborGraphBuilder', () => {
     const second = builder.build(cells(10), { topology: { k: 2 } });
 
     expect(await first).toBeNull();
-    expect(workers).toHaveLength(2);
-    expect(workers[0].terminated).toBe(true);
-    workers[1].complete();
+    // The worker session survives supersession — its retained previous build
+    // powers incremental responses; only dispose/failure terminates it.
+    expect(workers).toHaveLength(1);
+    expect(workers[0].terminated).toBe(false);
+    workers[0].complete();
     const result = await second;
     expect([...result!.graph.adjacency.keys()]).toEqual([11, 12, 13, 14, 15, 16]);
     builder.dispose();
+    expect(workers[0].terminated).toBe(true);
   });
 
   it('falls back to the canonical synchronous builder after a Worker error', async () => {
@@ -113,16 +116,14 @@ describe('createNeighborGraphBuilder', () => {
   });
 
   it('threads reuseFrom into the deserializer so unchanged Sets survive', async () => {
-    const workerA = new FakeWorker();
-    const workerB = new FakeWorker();
-    const workers = [workerA, workerB];
+    const worker = new FakeWorker();
     const builder = createNeighborGraphBuilder({
       minWorkerCells: 0,
-      workerFactory: () => workers.shift() as unknown as Worker,
+      workerFactory: () => worker as unknown as Worker,
     });
 
     const firstPending = builder.build(cells(), { topology: { k: 2 } });
-    workerA.complete();
+    worker.complete();
     const first = await firstPending;
     expect(first).not.toBeNull();
 
@@ -130,7 +131,7 @@ describe('createNeighborGraphBuilder', () => {
       topology: { k: 2 },
       reuseFrom: () => ({ graph: first!.graph, passiveGraph: null }),
     });
-    workerB.complete();
+    worker.complete();
     const second = await secondPending;
 
     expect(second!.graph).not.toBe(first!.graph);

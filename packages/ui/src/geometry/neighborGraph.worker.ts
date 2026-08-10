@@ -1,5 +1,5 @@
 import {
-  executeNeighborGraphWorkerRequest,
+  createNeighborGraphWorkerSession,
   type NeighborGraphWorkerRequest,
   type NeighborGraphWorkerResponse,
 } from './neighborGraphWorkerProtocol';
@@ -10,18 +10,22 @@ interface WorkerScope {
 }
 
 const workerScope = globalThis as unknown as WorkerScope;
+const session = createNeighborGraphWorkerSession();
 
 workerScope.onmessage = (event) => {
   const request = event.data;
   if (request.kind !== 'build') return;
   try {
-    const response = executeNeighborGraphWorkerRequest(request);
+    const response = session.execute(request);
     const transfer: Transferable[] = [
       response.graph.nodeIds.buffer,
       response.graph.adjacencyOffsets.buffer,
       response.graph.adjacentNodeIds.buffer,
       response.graph.edges.buffer,
     ];
+    if (response.changedNodeIds) transfer.push(response.changedNodeIds.buffer);
+    if (response.passiveAdded) transfer.push(response.passiveAdded.buffer);
+    if (response.passiveRemoved) transfer.push(response.passiveRemoved.buffer);
     if (response.passiveGraph) {
       transfer.push(
         response.passiveGraph.nodeIds.buffer,

@@ -322,6 +322,9 @@ export default function NeuralNetwork({
   // them on every birth would continually cancel useful topology work.
   const graphRef = useRef<NeighborGraph>(emptyNeighborGraph());
   const passiveGraphRef = useRef<NeighborGraph>(emptyNeighborGraph());
+  /** Consecutive delta-applied builds since the last full setFabric
+   * reconcile (see the delta path below). */
+  const fabricDeltaStreakRef = useRef(0);
   const displayGraphRef = useRef<NeighborGraph>(emptyNeighborGraph());
   const displayCellsRef = useRef<Map<number, Cell>>(new Map());
   const displayRenderSetRef = useRef(createCellRenderSetState());
@@ -483,12 +486,47 @@ export default function NeuralNetwork({
         displayCellsRef.current = displayCells;
         displayTopologyRef.current = topologyKey;
         displayTopologyVersionRef.current = requestedTopologyVersion;
+        const wasBootstrapped = displayBootstrappedRef.current;
         displayBootstrappedRef.current = true;
-        fabricHandlesRef.current?.setFabric(
-          passiveGraph,
-          displayCells,
-          simClock.elapsedSec,
-        );
+        const handles = fabricHandlesRef.current;
+        // Selection deltas from the worker session let ordinary per-block
+        // churn skip the O(selection) full-set diff. The eager living-mesh
+        // driver may occasionally grow an edge the final selection never
+        // confirms, so every 16th delta application reconciles with one
+        // full setFabric — bounded drift, amortized cost.
+        const delta = result.passiveDelta;
+        if (
+          handles
+          && wasBootstrapped
+          && delta !== null
+          && fabricDeltaStreakRef.current < 16
+        ) {
+          fabricDeltaStreakRef.current += 1;
+          if (delta.removed.length > 0) {
+            handles.killEdges(
+              delta.removed.map((edge) => `${edge.from}:${edge.to}`),
+              simClock.elapsedSec,
+              'gc',
+            );
+          }
+          if (delta.added.length > 0) {
+            const bornAtByKey = new Map<string, number>();
+            const dirByKey = new Map<string, 1 | -1>();
+            for (const edge of delta.added) {
+              const key = `${edge.from}:${edge.to}`;
+              bornAtByKey.set(key, simClock.elapsedSec);
+              dirByKey.set(key, 1);
+            }
+            handles.growEdges(delta.added, displayCells, bornAtByKey, dirByKey);
+          }
+        } else {
+          fabricDeltaStreakRef.current = 0;
+          handles?.setFabric(
+            passiveGraph,
+            displayCells,
+            simClock.elapsedSec,
+          );
+        }
         const selectedCellId = latestInspectionCellIdRef.current;
         const next = deriveCellInspectionField(result.graph, selectedCellId);
         displayInspectionCellIdRef.current = selectedCellId;

@@ -8,9 +8,10 @@ import {
 import { buildPassiveNeighborGraph } from './passiveNeighborGraph';
 import {
   PACKED_TOPOLOGY_CELL_STRIDE,
-  deserializeNeighborGraphInto,
+  deserializeNeighborGraphWithHints,
   packPreferredEdges,
   packTopologyCells,
+  unpackDeltaEdges,
   type NeighborGraphWorkerRequest,
   type NeighborGraphWorkerResponse,
 } from './neighborGraphWorkerProtocol';
@@ -59,6 +60,13 @@ export interface NeighborGraphBuildOptions {
 export interface NeighborGraphBuildResult {
   graph: NeighborGraph;
   passiveGraph: NeighborGraph | null;
+  /** Passive-selection delta vs the PREVIOUS applied build, available when
+   * the worker session's generations chained without a gap. Null means the
+   * consumer must treat `passiveGraph` as a full replacement. */
+  passiveDelta: {
+    added: NeighborEdge[];
+    removed: NeighborEdge[];
+  } | null;
 }
 
 export interface NeighborGraphBuilder {
@@ -96,6 +104,7 @@ function buildSynchronously(
         preferredEdges: options.preferredEdges,
       })
       : null,
+    passiveDelta: null,
   };
 }
 
@@ -122,6 +131,11 @@ export function createNeighborGraphBuilder(
   let active: ActiveBuild | null = null;
   let nextRequestId = 1;
   let disposed = false;
+  /** Generation of the last worker response actually APPLIED on this side.
+   * Incremental hints are trusted only when the next response chains from
+   * it; a superseded/dropped response breaks the chain and downgrades one
+   * build to the always-correct probing path. */
+  let lastAppliedGeneration = 0;
 
   const terminateWorker = () => {
     if (!worker) return;
@@ -132,12 +146,16 @@ export function createNeighborGraphBuilder(
     worker = null;
   };
 
+  // The worker survives across builds (its session retains the previous
+  // graph so responses carry incremental hints, and per-build spawn + JIT
+  // re-warm disappear). Superseding an in-flight request only abandons the
+  // RESULT: responses are keyed by requestId, and a stale response advances
+  // nothing on this side. Termination is reserved for dispose and failures.
   const cancel = () => {
     if (active) {
       active.resolve(null);
       active = null;
     }
-    terminateWorker();
   };
 
   const fallbackActive = (requestId: number) => {
@@ -208,18 +226,31 @@ export function createNeighborGraphBuilder(
           }
           try {
             const reuse = options.reuseFrom?.() ?? null;
+            const chained = response.generation === lastAppliedGeneration + 1;
             const result: NeighborGraphBuildResult = {
-              graph: deserializeNeighborGraphInto(
+              graph: deserializeNeighborGraphWithHints(
                 reuse?.graph ?? null,
                 response.graph,
+                chained ? response.changedNodeIds : null,
               ),
               passiveGraph: response.passiveGraph
-                ? deserializeNeighborGraphInto(
+                ? deserializeNeighborGraphWithHints(
                   reuse?.passiveGraph ?? null,
                   response.passiveGraph,
+                  null,
                 )
                 : null,
+              passiveDelta:
+                chained
+                && response.passiveAdded !== null
+                && response.passiveRemoved !== null
+                  ? {
+                    added: unpackDeltaEdges(response.passiveAdded),
+                    removed: unpackDeltaEdges(response.passiveRemoved),
+                  }
+                  : null,
             };
+            lastAppliedGeneration = response.generation;
             active = null;
             worker!.onmessage = null;
             worker!.onerror = null;
