@@ -3,7 +3,7 @@ import type { Cell } from '@cknerv/types';
 import { buildNeighborGraph } from '../../src/geometry/neighborGraph';
 import {
   buildPassiveNeighborGraph,
-  PASSIVE_EDGE_BUDGET,
+  PASSIVE_EDGE_CEILING,
   PASSIVE_EDGES_PER_CELL,
   passiveEdgeBudget,
 } from '../../src/geometry/passiveNeighborGraph';
@@ -72,12 +72,16 @@ describe('buildPassiveNeighborGraph', () => {
     expect(keys(a).every((key) => fullKeys.has(key))).toBe(true);
   });
 
-  it('fills the fixed screen cap for the quality-invariant 6K AUTO field', () => {
+  it('keeps the nerves-per-Cell ratio constant across tier-scale fields', () => {
+    // Explicit product decision (2026-08-10): the nerve budget follows the
+    // visible Cell count so the picture stays equally neural at every tier.
     expect(passiveEdgeBudget(6_000)).toBe(Math.round(6_000 * PASSIVE_EDGES_PER_CELL));
-    expect(passiveEdgeBudget(6_000)).toBe(PASSIVE_EDGE_BUDGET);
-    expect(passiveEdgeBudget(9_000)).toBe(PASSIVE_EDGE_BUDGET);
-    expect(passiveEdgeBudget(14_000)).toBe(PASSIVE_EDGE_BUDGET);
-    expect(passiveEdgeBudget(20_000)).toBe(PASSIVE_EDGE_BUDGET);
+    expect(passiveEdgeBudget(6_000)).toBe(8_000); // historical Low field
+    expect(passiveEdgeBudget(20_000)).toBe(26_667);
+    expect(passiveEdgeBudget(50_000)).toBe(66_667);
+    expect(passiveEdgeBudget(50_000)).toBe(PASSIVE_EDGE_CEILING);
+    // The renderer's full-field ceiling bounds any larger request.
+    expect(passiveEdgeBudget(90_000)).toBe(PASSIVE_EDGE_CEILING);
   });
 
   it('preserves surviving old branches after guaranteeing current coverage', () => {

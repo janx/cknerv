@@ -106,10 +106,17 @@ language change and requires browser review.
 The Cell galaxy must read as a neural network in every quality mode, including
 when no new block is arriving.
 
-- The passive budget is
-  `min(8000, round(visible_cells * 4 / 3))`.
-- Any AUTO field of 6,000 Cells or more therefore submits 8,000 resting
-  nerves; the Low tier's 6,000-Cell field sits exactly at that ceiling.
+- The passive budget is `round(visible_cells * 4 / 3)`, bounded only by the
+  full-field ceiling of 66,667 edges (50,000 Cells x 4/3). The nerve budget
+  follows the visible Cell count at every quality tier (explicit product
+  decision, 2026-08-10): the tiers render 8,000 / 26,667 / 66,667 resting
+  nerves for their 6,000 / 20,000 / 50,000 Cell fields, so the
+  nerves-per-Cell ratio - the visual identity of the nervous system - stays
+  constant and a denser field never reads bald.
+- GPU buffer allocation quantizes to one class per tier budget
+  (`fabricAllocationEdges`); the fabric remounts through one canonical
+  rebuild when the display budget crosses a class boundary, so a machine
+  that settles on the Low tier never holds High-tier buffers.
 - A deterministic spanning forest is selected first. In the default AUTO
   field this keeps every connected visible Cell attached to the rendered
   nervous system.
@@ -123,10 +130,10 @@ when no new block is arriving.
   ceiling instead of clipping to a uniform white mass. Active paths remain in
   separate additive layers and retain visual headroom.
 
-The 8,000-edge screen cap is also the upper bound for manual fields larger than
-AUTO. Such fields must remain coverage-first and visibly neural, but perfect
-per-Cell passive coverage is not guaranteed once a spanning tree itself would
-exceed the cap.
+Manual fields derive their nerve budget by the same ratio and quantize into
+the same allocation classes. Coverage stays first: the spanning forest of any
+tier-scale field now fits its own budget, so every connected visible Cell
+remains attached to the rendered nervous system at every tier.
 
 Current presentation defaults are a 2.5 CSS-pixel passive width, `0.15` fabric
 energy, a `0.44` midpoint taper floor, and a `0.34` weak-twig floor. These are
@@ -195,7 +202,8 @@ The following remain identical across High, Med, and Low:
 
 - the visible-membership selection rules and ordering (the per-tier budgets
   above change how many Cells render, never which rules pick them);
-- passive edge selection and the 8,000-edge AUTO ceiling;
+- the passive selection rules and the 4/3 nerves-per-Cell ratio (per-tier
+  budgets change how many nerves render, never how they are chosen);
 - four passive samples per edge;
 - passive curve shape, width baseline, energy hierarchy, and animation cadence;
 - event identity, route, start/end times, and terminal response; and
@@ -212,11 +220,11 @@ immediately.
 |---|---:|---|
 | Instanced Cell capacity | 50,000 | `geometry/cellPositions.ts` |
 | AUTO visible Cells | High 50,000 / Med 20,000 / Low 6,000 | `tweaks/cellDisplay.ts` |
-| Passive nerves | 8,000 maximum | `geometry/passiveNeighborGraph.ts` |
+| Passive nerves | visible Cells x 4/3 (High 66,667 / Med 26,667 / Low 8,000) | `geometry/passiveNeighborGraph.ts` |
 | Passive curve samples | 4 per edge | `nerve/fabricCapacity.ts` |
 | Passive lifecycle generations | 3 | `nerve/fabricCapacity.ts` |
-| Passive segment allocation | 96,000 | `nerve/fabricCapacity.ts` |
-| Sparse warm-route allocation | 32,000 segments | `nerve/fabricCapacity.ts` |
+| Passive segment allocation | per class: edges x 3 x 4 (ceiling 800,004) | `nerve/fabricCapacity.ts` |
+| Sparse warm-route allocation | per class: edges x 4 (ceiling 266,668) | `nerve/fabricCapacity.ts` |
 | Live active-route allocation | 6,000 segments | `nerve/NeuralFabric.tsx` |
 | Memory-route allocation | 6,000 segments | `nerve/NeuralFabric.tsx` |
 | Cell birth envelope | 500 ms | `geometry/cellPositions.ts` |

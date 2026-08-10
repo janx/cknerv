@@ -30,8 +30,9 @@ import { bezierAtInto, bezierControlInto, fabricEdgeSeed } from '../geometry/edg
 import { fabricEdgeKey, orderFabricStateKeys } from './fabricOrder';
 import {
   FABRIC_SAMPLES_PER_EDGE,
-  MAX_FABRIC_SEGMENTS,
-  MAX_WARM_FABRIC_SEGMENTS,
+  FABRIC_ALLOCATION_EDGE_CLASSES,
+  fabricSegmentAllocation,
+  warmSegmentAllocation,
 } from './fabricCapacity';
 import {
   FABRIC_SLOT_FILLER_Y,
@@ -231,6 +232,11 @@ export interface NeuralFabricProps {
   onReady: (handles: NeuralFabricHandles) => void;
   /** Shared camera-distance focus. Optional keeps standalone scenes unchanged. */
   cellDetailViewFocusRef?: { readonly current: number };
+  /** Edge-allocation class sizing the passive/warm GPU buffers (see
+   * `fabricAllocationEdges`). The owner remounts this component (React key)
+   * when the class changes, so one mount always holds one allocation.
+   * Default = the smallest class, today's historical 8K field. */
+  allocationEdges?: number;
 }
 
 interface FatLineLayer {
@@ -1119,6 +1125,7 @@ const SETTLED_EDGE_RENDER: EdgeRender = {
 export default function NeuralFabric({
   onReady,
   cellDetailViewFocusRef,
+  allocationEdges = FABRIC_ALLOCATION_EDGE_CLASSES[0],
 }: NeuralFabricProps) {
   const simClock = useSimClock();
   const { size } = useThree();
@@ -1127,24 +1134,24 @@ export default function NeuralFabric({
 
   const fabric = useMemo(
     () => makeFatLineLayer(
-      MAX_FABRIC_SEGMENTS,
+      fabricSegmentAllocation(allocationEdges),
       LIVE.cell.fabricWidth,
       'screen',
       true,
       true,
       true, // GPU-parametric lifecycle: static slots, sim-time evaluation
     ),
-    [],
+    [allocationEdges],
   );
   const warmRoutes = useMemo(
     () => makeFatLineLayer(
-      MAX_WARM_FABRIC_SEGMENTS,
+      warmSegmentAllocation(allocationEdges),
       LIVE.cell.fabricWidth,
       'screen',
       false,
       true,
     ),
-    [],
+    [allocationEdges],
   );
   const active = useMemo(
     () => makeFatLineLayer(MAX_ACTIVE_SEGMENTS, LIVE.cell.activeWidth, 'additive'),

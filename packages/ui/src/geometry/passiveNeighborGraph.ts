@@ -1,15 +1,21 @@
+import { INSTANCE_CAPACITY } from './cellPositions';
 import { fabricEdgeSeed } from './edgeBezier';
 import type { NeighborEdge, NeighborGraph } from './neighborGraph';
 
-/** Hard screen-composition budget. AUTO's 6K Cell field reaches this ceiling,
- * which leaves room for the complete spanning arbor plus visible cross-links
- * without returning to the complete k-NN graph's uniform hair. */
-export const PASSIVE_EDGE_BUDGET = 8_000;
 /** Admit enough resting fibres to keep every connected Cell on the visible
- * arbor and still retain capillary cross-links. This policy is deliberately
- * independent of render quality: High/Med/Low change raster/transient costs,
- * never the Cell nervous system. */
+ * arbor and still retain capillary cross-links. This ratio is the stable
+ * visual identity of the nervous system: the nerve budget follows the visible
+ * Cell count at every quality tier (explicit product decision, 2026-08-10),
+ * so a denser Cell field always reads equally neural — quality changes how
+ * many Cells AND nerves render together, never their proportion. */
 export const PASSIVE_EDGES_PER_CELL = 4 / 3;
+/** Absolute nerve ceiling at the full renderer field: enough for the
+ * spanning arbor plus cross-links over every instanced Cell slot. The old
+ * fixed 8,000 screen cap survives as the LOW tier's derived budget
+ * (6,000 Cells × 4/3), not as a global ceiling. */
+export const PASSIVE_EDGE_CEILING = Math.round(
+  INSTANCE_CAPACITY * PASSIVE_EDGES_PER_CELL,
+);
 /** Most screen energy belongs to coherent carrying branches. */
 export const PASSIVE_TRUNK_SHARE = 0.72;
 /** A minority of lower-order arbor edges break up clean top-weight contours. */
@@ -69,11 +75,12 @@ function spanningCoverageEdges(graph: NeighborGraph): NeighborEdge[] {
   return coverage;
 }
 
-/** Stable, bounded passive-fibre budget for a visible Cell population. */
+/** Ratio-constant passive-fibre budget for a visible Cell population,
+ *  bounded only by the full-field ceiling. */
 export function passiveEdgeBudget(nodeCount: number): number {
   if (!Number.isFinite(nodeCount) || nodeCount <= 1) return 0;
   return Math.min(
-    PASSIVE_EDGE_BUDGET,
+    PASSIVE_EDGE_CEILING,
     Math.max(1, Math.round(nodeCount * PASSIVE_EDGES_PER_CELL)),
   );
 }
@@ -94,8 +101,8 @@ function graphFromEdges(
 /**
  * Derive the resting biological silhouette without changing authoritative
  * routing. The full graph stays connected for pulse planning; this layer is a
- * bounded arbor drawing that keeps every Cell attached whenever its spanning
- * forest fits the screen cap (including the default 6K AUTO field).
+ * bounded arbor drawing that keeps every Cell attached: each tier's ratio-
+ * derived budget exceeds its own field's spanning forest.
  *
  * Selection is deterministic and hierarchical:
  *  1. a spanning forest keeps every connected Cell on a visible nerve;
@@ -168,9 +175,10 @@ export function buildPassiveNeighborGraph(
     kept.push(edge);
   };
 
-  // Connectivity is the visual contract. In the normal AUTO field its
-  // spanning forest fits below the 8K cap, so every Cell is visibly attached
-  // before continuity and decorative cross-links compete for the remainder.
+  // Connectivity is the visual contract. Every tier's budget exceeds its
+  // own field's spanning forest (4/3 ratio > 1 edge per Cell), so every
+  // connected Cell is visibly attached before continuity and decorative
+  // cross-links compete for the remainder.
   for (const edge of coverage) keep(edge);
   for (const previous of options.preferredEdges ?? []) {
     const current = availableByKey.get(edgeKey(previous));

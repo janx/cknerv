@@ -31,6 +31,7 @@ import { useSimFrame } from '../tweaks/useSimFrame';
 import { useSimClock } from '../tweaks/SimClockScope';
 import { galaxyFrame } from '../tweaks/galaxyFrame';
 import { QUALITY_PRESETS, useQualityRuntime } from '../tweaks/qualityPresets';
+import { fabricAllocationEdges } from './fabricCapacity';
 import {
   resolveCellDisplayLimit,
   useCellDisplayRuntime,
@@ -288,6 +289,21 @@ export default function NeuralNetwork({
     quality,
     cellCapacity,
   );
+  // Fabric GPU allocation quantizes the display budget to tier-scale
+  // classes; a short settle keeps a manual slider drag from remounting the
+  // fabric at every class boundary it sweeps through. The remount (React
+  // key below) is the sanctioned tier-change rebuild: one mount always
+  // holds exactly one allocation.
+  const targetAllocationEdges = fabricAllocationEdges(cellDisplayLimit);
+  const [fabricAllocation, setFabricAllocation] = useState(targetAllocationEdges);
+  useEffect(() => {
+    if (targetAllocationEdges === fabricAllocation) return undefined;
+    const settle = setTimeout(
+      () => setFabricAllocation(targetAllocationEdges),
+      400,
+    );
+    return () => clearTimeout(settle);
+  }, [targetAllocationEdges, fabricAllocation]);
   const activityCellIds = useMemo(
     () => galaxyComposition ? currentActivityCellIds(cellsCache) : [],
     [cellsCache.pulseLinks, galaxyComposition],
@@ -1700,6 +1716,8 @@ export default function NeuralNetwork({
   return (
     <>
       <NeuralFabric
+        key={fabricAllocation}
+        allocationEdges={fabricAllocation}
         onReady={onFabricReady}
         cellDetailViewFocusRef={cellDetailViewFocusRef}
       />

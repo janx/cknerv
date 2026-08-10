@@ -206,7 +206,7 @@ describe('NeuralFabric living-mesh handles', () => {
     expect(SRC).toContain("accumulation === 'screen'");
     expect(SRC).toContain('&& optimizePassiveGeometry');
     expect(SRC).toMatch(
-      /MAX_FABRIC_SEGMENTS,[\s\S]*?'screen',[\s\S]*?true,/,
+      /fabricSegmentAllocation\(allocationEdges\),[\s\S]*?'screen',[\s\S]*?true,/,
     );
     expect(SRC).toContain(': new LineSegmentsGeometry()');
   });
@@ -246,7 +246,7 @@ describe('NeuralFabric living-mesh handles', () => {
   });
 
   it('decays and uploads reinforcement through a sparse warm-route layer', () => {
-    expect(SRC).toContain('MAX_WARM_FABRIC_SEGMENTS');
+    expect(SRC).toContain('warmSegmentAllocation(allocationEdges)');
     expect(SRC).toContain('warmRouteKeysRef');
     expect(SRC).toContain('warmRouteBrightnessGain(');
     expect(SRC).toContain('commitLayer(warmRoutes)');
