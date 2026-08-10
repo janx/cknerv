@@ -26,6 +26,10 @@ import {
   syncCellRenderSet,
   type CellRenderRange,
 } from '../geometry/cellRenderSet';
+import {
+  createCellSlotState,
+  syncCellSlots,
+} from '../geometry/cellSlotAssignment';
 import { ScreenSpaceHitIndex } from '../geometry/screenSpaceHitIndex';
 export {
   pinCellInspectionFieldInVisiblePrefix,
@@ -1087,6 +1091,8 @@ export default function CellGalaxy({
    * replacements patch indexed slots, and births beyond the display cap leave
    * this array untouched. */
   const cellRenderSetRef = useRef(createCellRenderSetState());
+  /** Stable GPU slot assignment over the render set's membership. */
+  const cellSlotStateRef = useRef(createCellSlotState());
   /** Unchanged immutable Cell objects retain their expensive hash/taxonomy
    * presentation even when GC moves them to a different visible slot. */
   const cellBufferPresentationCacheRef = useRef(
@@ -1404,10 +1410,16 @@ export default function CellGalaxy({
         activityCellIds,
       )
       : null;
-    const cellsList = renderUpdate?.cells ?? renderSet.cells;
+    // Stable-slot indirection: the render set's LIST reorders per block
+    // (activity leads, cap eviction removes from the front), but each cell
+    // keeps its GPU slot while visible, so uploads collapse to O(churn).
+    const slotSync = renderUpdate
+      ? syncCellSlots(cellSlotStateRef.current, renderUpdate.cells)
+      : null;
+    const cellsList = slotSync?.cells ?? cellSlotStateRef.current.published;
     const count = cellsList.length;
-    const cellBufferRanges = renderUpdate?.ranges ?? EMPTY_CELL_BUFFER_RANGES;
-    const renderMembershipChanged = renderUpdate?.membershipChanged ?? false;
+    const cellBufferRanges = slotSync?.ranges ?? EMPTY_CELL_BUFFER_RANGES;
+    const renderMembershipChanged = slotSync?.membershipChanged ?? false;
     const drawCountChanged = count !== drawCountRef.current;
     cellsListRef.current = cellsList;
     drawCountRef.current = count;
@@ -1573,7 +1585,7 @@ export default function CellGalaxy({
       if (dirtyFlashIds && dirtyFlashIds.size > 0) {
         const dirtyFlashRanges = writeDirtyCellFlashSlots(
           dirtyFlashIds,
-          cellRenderSetRef.current.indexById,
+          cellSlotStateRef.current.slotOf,
           drawCountRef.current,
           cellFlashRef.current,
           cellFlashAtAttr.array as Float32Array,

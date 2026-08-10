@@ -137,7 +137,9 @@ describe('CellGalaxy', () => {
     const source = readFileSync(CELL_GALAXY_SOURCE, 'utf8');
 
     expect(source).toContain('writeDirtyCellFlashSlots(');
-    expect(source).toContain('cellRenderSetRef.current.indexById');
+    // The flash writer resolves ids through the STABLE slot map — list
+    // positions reshuffle per block, GPU slots do not.
+    expect(source).toContain('cellSlotStateRef.current.slotOf');
     expect(source).toContain('mergeCellFlashRanges(');
     expect(source).toContain('dirtyFlashIds?.clear()');
     expect(source).toContain('writeFlashSlots(');
@@ -848,8 +850,10 @@ describe('CellGalaxy useSimFrame buffer behavior', () => {
 
     expect(source).toContain('const renderUpdate = renderNeedsSync');
     expect(source).toContain('? syncCellRenderSet(');
+    // Uploads are driven by the stable-slot sync, not list positions.
+    expect(source).toContain('syncCellSlots(cellSlotStateRef.current');
     expect(source).toContain(
-      'const cellBufferRanges = renderUpdate?.ranges',
+      'const cellBufferRanges = slotSync?.ranges',
     );
     expect(source).toContain('cellBufferRanges,');
     expect(source).toContain('markCellBufferUpdateRanges(');
