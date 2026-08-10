@@ -144,6 +144,31 @@ export default function CellPortraitInset({
     gl.setScissorTest(false);
   }, [gl]);
 
+  // The braid's programs compile asynchronously on mount
+  // (KHR_parallel_shader_compile where the driver offers it) so the FIRST
+  // selection never blocks a frame on shader compilation — that lazy compile
+  // was the dominant slice of the ~100ms first-select hitch. The braid pass
+  // simply starts once its programs are ready (a few frames, under the scan
+  // reveal); programs are cached per shader, so every later mount resolves
+  // immediately.
+  const braidCompiledRef = useRef(false);
+  useEffect(() => {
+    braidCompiledRef.current = false;
+    let cancelled = false;
+    // One frame lets the portal's children commit their materials first.
+    const raf = requestAnimationFrame(() => {
+      void gl.compileAsync(braidScene, braidCamera)
+        .catch(() => undefined)
+        .then(() => {
+          if (!cancelled) braidCompiledRef.current = true;
+        });
+    });
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(raf);
+    };
+  }, [gl, braidScene, braidCamera]);
+
   useFrame((state) => {
     const renderer = state.gl;
     renderer.autoClear = true;
@@ -175,6 +200,9 @@ export default function CellPortraitInset({
       braidCamera.aspect = aspect;
       braidCamera.updateProjectionMatrix();
     }
+    // Programs still compiling: keep the square empty for these few frames
+    // instead of stalling the whole canvas on a synchronous compile.
+    if (!braidCompiledRef.current) return;
     renderer.autoClear = false;
     renderer.setScissorTest(true);
     renderer.setScissor(
