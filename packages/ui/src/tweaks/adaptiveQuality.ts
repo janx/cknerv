@@ -1,7 +1,13 @@
 import type { QualityPreset } from './qualityPresets';
 
 export const ADAPTIVE_SAMPLE_WINDOW_MS = 750;
-export const ADAPTIVE_WARMUP_MS = 4_000;
+/** Boot grace before frames count as tier evidence. Sized for the FULL
+ * first-composition storm at the High tier on a resumed session (initial
+ * 50K kNN worker build, first 66K-nerve fabric growth, catch-up batches),
+ * which lasts well past the old 4s and — measured live — knocked every
+ * boot down a tier before steady state existed. Weak hardware still walks
+ * down afterwards; it just starts judging from steady frames. */
+export const ADAPTIVE_WARMUP_MS = 12_000;
 export const ADAPTIVE_SWITCH_COOLDOWN_MS = 6_000;
 export const ADAPTIVE_EMA_TIME_MS = 1_500;
 
