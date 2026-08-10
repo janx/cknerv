@@ -144,15 +144,24 @@ export default function CellPortraitInset({
     gl.setScissorTest(false);
   }, [gl]);
 
-  // The braid's programs compile asynchronously on mount
-  // (KHR_parallel_shader_compile where the driver offers it) so the FIRST
+  // The braid's programs compile asynchronously on mount so the FIRST
   // selection never blocks a frame on shader compilation — that lazy compile
   // was the dominant slice of the ~100ms first-select hitch. The braid pass
   // simply starts once its programs are ready (a few frames, under the scan
   // reveal); programs are cached per shader, so every later mount resolves
   // immediately.
+  //
+  // ONLY when the driver offers KHR_parallel_shader_compile: without it,
+  // compileAsync degrades to one synchronous batch compile in a microtask —
+  // measurably WORSE than the historical lazy spread (250ms vs 103ms on the
+  // extension-less headless GLES stack) — so such drivers keep the old
+  // first-render compile instead.
   const braidCompiledRef = useRef(false);
   useEffect(() => {
+    if (!gl.extensions.has('KHR_parallel_shader_compile')) {
+      braidCompiledRef.current = true;
+      return undefined;
+    }
     braidCompiledRef.current = false;
     let cancelled = false;
     // One frame lets the portal's children commit their materials first.
