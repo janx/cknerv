@@ -9,7 +9,7 @@ import {
   syncCellRenderSet,
 } from '../../src/geometry/cellRenderSet';
 import type { CellInspectionField } from '../../src/nerve/cellInspectionField';
-import { applyCellDelta, emptyCellsCache } from '@cknerv/cache';
+import { applyCellDelta, applyRevisionedCellDeltas, emptyCellsCache } from '@cknerv/cache';
 
 function cell(id: number, assetKind?: AssetKind): Cell {
   return {
@@ -537,5 +537,67 @@ describe('syncCellRenderSet', () => {
     const pinned = syncCellRenderSet(state, selected, 3, 9, null);
     expect(pinned.mode).toBe('rebuild');
     expect(pinned.cells.map(({ id }) => id)).toEqual([0, 1, 9]);
+  });
+});
+
+describe('full-coverage journal fast path (composition present)', () => {
+  function cacheOf(ids: readonly number[]) {
+    let cache = emptyCellsCache();
+    for (const id of ids) {
+      cache = applyCellDelta(cache, { type: 'birth', cell: cell(id) });
+    }
+    return cache;
+  }
+
+  it('applies per-block churn incrementally when the budget covers everyone', () => {
+    const state = createCellRenderSetState();
+    let cache = cacheOf([1, 2, 3, 4, 5]);
+    const record = composition([cell(1)], [cell(2)], [cell(3)]);
+    const first = syncCellRenderSet(state, cache, 50, null, null, record, [1]);
+    expect(first.mode).toBe('rebuild');
+
+    // One block batch: a birth, a value replacement, a front GC removal,
+    // and a CHANGED activity set — previously any of these forced a full
+    // rebuild.
+    cache = applyRevisionedCellDeltas(cache, [
+      { revision: 2, delta: { type: 'birth', cell: cell(9) } },
+      { revision: 3, delta: { type: 'tag', id: 2, tag: 'dex' } },
+      { revision: 4, delta: { type: 'gc', ids: [1] } },
+    ]);
+    const second = syncCellRenderSet(state, cache, 50, null, null, record, [9]);
+    expect(second.mode).toBe('incremental');
+    expect(second.membershipChanged).toBe(true);
+    const ids = second.cells.map((c) => c.id).sort((a, b) => a - b);
+    expect(ids).toEqual([2, 3, 4, 5, 9]);
+    expect(second.cells.find((c) => c.id === 2)?.tag).toBe('dex');
+    // The index stays exact after the swap-removal.
+    for (const [index, c] of second.cells.entries()) {
+      expect(state.indexById.get(c.id)).toBe(index);
+    }
+  });
+
+  it('keeps the composed rebuild for partial coverage', () => {
+    const state = createCellRenderSetState();
+    let cache = cacheOf([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+    const record = composition([cell(1)], [cell(2)], [cell(3)]);
+    const first = syncCellRenderSet(state, cache, 10, null, null, record, []);
+    expect(first.mode).toBe('rebuild');
+    cache = applyCellDelta(cache, { type: 'gc', ids: [4] });
+    // Below full coverage a deletion still invalidates the ordered prefix.
+    const second = syncCellRenderSet(state, cache, 10, null, null, record, []);
+    expect(second.mode).toBe('rebuild');
+  });
+
+  it('falls back to one canonical rebuild when the journal cannot explain the prefix', () => {
+    const state = createCellRenderSetState();
+    let cache = cacheOf([1, 2, 3]);
+    const record = composition([], [], []);
+    syncCellRenderSet(state, cache, 50, null, null, record, []);
+    // Skip a generation: the second transition's journal no longer chains.
+    cache = applyCellDelta(cache, { type: 'birth', cell: cell(7) });
+    cache = applyCellDelta(cache, { type: 'birth', cell: cell(8) });
+    const out = syncCellRenderSet(state, cache, 50, null, null, record, []);
+    expect(out.mode).toBe('rebuild');
+    expect(out.cells.map((c) => c.id).sort((a, b) => a - b)).toEqual([1, 2, 3, 7, 8]);
   });
 });

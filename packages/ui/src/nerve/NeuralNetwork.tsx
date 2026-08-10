@@ -456,7 +456,13 @@ export default function NeuralNetwork({
       );
       if (requestMatches) return;
 
-      const displayCells = cellRenderMap(visibleCells);
+      // Full coverage: the display list IS the canonical map's cells, so
+      // reuse the retained Map instead of materialising a 50K copy per
+      // block. Any deviation (composition extras, dedupe gaps) fails the
+      // length check and takes the exact path.
+      const displayCells = visibleCells.length === cellsCache.cells.size
+        ? cellsCache.cells
+        : cellRenderMap(visibleCells);
       const requestedTopologyVersion = renderUpdate.topologyVersion;
       displayRequestedCellsRef.current = displayCells;
       displayRequestedTopologyRef.current = topologyKey;

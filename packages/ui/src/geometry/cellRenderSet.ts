@@ -646,7 +646,15 @@ function rebuildCellRenderSet(
   state.selectedCellId = selectedCellId;
   state.inspectionField = inspectionField;
   state.compositionToken = composition;
-  state.activityKey = composition ? activityCellIds.join(':') : '';
+  // Mirror syncCellRenderSet's EFFECTIVE key: at full coverage activity
+  // pins are membership no-ops and deliberately non-structural, so the
+  // stored key must compare equal to the journal path's computed ''.
+  state.activityKey =
+    composition
+    && Number.isFinite(displayBudget)
+    && displayBudget < cache.cells.size
+      ? activityCellIds.join(':')
+      : '';
   if (topologyChanged) state.topologyVersion += 1;
 
   return {
@@ -677,11 +685,22 @@ export function syncCellRenderSet(
   activityCellIds: readonly number[] = [],
 ): CellRenderSetUpdate {
   const displayBudget = normalizeCellDisplayBudget(visibleCount);
-  const activityKey = composition ? activityCellIds.join(':') : '';
+  // Full coverage: every retained cell is displayed, so composed selection,
+  // activity pinning, and canonical ordering are membership no-ops — the
+  // journal path below maintains identical membership at O(churn). The
+  // stable-slot layer downstream already decouples GPU slots from list
+  // order, so the swap-removals this path performs are visually free.
+  // Composition-indexed extras and composed ordering re-enter through the
+  // next structural rebuild (selection/field/budget changes).
+  const fullCoverage = !Number.isFinite(displayBudget)
+    || displayBudget >= cache.cells.size;
+  const journalWithComposition = composition !== null && fullCoverage;
+  const activityKey =
+    composition && !fullCoverage ? activityCellIds.join(':') : '';
   const structuralInputsMatch = state.displayBudget === displayBudget
     && state.selectedCellId === selectedCellId
     && state.inspectionField === inspectionField
-    && state.compositionToken === composition
+    && (journalWithComposition || state.compositionToken === composition)
     && state.activityKey === activityKey;
 
   if (state.cellsToken === cache.cellsToken && structuralInputsMatch) {
@@ -697,11 +716,11 @@ export function syncCellRenderSet(
 
   const changes = cache.cellChanges;
   if (
-    composition !== null
+    (composition !== null && !journalWithComposition)
     || !structuralInputsMatch
     || state.cellsToken === null
     || changes.reset
-    || changes.orderInvalidated
+    || (!journalWithComposition && changes.orderInvalidated)
     || changes.baseToken !== state.cellsToken
   ) {
     return rebuildCellRenderSet(
@@ -738,6 +757,30 @@ export function syncCellRenderSet(
     }
     return indexById;
   };
+
+  // Full-coverage removals leave the list by swap-from-tail: the moved
+  // cell's slot dirties, the order deviation is confined to the regime
+  // where order has no consumer, and the strict insertion-order path below
+  // remains untouched for partial coverage.
+  if (journalWithComposition) {
+    for (const id of changes.removed) {
+      const slot = indexById.get(id);
+      if (slot === undefined) continue;
+      const list = writableCells();
+      const index = writableIndex();
+      index.delete(id);
+      const last = list.length - 1;
+      if (slot !== last) {
+        const moved = list[last];
+        list[slot] = moved;
+        index.set(moved.id, slot);
+        dirtySlots.add(slot);
+      }
+      list.pop();
+      membershipChanged = true;
+      topologyChanged = true;
+    }
+  }
 
   for (const id of changes.updated) {
     const slot = indexById.get(id);
@@ -799,6 +842,7 @@ export function syncCellRenderSet(
   state.cells = cells;
   state.indexById = indexById;
   state.cellsToken = cache.cellsToken;
+  state.compositionToken = composition;
   if (topologyChanged) state.topologyVersion += 1;
 
   return {
