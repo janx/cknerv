@@ -325,6 +325,14 @@ export default function NeuralNetwork({
   /** Consecutive delta-applied builds since the last full setFabric
    * reconcile (see the delta path below). */
   const fabricDeltaStreakRef = useRef(0);
+  /** Bumped whenever a (re)mounted fabric rehydrates via onFabricReady.
+   * A build response may apply a selection DELTA only when no rehydration
+   * happened since the previous response was applied — a remount between
+   * responses rebuilds the fabric from the then-current ref, and a delta on
+   * top of that stale base would drift silently (the allocation-remount /
+   * response race clipped the fabric at the old class in live testing). */
+  const fabricEpochRef = useRef(0);
+  const fabricEpochAppliedRef = useRef(0);
   const displayGraphRef = useRef<NeighborGraph>(emptyNeighborGraph());
   const displayCellsRef = useRef<Map<number, Cell>>(new Map());
   const displayRenderSetRef = useRef(createCellRenderSetState());
@@ -495,9 +503,13 @@ export default function NeuralNetwork({
         // confirms, so every 16th delta application reconciles with one
         // full setFabric — bounded drift, amortized cost.
         const delta = result.passiveDelta;
+        const epochClean =
+          fabricEpochRef.current === fabricEpochAppliedRef.current;
+        fabricEpochAppliedRef.current = fabricEpochRef.current;
         if (
           handles
           && wasBootstrapped
+          && epochClean
           && delta !== null
           && fabricDeltaStreakRef.current < 16
         ) {
@@ -1263,6 +1275,7 @@ export default function NeuralNetwork({
 
   const onFabricReady = useCallback((handles: NeuralFabricHandles) => {
     fabricHandlesRef.current = handles;
+    fabricEpochRef.current += 1;
     // Rehydrate only the bounded passive view. Causal routing continues to
     // read the complete graphRef and full cache independently.
     handles.setFabric(
