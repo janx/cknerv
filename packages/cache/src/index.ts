@@ -22,6 +22,16 @@ export {
 } from './cellsReducer';
 
 export {
+  decodeCellsColumnar,
+  columnarCellAt,
+  CELLS_COLUMNAR_VERSION,
+  CELLS_COLUMNAR_NO_TAG,
+  COLUMNAR_LOCK_KINDS,
+  COLUMNAR_ASSET_KINDS,
+  type CellsColumnarView,
+} from './cellsColumnar';
+
+export {
   aggregateCellsStats,
   cellKindKey,
   cloneCellsStats,

@@ -18,6 +18,7 @@ use serde_json::Value;
 use crate::mutation::Mutation;
 
 pub mod cells;
+pub mod cells_columnar;
 
 /// A typed projection of the entity store. Implementors maintain their
 /// own internal state (initialized in `new`), apply incoming mutations,
@@ -47,6 +48,13 @@ pub trait Projection: Send + Sync + 'static {
 
     /// Capture the current state as a serializable snapshot.
     fn snapshot(&self) -> Self::Snapshot;
+
+    /// Optional columnar (binary) snapshot for projections that offer one.
+    /// The 8 bytes at CELLS_COLUMNAR_REVISION_OFFSET are a revision slot the
+    /// server-side runtime patches in before responding.
+    fn snapshot_bin(&self) -> Option<Vec<u8>> {
+        None
+    }
 
     /// Apply a mutation, returning zero or more deltas to broadcast.
     fn apply_mutation(&mut self, m: &Mutation) -> Vec<Self::Delta>;

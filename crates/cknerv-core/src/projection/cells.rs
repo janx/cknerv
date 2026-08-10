@@ -1161,6 +1161,12 @@ impl Projection for CellGalaxy {
         "cells"
     }
 
+    fn snapshot_bin(&self) -> Option<Vec<u8>> {
+        Some(crate::projection::cells_columnar::encode_cells_columnar(
+            &self.snapshot(),
+        ))
+    }
+
     fn snapshot(&self) -> CellGalaxySnapshot {
         CellGalaxySnapshot {
             // pos_seed is a PURE function of the cell id (helix_seed_for), so

@@ -40,6 +40,10 @@ pub fn build_router(
         .route("/api/entities/chain/snapshot", get(entities_chain_snapshot))
         .route("/api/entities/chain/stream", get(entities_chain_stream))
         .route("/api/projections/:name/snapshot", get(projection_snapshot))
+        .route(
+            "/api/projections/:name/snapshot.bin",
+            get(projection_snapshot_bin),
+        )
         .route("/api/projections/:name/stream", get(projection_stream))
         .route(
             "/api/enrichment/cells/:tx_hash/:output_index",
@@ -88,6 +92,38 @@ async fn projection_snapshot(
         "snapshot": snapshot,
     }))
     .into_response()
+}
+
+/// Columnar snapshot: raw little-endian bytes (revision already patched into
+/// the header by the runtime, mirrored in `x-snapshot-revision` for clients
+/// that want it before parsing). 404 both for unknown projections and for
+/// projections without a binary form, so old servers and non-columnar
+/// projections look identical to the client's fallback probe.
+async fn projection_snapshot_bin(
+    Path(name): Path<String>,
+    State(s): State<RouterState>,
+) -> impl IntoResponse {
+    let runner = match s.state.projections.read().unwrap().lookup(&name) {
+        Some(r) => r,
+        None => {
+            return (StatusCode::NOT_FOUND, format!("no projection: {name}")).into_response();
+        }
+    };
+    let Some((revision, bytes)) = runner.snapshot_bin() else {
+        return (
+            StatusCode::NOT_FOUND,
+            format!("projection {name} has no columnar snapshot"),
+        )
+            .into_response();
+    };
+    (
+        [
+            ("content-type", "application/octet-stream".to_string()),
+            ("x-snapshot-revision", revision.to_string()),
+        ],
+        bytes,
+    )
+        .into_response()
 }
 
 async fn projection_stream(

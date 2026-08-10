@@ -53,6 +53,11 @@ pub trait ProjectionRuntime: Send + Sync {
     /// Snapshot the projection. Returns `(revision, JSON value)` so the
     /// client can resume the stream from `since=revision`.
     fn snapshot_json(&self) -> (u64, Value);
+    /// Columnar (binary) snapshot with the revision patched into its header
+    /// slot; `None` for projections without a binary form.
+    fn snapshot_bin(&self) -> Option<(u64, Vec<u8>)> {
+        None
+    }
     /// Snapshot the delta ring (oldest → newest).
     fn delta_ring_snapshot(&self) -> Vec<DeltaEntry>;
     /// Subscribe to the live delta channel.
@@ -116,6 +121,18 @@ impl<P: Projection> ProjectionRuntime for ProjectionRunner<P> {
         let snap = p.snapshot();
         let value = serde_json::to_value(&snap).unwrap_or(Value::Null);
         (self.revision.load(Ordering::Relaxed), value)
+    }
+
+    fn snapshot_bin(&self) -> Option<(u64, Vec<u8>)> {
+        // Read the revision under the SAME projection read-lock as the
+        // snapshot so the patched header cannot drift from the rows.
+        let p = self.inner.read().unwrap();
+        let mut bytes = p.snapshot_bin()?;
+        let revision = self.revision.load(Ordering::Relaxed);
+        bytes[cknerv_core::projection::cells_columnar::CELLS_COLUMNAR_REVISION_OFFSET
+            ..cknerv_core::projection::cells_columnar::CELLS_COLUMNAR_REVISION_OFFSET + 8]
+            .copy_from_slice(&revision.to_le_bytes());
+        Some((revision, bytes))
     }
 
     fn delta_ring_snapshot(&self) -> Vec<DeltaEntry> {
