@@ -22,6 +22,21 @@ export {
 } from './cellsReducer';
 
 export {
+  createCellField,
+  cellFieldSlotOf,
+  cellFieldUpsert,
+  cellFieldRemove,
+  clearCellField,
+  materializeCellAt,
+  syncCellFieldFromCache,
+  hydrateCellFieldFromColumnar,
+  cellFieldColumnBytes,
+  CELL_FIELD_HAS_DATA,
+  type CellField,
+  type CellFieldSyncResult,
+} from './cellField';
+
+export {
   decodeCellsColumnar,
   columnarCellAt,
   CELLS_COLUMNAR_VERSION,

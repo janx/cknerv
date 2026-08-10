@@ -92,6 +92,7 @@ import type {
 } from '@cknerv/types';
 import Tweaks from './Tweaks';
 import Jukebox from './Jukebox';
+import { ingestCellsCacheIntoField } from './cell-field-hook';
 import {
   INITIAL_CELL_IDENTITY_JOURNEY_STATE,
   cellIdentityJourneyReducer,
@@ -447,10 +448,18 @@ export default function App({
         staleAfterMs: STREAM_STALE_AFTER_MS,
       },
     );
+    // Seed the columnar CellField mirror from the bootstrap cache, then keep
+    // it in step inside the same callback that publishes each generation to
+    // React. Sync is idempotent per cellsToken, so StrictMode double-runs
+    // and re-delivered generations are no-ops.
+    ingestCellsCacheIntoField(initialCellsCache);
     const cells = connectCellsStream(
       '/api/projections/cells/stream',
       initialCellsCache,
-      setCellsCache,
+      (next) => {
+        ingestCellsCacheIntoField(next);
+        setCellsCache(next);
+      },
       {
         recentLinksCapacity: galaxyConfig.recentLinksCap,
         linkRingCapacity: galaxyConfig.pulses.linkRingCapacity,

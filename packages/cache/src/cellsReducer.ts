@@ -64,6 +64,11 @@ export interface CellChangeSet {
   /** Retained Cell objects whose final value differs from the previous cache.
    * Includes births and metadata/lifecycle replacements, but not removals. */
   readonly updated: readonly number[];
+  /** EVERY id deleted from the Map this batch — alive evictions (also listed
+   * in `evicted`) and already-dead records reaped after their death display
+   * window. Mirror stores (e.g. the columnar CellField) need the complete
+   * removal set; the older lists deliberately don't carry dead-record GC. */
+  readonly removed: readonly number[];
 }
 
 const EMPTY_CELL_IDS: readonly number[] = Object.freeze([] as number[]);
@@ -77,6 +82,7 @@ export const NO_CELL_CHANGES: CellChangeSet = Object.freeze({
   died: EMPTY_CELL_IDS,
   evicted: EMPTY_CELL_IDS,
   updated: EMPTY_CELL_IDS,
+  removed: EMPTY_CELL_IDS,
 });
 
 const RESET_CELL_CHANGES: CellChangeSet = Object.freeze({
@@ -337,6 +343,7 @@ function summarizeCellChanges(
   const died: number[] = [];
   const evicted: number[] = [];
   const updated: number[] = [];
+  const removed: number[] = [];
   for (const id of touchedCellIds) {
     const hadBefore = previous.has(id);
     const hasAfter = next.has(id);
@@ -357,6 +364,7 @@ function summarizeCellChanges(
     ) evicted.push(id);
 
     if (hasAfter && (!hadBefore || before !== after)) updated.push(id);
+    if (hadBefore && !hasAfter) removed.push(id);
   }
 
   return {
@@ -367,6 +375,7 @@ function summarizeCellChanges(
     died,
     evicted,
     updated,
+    removed,
   };
 }
 

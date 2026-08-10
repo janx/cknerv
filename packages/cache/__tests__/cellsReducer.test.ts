@@ -113,8 +113,18 @@ describe('applyCellDelta', () => {
     expect(c.cells.size).toBe(1);
     expect(c.cells.get(2)?.id).toBe(2);
     expect(c.cellChanges.evicted).toEqual([1, 3]);
+    expect(c.cellChanges.removed).toEqual([1, 3]);
     expect(c.cellChanges.updated).toEqual([]);
     expect(c.cellChanges.orderInvalidated).toBe(true);
+  });
+
+  it('lists dead-record reaping in removed but not evicted', () => {
+    let c = applyCellDelta(emptyCellsCache(), { type: 'birth', cell: cell(1) });
+    c = applyCellDelta(c, { type: 'death', id: 1, at_ms: 5000 });
+    c = applyCellDelta(c, { type: 'gc', ids: [1] });
+    expect(c.cells.size).toBe(0);
+    expect(c.cellChanges.evicted).toEqual([]);
+    expect(c.cellChanges.removed).toEqual([1]);
   });
 
   it('invalidates insertion order when gc removes then reinserts an id', () => {
@@ -133,6 +143,9 @@ describe('applyCellDelta', () => {
       born: [],
       evicted: [],
       updated: [1],
+      // Net view: the id is present on both sides of the batch, so the
+      // remove-then-reinsert collapses out of `removed` too.
+      removed: [],
     });
   });
 

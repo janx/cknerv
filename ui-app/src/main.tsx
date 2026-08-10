@@ -10,6 +10,7 @@ import { setQualityMode } from '@cknerv/ui';
 import App from './App';
 import { fetchCellsSnapshot, fetchChainSnapshot } from './connect';
 import { installPulseStatsHook } from './pulse-stats-hook';
+import { installCellFieldHook } from './cell-field-hook';
 import {
   resolveVisualReviewRoute,
   type VisualReviewRoute,
@@ -65,6 +66,7 @@ async function bootstrap() {
 // live inspection of the nerve-pulse drop counters. Independent of the
 // render, so it stays available even if bootstrap below fails.
 installPulseStatsHook();
+installCellFieldHook();
 
 bootstrap().catch((e: unknown) => {
   // Safe DOM API rendering — `textContent` escapes the message so a
