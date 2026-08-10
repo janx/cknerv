@@ -16,7 +16,6 @@ import {
   GROWTH_MS,
 } from '../../src/nerve/fabricEdgeRender';
 import { TAPER_MIN, TWIG_MIN } from '../../src/nerve/fabricLuminance';
-import { USAGE_DECAY_HALF_LIFE_S } from '../../src/nerve/fabricReinforce';
 import { CONSENSUS_BRAID_PALETTE } from '../../src/derives/consensusBraid.derive';
 
 /** The fabric layer's real material stack: capsule + inspection + lifecycle. */
@@ -44,21 +43,28 @@ describe('fabric lifecycle shader patch', () => {
     expect(vertex).not.toContain('modelViewMatrix * vec4( instanceStart');
     expect(vertex).not.toContain('vCapsuleColorStart = instanceColorStart;');
 
-    // Static-record attributes and the three per-frame uniforms.
+    // Six packed vec4 attributes (locations are a hard GPU budget) and the
+    // three per-frame uniforms; the dead stock attributes are stripped so
+    // no driver counts them against the location limit.
     for (const declaration of [
-      'attribute vec3 fabricCurveFrom;',
-      'attribute vec3 fabricCurveCtrl;',
-      'attribute vec3 fabricCurveTo;',
-      'attribute vec2 fabricSegmentSpan;',
-      'attribute vec3 fabricColorFrom;',
-      'attribute vec3 fabricColorTo;',
+      'attribute vec4 fabricCurveFrom;',
+      'attribute vec4 fabricCurveCtrl;',
+      'attribute vec4 fabricCurveTo;',
+      'attribute vec4 fabricColorFrom;',
+      'attribute vec4 fabricColorTo;',
       'attribute vec4 fabricLifecycle;',
-      'attribute vec4 fabricUsage;',
-      'attribute vec2 fabricAperture;',
       'uniform float fabricSimTimeSec;',
       'uniform float fabricEnergyLive;',
       'uniform float fabricCenterDimLive;',
     ]) expect(vertex).toContain(declaration);
+    expect(vertex).not.toContain('attribute vec3 instanceStart;');
+    expect(vertex).not.toContain('attribute vec3 instanceColorStart;');
+    // Source-level declarations include ifdef'd-out dash attributes; the
+    // ACTIVE set is 6 lifecycle + 4 inspection (+ position/uv from three's
+    // prefix), safely under the 16-location floor the old 19-attribute
+    // stack overflowed.
+    const attributeCount = (vertex.match(/attribute /g) ?? []).length;
+    expect(attributeCount).toBeLessThanOrEqual(13);
     expect(material.uniforms.fabricSimTimeSec).toBeDefined();
   });
 
@@ -72,8 +78,7 @@ describe('fabric lifecycle shader patch', () => {
     // Brightness floors and reclaim curve (fabricLuminance).
     expect(vertex).toContain(`${TAPER_MIN}`);
     expect(vertex).toContain(`${TWIG_MIN}`);
-    // Usage half-life (fabricReinforce) and the braid palette.
-    expect(vertex).toContain(`${USAGE_DECAY_HALF_LIFE_S}.0`);
+    // The braid palette.
     const [gr, gg, gb] = CONSENSUS_BRAID_PALETTE.gold;
     expect(vertex).toContain(`vec3( ${gr}, ${gg}, ${gb} )`);
     const [rr, rg, rb] = CONSENSUS_BRAID_PALETTE.retire;

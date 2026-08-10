@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import type { InterleavedBufferAttribute } from 'three';
 import { makeFatLineLayer } from '../../src/nerve/NeuralFabric';
 import {
-  FABRIC_LIFE_APERTURE_STRIDE,
   FABRIC_LIFE_COLOR_STRIDE,
   FABRIC_LIFE_CURVE_STRIDE,
   FABRIC_LIFE_SCALAR_STRIDE,
@@ -15,15 +14,12 @@ describe('fabric lifecycle layer construction', () => {
     const layer = makeFatLineLayer(SEGMENTS, 2.5, 'screen', true, true, true);
     expect(layer.lifecycle).toBeDefined();
     const expectations: Array<[string, number, number]> = [
-      ['fabricCurveFrom', 3, 0],
-      ['fabricCurveCtrl', 3, 3],
-      ['fabricCurveTo', 3, 6],
-      ['fabricSegmentSpan', 2, 9],
-      ['fabricColorFrom', 3, 0],
-      ['fabricColorTo', 3, 3],
+      ['fabricCurveFrom', 4, 0],
+      ['fabricCurveCtrl', 4, 4],
+      ['fabricCurveTo', 4, 8],
+      ['fabricColorFrom', 4, 0],
+      ['fabricColorTo', 4, 4],
       ['fabricLifecycle', 4, 0],
-      ['fabricUsage', 4, 4],
-      ['fabricAperture', 2, 0],
     ];
     for (const [name, itemSize, offset] of expectations) {
       const attribute = layer.geometry.getAttribute(
@@ -41,9 +37,6 @@ describe('fabric lifecycle layer construction', () => {
     );
     expect(layer.lifecycle!.arrays.scalar).toHaveLength(
       SEGMENTS * FABRIC_LIFE_SCALAR_STRIDE,
-    );
-    expect(layer.lifecycle!.arrays.aperture).toHaveLength(
-      SEGMENTS * FABRIC_LIFE_APERTURE_STRIDE,
     );
     expect(layer.material.uniforms.fabricSimTimeSec).toBeDefined();
     expect(layer.material.vertexShader).toContain('computeFabricLifecycle();');

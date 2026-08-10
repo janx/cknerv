@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  FABRIC_LIFE_APERTURE_STRIDE,
+  FABRIC_LIFE_APERTURE_END_OFFSET,
+  FABRIC_LIFE_APERTURE_START_OFFSET,
   FABRIC_LIFE_COLOR_STRIDE,
   FABRIC_LIFE_CURVE_STRIDE,
   FABRIC_LIFE_SCALAR_STRIDE,
@@ -30,8 +31,6 @@ function record(overrides: Partial<FabricLifecycleRecord> = {}): FabricLifecycle
     deadEnd: null,
     growDir: 1,
     brightnessMul: 0.8,
-    usageAtEvent: 0.5,
-    usageEventAtSec: 12,
     ...overrides,
   };
 }
@@ -48,15 +47,19 @@ describe('fabric lifecycle slots', () => {
         instance * FABRIC_LIFE_CURVE_STRIDE,
         instance * FABRIC_LIFE_CURVE_STRIDE + FABRIC_LIFE_CURVE_STRIDE,
       );
-      expect([...curve.subarray(0, 9)]).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
-      expect(curve[9]).toBeCloseTo(segment / FABRIC_SAMPLES_PER_EDGE, 6);
-      expect(curve[10]).toBeCloseTo((segment + 1) / FABRIC_SAMPLES_PER_EDGE, 6);
+      // xyz + spanStart | xyz + spanEnd | xyz + reserved
+      expect([...curve.subarray(0, 3)]).toEqual([1, 2, 3]);
+      expect(curve[3]).toBeCloseTo(segment / FABRIC_SAMPLES_PER_EDGE, 6);
+      expect([...curve.subarray(4, 7)]).toEqual([4, 5, 6]);
+      expect(curve[7]).toBeCloseTo((segment + 1) / FABRIC_SAMPLES_PER_EDGE, 6);
+      expect([...curve.subarray(8, 11)]).toEqual([7, 8, 9]);
       const color = arrays.color.subarray(
         instance * FABRIC_LIFE_COLOR_STRIDE,
         instance * FABRIC_LIFE_COLOR_STRIDE + FABRIC_LIFE_COLOR_STRIDE,
       );
+      // rgb + apertureStart | rgb + apertureEnd — aperture rests at 1.
       expect([...color].map((v) => +v.toFixed(6)))
-        .toEqual([0.1, 0.2, 0.3, 0.4, 0.5, 0.6]);
+        .toEqual([0.1, 0.2, 0.3, 1, 0.4, 0.5, 0.6, 1]);
       const scalar = arrays.scalar.subarray(
         instance * FABRIC_LIFE_SCALAR_STRIDE,
         instance * FABRIC_LIFE_SCALAR_STRIDE + FABRIC_LIFE_SCALAR_STRIDE,
@@ -65,15 +68,24 @@ describe('fabric lifecycle slots', () => {
       expect(scalar[1]).toBe(Math.fround(FABRIC_LIFECYCLE_ALIVE_SENTINEL));
       expect(scalar[2]).toBeCloseTo(0.8, 6);
       expect(scalar[3]).toBe(0);
-      expect(scalar[4]).toBeCloseTo(0.5, 6);
-      expect(scalar[5]).toBe(12);
     }
-    // Aperture defaults to 1 everywhere and the writer never touches it.
-    expect([...arrays.aperture]).toEqual(
-      new Array(FABRIC_SAMPLES_PER_EDGE * 3 * FABRIC_LIFE_APERTURE_STRIDE).fill(1),
-    );
-    // Neighbouring slots stay untouched.
+    // Neighbouring slots stay untouched (aperture lanes still at baseline 1).
     expect(arrays.scalar[0]).toBe(0);
+    expect(arrays.color[FABRIC_LIFE_APERTURE_START_OFFSET]).toBe(1);
+    expect(arrays.color[FABRIC_LIFE_APERTURE_END_OFFSET]).toBe(1);
+  });
+
+  it('rewriting a recycled slot resets its aperture lanes to baseline', () => {
+    const arrays = makeFabricLifecycleArrays(FABRIC_SAMPLES_PER_EDGE);
+    writeFabricLifecycleSlot(arrays, 0, record());
+    // Simulate a recall window dimming the slot…
+    arrays.color[FABRIC_LIFE_APERTURE_START_OFFSET] = 0.25;
+    arrays.color[FABRIC_LIFE_APERTURE_END_OFFSET] = 0.4;
+    // …then the slot is recycled for a different edge.
+    writeFabricLifecycleSlot(arrays, 0, record({ fromR: 0.9 }));
+    expect(arrays.color[FABRIC_LIFE_APERTURE_START_OFFSET]).toBe(1);
+    expect(arrays.color[FABRIC_LIFE_APERTURE_END_OFFSET]).toBe(1);
+    expect(arrays.color[0]).toBeCloseTo(0.9, 6);
   });
 
   it('packs lifecycle flags as exact small float integers', () => {

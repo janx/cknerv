@@ -14,6 +14,7 @@
 // upstream shader source drifts.
 
 import type { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
+import { CAPSULE_INSPECTION_FRAGMENT } from '../geometry/screenSpaceCapsuleLine';
 import {
   DEATH_FLASH_MS,
   DEATH_RETRACT_MS,
@@ -28,13 +29,7 @@ import {
   TAPER_MIN,
   TWIG_MIN,
 } from './fabricLuminance';
-import {
-  GOLD_MIX_TRAFFIC_EDGE0,
-  GOLD_MIX_TRAFFIC_EDGE1,
-  GOLD_MIX_TRAFFIC_GAIN,
-  GOLD_MIX_TRUNK_GAIN,
-} from '../derives/consensusFlow.derive';
-import { USAGE_DECAY_HALF_LIFE_S } from './fabricReinforce';
+import { GOLD_MIX_TRUNK_GAIN } from '../derives/consensusFlow.derive';
 import { CONSENSUS_BRAID_PALETTE } from '../derives/consensusBraid.derive';
 import { LIVE } from '../tweaks/liveTweaks';
 
@@ -69,19 +64,18 @@ const replaceShaderChunk = (
  * endpoint-constant capsule varyings stay consistent without flat
  * interpolation. */
 const LIFECYCLE_DECLARATIONS = `
-		attribute vec3 fabricCurveFrom;
-		attribute vec3 fabricCurveCtrl;
-		attribute vec3 fabricCurveTo;
-		attribute vec2 fabricSegmentSpan;
-		attribute vec3 fabricColorFrom;
-		attribute vec3 fabricColorTo;
+		// Six attributes total — vertex attribute locations are a hard GPU
+		// budget shared with the line/inspection pipeline. Curve endpoints
+		// carry the static segment span in .w; endpoint colors carry the
+		// CPU-baked recall-aperture scale in .w (1 outside a recall).
+		attribute vec4 fabricCurveFrom;   // xyz + spanStart
+		attribute vec4 fabricCurveCtrl;   // xyz + spanEnd
+		attribute vec4 fabricCurveTo;     // xyz + reserved
+		attribute vec4 fabricColorFrom;   // rgb + apertureStart
+		attribute vec4 fabricColorTo;     // rgb + apertureEnd
 		// x: bornAtSec, y: dyingAtSec (${glf(FABRIC_LIFECYCLE_ALIVE_SENTINEL)} = alive),
 		// z: brightnessMul, w: packed(deathKind*4 + deadEndTo*2 + growReversed)
 		attribute vec4 fabricLifecycle;
-		// x: usage at last reinforce event, y: that event's sim-second
-		attribute vec4 fabricUsage;
-		// CPU-written recall-aperture scale per endpoint (1 outside recall)
-		attribute vec2 fabricAperture;
 		uniform float fabricSimTimeSec;
 		uniform float fabricEnergyLive;
 		uniform float fabricCenterDimLive;
@@ -92,12 +86,13 @@ const LIFECYCLE_DECLARATIONS = `
 		vec3 fabricLifeEnd = vec3( 0.0 );
 		vec3 fabricLifeColorStart = vec3( 0.0 );
 		vec3 fabricLifeColorEnd = vec3( 0.0 );
+		varying float vFabricFlash;
 
 		vec3 fabricBezierAt( const in float t ) {
 			float u = 1.0 - t;
-			return u * u * fabricCurveFrom
-				+ 2.0 * u * t * fabricCurveCtrl
-				+ t * t * fabricCurveTo;
+			return u * u * fabricCurveFrom.xyz
+				+ 2.0 * u * t * fabricCurveCtrl.xyz
+				+ t * t * fabricCurveTo.xyz;
 		}
 
 		float fabricTaperGl( const in float t ) {
@@ -195,6 +190,7 @@ const LIFECYCLE_DECLARATIONS = `
 		void computeFabricLifecycle() {
 			if ( fabricLifeComputed ) return;
 			fabricLifeComputed = true;
+			vFabricFlash = 0.0;
 			vec2 interval;
 			float alphaMul;
 			float flash;
@@ -203,9 +199,10 @@ const LIFECYCLE_DECLARATIONS = `
 				fabricLifeHidden = true;
 				return;
 			}
+			vFabricFlash = flash;
 			float span = interval.y - interval.x;
-			float tA = min( interval.x + span * fabricSegmentSpan.x, interval.y );
-			float tB = min( interval.x + span * fabricSegmentSpan.y, interval.y );
+			float tA = min( interval.x + span * fabricCurveFrom.w, interval.y );
+			float tB = min( interval.x + span * fabricCurveCtrl.w, interval.y );
 			fabricLifeStart = fabricBezierAt( tA );
 			fabricLifeEnd = fabricBezierAt( tB );
 			float hierarchy = clamp(
@@ -213,34 +210,31 @@ const LIFECYCLE_DECLARATIONS = `
 				0.0,
 				1.0
 			);
-			float usage = fabricUsage.x <= 0.0
-				? 0.0
-				: fabricUsage.x * exp2(
-					- max( fabricSimTimeSec - fabricUsage.y, 0.0 )
-						/ ${glf(USAGE_DECAY_HALF_LIFE_S)}
-				);
-			float goldMix = max(
-				clamp( hierarchy, 0.0, 1.0 ) * ${glf(GOLD_MIX_TRUNK_GAIN)},
-				smoothstep(
-					${glf(GOLD_MIX_TRAFFIC_EDGE0)},
-					${glf(GOLD_MIX_TRAFFIC_EDGE1)},
-					clamp( usage, 0.0, 1.0 )
-				) * ${glf(GOLD_MIX_TRAFFIC_GAIN)}
-			);
+			// The base fabric always evaluated with usage 0 (reinforcement is
+			// the warm overlay's job): trunk hierarchy alone drives the gold.
+			float usage = 0.0;
+			float goldMix = clamp( hierarchy, 0.0, 1.0 ) * ${glf(GOLD_MIX_TRUNK_GAIN)};
 			vec3 gold = ${glv3(CONSENSUS_BRAID_PALETTE.gold)};
 			vec3 retire = ${glv3(CONSENSUS_BRAID_PALETTE.retire)};
-			vec3 semFrom = ( fabricColorFrom + ( gold - fabricColorFrom ) * goldMix )
+			vec3 semFrom = ( fabricColorFrom.rgb + ( gold - fabricColorFrom.rgb ) * goldMix )
 				* ( 1.0 - flash ) + retire * flash;
-			vec3 semTo = ( fabricColorTo + ( gold - fabricColorTo ) * goldMix )
+			vec3 semTo = ( fabricColorTo.rgb + ( gold - fabricColorTo.rgb ) * goldMix )
 				* ( 1.0 - flash ) + retire * flash;
 			float energyBase = fabricEnergyLive * alphaMul * fabricLifecycle.z;
+			// Aperture lanes are baked with flash = 0; a real retirement
+			// reclaims full energy through the same affine lift the CPU applied
+			// inside the aperture itself (lift commutes with the bake).
+			float apertureStart = fabricColorFrom.w
+				+ ( 1.0 - fabricColorFrom.w ) * flash;
+			float apertureEnd = fabricColorTo.w
+				+ ( 1.0 - fabricColorTo.w ) * flash;
 			fabricLifeColorStart = fabricSampleColorGl(
 				tA, fabricLifeStart, semFrom, semTo, energyBase,
-				hierarchy, usage, flash, fabricAperture.x
+				hierarchy, usage, flash, apertureStart
 			);
 			fabricLifeColorEnd = fabricSampleColorGl(
 				tB, fabricLifeEnd, semFrom, semTo, energyBase,
-				hierarchy, usage, flash, fabricAperture.y
+				hierarchy, usage, flash, apertureEnd
 			);
 		}
 `;
@@ -249,6 +243,35 @@ const LIFECYCLE_DECLARATIONS = `
 const CAPSULE_COLOR_HOOK = 'vColor.xyz = vec3( 1.0 );';
 const CAPSULE_COLOR_START_READ = 'vCapsuleColorStart = instanceColorStart;';
 const CAPSULE_COLOR_END_READ = 'vCapsuleColorEnd = instanceColorEnd;';
+
+/** Flash-lifted inspection application: attributes bake the pure field scale
+ * (flash = 0) and the shader restores retirement's energy reclaim with its own
+ * analytic flash — the lift is affine, so lifting the mixed value equals the
+ * CPU's lift-per-endpoint-then-interpolate exactly. */
+const CAPSULE_INSPECTION_FRAGMENT_LIFTED = `
+			#ifdef USE_COLOR
+
+				float fabricInspectionMix = mix(
+					mix(
+						vCapsuleInspectionFromStart,
+						vCapsuleInspectionFromEnd,
+						clamp( capsuleColorT, 0.0, 1.0 )
+					),
+					mix(
+						vCapsuleInspectionToStart,
+						vCapsuleInspectionToEnd,
+						clamp( capsuleColorT, 0.0, 1.0 )
+					),
+					smoothstep(
+						0.0,
+						1.0,
+						clamp( inspectionTransitionProgress, 0.0, 1.0 )
+					)
+				);
+				diffuseColor.rgb *= fabricInspectionMix
+					+ ( 1.0 - fabricInspectionMix ) * vFabricFlash;
+
+			#endif`;
 
 /** Stock camera-space endpoint reads (untouched by the capsule patch). */
 const CAMERA_SPACE_READS = `
@@ -280,6 +303,24 @@ export function enableFabricLifecycleMaterial(
   material.uniforms.fabricSimTimeSec = { value: 0 };
   material.uniforms.fabricEnergyLive = { value: LIVE.cell.fabricAlpha };
   material.uniforms.fabricCenterDimLive = { value: LIVE.cell.centerDim };
+  // The stock per-segment attributes become dead inputs here, and vertex
+  // attribute LOCATIONS are a hard GPU budget (16 on common hardware) that
+  // this stack would otherwise exceed — strip their declarations so no
+  // driver can count them as active.
+  material.vertexShader = replaceShaderChunk(
+    material.vertexShader,
+    `		attribute vec3 instanceStart;
+		attribute vec3 instanceEnd;`,
+    '',
+    'stock endpoint attribute declarations',
+  );
+  material.vertexShader = replaceShaderChunk(
+    material.vertexShader,
+    `		attribute vec3 instanceColorStart;
+		attribute vec3 instanceColorEnd;`,
+    '',
+    'stock endpoint color attribute declarations',
+  );
   material.vertexShader = replaceShaderChunk(
     material.vertexShader,
     'void main() {',
@@ -311,6 +352,19 @@ export function enableFabricLifecycleMaterial(
     CAMERA_SPACE_READS,
     CAMERA_SPACE_LIFECYCLE,
     'camera-space endpoint reads',
+  );
+  material.fragmentShader = replaceShaderChunk(
+    material.fragmentShader,
+    'uniform float inspectionTransitionProgress;',
+    `uniform float inspectionTransitionProgress;
+		varying float vFabricFlash;`,
+    'fragment inspection uniform (inspection transition required)',
+  );
+  material.fragmentShader = replaceShaderChunk(
+    material.fragmentShader,
+    CAPSULE_INSPECTION_FRAGMENT,
+    CAPSULE_INSPECTION_FRAGMENT_LIFTED,
+    'capsule inspection fragment application',
   );
   material.needsUpdate = true;
   return material;

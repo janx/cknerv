@@ -40,13 +40,19 @@ import {
   type FabricSlotRange,
 } from './fabricSlots';
 import { planFabricCohorts, type FabricCohortSlice } from './fabricCohorts';
-import { enableFabricLifecycleMaterial } from './fabricLifecycleShader';
 import {
-  FABRIC_LIFE_APERTURE_STRIDE,
+  enableFabricLifecycleMaterial,
+  syncFabricLifecycleUniforms,
+} from './fabricLifecycleShader';
+import {
+  FABRIC_LIFE_APERTURE_END_OFFSET,
+  FABRIC_LIFE_APERTURE_START_OFFSET,
   FABRIC_LIFE_COLOR_STRIDE,
   FABRIC_LIFE_CURVE_STRIDE,
   FABRIC_LIFE_SCALAR_STRIDE,
+  fabricLifecycleEndSec,
   makeFabricLifecycleArrays,
+  writeFabricLifecycleSlot,
   type FabricLifecycleArrays,
 } from './fabricLifecycleSlots';
 import {
@@ -252,7 +258,6 @@ interface FabricLifecycleBuffers {
   curveBuf: THREE.InstancedInterleavedBuffer;
   colorBuf: THREE.InstancedInterleavedBuffer;
   scalarBuf: THREE.InstancedInterleavedBuffer;
-  apertureBuf: THREE.InstancedInterleavedBuffer;
 }
 
 /** One persistent fabric edge. Endpoint positions + control point
@@ -805,24 +810,20 @@ export function makeFatLineLayer(
     const scalarBuf = new THREE.InstancedInterleavedBuffer(
       arrays.scalar, FABRIC_LIFE_SCALAR_STRIDE, 1,
     );
-    const apertureBuf = new THREE.InstancedInterleavedBuffer(
-      arrays.aperture, FABRIC_LIFE_APERTURE_STRIDE, 1,
-    );
     curveBuf.setUsage(THREE.DynamicDrawUsage);
     colorBuf.setUsage(THREE.DynamicDrawUsage);
     scalarBuf.setUsage(THREE.DynamicDrawUsage);
-    apertureBuf.setUsage(THREE.DynamicDrawUsage);
-    geometry.setAttribute('fabricCurveFrom', new THREE.InterleavedBufferAttribute(curveBuf, 3, 0));
-    geometry.setAttribute('fabricCurveCtrl', new THREE.InterleavedBufferAttribute(curveBuf, 3, 3));
-    geometry.setAttribute('fabricCurveTo', new THREE.InterleavedBufferAttribute(curveBuf, 3, 6));
-    geometry.setAttribute('fabricSegmentSpan', new THREE.InterleavedBufferAttribute(curveBuf, 2, 9));
-    geometry.setAttribute('fabricColorFrom', new THREE.InterleavedBufferAttribute(colorBuf, 3, 0));
-    geometry.setAttribute('fabricColorTo', new THREE.InterleavedBufferAttribute(colorBuf, 3, 3));
+    // Six vec4 attributes — locations are a hard GPU budget; the segment
+    // span rides the curve endpoints' .w and the recall-aperture scale
+    // rides the endpoint colors' .w.
+    geometry.setAttribute('fabricCurveFrom', new THREE.InterleavedBufferAttribute(curveBuf, 4, 0));
+    geometry.setAttribute('fabricCurveCtrl', new THREE.InterleavedBufferAttribute(curveBuf, 4, 4));
+    geometry.setAttribute('fabricCurveTo', new THREE.InterleavedBufferAttribute(curveBuf, 4, 8));
+    geometry.setAttribute('fabricColorFrom', new THREE.InterleavedBufferAttribute(colorBuf, 4, 0));
+    geometry.setAttribute('fabricColorTo', new THREE.InterleavedBufferAttribute(colorBuf, 4, 4));
     geometry.setAttribute('fabricLifecycle', new THREE.InterleavedBufferAttribute(scalarBuf, 4, 0));
-    geometry.setAttribute('fabricUsage', new THREE.InterleavedBufferAttribute(scalarBuf, 4, 4));
-    geometry.setAttribute('fabricAperture', new THREE.InterleavedBufferAttribute(apertureBuf, 2, 0));
     enableFabricLifecycleMaterial(material);
-    lifecycleBuffers = { arrays, curveBuf, colorBuf, scalarBuf, apertureBuf };
+    lifecycleBuffers = { arrays, curveBuf, colorBuf, scalarBuf };
   }
   if (accumulation === 'screen') {
     // Passive structure must approach the display ceiling asymptotically when
@@ -1006,6 +1007,115 @@ function commitFabricSlotRanges(
   }));
 }
 
+/** Static-record bytes per segment across the four lifecycle buffers. */
+const FABRIC_LIFECYCLE_BYTES_PER_SEGMENT = 4 * (
+  FABRIC_LIFE_CURVE_STRIDE
+  + FABRIC_LIFE_COLOR_STRIDE
+  + FABRIC_LIFE_SCALAR_STRIDE
+);
+
+/** Upload only the given SLOT ranges of the static lifecycle records (curve,
+ * colors, scalars — aperture has its own recall-window writer). Event-driven:
+ * runs when an admit/kill/revival wrote slots, never per animated frame. */
+function commitFabricLifecycleSlotRanges(
+  layer: FatLineLayer,
+  ranges: readonly FabricSlotRange[],
+): void {
+  const lifecycle = layer.lifecycle;
+  if (!lifecycle || ranges.length === 0) return;
+  lifecycle.curveBuf.clearUpdateRanges();
+  lifecycle.colorBuf.clearUpdateRanges();
+  lifecycle.scalarBuf.clearUpdateRanges();
+  let rangeSegments = 0;
+  // mergeFabricSlotRanges already returns SEGMENT-unit ranges.
+  for (const range of ranges) {
+    rangeSegments += range.count;
+    lifecycle.curveBuf.addUpdateRange(
+      range.start * FABRIC_LIFE_CURVE_STRIDE,
+      range.count * FABRIC_LIFE_CURVE_STRIDE,
+    );
+    lifecycle.colorBuf.addUpdateRange(
+      range.start * FABRIC_LIFE_COLOR_STRIDE,
+      range.count * FABRIC_LIFE_COLOR_STRIDE,
+    );
+    lifecycle.scalarBuf.addUpdateRange(
+      range.start * FABRIC_LIFE_SCALAR_STRIDE,
+      range.count * FABRIC_LIFE_SCALAR_STRIDE,
+    );
+  }
+  lifecycle.curveBuf.needsUpdate = true;
+  lifecycle.colorBuf.needsUpdate = true;
+  lifecycle.scalarBuf.needsUpdate = true;
+  // Admits bake inspection snapshots into recycled slots alongside the
+  // static record, so those two buffers ride the same event ranges.
+  if (layer.inspectionFromBuf && layer.inspectionToBuf) {
+    layer.inspectionFromBuf.clearUpdateRanges();
+    layer.inspectionToBuf.clearUpdateRanges();
+    for (const range of ranges) {
+      layer.inspectionFromBuf.addUpdateRange(range.start * 2, range.count * 2);
+      layer.inspectionToBuf.addUpdateRange(range.start * 2, range.count * 2);
+    }
+    layer.inspectionFromBuf.needsUpdate = true;
+    layer.inspectionToBuf.needsUpdate = true;
+  }
+  layer.geometry.instanceCount = layer.count;
+  fabricStats.observeUpload(
+    rangeSegments * (FABRIC_LIFECYCLE_BYTES_PER_SEGMENT + 16),
+  );
+}
+
+/** Full-population upload of the static records + inspection snapshots after
+ * a compacting walk (boot / slot-space overflow / rare global repaint). */
+function commitFabricLifecycleFull(layer: FatLineLayer): void {
+  const lifecycle = layer.lifecycle;
+  if (!lifecycle) return;
+  const segments = layer.count;
+  lifecycle.curveBuf.clearUpdateRanges();
+  lifecycle.colorBuf.clearUpdateRanges();
+  lifecycle.scalarBuf.clearUpdateRanges();
+  layer.inspectionFromBuf?.clearUpdateRanges();
+  layer.inspectionToBuf?.clearUpdateRanges();
+  if (segments > 0) {
+    lifecycle.curveBuf.addUpdateRange(0, segments * FABRIC_LIFE_CURVE_STRIDE);
+    lifecycle.colorBuf.addUpdateRange(0, segments * FABRIC_LIFE_COLOR_STRIDE);
+    lifecycle.scalarBuf.addUpdateRange(0, segments * FABRIC_LIFE_SCALAR_STRIDE);
+    lifecycle.curveBuf.needsUpdate = true;
+    lifecycle.colorBuf.needsUpdate = true;
+    lifecycle.scalarBuf.needsUpdate = true;
+    if (layer.inspectionFromBuf && layer.inspectionToBuf) {
+      layer.inspectionFromBuf.addUpdateRange(0, segments * 2);
+      layer.inspectionFromBuf.needsUpdate = true;
+      layer.inspectionToBuf.addUpdateRange(0, segments * 2);
+      layer.inspectionToBuf.needsUpdate = true;
+    }
+  }
+  layer.geometry.instanceCount = segments;
+  fabricStats.observeUpload(
+    segments * (FABRIC_LIFECYCLE_BYTES_PER_SEGMENT + 16),
+  );
+}
+
+/** Aperture-window upload: recall dims live in the color records' .w lanes,
+ * so a recall frame re-uploads the populated color prefix (8 floats per
+ * segment — bounded to the interaction window). */
+function commitFabricApertureLanes(layer: FatLineLayer): void {
+  const lifecycle = layer.lifecycle;
+  if (!lifecycle) return;
+  lifecycle.colorBuf.clearUpdateRanges();
+  if (layer.count > 0) {
+    lifecycle.colorBuf.addUpdateRange(0, layer.count * FABRIC_LIFE_COLOR_STRIDE);
+    lifecycle.colorBuf.needsUpdate = true;
+  }
+  fabricStats.observeUpload(layer.count * 4 * FABRIC_LIFE_COLOR_STRIDE);
+}
+
+/** A settled lifecycle for static-span inspection/aperture baking: the shader
+ * owns the real interval, alpha, and flash. */
+const SETTLED_EDGE_RENDER: EdgeRender = {
+  visible: true, alphaMul: 1, tStart: 0, tEnd: 1, flash: 0,
+  reap: false, animating: false,
+};
+
 export default function NeuralFabric({
   onReady,
   cellDetailViewFocusRef,
@@ -1022,6 +1132,7 @@ export default function NeuralFabric({
       'screen',
       true,
       true,
+      true, // GPU-parametric lifecycle: static slots, sim-time evaluation
     ),
     [],
   );
@@ -1101,9 +1212,7 @@ export default function NeuralFabric({
    * animating set (grow / gc-fade / death-retract / future-staggered) drives
    * the incremental per-slot path in between. */
   const slotByKeyRef = useRef<Map<string, number>>(new Map());
-  const animatingKeysRef = useRef<Set<string>>(new Set());
   const usedSlotCountRef = useRef(0);
-  const dirtySlotScratchRef = useRef<number[]>([]);
   /** Recycled slot indices from in-place reaps. Cleared by every full walk. */
   const freeSlotsRef = useRef<number[]>([]);
   /** renderOrder keys whose state has been reaped in place. Filtered lazily —
@@ -1180,6 +1289,88 @@ export default function NeuralFabric({
     const fabricSlotCapacity = Math.floor(
       fabric.positions.length / 6 / FABRIC_SLOT_SEGMENTS,
     );
+
+    // ——— GPU-parametric lifecycle plumbing (P1.7) ———
+    const lifecycleArrays = fabric.lifecycle!.arrays;
+    /** Slots whose static record changed since the last emit → ranged upload. */
+    const lifeDirtySlots: number[] = [];
+    /** Rewrite one edge's static record into its slot and mark it dirty.
+     * Fabric-layer usage is deliberately 0 — reinforcement lives on the warm
+     * overlay; the shader's gold/reclaim terms match the old CPU walk which
+     * always passed usage=0 here. */
+    const writeLifecycleSlot = (key: string, st: EdgeState): void => {
+      const slot = slotByKeyRef.current.get(key);
+      if (slot === undefined) return;
+      writeFabricLifecycleSlot(lifecycleArrays, slot * FABRIC_SLOT_SEGMENTS, {
+        fromX: st.fromX, fromY: st.fromY, fromZ: st.fromZ,
+        ctrlX: st.ctrlX, ctrlY: st.ctrlY, ctrlZ: st.ctrlZ,
+        toX: st.toX, toY: st.toY, toZ: st.toZ,
+        fromR: st.fromR, fromG: st.fromG, fromB: st.fromB,
+        toR: st.toR, toG: st.toG, toB: st.toB,
+        bornAt: st.bornAt,
+        dyingAt: st.dyingAt,
+        deathKind: st.deathKind,
+        deadEnd: st.deadEnd,
+        growDir: st.growDir,
+        brightnessMul: st.brightnessMul,
+      });
+      // Inspection snapshots bake at the STATIC span (flash = 0; the shader
+      // owns interval and lift) — a recycled slot may hold stale values.
+      fabric.count = slot * FABRIC_SLOT_SEGMENTS;
+      writeFabricEdgeInspectionSegments(
+        fabric,
+        st,
+        SETTLED_EDGE_RENDER,
+        inspectionFieldRef.current,
+      );
+      fillInspectionSlotRemainder(fabric, (slot + 1) * FABRIC_SLOT_SEGMENTS);
+      lifeDirtySlots.push(slot);
+    };
+    /** Two FIFO expiry queues (fixed windows per kind ⇒ each queue stays
+     * time-ordered as kills arrive monotonically). Drained lazily each emit;
+     * entries are re-validated against the CURRENT state so a revival between
+     * queueing and expiry is never reaped. */
+    const reapQueues = {
+      death: { entries: [] as { key: string; endSec: number }[], head: 0 },
+      gc: { entries: [] as { key: string; endSec: number }[], head: 0 },
+    };
+    const queueReap = (key: string, st: EdgeState): void => {
+      const endSec = fabricLifecycleEndSec(st.dyingAt, st.deathKind);
+      if (!Number.isFinite(endSec) || st.deathKind === null) return;
+      reapQueues[st.deathKind].entries.push({ key, endSec });
+    };
+    const drainReapQueue = (
+      queue: { entries: { key: string; endSec: number }[]; head: number },
+      now: number,
+    ): void => {
+      const states = edgeStatesRef.current;
+      while (
+        queue.head < queue.entries.length
+        && queue.entries[queue.head].endSec <= now
+      ) {
+        const { key } = queue.entries[queue.head];
+        queue.head += 1;
+        const st = states.get(key);
+        if (
+          !st
+          || st.dyingAt === null
+          || fabricLifecycleEndSec(st.dyingAt, st.deathKind) > now
+        ) continue; // revived or already gone — the stale entry just drops
+        const slot = slotByKeyRef.current.get(key);
+        if (slot !== undefined) {
+          slotByKeyRef.current.delete(key);
+          freeSlotsRef.current.push(slot);
+        }
+        states.delete(key);
+        warmRouteKeysRef.current.delete(key);
+        renderOrderTombstonesRef.current += 1;
+        fabricStats.observeReapInPlace();
+      }
+      if (queue.head > 256 && queue.head * 2 > queue.entries.length) {
+        queue.entries = queue.entries.slice(queue.head);
+        queue.head = 0;
+      }
+    };
     /** Persistent slot allocation: recycle a hole from an in-place reap, else
      * grow the high-water mark. Newly claimed regions hold invisible content
      * (fillers, or zero colours on a fresh buffer) until the next emit writes
@@ -1217,7 +1408,6 @@ export default function NeuralFabric({
       const c = cells.get(e.to);
       if (!a || !c) return 'missing-cell';
       const slotted = allocateFabricSlot(key) !== undefined;
-      animatingKeysRef.current.add(key);
       const seed = fabricEdgeSeed(e.from, e.to);
       const routeColors = consensusRouteColors(seed);
       bezierControlInto(
@@ -1226,7 +1416,7 @@ export default function NeuralFabric({
         c.pos_seed[0], c.pos_seed[1], c.pos_seed[2],
         seed,
       );
-      edgeStatesRef.current.set(key, {
+      const state: EdgeState = {
         fromCellId: e.from,
         toCellId: e.to,
         fromX: a.pos_seed[0], fromY: a.pos_seed[1], fromZ: a.pos_seed[2],
@@ -1241,7 +1431,10 @@ export default function NeuralFabric({
         fromR: routeColors.from[0], fromG: routeColors.from[1], fromB: routeColors.from[2],
         toR: routeColors.to[0], toG: routeColors.to[1], toB: routeColors.to[2],
         usage: 0,
-      });
+      };
+      edgeStatesRef.current.set(key, state);
+      // One static-record write; the shader grows it from bornAt onward.
+      if (slotted) writeLifecycleSlot(key, state);
       return slotted ? 'slotted' : 'unslotted';
     };
 
@@ -1293,9 +1486,8 @@ export default function NeuralFabric({
       },
       setFabric(graph, cells, now) {
         const states = edgeStatesRef.current;
-        const animatingKeys = animatingKeysRef.current;
         // Boot guard for the stagger below: a first population from an
-        // empty set keeps the historical mass-churn-guard fast forming.
+        // empty set applies in one pass instead of staggered cohorts.
         const wasPopulated = states.size > 0;
         let overflowed = false;
         // A NEW authoritative graph supersedes any still-queued cohorts of
@@ -1363,10 +1555,12 @@ export default function NeuralFabric({
             // DECAY_MS), so we don't bother smoothing it further.
             if (existing.dyingAt !== null) {
               existing.dyingAt = null;
+              existing.deathKind = null;
+              existing.deadEnd = null;
               existing.bornAt = now - GROWTH_MS / 1000;
               statsRevived += 1;
-              // One incremental rewrite snaps the slot back to stable.
-              animatingKeys.add(key);
+              // One static-record rewrite snaps the slot back to stable.
+              writeLifecycleSlot(key, existing);
             } else {
               statsStable += 1;
             }
@@ -1439,7 +1633,8 @@ export default function NeuralFabric({
             st.dyingAt = now;
             st.deathKind = 'gc';
             statsDying += 1;
-            animatingKeys.add(key);
+            writeLifecycleSlot(key, st);
+            queueReap(key, st);
           } else {
             (deferredKills ??= []).push(key);
             statsDying += 1;
@@ -1510,8 +1705,8 @@ export default function NeuralFabric({
             existing.deadEnd = null;
             existing.bornAt = now - GROWTH_MS / 1000;
             statsRevived += 1;
-            // One incremental rewrite snaps the slot back to stable.
-            animatingKeysRef.current.add(key);
+            // One static-record rewrite snaps the slot back to stable.
+            writeLifecycleSlot(key, existing);
             continue;
           }
           const a = cells.get(e.from);
@@ -1519,7 +1714,6 @@ export default function NeuralFabric({
           if (!a || !c) continue;
           statsAdded += 1;
           if (allocateFabricSlot(key) === undefined) growOverflowed = true;
-          animatingKeysRef.current.add(key);
           const seed = fabricEdgeSeed(e.from, e.to);
           const routeColors = consensusRouteColors(seed);
           bezierControlInto(
@@ -1528,7 +1722,7 @@ export default function NeuralFabric({
             c.pos_seed[0], c.pos_seed[1], c.pos_seed[2],
             seed,
           );
-          states.set(key, {
+          const grown: EdgeState = {
             fromCellId: e.from,
             toCellId: e.to,
             fromX: a.pos_seed[0], fromY: a.pos_seed[1], fromZ: a.pos_seed[2],
@@ -1543,7 +1737,9 @@ export default function NeuralFabric({
             fromR: routeColors.from[0], fromG: routeColors.from[1], fromB: routeColors.from[2],
             toR: routeColors.to[0], toG: routeColors.to[1], toB: routeColors.to[2],
             usage: 0,
-          });
+          };
+          states.set(key, grown);
+          writeLifecycleSlot(key, grown);
           renderOrderRef.current.push(key); // append; reaps clean up lazily
         }
         fabricStats.observeDiff({
@@ -1575,7 +1771,8 @@ export default function NeuralFabric({
           st.deathKind = kind;
           st.deadEnd = kind === 'death' ? (deadEndByKey?.get(key) ?? 'from') : null;
           statsDying += 1;
-          animatingKeysRef.current.add(key);
+          writeLifecycleSlot(key, st);
+          queueReap(key, st);
         }
         fabricStats.observeDiff({
           atSec: dyingAt,
@@ -1603,6 +1800,21 @@ export default function NeuralFabric({
         if (st.usage > 0) warmRouteKeysRef.current.add(key);
       },
       emitFabric(now) {
+        // The fabric animates entirely on the GPU: these three scalars are
+        // its complete per-frame cost, and they must advance even on frames
+        // the CPU otherwise skips.
+        syncFabricLifecycleUniforms(fabric.material, now);
+        // Lazy reap: expired lifecycles are already invisible analytically;
+        // this only reclaims bookkeeping + slots, O(expired) per call.
+        drainReapQueue(reapQueues.death, now);
+        drainReapQueue(reapQueues.gc, now);
+        if (renderOrderTombstonesRef.current > RENDER_ORDER_TOMBSTONE_MAX) {
+          const reapStates = edgeStatesRef.current;
+          renderOrderRef.current = renderOrderRef.current.filter(
+            (key) => reapStates.has(key),
+          );
+          renderOrderTombstonesRef.current = 0;
+        }
         // Deferred-cohort pump: admit any due slices of a staggered
         // oversized diff through the SAME insertion body the immediate
         // path uses. Runs before the dirty gate below so a due cohort
@@ -1647,7 +1859,8 @@ export default function NeuralFabric({
               if (!st || st.dyingAt !== null) continue;
               st.dyingAt = now;
               st.deathKind = 'gc';
-              animatingKeysRef.current.add(key);
+              writeLifecycleSlot(key, st);
+              queueReap(key, st);
               cohortChanged = true;
             }
           }
@@ -1670,16 +1883,18 @@ export default function NeuralFabric({
         // true), never suppresses one, so it cannot regress the living-
         // mesh animation. Steady state with no change = six numeric
         // compares, then the existing early-return fires as before.
+        // fabricAlpha / centerDim became per-frame uniforms with the GPU
+        // lifecycle — a knob drag lands next frame with no repaint at all.
+        // Width / active-colour changes still need one pass through
+        // applyPassiveViewWeight + the material props below, but never a
+        // fabric rewrite: arm the dirty gate only.
         const ct = LIVE.cell, lc = lastCellTweakRef.current;
-        if (ct.fabricAlpha !== lc.alpha || ct.activeColorR !== lc.r || ct.activeColorG !== lc.g ||
-            ct.activeColorB !== lc.b || ct.fabricWidth !== lc.fw || ct.activeWidth !== lc.aw ||
-            ct.centerDim !== lc.cd) {
-          lc.alpha = ct.fabricAlpha; lc.r = ct.activeColorR; lc.g = ct.activeColorG;
+        if (ct.activeColorR !== lc.r || ct.activeColorG !== lc.g ||
+            ct.activeColorB !== lc.b || ct.fabricWidth !== lc.fw ||
+            ct.activeWidth !== lc.aw) {
+          lc.r = ct.activeColorR; lc.g = ct.activeColorG;
           lc.b = ct.activeColorB; lc.fw = ct.fabricWidth; lc.aw = ct.activeWidth;
-          lc.cd = ct.centerDim;
-          inspectionOnlyDirtyRef.current = false;
-          globalRepaintRef.current = true;
-          emitDirtyRef.current = true; // force one redraw with the new values
+          emitDirtyRef.current = true; // one pass applies the new values
         }
         const inspectionField = inspectionFieldRef.current;
         if (inspectionField.progress < 1) {
@@ -1697,22 +1912,50 @@ export default function NeuralFabric({
           }
         }
         const recallAperture = recallApertureRef.current;
-        const apertureAnimating = (
-          recallAperture.activeStrength > 0.001
-          && consensusMemoryApertureAnimating(recallAperture.active, now)
-        ) || (
-          recallAperture.departingStrength > 0.001
-          && consensusMemoryApertureAnimating(recallAperture.departing, now)
-        );
-        // Temporal masks need fresh passive vertices while their verified
-        // wavefront or targetward closure is moving. One final redraw after
-        // the interval restores every released fibre to its exact baseline.
-        if (apertureAnimating || apertureAnimationRef.current) {
-          inspectionOnlyDirtyRef.current = false;
-          globalRepaintRef.current = true;
-          emitDirtyRef.current = true;
+        // Recall apertures are the one lifecycle input the CPU still owns
+        // (spatial-hash segment queries can't move to the vertex stage).
+        // While a recall holds or releases, bake the aperture scale at each
+        // slot's STATIC curve samples (flash = 0 — the shader lifts) and
+        // upload just the 2-float-per-segment aperture prefix; one final
+        // pass after release restores the exact 1.0 baseline everywhere.
+        const apertureActive = recallAperture.activeStrength > 0.001
+          || recallAperture.departingStrength > 0.001;
+        if (apertureActive || apertureAnimationRef.current) {
+          const colorArray = lifecycleArrays.color;
+          const slots = slotByKeyRef.current;
+          const apertureStates = edgeStatesRef.current;
+          for (const [key, slot] of slots) {
+            const st = apertureStates.get(key);
+            if (!st) continue;
+            const baseSegment = slot * FABRIC_SLOT_SEGMENTS;
+            let prevScale = apertureActive
+              ? recallApertureScaleAt(recallAperture, st.fromX, st.fromZ, 0, now)
+              : 1;
+            for (let seg = 0; seg < FABRIC_SLOT_SEGMENTS; seg += 1) {
+              const t = (seg + 1) / FABRIC_SLOT_SEGMENTS;
+              let endScale = 1;
+              if (apertureActive) {
+                bezierAtInto(
+                  sample,
+                  st.fromX, st.fromY, st.fromZ,
+                  st.ctrlX, st.ctrlY, st.ctrlZ,
+                  st.toX, st.toY, st.toZ,
+                  t,
+                );
+                endScale = recallApertureScaleAt(
+                  recallAperture, sample[0], sample[2], 0, now,
+                );
+              }
+              const offset = (baseSegment + seg) * FABRIC_LIFE_COLOR_STRIDE;
+              colorArray[offset + FABRIC_LIFE_APERTURE_START_OFFSET] = prevScale;
+              colorArray[offset + FABRIC_LIFE_APERTURE_END_OFFSET] = endScale;
+              prevScale = endScale;
+            }
+          }
+          fabric.count = usedSlotCountRef.current * FABRIC_SLOT_SEGMENTS;
+          commitFabricApertureLanes(fabric);
         }
-        apertureAnimationRef.current = apertureAnimating;
+        apertureAnimationRef.current = apertureActive;
 
         const states = edgeStatesRef.current;
         const warmRouteKeys = warmRouteKeysRef.current;
@@ -1774,12 +2017,10 @@ export default function NeuralFabric({
           fabricStats.observeSkipFrame();
           return;
         }
-        const animatingKeys = animatingKeysRef.current;
         if (
           inspectionOnlyDirtyRef.current
           && !passivePositionsDirtyRef.current
           && !globalRepaintRef.current
-          && animatingKeys.size === 0
         ) {
           // Selection changed over a settled fabric: rewrite only the two
           // static inspection snapshots, slot-addressed so they stay aligned
@@ -1791,10 +2032,11 @@ export default function NeuralFabric({
             const slot = slots.get(key);
             if (slot === undefined) continue;
             fabric.count = slot * FABRIC_SLOT_SEGMENTS;
+            // Static-span bake: the shader owns interval and flash lift.
             writeFabricEdgeInspectionSegments(
               fabric,
               st,
-              fabricEdgeRenderState(st, now),
+              SETTLED_EDGE_RENDER,
               inspectionField,
             );
             fillInspectionSlotRemainder(
@@ -1820,104 +2062,36 @@ export default function NeuralFabric({
         // any width-knob change — including on the forced redraw above.
         active.material.linewidth = LIVE.cell.activeWidth;
 
-        // Incremental path: no structural or global-colour change is pending,
-        // only lifecycle animation. Each animating edge rewrites exactly its
-        // own fixed slot; every settled edge's segments stay untouched in the
-        // buffer, and only the merged dirty slot ranges upload. This replaces
-        // the historical whole-fabric rewrite that ran every frame while ANY
-        // edge was growing or dying.
+        // Event flush: lifecycle animation is GPU-owned, so the only per-emit
+        // buffer work is uploading the static records that admits / kills /
+        // revivals wrote since the last flush. A frame with no events and no
+        // structural change uploads nothing.
         if (
           !passivePositionsDirtyRef.current
           && !globalRepaintRef.current
-          // A pending selection change touches EVERY edge's inspection
-          // snapshot — that rides the full walk below, exactly as the packed
-          // layout handled selection during animation.
-          && !inspectionOnlyDirtyRef.current
-          && animatingKeys.size > 0
-          // Mass churn (a reconciliation that re-animates most of the mesh)
-          // degenerates per-slot bookkeeping into a full rewrite plus
-          // overhead — take the plain full walk there and keep the
-          // incremental path for its target case: a small animating set
-          // over a settled fabric.
-          && animatingKeys.size * 2 < usedSlotCountRef.current
         ) {
-          const slots = slotByKeyRef.current;
-          const dirtySlots = dirtySlotScratchRef.current;
-          dirtySlots.length = 0;
-          for (const key of animatingKeys) {
-            const st = states.get(key);
-            const slot = st ? slots.get(key) : undefined;
-            if (!st || slot === undefined) {
-              animatingKeys.delete(key);
-              continue;
-            }
-            const rs = fabricEdgeRenderState(st, now);
-            if (rs.reap) {
-              // Free the slot in place: park its segments as invisible
-              // fillers and recycle the index. No compaction, no full walk.
-              fabric.count = slot * FABRIC_SLOT_SEGMENTS;
-              fillFabricSlotRemainder(fabric, (slot + 1) * FABRIC_SLOT_SEGMENTS);
-              dirtySlots.push(slot);
-              states.delete(key);
-              warmRouteKeys.delete(key);
-              slots.delete(key);
-              freeSlotsRef.current.push(slot);
-              animatingKeys.delete(key);
-              renderOrderTombstonesRef.current += 1;
-              fabricStats.observeReapInPlace();
-              continue;
-            }
-            fabric.count = slot * FABRIC_SLOT_SEGMENTS;
-            writeFabricEdgeSegments(
+          if (lifeDirtySlots.length > 0) {
+            fabric.count = usedSlotCountRef.current * FABRIC_SLOT_SEGMENTS;
+            commitFabricLifecycleSlotRanges(
               fabric,
-              st,
-              rs,
-              sample,
-              now,
-              0,
-              1,
-              recallAperture,
-              inspectionField,
+              mergeFabricSlotRanges(lifeDirtySlots),
             );
-            fillFabricSlotRemainder(fabric, (slot + 1) * FABRIC_SLOT_SEGMENTS);
-            dirtySlots.push(slot);
-            if (!rs.animating) animatingKeys.delete(key);
+            fabricStats.observeIncrementalFrame(lifeDirtySlots.length, 0);
+            lifeDirtySlots.length = 0;
           }
-          // Tombstone hygiene: reaped keys linger in renderOrder (both
-          // consumers skip missing states); filter once they pile up.
-          if (renderOrderTombstonesRef.current > RENDER_ORDER_TOMBSTONE_MAX) {
-            renderOrderRef.current = renderOrderRef.current.filter(
-              (key) => states.has(key),
-            );
-            renderOrderTombstonesRef.current = 0;
-          }
-          fabric.count = usedSlotCountRef.current * FABRIC_SLOT_SEGMENTS;
-          commitFabricSlotRanges(fabric, mergeFabricSlotRanges(dirtySlots));
-          emitDirtyRef.current = animatingKeys.size > 0;
-          fabricStats.observeIncrementalFrame(
-            dirtySlots.length,
-            animatingKeys.size,
-          );
+          inspectionOnlyDirtyRef.current = false;
+          emitDirtyRef.current = false;
           return;
         }
 
-        // Full walk: structural change (slot-space overflow / boot), global
-        // colour change, or a selection snapshot landing mid-animation.
-        // Positions rewrite when the slot layout moved or any edge geometry
-        // is mid-animation; a settled global repaint (aperture release /
-        // knob drag) stays colours-only.
+        // Full walk: compacting structural change (slot-space overflow /
+        // boot) or a rare global repaint. Rewrites every static record into
+        // freshly assigned slots plus the settled inspection snapshots.
         const fullWalkReason: FabricFullWalkReason = passivePositionsDirtyRef.current
           ? 'structural'
-          : globalRepaintRef.current
-            ? 'global-repaint'
-            : inspectionOnlyDirtyRef.current
-              ? 'inspection-during-animation'
-              : 'mass-churn-guard';
-        const writePassivePositions = passivePositionsDirtyRef.current
-          || animatingKeys.size > 0;
+          : 'global-repaint';
         const slots = slotByKeyRef.current;
         slots.clear();
-        animatingKeys.clear();
         const slotCapacity = Math.floor(
           fabric.positions.length / 6 / FABRIC_SLOT_SEGMENTS,
         );
@@ -1928,37 +2102,52 @@ export default function NeuralFabric({
         for (const key of renderOrderRef.current) {
           const st = states.get(key);
           if (!st) continue;
-          // All lifecycle math (grow tip / gc fade / death retract +
-          // flash / future-staggered start) lives in the pure
-          // fabricEdgeRenderState. It returns the drawn Bezier interval
-          // [tStart, tEnd], the alpha multiplier, a semantic death
-          // flash, and reap/animating flags — this loop just draws it.
-          const rs = fabricEdgeRenderState(st, now);
-          if (rs.reap) { (toReap ??= []).push(key); continue; }
+          // Expired lifecycles compact away here; live and animating ones
+          // just get their static record — the shader owns the animation.
+          if (fabricLifecycleEndSec(st.dyingAt, st.deathKind) <= now) {
+            (toReap ??= []).push(key);
+            continue;
+          }
           // Over the slot budget: drop trailing entries (renderOrder keeps
           // current edges first, so superseded afterimages clip before live
           // form — the same degradation direction as the packed layout).
           if (slotIndex >= slotCapacity) continue;
+          writeFabricLifecycleSlot(
+            lifecycleArrays,
+            slotIndex * FABRIC_SLOT_SEGMENTS,
+            {
+              fromX: st.fromX, fromY: st.fromY, fromZ: st.fromZ,
+              ctrlX: st.ctrlX, ctrlY: st.ctrlY, ctrlZ: st.ctrlZ,
+              toX: st.toX, toY: st.toY, toZ: st.toZ,
+              fromR: st.fromR, fromG: st.fromG, fromB: st.fromB,
+              toR: st.toR, toG: st.toG, toB: st.toB,
+              bornAt: st.bornAt,
+              dyingAt: st.dyingAt,
+              deathKind: st.deathKind,
+              deadEnd: st.deadEnd,
+              growDir: st.growDir,
+              brightnessMul: st.brightnessMul,
+            },
+          );
           fabric.count = slotIndex * FABRIC_SLOT_SEGMENTS;
-          writeFabricEdgeSegments(
+          writeFabricEdgeInspectionSegments(
             fabric,
             st,
-            rs,
-            sample,
-            now,
-            0,
-            1,
-            recallAperture,
+            SETTLED_EDGE_RENDER,
             inspectionField,
-            writePassivePositions,
           );
-          fillFabricSlotRemainder(fabric, (slotIndex + 1) * FABRIC_SLOT_SEGMENTS);
+          fillInspectionSlotRemainder(
+            fabric,
+            (slotIndex + 1) * FABRIC_SLOT_SEGMENTS,
+          );
+          // The slot writer resets the aperture lanes to the 1.0 baseline;
+          // the aperture pass re-bakes them next frame while a recall holds.
           slots.set(key, slotIndex);
-          if (rs.animating) animatingKeys.add(key);
           slotIndex += 1;
         }
         usedSlotCountRef.current = slotIndex;
         fabric.count = slotIndex * FABRIC_SLOT_SEGMENTS;
+        lifeDirtySlots.length = 0; // superseded by the full upload below
 
         if (toReap) {
           for (const key of toReap) {
@@ -1977,24 +2166,12 @@ export default function NeuralFabric({
         }
         renderOrderTombstonesRef.current = 0;
 
-        fabricStats.observeUpload(fabricUploadBytes(fabric.count, {
-          positions: writePassivePositions,
-          colors: true,
-          inspection: (fabric.inspectionFromBuf ? 1 : 0)
-            + (fabric.inspectionToBuf ? 1 : 0),
-        }));
-        commitLayer(fabric, writePassivePositions, true);
+        commitFabricLifecycleFull(fabric);
         inspectionOnlyDirtyRef.current = false;
         globalRepaintRef.current = false;
         passivePositionsDirtyRef.current = false;
-        // Animating edges continue through the incremental slot path above;
-        // once everything settles the buffer rests until the next diff.
-        emitDirtyRef.current = animatingKeys.size > 0;
-        fabricStats.observeFullWalk(
-          fullWalkReason,
-          slotIndex,
-          animatingKeys.size,
-        );
+        emitDirtyRef.current = false;
+        fabricStats.observeFullWalk(fullWalkReason, slotIndex, 0);
       },
       pushActiveHop(hop, cells) {
         const layer = hop.mode === 'memory'

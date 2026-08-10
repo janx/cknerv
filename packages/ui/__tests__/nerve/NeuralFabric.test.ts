@@ -232,19 +232,16 @@ describe('NeuralFabric living-mesh handles', () => {
     expect(SRC).toContain('clearUpdateRanges()');
   });
 
-  it('retains passive positions during colour-only mask transitions', () => {
+  it('never streams passive positions — the shader owns the animation', () => {
     expect(SRC).toContain('passivePositionsDirtyRef');
-    expect(SRC).toContain(
-      'const writePassivePositions = passivePositionsDirtyRef.current',
-    );
-    expect(SRC).toContain(
-      'commitLayer(fabric, writePassivePositions, true)',
-    );
-    expect(SRC).toContain('if (updatePositions)');
-    expect(SRC).toContain('if (writePositions)');
-    // Positions rewrite while the slot layout moves (structural) or any edge
-    // geometry is mid-animation; the structural flag resolves with the walk.
-    expect(SRC).toContain('|| animatingKeys.size > 0');
+    // The GPU-parametric fabric writes static records once per lifecycle
+    // event; per-frame CPU is the uniform sync alone, and even the compacting
+    // full walk uploads static records + inspection, never sampled positions.
+    expect(SRC).toContain('syncFabricLifecycleUniforms(fabric.material, now)');
+    expect(SRC).toContain('writeFabricLifecycleSlot(');
+    expect(SRC).toContain('commitFabricLifecycleFull(fabric)');
+    expect(SRC).toContain('commitFabricLifecycleSlotRanges(');
+    expect(SRC).not.toMatch(/writeFabricEdgeSegments\(\s*fabric/);
     expect(SRC).toContain('passivePositionsDirtyRef.current = false');
   });
 
@@ -323,7 +320,8 @@ describe('NeuralFabric oversized-diff cohort staggering', () => {
   it('meters passive-fabric uploads through fabricUploadBytes', () => {
     expect(SRC).toContain('fabricUploadBytes');
     const observeCalls = SRC.match(/fabricStats\.observeUpload\(/g) ?? [];
-    // Incremental slot ranges + full walk + inspection-only prefix.
-    expect(observeCalls.length).toBe(3);
+    // Legacy slot ranges (test surface) + inspection-only prefix + the three
+    // lifecycle commits (event ranges, full population, aperture prefix).
+    expect(observeCalls.length).toBe(5);
   });
 });

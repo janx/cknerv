@@ -196,7 +196,9 @@ const CAPSULE_INSPECTION_VERTEX_ASSIGNMENT = `
 			vCapsuleInspectionFromEnd = instanceInspectionFromEnd;
 			vCapsuleInspectionToStart = instanceInspectionToStart;
 			vCapsuleInspectionToEnd = instanceInspectionToEnd;`;
-const CAPSULE_INSPECTION_FRAGMENT = `
+/** Exported so the fabric lifecycle patch can anchor its flash-lifted
+ * replacement on this exact chunk. */
+export const CAPSULE_INSPECTION_FRAGMENT = `
 			#ifdef USE_COLOR
 
 				diffuseColor.rgb *= mix(

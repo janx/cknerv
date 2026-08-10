@@ -3,8 +3,13 @@
 // edge's curve/color/lifecycle record and differ only in their static segment
 // span. Written ONCE per lifecycle event (admit / kill / reinforce / aperture
 // window) instead of every animated frame; the shader in
-// fabricLifecycleShader.ts evaluates everything else from sim time. Pure
-// module — unit-tested directly.
+// fabricLifecycleShader.ts evaluates everything else from sim time.
+//
+// The layout packs everything into THREE vec4-friendly interleaved buffers —
+// six attributes total — because vertex attribute locations are a hard GPU
+// resource (16 on common hardware) already shared with the line/inspection
+// pipeline: curve endpoints carry the segment span in .w, endpoint colors
+// carry the recall-aperture scale in .w. Pure module — unit-tested directly.
 
 import { FABRIC_SAMPLES_PER_EDGE } from './fabricCapacity';
 import {
@@ -14,26 +19,36 @@ import {
 } from './fabricEdgeRender';
 import { FABRIC_LIFECYCLE_ALIVE_SENTINEL } from './fabricLifecycleShader';
 
-export const FABRIC_LIFE_CURVE_STRIDE = 11; // from(3) ctrl(3) to(3) span(2)
-export const FABRIC_LIFE_COLOR_STRIDE = 6; // fromRGB toRGB
-export const FABRIC_LIFE_SCALAR_STRIDE = 8; // born dying brightness flags usage usageAt r r
-export const FABRIC_LIFE_APERTURE_STRIDE = 2; // start end
+/** [fx,fy,fz,spanStart, cx,cy,cz,spanEnd, tx,ty,tz,reserved] */
+export const FABRIC_LIFE_CURVE_STRIDE = 12;
+/** [fromR,fromG,fromB,apertureStart, toR,toG,toB,apertureEnd] */
+export const FABRIC_LIFE_COLOR_STRIDE = 8;
+/** [bornAtSec, dyingAtSec, brightnessMul, packedFlags] */
+export const FABRIC_LIFE_SCALAR_STRIDE = 4;
+
+/** Float offsets of the two aperture lanes inside one color-stride record. */
+export const FABRIC_LIFE_APERTURE_START_OFFSET = 3;
+export const FABRIC_LIFE_APERTURE_END_OFFSET = 7;
 
 export interface FabricLifecycleArrays {
   curve: Float32Array;
   color: Float32Array;
   scalar: Float32Array;
-  aperture: Float32Array;
 }
 
 export function makeFabricLifecycleArrays(
   maxSegments: number,
 ): FabricLifecycleArrays {
+  const color = new Float32Array(maxSegments * FABRIC_LIFE_COLOR_STRIDE);
+  // Aperture lanes rest at the exact 1.0 baseline.
+  for (let segment = 0; segment < maxSegments; segment += 1) {
+    color[segment * FABRIC_LIFE_COLOR_STRIDE + FABRIC_LIFE_APERTURE_START_OFFSET] = 1;
+    color[segment * FABRIC_LIFE_COLOR_STRIDE + FABRIC_LIFE_APERTURE_END_OFFSET] = 1;
+  }
   return {
     curve: new Float32Array(maxSegments * FABRIC_LIFE_CURVE_STRIDE),
-    color: new Float32Array(maxSegments * FABRIC_LIFE_COLOR_STRIDE),
+    color,
     scalar: new Float32Array(maxSegments * FABRIC_LIFE_SCALAR_STRIDE),
-    aperture: new Float32Array(maxSegments * FABRIC_LIFE_APERTURE_STRIDE).fill(1),
   };
 }
 
@@ -50,7 +65,9 @@ export function packFabricLifecycleFlags(
   return kind * 4 + deadEndTo * 2 + reversed;
 }
 
-/** The lifecycle-relevant subset of NeuralFabric's EdgeState. */
+/** The lifecycle-relevant subset of NeuralFabric's EdgeState. Fabric-layer
+ *  usage is deliberately absent: reinforcement renders on the warm overlay
+ *  and the base fabric always evaluated with usage 0. */
 export interface FabricLifecycleRecord {
   fromX: number; fromY: number; fromZ: number;
   ctrlX: number; ctrlY: number; ctrlZ: number;
@@ -63,17 +80,13 @@ export interface FabricLifecycleRecord {
   deadEnd: 'from' | 'to' | null;
   growDir: 1 | -1;
   brightnessMul: number;
-  /** Usage value at the most recent reinforce event (0 = cold). */
-  usageAtEvent: number;
-  /** Sim-second of that event; the shader decays from here. */
-  usageEventAtSec: number;
 }
 
 /** Write one edge's full static record into its slot (all
  *  FABRIC_SAMPLES_PER_EDGE instances). `slotBaseSegment` is the slot's first
- *  segment index (slotIndex × FABRIC_SAMPLES_PER_EDGE). Aperture values are
- *  deliberately NOT touched — they belong to the recall window's own writer
- *  and default to 1. */
+ *  segment index (slotIndex × FABRIC_SAMPLES_PER_EDGE). The aperture lanes are
+ *  reset to the 1.0 baseline — a recycled slot must not inherit a stale
+ *  recall dim; the recall-window writer re-bakes them while a recall holds. */
 export function writeFabricLifecycleSlot(
   arrays: FabricLifecycleArrays,
   slotBaseSegment: number,
@@ -93,30 +106,29 @@ export function writeFabricLifecycleSlot(
     arrays.curve[curveOffset] = record.fromX;
     arrays.curve[curveOffset + 1] = record.fromY;
     arrays.curve[curveOffset + 2] = record.fromZ;
-    arrays.curve[curveOffset + 3] = record.ctrlX;
-    arrays.curve[curveOffset + 4] = record.ctrlY;
-    arrays.curve[curveOffset + 5] = record.ctrlZ;
-    arrays.curve[curveOffset + 6] = record.toX;
-    arrays.curve[curveOffset + 7] = record.toY;
-    arrays.curve[curveOffset + 8] = record.toZ;
-    arrays.curve[curveOffset + 9] = segment / FABRIC_SAMPLES_PER_EDGE;
-    arrays.curve[curveOffset + 10] = (segment + 1) / FABRIC_SAMPLES_PER_EDGE;
+    arrays.curve[curveOffset + 3] = segment / FABRIC_SAMPLES_PER_EDGE;
+    arrays.curve[curveOffset + 4] = record.ctrlX;
+    arrays.curve[curveOffset + 5] = record.ctrlY;
+    arrays.curve[curveOffset + 6] = record.ctrlZ;
+    arrays.curve[curveOffset + 7] = (segment + 1) / FABRIC_SAMPLES_PER_EDGE;
+    arrays.curve[curveOffset + 8] = record.toX;
+    arrays.curve[curveOffset + 9] = record.toY;
+    arrays.curve[curveOffset + 10] = record.toZ;
+    arrays.curve[curveOffset + 11] = 0;
     const colorOffset = instance * FABRIC_LIFE_COLOR_STRIDE;
     arrays.color[colorOffset] = record.fromR;
     arrays.color[colorOffset + 1] = record.fromG;
     arrays.color[colorOffset + 2] = record.fromB;
-    arrays.color[colorOffset + 3] = record.toR;
-    arrays.color[colorOffset + 4] = record.toG;
-    arrays.color[colorOffset + 5] = record.toB;
+    arrays.color[colorOffset + FABRIC_LIFE_APERTURE_START_OFFSET] = 1;
+    arrays.color[colorOffset + 4] = record.toR;
+    arrays.color[colorOffset + 5] = record.toG;
+    arrays.color[colorOffset + 6] = record.toB;
+    arrays.color[colorOffset + FABRIC_LIFE_APERTURE_END_OFFSET] = 1;
     const scalarOffset = instance * FABRIC_LIFE_SCALAR_STRIDE;
     arrays.scalar[scalarOffset] = record.bornAt;
     arrays.scalar[scalarOffset + 1] = dying;
     arrays.scalar[scalarOffset + 2] = record.brightnessMul;
     arrays.scalar[scalarOffset + 3] = flags;
-    arrays.scalar[scalarOffset + 4] = record.usageAtEvent;
-    arrays.scalar[scalarOffset + 5] = record.usageEventAtSec;
-    arrays.scalar[scalarOffset + 6] = 0;
-    arrays.scalar[scalarOffset + 7] = 0;
   }
 }
 
