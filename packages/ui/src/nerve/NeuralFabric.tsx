@@ -51,7 +51,11 @@ import {
   decayUsage,
   warmRouteBrightnessGain,
 } from './fabricReinforce';
-import { passiveFabricEnergyScale } from './fabricLuminance';
+import {
+  passiveFabricEnergyScale,
+  TWIG_MIN,
+  fabricTaper as taper,
+} from './fabricLuminance';
 import {
   fabricStats,
   fabricUploadBytes,
@@ -373,24 +377,8 @@ function recallApertureScaleAt(
   );
 }
 
-/** Floor brightness at the midpoint of a fabric edge, as a fraction of
- *  the endpoint brightness. The taper drops smoothly from 1.0 at each
- *  cell down to TAPER_MIN at the shaft midpoint, then back to 1.0 at
- *  the other cell — a parabolic profile that lets each Cell read as a
- *  bright agreement endpoint rather than a uniform vessel. */
-const TAPER_MIN = 0.44;
-
-/** Returns the per-vertex brightness multiplier along a fabric edge at
- *  parameter t ∈ [0, 1]. Parabolic in (2t − 1)² so it's exactly
- *  TAPER_MIN at the midpoint and 1.0 at either endpoint, with smooth
- *  rise on both sides. */
-function taper(t: number): number {
-  const k = 2 * t - 1;
-  return TAPER_MIN + (1 - TAPER_MIN) * k * k;
-}
-
-/** Floor brightness — twigs / non-forest cross-links sit here. */
-const TWIG_MIN = 0.34;
+// TAPER_MIN / taper / TWIG_MIN moved to fabricLuminance so the GLSL
+// lifecycle port shares one definition with this CPU reference.
 
 /** Per-edge brightness multiplier ∈ [TWIG_MIN, 1.0], the fabric's trunk/branch
  *  hierarchy. Forest edges scale by their arbor weight `w` (normalized subtree

@@ -196,12 +196,24 @@ export function consensusCellColor(
 /** Gold occupancy for one passive route. Geometric hierarchy establishes a
  * restrained persistent backbone; repeated real packet crossings dominate and
  * can turn the route into a warm consensus trunk. */
+/** Gold-mix curve constants, exported so the GLSL fabric-lifecycle port
+ *  injects the very same values (a template literal builds the shader from
+ *  these — the two implementations cannot drift). */
+export const GOLD_MIX_TRUNK_GAIN = 0.28;
+export const GOLD_MIX_TRAFFIC_EDGE0 = 0.02;
+export const GOLD_MIX_TRAFFIC_EDGE1 = 0.88;
+export const GOLD_MIX_TRAFFIC_GAIN = 0.82;
+
 export function consensusRouteGoldMix(
   hierarchy: number,
   usage: number,
 ): number {
-  const trunk = Math.max(0, Math.min(1, hierarchy)) * 0.28;
-  const traffic = smoothstep(0.02, 0.88, Math.max(0, Math.min(1, usage))) * 0.82;
+  const trunk = Math.max(0, Math.min(1, hierarchy)) * GOLD_MIX_TRUNK_GAIN;
+  const traffic = smoothstep(
+    GOLD_MIX_TRAFFIC_EDGE0,
+    GOLD_MIX_TRAFFIC_EDGE1,
+    Math.max(0, Math.min(1, usage)),
+  ) * GOLD_MIX_TRAFFIC_GAIN;
   return Math.max(trunk, traffic);
 }
 

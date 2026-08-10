@@ -12,6 +12,25 @@ export const FABRIC_CORE_OUTER_RADIUS = 24;
 export const FABRIC_TRUNK_RECLAIM = 0.34;
 export const FABRIC_USAGE_RECLAIM = 0.52;
 
+/** Floor brightness at the midpoint of a fabric edge, as a fraction of the
+ *  endpoint brightness (art-direction baseline, see canvas-rendering.md).
+ *  Moved here from NeuralFabric so the GLSL lifecycle port and the CPU
+ *  reference share one definition. */
+export const TAPER_MIN = 0.44;
+
+/** Floor brightness for twig / non-forest cross-link edges — the bottom of
+ *  the per-edge brightnessMul range and the zero point of the hierarchy
+ *  normalization. Moved here from NeuralFabric with TAPER_MIN. */
+export const TWIG_MIN = 0.34;
+
+/** Per-vertex brightness multiplier along a fabric edge at t ∈ [0, 1].
+ *  Parabolic in (2t − 1)² so it's exactly TAPER_MIN at the midpoint and 1.0
+ *  at either endpoint, with smooth rise on both sides. */
+export function fabricTaper(t: number): number {
+  const k = 2 * t - 1;
+  return TAPER_MIN + (1 - TAPER_MIN) * k * k;
+}
+
 const clamp01 = (value: number): number => Math.max(0, Math.min(1, value));
 
 function smoothstep(edge0: number, edge1: number, value: number): number {

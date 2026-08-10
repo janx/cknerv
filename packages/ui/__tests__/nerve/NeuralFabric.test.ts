@@ -149,8 +149,16 @@ describe('NeuralFabric living-mesh handles', () => {
   });
 
   it('keeps weak and mid-curve resting nerves visibly present', () => {
-    expect(SRC).toContain('const TAPER_MIN = 0.44;');
-    expect(SRC).toContain('const TWIG_MIN = 0.34;');
+    // The floors moved to fabricLuminance (shared with the GLSL lifecycle
+    // port); the fabric still consumes them and their values stay pinned.
+    expect(SRC).toContain("fabricTaper as taper");
+    expect(SRC).toContain('TWIG_MIN');
+    const luminanceSrc = readFileSync(
+      resolve(process.cwd(), 'src/nerve/fabricLuminance.ts'),
+      'utf8',
+    );
+    expect(luminanceSrc).toContain('export const TAPER_MIN = 0.44;');
+    expect(luminanceSrc).toContain('export const TWIG_MIN = 0.34;');
   });
 
   it('does not rate-limit passive lifecycle or mask animation frames', () => {
