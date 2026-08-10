@@ -9,6 +9,13 @@ export const ADAPTIVE_SAMPLE_WINDOW_MS = 750;
  * down afterwards; it just starts judging from steady frames. */
 export const ADAPTIVE_WARMUP_MS = 12_000;
 export const ADAPTIVE_SWITCH_COOLDOWN_MS = 6_000;
+/** Settle grace after an UPWARD switch. A promotion triggers a one-time
+ * transition storm (tier-scale render-set rebuild, fabric reallocation and
+ * regrowth) that outlives the ordinary cooldown and used to knock every
+ * promotion straight back down — the tier was judged on its own arrival
+ * cost, never on steady frames. Downward switches keep the short cooldown:
+ * protective downshifts on weak hardware must stay fast. */
+export const ADAPTIVE_UP_SETTLE_MS = 18_000;
 export const ADAPTIVE_EMA_TIME_MS = 1_500;
 
 const QUALITY_ORDER: readonly QualityPreset[] = ['low', 'med', 'high'];
@@ -128,7 +135,7 @@ export function advanceAdaptiveQuality(
       quality: adjacentQuality(state.quality, 1),
       smoothedFrameMs,
       warmupRemainingMs: 0,
-      cooldownRemainingMs: ADAPTIVE_SWITCH_COOLDOWN_MS,
+      cooldownRemainingMs: ADAPTIVE_UP_SETTLE_MS,
       slowEvidenceMs: 0,
       fastEvidenceMs: 0,
     };
