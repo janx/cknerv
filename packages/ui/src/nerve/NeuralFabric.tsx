@@ -40,6 +40,15 @@ import {
   type FabricSlotRange,
 } from './fabricSlots';
 import { planFabricCohorts, type FabricCohortSlice } from './fabricCohorts';
+import { enableFabricLifecycleMaterial } from './fabricLifecycleShader';
+import {
+  FABRIC_LIFE_APERTURE_STRIDE,
+  FABRIC_LIFE_COLOR_STRIDE,
+  FABRIC_LIFE_CURVE_STRIDE,
+  FABRIC_LIFE_SCALAR_STRIDE,
+  makeFabricLifecycleArrays,
+  type FabricLifecycleArrays,
+} from './fabricLifecycleSlots';
 import {
   fabricEdgeRenderState,
   GROWTH_MS,
@@ -231,6 +240,19 @@ interface FatLineLayer {
   material: LineMaterial;
   mesh: LineSegments2;
   count: number;
+  /** GPU-parametric lifecycle mode (P1.7): static per-slot records the vertex
+   * stage evaluates from sim time. Present only when the layer was built with
+   * lifecycle=true; instanceStart/End + instanceColorStart/End become dead
+   * inputs on such a layer. */
+  lifecycle?: FabricLifecycleBuffers;
+}
+
+interface FabricLifecycleBuffers {
+  arrays: FabricLifecycleArrays;
+  curveBuf: THREE.InstancedInterleavedBuffer;
+  colorBuf: THREE.InstancedInterleavedBuffer;
+  scalarBuf: THREE.InstancedInterleavedBuffer;
+  apertureBuf: THREE.InstancedInterleavedBuffer;
 }
 
 /** One persistent fabric edge. Endpoint positions + control point
@@ -693,12 +715,14 @@ function writeFabricEdgeInspectionSegments(
   }
 }
 
-function makeFatLineLayer(
+/** Exported for the lifecycle-layer construction tests. */
+export function makeFatLineLayer(
   maxSegments: number,
   widthPx: number,
   accumulation: 'screen' | 'additive',
   optimizePassiveGeometry = false,
   inspectionTransition = false,
+  lifecycle = false,
 ): FatLineLayer {
   const positions = new Float32Array(maxSegments * 6);
   const colors = new Float32Array(maxSegments * 6);
@@ -766,6 +790,40 @@ function makeFatLineLayer(
   if (useScreenCapsule) {
     optimizeScreenSpaceCapsuleMaterial(material);
   }
+  let lifecycleBuffers: FabricLifecycleBuffers | undefined;
+  if (lifecycle) {
+    if (!useScreenCapsule) {
+      throw new Error('fabric lifecycle mode requires the screen-capsule layer');
+    }
+    const arrays = makeFabricLifecycleArrays(maxSegments);
+    const curveBuf = new THREE.InstancedInterleavedBuffer(
+      arrays.curve, FABRIC_LIFE_CURVE_STRIDE, 1,
+    );
+    const colorBuf = new THREE.InstancedInterleavedBuffer(
+      arrays.color, FABRIC_LIFE_COLOR_STRIDE, 1,
+    );
+    const scalarBuf = new THREE.InstancedInterleavedBuffer(
+      arrays.scalar, FABRIC_LIFE_SCALAR_STRIDE, 1,
+    );
+    const apertureBuf = new THREE.InstancedInterleavedBuffer(
+      arrays.aperture, FABRIC_LIFE_APERTURE_STRIDE, 1,
+    );
+    curveBuf.setUsage(THREE.DynamicDrawUsage);
+    colorBuf.setUsage(THREE.DynamicDrawUsage);
+    scalarBuf.setUsage(THREE.DynamicDrawUsage);
+    apertureBuf.setUsage(THREE.DynamicDrawUsage);
+    geometry.setAttribute('fabricCurveFrom', new THREE.InterleavedBufferAttribute(curveBuf, 3, 0));
+    geometry.setAttribute('fabricCurveCtrl', new THREE.InterleavedBufferAttribute(curveBuf, 3, 3));
+    geometry.setAttribute('fabricCurveTo', new THREE.InterleavedBufferAttribute(curveBuf, 3, 6));
+    geometry.setAttribute('fabricSegmentSpan', new THREE.InterleavedBufferAttribute(curveBuf, 2, 9));
+    geometry.setAttribute('fabricColorFrom', new THREE.InterleavedBufferAttribute(colorBuf, 3, 0));
+    geometry.setAttribute('fabricColorTo', new THREE.InterleavedBufferAttribute(colorBuf, 3, 3));
+    geometry.setAttribute('fabricLifecycle', new THREE.InterleavedBufferAttribute(scalarBuf, 4, 0));
+    geometry.setAttribute('fabricUsage', new THREE.InterleavedBufferAttribute(scalarBuf, 4, 4));
+    geometry.setAttribute('fabricAperture', new THREE.InterleavedBufferAttribute(apertureBuf, 2, 0));
+    enableFabricLifecycleMaterial(material);
+    lifecycleBuffers = { arrays, curveBuf, colorBuf, scalarBuf, apertureBuf };
+  }
   if (accumulation === 'screen') {
     // Passive structure must approach the display ceiling asymptotically when
     // thousands of fibres overlap. Activity keeps ordinary additive blending
@@ -805,6 +863,7 @@ function makeFatLineLayer(
     material,
     mesh,
     count: 0,
+    lifecycle: lifecycleBuffers,
   };
 }
 
