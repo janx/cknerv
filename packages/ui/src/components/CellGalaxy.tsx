@@ -1755,7 +1755,11 @@ export default function CellGalaxy({
           originLocalX,
           originLocalZ,
           LOCAL_IGNITION_RADIUS,
-          sharedCellNearestIndex(cellsCache.cellsToken, cellsCache.cells.values()),
+          sharedCellNearestIndex(
+            cellsCache.cellsToken,
+            cellsCache.cells,
+            cellsCache.cellChanges,
+          ),
         );
         const ignitionCount = Math.min(withinRadius.length, MAX_LOCAL_IGNITIONS);
         for (let hit = 0; hit < ignitionCount; hit += 1) {

@@ -216,6 +216,10 @@ export interface CellNearestIndex {
   readonly maxBx: number;
   readonly minBz: number;
   readonly maxBz: number;
+  /** Tombstoned ids (incrementally maintained shared index). Walkers skip
+   * them; the shared maintainer rebuilds once they outgrow a small share of
+   * the entries. A plain build has none. */
+  readonly dead: ReadonlySet<number>;
 }
 
 const CELL_NEAREST_BUCKET_SIZE = 6;
@@ -268,6 +272,7 @@ export function buildCellNearestIndex(
     maxBx,
     minBz,
     maxBz,
+    dead: new Set<number>(),
   };
 }
 
@@ -343,14 +348,17 @@ function visitNearestBucket(
 ): void {
   let candidateIndex = index.rows.get(bx)?.get(bz) ?? -1;
   while (candidateIndex >= 0) {
-    considerNearestCandidate(
-      nearest,
-      limit,
-      index.cells[candidateIndex],
-      candidateIndex,
-      lx,
-      lz,
-    );
+    const candidate = index.cells[candidateIndex];
+    if (!index.dead.has(candidate.id)) {
+      considerNearestCandidate(
+        nearest,
+        limit,
+        candidate,
+        candidateIndex,
+        lx,
+        lz,
+      );
+    }
     candidateIndex = index.next[candidateIndex];
   }
 }
@@ -458,6 +466,10 @@ export function cellIdsWithinRadiusFromIndex(
       let candidateIndex = row.get(bz) ?? -1;
       while (candidateIndex >= 0) {
         const candidate = index.cells[candidateIndex];
+        if (index.dead.has(candidate.id)) {
+          candidateIndex = index.next[candidateIndex];
+          continue;
+        }
         const dx = candidate.pos_seed[0] - localX;
         const dz = candidate.pos_seed[2] - localZ;
         const d2 = dx * dx + dz * dz;
@@ -474,23 +486,117 @@ export function cellIdsWithinRadiusFromIndex(
 
 let sharedNearestIndexToken: unknown = Symbol('unset');
 let sharedNearestIndexValue: CellNearestIndex | null = null;
+/** Journal chain: cellsToken the shared index was last synced to. */
+let sharedNearestIndexIds: Set<number> | null = null;
+/** Rebuild once tombstones outgrow this share of appended entries. */
+const SHARED_NEAREST_TOMBSTONE_SHARE = 0.12;
+
+interface MutableNearestIndex {
+  bucketSize: number;
+  cells: IndexedNearestCell[];
+  next: number[];
+  rows: Map<number, Map<number, number>>;
+  count: number;
+  minBx: number;
+  maxBx: number;
+  minBz: number;
+  maxBz: number;
+  dead: Set<number>;
+}
+
+function appendToNearestIndex(
+  index: MutableNearestIndex,
+  cell: { id: number; pos_seed: readonly [number, number, number] },
+): void {
+  const bx = Math.floor(cell.pos_seed[0] / index.bucketSize);
+  const bz = Math.floor(cell.pos_seed[2] / index.bucketSize);
+  let row = index.rows.get(bx);
+  if (!row) {
+    row = new Map();
+    index.rows.set(bx, row);
+  }
+  const order = index.cells.length;
+  index.cells.push(cell);
+  index.next.push(row.get(bz) ?? -1);
+  row.set(bz, order);
+  index.count = index.cells.length;
+  index.minBx = Math.min(index.minBx, bx);
+  index.maxBx = Math.max(index.maxBx, bx);
+  index.minBz = Math.min(index.minBz, bz);
+  index.maxBz = Math.max(index.maxBz, bz);
+}
+
+/** Minimal journal shape the shared index chains on (matches the cache's
+ * `CellChangeSet` fields it needs). */
+export interface NearestIndexJournal {
+  readonly reset: boolean;
+  readonly baseToken: object | null;
+  readonly born: readonly number[];
+  readonly removed: readonly number[];
+}
 
 /**
- * One nearest-index build per Cell-set revision, shared across consumers
- * (delivery ignition + galaxy local ignition today). Keyed on `cellsToken`,
- * which the cache publishes exactly when Cell membership/positions change —
- * the same freshness assumption BlockDeliveryLayer's per-component memo
- * already relied on. Single-slot: alternating tokens rebuild, which no
- * production scene does.
+ * One nearest index shared across consumers (delivery ignition + galaxy
+ * local ignition today), keyed on `cellsToken` and maintained INCREMENTALLY
+ * from the reducer journal: births append (O(1) bucket insert), removals
+ * tombstone (walkers skip; a reborn id un-tombstones — `pos_seed` is a pure
+ * function of the id, so the retained entry is exact), and any journal gap,
+ * reset, or tombstone overgrowth falls back to one full rebuild. Survivor
+ * entry order equals retained-map order, preserving the input-order
+ * first-N cap semantics the walkers sort back to.
  */
 export function sharedCellNearestIndex(
   cellsToken: unknown,
-  cells: Iterable<{ id: number; pos_seed: readonly [number, number, number] }>,
+  cells:
+    | ReadonlyMap<number, { id: number; pos_seed: readonly [number, number, number] }>
+    | Iterable<{ id: number; pos_seed: readonly [number, number, number] }>,
+  journal?: NearestIndexJournal,
 ): CellNearestIndex {
-  if (sharedNearestIndexValue === null || sharedNearestIndexToken !== cellsToken) {
-    sharedNearestIndexValue = buildCellNearestIndex(cells);
-    sharedNearestIndexToken = cellsToken;
+  if (sharedNearestIndexValue !== null && sharedNearestIndexToken === cellsToken) {
+    return sharedNearestIndexValue;
   }
+  const mutable = sharedNearestIndexValue as MutableNearestIndex | null;
+  const ids = sharedNearestIndexIds;
+  const chained = mutable !== null
+    && ids !== null
+    && journal !== undefined
+    && !journal.reset
+    && journal.baseToken !== null
+    && journal.baseToken === sharedNearestIndexToken
+    && mutable.dead.size + journal.removed.length
+      <= mutable.cells.length * SHARED_NEAREST_TOMBSTONE_SHARE;
+  if (chained) {
+    for (const id of journal.removed) {
+      if (ids.has(id)) mutable.dead.add(id);
+    }
+    // Born positions resolve through the iterable's Map form when available;
+    // otherwise fall back to a rebuild (production passes the retained Map).
+    const lookup = cells instanceof Map
+      ? cells as ReadonlyMap<number, { id: number; pos_seed: readonly [number, number, number] }>
+      : null;
+    if (lookup !== null || journal.born.length === 0) {
+      for (const id of journal.born) {
+        const cell = lookup!.get(id);
+        if (!cell) continue;
+        if (ids.has(id)) {
+          mutable.dead.delete(id);
+          continue;
+        }
+        appendToNearestIndex(mutable, cell);
+        ids.add(id);
+      }
+      sharedNearestIndexToken = cellsToken;
+      return sharedNearestIndexValue!;
+    }
+  }
+  const iterable = cells instanceof Map
+    ? (cells as ReadonlyMap<number, { id: number; pos_seed: readonly [number, number, number] }>).values()
+    : cells as Iterable<{ id: number; pos_seed: readonly [number, number, number] }>;
+  sharedNearestIndexValue = buildCellNearestIndex(iterable);
+  sharedNearestIndexToken = cellsToken;
+  sharedNearestIndexIds = new Set(
+    sharedNearestIndexValue.cells.map((cell) => cell.id),
+  );
   return sharedNearestIndexValue;
 }
 

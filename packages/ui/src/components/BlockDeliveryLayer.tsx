@@ -252,7 +252,11 @@ export default function BlockDeliveryLayer({
   const ignitedPulseAtRef = useRef<number | null>(null);
   const cellsToken = cellsCache?.cellsToken ?? null;
   const nearestCellIndex = useMemo(
-    () => sharedCellNearestIndex(cellsToken, cellsCache?.cells.values() ?? []),
+    () => sharedCellNearestIndex(
+      cellsToken,
+      cellsCache?.cells ?? new Map(),
+      cellsCache?.cellChanges,
+    ),
     // The cache publishes a fresh token exactly when Cell membership/position
     // changes, so peer deliveries share one index without rebuilding per peer —
     // and the galaxy's local-ignition pass shares the very same build.
