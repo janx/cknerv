@@ -30,10 +30,7 @@ describe('adaptive quality hysteresis', () => {
   });
 
   it('downgrades only one level after sustained pressure', () => {
-    // High's hold is 12s of sustained evidence (burst spikes decay between
-    // blocks and never reach it; continuous overload does): exactly 16
-    // windows of 750ms.
-    const state = sample(createAdaptiveQualityState('high', 0), 36, 16);
+    const state = sample(createAdaptiveQualityState('high', 0), 36, 7);
 
     expect(state.quality).toBe('med');
     expect(state.cooldownRemainingMs).toBe(ADAPTIVE_SWITCH_COOLDOWN_MS);
@@ -56,7 +53,7 @@ describe('adaptive quality hysteresis', () => {
   });
 
   it('does not accumulate evidence while switch cooldown is active', () => {
-    let state = sample(createAdaptiveQualityState('high', 0), 36, 16);
+    let state = sample(createAdaptiveQualityState('high', 0), 36, 7);
     state = sample(state, 12, 7);
 
     expect(state.quality).toBe('med');
