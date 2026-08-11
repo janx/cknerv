@@ -26,7 +26,10 @@ const DOWN_FRAME_MS: Record<QualityPreset, number> = {
 };
 const UP_FRAME_MS: Record<QualityPreset, number> = {
   high: Number.NEGATIVE_INFINITY,
-  med: 17.5,
+  // 18.5 leaves headroom over the vsync-locked 16.7 baseline so ordinary
+  // jitter does not interrupt promotion evidence, while staying far below
+  // the demotion thresholds (30/22) — the hysteresis band stays wide.
+  med: 18.5,
   low: 20,
 };
 const DOWN_HOLD_MS: Record<QualityPreset, number> = {
@@ -115,9 +118,12 @@ export function advanceAdaptiveQuality(
   const slowEvidenceMs = slow
     ? state.slowEvidenceMs + duration
     : Math.max(0, state.slowEvidenceMs - duration * 2);
+  // Fast evidence decays at 1x: per-block work spikes are inherent at every
+  // tier, and a 2x wipe made promotion a lottery against the block cadence.
+  // The demotion side keeps its aggressive decay — protection stays fast.
   const fastEvidenceMs = fast
     ? state.fastEvidenceMs + duration
-    : Math.max(0, state.fastEvidenceMs - duration * 2);
+    : Math.max(0, state.fastEvidenceMs - duration);
 
   if (slowEvidenceMs >= DOWN_HOLD_MS[state.quality]) {
     return {
