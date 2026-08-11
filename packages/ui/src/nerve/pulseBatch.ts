@@ -16,6 +16,13 @@ import {
 } from './pulseRunner';
 import type { PulseStatsSink } from './pulseStats';
 
+/** Per-batch planning ceiling. The active-pulse render pool clamps at 128,
+ * so planning past it is pure main-thread waste on tx-heavy blocks — the
+ * routing BFS per source was the dominant block-content-dependent cost.
+ * Same bounded-work family as MAX_PULSES_PER_LINK and the courier layer's
+ * in-flight cap; dropped links are accounted as 'batch-budget'. */
+export const MAX_PULSES_PER_BATCH = 128;
+
 /** The stats surface `planLinkBatch` needs (superset of `PulseStatsSink`:
  *  `planPulses` writes drop reasons via the sink, and we roll each link's
  *  outcome up per block via `observeLink`). */
@@ -56,6 +63,11 @@ export function planLinkBatch(
       sourceIndex: collectLinkSourceIndex(toFire, cells),
     };
     for (const link of toFire) {
+      if (planned.length >= MAX_PULSES_PER_BATCH) {
+        stats.bump('batch-budget');
+        stats.observeLink(link.block, false);
+        continue;
+      }
       const p = planPulses(link, cells, graph, batchOpts, link.at_ms, stats);
       stats.observeLink(link.block, p.length > 0);
       for (const pulse of p) planned.push(pulse);

@@ -14,6 +14,7 @@ export type DropReason =
   | 'no-parents'
   | 'no-source'
   | 'all-paths-failed'
+  | 'batch-budget'
   | 'backfill';
 
 /** Why one source→dst routing attempt produced no path (explains
@@ -52,6 +53,7 @@ function zeroReasons(): Record<DropReason, number> {
     'no-outputs': 0,
     'no-parents': 0,
     'no-source': 0,
+    'batch-budget': 0,
     'all-paths-failed': 0,
     backfill: 0,
   };
@@ -118,7 +120,8 @@ export const pulseStats: PulseStatsState = {
       this.linkReasons['no-outputs'] +
       this.linkReasons['no-parents'] +
       this.linkReasons['no-source'] +
-      this.linkReasons['all-paths-failed'];
+      this.linkReasons['all-paths-failed'] +
+      this.linkReasons['batch-budget'];
     return {
       linkReasons: { ...this.linkReasons },
       pathFails: { ...this.pathFails },
