@@ -225,6 +225,7 @@ fall back to the SPA.
 | `GET` | `/api/entities/chain/snapshot` | `{ revision, chain, chain_nodes }` |
 | `WS` | `/api/entities/chain/stream?since=<rev>` | snapshot, delta, lagged, or heartbeat frames |
 | `GET` | `/api/projections/cells/snapshot` | `{ revision, snapshot }` where `snapshot.cells` is the live cell set |
+| `GET` | `/api/projections/cells/snapshot.bin` | Columnar little-endian snapshot (~9x smaller); revision patched into the header and mirrored in `x-snapshot-revision` |
 | `WS` | `/api/projections/cells/stream?since=<rev>` | snapshot, delta, lagged, or heartbeat frames |
 | `GET` | `/api/projections/semantics/snapshot` | Optional indexed-enrichment snapshot; present even when disabled |
 | `WS` | `/api/projections/semantics/stream?since=<rev>` | Independent optional semantics snapshot/delta stream |
@@ -328,11 +329,12 @@ The generated ckbadger block is fully commented out, so a new work directory
 keeps the direct CKB-only behavior. Setup and endpoint details live in
 [`docs/ckbadger.md`](docs/ckbadger.md).
 
-Profile defaults are resolved in `crates/cknerv-cli/src/config.rs`. `devnet`
-targets 2,000 retained live Cells; the other profiles target 20,000. At an
-empty boot, the adapter anchors the current tip, scans canonical blocks in
-reverse until it has identified that many outputs still live at the anchor (or
-reaches genesis), then replays the cached window once in ascending order.
+Profile defaults are resolved in `crates/cknerv-cli/src/config.rs`. Every
+profile retains the built-in 50,000-Cell live reservoir (the renderer's
+ceiling — not a knob). At an empty boot, the adapter anchors the current tip,
+scans canonical blocks in reverse until it has identified that many outputs
+still live at the anchor (or reaches genesis), then replays the cached window
+once in ascending order.
 `mainnet` also uses sparser topology and lower pulse caps to reduce visual
 noise. Backfill is deliberately absent from `cknerv.toml`; legacy `[backfill]`
 sections are ignored. Use `--backfill-blocks N` only as a one-run hard scan
@@ -380,8 +382,8 @@ persists the chain entity and registered projections to:
 ```
 
 On the next boot, the CLI first peeks at the saved tip and completed Cell target.
-It restores the file only when that target satisfies the current `cell_cap`;
-otherwise it starts a fresh adaptive hydration and replaces the checkpoint when
+It restores the file only when that target satisfies the built-in reservoir
+target; otherwise it starts a fresh hydration and replaces the checkpoint when
 that replay completes. A valid restored tip skips historical hydration, and the
 normal forward poll processes the complete downtime gap.
 
@@ -421,13 +423,16 @@ twin, the fixtures, and both sides of the tests together.
 
 - The cell galaxy tracks a bounded reservoir of the newest observed live Cells,
   not the full global live-cell set. Startup scans a recent canonical suffix
-  deep enough to fill `cell_cap` (or all the way to genesis); a complete global
+  deep enough to fill the 50,000-Cell reservoir (or all the way to genesis); a
+  complete global
   live set beyond that cap would require an indexer. `--backfill-blocks` can
   impose a smaller diagnostic hard limit. After a deep-reorg rebuild, Cell
   TOTAL/DEAD counters are likewise reconstructed from the hydrated observation
   window.
 - With optional ckbadger enrichment, the resting visible subset can instead be
-  composed as DAO:typed:plain = 30:40:30 (up to the 6,000-Cell AUTO budget).
+  composed as DAO:typed:plain = 30:40:30 at the active display budget, seeded
+  from a 6,000-record indexed reservoir (canonical retained Cells fill any
+  remainder).
   This is an additive, node-revalidated display reservoir: canonical Cells and
   the complete canonical neighbour graph still own new-block pulses, live nerve
   routes, counters, and reorg behavior. See
