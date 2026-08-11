@@ -33,6 +33,12 @@ import { galaxyFrame } from '../tweaks/galaxyFrame';
 import { QUALITY_PRESETS, useQualityRuntime } from '../tweaks/qualityPresets';
 import { fabricAllocationEdges } from './fabricCapacity';
 import {
+  consumeTopologyJournal,
+  createTopologyJournal,
+  feedTopologyJournal,
+  invalidateTopologyJournal,
+} from '../geometry/topologyJournal';
+import {
   resolveCellDisplayLimit,
   useCellDisplayRuntime,
 } from '../tweaks/cellDisplay';
@@ -325,6 +331,13 @@ export default function NeuralNetwork({
   /** Consecutive delta-applied builds since the last full setFabric
    * reconcile (see the delta path below). */
   const fabricDeltaStreakRef = useRef(0);
+  /** O(churn) topology journals for the two graph builders (Step B):
+   * accumulated per cache generation, handed to build() and cleared
+   * speculatively at issuance — every failure path (supersession, worker
+   * loss, sync fallback) funnels through the worker generation check into a
+   * full re-pack, so lost entries can never corrupt topology. */
+  const routingJournalRef = useRef(createTopologyJournal());
+  const displayJournalRef = useRef(createTopologyJournal());
   /** Bumped whenever a (re)mounted fabric rehydrates via onFabricReady.
    * A build response may apply a selection DELTA only when no rehydration
    * happened since the previous response was applied — a remount between
@@ -388,6 +401,10 @@ export default function NeuralNetwork({
         k: topology?.neighborK,
         maxEdgeLength: topology?.maxEdgeLength,
       },
+      // The routing graph always builds from the retained map, so the cache
+      // journal applies directly. Packed synchronously inside build();
+      // cleared speculatively right after (see journal ref docs).
+      cellsJournal: consumeTopologyJournal(routingJournalRef.current),
       // Patch-deserialize against the graph being replaced: unchanged nodes
       // reuse their neighbour Sets, so a per-block completion costs
       // O(changed) instead of O(V+E). The old graph is discarded on swap.
@@ -475,6 +492,12 @@ export default function NeuralNetwork({
           maxEdgeLength: topology?.maxEdgeLength,
         },
         includePassive: true,
+        // Only meaningful when the display set IS the retained map (full
+        // coverage); a composed subset has its own membership churn the
+        // cache journal does not describe.
+        cellsJournal: displayCells === cellsCache.cells
+          ? consumeTopologyJournal(displayJournalRef.current)
+          : invalidateTopologyJournal(displayJournalRef.current),
         preferredEdges: passiveGraphRef.current.edges,
         // Patch-deserialize both display CSRs against the graphs being
         // replaced (read at completion): per-block churn touches a small
@@ -620,6 +643,8 @@ export default function NeuralNetwork({
     }
 
     const diff = cellsCache.cellChanges;
+    feedTopologyJournal(routingJournalRef.current, cellsCache);
+    feedTopologyJournal(displayJournalRef.current, cellsCache);
     if (routedCellsTokenRef.current === cellsCache.cellsToken) return;
     if (
       !routingGraphReadyRef.current

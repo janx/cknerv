@@ -92,6 +92,7 @@ describe('neighbor graph Worker protocol', () => {
       kind: 'build',
       requestId: 42,
       cells: packTopologyCells(cells),
+      cellsDelta: null,
       options,
       includePassive: true,
       passiveEdgeBudget: 4,
@@ -180,6 +181,7 @@ describe('createNeighborGraphWorkerSession (stateful increments)', () => {
     kind: 'build' as const,
     requestId,
     cells: packedCells(ids),
+    cellsDelta: null,
     options: { k: 3 },
     includePassive: true,
     passiveEdgeBudget: null,
@@ -190,12 +192,14 @@ describe('createNeighborGraphWorkerSession (stateful increments)', () => {
     const session = createNeighborGraphWorkerSession();
     const ids = Array.from({ length: 40 }, (_, i) => i + 1);
     const first = session.execute(request(ids, 1));
+    if (first.kind !== 'built') throw new Error('expected built');
     expect(first.generation).toBe(1);
     expect(first.changedNodeIds).toBeNull();
     expect(first.passiveAdded).toBeNull();
 
     const ids2 = [...ids.filter((id) => id !== 17), 99];
     const second = session.execute(request(ids2, 2));
+    if (second.kind !== 'built') throw new Error('expected built');
     expect(second.generation).toBe(2);
     expect(second.changedNodeIds).not.toBeNull();
 
@@ -239,5 +243,86 @@ describe('createNeighborGraphWorkerSession (stateful increments)', () => {
       ),
     );
     expect([...before].sort()).toEqual([...after].sort());
+  });
+});
+
+describe('worker session cells-delta requests', () => {
+  function packedCellsOf(ids: number[]): Float64Array {
+    const packed = new Float64Array(ids.length * 4);
+    ids.forEach((id, i) => {
+      packed[i * 4] = id;
+      packed[i * 4 + 1] = ((id * 37) % 91) - 45;
+      packed[i * 4 + 2] = 0;
+      packed[i * 4 + 3] = ((id * 53) % 83) - 41;
+    });
+    return packed;
+  }
+  const base = {
+    kind: 'build' as const,
+    options: { k: 3 },
+    includePassive: false,
+    passiveEdgeBudget: null,
+    preferredEdges: null,
+  };
+
+  it('patches the retained cells and matches a fresh full build', () => {
+    const session = createNeighborGraphWorkerSession();
+    const ids = Array.from({ length: 60 }, (_, i) => i + 1);
+    const first = session.execute({
+      ...base,
+      requestId: 1,
+      cells: packedCellsOf(ids),
+      cellsDelta: null,
+    });
+    if (first.kind !== 'built') throw new Error('expected built');
+
+    // Delta: remove 5, add 99.
+    const second = session.execute({
+      ...base,
+      requestId: 2,
+      cells: null,
+      cellsDelta: {
+        baseGeneration: first.generation,
+        upserts: packedCellsOf([99]),
+        removedIds: Float64Array.from([5]),
+      },
+    });
+    if (second.kind !== 'built') throw new Error('expected built');
+    const viaDelta = deserializeNeighborGraph(second.graph);
+    const oracle = executeNeighborGraphWorkerRequest({
+      ...base,
+      requestId: 3,
+      cells: packedCellsOf([...ids.filter((id) => id !== 5), 99]),
+      cellsDelta: null,
+    });
+    const fresh = deserializeNeighborGraph(oracle.graph);
+    expect(viaDelta.adjacency.size).toBe(fresh.adjacency.size);
+    for (const [id, neighbours] of fresh.adjacency) {
+      expect([...viaDelta.adjacency.get(id)!].sort()).toEqual(
+        [...neighbours].sort(),
+      );
+    }
+  });
+
+  it('answers stale on a generation gap so the builder re-sends full', () => {
+    const session = createNeighborGraphWorkerSession();
+    const first = session.execute({
+      ...base,
+      requestId: 1,
+      cells: packedCellsOf([1, 2, 3, 4, 5, 6, 7, 8]),
+      cellsDelta: null,
+    });
+    if (first.kind !== 'built') throw new Error('expected built');
+    const stale = session.execute({
+      ...base,
+      requestId: 2,
+      cells: null,
+      cellsDelta: {
+        baseGeneration: first.generation + 7,
+        upserts: new Float64Array(0),
+        removedIds: new Float64Array(0),
+      },
+    });
+    expect(stale.kind).toBe('stale');
   });
 });

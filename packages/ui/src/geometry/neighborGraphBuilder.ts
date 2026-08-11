@@ -48,6 +48,18 @@ export interface NeighborGraphBuildOptions {
    * untouched for routing. */
   passiveEdgeBudget?: number;
   preferredEdges?: readonly NeighborEdge[];
+  /** O(churn) topology journal since the previous APPLIED build. When valid
+   * and a previous response chained, the builder sends this instead of a
+   * full 50K pack; the worker patches its retained cell map. Any gap makes
+   * the worker answer `stale` and the builder re-sends the full pack. */
+  cellsJournal?: {
+    valid: boolean;
+    upserts: ReadonlyMap<
+      number,
+      { id: number; pos_seed: readonly [number, number, number] }
+    >;
+    removedIds: Iterable<number>;
+  };
   /** Read at completion time; when provided, the worker CSR deserializes by
    * patching against these graphs (unchanged nodes reuse their neighbour Set
    * instances — the previous graphs must be discarded after the swap). */
@@ -174,10 +186,11 @@ export function createNeighborGraphBuilder(
     build(cells, options = {}) {
       if (disposed) return Promise.resolve(null);
       cancel();
-      const packedCells = packTopologyCells(cells);
-      const liveCellCount = packedCells.length / PACKED_TOPOLOGY_CELL_STRIDE;
+      // The retained map's size upper-bounds live cells closely enough for
+      // the worker threshold; the full O(N) pack happens only when a full
+      // request is actually needed.
       const canUseWorker = (
-        liveCellCount >= minWorkerCells
+        cells.size >= minWorkerCells
         && (
           builderOptions.workerFactory !== undefined
           || typeof Worker !== 'undefined'
@@ -202,15 +215,44 @@ export function createNeighborGraphBuilder(
       const preferredEdges = options.includePassive
         ? packPreferredEdges(options.preferredEdges ?? [])
         : null;
-      const request: NeighborGraphWorkerRequest = {
-        kind: 'build',
+      const baseRequest = {
+        kind: 'build' as const,
         requestId,
-        cells: packedCells,
         options: options.topology ?? {},
         includePassive: options.includePassive ?? false,
         passiveEdgeBudget: options.passiveEdgeBudget ?? null,
         preferredEdges,
       };
+      const fullRequest = (): NeighborGraphWorkerRequest => ({
+        ...baseRequest,
+        cells: packTopologyCells(cells),
+        cellsDelta: null,
+      });
+      const journal = options.cellsJournal;
+      const deltaRequest = (): NeighborGraphWorkerRequest | null => {
+        if (!journal?.valid || lastAppliedGeneration === 0) return null;
+        const upserts = new Float64Array(
+          journal.upserts.size * PACKED_TOPOLOGY_CELL_STRIDE,
+        );
+        let offset = 0;
+        for (const cell of journal.upserts.values()) {
+          upserts[offset] = cell.id;
+          upserts[offset + 1] = cell.pos_seed[0];
+          upserts[offset + 2] = cell.pos_seed[1];
+          upserts[offset + 3] = cell.pos_seed[2];
+          offset += PACKED_TOPOLOGY_CELL_STRIDE;
+        }
+        return {
+          ...baseRequest,
+          cells: null,
+          cellsDelta: {
+            baseGeneration: lastAppliedGeneration,
+            upserts,
+            removedIds: Float64Array.from(journal.removedIds),
+          },
+        };
+      };
+      const request = deltaRequest() ?? fullRequest();
 
       return new Promise<NeighborGraphBuildResult | null>((resolve, reject) => {
         active = { requestId, resolve, reject, fallback };
@@ -222,6 +264,17 @@ export function createNeighborGraphBuilder(
           if (response.kind === 'failed') {
             noteWorkerFallback();
             fallbackActive(requestId);
+            return;
+          }
+          if (response.kind === 'stale') {
+            // Ordinary after a superseded/dropped build: re-send the full
+            // pack under the same requestId (full requests never go stale).
+            try {
+              worker!.postMessage(fullRequest(), []);
+            } catch {
+              noteWorkerFallback();
+              fallbackActive(requestId);
+            }
             return;
           }
           try {
@@ -269,7 +322,14 @@ export function createNeighborGraphBuilder(
           noteWorkerFallback();
           fallbackActive(requestId);
         };
-        const transfer: Transferable[] = [packedCells.buffer];
+        const transfer: Transferable[] = [];
+        if (request.cells) transfer.push(request.cells.buffer);
+        if (request.cellsDelta) {
+          transfer.push(
+            request.cellsDelta.upserts.buffer,
+            request.cellsDelta.removedIds.buffer,
+          );
+        }
         if (preferredEdges) transfer.push(preferredEdges.buffer);
         try {
           worker!.postMessage(request, transfer);

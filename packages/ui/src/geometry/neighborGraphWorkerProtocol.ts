@@ -21,10 +21,23 @@ export interface SerializedNeighborGraph {
   edges: Float64Array;
 }
 
+export interface NeighborGraphWorkerCellsDelta {
+  /** Session generation this delta chains from; a mismatch (superseded or
+   * dropped build, fresh worker) makes the worker answer `stale` and the
+   * builder re-sends a full pack. */
+  baseGeneration: number;
+  /** Live cells born/revived since the base, packed `[id, x, y, z]`. */
+  upserts: Float64Array;
+  /** Ids that left the live topology (map removal or death transition). */
+  removedIds: Float64Array;
+}
+
 export interface NeighborGraphWorkerRequest {
   kind: 'build';
   requestId: number;
-  cells: Float64Array;
+  /** Full topology pack, or null when `cellsDelta` carries the change set. */
+  cells: Float64Array | null;
+  cellsDelta: NeighborGraphWorkerCellsDelta | null;
   options: NeighborGraphOptions;
   includePassive: boolean;
   /** Visual-only edge cap; null selects the canonical population-derived cap. */
@@ -62,8 +75,16 @@ export interface NeighborGraphWorkerFailure {
   message: string;
 }
 
+/** The delta's base generation did not match the session — the builder must
+ * re-send a full pack. Never an error: supersession makes gaps ordinary. */
+export interface NeighborGraphWorkerStale {
+  kind: 'stale';
+  requestId: number;
+}
+
 export type NeighborGraphWorkerResponse =
   | NeighborGraphWorkerSuccess
+  | NeighborGraphWorkerStale
   | NeighborGraphWorkerFailure;
 
 /** Copy only topology inputs and omit dead Cells entirely. Complete Cell
@@ -345,7 +366,9 @@ function collectChangedNodeIds(
 }
 
 export interface NeighborGraphWorkerSession {
-  execute(request: NeighborGraphWorkerRequest): NeighborGraphWorkerSuccess;
+  execute(
+    request: NeighborGraphWorkerRequest,
+  ): NeighborGraphWorkerSuccess | NeighborGraphWorkerStale;
 }
 
 /** Stateful worker session: retains the previous build so each response can
@@ -356,10 +379,43 @@ export function createNeighborGraphWorkerSession(): NeighborGraphWorkerSession {
   let generation = 0;
   let lastGraph: NeighborGraph | null = null;
   let lastPassiveEdges: NeighborEdge[] | null = null;
+  let lastCells: Map<number, NeighborGraphCell> | null = null;
 
   return {
     execute(request) {
-      const cells = unpackTopologyCells(request.cells);
+      let cells: Map<number, NeighborGraphCell>;
+      if (request.cells !== null) {
+        cells = unpackTopologyCells(request.cells);
+      } else if (request.cellsDelta !== null && lastCells !== null) {
+        if (request.cellsDelta.baseGeneration !== generation) {
+          return { kind: 'stale', requestId: request.requestId };
+        }
+        const delta = request.cellsDelta;
+        for (const id of delta.removedIds) lastCells.delete(id);
+        if (delta.upserts.length % PACKED_TOPOLOGY_CELL_STRIDE !== 0) {
+          throw new Error('invalid packed topology delta buffer');
+        }
+        for (
+          let offset = 0;
+          offset < delta.upserts.length;
+          offset += PACKED_TOPOLOGY_CELL_STRIDE
+        ) {
+          const id = delta.upserts[offset];
+          lastCells.set(id, {
+            id,
+            death_at_ms: null,
+            pos_seed: [
+              delta.upserts[offset + 1],
+              delta.upserts[offset + 2],
+              delta.upserts[offset + 3],
+            ],
+          });
+        }
+        cells = lastCells;
+      } else {
+        return { kind: 'stale', requestId: request.requestId };
+      }
+      lastCells = cells;
       const graph = buildNeighborGraph(cells, request.options);
       const passiveGraph = request.includePassive
         ? buildPassiveNeighborGraph(graph, {
@@ -412,11 +468,17 @@ export function createNeighborGraphWorkerSession(): NeighborGraphWorkerSession {
   };
 }
 
-/** Stateless entry point retained for tests and one-shot use. */
+/** Stateless entry point retained for tests and one-shot use. A one-shot
+ * session cannot satisfy a delta request (no retained cells), so this only
+ * accepts full-pack requests. */
 export function executeNeighborGraphWorkerRequest(
   request: NeighborGraphWorkerRequest,
 ): NeighborGraphWorkerSuccess {
-  return createNeighborGraphWorkerSession().execute(request);
+  const response = createNeighborGraphWorkerSession().execute(request);
+  if (response.kind !== 'built') {
+    throw new Error('one-shot worker request requires a full cell pack');
+  }
+  return response;
 }
 
 /**

@@ -17,6 +17,10 @@ workerScope.onmessage = (event) => {
   if (request.kind !== 'build') return;
   try {
     const response = session.execute(request);
+    if (response.kind !== 'built') {
+      workerScope.postMessage(response, []);
+      return;
+    }
     const transfer: Transferable[] = [
       response.graph.nodeIds.buffer,
       response.graph.adjacencyOffsets.buffer,
