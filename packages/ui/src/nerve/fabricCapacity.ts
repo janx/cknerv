@@ -35,11 +35,15 @@ export function warmSegmentAllocation(edges: number): number {
  * holds High-tier buffers.
  */
 export const FABRIC_ALLOCATION_EDGE_CLASSES: readonly number[] = [
-  ...new Set(
-    Object.values(AUTO_CELL_DISPLAY_BUDGETS).map(
+  ...new Set([
+    ...Object.values(AUTO_CELL_DISPLAY_BUDGETS).map(
       (cells) => passiveEdgeBudget(cells),
     ),
-  ),
+    // Manual fields may exceed the top AUTO rung (the 50K upper bound lives
+    // on the slider); the full-field ceiling closes the class ladder so a
+    // 50K manual field never gets a clipped allocation.
+    PASSIVE_EDGE_CEILING,
+  ]),
 ].sort((a, b) => a - b);
 
 /** Smallest allocation class that fits the nerve budget of `displayLimit`

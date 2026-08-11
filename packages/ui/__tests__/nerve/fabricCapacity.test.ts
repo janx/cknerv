@@ -39,8 +39,12 @@ describe('fabric capacity', () => {
   it('derives one allocation class per AUTO tier nerve budget', () => {
     // Low keeps the historical 8K field; higher tiers scale by the same
     // 4/3 nerves-per-Cell ratio that keeps the picture equally neural.
-    expect(FABRIC_ALLOCATION_EDGE_CLASSES).toEqual([8_000, 26_667, 66_667]);
-    expect(FABRIC_ALLOCATION_EDGE_CLASSES).toEqual(
+    expect(FABRIC_ALLOCATION_EDGE_CLASSES).toEqual([
+      8_000, 26_667, 46_667, 66_667,
+    ]);
+    // Tier budgets derive the lower classes; the full-field ceiling closes
+    // the ladder for manual fields beyond the top AUTO rung.
+    expect(FABRIC_ALLOCATION_EDGE_CLASSES.slice(0, 3)).toEqual(
       Object.values(AUTO_CELL_DISPLAY_BUDGETS)
         .map((cells) => passiveEdgeBudget(cells))
         .sort((a, b) => a - b),
@@ -52,7 +56,9 @@ describe('fabric capacity', () => {
     expect(fabricAllocationEdges(6_000)).toBe(8_000);
     expect(fabricAllocationEdges(6_001)).toBe(26_667);
     expect(fabricAllocationEdges(20_000)).toBe(26_667);
-    expect(fabricAllocationEdges(20_001)).toBe(66_667);
+    expect(fabricAllocationEdges(20_001)).toBe(46_667);
+    expect(fabricAllocationEdges(35_000)).toBe(46_667);
+    expect(fabricAllocationEdges(35_001)).toBe(66_667);
     expect(fabricAllocationEdges(50_000)).toBe(66_667);
     // Beyond the renderer ceiling still lands on the top class.
     expect(fabricAllocationEdges(99_999)).toBe(66_667);

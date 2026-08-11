@@ -78,10 +78,15 @@ language change and requires browser review.
 
 - Instanced Cell layers have a hard capacity of 50,000 records.
 - AUTO resolves its structural budget from the effective quality tier
-  (explicit product decision, 2026-08-10): High 50,000, Med 20,000,
-  Low 6,000 — or every Cell when the retained field is smaller. Low
-  preserves the historical single stable budget, so the weakest hardware
-  keeps its long-proven behavior.
+  (explicit product decision, 2026-08-10; rungs repositioned 2026-08-11):
+  High 35,000, Med 20,000, Low 6,000 — or every Cell when the retained
+  field is smaller. Rungs sit at measured HOLD points: a tier a machine
+  oscillates in and out of is a worse steady experience than one it keeps,
+  so AUTO's top rung sits between the reference iGPU's rock-solid 20,000
+  and the un-holdable 50,000. Low preserves the historical single stable
+  budget, so the weakest hardware keeps its long-proven behavior. The
+  50,000 upper bound remains on the manual slider and the retained
+  reservoir.
 - Tier membership is nested and deterministic: a lower tier's visible set is
   a subset of a higher tier's, resolved by the same selection rules from the
   same retained cache. A tier change is one canonical render-set rebuild —
@@ -109,10 +114,12 @@ when no new block is arriving.
 - The passive budget is `round(visible_cells * 4 / 3)`, bounded only by the
   full-field ceiling of 66,667 edges (50,000 Cells x 4/3). The nerve budget
   follows the visible Cell count at every quality tier (explicit product
-  decision, 2026-08-10): the tiers render 8,000 / 26,667 / 66,667 resting
-  nerves for their 6,000 / 20,000 / 50,000 Cell fields, so the
+  decision, 2026-08-10): the tiers render 8,000 / 26,667 / 46,667 resting
+  nerves for their 6,000 / 20,000 / 35,000 Cell fields, so the
   nerves-per-Cell ratio - the visual identity of the nervous system - stays
-  constant and a denser field never reads bald.
+  constant and a denser field never reads bald. The ratio floor is
+  structural: below ~1 nerve per Cell the spanning forest itself no longer
+  fits and coverage breaks.
 - GPU buffer allocation quantizes to one class per tier budget
   (`fabricAllocationEdges`); the fabric remounts through one canonical
   rebuild when the display budget crosses a class boundary, so a machine
@@ -221,8 +228,8 @@ ownership immediately.
 | Budget | Current value | Owner |
 |---|---:|---|
 | Instanced Cell capacity | 50,000 | `geometry/cellPositions.ts` |
-| AUTO visible Cells | High 50,000 / Med 20,000 / Low 6,000 | `tweaks/cellDisplay.ts` |
-| Passive nerves | visible Cells x 4/3 (High 66,667 / Med 26,667 / Low 8,000) | `geometry/passiveNeighborGraph.ts` |
+| AUTO visible Cells | High 35,000 / Med 20,000 / Low 6,000 | `tweaks/cellDisplay.ts` |
+| Passive nerves | visible Cells x 4/3 (High 46,667 / Med 26,667 / Low 8,000; manual up to 66,667) | `geometry/passiveNeighborGraph.ts` |
 | Passive curve samples | 4 per edge | `nerve/fabricCapacity.ts` |
 | Passive lifecycle generations | 3 | `nerve/fabricCapacity.ts` |
 | Passive segment allocation | per class: edges x 3 x 4 (ceiling 800,004) | `nerve/fabricCapacity.ts` |

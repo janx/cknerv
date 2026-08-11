@@ -31,7 +31,13 @@ export const CELL_DISPLAY_COARSE_STEP = 250;
 export const AUTO_CELL_DISPLAY_BUDGETS: Record<QualityPreset, number> = {
   low: 6_000,
   med: 20_000,
-  high: 50_000,
+  // Positioned at the measured HOLD point, not the renderer ceiling: a tier
+  // a strong machine oscillates in and out of (50,000 measured ~25% high
+  // share on the reference iGPU) is a worse steady experience than one it
+  // keeps. The 50K upper bound lives on in the retained reservoir and the
+  // manual slider; AUTO's top rung sits between the rock-solid 20K anchor
+  // and the un-holdable 50K.
+  high: 35_000,
 };
 
 const listeners = new Set<() => void>();
