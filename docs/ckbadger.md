@@ -124,8 +124,9 @@ global chain truth.
 ### CellGalaxy Composition
 
 With `galaxy_composition`, cknerv refreshes one non-persisted resting display
-reservoir at most once every 15 minutes. Its target is 6,000 Cells, matching
-the browser's Low-tier visible budget (the reservoir itself is far larger). At the default target the requested classes are exactly:
+reservoir at most once every 15 minutes. Its target is 6,000 Cells — the curated core of the browser's fixed
+12,000-Cell field, with canonical retained Cells filling the remainder (the
+reservoir itself is far larger). At the default target the requested classes are exactly:
 
 - 1,800 active Nervos DAO deposit Cells (30%).
 - 2,400 non-DAO Cells with a non-empty type script (40%).

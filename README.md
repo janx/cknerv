@@ -341,10 +341,10 @@ sections are ignored. Use `--backfill-blocks N` only as a one-run hard scan
 limit for diagnostics.
 
 The dashboard's manual Cell-count controller tops out at the built-in
-50,000-Cell visual ceiling. AUTO resolves its structural budget from the
-effective quality tier — 30,000 / 15,000 / 6,000 Cells (High is
-opportunistic: quiet chain stretches earn extra density, load falls back) —
-with the passive nervous system scaled at 4/3 nerves per Cell alongside it.
+50,000-Cell visual ceiling. AUTO renders a fixed 12,000-Cell structural
+budget — render quality adjusts presentation only (DPR, effects, sampling),
+never composition — and the passive nervous system draws a fixed 8,000-nerve
+screen budget regardless of field size.
 The manual controller keeps its full range but cannot display records the
 server did not retain. A checkpoint recorded against a smaller historical
 hydration target is invalidated automatically, so the next launch rebuilds

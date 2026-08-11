@@ -77,32 +77,20 @@ language change and requires browser review.
 ### Visible membership
 
 - Instanced Cell layers have a hard capacity of 50,000 records.
-- AUTO resolves its structural budget from the effective quality tier
-  (explicit product decision, 2026-08-10; conservative average-hardware
-  ladder 2026-08-11): High 30,000, Med 15,000, Low 6,000 — or every Cell
-  when the retained field is smaller. The ladder is calibrated for AVERAGE
-  hardware: Med keeps margin below the reference iGPU's measured rock-solid
-  20,000 (that machine is well above average), and High is the
-  OPPORTUNISTIC tier — no rung above the steady anchor holds through
-  mainnet block clusters on the reference machine (35K and 50K measured
-  statistically identical shares), so quiet chain stretches earn extra
-  density and load falls back gracefully. Low preserves the historical
-  single stable budget, so the weakest hardware keeps its long-proven
-  behavior. The 50,000 upper bound remains on the manual slider and the
-  retained reservoir.
-- Tier membership is nested and deterministic: a lower tier's visible set is
-  a subset of a higher tier's, resolved by the same selection rules from the
-  same retained cache. A tier change is one canonical render-set rebuild —
-  exactly the path a manual budget change already takes.
-- Tier changes ride the adaptive-quality hysteresis (evidence windows plus
-  switch cooldown). The density feedback loop that previously justified a
-  single fixed budget is bounded by that hysteresis and by the journal-driven
-  O(churn) rebuild economics.
-- Quality-driven reveal/conceal is not a biological event. Cells entering the
-  visible set render in their time-parametric lifecycle state (typically
-  settled — born long ago); they must not fire birth or death choreography,
-  and HUD counters keep reporting the retained totals, never the display
-  budget.
+- AUTO renders a FIXED structural budget of 12,000 Cells — or every Cell
+  when the retained field is smaller (explicit product decision,
+  2026-08-11, superseding the short-lived per-quality ladder): Galaxy
+  membership never varies with render quality. High, Med, and Low use the
+  same AUTO membership; quality adjusts presentation only — DPR, effects,
+  sampling, near-field detail. The value is calibrated for AVERAGE
+  hardware, below the reference iGPU's measured rock-solid 20,000 (that
+  machine is well above average). The accepted cost: weak machines no
+  longer shed membership, only presentation. The 50,000 upper bound
+  remains on the manual slider and the retained reservoir.
+- Quality-driven reveal/conceal does not exist. Membership changes come
+  only from data (births, deaths, composition) or explicit user intent
+  (the manual slider); HUD counters keep reporting the retained totals,
+  never the display budget.
 - Manual Cell count remains independent from render quality and may request up
   to the 50,000-Cell renderer ceiling.
 - The selected Cell, its bounded inspection neighborhood, and current activity
@@ -114,22 +102,31 @@ language change and requires browser review.
 The Cell galaxy must read as a neural network in every quality mode, including
 when no new block is arriving.
 
-- The passive budget is `round(visible_cells * 4 / 3)`, bounded only by the
-  full-field ceiling of 66,667 edges (50,000 Cells x 4/3). The nerve budget
-  follows the visible Cell count at every quality tier (explicit product
-  decision, 2026-08-10): the tiers render 8,000 / 20,000 / 40,000 resting
-  nerves for their 6,000 / 15,000 / 30,000 Cell fields, so the
-  nerves-per-Cell ratio - the visual identity of the nervous system - stays
-  constant and a denser field never reads bald. The ratio floor is
-  structural: below ~1 nerve per Cell the spanning forest itself no longer
-  fits and coverage breaks.
-- GPU buffer allocation quantizes to one class per tier budget
-  (`fabricAllocationEdges`); the fabric remounts through one canonical
-  rebuild when the display budget crosses a class boundary, so a machine
-  that settles on the Low tier never holds High-tier buffers.
-- A deterministic spanning forest is selected first. In the default AUTO
-  field this keeps every connected visible Cell attached to the rendered
-  nervous system.
+- The passive budget is a FIXED screen-composition constant: 8,000 resting
+  nerves (explicit product decision, 2026-08-11, superseding the 4/3-ratio-
+  at-every-scale model). Perceived density scales with TOTAL on-screen
+  edges over the fixed galaxy disk, not with edges per Cell — the ratio
+  model at 20,000+ edges read as felt, not a nervous system. Small fields
+  are still sized by the 4/3 connectivity ratio (`min(8,000,
+  round(visible_cells * 4/3))`); the constant governs once the field
+  outgrows it. The budget is live-tunable (backtick panel, 6,000-20,000
+  with selection shares) for by-eye calibration; the shipped defaults are
+  the contract values.
+- GPU buffer allocation quantizes the resolved budget to two classes
+  (`fabricAllocationEdges`: 8,000 default / 20,000 ceiling); the fabric
+  remounts through one canonical rebuild when a raised tuning knob crosses
+  the class boundary. AUTO and manual fields alike hold default-class
+  buffers.
+- A deterministic spanning forest is selected first. While it fits the
+  budget (fields up to ~6,000 Cells), every connected visible Cell stays
+  attached to the rendered nervous system. When the forest exceeds the
+  budget — the fixed 12,000-Cell AUTO field is such a field — partial
+  coverage is BY DESIGN, and it must scatter: a hash-ranked share of the
+  forest (default 0.55 of budget) spreads covered Cells uniformly across
+  the disk. Admitting the forest in graph order instead (one region wired
+  solid, the remainder bare) is the canopy-beside-dust pathology and is
+  forbidden. Bare Cells read as dust between capillaries; trunks supply
+  the long coherent strands.
 - Still-valid prior edges are considered next so ordinary churn preserves
   local continuity. Hierarchical trunks, twigs, and deterministic cross-links
   fill the remaining budget.
@@ -140,10 +137,10 @@ when no new block is arriving.
   ceiling instead of clipping to a uniform white mass. Active paths remain in
   separate additive layers and retain visual headroom.
 
-Manual fields derive their nerve budget by the same ratio and quantize into
-the same allocation classes. Coverage stays first: the spanning forest of any
-tier-scale field now fits its own budget, so every connected visible Cell
-remains attached to the rendered nervous system at every tier.
+Manual fields use the same fixed screen budget and the same selection rules:
+a 50,000-Cell manual field renders the same 8,000 nerves, airier per Cell.
+The screen composition — not per-Cell coverage — is the preserved visual
+identity.
 
 Current presentation defaults are a 2.5 CSS-pixel passive width, `0.15` fabric
 energy, a `0.44` midpoint taper floor, and a `0.34` weak-twig floor. These are
@@ -210,10 +207,10 @@ they must not drop checksum lanes or the focused record.
 
 The following remain identical across High, Med, and Low:
 
-- the visible-membership selection rules and ordering (the per-tier budgets
-  above change how many Cells render, never which rules pick them);
-- the passive selection rules and the 4/3 nerves-per-Cell ratio (per-tier
-  budgets change how many nerves render, never how they are chosen);
+- AUTO Cell membership (the fixed 12,000 budget) and its selection rules
+  and ordering;
+- the passive nerve count (the fixed 8,000 screen budget) and its selection
+  rules;
 - four passive samples per edge;
 - passive curve shape, width baseline, energy hierarchy, and animation cadence;
 - event identity, route, start/end times, and terminal response; and
@@ -231,11 +228,11 @@ ownership immediately.
 | Budget | Current value | Owner |
 |---|---:|---|
 | Instanced Cell capacity | 50,000 | `geometry/cellPositions.ts` |
-| AUTO visible Cells | High 30,000 / Med 15,000 / Low 6,000 | `tweaks/cellDisplay.ts` |
-| Passive nerves | visible Cells x 4/3 (High 40,000 / Med 20,000 / Low 8,000; manual up to 66,667) | `geometry/passiveNeighborGraph.ts` |
+| AUTO visible Cells | 12,000 fixed (quality-independent) | `tweaks/cellDisplay.ts` |
+| Passive nerves | min(8,000, visible Cells x 4/3); live-tunable up to 20,000 | `geometry/passiveNeighborGraph.ts` |
 | Passive curve samples | 4 per edge | `nerve/fabricCapacity.ts` |
 | Passive lifecycle generations | 3 | `nerve/fabricCapacity.ts` |
-| Passive segment allocation | per class: edges x 3 x 4 (ceiling 800,004) | `nerve/fabricCapacity.ts` |
+| Passive segment allocation | per class: edges x 3 x 4 (ceiling 240,000) | `nerve/fabricCapacity.ts` |
 | Sparse warm-route allocation | per class: edges x 4 (ceiling 266,668) | `nerve/fabricCapacity.ts` |
 | Live active-route allocation | 6,000 segments | `nerve/NeuralFabric.tsx` |
 | Memory-route allocation | 6,000 segments | `nerve/NeuralFabric.tsx` |
@@ -274,17 +271,15 @@ A performance-only change must not:
 
 - introduce quality-dependent passive edge caps, passive samples, or passive
   animation FPS;
-- shrink a tier's visible membership below its sanctioned AUTO budget, change
-  the selection rules per tier, or add membership rungs outside the Visible
-  membership section (the tiered budgets themselves are a signed product
-  decision, not a precedent for further quality-driven trimming);
+- shrink visible membership below the fixed AUTO budget, vary it by quality
+  tier, or reintroduce membership rungs (the 2026-08-10 tier ladder was
+  tried and explicitly revoked on 2026-08-11 — fixed composition is a
+  signed product decision);
 - shorten, skip, or coalesce a semantic animation so that an observed event is
   no longer visible;
 - replace a real route with a cheaper synthetic route;
 - lower passive width/energy until the resting nervous system stops reading;
-- rebuild the Cell set or topology in response to adaptive quality alone
-  (a tier change's single canonical render-set rebuild is the sanctioned
-  exception);
+- rebuild the Cell set or topology in response to adaptive quality alone;
 - remove focused identity/evidence or make it sub-pixel; or
 - claim a gain from a hidden/throttled browser tab.
 
