@@ -30,14 +30,18 @@ export const CELL_DISPLAY_COARSE_STEP = 250;
  */
 export const AUTO_CELL_DISPLAY_BUDGETS: Record<QualityPreset, number> = {
   low: 6_000,
-  med: 20_000,
-  // Positioned at the measured HOLD point, not the renderer ceiling: a tier
-  // a strong machine oscillates in and out of (50,000 measured ~25% high
-  // share on the reference iGPU) is a worse steady experience than one it
-  // keeps. The 50K upper bound lives on in the retained reservoir and the
-  // manual slider; AUTO's top rung sits between the rock-solid 20K anchor
-  // and the un-holdable 50K.
-  high: 35_000,
+  // Med sits BELOW the reference iGPU's measured rock-solid 20,000: the
+  // ladder is calibrated for AVERAGE hardware (the reference machine is
+  // well above average), so the steady tier keeps margin there. High is the
+  // opportunistic tier — no rung above the steady anchor holds through
+  // mainnet block clusters on the reference machine (35K and 50K measured
+  // statistically identical ~22-25% share), so its value is a product
+  // choice: conservative 30,000 keeps the density breathing gentle. The
+  // 50K upper bound lives on in the retained reservoir and the manual
+  // slider. Ladder steps are ~2x; the 4/3 nerve ratio lands on round
+  // budgets (8,000 / 20,000 / 40,000).
+  med: 15_000,
+  high: 30_000,
 };
 
 const listeners = new Set<() => void>();

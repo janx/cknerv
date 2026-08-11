@@ -25,10 +25,11 @@ describe('Cell display budget', () => {
     // Explicit product decision (2026-08-10): quality adjusts membership
     // within the rungs; `low` preserves the historical 6K budget.
     expect(AUTO_CELL_DISPLAY_BUDGETS.low).toBe(6_000);
-    // High sits at the measured HOLD point between the rock-solid 20K
-    // anchor and the un-holdable 50K; the 50K bound stays manual-only.
-    expect(automaticCellDisplayLimit('high')).toBe(35_000);
-    expect(automaticCellDisplayLimit('med')).toBe(20_000);
+    // Conservative average-hardware ladder (~2x steps): med keeps margin
+    // below the reference machine's proven 20K, high is the opportunistic
+    // tier, and the 50K bound stays manual-only.
+    expect(automaticCellDisplayLimit('high')).toBe(30_000);
+    expect(automaticCellDisplayLimit('med')).toBe(15_000);
     expect(automaticCellDisplayLimit('low')).toBe(6_000);
     // Nested rungs: a lower tier's budget never exceeds a higher tier's.
     expect(AUTO_CELL_DISPLAY_BUDGETS.low)
@@ -81,7 +82,7 @@ describe('Cell display budget', () => {
     setCellDisplayMode('auto');
     const automatic = getCellDisplayRuntimeSnapshot();
     expect(resolveCellDisplayLimit(automatic, 'low')).toBe(6_000);
-    expect(resolveCellDisplayLimit(automatic, 'high')).toBe(35_000);
+    expect(resolveCellDisplayLimit(automatic, 'high')).toBe(30_000);
     expect(automatic.manualLimit).toBe(2_700);
   });
 });
