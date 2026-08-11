@@ -1,10 +1,9 @@
 // Geometry budget for the bounded persistent resting-fibre layer.
 
 import {
+  NERVE_SCREEN_BUDGET,
   PASSIVE_EDGE_CEILING,
-  passiveEdgeBudget,
 } from '../geometry/passiveNeighborGraph';
-import { AUTO_CELL_DISPLAY_BUDGETS } from '../tweaks/cellDisplay';
 
 /** Four samples preserve the quadratic silhouette of one organic fibre. */
 export const FABRIC_SAMPLES_PER_EDGE = 4;
@@ -27,39 +26,30 @@ export function warmSegmentAllocation(edges: number): number {
 }
 
 /**
- * Discrete GPU-allocation classes for the fabric layers, one per AUTO tier's
- * derived nerve budget (Low 8,000 / Med 26,667 / High 66,667 edges). Nerve
- * BUDGETS follow the visible Cell count continuously; ALLOCATIONS quantize to
- * these classes so buffer sizes change only when the display budget crosses a
- * tier-scale boundary — a weak machine that settles on the Low tier never
- * holds High-tier buffers.
+ * Discrete GPU-allocation classes for the fabric layers. The nerve budget is
+ * a fixed screen-composition constant (default 8,000, live-tunable up to the
+ * 20,000 ceiling), so the default class serves every field — AUTO and manual
+ * alike — and the ceiling class exists only for a raised live-tuning knob.
+ * ALLOCATIONS quantize to these classes so buffer sizes change only when the
+ * resolved budget crosses a class boundary.
  */
 export const FABRIC_ALLOCATION_EDGE_CLASSES: readonly number[] = [
-  ...new Set([
-    ...Object.values(AUTO_CELL_DISPLAY_BUDGETS).map(
-      (cells) => passiveEdgeBudget(cells),
-    ),
-    // Manual fields may exceed the top AUTO rung (the 50K upper bound lives
-    // on the slider); the full-field ceiling closes the class ladder so a
-    // 50K manual field never gets a clipped allocation.
-    PASSIVE_EDGE_CEILING,
-  ]),
+  ...new Set([NERVE_SCREEN_BUDGET, PASSIVE_EDGE_CEILING]),
 ].sort((a, b) => a - b);
 
-/** Smallest allocation class that fits the nerve budget of `displayLimit`
- * visible Cells (manual fields quantize the same way). */
-export function fabricAllocationEdges(displayLimit: number): number {
-  const need = passiveEdgeBudget(displayLimit);
+/** Smallest allocation class that fits a resolved passive edge budget
+ * (callers pass `passiveEdgeBudget(displayLimit, liveScreenBudget)`). */
+export function fabricAllocationEdges(edgeNeed: number): number {
   for (const edgeClass of FABRIC_ALLOCATION_EDGE_CLASSES) {
-    if (edgeClass >= need) return edgeClass;
+    if (edgeClass >= edgeNeed) return edgeClass;
   }
   return FABRIC_ALLOCATION_EDGE_CLASSES[FABRIC_ALLOCATION_EDGE_CLASSES.length - 1];
 }
 
-/** Absolute passive-layer ceiling (the High-tier class): 66,667 edges × 3
+/** Absolute passive-layer ceiling (the top class): 20,000 edges × 3
  * generations × 4 segments. Kept as the hard upper bound; per-mount
  * allocations use `fabricSegmentAllocation(fabricAllocationEdges(...))`. */
 export const MAX_FABRIC_SEGMENTS = fabricSegmentAllocation(PASSIVE_EDGE_CEILING);
 
-/** Absolute warm-overlay ceiling at the High-tier class. */
+/** Absolute warm-overlay ceiling at the top class. */
 export const MAX_WARM_FABRIC_SEGMENTS = warmSegmentAllocation(PASSIVE_EDGE_CEILING);

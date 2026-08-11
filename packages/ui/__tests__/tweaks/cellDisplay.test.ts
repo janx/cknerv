@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import {
-  AUTO_CELL_DISPLAY_BUDGETS,
+  AUTO_CELL_DISPLAY_BUDGET,
   CELL_DISPLAY_MAX,
   CELL_DISPLAY_MIN,
   automaticCellDisplayLimit,
@@ -21,26 +21,14 @@ afterEach(() => {
 });
 
 describe('Cell display budget', () => {
-  it('resolves the AUTO budget from the quality tier rungs', () => {
-    // Explicit product decision (2026-08-10): quality adjusts membership
-    // within the rungs; `low` preserves the historical 6K budget.
-    expect(AUTO_CELL_DISPLAY_BUDGETS.low).toBe(6_000);
-    // Conservative average-hardware ladder (~2x steps): med keeps margin
-    // below the reference machine's proven 20K, high is the opportunistic
-    // tier, and the 50K bound stays manual-only.
-    expect(automaticCellDisplayLimit('high')).toBe(30_000);
-    expect(automaticCellDisplayLimit('med')).toBe(15_000);
-    expect(automaticCellDisplayLimit('low')).toBe(6_000);
-    // Nested rungs: a lower tier's budget never exceeds a higher tier's.
-    expect(AUTO_CELL_DISPLAY_BUDGETS.low)
-      .toBeLessThanOrEqual(AUTO_CELL_DISPLAY_BUDGETS.med);
-    expect(AUTO_CELL_DISPLAY_BUDGETS.med)
-      .toBeLessThanOrEqual(AUTO_CELL_DISPLAY_BUDGETS.high);
+  it('resolves the fixed AUTO budget regardless of quality', () => {
+    // Explicit product decision (2026-08-11): Galaxy membership is FIXED —
+    // render quality adjusts presentation only, never composition.
+    expect(AUTO_CELL_DISPLAY_BUDGET).toBe(12_000);
+    expect(automaticCellDisplayLimit()).toBe(12_000);
 
-    // The server's retained capacity still bounds every tier.
-    expect(automaticCellDisplayLimit('high', 2_000)).toBe(2_000);
-    expect(automaticCellDisplayLimit('med', 2_000)).toBe(2_000);
-    expect(automaticCellDisplayLimit('low', 2_000)).toBe(2_000);
+    // The server's retained capacity still bounds the budget.
+    expect(automaticCellDisplayLimit(2_000)).toBe(2_000);
   });
 
   it('normalizes manual values to a safe renderer step and capacity', () => {
@@ -70,19 +58,19 @@ describe('Cell display budget', () => {
     expect(cellDisplaySliderValueToLimit(33, 3_333)).toBe(3_333);
   });
 
-  it('lets manual Cell capacity override quality without changing its tier', () => {
+  it('keeps manual capacity independent from AUTO and its server bound', () => {
     setCellDisplayLimit(2_700);
     const manual = getCellDisplayRuntimeSnapshot();
 
     expect(manual).toEqual({ mode: 'manual', manualLimit: 2_700 });
-    expect(resolveCellDisplayLimit(manual, 'high')).toBe(2_700);
-    expect(resolveCellDisplayLimit(manual, 'low')).toBe(2_700);
-    expect(resolveCellDisplayLimit(manual, 'low', 2_000)).toBe(2_700);
+    expect(resolveCellDisplayLimit(manual)).toBe(2_700);
+    // The automatic capacity bound applies to AUTO only, never to manual.
+    expect(resolveCellDisplayLimit(manual, 2_000)).toBe(2_700);
 
     setCellDisplayMode('auto');
     const automatic = getCellDisplayRuntimeSnapshot();
-    expect(resolveCellDisplayLimit(automatic, 'low')).toBe(6_000);
-    expect(resolveCellDisplayLimit(automatic, 'high')).toBe(30_000);
+    expect(resolveCellDisplayLimit(automatic)).toBe(12_000);
+    expect(resolveCellDisplayLimit(automatic, 2_000)).toBe(2_000);
     expect(automatic.manualLimit).toBe(2_700);
   });
 });

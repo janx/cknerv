@@ -124,7 +124,7 @@ describe('CellGalaxy', () => {
     const source = readFileSync(CELL_GALAXY_SOURCE, 'utf8');
 
     expect(source).toMatch(
-      /resolveCellDisplayLimit\(\s*cellDisplay,\s*quality,\s*cellCapacity,\s*\)/,
+      /resolveCellDisplayLimit\(\s*cellDisplay,\s*cellCapacity,\s*\)/,
     );
     expect(source).toContain('createCellRenderSetState()');
     expect(source).toMatch(

@@ -14,7 +14,6 @@ import {
   DEATH_DURATION_MS,
   INSTANCE_CAPACITY,
 } from '../geometry/cellPositions';
-import { useQualityRuntime } from '../tweaks/qualityPresets';
 import {
   resolveCellDisplayLimit,
   useCellDisplayRuntime,
@@ -51,9 +50,8 @@ interface CellShellProps {
 export default function CellShell({ cellFlashRef, flashDirtyRef }: CellShellProps) {
   const simClock = useSimClock();
   const cellsCache = useCellGalaxy();
-  const { effective: quality } = useQualityRuntime();
   const cellDisplay = useCellDisplayRuntime();
-  const cellDisplayLimit = resolveCellDisplayLimit(cellDisplay, quality);
+  const cellDisplayLimit = resolveCellDisplayLimit(cellDisplay);
 
   const { shellScale, shellOpacity } = useControls('Galaxy 共识记忆', {
     shellScale:   { value: 1.0, min: 0.1, max: 3.0, step: 0.05, label: 'scale' },

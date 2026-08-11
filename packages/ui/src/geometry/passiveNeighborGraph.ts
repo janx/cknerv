@@ -1,25 +1,34 @@
-import { INSTANCE_CAPACITY } from './cellPositions';
 import { fabricEdgeSeed } from './edgeBezier';
 import type { NeighborEdge, NeighborGraph } from './neighborGraph';
 
-/** Admit enough resting fibres to keep every connected Cell on the visible
- * arbor and still retain capillary cross-links. This ratio is the stable
- * visual identity of the nervous system: the nerve budget follows the visible
- * Cell count at every quality tier (explicit product decision, 2026-08-10),
- * so a denser Cell field always reads equally neural — quality changes how
- * many Cells AND nerves render together, never their proportion. */
+/** Small-field connectivity ratio: enough resting fibres for the spanning
+ * arbor plus capillary redundancy. It sizes the budget only while the field
+ * is small — perceived density scales with TOTAL on-screen edges over the
+ * fixed galaxy disk, not with edges per Cell, so large fields are bounded by
+ * the screen-composition budget below (explicit product decision,
+ * 2026-08-11: the 4/3-ratio-at-every-scale model read as felt, not nerves). */
 export const PASSIVE_EDGES_PER_CELL = 4 / 3;
-/** Absolute nerve ceiling at the full renderer field: enough for the
- * spanning arbor plus cross-links over every instanced Cell slot. The old
- * fixed 8,000 screen cap survives as the LOW tier's derived budget
- * (6,000 Cells × 4/3), not as a global ceiling. */
-export const PASSIVE_EDGE_CEILING = Math.round(
-  INSTANCE_CAPACITY * PASSIVE_EDGES_PER_CELL,
-);
+/** The aesthetic screen-composition budget: the resting fibre count the
+ * galaxy disk carries at the reference "neural" density, independent of how
+ * many Cells render. Restores the original fixed screen cap; live-tunable
+ * within [NERVE_SCREEN_BUDGET_MIN, NERVE_SCREEN_BUDGET_MAX]. */
+export const NERVE_SCREEN_BUDGET = 8_000;
+export const NERVE_SCREEN_BUDGET_MIN = 6_000;
+export const NERVE_SCREEN_BUDGET_MAX = 20_000;
+/** Absolute passive-layer ceiling = the largest reachable screen budget.
+ * Bounds GPU allocation classes; manual 50K fields still keep the fixed
+ * screen budget, so nothing above the knob domain is ever requested. */
+export const PASSIVE_EDGE_CEILING = NERVE_SCREEN_BUDGET_MAX;
 /** Most screen energy belongs to coherent carrying branches. */
 export const PASSIVE_TRUNK_SHARE = 0.72;
 /** A minority of lower-order arbor edges break up clean top-weight contours. */
 export const PASSIVE_TWIG_SHARE = 0.18;
+/** Over-budget fields (spanning forest larger than the budget) spend this
+ * share of the budget on a hash-scattered forest subset: partial coverage
+ * must read as uniform airiness across the disk — scattered capillaries
+ * weaving through bare "dust" Cells — never as one fully-wired canopy region
+ * beside a bare remainder (the graph-order pathology of dense fields). */
+export const PASSIVE_COVERAGE_SHARE = 0.55;
 
 export interface PassiveNeighborGraphOptions {
   /** Override used by focused diagnostics/tests. Default is derived from N. */
@@ -29,6 +38,10 @@ export interface PassiveNeighborGraphOptions {
   /** Still-valid resting edges from the previous frame. Preserving them turns
    * ordinary Cell churn into local growth instead of a whole-field reshuffle. */
   preferredEdges?: readonly NeighborEdge[];
+  /** Live-tunable selection shares (defaults are the module constants). */
+  coverageShare?: number;
+  trunkShare?: number;
+  twigShare?: number;
 }
 
 function edgeKey(edge: NeighborEdge): string {
@@ -41,6 +54,11 @@ function edgeHash(edge: NeighborEdge): number {
 
 function canonicalEdgeOrder(a: NeighborEdge, b: NeighborEdge): number {
   return a.from - b.from || a.to - b.to;
+}
+
+function clampShare(value: number | undefined, fallback: number): number {
+  if (value === undefined || !Number.isFinite(value)) return fallback;
+  return Math.max(0, Math.min(1, value));
 }
 
 /** Select a deterministic spanning forest from the authoritative graph order.
@@ -75,12 +93,19 @@ function spanningCoverageEdges(graph: NeighborGraph): NeighborEdge[] {
   return coverage;
 }
 
-/** Ratio-constant passive-fibre budget for a visible Cell population,
- *  bounded only by the full-field ceiling. */
-export function passiveEdgeBudget(nodeCount: number): number {
+/** Passive-fibre budget for a visible Cell population: the 4/3 connectivity
+ * ratio while the field is small, capped by the (live-tunable) fixed
+ * screen-composition budget once the field outgrows it. */
+export function passiveEdgeBudget(
+  nodeCount: number,
+  screenBudget = NERVE_SCREEN_BUDGET,
+): number {
   if (!Number.isFinite(nodeCount) || nodeCount <= 1) return 0;
+  const cap = Number.isFinite(screenBudget)
+    ? Math.max(1, Math.min(PASSIVE_EDGE_CEILING, Math.round(screenBudget)))
+    : NERVE_SCREEN_BUDGET;
   return Math.min(
-    PASSIVE_EDGE_CEILING,
+    cap,
     Math.max(1, Math.round(nodeCount * PASSIVE_EDGES_PER_CELL)),
   );
 }
@@ -100,12 +125,14 @@ function graphFromEdges(
 
 /**
  * Derive the resting biological silhouette without changing authoritative
- * routing. The full graph stays connected for pulse planning; this layer is a
- * bounded arbor drawing that keeps every Cell attached: each tier's ratio-
- * derived budget exceeds its own field's spanning forest.
+ * routing. The full graph stays connected for pulse planning; this layer is
+ * a bounded screen-composition drawing. Small fields keep every connected
+ * Cell attached (the budget exceeds their spanning forest); fields larger
+ * than the screen budget accept scattered partial coverage by design.
  *
  * Selection is deterministic and hierarchical:
- *  1. a spanning forest keeps every connected Cell on a visible nerve;
+ *  1. spanning-forest edges — all of them when they fit, otherwise a
+ *     hash-scattered share (uniform airiness, never a wired-solid region);
  *  2. still-valid prior edges preserve local visual continuity;
  *  3. hierarchy-ranked branches and hash-scattered cross-links fill the cap.
  */
@@ -128,15 +155,22 @@ export function buildPassiveNeighborGraph(
   );
   if (budget === 0) return graphFromEdges(graph, []);
 
+  const trunkShare = clampShare(options.trunkShare, PASSIVE_TRUNK_SHARE);
+  const twigShare = clampShare(options.twigShare, PASSIVE_TWIG_SHARE);
+  const coverageShare = clampShare(
+    options.coverageShare,
+    PASSIVE_COVERAGE_SHARE,
+  );
+
   const arbor = graph.edges.filter((edge) => edge.w !== undefined);
   const crosslinks = graph.edges.filter((edge) => edge.w === undefined);
   const trunkBudget = Math.min(
     arbor.length,
-    Math.round(budget * PASSIVE_TRUNK_SHARE),
+    Math.round(budget * trunkShare),
   );
   const twigBudget = Math.min(
     arbor.length - trunkBudget,
-    Math.round(budget * PASSIVE_TWIG_SHARE),
+    Math.round(budget * twigShare),
   );
 
   const byHierarchy = [...arbor].sort((a, b) =>
@@ -175,11 +209,30 @@ export function buildPassiveNeighborGraph(
     kept.push(edge);
   };
 
-  // Connectivity is the visual contract. Every tier's budget exceeds its
-  // own field's spanning forest (4/3 ratio > 1 edge per Cell), so every
-  // connected Cell is visibly attached before continuity and decorative
-  // cross-links compete for the remainder.
-  for (const edge of coverage) keep(edge);
+  // Small fields: the budget exceeds the spanning forest (4/3 ratio), so
+  // every connected Cell is visibly attached before continuity and
+  // decorative cross-links compete for the remainder — full coverage is
+  // still the visual contract there.
+  //
+  // Over-budget fields (forest > budget): full coverage is impossible, and
+  // admitting the forest in graph order would wire one coherent region
+  // solid while the rest goes bare (canopy-beside-dust). Spend only a
+  // share of the budget on coverage, selected by stable per-edge hash —
+  // spatially uniform scatter, deterministic across rebuilds, minimal
+  // churn (an edge keeps its rank while it lives). Bare Cells are the
+  // accepted "dust" between capillaries; trunks below supply the long
+  // coherent strands.
+  if (coverage.length <= budget) {
+    for (const edge of coverage) keep(edge);
+  } else {
+    const coverageBudget = Math.round(budget * coverageShare);
+    const scattered = [...coverage].sort((a, b) =>
+      edgeHash(b) - edgeHash(a)
+      || canonicalEdgeOrder(a, b));
+    for (let i = 0; i < coverageBudget && i < scattered.length; i += 1) {
+      keep(scattered[i]);
+    }
+  }
   for (const previous of options.preferredEdges ?? []) {
     const current = availableByKey.get(edgeKey(previous));
     if (current) keep(current);

@@ -277,11 +277,11 @@ describe('StatusStrip', () => {
     ) as HTMLInputElement;
 
     expect(automatic.getAttribute('aria-pressed')).toBe('true');
-    // Default effective quality is `high` (the opportunistic 30K rung);
+    // AUTO is the fixed 12K structural budget (quality-independent);
     // the manual rail still spans the full 50K.
-    expect(slider.value).toBe('149');
+    expect(slider.value).toBe('77');
     expect(slider.max).toBe('229');
-    expect(slider.getAttribute('aria-valuetext')).toContain('30,000 Cells');
+    expect(slider.getAttribute('aria-valuetext')).toContain('12,000 Cells');
     expect(control.getAttribute('data-cell-display-capacity')).toBe('50000');
     expect(control.getAttribute('data-cell-display-count')).toBe('5000');
     expect(control.getAttribute('data-cell-display-available')).toBe('5000');
@@ -294,7 +294,7 @@ describe('StatusStrip', () => {
     ).not.toContain('SHOWN');
     expect(
       control.querySelector('[data-cell-display-cap]')?.textContent,
-    ).toContain('/30K');
+    ).toContain('/12K');
     expect(automatic.textContent).toContain('AUTO');
 
     fireEvent.change(slider, { target: { value: '29' } });

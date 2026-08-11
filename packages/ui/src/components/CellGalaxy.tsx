@@ -1074,7 +1074,6 @@ export default function CellGalaxy({
   const cellDisplay = useCellDisplayRuntime();
   const cellDisplayLimit = resolveCellDisplayLimit(
     cellDisplay,
-    quality,
     cellCapacity,
   );
   const dischargeArms = QUALITY_PRESETS[quality].dischargeArms;

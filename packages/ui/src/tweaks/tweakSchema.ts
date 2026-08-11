@@ -32,6 +32,17 @@ import {
   FABRIC_COHORT_SIZE,
   FABRIC_COHORT_INTERVAL_S,
 } from '../nerve/fabricCohorts';
+// Nerve screen-composition defaults live in passiveNeighborGraph.ts — the
+// selection algorithm owns the numbers; these knobs expose them live so the
+// resting-fibre density is settled by eye, then pinned back as constants.
+import {
+  NERVE_SCREEN_BUDGET,
+  NERVE_SCREEN_BUDGET_MIN,
+  NERVE_SCREEN_BUDGET_MAX,
+  PASSIVE_COVERAGE_SHARE,
+  PASSIVE_TRUNK_SHARE,
+  PASSIVE_TWIG_SHARE,
+} from '../geometry/passiveNeighborGraph';
 
 export interface KnobDef {
   value: number;
@@ -112,9 +123,27 @@ export const cellSchema = {
   fabricCohortInterval: { value: FABRIC_COHORT_INTERVAL_S, min: 0.05, max: 1, step: 0.05, label: 'cohort interval s' },
 } satisfies FolderSchema;
 
+// Unlike every other folder, these four knobs change GRAPH SELECTION, not
+// material uniforms: a change triggers one incremental display-graph rebuild
+// (worker delta) rather than a per-frame uniform read. Defaults must stay
+// equal to the module constants (zero-drift parity).
+export const nerveSchema = {
+  screenBudget: {
+    value: NERVE_SCREEN_BUDGET,
+    min: NERVE_SCREEN_BUDGET_MIN,
+    max: NERVE_SCREEN_BUDGET_MAX,
+    step: 250,
+    label: 'screen budget',
+  },
+  coverageShare: { value: PASSIVE_COVERAGE_SHARE, min: 0, max: 1, step: 0.05, label: 'scatter share' },
+  trunkShare: { value: PASSIVE_TRUNK_SHARE, min: 0, max: 1, step: 0.02, label: 'trunk share' },
+  twigShare: { value: PASSIVE_TWIG_SHARE, min: 0, max: 1, step: 0.02, label: 'twig share' },
+} satisfies FolderSchema;
+
 export const FOLDER_LABELS = {
   galaxy: 'Galaxy 共识记忆',
   delivery: 'Consensus carrier 共识载体',
   peer: 'Peer mesh 对端',
   cell: 'Cell structure 数据结构',
+  nerve: 'Nerve fabric 神经',
 } as const;

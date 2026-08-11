@@ -5,7 +5,7 @@
 // (e.g. shellScale lives under 'Galaxy 共识记忆' too).
 import { useEffect } from 'react';
 import { useControls } from 'leva';
-import { galaxySchema, deliverySchema, peerSchema, cellSchema, FOLDER_LABELS } from './tweakSchema';
+import { galaxySchema, deliverySchema, peerSchema, cellSchema, nerveSchema, FOLDER_LABELS } from './tweakSchema';
 import { LIVE, applyTweaks, type PartialLive } from './liveTweaks';
 
 export default function TweakSync(): null {
@@ -13,10 +13,11 @@ export default function TweakSync(): null {
   const delivery = useControls(FOLDER_LABELS.delivery, deliverySchema);
   const peer = useControls(FOLDER_LABELS.peer, peerSchema);
   const cell = useControls(FOLDER_LABELS.cell, cellSchema);
+  const nerve = useControls(FOLDER_LABELS.nerve, nerveSchema);
 
   useEffect(() => {
-    applyTweaks(LIVE, { galaxy, delivery, peer, cell } as PartialLive);
-  }, [galaxy, delivery, peer, cell]);
+    applyTweaks(LIVE, { galaxy, delivery, peer, cell, nerve } as PartialLive);
+  }, [galaxy, delivery, peer, cell, nerve]);
 
   return null;
 }

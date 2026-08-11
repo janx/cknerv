@@ -4,7 +4,8 @@
 // never reallocated — so reads in hot loops never chase a moving reference and
 // no per-frame garbage is produced.
 import {
-  galaxySchema, deliverySchema, peerSchema, cellSchema, type FolderSchema,
+  galaxySchema, deliverySchema, peerSchema, cellSchema, nerveSchema,
+  type FolderSchema,
 } from './tweakSchema';
 
 export function defaultsFrom(schema: FolderSchema): Record<string, number> {
@@ -17,12 +18,14 @@ export type GalaxyLive = { [K in keyof typeof galaxySchema]: number };
 export type DeliveryLive = { [K in keyof typeof deliverySchema]: number };
 export type PeerLive = { [K in keyof typeof peerSchema]: number };
 export type CellLive = { [K in keyof typeof cellSchema]: number };
+export type NerveLive = { [K in keyof typeof nerveSchema]: number };
 
 export interface LiveTweaks {
   galaxy: GalaxyLive;
   delivery: DeliveryLive;
   peer: PeerLive;
   cell: CellLive;
+  nerve: NerveLive;
 }
 export type PartialLive = { [F in keyof LiveTweaks]?: Partial<LiveTweaks[F]> };
 
@@ -31,11 +34,41 @@ export const LIVE: LiveTweaks = {
   delivery: defaultsFrom(deliverySchema) as DeliveryLive,
   peer: defaultsFrom(peerSchema) as PeerLive,
   cell: defaultsFrom(cellSchema) as CellLive,
+  nerve: defaultsFrom(nerveSchema) as NerveLive,
 };
+
+// The nerve folder feeds GRAPH SELECTION, not per-frame uniform reads, so it
+// needs a push channel: consumers (NeuralNetwork) subscribe and schedule one
+// incremental display rebuild per change instead of polling LIVE each frame.
+let nerveTuningVersion = 0;
+const nerveTuningListeners = new Set<() => void>();
+
+export function getNerveTuningVersion(): number {
+  return nerveTuningVersion;
+}
+
+export function subscribeNerveTuning(listener: () => void): () => void {
+  nerveTuningListeners.add(listener);
+  return () => { nerveTuningListeners.delete(listener); };
+}
 
 export function applyTweaks(live: LiveTweaks, values: PartialLive): void {
   if (values.galaxy) Object.assign(live.galaxy, values.galaxy);
   if (values.delivery) Object.assign(live.delivery, values.delivery);
   if (values.peer) Object.assign(live.peer, values.peer);
   if (values.cell) Object.assign(live.cell, values.cell);
+  if (values.nerve) {
+    let changed = false;
+    for (const key of Object.keys(values.nerve) as (keyof NerveLive)[]) {
+      const next = values.nerve[key];
+      if (next !== undefined && live.nerve[key] !== next) {
+        live.nerve[key] = next;
+        changed = true;
+      }
+    }
+    if (changed && live === LIVE) {
+      nerveTuningVersion += 1;
+      for (const listener of nerveTuningListeners) listener();
+    }
+  }
 }

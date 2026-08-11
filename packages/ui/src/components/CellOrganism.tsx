@@ -68,7 +68,7 @@ export default function CellOrganism({
       label: 'shell scale',
     },
   });
-  const cellDisplayLimit = resolveCellDisplayLimit(cellDisplay, quality);
+  const cellDisplayLimit = resolveCellDisplayLimit(cellDisplay);
   const geometryDetail = quality === 'high' ? 1 : 0;
 
   const accent = useMemo(() => new Float32Array(INSTANCE_CAPACITY * 3), []);

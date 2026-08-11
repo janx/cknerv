@@ -47,6 +47,12 @@ export interface NeighborGraphBuildOptions {
   /** Visual-only cap for the passive graph. The complete graph remains
    * untouched for routing. */
   passiveEdgeBudget?: number;
+  /** Live-tunable passive selection shares (module-constant defaults). */
+  passiveTuning?: {
+    coverageShare: number;
+    trunkShare: number;
+    twigShare: number;
+  };
   preferredEdges?: readonly NeighborEdge[];
   /** O(churn) topology journal since the previous APPLIED build. When valid
    * and a previous response chained, the builder sends this instead of a
@@ -113,6 +119,9 @@ function buildSynchronously(
     passiveGraph: options.includePassive
       ? buildPassiveNeighborGraph(graph, {
         edgeBudget: options.passiveEdgeBudget,
+        coverageShare: options.passiveTuning?.coverageShare,
+        trunkShare: options.passiveTuning?.trunkShare,
+        twigShare: options.passiveTuning?.twigShare,
         preferredEdges: options.preferredEdges,
       })
       : null,
@@ -221,6 +230,7 @@ export function createNeighborGraphBuilder(
         options: options.topology ?? {},
         includePassive: options.includePassive ?? false,
         passiveEdgeBudget: options.passiveEdgeBudget ?? null,
+        passiveTuning: options.passiveTuning ?? null,
         preferredEdges,
       };
       const fullRequest = (): NeighborGraphWorkerRequest => ({

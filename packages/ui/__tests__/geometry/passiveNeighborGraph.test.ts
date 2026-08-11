@@ -50,14 +50,31 @@ describe('buildPassiveNeighborGraph', () => {
     }
   });
 
-  it('keeps broad Cell coverage when a manual field reaches the screen cap', () => {
-    const capped = buildPassiveNeighborGraph(full, {
-      edgeBudget: Math.round(cells.size * (8 / 9)),
-    });
+  it('scatters partial coverage uniformly when the forest exceeds the budget', () => {
+    // Over-budget regime: full coverage is impossible by design. The
+    // spanning forest must not be admitted in graph order (which wires one
+    // coherent region solid and leaves the rest bare) — a hash-scattered
+    // share keeps the bare "dust" spread across the field.
+    const edgeBudget = Math.round(cells.size * (8 / 9));
+    const capped = buildPassiveNeighborGraph(full, { edgeBudget });
     const covered = [...capped.adjacency.values()]
       .filter((edges) => edges.size > 0).length;
 
-    expect(covered / cells.size).toBeGreaterThan(0.85);
+    expect(capped.edges).toHaveLength(edgeBudget);
+    // Bare Cells exist (partial coverage), but most of the field stays on
+    // visible fibres at this near-full budget.
+    expect(covered / cells.size).toBeGreaterThan(0.6);
+    expect(covered / cells.size).toBeLessThan(1);
+
+    // The scatter must not be the graph-order forest prefix: an id-ordered
+    // prefix concentrates coverage on the lowest ids; hash scatter reaches
+    // deep into the id range even at a small coverage share.
+    const low = buildPassiveNeighborGraph(full, { edgeBudget, coverageShare: 0.3 });
+    const coveredIds = [...low.adjacency.entries()]
+      .filter(([, edges]) => edges.size > 0)
+      .map(([id]) => id);
+    const highIds = coveredIds.filter((id) => id >= cells.size / 2).length;
+    expect(highIds / coveredIds.length).toBeGreaterThan(0.25);
   });
 
   it('selects a deterministic subset of authoritative graph edges', () => {
@@ -72,16 +89,20 @@ describe('buildPassiveNeighborGraph', () => {
     expect(keys(a).every((key) => fullKeys.has(key))).toBe(true);
   });
 
-  it('keeps the nerves-per-Cell ratio constant across tier-scale fields', () => {
-    // Explicit product decision (2026-08-10): the nerve budget follows the
-    // visible Cell count so the picture stays equally neural at every tier.
-    expect(passiveEdgeBudget(6_000)).toBe(Math.round(6_000 * PASSIVE_EDGES_PER_CELL));
-    expect(passiveEdgeBudget(6_000)).toBe(8_000); // historical Low field
-    expect(passiveEdgeBudget(20_000)).toBe(26_667);
-    expect(passiveEdgeBudget(50_000)).toBe(66_667);
-    expect(passiveEdgeBudget(50_000)).toBe(PASSIVE_EDGE_CEILING);
-    // The renderer's full-field ceiling bounds any larger request.
-    expect(passiveEdgeBudget(90_000)).toBe(PASSIVE_EDGE_CEILING);
+  it('caps the budget at the fixed screen composition, ratio-sized below it', () => {
+    // Explicit product decision (2026-08-11): perceived density scales with
+    // TOTAL on-screen edges over the fixed galaxy disk, so the budget is a
+    // fixed screen constant once the field outgrows it — a bigger field
+    // means airier coverage, never a denser mat.
+    expect(passiveEdgeBudget(240)).toBe(Math.round(240 * PASSIVE_EDGES_PER_CELL));
+    expect(passiveEdgeBudget(6_000)).toBe(8_000); // ratio and cap coincide
+    expect(passiveEdgeBudget(12_000)).toBe(8_000); // the fixed AUTO field
+    expect(passiveEdgeBudget(50_000)).toBe(8_000); // manual fields too
+    // A raised live-tuning knob lifts the cap up to the ceiling; the 4/3
+    // connectivity ratio still bounds small fields.
+    expect(passiveEdgeBudget(12_000, 20_000)).toBe(16_000);
+    expect(passiveEdgeBudget(50_000, 20_000)).toBe(PASSIVE_EDGE_CEILING);
+    expect(passiveEdgeBudget(50_000, 99_999)).toBe(PASSIVE_EDGE_CEILING);
   });
 
   it('preserves surviving old branches after guaranteeing current coverage', () => {

@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+  NERVE_SCREEN_BUDGET,
+  NERVE_SCREEN_BUDGET_MAX,
   PASSIVE_EDGE_CEILING,
   passiveEdgeBudget,
 } from '../../src/geometry/passiveNeighborGraph';
-import { AUTO_CELL_DISPLAY_BUDGETS } from '../../src/tweaks/cellDisplay';
+import { AUTO_CELL_DISPLAY_BUDGET } from '../../src/tweaks/cellDisplay';
 import {
   FABRIC_ALLOCATION_EDGE_CLASSES,
   FABRIC_SAMPLES_PER_EDGE,
@@ -36,33 +38,28 @@ describe('fabric capacity', () => {
     expect(MAX_WARM_FABRIC_SEGMENTS).toBeLessThan(MAX_FABRIC_SEGMENTS);
   });
 
-  it('derives one allocation class per AUTO tier nerve budget', () => {
-    // Low keeps the historical 8K field; higher tiers scale by the same
-    // 4/3 nerves-per-Cell ratio that keeps the picture equally neural.
-    // Round classes fall straight out of the 4/3 ratio on the new ladder.
-    expect(FABRIC_ALLOCATION_EDGE_CLASSES).toEqual([
-      8_000, 20_000, 40_000, 66_667,
-    ]);
-    // Tier budgets derive the lower classes; the full-field ceiling closes
-    // the ladder for manual fields beyond the top AUTO rung.
-    expect(FABRIC_ALLOCATION_EDGE_CLASSES.slice(0, 3)).toEqual(
-      Object.values(AUTO_CELL_DISPLAY_BUDGETS)
-        .map((cells) => passiveEdgeBudget(cells))
-        .sort((a, b) => a - b),
-    );
+  it('derives the default class from the fixed screen budget', () => {
+    // The nerve budget is a fixed screen-composition constant, so the
+    // default class serves every field (AUTO and manual alike); the
+    // ceiling class exists only for a raised live-tuning knob.
+    expect(FABRIC_ALLOCATION_EDGE_CLASSES).toEqual([8_000, 20_000]);
+    expect(FABRIC_ALLOCATION_EDGE_CLASSES[0]).toBe(NERVE_SCREEN_BUDGET);
+    expect(PASSIVE_EDGE_CEILING).toBe(NERVE_SCREEN_BUDGET_MAX);
+    // The fixed AUTO field and a maxed manual field both resolve to the
+    // default class at the default screen budget.
+    expect(fabricAllocationEdges(passiveEdgeBudget(AUTO_CELL_DISPLAY_BUDGET)))
+      .toBe(NERVE_SCREEN_BUDGET);
+    expect(fabricAllocationEdges(passiveEdgeBudget(50_000)))
+      .toBe(NERVE_SCREEN_BUDGET);
   });
 
-  it('quantizes any display limit to the smallest fitting class', () => {
+  it('quantizes any resolved edge need to the smallest fitting class', () => {
     expect(fabricAllocationEdges(100)).toBe(8_000);
-    expect(fabricAllocationEdges(6_000)).toBe(8_000);
-    expect(fabricAllocationEdges(6_001)).toBe(20_000);
-    expect(fabricAllocationEdges(15_000)).toBe(20_000);
-    expect(fabricAllocationEdges(15_001)).toBe(40_000);
-    expect(fabricAllocationEdges(30_000)).toBe(40_000);
-    expect(fabricAllocationEdges(30_001)).toBe(66_667);
-    expect(fabricAllocationEdges(50_000)).toBe(66_667);
-    // Beyond the renderer ceiling still lands on the top class.
-    expect(fabricAllocationEdges(99_999)).toBe(66_667);
+    expect(fabricAllocationEdges(8_000)).toBe(8_000);
+    expect(fabricAllocationEdges(8_001)).toBe(20_000);
+    expect(fabricAllocationEdges(20_000)).toBe(20_000);
+    // Beyond the ceiling still lands on the top class.
+    expect(fabricAllocationEdges(99_999)).toBe(20_000);
   });
 
   it('sizes per-class segment allocations by the shared sample math', () => {

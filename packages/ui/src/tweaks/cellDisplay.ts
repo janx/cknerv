@@ -1,6 +1,5 @@
 import { useSyncExternalStore } from 'react';
 import { INSTANCE_CAPACITY } from '../geometry/cellPositions';
-import type { QualityPreset } from './qualityPresets';
 
 export type CellDisplayMode = 'auto' | 'manual';
 
@@ -18,31 +17,15 @@ export const CELL_DISPLAY_STEP = 100;
 export const CELL_DISPLAY_FINE_MAX = 5_000;
 export const CELL_DISPLAY_COARSE_STEP = 250;
 /**
- * Per-quality structural budgets for AUTO mode (explicit product decision,
- * 2026-08-10: quality MAY adjust Galaxy membership within these rungs).
- * `low` preserves the historical single stable budget, so the weakest
- * hardware keeps its long-proven behavior; higher tiers spend measured
- * headroom on field density. Rung changes ride the adaptive-quality
- * hysteresis (evidence windows + switch cooldown), and the render set
- * treats a budget change as one canonical rebuild — cells revealed this
- * way render in their settled lifecycle state (born long ago), never as
- * fake births. Smaller retained fields still show every Cell.
+ * The single AUTO structural budget (explicit product decision, 2026-08-11:
+ * Galaxy membership is FIXED — render quality adjusts presentation only, DPR
+ * / effects / sampling, never composition). 12,000 sits below the reference
+ * iGPU's measured rock-solid 20,000 with margin for average hardware; the
+ * cost is that weak machines no longer shed membership, only presentation.
+ * The 50K upper bound lives on in the retained reservoir and the manual
+ * slider — user intent, not quality adaptation.
  */
-export const AUTO_CELL_DISPLAY_BUDGETS: Record<QualityPreset, number> = {
-  low: 6_000,
-  // Med sits BELOW the reference iGPU's measured rock-solid 20,000: the
-  // ladder is calibrated for AVERAGE hardware (the reference machine is
-  // well above average), so the steady tier keeps margin there. High is the
-  // opportunistic tier — no rung above the steady anchor holds through
-  // mainnet block clusters on the reference machine (35K and 50K measured
-  // statistically identical ~22-25% share), so its value is a product
-  // choice: conservative 30,000 keeps the density breathing gentle. The
-  // 50K upper bound lives on in the retained reservoir and the manual
-  // slider. Ladder steps are ~2x; the 4/3 nerve ratio lands on round
-  // budgets (8,000 / 20,000 / 40,000).
-  med: 15_000,
-  high: 30_000,
-};
+export const AUTO_CELL_DISPLAY_BUDGET = 12_000;
 
 const listeners = new Set<() => void>();
 let runtimeSnapshot: CellDisplayRuntimeSnapshot = {
@@ -140,28 +123,26 @@ export function cellDisplayLimitToSliderValue(
   );
 }
 
-/** AUTO resolves the display budget from the effective quality tier —
- * membership varies between the tier rungs by explicit product decision
- * (see AUTO_CELL_DISPLAY_BUDGETS). The complete browser cache remains
- * intact at every tier; the budget only bounds what the Galaxy renders. */
+/** AUTO's display budget is quality-independent: the fixed structural
+ * budget, bounded by the server's retained capacity. The complete browser
+ * cache remains intact; the budget only bounds what the Galaxy renders. */
 export function automaticCellDisplayLimit(
-  quality: QualityPreset,
   capacity = CELL_DISPLAY_MAX,
 ): number {
   const maximum = normalizeCellDisplayCapacity(capacity);
-  return Math.min(maximum, AUTO_CELL_DISPLAY_BUDGETS[quality]);
+  return Math.min(maximum, AUTO_CELL_DISPLAY_BUDGET);
 }
 
 /** AUTO stays within both its stable visual budget and the server's retained
- * capacity. Manual mode remains a renderer request up to the 20K hard ceiling,
- * so an older low-cap config does not silently shrink the slider's range. */
+ * capacity. Manual mode remains a renderer request up to the renderer's hard
+ * ceiling, so an older low-cap config does not silently shrink the slider's
+ * range. */
 export function resolveCellDisplayLimit(
   snapshot: CellDisplayRuntimeSnapshot,
-  quality: QualityPreset,
   automaticCapacity = CELL_DISPLAY_MAX,
 ): number {
   return snapshot.mode === 'auto'
-    ? automaticCellDisplayLimit(quality, automaticCapacity)
+    ? automaticCellDisplayLimit(automaticCapacity)
     : normalizeCellDisplayLimit(snapshot.manualLimit);
 }
 

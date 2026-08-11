@@ -42,6 +42,14 @@ export interface NeighborGraphWorkerRequest {
   includePassive: boolean;
   /** Visual-only edge cap; null selects the canonical population-derived cap. */
   passiveEdgeBudget: number | null;
+  /** Live-tunable passive selection shares. The worker bundle holds its own
+   * module instances (its LIVE singleton is never the panel's), so tuning
+   * must ride the request; null selects the module-constant defaults. */
+  passiveTuning: {
+    coverageShare: number;
+    trunkShare: number;
+    twigShare: number;
+  } | null;
   /** Repeated `[from, to]` keys retained from the current passive fabric.
    * Only consulted when the worker session has no retained selection of its
    * own (first build after a fresh worker); a stateful session prefers its
@@ -424,6 +432,9 @@ export function createNeighborGraphWorkerSession(): NeighborGraphWorkerSession {
       const passiveGraph = request.includePassive
         ? buildPassiveNeighborGraph(graph, {
           edgeBudget: request.passiveEdgeBudget ?? undefined,
+          coverageShare: request.passiveTuning?.coverageShare,
+          trunkShare: request.passiveTuning?.trunkShare,
+          twigShare: request.passiveTuning?.twigShare,
           preferredEdges:
             lastPassiveEdges ?? unpackPreferredEdges(request.preferredEdges),
         })

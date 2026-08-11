@@ -96,6 +96,7 @@ describe('neighbor graph Worker protocol', () => {
       options,
       includePassive: true,
       passiveEdgeBudget: 4,
+      passiveTuning: null,
       preferredEdges: packPreferredEdges(preferredEdges),
     });
 
@@ -185,6 +186,7 @@ describe('createNeighborGraphWorkerSession (stateful increments)', () => {
     options: { k: 3 },
     includePassive: true,
     passiveEdgeBudget: null,
+    passiveTuning: null,
     preferredEdges: null,
   });
 
@@ -262,6 +264,7 @@ describe('worker session cells-delta requests', () => {
     options: { k: 3 },
     includePassive: false,
     passiveEdgeBudget: null,
+    passiveTuning: null,
     preferredEdges: null,
   };
 

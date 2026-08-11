@@ -354,7 +354,6 @@ function CellDisplayControl({
   const automaticCapacity = normalizeCellDisplayCapacity(serverCapacity);
   const limit = resolveCellDisplayLimit(
     display,
-    quality.effective,
     automaticCapacity,
   );
   const sliderMaximum = cellDisplaySliderMaximum();

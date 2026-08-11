@@ -18,6 +18,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import { useCellGalaxy } from '../hooks/cellGalaxyContext';
@@ -32,6 +33,12 @@ import { useSimClock } from '../tweaks/SimClockScope';
 import { galaxyFrame } from '../tweaks/galaxyFrame';
 import { QUALITY_PRESETS, useQualityRuntime } from '../tweaks/qualityPresets';
 import { fabricAllocationEdges } from './fabricCapacity';
+import { passiveEdgeBudget } from '../geometry/passiveNeighborGraph';
+import {
+  LIVE,
+  getNerveTuningVersion,
+  subscribeNerveTuning,
+} from '../tweaks/liveTweaks';
 import {
   consumeTopologyJournal,
   createTopologyJournal,
@@ -293,15 +300,37 @@ export default function NeuralNetwork({
   const cellDisplayRuntime = useCellDisplayRuntime();
   const cellDisplayLimit = resolveCellDisplayLimit(
     cellDisplayRuntime,
-    quality,
     cellCapacity,
   );
-  // Fabric GPU allocation quantizes the display budget to tier-scale
-  // classes; a short settle keeps a manual slider drag from remounting the
+  // The nerve screen budget and selection shares are live-tunable (backtick
+  // panel). LIVE mutates in place, so the version counter is the change
+  // signal; a change flows into displaySelectionKey below and schedules one
+  // incremental display rebuild.
+  const nerveTuningVersion = useSyncExternalStore(
+    subscribeNerveTuning,
+    getNerveTuningVersion,
+    getNerveTuningVersion,
+  );
+  const {
+    screenBudget: nerveScreenBudget,
+    coverageShare: nerveCoverageShare,
+    trunkShare: nerveTrunkShare,
+    twigShare: nerveTwigShare,
+  } = useMemo(
+    () => ({ ...LIVE.nerve }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- version stamps the in-place LIVE mutation
+    [nerveTuningVersion],
+  );
+  const resolvedNerveBudget = passiveEdgeBudget(
+    cellDisplayLimit,
+    nerveScreenBudget,
+  );
+  // Fabric GPU allocation quantizes the resolved nerve budget to discrete
+  // classes; a short settle keeps a live-tuning drag from remounting the
   // fabric at every class boundary it sweeps through. The remount (React
-  // key below) is the sanctioned tier-change rebuild: one mount always
+  // key below) is the sanctioned allocation rebuild: one mount always
   // holds exactly one allocation.
-  const targetAllocationEdges = fabricAllocationEdges(cellDisplayLimit);
+  const targetAllocationEdges = fabricAllocationEdges(resolvedNerveBudget);
   const [fabricAllocation, setFabricAllocation] = useState(targetAllocationEdges);
   useEffect(() => {
     if (targetAllocationEdges === fabricAllocation) return undefined;
@@ -317,6 +346,11 @@ export default function NeuralNetwork({
   );
   const particleCapMul = QUALITY_PRESETS[quality].particleCapMul;
   const topologyKey = `${topology?.neighborK ?? ''}:${topology?.maxEdgeLength ?? ''}`;
+  // The display graph additionally re-selects when the nerve tuning moves;
+  // the routing graph keys on spatial topology alone (tuning never touches
+  // routing, so a knob drag must not trigger a kNN rebuild).
+  const displaySelectionKey = `${topologyKey}|n${resolvedNerveBudget}`
+    + `:c${nerveCoverageShare}:t${nerveTrunkShare}:w${nerveTwigShare}`;
 
   // The complete neighbour graph is maintained incrementally for causal pulse
   // routing. Passive rendering is deliberately separate: it is rebuilt over
@@ -447,7 +481,7 @@ export default function NeuralNetwork({
     const visibleCells = renderUpdate.cells;
     const topologyChanged = (
       !displayBootstrappedRef.current
-      || displayTopologyRef.current !== topologyKey
+      || displayTopologyRef.current !== displaySelectionKey
       || displayTopologyVersionRef.current !== renderUpdate.topologyVersion
     );
     const inspectionChanged = (
@@ -468,7 +502,7 @@ export default function NeuralNetwork({
       const requestedCells = displayRequestedCellsRef.current;
       const requestMatches = (
         requestedCells !== null
-        && displayRequestedTopologyRef.current === topologyKey
+        && displayRequestedTopologyRef.current === displaySelectionKey
         && displayRequestedTopologyVersionRef.current
           === renderUpdate.topologyVersion
       );
@@ -483,7 +517,7 @@ export default function NeuralNetwork({
         : cellRenderMap(visibleCells);
       const requestedTopologyVersion = renderUpdate.topologyVersion;
       displayRequestedCellsRef.current = displayCells;
-      displayRequestedTopologyRef.current = topologyKey;
+      displayRequestedTopologyRef.current = displaySelectionKey;
       displayRequestedTopologyVersionRef.current = requestedTopologyVersion;
       const generation = displayBuildGenerationRef.current + 1;
       displayBuildGenerationRef.current = generation;
@@ -493,6 +527,15 @@ export default function NeuralNetwork({
           maxEdgeLength: topology?.maxEdgeLength,
         },
         includePassive: true,
+        // The resolved screen budget and shares ride every request: the
+        // worker holds its own module instances, so the panel's LIVE values
+        // can only reach the selection through here.
+        passiveEdgeBudget: resolvedNerveBudget,
+        passiveTuning: {
+          coverageShare: nerveCoverageShare,
+          trunkShare: nerveTrunkShare,
+          twigShare: nerveTwigShare,
+        },
         // Only meaningful when the display set IS the retained map (full
         // coverage); a composed subset has its own membership churn the
         // cache journal does not describe.
@@ -512,7 +555,7 @@ export default function NeuralNetwork({
           result === null
           || displayBuildGenerationRef.current !== generation
           || displayRequestedCellsRef.current !== displayCells
-          || displayRequestedTopologyRef.current !== topologyKey
+          || displayRequestedTopologyRef.current !== displaySelectionKey
           || displayRequestedTopologyVersionRef.current
             !== requestedTopologyVersion
         ) return;
@@ -523,7 +566,7 @@ export default function NeuralNetwork({
         passiveGraphRef.current = passiveGraph;
         fabricStats.passiveSelectionEdges = passiveGraph.edges.length;
         displayCellsRef.current = displayCells;
-        displayTopologyRef.current = topologyKey;
+        displayTopologyRef.current = displaySelectionKey;
         displayTopologyVersionRef.current = requestedTopologyVersion;
         const wasBootstrapped = displayBootstrappedRef.current;
         displayBootstrappedRef.current = true;
@@ -627,10 +670,14 @@ export default function NeuralNetwork({
     galaxyComposition,
     activityCellIds,
     displayGraphBuilder,
+    displaySelectionKey,
+    resolvedNerveBudget,
+    nerveCoverageShare,
+    nerveTrunkShare,
+    nerveTwigShare,
     inspectionCellId,
     inspectionFieldRef,
     invalidate,
-    topologyKey,
     topology?.neighborK,
     topology?.maxEdgeLength,
   ]);
