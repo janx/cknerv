@@ -1127,6 +1127,8 @@ export default function NeuralFabric({
   cellDetailViewFocusRef,
   allocationEdges = FABRIC_ALLOCATION_EDGE_CLASSES[0],
 }: NeuralFabricProps) {
+  // Tier-pipeline gauge: which allocation class is actually mounted.
+  fabricStats.allocationEdges = allocationEdges;
   const simClock = useSimClock();
   const { size } = useThree();
   const { effective: quality } = useQualityRuntime();

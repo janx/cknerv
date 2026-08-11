@@ -85,6 +85,10 @@ export interface FabricStatsSnapshot {
   animatingMax: number;
   /** Slot count of the last full walk (≈ renderOrder length). */
   usedSlotsLast: number;
+  /** Diagnostic gauges for the tier pipeline: the mounted fabric layer's
+   * edge-allocation class and the last applied passive selection size. */
+  allocationEdges: number;
+  passiveSelectionEdges: number;
   /** Passive-fabric bytes handed to bufferSubData (Σ across every commit —
    *  incremental slot ranges and full-walk/inspection prefix uploads). */
   uploadedBytes: number;
@@ -123,6 +127,10 @@ interface FabricStatsState {
   animatingLast: number;
   animatingMax: number;
   usedSlotsLast: number;
+  /** Diagnostic gauges for the tier pipeline: the mounted fabric layer's
+   * edge-allocation class and the last applied passive selection size. */
+  allocationEdges: number;
+  passiveSelectionEdges: number;
   uploadedBytes: number;
   uploadedBytesLast: number;
   uploadedBytesMax: number;
@@ -160,6 +168,8 @@ export const fabricStats: FabricStatsState = {
   animatingLast: 0,
   animatingMax: 0,
   usedSlotsLast: 0,
+  allocationEdges: 0,
+  passiveSelectionEdges: 0,
   uploadedBytes: 0,
   uploadedBytesLast: 0,
   uploadedBytesMax: 0,
@@ -217,6 +227,8 @@ export const fabricStats: FabricStatsState = {
       animatingLast: this.animatingLast,
       animatingMax: this.animatingMax,
       usedSlotsLast: this.usedSlotsLast,
+      allocationEdges: this.allocationEdges,
+      passiveSelectionEdges: this.passiveSelectionEdges,
       uploadedBytes: this.uploadedBytes,
       uploadedBytesLast: this.uploadedBytesLast,
       uploadedBytesMax: this.uploadedBytesMax,

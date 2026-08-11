@@ -38,6 +38,7 @@ import {
   feedTopologyJournal,
   invalidateTopologyJournal,
 } from '../geometry/topologyJournal';
+import { fabricStats } from './fabricStats';
 import {
   resolveCellDisplayLimit,
   useCellDisplayRuntime,
@@ -520,6 +521,7 @@ export default function NeuralNetwork({
         displayRequestedTopologyVersionRef.current = -1;
         displayGraphRef.current = result.graph;
         passiveGraphRef.current = passiveGraph;
+        fabricStats.passiveSelectionEdges = passiveGraph.edges.length;
         displayCellsRef.current = displayCells;
         displayTopologyRef.current = topologyKey;
         displayTopologyVersionRef.current = requestedTopologyVersion;
