@@ -235,12 +235,37 @@ export function connectEntityStream(
     cancelDeltaFlush = () => clearTimeout(timeoutId);
   };
 
-  const health = createStreamHealthTracker(opts, () => {
-    try {
-      socket?.close();
-    } catch {
-      // Best effort.
+  /** Same close-handshake-deadlock hardening as the projection stream: a
+   * server under replay load may never complete the close handshake after a
+   * `lagged` close or a stale-watchdog close, so retries must not depend on
+   * `onclose`. Idempotent (one pending timer); the stale socket is detached
+   * so its late events cannot double-schedule or touch the next socket. */
+  const scheduleReconnect = (flushFirst: boolean) => {
+    if (stopped) return;
+    if (reconnectTimer !== null) return;
+    const stale = socket;
+    if (stale) {
+      stale.onclose = null;
+      stale.onerror = null;
+      stale.onopen = null;
+      stale.onmessage = null;
+      try {
+        stale.close();
+      } catch {
+        // Best effort.
+      }
+      socket = null;
     }
+    if (flushFirst) flushPendingDeltas();
+    health.closed(needsResync);
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      open();
+    }, reconnectMs);
+  };
+
+  const health = createStreamHealthTracker(opts, () => {
+    scheduleReconnect(true);
   });
 
   const open = () => {
@@ -280,30 +305,22 @@ export function connectEntityStream(
         }
       } else if (frame.kind === 'lagged') {
         // Stream lost mutations; force a re-snapshot on reconnect by
-        // zeroing our revision. Then drop the connection.
+        // zeroing our revision, and schedule that reconnect DIRECTLY —
+        // waiting for the close handshake deadlocks under replay load.
         discardPendingDeltas();
         needsResync = true;
         health.resyncing();
         cache = { ...cache, revision: 0 };
-        try {
-          ws.close();
-        } catch {
-          // Best effort.
-        }
+        scheduleReconnect(false);
       }
     };
 
     const onClose = () => {
-      if (stopped) return;
       // Browsers commonly fire `error` then `close` for the same broken
-      // socket; without this guard each outage would schedule two timers
-      // and reconnect twice in parallel.
-      if (reconnectTimer !== null) return;
-      health.closed(needsResync);
-      reconnectTimer = setTimeout(() => {
-        reconnectTimer = null;
-        open();
-      }, reconnectMs);
+      // socket; scheduleReconnect's single-timer guard collapses them, and
+      // the identity check ignores late events from detached sockets.
+      if (socket !== ws) return;
+      scheduleReconnect(true);
     };
     ws.onclose = onClose;
     ws.onerror = onClose;

@@ -130,12 +130,45 @@ export function connectProjectionStream<Cache, Snapshot, Delta>(
     cancelDeltaFlush = () => clearTimeout(timeoutId);
   };
 
-  const health = createStreamHealthTracker(opts, () => {
-    try {
-      socket?.close();
-    } catch {
-      // Best effort; onclose/retry still handles ordinary failures.
+  /**
+   * Schedule the next attempt WITHOUT waiting for the transport's close
+   * handshake. Live debugging caught the deadlock this guards against: a
+   * server under replay load emits `lagged`, the client calls close(), and
+   * the server never completes the close handshake — `onclose` never fires
+   * and the stream stayed dead forever with zero retries. Reconnect
+   * scheduling is idempotent (one pending timer), stale sockets are
+   * detached so their late events cannot double-schedule or touch the next
+   * socket, and the ordinary onclose path funnels through here too.
+   */
+  const scheduleReconnect = (flushFirst: boolean) => {
+    if (stopped) return;
+    if (reconnectTimer !== null) return;
+    const stale = socket;
+    if (stale) {
+      stale.onclose = null;
+      stale.onerror = null;
+      stale.onopen = null;
+      stale.onmessage = null;
+      try {
+        stale.close();
+      } catch {
+        // Best effort.
+      }
+      socket = null;
     }
+    if (flushFirst) flushPendingDeltas();
+    health.closed(needsResync);
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      open();
+    }, reconnectMs);
+  };
+
+  const health = createStreamHealthTracker(opts, () => {
+    // Stale watchdog: force the retry cycle directly — a close() that never
+    // completes must not leave the stream dead. Valid frames received before
+    // the silence still commit.
+    scheduleReconnect(true);
   });
 
   type Frame =
@@ -184,26 +217,18 @@ export function connectProjectionStream<Cache, Snapshot, Delta>(
         needsResync = true;
         health.resyncing();
         cache = hooks.markLagged(cache);
-        try {
-          ws.close();
-        } catch {
-          // Best effort.
-        }
+        // Do NOT wait for the close handshake — schedule the resync attempt
+        // now (see scheduleReconnect docs for the deadlock this avoids).
+        scheduleReconnect(false);
       }
     };
 
     const onClose = () => {
-      if (stopped) return;
-      if (reconnectTimer !== null) return;
+      if (socket !== ws) return;
       // Commit every frame received before an ordinary transport close so
       // reconnect resumes from the newest applied revision. A lagged frame
       // already discarded the unsafe batch and reset the cursor above.
-      flushPendingDeltas();
-      health.closed(needsResync);
-      reconnectTimer = setTimeout(() => {
-        reconnectTimer = null;
-        open();
-      }, reconnectMs);
+      scheduleReconnect(true);
     };
     ws.onclose = onClose;
     ws.onerror = onClose;

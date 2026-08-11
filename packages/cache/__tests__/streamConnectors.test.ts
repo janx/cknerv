@@ -276,3 +276,103 @@ describe('entity stream delta batching', () => {
     handle.disconnect();
   });
 });
+
+describe('close-handshake deadlock hardening', () => {
+  /** A server under replay load may NEVER complete the close handshake:
+   * close() here fires no events at all, like the live deadlock. */
+  class SilentCloseWebSocket {
+    static instances: SilentCloseWebSocket[] = [];
+    onopen: ((event: Event) => void) | null = null;
+    onmessage: ((event: MessageEvent) => void) | null = null;
+    onclose: ((event: CloseEvent) => void) | null = null;
+    onerror: ((event: Event) => void) | null = null;
+    closeCalls = 0;
+
+    constructor(readonly url: string) {
+      SilentCloseWebSocket.instances.push(this);
+    }
+
+    open(): void {
+      this.onopen?.({} as Event);
+    }
+
+    message(payload: unknown): void {
+      this.onmessage?.({ data: JSON.stringify(payload) } as MessageEvent);
+    }
+
+    close(): void {
+      this.closeCalls += 1;
+    }
+  }
+
+  afterEach(() => {
+    SilentCloseWebSocket.instances = [];
+    vi.useRealTimers();
+  });
+
+  it('reconnects after a projection lagged frame even if onclose never fires', () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('WebSocket', SilentCloseWebSocket);
+    const handle = connectCellsStream(
+      'ws://localhost/api/projections/cells/stream',
+      emptyCellsCache(),
+      () => {},
+      {},
+    );
+    const first = SilentCloseWebSocket.instances[0];
+    first.open();
+    first.message({ kind: 'lagged', skipped: 3 });
+
+    expect(first.closeCalls).toBeGreaterThan(0);
+    // No close event ever arrives; the retry must be self-scheduled.
+    vi.advanceTimersByTime(2100);
+    expect(SilentCloseWebSocket.instances).toHaveLength(2);
+    // The resync attempt starts from revision 0.
+    expect(SilentCloseWebSocket.instances[1].url).toContain('since=0');
+    // Late events from the detached first socket must be inert (no double
+    // scheduling, no third socket).
+    first.onclose?.({} as CloseEvent);
+    vi.advanceTimersByTime(2100);
+    expect(SilentCloseWebSocket.instances).toHaveLength(2);
+    handle.disconnect();
+  });
+
+  it('reconnects after an entity lagged frame even if onclose never fires', () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('WebSocket', SilentCloseWebSocket);
+    const handle = connectEntityStream(
+      'ws://localhost/api/entities/chain/stream',
+      emptyChainEntityCache(),
+      () => {},
+      {},
+    );
+    const first = SilentCloseWebSocket.instances[0];
+    first.open();
+    first.message({ kind: 'lagged', skipped: 1 });
+
+    vi.advanceTimersByTime(2100);
+    expect(SilentCloseWebSocket.instances).toHaveLength(2);
+    expect(SilentCloseWebSocket.instances[1].url).toContain('since=0');
+    handle.disconnect();
+  });
+
+  it('stale watchdog forces the retry cycle without a close event', () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('WebSocket', SilentCloseWebSocket);
+    const handle = connectCellsStream(
+      'ws://localhost/api/projections/cells/stream',
+      emptyCellsCache(),
+      () => {},
+      { staleAfterMs: 5_000 },
+    );
+    const first = SilentCloseWebSocket.instances[0];
+    first.open();
+    // Total silence: the watchdog fires at 5s and must self-schedule the
+    // retry even though close() completes nothing.
+    vi.advanceTimersByTime(5_100);
+    expect(first.closeCalls).toBeGreaterThan(0);
+    vi.advanceTimersByTime(2_100);
+    expect(SilentCloseWebSocket.instances.length).toBeGreaterThanOrEqual(2);
+    handle.disconnect();
+  });
+});
