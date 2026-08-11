@@ -1813,6 +1813,7 @@ export default function NeuralFabric({
         // its complete per-frame cost, and they must advance even on frames
         // the CPU otherwise skips.
         syncFabricLifecycleUniforms(fabric.material, now);
+        fabricStats.liveEdges = edgeStatesRef.current.size;
         // Lazy reap: expired lifecycles are already invisible analytically;
         // this only reclaims bookkeeping + slots, O(expired) per call.
         drainReapQueue(reapQueues.death, now);

@@ -86,9 +86,12 @@ export interface FabricStatsSnapshot {
   /** Slot count of the last full walk (≈ renderOrder length). */
   usedSlotsLast: number;
   /** Diagnostic gauges for the tier pipeline: the mounted fabric layer's
-   * edge-allocation class and the last applied passive selection size. */
+   * edge-allocation class, the last applied passive selection size, and the
+   * LIVE edge-state count (updated every emit frame — unlike usedSlotsLast,
+   * which only full walks refresh and which goes stale on the delta path). */
   allocationEdges: number;
   passiveSelectionEdges: number;
+  liveEdges: number;
   /** Passive-fabric bytes handed to bufferSubData (Σ across every commit —
    *  incremental slot ranges and full-walk/inspection prefix uploads). */
   uploadedBytes: number;
@@ -128,9 +131,12 @@ interface FabricStatsState {
   animatingMax: number;
   usedSlotsLast: number;
   /** Diagnostic gauges for the tier pipeline: the mounted fabric layer's
-   * edge-allocation class and the last applied passive selection size. */
+   * edge-allocation class, the last applied passive selection size, and the
+   * LIVE edge-state count (updated every emit frame — unlike usedSlotsLast,
+   * which only full walks refresh and which goes stale on the delta path). */
   allocationEdges: number;
   passiveSelectionEdges: number;
+  liveEdges: number;
   uploadedBytes: number;
   uploadedBytesLast: number;
   uploadedBytesMax: number;
@@ -170,6 +176,7 @@ export const fabricStats: FabricStatsState = {
   usedSlotsLast: 0,
   allocationEdges: 0,
   passiveSelectionEdges: 0,
+  liveEdges: 0,
   uploadedBytes: 0,
   uploadedBytesLast: 0,
   uploadedBytesMax: 0,
@@ -229,6 +236,7 @@ export const fabricStats: FabricStatsState = {
       usedSlotsLast: this.usedSlotsLast,
       allocationEdges: this.allocationEdges,
       passiveSelectionEdges: this.passiveSelectionEdges,
+      liveEdges: this.liveEdges,
       uploadedBytes: this.uploadedBytes,
       uploadedBytesLast: this.uploadedBytesLast,
       uploadedBytesMax: this.uploadedBytesMax,
