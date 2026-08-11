@@ -33,7 +33,15 @@ const UP_FRAME_MS: Record<QualityPreset, number> = {
   low: 20,
 };
 const DOWN_HOLD_MS: Record<QualityPreset, number> = {
-  high: 5_000,
+  // Demotion must distinguish CONTINUOUS slowness (the tier exceeds the
+  // machine — every frame slow, evidence accrues monotonically and trips
+  // the hold quickly regardless of its length) from PER-BLOCK BURSTS
+  // (data-event spikes that decay at 2x between blocks and can only reach
+  // a long hold if blocks arrive faster than the decay — i.e., the burst
+  // cost itself is chronic). 12s at High tolerates block bursts a strong
+  // machine absorbs; a genuinely overwhelmed machine still demotes in
+  // ~12s of wall time.
+  high: 12_000,
   med: 6_000,
   low: Number.POSITIVE_INFINITY,
 };
