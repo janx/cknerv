@@ -69,8 +69,10 @@ Useful run options:
 - `data/`: derived dashboard state, including `cknerv-state.json`.
 
 Config priority is **CLI args > `cknerv.toml` > built-in defaults**. Historical
-hydration targets the resolved `galaxy.cell_cap`; the `--backfill-blocks` flag
-is an optional one-run hard scan limit and is intentionally not persisted in
+hydration targets the built-in live-cell reservoir (50,000 — not a config
+knob; the renderer caps there, so a larger reservoir would be wasted and a
+smaller one only degrades); the `--backfill-blocks` flag is an optional
+one-run hard scan limit and is intentionally not persisted in
 `cknerv.toml`. The CKB node is accessed read-only; cknerv polls node state and
 never submits transactions.
 
@@ -308,7 +310,6 @@ open = true
 
 [galaxy]
 profile = "auto" # auto, devnet, testnet, mainnet, custom
-cell_cap = 20000
 recent_links_cap = 2048
 
 [galaxy.topology]
@@ -338,14 +339,15 @@ sections are ignored. Use `--backfill-blocks N` only as a one-run hard scan
 limit for diagnostics.
 
 The dashboard's manual Cell-count controller tops out at the built-in
-20,000-Cell visual ceiling. AUTO keeps a stable 6,000-Cell structural budget
-(or the complete field when `cell_cap` is smaller); adaptive quality changes
-DPR and transient effect sampling without rebuilding Galaxy membership. The
-manual controller keeps its full range but cannot display records the server
-did not retain. Increasing `cell_cap` invalidates a checkpoint whose recorded
-hydration target is too small, so the next launch automatically rebuilds the
-larger reservoir. Legacy fixed-window checkpoints are treated the same way. No
-manual prune is needed.
+50,000-Cell visual ceiling. AUTO resolves its structural budget from the
+effective quality tier — 30,000 / 15,000 / 6,000 Cells (High is
+opportunistic: quiet chain stretches earn extra density, load falls back) —
+with the passive nervous system scaled at 4/3 nerves per Cell alongside it.
+The manual controller keeps its full range but cannot display records the
+server did not retain. A checkpoint recorded against a smaller historical
+hydration target is invalidated automatically, so the next launch rebuilds
+the full reservoir once. Legacy fixed-window checkpoints are treated the
+same way. No manual prune is needed.
 
 The top bar keeps a `PANELS` menu immediately after the build version. It
 independently controls `CKB·01`, `ECG·04`, `CELL MESH`, and `PEER MESH`, plus

@@ -50,7 +50,6 @@ pub enum GalaxyProfile {
 #[derive(Debug, Default, serde::Deserialize)]
 pub struct GalaxySection {
     pub profile: Option<GalaxyProfile>,
-    pub cell_cap: Option<usize>,
     pub recent_links_cap: Option<usize>,
     #[serde(default)]
     pub topology: GalaxyTopologySection,
@@ -77,6 +76,13 @@ pub struct GalaxyPulsesSection {
 #[serde(rename_all = "camelCase")]
 pub struct ResolvedGalaxyConfig {
     pub profile: GalaxyProfile,
+    /// NOT a knob: always `cknerv_core::projection::cells::CELL_CAP`. Kept
+    /// in the resolved struct so the runtime-config payload keeps telling
+    /// the SPA the reservoir bound, and because hydration/persistence/
+    /// composition all read it from here. A legacy `cell_cap` line in an
+    /// existing cknerv.toml is silently ignored (serde tolerates unknown
+    /// keys); a workdir hydrated to a smaller historical target simply
+    /// rehydrates once.
     pub cell_cap: usize,
     pub recent_links_cap: usize,
     pub topology: ResolvedGalaxyTopologyConfig,
@@ -107,7 +113,7 @@ pub struct ResolvedConfig {
     pub port: u16,
     pub open: bool,
     /// Optional one-run hard limit for Cell hydration. `None` uses the
-    /// target-driven policy derived from `galaxy.cell_cap`.
+    /// target-driven policy (the built-in live-cell reservoir target).
     pub backfill_blocks: Option<u64>,
     /// Optional local indexed context. Section absence keeps enrichment off.
     pub ckbadger: Option<ResolvedCkbadgerConfig>,
@@ -128,7 +134,7 @@ impl ResolvedGalaxyConfig {
         match profile {
             GalaxyProfile::Devnet => Self {
                 profile,
-                cell_cap: 2000,
+                cell_cap: cknerv_core::projection::cells::CELL_CAP,
                 recent_links_cap: 1024,
                 topology: ResolvedGalaxyTopologyConfig {
                     neighbor_k: 5,
@@ -144,7 +150,7 @@ impl ResolvedGalaxyConfig {
             },
             GalaxyProfile::Mainnet => Self {
                 profile,
-                cell_cap: 50_000,
+                cell_cap: cknerv_core::projection::cells::CELL_CAP,
                 recent_links_cap: 1536,
                 topology: ResolvedGalaxyTopologyConfig {
                     neighbor_k: 3,
@@ -160,7 +166,7 @@ impl ResolvedGalaxyConfig {
             },
             GalaxyProfile::Auto | GalaxyProfile::Testnet | GalaxyProfile::Custom => Self {
                 profile,
-                cell_cap: 50_000,
+                cell_cap: cknerv_core::projection::cells::CELL_CAP,
                 recent_links_cap: 2048,
                 topology: ResolvedGalaxyTopologyConfig {
                     neighbor_k: 4,
@@ -214,7 +220,8 @@ pub fn resolve(
         file.dashboard.open.unwrap_or(true)
     };
     let profile = file.galaxy.profile.unwrap_or(GalaxyProfile::Auto);
-    // Historical hydration is target-driven by `galaxy.cell_cap`. The CLI
+    // Historical hydration is target-driven by the built-in reservoir
+    // target. The CLI
     // value is deliberately not defaulted: when present it is a one-run hard
     // block-window override for diagnostics.
     let backfill_blocks = cli_backfill;
@@ -240,9 +247,6 @@ pub fn resolve(
         })
         .transpose()?;
     let mut galaxy = ResolvedGalaxyConfig::for_profile(profile);
-    if let Some(v) = file.galaxy.cell_cap {
-        galaxy.cell_cap = v;
-    }
     if let Some(v) = file.galaxy.recent_links_cap {
         galaxy.recent_links_cap = v;
     }
@@ -301,9 +305,6 @@ open = true
 [galaxy]
 # auto uses balanced defaults. Explicit: devnet, testnet, mainnet, custom.
 profile = "auto"
-# Maximum live cells retained by the server projection and used by the
-# dashboard's automatic Cell-count budget.
-cell_cap = 50000
 # Recent tx-link records retained in server snapshots.
 recent_links_cap = 2048
 
@@ -405,7 +406,7 @@ mod tests {
 
         assert_eq!(r.backfill_blocks, None);
         assert_eq!(r.galaxy.profile, GalaxyProfile::Devnet);
-        assert_eq!(r.galaxy.cell_cap, 2000);
+        assert_eq!(r.galaxy.cell_cap, 50_000);
         assert_eq!(r.galaxy.recent_links_cap, 1024);
         assert_eq!(r.galaxy.topology.neighbor_k, 5);
         assert_eq!(r.galaxy.topology.max_edge_length, 36.0);
@@ -427,7 +428,9 @@ mod tests {
 
         assert_eq!(r.backfill_blocks, None);
         assert_eq!(r.galaxy.profile, GalaxyProfile::Mainnet);
-        assert_eq!(r.galaxy.cell_cap, 3333);
+        // A legacy `cell_cap` line is tolerated and ignored — the reservoir
+        // bound is not a knob.
+        assert_eq!(r.galaxy.cell_cap, 50_000);
         assert_eq!(r.galaxy.recent_links_cap, 444);
         assert_eq!(r.galaxy.topology.neighbor_k, 6);
         assert_eq!(r.galaxy.topology.max_edge_length, 31.5);

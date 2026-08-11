@@ -46,7 +46,8 @@ pub struct RunArgs {
     pub no_open: bool,
 
     /// One-run hard block limit for target-driven boot/rebuild hydration.
-    /// Without it, cknerv scans until galaxy.cell_cap live Cells or genesis.
+    /// Without it, cknerv scans until the built-in live-cell reservoir
+    /// target (50,000) or genesis.
     /// 0 disables historical boot replay.
     #[arg(long, value_name = "N")]
     pub backfill_blocks: Option<u64>,
