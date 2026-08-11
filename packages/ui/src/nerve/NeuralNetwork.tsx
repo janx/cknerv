@@ -542,7 +542,6 @@ export default function NeuralNetwork({
           && wasBootstrapped
           && epochClean
           && delta !== null
-          && fabricDeltaStreakRef.current < 16
         ) {
           fabricDeltaStreakRef.current += 1;
           if (delta.removed.length > 0) {
@@ -561,6 +560,24 @@ export default function NeuralNetwork({
               dirByKey.set(key, 1);
             }
             handles.growEdges(delta.added, displayCells, bornAtByKey, dirByKey);
+          }
+          // Periodic reconcile: while deltas chain, drift can only be EXTRA
+          // fabric edges (eager living-mesh growth the selection never
+          // confirmed) — missing edges are impossible, so pruning extras
+          // replaces the old full re-admission (which cost a 300-500ms
+          // admission storm every 16th block at the High tier).
+          if (fabricDeltaStreakRef.current >= 16) {
+            fabricDeltaStreakRef.current = 0;
+            const selectionKeys = new Set<string>();
+            for (const edge of passiveGraph.edges) {
+              selectionKeys.add(`${edge.from}:${edge.to}`);
+            }
+            const extras = handles
+              .collectLiveEdgeKeys()
+              .filter((key) => !selectionKeys.has(key));
+            if (extras.length > 0) {
+              handles.killEdges(extras, simClock.elapsedSec, 'gc');
+            }
           }
         } else {
           fabricDeltaStreakRef.current = 0;

@@ -290,7 +290,7 @@ export function createNeighborGraphBuilder(
                 ? deserializeNeighborGraphWithHints(
                   reuse?.passiveGraph ?? null,
                   response.passiveGraph,
-                  null,
+                  chained ? response.passiveChangedNodeIds : null,
                 )
                 : null,
               passiveDelta:

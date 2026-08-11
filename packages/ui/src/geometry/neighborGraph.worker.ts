@@ -28,6 +28,9 @@ workerScope.onmessage = (event) => {
       response.graph.edges.buffer,
     ];
     if (response.changedNodeIds) transfer.push(response.changedNodeIds.buffer);
+    if (response.passiveChangedNodeIds) {
+      transfer.push(response.passiveChangedNodeIds.buffer);
+    }
     if (response.passiveAdded) transfer.push(response.passiveAdded.buffer);
     if (response.passiveRemoved) transfer.push(response.passiveRemoved.buffer);
     if (response.passiveGraph) {

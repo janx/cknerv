@@ -62,6 +62,9 @@ export interface NeighborGraphWorkerSuccess {
    * graph — compared in the worker with the same order-strict probe the main
    * thread would run. Null = no previous build in this session. */
   changedNodeIds: Float64Array | null;
+  /** Same, for the passive graph — without it the passive deserialize runs
+   * the O(V) probing path on every block. */
+  passiveChangedNodeIds: Float64Array | null;
   /** Passive-selection delta vs this session's previous selection, packed
    * `[from, to, d, w(NaN=none)]` / `[from, to]`. Null when no previous
    * selection exists (consumer must treat passiveGraph as a full set). */
@@ -378,6 +381,7 @@ export interface NeighborGraphWorkerSession {
 export function createNeighborGraphWorkerSession(): NeighborGraphWorkerSession {
   let generation = 0;
   let lastGraph: NeighborGraph | null = null;
+  let lastPassiveGraph: NeighborGraph | null = null;
   let lastPassiveEdges: NeighborEdge[] | null = null;
   let lastCells: Map<number, NeighborGraphCell> | null = null;
 
@@ -428,6 +432,10 @@ export function createNeighborGraphWorkerSession(): NeighborGraphWorkerSession {
       const changedNodeIds = lastGraph !== null
         ? collectChangedNodeIds(lastGraph, graph)
         : null;
+      const passiveChangedNodeIds =
+        passiveGraph !== null && lastPassiveGraph !== null
+          ? collectChangedNodeIds(lastPassiveGraph, passiveGraph)
+          : null;
 
       let passiveAdded: Float64Array | null = null;
       let passiveRemoved: Float64Array | null = null;
@@ -452,6 +460,7 @@ export function createNeighborGraphWorkerSession(): NeighborGraphWorkerSession {
 
       generation += 1;
       lastGraph = graph;
+      lastPassiveGraph = passiveGraph;
       lastPassiveEdges = passiveGraph ? [...passiveGraph.edges] : null;
 
       return {
@@ -461,6 +470,7 @@ export function createNeighborGraphWorkerSession(): NeighborGraphWorkerSession {
         graph: serializeNeighborGraph(graph),
         passiveGraph: passiveGraph ? serializeNeighborGraph(passiveGraph) : null,
         changedNodeIds,
+        passiveChangedNodeIds,
         passiveAdded,
         passiveRemoved,
       };

@@ -226,6 +226,10 @@ export interface NeuralFabricHandles {
    *  One call per edge-crossing; bumps that edge's usage weight so a
    *  frequently-travelled vein glows and persists. No-op for an unknown edge. */
   reinforce(fromCellId: number, toCellId: number): void;
+  /** Keys of edges not currently dying — the periodic prune-only reconcile
+   *  diffs these against the authoritative selection. O(live edges), called
+   *  every 16th build, never per frame. */
+  collectLiveEdgeKeys(): string[];
 }
 
 export interface NeuralFabricProps {
@@ -1807,6 +1811,13 @@ export default function NeuralFabric({
         if (!st) return;
         st.usage = reinforceUsage(st.usage, LIVE.cell.reinforceAmount);
         if (st.usage > 0) warmRouteKeysRef.current.add(key);
+      },
+      collectLiveEdgeKeys() {
+        const keys: string[] = [];
+        for (const [key, st] of edgeStatesRef.current) {
+          if (st.dyingAt === null) keys.push(key);
+        }
+        return keys;
       },
       emitFabric(now) {
         // The fabric animates entirely on the GPU: these three scalars are
