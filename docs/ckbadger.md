@@ -78,14 +78,15 @@ class. The node also supplies the real output data, content hash, lock class,
 and deterministic position seed. No ckbadger payload is converted directly
 into a displayable Cell.
 
-The validated composition record is display-plane input rather than a semantic
+Validated composition input is display-plane input rather than a semantic
 record, so it takes the second branch above. After the ordinary anchor guard,
 the server installs it into its own canonical stream as the server-internal
-`Mutation::GalaxyReservoirReplaced`, which only the cells projection consumes.
-That variant never reaches the entity wire, never enters the canonical Cell
-map, and moves no counters; it changes only which Cells the display plane
-stages. Routing it through the canonical stream is what keeps display membership
-ordered against the births, deaths, and reorgs it is staged against.
+`Mutation::GalaxyReservoirReplaced` (a whole composition) or
+`Mutation::GalaxyReservoirToppedUp` (an additive supply), which only the cells
+projection consumes. Neither variant reaches the entity wire, enters the
+canonical Cell map, or moves counters; they change only which Cells the display
+plane stages. Routing them through the canonical stream is what keeps display
+membership ordered against the births, deaths, and reorgs it is staged against.
 
 ## HTTP and WebSocket Routes
 
@@ -148,8 +149,27 @@ nerve screen budget) and ships it in the `display` section of the cells
 snapshot; the browser reads its budget from there rather than from a client
 constant.
 
-With `galaxy_composition`, cknerv refreshes one non-persisted resting display
-reservoir at most once every 15 minutes. Its target is 6,000 Cells — the curated core of the browser's fixed
+#### Mechanism and policy
+
+Two questions live behind the display plane, and they are answered in different
+places. *Who is on stage, and what do they look like* — the member set, staged
+payloads, the budget, the activity FIFO, the coalesced delta — belongs to the
+stage. *Who should be* — composition classes, the 30:40:30 quota, admission
+ranking, the displacement ratchet, refill queues — belongs to a
+`CompositionPolicy`. There are two policies: prefix staffing (canonical
+insertion order, class-blind) and curated staffing (everything above). The stage
+knows nothing about classes; its canonical mirror carries each Cell's
+`asset_kind`, which is chain fact, and the policy interprets it.
+
+Policies answer synchronously, acting on the stage they are handed. That is a
+hard constraint rather than a style choice: the stage has to be self-consistent
+within a single mutation, because a snapshot taken right after it and the delta
+emitted by it must agree.
+
+#### Composing, then holding
+
+With `galaxy_composition`, cknerv composes one non-persisted resting display
+reservoir. Its target is 6,000 Cells — the curated core of the browser's fixed
 12,000-Cell field, with canonical retained Cells filling the remainder (the
 reservoir itself is far larger). At the default target the requested classes are exactly:
 
@@ -194,8 +214,65 @@ broad new-block pulse still follows the canonical
 `BlockMined -> CellDelta::Pulse -> lastPulseAtMs` path and is independent of
 composition refreshes.
 
-Without ckbadger — disabled, unavailable, or before the first composition
-refresh — the plane stages the canonical insertion-order prefix instead, with
+#### Holding the composition: demand, not a timer
+
+A composition drifts. Curated Cells get spent, and every vacancy they leave used
+to be refilled by whatever the canonical fallback stream had — which on mainnet
+is over 99% plain. The old correction was to re-derive the whole membership
+every 15 minutes. That is expensive, it churns membership that was fine, and it
+leaves up to a quarter of an hour of Cells on stage that the chain has already
+spent.
+
+The plane instead publishes what it is short of, per class, and that shortfall
+is answered directly:
+
+- **Spends are seen exactly.** A staged Cell outside the retained map is, by
+  definition, an outpoint the canonical index does not hold — so its spend
+  arrives as a transaction input that resolves to nothing. The display plane now
+  gets a look at every such input and retires the Cell it recognizes. Canonical
+  truth does not move: no death delta, no counter, no map edit.
+- **The shortfall is measured against the ideal quota**, not against the ratio a
+  given composition happened to land on. On mainnet the composition lands near
+  1.8K/2.8K/7.3K because DAO and typed candidates run out; measured against its
+  own targets that would read as no shortfall at all.
+- **Supply walks deeper** rather than re-reading the head. The source keeps
+  where each class's paging reached and resumes from there, skipping what it has
+  already handed out. One turn is bounded — a few pages and a few hundred
+  candidates per class — so a large opening gap arrives as a series of quiet
+  ticks rather than one stall.
+- **Arrivals enter by a one-way ratchet.** The stage is always exactly full, so
+  a curated Cell entering needs someone to give way, and the giver is drawn only
+  from the canonical-fallback members of whichever class is furthest over its
+  own quota. A curated Cell can therefore never be displaced by another curated
+  Cell: the ratio climbs monotonically toward 30:40:30 instead of oscillating,
+  and a class holding nothing but curated members simply yields nobody.
+  Displaced members return to the front of their own refill queue.
+
+Three deliberate limits, each visible in the product:
+
+- **Plain is not curated.** The shortfall covers DAO and typed only; plain
+  vacancies keep being filled from the canonical fallback stream. Convergence
+  works by DAO and typed displacing plain's over-allocation, so the ratio still
+  reaches 30:40:30 — but that final 30% is canonical membership, which is what
+  keeps recent on-chain births and deaths visible in the resting field.
+- **A retired Cell is not revived by a reorg.** Canonical rollback revives
+  canonical Cells through the ordinary birth path, but a staged Cell retired by
+  a spend stays retired. Showing one fewer of the Cells we could have shown is a
+  different sample; showing a Cell that has been spent is a lie, and the next
+  top-up fills the slot anyway.
+- **The periodic full refresh is off by default.** The composition runs once to
+  staff the stage and then holds; a reorg at or below its anchor degrades the
+  plane and makes it due again. With no periodic re-rank, the resting set is
+  "the head of each class at the moment its slot was filled" rather than "the
+  current head" — a Cell that has since slipped down the capacity ranking stays
+  on stage as long as it is alive. Configuring a cadence restores the old
+  behaviour, whose meaning is now narrower: a pure re-rank against the current
+  index ordering.
+
+#### Without a composition
+
+Without ckbadger — disabled, unavailable, or before the first composition —
+the plane stages the canonical insertion-order prefix instead, with
 the same reserved activity pool putting each block's real endpoints on stage.
 The browser cannot tell the two modes apart except through the section's
 `provenance` (`mode`, `source`, `as_of`), which is what the source-health chip
@@ -203,9 +280,7 @@ reads. A content-identical refresh is suppressed outright: no delta, no
 membership churn. A failed refresh leaves the last good record staged; a
 canonical reorg or rebuild past its anchor drops the reservoir and returns the
 plane to canonical staffing in one coalesced delta, re-arming that suppression
-so the next refresh applies even if its content is unchanged. Because the server
-cannot observe spends of outpoints it does not retain, a staged non-retained
-Cell stays until the next refresh or degrade replaces it.
+so the next composition applies even if its content is unchanged.
 
 ### Selected Cell and Origin Transaction
 
@@ -448,3 +523,10 @@ staffing once the first refresh lands.
   sort. Typed composition therefore ranks a bounded three-page sample from each
   of the 64 highest-capacity asset groups; it is deliberately a diverse ranked
   display sample, not a claim to contain the globally largest typed Cells.
+- `dao/deposits` ignores `sort_key`/`sort_direction`, so DAO ranking is done by
+  cknerv over the pages it has fetched — "the largest of the first N in cursor
+  order", not the globally largest deposits. This is measured, not assumed. It
+  is also why top-ups do not need a ranked endpoint: a top-up asks for another
+  live Cell of a class, not for a rank, and mainnet supply (~21k live deposits,
+  ~64k typed Cells across 53 asset groups) is several times the quota either
+  way.

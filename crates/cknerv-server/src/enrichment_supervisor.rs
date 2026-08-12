@@ -28,7 +28,18 @@ const ENRICHMENT_ACTIVITY_REFRESH: Duration = Duration::from_secs(15);
 const ENRICHMENT_TRANSACTION_HORIZON_REFRESH: Duration = Duration::from_secs(60);
 const ENRICHMENT_FORK_WATCH_REFRESH: Duration = Duration::from_secs(15);
 const ENRICHMENT_NETWORK_ATLAS_REFRESH: Duration = Duration::from_secs(60);
-const ENRICHMENT_GALAXY_COMPOSITION_REFRESH: Duration = Duration::from_secs(15 * 60);
+/// The composition has NO cadence by default (design D7). It runs once
+/// to staff the stage and then holds; drift is corrected by the top-up,
+/// which costs churn rather than a whole re-derivation every period.
+/// Setting this re-enables the old behaviour, whose meaning is now
+/// narrower: a pure re-rank of the resting set against the current
+/// index ordering.
+const ENRICHMENT_GALAXY_COMPOSITION_REFRESH: Option<Duration> = None;
+/// How long to wait before re-attempting a composition that has not
+/// landed yet — and the grace period before an uncurated stage is read
+/// as a degrade rather than as the gap between publishing the event and
+/// the reducer applying it.
+const ENRICHMENT_GALAXY_COMPOSITION_RETRY: Duration = Duration::from_secs(30);
 /// The top-up cadence. Short, because each turn is bounded to a few
 /// hundred candidates and the whole point is that a shortfall closes as
 /// it opens rather than waiting out a period.
@@ -46,7 +57,8 @@ struct RefreshCadence {
     transaction_horizon: Duration,
     fork_watch: Duration,
     network_atlas: Duration,
-    galaxy_composition: Duration,
+    galaxy_composition: Option<Duration>,
+    galaxy_composition_retry: Duration,
     galaxy_top_up: Duration,
     max_concurrent: usize,
 }
@@ -64,6 +76,7 @@ impl Default for RefreshCadence {
             fork_watch: ENRICHMENT_FORK_WATCH_REFRESH,
             network_atlas: ENRICHMENT_NETWORK_ATLAS_REFRESH,
             galaxy_composition: ENRICHMENT_GALAXY_COMPOSITION_REFRESH,
+            galaxy_composition_retry: ENRICHMENT_GALAXY_COMPOSITION_RETRY,
             galaxy_top_up: ENRICHMENT_GALAXY_TOP_UP_REFRESH,
             max_concurrent: MAX_CONCURRENT_REFRESHES,
         }
@@ -111,17 +124,21 @@ impl RefreshKind {
         }
     }
 
-    fn interval(self, cadence: RefreshCadence) -> Duration {
+    /// How often this capability repeats. `None` means "run once and
+    /// hold" — only the composition does that, and only something
+    /// external can make it due again (see
+    /// [`RefreshTracker::rearm_composition_if_degraded`]).
+    fn interval(self, cadence: RefreshCadence) -> Option<Duration> {
         match self {
-            Self::AssetEcosystem => cadence.ecosystem,
-            Self::DaoState => cadence.dao_state,
-            Self::ProtocolEra => cadence.protocol_era,
-            Self::ActivityFeed => cadence.activity,
-            Self::TransactionHorizon => cadence.transaction_horizon,
-            Self::ForkWatch => cadence.fork_watch,
-            Self::NetworkAtlas => cadence.network_atlas,
+            Self::AssetEcosystem => Some(cadence.ecosystem),
+            Self::DaoState => Some(cadence.dao_state),
+            Self::ProtocolEra => Some(cadence.protocol_era),
+            Self::ActivityFeed => Some(cadence.activity),
+            Self::TransactionHorizon => Some(cadence.transaction_horizon),
+            Self::ForkWatch => Some(cadence.fork_watch),
+            Self::NetworkAtlas => Some(cadence.network_atlas),
             Self::GalaxyComposition => cadence.galaxy_composition,
-            Self::GalaxyTopUp => cadence.galaxy_top_up,
+            Self::GalaxyTopUp => Some(cadence.galaxy_top_up),
         }
     }
 
@@ -226,11 +243,45 @@ impl RefreshTracker {
             }
             return false;
         }
-        !self.in_flight.contains(&kind)
-            && self
-                .last_started
+        if self.in_flight.contains(&kind) {
+            return false;
+        }
+        let waited = |at_least: Duration| {
+            self.last_started
                 .get(&kind)
-                .is_none_or(|last| last.elapsed() >= kind.interval(cadence))
+                .is_none_or(|last| last.elapsed() >= at_least)
+        };
+        match kind.interval(cadence) {
+            Some(interval) => waited(interval),
+            // No cadence: keep trying until it lands, then hold.
+            None => !self.published.contains(&kind) && waited(cadence.galaxy_composition_retry),
+        }
+    }
+
+    /// A composition with no cadence runs once — so something has to
+    /// make it due again when the stage loses it. A reorg at or below
+    /// the reservoir anchor degrades the display plane back to prefix
+    /// staffing, and the plane says so by publishing an uncurated
+    /// demand; only a fresh composition can lift it out again.
+    ///
+    /// The grace period is what keeps this from mistaking the gap
+    /// between publishing the event and the reducer applying it for a
+    /// degrade — during that window the stage is legitimately not
+    /// curated yet.
+    fn rearm_composition_if_degraded(&mut self, demand: CompositionDemand, grace: Duration) {
+        const KIND: RefreshKind = RefreshKind::GalaxyComposition;
+        if demand.curated || !self.published.contains(&KIND) {
+            return;
+        }
+        if self
+            .last_started
+            .get(&KIND)
+            .is_some_and(|last| last.elapsed() < grace)
+        {
+            return;
+        }
+        self.published.remove(&KIND);
+        self.last_started.remove(&KIND);
     }
 
     fn started(&mut self, kind: RefreshKind) {
@@ -319,6 +370,7 @@ async fn run(
                 }
 
                 let demand = state.composition_demand();
+                tracker.rearm_composition_if_degraded(demand, cadence.galaxy_composition_retry);
                 for kind in REFRESH_KINDS {
                     if kind == RefreshKind::GalaxyTopUp && (!demand.curated || demand.is_empty()) {
                         // Nothing to close. Stay due so the next tick sees
@@ -669,10 +721,251 @@ mod tests {
             transaction_horizon: Duration::from_secs(60),
             fork_watch: Duration::from_secs(60),
             network_atlas: Duration::from_secs(60),
-            galaxy_composition: Duration::from_secs(60),
+            galaxy_composition: None,
+            galaxy_composition_retry: Duration::from_secs(60),
             galaxy_top_up: Duration::from_millis(10),
             max_concurrent: 1,
         }
+    }
+
+    /// A source that counts full compositions and reports them landing.
+    struct CompositionCountingSource {
+        compositions: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl EnrichmentSource for CompositionCountingSource {
+        fn name(&self) -> &'static str {
+            "composition-fixture"
+        }
+
+        fn capabilities(&self) -> Vec<String> {
+            vec!["galaxy_composition".to_string()]
+        }
+
+        async fn probe(&self, context: &CanonicalContext) -> EnrichmentSourceStatus {
+            let anchor = context.recent_blocks.last().map(|block| ChainAnchor {
+                block: block.number,
+                hash: block.hash.clone(),
+            });
+            EnrichmentSourceStatus {
+                source: self.name().to_string(),
+                status: EnrichmentSourceState::Ready,
+                capabilities: self.capabilities(),
+                indexed_tip: Some(context.tip),
+                lag_blocks: Some(0),
+                validated_anchor: anchor,
+                last_success_at_ms: Some(1),
+                message: None,
+            }
+        }
+
+        async fn enrich_cell(
+            &self,
+            _out_point: &cknerv_core::OutPoint,
+            _context: &CanonicalContext,
+        ) -> anyhow::Result<Option<cknerv_core::CellSemanticRecord>> {
+            Ok(None)
+        }
+
+        async fn enrich_galaxy_composition(
+            &self,
+            context: &CanonicalContext,
+        ) -> anyhow::Result<Option<cknerv_core::GalaxyCompositionRecord>> {
+            self.compositions.fetch_add(1, Ordering::Relaxed);
+            let block = context.recent_blocks.last().unwrap();
+            Ok(Some(cknerv_core::GalaxyCompositionRecord {
+                source: self.name().to_string(),
+                as_of: ChainAnchor {
+                    block: block.number,
+                    hash: block.hash.clone(),
+                },
+                updated_at_ms: 1,
+                dao: Vec::new(),
+                typed: Vec::new(),
+                plain: Vec::new(),
+            }))
+        }
+    }
+
+    fn composition_cadence(periodic: Option<Duration>) -> RefreshCadence {
+        RefreshCadence {
+            probe: Duration::from_millis(10),
+            status: Duration::from_secs(60),
+            ecosystem: Duration::from_secs(60),
+            dao_state: Duration::from_secs(60),
+            protocol_era: Duration::from_secs(60),
+            activity: Duration::from_secs(60),
+            transaction_horizon: Duration::from_secs(60),
+            fork_watch: Duration::from_secs(60),
+            network_atlas: Duration::from_secs(60),
+            galaxy_composition: periodic,
+            galaxy_composition_retry: Duration::from_millis(30),
+            galaxy_top_up: Duration::from_secs(60),
+            max_concurrent: 2,
+        }
+    }
+
+    /// D7 — with no cadence the composition staffs the stage ONCE and
+    /// then holds. The whole point of the top-up is that drift no longer
+    /// needs a periodic re-derivation of the entire membership.
+    #[tokio::test]
+    async fn without_a_cadence_the_composition_runs_once_and_holds() {
+        let sink = Arc::new(cknerv_core::CompositionDemandSink::new());
+        let mut state = ServerState::new();
+        state.set_composition_demand_sink(sink.clone());
+        let state = Arc::new(state);
+        state.apply_mutation(Mutation::BlockMined {
+            number: 7,
+            hash: "0xblock7".to_string(),
+            tx_count: 1,
+            size: 1,
+            at: 1,
+        });
+        let compositions = Arc::new(AtomicUsize::new(0));
+        let source: Arc<dyn EnrichmentSource> = Arc::new(CompositionCountingSource {
+            compositions: compositions.clone(),
+        });
+        let (out, mut events) = mpsc::channel(16);
+        let (shutdown, shutdown_rx) = watch::channel(false);
+        let handle = tokio::spawn(run(
+            source,
+            state,
+            out,
+            shutdown_rx,
+            composition_cadence(None),
+        ));
+
+        // It lands once…
+        tokio::time::timeout(Duration::from_millis(500), async {
+            while compositions.load(Ordering::Relaxed) == 0 {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("the first composition must still run");
+        // …and the supervisor's own view of it is "published", which is
+        // what the reducer would confirm on the real path.
+        while let Ok(event) = events.try_recv() {
+            if matches!(event, EnrichmentEvent::GalaxyCompositionReplace(_)) {
+                sink.publish(CompositionDemand {
+                    curated: true,
+                    dao: 10,
+                    typed: 10,
+                });
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert_eq!(
+            compositions.load(Ordering::Relaxed),
+            1,
+            "no periodic re-derivation: {} probe rounds went by",
+            200 / 10
+        );
+
+        let _ = shutdown.send(true);
+        let _ = handle.await;
+    }
+
+    /// …but a degrade must lift the stage back out. The plane reports an
+    /// uncurated demand after a reorg at the reservoir anchor, and only
+    /// a fresh composition can answer that.
+    #[tokio::test]
+    async fn a_degraded_stage_makes_the_composition_due_again() {
+        let sink = Arc::new(cknerv_core::CompositionDemandSink::new());
+        let mut state = ServerState::new();
+        state.set_composition_demand_sink(sink.clone());
+        let state = Arc::new(state);
+        state.apply_mutation(Mutation::BlockMined {
+            number: 7,
+            hash: "0xblock7".to_string(),
+            tx_count: 1,
+            size: 1,
+            at: 1,
+        });
+        let compositions = Arc::new(AtomicUsize::new(0));
+        let source: Arc<dyn EnrichmentSource> = Arc::new(CompositionCountingSource {
+            compositions: compositions.clone(),
+        });
+        let (out, _events) = mpsc::channel(16);
+        let (shutdown, shutdown_rx) = watch::channel(false);
+        let handle = tokio::spawn(run(
+            source,
+            state,
+            out,
+            shutdown_rx,
+            composition_cadence(None),
+        ));
+
+        tokio::time::timeout(Duration::from_millis(500), async {
+            while compositions.load(Ordering::Relaxed) == 0 {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("first composition");
+        sink.publish(CompositionDemand {
+            curated: true,
+            dao: 1,
+            typed: 1,
+        });
+        tokio::time::sleep(Duration::from_millis(120)).await;
+        assert_eq!(
+            compositions.load(Ordering::Relaxed),
+            1,
+            "held while curated"
+        );
+
+        // The reorg degrade: the plane falls back to prefix staffing.
+        sink.publish(CompositionDemand::default());
+        tokio::time::timeout(Duration::from_millis(600), async {
+            while compositions.load(Ordering::Relaxed) < 2 {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("a degraded stage must be recomposed");
+
+        let _ = shutdown.send(true);
+        let _ = handle.await;
+    }
+
+    /// With a cadence configured the old behaviour is intact — it just
+    /// means "re-rank against the current index ordering" now.
+    #[tokio::test]
+    async fn a_configured_cadence_still_repeats() {
+        let state = Arc::new(ServerState::new());
+        state.apply_mutation(Mutation::BlockMined {
+            number: 7,
+            hash: "0xblock7".to_string(),
+            tx_count: 1,
+            size: 1,
+            at: 1,
+        });
+        let compositions = Arc::new(AtomicUsize::new(0));
+        let source: Arc<dyn EnrichmentSource> = Arc::new(CompositionCountingSource {
+            compositions: compositions.clone(),
+        });
+        let (out, _events) = mpsc::channel(16);
+        let (shutdown, shutdown_rx) = watch::channel(false);
+        let handle = tokio::spawn(run(
+            source,
+            state,
+            out,
+            shutdown_rx,
+            composition_cadence(Some(Duration::from_millis(30))),
+        ));
+
+        tokio::time::timeout(Duration::from_millis(800), async {
+            while compositions.load(Ordering::Relaxed) < 3 {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("a configured cadence repeats");
+
+        let _ = shutdown.send(true);
+        let _ = handle.await;
     }
 
     /// The top-up is demand-gated: a stage that is not asking costs the
@@ -758,7 +1051,8 @@ mod tests {
             transaction_horizon: Duration::from_secs(60),
             fork_watch: Duration::from_secs(60),
             network_atlas: Duration::from_secs(60),
-            galaxy_composition: Duration::from_secs(60),
+            galaxy_composition: Some(Duration::from_secs(60)),
+            galaxy_composition_retry: Duration::from_secs(60),
             galaxy_top_up: Duration::from_secs(60),
             max_concurrent: 1,
         }
@@ -793,7 +1087,8 @@ mod tests {
             transaction_horizon: Duration::from_secs(1),
             fork_watch: Duration::from_secs(1),
             network_atlas: Duration::from_secs(1),
-            galaxy_composition: Duration::from_secs(1),
+            galaxy_composition: Some(Duration::from_secs(1)),
+            galaxy_composition_retry: Duration::from_secs(1),
             galaxy_top_up: Duration::from_secs(1),
             max_concurrent: 2,
         };

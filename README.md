@@ -178,10 +178,11 @@ The primary public seams are:
   block/hash anchor immediately before it enters the semantics projection.
   CellGalaxy composition additionally uses ckbadger only to discover/rank
   outpoints, then batch-validates and materializes every displayed candidate
-  through the local CKB node's read-only `get_live_cell` RPC. That validated
-  record is display-plane input, not semantics: it enters the server's own
-  canonical stream as a server-internal mutation the browser never sees, so
-  display membership stays ordered against the births and reorgs it is staged
+  through the local CKB node's read-only `get_live_cell` RPC — full
+  compositions and incremental top-ups alike. That validated input is
+  display-plane input, not semantics: it enters the server's own canonical
+  stream as a server-internal mutation the browser never sees, so display
+  membership stays ordered against the births and reorgs it is staged
   against.
 
 The current workspace ships `CkbDirectAdapter`, which polls CKB JSON-RPC and
@@ -439,10 +440,14 @@ twin, the fixtures, and both sides of the tests together.
   whatever the source situation. Without enrichment the server stages the
   canonical insertion-order prefix; with optional ckbadger enrichment it stages
   DAO:typed:plain = 30:40:30 at the display budget, seeded from a 6,000-record
-  node-revalidated reservoir (canonical retained Cells fill any remainder). In
-  both modes each block's real transaction endpoints take a reserved slice of
-  the stage. Canonical Cells and the complete canonical neighbour graph still
-  own new-block pulses, live nerve routes, counters, and reorg behavior. See
+  node-revalidated reservoir (canonical retained Cells fill any remainder). The
+  composition is held by demand rather than by a timer: the plane publishes what
+  it is short of per class, spends of staged Cells are detected exactly, and
+  bounded top-ups walk deeper into each class and enter by a one-way ratchet, so
+  the steady-state cost is proportional to churn. In both modes each block's
+  real transaction endpoints take a reserved slice of the stage. Canonical Cells
+  and the complete canonical neighbour graph still own new-block pulses, live
+  nerve routes, counters, and reorg behavior. See
   [`docs/ckbadger.md`](docs/ckbadger.md#cellgalaxy-composition).
 - The CKB adapter is read-only JSON-RPC polling. There is no bundled CKB node,
   indexer, or transaction submitter.
