@@ -524,9 +524,6 @@ export default function CellDetailPanel({
         <span style={{ color: HUD_COLORS.orange, fontFamily: HUD_FONTS.display, fontSize: HUD_TYPE.title, fontWeight: 600, letterSpacing: 2, textShadow: '0 0 9px rgba(255,152,48,.45)' }}>
           CELL // #{cell.id}
         </span>
-        <span style={{ color: HUD_COLORS.orange, fontFamily: HUD_FONTS.cjk, fontSize: HUD_TYPE.section, opacity: 0.78 }}>
-          共识细胞
-        </span>
         <span title={cell.content_hash} style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: HUD_COLORS.dim, fontSize: HUD_TYPE.label, letterSpacing: 0.8 }}>
           {cell.content_hash.slice(2, 10)}:{cell.out_point.index}
         </span>
@@ -623,7 +620,6 @@ export default function CellDetailPanel({
         </span>
         <SpatialPlateHeader
           en="CELL IDENTITY"
-          cjk="细胞身份"
           accent={HUD_COLORS.cyanWire}
           status={(
             <span

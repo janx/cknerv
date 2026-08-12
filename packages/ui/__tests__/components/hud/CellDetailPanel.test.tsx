@@ -126,8 +126,7 @@ describe('CellDetailPanel', () => {
     const { container } = render(<CellDetailPanel cell={base} onClose={() => {}} />);
     const t = container.textContent ?? '';
     expect(t).toContain('CELL');
-    expect(t).toContain('细胞');
-    expect(t).toContain('共识细胞');       // CJK title
+    expect(t).not.toContain('共识细胞');   // Cell detail titles stay English-only
     expect(t).toContain('Omnilock');       // LOCK
     expect(t).toContain('xUDT');           // ASSET
     expect(t).toContain('123.00 CKB');     // CAPACITY
@@ -142,9 +141,8 @@ describe('CellDetailPanel', () => {
     expect(t).not.toContain('knots');      // portrait joins stay visual-only
     expect(container.querySelector('[data-cell-detail-field="capacity"]')
       ?.textContent).toBe('CAPACITY123.00 CKB');
-    expect(t).toContain('共识细胞');       // CJK title stays (no re-subset)
     expect(t).toContain('CONSENSUS MEMORY');
-    expect(t).toContain('共识记忆');
+    expect(t).not.toContain('共识记忆');
     expect(t).not.toContain('CELL CONTENT');
     expect(t).not.toContain('细胞内容');
     expect(t).toContain('DIRECT NODE · RAW');
@@ -183,7 +181,7 @@ describe('CellDetailPanel', () => {
     expect(container.querySelector('[data-cell-detail-readable-scale]')).toBeNull();
     expect(t).toContain('CELL SCAN');
     expect(t).toContain('CELL IDENTITY');
-    expect(t).toContain('细胞身份');
+    expect(t).not.toContain('细胞身份');
     expect(t).not.toContain('SCAN LOCKED');
     expect(t).not.toContain('INDEX LAYER');
     expect(t).toContain('DRAG TO ORBIT');

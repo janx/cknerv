@@ -1534,7 +1534,6 @@ export default function ConsensusIdentityPlate({
 
       <SpatialPlateHeader
         en="CONSENSUS MEMORY"
-        cjk="共识记忆"
         accent={VIOLET}
         marginBottom={0}
         status={(
