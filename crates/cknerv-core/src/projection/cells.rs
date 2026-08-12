@@ -21,6 +21,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::enrichment::ChainAnchor;
 use crate::helix::helix_seed_for;
 use crate::mutation::{Mutation, ReplayPhase};
 use crate::outpoint::{is_cellbase_input, OutPoint, TxOutputInfo};
@@ -150,6 +151,13 @@ pub struct CellGalaxySnapshot {
     /// unaffected.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub backfill: Option<BackfillState>,
+    /// Display-plane membership ("who is on stage"). Presentation policy,
+    /// never canonical truth — no counters, no persistence. Omitted from
+    /// the wire while `None` (contract-only stage; the server starts
+    /// staffing the plane in S1), matching the `backfill` precedent so
+    /// older snapshots and fixtures stay readable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display: Option<DisplaySection>,
 }
 
 /// Persistent record of one tx's causal edge. Carries everything the
@@ -175,6 +183,63 @@ pub struct CellLinkRecord {
     #[serde(alias = "otp_kind")]
     pub tag: Option<String>,
     pub at_ms: u64,
+}
+
+// ── display plane — wire contract ────────────────────────────────────
+// The display plane answers "who is on stage": a server-owned membership
+// of at most `budget.cells` ids drawn from the canonical retained set
+// plus curated residents. INVARIANT: display membership is presentation
+// policy, never canonical truth — it moves no counters and is never
+// persisted (`CellGalaxyPersisted` carries no display state).
+
+/// Fixed product budgets for the display plane. Server-owned so the
+/// composition constants (12K cells / 8K nerve screen budget) can be
+/// retuned without a frontend release. Bounds what is staged for
+/// rendering — presentation policy, never canonical truth.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DisplayBudget {
+    pub cells: u32,
+    pub nerve_edges: u32,
+}
+
+/// Which policy currently authors the display-plane membership.
+/// `Canonical` fills from the canonical retained set; `Composed` blends
+/// a curated reservoir (e.g. ckbadger) with canonical fill. The mode
+/// only changes who the server puts on stage — never the wire shape and
+/// never canonical truth.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DisplayMode {
+    Canonical,
+    Composed,
+}
+
+/// Where the current display-plane membership came from and how fresh
+/// it is. `source` and `as_of` are `None` in canonical mode and
+/// serialize as explicit `null` (mirroring the TS `| null` twins, same
+/// convention as [`Cell::death_at_ms`]). Presentation provenance only —
+/// it asserts nothing about canonical truth.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DisplayProvenance {
+    pub mode: DisplayMode,
+    pub source: Option<String>,
+    pub as_of: Option<ChainAnchor>,
+    pub updated_at_ms: u64,
+}
+
+/// Snapshot section describing the display plane. `members` is
+/// set-semantics (client slot assignment ignores order; the server keeps
+/// a deterministic order for tests/replay) and mixes canonical ids with
+/// resident ids; `residents` carries full payloads only for members
+/// outside the canonical retained set. Display membership is
+/// presentation policy, never canonical truth: it feeds no counters and
+/// is excluded from persistence.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct DisplaySection {
+    pub budget: DisplayBudget,
+    pub members: Vec<u64>,
+    pub residents: Vec<Cell>,
+    pub provenance: DisplayProvenance,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -253,6 +318,23 @@ pub enum CellDelta {
         parents: Vec<String>,
         tag: Option<String>,
         at_ms: u64,
+    },
+    /// Display-plane membership patch ("who is on stage"). `enter_ids`
+    /// reference cells inside the canonical retained set — same-stream
+    /// revision ordering guarantees their `Birth` deltas already arrived;
+    /// `enter_cells` carry full payloads for resident members outside that
+    /// set; `exit_ids` leave the stage. `provenance` rides along only when
+    /// mode/source health changes and is omitted from the wire when
+    /// `None`. Display membership is presentation policy, never canonical
+    /// truth: this delta moves no counters, persists nothing, and implies
+    /// no birth/death semantics. Contract-only in S0 — nothing emits it
+    /// yet; server emission lands in S1.
+    Display {
+        enter_ids: Vec<u64>,
+        enter_cells: Vec<Cell>,
+        exit_ids: Vec<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        provenance: Option<DisplayProvenance>,
     },
 }
 
@@ -1199,6 +1281,8 @@ impl Projection for CellGalaxy {
             total_births: self.total_births,
             total_deaths: self.total_deaths,
             backfill: self.backfill,
+            // Display plane is contract-only until S1 staffs it.
+            display: None,
         }
     }
 

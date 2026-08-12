@@ -9,5 +9,38 @@
     "total": 10,
     "active": true,
     "phase": "rebuild"
+  },
+  "display_composed": {
+    "type": "display",
+    "enter_ids": [1],
+    "enter_cells": [
+      {
+        "id": 4503599627370501,
+        "born_at_ms": 0,
+        "death_at_ms": null,
+        "birth_block": 12,
+        "tag": null,
+        "pos_seed": [2.5, -1.25, 0.75],
+        "out_point": { "tx_hash": "0xdef", "index": 3 },
+        "capacity": 5000,
+        "data_hex": "0x",
+        "content_hash": "0x2222222222222222222222222222222222222222222222222222222222222222",
+        "lock_kind": "acp",
+        "asset_kind": "xudt"
+      }
+    ],
+    "exit_ids": [2],
+    "provenance": {
+      "mode": "composed",
+      "source": "ckbadger",
+      "as_of": { "block": 12, "hash": "0xfeed" },
+      "updated_at_ms": 2000
+    }
+  },
+  "display_minimal": {
+    "type": "display",
+    "enter_ids": [2],
+    "enter_cells": [],
+    "exit_ids": [1]
   }
 }

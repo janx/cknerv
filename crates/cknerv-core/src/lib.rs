@@ -43,7 +43,8 @@ pub use mutation::{Mutation, ReplayPhase, RevisionedMutation};
 pub use outpoint::{is_cellbase_input, CellOutput, OutPoint, TxOutputInfo};
 pub use projection::cells::{
     Cell, CellDelta, CellGalaxy, CellGalaxyPersisted, CellGalaxySnapshot, CellLinkEndpointAnchor,
-    CellLinkRecord, DEFAULT_REORG_WINDOW_BLOCKS,
+    CellLinkRecord, DisplayBudget, DisplayMode, DisplayProvenance, DisplaySection,
+    DEFAULT_REORG_WINDOW_BLOCKS,
 };
 pub use projection::Projection;
 pub use ring::Ring;

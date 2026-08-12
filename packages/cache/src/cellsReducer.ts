@@ -558,6 +558,11 @@ function mutateCellDelta(
       c.backfill = d.active ? normalizeReplayProgress(d) : null;
       return true;
     }
+    case 'display': {
+      // Display-plane membership (server-authored). Contract lands in S0;
+      // the client store that consumes it arrives in S3. No-op until then.
+      return false;
+    }
     default: {
       const _exhaustive: never = d;
       void _exhaustive;

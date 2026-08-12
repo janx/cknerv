@@ -12,7 +12,8 @@
 use std::path::PathBuf;
 
 use cknerv_core::{
-    Cell, CellDelta, CellGalaxySnapshot, Chain, Mutation, ReplayPhase, SemanticsDelta,
+    AssetKind, Cell, CellDelta, CellGalaxySnapshot, Chain, ChainAnchor, DisplayMode,
+    DisplayProvenance, LockKind, Mutation, OutPoint, ReplayPhase, SemanticsDelta,
     SemanticsSnapshot,
 };
 
@@ -83,6 +84,56 @@ fn cell_delta_samples_match_serialized_shape() {
         phase: ReplayPhase::Rebuild,
     };
     let serialized = serde_json::to_value(delta).expect("serialize CellDelta::Backfill");
+    assert_eq!(canonicalize(sample), canonicalize(&serialized));
+
+    // Display-plane patch, composed mode: a canonical enter by id, a
+    // resident enter with full payload (composition-range id, 2^52 + 5),
+    // an exit, and full provenance.
+    let sample = &samples["display_composed"];
+    let delta = CellDelta::Display {
+        enter_ids: vec![1],
+        enter_cells: vec![Cell {
+            id: 4503599627370501,
+            born_at_ms: 0,
+            death_at_ms: None,
+            birth_block: 12,
+            tag: None,
+            pos_seed: [2.5, -1.25, 0.75],
+            out_point: OutPoint {
+                tx_hash: "0xdef".to_string(),
+                index: 3,
+            },
+            capacity: 5000,
+            data_hex: "0x".to_string(),
+            content_hash: "0x2222222222222222222222222222222222222222222222222222222222222222"
+                .to_string(),
+            lock_kind: LockKind::Acp,
+            asset_kind: AssetKind::Xudt,
+        }],
+        exit_ids: vec![2],
+        provenance: Some(DisplayProvenance {
+            mode: DisplayMode::Composed,
+            source: Some("ckbadger".to_string()),
+            as_of: Some(ChainAnchor {
+                block: 12,
+                hash: "0xfeed".to_string(),
+            }),
+            updated_at_ms: 2000,
+        }),
+    };
+    let serialized = serde_json::to_value(delta).expect("serialize CellDelta::Display");
+    assert_eq!(canonicalize(sample), canonicalize(&serialized));
+
+    // Everyday activity-swap shape: id-only churn, no resident payloads,
+    // and `provenance: None` must vanish from the wire entirely.
+    let sample = &samples["display_minimal"];
+    let delta = CellDelta::Display {
+        enter_ids: vec![2],
+        enter_cells: vec![],
+        exit_ids: vec![1],
+        provenance: None,
+    };
+    let serialized = serde_json::to_value(delta).expect("serialize minimal CellDelta::Display");
     assert_eq!(canonicalize(sample), canonicalize(&serialized));
 }
 

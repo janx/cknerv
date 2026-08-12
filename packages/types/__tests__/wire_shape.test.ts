@@ -73,7 +73,7 @@ describe('wire-shape parity (TS twin of cknerv-core)', () => {
     expect(typeof sample.epoch).toBe('object');
   });
 
-  it('cell_delta_samples.json covers reorg evidence and replay cause', () => {
+  it('cell_delta_samples.json covers reorg evidence, replay cause and display membership', () => {
     const samples = fixture<Record<string, CellDelta>>('cell_delta_samples.json');
     expect(samples.link_prune).toEqual({
       type: 'link_prune',
@@ -85,6 +85,45 @@ describe('wire-shape parity (TS twin of cknerv-core)', () => {
       total: 10,
       active: true,
       phase: 'rebuild',
+    });
+    // Display-plane patch, composed mode: canonical enter by id, resident
+    // enter with full payload (composition-range id, 2^52 + 5), an exit,
+    // and full provenance.
+    expect(samples.display_composed).toEqual({
+      type: 'display',
+      enter_ids: [1],
+      enter_cells: [
+        {
+          id: 4503599627370501,
+          born_at_ms: 0,
+          death_at_ms: null,
+          birth_block: 12,
+          tag: null,
+          pos_seed: [2.5, -1.25, 0.75],
+          out_point: { tx_hash: '0xdef', index: 3 },
+          capacity: 5000,
+          data_hex: '0x',
+          content_hash:
+            '0x2222222222222222222222222222222222222222222222222222222222222222',
+          lock_kind: 'acp',
+          asset_kind: 'xudt',
+        },
+      ],
+      exit_ids: [2],
+      provenance: {
+        mode: 'composed',
+        source: 'ckbadger',
+        as_of: { block: 12, hash: '0xfeed' },
+        updated_at_ms: 2000,
+      },
+    });
+    // Everyday activity-swap shape: id-only churn, no provenance key at
+    // all (Rust skips a `None` provenance on the wire).
+    expect(samples.display_minimal).toEqual({
+      type: 'display',
+      enter_ids: [2],
+      enter_cells: [],
+      exit_ids: [1],
     });
   });
 
@@ -122,6 +161,18 @@ describe('wire-shape parity (TS twin of cknerv-core)', () => {
         }
       }
     }
+    // Display plane: members mix canonical ids with resident ids; only
+    // out-of-retained-set members carry a resident payload.
+    expect(sample.display?.budget.cells).toBe(12000);
+    expect(sample.display?.budget.nerve_edges).toBe(8000);
+    expect(sample.display?.members).toEqual([1, 2, 4503599627370501]);
+    expect(sample.display?.residents.map((cell) => cell.id)).toEqual([
+      4503599627370501,
+    ]);
+    expect(sample.display?.provenance.mode).toBe('composed');
+    expect(sample.display?.provenance.source).toBe('ckbadger');
+    expect(sample.display?.provenance.as_of?.block).toBe(1);
+    expect(typeof sample.display?.provenance.updated_at_ms).toBe('number');
   });
 
   it('enrichment_samples.json mirrors optional semantics shapes', () => {

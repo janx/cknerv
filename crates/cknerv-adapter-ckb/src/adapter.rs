@@ -250,7 +250,10 @@ mod tests {
         let adapter = CkbDirectAdapter::new(Url::parse("http://localhost:8114").unwrap());
 
         // The default hydration target tracks the projection's CELL_CAP.
-        assert_eq!(adapter.cell_target, cknerv_core::projection::cells::CELL_CAP);
+        assert_eq!(
+            adapter.cell_target,
+            cknerv_core::projection::cells::CELL_CAP
+        );
         assert_eq!(adapter.cell_target, 50_000);
         assert_eq!(adapter.backfill_blocks, None);
         assert_eq!(

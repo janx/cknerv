@@ -5,6 +5,7 @@
 // Rust serializer's `#[serde(rename_all = "snake_case")]` shape. The
 // fixture in `tests/fixtures/snapshot_cells.json` pins it on both sides.
 
+import type { ChainAnchor } from './enrichment';
 import type { OutPoint } from './outpoint';
 
 /** Free-form tag string assigned by an external emitter. Known values
@@ -78,6 +79,51 @@ export interface CellLinkRecord {
   at_ms: number;
 }
 
+// ── display plane — wire contract ────────────────────────────────────
+// The display plane answers "who is on stage": a server-owned membership
+// of at most `budget.cells` ids drawn from the canonical retained set
+// plus curated residents. INVARIANT: display membership is presentation
+// policy, never canonical truth — it moves no counters and is never
+// persisted.
+
+/** Fixed product budgets for the display plane. Server-owned so the
+ *  composition constants (12K cells / 8K nerve screen budget) can be
+ *  retuned without a frontend release. Presentation policy, never
+ *  canonical truth. */
+export interface DisplayBudget {
+  cells: number;
+  nerve_edges: number;
+}
+
+/** Which policy authors the display-plane membership. Mirrors the Rust
+ *  `#[serde(rename_all = "snake_case")]` `DisplayMode` enum:
+ *  'canonical' fills from the canonical retained set; 'composed' blends
+ *  a curated reservoir (e.g. ckbadger) with canonical fill. */
+export type DisplayMode = 'canonical' | 'composed';
+
+/** Where the current display-plane membership came from and how fresh
+ *  it is. `source`/`as_of` are null in canonical mode. Presentation
+ *  provenance only — asserts nothing about canonical truth. */
+export interface DisplayProvenance {
+  mode: DisplayMode;
+  source: string | null;
+  as_of: ChainAnchor | null;
+  updated_at_ms: number;
+}
+
+/** Snapshot section describing the display plane ("who is on stage").
+ *  `members` is set-semantics and mixes canonical ids with resident
+ *  ids; `residents` carries full payloads only for members outside the
+ *  canonical retained set. Display membership is presentation policy,
+ *  never canonical truth: it feeds no counters and is excluded from
+ *  persistence. */
+export interface DisplaySection {
+  budget: DisplayBudget;
+  members: number[];
+  residents: Cell[];
+  provenance: DisplayProvenance;
+}
+
 export interface CellGalaxySnapshot {
   cells: Cell[];
   last_pulse_at_ms: number;
@@ -91,6 +137,10 @@ export interface CellGalaxySnapshot {
   total_deaths?: number;
   /** Historical replay progress; present while seeding or rebuilding. */
   backfill?: ReplayProgress | null;
+  /** Display-plane membership ("who is on stage"). Presentation policy,
+   *  never canonical truth. Absent until the server staffs the plane
+   *  (S1), mirroring the Rust `skip_serializing_if` on `display`. */
+  display?: DisplaySection;
 }
 
 /** Causal-edge entry kept in the live cache after `applyCellDelta`. */
@@ -135,6 +185,18 @@ export type CellDelta =
       parents: string[];
       tag: CellTag | null;
       at_ms: number;
+    }
+  /** Display-plane membership patch ("who is on stage"). `enter_ids`
+   *  reference canonical retained cells (same-stream ordering guarantees
+   *  their births already arrived); `enter_cells` carry full payloads for
+   *  resident members outside that set; `provenance` rides along only on
+   *  mode/health changes. Presentation policy, never canonical truth. */
+  | {
+      type: 'display';
+      enter_ids: number[];
+      enter_cells: Cell[];
+      exit_ids: number[];
+      provenance?: DisplayProvenance | null;
     };
 
 /** Delta paired with the revision that produced it. The Rust side ships

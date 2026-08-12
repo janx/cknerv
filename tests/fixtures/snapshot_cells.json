@@ -54,5 +54,31 @@
     }
   ],
   "total_births": 2,
-  "total_deaths": 0
+  "total_deaths": 0,
+  "display": {
+    "budget": { "cells": 12000, "nerve_edges": 8000 },
+    "members": [1, 2, 4503599627370501],
+    "residents": [
+      {
+        "id": 4503599627370501,
+        "born_at_ms": 0,
+        "death_at_ms": null,
+        "birth_block": 12,
+        "tag": null,
+        "pos_seed": [2.5, -1.25, 0.75],
+        "out_point": { "tx_hash": "0xdef", "index": 3 },
+        "capacity": 5000,
+        "data_hex": "0x",
+        "content_hash": "0x2222222222222222222222222222222222222222222222222222222222222222",
+        "lock_kind": "acp",
+        "asset_kind": "xudt"
+      }
+    ],
+    "provenance": {
+      "mode": "composed",
+      "source": "ckbadger",
+      "as_of": { "block": 1, "hash": "0xb1b1" },
+      "updated_at_ms": 1500
+    }
+  }
 }
