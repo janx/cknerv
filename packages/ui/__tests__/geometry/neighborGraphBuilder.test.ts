@@ -9,6 +9,10 @@ import {
   type NeighborGraphWorkerRequest,
   type NeighborGraphWorkerResponse,
 } from '../../src/geometry/neighborGraphWorkerProtocol';
+import {
+  consumeTopologyJournal,
+  createTopologyJournal,
+} from '../../src/geometry/topologyJournal';
 
 function cells(offset = 0): Map<number, Cell> {
   const entries: Array<[number, Cell]> = [];
@@ -49,6 +53,25 @@ class FakeWorker {
     if (!this.request) throw new Error('missing Worker request');
     const response = executeNeighborGraphWorkerRequest(this.request);
     this.onmessage?.({ data: response } as MessageEvent<NeighborGraphWorkerResponse>);
+  }
+}
+
+/** `FakeWorker` with the real transfer semantics: every buffer in the
+ *  transfer list detaches on the sender's side, so a request that reuses a
+ *  previously transferred buffer fails to clone exactly as in a browser. */
+class TransferringFakeWorker extends FakeWorker {
+  override postMessage(
+    message: NeighborGraphWorkerRequest,
+    transfer: Transferable[] = [],
+  ): void {
+    this.request = structuredClone(message, { transfer });
+  }
+
+  replyStale(): void {
+    if (!this.request) throw new Error('missing Worker request');
+    this.onmessage?.({
+      data: { kind: 'stale', requestId: this.request.requestId },
+    } as MessageEvent<NeighborGraphWorkerResponse>);
   }
 }
 
@@ -139,6 +162,60 @@ describe('createNeighborGraphBuilder', () => {
     for (const [id, neighbours] of first!.graph.adjacency) {
       expect(second!.graph.adjacency.get(id)).toBe(neighbours);
     }
+    builder.dispose();
+  });
+
+  /** A real Worker DETACHES every transferred buffer on the sending side.
+   *  The stale-resend re-sends the same request shape, so anything it
+   *  carries must be re-packed — a detached buffer makes `postMessage`
+   *  throw `DataCloneError`, and the silent catch turns that into a
+   *  synchronous main-thread rebuild of the whole display graph. Measured
+   *  live as 400-800ms blocking tasks once the display plane made delta
+   *  requests (and therefore `stale` replies) reachable. */
+  it('survives a stale reply after transferring the preferred-edge buffer', async () => {
+    const before = neighborGraphBuilderStats.workerFallbacks;
+    const worker = new TransferringFakeWorker();
+    const builder = createNeighborGraphBuilder({
+      minWorkerCells: 0,
+      workerFactory: () => worker as unknown as Worker,
+    });
+    const passiveOptions = {
+      topology: { k: 2 },
+      includePassive: true,
+      passiveEdgeBudget: 3,
+      preferredEdges: [
+        { from: 1, to: 2, d: 2 },
+        { from: 2, to: 3, d: 2 },
+      ],
+    };
+
+    // Chain a generation so the next build is eligible to send a delta.
+    const firstPending = builder.build(cells(), passiveOptions);
+    worker.complete();
+    expect(await firstPending).not.toBeNull();
+
+    const journal = createTopologyJournal();
+    journal.valid = true;
+    journal.upserts.set(7, {
+      id: 7,
+      pos_seed: [9, 0, 1],
+    } as unknown as Cell);
+    const secondPending = builder.build(cells(), {
+      ...passiveOptions,
+      cellsJournal: consumeTopologyJournal(journal),
+    });
+    expect(worker.request?.cellsDelta).not.toBeNull();
+
+    // The session rejects the delta (superseded generation) and asks for a
+    // full pack; the resend must reach the worker, not the fallback.
+    worker.replyStale();
+    expect(worker.request?.cells).not.toBeNull();
+    worker.complete();
+    const second = await secondPending;
+
+    expect(second).not.toBeNull();
+    expect(second!.graph.adjacency.size).toBe(6);
+    expect(neighborGraphBuilderStats.workerFallbacks).toBe(before);
     builder.dispose();
   });
 });

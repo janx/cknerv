@@ -30,13 +30,17 @@ export const neighborGraphBuilderStats = {
 
 let workerFallbackWarned = false;
 
-function noteWorkerFallback(): void {
+function noteWorkerFallback(reason: unknown): void {
   neighborGraphBuilderStats.workerFallbacks += 1;
   if (!workerFallbackWarned) {
     workerFallbackWarned = true;
+    // The reason rides the warning: this fallback costs a full synchronous
+    // topology build, so "which path failed" has to be answerable from a
+    // console alone.
     console.warn(
       'neighborGraphBuilder: worker path failed; building topology synchronously '
       + 'on the main thread (counted in neighborGraphBuilderStats.workerFallbacks).',
+      reason,
     );
   }
 }
@@ -213,17 +217,21 @@ export function createNeighborGraphBuilder(
 
       try {
         worker ??= workerFactory();
-      } catch {
-        noteWorkerFallback();
+      } catch (error) {
+        noteWorkerFallback(error);
         terminateWorker();
         return Promise.resolve().then(fallback);
       }
 
       const requestId = nextRequestId;
       nextRequestId += 1;
-      const preferredEdges = options.includePassive
+      // Every packed buffer is TRANSFERRED, which detaches it here — so each
+      // request packs its own. Sharing one pack across the delta request and
+      // the stale-resend below would post a detached buffer, and the throw
+      // lands in the silent fallback (a full synchronous rebuild).
+      const packEdges = () => (options.includePassive
         ? packPreferredEdges(options.preferredEdges ?? [])
-        : null;
+        : null);
       const baseRequest = {
         kind: 'build' as const,
         requestId,
@@ -231,10 +239,10 @@ export function createNeighborGraphBuilder(
         includePassive: options.includePassive ?? false,
         passiveEdgeBudget: options.passiveEdgeBudget ?? null,
         passiveTuning: options.passiveTuning ?? null,
-        preferredEdges,
       };
       const fullRequest = (): NeighborGraphWorkerRequest => ({
         ...baseRequest,
+        preferredEdges: packEdges(),
         cells: packTopologyCells(cells),
         cellsDelta: null,
       });
@@ -254,6 +262,7 @@ export function createNeighborGraphBuilder(
         }
         return {
           ...baseRequest,
+          preferredEdges: packEdges(),
           cells: null,
           cellsDelta: {
             baseGeneration: lastAppliedGeneration,
@@ -264,6 +273,22 @@ export function createNeighborGraphBuilder(
       };
       const request = deltaRequest() ?? fullRequest();
 
+      /** Post a request with the transfer list its own buffers imply. */
+      const send = (outgoing: NeighborGraphWorkerRequest): void => {
+        const transfer: Transferable[] = [];
+        if (outgoing.cells) transfer.push(outgoing.cells.buffer);
+        if (outgoing.cellsDelta) {
+          transfer.push(
+            outgoing.cellsDelta.upserts.buffer,
+            outgoing.cellsDelta.removedIds.buffer,
+          );
+        }
+        if (outgoing.preferredEdges) {
+          transfer.push(outgoing.preferredEdges.buffer);
+        }
+        worker!.postMessage(outgoing, transfer);
+      };
+
       return new Promise<NeighborGraphBuildResult | null>((resolve, reject) => {
         active = { requestId, resolve, reject, fallback };
         worker!.onmessage = (event: MessageEvent<NeighborGraphWorkerResponse>) => {
@@ -272,17 +297,18 @@ export function createNeighborGraphBuilder(
             return;
           }
           if (response.kind === 'failed') {
-            noteWorkerFallback();
+            noteWorkerFallback(response.message);
             fallbackActive(requestId);
             return;
           }
           if (response.kind === 'stale') {
-            // Ordinary after a superseded/dropped build: re-send the full
-            // pack under the same requestId (full requests never go stale).
+            // Ordinary after a superseded/dropped build: re-send a freshly
+            // packed full request under the same requestId (full requests
+            // never go stale).
             try {
-              worker!.postMessage(fullRequest(), []);
-            } catch {
-              noteWorkerFallback();
+              send(fullRequest());
+            } catch (error) {
+              noteWorkerFallback(error);
               fallbackActive(requestId);
             }
             return;
@@ -319,32 +345,23 @@ export function createNeighborGraphBuilder(
             worker!.onerror = null;
             worker!.onmessageerror = null;
             resolve(result);
-          } catch {
-            noteWorkerFallback();
+          } catch (error) {
+            noteWorkerFallback(error);
             fallbackActive(requestId);
           }
         };
-        worker!.onerror = () => {
-          noteWorkerFallback();
+        worker!.onerror = (event) => {
+          noteWorkerFallback(event);
           fallbackActive(requestId);
         };
-        worker!.onmessageerror = () => {
-          noteWorkerFallback();
+        worker!.onmessageerror = (event) => {
+          noteWorkerFallback(event);
           fallbackActive(requestId);
         };
-        const transfer: Transferable[] = [];
-        if (request.cells) transfer.push(request.cells.buffer);
-        if (request.cellsDelta) {
-          transfer.push(
-            request.cellsDelta.upserts.buffer,
-            request.cellsDelta.removedIds.buffer,
-          );
-        }
-        if (preferredEdges) transfer.push(preferredEdges.buffer);
         try {
-          worker!.postMessage(request, transfer);
-        } catch {
-          noteWorkerFallback();
+          send(request);
+        } catch (error) {
+          noteWorkerFallback(error);
           fallbackActive(requestId);
         }
       });
