@@ -46,6 +46,7 @@ pub use projection::cells::{
     CellLinkRecord, DisplayBudget, DisplayMode, DisplayProvenance, DisplaySection,
     DEFAULT_REORG_WINDOW_BLOCKS,
 };
+pub use projection::composition_policy::{CompositionDemand, CompositionDemandSink};
 pub use projection::Projection;
 pub use ring::Ring;
 pub use taxonomy::{AssetKind, LockKind};

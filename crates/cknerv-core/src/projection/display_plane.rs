@@ -114,6 +114,7 @@
 //! reset, and the backfill-terminal resettle — all sanctioned big events.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::sync::Arc;
 
 use crate::enrichment::GalaxyCompositionRecord;
 /// The quota constant itself belongs to the policy; the tests below pin
@@ -128,7 +129,7 @@ use super::cells::{
     Cell, CellDelta, DisplayBudget, DisplayMode, DisplayProvenance, DisplaySection,
 };
 use super::composition_policy::{
-    CanonicalPolicy, CompositionFill, CompositionPolicy, CuratedPolicy,
+    CanonicalPolicy, CompositionDemandSink, CompositionFill, CompositionPolicy, CuratedPolicy,
 };
 
 /// Fixed product budget: cells on stage. Server-owned (see design doc
@@ -528,6 +529,12 @@ pub(crate) struct DisplayPlane {
     /// Tx endpoints reported this mutation, in arrival order.
     pending_activity: Vec<(u64, u64)>, // (block, id)
 
+    /// Where the policy's shortfall is published for an outside supplier
+    /// to act on. `None` — the default, and the only state a CKB-only
+    /// deployment ever sees — means nobody is listening and the plane
+    /// behaves exactly as it did before demand existed.
+    demand_sink: Option<Arc<CompositionDemandSink>>,
+
     provenance: DisplayProvenance,
     /// Ride provenance on the next emitted delta (armed at construction
     /// for the first fill, and by every mode/reservoir change).
@@ -573,6 +580,7 @@ impl DisplayPlane {
             stage,
             policy,
             pending_activity: Vec::new(),
+            demand_sink: None,
             provenance: DisplayProvenance {
                 mode: DisplayMode::Canonical,
                 source: None,
@@ -586,6 +594,12 @@ impl DisplayPlane {
             backfill_baseline: None,
             resettle_pending: false,
         }
+    }
+
+    /// Attach the sink the policy publishes its shortfall to. Wired once
+    /// at construction; the same sink goes to whoever can supply cells.
+    pub(crate) fn set_demand_sink(&mut self, sink: Arc<CompositionDemandSink>) {
+        self.demand_sink = Some(sink);
     }
 
     fn prefix_policy(stage: &Stage) -> Box<dyn CompositionPolicy + Send + Sync> {
@@ -896,6 +910,14 @@ impl DisplayPlane {
             self.policy.fill_vacancies(&mut self.stage);
         }
 
+        // 4. Publish what the policy is still short of. After the fills,
+        //    so it reflects everything this mutation could close on its
+        //    own; before the backfill return, so a long replay keeps the
+        //    number honest.
+        if let Some(sink) = &self.demand_sink {
+            sink.publish(self.policy.demand(&self.stage));
+        }
+
         if self.backfill_active {
             self.stage.touched.clear();
             return None;
@@ -1065,6 +1087,7 @@ impl DisplayPlane {
 mod tests {
     use super::*;
     use crate::enrichment::ChainAnchor;
+    use crate::projection::composition_policy::CompositionDemand;
 
     fn small_plane(cells: u32, quota: usize) -> DisplayPlane {
         DisplayPlane::with_limits(
@@ -1846,6 +1869,216 @@ mod tests {
             "activity role survives refresh"
         );
         assert_eq!(plane.class_counts(), [2, 1, 1]);
+    }
+
+    // ═══ T2 demand ═══════════════════════════════════════════════════
+
+    fn with_sink(plane: &mut DisplayPlane) -> Arc<CompositionDemandSink> {
+        let sink = Arc::new(CompositionDemandSink::new());
+        plane.set_demand_sink(sink.clone());
+        sink
+    }
+
+    /// The mainnet pathology this iteration exists to fix, reproduced at
+    /// full budget: a 6K reservoir plus a retained map that is ~99% plain
+    /// composes to roughly 1.8K/2.8K/7.3K instead of 3600/4800/3600,
+    /// because dao and typed simply run out of candidates.
+    ///
+    /// Demand must be measured against the IDEAL quota. Against
+    /// `class_targets` — what this refresh actually landed on — it would
+    /// read zero forever and the lopsided stage would look healthy.
+    #[test]
+    fn demand_measures_the_ideal_quota_not_the_ratio_this_refresh_landed_on() {
+        let mut plane = small_plane(12_000, 512);
+        let sink = with_sink(&mut plane);
+
+        // Retained canonical window, mainnet-shaped: a handful of dao,
+        // a few hundred typed, everything else plain.
+        let mut canonical: Vec<Cell> = Vec::new();
+        for i in 0..48 {
+            canonical.push(cell_with(
+                1_000_000 + i,
+                &format!("0xcd{i}"),
+                AssetKind::Dao,
+                0,
+            ));
+        }
+        for i in 0..412 {
+            canonical.push(cell_with(
+                2_000_000 + i,
+                &format!("0xct{i}"),
+                AssetKind::Xudt,
+                0,
+            ));
+        }
+        for i in 0..8_000 {
+            canonical.push(cell_with(
+                3_000_000 + i,
+                &format!("0xcp{i}"),
+                AssetKind::Native,
+                0,
+            ));
+        }
+        seed_canonical(&mut plane, &canonical, 500);
+        assert_eq!(
+            sink.read(),
+            CompositionDemand::default(),
+            "a prefix stage asks for nothing"
+        );
+
+        // The 6K reservoir, at its 30:40:30 split.
+        let rec = record(
+            10,
+            (0..1_800)
+                .map(|i| cell_with(10_000 + i, &format!("0xrd{i}"), AssetKind::Dao, 0))
+                .collect(),
+            (0..2_400)
+                .map(|i| cell_with(20_000 + i, &format!("0xrt{i}"), AssetKind::Xudt, 0))
+                .collect(),
+            (0..1_800)
+                .map(|i| cell_with(30_000 + i, &format!("0xrp{i}"), AssetKind::Native, 0))
+                .collect(),
+        );
+        plane.reservoir_replaced(&rec, &outpoint_index(&canonical), &canonical);
+        plane.flush(Some(1_000));
+
+        // dao/typed take everything they have; plain absorbs the rest of
+        // the budget through the spill.
+        assert_eq!(plane.class_counts(), [1_848, 2_812, 7_340]);
+        assert_eq!(
+            plane.class_counts().iter().sum::<usize>(),
+            12_000,
+            "the stage is full — the shortfall is in the RATIO, not the count"
+        );
+
+        let demand = sink.read();
+        assert!(demand.curated);
+        assert_eq!(demand.dao, 3_600 - 1_848);
+        assert_eq!(demand.typed, 4_800 - 2_812);
+        assert_eq!(demand.total(), 3_740);
+        assert!(!demand.is_empty());
+    }
+
+    /// Demand is a function of what is staged, so closing the gap closes
+    /// the demand — and plain never appears in it at all (D5).
+    #[test]
+    fn demand_tracks_staged_counts_and_ignores_plain() {
+        let mut plane = small_plane(10, 2);
+        let sink = with_sink(&mut plane);
+        // targets(10) = {3,4,3}. Give dao 2 and typed 4, plain plenty.
+        let rec = record(
+            10,
+            (1..=2)
+                .map(|i| cell_with(100 + i, &format!("0xd{i}"), AssetKind::Dao, 0))
+                .collect(),
+            (1..=4)
+                .map(|i| cell_with(200 + i, &format!("0xt{i}"), AssetKind::Xudt, 0))
+                .collect(),
+            (1..=9)
+                .map(|i| cell_with(300 + i, &format!("0xp{i}"), AssetKind::Native, 0))
+                .collect(),
+        );
+        plane.reservoir_replaced(&rec, &HashMap::new(), &[]);
+        plane.flush(Some(1_000));
+        assert_eq!(
+            plane.class_counts(),
+            [2, 4, 4],
+            "dao short by one, plain over"
+        );
+        assert_eq!(
+            sink.read(),
+            CompositionDemand {
+                curated: true,
+                dao: 1,
+                typed: 0,
+            },
+            "typed is satisfied; plain is over quota and still never asked for"
+        );
+
+        // Spending a staged dao widens the gap by exactly one.
+        plane.note_input_unresolved(&OutPoint {
+            tx_hash: "0xd1".into(),
+            index: 0,
+        });
+        plane.flush(Some(2_000));
+        assert_eq!(sink.read().dao, 2);
+    }
+
+    /// Falling back to canonical staffing — degrade, or a rebuild reset —
+    /// zeroes the demand: there is nobody left to satisfy.
+    #[test]
+    fn leaving_composed_mode_zeroes_the_demand() {
+        let mut plane = small_plane(10, 2);
+        let sink = with_sink(&mut plane);
+        let canonical = canonical_field(4);
+        seed_canonical(&mut plane, &canonical, 500);
+        let rec = record(
+            10,
+            vec![cell_with(1_001, "0xrd", AssetKind::Dao, 0)],
+            vec![cell_with(2_001, "0xrt", AssetKind::Xudt, 0)],
+            vec![cell_with(3_001, "0xrp", AssetKind::Native, 0)],
+        );
+        plane.reservoir_replaced(&rec, &outpoint_index(&canonical), &canonical);
+        plane.flush(Some(1_000));
+        assert!(sink.read().curated && !sink.read().is_empty());
+
+        plane.chain_reorganized(10, &canonical);
+        plane.flush(Some(1_100));
+        assert_eq!(sink.read(), CompositionDemand::default(), "degrade");
+
+        // And again through a rebuild reset from a fresh composition.
+        plane.reservoir_replaced(&rec, &outpoint_index(&canonical), &canonical);
+        plane.flush(Some(1_200));
+        assert!(sink.read().curated);
+        plane.note_reset();
+        plane.flush(Some(1_300));
+        assert_eq!(sink.read(), CompositionDemand::default(), "reset");
+    }
+
+    /// The sink is an observer. Wiring one must not shift a single byte
+    /// of what the plane emits — the CKB-only path leaves it unwired.
+    #[test]
+    fn publishing_demand_does_not_disturb_the_wire() {
+        let script = |plane: &mut DisplayPlane| {
+            let canonical = canonical_field(24);
+            seed_canonical(plane, &canonical, 500);
+            let rec = record(
+                10,
+                vec![cell_with(1_001, "0xrd", AssetKind::Dao, 0)],
+                vec![cell_with(2_001, "0xrt", AssetKind::Xudt, 0)],
+                vec![cell_with(3_001, "0xrp", AssetKind::Native, 0)],
+            );
+            plane.reservoir_replaced(&rec, &outpoint_index(&canonical), &canonical);
+            let mut log: Vec<String> = Vec::new();
+            for step in 0..8u64 {
+                plane.note_activity(20 + step, [step % 24]);
+                if step == 3 {
+                    plane.note_input_unresolved(&OutPoint {
+                        tx_hash: "0xrt".into(),
+                        index: 0,
+                    });
+                }
+                if step == 5 {
+                    plane.note_removed(step);
+                }
+                let delta = plane.flush(Some(1_000 + step * 10));
+                log.push(serde_json::to_string(&delta).unwrap());
+                log.push(serde_json::to_string(&plane.section()).unwrap());
+            }
+            log
+        };
+
+        let mut bare = small_plane(12, 2);
+        let quiet = script(&mut bare);
+        let mut wired = small_plane(12, 2);
+        let sink = with_sink(&mut wired);
+        let observed = script(&mut wired);
+
+        assert_eq!(
+            quiet, observed,
+            "the sink is write-only, never a feedback loop"
+        );
+        assert!(sink.read().curated, "…and it did publish");
     }
 
     // ═══ T1 precise spend detection ══════════════════════════════════

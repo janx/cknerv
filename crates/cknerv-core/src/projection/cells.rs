@@ -19,12 +19,15 @@
 //! fixture (`tests/fixtures/helix_seed.json`) that both languages compare
 //! against — see `crates/cknerv-core/tests/helix_parity.rs`.
 
+use std::sync::Arc;
+
 use serde::{Deserialize, Serialize};
 
 use crate::enrichment::ChainAnchor;
 use crate::helix::helix_seed_for;
 use crate::mutation::{Mutation, ReplayPhase};
 use crate::outpoint::{is_cellbase_input, OutPoint, TxOutputInfo};
+use crate::projection::composition_policy::CompositionDemandSink;
 use crate::projection::display_plane::DisplayPlane;
 use crate::projection::Projection;
 use crate::{AssetKind, LockKind};
@@ -474,6 +477,14 @@ impl Default for CellGalaxy {
 impl CellGalaxy {
     pub fn new() -> Self {
         Self::with_config(CellGalaxyConfig::default())
+    }
+
+    /// Publish the display plane's composition shortfall to `sink`, so a
+    /// supplier outside the projection can close it. Without this the
+    /// plane never computes or publishes demand.
+    pub fn with_composition_demand_sink(mut self, sink: Arc<CompositionDemandSink>) -> Self {
+        self.display.set_demand_sink(sink);
+        self
     }
 
     pub fn with_config(config: CellGalaxyConfig) -> Self {
@@ -1482,6 +1493,7 @@ mod tests {
     use super::*;
     use crate::enrichment::GalaxyCompositionRecord;
     use crate::outpoint::{CELLBASE_INDEX, CELLBASE_TX_HASH};
+    use crate::projection::composition_policy::CompositionDemand;
 
     fn make_galaxy() -> CellGalaxy {
         CellGalaxy::new()
@@ -3926,6 +3938,43 @@ mod tests {
             Some(5)
         );
         assert_display_invariants(&g);
+    }
+
+    /// T2 — the sink survives the whole projection path: a reservoir
+    /// arriving as an ordinary mutation makes the display plane publish
+    /// what it is short of, and a degrade takes it back to silence.
+    #[test]
+    fn composition_demand_reaches_the_sink_through_apply_mutation() {
+        let sink = Arc::new(CompositionDemandSink::new());
+        let mut g = CellGalaxy::new().with_composition_demand_sink(sink.clone());
+        g.apply_mutation(&mined(1, "0xb1", 1_000));
+        g.apply_mutation(&landed(
+            "0xa",
+            1,
+            1_000,
+            vec![],
+            vec![out(1, "0x"), out(2, "0x")],
+        ));
+        assert_eq!(
+            sink.read(),
+            CompositionDemand::default(),
+            "prefix staffing asks for nothing"
+        );
+
+        // Three residents against a 12,000-cell budget: the shortfall is
+        // almost the entire quota.
+        g.apply_mutation(&reservoir(1, (500_000, 500_001, 500_002)));
+        let demand = sink.read();
+        assert!(demand.curated);
+        assert_eq!(demand.dao, 3_600 - 1, "one dao staged of 3600");
+        assert_eq!(demand.typed, 4_800 - 3, "one resident + the two canonical");
+
+        g.apply_mutation(&Mutation::ChainReorganized { from_block: 1 });
+        assert_eq!(
+            sink.read(),
+            CompositionDemand::default(),
+            "a degraded stage has nobody to satisfy"
+        );
     }
 
     /// T1 — the ONLY way the server can learn a staged resident died:

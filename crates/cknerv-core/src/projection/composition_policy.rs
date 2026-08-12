@@ -43,6 +43,7 @@
 //! `bench`) are keyed-lookup only — they are never iterated.
 
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use crate::enrichment::{GalaxyCompositionRecord, GalaxyCompositionTarget};
 use crate::outpoint::OutPoint;
@@ -82,6 +83,79 @@ fn class_of(kind: AssetKind) -> CompositionClass {
         AssetKind::Dao => CompositionClass::Dao,
         AssetKind::Native => CompositionClass::Plain,
         _ => CompositionClass::Typed,
+    }
+}
+
+/// What a curated stage is short of, in the policy's own vocabulary.
+///
+/// Measured against the IDEAL quota
+/// ([`GalaxyCompositionTarget::for_total`] over the full cell budget) —
+/// *not* against the per-class counts a given refresh happened to land
+/// on. Those are what the composition could reach with the candidates it
+/// had; demand is the gap between that and what the product asks for, so
+/// it stays non-zero for as long as the gap is real. On live mainnet the
+/// gap opens at roughly 1,750 dao and 1,990 typed.
+///
+/// Plain is deliberately absent (design D5): plain slots keep being
+/// filled by the canonical fallback stream, which is what keeps recent
+/// chain births and deaths visible in the resting field. Curated dao and
+/// typed converge by displacing plain's over-allocation, not by curating
+/// plain too.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CompositionDemand {
+    /// False when no curated policy is staffing the stage. A prefix
+    /// stage asks for nothing and both counts are zero — so a CKB-only
+    /// deployment needs no special case anywhere downstream.
+    pub curated: bool,
+    pub dao: usize,
+    pub typed: usize,
+}
+
+impl CompositionDemand {
+    pub fn is_empty(self) -> bool {
+        self.dao == 0 && self.typed == 0
+    }
+
+    pub fn total(self) -> usize {
+        self.dao.saturating_add(self.typed)
+    }
+}
+
+/// Where the policy publishes its [`CompositionDemand`], and where a
+/// supplier reads it. One slot, one writer (the projection, at every
+/// flush), any number of readers.
+///
+/// The three fields are stored as independent relaxed atomics, so a
+/// reader can in principle straddle a publish and see one field from
+/// before it. That is deliberate: the counts are a request for a bounded
+/// amount of work on a multi-second cadence, so a tick sized from a
+/// slightly stale number costs one round of over- or under-fetching and
+/// self-corrects on the next. It buys the projection's hot path freedom
+/// from a lock the supervisor also touches.
+#[derive(Debug, Default)]
+pub struct CompositionDemandSink {
+    curated: AtomicBool,
+    dao: AtomicUsize,
+    typed: AtomicUsize,
+}
+
+impl CompositionDemandSink {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn publish(&self, demand: CompositionDemand) {
+        self.curated.store(demand.curated, Ordering::Relaxed);
+        self.dao.store(demand.dao, Ordering::Relaxed);
+        self.typed.store(demand.typed, Ordering::Relaxed);
+    }
+
+    pub fn read(&self) -> CompositionDemand {
+        CompositionDemand {
+            curated: self.curated.load(Ordering::Relaxed),
+            dao: self.dao.load(Ordering::Relaxed),
+            typed: self.typed.load(Ordering::Relaxed),
+        }
     }
 }
 
@@ -138,6 +212,10 @@ pub(crate) trait CompositionPolicy {
     /// policy decides whether it enters and, if the stage is full, who
     /// gives way.
     fn admit_activity(&mut self, stage: &mut Stage, block: u64, id: u64);
+
+    /// What this policy is short of and would like supplied from
+    /// outside. Read at every flush, so it must be O(1).
+    fn demand(&self, stage: &Stage) -> CompositionDemand;
 
     /// Staged members per class — a test seam for the composition
     /// invariants (I1's ratio).
@@ -249,6 +327,12 @@ impl CompositionPolicy for CanonicalPolicy {
 
     fn admit_activity(&mut self, stage: &mut Stage, block: u64, id: u64) {
         stage.stage_activity(block, id);
+    }
+
+    fn demand(&self, _stage: &Stage) -> CompositionDemand {
+        // Prefix staffing wants nothing: it takes the canonical map in
+        // insertion order and there is no such thing as a shortfall.
+        CompositionDemand::default()
     }
 }
 
@@ -660,6 +744,19 @@ impl CompositionPolicy for CuratedPolicy {
             stage.stage_activity(block, id);
             self.class_of_member.insert(id, class);
             self.class_counts[class as usize] += 1;
+        }
+    }
+
+    fn demand(&self, stage: &Stage) -> CompositionDemand {
+        let ideal = GalaxyCompositionTarget::for_total(stage.budget_cells());
+        CompositionDemand {
+            curated: true,
+            dao: ideal
+                .dao
+                .saturating_sub(self.class_counts[CompositionClass::Dao as usize]),
+            typed: ideal
+                .typed
+                .saturating_sub(self.class_counts[CompositionClass::Typed as usize]),
         }
     }
 

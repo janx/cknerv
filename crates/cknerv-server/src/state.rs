@@ -23,8 +23,9 @@ use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::{broadcast, mpsc, watch};
 
 use cknerv_core::{
-    Chain, ChainNode, EnrichmentEvent, EnrichmentSourceState, MempoolStats, Mutation, Peer,
-    RecentBlock, RecentTx, ReplayPhase, RevisionedMutation, Ring,
+    Chain, ChainNode, CompositionDemand, CompositionDemandSink, EnrichmentEvent,
+    EnrichmentSourceState, MempoolStats, Mutation, Peer, RecentBlock, RecentTx, ReplayPhase,
+    RevisionedMutation, Ring,
 };
 
 use crate::enrichment::CanonicalContext;
@@ -86,6 +87,11 @@ pub struct ServerState {
     canonical_evidence_tx: watch::Sender<u64>,
     replay_active: AtomicBool,
     pub(crate) projections: RwLock<Registry>,
+    /// The cell galaxy's live composition shortfall, published by the
+    /// display plane at every flush. Empty (and never written) unless the
+    /// host wired the same sink into the projection — a CKB-only
+    /// deployment simply reads zeros forever.
+    composition_demand: Arc<CompositionDemandSink>,
     /// Coordination lock making (state, revision) snapshot-atomic. The
     /// reducer takes the write side around its full apply sequence
     /// (mutate + revision bump + broadcast); `snapshot()` takes the
@@ -108,8 +114,20 @@ impl ServerState {
             canonical_evidence_tx,
             replay_active: AtomicBool::new(false),
             projections: RwLock::new(Registry::new()),
+            composition_demand: Arc::new(CompositionDemandSink::new()),
             coord: RwLock::new(()),
         }
+    }
+
+    /// Install the sink the cell-galaxy projection publishes to, so the
+    /// enrichment supervisor and the projection share one slot.
+    pub fn set_composition_demand_sink(&mut self, sink: Arc<CompositionDemandSink>) {
+        self.composition_demand = sink;
+    }
+
+    /// What the display plane is short of right now, per class.
+    pub fn composition_demand(&self) -> CompositionDemand {
+        self.composition_demand.read()
     }
 
     /// Subscribe to the live mutation broadcast.
@@ -749,6 +767,34 @@ fn apply_chain_mutation(chain: &mut Chain, m: &Mutation) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The projection and the supervisor have to be looking at the SAME
+    /// slot — a demand nobody can read is worse than no demand at all.
+    #[test]
+    fn the_installed_demand_sink_is_the_one_the_server_reads() {
+        let mut state = ServerState::new();
+        assert_eq!(
+            state.composition_demand(),
+            CompositionDemand::default(),
+            "unwired: zeros forever, which is what a CKB-only host wants"
+        );
+
+        let sink = Arc::new(CompositionDemandSink::new());
+        state.set_composition_demand_sink(sink.clone());
+        sink.publish(CompositionDemand {
+            curated: true,
+            dao: 1_777,
+            typed: 1_994,
+        });
+        assert_eq!(
+            state.composition_demand(),
+            CompositionDemand {
+                curated: true,
+                dao: 1_777,
+                typed: 1_994,
+            }
+        );
+    }
 
     #[test]
     fn block_mined_updates_tip_and_recent() {

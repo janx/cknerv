@@ -9,11 +9,14 @@
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use anyhow::Result;
 use cknerv_adapter_ckb::{CkbDirectAdapter, CkbGalaxyCompositionHydrator};
 use cknerv_adapter_ckbadger::CkbadgerEnrichmentSource;
-use cknerv_core::{CellGalaxy, SemanticsProjection, DEFAULT_REORG_WINDOW_BLOCKS};
+use cknerv_core::{
+    CellGalaxy, CompositionDemandSink, SemanticsProjection, DEFAULT_REORG_WINDOW_BLOCKS,
+};
 use cknerv_server::{EnrichmentSource, ServerBuilder};
 
 use axum::routing::get;
@@ -115,10 +118,18 @@ pub async fn run(workdir: PathBuf, cfg: ResolvedConfig) -> Result<()> {
         .as_ref()
         .map(|source| (source.name(), source.capabilities()));
 
+    // One slot, shared: the display plane publishes what its composition
+    // is short of, and the enrichment supervisor is the only thing in a
+    // position to go find it.
+    let composition_demand = Arc::new(CompositionDemandSink::new());
     let mut builder = ServerBuilder::new()
         .add_adapter(adapter)
-        .add_projection(CellGalaxy::with_config(galaxy_config))
+        .add_projection(
+            CellGalaxy::with_config(galaxy_config)
+                .with_composition_demand_sink(composition_demand.clone()),
+        )
         .add_enrichment_projection(SemanticsProjection::new(configured_semantics_source))
+        .composition_demand_sink(composition_demand)
         .workdir(state_dir.clone())
         .restore_persisted(restore_persisted);
     if let Some(source) = ckbadger_source {

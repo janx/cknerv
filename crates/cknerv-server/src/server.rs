@@ -25,7 +25,7 @@ use std::time::Duration;
 use axum::Router;
 use tokio::sync::{mpsc, watch};
 
-use cknerv_core::{EnrichmentEvent, Mutation, Projection};
+use cknerv_core::{CompositionDemandSink, EnrichmentEvent, Mutation, Projection};
 
 use crate::adapter::Adapter;
 use crate::enrichment::EnrichmentSource;
@@ -82,6 +82,7 @@ pub struct ServerBuilder {
     projections: Vec<ProjectionInstaller>,
     enrichment_projections: Vec<ProjectionInstaller>,
     enrichment_source: Option<Arc<dyn EnrichmentSource>>,
+    composition_demand: Option<Arc<CompositionDemandSink>>,
     workdir: Option<PathBuf>,
     restore_persisted: bool,
 }
@@ -93,6 +94,7 @@ impl ServerBuilder {
             projections: Vec::new(),
             enrichment_projections: Vec::new(),
             enrichment_source: None,
+            composition_demand: None,
             workdir: None,
             restore_persisted: true,
         }
@@ -135,6 +137,16 @@ impl ServerBuilder {
         self
     }
 
+    /// Share the cell galaxy's composition-demand sink with the server,
+    /// so the enrichment supervisor can see what the display plane is
+    /// short of. Pass the SAME `Arc` given to
+    /// `CellGalaxy::with_composition_demand_sink`; omitting the call
+    /// leaves demand unread and every supply path idle.
+    pub fn composition_demand_sink(mut self, sink: Arc<CompositionDemandSink>) -> Self {
+        self.composition_demand = Some(sink);
+        self
+    }
+
     pub fn workdir(mut self, p: PathBuf) -> Self {
         self.workdir = Some(p);
         self
@@ -160,7 +172,11 @@ impl ServerBuilder {
     /// wants to host extra RCG-specific routes alongside.
     pub fn build(self) -> anyhow::Result<(Router, ServerHandle)> {
         // 1. Empty state + projection registration.
-        let state = Arc::new(ServerState::new());
+        let mut state = ServerState::new();
+        if let Some(sink) = self.composition_demand {
+            state.set_composition_demand_sink(sink);
+        }
+        let state = Arc::new(state);
         {
             let mut registry = state.projections.write().unwrap();
             for install in self.projections {
