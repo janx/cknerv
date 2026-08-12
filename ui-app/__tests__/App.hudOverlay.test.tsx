@@ -141,6 +141,10 @@ describe('HudOverlay wiring', () => {
     );
     expect(APP_SOURCE).toContain('setCellScanInteractionActive(false);');
     expect(APP_SOURCE).toContain('enabled={!cellScanInteractionActive}');
+    expect(APP_SOURCE).toContain('ref={cellGalaxyCanvasRef}');
+    expect(APP_SOURCE).toContain(
+      'restoreCellGalaxyFocus(cellGalaxyCanvasRef.current);',
+    );
   });
 
   it('keeps one primary scene inspection target at a time', () => {

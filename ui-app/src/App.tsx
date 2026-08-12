@@ -131,6 +131,7 @@ import {
   resolveEnrichmentConfig,
   resolveGalaxyConfig,
 } from './runtime-config';
+import { restoreCellGalaxyFocus } from './cell-galaxy-focus';
 
 interface AppProps {
   /** Initial Chain entity from `/api/entities/chain/snapshot`. */
@@ -202,6 +203,7 @@ export default function App({
   }, [qualityOverride]);
   const qualityRuntime = useQualityRuntime();
   const qualityCascade = QUALITY_PRESETS[qualityRuntime.effective];
+  const cellGalaxyCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const orbitControlsRef = useRef<ElementRef<typeof OrbitControls>>(null);
   const [cellScanInteractionActive, setCellScanInteractionActive] = useState(
     false,
@@ -339,7 +341,8 @@ export default function App({
   const clearCellSelection = useCallback(() => {
     // Closing is also an interaction-boundary reset. The nested Cell Scan can
     // disappear while it owns pointer capture, before its delayed R3F teardown
-    // reports onEnd; never let that keep the main OrbitControls disabled.
+    // reports onEnd; never let that keep the main OrbitControls disabled, and
+    // hand DOM focus back to the Galaxy for the user's next interaction.
     setCellScanInteractionActive(false);
     memoryRouteHopAnchorRef.current = null;
     setCellIdentityProof(null);
@@ -347,6 +350,7 @@ export default function App({
     dispatchCellCausalNavigation({ type: 'clear' });
     setSelectedCellId(null);
     dispatchMemoryRecall({ type: 'cancel' });
+    restoreCellGalaxyFocus(cellGalaxyCanvasRef.current);
   }, []);
   const inspectCell = useCallback((nextCellId: number) => {
     if (!Number.isSafeInteger(nextCellId) || nextCellId < 0) return;
@@ -1112,6 +1116,7 @@ export default function App({
 
       <CellGalaxyProvider value={cellsCache}>
         <Canvas
+          ref={cellGalaxyCanvasRef}
           camera={{ position: [110, 108, 110], fov: 50, near: 1, far: 3000 }}
           gl={{ antialias: true, alpha: true }}
           dpr={canvasDpr}
