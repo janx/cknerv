@@ -123,26 +123,37 @@ export function cellDisplayLimitToSliderValue(
   );
 }
 
-/** AUTO's display budget is quality-independent: the fixed structural
- * budget, bounded by the server's retained capacity. The complete browser
- * cache remains intact; the budget only bounds what the Galaxy renders. */
+/** AUTO's display budget is quality-independent: the server-owned display
+ * budget when one is streaming (`cache.displayBudget.cells`), the fixed
+ * structural constant otherwise — both bounded by the server's retained
+ * capacity. The complete browser cache remains intact; the budget only
+ * bounds what the Galaxy renders. */
 export function automaticCellDisplayLimit(
   capacity = CELL_DISPLAY_MAX,
+  serverBudget?: number | null,
 ): number {
   const maximum = normalizeCellDisplayCapacity(capacity);
-  return Math.min(maximum, AUTO_CELL_DISPLAY_BUDGET);
+  const budget =
+    serverBudget !== undefined
+    && serverBudget !== null
+    && Number.isFinite(serverBudget)
+      ? Math.max(0, Math.floor(serverBudget))
+      : AUTO_CELL_DISPLAY_BUDGET;
+  return Math.min(maximum, budget);
 }
 
-/** AUTO stays within both its stable visual budget and the server's retained
- * capacity. Manual mode remains a renderer request up to the renderer's hard
- * ceiling, so an older low-cap config does not silently shrink the slider's
- * range. */
+/** AUTO stays within both its resolved visual budget and the server's
+ * retained capacity. Manual mode remains a presentation clamp up to the
+ * renderer's hard ceiling — render the first N of the staged list, no
+ * policy semantics — so an older low-cap config does not silently shrink
+ * the slider's range. */
 export function resolveCellDisplayLimit(
   snapshot: CellDisplayRuntimeSnapshot,
   automaticCapacity = CELL_DISPLAY_MAX,
+  serverBudget?: number | null,
 ): number {
   return snapshot.mode === 'auto'
-    ? automaticCellDisplayLimit(automaticCapacity)
+    ? automaticCellDisplayLimit(automaticCapacity, serverBudget)
     : normalizeCellDisplayLimit(snapshot.manualLimit);
 }
 

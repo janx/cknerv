@@ -20,8 +20,8 @@ import {
   INSTANCE_CAPACITY,
 } from '../geometry/cellPositions';
 import {
+  cellRenderOverlay,
   createCellRenderSetState,
-  currentActivityCellIds,
   diffCellRenderSlots,
   syncCellRenderSet,
   type CellRenderRange,
@@ -31,11 +31,7 @@ import {
   syncCellSlots,
 } from '../geometry/cellSlotAssignment';
 import { ScreenSpaceHitIndex } from '../geometry/screenSpaceHitIndex';
-export {
-  pinCellInspectionFieldInVisiblePrefix,
-  pinSelectedCellInVisiblePrefix,
-} from '../geometry/cellRenderSet';
-import type { Cell, GalaxyCompositionRecord } from '@cknerv/types';
+import type { Cell } from '@cknerv/types';
 import { useCellGalaxy } from '../hooks/cellGalaxyContext';
 import { ConsensusMemoryFocusScope } from '../hooks/consensusMemoryFocusContext';
 import {
@@ -150,9 +146,6 @@ interface CellGalaxyProps {
   /** Resolved server projection cap. The shared renderer hard ceiling still
    * bounds allocations, while smaller profiles keep AUTO honest. */
   cellCapacity?: number;
-  /** Optional canonically validated resting reservoir. It changes only the
-   * visible composition; canonical block activity remains in CellGalaxyCache. */
-  galaxyComposition?: GalaxyCompositionRecord | null;
   /** Subset of `ckbNodeIds` whose chain node runs a miner. Miner pulses
    *  only fire from these positions. Falls back to all node ids when empty
    *  (e.g. tests / placeholder profile). */
@@ -1018,7 +1011,6 @@ function CellPicker({
 export default function CellGalaxy({
   ckbNodeIds,
   cellCapacity,
-  galaxyComposition = null,
   minerCkbNodeIds,
   universeSeed,
   selectedId,
@@ -1042,32 +1034,16 @@ export default function CellGalaxy({
   // slots in the Points BufferGeometry. Birth / death / tag are reduced
   // server-side before they reach this renderer.
   const cellsCache = useCellGalaxy();
-  const activityCellIds = useMemo(
-    () => galaxyComposition ? currentActivityCellIds(cellsCache) : [],
-    [cellsCache.pulseLinks, galaxyComposition],
-  );
-  const activityKey = useMemo(
-    () => galaxyComposition ? activityCellIds.join(':') : '',
-    [activityCellIds, galaxyComposition],
-  );
-  const compositionCellsById = useMemo(() => {
-    const cells = new Map<number, Cell>();
-    if (!galaxyComposition) return cells;
-    for (const cell of [
-      ...galaxyComposition.dao,
-      ...galaxyComposition.typed,
-      ...galaxyComposition.plain,
-    ]) cells.set(cell.id, cell);
-    return cells;
-  }, [galaxyComposition]);
+  // Selection targets resolve canonical-first, then through the display
+  // plane's resident payloads (staged members outside the retained set).
   const identityProofCell = identityProof
     ? cellsCache.cells.get(identityProof.cellId)
-      ?? compositionCellsById.get(identityProof.cellId)
+      ?? cellsCache.displayResidents.get(identityProof.cellId)
       ?? null
     : null;
   const identityProofBindingCell = identityProofBinding
     ? cellsCache.cells.get(identityProofBinding.cellId)
-      ?? compositionCellsById.get(identityProofBinding.cellId)
+      ?? cellsCache.displayResidents.get(identityProofBinding.cellId)
       ?? null
     : null;
   const { effective: quality } = useQualityRuntime();
@@ -1075,6 +1051,7 @@ export default function CellGalaxy({
   const cellDisplayLimit = resolveCellDisplayLimit(
     cellDisplay,
     cellCapacity,
+    cellsCache.displayBudget?.cells,
   );
   const dischargeArms = QUALITY_PRESETS[quality].dischargeArms;
   const memorySignal = QUALITY_PRESETS[quality].memorySignal;
@@ -1086,11 +1063,20 @@ export default function CellGalaxy({
    *  hitbox's `e.instanceId` did, so the `cell:${id}` selection
    *  contract is preserved. */
   const cellsListRef = useRef<Cell[]>([]);
-  /** Reducer-journal cursor for the visible prefix. Ordinary retained Cell
-   * replacements patch indexed slots, and births beyond the display cap leave
-   * this array untouched. */
+  /** Display-journal cursor over the server-authored stage membership.
+   * Ordinary churn patches indexed slots; only reset/skipped-journal/clamp
+   * transitions rebuild. */
   const cellRenderSetRef = useRef(createCellRenderSetState());
-  /** Stable GPU slot assignment over the render set's membership. */
+  /** D4 overlay pool state: the selected cell and inspection-field members
+   * that sit off-stage render as overlay entries appended after the staged
+   * list — client-transient, never entering the shared display membership
+   * or the passive display graph. */
+  const overlayStateRef = useRef<{
+    selectedCellId: number | null;
+    field: CellInspectionField | null;
+    combined: Cell[];
+  }>({ selectedCellId: null, field: null, combined: [] });
+  /** Stable GPU slot assignment over the staged + overlay membership. */
   const cellSlotStateRef = useRef(createCellSlotState());
   /** Unchanged immutable Cell objects retain their expensive hash/taxonomy
    * presentation even when GC moves them to a different visible slot. */
@@ -1393,27 +1379,45 @@ export default function CellGalaxy({
 
     const renderSet = cellRenderSetRef.current;
     const renderNeedsSync = renderSet.cellsToken !== cellsCache.cellsToken
+      || renderSet.displayToken !== cellsCache.displayToken
       || renderSet.displayBudget !== cellDisplayLimit
-      || renderSet.selectedCellId !== selectedCellIdRef.current
-      || renderSet.inspectionField !== inspectionField
-      || renderSet.compositionToken !== galaxyComposition
-      || renderSet.activityKey !== activityKey;
+      || renderSet.displayPlaneActive !== (cellsCache.displayBudget !== null);
     const renderUpdate = renderNeedsSync
-      ? syncCellRenderSet(
-        renderSet,
+      ? syncCellRenderSet(renderSet, cellsCache, cellDisplayLimit)
+      : null;
+    // Overlay pool: selection/inspection visibility is a client transient
+    // appended AFTER the staged list, resolved canonical-first. Recomputed
+    // only when the staged list or the selection inputs move.
+    const overlayState = overlayStateRef.current;
+    const overlayNeedsSync = renderUpdate !== null
+      || overlayState.selectedCellId !== selectedCellIdRef.current
+      || overlayState.field !== inspectionField;
+    if (overlayNeedsSync) {
+      const staged = renderSet.cells;
+      const overlay = cellRenderOverlay(
         cellsCache,
-        cellDisplayLimit,
+        renderSet.indexById,
         selectedCellIdRef.current,
         inspectionField,
-        galaxyComposition,
-        activityCellIds,
-      )
-      : null;
-    // Stable-slot indirection: the render set's LIST reorders per block
-    // (activity leads, cap eviction removes from the front), but each cell
-    // keeps its GPU slot while visible, so uploads collapse to O(churn).
-    const slotSync = renderUpdate
-      ? syncCellSlots(cellSlotStateRef.current, renderUpdate.cells)
+      );
+      overlayState.selectedCellId = selectedCellIdRef.current;
+      overlayState.field = inspectionField;
+      // The shared buffers hold INSTANCE_CAPACITY slots; the staged list is
+      // bounded by the display budget, so the reserved overlay pool fits.
+      // Clamp defensively so a manual full-capacity clamp can never push
+      // the combined list past the allocation.
+      const capacityLeft = INSTANCE_CAPACITY - staged.length;
+      const bounded = overlay.length > capacityLeft
+        ? overlay.slice(0, Math.max(0, capacityLeft))
+        : overlay;
+      overlayState.combined = bounded.length === 0
+        ? staged
+        : staged.concat(bounded);
+    }
+    // Stable-slot indirection: each cell keeps its GPU slot while visible
+    // (staged or overlay), so uploads collapse to O(churn).
+    const slotSync = overlayNeedsSync
+      ? syncCellSlots(cellSlotStateRef.current, overlayState.combined)
       : null;
     const cellsList = slotSync?.cells ?? cellSlotStateRef.current.published;
     const count = cellsList.length;

@@ -578,27 +578,17 @@ export default function App({
   // identity-stable when unchanged) — never re-aggregated here.
   const cellsStats = cellsCache.stats;
 
-  const compositionCellsById = useMemo(() => {
-    const cells = new Map<number, Cell>();
-    const composition = semanticsCache.galaxyComposition;
-    if (!composition) return cells;
-    for (const cell of [
-      ...composition.dao,
-      ...composition.typed,
-      ...composition.plain,
-    ]) cells.set(cell.id, cell);
-    return cells;
-  }, [semanticsCache.galaxyComposition]);
-
   // Resolve the two selections. Cell = the galaxy axis; node/peer share the
   // network axis (selectedNetId holds a node id or a `peer:` id, never a cell).
+  // Canonical-first over the display plane's resident payloads (staged
+  // members outside the retained set).
   const selectedCell = useMemo(() => {
     if (!selectedCellId || !selectedCellId.startsWith(CELL_SELECTION_PREFIX)) return null;
     const id = Number(selectedCellId.slice(CELL_SELECTION_PREFIX.length));
     return Number.isFinite(id)
-      ? cellsCache.cells.get(id) ?? compositionCellsById.get(id) ?? null
+      ? cellsCache.cells.get(id) ?? cellsCache.displayResidents.get(id) ?? null
       : null;
-  }, [selectedCellId, cellsCache.cells, compositionCellsById]);
+  }, [selectedCellId, cellsCache.cells, cellsCache.displayResidents]);
   const cachedSelectedCellSemantics = selectedCell
     ? semanticsCache.cells.get(outPointKey(selectedCell.out_point)) ?? null
     : null;
@@ -1182,7 +1172,6 @@ export default function App({
             ckbNodeIds={ckbNodeIds}
             universeSeed={universeSeed}
             cellCapacity={galaxyConfig.cellCap}
-            galaxyComposition={semanticsCache.galaxyComposition}
             localReceiveDelayS={cf.localReceiveDelayS}
             selectedId={selectedNetId}
             selectedCellId={selectedCellId}
@@ -1223,7 +1212,6 @@ export default function App({
                     structure before the terminal write seal resolves. */}
                 <NeuralNetwork
                   cellCapacity={galaxyConfig.cellCap}
-                  galaxyComposition={semanticsCache.galaxyComposition}
                   cellFlashRef={cellFlashRef}
                   flashDirtyRef={flashDirtyRef}
                   flashDirtyIdsRef={flashDirtyIdsRef}

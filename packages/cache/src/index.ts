@@ -10,15 +10,19 @@ export {
   applyCellDelta,
   applyRevisionedCellDeltas,
   cellContentEquals,
+  resolveDisplayCell,
   DEFAULT_RECENT_LINKS_CAPACITY,
   DEFAULT_LINK_RING_CAPACITY,
   NO_CELL_CHANGES,
+  NO_DISPLAY_CHANGES,
   type ActiveReplayProgress,
   type CanonicalRewriteEcho,
   type CanonicalRewriteMarker,
   type CellChangeSet,
   type CellGalaxyCache,
   type CellsReducerOptions,
+  type DisplayBudgetView,
+  type DisplayChangeSet,
 } from './cellsReducer';
 
 export {

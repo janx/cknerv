@@ -15,8 +15,6 @@ import {
   writeCellBuffers,
   writeCellInspectionNavigationRoles,
   writeCellInspectionTargets,
-  pinCellInspectionFieldInVisiblePrefix,
-  pinSelectedCellInVisiblePrefix,
 } from '../../src/components/CellGalaxy';
 import { deriveCellInspectionField } from '../../src/nerve/cellInspectionField';
 import type { NeighborGraph } from '../../src/geometry/neighborGraph';
@@ -120,15 +118,15 @@ describe('CellGalaxy', () => {
     expect(source).not.toContain('CELL_FORM');
   });
 
-  it('uses the shared manual-or-adaptive display budget for its draw range', () => {
+  it('uses the shared manual-or-server display budget for its draw range', () => {
     const source = readFileSync(CELL_GALAXY_SOURCE, 'utf8');
 
     expect(source).toMatch(
-      /resolveCellDisplayLimit\(\s*cellDisplay,\s*cellCapacity,\s*\)/,
+      /resolveCellDisplayLimit\(\s*cellDisplay,\s*cellCapacity,\s*cellsCache\.displayBudget\?\.cells,\s*\)/,
     );
     expect(source).toContain('createCellRenderSetState()');
     expect(source).toMatch(
-      /syncCellRenderSet\(\s*renderSet,\s*cellsCache,\s*cellDisplayLimit,/,
+      /syncCellRenderSet\(renderSet,\s*cellsCache,\s*cellDisplayLimit\)/,
     );
     expect(source).toContain('const count = cellsList.length');
   });
@@ -209,18 +207,20 @@ describe('CellGalaxy', () => {
     expect(picker).toContain('forcePreciseRaycastRef.current');
   });
 
-  it('memoizes composition activity pins outside the frame loop', () => {
+  it('consumes only the server display plane — zero composition policy', () => {
     const source = readFileSync(CELL_GALAXY_SOURCE, 'utf8');
-    const componentStart = source.indexOf('export default function CellGalaxy');
-    const frameStart = source.indexOf('useSimFrame(', componentStart);
-    const activityDerive = source.indexOf(
-      'currentActivityCellIds(cellsCache)',
-      componentStart,
-    );
 
-    expect(activityDerive).toBeGreaterThan(0);
-    expect(activityDerive).toBeLessThan(frameStart);
-    expect(source).toContain('[cellsCache.pulseLinks, galaxyComposition]');
+    // The old client-side composition machinery must stay dead: membership
+    // is server-authored and arrives as the display journal.
+    expect(source).not.toContain('galaxyComposition');
+    expect(source).not.toContain('currentActivityCellIds');
+    expect(source).not.toContain('pinCellInspectionFieldInVisiblePrefix');
+    // Staged members resolve canonical-first through the display residents,
+    // and selection/inspection visibility rides the bounded overlay pool
+    // appended after the staged list.
+    expect(source).toContain('cellsCache.displayResidents.get(');
+    expect(source).toContain('cellRenderOverlay(');
+    expect(source).toContain('renderSet.displayToken !== cellsCache.displayToken');
   });
 
   it('shares explicit memory focus between the route overlay and Cell body', () => {
@@ -546,122 +546,6 @@ describe('writeCellInspectionNavigationRoles', () => {
     );
 
     expect([...roles]).toEqual([1, 0, 1]);
-  });
-});
-
-describe('pinSelectedCellInVisiblePrefix', () => {
-  it('pins an inspected Cell without dropping or duplicating cache entries', () => {
-    const cells = [mkCell(1), mkCell(2), mkCell(3), mkCell(4), mkCell(5)];
-    const result = pinSelectedCellInVisiblePrefix(cells, 3, 5);
-
-    expect(result.slice(0, 3).map((cell) => cell.id)).toEqual([1, 2, 5]);
-    expect(new Set(result.map((cell) => cell.id))).toEqual(new Set([1, 2, 3, 4, 5]));
-    expect(cells.map((cell) => cell.id)).toEqual([1, 2, 3, 4, 5]);
-  });
-
-  it('returns the existing order when selection is already visible or absent', () => {
-    const cells = [mkCell(1), mkCell(2), mkCell(3)];
-    expect(pinSelectedCellInVisiblePrefix(cells, 2, 2)).toBe(cells);
-    expect(pinSelectedCellInVisiblePrefix(cells, 2, 99)).toBe(cells);
-    expect(pinSelectedCellInVisiblePrefix(cells, 3, 3)).toBe(cells);
-  });
-});
-
-describe('pinCellInspectionFieldInVisiblePrefix', () => {
-  it('keeps the root and direct neighbours before hop-two context', () => {
-    const cells = Array.from({ length: 10 }, (_, index) => mkCell(index + 1));
-    const field = {
-      selectedCellId: 9,
-      maxHops: 2,
-      hopsByCellId: new Map([
-        [9, 0],
-        [8, 1],
-        [10, 1],
-        [6, 2],
-        [7, 2],
-      ]),
-    };
-
-    const result = pinCellInspectionFieldInVisiblePrefix(
-      cells,
-      4,
-      9,
-      field,
-    );
-
-    expect(new Set(result.slice(0, 4).map((cell) => cell.id)))
-      .toEqual(new Set([9, 8, 10, 6]));
-    expect(result[3].id).toBe(9);
-    expect(new Set(result.map((cell) => cell.id)))
-      .toEqual(new Set(cells.map((cell) => cell.id)));
-    expect(cells.map((cell) => cell.id))
-      .toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
-  });
-
-  it('spends a tight budget on every direct neighbour before hop two', () => {
-    const cells = Array.from({ length: 8 }, (_, index) => mkCell(index + 1));
-    const field = {
-      selectedCellId: 8,
-      maxHops: 2,
-      hopsByCellId: new Map([
-        [8, 0],
-        [6, 1],
-        [7, 1],
-        [5, 2],
-      ]),
-    };
-
-    const result = pinCellInspectionFieldInVisiblePrefix(
-      cells,
-      3,
-      8,
-      field,
-    );
-
-    expect(new Set(result.slice(0, 3).map((cell) => cell.id)))
-      .toEqual(new Set([8, 6, 7]));
-    expect(result.slice(0, 3).some((cell) => cell.id === 5)).toBe(false);
-  });
-
-  it('ignores a stale field while immediately pinning the new root', () => {
-    const cells = Array.from({ length: 9 }, (_, index) => mkCell(index + 1));
-    const staleField = {
-      selectedCellId: 9,
-      maxHops: 2,
-      hopsByCellId: new Map([
-        [9, 0],
-        [6, 1],
-        [7, 1],
-      ]),
-    };
-
-    const result = pinCellInspectionFieldInVisiblePrefix(
-      cells,
-      3,
-      8,
-      staleField,
-    );
-
-    expect(result.slice(0, 3).map((cell) => cell.id)).toEqual([1, 2, 8]);
-  });
-
-  it('returns the existing order when the full field is already visible', () => {
-    const cells = Array.from({ length: 6 }, (_, index) => mkCell(index + 1));
-    const field = {
-      selectedCellId: 2,
-      maxHops: 2,
-      hopsByCellId: new Map([
-        [2, 0],
-        [1, 1],
-        [3, 1],
-        [4, 2],
-      ]),
-    };
-
-    expect(pinCellInspectionFieldInVisiblePrefix(cells, 4, 2, field))
-      .toBe(cells);
-    expect(pinCellInspectionFieldInVisiblePrefix(cells, 4, null, field))
-      .toBe(cells);
   });
 });
 

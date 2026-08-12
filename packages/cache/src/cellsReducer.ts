@@ -11,6 +11,7 @@ import type {
   CellGalaxySnapshot,
   CellLink,
   CellLinkRecord,
+  DisplayProvenance,
   ReplayPhase,
   RevisionedCellDelta,
 } from '@cknerv/types';
@@ -87,6 +88,48 @@ export const NO_CELL_CHANGES: CellChangeSet = Object.freeze({
 
 const RESET_CELL_CHANGES: CellChangeSet = Object.freeze({
   ...NO_CELL_CHANGES,
+  reset: true,
+});
+
+/** Server-owned display-plane budgets mirrored from `snapshot.display`.
+ *  camelCase view over the snake_case wire `DisplayBudget`. */
+export interface DisplayBudgetView {
+  cells: number;
+  nerveEdges: number;
+}
+
+/** Net display-plane changes carried by one cache transition, mirroring
+ * `CellChangeSet`'s journal shape and reset semantics. The render pipeline
+ * consumes ONLY this journal for stage membership — one journal-shaped code
+ * path, zero source knowledge, O(churn) end to end.
+ *
+ * `updated` lists payload replacements of on-stage cells: canonical
+ * `cellChanges.updated` ids that are currently staged members (death/tag of
+ * a member) plus residents re-shipped via `enter_cells` while already
+ * members. Ids also in `entered` are excluded — the enter itself carries the
+ * final payload. */
+export interface DisplayChangeSet {
+  /** Opaque identity of the display membership this journal applies AFTER
+   * the previous cache. A renderer that skipped an intermediate state
+   * detects the mismatch and falls back to one canonical rebuild. */
+  readonly baseToken: object | null;
+  readonly reset: boolean;
+  readonly entered: readonly number[];
+  readonly exited: readonly number[];
+  readonly updated: readonly number[];
+}
+
+/** Stable no-op journal for transitions that touch nothing on stage. */
+export const NO_DISPLAY_CHANGES: DisplayChangeSet = Object.freeze({
+  baseToken: null,
+  reset: false,
+  entered: EMPTY_CELL_IDS,
+  exited: EMPTY_CELL_IDS,
+  updated: EMPTY_CELL_IDS,
+});
+
+const RESET_DISPLAY_CHANGES: DisplayChangeSet = Object.freeze({
+  ...NO_DISPLAY_CHANGES,
   reset: true,
 });
 
@@ -170,6 +213,38 @@ export interface CellGalaxyCache {
    *  identity-stable across batches that change nothing it reports. Always
    *  equals `aggregateCellsStats(cells, totalBirths, totalDeaths)`. */
   stats: CellsStats;
+  // ── display plane ("who is on stage") — server-authored membership.
+  // Presentation policy, never canonical truth: it feeds no counters and is
+  // excluded from persistence. Absent section (old server) ⇒ null budget /
+  // provenance and empty membership; the ui falls back to a canonical prefix.
+  /** Staged membership ids in enter order (insertion-ordered Set). Mixes
+   *  canonical ids with resident ids; resolve canonical-first at read time
+   *  (`resolveDisplayCell`). */
+  displayMembers: Set<number>;
+  /** Full payloads for staged members outside the canonical retained set.
+   *  A resident id that also appears in the canonical map (post-reorg
+   *  overlap) keeps both records — canonical wins on lookup. */
+  displayResidents: Map<number, Cell>;
+  /** Server-owned product budgets, or null when the server ships no display
+   *  plane. */
+  displayBudget: DisplayBudgetView | null;
+  displayProvenance: DisplayProvenance | null;
+  /** Opaque identity that changes exactly when `displayMembers` or
+   *  `displayResidents` change. Provenance-only transitions keep it. */
+  displayToken: object;
+  /** Display journal from the immediately previous cache value. Browser-only
+   * reducer metadata; not part of the wire contract. */
+  displayChanges: DisplayChangeSet;
+}
+
+/** Canonical-first resolution of a staged member id. The canonical retained
+ *  record always wins over a resident payload with the same id (post-reorg
+ *  overlap keeps both stored). */
+export function resolveDisplayCell(
+  cache: Pick<CellGalaxyCache, 'cells' | 'displayResidents'>,
+  id: number,
+): Cell | undefined {
+  return cache.cells.get(id) ?? cache.displayResidents.get(id);
 }
 
 export function emptyCellsCache(): CellGalaxyCache {
@@ -187,6 +262,12 @@ export function emptyCellsCache(): CellGalaxyCache {
     totalDeaths: 0,
     backfill: null,
     stats: emptyCellsStats(),
+    displayMembers: new Set(),
+    displayResidents: new Map(),
+    displayBudget: null,
+    displayProvenance: null,
+    displayToken: {},
+    displayChanges: RESET_DISPLAY_CHANGES,
   };
 }
 
@@ -247,12 +328,26 @@ export function fromCellsSnapshot(
    *  journal stay authoritative from the snapshot; only the per-Cell object
    *  identity of content-identical records is reused so identity-keyed
    *  downstream caches survive the reset. */
-  prev?: Pick<CellGalaxyCache, 'cells'>,
+  prev?: Pick<CellGalaxyCache, 'cells'>
+    & Partial<Pick<CellGalaxyCache, 'displayResidents'>>,
 ): CellGalaxyCache {
   const cells = new Map<number, Cell>();
   for (const c of snap.cells) {
     const retained = prev?.cells.get(c.id);
     cells.set(
+      c.id,
+      retained !== undefined && cellContentEquals(retained, c) ? retained : c,
+    );
+  }
+  // Seed the display plane from the snapshot's display section. An absent
+  // section (old server) leaves budget/provenance null and membership empty —
+  // the ui renders its canonical-prefix fallback instead.
+  const display = snap.display;
+  const displayMembers = new Set<number>(display?.members ?? []);
+  const displayResidents = new Map<number, Cell>();
+  for (const c of display?.residents ?? []) {
+    const retained = prev?.displayResidents?.get(c.id) ?? prev?.cells.get(c.id);
+    displayResidents.set(
       c.id,
       retained !== undefined && cellContentEquals(retained, c) ? retained : c,
     );
@@ -294,6 +389,17 @@ export function fromCellsSnapshot(
       snap.total_births ?? 0,
       snap.total_deaths ?? 0,
     ),
+    displayMembers,
+    displayResidents,
+    displayBudget: display
+      ? {
+        cells: display.budget.cells,
+        nerveEdges: display.budget.nerve_edges,
+      }
+      : null,
+    displayProvenance: display?.provenance ?? null,
+    displayToken: {},
+    displayChanges: RESET_DISPLAY_CHANGES,
   };
 }
 
@@ -307,17 +413,31 @@ interface CellGalaxyDraft {
   cellsOwned: boolean;
   recentLinksOwned: boolean;
   pulseLinksOwned: boolean;
+  /** Display maps copy-on-write flag — one flag covers members + residents
+   * so both copies (and one displayToken turnover) happen together. */
+  displayOwned: boolean;
   touchedCellIds: Set<number>;
+  /** Ids whose display MEMBERSHIP this batch may have changed. */
+  touchedDisplayIds: Set<number>;
+  /** Already-staged residents whose payload this batch re-shipped. */
+  residentUpdatedIds: Set<number>;
   cellOrderInvalidated: boolean;
 }
 
 function createDraft(prev: CellGalaxyCache): CellGalaxyDraft {
   return {
-    value: { ...prev, cellChanges: NO_CELL_CHANGES },
+    value: {
+      ...prev,
+      cellChanges: NO_CELL_CHANGES,
+      displayChanges: NO_DISPLAY_CHANGES,
+    },
     cellsOwned: false,
     recentLinksOwned: false,
     pulseLinksOwned: false,
+    displayOwned: false,
     touchedCellIds: new Set(),
+    touchedDisplayIds: new Set(),
+    residentUpdatedIds: new Set(),
     cellOrderInvalidated: false,
   };
 }
@@ -413,6 +533,78 @@ function writableCells(draft: CellGalaxyDraft): Map<number, Cell> {
     draft.cellsOwned = true;
   }
   return draft.value.cells;
+}
+
+function writableDisplay(draft: CellGalaxyDraft): void {
+  if (!draft.displayOwned) {
+    draft.value.displayMembers = new Set(draft.value.displayMembers);
+    draft.value.displayResidents = new Map(draft.value.displayResidents);
+    draft.value.displayToken = {};
+    draft.displayOwned = true;
+  }
+}
+
+function displayProvenanceEquals(
+  a: DisplayProvenance | null,
+  b: DisplayProvenance,
+): boolean {
+  return (
+    a !== null
+    && a.mode === b.mode
+    && a.source === b.source
+    && a.updated_at_ms === b.updated_at_ms
+    && (a.as_of === null) === (b.as_of === null)
+    && (
+      a.as_of === null
+      || b.as_of === null
+      || (a.as_of.block === b.as_of.block && a.as_of.hash === b.as_of.hash)
+    )
+  );
+}
+
+/** Derive the display journal for one batch. `entered`/`exited` are the net
+ * membership diff over ids this batch touched; `updated` merges already-
+ * staged residents whose payload was re-shipped with canonical `updated` ids
+ * that are staged members — excluding ids that just entered (the enter
+ * already carries the final payload). Returns the frozen no-op journal only
+ * when the display maps kept their identity AND nothing on stage changed, so
+ * a chained (possibly empty) journal always accompanies a displayToken
+ * turnover. */
+function summarizeDisplayChanges(
+  previousMembers: ReadonlySet<number>,
+  nextMembers: ReadonlySet<number>,
+  touchedDisplayIds: ReadonlySet<number>,
+  residentUpdatedIds: ReadonlySet<number>,
+  canonicalUpdated: readonly number[],
+  baseToken: object,
+  displayTouched: boolean,
+): DisplayChangeSet {
+  const entered: number[] = [];
+  const exited: number[] = [];
+  for (const id of touchedDisplayIds) {
+    const before = previousMembers.has(id);
+    const after = nextMembers.has(id);
+    if (!before && after) entered.push(id);
+    else if (before && !after) exited.push(id);
+  }
+  const enteredSet = entered.length > 0 ? new Set(entered) : null;
+  const updated: number[] = [];
+  for (const id of residentUpdatedIds) {
+    if (nextMembers.has(id) && !enteredSet?.has(id)) updated.push(id);
+  }
+  for (const id of canonicalUpdated) {
+    if (!nextMembers.has(id)) continue;
+    if (enteredSet?.has(id)) continue;
+    if (residentUpdatedIds.has(id)) continue;
+    updated.push(id);
+  }
+  if (
+    !displayTouched
+    && entered.length === 0
+    && exited.length === 0
+    && updated.length === 0
+  ) return NO_DISPLAY_CHANGES;
+  return { baseToken, reset: false, entered, exited, updated };
 }
 
 function writableRecentLinks(draft: CellGalaxyDraft): CellLink[] {
@@ -559,9 +751,55 @@ function mutateCellDelta(
       return true;
     }
     case 'display': {
-      // Display-plane membership (server-authored). Contract lands in S0;
-      // the client store that consumes it arrives in S3. No-op until then.
-      return false;
+      // Server-authored stage membership patch. Byte-identical replays
+      // (reconnect catch-up, replay-ring re-delivery) must be pure no-ops:
+      // no map copy, no token turnover, no journal entry.
+      let changed = false;
+      for (const cell of d.enter_cells) {
+        const isMember = c.displayMembers.has(cell.id);
+        const retained = c.displayResidents.get(cell.id);
+        const identical =
+          retained !== undefined && cellContentEquals(retained, cell);
+        if (isMember && identical) continue;
+        writableDisplay(draft);
+        c.displayResidents.set(
+          cell.id,
+          retained !== undefined && identical ? retained : cell,
+        );
+        if (isMember) {
+          draft.residentUpdatedIds.add(cell.id);
+        } else {
+          c.displayMembers.add(cell.id);
+          draft.touchedDisplayIds.add(cell.id);
+        }
+        changed = true;
+      }
+      for (const id of d.enter_ids) {
+        if (c.displayMembers.has(id)) continue;
+        writableDisplay(draft);
+        c.displayMembers.add(id);
+        draft.touchedDisplayIds.add(id);
+        changed = true;
+      }
+      for (const id of d.exit_ids) {
+        if (!c.displayMembers.has(id) && !c.displayResidents.has(id)) continue;
+        writableDisplay(draft);
+        if (c.displayMembers.delete(id)) draft.touchedDisplayIds.add(id);
+        c.displayResidents.delete(id);
+        changed = true;
+      }
+      if (
+        d.provenance !== undefined
+        && d.provenance !== null
+        && !displayProvenanceEquals(c.displayProvenance, d.provenance)
+      ) {
+        // Presentation provenance only — the displayToken deliberately does
+        // NOT advance (membership/residents unchanged); the new cache object
+        // itself is the change signal for provenance consumers.
+        c.displayProvenance = d.provenance;
+        changed = true;
+      }
+      return changed;
     }
     default: {
       const _exhaustive: never = d;
@@ -587,6 +825,15 @@ export function applyCellDelta(
     draft.touchedCellIds,
     prev.cellsToken,
     draft.cellOrderInvalidated,
+  );
+  draft.value.displayChanges = summarizeDisplayChanges(
+    prev.displayMembers,
+    draft.value.displayMembers,
+    draft.touchedDisplayIds,
+    draft.residentUpdatedIds,
+    draft.value.cellChanges.updated,
+    prev.displayToken,
+    draft.displayOwned,
   );
   draft.value.stats = nextCellsStats(
     prev.stats,
@@ -623,6 +870,15 @@ export function applyRevisionedCellDeltas(
     draft.touchedCellIds,
     prev.cellsToken,
     draft.cellOrderInvalidated,
+  );
+  draft.value.displayChanges = summarizeDisplayChanges(
+    prev.displayMembers,
+    draft.value.displayMembers,
+    draft.touchedDisplayIds,
+    draft.residentUpdatedIds,
+    draft.value.cellChanges.updated,
+    prev.displayToken,
+    draft.displayOwned,
   );
   draft.value.stats = nextCellsStats(
     prev.stats,

@@ -7,7 +7,7 @@
 // full re-pack, so a lost journal can never corrupt topology.
 
 import type { Cell } from '@cknerv/types';
-import type { CellChangeSet } from '@cknerv/cache';
+import type { CellChangeSet, CellGalaxyCache } from '@cknerv/cache';
 
 export interface TopologyJournal {
   upserts: Map<number, Cell>;
@@ -109,4 +109,98 @@ export function invalidateTopologyJournal(
   journal.upserts.clear();
   journal.removedIds.clear();
   return undefined;
+}
+
+// ── display-graph feed ──────────────────────────────────────────────────
+// The display graph's membership is the server-authored display plane, so
+// its journal is fed from the DISPLAY journal (entered→upserts with
+// canonical-first resolved cells, exited→removes, updated→upserts) instead
+// of the canonical cache journal. Chain validity spans BOTH token lineages:
+// canonical updates of staged members ride batches that advance only the
+// cells token, while membership patches advance only the display token.
+
+export interface DisplayGraphJournalFeed {
+  journal: TopologyJournal;
+  /** True while feeding from the server display plane. A regime flip
+   * (display plane appearing/disappearing across a snapshot) breaks the
+   * chain — the next build sends a full pack. */
+  displayPlaneActive: boolean;
+  lastCellsToken: object | null;
+  lastDisplayToken: object | null;
+}
+
+export function createDisplayGraphJournalFeed(): DisplayGraphJournalFeed {
+  return {
+    journal: createTopologyJournal(),
+    displayPlaneActive: false,
+    lastCellsToken: null,
+    lastDisplayToken: null,
+  };
+}
+
+/** Accumulate one cache generation for the display graph. Under a display
+ * plane the display journal drives entries (dead members remove, live
+ * members upsert); without one the canonical fallback delegates to
+ * `feedTopologyJournal` — that regime's builds only chain deltas at full
+ * coverage, exactly as before. Re-feeding the same generation is a no-op. */
+export function feedDisplayGraphJournal(
+  feed: DisplayGraphJournalFeed,
+  cache: Pick<
+    CellGalaxyCache,
+    | 'cells'
+    | 'cellsToken'
+    | 'cellChanges'
+    | 'displayMembers'
+    | 'displayResidents'
+    | 'displayBudget'
+    | 'displayToken'
+    | 'displayChanges'
+  >,
+): void {
+  const displayPlaneActive = cache.displayBudget !== null;
+  if (feed.displayPlaneActive !== displayPlaneActive) {
+    invalidateTopologyJournal(feed.journal);
+    feed.displayPlaneActive = displayPlaneActive;
+    feed.lastCellsToken = null;
+    feed.lastDisplayToken = null;
+  }
+  if (!displayPlaneActive) {
+    feedTopologyJournal(feed.journal, cache);
+    return;
+  }
+
+  const canonicalFresh = cache.cellsToken !== feed.lastCellsToken;
+  const displayFresh = cache.displayToken !== feed.lastDisplayToken;
+  if (!canonicalFresh && !displayFresh) return;
+  const displayChanges = cache.displayChanges;
+  const chainBroken =
+    feed.lastCellsToken === null
+    || cache.cellChanges.reset
+    || displayChanges.reset
+    || (canonicalFresh && cache.cellChanges.baseToken !== feed.lastCellsToken)
+    || (displayFresh && displayChanges.baseToken !== feed.lastDisplayToken);
+  if (chainBroken) {
+    invalidateTopologyJournal(feed.journal);
+  } else {
+    const journal = feed.journal;
+    for (const id of displayChanges.exited) {
+      journal.removedIds.add(id);
+      journal.upserts.delete(id);
+    }
+    const upsert = (id: number) => {
+      const cell = cache.cells.get(id) ?? cache.displayResidents.get(id);
+      if (!cell) return;
+      if (cell.death_at_ms === null) {
+        journal.upserts.set(id, cell);
+        journal.removedIds.delete(id);
+      } else {
+        journal.removedIds.add(id);
+        journal.upserts.delete(id);
+      }
+    };
+    for (const id of displayChanges.entered) upsert(id);
+    for (const id of displayChanges.updated) upsert(id);
+  }
+  feed.lastCellsToken = cache.cellsToken;
+  feed.lastDisplayToken = cache.displayToken;
 }

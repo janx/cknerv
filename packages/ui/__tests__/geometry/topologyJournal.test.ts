@@ -1,13 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import type { Cell } from '@cknerv/types';
+import type { Cell, CellDelta } from '@cknerv/types';
 import {
   applyCellDelta,
   applyRevisionedCellDeltas,
   emptyCellsCache,
+  fromCellsSnapshot,
 } from '@cknerv/cache';
 import {
   consumeTopologyJournal,
+  createDisplayGraphJournalFeed,
   createTopologyJournal,
+  feedDisplayGraphJournal,
   feedTopologyJournal,
   invalidateTopologyJournal,
 } from '../../src/geometry/topologyJournal';
@@ -71,5 +74,131 @@ describe('topology journal', () => {
     expect(journal.valid).toBe(true);
     expect(invalidateTopologyJournal(journal)).toBeUndefined();
     expect(journal.valid).toBe(false);
+  });
+});
+
+describe('display-graph journal feed', () => {
+  function displayDelta(overrides: Partial<{
+    enter_ids: number[];
+    enter_cells: Cell[];
+    exit_ids: number[];
+  }> = {}): CellDelta {
+    return {
+      type: 'display',
+      enter_ids: [],
+      enter_cells: [],
+      exit_ids: [],
+      ...overrides,
+    };
+  }
+
+  function stagedCache(canonical: Cell[], members: number[], residents: Cell[] = []) {
+    return fromCellsSnapshot(1, {
+      cells: canonical,
+      last_pulse_at_ms: 0,
+      display: {
+        budget: { cells: 12_000, nerve_edges: 8_000 },
+        members,
+        residents,
+        provenance: {
+          mode: 'canonical',
+          source: null,
+          as_of: null,
+          updated_at_ms: 0,
+        },
+      },
+    });
+  }
+
+  it('translates display enters/exits/updates into graph upserts/removes', () => {
+    const feed = createDisplayGraphJournalFeed();
+    let cache = stagedCache([cell(1), cell(2), cell(3)], [1, 2]);
+    feedDisplayGraphJournal(feed, cache);
+    // Bootstrap sight is a broken chain: the first build full-packs.
+    expect(consumeTopologyJournal(feed.journal).valid).toBe(false);
+
+    const resident = cell(700);
+    cache = applyRevisionedCellDeltas(cache, [
+      {
+        revision: 2,
+        delta: displayDelta({
+          enter_ids: [3],
+          enter_cells: [resident],
+          exit_ids: [2],
+        }),
+      },
+      { revision: 3, delta: { type: 'death', id: 1, at_ms: 9 } },
+    ]);
+    feedDisplayGraphJournal(feed, cache);
+    // StrictMode-style refeed of the SAME generation is a no-op.
+    feedDisplayGraphJournal(feed, cache);
+
+    const snapshot = consumeTopologyJournal(feed.journal);
+    expect(snapshot.valid).toBe(true);
+    // Enters upsert (canonical 3 + resident 700); the dead staged member 1
+    // removes (topology holds live positions only); the exit removes.
+    expect([...snapshot.upserts.keys()].sort((a, b) => a - b)).toEqual([3, 700]);
+    expect([...snapshot.removedIds].sort((a, b) => a - b)).toEqual([1, 2]);
+  });
+
+  it('canonical churn of off-stage cells feeds nothing', () => {
+    const feed = createDisplayGraphJournalFeed();
+    let cache = stagedCache([cell(1)], [1]);
+    feedDisplayGraphJournal(feed, cache);
+    consumeTopologyJournal(feed.journal);
+
+    cache = applyCellDelta(cache, { type: 'birth', cell: cell(50) });
+    feedDisplayGraphJournal(feed, cache);
+    const snapshot = consumeTopologyJournal(feed.journal);
+    expect(snapshot.valid).toBe(true);
+    expect(snapshot.upserts.size).toBe(0);
+    expect([...snapshot.removedIds]).toEqual([]);
+  });
+
+  it('invalidates on a skipped generation in either token lineage', () => {
+    const feed = createDisplayGraphJournalFeed();
+    let cache = stagedCache([cell(1), cell(2), cell(3)], [1]);
+    feedDisplayGraphJournal(feed, cache);
+    consumeTopologyJournal(feed.journal);
+
+    cache = applyCellDelta(cache, displayDelta({ enter_ids: [2] }));
+    const skipped = applyCellDelta(cache, displayDelta({ enter_ids: [3] }));
+    feedDisplayGraphJournal(feed, skipped);
+    expect(feed.journal.valid).toBe(false);
+  });
+
+  it('falls back to the canonical cache journal without a display plane', () => {
+    const feed = createDisplayGraphJournalFeed();
+    let cache = applyCellDelta(emptyCellsCache(), { type: 'birth', cell: cell(1) });
+    feedDisplayGraphJournal(feed, cache);
+    consumeTopologyJournal(feed.journal);
+
+    cache = applyCellDelta(cache, { type: 'birth', cell: cell(2) });
+    feedDisplayGraphJournal(feed, cache);
+    const snapshot = consumeTopologyJournal(feed.journal);
+    expect(snapshot.valid).toBe(true);
+    expect([...snapshot.upserts.keys()]).toEqual([2]);
+  });
+
+  it('a display plane appearing breaks the chain once', () => {
+    const feed = createDisplayGraphJournalFeed();
+    let cache = applyCellDelta(emptyCellsCache(), { type: 'birth', cell: cell(1) });
+    feedDisplayGraphJournal(feed, cache);
+    consumeTopologyJournal(feed.journal);
+
+    const staffed = stagedCache([cell(1)], [1]);
+    feedDisplayGraphJournal(feed, staffed);
+    expect(feed.journal.valid).toBe(false);
+    consumeTopologyJournal(feed.journal);
+
+    // …and chains normally afterwards.
+    const grown = applyRevisionedCellDeltas(staffed, [
+      { revision: 2, delta: { type: 'birth', cell: cell(2) } },
+      { revision: 2, delta: displayDelta({ enter_ids: [2] }) },
+    ]);
+    feedDisplayGraphJournal(feed, grown);
+    const snapshot = consumeTopologyJournal(feed.journal);
+    expect(snapshot.valid).toBe(true);
+    expect([...snapshot.upserts.keys()]).toEqual([2]);
   });
 });

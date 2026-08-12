@@ -33,7 +33,12 @@ import { useSimClock } from '../tweaks/SimClockScope';
 import { galaxyFrame } from '../tweaks/galaxyFrame';
 import { QUALITY_PRESETS, useQualityRuntime } from '../tweaks/qualityPresets';
 import { fabricAllocationEdges } from './fabricCapacity';
-import { passiveEdgeBudget } from '../geometry/passiveNeighborGraph';
+import {
+  NERVE_SCREEN_BUDGET,
+  NERVE_SCREEN_BUDGET_MAX,
+  NERVE_SCREEN_BUDGET_MIN,
+  passiveEdgeBudget,
+} from '../geometry/passiveNeighborGraph';
 import {
   LIVE,
   getNerveTuningVersion,
@@ -41,7 +46,9 @@ import {
 } from '../tweaks/liveTweaks';
 import {
   consumeTopologyJournal,
+  createDisplayGraphJournalFeed,
   createTopologyJournal,
+  feedDisplayGraphJournal,
   feedTopologyJournal,
   invalidateTopologyJournal,
 } from '../geometry/topologyJournal';
@@ -55,7 +62,6 @@ import { createNeighborGraphBuilder } from '../geometry/neighborGraphBuilder';
 import {
   cellRenderMap,
   createCellRenderSetState,
-  currentActivityCellIds,
   syncCellRenderSet,
 } from '../geometry/cellRenderSet';
 import { type Pulse, type PulsePlanningOptions } from './pulseRunner';
@@ -146,7 +152,7 @@ import {
   deriveCellInspectionField,
   type CellInspectionField,
 } from './cellInspectionField';
-import type { Cell, GalaxyCompositionRecord } from '@cknerv/types';
+import type { Cell } from '@cknerv/types';
 
 const SPIKE_POOL_CAPACITY = 1024;
 
@@ -191,9 +197,6 @@ interface NeuralNetworkProps {
   /** Server projection cap used by CellGalaxy's AUTO display budget. Passive
    * fibres resolve the same budget so hidden Cells never leave visible hair. */
   cellCapacity?: number;
-  /** Same additive resting reservoir consumed by CellGalaxy. Active pulse
-   * planning and route geometry continue to use the canonical cache. */
-  galaxyComposition?: GalaxyCompositionRecord | null;
   cellFlashRef?: React.RefObject<Map<number, number>>;
   flashDirtyRef?: React.MutableRefObject<boolean>;
   flashDirtyIdsRef?: CellFlashDirtyIdsRef;
@@ -268,7 +271,6 @@ interface ActivePulse extends Pulse {
 
 export default function NeuralNetwork({
   cellCapacity,
-  galaxyComposition = null,
   cellFlashRef,
   flashDirtyRef,
   flashDirtyIdsRef,
@@ -301,6 +303,7 @@ export default function NeuralNetwork({
   const cellDisplayLimit = resolveCellDisplayLimit(
     cellDisplayRuntime,
     cellCapacity,
+    cellsCache.displayBudget?.cells,
   );
   // The nerve screen budget and selection shares are live-tunable (backtick
   // panel). LIVE mutates in place, so the version counter is the change
@@ -321,9 +324,23 @@ export default function NeuralNetwork({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- version stamps the in-place LIVE mutation
     [nerveTuningVersion],
   );
+  // The server display plane owns the nerve screen budget when it streams
+  // one (`displayBudget.nerveEdges`); the module constant remains the
+  // fallback for old servers. A live-tuned knob (moved off its default)
+  // keeps priority — tuned behavior is unchanged.
+  const serverNerveEdges = cellsCache.displayBudget?.nerveEdges;
+  const effectiveNerveScreenBudget =
+    nerveScreenBudget === NERVE_SCREEN_BUDGET
+    && serverNerveEdges !== undefined
+    && Number.isFinite(serverNerveEdges)
+      ? Math.max(
+        NERVE_SCREEN_BUDGET_MIN,
+        Math.min(NERVE_SCREEN_BUDGET_MAX, Math.floor(serverNerveEdges)),
+      )
+      : nerveScreenBudget;
   const resolvedNerveBudget = passiveEdgeBudget(
     cellDisplayLimit,
-    nerveScreenBudget,
+    effectiveNerveScreenBudget,
   );
   // Fabric GPU allocation quantizes the resolved nerve budget to discrete
   // classes; a short settle keeps a live-tuning drag from remounting the
@@ -340,10 +357,6 @@ export default function NeuralNetwork({
     );
     return () => clearTimeout(settle);
   }, [targetAllocationEdges, fabricAllocation]);
-  const activityCellIds = useMemo(
-    () => galaxyComposition ? currentActivityCellIds(cellsCache) : [],
-    [cellsCache.pulseLinks, galaxyComposition],
-  );
   const particleCapMul = QUALITY_PRESETS[quality].particleCapMul;
   const topologyKey = `${topology?.neighborK ?? ''}:${topology?.maxEdgeLength ?? ''}`;
   // The display graph additionally re-selects when the nerve tuning moves;
@@ -370,9 +383,12 @@ export default function NeuralNetwork({
    * accumulated per cache generation, handed to build() and cleared
    * speculatively at issuance — every failure path (supersession, worker
    * loss, sync fallback) funnels through the worker generation check into a
-   * full re-pack, so lost entries can never corrupt topology. */
+   * full re-pack, so lost entries can never corrupt topology. The display
+   * feed consumes the server display journal (entered→upserts, exited→
+   * removes, updated→upserts); the routing journal stays on the canonical
+   * cache journal. */
   const routingJournalRef = useRef(createTopologyJournal());
-  const displayJournalRef = useRef(createTopologyJournal());
+  const displayFeedRef = useRef(createDisplayGraphJournalFeed());
   /** Bumped whenever a (re)mounted fabric rehydrates via onFabricReady.
    * A build response may apply a selection DELTA only when no rehydration
    * happened since the previous response was applied — a remount between
@@ -469,14 +485,14 @@ export default function NeuralNetwork({
   ]);
 
   const syncDisplayFabric = useCallback(() => {
+    // Accumulate this cache generation into the display-graph journal
+    // BEFORE consuming the render set, so a build issued below carries the
+    // exact O(churn) change set (StrictMode re-runs dedupe by token).
+    feedDisplayGraphJournal(displayFeedRef.current, cellsCache);
     const renderUpdate = syncCellRenderSet(
       displayRenderSetRef.current,
       cellsCache,
       cellDisplayLimit,
-      inspectionCellId,
-      inspectionFieldSnapshotRef.current,
-      galaxyComposition,
-      activityCellIds,
     );
     const visibleCells = renderUpdate.cells;
     const topologyChanged = (
@@ -508,13 +524,16 @@ export default function NeuralNetwork({
       );
       if (requestMatches) return;
 
-      // Full coverage: the display list IS the canonical map's cells, so
-      // reuse the retained Map instead of materialising a 50K copy per
-      // block. Any deviation (composition extras, dedupe gaps) fails the
-      // length check and takes the exact path.
-      const displayCells = visibleCells.length === cellsCache.cells.size
-        ? cellsCache.cells
-        : cellRenderMap(visibleCells);
+      // Fallback full coverage: the display list IS the canonical map's
+      // cells, so reuse the retained Map instead of materialising a copy
+      // per block. Under a display plane membership mixes residents in, so
+      // the staged list always materialises its own map (identity frozen
+      // per request for the completion-time guards below).
+      const displayPlaneActive = cellsCache.displayBudget !== null;
+      const displayCells =
+        !displayPlaneActive && visibleCells.length === cellsCache.cells.size
+          ? cellsCache.cells
+          : cellRenderMap(visibleCells);
       const requestedTopologyVersion = renderUpdate.topologyVersion;
       displayRequestedCellsRef.current = displayCells;
       displayRequestedTopologyRef.current = displaySelectionKey;
@@ -536,12 +555,15 @@ export default function NeuralNetwork({
           trunkShare: nerveTrunkShare,
           twigShare: nerveTwigShare,
         },
-        // Only meaningful when the display set IS the retained map (full
-        // coverage); a composed subset has its own membership churn the
-        // cache journal does not describe.
-        cellsJournal: displayCells === cellsCache.cells
-          ? consumeTopologyJournal(displayJournalRef.current)
-          : invalidateTopologyJournal(displayJournalRef.current),
+        // Under a display plane the journal is ALWAYS a valid delta feed —
+        // the server display journal describes the staged membership churn
+        // exactly, so a full pack happens only on bootstrap/reset/chain
+        // breaks. The canonical fallback keeps its old regime: delta at
+        // full coverage, explicit invalidation for a truncated prefix
+        // (whose churn the cache journal does not describe).
+        cellsJournal: displayPlaneActive || displayCells === cellsCache.cells
+          ? consumeTopologyJournal(displayFeedRef.current.journal)
+          : invalidateTopologyJournal(displayFeedRef.current.journal),
         preferredEdges: passiveGraphRef.current.edges,
         // Patch-deserialize both display CSRs against the graphs being
         // replaced (read at completion): per-block churn touches a small
@@ -667,8 +689,10 @@ export default function NeuralNetwork({
     cellsCache.cellChanges,
     cellsCache.cells,
     cellsCache.cellsToken,
-    galaxyComposition,
-    activityCellIds,
+    cellsCache.displayBudget,
+    cellsCache.displayChanges,
+    cellsCache.displayResidents,
+    cellsCache.displayToken,
     displayGraphBuilder,
     displaySelectionKey,
     resolvedNerveBudget,
@@ -710,7 +734,6 @@ export default function NeuralNetwork({
 
     const diff = cellsCache.cellChanges;
     feedTopologyJournal(routingJournalRef.current, cellsCache);
-    feedTopologyJournal(displayJournalRef.current, cellsCache);
     if (routedCellsTokenRef.current === cellsCache.cellsToken) return;
     if (
       !routingGraphReadyRef.current

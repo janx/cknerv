@@ -38,6 +38,23 @@ describe('NeuralNetwork drop instrumentation wiring', () => {
     expect(NETWORK_SOURCE.match(/markCellFlashDirty\(/g)).toHaveLength(2);
   });
 
+  it('feeds the display graph from the server display journal — never invalidating on the display path', () => {
+    // The display-plane build request always chains worker deltas; the
+    // explicit journal invalidation survives ONLY for the no-display-plane
+    // fallback's truncated canonical prefix.
+    expect(NETWORK_SOURCE).toContain('feedDisplayGraphJournal(displayFeedRef.current, cellsCache)');
+    expect(NETWORK_SOURCE).toMatch(
+      /displayPlaneActive \|\| displayCells === cellsCache\.cells\s*\?\s*consumeTopologyJournal\(displayFeedRef\.current\.journal\)\s*:\s*invalidateTopologyJournal\(displayFeedRef\.current\.journal\)/,
+    );
+    // Zero composition policy remains: no source knowledge, no activity
+    // derivation, no client-side membership resolution.
+    expect(NETWORK_SOURCE).not.toContain('galaxyComposition');
+    expect(NETWORK_SOURCE).not.toContain('currentActivityCellIds');
+    // The nerve screen budget defers to the server display plane when the
+    // live-tuning knob rests at its default.
+    expect(NETWORK_SOURCE).toContain('cellsCache.displayBudget?.nerveEdges');
+  });
+
   // Integration mount-safety test — the level this jsdom harness supports
   // (same precedent as __tests__/components/CellGalaxy.test.tsx). r3f v8's
   // <Canvas> never mounts its children at 0×0 (the no-op ResizeObserver in

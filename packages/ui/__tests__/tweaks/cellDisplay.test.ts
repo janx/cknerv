@@ -31,6 +31,15 @@ describe('Cell display budget', () => {
     expect(automaticCellDisplayLimit(2_000)).toBe(2_000);
   });
 
+  it('prefers the server display-plane budget over the client constant', () => {
+    // The display plane owns the product constant; the client constant is
+    // the old-server fallback only.
+    expect(automaticCellDisplayLimit(undefined, 9_000)).toBe(9_000);
+    expect(automaticCellDisplayLimit(2_000, 9_000)).toBe(2_000);
+    expect(automaticCellDisplayLimit(undefined, null)).toBe(12_000);
+    expect(automaticCellDisplayLimit(undefined, Number.NaN)).toBe(12_000);
+  });
+
   it('normalizes manual values to a safe renderer step and capacity', () => {
     expect(normalizeCellDisplayLimit(2_749)).toBe(2_700);
     expect(normalizeCellDisplayLimit(9_124)).toBe(9_000);
@@ -71,6 +80,9 @@ describe('Cell display budget', () => {
     const automatic = getCellDisplayRuntimeSnapshot();
     expect(resolveCellDisplayLimit(automatic)).toBe(12_000);
     expect(resolveCellDisplayLimit(automatic, 2_000)).toBe(2_000);
+    // The server display budget steers AUTO but never the manual clamp.
+    expect(resolveCellDisplayLimit(automatic, undefined, 9_000)).toBe(9_000);
+    expect(resolveCellDisplayLimit(manual, undefined, 9_000)).toBe(2_700);
     expect(automatic.manualLimit).toBe(2_700);
   });
 });
