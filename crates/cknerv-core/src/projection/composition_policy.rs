@@ -217,6 +217,12 @@ pub(crate) trait CompositionPolicy {
     /// outside. Read at every flush, so it must be O(1).
     fn demand(&self, stage: &Stage) -> CompositionDemand;
 
+    /// Cells found in answer to that shortfall, already parked where the
+    /// stage can reach them (every id satisfies `stage.is_stageable`).
+    /// Ids the policy declines to stage are returned so the caller can
+    /// let them go.
+    fn supply(&mut self, stage: &mut Stage, ids: &[u64]) -> Vec<u64>;
+
     /// Staged members per class — a test seam for the composition
     /// invariants (I1's ratio).
     #[cfg(test)]
@@ -333,6 +339,13 @@ impl CompositionPolicy for CanonicalPolicy {
         // Prefix staffing wants nothing: it takes the canonical map in
         // insertion order and there is no such thing as a shortfall.
         CompositionDemand::default()
+    }
+
+    fn supply(&mut self, _stage: &mut Stage, ids: &[u64]) -> Vec<u64> {
+        // Asked for nothing; declines everything. Reachable when a
+        // top-up lands in the window between a degrade and the next
+        // refresh.
+        ids.to_vec()
     }
 }
 
@@ -760,6 +773,66 @@ impl CompositionPolicy for CuratedPolicy {
         }
     }
 
+    /// Stage supplied cells until the class reaches its ideal quota,
+    /// making room on a full stage by displacing the lowest-priority
+    /// canonical-fallback member of whichever class is furthest over its
+    /// own quota.
+    ///
+    /// The displacement rule IS the convergence guarantee. Victims are
+    /// drawn only from `FALLBACK_GROUP`, so a curated member can never be
+    /// displaced by another curated member — the curated set is a one-way
+    /// ratchet and the ratio climbs monotonically toward 30:40:30 instead
+    /// of oscillating. A class holding nothing but curated members simply
+    /// yields nobody, and the supply stops rather than trade one curated
+    /// cell for another.
+    ///
+    /// A displaced member goes back to the FRONT of its own refill queue:
+    /// it lost its slot to a better-qualified cell, not to a death, and
+    /// the next vacancy in its class should take it first.
+    fn supply(&mut self, stage: &mut Stage, ids: &[u64]) -> Vec<u64> {
+        let target = GalaxyCompositionTarget::for_total(stage.budget_cells());
+        let ideal = [target.dao, target.typed, target.plain];
+        let mut declined = Vec::new();
+        for &id in ids {
+            if stage.is_member(id) {
+                continue; // already on stage; never stage an id twice
+            }
+            let Some(class) = stage.kind_of(id).map(class_of) else {
+                continue; // vanished between the offer and here
+            };
+            let c = class as usize;
+            if self.class_counts[c] >= ideal[c] {
+                declined.push(id); // this class is whole again
+                continue;
+            }
+            if stage.member_count() >= stage.dynamic_target() {
+                let Some((victim, victim_class)) = self.take_yielder(&ideal) else {
+                    // Nobody may give way without breaking the ratchet.
+                    declined.push(id);
+                    continue;
+                };
+                stage.unstage(victim);
+                self.class_of_member.remove(&victim);
+                self.class_counts[victim_class as usize] -= 1;
+                self.class_targets[victim_class as usize] =
+                    self.class_targets[victim_class as usize].saturating_sub(1);
+                self.class_queues[victim_class as usize].push_front(victim);
+            }
+            stage.stage_resting(id);
+            let key: PriorityKey = (RESERVOIR_GROUP, self.next_seq);
+            self.next_seq += 1;
+            self.class_of_member.insert(id, class);
+            self.class_counts[c] += 1;
+            // The refill preference moves with the membership, so a later
+            // vacancy restores the ratio supply just achieved rather than
+            // the one this refresh happened to land on.
+            self.class_targets[c] += 1;
+            self.resting_priority[c].insert(key, id);
+            self.priority_of.insert(id, key);
+        }
+        declined
+    }
+
     #[cfg(test)]
     fn class_counts(&self) -> [usize; 3] {
         self.class_counts
@@ -767,6 +840,39 @@ impl CompositionPolicy for CuratedPolicy {
 }
 
 impl CuratedPolicy {
+    /// Who gives way so a curated cell can enter: the lowest-priority
+    /// resting member of whichever class is furthest above its ideal
+    /// quota — and only ever a canonical-fallback admit.
+    ///
+    /// `resting_priority` is ordered so the maximum key is displaced
+    /// first, and `FALLBACK_GROUP` sorts after `RESERVOIR_GROUP`. So if
+    /// the maximum is not a fallback admit, the class holds nothing but
+    /// curated members and yields nobody. Activity members are not in
+    /// this map at all and are never candidates.
+    fn take_yielder(&mut self, ideal: &[usize; 3]) -> Option<(u64, CompositionClass)> {
+        let mut best: Option<(usize, CompositionClass, PriorityKey, u64)> = None;
+        for class in CLASS_ORDER {
+            let c = class as usize;
+            let overshoot = self.class_counts[c].saturating_sub(ideal[c]);
+            if overshoot == 0 {
+                continue;
+            }
+            let Some((&key, &id)) = self.resting_priority[c].iter().next_back() else {
+                continue;
+            };
+            if key.0 != FALLBACK_GROUP {
+                continue;
+            }
+            if best.is_none_or(|(most, ..)| overshoot > most) {
+                best = Some((overshoot, class, key, id));
+            }
+        }
+        let (_, class, key, id) = best?;
+        self.resting_priority[class as usize].remove(&key);
+        self.priority_of.remove(&id);
+        Some((id, class))
+    }
+
     /// An activity member left the stage (quota eviction or canonical
     /// removal): restore the resting member it displaced, when possible.
     /// The membership bookkeeping for the leaver itself is the stage's

@@ -362,6 +362,39 @@ impl GalaxyCompositionRecord {
     }
 }
 
+/// An ADDITIVE handoff for the curated display composition: cells found
+/// for the classes the stage said it was short of.
+///
+/// Deliberately not a [`GalaxyCompositionRecord`]. A record is a whole
+/// replacement — it re-derives the entire membership and carries the
+/// content-dedupe and degrade semantics that go with that. A top-up
+/// only ever adds, so reusing the replace shape would make both the
+/// dedupe and the degrade predicate meaningless.
+///
+/// Plain is absent by design (D5): plain slots stay fed by the canonical
+/// fallback stream, which is what keeps recent chain births and deaths
+/// visible in the resting field.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct GalaxyCompositionTopUp {
+    pub source: String,
+    pub as_of: ChainAnchor,
+    pub updated_at_ms: u64,
+    #[serde(default)]
+    pub dao: Vec<Cell>,
+    #[serde(default)]
+    pub typed: Vec<Cell>,
+}
+
+impl GalaxyCompositionTopUp {
+    pub fn is_empty(&self) -> bool {
+        self.dao.is_empty() && self.typed.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.dao.len() + self.typed.len()
+    }
+}
+
 /// One exact capacity bucket from a bounded indexed ecosystem sample.
 /// Capacity is encoded in shannons so adapters cannot leak display-unit
 /// rounding into the shared wire contract.
@@ -596,6 +629,9 @@ pub enum EnrichmentEvent {
     NetworkAtlasReplace(NetworkAtlasRecord),
     NetworkAtlasClear,
     GalaxyCompositionReplace(GalaxyCompositionRecord),
+    /// Additive supply for the curated composition, in answer to the
+    /// display plane's published shortfall.
+    GalaxyCompositionTopUp(GalaxyCompositionTopUp),
     Clear,
 }
 
@@ -1022,13 +1058,15 @@ impl EnrichmentProjection for SemanticsProjection {
                 self.network_atlas = None;
                 vec![SemanticsDelta::NetworkAtlasClear]
             }
-            EnrichmentEvent::GalaxyCompositionReplace(_) => {
-                // The composition record is display-plane input, not a
-                // semantic record: the server reducer installs it into the
-                // canonical stream as `Mutation::GalaxyReservoirReplaced`
-                // and the cells projection stages it. Content dedup, reorg
-                // degrade, and the resulting wire deltas all live there —
-                // semantics deliberately holds nothing.
+            EnrichmentEvent::GalaxyCompositionReplace(_)
+            | EnrichmentEvent::GalaxyCompositionTopUp(_) => {
+                // Composition input is display-plane input, not a semantic
+                // record: the server reducer installs it into the canonical
+                // stream as `Mutation::GalaxyReservoirReplaced` /
+                // `GalaxyReservoirToppedUp` and the cells projection stages
+                // it. Content dedup, reorg degrade, the ratchet, and the
+                // resulting wire deltas all live there — semantics
+                // deliberately holds nothing.
                 Vec::new()
             }
             EnrichmentEvent::Clear => {

@@ -116,11 +116,11 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 
-use crate::enrichment::GalaxyCompositionRecord;
 /// The quota constant itself belongs to the policy; the tests below pin
 /// its parity with the old client, so they still need it in scope.
 #[cfg(test)]
 use crate::enrichment::GalaxyCompositionTarget;
+use crate::enrichment::{GalaxyCompositionRecord, GalaxyCompositionTopUp};
 use crate::helix::helix_seed_for;
 use crate::outpoint::OutPoint;
 use crate::taxonomy::AssetKind;
@@ -358,10 +358,35 @@ impl Stage {
     }
 
     /// Forget a resident payload entirely (superseded by a canonical
-    /// birth of the same outpoint — it must never restage).
+    /// birth of the same outpoint, or spent — it must never restage).
     fn discard_resident(&mut self, id: u64) {
         self.residents.remove(&id);
         self.resident_pool.remove(&id);
+    }
+
+    /// Park a supplied off-map cell where the policy can reach it,
+    /// returning the id it is reachable under. `None` when the stage
+    /// already represents that outpoint or that id — invariant I4 holds
+    /// for supply exactly as it does for a refresh.
+    fn offer_resident(&mut self, cell: &Cell) -> Option<u64> {
+        if self.resident_outpoints.contains_key(&cell.out_point) {
+            return None;
+        }
+        if self.present.contains_key(&cell.id) || self.members.contains_key(&cell.id) {
+            return None;
+        }
+        self.resident_outpoints
+            .insert(cell.out_point.clone(), cell.id);
+        self.resident_pool.insert(cell.id, cell.clone());
+        Some(cell.id)
+    }
+
+    /// Drop an offered candidate the policy declined and that no refill
+    /// queue holds — it would otherwise sit in the pool unreachable.
+    fn withdraw_offer(&mut self, id: u64) {
+        if let Some(cell) = self.resident_pool.remove(&id) {
+            self.resident_outpoints.remove(&cell.out_point);
+        }
     }
 
     /// Activity members in FIFO order (oldest block first).
@@ -838,6 +863,54 @@ impl DisplayPlane {
         self.provenance_force = true;
     }
 
+    /// Additive supply (D6 arrival, `Mutation::GalaxyReservoirToppedUp`):
+    /// cells found for the classes this stage said it was short of.
+    ///
+    /// Unlike a refresh this recomputes nothing. Each supplied cell is
+    /// resolved the same way a refresh resolves its reservoir — an
+    /// outpoint the canonical map holds becomes that canonical member,
+    /// anything else becomes a resident under its composition id — and
+    /// then offered to the policy, which decides how many fit and who
+    /// gives way. A supply arriving while the plane is in prefix mode
+    /// (a degrade raced the tick) is declined in full and dropped.
+    ///
+    /// `outpoint_index` is the canonical resolver at the call boundary.
+    pub(crate) fn reservoir_topped_up(
+        &mut self,
+        top_up: &GalaxyCompositionTopUp,
+        outpoint_index: &HashMap<OutPoint, u64>,
+    ) {
+        let mut offered: Vec<u64> = Vec::with_capacity(top_up.len());
+        let mut seen: HashSet<u64> = HashSet::new();
+        let mut parked: HashSet<u64> = HashSet::new();
+        for cell in top_up.dao.iter().chain(top_up.typed.iter()) {
+            match outpoint_index.get(&cell.out_point) {
+                Some(&canonical_id) => {
+                    // Retained canonically after the tick fetched it: use
+                    // the canonical identity, never a second id for one
+                    // outpoint (invariant I4). A supplier that repeats an
+                    // outpoint offers it once.
+                    if !self.stage.is_member(canonical_id) && seen.insert(canonical_id) {
+                        offered.push(canonical_id);
+                    }
+                }
+                None => {
+                    if let Some(id) = self.stage.offer_resident(cell) {
+                        parked.insert(id);
+                        seen.insert(id);
+                        offered.push(id);
+                    }
+                }
+            }
+        }
+        let declined = self.policy.supply(&mut self.stage, &offered);
+        for id in declined {
+            if parked.contains(&id) {
+                self.stage.withdraw_offer(id);
+            }
+        }
+    }
+
     /// Reorg hook (explicit `ChainReorganized` or an implicit
     /// hash-mismatch rollback): a boundary at or below the reservoir
     /// anchor invalidates the composition — drop it, rebuild prefix
@@ -1145,6 +1218,19 @@ mod tests {
             dao,
             typed,
             plain,
+        }
+    }
+
+    fn top_up(block: u64, dao: Vec<Cell>, typed: Vec<Cell>) -> GalaxyCompositionTopUp {
+        GalaxyCompositionTopUp {
+            source: "ckbadger".into(),
+            as_of: ChainAnchor {
+                block,
+                hash: format!("0xblock{block}"),
+            },
+            updated_at_ms: block * 10,
+            dao,
+            typed,
         }
     }
 
@@ -2079,6 +2165,260 @@ mod tests {
             "the sink is write-only, never a feedback loop"
         );
         assert!(sink.read().curated, "…and it did publish");
+    }
+
+    // ═══ T4 supply + the one-way ratchet ═════════════════════════════
+
+    /// Supplied cells that a plain over-allocation makes room for. The
+    /// displaced plain member is a canonical-fallback admit, and it goes
+    /// back to the FRONT of its own queue so the next plain vacancy
+    /// takes it first.
+    #[test]
+    fn supply_displaces_an_over_quota_fallback_member() {
+        let mut plane = small_plane(10, 2);
+        // targets(10) = {3,4,3}. An all-plain canonical map composes to
+        // 10 plain members, every one a fallback admit.
+        let canonical: Vec<Cell> = (0..10)
+            .map(|id| cell_with(id, &format!("0xc{id}"), AssetKind::Native, 0))
+            .collect();
+        seed_canonical(&mut plane, &canonical, 500);
+        plane.reservoir_replaced(
+            &record(10, vec![], vec![], vec![]),
+            &outpoint_index(&canonical),
+            &canonical,
+        );
+        plane.flush(Some(1_000));
+        assert_eq!(
+            plane.class_counts(),
+            [0, 0, 10],
+            "plain owns the whole stage"
+        );
+
+        // Two dao arrive. Plain is 7 over quota, so it yields twice —
+        // latest-admitted first (9, then 8).
+        let supply = top_up(
+            20,
+            vec![
+                cell_with(9_001, "0xs1", AssetKind::Dao, 0),
+                cell_with(9_002, "0xs2", AssetKind::Dao, 0),
+            ],
+            vec![],
+        );
+        plane.reservoir_topped_up(&supply, &outpoint_index(&canonical));
+        let (enter_ids, enter_cells, exit, _) = full_delta_parts(plane.flush(Some(2_000)));
+        assert!(enter_ids.is_empty(), "supplied cells are off-map residents");
+        assert_eq!(
+            enter_cells.iter().map(|c| c.id).collect::<Vec<_>>(),
+            vec![9_001, 9_002]
+        );
+        assert_eq!(exit, vec![8, 9], "the two latest plain fallback admits");
+        assert_eq!(plane.class_counts(), [2, 0, 8]);
+        assert_eq!(member_set(&plane).len(), 10, "the stage stays exactly full");
+
+        // A plain vacancy restores a displaced member ahead of any other
+        // candidate. Displacement takes the LOWEST-priority member first
+        // (9 before 8) and each one goes to the front, so the queue ends
+        // up ordered by descending priority: 8 comes back before 9.
+        plane.note_removed(0);
+        let (enter, exit, _) = delta_parts(plane.flush(Some(3_000)));
+        assert_eq!(exit, vec![0]);
+        assert_eq!(
+            enter,
+            vec![8],
+            "the higher-ranked of the two displaced returns first"
+        );
+        plane.note_removed(1);
+        let (enter, _, _) = delta_parts(plane.flush(Some(3_100)));
+        assert_eq!(enter, vec![9], "then the other one");
+    }
+
+    /// The ratchet: a curated member is never traded for another curated
+    /// member. Once a class holds nothing but reservoir admits it yields
+    /// nobody, and the supply stops instead of churning.
+    #[test]
+    fn supply_never_displaces_a_curated_member() {
+        let mut plane = small_plane(4, 1);
+        // A reservoir that fills the whole stage: every member is a
+        // RESERVOIR admit, so nobody may give way.
+        let rec = record(
+            10,
+            vec![cell_with(1_001, "0xrd", AssetKind::Dao, 0)],
+            vec![cell_with(2_001, "0xrt", AssetKind::Xudt, 0)],
+            vec![
+                cell_with(3_001, "0xrp1", AssetKind::Native, 0),
+                cell_with(3_002, "0xrp2", AssetKind::Native, 0),
+            ],
+        );
+        plane.reservoir_replaced(&rec, &HashMap::new(), &[]);
+        plane.flush(Some(1_000));
+        assert_eq!(member_set(&plane), [1_001, 2_001, 3_001, 3_002].into());
+        assert_eq!(plane.class_counts(), [1, 1, 2]);
+
+        // targets(4) = {1,1,2}: plain is at quota, dao is at quota. Even
+        // so, offer more dao — nothing may be displaced for it.
+        let supply = top_up(
+            20,
+            vec![cell_with(9_001, "0xs1", AssetKind::Dao, 0)],
+            vec![],
+        );
+        plane.reservoir_topped_up(&supply, &HashMap::new());
+        assert!(
+            plane.flush(Some(2_000)).is_none(),
+            "no room, no trade, no churn"
+        );
+        assert_eq!(plane.class_counts(), [1, 1, 2]);
+        assert!(!member_set(&plane).contains(&9_001));
+        assert!(
+            !plane.resident_ids_sorted().contains(&9_001),
+            "the declined candidate is let go, not left in the pool"
+        );
+    }
+
+    /// Supply stops at the ideal quota — it fills the gap, it does not
+    /// overshoot into someone else's share.
+    #[test]
+    fn supply_stops_at_the_ideal_quota() {
+        let mut plane = small_plane(10, 2); // targets(10) = {3,4,3}
+        let canonical: Vec<Cell> = (0..10)
+            .map(|id| cell_with(id, &format!("0xc{id}"), AssetKind::Native, 0))
+            .collect();
+        seed_canonical(&mut plane, &canonical, 500);
+        plane.reservoir_replaced(
+            &record(10, vec![], vec![], vec![]),
+            &outpoint_index(&canonical),
+            &canonical,
+        );
+        plane.flush(Some(1_000));
+
+        // Five dao offered against a quota of three.
+        let supply = top_up(
+            20,
+            (1..=5)
+                .map(|i| cell_with(9_000 + i, &format!("0xs{i}"), AssetKind::Dao, 0))
+                .collect(),
+            vec![],
+        );
+        plane.reservoir_topped_up(&supply, &outpoint_index(&canonical));
+        plane.flush(Some(2_000));
+        assert_eq!(plane.class_counts(), [3, 0, 7], "exactly the dao quota");
+        assert_eq!(member_set(&plane).len(), 10);
+    }
+
+    /// ⭐ Convergence. Starting from the live mainnet shape and feeding
+    /// bounded rounds of supply, the ratio must climb to 3600/4800/3600
+    /// and MUST NOT oscillate on the way — every round is a monotone step
+    /// and the member count never moves.
+    #[test]
+    fn bounded_rounds_converge_monotonically_to_the_quota() {
+        let mut plane = small_plane(12_000, 512);
+        let sink = with_sink(&mut plane);
+        let mut canonical: Vec<Cell> = Vec::new();
+        for i in 0..48 {
+            canonical.push(cell_with(
+                1_000_000 + i,
+                &format!("0xcd{i}"),
+                AssetKind::Dao,
+                0,
+            ));
+        }
+        for i in 0..412 {
+            canonical.push(cell_with(
+                2_000_000 + i,
+                &format!("0xct{i}"),
+                AssetKind::Xudt,
+                0,
+            ));
+        }
+        for i in 0..8_000 {
+            canonical.push(cell_with(
+                3_000_000 + i,
+                &format!("0xcp{i}"),
+                AssetKind::Native,
+                0,
+            ));
+        }
+        seed_canonical(&mut plane, &canonical, 500);
+        let rec = record(
+            10,
+            (0..1_800)
+                .map(|i| cell_with(10_000 + i, &format!("0xrd{i}"), AssetKind::Dao, 0))
+                .collect(),
+            (0..2_400)
+                .map(|i| cell_with(20_000 + i, &format!("0xrt{i}"), AssetKind::Xudt, 0))
+                .collect(),
+            (0..1_800)
+                .map(|i| cell_with(30_000 + i, &format!("0xrp{i}"), AssetKind::Native, 0))
+                .collect(),
+        );
+        let index = outpoint_index(&canonical);
+        plane.reservoir_replaced(&rec, &index, &canonical);
+        plane.flush(Some(1_000));
+        assert_eq!(plane.class_counts(), [1_848, 2_812, 7_340]);
+
+        // Bounded rounds, exactly as the supervisor will drive them:
+        // fetch at most 256 per class per tick, sized by the published
+        // demand, until the demand closes.
+        const PER_CLASS_PER_TICK: usize = 256;
+        let mut previous = plane.class_counts();
+        let mut supplied = 0u64;
+        let mut rounds = 0;
+        while !sink.read().is_empty() {
+            rounds += 1;
+            assert!(rounds < 40, "should converge in ~15 rounds, not spin");
+            let demand = sink.read();
+            let dao: Vec<Cell> = (0..demand.dao.min(PER_CLASS_PER_TICK))
+                .map(|_| {
+                    supplied += 1;
+                    cell_with(
+                        500_000 + supplied,
+                        &format!("0xsd{supplied}"),
+                        AssetKind::Dao,
+                        0,
+                    )
+                })
+                .collect();
+            let typed: Vec<Cell> = (0..demand.typed.min(PER_CLASS_PER_TICK))
+                .map(|_| {
+                    supplied += 1;
+                    cell_with(
+                        500_000 + supplied,
+                        &format!("0xst{supplied}"),
+                        AssetKind::Xudt,
+                        0,
+                    )
+                })
+                .collect();
+            plane.reservoir_topped_up(&top_up(20 + rounds, dao, typed), &index);
+            plane.flush(Some(2_000 + rounds * 10));
+
+            let now = plane.class_counts();
+            assert!(
+                now[0] >= previous[0],
+                "dao round {rounds}: {previous:?} -> {now:?}"
+            );
+            assert!(
+                now[1] >= previous[1],
+                "typed round {rounds}: {previous:?} -> {now:?}"
+            );
+            assert!(
+                now[2] <= previous[2],
+                "plain round {rounds}: {previous:?} -> {now:?}"
+            );
+            assert_eq!(
+                now.iter().sum::<usize>(),
+                12_000,
+                "round {rounds}: the stage is always exactly full"
+            );
+            assert!(now[0] <= 3_600 && now[1] <= 4_800, "never overshoots");
+            previous = now;
+        }
+        assert_eq!(
+            plane.class_counts(),
+            [3_600, 4_800, 3_600],
+            "30:40:30, reached"
+        );
+        assert!(sink.read().is_empty());
+        assert!(rounds >= 8, "the bound really did spread it over rounds");
     }
 
     // ═══ T1 precise spend detection ══════════════════════════════════

@@ -279,14 +279,18 @@ impl ServerState {
     }
 
     /// Apply one optional enrichment event. Most events never touch the
-    /// canonical revision or mutation stream; `GalaxyCompositionReplace`
-    /// is the one exception (D6) — see
-    /// [`Self::apply_galaxy_composition_replace`]. Anchored records are
+    /// canonical revision or mutation stream; the two composition events
+    /// are the exception (D6) — see
+    /// [`Self::apply_galaxy_composition`]. Anchored records are
     /// rejected if a reorg raced the source request and the claimed
     /// block/hash is no longer in the retained canonical evidence window.
     pub fn apply_enrichment(&self, event: EnrichmentEvent) -> bool {
-        if matches!(event, EnrichmentEvent::GalaxyCompositionReplace(_)) {
-            return self.apply_galaxy_composition_replace(event);
+        if matches!(
+            event,
+            EnrichmentEvent::GalaxyCompositionReplace(_)
+                | EnrichmentEvent::GalaxyCompositionTopUp(_)
+        ) {
+            return self.apply_galaxy_composition(event);
         }
         let _coord = self.coord.read().unwrap();
         let store = self.entity_store.read().unwrap();
@@ -327,11 +331,13 @@ impl ServerState {
         true
     }
 
-    /// D6 reservoir channel: a validated composition record is installed
-    /// into the CANONICAL mutation stream (as the server-internal
-    /// `Mutation::GalaxyReservoirReplaced`) so the cells projection's
-    /// display plane can stage it at a real revision. This is the record's
-    /// ONLY destination — semantics deliberately ignores the event, so the
+    /// D6 reservoir channel: validated composition input — a whole
+    /// record, or an additive top-up — is installed into the CANONICAL
+    /// mutation stream (as the server-internal
+    /// `Mutation::GalaxyReservoirReplaced` /
+    /// `GalaxyReservoirToppedUp`) so the cells projection's display plane
+    /// can stage it at a real revision. This is the input's ONLY
+    /// destination — semantics deliberately ignores both events, so the
     /// same membership can never reach the browser through two contracts.
     ///
     /// Lock dance: every other enrichment event validates and fans out
@@ -344,11 +350,13 @@ impl ServerState {
     /// canonical apply sequence (via `apply_mutation_locked`). Lock order
     /// stays coord → entity_store → projections → per-runner locks,
     /// identical to `apply_mutation`; nothing downstream re-acquires
-    /// coord, so there is no deadlock, and the 15-minute cadence puts no
-    /// pressure on the write side.
+    /// coord, so there is no deadlock. Top-ups arrive on a much shorter
+    /// cadence than the old 15-minute refresh, but each one carries at
+    /// most a few hundred cells and the plane's work is O(supplied), so
+    /// the write side still sees far less than an ordinary block does.
     // See apply_mutation: the coord write guard IS the exclusion.
     #[allow(clippy::readonly_write_lock)]
-    fn apply_galaxy_composition_replace(&self, event: EnrichmentEvent) -> bool {
+    fn apply_galaxy_composition(&self, event: EnrichmentEvent) -> bool {
         let coord = self.coord.write().unwrap();
         {
             let store = self.entity_store.read().unwrap();
@@ -360,10 +368,16 @@ impl ServerState {
                 return false;
             }
         }
-        let EnrichmentEvent::GalaxyCompositionReplace(record) = event else {
-            unreachable!("caller matched the variant");
+        let mutation = match event {
+            EnrichmentEvent::GalaxyCompositionReplace(record) => {
+                Mutation::GalaxyReservoirReplaced { record }
+            }
+            EnrichmentEvent::GalaxyCompositionTopUp(top_up) => {
+                Mutation::GalaxyReservoirToppedUp { top_up }
+            }
+            _ => unreachable!("caller matched the variants"),
         };
-        self.apply_mutation_locked(&coord, Mutation::GalaxyReservoirReplaced { record });
+        self.apply_mutation_locked(&coord, mutation);
         true
     }
 
@@ -504,6 +518,7 @@ fn event_anchor_is_current(event: &EnrichmentEvent, recent_blocks: &[RecentBlock
         }
         EnrichmentEvent::NetworkAtlasReplace(network_atlas) => Some(&network_atlas.as_of),
         EnrichmentEvent::GalaxyCompositionReplace(composition) => Some(&composition.as_of),
+        EnrichmentEvent::GalaxyCompositionTopUp(top_up) => Some(&top_up.as_of),
         EnrichmentEvent::SourceStatus(_)
         | EnrichmentEvent::NetworkAtlasClear
         | EnrichmentEvent::Clear => None,
@@ -753,10 +768,10 @@ fn apply_chain_mutation(chain: &mut Chain, m: &Mutation) {
             // EntityStore.peers / chain_nodes. The Chain entity has no
             // field to update here.
         }
-        Mutation::GalaxyReservoirReplaced { .. } => {
-            // SERVER-INTERNAL projection-only variant (D6): consumed by
-            // the cells projection's display plane. It never appears on
-            // the entity wire (`entity_wire_visible()` filters it from
+        Mutation::GalaxyReservoirReplaced { .. } | Mutation::GalaxyReservoirToppedUp { .. } => {
+            // SERVER-INTERNAL projection-only variants (D6): consumed by
+            // the cells projection's display plane. They never appear on
+            // the entity wire (`entity_wire_visible()` filters them from
             // the ring + broadcast) and there is no entity state to
             // update — display membership is presentation policy, never
             // canonical truth.
@@ -1370,6 +1385,120 @@ mod tests {
                 cknerv_core::AssetKind::Native,
             )],
         }
+    }
+
+    /// Supply carrying outpoints the stage does NOT already hold — an
+    /// id already represented is declined by design (invariant I4).
+    fn top_up_payload(block: u64, hash: &str) -> cknerv_core::GalaxyCompositionTopUp {
+        cknerv_core::GalaxyCompositionTopUp {
+            source: "ckbadger".to_string(),
+            as_of: cknerv_core::ChainAnchor {
+                block,
+                hash: hash.to_string(),
+            },
+            updated_at_ms: 6_000,
+            dao: vec![
+                hydrated_reservoir_cell(600_000, cknerv_core::AssetKind::Dao),
+                hydrated_reservoir_cell(600_001, cknerv_core::AssetKind::Dao),
+            ],
+            typed: vec![hydrated_reservoir_cell(
+                600_002,
+                cknerv_core::AssetKind::Xudt,
+            )],
+        }
+    }
+
+    /// T3 — the top-up rides the same internal channel as a replace, and
+    /// obeys the same three rules: it never reaches the entity wire, it
+    /// closes the published demand, and an anchor a reorg invalidated is
+    /// discarded without consuming a revision.
+    #[test]
+    fn galaxy_top_up_closes_demand_over_the_internal_channel_only() {
+        let sink = Arc::new(CompositionDemandSink::new());
+        let mut state = ServerState::new();
+        state.set_composition_demand_sink(sink.clone());
+        {
+            let mut projections = state.projections.write().unwrap();
+            projections.register(
+                cknerv_core::CellGalaxy::default().with_composition_demand_sink(sink.clone()),
+            );
+        }
+        state.apply_mutation(Mutation::BlockMined {
+            number: 10,
+            hash: "0xblock10".into(),
+            tx_count: 0,
+            size: 0,
+            at: 1_000,
+        });
+        assert!(
+            state.apply_enrichment(EnrichmentEvent::GalaxyCompositionReplace(reservoir_record(
+                10,
+                "0xblock10"
+            )))
+        );
+        let before = state.composition_demand();
+        assert!(before.curated && before.dao > 0, "the stage is asking");
+
+        let mut rx = state.subscribe_mutations();
+        let revision_before = state.revision.load(Ordering::Relaxed);
+        assert!(
+            state.apply_enrichment(EnrichmentEvent::GalaxyCompositionTopUp(top_up_payload(
+                10,
+                "0xblock10"
+            )))
+        );
+        assert_eq!(
+            state.revision.load(Ordering::Relaxed),
+            revision_before + 1,
+            "the internal mutation consumes a revision"
+        );
+        let after = state.composition_demand();
+        assert_eq!(after.dao, before.dao - 2, "two dao supplied");
+        assert_eq!(after.typed, before.typed - 1, "one typed supplied");
+
+        // …and nothing about it is visible outside.
+        assert!(
+            state
+                .mutation_ring_snapshot()
+                .iter()
+                .all(|rm| !matches!(rm.mutation, Mutation::GalaxyReservoirToppedUp { .. })),
+            "the entity ring must never contain the top-up tag"
+        );
+        assert!(
+            matches!(
+                rx.try_recv(),
+                Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+            ),
+            "the entity broadcast must never carry the top-up tag"
+        );
+        let cells_snap = state
+            .projections
+            .read()
+            .unwrap()
+            .lookup("cells")
+            .unwrap()
+            .snapshot_json()
+            .1;
+        assert!(
+            cells_snap["cells"].as_array().unwrap().is_empty(),
+            "supply must never enter the canonical cells map (I2)"
+        );
+
+        // An anchor the chain no longer has is discarded outright — and
+        // it must not consume a revision on the way out.
+        let revision_before = state.revision.load(Ordering::Relaxed);
+        let stale = state.composition_demand();
+        assert!(
+            !state.apply_enrichment(EnrichmentEvent::GalaxyCompositionTopUp(top_up_payload(
+                9, "0xblock9"
+            )))
+        );
+        assert_eq!(
+            state.revision.load(Ordering::Relaxed),
+            revision_before,
+            "a rejected top-up consumes nothing"
+        );
+        assert_eq!(state.composition_demand(), stale, "and changes nothing");
     }
 
     /// R5 pin: `GalaxyReservoirReplaced` NEVER reaches the entity wire.

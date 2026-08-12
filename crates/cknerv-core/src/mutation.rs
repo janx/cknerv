@@ -14,7 +14,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::enrichment::GalaxyCompositionRecord;
+use crate::enrichment::{GalaxyCompositionRecord, GalaxyCompositionTopUp};
 use crate::entity::{EpochInfo, Peer};
 use crate::outpoint::{OutPoint, TxOutputInfo};
 
@@ -184,6 +184,15 @@ pub enum Mutation {
     /// local node) — and it only ever touches display membership: no entity
     /// state, no counters, no persistence.
     GalaxyReservoirReplaced { record: GalaxyCompositionRecord },
+
+    /// SERVER-INTERNAL (D6, same channel and same guarantees as
+    /// [`Mutation::GalaxyReservoirReplaced`]): additive supply for the
+    /// curated display composition. Where a replace re-derives the whole
+    /// membership on a timer, this closes the specific per-class gap the
+    /// display plane published — so the steady-state cost of holding the
+    /// composition is proportional to churn rather than to a period. Also
+    /// never serialized to the browser.
+    GalaxyReservoirToppedUp { top_up: GalaxyCompositionTopUp },
 }
 
 impl Mutation {
@@ -196,7 +205,10 @@ impl Mutation {
     /// assuming contiguous revisions, and the TS entity client tracks only
     /// the max revision it has seen.
     pub fn entity_wire_visible(&self) -> bool {
-        !matches!(self, Mutation::GalaxyReservoirReplaced { .. })
+        !matches!(
+            self,
+            Mutation::GalaxyReservoirReplaced { .. } | Mutation::GalaxyReservoirToppedUp { .. }
+        )
     }
 }
 

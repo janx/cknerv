@@ -1316,6 +1316,7 @@ fn mutation_at_ms(m: &Mutation) -> Option<u64> {
         | Mutation::TxLanded { at, .. }
         | Mutation::CellTagged { at, .. } => Some(*at),
         Mutation::GalaxyReservoirReplaced { record } => Some(record.updated_at_ms),
+        Mutation::GalaxyReservoirToppedUp { top_up } => Some(top_up.updated_at_ms),
         _ => None,
     }
 }
@@ -1462,6 +1463,15 @@ impl Projection for CellGalaxy {
                 // coalesced `refresh_transition` Display delta.
                 self.display
                     .reservoir_replaced(record, &self.outpoint_index, &self.cells);
+                Vec::new()
+            }
+            Mutation::GalaxyReservoirToppedUp { top_up } => {
+                // Same D6 fence, additive: cells found for the classes
+                // the plane published a shortfall for. Membership only —
+                // the cells map, the counters and persistence are as
+                // untouched here as they are on a refresh.
+                self.display
+                    .reservoir_topped_up(top_up, &self.outpoint_index);
                 Vec::new()
             }
             _ => Vec::new(),
@@ -3709,9 +3719,28 @@ mod tests {
         }
     }
 
+    /// Additive supply carrying one dao and one typed resident.
+    fn top_up(block: u64, ids: (u64, u64)) -> Mutation {
+        let record = reservoir_record(block, (ids.0, ids.1, 0));
+        Mutation::GalaxyReservoirToppedUp {
+            top_up: cknerv_core_top_up(record),
+        }
+    }
+
+    fn cknerv_core_top_up(record: GalaxyCompositionRecord) -> crate::GalaxyCompositionTopUp {
+        crate::GalaxyCompositionTopUp {
+            source: record.source,
+            as_of: record.as_of,
+            updated_at_ms: record.updated_at_ms,
+            dao: record.dao,
+            typed: record.typed,
+        }
+    }
+
     /// Composed-mode mutation script crossing every S2 path: refresh
     /// transition (canonical→composed with residents), activity/vacancy
-    /// churn, content dedup, an off-map resident SPEND (T1), corpse GC,
+    /// churn, content dedup, an off-map resident SPEND (T1), an additive
+    /// TOP-UP (T3/T4), corpse GC,
     /// a D5 later-collision birth (the tx re-creating a staged
     /// resident's outpoint), a reorg ABOVE the
     /// anchor (composition kept), a reorg AT the anchor (degrade →
@@ -3734,6 +3763,8 @@ mod tests {
             // T1: an input the canonical index cannot resolve, spending
             // the DAO resident's outpoint → it exits the stage.
             landed("0xspend", 2, 2_100, vec![op("0xr500000", 0)], vec![]),
+            // T3/T4: supply answering the dao shortfall the spend widened.
+            top_up(2, (510_000, 510_001)),
             mined(3, "0xb3", 2_700), // GCs the corpse of a#0
             // D5 later-collision: this tx's #0 output IS the typed
             // resident's outpoint → in-place swap.
