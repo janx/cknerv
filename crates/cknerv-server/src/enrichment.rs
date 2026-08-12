@@ -8,10 +8,10 @@
 use async_trait::async_trait;
 
 use cknerv_core::{
-    ActivityFeedRecord, AssetEcosystemRecord, CellSemanticRecord, DaoStateRecord,
-    EnrichmentSourceStatus, ForkWatchRecord, GalaxyCompositionCandidates, GalaxyCompositionRecord,
-    NetworkAtlasRecord, OutPoint, ProtocolEraRecord, RecentBlock, RecentTx,
-    TransactionHorizonRecord, TransactionSemanticRecord,
+    ActivityFeedRecord, AssetEcosystemRecord, CellSemanticRecord, CompositionDemand,
+    DaoStateRecord, EnrichmentSourceStatus, ForkWatchRecord, GalaxyCompositionCandidates,
+    GalaxyCompositionRecord, GalaxyCompositionTopUp, NetworkAtlasRecord, OutPoint,
+    ProtocolEraRecord, RecentBlock, RecentTx, TransactionHorizonRecord, TransactionSemanticRecord,
 };
 
 /// Bounded canonical evidence supplied to an enrichment source when it
@@ -36,6 +36,16 @@ pub trait GalaxyCompositionHydrator: Send + Sync + 'static {
         &self,
         candidates: GalaxyCompositionCandidates,
     ) -> anyhow::Result<GalaxyCompositionRecord>;
+
+    /// Validate an ADDITIVE supply through the same trust fence: every
+    /// candidate is re-read against the local node, and anything spent
+    /// or reclassified since discovery is dropped. `candidates.target`
+    /// carries how many of each class the display plane asked for; the
+    /// plain bucket is unused (D5).
+    async fn hydrate_galaxy_top_up(
+        &self,
+        candidates: GalaxyCompositionCandidates,
+    ) -> anyhow::Result<GalaxyCompositionTopUp>;
 }
 
 /// Optional read-only source of indexed semantics.
@@ -144,6 +154,19 @@ pub trait EnrichmentSource: Send + Sync + 'static {
         &self,
         _context: &CanonicalContext,
     ) -> anyhow::Result<Option<GalaxyCompositionRecord>> {
+        Ok(None)
+    }
+
+    /// Find more cells for the classes the display composition says it is
+    /// short of — additive, never a replacement. Sources answer by walking
+    /// DEEPER into their own ranking rather than re-reading the head, so
+    /// the cost is proportional to the shortfall instead of to the size of
+    /// the whole composition. `None` means "nothing further to add".
+    async fn enrich_galaxy_top_up(
+        &self,
+        _context: &CanonicalContext,
+        _demand: CompositionDemand,
+    ) -> anyhow::Result<Option<GalaxyCompositionTopUp>> {
         Ok(None)
     }
 }

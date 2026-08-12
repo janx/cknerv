@@ -12,7 +12,9 @@ use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, watch, Semaphore};
 use tokio::task::{JoinHandle, JoinSet};
 
-use cknerv_core::{EnrichmentEvent, EnrichmentSourceState, EnrichmentSourceStatus};
+use cknerv_core::{
+    CompositionDemand, EnrichmentEvent, EnrichmentSourceState, EnrichmentSourceStatus,
+};
 
 use crate::enrichment::{CanonicalContext, EnrichmentSource};
 use crate::state::ServerState;
@@ -27,6 +29,10 @@ const ENRICHMENT_TRANSACTION_HORIZON_REFRESH: Duration = Duration::from_secs(60)
 const ENRICHMENT_FORK_WATCH_REFRESH: Duration = Duration::from_secs(15);
 const ENRICHMENT_NETWORK_ATLAS_REFRESH: Duration = Duration::from_secs(60);
 const ENRICHMENT_GALAXY_COMPOSITION_REFRESH: Duration = Duration::from_secs(15 * 60);
+/// The top-up cadence. Short, because each turn is bounded to a few
+/// hundred candidates and the whole point is that a shortfall closes as
+/// it opens rather than waiting out a period.
+const ENRICHMENT_GALAXY_TOP_UP_REFRESH: Duration = Duration::from_secs(5);
 const MAX_CONCURRENT_REFRESHES: usize = 3;
 
 #[derive(Clone, Copy)]
@@ -41,6 +47,7 @@ struct RefreshCadence {
     fork_watch: Duration,
     network_atlas: Duration,
     galaxy_composition: Duration,
+    galaxy_top_up: Duration,
     max_concurrent: usize,
 }
 
@@ -57,6 +64,7 @@ impl Default for RefreshCadence {
             fork_watch: ENRICHMENT_FORK_WATCH_REFRESH,
             network_atlas: ENRICHMENT_NETWORK_ATLAS_REFRESH,
             galaxy_composition: ENRICHMENT_GALAXY_COMPOSITION_REFRESH,
+            galaxy_top_up: ENRICHMENT_GALAXY_TOP_UP_REFRESH,
             max_concurrent: MAX_CONCURRENT_REFRESHES,
         }
     }
@@ -72,9 +80,10 @@ enum RefreshKind {
     ForkWatch,
     NetworkAtlas,
     GalaxyComposition,
+    GalaxyTopUp,
 }
 
-const REFRESH_KINDS: [RefreshKind; 8] = [
+const REFRESH_KINDS: [RefreshKind; 9] = [
     RefreshKind::AssetEcosystem,
     RefreshKind::DaoState,
     RefreshKind::ProtocolEra,
@@ -83,6 +92,7 @@ const REFRESH_KINDS: [RefreshKind; 8] = [
     RefreshKind::ForkWatch,
     RefreshKind::NetworkAtlas,
     RefreshKind::GalaxyComposition,
+    RefreshKind::GalaxyTopUp,
 ];
 
 impl RefreshKind {
@@ -95,7 +105,9 @@ impl RefreshKind {
             Self::TransactionHorizon => "transaction_horizon",
             Self::ForkWatch => "fork_watch",
             Self::NetworkAtlas => "network_atlas",
-            Self::GalaxyComposition => "galaxy_composition",
+            // The top-up is the same source feature as the composition:
+            // a source that cannot compose cannot supply either.
+            Self::GalaxyComposition | Self::GalaxyTopUp => "galaxy_composition",
         }
     }
 
@@ -109,6 +121,7 @@ impl RefreshKind {
             Self::ForkWatch => cadence.fork_watch,
             Self::NetworkAtlas => cadence.network_atlas,
             Self::GalaxyComposition => cadence.galaxy_composition,
+            Self::GalaxyTopUp => cadence.galaxy_top_up,
         }
     }
 
@@ -147,6 +160,7 @@ impl RefreshKind {
         self,
         source: &dyn EnrichmentSource,
         context: &CanonicalContext,
+        demand: CompositionDemand,
     ) -> anyhow::Result<Option<EnrichmentEvent>> {
         match self {
             Self::AssetEcosystem => source
@@ -181,6 +195,10 @@ impl RefreshKind {
                 .enrich_galaxy_composition(context)
                 .await
                 .map(|record| record.map(EnrichmentEvent::GalaxyCompositionReplace)),
+            Self::GalaxyTopUp => source
+                .enrich_galaxy_top_up(context, demand)
+                .await
+                .map(|top_up| top_up.map(EnrichmentEvent::GalaxyCompositionTopUp)),
         }
     }
 }
@@ -280,6 +298,7 @@ async fn run(
         .unwrap_or_else(Instant::now);
     let mut tracker = RefreshTracker::default();
     let limiter = Arc::new(Semaphore::new(cadence.max_concurrent.max(1)));
+    let top_up_limiter = Arc::new(Semaphore::new(1));
     let mut refreshes = JoinSet::new();
     let mut network_atlas_present = false;
 
@@ -299,11 +318,29 @@ async fn run(
                     last_publish = Instant::now();
                 }
 
+                let demand = state.composition_demand();
                 for kind in REFRESH_KINDS {
+                    if kind == RefreshKind::GalaxyTopUp && (!demand.curated || demand.is_empty()) {
+                        // Nothing to close. Stay due so the next tick sees
+                        // a fresh number the moment the stage drifts.
+                        continue;
+                    }
                     if !tracker.due(kind, &status, cadence) {
                         continue;
                     }
-                    let Ok(permit) = limiter.clone().try_acquire_owned() else {
+                    // The top-up runs on its own permit. It is the only
+                    // capability that repeats on a seconds cadence, so
+                    // sharing the pool would let it crowd out the bounded
+                    // aggregates it sits beside.
+                    let permit = if kind == RefreshKind::GalaxyTopUp {
+                        top_up_limiter.clone().try_acquire_owned()
+                    } else {
+                        limiter.clone().try_acquire_owned()
+                    };
+                    let Ok(permit) = permit else {
+                        if kind == RefreshKind::GalaxyTopUp {
+                            continue;
+                        }
                         // Do not queue a request with this tick's canonical
                         // context. A later probe will retry it with fresh proof.
                         break;
@@ -315,7 +352,7 @@ async fn run(
                         let _permit = permit;
                         RefreshCompletion {
                             kind,
-                            result: kind.refresh(source.as_ref(), &context).await,
+                            result: kind.refresh(source.as_ref(), &context, demand).await,
                         }
                     });
                 }
@@ -570,6 +607,146 @@ mod tests {
         }
     }
 
+    /// A source that only supports the composition capability and
+    /// records every top-up it is asked for.
+    struct TopUpSource {
+        asks: Arc<std::sync::Mutex<Vec<CompositionDemand>>>,
+    }
+
+    #[async_trait]
+    impl EnrichmentSource for TopUpSource {
+        fn name(&self) -> &'static str {
+            "top-up-fixture"
+        }
+
+        fn capabilities(&self) -> Vec<String> {
+            vec!["galaxy_composition".to_string()]
+        }
+
+        async fn probe(&self, context: &CanonicalContext) -> EnrichmentSourceStatus {
+            let anchor = context.recent_blocks.last().map(|block| ChainAnchor {
+                block: block.number,
+                hash: block.hash.clone(),
+            });
+            EnrichmentSourceStatus {
+                source: self.name().to_string(),
+                status: EnrichmentSourceState::Ready,
+                capabilities: self.capabilities(),
+                indexed_tip: Some(context.tip),
+                lag_blocks: Some(0),
+                validated_anchor: anchor,
+                last_success_at_ms: Some(1),
+                message: None,
+            }
+        }
+
+        async fn enrich_cell(
+            &self,
+            _out_point: &cknerv_core::OutPoint,
+            _context: &CanonicalContext,
+        ) -> anyhow::Result<Option<cknerv_core::CellSemanticRecord>> {
+            Ok(None)
+        }
+
+        async fn enrich_galaxy_top_up(
+            &self,
+            _context: &CanonicalContext,
+            demand: CompositionDemand,
+        ) -> anyhow::Result<Option<cknerv_core::GalaxyCompositionTopUp>> {
+            self.asks.lock().unwrap().push(demand);
+            Ok(None)
+        }
+    }
+
+    fn top_up_cadence() -> RefreshCadence {
+        RefreshCadence {
+            probe: Duration::from_millis(10),
+            status: Duration::from_secs(60),
+            ecosystem: Duration::from_secs(60),
+            dao_state: Duration::from_secs(60),
+            protocol_era: Duration::from_secs(60),
+            activity: Duration::from_secs(60),
+            transaction_horizon: Duration::from_secs(60),
+            fork_watch: Duration::from_secs(60),
+            network_atlas: Duration::from_secs(60),
+            galaxy_composition: Duration::from_secs(60),
+            galaxy_top_up: Duration::from_millis(10),
+            max_concurrent: 1,
+        }
+    }
+
+    /// The top-up is demand-gated: a stage that is not asking costs the
+    /// index nothing, and one that is asking is told exactly how much.
+    #[tokio::test]
+    async fn the_top_up_only_runs_while_the_stage_is_asking() {
+        let sink = Arc::new(cknerv_core::CompositionDemandSink::new());
+        let mut state = ServerState::new();
+        state.set_composition_demand_sink(sink.clone());
+        let state = Arc::new(state);
+        state.apply_mutation(Mutation::BlockMined {
+            number: 7,
+            hash: "0xblock7".to_string(),
+            tx_count: 1,
+            size: 1,
+            at: 1,
+        });
+
+        let asks = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let source: Arc<dyn EnrichmentSource> = Arc::new(TopUpSource { asks: asks.clone() });
+        let (out, _events) = mpsc::channel(16);
+        let (shutdown, shutdown_rx) = watch::channel(false);
+        let handle = tokio::spawn(run(
+            source,
+            state.clone(),
+            out,
+            shutdown_rx,
+            top_up_cadence(),
+        ));
+
+        // Silent stage: nothing published, so nothing is fetched.
+        tokio::time::sleep(Duration::from_millis(80)).await;
+        assert!(
+            asks.lock().unwrap().is_empty(),
+            "a stage that is not asking must not touch the index"
+        );
+
+        sink.publish(CompositionDemand {
+            curated: true,
+            dao: 1_777,
+            typed: 1_994,
+        });
+        tokio::time::timeout(Duration::from_millis(500), async {
+            while asks.lock().unwrap().is_empty() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("a published shortfall wakes the top-up");
+        assert_eq!(
+            asks.lock().unwrap()[0],
+            CompositionDemand {
+                curated: true,
+                dao: 1_777,
+                typed: 1_994,
+            },
+            "the source is told the shortfall verbatim"
+        );
+
+        // Closing the gap stops the asking again.
+        sink.publish(CompositionDemand::default());
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let settled = asks.lock().unwrap().len();
+        tokio::time::sleep(Duration::from_millis(80)).await;
+        assert_eq!(
+            asks.lock().unwrap().len(),
+            settled,
+            "a satisfied stage goes quiet"
+        );
+
+        let _ = shutdown.send(true);
+        let _ = handle.await;
+    }
+
     fn cold_start_cadence() -> RefreshCadence {
         RefreshCadence {
             probe: Duration::from_secs(10),
@@ -582,6 +759,7 @@ mod tests {
             fork_watch: Duration::from_secs(60),
             network_atlas: Duration::from_secs(60),
             galaxy_composition: Duration::from_secs(60),
+            galaxy_top_up: Duration::from_secs(60),
             max_concurrent: 1,
         }
     }
@@ -616,6 +794,7 @@ mod tests {
             fork_watch: Duration::from_secs(1),
             network_atlas: Duration::from_secs(1),
             galaxy_composition: Duration::from_secs(1),
+            galaxy_top_up: Duration::from_secs(1),
             max_concurrent: 2,
         };
         let handle = tokio::spawn(run(source, state, out, shutdown_rx, cadence));

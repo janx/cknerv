@@ -10,12 +10,13 @@ use url::Url;
 use cknerv_core::{
     ActivityFeedItem, ActivityFeedRecord, AssetEcosystemCategory, AssetEcosystemLeader,
     AssetEcosystemRecord, CellSemanticRecord, ChainAnchor, CommonKnowledgeBreakdown,
-    DaoStateRecord, EnrichmentSourceState, EnrichmentSourceStatus, ForkWatchDeepFork,
-    ForkWatchEventKind, ForkWatchRecord, ForkWatchReorg, GalaxyCompositionRecord,
-    NetworkAtlasBucket, NetworkAtlasRecord, OutPoint, ProtocolEra, ProtocolEraRecord,
-    SemanticAsset, SemanticAttribute, SemanticCellContent, SemanticContentDecode,
-    SemanticContentGuess, SemanticContentSegment, SemanticFacet, SemanticScript,
-    TransactionHorizonRecord, TransactionParticipantSemantic, TransactionSemanticRecord,
+    CompositionDemand, DaoStateRecord, EnrichmentSourceState, EnrichmentSourceStatus,
+    ForkWatchDeepFork, ForkWatchEventKind, ForkWatchRecord, ForkWatchReorg,
+    GalaxyCompositionRecord, GalaxyCompositionTopUp, NetworkAtlasBucket, NetworkAtlasRecord,
+    OutPoint, ProtocolEra, ProtocolEraRecord, SemanticAsset, SemanticAttribute,
+    SemanticCellContent, SemanticContentDecode, SemanticContentGuess, SemanticContentSegment,
+    SemanticFacet, SemanticScript, TransactionHorizonRecord, TransactionParticipantSemantic,
+    TransactionSemanticRecord,
 };
 use cknerv_server::{CanonicalContext, EnrichmentSource, GalaxyCompositionHydrator};
 
@@ -28,7 +29,9 @@ use crate::dto::{
     TransactionDetailResponse, TransactionLifecycleResponse, TransactionStatsPoint,
     TransactionStatsResponse,
 };
-use crate::galaxy_composition::discover as discover_galaxy_composition;
+use crate::galaxy_composition::{
+    discover as discover_galaxy_composition, top_up as top_up_galaxy_composition, CandidateTail,
+};
 
 const CAPABILITIES: &[&str] = &[
     "cell_detail",
@@ -66,6 +69,11 @@ const MAX_CELL_CONTENT_GUESSES: usize = 16;
 const SHANNONS_PER_CKB: u128 = 100_000_000;
 const MAX_WIRE_SAFE_U64: u64 = 9_007_199_254_740_991;
 const MAX_GALAXY_COMPOSITION_TARGET: usize = 6_000;
+/// Candidates a single top-up may offer per class. Bounds one tick's
+/// node work to ~4 `get_live_cell` batches per class; a larger shortfall
+/// simply takes more ticks, which is what keeps a several-thousand-cell
+/// boot gap from arriving as one stall.
+const TOP_UP_CANDIDATES_PER_CLASS: usize = 256;
 
 /// Read-only client for a direct or orchestrator-proxied ckbadger API base.
 pub struct CkbadgerEnrichmentSource {
@@ -75,6 +83,11 @@ pub struct CkbadgerEnrichmentSource {
     validated_anchor: RwLock<Option<ChainAnchor>>,
     galaxy_hydrator: Option<Arc<dyn GalaxyCompositionHydrator>>,
     galaxy_composition_target: usize,
+    /// How far each class's candidate paging has reached. Held behind a
+    /// mutex because `EnrichmentSource` is a `&self` trait and the tail
+    /// is the one piece of source state that must survive between calls.
+    /// Contention is nil: one supervisor task drives it.
+    candidate_tail: tokio::sync::Mutex<CandidateTail>,
 }
 
 impl CkbadgerEnrichmentSource {
@@ -94,6 +107,7 @@ impl CkbadgerEnrichmentSource {
             validated_anchor: RwLock::new(None),
             galaxy_hydrator: None,
             galaxy_composition_target: 0,
+            candidate_tail: tokio::sync::Mutex::new(CandidateTail::default()),
         })
     }
 
@@ -1053,6 +1067,16 @@ impl EnrichmentSource for CkbadgerEnrichmentSource {
         // the bounded discovery requests were in flight.
         self.revalidate_anchor(&anchor, "CellGalaxy composition discovery")
             .await?;
+        // The tail resumes past whatever this discovery hands out, so a
+        // later top-up walks deeper instead of re-offering the head.
+        self.candidate_tail.lock().await.note_emitted(
+            candidates
+                .dao
+                .iter()
+                .chain(&candidates.typed)
+                .chain(&candidates.plain)
+                .map(|candidate| &candidate.out_point),
+        );
         let record = hydrator.hydrate_galaxy_composition(candidates).await?;
         if record.source != self.name() || record.as_of != anchor {
             return Err(anyhow!(
@@ -1062,6 +1086,55 @@ impl EnrichmentSource for CkbadgerEnrichmentSource {
         self.revalidate_anchor(&anchor, "CellGalaxy composition")
             .await?;
         Ok(Some(record))
+    }
+
+    async fn enrich_galaxy_top_up(
+        &self,
+        context: &CanonicalContext,
+        demand: CompositionDemand,
+    ) -> anyhow::Result<Option<GalaxyCompositionTopUp>> {
+        let Some(hydrator) = self.galaxy_hydrator.as_ref() else {
+            return Ok(None);
+        };
+        if self.galaxy_composition_target == 0 || !demand.curated || demand.is_empty() {
+            return Ok(None);
+        }
+        let want_dao = demand.dao.min(TOP_UP_CANDIDATES_PER_CLASS);
+        let want_typed = demand.typed.min(TOP_UP_CANDIDATES_PER_CLASS);
+
+        let anchor = self.current_anchor(context)?;
+        let candidates = {
+            let mut tail = self.candidate_tail.lock().await;
+            top_up_galaxy_composition(
+                &self.client,
+                &self.api_base,
+                anchor.clone(),
+                &mut tail,
+                want_dao,
+                want_typed,
+                now_ms(),
+            )
+            .await?
+        };
+        if candidates.dao.is_empty() && candidates.typed.is_empty() {
+            // The tail had nothing new this turn. Not an error — the
+            // cursors advanced, so the next tick resumes deeper.
+            return Ok(None);
+        }
+        self.revalidate_anchor(&anchor, "CellGalaxy composition top-up discovery")
+            .await?;
+        let top_up = hydrator.hydrate_galaxy_top_up(candidates).await?;
+        if top_up.source != self.name() || top_up.as_of != anchor {
+            return Err(anyhow!(
+                "CellGalaxy composition hydrator changed its source anchor"
+            ));
+        }
+        if top_up.is_empty() {
+            return Ok(None);
+        }
+        self.revalidate_anchor(&anchor, "CellGalaxy composition top-up")
+            .await?;
+        Ok(Some(top_up))
     }
 }
 

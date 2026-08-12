@@ -761,15 +761,28 @@ impl CompositionPolicy for CuratedPolicy {
     }
 
     fn demand(&self, stage: &Stage) -> CompositionDemand {
-        let ideal = GalaxyCompositionTarget::for_total(stage.budget_cells());
+        let target = GalaxyCompositionTarget::for_total(stage.budget_cells());
+        let ideal = [target.dao, target.typed, target.plain];
+        // Ask only for what could actually be placed. A full stage makes
+        // room by taking it from a class that is over its own quota, so
+        // the total overshoot — plus whatever budget is still unused — is
+        // the real ceiling. Without this the supervisor would keep
+        // fetching cells the ratchet has nowhere to put.
+        let mut room = (0..3)
+            .map(|c| self.class_counts[c].saturating_sub(ideal[c]))
+            .sum::<usize>()
+            .saturating_add(stage.budget_cells().saturating_sub(stage.member_count()));
+        let dao = ideal[CompositionClass::Dao as usize]
+            .saturating_sub(self.class_counts[CompositionClass::Dao as usize])
+            .min(room);
+        room -= dao;
+        let typed = ideal[CompositionClass::Typed as usize]
+            .saturating_sub(self.class_counts[CompositionClass::Typed as usize])
+            .min(room);
         CompositionDemand {
             curated: true,
-            dao: ideal
-                .dao
-                .saturating_sub(self.class_counts[CompositionClass::Dao as usize]),
-            typed: ideal
-                .typed
-                .saturating_sub(self.class_counts[CompositionClass::Typed as usize]),
+            dao,
+            typed,
         }
     }
 
