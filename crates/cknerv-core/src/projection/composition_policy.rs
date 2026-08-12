@@ -122,12 +122,13 @@ pub(crate) trait CompositionPolicy {
     /// the policy's, and may re-stage a member it had benched.
     fn note_exit(&mut self, stage: &mut Stage, id: u64, role: MemberRole);
 
-    /// A resident candidate was superseded by a canonical birth of the
-    /// same outpoint (invariant I4 — one outpoint is never staged under
-    /// two ids). `replacement` is `Some(canonical id)` when the resident
-    /// held a slot the canonical cell just took over in place, `None`
-    /// when the superseded candidate was merely pooled.
-    fn note_superseded(&mut self, stage: &Stage, resident_id: u64, replacement: Option<u64>);
+    /// A resident candidate is gone for good and must never stage again
+    /// — either superseded by a canonical birth of the same outpoint
+    /// (invariant I4: one outpoint is never staged under two ids), or
+    /// spent on chain. `replacement` is `Some(canonical id)` when a
+    /// canonical cell took over the slot the resident held, `None`
+    /// otherwise (a spend, or a merely pooled candidate).
+    fn note_resident_retired(&mut self, stage: &Stage, resident_id: u64, replacement: Option<u64>);
 
     /// Fill resting vacancies. Called at every flush; must leave the
     /// stage settled.
@@ -214,7 +215,12 @@ impl CompositionPolicy for CanonicalPolicy {
         // simply refilled from the cursor at the next flush.
     }
 
-    fn note_superseded(&mut self, _stage: &Stage, _resident_id: u64, _replacement: Option<u64>) {
+    fn note_resident_retired(
+        &mut self,
+        _stage: &Stage,
+        _resident_id: u64,
+        _replacement: Option<u64>,
+    ) {
         // Unreachable: prefix mode never stages residents.
     }
 
@@ -556,7 +562,7 @@ impl CompositionPolicy for CuratedPolicy {
         }
     }
 
-    fn note_superseded(&mut self, stage: &Stage, resident_id: u64, replacement: Option<u64>) {
+    fn note_resident_retired(&mut self, stage: &Stage, resident_id: u64, replacement: Option<u64>) {
         let Some(class) = self.class_of_member.remove(&resident_id) else {
             // A pooled candidate: its queue entry goes stale and is
             // skipped at pop.

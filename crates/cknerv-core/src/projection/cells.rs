@@ -1038,23 +1038,29 @@ impl CellGalaxy {
             if is_cellbase_input(inp) {
                 continue;
             }
-            let dead_id = self.outpoint_index.remove(inp);
-            if let Some(id) = dead_id {
-                let mut death_snapshot = None;
-                for cell in self.cells.iter_mut() {
-                    if cell.id == id && cell.death_at_ms.is_none() {
-                        death_snapshot = Some(cell.clone());
-                        cell.death_at_ms = Some(at_ms);
-                        deltas.push(CellDelta::Death { id, at_ms });
-                        self.total_deaths += 1;
-                        dead_ids.push(id);
-                        break;
-                    }
+            let Some(id) = self.outpoint_index.remove(inp) else {
+                // Nothing canonical here — usually a spend of a cell
+                // outside the retained window. It is also the only signal
+                // that a staged display resident (an outpoint the map
+                // deliberately does not hold) just died, so the plane
+                // gets a look before we move on.
+                self.display.note_input_unresolved(inp);
+                continue;
+            };
+            let mut death_snapshot = None;
+            for cell in self.cells.iter_mut() {
+                if cell.id == id && cell.death_at_ms.is_none() {
+                    death_snapshot = Some(cell.clone());
+                    cell.death_at_ms = Some(at_ms);
+                    deltas.push(CellDelta::Death { id, at_ms });
+                    self.total_deaths += 1;
+                    dead_ids.push(id);
+                    break;
                 }
-                if let Some(cell) = death_snapshot {
-                    endpoint_anchors.push(CellLinkEndpointAnchor::from(&cell));
-                    self.block_deaths.entry(block).or_default().push(cell);
-                }
+            }
+            if let Some(cell) = death_snapshot {
+                endpoint_anchors.push(CellLinkEndpointAnchor::from(&cell));
+                self.block_deaths.entry(block).or_default().push(cell);
             }
         }
 
@@ -3693,8 +3699,9 @@ mod tests {
 
     /// Composed-mode mutation script crossing every S2 path: refresh
     /// transition (canonical→composed with residents), activity/vacancy
-    /// churn, content dedup, corpse GC, a D5 later-collision birth (the
-    /// tx re-creating a staged resident's outpoint), a reorg ABOVE the
+    /// churn, content dedup, an off-map resident SPEND (T1), corpse GC,
+    /// a D5 later-collision birth (the tx re-creating a staged
+    /// resident's outpoint), a reorg ABOVE the
     /// anchor (composition kept), a reorg AT the anchor (degrade →
     /// canonical, park-everything), a rebuild reset, and a fresh
     /// composition after it.
@@ -3712,7 +3719,10 @@ mod tests {
             mined(2, "0xb2", 2_000),
             landed("0xb", 2, 2_000, vec![op("0xa", 0)], vec![out(5, "0x")]),
             reservoir(2, (500_000, 500_001, 500_002)), // content dedup no-op
-            mined(3, "0xb3", 2_700),                   // GCs the corpse of a#0
+            // T1: an input the canonical index cannot resolve, spending
+            // the DAO resident's outpoint → it exits the stage.
+            landed("0xspend", 2, 2_100, vec![op("0xr500000", 0)], vec![]),
+            mined(3, "0xb3", 2_700), // GCs the corpse of a#0
             // D5 later-collision: this tx's #0 output IS the typed
             // resident's outpoint → in-place swap.
             landed("0xr500001", 3, 2_800, vec![], vec![out(9, "0x")]),
@@ -3915,6 +3925,86 @@ mod tests {
                 .map(|a| a.block),
             Some(5)
         );
+        assert_display_invariants(&g);
+    }
+
+    /// T1 — the ONLY way the server can learn a staged resident died:
+    /// a tx input the canonical outpoint index cannot resolve. The
+    /// resident must exit within that same mutation, and canonical truth
+    /// must not move an inch (invariant I2 — no Death delta, no counter).
+    #[test]
+    fn display_resident_spend_exits_without_touching_canonical_truth() {
+        let mut g = make_galaxy();
+        g.apply_mutation(&mined(1, "0xb1", 1_000));
+        g.apply_mutation(&landed(
+            "0xa",
+            1,
+            1_000,
+            vec![],
+            vec![out(1, "0x"), out(2, "0x")],
+        ));
+        g.apply_mutation(&reservoir(1, (500_000, 500_001, 500_002)));
+        let section = g.snapshot().display.expect("section");
+        assert_eq!(section.members, vec![0, 1, 500_000, 500_001, 500_002]);
+        let deaths_before = g.snapshot().total_deaths;
+        let cells_before: Vec<u64> = g.cells.iter().map(|c| c.id).collect();
+
+        // A block spends the typed resident's outpoint. The index misses
+        // (the cell was never in the retained map) — before T1 this was
+        // simply skipped and the resident haunted the stage until the
+        // next 15-minute refresh.
+        g.apply_mutation(&mined(2, "0xb2", 2_000));
+        let deltas = g.apply_mutation(&landed(
+            "0xspend",
+            2,
+            2_000,
+            vec![op("0xr500001", 0)],
+            vec![],
+        ));
+        let (enter_ids, enter_cells, exit_ids, provenance) =
+            display_delta_full(&deltas).expect("the spend exits the resident");
+        assert_eq!(exit_ids, &vec![500_001]);
+        assert!(enter_ids.is_empty() && enter_cells.is_empty());
+        assert!(provenance.is_none(), "membership change, not a mode change");
+        assert!(
+            !deltas
+                .iter()
+                .any(|d| matches!(d, CellDelta::Death { .. } | CellDelta::Birth { .. })),
+            "an off-map spend is not canonical news: {deltas:?}"
+        );
+        assert_eq!(
+            g.snapshot().total_deaths,
+            deaths_before,
+            "the death counter belongs to canonical truth alone"
+        );
+        assert_eq!(
+            g.cells.iter().map(|c| c.id).collect::<Vec<_>>(),
+            cells_before,
+            "the canonical map is untouched"
+        );
+
+        let section = g.snapshot().display.expect("section");
+        assert_eq!(section.members, vec![0, 1, 500_000, 500_002]);
+        assert_eq!(
+            section.residents.iter().map(|c| c.id).collect::<Vec<_>>(),
+            vec![500_000, 500_002]
+        );
+        assert_eq!(
+            section.provenance.mode,
+            DisplayMode::Composed,
+            "one spent sample does not degrade the composition"
+        );
+        assert_display_invariants(&g);
+
+        // Replaying it (a reorg re-landing the same tx) stays a no-op.
+        let deltas = g.apply_mutation(&landed(
+            "0xspend",
+            2,
+            2_000,
+            vec![op("0xr500001", 0)],
+            vec![],
+        ));
+        assert_eq!(display_delta_count(&deltas), 0);
         assert_display_invariants(&g);
     }
 

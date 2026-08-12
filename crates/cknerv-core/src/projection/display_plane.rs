@@ -612,11 +612,12 @@ impl DisplayPlane {
                 self.stage.unstage(rid);
                 self.stage.discard_resident(rid);
                 self.stage.stage_resting(cell.id);
-                self.policy.note_superseded(&self.stage, rid, Some(cell.id));
+                self.policy
+                    .note_resident_retired(&self.stage, rid, Some(cell.id));
                 return;
             }
             self.stage.discard_resident(rid);
-            self.policy.note_superseded(&self.stage, rid, None);
+            self.policy.note_resident_retired(&self.stage, rid, None);
         }
         self.policy.note_candidate(&self.stage, cell.id);
     }
@@ -633,6 +634,32 @@ impl DisplayPlane {
             return;
         };
         self.policy.note_exit(&mut self.stage, id, role);
+    }
+
+    /// A tx input that resolved to nothing canonical. Almost always an
+    /// ordinary spend of a cell outside the retained window — but it is
+    /// also the ONLY way the server learns that a staged resident died,
+    /// because a resident is by definition an outpoint the canonical map
+    /// does not hold, so `handle_tx_landed`'s index lookup can never see
+    /// it. A hit retires the resident: it leaves the stage (or the
+    /// candidate pool) and its composition id can never stage again. The
+    /// vacancy refills from the policy at the next flush.
+    ///
+    /// Not reversed by a reorg (design D6): a rollback revives canonical
+    /// cells through the ordinary birth path, but a retired resident
+    /// stays retired. Showing one fewer of the cells we *could* have
+    /// shown is a different sample; showing a cell that has been spent is
+    /// a lie — the two errors are not symmetric, and the next top-up
+    /// fills the slot anyway.
+    pub(crate) fn note_input_unresolved(&mut self, out_point: &OutPoint) {
+        let Some(rid) = self.stage.take_resident_for_outpoint(out_point) else {
+            return; // the overwhelmingly common case: not ours
+        };
+        if self.stage.is_staged_resident(rid) {
+            self.stage.unstage(rid);
+        }
+        self.stage.discard_resident(rid);
+        self.policy.note_resident_retired(&self.stage, rid, None);
     }
 
     /// The resolved endpoint ids of a landed tx, in `from` then `to`
@@ -1819,6 +1846,157 @@ mod tests {
             "activity role survives refresh"
         );
         assert_eq!(plane.class_counts(), [2, 1, 1]);
+    }
+
+    // ═══ T1 precise spend detection ══════════════════════════════════
+
+    /// A staged resident's outpoint is spent on chain. The server can
+    /// never see this through the canonical map (a resident is by
+    /// definition off-map), so the unresolved-input hook is the only
+    /// signal — and it must retire the resident and refill IN CLASS.
+    #[test]
+    fn spending_a_staged_resident_exits_it_and_refills_in_class() {
+        let mut plane = small_plane(4, 1);
+        let canonical = vec![
+            cell_with(0, "0xa", AssetKind::Dao, 0),
+            cell_with(1, "0xb", AssetKind::Xudt, 0),
+            cell_with(2, "0xc", AssetKind::Native, 0),
+            cell_with(3, "0xd", AssetKind::Native, 0),
+        ];
+        seed_canonical(&mut plane, &canonical, 500);
+        // targets(4) = {1,1,2}: dao [0], typed [1], plain [301, 2];
+        // the plain refill queue holds the unchosen canonical 3.
+        let rec = record(
+            10,
+            vec![],
+            vec![],
+            vec![cell_with(301, "0xp1", AssetKind::Native, 0)],
+        );
+        plane.reservoir_replaced(&rec, &outpoint_index(&canonical), &canonical);
+        plane.flush(Some(1_000));
+        assert_eq!(member_set(&plane), [0, 1, 2, 301].into());
+        assert_eq!(plane.resident_ids_sorted(), vec![301]);
+
+        plane.note_input_unresolved(&OutPoint {
+            tx_hash: "0xp1".into(),
+            index: 0,
+        });
+        let (enter, exit, _) = delta_parts(plane.flush(Some(2_000)));
+        assert_eq!(exit, vec![301], "the spent resident leaves the stage");
+        assert_eq!(enter, vec![3], "and its slot refills from the SAME class");
+        assert_eq!(member_set(&plane), [0, 1, 2, 3].into());
+        assert!(plane.resident_ids_sorted().is_empty());
+        assert_eq!(plane.class_counts(), [1, 1, 2], "the ratio is preserved");
+    }
+
+    /// Spending a candidate that is only POOLED changes nothing on the
+    /// wire, but it must never be staged afterwards — a later vacancy
+    /// skips it and takes the next queue entry instead.
+    #[test]
+    fn spending_a_pooled_candidate_keeps_it_off_the_stage_for_good() {
+        let mut plane = small_plane(4, 1);
+        let canonical = vec![
+            cell_with(0, "0xa", AssetKind::Dao, 0),
+            cell_with(1, "0xb", AssetKind::Xudt, 0),
+            cell_with(2, "0xc", AssetKind::Native, 0),
+        ];
+        seed_canonical(&mut plane, &canonical, 500);
+        // targets(4) = {1,1,2}: plain stages [301, 302]; the plain queue
+        // holds [303 (pooled resident), 2 (canonical)].
+        let rec = record(
+            10,
+            vec![],
+            vec![],
+            vec![
+                cell_with(301, "0xp1", AssetKind::Native, 0),
+                cell_with(302, "0xp2", AssetKind::Native, 0),
+                cell_with(303, "0xp3", AssetKind::Native, 0),
+            ],
+        );
+        plane.reservoir_replaced(&rec, &outpoint_index(&canonical), &canonical);
+        plane.flush(Some(1_000));
+        assert_eq!(member_set(&plane), [0, 1, 301, 302].into());
+
+        // The pooled candidate is spent: no membership change at all.
+        plane.note_input_unresolved(&OutPoint {
+            tx_hash: "0xp3".into(),
+            index: 0,
+        });
+        assert!(
+            plane.flush(Some(2_000)).is_none(),
+            "retiring an off-stage candidate is invisible"
+        );
+
+        // Now a STAGED plain resident is spent. The refill must skip the
+        // retired 303 and take canonical 2 — 303 can never come back.
+        plane.note_input_unresolved(&OutPoint {
+            tx_hash: "0xp2".into(),
+            index: 0,
+        });
+        let (enter, exit, _) = delta_parts(plane.flush(Some(3_000)));
+        assert_eq!(exit, vec![302]);
+        assert_eq!(enter, vec![2], "the retired candidate is skipped");
+        assert_eq!(member_set(&plane), [0, 1, 2, 301].into());
+        assert!(!member_set(&plane).contains(&303));
+    }
+
+    /// The hook fires on EVERY unresolved input — the overwhelming
+    /// majority of which are ordinary spends outside the retained
+    /// window. Unknown outpoints and repeat spends must both be exact
+    /// no-ops.
+    #[test]
+    fn unresolved_inputs_that_are_not_ours_are_no_ops() {
+        let mut plane = small_plane(4, 1);
+        let canonical = vec![
+            cell_with(0, "0xa", AssetKind::Dao, 0),
+            cell_with(1, "0xb", AssetKind::Xudt, 0),
+            cell_with(2, "0xc", AssetKind::Native, 0),
+            cell_with(3, "0xd", AssetKind::Native, 0),
+        ];
+        seed_canonical(&mut plane, &canonical, 500);
+        let rec = record(
+            10,
+            vec![],
+            vec![],
+            vec![cell_with(301, "0xp1", AssetKind::Native, 0)],
+        );
+        plane.reservoir_replaced(&rec, &outpoint_index(&canonical), &canonical);
+        plane.flush(Some(1_000));
+        let before = member_set(&plane);
+
+        // An outpoint nobody on stage holds.
+        plane.note_input_unresolved(&OutPoint {
+            tx_hash: "0xnothing".into(),
+            index: 7,
+        });
+        // A canonical member's outpoint reached here would be a caller
+        // bug (the index would have resolved it) — it must still not
+        // disturb the stage.
+        plane.note_input_unresolved(&OutPoint {
+            tx_hash: "0xa".into(),
+            index: 0,
+        });
+        assert!(plane.flush(Some(2_000)).is_none());
+        assert_eq!(member_set(&plane), before);
+
+        // Same outpoint twice, and again after it already settled.
+        plane.note_input_unresolved(&OutPoint {
+            tx_hash: "0xp1".into(),
+            index: 0,
+        });
+        plane.note_input_unresolved(&OutPoint {
+            tx_hash: "0xp1".into(),
+            index: 0,
+        });
+        let (enter, exit, _) = delta_parts(plane.flush(Some(3_000)));
+        assert_eq!(exit, vec![301], "one exit, not two");
+        assert_eq!(enter, vec![3]);
+        plane.note_input_unresolved(&OutPoint {
+            tx_hash: "0xp1".into(),
+            index: 0,
+        });
+        assert!(plane.flush(Some(4_000)).is_none(), "idempotent");
+        assert_eq!(member_set(&plane), [0, 1, 2, 3].into());
     }
 
     /// GC of a staged composed member refills the class from the refresh
