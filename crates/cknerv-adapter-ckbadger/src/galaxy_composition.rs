@@ -189,6 +189,12 @@ async fn top_up_dao(
                 deposit.deposit_block_number,
                 "DAO deposit",
             )?;
+            if found.len() >= want {
+                // Past the ask. Leave the rest of this page UNCLAIMED —
+                // marking a candidate emitted without delivering it would
+                // burn tail depth on a cell nobody ever saw.
+                break;
+            }
             if tail.emitted.insert(candidate.out_point.clone()) {
                 found.push(candidate);
             }
@@ -282,6 +288,9 @@ async fn top_up_typed(
                 cell.created_at_block,
                 "live Cell",
             )?;
+            if found.len() >= want {
+                break; // as above: never claim what is not delivered
+            }
             if tail.emitted.insert(candidate.out_point.clone()) {
                 found.push(candidate);
             }
@@ -834,11 +843,11 @@ mod tests {
         let first = top_up(&client, &api, anchor(), &mut tail, 150, 0, 1)
             .await
             .unwrap();
-        assert_eq!(first.dao.len(), 200, "pages until the ask is covered");
+        assert_eq!(first.dao.len(), 150, "exactly the ask, never a page more");
         let second = top_up(&client, &api, anchor(), &mut tail, 150, 0, 1)
             .await
             .unwrap();
-        assert_eq!(second.dao.len(), 200);
+        assert_eq!(second.dao.len(), 150);
 
         let overlap = first
             .dao
@@ -866,7 +875,7 @@ mod tests {
                 .iter(),
         );
 
-        let got = top_up(&client, &api, anchor(), &mut tail, 50, 0, 1)
+        let got = top_up(&client, &api, anchor(), &mut tail, 200, 0, 1)
             .await
             .unwrap();
         assert!(
@@ -876,7 +885,11 @@ mod tests {
                     || c.out_point.tx_hash != format!("0x{:064x}", 0)),
             "nothing from the emitted prefix"
         );
-        assert_eq!(got.dao.len(), 100, "the whole first page was already ours");
+        assert_eq!(
+            got.dao.len(),
+            200,
+            "skipping the emitted page, not stopping at it"
+        );
         server.abort();
     }
 
@@ -918,7 +931,7 @@ mod tests {
         let got = top_up(&client, &api, anchor(), &mut tail, 0, 250, 1)
             .await
             .unwrap();
-        assert_eq!(got.typed.len(), 300, "three pages, one ask covered");
+        assert_eq!(got.typed.len(), 250, "exactly the ask");
         let from_a = got
             .typed
             .iter()
