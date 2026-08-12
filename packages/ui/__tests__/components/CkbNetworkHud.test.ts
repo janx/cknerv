@@ -34,23 +34,10 @@ function makeChain(overrides: Partial<ChainEntry> = {}): ChainEntry {
 }
 
 describe('computeRollingStats', () => {
-  it('returns zeros / null when rings are empty', () => {
+  it('returns zero / null when the interval ring is empty', () => {
     const out = computeRollingStats(makeChain());
-    expect(out.tps).toBe(0);
     expect(out.intervalAvgMs).toBe(0);
     expect(out.intervalLastMs).toBeNull();
-  });
-
-  it('derives TPS from total tx count over total interval seconds', () => {
-    // 3 intervals of 5s each = 15s window, with 6 + 4 + 5 = 15 txs in
-    // those windows => 1.0 tps. The first tx_count sample lacks a
-    // preceding interval and must be excluded by the alignment slice.
-    const chain = makeChain({
-      recent_block_intervals_ms: [5000, 5000, 5000],
-      recent_block_tx_counts: [99 /* dropped */, 6, 4, 5],
-    });
-    const out = computeRollingStats(chain);
-    expect(out.tps).toBeCloseTo(1.0, 6);
   });
 
   it('derives intervalAvgMs from the interval ring', () => {
@@ -61,17 +48,5 @@ describe('computeRollingStats', () => {
     const out = computeRollingStats(chain);
     expect(out.intervalAvgMs).toBe(5000);
     expect(out.intervalLastMs).toBe(5000);
-  });
-
-  it('handles tx_counts shorter than intervals (single block + one interval)', () => {
-    // Only one interval recorded; alignment slice must not negative-index.
-    const chain = makeChain({
-      recent_block_intervals_ms: [3000],
-      recent_block_tx_counts: [10],
-    });
-    const out = computeRollingStats(chain);
-    // Alignment: take last 1 of [10] = [10], totalSec = 3, tps = 10/3.
-    expect(out.tps).toBeCloseTo(10 / 3, 6);
-    expect(out.intervalLastMs).toBe(3000);
   });
 });

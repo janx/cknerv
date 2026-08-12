@@ -18,7 +18,9 @@ describe('NodeDetailPanel', () => {
     expect(t).toContain('local');
     expect(t).toContain('OBSERVER');
     expect(t).toContain('ckb');
-    expect(t).toContain('11042.842/1800');
+    expect(t).toContain('Epoch#11,042');
+    expect(t).toContain('Epoch progress842 / 1,800');
+    expect(t).not.toContain('11042.842/1800');
     getByRole('button', { name: 'close' }).click();
     expect(onClose).toHaveBeenCalledTimes(1);
   });

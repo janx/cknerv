@@ -50,7 +50,8 @@ export interface ChainEntry {
   /** ms intervals between consecutive blocks (capped on the backend). Drives
    *  the "INTERVAL avg / last" HUD readout. */
   recent_block_intervals_ms: number[];
-  /** Per-block tx counts (parallel to recent_block_intervals_ms). Drives TPS. */
+  /** Per-block tx counts (parallel to recent_block_intervals_ms). Drives
+   *  pulse telemetry. */
   recent_block_tx_counts: number[];
   /** Per-block serialized sizes (bytes), parallel to recent_block_tx_counts. */
   recent_block_sizes: number[];

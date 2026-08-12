@@ -2,6 +2,7 @@ import { Text } from '@react-three/drei';
 
 import type { ChainEntry } from '@cknerv/types';
 import { FONT_DISPLAY, FONT_MONO } from '../ui/fonts';
+import { formatEpochReadout } from './hud/epochReadout';
 
 interface CkbNetworkHudProps {
   x: number;
@@ -18,7 +19,7 @@ const FONT_SIZE_HEADER = 10;
 const FONT_SIZE_FIELD = 10;
 const FONT_SIZE_LABEL = 8.5;
 // Value column x within a FieldRow group. Sized for the widest label
-// in `fields` ("TPS (60s)") rendered in Orbitron Medium at
+// in `fields` ("EPOCH POS") rendered in Orbitron Medium at
 // FONT_SIZE_LABEL with LABEL_LETTER_SPACING — leaves a one-char gap
 // before the value so label and number never visually merge.
 const VALUE_X = 82;
@@ -41,29 +42,18 @@ function fmtMs(ms: number): string {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
-/** Compute rolling TPS and rolling avg block interval from the parallel
- *  per-block rings on `chain`. Both rings are bounded by the backend cap;
- *  here we just sum what's there. Exported for unit tests. */
+/** Compute rolling block timing from the interval ring on `chain`. The ring is
+ *  bounded by the backend cap; here we just summarize what's there. Exported
+ *  for unit tests. */
 export function computeRollingStats(chain: ChainEntry): {
-  tps: number;
   intervalAvgMs: number;
   intervalLastMs: number | null;
 } {
   const intervals = chain.recent_block_intervals_ms;
-  const txCounts = chain.recent_block_tx_counts;
   const intervalAvgMs = avg(intervals);
   const intervalLastMs =
     intervals.length > 0 ? intervals[intervals.length - 1] : null;
-  // TPS = (sum of tx_counts in the same window the intervals cover) / (sum
-  // of those intervals in seconds). We only count tx_counts whose
-  // *preceding-interval* lives in the ring — the first tx_count entry has
-  // no preceding interval, so the windows are off-by-one. Slice tx_counts
-  // to align with intervals.
-  const aligned = txCounts.slice(Math.max(0, txCounts.length - intervals.length));
-  const totalTx = aligned.reduce((a, b) => a + b, 0);
-  const totalSec = intervals.reduce((a, b) => a + b, 0) / 1000;
-  const tps = totalSec > 0 ? totalTx / totalSec : 0;
-  return { tps, intervalAvgMs, intervalLastMs };
+  return { intervalAvgMs, intervalLastMs };
 }
 
 export default function CkbNetworkHud({
@@ -75,27 +65,20 @@ export default function CkbNetworkHud({
   // Newest-first: take the tail of the recent ring, then reverse so
   // the highest-numbered block sits at the top of the LATEST list.
   const latestBlocks = chain.recent_blocks.slice(-4).slice().reverse();
-  const { tps, intervalAvgMs, intervalLastMs } = computeRollingStats(chain);
-
-  const epochLabel =
-    chain.epoch.length > 0
-      ? `${chain.epoch.number}.${chain.epoch.index}/${chain.epoch.length}`
-      : '—';
+  const { intervalAvgMs, intervalLastMs } = computeRollingStats(chain);
+  const epoch = formatEpochReadout(chain.epoch);
   const intervalLabel =
     intervalLastMs === null
       ? '—'
       : `${fmtMs(intervalAvgMs)} · ${fmtMs(intervalLastMs)}`;
   const mempoolLabel = `${chain.mempool.pending} · ${chain.mempool.proposed}`;
-  const tpsLabel = tps > 0 ? tps.toFixed(2) : '0.00';
 
   // Field layout — order matters: most-actionable fields on top, history
   // (LATEST) on the bottom.
   const fields: Array<{ label: string; value: string; title?: string }> = [
     { label: 'TIP', value: `#${chain.tip}` },
-    { label: 'EPOCH', value: epochLabel, title: 'epoch number . index / length' },
-    { label: 'BLOCKS', value: chain.total_blocks.toString() },
-    { label: 'TXS', value: chain.total_txs.toString() },
-    { label: 'TPS (60s)', value: tpsLabel, title: 'rolling tx/s over the recent block ring' },
+    { label: 'EPOCH', value: epoch.number },
+    { label: 'EPOCH POS', value: epoch.progress, title: 'current block index / epoch length' },
     { label: 'INTERVAL', value: intervalLabel, title: 'avg · last block interval' },
     {
       label: 'MEMPOOL',

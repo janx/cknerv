@@ -107,7 +107,12 @@ describe('BlockchainReadout', () => {
       <BlockchainReadout chain={chain} cellsStats={cellsStats} />,
     );
     expect(container.textContent).toContain('#16,204,887');
-    expect(container.textContent).toContain('11042.842/1800');
+    expect(container.querySelector('[data-epoch-number]')?.textContent).toBe('#11,042');
+    expect(container.querySelector('[data-epoch-progress]')?.textContent?.trim()).toBe('842 / 1,800');
+    expect(container.textContent).not.toContain('11042.842/1800');
+    expect(container.textContent).not.toContain('Blocks');
+    expect(container.textContent).not.toContain('Txs');
+    expect(container.textContent).not.toContain('Tps');
     expect(container.textContent).toContain('312 · 64');
     expect(container.textContent).toContain('COMMON KNOWLEDGE BASE');
     expect(container.textContent).toContain('共识记忆');
@@ -131,7 +136,7 @@ describe('BlockchainReadout', () => {
     );
     const badge = container.querySelector<HTMLElement>('[data-protocol-era-state="ready"]');
 
-    expect(container.textContent).toContain('11042.842/1800· MIRANA·21');
+    expect(container.textContent).toContain('#11,042· MIRANA·21');
     expect(container.textContent).not.toContain('IDX');
     expect(badge?.dataset.protocolEraLabel).toBe('MIRANA·21');
     expect(badge?.title).toContain('epoch 5,414, block #70');
@@ -176,7 +181,7 @@ describe('BlockchainReadout', () => {
     expect(container.querySelector('[data-activity-feed-compact="true"]')).not.toBeNull();
   });
 
-  it('renders the hourly horizon without replacing direct TPS', () => {
+  it('renders the hourly horizon without a TPS row', () => {
     const { container } = render(
       <BlockchainReadout
         chain={chain}
@@ -186,7 +191,7 @@ describe('BlockchainReadout', () => {
       />,
     );
     const text = container.textContent ?? '';
-    expect(text).toContain('Tps 60s0.33');
+    expect(text).not.toContain('Tps');
     expect(text).toContain('TX HORIZON');
     expect(text).toContain('3/24H · AS OF #100');
     expect(text).toContain('HOUR 12');
@@ -207,7 +212,7 @@ describe('BlockchainReadout', () => {
       />,
     );
     const text = container.textContent ?? '';
-    expect(text).toContain('Tps 60s0.33');
+    expect(text).not.toContain('Tps');
     expect(text).toContain('TX HORIZON');
     expect(text).toContain('H12/D345 · AS OF #100');
     expect(text.indexOf('TX HORIZON')).toBeLessThan(text.indexOf('ACTIVITY'));

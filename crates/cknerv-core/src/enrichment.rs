@@ -562,9 +562,7 @@ pub struct ActivityFeedRecord {
 /// ordered oldest-to-newest and intentionally carry counts only: source-local
 /// presentation labels do not cross the shared wire contract, and no timezone
 /// is inferred from their absence. Current-hour/day values retain their
-/// explicitly indexed, source-defined bucket meaning. This supplements the
-/// direct adapter's short rolling TPS window; it never replaces canonical
-/// transaction totals.
+/// explicitly indexed, source-defined bucket meaning.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TransactionHorizonRecord {
     pub source: String,

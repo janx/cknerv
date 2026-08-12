@@ -259,7 +259,7 @@ export interface ActivityFeedRecord {
   activities: ActivityFeedItem[];
 }
 
-/** Bounded oldest-to-newest indexed counts; never a canonical total or TPS. */
+/** Bounded oldest-to-newest indexed counts; never a canonical total. */
 export interface TransactionHorizonRecord {
   source: string;
   as_of: ChainAnchor;

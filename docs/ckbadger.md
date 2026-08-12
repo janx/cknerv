@@ -465,8 +465,7 @@ On taller viewports, `COMMON KNOWLEDGE BASE` renders **TX HORIZON · N/24H**
 with exact current-hour and current-day counts. At 860 pixels or less it folds
 to a header-only **TX HORIZON · H…/D…** section so the CKB panel order remains
 canonical chain data, fused capacity, **TX HORIZON**, then **ACTIVITY**. It
-never replaces direct TPS or cumulative transaction totals, disappears in
-CKB-only mode, and dims after three missed refreshes.
+disappears in CKB-only mode and dims after three missed refreshes.
 
 ### Network Atlas
 

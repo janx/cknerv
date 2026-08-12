@@ -115,7 +115,7 @@ It should also gain `transaction_horizon`, whose hourly/daily arrays contain at
 most 24/14 non-negative counts and which contains no source bucket labels. Its
 `as_of` is a compatibility anchor rather than a claim that the independently
 cached summary was generated at that exact block. This summary refreshes
-independently and must not change direct TPS or cumulative transaction totals.
+independently and must not change canonical chain state.
 If ckbadger's network crawler is enabled and has completed a round, the snapshot
 should additionally gain `network_atlas`. Its `sample_size` must be at most 64;
 country/version bucket totals must each equal that sample size; and no peer ID
@@ -280,8 +280,9 @@ With a local ckbadger service configured:
 - [ ] `COMMON KNOWLEDGE BASE` shows a separately labeled
       `INDEXED ACTIVITY · LATEST N` fingerprint and recent activity rows
 - [ ] At 768px viewport height, the activity fingerprint remains but its rows
-      fold away, and the transaction horizon folds into `IDX H…/D…` inside the
-      direct TPS row; `COMMON KNOWLEDGE BASE` does not overlap `PULSE`
+      fold away, and the transaction horizon folds into a header-only
+      `TX HORIZON · H…/D…` section; `COMMON KNOWLEDGE BASE` does not overlap
+      `PULSE`
 - [ ] `CELL MESH` replaces its retained-capacity detail with a labeled
       `INDEXED CHAIN CAPACITY` bar and bounded top-asset list, without showing
       duplicate capacity views

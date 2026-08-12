@@ -99,10 +99,9 @@ pub struct Peer {
     pub connected_ms: u64,
 }
 
-/// Cap on the rolling block-interval / tx-count rings used to derive the
-/// `TPS (60s)` and `INTERVAL avg` HUD readings. ~6s blocks × 60 entries
-/// covers a ~6 minute window — wide enough to absorb mesh jitter without
-/// chasing every tick.
+/// Cap on the rolling block-interval / tx-count rings used by pulse telemetry.
+/// ~6s blocks × 60 entries covers a ~6 minute window — wide enough to absorb
+/// mesh jitter without chasing every tick.
 pub const RECENT_INTERVAL_CAP: usize = 60;
 
 /// Chain-state singleton. Adapters produce this via the `ChainUpdated`
