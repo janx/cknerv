@@ -25,6 +25,7 @@ use crate::enrichment::ChainAnchor;
 use crate::helix::helix_seed_for;
 use crate::mutation::{Mutation, ReplayPhase};
 use crate::outpoint::{is_cellbase_input, OutPoint, TxOutputInfo};
+use crate::projection::display_plane::DisplayPlane;
 use crate::projection::Projection;
 use crate::{AssetKind, LockKind};
 
@@ -417,6 +418,12 @@ pub struct CellGalaxy {
     hydrated_cell_target: usize,
     /// Oldest canonical block included by the last complete hydration.
     hydration_floor: Option<u64>,
+    /// Display-plane membership ("who is on stage"). Presentation policy
+    /// layered on the canonical state above: the handlers report
+    /// births/removals/tx-endpoints as they happen and `apply_mutation`
+    /// flushes at most one coalesced `CellDelta::Display` per mutation.
+    /// Never persisted (invariant I2) — rebuilt by `restore_from`.
+    display: DisplayPlane,
 }
 
 /// Persisted form of [`CellGalaxy`]. Written at preserved-workdir checkpoints
@@ -488,6 +495,7 @@ impl CellGalaxy {
             backfill: None,
             hydrated_cell_target: 0,
             hydration_floor: None,
+            display: DisplayPlane::new(),
         }
     }
 
@@ -599,6 +607,11 @@ impl CellGalaxy {
             self.total_births = self.next_id;
             self.total_deaths = self.next_id - alive_now;
         }
+
+        // Display state is deliberately not persisted: rebuild the resting
+        // membership from the restored map (insertion order). No delta —
+        // every snapshot served after load() already carries this fill.
+        self.display.bootstrap(&self.cells);
     }
 
     fn enforce_cap(&mut self, at_ms: u64) -> Vec<u64> {
@@ -674,6 +687,10 @@ impl CellGalaxy {
     /// queued before the reset, and replayed historical blocks must not move
     /// the pulse clock backward.
     fn reset_for_rebuild(&mut self) -> Vec<CellDelta> {
+        // The stage empties with the map: every member exits in one
+        // coalesced Display delta (flushed by `apply_mutation` alongside
+        // the Gc(all) below).
+        self.display.note_reset();
         let mut ids = self.cells.iter().map(|cell| cell.id).collect::<Vec<_>>();
         // Parked reorg identities live outside `cells`; retire them with the
         // same reset GC so no client retains a cell this rebuild abandons.
@@ -827,6 +844,14 @@ impl CellGalaxy {
                         // `handle_tx_landed`; the rest get this deferred GC
                         // at `settle_reorg_limbo` time.
                         let cell = self.cells.remove(pos);
+                        // Parking is a SILENT removal on the canonical
+                        // delta stream (no Gc — the client keeps the cell
+                        // alive in place awaiting revival), but the plane
+                        // must mirror the map: a staged member exits now
+                        // and re-enters through the ordinary birth/
+                        // endpoint paths if the replacement suffix
+                        // revives it.
+                        self.display.note_removed(cell.id);
                         self.reorg_limbo.insert(outpoint, cell);
                     }
                     // Strict 1:1 with the original `handle_tx_landed` increment:
@@ -857,6 +882,9 @@ impl CellGalaxy {
                         self.cells.push(cell.clone());
                     }
                     self.outpoint_index.insert(cell.out_point.clone(), id);
+                    // Resurrections re-enter the map; note_birth is
+                    // idempotent for the in-place-update case above.
+                    self.display.note_birth(id);
                     deltas.push(CellDelta::Birth { cell });
                     // Mirror image of the birth-rollback above: every recorded
                     // death bumped `total_deaths` exactly once. The
@@ -961,13 +989,18 @@ impl CellGalaxy {
             deltas.push(CellDelta::Pulse { at_ms });
         }
 
-        // GC dead cells past the death-animation tail.
+        // GC dead cells past the death-animation tail. This is the moment
+        // a staged corpse's display window closes: the plane exits it and
+        // backfills the resting vacancy at flush time.
         let gc_removed = if self.backfill.is_some() {
             self.gc_cells(at_ms)
         } else {
             self.gc(at_ms)
         };
         if !gc_removed.is_empty() {
+            for id in &gc_removed {
+                self.display.note_removed(*id);
+            }
             deltas.push(CellDelta::Gc { ids: gc_removed });
         }
 
@@ -1096,6 +1129,7 @@ impl CellGalaxy {
                 .push(cell.out_point.clone());
             endpoint_anchors.push(CellLinkEndpointAnchor::from(&cell));
             self.cells.push(cell);
+            self.display.note_birth(id);
             birthed_ids.push(id);
         }
 
@@ -1142,6 +1176,13 @@ impl CellGalaxy {
                     parents.push(inp.tx_hash.clone());
                 }
             }
+            // Display-plane activity hook (D3): the resolved endpoint
+            // ids of this tx — exactly what rides the Link delta below —
+            // enter the stage progressively if not already on it.
+            self.display.note_activity(
+                block,
+                dead_ids.iter().copied().chain(birthed_ids.iter().copied()),
+            );
             // `link_tag` is `Some(tag)` iff at least one output had a
             // pre-birth tag stash (the sync-pair case). All outputs in
             // a single tx share the same app tag, so the first
@@ -1235,6 +1276,19 @@ impl CellGalaxy {
     }
 }
 
+/// The mutation-carried event clock, when the variant has one. The
+/// display plane uses this (never a wall clock) for its provenance
+/// timestamp; variants without a clock fall back to the plane's last
+/// seen value — still deterministic, still mutation-derived.
+fn mutation_at_ms(m: &Mutation) -> Option<u64> {
+    match m {
+        Mutation::BlockMined { at, .. }
+        | Mutation::TxLanded { at, .. }
+        | Mutation::CellTagged { at, .. } => Some(*at),
+        _ => None,
+    }
+}
+
 impl Projection for CellGalaxy {
     type Snapshot = CellGalaxySnapshot;
     type Delta = CellDelta;
@@ -1281,13 +1335,12 @@ impl Projection for CellGalaxy {
             total_births: self.total_births,
             total_deaths: self.total_deaths,
             backfill: self.backfill,
-            // Display plane is contract-only until S1 staffs it.
-            display: None,
+            display: Some(self.display.section()),
         }
     }
 
     fn apply_mutation(&mut self, m: &Mutation) -> Vec<CellDelta> {
-        match m {
+        let mut deltas = match m {
             Mutation::BlockMined {
                 number,
                 hash,
@@ -1317,6 +1370,17 @@ impl Projection for CellGalaxy {
                     total: *total,
                     phase: *phase,
                 });
+                // Display plane goes silent for the replay (activity
+                // suppressed, deltas coalesced) and resettles once at the
+                // terminal — the flush below this match emits the single
+                // coalesced Display delta.
+                if *active {
+                    if !was_active {
+                        self.display.backfill_started();
+                    }
+                } else if was_active {
+                    self.display.backfill_ended();
+                }
                 let mut deltas = vec![CellDelta::Backfill {
                     done: *done,
                     total: *total,
@@ -1358,7 +1422,15 @@ impl Projection for CellGalaxy {
                 Vec::new()
             }
             _ => Vec::new(),
+        };
+        // Single display-plane settle point: at most ONE coalesced
+        // `CellDelta::Display` per mutation, appended after the canonical
+        // deltas so `enter_ids` always reference cells whose Birth deltas
+        // precede them at the same revision (invariant I3).
+        if let Some(display_delta) = self.display.flush(mutation_at_ms(m)) {
+            deltas.push(display_delta);
         }
+        deltas
     }
 
     fn save(&self) -> serde_json::Value {
@@ -2021,7 +2093,16 @@ mod tests {
     #[test]
     fn cell_tagged_idempotent_re_tag_is_noop() {
         let mut g = make_galaxy();
-        g.handle_tx_landed("0xtx", 1, 1_000, &[], &[out(100, "0x")]);
+        // Mint through apply_mutation so the display plane settles with
+        // the birth mutation itself; the CellTagged deltas below then
+        // carry Tag alone, as on the real wire path.
+        g.apply_mutation(&Mutation::TxLanded {
+            tx_hash: "0xtx".into(),
+            block: 1,
+            at: 1_000,
+            inputs: vec![],
+            outputs: vec![out(100, "0x")],
+        });
         let first = g.apply_mutation(&Mutation::CellTagged {
             out_point: op("0xtx", 0),
             tag: "dex".to_string(),
@@ -3107,5 +3188,547 @@ mod tests {
             _ => panic!("expected Birth delta"),
         };
         assert_eq!(cell.data_hex, big);
+    }
+
+    // ── display plane (S1, prefix mode) ──────────────────────────────
+
+    use crate::projection::display_plane::{
+        DISPLAY_ACTIVITY_QUOTA, DISPLAY_CELL_BUDGET, DISPLAY_NERVE_EDGE_BUDGET,
+    };
+
+    const RESTING_TARGET: usize = DISPLAY_CELL_BUDGET as usize - DISPLAY_ACTIVITY_QUOTA;
+
+    fn mined(number: u64, hash: &str, at: u64) -> Mutation {
+        Mutation::BlockMined {
+            number,
+            hash: hash.into(),
+            tx_count: 1,
+            size: 0,
+            at,
+        }
+    }
+
+    fn landed(
+        tx: &str,
+        block: u64,
+        at: u64,
+        inputs: Vec<OutPoint>,
+        outputs: Vec<TxOutputInfo>,
+    ) -> Mutation {
+        Mutation::TxLanded {
+            tx_hash: tx.into(),
+            block,
+            at,
+            inputs,
+            outputs,
+        }
+    }
+
+    fn display_delta_count(deltas: &[CellDelta]) -> usize {
+        deltas
+            .iter()
+            .filter(|d| matches!(d, CellDelta::Display { .. }))
+            .count()
+    }
+
+    /// Extract THE display delta of a mutation (pinning "at most one per
+    /// mutation" and "no resident payloads in prefix mode" on the way).
+    #[allow(clippy::type_complexity)]
+    fn display_delta(
+        deltas: &[CellDelta],
+    ) -> Option<(&Vec<u64>, &Vec<u64>, Option<&DisplayProvenance>)> {
+        assert!(
+            display_delta_count(deltas) <= 1,
+            "at most one Display delta per mutation; got {deltas:?}"
+        );
+        deltas.iter().find_map(|d| match d {
+            CellDelta::Display {
+                enter_ids,
+                enter_cells,
+                exit_ids,
+                provenance,
+            } => {
+                assert!(
+                    enter_cells.is_empty(),
+                    "prefix mode never ships resident payloads"
+                );
+                Some((enter_ids, exit_ids, provenance.as_ref()))
+            }
+            _ => None,
+        })
+    }
+
+    /// Structural invariants: members ⊆ cells-map keys, the plane's
+    /// presence mirror tracks the map exactly, and the budget holds.
+    fn assert_display_invariants(g: &CellGalaxy) {
+        let mut map_ids: Vec<u64> = g.cells.iter().map(|c| c.id).collect();
+        map_ids.sort_unstable();
+        assert_eq!(
+            g.display.present_ids_sorted(),
+            map_ids,
+            "presence mirror diverged from the canonical map — a removal path went unhooked"
+        );
+        let members = g.display.member_ids_sorted();
+        let map_set: std::collections::HashSet<u64> = map_ids.iter().copied().collect();
+        for id in &members {
+            assert!(map_set.contains(id), "member {id} is not in the cells map");
+        }
+        assert!(members.len() <= DISPLAY_CELL_BUDGET as usize);
+    }
+
+    /// Pin 1 — bootstrap fill: first (budget − quota) births in insertion
+    /// order; a birth beyond the full resting set enters as ACTIVITY
+    /// (D3), never as resting.
+    #[test]
+    fn display_bootstrap_fills_resting_prefix_and_late_births_enter_as_activity() {
+        let mut g = make_galaxy();
+        let outs: Vec<TxOutputInfo> = (0..RESTING_TARGET + 3)
+            .map(|i| out(100 + i as u64, "0x"))
+            .collect();
+        let deltas = g.apply_mutation(&landed("0xbulk", 1, 1_000, vec![], outs));
+        let (enter, exit, provenance) = display_delta(&deltas).expect("bootstrap fill delta");
+        // First RESTING_TARGET ids fill the resting set; the 3 overflow
+        // births enter as activity endpoints of their own birth tx.
+        assert_eq!(enter, &(0..(RESTING_TARGET as u64 + 3)).collect::<Vec<_>>());
+        assert!(exit.is_empty());
+        let provenance = provenance.expect("first fill rides provenance");
+        assert_eq!(provenance.mode, DisplayMode::Canonical);
+        assert_eq!(provenance.source, None);
+        assert_eq!(provenance.as_of, None);
+        assert_eq!(provenance.updated_at_ms, 1_000);
+        assert_eq!(g.display.resting_len(), RESTING_TARGET);
+        assert_eq!(g.display.activity_len(), 3);
+        assert!(g.display.is_activity_member(RESTING_TARGET as u64));
+
+        // A later birth beyond the full resting set: enters, but only as
+        // activity — the resting prefix is closed.
+        let late_id = RESTING_TARGET as u64 + 3;
+        let deltas = g.apply_mutation(&landed("0xlate", 2, 2_000, vec![], vec![out(7, "0x")]));
+        let (enter, exit, provenance) = display_delta(&deltas).expect("late birth enters");
+        assert_eq!(enter, &vec![late_id]);
+        assert!(exit.is_empty());
+        assert!(
+            provenance.is_none(),
+            "provenance rides only when it changes"
+        );
+        assert!(g.display.is_activity_member(late_id));
+        assert_eq!(g.display.resting_len(), RESTING_TARGET);
+
+        let section = g.snapshot().display.expect("display always present");
+        assert_eq!(section.members.len(), RESTING_TARGET + 4);
+        assert_eq!(section.budget.cells, DISPLAY_CELL_BUDGET);
+        assert_eq!(section.budget.nerve_edges, DISPLAY_NERVE_EDGE_BUDGET);
+        assert!(section.residents.is_empty());
+        assert_display_invariants(&g);
+    }
+
+    /// Pin 2 — a staged endpoint (even a fresh corpse) is a membership no-op;
+    /// only beyond-prefix endpoints enter.
+    #[test]
+    fn display_endpoint_already_staged_is_membership_noop() {
+        let mut g = make_galaxy();
+        let outs: Vec<TxOutputInfo> = (0..RESTING_TARGET)
+            .map(|i| out(1 + i as u64, "0x"))
+            .collect();
+        g.apply_mutation(&landed("0xbulk", 1, 1_000, vec![], outs));
+
+        // Spend member 5 producing one output: endpoints are [5, new].
+        // 5 is staged (and now a corpse) → no-op; the new cell enters as
+        // activity.
+        let new_id = RESTING_TARGET as u64;
+        let deltas = g.apply_mutation(&landed(
+            "0xswap",
+            2,
+            2_000,
+            vec![op("0xbulk", 5)],
+            vec![out(9, "0x")],
+        ));
+        let (enter, exit, _) = display_delta(&deltas).expect("endpoint entry");
+        assert_eq!(enter, &vec![new_id]);
+        assert!(exit.is_empty(), "the consumed member keeps its seat");
+        assert!(g.display.is_activity_member(new_id));
+        assert!(g.display.member_ids_sorted().contains(&5));
+        assert_display_invariants(&g);
+    }
+
+    /// Pin 3 — death: the member stays (corpse window); canonical GC → exit,
+    /// and the resting vacancy backfills from the insertion-order cursor
+    /// (promoting an already-staged activity member without wire churn).
+    #[test]
+    fn display_corpse_stays_until_gc_then_cursor_backfills_with_promotion() {
+        let mut g = make_galaxy();
+        let outs: Vec<TxOutputInfo> = (0..RESTING_TARGET + 1)
+            .map(|i| out(1 + i as u64, "0x"))
+            .collect();
+        g.apply_mutation(&landed("0xbulk", 1, 1_000, vec![], outs));
+        let over_id = RESTING_TARGET as u64; // beyond the prefix → activity
+        assert!(g.display.is_activity_member(over_id));
+
+        // Pure spend (no outputs → no Link → no endpoint entries): the
+        // death alone changes nothing on stage.
+        g.apply_mutation(&mined(2, "0xb2", 2_000));
+        let deltas = g.apply_mutation(&landed("0xspend", 2, 2_000, vec![op("0xbulk", 0)], vec![]));
+        assert!(
+            display_delta(&deltas).is_none(),
+            "corpse keeps its seat — no membership change, no delta"
+        );
+        assert!(g.display.member_ids_sorted().contains(&0));
+
+        // GC past the death tail: 0 exits; the cursor's next candidate
+        // (over_id) is already staged as activity → promoted in place,
+        // so the only wire change is the exit.
+        let deltas = g.apply_mutation(&mined(3, "0xb3", 2_700));
+        let (enter, exit, _) = display_delta(&deltas).expect("gc exit");
+        assert!(enter.is_empty());
+        assert_eq!(exit, &vec![0]);
+        assert_eq!(g.display.resting_len(), RESTING_TARGET);
+        assert_eq!(g.display.activity_len(), 0, "promotion freed the slot");
+        assert!(!g.display.is_activity_member(over_id));
+
+        // Understudies exhausted: the next GC leaves the stage underfull…
+        g.apply_mutation(&mined(4, "0xb4", 3_000));
+        g.apply_mutation(&landed("0xspend2", 4, 3_000, vec![op("0xbulk", 1)], vec![]));
+        let deltas = g.apply_mutation(&mined(5, "0xb5", 3_700));
+        let (enter, exit, _) = display_delta(&deltas).expect("second gc exit");
+        assert!(enter.is_empty(), "no backfill candidates left");
+        assert_eq!(exit, &vec![1]);
+
+        // …and the next birth refills the vacancy as RESTING.
+        let fresh_id = over_id + 1;
+        let deltas = g.apply_mutation(&landed("0xfresh", 5, 3_800, vec![], vec![out(9, "0x")]));
+        let (enter, exit, _) = display_delta(&deltas).expect("vacancy refill");
+        assert_eq!(enter, &vec![fresh_id]);
+        assert!(exit.is_empty());
+        assert!(!g.display.is_activity_member(fresh_id));
+        assert_eq!(g.display.resting_len(), RESTING_TARGET);
+        assert_display_invariants(&g);
+    }
+
+    /// Pin 4a — reorg rollback: parked births exit (the park is SILENT on the
+    /// canonical stream); limbo settle GCs ids that already left the
+    /// stage, so it is a display no-op.
+    #[test]
+    fn display_reorg_rollback_and_limbo_settle_keep_members_within_map() {
+        let mut g = make_galaxy();
+        g.apply_mutation(&mined(1, "0xb1", 1_000));
+        g.apply_mutation(&landed("0xbase", 1, 1_000, vec![], vec![out(100, "0x")]));
+        g.apply_mutation(&mined(2, "0xb2", 2_000));
+        g.apply_mutation(&landed(
+            "0xtx",
+            2,
+            2_000,
+            vec![],
+            vec![out(200, "0xdd"), out(300, "0xee")],
+        ));
+        assert_eq!(g.display.member_ids_sorted(), vec![0, 1, 2]);
+        assert_display_invariants(&g);
+
+        let deltas = g.apply_mutation(&Mutation::ChainReorganized { from_block: 2 });
+        let (enter, exit, _) = display_delta(&deltas).expect("park exits");
+        assert!(enter.is_empty());
+        assert_eq!(exit, &vec![1, 2]);
+        assert_display_invariants(&g);
+
+        // Replacement block never re-includes the tx; the backstop block
+        // settles the limbo with a canonical Gc — both ids already left
+        // the stage at park time, so no display delta rides along.
+        g.apply_mutation(&mined(2, "0xb2r", 3_000));
+        let deltas = g.apply_mutation(&mined(3, "0xb3", 4_000));
+        assert!(deltas
+            .iter()
+            .any(|d| matches!(d, CellDelta::Gc { ids } if ids.len() == 2)));
+        assert!(display_delta(&deltas).is_none());
+        assert_eq!(g.display.member_ids_sorted(), vec![0]);
+        assert_display_invariants(&g);
+    }
+
+    /// Pin 4b — a revived identity re-enters through the ordinary birth +
+    /// endpoint paths — no special casing beyond the invariant.
+    #[test]
+    fn display_reorg_revival_re_enters_the_stage() {
+        let mut g = make_galaxy();
+        g.apply_mutation(&mined(1, "0xb1", 1_000));
+        g.apply_mutation(&landed("0xbase", 1, 1_000, vec![], vec![out(100, "0x")]));
+        g.apply_mutation(&mined(2, "0xb2", 2_000));
+        g.apply_mutation(&landed(
+            "0xtx",
+            2,
+            2_000,
+            vec![],
+            vec![out(200, "0xdd"), out(300, "0xee")],
+        ));
+        g.apply_mutation(&Mutation::ChainReorganized { from_block: 2 });
+        assert_eq!(g.display.member_ids_sorted(), vec![0]);
+
+        g.apply_mutation(&mined(2, "0xb2r", 3_000));
+        let deltas = g.apply_mutation(&landed(
+            "0xtx",
+            2,
+            3_000,
+            vec![],
+            vec![out(200, "0xdd"), out(300, "0xee")],
+        ));
+        let (enter, exit, _) = display_delta(&deltas).expect("revival re-enters");
+        assert_eq!(enter, &vec![1, 2]);
+        assert!(exit.is_empty());
+        assert_display_invariants(&g);
+
+        // Everything revived — the settle block has nothing to retire
+        // and the stage is untouched.
+        let deltas = g.apply_mutation(&mined(3, "0xb3", 4_000));
+        assert!(display_delta(&deltas).is_none());
+        assert_eq!(g.display.member_ids_sorted(), vec![0, 1, 2]);
+        assert_display_invariants(&g);
+    }
+
+    /// Pin 5 — reset_for_rebuild empties the plane with one coalesced
+    /// exit-all delta alongside the canonical Gc(all).
+    #[test]
+    fn display_reset_for_rebuild_exits_everything_in_one_coalesced_delta() {
+        let mut g = make_galaxy();
+        g.apply_mutation(&landed(
+            "0xa",
+            1,
+            1_000,
+            vec![],
+            vec![out(1, "0x"), out(2, "0x"), out(3, "0x")],
+        ));
+        let deltas = g.apply_mutation(&Mutation::ChainRebuild { from_block: 9 });
+        let (enter, exit, provenance) = display_delta(&deltas).expect("exit-all");
+        assert!(enter.is_empty());
+        assert_eq!(exit, &vec![0, 1, 2]);
+        assert!(provenance.is_none(), "mode unchanged — no provenance ride");
+        assert!(g.snapshot().display.expect("section").members.is_empty());
+        assert_display_invariants(&g);
+    }
+
+    /// Pin 6 — backfill: per-mutation display deltas are suppressed while the
+    /// replay runs; the terminal emits exactly one coalesced delta with
+    /// the final membership (activity suppressed throughout).
+    #[test]
+    fn display_backfill_suppresses_per_mutation_deltas_and_resettles_once() {
+        let mut g = make_galaxy();
+        g.apply_mutation(&Mutation::BackfillProgress {
+            done: 0,
+            total: 2,
+            active: true,
+            phase: ReplayPhase::Boot,
+        });
+        let streamed = [
+            g.apply_mutation(&mined(1, "0xb1", 1_000)),
+            g.apply_mutation(&landed(
+                "0xa",
+                1,
+                1_000,
+                vec![],
+                vec![out(1, "0x"), out(2, "0x")],
+            )),
+            g.apply_mutation(&mined(2, "0xb2", 2_000)),
+            g.apply_mutation(&landed(
+                "0xb",
+                2,
+                2_000,
+                vec![op("0xa", 0)],
+                vec![out(3, "0x")],
+            )),
+        ];
+        for deltas in &streamed {
+            assert_eq!(display_delta_count(deltas), 0, "suppressed during replay");
+        }
+
+        let terminal = g.apply_mutation(&Mutation::BackfillProgress {
+            done: 2,
+            total: 2,
+            active: false,
+            phase: ReplayPhase::Boot,
+        });
+        let (enter, exit, provenance) = display_delta(&terminal).expect("terminal resettle");
+        assert_eq!(enter, &vec![0, 1, 2]);
+        assert!(exit.is_empty());
+        assert!(
+            provenance.is_some(),
+            "the wire first learns membership at the resettle"
+        );
+        assert_eq!(
+            g.snapshot().display.expect("section").members,
+            vec![0, 1, 2]
+        );
+        assert_eq!(
+            g.display.activity_len(),
+            0,
+            "replay-time endpoints must not stage as activity"
+        );
+        assert_display_invariants(&g);
+    }
+
+    /// Shared mutation script for the replay-consistency and determinism
+    /// tests. Deliberately crosses every membership-changing path:
+    /// backfill fill + terminal resettle, GC exit + backfill, reorg park,
+    /// revival, a second park, limbo drain into a rebuild reset (HashMap
+    /// drain order — must never leak into display bytes), and a fresh
+    /// refill.
+    fn display_scenario() -> Vec<Mutation> {
+        vec![
+            Mutation::BackfillProgress {
+                done: 0,
+                total: 3,
+                active: true,
+                phase: ReplayPhase::Boot,
+            },
+            mined(1, "0xb1", 1_000),
+            landed(
+                "0xa",
+                1,
+                1_000,
+                vec![],
+                vec![out(1, "0x"), out(2, "0x"), out(3, "0x"), out(4, "0x")],
+            ),
+            mined(2, "0xb2", 2_000),
+            landed("0xb", 2, 2_000, vec![op("0xa", 0)], vec![out(5, "0x")]),
+            Mutation::BackfillProgress {
+                done: 3,
+                total: 3,
+                active: false,
+                phase: ReplayPhase::Boot,
+            },
+            mined(3, "0xb3", 2_700), // GCs the corpse of a#0
+            landed("0xc", 3, 2_800, vec![], vec![out(6, "0x"), out(7, "0x")]),
+            Mutation::ChainReorganized { from_block: 3 }, // parks c's births
+            mined(3, "0xb3r", 3_000),
+            landed("0xc", 3, 3_000, vec![], vec![out(6, "0x"), out(7, "0x")]), // revives them
+            mined(4, "0xb4", 4_000), // settle: limbo empty
+            mined(5, "0xb5", 5_000),
+            Mutation::ChainReorganized { from_block: 3 }, // re-parks the revived pair
+            Mutation::ChainRebuild { from_block: 50 },    // reset drains the limbo
+            landed("0xd", 50, 50_000, vec![], vec![out(8, "0x")]),
+        ]
+    }
+
+    /// Pin 7 (⭐) — replay consistency (invariant I5): applying ONLY the emitted
+    /// Display deltas on top of the initial snapshot's display section
+    /// reproduces snapshot().display at every step — except inside an
+    /// active replay window, where per-mutation deltas are suppressed BY
+    /// DESIGN (the runner clears the ring; reconnecting clients get a
+    /// FullSnapshot) and the shadow must simply stay frozen until the
+    /// terminal resettle re-converges it.
+    #[test]
+    fn display_deltas_replay_to_snapshot_membership() {
+        let mut g = make_galaxy();
+        let mut shadow: std::collections::BTreeSet<u64> = g
+            .snapshot()
+            .display
+            .expect("display section always present")
+            .members
+            .into_iter()
+            .collect();
+        for (step, mutation) in display_scenario().into_iter().enumerate() {
+            let deltas = g.apply_mutation(&mutation);
+            let snapshot = g.snapshot();
+            if snapshot.backfill.is_some() {
+                assert!(
+                    display_delta(&deltas).is_none(),
+                    "step {step}: no display delta may leak mid-replay"
+                );
+                assert_display_invariants(&g);
+                continue;
+            }
+            if let Some((enter, exit, _)) = display_delta(&deltas) {
+                for id in exit {
+                    assert!(shadow.remove(id), "step {step}: exit {id} not in shadow");
+                }
+                for id in enter {
+                    assert!(shadow.insert(*id), "step {step}: enter {id} already staged");
+                }
+            }
+            let snapshot_members: Vec<u64> = snapshot.display.expect("display section").members;
+            assert_eq!(
+                shadow.iter().copied().collect::<Vec<_>>(),
+                snapshot_members,
+                "step {step}: delta-replayed shadow diverged from the snapshot"
+            );
+            assert_display_invariants(&g);
+        }
+    }
+
+    /// Pin 8 — determinism: the same mutation sequence produces byte-identical
+    /// display deltas and sections across runs (HashMap drain orders in
+    /// canonical code must never reach the display wire).
+    #[test]
+    fn display_membership_is_deterministic_across_identical_runs() {
+        let run = || {
+            let mut g = make_galaxy();
+            let mut wire: Vec<String> = Vec::new();
+            for mutation in display_scenario() {
+                for delta in g.apply_mutation(&mutation) {
+                    if matches!(delta, CellDelta::Display { .. }) {
+                        wire.push(serde_json::to_string(&delta).expect("serialize delta"));
+                    }
+                }
+                wire.push(
+                    serde_json::to_string(&g.snapshot().display.expect("section"))
+                        .expect("serialize section"),
+                );
+            }
+            wire
+        };
+        assert_eq!(run(), run());
+    }
+
+    /// Display state is rebuilt from the restored map on load — resting
+    /// prefix in insertion order, no delta, snapshot immediately staffed.
+    #[test]
+    fn display_rebuilds_from_restored_state_without_deltas() {
+        let mut g = make_galaxy();
+        g.apply_mutation(&landed(
+            "0xa",
+            1,
+            1_000,
+            vec![],
+            vec![out(1, "0x"), out(2, "0x")],
+        ));
+        g.apply_mutation(&landed(
+            "0xb",
+            2,
+            2_000,
+            vec![op("0xa", 0)],
+            vec![out(3, "0x")],
+        ));
+
+        let mut restored = make_galaxy();
+        restored.load(g.save()).expect("load");
+        let section = restored.snapshot().display.expect("post-load fill");
+        assert_eq!(section.members, g.display.member_ids_sorted());
+        assert_display_invariants(&restored);
+        // The plane starts a fresh first-fill epoch only for the wire —
+        // no delta is owed for the bootstrap itself.
+        let deltas = restored.apply_mutation(&Mutation::CellTagged {
+            out_point: op("0xa", 1),
+            tag: "dex".into(),
+            at: 3_000,
+        });
+        assert_eq!(display_delta_count(&deltas), 0);
+    }
+
+    /// Pin 9 — the columnar snapshot (v1) carries no display section: staffing
+    /// the plane must not change a single byte.
+    #[test]
+    fn snapshot_bin_ignores_the_display_section() {
+        let mut g = make_galaxy();
+        g.apply_mutation(&landed(
+            "0xa",
+            1,
+            1_000,
+            vec![],
+            vec![out(1, "0x"), out(2, "0x")],
+        ));
+        let snapshot = g.snapshot();
+        assert!(snapshot.display.is_some());
+        let mut stripped = snapshot.clone();
+        stripped.display = None;
+        assert_eq!(
+            crate::projection::cells_columnar::encode_cells_columnar(&snapshot),
+            crate::projection::cells_columnar::encode_cells_columnar(&stripped),
+            "columnar v1 must not encode the display plane"
+        );
     }
 }
