@@ -19,6 +19,7 @@ use crate::mutation::Mutation;
 
 pub mod cells;
 pub mod cells_columnar;
+pub mod composition_policy;
 pub mod display_plane;
 
 /// A typed projection of the entity store. Implementors maintain their

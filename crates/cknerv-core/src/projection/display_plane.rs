@@ -12,24 +12,38 @@
 //! a reservoir refresh upgrades it later, exactly like today's
 //! "composition appears when ready" UX).
 //!
-//! ## Membership policy — prefix / canonical mode (S1, unchanged)
+//! ## Mechanism / policy split
 //!
-//! * **Resting** members are the first `budget.cells − ACTIVITY_QUOTA`
-//!   live-or-corpse cells in canonical insertion order. Births beyond a
-//!   full resting set do NOT enter as resting — they wait in an
-//!   insertion-order understudy queue and are staged only when a resting
-//!   vacancy opens (amortized cursor; the cursor never moves backward).
+//! This module is the MECHANISM. [`Stage`] holds the member set, the
+//! resident payloads, the budget, the activity FIFO and the per-mutation
+//! coalescing log, and exposes them as a small vocabulary of membership
+//! moves (`stage_resting`, `stage_activity`, `promote_to_resting`,
+//! `unstage`). [`DisplayPlane`] wires that stage to the canonical
+//! handlers, the wire (delta + snapshot section) and provenance.
+//!
+//! Which cells deserve those slots is [`CompositionPolicy`]'s call
+//! ([`composition_policy`](super::composition_policy) — classes, quotas,
+//! ranks, refill queues). The rule: **"who is on stage, and what they look
+//! like" belongs here; "who *should* be" belongs to the policy.** Two
+//! policies are installed by this module:
+//!
+//! * [`CanonicalPolicy`] — prefix mode (no reservoir yet, or degraded).
+//! * [`CuratedPolicy`] — composed mode, staffed by a validated
+//!   [`GalaxyCompositionRecord`].
+//!
+//! ## Membership rules the mechanism itself owns
+//!
 //! * **Activity** members are the resolved endpoint ids of each landed
 //!   tx (the same `from_ids`/`to_ids` that ride `CellDelta::Link`). An
-//!   endpoint not already on stage enters as activity, consuming quota.
-//!   The quota is a FIFO grouped by block number: past
-//!   `DISPLAY_ACTIVITY_QUOTA`, oldest-block activity members are evicted
-//!   first. Eviction never removes resting members. An endpoint already
-//!   on stage (resting or activity) is a membership no-op.
+//!   endpoint not already on stage is offered to the policy, which
+//!   decides how it enters. The quota is a FIFO grouped by block number:
+//!   past `DISPLAY_ACTIVITY_QUOTA`, oldest-block activity members are
+//!   evicted first. Eviction never removes resting members. An endpoint
+//!   already on stage (resting or activity) is a membership no-op.
 //! * **Deaths** don't change membership: a staged corpse stays visible
 //!   for its death-animation window and exits only when canonical GC
-//!   removes it from the map — the vacancy then backfills from the
-//!   cursor. Cap eviction is a death (not a removal) and behaves the
+//!   removes it from the map — the vacancy then refills at the next
+//!   flush. Cap eviction is a death (not a removal) and behaves the
 //!   same way.
 //! * **Reorg** mirrors canonical outcomes: members removed from the map
 //!   exit (rollback *parks* orphaned births in `reorg_limbo` with NO
@@ -44,51 +58,17 @@
 //!   silently, and the terminal `active: false` emits one coalesced
 //!   delta diffing final membership against what clients last saw.
 //!
-//! ## Membership policy — composed mode (S2)
+//! ## Composed mode — the transitions this module drives
 //!
 //! A validated [`GalaxyCompositionRecord`] arriving through the internal
-//! `Mutation::GalaxyReservoirReplaced` channel (design D6) switches the
-//! plane to composed staffing — the server-side port of the old client's
-//! `composedCellRenderList` (`packages/ui/src/geometry/cellRenderSet.ts`),
-//! membership-set semantics only (the client's interleave ORDER is
-//! deliberately dropped; slot assignment ignores order):
+//! `Mutation::GalaxyReservoirReplaced` channel (design D6) installs a
+//! fresh [`CuratedPolicy`] and its membership:
 //!
-//! * **Classes**: `asset_kind` dao → Dao, native → Plain, everything else
-//!   → Typed (the old client's `compositionBucket`). Quotas come from the
-//!   shared [`GalaxyCompositionTarget::for_total`] (30:40:30 bps) over the
-//!   FULL cell budget.
-//! * **Fill** (`composed_fill`, run at every refresh): each class fills
-//!   from its reservoir bucket first (record rank order), with D5 outpoint
-//!   dedupe at admission — an outpoint retained canonically resolves to
-//!   the canonical id/cell; only genuinely off-map outpoints stage as
-//!   *residents* under their composition id, payload riding
-//!   `enter_cells`. Then one canonical fallback walk in insertion order
-//!   admits cells into their own classes until every quota is satisfied
-//!   (whole-map walk when the budget is below the old client's ≥10
-//!   early-stop guard). Final per-class targets are computed on
-//!   `min(budget, admitted)`; classes that run dry spill round-robin
-//!   dao → typed → plain (one candidate per class per round — the old
-//!   client's exact spill loop).
-//! * **Activity** is in-class substitution per `docs/ckbadger.md`: an
-//!   off-stage endpoint enters by displacing the lowest-priority
-//!   same-class RESTING member. Priority (lowest displaced first):
-//!   canonical-fallback admits before reservoir admits; within a group,
-//!   latest-admitted first. The displaced member is remembered (bench)
-//!   and restored when its displacer leaves the quota FIFO; an
-//!   unrestorable bench (GC'd, superseded, or re-staged) falls back to
-//!   the per-class refill queues. While the stage is below
-//!   `min(budget, available)` an endpoint enters WITHOUT displacing
-//!   (mirrors the old client, where activity always fit whenever
-//!   available ≤ budget); with the stage full and no same-class resting
-//!   member to displace, the entry is skipped. The quota itself stays
-//!   the S1 FIFO-by-block `DISPLAY_ACTIVITY_QUOTA`.
-//! * **Vacancies** (GC of a staged member, failed bench restore): refill
-//!   from per-class queues seeded at refresh with the unchosen admission
-//!   tail (reservoir tail first, then canonical unchosen in insertion
-//!   order) and fed by post-refresh births; a dry class borrows other
-//!   queues in dao → typed → plain order so the member COUNT holds even
-//!   when the ratio can't (invariant I1's "when candidates suffice"
-//!   proviso).
+//! * **Residents.** An admitted outpoint that is NOT in the canonical map
+//!   stages under its composition id with the hydrated payload riding
+//!   `enter_cells`; the stage keeps staged payloads in `residents` and
+//!   off-stage candidates in `resident_pool`, indexed by outpoint so one
+//!   outpoint is never staged under two ids (invariant I4).
 //! * **Refresh dedupe**: a record whose content matches the stored
 //!   reservoir (`GalaxyCompositionRecord::content_matches` — `as_of` and
 //!   `updated_at_ms` ignored) is a FULL no-op: no delta, provenance
@@ -108,8 +88,7 @@
 //!   same blind spot the old client had between 15-minute records. The
 //!   one exception is D5's later-collision: a canonical birth claiming a
 //!   staged resident's outpoint swaps the resident out in place (exit
-//!   composition id, enter canonical id, same slot priority), so one
-//!   outpoint is never staged under two ids (invariant I4).
+//!   composition id, enter canonical id, same slot priority).
 //!
 //! ## Determinism
 //!
@@ -134,15 +113,22 @@
 //! only at refresh (15-minute cadence), degrade, bootstrap (restore),
 //! reset, and the backfill-terminal resettle — all sanctioned big events.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
-use crate::enrichment::{GalaxyCompositionRecord, GalaxyCompositionTarget};
+use crate::enrichment::GalaxyCompositionRecord;
+/// The quota constant itself belongs to the policy; the tests below pin
+/// its parity with the old client, so they still need it in scope.
+#[cfg(test)]
+use crate::enrichment::GalaxyCompositionTarget;
 use crate::helix::helix_seed_for;
 use crate::outpoint::OutPoint;
 use crate::taxonomy::AssetKind;
 
 use super::cells::{
     Cell, CellDelta, DisplayBudget, DisplayMode, DisplayProvenance, DisplaySection,
+};
+use super::composition_policy::{
+    CanonicalPolicy, CompositionFill, CompositionPolicy, CuratedPolicy,
 };
 
 /// Fixed product budget: cells on stage. Server-owned (see design doc
@@ -157,18 +143,8 @@ pub const DISPLAY_NERVE_EDGE_BUDGET: u32 = 8_000;
 /// prefix mode; an in-class substitution bound in composed mode.
 pub const DISPLAY_ACTIVITY_QUOTA: usize = 512;
 
-/// How many stale understudy entries we tolerate before compacting the
-/// prefix queue against the presence mirror. `2·present + slack` keeps
-/// the compaction amortized O(1) per insertion.
-const UNDERSTUDY_COMPACT_SLACK: usize = 1_024;
-
-/// The old client's early-stop guard: below this budget the canonical
-/// fallback walk admits the whole map instead of stopping at satisfied
-/// quotas (`cellRenderSet.ts` `requestedCount >= 10`).
-const COMPOSED_EARLY_STOP_MIN_BUDGET: usize = 10;
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum MemberRole {
+pub(crate) enum MemberRole {
     Resting,
     /// Entered via a tx-endpoint swap; `block` keys the eviction FIFO.
     Activity {
@@ -176,98 +152,14 @@ enum MemberRole {
     },
 }
 
-/// Composition class of a cell — the old client's `compositionBucket`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum CompositionClass {
-    Dao = 0,
-    Typed = 1,
-    Plain = 2,
-}
-
-const CLASS_ORDER: [CompositionClass; 3] = [
-    CompositionClass::Dao,
-    CompositionClass::Typed,
-    CompositionClass::Plain,
-];
-
-fn class_of(kind: AssetKind) -> CompositionClass {
-    match kind {
-        AssetKind::Dao => CompositionClass::Dao,
-        AssetKind::Native => CompositionClass::Plain,
-        _ => CompositionClass::Typed,
-    }
-}
-
-/// Displacement priority of a resting composed member. Ordered so the
-/// MAXIMUM key is displaced first: canonical-fallback admits
-/// (`FALLBACK_GROUP`) go before reservoir admits, and within a group the
-/// latest admission sequence goes first.
-type PriorityKey = (u8, u64);
-const RESERVOIR_GROUP: u8 = 0;
-const FALLBACK_GROUP: u8 = 1;
-
-/// The resting member an activity entry displaced; restored (with its
-/// original slot priority) when the displacer leaves the stage.
-#[derive(Clone, Copy, Debug)]
-struct BenchEntry {
-    id: u64,
-    key: PriorityKey,
-}
-
-/// Composed-mode staffing state. `Some` ⇔ provenance mode Composed.
-struct ComposedState {
-    /// The validated reservoir this membership was composed from. Held
-    /// internally only — never on the wire. Drives the content dedupe and
-    /// the reorg degrade predicate.
-    reservoir: GalaxyCompositionRecord,
-    /// Per-class chosen counts frozen at refresh: the ratio the vacancy
-    /// refill prefers to restore.
-    class_targets: [usize; 3],
-    /// Staged members currently on stage by class (resting + activity).
-    class_counts: [usize; 3],
-    /// Class of every staged member.
-    class_of_member: HashMap<u64, CompositionClass>,
-    /// Staged residents' payloads (composition id → node-hydrated Cell).
-    residents: HashMap<u64, Cell>,
-    /// Off-stage reservoir candidates' payloads (backfill/bench pool).
-    resident_pool: HashMap<u64, Cell>,
-    /// Every reservoir-origin outpoint currently represented by a
-    /// composition id (staged or pooled) — D5 later-collision detection
-    /// at canonical birth time.
-    resident_outpoints: HashMap<OutPoint, u64>,
-    /// Resting members by displacement priority, per class. The maximum
-    /// key is displaced first.
-    resting_priority: [BTreeMap<PriorityKey, u64>; 3],
-    priority_of: HashMap<u64, PriorityKey>,
-    next_seq: u64,
-    /// Per-class vacancy refill queues: unchosen admission tail at
-    /// refresh (reservoir tail first, then canonical unchosen in
-    /// insertion order), then post-refresh births. Entries may be stale
-    /// (GC'd / superseded / already staged) — skipped at pop.
-    class_queues: [VecDeque<u64>; 3],
-    /// Activity member id → the resting member it displaced.
-    bench: HashMap<u64, BenchEntry>,
-    /// Staged residents whose payload changed at a refresh that kept
-    /// membership identical — re-ride `enter_cells` once so delta
-    /// followers converge with fresh snapshots.
-    resident_reenter: BTreeSet<u64>,
-}
-
-impl ComposedState {
-    fn queue(&mut self, class: CompositionClass) -> &mut VecDeque<u64> {
-        &mut self.class_queues[class as usize]
-    }
-}
-
-/// See the module docs. Owned by `CellGalaxy`; every canonical handler
-/// reports births/removals/endpoints as they happen and `apply_mutation`
-/// calls [`DisplayPlane::flush`] exactly once at the end — which is what
-/// structurally guarantees "at most one `Display` delta per mutation".
-pub(crate) struct DisplayPlane {
+/// The stage: who is on stage, what they look like, and the bookkeeping
+/// that makes one coalesced delta per mutation possible. Class-blind and
+/// ratio-blind by construction — every "should" question is the
+/// [`CompositionPolicy`]'s, which acts on the stage through the
+/// membership moves below.
+pub(crate) struct Stage {
     budget: DisplayBudget,
     activity_quota: usize,
-    /// budget.cells − activity_quota (prefix mode's resting pool).
-    resting_target: usize,
 
     /// Staged members. BTreeMap so snapshot/wire order is deterministic
     /// (ascending id) without per-mutation sorting of the full set.
@@ -279,23 +171,360 @@ pub(crate) struct DisplayPlane {
     /// `MemberRole::Activity`.
     activity_groups: BTreeMap<u64, Vec<u64>>,
 
-    /// Mirror of the canonical cells-map key set (id → composition
-    /// class), maintained by the same note_* hooks that drive
-    /// membership. Needed because the canonical container (`Vec<Cell>`)
-    /// has no id index; the class rides along for composed staffing.
-    present: HashMap<u64, CompositionClass>,
-    /// Prefix-mode insertion-order backfill candidates ("understudies").
-    /// May contain stale ids (skipped at pop) and rebirth duplicates
-    /// (skipped when they surface already-resting). Unused while
-    /// composed; rebuilt from the map at degrade.
-    understudies: VecDeque<u64>,
+    /// Mirror of the canonical cells-map key set (id → asset kind),
+    /// maintained by the same note_* hooks that drive membership. Needed
+    /// because the canonical container (`Vec<Cell>`) has no id index; the
+    /// kind rides along as the raw canonical fact the policy classifies.
+    present: HashMap<u64, AssetKind>,
 
-    /// Composed staffing state; `None` = prefix mode.
-    composed: Option<ComposedState>,
+    /// Staged residents' payloads (composition id → node-hydrated Cell) —
+    /// members that are NOT in the canonical map.
+    residents: HashMap<u64, Cell>,
+    /// Off-stage resident candidates' payloads (refill/bench pool).
+    resident_pool: HashMap<u64, Cell>,
+    /// Every reservoir-origin outpoint currently represented by a
+    /// composition id (staged or pooled) — D5 later-collision detection
+    /// at canonical birth time.
+    resident_outpoints: HashMap<OutPoint, u64>,
+    /// Staged residents whose payload changed at a refresh that kept
+    /// membership identical — re-ride `enter_cells` once so delta
+    /// followers converge with fresh snapshots.
+    resident_reenter: BTreeSet<u64>,
 
     /// Per-mutation coalescing log: id → was-member at first touch this
     /// mutation. Diffed against final membership at flush.
     touched: HashMap<u64, bool>,
+}
+
+impl Stage {
+    fn new(budget: DisplayBudget, activity_quota: usize) -> Self {
+        Self {
+            budget,
+            activity_quota,
+            members: BTreeMap::new(),
+            resting_count: 0,
+            activity_count: 0,
+            activity_groups: BTreeMap::new(),
+            present: HashMap::new(),
+            residents: HashMap::new(),
+            resident_pool: HashMap::new(),
+            resident_outpoints: HashMap::new(),
+            resident_reenter: BTreeSet::new(),
+            touched: HashMap::new(),
+        }
+    }
+
+    // ── facts the policy reads ───────────────────────────────────────
+
+    pub(crate) fn budget_cells(&self) -> usize {
+        self.budget.cells as usize
+    }
+
+    pub(crate) fn activity_quota(&self) -> usize {
+        self.activity_quota
+    }
+
+    /// The largest member count the stage can currently hold:
+    /// `min(budget, everything stageable)`. Below it a new member fits
+    /// without anyone giving way.
+    pub(crate) fn dynamic_target(&self) -> usize {
+        self.budget_cells()
+            .min(self.present.len() + self.residents.len() + self.resident_pool.len())
+    }
+
+    pub(crate) fn member_count(&self) -> usize {
+        self.members.len()
+    }
+
+    pub(crate) fn resting_count(&self) -> usize {
+        self.resting_count
+    }
+
+    pub(crate) fn role_of(&self, id: u64) -> Option<MemberRole> {
+        self.members.get(&id).copied()
+    }
+
+    pub(crate) fn is_member(&self, id: u64) -> bool {
+        self.members.contains_key(&id)
+    }
+
+    pub(crate) fn is_present(&self, id: u64) -> bool {
+        self.present.contains_key(&id)
+    }
+
+    pub(crate) fn present_count(&self) -> usize {
+        self.present.len()
+    }
+
+    /// Canonical facts about a stageable id: the asset kind of the
+    /// canonical cell, or of a resident's hydrated payload. `None` means
+    /// the id is stale — GC'd or superseded.
+    pub(crate) fn kind_of(&self, id: u64) -> Option<AssetKind> {
+        self.present
+            .get(&id)
+            .copied()
+            .or_else(|| self.residents.get(&id).map(|cell| cell.asset_kind))
+            .or_else(|| self.resident_pool.get(&id).map(|cell| cell.asset_kind))
+    }
+
+    /// Whether a not-currently-staged id still has something to stage:
+    /// a canonical cell or a pooled resident payload.
+    pub(crate) fn is_stageable(&self, id: u64) -> bool {
+        self.present.contains_key(&id) || self.resident_pool.contains_key(&id)
+    }
+
+    // ── membership moves the policy makes ────────────────────────────
+
+    /// Stage an off-stage id as resting. A pooled resident payload (an id
+    /// that is not canonical) comes on stage with it.
+    pub(crate) fn stage_resting(&mut self, id: u64) {
+        debug_assert!(!self.members.contains_key(&id), "{id} is already staged");
+        if !self.present.contains_key(&id) {
+            if let Some(payload) = self.resident_pool.remove(&id) {
+                self.residents.insert(id, payload);
+            }
+        }
+        self.members.insert(id, MemberRole::Resting);
+        self.touched.entry(id).or_insert(false);
+        self.resting_count += 1;
+    }
+
+    /// Stage an off-stage id as an activity member of `block`, consuming
+    /// a quota slot.
+    pub(crate) fn stage_activity(&mut self, block: u64, id: u64) {
+        debug_assert!(!self.members.contains_key(&id), "{id} is already staged");
+        self.members.insert(id, MemberRole::Activity { block });
+        self.touched.entry(id).or_insert(false);
+        self.activity_count += 1;
+        self.activity_groups.entry(block).or_default().push(id);
+    }
+
+    /// Convert an activity member into a resting one in place: membership
+    /// is unchanged (no wire noise) and its quota slot is freed.
+    pub(crate) fn promote_to_resting(&mut self, id: u64) {
+        let Some(MemberRole::Activity { block }) = self.members.get(&id).copied() else {
+            debug_assert!(false, "{id} is not an activity member");
+            return;
+        };
+        self.members.insert(id, MemberRole::Resting);
+        self.activity_count -= 1;
+        self.resting_count += 1;
+        self.remove_from_activity_group(block, id);
+    }
+
+    /// Take a member off stage. A staged resident's payload parks in the
+    /// pool so a later restore can re-ship it.
+    pub(crate) fn unstage(&mut self, id: u64) -> Option<MemberRole> {
+        let role = self.members.remove(&id)?;
+        self.touched.entry(id).or_insert(true);
+        match role {
+            MemberRole::Resting => {
+                self.resting_count -= 1;
+                if let Some(payload) = self.residents.remove(&id) {
+                    self.resident_pool.insert(id, payload);
+                }
+            }
+            MemberRole::Activity { block } => {
+                self.activity_count -= 1;
+                self.remove_from_activity_group(block, id);
+            }
+        }
+        Some(role)
+    }
+
+    // ── mechanism-owned bookkeeping ──────────────────────────────────
+
+    /// Mirror a canonical arrival. Returns the previous kind when the id
+    /// was already present (an in-place resurrection — a no-op).
+    fn note_present(&mut self, cell: &Cell) -> Option<AssetKind> {
+        self.present.insert(cell.id, cell.asset_kind)
+    }
+
+    /// Mirror a canonical removal. Returns `None` when the id was not in
+    /// the map (nothing to do).
+    fn forget_present(&mut self, id: u64) -> Option<AssetKind> {
+        self.present.remove(&id)
+    }
+
+    /// D5 later-collision probe: the composition id representing
+    /// `out_point`, if any. Claimed (removed from the index) by the call.
+    fn take_resident_for_outpoint(&mut self, out_point: &OutPoint) -> Option<u64> {
+        self.resident_outpoints.remove(out_point)
+    }
+
+    fn is_staged_resident(&self, id: u64) -> bool {
+        self.residents.contains_key(&id)
+    }
+
+    /// Forget a resident payload entirely (superseded by a canonical
+    /// birth of the same outpoint — it must never restage).
+    fn discard_resident(&mut self, id: u64) {
+        self.residents.remove(&id);
+        self.resident_pool.remove(&id);
+    }
+
+    /// Activity members in FIFO order (oldest block first).
+    pub(crate) fn standing_activity(&self) -> Vec<(u64, u64)> {
+        self.activity_groups
+            .iter()
+            .flat_map(|(block, ids)| ids.iter().map(move |id| (*block, *id)))
+            .collect()
+    }
+
+    fn activity_over_quota(&self) -> bool {
+        self.activity_count > self.activity_quota
+    }
+
+    /// Evict the oldest-block activity member, returning it with the
+    /// block that keyed its FIFO slot. Only activity structures are
+    /// drained — resting members are never evicted for activity.
+    fn evict_oldest_activity(&mut self) -> Option<(u64, u64)> {
+        loop {
+            let mut entry = self.activity_groups.first_entry()?;
+            let block = *entry.key();
+            let ids = entry.get_mut();
+            if ids.is_empty() {
+                entry.remove();
+                continue;
+            }
+            let id = ids.remove(0);
+            if ids.is_empty() {
+                entry.remove();
+            }
+            self.touched.entry(id).or_insert(true);
+            self.members.remove(&id);
+            self.activity_count -= 1;
+            return Some((block, id));
+        }
+    }
+
+    /// Everyone leaves, through the touched log (the flush coalesces the
+    /// exits with whatever re-enters). Presence and payloads are the
+    /// caller's to settle.
+    pub(crate) fn exit_all_members(&mut self) {
+        for id in self.members.keys() {
+            self.touched.entry(*id).or_insert(true);
+        }
+        self.members.clear();
+        self.resting_count = 0;
+        self.activity_count = 0;
+        self.activity_groups.clear();
+    }
+
+    /// Forget the whole canonical mirror (reset / restore).
+    fn forget_all_presence(&mut self) {
+        self.present.clear();
+    }
+
+    /// Drop every resident payload — a degrade back to canonical staffing
+    /// (residents only exist while a reservoir does).
+    fn clear_residents(&mut self) {
+        self.residents.clear();
+        self.resident_pool.clear();
+        self.resident_outpoints.clear();
+        self.resident_reenter.clear();
+    }
+
+    /// Install a freshly composed membership: diff it against what is on
+    /// stage (exits first so the touched log pairs them with re-enters),
+    /// then take over the resident payloads. Every installed member is
+    /// resting; standing activity is re-layered by the caller.
+    fn install_composed(&mut self, fill: CompositionFill) {
+        let old_residents = std::mem::take(&mut self.residents);
+        self.resident_pool.clear();
+        self.resident_outpoints.clear();
+        self.resident_reenter.clear();
+
+        let mut new_members: BTreeMap<u64, ()> = BTreeMap::new();
+        for (id, payload) in &fill.members {
+            new_members.insert(*id, ());
+            if let Some(payload) = payload {
+                // A staged resident whose payload changed while its
+                // membership held must re-ride enter_cells once.
+                if self.members.contains_key(id)
+                    && old_residents.get(id).is_some_and(|old| old != payload)
+                {
+                    self.resident_reenter.insert(*id);
+                }
+            }
+        }
+
+        let old_ids: Vec<u64> = self.members.keys().copied().collect();
+        for id in old_ids {
+            if !new_members.contains_key(&id) {
+                self.members.remove(&id);
+                self.touched.entry(id).or_insert(true);
+            }
+        }
+        for id in new_members.keys() {
+            if self.members.insert(*id, MemberRole::Resting).is_none() {
+                self.touched.entry(*id).or_insert(false);
+            }
+        }
+        self.resting_count = self.members.len();
+        self.activity_count = 0;
+        self.activity_groups.clear();
+
+        for (id, payload) in fill.members {
+            if let Some(payload) = payload {
+                self.resident_outpoints
+                    .insert(payload.out_point.clone(), id);
+                self.residents.insert(id, payload);
+            }
+        }
+        for (id, payload) in fill.pool {
+            self.resident_outpoints
+                .insert(payload.out_point.clone(), id);
+            self.resident_pool.insert(id, payload);
+        }
+    }
+
+    fn remove_from_activity_group(&mut self, block: u64, id: u64) {
+        if let Some(ids) = self.activity_groups.get_mut(&block) {
+            ids.retain(|entry| *entry != id);
+            if ids.is_empty() {
+                self.activity_groups.remove(&block);
+            }
+        }
+    }
+
+    /// Every staged resident payload, ascending id — the snapshot's
+    /// resident section.
+    fn staged_residents_sorted(&self) -> Vec<Cell> {
+        let mut cells: Vec<Cell> = self
+            .residents
+            .values()
+            .map(|cell| Cell {
+                pos_seed: helix_seed_for(cell.id),
+                ..cell.clone()
+            })
+            .collect();
+        cells.sort_unstable_by_key(|cell| cell.id);
+        cells
+    }
+
+    /// Staged-resident payload for emission: the stored hydrated cell
+    /// with its position re-derived from the id (`helix_seed_for`), the
+    /// same recompute-on-emit rule every canonical snapshot cell obeys.
+    fn resident_payload(&self, id: u64) -> Option<Cell> {
+        let cell = self.residents.get(&id)?;
+        Some(Cell {
+            pos_seed: helix_seed_for(id),
+            ..cell.clone()
+        })
+    }
+}
+
+/// See the module docs. Owned by `CellGalaxy`; every canonical handler
+/// reports births/removals/endpoints as they happen and `apply_mutation`
+/// calls [`DisplayPlane::flush`] exactly once at the end — which is what
+/// structurally guarantees "at most one `Display` delta per mutation".
+pub(crate) struct DisplayPlane {
+    stage: Stage,
+    /// Who *should* be on stage. `CanonicalPolicy` = prefix mode,
+    /// `CuratedPolicy` = composed mode.
+    policy: Box<dyn CompositionPolicy + Send + Sync>,
+
     /// Tx endpoints reported this mutation, in arrival order.
     pending_activity: Vec<(u64, u64)>, // (block, id)
 
@@ -334,20 +563,15 @@ impl DisplayPlane {
     /// Test seam: shrink the budgets so quota/FIFO/composition behavior
     /// is exercisable without minting thousands of cells.
     pub(crate) fn with_limits(budget: DisplayBudget, activity_quota: usize) -> Self {
-        let cells = budget.cells as usize;
-        debug_assert!(cells >= activity_quota, "budget must cover the quota");
+        debug_assert!(
+            budget.cells as usize >= activity_quota,
+            "budget must cover the quota"
+        );
+        let stage = Stage::new(budget, activity_quota);
+        let policy = Self::prefix_policy(&stage);
         Self {
-            budget,
-            activity_quota,
-            resting_target: cells.saturating_sub(activity_quota),
-            members: BTreeMap::new(),
-            resting_count: 0,
-            activity_count: 0,
-            activity_groups: BTreeMap::new(),
-            present: HashMap::new(),
-            understudies: VecDeque::new(),
-            composed: None,
-            touched: HashMap::new(),
+            stage,
+            policy,
             pending_activity: Vec::new(),
             provenance: DisplayProvenance {
                 mode: DisplayMode::Canonical,
@@ -364,96 +588,51 @@ impl DisplayPlane {
         }
     }
 
+    fn prefix_policy(stage: &Stage) -> Box<dyn CompositionPolicy + Send + Sync> {
+        Box::new(CanonicalPolicy::new(
+            stage.budget_cells(),
+            stage.activity_quota(),
+        ))
+    }
+
     // ── hooks (called by CellGalaxy handlers mid-mutation) ───────────
 
     /// A cell entered the canonical map (fresh birth, reorg revival, or
     /// rollback resurrection). Idempotent: in-place resurrections of an
-    /// id that never left the map are no-ops. In composed mode this is
-    /// also the D5 later-collision point: a birth claiming an outpoint
-    /// held by a reservoir entry supersedes it (a STAGED resident swaps
-    /// out in place; a pooled candidate is simply dropped).
+    /// id that never left the map are no-ops. This is also the D5
+    /// later-collision point: a birth claiming an outpoint held by a
+    /// reservoir entry supersedes it (a STAGED resident swaps out in
+    /// place — same slot, same class; a pooled candidate is dropped).
     pub(crate) fn note_birth(&mut self, cell: &Cell) {
-        let id = cell.id;
-        let class = class_of(cell.asset_kind);
-        if self.present.insert(id, class).is_some() {
+        if self.stage.note_present(cell).is_some() {
             return;
         }
-        let Some(mut cs) = self.composed.take() else {
-            self.understudies.push_back(id);
-            self.maybe_compact_understudies();
-            return;
-        };
-        if let Some(rid) = cs.resident_outpoints.remove(&cell.out_point) {
-            if let Some(payload) = cs.residents.remove(&rid) {
-                // D5 later-collision swap: the canonical cell takes over
-                // the resident's slot (same class — same outpoint means
-                // same content) so one outpoint is never staged twice.
-                let rclass = class_of(payload.asset_kind);
-                let key = cs
-                    .priority_of
-                    .remove(&rid)
-                    .expect("staged resident is always a resting member");
-                cs.resting_priority[rclass as usize].remove(&key);
-                cs.class_of_member.remove(&rid);
-                cs.class_counts[rclass as usize] -= 1;
-                self.members.remove(&rid);
-                self.touched.entry(rid).or_insert(true);
-                self.resting_count -= 1;
-
-                self.members.insert(id, MemberRole::Resting);
-                self.touched.entry(id).or_insert(false);
-                self.resting_count += 1;
-                cs.class_of_member.insert(id, class);
-                cs.class_counts[class as usize] += 1;
-                cs.resting_priority[class as usize].insert(key, id);
-                cs.priority_of.insert(id, key);
-                self.composed = Some(cs);
+        if let Some(rid) = self.stage.take_resident_for_outpoint(&cell.out_point) {
+            if self.stage.is_staged_resident(rid) {
+                self.stage.unstage(rid);
+                self.stage.discard_resident(rid);
+                self.stage.stage_resting(cell.id);
+                self.policy.note_superseded(&self.stage, rid, Some(cell.id));
                 return;
             }
-            // Pooled candidate superseded by the canonical birth; its
-            // queue entry goes stale and is skipped at pop.
-            cs.resident_pool.remove(&rid);
+            self.stage.discard_resident(rid);
+            self.policy.note_superseded(&self.stage, rid, None);
         }
-        cs.queue(class).push_back(id);
-        self.composed = Some(cs);
+        self.policy.note_candidate(&self.stage, cell.id);
     }
 
     /// A cell left the canonical map — this must cover EVERY removal
     /// path (GC sweep, reorg parking, reset). Staged members exit here;
     /// the vacancy backfills at the next flush.
     pub(crate) fn note_removed(&mut self, id: u64) {
-        if self.present.remove(&id).is_none() {
+        if self.stage.forget_present(id).is_none() {
             return;
         }
-        let Some(role) = self.members.remove(&id) else {
-            // A stale understudy/queue entry (if any) is skipped at pop.
+        // A stale refill-queue entry (if any) is skipped at pop.
+        let Some(role) = self.stage.unstage(id) else {
             return;
         };
-        self.touched.entry(id).or_insert(true);
-        match role {
-            MemberRole::Resting => {
-                self.resting_count -= 1;
-                if let Some(mut cs) = self.composed.take() {
-                    let class = cs
-                        .class_of_member
-                        .remove(&id)
-                        .expect("staged member has a class");
-                    cs.class_counts[class as usize] -= 1;
-                    if let Some(key) = cs.priority_of.remove(&id) {
-                        cs.resting_priority[class as usize].remove(&key);
-                    }
-                    self.composed = Some(cs);
-                    // The class vacancy refills at the next flush.
-                }
-            }
-            MemberRole::Activity { block } => {
-                self.activity_count -= 1;
-                self.remove_from_activity_group(block, id);
-                if self.composed.is_some() {
-                    self.composed_activity_exited(id);
-                }
-            }
-        }
+        self.policy.note_exit(&mut self.stage, id, role);
     }
 
     /// The resolved endpoint ids of a landed tx, in `from` then `to`
@@ -471,17 +650,13 @@ impl DisplayPlane {
     /// exit-all delta and the content dedup re-arms; a prefix-mode reset
     /// leaves provenance untouched exactly as in S1.
     pub(crate) fn note_reset(&mut self) {
-        for id in self.members.keys() {
-            self.touched.entry(*id).or_insert(true);
-        }
-        self.members.clear();
-        self.resting_count = 0;
-        self.activity_count = 0;
-        self.activity_groups.clear();
-        self.present.clear();
-        self.understudies.clear();
+        let was_composed = self.policy.reservoir().is_some();
+        self.stage.exit_all_members();
+        self.stage.forget_all_presence();
+        self.stage.clear_residents();
         self.pending_activity.clear();
-        if self.composed.take().is_some() {
+        self.policy = Self::prefix_policy(&self.stage);
+        if was_composed {
             self.provenance = DisplayProvenance {
                 mode: DisplayMode::Canonical,
                 source: None,
@@ -501,7 +676,7 @@ impl DisplayPlane {
         }
         self.backfill_active = true;
         self.resettle_pending = false;
-        self.backfill_baseline = Some(self.members.keys().copied().collect());
+        self.backfill_baseline = Some(self.stage.members.keys().copied().collect());
     }
 
     /// The replay closed (complete or not — canonical clears its
@@ -522,14 +697,11 @@ impl DisplayPlane {
     /// completes, and every snapshot taken after `load()` already
     /// carries this fill.
     pub(crate) fn bootstrap(&mut self, cells: &[Cell]) {
-        self.members.clear();
-        self.resting_count = 0;
-        self.activity_count = 0;
-        self.activity_groups.clear();
-        self.present.clear();
-        self.understudies.clear();
-        self.composed = None;
-        self.touched.clear();
+        self.stage.exit_all_members();
+        self.stage.forget_all_presence();
+        self.stage.clear_residents();
+        self.stage.touched.clear();
+        self.policy = Self::prefix_policy(&self.stage);
         self.pending_activity.clear();
         self.backfill_active = false;
         self.backfill_baseline = None;
@@ -544,17 +716,13 @@ impl DisplayPlane {
         self.provenance_force = false;
 
         for cell in cells {
-            if self
-                .present
-                .insert(cell.id, class_of(cell.asset_kind))
-                .is_none()
-            {
-                self.understudies.push_back(cell.id);
+            if self.stage.note_present(cell).is_none() {
+                self.policy.note_candidate(&self.stage, cell.id);
             }
         }
-        self.fill_resting_vacancies();
-        self.touched.clear();
-        if !self.members.is_empty() {
+        self.policy.fill_vacancies(&mut self.stage);
+        self.stage.touched.clear();
+        if !self.stage.members.is_empty() {
             // Deterministic restore clock: the newest event time carried
             // by the restored cells themselves (same derivation the
             // backfill-terminal cap enforcement uses).
@@ -574,9 +742,9 @@ impl DisplayPlane {
     /// `refresh_transition` (D6 arrival): recompose the stage from a
     /// validated reservoir. A content-identical record (per
     /// [`GalaxyCompositionRecord::content_matches`]) is a FULL no-op —
-    /// no delta, provenance frozen. Otherwise membership is recomputed
-    /// (old-client `composedCellRenderList` set semantics), standing
-    /// activity members re-layer via in-class substitution, and the one
+    /// no delta, provenance frozen. Otherwise a fresh
+    /// [`CuratedPolicy`] decides the new membership, standing activity
+    /// members re-layer via its in-class substitution, and the one
     /// coalesced Display delta (enter_ids + enter_cells + exit_ids +
     /// provenance) is emitted by the flush that follows this call.
     ///
@@ -589,231 +757,36 @@ impl DisplayPlane {
         outpoint_index: &HashMap<OutPoint, u64>,
         cells: &[Cell],
     ) {
-        if let Some(cs) = &self.composed {
-            if cs.reservoir.content_matches(record) {
-                // Duplicate revalidation: broadcast nothing and keep the
-                // stored record exactly as previously applied, so fresh
-                // snapshots match delta subscribers and the reorg-degrade
-                // predicate evaluates identically everywhere. Every
-                // degrade path nulls the stored reservoir, re-arming this.
-                return;
-            }
+        if self
+            .policy
+            .reservoir()
+            .is_some_and(|stored| stored.content_matches(record))
+        {
+            // Duplicate revalidation: broadcast nothing and keep the
+            // stored record exactly as previously applied, so fresh
+            // snapshots match delta subscribers and the reorg-degrade
+            // predicate evaluates identically everywhere. Every degrade
+            // path nulls the stored reservoir, re-arming this.
+            return;
         }
 
-        let budget = self.budget.cells as usize;
-        let by_id: HashMap<u64, &Cell> = cells.iter().map(|c| (c.id, c)).collect();
+        let (policy, fill) =
+            CuratedPolicy::compose(record, outpoint_index, cells, self.stage.budget_cells());
+        let standing_activity = self.stage.standing_activity();
+        self.stage.install_composed(fill);
+        self.policy = Box::new(policy);
 
-        // ── admission (port of composedCellRenderList, membership set) ──
-        struct Admit<'a> {
-            id: u64,
-            class: CompositionClass,
-            resident: Option<&'a Cell>,
-        }
-        let mut buckets: [Vec<Admit>; 3] = [Vec::new(), Vec::new(), Vec::new()];
-        let mut reservoir_len = [0usize; 3];
-        let mut admitted_ids: HashSet<u64> = HashSet::new();
-        let mut admitted_ops: HashSet<&OutPoint> = HashSet::new();
-
-        // 1. Reservoir buckets in ranked order, D5 resolution at
-        //    admission: an outpoint retained canonically uses the
-        //    canonical id/cell; a class-mismatched resolution is skipped
-        //    (the old client's `admit(cell, expected)` guard); dedupe by
-        //    both id and outpoint.
-        for (expected, bucket) in [
-            (CompositionClass::Dao, &record.dao),
-            (CompositionClass::Typed, &record.typed),
-            (CompositionClass::Plain, &record.plain),
-        ] {
-            for rc in bucket {
-                let (id, class, resident) = match outpoint_index
-                    .get(&rc.out_point)
-                    .and_then(|cid| by_id.get(cid))
-                {
-                    Some(canonical) => (canonical.id, class_of(canonical.asset_kind), None),
-                    None => (rc.id, class_of(rc.asset_kind), Some(rc)),
-                };
-                if class != expected {
-                    continue;
-                }
-                if admitted_ids.contains(&id) || admitted_ops.contains(&rc.out_point) {
-                    continue;
-                }
-                admitted_ids.insert(id);
-                admitted_ops.insert(&rc.out_point);
-                buckets[class as usize].push(Admit {
-                    id,
-                    class,
-                    resident,
-                });
-                reservoir_len[class as usize] += 1;
-            }
-        }
-
-        // 2. Canonical fallback walk in insertion order, admitting cells
-        //    into their own classes, stopping once every full-budget
-        //    quota is satisfied (never stopping below the old client's
-        //    ≥10 guard so tiny budgets admit the whole map).
-        let full_targets = (budget >= COMPOSED_EARLY_STOP_MIN_BUDGET)
-            .then(|| GalaxyCompositionTarget::for_total(budget));
-        let quotas_satisfied = |b: &[Vec<Admit>; 3]| {
-            full_targets.is_some_and(|t| {
-                b[0].len() >= t.dao && b[1].len() >= t.typed && b[2].len() >= t.plain
-            })
-        };
-        if !quotas_satisfied(&buckets) {
-            for cell in cells {
-                if admitted_ids.contains(&cell.id) || admitted_ops.contains(&cell.out_point) {
-                    continue;
-                }
-                let class = class_of(cell.asset_kind);
-                admitted_ids.insert(cell.id);
-                admitted_ops.insert(&cell.out_point);
-                buckets[class as usize].push(Admit {
-                    id: cell.id,
-                    class,
-                    resident: None,
-                });
-                if quotas_satisfied(&buckets) {
-                    break;
-                }
-            }
-        }
-
-        // 3. Final targets on min(budget, admitted), per-class prefix
-        //    slices, then the old client's round-robin spill
-        //    (dao → typed → plain, one per class per round).
-        let available = buckets.iter().map(Vec::len).sum::<usize>();
-        let count = budget.min(available);
-        let targets = GalaxyCompositionTarget::for_total(count);
-        let mut chosen = [
-            targets.dao.min(buckets[0].len()),
-            targets.typed.min(buckets[1].len()),
-            targets.plain.min(buckets[2].len()),
-        ];
-        let mut chosen_total: usize = chosen.iter().sum();
-        while chosen_total < count {
-            let mut progressed = false;
-            for c in 0..3 {
-                if chosen[c] < buckets[c].len() {
-                    chosen[c] += 1;
-                    chosen_total += 1;
-                    progressed = true;
-                    if chosen_total == count {
-                        break;
-                    }
-                }
-            }
-            if !progressed {
-                break;
-            }
-        }
-
-        // 4. Build the new composed state from the chosen prefixes.
-        let mut cs = ComposedState {
-            reservoir: record.clone(),
-            class_targets: chosen,
-            class_counts: [0; 3],
-            class_of_member: HashMap::new(),
-            residents: HashMap::new(),
-            resident_pool: HashMap::new(),
-            resident_outpoints: HashMap::new(),
-            resting_priority: [BTreeMap::new(), BTreeMap::new(), BTreeMap::new()],
-            priority_of: HashMap::new(),
-            next_seq: 0,
-            class_queues: [VecDeque::new(), VecDeque::new(), VecDeque::new()],
-            bench: HashMap::new(),
-            resident_reenter: BTreeSet::new(),
-        };
-        let old_residents = self
-            .composed
-            .take()
-            .map(|old| old.residents)
-            .unwrap_or_default();
-        let mut new_members: BTreeMap<u64, ()> = BTreeMap::new();
-        for c in 0..3 {
-            for (i, admit) in buckets[c].iter().take(chosen[c]).enumerate() {
-                let group = if i < reservoir_len[c] {
-                    RESERVOIR_GROUP
-                } else {
-                    FALLBACK_GROUP
-                };
-                let key: PriorityKey = (group, cs.next_seq);
-                cs.next_seq += 1;
-                new_members.insert(admit.id, ());
-                cs.class_of_member.insert(admit.id, admit.class);
-                cs.class_counts[c] += 1;
-                cs.resting_priority[c].insert(key, admit.id);
-                cs.priority_of.insert(admit.id, key);
-                if let Some(payload) = admit.resident {
-                    cs.residents.insert(admit.id, payload.clone());
-                    cs.resident_outpoints
-                        .insert(payload.out_point.clone(), admit.id);
-                    // A staged resident whose payload changed while its
-                    // membership held must re-ride enter_cells once.
-                    if self.members.contains_key(&admit.id)
-                        && old_residents
-                            .get(&admit.id)
-                            .is_some_and(|old| old != payload)
-                    {
-                        cs.resident_reenter.insert(admit.id);
-                    }
-                }
-            }
-            // Unchosen admission tail seeds the class refill queue, in
-            // admission order; unchosen residents park in the pool.
-            for admit in buckets[c].iter().skip(chosen[c]) {
-                cs.class_queues[c].push_back(admit.id);
-                if let Some(payload) = admit.resident {
-                    cs.resident_pool.insert(admit.id, payload.clone());
-                    cs.resident_outpoints
-                        .insert(payload.out_point.clone(), admit.id);
-                }
-            }
-        }
-        // Never-admitted canonical cells queue after the admission tails,
-        // in insertion order (the fallback walk would have reached them
-        // next).
-        for cell in cells {
-            if !admitted_ids.contains(&cell.id) {
-                cs.class_queues[class_of(cell.asset_kind) as usize].push_back(cell.id);
-            }
-        }
-
-        // 5. Diff membership: exits first (touched coalescing pairs them
-        //    with re-enters), then installs.
-        let standing_activity: Vec<(u64, u64)> = self
-            .activity_groups
-            .iter()
-            .flat_map(|(block, ids)| ids.iter().map(move |id| (*block, *id)))
-            .collect();
-        let old_ids: Vec<u64> = self.members.keys().copied().collect();
-        for id in old_ids {
-            if !new_members.contains_key(&id) {
-                self.members.remove(&id);
-                self.touched.entry(id).or_insert(true);
-            }
-        }
-        for id in new_members.keys() {
-            if self.members.insert(*id, MemberRole::Resting).is_none() {
-                self.touched.entry(*id).or_insert(false);
-            }
-        }
-        self.resting_count = self.members.len();
-        self.activity_count = 0;
-        self.activity_groups.clear();
-        self.composed = Some(cs);
-
-        // 6. Re-layer standing activity endpoints (FIFO order) via the
-        //    ordinary in-class substitution. An endpoint inside the new
-        //    fill simply stays resting (its quota slot dissolves).
+        // Re-layer standing activity endpoints (FIFO order) through the
+        // new policy. An endpoint inside the new fill simply stays
+        // resting (its quota slot dissolves).
         for (block, id) in standing_activity {
-            if self.members.contains_key(&id) || !self.present.contains_key(&id) {
+            if self.stage.is_member(id) || !self.stage.is_present(id) {
                 continue;
             }
-            self.composed_activity_enter(block, id);
+            self.policy.admit_activity(&mut self.stage, block, id);
         }
 
-        // 7. Provenance: composed, stamped with the record's own clock.
+        // Provenance: composed, stamped with the record's own clock.
         self.provenance = DisplayProvenance {
             mode: DisplayMode::Composed,
             source: Some(record.source.clone()),
@@ -822,8 +795,6 @@ impl DisplayPlane {
         };
         self.provenance_pending = true;
         self.provenance_force = true;
-        // Prefix bookkeeping is rebuilt from the map at degrade.
-        self.understudies.clear();
     }
 
     /// Reorg hook (explicit `ChainReorganized` or an implicit
@@ -834,14 +805,17 @@ impl DisplayPlane {
     /// content dedup re-arms (a later identical record applies again).
     pub(crate) fn chain_reorganized(&mut self, from_block: u64, cells: &[Cell]) {
         let anchored_below = self
-            .composed
-            .as_ref()
-            .is_some_and(|cs| from_block <= cs.reservoir.as_of.block);
+            .policy
+            .reservoir()
+            .is_some_and(|stored| from_block <= stored.as_of.block);
         if !anchored_below {
             return;
         }
-        self.composed = None;
-        self.rebuild_prefix_membership(cells);
+        self.stage.clear_residents();
+        let mut policy =
+            CanonicalPolicy::new(self.stage.budget_cells(), self.stage.activity_quota());
+        policy.rebuild(&mut self.stage, cells);
+        self.policy = Box::new(policy);
         self.provenance = DisplayProvenance {
             mode: DisplayMode::Canonical,
             source: None,
@@ -850,47 +824,6 @@ impl DisplayPlane {
         };
         self.provenance_pending = true;
         self.provenance_force = true;
-    }
-
-    /// Degrade helper: prefix-mode membership recomputed from the
-    /// canonical container (S1 semantics — first `resting_target`
-    /// live-or-corpse cells in insertion order, remainder understudies),
-    /// standing activity members re-admitted beyond the prefix. All
-    /// changes flow through the touched log so the flush emits one
-    /// coalesced diff.
-    fn rebuild_prefix_membership(&mut self, cells: &[Cell]) {
-        let standing_activity: Vec<(u64, u64)> = self
-            .activity_groups
-            .iter()
-            .flat_map(|(block, ids)| ids.iter().map(move |id| (*block, *id)))
-            .collect();
-        let old_ids: Vec<u64> = self.members.keys().copied().collect();
-        for id in old_ids {
-            self.touched.entry(id).or_insert(true);
-        }
-        self.members.clear();
-        self.resting_count = 0;
-        self.activity_count = 0;
-        self.activity_groups.clear();
-        self.understudies.clear();
-
-        for cell in cells.iter().take(self.resting_target) {
-            self.members.insert(cell.id, MemberRole::Resting);
-            self.touched.entry(cell.id).or_insert(false);
-            self.resting_count += 1;
-        }
-        for cell in cells.iter().skip(self.resting_target) {
-            self.understudies.push_back(cell.id);
-        }
-        for (block, id) in standing_activity {
-            if self.members.contains_key(&id) || !self.present.contains_key(&id) {
-                continue;
-            }
-            self.members.insert(id, MemberRole::Activity { block });
-            self.touched.entry(id).or_insert(false);
-            self.activity_count += 1;
-            self.activity_groups.entry(block).or_default().push(id);
-        }
     }
 
     // ── flush (called once per mutation by apply_mutation) ───────────
@@ -905,11 +838,7 @@ impl DisplayPlane {
 
         // 1. Vacancy fill. Runs even during backfill (membership evolves
         //    silently).
-        if self.composed.is_some() {
-            self.fill_composed_vacancies();
-        } else {
-            self.fill_resting_vacancies();
-        }
+        self.policy.fill_vacancies(&mut self.stage);
 
         // 2. Activity entries — suppressed during historical replay
         //    (calm catch-up; the terminal resettle presents the final
@@ -919,60 +848,39 @@ impl DisplayPlane {
         } else {
             let pending = std::mem::take(&mut self.pending_activity);
             for (block, id) in pending {
-                if self.members.contains_key(&id) || !self.present.contains_key(&id) {
+                if self.stage.is_member(id) || !self.stage.is_present(id) {
                     continue; // already on stage / defensive: unknown id
                 }
-                if self.composed.is_some() {
-                    self.composed_activity_enter(block, id);
-                } else {
-                    self.touched.entry(id).or_insert(false);
-                    self.members.insert(id, MemberRole::Activity { block });
-                    self.activity_count += 1;
-                    self.activity_groups.entry(block).or_default().push(id);
-                }
+                self.policy.admit_activity(&mut self.stage, block, id);
             }
-            // 3. Quota: evict oldest-block activity members first. Only
-            //    activity structures are drained — resting members are
-            //    never evicted for activity. In composed mode an eviction
-            //    restores the member the leaver displaced.
-            while self.activity_count > self.activity_quota {
-                let Some(mut entry) = self.activity_groups.first_entry() else {
+            // 3. Quota: evict oldest-block activity members first. In
+            //    composed mode an eviction restores the member the leaver
+            //    displaced.
+            while self.stage.activity_over_quota() {
+                let Some((block, id)) = self.stage.evict_oldest_activity() else {
                     break;
                 };
-                let ids = entry.get_mut();
-                if ids.is_empty() {
-                    entry.remove();
-                    continue;
-                }
-                let id = ids.remove(0);
-                if ids.is_empty() {
-                    entry.remove();
-                }
-                self.touched.entry(id).or_insert(true);
-                self.members.remove(&id);
-                self.activity_count -= 1;
-                if self.composed.is_some() {
-                    self.composed_activity_exited(id);
-                }
+                self.policy
+                    .note_exit(&mut self.stage, id, MemberRole::Activity { block });
             }
             // Unrestorable benches leave resting vacancies inside this
-            // same mutation — repair before emitting.
-            if self.composed.is_some() {
-                self.fill_composed_vacancies();
-            }
+            // same mutation — repair before emitting. (A prefix-mode
+            // second pass is a no-op: activity never displaces resting.)
+            self.policy.fill_vacancies(&mut self.stage);
         }
 
         if self.backfill_active {
-            self.touched.clear();
+            self.stage.touched.clear();
             return None;
         }
 
         let (enter, exit_ids) = if self.resettle_pending {
             self.resettle_pending = false;
-            self.touched.clear();
+            self.stage.touched.clear();
             let baseline = self.backfill_baseline.take().unwrap_or_default();
             // Both sides iterate ordered sets → sorted output.
             let enter: Vec<u64> = self
+                .stage
                 .members
                 .keys()
                 .filter(|id| !baseline.contains(id))
@@ -980,19 +888,21 @@ impl DisplayPlane {
                 .collect();
             let exit: Vec<u64> = baseline
                 .iter()
-                .filter(|id| !self.members.contains_key(id))
+                .filter(|id| !self.stage.members.contains_key(id))
                 .copied()
                 .collect();
             (enter, exit)
         } else {
-            let mut ids: Vec<(u64, bool)> = std::mem::take(&mut self.touched).into_iter().collect();
+            let mut ids: Vec<(u64, bool)> = std::mem::take(&mut self.stage.touched)
+                .into_iter()
+                .collect();
             // The touched log is a HashMap — sort so iteration order can
             // never leak into wire bytes.
             ids.sort_unstable_by_key(|(id, _)| *id);
             let mut enter = Vec::new();
             let mut exit = Vec::new();
             for (id, was) in ids {
-                let now = self.members.contains_key(&id);
+                let now = self.stage.is_member(id);
                 if was == now {
                     continue; // coalesced away (e.g. park + revive)
                 }
@@ -1005,11 +915,7 @@ impl DisplayPlane {
             (enter, exit)
         };
 
-        let resident_reenter: BTreeSet<u64> = self
-            .composed
-            .as_mut()
-            .map(|cs| std::mem::take(&mut cs.resident_reenter))
-            .unwrap_or_default();
+        let resident_reenter = std::mem::take(&mut self.stage.resident_reenter);
 
         if enter.is_empty()
             && exit_ids.is_empty()
@@ -1026,11 +932,11 @@ impl DisplayPlane {
         let mut carried: HashSet<u64> = HashSet::new();
         for id in enter {
             debug_assert_ne!(
-                self.present.contains_key(&id),
-                self.resident_payload(id).is_some(),
+                self.stage.is_present(id),
+                self.stage.is_staged_resident(id),
                 "member {id} must be exactly one of canonical or resident"
             );
-            match self.resident_payload(id) {
+            match self.stage.resident_payload(id) {
                 Some(cell) => {
                     carried.insert(id);
                     enter_cells.push(cell);
@@ -1040,7 +946,7 @@ impl DisplayPlane {
         }
         for id in resident_reenter {
             if !carried.contains(&id) {
-                if let Some(cell) = self.resident_payload(id) {
+                if let Some(cell) = self.stage.resident_payload(id) {
                     enter_cells.push(cell);
                 }
             }
@@ -1073,306 +979,11 @@ impl DisplayPlane {
     /// re-derived like every canonical snapshot cell), current
     /// provenance, fixed budget.
     pub(crate) fn section(&self) -> DisplaySection {
-        let residents = match &self.composed {
-            None => Vec::new(),
-            Some(cs) => {
-                let mut cells: Vec<Cell> = cs
-                    .residents
-                    .values()
-                    .map(|cell| Cell {
-                        pos_seed: helix_seed_for(cell.id),
-                        ..cell.clone()
-                    })
-                    .collect();
-                cells.sort_unstable_by_key(|cell| cell.id);
-                cells
-            }
-        };
         DisplaySection {
-            budget: self.budget,
-            members: self.members.keys().copied().collect(),
-            residents,
+            budget: self.stage.budget,
+            members: self.stage.members.keys().copied().collect(),
+            residents: self.stage.staged_residents_sorted(),
             provenance: self.provenance.clone(),
-        }
-    }
-
-    // ── internals ────────────────────────────────────────────────────
-
-    /// Staged-resident payload for emission: the stored hydrated cell
-    /// with its position re-derived from the id (`helix_seed_for`), the
-    /// same recompute-on-emit rule every canonical snapshot cell obeys.
-    fn resident_payload(&self, id: u64) -> Option<Cell> {
-        let cs = self.composed.as_ref()?;
-        let cell = cs.residents.get(&id)?;
-        Some(Cell {
-            pos_seed: helix_seed_for(id),
-            ..cell.clone()
-        })
-    }
-
-    /// In-class substitution (composed mode). The caller has verified
-    /// the id is canonical-present and off stage.
-    fn composed_activity_enter(&mut self, block: u64, id: u64) {
-        let Some(mut cs) = self.composed.take() else {
-            return;
-        };
-        let class = *self
-            .present
-            .get(&id)
-            .expect("caller verified canonical presence");
-        let dynamic_target = (self.budget.cells as usize)
-            .min(self.present.len() + cs.residents.len() + cs.resident_pool.len());
-        let mut enter = false;
-        if self.members.len() < dynamic_target {
-            // Stage below min(budget, available): enter without
-            // displacing — the old client admitted activity outright
-            // whenever available ≤ budget.
-            enter = true;
-        } else if let Some((&key, &victim)) = cs.resting_priority[class as usize].iter().next_back()
-        {
-            // Displace the lowest-priority same-class resting member:
-            // fallback admits before reservoir admits, latest-admitted
-            // first within a group.
-            cs.resting_priority[class as usize].remove(&key);
-            cs.priority_of.remove(&victim);
-            cs.class_of_member.remove(&victim);
-            cs.class_counts[class as usize] -= 1;
-            self.members.remove(&victim);
-            self.touched.entry(victim).or_insert(true);
-            self.resting_count -= 1;
-            if let Some(payload) = cs.residents.remove(&victim) {
-                // A displaced resident keeps its payload off stage so a
-                // later restore can re-ship it.
-                cs.resident_pool.insert(victim, payload);
-            }
-            cs.bench.insert(id, BenchEntry { id: victim, key });
-            enter = true;
-        }
-        // else: stage full and the class has no resting member to
-        // displace (all-activity class) — skip the entry, deterministic.
-        if enter {
-            self.members.insert(id, MemberRole::Activity { block });
-            self.touched.entry(id).or_insert(false);
-            self.activity_count += 1;
-            self.activity_groups.entry(block).or_default().push(id);
-            cs.class_of_member.insert(id, class);
-            cs.class_counts[class as usize] += 1;
-        }
-        self.composed = Some(cs);
-    }
-
-    /// An activity member left the stage (quota eviction or canonical
-    /// removal): restore the resting member it displaced, when possible.
-    /// The membership/touched/count bookkeeping for the leaver itself is
-    /// the caller's job; this settles the composed side tables + bench.
-    fn composed_activity_exited(&mut self, id: u64) {
-        let Some(mut cs) = self.composed.take() else {
-            return;
-        };
-        let class = cs
-            .class_of_member
-            .remove(&id)
-            .expect("staged member has a class");
-        cs.class_counts[class as usize] -= 1;
-        if let Some(bench) = cs.bench.remove(&id) {
-            let b = bench.id;
-            if let Some(MemberRole::Activity { block }) = self.members.get(&b).copied() {
-                // The benched member re-entered on its own as an
-                // endpoint: promote it back to its resting slot (quota
-                // slot freed, no wire noise). Its own bench (if any)
-                // dissolves — that candidate becomes the class's top
-                // refill candidate instead.
-                self.members.insert(b, MemberRole::Resting);
-                self.activity_count -= 1;
-                self.resting_count += 1;
-                self.remove_from_activity_group(block, b);
-                cs.resting_priority[class as usize].insert(bench.key, b);
-                cs.priority_of.insert(b, bench.key);
-                if let Some(chained) = cs.bench.remove(&b) {
-                    cs.class_queues[class as usize].push_front(chained.id);
-                }
-            } else if self.members.contains_key(&b) {
-                // Already resting again through another path — the
-                // vacancy stands and the refill queues cover it.
-            } else if self.present.contains_key(&b) {
-                // Ordinary canonical restore, original slot priority.
-                self.members.insert(b, MemberRole::Resting);
-                self.touched.entry(b).or_insert(false);
-                self.resting_count += 1;
-                cs.class_of_member.insert(b, class);
-                cs.class_counts[class as usize] += 1;
-                cs.resting_priority[class as usize].insert(bench.key, b);
-                cs.priority_of.insert(b, bench.key);
-            } else if let Some(payload) = cs.resident_pool.remove(&b) {
-                // Resident restore: payload re-ships via enter_cells.
-                self.members.insert(b, MemberRole::Resting);
-                self.touched.entry(b).or_insert(false);
-                self.resting_count += 1;
-                cs.residents.insert(b, payload);
-                cs.class_of_member.insert(b, class);
-                cs.class_counts[class as usize] += 1;
-                cs.resting_priority[class as usize].insert(bench.key, b);
-                cs.priority_of.insert(b, bench.key);
-            }
-            // else: the benched member is gone (GC'd / superseded) — the
-            // vacancy refills from the class queues at flush.
-        }
-        self.composed = Some(cs);
-    }
-
-    /// Composed vacancy refill: first restore each class toward its
-    /// frozen refresh target, then top the stage up to
-    /// min(budget, available) borrowing across classes in the spill
-    /// preference order (dao → typed → plain, round-robin).
-    fn fill_composed_vacancies(&mut self) {
-        let Some(mut cs) = self.composed.take() else {
-            return;
-        };
-        let dynamic_target = (self.budget.cells as usize)
-            .min(self.present.len() + cs.residents.len() + cs.resident_pool.len());
-        for class in CLASS_ORDER {
-            while cs.class_counts[class as usize] < cs.class_targets[class as usize]
-                && self.members.len() < dynamic_target
-            {
-                if !self.pop_stage_one(&mut cs, class) {
-                    break;
-                }
-            }
-        }
-        'top_up: while self.members.len() < dynamic_target {
-            let mut progressed = false;
-            for class in CLASS_ORDER {
-                if self.members.len() >= dynamic_target {
-                    break 'top_up;
-                }
-                if self.pop_stage_one(&mut cs, class) {
-                    progressed = true;
-                }
-            }
-            if !progressed {
-                break;
-            }
-        }
-        self.composed = Some(cs);
-    }
-
-    /// Pop `class`'s refill queue until one member is staged as resting
-    /// (skipping stale entries; promoting an entry already staged as
-    /// activity in place, which frees quota without filling the count).
-    /// Returns whether a member was staged.
-    fn pop_stage_one(&mut self, cs: &mut ComposedState, class: CompositionClass) -> bool {
-        while let Some(id) = cs.queue(class).pop_front() {
-            match self.members.get(&id).copied() {
-                Some(MemberRole::Activity { block }) => {
-                    // Promote in place (no wire noise, quota slot freed);
-                    // the count deficit stands, keep popping.
-                    self.members.insert(id, MemberRole::Resting);
-                    self.activity_count -= 1;
-                    self.resting_count += 1;
-                    self.remove_from_activity_group(block, id);
-                    let member_class = *cs
-                        .class_of_member
-                        .get(&id)
-                        .expect("staged member has a class");
-                    let key: PriorityKey = (FALLBACK_GROUP, cs.next_seq);
-                    cs.next_seq += 1;
-                    cs.resting_priority[member_class as usize].insert(key, id);
-                    cs.priority_of.insert(id, key);
-                    if let Some(chained) = cs.bench.remove(&id) {
-                        cs.class_queues[member_class as usize].push_front(chained.id);
-                    }
-                    continue;
-                }
-                Some(MemberRole::Resting) => continue, // stale duplicate
-                None => {}
-            }
-            if let Some(&class_now) = self.present.get(&id) {
-                // Canonical candidate (staged under its CURRENT class —
-                // rebirth cycles keep content, but never trust a stale
-                // queue lane over the live map).
-                self.stage_resting(cs, id, class_now, None);
-                return true;
-            }
-            if let Some(payload) = cs.resident_pool.remove(&id) {
-                let rclass = class_of(payload.asset_kind);
-                self.stage_resting(cs, id, rclass, Some(payload));
-                return true;
-            }
-            // Stale: GC'd canonical id or a superseded resident — skip.
-        }
-        false
-    }
-
-    fn stage_resting(
-        &mut self,
-        cs: &mut ComposedState,
-        id: u64,
-        class: CompositionClass,
-        resident: Option<Cell>,
-    ) {
-        self.members.insert(id, MemberRole::Resting);
-        self.touched.entry(id).or_insert(false);
-        self.resting_count += 1;
-        let key: PriorityKey = (FALLBACK_GROUP, cs.next_seq);
-        cs.next_seq += 1;
-        cs.class_of_member.insert(id, class);
-        cs.class_counts[class as usize] += 1;
-        cs.resting_priority[class as usize].insert(key, id);
-        cs.priority_of.insert(id, key);
-        if let Some(payload) = resident {
-            cs.residents.insert(id, payload);
-        }
-    }
-
-    /// Advance the prefix-mode insertion-order cursor to fill resting
-    /// vacancies. Candidates that left the map are skipped; a candidate
-    /// already on stage as activity is PROMOTED in place (membership
-    /// unchanged, no wire noise, activity slot freed) — it is, after
-    /// all, the next cell in canonical insertion order.
-    fn fill_resting_vacancies(&mut self) {
-        while self.resting_count < self.resting_target {
-            let Some(id) = self.understudies.pop_front() else {
-                break;
-            };
-            if !self.present.contains_key(&id) {
-                continue; // removed while waiting in the queue
-            }
-            match self.members.get(&id).copied() {
-                Some(MemberRole::Activity { block }) => {
-                    self.members.insert(id, MemberRole::Resting);
-                    self.resting_count += 1;
-                    self.activity_count -= 1;
-                    self.remove_from_activity_group(block, id);
-                }
-                Some(MemberRole::Resting) => {
-                    // Duplicate queue entry from a removal+rebirth cycle.
-                }
-                None => {
-                    self.touched.entry(id).or_insert(false);
-                    self.members.insert(id, MemberRole::Resting);
-                    self.resting_count += 1;
-                }
-            }
-        }
-    }
-
-    fn remove_from_activity_group(&mut self, block: u64, id: u64) {
-        if let Some(ids) = self.activity_groups.get_mut(&block) {
-            ids.retain(|entry| *entry != id);
-            if ids.is_empty() {
-                self.activity_groups.remove(&block);
-            }
-        }
-    }
-
-    /// Drop stale prefix-queue entries once they dominate. Amortized
-    /// O(1) per insertion: right after a compaction the queue is ⊆
-    /// present, so it takes ≥ present + slack fresh pushes to trigger
-    /// again.
-    fn maybe_compact_understudies(&mut self) {
-        if self.understudies.len() > self.present.len() * 2 + UNDERSTUDY_COMPACT_SLACK {
-            let present = &self.present;
-            self.understudies.retain(|id| present.contains_key(id));
         }
     }
 
@@ -1380,29 +991,29 @@ impl DisplayPlane {
 
     #[cfg(test)]
     pub(crate) fn member_ids_sorted(&self) -> Vec<u64> {
-        self.members.keys().copied().collect()
+        self.stage.members.keys().copied().collect()
     }
 
     #[cfg(test)]
     pub(crate) fn present_ids_sorted(&self) -> Vec<u64> {
-        let mut ids: Vec<u64> = self.present.keys().copied().collect();
+        let mut ids: Vec<u64> = self.stage.present.keys().copied().collect();
         ids.sort_unstable();
         ids
     }
 
     #[cfg(test)]
     pub(crate) fn resting_len(&self) -> usize {
-        self.resting_count
+        self.stage.resting_count
     }
 
     #[cfg(test)]
     pub(crate) fn activity_len(&self) -> usize {
-        self.activity_count
+        self.stage.activity_count
     }
 
     #[cfg(test)]
     pub(crate) fn is_activity_member(&self, id: u64) -> bool {
-        matches!(self.members.get(&id), Some(MemberRole::Activity { .. }))
+        matches!(self.stage.role_of(id), Some(MemberRole::Activity { .. }))
     }
 
     #[cfg(test)]
@@ -1412,22 +1023,14 @@ impl DisplayPlane {
 
     #[cfg(test)]
     pub(crate) fn resident_ids_sorted(&self) -> Vec<u64> {
-        match &self.composed {
-            None => Vec::new(),
-            Some(cs) => {
-                let mut ids: Vec<u64> = cs.residents.keys().copied().collect();
-                ids.sort_unstable();
-                ids
-            }
-        }
+        let mut ids: Vec<u64> = self.stage.residents.keys().copied().collect();
+        ids.sort_unstable();
+        ids
     }
 
     #[cfg(test)]
     pub(crate) fn class_counts(&self) -> [usize; 3] {
-        self.composed
-            .as_ref()
-            .map(|cs| cs.class_counts)
-            .unwrap_or([0; 3])
+        self.policy.class_counts()
     }
 }
 
