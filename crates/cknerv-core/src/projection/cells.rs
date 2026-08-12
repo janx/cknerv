@@ -815,6 +815,10 @@ impl CellGalaxy {
             .collect();
         if heights.is_empty() {
             self.recent_links.retain(|link| link.block < number);
+            // Even a journal-less rollback invalidates a reservoir anchored
+            // at or beyond the boundary (degrade → canonical mode; the
+            // flush emits the coalesced transition delta).
+            self.display.chain_reorganized(number, &self.cells);
             return vec![CellDelta::LinkPrune { from_block: number }];
         }
 
@@ -884,7 +888,7 @@ impl CellGalaxy {
                     self.outpoint_index.insert(cell.out_point.clone(), id);
                     // Resurrections re-enter the map; note_birth is
                     // idempotent for the in-place-update case above.
-                    self.display.note_birth(id);
+                    self.display.note_birth(&cell);
                     deltas.push(CellDelta::Birth { cell });
                     // Mirror image of the birth-rollback above: every recorded
                     // death bumped `total_deaths` exactly once. The
@@ -908,6 +912,15 @@ impl CellGalaxy {
                     .map_or(orphan_tip, |w| w.max(orphan_tip)),
             );
         }
+
+        // Composed-mode degrade (covers the explicit `ChainReorganized`
+        // mutation AND the implicit hash-mismatch rollback): a boundary at
+        // or below the reservoir anchor drops the reservoir and rebuilds
+        // canonical prefix membership from the rolled-back map. Ordered
+        // AFTER the park/resurrect passes above so the plane rebuilds from
+        // the post-rollback container; the reorg exits and the mode
+        // transition coalesce into the mutation's single Display delta.
+        self.display.chain_reorganized(number, &self.cells);
 
         if counters_touched {
             deltas.push(CellDelta::Stats {
@@ -1128,8 +1141,8 @@ impl CellGalaxy {
                 .or_default()
                 .push(cell.out_point.clone());
             endpoint_anchors.push(CellLinkEndpointAnchor::from(&cell));
+            self.display.note_birth(&cell);
             self.cells.push(cell);
-            self.display.note_birth(id);
             birthed_ids.push(id);
         }
 
@@ -1285,6 +1298,7 @@ fn mutation_at_ms(m: &Mutation) -> Option<u64> {
         Mutation::BlockMined { at, .. }
         | Mutation::TxLanded { at, .. }
         | Mutation::CellTagged { at, .. } => Some(*at),
+        Mutation::GalaxyReservoirReplaced { record } => Some(record.updated_at_ms),
         _ => None,
     }
 }
@@ -1421,6 +1435,18 @@ impl Projection for CellGalaxy {
                 self.hydration_floor = Some(*from_block);
                 Vec::new()
             }
+            Mutation::GalaxyReservoirReplaced { record } => {
+                // D6 arrival: the node-hydrated reservoir (trust fence
+                // closed upstream) reaches ONLY the display plane —
+                // never the cells map, counters, or persistence
+                // (invariant I2). The canonical outpoint index + the
+                // insertion-order container act as the D5 resolver at
+                // this call boundary; the flush below emits the one
+                // coalesced `refresh_transition` Display delta.
+                self.display
+                    .reservoir_replaced(record, &self.outpoint_index, &self.cells);
+                Vec::new()
+            }
             _ => Vec::new(),
         };
         // Single display-plane settle point: at most ONE coalesced
@@ -1448,6 +1474,7 @@ impl Projection for CellGalaxy {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::enrichment::GalaxyCompositionRecord;
     use crate::outpoint::{CELLBASE_INDEX, CELLBASE_TX_HASH};
 
     fn make_galaxy() -> CellGalaxy {
@@ -3237,6 +3264,22 @@ mod tests {
     fn display_delta(
         deltas: &[CellDelta],
     ) -> Option<(&Vec<u64>, &Vec<u64>, Option<&DisplayProvenance>)> {
+        display_delta_full(deltas).map(|(enter_ids, enter_cells, exit_ids, provenance)| {
+            assert!(
+                enter_cells.is_empty(),
+                "prefix mode never ships resident payloads"
+            );
+            (enter_ids, exit_ids, provenance)
+        })
+    }
+
+    /// Composed-aware variant: the full (enter_ids, enter_cells,
+    /// exit_ids, provenance) of THE display delta, still pinning "at
+    /// most one per mutation".
+    #[allow(clippy::type_complexity)]
+    fn display_delta_full(
+        deltas: &[CellDelta],
+    ) -> Option<(&Vec<u64>, &Vec<Cell>, &Vec<u64>, Option<&DisplayProvenance>)> {
         assert!(
             display_delta_count(deltas) <= 1,
             "at most one Display delta per mutation; got {deltas:?}"
@@ -3247,19 +3290,14 @@ mod tests {
                 enter_cells,
                 exit_ids,
                 provenance,
-            } => {
-                assert!(
-                    enter_cells.is_empty(),
-                    "prefix mode never ships resident payloads"
-                );
-                Some((enter_ids, exit_ids, provenance.as_ref()))
-            }
+            } => Some((enter_ids, enter_cells, exit_ids, provenance.as_ref())),
             _ => None,
         })
     }
 
-    /// Structural invariants: members ⊆ cells-map keys, the plane's
-    /// presence mirror tracks the map exactly, and the budget holds.
+    /// Structural invariants: the presence mirror tracks the map
+    /// exactly, every member is exactly one of canonical or resident
+    /// (I4 at the id level), and the budget holds.
     fn assert_display_invariants(g: &CellGalaxy) {
         let mut map_ids: Vec<u64> = g.cells.iter().map(|c| c.id).collect();
         map_ids.sort_unstable();
@@ -3268,12 +3306,23 @@ mod tests {
             map_ids,
             "presence mirror diverged from the canonical map — a removal path went unhooked"
         );
-        let members = g.display.member_ids_sorted();
+        let section = g.snapshot().display.expect("display section");
         let map_set: std::collections::HashSet<u64> = map_ids.iter().copied().collect();
-        for id in &members {
-            assert!(map_set.contains(id), "member {id} is not in the cells map");
+        let resident_ids: std::collections::HashSet<u64> =
+            section.residents.iter().map(|c| c.id).collect();
+        for id in &resident_ids {
+            assert!(
+                !map_set.contains(id),
+                "resident {id} duplicates a canonical id"
+            );
         }
-        assert!(members.len() <= DISPLAY_CELL_BUDGET as usize);
+        for id in &section.members {
+            assert!(
+                map_set.contains(id) || resident_ids.contains(id),
+                "member {id} is neither canonical nor resident"
+            );
+        }
+        assert!(section.members.len() <= DISPLAY_CELL_BUDGET as usize);
     }
 
     /// Pin 1 — bootstrap fill: first (budget − quota) births in insertion
@@ -3604,61 +3653,162 @@ mod tests {
         ]
     }
 
-    /// Pin 7 (⭐) — replay consistency (invariant I5): applying ONLY the emitted
-    /// Display deltas on top of the initial snapshot's display section
-    /// reproduces snapshot().display at every step — except inside an
-    /// active replay window, where per-mutation deltas are suppressed BY
-    /// DESIGN (the runner clears the ring; reconnecting clients get a
-    /// FullSnapshot) and the shadow must simply stay frozen until the
-    /// terminal resettle re-converges it.
-    #[test]
-    fn display_deltas_replay_to_snapshot_membership() {
+    /// One off-map reservoir resident per class, at a given anchor.
+    /// Content is keyed by the id triple, so records with the same ids
+    /// content-match across anchors (the dedup shape) and records with
+    /// different ids do not.
+    fn reservoir_record(block: u64, ids: (u64, u64, u64)) -> GalaxyCompositionRecord {
+        let resident = |id: u64, kind| Cell {
+            id,
+            born_at_ms: 0,
+            death_at_ms: None,
+            birth_block: 0,
+            tag: None,
+            pos_seed: helix_seed_for(id),
+            out_point: op(&format!("0xr{id}"), 0),
+            capacity: 61_00000000,
+            data_hex: "0x".into(),
+            content_hash: format!("0x{id:064x}"),
+            lock_kind: Default::default(),
+            asset_kind: kind,
+        };
+        GalaxyCompositionRecord {
+            source: "ckbadger".into(),
+            as_of: ChainAnchor {
+                block,
+                hash: format!("0xanchor{block}"),
+            },
+            updated_at_ms: block * 1_000,
+            dao: vec![resident(ids.0, AssetKind::Dao)],
+            typed: vec![resident(ids.1, AssetKind::Xudt)],
+            plain: vec![resident(ids.2, AssetKind::Native)],
+        }
+    }
+
+    fn reservoir(block: u64, ids: (u64, u64, u64)) -> Mutation {
+        Mutation::GalaxyReservoirReplaced {
+            record: reservoir_record(block, ids),
+        }
+    }
+
+    /// Composed-mode mutation script crossing every S2 path: refresh
+    /// transition (canonical→composed with residents), activity/vacancy
+    /// churn, content dedup, corpse GC, a D5 later-collision birth (the
+    /// tx re-creating a staged resident's outpoint), a reorg ABOVE the
+    /// anchor (composition kept), a reorg AT the anchor (degrade →
+    /// canonical, park-everything), a rebuild reset, and a fresh
+    /// composition after it.
+    fn composed_display_scenario() -> Vec<Mutation> {
+        vec![
+            mined(1, "0xb1", 1_000),
+            landed(
+                "0xa",
+                1,
+                1_000,
+                vec![],
+                vec![out(1, "0x"), out(2, "0x"), out(3, "0x")],
+            ),
+            reservoir(1, (500_000, 500_001, 500_002)),
+            mined(2, "0xb2", 2_000),
+            landed("0xb", 2, 2_000, vec![op("0xa", 0)], vec![out(5, "0x")]),
+            reservoir(2, (500_000, 500_001, 500_002)), // content dedup no-op
+            mined(3, "0xb3", 2_700),                   // GCs the corpse of a#0
+            // D5 later-collision: this tx's #0 output IS the typed
+            // resident's outpoint → in-place swap.
+            landed("0xr500001", 3, 2_800, vec![], vec![out(9, "0x")]),
+            Mutation::ChainReorganized { from_block: 3 }, // above anchor 2 → composition kept
+            mined(3, "0xb3r", 3_000),
+            Mutation::ChainReorganized { from_block: 1 }, // at/below anchor → degrade
+            Mutation::ChainRebuild { from_block: 50 },
+            landed("0xd", 50, 50_000, vec![], vec![out(8, "0x")]),
+            reservoir(60, (600_000, 600_001, 600_002)),
+        ]
+    }
+
+    /// Shared assertion: applying ONLY the emitted Display deltas on top
+    /// of the initial snapshot's display section reproduces
+    /// snapshot().display — members AND residents — at every step, except
+    /// inside an active replay window, where per-mutation deltas are
+    /// suppressed BY DESIGN (the runner clears the ring; reconnecting
+    /// clients get a FullSnapshot) and the shadow simply stays frozen
+    /// until the terminal resettle re-converges it.
+    fn assert_display_replay_consistency(scenario: Vec<Mutation>) {
         let mut g = make_galaxy();
-        let mut shadow: std::collections::BTreeSet<u64> = g
+        let initial = g
             .snapshot()
             .display
-            .expect("display section always present")
-            .members
+            .expect("display section always present");
+        let mut shadow: std::collections::BTreeSet<u64> = initial.members.into_iter().collect();
+        let mut shadow_residents: std::collections::BTreeMap<u64, Cell> = initial
+            .residents
             .into_iter()
+            .map(|cell| (cell.id, cell))
             .collect();
-        for (step, mutation) in display_scenario().into_iter().enumerate() {
+        for (step, mutation) in scenario.into_iter().enumerate() {
             let deltas = g.apply_mutation(&mutation);
             let snapshot = g.snapshot();
             if snapshot.backfill.is_some() {
                 assert!(
-                    display_delta(&deltas).is_none(),
+                    display_delta_full(&deltas).is_none(),
                     "step {step}: no display delta may leak mid-replay"
                 );
                 assert_display_invariants(&g);
                 continue;
             }
-            if let Some((enter, exit, _)) = display_delta(&deltas) {
-                for id in exit {
+            if let Some((enter_ids, enter_cells, exit_ids, _)) = display_delta_full(&deltas) {
+                for id in exit_ids {
                     assert!(shadow.remove(id), "step {step}: exit {id} not in shadow");
+                    shadow_residents.remove(id);
                 }
-                for id in enter {
+                for id in enter_ids {
                     assert!(shadow.insert(*id), "step {step}: enter {id} already staged");
                 }
+                for cell in enter_cells {
+                    // Payload re-enters are upserts (a refresh may re-ship
+                    // a changed resident without membership churn).
+                    shadow.insert(cell.id);
+                    shadow_residents.insert(cell.id, cell.clone());
+                }
             }
-            let snapshot_members: Vec<u64> = snapshot.display.expect("display section").members;
+            let section = snapshot.display.expect("display section");
             assert_eq!(
                 shadow.iter().copied().collect::<Vec<_>>(),
-                snapshot_members,
+                section.members,
                 "step {step}: delta-replayed shadow diverged from the snapshot"
+            );
+            assert_eq!(
+                shadow_residents.values().cloned().collect::<Vec<_>>(),
+                section.residents,
+                "step {step}: delta-replayed residents diverged from the snapshot"
             );
             assert_display_invariants(&g);
         }
     }
 
+    /// Pin 7 (⭐) — replay consistency (invariant I5), prefix mode.
+    #[test]
+    fn display_deltas_replay_to_snapshot_membership() {
+        assert_display_replay_consistency(display_scenario());
+    }
+
+    /// Pin 7b (⭐) — replay consistency (invariant I5), composed mode:
+    /// the shadow additionally ingests `enter_cells` residents and the
+    /// residents section must replay exactly across refresh, dedup,
+    /// D5 collision, reorg-above-anchor, degrade, and rebuild.
+    #[test]
+    fn display_deltas_replay_to_snapshot_membership_composed() {
+        assert_display_replay_consistency(composed_display_scenario());
+    }
+
     /// Pin 8 — determinism: the same mutation sequence produces byte-identical
     /// display deltas and sections across runs (HashMap drain orders in
-    /// canonical code must never reach the display wire).
+    /// canonical code must never reach the display wire) — in both modes.
     #[test]
     fn display_membership_is_deterministic_across_identical_runs() {
-        let run = || {
+        let run = |scenario: fn() -> Vec<Mutation>| {
             let mut g = make_galaxy();
             let mut wire: Vec<String> = Vec::new();
-            for mutation in display_scenario() {
+            for mutation in scenario() {
                 for delta in g.apply_mutation(&mutation) {
                     if matches!(delta, CellDelta::Display { .. }) {
                         wire.push(serde_json::to_string(&delta).expect("serialize delta"));
@@ -3671,7 +3821,146 @@ mod tests {
             }
             wire
         };
-        assert_eq!(run(), run());
+        assert_eq!(run(display_scenario), run(display_scenario));
+        assert_eq!(
+            run(composed_display_scenario),
+            run(composed_display_scenario)
+        );
+    }
+
+    /// Pin 10 — the reservoir mutation arm end-to-end: refresh
+    /// transition with resident payloads + Composed provenance; a
+    /// content-identical record at a fresher anchor is a FULL no-op; a
+    /// rollback at the anchor coalesces its canonical exits with the
+    /// degrade transition (mode back to Canonical) in ONE delta; and the
+    /// dedup re-arms afterwards.
+    #[test]
+    fn display_reservoir_refresh_dedups_degrades_and_rearms() {
+        let mut g = make_galaxy();
+        g.apply_mutation(&mined(1, "0xb1", 1_000));
+        g.apply_mutation(&landed(
+            "0xa",
+            1,
+            1_000,
+            vec![],
+            vec![out(1, "0x"), out(2, "0x")],
+        ));
+
+        // Refresh transition: canonical members stay, residents enter
+        // with payloads, provenance flips to Composed with the record's
+        // anchor + clock.
+        let deltas = g.apply_mutation(&reservoir(1, (500_000, 500_001, 500_002)));
+        let (enter_ids, enter_cells, exit, provenance) =
+            display_delta_full(&deltas).expect("refresh transition delta");
+        assert!(
+            enter_ids.is_empty(),
+            "canonical members were already staged"
+        );
+        assert_eq!(
+            enter_cells.iter().map(|c| c.id).collect::<Vec<_>>(),
+            vec![500_000, 500_001, 500_002]
+        );
+        assert!(exit.is_empty());
+        let provenance = provenance.expect("mode transition rides provenance");
+        assert_eq!(provenance.mode, DisplayMode::Composed);
+        assert_eq!(provenance.source.as_deref(), Some("ckbadger"));
+        assert_eq!(provenance.as_of.as_ref().map(|a| a.block), Some(1));
+        assert_eq!(provenance.updated_at_ms, 1_000);
+        let section = g.snapshot().display.expect("section");
+        assert_eq!(section.members, vec![0, 1, 500_000, 500_001, 500_002]);
+        assert_eq!(
+            section.residents.iter().map(|c| c.id).collect::<Vec<_>>(),
+            vec![500_000, 500_001, 500_002]
+        );
+        assert_eq!(section.provenance.mode, DisplayMode::Composed);
+        assert_display_invariants(&g);
+
+        // Content-identical revalidation at a fresher anchor: FULL no-op
+        // — no delta, provenance (anchor included) frozen.
+        let deltas = g.apply_mutation(&reservoir(2, (500_000, 500_001, 500_002)));
+        assert_eq!(
+            display_delta_count(&deltas),
+            0,
+            "content dedup emits nothing"
+        );
+        let section = g.snapshot().display.expect("section");
+        assert_eq!(section.provenance.as_of.as_ref().map(|a| a.block), Some(1));
+        assert_eq!(section.provenance.updated_at_ms, 1_000);
+
+        // Rollback at the anchor: the parked canonical members AND the
+        // dropped residents exit in ONE coalesced delta riding
+        // mode-Canonical provenance.
+        let deltas = g.apply_mutation(&Mutation::ChainReorganized { from_block: 1 });
+        let (enter_ids, enter_cells, exit, provenance) =
+            display_delta_full(&deltas).expect("degrade delta");
+        assert!(enter_ids.is_empty() && enter_cells.is_empty());
+        assert_eq!(exit, &vec![0, 1, 500_000, 500_001, 500_002]);
+        let provenance = provenance.expect("degrade rides provenance");
+        assert_eq!(provenance.mode, DisplayMode::Canonical);
+        assert_eq!(provenance.source, None);
+        assert_eq!(provenance.as_of, None);
+        assert!(g.snapshot().display.expect("section").residents.is_empty());
+        assert_display_invariants(&g);
+
+        // Re-arm: the SAME content applies again after the degrade.
+        let deltas = g.apply_mutation(&reservoir(5, (500_000, 500_001, 500_002)));
+        let (_, enter_cells, _, provenance) =
+            display_delta_full(&deltas).expect("re-armed refresh applies");
+        assert_eq!(enter_cells.len(), 3);
+        assert_eq!(
+            provenance
+                .expect("mode transition")
+                .as_of
+                .as_ref()
+                .map(|a| a.block),
+            Some(5)
+        );
+        assert_display_invariants(&g);
+    }
+
+    /// Pin 11 — a refresh landing mid-replay stays silent and the
+    /// terminal resettle presents it whole: canonical enters ride
+    /// enter_ids, residents ride enter_cells, Composed provenance rides
+    /// the resettle.
+    #[test]
+    fn display_reservoir_refresh_during_backfill_lands_at_the_resettle() {
+        let mut g = make_galaxy();
+        g.apply_mutation(&Mutation::BackfillProgress {
+            done: 0,
+            total: 2,
+            active: true,
+            phase: ReplayPhase::Boot,
+        });
+        g.apply_mutation(&mined(1, "0xb1", 1_000));
+        g.apply_mutation(&landed(
+            "0xa",
+            1,
+            1_000,
+            vec![],
+            vec![out(1, "0x"), out(2, "0x")],
+        ));
+        let deltas = g.apply_mutation(&reservoir(1, (500_000, 500_001, 500_002)));
+        assert_eq!(display_delta_count(&deltas), 0, "silent during replay");
+
+        let terminal = g.apply_mutation(&Mutation::BackfillProgress {
+            done: 2,
+            total: 2,
+            active: false,
+            phase: ReplayPhase::Boot,
+        });
+        let (enter_ids, enter_cells, exit, provenance) =
+            display_delta_full(&terminal).expect("terminal resettle");
+        assert_eq!(enter_ids, &vec![0, 1]);
+        assert_eq!(
+            enter_cells.iter().map(|c| c.id).collect::<Vec<_>>(),
+            vec![500_000, 500_001, 500_002]
+        );
+        assert!(exit.is_empty());
+        assert_eq!(
+            provenance.expect("resettle announces the mode").mode,
+            DisplayMode::Composed
+        );
+        assert_display_invariants(&g);
     }
 
     /// Display state is rebuilt from the restored map on load — resting

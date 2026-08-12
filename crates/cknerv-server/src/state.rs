@@ -165,7 +165,24 @@ impl ServerState {
     /// (entity-store update + revision bump + ring push + broadcast +
     /// projection fan-out) so concurrent `snapshot()` readers observe
     /// (state, revision) atomically. Returns the assigned revision.
+    // The coord lock guards `()`: WRITE-ness is the mutual exclusion
+    // itself (snapshot readers hold the read side), not data access.
+    #[allow(clippy::readonly_write_lock)]
     pub fn apply_mutation(&self, m: Mutation) -> u64 {
+        let coord = self.coord.write().unwrap();
+        self.apply_mutation_locked(&coord, m)
+    }
+
+    /// The apply sequence body. The caller MUST hold the coord write
+    /// guard it passes (the parameter exists so callers that need
+    /// validation to be atomic with the revision assignment — the
+    /// enrichment reducer's D6 reservoir synthesis — can run both under
+    /// one acquisition without re-entering the non-reentrant lock).
+    fn apply_mutation_locked(
+        &self,
+        _coord: &std::sync::RwLockWriteGuard<'_, ()>,
+        m: Mutation,
+    ) -> u64 {
         let boot_replay_completed = matches!(
             &m,
             Mutation::BackfillProgress {
@@ -186,7 +203,6 @@ impl ServerState {
         //    only; `CellTagged` is projection-only). Done under the
         //    coord write lock so the snapshot read side sees a
         //    consistent (state, revision) pair.
-        let _coord = self.coord.write().unwrap();
         if let Mutation::BackfillProgress { active, .. } = &m {
             self.replay_active.store(*active, Ordering::Relaxed);
         }
@@ -206,7 +222,16 @@ impl ServerState {
                 self.mutation_ring.clear_and_shrink();
             }
         }
-        self.mutation_ring.push(rev.clone());
+        // Server-internal variants never reach the entity wire (R5): no
+        // ring entry, no broadcast. The consumed revision simply never
+        // appears on the entity stream — safe, because `decide_action`
+        // (ws.rs) compares `since` against ring boundaries without
+        // assuming contiguous revisions, and the TS client tracks only
+        // the max revision it has seen.
+        let entity_wire_visible = rev.mutation.entity_wire_visible();
+        if entity_wire_visible {
+            self.mutation_ring.push(rev.clone());
+        }
 
         // 2. Fan into projections. Each projection takes its own
         //    internal lock; the registry's read lock is released before
@@ -222,7 +247,9 @@ impl ServerState {
         // 3. Broadcast the structural mutation. A broadcast with zero
         //    subscribers errors — ignore it, the ring still holds the
         //    record for catch-up.
-        let _ = self.mutation_tx.send(rev);
+        if entity_wire_visible {
+            let _ = self.mutation_tx.send(rev);
+        }
         if canonical_evidence_changed && !self.replay_active.load(Ordering::Relaxed) {
             self.canonical_evidence_tx.send_replace(revision);
         }
@@ -233,11 +260,16 @@ impl ServerState {
         revision
     }
 
-    /// Apply one optional enrichment event without touching the canonical
-    /// revision or mutation stream. Anchored records are rejected if a reorg
-    /// raced the source request and the claimed block/hash is no longer in
-    /// the retained canonical evidence window.
+    /// Apply one optional enrichment event. Most events never touch the
+    /// canonical revision or mutation stream; `GalaxyCompositionReplace`
+    /// is the one exception (D6) — see
+    /// [`Self::apply_galaxy_composition_replace`]. Anchored records are
+    /// rejected if a reorg raced the source request and the claimed
+    /// block/hash is no longer in the retained canonical evidence window.
     pub fn apply_enrichment(&self, event: EnrichmentEvent) -> bool {
+        if matches!(event, EnrichmentEvent::GalaxyCompositionReplace(_)) {
+            return self.apply_galaxy_composition_replace(event);
+        }
         let _coord = self.coord.read().unwrap();
         let store = self.entity_store.read().unwrap();
 
@@ -270,6 +302,57 @@ impl ServerState {
         };
         drop(store);
 
+        let registry = self.projections.read().unwrap();
+        for writer in registry.enrichment_writers() {
+            writer.apply_enrichment(&event);
+        }
+        true
+    }
+
+    /// D6 reservoir channel: a validated composition record is installed
+    /// into the CANONICAL mutation stream (as the server-internal
+    /// `Mutation::GalaxyReservoirReplaced`) so the cells projection's
+    /// display plane can emit its refresh at a real revision — and, for
+    /// the S2 dual-emit window, still fanned out to the semantics stream
+    /// as before (S3 closes that).
+    ///
+    /// Lock dance: every other enrichment event validates and fans out
+    /// under the coord READ lock, but this one must reach
+    /// `apply_mutation`'s write side. `RwLock` is not reentrant, so
+    /// instead of read-validate → drop → re-lock (which would open a
+    /// TOCTOU where a reorg lands between validation and installation —
+    /// a window today's read path structurally excludes), we take ONE
+    /// coord write acquisition and run anchor validation, the canonical
+    /// apply sequence (via `apply_mutation_locked`), and the semantics
+    /// fan-out all under it. Lock order stays coord → entity_store →
+    /// projections → per-runner locks, identical to `apply_mutation`;
+    /// nothing downstream re-acquires coord, so there is no deadlock,
+    /// and the 15-minute cadence puts no pressure on the write side.
+    // See apply_mutation: the coord write guard IS the exclusion.
+    #[allow(clippy::readonly_write_lock)]
+    fn apply_galaxy_composition_replace(&self, event: EnrichmentEvent) -> bool {
+        let coord = self.coord.write().unwrap();
+        {
+            let store = self.entity_store.read().unwrap();
+            if !event_anchor_is_current(&event, &store.chain.recent_blocks) {
+                tracing::warn!(
+                    target: "cknerv-server",
+                    "discarded enrichment event with a non-canonical or expired anchor"
+                );
+                return false;
+            }
+        }
+        let EnrichmentEvent::GalaxyCompositionReplace(record) = &event else {
+            unreachable!("caller matched the variant");
+        };
+        self.apply_mutation_locked(
+            &coord,
+            Mutation::GalaxyReservoirReplaced {
+                record: record.clone(),
+            },
+        );
+        // Dual-emit window: the semantics stream keeps carrying the
+        // record until S3 switches clients to the display plane.
         let registry = self.projections.read().unwrap();
         for writer in registry.enrichment_writers() {
             writer.apply_enrichment(&event);
@@ -662,6 +745,14 @@ fn apply_chain_mutation(chain: &mut Chain, m: &Mutation) {
             // Handled by the outer `apply_entity_mutation` against
             // EntityStore.peers / chain_nodes. The Chain entity has no
             // field to update here.
+        }
+        Mutation::GalaxyReservoirReplaced { .. } => {
+            // SERVER-INTERNAL projection-only variant (D6): consumed by
+            // the cells projection's display plane. It never appears on
+            // the entity wire (`entity_wire_visible()` filters it from
+            // the ring + broadcast) and there is no entity state to
+            // update — display membership is presentation policy, never
+            // canonical truth.
         }
     }
 }
@@ -1088,8 +1179,13 @@ mod tests {
         assert_eq!(snap["revision"], 1);
     }
 
+    /// Anchor-stale enrichment is rejected; anchored semantics records
+    /// stay off the canonical channel — EXCEPT the composition record,
+    /// which (D6) synthesizes the internal `GalaxyReservoirReplaced`
+    /// mutation and therefore advances the canonical revision while
+    /// still never touching canonical cell state.
     #[test]
-    fn enrichment_anchor_guard_never_changes_canonical_revision() {
+    fn enrichment_stays_off_the_canonical_channel_except_the_reservoir() {
         let state = ServerState::new();
         {
             let mut projections = state.projections.write().unwrap();
@@ -1144,6 +1240,9 @@ mod tests {
             runtime.snapshot_json().1["cells"].as_array().unwrap().len(),
             1
         );
+        // Semantics upserts never advance the canonical revision.
+        assert_eq!(state.snapshot()["revision"], 1);
+
         let cells_runtime = state.projections.read().unwrap().lookup("cells").unwrap();
         let pulse_before = cells_runtime.snapshot_json().1["last_pulse_at_ms"].clone();
         assert!(
@@ -1161,10 +1260,210 @@ mod tests {
                 }
             ))
         );
+        // The composition rode the canonical channel (D6): one internal
+        // mutation, one revision — but canonical cell state (the pulse
+        // clock stands in for it) is untouched, and the display plane
+        // switched to composed staffing.
         assert_eq!(
             cells_runtime.snapshot_json().1["last_pulse_at_ms"],
             pulse_before
         );
-        assert_eq!(state.snapshot()["revision"], 1);
+        assert_eq!(state.snapshot()["revision"], 2);
+        assert_eq!(
+            cells_runtime.snapshot_json().1["display"]["provenance"]["mode"],
+            "composed"
+        );
+
+        // A stale-anchored composition is rejected under the SAME write
+        // acquisition that would install it — no revision consumed.
+        assert!(
+            !state.apply_enrichment(EnrichmentEvent::GalaxyCompositionReplace(
+                cknerv_core::GalaxyCompositionRecord {
+                    source: "test".to_string(),
+                    as_of: cknerv_core::ChainAnchor {
+                        block: 10,
+                        hash: "0xorphan".to_string(),
+                    },
+                    updated_at_ms: 1_002,
+                    dao: Vec::new(),
+                    typed: Vec::new(),
+                    plain: Vec::new(),
+                }
+            ))
+        );
+        assert_eq!(state.snapshot()["revision"], 2);
+    }
+
+    fn hydrated_reservoir_cell(id: u64, kind: cknerv_core::AssetKind) -> cknerv_core::Cell {
+        cknerv_core::Cell {
+            id,
+            born_at_ms: 0,
+            death_at_ms: None,
+            birth_block: 0,
+            tag: None,
+            pos_seed: cknerv_core::helix_seed_for(id),
+            out_point: cknerv_core::OutPoint {
+                tx_hash: format!("0xr{id}"),
+                index: 0,
+            },
+            capacity: 61_00000000,
+            data_hex: "0x".into(),
+            content_hash: format!("0x{id:064x}"),
+            lock_kind: Default::default(),
+            asset_kind: kind,
+        }
+    }
+
+    fn reservoir_record(block: u64, hash: &str) -> cknerv_core::GalaxyCompositionRecord {
+        cknerv_core::GalaxyCompositionRecord {
+            source: "ckbadger".to_string(),
+            as_of: cknerv_core::ChainAnchor {
+                block,
+                hash: hash.to_string(),
+            },
+            updated_at_ms: 5_000,
+            dao: vec![hydrated_reservoir_cell(
+                500_000,
+                cknerv_core::AssetKind::Dao,
+            )],
+            typed: vec![hydrated_reservoir_cell(
+                500_001,
+                cknerv_core::AssetKind::Xudt,
+            )],
+            plain: vec![hydrated_reservoir_cell(
+                500_002,
+                cknerv_core::AssetKind::Native,
+            )],
+        }
+    }
+
+    /// R5 pin: `GalaxyReservoirReplaced` NEVER reaches the entity wire.
+    /// Its revision is consumed but neither the mutation ring nor the
+    /// live broadcast carries the tag, and the next visible mutation
+    /// flows normally across the gap (the ws replay check tolerates
+    /// non-contiguous revisions).
+    #[test]
+    fn galaxy_reservoir_mutation_never_reaches_the_entity_wire() {
+        let state = ServerState::new();
+        state.apply_mutation(Mutation::BlockMined {
+            number: 10,
+            hash: "0xblock10".into(),
+            tx_count: 0,
+            size: 0,
+            at: 1_000,
+        });
+        let mut rx = state.subscribe_mutations();
+
+        let revision = state.apply_mutation(Mutation::GalaxyReservoirReplaced {
+            record: reservoir_record(10, "0xblock10"),
+        });
+        assert_eq!(revision, 2, "the internal mutation consumes a revision");
+        assert!(
+            state
+                .mutation_ring_snapshot()
+                .iter()
+                .all(|rm| rm.mutation.entity_wire_visible()
+                    && !matches!(rm.mutation, Mutation::GalaxyReservoirReplaced { .. })),
+            "the entity ring must never contain the internal tag"
+        );
+        assert!(
+            matches!(
+                rx.try_recv(),
+                Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+            ),
+            "the entity broadcast must never carry the internal tag"
+        );
+
+        // The next visible mutation broadcasts at revision 3 — the gap at
+        // revision 2 never surfaces as a frame.
+        let next = state.apply_mutation(Mutation::BlockMined {
+            number: 11,
+            hash: "0xblock11".into(),
+            tx_count: 0,
+            size: 0,
+            at: 2_000,
+        });
+        assert_eq!(next, 3);
+        let got = rx.try_recv().expect("visible mutation broadcasts");
+        assert_eq!(got.revision, 3);
+        assert!(matches!(got.mutation, Mutation::BlockMined { .. }));
+        let ring: Vec<u64> = state
+            .mutation_ring_snapshot()
+            .iter()
+            .map(|rm| rm.revision)
+            .collect();
+        assert_eq!(ring, vec![1, 3], "ring skips the internal revision");
+    }
+
+    /// D6 dual-emit window: one enrichment event installs the reservoir
+    /// into the cells projection (display plane, via the canonical
+    /// channel) AND still fans out to the semantics stream — while the
+    /// entity wire sees nothing.
+    #[test]
+    fn galaxy_composition_installs_reservoir_and_dual_emits_semantics() {
+        let state = ServerState::new();
+        {
+            let mut projections = state.projections.write().unwrap();
+            projections.register(cknerv_core::CellGalaxy::default());
+            projections.register_enrichment(cknerv_core::SemanticsProjection::new(Some((
+                "ckbadger",
+                vec!["galaxy_composition".into()],
+            ))));
+        }
+        state.apply_mutation(Mutation::BlockMined {
+            number: 10,
+            hash: "0xblock10".into(),
+            tx_count: 0,
+            size: 0,
+            at: 1_000,
+        });
+        let mut rx = state.subscribe_mutations();
+
+        assert!(
+            state.apply_enrichment(EnrichmentEvent::GalaxyCompositionReplace(reservoir_record(
+                10,
+                "0xblock10"
+            )))
+        );
+
+        // Cells projection: composed display plane with resident
+        // payloads, at the canonical revision the synthesis consumed.
+        let cells_runtime = state.projections.read().unwrap().lookup("cells").unwrap();
+        let (cells_rev, cells_snap) = cells_runtime.snapshot_json();
+        assert_eq!(cells_rev, 2);
+        assert_eq!(cells_snap["display"]["provenance"]["mode"], "composed");
+        assert_eq!(cells_snap["display"]["provenance"]["source"], "ckbadger");
+        assert_eq!(
+            cells_snap["display"]["residents"].as_array().unwrap().len(),
+            3
+        );
+        assert_eq!(
+            cells_snap["display"]["members"].as_array().unwrap().len(),
+            3
+        );
+        assert!(
+            cells_snap["cells"].as_array().unwrap().is_empty(),
+            "the reservoir must never enter the canonical cells map (I2)"
+        );
+
+        // Dual-emit: the semantics stream still carries the record.
+        let semantics_runtime = state
+            .projections
+            .read()
+            .unwrap()
+            .lookup("semantics")
+            .unwrap();
+        let (_, semantics_snap) = semantics_runtime.snapshot_json();
+        assert_eq!(semantics_snap["galaxy_composition"]["as_of"]["block"], 10);
+
+        // Entity wire: nothing.
+        assert!(matches!(
+            rx.try_recv(),
+            Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+        ));
+        assert!(state
+            .mutation_ring_snapshot()
+            .iter()
+            .all(|rm| rm.mutation.entity_wire_visible()));
     }
 }

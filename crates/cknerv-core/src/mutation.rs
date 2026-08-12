@@ -14,6 +14,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::enrichment::GalaxyCompositionRecord;
 use crate::entity::{EpochInfo, Peer};
 use crate::outpoint::{OutPoint, TxOutputInfo};
 
@@ -168,6 +169,35 @@ pub enum Mutation {
         version: String,
         connections: u64,
     },
+
+    /// SERVER-INTERNAL (D6): curated display-reservoir handoff. Synthesized
+    /// by the enrichment reducer after the canonical anchor guard validates a
+    /// `GalaxyCompositionReplace` event, so the reservoir rides the canonical
+    /// mutation channel (write lock + revision bump + ordered projection
+    /// fan-out) and the cells projection's display plane can emit its
+    /// `refresh_transition` at a real revision. NEVER serialized to the
+    /// browser: [`Mutation::entity_wire_visible`] excludes it from the entity
+    /// mutation ring and broadcast, and the TS `Mutation` union
+    /// (`packages/types/src/mutation.ts`) deliberately has no such tag. The
+    /// carried record is node-hydrated — the trust fence closed upstream
+    /// (`CkbGalaxyCompositionHydrator` re-read every candidate against the
+    /// local node) — and it only ever touches display membership: no entity
+    /// state, no counters, no persistence.
+    GalaxyReservoirReplaced { record: GalaxyCompositionRecord },
+}
+
+impl Mutation {
+    /// Whether this mutation may appear on the entity wire (the chain
+    /// mutation ring + `/api/entities/chain/stream` broadcast). Server-
+    /// internal variants are excluded at both the ring push and the
+    /// broadcast send; the revision they consumed simply never appears on
+    /// the entity stream. That gap is safe: the server's `decide_action`
+    /// replay check compares `since` against ring boundaries without
+    /// assuming contiguous revisions, and the TS entity client tracks only
+    /// the max revision it has seen.
+    pub fn entity_wire_visible(&self) -> bool {
+        !matches!(self, Mutation::GalaxyReservoirReplaced { .. })
+    }
 }
 
 /// Mutation paired with the EntityStore revision that produced it.
