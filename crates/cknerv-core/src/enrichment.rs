@@ -620,8 +620,6 @@ pub struct SemanticsSnapshot {
     pub transaction_horizon: Option<TransactionHorizonRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub network_atlas: Option<NetworkAtlasRecord>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub galaxy_composition: Option<GalaxyCompositionRecord>,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq)]
@@ -667,9 +665,6 @@ pub enum SemanticsDelta {
         network_atlas: NetworkAtlasRecord,
     },
     NetworkAtlasClear,
-    GalaxyCompositionReplace {
-        galaxy_composition: GalaxyCompositionRecord,
-    },
     Prune {
         from_block: u64,
     },
@@ -695,7 +690,6 @@ pub struct SemanticsProjection {
     activity_feed: Option<ActivityFeedRecord>,
     transaction_horizon: Option<TransactionHorizonRecord>,
     network_atlas: Option<NetworkAtlasRecord>,
-    galaxy_composition: Option<GalaxyCompositionRecord>,
     next_sequence: u64,
     cell_cap: usize,
     transaction_cap: usize,
@@ -719,7 +713,6 @@ impl SemanticsProjection {
             activity_feed: None,
             transaction_horizon: None,
             network_atlas: None,
-            galaxy_composition: None,
             next_sequence: 0,
             cell_cap: 512,
             transaction_cap: 2048,
@@ -782,7 +775,6 @@ impl SemanticsProjection {
         self.activity_feed = None;
         self.transaction_horizon = None;
         self.network_atlas = None;
-        self.galaxy_composition = None;
     }
 
     fn invalidate_source_anchor(&mut self, message: &str) -> Option<SemanticsDelta> {
@@ -842,7 +834,6 @@ impl Projection for SemanticsProjection {
             activity_feed: self.activity_feed.clone(),
             transaction_horizon: self.transaction_horizon.clone(),
             network_atlas: self.network_atlas.clone(),
-            galaxy_composition: self.galaxy_composition.clone(),
         }
     }
 
@@ -909,13 +900,6 @@ impl Projection for SemanticsProjection {
                     .is_some_and(|atlas| atlas.as_of.block >= *from_block)
                 {
                     self.network_atlas = None;
-                }
-                if self
-                    .galaxy_composition
-                    .as_ref()
-                    .is_some_and(|composition| composition.as_of.block >= *from_block)
-                {
-                    self.galaxy_composition = None;
                 }
                 let mut deltas = vec![SemanticsDelta::Prune {
                     from_block: *from_block,
@@ -1038,28 +1022,14 @@ impl EnrichmentProjection for SemanticsProjection {
                 self.network_atlas = None;
                 vec![SemanticsDelta::NetworkAtlasClear]
             }
-            EnrichmentEvent::GalaxyCompositionReplace(galaxy_composition) => {
-                let duplicate = self
-                    .galaxy_composition
-                    .as_ref()
-                    .is_some_and(|stored| stored.content_matches(galaxy_composition));
-                if duplicate {
-                    // Content-identical revalidation: broadcast nothing and
-                    // keep the stored record exactly as previously sent, so
-                    // new-subscriber snapshots match delta subscribers and
-                    // the reorg-prune predicate (`as_of.block >= from_block`)
-                    // evaluates identically on server and clients. Every
-                    // invalidation path (`Prune`/`Clear`/rebuild/incompatible
-                    // source) nulls the stored record, which re-arms the next
-                    // refresh broadcast — a client that nulled its copy can
-                    // never be starved by this dedup.
-                    Vec::new()
-                } else {
-                    self.galaxy_composition = Some(galaxy_composition.clone());
-                    vec![SemanticsDelta::GalaxyCompositionReplace {
-                        galaxy_composition: galaxy_composition.clone(),
-                    }]
-                }
+            EnrichmentEvent::GalaxyCompositionReplace(_) => {
+                // The composition record is display-plane input, not a
+                // semantic record: the server reducer installs it into the
+                // canonical stream as `Mutation::GalaxyReservoirReplaced`
+                // and the cells projection stages it. Content dedup, reorg
+                // degrade, and the resulting wire deltas all live there —
+                // semantics deliberately holds nothing.
+                Vec::new()
             }
             EnrichmentEvent::Clear => {
                 self.clear_records();
@@ -1297,89 +1267,23 @@ mod tests {
         assert_eq!(GalaxyCompositionTarget::for_total(7).total(), 7);
     }
 
+    /// The composition record is display-plane input, not semantics: the
+    /// server reducer routes it to the canonical stream and the cells
+    /// projection stages it (dedup, degrade, and wire deltas all live
+    /// there). Semantics must hold nothing and emit nothing, or the same
+    /// membership would reach the browser through two contracts.
     #[test]
-    fn galaxy_composition_replaces_only_enrichment_state() {
+    fn galaxy_composition_is_not_a_semantic_record() {
         let mut projection =
             SemanticsProjection::new(Some(("ckbadger", vec!["galaxy_composition".into()])));
-        let record = galaxy_composition(10);
+        let before = projection.snapshot();
 
-        let deltas =
-            projection.apply_enrichment(&EnrichmentEvent::GalaxyCompositionReplace(record.clone()));
-
-        assert_eq!(projection.snapshot().galaxy_composition, Some(record));
-        assert!(matches!(
-            &deltas[..],
-            [SemanticsDelta::GalaxyCompositionReplace { .. }]
-        ));
-    }
-
-    #[test]
-    fn galaxy_composition_content_duplicate_is_suppressed_and_keeps_the_sent_record() {
-        let mut projection =
-            SemanticsProjection::new(Some(("ckbadger", vec!["galaxy_composition".into()])));
-        let first = galaxy_composition(10);
-        projection.apply_enrichment(&EnrichmentEvent::GalaxyCompositionReplace(first.clone()));
-
-        // Same content revalidated at a newer anchor + refresh timestamp
-        // (the helper derives both from the block).
         let deltas = projection.apply_enrichment(&EnrichmentEvent::GalaxyCompositionReplace(
-            galaxy_composition(12),
+            galaxy_composition(10),
         ));
 
         assert!(deltas.is_empty());
-        // The stored record must stay exactly what subscribers were sent so
-        // the server-side reorg-prune predicate matches every client's.
-        assert_eq!(projection.snapshot().galaxy_composition, Some(first));
-    }
-
-    #[test]
-    fn galaxy_composition_reemits_after_a_prune_nulls_the_stored_record() {
-        let mut projection =
-            SemanticsProjection::new(Some(("ckbadger", vec!["galaxy_composition".into()])));
-        projection.apply_enrichment(&EnrichmentEvent::GalaxyCompositionReplace(
-            galaxy_composition(10),
-        ));
-        assert!(projection
-            .apply_enrichment(&EnrichmentEvent::GalaxyCompositionReplace(
-                galaxy_composition(12),
-            ))
-            .is_empty());
-
-        // A reorg at the stored anchor prunes the record; clients null their
-        // copy on the same predicate.
-        projection.apply_mutation(&Mutation::ChainReorganized { from_block: 10 });
-        assert!(projection.snapshot().galaxy_composition.is_none());
-
-        // The next refresh must re-broadcast even though its content is
-        // identical, or pruned clients would stay null forever.
-        let record = galaxy_composition(14);
-        let deltas =
-            projection.apply_enrichment(&EnrichmentEvent::GalaxyCompositionReplace(record.clone()));
-        assert!(matches!(
-            &deltas[..],
-            [SemanticsDelta::GalaxyCompositionReplace { .. }]
-        ));
-        assert_eq!(projection.snapshot().galaxy_composition, Some(record));
-    }
-
-    #[test]
-    fn galaxy_composition_content_change_still_replaces() {
-        let mut projection =
-            SemanticsProjection::new(Some(("ckbadger", vec!["galaxy_composition".into()])));
-        projection.apply_enrichment(&EnrichmentEvent::GalaxyCompositionReplace(
-            galaxy_composition(10),
-        ));
-
-        let mut changed = galaxy_composition(12);
-        changed.plain.push(galaxy_cell(4, crate::AssetKind::Native));
-        let deltas = projection
-            .apply_enrichment(&EnrichmentEvent::GalaxyCompositionReplace(changed.clone()));
-
-        assert!(matches!(
-            &deltas[..],
-            [SemanticsDelta::GalaxyCompositionReplace { .. }]
-        ));
-        assert_eq!(projection.snapshot().galaxy_composition, Some(changed));
+        assert_eq!(projection.snapshot(), before);
     }
 
     #[test]
@@ -1442,9 +1346,6 @@ mod tests {
             transaction_horizon(10),
         ));
         projection.apply_enrichment(&EnrichmentEvent::NetworkAtlasReplace(network_atlas(10)));
-        projection.apply_enrichment(&EnrichmentEvent::GalaxyCompositionReplace(
-            galaxy_composition(10),
-        ));
 
         projection.apply_mutation(&Mutation::ChainReorganized { from_block: 10 });
 
@@ -1455,7 +1356,6 @@ mod tests {
         assert!(projection.snapshot().activity_feed.is_none());
         assert!(projection.snapshot().transaction_horizon.is_none());
         assert!(projection.snapshot().network_atlas.is_none());
-        assert!(projection.snapshot().galaxy_composition.is_none());
     }
 
     #[test]

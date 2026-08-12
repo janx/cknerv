@@ -2,7 +2,6 @@
 // `cknerv_core::enrichment` and are deliberately separate from canonical
 // Cell/transaction shapes.
 
-import type { Cell } from './cell';
 import type { OutPoint } from './outpoint';
 
 export interface ChainAnchor {
@@ -296,20 +295,6 @@ export interface NetworkAtlasRecord {
   versions: NetworkAtlasBucket[];
 }
 
-/**
- * Bounded, canonically revalidated display reservoir for CellGalaxy. It is
- * additive indexed context: these Cells never enter the canonical mutation or
- * pulse-routing cache.
- */
-export interface GalaxyCompositionRecord {
-  source: string;
-  as_of: ChainAnchor;
-  updated_at_ms: number;
-  dao: Cell[];
-  typed: Cell[];
-  plain: Cell[];
-}
-
 export interface SemanticsSnapshot {
   source: EnrichmentSourceStatus;
   cells: CellSemanticRecord[];
@@ -322,7 +307,6 @@ export interface SemanticsSnapshot {
   activity_feed?: ActivityFeedRecord;
   transaction_horizon?: TransactionHorizonRecord;
   network_atlas?: NetworkAtlasRecord;
-  galaxy_composition?: GalaxyCompositionRecord;
 }
 
 export type SemanticsDelta =
@@ -340,10 +324,6 @@ export type SemanticsDelta =
   | { type: 'transaction_horizon_replace'; transaction_horizon: TransactionHorizonRecord }
   | { type: 'network_atlas_replace'; network_atlas: NetworkAtlasRecord }
   | { type: 'network_atlas_clear' }
-  | {
-      type: 'galaxy_composition_replace';
-      galaxy_composition: GalaxyCompositionRecord;
-    }
   | { type: 'prune'; from_block: number }
   | { type: 'clear' };
 

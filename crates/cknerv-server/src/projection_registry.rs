@@ -281,15 +281,6 @@ impl<P: EnrichmentProjection> ApplyEnrichment for EnrichmentProjectionRunner<P> 
     fn apply_enrichment(&self, event: &EnrichmentEvent) {
         let _coord = self.event_coord.lock().unwrap();
         let deltas = self.inner.write().unwrap().apply_enrichment(event);
-        if deltas.is_empty() && matches!(event, EnrichmentEvent::GalaxyCompositionReplace(_)) {
-            // The projection deduplicated a content-identical refresh:
-            // no delta, no revision advance, snapshot unchanged.
-            tracing::debug!(
-                target: "cknerv-server",
-                projection = self.name,
-                "suppressed content-identical galaxy composition refresh"
-            );
-        }
         self.publish(deltas);
     }
 }
@@ -615,52 +606,30 @@ mod tests {
         assert_eq!(ring[2].value["type"], "source_status");
     }
 
+    /// Composition refreshes are display-plane input: they reach the cells
+    /// projection through the canonical stream, so the semantics runtime
+    /// must stay completely still — no delta, no revision, nothing in the
+    /// ring — however often the source revalidates.
     #[test]
-    fn duplicate_galaxy_composition_refresh_holds_the_semantics_cursor() {
+    fn galaxy_composition_refresh_never_moves_the_semantics_cursor() {
         let mut registry = Registry::new();
         registry.register_enrichment(SemanticsProjection::new(Some((
             "ckbadger",
             vec!["galaxy_composition".into()],
         ))));
         let runtime = registry.lookup("semantics").expect("semantics runtime");
-        let canonical = registry.writers().into_iter().next().unwrap();
         let enrichment = registry.enrichment_writers().into_iter().next().unwrap();
+        let (revision_before, snapshot_before) = runtime.snapshot_json();
 
-        enrichment.apply_enrichment(&EnrichmentEvent::GalaxyCompositionReplace(
-            galaxy_composition(10),
-        ));
-        assert_eq!(runtime.snapshot_json().0, 1);
-        assert_eq!(runtime.delta_ring_snapshot().len(), 1);
+        for block in [10, 12, 14] {
+            enrichment.apply_enrichment(&EnrichmentEvent::GalaxyCompositionReplace(
+                galaxy_composition(block),
+            ));
+        }
 
-        // A content-identical revalidation at a newer anchor advances
-        // neither the revision cursor nor the delta ring: a `?since=`
-        // reconnect and a fresh snapshot stay in exact agreement.
-        enrichment.apply_enrichment(&EnrichmentEvent::GalaxyCompositionReplace(
-            galaxy_composition(12),
-        ));
         let (revision, snapshot) = runtime.snapshot_json();
-        assert_eq!(revision, 1);
-        assert_eq!(runtime.delta_ring_snapshot().len(), 1);
-        // The snapshot still carries the previously broadcast anchor.
-        assert_eq!(snapshot["galaxy_composition"]["as_of"]["block"], 10);
-
-        // A reorg at the stored anchor prunes the record (rev 2: prune,
-        // rev 3: source_status). Clients null their copy on the same
-        // predicate, so the following content-identical refresh must
-        // broadcast again.
-        canonical.apply(&RevisionedMutation {
-            revision: 99,
-            mutation: Mutation::ChainReorganized { from_block: 10 },
-        });
-        enrichment.apply_enrichment(&EnrichmentEvent::GalaxyCompositionReplace(
-            galaxy_composition(14),
-        ));
-        let (revision, snapshot) = runtime.snapshot_json();
-        assert_eq!(revision, 4);
-        assert_eq!(snapshot["galaxy_composition"]["as_of"]["block"], 14);
-        let ring = runtime.delta_ring_snapshot();
-        assert_eq!(ring.len(), 4);
-        assert_eq!(ring[3].rev, 4);
-        assert_eq!(ring[3].value["type"], "galaxy_composition_replace");
+        assert_eq!(revision, revision_before);
+        assert_eq!(snapshot, snapshot_before);
+        assert!(runtime.delta_ring_snapshot().is_empty());
     }
 }

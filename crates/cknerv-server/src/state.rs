@@ -312,9 +312,9 @@ impl ServerState {
     /// D6 reservoir channel: a validated composition record is installed
     /// into the CANONICAL mutation stream (as the server-internal
     /// `Mutation::GalaxyReservoirReplaced`) so the cells projection's
-    /// display plane can emit its refresh at a real revision — and, for
-    /// the S2 dual-emit window, still fanned out to the semantics stream
-    /// as before (S3 closes that).
+    /// display plane can stage it at a real revision. This is the record's
+    /// ONLY destination — semantics deliberately ignores the event, so the
+    /// same membership can never reach the browser through two contracts.
     ///
     /// Lock dance: every other enrichment event validates and fans out
     /// under the coord READ lock, but this one must reach
@@ -322,12 +322,12 @@ impl ServerState {
     /// instead of read-validate → drop → re-lock (which would open a
     /// TOCTOU where a reorg lands between validation and installation —
     /// a window today's read path structurally excludes), we take ONE
-    /// coord write acquisition and run anchor validation, the canonical
-    /// apply sequence (via `apply_mutation_locked`), and the semantics
-    /// fan-out all under it. Lock order stays coord → entity_store →
-    /// projections → per-runner locks, identical to `apply_mutation`;
-    /// nothing downstream re-acquires coord, so there is no deadlock,
-    /// and the 15-minute cadence puts no pressure on the write side.
+    /// coord write acquisition covering both anchor validation and the
+    /// canonical apply sequence (via `apply_mutation_locked`). Lock order
+    /// stays coord → entity_store → projections → per-runner locks,
+    /// identical to `apply_mutation`; nothing downstream re-acquires
+    /// coord, so there is no deadlock, and the 15-minute cadence puts no
+    /// pressure on the write side.
     // See apply_mutation: the coord write guard IS the exclusion.
     #[allow(clippy::readonly_write_lock)]
     fn apply_galaxy_composition_replace(&self, event: EnrichmentEvent) -> bool {
@@ -342,21 +342,10 @@ impl ServerState {
                 return false;
             }
         }
-        let EnrichmentEvent::GalaxyCompositionReplace(record) = &event else {
+        let EnrichmentEvent::GalaxyCompositionReplace(record) = event else {
             unreachable!("caller matched the variant");
         };
-        self.apply_mutation_locked(
-            &coord,
-            Mutation::GalaxyReservoirReplaced {
-                record: record.clone(),
-            },
-        );
-        // Dual-emit window: the semantics stream keeps carrying the
-        // record until S3 switches clients to the display plane.
-        let registry = self.projections.read().unwrap();
-        for writer in registry.enrichment_writers() {
-            writer.apply_enrichment(&event);
-        }
+        self.apply_mutation_locked(&coord, Mutation::GalaxyReservoirReplaced { record });
         true
     }
 
@@ -1395,12 +1384,11 @@ mod tests {
         assert_eq!(ring, vec![1, 3], "ring skips the internal revision");
     }
 
-    /// D6 dual-emit window: one enrichment event installs the reservoir
-    /// into the cells projection (display plane, via the canonical
-    /// channel) AND still fans out to the semantics stream — while the
-    /// entity wire sees nothing.
+    /// D6: one enrichment event installs the reservoir into the cells
+    /// projection (display plane, via the canonical channel) and nowhere
+    /// else — semantics stays empty and the entity wire sees nothing.
     #[test]
-    fn galaxy_composition_installs_reservoir_and_dual_emits_semantics() {
+    fn galaxy_composition_installs_the_reservoir_and_nothing_else() {
         let state = ServerState::new();
         {
             let mut projections = state.projections.write().unwrap();
@@ -1446,15 +1434,16 @@ mod tests {
             "the reservoir must never enter the canonical cells map (I2)"
         );
 
-        // Dual-emit: the semantics stream still carries the record.
+        // Semantics: untouched. The record has exactly one destination.
         let semantics_runtime = state
             .projections
             .read()
             .unwrap()
             .lookup("semantics")
             .unwrap();
-        let (_, semantics_snap) = semantics_runtime.snapshot_json();
-        assert_eq!(semantics_snap["galaxy_composition"]["as_of"]["block"], 10);
+        let (semantics_rev, semantics_snap) = semantics_runtime.snapshot_json();
+        assert_eq!(semantics_rev, 0);
+        assert!(semantics_snap.get("galaxy_composition").is_none());
 
         // Entity wire: nothing.
         assert!(matches!(

@@ -178,7 +178,11 @@ The primary public seams are:
   block/hash anchor immediately before it enters the semantics projection.
   CellGalaxy composition additionally uses ckbadger only to discover/rank
   outpoints, then batch-validates and materializes every displayed candidate
-  through the local CKB node's read-only `get_live_cell` RPC.
+  through the local CKB node's read-only `get_live_cell` RPC. That validated
+  record is display-plane input, not semantics: it enters the server's own
+  canonical stream as a server-internal mutation the browser never sees, so
+  display membership stays ordered against the births and reorgs it is staged
+  against.
 
 The current workspace ships `CkbDirectAdapter`, which polls CKB JSON-RPC and
 emits chain-generic mutations. It also includes optional ckbadger enrichment;
@@ -341,10 +345,11 @@ sections are ignored. Use `--backfill-blocks N` only as a one-run hard scan
 limit for diagnostics.
 
 The dashboard's manual Cell-count controller tops out at the built-in
-50,000-Cell visual ceiling. AUTO renders a fixed 12,000-Cell structural
-budget — render quality adjusts presentation only (DPR, effects, sampling),
-never composition — and the passive nervous system draws a fixed 8,000-nerve
-screen budget regardless of field size.
+50,000-Cell visual ceiling. AUTO renders the server-shipped display budget —
+a fixed 12,000-Cell structural budget, with render quality adjusting
+presentation only (DPR, effects, sampling), never composition — and the
+passive nervous system draws a fixed 8,000-nerve screen budget regardless of
+field size. The manual controller is a presentation clamp on that stage.
 The manual controller keeps its full range but cannot display records the
 server did not retain. A checkpoint recorded against a smaller historical
 hydration target is invalidated automatically, so the next launch rebuilds
@@ -429,13 +434,15 @@ twin, the fixtures, and both sides of the tests together.
   impose a smaller diagnostic hard limit. After a deep-reorg rebuild, Cell
   TOTAL/DEAD counters are likewise reconstructed from the hydrated observation
   window.
-- With optional ckbadger enrichment, the resting visible subset can instead be
-  composed as DAO:typed:plain = 30:40:30 at the active display budget, seeded
-  from a 6,000-record indexed reservoir (canonical retained Cells fill any
-  remainder).
-  This is an additive, node-revalidated display reservoir: canonical Cells and
-  the complete canonical neighbour graph still own new-block pulses, live nerve
-  routes, counters, and reorg behavior. See
+- Which Cells are on stage is decided server-side in every mode and streamed as
+  the cells projection's display membership, so the browser runs one code path
+  whatever the source situation. Without enrichment the server stages the
+  canonical insertion-order prefix; with optional ckbadger enrichment it stages
+  DAO:typed:plain = 30:40:30 at the display budget, seeded from a 6,000-record
+  node-revalidated reservoir (canonical retained Cells fill any remainder). In
+  both modes each block's real transaction endpoints take a reserved slice of
+  the stage. Canonical Cells and the complete canonical neighbour graph still
+  own new-block pulses, live nerve routes, counters, and reorg behavior. See
   [`docs/ckbadger.md`](docs/ckbadger.md#cellgalaxy-composition).
 - The CKB adapter is read-only JSON-RPC polling. There is no bundled CKB node,
   indexer, or transaction submitter.

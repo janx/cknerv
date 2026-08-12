@@ -30,7 +30,6 @@ describe('NeuralNetwork drop instrumentation wiring', () => {
     expect(NETWORK_SOURCE).not.toContain('diffAndSnapshotCells');
     expect(NETWORK_SOURCE).not.toContain('snapshotCells');
     expect(NETWORK_SOURCE).not.toContain('prevCellsRef');
-    expect(NETWORK_SOURCE).not.toContain('sameCellRenderTopology(');
   });
 
   it('journals exact Cell ids for sparse flash-buffer uploads', () => {

@@ -306,17 +306,6 @@
           "count": 1
         }
       ]
-    },
-    "galaxy_composition": {
-      "source": "ckbadger",
-      "as_of": {
-        "block": 100,
-        "hash": "0xblock100"
-      },
-      "updated_at_ms": 1700000000011,
-      "dao": [],
-      "typed": [],
-      "plain": []
     }
   },
   "deltas": {
@@ -632,20 +621,6 @@
     },
     "network_atlas_clear": {
       "type": "network_atlas_clear"
-    },
-    "galaxy_composition_replace": {
-      "type": "galaxy_composition_replace",
-      "galaxy_composition": {
-        "source": "ckbadger",
-        "as_of": {
-          "block": 100,
-          "hash": "0xblock100"
-        },
-        "updated_at_ms": 1700000000011,
-        "dao": [],
-        "typed": [],
-        "plain": []
-      }
     },
     "prune": {
       "type": "prune",

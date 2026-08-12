@@ -2,9 +2,10 @@
 
 ckbadger is an optional, read-only indexed enrichment source for cknerv. It
 adds bounded Cell, transaction, asset, DAO, protocol, fork, activity, history,
-network, and CellGalaxy-composition context to the semantics pipeline. The direct CKB JSON-RPC adapter
-remains the only source of structural chain truth: ckbadger data cannot create,
-spend, or replace a canonical Cell.
+and network context to the semantics pipeline, and it curates the CellGalaxy
+display plane through a separate server-side path (see below). The direct CKB
+JSON-RPC adapter remains the only source of structural chain truth: ckbadger
+data cannot create, spend, or replace a canonical Cell.
 
 ## Configuration
 
@@ -45,9 +46,14 @@ CkbDirectAdapter                              EnrichmentSource
       v                                              |
 canonical Mutation stream                           v
       |                                    EnrichmentEvent stream
-      v                                              |
-cknerv-server <-------------------------- SemanticsProjection
-      |
+      |                                              |
+      |                            +-----------------+-----------------+
+      |                            v                                   v
+      |                   SemanticsProjection            display-plane reservoir
+      |                   (HUD context records)     (internal Mutation, see below)
+      v                            |                                   |
+cknerv-server <------------------- +                                   |
+      |    <--------------------------------------------------------- +
       v
 HTTP/WS API -> @cknerv/cache -> @cknerv/ui
 ```
@@ -72,12 +78,23 @@ class. The node also supplies the real output data, content hash, lock class,
 and deterministic position seed. No ckbadger payload is converted directly
 into a displayable Cell.
 
+The validated composition record is display-plane input rather than a semantic
+record, so it takes the second branch above. After the ordinary anchor guard,
+the server installs it into its own canonical stream as the server-internal
+`Mutation::GalaxyReservoirReplaced`, which only the cells projection consumes.
+That variant never reaches the entity wire, never enters the canonical Cell
+map, and moves no counters; it changes only which Cells the display plane
+stages. Routing it through the canonical stream is what keeps display membership
+ordered against the births, deaths, and reorgs it is staged against.
+
 ## HTTP and WebSocket Routes
 
 | Method | Path | Behavior |
 |---|---|---|
 | `GET` | `/api/projections/semantics/snapshot` | Source health and currently available bounded semantics; present even when enrichment is disabled |
 | `WS` | `/api/projections/semantics/stream?since=<rev>` | Independent semantics snapshot/delta stream |
+| `GET` | `/api/projections/cells/snapshot` | Canonical Cells **and** the display plane's `display` section; present in every mode |
+| `WS` | `/api/projections/cells/stream?since=<rev>` | Canonical Cell deltas **and** `display` membership patches, in one revision order |
 | `GET` | `/api/enrichment/cells/:tx_hash/:output_index` | Resolve one selected Cell lazily; returns `404 enrichment_disabled` without a configured source |
 | `GET` | `/api/enrichment/transactions/:tx_hash` | Resolve the selected Cell's origin transaction lazily |
 
@@ -123,6 +140,14 @@ global chain truth.
 
 ### CellGalaxy Composition
 
+The display plane — "who is on stage" — is decided entirely server-side and is
+present in every mode, so enabling or disabling ckbadger changes only which
+Cells the server stages, never the shape, cadence, or cost of what the browser
+receives. The server owns the display budget (12,000 Cells and an 8,000-edge
+nerve screen budget) and ships it in the `display` section of the cells
+snapshot; the browser reads its budget from there rather than from a client
+constant.
+
 With `galaxy_composition`, cknerv refreshes one non-persisted resting display
 reservoir at most once every 15 minutes. Its target is 6,000 Cells — the curated core of the browser's fixed
 12,000-Cell field, with canonical retained Cells filling the remainder (the
@@ -148,24 +173,39 @@ ckbadger's existing APIs provide the bounded discovery work:
 Candidate discovery deliberately uses the index for the work a CKB node cannot
 perform efficiently. Final Cell materialization deliberately uses the node for
 the authority the index must not own. If one class is sparse after live-cell
-validation, the UI fills that shortage from matching canonical retained Cells,
-then spills remaining vacancies toward DAO and typed Cells. With sufficient
-candidates, the visible result remains exactly 30:40:30.
+validation, the server fills that shortage from matching canonical retained
+Cells, then spills remaining vacancies toward DAO and typed Cells. With
+sufficient candidates, the visible result remains exactly 30:40:30. A reservoir
+Cell whose outpoint is also retained canonically is staged under its canonical
+identity, so one outpoint is never on stage twice.
 
-This record changes only the shared Cell/body and passive-fibre display subset.
-It never enters `CellGalaxySnapshot`, never increments Cell counters, and never
-emits `birth`, `death`, `link`, or `pulse` deltas. The complete canonical Cell
-map and neighbour graph continue to plan and render live nerve routes. Endpoints
-from the newest canonical block temporarily replace resting entries inside
-their own class quota, so exact Cell flashes remain visible without changing
-the ratio. The broad new-block pulse still follows the canonical
+Membership reaches the browser as the cells projection's `display` section plus
+`display` deltas carrying `enter_ids` (canonical Cells, whose births the same
+revision order has already delivered), `enter_cells` (full payloads for staged
+Cells outside the retained map), and `exit_ids`. Ordinary churn is a handful of
+ids; only a refresh or a mode change ships payloads. The plane changes only the
+shared Cell/body and passive-fibre display subset: it never enters the canonical
+Cell map, never increments Cell counters, and never emits `birth`, `death`,
+`link`, or `pulse` deltas. The complete canonical Cell map and neighbour graph
+continue to plan and render live nerve routes. Endpoints from the newest
+canonical block temporarily replace resting entries inside their own class
+quota, so exact Cell flashes remain visible without changing the ratio. The
+broad new-block pulse still follows the canonical
 `BlockMined -> CellDelta::Pulse -> lastPulseAtMs` path and is independent of
 composition refreshes.
 
-When ckbadger is disabled, unavailable, or has not completed the first
-composition refresh, CellGalaxy retains its original canonical-prefix display
-behavior. A failed refresh leaves the last good anchored record in place; a
-canonical reorg prunes it through the normal semantics anchor guard.
+Without ckbadger — disabled, unavailable, or before the first composition
+refresh — the plane stages the canonical insertion-order prefix instead, with
+the same reserved activity pool putting each block's real endpoints on stage.
+The browser cannot tell the two modes apart except through the section's
+`provenance` (`mode`, `source`, `as_of`), which is what the source-health chip
+reads. A content-identical refresh is suppressed outright: no delta, no
+membership churn. A failed refresh leaves the last good record staged; a
+canonical reorg or rebuild past its anchor drops the reservoir and returns the
+plane to canonical staffing in one coalesced delta, re-arming that suppression
+so the next refresh applies even if its content is unchanged. Because the server
+cannot observe spends of outpoints it does not retain, a staged non-retained
+Cell stays until the next refresh or degrade replaces it.
 
 ### Selected Cell and Origin Transaction
 
@@ -378,7 +418,9 @@ after three missed minute refreshes.
 Optional semantics are bounded in memory and intentionally not persisted. They
 are rehydrated from the configured source, so enabling, disabling, or changing
 ckbadger does not alter the persistence schema and does not require
-`cknerv prune`.
+`cknerv prune`. Display membership is likewise never persisted: a restart
+re-derives it from the restored canonical Cells and upgrades to composed
+staffing once the first refresh lands.
 
 ## Known Limits
 

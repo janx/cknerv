@@ -530,21 +530,3 @@ export function cellRenderOverlay(
   }
   return overlay.length === 0 ? EMPTY_OVERLAY : overlay;
 }
-
-/** Whether a newly resolved display list would produce the same neighbour
- *  topology as the previous one. Tags and other payload fields deliberately
- *  do not participate: graph construction depends only on ordered membership,
- *  live/dead status, and position. */
-export function sameCellRenderTopology(
-  previous: ReadonlyMap<number, Cell>,
-  next: readonly Cell[],
-): boolean {
-  if (previous.size !== next.length) return false;
-  const previousCells = previous.values();
-  for (const cell of next) {
-    const entry = previousCells.next();
-    if (entry.done) return false;
-    if (!sameCellTopology(entry.value, cell)) return false;
-  }
-  return previousCells.next().done === true;
-}

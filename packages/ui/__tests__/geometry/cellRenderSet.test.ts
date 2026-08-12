@@ -12,7 +12,6 @@ import {
   cellRenderOverlay,
   createCellRenderSetState,
   OVERLAY_SLOT_POOL,
-  sameCellRenderTopology,
   syncCellRenderSet,
 } from '../../src/geometry/cellRenderSet';
 import type { CellInspectionField } from '../../src/nerve/cellInspectionField';
@@ -533,25 +532,5 @@ describe('cellRenderOverlay (D4 inspection pool)', () => {
     const overlay = cellRenderOverlay(cache, new Map(), 1, field);
     expect(overlay).toHaveLength(OVERLAY_SLOT_POOL);
     expect(overlay[0].id).toBe(1);
-  });
-});
-
-describe('sameCellRenderTopology', () => {
-  it('ignores payload-only changes but detects structural display changes', () => {
-    const previous = cellRenderMap([cell(1), cell(2)]);
-
-    expect(sameCellRenderTopology(previous, [
-      { ...cell(1), tag: 'dex' },
-      cell(2),
-    ])).toBe(true);
-    expect(sameCellRenderTopology(previous, [cell(2), cell(1)])).toBe(false);
-    expect(sameCellRenderTopology(previous, [
-      { ...cell(1), death_at_ms: 5000 },
-      cell(2),
-    ])).toBe(false);
-    expect(sameCellRenderTopology(previous, [
-      { ...cell(1), pos_seed: [99, 0, 0] },
-      cell(2),
-    ])).toBe(false);
   });
 });

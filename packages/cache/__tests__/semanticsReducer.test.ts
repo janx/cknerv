@@ -3,13 +3,11 @@ import { describe, expect, it } from 'vitest';
 import type {
   ActivityFeedRecord,
   AssetEcosystemRecord,
-  Cell,
   CellSemanticRecord,
   ChainAnchor,
   ChainCensus,
   DaoStateRecord,
   ForkWatchRecord,
-  GalaxyCompositionRecord,
   EnrichmentSourceStatus,
   NetworkAtlasRecord,
   ProtocolEraRecord,
@@ -206,56 +204,6 @@ function networkAtlas(block: number): NetworkAtlasRecord {
   };
 }
 
-function galaxyCell(id: number, overrides: Partial<Cell> = {}): Cell {
-  return {
-    id,
-    born_at_ms: 0,
-    death_at_ms: null,
-    birth_block: 100 + id,
-    tag: null,
-    pos_seed: [id * 0.25, id * 0.5, id * 0.75],
-    out_point: { tx_hash: `0xtx${id}`, index: id },
-    capacity: 6_100_000_000 + id,
-    data_hex: '0x',
-    content_hash: `0xcontent${id}`,
-    lock_kind: 'sighash',
-    asset_kind: 'native',
-    ...overrides,
-  };
-}
-
-function galaxyComposition(
-  block: number,
-  buckets: Pick<GalaxyCompositionRecord, 'dao' | 'typed' | 'plain'> = {
-    dao: [],
-    typed: [],
-    plain: [],
-  },
-): GalaxyCompositionRecord {
-  return {
-    source: 'ckbadger',
-    as_of: { block, hash: `0xblock${block}` },
-    updated_at_ms: block,
-    ...buckets,
-  };
-}
-
-/** Fresh objects, identical content — the shape of the enrichment source's
- *  periodic re-emit (only the freshness anchors advance). */
-function seededGalaxyBuckets(): Pick<
-  GalaxyCompositionRecord,
-  'dao' | 'typed' | 'plain'
-> {
-  return {
-    dao: [galaxyCell(1, { asset_kind: 'dao' })],
-    typed: [
-      galaxyCell(2, { asset_kind: 'sudt' }),
-      galaxyCell(3, { asset_kind: 'xudt' }),
-    ],
-    plain: [galaxyCell(4)],
-  };
-}
-
 describe('semantics reducer', () => {
   it('keeps its own revision and upserts selected Cell context', () => {
     const record = cell(10, '0xcell');
@@ -406,24 +354,6 @@ describe('semantics reducer', () => {
     expect(next.cells).toBe(seeded.cells);
   });
 
-  it('replaces and prunes the additive CellGalaxy composition', () => {
-    const record = galaxyComposition(10);
-    const seeded = applyRevisionedSemanticsDeltas(emptySemanticsCache(), [{
-      revision: 1,
-      delta: {
-        type: 'galaxy_composition_replace',
-        galaxy_composition: record,
-      },
-    }]);
-    expect(seeded.galaxyComposition).toBe(record);
-
-    const next = applyRevisionedSemanticsDeltas(seeded, [{
-      revision: 2,
-      delta: { type: 'prune', from_block: 10 },
-    }]);
-    expect(next.galaxyComposition).toBeNull();
-  });
-
   it('clear does not erase source health', () => {
     const seeded = applyRevisionedSemanticsDeltas(emptySemanticsCache(), [
       { revision: 1, delta: { type: 'source_status', source: ready } },
@@ -435,88 +365,6 @@ describe('semantics reducer', () => {
 
     expect(next.source.status).toBe('ready');
     expect(next.cells.size).toBe(0);
-  });
-});
-
-describe('galaxy composition identity reuse', () => {
-  it('returns prev untouched when a replace carries content-identical Cells', () => {
-    const seeded = applySemanticsDelta(emptySemanticsCache(), {
-      type: 'galaxy_composition_replace',
-      galaxy_composition: galaxyComposition(10, seededGalaxyBuckets()),
-    });
-
-    const next = applySemanticsDelta(seeded, {
-      type: 'galaxy_composition_replace',
-      galaxy_composition: galaxyComposition(20, seededGalaxyBuckets()),
-    });
-
-    expect(next).toBe(seeded);
-    // The old freshness anchor is deliberately frozen with the old identity:
-    // content-identical context stays valid at its original anchor.
-    expect(next.galaxyComposition?.as_of.block).toBe(10);
-
-    // Same dedup through the revisioned stream path: the revision advances
-    // but the composition record keeps its identity.
-    const bumped = applyRevisionedSemanticsDeltas(seeded, [{
-      revision: 7,
-      delta: {
-        type: 'galaxy_composition_replace',
-        galaxy_composition: galaxyComposition(30, seededGalaxyBuckets()),
-      },
-    }]);
-    expect(bumped.revision).toBe(7);
-    expect(bumped.galaxyComposition).toBe(seeded.galaxyComposition);
-  });
-
-  it('rebuilds only the changed Cell, reusing every untouched identity', () => {
-    const prevRecord = galaxyComposition(10, seededGalaxyBuckets());
-    const seeded = applySemanticsDelta(emptySemanticsCache(), {
-      type: 'galaxy_composition_replace',
-      galaxy_composition: prevRecord,
-    });
-
-    const incoming = seededGalaxyBuckets();
-    const changedCell = galaxyCell(3, { asset_kind: 'xudt', capacity: 999 });
-    incoming.typed[1] = changedCell;
-    const next = applySemanticsDelta(seeded, {
-      type: 'galaxy_composition_replace',
-      galaxy_composition: galaxyComposition(20, incoming),
-    });
-    const record = next.galaxyComposition;
-
-    expect(next).not.toBe(seeded);
-    expect(record).not.toBe(prevRecord);
-    // Untouched buckets keep their array identity outright.
-    expect(record?.dao).toBe(prevRecord.dao);
-    expect(record?.plain).toBe(prevRecord.plain);
-    // The touched bucket is rebuilt, but its unchanged Cell keeps identity.
-    expect(record?.typed).not.toBe(prevRecord.typed);
-    expect(record?.typed[0]).toBe(prevRecord.typed[0]);
-    expect(record?.typed[1]).toBe(changedCell);
-    // A real change adopts the incoming freshness anchors.
-    expect(record?.as_of.block).toBe(20);
-    expect(record?.updated_at_ms).toBe(20);
-  });
-
-  it('still applies a replace after prune cleared the composition', () => {
-    const seeded = applySemanticsDelta(emptySemanticsCache(), {
-      type: 'galaxy_composition_replace',
-      galaxy_composition: galaxyComposition(10, seededGalaxyBuckets()),
-    });
-    const pruned = applySemanticsDelta(seeded, {
-      type: 'prune',
-      from_block: 10,
-    });
-    expect(pruned.galaxyComposition).toBeNull();
-
-    // Even content identical to the pre-prune record must land: dedup only
-    // ever compares against the live prev record, never a pruned one.
-    const restored = galaxyComposition(20, seededGalaxyBuckets());
-    const next = applySemanticsDelta(pruned, {
-      type: 'galaxy_composition_replace',
-      galaxy_composition: restored,
-    });
-    expect(next.galaxyComposition).toBe(restored);
   });
 });
 

@@ -270,11 +270,4 @@ fn enrichment_samples_match_wire_shape() {
         canonicalize(&samples["deltas"]["network_atlas_clear"]),
         canonicalize(&serde_json::to_value(SemanticsDelta::NetworkAtlasClear).unwrap())
     );
-    let galaxy_composition = SemanticsDelta::GalaxyCompositionReplace {
-        galaxy_composition: snapshot.galaxy_composition.clone().unwrap(),
-    };
-    assert_eq!(
-        canonicalize(&samples["deltas"]["galaxy_composition_replace"]),
-        canonicalize(&serde_json::to_value(galaxy_composition).unwrap())
-    );
 }

@@ -1,13 +1,11 @@
 import type {
   ActivityFeedRecord,
   AssetEcosystemRecord,
-  Cell,
   CellSemanticRecord,
   ChainCensus,
   DaoStateRecord,
   EnrichmentSourceStatus,
   ForkWatchRecord,
-  GalaxyCompositionRecord,
   NetworkAtlasRecord,
   OutPoint,
   ProtocolEraRecord,
@@ -17,8 +15,6 @@ import type {
   TransactionHorizonRecord,
   TransactionSemanticRecord,
 } from '@cknerv/types';
-
-import { cellContentEquals } from './cellsReducer';
 
 export interface SemanticsCache {
   revision: number;
@@ -33,7 +29,6 @@ export interface SemanticsCache {
   activityFeed: ActivityFeedRecord | null;
   transactionHorizon: TransactionHorizonRecord | null;
   networkAtlas: NetworkAtlasRecord | null;
-  galaxyComposition: GalaxyCompositionRecord | null;
 }
 
 export function outPointKey(outPoint: OutPoint): string {
@@ -58,7 +53,6 @@ export function emptySemanticsCache(): SemanticsCache {
     activityFeed: null,
     transactionHorizon: null,
     networkAtlas: null,
-    galaxyComposition: null,
   };
 }
 
@@ -81,81 +75,18 @@ export function fromSemanticsSnapshot(
     activityFeed: snapshot.activity_feed ?? null,
     transactionHorizon: snapshot.transaction_horizon ?? null,
     networkAtlas: snapshot.network_atlas ?? null,
-    galaxyComposition: snapshot.galaxy_composition ?? null,
   };
-}
-
-// ── CellGalaxy composition identity reuse ───────────────────────────────
-//
-// The enrichment source re-emits `galaxy_composition_replace` on every
-// refresh (~15 min) even when the composition content is unchanged. A naive
-// replace hands every Cell a fresh object identity, forcing identity-keyed
-// consumers downstream (WeakMap presentation caches, render-set journal,
-// k-NN display graph, fabric reconcile) into a full rebuild. These helpers
-// reconcile the incoming record against the previous one instead: a Cell
-// whose content is unchanged keeps its old object identity, an untouched
-// bucket keeps its array identity, and a content-identical record keeps the
-// record identity outright — deliberately freezing the previous
-// `as_of`/`updated_at_ms` freshness anchors, which stay semantically valid
-// while the content they anchor is byte-identical.
-
-/** Rebuild one composition bucket, reusing the previous Cell object for
- *  every incoming Cell whose content is unchanged. Returns the previous
- *  array itself when the whole bucket is order- and content-identical. */
-function reconcileCompositionBucket(
-  prevBucket: Cell[],
-  nextBucket: Cell[],
-  prevById: Map<number, Cell>,
-): Cell[] {
-  let changed = prevBucket.length !== nextBucket.length;
-  const merged = new Array<Cell>(nextBucket.length);
-  for (let i = 0; i < nextBucket.length; i += 1) {
-    const incoming = nextBucket[i];
-    const previous = prevById.get(incoming.id);
-    const kept =
-      previous !== undefined && cellContentEquals(previous, incoming)
-        ? previous
-        : incoming;
-    merged[i] = kept;
-    if (!changed && kept !== prevBucket[i]) changed = true;
-  }
-  return changed ? merged : prevBucket;
-}
-
-/** Reconcile an incoming composition against the previous one so unchanged
- *  content keeps its object identity at every level (record → bucket array
- *  → Cell). Record equality ignores the `as_of`/`updated_at_ms` freshness
- *  anchors, which advance on every refresh regardless of content. */
-function reconcileGalaxyComposition(
-  prev: GalaxyCompositionRecord | null,
-  next: GalaxyCompositionRecord,
-): GalaxyCompositionRecord {
-  if (prev === null) return next;
-  const prevById = new Map<number, Cell>();
-  for (const bucket of [prev.dao, prev.typed, prev.plain]) {
-    for (const cell of bucket) prevById.set(cell.id, cell);
-  }
-  const dao = reconcileCompositionBucket(prev.dao, next.dao, prevById);
-  const typed = reconcileCompositionBucket(prev.typed, next.typed, prevById);
-  const plain = reconcileCompositionBucket(prev.plain, next.plain, prevById);
-  const contentIdentical =
-    dao === prev.dao
-    && typed === prev.typed
-    && plain === prev.plain
-    && next.source === prev.source;
-  return contentIdentical ? prev : { ...next, dao, typed, plain };
 }
 
 // ── Periodic-refresh dedup for selected semantic records ────────────────
 //
-// The same refresh loop that motivates the composition reconcile above also
-// re-emits other record arms and re-upserts cell/transaction records whose
-// content the cache already retains — often only the freshness anchors
-// advance. A naive `{ ...prev, X: delta.X }` hands the record a fresh
-// identity each time, breaking record-keyed React memoization downstream.
-// Guards below return `prev` outright when the incoming content is
-// unchanged, freezing the previous `as_of`/`updated_at_ms` like the
-// composition reconcile does.
+// The enrichment refresh loop re-emits record arms and re-upserts
+// cell/transaction records whose content the cache already retains — often
+// only the freshness anchors advance. A naive `{ ...prev, X: delta.X }`
+// hands the record a fresh identity each time, breaking record-keyed React
+// memoization downstream. Guards below return `prev` outright when the
+// incoming content is unchanged, freezing the previous
+// `as_of`/`updated_at_ms`.
 //
 // DELIBERATELY UNGUARDED: the seven records whose HUD derives read
 // `nowMs - record.updated_at_ms` as a staleness signal (assetEcosystem,
@@ -168,16 +99,13 @@ function reconcileGalaxyComposition(
 // Guard one of them only after its derive stops treating `updated_at_ms`
 // as a liveness clock.
 //
-// Cost trade-off: the multi-thousand-Cell galaxy composition gets the
-// dedicated per-field comparator (`cellContentEquals`) plus per-bucket
-// reconcile above because a generic deep walk at that scale on every
-// refresh would be wasteful. Every record below is tiny — census is a
-// handful of scalars, cell/transaction records are single rows — so one
-// generic recursive comparison per refresh is negligible and stays correct
-// as record shapes evolve.
+// Cost trade-off: every record here is tiny — census is a handful of
+// scalars, cell/transaction records are single rows — so one generic
+// recursive comparison per refresh is negligible and stays correct as
+// record shapes evolve.
 
 /** Freshness-anchor keys skipped at every depth of the comparison.
- *  Verified against `packages/types/src/enrichment.ts`: all eleven record
+ *  Verified against `packages/types/src/enrichment.ts`: all record
  *  types spell their anchors exactly `as_of` / `updated_at_ms`; no aliases
  *  exist. Deliberately NOT ignored (content, not freshness):
  *  `observed_at_block`, `statistics_block`, `detected_at_ms` (fork events),
@@ -295,15 +223,6 @@ function reduceDelta(prev: SemanticsCache, delta: SemanticsDelta): SemanticsCach
       return { ...prev, networkAtlas: delta.network_atlas };
     case 'network_atlas_clear':
       return { ...prev, networkAtlas: null };
-    case 'galaxy_composition_replace': {
-      const galaxyComposition = reconcileGalaxyComposition(
-        prev.galaxyComposition,
-        delta.galaxy_composition,
-      );
-      return galaxyComposition === prev.galaxyComposition
-        ? prev
-        : { ...prev, galaxyComposition };
-    }
     case 'prune': {
       const cells = new Map(
         [...prev.cells].filter(([, cell]) => cell.as_of.block < delta.from_block),
@@ -351,11 +270,6 @@ function reduceDelta(prev: SemanticsCache, delta: SemanticsDelta): SemanticsCach
         && prev.networkAtlas.as_of.block >= delta.from_block
           ? null
           : prev.networkAtlas;
-      const galaxyComposition =
-        prev.galaxyComposition
-        && prev.galaxyComposition.as_of.block >= delta.from_block
-          ? null
-          : prev.galaxyComposition;
       return {
         ...prev,
         cells,
@@ -368,7 +282,6 @@ function reduceDelta(prev: SemanticsCache, delta: SemanticsDelta): SemanticsCach
         activityFeed,
         transactionHorizon,
         networkAtlas,
-        galaxyComposition,
       };
     }
     case 'clear':
@@ -384,7 +297,6 @@ function reduceDelta(prev: SemanticsCache, delta: SemanticsDelta): SemanticsCach
         activityFeed: null,
         transactionHorizon: null,
         networkAtlas: null,
-        galaxyComposition: null,
       };
   }
 }
