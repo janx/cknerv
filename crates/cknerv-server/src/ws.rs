@@ -149,6 +149,7 @@ pub async fn handle_chain_stream(
         StreamAction::ReplayDelta => {
             let mutations: Vec<&RevisionedMutation> = ring_snapshot
                 .iter()
+                .map(|r| r.as_ref())
                 .filter(|r| r.revision > since)
                 .collect();
             if let Some(last) = mutations.last() {
@@ -189,7 +190,7 @@ pub async fn handle_chain_stream(
                     let frame = serde_json::json!({
                         "kind": "delta",
                         "revision": rev.revision,
-                        "mutations": [&rev],
+                        "mutations": [rev.as_ref()],
                     });
                     if socket.send(Message::Text(frame.to_string())).await.is_err() {
                         break;
@@ -262,7 +263,11 @@ pub async fn handle_projection_stream(
             }
         }
         StreamAction::ReplayDelta => {
-            let deltas: Vec<&DeltaEntry> = ring_snapshot.iter().filter(|d| d.rev > since).collect();
+            let deltas: Vec<&DeltaEntry> = ring_snapshot
+                .iter()
+                .map(|d| d.as_ref())
+                .filter(|d| d.rev > since)
+                .collect();
             if let Some(last) = deltas.last() {
                 last_sent_seq = last.seq;
                 last_sent_revision = last.rev;

@@ -31,6 +31,11 @@ use cknerv_core::{
 use crate::enrichment::CanonicalContext;
 use crate::projection_registry::Registry;
 
+/// Reference-counted structural mutation. The ring holds up to 50k of them
+/// and every connecting client snapshots it, so entries are shared rather
+/// than deep-copied — same reason the projection deltas are.
+pub type SharedMutation = Arc<RevisionedMutation>;
+
 /// Capacity of the structural mutation ring. Sized to cover dozens of
 /// minutes of real activity so a reconnecting client at a stale revision
 /// can still catch up via deltas instead of pulling a full snapshot.
@@ -74,8 +79,8 @@ impl EntityStore {
 pub struct ServerState {
     pub(crate) entity_store: RwLock<EntityStore>,
     pub(crate) revision: AtomicU64,
-    pub(crate) mutation_tx: broadcast::Sender<RevisionedMutation>,
-    pub(crate) mutation_ring: Ring<RevisionedMutation>,
+    pub(crate) mutation_tx: broadcast::Sender<SharedMutation>,
+    pub(crate) mutation_ring: Ring<SharedMutation>,
     /// Lightweight completion signal used by persistence. Keeping this
     /// separate from `mutation_tx` avoids cloning every historical block/tx
     /// payload into a subscriber that only needs the terminal boot marker.
@@ -131,7 +136,7 @@ impl ServerState {
     }
 
     /// Subscribe to the live mutation broadcast.
-    pub fn subscribe_mutations(&self) -> broadcast::Receiver<RevisionedMutation> {
+    pub fn subscribe_mutations(&self) -> broadcast::Receiver<SharedMutation> {
         self.mutation_tx.subscribe()
     }
 
@@ -145,7 +150,7 @@ impl ServerState {
 
     /// Snapshot of the mutation ring contents (oldest → newest revision).
     /// Cheap clone — the ring's lock is held only for the iteration.
-    pub fn mutation_ring_snapshot(&self) -> Vec<RevisionedMutation> {
+    pub fn mutation_ring_snapshot(&self) -> Vec<SharedMutation> {
         self.mutation_ring.snapshot()
     }
 
@@ -229,10 +234,10 @@ impl ServerState {
             apply_entity_mutation(&mut store, &m);
         }
         let revision = self.revision.fetch_add(1, Ordering::Relaxed) + 1;
-        let rev = RevisionedMutation {
+        let rev: SharedMutation = Arc::new(RevisionedMutation {
             revision,
             mutation: m,
-        };
+        });
         if let Mutation::BackfillProgress { active, .. } = &rev.mutation {
             if *active {
                 self.mutation_ring.clear();
@@ -783,6 +788,29 @@ fn apply_chain_mutation(chain: &mut Chain, m: &Mutation) {
 mod tests {
     use super::*;
     use crate::projection_registry::ProjectionRuntimeTestExt;
+
+    /// The entities stream snapshots this ring on every connect, exactly
+    /// like the projection stream does with its deltas — so it has to share
+    /// entries too, or a reconnect copies 50k mutations to read a handful.
+    #[test]
+    fn the_mutation_ring_shares_entries_with_every_reader() {
+        let state = ServerState::new();
+        state.apply_mutation(Mutation::BlockMined {
+            number: 1,
+            hash: "0xblock1".into(),
+            tx_count: 0,
+            size: 0,
+            at: 1_000,
+        });
+
+        let first = state.mutation_ring_snapshot();
+        let second = state.mutation_ring_snapshot();
+        assert_eq!(first.len(), 1);
+        assert!(
+            first.iter().zip(&second).all(|(a, b)| Arc::ptr_eq(a, b)),
+            "two readers of the ring must share its entries"
+        );
+    }
 
     /// The projection and the supervisor have to be looking at the SAME
     /// slot — a demand nobody can read is worse than no demand at all.

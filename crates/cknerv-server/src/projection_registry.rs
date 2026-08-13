@@ -41,12 +41,23 @@ const PROJECTION_DELTA_RING_CAP: usize = 50_000;
 /// (used internally for dedup against `since`) and the revision of the
 /// mutation that produced it (surfaced to the client). Multiple deltas
 /// from the same mutation share `rev` but each gets a unique `seq`.
+///
+/// Always handed around as [`SharedDelta`]. The ring holds up to 50k of
+/// these and a display delta can carry hundreds of full Cell payloads, so
+/// a connecting client that deep-copied the backlog would stall the
+/// server for as long as the copy took — measured at 87–750ms even when
+/// it had nothing to replay. Broadcast delivery has the same shape: one
+/// entry, N subscribers, N copies of the same `Value` tree.
 #[derive(Clone, Debug)]
 pub struct DeltaEntry {
     pub seq: u64,
     pub rev: u64,
     pub value: Value,
 }
+
+/// Reference-counted delta. Cloning is a pointer bump, which is what makes
+/// ring replay and broadcast fan-out cheap.
+pub type SharedDelta = Arc<DeltaEntry>;
 
 /// Which envelope a caller needs around the serialized snapshot body. Both
 /// shapes carry the revision so the client can resume from
@@ -182,9 +193,9 @@ pub trait ProjectionRuntime: Send + Sync {
         None
     }
     /// Snapshot the delta ring (oldest → newest).
-    fn delta_ring_snapshot(&self) -> Vec<DeltaEntry>;
+    fn delta_ring_snapshot(&self) -> Vec<SharedDelta>;
     /// Subscribe to the live delta channel.
-    fn subscribe(&self) -> broadcast::Receiver<DeltaEntry>;
+    fn subscribe(&self) -> broadcast::Receiver<SharedDelta>;
     /// Persistable state — `Value::Null` for projections that opt out of
     /// cross-run persistence.
     fn save_state(&self) -> Value;
@@ -215,8 +226,8 @@ pub struct ProjectionRunner<P: Projection> {
     /// in `handle_projection_stream` so multiple deltas from a single
     /// mutation (sharing `rev`) each get a unique skip key.
     delta_seq: AtomicU64,
-    tx: broadcast::Sender<DeltaEntry>,
-    ring: Ring<DeltaEntry>,
+    tx: broadcast::Sender<SharedDelta>,
+    ring: Ring<SharedDelta>,
     snapshots: Mutex<SnapshotCache>,
 }
 
@@ -294,11 +305,11 @@ impl<P: Projection> ProjectionRuntime for ProjectionRunner<P> {
         Some((revision, bytes))
     }
 
-    fn delta_ring_snapshot(&self) -> Vec<DeltaEntry> {
+    fn delta_ring_snapshot(&self) -> Vec<SharedDelta> {
         self.ring.snapshot()
     }
 
-    fn subscribe(&self) -> broadcast::Receiver<DeltaEntry> {
+    fn subscribe(&self) -> broadcast::Receiver<SharedDelta> {
         self.tx.subscribe()
     }
 
@@ -337,11 +348,11 @@ impl<P: Projection> ApplyMutation for ProjectionRunner<P> {
         for d in deltas {
             let value = serde_json::to_value(&d).unwrap_or(Value::Null);
             let seq = self.delta_seq.fetch_add(1, Ordering::Relaxed) + 1;
-            let entry = DeltaEntry {
+            let entry: SharedDelta = Arc::new(DeltaEntry {
                 seq,
                 rev: rm.revision,
                 value,
-            };
+            });
             self.ring.push(entry.clone());
             // A broadcast with zero live subscribers errors — ignore it,
             // the ring still has the record for catch-up.
@@ -359,8 +370,8 @@ pub struct EnrichmentProjectionRunner<P: EnrichmentProjection> {
     event_coord: Mutex<()>,
     revision: AtomicU64,
     delta_seq: AtomicU64,
-    tx: broadcast::Sender<DeltaEntry>,
-    ring: Ring<DeltaEntry>,
+    tx: broadcast::Sender<SharedDelta>,
+    ring: Ring<SharedDelta>,
 }
 
 impl<P: EnrichmentProjection> EnrichmentProjectionRunner<P> {
@@ -389,11 +400,11 @@ impl<P: EnrichmentProjection> EnrichmentProjectionRunner<P> {
             let revision = self.revision.fetch_add(1, Ordering::Relaxed) + 1;
             let value = serde_json::to_value(&delta).unwrap_or(Value::Null);
             let seq = self.delta_seq.fetch_add(1, Ordering::Relaxed) + 1;
-            let entry = DeltaEntry {
+            let entry: SharedDelta = Arc::new(DeltaEntry {
                 seq,
                 rev: revision,
                 value,
-            };
+            });
             self.ring.push(entry.clone());
             let _ = self.tx.send(entry);
         }
@@ -423,11 +434,11 @@ impl<P: EnrichmentProjection> ProjectionRuntime for EnrichmentProjectionRunner<P
         )
     }
 
-    fn delta_ring_snapshot(&self) -> Vec<DeltaEntry> {
+    fn delta_ring_snapshot(&self) -> Vec<SharedDelta> {
         self.ring.snapshot()
     }
 
-    fn subscribe(&self) -> broadcast::Receiver<DeltaEntry> {
+    fn subscribe(&self) -> broadcast::Receiver<SharedDelta> {
         self.tx.subscribe()
     }
 
@@ -609,6 +620,45 @@ mod tests {
             typed: vec![galaxy_cell(2)],
             plain: vec![galaxy_cell(3)],
         }
+    }
+
+    /// Replay and fan-out must hand out the SAME entries, not copies. The
+    /// ring holds up to 50k deltas and a display delta can carry hundreds
+    /// of Cell payloads, so a client that deep-copied the backlog stalled
+    /// the server just by connecting — even with nothing to replay.
+    #[test]
+    fn replaying_the_ring_shares_entries_instead_of_copying_them() {
+        let mut registry = Registry::new();
+        registry.register(CellGalaxy::new());
+        let runtime = registry.lookup("cells").expect("cells runtime");
+        let writer = registry.writers().into_iter().next().unwrap();
+        let mut subscriber = runtime.subscribe();
+
+        writer.apply(&RevisionedMutation {
+            revision: 1,
+            mutation: Mutation::TxLanded {
+                tx_hash: "0xtx".to_string(),
+                block: 1,
+                at: 1_000,
+                inputs: vec![],
+                outputs: vec![output(100)],
+            },
+        });
+
+        let first = runtime.delta_ring_snapshot();
+        let second = runtime.delta_ring_snapshot();
+        assert!(!first.is_empty(), "the fixture must emit deltas");
+        assert_eq!(first.len(), second.len());
+        assert!(
+            first.iter().zip(&second).all(|(a, b)| Arc::ptr_eq(a, b)),
+            "two readers of the ring must share its entries"
+        );
+
+        let live = subscriber.try_recv().expect("broadcast entry");
+        assert!(
+            first.iter().any(|entry| Arc::ptr_eq(entry, &live)),
+            "a subscriber must receive the ring's entry, not a copy of it"
+        );
     }
 
     /// Counts how often the projection was actually asked for a snapshot,
