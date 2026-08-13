@@ -581,6 +581,14 @@ export default function App({
   // Maintained incrementally by the cells reducer (O(touched) per batch,
   // identity-stable when unchanged) — never re-aggregated here.
   const cellsStats = cellsCache.stats;
+  // How many cells the viewer could be shown. Under a display plane that is
+  // the STAGED MEMBERSHIP, not the retained map: the snapshot carries only the
+  // canonical rows the plane staged, and the rest of the stage arrives as
+  // resident payloads. Counting `cells.size` sees the canonical half alone and
+  // reports a stage four times smaller than the one actually on screen.
+  const showableCellCount = cellsCache.displayBudget !== null
+    ? cellsCache.displayMembers.size
+    : cellsCache.cells.size;
 
   // Resolve the two selections. Cell = the galaxy axis; node/peer share the
   // network axis (selectedNetId holds a node id or a `peer:` id, never a cell).
@@ -1079,7 +1087,7 @@ export default function App({
         peers={peers}
         localNode={localNode}
         cellsStats={cellsStats}
-        cellCount={cellsCache.cells.size}
+        cellCount={showableCellCount}
         cellCapacity={galaxyConfig.cellCap}
         enrichmentSource={enrichmentConfig.enabled ? semanticsCache.source : undefined}
         assetEcosystem={enrichmentConfig.enabled
