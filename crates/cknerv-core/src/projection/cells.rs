@@ -61,6 +61,27 @@ impl Default for CellGalaxyConfig {
     }
 }
 
+/// Positions are computed and stored as `f32` but have always ridden the
+/// wire WIDENED to `f64` — an accident of the old snapshot path, which built
+/// a `serde_json::Value` first (`Value::from(v as f64)`) before printing it.
+/// Delta frames still take that route, so the widening is pinned here
+/// explicitly: whichever serializer a frame goes through, one position emits
+/// one text. Without it a direct-to-text snapshot prints the shortest `f32`
+/// form (`19.188807`) while the delta beside it prints the widened `f64`
+/// (`19.188806533813477`) — same position, two JS numbers, and every
+/// downstream equality check on the pair starts lying.
+fn serialize_pos_seed<S: serde::Serializer>(
+    pos_seed: &[f32; 3],
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    use serde::ser::SerializeTuple;
+    let mut tuple = serializer.serialize_tuple(pos_seed.len())?;
+    for axis in pos_seed {
+        tuple.serialize_element(&(*axis as f64))?;
+    }
+    tuple.end()
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Cell {
     pub id: u64,
@@ -73,6 +94,7 @@ pub struct Cell {
     /// state files written before this rename load cleanly.
     #[serde(alias = "otp_kind")]
     pub tag: Option<String>,
+    #[serde(serialize_with = "serialize_pos_seed")]
     pub pos_seed: [f32; 3],
     pub out_point: OutPoint,
     pub capacity: u64,
@@ -112,6 +134,7 @@ pub struct BackfillState {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct CellLinkEndpointAnchor {
     pub id: u64,
+    #[serde(serialize_with = "serialize_pos_seed")]
     pub pos_seed: [f32; 3],
     pub content_hash: String,
 }

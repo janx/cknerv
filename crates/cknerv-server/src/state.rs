@@ -782,6 +782,7 @@ fn apply_chain_mutation(chain: &mut Chain, m: &Mutation) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::projection_registry::ProjectionRuntimeTestExt;
 
     /// The projection and the supervisor have to be looking at the SAME
     /// slot — a demand nobody can read is worse than no demand at all.

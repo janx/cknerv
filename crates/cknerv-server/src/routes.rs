@@ -19,6 +19,7 @@ use tokio::sync::watch;
 use cknerv_core::{EnrichmentEvent, OutPoint};
 
 use crate::enrichment::EnrichmentSource;
+use crate::projection_registry::SnapshotEnvelope;
 use crate::state::ServerState;
 
 /// Composite router state: shared `ServerState` + the shutdown receiver
@@ -86,12 +87,10 @@ async fn projection_snapshot(
             return (StatusCode::NOT_FOUND, format!("no projection: {name}")).into_response();
         }
     };
-    let (revision, snapshot) = runner.snapshot_json();
-    Json(serde_json::json!({
-        "revision": revision,
-        "snapshot": snapshot,
-    }))
-    .into_response()
+    // Already-serialized text: the envelope is built in one pass by the
+    // runtime, so nothing here re-encodes a `Value`.
+    let (_, body) = runner.snapshot_envelope(SnapshotEnvelope::Bare);
+    ([("content-type", "application/json")], body).into_response()
 }
 
 /// Columnar snapshot: raw little-endian bytes (revision already patched into

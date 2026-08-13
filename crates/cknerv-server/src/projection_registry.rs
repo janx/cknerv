@@ -47,12 +47,79 @@ pub struct DeltaEntry {
     pub value: Value,
 }
 
+/// Which envelope a caller needs around the serialized snapshot body. Both
+/// shapes carry the revision so the client can resume from
+/// `since=revision`; only the WS frame is self-describing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SnapshotEnvelope {
+    /// `{"revision":N,"snapshot":…}` — the HTTP route.
+    Bare,
+    /// `{"kind":"snapshot","revision":N,"snapshot":…}` — the WS frame.
+    Frame,
+}
+
+impl SnapshotEnvelope {
+    fn kind(self) -> Option<&'static str> {
+        match self {
+            Self::Bare => None,
+            Self::Frame => Some("snapshot"),
+        }
+    }
+}
+
+/// The wire envelope, serialized in ONE pass straight to text. The snapshot
+/// rides as a borrow: no intermediate `serde_json::Value` is ever built.
+///
+/// That intermediate tree was the whole cost of this path — a 50k-cell
+/// galaxy turns into ~770k `Map` entries plus as many heap `String` keys,
+/// none of which any caller wants (routes and ws both serialize it right
+/// back out). Skipping it is worth more than every other tuning here.
+#[derive(serde::Serialize)]
+struct SnapshotEnvelopeBody<'a, S: serde::Serialize> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    kind: Option<&'static str>,
+    revision: u64,
+    snapshot: &'a S,
+}
+
+fn serialize_envelope<S: serde::Serialize>(
+    envelope: SnapshotEnvelope,
+    revision: u64,
+    snapshot: &S,
+) -> String {
+    serde_json::to_string(&SnapshotEnvelopeBody {
+        kind: envelope.kind(),
+        revision,
+        snapshot,
+    })
+    .unwrap_or_else(|_| String::from("{}"))
+}
+
+/// Test shim: the snapshot body back as a `Value`, for assertions that want
+/// to index into it. Deliberately NOT on the trait — materializing a
+/// `Value` is precisely what the production path exists to avoid, so it
+/// must stay unreachable from route code.
+#[cfg(test)]
+pub(crate) trait ProjectionRuntimeTestExt {
+    fn snapshot_json(&self) -> (u64, Value);
+}
+
+#[cfg(test)]
+impl<T: ProjectionRuntime + ?Sized> ProjectionRuntimeTestExt for T {
+    fn snapshot_json(&self) -> (u64, Value) {
+        let (revision, text) = self.snapshot_envelope(SnapshotEnvelope::Bare);
+        let mut envelope: Value = serde_json::from_str(&text).expect("snapshot envelope is JSON");
+        (revision, envelope["snapshot"].take())
+    }
+}
+
 /// Read-side handle exposed to HTTP/WS routes.
 pub trait ProjectionRuntime: Send + Sync {
     fn name(&self) -> &'static str;
-    /// Snapshot the projection. Returns `(revision, JSON value)` so the
-    /// client can resume the stream from `since=revision`.
-    fn snapshot_json(&self) -> (u64, Value);
+    /// Serialize the projection snapshot inside `envelope`. Returns
+    /// `(revision, JSON text)` so the client can resume the stream from
+    /// `since=revision`.
+    fn snapshot_envelope(&self, envelope: SnapshotEnvelope) -> (u64, String);
     /// Columnar (binary) snapshot with the revision patched into its header
     /// slot; `None` for projections without a binary form.
     fn snapshot_bin(&self) -> Option<(u64, Vec<u8>)> {
@@ -116,11 +183,11 @@ impl<P: Projection> ProjectionRuntime for ProjectionRunner<P> {
         self.name
     }
 
-    fn snapshot_json(&self) -> (u64, Value) {
+    fn snapshot_envelope(&self, envelope: SnapshotEnvelope) -> (u64, String) {
         let p = self.inner.read().unwrap();
         let snap = p.snapshot();
-        let value = serde_json::to_value(&snap).unwrap_or(Value::Null);
-        (self.revision.load(Ordering::Relaxed), value)
+        let revision = self.revision.load(Ordering::Relaxed);
+        (revision, serialize_envelope(envelope, revision, &snap))
     }
 
     fn snapshot_bin(&self) -> Option<(u64, Vec<u8>)> {
@@ -243,11 +310,11 @@ impl<P: EnrichmentProjection> ProjectionRuntime for EnrichmentProjectionRunner<P
         self.name
     }
 
-    fn snapshot_json(&self) -> (u64, Value) {
+    fn snapshot_envelope(&self, envelope: SnapshotEnvelope) -> (u64, String) {
         let _coord = self.event_coord.lock().unwrap();
         let snapshot = self.inner.read().unwrap().snapshot();
-        let value = serde_json::to_value(snapshot).unwrap_or(Value::Null);
-        (self.revision.load(Ordering::Relaxed), value)
+        let revision = self.revision.load(Ordering::Relaxed);
+        (revision, serialize_envelope(envelope, revision, &snapshot))
     }
 
     fn delta_ring_snapshot(&self) -> Vec<DeltaEntry> {
@@ -435,6 +502,90 @@ mod tests {
             typed: vec![galaxy_cell(2)],
             plain: vec![galaxy_cell(3)],
         }
+    }
+
+    /// The envelope is hand-rolled now — one serde pass straight to text,
+    /// no intermediate `Value`. The guard against that drifting is a
+    /// differential: feed the same mutations to a bare projection, take the
+    /// `to_value` snapshot this path used to build, and require the emitted
+    /// text to parse back to exactly it.
+    #[test]
+    fn snapshot_envelope_matches_the_value_path_it_replaced() {
+        use cknerv_core::Projection;
+
+        let mutations = [
+            Mutation::BlockMined {
+                number: 1,
+                hash: "0xblock1".to_string(),
+                tx_count: 1,
+                size: 0,
+                at: 1_000,
+            },
+            Mutation::TxLanded {
+                tx_hash: "0xtx".to_string(),
+                block: 1,
+                at: 1_000,
+                inputs: vec![],
+                outputs: vec![output(100), output(200)],
+            },
+            // A composed reservoir puts resident payloads in the display
+            // section — the heaviest part of a live snapshot, and the part
+            // this refactor must not disturb.
+            Mutation::GalaxyReservoirReplaced {
+                record: galaxy_composition(1),
+            },
+        ];
+
+        let mut registry = Registry::new();
+        registry.register(CellGalaxy::new());
+        let runtime = registry.lookup("cells").expect("cells runtime");
+        let writer = registry.writers().into_iter().next().unwrap();
+        let mut direct = CellGalaxy::new();
+        for (index, mutation) in mutations.iter().enumerate() {
+            writer.apply(&RevisionedMutation {
+                revision: index as u64 + 1,
+                mutation: mutation.clone(),
+            });
+            direct.apply_mutation(mutation);
+        }
+
+        let body = serde_json::to_value(direct.snapshot()).expect("snapshot serializes");
+        assert!(
+            !body["cells"].as_array().expect("cells").is_empty()
+                && !body["display"]["residents"]
+                    .as_array()
+                    .expect("residents")
+                    .is_empty(),
+            "the fixture must exercise both canonical cells and resident payloads"
+        );
+
+        // Both sides are compared as text re-parsed by the SAME parser.
+        // serde_json's default float parser is not round-trip exact, so
+        // comparing a parsed value against a `to_value` one reports an ULP
+        // of parser drift as if it were a wire change; routing both through
+        // `from_str` cancels it and leaves only real differences. (Key
+        // ORDER does change — struct declaration order instead of the
+        // `Value` map's alphabetical — which is why this compares parsed
+        // trees rather than raw bytes.)
+        let reparse =
+            |text: &str| -> Value { serde_json::from_str(text).expect("envelope is JSON") };
+        let old_path = |kind: Option<&str>| {
+            let mut envelope = serde_json::Map::new();
+            if let Some(kind) = kind {
+                envelope.insert("kind".into(), Value::from(kind));
+            }
+            envelope.insert("revision".into(), Value::from(3u64));
+            envelope.insert("snapshot".into(), body.clone());
+            reparse(&serde_json::to_string(&Value::Object(envelope)).unwrap())
+        };
+
+        let (revision, bare) = runtime.snapshot_envelope(SnapshotEnvelope::Bare);
+        assert_eq!(revision, 3);
+        assert_eq!(reparse(&bare), old_path(None));
+
+        let (frame_revision, frame) = runtime.snapshot_envelope(SnapshotEnvelope::Frame);
+        assert_eq!(frame_revision, 3);
+        assert_eq!(reparse(&frame), old_path(Some("snapshot")));
     }
 
     #[test]

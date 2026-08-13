@@ -35,7 +35,7 @@ use tokio::time::{self, Instant, MissedTickBehavior};
 
 use cknerv_core::RevisionedMutation;
 
-use crate::projection_registry::{DeltaEntry, ProjectionRuntime};
+use crate::projection_registry::{DeltaEntry, ProjectionRuntime, SnapshotEnvelope};
 use crate::state::ServerState;
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
@@ -240,13 +240,11 @@ pub async fn handle_projection_stream(
 
     match action {
         StreamAction::FullSnapshot => {
-            let (rev, snap) = runner.snapshot_json();
-            let frame = serde_json::json!({
-                "kind": "snapshot",
-                "revision": rev,
-                "snapshot": snap,
-            });
-            if socket.send(Message::Text(frame.to_string())).await.is_err() {
+            // The runtime hands back the finished frame text, so a large
+            // snapshot is serialized once instead of once into a `Value`
+            // and again out of it.
+            let (rev, frame) = runner.snapshot_envelope(SnapshotEnvelope::Frame);
+            if socket.send(Message::Text(frame)).await.is_err() {
                 return;
             }
             last_sent_revision = rev;
