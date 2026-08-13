@@ -50,6 +50,28 @@ pub struct CellGalaxyConfig {
     pub cell_cap: usize,
     pub recent_links_cap: usize,
     pub reorg_window_blocks: usize,
+    pub snapshot_scope: SnapshotScope,
+}
+
+/// How many rows a snapshot carries.
+///
+/// The retained set is ~4x the display plane, and the renderer only ever
+/// draws what the plane stages. `Staged` stops shipping the remainder — the
+/// rows a connecting client decodes, allocates and then never looks at.
+///
+/// Independent of what the snapshot MEANS: the aggregate statistics segment
+/// always describes the full retained set, so the panel reads the same
+/// numbers under either scope.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SnapshotScope {
+    /// Every retained row. The historical shape, and the safe default.
+    #[default]
+    Retained,
+    /// Only rows the display plane has staged. Members not held canonically
+    /// are staged residents, which ride the display section already, so
+    /// membership still resolves completely on the client.
+    Staged,
 }
 
 impl Default for CellGalaxyConfig {
@@ -58,6 +80,7 @@ impl Default for CellGalaxyConfig {
             cell_cap: CELL_CAP,
             recent_links_cap: DEFAULT_RECENT_LINKS_CAP,
             reorg_window_blocks: DEFAULT_REORG_WINDOW_BLOCKS,
+            snapshot_scope: SnapshotScope::Retained,
         }
     }
 }
@@ -653,6 +676,21 @@ impl CellGalaxy {
         // membership from the restored map (insertion order). No delta —
         // every snapshot served after load() already carries this fill.
         self.display.bootstrap(&self.cells);
+    }
+
+    /// The retained rows the display plane has staged.
+    ///
+    /// Members the map does not hold canonically are staged residents, and
+    /// those ride the display section with their own payloads — so the union
+    /// a client reconstructs is complete membership either way. Dead rows
+    /// that are still staged come along: their death animation is exactly
+    /// what the stage is holding them for.
+    fn staged_rows(&self) -> Vec<Cell> {
+        self.cells
+            .iter()
+            .filter(|cell| self.display.is_staged(cell.id))
+            .cloned()
+            .collect()
     }
 
     fn enforce_cap(&mut self, at_ms: u64) -> Vec<u64> {
@@ -1360,12 +1398,20 @@ impl Projection for CellGalaxy {
     }
 
     fn snapshot_bin(&self) -> Option<Vec<u8>> {
+        let staged;
+        let rows: &[Cell] = match self.config.snapshot_scope {
+            SnapshotScope::Retained => &self.cells,
+            SnapshotScope::Staged => {
+                staged = self.staged_rows();
+                &staged
+            }
+        };
         // Straight from projection state: the columnar form reads only
         // numeric columns, so routing it through `snapshot()` would clone
         // every Cell (three heap strings apiece), every staged resident
         // payload and every recent link just to drop them one call later.
         Some(crate::projection::cells_columnar::encode_cells_columnar(
-            &self.cells,
+            rows,
             crate::projection::cells_columnar::CellsColumnarHeader {
                 last_pulse_at_ms: self.last_pulse_at_ms,
                 total_births: self.total_births,
@@ -1393,7 +1439,10 @@ impl Projection for CellGalaxy {
             // them per connect on mainnet, to arrive at the value already
             // sitting in the field. `emitted_positions_are_the_derived_ones`
             // keeps the claim honest.
-            cells: self.cells.clone(),
+            cells: match self.config.snapshot_scope {
+                SnapshotScope::Retained => self.cells.clone(),
+                SnapshotScope::Staged => self.staged_rows(),
+            },
             last_pulse_at_ms: self.last_pulse_at_ms,
             recent_links: self.recent_links.clone(),
             total_births: self.total_births,
@@ -1612,6 +1661,7 @@ mod tests {
             cell_cap: 2,
             recent_links_cap: DEFAULT_RECENT_LINKS_CAP,
             reorg_window_blocks: DEFAULT_REORG_WINDOW_BLOCKS,
+            snapshot_scope: SnapshotScope::Retained,
         });
         let births = g.apply_mutation(&Mutation::TxLanded {
             tx_hash: "0xmint".into(),
@@ -1659,6 +1709,7 @@ mod tests {
             cell_cap: 2,
             recent_links_cap: DEFAULT_RECENT_LINKS_CAP,
             reorg_window_blocks: DEFAULT_REORG_WINDOW_BLOCKS,
+            snapshot_scope: SnapshotScope::Retained,
         });
         g.apply_mutation(&Mutation::BackfillProgress {
             done: 0,
@@ -1812,6 +1863,7 @@ mod tests {
             cell_cap: CELL_CAP,
             recent_links_cap: 2,
             reorg_window_blocks: DEFAULT_REORG_WINDOW_BLOCKS,
+            snapshot_scope: SnapshotScope::Retained,
         });
         for n in 0..3 {
             g.apply_mutation(&Mutation::TxLanded {
@@ -2844,6 +2896,7 @@ mod tests {
             cell_cap: CELL_CAP,
             recent_links_cap: DEFAULT_RECENT_LINKS_CAP,
             reorg_window_blocks: 10,
+            snapshot_scope: SnapshotScope::Retained,
         });
         for block in 1..=4 {
             source.handle_block_mined(block, &format!("0xblock{block}"), 1, block * 1_000);
@@ -2866,6 +2919,7 @@ mod tests {
             cell_cap: CELL_CAP,
             recent_links_cap: DEFAULT_RECENT_LINKS_CAP,
             reorg_window_blocks: 2,
+            snapshot_scope: SnapshotScope::Retained,
         });
         restored.restore_from(source.to_persisted());
 
@@ -2893,6 +2947,7 @@ mod tests {
             cell_cap: CELL_CAP,
             recent_links_cap: DEFAULT_RECENT_LINKS_CAP,
             reorg_window_blocks: 2,
+            snapshot_scope: SnapshotScope::Retained,
         });
         g.handle_block_mined(1, "0xblock1", 1, 1_000);
         g.handle_tx_landed("0xtx1", 1, 1_000, &[], &[out(100, "0x")]);
@@ -2938,6 +2993,7 @@ mod tests {
             cell_cap: CELL_CAP,
             recent_links_cap: DEFAULT_RECENT_LINKS_CAP,
             reorg_window_blocks: 2,
+            snapshot_scope: SnapshotScope::Retained,
         });
         for block in 1..=4 {
             g.handle_block_mined(block, &format!("0xblock{block}"), 1, block * 1_000);
@@ -2967,6 +3023,7 @@ mod tests {
             cell_cap: CELL_CAP,
             recent_links_cap: 0,
             reorg_window_blocks: DEFAULT_REORG_WINDOW_BLOCKS,
+            snapshot_scope: SnapshotScope::Retained,
         });
         g.handle_block_mined(1, "0xaaa", 1, 1_000);
         g.handle_tx_landed("0xbase", 1, 1_000, &[], &[out(100, "0x")]);
@@ -4274,6 +4331,136 @@ mod tests {
                 }
             }
         }
+    }
+
+    fn staged_galaxy() -> CellGalaxy {
+        let mut g = CellGalaxy::new();
+        g.config.snapshot_scope = SnapshotScope::Staged;
+        g
+    }
+
+    /// A galaxy whose retained set is strictly larger than its stage. The
+    /// production plane holds 12k, so a test that wants off-stage rows either
+    /// mints 12k cells or shrinks the stage; shrinking is the honest one,
+    /// because the ratio is what matters, not the absolute size.
+    fn galaxy_with_offstage_rows(mut g: CellGalaxy) -> CellGalaxy {
+        g.display = DisplayPlane::with_limits(
+            DisplayBudget {
+                cells: 2,
+                nerve_edges: 8,
+            },
+            1,
+        );
+        g.apply_mutation(&landed(
+            "0xa",
+            1,
+            1_000,
+            vec![],
+            vec![out(1, "0x"), out(2, "0x"), out(3, "0x")],
+        ));
+        g.apply_mutation(&landed(
+            "0xb",
+            2,
+            2_000,
+            vec![],
+            vec![out(4, "0x"), out(5, "0x")],
+        ));
+        g
+    }
+
+    #[test]
+    fn retained_scope_is_the_default_and_ships_every_row() {
+        assert_eq!(
+            CellGalaxyConfig::default().snapshot_scope,
+            SnapshotScope::Retained
+        );
+        let g = galaxy_with_offstage_rows(make_galaxy());
+        let snap = g.snapshot();
+        assert_eq!(snap.cells.len(), g.cells.len());
+    }
+
+    /// The reduction itself: staged scope drops retained rows nobody stages.
+    #[test]
+    fn staged_scope_ships_only_what_the_stage_holds() {
+        let g = galaxy_with_offstage_rows(staged_galaxy());
+        let snap = g.snapshot();
+        assert!(
+            snap.cells.len() < g.cells.len(),
+            "staged scope must actually drop rows (kept {} of {})",
+            snap.cells.len(),
+            g.cells.len()
+        );
+        for cell in &snap.cells {
+            assert!(
+                g.display.is_staged(cell.id),
+                "cell {} shipped without being on stage",
+                cell.id
+            );
+        }
+    }
+
+    /// The invariant a client depends on: every member resolves, from the
+    /// emitted rows or from the resident payloads, with nothing left dangling.
+    #[test]
+    fn every_member_still_resolves_under_the_staged_scope() {
+        let g = galaxy_with_offstage_rows(staged_galaxy());
+        let snap = g.snapshot();
+        let section = snap.display.as_ref().expect("display section");
+        let emitted: std::collections::HashSet<u64> = snap.cells.iter().map(|c| c.id).collect();
+        let residents: std::collections::HashSet<u64> =
+            section.residents.iter().map(|c| c.id).collect();
+        assert!(!section.members.is_empty(), "the stage must be staffed");
+        for id in &section.members {
+            assert!(
+                emitted.contains(id) || residents.contains(id),
+                "member {id} resolves to neither an emitted row nor a resident"
+            );
+        }
+    }
+
+    /// The statistics segment describes the galaxy, not the stage, so the
+    /// panel reads identical numbers under either scope.
+    #[test]
+    fn statistics_do_not_move_with_the_snapshot_scope() {
+        let retained = galaxy_with_offstage_rows(make_galaxy()).snapshot();
+        let staged = galaxy_with_offstage_rows(staged_galaxy()).snapshot();
+        assert_eq!(retained.stats, staged.stats);
+        assert!(
+            staged.stats.in_view as usize > staged.cells.len(),
+            "the fixture must count more cells than it ships, or this proves nothing"
+        );
+    }
+
+    /// Retained scope has to stay byte-identical, both forms — the switch is
+    /// only trustworthy as a rollback if the off position changes nothing.
+    #[test]
+    fn retained_scope_emits_the_same_bytes_as_before_the_switch() {
+        let with_default = galaxy_with_offstage_rows(make_galaxy());
+        let mut explicit = CellGalaxy::new();
+        explicit.config.snapshot_scope = SnapshotScope::Retained;
+        let explicit = galaxy_with_offstage_rows(explicit);
+        assert_eq!(
+            serde_json::to_value(with_default.snapshot()).unwrap(),
+            serde_json::to_value(explicit.snapshot()).unwrap()
+        );
+        assert_eq!(with_default.snapshot_bin(), explicit.snapshot_bin());
+    }
+
+    #[test]
+    fn staged_scope_reaches_the_columnar_form_too() {
+        let retained = galaxy_with_offstage_rows(make_galaxy());
+        let staged = galaxy_with_offstage_rows(staged_galaxy());
+        let retained_bin = retained.snapshot_bin().expect("columnar");
+        let staged_bin = staged.snapshot_bin().expect("columnar");
+        // cell_count sits at byte 40 (residents 44, members 48).
+        let count = |b: &[u8]| u32::from_le_bytes(b[40..44].try_into().unwrap());
+        assert!(count(&staged_bin) < count(&retained_bin));
+        assert_eq!(
+            u32::from_le_bytes(staged_bin[48..52].try_into().unwrap()),
+            u32::from_le_bytes(retained_bin[48..52].try_into().unwrap()),
+            "membership is unchanged; only which rows ride along is"
+        );
+        assert!(staged_bin.len() < retained_bin.len());
     }
 
     /// Pin 9, inverted for v2 — the columnar snapshot now carries the

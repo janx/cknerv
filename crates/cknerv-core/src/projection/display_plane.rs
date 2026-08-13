@@ -1127,6 +1127,12 @@ impl DisplayPlane {
     /// (ascending id), staged resident payloads (ascending id, position
     /// re-derived like every canonical snapshot cell), current
     /// provenance, fixed budget.
+    /// Whether this id is on stage. Used by the staged snapshot scope to
+    /// decide which retained rows are worth shipping.
+    pub(crate) fn is_staged(&self, id: u64) -> bool {
+        self.stage.is_member(id)
+    }
+
     pub(crate) fn section(&self) -> DisplaySection {
         DisplaySection {
             budget: self.stage.budget,
