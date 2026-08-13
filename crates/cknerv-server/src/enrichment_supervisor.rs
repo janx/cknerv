@@ -44,6 +44,13 @@ const ENRICHMENT_GALAXY_COMPOSITION_RETRY: Duration = Duration::from_secs(30);
 /// hundred candidates and the whole point is that a shortfall closes as
 /// it opens rather than waiting out a period.
 const ENRICHMENT_GALAXY_TOP_UP_REFRESH: Duration = Duration::from_secs(5);
+/// Consecutive fruitless top-up rounds tolerated before the cadence starts
+/// stretching. Sized to absorb the ordinary lag between dispatching a round
+/// and the reducer applying its mutation, so a round in flight is never
+/// mistaken for a round that achieved nothing.
+const TOP_UP_STALL_GRACE: u32 = 3;
+/// Ceiling on the doubling: 5s << 6 ≈ 5 minutes.
+const TOP_UP_MAX_BACKOFF_SHIFT: u32 = 6;
 const MAX_CONCURRENT_REFRESHES: usize = 3;
 
 #[derive(Clone, Copy)]
@@ -226,6 +233,11 @@ struct RefreshTracker {
     in_flight: HashSet<RefreshKind>,
     published: HashSet<RefreshKind>,
     initial_dao_retry_pending: bool,
+    /// Consecutive top-up rounds that left the shortfall no smaller, and
+    /// the bookkeeping to tell a completed round from one still in flight.
+    top_up_stalled: u32,
+    top_up_awaiting_outcome: bool,
+    top_up_demand_before: usize,
 }
 
 impl RefreshTracker {
@@ -252,7 +264,7 @@ impl RefreshTracker {
                 .is_none_or(|last| last.elapsed() >= at_least)
         };
         match kind.interval(cadence) {
-            Some(interval) => waited(interval),
+            Some(interval) => waited(self.stretched(kind, interval)),
             // No cadence: keep trying until it lands, then hold.
             None => !self.published.contains(&kind) && waited(cadence.galaxy_composition_retry),
         }
@@ -284,7 +296,61 @@ impl RefreshTracker {
         self.last_started.remove(&KIND);
     }
 
+    /// Judge the last dispatched top-up by the only thing that matters:
+    /// did the shortfall get smaller.
+    ///
+    /// A demand can be perfectly real and still unplaceable — a class is
+    /// short while every over-quota class holds nothing but curated
+    /// members, so nobody may give way and the plane declines everything
+    /// offered. Asking again at full cadence then costs index pages and a
+    /// node round-trip every 5 seconds forever, and worse: the source
+    /// marks each offered outpoint as handed out, so a round that placed
+    /// nothing still permanently shrinks the supply that could have
+    /// answered later. Stretching the cadence is what keeps an
+    /// unsatisfiable ask from eating the answer.
+    fn note_top_up_outcome(&mut self, demand: CompositionDemand) {
+        if !demand.curated {
+            // Prefix staffing asks for nothing; a degrade is not a stall.
+            self.top_up_stalled = 0;
+            self.top_up_awaiting_outcome = false;
+            return;
+        }
+        if !self.top_up_awaiting_outcome || self.in_flight.contains(&RefreshKind::GalaxyTopUp) {
+            return; // no completed round to judge
+        }
+        self.top_up_awaiting_outcome = false;
+        if demand.total() < self.top_up_demand_before {
+            self.top_up_stalled = 0;
+            return;
+        }
+        self.top_up_stalled = self.top_up_stalled.saturating_add(1);
+        if self.top_up_stalled == TOP_UP_STALL_GRACE + 1 {
+            tracing::info!(
+                target: "cknerv-server",
+                shortfall = demand.total(),
+                "the display plane is asking for cells it cannot place; \
+                 stretching the top-up cadence"
+            );
+        }
+    }
+
+    /// The top-up's cadence after any earned backoff. Every other
+    /// capability keeps its configured interval.
+    fn stretched(&self, kind: RefreshKind, interval: Duration) -> Duration {
+        if kind != RefreshKind::GalaxyTopUp {
+            return interval;
+        }
+        let steps = self
+            .top_up_stalled
+            .saturating_sub(TOP_UP_STALL_GRACE)
+            .min(TOP_UP_MAX_BACKOFF_SHIFT);
+        interval.saturating_mul(1u32 << steps)
+    }
+
     fn started(&mut self, kind: RefreshKind) {
+        if kind == RefreshKind::GalaxyTopUp {
+            self.top_up_awaiting_outcome = true;
+        }
         self.last_started.insert(kind, Instant::now());
         self.in_flight.insert(kind);
         if kind == RefreshKind::DaoState {
@@ -371,6 +437,7 @@ async fn run(
 
                 let demand = state.composition_demand();
                 tracker.rearm_composition_if_degraded(demand, cadence.galaxy_composition_retry);
+                tracker.note_top_up_outcome(demand);
                 for kind in REFRESH_KINDS {
                     if kind == RefreshKind::GalaxyTopUp && (!demand.curated || demand.is_empty()) {
                         // Nothing to close. Stay due so the next tick sees
@@ -397,6 +464,9 @@ async fn run(
                         // context. A later probe will retry it with fresh proof.
                         break;
                     };
+                    if kind == RefreshKind::GalaxyTopUp {
+                        tracker.top_up_demand_before = demand.total();
+                    }
                     tracker.started(kind);
                     let source = source.clone();
                     let context = context.clone();
@@ -970,6 +1040,99 @@ mod tests {
 
     /// The top-up is demand-gated: a stage that is not asking costs the
     /// index nothing, and one that is asking is told exactly how much.
+    fn curated_shortfall(total: usize) -> CompositionDemand {
+        CompositionDemand {
+            curated: true,
+            dao: total,
+            typed: 0,
+        }
+    }
+
+    /// One completed top-up round, judged.
+    fn top_up_round(tracker: &mut RefreshTracker, before: usize, after: usize) {
+        tracker.top_up_demand_before = before;
+        tracker.started(RefreshKind::GalaxyTopUp);
+        tracker.finished(RefreshKind::GalaxyTopUp, true);
+        tracker.note_top_up_outcome(curated_shortfall(after));
+    }
+
+    /// A shortfall that keeps closing is exactly what the top-up is for —
+    /// it must never be slowed down for doing its job.
+    #[test]
+    fn a_closing_shortfall_never_earns_a_backoff() {
+        let mut tracker = RefreshTracker::default();
+        let base = Duration::from_secs(5);
+        let mut shortfall = 1_000;
+        for _ in 0..12 {
+            let before = shortfall;
+            shortfall -= 50;
+            top_up_round(&mut tracker, before, shortfall);
+            assert_eq!(tracker.stretched(RefreshKind::GalaxyTopUp, base), base);
+        }
+    }
+
+    /// The plane can publish a shortfall the ratchet cannot place: a class
+    /// is short while every over-quota class holds nothing but curated
+    /// members, so nobody may give way. Asking again every 5s forever costs
+    /// index pages and a node round-trip each time — and each round burns
+    /// candidates out of the source's tail for good, so it shrinks the very
+    /// supply that could have answered later.
+    #[test]
+    fn an_unplaceable_shortfall_stretches_the_cadence_up_to_a_ceiling() {
+        let mut tracker = RefreshTracker::default();
+        let base = Duration::from_secs(5);
+
+        for _ in 0..TOP_UP_STALL_GRACE {
+            top_up_round(&mut tracker, 1_000, 1_000);
+            assert_eq!(
+                tracker.stretched(RefreshKind::GalaxyTopUp, base),
+                base,
+                "a round in flight must not be mistaken for a fruitless one"
+            );
+        }
+
+        for step in 1..=4u32 {
+            top_up_round(&mut tracker, 1_000, 1_000);
+            assert_eq!(
+                tracker.stretched(RefreshKind::GalaxyTopUp, base),
+                base * (1 << step)
+            );
+        }
+
+        for _ in 0..20 {
+            top_up_round(&mut tracker, 1_000, 1_000);
+        }
+        assert_eq!(
+            tracker.stretched(RefreshKind::GalaxyTopUp, base),
+            base * (1 << TOP_UP_MAX_BACKOFF_SHIFT),
+            "the backoff has a ceiling; a stalled stage is still checked"
+        );
+        assert_eq!(
+            tracker.stretched(RefreshKind::AssetEcosystem, Duration::from_secs(30)),
+            Duration::from_secs(30),
+            "the backoff belongs to the top-up alone"
+        );
+
+        // One placement reopens the tap immediately.
+        top_up_round(&mut tracker, 1_000, 999);
+        assert_eq!(tracker.stretched(RefreshKind::GalaxyTopUp, base), base);
+    }
+
+    /// A degrade back to prefix staffing zeroes the demand; that is not a
+    /// stalled top-up, and the next composition must not inherit a
+    /// stretched cadence.
+    #[test]
+    fn a_degrade_clears_the_backoff() {
+        let mut tracker = RefreshTracker::default();
+        let base = Duration::from_secs(5);
+        for _ in 0..10 {
+            top_up_round(&mut tracker, 1_000, 1_000);
+        }
+        assert!(tracker.stretched(RefreshKind::GalaxyTopUp, base) > base);
+        tracker.note_top_up_outcome(CompositionDemand::default());
+        assert_eq!(tracker.stretched(RefreshKind::GalaxyTopUp, base), base);
+    }
+
     #[tokio::test]
     async fn the_top_up_only_runs_while_the_stage_is_asking() {
         let sink = Arc::new(cknerv_core::CompositionDemandSink::new());
