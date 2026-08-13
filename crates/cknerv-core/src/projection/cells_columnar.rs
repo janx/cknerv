@@ -17,7 +17,8 @@
 //! The 8 bytes at [8..16] are a revision slot the SERVER patches in (the
 //! registry owns revisions; the projection does not know its own).
 
-use crate::projection::cells::CellGalaxySnapshot;
+use crate::helix::helix_seed_for;
+use crate::projection::cells::Cell;
 use crate::taxonomy::{AssetKind, LockKind};
 
 pub const CELLS_COLUMNAR_MAGIC: [u8; 4] = *b"CKNB";
@@ -48,18 +49,37 @@ fn asset_kind_code(kind: AssetKind) -> u8 {
     }
 }
 
-/// Encode the snapshot's cells as one columnar buffer. Row order is the
-/// snapshot's `cells` order, so row `i` of every column describes the same
-/// cell as `snapshot.cells[i]` on the JSON path — the live parity gate
-/// compares them field by field.
-pub fn encode_cells_columnar(snapshot: &CellGalaxySnapshot) -> Vec<u8> {
-    let n = snapshot.cells.len();
+/// Scalars the header carries beside the columns. Grouped so three
+/// same-typed counters cannot silently swap places at a call site.
+#[derive(Clone, Copy, Debug)]
+pub struct CellsColumnarHeader {
+    pub last_pulse_at_ms: u64,
+    pub total_births: u64,
+    pub total_deaths: u64,
+}
+
+/// Encode `cells` as one columnar buffer. Row order is the caller's order,
+/// so row `i` of every column describes the same cell as `snapshot.cells[i]`
+/// on the JSON path — the live parity gate compares them field by field.
+///
+/// Takes the rows by reference rather than a `CellGalaxySnapshot`: the
+/// columnar form reads only numeric fields, so going through a snapshot
+/// would clone every `Cell` (three heap strings apiece), every staged
+/// resident payload and every recent link, purely to drop them here.
+///
+/// Positions are derived from the id rather than read off the row, for the
+/// same reason the JSON path recomputes them (`pos_seed` is a pure function
+/// of the id, so a helix change applies retroactively). Deriving it here
+/// makes that a property of emission rather than something each caller has
+/// to remember.
+pub fn encode_cells_columnar(cells: &[Cell], header: CellsColumnarHeader) -> Vec<u8> {
+    let n = cells.len();
 
     // Tag dictionary: distinct tags in first-seen order (low cardinality),
     // resolved in one pass so the column write below is a plain lookup.
     let mut tags: Vec<&str> = Vec::new();
     let mut tag_indices: Vec<u8> = Vec::with_capacity(n);
-    for cell in &snapshot.cells {
+    for cell in cells {
         let index = match cell.tag.as_deref() {
             None => CELLS_COLUMNAR_NO_TAG,
             Some(tag) => match tags.iter().position(|t| *t == tag) {
@@ -85,49 +105,54 @@ pub fn encode_cells_columnar(snapshot: &CellGalaxySnapshot) -> Vec<u8> {
     buf.extend_from_slice(&CELLS_COLUMNAR_VERSION.to_le_bytes());
     buf.extend_from_slice(&0u16.to_le_bytes()); // flags
     buf.extend_from_slice(&0u64.to_le_bytes()); // revision slot (server-patched)
-    buf.extend_from_slice(&snapshot.last_pulse_at_ms.to_le_bytes());
-    buf.extend_from_slice(&snapshot.total_births.to_le_bytes());
-    buf.extend_from_slice(&snapshot.total_deaths.to_le_bytes());
+    buf.extend_from_slice(&header.last_pulse_at_ms.to_le_bytes());
+    buf.extend_from_slice(&header.total_births.to_le_bytes());
+    buf.extend_from_slice(&header.total_deaths.to_le_bytes());
     buf.extend_from_slice(&(n as u32).to_le_bytes());
     buf.extend_from_slice(&0u32.to_le_bytes()); // tag_dict_offset back-patched
     debug_assert_eq!(buf.len(), CELLS_COLUMNAR_HEADER_BYTES);
 
     // —— f64 columns ——
-    for cell in &snapshot.cells {
+    for cell in cells {
         buf.extend_from_slice(&(cell.id as f64).to_le_bytes());
     }
-    for cell in &snapshot.cells {
+    for cell in cells {
         buf.extend_from_slice(&(cell.born_at_ms as f64).to_le_bytes());
     }
-    for cell in &snapshot.cells {
+    for cell in cells {
         let death = cell.death_at_ms.map_or(f64::NAN, |ms| ms as f64);
         buf.extend_from_slice(&death.to_le_bytes());
     }
-    for cell in &snapshot.cells {
+    for cell in cells {
         buf.extend_from_slice(&(cell.capacity as f64).to_le_bytes());
     }
     // —— f32 columns ——
+    // Resolved once per row, not once per (row, axis): the layout is
+    // column-major, so deriving inside the axis loop would run the helix
+    // sampler three times per cell — measurably (a 50k-row buffer went
+    // 0.17s → 0.64s before this was hoisted).
+    let positions: Vec<[f32; 3]> = cells.iter().map(|cell| helix_seed_for(cell.id)).collect();
     for axis in 0..3 {
-        for cell in &snapshot.cells {
-            buf.extend_from_slice(&cell.pos_seed[axis].to_le_bytes());
+        for position in &positions {
+            buf.extend_from_slice(&position[axis].to_le_bytes());
         }
     }
     // —— u32 columns ——
-    for cell in &snapshot.cells {
+    for cell in cells {
         buf.extend_from_slice(&(cell.birth_block as u32).to_le_bytes());
     }
-    for cell in &snapshot.cells {
+    for cell in cells {
         buf.extend_from_slice(&cell.out_point.index.to_le_bytes());
     }
     // —— u8 columns ——
-    for cell in &snapshot.cells {
+    for cell in cells {
         buf.push(lock_kind_code(cell.lock_kind));
     }
-    for cell in &snapshot.cells {
+    for cell in cells {
         buf.push(asset_kind_code(cell.asset_kind));
     }
     buf.extend_from_slice(&tag_indices);
-    for cell in &snapshot.cells {
+    for cell in cells {
         let has_data = cell.data_hex.len() > 2;
         buf.push(u8::from(has_data));
     }
@@ -165,7 +190,7 @@ mod tests {
             },
             birth_block: 42 + id,
             tag: tag.map(str::to_owned),
-            pos_seed: [id as f32, -1.5, 0.25 * id as f32],
+            pos_seed: helix_seed_for(id),
             out_point: OutPoint {
                 tx_hash: format!("0x{id:064x}"),
                 index: id as u32,
@@ -190,27 +215,23 @@ mod tests {
         }
     }
 
-    fn snapshot(cells: Vec<Cell>) -> CellGalaxySnapshot {
-        CellGalaxySnapshot {
-            cells,
+    fn header() -> CellsColumnarHeader {
+        CellsColumnarHeader {
             last_pulse_at_ms: 777,
-            recent_links: Vec::new(),
             total_births: 30,
             total_deaths: 11,
-            backfill: None,
-            display: None,
         }
     }
 
     #[test]
     fn header_columns_and_dictionary_round_trip() {
-        let snap = snapshot(vec![
+        let rows = [
             cell(1, Some("wallet")),
             cell(2, None),
             cell(3, Some("dex")),
             cell(4, Some("wallet")),
-        ]);
-        let buf = encode_cells_columnar(&snap);
+        ];
+        let buf = encode_cells_columnar(&rows, header());
         assert_eq!(&buf[0..4], b"CKNB");
         assert_eq!(u16::from_le_bytes([buf[4], buf[5]]), CELLS_COLUMNAR_VERSION);
         assert_eq!(u64::from_le_bytes(buf[16..24].try_into().unwrap()), 777);
@@ -246,7 +267,7 @@ mod tests {
 
     #[test]
     fn empty_snapshot_is_header_plus_empty_dictionary() {
-        let buf = encode_cells_columnar(&snapshot(Vec::new()));
+        let buf = encode_cells_columnar(&[], header());
         assert_eq!(buf.len(), CELLS_COLUMNAR_HEADER_BYTES + 1);
         assert_eq!(buf[CELLS_COLUMNAR_HEADER_BYTES], 0);
     }

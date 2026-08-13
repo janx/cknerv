@@ -1353,8 +1353,17 @@ impl Projection for CellGalaxy {
     }
 
     fn snapshot_bin(&self) -> Option<Vec<u8>> {
+        // Straight from projection state: the columnar form reads only
+        // numeric columns, so routing it through `snapshot()` would clone
+        // every Cell (three heap strings apiece), every staged resident
+        // payload and every recent link just to drop them one call later.
         Some(crate::projection::cells_columnar::encode_cells_columnar(
-            &self.snapshot(),
+            &self.cells,
+            crate::projection::cells_columnar::CellsColumnarHeader {
+                last_pulse_at_ms: self.last_pulse_at_ms,
+                total_births: self.total_births,
+                total_deaths: self.total_deaths,
+            },
         ))
     }
 
@@ -4192,7 +4201,9 @@ mod tests {
     }
 
     /// Pin 9 — the columnar snapshot (v1) carries no display section: staffing
-    /// the plane must not change a single byte.
+    /// the plane must not change a single byte. Stated against the emitter
+    /// rather than the encoder's arguments, so it stays a real claim now
+    /// that the display section is not even in scope at the call.
     #[test]
     fn snapshot_bin_ignores_the_display_section() {
         let mut g = make_galaxy();
@@ -4203,14 +4214,54 @@ mod tests {
             vec![],
             vec![out(1, "0x"), out(2, "0x")],
         ));
+        let before = g.snapshot_bin().expect("columnar snapshot");
+
+        g.apply_mutation(&reservoir(1, (900, 901, 902)));
         let snapshot = g.snapshot();
-        assert!(snapshot.display.is_some());
-        let mut stripped = snapshot.clone();
-        stripped.display = None;
+        assert!(
+            snapshot.display.as_ref().is_some_and(|display| {
+                !display.residents.is_empty() && !display.members.is_empty()
+            }),
+            "the composition must actually have staffed the plane"
+        );
+
         assert_eq!(
-            crate::projection::cells_columnar::encode_cells_columnar(&snapshot),
-            crate::projection::cells_columnar::encode_cells_columnar(&stripped),
+            before,
+            g.snapshot_bin().expect("columnar snapshot"),
             "columnar v1 must not encode the display plane"
+        );
+    }
+
+    /// The columnar path must not go through `CellGalaxySnapshot` — that is
+    /// the whole point of taking rows by reference — but it must still emit
+    /// exactly what that path would have. Row-for-row equality against a
+    /// materialized snapshot keeps both true at once.
+    #[test]
+    fn snapshot_bin_matches_the_rows_of_the_json_snapshot() {
+        let mut g = make_galaxy();
+        g.apply_mutation(&landed(
+            "0xa",
+            1,
+            1_000,
+            vec![],
+            vec![out(1, "0x"), out(2, "0xdeadbeef")],
+        ));
+        g.apply_mutation(&Mutation::CellTagged {
+            out_point: op("0xa", 0),
+            tag: "dex".into(),
+            at: 1_100,
+        });
+        let snapshot = g.snapshot();
+        assert_eq!(
+            g.snapshot_bin().expect("columnar snapshot"),
+            crate::projection::cells_columnar::encode_cells_columnar(
+                &snapshot.cells,
+                crate::projection::cells_columnar::CellsColumnarHeader {
+                    last_pulse_at_ms: snapshot.last_pulse_at_ms,
+                    total_births: snapshot.total_births,
+                    total_deaths: snapshot.total_deaths,
+                },
+            )
         );
     }
 }
