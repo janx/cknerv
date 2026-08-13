@@ -202,3 +202,105 @@ describe('display-graph journal feed', () => {
     expect([...snapshot.upserts.keys()]).toEqual([2]);
   });
 });
+
+describe('feed results (the eager driver licence)', () => {
+  function stagedCache(canonical: Cell[], members: number[]) {
+    return fromCellsSnapshot(1, {
+      cells: canonical,
+      last_pulse_at_ms: 0,
+      display: {
+        budget: { cells: 12_000, nerve_edges: 8_000 },
+        members,
+        residents: [],
+        provenance: {
+          mode: 'canonical',
+          source: null,
+          as_of: null,
+          updated_at_ms: 0,
+        },
+      },
+    });
+  }
+
+  it('reports the canonical journal as fresh only once per generation', () => {
+    const journal = createTopologyJournal();
+    let cache = applyCellDelta(emptyCellsCache(), { type: 'birth', cell: cell(1) });
+    // Bootstrap sight has no predecessor to chain onto.
+    expect(feedTopologyJournal(journal, cache)).toEqual({
+      fresh: true,
+      chained: false,
+    });
+    expect(feedTopologyJournal(journal, cache)).toEqual({
+      fresh: false,
+      chained: false,
+    });
+    cache = applyCellDelta(cache, { type: 'birth', cell: cell(2) });
+    expect(feedTopologyJournal(journal, cache)).toEqual({
+      fresh: true,
+      chained: true,
+    });
+  });
+
+  it('withholds the chain across a skipped canonical generation', () => {
+    const journal = createTopologyJournal();
+    let cache = applyCellDelta(emptyCellsCache(), { type: 'birth', cell: cell(1) });
+    feedTopologyJournal(journal, cache);
+    cache = applyCellDelta(cache, { type: 'birth', cell: cell(2) });
+    const skipped = applyCellDelta(cache, { type: 'birth', cell: cell(3) });
+    expect(feedTopologyJournal(journal, skipped)).toEqual({
+      fresh: true,
+      chained: false,
+    });
+  });
+
+  it('names the display regime and chains across membership churn', () => {
+    const feed = createDisplayGraphJournalFeed();
+    let cache = stagedCache([cell(1), cell(2)], [1]);
+    expect(feedDisplayGraphJournal(feed, cache)).toEqual({
+      fresh: true,
+      chained: false,
+      regime: 'display',
+    });
+    cache = applyCellDelta(cache, {
+      type: 'display',
+      enter_ids: [2],
+      enter_cells: [],
+      exit_ids: [],
+    });
+    expect(feedDisplayGraphJournal(feed, cache)).toEqual({
+      fresh: true,
+      chained: true,
+      regime: 'display',
+    });
+    // StrictMode-style refeed of the same generation must not re-apply.
+    expect(feedDisplayGraphJournal(feed, cache)).toEqual({
+      fresh: false,
+      chained: false,
+      regime: 'display',
+    });
+  });
+
+  it('names the canonical regime and never chains across a regime flip', () => {
+    const feed = createDisplayGraphJournalFeed();
+    let cache = applyCellDelta(emptyCellsCache(), { type: 'birth', cell: cell(1) });
+    expect(feedDisplayGraphJournal(feed, cache)).toEqual({
+      fresh: true,
+      chained: false,
+      regime: 'canonical',
+    });
+    cache = applyCellDelta(cache, { type: 'birth', cell: cell(2) });
+    expect(feedDisplayGraphJournal(feed, cache)).toEqual({
+      fresh: true,
+      chained: true,
+      regime: 'canonical',
+    });
+    // A display plane appearing re-bases the graph even though the cell
+    // journal itself chained — the flip alone disqualifies an in-place replay.
+    const staged = stagedCache([cell(1), cell(2)], [1]);
+    expect(feedDisplayGraphJournal(feed, staged)).toEqual({
+      fresh: true,
+      chained: false,
+      regime: 'display',
+    });
+  });
+});

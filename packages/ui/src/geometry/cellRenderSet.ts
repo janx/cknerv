@@ -137,7 +137,7 @@ function cellRenderRanges(indices: ReadonlySet<number>): CellRenderRange[] {
 /** Canonical-first resolution of a staged member id. Post-reorg overlap may
  * keep a resident payload beside a canonical record with the same id — the
  * canonical retained object always wins. */
-function resolveStagedCell(
+export function resolveStagedCell(
   cache: Pick<CellGalaxyCache, 'cells' | 'displayResidents'>,
   id: number,
 ): Cell | undefined {

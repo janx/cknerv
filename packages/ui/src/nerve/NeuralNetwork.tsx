@@ -62,6 +62,7 @@ import { createNeighborGraphBuilder } from '../geometry/neighborGraphBuilder';
 import {
   cellRenderMap,
   createCellRenderSetState,
+  resolveStagedCell,
   syncCellRenderSet,
 } from '../geometry/cellRenderSet';
 import { type Pulse, type PulsePlanningOptions } from './pulseRunner';
@@ -73,6 +74,7 @@ import {
 } from './pulseBatch';
 import { pulseStats } from './pulseStats';
 import {
+  planDisplayMeshDiff,
   planMeshUpdate,
   shouldBulkRebuildRoutingGraph,
 } from './livingMeshDriver';
@@ -192,6 +194,10 @@ const MEMORY_ROUTE_HOP_LOCK_PULSE_TAIL_DECAY = 6.5;
 const MEMORY_SOURCE_HANDOFF_FLARE_BRIGHT = 1.18;
 const MEMORY_SOURCE_HANDOFF_FLARE_TAIL_DECAY = 0.42;
 const RIPPLE_STAGGER_MS = 60;      // per-birth grow-in delay within a block
+/** Shared empties for living-mesh calls that carry only one lifecycle side —
+ *  a removal batch never reads the Cell map, a birth batch never removes. */
+const NO_CELLS: ReadonlyMap<number, Cell> = new Map();
+const NO_CELL_IDS: readonly number[] = Object.freeze([] as number[]);
 
 interface NeuralNetworkProps {
   /** Server projection cap used by CellGalaxy's AUTO display budget. Passive
@@ -488,7 +494,51 @@ export default function NeuralNetwork({
     // Accumulate this cache generation into the display-graph journal
     // BEFORE consuming the render set, so a build issued below carries the
     // exact O(churn) change set (StrictMode re-runs dedupe by token).
-    feedDisplayGraphJournal(displayFeedRef.current, cellsCache);
+    const feed = feedDisplayGraphJournal(displayFeedRef.current, cellsCache);
+    const meshNow = simClock.elapsedSec;
+    const meshOpts = {
+      k: topology?.neighborK,
+      maxEdgeLength: topology?.maxEdgeLength,
+    };
+    // Eager living-mesh maintenance of the display graph, replayed from the
+    // same generation the journal above accumulated. `chained` is the licence:
+    // a broken chain means the next build re-bases the graph wholesale, so
+    // replaying a partial diff onto it would drift silently.
+    const meshDiff = (
+      feed.fresh && feed.chained && displayBootstrappedRef.current
+    )
+      ? (feed.regime === 'display'
+        ? planDisplayMeshDiff(
+          cellsCache.displayChanges,
+          displayGraphRef.current,
+          (id) => resolveStagedCell(cellsCache, id),
+        )
+        // No server display plane: membership is a prefix of the retained map,
+        // so the cell journal already IS this graph's lifecycle diff.
+        : cellsCache.cellChanges)
+      : null;
+    // Removals run AHEAD of the topology gate below. A member dying does not
+    // change membership, so no build is issued for it — yet its fibres have to
+    // retract now. Births are admitted further down, where the render set that
+    // resolves them exists.
+    if (meshDiff && (meshDiff.died.length > 0 || meshDiff.evicted.length > 0)) {
+      const removal = planMeshUpdate(
+        { born: NO_CELL_IDS, died: meshDiff.died, evicted: meshDiff.evicted },
+        displayGraphRef.current,
+        NO_CELLS,
+        meshNow,
+        meshOpts,
+        RIPPLE_STAGGER_MS,
+      );
+      if (removal.deathKeys.length > 0) {
+        fabricHandlesRef.current?.killEdges(
+          removal.deathKeys,
+          meshNow,
+          'death',
+          removal.deathEndByKey,
+        );
+      }
+    }
     const renderUpdate = syncCellRenderSet(
       displayRenderSetRef.current,
       cellsCache,
@@ -534,6 +584,21 @@ export default function NeuralNetwork({
         !displayPlaneActive && visibleCells.length === cellsCache.cells.size
           ? cellsCache.cells
           : cellRenderMap(visibleCells);
+      // Admit this generation's newborns into the display graph on the exact
+      // map the build below packs, closing the window between the delta and
+      // the worker completion. Graph-only: resting fibres still grow from the
+      // authoritative passive selection, so an edge the selection never
+      // confirms is never rendered.
+      if (meshDiff && meshDiff.born.length > 0) {
+        planMeshUpdate(
+          { born: meshDiff.born, died: NO_CELL_IDS, evicted: NO_CELL_IDS },
+          displayGraphRef.current,
+          displayCells,
+          meshNow,
+          meshOpts,
+          RIPPLE_STAGGER_MS,
+        );
+      }
       const requestedTopologyVersion = renderUpdate.topologyVersion;
       displayRequestedCellsRef.current = displayCells;
       displayRequestedTopologyRef.current = displaySelectionKey;
@@ -748,13 +813,15 @@ export default function NeuralNetwork({
     }
 
     // The pure driver mutates the routing graph immediately, closing the
-    // stale-graph window for pulses. Passive fibres are reconciled below from
-    // the authoritative display subset in one animated setFabric diff.
+    // stale-graph window for pulses. Fabric instructions are NOT emitted here:
+    // every rendered fibre lives in the display subset, so the display graph's
+    // own eager driver (`syncDisplayFabric`) owns retract/grow. Routing-graph
+    // removals are a superset whose extra keys were always fabric no-ops.
     const bulkRebuild = shouldBulkRebuildRoutingGraph(
       diff.born.length,
       cells.size,
     );
-    const update = planMeshUpdate(
+    planMeshUpdate(
       bulkRebuild ? { ...diff, born: [] } : diff,
       graphRef.current,
       cells,
@@ -769,14 +836,6 @@ export default function NeuralNetwork({
       scheduleRoutingGraphBuild(cells, cellsCache.cellsToken, topologyKey);
     } else {
       routedCellsTokenRef.current = cellsCache.cellsToken;
-    }
-    if (update.deathKeys.length > 0) {
-      fabricHandlesRef.current?.killEdges(
-        update.deathKeys,
-        now,
-        'death',
-        update.deathEndByKey,
-      );
     }
 
   }, [

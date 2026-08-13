@@ -28,6 +28,24 @@ export interface TopologyJournalSnapshot {
   removedIds: Iterable<number>;
 }
 
+/** What one feed call did with a cache generation.
+ *
+ * `chained` is the signal an IN-PLACE consumer needs (the eager living-mesh
+ * driver): the incoming change set applies on top of the generation the feed
+ * last saw, so that same diff may be replayed against a graph built from that
+ * generation. A break means the next build sends a full pack and re-bases the
+ * graph wholesale, so replaying the diff would corrupt it. */
+export interface TopologyFeedResult {
+  /** This call consumed a generation the feed had not seen yet. */
+  readonly fresh: boolean;
+  readonly chained: boolean;
+}
+
+const FEED_STALE: TopologyFeedResult = Object.freeze({
+  fresh: false,
+  chained: false,
+});
+
 export function createTopologyJournal(): TopologyJournal {
   return {
     upserts: new Map(),
@@ -48,14 +66,13 @@ export function feedTopologyJournal(
     readonly cellsToken: object;
     readonly cellChanges: CellChangeSet;
   },
-): void {
-  if (cache.cellsToken === journal.lastToken) return;
+): TopologyFeedResult {
+  if (cache.cellsToken === journal.lastToken) return FEED_STALE;
   const changes = cache.cellChanges;
-  if (
-    changes.reset
+  const chainBroken = changes.reset
     || journal.lastToken === null
-    || changes.baseToken !== journal.lastToken
-  ) {
+    || changes.baseToken !== journal.lastToken;
+  if (chainBroken) {
     journal.valid = false;
     journal.upserts.clear();
     journal.removedIds.clear();
@@ -77,6 +94,7 @@ export function feedTopologyJournal(
     }
   }
   journal.lastToken = cache.cellsToken;
+  return { fresh: true, chained: !chainBroken };
 }
 
 /** Snapshot for one build, then restart the chain (speculative clear — see
@@ -119,6 +137,14 @@ export function invalidateTopologyJournal(
 // canonical updates of staged members ride batches that advance only the
 // cells token, while membership patches advance only the display token.
 
+/** A feed result that also names WHICH journal drove the generation, because
+ * an in-place consumer has to read the matching change set: `display` means
+ * `cache.displayChanges` is authoritative, `canonical` means there is no
+ * server display plane and `cache.cellChanges` is. */
+export interface DisplayGraphFeedResult extends TopologyFeedResult {
+  readonly regime: 'display' | 'canonical';
+}
+
 export interface DisplayGraphJournalFeed {
   journal: TopologyJournal;
   /** True while feeding from the server display plane. A regime flip
@@ -156,22 +182,31 @@ export function feedDisplayGraphJournal(
     | 'displayToken'
     | 'displayChanges'
   >,
-): void {
+): DisplayGraphFeedResult {
   const displayPlaneActive = cache.displayBudget !== null;
-  if (feed.displayPlaneActive !== displayPlaneActive) {
+  const regimeFlipped = feed.displayPlaneActive !== displayPlaneActive;
+  if (regimeFlipped) {
     invalidateTopologyJournal(feed.journal);
     feed.displayPlaneActive = displayPlaneActive;
     feed.lastCellsToken = null;
     feed.lastDisplayToken = null;
   }
   if (!displayPlaneActive) {
-    feedTopologyJournal(feed.journal, cache);
-    return;
+    const canonical = feedTopologyJournal(feed.journal, cache);
+    return {
+      fresh: canonical.fresh,
+      // A regime flip re-bases the graph even when the cell journal itself
+      // chained, so the flip alone disqualifies an in-place replay.
+      chained: canonical.chained && !regimeFlipped,
+      regime: 'canonical',
+    };
   }
 
   const canonicalFresh = cache.cellsToken !== feed.lastCellsToken;
   const displayFresh = cache.displayToken !== feed.lastDisplayToken;
-  if (!canonicalFresh && !displayFresh) return;
+  if (!canonicalFresh && !displayFresh) {
+    return { ...FEED_STALE, regime: 'display' };
+  }
   const displayChanges = cache.displayChanges;
   const chainBroken =
     feed.lastCellsToken === null
@@ -203,4 +238,5 @@ export function feedDisplayGraphJournal(
   }
   feed.lastCellsToken = cache.cellsToken;
   feed.lastDisplayToken = cache.displayToken;
+  return { fresh: true, chained: !chainBroken, regime: 'display' };
 }

@@ -10,6 +10,7 @@ import {
   MAX_INCREMENTAL_BIRTH_COMPARISONS,
   staggerBornAt,
   deadEndFor,
+  planDisplayMeshDiff,
   planMeshUpdate,
   shouldBulkRebuildRoutingGraph,
 } from '../../src/nerve/livingMeshDriver';
@@ -122,5 +123,101 @@ describe('planMeshUpdate (orchestration)', () => {
     ]));
     expect(update.evictKeys).toEqual(['1|4', '4|5']);
     expect(edges).toEqual([]);
+  });
+});
+
+describe('planDisplayMeshDiff (display journal → lifecycle diff)', () => {
+  function stagedGraph(heldIds: readonly number[]): NeighborGraph {
+    const graph = emptyNeighborGraph();
+    for (const id of heldIds) graph.adjacency.set(id, new Set());
+    return graph;
+  }
+  function stage(entries: readonly Cell[]): (id: number) => Cell | undefined {
+    const byId = new Map(entries.map((c) => [c.id, c]));
+    return (id) => byId.get(id);
+  }
+  const dead = (id: number, at = 5): Cell => ({ ...cell(id, 0, 0), death_at_ms: at });
+
+  it('admits a live entrant the graph does not hold yet', () => {
+    const diff = planDisplayMeshDiff(
+      { entered: [7], exited: [], updated: [] },
+      stagedGraph([1]),
+      stage([cell(1, 0, 0), cell(7, 1, 0)]),
+    );
+    expect(diff).toEqual({ born: [7], died: [], evicted: [] });
+  });
+
+  it('does not re-admit a member the graph already holds', () => {
+    const diff = planDisplayMeshDiff(
+      { entered: [1], exited: [], updated: [1] },
+      stagedGraph([1]),
+      stage([cell(1, 0, 0)]),
+    );
+    expect(diff).toEqual({ born: [], died: [], evicted: [] });
+  });
+
+  it('retracts a staged member that died (death arrives as a canonical update)', () => {
+    const diff = planDisplayMeshDiff(
+      { entered: [], exited: [], updated: [1] },
+      stagedGraph([1]),
+      stage([dead(1)]),
+    );
+    expect(diff).toEqual({ born: [], died: [1], evicted: [] });
+  });
+
+  it('evicts a member that left the stage alive — no retract', () => {
+    const diff = planDisplayMeshDiff(
+      { entered: [], exited: [1], updated: [] },
+      stagedGraph([1]),
+      stage([cell(1, 0, 0)]),
+    );
+    expect(diff).toEqual({ born: [], died: [], evicted: [1] });
+  });
+
+  // The curated queues drop the dead, so a member killed this batch can leave
+  // membership in the SAME batch. Which channel reported it must not decide
+  // whether its fibres retract or simply go.
+  it('retracts a member dropped BECAUSE it died, not just gc it', () => {
+    const diff = planDisplayMeshDiff(
+      { entered: [], exited: [1], updated: [] },
+      stagedGraph([1]),
+      stage([dead(1)]),
+    );
+    expect(diff).toEqual({ born: [], died: [1], evicted: [] });
+  });
+
+  it('lets admission outrank exit for an id listed in both', () => {
+    const diff = planDisplayMeshDiff(
+      { entered: [1], exited: [1], updated: [] },
+      stagedGraph([1]),
+      stage([cell(1, 0, 0)]),
+    );
+    expect(diff).toEqual({ born: [], died: [], evicted: [] });
+  });
+
+  it('ignores ids the graph never held and the stage cannot resolve', () => {
+    const diff = planDisplayMeshDiff(
+      { entered: [9], exited: [8], updated: [7] },
+      stagedGraph([1]),
+      stage([cell(1, 0, 0)]),
+    );
+    expect(diff).toEqual({ born: [], died: [], evicted: [] });
+  });
+
+  it('feeds planMeshUpdate a removal batch that retracts the right fibre', () => {
+    const graph = emptyNeighborGraph();
+    graph.adjacency.set(1, new Set([5]));
+    graph.adjacency.set(5, new Set([1]));
+    graph.edges.push({ from: 1, to: 5, d: 2 });
+    const diff = planDisplayMeshDiff(
+      { entered: [], exited: [], updated: [1] },
+      graph,
+      stage([dead(1), cell(5, 2, 0)]),
+    );
+    const update = planMeshUpdate(diff, graph, new Map(), 10, { k: 4 }, 60);
+    expect(update.deathKeys).toEqual(['1|5']);
+    expect(update.deathEndByKey.get('1|5')).toBe('from');
+    expect(update.evictKeys).toEqual([]);
+    expect(graph.adjacency.has(1)).toBe(false);
   });
 });

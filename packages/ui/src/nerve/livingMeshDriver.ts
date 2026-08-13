@@ -16,6 +16,71 @@ export interface CellsDiff {
   readonly evicted: readonly number[];
 }
 
+/** Lifecycle subset of one display-plane membership journal. */
+export interface DisplayMembershipDiff {
+  readonly entered: readonly number[];
+  readonly exited: readonly number[];
+  readonly updated: readonly number[];
+}
+
+/**
+ * Map one display-plane membership journal onto the living-mesh diff the eager
+ * driver applies to the display graph. Mirrors `feedDisplayGraphJournal`'s
+ * admission rule, so the eager mutation and the journal the worker receives
+ * describe the same change set:
+ *
+ *   - a live member the graph does not hold yet is BORN,
+ *   - a member that has died is DIED — its fibres retract,
+ *   - a member that merely left the stage is EVICTED — its fibres just go.
+ *
+ * `entered` and `updated` are both admission channels: a canonical update is
+ * how a member that entered dead (or unresolved) later becomes live, and it is
+ * also how a staged member's death reaches this journal. Admission outranks
+ * exit for an id listed in both, matching the journal's remove-then-upsert
+ * order.
+ *
+ * ⚠️ A member the plane drops BECAUSE it died arrives on `exited`, not
+ * `updated` — the curated queues do not hoard the dead. Retract-vs-gc is
+ * therefore decided by the cell's own lifecycle, never by which channel
+ * reported it; otherwise the same death animates differently depending on
+ * whether the plane happened to re-stage that slot in the same batch.
+ *
+ * Pure: reads `graph.adjacency` for membership only.
+ */
+export function planDisplayMeshDiff(
+  changes: DisplayMembershipDiff,
+  graph: NeighborGraph,
+  resolve: (id: number) => Cell | undefined,
+): CellsDiff {
+  const exiting = new Set(changes.exited);
+  const born: number[] = [];
+  const died: number[] = [];
+  const decided = new Set<number>();
+  const admit = (id: number): void => {
+    if (decided.has(id)) return;
+    decided.add(id);
+    exiting.delete(id);
+    const held = graph.adjacency.has(id);
+    const cell = resolve(id);
+    if (cell === undefined || cell.death_at_ms !== null) {
+      if (held) died.push(id);
+      return;
+    }
+    if (!held) born.push(id);
+  };
+  for (const id of changes.entered) admit(id);
+  for (const id of changes.updated) admit(id);
+
+  const evicted: number[] = [];
+  for (const id of exiting) {
+    if (!graph.adjacency.has(id)) continue;
+    const cell = resolve(id);
+    if (cell !== undefined && cell.death_at_ms !== null) died.push(id);
+    else evicted.push(id);
+  }
+  return { born, died, evicted };
+}
+
 /** Above this estimated birth-to-existing-Cell comparison count, one spatial
  * bulk rebuild is cheaper than scanning the complete map once per birth. */
 export const MAX_INCREMENTAL_BIRTH_COMPARISONS = 250_000;
