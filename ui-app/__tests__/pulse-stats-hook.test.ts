@@ -10,5 +10,9 @@ describe('installPulseStatsHook', () => {
     const snap = window.__pulseStats!();
     expect(snap).toHaveProperty('blocksTotal');
     expect(snap).toHaveProperty('linkReasons');
+    // Recall counters ride the same surface: unification moved historical
+    // recall onto the staged graph, so its availability has to be observable.
+    expect(snap).toHaveProperty('recallOutcomes');
+    expect(snap).toHaveProperty('recalledRatePct');
   });
 });

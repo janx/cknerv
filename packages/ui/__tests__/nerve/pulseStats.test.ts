@@ -67,3 +67,35 @@ describe('resetPulseStats', () => {
     expect(s.blocksLit).toBe(0);
   });
 });
+
+describe('pulseStats.bumpRecall', () => {
+  beforeEach(() => resetPulseStats());
+
+  it('counts recall outcomes and reports the success rate', () => {
+    pulseStats.bumpRecall('recalled');
+    pulseStats.bumpRecall('no-source', 2);
+    pulseStats.bumpRecall('no-route');
+    const snap = snapshotPulseStats();
+    expect(snap.recallOutcomes).toEqual({
+      recalled: 1,
+      'link-missing': 0,
+      'no-source': 2,
+      'no-route': 1,
+    });
+    expect(snap.recalledRatePct).toBeCloseTo(25, 6);
+  });
+
+  it('reports a zero rate before any recall is attempted', () => {
+    expect(snapshotPulseStats().recalledRatePct).toBe(0);
+  });
+
+  it('keeps recall counters clear of the per-link pulse counters', () => {
+    pulseStats.bump('fired');
+    pulseStats.bumpRecall('recalled');
+    const snap = snapshotPulseStats();
+    expect(snap.firedRatePct).toBeCloseTo(100, 6);
+    expect(snap.recalledRatePct).toBeCloseTo(100, 6);
+    expect(snap.linkReasons.fired).toBe(1);
+    expect(snap.recallOutcomes.recalled).toBe(1);
+  });
+});

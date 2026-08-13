@@ -1138,6 +1138,7 @@ export default function NeuralNetwork({
         && activeTraceRequestRef.current === null
         && traceFocusRef.current === null;
       if (alreadyUnavailable) return;
+      pulseStats.bumpRecall('link-missing');
       // Missing evidence is not an aesthetic exit. A reorg invalidates the
       // claim immediately, including packets and afterimages already queued.
       invalidateMemoryTrace(traceRequest);
@@ -1165,6 +1166,16 @@ export default function NeuralNetwork({
         maxPulses: traceMaxPulses ?? pulses?.maxPulsesPerLink,
         targetCellId: traceRequest.targetCellId,
       },
+    );
+    // Split the failures apart, because they call for different repairs: a
+    // recall with no source lost its endpoints to the stage, while one with
+    // sources but no route lost the fibres between them.
+    pulseStats.bumpRecall(
+      trace.pulses.length > 0
+        ? 'recalled'
+        : trace.sourceKind === 'none'
+          ? 'no-source'
+          : 'no-route',
     );
     const plannedFocus = deriveConsensusMemoryTraceFocus(trace, startSec, key);
     const recordBridge = deriveConsensusMemoryRecordBridge(

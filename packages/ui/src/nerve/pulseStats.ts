@@ -22,6 +22,17 @@ export type DropReason =
  *  neighbour graph = the stale/throttled-graph race. */
 export type PathFail = 'endpoint-missing' | 'no-path';
 
+/** Per-recall terminal outcome. `recalled` is the success bucket; the rest are
+ *  the reasons one user-driven recall produced no route. Recall plans on the
+ *  staged graph, so `no-source` counts links whose endpoints have ALL left the
+ *  stage — the cost worth measuring before deciding whether an anchored
+ *  free-space route is worth building. */
+export type RecallOutcome =
+  | 'recalled'
+  | 'link-missing'
+  | 'no-source'
+  | 'no-route';
+
 /** Write side, so `planPulses` stays decoupled from the singleton. */
 export interface PulseStatsSink {
   bump(reason: DropReason, n?: number): void;
@@ -31,6 +42,8 @@ export interface PulseStatsSink {
 export interface PulseStatsSnapshot {
   linkReasons: Record<DropReason, number>;
   pathFails: Record<PathFail, number>;
+  /** User-driven historical recalls, by terminal outcome. */
+  recallOutcomes: Record<RecallOutcome, number>;
   /** All blocks observed (one per `pulse` delta), incl. empty ones. */
   blocksTotal: number;
   /** Blocks that emitted ≥1 tx-link. */
@@ -45,6 +58,8 @@ export interface PulseStatsSnapshot {
   blocksLinksButDark: number;
   /** fired / (all planPulses terminal outcomes), as a percentage. */
   firedRatePct: number;
+  /** recalled / (all recall outcomes), as a percentage. */
+  recalledRatePct: number;
 }
 
 function zeroReasons(): Record<DropReason, number> {
@@ -61,11 +76,16 @@ function zeroReasons(): Record<DropReason, number> {
 function zeroPathFails(): Record<PathFail, number> {
   return { 'endpoint-missing': 0, 'no-path': 0 };
 }
+function zeroRecallOutcomes(): Record<RecallOutcome, number> {
+  return { recalled: 0, 'link-missing': 0, 'no-source': 0, 'no-route': 0 };
+}
 
 interface PulseStatsState extends PulseStatsSink {
   linkReasons: Record<DropReason, number>;
   pathFails: Record<PathFail, number>;
+  recallOutcomes: Record<RecallOutcome, number>;
   blocksTotal: number;
+  bumpRecall(outcome: RecallOutcome, n?: number): void;
   // Internal block-rollup state. `link.block` is monotonic non-decreasing, so
   // we close the current block when a strictly different block id arrives.
   _curBlock: number;
@@ -81,6 +101,7 @@ interface PulseStatsState extends PulseStatsSink {
 export const pulseStats: PulseStatsState = {
   linkReasons: zeroReasons(),
   pathFails: zeroPathFails(),
+  recallOutcomes: zeroRecallOutcomes(),
   blocksTotal: 0,
   _curBlock: -1,
   _curBlockLit: false,
@@ -92,6 +113,9 @@ export const pulseStats: PulseStatsState = {
   },
   bumpPath(reason, n = 1) {
     this.pathFails[reason] += n;
+  },
+  bumpRecall(outcome, n = 1) {
+    this.recallOutcomes[outcome] += n;
   },
 
   observeLink(block, lit) {
@@ -122,9 +146,15 @@ export const pulseStats: PulseStatsState = {
       this.linkReasons['no-source'] +
       this.linkReasons['all-paths-failed'] +
       this.linkReasons['batch-budget'];
+    const recallTotal =
+      this.recallOutcomes.recalled +
+      this.recallOutcomes['link-missing'] +
+      this.recallOutcomes['no-source'] +
+      this.recallOutcomes['no-route'];
     return {
       linkReasons: { ...this.linkReasons },
       pathFails: { ...this.pathFails },
+      recallOutcomes: { ...this.recallOutcomes },
       blocksTotal: this.blocksTotal,
       blocksWithLinks,
       blocksLit,
@@ -133,12 +163,17 @@ export const pulseStats: PulseStatsState = {
       blocksLinksButDark: Math.max(0, blocksWithLinks - blocksLit),
       firedRatePct:
         terminal === 0 ? 0 : (this.linkReasons.fired / terminal) * 100,
+      recalledRatePct:
+        recallTotal === 0
+          ? 0
+          : (this.recallOutcomes.recalled / recallTotal) * 100,
     };
   },
 
   reset() {
     this.linkReasons = zeroReasons();
     this.pathFails = zeroPathFails();
+    this.recallOutcomes = zeroRecallOutcomes();
     this.blocksTotal = 0;
     this._curBlock = -1;
     this._curBlockLit = false;
