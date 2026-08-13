@@ -90,7 +90,6 @@ pub async fn run(workdir: PathBuf, cfg: ResolvedConfig) -> Result<()> {
     let galaxy_config = cknerv_core::projection::cells::CellGalaxyConfig {
         cell_cap: cfg.galaxy.cell_cap,
         recent_links_cap: cfg.galaxy.recent_links_cap,
-        snapshot_scope: cfg.galaxy.snapshot_scope,
         // Forty-eight rollback blocks plus their parent proof fit inside the
         // server's persisted 50-block canonical evidence ring. Deeper changes
         // rebuild the profile-selected replay window instead of keeping every

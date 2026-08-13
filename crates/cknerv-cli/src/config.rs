@@ -6,8 +6,6 @@ use std::path::Path;
 
 use url::Url;
 
-use cknerv_core::projection::cells::SnapshotScope;
-
 /// On-disk config shape. All-optional: a missing key falls through to the
 /// CLI override (if any) then the built-in default.
 #[derive(Debug, Default, serde::Deserialize)]
@@ -53,9 +51,6 @@ pub enum GalaxyProfile {
 pub struct GalaxySection {
     pub profile: Option<GalaxyProfile>,
     pub recent_links_cap: Option<usize>,
-    /// `"retained"` (default) ships every retained row; `"staged"` ships only
-    /// what the display plane put on stage. See `SnapshotScope`.
-    pub snapshot_scope: Option<SnapshotScope>,
     #[serde(default)]
     pub topology: GalaxyTopologySection,
     #[serde(default)]
@@ -90,11 +85,6 @@ pub struct ResolvedGalaxyConfig {
     /// rehydrates once.
     pub cell_cap: usize,
     pub recent_links_cap: usize,
-    /// How many rows a snapshot carries. Defaults to the historical
-    /// `Retained` under every profile, so turning the reduction on is always
-    /// an explicit line in cknerv.toml — and turning it back off is deleting
-    /// that line, with no other moving part.
-    pub snapshot_scope: SnapshotScope,
     pub topology: ResolvedGalaxyTopologyConfig,
     pub pulses: ResolvedGalaxyPulsesConfig,
 }
@@ -145,7 +135,6 @@ impl ResolvedGalaxyConfig {
             GalaxyProfile::Devnet => Self {
                 profile,
                 cell_cap: cknerv_core::projection::cells::CELL_CAP,
-                snapshot_scope: SnapshotScope::default(),
                 recent_links_cap: 1024,
                 topology: ResolvedGalaxyTopologyConfig {
                     neighbor_k: 5,
@@ -162,7 +151,6 @@ impl ResolvedGalaxyConfig {
             GalaxyProfile::Mainnet => Self {
                 profile,
                 cell_cap: cknerv_core::projection::cells::CELL_CAP,
-                snapshot_scope: SnapshotScope::default(),
                 recent_links_cap: 1536,
                 topology: ResolvedGalaxyTopologyConfig {
                     neighbor_k: 3,
@@ -179,7 +167,6 @@ impl ResolvedGalaxyConfig {
             GalaxyProfile::Auto | GalaxyProfile::Testnet | GalaxyProfile::Custom => Self {
                 profile,
                 cell_cap: cknerv_core::projection::cells::CELL_CAP,
-                snapshot_scope: SnapshotScope::default(),
                 recent_links_cap: 2048,
                 topology: ResolvedGalaxyTopologyConfig {
                     neighbor_k: 4,
@@ -260,9 +247,6 @@ pub fn resolve(
         })
         .transpose()?;
     let mut galaxy = ResolvedGalaxyConfig::for_profile(profile);
-    if let Some(v) = file.galaxy.snapshot_scope {
-        galaxy.snapshot_scope = v;
-    }
     if let Some(v) = file.galaxy.recent_links_cap {
         galaxy.recent_links_cap = v;
     }
