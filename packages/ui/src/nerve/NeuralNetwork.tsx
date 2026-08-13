@@ -1,8 +1,10 @@
 // Orchestrator for the Cell consensus-flow overlay.
 //
 // Pipeline:
-//   1. cellsCache changes → maintain the complete routing graph, then derive
-//      a sparse passive graph over the exact CellGalaxy display subset.
+//   1. cellsCache changes → maintain ONE neighbour graph over the exact
+//      CellGalaxy display subset, then derive a sparse passive graph from it.
+//      Everything downstream reads that single graph: a pulse can only exist
+//      where the viewer can see the fibre it rides.
 //   2. Each new CellLink delta → planPulses derives source cells from
 //      parent tx siblings + finds shortest paths to the new outputs
 //      through the neighbour graph. Each pulse is queued.
@@ -47,9 +49,7 @@ import {
 import {
   consumeTopologyJournal,
   createDisplayGraphJournalFeed,
-  createTopologyJournal,
   feedDisplayGraphJournal,
-  feedTopologyJournal,
   invalidateTopologyJournal,
 } from '../geometry/topologyJournal';
 import { fabricStats } from './fabricStats';
@@ -76,7 +76,7 @@ import { pulseStats } from './pulseStats';
 import {
   planDisplayMeshDiff,
   planMeshUpdate,
-  shouldBulkRebuildRoutingGraph,
+  shouldDeferBirthsToBulkRebuild,
 } from './livingMeshDriver';
 import NeuralFabric, { type NeuralFabricHandles } from './NeuralFabric';
 import {
@@ -365,22 +365,20 @@ export default function NeuralNetwork({
   }, [targetAllocationEdges, fabricAllocation]);
   const particleCapMul = QUALITY_PRESETS[quality].particleCapMul;
   const topologyKey = `${topology?.neighborK ?? ''}:${topology?.maxEdgeLength ?? ''}`;
-  // The display graph additionally re-selects when the nerve tuning moves;
-  // the routing graph keys on spatial topology alone (tuning never touches
-  // routing, so a knob drag must not trigger a kNN rebuild).
+  // Spatial topology alone decides the graph; the passive selection on top of
+  // it additionally re-selects when the nerve tuning moves, so a knob drag
+  // rethins the fibres without paying for a kNN rebuild.
   const displaySelectionKey = `${topologyKey}|n${resolvedNerveBudget}`
     + `:c${nerveCoverageShare}:t${nerveTrunkShare}:w${nerveTwigShare}`;
 
-  // The complete neighbour graph is maintained incrementally for causal pulse
-  // routing. Passive rendering is deliberately separate: it is rebuilt over
-  // the exact CellGalaxy display subset, then thinned to a bounded grown arbor
-  // plus a small deterministic cross-link sample. Hidden cache
-  // entries therefore cannot leave visible fibres behind.
+  // One graph, built over the exact CellGalaxy display subset and maintained
+  // incrementally between builds. The passive layer is a SELECTION from it —
+  // a bounded grown arbor plus a small deterministic cross-link sample — not a
+  // second graph, so a lit hop and the fibre under it can never disagree.
   //
-  // Live changes stay incremental. Full canonical rebuilds run in a latest-
-  // only Worker for bootstrap, recovery, or explicit topology changes; doing
-  // them on every birth would continually cancel useful topology work.
-  const graphRef = useRef<NeighborGraph>(emptyNeighborGraph());
+  // Live changes stay incremental. Full rebuilds run in a latest-only Worker
+  // for bootstrap, recovery, or explicit topology changes; doing them on every
+  // birth would continually cancel useful topology work.
   const passiveGraphRef = useRef<NeighborGraph>(emptyNeighborGraph());
   /** Consecutive delta-applied builds since the last full setFabric
    * reconcile (see the delta path below). */
@@ -389,11 +387,10 @@ export default function NeuralNetwork({
    * accumulated per cache generation, handed to build() and cleared
    * speculatively at issuance — every failure path (supersession, worker
    * loss, sync fallback) funnels through the worker generation check into a
-   * full re-pack, so lost entries can never corrupt topology. The display
-   * feed consumes the server display journal (entered→upserts, exited→
-   * removes, updated→upserts); the routing journal stays on the canonical
-   * cache journal. */
-  const routingJournalRef = useRef(createTopologyJournal());
+   * full re-pack, so lost entries can never corrupt topology. The feed
+   * consumes the server display journal (entered→upserts, exited→removes,
+   * updated→upserts), falling back to the canonical cache journal when no
+   * display plane is present. */
   const displayFeedRef = useRef(createDisplayGraphJournalFeed());
   /** Bumped whenever a (re)mounted fabric rehydrates via onFabricReady.
    * A build response may apply a selection DELTA only when no rehydration
@@ -408,90 +405,32 @@ export default function NeuralNetwork({
   const displayRenderSetRef = useRef(createCellRenderSetState());
   const fabricHandlesRef = useRef<NeuralFabricHandles | null>(null);
   const inspectionFieldSnapshotRef = useRef<CellInspectionField | null>(null);
-  const bootstrappedRef = useRef(false);
-  const routingGraphReadyRef = useRef(false);
-  const routedCellsTokenRef = useRef<object | null>(null);
-  const routingTopologyRef = useRef('');
   const displayTopologyRef = useRef('');
   const displayTopologyVersionRef = useRef(-1);
   const displayInspectionCellIdRef = useRef<number | null>(null);
   const displayBootstrappedRef = useRef(false);
-  const routingBuildGenerationRef = useRef(0);
   const displayBuildGenerationRef = useRef(0);
-  const latestCellsTokenRef = useRef(cellsCache.cellsToken);
-  const latestRoutingTopologyRef = useRef(topologyKey);
   const latestInspectionCellIdRef = useRef(inspectionCellId);
   const latestInspectionFieldRef = useRef(inspectionFieldRef);
   const displayRequestedCellsRef = useRef<Map<number, Cell> | null>(null);
   const displayRequestedTopologyRef = useRef('');
   const displayRequestedTopologyVersionRef = useRef(-1);
-  const routingGraphBuilder = useMemo(() => createNeighborGraphBuilder(), []);
   const displayGraphBuilder = useMemo(() => createNeighborGraphBuilder(), []);
-  const [routingGraphVersion, setRoutingGraphVersion] = useState(0);
   /** Bumped when a display build swaps the graph pulses ride, so link batches
    *  that arrive in the same commit plan against the graph that just landed. */
   const [displayGraphVersion, setDisplayGraphVersion] = useState(0);
 
-  latestCellsTokenRef.current = cellsCache.cellsToken;
-  latestRoutingTopologyRef.current = topologyKey;
   latestInspectionCellIdRef.current = inspectionCellId;
   latestInspectionFieldRef.current = inspectionFieldRef;
 
   useEffect(() => () => {
-    routingBuildGenerationRef.current += 1;
     displayBuildGenerationRef.current += 1;
     // `cancel` releases Workers while remaining reusable for React Strict
     // Mode's development-only setup→cleanup→setup effect replay.
-    routingGraphBuilder.cancel();
     displayGraphBuilder.cancel();
     displayRequestedCellsRef.current = null;
     displayRequestedTopologyVersionRef.current = -1;
-  }, [displayGraphBuilder, routingGraphBuilder]);
-
-  const scheduleRoutingGraphBuild = useCallback((
-    cells: ReadonlyMap<number, Cell>,
-    cellsToken: object,
-    nextTopologyKey: string,
-  ) => {
-    const generation = routingBuildGenerationRef.current + 1;
-    routingBuildGenerationRef.current = generation;
-    routingGraphReadyRef.current = false;
-    void routingGraphBuilder.build(cells, {
-      topology: {
-        k: topology?.neighborK,
-        maxEdgeLength: topology?.maxEdgeLength,
-      },
-      // The routing graph always builds from the retained map, so the cache
-      // journal applies directly. Packed synchronously inside build();
-      // cleared speculatively right after (see journal ref docs).
-      cellsJournal: consumeTopologyJournal(routingJournalRef.current),
-      // Patch-deserialize against the graph being replaced: unchanged nodes
-      // reuse their neighbour Sets, so a per-block completion costs
-      // O(changed) instead of O(V+E). The old graph is discarded on swap.
-      reuseFrom: () => ({ graph: graphRef.current, passiveGraph: null }),
-    }).then((result) => {
-      if (
-        result === null
-        || routingBuildGenerationRef.current !== generation
-        || latestCellsTokenRef.current !== cellsToken
-        || latestRoutingTopologyRef.current !== nextTopologyKey
-      ) return;
-      graphRef.current = result.graph;
-      routedCellsTokenRef.current = cellsToken;
-      routingTopologyRef.current = nextTopologyKey;
-      bootstrappedRef.current = true;
-      routingGraphReadyRef.current = true;
-      setRoutingGraphVersion((version) => version + 1);
-    }).catch((error: unknown) => {
-      if (routingBuildGenerationRef.current !== generation) return;
-      routingGraphReadyRef.current = false;
-      console.error('failed to build Cell routing topology', error);
-    });
-  }, [
-    routingGraphBuilder,
-    topology?.neighborK,
-    topology?.maxEdgeLength,
-  ]);
+  }, [displayGraphBuilder]);
 
   const syncDisplayFabric = useCallback(() => {
     // Accumulate this cache generation into the display-graph journal
@@ -557,9 +496,9 @@ export default function NeuralNetwork({
       displayInspectionCellIdRef.current !== inspectionCellId
     );
 
-    // New births append behind the bounded visible prefix in the usual 20K
-    // cache. They still join the complete routing graph below, but must not
-    // rebuild the unchanged 6K display graph or restart every fibre lifecycle.
+    // A canonical birth that the plane does not stage changes nothing here:
+    // membership is what this graph is built from, so an unchanged stage must
+    // not rebuild it and restart every fibre lifecycle.
     if (!topologyChanged && !inspectionChanged) {
       if (inspectionFieldRef) {
         inspectionFieldRef.current = inspectionFieldSnapshotRef.current;
@@ -591,8 +530,16 @@ export default function NeuralNetwork({
       // map the build below packs, closing the window between the delta and
       // the worker completion. Graph-only: resting fibres still grow from the
       // authoritative passive selection, so an edge the selection never
-      // confirms is never rendered.
-      if (meshDiff && meshDiff.born.length > 0) {
+      // confirms is never rendered. Past the comparison ceiling the eager pass
+      // is pure duplicated work — the build superseding it is already issued.
+      if (
+        meshDiff
+        && meshDiff.born.length > 0
+        && !shouldDeferBirthsToBulkRebuild(
+          meshDiff.born.length,
+          displayCells.size,
+        )
+      ) {
         planMeshUpdate(
           { born: meshDiff.born, died: NO_CELL_IDS, evicted: NO_CELL_IDS },
           displayGraphRef.current,
@@ -783,84 +730,6 @@ export default function NeuralNetwork({
   ]);
 
   useEffect(() => {
-    const cells = cellsCache.cells;
-    const now = simClock.elapsedSec;
-    const opts = { k: topology?.neighborK, maxEdgeLength: topology?.maxEdgeLength };
-
-    if (!bootstrappedRef.current) {
-      if (cells.size === 0) {
-        // An authoritative empty snapshot can supersede a populated bootstrap
-        // request before it completes. Stop that stale CPU work, then wait for
-        // the first populated frame as before.
-        routingBuildGenerationRef.current += 1;
-        routingGraphBuilder.cancel();
-        return;
-      }
-      scheduleRoutingGraphBuild(cells, cellsCache.cellsToken, topologyKey);
-      return;
-    }
-
-    if (
-      cellsCache.cellChanges.reset
-      || routingTopologyRef.current !== topologyKey
-    ) {
-      scheduleRoutingGraphBuild(cells, cellsCache.cellsToken, topologyKey);
-      return;
-    }
-
-    const diff = cellsCache.cellChanges;
-    feedTopologyJournal(routingJournalRef.current, cellsCache);
-    if (routedCellsTokenRef.current === cellsCache.cellsToken) return;
-    if (
-      !routingGraphReadyRef.current
-      || diff.baseToken !== routedCellsTokenRef.current
-    ) {
-      // React may coalesce multiple external-store updates. A journal is safe
-      // only when it starts from the exact Cell Map already represented by the
-      // live graph; otherwise rebuild once instead of applying a partial diff
-      // across a skipped cache state.
-      scheduleRoutingGraphBuild(cells, cellsCache.cellsToken, topologyKey);
-      return;
-    }
-
-    // The pure driver mutates the routing graph immediately, closing the
-    // stale-graph window for pulses. Fabric instructions are NOT emitted here:
-    // every rendered fibre lives in the display subset, so the display graph's
-    // own eager driver (`syncDisplayFabric`) owns retract/grow. Routing-graph
-    // removals are a superset whose extra keys were always fabric no-ops.
-    const bulkRebuild = shouldBulkRebuildRoutingGraph(
-      diff.born.length,
-      cells.size,
-    );
-    planMeshUpdate(
-      bulkRebuild ? { ...diff, born: [] } : diff,
-      graphRef.current,
-      cells,
-      now,
-      opts,
-      RIPPLE_STAGGER_MS,
-    );
-    if (bulkRebuild) {
-      // Backfill/high-output batches otherwise scan the entire retained map
-      // once per birth. Preserve death keys from the old graph above, then
-      // replace routing state with one canonical off-thread spatial rebuild.
-      scheduleRoutingGraphBuild(cells, cellsCache.cellsToken, topologyKey);
-    } else {
-      routedCellsTokenRef.current = cellsCache.cellsToken;
-    }
-
-  }, [
-    cellsCache.cellChanges,
-    cellsCache.cells,
-    cellsCache.cellsToken,
-    routingGraphBuilder,
-    scheduleRoutingGraphBuild,
-    topologyKey,
-    topology?.neighborK,
-    topology?.maxEdgeLength,
-  ]);
-
-  useEffect(() => {
     syncDisplayFabric();
   }, [syncDisplayFabric]);
 
@@ -887,9 +756,11 @@ export default function NeuralNetwork({
       lastLinksSeqRef.current = cellsCache.linksSeq;
       return;
     }
-    // Do not consume the bounded event queue against an obsolete/empty graph.
-    // The build completion version reruns this effect with the latest queue.
-    if (!routingGraphReadyRef.current) return;
+    // Do not consume the bounded event queue before there is a graph to route
+    // through. The build completion version reruns this effect with the latest
+    // queue. Only emptiness has to be gated now — the eager driver keeps the
+    // graph current between builds, so it is never merely obsolete.
+    if (!displayBootstrappedRef.current) return;
     const newestPulseSeq = cellsCache.pulseLinks.at(-1)?.seq ?? 0;
     if (newestPulseSeq < lastLinksSeqRef.current) {
       // A full snapshot can re-sequence the local evidence archive. WebSocket
@@ -1254,10 +1125,10 @@ export default function NeuralNetwork({
       }
       return;
     }
-    // Preserve the request until the canonical graph is ready. Marking it
-    // unavailable against the bootstrap graph would prevent the same key from
-    // being retried when the Worker completes.
-    if (!routingGraphReadyRef.current) return;
+    // Preserve the request until there is a graph to recall through. Marking
+    // it unavailable against the bootstrap graph would prevent the same key
+    // from being retried when the Worker completes.
+    if (!displayBootstrappedRef.current) return;
     const key = consensusMemoryTraceRequestKey(traceRequest);
     const link = cellsCache.recentLinks.find(
       (candidate) => candidate.seq === traceRequest.linkSeq,
@@ -1377,7 +1248,7 @@ export default function NeuralNetwork({
     publishTraceTargetResponse,
     reducedMotion,
     releaseMemoryPulses,
-    routingGraphVersion,
+    displayGraphVersion,
     sharedTraceFocusRef,
     traceDisplayRouteHopLock,
   ]);
@@ -1476,8 +1347,8 @@ export default function NeuralNetwork({
   const onFabricReady = useCallback((handles: NeuralFabricHandles) => {
     fabricHandlesRef.current = handles;
     fabricEpochRef.current += 1;
-    // Rehydrate only the bounded passive view. Causal routing continues to
-    // read the complete graphRef and full cache independently.
+    // Rehydrate only the bounded passive view; the graph and the staged map
+    // it was built from are untouched, so routes in flight keep their footing.
     handles.setFabric(
       passiveGraphRef.current,
       displayCellsRef.current,

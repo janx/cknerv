@@ -12,7 +12,7 @@ import {
   deadEndFor,
   planDisplayMeshDiff,
   planMeshUpdate,
-  shouldBulkRebuildRoutingGraph,
+  shouldDeferBirthsToBulkRebuild,
 } from '../../src/nerve/livingMeshDriver';
 
 function cell(id: number, x: number, z: number): Cell {
@@ -30,10 +30,13 @@ describe('livingMeshDriver helpers', () => {
     expect(deadEndFor('3|7', 3)).toBe('from');
     expect(deadEndFor('3|7', 7)).toBe('to');
   });
-  it('switches large birth batches to one routing-graph rebuild', () => {
-    expect(shouldBulkRebuildRoutingGraph(1, 1_000_000)).toBe(false);
-    expect(shouldBulkRebuildRoutingGraph(12, 20_000)).toBe(false);
-    expect(shouldBulkRebuildRoutingGraph(13, 20_000)).toBe(true);
+  it('leaves large birth batches to the rebuild already in flight', () => {
+    expect(shouldDeferBirthsToBulkRebuild(1, 1_000_000)).toBe(false);
+    expect(shouldDeferBirthsToBulkRebuild(12, 20_000)).toBe(false);
+    expect(shouldDeferBirthsToBulkRebuild(13, 20_000)).toBe(true);
+    // A full 12K stage tolerates 20 admissions before the ceiling bites.
+    expect(shouldDeferBirthsToBulkRebuild(20, 12_000)).toBe(false);
+    expect(shouldDeferBirthsToBulkRebuild(21, 12_000)).toBe(true);
     expect(MAX_INCREMENTAL_BIRTH_COMPARISONS).toBe(250_000);
   });
 });

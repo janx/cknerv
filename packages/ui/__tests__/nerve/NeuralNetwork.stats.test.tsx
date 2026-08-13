@@ -17,19 +17,51 @@ beforeEach(() => resetPulseStats());
 
 describe('NeuralNetwork drop instrumentation wiring', () => {
   it('consumes reducer Cell changes without rebuilding a lifecycle snapshot', () => {
-    expect(NETWORK_SOURCE).toContain('const diff = cellsCache.cellChanges');
-    expect(NETWORK_SOURCE).toContain('diff.baseToken !== routedCellsTokenRef.current');
     expect(NETWORK_SOURCE).toContain('syncCellRenderSet(');
     expect(NETWORK_SOURCE).toContain('displayTopologyVersionRef.current');
     expect(NETWORK_SOURCE).toContain('createNeighborGraphBuilder');
-    expect(NETWORK_SOURCE).toContain('scheduleRoutingGraphBuild');
-    expect(NETWORK_SOURCE).toContain('if (!routingGraphReadyRef.current) return');
-    expect(NETWORK_SOURCE).toContain('routingGraphBuilder.cancel()');
-    expect(NETWORK_SOURCE).not.toContain('routingGraphBuilder.dispose()');
+    expect(NETWORK_SOURCE).toContain('displayGraphBuilder.cancel()');
+    expect(NETWORK_SOURCE).not.toContain('displayGraphBuilder.dispose()');
     expect(NETWORK_SOURCE).not.toContain('buildNeighborGraph(cells, opts)');
     expect(NETWORK_SOURCE).not.toContain('diffAndSnapshotCells');
     expect(NETWORK_SOURCE).not.toContain('snapshotCells');
     expect(NETWORK_SOURCE).not.toContain('prevCellsRef');
+  });
+
+  // Replaces the former "routing graph is maintained separately" guard. A
+  // second graph over the retained map let pulses route through cells that are
+  // never rendered — 41% of sources on mainnet — so the invariant flipped from
+  // "keep both fresh" to "there is only one".
+  it('keeps exactly one neighbour graph, built over the staged subset', () => {
+    expect(NETWORK_SOURCE.match(/createNeighborGraphBuilder\(\)/g))
+      .toHaveLength(1);
+    // `graphRef` here is the deleted routing ref: `displayGraphRef` and
+    // `passiveGraphRef` both capitalise the G, so this cannot match them.
+    expect(NETWORK_SOURCE).not.toContain('graphRef');
+    expect(NETWORK_SOURCE).not.toContain('routing');
+  });
+
+  it('plans, validates and draws pulses on that one graph and its map', () => {
+    // Planning takes the pair together, so a route can never be found over
+    // edges whose endpoints the geometry lookup below cannot resolve.
+    expect(NETWORK_SOURCE).toContain(
+      '      displayCellsRef.current,\n      displayGraphRef.current,',
+    );
+    // Per-frame hop validation and hop geometry read the same pair.
+    expect(NETWORK_SOURCE).toContain(
+      'const adjacency = displayGraphRef.current.adjacency',
+    );
+    expect(NETWORK_SOURCE).toContain('const cells = displayCellsRef.current');
+    // Nothing routes over the retained map any more.
+    expect(NETWORK_SOURCE).not.toContain('const cells = cellsCache.cells');
+  });
+
+  it('maintains that graph eagerly between worker builds', () => {
+    expect(NETWORK_SOURCE).toContain('planDisplayMeshDiff(');
+    // The licence for replaying a diff in place, and the ceiling past which
+    // the rebuild already in flight is left to do the work.
+    expect(NETWORK_SOURCE).toContain('feed.fresh && feed.chained');
+    expect(NETWORK_SOURCE).toContain('shouldDeferBirthsToBulkRebuild(');
   });
 
   it('journals exact Cell ids for sparse flash-buffer uploads', () => {

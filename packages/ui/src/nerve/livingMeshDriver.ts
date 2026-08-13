@@ -85,7 +85,11 @@ export function planDisplayMeshDiff(
  * bulk rebuild is cheaper than scanning the complete map once per birth. */
 export const MAX_INCREMENTAL_BIRTH_COMPARISONS = 250_000;
 
-export function shouldBulkRebuildRoutingGraph(
+/** Whether a birth batch should be left to the worker rebuild instead of being
+ * admitted one cell at a time. Each eager admission scans the staged map for
+ * its k nearest, so a big batch costs births × cells comparisons on the main
+ * thread — and the rebuild that supersedes it is already in flight. */
+export function shouldDeferBirthsToBulkRebuild(
   birthCount: number,
   cellCount: number,
 ): boolean {
