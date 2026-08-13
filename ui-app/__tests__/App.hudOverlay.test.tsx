@@ -23,8 +23,10 @@ describe('HudOverlay wiring', () => {
 
   it('owns the SoundCloud Jukebox as a floating app control', () => {
     expect(APP_SOURCE).toContain("import Jukebox from './Jukebox'");
-    expect(APP_SOURCE).toContain('      <Jukebox />');
-    expect(APP_SOURCE).not.toContain('topBarActions={<Jukebox />}');
+    expect(APP_SOURCE).toContain(
+      '      <Jukebox blockPulseAtMs={cellsCache.lastPulseAtMs} />',
+    );
+    expect(APP_SOURCE).not.toContain('topBarActions={<Jukebox');
   });
 
   it('routes each resolved identity proof from the scene inspector to the matching galaxy Cell', () => {

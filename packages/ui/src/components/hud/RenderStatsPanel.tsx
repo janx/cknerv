@@ -9,9 +9,10 @@ import {
 import { useQualityRuntime } from '../../tweaks/qualityPresets';
 
 // Bottom-right — the corner freed by the mesh-rail change; clear of leva
-// (top-right). pointerEvents:none → display-only, never eats clicks.
+// (top-right). The bottom offset clears the app's floating Jukebox chip, which
+// docks in the same corner. pointerEvents:none → display-only, never eats clicks.
 const PANEL_STYLE: CSSProperties = {
-  position: 'fixed', right: 14, bottom: 14, zIndex: 15,
+  position: 'fixed', right: 14, bottom: 56, zIndex: 15,
   pointerEvents: 'none', minWidth: 116,
 };
 

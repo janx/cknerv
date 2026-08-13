@@ -10,7 +10,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import Jukebox, {
   DEFAULT_JUKEBOX_PLAYBACK_MODE,
   DEFAULT_JUKEBOX_TRACK_ID,
-  JUKEBOX_BUTTON_SIZE_PX,
+  JUKEBOX_CHIP_HEIGHT_PX,
+  JUKEBOX_INVITE_DELAY_MS,
+  JUKEBOX_INVITE_HOLD_MS,
+  JUKEBOX_INVITE_TEXT,
+  JUKEBOX_MODULE_CODE,
   JUKEBOX_PANEL_WIDTH_PX,
   JUKEBOX_PLAYER_HEIGHT_PX,
   JUKEBOX_PLAYBACK_MODES,
@@ -22,6 +26,7 @@ import Jukebox, {
   SOUNDCLOUD_WIDGET_API_SRC,
 } from '../src/Jukebox';
 
+const OPEN_LABEL = 'Open Jukebox and play default SoundCloud track';
 const MICHELLE_TRACK = JUKEBOX_TRACKS[0];
 const ARIANNE_TRACK = JUKEBOX_TRACKS[1];
 const JOSETO_ARC_PIANO_TRACK = JUKEBOX_TRACKS[2];
@@ -60,6 +65,7 @@ function installWidgetMock(volume = 80) {
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.restoreAllMocks();
   document
     .querySelector('script[data-cknerv-soundcloud-widget-api="true"]')
@@ -113,7 +119,7 @@ describe('Jukebox', () => {
       track.embedUrl.includes('auto_play=true')
     ))).toBe(true);
     expect(opener.getAttribute('aria-expanded')).toBe('false');
-    expect(opener.textContent).toBe('');
+    expect(opener.textContent).toContain('BGM');
     expect(container.querySelector('.cknerv-top-bar-action-label')).toBeNull();
     expect(container.querySelector('iframe')).toBeNull();
 
@@ -418,8 +424,8 @@ describe('Jukebox', () => {
     expect(floating.style.position).toBe('fixed');
     expect(floating.style.right).toContain('safe-area-inset-right');
     expect(floating.style.bottom).toContain('safe-area-inset-bottom');
-    expect(opener.style.width).toBe(`${JUKEBOX_BUTTON_SIZE_PX}px`);
-    expect(opener.style.height).toBe(`${JUKEBOX_BUTTON_SIZE_PX}px`);
+    expect(opener.style.height).toBe(`${JUKEBOX_CHIP_HEIGHT_PX}px`);
+    expect(opener.style.maxWidth).toContain('100vw');
 
     fireEvent.click(opener);
 
@@ -507,6 +513,88 @@ describe('Jukebox', () => {
     expect(screen.getByRole('link', {
       name: 'Open piano version by JOSETO ARC on SoundCloud',
     }).getAttribute('href')).toBe(JOSETO_ARC_PIANO_TRACK.trackUrl);
+  });
+
+  it('names itself as a console module instead of hiding behind a glyph', () => {
+    render(<Jukebox />);
+    const opener = screen.getByRole('button', { name: OPEN_LABEL });
+
+    expect(opener.textContent).toContain('BGM');
+    expect(opener.textContent).toContain(JUKEBOX_MODULE_CODE);
+    expect(opener.querySelectorAll('.cknerv-jukebox-bar')).toHaveLength(3);
+    expect(document.getElementById('cknerv-jukebox-style')).not.toBeNull();
+  });
+
+  it('invites once with the track titles, then spends the invitation', () => {
+    vi.useFakeTimers();
+    render(<Jukebox />);
+    const opener = screen.getByRole('button', { name: OPEN_LABEL });
+    const invite = opener.querySelector(
+      '.cknerv-jukebox-invite',
+    ) as HTMLElement;
+
+    expect(invite.textContent).toBe(JUKEBOX_INVITE_TEXT);
+    expect(invite.getAttribute('data-jukebox-invite')).toBe('false');
+    expect(opener.getAttribute('data-jukebox-attract')).toBe('attract');
+
+    act(() => vi.advanceTimersByTime(JUKEBOX_INVITE_DELAY_MS));
+    expect(invite.getAttribute('data-jukebox-invite')).toBe('true');
+    expect(opener.getAttribute('data-jukebox-attract')).toBe('invite');
+
+    act(() => vi.advanceTimersByTime(JUKEBOX_INVITE_HOLD_MS));
+    expect(invite.getAttribute('data-jukebox-invite')).toBe('false');
+    expect(opener.getAttribute('data-jukebox-attract')).toBe('attract');
+
+    act(() => vi.advanceTimersByTime(JUKEBOX_INVITE_DELAY_MS * 3));
+    expect(invite.getAttribute('data-jukebox-invite')).toBe('false');
+  });
+
+  it('holds the invitation open while it is being read', () => {
+    vi.useFakeTimers();
+    render(<Jukebox />);
+    const opener = screen.getByRole('button', { name: OPEN_LABEL });
+    const invite = opener.querySelector(
+      '.cknerv-jukebox-invite',
+    ) as HTMLElement;
+
+    act(() => vi.advanceTimersByTime(JUKEBOX_INVITE_DELAY_MS));
+    fireEvent.pointerEnter(opener);
+    act(() => vi.advanceTimersByTime(JUKEBOX_INVITE_HOLD_MS * 4));
+    expect(invite.getAttribute('data-jukebox-invite')).toBe('true');
+
+    fireEvent.pointerLeave(opener);
+    act(() => vi.advanceTimersByTime(JUKEBOX_INVITE_HOLD_MS));
+    expect(invite.getAttribute('data-jukebox-invite')).toBe('false');
+  });
+
+  it('stops attracting for good once the player has been opened', () => {
+    vi.useFakeTimers();
+    render(<Jukebox />);
+    fireEvent.click(screen.getByRole('button', { name: OPEN_LABEL }));
+    fireEvent.click(screen.getByRole('button', {
+      name: 'Close Jukebox player',
+    }));
+
+    const opener = screen.getByRole('button', { name: OPEN_LABEL });
+    expect(opener.getAttribute('data-jukebox-attract')).toBe('settled');
+
+    act(() => vi.advanceTimersByTime(JUKEBOX_INVITE_DELAY_MS * 2));
+    expect(opener.getAttribute('data-jukebox-attract')).toBe('settled');
+    expect(
+      opener.querySelector('.cknerv-jukebox-invite')
+        ?.getAttribute('data-jukebox-invite'),
+    ).toBe('false');
+  });
+
+  it('ticks the equalizer once per block arrival', () => {
+    const { container, rerender } = render(<Jukebox blockPulseAtMs={1_000} />);
+    const bars = container.querySelector('.cknerv-jukebox-bars');
+
+    rerender(<Jukebox blockPulseAtMs={1_000} />);
+    expect(container.querySelector('.cknerv-jukebox-bars')).toBe(bars);
+
+    rerender(<Jukebox blockPulseAtMs={2_000} />);
+    expect(container.querySelector('.cknerv-jukebox-bars')).not.toBe(bars);
   });
 
   it('keeps Jukebox interactions inside the floating control', () => {

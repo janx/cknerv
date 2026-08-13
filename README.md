@@ -102,8 +102,14 @@ documented in [`docs/canvas-rendering.md`](docs/canvas-rendering.md).
 The dashboard includes an optional four-track SoundCloud Jukebox labeled
 `Vocal A`, `Vocal B`, `Piano A`, and `Piano B` for versions of
 `TSUBASA WO KUDASAI` and `Komm, süsser Tod`, collapsed into a small floating
-button in the bottom-right corner. SoundCloud is not contacted
-and no audio is loaded during dashboard startup. Clicking the button replaces it
+`SND·06` chip in the bottom-right corner: an equalizer mark, a `BGM` label, and
+the panels' own corner brackets. Until the Jukebox has been opened once, the
+equalizer idles slowly and ticks with each arriving block, and thirty seconds
+after load the chip widens once for seven seconds to name the two tracks before
+collapsing again; opening it retires both for the rest of the page's life, and
+`prefers-reduced-motion` retires the animation while keeping the words.
+SoundCloud is not contacted
+and no audio is loaded during dashboard startup. Clicking the chip replaces it
 with SoundCloud's official HTML5 player and requests playback of the selected
 track; browser autoplay policy may still require a second tap, especially on
 mobile. The Jukebox offers `SINGLE ∞` and `RANDOM ∞` playback modes and
@@ -116,9 +122,10 @@ the source recording's full length. The visible player is scaled and darkened
 inside a compact cknerv HUD shell, while its native controls and SoundCloud
 attribution remain intact.
 Closing the Jukebox removes the player, stops playback, and restores the floating
-button. The feature requires internet access, remains independent of chain
-events and visual timing, and is subject to SoundCloud's terms and regional
-availability.
+chip. The feature requires internet access, keeps playback independent of chain
+events and visual timing — the closed chip's idle equalizer tick is the one
+chain-driven detail, and it stops once the Jukebox has been opened — and is
+subject to SoundCloud's terms and regional availability.
 
 ## Tech Stack
 

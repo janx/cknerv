@@ -1109,7 +1109,7 @@ export default function App({
         build={build}
         colonyCount={topology.nodes.length}
       />
-      <Jukebox />
+      <Jukebox blockPulseAtMs={cellsCache.lastPulseAtMs} />
       {/* Render-stats HUD overlay (DOM sibling of HudOverlay, NOT in-Canvas):
           visible through the ` panel toggle or ?render-stats=1. */}
       <RenderStatsPanel forceVisible={forceRenderStats} />

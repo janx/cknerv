@@ -91,7 +91,19 @@ export type JukeboxPlaybackMode =
 export const DEFAULT_JUKEBOX_PLAYBACK_MODE: JukeboxPlaybackMode = 'single';
 // Match the CELL MESH panel's 302px content width plus 15px inline padding.
 export const JUKEBOX_PANEL_WIDTH_PX = 332;
-export const JUKEBOX_BUTTON_SIZE_PX = 32;
+export const JUKEBOX_CHIP_HEIGHT_PX = 28;
+/** The console module code, in the CKB·01 / MESH·03 grammar of the HUD panels —
+ *  it is what makes the closed Jukebox read as part of the instrument rather
+ *  than as a stray widget dropped on the scene. */
+export const JUKEBOX_MODULE_CODE = 'SND·06';
+/** The closed chip invites once, long after boot has settled, and only while
+ *  the Jukebox has never been opened on this page. Track titles are the pitch;
+ *  "jukebox" is not. Latin transliterations, because the HUD's CJK face is a
+ *  hand-subset woff2 that carries no kana. */
+export const JUKEBOX_INVITE_DELAY_MS = 30_000;
+export const JUKEBOX_INVITE_HOLD_MS = 7_000;
+export const JUKEBOX_INVITE_TEXT =
+  '// TSUBASA WO KUDASAI · KOMM, SÜSSER TOD';
 export const SOUNDCLOUD_NATIVE_PLAYER_HEIGHT_PX = 166;
 export const SOUNDCLOUD_PLAYER_SCALE = 0.72;
 export const JUKEBOX_PLAYER_HEIGHT_PX = Math.ceil(
@@ -104,6 +116,50 @@ const ORANGE = 'var(--hud-orange, #FF9830)';
 const INK = 'var(--hud-ink, #E8E8E8)';
 const DIM = 'var(--hud-dim, #7C8794)';
 const MONO = "'Share Tech Mono', ui-monospace, monospace";
+
+const JUKEBOX_STYLE_ID = 'cknerv-jukebox-style';
+
+/** Feature-local CSS, injected once beside the shared HUD theme. The closed
+ *  chip's whole attract behaviour lives here so that
+ *  `prefers-reduced-motion` can retire every animation at the platform level
+ *  instead of through a second React state machine — the invitation still
+ *  appears and still says what it says, it simply stops moving. */
+function injectJukeboxStyles(doc: Document = document): void {
+  if (doc.getElementById(JUKEBOX_STYLE_ID)) return;
+  const style = doc.createElement('style');
+  style.id = JUKEBOX_STYLE_ID;
+  style.textContent = [
+    '@keyframes cknerv-jukebox-eq-a{0%,100%{transform:scaleY(.42)}50%{transform:scaleY(1)}}',
+    '@keyframes cknerv-jukebox-eq-b{0%,100%{transform:scaleY(1)}46%{transform:scaleY(.34)}}',
+    '@keyframes cknerv-jukebox-eq-c{0%,100%{transform:scaleY(.6)}32%{transform:scaleY(.95)}}',
+    '@keyframes cknerv-jukebox-tick{0%{transform:scaleY(1)}16%{transform:scaleY(1.55)}100%{transform:scaleY(1)}}',
+    '@keyframes cknerv-jukebox-breathe{0%,100%{opacity:.72}50%{opacity:1}}',
+    '.cknerv-jukebox-bar{transform-box:fill-box;transform-origin:bottom}',
+    '.cknerv-jukebox-bars{transform-box:fill-box;transform-origin:bottom}',
+    // Live only while the Jukebox has never been opened: a quiet corner that
+    // moves is found by peripheral vision; a corner that keeps moving after
+    // you have answered it is a nag.
+    '[data-jukebox-attract="settled"] .cknerv-jukebox-glyph,'
+      + '[data-jukebox-attract="settled"] .cknerv-jukebox-bar,'
+      + '[data-jukebox-attract="settled"] .cknerv-jukebox-bars{animation:none}',
+    '.cknerv-jukebox-glyph{animation:cknerv-jukebox-breathe 3.4s ease-in-out infinite}',
+    '.cknerv-jukebox-bars{animation:cknerv-jukebox-tick .52s ease-out 1}',
+    '.cknerv-jukebox-bar-a{animation:cknerv-jukebox-eq-a 2.4s ease-in-out infinite}',
+    '.cknerv-jukebox-bar-b{animation:cknerv-jukebox-eq-b 3.1s ease-in-out infinite}',
+    '.cknerv-jukebox-bar-c{animation:cknerv-jukebox-eq-c 2.7s ease-in-out infinite}',
+    '.cknerv-jukebox-invite{box-sizing:border-box;max-width:0;overflow:hidden;'
+      + 'white-space:nowrap;opacity:0;'
+      + 'transition:max-width .55s ease,opacity .3s ease .12s}',
+    '.cknerv-jukebox-invite[data-jukebox-invite="true"]{max-width:340px;opacity:1}',
+    '@media (prefers-reduced-motion:reduce){'
+      + '.cknerv-jukebox-glyph,.cknerv-jukebox-bar,.cknerv-jukebox-bars{animation:none}'
+      + '.cknerv-jukebox-invite{transition:none}}',
+    // Narrow viewports keep the mark and drop the words, matching the HUD's
+    // existing label-shedding breakpoints.
+    '@media (max-width:380px){.cknerv-jukebox-label,.cknerv-jukebox-code{display:none}}',
+  ].join('\n');
+  doc.head.appendChild(style);
+}
 
 interface SoundCloudWidgetEvent {
   currentPosition?: number;
@@ -191,10 +247,12 @@ function loadSoundCloudWidgetApi(): Promise<SoundCloudWidgetFactory> {
   return request;
 }
 
+// 18px, not 14px: an object hugging the very edge reads as trim. The margin is
+// what lets an otherwise quiet corner present it as something placed there.
 const floatingStyle: CSSProperties = {
   position: 'fixed',
-  right: 'max(14px, env(safe-area-inset-right, 0px))',
-  bottom: 'max(14px, env(safe-area-inset-bottom, 0px))',
+  right: 'max(18px, env(safe-area-inset-right, 0px))',
+  bottom: 'max(18px, env(safe-area-inset-bottom, 0px))',
   zIndex: 22,
   display: 'inline-flex',
   alignItems: 'flex-end',
@@ -206,9 +264,9 @@ const floatingStyle: CSSProperties = {
 const panelStyle: CSSProperties = {
   position: 'relative',
   width:
-    `min(${JUKEBOX_PANEL_WIDTH_PX}px, calc(100vw - 28px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)))`,
+    `min(${JUKEBOX_PANEL_WIDTH_PX}px, calc(100vw - 36px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)))`,
   maxHeight:
-    'calc(100vh - 28px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px))',
+    'calc(100vh - 36px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px))',
   overflowY: 'auto',
   boxSizing: 'border-box',
   padding: 6,
@@ -245,40 +303,100 @@ export function getRandomJukeboxTrackId(
   return candidates[index].id;
 }
 
-function JukeboxGlyph({ active }: { active: boolean }) {
-  const color = active ? CYAN : DIM;
+/** The mark is the affordance: a drawn eighth note — the mono face carries no
+ *  ♪ glyph — beside a three-bar equalizer, the same bar-meter vocabulary the
+ *  HUD already uses for BORN/DIED and SYNC RATIO. The retired jukebox-cabinet
+ *  silhouette was unreadable at 14px and said nothing about sound. `pulseKey`
+ *  remounts the bars so each new block ticks them once. */
+function JukeboxGlyph({ pulseKey }: { pulseKey: number }) {
   return (
     <svg
       aria-hidden="true"
-      width="14"
+      className="cknerv-jukebox-glyph"
+      width="23"
       height="14"
-      viewBox="0 0 16 16"
+      viewBox="0 0 23 14"
       fill="none"
       style={{
         flex: '0 0 auto',
-        filter: active
-          ? 'drop-shadow(0 0 4px rgba(32,240,255,.55))'
-          : undefined,
+        filter: 'drop-shadow(0 0 4px rgba(32,240,255,.55))',
       }}
     >
+      <ellipse
+        cx="4.1"
+        cy="10.7"
+        rx="2.5"
+        ry="1.9"
+        transform="rotate(-20 4.1 10.7)"
+        fill={CYAN}
+      />
       <path
-        d="M4 13V7.2a4 4 0 0 1 8 0V13M4 9h8M6 13V9h4v4"
-        stroke={color}
+        d="M6.5 10.6V2.3"
+        stroke={CYAN}
         strokeWidth="1.1"
         strokeLinecap="round"
-        strokeLinejoin="round"
       />
       <path
-        d="M6.3 6.8c.55-.52 1.06-.76 1.52-.76.7 0 .98.64 1.48.64.27 0 .54-.12.81-.36"
-        stroke={active ? ORANGE : color}
-        strokeWidth=".9"
+        d="M6.5 2.4c2.2.7 3.3 1.6 3 3.4"
+        stroke={CYAN}
+        strokeWidth="1.1"
         strokeLinecap="round"
       />
+      <g key={pulseKey} className="cknerv-jukebox-bars">
+        <rect
+          className="cknerv-jukebox-bar cknerv-jukebox-bar-a"
+          x="12.2"
+          y="7.3"
+          width="2.4"
+          height="5.1"
+          fill={CYAN}
+        />
+        <rect
+          className="cknerv-jukebox-bar cknerv-jukebox-bar-b"
+          x="15.6"
+          y="3.3"
+          width="2.4"
+          height="9.1"
+          fill={CYAN}
+        />
+        <rect
+          className="cknerv-jukebox-bar cknerv-jukebox-bar-c"
+          x="19"
+          y="5.8"
+          width="2.4"
+          height="6.6"
+          fill={CYAN}
+        />
+      </g>
     </svg>
   );
 }
 
-export default function Jukebox() {
+/** The panels' own corner grammar: top-left and bottom-right ticks in orange.
+ *  Wearing it is what promotes the chip from "stray control" to "module". */
+function chipBracket(corner: 'tl' | 'br'): CSSProperties {
+  const base: CSSProperties = {
+    position: 'absolute',
+    width: 8,
+    height: 8,
+    borderColor: ORANGE,
+    borderStyle: 'solid',
+    opacity: .8,
+    pointerEvents: 'none',
+  };
+  return corner === 'tl'
+    ? { ...base, top: -1, left: -1, borderWidth: '1px 0 0 1px' }
+    : { ...base, bottom: -1, right: -1, borderWidth: '0 1px 1px 0' };
+}
+
+export interface JukeboxProps {
+  /** Arrival time of the newest block. Ticks the closed chip's equalizer so it
+   *  breathes with the chain rather than on a decorative clock of its own.
+   *  Optional — the Jukebox is complete without it. */
+  blockPulseAtMs?: number;
+}
+
+export default function Jukebox({ blockPulseAtMs }: JukeboxProps) {
   const [open, setOpen] = useState(false);
   const [selectedTrackId, setSelectedTrackId] =
     useState<JukeboxTrackId>(DEFAULT_JUKEBOX_TRACK_ID);
@@ -286,6 +404,9 @@ export default function Jukebox() {
     DEFAULT_JUKEBOX_PLAYBACK_MODE,
   );
   const [readyTrackId, setReadyTrackId] = useState<JukeboxTrackId | null>(null);
+  const [openedOnce, setOpenedOnce] = useState(false);
+  const [invite, setInvite] = useState<'armed' | 'showing' | 'spent'>('armed');
+  const [inviteHovered, setInviteHovered] = useState(false);
   const toggleRef = useRef<HTMLButtonElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const frameRef = useRef<HTMLIFrameElement>(null);
@@ -296,6 +417,9 @@ export default function Jukebox() {
   const restoreFocusRef = useRef(false);
   const selectedTrack = getTrack(selectedTrackId);
   const frameReady = readyTrackId === selectedTrackId;
+  const attract = openedOnce
+    ? 'settled'
+    : invite === 'showing' ? 'invite' : 'attract';
   const fadeStartMs = 'fadeStartMs' in selectedTrack
     ? selectedTrack.fadeStartMs
     : null;
@@ -321,6 +445,37 @@ export default function Jukebox() {
     setOpen(false);
     setReadyTrackId(null);
   }, [teardownWidget]);
+
+  const openPlayer = useCallback(() => {
+    setReadyTrackId(null);
+    setOpenedOnce(true);
+    setInvite('spent');
+    setOpen(true);
+  }, []);
+
+  useEffect(() => {
+    injectJukeboxStyles();
+  }, []);
+
+  // One invitation, well after boot has settled, and only for someone who has
+  // never opened the player. It spends itself whether or not it worked.
+  useEffect(() => {
+    if (invite !== 'armed') return;
+    const timer = window.setTimeout(
+      () => setInvite('showing'),
+      JUKEBOX_INVITE_DELAY_MS,
+    );
+    return () => window.clearTimeout(timer);
+  }, [invite]);
+
+  useEffect(() => {
+    if (invite !== 'showing' || inviteHovered) return;
+    const timer = window.setTimeout(
+      () => setInvite('spent'),
+      JUKEBOX_INVITE_HOLD_MS,
+    );
+    return () => window.clearTimeout(timer);
+  }, [invite, inviteHovered]);
 
   useEffect(() => {
     if (open) {
@@ -537,34 +692,73 @@ export default function Jukebox() {
         <button
           ref={toggleRef}
           type="button"
-          className="cknerv-hud-control-button"
+          className="cknerv-hud-control-button cknerv-jukebox-chip"
           data-jukebox-trigger
+          data-jukebox-attract={attract}
           aria-controls={PANEL_ID}
           aria-expanded={false}
           aria-label="Open Jukebox and play default SoundCloud track"
           title="Open Jukebox — load SoundCloud and request playback"
-          onClick={() => {
-            setReadyTrackId(null);
-            setOpen(true);
-          }}
+          onPointerEnter={() => setInviteHovered(true)}
+          onPointerLeave={() => setInviteHovered(false)}
+          onClick={openPlayer}
           style={{
+            position: 'relative',
             appearance: 'none',
             display: 'inline-flex',
             alignItems: 'center',
-            justifyContent: 'center',
-            width: JUKEBOX_BUTTON_SIZE_PX,
-            height: JUKEBOX_BUTTON_SIZE_PX,
-            padding: 0,
-            border: '1px solid rgba(32,240,255,.3)',
+            justifyContent: 'flex-start',
+            maxWidth:
+              'calc(100vw - 36px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px))',
+            height: JUKEBOX_CHIP_HEIGHT_PX,
+            padding: '0 9px',
+            border: '1px solid rgba(32,240,255,.42)',
             background:
               'linear-gradient(180deg,rgba(3,10,18,.96),rgba(0,0,0,.94))',
-            boxShadow:
-              '0 8px 24px rgba(0,0,0,.6), inset 0 0 16px rgba(32,240,255,.045)',
+            // The third shadow is a dark moat: it fades the cyan mesh wires
+            // immediately around the chip, which is the only way a cyan-on-black
+            // control separates from a cyan-on-black scene.
+            boxShadow: '0 10px 30px rgba(0,0,0,.7), '
+              + 'inset 0 0 16px rgba(32,240,255,.05), '
+              + '0 0 20px 9px rgba(2,6,12,.6)',
             color: CYAN,
+            font: `400 8.5px/1 ${MONO}`,
+            letterSpacing: 1.05,
             cursor: 'pointer',
           }}
         >
-          <JukeboxGlyph active />
+          <span aria-hidden="true" style={chipBracket('tl')} />
+          <span aria-hidden="true" style={chipBracket('br')} />
+          <span
+            className="cknerv-jukebox-code"
+            style={{
+              position: 'absolute',
+              top: -4,
+              left: 11,
+              padding: '0 4px',
+              background: '#03080d',
+              color: DIM,
+              // The HUD's 7.5px legibility floor; below it the code is mush.
+              fontSize: 7.5,
+              letterSpacing: 1,
+            }}
+          >
+            {JUKEBOX_MODULE_CODE}
+          </span>
+          <JukeboxGlyph pulseKey={blockPulseAtMs ?? 0} />
+          <span
+            className="cknerv-jukebox-label"
+            style={{ marginLeft: 7, color: ORANGE }}
+          >
+            BGM
+          </span>
+          <span
+            className="cknerv-jukebox-invite"
+            data-jukebox-invite={invite === 'showing' ? 'true' : 'false'}
+            style={{ paddingLeft: 7, color: INK }}
+          >
+            {JUKEBOX_INVITE_TEXT}
+          </span>
         </button>
       ) : null}
 
