@@ -229,6 +229,13 @@ pub(crate) trait CompositionPolicy {
     fn class_counts(&self) -> [usize; 3] {
         [0; 3]
     }
+
+    /// Total entries waiting in the refill queues — a test seam for the
+    /// bound on how far they may drift from what can actually stage.
+    #[cfg(test)]
+    fn queued_len(&self) -> usize {
+        0
+    }
 }
 
 // ══ canonical / prefix mode ═════════════════════════════════════════════
@@ -346,6 +353,11 @@ impl CompositionPolicy for CanonicalPolicy {
         // top-up lands in the window between a degrade and the next
         // refresh.
         ids.to_vec()
+    }
+
+    #[cfg(test)]
+    fn queued_len(&self) -> usize {
+        self.understudies.len()
     }
 }
 
@@ -583,6 +595,26 @@ impl CuratedPolicy {
         &mut self.class_queues[class as usize]
     }
 
+    /// Drop entries that can never stage again, once they dominate the
+    /// queue. Without this the curated queues only grow: every canonical
+    /// birth pushes one, and a full stage pops none, so on a live chain
+    /// the backlog of ids the map has long since evicted climbs without
+    /// bound for as long as the server runs.
+    ///
+    /// The predicate keeps anything with something left to stage AND
+    /// anything already on stage — a member's entry is not dead weight,
+    /// it is how `pop_stage_one` promotes an activity member into a
+    /// resting slot. Same amortization as the prefix policy's compaction:
+    /// right after one the queue is a subset of that set, so it takes
+    /// `present + slack` fresh pushes to trigger again.
+    fn maybe_compact(&mut self, stage: &Stage, class: CompositionClass) {
+        let threshold = stage.present_count() * 2 + UNDERSTUDY_COMPACT_SLACK;
+        let queue = &mut self.class_queues[class as usize];
+        if queue.len() > threshold {
+            queue.retain(|id| stage.is_stageable(*id) || stage.is_member(*id));
+        }
+    }
+
     /// Record a member as resting under `class` with a fresh
     /// fallback-group rank (the lowest priority — displaced first).
     fn rank_fallback(&mut self, id: u64, class: CompositionClass) {
@@ -640,6 +672,7 @@ impl CompositionPolicy for CuratedPolicy {
     fn note_candidate(&mut self, stage: &Stage, id: u64) {
         let class = stage.kind_of(id).map(class_of).expect("candidate is known");
         self.queue(class).push_back(id);
+        self.maybe_compact(stage, class);
     }
 
     fn note_exit(&mut self, stage: &mut Stage, id: u64, role: MemberRole) {
@@ -849,6 +882,11 @@ impl CompositionPolicy for CuratedPolicy {
     #[cfg(test)]
     fn class_counts(&self) -> [usize; 3] {
         self.class_counts
+    }
+
+    #[cfg(test)]
+    fn queued_len(&self) -> usize {
+        self.class_queues.iter().map(VecDeque::len).sum()
     }
 }
 

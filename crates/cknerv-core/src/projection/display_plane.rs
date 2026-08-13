@@ -1154,6 +1154,11 @@ impl DisplayPlane {
     pub(crate) fn class_counts(&self) -> [usize; 3] {
         self.policy.class_counts()
     }
+
+    #[cfg(test)]
+    pub(crate) fn queued_len(&self) -> usize {
+        self.policy.queued_len()
+    }
 }
 
 #[cfg(test)]
@@ -2574,6 +2579,67 @@ mod tests {
 
     /// GC of a staged composed member refills the class from the refresh
     /// queues (reservoir tail first), keeping count and ratio.
+    /// On a live chain every birth pushes a curated refill candidate and a
+    /// full stage pops none, so the queues only ever grow — and the map
+    /// evicts those ids long before anyone would have staged them. Left
+    /// alone that is an unbounded backlog of entries that can never be
+    /// used. Compaction has to bound it WITHOUT changing who gets staged.
+    #[test]
+    fn curated_refill_queues_stay_bounded_under_churn() {
+        let mut plane = small_plane(8, 2);
+        let cells = canonical_field(12);
+        seed_canonical(&mut plane, &cells, 1_000);
+        plane.reservoir_replaced(
+            &record(1, vec![], vec![], vec![]),
+            &outpoint_index(&cells),
+            &cells,
+        );
+        plane.flush(Some(1_000));
+        let staged = member_set(&plane);
+
+        // Churn: births that reach the map and leave it again, which is
+        // what makes a queue entry unusable.
+        let mut id = 1_000u64;
+        for _ in 0..40 {
+            let batch: Vec<u64> = (0..40)
+                .map(|_| {
+                    id += 1;
+                    id
+                })
+                .collect();
+            for &new_id in &batch {
+                plane.note_birth(&cell_with(
+                    new_id,
+                    &format!("0xc{new_id}"),
+                    AssetKind::Native,
+                    0,
+                ));
+            }
+            for &new_id in &batch {
+                plane.note_removed(new_id);
+            }
+            plane.flush(Some(1_000));
+        }
+
+        assert_eq!(
+            member_set(&plane),
+            staged,
+            "compaction must not disturb who is on stage"
+        );
+        assert!(
+            plane.queued_len() <= plane.present_ids_sorted().len() * 2 + 1_024 + 40,
+            "1,600 dead candidates must not still be queued (queued {})",
+            plane.queued_len()
+        );
+
+        // …and the survivors still refill in order: free a slot and the
+        // next live candidate takes it.
+        let victim = *staged.iter().next().expect("a staged member");
+        plane.note_removed(victim);
+        plane.flush(Some(1_100));
+        assert_eq!(plane.member_ids_sorted().len(), staged.len());
+    }
+
     #[test]
     fn composed_gc_vacancy_refills_from_class_queue() {
         let mut plane = small_plane(4, 1);
