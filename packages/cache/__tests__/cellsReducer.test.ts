@@ -19,6 +19,7 @@ import {
   fromCellsSnapshot,
   NO_CELL_CHANGES,
 } from '../src/cellsReducer';
+import { aggregateCellsStats } from '../src/cellsStats';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const fixturePath = (name: string) =>
@@ -790,6 +791,49 @@ describe('cross-language wire-shape parity', () => {
     const c = fromCellsSnapshot(0, snap);
     expect(c.cells.size).toBe(snap.cells.length);
     expect(c.totalBirths).toBe(snap.total_births ?? 0);
+  });
+
+  // ⭐ The differential gate for moving aggregation to the server: the segment
+  // the Rust side computed over the fixture's cells must equal, field for
+  // field, what this side's reference scan derives from those same cells.
+  // Regenerating the fixture from Rust and running this is what keeps the two
+  // implementations honest about `data_hex` emptiness, the four known tags,
+  // and the dead-cell skip.
+  it('the server aggregate equals the reference full scan, field for field', () => {
+    const snap = fixture<CellGalaxySnapshot>('snapshot_cells.json');
+    expect(snap.stats).toBeDefined();
+    const seeded = fromCellsSnapshot(0, snap);
+    const scanned = aggregateCellsStats(
+      seeded.cells,
+      snap.total_births ?? 0,
+      snap.total_deaths ?? 0,
+    );
+    expect(seeded.stats).toEqual(scanned);
+  });
+
+  it('falls back to the full scan when the server sends no aggregate', () => {
+    const snap = fixture<CellGalaxySnapshot>('snapshot_cells.json');
+    const { stats: _dropped, ...legacy } = snap;
+    const seeded = fromCellsSnapshot(0, legacy as CellGalaxySnapshot);
+    expect(seeded.stats).toEqual(
+      aggregateCellsStats(
+        seeded.cells,
+        snap.total_births ?? 0,
+        snap.total_deaths ?? 0,
+      ),
+    );
+  });
+
+  // The whole point of the segment: it describes the server's retained set, so
+  // it must not move when the snapshot's row scope narrows to the stage.
+  it('keeps the seeded aggregate when the snapshot carries fewer rows', () => {
+    const snap = fixture<CellGalaxySnapshot>('snapshot_cells.json');
+    const staged: CellGalaxySnapshot = { ...snap, cells: snap.cells.slice(0, 1) };
+    const seeded = fromCellsSnapshot(0, staged);
+    expect(seeded.cells.size).toBe(1);
+    expect(seeded.stats.inView).toBe(snap.stats!.in_view);
+    expect(seeded.stats.capacityShannons).toBe(snap.stats!.capacity_shannons);
+    expect(seeded.stats.byAsset).toEqual(snap.stats!.by_asset);
   });
 
   it('the cell_samples.json entries pipe through applyCellDelta birth/death', () => {

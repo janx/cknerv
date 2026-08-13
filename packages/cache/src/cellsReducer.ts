@@ -17,6 +17,7 @@ import type {
 } from '@cknerv/types';
 import {
   adjustCellsStats,
+  adoptCellViewStats,
   aggregateCellsStats,
   cloneCellsStats,
   emptyCellsStats,
@@ -384,11 +385,21 @@ export function fromCellsSnapshot(
     totalBirths: snap.total_births ?? 0,
     totalDeaths: snap.total_deaths ?? 0,
     backfill: snap.backfill ? normalizeReplayProgress(snap.backfill) : null,
-    stats: aggregateCellsStats(
-      cells,
-      snap.total_births ?? 0,
-      snap.total_deaths ?? 0,
-    ),
+    // The server aggregates over its own retained set; the full scan below is
+    // the fallback for a server that predates the segment. Once the snapshot
+    // stops carrying every retained row the scan can no longer produce these
+    // numbers at all — it would count the stage, not the galaxy.
+    stats: snap.stats
+      ? adoptCellViewStats(
+        snap.stats,
+        snap.total_births ?? 0,
+        snap.total_deaths ?? 0,
+      )
+      : aggregateCellsStats(
+        cells,
+        snap.total_births ?? 0,
+        snap.total_deaths ?? 0,
+      ),
     displayMembers,
     displayResidents,
     displayBudget: display

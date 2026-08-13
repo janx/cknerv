@@ -6,8 +6,15 @@
       "death_at_ms": null,
       "birth_block": 1,
       "tag": null,
-      "pos_seed": [0.0, 0.0, 0.0],
-      "out_point": { "tx_hash": "0xabc", "index": 0 },
+      "pos_seed": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "out_point": {
+        "tx_hash": "0xabc",
+        "index": 0
+      },
       "capacity": 100,
       "data_hex": "0x",
       "content_hash": "0x0000000000000000000000000000000000000000000000000000000000000000",
@@ -20,8 +27,15 @@
       "death_at_ms": null,
       "birth_block": 1,
       "tag": "dex",
-      "pos_seed": [1.25, -0.5, 3.75],
-      "out_point": { "tx_hash": "0xabc", "index": 1 },
+      "pos_seed": [
+        1.25,
+        -0.5,
+        3.75
+      ],
+      "out_point": {
+        "tx_hash": "0xabc",
+        "index": 1
+      },
       "capacity": 200,
       "data_hex": "0xdeadbeef",
       "content_hash": "0x1111111111111111111111111111111111111111111111111111111111111111",
@@ -35,16 +49,27 @@
       "tx_hash": "0xabc",
       "block": 1,
       "from_ids": [],
-      "to_ids": [1, 2],
+      "to_ids": [
+        1,
+        2
+      ],
       "endpoint_anchors": [
         {
           "id": 1,
-          "pos_seed": [0.0, 0.0, 0.0],
+          "pos_seed": [
+            0.0,
+            0.0,
+            0.0
+          ],
           "content_hash": "0x0000000000000000000000000000000000000000000000000000000000000000"
         },
         {
           "id": 2,
-          "pos_seed": [1.25, -0.5, 3.75],
+          "pos_seed": [
+            1.25,
+            -0.5,
+            3.75
+          ],
           "content_hash": "0x1111111111111111111111111111111111111111111111111111111111111111"
         }
       ],
@@ -55,9 +80,43 @@
   ],
   "total_births": 2,
   "total_deaths": 0,
+  "stats": {
+    "in_view": 2,
+    "data_bearing": 1,
+    "capacity_shannons": 300,
+    "by_kind": {
+      "wallet": 0,
+      "dex": 1,
+      "cf": 0,
+      "ckbloom": 0,
+      "generic": 1
+    },
+    "by_lock": {
+      "sighash": 2,
+      "multisig": 0,
+      "acp": 0,
+      "omnilock": 0,
+      "other": 0
+    },
+    "by_asset": {
+      "native": 1,
+      "sudt": 1,
+      "xudt": 0,
+      "dao": 0,
+      "spore": 0,
+      "other": 0
+    }
+  },
   "display": {
-    "budget": { "cells": 12000, "nerve_edges": 8000 },
-    "members": [1, 2, 4503599627370501],
+    "budget": {
+      "cells": 12000,
+      "nerve_edges": 8000
+    },
+    "members": [
+      1,
+      2,
+      4503599627370501
+    ],
     "residents": [
       {
         "id": 4503599627370501,
@@ -65,8 +124,15 @@
         "death_at_ms": null,
         "birth_block": 12,
         "tag": null,
-        "pos_seed": [2.5, -1.25, 0.75],
-        "out_point": { "tx_hash": "0xdef", "index": 3 },
+        "pos_seed": [
+          2.5,
+          -1.25,
+          0.75
+        ],
+        "out_point": {
+          "tx_hash": "0xdef",
+          "index": 3
+        },
         "capacity": 5000,
         "data_hex": "0x",
         "content_hash": "0x2222222222222222222222222222222222222222222222222222222222222222",
@@ -77,7 +143,10 @@
     "provenance": {
       "mode": "composed",
       "source": "ckbadger",
-      "as_of": { "block": 1, "hash": "0xb1b1" },
+      "as_of": {
+        "block": 1,
+        "hash": "0xb1b1"
+      },
       "updated_at_ms": 1500
     }
   }

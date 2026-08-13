@@ -18,6 +18,7 @@ import type {
   Cell,
   CellGalaxySnapshot,
   CellLinkRecord,
+  CellViewStats,
   LockKind,
 } from '@cknerv/types';
 
@@ -94,6 +95,10 @@ export interface CellsColumnarView {
    *  variable-length id arrays per record, so they are not columnar. */
   recentLinks: CellLinkRecord[];
   backfill: CellGalaxySnapshot['backfill'];
+  /** Aggregate view statistics over the server's FULL retained set. Null from
+   *  a server that predates the segment; the reducer then falls back to
+   *  scanning the rows it received. */
+  stats: CellViewStats | null;
 }
 
 export interface CellsColumnarDisplay {
@@ -212,7 +217,11 @@ export function decodeCellsColumnar(buffer: ArrayBuffer): CellsColumnarView {
   if (cursor + sectionsLength > buffer.byteLength) fail('tail sections truncated');
   const sections = JSON.parse(
     utf8.decode(new Uint8Array(buffer, cursor, sectionsLength)),
-  ) as { recent_links?: CellLinkRecord[]; backfill?: CellGalaxySnapshot['backfill'] };
+  ) as {
+    recent_links?: CellLinkRecord[];
+    backfill?: CellGalaxySnapshot['backfill'];
+    stats?: CellViewStats;
+  };
 
   return {
     revision,
@@ -242,6 +251,7 @@ export function decodeCellsColumnar(buffer: ArrayBuffer): CellsColumnarView {
     display,
     recentLinks: sections.recent_links ?? [],
     backfill: sections.backfill ?? null,
+    stats: sections.stats ?? null,
   };
 }
 
@@ -288,6 +298,10 @@ export function cellsSnapshotFromColumnar(view: CellsColumnarView): CellGalaxySn
     recent_links: view.recentLinks,
     total_births: view.totalBirths,
     total_deaths: view.totalDeaths,
+    // Carried through so the columnar boot path seeds the panel from the
+    // server's aggregate too. This is the path that actually runs in
+    // production, and the one that will stop carrying every retained row.
+    ...(view.stats === null ? {} : { stats: view.stats }),
     backfill: view.backfill,
     display: view.display === null ? undefined : {
       budget: {

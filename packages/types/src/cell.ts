@@ -22,6 +22,12 @@ export type LockKind = 'sighash' | 'multisig' | 'acp' | 'omnilock' | 'other';
  *  `#[serde(rename_all = "snake_case")]` `AssetKind` enum. */
 export type AssetKind = 'native' | 'sudt' | 'xudt' | 'dao' | 'spore' | 'other';
 
+/** Per-app bucket keys. `Cell.tag` is an opaque string; only these four
+ *  bucket by name and everything else — untagged included — is `generic`.
+ *  Pinned here because the SERVER now does the bucketing: the wire's
+ *  `by_kind` object has exactly these fields. */
+export type CellKindKey = 'wallet' | 'dex' | 'cf' | 'ckbloom' | 'generic';
+
 /** Why canonical blocks are being replayed instead of followed live.
  *  Mirrors `cknerv_core::ReplayPhase`. */
 export type ReplayPhase = 'boot' | 'catchup' | 'reorg' | 'rebuild';
@@ -124,6 +130,19 @@ export interface DisplaySection {
   provenance: DisplayProvenance;
 }
 
+/** Aggregate view statistics computed where the retained set lives. Field
+ *  names are the wire's; the cache maps them onto its own `CellsStats`, which
+ *  additionally carries the born/live/dead counters that ride the snapshot
+ *  separately as `total_births` / `total_deaths`. */
+export interface CellViewStats {
+  in_view: number;
+  data_bearing: number;
+  capacity_shannons: number;
+  by_kind: Record<CellKindKey, number>;
+  by_lock: Record<LockKind, number>;
+  by_asset: Record<AssetKind, number>;
+}
+
 export interface CellGalaxySnapshot {
   cells: Cell[];
   last_pulse_at_ms: number;
@@ -135,6 +154,15 @@ export interface CellGalaxySnapshot {
   /** Real chain deaths represented by the current observation/rebuild window.
    *  Excludes `CELL_CAP` evictions. */
   total_deaths?: number;
+  /** Aggregate view statistics over the server's FULL retained set. The
+   *  client used to derive these by walking every retained row it was sent;
+   *  seeding from here is what lets the snapshot stop carrying rows the
+   *  renderer never draws. Scope-independent by construction: it does not
+   *  move when the snapshot's row scope does.
+   *
+   *  Absent from a server that predates the segment — the client falls back
+   *  to its own full scan, which is exact for whatever rows it did receive. */
+  stats?: CellViewStats;
   /** Historical replay progress; present while seeding or rebuilding. */
   backfill?: ReplayProgress | null;
   /** Display-plane membership ("who is on stage"). Presentation policy,

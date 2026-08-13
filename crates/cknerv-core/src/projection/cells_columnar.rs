@@ -25,6 +25,7 @@
 //! registry owns revisions; the projection does not know its own).
 
 use crate::projection::cells::{BackfillState, Cell, CellLinkRecord, DisplayBudget, DisplayMode};
+use crate::projection::cells_stats::CellViewStats;
 use crate::projection::display_plane::ColumnarDisplayView;
 use crate::taxonomy::{AssetKind, LockKind};
 
@@ -80,6 +81,9 @@ pub const CELLS_COLUMNAR_DISPLAY_COMPOSED: u8 = 2;
 pub struct CellsColumnarTail<'a> {
     pub recent_links: &'a [CellLinkRecord],
     pub backfill: Option<BackfillState>,
+    /// Aggregate view statistics over the FULL retained set — deliberately
+    /// independent of which rows this buffer carries.
+    pub stats: CellViewStats,
 }
 
 /// The three ASCII string columns, laid out FIELD-major in one region:
@@ -347,6 +351,7 @@ pub fn encode_cells_columnar(
     let sections = serde_json::json!({
         "recent_links": tail.recent_links,
         "backfill": tail.backfill,
+        "stats": tail.stats,
     });
     let sections = serde_json::to_vec(&sections).unwrap_or_else(|_| b"{}".to_vec());
     buf.extend_from_slice(&(sections.len() as u32).to_le_bytes());
@@ -415,6 +420,7 @@ mod tests {
         CellsColumnarTail {
             recent_links: &[],
             backfill: None,
+            stats: CellViewStats::default(),
         }
     }
 

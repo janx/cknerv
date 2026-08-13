@@ -19,6 +19,7 @@ use crate::mutation::Mutation;
 
 pub mod cells;
 pub mod cells_columnar;
+pub mod cells_stats;
 pub mod composition_policy;
 pub mod display_plane;
 

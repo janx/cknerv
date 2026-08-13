@@ -27,6 +27,7 @@ use crate::enrichment::ChainAnchor;
 use crate::helix::helix_seed_for;
 use crate::mutation::{Mutation, ReplayPhase};
 use crate::outpoint::{is_cellbase_input, OutPoint, TxOutputInfo};
+use crate::projection::cells_stats::{aggregate_cell_view_stats, CellViewStats};
 use crate::projection::composition_policy::CompositionDemandSink;
 use crate::projection::display_plane::DisplayPlane;
 use crate::projection::Projection;
@@ -173,6 +174,12 @@ pub struct CellGalaxySnapshot {
     /// chain and only leave this bounded projection.
     #[serde(default)]
     pub total_deaths: u64,
+    /// Aggregate view statistics over the retained set, computed here so the
+    /// client does not have to hold every retained row just to walk it once.
+    /// Always covers the FULL retained set, never the emitted subset — the
+    /// panel's numbers must not move when the snapshot's scope does.
+    #[serde(default)]
+    pub stats: CellViewStats,
     /// Historical replay progress; present only while seeding or rebuilding.
     /// Omitted from the wire when `None` so existing snapshot fixtures are
     /// unaffected.
@@ -1368,6 +1375,7 @@ impl Projection for CellGalaxy {
             crate::projection::cells_columnar::CellsColumnarTail {
                 recent_links: &self.recent_links,
                 backfill: self.backfill,
+                stats: aggregate_cell_view_stats(&self.cells),
             },
         ))
     }
@@ -1390,6 +1398,7 @@ impl Projection for CellGalaxy {
             recent_links: self.recent_links.clone(),
             total_births: self.total_births,
             total_deaths: self.total_deaths,
+            stats: aggregate_cell_view_stats(&self.cells),
             backfill: self.backfill,
             display: Some(self.display.section()),
         }
@@ -4331,6 +4340,7 @@ mod tests {
                 crate::projection::cells_columnar::CellsColumnarTail {
                     recent_links: &snapshot.recent_links,
                     backfill: snapshot.backfill,
+                    stats: snapshot.stats,
                 },
             )
         );

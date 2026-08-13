@@ -52,6 +52,7 @@ export {
 } from './cellsColumnar';
 
 export {
+  adoptCellViewStats,
   aggregateCellsStats,
   cellKindKey,
   cloneCellsStats,

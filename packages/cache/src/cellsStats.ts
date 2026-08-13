@@ -5,14 +5,18 @@
 // the reducer can own the upkeep — the ui module re-exports for
 // compatibility.
 
-import type { AssetKind, Cell, LockKind } from '@cknerv/types';
+import type {
+  AssetKind,
+  Cell,
+  CellKindKey,
+  CellViewStats,
+  LockKind,
+} from '@cknerv/types';
 
-/** Per-kind bucket keys. Today the simulator emits four known tag
- *  strings; cells without a tag bucket into `'generic'`. Kept as a
- *  string union so the four-known-keys aggregate row layout stays
- *  exhaustively typed on this side, even though `Cell.tag` itself is
- *  an opaque string. */
-export type CellKindKey = 'wallet' | 'dex' | 'cf' | 'ckbloom' | 'generic';
+/** Re-exported from `@cknerv/types`, where it moved once the SERVER took
+ *  over the bucketing: the wire's `by_kind` object is keyed by exactly this
+ *  union, so one definition has to bind both sides. */
+export type { CellKindKey } from '@cknerv/types';
 
 export interface CellsStats {
   /** Canonical births in the backend's current observation/rebuild window,
@@ -114,8 +118,40 @@ export function adjustCellsStats(
   }
 }
 
-/** Reference full-scan aggregation — the hydration path and the equivalence
- *  oracle for the reducer's incremental upkeep. */
+/** Adopt the server's aggregate segment as the hydration seed.
+ *
+ * The counters the server does NOT send — born/live/dead — come from the
+ * snapshot's own `total_births`/`total_deaths`, so there is exactly one copy
+ * of each number on the wire. Everything else is a rename: the wire uses the
+ * Rust field names, the cache its own.
+ *
+ * ⚠️ Scope-independent by contract. The segment always describes the server's
+ * FULL retained set, so it stays correct once the snapshot stops carrying
+ * every retained row — which is the entire reason it exists. Seeding from a
+ * scan of the rows that DID arrive would silently start counting the stage
+ * instead of the galaxy.
+ */
+export function adoptCellViewStats(
+  stats: CellViewStats,
+  totalBirths: number,
+  totalDeaths: number,
+): CellsStats {
+  return {
+    born: totalBirths,
+    live: totalBirths - totalDeaths,
+    dead: totalDeaths,
+    byKind: { ...stats.by_kind },
+    capacityShannons: stats.capacity_shannons,
+    inView: stats.in_view,
+    dataBearing: stats.data_bearing,
+    byLock: { ...stats.by_lock },
+    byAsset: { ...stats.by_asset },
+  };
+}
+
+/** Reference full-scan aggregation — the fallback hydration path for a server
+ *  with no aggregate segment, and the equivalence oracle for both the
+ *  reducer's incremental upkeep and the server's aggregation. */
 export function aggregateCellsStats(
   cells: ReadonlyMap<number, Cell>,
   totalBirths: number,

@@ -295,6 +295,7 @@ describe('hydrateCellFieldFromColumnar', () => {
       display: null,
       recentLinks: [],
       backfill: null,
+      stats: null,
     };
     const field = createCellField(16);
     hydrateCellFieldFromColumnar(field, view);
