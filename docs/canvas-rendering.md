@@ -1,325 +1,887 @@
-# Canvas Rendering Design
+# Canvas Design and Rendering Architecture
 
-This document is the normative rendering contract for the production cknerv
-Canvas in `ui-app/src/App.tsx` and the reusable scene layers in `packages/ui/`.
-It defines what the visualization must communicate, which costs a quality
-preset may reduce, and how a rendering change is accepted.
+This document is the normative design and architecture contract for the
+production cknerv Canvas assembled in `ui-app/src/App.tsx` and for the reusable
+rendering layers in `packages/ui/`. It explains the complete browser-side path
+from projection state to pixels, including scene ownership, visual semantics,
+topology, event choreography, interaction, performance budgets, and review
+requirements.
 
-The deterministic capture procedure is documented separately in
-[`ui-app/VISUAL_REVIEW.md`](../ui-app/VISUAL_REVIEW.md). This document owns the
+The broader process, Rust/TypeScript boundary, server API, and persistence
+model are described in [System Architecture](architecture.md). The deterministic
+capture procedure is described in
+[Visual Review](../ui-app/VISUAL_REVIEW.md). This document owns Canvas
 requirements; the review guide owns the browser workflow.
 
-## Goals
+## 1. Scope
+
+The Canvas is the spatial explanation layer of the dashboard. It consumes
+already-reduced browser state and turns it into three related views:
+
+- the warm Cell field, where canonical Cells have stable identities and
+  positions;
+- the Cell nervous system, where deterministic display topology carries
+  transaction-triggered activity, inspection, and memory traces; and
+- the cool CKB peer colony, which gives block arrival and local-node context.
+
+DOM HUDs and inspectors are part of the same user experience but are not drawn
+into the main WebGL color buffer. This document covers their ownership and
+coordination with the Canvas, not their full information hierarchy.
+
+This document does not define the server retention algorithm, wire encoding,
+on-disk persistence, or a future WebGPU implementation. It does define the
+renderer-facing invariants those systems must preserve.
+
+## 2. Product Goals and Non-goals
+
+### Goals
 
 The Canvas must:
 
-- make CKB's Cell model visible as a living Cell galaxy;
-- make canonical relationships visible as a dense neural fabric, not isolated
-  points or an unrelated network diagram;
-- distinguish the warm Cell data plane from the cool peer/network data plane;
-- make real births, deaths, writes, routes, recalls, and canonical corrections
-  legible without inventing chain events;
-- remain responsive on a local dashboard while preserving the visual and
-  semantic invariants below; and
-- provide deterministic review scenes for intentional visual changes.
+- make CKB's Cell model tangible as a living field of records;
+- make the resting field read as connected neural tissue rather than unrelated
+  points;
+- distinguish the warm Cell data plane from the cool peer/network plane;
+- make real births, deaths, transaction links, block arrivals, recalls, and
+  canonical corrections legible without inventing chain events;
+- preserve stable identity and deterministic geometry through normal updates;
+- remain responsive on a local dashboard with explicit, bounded CPU and GPU
+  work; and
+- support deterministic review scenes for intentional visual changes.
 
-Performance is a requirement, but it is not permission to silently remove the
-visual structure that explains the chain.
+Performance is a product requirement, but it is not permission to erase the
+structure that explains the chain.
 
-## Sources of Truth
+### Non-goals
 
-The browser renders derived views over canonical cache state:
+The Canvas is not:
 
-```text
-CKB node -> mutations/snapshots -> @cknerv/cache
-                                  |-- complete Cell and routing state
-                                  `-- bounded visible Cell set
-                                        |-- Cell bodies
-                                        |-- passive nerve fabric
-                                        `-- active routes and inspection
-```
+- a direct CKB JSON-RPC client;
+- a transaction-submission surface;
+- an on-chain proof that spatially neighboring Cells are directly related; or
+- a second source of canonical chain state.
+
+Browser packages consume `@cknerv/types` and `@cknerv/cache`. CKB-specific RPC
+logic remains in the Rust adapter.
+
+## 3. Truth, Derivation, and Presentation
+
+Every visual feature belongs to one of four provenance classes. Keeping these
+classes explicit prevents a visually useful model from being mistaken for
+chain evidence.
+
+| Class | Examples | Contract |
+|---|---|---|
+| Canonical chain evidence | Cells, lifecycle heights and times, out points, transaction links, immutable link endpoint anchors, canonical prune witnesses | Comes from snapshots or ordered deltas; the renderer may style it but may not replace it |
+| Observed local-node state | Local CKB node identity, connected peers, peer latency, stream health | Comes from server entities or runtime state; absence remains absence |
+| Deterministic renderer derivation | Helix positions supplied as `pos_seed`, spatial neighbor graph, passive edge selection, Bezier controls, inspection hops | Reproducible from authoritative inputs; communicates structure but does not become new chain evidence |
+| Presentation simulation | Stars, inferred peer scaffold, illustrative flood paths, easing, particles, glints, shockwaves | Adds legibility and atmosphere; must never be labeled as directly observed topology or traffic |
 
 The following rules are non-negotiable:
 
-- A displayed Cell, endpoint, route, pulse, or canonical-rewrite witness must
-  derive from observed chain data. Review normalization may change a camera or
-  pose, but must not substitute generated Cell records.
-- `pos_seed` and the Rust/TypeScript helix contract own deterministic Cell
-  position. A renderer must not introduce a second positioning calculation.
-- The complete neighbor graph owns causal route planning. The bounded passive
-  graph is a visual selection of that graph and cannot create new adjacency.
-- Optional enrichment may select and classify node-revalidated Cells, but it
-  cannot create, spend, or replace canonical Cells.
-- A quality transition is presentation state. It must not mutate cache state,
-  chain counters, Cell identity, or event ordering.
+- A displayed canonical record or endpoint must resolve from retained or
+  explicitly scoped chain evidence.
+- `pos_seed` owns Cell placement. It is produced by the shared deterministic
+  Rust/TypeScript helix contract; the renderer must not introduce another Cell
+  positioning calculation.
+- Cell-neighbor edges are a deterministic spatial rendering topology, not
+  literal on-chain links. A real `CellLink` starts an active visualization;
+  intermediate hops are conduits through that display topology.
+- The active pulse, warm reinforcement, memory trace, and passive nerve for a
+  given display edge use the same deterministic quadratic Bezier.
+- The single display graph is built over the exact staged Cell subset. Both
+  live and recalled routes use that graph. If an endpoint is not staged or no
+  path exists, the route is omitted rather than synthesized off-stage.
+- Optional enrichment may rank or classify node-revalidated Cells, but it may
+  not create, spend, or replace canonical Cells.
+- Quality is presentation state. It must not mutate cache state, Cell identity,
+  event order, staged membership, or route choice.
 
-## Visual Language
+## 4. End-to-end Architecture
 
-| Layer | Required reading | Data owner | Rendering constraint |
-|---|---|---|---|
-| Background and stars | Deep field and scale | Ambient only | May scale with quality; must not carry chain meaning |
-| Peer network | Cool cyan synthetic data plane | Chain/peer entity view | Must remain visually distinct from Cell nerves |
-| Cell bodies | Warm rose living records | Visible canonical Cell set | Stable identity and position; lifecycle and selection accents may animate |
-| Passive Cell nerves | Crimson/rose neural tissue | Passive selection of the canonical neighbor graph | Abundant and obvious at every quality preset |
-| Warm routes | Recently used consensus paths | Observed route usage | Must ride the same curve as the passive nerve |
-| Active writes | Bright packet wavefronts and terminal response | Real pulse/link events | May reduce transient sampling by preset, never disappear semantically |
-| Memory routes | Explicit historical recall | Retained canonical evidence | Separate screen-weighted layer; must remain identifiable at distance |
-| Rewrite echo | Fractured invalidated suffix | Canonical prune witness | Must never be presented as a synthetic replacement fork |
-| HUD | State, controls, and evidence | DOM outside the main Canvas | Must not be baked into scene textures solely for convenience |
+```text
+Read-only CKB node
+        |
+        v
+Rust adapter -> chain-generic mutations -> server projections
+                                           | HTTP snapshots
+                                           | WebSocket deltas
+                                           v
+ui-app bootstrap --------------------> @cknerv/cache reducers
+                                           |
+                    +----------------------+---------------------+
+                    |                      |                     |
+                    v                      v                     v
+              chain/entity cache     CellGalaxyCache      semantic fetches
+                    |                      |
+                    |              display-change journal
+                    |                      |
+                    v                +-----+-----------------------+
+             peer topology          |                             |
+             + block flood          v                             v
+                    |          CellGalaxy cursor             NeuralNetwork cursor
+                    |          + overlay pool                (staged set only)
+                    |                 |                             |
+                    |                 v                             v
+                    |        stable GPU Cell slots          topology worker
+                    |        bodies / nuclei / pick         + eager delta bridge
+                    |                                               |
+                    |                                  one staged display graph
+                    |                                      |              |
+                    |                                      v              v
+                    |                               passive selector   route planner
+                    |                                      |          live / memory
+                    |                                      +-------+------+
+                    |                                              |
+                    +--------------------+-------------------------+
+                                         v
+                                  React Three Fiber Canvas
+                                         |
+                                         +--> DOM HUD and inspectors
+```
 
-The warm Cell palette lives in `packages/ui/src/visualPalette.ts`. Resting Cell
-nerves stay inside the crimson/rose family; peer scaffolding stays cyan. A
-change that collapses those two planes into the same color family is a visual
-language change and requires browser review.
+There are deliberately two render-set cursors, one owned by `CellGalaxy` and
+one by `NeuralNetwork`. Both advance from the same cache/display journals and
+must resolve the same staged membership. This avoids coupling GPU Cell slots to
+topology-worker state while preserving a single shared data contract.
 
-## Cell Galaxy Contract
+### 4.1 Bootstrap and stream recovery
 
-### Visible membership
+`ui-app/src/main.tsx` resolves review and quality query state, then fetches the
+chain snapshot and Cell projection snapshot in parallel before mounting the
+application. The Cell bootstrap prefers the compact binary snapshot endpoint
+and falls back to JSON if binary loading or decoding fails.
 
-- Instanced Cell layers have a hard capacity of 50,000 records.
-- AUTO renders a FIXED structural budget of 12,000 Cells — or every Cell
-  when the retained field is smaller (explicit product decision,
-  2026-08-11, superseding the short-lived per-quality ladder): Galaxy
-  membership never varies with render quality. High, Med, and Low use the
-  same AUTO membership; quality adjusts presentation only — DPR, effects,
-  sampling, near-field detail. The value is calibrated for AVERAGE
-  hardware, below the reference iGPU's measured rock-solid 20,000 (that
-  machine is well above average). The accepted cost: weak machines no
-  longer shed membership, only presentation. The 50,000 upper bound
-  remains on the manual slider and the retained reservoir.
-- Quality-driven reveal/conceal does not exist. Membership changes come
-  only from data (births, deaths, composition) or explicit user intent
-  (the manual slider); HUD counters keep reporting the retained totals,
-  never the display budget.
-- Manual Cell count remains independent from render quality and may request up
-  to the 50,000-Cell renderer ceiling.
-- The selected Cell, its bounded inspection neighborhood, and current activity
-  endpoints are pinned into the visible prefix when required. A visible nerve
-  must never terminate at a quality-hidden Cell.
+After bootstrap, projection streams connect from the current revision.
+Incoming deltas are grouped at the next animation frame, with a short timer
+fallback when a frame is unavailable. A server `lagged` notification discards
+pending work, resets the cursor, and forces snapshot-based resynchronization;
+visual code does not guess across a missing canonical interval.
 
-### Passive nervous system
+Historical snapshot links populate bounded recall history but do not enter the
+live pulse queue. During backfill, link cursors and block cursors advance while
+transient pulse, flood, and carrier animation is suppressed. Catch-up traffic
+therefore cannot masquerade as live activity or poison adaptive-quality
+measurements.
 
-The Cell galaxy must read as a neural network in every quality mode, including
-when no new block is arriving.
+### 4.2 Browser state ownership
 
-- The passive budget is a FIXED screen-composition constant: 8,000 resting
-  nerves (explicit product decision, 2026-08-11, superseding the 4/3-ratio-
-  at-every-scale model). Perceived density scales with TOTAL on-screen
-  edges over the fixed galaxy disk, not with edges per Cell — the ratio
-  model at 20,000+ edges read as felt, not a nervous system. Small fields
-  are still sized by the 4/3 connectivity ratio (`min(8,000,
-  round(visible_cells * 4/3))`); the constant governs once the field
-  outgrows it. The budget is live-tunable (backtick panel, 6,000-20,000
-  with selection shares) for by-eye calibration; the shipped defaults are
-  the contract values.
-- GPU buffer allocation quantizes the resolved budget to two classes
-  (`fabricAllocationEdges`: 8,000 default / 20,000 ceiling); the fabric
-  remounts through one canonical rebuild when a raised tuning knob crosses
-  the class boundary. AUTO and manual fields alike hold default-class
-  buffers.
-- A deterministic spanning forest is selected first. While it fits the
-  budget (fields up to ~6,000 Cells), every connected visible Cell stays
-  attached to the rendered nervous system. When the forest exceeds the
-  budget — the fixed 12,000-Cell AUTO field is such a field — partial
-  coverage is BY DESIGN, and it must scatter: a hash-ranked share of the
-  forest (default 0.55 of budget) spreads covered Cells uniformly across
-  the disk. Admitting the forest in graph order instead (one region wired
-  solid, the remainder bare) is the canopy-beside-dust pathology and is
-  forbidden. Bare Cells read as dust between capillaries; trunks supply
-  the long coherent strands.
-- Still-valid prior edges are considered next so ordinary churn preserves
-  local continuity. Hierarchical trunks, twigs, and deterministic cross-links
-  fill the remaining budget.
-- Every passive quadratic Bezier uses four samples at every quality preset.
-- Passive lifecycle and mask transitions render at the normal animation
-  cadence. They must not acquire a quality-dependent FPS limiter.
-- Passive lines use bounded screen accumulation so dense overlap approaches a
-  ceiling instead of clipping to a uniform white mass. Active paths remain in
-  separate additive layers and retain visual headroom.
+`CellGalaxyCache` is the renderer's canonical browser input. It contains:
 
-Manual fields use the same fixed screen budget and the same selection rules:
-a 50,000-Cell manual field renders the same 8,000 nerves, airier per Cell.
-The screen composition — not per-Cell coverage — is the preserved visual
-identity.
+- canonical `cells` and their copy-on-write change journal;
+- bounded `recentLinks` for evidence and recall;
+- `pulseLinks`, containing only newly observed live links;
+- an ordered `linkPrune` witness for canonical rewrites;
+- chain-wide totals and incremental statistics;
+- backfill state; and
+- the server-owned display plane: members, residents, budget, provenance, and
+  a display-change journal.
 
-Current presentation defaults are a 2.5 CSS-pixel passive width, `0.15` fabric
-energy, a `0.44` midpoint taper floor, and a `0.34` weak-twig floor. These are
-art-direction baselines, not performance controls. Reducing them requires a
-visual-language review rather than a performance-only change.
+The reducer remains pure and owns ordering semantics. Components may derive
+GPU-ready state but must not repeat domain reduction.
 
-### Routing and lifecycle
+`ui-app/src/cell-field-hook.ts` currently maintains a mutable structure-of-
+arrays mirror and parity diagnostics. It is a verified migration seam, not yet
+the production Canvas read path: current Canvas consumers still read the
+Map-backed `CellGalaxyCache`. Documentation and performance claims must not
+describe that mirror as authoritative until consumers actually migrate.
 
-- The active pulse, warm reinforcement, memory trace, and passive nerve for
-  the same edge must use the same deterministic Bezier control point.
-- Birth, death, retraction, flash, and route timing advance on simulation time.
-  A slow frame may advance animation state; it must not drop the semantic
-  event or select a different route.
-- New edges grow and removed edges decay through persistent keyed lifecycle
-  state. A graph refresh must not wipe and redraw the entire fabric as an
-  unrelated shape.
-- Reorg pruning removes orphan routes and queued visual events before canonical
-  replacement events arrive. Only real replacement births use the normal
-  re-entry animation.
+### 4.3 Application and component ownership
 
-## Canvas and Clock Contract
+`App` owns cross-layer state: caches and stream connections, Cell and network
+selection, lazy semantic evidence, identity proof, memory recall, causal-route
+navigation, stream health, peer topology, and the current block-event clock.
+It passes already-scoped data into the rendering package.
 
-The production Canvas currently uses:
+The production scene is conceptually assembled as follows:
 
-- camera position `[110, 108, 110]`, FOV `50`, near `1`, far `3000`;
+```text
+App
+|-- DOM: tweaks, HUD, jukebox, render statistics, Cell inspection panel
+`-- CellGalaxyProvider
+    `-- Canvas
+        |-- SimClockTicker
+        |-- detail/selection trackers and camera controllers
+        |-- adaptive quality and render-stat samplers
+        |-- Stars
+        |-- CellGalaxy
+        |   |-- Cell body and sparse flare passes
+        |   |-- batched CellNucleus near-detail passes
+        |   |-- custom CellPicker
+        |   `-- rotating overlay group
+        |       |-- inspection anchor and semantic orbit
+        |       |-- causal lens and write seal
+        |       `-- NeuralNetwork -> NeuralFabric
+        |-- NetworkColony
+        |-- optional CellPortraitInset scissor pass
+        `-- OrbitControls
+```
+
+`CellGalaxyProvider` exposes the same cache to nested enhancement layers and
+fails fast when a required consumer is mounted without it. Optional consumers
+use the nullable variant when absence is a supported embedding mode.
+
+High-frequency animation state lives in refs, typed arrays, and Three.js
+objects. React state is reserved for structural or user-visible transitions;
+publishing thousands of per-frame objects through React is outside the design.
+
+## 5. Scene Space, Camera, and Render Passes
+
+### 5.1 Coordinate system
+
+The scene uses a vertically layered world:
+
+| Plane | World Y | Meaning |
+|---|---:|---|
+| Satellite applications | `-26` | Lowest contextual layer |
+| CKBloom | `0` | Application/ecosystem ring |
+| Chain and peer colony | `22` | Local CKB node, peers, inferred network context |
+| Cell field origin | `38` | Folded Cell tissue and neural fabric |
+
+Cell `pos_seed` values are local to the Cell-field group. The group is
+translated to `CELLS_Y` and slowly rotates around Y; Cell overlays and nerves
+live inside the same group so they inherit the exact transform. World-space
+anchors, labels, carrier impacts, and inspection panels use the published
+galaxy frame to apply the same rotation rather than recomputing positions.
+
+Chain-node placement accepts a shared universe seed so every consumer agrees
+on the same anchor positions. The current `App` assembly uses
+`UNIVERSE_SEED_FALLBACK` (`0xc0ffee`); the layout API is ready for a persisted
+profile seed, but the production bootstrap does not yet wire one through.
+
+### 5.2 Production camera and renderer
+
+The production Canvas uses:
+
+- camera position `[110, 108, 110]`;
+- target `[0, CELLS_Y, 0]`;
+- FOV `50`, near `1`, and far `3000`;
 - WebGL antialiasing and an alpha-capable renderer;
-- CSS background `#02030a`; and
-- device DPR clamped by the effective quality preset, never below CSS-pixel
-  density.
+- CSS background `#02030a`;
+- quality-limited DPR, never below CSS-pixel density; and
+- damped orbit control with damping factor `0.08` and distance range `4..400`.
 
-Camera values are composition defaults, not wire contracts, but changes must
-be reviewed at desktop and narrow layouts because they affect Cell/nerve
-readability and HUD occlusion.
+These are composition defaults rather than wire contracts. A change still
+requires desktop and narrow-layout review because camera composition controls
+Cell readability, network separation, picking density, and HUD occlusion.
+
+### 5.3 Pass ownership and compositing
+
+The main Canvas renders the ambient field, Cell layers, neural layers, and peer
+colony. Warm Cell layers and cool peer layers remain separable by palette and
+depth even when their projected silhouettes overlap.
+
+The Cell body uses bounded screen-style accumulation so a dense field tends
+toward a ceiling instead of becoming a uniformly clipped white disc. Resting
+fibres use the same bounded accumulation family. Short-lived active writes,
+memory traces, lock acknowledgements, flares, and near nuclei use additive
+layers and therefore retain headroom above the passive field.
+
+The selected Cell portrait does not create a second WebGL context. It renders a
+portal scene through the existing renderer after the main scene, using a
+scissor rectangle and its own camera. This preserves the renderer's program
+cache and avoids the resource and compatibility costs of a second Canvas.
+
+The HUD and Cell inspection panel remain DOM siblings. A small R3F anchor
+projects the selected Cell into screen space so the DOM inspector can stay
+tethered without turning text and controls into scene textures.
+
+## 6. Visual Language
+
+| Layer | Required reading | Provenance | Rendering rule |
+|---|---|---|---|
+| Background and stars | Deep field and scale | Ambient presentation | May scale with quality; carries no chain meaning |
+| Peer colony scaffold | Cool cyan network context | Explicitly inferred presentation topology | Must never be presented as an observed Internet map |
+| Local node and measured peers | Cool local-node context | Observed entity state | Measured and inferred nodes remain visually distinguishable |
+| Cell bodies | Warm rose living records | Canonical staged Cells plus bounded inspection overlays | Identity and position are stable; lifecycle and focus accents may animate |
+| Near Cell nuclei | Expanded A-braid identity | Canonical Cell identity, renderer-derived detail | Batched and distance-limited; focused evidence wins admission |
+| Passive Cell nerves | Crimson/rose neural tissue | Deterministic graph over staged Cells | Abundant at rest and stable through ordinary churn |
+| Warm reinforcement | Recently used display conduits | Real link event plus derived graph route | Uses the same edge curve as the passive fibre |
+| Active writes | Bright packet wavefront and terminal response | Real live `CellLink`, derived route | Quality may reduce sampling and bounded concurrency, but not route derivation |
+| Memory route | Explicit historical recall | Retained link evidence, derived route | Separate screen-weighted layer and readable at distance |
+| Rewrite echo | Fractured invalidated suffix | Canonical prune witness | Must not imply a replacement fork that was not observed |
+| HUD and inspectors | State, controls, provenance, evidence | DOM application state | Kept outside the main scene color buffer |
+
+The warm Cell palette is centralized in `packages/ui/src/visualPalette.ts`:
+rose, crimson, amber, ember, warm white, and violet. Peer scaffolding stays in
+the cyan, ice, blue, violet, and cold-white family. Collapsing those planes into
+one color family is a visual-language change, not a local styling adjustment.
+
+## 7. Cell Field Architecture
+
+### 7.1 Staged membership
+
+The renderer distinguishes three populations:
+
+1. The canonical retained reservoir in `cells`, currently capped by the server
+   profile and independently of what can be drawn.
+2. The server-owned display plane in `displayMembers` and `displayResidents`.
+   Residents can preserve displayable records even when they are no longer in
+   the canonical live Map.
+3. A client-only inspection overlay containing an off-stage selected Cell and
+   its bounded inspection neighborhood.
+
+AUTO uses the server display budget when one is streamed and otherwise uses a
+fixed 12,000-Cell compatibility budget. High, Med, and Low render the same AUTO
+membership. Manual mode is a presentation clamp over the staged order and may
+request up to the 50,000-record renderer ceiling.
+
+With a display plane, `displayChanges` incrementally append entries, remove by
+swap-from-tail, and patch updated residents. A skipped journal, reset, token
+mismatch, structural budget change, or active manual clamp uses one canonical
+rebuild. Against an older server without a display plane, the compatibility
+path maintains the canonical insertion-order prefix through `cellChanges`.
+
+The inspection overlay is appended after the staged list, selected Cell first
+and then field members in ascending hop order. It is capped at 256 entries and
+clamped to remaining GPU capacity. Overlay entries are visible and pickable but
+never enter shared display membership, passive topology, live routing, or
+memory routing.
+
+This separation is intentional: interaction can reveal a retained record
+without silently changing the topology seen by every other renderer.
+
+### 7.2 Stable GPU slots
+
+List position is not GPU identity. `syncCellSlots` maintains an ID-to-slot map:
+
+- a retained visible Cell keeps its slot;
+- removals create holes or swap a tail entry into a freed slot;
+- additions fill reusable slots; and
+- only affected ranges become dirty.
+
+This keeps ordinary update cost proportional to churn instead of field size
+and prevents list reordering from making the whole galaxy flicker or upload.
+If dirty intervals become too fragmented, the updater coalesces them and may
+fall back to one populated-prefix upload.
+
+### 7.3 Cell GPU representation
+
+Shared, preallocated attributes encode the field at a hard capacity of 50,000
+records. The important attribute families are:
+
+- position and deterministic position seed;
+- body color, size, birth time, death time, and flash time;
+- identity/memory seed and focus or recall state;
+- detail level; and
+- inspection source, target, hop, and role masks.
+
+Presentation descriptors are deterministic functions of Cell data. Capacity
+uses logarithmic compression for perceptual mass, payload density influences
+form, and content hashes seed identity detail. Invalid optional hash input
+falls back deterministically; it does not introduce a random layout.
+
+The far-field body is one shared point pass using the Cell hybrid material.
+Exact active flashes are drawn through a separate sparse indexed point pass so
+inactive slots do not produce transparent fragments. Birth and death envelopes
+are evaluated in shader time, while CPU writes only changed records.
+
+### 7.4 Near identity LOD
+
+`CellNucleus` expands nearby Cells into a batched A-braid identity using two
+line draws and a point draw. It does not mount one React object per Cell.
+Distance and quality limit concurrent expanded identities; focused Cells sort
+ahead of the cap and remain legible at every preset. LOD admission is refreshed
+at a controlled cadence, and sparse ranges are updated without rebuilding the
+far body.
+
+### 7.5 Picking
+
+`CellPicker` provides a custom `Object3D.raycast` path backed by a screen-space
+hit index. It projects eligible Cell slots when the camera, viewport, or Cell
+state changes, then answers pointer actions without scanning the full field on
+every event.
+
+Picking is suspended only after actual orbit movement begins. A press/release
+with at most a small pointer displacement remains a click. Selection and
+inspection eligibility are applied at index construction so hidden or
+non-navigable records cannot win a hit by accident.
+
+## 8. Display Topology and Neural Fabric
+
+### 8.1 One graph over the exact staged set
+
+`NeuralNetwork` owns one neighbor graph over the exact staged display subset.
+The client-only inspection overlay is excluded. All downstream neural behavior
+reads this graph:
+
+- passive-fibre selection;
+- live pulse planning;
+- warm route reinforcement;
+- memory recall; and
+- graph-hop inspection fields.
+
+This is a correctness boundary. A live or recalled packet cannot traverse an
+edge that has no corresponding display graph edge, and it cannot route to an
+off-stage endpoint. There is no second canonical-reservoir routing graph.
+
+Only living staged Cells participate. The pure builder uses a numeric
+spatial-hash grid and symmetric k-nearest-neighbor candidates (default `k=4`),
+drops ordinary candidates longer than 25 world units, gives isolated Cells a
+lifeline, and stitches disconnected components with the minimum sparse long
+links needed for reachability. A 14-seed arbor forest assigns visual trunk
+weights; those weights affect presentation, not route connectivity.
+
+Cell IDs stay numeric end to end. Worker transport uses `Float64Array` for IDs
+because composition-derived IDs are not constrained to 32-bit integers.
+
+### 8.2 Incremental worker pipeline
+
+Topology construction runs in a long-lived worker once the staged set reaches
+the worker threshold (512 records). The main thread sends packed minimal Cell
+data and a generation number. After bootstrap it sends display-journal deltas
+when possible rather than recloning complete Cell payloads.
+
+The pipeline is latest-only:
+
+- superseded requests are ignored;
+- stale worker generations trigger a safe full resend;
+- packed output is rebuilt into reusable adjacency sets; and
+- worker creation or execution failure falls back to the same synchronous pure
+  builder and records the fallback in diagnostics.
+
+While a worker build is pending, an eager living mesh applies same-frame births
+and removals to the currently published graph. The request-time Cell map also
+closes the gap for links arriving in the same frame. The worker result remains
+authoritative once published; periodic cleanup removes eager edges that are no
+longer part of the resolved graph.
+
+### 8.3 Passive selection
+
+The complete staged graph is generally denser than the resting visual budget.
+`buildPassiveNeighborGraph` chooses a deterministic subset without inventing
+adjacency.
+
+The budget is:
+
+```text
+min(live screen budget, round(staged Cell count * 4 / 3))
+```
+
+The effective screen budget comes from the server's
+`displayBudget.nerveEdges` when present, otherwise the shipped 8,000-edge
+fallback. Moving the live tuning control away from its default explicitly
+overrides the server value. Server and tuning values are bounded to
+`6,000..20,000`. The result is fixed across High, Med, and Low and across AUTO
+and manual Cell display modes.
+
+Selection order preserves the field's visual identity:
+
+1. Use a spanning forest while it fits.
+2. If the forest exceeds the budget, reserve the coverage share (default
+   `0.55`) for a hash-scattered forest subset. Graph-order admission that fully
+   wires one region and leaves another bare is forbidden.
+3. Prefer still-valid prior edges so ordinary churn changes the fabric locally.
+4. Fill remaining capacity with hierarchical trunks, twigs, and deterministic
+   cross-links (default trunk and twig shares `0.72` and `0.18`).
+
+Every passive quadratic curve uses four samples at every quality preset. Dense
+manual fields intentionally become airier per Cell: the preserved quantity is
+the screen composition, not full per-Cell coverage.
+
+### 8.4 Persistent fibre lifecycle
+
+`NeuralFabric` keeps keyed edge state by canonical `minId:maxId`. An edge
+captures its endpoints and deterministic control point when born, so a dying
+fibre can retract after its Cell record has left the current graph.
+
+Graph diffs grow new edges, preserve surviving slots, and mark removed edges
+for decay. GPU lifecycle uniforms advance growth, death, warmth, masks, and
+recall without rewriting every position each frame. Normal topology churn uses
+slot-level dirty uploads; full walks are reserved for global or structural
+changes.
+
+Real Cell death produces retraction and an energy response. Quiet graph garbage
+collection fades without implying a canonical spend. This difference must not
+be collapsed into one generic removal animation.
+
+### 8.5 Neural render layers
+
+All neural layers share the same Bezier calculation but use separate buffers
+and compositing roles:
+
+1. Passive fabric: bounded screen accumulation, persistent lifecycle.
+2. Sparse warm reinforcement: bounded screen accumulation over recently used
+   real display edges.
+3. Live packet wavefronts: additive and rebuilt from the bounded active pool.
+4. Memory traces: additive and independently bounded.
+5. Route-hop acknowledgement: a short additive lock/inspection pulse.
+
+Each sampled nerve segment is rendered as a two-triangle screen-space capsule.
+Width, cap shape, and color interpolation therefore remain stable in CSS space
+without the heavier generic line geometry. The shader patch fails loudly if an
+upstream shader layout no longer matches; silently falling back to a different
+silhouette is not acceptable.
+
+## 9. Live Transactions, Recall, and Canonical Rewrite
+
+### 9.1 Live pulse planning
+
+Only `pulseLinks` newer than the local cursor are eligible for live animation.
+For each link, the planner:
+
+1. indexes staged Cells by the parent transaction hashes referenced by the
+   link; only sources present in the living display graph can produce a route;
+2. chooses at most two surviving sibling sources per parent;
+3. uses the link's real `to_ids` as destinations;
+4. performs one breadth-first search per source over the staged display graph;
+5. rejects missing, disconnected, or longer-than-40-hop paths; and
+6. emits at most six pulses per link and 128 planned pulses per batch.
+
+Timing is deterministic per transaction/source/destination: base traversal is
+73 ms per hop, scaled into `0.7..1.4` of that value, with up to 300 ms of start
+jitter. The default active population is 256 pulses before the quality particle
+multiplier, backed by a 1,024-entry spike pool. Saturation drops bounded visual
+work; it never manufactures a cheaper route.
+
+When a packet crosses an edge, that same edge is reinforced. Terminal arrival
+flashes the target Cell and stamps the consensus write seal. Memory-mode
+packets do not reinforce the live field, flash a live write, or stamp a new
+seal.
+
+### 9.2 Shared block choreography
+
+A real block pulse anchors the presentation timeline. The peer flood and Cell
+delivery sequence are illustrative timing over observed block arrival, not a
+claim about actual unobserved peers.
+
+| Relative time | Visual event |
+|---:|---|
+| `0` | Deterministic two-second peer-colony flood begins |
+| `0.3..1.7 s` | Local receive point, clamped into the flood's hero band |
+| `local receive - 0.4 s` | Carrier precharge can begin when lead time exists |
+| `local receive` | Local protocol carrier launches toward the Cell field |
+| `local receive + 1.0 s` | Carrier reaches the field; live Cell-to-Cell pulses may start |
+| `local receive + 2.2 s` | Cell ledger acknowledgement completes |
+| `local receive + 2.35 s` | Exact touched-Cell highlight uses the additional 150 ms readability offset |
+
+The exact touched set is derived from fresh links and bounded to 256 Cells per
+block. A local impact can also ignite up to 128 nearby staged Cells within a
+14-world-unit radius as a presentation bridge from carrier to field. That
+radial response must not be described as additional chain linkage.
+
+Backfill consumes block and link cursors without firing this choreography.
+
+### 9.3 Memory recall and inspection routes
+
+Recall starts only from retained evidence and resolves against the current
+staged display graph. The memory layer has separate energy, width, and aperture
+rules so it reads as recalled evidence rather than a new write. If the retained
+link endpoint is unavailable or the current graph cannot connect it, the UI
+reports or displays the available evidence without inventing a substitute
+path.
+
+The graph-hop inspection field is a bounded breadth-first neighborhood, by
+default no more than two hops. Energy decreases by hop, and only the selected
+Cell and first-hop records become direct navigation targets. Background dimming
+and transition masks are shader state over the existing topology.
+
+The causal lens uses immutable link endpoint anchors and bounded real input and
+sibling sets. Missing retained positions remain missing; it never fabricates a
+complete family around incomplete evidence.
+
+### 9.4 Reorg ordering
+
+Canonical prune processing happens before replacement deltas. On receipt:
+
+- queued and active pulses at or above the prune height are removed;
+- recalled routes that depend on invalidated links are cleared;
+- the compact rewrite witness is captured for `CanonicalRewriteEcho`; and
+- dying Cell/fibre lifecycle proceeds from the last known real geometry.
+
+Only replacement Cells actually received from the new canonical branch run the
+normal birth/re-entry animation. The rewrite echo visualizes invalidated
+evidence; it must not draw a speculative alternative branch.
+
+## 10. Peer Colony Architecture
+
+The peer colony is a cool contextual data-flow layer on the chain plane. It is
+separate from the Cell topology even when both respond to the same block.
+
+### 10.1 Measured and inferred topology
+
+The topology contains:
+
+- one local CKB node, aligned with the shared chain-node anchor;
+- measured peers positioned deterministically by peer ID and reported latency;
+- a seed-only inferred scaffold of roughly `240 +/- 30` nodes in an elliptical
+  disc; and
+- inferred k-nearest, small-world, and component-bridge edges.
+
+The inferred scaffold is independent of the measured peer list, so peer churn
+does not reshuffle the ambient colony. It is memoized by universe seed. Edges
+from measured peers into the scaffold remain classified as inferred because
+the node did not observe those Internet links.
+
+### 10.2 Block flood and delivery
+
+For each block pulse, a deterministic nonce selects a non-local origin biased
+away from the local node. Dijkstra arrival times over the presentation graph
+are normalized into a two-second flood. Colony edges and nodes show the wave;
+couriers show hop-level glints; measured arrivals can launch protocol carriers;
+and the local carrier hands the event to the Cell field.
+
+This sequence communicates propagation and local receipt. Only the block event,
+local node, measured peers, and measured metadata are observations. The origin,
+unmeasured hops, and shortest path through inferred nodes are explicitly a
+presentation model.
+
+Peer topology is memoized from a stable content signature that excludes the
+continuously changing best-known block height. A new height drives event state,
+not an expensive topology rebuild.
+
+## 11. Interaction Architecture
+
+### 11.1 Ownership rules
+
+- Main `OrbitControls` owns background orbit gestures.
+- `CellPicker` owns Cell click resolution but suspends expensive hit work during
+  real orbit movement.
+- The scissored Cell portrait owns pointer input within its DOM rectangle and
+  disables main Galaxy controls until release.
+- Pointer miss and Escape clear inspection only when no other gesture owns the
+  action.
+- Cell and peer selection are mutually exclusive in `App`.
+
+Opening or switching a Cell is camera-passive. The camera moves only for an
+explicit consensus-route action; `ConsensusRouteCamera` then frames required
+real endpoints while keeping presentation-only carriers in view when useful.
+
+### 11.2 Selected-Cell flow
+
+```text
+CellPicker hit
+    -> App selectedCellId
+       |-> overlay pool guarantees bounded body visibility
+       |-> inspection field derives graph hops
+       |-> R3F anchor projects to DOM inspection panel
+       |-> optional portrait scissor pass
+       |-> lazy semantic/identity evidence request
+       `-> causal navigation or explicit memory recall
+```
+
+Selection identity is an ID, not a GPU slot. Slot churn, display-list order,
+and quality transitions must not change the selected record.
+
+### 11.3 Pause and responsiveness
+
+Camera damping, pointer interaction, projected DOM anchors, and performance
+sampling use raw frame time so they remain responsive while semantic animation
+is paused. Scene-semantic transitions use simulation time.
+
+## 12. Clock and Determinism
 
 `SimClockTicker` advances the selected simulation clock at frame priority
-`-1000`. Simulation consumers use `useSimFrame`; camera input, billboarding,
-and performance sampling use raw `useFrame` because they must remain responsive
-while simulation is paused.
+`-1000`. Semantic consumers use `useSimFrame`; input, camera, billboarding, and
+performance measurement use raw `useFrame`.
 
-- Production mounts one clock ticker under the R3F context.
-- Pause and time scale apply consistently to every simulation animation.
-- A review scene may use a scoped clock, fixed delta, and exact stop boundary.
-- A paused review Canvas may use demand rendering. Production remains live.
-- Reduced motion is an explicit complete renderer state, not an animation
-  paused on an arbitrary incomplete frame.
+- Production mounts one ticker under the R3F context.
+- The production singleton survives ordinary remounts so timeline identity is
+  not reset accidentally.
+- Pause and time scale apply to every semantic animation.
+- Review scenes may install a scoped clock, fixed delta, and exact stop
+  boundary.
+- A paused review Canvas may use demand rendering; production remains live.
+- Reduced motion is a deliberately completed semantic state, not a random
+  half-finished frame.
 
-## Quality Presets
+Determinism depends on more than a seeded layout. A valid comparison fixes the
+input snapshot, event nonce, simulation time, camera, viewport, DPR, quality,
+and review route.
+
+## 13. Quality and Adaptive Control
 
 Quality owns raster density, ambience, and bounded transient detail. It does
-not own Cell membership or the passive nervous system.
+not own staged Cell membership or the resting nervous system.
 
-| Setting | High | Med | Low | Allowed meaning |
+| Setting | High | Med | Low | Allowed effect |
 |---|---:|---:|---:|---|
 | Maximum DPR | 2.0 | 1.5 | 1.0 | Raster cost |
 | Stars | 2,000 | 600 | 200 | Ambient density |
-| Particle capacity multiplier | 1.0 | 0.5 | 0.25 | Transient particles |
+| Particle capacity multiplier | 1.0 | 0.5 | 0.25 | Transient concurrency |
 | Discharge arms | 3 | 2 | 1 | Transient write decoration |
 | Active samples per hop | 12 | 10 | 8 | Moving wavefront tessellation |
 | Expanded nearby Cell identities | 12 | 8 | 4 | Non-focused near-detail concurrency |
 
-Semantic memory retains a 24 CSS-pixel minimum core at all presets. Lower
-presets compensate reduced sampling with controlled line-width/filter changes;
-they must not drop checksum lanes or the focused record.
+Semantic memory keeps a minimum 24 CSS-pixel core at every preset. Lower
+presets compensate for reduced sampling with controlled line-width and energy
+changes; they do not drop focused evidence.
 
 The following remain identical across High, Med, and Low:
 
-- AUTO Cell membership (the fixed 12,000 budget) and its selection rules
-  and ordering;
-- the passive nerve count (the fixed 8,000 screen budget) and its selection
-  rules;
+- AUTO staged membership and its ordering;
+- the passive nerve budget and selection rules;
 - four passive samples per edge;
-- passive curve shape, width baseline, energy hierarchy, and animation cadence;
-- event identity, route, start/end times, and terminal response; and
-- inspection focus, selected Cell, and canonical evidence.
+- passive curve geometry, width baseline, hierarchy, and animation cadence;
+- route planning and deterministic timing for every admitted pulse; and
+- selection, inspection evidence, and canonical counters.
 
-AUTO quality samples raw frame time with warmup, hysteresis, and cooldown.
-Hidden tabs, debugger pauses, and delayed callbacks are not renderer evidence
-and must not trigger a quality change; neither is historical hydration/replay
-(the cells backfill window and a fresh warmup after it) — catch-up storms say
-nothing about steady rendering capability. Manual High/Med/Low takes
-ownership immediately.
+The particle multiplier can lower simultaneous active-pulse admission under
+saturation. It may omit bounded transient work, but it cannot reroute an
+admitted pulse or change canonical state.
 
-## Reference Budgets
+AUTO samples 750 ms windows, uses a 1,500 ms exponential average, begins with a
+4,000 ms warmup, and waits 6,000 ms after a switch. It requires sustained slow
+or fast evidence with a deadband before moving one adjacent preset. Hidden
+tabs, delayed callbacks, debugger pauses, and backfill/replay windows are
+rejected as performance evidence. Manual High/Med/Low takes ownership
+immediately.
 
-| Budget | Current value | Owner |
+## 14. Capacity and Resource Budgets
+
+| Budget | Shipped value | Owner |
 |---|---:|---|
-| Instanced Cell capacity | 50,000 | `geometry/cellPositions.ts` |
-| AUTO visible Cells | 12,000 fixed (quality-independent) | `tweaks/cellDisplay.ts` |
-| Passive nerves | min(8,000, visible Cells x 4/3); live-tunable up to 20,000 | `geometry/passiveNeighborGraph.ts` |
+| Cell GPU slots | 50,000 total | `geometry/cellPositions.ts` |
+| AUTO staged Cells | server budget or 12,000 fallback, quality-independent | `tweaks/cellDisplay.ts` |
+| Client inspection overlay | up to 256, within remaining Cell slots | `geometry/cellRenderSet.ts` |
+| Passive nerves | `min(effective server/tuned screen budget, staged Cells * 4/3)`; 8,000 fallback, 20,000 ceiling | `geometry/passiveNeighborGraph.ts` |
 | Passive curve samples | 4 per edge | `nerve/fabricCapacity.ts` |
 | Passive lifecycle generations | 3 | `nerve/fabricCapacity.ts` |
-| Passive segment allocation | per class: edges x 3 x 4 (ceiling 240,000) | `nerve/fabricCapacity.ts` |
-| Sparse warm-route allocation | per class: edges x 4 (ceiling 266,668) | `nerve/fabricCapacity.ts` |
-| Live active-route allocation | 6,000 segments | `nerve/NeuralFabric.tsx` |
-| Memory-route allocation | 6,000 segments | `nerve/NeuralFabric.tsx` |
-| Cell birth envelope | 500 ms | `geometry/cellPositions.ts` |
-| Cell death envelope | 600 ms | `geometry/cellPositions.ts` |
+| Passive segment allocation | 96,000 default; 240,000 ceiling | `nerve/fabricCapacity.ts` |
+| Warm segment allocation | 32,000 default; 80,000 ceiling | `nerve/fabricCapacity.ts` |
+| Live active-route segments | 6,000 | `nerve/NeuralFabric.tsx` |
+| Memory-route segments | 6,000 | `nerve/NeuralFabric.tsx` |
+| Route-hop acknowledgement | 48 segments | `nerve/NeuralFabric.tsx` |
+| Default active pulses | 256 before quality multiplier | `nerve/NeuralNetwork.tsx` |
+| Spike object pool | 1,024 | `nerve/NeuralNetwork.tsx` |
+| Planned pulses per link / batch | 6 / 128 | `nerve/pulseRunner.ts`, `pulseBatch.ts` |
+| Recent evidence links | 2,048 by default | `@cknerv/cache` `cellsReducer.ts` |
+| Live pulse-link ring | 128 by default | `@cknerv/cache` `cellsReducer.ts` |
+| Canonical rewrite echo | up to 50,000 records in one point draw | `components/CanonicalRewriteEcho.tsx` |
+| Exact touched Cells per block | 256 | `ui/topologyConstants.ts` |
+| Local impact ignitions | 128 | `ui/topologyConstants.ts` |
+| Cell birth / death envelope | 500 ms / 600 ms | `geometry/cellPositions.ts` |
 
-These values are implementation limits with visual consequences. If one
-changes, update its unit tests and this table in the same change.
+Passive and warm allocations quantize to the 8,000-edge default class or the
+20,000-edge ceiling class. Raising the live tuning budget across the class
+boundary intentionally remounts those buffers through one canonical rebuild.
 
-## Performance Constraints
+All persistent and transient pools are bounded. Under adversarial churn,
+superseded passive afterimages and low-priority transient work clip before the
+current staged structure.
 
-### Preferred optimization order
+## 15. Performance Architecture
 
-Optimize work that cannot affect a visible result before changing visible
-budgets:
+### 15.1 Main-thread strategy
 
-1. Eliminate redundant CPU calculation and per-frame allocation.
-2. Move per-object invariants out of fragment hot paths when interpolation is
-   visually equivalent.
-3. Upload only dirty/populated buffer ranges.
-4. Separate position and color dirtiness when topology is unchanged.
-5. Draw only primitives that can produce a fragment, while keeping the exact
-   shader gate as the authority.
-6. Move topology construction to workers and keep latest-only cancellation.
-7. Reduce equivalent geometry, such as the two-triangle screen-space capsule,
-   only after proving the silhouette, width, cap, and color interpolation.
-8. Use the quality-owned transient controls in the table above.
+- Pure reducers publish immutable state and compact journals.
+- Render-set cursors turn adjacent journals into slot-local changes.
+- The Cell source index for a link batch scans the staged Cell Map once, not
+  once per link.
+- Topology construction moves to a worker for non-trivial fields.
+- High-frequency state stays in refs and reusable scratch objects.
+- Peer topology excludes rapidly changing height from its memo signature.
+- Picking projects only when its input epoch changes and pauses during orbit.
 
-Examples already following this order include shared Cell attributes, sparse
-flash indices, dirty-range uploads, color-only passive-fabric updates, worker
-neighbor builds, and screen-space capsule nerves.
+### 15.2 GPU strategy
 
-### Forbidden performance shortcuts
+- Cell attributes are shared across body, flare, nucleus, and picking
+  consumers where their semantics match.
+- Only populated prefixes or exact dirty ranges upload.
+- Sparse indexed passes avoid transparent work for inactive effects.
+- Passive topology and color/mask updates have separate dirty paths.
+- Screen-space capsule nerves use two triangles per sampled segment.
+- Shader time advances lifecycle without per-frame full-buffer rewrites.
+- Draw and pool bounds are explicit at worst-case staged size.
+
+Transparent overdraw remains the dominant large-field GPU risk. Draw calls,
+triangles, upload bytes, and program counts are useful diagnostics, but none of
+them alone proves visual equivalence or perceived smoothness.
+
+### 15.3 Preferred optimization order
+
+Optimize invisible work before changing a visible contract:
+
+1. Remove redundant calculation and per-frame allocation.
+2. Move invariant work out of fragment and frame hot paths.
+3. Upload only changed or populated ranges.
+4. Separate topology, position, color, mask, and timing dirtiness.
+5. Draw only primitives capable of producing a fragment.
+6. Move pure construction to workers with latest-only cancellation.
+7. Reduce equivalent geometry only after proving silhouette and interpolation.
+8. Use quality-owned raster, ambience, and transient controls.
+
+### 15.4 Forbidden shortcuts
 
 A performance-only change must not:
 
-- introduce quality-dependent passive edge caps, passive samples, or passive
-  animation FPS;
-- shrink visible membership below the fixed AUTO budget, vary it by quality
-  tier, or reintroduce membership rungs (the 2026-08-10 tier ladder was
-  tried and explicitly revoked on 2026-08-11 — fixed composition is a
-  signed product decision);
-- shorten, skip, or coalesce a semantic animation so that an observed event is
-  no longer visible;
-- replace a real route with a cheaper synthetic route;
-- lower passive width/energy until the resting nervous system stops reading;
-- rebuild the Cell set or topology in response to adaptive quality alone;
+- vary AUTO membership or passive edge count by quality;
+- add quality-dependent passive samples or passive animation cadence;
+- shorten, skip, or coalesce an observed semantic event until it disappears;
+- replace a missing real endpoint or display route with a synthetic one;
+- lower passive width or energy until the resting field no longer reads as a
+  nervous system;
+- rebuild membership or topology in response to adaptive quality alone;
 - remove focused identity/evidence or make it sub-pixel; or
-- claim a gain from a hidden/throttled browser tab.
+- claim a gain from a hidden or throttled tab.
 
-If a target cannot be met without one of these changes, treat it as an explicit
-product/art-direction decision, not an implementation optimization.
+If a target cannot be met without one of those changes, it is an explicit
+product or art-direction decision and requires contract review.
 
-### Hot-path discipline
+## 16. Failure and Degradation Behavior
 
-- Reuse typed arrays and scratch vectors; avoid object/array creation inside
-  Cell, edge, and pulse loops.
-- Keep high-frequency state in refs or external stores instead of publishing
-  React state every frame.
-- Preserve shared BufferAttributes where layers consume the same Cell data.
-- Mark only populated prefixes or exact dirty ranges for GPU upload.
-- Keep stable topology buffers untouched during color-only transitions.
-- Bound all persistent, transient, and afterimage pools. Under saturation,
-  clip low-priority afterimages before current canonical structure.
-- Keep picking work out of orbit-drag frames and avoid full-field projection
-  scans when the pointer action cannot select a Cell.
+The Canvas favors visible, diagnosable degradation over invented continuity.
 
-Transparent overdraw remains the dominant large-field GPU risk. Draw calls,
-triangle counts, and upload bytes are useful diagnostics, but none alone proves
-visual equivalence or user-perceived smoothness.
+| Condition | Required behavior |
+|---|---|
+| Binary Cell snapshot fails | Fall back to the JSON snapshot path |
+| Server reports a lagged stream | Discard pending deltas, reset the cursor, and resynchronize from a snapshot |
+| Display journal is skipped or reset | Rebuild the staged cursor from authoritative cache state |
+| Topology worker is unavailable or fails | Use the same synchronous pure builder and expose diagnostics |
+| Worker result is stale | Ignore it and request current state; never publish stale topology |
+| Route endpoint or path is missing | Drop that visual route and record the reason |
+| Pool or segment budget saturates | Clip lower-priority transient/afterimage work before current structure |
+| Historical backfill is active | Advance cursors, suppress live choreography, restart quality warmup |
+| Canonical prune arrives | Remove invalid pulses/recalls before rendering replacements |
+| Optional semantic evidence fails | Keep canonical Cell rendering; do not fabricate enrichment |
 
-## Interaction Constraints
+Runtime diagnostics and tests should distinguish these cases. Silent fallback
+chains inside projection or route logic make provenance impossible to audit and
+are not acceptable.
 
-- Orbit movement suspends expensive Cell picking once actual camera movement
-  begins; a click without movement must still select correctly.
-- The nested Cell Scan owns its pointer gesture until release. It rotates its
-  inspection camera without moving the Galaxy camera.
-- Pointer miss and Escape clear inspection only when another gesture does not
-  own the action.
-- Camera damping, projected labels, and close-view fabric weighting remain
-  responsive while simulation is paused.
-- Selected and inspected Cells retain bounded priority in rendering and picking
-  at every quality preset.
+## 17. Accessibility and Reduced Motion
 
-## Acceptance
+Reduced motion preserves the complete semantic result:
 
-### Automated checks
+- a born or replaced Cell appears in its resolved final state;
+- a death or prune does not freeze mid-retraction;
+- selected and recalled evidence remains visible;
+- input and camera response remain live; and
+- no extra event is generated to compensate for removed motion.
+
+Color is reinforced by geometry, timing, labels, and focus state. Warm versus
+cool palette separation is important, but provenance and selection must not be
+communicated by hue alone. DOM evidence remains the authoritative readable
+surface for exact identifiers and values.
+
+## 18. Extension Rules
+
+When adding a Canvas feature:
+
+1. Classify its source as canonical, observed, deterministic derivation, or
+   presentation simulation.
+2. Add wire/cache state only through the shared type and reducer boundaries;
+   never call node RPC from a UI package.
+3. Prefer a pure derive module before React or Three.js wiring.
+4. Choose the correct coordinate space and share the Cell group's transform if
+   the feature attaches to Cells.
+5. Choose simulation time for semantic animation and raw frame time only for
+   input, camera, projection, or measurement.
+6. Declare CPU, GPU, pool, and draw bounds before mounting the feature at full
+   field size.
+7. State whether quality may reduce it. Canonical identity and evidence are not
+   quality-owned.
+8. Define missing-data, resync, backfill, and reorg behavior.
+9. Add pure tests for derivation and lifecycle, Canvas tests where practical,
+   and deterministic browser review for the final pixels.
+
+If Cell positioning changes, update the Rust and TypeScript helix
+implementations and their parity tests together. A renderer-local correction is
+not an acceptable substitute.
+
+## 19. Verification and Acceptance
+
+### 19.1 Automated checks
 
 For Canvas behavior changes, run at minimum:
 
@@ -329,102 +891,143 @@ pnpm typecheck
 pnpm -F cknerv-ui-app build
 ```
 
-When validating the embedded production SPA, also run:
+When validating the SPA embedded in the release CLI, also run:
 
 ```bash
 cargo build --release -p cknerv-cli
 ```
 
+For documentation-only changes, the repository minimum is:
+
+```bash
+git diff --check
+```
+
 Tests should pin semantic invariants and budget ownership, not merely search
-for an implementation spelling when a pure behavior test is practical.
+for a particular implementation spelling when a pure behavior test is
+possible.
 
-### Browser matrix
+### 19.2 Browser matrix
 
-Use a fresh visible browser context for each explicit preset. Reusing a page
-after freezing its lifecycle can leave it hidden and produce false zero-draw or
-default-size Canvas results.
+Use a fresh visible browser context for each explicit preset. A page left
+hidden after lifecycle manipulation can report false zero-draw or default-size
+Canvas results.
 
 | Scenario | Required checks |
 |---|---|
-| Main Canvas, High/Med/Low | Same AUTO Cell membership, passive nerve count/topology, curve shape, and obvious neural reading; expected DPR/transient differences only |
-| Idle field | Nerves remain abundant without live traffic |
-| Protocol network/commit/settled | Active route rides passive curve; terminal write and memory evidence remain legible |
-| Selection and orbit | Correct pick, no accidental deselect after drag, focused neighborhood stays visible |
-| Recall and reorg | Exact evidence route; orphan visuals prune before replacement |
+| Main Canvas, High/Med/Low | Same AUTO membership, display graph, passive selection, curve shape, and neural reading; only documented DPR/ambient/transient differences |
+| Idle field | Resting nerves remain abundant without new blocks |
+| Network, carrier, commit, settled stages | Flood, carrier handoff, active route, terminal write, and retained evidence remain legible and correctly ordered |
+| Selection and orbit | Correct pick, no accidental deselect after drag, overlay visibility, stable nested portrait controls |
+| Memory and causal inspection | Exact retained endpoints, graph-bounded route, readable DOM evidence |
+| Reorg | Invalid pulses and recall disappear before real replacement births; echo shows only the prune witness |
+| Backfill | No live pulse storm and no adaptive-quality downgrade caused by replay |
 | Reduced motion | Complete static semantic state without fake or half-finished motion |
 
-For deterministic captures, use a 1440 × 900 viewport, an explicit quality,
-the readiness markers in `ui-app/VISUAL_REVIEW.md`, and record CSS size,
-framebuffer size, DPR, review time, and relevant scene identifiers.
+For deterministic captures, use a 1440 x 900 viewport, explicit quality, the
+readiness markers in `ui-app/VISUAL_REVIEW.md`, and record CSS size, framebuffer
+size, DPR, simulation time, and scene identifier.
 
-### Quality-neutral optimization proof
+### 19.3 Quality-neutral optimization proof
 
 When a change claims no visual difference:
 
-- compare the same deterministic input, clock time, camera, viewport, DPR, and
-  quality before and after;
-- require an exact pixel match where the scene is designed to be deterministic
-  (RMSE `0` and changed-pixel count `0`);
-- inspect at least one active animation frame in addition to an idle frame; and
+- compare the same input, event nonce, clock time, camera, viewport, DPR, and
+  quality;
+- require an exact pixel match where the review scene is deterministic (RMSE
+  `0` and changed-pixel count `0`);
+- inspect at least one active frame as well as an idle frame; and
 - verify shader compilation on the supported WebGL path, not only source-level
-  tests.
+  string tests.
 
-When an intentional visual improvement cannot be pixel-identical, keep the
-before/after captures, state the changed invariant, and verify every quality
-preset.
+When an intentional improvement cannot be pixel-identical, retain before/after
+captures, name the changed invariant, and verify every affected quality preset.
 
-### Performance comparison
+### 19.4 Performance comparison
 
 - Use the same browser, GPU path, viewport, DPR, quality, data snapshot, and
-  warmup for before/after runs.
+  warmup.
 - Measure idle and pointer/camera interaction separately.
-- Record draw calls, triangles, geometries, textures, and programs alongside
-  frame and main-thread samples.
-- Prefer multiple steady samples or medians; software-GPU frame times are
-  useful for relative comparison but are not production FPS promises.
-- Report a deliberate visual-budget increase, such as additional nerves,
-  separately from implementation overhead.
+- Record draw calls, triangles, geometries, textures, programs, frame samples,
+  and main-thread samples.
+- Prefer multiple steady samples or medians.
+- Treat software-GPU frame times as relative comparisons, not production FPS
+  promises.
+- Report deliberate visual-budget increases separately from implementation
+  overhead.
 
-## Change Checklist
+## 20. Change Checklist
 
 Before merging a Canvas change, answer:
 
-1. Does every visual record still derive from canonical or explicitly scoped
-   retained evidence?
-2. Are AUTO Cell membership and passive nerves unchanged across quality modes?
-3. Is the resting Cell galaxy still visibly a neural network?
-4. Do active, memory, and passive layers use the same route geometry?
-5. Does simulation time still own semantic animation while raw frame time owns
-   input and performance measurement?
-6. Are buffer, pool, and draw bounds explicit under worst-case Cell churn?
-7. Were deterministic idle and active frames reviewed at all affected presets?
-8. Were tests, this document, and the source-of-truth constants updated
-   together when a contract changed?
+1. Is every visual element classified by provenance, and does canonical
+   evidence still resolve from cache state?
+2. Are `pos_seed`, Cell IDs, and selected identity still stable?
+3. Do Cell bodies and `NeuralNetwork` resolve the same staged membership?
+4. Do live and memory routes use the one staged display graph, with no
+   off-stage synthetic route?
+5. Are AUTO membership and passive nerves unchanged across quality modes?
+6. Is the idle Cell field still visibly a nervous system?
+7. Do active, warm, memory, and passive layers use the same edge geometry?
+8. Does simulation time own semantic animation while raw time owns input and
+   measurement?
+9. Are buffer, pool, upload, and draw bounds explicit under worst-case churn?
+10. Are backfill, missing-data, worker-failure, and reorg paths tested?
+11. Were deterministic idle and active frames reviewed at affected presets?
+12. Were constants, tests, and this document updated together when a contract
+    changed?
 
-## Implementation Map
+## 21. Implementation Map
 
 | Concern | Primary implementation |
 |---|---|
-| Production Canvas assembly | `ui-app/src/App.tsx` |
-| DPR/query quality resolution | `ui-app/src/render-quality.ts` |
-| Quality ownership and preset values | `packages/ui/src/tweaks/qualityPresets.ts` |
-| Adaptive hysteresis | `packages/ui/src/tweaks/adaptiveQuality.ts` |
+| Browser bootstrap and initial snapshots | `ui-app/src/main.tsx`, `ui-app/src/connect.ts` |
+| Projection stream batching and recovery | `packages/cache/src/projectionStream.ts` |
+| Cell cache, link rings, display journal | `packages/cache/src/cellsReducer.ts` |
+| Application orchestration and Canvas assembly | `ui-app/src/App.tsx` |
+| Transitional Cell SoA mirror | `ui-app/src/cell-field-hook.ts` |
+| Cache context | `packages/ui/src/hooks/cellGalaxyContext.tsx` |
+| Scene planes and chain anchors | `packages/ui/src/layout.ts` |
+| DPR and query quality resolution | `ui-app/src/render-quality.ts` |
+| Quality presets and adaptive state | `packages/ui/src/tweaks/qualityPresets.ts`, `packages/ui/src/tweaks/adaptiveQuality.ts` |
 | Stable Cell display budget | `packages/ui/src/tweaks/cellDisplay.ts` |
-| Cell body, flash, inspection buffers | `packages/ui/src/components/CellGalaxy.tsx` |
-| Visible Cell selection/pinning | `packages/ui/src/geometry/cellRenderSet.ts` |
-| Complete neighbor topology | `packages/ui/src/geometry/neighborGraph.ts` |
-| Passive nerve selection | `packages/ui/src/geometry/passiveNeighborGraph.ts` |
-| Persistent/active nerve rendering | `packages/ui/src/nerve/NeuralFabric.tsx` |
-| Nerve buffer capacities | `packages/ui/src/nerve/fabricCapacity.ts` |
-| Optimized fat-line silhouette | `packages/ui/src/geometry/screenSpaceCapsuleLine.ts` |
-| Cell and peer color families | `packages/ui/src/visualPalette.ts` |
-| Simulation clock and frame wrapper | `packages/ui/src/tweaks/SimClockTicker.tsx`, `useSimFrame.ts` |
-| Render counters | `packages/ui/src/tweaks/RenderStatsSampler.tsx` |
+| Cell body, lifecycle, flash, and picking | `packages/ui/src/components/CellGalaxy.tsx` |
+| Staged render cursor and inspection overlay | `packages/ui/src/geometry/cellRenderSet.ts` |
+| Stable Cell GPU slot assignment | `packages/ui/src/geometry/cellSlotAssignment.ts` |
+| Cell visual descriptors and shaders | `packages/ui/src/derives/cellVisual.derive.ts`, `packages/ui/src/materials/cellHybridMaterial.ts`, `packages/ui/src/materials/cellFlareMaterial.ts` |
+| Batched near identity | `packages/ui/src/components/CellNucleus.tsx` |
+| One staged neighbor topology | `packages/ui/src/geometry/neighborGraph.ts` |
+| Worker and topology journal | `packages/ui/src/geometry/neighborGraphBuilder.ts`, `packages/ui/src/geometry/topologyJournal.ts` |
+| Passive edge selection | `packages/ui/src/geometry/passiveNeighborGraph.ts` |
+| Shared edge curve and route search | `packages/ui/src/geometry/edgeBezier.ts`, `packages/ui/src/geometry/pathRouter.ts` |
+| Neural orchestration and pulse state | `packages/ui/src/nerve/NeuralNetwork.tsx` |
+| Pulse planning and batch bounds | `packages/ui/src/nerve/pulseRunner.ts`, `packages/ui/src/nerve/pulseBatch.ts` |
+| Inspection fields and memory routes | `packages/ui/src/nerve/cellInspectionField.ts`, `packages/ui/src/nerve/consensusMemoryTrace.ts` |
+| Persistent and active nerve rendering | `packages/ui/src/nerve/NeuralFabric.tsx` |
+| Nerve allocation classes | `packages/ui/src/nerve/fabricCapacity.ts` |
+| Screen-space capsule geometry | `packages/ui/src/geometry/screenSpaceCapsuleLine.ts` |
+| Peer topology and block flood | `packages/ui/src/derives/networkTopology.derive.ts`, `packages/ui/src/derives/networkFlood.derive.ts` |
+| Peer render layers and Cell delivery | `packages/ui/src/components/NetworkColony.tsx`, `packages/ui/src/components/BlockDeliveryLayer.tsx` |
+| Canonical rewrite echo | `packages/ui/src/components/CanonicalRewriteEcho.tsx` |
+| Simulation clock | `packages/ui/src/tweaks/simClock.ts`, `packages/ui/src/tweaks/SimClockTicker.tsx`, `packages/ui/src/tweaks/useSimFrame.ts` |
+| Portrait scissor pass | `packages/ui/src/components/hud/CellPortraitInset.tsx` |
+| Render diagnostics | `packages/ui/src/tweaks/RenderStatsSampler.tsx` |
 | Deterministic browser review | `ui-app/VISUAL_REVIEW.md`, `ui-app/src/ProtocolEventLab.tsx` |
 
-## Out of Scope
+## 22. Glossary
 
-This document does not define server retention, wire formats, persistence, HUD
-content hierarchy, or a future WebGPU renderer. Those systems may constrain the
-Canvas, but changes to them follow their own contracts in `README.md`,
-`AGENTS.md`, and the relevant package tests.
+| Term | Meaning in this document |
+|---|---|
+| Canonical reservoir | The browser's retained canonical Cell Map, independent of display membership |
+| Display plane | Server-owned bounded membership and resident records for visualization |
+| Staged Cell | A Cell admitted by the resolved display plane and current presentation clamp |
+| Overlay Cell | A selected/inspection Cell drawn client-side outside staged membership |
+| Display graph | The one deterministic neighbor graph over living staged Cells |
+| Passive graph | The bounded visual edge selection from the display graph, not a second routing graph |
+| Active pulse | A transient route triggered by a newly observed `CellLink` |
+| Warm reinforcement | Persistent short-lived emphasis on display edges crossed by live pulses |
+| Memory route | An explicit route visualization derived from retained historical evidence |
+| Rewrite echo | A compact visual witness of the invalidated canonical suffix |
+| Measured peer | A peer present in observed local-node entity state |
+| Inferred peer | A seeded presentation node used to make propagation context legible |
+| Simulation time | The controlled semantic animation timeline, distinct from raw render-frame time |

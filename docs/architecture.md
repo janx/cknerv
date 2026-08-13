@@ -701,20 +701,22 @@ causal facts.
 
 The TypeScript decoder creates typed-array views over numeric columns and runs
 one `TextDecoder` over the shared string region. It materializes cache objects
-for compatibility, then maintains a mutable structure-of-arrays `CellField`
-for numeric consumers:
+for compatibility. `ui-app` also maintains a mutable structure-of-arrays
+`CellField` shadow for migration and parity verification:
 
 - ids use `Float64Array`, supporting high composition ids safely;
 - slot generations, a free list, and an open-addressing id hash provide stable
   slots and O(1) lookup;
 - a continuous journal updates only changed slots;
 - reset, skipped journals, or structural mismatch trigger a full rebuild;
-- the public cache remains immutable, while its single consumer owns the SoA
-  mirror.
+- the public cache remains immutable, while the app owns the SoA mirror and
+  publishes development parity diagnostics.
 
 This is a deliberate dual representation: application objects suit React,
-while a numeric mirror suits rendering. They are not competing sources of
-truth.
+while a numeric mirror is suitable for a future rendering hot path. In the
+current implementation the production Canvas still reads the Map-backed
+`CellGalaxyCache`; `CellField` is maintained and verified but is not yet a
+rendering source. They are not competing sources of truth.
 
 ## 11. UI and Rendering Architecture
 
@@ -762,20 +764,26 @@ TypeScript. Any algorithm change must update both implementations and their
 parity fixtures, or server anchors and browser positions will diverge for the
 same Cell.
 
-### 11.3 NeuralNetwork: Routing and Display Graphs
+### 11.3 NeuralNetwork: Staged Topology and Passive Selection
 
-The neural system maintains two graphs:
+The neural system maintains one neighbor graph over the exact living staged
+Cell subset. Client-only selection/inspection overlay Cells do not enter this
+graph. Every neural consumer reads the same adjacency:
 
-| Graph | Node set | Purpose | Budget |
-|---|---|---|---|
-| Routing graph | Canonical retained Cells | Causal pulse routing | Complete adjacency graph |
-| Display/passive graph | Currently staged Cells | Resting nerve rendering | 8,000 edges by default |
+- live `CellLink` pulse planning;
+- historical memory-route planning;
+- graph-hop inspection fields; and
+- passive-fibre selection.
 
-A hidden retained Cell can therefore still participate in real causal routing
-without leaving a passive fibre whose endpoint is absent from the screen. The
-passive graph selects deterministic spanning coverage, trunks, twigs, and
-cross-links. Small scenes favor complete coverage; large scenes obey a fixed
-screen-composition budget.
+The resting fabric is a bounded edge selection from that graph, not a second
+graph over a different node population. It selects deterministic spanning
+coverage, trunks, twigs, and cross-links. Small scenes favor complete coverage;
+large scenes obey the fixed 8,000-edge screen-composition budget.
+
+This keeps visible topology and route topology aligned. A hidden retained Cell
+cannot participate in a live or recalled visual route until it is part of the
+staged set; a missing endpoint or path suppresses that route rather than
+creating an invisible fibre or a synthetic fallback.
 
 Topology performance rules are:
 
@@ -790,8 +798,9 @@ Topology performance rules are:
 - Passive-selection deltas can add or remove NeuralFabric edges directly, with
   periodic full reconciliation to bound drift.
 
-The complete routing graph and bounded passive graph are separate correctness
-boundaries and must not be merged as a performance shortcut.
+The complete staged adjacency and its bounded passive edge selection are
+different representations with one node boundary. They must not drift into
+separate routing and display populations.
 
 ### 11.4 P2P NetworkColony
 
@@ -847,7 +856,7 @@ Structural budgets are independent:
 - Automatic quality degradation never changes which Cells are on stage.
 
 This prevents performance pressure from becoming a silent semantic change.
-See [Canvas Rendering Design](canvas-rendering.md) for stricter visual
+See [Canvas Design and Rendering Architecture](canvas-rendering.md) for stricter visual
 constraints, optimization order, and acceptance criteria.
 
 ## 12. Persistence and Recovery
@@ -1060,7 +1069,7 @@ application. Every value that affects determinism must arrive in the mutation.
 - If CellGalaxy semantics change, inspect and test both Rust and TypeScript
   reducers. Pure visual changes still require focused Vitest updates.
 - Follow the forbidden shortcuts and browser acceptance requirements in
-  [Canvas Rendering Design](canvas-rendering.md).
+  [Canvas Design and Rendering Architecture](canvas-rendering.md).
 
 ## 17. Testing and Verification Strategy
 
