@@ -279,6 +279,8 @@ export {
   type ConsensusMemoryCellResponseRef,
   type ConsensusMemoryEvidenceResponse,
   type ConsensusMemoryEvidenceState,
+  deriveConsensusMemoryConsumedInputs,
+  type ConsensusMemoryConsumedInput,
   type ConsensusMemorySourceEvidence,
   type ConsensusMemoryTraceEvidence,
   type ConsensusMemoryTargetResponse,

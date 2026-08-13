@@ -41,6 +41,7 @@ function focus(
         arrivesAtSec: startedAtSec + 0.5,
       }],
     }],
+    consumedInputs: [],
     routedSourceCount: 1,
     targetIds: [targetId],
     startedAtSec,

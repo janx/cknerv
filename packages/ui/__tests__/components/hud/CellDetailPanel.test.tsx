@@ -66,6 +66,7 @@ function traceReadout(
     sourceKind: 'input' as const,
     stage: 'reading' as const,
     sourceCount: 2,
+    consumedInputs: [],
     arrivedSourceCount: 0,
     resolvedSourceCount: 0,
     ...overrides,
@@ -951,6 +952,60 @@ describe('CellDetailPanel', () => {
     expect(container.querySelectorAll('[data-memory-evidence]')).toHaveLength(2);
     expect(container.textContent).toContain('EVIDENCE → AGREEMENT');
     expect(container.textContent).toContain('1111111·1111');
+    // Nothing to disclose when the routed evidence already IS the inputs.
+    expect(container.querySelector('[data-memory-consumed-inputs]')).toBeNull();
+  });
+
+  // The witness-carried case: the ledger lists the carriers, so the inputs the
+  // transaction actually spent have to be named somewhere or they vanish.
+  it('names the spent inputs no route departs from', () => {
+    vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener: () => {}, removeEventListener: () => {} }));
+    const origin: CellLink = {
+      seq: 18,
+      tx_hash: base.out_point.tx_hash,
+      block: base.birth_block,
+      from_ids: [901, 902],
+      to_ids: [base.id],
+      endpoint_anchors: [],
+      parents: ['0xparent'],
+      tag: base.tag,
+      at_ms: 12_000,
+    };
+    const { container } = render(
+      <CellDetailPanel
+        cell={base}
+        recentLinks={[origin]}
+        tracedWriteSeq={origin.seq}
+        traceSource="witness"
+        onTraceWrite={() => {}}
+        onClose={() => {}}
+        traceReadout={traceReadout({
+          sourceKind: 'witness',
+          consumedInputs: [
+            {
+              id: 901,
+              contentHash: `0x${'a'.repeat(64)}`,
+              posSeed: [1, 2, 3],
+              retained: false,
+            },
+            {
+              id: 902,
+              contentHash: `0x${'b'.repeat(64)}`,
+              posSeed: [4, 5, 6],
+              retained: false,
+            },
+          ],
+        })}
+      />,
+    );
+    const disclosure = container.querySelector('[data-memory-consumed-inputs]');
+    expect(disclosure).not.toBeNull();
+    expect(disclosure?.getAttribute('data-memory-consumed-input-count')).toBe('2');
+    expect(container.textContent).toContain('SPENT INPUTS');
+    expect(container.textContent).toContain('AAAAAAA·AAAA');
+    expect(container.textContent).toContain('BBBBBBB·BBBB');
+    // The ledger header still describes what carried the route, unchanged.
+    expect(container.textContent).toContain('LINEAGE WITNESSES');
   });
 
   it('advances the explanatory rail through the same convergence stages as the Cell', () => {
@@ -984,6 +1039,7 @@ describe('CellDetailPanel', () => {
       {...props}
       traceReadout={traceReadout({
         stage: 'converging',
+        consumedInputs: [],
         arrivedSourceCount: 1,
       })}
     />);
@@ -1006,6 +1062,7 @@ describe('CellDetailPanel', () => {
       {...props}
       traceReadout={traceReadout({
         stage: 'locked',
+        consumedInputs: [],
         arrivedSourceCount: 2,
         resolvedSourceCount: 2,
       })}

@@ -106,6 +106,7 @@ function traceReadout(): ConsensusMemoryTraceReadout {
     sourceKind: 'input',
     stage: 'reading',
     sourceCount: 1,
+    consumedInputs: [],
     arrivedSourceCount: 0,
     resolvedSourceCount: 0,
     evidence: [{

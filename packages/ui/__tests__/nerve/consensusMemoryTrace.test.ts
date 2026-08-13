@@ -40,6 +40,7 @@ import {
   deriveConsensusMemoryRouteHopSpatialFocus,
   deriveConsensusMemoryRouteHopTangent,
   deriveConsensusMemoryRouteHopWindow,
+  deriveConsensusMemoryConsumedInputs,
   deriveConsensusMemoryTraceEndpoints,
   isConsensusMemoryRouteHopTargetArrival,
   planConsensusMemoryTrace,
@@ -753,5 +754,109 @@ describe('planConsensusMemoryTrace', () => {
       flashCells: true,
       stampWrite: true,
     });
+  });
+});
+
+describe('deriveConsensusMemoryConsumedInputs', () => {
+  const anchor = (id: number, hash = `0xaa${String(id).padStart(62, '0')}`) => ({
+    id,
+    pos_seed: [id, id * 2, id * 3] as [number, number, number],
+    content_hash: hash,
+  });
+
+  it('names what the transaction spent with nothing left in the cell map', () => {
+    const consumed = deriveConsensusMemoryConsumedInputs(
+      link({ endpoint_anchors: [anchor(1), anchor(2), anchor(5)] }),
+      new Map(),
+    );
+    expect(consumed.map((input) => input.id)).toEqual([1, 2]);
+    expect(consumed[0].contentHash).toBe(anchor(1).content_hash);
+    expect(consumed[0].posSeed).toEqual([1, 2, 3]);
+    expect(consumed.every((input) => input.retained)).toBe(false);
+  });
+
+  // The identity has to come from the record, not from a cell that happens to
+  // linger — otherwise it is the same substitution this fixes.
+  it('reads identity from the anchor even when the cell is still around', () => {
+    const consumed = deriveConsensusMemoryConsumedInputs(
+      link({ from_ids: [1], endpoint_anchors: [anchor(1)] }),
+      new Map([[1, cell(1)]]),
+    );
+    expect(consumed).toHaveLength(1);
+    expect(consumed[0].contentHash).toBe(anchor(1).content_hash);
+    expect(consumed[0].contentHash).not.toBe(cell(1).content_hash);
+    expect(consumed[0].retained).toBe(true);
+  });
+
+  it('keeps the transaction input order and drops repeats', () => {
+    const consumed = deriveConsensusMemoryConsumedInputs(
+      link({ from_ids: [2, 1, 2], endpoint_anchors: [anchor(1), anchor(2)] }),
+      new Map(),
+    );
+    expect(consumed.map((input) => input.id)).toEqual([2, 1]);
+  });
+
+  it('stays silent about inputs the record cannot identify', () => {
+    expect(deriveConsensusMemoryConsumedInputs(link(), new Map())).toEqual([]);
+    const partial = deriveConsensusMemoryConsumedInputs(
+      link({ endpoint_anchors: [anchor(2)] }),
+      new Map(),
+    );
+    expect(partial.map((input) => input.id)).toEqual([2]);
+  });
+});
+
+describe('consumed inputs survive a witness-carried recall', () => {
+  const anchor = (id: number) => ({
+    id,
+    pos_seed: [id, 0, 0] as [number, number, number],
+    content_hash: `0xaa${String(id).padStart(62, '0')}`,
+  });
+
+  // The defect this fixes: for all but the freshest records the spent inputs
+  // are gone, the route is carried by surviving siblings, and the ledger used
+  // to name the carriers and nothing else.
+  it('reports the real inputs while routing through lineage witnesses', () => {
+    const spent = link({
+      from_ids: [1, 2],
+      to_ids: [5],
+      parents: ['0xparent'],
+      endpoint_anchors: [anchor(1), anchor(2), anchor(5)],
+    });
+    // Neither input is in view; a sibling of the parent tx is.
+    const witness = { ...cell(4), out_point: { tx_hash: '0xparent', index: 0 } };
+    const cells = new Map([[4, witness], [5, cell(5)]]);
+
+    const plan = planConsensusMemoryTrace(spent, cells, graph([[4, 5]]));
+
+    expect(plan.sourceKind).toBe('witness');
+    expect(plan.sourceIds).toEqual([4]);
+    expect(plan.retainedInputIds).toEqual([]);
+    expect(plan.pulses.length).toBeGreaterThan(0);
+    // ...and the record still says exactly what was spent.
+    expect(plan.consumedInputs.map((input) => input.id)).toEqual([1, 2]);
+    expect(plan.consumedInputs.every((input) => input.retained)).toBe(false);
+  });
+
+  it('carries them through the focus and the readout the HUD reads', () => {
+    const spent = link({
+      from_ids: [1, 2],
+      to_ids: [5],
+      parents: ['0xparent'],
+      endpoint_anchors: [anchor(1), anchor(2), anchor(5)],
+    });
+    const witness = { ...cell(4), out_point: { tx_hash: '0xparent', index: 0 } };
+    const cells = new Map([[4, witness], [5, cell(5)]]);
+    const plan = planConsensusMemoryTrace(spent, cells, graph([[4, 5]]));
+    const focus = deriveConsensusMemoryTraceFocus(plan, 10, 'trace');
+    expect(focus).not.toBeNull();
+    expect(focus!.consumedInputs.map((input) => input.id)).toEqual([1, 2]);
+
+    const readout = consensusMemoryTraceReadout(focus, 5, 10.1);
+    expect(readout).not.toBeNull();
+    expect(readout!.sourceKind).toBe('witness');
+    expect(readout!.consumedInputs.map((input) => input.id)).toEqual([1, 2]);
+    // The carrier and the input are different cells; that is the whole point.
+    expect(readout!.evidence.map((e) => e.sourceId)).toEqual([4]);
   });
 });

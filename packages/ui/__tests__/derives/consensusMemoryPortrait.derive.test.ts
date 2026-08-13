@@ -18,6 +18,7 @@ const readout = (
     sourceKind: 'witness' as const,
     stage: 'reading' as const,
     sourceCount: 2,
+    consumedInputs: [],
     arrivedSourceCount: 0,
     resolvedSourceCount: 0,
     ...overrides,

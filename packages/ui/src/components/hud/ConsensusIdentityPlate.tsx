@@ -1012,6 +1012,17 @@ function EvidenceLedger({
   const evidenceLabel = readout.sourceKind === 'input'
     ? 'RETAINED INPUTS'
     : 'LINEAGE WITNESSES';
+  // The ledger below can only list cells a route departs from. What the
+  // transaction actually SPENT is answered by the link's own anchors, and for
+  // all but the freshest records none of it is still routable — so without
+  // this line a witness-carried recall names its carriers and never once names
+  // the inputs, even though the record knows them exactly.
+  const ledgerSourceIds = new Set(
+    readout.evidence.map((evidence) => evidence.sourceId),
+  );
+  const unroutedInputs = readout.consumedInputs.filter(
+    (input) => !ledgerSourceIds.has(input.id),
+  );
   const scenePreviewSourceId = previewSourceId !== null
     && readout.evidence.some((evidence) => evidence.sourceId === previewSourceId)
     ? previewSourceId
@@ -1030,6 +1041,41 @@ function EvidenceLedger({
           EVIDENCE → AGREEMENT
         </span>
       </div>
+      {unroutedInputs.length > 0 ? (
+        <div
+          data-memory-consumed-inputs="true"
+          data-memory-consumed-input-count={unroutedInputs.length}
+          title={unroutedInputs.map((input) => input.contentHash).join('\n')}
+          style={{
+            display: 'flex',
+            gap: 6,
+            alignItems: 'baseline',
+            marginBottom: 3,
+            fontFamily: HUD_FONTS.mono,
+            fontSize: HUD_TYPE.micro,
+            letterSpacing: 0.4,
+          }}
+        >
+          <span style={{ fontFamily: HUD_FONTS.tech, letterSpacing: 0.85, color: HUD_COLORS.dim, whiteSpace: 'nowrap' }}>
+            SPENT INPUTS
+          </span>
+          <span
+            style={{
+              marginLeft: 'auto',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+              textAlign: 'right',
+              color: HUD_COLORS.dim,
+              opacity: 0.86,
+            }}
+          >
+            {unroutedInputs
+              .map((input) => consensusMemoryEvidenceFingerprint(input.contentHash))
+              .join(' · ')}
+          </span>
+        </div>
+      ) : null}
       {bindings.map((binding) => {
         const evidence = readout.evidence[binding.evidenceIndex];
         const sourceColor = consensusMemoryEvidenceCssColor(binding.evidenceIndex);

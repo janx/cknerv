@@ -74,9 +74,23 @@ export interface ConsensusMemoryTraceOptions {
 
 export type ConsensusMemoryTraceSource = 'input' | 'witness' | 'none';
 
+/** One cell this transaction spent, named from the link's own durable
+ *  evidence. Survives the cell it describes: anchors outlive the record. */
+export interface ConsensusMemoryConsumedInput {
+  id: number;
+  contentHash: string;
+  /** Where the spent cell sat. The anchor's copy, not the map's. */
+  posSeed: readonly [number, number, number];
+  /** Whether the same cell is still resolvable in the view this recall was
+   *  planned against — i.e. whether a route could pass through it. */
+  retained: boolean;
+}
+
 export interface ConsensusMemoryTraceEndpoints {
   sourceKind: ConsensusMemoryTraceSource;
   sourceIds: number[];
+  /** What the transaction consumed, independent of what is still in view. */
+  consumedInputs: ConsensusMemoryConsumedInput[];
   retainedInputIds: number[];
   retainedOutputIds: number[];
   witnessIds: number[];
@@ -86,6 +100,7 @@ export interface ConsensusMemoryTracePlan {
   pulses: Pulse[];
   sourceKind: ConsensusMemoryTraceSource;
   sourceIds: number[];
+  consumedInputs: ConsensusMemoryConsumedInput[];
   /** Immutable source identities captured when the display-only route is planned. */
   sourceEvidence: ConsensusMemorySourceEvidence[];
   /** Exact link endpoints and parent witnesses still present in the cache. */
@@ -146,6 +161,9 @@ export interface ConsensusMemoryTraceFocus {
   linkBlock: number;
   sourceKind: Exclude<ConsensusMemoryTraceSource, 'none'>;
   sources: ConsensusMemoryTraceFocusSource[];
+  /** What the transaction consumed. Carried beside the routed sources because
+   *  the two answer different questions and only rarely name the same cells. */
+  consumedInputs: ConsensusMemoryConsumedInput[];
   routedSourceCount: number;
   targetIds: number[];
   startedAtSec: number;
@@ -232,6 +250,9 @@ export interface ConsensusMemoryTraceReadout {
   sourceCount: number;
   arrivedSourceCount: number;
   resolvedSourceCount: number;
+  /** What the transaction consumed, whether or not any of it still routes.
+   *  A witness-carried recall would otherwise never name its real inputs. */
+  consumedInputs: ConsensusMemoryConsumedInput[];
   /** Stable evidence ledger used by the HUD and canonical knot bindings. */
   evidence: readonly ConsensusMemoryTraceEvidence[];
 }
@@ -375,6 +396,7 @@ export function deriveConsensusMemoryTraceFocus(
     linkBlock: originPulse.linkBlock,
     sourceKind: plan.sourceKind,
     sources,
+    consumedInputs: plan.consumedInputs,
     routedSourceCount: sourceById.size,
     targetIds,
     startedAtSec,
@@ -932,6 +954,7 @@ export function consensusMemoryTraceReadout(
     sourceCount: routedSources.length,
     arrivedSourceCount,
     resolvedSourceCount,
+    consumedInputs: focus.consumedInputs,
     evidence,
   };
 }
@@ -980,15 +1003,66 @@ const uniqueRetained = (
 ): number[] => [...new Set(ids)].filter((id) => cells.has(id));
 
 /**
- * Resolve honest recall sources. Exact consumed inputs win while their short
- * death tail remains. Afterwards, live sibling outputs from the same parent
- * transactions act as lineage witnesses; they are never labeled as inputs.
+ * What this transaction actually consumed, read from the link's own durable
+ * evidence rather than from whatever cells happen to still be around.
+ *
+ * A spent cell leaves the view almost immediately — its death animation ends,
+ * the stage drops it, the retained window eventually gc's it — so asking the
+ * cell map "which inputs are still here" answers `none` for essentially every
+ * historical link. The link record anticipated exactly that: `endpoint_anchors`
+ * captured each endpoint's identity at the moment the transaction landed, and
+ * keeps it for as long as the record itself survives.
+ *
+ * `retained` reports whether the same cell is ALSO resolvable in the view this
+ * recall is planned against — i.e. whether a route could pass through it. That
+ * is a separate question from what was consumed, and conflating the two is why
+ * the true inputs used to go unnamed.
+ *
+ * Ordered by `from_ids`, so the reading matches the transaction's own input
+ * order. Ids without an anchor are dropped: they come from records written
+ * before anchors existed, and inventing an identity for them would be worse
+ * than admitting the record is silent.
+ */
+export function deriveConsensusMemoryConsumedInputs(
+  link: CellLink,
+  cells: ReadonlyMap<number, Cell>,
+): ConsensusMemoryConsumedInput[] {
+  const anchors = link.endpoint_anchors;
+  if (!anchors || anchors.length === 0) return [];
+  const anchorById = new Map(anchors.map((anchor) => [anchor.id, anchor]));
+  const seen = new Set<number>();
+  const consumed: ConsensusMemoryConsumedInput[] = [];
+  for (const id of link.from_ids) {
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const anchor = anchorById.get(id);
+    if (!anchor) continue;
+    consumed.push({
+      id,
+      contentHash: anchor.content_hash,
+      posSeed: [anchor.pos_seed[0], anchor.pos_seed[1], anchor.pos_seed[2]],
+      retained: cells.has(id),
+    });
+  }
+  return consumed;
+}
+
+/**
+ * Resolve honest recall sources. Exact consumed inputs win while they are
+ * still routable. Afterwards, live sibling outputs from the same parent
+ * transactions carry the route as lineage witnesses; they are never labeled as
+ * inputs.
+ *
+ * The witness branch is a ROUTING fallback, not an evidence fallback: what the
+ * transaction consumed is answered separately by `consumedInputs`, which the
+ * cell map cannot take away.
  */
 export function deriveConsensusMemoryTraceEndpoints(
   link: CellLink,
   cells: ReadonlyMap<number, Cell>,
   maxWitnessesPerParent: number = 2,
 ): ConsensusMemoryTraceEndpoints {
+  const consumedInputs = deriveConsensusMemoryConsumedInputs(link, cells);
   const retainedInputIds = uniqueRetained(link.from_ids, cells);
   const retainedOutputIds = uniqueRetained(link.to_ids, cells);
   const witnessIds: number[] = [];
@@ -1016,6 +1090,7 @@ export function deriveConsensusMemoryTraceEndpoints(
   return {
     sourceKind,
     sourceIds: sourceKind === 'input' ? retainedInputIds : witnessIds,
+    consumedInputs,
     retainedInputIds,
     retainedOutputIds,
     witnessIds,

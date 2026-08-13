@@ -122,6 +122,7 @@ describe('CellCoreArtwork', () => {
         traceReadout={{
           key: '7:1:1', targetCellId: 1, sourceKind: 'input', stage: 'locked',
           sourceCount: 2, arrivedSourceCount: 2, resolvedSourceCount: 2,
+          consumedInputs: [],
           evidence: [1, 2].map((ordinal) => ({
             sourceId: ordinal,
             ordinal,

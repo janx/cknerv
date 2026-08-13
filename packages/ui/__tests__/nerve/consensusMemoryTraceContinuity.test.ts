@@ -44,6 +44,7 @@ function focus(
         arrivesAtSec: sourceArrivesAtSec,
       }],
     }],
+    consumedInputs: [],
     routedSourceCount: 1,
     targetIds: [5],
     startedAtSec,

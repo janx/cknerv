@@ -77,6 +77,7 @@ function focus(
     linkBlock: 1,
     sourceKind: 'input',
     sources,
+    consumedInputs: [],
     routedSourceCount: sources.length,
     targetIds,
     startedAtSec: 1,

@@ -80,6 +80,7 @@ function focus(overrides: Partial<ConsensusMemoryTraceFocus> = {}): ConsensusMem
     linkBlock: 99,
     sourceKind: 'witness',
     sources: [focusSource(8, 'a', 1.1, 1.8)],
+    consumedInputs: [],
     routedSourceCount: 1,
     targetIds: [5],
     startedAtSec: 1,
@@ -171,6 +172,7 @@ describe('ConsensusMemoryMarkers', () => {
             focusSource(8, 'a', 1.1, 1.8),
             focusSource(9, 'c', 1.32, 2.02),
           ],
+          consumedInputs: [],
           routedSourceCount: 2,
         })} />
       </CellGalaxyProvider>,
@@ -246,6 +248,7 @@ describe('ConsensusMemoryMarkers', () => {
             focusSource(8, 'a', 1.1, 1.8),
             focusSource(9, 'c', 1.32, 2.02),
           ],
+          consumedInputs: [],
           routedSourceCount: 2,
         })} />
       </CellGalaxyProvider>,
@@ -320,6 +323,7 @@ describe('ConsensusMemoryMarkers', () => {
         focusSource(8, 'a', 1.1, 1.8),
         focusSource(9, 'c', 1.32, 2.02),
       ],
+      consumedInputs: [],
       routedSourceCount: 2,
       evidenceFocusSourceId: 9,
     });
@@ -351,6 +355,7 @@ describe('ConsensusMemoryMarkers', () => {
         focusSource(8, 'a', 1.1, 1.8),
         focusSource(9, 'c', 1.32, 2.02),
       ],
+      consumedInputs: [],
       routedSourceCount: 2,
       evidenceFocusSourceId: 9,
     });
