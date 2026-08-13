@@ -1369,33 +1369,20 @@ impl Projection for CellGalaxy {
 
     fn snapshot(&self) -> CellGalaxySnapshot {
         CellGalaxySnapshot {
-            // pos_seed is a PURE function of the cell id (helix_seed_for), so
-            // recompute it fresh here instead of serving the value frozen at the
-            // cell's birth. Without this, a helix change only reshapes cells born
-            // AFTER the change — persisted/restored cells keep their old position
-            // and the galaxy stays half-old. Recomputing on emit makes a helix
-            // tune apply retroactively to every live cell on the next snapshot.
-            // Cheap: one PRNG walk per cell, only on (re)connect.
-            cells: self
-                .cells
-                .iter()
-                .map(|c| Cell {
-                    pos_seed: helix_seed_for(c.id),
-                    ..c.clone()
-                })
-                .collect(),
+            // `pos_seed` is served as stored, not recomputed. It is a pure
+            // function of the id and every path that can hold a stale one
+            // already refreshes it: births derive it (`handle_tx_landed`),
+            // and a restore rewrites every persisted copy
+            // (`refresh_derived_positions`) — which is the only way an old
+            // layout can reach a new binary, since changing the helix means
+            // changing the binary. Recomputing here instead cost a
+            // rejection-sampling walk per row on every snapshot, ~59k of
+            // them per connect on mainnet, to arrive at the value already
+            // sitting in the field. `emitted_positions_are_the_derived_ones`
+            // keeps the claim honest.
+            cells: self.cells.clone(),
             last_pulse_at_ms: self.last_pulse_at_ms,
-            recent_links: self
-                .recent_links
-                .iter()
-                .cloned()
-                .map(|mut link| {
-                    for anchor in &mut link.endpoint_anchors {
-                        anchor.pos_seed = helix_seed_for(anchor.id);
-                    }
-                    link
-                })
-                .collect(),
+            recent_links: self.recent_links.clone(),
             total_births: self.total_births,
             total_deaths: self.total_deaths,
             backfill: self.backfill,
@@ -2441,15 +2428,14 @@ mod tests {
             }
         }
 
-        // Snapshot emission remains defensive even if an in-memory caller
-        // accidentally carries stale evidence after the restore boundary.
-        restored.recent_links[0].endpoint_anchors[0].pos_seed = stale;
-        let snapshot = restored.snapshot();
-        for link in snapshot.recent_links {
-            for anchor in link.endpoint_anchors {
-                assert_eq!(anchor.pos_seed, helix_seed_for(anchor.id));
-            }
-        }
+        // What emission does with a position is no longer part of this
+        // test: it serves what is stored, and the restore above is what
+        // makes stored current. Re-deriving on the way out instead cost a
+        // rejection-sampling walk per row — 100ms per snapshot at mainnet
+        // size, which was the entire remaining cost of the columnar path —
+        // to defend against an in-memory corruption no code path performs.
+        // `emitted_positions_are_the_derived_ones` walks the paths that do
+        // exist and requires the wire to agree with the derivation.
     }
 
     #[test]
@@ -4198,6 +4184,78 @@ mod tests {
             at: 3_000,
         });
         assert_eq!(display_delta_count(&deltas), 0);
+    }
+
+    /// Emission serves `pos_seed` as stored instead of recomputing it, which
+    /// is only safe while every path that can produce a Cell derives it. This
+    /// walks the ones that exist — birth, reorg revival, restore of a
+    /// deliberately stale workdir, and a composed resident — and requires
+    /// what reaches the wire to equal the derivation on all three surfaces
+    /// (JSON cells, link anchors, columnar column).
+    #[test]
+    fn emitted_positions_are_the_derived_ones() {
+        let mut g = make_galaxy();
+        g.apply_mutation(&landed(
+            "0xa",
+            1,
+            1_000,
+            vec![],
+            vec![out(1, "0x"), out(2, "0x")],
+        ));
+        g.apply_mutation(&landed(
+            "0xb",
+            2,
+            2_000,
+            vec![op("0xa", 0)],
+            vec![out(3, "0x")],
+        ));
+        g.apply_mutation(&reservoir(2, (900, 901, 902)));
+
+        // A workdir written by an older layout: every stored copy is wrong
+        // until the restore refreshes it.
+        let mut persisted = g.to_persisted();
+        for cell in &mut persisted.cells {
+            cell.pos_seed = [-1.0, -2.0, -3.0];
+        }
+        for link in &mut persisted.recent_links {
+            for anchor in &mut link.endpoint_anchors {
+                anchor.pos_seed = [-1.0, -2.0, -3.0];
+            }
+        }
+        let mut restored = make_galaxy();
+        restored.restore_from(persisted);
+        restored.apply_mutation(&reservoir(2, (900, 901, 902)));
+
+        for galaxy in [&g, &restored] {
+            let snapshot = galaxy.snapshot();
+            assert!(!snapshot.cells.is_empty());
+            for cell in &snapshot.cells {
+                assert_eq!(cell.pos_seed, helix_seed_for(cell.id), "cell {}", cell.id);
+            }
+            for link in &snapshot.recent_links {
+                for anchor in &link.endpoint_anchors {
+                    assert_eq!(anchor.pos_seed, helix_seed_for(anchor.id));
+                }
+            }
+            let display = snapshot.display.as_ref().expect("display section");
+            assert!(!display.residents.is_empty());
+            for resident in &display.residents {
+                assert_eq!(resident.pos_seed, helix_seed_for(resident.id));
+            }
+
+            // …and the columnar columns, which read the same stored field.
+            let bytes = galaxy.snapshot_bin().expect("columnar snapshot");
+            let n = snapshot.cells.len();
+            let base = crate::projection::cells_columnar::CELLS_COLUMNAR_HEADER_BYTES + 4 * 8 * n;
+            for (row, cell) in snapshot.cells.iter().enumerate() {
+                let expected = helix_seed_for(cell.id);
+                for (axis, want) in expected.iter().enumerate() {
+                    let at = base + (axis * n + row) * 4;
+                    let got = f32::from_le_bytes(bytes[at..at + 4].try_into().unwrap());
+                    assert_eq!(got, *want, "cell {} axis {axis}", cell.id);
+                }
+            }
+        }
     }
 
     /// Pin 9 — the columnar snapshot (v1) carries no display section: staffing

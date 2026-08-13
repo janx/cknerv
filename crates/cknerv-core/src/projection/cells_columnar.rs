@@ -17,7 +17,6 @@
 //! The 8 bytes at [8..16] are a revision slot the SERVER patches in (the
 //! registry owns revisions; the projection does not know its own).
 
-use crate::helix::helix_seed_for;
 use crate::projection::cells::Cell;
 use crate::taxonomy::{AssetKind, LockKind};
 
@@ -66,12 +65,6 @@ pub struct CellsColumnarHeader {
 /// columnar form reads only numeric fields, so going through a snapshot
 /// would clone every `Cell` (three heap strings apiece), every staged
 /// resident payload and every recent link, purely to drop them here.
-///
-/// Positions are derived from the id rather than read off the row, for the
-/// same reason the JSON path recomputes them (`pos_seed` is a pure function
-/// of the id, so a helix change applies retroactively). Deriving it here
-/// makes that a property of emission rather than something each caller has
-/// to remember.
 pub fn encode_cells_columnar(cells: &[Cell], header: CellsColumnarHeader) -> Vec<u8> {
     let n = cells.len();
 
@@ -127,14 +120,9 @@ pub fn encode_cells_columnar(cells: &[Cell], header: CellsColumnarHeader) -> Vec
         buf.extend_from_slice(&(cell.capacity as f64).to_le_bytes());
     }
     // —— f32 columns ——
-    // Resolved once per row, not once per (row, axis): the layout is
-    // column-major, so deriving inside the axis loop would run the helix
-    // sampler three times per cell — measurably (a 50k-row buffer went
-    // 0.17s → 0.64s before this was hoisted).
-    let positions: Vec<[f32; 3]> = cells.iter().map(|cell| helix_seed_for(cell.id)).collect();
     for axis in 0..3 {
-        for position in &positions {
-            buf.extend_from_slice(&position[axis].to_le_bytes());
+        for cell in cells {
+            buf.extend_from_slice(&cell.pos_seed[axis].to_le_bytes());
         }
     }
     // —— u32 columns ——
@@ -176,6 +164,7 @@ pub fn encode_cells_columnar(cells: &[Cell], header: CellsColumnarHeader) -> Vec
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::helix::helix_seed_for;
     use crate::outpoint::OutPoint;
     use crate::projection::cells::Cell;
 
