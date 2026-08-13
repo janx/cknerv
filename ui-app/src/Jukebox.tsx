@@ -96,14 +96,6 @@ export const JUKEBOX_CHIP_HEIGHT_PX = 28;
  *  it is what makes the closed Jukebox read as part of the instrument rather
  *  than as a stray widget dropped on the scene. */
 export const JUKEBOX_MODULE_CODE = 'SND·06';
-/** The closed chip invites once, long after boot has settled, and only while
- *  the Jukebox has never been opened on this page. Track titles are the pitch;
- *  "jukebox" is not. Latin transliterations, because the HUD's CJK face is a
- *  hand-subset woff2 that carries no kana. */
-export const JUKEBOX_INVITE_DELAY_MS = 30_000;
-export const JUKEBOX_INVITE_HOLD_MS = 7_000;
-export const JUKEBOX_INVITE_TEXT =
-  '// TSUBASA WO KUDASAI · KOMM, SÜSSER TOD';
 export const SOUNDCLOUD_NATIVE_PLAYER_HEIGHT_PX = 166;
 export const SOUNDCLOUD_PLAYER_SCALE = 0.72;
 export const JUKEBOX_PLAYER_HEIGHT_PX = Math.ceil(
@@ -147,13 +139,8 @@ function injectJukeboxStyles(doc: Document = document): void {
     '.cknerv-jukebox-bar-a{animation:cknerv-jukebox-eq-a 2.4s ease-in-out infinite}',
     '.cknerv-jukebox-bar-b{animation:cknerv-jukebox-eq-b 3.1s ease-in-out infinite}',
     '.cknerv-jukebox-bar-c{animation:cknerv-jukebox-eq-c 2.7s ease-in-out infinite}',
-    '.cknerv-jukebox-invite{box-sizing:border-box;max-width:0;overflow:hidden;'
-      + 'white-space:nowrap;opacity:0;'
-      + 'transition:max-width .55s ease,opacity .3s ease .12s}',
-    '.cknerv-jukebox-invite[data-jukebox-invite="true"]{max-width:340px;opacity:1}',
     '@media (prefers-reduced-motion:reduce){'
-      + '.cknerv-jukebox-glyph,.cknerv-jukebox-bar,.cknerv-jukebox-bars{animation:none}'
-      + '.cknerv-jukebox-invite{transition:none}}',
+      + '.cknerv-jukebox-glyph,.cknerv-jukebox-bar,.cknerv-jukebox-bars{animation:none}}',
     // Narrow viewports keep the mark and drop the words, matching the HUD's
     // existing label-shedding breakpoints.
     '@media (max-width:380px){.cknerv-jukebox-label,.cknerv-jukebox-code{display:none}}',
@@ -405,8 +392,6 @@ export default function Jukebox({ blockPulseAtMs }: JukeboxProps) {
   );
   const [readyTrackId, setReadyTrackId] = useState<JukeboxTrackId | null>(null);
   const [openedOnce, setOpenedOnce] = useState(false);
-  const [invite, setInvite] = useState<'armed' | 'showing' | 'spent'>('armed');
-  const [inviteHovered, setInviteHovered] = useState(false);
   const toggleRef = useRef<HTMLButtonElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const frameRef = useRef<HTMLIFrameElement>(null);
@@ -417,9 +402,7 @@ export default function Jukebox({ blockPulseAtMs }: JukeboxProps) {
   const restoreFocusRef = useRef(false);
   const selectedTrack = getTrack(selectedTrackId);
   const frameReady = readyTrackId === selectedTrackId;
-  const attract = openedOnce
-    ? 'settled'
-    : invite === 'showing' ? 'invite' : 'attract';
+  const attract = openedOnce ? 'settled' : 'attract';
   const fadeStartMs = 'fadeStartMs' in selectedTrack
     ? selectedTrack.fadeStartMs
     : null;
@@ -449,33 +432,12 @@ export default function Jukebox({ blockPulseAtMs }: JukeboxProps) {
   const openPlayer = useCallback(() => {
     setReadyTrackId(null);
     setOpenedOnce(true);
-    setInvite('spent');
     setOpen(true);
   }, []);
 
   useEffect(() => {
     injectJukeboxStyles();
   }, []);
-
-  // One invitation, well after boot has settled, and only for someone who has
-  // never opened the player. It spends itself whether or not it worked.
-  useEffect(() => {
-    if (invite !== 'armed') return;
-    const timer = window.setTimeout(
-      () => setInvite('showing'),
-      JUKEBOX_INVITE_DELAY_MS,
-    );
-    return () => window.clearTimeout(timer);
-  }, [invite]);
-
-  useEffect(() => {
-    if (invite !== 'showing' || inviteHovered) return;
-    const timer = window.setTimeout(
-      () => setInvite('spent'),
-      JUKEBOX_INVITE_HOLD_MS,
-    );
-    return () => window.clearTimeout(timer);
-  }, [invite, inviteHovered]);
 
   useEffect(() => {
     if (open) {
@@ -699,8 +661,6 @@ export default function Jukebox({ blockPulseAtMs }: JukeboxProps) {
           aria-expanded={false}
           aria-label="Open Jukebox and play default SoundCloud track"
           title="Open Jukebox — load SoundCloud and request playback"
-          onPointerEnter={() => setInviteHovered(true)}
-          onPointerLeave={() => setInviteHovered(false)}
           onClick={openPlayer}
           style={{
             position: 'relative',
@@ -708,8 +668,6 @@ export default function Jukebox({ blockPulseAtMs }: JukeboxProps) {
             display: 'inline-flex',
             alignItems: 'center',
             justifyContent: 'flex-start',
-            maxWidth:
-              'calc(100vw - 36px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px))',
             height: JUKEBOX_CHIP_HEIGHT_PX,
             padding: '0 9px',
             border: '1px solid rgba(32,240,255,.42)',
@@ -751,13 +709,6 @@ export default function Jukebox({ blockPulseAtMs }: JukeboxProps) {
             style={{ marginLeft: 7, color: ORANGE }}
           >
             BGM
-          </span>
-          <span
-            className="cknerv-jukebox-invite"
-            data-jukebox-invite={invite === 'showing' ? 'true' : 'false'}
-            style={{ paddingLeft: 7, color: INK }}
-          >
-            {JUKEBOX_INVITE_TEXT}
           </span>
         </button>
       ) : null}

@@ -103,11 +103,10 @@ The dashboard includes an optional four-track SoundCloud Jukebox labeled
 `Vocal A`, `Vocal B`, `Piano A`, and `Piano B` for versions of
 `TSUBASA WO KUDASAI` and `Komm, süsser Tod`, collapsed into a small floating
 `SND·06` chip in the bottom-right corner: an equalizer mark, a `BGM` label, and
-the panels' own corner brackets. Until the Jukebox has been opened once, the
-equalizer idles slowly and ticks with each arriving block, and thirty seconds
-after load the chip widens once for seven seconds to name the two tracks before
-collapsing again; opening it retires both for the rest of the page's life, and
-`prefers-reduced-motion` retires the animation while keeping the words.
+the panels' own corner brackets. The closed chip never names a track. Until the
+Jukebox has been opened once its equalizer idles slowly and ticks with each
+arriving block; opening it retires the motion for the rest of the page's life,
+as does `prefers-reduced-motion`.
 SoundCloud is not contacted
 and no audio is loaded during dashboard startup. Clicking the chip replaces it
 with SoundCloud's official HTML5 player and requests playback of the selected

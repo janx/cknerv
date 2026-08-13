@@ -11,9 +11,6 @@ import Jukebox, {
   DEFAULT_JUKEBOX_PLAYBACK_MODE,
   DEFAULT_JUKEBOX_TRACK_ID,
   JUKEBOX_CHIP_HEIGHT_PX,
-  JUKEBOX_INVITE_DELAY_MS,
-  JUKEBOX_INVITE_HOLD_MS,
-  JUKEBOX_INVITE_TEXT,
   JUKEBOX_MODULE_CODE,
   JUKEBOX_PANEL_WIDTH_PX,
   JUKEBOX_PLAYER_HEIGHT_PX,
@@ -425,7 +422,6 @@ describe('Jukebox', () => {
     expect(floating.style.right).toContain('safe-area-inset-right');
     expect(floating.style.bottom).toContain('safe-area-inset-bottom');
     expect(opener.style.height).toBe(`${JUKEBOX_CHIP_HEIGHT_PX}px`);
-    expect(opener.style.maxWidth).toContain('100vw');
 
     fireEvent.click(opener);
 
@@ -525,46 +521,27 @@ describe('Jukebox', () => {
     expect(document.getElementById('cknerv-jukebox-style')).not.toBeNull();
   });
 
-  it('invites once with the track titles, then spends the invitation', () => {
+  it('never names a track while the player is closed', () => {
     vi.useFakeTimers();
-    render(<Jukebox />);
+    const { container } = render(<Jukebox />);
     const opener = screen.getByRole('button', { name: OPEN_LABEL });
-    const invite = opener.querySelector(
-      '.cknerv-jukebox-invite',
-    ) as HTMLElement;
 
-    expect(invite.textContent).toBe(JUKEBOX_INVITE_TEXT);
-    expect(invite.getAttribute('data-jukebox-invite')).toBe('false');
-    expect(opener.getAttribute('data-jukebox-attract')).toBe('attract');
-
-    act(() => vi.advanceTimersByTime(JUKEBOX_INVITE_DELAY_MS));
-    expect(invite.getAttribute('data-jukebox-invite')).toBe('true');
-    expect(opener.getAttribute('data-jukebox-attract')).toBe('invite');
-
-    act(() => vi.advanceTimersByTime(JUKEBOX_INVITE_HOLD_MS));
-    expect(invite.getAttribute('data-jukebox-invite')).toBe('false');
-    expect(opener.getAttribute('data-jukebox-attract')).toBe('attract');
-
-    act(() => vi.advanceTimersByTime(JUKEBOX_INVITE_DELAY_MS * 3));
-    expect(invite.getAttribute('data-jukebox-invite')).toBe('false');
-  });
-
-  it('holds the invitation open while it is being read', () => {
-    vi.useFakeTimers();
-    render(<Jukebox />);
-    const opener = screen.getByRole('button', { name: OPEN_LABEL });
-    const invite = opener.querySelector(
-      '.cknerv-jukebox-invite',
-    ) as HTMLElement;
-
-    act(() => vi.advanceTimersByTime(JUKEBOX_INVITE_DELAY_MS));
+    // No timer, no hover and no reopen may put a title on the closed chip.
+    act(() => vi.advanceTimersByTime(600_000));
     fireEvent.pointerEnter(opener);
-    act(() => vi.advanceTimersByTime(JUKEBOX_INVITE_HOLD_MS * 4));
-    expect(invite.getAttribute('data-jukebox-invite')).toBe('true');
+    act(() => vi.advanceTimersByTime(600_000));
 
-    fireEvent.pointerLeave(opener);
-    act(() => vi.advanceTimersByTime(JUKEBOX_INVITE_HOLD_MS));
-    expect(invite.getAttribute('data-jukebox-invite')).toBe('false');
+    const closedText = [
+      container.querySelector('[data-jukebox]')?.textContent ?? '',
+      opener.getAttribute('aria-label') ?? '',
+      opener.getAttribute('title') ?? '',
+    ].join(' ').toUpperCase();
+    for (const track of JUKEBOX_TRACKS) {
+      expect(closedText).not.toContain(track.artist.toUpperCase());
+      expect(closedText).not.toContain(track.name.toUpperCase());
+    }
+    expect(closedText).not.toContain('TSUBASA');
+    expect(closedText).not.toContain('KOMM');
   });
 
   it('stops attracting for good once the player has been opened', () => {
@@ -578,12 +555,8 @@ describe('Jukebox', () => {
     const opener = screen.getByRole('button', { name: OPEN_LABEL });
     expect(opener.getAttribute('data-jukebox-attract')).toBe('settled');
 
-    act(() => vi.advanceTimersByTime(JUKEBOX_INVITE_DELAY_MS * 2));
+    act(() => vi.advanceTimersByTime(600_000));
     expect(opener.getAttribute('data-jukebox-attract')).toBe('settled');
-    expect(
-      opener.querySelector('.cknerv-jukebox-invite')
-        ?.getAttribute('data-jukebox-invite'),
-    ).toBe('false');
   });
 
   it('ticks the equalizer once per block arrival', () => {
