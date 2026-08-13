@@ -138,9 +138,12 @@ async fn projection_stream(
         }
     };
     let since: Option<u64> = params.get("since").and_then(|s| s.parse().ok());
+    // Opt-in: a client that can decode the columnar form says so, because a
+    // binary frame carries no `kind` to recognise it by.
+    let binary_snapshot = params.get("bin").is_some_and(|value| value == "1");
     let shutdown_rx = s.shutdown_rx.clone();
     ws.on_upgrade(move |socket| {
-        crate::ws::handle_projection_stream(runner, socket, since, shutdown_rx)
+        crate::ws::handle_projection_stream(runner, socket, since, binary_snapshot, shutdown_rx)
     })
     .into_response()
 }

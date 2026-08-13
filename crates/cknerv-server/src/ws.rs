@@ -219,6 +219,7 @@ pub async fn handle_projection_stream(
     runner: Arc<dyn ProjectionRuntime>,
     mut socket: WebSocket,
     since: Option<u64>,
+    binary_snapshot: bool,
     mut shutdown: watch::Receiver<bool>,
 ) {
     let since = since.unwrap_or(0);
@@ -241,18 +242,37 @@ pub async fn handle_projection_stream(
 
     match action {
         StreamAction::FullSnapshot => {
-            // The runtime hands back the finished frame text, so a large
-            // snapshot is serialized once instead of once into a `Value`
-            // and again out of it.
-            let (rev, frame) = runner.snapshot_envelope(SnapshotEnvelope::Frame);
-            // One copy to satisfy `Message::Text`'s owned `String`; the
-            // expensive half (taking and serializing the snapshot) is what
-            // the runtime cached.
-            let frame = String::from_utf8(frame.to_vec()).expect("snapshot frame is UTF-8");
-            if socket.send(Message::Text(frame)).await.is_err() {
+            // A resync at this size is the one frame worth sending as
+            // bytes: the columnar form is half the payload and skips the
+            // client's parse entirely. Only for clients that asked —
+            // `kind` lives in the JSON envelope, so a binary frame is
+            // self-describing only to a reader expecting one.
+            let binary = if binary_snapshot {
+                runner.snapshot_bin()
+            } else {
+                None
+            };
+            let sent = match binary {
+                Some((rev, bytes)) => {
+                    last_sent_revision = rev;
+                    socket.send(Message::Binary(bytes.to_vec())).await
+                }
+                None => {
+                    // The runtime hands back the finished frame text, so a
+                    // large snapshot is serialized once instead of once
+                    // into a `Value` and again out of it.
+                    let (rev, frame) = runner.snapshot_envelope(SnapshotEnvelope::Frame);
+                    last_sent_revision = rev;
+                    // One copy to satisfy `Message::Text`'s owned `String`;
+                    // the expensive half is what the runtime cached.
+                    let frame = String::from_utf8(frame.to_vec()).expect("snapshot frame is UTF-8");
+                    socket.send(Message::Text(frame)).await
+                }
+            };
+            if sent.is_err() {
                 return;
             }
-            last_sent_revision = rev;
+            let rev = last_sent_revision;
             // After a full snapshot the client's effective revision is
             // `rev`. Drop any stream entries with rev <= rev (their
             // effects are already in the snapshot).

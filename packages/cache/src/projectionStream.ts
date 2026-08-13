@@ -18,6 +18,7 @@ import type {
   SemanticsSnapshot,
 } from '@cknerv/types';
 
+import { cellsSnapshotFromColumnar, decodeCellsColumnar } from './cellsColumnar';
 import {
   applyRevisionedCellDeltas,
   emptyCellsCache,
@@ -48,6 +49,14 @@ export interface ProjectionStreamOptions extends StreamHealthOptions {
   recentLinksCapacity?: number;
   linkRingCapacity?: number;
 }
+
+/** Decoder for a binary resync frame. Supplying one opts the socket into
+ *  `?bin=1`; the server keeps sending JSON text to anyone who does not,
+ *  because a binary frame carries no `kind` to recognise it by. A throw
+ *  forces a reconnect rather than a wrong cache. */
+export type BinarySnapshotDecoder<Snapshot> = (
+  buffer: ArrayBuffer,
+) => { revision: number; snapshot: Snapshot };
 
 export interface ProjectionStreamHandle {
   disconnect: () => void;
@@ -81,6 +90,7 @@ export function connectProjectionStream<Cache, Snapshot, Delta>(
     ) => Cache;
     getRevision: (cache: Cache) => number;
     markLagged: (cache: Cache) => Cache;
+    decodeBinarySnapshot?: BinarySnapshotDecoder<Snapshot>;
   },
   onChange: (next: Cache) => void,
   opts: ProjectionStreamOptions = {},
@@ -182,12 +192,36 @@ export function connectProjectionStream<Cache, Snapshot, Delta>(
     health.startAttempt(needsResync);
     const base = resolveWsUrl(streamUrl);
     const sep = base.includes('?') ? '&' : '?';
-    const url = `${base}${sep}since=${hooks.getRevision(cache)}`;
+    const binary = hooks.decodeBinarySnapshot;
+    const url = `${base}${sep}since=${hooks.getRevision(cache)}${binary ? '&bin=1' : ''}`;
     const ws = new WebSocket(url);
+    if (binary) ws.binaryType = 'arraybuffer';
     socket = ws;
     ws.onopen = () => health.opened(needsResync);
 
     ws.onmessage = (msg: MessageEvent) => {
+      if (binary && msg.data instanceof ArrayBuffer) {
+        // The only binary frame is a resync snapshot, and it is
+        // authoritative at its exact point in the ordered stream — same
+        // rule as the JSON one, so older uncommitted deltas are dropped.
+        let decoded: { revision: number; snapshot: Snapshot };
+        try {
+          decoded = binary(msg.data);
+        } catch (error) {
+          // A frame we cannot read is worse than no frame: drop the socket
+          // and let the reconnect ask again (without `bin=1` it would take
+          // the JSON path, but the cursor is what matters here).
+          console.warn('binary snapshot frame unusable; resyncing', error);
+          ws.close();
+          return;
+        }
+        discardPendingDeltas();
+        cache = hooks.fromSnapshot(decoded.revision, decoded.snapshot, cache);
+        needsResync = false;
+        health.message();
+        onChange(cache);
+        return;
+      }
       let frame: Frame;
       try {
         frame = typeof msg.data === 'string' ? JSON.parse(msg.data) : (null as never);
@@ -286,6 +320,10 @@ export function connectCellsStream(
         applyRevisionedCellDeltas(prev, deltas as RevisionedCellDelta[], opts),
       getRevision: (c) => c.revision,
       markLagged: (c) => ({ ...c, revision: 0 }),
+      decodeBinarySnapshot: (buffer) => {
+        const view = decodeCellsColumnar(buffer);
+        return { revision: view.revision, snapshot: cellsSnapshotFromColumnar(view) };
+      },
     },
     onChange,
     opts,

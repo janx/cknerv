@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -27,8 +29,14 @@ class MockWebSocket {
     this.onopen?.({} as Event);
   }
 
+  binaryType = 'blob';
+
   message(payload: unknown): void {
     this.onmessage?.({ data: JSON.stringify(payload) } as MessageEvent);
+  }
+
+  binaryMessage(buffer: ArrayBuffer): void {
+    this.onmessage?.({ data: buffer } as MessageEvent);
   }
 
   close(): void {
@@ -374,5 +382,53 @@ describe('close-handshake deadlock hardening', () => {
     vi.advanceTimersByTime(2_100);
     expect(SilentCloseWebSocket.instances.length).toBeGreaterThanOrEqual(2);
     handle.disconnect();
+  });
+});
+
+describe('binary resync frames', () => {
+  /** The very bytes the Rust encoder produced — the same fixture the
+   *  decoder tests read, so this exercises the real frame, not a mock of
+   *  one. */
+  function fixture(): ArrayBuffer {
+    const bytes = readFileSync(
+      fileURLToPath(new URL('../../../tests/fixtures/cells_columnar_v2.bin', import.meta.url)),
+    );
+    return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+  }
+
+  it('asks for binary, then rebuilds the cache from one', () => {
+    vi.stubGlobal('WebSocket', MockWebSocket);
+    let cache: CellGalaxyCache = emptyCellsCache();
+    const handle = connectCellsStream('/api/projections/cells/stream', undefined, (next) => {
+      cache = next;
+    });
+    const socket = MockWebSocket.instances[0];
+    expect(socket.url).toContain('bin=1');
+    expect(socket.binaryType).toBe('arraybuffer');
+
+    socket.open();
+    socket.binaryMessage(fixture());
+    expect(cache.cells.size).toBe(3);
+    expect(cache.displayMembers.size).toBe(3);
+    expect(cache.displayResidents.size).toBe(1);
+    expect(cache.displayBudget).toEqual({ cells: 12_000, nerveEdges: 8_000 });
+    expect(cache.cells.get(1)?.out_point.tx_hash).toBe(`0x${(1).toString(16).padStart(64, '0')}`);
+    handle.disconnect();
+  });
+
+  it('drops the socket on a frame it cannot read rather than a wrong cache', () => {
+    vi.stubGlobal('WebSocket', MockWebSocket);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    let cache: CellGalaxyCache = emptyCellsCache();
+    const handle = connectCellsStream('/api/projections/cells/stream', undefined, (next) => {
+      cache = next;
+    });
+    const socket = MockWebSocket.instances[0];
+    socket.open();
+    socket.binaryMessage(new ArrayBuffer(16));
+    expect(cache.cells.size).toBe(0);
+    expect(warn).toHaveBeenCalled();
+    handle.disconnect();
+    warn.mockRestore();
   });
 });
