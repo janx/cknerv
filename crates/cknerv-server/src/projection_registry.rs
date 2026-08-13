@@ -22,6 +22,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
+use axum::body::Bytes;
 use serde_json::Value;
 use tokio::sync::broadcast;
 
@@ -95,6 +96,60 @@ fn serialize_envelope<S: serde::Serialize>(
     .unwrap_or_else(|_| String::from("{}"))
 }
 
+/// Serialized snapshots held for the revision they were taken at.
+///
+/// A snapshot is expensive to produce and every client that arrives at the
+/// same revision wants byte-identical output, so the second arrival should
+/// pay nothing: a hit never touches the projection lock, which is the lock
+/// the reducer needs. Bursts are the normal case — a page load fetches and
+/// then streams, StrictMode mounts twice, several tabs open together.
+///
+/// Entries are dropped the moment a mutation makes them unservable, so a
+/// quiet server does not sit on tens of megabytes that can never be sent
+/// again. Two readers missing at once both build; the waste is one
+/// duplicate serialization, and the alternative is a lock that makes them
+/// wait for each other.
+#[derive(Default)]
+struct SnapshotCache {
+    revision: Option<u64>,
+    bare: Option<Bytes>,
+    frame: Option<Bytes>,
+    bin: Option<Bytes>,
+}
+
+impl SnapshotCache {
+    fn slot(&mut self, envelope: Option<SnapshotEnvelope>) -> &mut Option<Bytes> {
+        match envelope {
+            Some(SnapshotEnvelope::Bare) => &mut self.bare,
+            Some(SnapshotEnvelope::Frame) => &mut self.frame,
+            None => &mut self.bin,
+        }
+    }
+
+    fn get(&mut self, envelope: Option<SnapshotEnvelope>, revision: u64) -> Option<Bytes> {
+        if self.revision != Some(revision) {
+            return None;
+        }
+        self.slot(envelope).clone()
+    }
+
+    fn put(&mut self, envelope: Option<SnapshotEnvelope>, revision: u64, bytes: Bytes) {
+        if self.revision != Some(revision) {
+            *self = Self {
+                revision: Some(revision),
+                ..Default::default()
+            };
+        }
+        *self.slot(envelope) = Some(bytes);
+    }
+
+    fn clear(&mut self) {
+        if self.revision.is_some() {
+            *self = Self::default();
+        }
+    }
+}
+
 /// Test shim: the snapshot body back as a `Value`, for assertions that want
 /// to index into it. Deliberately NOT on the trait — materializing a
 /// `Value` is precisely what the production path exists to avoid, so it
@@ -108,7 +163,7 @@ pub(crate) trait ProjectionRuntimeTestExt {
 impl<T: ProjectionRuntime + ?Sized> ProjectionRuntimeTestExt for T {
     fn snapshot_json(&self) -> (u64, Value) {
         let (revision, text) = self.snapshot_envelope(SnapshotEnvelope::Bare);
-        let mut envelope: Value = serde_json::from_str(&text).expect("snapshot envelope is JSON");
+        let mut envelope: Value = serde_json::from_slice(&text).expect("snapshot envelope is JSON");
         (revision, envelope["snapshot"].take())
     }
 }
@@ -118,11 +173,12 @@ pub trait ProjectionRuntime: Send + Sync {
     fn name(&self) -> &'static str;
     /// Serialize the projection snapshot inside `envelope`. Returns
     /// `(revision, JSON text)` so the client can resume the stream from
-    /// `since=revision`.
-    fn snapshot_envelope(&self, envelope: SnapshotEnvelope) -> (u64, String);
+    /// `since=revision`. Reference-counted: repeat callers at one revision
+    /// share the bytes rather than each getting a copy.
+    fn snapshot_envelope(&self, envelope: SnapshotEnvelope) -> (u64, Bytes);
     /// Columnar (binary) snapshot with the revision patched into its header
     /// slot; `None` for projections without a binary form.
-    fn snapshot_bin(&self) -> Option<(u64, Vec<u8>)> {
+    fn snapshot_bin(&self) -> Option<(u64, Bytes)> {
         None
     }
     /// Snapshot the delta ring (oldest → newest).
@@ -161,6 +217,7 @@ pub struct ProjectionRunner<P: Projection> {
     delta_seq: AtomicU64,
     tx: broadcast::Sender<DeltaEntry>,
     ring: Ring<DeltaEntry>,
+    snapshots: Mutex<SnapshotCache>,
 }
 
 impl<P: Projection> ProjectionRunner<P> {
@@ -174,7 +231,24 @@ impl<P: Projection> ProjectionRunner<P> {
             delta_seq: AtomicU64::new(0),
             tx,
             ring: Ring::with_capacity(PROJECTION_DELTA_RING_CAP),
+            snapshots: Mutex::new(SnapshotCache::default()),
         }
+    }
+
+    /// Serve `envelope` from the cache when it is current. Checked before
+    /// the projection lock is taken, so a hit costs one atomic load and one
+    /// uncontended mutex.
+    fn cached(&self, envelope: Option<SnapshotEnvelope>) -> Option<(u64, Bytes)> {
+        let revision = self.revision.load(Ordering::Relaxed);
+        let hit = self.snapshots.lock().unwrap().get(envelope, revision)?;
+        Some((revision, hit))
+    }
+
+    fn remember(&self, envelope: Option<SnapshotEnvelope>, revision: u64, bytes: &Bytes) {
+        self.snapshots
+            .lock()
+            .unwrap()
+            .put(envelope, revision, bytes.clone());
     }
 }
 
@@ -183,7 +257,10 @@ impl<P: Projection> ProjectionRuntime for ProjectionRunner<P> {
         self.name
     }
 
-    fn snapshot_envelope(&self, envelope: SnapshotEnvelope) -> (u64, String) {
+    fn snapshot_envelope(&self, envelope: SnapshotEnvelope) -> (u64, Bytes) {
+        if let Some(hit) = self.cached(Some(envelope)) {
+            return hit;
+        }
         // The read lock covers TAKING the snapshot, never WRITING it out.
         // The reducer's fan-out waits on this lock while holding the coord
         // write lock, so anything left inside this scope stalls the whole
@@ -194,18 +271,26 @@ impl<P: Projection> ProjectionRuntime for ProjectionRunner<P> {
             let p = self.inner.read().unwrap();
             (self.revision.load(Ordering::Relaxed), p.snapshot())
         };
-        (revision, serialize_envelope(envelope, revision, &snap))
+        let bytes = Bytes::from(serialize_envelope(envelope, revision, &snap).into_bytes());
+        self.remember(Some(envelope), revision, &bytes);
+        (revision, bytes)
     }
 
-    fn snapshot_bin(&self) -> Option<(u64, Vec<u8>)> {
+    fn snapshot_bin(&self) -> Option<(u64, Bytes)> {
+        if let Some(hit) = self.cached(None) {
+            return Some(hit);
+        }
         // Read the revision under the SAME projection read-lock as the
         // snapshot so the patched header cannot drift from the rows.
-        let p = self.inner.read().unwrap();
-        let mut bytes = p.snapshot_bin()?;
-        let revision = self.revision.load(Ordering::Relaxed);
+        let (revision, mut bytes) = {
+            let p = self.inner.read().unwrap();
+            (self.revision.load(Ordering::Relaxed), p.snapshot_bin()?)
+        };
         bytes[cknerv_core::projection::cells_columnar::CELLS_COLUMNAR_REVISION_OFFSET
             ..cknerv_core::projection::cells_columnar::CELLS_COLUMNAR_REVISION_OFFSET + 8]
             .copy_from_slice(&revision.to_le_bytes());
+        let bytes = Bytes::from(bytes);
+        self.remember(None, revision, &bytes);
         Some((revision, bytes))
     }
 
@@ -244,8 +329,11 @@ impl<P: Projection> ApplyMutation for ProjectionRunner<P> {
         };
         // Always advance our revision to match the EntityStore's. Even
         // if no deltas were emitted, the revision moves forward so a
-        // client at `since=N-1` knows we processed mutation N.
+        // client at `since=N-1` knows we processed mutation N. Cached
+        // snapshots die with the revision they described — holding one no
+        // client can be served is pure resident memory.
         self.revision.store(rm.revision, Ordering::Relaxed);
+        self.snapshots.lock().unwrap().clear();
         for d in deltas {
             let value = serde_json::to_value(&d).unwrap_or(Value::Null);
             let seq = self.delta_seq.fetch_add(1, Ordering::Relaxed) + 1;
@@ -317,16 +405,22 @@ impl<P: EnrichmentProjection> ProjectionRuntime for EnrichmentProjectionRunner<P
         self.name
     }
 
-    fn snapshot_envelope(&self, envelope: SnapshotEnvelope) -> (u64, String) {
+    fn snapshot_envelope(&self, envelope: SnapshotEnvelope) -> (u64, Bytes) {
         // Same rule as the canonical runner: serialize outside every lock.
         // Here the event coordinator matters too — it is what an incoming
-        // enrichment event has to take.
+        // enrichment event has to take. No snapshot cache: enrichment
+        // snapshots are aggregates measured in kilobytes, so the cache
+        // would cost a lock on the event path to save nothing worth
+        // saving.
         let (revision, snapshot) = {
             let _coord = self.event_coord.lock().unwrap();
             let snapshot = self.inner.read().unwrap().snapshot();
             (self.revision.load(Ordering::Relaxed), snapshot)
         };
-        (revision, serialize_envelope(envelope, revision, &snapshot))
+        (
+            revision,
+            Bytes::from(serialize_envelope(envelope, revision, &snapshot).into_bytes()),
+        )
     }
 
     fn delta_ring_snapshot(&self) -> Vec<DeltaEntry> {
@@ -463,6 +557,7 @@ impl Default for Registry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cknerv_core::projection::cells_columnar::CELLS_COLUMNAR_HEADER_BYTES;
     use cknerv_core::{
         helix_seed_for, Cell, CellGalaxy, ChainAnchor, EnrichmentEvent, EnrichmentSourceState,
         EnrichmentSourceStatus, GalaxyCompositionRecord, Mutation, OutPoint, SemanticsProjection,
@@ -514,6 +609,77 @@ mod tests {
             typed: vec![galaxy_cell(2)],
             plain: vec![galaxy_cell(3)],
         }
+    }
+
+    /// Counts how often the projection was actually asked for a snapshot,
+    /// so a cache hit is provable rather than inferred from timing.
+    struct CountingProjection {
+        taken: Arc<AtomicU64>,
+    }
+
+    impl Projection for CountingProjection {
+        type Snapshot = u64;
+        type Delta = u64;
+
+        fn name(&self) -> &'static str {
+            "counting"
+        }
+
+        fn snapshot(&self) -> u64 {
+            self.taken.fetch_add(1, Ordering::Relaxed) + 1
+        }
+
+        fn snapshot_bin(&self) -> Option<Vec<u8>> {
+            Some(vec![0u8; CELLS_COLUMNAR_HEADER_BYTES])
+        }
+
+        fn apply_mutation(&mut self, _m: &Mutation) -> Vec<u64> {
+            Vec::new()
+        }
+    }
+
+    /// Clients arrive in bursts at one revision — a page load fetching then
+    /// streaming, StrictMode mounting twice, several tabs at once — and each
+    /// of them wants byte-identical output. The second one should pay
+    /// nothing, and the bytes must die with the revision they describe so a
+    /// quiet server is not sitting on a snapshot nobody can be served.
+    #[test]
+    fn a_snapshot_is_serialized_once_per_revision_and_retired_with_it() {
+        let taken = Arc::new(AtomicU64::new(0));
+        let mut registry = Registry::new();
+        registry.register(CountingProjection {
+            taken: taken.clone(),
+        });
+        let runtime = registry.lookup("counting").expect("counting runtime");
+        let writer = registry.writers().into_iter().next().unwrap();
+
+        let (first_revision, first) = runtime.snapshot_envelope(SnapshotEnvelope::Bare);
+        let (again_revision, again) = runtime.snapshot_envelope(SnapshotEnvelope::Bare);
+        assert_eq!((first_revision, &first), (again_revision, &again));
+        assert_eq!(
+            taken.load(Ordering::Relaxed),
+            1,
+            "the second caller at one revision must not re-take the snapshot"
+        );
+
+        // Envelopes are separate slots: the frame is a different shape, so
+        // serving it from the bare entry would ship a client the wrong one.
+        let (_, frame) = runtime.snapshot_envelope(SnapshotEnvelope::Frame);
+        assert_ne!(frame, first);
+        assert_eq!(taken.load(Ordering::Relaxed), 2);
+
+        let (_, bin) = runtime.snapshot_bin().expect("columnar snapshot");
+        let (_, bin_again) = runtime.snapshot_bin().expect("columnar snapshot");
+        assert_eq!(bin, bin_again);
+
+        writer.apply(&RevisionedMutation {
+            revision: 7,
+            mutation: Mutation::ChainReorganized { from_block: 1 },
+        });
+        let (revision, after) = runtime.snapshot_envelope(SnapshotEnvelope::Bare);
+        assert_eq!(revision, 7);
+        assert_ne!(after, first, "a stale revision must not be served");
+        assert_eq!(taken.load(Ordering::Relaxed), 3);
     }
 
     /// A projection whose snapshot parks the calling thread *while it
@@ -664,7 +830,7 @@ mod tests {
         // `Value` map's alphabetical — which is why this compares parsed
         // trees rather than raw bytes.)
         let reparse =
-            |text: &str| -> Value { serde_json::from_str(text).expect("envelope is JSON") };
+            |text: &[u8]| -> Value { serde_json::from_slice(text).expect("envelope is JSON") };
         let old_path = |kind: Option<&str>| {
             let mut envelope = serde_json::Map::new();
             if let Some(kind) = kind {
@@ -672,7 +838,11 @@ mod tests {
             }
             envelope.insert("revision".into(), Value::from(3u64));
             envelope.insert("snapshot".into(), body.clone());
-            reparse(&serde_json::to_string(&Value::Object(envelope)).unwrap())
+            reparse(
+                serde_json::to_string(&Value::Object(envelope))
+                    .unwrap()
+                    .as_bytes(),
+            )
         };
 
         let (revision, bare) = runtime.snapshot_envelope(SnapshotEnvelope::Bare);

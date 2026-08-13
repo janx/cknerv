@@ -244,6 +244,10 @@ pub async fn handle_projection_stream(
             // snapshot is serialized once instead of once into a `Value`
             // and again out of it.
             let (rev, frame) = runner.snapshot_envelope(SnapshotEnvelope::Frame);
+            // One copy to satisfy `Message::Text`'s owned `String`; the
+            // expensive half (taking and serializing the snapshot) is what
+            // the runtime cached.
+            let frame = String::from_utf8(frame.to_vec()).expect("snapshot frame is UTF-8");
             if socket.send(Message::Text(frame)).await.is_err() {
                 return;
             }
