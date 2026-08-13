@@ -184,9 +184,16 @@ impl<P: Projection> ProjectionRuntime for ProjectionRunner<P> {
     }
 
     fn snapshot_envelope(&self, envelope: SnapshotEnvelope) -> (u64, String) {
-        let p = self.inner.read().unwrap();
-        let snap = p.snapshot();
-        let revision = self.revision.load(Ordering::Relaxed);
+        // The read lock covers TAKING the snapshot, never WRITING it out.
+        // The reducer's fan-out waits on this lock while holding the coord
+        // write lock, so anything left inside this scope stalls the whole
+        // server — including endpoints that have nothing to do with this
+        // projection. Revision and state are still read together, so the
+        // pair a client resumes from stays consistent.
+        let (revision, snap) = {
+            let p = self.inner.read().unwrap();
+            (self.revision.load(Ordering::Relaxed), p.snapshot())
+        };
         (revision, serialize_envelope(envelope, revision, &snap))
     }
 
@@ -311,9 +318,14 @@ impl<P: EnrichmentProjection> ProjectionRuntime for EnrichmentProjectionRunner<P
     }
 
     fn snapshot_envelope(&self, envelope: SnapshotEnvelope) -> (u64, String) {
-        let _coord = self.event_coord.lock().unwrap();
-        let snapshot = self.inner.read().unwrap().snapshot();
-        let revision = self.revision.load(Ordering::Relaxed);
+        // Same rule as the canonical runner: serialize outside every lock.
+        // Here the event coordinator matters too — it is what an incoming
+        // enrichment event has to take.
+        let (revision, snapshot) = {
+            let _coord = self.event_coord.lock().unwrap();
+            let snapshot = self.inner.read().unwrap().snapshot();
+            (self.revision.load(Ordering::Relaxed), snapshot)
+        };
         (revision, serialize_envelope(envelope, revision, &snapshot))
     }
 
@@ -502,6 +514,90 @@ mod tests {
             typed: vec![galaxy_cell(2)],
             plain: vec![galaxy_cell(3)],
         }
+    }
+
+    /// A projection whose snapshot parks the calling thread *while it
+    /// serializes*, so a test can hold serialization open and see who else
+    /// is stuck behind it.
+    struct ParkingProjection {
+        entered: Arc<std::sync::Barrier>,
+        release: Arc<std::sync::Barrier>,
+    }
+
+    struct ParkingSnapshot {
+        entered: Arc<std::sync::Barrier>,
+        release: Arc<std::sync::Barrier>,
+    }
+
+    impl serde::Serialize for ParkingSnapshot {
+        fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+            self.entered.wait();
+            self.release.wait();
+            serializer.serialize_u64(1)
+        }
+    }
+
+    impl Projection for ParkingProjection {
+        type Snapshot = ParkingSnapshot;
+        type Delta = u64;
+
+        fn name(&self) -> &'static str {
+            "parking"
+        }
+
+        fn snapshot(&self) -> ParkingSnapshot {
+            ParkingSnapshot {
+                entered: self.entered.clone(),
+                release: self.release.clone(),
+            }
+        }
+
+        fn apply_mutation(&mut self, _m: &Mutation) -> Vec<u64> {
+            Vec::new()
+        }
+    }
+
+    /// Serializing a snapshot must not hold the projection lock, because
+    /// the reducer waits on that lock while holding the coord write lock —
+    /// so a slow write-out freezes endpoints that have nothing to do with
+    /// this projection. The proof is direct: park inside serialization and
+    /// require a mutation to land anyway.
+    #[test]
+    fn a_parked_serialization_does_not_hold_up_the_reducer() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let entered = Arc::new(std::sync::Barrier::new(2));
+        let release = Arc::new(std::sync::Barrier::new(2));
+        let mut registry = Registry::new();
+        registry.register(ParkingProjection {
+            entered: entered.clone(),
+            release: release.clone(),
+        });
+        let runtime = registry.lookup("parking").expect("parking runtime");
+        let writer = registry.writers().into_iter().next().unwrap();
+
+        let reader =
+            std::thread::spawn(move || runtime.snapshot_envelope(SnapshotEnvelope::Bare).0);
+        entered.wait(); // serialization is now in flight
+
+        let (landed_tx, landed_rx) = mpsc::channel();
+        let applier = std::thread::spawn(move || {
+            writer.apply(&RevisionedMutation {
+                revision: 1,
+                mutation: Mutation::ChainReorganized { from_block: 1 },
+            });
+            let _ = landed_tx.send(());
+        });
+        let landed = landed_rx.recv_timeout(Duration::from_secs(5)).is_ok();
+
+        release.wait();
+        reader.join().expect("reader thread");
+        applier.join().expect("applier thread");
+        assert!(
+            landed,
+            "the reducer waited on snapshot serialization — the read lock is being held too long"
+        );
     }
 
     /// The envelope is hand-rolled now — one serde pass straight to text,
