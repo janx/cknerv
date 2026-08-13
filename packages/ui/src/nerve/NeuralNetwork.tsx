@@ -428,6 +428,9 @@ export default function NeuralNetwork({
   const routingGraphBuilder = useMemo(() => createNeighborGraphBuilder(), []);
   const displayGraphBuilder = useMemo(() => createNeighborGraphBuilder(), []);
   const [routingGraphVersion, setRoutingGraphVersion] = useState(0);
+  /** Bumped when a display build swaps the graph pulses ride, so link batches
+   *  that arrive in the same commit plan against the graph that just landed. */
+  const [displayGraphVersion, setDisplayGraphVersion] = useState(0);
 
   latestCellsTokenRef.current = cellsCache.cellsToken;
   latestRoutingTopologyRef.current = topologyKey;
@@ -599,6 +602,11 @@ export default function NeuralNetwork({
           RIPPLE_STAGGER_MS,
         );
       }
+      // The map moves with the graph it defines, at request time rather than
+      // at completion. A pulse planned this tick targets cells born this tick,
+      // and its hops resolve their geometry from here — waiting for the worker
+      // would extinguish exactly the pulses a new block just created.
+      displayCellsRef.current = displayCells;
       const requestedTopologyVersion = renderUpdate.topologyVersion;
       displayRequestedCellsRef.current = displayCells;
       displayRequestedTopologyRef.current = displaySelectionKey;
@@ -650,8 +658,11 @@ export default function NeuralNetwork({
         displayRequestedCellsRef.current = null;
         displayRequestedTopologyVersionRef.current = -1;
         displayGraphRef.current = result.graph;
+        setDisplayGraphVersion((version) => version + 1);
         passiveGraphRef.current = passiveGraph;
         fabricStats.passiveSelectionEdges = passiveGraph.edges.length;
+        // Already set at request time; re-asserted here because the guards
+        // above are what prove THIS response is the live one.
         displayCellsRef.current = displayCells;
         displayTopologyRef.current = displaySelectionKey;
         displayTopologyVersionRef.current = requestedTopologyVersion;
@@ -893,12 +904,19 @@ export default function NeuralNetwork({
     // is active this returns planned=[] but still advances the cursor, so the
     // storm is suppressed and the window does not replay when `backfill`
     // clears. Drop reasons + per-block rollup are recorded into pulseStats.
+    //
+    // Sources and routes come from the DISPLAY pair — the staged map and the
+    // graph built from it. A pulse only reads as consensus flow if the viewer
+    // can see the fibre it rides, and the retained map holds four cells
+    // off-stage for every one on it. Pairing them also makes residents
+    // routable: they are most of the stage and `cellsCache.cells` never held
+    // them at all.
     const { planned, nextSeq } = planLinkBatch(
       cellsCache.pulseLinks,
       lastLinksSeqRef.current,
       !!cellsCache.backfill,
-      cellsCache.cells,
-      graphRef.current,
+      displayCellsRef.current,
+      displayGraphRef.current,
       {
         maxHops: topology?.maxHops,
         maxPulsesPerLink: pulses?.maxPulsesPerLink,
@@ -928,7 +946,6 @@ export default function NeuralNetwork({
   }, [
     cellsCache.pulseLinks,
     cellsCache.linksSeq,
-    cellsCache.cells,
     cellsCache.backfill,
     topology?.maxHops,
     pulses?.maxPulsesPerLink,
@@ -936,7 +953,7 @@ export default function NeuralNetwork({
     pulses?.maxActivePulses,
     livePulseDelayS,
     particleCapMul,
-    routingGraphVersion,
+    displayGraphVersion,
   ]);
 
   // User-driven historical recall. It prefers retained spent inputs and falls
@@ -1264,10 +1281,14 @@ export default function NeuralNetwork({
     lastTraceKeyRef.current = key;
     activeTraceRequestRef.current = null;
 
+    // Recall rides the same pair as live traffic. A remembered route the
+    // viewer cannot see is not a recall, so an old link whose endpoints have
+    // left the stage now resolves to no route rather than to one drawn across
+    // unrendered space.
     const trace = planConsensusMemoryTrace(
       link,
-      cellsCache.cells,
-      graphRef.current,
+      displayCellsRef.current,
+      displayGraphRef.current,
       {
         maxHops: topology?.maxHops,
         maxPulses: traceMaxPulses ?? pulses?.maxPulsesPerLink,
@@ -1423,8 +1444,8 @@ export default function NeuralNetwork({
         simClock.elapsedSec,
       );
       if (verified && route && focusStrength > 0.001) {
-        const cells = cellsCache.cells;
-        const adjacency = graphRef.current.adjacency;
+        const cells = displayCellsRef.current;
+        const adjacency = displayGraphRef.current.adjacency;
         const distancePresentation = traceDistancePresentationRef.current;
         for (const edge of deriveConsensusMemoryRouteHopPulseEdges(
           verified,
@@ -1472,7 +1493,10 @@ export default function NeuralNetwork({
     const now = simClock.elapsedSec;
     spikePool.beginFrame();
     const handles = fabricHandlesRef.current;
-    const cells = cellsCache.cells;
+    // Endpoint geometry for every hop below. Paired with the display graph on
+    // purpose: a hop is drawn only where both the fibre and its two cells are
+    // on screen, and residents (most of the stage) live only in this map.
+    const cells = displayCellsRef.current;
     const departingFocus = departingTraceFocusRef.current;
     if (departingFocus && now >= departingFocus.endsAtSec) {
       departingTraceFocusRef.current = null;
@@ -1584,11 +1608,12 @@ export default function NeuralNetwork({
 
     // Live adjacency snapshot for this frame. Pulses ride only edges
     // that exist in this graph; when a hop's edge has been dropped
-    // (cell GC, rebuild after membership delta) the pulse — or that
-    // individual trail hop — extinguishes. Single calculation path:
-    // the same adjacency the fabric layer is rendering, so the
-    // active layer can never light up a fibre that isn't there.
-    const adjacency = graphRef.current.adjacency;
+    // (cell GC, rebuild after membership delta, exit from the stage) the
+    // pulse — or that individual trail hop — extinguishes. Single
+    // calculation path: this is the graph the fabric layer is built from
+    // AND the graph the routes were planned on, so the active layer can
+    // never light up a fibre that isn't there.
+    const adjacency = displayGraphRef.current.adjacency;
     const framePulses = pulsesRef.current;
     const stillActive = sparePulsesRef.current;
     stillActive.length = 0;
