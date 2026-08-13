@@ -541,6 +541,18 @@ impl Stage {
     }
 }
 
+/// Borrowed display plane for the columnar wire form. Ids and payload
+/// references only; nothing here is cloned.
+pub struct ColumnarDisplayView<'a> {
+    pub budget: DisplayBudget,
+    pub provenance: &'a DisplayProvenance,
+    /// Staged member ids, ascending.
+    pub members: Vec<u64>,
+    /// Staged resident payloads, ascending id — the rows that follow the
+    /// canonical ones in the row block.
+    pub residents: Vec<&'a Cell>,
+}
+
 /// See the module docs. Owned by `CellGalaxy`; every canonical handler
 /// reports births/removals/endpoints as they happen and `apply_mutation`
 /// calls [`DisplayPlane::flush`] exactly once at the end — which is what
@@ -1094,6 +1106,21 @@ impl DisplayPlane {
             exit_ids,
             provenance,
         })
+    }
+
+    /// The display plane as the columnar encoder needs it: borrows only,
+    /// so building a binary snapshot never clones a resident payload.
+    /// Membership and resident order match [`Self::section`] exactly
+    /// (ascending id both times) — the two wire forms describe one stage.
+    pub(crate) fn columnar_view(&self) -> ColumnarDisplayView<'_> {
+        let mut residents: Vec<&Cell> = self.stage.residents.values().collect();
+        residents.sort_unstable_by_key(|cell| cell.id);
+        ColumnarDisplayView {
+            budget: self.stage.budget,
+            provenance: &self.provenance,
+            members: self.stage.members.keys().copied().collect(),
+            residents,
+        }
     }
 
     /// Snapshot section: members in the plane's deterministic order

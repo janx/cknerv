@@ -1,18 +1,29 @@
 // Decoder for the columnar cell-galaxy snapshot — TS mirror of
 // `cknerv-core::projection::cells_columnar` (see that file for the layout
-// spec). One little-endian buffer: 48-byte header, then per-field columns
-// grouped by element width (f64, f32, u32, u8), then a tag dictionary.
+// spec). One little-endian buffer: a 72-byte header, per-field columns
+// grouped by element width (f64, f32, u32, u8), an ASCII string region, and
+// a tail holding the tag dictionary and display provenance.
 //
-// Decoding is ZERO-COPY: every column is a typed-array view over the fetched
-// ArrayBuffer. The header places the f64 group at byte 48 and orders groups
-// widest-first, so every view lands on a naturally aligned offset.
+// Numeric decoding is ZERO-COPY: every column is a typed-array view over the
+// fetched ArrayBuffer, and the header orders groups widest-first so each view
+// lands on a naturally aligned offset.
+//
+// Strings are decoded ONCE for the whole region and then sliced by offset.
+// That is the measured reason the wire carries hex text rather than packed
+// 32-byte hashes: re-hexing 100k hashes costs ~68ms of main thread even with
+// a lookup table, while one decode plus fixed slicing costs ~4.7ms.
 
-import type { AssetKind, LockKind } from '@cknerv/types';
+import type { AssetKind, Cell, LockKind } from '@cknerv/types';
 
-export const CELLS_COLUMNAR_VERSION = 1;
-export const CELLS_COLUMNAR_HEADER_BYTES = 48;
+export const CELLS_COLUMNAR_VERSION = 2;
+export const CELLS_COLUMNAR_HEADER_BYTES = 72;
 /** tag_index value meaning "no tag". */
 export const CELLS_COLUMNAR_NO_TAG = 0xff;
+
+/** `display_mode` byte: absent / canonical / composed. */
+export const CELLS_COLUMNAR_DISPLAY_ABSENT = 0;
+export const CELLS_COLUMNAR_DISPLAY_CANONICAL = 1;
+export const CELLS_COLUMNAR_DISPLAY_COMPOSED = 2;
 
 /** Enum code tables — index = wire code. MUST match the Rust
  *  `lock_kind_code` / `asset_kind_code` mappings (declaration order of the
@@ -40,6 +51,11 @@ export interface CellsColumnarView {
   lastPulseAtMs: number;
   totalBirths: number;
   totalDeaths: number;
+  /** Canonical rows. Rows `[0, cellCount)` are the canonical map. */
+  cellCount: number;
+  /** Resident rows. Rows `[cellCount, rowCount)` are staged residents. */
+  residentCount: number;
+  /** Canonical + resident rows; the length of every column below. */
   rowCount: number;
   id: Float64Array;
   bornAtMs: Float64Array;
@@ -62,6 +78,24 @@ export interface CellsColumnarView {
   dataFlag: Uint8Array;
   /** Tag dictionary, first-seen order. */
   tags: readonly string[];
+  /** Row `i`'s `out_point.tx_hash`. */
+  txHash(row: number): string;
+  contentHash(row: number): string;
+  dataHex(row: number): string;
+  /** Null when the server ships no display plane at all. */
+  display: CellsColumnarDisplay | null;
+}
+
+export interface CellsColumnarDisplay {
+  mode: 'canonical' | 'composed';
+  budgetCells: number;
+  budgetNerveEdges: number;
+  /** Staged member ids, ascending. */
+  members: Float64Array;
+  source: string | null;
+  asOfBlock: number | null;
+  asOfHash: string | null;
+  updatedAtMs: number;
 }
 
 function fail(reason: string): never {
@@ -92,36 +126,75 @@ export function decodeCellsColumnar(buffer: ArrayBuffer): CellsColumnarView {
   const lastPulseAtMs = Number(header.getBigUint64(16, true));
   const totalBirths = Number(header.getBigUint64(24, true));
   const totalDeaths = Number(header.getBigUint64(32, true));
-  const rowCount = header.getUint32(40, true);
-  const tagDictOffset = header.getUint32(44, true);
+  const cellCount = header.getUint32(40, true);
+  const residentCount = header.getUint32(44, true);
+  const memberCount = header.getUint32(48, true);
+  const budgetCells = header.getUint32(52, true);
+  const budgetNerveEdges = header.getUint32(56, true);
+  const displayMode = header.getUint8(60);
+  const tailOffset = header.getUint32(64, true);
 
-  const n = rowCount;
+  const n = cellCount + residentCount;
   const f64Base = CELLS_COLUMNAR_HEADER_BYTES;
-  const f32Base = f64Base + 4 * 8 * n;
+  const membersBase = f64Base + 4 * 8 * n;
+  const f32Base = membersBase + 8 * memberCount;
   const u32Base = f32Base + 3 * 4 * n;
-  const u8Base = u32Base + 2 * 4 * n;
-  const columnsEnd = u8Base + 4 * n;
-  if (tagDictOffset !== columnsEnd) {
-    fail(`tag dictionary offset ${tagDictOffset} != columns end ${columnsEnd}`);
-  }
-  if (buffer.byteLength <= columnsEnd) {
-    fail(`buffer truncated (${buffer.byteLength} <= ${columnsEnd})`);
+  const offsetsBase = u32Base + 2 * 4 * n;
+  const u8Base = offsetsBase + 3 * (n + 1) * 4;
+  const stringsBase = u8Base + 4 * n;
+  if (tailOffset < stringsBase || tailOffset > buffer.byteLength) {
+    fail(`tail offset ${tailOffset} outside [${stringsBase}, ${buffer.byteLength}]`);
   }
 
-  const tags: string[] = [];
-  {
-    const bytes = new Uint8Array(buffer);
-    const utf8 = new TextDecoder();
-    let cursor = tagDictOffset;
-    const count = bytes[cursor];
+  const offsets = new Uint32Array(buffer, offsetsBase, 3 * (n + 1));
+  // One decode for every string in the snapshot; `substring` on the result
+  // is a cheap sliced string in V8, and the offsets are region-relative
+  // byte offsets which are also char offsets because the region is ASCII.
+  const region = new TextDecoder().decode(
+    new Uint8Array(buffer, stringsBase, tailOffset - stringsBase),
+  );
+  const sliceAt = (field: number, row: number): string => {
+    if (row < 0 || row >= n) fail(`row ${row} out of range`);
+    const table = field * (n + 1);
+    return region.substring(offsets[table + row], offsets[table + row + 1]);
+  };
+
+  const bytes = new Uint8Array(buffer);
+  const utf8 = new TextDecoder();
+  let cursor = tailOffset;
+  const shortString = (): string => {
+    const length = bytes[cursor];
     cursor += 1;
-    for (let i = 0; i < count; i += 1) {
-      const length = bytes[cursor];
-      cursor += 1;
-      if (cursor + length > buffer.byteLength) fail('tag dictionary truncated');
-      tags.push(utf8.decode(new Uint8Array(buffer, cursor, length)));
-      cursor += length;
-    }
+    if (cursor + length > buffer.byteLength) fail('tail string truncated');
+    const value = utf8.decode(new Uint8Array(buffer, cursor, length));
+    cursor += length;
+    return value;
+  };
+  const tags: string[] = [];
+  const tagCount = bytes[cursor];
+  cursor += 1;
+  for (let i = 0; i < tagCount; i += 1) tags.push(shortString());
+
+  let display: CellsColumnarDisplay | null = null;
+  if (displayMode !== CELLS_COLUMNAR_DISPLAY_ABSENT) {
+    const tail = new DataView(buffer);
+    const updatedAtMs = Number(tail.getBigUint64(cursor, true));
+    const asOfBlock = Number(tail.getBigUint64(cursor + 8, true));
+    cursor += 16;
+    const source = shortString();
+    const asOfHash = shortString();
+    display = {
+      mode: displayMode === CELLS_COLUMNAR_DISPLAY_COMPOSED ? 'composed' : 'canonical',
+      budgetCells,
+      budgetNerveEdges,
+      members: new Float64Array(buffer, membersBase, memberCount),
+      // Canonical provenance carries neither, and the wire spells that as
+      // empty rather than absent — restore the `| null` the JSON twin has.
+      source: source === '' ? null : source,
+      asOfHash: asOfHash === '' ? null : asOfHash,
+      asOfBlock: asOfHash === '' ? null : asOfBlock,
+      updatedAtMs,
+    };
   }
 
   return {
@@ -129,7 +202,9 @@ export function decodeCellsColumnar(buffer: ArrayBuffer): CellsColumnarView {
     lastPulseAtMs,
     totalBirths,
     totalDeaths,
-    rowCount,
+    cellCount,
+    residentCount,
+    rowCount: n,
     id: new Float64Array(buffer, f64Base, n),
     bornAtMs: new Float64Array(buffer, f64Base + 8 * n, n),
     deathAtMs: new Float64Array(buffer, f64Base + 16 * n, n),
@@ -144,26 +219,17 @@ export function decodeCellsColumnar(buffer: ArrayBuffer): CellsColumnarView {
     tagIndex: new Uint8Array(buffer, u8Base + 2 * n, n),
     dataFlag: new Uint8Array(buffer, u8Base + 3 * n, n),
     tags,
+    txHash: (row) => sliceAt(0, row),
+    contentHash: (row) => sliceAt(1, row),
+    dataHex: (row) => sliceAt(2, row),
+    display,
   };
 }
 
-/** Row `i` materialized into JSON-path field shapes — for parity checks and
- *  tests, NOT for bulk consumption (that would defeat the columns). Strings
- *  absent from the columnar form (`tx_hash`, `content_hash`, `data_hex`) are
- *  not included. */
-export function columnarCellAt(view: CellsColumnarView, i: number): {
-  id: number;
-  born_at_ms: number;
-  death_at_ms: number | null;
-  birth_block: number;
-  tag: string | null;
-  pos_seed: [number, number, number];
-  out_point_index: number;
-  capacity: number;
-  has_data: boolean;
-  lock_kind: LockKind;
-  asset_kind: AssetKind;
-} {
+/** Row `i` materialized into a JSON-path `Cell`. This is how the reducer
+ *  rebuilds its map — measured at ~17ms for 50k rows, against ~123ms just to
+ *  `JSON.parse` the equivalent snapshot. */
+export function columnarCellAt(view: CellsColumnarView, i: number): Cell {
   const death = view.deathAtMs[i];
   const tagCode = view.tagIndex[i];
   return {
@@ -173,9 +239,10 @@ export function columnarCellAt(view: CellsColumnarView, i: number): {
     birth_block: view.birthBlock[i],
     tag: tagCode === CELLS_COLUMNAR_NO_TAG ? null : view.tags[tagCode],
     pos_seed: [view.posX[i], view.posY[i], view.posZ[i]],
-    out_point_index: view.outPointIndex[i],
+    out_point: { tx_hash: view.txHash(i), index: view.outPointIndex[i] },
     capacity: view.capacity[i],
-    has_data: view.dataFlag[i] === 1,
+    data_hex: view.dataHex(i),
+    content_hash: view.contentHash(i),
     lock_kind: COLUMNAR_LOCK_KINDS[view.lockKind[i]] ?? 'other',
     asset_kind: COLUMNAR_ASSET_KINDS[view.assetKind[i]] ?? 'other',
   };

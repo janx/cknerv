@@ -1364,6 +1364,7 @@ impl Projection for CellGalaxy {
                 total_births: self.total_births,
                 total_deaths: self.total_deaths,
             },
+            Some(&self.display.columnar_view()),
         ))
     }
 
@@ -4245,9 +4246,13 @@ mod tests {
 
             // …and the columnar columns, which read the same stored field.
             let bytes = galaxy.snapshot_bin().expect("columnar snapshot");
-            let n = snapshot.cells.len();
-            let base = crate::projection::cells_columnar::CELLS_COLUMNAR_HEADER_BYTES + 4 * 8 * n;
-            for (row, cell) in snapshot.cells.iter().enumerate() {
+            // v2 rows are canonical cells then residents, with the member id
+            // list sitting between the f64 block and the positions.
+            let n = snapshot.cells.len() + display.residents.len();
+            let base = crate::projection::cells_columnar::CELLS_COLUMNAR_HEADER_BYTES
+                + 4 * 8 * n
+                + 8 * display.members.len();
+            for (row, cell) in snapshot.cells.iter().chain(&display.residents).enumerate() {
                 let expected = helix_seed_for(cell.id);
                 for (axis, want) in expected.iter().enumerate() {
                     let at = base + (axis * n + row) * 4;
@@ -4258,12 +4263,12 @@ mod tests {
         }
     }
 
-    /// Pin 9 — the columnar snapshot (v1) carries no display section: staffing
-    /// the plane must not change a single byte. Stated against the emitter
-    /// rather than the encoder's arguments, so it stays a real claim now
-    /// that the display section is not even in scope at the call.
+    /// Pin 9, inverted for v2 — the columnar snapshot now carries the
+    /// display plane, so staffing it has to move the bytes. v1 asserted the
+    /// opposite; a client that reads membership out of the binary form
+    /// would silently keep a stale stage forever if this stopped holding.
     #[test]
-    fn snapshot_bin_ignores_the_display_section() {
+    fn snapshot_bin_carries_the_display_section() {
         let mut g = make_galaxy();
         g.apply_mutation(&landed(
             "0xa",
@@ -4275,18 +4280,17 @@ mod tests {
         let before = g.snapshot_bin().expect("columnar snapshot");
 
         g.apply_mutation(&reservoir(1, (900, 901, 902)));
-        let snapshot = g.snapshot();
-        assert!(
-            snapshot.display.as_ref().is_some_and(|display| {
-                !display.residents.is_empty() && !display.members.is_empty()
-            }),
-            "the composition must actually have staffed the plane"
-        );
+        let after = g.snapshot_bin().expect("columnar snapshot");
+        assert_ne!(before, after, "a composed stage must reach the binary form");
 
+        let section = g.snapshot().display.expect("display section");
+        let residents = u32::from_le_bytes(after[44..48].try_into().unwrap()) as usize;
+        let members = u32::from_le_bytes(after[48..52].try_into().unwrap()) as usize;
+        assert_eq!(residents, section.residents.len());
+        assert_eq!(members, section.members.len());
         assert_eq!(
-            before,
-            g.snapshot_bin().expect("columnar snapshot"),
-            "columnar v1 must not encode the display plane"
+            after[60],
+            crate::projection::cells_columnar::CELLS_COLUMNAR_DISPLAY_COMPOSED
         );
     }
 
@@ -4319,6 +4323,7 @@ mod tests {
                     total_births: snapshot.total_births,
                     total_deaths: snapshot.total_deaths,
                 },
+                Some(&g.display.columnar_view()),
             )
         );
     }

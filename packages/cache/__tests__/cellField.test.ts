@@ -270,6 +270,8 @@ describe('hydrateCellFieldFromColumnar', () => {
       lastPulseAtMs: 0,
       totalBirths: 2,
       totalDeaths: 0,
+      cellCount: 2,
+      residentCount: 0,
       rowCount: 2,
       id: new Float64Array([4_503_599_627_370_497, 8]),
       bornAtMs: new Float64Array([100, 200]),
@@ -285,6 +287,12 @@ describe('hydrateCellFieldFromColumnar', () => {
       tagIndex: new Uint8Array([0, CELLS_COLUMNAR_NO_TAG]),
       dataFlag: new Uint8Array([1, 0]),
       tags: ['wallet'],
+      // v2 carries the strings too; this hydrator deliberately skips them
+      // (it fills the numeric field and leaves `stringsHydrated` false).
+      txHash: (row: number) => `0xtx${row}`,
+      contentHash: (row: number) => `0xhash${row}`,
+      dataHex: (row: number) => (row === 0 ? '0xdeadbeef' : '0x'),
+      display: null,
     };
     const field = createCellField(16);
     hydrateCellFieldFromColumnar(field, view);

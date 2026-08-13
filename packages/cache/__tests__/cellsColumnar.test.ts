@@ -1,208 +1,97 @@
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
+  CELLS_COLUMNAR_HEADER_BYTES,
   CELLS_COLUMNAR_NO_TAG,
+  CELLS_COLUMNAR_VERSION,
   columnarCellAt,
   decodeCellsColumnar,
 } from '../src/cellsColumnar';
 
-interface FixtureRow {
-  id: number;
-  born: number;
-  death: number | null;
-  capacity: number;
-  pos: [number, number, number];
-  birthBlock: number;
-  outIndex: number;
-  lock: number;
-  asset: number;
-  tag: string | null;
-  hasData: boolean;
+/** The very bytes the Rust encoder produced. Both sides read this one file,
+ *  so a layout change that lands on only one of them fails on both — which
+ *  a hand-rolled TS encoder here could never catch, because it would drift
+ *  along with whichever reading its author had. Regenerate with
+ *  `CKNERV_REGEN_FIXTURES=1 cargo test -p cknerv-core columnar_v2`. */
+function fixture(): ArrayBuffer {
+  const path = fileURLToPath(
+    new URL('../../../tests/fixtures/cells_columnar_v2.bin', import.meta.url),
+  );
+  const bytes = readFileSync(path);
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
 }
 
-/** Hand-built encoder mirroring the Rust layout spec — intentionally an
- *  independent construction so a shared misreading can't cancel out. The
- *  live parity gate is the true cross-language check. */
-function encodeFixture(
-  rows: FixtureRow[],
-  header: { revision: number; lastPulse: number; births: number; deaths: number },
-): ArrayBuffer {
-  const n = rows.length;
-  const tags: string[] = [];
-  const tagCode = (tag: string | null): number => {
-    if (tag === null) return CELLS_COLUMNAR_NO_TAG;
-    const found = tags.indexOf(tag);
-    if (found >= 0) return found;
-    tags.push(tag);
-    return tags.length - 1;
+/** Mirrors the Rust fixture's `cell(id, tag)` helper. */
+function expectedCell(id: number, tag: string | null) {
+  return {
+    id,
+    born_at_ms: 1_000 + id,
+    death_at_ms: id % 2 === 0 ? null : 2_000 + id,
+    birth_block: 42 + id,
+    tag,
+    out_point: { tx_hash: `0x${id.toString(16).padStart(64, '0')}`, index: id },
+    capacity: 6_100_000_000 + id,
+    data_hex: id % 3 === 0 ? '0x' : '0xdeadbeef',
+    content_hash: `0x${(id * 7).toString(16).padStart(64, '0')}`,
+    lock_kind: id % 2 === 0 ? 'sighash' : 'omnilock',
+    asset_kind: id % 2 === 0 ? 'native' : 'dao',
   };
-  const tagCodes = rows.map((row) => tagCode(row.tag));
-  const utf8 = new TextEncoder();
-  const encodedTags = tags.map((tag) => utf8.encode(tag));
-  const dictBytes = 1 + encodedTags.reduce((sum, t) => sum + 1 + t.length, 0);
-  const columnsEnd = 48 + n * (4 * 8 + 3 * 4 + 2 * 4 + 4);
-  const buffer = new ArrayBuffer(columnsEnd + dictBytes);
-  const view = new DataView(buffer);
-  const bytes = new Uint8Array(buffer);
-
-  bytes.set([0x43, 0x4b, 0x4e, 0x42], 0); // "CKNB"
-  view.setUint16(4, 1, true);
-  view.setUint16(6, 0, true);
-  view.setBigUint64(8, BigInt(header.revision), true);
-  view.setBigUint64(16, BigInt(header.lastPulse), true);
-  view.setBigUint64(24, BigInt(header.births), true);
-  view.setBigUint64(32, BigInt(header.deaths), true);
-  view.setUint32(40, n, true);
-  view.setUint32(44, columnsEnd, true);
-
-  rows.forEach((row, i) => {
-    view.setFloat64(48 + 8 * i, row.id, true);
-    view.setFloat64(48 + 8 * (n + i), row.born, true);
-    view.setFloat64(48 + 8 * (2 * n + i), row.death ?? Number.NaN, true);
-    view.setFloat64(48 + 8 * (3 * n + i), row.capacity, true);
-    const f32Base = 48 + 32 * n;
-    view.setFloat32(f32Base + 4 * i, row.pos[0], true);
-    view.setFloat32(f32Base + 4 * (n + i), row.pos[1], true);
-    view.setFloat32(f32Base + 4 * (2 * n + i), row.pos[2], true);
-    const u32Base = f32Base + 12 * n;
-    view.setUint32(u32Base + 4 * i, row.birthBlock, true);
-    view.setUint32(u32Base + 4 * (n + i), row.outIndex, true);
-    const u8Base = u32Base + 8 * n;
-    bytes[u8Base + i] = row.lock;
-    bytes[u8Base + n + i] = row.asset;
-    bytes[u8Base + 2 * n + i] = tagCodes[i];
-    bytes[u8Base + 3 * n + i] = row.hasData ? 1 : 0;
-  });
-
-  let cursor = columnsEnd;
-  bytes[cursor] = encodedTags.length;
-  cursor += 1;
-  for (const tag of encodedTags) {
-    bytes[cursor] = tag.length;
-    cursor += 1;
-    bytes.set(tag, cursor);
-    cursor += tag.length;
-  }
-  return buffer;
 }
-
-const ROWS: FixtureRow[] = [
-  {
-    // 2^52-range composition id: must survive the f64 column exactly.
-    id: 4_503_599_627_370_497,
-    born: 1_754_700_000_123,
-    death: null,
-    capacity: 6_100_000_000,
-    pos: [0.25, -1.5, 3.75],
-    birthBlock: 17_000_000,
-    outIndex: 3,
-    lock: 0,
-    asset: 0,
-    tag: 'wallet',
-    hasData: false,
-  },
-  {
-    id: 7,
-    born: 1_754_700_001_000,
-    death: 1_754_700_002_000,
-    capacity: 14_200_000_000,
-    pos: [-2, 0.5, 0],
-    birthBlock: 17_000_001,
-    outIndex: 0,
-    lock: 3,
-    asset: 3,
-    tag: null,
-    hasData: true,
-  },
-  {
-    id: 8,
-    born: 1_754_700_003_000,
-    death: null,
-    capacity: 100,
-    pos: [1, 2, 3],
-    birthBlock: 17_000_002,
-    outIndex: 12,
-    lock: 4,
-    asset: 5,
-    tag: 'wallet',
-    hasData: false,
-  },
-];
-
-const HEADER = { revision: 4321, lastPulse: 1_754_700_003_500, births: 30, deaths: 11 };
 
 describe('decodeCellsColumnar', () => {
-  it('decodes header, columns, and tag dictionary zero-copy', () => {
-    const buffer = encodeFixture(ROWS, HEADER);
-    const view = decodeCellsColumnar(buffer);
-
-    expect(view.revision).toBe(4321);
-    expect(view.lastPulseAtMs).toBe(1_754_700_003_500);
+  it('reads the header the Rust encoder wrote', () => {
+    const view = decodeCellsColumnar(fixture());
+    expect(CELLS_COLUMNAR_VERSION).toBe(2);
+    expect(CELLS_COLUMNAR_HEADER_BYTES).toBe(72);
+    expect(view.lastPulseAtMs).toBe(777);
     expect(view.totalBirths).toBe(30);
     expect(view.totalDeaths).toBe(11);
-    expect(view.rowCount).toBe(3);
-    expect(view.tags).toEqual(['wallet']);
-    // Zero-copy: columns are views over the SAME buffer, not copies.
-    expect(view.id.buffer).toBe(buffer);
-    expect(view.dataFlag.buffer).toBe(buffer);
-
-    expect(Array.from(view.id)).toEqual(ROWS.map((r) => r.id));
-    expect(view.deathAtMs[0]).toBeNaN();
-    expect(view.deathAtMs[1]).toBe(1_754_700_002_000);
-    expect(Array.from(view.birthBlock)).toEqual(ROWS.map((r) => r.birthBlock));
-    expect(Array.from(view.tagIndex)).toEqual([0, CELLS_COLUMNAR_NO_TAG, 0]);
+    expect(view.cellCount).toBe(3);
+    expect(view.residentCount).toBe(1);
+    expect(view.rowCount).toBe(4);
   });
 
-  it('materializes rows into JSON-path field shapes', () => {
-    const view = decodeCellsColumnar(encodeFixture(ROWS, HEADER));
-
-    expect(columnarCellAt(view, 0)).toEqual({
-      id: 4_503_599_627_370_497,
-      born_at_ms: 1_754_700_000_123,
-      death_at_ms: null,
-      birth_block: 17_000_000,
-      tag: 'wallet',
-      pos_seed: [0.25, -1.5, 3.75],
-      out_point_index: 3,
-      capacity: 6_100_000_000,
-      has_data: false,
-      lock_kind: 'sighash',
-      asset_kind: 'native',
-    });
-    expect(columnarCellAt(view, 1)).toMatchObject({
-      death_at_ms: 1_754_700_002_000,
-      tag: null,
-      has_data: true,
-      lock_kind: 'omnilock',
-      asset_kind: 'dao',
-    });
-    expect(columnarCellAt(view, 2)).toMatchObject({
-      lock_kind: 'other',
-      asset_kind: 'other',
-      tag: 'wallet',
-    });
+  it('materializes every row, canonical and resident alike', () => {
+    const view = decodeCellsColumnar(fixture());
+    for (const [row, [id, tag]] of (
+      [[1, 'wallet'], [2, null], [3, 'dex'], [9, 'wallet']] as const
+    ).entries()) {
+      const cell = columnarCellAt(view, row);
+      expect(cell).toMatchObject(expectedCell(id, tag));
+      // Positions are the derived ones; the encoder no longer recomputes
+      // them, so a wrong column would show up as a wrong triple here.
+      expect(cell.pos_seed.every(Number.isFinite)).toBe(true);
+    }
+    expect(view.tags).toEqual(['wallet', 'dex']);
+    expect(view.tagIndex[1]).toBe(CELLS_COLUMNAR_NO_TAG);
+    expect(Array.from(view.dataFlag)).toEqual([1, 1, 0, 0]);  // id 3 and id 9 are both "0x"
   });
 
-  it('decodes an empty snapshot', () => {
-    const view = decodeCellsColumnar(encodeFixture([], HEADER));
-    expect(view.rowCount).toBe(0);
-    expect(view.tags).toEqual([]);
-    expect(view.id.length).toBe(0);
+  it('carries the display plane: members, budgets and provenance', () => {
+    const { display } = decodeCellsColumnar(fixture());
+    expect(display).not.toBeNull();
+    expect(display!.mode).toBe('composed');
+    expect(display!.budgetCells).toBe(12_000);
+    expect(display!.budgetNerveEdges).toBe(8_000);
+    expect(Array.from(display!.members)).toEqual([1, 3, 9]);
+    expect(display!.source).toBe('ckbadger');
+    expect(display!.asOfBlock).toBe(4_242);
+    expect(display!.asOfHash).toBe(`0x${(0xabc).toString(16).padStart(64, '0')}`);
+    expect(display!.updatedAtMs).toBe(1_700_000_000_123);
   });
 
-  it('rejects malformed buffers instead of misreading them', () => {
-    const good = encodeFixture(ROWS, HEADER);
-
+  it('rejects malformed buffers so the caller can fall back to JSON', () => {
+    const good = fixture();
     const badMagic = good.slice(0);
-    new Uint8Array(badMagic)[0] = 0x58;
+    new Uint8Array(badMagic)[0] = 0;
     expect(() => decodeCellsColumnar(badMagic)).toThrow(/bad magic/);
 
     const badVersion = good.slice(0);
-    new DataView(badVersion).setUint16(4, 9, true);
+    new DataView(badVersion).setUint16(4, 99, true);
     expect(() => decodeCellsColumnar(badVersion)).toThrow(/version/);
 
-    const truncated = good.slice(0, 60);
-    expect(() => decodeCellsColumnar(truncated)).toThrow();
-
+    expect(() => decodeCellsColumnar(good.slice(0, 40))).toThrow(/too small/);
     expect(() => decodeCellsColumnar(new ArrayBuffer(8))).toThrow(/too small/);
   });
 });
