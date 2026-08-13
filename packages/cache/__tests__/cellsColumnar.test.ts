@@ -5,6 +5,7 @@ import {
   CELLS_COLUMNAR_HEADER_BYTES,
   CELLS_COLUMNAR_NO_TAG,
   CELLS_COLUMNAR_VERSION,
+  cellsSnapshotFromColumnar,
   columnarCellAt,
   decodeCellsColumnar,
 } from '../src/cellsColumnar';
@@ -79,6 +80,26 @@ describe('decodeCellsColumnar', () => {
     expect(display!.asOfBlock).toBe(4_242);
     expect(display!.asOfHash).toBe(`0x${(0xabc).toString(16).padStart(64, '0')}`);
     expect(display!.updatedAtMs).toBe(1_700_000_000_123);
+  });
+
+  it('rebuilds the JSON-path snapshot shape from the columns', () => {
+    const snapshot = cellsSnapshotFromColumnar(decodeCellsColumnar(fixture()));
+    expect(snapshot.cells).toHaveLength(3);
+    expect(snapshot.cells[0]).toMatchObject(expectedCell(1, 'wallet'));
+    expect(snapshot.last_pulse_at_ms).toBe(777);
+    expect(snapshot.total_births).toBe(30);
+    expect(snapshot.recent_links).toEqual([]);
+    expect(snapshot.backfill).toBeNull();
+    // Residents leave the row block and land in the display section, which
+    // is where every downstream consumer looks for them.
+    expect(snapshot.display?.members).toEqual([1, 3, 9]);
+    expect(snapshot.display?.residents).toHaveLength(1);
+    expect(snapshot.display?.residents[0]).toMatchObject(expectedCell(9, 'wallet'));
+    expect(snapshot.display?.provenance).toMatchObject({
+      mode: 'composed',
+      source: 'ckbadger',
+      updated_at_ms: 1_700_000_000_123,
+    });
   });
 
   it('rejects malformed buffers so the caller can fall back to JSON', () => {

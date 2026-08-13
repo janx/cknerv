@@ -24,7 +24,7 @@
 //! The 8 bytes at [8..16] are a revision slot the SERVER patches in (the
 //! registry owns revisions; the projection does not know its own).
 
-use crate::projection::cells::{Cell, DisplayBudget, DisplayMode};
+use crate::projection::cells::{BackfillState, Cell, CellLinkRecord, DisplayBudget, DisplayMode};
 use crate::projection::display_plane::ColumnarDisplayView;
 use crate::taxonomy::{AssetKind, LockKind};
 
@@ -71,6 +71,16 @@ pub struct CellsColumnarHeader {
 pub const CELLS_COLUMNAR_DISPLAY_ABSENT: u8 = 0;
 pub const CELLS_COLUMNAR_DISPLAY_CANONICAL: u8 = 1;
 pub const CELLS_COLUMNAR_DISPLAY_COMPOSED: u8 = 2;
+
+/// The parts of the snapshot that are not rows. Tx links nest three id
+/// arrays and a list of endpoint anchors per record, so columnarizing them
+/// would cost more in offset tables than it saves; at ~2k records they
+/// parse in single-digit milliseconds as JSON. The bulk is columnar
+/// because it is 60k uniform rows — the tail is JSON because it is not.
+pub struct CellsColumnarTail<'a> {
+    pub recent_links: &'a [CellLinkRecord],
+    pub backfill: Option<BackfillState>,
+}
 
 /// The three ASCII string columns, laid out FIELD-major in one region:
 /// every `tx_hash`, then every `content_hash`, then every `data_hex`.
@@ -170,6 +180,7 @@ pub fn encode_cells_columnar(
     cells: &[Cell],
     header: CellsColumnarHeader,
     display: Option<&ColumnarDisplayView<'_>>,
+    tail: CellsColumnarTail<'_>,
 ) -> Vec<u8> {
     let residents: &[&Cell] = display.map_or(&[], |view| view.residents.as_slice());
     let members: &[u64] = display.map_or(&[], |view| view.members.as_slice());
@@ -331,6 +342,15 @@ pub fn encode_cells_columnar(
             push_short_string(&mut buf, "");
         }
     }
+
+    // —— non-row sections, as JSON ——
+    let sections = serde_json::json!({
+        "recent_links": tail.recent_links,
+        "backfill": tail.backfill,
+    });
+    let sections = serde_json::to_vec(&sections).unwrap_or_else(|_| b"{}".to_vec());
+    buf.extend_from_slice(&(sections.len() as u32).to_le_bytes());
+    buf.extend_from_slice(&sections);
     buf
 }
 
@@ -391,6 +411,13 @@ mod tests {
         }
     }
 
+    fn empty_tail() -> CellsColumnarTail<'static> {
+        CellsColumnarTail {
+            recent_links: &[],
+            backfill: None,
+        }
+    }
+
     fn header() -> CellsColumnarHeader {
         CellsColumnarHeader {
             last_pulse_at_ms: 777,
@@ -442,7 +469,7 @@ mod tests {
             cell(3, Some("dex")),
             cell(4, Some("wallet")),
         ];
-        let buf = encode_cells_columnar(&rows, header(), None);
+        let buf = encode_cells_columnar(&rows, header(), None, empty_tail());
         assert_eq!(&buf[0..4], b"CKNB");
         assert_eq!(u16::from_le_bytes([buf[4], buf[5]]), CELLS_COLUMNAR_VERSION);
         assert_eq!(u64::from_le_bytes(buf[16..24].try_into().unwrap()), 777);
@@ -486,7 +513,7 @@ mod tests {
     #[test]
     fn string_columns_slice_by_offset() {
         let rows = [cell(1, None), cell(2, Some("wallet")), cell(3, None)];
-        let buf = encode_cells_columnar(&rows, header(), None);
+        let buf = encode_cells_columnar(&rows, header(), None, empty_tail());
         let n = rows.len();
         let at = offsets(n, 0);
         // Offsets are REGION-relative: the client decodes the region once
@@ -539,7 +566,7 @@ mod tests {
             members: vec![1, 9],
             residents: vec![&resident],
         };
-        let buf = encode_cells_columnar(&rows, header(), Some(&view));
+        let buf = encode_cells_columnar(&rows, header(), Some(&view), empty_tail());
 
         assert_eq!(u32_at(&buf, 40), 2, "canonical rows");
         assert_eq!(u32_at(&buf, 44), 1, "resident rows");
@@ -619,7 +646,7 @@ mod tests {
             members: vec![1, 3, 9],
             residents: vec![&resident],
         };
-        let encoded = encode_cells_columnar(&rows, header(), Some(&view));
+        let encoded = encode_cells_columnar(&rows, header(), Some(&view), empty_tail());
 
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -638,7 +665,7 @@ mod tests {
 
     #[test]
     fn empty_snapshot_is_header_plus_empty_tail() {
-        let buf = encode_cells_columnar(&[], header(), None);
+        let buf = encode_cells_columnar(&[], header(), None, empty_tail());
         let tail = u32_at(&buf, 64) as usize;
         assert_eq!(tail, CELLS_COLUMNAR_HEADER_BYTES + 3 * 4);
         assert_eq!(buf[tail], 0, "empty tag dictionary");

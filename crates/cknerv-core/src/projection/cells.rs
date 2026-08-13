@@ -1365,6 +1365,10 @@ impl Projection for CellGalaxy {
                 total_deaths: self.total_deaths,
             },
             Some(&self.display.columnar_view()),
+            crate::projection::cells_columnar::CellsColumnarTail {
+                recent_links: &self.recent_links,
+                backfill: self.backfill,
+            },
         ))
     }
 
@@ -4324,6 +4328,10 @@ mod tests {
                     total_deaths: snapshot.total_deaths,
                 },
                 Some(&g.display.columnar_view()),
+                crate::projection::cells_columnar::CellsColumnarTail {
+                    recent_links: &snapshot.recent_links,
+                    backfill: snapshot.backfill,
+                },
             )
         );
     }

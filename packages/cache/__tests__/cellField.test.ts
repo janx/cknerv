@@ -293,6 +293,8 @@ describe('hydrateCellFieldFromColumnar', () => {
       contentHash: (row: number) => `0xhash${row}`,
       dataHex: (row: number) => (row === 0 ? '0xdeadbeef' : '0x'),
       display: null,
+      recentLinks: [],
+      backfill: null,
     };
     const field = createCellField(16);
     hydrateCellFieldFromColumnar(field, view);

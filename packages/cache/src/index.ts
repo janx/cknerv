@@ -41,6 +41,7 @@ export {
 } from './cellField';
 
 export {
+  cellsSnapshotFromColumnar,
   decodeCellsColumnar,
   columnarCellAt,
   CELLS_COLUMNAR_VERSION,

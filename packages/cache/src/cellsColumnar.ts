@@ -13,7 +13,13 @@
 // 32-byte hashes: re-hexing 100k hashes costs ~68ms of main thread even with
 // a lookup table, while one decode plus fixed slicing costs ~4.7ms.
 
-import type { AssetKind, Cell, LockKind } from '@cknerv/types';
+import type {
+  AssetKind,
+  Cell,
+  CellGalaxySnapshot,
+  CellLinkRecord,
+  LockKind,
+} from '@cknerv/types';
 
 export const CELLS_COLUMNAR_VERSION = 2;
 export const CELLS_COLUMNAR_HEADER_BYTES = 72;
@@ -84,6 +90,10 @@ export interface CellsColumnarView {
   dataHex(row: number): string;
   /** Null when the server ships no display plane at all. */
   display: CellsColumnarDisplay | null;
+  /** The non-row sections, decoded from the trailing JSON: tx links nest
+   *  variable-length id arrays per record, so they are not columnar. */
+  recentLinks: CellLinkRecord[];
+  backfill: CellGalaxySnapshot['backfill'];
 }
 
 export interface CellsColumnarDisplay {
@@ -197,6 +207,13 @@ export function decodeCellsColumnar(buffer: ArrayBuffer): CellsColumnarView {
     };
   }
 
+  const sectionsLength = new DataView(buffer).getUint32(cursor, true);
+  cursor += 4;
+  if (cursor + sectionsLength > buffer.byteLength) fail('tail sections truncated');
+  const sections = JSON.parse(
+    utf8.decode(new Uint8Array(buffer, cursor, sectionsLength)),
+  ) as { recent_links?: CellLinkRecord[]; backfill?: CellGalaxySnapshot['backfill'] };
+
   return {
     revision,
     lastPulseAtMs,
@@ -223,6 +240,8 @@ export function decodeCellsColumnar(buffer: ArrayBuffer): CellsColumnarView {
     contentHash: (row) => sliceAt(1, row),
     dataHex: (row) => sliceAt(2, row),
     display,
+    recentLinks: sections.recent_links ?? [],
+    backfill: sections.backfill ?? null,
   };
 }
 
@@ -245,5 +264,46 @@ export function columnarCellAt(view: CellsColumnarView, i: number): Cell {
     content_hash: view.contentHash(i),
     lock_kind: COLUMNAR_LOCK_KINDS[view.lockKind[i]] ?? 'other',
     asset_kind: COLUMNAR_ASSET_KINDS[view.assetKind[i]] ?? 'other',
+  };
+}
+
+/** Rebuild the JSON-path snapshot shape from the columns.
+ *
+ * Deliberately produces exactly what `fetchCellsSnapshot` used to return, so
+ * every consumer downstream — reducer, stats, links, detail — is untouched.
+ * The win is not a new data path, it is a cheaper way to arrive at the same
+ * one: measured in V8, ~123ms to `JSON.parse` the equivalent snapshot
+ * against ~17ms to build these objects from columns, plus ~5ms for all the
+ * strings in one decode. */
+export function cellsSnapshotFromColumnar(view: CellsColumnarView): CellGalaxySnapshot {
+  const cells: Cell[] = new Array(view.cellCount);
+  for (let row = 0; row < view.cellCount; row += 1) cells[row] = columnarCellAt(view, row);
+  const residents: Cell[] = new Array(view.residentCount);
+  for (let i = 0; i < view.residentCount; i += 1) {
+    residents[i] = columnarCellAt(view, view.cellCount + i);
+  }
+  return {
+    cells,
+    last_pulse_at_ms: view.lastPulseAtMs,
+    recent_links: view.recentLinks,
+    total_births: view.totalBirths,
+    total_deaths: view.totalDeaths,
+    backfill: view.backfill,
+    display: view.display === null ? undefined : {
+      budget: {
+        cells: view.display.budgetCells,
+        nerve_edges: view.display.budgetNerveEdges,
+      },
+      members: Array.from(view.display.members),
+      residents,
+      provenance: {
+        mode: view.display.mode,
+        source: view.display.source,
+        as_of: view.display.asOfHash === null || view.display.asOfBlock === null
+          ? null
+          : { block: view.display.asOfBlock, hash: view.display.asOfHash },
+        updated_at_ms: view.display.updatedAtMs,
+      },
+    },
   };
 }
