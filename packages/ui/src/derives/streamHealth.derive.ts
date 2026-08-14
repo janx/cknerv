@@ -6,6 +6,10 @@ import type {
 export interface StreamHealthChannels {
   chain: StreamHealth;
   cells: StreamHealth;
+  /** Present only when enrichment is enabled — the semantics stream is
+   * optional by design, but once it exists its outages must surface here
+   * like any other transport instead of freezing five panels silently. */
+  semantics?: StreamHealth;
 }
 
 export interface StreamHealthSummary {
@@ -30,9 +34,12 @@ export function deriveStreamHealthSummary(
   channels: StreamHealthChannels,
   nowMs: number,
 ): StreamHealthSummary {
-  const entries = Object.entries(channels) as Array<
-    [keyof StreamHealthChannels, StreamHealth]
-  >;
+  const entries = (Object.entries(channels) as Array<
+    [keyof StreamHealthChannels, StreamHealth | undefined]
+  >).filter(
+    (entry): entry is [keyof StreamHealthChannels, StreamHealth] =>
+      entry[1] !== undefined,
+  );
   const phase = entries.reduce<StreamHealthPhase>(
     (worst, [, health]) => (
       PHASE_PRIORITY[health.phase] > PHASE_PRIORITY[worst]

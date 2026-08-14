@@ -294,6 +294,9 @@ export default function App({
   const [cellsStreamHealth, setCellsStreamHealth] = useState<StreamHealth>(
     initialStreamHealth,
   );
+  const [semanticsStreamHealth, setSemanticsStreamHealth] = useState<StreamHealth>(
+    initialStreamHealth,
+  );
   const retainedCellRecordsRef = useRef(cellsCache.cells);
   retainedCellRecordsRef.current = cellsCache.cells;
   // Cell and network ids retain separate state shapes because their scene
@@ -476,6 +479,13 @@ export default function App({
         '/api/projections/semantics/stream',
         initialSemanticsCache,
         setSemanticsCache,
+        {
+          // Same watchdog as chain/cells: a half-open socket (sleep/resume,
+          // NAT timeout) must force the retry cycle instead of freezing
+          // every enrichment panel until TCP happens to error.
+          onHealth: setSemanticsStreamHealth,
+          staleAfterMs: STREAM_STALE_AFTER_MS,
+        },
       )
       : null;
     return () => {
@@ -1073,8 +1083,19 @@ export default function App({
     return { version: buildVersion, href: buildCommitHref(buildVersion) };
   }, []);
   const hudStreamHealth = useMemo(
-    () => ({ chain: chainStreamHealth, cells: cellsStreamHealth }),
-    [chainStreamHealth, cellsStreamHealth],
+    () => (enrichmentConfig.enabled
+      ? {
+        chain: chainStreamHealth,
+        cells: cellsStreamHealth,
+        semantics: semanticsStreamHealth,
+      }
+      : { chain: chainStreamHealth, cells: cellsStreamHealth }),
+    [
+      chainStreamHealth,
+      cellsStreamHealth,
+      semanticsStreamHealth,
+      enrichmentConfig.enabled,
+    ],
   );
   const clearNetSelection = useCallback(() => setSelectedNetId(null), []);
 

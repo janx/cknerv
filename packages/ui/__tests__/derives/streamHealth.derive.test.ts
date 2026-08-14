@@ -50,6 +50,32 @@ describe('deriveStreamHealthSummary', () => {
     expect(summary.lastMessageAgeMs).toBeNull();
     expect(formatStreamAge(summary.lastMessageAgeMs)).toBe('AWAITING FRAME');
   });
+
+  it('surfaces a dead semantics stream while the core streams stay live', () => {
+    const summary = deriveStreamHealthSummary({
+      chain: health('live', 9_000),
+      cells: health('live', 9_500),
+      semantics: health('stale', 2_000, 4),
+    }, 10_000);
+
+    expect(summary.phase).toBe('stale');
+    expect(summary.affectedChannels).toEqual(['semantics']);
+    expect(summary.attempt).toBe(4);
+    expect(formatStreamChannels(summary.affectedChannels)).toBe('SEMANTICS');
+  });
+
+  it('behaves identically with the optional channel absent or undefined', () => {
+    const twoChannels = deriveStreamHealthSummary({
+      chain: health('live', 9_000),
+      cells: health('live', 8_000),
+    }, 10_000);
+    const explicitUndefined = deriveStreamHealthSummary({
+      chain: health('live', 9_000),
+      cells: health('live', 8_000),
+      semantics: undefined,
+    }, 10_000);
+    expect(explicitUndefined).toEqual(twoChannels);
+  });
 });
 
 describe('stream health formatting', () => {
