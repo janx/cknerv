@@ -78,16 +78,42 @@ function rank(
   names: Map<string, string>,
   limit: number,
 ): { buckets: ScriptFamilyBucket[]; restCells: number; restScripts: number } {
-  const head = entries.slice(0, limit);
-  const rest = entries.slice(limit);
-  return {
-    buckets: head.map((entry, index) => ({
+  // Merge identities that share a name before cutting. A family can be
+  // deployed more than once — mainnet runs three Default Multisig versions
+  // and two xUDTs — and the census counts each deployment separately because
+  // they are separate scripts. On a bar they are one family, and repeating
+  // the same label twice reads as a bug rather than as two versions.
+  const merged: ScriptFamilyBucket[] = [];
+  const byLabel = new Map<string, ScriptFamilyBucket>();
+  for (const entry of entries) {
+    const identity = scriptLabel(entry.script, names);
+    // Only names merge: two unnamed identities have different code hashes,
+    // so they are already distinct labels and must stay distinct segments.
+    const existing = identity.named ? byLabel.get(identity.label) : undefined;
+    if (existing) {
+      existing.count += entry.count;
+      continue;
+    }
+    const bucket: ScriptFamilyBucket = {
       key: registryKey(entry.script.code_hash, entry.script.hash_type),
-      ...scriptLabel(entry.script, names),
+      ...identity,
       count: entry.count,
+      color: REST_COLOR,
+    };
+    merged.push(bucket);
+    if (identity.named) byLabel.set(identity.label, bucket);
+  }
+  // Merging can reorder: two small versions of one family may outrank a
+  // single larger script.
+  merged.sort((a, b) => b.count - a.count || a.key.localeCompare(b.key));
+
+  const rest = merged.slice(limit);
+  return {
+    buckets: merged.slice(0, limit).map((bucket, index) => ({
+      ...bucket,
       color: RANK_COLORS[index % RANK_COLORS.length],
     })),
-    restCells: rest.reduce((sum, entry) => sum + entry.count, 0),
+    restCells: rest.reduce((sum, bucket) => sum + bucket.count, 0),
     restScripts: rest.length,
   };
 }

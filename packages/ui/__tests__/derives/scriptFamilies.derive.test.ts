@@ -86,6 +86,37 @@ describe('scriptFamilies.derive', () => {
     expect(buckets[0].count).toBe(500);
   });
 
+  it('merges the versions of one family instead of repeating its name', () => {
+    // Mainnet runs three Default Multisig deployments and two xUDTs. The
+    // census counts each separately because they are separate scripts; a bar
+    // showing "Default Multisig 1% · Default Multisig 1%" reads as a bug.
+    const versioned: ScriptCensus = {
+      ...census,
+      locks: [
+        { script: { code_hash: hash('aa'), hash_type: 'type' }, count: 40 },
+        { script: { code_hash: hash('bb'), hash_type: 'type' }, count: 30 },
+        { script: { code_hash: hash('cc'), hash_type: 'type' }, count: 25 },
+      ],
+      locks_tail_cells: 0,
+      locks_tail_scripts: 0,
+      unidentified: 0,
+    };
+    const twoVersions: ScriptRegistryRecord = {
+      ...registry,
+      entries: [
+        { code_hash: hash('bb'), hash_type: 'type', name: 'Default Multisig', deprecated: false },
+        { code_hash: hash('cc'), hash_type: 'type', name: 'Default Multisig', deprecated: false },
+      ],
+    };
+    const buckets = lockFamilyBuckets(versioned, twoVersions);
+    expect(buckets).toHaveLength(2);
+    // Merged, and the merge re-ranks: 30 + 25 outranks the 40 above them.
+    expect(buckets[0]).toMatchObject({ label: 'Default Multisig', count: 55 });
+    expect(buckets[1].count).toBe(40);
+    // Two unnamed identities are already distinct labels and stay separate.
+    expect(lockFamilyBuckets(versioned, null)).toHaveLength(3);
+  });
+
   it('reports whether a census exists at all', () => {
     expect(hasScriptCensus(census)).toBe(true);
     expect(hasScriptCensus(undefined)).toBe(false);

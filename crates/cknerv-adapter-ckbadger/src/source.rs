@@ -72,6 +72,18 @@ const SCRIPT_CATALOGUE_LIMIT: usize = 200;
 /// the response's own `resolutionState` say whether that mattered.
 const UNANCHORED_LOOKUP_TX: &str = "0x0000000000000000000000000000000000000000000000000000000000000000";
 
+/// ckbadger answers `resolutionState: "resolved"` once it has located the
+/// code cell, and names it `"Unknown"` when it has no family for it — so
+/// "resolved" means "I found the deployment", not "I know what it is". Eight
+/// of twenty-nine identities on a live mainnet galaxy come back that way.
+/// Passing that through would print "Unknown" as a script family and report
+/// nothing unresolved, which is the exact failure this registry exists to
+/// end: a name we do not have is reported as missing, not invented.
+fn is_real_script_name(name: &str) -> bool {
+    let trimmed = name.trim();
+    !trimmed.is_empty() && !trimmed.eq_ignore_ascii_case("unknown")
+}
+
 /// CKB's own spelling for a hash type, which is what the wire carries.
 fn hash_type_wire(hash_type: HashType) -> String {
     match hash_type {
@@ -356,7 +368,7 @@ impl CkbadgerEnrichmentSource {
             .context("decode ckbadger script lookup")?;
         Ok(looked_up
             .into_iter()
-            .filter(|(_, info)| info.resolution_state == "resolved" && !info.name.is_empty())
+            .filter(|(_, info)| info.resolution_state == "resolved" && is_real_script_name(&info.name))
             .collect())
     }
 
@@ -3956,6 +3968,13 @@ mod tests {
                                 "scriptKind": "lock",
                                 "decoderType": null,
                                 "resolutionState": "ambiguous"
+                            },
+                            "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc": {
+                                "name": "Unknown",
+                                "deprecated": false,
+                                "scriptKind": "lock",
+                                "decoderType": null,
+                                "resolutionState": "resolved"
                             }
                         }))
                     }
@@ -3993,9 +4012,15 @@ mod tests {
                 code_hash: [0xbb; 32],
                 hash_type: HashType::Type,
             },
-            // The index has never heard of this one.
+            // Located but unnamed: ckbadger calls this "resolved" and names
+            // it "Unknown", which is not a name.
             ScriptId {
                 code_hash: [0xcc; 32],
+                hash_type: HashType::Type,
+            },
+            // The index has never heard of this one at all.
+            ScriptId {
+                code_hash: [0xdd; 32],
                 hash_type: HashType::Data1,
             },
         ];
@@ -4016,9 +4041,11 @@ mod tests {
         assert_eq!(entry.description.as_deref(), Some("Passkey lock."));
         assert_eq!(entry.website.as_deref(), Some("https://joy.id"));
         assert!(!entry.deprecated);
-        // Two observed identities produced no name, and the record says so
-        // rather than presenting one name as the whole answer.
-        assert_eq!(registry.unresolved, 2);
+        // Three observed identities produced no name — ambiguous, sentinel,
+        // and absent — and the record says so rather than presenting one
+        // name as the whole answer.
+        assert_eq!(registry.unresolved, 3);
+        assert!(!registry.entries.iter().any(|entry| entry.name == "Unknown"));
         assert_eq!(lookup_requests.load(Ordering::Relaxed), 1);
 
         server.abort();

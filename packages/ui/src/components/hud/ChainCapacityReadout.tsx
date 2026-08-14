@@ -26,6 +26,14 @@ function formatStateBytes(shannons: number): string {
 
 type Bucket = { key: string; label: string; color: string; count: number };
 
+/** Mainnet is 99% one lock family, so every other family rounds to zero and a
+ *  bar naming 120 real cells would read "JoyID 0%" — present in the legend and
+ *  claiming to be absent. A bucket that exists says so. */
+function share(count: number, total: number): string {
+  const pct = (count / total) * 100;
+  return pct < 0.5 ? '<1%' : `${Math.round(pct)}%`;
+}
+
 function TaxonomyBar({ title, buckets }: { title: string; buckets: Bucket[] }) {
   const total = buckets.reduce((sum, bucket) => sum + bucket.count, 0);
   if (total <= 0) return null;
@@ -44,9 +52,7 @@ function TaxonomyBar({ title, buckets }: { title: string; buckets: Bucket[] }) {
         ) : null)}
       </div>
       <div style={{ fontFamily: HUD_FONTS.mono, fontSize: 8.5, color: '#9fb0bd', marginTop: 3, lineHeight: 1.5 }}>
-        {nonZero
-          .map((bucket) => `${bucket.label} ${Math.round((bucket.count / total) * 100)}%`)
-          .join(' · ')}
+        {nonZero.map((bucket) => `${bucket.label} ${share(bucket.count, total)}`).join(' · ')}
       </div>
     </div>
   );

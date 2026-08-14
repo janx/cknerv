@@ -103,6 +103,10 @@ describe('ChainCapacityReadout', () => {
 
     expect(text).toContain('Default Lock 67%');
     expect(text).toContain('xUDT 9%');
+    // A family too small to round to a whole percent is still there: mainnet
+    // is 99% one lock, so "0%" beside a real name is the common case and the
+    // one reading most like absence.
+    expect(text).not.toMatch(/ 0%/);
     // The one family nothing named keeps its identity instead of joining a
     // bucket with everything else cknerv cannot place.
     expect(text).toContain('0xd0d0…0d0 33%');
