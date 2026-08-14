@@ -21,6 +21,12 @@ export default defineConfig({
     port: 5181, // dev mode — different from simulator's 5180
     proxy: {
       '/api': { target: 'http://localhost:7001', ws: true, changeOrigin: true },
+      // Dev must run the SAME galaxy config the embedded server injects, or
+      // every harness visual acceptance judges a different galaxy than
+      // production renders. With no server up this 404s and index.html's
+      // classic script falls through to the bundled defaults — which the
+      // shared fixture test pins to the server payload anyway.
+      '/runtime-config.js': { target: 'http://localhost:7001', changeOrigin: true },
     },
   },
 });

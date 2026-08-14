@@ -130,55 +130,33 @@ const DEFAULT_RPC: &str = "http://localhost:8114";
 const DEFAULT_PORT: u16 = 7001;
 
 impl ResolvedGalaxyConfig {
+    /// Every profile serves ONE value set: the SPA's bundled defaults
+    /// (`ui-app/src/runtime-config.ts` DEFAULT_GALAXY_CONFIG). This payload
+    /// overrides those defaults in every embedded deployment while the Vite
+    /// dev harness runs them directly, so any per-profile number here that
+    /// trails a frontend retune ships a galaxy nobody ever visually
+    /// accepted — which is exactly what happened twice (the gap-fill
+    /// densification and the link-ring block guarantee both reached only
+    /// dev). The shared fixture test below pins the two sides together;
+    /// reintroduce a per-profile delta only as a deliberate divergence with
+    /// its own fixture.
     pub fn for_profile(profile: GalaxyProfile) -> Self {
-        match profile {
-            GalaxyProfile::Devnet => Self {
-                profile,
-                cell_cap: cknerv_core::projection::cells::CELL_CAP,
-                recent_links_cap: 1024,
-                topology: ResolvedGalaxyTopologyConfig {
-                    neighbor_k: 5,
-                    max_edge_length: 36.0,
-                    max_hops: 50,
-                },
-                pulses: ResolvedGalaxyPulsesConfig {
-                    link_ring_capacity: 64,
-                    max_pulses_per_link: 4,
-                    max_sources_per_parent: 2,
-                    max_active_pulses: 128,
-                },
+        Self {
+            profile,
+            cell_cap: cknerv_core::projection::cells::CELL_CAP,
+            recent_links_cap: 2048,
+            topology: ResolvedGalaxyTopologyConfig {
+                neighbor_k: 5,
+                max_edge_length: 42.0,
+                max_hops: 40,
             },
-            GalaxyProfile::Mainnet => Self {
-                profile,
-                cell_cap: cknerv_core::projection::cells::CELL_CAP,
-                recent_links_cap: 1536,
-                topology: ResolvedGalaxyTopologyConfig {
-                    neighbor_k: 3,
-                    max_edge_length: 25.0,
-                    max_hops: 38,
-                },
-                pulses: ResolvedGalaxyPulsesConfig {
-                    link_ring_capacity: 96,
-                    max_pulses_per_link: 4,
-                    max_sources_per_parent: 2,
-                    max_active_pulses: 192,
-                },
-            },
-            GalaxyProfile::Auto | GalaxyProfile::Testnet | GalaxyProfile::Custom => Self {
-                profile,
-                cell_cap: cknerv_core::projection::cells::CELL_CAP,
-                recent_links_cap: 2048,
-                topology: ResolvedGalaxyTopologyConfig {
-                    neighbor_k: 4,
-                    max_edge_length: 28.0,
-                    max_hops: 40,
-                },
-                pulses: ResolvedGalaxyPulsesConfig {
-                    link_ring_capacity: 128,
-                    max_pulses_per_link: 6,
-                    max_sources_per_parent: 2,
-                    max_active_pulses: 256,
-                },
+            pulses: ResolvedGalaxyPulsesConfig {
+                // Sized for the block guarantee: the ring must hold a whole
+                // busy block's links until the plan effect consumes them.
+                link_ring_capacity: 512,
+                max_pulses_per_link: 6,
+                max_sources_per_parent: 2,
+                max_active_pulses: 256,
             },
         }
     }
@@ -310,13 +288,14 @@ recent_links_cap = 2048
 
 [galaxy.topology]
 # Spatial neighbour graph density and pulse route reach.
-neighbor_k = 4
-max_edge_length = 28.0
+neighbor_k = 5
+max_edge_length = 42.0
 max_hops = 40
 
 [galaxy.pulses]
-# Frontend pulse retention and visual fan-out limits.
-link_ring_capacity = 128
+# Frontend pulse retention and visual fan-out limits. link_ring_capacity
+# below the SPA default (512) re-opens silent whole-block-dark eviction.
+link_ring_capacity = 512
 max_pulses_per_link = 6
 max_sources_per_parent = 2
 max_active_pulses = 256
@@ -400,20 +379,50 @@ mod tests {
     }
 
     #[test]
-    fn devnet_profile_sets_small_connected_galaxy_defaults() {
-        let file: FileConfig = toml::from_str("[galaxy]\nprofile = \"devnet\"\n").unwrap();
-        let r = resolve(None, None, false, None, &file).unwrap();
+    fn every_profile_serves_the_same_galaxy_values() {
+        // Profile-specific numbers went stale against frontend retunes twice
+        // and silently overrode them in production. Until a divergence is
+        // chosen deliberately (with its own fixture), the profiles converge.
+        let auto = ResolvedGalaxyConfig::for_profile(GalaxyProfile::Auto);
+        for profile in [
+            GalaxyProfile::Devnet,
+            GalaxyProfile::Testnet,
+            GalaxyProfile::Mainnet,
+            GalaxyProfile::Custom,
+        ] {
+            let mut resolved = ResolvedGalaxyConfig::for_profile(profile);
+            assert_eq!(resolved.profile, profile);
+            resolved.profile = GalaxyProfile::Auto;
+            assert_eq!(resolved, auto, "{profile:?} diverged from the shared galaxy values");
+        }
+    }
 
-        assert_eq!(r.backfill_blocks, None);
-        assert_eq!(r.galaxy.profile, GalaxyProfile::Devnet);
-        assert_eq!(r.galaxy.cell_cap, 50_000);
-        assert_eq!(r.galaxy.recent_links_cap, 1024);
-        assert_eq!(r.galaxy.topology.neighbor_k, 5);
-        assert_eq!(r.galaxy.topology.max_edge_length, 36.0);
-        assert_eq!(r.galaxy.topology.max_hops, 50);
-        assert_eq!(r.galaxy.pulses.link_ring_capacity, 64);
-        assert_eq!(r.galaxy.pulses.max_pulses_per_link, 4);
-        assert_eq!(r.galaxy.pulses.max_active_pulses, 128);
+    #[test]
+    fn galaxy_payload_matches_the_shared_fixture() {
+        // Cross-language gate: the embedded server injects this struct as
+        // `window.__CKNERV_RUNTIME_CONFIG__.galaxy`, overriding the SPA's
+        // bundled defaults. ui-app's runtime-config test reads the SAME
+        // fixture and asserts it resolves to DEFAULT_GALAXY_CONFIG, so a
+        // retune that lands on only one side fails one of the two tests.
+        // Regenerate with `CKNERV_REGEN_FIXTURES=1 cargo test -p cknerv-cli`.
+        let auto = ResolvedGalaxyConfig::for_profile(GalaxyProfile::Auto);
+        let mut encoded =
+            serde_json::to_string_pretty(&auto).expect("serialize galaxy config");
+        encoded.push('\n');
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/fixtures/runtime_config_galaxy.json"
+        );
+        if std::env::var("CKNERV_REGEN_FIXTURES").is_ok() {
+            std::fs::write(path, &encoded).expect("write fixture");
+        }
+        let fixture = std::fs::read_to_string(path).expect("read fixture");
+        assert_eq!(
+            encoded, fixture,
+            "runtime galaxy config drifted from the shared fixture; regenerate \
+             with CKNERV_REGEN_FIXTURES=1 cargo test -p cknerv-cli, then re-run \
+             the ui-app runtime-config test to confirm the SPA defaults agree"
+        );
     }
 
     #[test]
@@ -462,6 +471,12 @@ mod tests {
         assert_eq!(r.backfill_blocks, None);
         assert!(r.ckbadger.is_none());
         assert_eq!(r.galaxy.cell_cap, 50_000);
+        // The documented values must BE the built-in defaults, or an
+        // uncommented template line silently pins a stale number.
+        assert_eq!(
+            r.galaxy,
+            ResolvedGalaxyConfig::for_profile(GalaxyProfile::Auto)
+        );
     }
 
     #[test]

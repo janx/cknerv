@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -70,6 +72,20 @@ describe('resolveGalaxyConfig', () => {
   it('falls back to bundled defaults when galaxy config is missing', () => {
     expect(resolveGalaxyConfig({})).toEqual(DEFAULT_GALAXY_CONFIG);
     expect(resolveGalaxyConfig({}).cellCap).toBe(50_000);
+  });
+
+  /** The very JSON the Rust encoder produced (regenerate with
+   *  `CKNERV_REGEN_FIXTURES=1 cargo test -p cknerv-cli`). The embedded
+   *  server injects this struct over the bundled defaults in every
+   *  production deployment, so the two must agree or dev and prod render
+   *  different galaxies — a package-default retune that never touches
+   *  `config.rs` fails right here instead of shipping silently defeated. */
+  it('the server-injected payload resolves to the bundled defaults', () => {
+    const path = resolve(
+      __dirname, '..', '..', 'tests', 'fixtures', 'runtime_config_galaxy.json',
+    );
+    const galaxy = JSON.parse(readFileSync(path, 'utf8'));
+    expect(resolveGalaxyConfig({ galaxy })).toEqual(DEFAULT_GALAXY_CONFIG);
   });
 });
 

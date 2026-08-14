@@ -1,0 +1,16 @@
+{
+  "profile": "auto",
+  "cellCap": 50000,
+  "recentLinksCap": 2048,
+  "topology": {
+    "neighborK": 5,
+    "maxEdgeLength": 42.0,
+    "maxHops": 40
+  },
+  "pulses": {
+    "linkRingCapacity": 512,
+    "maxPulsesPerLink": 6,
+    "maxSourcesPerParent": 2,
+    "maxActivePulses": 256
+  }
+}
