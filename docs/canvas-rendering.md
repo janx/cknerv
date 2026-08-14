@@ -573,15 +573,26 @@ of dozens of independent events because they share that one shape and one
 speed: the Cell-field front travels at the peer plane's `SHOCKWAVE_SPEED`
 divided by `CONTACT_WAVE_SCALE`, so both planes read as sections of the same
 event while the released ring stays a local ripple in the tissue. Every spatial
-constant of the front — speed, reach, start radius, crest width, widening rate,
-falloff reference — is divided by that one scale, which is what makes the size
-change a pure spatial scale that leaves the front's shape and pacing untouched.
+constant of the front — speed, reach, start radius, crest width, falloff
+reference — is divided by that one scale, which is what makes the size change a
+pure spatial scale that leaves the front's shape and pacing untouched. The
+crest's widening rate is the exception by design: it is a dimensionless
+per-second rate multiplying the already-scaled width, so it self-scales and
+dividing it too would stiffen the small ring into a rigid decal.
 
-Overlap is kept off the white rail by thin crests, a 1/r falloff, the rim's
-three gaps, and extinction where the tissue runs out. Reach is extinction
+Because the ring is local, it must be released on tissue: a worker sitting
+past the field's rim (the chain annulus runs wider than the tissue on x) has
+its landing pulled radially onto the footprint ellipse, and the front's
+extinction band is that same ellipse — exported by the helix module and
+projected through the galaxy's live rotation — rather than a second
+hand-typed radius. Overlap is kept off the white rail by thin crests, a 1/r
+falloff, the rim's three gaps, and that rim extinction. Reach is extinction
 rather than a clamp: a clamped radius would freeze fronts mid-field and break
-the shared-speed reading. Crest half-width is capped as a fraction of the crest
-radius, without which a young front is mostly crest and the release reads as a
+the shared-speed reading. A reach configured past what the contact window can
+complete clamps to the completable ceiling, so the knee extinction always
+finishes inside the window instead of being cut off mid-fade by the time
+envelope. Crest half-width is capped as a fraction of the crest radius,
+without which a young front is mostly crest and the release reads as a
 soft doughnut instead of a ring leaving. The front is resolved analytically in
 an instanced material drawn on an annulus rather than scaled from a sprite,
 which smears the moment a front grows past a few world units; delivery count
