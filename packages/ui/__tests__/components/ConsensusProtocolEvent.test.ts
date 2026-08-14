@@ -92,6 +92,12 @@ describe('A protocol event relay', () => {
     expect(delivery).toContain('reachFade');
     // Overlap safety: a 1/r falloff dims a front before it can meet a neighbour.
     expect(delivery).toContain('WAVE_FALLOFF_REFERENCE + crestRadius');
+    // The rim-gap roll is keyed to the WORKER, not to a queue position: an
+    // array index shifts under peer churn and snap-rotates in-flight fronts.
+    expect(delivery).toContain('peerAngle(delivery.key)');
+    expect(delivery).not.toContain('deliveryIndex');
+    // And the glyph rim carries the same roll as the front it is released as.
+    expect(delivery).toContain('_bodyQuaternion.multiply(_bodyRollQuaternion)');
   });
 
   it('resolves the contact into the Cell field\'s own tissue, not a cool pale', () => {

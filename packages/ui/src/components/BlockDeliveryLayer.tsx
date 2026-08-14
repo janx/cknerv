@@ -14,6 +14,7 @@ import {
   deliveryScheduleHorizon,
   easeInLob,
   contactRelease,
+  peerAngle,
   sharedCellNearestIndex,
   nearestCellIdsFromIndex,
   type DeliveryPhaseConfig,
@@ -101,9 +102,6 @@ const WAVE_REACH_KNEE = 0.72;
  *  it a young front — radius still a world unit or two — is mostly crest, and
  *  the release reads as a soft doughnut instead of a thin ring leaving. */
 const WAVE_WIDTH_RADIUS_CAP = 0.22;
-/** Golden-angle roll per delivery so the three rim gaps never align across
- *  workers and the overlapping fronts stay an interference field, not a moiré. */
-const WAVE_GAP_ROLL = 2.399963;
 
 const TISSUE_ROSE = new THREE.Color().setRGB(...CELL_GALAXY_PALETTE.tissueRose);
 const CARRIER_COLOR = new THREE.Color();
@@ -152,6 +150,7 @@ const _wakeNormal = new THREE.Vector3();
 const _wakeRight = new THREE.Vector3();
 const _scale = new THREE.Vector3();
 const _bodyQuaternion = new THREE.Quaternion();
+const _bodyRollQuaternion = new THREE.Quaternion();
 const _wakeQuaternion = new THREE.Quaternion();
 const _spriteQuaternion = new THREE.Quaternion();
 const _spriteRollQuaternion = new THREE.Quaternion();
@@ -546,10 +545,8 @@ export default function BlockDeliveryLayer({
     let coreCount = 0;
     let trailCount = 0;
     let waveCount = 0;
-    let deliveryIndex = -1;
 
     for (const delivery of deliveries) {
-      deliveryIndex += 1;
       const phase = deliveryPhase(age - delivery.startAge, CFG);
       if (phase.phase === 'idle' || phase.phase === 'done') continue;
 
@@ -567,13 +564,23 @@ export default function BlockDeliveryLayer({
       } else {
         _flightDirection.normalize();
       }
-      _bodyQuaternion.copy(CARRIER_FLAT_FACING);
 
       const punch = delivery.hero ? 1 : LIVE.delivery.peerPunchScale;
       const size = delivery.hero
         ? LIVE.delivery.heroSize
         : LIVE.delivery.peerSize;
-      const gapRoll = deliveryIndex * WAVE_GAP_ROLL;
+      // One roll per WORKER, hashed from the delivery's stable key: the three
+      // rim gaps never align across ~81 workers, so overlapping fronts stay
+      // an interference field instead of a moiré — and because the key never
+      // moves, peer churn mid-pulse cannot snap-rotate a front already in
+      // flight the way an array index (shifting under every join/leave) did.
+      const gapRoll = peerAngle(delivery.key);
+      // The glyph rim carries the SAME roll as the front it becomes. They are
+      // one interrupted polygon at two scales, and the moment of release is
+      // exactly when their gaps must agree.
+      _bodyQuaternion.copy(CARRIER_FLAT_FACING);
+      _bodyRollQuaternion.setFromAxisAngle(CARRIER_LOCAL_FORWARD, gapRoll);
+      _bodyQuaternion.multiply(_bodyRollQuaternion);
       let glyphScale = 0;
       let glyphOpacity = 0;
 
@@ -592,7 +599,6 @@ export default function BlockDeliveryLayer({
           CARRIER_COLOR,
           glyphOpacity * LOB_CORE_ONSET,
           CARRIER_FLAT_FACING,
-          gapRoll,
         );
         coreCount += 1;
       } else if (phase.phase === 'lob') {
@@ -619,7 +625,6 @@ export default function BlockDeliveryLayer({
           CARRIER_COLOR,
           LOB_CORE_ONSET + (1 - LOB_CORE_ONSET) * progress,
           CARRIER_FLAT_FACING,
-          gapRoll,
         );
         coreCount += 1;
 
@@ -668,7 +673,6 @@ export default function BlockDeliveryLayer({
             _coreColor,
             release.coreOpacity,
             CARRIER_FLAT_FACING,
-            gapRoll,
           );
           coreCount += 1;
         }
