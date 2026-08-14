@@ -4,11 +4,23 @@ import {
   makeShockwaveColorArray,
   makeShockwaveOriginArray,
   makeShockwaveUniforms,
+  SHOCKWAVE_SIGNAL_GLSL,
   SHOCKWAVE_SLOTS,
+  WAVE_CREST_WAKE_GLSL,
+  WAVE_WAKE_LENGTH,
   writeShockwaveSlot,
 } from '../../src/materials/shockwaveMaterial';
 
 describe('protocol shockwave slots', () => {
+  it('owns the one crest+wake waveform both planes of the block event draw', () => {
+    expect(WAVE_CREST_WAKE_GLSL).toContain('float waveCrestWake');
+    // The peer-plane sampler draws through it — not a private re-derivation.
+    expect(SHOCKWAVE_SIGNAL_GLSL).toContain('waveCrestWake(');
+    expect(SHOCKWAVE_SIGNAL_GLSL).not.toMatch(/pow\(\(dist - ringR\)/);
+    // One wake length for the shockwave and the quarter-scale contact front.
+    expect(WAVE_WAKE_LENGTH).toBe(3.2);
+  });
+
   it('allocates one colour beside every time/origin slot', () => {
     expect(makeShockwaveAtArray()).toHaveLength(SHOCKWAVE_SLOTS);
     expect(makeShockwaveOriginArray()).toHaveLength(SHOCKWAVE_SLOTS * 2);

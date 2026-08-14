@@ -119,8 +119,14 @@ describe('A protocol event relay', () => {
 
     // The crest is pinned to a fixed UV radius and the instance scale does the
     // rest — a baked ring texture smears the moment a front grows.
-    expect(wave).toContain('uniform float uCrest;');
-    expect(wave).toContain('float offset = (radius - uCrest) / halfWidth;');
+    expect(wave).toContain('(radius - ${CONTACT_WAVE_CREST_UV.toFixed(2)}) / halfWidth');
+    // The crest+wake waveform is the peer-plane shockwave's own GLSL at
+    // quarter scale: one profile, two planes, no second copy to drift.
+    expect(wave).toContain('waveCrestWake(');
+    expect(wave).toContain("from './shockwaveMaterial'");
+    // The front blends against built-in sprite materials inside one release
+    // event, so it must encode to the output colour space like they do.
+    expect(wave).toContain('#include <colorspace_fragment>');
     // One vocabulary: the front's gaps come from the carrier rim's own numbers.
     expect(wave).toContain("from '../geometry/protocolCarrier'");
     expect(wave).toContain('CONTACT_RING_SIDES');

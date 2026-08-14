@@ -61,6 +61,35 @@ export const SHOCKWAVE_TRAIL_BOOST = 0.18;
 export const SHOCKWAVE_COLOR_CEIL = 1.4;
 export const SHOCKWAVE_ALPHA_CEIL = 1.1;
 
+/** Wake length as a multiple of the crest half-width — one number for both
+ *  planes of the block event (the peer shockwave here, the Cell-field contact
+ *  front in contactWaveMaterial). */
+export const WAVE_WAKE_LENGTH = 3.2;
+
+/**
+ * The ONE crest+wake waveform of a block event, at any scale: a gaussian
+ * band `offset` half-widths from the crest, plus an exponential wake gated to
+ * the side the wave came from (`signedBehind` > 0). The peer-plane shockwave
+ * and the quarter-scale Cell-field front both draw THIS profile — the tests
+ * pin them as one shape at two sizes, and the shape math living twice is how
+ * they had already drifted (wake 3.4 vs 3.2) within a single feature.
+ */
+export const WAVE_CREST_WAKE_GLSL = /* glsl */ `
+  float waveCrestWake(
+    float offset,
+    float signedBehind,
+    float halfWidth,
+    float wakeLength,
+    float wakeAmp
+  ) {
+    float crest = exp(-offset * offset);
+    float wake = wakeAmp
+      * exp(-max(signedBehind, 0.0) / max(halfWidth * wakeLength, 1e-4))
+      * step(0.0, signedBehind);
+    return crest + wake;
+  }
+`;
+
 /**
  * GLSL declarations and the single wave-sampling calculation used by both peer
  * node materials. Keeping the ring math here prevents inferred and measured
@@ -83,6 +112,7 @@ export const SHOCKWAVE_UNIFORMS_GLSL = /* glsl */ `
 `;
 
 export const SHOCKWAVE_SIGNAL_GLSL = /* glsl */ `
+  ${WAVE_CREST_WAKE_GLSL}
   vec4 shockwaveSignalAt(vec2 worldXZ) {
     float total = 0.0;
     vec3 carrier = vec3(0.0);
@@ -92,15 +122,17 @@ export const SHOCKWAVE_SIGNAL_GLSL = /* glsl */ `
       float ringR = uShockwaveSpeed * age;
       float dist = length(worldXZ - uShockwaveOriginXZ[i]);
       float bandWidth = uShockwaveBandBase + uShockwaveBandGrow * age;
-      float band = exp(-pow((dist - ringR) / bandWidth, 2.0));
-      float behind = max(0.0, ringR - dist);
-      float trail = exp(-behind / max(bandWidth * 3.2, 0.001))
-        * step(dist, ringR);
       float t = age / uShockwaveDurS;
       float life = sin(3.14159265 * t)
         * (1.0 - smoothstep(0.3, 1.0, t))
         * (1.0 - t);
-      float signal = (band + trail * uShockwaveTrailBoost) * life;
+      float signal = waveCrestWake(
+        (dist - ringR) / bandWidth,
+        ringR - dist,
+        bandWidth,
+        ${WAVE_WAKE_LENGTH.toFixed(1)},
+        uShockwaveTrailBoost
+      ) * life;
       total += signal;
       carrier += uShockwaveColor[i] * signal;
     }
