@@ -18,6 +18,10 @@ import {
   SHOCKWAVE_COLOR_CEIL,
   SHOCKWAVE_ALPHA_CEIL,
 } from '../materials/shockwaveMaterial';
+// The Cell-field contact front travels at the SAME speed as the peer-plane
+// brightness wave, so both planes read as sections of one event. One authority,
+// imported here rather than re-typed as a literal.
+import { SHOCKWAVE_SPEED } from '../ui/topologyConstants';
 // ② reinforcement defaults live in fabricReinforce.ts — import so there's ONE
 // authority (the module owns the numbers; these knobs just expose them live).
 import {
@@ -57,18 +61,32 @@ export const galaxySchema = {
   rotationRate: { value: 0.0025, min: 0, max: 0.02, step: 0.0005, label: 'rotation rate' },
 } satisfies FolderSchema;
 
+// Carrier glyph → contact front. The wave block is where this event lives now:
+// every worker releases its own front, and they only compose into one field
+// because they share `waveSpeed` (= the peer plane's `SHOCKWAVE_SPEED`) and one
+// shape. Retune reach/opacity freely; change speed and the two planes stop
+// reading as two sections of the same event.
 export const deliverySchema = {
   heroSize: { value: 1.16, min: 0.2, max: 2, step: 0.02, label: 'hero size' },
   peerSize: { value: 0.46, min: 0.1, max: 1.5, step: 0.02, label: 'peer size' },
-  ingestDur: { value: 0.7, min: 0.1, max: 1.5, step: 0.05, label: 'commit dur' },
-  bolusBloom: { value: 3.0, min: 0.5, max: 5, step: 0.1, label: 'bell membrane' },
-  flashSize: { value: 3.6, min: 1, max: 10, step: 0.1, label: 'contact shockwave' },
-  trailWidth: { value: 0.7, min: 0.1, max: 3, step: 0.05, label: 'tentacle width' },
-  trailLenBase: { value: 1.0, min: 0, max: 4, step: 0.1, label: 'tentacle len base' },
-  trailLenGain: { value: 1.6, min: 0, max: 6, step: 0.1, label: 'tentacle len gain' },
-  trailOpacity: { value: 0.65, min: 0, max: 1, step: 0.05, label: 'tentacle opacity' },
-  recoil: { value: 0.14, min: 0, max: 1, step: 0.01, label: 'agreement recoil' },
-  peerPunchScale: { value: 0.55, min: 0, max: 1.5, step: 0.05, label: 'peer punch' },
+  ingestDur: { value: 0.7, min: 0.1, max: 1.5, step: 0.05, label: 'contact dur' },
+  glyphBloom: { value: 1.6, min: 0.5, max: 5, step: 0.1, label: 'glyph core' },
+  glyphCompress: { value: 0.45, min: 0, max: 0.9, step: 0.05, label: 'glyph compress' },
+  coreSize: { value: 2.2, min: 0.5, max: 8, step: 0.1, label: 'contact core' },
+  trailWidth: { value: 0.55, min: 0.1, max: 3, step: 0.05, label: 'streak width' },
+  trailLenBase: { value: 1.0, min: 0, max: 4, step: 0.1, label: 'streak len base' },
+  trailLenGain: { value: 1.6, min: 0, max: 6, step: 0.1, label: 'streak len gain' },
+  trailOpacity: { value: 0.6, min: 0, max: 1, step: 0.05, label: 'streak opacity' },
+  inhaleAmount: { value: 0.55, min: 0, max: 1.5, step: 0.05, label: 'drawn breath' },
+  waveSpeed: { value: SHOCKWAVE_SPEED, min: 4, max: 90, step: 1, label: 'front speed' },
+  waveWidth: { value: 0.85, min: 0.1, max: 4, step: 0.05, label: 'front width' },
+  waveOpacity: { value: 0.9, min: 0, max: 3, step: 0.05, label: 'front opacity' },
+  waveFalloff: { value: 0.85, min: 0, max: 2.5, step: 0.05, label: 'front 1/r falloff' },
+  waveReachHero: { value: 30, min: 2, max: 60, step: 1, label: 'front reach hero' },
+  waveReachPeer: { value: 13, min: 2, max: 60, step: 1, label: 'front reach peer' },
+  waveWake: { value: 0.22, min: 0, max: 1, step: 0.02, label: 'front wake' },
+  waveSegments: { value: 0.55, min: 0, max: 1, step: 0.05, label: 'front gaps' },
+  peerPunchScale: { value: 0.7, min: 0, max: 1.5, step: 0.05, label: 'peer punch' },
   igniteKHero: { value: 8, min: 0, max: 30, step: 1, label: 'ignite k hero' },
   igniteKPeer: { value: 3, min: 0, max: 15, step: 1, label: 'ignite k peer' },
   igniteMax: { value: 300, min: 0, max: 1000, step: 10, label: 'ignite max' },

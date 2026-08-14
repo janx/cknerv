@@ -13,23 +13,28 @@ import {
   deliveryPhase,
   deliveryScheduleHorizon,
   easeInLob,
-  bolusIngest,
+  contactRelease,
   sharedCellNearestIndex,
   nearestCellIdsFromIndex,
   type DeliveryPhaseConfig,
 } from '../derives/peers.derive';
 import {
-  makeJellyfishBellTexture,
-  makeIngestShockwaveTexture,
-  makeJellyfishWakeTexture,
+  makeCarrierCoreTexture,
+  makeCarrierTrailTexture,
 } from '../materials/deliveryTextures';
+import {
+  makeContactWaveAttribute,
+  makeContactWaveGeometry,
+  makeContactWaveMaterial,
+  CONTACT_WAVE_CREST_UV,
+  CONTACT_WAVE_WAKE_AHEAD,
+  CONTACT_WAVE_WAKE_BEHIND,
+} from '../materials/contactWaveMaterial';
 import { BEAM_GROW_DUR_S, BEAM_CHARGE_DUR_S } from '../ui/topologyConstants';
-import { CONSENSUS_BRAID_PALETTE } from '../derives/consensusBraid.derive';
+import { CELL_GALAXY_PALETTE } from '../visualPalette';
 import type { ConsensusFlowColor } from '../derives/consensusFlow.derive';
 import {
   makeProtocolCarrierGeometry,
-  protocolCarrierBellPulse,
-  protocolCarrierShockwaveProgress,
   setProtocolCarrierFacing,
 } from '../geometry/protocolCarrier';
 import {
@@ -38,29 +43,61 @@ import {
 } from './cellFlash';
 
 // BlockDeliveryLayer — the network→Cell-field handoff in the A visual language.
+//
+// ONE IDEA, THREE BEATS: compression, then release.
+//   gather — the worker holds still. Its glyph tightens and brightens in place;
+//            nothing moves. The stillness is what gives the release a moment.
+//   lob    — the glyph rises straight up, accelerating, CONTRACTING as it goes,
+//            trailing a hard streak. Smallest and hottest at the membrane.
+//   ingest — the seed ring is released as a thin front that races out flat
+//            through the Cell field, after one ring is drawn inward and a
+//            compact core sears at the landing.
+//
+// The glyph and the front are the same interrupted polygon at two scales (see
+// geometry/protocolCarrier), so the arriving object and the spreading pressure
+// are one shape, not two languages meeting at the membrane.
+//
+// EVERY worker gets its own front, at the SAME wave speed the peer-plane
+// brightness wave uses. Identical speed and shape make ~81 latency-staggered
+// commits read as one interference field converging on the galaxy core rather
+// than as 81 independent events; hero emphasis is scale and reach, never a
+// different form. Overlap is kept off the white rail by thin crests, a 1/r
+// falloff, the rim's three gaps, and extinction where the tissue ends.
+//
 // Every real measured node keeps its own timing and transform, but the renderer
-// submits the whole event as four semantic batches: one sparse low-poly canopy,
-// plus instanced unmarked membrane, three angular tentacles, and pressure rings.
-// The open dodecagonal skirt swims head-first along the peer→Cell travel axis.
-// Each restrained contraction sheds a segmented propulsion ring; contact
-// resolves the carrier into the same geometry at Cell-field scale.
+// submits the whole event as four semantic batches: sparse low-poly glyph rims,
+// plus instanced cores, travel streaks, and contact fronts.
 // Delivery count changes instance/vertex counts, never draw-call count.
 
 const CARRIER_GEOM = makeProtocolCarrierGeometry();
 const CARRIER_BASE_POSITION = CARRIER_GEOM.getAttribute('position') as THREE.BufferAttribute;
 const CARRIER_VERTEX_COUNT = CARRIER_BASE_POSITION.count;
 const LOB_DUR_S = BEAM_GROW_DUR_S;
-const JELLY_BELL_ROLL_RATE = 0.18;
-const JELLY_BELL_PULSE_RATE = 7.2;
-const JELLY_BELL_OPEN_MIN = 0.96;
-const JELLY_BELL_OPEN_AMOUNT = 0.08;
-const JELLY_BELL_DEPTH_MAX = 1.20;
-const JELLY_BELL_DEPTH_SWING = 0.20;
-const JELLY_TENTACLE_STRETCH_MIN = 0.98;
-const JELLY_TENTACLE_STRETCH_AMOUNT = 0.12;
-const JELLY_TENTACLE_WIDTH_MIN = 1.65;
-const JELLY_TENTACLE_WIDTH_AMOUNT = 0.20;
-const PALE_CONSENSUS = new THREE.Color().setRGB(...CONSENSUS_BRAID_PALETTE.pale);
+
+/** How much larger the glyph starts the gather before tightening to its
+ *  travelling size. The whole beat is scale and brightness — never motion. */
+const GATHER_SWELL = 0.55;
+/** Core brightness at the start of the lob; it climbs to 1 as the glyph
+ *  compresses, so tightening reads as heating rather than as shrinking away. */
+const LOB_CORE_ONSET = 0.55;
+/** The core barely shrinks while the rim does, which is what sells compression. */
+const LOB_CORE_COMPRESS = 0.20;
+/** Widest radius of the drawn-inward ring, in glyph sizes. */
+const INHALE_REACH = 3.2;
+/** Front radius at the instant of release. Also anchors the 1/r falloff away
+ *  from its singularity. */
+const WAVE_START_RADIUS = 0.6;
+const WAVE_FALLOFF_REFERENCE = 6;
+/** Crest widening per second of travel — the same slow spread the peer-plane
+ *  wave uses, so neither front reads as a rigid decal. */
+const WAVE_WIDTH_GROW = 0.45;
+/** Fraction of a front's reach where its extinction begins. */
+const WAVE_REACH_KNEE = 0.72;
+/** Golden-angle roll per delivery so the three rim gaps never align across
+ *  workers and the overlapping fronts stay an interference field, not a moiré. */
+const WAVE_GAP_ROLL = 2.399963;
+
+const TISSUE_ROSE = new THREE.Color().setRGB(...CELL_GALAXY_PALETTE.tissueRose);
 const CARRIER_COLOR = new THREE.Color();
 const WHITE = new THREE.Color(1, 1, 1);
 const BLACK = new THREE.Color(0, 0, 0);
@@ -78,11 +115,15 @@ const CFG: DeliveryPhaseConfig = {
 // Analytic speed of easeInLob(t) = 0.15t + 0.85t².
 const lobSpeed = (t: number) => 0.15 + 1.7 * t;
 
+function smoothUnit(value: number): number {
+  const u = value <= 0 ? 0 : value >= 1 ? 1 : value;
+  return u * u * (3 - 2 * u);
+}
+
 // Shared scratch state. Frame callbacks are sequential, and every setter copies
 // into a GPU attribute immediately, so no per-frame object allocation is needed.
 const _position = new THREE.Vector3();
 const _trailPosition = new THREE.Vector3();
-const _wavePosition = new THREE.Vector3();
 const _flightDirection = new THREE.Vector3();
 const _cameraPosition = new THREE.Vector3();
 const _wakeNormal = new THREE.Vector3();
@@ -90,14 +131,14 @@ const _wakeRight = new THREE.Vector3();
 const _scale = new THREE.Vector3();
 const _bodyQuaternion = new THREE.Quaternion();
 const _carrierFacingQuaternion = new THREE.Quaternion();
-const _bellRollQuaternion = new THREE.Quaternion();
 const _wakeQuaternion = new THREE.Quaternion();
 const _spriteQuaternion = new THREE.Quaternion();
 const _spriteRollQuaternion = new THREE.Quaternion();
 const _wakeBasis = new THREE.Matrix4();
 const _matrix = new THREE.Matrix4();
 const _batchColor = new THREE.Color();
-const _flashColor = new THREE.Color();
+const _coreColor = new THREE.Color();
+const _waveColor = new THREE.Color();
 
 export interface BlockDeliveryPulse {
   at: number;
@@ -137,7 +178,7 @@ function makeSpriteBatchMaterial(map: THREE.Texture): THREE.MeshBasicMaterial {
   });
 }
 
-/** Billboard a wake only around its travel axis. Local +Y follows the carrier
+/** Billboard a streak only around its travel axis. Local +Y follows the carrier
  * path, while local +Z faces the camera as closely as that constraint allows. */
 function setWakeQuaternion(
   axis: THREE.Vector3,
@@ -185,6 +226,39 @@ function writeSpriteInstance(
   batch.setColorAt(index, _batchColor);
 }
 
+/** One front. The annulus is scaled so its crest lands on the shader's fixed UV
+ * radius, which is what keeps the crest razor-thin at any world radius; the
+ * per-instance attribute then carries the crest width in that same UV space. */
+function writeWaveInstance(
+  batch: THREE.InstancedMesh,
+  shape: THREE.InstancedBufferAttribute,
+  index: number,
+  position: THREE.Vector3,
+  crestRadius: number,
+  crestHalfWidth: number,
+  wakeSide: number,
+  color: THREE.Color,
+  intensity: number,
+  basisQuaternion: THREE.Quaternion,
+  rotationZ: number,
+): void {
+  const extent = crestRadius / CONTACT_WAVE_CREST_UV;
+  writeSpriteInstance(
+    batch,
+    index,
+    position,
+    extent,
+    extent,
+    color,
+    intensity,
+    basisQuaternion,
+    rotationZ,
+  );
+  const shapeArray = shape.array as Float32Array;
+  shapeArray[index * 2] = crestHalfWidth / extent;
+  shapeArray[index * 2 + 1] = wakeSide;
+}
+
 function commitInstanceBatch(batch: THREE.InstancedMesh, count: number): void {
   batch.count = count;
   if (count === 0) return;
@@ -201,7 +275,7 @@ function commitInstanceBatch(batch: THREE.InstancedMesh, count: number): void {
   }
 }
 
-/** Append one transformed carrier to the shared line buffers. Vertex colour is
+/** Append one transformed glyph to the shared line buffers. Vertex colour is
  * premultiplied by the carrier's independent opacity for additive equivalence. */
 function writeCarrierBody(
   positions: Float32Array,
@@ -249,6 +323,9 @@ export default function BlockDeliveryLayer({
     [localOrigins, localReceiveDelayS, posById, arrivals],
   );
   const capacity = Math.max(1, deliveries.length);
+  // A delivery can have its drawn-inward ring and its released front alive on
+  // the same frame — never more than those two.
+  const waveCapacity = capacity * 2;
   const ignitedPulseAtRef = useRef<number | null>(null);
   const cellsToken = cellsCache?.cellsToken ?? null;
   const nearestCellIndex = useMemo(
@@ -300,26 +377,31 @@ export default function BlockDeliveryLayer({
     toneMapped: false,
   }), []);
 
-  const membraneTex = useMemo(() => makeJellyfishBellTexture(), []);
-  const impactTex = useMemo(() => makeIngestShockwaveTexture(), []);
-  const wakeTex = useMemo(() => makeJellyfishWakeTexture(), []);
+  const coreTex = useMemo(() => makeCarrierCoreTexture(), []);
+  const trailTex = useMemo(() => makeCarrierTrailTexture(), []);
   const spriteGeometry = useMemo(() => new THREE.PlaneGeometry(1, 1), []);
-  const membraneMaterial = useMemo(
-    () => makeSpriteBatchMaterial(membraneTex),
-    [membraneTex],
+  const coreMaterial = useMemo(() => makeSpriteBatchMaterial(coreTex), [coreTex]);
+  const trailMaterial = useMemo(() => makeSpriteBatchMaterial(trailTex), [trailTex]);
+  const waveMaterial = useMemo(() => makeContactWaveMaterial(), []);
+  const waveShape = useMemo(
+    () => makeContactWaveAttribute(waveCapacity),
+    [waveCapacity],
   );
-  const wakeMaterial = useMemo(() => makeSpriteBatchMaterial(wakeTex), [wakeTex]);
-  const impactMaterial = useMemo(() => makeSpriteBatchMaterial(impactTex), [impactTex]);
+  const waveGeometry = useMemo(() => {
+    const geometry = makeContactWaveGeometry();
+    geometry.setAttribute('aWave', waveShape);
+    return geometry;
+  }, [waveShape]);
 
-  const membraneBatchRef = useRef<THREE.InstancedMesh>(null);
-  const wakeBatchRef = useRef<THREE.InstancedMesh>(null);
-  const impactBatchRef = useRef<THREE.InstancedMesh>(null);
+  const coreBatchRef = useRef<THREE.InstancedMesh>(null);
+  const trailBatchRef = useRef<THREE.InstancedMesh>(null);
+  const waveBatchRef = useRef<THREE.InstancedMesh>(null);
 
   useLayoutEffect(() => {
     const batches = [
-      membraneBatchRef.current,
-      wakeBatchRef.current,
-      impactBatchRef.current,
+      coreBatchRef.current,
+      trailBatchRef.current,
+      waveBatchRef.current,
     ];
     for (const batch of batches) {
       if (!batch) continue;
@@ -330,44 +412,46 @@ export default function BlockDeliveryLayer({
       batch.setColorAt(0, BLACK);
       batch.instanceColor?.setUsage(THREE.DynamicDrawUsage);
     }
-  }, [capacity]);
+  }, [capacity, waveCapacity]);
 
+  // Disposal is split by lifetime on purpose. Delivery count changes whenever
+  // peers churn, which rebuilds the two capacity-sized geometries — bundling the
+  // shared materials into that same cleanup would dispose a live shader program
+  // and force a recompile on an ordinary peer join.
+  useEffect(() => () => { bodyGeometry.dispose(); }, [bodyGeometry]);
+  useEffect(() => () => { waveGeometry.dispose(); }, [waveGeometry]);
   useEffect(() => () => {
-    bodyGeometry.dispose();
     bodyMaterial.dispose();
     spriteGeometry.dispose();
-    membraneMaterial.dispose();
-    wakeMaterial.dispose();
-    impactMaterial.dispose();
-    membraneTex.dispose();
-    impactTex.dispose();
-    wakeTex.dispose();
+    coreMaterial.dispose();
+    trailMaterial.dispose();
+    waveMaterial.dispose();
+    coreTex.dispose();
+    trailTex.dispose();
   }, [
-    bodyGeometry,
     bodyMaterial,
     spriteGeometry,
-    membraneMaterial,
-    wakeMaterial,
-    impactMaterial,
-    membraneTex,
-    impactTex,
-    wakeTex,
+    coreMaterial,
+    trailMaterial,
+    waveMaterial,
+    coreTex,
+    trailTex,
   ]);
 
   useSimFrame((state) => {
-    const membraneBatch = membraneBatchRef.current;
-    const wakeBatch = wakeBatchRef.current;
-    const impactBatch = impactBatchRef.current;
-    if (!membraneBatch || !wakeBatch || !impactBatch) return;
+    const coreBatch = coreBatchRef.current;
+    const trailBatch = trailBatchRef.current;
+    const waveBatch = waveBatchRef.current;
+    if (!coreBatch || !trailBatch || !waveBatch) return;
 
     const now = simClock.elapsedSec;
     CFG.ingestDur = LIVE.delivery.ingestDur;
     const pulse = pulseRef.current;
     if (!pulse) {
       bodyGeometry.setDrawRange(0, 0);
-      membraneBatch.count = 0;
-      wakeBatch.count = 0;
-      impactBatch.count = 0;
+      coreBatch.count = 0;
+      trailBatch.count = 0;
+      waveBatch.count = 0;
       ignitedPulseAtRef.current = null;
       return;
     }
@@ -379,17 +463,17 @@ export default function BlockDeliveryLayer({
       // walking every delivery + committing empty batches forever.
       pulseRef.current = null;
       bodyGeometry.setDrawRange(0, 0);
-      membraneBatch.count = 0;
-      wakeBatch.count = 0;
-      impactBatch.count = 0;
+      coreBatch.count = 0;
+      trailBatch.count = 0;
+      waveBatch.count = 0;
       ignitedPulseAtRef.current = null;
       return;
     }
     // Three-arg setRGB: the spread form allocates an arguments array per frame.
     CARRIER_COLOR.setRGB(pulse.color[0], pulse.color[1], pulse.color[2]);
     state.camera.getWorldPosition(_cameraPosition);
-    const bellRoll = now * JELLY_BELL_ROLL_RATE;
-    _bellRollQuaternion.setFromAxisAngle(CARRIER_LOCAL_FORWARD, bellRoll);
+    waveMaterial.uniforms.uWake.value = LIVE.delivery.waveWake;
+    waveMaterial.uniforms.uSegmentDepth.value = LIVE.delivery.waveSegments;
 
     // Galaxy RECEIVES the wave: once per real block, schedule a flare on the
     // Cells nearest each real delivery landing. Batching never changes this data
@@ -428,17 +512,19 @@ export default function BlockDeliveryLayer({
     }
 
     let bodyVertexCount = 0;
-    let membraneCount = 0;
-    let wakeCount = 0;
-    let impactCount = 0;
+    let coreCount = 0;
+    let trailCount = 0;
+    let waveCount = 0;
+    let deliveryIndex = -1;
 
     for (const delivery of deliveries) {
+      deliveryIndex += 1;
       const phase = deliveryPhase(age - delivery.startAge, CFG);
       if (phase.phase === 'idle' || phase.phase === 'done') continue;
 
-      // Local +Z is the bell's swimming direction. Align it with the actual
-      // peer→galaxy path, then roll only around that axis. Camera motion never
-      // changes where the carrier is headed.
+      // Local +Z is the glyph's travel direction. Align it with the actual
+      // peer→galaxy path; that also lays the rim — and the front it becomes —
+      // flat in the Cell plane. Camera motion never changes where it is headed.
       _flightDirection.set(
         delivery.to[0] - delivery.from[0],
         delivery.to[1] - delivery.from[1],
@@ -450,135 +536,177 @@ export default function BlockDeliveryLayer({
         _flightDirection.normalize();
       }
       setProtocolCarrierFacing(_carrierFacingQuaternion, _flightDirection);
-      _bodyQuaternion.copy(_carrierFacingQuaternion).multiply(_bellRollQuaternion);
+      _bodyQuaternion.copy(_carrierFacingQuaternion);
 
       const punch = delivery.hero ? 1 : LIVE.delivery.peerPunchScale;
-      const inFlight = phase.phase === 'gather' || phase.phase === 'lob';
-      let bodyScale = 0;
-      let bodyOpacity = 0;
-      let membraneScale = 0;
-      const swimPhase = now * JELLY_BELL_PULSE_RATE + delivery.startAge * 5.3;
-      const bellPulse = protocolCarrierBellPulse(swimPhase);
-      const bellOpenScale = JELLY_BELL_OPEN_MIN
-        + JELLY_BELL_OPEN_AMOUNT * bellPulse;
-      const bellDepthScale = JELLY_BELL_DEPTH_MAX
-        - JELLY_BELL_DEPTH_SWING * bellPulse;
-      const tentacleStretch = JELLY_TENTACLE_STRETCH_MIN
-        + JELLY_TENTACLE_STRETCH_AMOUNT * (1 - bellPulse);
-      const tentacleWidthScale = JELLY_TENTACLE_WIDTH_MIN
-        + JELLY_TENTACLE_WIDTH_AMOUNT * bellPulse;
+      const size = delivery.hero
+        ? LIVE.delivery.heroSize
+        : LIVE.delivery.peerSize;
+      const gapRoll = deliveryIndex * WAVE_GAP_ROLL;
+      let glyphScale = 0;
+      let glyphOpacity = 0;
 
-      if (inFlight) {
-        const progress = phase.phase === 'lob' ? easeInLob(phase.t) : 0;
+      if (phase.phase === 'gather') {
+        // Held breath: the glyph tightens and brightens where it stands. No
+        // travel, no roll, no swim — the beat is the absence of motion.
+        _position.set(delivery.from[0], delivery.from[1], delivery.from[2]);
+        glyphScale = size * (1 + GATHER_SWELL * (1 - phase.t));
+        glyphOpacity = Math.pow(phase.t, 0.6);
+        writeSpriteInstance(
+          coreBatch,
+          coreCount,
+          _position,
+          glyphScale * LIVE.delivery.glyphBloom,
+          glyphScale * LIVE.delivery.glyphBloom,
+          CARRIER_COLOR,
+          glyphOpacity * LOB_CORE_ONSET,
+          _carrierFacingQuaternion,
+          gapRoll,
+        );
+        coreCount += 1;
+      } else if (phase.phase === 'lob') {
+        const progress = easeInLob(phase.t);
         _position.set(
           delivery.from[0] + (delivery.to[0] - delivery.from[0]) * progress,
           delivery.from[1] + (delivery.to[1] - delivery.from[1]) * progress,
           delivery.from[2] + (delivery.to[2] - delivery.from[2]) * progress,
         );
-        const grow = phase.phase === 'gather' ? phase.t : 1;
-        bodyScale = (
-          delivery.hero ? LIVE.delivery.heroSize : LIVE.delivery.peerSize
-        ) * grow;
-        bodyOpacity = 1;
-        membraneScale = LIVE.delivery.bolusBloom * punch * grow * bellOpenScale;
+        glyphScale = size * (1 - LIVE.delivery.glyphCompress * progress);
+        glyphOpacity = 1;
 
-        if (phase.phase === 'lob') {
-          const length = (
-            LIVE.delivery.trailLenBase + LIVE.delivery.trailLenGain * lobSpeed(phase.t)
-          ) * punch * tentacleStretch;
-          _trailPosition.copy(_position).addScaledVector(_flightDirection, -length / 2);
-          setWakeQuaternion(
-            _flightDirection,
-            _trailPosition,
-            _cameraPosition,
-            _wakeQuaternion,
-          );
-          writeSpriteInstance(
-            wakeBatch,
-            wakeCount,
-            _trailPosition,
-            LIVE.delivery.trailWidth * punch * tentacleWidthScale,
-            length,
-            CARRIER_COLOR,
-            LIVE.delivery.trailOpacity * (0.84 + 0.16 * (1 - bellPulse)),
-            _wakeQuaternion,
-          );
-          wakeCount += 1;
+        // The core barely shrinks while the rim compresses, so the carrier
+        // reads as heating up on the way in rather than dwindling.
+        const coreScale = size
+          * LIVE.delivery.glyphBloom
+          * (1 - LOB_CORE_COMPRESS * progress);
+        writeSpriteInstance(
+          coreBatch,
+          coreCount,
+          _position,
+          coreScale,
+          coreScale,
+          CARRIER_COLOR,
+          LOB_CORE_ONSET + (1 - LOB_CORE_ONSET) * progress,
+          _carrierFacingQuaternion,
+          gapRoll,
+        );
+        coreCount += 1;
 
-          // A contracted bell pushes water/energy backward. Reuse the pressure
-          // texture for one faint, expanding propulsion ring per carrier; the
-          // stronger instance at contact occupies this same fixed batch later.
-          const propulsionT = protocolCarrierShockwaveProgress(swimPhase);
-          const propulsionOpacity = 0.30 * Math.pow(1 - propulsionT, 2.4);
-          if (propulsionOpacity > 0.004) {
-            _wavePosition.copy(_position).addScaledVector(
-              _flightDirection,
-              -bodyScale * (0.20 + propulsionT * 0.55),
-            );
-            const propulsionScale = bodyScale * (1.10 + propulsionT * 1.65);
-            writeSpriteInstance(
-              impactBatch,
-              impactCount,
-              _wavePosition,
-              propulsionScale,
-              propulsionScale,
-              CARRIER_COLOR,
-              propulsionOpacity,
-              _carrierFacingQuaternion,
-              -bellRoll * 0.35,
-            );
-            impactCount += 1;
-          }
-        }
+        const length = (
+          LIVE.delivery.trailLenBase + LIVE.delivery.trailLenGain * lobSpeed(phase.t)
+        ) * punch;
+        _trailPosition.copy(_position).addScaledVector(_flightDirection, -length / 2);
+        setWakeQuaternion(
+          _flightDirection,
+          _trailPosition,
+          _cameraPosition,
+          _wakeQuaternion,
+        );
+        writeSpriteInstance(
+          trailBatch,
+          trailCount,
+          _trailPosition,
+          LIVE.delivery.trailWidth * punch,
+          length,
+          CARRIER_COLOR,
+          LIVE.delivery.trailOpacity,
+          _wakeQuaternion,
+        );
+        trailCount += 1;
       } else {
-        const ingest = bolusIngest(phase.t);
-        // Contact is an event boundary, not another travelling object. Keep the
-        // carrier and pressure wave pinned to the real landing while the wave
-        // spreads across the field and nearby Cells flare in response.
-        _position.set(
-          delivery.to[0],
-          delivery.to[1],
-          delivery.to[2],
-        );
-        const recoil = 1 + LIVE.delivery.recoil * Math.sin(
-          Math.min(1, phase.t / 0.32) * Math.PI,
-        );
-        bodyScale = (
-          delivery.hero ? LIVE.delivery.heroSize : LIVE.delivery.peerSize
-        ) * ingest.bodyScale * recoil;
-        bodyOpacity = ingest.bodyOpacity;
-        membraneScale = LIVE.delivery.bolusBloom
-          * punch
-          * ingest.bodyScale
-          * recoil
-          * bellOpenScale;
+        const release = contactRelease(phase.t);
+        // Contact is an event boundary, not another travelling object. The
+        // glyph is pinned at the real landing while it is released as a front.
+        _position.set(delivery.to[0], delivery.to[1], delivery.to[2]);
+        glyphScale = size * release.glyphScale;
+        glyphOpacity = release.glyphOpacity;
 
-        if (ingest.flashOpacity > 0.001) {
-          _flashColor.copy(CARRIER_COLOR).lerp(PALE_CONSENSUS, ingest.colorT);
-          const size = LIVE.delivery.flashSize * punch * ingest.impactScale;
+        if (release.coreOpacity > 0.002) {
+          // White at the strike, cooling into the block's own carrier hue.
+          _coreColor.copy(WHITE).lerp(CARRIER_COLOR, release.colorT);
+          const coreScale = size
+            * LIVE.delivery.coreSize
+            * punch
+            * (1 - 0.3 * phase.t);
           writeSpriteInstance(
-            impactBatch,
-            impactCount,
+            coreBatch,
+            coreCount,
             _position,
-            size,
-            size,
-            _flashColor,
-            ingest.flashOpacity,
+            coreScale,
+            coreScale,
+            _coreColor,
+            release.coreOpacity,
             _carrierFacingQuaternion,
-            -bellRoll * 0.45,
+            gapRoll,
           );
-          impactCount += 1;
+          coreCount += 1;
+        }
+
+        // The breath drawn in: one ring contracting onto the landing, its wake
+        // trailing outward, just before the front leaves.
+        const inhaleOpacity = release.inhaleOpacity * LIVE.delivery.inhaleAmount;
+        const inhaleRadius = INHALE_REACH * size * punch * release.inhaleRadius;
+        if (inhaleOpacity > 0.004 && inhaleRadius > 0.05) {
+          writeWaveInstance(
+            waveBatch,
+            waveShape,
+            waveCount,
+            _position,
+            inhaleRadius,
+            LIVE.delivery.waveWidth * 0.7 * punch,
+            CONTACT_WAVE_WAKE_AHEAD,
+            CARRIER_COLOR,
+            inhaleOpacity,
+            _carrierFacingQuaternion,
+            gapRoll,
+          );
+          waveCount += 1;
+        }
+
+        // The released front. Radius comes from real seconds at the shared wave
+        // speed — never from a normalized scale — so every worker's front
+        // belongs to the same expanding field.
+        const contactAge = phase.t * CFG.ingestDur;
+        const crestRadius = WAVE_START_RADIUS
+          + LIVE.delivery.waveSpeed * contactAge;
+        const reach = delivery.hero
+          ? LIVE.delivery.waveReachHero
+          : LIVE.delivery.waveReachPeer;
+        // Reach is extinction, not a stop: a clamped radius would freeze the
+        // front mid-field and break the one-speed reading.
+        const reachFade = 1 - smoothUnit(
+          (crestRadius - reach * WAVE_REACH_KNEE) / (reach * (1 - WAVE_REACH_KNEE)),
+        );
+        const falloff = Math.pow(
+          WAVE_FALLOFF_REFERENCE / (WAVE_FALLOFF_REFERENCE + crestRadius),
+          LIVE.delivery.waveFalloff,
+        );
+        const intensity = LIVE.delivery.waveOpacity
+          * release.frontOpacity
+          * falloff
+          * reachFade
+          * punch;
+        if (intensity > 0.002) {
+          _waveColor.copy(CARRIER_COLOR).lerp(TISSUE_ROSE, release.colorT);
+          writeWaveInstance(
+            waveBatch,
+            waveShape,
+            waveCount,
+            _position,
+            crestRadius,
+            LIVE.delivery.waveWidth * (1 + WAVE_WIDTH_GROW * contactAge),
+            CONTACT_WAVE_WAKE_BEHIND,
+            _waveColor,
+            intensity,
+            _carrierFacingQuaternion,
+            gapRoll,
+          );
+          waveCount += 1;
         }
       }
 
-      if (bodyScale > 0.001 && bodyOpacity > 0.001) {
-        // Local XY opens/closes the umbrella; local Z (the flight axis) moves
-        // inversely, giving the wireframe bell a soft jellyfish contraction.
-        _scale.set(
-          bodyScale * bellOpenScale,
-          bodyScale * bellOpenScale,
-          bodyScale * bellDepthScale,
-        );
+      if (glyphScale > 0.001 && glyphOpacity > 0.001) {
+        _scale.set(glyphScale, glyphScale, glyphScale);
         _matrix.compose(_position, _bodyQuaternion, _scale);
         bodyVertexCount = writeCarrierBody(
           bodyPositions,
@@ -586,22 +714,8 @@ export default function BlockDeliveryLayer({
           bodyVertexCount,
           _matrix,
           CARRIER_COLOR,
-          bodyOpacity,
+          glyphOpacity,
         );
-      }
-      if (membraneScale > 0.001 && bodyOpacity > 0.001) {
-        writeSpriteInstance(
-          membraneBatch,
-          membraneCount,
-          _position,
-          membraneScale,
-          membraneScale,
-          CARRIER_COLOR,
-          bodyOpacity,
-          _carrierFacingQuaternion,
-          -bellRoll * 0.7,
-        );
-        membraneCount += 1;
       }
     }
 
@@ -614,9 +728,14 @@ export default function BlockDeliveryLayer({
       bodyColorAttr.addUpdateRange(0, bodyVertexCount * 3);
       bodyColorAttr.needsUpdate = true;
     }
-    commitInstanceBatch(membraneBatch, membraneCount);
-    commitInstanceBatch(wakeBatch, wakeCount);
-    commitInstanceBatch(impactBatch, impactCount);
+    commitInstanceBatch(coreBatch, coreCount);
+    commitInstanceBatch(trailBatch, trailCount);
+    commitInstanceBatch(waveBatch, waveCount);
+    if (waveCount > 0) {
+      waveShape.clearUpdateRanges();
+      waveShape.addUpdateRange(0, waveCount * 2);
+      waveShape.needsUpdate = true;
+    }
   });
 
   return (
@@ -628,20 +747,20 @@ export default function BlockDeliveryLayer({
         renderOrder={1}
       />
       <instancedMesh
-        ref={membraneBatchRef}
-        args={[spriteGeometry, membraneMaterial, capacity]}
+        ref={coreBatchRef}
+        args={[spriteGeometry, coreMaterial, capacity]}
         frustumCulled={false}
         renderOrder={2}
       />
       <instancedMesh
-        ref={wakeBatchRef}
-        args={[spriteGeometry, wakeMaterial, capacity]}
+        ref={trailBatchRef}
+        args={[spriteGeometry, trailMaterial, capacity]}
         frustumCulled={false}
         renderOrder={3}
       />
       <instancedMesh
-        ref={impactBatchRef}
-        args={[spriteGeometry, impactMaterial, capacity]}
+        ref={waveBatchRef}
+        args={[waveGeometry, waveMaterial, waveCapacity]}
         frustumCulled={false}
         renderOrder={4}
       />

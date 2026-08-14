@@ -3,24 +3,30 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import * as THREE from 'three';
 import {
-  JELLYFISH_BELL_ARCHES,
-  JELLYFISH_BELL_ARCH_SEGMENTS,
-  JELLYFISH_BELL_CROWN_DEPTH,
-  JELLYFISH_BELL_RIM_DEPTH,
-  JELLYFISH_BELL_SIDES,
+  CARRIER_KEEL_COUNT,
+  CARRIER_KEEL_DEPTH,
+  CONTACT_RING_GAPS,
+  CONTACT_RING_GAP_EVERY,
+  CONTACT_RING_SIDES,
+  isContactRingGap,
   makeProtocolCarrierGeometry,
-  protocolCarrierBellPulse,
-  protocolCarrierShockwaveProgress,
   setProtocolCarrierFacing,
 } from '../../src/geometry/protocolCarrier';
+import { SHOCKWAVE_SPEED } from '../../src/ui/topologyConstants';
+import { deliverySchema } from '../../src/tweaks/tweakSchema';
 
 const source = (file: string): string => readFileSync(
   resolve(process.cwd(), `src/components/${file}`),
   'utf8',
 );
 
+const material = (file: string): string => readFileSync(
+  resolve(process.cwd(), `src/materials/${file}`),
+  'utf8',
+);
+
 describe('A protocol event relay', () => {
-  it('uses one sparse low-poly jellyfish canopy instead of a field barrier', () => {
+  it('carries the block as an interrupted rim with three trailing keels', () => {
     const geometry = makeProtocolCarrierGeometry();
     const positions = geometry.getAttribute('position');
     const depths = new Set<number>();
@@ -29,51 +35,81 @@ describe('A protocol event relay', () => {
     }
 
     expect(geometry).toBeInstanceOf(THREE.BufferGeometry);
-    expect(JELLYFISH_BELL_SIDES).toBe(12);
-    expect(JELLYFISH_BELL_ARCHES).toBe(3);
-    expect(JELLYFISH_BELL_ARCH_SEGMENTS).toBe(6);
-    expect(JELLYFISH_BELL_CROWN_DEPTH - JELLYFISH_BELL_RIM_DEPTH).toBeCloseTo(0.6);
-    expect(positions.count).toBe(54);
-    expect(depths.size).toBe(4);
+    expect(CONTACT_RING_SIDES).toBe(12);
+    expect(CONTACT_RING_GAPS).toBe(3);
+    expect(CONTACT_RING_GAP_EVERY).toBe(4);
+    // Nine kept rim sides plus three keels, two vertices each.
+    expect(positions.count).toBe((CONTACT_RING_SIDES - CONTACT_RING_GAPS) * 2 + CARRIER_KEEL_COUNT * 2);
+    expect(depths).toEqual(new Set([0, -CARRIER_KEEL_DEPTH]));
     expect(geometry.index).toBeNull();
+    // Keels hang off kept corners, never off an open side.
+    for (let keel = 0; keel < CARRIER_KEEL_COUNT; keel += 1) {
+      expect(isContactRingGap(1 + keel * CONTACT_RING_GAP_EVERY)).toBe(false);
+    }
     expect(source('BlockDeliveryLayer.tsx')).not.toContain('BoxGeometry');
-    expect(source('BlockDeliveryLayer.tsx')).not.toContain('makeProtocolLandingTexture');
     expect(source('BlockDeliveryLayer.tsx')).toContain(
       'setProtocolCarrierFacing(_carrierFacingQuaternion, _flightDirection)',
     );
     expect(source('BlockDeliveryLayer.tsx')).not.toMatch(/A\.T\.-Field|octagon/i);
     expect(source('BlockDeliveryLayer.tsx')).not.toContain('getWorldQuaternion');
-    expect(source('BlockDeliveryLayer.tsx')).not.toContain('TUMBLE_RATE');
     geometry.dispose();
   });
 
-  it('opens the bell, counter-stretches three tentacles, and sheds a propulsion wave', () => {
+  it('abandons the swimming carrier for compression into a released front', () => {
     const delivery = source('BlockDeliveryLayer.tsx');
 
-    expect(protocolCarrierBellPulse(Math.PI / 2)).toBe(1);
-    expect(protocolCarrierBellPulse(Math.PI * 1.5)).toBe(0);
-    expect(protocolCarrierShockwaveProgress(Math.PI * 1.5)).toBe(0);
-    expect(protocolCarrierShockwaveProgress(Math.PI * 2.5)).toBeCloseTo(0.5);
-    expect(delivery).toContain('makeJellyfishWakeTexture()');
-    expect(delivery).toContain('JELLY_TENTACLE_STRETCH_AMOUNT * (1 - bellPulse)');
-    expect(delivery).toContain('bodyScale * bellDepthScale');
-    expect(delivery).toContain('protocolCarrierShockwaveProgress(swimPhase)');
-    expect(delivery).toContain('_wavePosition.copy(_position).addScaledVector(');
-    expect(delivery).not.toContain('_scale.setScalar(bodyScale)');
+    // Nothing survives of the organism that used to drift in: no swim cycle, no
+    // bell contraction, no tentacles, no shed propulsion rings.
+    expect(delivery).not.toMatch(/jellyfish|bellPulse|tentacle|swimPhase|propulsion/i);
+    // Gather holds still; the lob compresses the rim while the core heats.
+    expect(delivery).toContain('LIVE.delivery.glyphCompress * progress');
+    expect(delivery).toContain('GATHER_SWELL * (1 - phase.t)');
+    expect(delivery).toContain('LOB_CORE_COMPRESS * progress');
   });
 
-  it('aims the swimming bell and expanding shockwave at the Cell galaxy', () => {
+  it('gives every worker its own front, and all of them one wave field', () => {
     const delivery = source('BlockDeliveryLayer.tsx');
-    const direction = new THREE.Vector3(0.25, 1, -0.4).normalize();
-    const facing = setProtocolCarrierFacing(new THREE.Quaternion(), direction);
-    const transformedNormal = new THREE.Vector3(0, 0, 1).applyQuaternion(facing);
 
-    expect(transformedNormal.distanceTo(direction)).toBeLessThan(1e-9);
-    expect(delivery).toContain('delivery.to[1] - delivery.from[1]');
-    expect(delivery).toContain('_bodyQuaternion.copy(_carrierFacingQuaternion)');
-    expect(delivery).toContain('ingest.impactScale');
-    expect(delivery).toContain('_carrierFacingQuaternion,\n            -bellRoll * 0.45');
-    expect(delivery).toContain('side: THREE.DoubleSide');
+    // Same speed on both planes is the whole reason ~81 staggered commits read
+    // as one interference field instead of 81 independent events.
+    expect(deliverySchema.waveSpeed.value).toBe(SHOCKWAVE_SPEED);
+    // Radius comes from real seconds at that speed — never a normalized scale.
+    expect(delivery).toContain('LIVE.delivery.waveSpeed * contactAge');
+    // Hero emphasis is reach and scale, never a different shape.
+    expect(delivery).toContain('LIVE.delivery.waveReachHero');
+    expect(delivery).toContain('LIVE.delivery.waveReachPeer');
+    // Reach must extinguish rather than clamp, or fronts freeze mid-field.
+    expect(delivery).not.toMatch(/Math\.min\([^)]*crestRadius/);
+    expect(delivery).toContain('reachFade');
+    // Overlap safety: a 1/r falloff dims a front before it can meet a neighbour.
+    expect(delivery).toContain('WAVE_FALLOFF_REFERENCE + crestRadius');
+  });
+
+  it('resolves the contact into the Cell field\'s own tissue, not a cool pale', () => {
+    const delivery = source('BlockDeliveryLayer.tsx');
+
+    expect(delivery).toContain('CELL_GALAXY_PALETTE.tissueRose');
+    expect(delivery).toContain('_waveColor.copy(CARRIER_COLOR).lerp(TISSUE_ROSE, release.colorT)');
+    // White at the strike, cooling into the block's own carrier hue.
+    expect(delivery).toContain('_coreColor.copy(WHITE).lerp(CARRIER_COLOR, release.colorT)');
+    expect(delivery).not.toContain('PALE_CONSENSUS');
+  });
+
+  it('resolves the front analytically so its crest stays sharp at any radius', () => {
+    const wave = material('contactWaveMaterial.ts');
+
+    // The crest is pinned to a fixed UV radius and the instance scale does the
+    // rest — a baked ring texture smears the moment a front grows.
+    expect(wave).toContain('uniform float uCrest;');
+    expect(wave).toContain('float offset = (radius - uCrest) / halfWidth;');
+    // One vocabulary: the front's gaps come from the carrier rim's own numbers.
+    expect(wave).toContain("from '../geometry/protocolCarrier'");
+    expect(wave).toContain('CONTACT_RING_SIDES');
+    // A front only propagates through tissue.
+    expect(wave).toContain('uDiskFadeStart');
+    expect(wave).toContain('length(vWorldXZ)');
+    // An annulus, not a quad: ~81 full-screen-ish fills per block is not free.
+    expect(wave).toContain('THREE.RingGeometry');
   });
 
   it('keeps one block carrier hue across P2P surge, courier, and delivery', () => {
@@ -116,6 +152,18 @@ describe('A protocol event relay', () => {
     expect(colony).toContain('flashDirtyIdsRef={flashDirtyIdsRef}');
     expect(delivery).toContain('flashDirtyIdsRef?: CellFlashDirtyIdsRef');
     expect(delivery.match(/markCellFlashDirty\(/g)).toHaveLength(1);
+  });
+
+  it('aims the glyph and the front it becomes at the Cell galaxy', () => {
+    const delivery = source('BlockDeliveryLayer.tsx');
+    const direction = new THREE.Vector3(0.25, 1, -0.4).normalize();
+    const facing = setProtocolCarrierFacing(new THREE.Quaternion(), direction);
+    const transformedNormal = new THREE.Vector3(0, 0, 1).applyQuaternion(facing);
+
+    expect(transformedNormal.distanceTo(direction)).toBeLessThan(1e-9);
+    expect(delivery).toContain('delivery.to[1] - delivery.from[1]');
+    expect(delivery).toContain('_bodyQuaternion.copy(_carrierFacingQuaternion)');
+    expect(delivery).toContain('side: THREE.DoubleSide');
   });
 
   it('hands the same hue to the peer-network shockwave instead of bleaching it white', () => {

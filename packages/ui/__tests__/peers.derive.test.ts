@@ -13,7 +13,7 @@ import {
   planDeliveries,
   deliveryPhase,
   deliveryScheduleHorizon,
-  bolusIngest,
+  contactRelease,
   buildCellNearestIndex,
   cellIdsWithinRadiusFromIndex,
   sharedCellNearestIndex,
@@ -218,54 +218,62 @@ describe('peers.derive', () => {
     });
   });
 
-  describe('bolusIngest', () => {
+  describe('contactRelease', () => {
     const samples = Array.from({ length: 21 }, (_, i) => i / 20);
 
-    it('body dissolves: scale & opacity start full and reach exactly 0', () => {
-      expect(bolusIngest(0).bodyScale).toBeCloseTo(1, 6);
-      expect(bolusIngest(0).bodyOpacity).toBeCloseTo(1, 6);
-      expect(bolusIngest(1).bodyScale).toBe(0);
-      expect(bolusIngest(1).bodyOpacity).toBe(0);
+    it('the seed glyph is released: scale & opacity start full and reach exactly 0', () => {
+      expect(contactRelease(0).glyphScale).toBeCloseTo(1, 6);
+      expect(contactRelease(0).glyphOpacity).toBeCloseTo(1, 6);
+      expect(contactRelease(1).glyphScale).toBe(0);
+      expect(contactRelease(1).glyphOpacity).toBe(0);
+      // Released early in the window — the front, not the glyph, carries the rest.
+      expect(contactRelease(0.4).glyphScale).toBe(0);
     });
 
-    it('body scale & opacity are monotonically decreasing (no re-grow)', () => {
+    it('glyph scale & opacity are monotonically decreasing (no re-grow)', () => {
       for (let i = 1; i < samples.length; i += 1) {
-        expect(bolusIngest(samples[i]).bodyScale).toBeLessThanOrEqual(
-          bolusIngest(samples[i - 1]).bodyScale + 1e-9,
+        expect(contactRelease(samples[i]).glyphScale).toBeLessThanOrEqual(
+          contactRelease(samples[i - 1]).glyphScale + 1e-9,
         );
-        expect(bolusIngest(samples[i]).bodyOpacity).toBeLessThanOrEqual(
-          bolusIngest(samples[i - 1]).bodyOpacity + 1e-9,
+        expect(contactRelease(samples[i]).glyphOpacity).toBeLessThanOrEqual(
+          contactRelease(samples[i - 1]).glyphOpacity + 1e-9,
         );
       }
     });
 
-    it('THE FIX: nothing visible remains at t=1, so the phase→done hard-hide is imperceptible', () => {
-      const end = bolusIngest(1);
-      expect(end.bodyScale * end.bodyOpacity).toBe(0);
-      expect(end.flashOpacity).toBe(0);
+    it('THE INVARIANT: nothing visible remains at t=1, so the phase→done hard-hide is imperceptible', () => {
+      const end = contactRelease(1);
+      expect(end.glyphScale * end.glyphOpacity).toBe(0);
+      expect(end.coreOpacity).toBe(0);
+      expect(end.inhaleOpacity).toBe(0);
+      expect(end.frontOpacity).toBe(0);
     });
 
-    it('flash is a bright impact that lingers into an agreement tail (not the old ~2-frame pop)', () => {
-      expect(bolusIngest(0).flashOpacity).toBeCloseTo(1, 6); // bright at the strike
-      // spans the window: at 30% through, brighter than the old exp(-7·t)=0.122 blink
-      expect(bolusIngest(0.3).flashOpacity).toBeGreaterThan(0.122);
-      expect(bolusIngest(1).flashOpacity).toBe(0); // clean end, no leftover pop
+    it('the contact core sears and is gone well before the front is', () => {
+      expect(contactRelease(0).coreOpacity).toBeCloseTo(1, 6);
+      expect(contactRelease(0.3).coreOpacity).toBeLessThan(0.1);
+      expect(contactRelease(0.3).frontOpacity).toBeGreaterThan(0.5);
+      expect(contactRelease(1).coreOpacity).toBe(0);
     });
 
-    it('expands the contact wave across the Cell plane while it fades', () => {
-      expect(bolusIngest(0).impactScale).toBeCloseTo(0.7, 6);
-      expect(bolusIngest(0.5).impactScale).toBeGreaterThan(2.5);
-      expect(bolusIngest(1).impactScale).toBeCloseTo(3.6, 6);
-      for (let i = 1; i < samples.length; i += 1) {
-        expect(bolusIngest(samples[i]).impactScale).toBeGreaterThanOrEqual(
-          bolusIngest(samples[i - 1]).impactScale - 1e-9,
-        );
-      }
+    it('the breath is drawn inward only in the pre-release window', () => {
+      expect(contactRelease(0).inhaleRadius).toBeCloseTo(1, 6);
+      expect(contactRelease(0).inhaleOpacity).toBeCloseTo(0, 6);
+      expect(contactRelease(0.07).inhaleOpacity).toBeGreaterThan(0.9);
+      // Fully contracted (and silent) once the window closes.
+      expect(contactRelease(0.14).inhaleRadius).toBeCloseTo(0, 6);
+      expect(contactRelease(0.5).inhaleOpacity).toBeCloseTo(0, 6);
     });
 
-    it('colour resolves moving carrier hue → pale agreement across ingest', () => {
-      expect(bolusIngest(0).colorT).toBe(0);
-      expect(bolusIngest(1).colorT).toBeCloseTo(1, 6);
+    it('the front grows out of the core rather than appearing beside it', () => {
+      expect(contactRelease(0).frontOpacity).toBe(0);
+      expect(contactRelease(0.05).frontOpacity).toBeGreaterThan(0.9);
+      expect(contactRelease(1).frontOpacity).toBe(0);
+    });
+
+    it('colour resolves carrier hue → the Cell field\'s own tissue across contact', () => {
+      expect(contactRelease(0).colorT).toBe(0);
+      expect(contactRelease(1).colorT).toBeCloseTo(1, 6);
     });
   });
 

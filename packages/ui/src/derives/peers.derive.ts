@@ -162,35 +162,66 @@ export function deliveryScheduleHorizon(
   return maxStart + cfg.lobDur + cfg.ingestDur;
 }
 
-export interface BolusIngest {
-  /** Legacy API name; describes the carrier's Cell-contact envelope. */
-  /** Carrier glyph scale multiplier: 1 at impact → 0 at commit. */
-  bodyScale: number;
-  /** Body + bloom opacity: 1 at impact → 0. */
-  bodyOpacity: number;
-  /** Contact-wave opacity: bright at impact, resolved at t=1. */
-  flashOpacity: number;
-  /** Contact-wave scale: compact strike → broad Cell-field diffusion. */
-  impactScale: number;
-  /** Hash-stable carrier hue → pale agreement lerp param, 0→1. */
+export interface ContactRelease {
+  /** Seed-glyph scale: 1 at contact → 0 once the ring has been released. */
+  glyphScale: number;
+  /** Seed-glyph opacity, on the same short window as `glyphScale`. */
+  glyphOpacity: number;
+  /** Compact core at the landing: searing onset, resolved before the end. */
+  coreOpacity: number;
+  /** Contracting pre-release ring: 1 at its widest → 0 at the landing. */
+  inhaleRadius: number;
+  /** Strength of that ring; nonzero only inside the pre-release window. */
+  inhaleOpacity: number;
+  /** Expanding front intensity across the whole window. */
+  frontOpacity: number;
+  /** 0 = white-hot contact, 1 = resolved into the Cell field's own tissue. */
   colorT: number;
 }
 
-/** Per-frame Cell-commit envelope for the protocol carrier (t∈[0,1]).
- *  The compatibility export name remains `bolusIngest`, but the visual is a
- *  low-poly energy jellyfish: its canopy recoils and dissolves at contact while
- *  one segmented shockwave spreads across the Cell plane and fades from the
- *  block's stable warm hue to pale consensus. Pure. */
-export function bolusIngest(t: number): BolusIngest {
-  const u = Math.max(0, Math.min(1, t));
-  const k = 1 - u;
+/** Fraction of the contact phase the seed glyph takes to release. */
+const RELEASE_WINDOW = 0.35;
+/** Fraction the pre-release ring contracts over — short, so the drawn breath
+ *  lands just before the front leaves rather than reading as its own event. */
+const INHALE_WINDOW = 0.14;
+/** Fraction the front takes to reach full strength. Non-zero so the front
+ *  grows out of the contact core instead of appearing beside it. */
+const FRONT_ONSET = 0.05;
+
+function clampUnit(value: number): number {
+  return Math.max(0, Math.min(1, value));
+}
+
+function smoothOnset(value: number): number {
+  const u = clampUnit(value);
+  return u * u * (3 - 2 * u);
+}
+
+/** Per-frame Cell-contact envelope for one delivered block (t∈[0,1]).
+ *
+ *  The whole handoff is one idea — compression then release — and this is its
+ *  second half: the carrier's seed ring collapses, a small ring is drawn INWARD
+ *  to the landing, a compact core sears, and the front leaves. Front RADIUS is
+ *  deliberately absent: the renderer drives it from a shared wave speed in real
+ *  seconds so every worker's front belongs to one wave field, and this envelope
+ *  supplies only strengths.
+ *
+ *  THE INVARIANT: every opacity and the glyph scale reach EXACTLY 0 at t=1, so
+ *  the phase→done hard-hide has nothing left to blink off. Pure. */
+export function contactRelease(t: number): ContactRelease {
+  const u = clampUnit(t);
+  const released = clampUnit(1 - u / RELEASE_WINDOW);
+  const drawn = clampUnit(u / INHALE_WINDOW);
   return {
-    // The slower scale envelope leaves room for the renderer's short recoil;
-    // opacity still clears the field before the phase ends.
-    bodyScale: Math.pow(k, 0.85),
-    bodyOpacity: Math.pow(k, 1.15),
-    flashOpacity: Math.pow(k, 1.7),
-    impactScale: 0.7 + 2.9 * easeOutCubic(u),
+    glyphScale: Math.pow(released, 0.7),
+    glyphOpacity: Math.pow(released, 1.2),
+    coreOpacity: Math.exp(-9 * u) * (1 - u),
+    inhaleRadius: 1 - easeInLob(drawn),
+    inhaleOpacity: Math.sin(Math.PI * drawn) * (1 - u),
+    // Linear life on purpose: the renderer's 1/r falloff already dims a front
+    // as it spreads, and curving the time decay on top of it killed the front
+    // long before it had crossed anything.
+    frontOpacity: (1 - u) * smoothOnset(u / FRONT_ONSET),
     colorT: easeOutCubic(u),
   };
 }

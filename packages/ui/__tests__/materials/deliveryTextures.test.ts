@@ -3,17 +3,8 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import * as THREE from 'three';
 import {
-  GEOMETRIC_SHOCKWAVE_GAPS,
-  GEOMETRIC_SHOCKWAVE_SIDES,
-  makeBolusBloomTexture,
-  makeJellyfishBellTexture,
-  makeProtocolCarrierTexture,
-  makeIngestFlashTexture,
-  makeIngestShockwaveTexture,
-  makeBolusTrailTexture,
-  makeJellyfishWakeTexture,
-  JELLYFISH_TENTACLE_COUNT,
-  JELLYFISH_TENTACLE_SEGMENTS,
+  makeCarrierCoreTexture,
+  makeCarrierTrailTexture,
 } from '../../src/materials/deliveryTextures';
 
 const textureSource = readFileSync(
@@ -22,51 +13,32 @@ const textureSource = readFileSync(
 );
 
 describe('deliveryTextures', () => {
-  it('keeps the low-poly silhouette in geometry and the membrane unmarked', () => {
-    const texture = makeJellyfishBellTexture();
+  it('bakes one compact core for both the travelling glyph and the contact', () => {
+    const texture = makeCarrierCoreTexture();
     expect(texture).toBeInstanceOf(THREE.Texture);
     expect((texture.image as HTMLCanvasElement).width).toBe(128);
+    expect((texture.image as HTMLCanvasElement).height).toBe(128);
+    texture.dispose();
+  });
+
+  it('bakes a hard tapered travel streak, not a waving tentacle set', () => {
+    const texture = makeCarrierTrailTexture();
+    expect(texture).toBeInstanceOf(THREE.Texture);
+    expect((texture.image as HTMLCanvasElement).width).toBe(64);
+    expect((texture.image as HTMLCanvasElement).height).toBe(256);
+    // Per-row fills are what keep the streak's long edges hard; a gradient
+    // along the bar would smear it back into a plume.
+    expect(textureSource).toContain('ctx.fillRect(centre - halfSpan, row');
+    texture.dispose();
+  });
+
+  it('leaves every silhouette to geometry and the shader', () => {
+    // Rings, polygons and crests all moved to protocolCarrier/contactWaveMaterial:
+    // a baked ring cannot stay sharp once a front grows past a few world units.
+    expect(textureSource).not.toContain('strokeSegmentedRing');
     expect(textureSource).not.toContain('strokeFluidLoop');
-    expect(textureSource).not.toContain('strokeFluidArc');
     expect(textureSource).not.toContain('strokeRegularPolygon');
     expect(textureSource).not.toMatch(/A\.T\.-Field|octagon/i);
-    texture.dispose();
-  });
-
-  it('keeps both legacy bell exports mapped to the unmarked membrane', () => {
-    const textures = [makeProtocolCarrierTexture(), makeBolusBloomTexture()];
-    for (const texture of textures) {
-      expect(texture).toBeInstanceOf(THREE.Texture);
-      expect((texture.image as HTMLCanvasElement).height).toBe(128);
-      texture.dispose();
-    }
-  });
-
-  it('bakes one segmented shockwave for propulsion and Cell-field contact', () => {
-    const textures = [makeIngestShockwaveTexture(), makeIngestFlashTexture()];
-    for (const texture of textures) {
-      expect(texture).toBeInstanceOf(THREE.Texture);
-      expect((texture.image as HTMLCanvasElement).width).toBe(128);
-      texture.dispose();
-    }
-    expect(GEOMETRIC_SHOCKWAVE_SIDES).toBe(12);
-    expect(GEOMETRIC_SHOCKWAVE_GAPS).toBe(3);
-  });
-
-  it('bakes a three-tentacle geometric jellyfish wake', () => {
-    const texture = makeJellyfishWakeTexture();
-    expect(texture).toBeInstanceOf(THREE.Texture);
-    expect((texture.image as HTMLCanvasElement).width).toBe(128);
-    expect((texture.image as HTMLCanvasElement).height).toBe(256);
-    expect(JELLYFISH_TENTACLE_COUNT).toBe(3);
-    expect(JELLYFISH_TENTACLE_SEGMENTS).toBe(6);
-    texture.dispose();
-  });
-
-  it('keeps the legacy trail export mapped to the jellyfish wake', () => {
-    const texture = makeBolusTrailTexture();
-    expect(texture).toBeInstanceOf(THREE.Texture);
-    expect((texture.image as HTMLCanvasElement).width).toBe(128);
-    texture.dispose();
+    expect(textureSource).not.toMatch(/jellyfish|tentacle|bell/i);
   });
 });

@@ -1,10 +1,14 @@
 import * as THREE from 'three';
 
-const TAU = Math.PI * 2;
-export const GEOMETRIC_SHOCKWAVE_SIDES = 12;
-export const GEOMETRIC_SHOCKWAVE_GAPS = 3;
-export const JELLYFISH_TENTACLE_COUNT = 3;
-export const JELLYFISH_TENTACLE_SEGMENTS = 6;
+/**
+ * The two point primitives of the block handoff. Everything with a silhouette
+ * — the carrier rim, the released front — is geometry or shader, not texture;
+ * these only supply the compact light that sits at a single point.
+ *
+ * Both are deliberately hard-centred. Soft blobs were what made the previous
+ * carrier read as an organism drifting in, and a soft contact core cannot carry
+ * a "release" the way a small searing point can.
+ */
 
 function finish(canvas: HTMLCanvasElement): THREE.Texture {
   const tex = new THREE.CanvasTexture(canvas);
@@ -14,159 +18,65 @@ function finish(canvas: HTMLCanvasElement): THREE.Texture {
   return tex;
 }
 
-function strokeSegmentedRing(
-  ctx: CanvasRenderingContext2D,
-  cx: number,
-  cy: number,
-  radius: number,
-  color: string,
-  lineWidth: number,
-): void {
-  const gapEvery = GEOMETRIC_SHOCKWAVE_SIDES / GEOMETRIC_SHOCKWAVE_GAPS;
-  ctx.strokeStyle = color;
-  ctx.lineWidth = lineWidth;
-  for (let side = 0; side < GEOMETRIC_SHOCKWAVE_SIDES; side += 1) {
-    if (side % gapEvery === gapEvery - 1) continue;
-    const fromAngle = side / GEOMETRIC_SHOCKWAVE_SIDES * TAU;
-    const toAngle = (side + 1) / GEOMETRIC_SHOCKWAVE_SIDES * TAU;
-    ctx.beginPath();
-    ctx.moveTo(
-      cx + Math.cos(fromAngle) * radius,
-      cy + Math.sin(fromAngle) * radius,
-    );
-    ctx.lineTo(
-      cx + Math.cos(toAngle) * radius,
-      cy + Math.sin(toAngle) * radius,
-    );
-    ctx.stroke();
-  }
-}
-
 /**
- * Unmarked light membrane for the low-poly bell. Geometry owns the silhouette;
- * the texture contributes only a compact falloff, avoiding nested rings,
- * caustic decoration, or any second glyph competing with the wire canopy.
+ * Compact core light. It rides the carrier glyph in flight and becomes the
+ * searing point at contact, so one primitive covers the whole arc: a small hot
+ * centre with a fast falloff and no ring, halo band, or second glyph competing
+ * with the rim.
  */
-export function makeJellyfishBellTexture(): THREE.Texture {
+export function makeCarrierCoreTexture(): THREE.Texture {
   const size = 128;
   const canvas = document.createElement('canvas');
   canvas.width = size;
   canvas.height = size;
   const ctx = canvas.getContext('2d')!;
   const c = size / 2;
-
-  const glow = ctx.createRadialGradient(c, c - 3, 0, c, c, size / 2);
-  glow.addColorStop(0.0, 'rgba(255,255,255,0.34)');
-  glow.addColorStop(0.30, 'rgba(255,255,255,0.16)');
-  glow.addColorStop(0.68, 'rgba(255,255,255,0.045)');
-  glow.addColorStop(1.0, 'rgba(255,255,255,0.0)');
-  ctx.fillStyle = glow;
-  ctx.fillRect(0, 0, size, size);
-  return finish(canvas);
-}
-
-/** Compatibility export for the original generic carrier texture name. */
-export function makeProtocolCarrierTexture(): THREE.Texture {
-  return makeJellyfishBellTexture();
-}
-
-/** Compatibility export for the legacy tuning/API name. */
-export function makeBolusBloomTexture(): THREE.Texture {
-  return makeJellyfishBellTexture();
-}
-
-/**
- * One interrupted twelve-sided pressure crest. The three gaps echo the open
- * bell skirt and make expansion legible without adding a second concentric ring.
- */
-export function makeIngestShockwaveTexture(): THREE.Texture {
-  const size = 128;
-  const canvas = document.createElement('canvas');
-  canvas.width = size;
-  canvas.height = size;
-  const ctx = canvas.getContext('2d')!;
-  const c = size / 2;
-  ctx.globalCompositeOperation = 'lighter';
-  ctx.lineCap = 'butt';
-  ctx.lineJoin = 'miter';
 
   const glow = ctx.createRadialGradient(c, c, 0, c, c, size / 2);
-  glow.addColorStop(0.0, 'rgba(255,255,255,0.08)');
-  glow.addColorStop(0.58, 'rgba(255,255,255,0.015)');
-  glow.addColorStop(0.80, 'rgba(255,255,255,0.025)');
-  glow.addColorStop(0.92, 'rgba(255,255,255,0.04)');
+  glow.addColorStop(0.0, 'rgba(255,255,255,1.0)');
+  glow.addColorStop(0.08, 'rgba(255,255,255,0.62)');
+  glow.addColorStop(0.22, 'rgba(255,255,255,0.20)');
+  glow.addColorStop(0.52, 'rgba(255,255,255,0.05)');
   glow.addColorStop(1.0, 'rgba(255,255,255,0.0)');
   ctx.fillStyle = glow;
   ctx.fillRect(0, 0, size, size);
-
-  strokeSegmentedRing(ctx, c, c, 53, 'rgba(255,255,255,0.20)', 6.0);
-  strokeSegmentedRing(ctx, c, c, 53, 'rgba(255,255,255,0.92)', 1.8);
   return finish(canvas);
 }
 
-/** Compatibility export for the original contact-flash API name. */
-export function makeIngestFlashTexture(): THREE.Texture {
-  return makeIngestShockwaveTexture();
-}
-
 /**
- * Three angular energy filaments below the bell. Six tapered straight sections
- * per filament preserve the jellyfish reading with far less visual noise than
- * the former five continuously waving strands.
+ * Travel streak. One hard-edged tapered bar — brightest at the head, gone at
+ * the tail — rather than the three waving filaments the swimming carrier used.
+ * Canvas row 0 is the head: the renderer aligns the plane's local +Y with the
+ * travel axis and THREE's default flip maps row 0 to that end.
  */
-export function makeJellyfishWakeTexture(): THREE.Texture {
-  const width = 128;
+export function makeCarrierTrailTexture(): THREE.Texture {
+  const width = 64;
   const height = 256;
   const canvas = document.createElement('canvas');
   canvas.width = width;
   canvas.height = height;
   const ctx = canvas.getContext('2d')!;
   ctx.globalCompositeOperation = 'lighter';
-  ctx.lineCap = 'butt';
-  ctx.lineJoin = 'miter';
+  const centre = width / 2;
 
-  const rootGlow = ctx.createRadialGradient(width / 2, 13, 0, width / 2, 13, 34);
-  rootGlow.addColorStop(0, 'rgba(255,255,255,0.42)');
-  rootGlow.addColorStop(0.48, 'rgba(255,255,255,0.11)');
-  rootGlow.addColorStop(1, 'rgba(255,255,255,0)');
-  ctx.fillStyle = rootGlow;
-  ctx.fillRect(20, 0, width - 40, 54);
-
-  const roots = [-25, 0, 25] as const;
-  const lengths = [0.84, 1, 0.88] as const;
-  for (let tentacle = 0; tentacle < JELLYFISH_TENTACLE_COUNT; tentacle += 1) {
-    const root = roots[tentacle];
-    const lane = tentacle - 1;
-    const point = (step: number): [number, number] => {
-      const t = step / JELLYFISH_TENTACLE_SEGMENTS;
-      const direction = step % 2 === 0 ? 1 : -1;
-      const kink = step === 0
-        ? 0
-        : direction * (2.0 + t * 5.0) * (tentacle === 1 ? 0.62 : 1);
-      return [
-        width / 2 + root * (1 - t * 0.20) + lane * t * 5 + kink,
-        13 + t * (height - 28) * lengths[tentacle],
-      ];
-    };
-
-    for (let segment = 0; segment < JELLYFISH_TENTACLE_SEGMENTS; segment += 1) {
-      const [x0, y0] = point(segment);
-      const [x1, y1] = point(segment + 1);
-      const strength = Math.pow(1 - segment / JELLYFISH_TENTACLE_SEGMENTS, 0.72);
-      ctx.strokeStyle = `rgba(255,255,255,${
-        (tentacle === 1 ? 0.88 : 0.68) * strength
-      })`;
-      ctx.lineWidth = 0.55 + 2.1 * strength * (tentacle === 1 ? 1 : 0.82);
-      ctx.beginPath();
-      ctx.moveTo(x0, y0);
-      ctx.lineTo(x1, y1);
-      ctx.stroke();
-    }
+  // Per-row fills keep the long edges hard while the bar tapers, which a
+  // gradient cannot do without smearing the streak into a plume.
+  for (let row = 0; row < height; row += 1) {
+    const t = row / (height - 1);
+    const alpha = Math.pow(1 - t, 1.7);
+    if (alpha <= 0.003) continue;
+    const halfSpan = Math.max(0.5, centre * 0.58 * Math.pow(1 - t, 0.85));
+    ctx.fillStyle = `rgba(255,255,255,${alpha.toFixed(4)})`;
+    ctx.fillRect(centre - halfSpan, row, halfSpan * 2, 1);
   }
-  return finish(canvas);
-}
 
-/** Compatibility export for the original carrier-trail API name. */
-export function makeBolusTrailTexture(): THREE.Texture {
-  return makeJellyfishWakeTexture();
+  // A short hot cap so the streak reads as trailing a moving head, not as a
+  // free-floating bar.
+  const cap = ctx.createRadialGradient(centre, 6, 0, centre, 6, 26);
+  cap.addColorStop(0, 'rgba(255,255,255,0.85)');
+  cap.addColorStop(0.45, 'rgba(255,255,255,0.22)');
+  cap.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = cap;
+  ctx.fillRect(0, 0, width, 40);
+  return finish(canvas);
 }
