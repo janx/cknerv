@@ -227,6 +227,24 @@ describe('createNeighborGraphWorkerSession (stateful increments)', () => {
     }
     expect(adopted).toBeGreaterThan(0);
 
+    // Edge records: value-identical to the probing path, and every
+    // positionally-unchanged record keeps its previous object identity
+    // (the hinted path shares the probing path's reuse loop instead of
+    // paying for a throwaway adjacency rebuild).
+    expect(viaHints.edges).toEqual(viaProbe.edges);
+    viaHints.edges.forEach((edge, i) => {
+      const prev = firstGraph.edges[i];
+      if (
+        prev !== undefined
+        && prev.from === edge.from
+        && prev.to === edge.to
+        && prev.d === edge.d
+        && prev.w === edge.w
+      ) {
+        expect(edge).toBe(prev);
+      }
+    });
+
     // Passive delta oracle: previous selection + delta === new selection.
     const before = new Set(
       deserializeNeighborGraph(first.passiveGraph!).edges.map(

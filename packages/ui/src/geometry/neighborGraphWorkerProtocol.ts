@@ -234,13 +234,55 @@ function reusableNeighbourSet(
  * returned graph is a new object and the previous one must be discarded by
  * the caller (they may now share Set instances).
  */
+/** Positional edge-record value-reuse of the probing path, shared by the
+ *  full deserializer and the hint-guided one — the hinted path must not pay
+ *  for a throwaway adjacency (a fresh Set per node, discarded by the caller)
+ *  just to keep previous edge object identities. */
+function reuseEdgeRecords(
+  previousEdges: readonly NeighborEdge[] | null,
+  serialized: SerializedNeighborGraph,
+): NeighborEdge[] {
+  if (serialized.edges.length % PACKED_TOPOLOGY_EDGE_STRIDE !== 0) {
+    throw new Error('invalid packed topology edge buffer');
+  }
+  const edges: NeighborEdge[] = [];
+  let edgeIndex = 0;
+  for (
+    let offset = 0;
+    offset < serialized.edges.length;
+    offset += PACKED_TOPOLOGY_EDGE_STRIDE
+  ) {
+    const from = serialized.edges[offset];
+    const to = serialized.edges[offset + 1];
+    const d = serialized.edges[offset + 2];
+    const weight = serialized.edges[offset + 3];
+    const hasWeight = !Number.isNaN(weight);
+    const candidate = previousEdges !== null && edgeIndex < previousEdges.length
+      ? previousEdges[edgeIndex]
+      : undefined;
+    if (
+      candidate !== undefined
+      && candidate.from === from
+      && candidate.to === to
+      && candidate.d === d
+      && (hasWeight ? candidate.w === weight : candidate.w === undefined)
+    ) {
+      edges.push(candidate);
+    } else {
+      const edge: NeighborEdge = { from, to, d };
+      if (hasWeight) edge.w = weight;
+      edges.push(edge);
+    }
+    edgeIndex += 1;
+  }
+  return edges;
+}
+
 export function deserializeNeighborGraphInto(
   previous: NeighborGraph | null,
   serialized: SerializedNeighborGraph,
 ): NeighborGraph {
-  if (serialized.edges.length % PACKED_TOPOLOGY_EDGE_STRIDE !== 0) {
-    throw new Error('invalid packed topology edge buffer');
-  }
+  const edges = reuseEdgeRecords(previous?.edges ?? null, serialized);
   if (
     serialized.adjacencyOffsets.length !== serialized.nodeIds.length + 1
     || serialized.adjacencyOffsets.at(-1) !== serialized.adjacentNodeIds.length
@@ -275,37 +317,6 @@ export function deserializeNeighborGraphInto(
     adjacency.set(nodeId, neighbours);
   }
 
-  const previousEdges = previous?.edges ?? null;
-  const edges: NeighborEdge[] = [];
-  let edgeIndex = 0;
-  for (
-    let offset = 0;
-    offset < serialized.edges.length;
-    offset += PACKED_TOPOLOGY_EDGE_STRIDE
-  ) {
-    const from = serialized.edges[offset];
-    const to = serialized.edges[offset + 1];
-    const d = serialized.edges[offset + 2];
-    const weight = serialized.edges[offset + 3];
-    const hasWeight = !Number.isNaN(weight);
-    const candidate = previousEdges !== null && edgeIndex < previousEdges.length
-      ? previousEdges[edgeIndex]
-      : undefined;
-    if (
-      candidate !== undefined
-      && candidate.from === from
-      && candidate.to === to
-      && candidate.d === d
-      && (hasWeight ? candidate.w === weight : candidate.w === undefined)
-    ) {
-      edges.push(candidate);
-    } else {
-      const edge: NeighborEdge = { from, to, d };
-      if (hasWeight) edge.w = weight;
-      edges.push(edge);
-    }
-    edgeIndex += 1;
-  }
   return { adjacency, edges };
 }
 
@@ -548,10 +559,7 @@ export function deserializeNeighborGraphWithHints(
     }
     adjacency.set(nodeId, neighbours);
   }
-  // Edge records keep the positional value-reuse of the probing path.
-  const edgesOnly = deserializeNeighborGraphInto(
-    previous === null ? null : { adjacency: new Map(), edges: previous.edges },
-    serialized,
-  );
-  return { adjacency, edges: edgesOnly.edges };
+  // Edge records keep the positional value-reuse of the probing path,
+  // without paying for that path's adjacency rebuild.
+  return { adjacency, edges: reuseEdgeRecords(previous.edges, serialized) };
 }
