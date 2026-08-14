@@ -20,6 +20,8 @@ import {
   formatDataSize,
   formatLockKind,
   formatAssetKind,
+  formatScriptIdentity,
+  scriptIdentityColor,
   LOCK_COLORS,
   ASSET_COLORS,
 } from './cellFormat';
@@ -372,13 +374,13 @@ export default function CellDetailPanel({
     capacity: { label: 'CAPACITY', value: formatCkb(cell.capacity) },
     asset: {
       label: 'ASSET',
-      value: formatAssetKind(cell.asset_kind),
-      color: cell.asset_kind ? ASSET_COLORS[cell.asset_kind] : HUD_COLORS.dim,
+      value: formatScriptIdentity(formatAssetKind(cell.asset_kind), semanticRecord?.type_script),
+      color: scriptIdentityColor(cell.asset_kind, ASSET_COLORS, semanticRecord?.type_script),
     },
     lock: {
       label: 'LOCK',
-      value: formatLockKind(cell.lock_kind),
-      color: cell.lock_kind ? LOCK_COLORS[cell.lock_kind] : HUD_COLORS.dim,
+      value: formatScriptIdentity(formatLockKind(cell.lock_kind), semanticRecord?.lock_script),
+      color: scriptIdentityColor(cell.lock_kind, LOCK_COLORS, semanticRecord?.lock_script),
     },
     data: {
       label: 'DATA',

@@ -77,27 +77,66 @@ export function formatSemanticAssetAmount(
   }
 }
 
+/** Nothing named this script. Deliberately not "custom": an unrecognized
+ *  script is one we cannot name, which is a different claim from one nobody
+ *  else can either. */
+const UNLISTED = 'UNLISTED';
+/** The cell carries no taxonomy at all (persisted before it existed). */
+const UNKNOWN = 'UNKNOWN';
+
+// The scripts cknerv can name from the node alone, spelled exactly as the
+// script index spells them, so an enriched and a CKB-only dashboard say the
+// same word about the same script. This is NOT a catalogue of the ecosystem's
+// scripts — naming those is the index's job (`SemanticScript.name`), and the
+// families below are only the ones whose code hashes cknerv itself pins.
 const LOCK_LABEL: Record<string, string> = {
-  sighash: 'Sighash',
-  multisig: 'Multisig',
-  acp: 'Anyone Can Pay',
-  omnilock: 'Omnilock',
-  other: 'Custom lock',
+  sighash: 'Default Lock',
+  multisig: 'Default Multisig',
+  acp: 'Anyone-Can-Pay Lock',
+  omnilock: 'OMNI Lock',
+  other: UNLISTED,
 };
 const ASSET_LABEL: Record<string, string> = {
   native: 'Native CKB',
-  sudt: 'sUDT',
+  sudt: 'Simple UDT',
   xudt: 'xUDT',
   dao: 'Nervos DAO',
   spore: 'Spore',
-  other: 'Custom type',
+  other: UNLISTED,
 };
 
 export function formatLockKind(k: Cell['lock_kind']): string {
-  return k ? (LOCK_LABEL[k] ?? k) : 'Unknown';
+  return k ? (LOCK_LABEL[k] ?? k) : UNKNOWN;
 }
 export function formatAssetKind(k: Cell['asset_kind']): string {
-  return k ? (ASSET_LABEL[k] ?? k) : 'Unknown';
+  return k ? (ASSET_LABEL[k] ?? k) : UNKNOWN;
+}
+
+/** One identity for a cell's lock/type script, in priority order:
+ *  the index's own family name, then the built-in table above, then an
+ *  honest unlisted marker carrying the code hash we could not resolve.
+ *
+ *  The index knows ~66 script families; the built-in table knows 4. Whenever
+ *  both have an opinion they agree, so this reads as one vocabulary that
+ *  simply covers more ground when the index is reachable. */
+export function formatScriptIdentity(
+  builtin: string,
+  script?: { name?: string; code_hash?: string } | null,
+): string {
+  const indexed = script?.name?.trim();
+  if (indexed) return indexed;
+  if (builtin !== UNLISTED && builtin !== UNKNOWN) return builtin;
+  const codeHash = script?.code_hash;
+  return codeHash ? `${UNLISTED} · ${midTruncate(codeHash, 6, 3)}` : builtin;
+}
+
+/** True once something actually named the script, so callers can stop
+ *  rendering it in the unrecognized-family colour. */
+export function isScriptNamed(
+  kind: Cell['lock_kind'] | Cell['asset_kind'],
+  script?: { name?: string } | null,
+): boolean {
+  return Boolean(script?.name?.trim()) || (Boolean(kind) && kind !== 'other');
 }
 
 // Shared lock/asset family palette — the SINGLE source used by BOTH the CELLS
@@ -111,3 +150,17 @@ export const ASSET_COLORS: Record<string, string> = {
   native: HUD_COLORS.cyanWire, sudt: HUD_COLORS.orange, xudt: '#ffb84d',
   dao: HUD_COLORS.caution, spore: '#9d7bd8', other: '#33424f',
 };
+
+/** Palette colour for a script identity. A script the index named is a known
+ *  script even when cknerv's own table could not place it, so it drops the
+ *  near-black unrecognized-family swatch for plain ink — present, but
+ *  claiming no family colour it has not earned. */
+export function scriptIdentityColor(
+  kind: Cell['lock_kind'] | Cell['asset_kind'],
+  palette: Record<string, string>,
+  script?: { name?: string } | null,
+): string {
+  if (!kind) return HUD_COLORS.dim;
+  if (kind === 'other' && isScriptNamed(kind, script)) return HUD_COLORS.ink;
+  return palette[kind] ?? HUD_COLORS.dim;
+}

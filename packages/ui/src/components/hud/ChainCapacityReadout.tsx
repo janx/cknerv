@@ -67,7 +67,7 @@ function GalaxyWindow({ stats }: { stats: CellsStats }) {
           { key: 'other', label: '?', color: ASSET_COLORS.other, count: stats.byAsset.other },
         ]} />
         <TaxonomyBar title="WINDOW LOCKS" buckets={[
-          { key: 'sighash', label: 'sighash', color: LOCK_COLORS.sighash, count: stats.byLock.sighash },
+          { key: 'sighash', label: 'default', color: LOCK_COLORS.sighash, count: stats.byLock.sighash },
           { key: 'multisig', label: 'multisig', color: LOCK_COLORS.multisig, count: stats.byLock.multisig },
           { key: 'acp', label: 'ACP', color: LOCK_COLORS.acp, count: stats.byLock.acp },
           { key: 'omnilock', label: 'omni', color: LOCK_COLORS.omnilock, count: stats.byLock.omnilock },

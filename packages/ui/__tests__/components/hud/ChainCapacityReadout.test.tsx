@@ -59,7 +59,7 @@ describe('ChainCapacityReadout', () => {
     expect(text).toContain('1.21 GB');
     expect(text).toContain('WINDOW ASSETS');
     expect(text).toContain('WINDOW LOCKS');
-    expect(text).toContain('sighash');
+    expect(text).toContain('default');
     expect(text).not.toContain('CHAIN CAPACITY');
     expect(container.querySelector('[data-cell-capacity-mode="retained"]')).not.toBeNull();
   });

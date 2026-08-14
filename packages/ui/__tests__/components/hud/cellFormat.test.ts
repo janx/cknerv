@@ -2,8 +2,10 @@ import { describe, it, expect } from 'vitest';
 import {
   formatCkb, midTruncate, formatOutpoint, formatDataHex, formatCellKind,
   formatAge, formatBlockRef, formatDataSize, formatLockKind, formatAssetKind,
+  formatScriptIdentity, scriptIdentityColor,
   LOCK_COLORS, ASSET_COLORS,
 } from '../../../src/components/hud/cellFormat';
+import { HUD_COLORS } from '../../../src/components/hud/hudTheme';
 
 describe('cellFormat — moved formatters', () => {
   it('formatCkb converts shannons to CKB', () => {
@@ -44,14 +46,48 @@ describe('cellFormat — new helpers', () => {
     expect(formatDataSize('0xdeadbeef')).toBe('4 B');
     expect(formatDataSize('0xdeadbeef…')).toBe('4 B+'); // upstream-truncated
   });
-  it('formatLockKind / formatAssetKind label families with fallbacks', () => {
-    expect(formatLockKind('omnilock')).toBe('Omnilock');
-    expect(formatLockKind('acp')).toBe('Anyone Can Pay');
-    expect(formatLockKind(undefined)).toBe('Unknown');
+  it('formatLockKind / formatAssetKind label families the way the index does', () => {
+    // The built-in table spells its families exactly as the script index
+    // spells them, so the two naming paths never disagree about one script.
+    expect(formatLockKind('sighash')).toBe('Default Lock');
+    expect(formatLockKind('multisig')).toBe('Default Multisig');
+    expect(formatLockKind('omnilock')).toBe('OMNI Lock');
+    expect(formatLockKind('acp')).toBe('Anyone-Can-Pay Lock');
+    // Unrecognized is reported as unlisted, never asserted to be "custom".
+    expect(formatLockKind('other')).toBe('UNLISTED');
+    expect(formatLockKind(undefined)).toBe('UNKNOWN');
     expect(formatAssetKind('xudt')).toBe('xUDT');
+    expect(formatAssetKind('sudt')).toBe('Simple UDT');
     expect(formatAssetKind('native')).toBe('Native CKB');
     expect(formatAssetKind('dao')).toBe('Nervos DAO');
-    expect(formatAssetKind(undefined)).toBe('Unknown');
+    expect(formatAssetKind('other')).toBe('UNLISTED');
+    expect(formatAssetKind(undefined)).toBe('UNKNOWN');
+  });
+  it('formatScriptIdentity prefers the index name over the built-in table', () => {
+    const joyid = { name: 'JoyID', code_hash: `0x${'ab'.repeat(32)}` };
+    // A family cknerv cannot place but the index can.
+    expect(formatScriptIdentity(formatLockKind('other'), joyid)).toBe('JoyID');
+    // The index and the built-in table agreeing is the ordinary case.
+    expect(formatScriptIdentity(formatLockKind('sighash'), { name: 'Default Lock' }))
+      .toBe('Default Lock');
+    // Index unreachable: the built-in table still names the protocol's own.
+    expect(formatScriptIdentity(formatLockKind('sighash'), null)).toBe('Default Lock');
+    // Nobody named it, but we know which script it is.
+    expect(formatScriptIdentity(formatLockKind('other'), { code_hash: `0x${'7f'.repeat(32)}` }))
+      .toBe('UNLISTED · 0x7f7f…f7f');
+    // Nobody named it and we do not even hold its code hash.
+    expect(formatScriptIdentity(formatLockKind('other'), null)).toBe('UNLISTED');
+    expect(formatScriptIdentity(formatLockKind(undefined), null)).toBe('UNKNOWN');
+    // A blank name is not a name.
+    expect(formatScriptIdentity(formatLockKind('other'), { name: '  ' })).toBe('UNLISTED');
+  });
+  it('scriptIdentityColor stops greying out scripts the index named', () => {
+    expect(scriptIdentityColor('sighash', LOCK_COLORS, null)).toBe(LOCK_COLORS.sighash);
+    // Unrecognized and unnamed keeps the near-black unrecognized swatch.
+    expect(scriptIdentityColor('other', LOCK_COLORS, null)).toBe(LOCK_COLORS.other);
+    // Named by the index: present, but claiming no family colour.
+    expect(scriptIdentityColor('other', LOCK_COLORS, { name: 'JoyID' })).toBe(HUD_COLORS.ink);
+    expect(scriptIdentityColor(undefined, LOCK_COLORS, null)).toBe(HUD_COLORS.dim);
   });
   it('color maps cover every family key', () => {
     for (const k of ['sighash','multisig','acp','omnilock','other']) expect(LOCK_COLORS[k]).toMatch(/^#/);

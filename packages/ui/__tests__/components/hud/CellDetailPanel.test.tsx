@@ -128,7 +128,7 @@ describe('CellDetailPanel', () => {
     const t = container.textContent ?? '';
     expect(t).toContain('CELL');
     expect(t).not.toContain('共识细胞');   // Cell detail titles stay English-only
-    expect(t).toContain('Omnilock');       // LOCK
+    expect(t).toContain('OMNI Lock');       // LOCK
     expect(t).toContain('xUDT');           // ASSET
     expect(t).toContain('123.00 CKB');     // CAPACITY
     expect(t).toContain('LIVE');           // STATE
@@ -228,7 +228,7 @@ describe('CellDetailPanel', () => {
 
     const text = container.textContent ?? '';
     expect(text).toContain('Native CKB');
-    expect(text).toContain('Sighash');
+    expect(text).toContain('Default Lock');
     expect(text).toContain('Empty');
     // A validly-empty output collapses to one line instead of a negatives
     // stack (∅ box + byte count + decode fallbacks).
@@ -238,6 +238,56 @@ describe('CellDetailPanel', () => {
     expect(container.querySelector('[data-cell-content-empty="true"]')).not.toBeNull();
     expect(container.querySelector('[data-cell-content-bytes="true"]')).toBeNull();
     expect(text).not.toMatch(/ƒ\d|\d+ paths|\d+ knots|\d\.\d{2}×/);
+  });
+
+  it('names a script the index knows and cknerv does not, instead of calling it custom', () => {
+    // A JoyID cell: cknerv's own table cannot place either script, so on the
+    // base path both rows would read UNLISTED. The index names both, and the
+    // LOCK row must agree with the INDEX LAYER's own LOCK SCRIPT line rather
+    // than telling the viewer two different things about one cell.
+    const unplaceable = { ...base, lock_kind: 'other' as const, asset_kind: 'other' as const };
+    const script = (name: string, codeHash: string) => ({
+      script_hash: `0x${'cd'.repeat(32)}`,
+      code_hash: codeHash,
+      hash_type: 'type',
+      args: '0x1234',
+      name,
+      family: 'lock',
+      deprecated: false,
+    });
+    const { container, rerender } = render(
+      <CellDetailPanel cell={unplaceable} onClose={() => {}} />,
+    );
+    expect(container.textContent).toContain('UNLISTED');
+    expect(container.textContent).not.toContain('Custom lock');
+
+    rerender(
+      <CellDetailPanel
+        cell={unplaceable}
+        onClose={() => {}}
+        semanticSource={{
+          source: 'ckbadger',
+          status: 'ready',
+          capabilities: ['cell_detail'],
+          lag_blocks: 1,
+        }}
+        semanticPhase="ready"
+        semanticRecord={{
+          out_point: unplaceable.out_point,
+          source: 'ckbadger',
+          as_of: { block: unplaceable.birth_block, hash: '0xanchor' },
+          observed_at_block: unplaceable.birth_block,
+          updated_at_ms: 1,
+          lock_script: script('JoyID', `0x${'7f'.repeat(32)}`),
+          type_script: script('.bit Income Cell', `0x${'3a'.repeat(32)}`),
+          facets: [],
+        }}
+      />,
+    );
+    const text = container.textContent ?? '';
+    expect(text).toContain('JoyID');
+    expect(text).toContain('.bit Income Cell');
+    expect(text).not.toContain('UNLISTED');
   });
 
   it('keeps every retained direct byte inspectable through bounded windows', () => {
@@ -701,7 +751,7 @@ describe('CellDetailPanel', () => {
     expect(t).toContain('CELL IDENTITY');
     expect(t).toContain('LOCKED · A-LATTICE 6/6');
     expect(t).not.toContain('1111111111111111 · 1111111111');
-    expect(t).toContain('Omnilock');                              // decoded rows still present
+    expect(t).toContain('OMNI Lock');                              // decoded rows still present
     expect(t).toContain('11 B');
     expect((container.firstElementChild as HTMLElement).style.animation).toBe('');
   });
@@ -1731,9 +1781,9 @@ describe('CellDetailPanel', () => {
     const bare = { ...base, lock_kind: undefined, asset_kind: undefined };
     const { container } = render(<CellDetailPanel cell={bare} onClose={() => {}} />);
     expect(container.querySelector('[data-cell-detail-field="asset"]')
-      ?.textContent).toBe('ASSETUnknown');
+      ?.textContent).toBe('ASSETUNKNOWN');
     expect(container.querySelector('[data-cell-detail-field="lock"]')
-      ?.textContent).toBe('LOCKUnknown');
+      ?.textContent).toBe('LOCKUNKNOWN');
   });
 
   it('close button fires onClose', () => {
