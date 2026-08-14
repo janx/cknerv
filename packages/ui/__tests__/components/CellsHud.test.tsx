@@ -1,3 +1,4 @@
+import { emptyScriptCensus } from '@cknerv/cache';
 import { describe, expect, it, vi } from 'vitest';
 import { render } from '@testing-library/react';
 
@@ -21,6 +22,7 @@ const stats: CellsStats = {
   dataBearing: 0,
   byLock: { sighash: 0, multisig: 0, acp: 0, omnilock: 0, other: 0 },
   byAsset: { native: 0, sudt: 0, xudt: 0, dao: 0, spore: 0, other: 0 },
+  scripts: emptyScriptCensus(),
 };
 
 describe('CellsHud', () => {

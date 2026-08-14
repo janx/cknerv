@@ -173,6 +173,34 @@ describe('wire-shape parity (TS twin of cknerv-core)', () => {
     expect(sample.display?.provenance.source).toBe('ckbadger');
     expect(sample.display?.provenance.as_of?.block).toBe(1);
     expect(typeof sample.display?.provenance.updated_at_ms).toBe('number');
+
+    // Script identity travels with the cell, unclassified: `lock_kind` is
+    // cknerv's coarse reading, `lock_script` is which script is actually
+    // there. Both cells run the protocol's default lock; only one is typed,
+    // and mainnet xUDT is `data1` — the hash type is part of the identity.
+    const [plain, typed] = sample.cells;
+    expect(plain.lock_script?.hash_type).toBe('type');
+    expect(plain.type_script).toBeUndefined();
+    expect(typed.lock_script?.code_hash).toBe(plain.lock_script?.code_hash);
+    expect(typed.type_script?.hash_type).toBe('data1');
+    // A staged resident under a lock cknerv does not pin at all: its
+    // identity is readable even though no `lock_kind` names it.
+    const resident = sample.display?.residents[0];
+    expect(resident?.lock_script?.code_hash).not.toBe(plain.lock_script?.code_hash);
+
+    // The census counts the same alive set by identity. It is ranked and
+    // cut, so the tail counters are what keep a truncated head honest.
+    const census = sample.stats?.scripts;
+    expect(census?.locks).toEqual([
+      { script: plain.lock_script, count: 2 },
+    ]);
+    expect(census?.types).toEqual([
+      { script: typed.type_script, count: 1 },
+    ]);
+    expect(census?.types_absent).toBe(1);
+    expect(census?.locks_tail_cells).toBe(0);
+    expect(census?.locks_tail_scripts).toBe(0);
+    expect(census?.unidentified).toBe(0);
   });
 
   it('enrichment_samples.json mirrors optional semantics shapes', () => {

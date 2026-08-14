@@ -1,3 +1,4 @@
+import { emptyScriptCensus } from '@cknerv/cache';
 import { cleanup, render } from '@testing-library/react';
 import { afterEach, describe, it, expect } from 'vitest';
 import type {
@@ -31,6 +32,7 @@ const cellsStats: CellsStats = {
   dataBearing: 1_545,
   byLock: { sighash: 3_200, multisig: 1_100, acp: 450, omnilock: 0, other: 233 },
   byAsset: { native: 3_500, sudt: 900, xudt: 350, dao: 200, spore: 33, other: 0 },
+  scripts: emptyScriptCensus(),
 };
 
 const source: EnrichmentSourceStatus = {

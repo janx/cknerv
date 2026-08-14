@@ -582,6 +582,8 @@ mod tests {
             content_hash: format!("0x{}", "00".repeat(32)),
             lock_kind: Default::default(),
             asset_kind: Default::default(),
+            lock_script: Default::default(),
+            type_script: None,
         }
     }
 
@@ -602,6 +604,8 @@ mod tests {
             content_hash: format!("0x{:064x}", id + 1),
             lock_kind: Default::default(),
             asset_kind: Default::default(),
+            lock_script: Default::default(),
+            type_script: None,
         }
     }
 

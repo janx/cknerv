@@ -11,6 +11,7 @@ import type {
   CellKindKey,
   CellViewStats,
   LockKind,
+  ScriptCensus,
 } from '@cknerv/types';
 
 /** Re-exported from `@cknerv/types`, where it moved once the SERVER took
@@ -48,6 +49,30 @@ export interface CellsStats {
   /** Asset/type-script-family breakdown of in-view alive cells. Galaxy-view
    *  sample like `byLock`; cells lacking `asset_kind` bucket into `other`. */
   byAsset: Record<AssetKind, number>;
+  /** The same alive set counted by script identity rather than by the four
+   *  lock families and five asset families cknerv pins itself.
+   *
+   *  Adopted wholesale from the backend and never maintained here: the cache
+   *  holds the staged subset, so counting it locally would report the stage
+   *  as if it were the galaxy. It refreshes on snapshots and on the backend's
+   *  own block-cadence `script_census` delta. */
+  scripts: ScriptCensus;
+}
+
+/** A census with nothing in it — the shape the panel gets before the backend
+ *  has sent one, and the only honest local answer to a question only the
+ *  backend can count. */
+export function emptyScriptCensus(): ScriptCensus {
+  return {
+    locks: [],
+    locks_tail_cells: 0,
+    locks_tail_scripts: 0,
+    types: [],
+    types_tail_cells: 0,
+    types_tail_scripts: 0,
+    types_absent: 0,
+    unidentified: 0,
+  };
 }
 
 /** Bucket an opaque tag string into the exhaustive four-known-keys union. */
@@ -68,6 +93,7 @@ export function emptyCellsStats(totalBirths = 0, totalDeaths = 0): CellsStats {
     dataBearing: 0,
     byLock: { sighash: 0, multisig: 0, acp: 0, omnilock: 0, other: 0 },
     byAsset: { native: 0, sudt: 0, xudt: 0, dao: 0, spore: 0, other: 0 },
+    scripts: emptyScriptCensus(),
   };
 }
 
@@ -83,6 +109,9 @@ export function cloneCellsStats(stats: CellsStats): CellsStats {
     dataBearing: stats.dataBearing,
     byLock: { ...stats.byLock },
     byAsset: { ...stats.byAsset },
+    // Shared by reference: the census is replaced wholesale by the backend,
+    // never edited in place, so a draft can point at the same record.
+    scripts: stats.scripts,
   };
 }
 
@@ -146,6 +175,8 @@ export function adoptCellViewStats(
     dataBearing: stats.data_bearing,
     byLock: { ...stats.by_lock },
     byAsset: { ...stats.by_asset },
+    // Absent from snapshots produced before the census existed.
+    scripts: stats.scripts ?? emptyScriptCensus(),
   };
 }
 

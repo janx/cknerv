@@ -233,6 +233,8 @@ pub(crate) fn parse_output_info(
     let type_: Option<packed::Script> = type_json.map(Into::into);
     let lock_kind = crate::script_taxonomy::classify_lock(&lock);
     let asset_kind = crate::script_taxonomy::classify_asset(type_.as_ref());
+    let lock_script = crate::script_taxonomy::script_id(&lock);
+    let type_script = type_.as_ref().map(crate::script_taxonomy::script_id);
     let cell_output = packed::CellOutput::new_builder()
         .capacity(capacity)
         .lock(lock)
@@ -245,6 +247,8 @@ pub(crate) fn parse_output_info(
         content_hash: compute_content_hash(&cell_output, &raw_data_bytes),
         lock_kind,
         asset_kind,
+        lock_script,
+        type_script,
     })
 }
 

@@ -5,11 +5,30 @@
 //! Match on the (code_hash, hash_type) pair — xUDT mainnet is data1, testnet type.
 
 use ckb_types::packed;
-use cknerv_core::{AssetKind, LockKind};
+use cknerv_core::{AssetKind, HashType, LockKind, ScriptId};
 
 // hash_type discriminants
 const TYPE: u8 = 1;
 const DATA1: u8 = 2;
+const DATA2: u8 = 4;
+
+/// The script's identity, carried through unclassified. Everything below this
+/// line recognizes a handful of families; this recognizes nothing and is
+/// therefore complete — which is what lets a script cknerv has never heard of
+/// still be counted, and later named by an index.
+pub fn script_id(script: &packed::Script) -> ScriptId {
+    let mut code_hash = [0u8; 32];
+    code_hash.copy_from_slice(&script.code_hash().raw_data());
+    ScriptId {
+        code_hash,
+        hash_type: match u8::from(script.hash_type()) {
+            TYPE => HashType::Type,
+            DATA1 => HashType::Data1,
+            DATA2 => HashType::Data2,
+            _ => HashType::Data,
+        },
+    }
+}
 
 /// Classify a lock script. Unknown → `Other`.
 pub fn classify_lock(lock: &packed::Script) -> LockKind {

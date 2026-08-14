@@ -57,6 +57,7 @@ export {
   cellKindKey,
   cloneCellsStats,
   emptyCellsStats,
+  emptyScriptCensus,
   type CellKindKey,
   type CellsStats,
 } from './cellsStats';

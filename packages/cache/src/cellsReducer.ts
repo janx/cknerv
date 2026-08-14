@@ -14,6 +14,7 @@ import type {
   DisplayProvenance,
   ReplayPhase,
   RevisionedCellDelta,
+  ScriptId,
 } from '@cknerv/types';
 import {
   adjustCellsStats,
@@ -296,7 +297,17 @@ export function cellContentEquals(a: Cell, b: Cell): boolean {
     && a.content_hash === b.content_hash
     && a.lock_kind === b.lock_kind
     && a.asset_kind === b.asset_kind
+    && scriptIdEquals(a.lock_script, b.lock_script)
+    && scriptIdEquals(a.type_script, b.type_script)
   );
+}
+
+/** Script identity is a two-field record on the wire; a cell whose lock or
+ *  type script changed is a different cell, so both fields count. */
+function scriptIdEquals(a: ScriptId | undefined, b: ScriptId | undefined): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return a.code_hash === b.code_hash && a.hash_type === b.hash_type;
 }
 
 /** Compile-time completeness anchor for `cellContentEquals`: one entry per
@@ -317,6 +328,8 @@ const comparedCellFields = {
   content_hash: true,
   lock_kind: true,
   asset_kind: true,
+  lock_script: true,
+  type_script: true,
 } as const satisfies Record<keyof Cell, true>;
 void comparedCellFields;
 
@@ -706,6 +719,13 @@ function mutateCellDelta(
     case 'stats': {
       c.totalBirths = d.total_births;
       c.totalDeaths = d.total_deaths;
+      return true;
+    }
+    case 'script_census': {
+      // Adopted verbatim. The backend counted the whole retained set; this
+      // cache holds the staged subset, so there is nothing here to reconcile
+      // it against and nothing it could be recomputed from.
+      c.stats = { ...c.stats, scripts: d.census };
       return true;
     }
     case 'link_prune': {

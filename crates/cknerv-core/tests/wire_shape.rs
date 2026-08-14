@@ -109,6 +109,8 @@ fn cell_delta_samples_match_serialized_shape() {
                 .to_string(),
             lock_kind: LockKind::Acp,
             asset_kind: AssetKind::Xudt,
+            lock_script: Default::default(),
+            type_script: None,
         }],
         exit_ids: vec![2],
         provenance: Some(DisplayProvenance {

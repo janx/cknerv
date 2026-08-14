@@ -49,4 +49,4 @@ pub use projection::cells::{
 pub use projection::composition_policy::{CompositionDemand, CompositionDemandSink};
 pub use projection::Projection;
 pub use ring::Ring;
-pub use taxonomy::{AssetKind, LockKind};
+pub use taxonomy::{AssetKind, HashType, LockKind, ScriptId};

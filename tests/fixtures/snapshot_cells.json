@@ -19,7 +19,11 @@
       "data_hex": "0x",
       "content_hash": "0x0000000000000000000000000000000000000000000000000000000000000000",
       "lock_kind": "sighash",
-      "asset_kind": "native"
+      "asset_kind": "native",
+      "lock_script": {
+        "code_hash": "0x9bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce8",
+        "hash_type": "type"
+      }
     },
     {
       "id": 2,
@@ -40,7 +44,15 @@
       "data_hex": "0xdeadbeef",
       "content_hash": "0x1111111111111111111111111111111111111111111111111111111111111111",
       "lock_kind": "sighash",
-      "asset_kind": "sudt"
+      "asset_kind": "sudt",
+      "lock_script": {
+        "code_hash": "0x9bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce8",
+        "hash_type": "type"
+      },
+      "type_script": {
+        "code_hash": "0x50bd8d6680b8b9cf98b73f3c08faf8b2a21914311954118ad6609be6e78a1b95",
+        "hash_type": "data1"
+      }
     }
   ],
   "last_pulse_at_ms": 1500,
@@ -105,6 +117,32 @@
       "dao": 0,
       "spore": 0,
       "other": 0
+    },
+    "scripts": {
+      "locks": [
+        {
+          "script": {
+            "code_hash": "0x9bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce8",
+            "hash_type": "type"
+          },
+          "count": 2
+        }
+      ],
+      "locks_tail_cells": 0,
+      "locks_tail_scripts": 0,
+      "types": [
+        {
+          "script": {
+            "code_hash": "0x50bd8d6680b8b9cf98b73f3c08faf8b2a21914311954118ad6609be6e78a1b95",
+            "hash_type": "data1"
+          },
+          "count": 1
+        }
+      ],
+      "types_tail_cells": 0,
+      "types_tail_scripts": 0,
+      "types_absent": 1,
+      "unidentified": 0
     }
   },
   "display": {
@@ -137,7 +175,11 @@
         "data_hex": "0x",
         "content_hash": "0x2222222222222222222222222222222222222222222222222222222222222222",
         "lock_kind": "acp",
-        "asset_kind": "xudt"
+        "asset_kind": "xudt",
+        "lock_script": {
+          "code_hash": "0xd00c84f0ec8fd441c38bc3f87a371f547190f2fcff88e642bc5bf54b9e018215",
+          "hash_type": "type"
+        }
       }
     ],
     "provenance": {

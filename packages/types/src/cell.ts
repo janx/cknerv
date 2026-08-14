@@ -22,6 +22,19 @@ export type LockKind = 'sighash' | 'multisig' | 'acp' | 'omnilock' | 'other';
  *  `#[serde(rename_all = "snake_case")]` `AssetKind` enum. */
 export type AssetKind = 'native' | 'sudt' | 'xudt' | 'dao' | 'spore' | 'other';
 
+/** How a script's `code_hash` is matched. Part of the identity: the same 32
+ *  bytes under a different hash type is a different script. */
+export type HashType = 'data' | 'type' | 'data1' | 'data2';
+
+/** One script's identity, carried from the node unclassified. `LockKind` and
+ *  `AssetKind` above are cknerv's own coarse reading of a handful of pinned
+ *  code hashes; this is which script is actually there, which is what the
+ *  script census counts and what an index can turn into a name. */
+export interface ScriptId {
+  code_hash: string;
+  hash_type: HashType;
+}
+
 /** Per-app bucket keys. `Cell.tag` is an opaque string; only these four
  *  bucket by name and everything else — untagged included — is `generic`.
  *  Pinned here because the SERVER now does the bucketing: the wire's
@@ -59,6 +72,11 @@ export interface Cell {
   /** Asset/type-script family. Optional: old persisted state may lack
    *  it (mirrors Rust `#[serde(default)]`). */
   asset_kind?: AssetKind;
+  /** Which lock script guards this cell. Omitted from the wire while unset,
+   *  which is what a cell restored from pre-identity state carries. */
+  lock_script?: ScriptId;
+  /** Which type script it carries; absent on a plain cell. */
+  type_script?: ScriptId;
 }
 
 /**
@@ -141,6 +159,36 @@ export interface CellViewStats {
   by_kind: Record<CellKindKey, number>;
   by_lock: Record<LockKind, number>;
   by_asset: Record<AssetKind, number>;
+  /** Absent from snapshots produced before the census existed. */
+  scripts?: ScriptCensus;
+}
+
+/** One script's share of the retained set. `script` is the identity and
+ *  nothing more — the name belongs to the semantics stream's registry, which
+ *  the UI joins in. */
+export interface ScriptCount {
+  script: ScriptId;
+  count: number;
+}
+
+/** The retained set counted by script identity instead of by the four lock
+ *  families and five asset families cknerv pins itself. Mirrors the Rust
+ *  `ScriptCensus`; ranked most-cells-first and cut at 24 entries per role,
+ *  with the tail counters carrying whatever the cut dropped so a panel can
+ *  say "and N more" instead of showing a head as if it were the whole. */
+export interface ScriptCensus {
+  locks: ScriptCount[];
+  locks_tail_cells: number;
+  locks_tail_scripts: number;
+  /** Plain cells appear in neither `types` nor its tail — see `types_absent`. */
+  types: ScriptCount[];
+  types_tail_cells: number;
+  types_tail_scripts: number;
+  /** Alive cells carrying no type script at all. */
+  types_absent: number;
+  /** Alive cells whose identity is unreadable, kept out of the ranked lists
+   *  so a gap in cknerv's records cannot be displayed as a script family. */
+  unidentified: number;
 }
 
 export interface CellGalaxySnapshot {
@@ -193,6 +241,11 @@ export type CellDelta =
   | { type: 'gc'; ids: number[] }
   | { type: 'pulse'; at_ms: number }
   | { type: 'stats'; total_births: number; total_deaths: number }
+  /** Refreshed script census over the whole retained set. Its own delta
+   *  because it runs at block cadence, not per transaction, and because the
+   *  client cannot derive it: the snapshot carries the stage, this counts
+   *  the galaxy. */
+  | { type: 'script_census'; census: ScriptCensus }
   | {
       type: 'backfill';
       done: number;

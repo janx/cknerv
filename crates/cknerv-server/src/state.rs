@@ -1390,6 +1390,8 @@ mod tests {
             content_hash: format!("0x{id:064x}"),
             lock_kind: Default::default(),
             asset_kind: kind,
+            lock_script: Default::default(),
+            type_script: None,
         }
     }
 

@@ -19,7 +19,7 @@ import {
   fromCellsSnapshot,
   NO_CELL_CHANGES,
 } from '../src/cellsReducer';
-import { aggregateCellsStats } from '../src/cellsStats';
+import { aggregateCellsStats, emptyScriptCensus } from '../src/cellsStats';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const fixturePath = (name: string) =>
@@ -808,7 +808,17 @@ describe('cross-language wire-shape parity', () => {
       snap.total_births ?? 0,
       snap.total_deaths ?? 0,
     );
-    expect(seeded.stats).toEqual(scanned);
+    // The script census is the one field this side deliberately does NOT
+    // derive. Every other number here is scope-independent enough that a scan
+    // over the same rows reproduces it; a census is a distribution over the
+    // whole retained set, and this cache holds the staged subset. Computing
+    // it locally would not be a slower path to the same answer — it would be
+    // a confident wrong one, so the scan leaves it empty.
+    const { scripts: scannedCensus, ...scannedRest } = scanned;
+    const { scripts: seededCensus, ...seededRest } = seeded.stats;
+    expect(seededRest).toEqual(scannedRest);
+    expect(scannedCensus).toEqual(emptyScriptCensus());
+    expect(seededCensus.locks.length).toBeGreaterThan(0);
   });
 
   it('falls back to the full scan when the server sends no aggregate', () => {

@@ -27,11 +27,13 @@ use crate::enrichment::ChainAnchor;
 use crate::helix::helix_seed_for;
 use crate::mutation::{Mutation, ReplayPhase};
 use crate::outpoint::{is_cellbase_input, OutPoint, TxOutputInfo};
-use crate::projection::cells_stats::{aggregate_cell_view_stats, CellViewStats};
+use crate::projection::cells_stats::{
+    aggregate_cell_view_stats, aggregate_script_census, CellViewStats, ScriptCensus,
+};
 use crate::projection::composition_policy::CompositionDemandSink;
 use crate::projection::display_plane::DisplayPlane;
 use crate::projection::Projection;
-use crate::{AssetKind, LockKind};
+use crate::{AssetKind, LockKind, ScriptId};
 
 // ── visual / behavior constants — mirror cellGalaxy.ts ───────────────
 pub const CELL_CAP: usize = 50_000;
@@ -114,6 +116,17 @@ pub struct Cell {
     /// loadable (→ `AssetKind::Other`).
     #[serde(default)]
     pub asset_kind: AssetKind,
+    /// *Which* lock script guards it. The `_kind` fields above are cknerv's
+    /// own coarse classification, which the renderer and the composition
+    /// policy read; this is the script's actual identity, which is what the
+    /// script census counts and what an index can turn into a name. Unset on
+    /// cells restored from state written before it existed, and omitted from
+    /// the wire while unset so a pre-identity snapshot stays byte-identical.
+    #[serde(default, skip_serializing_if = "ScriptId::is_unset")]
+    pub lock_script: ScriptId,
+    /// Which type script it carries, or `None` for a plain cell.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub type_script: Option<ScriptId>,
 }
 
 /// Transient historical-replay progress. `None` during ordinary live polling.
@@ -311,6 +324,17 @@ pub enum CellDelta {
         total_births: u64,
         total_deaths: u64,
     },
+    /// Refreshed count of which scripts guard and type the retained set.
+    ///
+    /// Its own delta rather than a field on `Stats`, because the two have
+    /// different cadences and different costs: `Stats` fires per transaction
+    /// and carries two integers, while this needs a pass over the retained
+    /// set and so runs at most once per block, never during replay, and only
+    /// when the distribution actually moved. The client cannot derive it —
+    /// the snapshot carries the stage, and this counts the galaxy.
+    ScriptCensus {
+        census: ScriptCensus,
+    },
     /// Historical replay progress passthrough. `active` is true while boot,
     /// catch-up, reorg, or rebuild replay is in progress and false on
     /// completion. The SPA shows a cause-specific HUD and the projection
@@ -384,6 +408,10 @@ pub struct CellGalaxy {
     /// input-spend; rebuilt lazily by `gc()` when entries fall out.
     /// Also used by `apply_cell_tagged` to resolve the cell to tag.
     outpoint_index: std::collections::HashMap<OutPoint, u64>,
+    /// Last census put on the wire, so a block that did not move the
+    /// distribution ships nothing. Derived state: a restart recomputes it
+    /// from the restored cells at the first live block.
+    last_script_census: ScriptCensus,
     /// Bounded block hash journal for detecting canonical replacement at a
     /// height. Its horizon is `config.reorg_window_blocks`.
     block_hashes: std::collections::BTreeMap<u64, String>,
@@ -523,6 +551,7 @@ impl CellGalaxy {
             cells: Vec::new(),
             next_id: 0,
             outpoint_index: std::collections::HashMap::new(),
+            last_script_census: ScriptCensus::default(),
             block_hashes: std::collections::BTreeMap::new(),
             block_births: std::collections::BTreeMap::new(),
             block_deaths: std::collections::BTreeMap::new(),
@@ -1069,6 +1098,18 @@ impl CellGalaxy {
             deltas.push(CellDelta::Pulse { at_ms });
         }
 
+        // Script census, on the same "live block, not replay" gate as the
+        // pulse. Emitted only when the distribution actually moved: births
+        // and deaths mostly land inside families that are already on the
+        // list, so a quiet block ships nothing.
+        if self.backfill.is_none() {
+            let census = aggregate_script_census(&self.cells);
+            if census != self.last_script_census {
+                self.last_script_census = census.clone();
+                deltas.push(CellDelta::ScriptCensus { census });
+            }
+        }
+
         // GC dead cells past the death-animation tail. This is the moment
         // a staged corpse's display window closes: the plane exits it and
         // backfills the resting vacancy at flush time.
@@ -1205,6 +1246,8 @@ impl CellGalaxy {
                 content_hash: out.content_hash.clone(),
                 lock_kind: out.lock_kind,
                 asset_kind: out.asset_kind,
+                lock_script: out.lock_script,
+                type_script: out.type_script,
             };
             deltas.push(CellDelta::Birth { cell: cell.clone() });
             self.total_births += 1;
@@ -1586,6 +1629,8 @@ mod tests {
             content_hash: format!("0x{:064x}", (cap as u128) ^ data.len() as u128),
             lock_kind: LockKind::Other,
             asset_kind: AssetKind::Other,
+            lock_script: Default::default(),
+            type_script: None,
         }
     }
 
@@ -1678,6 +1723,89 @@ mod tests {
                 .count(),
             2
         );
+    }
+
+    #[test]
+    fn script_census_rides_blocks_and_only_when_the_distribution_moves() {
+        fn census_of(deltas: &[CellDelta]) -> Option<&ScriptCensus> {
+            deltas.iter().find_map(|d| match d {
+                CellDelta::ScriptCensus { census } => Some(census),
+                _ => None,
+            })
+        }
+        fn block(g: &mut CellGalaxy, number: u64, at: u64) -> Vec<CellDelta> {
+            g.apply_mutation(&Mutation::BlockMined {
+                number,
+                hash: format!("0xblock{number}"),
+                tx_count: 1,
+                size: 0,
+                at,
+            })
+        }
+
+        let joyid = crate::ScriptId {
+            code_hash: [0xaa; 32],
+            hash_type: crate::HashType::Type,
+        };
+        let mut g = CellGalaxy::new();
+        let mut output = out(1, "a");
+        output.lock_script = joyid;
+        g.apply_mutation(&Mutation::TxLanded {
+            tx_hash: "0xtx".into(),
+            block: 1,
+            at: 1_000,
+            inputs: vec![],
+            outputs: vec![output],
+        });
+
+        // Landing a transaction does not pay for a census — that pass is on
+        // the block, not on every tx.
+        let first = block(&mut g, 1, 2_000);
+        let census = census_of(&first).expect("first live block publishes the census");
+        assert_eq!(census.locks.len(), 1);
+        assert_eq!(census.locks[0].script, joyid);
+        assert_eq!(census.locks[0].count, 1);
+
+        // A block that leaves the distribution alone ships nothing.
+        assert!(census_of(&block(&mut g, 2, 3_000)).is_none());
+    }
+
+    #[test]
+    fn script_census_stays_quiet_through_replay() {
+        let mut g = CellGalaxy::new();
+        g.apply_mutation(&Mutation::BackfillProgress {
+            done: 1,
+            total: 10,
+            active: true,
+            phase: ReplayPhase::Boot,
+        });
+        let mut output = out(1, "a");
+        output.lock_script = crate::ScriptId {
+            code_hash: [0xbb; 32],
+            hash_type: crate::HashType::Type,
+        };
+        g.apply_mutation(&Mutation::TxLanded {
+            tx_hash: "0xtx".into(),
+            block: 1,
+            at: 1_000,
+            inputs: vec![],
+            outputs: vec![output],
+        });
+        let deltas = g.apply_mutation(&Mutation::BlockMined {
+            number: 1,
+            hash: "0xblock".into(),
+            tx_count: 1,
+            size: 0,
+            at: 2_000,
+        });
+        // Boot replays thousands of blocks; a full pass per replayed block is
+        // exactly the cost the live-block gate exists to avoid.
+        assert!(deltas
+            .iter()
+            .all(|d| !matches!(d, CellDelta::ScriptCensus { .. })));
+        // The snapshot still carries it, so a client connecting mid-replay is
+        // not left without one.
+        assert_eq!(g.snapshot().stats.scripts.locks.len(), 1);
     }
 
     #[test]
@@ -3139,6 +3267,8 @@ mod tests {
             content_hash: format!("0x{:064x}", 0),
             lock_kind: LockKind::Other,
             asset_kind: AssetKind::Other,
+            lock_script: Default::default(),
+            type_script: None,
         };
         let alive_b = Cell {
             id: 1,
@@ -3758,6 +3888,8 @@ mod tests {
             content_hash: format!("0x{id:064x}"),
             lock_kind: Default::default(),
             asset_kind: kind,
+            lock_script: Default::default(),
+            type_script: None,
         };
         GalaxyCompositionRecord {
             source: "ckbadger".into(),

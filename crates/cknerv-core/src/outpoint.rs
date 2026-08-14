@@ -12,7 +12,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::{AssetKind, LockKind};
+use crate::{AssetKind, LockKind, ScriptId};
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct OutPoint {
@@ -43,6 +43,16 @@ pub struct TxOutputInfo {
     /// (→ `AssetKind::Other`).
     #[serde(default)]
     pub asset_kind: AssetKind,
+    /// *Which* lock script guards it, carried verbatim rather than
+    /// classified. The two `_kind` fields above say what cknerv recognizes;
+    /// these say what is actually there, so a script cknerv cannot place can
+    /// still be counted and later named. Unset (all-zero) when the source
+    /// gave no readable script.
+    #[serde(default, skip_serializing_if = "ScriptId::is_unset")]
+    pub lock_script: ScriptId,
+    /// Which type script it carries, or `None` for a plain cell.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub type_script: Option<ScriptId>,
 }
 
 /// Minimal output shape used by adapters that haven't computed a

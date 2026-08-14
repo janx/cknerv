@@ -90,6 +90,12 @@ impl CkbGalaxyCompositionHydrator {
                     content_hash: output.content_hash,
                     lock_kind: output.lock_kind,
                     asset_kind: output.asset_kind,
+                    // Node-derived like every other field here: the hydrator
+                    // re-reads each indexed candidate with `get_live_cell`, so
+                    // a staged Cell's script identity comes from the chain, not
+                    // from the index that merely pointed at it.
+                    lock_script: output.lock_script,
+                    type_script: output.type_script,
                 });
             }
         }

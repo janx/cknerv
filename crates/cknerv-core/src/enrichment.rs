@@ -1273,6 +1273,8 @@ mod tests {
             content_hash: format!("0x{:064x}", id + 1),
             lock_kind: crate::LockKind::Sighash,
             asset_kind,
+            lock_script: Default::default(),
+            type_script: None,
         }
     }
 

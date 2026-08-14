@@ -1,3 +1,4 @@
+import { emptyScriptCensus } from '@cknerv/cache';
 import { cleanup, render } from '@testing-library/react';
 import { afterEach, describe, it, expect } from 'vitest';
 import CellsPanel from '../../../src/components/hud/CellsPanel';
@@ -12,6 +13,7 @@ const stats: CellsStats = {
   inView: 4983, dataBearing: 1545,
   byLock: { sighash: 3200, multisig: 1100, acp: 450, omnilock: 0, other: 233 },
   byAsset: { native: 3500, sudt: 900, xudt: 350, dao: 200, spore: 33, other: 0 },
+  scripts: emptyScriptCensus(),
 };
 const churn = { bornPerBlock: 3.2, spentPerBlock: 2.7, netPerBlock: 0.5 };
 

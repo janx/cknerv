@@ -413,6 +413,8 @@ mod tests {
             } else {
                 AssetKind::Dao
             },
+            lock_script: Default::default(),
+            type_script: None,
         }
     }
 
