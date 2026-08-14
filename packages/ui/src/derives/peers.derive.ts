@@ -3,6 +3,7 @@
 
 import type { ChainEntry, ChainNode, Peer, PeerDirection } from '@cknerv/types';
 import type { Vec3 } from '../types';
+import { CONTACT_WAVE_SCALE } from '../ui/topologyConstants';
 import {
   PEER_NETWORK_PALETTE,
   type SceneColor,
@@ -238,7 +239,11 @@ function clampUnit(value: number): number {
   return Math.max(0, Math.min(1, value));
 }
 
-function smoothOnset(value: number): number {
+/** Clamped smoothstep over [0,1]. ONE easing shapes both ends of a front —
+ *  its strength onset (contactRelease) and its reach extinction
+ *  (contactFrontState) — so the two halves of the same edge can never drift
+ *  apart in separate private copies. */
+export function smoothUnit(value: number): number {
   const u = clampUnit(value);
   return u * u * (3 - 2 * u);
 }
@@ -267,8 +272,104 @@ export function contactRelease(t: number): ContactRelease {
     // Linear life on purpose: the renderer's 1/r falloff already dims a front
     // as it spreads, and curving the time decay on top of it killed the front
     // long before it had crossed anything.
-    frontOpacity: (1 - u) * smoothOnset(u / FRONT_ONSET),
+    frontOpacity: (1 - u) * smoothUnit(u / FRONT_ONSET),
     colorT: easeOutCubic(u),
+  };
+}
+
+// ————— The released front's spatial algebra —————
+//
+// Everything below is the geometry of one expanding contact ring, extracted
+// from the renderer's frame callback so it can be numerically tested: jsdom
+// cannot run an R3F frame loop, and source-string assertions cannot catch a
+// front that silently extinguishes early or never completes.
+
+/** Front radius at the instant of release. Also anchors the 1/r falloff away
+ *  from its singularity. Both are on the front's quarter scale. */
+export const CONTACT_FRONT_START_RADIUS = 2.4 / CONTACT_WAVE_SCALE;
+export const CONTACT_FRONT_FALLOFF_REFERENCE = 24 / CONTACT_WAVE_SCALE;
+/** Crest widening RATE — fraction of the width per second of travel — so a
+ *  front never reads as a rigid decal. Deliberately NOT divided by
+ *  CONTACT_WAVE_SCALE: it multiplies a width that is already quarter-scaled,
+ *  so the widening rescales with the ring by construction. (Dividing it too
+ *  left the crest ×1.13 over its whole life instead of the tuned ×1.54 —
+ *  proportionally four times stiffer than the peer-plane wave it mirrors.) */
+export const CONTACT_FRONT_WIDTH_GROW_RATE = 0.45;
+/** Fraction of a front's reach where its extinction begins. */
+export const CONTACT_FRONT_REACH_KNEE = 0.72;
+/** Ceiling on the crest half-width as a fraction of the crest radius. Without
+ *  it a young front — radius still a world unit or two — is mostly crest, and
+ *  the release reads as a soft doughnut instead of a thin ring leaving. */
+export const CONTACT_FRONT_WIDTH_RADIUS_CAP = 0.22;
+
+/** The live knobs the front algebra runs on (renderer refreshes per frame). */
+export interface ContactFrontLive {
+  /** Shared field speed (world units/s) every front expands at. */
+  speed: number;
+  /** Crest half-width basis at the moment of release (world units). */
+  width: number;
+  /** Exponent of the 1/r falloff. */
+  falloffPower: number;
+  /** Ingest window (s). A front only renders inside it, so reach is clamped
+   *  to what the window can complete — see contactFrontReachCeiling. */
+  windowS: number;
+}
+
+export interface ContactFrontState {
+  crestRadius: number;
+  crestHalfWidth: number;
+  /** 1 until the reach knee, easing to exactly 0 at the (clamped) reach. */
+  reachFade: number;
+  /** 1/r-family dimming of the expanding ring. */
+  falloff: number;
+}
+
+/** The largest reach a front can fully extinguish inside the ingest window.
+ *  A reach configured past this would die by the time envelope mid-flight,
+ *  knee unplayed — a structurally different ending from every other front —
+ *  so contactFrontState clamps to it. Pure. */
+export function contactFrontReachCeiling(speed: number, windowS: number): number {
+  return CONTACT_FRONT_START_RADIUS + speed * windowS;
+}
+
+/** A crest may never be a large fraction of its own radius. */
+export function contactCrestHalfWidth(width: number, crestRadius: number): number {
+  return Math.min(width, crestRadius * CONTACT_FRONT_WIDTH_RADIUS_CAP);
+}
+
+/** Pure spatial state of one released front, `contactAgeS` seconds after
+ *  release. Radius comes from real seconds at the shared wave speed — never
+ *  from a normalized scale — so every worker's front belongs to the same
+ *  expanding field. Reach is extinction, not a stop: a clamped RADIUS would
+ *  freeze the front mid-field and break the one-speed reading, so the fade
+ *  goes to zero while the radius keeps its speed. Strengths (time envelope,
+ *  opacity knobs, hero punch) stay with the renderer. Pure. */
+export function contactFrontState(
+  contactAgeS: number,
+  reach: number,
+  live: ContactFrontLive,
+): ContactFrontState {
+  const crestRadius = CONTACT_FRONT_START_RADIUS + live.speed * contactAgeS;
+  const cappedReach = Math.min(
+    reach,
+    contactFrontReachCeiling(live.speed, live.windowS),
+  );
+  const reachFade = 1 - smoothUnit(
+    (crestRadius - cappedReach * CONTACT_FRONT_REACH_KNEE)
+      / (cappedReach * (1 - CONTACT_FRONT_REACH_KNEE)),
+  );
+  return {
+    crestRadius,
+    crestHalfWidth: contactCrestHalfWidth(
+      live.width * (1 + CONTACT_FRONT_WIDTH_GROW_RATE * contactAgeS),
+      crestRadius,
+    ),
+    reachFade,
+    falloff: Math.pow(
+      CONTACT_FRONT_FALLOFF_REFERENCE
+        / (CONTACT_FRONT_FALLOFF_REFERENCE + crestRadius),
+      live.falloffPower,
+    ),
   };
 }
 

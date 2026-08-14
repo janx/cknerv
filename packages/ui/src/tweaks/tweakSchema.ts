@@ -23,8 +23,7 @@ import {
 // planes still read as sections of one event while the released ring stays a
 // local ripple in the tissue. Both authorities are imported rather than
 // re-typed, so the relationship survives a retune of either side.
-import { SHOCKWAVE_SPEED } from '../ui/topologyConstants';
-import { CONTACT_WAVE_SCALE } from '../materials/contactWaveMaterial';
+import { SHOCKWAVE_SPEED, CONTACT_WAVE_SCALE } from '../ui/topologyConstants';
 // ② reinforcement defaults live in fabricReinforce.ts — import so there's ONE
 // authority (the module owns the numbers; these knobs just expose them live).
 import {
@@ -91,6 +90,10 @@ export const deliverySchema = {
   waveWidth: { value: 0.14, min: 0.02, max: 1.5, step: 0.01, label: 'front width' },
   waveOpacity: { value: 2.0, min: 0, max: 3, step: 0.05, label: 'front opacity' },
   waveFalloff: { value: 0.5, min: 0, max: 2.5, step: 0.05, label: 'front 1/r falloff' },
+  // Reach past what the window can complete — start + speed×ingestDur, 11.4 at
+  // these defaults — clamps at render time (peers.derive
+  // contactFrontReachCeiling), so a front's knee extinction always finishes
+  // inside the ingest window instead of being cut off by the time envelope.
   waveReachHero: { value: 52 / CONTACT_WAVE_SCALE, min: 0.5, max: 30, step: 0.5, label: 'front reach hero' },
   waveReachPeer: { value: 34 / CONTACT_WAVE_SCALE, min: 0.5, max: 30, step: 0.5, label: 'front reach peer' },
   waveWake: { value: 0.14, min: 0, max: 1, step: 0.02, label: 'front wake' },

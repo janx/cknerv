@@ -12,8 +12,7 @@ import {
   makeProtocolCarrierGeometry,
   setProtocolCarrierFacing,
 } from '../../src/geometry/protocolCarrier';
-import { SHOCKWAVE_SPEED } from '../../src/ui/topologyConstants';
-import { CONTACT_WAVE_SCALE } from '../../src/materials/contactWaveMaterial';
+import { SHOCKWAVE_SPEED, CONTACT_WAVE_SCALE } from '../../src/ui/topologyConstants';
 import { deliverySchema } from '../../src/tweaks/tweakSchema';
 
 const source = (file: string): string => readFileSync(
@@ -84,17 +83,19 @@ describe('A protocol event relay', () => {
     expect(deliverySchema.waveSpeed.value).toBe(SHOCKWAVE_SPEED / CONTACT_WAVE_SCALE);
     expect(deliverySchema.waveReachHero.value * CONTACT_WAVE_SCALE).toBe(52);
     expect(deliverySchema.waveReachPeer.value * CONTACT_WAVE_SCALE).toBe(34);
-    // Radius comes from real seconds at that speed — never a normalized scale.
-    expect(delivery).toContain('LIVE.delivery.waveSpeed * contactAge');
+    // The front's spatial algebra lives in peers.derive (numerically tested
+    // there — radius from real seconds, reach completion, knee fade, 1/r,
+    // width rate+cap); the frame loop only composes strengths on top.
+    expect(delivery).toContain('contactFrontState(contactAge, reach, FRONT_LIVE)');
     // Hero emphasis is reach and scale, never a different shape.
     expect(delivery).toContain('LIVE.delivery.waveReachHero');
     expect(delivery).toContain('LIVE.delivery.waveReachPeer');
     // Reach must extinguish rather than clamp, or fronts freeze mid-field.
     // (The crest WIDTH is capped against the radius — that is a different knob.)
     expect(delivery).not.toMatch(/crestRadius\s*=\s*Math\.(min|max)/);
-    expect(delivery).toContain('reachFade');
+    expect(delivery).toContain('front.reachFade');
     // Overlap safety: a 1/r falloff dims a front before it can meet a neighbour.
-    expect(delivery).toContain('WAVE_FALLOFF_REFERENCE + crestRadius');
+    expect(delivery).toContain('front.falloff');
     // The rim-gap roll is keyed to the WORKER, not to a queue position: an
     // array index shifts under peer churn and snap-rotates in-flight fronts.
     expect(delivery).toContain('peerAngle(delivery.key)');

@@ -14,9 +14,12 @@ import {
   deliveryScheduleHorizon,
   easeInLob,
   contactRelease,
+  contactFrontState,
+  contactCrestHalfWidth,
   peerAngle,
   sharedCellNearestIndex,
   nearestCellIdsFromIndex,
+  type ContactFrontLive,
   type DeliveryPhaseConfig,
 } from '../derives/peers.derive';
 import {
@@ -28,7 +31,6 @@ import {
   makeContactWaveGeometry,
   makeContactWaveMaterial,
   CONTACT_WAVE_CREST_UV,
-  CONTACT_WAVE_SCALE,
   CONTACT_WAVE_WAKE_AHEAD,
   CONTACT_WAVE_WAKE_BEHIND,
 } from '../materials/contactWaveMaterial';
@@ -61,10 +63,15 @@ import {
 // geometry/protocolCarrier), so the arriving object and the spreading pressure
 // are one shape, not two languages meeting at the membrane.
 //
-// EVERY worker gets its own front, at the SAME wave speed the peer-plane
-// brightness wave uses. Identical speed and shape make ~81 latency-staggered
-// commits read as one interference field converging on the galaxy core rather
-// than as 81 independent events; hero emphasis is scale and reach, never a
+// EVERY worker gets its own front, all at ONE shared speed: the peer-plane
+// brightness wave's SHOCKWAVE_SPEED at quarter scale. Speed and reach divide
+// by CONTACT_WAVE_SCALE TOGETHER — that is the invariant, not raw speed
+// equality: it keeps a front's lifetime equal to the peer wave's structure,
+// so the two planes read as one event at two scales. (Restore the raw speed
+// without ×4 reach and every front extinguishes in a quarter of its window —
+// a blink.) Identical speed and shape make ~81 latency-staggered commits
+// read as one interference field converging on the galaxy core rather than
+// as 81 independent events; hero emphasis is scale and reach, never a
 // different form. Overlap is kept off the white rail by thin crests, a 1/r
 // falloff, the rim's three gaps, and extinction where the tissue ends.
 //
@@ -89,19 +96,6 @@ const LOB_CORE_COMPRESS = 0.20;
 /** Widest radius of the drawn-inward ring, in glyph sizes. Tied to the glyph,
  *  not to the front, so it is NOT on the front's quarter scale. */
 const INHALE_REACH = 3.2;
-/** Front radius at the instant of release. Also anchors the 1/r falloff away
- *  from its singularity. Both are on the front's quarter scale. */
-const WAVE_START_RADIUS = 2.4 / CONTACT_WAVE_SCALE;
-const WAVE_FALLOFF_REFERENCE = 24 / CONTACT_WAVE_SCALE;
-/** Crest widening per second of travel, so a front never reads as a rigid
- *  decal. Same quarter scale — widening is a distance, not a rate of style. */
-const WAVE_WIDTH_GROW = 0.45 / CONTACT_WAVE_SCALE;
-/** Fraction of a front's reach where its extinction begins. */
-const WAVE_REACH_KNEE = 0.72;
-/** Ceiling on the crest half-width as a fraction of the crest radius. Without
- *  it a young front — radius still a world unit or two — is mostly crest, and
- *  the release reads as a soft doughnut instead of a thin ring leaving. */
-const WAVE_WIDTH_RADIUS_CAP = 0.22;
 
 const TISSUE_ROSE = new THREE.Color().setRGB(...CELL_GALAXY_PALETTE.tissueRose);
 const CARRIER_COLOR = new THREE.Color();
@@ -127,18 +121,18 @@ const CFG: DeliveryPhaseConfig = {
   ingestDur: LIVE.delivery.ingestDur,
 };
 
+// The released front's live knobs, refreshed once per frame beside CFG. The
+// algebra itself (radius, reach completion, knee fade, 1/r, width rate+cap)
+// lives in peers.derive where it is numerically tested.
+const FRONT_LIVE: ContactFrontLive = {
+  speed: LIVE.delivery.waveSpeed,
+  width: LIVE.delivery.waveWidth,
+  falloffPower: LIVE.delivery.waveFalloff,
+  windowS: LIVE.delivery.ingestDur,
+};
+
 // Analytic speed of easeInLob(t) = 0.15t + 0.85t².
 const lobSpeed = (t: number) => 0.15 + 1.7 * t;
-
-function smoothUnit(value: number): number {
-  const u = value <= 0 ? 0 : value >= 1 ? 1 : value;
-  return u * u * (3 - 2 * u);
-}
-
-/** A crest may never be a large fraction of its own radius. */
-function crestHalfWidth(width: number, crestRadius: number): number {
-  return Math.min(width, crestRadius * WAVE_WIDTH_RADIUS_CAP);
-}
 
 // Shared scratch state. Frame callbacks are sequential, and every setter copies
 // into a GPU attribute immediately, so no per-frame object allocation is needed.
@@ -475,6 +469,10 @@ export default function BlockDeliveryLayer({
 
     const now = simClock.elapsedSec;
     CFG.ingestDur = LIVE.delivery.ingestDur;
+    FRONT_LIVE.speed = LIVE.delivery.waveSpeed;
+    FRONT_LIVE.width = LIVE.delivery.waveWidth;
+    FRONT_LIVE.falloffPower = LIVE.delivery.waveFalloff;
+    FRONT_LIVE.windowS = CFG.ingestDur;
     const pulse = pulseRef.current;
     if (!pulse) {
       bodyGeometry.setDrawRange(0, 0);
@@ -694,7 +692,7 @@ export default function BlockDeliveryLayer({
             waveCount,
             _position,
             inhaleRadius,
-            crestHalfWidth(LIVE.delivery.waveWidth * 0.7 * punch, inhaleRadius),
+            contactCrestHalfWidth(LIVE.delivery.waveWidth * 0.7 * punch, inhaleRadius),
             CONTACT_WAVE_WAKE_AHEAD,
             CARRIER_COLOR,
             inhaleOpacity,
@@ -704,28 +702,20 @@ export default function BlockDeliveryLayer({
           waveCount += 1;
         }
 
-        // The released front. Radius comes from real seconds at the shared wave
-        // speed — never from a normalized scale — so every worker's front
-        // belongs to the same expanding field.
+        // The released front. All of its spatial algebra — radius from real
+        // seconds at the shared wave speed, reach completion against the
+        // window, knee extinction, 1/r falloff, width rate + cap — is
+        // contactFrontState in peers.derive, numerically tested there. This
+        // loop only composes strengths on top.
         const contactAge = phase.t * CFG.ingestDur;
-        const crestRadius = WAVE_START_RADIUS
-          + LIVE.delivery.waveSpeed * contactAge;
         const reach = delivery.hero
           ? LIVE.delivery.waveReachHero
           : LIVE.delivery.waveReachPeer;
-        // Reach is extinction, not a stop: a clamped radius would freeze the
-        // front mid-field and break the one-speed reading.
-        const reachFade = 1 - smoothUnit(
-          (crestRadius - reach * WAVE_REACH_KNEE) / (reach * (1 - WAVE_REACH_KNEE)),
-        );
-        const falloff = Math.pow(
-          WAVE_FALLOFF_REFERENCE / (WAVE_FALLOFF_REFERENCE + crestRadius),
-          LIVE.delivery.waveFalloff,
-        );
+        const front = contactFrontState(contactAge, reach, FRONT_LIVE);
         const intensity = LIVE.delivery.waveOpacity
           * release.frontOpacity
-          * falloff
-          * reachFade
+          * front.falloff
+          * front.reachFade
           * punch;
         if (intensity > 0.002) {
           _waveColor.copy(CARRIER_COLOR).lerp(TISSUE_ROSE, release.colorT);
@@ -734,11 +724,8 @@ export default function BlockDeliveryLayer({
             waveShape,
             waveCount,
             _position,
-            crestRadius,
-            crestHalfWidth(
-              LIVE.delivery.waveWidth * (1 + WAVE_WIDTH_GROW * contactAge),
-              crestRadius,
-            ),
+            front.crestRadius,
+            front.crestHalfWidth,
             CONTACT_WAVE_WAKE_BEHIND,
             _waveColor,
             intensity,

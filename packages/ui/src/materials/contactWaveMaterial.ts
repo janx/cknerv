@@ -20,10 +20,12 @@ import { FIELD_HALF_X, FIELD_HALF_Z } from '../helix';
  * as decoration rather than pressure.
  *
  * WHY EVERY FRONT IS THE SAME SPEED (the renderer drives radius from
- * `SHOCKWAVE_SPEED`): ~81 workers commit the same block at latency-staggered
- * times. Identical speed and shape make their fronts ONE interference field
- * instead of 81 independent fireworks, and the peer-plane brightness wave moves
- * at that same speed — so the two planes read as two sections of one event.
+ * `SHOCKWAVE_SPEED / CONTACT_WAVE_SCALE`): ~81 workers commit the same block
+ * at latency-staggered times. Identical speed and shape make their fronts ONE
+ * interference field instead of 81 independent fireworks — and because speed
+ * and reach carry the SAME quarter scale, a front's lifetime still matches
+ * the peer-plane wave's structure, so the two planes read as two sections of
+ * one event at two sizes.
  *
  * Overlap safety (this is what keeps 81 additive fronts off the white rail):
  *  • the crest is thin, so crossings are line crossings, not area sums;
@@ -52,15 +54,9 @@ const CONTACT_WAVE_SEGMENTS = 96;
 export const CONTACT_WAVE_WAKE_BEHIND = 1;
 export const CONTACT_WAVE_WAKE_AHEAD = -1;
 
-/**
- * The Cell-field front is a QUARTER-scale version of the peer-plane wave: same
- * shape, same timing, a quarter of the reach. Every spatial constant of the
- * front — speed, reach, start radius, crest width, falloff reference — is
- * divided by this, so the two planes still run one synchronised event and the
- * released ring stays a local ripple in the tissue rather than a galaxy-wide
- * sweep. Change it and the whole front rescales without changing its pacing.
- */
-export const CONTACT_WAVE_SCALE = 4;
+// The front's quarter-scale relationship to the peer-plane wave
+// (CONTACT_WAVE_SCALE) lives in ui/topologyConstants.ts beside
+// SHOCKWAVE_SPEED — the two numbers together are the two-plane contract.
 
 /** A front is extinguished across a band of the tissue ellipse's normalized
  *  radius rather than at a hard edge. The footprint itself comes from helix.ts
