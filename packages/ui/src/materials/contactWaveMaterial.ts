@@ -49,6 +49,16 @@ const CONTACT_WAVE_SEGMENTS = 96;
 export const CONTACT_WAVE_WAKE_BEHIND = 1;
 export const CONTACT_WAVE_WAKE_AHEAD = -1;
 
+/**
+ * The Cell-field front is a QUARTER-scale version of the peer-plane wave: same
+ * shape, same timing, a quarter of the reach. Every spatial constant of the
+ * front — speed, reach, start radius, crest width, falloff reference — is
+ * divided by this, so the two planes still run one synchronised event and the
+ * released ring stays a local ripple in the tissue rather than a galaxy-wide
+ * sweep. Change it and the whole front rescales without changing its pacing.
+ */
+export const CONTACT_WAVE_SCALE = 4;
+
 /** Galaxy tissue runs out near r≈60; a front is extinguished across this band
  *  rather than at a hard edge. These describe the field, not taste, so they are
  *  module constants instead of tuning knobs. */

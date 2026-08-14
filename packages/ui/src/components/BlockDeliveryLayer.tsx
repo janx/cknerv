@@ -27,6 +27,7 @@ import {
   makeContactWaveGeometry,
   makeContactWaveMaterial,
   CONTACT_WAVE_CREST_UV,
+  CONTACT_WAVE_SCALE,
   CONTACT_WAVE_WAKE_AHEAD,
   CONTACT_WAVE_WAKE_BEHIND,
 } from '../materials/contactWaveMaterial';
@@ -82,15 +83,16 @@ const GATHER_SWELL = 0.55;
 const LOB_CORE_ONSET = 0.55;
 /** The core barely shrinks while the rim does, which is what sells compression. */
 const LOB_CORE_COMPRESS = 0.20;
-/** Widest radius of the drawn-inward ring, in glyph sizes. */
+/** Widest radius of the drawn-inward ring, in glyph sizes. Tied to the glyph,
+ *  not to the front, so it is NOT on the front's quarter scale. */
 const INHALE_REACH = 3.2;
 /** Front radius at the instant of release. Also anchors the 1/r falloff away
- *  from its singularity. */
-const WAVE_START_RADIUS = 0.6;
-const WAVE_FALLOFF_REFERENCE = 6;
-/** Crest widening per second of travel — the same slow spread the peer-plane
- *  wave uses, so neither front reads as a rigid decal. */
-const WAVE_WIDTH_GROW = 0.45;
+ *  from its singularity. Both are on the front's quarter scale. */
+const WAVE_START_RADIUS = 2.4 / CONTACT_WAVE_SCALE;
+const WAVE_FALLOFF_REFERENCE = 24 / CONTACT_WAVE_SCALE;
+/** Crest widening per second of travel, so a front never reads as a rigid
+ *  decal. Same quarter scale — widening is a distance, not a rate of style. */
+const WAVE_WIDTH_GROW = 0.45 / CONTACT_WAVE_SCALE;
 /** Fraction of a front's reach where its extinction begins. */
 const WAVE_REACH_KNEE = 0.72;
 /** Ceiling on the crest half-width as a fraction of the crest radius. Without

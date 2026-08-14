@@ -18,10 +18,13 @@ import {
   SHOCKWAVE_COLOR_CEIL,
   SHOCKWAVE_ALPHA_CEIL,
 } from '../materials/shockwaveMaterial';
-// The Cell-field contact front travels at the SAME speed as the peer-plane
-// brightness wave, so both planes read as sections of one event. One authority,
-// imported here rather than re-typed as a literal.
+// The Cell-field contact front is a quarter-scale version of the peer-plane
+// brightness wave: same shape, same timing, a quarter of the reach — so both
+// planes still read as sections of one event while the released ring stays a
+// local ripple in the tissue. Both authorities are imported rather than
+// re-typed, so the relationship survives a retune of either side.
 import { SHOCKWAVE_SPEED } from '../ui/topologyConstants';
+import { CONTACT_WAVE_SCALE } from '../materials/contactWaveMaterial';
 // ② reinforcement defaults live in fabricReinforce.ts — import so there's ONE
 // authority (the module owns the numbers; these knobs just expose them live).
 import {
@@ -78,12 +81,18 @@ export const deliverySchema = {
   trailLenGain: { value: 1.6, min: 0, max: 6, step: 0.1, label: 'streak len gain' },
   trailOpacity: { value: 0.6, min: 0, max: 1, step: 0.05, label: 'streak opacity' },
   inhaleAmount: { value: 0.55, min: 0, max: 1.5, step: 0.05, label: 'drawn breath' },
-  waveSpeed: { value: SHOCKWAVE_SPEED, min: 4, max: 90, step: 1, label: 'front speed' },
-  waveWidth: { value: 0.55, min: 0.1, max: 4, step: 0.05, label: 'front width' },
+  waveSpeed: {
+    value: SHOCKWAVE_SPEED / CONTACT_WAVE_SCALE,
+    min: 1, max: 40, step: 0.5, label: 'front speed',
+  },
+  // A quarter of the pre-shrink 0.55: the crest is part of the ring's form, so
+  // it scales with it — holding it fixed would make the smaller ring four times
+  // chunkier in proportion instead of simply smaller.
+  waveWidth: { value: 0.14, min: 0.02, max: 1.5, step: 0.01, label: 'front width' },
   waveOpacity: { value: 2.0, min: 0, max: 3, step: 0.05, label: 'front opacity' },
   waveFalloff: { value: 0.5, min: 0, max: 2.5, step: 0.05, label: 'front 1/r falloff' },
-  waveReachHero: { value: 52, min: 2, max: 60, step: 1, label: 'front reach hero' },
-  waveReachPeer: { value: 34, min: 2, max: 60, step: 1, label: 'front reach peer' },
+  waveReachHero: { value: 52 / CONTACT_WAVE_SCALE, min: 0.5, max: 30, step: 0.5, label: 'front reach hero' },
+  waveReachPeer: { value: 34 / CONTACT_WAVE_SCALE, min: 0.5, max: 30, step: 0.5, label: 'front reach peer' },
   waveWake: { value: 0.14, min: 0, max: 1, step: 0.02, label: 'front wake' },
   waveSegments: { value: 0.55, min: 0, max: 1, step: 0.05, label: 'front gaps' },
   peerPunchScale: { value: 0.7, min: 0, max: 1.5, step: 0.05, label: 'peer punch' },

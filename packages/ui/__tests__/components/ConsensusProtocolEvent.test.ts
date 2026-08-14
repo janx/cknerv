@@ -13,6 +13,7 @@ import {
   setProtocolCarrierFacing,
 } from '../../src/geometry/protocolCarrier';
 import { SHOCKWAVE_SPEED } from '../../src/ui/topologyConstants';
+import { CONTACT_WAVE_SCALE } from '../../src/materials/contactWaveMaterial';
 import { deliverySchema } from '../../src/tweaks/tweakSchema';
 
 const source = (file: string): string => readFileSync(
@@ -70,9 +71,13 @@ describe('A protocol event relay', () => {
   it('gives every worker its own front, and all of them one wave field', () => {
     const delivery = source('BlockDeliveryLayer.tsx');
 
-    // Same speed on both planes is the whole reason ~81 staggered commits read
-    // as one interference field instead of 81 independent events.
-    expect(deliverySchema.waveSpeed.value).toBe(SHOCKWAVE_SPEED);
+    // One shape at one speed is the whole reason ~81 staggered commits read as
+    // one interference field instead of 81 independent events. The Cell-field
+    // front is the peer-plane wave at quarter scale — same shape, same timing,
+    // a quarter of the reach — so the two planes stay one synchronised event.
+    expect(deliverySchema.waveSpeed.value).toBe(SHOCKWAVE_SPEED / CONTACT_WAVE_SCALE);
+    expect(deliverySchema.waveReachHero.value * CONTACT_WAVE_SCALE).toBe(52);
+    expect(deliverySchema.waveReachPeer.value * CONTACT_WAVE_SCALE).toBe(34);
     // Radius comes from real seconds at that speed — never a normalized scale.
     expect(delivery).toContain('LIVE.delivery.waveSpeed * contactAge');
     // Hero emphasis is reach and scale, never a different shape.
