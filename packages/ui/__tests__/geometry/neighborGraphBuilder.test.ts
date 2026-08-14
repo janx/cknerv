@@ -56,6 +56,15 @@ class FakeWorker {
   }
 }
 
+class CountingFakeWorker extends FakeWorker {
+  posted: NeighborGraphWorkerRequest[] = [];
+
+  override postMessage(message: NeighborGraphWorkerRequest): void {
+    this.posted.push(message);
+    super.postMessage(message);
+  }
+}
+
 /** `FakeWorker` with the real transfer semantics: every buffer in the
  *  transfer list detaches on the sender's side, so a request that reuses a
  *  previously transferred buffer fails to clone exactly as in a browser. */
@@ -95,6 +104,9 @@ describe('createNeighborGraphBuilder', () => {
     // powers incremental responses; only dispose/failure terminates it.
     expect(workers).toHaveLength(1);
     expect(workers[0].terminated).toBe(false);
+    // First completion answers the superseded request and frees the worker;
+    // the coalesced second request goes out only then.
+    workers[0].complete();
     workers[0].complete();
     const result = await second;
     expect([...result!.graph.adjacency.keys()]).toEqual([11, 12, 13, 14, 15, 16]);
@@ -216,6 +228,69 @@ describe('createNeighborGraphBuilder', () => {
     expect(second).not.toBeNull();
     expect(second!.graph.adjacency.size).toBe(6);
     expect(neighborGraphBuilderStats.workerFallbacks).toBe(before);
+    builder.dispose();
+  });
+});
+
+describe('createNeighborGraphBuilder (coalesced sends)', () => {
+  it('keeps at most one request in the worker and posts only the newest waiter', async () => {
+    const worker = new CountingFakeWorker();
+    const builder = createNeighborGraphBuilder({
+      minWorkerCells: 0,
+      workerFactory: () => worker as unknown as Worker,
+    });
+
+    const first = builder.build(cells(), { topology: { k: 2 } });
+    // Worker is busy with the first request: neither superseding build may
+    // reach it yet, and the middle one must never reach it at all.
+    const second = builder.build(cells(10), { topology: { k: 2 } });
+    const third = builder.build(cells(20), { topology: { k: 2 } });
+    expect(worker.posted).toHaveLength(1);
+
+    expect(await first).toBeNull();
+    expect(await second).toBeNull();
+
+    // The superseded response frees the worker; only the NEWEST build's
+    // request follows it.
+    worker.complete();
+    expect(worker.posted).toHaveLength(2);
+    worker.complete();
+    const result = await third;
+    expect([...result!.graph.adjacency.keys()]).toEqual([21, 22, 23, 24, 25, 26]);
+    // The middle build's request was never packed or posted.
+    expect(worker.posted.map((request) => request.requestId)).toEqual([1, 3]);
+    builder.dispose();
+  });
+
+  it('a worker error with a queued send falls back the newest build and clears the queue', async () => {
+    const workers: CountingFakeWorker[] = [];
+    const builder = createNeighborGraphBuilder({
+      minWorkerCells: 0,
+      workerFactory: () => {
+        const worker = new CountingFakeWorker();
+        workers.push(worker);
+        return worker as unknown as Worker;
+      },
+    });
+
+    const first = builder.build(cells(), { topology: { k: 2 } });
+    const second = builder.build(cells(10), { topology: { k: 2 } });
+    workers[0].onerror?.(new ErrorEvent('error'));
+
+    expect(await first).toBeNull();
+    // The newest build still completes — synchronously, off the dead worker.
+    const result = await second;
+    expect(result?.graph.adjacency.size).toBe(6);
+    expect(workers[0].terminated).toBe(true);
+    expect(workers[0].posted).toHaveLength(1);
+
+    // The cleared queue stays cleared: the next build gets a fresh worker
+    // and dispatches immediately.
+    const third = builder.build(cells(20), { topology: { k: 2 } });
+    expect(workers).toHaveLength(2);
+    expect(workers[1].posted).toHaveLength(1);
+    workers[1].complete();
+    expect((await third)?.graph.adjacency.size).toBe(6);
     builder.dispose();
   });
 });
