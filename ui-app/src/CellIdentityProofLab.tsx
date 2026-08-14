@@ -34,7 +34,6 @@ import { resolveCanvasDpr } from './render-quality';
 const PROOF_META: Record<CellIdentityProofKind, {
   code: 'WHERE' | 'WHAT' | 'WHEN';
   name: string;
-  cjk: string;
   thesis: string;
   color: string;
   x: number;
@@ -44,7 +43,6 @@ const PROOF_META: Record<CellIdentityProofKind, {
   address: {
     code: 'WHERE',
     name: 'OUTPOINT LOCATOR',
-    cjk: '位置证明',
     thesis: 'transaction output / exact scene location',
     color: '#9DF7FF',
     x: -2.8,
@@ -54,7 +52,6 @@ const PROOF_META: Record<CellIdentityProofKind, {
   content: {
     code: 'WHAT',
     name: 'CONTENT SIGNATURE',
-    cjk: '内容证明',
     thesis: 'content hash / stable information identity',
     color: '#C7A7FF',
     x: 0,
@@ -64,7 +61,6 @@ const PROOF_META: Record<CellIdentityProofKind, {
   anchor: {
     code: 'WHEN',
     name: 'BIRTH ANCHOR',
-    cjk: '时序证明',
     thesis: 'birth block / shared chain chronology',
     color: '#FFD48C',
     x: 2.2,
@@ -206,14 +202,6 @@ function ProofPanel({
             {meta.thesis.toUpperCase()}
           </div>
         </div>
-        <span style={{
-          color: meta.color,
-          opacity: 0.72,
-          fontSize: 8,
-          letterSpacing: '0.08em',
-        }}>
-          {meta.cjk}
-        </span>
       </header>
 
       <div style={{

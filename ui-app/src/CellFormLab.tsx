@@ -191,9 +191,6 @@ export default function CellFormLab({ snapshot }: { snapshot: CellGalaxySnapshot
                 <span style={{ fontSize: 10, letterSpacing: '0.15em', color: '#7dd3fc' }}>
                   {item.code} / {item.name}
                 </span>
-                <span style={{ fontSize: 9, letterSpacing: '0.08em', color: '#a78bfa' }}>
-                  {item.cjk}
-                </span>
               </div>
 
               <div style={{
@@ -383,7 +380,7 @@ export default function CellFormLab({ snapshot }: { snapshot: CellGalaxySnapshot
                     standalone
                   />
                   <span style={{ position: 'absolute', left: 6, bottom: 5, textAlign: 'left', font: '7px "JetBrains Mono", monospace', letterSpacing: '0.08em', color: item.id === direction ? '#7dd3fc' : '#64748b', pointerEvents: 'none', lineHeight: 1.45 }}>
-                    {item.code} / {item.name}<br />{item.cjk}
+                    {item.code} / {item.name}
                   </span>
                 </button>
               ))}

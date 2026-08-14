@@ -67,10 +67,12 @@ type ReviewClockMode =
   | 'settling'
   | 'paused';
 
+// Stage titles are English-only by explicit direction (2026-08-14): UI copy
+// carries no CJK unless specially called for — the bilingual treatment is the
+// main HUD's hand-subset lexicon, not the labs'.
 const STAGE_META: Record<ProtocolEventStage, {
   code: string;
   name: string;
-  cjk: string;
   thesis: string;
   accent: string;
   glow: string;
@@ -79,7 +81,6 @@ const STAGE_META: Record<ProtocolEventStage, {
   network: {
     code: '00',
     name: 'NETWORK AGREEMENT',
-    cjk: '网络共识',
     thesis: 'DISTRIBUTED WITNESSES CONVERGE',
     accent: '#73b8ff',
     glow: 'rgba(45, 118, 255, 0.13)',
@@ -87,8 +88,9 @@ const STAGE_META: Record<ProtocolEventStage, {
   },
   carrier: {
     code: '01',
-    name: 'JELLYFISH PULSE',
-    cjk: '水母脉冲',
+    // The carrier stage is the compression→release delivery; the jellyfish
+    // this stage was named for was deleted with dbed2a9.
+    name: 'CARRIER RELEASE',
     thesis: 'AGREED INFORMATION ENTERS THE CELL FIELD',
     accent: '#ff9a32',
     glow: 'rgba(255, 74, 12, 0.16)',
@@ -97,7 +99,6 @@ const STAGE_META: Record<ProtocolEventStage, {
   commit: {
     code: '02',
     name: 'SHOCKWAVE COMMIT',
-    cjk: '冲击波写入',
     thesis: 'CONSENSUS RESOLVES INTO REAL CELL STATE',
     accent: '#c8fbff',
     glow: 'rgba(77, 237, 255, 0.14)',
@@ -106,7 +107,6 @@ const STAGE_META: Record<ProtocolEventStage, {
   settled: {
     code: '03',
     name: 'CONSENSUS MEMORY',
-    cjk: '共识记忆',
     thesis: 'THE WRITE REMAINS AS SHARED MEMORY',
     accent: '#b397ff',
     glow: 'rgba(139, 92, 246, 0.13)',
@@ -664,9 +664,6 @@ export default function ProtocolEventLab({ snapshot }: { snapshot: CellGalaxySna
           <span style={{ color: stageMeta.accent, fontSize: 10, letterSpacing: '0.16em' }}>
             {stageMeta.code} / {stageMeta.name}
           </span>
-          <span style={{ color: stageMeta.accent, fontSize: 9, opacity: 0.78 }}>
-            {stageMeta.cjk}
-          </span>
         </div>
         <div style={{ marginTop: 9, display: 'flex', alignItems: 'center', gap: 9 }}>
           <span style={{
@@ -714,7 +711,6 @@ export default function ProtocolEventLab({ snapshot }: { snapshot: CellGalaxySna
               <div style={{ color: active ? meta.accent : '#708198', fontSize: 8, letterSpacing: '0.12em' }}>
                 {meta.code} {meta.name}
               </div>
-              <div style={{ marginTop: 3, color: '#718096', fontSize: 8 }}>{meta.cjk}</div>
             </button>
           );
         })}
