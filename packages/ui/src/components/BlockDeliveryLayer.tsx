@@ -440,7 +440,8 @@ export default function BlockDeliveryLayer({
       batch.setColorAt(0, BLACK);
       batch.instanceColor?.setUsage(THREE.DynamicDrawUsage);
     }
-  }, [capacity, waveCapacity]);
+    // waveCapacity is derived (capacity * 2), so one dep covers every remount.
+  }, [capacity]);
 
   // Disposal is split by lifetime on purpose. Delivery count changes whenever
   // peers churn, which rebuilds the two capacity-sized geometries — bundling the
@@ -654,7 +655,12 @@ export default function BlockDeliveryLayer({
         // Contact is an event boundary, not another travelling object. The
         // glyph is pinned at the real landing while it is released as a front.
         _position.set(delivery.to[0], delivery.to[1], delivery.to[2]);
-        glyphScale = size * release.glyphScale;
+        // The lob ends with the rim at size*(1−glyphCompress) and
+        // contactRelease(0).glyphScale is exactly 1, so the compressed factor
+        // must ride through the release: without it the bright rim pops back
+        // to full size (1.8× at defaults) on the very frame it strikes the
+        // membrane — the compressed seed is what the front grows out of.
+        glyphScale = size * (1 - LIVE.delivery.glyphCompress) * release.glyphScale;
         glyphOpacity = release.glyphOpacity;
 
         if (release.coreOpacity > 0.002) {

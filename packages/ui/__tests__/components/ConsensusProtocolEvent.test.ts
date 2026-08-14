@@ -69,6 +69,9 @@ describe('A protocol event relay', () => {
     expect(delivery).toContain('LIVE.delivery.glyphCompress * progress');
     expect(delivery).toContain('GATHER_SWELL * (1 - phase.t)');
     expect(delivery).toContain('LOB_CORE_COMPRESS * progress');
+    // And the release keeps the compressed size the lob arrived at — scale is
+    // continuous across the contact boundary, no full-size pop at the strike.
+    expect(delivery).toContain('(1 - LIVE.delivery.glyphCompress) * release.glyphScale');
   });
 
   it('gives every worker its own front, and all of them one wave field', () => {
