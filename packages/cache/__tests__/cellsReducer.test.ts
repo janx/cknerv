@@ -897,3 +897,56 @@ describe('cross-language wire-shape parity', () => {
     expect(c.revision).toBe(cells.length);
   });
 });
+
+describe('script_census deltas', () => {
+  // The census is server-authored and adopted verbatim; the regression this
+  // guards is the end-of-batch stats rebuild starting from the PRE-batch
+  // stats and silently discarding the census the same batch just applied
+  // (the panel then froze at its snapshot values for the whole session).
+  const census = () => ({
+    ...emptyScriptCensus(),
+    locks: [
+      {
+        script: { code_hash: '0x' + 'ab'.repeat(32), hash_type: 'type' as const },
+        count: 42,
+      },
+    ],
+  });
+
+  it('a single census delta survives the stats rebuild', () => {
+    const before = emptyCellsCache();
+    const c = applyCellDelta(before, { type: 'script_census', census: census() });
+    expect(c.stats.scripts.locks).toHaveLength(1);
+    expect(c.stats.scripts.locks[0].count).toBe(42);
+    // The stats identity must move so memoized census consumers wake.
+    expect(c.stats).not.toBe(before.stats);
+  });
+
+  it('a batched census delta survives the stats rebuild', () => {
+    const c = applyRevisionedCellDeltas(emptyCellsCache(), [
+      { revision: 1, delta: { type: 'script_census', census: census() } },
+    ]);
+    expect(c.stats.scripts.locks).toHaveLength(1);
+  });
+
+  it('census and birth in one batch keep both effects', () => {
+    const c = applyRevisionedCellDeltas(emptyCellsCache(), [
+      { revision: 1, delta: { type: 'script_census', census: census() } },
+      { revision: 2, delta: { type: 'birth', cell: cell(7) } },
+    ]);
+    expect(c.stats.inView).toBe(1);
+    expect(c.stats.scripts.locks).toHaveLength(1);
+  });
+
+  it('a census-only batch leaves the counted stats untouched', () => {
+    const seeded = applyCellDelta(emptyCellsCache(), {
+      type: 'birth',
+      cell: cell(3),
+    });
+    const c = applyCellDelta(seeded, { type: 'script_census', census: census() });
+    expect(c.stats.inView).toBe(seeded.stats.inView);
+    expect(c.stats.born).toBe(seeded.stats.born);
+    expect(c.stats.byKind).toEqual(seeded.stats.byKind);
+    expect(c.stats.scripts.locks).toHaveLength(1);
+  });
+});

@@ -880,7 +880,11 @@ export function applyCellDelta(
     draft.displayOwned,
   );
   draft.value.stats = nextCellsStats(
-    prev.stats,
+    // The draft's stats, not prev's: a `script_census` delta already
+    // replaced the census on the draft, and starting the rebuild from
+    // prev.stats would silently discard it (the delta applied, then
+    // vanished at the end of the same batch).
+    draft.value.stats,
     prev.cells,
     draft.value.cells,
     draft.touchedCellIds,
@@ -925,7 +929,9 @@ export function applyRevisionedCellDeltas(
     draft.displayOwned,
   );
   draft.value.stats = nextCellsStats(
-    prev.stats,
+    // Draft stats for the same reason as the single-delta path: keep the
+    // batch's own `script_census` replacement.
+    draft.value.stats,
     prev.cells,
     draft.value.cells,
     draft.touchedCellIds,
