@@ -4,6 +4,7 @@
 // about hop count, not Euclidean distance), capped at MAX_HOPS so a
 // pulse from one halo edge to the other doesn't grind the visual.
 
+import { FIELD_HALF_X, FIELD_HALF_Z } from '../helix';
 import type { NeighborGraph } from './neighborGraph';
 
 /** Maximum hops a pulse will travel. Has to be high enough that
@@ -77,6 +78,187 @@ export function shortestPathsToTargets(
     frontier = next;
   }
   return found;
+}
+
+// ── rescue-origin selection (block-guarantee pulses) ─────────────────
+//
+// When every link of a non-empty block dropped, the rescue pass fires one
+// pulse for the block's best link — but the honest origin may not exist
+// anywhere in the system (a spend of coins born before the retained
+// window). Instead of picking an origin point and praying a route exists,
+// selection is DST-ROOTED: BFS outward from the destination and pick the
+// reachable node that maximizes a caller-supplied score. Every hop of the
+// returned path is a real adjacency edge by construction, which is what
+// survives the frame loop's per-hop edge gate.
+
+/** Hop ceiling for rescue routes. Deliberately below DEFAULT_MAX_HOPS: a
+ *  rescue pulse is one deliberate inbound flow, not a cascade — ~24 hops
+ *  ≈ 1.8 s at HOP_MS_BASE. */
+export const RESCUE_MAX_HOPS = 24;
+
+/** Prefer origins at least this many hops out when any exist, so the
+ *  travel reads as an arrival rather than a twitch beside the newborn. */
+export const RESCUE_MIN_HOPS = 3;
+
+/** Minimal position shape the rescue scores need. Both `Cell` and
+ *  `NeighborGraphCell` satisfy it structurally. */
+export interface RescuePositioned {
+  pos_seed: readonly [number, number, number];
+}
+
+/**
+ * BFS outward from `dst`, score every reachable node, and return the
+ * highest-scoring origin's tree path `origin → … → dst`. Nodes at least
+ * `minHops` out are preferred as a set (when any exist) even over a
+ * higher-scoring closer node. Returns null only when `dst` is absent from
+ * the graph or nothing is reachable from it.
+ *
+ * Deterministic for a given graph CONTENT regardless of adjacency-set
+ * insertion order: equal scores break toward the lower node id.
+ */
+export function rescueOrigin(
+  graph: NeighborGraph,
+  dst: number,
+  score: (id: number) => number,
+  maxHops: number = RESCUE_MAX_HOPS,
+  minHops: number = RESCUE_MIN_HOPS,
+): number[] | null {
+  if (!graph.adjacency.has(dst)) return null;
+
+  // parent.get(n) = the neighbour one hop closer to dst, so the origin's
+  // parent chain IS the pulse path in travel order — no reverse needed.
+  const parent = new Map<number, number>();
+  const visited = new Set<number>([dst]);
+  let frontier: number[] = [dst];
+  let bestAny = -1;
+  let bestAnyScore = Number.NEGATIVE_INFINITY;
+  let bestFar = -1;
+  let bestFarScore = Number.NEGATIVE_INFINITY;
+  for (let depth = 1; depth <= maxHops; depth++) {
+    const next: number[] = [];
+    for (const cur of frontier) {
+      const neighbours = graph.adjacency.get(cur);
+      if (!neighbours) continue;
+      for (const nb of neighbours) {
+        if (visited.has(nb)) continue;
+        visited.add(nb);
+        parent.set(nb, cur);
+        next.push(nb);
+        const s = score(nb);
+        if (s > bestAnyScore || (s === bestAnyScore && nb < bestAny)) {
+          bestAny = nb;
+          bestAnyScore = s;
+        }
+        if (
+          depth >= minHops
+          && (s > bestFarScore || (s === bestFarScore && nb < bestFar))
+        ) {
+          bestFar = nb;
+          bestFarScore = s;
+        }
+      }
+    }
+    if (next.length === 0) break;
+    frontier = next;
+  }
+  const origin = bestFar !== -1 ? bestFar : bestAny;
+  if (origin === -1) return null;
+
+  const path = [origin];
+  let walk: number | undefined = origin;
+  while (walk !== undefined && walk !== dst) {
+    walk = parent.get(walk);
+    if (walk !== undefined) path.push(walk);
+  }
+  return path;
+}
+
+/**
+ * L2 rim-entry score: prefer the most rim-ward node in the destination's
+ * outward radial direction. Radial fraction is measured on the tissue
+ * ellipse (`FIELD_HALF_X/Z` — the helix module is the sole rim authority),
+ * alignment as the cosine against dst's outward radial, floored at 0 so
+ * opposite-side rim nodes score as mere mid-field:
+ *
+ *   score(n) = rf(n) × (0.5 + 0.5 · max(0, cos(θ(n) − θ(dst))))
+ *
+ * A dst at the exact ellipse centre has no radial; score degrades to rf.
+ */
+export function rimEntryScore(
+  cells: ReadonlyMap<number, RescuePositioned>,
+  dstId: number,
+): (id: number) => number {
+  let dirX = 0;
+  let dirZ = 0;
+  const dst = cells.get(dstId);
+  if (dst) {
+    const ex = dst.pos_seed[0] / FIELD_HALF_X;
+    const ez = dst.pos_seed[2] / FIELD_HALF_Z;
+    const len = Math.hypot(ex, ez);
+    if (len > 1e-9) {
+      dirX = ex / len;
+      dirZ = ez / len;
+    }
+  }
+  const hasDir = dirX !== 0 || dirZ !== 0;
+  return (id) => {
+    const cell = cells.get(id);
+    if (!cell) return Number.NEGATIVE_INFINITY;
+    const ex = cell.pos_seed[0] / FIELD_HALF_X;
+    const ez = cell.pos_seed[2] / FIELD_HALF_Z;
+    const rf = Math.hypot(ex, ez);
+    if (rf < 1e-9 || !hasDir) return rf;
+    const cos = (ex * dirX + ez * dirZ) / rf;
+    return rf * (0.5 + 0.5 * Math.max(0, cos));
+  };
+}
+
+/**
+ * L1 anchored score: prefer the node nearest a link's input anchor — the
+ * true position of the consumed coin (`endpoint_anchors` carries its
+ * `pos_seed` even after the cell left every client map).
+ */
+export function anchorProximityScore(
+  cells: ReadonlyMap<number, RescuePositioned>,
+  anchorPos: readonly [number, number, number],
+): (id: number) => number {
+  return (id) => {
+    const cell = cells.get(id);
+    if (!cell) return Number.NEGATIVE_INFINITY;
+    const dx = cell.pos_seed[0] - anchorPos[0];
+    const dy = cell.pos_seed[1] - anchorPos[1];
+    const dz = cell.pos_seed[2] - anchorPos[2];
+    return -(dx * dx + dy * dy + dz * dz);
+  };
+}
+
+/**
+ * Defensive fallback for the rescue destination: the in-graph cell nearest
+ * a position (a newborn's output anchor). Only consulted when none of a
+ * link's `to_ids` made it into the graph — the pulse then lands beside the
+ * newborn's true position instead of nowhere. Ties break toward the lower
+ * id. Returns null on an empty graph.
+ */
+export function nearestGraphNode(
+  cells: ReadonlyMap<number, RescuePositioned>,
+  graph: NeighborGraph,
+  pos: readonly [number, number, number],
+): number | null {
+  let best = -1;
+  let bestDistSq = Number.POSITIVE_INFINITY;
+  for (const id of graph.adjacency.keys()) {
+    const cell = cells.get(id);
+    if (!cell) continue;
+    const dx = cell.pos_seed[0] - pos[0];
+    const dy = cell.pos_seed[1] - pos[1];
+    const dz = cell.pos_seed[2] - pos[2];
+    const d = dx * dx + dy * dy + dz * dz;
+    if (d < bestDistSq || (d === bestDistSq && id < best)) {
+      best = id;
+      bestDistSq = d;
+    }
+  }
+  return best === -1 ? null : best;
 }
 
 export function shortestPath(

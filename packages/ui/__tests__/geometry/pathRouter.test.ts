@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import type { NeighborGraph } from '../../src/geometry/neighborGraph';
-import { shortestPath, shortestPathsToTargets } from '../../src/geometry/pathRouter';
+import {
+  anchorProximityScore,
+  nearestGraphNode,
+  rescueOrigin,
+  rimEntryScore,
+  shortestPath,
+  shortestPathsToTargets,
+  type RescuePositioned,
+} from '../../src/geometry/pathRouter';
 
 function mkGraph(edges: [number, number][]): NeighborGraph {
   const adjacency = new Map<number, Set<number>>();
@@ -128,5 +136,162 @@ describe('shortestPathsToTargets', () => {
     const g = mkGraph(edges);
     const targets = Array.from({ length: 36 }, (_, i) => i).filter((i) => i !== 0);
     expectEquivalent(g, 0, targets);
+  });
+});
+
+function mkCells(
+  entries: [number, [number, number, number]][],
+): Map<number, RescuePositioned> {
+  return new Map(entries.map(([id, pos]) => [id, { pos_seed: pos }]));
+}
+
+/** Every consecutive pair of a rescue path must be a live adjacency edge —
+ *  the frame loop extinguishes pulses on anything less. */
+function expectRealEdges(g: NeighborGraph, path: number[]) {
+  for (let i = 0; i < path.length - 1; i++) {
+    expect(g.adjacency.get(path[i])?.has(path[i + 1])).toBe(true);
+  }
+}
+
+describe('rescueOrigin', () => {
+  const byId = (id: number) => id;
+
+  it('returns null when dst is missing from the graph', () => {
+    expect(rescueOrigin(mkGraph([[1, 2]]), 99, byId)).toBeNull();
+  });
+
+  it('returns null when nothing is reachable from dst', () => {
+    const g: NeighborGraph = { adjacency: new Map([[1, new Set<number>()]]), edges: [] };
+    expect(rescueOrigin(g, 1, byId)).toBeNull();
+  });
+
+  it('returns the tree path origin → … → dst over real edges', () => {
+    // 1 — 2 — 3 — 4 — 5, dst = 1; score prefers the deep end.
+    const g = mkGraph([[1, 2], [2, 3], [3, 4], [4, 5]]);
+    const path = rescueOrigin(g, 1, byId);
+    expect(path).toEqual([5, 4, 3, 2, 1]);
+    expectRealEdges(g, path!);
+  });
+
+  it('respects the hop cap', () => {
+    const edges: [number, number][] = [];
+    for (let i = 1; i < 30; i++) edges.push([i, i + 1]);
+    const g = mkGraph(edges);
+    // Cap 5: deepest reachable node from dst=1 is 6.
+    const path = rescueOrigin(g, 1, byId, 5);
+    expect(path).toEqual([6, 5, 4, 3, 2, 1]);
+  });
+
+  it('prefers nodes at least minHops out even over a higher-scoring near node', () => {
+    //   1 — 2 — 3 — 4   (4 is 3 hops out)
+    //   1 — 9           (9 is 1 hop out, higher raw score)
+    const g = mkGraph([[1, 2], [2, 3], [3, 4], [1, 9]]);
+    expect(rescueOrigin(g, 1, byId)).toEqual([4, 3, 2, 1]);
+  });
+
+  it('falls back to the best near node when nothing reaches minHops', () => {
+    const g = mkGraph([[1, 2], [1, 9]]);
+    expect(rescueOrigin(g, 1, byId)).toEqual([9, 1]);
+  });
+
+  it('a custom minHops of 1 disables the far preference', () => {
+    const g = mkGraph([[1, 2], [2, 3], [3, 4], [1, 9]]);
+    expect(rescueOrigin(g, 1, byId, 24, 1)).toEqual([9, 1]);
+  });
+
+  it('breaks score ties toward the lower id regardless of adjacency insertion order', () => {
+    const forward = mkGraph([[1, 2], [2, 3], [1, 4], [4, 5]]);
+    const reversed = mkGraph([[4, 5], [1, 4], [2, 3], [1, 2]]);
+    const flat = () => 1;
+    expect(rescueOrigin(forward, 1, flat)).toEqual([2, 1]);
+    expect(rescueOrigin(reversed, 1, flat)).toEqual([2, 1]);
+  });
+});
+
+describe('rimEntryScore', () => {
+  it('prefers rim-ward nodes aligned with the destination outward radial', () => {
+    const cells = mkCells([
+      [1, [30, 0, 0]],    // dst: outward radial = +x
+      [2, [54, 0, 0]],    // rf 0.9, aligned      → 0.9
+      [3, [0, 0, 48.6]],  // rf 0.9, perpendicular → 0.45
+      [4, [-54, 0, 0]],   // rf 0.9, opposite      → 0.45
+      [5, [6, 0, 0]],     // rf 0.1, aligned       → 0.1
+    ]);
+    const score = rimEntryScore(cells, 1);
+    expect(score(2)).toBeCloseTo(0.9, 9);
+    expect(score(3)).toBeCloseTo(0.45, 9);
+    expect(score(4)).toBeCloseTo(0.45, 9);
+    expect(score(5)).toBeCloseTo(0.1, 9);
+    expect(score(2)).toBeGreaterThan(score(3));
+  });
+
+  it('degrades to plain radial fraction when the destination sits at the centre', () => {
+    const cells = mkCells([
+      [1, [0, 0, 0]],
+      [2, [54, 0, 0]],
+      [3, [-27, 0, 0]],
+    ]);
+    const score = rimEntryScore(cells, 1);
+    expect(score(2)).toBeCloseTo(0.9, 9);
+    expect(score(3)).toBeCloseTo(0.45, 9);
+  });
+
+  it('scores missing cells to negative infinity and centre nodes to zero', () => {
+    const cells = mkCells([[1, [30, 0, 0]], [2, [0, 0, 0]]]);
+    const score = rimEntryScore(cells, 1);
+    expect(score(99)).toBe(Number.NEGATIVE_INFINITY);
+    expect(score(2)).toBe(0);
+  });
+});
+
+describe('anchorProximityScore', () => {
+  it('ranks nodes by closeness to the anchor position', () => {
+    const cells = mkCells([
+      [1, [10, 0, 0]],
+      [2, [11, 1, 0]],
+      [3, [40, 0, 0]],
+    ]);
+    const score = anchorProximityScore(cells, [10, 0, 0]);
+    expect(score(1)).toBeGreaterThan(score(2));
+    expect(score(2)).toBeGreaterThan(score(3));
+    expect(score(99)).toBe(Number.NEGATIVE_INFINITY);
+  });
+});
+
+describe('nearestGraphNode', () => {
+  it('picks the nearest node that is actually in the graph', () => {
+    const cells = mkCells([
+      [1, [0, 0, 0]],   // nearest overall but NOT in the graph
+      [2, [5, 0, 0]],
+      [3, [9, 0, 0]],
+    ]);
+    const g = mkGraph([[2, 3]]);
+    expect(nearestGraphNode(cells, g, [1, 0, 0])).toBe(2);
+  });
+
+  it('breaks distance ties toward the lower id and returns null on an empty graph', () => {
+    const cells = mkCells([
+      [7, [2, 0, 0]],
+      [4, [-2, 0, 0]],
+    ]);
+    expect(nearestGraphNode(cells, mkGraph([[4, 7]]), [0, 0, 0])).toBe(4);
+    expect(nearestGraphNode(cells, mkGraph([]), [0, 0, 0])).toBeNull();
+  });
+});
+
+describe('rescueOrigin + rimEntryScore (integration)', () => {
+  it('routes a rim entry inward along the destination radial', () => {
+    // Cells strung centre → rim along +x; dst is the innermost.
+    const cells = mkCells([
+      [1, [10, 0, 0]],
+      [2, [20, 0, 0]],
+      [3, [30, 0, 0]],
+      [4, [40, 0, 0]],
+      [5, [50, 0, 0]],
+    ]);
+    const g = mkGraph([[1, 2], [2, 3], [3, 4], [4, 5]]);
+    const path = rescueOrigin(g, 1, rimEntryScore(cells, 1));
+    expect(path).toEqual([5, 4, 3, 2, 1]);
+    expectRealEdges(g, path!);
   });
 });
