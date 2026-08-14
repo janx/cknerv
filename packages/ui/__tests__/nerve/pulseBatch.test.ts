@@ -10,6 +10,7 @@ import type { Cell, CellLink } from '@cknerv/types';
 import type { NeighborGraph } from '../../src/geometry/neighborGraph';
 import type { PulsePlanningOptions } from '../../src/nerve/pulseRunner';
 import {
+  evictPulseOverflow,
   planLinkBatch,
   prunePulsesFromBlock,
   scheduleLivePulseStartSec,
@@ -438,6 +439,38 @@ describe('tickBlockIfAdvanced', () => {
     expect(tickBlockIfAdvanced(1000, 1000, pulseStats)).toBe(1000);
     expect(tickBlockIfAdvanced(999, 1000, pulseStats)).toBe(1000);
     expect(snapshotPulseStats().blocksTotal).toBe(0);
+  });
+});
+
+describe('evictPulseOverflow', () => {
+  function mkPulse(linkSeq: number, rescue?: 'anchored' | 'rim') {
+    return {
+      linkSeq,
+      linkBlock: 1,
+      path: [1, 2],
+      bornAtMs: 0,
+      color: [1, 1, 1] as [number, number, number],
+      startDelayMs: 0,
+      hopMs: 73,
+      ...(rescue ? { rescue } : {}),
+    };
+  }
+
+  it('returns the same array reference when under the cap', () => {
+    const pool = [mkPulse(1), mkPulse(2)];
+    expect(evictPulseOverflow(pool, 2)).toBe(pool);
+  });
+
+  it('sheds the oldest non-rescue pulses first', () => {
+    const pool = [mkPulse(1, 'rim'), mkPulse(2), mkPulse(3), mkPulse(4, 'anchored'), mkPulse(5)];
+    const kept = evictPulseOverflow(pool, 3);
+    expect(kept.map((p) => p.linkSeq)).toEqual([1, 4, 5]);
+  });
+
+  it('sheds oldest rescues only once nothing else is left', () => {
+    const pool = [mkPulse(1, 'rim'), mkPulse(2, 'rim'), mkPulse(3), mkPulse(4, 'anchored')];
+    const kept = evictPulseOverflow(pool, 2);
+    expect(kept.map((p) => p.linkSeq)).toEqual([2, 4]);
   });
 });
 

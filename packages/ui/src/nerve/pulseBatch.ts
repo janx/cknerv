@@ -229,6 +229,35 @@ export function prunePulsesFromBlock<T extends Pulse>(
 }
 
 /**
+ * Bounded active-pulse pool with guarantee-aware shedding: the oldest
+ * NON-rescue pulses go first, so a block's only pulse (its rescue) is not
+ * silently evicted by a cascade storm; rescues shed only among themselves
+ * once nothing else is left. Returns the same array reference when under
+ * the cap so the caller's mutable pool identity is preserved.
+ */
+export function evictPulseOverflow<T extends Pulse>(
+  pulses: T[],
+  max: number,
+): T[] {
+  let overflow = pulses.length - max;
+  if (overflow <= 0) return pulses;
+  const drop = new Set<number>();
+  for (let i = 0; i < pulses.length && overflow > 0; i++) {
+    if (pulses[i].rescue === undefined) {
+      drop.add(i);
+      overflow -= 1;
+    }
+  }
+  for (let i = 0; i < pulses.length && overflow > 0; i++) {
+    if (!drop.has(i)) {
+      drop.add(i);
+      overflow -= 1;
+    }
+  }
+  return pulses.filter((_, i) => !drop.has(i));
+}
+
+/**
  * Tick the per-block counter when `at` strictly advances past `lastSeen`,
  * skipping the bootstrap value (`lastSeen === 0` — the initial pulse delta,
  * not a new block during this session). Returns the new `lastSeen`.

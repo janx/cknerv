@@ -67,6 +67,7 @@ import {
 } from '../geometry/cellRenderSet';
 import { type Pulse, type PulsePlanningOptions } from './pulseRunner';
 import {
+  evictPulseOverflow,
   planLinkBatch,
   prunePulsesFromBlock,
   scheduleLivePulseStartSec,
@@ -811,15 +812,13 @@ export default function NeuralNetwork({
     for (const p of planned) {
       pulsesRef.current.push({ ...p, startSec, mode: 'live' });
     }
-    // Soft cap — drop oldest if we're way over.
+    // Soft cap — drop oldest if we're way over, shedding rescue pulses
+    // last (each is some block's only light).
     const maxActivePulses = Math.max(
       1,
       Math.floor((pulses?.maxActivePulses ?? MAX_ACTIVE_PULSES) * particleCapMul),
     );
-    if (pulsesRef.current.length > maxActivePulses) {
-      const overflow = pulsesRef.current.length - maxActivePulses;
-      pulsesRef.current.splice(0, overflow);
-    }
+    pulsesRef.current = evictPulseOverflow(pulsesRef.current, maxActivePulses);
   }, [
     cellsCache.pulseLinks,
     cellsCache.linksSeq,
@@ -1082,6 +1081,12 @@ export default function NeuralNetwork({
     pulsesRef.current = prunePulsesFromBlock(
       pulsesRef.current,
       prune.fromBlock,
+    );
+    // Replayed heights must re-qualify for the block guarantee: rewind the
+    // watermark below the rewrite boundary.
+    lastGuaranteedBlockRef.current = Math.min(
+      lastGuaranteedBlockRef.current,
+      prune.fromBlock - 1,
     );
 
     const activeFocus = traceFocusRef.current;
