@@ -124,18 +124,124 @@ pub(crate) fn network_mutations(
     ])
 }
 
+/// Ticks between unconditional re-emits of an unchanged network mutation.
+/// Telemetry fields (per-peer latency / connected duration / best-known
+/// header) move on nearly every 4s poll; re-emitting full snapshots for
+/// them filled the 50K entity ring with redundant peer lists in under a
+/// day and pushed a frame to every client each tick. Structural change
+/// still emits immediately; telemetry drift batches into one refresh per
+/// this many ticks (8 × 4s = 32s).
+pub(crate) const NETWORK_TELEMETRY_REFRESH_TICKS: u64 = 8;
+
+/// One peer's connection identity, blind to telemetry drift.
+type PeerStructuralKey = (String, String, PeerDirection, String);
+
+fn peers_structural_key(peers: &[Peer]) -> Vec<PeerStructuralKey> {
+    let mut key: Vec<PeerStructuralKey> = peers
+        .iter()
+        .map(|p| {
+            (
+                p.node_id.clone(),
+                p.addr.clone(),
+                p.direction,
+                p.version.clone(),
+            )
+        })
+        .collect();
+    // Blind to RPC enumeration order: every consumer keys peers by node_id.
+    key.sort_by(|a, b| a.0.cmp(&b.0));
+    key
+}
+
+fn refresh_due(tick: u64, emitted_at: u64) -> bool {
+    tick.saturating_sub(emitted_at) >= NETWORK_TELEMETRY_REFRESH_TICKS
+}
+
+/// Change-dedupe for the three slow-poll network mutations, mirroring the
+/// chain poll's `state.last_*` discipline (this poll previously emitted
+/// all three unconditionally every tick).
+#[derive(Default)]
+pub(crate) struct NetworkPollDedupe {
+    tick: u64,
+    peers: Option<(Vec<PeerStructuralKey>, u64)>,
+    sync: Option<((bool, u64), u64)>,
+    // Keyed by (version, connections); the id is constant per adapter.
+    node_info: Option<((String, u64), u64)>,
+}
+
+impl NetworkPollDedupe {
+    /// Admit one poll's mutations: anything structurally new passes now;
+    /// pure telemetry drift passes once per refresh window.
+    pub(crate) fn filter(&mut self, mutations: Vec<Mutation>) -> Vec<Mutation> {
+        self.tick += 1;
+        let tick = self.tick;
+        let mut out = Vec::with_capacity(mutations.len());
+        for m in mutations {
+            let admit = match &m {
+                Mutation::PeersUpdated { peers } => {
+                    let key = peers_structural_key(peers);
+                    let admit = self
+                        .peers
+                        .as_ref()
+                        .is_none_or(|(prev, at)| *prev != key || refresh_due(tick, *at));
+                    if admit {
+                        self.peers = Some((key, tick));
+                    }
+                    admit
+                }
+                Mutation::ChainSyncUpdated {
+                    ibd,
+                    best_known_block,
+                } => {
+                    let key = (*ibd, *best_known_block);
+                    let admit = self
+                        .sync
+                        .as_ref()
+                        .is_none_or(|(prev, at)| *prev != key || refresh_due(tick, *at));
+                    if admit {
+                        self.sync = Some((key, tick));
+                    }
+                    admit
+                }
+                Mutation::ChainNodeInfoUpdated {
+                    version,
+                    connections,
+                    ..
+                } => {
+                    let key = (version.clone(), *connections);
+                    let admit = self
+                        .node_info
+                        .as_ref()
+                        .is_none_or(|(prev, at)| *prev != key || refresh_due(tick, *at));
+                    if admit {
+                        self.node_info = Some((key, tick));
+                    }
+                    admit
+                }
+                _ => true,
+            };
+            if admit {
+                out.push(m);
+            }
+        }
+        out
+    }
+}
+
 /// Run one network poll: fetch peers / sync / local-node-info and emit
-/// the corresponding mutations. Individual sub-fetch failures are
+/// the mutations the dedupe admits. Individual sub-fetch failures are
 /// surfaced as an error for the caller to log; the adapter keeps looping.
 pub(crate) async fn poll_network_once(
     rpc: &RpcClient,
     node_id: &str,
+    dedupe: &mut NetworkPollDedupe,
     out: &mpsc::Sender<Mutation>,
 ) -> Result<()> {
     let peers_json = rpc.get_peers().await?;
     let sync_json = rpc.sync_state().await?;
     let lni_json = rpc.local_node_info().await?;
-    for m in network_mutations(&peers_json, &sync_json, &lni_json, node_id)? {
+    let mutations = network_mutations(&peers_json, &sync_json, &lni_json, node_id)?;
+    for m in dedupe.filter(mutations) {
         let _ = out.send(m).await;
     }
     Ok(())
@@ -199,6 +305,75 @@ mod tests {
     fn parse_local_node_info_reads_version_connections() {
         let v = serde_json::json!({ "version": "0.116.1", "connections": "0x18" });
         assert_eq!(parse_local_node_info(&v), ("0.116.1".to_string(), 24));
+    }
+
+    fn poll(latency: &str, tip: u64, peer_ids: &[&str]) -> Vec<Mutation> {
+        let peers = serde_json::json!(peer_ids
+            .iter()
+            .map(|id| {
+                serde_json::json!({
+                    "node_id": id,
+                    "version": "0.116.1",
+                    "is_outbound": true,
+                    "addresses": [{ "address": "/ip4/1.1.1.1/tcp/8115", "score": "0x1" }],
+                    "last_ping_duration": latency,
+                    "connected_duration": latency,
+                    "sync_state": { "best_known_header_number": format!("{tip:#x}") }
+                })
+            })
+            .collect::<Vec<_>>());
+        let sync =
+            serde_json::json!({ "ibd": false, "best_known_block_number": format!("{tip:#x}") });
+        let lni = serde_json::json!({ "version": "0.116.1", "connections": peer_ids.len() });
+        network_mutations(&peers, &sync, &lni, "ckb:local").expect("ok")
+    }
+
+    #[test]
+    fn dedupe_admits_everything_on_the_first_tick() {
+        let mut dedupe = NetworkPollDedupe::default();
+        assert_eq!(dedupe.filter(poll("0x1f", 100, &["QmA"])).len(), 3);
+    }
+
+    #[test]
+    fn dedupe_swallows_pure_telemetry_drift() {
+        let mut dedupe = NetworkPollDedupe::default();
+        dedupe.filter(poll("0x1f", 100, &["QmA"]));
+        // Latency / connected duration / per-peer best-known all moved, the
+        // connection set did not — nothing re-emits.
+        assert!(dedupe.filter(poll("0x2a", 100, &["QmA"])).is_empty());
+    }
+
+    #[test]
+    fn dedupe_admits_structural_change_immediately() {
+        let mut dedupe = NetworkPollDedupe::default();
+        dedupe.filter(poll("0x1f", 100, &["QmA"]));
+        // A new peer changes the peer set AND the connection count.
+        let admitted = dedupe.filter(poll("0x1f", 100, &["QmA", "QmB"]));
+        assert_eq!(admitted.len(), 2);
+        assert!(matches!(admitted[0], Mutation::PeersUpdated { .. }));
+        assert!(matches!(admitted[1], Mutation::ChainNodeInfoUpdated { .. }));
+    }
+
+    #[test]
+    fn dedupe_admits_a_tip_advance_without_the_peer_list() {
+        let mut dedupe = NetworkPollDedupe::default();
+        dedupe.filter(poll("0x1f", 100, &["QmA"]));
+        let admitted = dedupe.filter(poll("0x1f", 101, &["QmA"]));
+        assert_eq!(admitted.len(), 1);
+        assert!(matches!(admitted[0], Mutation::ChainSyncUpdated { .. }));
+    }
+
+    #[test]
+    fn dedupe_refreshes_quiet_telemetry_once_per_window() {
+        let mut dedupe = NetworkPollDedupe::default();
+        dedupe.filter(poll("0x1f", 100, &["QmA"]));
+        let mut refreshed = 0;
+        for _ in 0..NETWORK_TELEMETRY_REFRESH_TICKS {
+            refreshed += dedupe.filter(poll("0x2a", 100, &["QmA"])).len();
+        }
+        // Exactly one full refresh (all three mutations) inside the window,
+        // carrying the drifted telemetry to clients.
+        assert_eq!(refreshed, 3);
     }
 
     #[test]

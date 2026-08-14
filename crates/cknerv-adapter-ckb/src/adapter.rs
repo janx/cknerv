@@ -15,7 +15,7 @@ use url::Url;
 use cknerv_core::{Mutation, RecentBlock, DEFAULT_REORG_WINDOW_BLOCKS};
 use cknerv_server::Adapter;
 
-use crate::network::poll_network_once;
+use crate::network::{poll_network_once, NetworkPollDedupe};
 use crate::poll::PollState;
 use crate::rpc::RpcClient;
 
@@ -184,6 +184,7 @@ impl Adapter for CkbDirectAdapter {
 
         let mut net_interval = tokio::time::interval(self.network_poll_interval);
         net_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let mut net_dedupe = NetworkPollDedupe::default();
 
         loop {
             tokio::select! {
@@ -210,7 +211,7 @@ impl Adapter for CkbDirectAdapter {
                     }
                 }
                 _ = net_interval.tick() => {
-                    if let Err(e) = poll_network_once(&rpc, &self.node_id, &out).await {
+                    if let Err(e) = poll_network_once(&rpc, &self.node_id, &mut net_dedupe, &out).await {
                         tracing::warn!(
                             target: "cknerv-adapter-ckb",
                             "CKB network poll error: {e}"
