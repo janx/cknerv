@@ -65,9 +65,10 @@ export const galaxySchema = {
 
 // Carrier glyph → contact front. The wave block is where this event lives now:
 // every worker releases its own front, and they only compose into one field
-// because they share `waveSpeed` (= the peer plane's `SHOCKWAVE_SPEED`) and one
-// shape. Retune reach/opacity freely; change speed and the two planes stop
-// reading as two sections of the same event.
+// because they share `waveSpeed` — the peer plane's `SHOCKWAVE_SPEED` at
+// quarter scale — and one shape. Retune reach/opacity freely; change speed
+// WITHOUT moving reach by the same factor and fronts extinguish early or
+// never complete, and the two planes stop reading as one event at two sizes.
 export const deliverySchema = {
   heroSize: { value: 1.16, min: 0.2, max: 2, step: 0.02, label: 'hero size' },
   peerSize: { value: 0.46, min: 0.1, max: 1.5, step: 0.02, label: 'peer size' },
@@ -86,8 +87,9 @@ export const deliverySchema = {
   },
   // A quarter of the pre-shrink 0.55: the crest is part of the ring's form, so
   // it scales with it — holding it fixed would make the smaller ring four times
-  // chunkier in proportion instead of simply smaller.
-  waveWidth: { value: 0.14, min: 0.02, max: 1.5, step: 0.01, label: 'front width' },
+  // chunkier in proportion instead of simply smaller. Derived, not hand-rounded,
+  // so a CONTACT_WAVE_SCALE retune rescales the width with everything else.
+  waveWidth: { value: 0.55 / CONTACT_WAVE_SCALE, min: 0.02, max: 1.5, step: 0.01, label: 'front width' },
   waveOpacity: { value: 2.0, min: 0, max: 3, step: 0.05, label: 'front opacity' },
   waveFalloff: { value: 0.5, min: 0, max: 2.5, step: 0.05, label: 'front 1/r falloff' },
   // Reach past what the window can complete — start + speed×ingestDur, 11.4 at

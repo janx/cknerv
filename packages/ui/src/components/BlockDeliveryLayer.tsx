@@ -34,7 +34,11 @@ import {
   CONTACT_WAVE_WAKE_AHEAD,
   CONTACT_WAVE_WAKE_BEHIND,
 } from '../materials/contactWaveMaterial';
-import { BEAM_GROW_DUR_S, BEAM_CHARGE_DUR_S } from '../ui/topologyConstants';
+import {
+  BEAM_GROW_DUR_S,
+  BEAM_CHARGE_DUR_S,
+  CONTACT_WAVE_SCALE,
+} from '../ui/topologyConstants';
 import { FIELD_HALF_X, FIELD_HALF_Z } from '../helix';
 import { CELL_GALAXY_PALETTE } from '../visualPalette';
 import type { ConsensusFlowColor } from '../derives/consensusFlow.derive';
@@ -692,7 +696,14 @@ export default function BlockDeliveryLayer({
             waveCount,
             _position,
             inhaleRadius,
-            contactCrestHalfWidth(LIVE.delivery.waveWidth * 0.7 * punch, inhaleRadius),
+            // The knob still steers this crest, but ×CONTACT_WAVE_SCALE undoes
+            // the front's quarter first: like INHALE_REACH above, the drawn
+            // breath is on the GLYPH's scale, and quartering the front's width
+            // must not quietly starve a ring whose radius never moved.
+            contactCrestHalfWidth(
+              LIVE.delivery.waveWidth * CONTACT_WAVE_SCALE * 0.7 * punch,
+              inhaleRadius,
+            ),
             CONTACT_WAVE_WAKE_AHEAD,
             CARRIER_COLOR,
             inhaleOpacity,

@@ -81,8 +81,11 @@ describe('A protocol event relay', () => {
     // front is the peer-plane wave at quarter scale — same shape, same timing,
     // a quarter of the reach — so the two planes stay one synchronised event.
     expect(deliverySchema.waveSpeed.value).toBe(SHOCKWAVE_SPEED / CONTACT_WAVE_SCALE);
-    expect(deliverySchema.waveReachHero.value * CONTACT_WAVE_SCALE).toBe(52);
-    expect(deliverySchema.waveReachPeer.value * CONTACT_WAVE_SCALE).toBe(34);
+    // closeTo, not toBe: these only survive exact === today because the scale
+    // is a power of two — the relationship, not the bit pattern, is the pin.
+    expect(deliverySchema.waveReachHero.value * CONTACT_WAVE_SCALE).toBeCloseTo(52, 10);
+    expect(deliverySchema.waveReachPeer.value * CONTACT_WAVE_SCALE).toBeCloseTo(34, 10);
+    expect(deliverySchema.waveWidth.value * CONTACT_WAVE_SCALE).toBeCloseTo(0.55, 10);
     // The front's spatial algebra lives in peers.derive (numerically tested
     // there — radius from real seconds, reach completion, knee fade, 1/r,
     // width rate+cap); the frame loop only composes strengths on top.

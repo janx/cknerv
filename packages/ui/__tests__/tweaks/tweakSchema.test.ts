@@ -5,7 +5,11 @@ import { galaxySchema, deliverySchema, peerSchema, cellSchema, nerveSchema, FOLD
 // If a default changes, the untouched-panel baseline shifts — this test must fail.
 const EXPECTED_DEFAULTS = {
   galaxy: { rotationRate: 0.0025 },
-  delivery: { heroSize: 1.16, peerSize: 0.46, ingestDur: 1.2, glyphBloom: 1.6, glyphCompress: 0.45, coreSize: 2.2, trailWidth: 0.55, trailLenBase: 1.0, trailLenGain: 1.6, trailOpacity: 0.6, inhaleAmount: 0.55, waveSpeed: 9, waveWidth: 0.14, waveOpacity: 2.0, waveFalloff: 0.5, waveReachHero: 13, waveReachPeer: 8.5, waveWake: 0.14, waveSegments: 0.55, peerPunchScale: 0.7, igniteKHero: 8, igniteKPeer: 3, igniteMax: 300, igniteRipple: 0.015 },
+  // waveWidth is 0.55/CONTACT_WAVE_SCALE — the one delivery default that is
+  // derived rather than a hand literal, deliberately: the crest must rescale
+  // with the ring (baseline shifted 0.14 → 0.1375 when the hand-rounding was
+  // replaced by the derivation, 2026-08-14).
+  delivery: { heroSize: 1.16, peerSize: 0.46, ingestDur: 1.2, glyphBloom: 1.6, glyphCompress: 0.45, coreSize: 2.2, trailWidth: 0.55, trailLenBase: 1.0, trailLenGain: 1.6, trailOpacity: 0.6, inhaleAmount: 0.55, waveSpeed: 9, waveWidth: 0.55 / 4, waveOpacity: 2.0, waveFalloff: 0.5, waveReachHero: 13, waveReachPeer: 8.5, waveWake: 0.14, waveSegments: 0.55, peerPunchScale: 0.7, igniteKHero: 8, igniteKPeer: 3, igniteMax: 300, igniteRipple: 0.015 },
   peer: { ambientAmp: 0.22, ambientSpeed: 0.05, ambientSigma: 0.17, surgeAmp: 1.1, surgeSigma: 0.13, surgeEase: 0.12, colorBoost: 3.75, alphaBoost: 2.75, sizeBoost: 0.5, trailBoost: 0.18, colorCeil: 1.4, alphaCeil: 1.1, flameWidth: 0.7, flameMinLen: 0.7, flameMaxLen: 2.5, flameBloom: 0.7, glintBloomOpacity: 0.55, glintPlumeOpacity: 0.3 },
   cell: { fabricAlpha: 0.15, warmth: 0.12, centerDim: 0.3, activeColorR: 1.0, activeColorG: 1.0, activeColorB: 1.0, fabricWidth: 2.5, activeWidth: 3.4, reinforceAmount: 0.34, reinforceGain: 1.6, reinforceHalfLife: 3.0, fabricStaggerThreshold: 1500, fabricCohortSize: 750, fabricCohortInterval: 0.25 },
   nerve: { screenBudget: 8_000, coverageShare: 0.55, trunkShare: 0.72, twigShare: 0.18 },
