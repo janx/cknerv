@@ -76,7 +76,20 @@ enum StreamAction {
     NothingToReplay,
 }
 
-fn decide_action(since: u64, ring_first: Option<u64>, ring_last: Option<u64>) -> StreamAction {
+/// Longest gap the reconnect path will replay as one delta frame. A
+/// display/link delta can carry hundreds of cell payloads and the rings
+/// hold up to 50K entries, so a `since` just above the ring floor (an
+/// overnight tab) once meant a single tens-of-MB Text frame — dwarfing
+/// the cached columnar snapshot it was trying to avoid. Past this many
+/// pending entries the snapshot is strictly cheaper for both sides.
+const REPLAY_MAX_ENTRIES: usize = 2048;
+
+fn decide_action(
+    since: u64,
+    ring_first: Option<u64>,
+    ring_last: Option<u64>,
+    pending: usize,
+) -> StreamAction {
     match (ring_first, ring_last) {
         (None, _) | (_, None) => {
             // Empty ring. If the client has nothing yet (since=0) and the
@@ -92,14 +105,32 @@ fn decide_action(since: u64, ring_first: Option<u64>, ring_last: Option<u64>) ->
         (Some(first), Some(last)) => {
             if since >= last {
                 StreamAction::NothingToReplay
-            } else if since + 1 >= first {
-                // The next revision the client needs is in the ring.
+            } else if since + 1 >= first && pending <= REPLAY_MAX_ENTRIES {
+                // The next revision the client needs is in the ring AND the
+                // gap is small enough that a delta frame beats a snapshot.
                 StreamAction::ReplayDelta
             } else {
                 StreamAction::FullSnapshot
             }
         }
     }
+}
+
+/// Borrowing frame bodies for the projection delta stream: `json!` would
+/// deep-copy every ring delta's `Value` before serializing (once per
+/// entry per reconnect, and once per delta per subscriber on the live
+/// path); serializing through these copies nothing.
+#[derive(serde::Serialize)]
+struct ProjectionReplayEntry<'a> {
+    revision: u64,
+    delta: &'a serde_json::Value,
+}
+
+#[derive(serde::Serialize)]
+struct ProjectionDeltaFrame<'a> {
+    kind: &'static str,
+    revision: u64,
+    deltas: Vec<ProjectionReplayEntry<'a>>,
 }
 
 pub async fn handle_chain_stream(
@@ -122,9 +153,10 @@ pub async fn handle_chain_stream(
 
     let ring_first = ring_snapshot.first().map(|r| r.revision);
     let ring_last = ring_snapshot.last().map(|r| r.revision);
+    let pending = ring_snapshot.iter().filter(|r| r.revision > since).count();
 
     let mut last_sent_revision = since;
-    let action = decide_action(since, ring_first, ring_last);
+    let action = decide_action(since, ring_first, ring_last, pending);
 
     match action {
         StreamAction::FullSnapshot => {
@@ -235,10 +267,11 @@ pub async fn handle_projection_stream(
 
     let ring_first = ring_snapshot.first().map(|d| d.rev);
     let ring_last = ring_snapshot.last().map(|d| d.rev);
+    let pending = ring_snapshot.iter().filter(|d| d.rev > since).count();
 
     let mut last_sent_seq: u64 = 0;
     let mut last_sent_revision = since;
-    let action = decide_action(since, ring_first, ring_last);
+    let action = decide_action(since, ring_first, ring_last, pending);
 
     match action {
         StreamAction::FullSnapshot => {
@@ -293,17 +326,19 @@ pub async fn handle_projection_stream(
                 last_sent_revision = last.rev;
             }
             if !deltas.is_empty() {
-                let payload: Vec<serde_json::Value> = deltas
-                    .iter()
-                    .map(|d| serde_json::json!({ "revision": d.rev, "delta": d.value }))
-                    .collect();
-                let last_rev = deltas.last().unwrap().rev;
-                let frame = serde_json::json!({
-                    "kind": "delta",
-                    "revision": last_rev,
-                    "deltas": payload,
-                });
-                if socket.send(Message::Text(frame.to_string())).await.is_err() {
+                let frame = ProjectionDeltaFrame {
+                    kind: "delta",
+                    revision: last_sent_revision,
+                    deltas: deltas
+                        .iter()
+                        .map(|d| ProjectionReplayEntry {
+                            revision: d.rev,
+                            delta: &d.value,
+                        })
+                        .collect(),
+                };
+                let text = serde_json::to_string(&frame).expect("replay frame is JSON");
+                if socket.send(Message::Text(text)).await.is_err() {
                     return;
                 }
             }
@@ -335,12 +370,16 @@ pub async fn handle_projection_stream(
                     }
                     last_sent_seq = entry.seq;
                     last_sent_revision = entry.rev;
-                    let frame = serde_json::json!({
-                        "kind": "delta",
-                        "revision": entry.rev,
-                        "deltas": [{ "revision": entry.rev, "delta": entry.value }],
-                    });
-                    if socket.send(Message::Text(frame.to_string())).await.is_err() {
+                    let frame = ProjectionDeltaFrame {
+                        kind: "delta",
+                        revision: entry.rev,
+                        deltas: vec![ProjectionReplayEntry {
+                            revision: entry.rev,
+                            delta: &entry.value,
+                        }],
+                    };
+                    let text = serde_json::to_string(&frame).expect("delta frame is JSON");
+                    if socket.send(Message::Text(text)).await.is_err() {
                         break;
                     }
                 }
@@ -394,7 +433,10 @@ mod tests {
 
     #[test]
     fn decide_action_empty_ring_fresh_client() {
-        assert_eq!(decide_action(0, None, None), StreamAction::NothingToReplay);
+        assert_eq!(
+            decide_action(0, None, None, 0),
+            StreamAction::NothingToReplay
+        );
     }
 
     #[test]
@@ -407,13 +449,13 @@ mod tests {
 
     #[test]
     fn decide_action_empty_ring_stale_client() {
-        assert_eq!(decide_action(5, None, None), StreamAction::FullSnapshot);
+        assert_eq!(decide_action(5, None, None, 0), StreamAction::FullSnapshot);
     }
 
     #[test]
     fn decide_action_caught_up() {
         assert_eq!(
-            decide_action(10, Some(1), Some(10)),
+            decide_action(10, Some(1), Some(10), 0),
             StreamAction::NothingToReplay
         );
     }
@@ -421,7 +463,7 @@ mod tests {
     #[test]
     fn decide_action_replayable() {
         assert_eq!(
-            decide_action(5, Some(1), Some(10)),
+            decide_action(5, Some(1), Some(10), 5),
             StreamAction::ReplayDelta
         );
     }
@@ -429,8 +471,46 @@ mod tests {
     #[test]
     fn decide_action_gap_too_wide() {
         assert_eq!(
-            decide_action(5, Some(100), Some(200)),
+            decide_action(5, Some(100), Some(200), 100),
             StreamAction::FullSnapshot
+        );
+    }
+
+    #[test]
+    fn decide_action_replayable_but_over_entry_budget_snapshots() {
+        // The ring covers the gap, but replaying it as one frame would
+        // dwarf the cached snapshot — the budget flips it to FullSnapshot.
+        assert_eq!(
+            decide_action(5, Some(1), Some(60_000), REPLAY_MAX_ENTRIES + 1),
+            StreamAction::FullSnapshot
+        );
+        assert_eq!(
+            decide_action(5, Some(1), Some(60_000), REPLAY_MAX_ENTRIES),
+            StreamAction::ReplayDelta
+        );
+    }
+
+    #[test]
+    fn projection_delta_frame_borrows_without_reshaping_the_wire() {
+        let value = serde_json::json!({ "type": "pulse", "at_ms": 1 });
+        let frame = ProjectionDeltaFrame {
+            kind: "delta",
+            revision: 7,
+            deltas: vec![ProjectionReplayEntry {
+                revision: 7,
+                delta: &value,
+            }],
+        };
+        let parsed: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&frame).expect("serialize"))
+                .expect("parse");
+        assert_eq!(
+            parsed,
+            serde_json::json!({
+                "kind": "delta",
+                "revision": 7,
+                "deltas": [{ "revision": 7, "delta": value }],
+            })
         );
     }
 }
