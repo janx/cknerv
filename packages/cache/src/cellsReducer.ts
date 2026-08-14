@@ -199,6 +199,13 @@ export interface CellGalaxyCache {
   pulseLinks: CellLink[];
   /** Monotonic seq assigned to the most recent link. 0 = no link yet. */
   linksSeq: number;
+  /** Identity changes ONLY when the evidence archive is wholesale replaced
+   *  (snapshot hydration re-sequences link seqs from 1). Consumers holding
+   *  seq cursors or per-block watermarks keyed to the old lineage must
+   *  rebase when this identity moves — even when React batches the
+   *  hydration with the first subsequent link delta, which the emptied
+   *  `pulseLinks` alone cannot reveal. Deltas and prunes keep the identity. */
+  linksEpoch: object;
   /**
    * One-shot causal invalidation marker. Its object identity changes only
    * when a `link_prune` delta arrives, allowing renderers to clear already
@@ -263,6 +270,7 @@ export function emptyCellsCache(): CellGalaxyCache {
     recentLinks: [],
     pulseLinks: [],
     linksSeq: 0,
+    linksEpoch: {},
     linkPrune: null,
     totalBirths: 0,
     totalDeaths: 0,
@@ -398,6 +406,7 @@ export function fromCellsSnapshot(
     recentLinks,
     pulseLinks: [],
     linksSeq: recentLinks.length,
+    linksEpoch: {},
     linkPrune: null,
     totalBirths: snap.total_births ?? 0,
     totalDeaths: snap.total_deaths ?? 0,

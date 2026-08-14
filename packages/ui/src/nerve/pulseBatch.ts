@@ -33,6 +33,12 @@ import type { PulseStatsSink, RescueCounter, RescueKind } from './pulseStats';
  * point is that a starved block still lights. */
 export const MAX_PULSES_PER_BATCH = 128;
 
+/** Rescue candidate links retained per dark block. The retry loop tries
+ * them in seq order until one routes; each failed attempt pays a nearest-
+ * node scan + BFS, so an unroutable block must cost a bounded amount, not
+ * ring-capacity × BFS. */
+export const MAX_RESCUE_ATTEMPTS = 8;
+
 /** The stats surface `planLinkBatch` needs (superset of `PulseStatsSink`:
  *  `planPulses` writes drop reasons via the sink, we roll each link's
  *  outcome up per block via `observeLink`, and the rescue pass records its
@@ -61,9 +67,12 @@ function planRescuePulse(
   graph: NeighborGraph,
   stats: PulseBatchStats,
 ): Pulse | null {
+  // Degree-0 nodes are real in the live graph (death pruning can strand a
+  // neighbourless key) — an isolated dst would dead-end the rescue while a
+  // routable sibling output sits right there.
   let dst: number | null = null;
   for (const id of link.to_ids) {
-    if (graph.adjacency.has(id) && cells.has(id)) {
+    if ((graph.adjacency.get(id)?.size ?? 0) > 0 && cells.has(id)) {
       dst = id;
       break;
     }
@@ -85,9 +94,15 @@ function planRescuePulse(
   const score = inputAnchor
     ? anchorProximityScore(cells, inputAnchor.pos_seed)
     : rimEntryScore(cells, dst);
-  const path = rescueOrigin(graph, dst, score);
+  // The cells-membership predicate keeps every hop renderable at plan time:
+  // the frame loop extinguishes a pulse whose hop endpoints are missing
+  // from the cells map, and this pulse is its block's only light.
+  const path = rescueOrigin(graph, dst, score, {
+    valid: (id) => cells.has(id),
+  });
   if (!path || path.length < 2) return null;
   if (substituted) stats.bumpRescue('dst-substituted');
+  stats.bumpRescue(rescue);
   const { startDelayMs, hopMs } = pulseTiming(link, path[0], dst);
   return {
     linkSeq: link.seq,
@@ -129,19 +144,16 @@ export function planLinkBatch(
   stats: PulseBatchStats,
   lastGuaranteedBlock: number,
 ): { planned: Pulse[]; nextSeq: number; lastGuaranteedBlock: number } {
-  // A ring head past lastSeq+1 means live links were evicted before the
-  // cursor ever saw them — silent block-guarantee loss, so count it. The
-  // caller's rebase runs first, so a re-sequenced archive never reads as a
-  // gap; backfill storms are expected churn, not loss.
-  if (!backfillActive && pulseLinks.length > 0) {
-    const gap = pulseLinks[0].seq - lastSeq - 1;
-    if (gap > 0) stats.bumpRingEvicted(gap);
-  }
-  const { toFire, nextSeq, suppressed } = advanceLinkCursor(
+  const { toFire, nextSeq, suppressed, evictedGap } = advanceLinkCursor(
     pulseLinks,
     lastSeq,
     backfillActive,
   );
+  // Live links evicted from the bounded ring before the cursor saw them —
+  // silent block-guarantee loss, so count it. The caller rebases the cursor
+  // whenever the archive is re-sequenced (`linksEpoch`), so a hydration
+  // never reads as a gap; backfill storms are expected churn, not loss.
+  if (!backfillActive && evictedGap > 0) stats.bumpRingEvicted(evictedGap);
   if (suppressed > 0) stats.bump('backfill', suppressed);
   const planned: Pulse[] = [];
   let guaranteed = lastGuaranteedBlock;
@@ -153,6 +165,10 @@ export function planLinkBatch(
       ...opts,
       sourceIndex: collectLinkSourceIndex(toFire, cells),
     };
+    // Normal pulses admitted under MAX_PULSES_PER_BATCH. Tracked apart from
+    // planned.length so rescues are budget-NEUTRAL, not merely exempt — a
+    // mid-batch rescue must not steal the next block's last budget slot.
+    let budgeted = 0;
     // Per-open-block rescue state, flushed at each block boundary so the
     // rescue's `observeLink` stays monotonic with the per-link ones.
     let curBlock = -1;
@@ -164,6 +180,9 @@ export function planLinkBatch(
         if (curBlock > guaranteed) guaranteed = curBlock;
         return;
       }
+      // Deliberately the ENTRY watermark, not `guaranteed`: after a reorg
+      // prune, a replayed lower height must not be suppressed by a higher
+      // block that lit earlier in this same batch.
       if (curBlock <= lastGuaranteedBlock) return; // lit in an earlier slice
       if (curCandidates.length === 0) return; // cellbase-only: stays silent
       for (const link of curCandidates) {
@@ -171,7 +190,6 @@ export function planLinkBatch(
         if (rescued) {
           planned.push(rescued);
           stats.observeLink(curBlock, true);
-          stats.bumpRescue(rescued.rescue!);
           if (curBlock > guaranteed) guaranteed = curBlock;
           return;
         }
@@ -185,15 +203,29 @@ export function planLinkBatch(
         curLit = false;
         curCandidates = [];
       }
-      if (link.parents.length > 0) curCandidates.push(link);
-      if (planned.length >= MAX_PULSES_PER_BATCH) {
+      // Rescue candidates are only needed while the block is still dark;
+      // the attempt cap bounds the retry loop's worst case (each failed
+      // attempt pays a nearest-node scan + BFS).
+      if (
+        !curLit
+        && link.parents.length > 0
+        && curBlock > lastGuaranteedBlock
+        && curCandidates.length < MAX_RESCUE_ATTEMPTS
+      ) {
+        curCandidates.push(link);
+      }
+      if (budgeted >= MAX_PULSES_PER_BATCH) {
         stats.bump('batch-budget');
         stats.observeLink(link.block, false);
         continue;
       }
       const p = planPulses(link, cells, graph, batchOpts, link.at_ms, stats);
-      if (p.length > 0) curLit = true;
+      if (p.length > 0) {
+        curLit = true;
+        curCandidates = [];
+      }
       stats.observeLink(link.block, p.length > 0);
+      budgeted += p.length;
       for (const pulse of p) planned.push(pulse);
     }
     flushBlock();
@@ -239,22 +271,24 @@ export function evictPulseOverflow<T extends Pulse>(
   pulses: T[],
   max: number,
 ): T[] {
-  let overflow = pulses.length - max;
+  const overflow = pulses.length - max;
   if (overflow <= 0) return pulses;
-  const drop = new Set<number>();
-  for (let i = 0; i < pulses.length && overflow > 0; i++) {
-    if (pulses[i].rescue === undefined) {
-      drop.add(i);
-      overflow -= 1;
-    }
+  let plain = 0;
+  for (const pulse of pulses) {
+    if (pulse.rescue === undefined) plain += 1;
   }
-  for (let i = 0; i < pulses.length && overflow > 0; i++) {
-    if (!drop.has(i)) {
-      drop.add(i);
-      overflow -= 1;
+  // Explicit per-class drop budgets: plain pulses absorb the overflow
+  // first; only the remainder (an all-but-rescues pool) touches rescues.
+  let dropPlain = Math.min(overflow, plain);
+  let dropRescue = overflow - dropPlain;
+  return pulses.filter((pulse) => {
+    if (pulse.rescue === undefined) {
+      dropPlain -= 1;
+      return dropPlain < 0;
     }
-  }
-  return pulses.filter((_, i) => !drop.has(i));
+    dropRescue -= 1;
+    return dropRescue < 0;
+  });
 }
 
 /**

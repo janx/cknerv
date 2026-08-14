@@ -751,9 +751,26 @@ export default function NeuralNetwork({
   const lastLinksSeqRef = useRef<number>(cellsCache.linksSeq);
   // Block-guarantee watermark: the highest height that already produced a
   // pulse (fired or rescued), so a later batch slice of the same block
-  // never rescues twice. Rewound by the linkPrune handler on reorgs.
+  // never rescues twice. Rewound by the linkPrune handler on reorgs and
+  // reset whenever the evidence archive is wholesale replaced.
   const lastGuaranteedBlockRef = useRef(0);
+  const lastLinksEpochRef = useRef(cellsCache.linksEpoch);
   useEffect(() => {
+    if (cellsCache.linksEpoch !== lastLinksEpochRef.current) {
+      // The evidence archive was wholesale replaced: snapshot hydration
+      // re-sequences link seqs from 1, so the cursor's old lineage is
+      // meaningless — even when React batches the hydration with the first
+      // live link delta and the empty-queue render below is never seen.
+      // Rebase to just before the ring head (nothing retained is skipped,
+      // nothing gone can read as an eviction gap) and let the guarantee
+      // watermark re-learn: the new chain view may sit at lower heights.
+      lastLinksEpochRef.current = cellsCache.linksEpoch;
+      lastLinksSeqRef.current = Math.max(
+        0,
+        (cellsCache.pulseLinks[0]?.seq ?? cellsCache.linksSeq + 1) - 1,
+      );
+      lastGuaranteedBlockRef.current = 0;
+    }
     if (cellsCache.pulseLinks.length === 0) {
       // Snapshot hydration (including a lag recovery) replaces the evidence
       // archive but intentionally carries no live events. Rebase the local
@@ -822,6 +839,7 @@ export default function NeuralNetwork({
   }, [
     cellsCache.pulseLinks,
     cellsCache.linksSeq,
+    cellsCache.linksEpoch,
     cellsCache.backfill,
     topology?.maxHops,
     pulses?.maxPulsesPerLink,
@@ -1249,9 +1267,9 @@ export default function NeuralNetwork({
       1,
       Math.floor((pulses?.maxActivePulses ?? MAX_ACTIVE_PULSES) * particleCapMul),
     );
-    if (pulsesRef.current.length > maxActivePulses) {
-      pulsesRef.current.splice(0, pulsesRef.current.length - maxActivePulses);
-    }
+    // Same guarantee-aware shedding as the live-batch site: a recall flood
+    // must not evict a pending rescue (some block's only light).
+    pulsesRef.current = evictPulseOverflow(pulsesRef.current, maxActivePulses);
   }, [
     traceRequest?.linkSeq,
     traceRequest?.targetCellId,

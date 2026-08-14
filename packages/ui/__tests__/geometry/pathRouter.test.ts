@@ -178,7 +178,7 @@ describe('rescueOrigin', () => {
     for (let i = 1; i < 30; i++) edges.push([i, i + 1]);
     const g = mkGraph(edges);
     // Cap 5: deepest reachable node from dst=1 is 6.
-    const path = rescueOrigin(g, 1, byId, 5);
+    const path = rescueOrigin(g, 1, byId, { maxHops: 5 });
     expect(path).toEqual([6, 5, 4, 3, 2, 1]);
   });
 
@@ -196,7 +196,24 @@ describe('rescueOrigin', () => {
 
   it('a custom minHops of 1 disables the far preference', () => {
     const g = mkGraph([[1, 2], [2, 3], [3, 4], [1, 9]]);
-    expect(rescueOrigin(g, 1, byId, 24, 1)).toEqual([9, 1]);
+    expect(rescueOrigin(g, 1, byId, { minHops: 1 })).toEqual([9, 1]);
+  });
+
+  it('never routes through nodes failing the validity predicate', () => {
+    //   1 — 2 — 3 — 4   (short, but 3 is invalid)
+    //   1 — 5 — 6 — 4   (valid detour)
+    const g = mkGraph([[1, 2], [2, 3], [3, 4], [1, 5], [5, 6], [6, 4]]);
+    const score = (id: number) => (id === 4 ? 10 : 0);
+    const path = rescueOrigin(g, 1, score, { valid: (id) => id !== 3 });
+    expect(path).toEqual([4, 6, 5, 1]);
+    expectRealEdges(g, path!);
+    // Without the predicate the shorter branch through 3 wins.
+    expect(rescueOrigin(g, 1, score)).toEqual([4, 3, 2, 1]);
+  });
+
+  it('returns null when only invalid nodes are reachable', () => {
+    const g = mkGraph([[1, 2], [2, 3]]);
+    expect(rescueOrigin(g, 1, () => 1, { valid: () => false })).toBeNull();
   });
 
   it('breaks score ties toward the lower id regardless of adjacency insertion order', () => {
@@ -276,6 +293,17 @@ describe('nearestGraphNode', () => {
     ]);
     expect(nearestGraphNode(cells, mkGraph([[4, 7]]), [0, 0, 0])).toBe(4);
     expect(nearestGraphNode(cells, mkGraph([]), [0, 0, 0])).toBeNull();
+  });
+
+  it('skips degree-0 nodes — an isolated nearest would dead-end the rescue', () => {
+    const cells = mkCells([
+      [1, [1, 0, 0]], // nearest, but isolated
+      [2, [5, 0, 0]],
+      [3, [9, 0, 0]],
+    ]);
+    const g = mkGraph([[2, 3]]);
+    g.adjacency.set(1, new Set());
+    expect(nearestGraphNode(cells, g, [0, 0, 0])).toBe(2);
   });
 });
 

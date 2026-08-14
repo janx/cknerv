@@ -282,6 +282,19 @@ describe('applyCellDelta', () => {
     expect(c.linksSeq).toBe(DEFAULT_LINK_RING_CAPACITY + 1);
   });
 
+  it('linksEpoch identity survives deltas and prunes but moves on hydration', () => {
+    let c = emptyCellsCache();
+    const epoch = c.linksEpoch;
+    c = applyCellDelta(c, linkDelta('0xtx', 1));
+    c = applyCellDelta(c, { type: 'link_prune', from_block: 1 });
+    expect(c.linksEpoch).toBe(epoch); // deltas keep the seq lineage
+    const hydrated = fromCellsSnapshot(9, { cells: [], last_pulse_at_ms: 0 });
+    // A snapshot re-sequences link seqs from 1 — cursors keyed to the old
+    // lineage must be able to detect the replacement even when React
+    // batches the hydration with the first subsequent link delta.
+    expect(hydrated.linksEpoch).not.toBe(epoch);
+  });
+
   it('link_prune removes orphan evidence and pending pulse events without rewinding seq', () => {
     let c = emptyCellsCache();
     c = applyCellDelta(c, linkDelta('0xcanonical', 1));

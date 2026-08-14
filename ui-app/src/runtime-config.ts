@@ -1,3 +1,5 @@
+import { DEFAULT_LINK_RING_CAPACITY } from '@cknerv/cache';
+
 export type GalaxyProfile = 'auto' | 'devnet' | 'testnet' | 'mainnet' | 'custom';
 
 export interface GalaxyRuntimeConfig {
@@ -56,7 +58,12 @@ export const DEFAULT_GALAXY_CONFIG: GalaxyRuntimeConfig = {
     maxHops: 40,
   },
   pulses: {
-    linkRingCapacity: 128,
+    // The cache package's default is the authority: the ring is sized for
+    // the block guarantee (hold a whole busy block's links until the plan
+    // effect consumes them), not just the GPU pulse pool. A runtime
+    // override here that trails the package default re-opens the silent
+    // whole-block-dark eviction the 512 sizing closed.
+    linkRingCapacity: DEFAULT_LINK_RING_CAPACITY,
     maxPulsesPerLink: 6,
     maxSourcesPerParent: 2,
     maxActivePulses: 256,

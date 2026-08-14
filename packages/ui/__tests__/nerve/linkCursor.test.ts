@@ -52,4 +52,23 @@ describe('advanceLinkCursor', () => {
     expect(r.suppressed).toBe(1); // only seq 3 is new
     expect(r.nextSeq).toBe(3);
   });
+
+  it('reports no eviction gap in steady state or on an empty ring', () => {
+    // Ring still holds consumed links: min seq (1) <= cursor → gap 0.
+    expect(advanceLinkCursor([link(1), link(2), link(3)], 2, false).evictedGap).toBe(0);
+    // Contiguous fresh links: head is exactly cursor+1 → gap 0.
+    expect(advanceLinkCursor([link(3), link(4)], 2, false).evictedGap).toBe(0);
+    expect(advanceLinkCursor([], 7, false).evictedGap).toBe(0);
+  });
+
+  it('reports the seqs evicted before the cursor ever saw them', () => {
+    // Cursor at 2, ring starts at 5: seqs 3-4 were shed by the bounded ring.
+    const r = advanceLinkCursor([link(5), link(6)], 2, false);
+    expect(r.evictedGap).toBe(2);
+    expect(r.toFire.map((l) => l.seq)).toEqual([5, 6]);
+  });
+
+  it('computes the gap from the scanned minimum, not ring order', () => {
+    expect(advanceLinkCursor([link(6), link(5)], 2, false).evictedGap).toBe(2);
+  });
 });

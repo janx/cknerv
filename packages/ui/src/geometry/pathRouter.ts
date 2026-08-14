@@ -106,12 +106,23 @@ export interface RescuePositioned {
   pos_seed: readonly [number, number, number];
 }
 
+export interface RescueOriginOptions {
+  maxHops?: number;
+  minHops?: number;
+  /** Nodes failing this predicate are neither origins NOR intermediate
+   *  hops — the BFS refuses to traverse them. The renderer's per-hop gate
+   *  extinguishes a pulse whose hop endpoints are missing from the cells
+   *  map, so the caller passes cells-membership here and the whole path is
+   *  renderable at plan time by construction. */
+  valid?: (id: number) => boolean;
+}
+
 /**
- * BFS outward from `dst`, score every reachable node, and return the
+ * BFS outward from `dst`, score every reachable valid node, and return the
  * highest-scoring origin's tree path `origin → … → dst`. Nodes at least
  * `minHops` out are preferred as a set (when any exist) even over a
- * higher-scoring closer node. Returns null only when `dst` is absent from
- * the graph or nothing is reachable from it.
+ * higher-scoring closer node. Returns null when `dst` is absent from the
+ * graph or no valid node is reachable from it.
  *
  * Deterministic for a given graph CONTENT regardless of adjacency-set
  * insertion order: equal scores break toward the lower node id.
@@ -120,9 +131,11 @@ export function rescueOrigin(
   graph: NeighborGraph,
   dst: number,
   score: (id: number) => number,
-  maxHops: number = RESCUE_MAX_HOPS,
-  minHops: number = RESCUE_MIN_HOPS,
+  options: RescueOriginOptions = {},
 ): number[] | null {
+  const maxHops = options.maxHops ?? RESCUE_MAX_HOPS;
+  const minHops = options.minHops ?? RESCUE_MIN_HOPS;
+  const valid = options.valid;
   if (!graph.adjacency.has(dst)) return null;
 
   // parent.get(n) = the neighbour one hop closer to dst, so the origin's
@@ -142,6 +155,7 @@ export function rescueOrigin(
       for (const nb of neighbours) {
         if (visited.has(nb)) continue;
         visited.add(nb);
+        if (valid && !valid(nb)) continue; // never traverse THROUGH it either
         parent.set(nb, cur);
         next.push(nb);
         const s = score(nb);
@@ -236,8 +250,11 @@ export function anchorProximityScore(
  * Defensive fallback for the rescue destination: the in-graph cell nearest
  * a position (a newborn's output anchor). Only consulted when none of a
  * link's `to_ids` made it into the graph — the pulse then lands beside the
- * newborn's true position instead of nowhere. Ties break toward the lower
- * id. Returns null on an empty graph.
+ * newborn's true position instead of nowhere. Degree-0 nodes are skipped
+ * (the live graph really holds them after death pruning; an isolated
+ * destination would fail the whole rescue while a connected node sits
+ * marginally farther). Ties break toward the lower id. Returns null on an
+ * empty graph.
  */
 export function nearestGraphNode(
   cells: ReadonlyMap<number, RescuePositioned>,
@@ -246,7 +263,8 @@ export function nearestGraphNode(
 ): number | null {
   let best = -1;
   let bestDistSq = Number.POSITIVE_INFINITY;
-  for (const id of graph.adjacency.keys()) {
+  for (const [id, neighbours] of graph.adjacency) {
+    if (neighbours.size === 0) continue;
     const cell = cells.get(id);
     if (!cell) continue;
     const dx = cell.pos_seed[0] - pos[0];

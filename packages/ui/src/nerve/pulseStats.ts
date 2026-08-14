@@ -30,8 +30,10 @@ export type RescueKind = 'anchored' | 'rim';
 
 /** Rescue-pass bookkeeping. The two kinds count fired rescues (the honesty
  *  mix); `dst-substituted` = none of the link's outputs were routable so the
- *  pulse landed beside the newborn's anchored position; `failed` = a dark
- *  non-empty block could not be rescued at all (defensive — should stay 0). */
+ *  pulse landed beside the newborn's anchored position; `failed` = a rescue
+ *  ATTEMPT found nothing routable (defensive — should stay 0). A still-dark
+ *  block is retried on each later batch slice, so one stubborn block can
+ *  bump `failed` once per slice, not once overall. */
 export type RescueCounter = RescueKind | 'dst-substituted' | 'failed';
 
 /** Per-recall terminal outcome. `recalled` is the success bucket; the rest are
