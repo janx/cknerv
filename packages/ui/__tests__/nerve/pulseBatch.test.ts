@@ -390,6 +390,18 @@ describe('planLinkBatch — block-guarantee rescue', () => {
     expect(snap.rescues['dst-substituted']).toBe(1);
   });
 
+  it('counts live links evicted from the ring before the cursor saw them', () => {
+    const { cells, graph } = rimFixture();
+    const link = mkLink({ seq: 5, block: 9, parents: ['0xcold'], to_ids: [2], endpoint_anchors: [outAnchor] });
+    // Ring head at seq 5 while the cursor sits at 2: seqs 3-4 are gone.
+    planLinkBatch([link], 2, false, cells, graph, OPTS, pulseStats, 0);
+    expect(snapshotPulseStats().ringEvicted).toBe(2);
+    // During backfill the same gap is storm churn, not guarantee loss.
+    resetPulseStats();
+    planLinkBatch([link], 2, true, cells, graph, OPTS, pulseStats, 0);
+    expect(snapshotPulseStats().ringEvicted).toBe(0);
+  });
+
   it('counts an unrescuable dark block instead of inventing geometry', () => {
     // Empty graph, no anchors: nothing honest to route — stay dark, count it.
     const { planned } = planLinkBatch(

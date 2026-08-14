@@ -40,6 +40,7 @@ export const MAX_PULSES_PER_BATCH = 128;
 export interface PulseBatchStats extends PulseStatsSink {
   observeLink(block: number, lit: boolean): void;
   bumpRescue(kind: RescueCounter, n?: number): void;
+  bumpRingEvicted(n?: number): void;
 }
 
 /**
@@ -128,6 +129,14 @@ export function planLinkBatch(
   stats: PulseBatchStats,
   lastGuaranteedBlock: number,
 ): { planned: Pulse[]; nextSeq: number; lastGuaranteedBlock: number } {
+  // A ring head past lastSeq+1 means live links were evicted before the
+  // cursor ever saw them — silent block-guarantee loss, so count it. The
+  // caller's rebase runs first, so a re-sequenced archive never reads as a
+  // gap; backfill storms are expected churn, not loss.
+  if (!backfillActive && pulseLinks.length > 0) {
+    const gap = pulseLinks[0].seq - lastSeq - 1;
+    if (gap > 0) stats.bumpRingEvicted(gap);
+  }
   const { toFire, nextSeq, suppressed } = advanceLinkCursor(
     pulseLinks,
     lastSeq,

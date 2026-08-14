@@ -15,6 +15,7 @@ import type {
 import {
   applyCellDelta,
   applyRevisionedCellDeltas,
+  DEFAULT_LINK_RING_CAPACITY,
   emptyCellsCache,
   fromCellsSnapshot,
   NO_CELL_CHANGES,
@@ -255,6 +256,30 @@ describe('applyCellDelta', () => {
       .toEqual(['0xtx1', '0xtx2', '0xtx3']);
     expect(c.pulseLinks.map((l) => l.tx_hash)).toEqual(['0xtx2', '0xtx3']);
     expect(c.linksSeq).toBe(4);
+  });
+
+  it('holds a whole busy block of live links at the default ring capacity', () => {
+    // The per-block rescue pass can only see links that survive the ring:
+    // 512 must hold the largest single-flush burst, and an overflow must
+    // leave a detectable seq gap (the planner counts it as ringEvicted).
+    expect(DEFAULT_LINK_RING_CAPACITY).toBe(512);
+    let c = emptyCellsCache();
+    for (let i = 0; i < DEFAULT_LINK_RING_CAPACITY + 1; i++) {
+      c = applyCellDelta(c, {
+        type: 'link',
+        tx_hash: `0xtx${i}`,
+        block: 9,
+        from_ids: [],
+        to_ids: [i],
+        endpoint_anchors: [],
+        parents: [],
+        tag: null,
+        at_ms: 1000 + i,
+      });
+    }
+    expect(c.pulseLinks).toHaveLength(DEFAULT_LINK_RING_CAPACITY);
+    expect(c.pulseLinks[0].seq).toBe(2); // seq 1 evicted → gap of exactly 1
+    expect(c.linksSeq).toBe(DEFAULT_LINK_RING_CAPACITY + 1);
   });
 
   it('link_prune removes orphan evidence and pending pulse events without rewinding seq', () => {

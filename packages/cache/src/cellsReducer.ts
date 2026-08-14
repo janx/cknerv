@@ -30,9 +30,13 @@ import {
 export const DEFAULT_RECENT_LINKS_CAPACITY = 2048;
 
 /** FIFO retention for newly-arrived links that may trigger live visual
- *  pulses. Pulses live ~0.8 s on the GPU, so 128 entries is enough even at
- *  burst rates of ~150 tx/s. Snapshot history never enters this queue. */
-export const DEFAULT_LINK_RING_CAPACITY = 128;
+ *  pulses. Snapshot history never enters this queue. Sized for the block
+ *  guarantee, not just the GPU pulse pool: a link evicted before the
+ *  cursor consumes it is invisible to the per-block rescue pass, so the
+ *  ring must hold the largest single-flush burst — 512 covers a whole
+ *  busy block's links with headroom (the planner detects any residual
+ *  loss as a seq gap and counts it as `ringEvicted`). */
+export const DEFAULT_LINK_RING_CAPACITY = 512;
 
 export interface CellsReducerOptions {
   recentLinksCapacity?: number;
