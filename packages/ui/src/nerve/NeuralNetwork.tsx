@@ -748,6 +748,10 @@ export default function NeuralNetwork({
   const sparePulsesRef = useRef<ActivePulse[]>([]);
   const handledLinkPruneRef = useRef(cellsCache.linkPrune);
   const lastLinksSeqRef = useRef<number>(cellsCache.linksSeq);
+  // Block-guarantee watermark: the highest height that already produced a
+  // pulse (fired or rescued), so a later batch slice of the same block
+  // never rescues twice. Rewound by the linkPrune handler on reorgs.
+  const lastGuaranteedBlockRef = useRef(0);
   useEffect(() => {
     if (cellsCache.pulseLinks.length === 0) {
       // Snapshot hydration (including a lag recovery) replaces the evidence
@@ -782,7 +786,7 @@ export default function NeuralNetwork({
     // off-stage for every one on it. Pairing them also makes residents
     // routable: they are most of the stage and `cellsCache.cells` never held
     // them at all.
-    const { planned, nextSeq } = planLinkBatch(
+    const { planned, nextSeq, lastGuaranteedBlock } = planLinkBatch(
       cellsCache.pulseLinks,
       lastLinksSeqRef.current,
       !!cellsCache.backfill,
@@ -794,8 +798,10 @@ export default function NeuralNetwork({
         maxSourcesPerParent: pulses?.maxSourcesPerParent,
       },
       pulseStats,
+      lastGuaranteedBlockRef.current,
     );
     lastLinksSeqRef.current = nextSeq;
+    lastGuaranteedBlockRef.current = lastGuaranteedBlock;
     // All links in this synchronous batch share one clock read — simClock only
     // advances per frame, so stamping once == the prior per-link stamping.
     const startSec = scheduleLivePulseStartSec(

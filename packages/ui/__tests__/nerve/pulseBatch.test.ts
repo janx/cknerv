@@ -19,14 +19,18 @@ import { pulseStats, resetPulseStats, snapshotPulseStats } from '../../src/nerve
 
 beforeEach(() => resetPulseStats());
 
-function mkCell(id: number, txHash: string): Cell {
+function mkCell(
+  id: number,
+  txHash: string,
+  pos: [number, number, number] = [0, 0, 0],
+): Cell {
   return {
     id,
     born_at_ms: 0,
     death_at_ms: null,
     birth_block: 1,
     tag: null,
-    pos_seed: [0, 0, 0],
+    pos_seed: pos,
     out_point: { tx_hash: txHash, index: 0 },
     capacity: 0,
     data_hex: '0x',
@@ -81,6 +85,7 @@ describe('planLinkBatch', () => {
       mkGraph([[1, 2]]),
       OPTS,
       pulseStats,
+      0,
     );
 
     expect(cache.recentLinks).toHaveLength(1);
@@ -99,6 +104,7 @@ describe('planLinkBatch', () => {
       mkGraph([]),
       OPTS,
       pulseStats,
+      0,
     );
     expect(planned).toEqual([]);
     expect(nextSeq).toBe(2); // cursor advanced past both links
@@ -121,6 +127,7 @@ describe('planLinkBatch', () => {
       graph,
       OPTS,
       pulseStats,
+      0,
     );
     expect(planned.length).toBe(1);
     expect(planned[0]).toMatchObject({ linkSeq: 1, linkBlock: 7 });
@@ -142,6 +149,7 @@ describe('planLinkBatch', () => {
       mkGraph([]),
       OPTS,
       pulseStats,
+      0,
     );
     expect(planned.length).toBe(0);
     const snap = snapshotPulseStats();
@@ -162,6 +170,7 @@ describe('planLinkBatch', () => {
       graph,
       OPTS,
       pulseStats,
+      0,
     ).planned;
     const orphaned = planLinkBatch(
       [mkLink({ seq: 2, block: 7 })],
@@ -171,10 +180,232 @@ describe('planLinkBatch', () => {
       graph,
       OPTS,
       pulseStats,
+      0,
     ).planned;
 
     expect(prunePulsesFromBlock([...canonical, ...orphaned], 7))
       .toEqual(canonical);
+  });
+});
+
+describe('planLinkBatch — block-guarantee rescue', () => {
+  const CH = '0x' + '00'.repeat(32);
+  /** Chain 2—3—4—5 strung centre → rim along +x. Cells born of unrelated
+   *  txs so a cold link (`parents: ['0xcold']`) drops with no-source. */
+  function rimFixture() {
+    const cells = new Map<number, Cell>([
+      [2, mkCell(2, '0xu2', [10, 0, 0])],
+      [3, mkCell(3, '0xu3', [20, 0, 0])],
+      [4, mkCell(4, '0xu4', [30, 0, 0])],
+      [5, mkCell(5, '0xu5', [40, 0, 0])],
+    ]);
+    return { cells, graph: mkGraph([[2, 3], [3, 4], [4, 5]]) };
+  }
+  const outAnchor = { id: 2, pos_seed: [10, 0, 0] as [number, number, number], content_hash: CH };
+
+  it('rescues a dark non-empty block with a rim-entry pulse', () => {
+    const { cells, graph } = rimFixture();
+    const { planned, lastGuaranteedBlock } = planLinkBatch(
+      [mkLink({
+        seq: 1, block: 7, parents: ['0xcold'], to_ids: [2],
+        endpoint_anchors: [outAnchor],
+      })],
+      0,
+      false,
+      cells,
+      graph,
+      OPTS,
+      pulseStats,
+      0,
+    );
+    expect(planned.length).toBe(1);
+    expect(planned[0]).toMatchObject({
+      linkSeq: 1,
+      linkBlock: 7,
+      rescue: 'rim',
+      path: [5, 4, 3, 2], // most rim-ward node on the dst radial, real edges in
+    });
+    expect(lastGuaranteedBlock).toBe(7);
+    const snap = snapshotPulseStats();
+    expect(snap.linkReasons['no-source']).toBe(1);
+    expect(snap.linkReasons.fired).toBe(0); // rescue never inflates fired
+    expect(snap.rescues.rim).toBe(1);
+    expect(snap.blocksWithLinks).toBe(1);
+    expect(snap.blocksLit).toBe(1); // rescued counts as lit …
+    expect(snap.blocksLinksButDark).toBe(0); // … so the acceptance metric holds
+  });
+
+  it('departs from beside the consumed coin when the link carries input anchors', () => {
+    const { cells: base } = rimFixture();
+    const cells = new Map(base);
+    cells.set(8, mkCell(8, '0xu8', [0, 0, 15]));
+    cells.set(9, mkCell(9, '0xu9', [0, 0, 25]));
+    cells.set(10, mkCell(10, '0xu10', [0, 0, 38]));
+    const graph = mkGraph([[2, 3], [3, 4], [4, 5], [2, 8], [8, 9], [9, 10]]);
+    const { planned } = planLinkBatch(
+      [mkLink({
+        seq: 1, block: 7, parents: ['0xcold'], from_ids: [77], to_ids: [2],
+        endpoint_anchors: [
+          { id: 77, pos_seed: [0, 0, 40], content_hash: CH }, // consumed coin
+          outAnchor,
+        ],
+      })],
+      0,
+      false,
+      cells,
+      graph,
+      OPTS,
+      pulseStats,
+      0,
+    );
+    // Two nodes sit ≥3 hops out (5 and 10); the anchor pulls the origin to 10.
+    expect(planned.length).toBe(1);
+    expect(planned[0]).toMatchObject({ rescue: 'anchored', path: [10, 9, 8, 2] });
+    expect(snapshotPulseStats().rescues.anchored).toBe(1);
+  });
+
+  it('never rescues a block that already lit — plans exactly the normal pulses', () => {
+    const cells = new Map<number, Cell>([
+      [1, mkCell(1, '0xparent')],
+      [2, mkCell(2, '0xout')],
+    ]);
+    const graph = mkGraph([[1, 2]]);
+    const { planned, lastGuaranteedBlock } = planLinkBatch(
+      [
+        mkLink({ seq: 1, block: 7, parents: ['0xparent'], to_ids: [2] }),
+        mkLink({ seq: 2, block: 7, tx_hash: '0xtx2', parents: ['0xcold'], to_ids: [2], endpoint_anchors: [outAnchor] }),
+      ],
+      0,
+      false,
+      cells,
+      graph,
+      OPTS,
+      pulseStats,
+      0,
+    );
+    expect(planned.length).toBe(1); // the fired link's pulse only
+    expect(planned[0].rescue).toBeUndefined();
+    expect(lastGuaranteedBlock).toBe(7);
+    const snap = snapshotPulseStats();
+    expect(snap.rescues).toEqual({ anchored: 0, rim: 0, 'dst-substituted': 0, failed: 0 });
+  });
+
+  it('a later batch slice of an already-guaranteed block never re-rescues', () => {
+    const { cells, graph } = rimFixture();
+    const cold = (seq: number, block: number) => mkLink({
+      seq, block, tx_hash: `0xtx${seq}`, parents: ['0xcold'], to_ids: [2],
+      endpoint_anchors: [outAnchor],
+    });
+    const first = planLinkBatch(
+      [cold(1, 7)], 0, false, cells, graph, OPTS, pulseStats, 0,
+    );
+    expect(first.planned.length).toBe(1);
+    expect(first.lastGuaranteedBlock).toBe(7);
+    // Second slice: another dark block-7 link + a dark block-8 link.
+    const second = planLinkBatch(
+      [cold(2, 7), cold(3, 8)],
+      first.planned.length ? 1 : 0,
+      false,
+      cells,
+      graph,
+      OPTS,
+      pulseStats,
+      first.lastGuaranteedBlock,
+    );
+    expect(second.planned.length).toBe(1); // block 8's rescue only
+    expect(second.planned[0]).toMatchObject({ linkBlock: 8, rescue: 'rim' });
+    expect(second.lastGuaranteedBlock).toBe(8);
+    expect(snapshotPulseStats().rescues.rim).toBe(2);
+  });
+
+  it('cellbase-only dark blocks stay silent (2026-07-03 ruling upheld)', () => {
+    const { cells, graph } = rimFixture();
+    const { planned, lastGuaranteedBlock } = planLinkBatch(
+      [mkLink({ seq: 1, block: 7, parents: [], to_ids: [2], endpoint_anchors: [outAnchor] })],
+      0,
+      false,
+      cells,
+      graph,
+      OPTS,
+      pulseStats,
+      0,
+    );
+    expect(planned).toEqual([]);
+    expect(lastGuaranteedBlock).toBe(0);
+    const snap = snapshotPulseStats();
+    expect(snap.linkReasons['no-parents']).toBe(1);
+    expect(snap.rescues).toEqual({ anchored: 0, rim: 0, 'dst-substituted': 0, failed: 0 });
+    expect(snap.blocksLit).toBe(0);
+  });
+
+  it('a block starved by the batch budget still lights through its rescue', () => {
+    const cells = new Map<number, Cell>([
+      [1, mkCell(1, '0xparent')],
+      [2, mkCell(2, '0xout')],
+    ]);
+    const graph = mkGraph([[1, 2]]);
+    // 130 firing links in block 7 exhaust the 128-pulse budget…
+    const links: CellLink[] = [];
+    for (let i = 1; i <= 130; i++) {
+      links.push(mkLink({ seq: i, block: 7, tx_hash: `0xtx${i}`, parents: ['0xparent'], to_ids: [2] }));
+    }
+    // …then block 8 arrives dark in the same batch.
+    links.push(mkLink({
+      seq: 131, block: 8, tx_hash: '0xcoldtx', parents: ['0xcold'], to_ids: [2],
+      endpoint_anchors: [{ id: 2, pos_seed: [0, 0, 0], content_hash: CH }],
+    }));
+    const { planned } = planLinkBatch(
+      links, 0, false, cells, graph, OPTS, pulseStats, 0,
+    );
+    expect(planned.length).toBe(129); // 128 budgeted + 1 exempt rescue
+    expect(planned[128]).toMatchObject({ linkBlock: 8, rescue: 'rim' });
+    const snap = snapshotPulseStats();
+    // Links 129/130 of block 7 AND block 8's link all hit the budget —
+    // the rescue is what lights block 8 anyway.
+    expect(snap.linkReasons['batch-budget']).toBe(3);
+    expect(snap.blocksLit).toBe(2);
+    expect(snap.blocksLinksButDark).toBe(0);
+  });
+
+  it('lands beside the newborn when none of the outputs are routable', () => {
+    const { cells, graph } = rimFixture();
+    const { planned } = planLinkBatch(
+      [mkLink({
+        seq: 1, block: 7, parents: ['0xcold'], to_ids: [99],
+        endpoint_anchors: [{ id: 99, pos_seed: [9, 0, 0], content_hash: CH }],
+      })],
+      0,
+      false,
+      cells,
+      graph,
+      OPTS,
+      pulseStats,
+      0,
+    );
+    expect(planned.length).toBe(1);
+    // Nearest in-graph node to the newborn's anchor (9,0,0) is 2 at (10,0,0).
+    expect(planned[0]).toMatchObject({ rescue: 'rim', path: [5, 4, 3, 2] });
+    const snap = snapshotPulseStats();
+    expect(snap.rescues.rim).toBe(1);
+    expect(snap.rescues['dst-substituted']).toBe(1);
+  });
+
+  it('counts an unrescuable dark block instead of inventing geometry', () => {
+    // Empty graph, no anchors: nothing honest to route — stay dark, count it.
+    const { planned } = planLinkBatch(
+      [mkLink({ seq: 1, block: 7, parents: ['0xcold'], to_ids: [2] })],
+      0,
+      false,
+      new Map<number, Cell>(),
+      mkGraph([]),
+      OPTS,
+      pulseStats,
+      0,
+    );
+    expect(planned).toEqual([]);
+    const snap = snapshotPulseStats();
+    expect(snap.rescues.failed).toBe(1);
+    expect(snap.blocksLit).toBe(0);
   });
 });
 

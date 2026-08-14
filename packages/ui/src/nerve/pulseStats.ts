@@ -22,6 +22,18 @@ export type DropReason =
  *  neighbour graph = the stale/throttled-graph race. */
 export type PathFail = 'endpoint-missing' | 'no-path';
 
+/** Origin honesty of a block-guarantee rescue pulse: `anchored` departed
+ *  from beside the consumed coin's true position (the link carried input
+ *  anchors); `rim` declared the origin outside the retained window and
+ *  entered from the tissue rim. */
+export type RescueKind = 'anchored' | 'rim';
+
+/** Rescue-pass bookkeeping. The two kinds count fired rescues (the honesty
+ *  mix); `dst-substituted` = none of the link's outputs were routable so the
+ *  pulse landed beside the newborn's anchored position; `failed` = a dark
+ *  non-empty block could not be rescued at all (defensive — should stay 0). */
+export type RescueCounter = RescueKind | 'dst-substituted' | 'failed';
+
 /** Per-recall terminal outcome. `recalled` is the success bucket; the rest are
  *  the reasons one user-driven recall produced no route. Recall plans on the
  *  staged graph, so `no-source` counts links whose endpoints have ALL left the
@@ -44,6 +56,11 @@ export interface PulseStatsSnapshot {
   pathFails: Record<PathFail, number>;
   /** User-driven historical recalls, by terminal outcome. */
   recallOutcomes: Record<RecallOutcome, number>;
+  /** Block-guarantee rescue outcomes (the origin honesty mix). */
+  rescues: Record<RescueCounter, number>;
+  /** Live links evicted from the bounded pulse ring before the cursor
+   *  consumed them (a seq gap) — silent guarantee loss if ever nonzero. */
+  ringEvicted: number;
   /** All blocks observed (one per `pulse` delta), incl. empty ones. */
   blocksTotal: number;
   /** Blocks that emitted ≥1 tx-link. */
@@ -76,6 +93,9 @@ function zeroReasons(): Record<DropReason, number> {
 function zeroPathFails(): Record<PathFail, number> {
   return { 'endpoint-missing': 0, 'no-path': 0 };
 }
+function zeroRescues(): Record<RescueCounter, number> {
+  return { anchored: 0, rim: 0, 'dst-substituted': 0, failed: 0 };
+}
 function zeroRecallOutcomes(): Record<RecallOutcome, number> {
   return { recalled: 0, 'link-missing': 0, 'no-source': 0, 'no-route': 0 };
 }
@@ -84,8 +104,12 @@ interface PulseStatsState extends PulseStatsSink {
   linkReasons: Record<DropReason, number>;
   pathFails: Record<PathFail, number>;
   recallOutcomes: Record<RecallOutcome, number>;
+  rescues: Record<RescueCounter, number>;
+  ringEvicted: number;
   blocksTotal: number;
   bumpRecall(outcome: RecallOutcome, n?: number): void;
+  bumpRescue(kind: RescueCounter, n?: number): void;
+  bumpRingEvicted(n?: number): void;
   // Internal block-rollup state. `link.block` is monotonic non-decreasing, so
   // we close the current block when a strictly different block id arrives.
   _curBlock: number;
@@ -102,6 +126,8 @@ export const pulseStats: PulseStatsState = {
   linkReasons: zeroReasons(),
   pathFails: zeroPathFails(),
   recallOutcomes: zeroRecallOutcomes(),
+  rescues: zeroRescues(),
+  ringEvicted: 0,
   blocksTotal: 0,
   _curBlock: -1,
   _curBlockLit: false,
@@ -116,6 +142,12 @@ export const pulseStats: PulseStatsState = {
   },
   bumpRecall(outcome, n = 1) {
     this.recallOutcomes[outcome] += n;
+  },
+  bumpRescue(kind, n = 1) {
+    this.rescues[kind] += n;
+  },
+  bumpRingEvicted(n = 1) {
+    this.ringEvicted += n;
   },
 
   observeLink(block, lit) {
@@ -155,6 +187,8 @@ export const pulseStats: PulseStatsState = {
       linkReasons: { ...this.linkReasons },
       pathFails: { ...this.pathFails },
       recallOutcomes: { ...this.recallOutcomes },
+      rescues: { ...this.rescues },
+      ringEvicted: this.ringEvicted,
       blocksTotal: this.blocksTotal,
       blocksWithLinks,
       blocksLit,
@@ -174,6 +208,8 @@ export const pulseStats: PulseStatsState = {
     this.linkReasons = zeroReasons();
     this.pathFails = zeroPathFails();
     this.recallOutcomes = zeroRecallOutcomes();
+    this.rescues = zeroRescues();
+    this.ringEvicted = 0;
     this.blocksTotal = 0;
     this._curBlock = -1;
     this._curBlockLit = false;

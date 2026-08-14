@@ -8,7 +8,7 @@ import { fnv1a } from '../geometry/edgeBezier';
 import type { NeighborGraph } from '../geometry/neighborGraph';
 import { shortestPathsToTargets, DEFAULT_MAX_HOPS } from '../geometry/pathRouter';
 import { consensusPacketColor } from '../derives/consensusFlow.derive';
-import type { PulseStatsSink } from './pulseStats';
+import type { PulseStatsSink, RescueKind } from './pulseStats';
 
 /** Base time the spike spends traversing one hop (cell-to-cell) in
  *  ms. Each individual pulse picks its own hop time around this base
@@ -49,6 +49,10 @@ export interface Pulse {
    *  [0.7×, 1.4×] scale around HOP_MS_BASE so each pulse travels
    *  at its own pace. */
   hopMs: number;
+  /** Set on block-guarantee rescue pulses (≤1 per block): the origin
+   *  honesty this pulse fell back to. Absent on normal cascade pulses.
+   *  Overflow eviction sheds rescue pulses last. */
+  rescue?: RescueKind;
 }
 
 export interface PulsePlanningOptions {
@@ -107,8 +111,9 @@ export function collectLinkSourceIndex(
 
 /** Derive pulse start delay + hop duration from a deterministic seed
  *  (so replays produce the same animation). The hashed string mixes
- *  tx_hash + source/target ids so siblings differ. */
-function pulseTiming(
+ *  tx_hash + source/target ids so siblings differ. Exported for the
+ *  rescue pass, which stamps its one pulse per block the same way. */
+export function pulseTiming(
   link: CellLink,
   src: number,
   dst: number,
