@@ -160,8 +160,9 @@ import type { Cell } from '@cknerv/types';
 const SPIKE_POOL_CAPACITY = 1024;
 
 /** Soft cap on concurrent pulses. Anything above this drops oldest
- *  first — keeps the visual coherent during burst-block activity. */
-const MAX_ACTIVE_PULSES = 256;
+ *  first — keeps the visual coherent during burst-block activity.
+ *  Exported as the authority ui-app's runtime-config default mirrors. */
+export const MAX_ACTIVE_PULSES = 256;
 
 /** Wavefront glyph scale. Live writes use the pale data lozenge; historical
  *  recall uses a smaller segmented phase knot. The curve carries the route. */

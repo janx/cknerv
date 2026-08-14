@@ -1,4 +1,13 @@
-import { DEFAULT_LINK_RING_CAPACITY } from '@cknerv/cache';
+import {
+  DEFAULT_LINK_RING_CAPACITY,
+  DEFAULT_RECENT_LINKS_CAPACITY,
+} from '@cknerv/cache';
+import {
+  DEFAULT_MAX_HOPS,
+  MAX_ACTIVE_PULSES,
+  MAX_PULSES_PER_LINK,
+  MAX_SOURCES_PER_PARENT,
+} from '@cknerv/ui';
 
 export type GalaxyProfile = 'auto' | 'devnet' | 'testnet' | 'mainnet' | 'custom';
 
@@ -45,28 +54,34 @@ export const DEFAULT_ENRICHMENT_CONFIG: EnrichmentRuntimeConfig = {
 };
 export const DEFAULT_GALAXY_CONFIG: GalaxyRuntimeConfig = {
   profile: 'auto',
+  // Mirrors the Rust reservoir bound (cells::CELL_CAP — "not a knob"); the
+  // wire always shadows it, and the shared payload fixture pins the mirror.
   cellCap: 50_000,
-  recentLinksCap: 2048,
+  recentLinksCap: DEFAULT_RECENT_LINKS_CAPACITY,
   topology: {
     // Densified live to bridge the inter-arm gaps: sparse gap cells whose 4
     // nearest neighbours sat beyond the old 28u reach were dropped (no edge →
-    // dark voids). maxEdgeLength 28 → 42 connects them; neighborK 4 → 5 adds a
-    // little local density. Fabric buffer is sized for this — see
-    // fabricCapacity.ts AVG_DEGREE_BOUND.
+    // dark voids). maxEdgeLength 28 → 42 connects them; neighborK 4 → 5 adds
+    // a little local density. The fabric GPU buffers absorb this because they
+    // are sized from the fixed screen budget, not graph density — see
+    // fabricCapacity.ts FABRIC_ALLOCATION_EDGE_CLASSES. These two numbers are
+    // the app-level authority (deliberately denser than neighborGraph.ts's
+    // module defaults); the server payload is pinned to them by the shared
+    // runtime_config_galaxy.json fixture.
     neighborK: 5,
     maxEdgeLength: 42,
-    maxHops: 40,
+    maxHops: DEFAULT_MAX_HOPS,
   },
   pulses: {
-    // The cache package's default is the authority: the ring is sized for
+    // The owning packages' defaults are the authority: the ring is sized for
     // the block guarantee (hold a whole busy block's links until the plan
     // effect consumes them), not just the GPU pulse pool. A runtime
-    // override here that trails the package default re-opens the silent
+    // override here that trails a package default re-opens the silent
     // whole-block-dark eviction the 512 sizing closed.
     linkRingCapacity: DEFAULT_LINK_RING_CAPACITY,
-    maxPulsesPerLink: 6,
-    maxSourcesPerParent: 2,
-    maxActivePulses: 256,
+    maxPulsesPerLink: MAX_PULSES_PER_LINK,
+    maxSourcesPerParent: MAX_SOURCES_PER_PARENT,
+    maxActivePulses: MAX_ACTIVE_PULSES,
   },
 };
 

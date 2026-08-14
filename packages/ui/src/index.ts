@@ -215,7 +215,7 @@ export { default as ColonyCourierLayer } from './components/ColonyCourierLayer';
 export { default as NetworkColony } from './components/NetworkColony';
 
 // ── Consensus flow overlay (Cell→Cell protocol writes) ──────────────
-export { default as NeuralNetwork } from './nerve/NeuralNetwork';
+export { default as NeuralNetwork, MAX_ACTIVE_PULSES } from './nerve/NeuralNetwork';
 export {
   CELL_INSPECTION_BACKGROUND_ENERGY,
   CELL_INSPECTION_HOP_ENERGY,
@@ -241,7 +241,13 @@ export type {
   ConsensusWriteSealProps,
   DendriticBurstProps,
 } from './nerve/DendriticBurst';
-export { planPulses, type Pulse, type PulsePlanningOptions } from './nerve/pulseRunner';
+export {
+  planPulses,
+  MAX_PULSES_PER_LINK,
+  MAX_SOURCES_PER_PARENT,
+  type Pulse,
+  type PulsePlanningOptions,
+} from './nerve/pulseRunner';
 export {
   planConsensusMemoryTrace,
   canRecallConsensusMemory,
