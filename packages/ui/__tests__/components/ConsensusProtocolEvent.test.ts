@@ -79,7 +79,8 @@ describe('A protocol event relay', () => {
     expect(delivery).toContain('LIVE.delivery.waveReachHero');
     expect(delivery).toContain('LIVE.delivery.waveReachPeer');
     // Reach must extinguish rather than clamp, or fronts freeze mid-field.
-    expect(delivery).not.toMatch(/Math\.min\([^)]*crestRadius/);
+    // (The crest WIDTH is capped against the radius — that is a different knob.)
+    expect(delivery).not.toMatch(/crestRadius\s*=\s*Math\.(min|max)/);
     expect(delivery).toContain('reachFade');
     // Overlap safety: a 1/r falloff dims a front before it can meet a neighbour.
     expect(delivery).toContain('WAVE_FALLOFF_REFERENCE + crestRadius');

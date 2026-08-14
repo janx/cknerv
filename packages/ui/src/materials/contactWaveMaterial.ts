@@ -168,6 +168,12 @@ export function makeContactWaveMaterial(): THREE.ShaderMaterial {
 
         float signal = crest + wake;
 
+        // The annulus is a drawing surface, not part of the form. Fade the
+        // signal out at both of its edges so a wide crest or a long wake can
+        // never expose the geometry boundary as a hard line.
+        signal *= smoothstep(${CONTACT_WAVE_INNER_UV.toFixed(2)}, ${(CONTACT_WAVE_INNER_UV + 0.07).toFixed(2)}, radius)
+          * (1.0 - smoothstep(0.93, 1.0, radius));
+
         // Three open sides, the same break the carrier rim carries — and at the
         // same side indices, so the glyph and the front it becomes agree. Phase
         // runs 0..uGapEvery inside each period; the last unit of the period is

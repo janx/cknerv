@@ -93,6 +93,10 @@ const WAVE_FALLOFF_REFERENCE = 6;
 const WAVE_WIDTH_GROW = 0.45;
 /** Fraction of a front's reach where its extinction begins. */
 const WAVE_REACH_KNEE = 0.72;
+/** Ceiling on the crest half-width as a fraction of the crest radius. Without
+ *  it a young front — radius still a world unit or two — is mostly crest, and
+ *  the release reads as a soft doughnut instead of a thin ring leaving. */
+const WAVE_WIDTH_RADIUS_CAP = 0.22;
 /** Golden-angle roll per delivery so the three rim gaps never align across
  *  workers and the overlapping fronts stay an interference field, not a moiré. */
 const WAVE_GAP_ROLL = 2.399963;
@@ -118,6 +122,11 @@ const lobSpeed = (t: number) => 0.15 + 1.7 * t;
 function smoothUnit(value: number): number {
   const u = value <= 0 ? 0 : value >= 1 ? 1 : value;
   return u * u * (3 - 2 * u);
+}
+
+/** A crest may never be a large fraction of its own radius. */
+function crestHalfWidth(width: number, crestRadius: number): number {
+  return Math.min(width, crestRadius * WAVE_WIDTH_RADIUS_CAP);
 }
 
 // Shared scratch state. Frame callbacks are sequential, and every setter copies
@@ -653,7 +662,7 @@ export default function BlockDeliveryLayer({
             waveCount,
             _position,
             inhaleRadius,
-            LIVE.delivery.waveWidth * 0.7 * punch,
+            crestHalfWidth(LIVE.delivery.waveWidth * 0.7 * punch, inhaleRadius),
             CONTACT_WAVE_WAKE_AHEAD,
             CARRIER_COLOR,
             inhaleOpacity,
@@ -694,7 +703,10 @@ export default function BlockDeliveryLayer({
             waveCount,
             _position,
             crestRadius,
-            LIVE.delivery.waveWidth * (1 + WAVE_WIDTH_GROW * contactAge),
+            crestHalfWidth(
+              LIVE.delivery.waveWidth * (1 + WAVE_WIDTH_GROW * contactAge),
+              crestRadius,
+            ),
             CONTACT_WAVE_WAKE_BEHIND,
             _waveColor,
             intensity,
