@@ -13,15 +13,15 @@
 //     dimmed glow-mote flung node→node along the shortest-path tree, timed by the
 //     flood arrivals. The edge surge traces the actual route while the node
 //     shockwave supplies the broad network response.
-//   • BlockDeliveryLayer — one galaxy-facing energy jellyfish per measured
-//     worker (timed by cf.arrivals) plus the local source. Its sparse low-poly
-//     canopy and three angular tendrils resolve into a segmented contact wave +
-//     real Cell illumination.
+//   • BlockDeliveryLayer — one galaxy-facing carrier glyph per measured worker
+//     (timed by cf.arrivals) plus the local source. Each glyph tightens, rises
+//     contracting, and at contact is released as a front of that same
+//     interrupted rim + real Cell illumination.
 //
 // Block wiring (ported from the retired hub-and-spoke layer): on each new block
 // pulse we stamp `pulseRef` with { at: simClock.elapsedSec, entryId: cf.entryId };
-// the delivery layer reads it every frame. Boluses run off `colonyFlood`, so the
-// measured workers already feed the galaxy on the flood's timing.
+// the delivery layer reads it every frame. Deliveries run off `colonyFlood`, so
+// the measured workers already feed the galaxy on the flood's timing.
 //
 // Catch-up quiescence: during a backfill / large-restore-gap the cells projection
 // SUPPRESSES the block Pulse delta server-side (cknerv-core projection/cells.rs:

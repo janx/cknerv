@@ -52,8 +52,11 @@ this structure.
 ```
 
 `GET /api/projections/cells/snapshot` — envelope `{revision, snapshot}`.
-The cell set lives under `snapshot.cells`; cumulative counters are
-`snapshot.total_births` / `snapshot.total_deaths`:
+The rows live under `snapshot.cells` and carry the *staged* set, not the whole
+retained galaxy; whole-galaxy aggregates live under `snapshot.stats`, and
+cumulative counters are `snapshot.total_births` / `snapshot.total_deaths`. This
+procedure's 100-Cell target is far below the 12,000-Cell stage, so every
+retained Cell is staged here and counting rows is exact:
 
 ```json
 {
@@ -63,7 +66,8 @@ The cell set lives under `snapshot.cells`; cumulative counters are
     "total_births": 58,
     "total_deaths": 10,
     "last_pulse_at_ms": 0,
-    "recent_links": []
+    "recent_links": [],
+    "stats": { "in_view": 48, "data_bearing": 3, "capacity_shannons": 0, "by_kind": {}, "by_lock": {}, "by_asset": {}, "scripts": { "...": "..." } }
   }
 }
 ```
@@ -262,6 +266,10 @@ With a local ckbadger service configured:
       24 hourly / 14 daily count buckets and no localized source labels
 - [ ] With ckbadger's crawler enabled, the semantics snapshot gains a
       `network_atlas` whose sample is at most 64 and contains no peer identities
+- [ ] The semantics snapshot gains an anchored `script_registry` naming only the
+      identities the cells projection's census reports, with `unresolved`
+      counting the rest; `GALAXY WINDOW` then spells its lock/asset bars with
+      those names instead of the four pinned families
 - [ ] With the crawler disabled, `network_atlas` remains absent while source
       health, Cell detail, ecosystem, DAO, and activity enrichment still work
 - [ ] The semantics snapshot gains an anchored `galaxy_composition`; at the

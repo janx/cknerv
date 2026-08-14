@@ -168,11 +168,14 @@ measurements.
 
 `CellGalaxyCache` is the renderer's canonical browser input. It contains:
 
-- canonical `cells` and their copy-on-write change journal;
+- canonical `cells` and their copy-on-write change journal — seeded from a
+  snapshot that carries only the staged rows, then grown by streamed births;
 - bounded `recentLinks` for evidence and recall;
 - `pulseLinks`, containing only newly observed live links;
 - an ordered `linkPrune` witness for canonical rewrites;
-- chain-wide totals and incremental statistics;
+- chain-wide totals, plus statistics seeded from the snapshot's aggregate
+  segment (which covers the whole retained set) and maintained incrementally,
+  including the script census the client cannot derive from staged rows;
 - backfill state; and
 - the server-owned display plane: members, residents, budget, provenance, and
   a display-change journal.
@@ -313,8 +316,12 @@ one color family is a visual-language change, not a local styling adjustment.
 
 The renderer distinguishes three populations:
 
-1. The canonical retained reservoir in `cells`, currently capped by the server
-   profile and independently of what can be drawn.
+1. The canonical Cells in `cells`. This is **not** the server's retained
+   reservoir: a snapshot carries only the rows the display plane staged, and the
+   map grows afterwards through streamed births. Its size is therefore neither
+   the retained-set size nor a guaranteed superset of the stage, and nothing may
+   use it as a proxy for either — galaxy-wide numbers come from the snapshot's
+   statistics segment instead.
 2. The server-owned display plane in `displayMembers` and `displayResidents`.
    Residents can preserve displayable records even when they are no longer in
    the canonical live Map.
@@ -324,7 +331,8 @@ The renderer distinguishes three populations:
 AUTO uses the server display budget when one is streamed and otherwise uses a
 fixed 12,000-Cell compatibility budget. High, Med, and Low render the same AUTO
 membership. Manual mode is a presentation clamp over the staged order and may
-request up to the 50,000-record renderer ceiling.
+request up to the 50,000-record renderer ceiling, but it cannot display records
+the server did not send.
 
 With a display plane, `displayChanges` incrementally append entries, remove by
 swap-from-tail, and patch updated residents. A skipped journal, reset, token
@@ -549,16 +557,42 @@ claim about actual unobserved peers.
 |---:|---|
 | `0` | Deterministic two-second peer-colony flood begins |
 | `0.3..1.7 s` | Local receive point, clamped into the flood's hero band |
-| `local receive - 0.4 s` | Carrier precharge can begin when lead time exists |
-| `local receive` | Local protocol carrier launches toward the Cell field |
-| `local receive + 1.0 s` | Carrier reaches the field; live Cell-to-Cell pulses may start |
-| `local receive + 2.2 s` | Cell ledger acknowledgement completes |
+| `local receive - 0.4 s` | Gather: the worker holds still while its glyph tightens and brightens, when lead time exists |
+| `local receive` | The glyph rises toward the Cell field, contracting and heating as it goes |
+| `local receive + 1.0 s` | Contact: the glyph is released as a front; live Cell-to-Cell pulses may start |
+| `local receive + 2.2 s` | Contact window closes and the Cell ledger acknowledgement completes |
 | `local receive + 2.35 s` | Exact touched-Cell highlight uses the additional 150 ms readability offset |
 
+The handoff is one idea in three beats: compression, then release. The glyph a
+worker lifts and the front it releases into the field are the same interrupted
+polygon — twelve sides with every fourth left open — at two scales, so the
+arriving object and the spreading pressure are one shape rather than two
+languages meeting at the membrane. Every measured worker releases its own
+front. Latency-staggered releases compose into one interference field instead
+of dozens of independent events because they share that one shape and one
+speed: the Cell-field front travels at the peer plane's `SHOCKWAVE_SPEED`
+divided by `CONTACT_WAVE_SCALE`, so both planes read as sections of the same
+event while the released ring stays a local ripple in the tissue. Every spatial
+constant of the front — speed, reach, start radius, crest width, widening rate,
+falloff reference — is divided by that one scale, which is what makes the size
+change a pure spatial scale that leaves the front's shape and pacing untouched.
+
+Overlap is kept off the white rail by thin crests, a 1/r falloff, the rim's
+three gaps, and extinction where the tissue runs out. Reach is extinction
+rather than a clamp: a clamped radius would freeze fronts mid-field and break
+the shared-speed reading. Crest half-width is capped as a fraction of the crest
+radius, without which a young front is mostly crest and the release reads as a
+soft doughnut instead of a ring leaving. The front is resolved analytically in
+an instanced material drawn on an annulus rather than scaled from a sprite,
+which smears the moment a front grows past a few world units; delivery count
+changes instance and vertex counts, never draw-call count.
+
 The exact touched set is derived from fresh links and bounded to 256 Cells per
-block. A local impact can also ignite up to 128 nearby staged Cells within a
-14-world-unit radius as a presentation bridge from carrier to field. That
-radial response must not be described as additional chain linkage.
+block. Contact also ignites a small k-nearest neighbourhood per worker (more
+for the hero, fewer per peer, bounded in total and rippled by arrival order),
+and a local impact can ignite up to 128 nearby staged Cells within a
+14-world-unit radius as a presentation bridge from carrier to field. Neither
+radial response may be described as additional chain linkage.
 
 Backfill consumes block and link cursors without firing this choreography.
 
@@ -579,6 +613,20 @@ and transition masks are shader state over the existing topology.
 The causal lens uses immutable link endpoint anchors and bounded real input and
 sibling sets. Missing retained positions remain missing; it never fabricates a
 complete family around incomplete evidence.
+
+Recall answers two separate questions and must keep them separate. *What the
+transaction consumed* comes from the link's own `endpoint_anchors`, which
+captured every endpoint's identity at the moment the transaction landed and
+therefore cannot be taken away by a Cell ageing out of view — measured on
+mainnet, only about 0.3% of retained links still resolve even one input through
+the Cell map. *Where a pulse can depart from* remains a question about the
+current graph, answered as before, with the surviving-sibling route kept
+honestly labelled as a lineage witness. The panel names the spent inputs no
+route departs from above the ledger of what carried the transaction, and says
+nothing when the routed evidence already is the inputs. Routing from the
+anchors' own positions is deliberately not done: a pulse addresses Cells by id
+and the renderer resolves geometry from the display map, so a spent input is
+not a place a pulse can start.
 
 ### 9.4 Reorg ordering
 
@@ -750,6 +798,8 @@ immediately.
 | Canonical rewrite echo | up to 50,000 records in one point draw | `components/CanonicalRewriteEcho.tsx` |
 | Exact touched Cells per block | 256 | `ui/topologyConstants.ts` |
 | Local impact ignitions | 128 | `ui/topologyConstants.ts` |
+| Contact ignitions per block | 300 across all workers | `tweaks/tweakSchema.ts` |
+| Contact front scale | peer-plane wave / `CONTACT_WAVE_SCALE` | `materials/contactWaveMaterial.ts` |
 | Cell birth / death envelope | 500 ms / 600 ms | `geometry/cellPositions.ts` |
 
 Passive and warm allocations quantize to the 8,000-edge default class or the
@@ -1008,6 +1058,7 @@ Before merging a Canvas change, answer:
 | Screen-space capsule geometry | `packages/ui/src/geometry/screenSpaceCapsuleLine.ts` |
 | Peer topology and block flood | `packages/ui/src/derives/networkTopology.derive.ts`, `packages/ui/src/derives/networkFlood.derive.ts` |
 | Peer render layers and Cell delivery | `packages/ui/src/components/NetworkColony.tsx`, `packages/ui/src/components/BlockDeliveryLayer.tsx` |
+| Carrier glyph and contact front | `packages/ui/src/geometry/protocolCarrier.ts`, `packages/ui/src/materials/contactWaveMaterial.ts` |
 | Canonical rewrite echo | `packages/ui/src/components/CanonicalRewriteEcho.tsx` |
 | Simulation clock | `packages/ui/src/tweaks/simClock.ts`, `packages/ui/src/tweaks/SimClockTicker.tsx`, `packages/ui/src/tweaks/useSimFrame.ts` |
 | Portrait scissor pass | `packages/ui/src/components/hud/CellPortraitInset.tsx` |

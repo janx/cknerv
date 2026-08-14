@@ -94,7 +94,7 @@ membership ordered against the births, deaths, and reorgs it is staged against.
 |---|---|---|
 | `GET` | `/api/projections/semantics/snapshot` | Source health and currently available bounded semantics; present even when enrichment is disabled |
 | `WS` | `/api/projections/semantics/stream?since=<rev>` | Independent semantics snapshot/delta stream |
-| `GET` | `/api/projections/cells/snapshot` | Canonical Cells **and** the display plane's `display` section; present in every mode |
+| `GET` | `/api/projections/cells/snapshot` | The staged canonical Cells **and** the display plane's `display` section, plus a statistics segment covering the whole retained set; present in every mode |
 | `WS` | `/api/projections/cells/stream?since=<rev>` | Canonical Cell deltas **and** `display` membership patches, in one revision order |
 | `GET` | `/api/enrichment/cells/:tx_hash/:output_index` | Resolve one selected Cell lazily; returns `404 enrichment_disabled` without a configured source |
 | `GET` | `/api/enrichment/transactions/:tx_hash` | Resolve the selected Cell's origin transaction lazily |
@@ -486,6 +486,46 @@ rather than two adjacent network panels, and it creates no scene nodes or edges.
 The standalone base detail returns when the crawler is unconfigured, empty,
 disabled, or canonically unusable. Staleness dims only the network-wide stage
 after three missed minute refreshes.
+
+### Script Registry
+
+With `script_registry`, cknerv asks the index what the script identities its own
+galaxy is holding are called, at most once every five minutes. The question is
+"what is on my galaxy", not "what exists on CKB": the cells projection publishes
+the `(code_hash, hash_type)` pairs it currently holds through a shared sink, an
+empty observed set asks nothing at all, and the deduplicated hashes — at most
+256 — go out as one batched `scripts/lookup`. An index with a thousand families
+still produces a record sized by what cknerv observed.
+
+`scripts/lookup` uses a transaction hash to disambiguate a code hash that
+several deployed scripts share, which happens only for data-hash scripts. A
+census is a set of identities with no transaction attached, so cknerv asks
+without that context and reads each entry's `resolutionState` to learn when it
+mattered. An entry that is not `resolved` is dropped rather than guessed at, and
+so is one named "Unknown": `resolved` means "I found the deployment", not "I
+know what it is", and measured on a live mainnet galaxy 8 of 29 identities come
+back that way. Passing those through would print "Unknown" as a script family
+while reporting nothing unresolved, which is the exact failure this capability
+exists to end.
+
+The lookup route carries no descriptions, so descriptions and family websites
+come from the bounded `scripts` catalogue joined by name — measured unique
+across its 66 families. A catalogue failure costs those two fields and nothing
+else. The canonical anchor is proved before the lookup and re-proved before the
+record is admitted, like every other capability.
+
+The record carries the resolved entries plus `unresolved`, a count of observed
+identities the index had no name for. They are counted rather than listed: the
+panel already holds those code hashes from the cells projection's census, so the
+record only has to say that asking produced nothing.
+
+`GALAXY WINDOW` joins the two planes in the browser on `(code_hash, hash_type)`
+and renders the real families in **WINDOW ASSETS** and **WINDOW LOCKS** in place
+of the four lock and five asset families cknerv pins itself — never beside them.
+Without a census at all, from a backend predating it or a galaxy restored from
+older state, the pinned families remain rather than an empty panel. A family
+nothing named keeps its code hash as its label. Losing the index therefore costs
+names, not counts: the bars still show the true distribution, spelled in hashes.
 
 ## Persistence
 

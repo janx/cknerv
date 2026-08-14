@@ -180,6 +180,8 @@ A canonical Cell is created from a real CKB output. Its core fields are:
 - bounded `data_hex`;
 - the CKB-canonical content hash of the complete `CellOutput + data`;
 - `lock_kind` and `asset_kind` classifications;
+- `lock_script` and optional `type_script`, each a `ScriptId` carrying the
+  `(code_hash, hash_type)` pair verbatim from the node;
 - an id-derived `pos_seed`;
 - an optional opaque tag.
 
@@ -187,6 +189,17 @@ Cellbase uses a dedicated sentinel previous output, which the projection does
 not interpret as a normal Cell spend. Script taxonomy is a deterministic map
 of known code-hash/hash-type pairs. Unknown scripts remain `other`; no fallback
 classification chain invents a value.
+
+The `_kind` enums and `ScriptId` answer two different questions and are not
+interchangeable. The enums are cknerv's own coarse classification over the
+handful of code hashes it pins itself — small, fixed, and what the renderer and
+the composition policy read. `ScriptId` is the script's actual identity,
+classified by nobody, so it is complete by construction: it is what the script
+census counts and what an index can turn into a name. Measured against
+ckbadger's catalogue the four pinned lock families cover 59.8% of mainnet's
+live cells and the five asset families 33.4%, which is why the identity had to
+stop being derivable from the family. `ScriptId` is unset on Cells restored
+from state written before it existed and is omitted from the wire while unset.
 
 ### 4.4 Three Kinds of Fact
 
@@ -325,7 +338,9 @@ CellGalaxy is the main structural projection. It maintains:
 - cumulative birth/death counters;
 - tags that arrived before the corresponding birth;
 - hydration target and floor metadata;
-- non-persisted replay, reorg-limbo, and display-plane state.
+- non-persisted replay, reorg-limbo, and display-plane state;
+- aggregate view statistics, derived from the retained set when a snapshot is
+  taken, plus the last published census of the script identities it holds.
 
 The canonical Cell limit is 50,000. Cap eviction enters the same death
 animation and final-GC path as a spend, but it does not increment the real-chain
@@ -415,6 +430,52 @@ Additional mechanism rules:
 Mechanism and policy live separately in `display_plane.rs` and
 `composition_policy.rs`, allowing selection policy to change without changing
 the canonical reducer or display wire contract.
+
+### 6.5 Snapshot Scope and View Statistics
+
+A snapshot carries the rows the display plane has staged, not the whole
+retained set. On mainnet the stage is roughly a quarter of what is retained and
+the renderer never draws the rest, so the remainder would be rows a connecting
+client decodes, allocates, and never looks at. This is not a mode. There is no
+scope switch, on the same reasoning that `cell_cap` is not a knob; a
+`galaxy.snapshot_scope` line in an existing `cknerv.toml` is silently ignored,
+and going back means reverting the change rather than flipping a line.
+
+Membership still resolves completely. Staged members the canonical map does not
+hold are residents, and those already ride the display section with their own
+payloads, so the union a client reconstructs is unchanged — only which half of
+it travels as rows. Dead-but-staged rows come along too; their death animation
+is exactly what the stage is holding them for. The two wire forms must agree on
+which rows they carry: a client booting from the columnar buffer and one
+booting from JSON must not start from different galaxies.
+
+`CellViewStats` is what makes the narrowing safe to read. It is computed where
+the cells live and covers the **full** retained set by construction, never the
+emitted subset — otherwise a client-side scan would silently start counting the
+stage and the panel would report a number nobody asked for. It carries
+`in_view`, `data_bearing`, summed `capacity_shannons`, and per-kind, per-lock,
+and per-asset counts. Births, deaths, and the live count are deliberately
+absent: they already ride the snapshot as `total_births` / `total_deaths`, and
+a second copy could only disagree with the first. Both wire paths carry the
+segment — the JSON snapshot as a field, the columnar buffer in its tail — and a
+server without it still works, because the client keeps its own scan as a
+fallback, exact for whatever rows arrived.
+
+The script census sits in the same segment but has its own delta cadence.
+`Stats` fires per transaction and carries two integers, while a census needs a
+pass over the retained set, so it runs at most once per block, never during
+replay, and only when the distribution actually moved. Entries are ranked
+most-cells-first and cut at 24 per role with the tail counted rather than
+dropped; whole-chain sampling finds 26 distinct lock scripts and 25 distinct
+type scripts, so a truncated head is never presented as the whole
+distribution. The client cannot derive this — the snapshot carries the stage
+and the census counts the galaxy — so the cache adopts it verbatim. Naming
+those identities belongs to a different plane; see §9.5.
+
+`capacity_shannons` crosses as an exact `u64` and lands in a JavaScript number.
+Past 2^53 shannons (~90M CKB) the seed and the client's incremental upkeep
+drift in the low bits. That is pre-existing, since the client's own scan summed
+the same values the same way, but the seed now at least starts exact.
 
 ## 7. Server Runtime
 
@@ -558,10 +619,13 @@ Large Cell snapshots have a dedicated little-endian binary format:
 
 - magic `CKNB`, currently version 2;
 - a fixed 72-byte header with revision at byte offset 8;
-- canonical rows followed by display-resident rows;
+- staged canonical rows followed by display-resident rows (see §6.5: the
+  buffer carries the stage, not the whole retained set);
 - f64, f32, u32, and u8 columns grouped for aligned typed-array views;
 - one ASCII string region referenced by offset tables;
-- a bounded tail for tags, display provenance, recent links, and backfill data.
+- a bounded tail for tags, display provenance, recent links, backfill data,
+  and the aggregate view statistics segment, which describes the full retained
+  set regardless of which rows this buffer carries.
 
 The HTTP response also exposes revision through `x-snapshot-revision`. Browser
 bootstrap probes `cells/snapshot.bin` first and falls back to JSON on a 404 or
@@ -618,6 +682,7 @@ per capability. Default cadences are:
 | Transaction horizon | 60 s |
 | Fork watch | 15 s |
 | Network atlas | 60 s |
+| Script registry | 5 min |
 | Initial galaxy composition | Run once and hold after success; retry failures after 30 s |
 | Composition top-up | Start at 5 s; back off after repeated empty rounds to roughly 5 min |
 
@@ -647,6 +712,43 @@ ckbadger only discovers and ranks outpoints efficiently:
 
 Composition is therefore “index suggests, local node decides, display plane
 consumes,” not a second chain adapter.
+
+### 9.5 Script Registry Path
+
+The script census (§6.5) counts identities and refuses to name them. This is
+the other half: the `script_registry` capability asks the index what the
+observed code hashes are called and publishes the answers on the semantics
+stream, so the Cell panel's bars can read “Default Lock · JoyID · .bit Lock”
+instead of spelling two thirds of the galaxy as one unknown bucket.
+
+The two halves never meet inside the backend. The Cell projection publishes the
+identities it is holding through a shared sink — the same seam the composition
+demand already uses, and for the same reason: the index needs one fact out of
+that projection, and a shared cell is a much smaller opening than a handle on
+it. Names travel back through the semantics stream, which has its own revision
+and its own anchor discipline, and the browser performs the join on
+`(code_hash, hash_type)`. ckbadger still cannot write anything the Cell
+projection reads.
+
+The request is bounded by what cknerv observed rather than by what the index
+knows. An empty observed set asks nothing at all; otherwise the deduplicated
+code hashes — at most `MAX_SCRIPT_REGISTRY_ENTRIES` (256) — go out as one
+batched `scripts/lookup`. That route wants a transaction for context to
+disambiguate a code hash shared by several deployed data-hash scripts; a census
+is a set of identities with no transaction attached, so the adapter asks
+without one and reads each entry's `resolutionState`. Anything not `resolved`
+is dropped rather than guessed at, as is a source-supplied name of “Unknown” —
+a name we do not have is reported as missing, not invented. Descriptions and
+websites come from the bounded `scripts` catalogue joined by name, so a
+catalogue failure costs those fields and nothing else.
+
+`ScriptRegistryRecord` carries the resolved entries plus `unresolved`, a count
+of observed identities the index had no name for. They are counted, not listed:
+the panel already holds those code hashes from the census, and the record only
+has to say that asking produced nothing. The anchor is taken before the lookup
+and re-proved before the record is admitted, like every other capability.
+Losing the index therefore costs names, not counts — the bars still show the
+true distribution, spelled in hashes.
 
 ## 10. Browser Data Layer
 
@@ -689,13 +791,22 @@ an artificial empty world followed by a full-scene jump.
 - Every applied batch publishes `CellChangeSet`, `DisplayChangeSet`, and tokens
   so render consumers can verify an O(churn) journal chain. A broken chain
   triggers a full rebuild rather than an inferred partial state.
-- Statistics are updated incrementally, avoiding a 50k Cell scan during every
-  UI frame.
+- Statistics are seeded from the snapshot's `CellViewStats` segment and then
+  updated incrementally, avoiding a full Cell scan during every UI frame.
+  Against a server without that segment the client falls back to its own scan,
+  which is exact for whatever rows arrived. The script census is adopted
+  verbatim because the client cannot derive it: the rows describe the stage and
+  the census describes the galaxy.
 
 Display resolution is canonical-first. If an id exists in both canonical and
 resident maps, the canonical object wins. Display enter/exit operations change
 the stage only; they never change the canonical Cell map, lifecycle counts, or
 causal facts.
+
+The canonical Map is seeded from a snapshot that carries only the stage (§6.5)
+and afterwards grows through streamed births. Its size is therefore neither the
+server's retained-set size nor a superset of the stage, and it must not be used
+as a proxy for either; the galaxy-wide numbers live in the statistics segment.
 
 ### 10.3 Columnar Decoding and CellField
 
@@ -956,7 +1067,8 @@ There is no environment-variable configuration layer. Main sections are:
   pulse cap.
 
 The Cell cap is fixed at 50,000 and is not a user knob. A legacy `cell_cap`
-line is ignored by the tolerant TOML parser. Profiles choose recent-link,
+line is ignored by the tolerant TOML parser, as is a legacy
+`galaxy.snapshot_scope` line (§6.5). Profiles choose recent-link,
 topology, and pulse defaults only:
 
 | Profile | Recent links | Neighbor K | Max edge | Max hops | Link ring | Active pulses |
@@ -1010,6 +1122,7 @@ The following must change together:
 | JSON shape | serde structs and enums | `tests/fixtures/` and TS tests |
 | Helix positioning | `crates/cknerv-core/src/helix.rs` | `packages/ui/src/helix.ts` |
 | Columnar Cell snapshot | `cells_columnar.rs` | `packages/cache/src/cellsColumnar.ts` |
+| Aggregate view statistics and script census | `cells_stats.rs` | `packages/types/src/cell.ts`, `packages/cache/src/cellsStats.ts` |
 | Config shape and defaults | CLI config and TOML template | `ui-app/src/runtime-config.ts` and README |
 | API route and frame shape | `cknerv-server` routes/WS | `packages/cache` connectors |
 | Persistence shape | Server/core persisted structs | `SCHEMA_VERSION`, prune docs, and tests |
@@ -1122,6 +1235,8 @@ tip advancement, Ctrl-C persistence, and port release.
 | Default recent links | 2,048 | Core/auto profile |
 | Semantic Cell details | 512 | Enrichment projection |
 | Semantic transactions | 2,048 | Enrichment projection |
+| Script census entries | 24 per role, tail counted | Core projection |
+| Script registry entries | 256 | Core wire contract |
 | Curated composition candidates | 6,000 | ckbadger source |
 | Composition top-up | 256 per class per tick | ckbadger source |
 | Entity/projection replay ring | 50,000 entries | Server |
@@ -1170,6 +1285,7 @@ coverage, visual composition, and GPU cost respectively.
 | CellGalaxy | `crates/cknerv-core/src/projection/cells.rs` |
 | Display mechanism and policy | `crates/cknerv-core/src/projection/display_plane.rs`, `crates/cknerv-core/src/projection/composition_policy.rs` |
 | Columnar encoder | `crates/cknerv-core/src/projection/cells_columnar.rs` |
+| View statistics and script census | `crates/cknerv-core/src/projection/cells_stats.rs` |
 | Enrichment records and projection | `crates/cknerv-core/src/enrichment.rs` |
 | CKB adapter | `crates/cknerv-adapter-ckb/src/adapter.rs`, `crates/cknerv-adapter-ckb/src/backfill.rs`, `crates/cknerv-adapter-ckb/src/poll.rs`, `crates/cknerv-adapter-ckb/src/rpc.rs` |
 | Server composition root | `crates/cknerv-server/src/server.rs` |

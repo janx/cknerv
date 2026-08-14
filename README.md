@@ -189,7 +189,10 @@ The primary public seams are:
   display-plane input, not semantics: it enters the server's own canonical
   stream as a server-internal mutation the browser never sees, so display
   membership stays ordered against the births and reorgs it is staged
-  against.
+  against. The cells projection also publishes the script identities it is
+  currently holding through a shared sink, and names for them return on the
+  semantics stream; ckbadger still cannot write anything that projection
+  reads.
 
 The current workspace ships `CkbDirectAdapter`, which polls CKB JSON-RPC and
 emits chain-generic mutations. It also includes optional ckbadger enrichment;
@@ -235,7 +238,7 @@ fall back to the SPA.
 |---|---|---|
 | `GET` | `/api/entities/chain/snapshot` | `{ revision, chain, chain_nodes }` |
 | `WS` | `/api/entities/chain/stream?since=<rev>` | snapshot, delta, lagged, or heartbeat frames |
-| `GET` | `/api/projections/cells/snapshot` | `{ revision, snapshot }` where `snapshot.cells` is the live cell set |
+| `GET` | `/api/projections/cells/snapshot` | `{ revision, snapshot }` where `snapshot.cells` is the staged set, not the whole retained galaxy |
 | `GET` | `/api/projections/cells/snapshot.bin` | Columnar little-endian snapshot (~9x smaller); revision patched into the header and mirrored in `x-snapshot-revision` |
 | `WS` | `/api/projections/cells/stream?since=<rev>` | snapshot, delta, lagged, or heartbeat frames |
 | `GET` | `/api/projections/semantics/snapshot` | Optional indexed-enrichment snapshot; present even when disabled |
@@ -246,9 +249,24 @@ fall back to the SPA.
 The projection route name for the cell galaxy is literally `cells`
 (`CellGalaxy::name()`).
 
+A cells snapshot carries the rows the display plane has staged, not every
+retained Cell — on mainnet the retained set runs about four times the stage,
+and the renderer never draws the remainder. Membership still resolves
+completely: staged Cells the canonical map does not hold ride the display
+section as residents. What the rest of the galaxy contributes travels as
+`snapshot.stats`, an aggregate over the **full** retained set — per-lock,
+per-asset, and per-kind counts plus a census of the script identities that set
+holds — so panel numbers do not move when the rows do. Both wire forms carry
+it: the JSON snapshot as a field, the columnar buffer in its tail. The census
+is refreshed at most once per block through its own `script_census` delta;
+a server without the segment still works, and the browser falls back to
+counting whatever rows arrived.
+
 The optional `semantics` projection and lazy enrichment routes are documented
 in [`docs/ckbadger.md`](docs/ckbadger.md), including their independent revision,
 canonical-anchor checks, refresh intervals, UI behavior, and failure isolation.
+One of its records, `script_registry`, names the identities that census counts;
+the browser joins the two planes on `(code_hash, hash_type)`.
 
 Both WebSocket routes emit
 `{"kind":"heartbeat","revision":<last-confirmed-revision>}` every five seconds
@@ -451,9 +469,11 @@ twin, the fixtures, and both sides of the tests together.
   it is short of per class, spends of staged Cells are detected exactly, and
   bounded top-ups walk deeper into each class and enter by a one-way ratchet, so
   the steady-state cost is proportional to churn. In both modes each block's
-  real transaction endpoints take a reserved slice of the stage. Canonical Cells
-  and the complete canonical neighbour graph still own new-block pulses, live
-  nerve routes, counters, and reorg behavior. See
+  real transaction endpoints take a reserved slice of the stage. A snapshot
+  ships that stage and nothing else, so the galaxy-wide numbers the panels show
+  come from the aggregate statistics segment instead of from the rows that
+  arrived. Canonical Cells and the complete canonical neighbour graph still own
+  new-block pulses, live nerve routes, counters, and reorg behavior. See
   [`docs/ckbadger.md`](docs/ckbadger.md#cellgalaxy-composition).
 - The CKB adapter is read-only JSON-RPC polling. There is no bundled CKB node,
   indexer, or transaction submitter.
