@@ -5,9 +5,19 @@
 // component layer (geometry vectors, graph-node shapes, animation
 // hints) that are not part of the cknerv-core wire contract.
 
-import type { Peer } from '@cknerv/types';
+import type { Cell, Peer } from '@cknerv/types';
 
 export type Vec3 = [number, number, number];
+
+/**
+ * Read side of a cell lookup. Satisfied structurally by
+ * `ReadonlyMap<number, Cell>` AND by cheap single-record overlays — the
+ * detail panel splices the inspected display resident over the canonical
+ * map without cloning ~12K entries per churned block.
+ */
+export interface CellById {
+  get(id: number): Cell | undefined;
+}
 
 /**
  * Minimal graph-node shape consumed by `GlowNode` and other generic

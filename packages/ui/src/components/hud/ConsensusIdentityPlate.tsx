@@ -4,6 +4,7 @@ import type {
   CellSemanticRecord,
   EnrichmentSourceStatus,
 } from '@cknerv/types';
+import type { CellById } from '../../types';
 import type { CellConsensusIdentity } from '../../derives/cellConsensusIdentity.derive';
 import type { CellCausalLens } from '../../derives/cellCausalLens.derive';
 import {
@@ -220,7 +221,7 @@ function RouteHopInspector({
   evidence: ConsensusMemoryTraceEvidence;
   lockedHop: ConsensusMemoryRouteHopFocus;
   pulseKey: string;
-  routeCellById?: ReadonlyMap<number, Cell>;
+  routeCellById?: CellById;
   sourceColor: string;
   reducedMotion: boolean;
 }) {
@@ -410,7 +411,7 @@ function EvidenceRouteLedger({
   onHopFocusChange?: (focus: ConsensusMemoryRouteHopFocus | null) => void;
   lockedHop: ConsensusMemoryRouteHopFocus | null;
   onHopLockChange?: (focus: ConsensusMemoryRouteHopFocus | null) => void;
-  routeCellById?: ReadonlyMap<number, Cell>;
+  routeCellById?: CellById;
   reducedMotion: boolean;
 }) {
   const routeScrollRef = useRef<HTMLDivElement>(null);
@@ -992,7 +993,7 @@ function EvidenceLedger({
   onHopFocusChange?: (focus: ConsensusMemoryRouteHopFocus | null) => void;
   lockedHop: ConsensusMemoryRouteHopFocus | null;
   onHopLockChange?: (focus: ConsensusMemoryRouteHopFocus | null) => void;
-  routeCellById?: ReadonlyMap<number, Cell>;
+  routeCellById?: CellById;
 }) {
   const [expandedEvidenceKey, setExpandedEvidenceKey] = useState<string | null>(null);
   const lockedEvidenceKey = lockedHop?.traceKey === readout.key
@@ -1343,7 +1344,7 @@ export function ConsensusMemoryTracePlate({
   onHopFocusChange?: (focus: ConsensusMemoryRouteHopFocus | null) => void;
   lockedHop: ConsensusMemoryRouteHopFocus | null;
   onHopLockChange?: (focus: ConsensusMemoryRouteHopFocus | null) => void;
-  routeCellById?: ReadonlyMap<number, Cell>;
+  routeCellById?: CellById;
 }) {
   const activeIndex = MEMORY_READ_STAGES.findIndex(
     ({ stage }) => stage === readout.stage,
@@ -1505,7 +1506,7 @@ export default function ConsensusIdentityPlate({
   onTraceRouteHopLockChange?: (
     focus: ConsensusMemoryRouteHopFocus | null,
   ) => void;
-  routeCellById?: ReadonlyMap<number, Cell>;
+  routeCellById?: CellById;
   agreementCount: number;
   compact?: boolean;
   /** Transparent scan-field treatment instead of a self-contained HUD card. */

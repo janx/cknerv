@@ -25,6 +25,7 @@ import {
   LOCK_COLORS,
   ASSET_COLORS,
 } from './cellFormat';
+import type { CellById } from '../../types';
 import { HUD_COLORS, HUD_FONTS, rgba, HUD_TYPE } from './hudTheme';
 import {
   CloseButton,
@@ -324,11 +325,14 @@ export default function CellDetailPanel({
   ) => {
     onIdentityProofRead?.(kind, cell.id, reduced);
   }, [cell.id, onIdentityProofRead, reduced]);
-  const inspectedCellById = useMemo(() => {
+  const inspectedCellById = useMemo<CellById>(() => {
     if (routeCellById?.get(cell.id) === cell) return routeCellById;
-    const cells = new Map(routeCellById);
-    cells.set(cell.id, cell);
-    return cells;
+    // Overlay, not clone: display residents miss the canonical map (or hold
+    // a stale record there), and cloning ~12K entries on every churned block
+    // while the panel is open was the panel's dominant render cost.
+    return {
+      get: (id) => (id === cell.id ? cell : routeCellById?.get(id)),
+    };
   }, [cell, routeCellById]);
   const resolvedCausalLens = useMemo(
     () => causalLens ?? deriveCellCausalLens(

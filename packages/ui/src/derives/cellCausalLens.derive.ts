@@ -3,6 +3,7 @@ import type {
   CellLink,
   CellLinkEndpointAnchor,
 } from '@cknerv/types';
+import type { CellById } from '../types';
 import { findCellOriginLink } from './cellConsensusIdentity.derive';
 
 /** Anchor completeness of one selected Cell's retained origin transaction. */
@@ -83,7 +84,7 @@ function endpoint(
   ordinal: number,
   role: CellCausalEndpointRole,
   selectedCell: Cell,
-  cells: ReadonlyMap<number, Cell>,
+  cells: CellById,
   linkAnchors: ReadonlyMap<number, CellLinkEndpointAnchor>,
 ): CellCausalEndpoint {
   const record = role === 'selected' ? selectedCell : cells.get(id) ?? null;
@@ -109,7 +110,7 @@ function endpoint(
 export function deriveCellCausalLens(
   selectedCell: Cell,
   recentLinks: readonly CellLink[],
-  cells: ReadonlyMap<number, Cell>,
+  cells: CellById,
 ): CellCausalLens {
   const origin = findCellOriginLink(selectedCell, recentLinks);
   const canonicalTxHash = selectedCell.out_point.tx_hash.toLowerCase();
