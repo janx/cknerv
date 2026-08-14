@@ -32,6 +32,7 @@ import {
   CONTACT_WAVE_WAKE_BEHIND,
 } from '../materials/contactWaveMaterial';
 import { BEAM_GROW_DUR_S, BEAM_CHARGE_DUR_S } from '../ui/topologyConstants';
+import { FIELD_HALF_X, FIELD_HALF_Z } from '../helix';
 import { CELL_GALAXY_PALETTE } from '../visualPalette';
 import type { ConsensusFlowColor } from '../derives/consensusFlow.derive';
 import {
@@ -48,7 +49,8 @@ import {
 // ONE IDEA, THREE BEATS: compression, then release.
 //   gather — the worker holds still. Its glyph tightens and brightens in place;
 //            nothing moves. The stillness is what gives the release a moment.
-//   lob    — the glyph rises straight up, accelerating, CONTRACTING as it goes,
+//   lob    — the glyph rises to its landing (straight up from tissue, leaning
+//            inward from past the rim), accelerating, CONTRACTING as it goes,
 //            trailing a hard streak. Smallest and hottest at the membrane.
 //   ingest — the seed ring is released as a thin front that races out flat
 //            through the Cell field, after one ring is drawn inward and a
@@ -111,6 +113,15 @@ const CARRIER_LOCAL_FORWARD = new THREE.Vector3(0, 0, 1);
 const CARRIER_FALLBACK_DIRECTION = new THREE.Vector3(0, 1, 0);
 const WAKE_FALLBACK_NORMAL = new THREE.Vector3(0, 0, 1);
 const WAKE_SECONDARY_NORMAL = new THREE.Vector3(1, 0, 0);
+/** The rim — and the front it becomes — lives FLAT in the Cell plane for its
+ *  whole life, whatever the flight path: an over-rim worker's landing is pulled
+ *  onto the tissue (peers.derive), which slants its lob, and a rim that pitched
+ *  along that slant would release a front tilted out of the disc. Only the
+ *  travel streak follows the true velocity. */
+const CARRIER_FLAT_FACING = setProtocolCarrierFacing(
+  new THREE.Quaternion(),
+  new THREE.Vector3(0, 1, 0),
+);
 
 const CFG: DeliveryPhaseConfig = {
   chargeDur: BEAM_CHARGE_DUR_S,
@@ -141,7 +152,6 @@ const _wakeNormal = new THREE.Vector3();
 const _wakeRight = new THREE.Vector3();
 const _scale = new THREE.Vector3();
 const _bodyQuaternion = new THREE.Quaternion();
-const _carrierFacingQuaternion = new THREE.Quaternion();
 const _wakeQuaternion = new THREE.Quaternion();
 const _spriteQuaternion = new THREE.Quaternion();
 const _spriteRollQuaternion = new THREE.Quaternion();
@@ -330,7 +340,15 @@ export default function BlockDeliveryLayer({
   const simClock = useSimClock();
   const cellsCache = useCellGalaxyOptional();
   const deliveries = useMemo(
-    () => planDeliveries(localOrigins, localReceiveDelayS, posById, arrivals, CELLS_Y),
+    () => planDeliveries(localOrigins, localReceiveDelayS, posById, arrivals, CELLS_Y, {
+      halfX: FIELD_HALF_X,
+      halfZ: FIELD_HALF_Z,
+      // Plan-time rotation, same trick as the ignition pass below: the galaxy
+      // turns ≤ ~0.02 rad across a whole pulse at the default rate, so pinning
+      // the ellipse where it stood when the plan was made is exact enough for
+      // a landing clamp and keeps this memo off the frame clock.
+      rotationY: galaxyFrame.rotationY,
+    }),
     [localOrigins, localReceiveDelayS, posById, arrivals],
   );
   const capacity = Math.max(1, deliveries.length);
@@ -485,6 +503,8 @@ export default function BlockDeliveryLayer({
     state.camera.getWorldPosition(_cameraPosition);
     waveMaterial.uniforms.uWake.value = LIVE.delivery.waveWake;
     waveMaterial.uniforms.uSegmentDepth.value = LIVE.delivery.waveSegments;
+    // The rim-extinction ellipse turns with the galaxy; track it exactly.
+    waveMaterial.uniforms.uGalaxyRotY.value = galaxyFrame.rotationY;
 
     // Galaxy RECEIVES the wave: once per real block, schedule a flare on the
     // Cells nearest each real delivery landing. Batching never changes this data
@@ -533,9 +553,10 @@ export default function BlockDeliveryLayer({
       const phase = deliveryPhase(age - delivery.startAge, CFG);
       if (phase.phase === 'idle' || phase.phase === 'done') continue;
 
-      // Local +Z is the glyph's travel direction. Align it with the actual
-      // peer→galaxy path; that also lays the rim — and the front it becomes —
-      // flat in the Cell plane. Camera motion never changes where it is headed.
+      // The actual node→landing path. The rim itself stays flat in the Cell
+      // plane (CARRIER_FLAT_FACING) — this axis only steers the travel streak,
+      // so a rim worker's inward-slanted throw reads in the streak while the
+      // seed ring arrives lying on the membrane it is about to ripple.
       _flightDirection.set(
         delivery.to[0] - delivery.from[0],
         delivery.to[1] - delivery.from[1],
@@ -546,8 +567,7 @@ export default function BlockDeliveryLayer({
       } else {
         _flightDirection.normalize();
       }
-      setProtocolCarrierFacing(_carrierFacingQuaternion, _flightDirection);
-      _bodyQuaternion.copy(_carrierFacingQuaternion);
+      _bodyQuaternion.copy(CARRIER_FLAT_FACING);
 
       const punch = delivery.hero ? 1 : LIVE.delivery.peerPunchScale;
       const size = delivery.hero
@@ -571,7 +591,7 @@ export default function BlockDeliveryLayer({
           glyphScale * LIVE.delivery.glyphBloom,
           CARRIER_COLOR,
           glyphOpacity * LOB_CORE_ONSET,
-          _carrierFacingQuaternion,
+          CARRIER_FLAT_FACING,
           gapRoll,
         );
         coreCount += 1;
@@ -598,7 +618,7 @@ export default function BlockDeliveryLayer({
           coreScale,
           CARRIER_COLOR,
           LOB_CORE_ONSET + (1 - LOB_CORE_ONSET) * progress,
-          _carrierFacingQuaternion,
+          CARRIER_FLAT_FACING,
           gapRoll,
         );
         coreCount += 1;
@@ -647,7 +667,7 @@ export default function BlockDeliveryLayer({
             coreScale,
             _coreColor,
             release.coreOpacity,
-            _carrierFacingQuaternion,
+            CARRIER_FLAT_FACING,
             gapRoll,
           );
           coreCount += 1;
@@ -668,7 +688,7 @@ export default function BlockDeliveryLayer({
             CONTACT_WAVE_WAKE_AHEAD,
             CARRIER_COLOR,
             inhaleOpacity,
-            _carrierFacingQuaternion,
+            CARRIER_FLAT_FACING,
             gapRoll,
           );
           waveCount += 1;
@@ -712,7 +732,7 @@ export default function BlockDeliveryLayer({
             CONTACT_WAVE_WAKE_BEHIND,
             _waveColor,
             intensity,
-            _carrierFacingQuaternion,
+            CARRIER_FLAT_FACING,
             gapRoll,
           );
           waveCount += 1;

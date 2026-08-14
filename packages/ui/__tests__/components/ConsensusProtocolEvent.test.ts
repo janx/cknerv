@@ -48,8 +48,11 @@ describe('A protocol event relay', () => {
       expect(isContactRingGap(1 + keel * CONTACT_RING_GAP_EVERY)).toBe(false);
     }
     expect(source('BlockDeliveryLayer.tsx')).not.toContain('BoxGeometry');
-    expect(source('BlockDeliveryLayer.tsx')).toContain(
-      'setProtocolCarrierFacing(_carrierFacingQuaternion, _flightDirection)',
+    // The rim lives flat in the Cell plane for its whole life — a clamped
+    // rim landing slants the flight, and only the streak may follow that.
+    expect(source('BlockDeliveryLayer.tsx')).toContain('const CARRIER_FLAT_FACING');
+    expect(source('BlockDeliveryLayer.tsx')).not.toContain(
+      'setProtocolCarrierFacing(_carrierFacingQuaternion',
     );
     expect(source('BlockDeliveryLayer.tsx')).not.toMatch(/A\.T\.-Field|octagon/i);
     expect(source('BlockDeliveryLayer.tsx')).not.toContain('getWorldQuaternion');
@@ -111,9 +114,13 @@ describe('A protocol event relay', () => {
     // One vocabulary: the front's gaps come from the carrier rim's own numbers.
     expect(wave).toContain("from '../geometry/protocolCarrier'");
     expect(wave).toContain('CONTACT_RING_SIDES');
-    // A front only propagates through tissue.
-    expect(wave).toContain('uDiskFadeStart');
-    expect(wave).toContain('length(vWorldXZ)');
+    // A front only propagates through tissue: the extinction band is the
+    // helix footprint's own ellipse, tracked through the galaxy's rotation —
+    // never a second hand-typed radius.
+    expect(wave).toContain("from '../helix'");
+    expect(wave).toContain('FIELD_HALF_X');
+    expect(wave).toContain('uGalaxyRotY');
+    expect(wave).not.toMatch(/uDiskFade|smoothstep\(\s*44/);
     // An annulus, not a quad: ~81 full-screen-ish fills per block is not free.
     expect(wave).toContain('THREE.RingGeometry');
   });
@@ -160,15 +167,18 @@ describe('A protocol event relay', () => {
     expect(delivery.match(/markCellFlashDirty\(/g)).toHaveLength(1);
   });
 
-  it('aims the glyph and the front it becomes at the Cell galaxy', () => {
+  it('lays the glyph — and the front it becomes — flat in the Cell plane', () => {
     const delivery = source('BlockDeliveryLayer.tsx');
     const direction = new THREE.Vector3(0.25, 1, -0.4).normalize();
     const facing = setProtocolCarrierFacing(new THREE.Quaternion(), direction);
     const transformedNormal = new THREE.Vector3(0, 0, 1).applyQuaternion(facing);
 
     expect(transformedNormal.distanceTo(direction)).toBeLessThan(1e-9);
+    // The streak still reads the true node→landing velocity…
     expect(delivery).toContain('delivery.to[1] - delivery.from[1]');
-    expect(delivery).toContain('_bodyQuaternion.copy(_carrierFacingQuaternion)');
+    // …but the rim itself rides the one flat basis, so a slanted (rim-clamped)
+    // arrival can never release a front tilted out of the disc.
+    expect(delivery).toContain('_bodyQuaternion.copy(CARRIER_FLAT_FACING)');
     expect(delivery).toContain('side: THREE.DoubleSide');
   });
 

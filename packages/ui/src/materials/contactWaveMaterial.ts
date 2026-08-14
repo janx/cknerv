@@ -3,6 +3,7 @@ import {
   CONTACT_RING_GAPS,
   CONTACT_RING_SIDES,
 } from '../geometry/protocolCarrier';
+import { FIELD_HALF_X, FIELD_HALF_Z } from '../helix';
 
 /**
  * The contact front every worker releases into the Cell field.
@@ -30,8 +31,10 @@ import {
  *    already dim by the time it can meet a neighbour;
  *  • `uSegmentDepth` carves the rim's three gaps into the crest, breaking the
  *    circle into the same interrupted polygon the carrier glyph uses;
- *  • `uDiskFade*` extinguishes a front where the tissue ends — workers ring the
- *    galaxy's outer edge, so each front's outbound half must die off the disc.
+ *  • the rim fade extinguishes a front where the tissue ends — workers ring
+ *    the galaxy wider than the tissue, so their landings are pulled onto the
+ *    rim (peers.derive `clampLandingToField`) and each front's outbound half
+ *    dies across the halo band instead of glowing over empty space.
  */
 
 /** Fixed UV radius the crest always sits at. The renderer scales each instance
@@ -59,11 +62,17 @@ export const CONTACT_WAVE_WAKE_AHEAD = -1;
  */
 export const CONTACT_WAVE_SCALE = 4;
 
-/** Galaxy tissue runs out near r≈60; a front is extinguished across this band
- *  rather than at a hard edge. These describe the field, not taste, so they are
- *  module constants instead of tuning knobs. */
-export const CONTACT_WAVE_DISK_FADE_START = 44;
-export const CONTACT_WAVE_DISK_FADE_END = 62;
+/** A front is extinguished across a band of the tissue ellipse's normalized
+ *  radius rather than at a hard edge. The footprint itself comes from helix.ts
+ *  (60×54, rotating with the galaxy); these two numbers only place the band on
+ *  it: extinction begins just inside the nominal rim and completes a little
+ *  past it, where the ~4.5% halo outliers thin into nothing. They describe the
+ *  field, not taste, so they are module constants instead of tuning knobs.
+ *  (The old circular 44→62 band was calibrated for the pre-quarter reach-34
+ *  fronts, which needed dimming from mid-tissue outward; a quarter-scale ring
+ *  released ON the tissue must stay readable out to the rim.) */
+const CONTACT_WAVE_RIM_FADE_START_NORM = 0.94;
+const CONTACT_WAVE_RIM_FADE_END_NORM = 1.12;
 
 /** Wake length as a multiple of the crest half-width. */
 const CONTACT_WAVE_WAKE_LENGTH = 3.4;
@@ -105,8 +114,9 @@ export function makeContactWaveMaterial(): THREE.ShaderMaterial {
       uSegmentDepth: { value: 0.55 },
       uSides: { value: CONTACT_RING_SIDES },
       uGapEvery: { value: CONTACT_RING_SIDES / CONTACT_RING_GAPS },
-      uDiskFadeStart: { value: CONTACT_WAVE_DISK_FADE_START },
-      uDiskFadeEnd: { value: CONTACT_WAVE_DISK_FADE_END },
+      // The tissue ellipse turns with the galaxy while fronts hold world
+      // positions; the renderer mirrors the group's live rotation in here.
+      uGalaxyRotY: { value: 0 },
     },
     transparent: true,
     depthTest: false,
@@ -152,8 +162,7 @@ export function makeContactWaveMaterial(): THREE.ShaderMaterial {
       uniform float uSegmentDepth;
       uniform float uSides;
       uniform float uGapEvery;
-      uniform float uDiskFadeStart;
-      uniform float uDiskFadeEnd;
+      uniform float uGalaxyRotY;
 
       varying vec2 vPlane;
       varying vec2 vWorldXZ;
@@ -194,11 +203,23 @@ export function makeContactWaveMaterial(): THREE.ShaderMaterial {
         float gap = smoothstep(0.0, 0.35, intoGap);
         signal *= 1.0 - uSegmentDepth * gap;
 
-        // The wave only propagates through tissue.
+        // The wave only propagates through tissue. The footprint is an
+        // ellipse in the galaxy's rotating local frame, so project the world
+        // fragment back through the live rotation before normalizing.
+        float rotC = cos(uGalaxyRotY);
+        float rotS = sin(uGalaxyRotY);
+        vec2 tissueXZ = vec2(
+          vWorldXZ.x * rotC + vWorldXZ.y * rotS,
+          -vWorldXZ.x * rotS + vWorldXZ.y * rotC
+        );
+        float fieldNorm = length(tissueXZ / vec2(
+          ${FIELD_HALF_X.toFixed(1)},
+          ${FIELD_HALF_Z.toFixed(1)}
+        ));
         signal *= 1.0 - smoothstep(
-          uDiskFadeStart,
-          uDiskFadeEnd,
-          length(vWorldXZ)
+          ${CONTACT_WAVE_RIM_FADE_START_NORM.toFixed(2)},
+          ${CONTACT_WAVE_RIM_FADE_END_NORM.toFixed(2)},
+          fieldNorm
         );
 
         if (signal <= 0.0015) discard;

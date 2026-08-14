@@ -78,22 +78,67 @@ export interface Delivery {
   hero: boolean;
 }
 
+/** The Cell-tissue footprint a delivery must land on, as seen at plan time.
+ *  `halfX`/`halfZ` are the galaxy-LOCAL ellipse half-extents (helix.ts owns
+ *  them); `rotationY` is the galaxy group's live y-rotation, because the
+ *  ellipse turns with the tissue while workers hold fixed world positions. */
+export interface DeliveryLandingField {
+  halfX: number;
+  halfZ: number;
+  rotationY: number;
+}
+
+/** Landings may not sit past this normalized ellipse radius. 1.0 is the
+ *  nominal tissue rim: the released front is a small local ripple (a quarter
+ *  of the peer-plane wave), so a landing out past the rim would release its
+ *  whole ring over empty space and the worker's commit would never be seen
+ *  touching tissue. Workers ring the galaxy WIDER than the tissue on x
+ *  (chain ellipse 1.25 vs tissue 60), so far-rim landings are common, not a
+ *  degenerate case. */
+export const DELIVERY_LANDING_MAX_NORM = 1.0;
+
+/** Pull a world-xz landing radially (in the tissue's local frame) back onto
+ *  the footprint. Radial, not nearest-point: an over-rim worker throws its
+ *  block INWARD toward the galaxy, which is also what keeps the lob's travel
+ *  axis honest about where the commit went. Inside the rim, positions pass
+ *  through untouched. */
+function clampLandingToField(
+  x: number,
+  z: number,
+  field: DeliveryLandingField,
+): [number, number] {
+  const c = Math.cos(field.rotationY);
+  const s = Math.sin(field.rotationY);
+  const lx = x * c + z * s;
+  const lz = -x * s + z * c;
+  const norm = Math.hypot(lx / field.halfX, lz / field.halfZ);
+  if (norm <= DELIVERY_LANDING_MAX_NORM) return [x, z];
+  const k = DELIVERY_LANDING_MAX_NORM / norm;
+  const cx = lx * k;
+  const cz = lz * k;
+  return [cx * c - cz * s, cx * s + cz * c];
+}
+
 /** Build one delivery per delivering node: the local/hero node(s) (offered from
  *  `localOrigins` at `localStartAge`) plus every rendered peer that has an
- *  arrival. Each rises straight up from its node to `cellsY`. Pure. */
+ *  arrival. Each rises from its node to `cellsY`, landing at its own xz when
+ *  that is on the tissue and at the nearest radially-inward rim point when it
+ *  is not (see `clampLandingToField`). Pure. */
 export function planDeliveries(
   localOrigins: Vec3[],
   localStartAge: number,
   posById: Map<string, Vec3>,
   arrivals: Record<string, number>,
   cellsY: number,
+  field: DeliveryLandingField,
 ): Delivery[] {
   const out: Delivery[] = [];
   localOrigins.forEach((from, i) => {
+    const [x, z] = clampLandingToField(from[0], from[2], field);
     out.push({
       key: `local:${i}`,
       from,
-      to: [from[0], cellsY, from[2]],
+      to: [x, cellsY, z],
       startAge: localStartAge,
       hero: true,
     });
@@ -101,10 +146,11 @@ export function planDeliveries(
   for (const [id, from] of posById) {
     const a = arrivals[id];
     if (a === undefined) continue;
+    const [x, z] = clampLandingToField(from[0], from[2], field);
     out.push({
       key: `peer:${id}`,
       from,
-      to: [from[0], cellsY, from[2]],
+      to: [x, cellsY, z],
       startAge: a,
       hero: false,
     });

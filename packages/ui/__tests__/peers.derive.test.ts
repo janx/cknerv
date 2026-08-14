@@ -391,8 +391,12 @@ describe('peers.derive', () => {
   });
 
   describe('planDeliveries', () => {
+    // The real tissue footprint (helix.ts) at rest. Individual tests rotate it
+    // where the world→local projection is the point.
+    const FIELD = { halfX: 60, halfZ: 54, rotationY: 0 };
+
     it('builds a hero delivery per local origin, rising to cellsY', () => {
-      const d = planDeliveries([[0, 22, 0]], 0.7, new Map(), {}, 38);
+      const d = planDeliveries([[0, 22, 0]], 0.7, new Map(), {}, 38, FIELD);
       expect(d).toEqual([
         { key: 'local:0', from: [0, 22, 0], to: [0, 38, 0], startAge: 0.7, hero: true },
       ]);
@@ -400,7 +404,7 @@ describe('peers.derive', () => {
 
     it('builds a peer delivery per posById entry that has an arrival', () => {
       const pos = new Map<string, [number, number, number]>([['A', [10, 22, 5]]]);
-      const d = planDeliveries([], 0, pos, { A: 1.4 }, 38);
+      const d = planDeliveries([], 0, pos, { A: 1.4 }, 38, FIELD);
       expect(d).toEqual([
         { key: 'peer:A', from: [10, 22, 5], to: [10, 38, 5], startAge: 1.4, hero: false },
       ]);
@@ -411,8 +415,52 @@ describe('peers.derive', () => {
         ['A', [1, 22, 1]],
         ['B', [2, 22, 2]],
       ]);
-      const d = planDeliveries([], 0, pos, { A: 1.0 }, 38);
+      const d = planDeliveries([], 0, pos, { A: 1.0 }, 38, FIELD);
       expect(d.map((x) => x.key)).toEqual(['peer:A']);
+    });
+
+    it('pulls an over-rim landing radially onto the tissue, keeping the origin honest', () => {
+      // Chain ellipse ×1.25 puts workers out to |x|≈70 against a 60-half-x
+      // tissue: a quarter-scale front released at x=70 would live entirely
+      // off the field. The landing comes back to the rim; `from` never moves.
+      const pos = new Map<string, [number, number, number]>([['far', [70, 22, 0]]]);
+      const d = planDeliveries([], 0, pos, { far: 0.2 }, 38, FIELD);
+      expect(d[0].from).toEqual([70, 22, 0]);
+      expect(d[0].to[0]).toBeCloseTo(60, 6);
+      expect(d[0].to[1]).toBe(38);
+      expect(d[0].to[2]).toBeCloseTo(0, 6);
+    });
+
+    it('clamps on the ellipse, not a circle: z runs out at 54, and off-axis scales radially', () => {
+      const pos = new Map<string, [number, number, number]>([
+        ['zed', [0, 22, 58]],
+        ['diag', [60, 22, 54]],
+      ]);
+      const d = planDeliveries([], 0, pos, { zed: 0, diag: 0 }, 38, FIELD);
+      expect(d[0].to[0]).toBeCloseTo(0, 6);
+      expect(d[0].to[2]).toBeCloseTo(54, 6);
+      // (60,54) sits at norm √2: both components shrink by the same factor.
+      expect(d[1].to[0]).toBeCloseTo(60 / Math.SQRT2, 6);
+      expect(d[1].to[2]).toBeCloseTo(54 / Math.SQRT2, 6);
+    });
+
+    it('projects through the galaxy rotation before judging the rim', () => {
+      // World z=58 overruns the resting footprint (half-z 54), but once the
+      // galaxy has turned 90° that direction lies along the LONG axis (60):
+      // the same worker is on tissue and must land at its own xz.
+      const pos = new Map<string, [number, number, number]>([['A', [0, 22, 58]]]);
+      const resting = planDeliveries([], 0, pos, { A: 0 }, 38, FIELD);
+      expect(Math.hypot(resting[0].to[0], resting[0].to[2])).toBeLessThan(58);
+      const turned = planDeliveries([], 0, pos, { A: 0 }, 38, { ...FIELD, rotationY: Math.PI / 2 });
+      expect(turned[0].to[0]).toBeCloseTo(0, 6);
+      expect(turned[0].to[2]).toBeCloseTo(58, 6);
+    });
+
+    it('clamps the hero exactly like a peer (multi-node anchors can sit past the rim)', () => {
+      const d = planDeliveries([[75, 22, 0]], 0.5, new Map(), {}, 38, FIELD);
+      expect(d[0].hero).toBe(true);
+      expect(d[0].from).toEqual([75, 22, 0]);
+      expect(d[0].to[0]).toBeCloseTo(60, 6);
     });
   });
 

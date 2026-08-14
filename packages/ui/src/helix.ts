@@ -34,8 +34,14 @@ function idSeed(id: number | bigint, salt: number): number {
   return Number((idBig * saltBig) & 0xffffffffn);
 }
 
-const FIELD_HALF_X = 60;
-const FIELD_HALF_Z = 54;
+/** Tissue footprint half-extents (galaxy-local). This module is the authority
+ * on where the Cell field ends: layers that must respect the rim — delivery
+ * landings, the contact front's extinction band — derive from these two
+ * numbers instead of restating them. (Density thins from ~0.61 of this
+ * ellipse outward and a ~4.5% halo drifts a little past it, so the rim is a
+ * band, not a wall — but the band is anchored here.) */
+export const FIELD_HALF_X = 60;
+export const FIELD_HALF_Z = 54;
 const SAMPLE_ATTEMPTS = 10;
 const HALO_FRACTION = 0.045;
 
