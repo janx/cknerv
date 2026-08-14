@@ -118,6 +118,15 @@ describe('NeuralFabric living-mesh handles', () => {
     expect(SRC).not.toMatch(/active\.material\.opacity\s*=/);
   });
 
+  it('recall aperture changes never arm a full-fabric repaint', () => {
+    // The per-frame aperture bake owns the recall dim entirely (including
+    // the one release-to-baseline frame). Arming the global walk from the
+    // aperture setter rewrote the whole fabric on every ramp frame and
+    // reset the lanes AFTER the same frame's bake — the dim snapped
+    // instead of fading while uploading ~MBs per frame for nothing.
+    expect(SRC).not.toMatch(/globalRepaintRef\.current = true/);
+  });
+
   it('grades passive fibres by real selected-Cell topology without dimming events', () => {
     expect(SRC).toContain('setInspectionField');
     expect(SRC).toContain('cellInspectionEdgeScaleAt');

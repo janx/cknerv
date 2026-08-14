@@ -1486,9 +1486,13 @@ export default function NeuralFabric({
         previous.activeStrength = nextActiveStrength;
         previous.departing = departingAperture;
         previous.departingStrength = nextDepartingStrength;
-        inspectionOnlyDirtyRef.current = false;
-        globalRepaintRef.current = true;
-        emitDirtyRef.current = true;
+        // No repaint arm. Every consumer of this state re-reads the ref on
+        // frames it draws: the pre-early-return aperture bake (including
+        // its one release-to-baseline frame), the warm-route redraw, and
+        // the active-pulse writes. Arming the global full walk here — a
+        // leftover from the CPU-lifecycle era — rewrote the entire fabric
+        // on every ramp frame AND reset the aperture lanes AFTER the same
+        // frame's bake, so the recall dim snapped instead of fading.
       },
       setMemoryRouteWidthScale(scale) {
         const safeScale = Number.isFinite(scale) && scale > 0 ? scale : 1;
