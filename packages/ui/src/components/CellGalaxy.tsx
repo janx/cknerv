@@ -720,6 +720,28 @@ export function cellPointerGestureIsClick(delta: number): boolean {
     && delta <= CELL_CLICK_MAX_POINTER_DELTA_PX;
 }
 
+/** Screen-space error the hover index may accumulate from galaxy spin before
+ *  it rebuilds. The galaxy rotates every frame, so exact matrix equality made
+ *  EVERY pointermove rebuild the whole O(visible) projection; letting the
+ *  worst-placed cell drift ≤ this many px keeps hover accuracy sub-visual
+ *  (pick radii are 5–15px) while collapsing rebuilds during mouse motion to
+ *  ~1/s at the default spin rate. Clicks are exempt: pointerdown forces a
+ *  precise snapshot. */
+export const CELL_PICK_ROTATION_DRIFT_BUDGET_PX = 1.5;
+
+/** Max screen-px displacement per radian of galaxy spin for one indexed
+ *  cell: its distance from the spin (Y) axis times the world→pixel scale at
+ *  its view depth. The index tracks the max over indexed cells and goes
+ *  stale once accumulated spin could move that cell past the budget. */
+export function cellPickDriftPxPerRadian(
+  axisRadius: number,
+  projectionScaleY: number,
+  halfH: number,
+  viewZ: number,
+): number {
+  return viewZ > 0 ? (axisRadius * projectionScaleY * halfH) / viewZ : 0;
+}
+
 /** Custom Object3D that participates in r3f's raycast pipeline. Its
  *  `raycast()` refreshes a current-frame screen index, then pushes an
  *  intersect for the cell whose own visual radius covers the pointer.
@@ -765,6 +787,8 @@ function CellPicker({
     let indexedDetailVersion = -1;
     let indexedWidth = -1;
     let indexedHeight = -1;
+    let indexedRotationY = 0;
+    let indexedDriftPxPerRadian = 0;
 
     node.raycast = function raycastCells(raycaster, intersects) {
       if (pickingSuspendedRef?.current) return;
@@ -789,6 +813,15 @@ function CellPicker({
       const forcePrecise = forcePreciseRaycastRef.current;
       forcePreciseRaycastRef.current = false;
       const matrix = this.matrixWorld;
+      // The galaxy group only ever SPINS about Y (it never translates or
+      // scales), so a matrixWorld change is attributed to the recorded spin
+      // and tolerated inside the pixel budget; a change with zero recorded
+      // spin means some other ancestor transform moved — rebuild exactly.
+      const rotationDrift = Math.abs(galaxyFrame.rotationY - indexedRotationY);
+      const matrixStale = !indexedMatrixWorld.equals(matrix)
+        && (rotationDrift === 0
+          || rotationDrift * indexedDriftPxPerRadian
+            > CELL_PICK_ROTATION_DRIFT_BUDGET_PX);
       const structuralIndexChange = indexedCells !== cells
         || indexedCount !== count
         || indexedInspectionField !== inspectionField
@@ -797,7 +830,7 @@ function CellPicker({
         || indexedDetailVersion !== detailAttr.version
         || indexedWidth !== width
         || indexedHeight !== height
-        || !indexedMatrixWorld.equals(matrix)
+        || matrixStale
         || !indexedCameraView.equals(camera.matrixWorldInverse)
         || !indexedProjection.equals(camera.projectionMatrix);
       if (forcePrecise || structuralIndexChange) {
@@ -806,6 +839,7 @@ function CellPicker({
         const projectionScaleY = camera.projectionMatrix.elements[5];
         const selectedCellId = selectedCellIdRef.current;
         const hoveredCellId = hoveredCellIdRef.current;
+        let maxDriftPxPerRadian = 0;
         for (let i = 0; i < count; i += 1) {
           const c = cells[i];
           if (!cellInspectionNavigationTarget(inspectionField, c.id)) continue;
@@ -852,6 +886,15 @@ function CellPicker({
           // a second time through Vector3.project().
           cellNdc.copy(cellView).applyMatrix4(camera.projectionMatrix);
           if (cellNdc.z < -1 || cellNdc.z > 1) continue;
+          const driftPxPerRadian = cellPickDriftPxPerRadian(
+            Math.hypot(c.pos_seed[0], c.pos_seed[2]),
+            projectionScaleY,
+            halfH,
+            viewZ,
+          );
+          if (driftPxPerRadian > maxDriftPxPerRadian) {
+            maxDriftPxPerRadian = driftPxPerRadian;
+          }
           screenIndex.insert(
             i,
             (cellNdc.x + 1) * halfW,
@@ -868,6 +911,8 @@ function CellPicker({
         indexedDetailVersion = detailAttr.version;
         indexedWidth = width;
         indexedHeight = height;
+        indexedRotationY = galaxyFrame.rotationY;
+        indexedDriftPxPerRadian = maxDriftPxPerRadian;
         indexedMatrixWorld.copy(matrix);
         indexedCameraView.copy(camera.matrixWorldInverse);
         indexedProjection.copy(camera.projectionMatrix);

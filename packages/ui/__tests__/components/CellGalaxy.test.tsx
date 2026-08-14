@@ -8,6 +8,8 @@ import {
   ckbNodeAnchorHaloTarget,
   ckbNodeAnchorPresentation,
   cellPointerGestureIsClick,
+  cellPickDriftPxPerRadian,
+  CELL_PICK_ROTATION_DRIFT_BUDGET_PX,
   cellPointSize,
   diffCellBufferSlots,
   type CellBufferPresentation,
@@ -747,5 +749,29 @@ describe('CellGalaxy useSimFrame buffer behavior', () => {
     expect(source).not.toContain(
       'markPopulatedBufferUpdate(cellInspectionAttr, count)',
     );
+  });
+});
+
+describe('cell pick index rotation tolerance', () => {
+  it('scales drift with axis distance and inverse view depth', () => {
+    // A rim cell at 60u from the spin axis, projScaleY 2.4, half-height
+    // 540px, 150u deep: ~518 px of screen motion per radian of spin.
+    const rim = cellPickDriftPxPerRadian(60, 2.4, 540, 150);
+    expect(rim).toBeCloseTo((60 * 2.4 * 540) / 150, 6);
+    // The same cell twice as deep moves half as fast on screen.
+    expect(cellPickDriftPxPerRadian(60, 2.4, 540, 300)).toBeCloseTo(rim / 2, 6);
+    // On-axis cells do not move under spin; behind-camera depth is inert.
+    expect(cellPickDriftPxPerRadian(0, 2.4, 540, 150)).toBe(0);
+    expect(cellPickDriftPxPerRadian(60, 2.4, 540, 0)).toBe(0);
+  });
+
+  it('tolerates ~1s of default spin before the worst rim cell rebuilds', () => {
+    const rim = cellPickDriftPxPerRadian(60, 2.4, 540, 150);
+    const toleratedRadians = CELL_PICK_ROTATION_DRIFT_BUDGET_PX / rim;
+    // Default LIVE.galaxy.rotationRate is 0.0025 rad/s — the budget must
+    // buy enough angle that hover motion stops rebuilding per event.
+    expect(toleratedRadians / 0.0025).toBeGreaterThan(0.5);
+    // …while staying sub-visual: the budget itself is under 2px.
+    expect(CELL_PICK_ROTATION_DRIFT_BUDGET_PX).toBeLessThan(2);
   });
 });
