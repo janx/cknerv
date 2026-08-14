@@ -11,7 +11,8 @@ use cknerv_core::{
     ActivityFeedRecord, AssetEcosystemRecord, CellSemanticRecord, CompositionDemand,
     DaoStateRecord, EnrichmentSourceStatus, ForkWatchRecord, GalaxyCompositionCandidates,
     GalaxyCompositionRecord, GalaxyCompositionTopUp, NetworkAtlasRecord, OutPoint,
-    ProtocolEraRecord, RecentBlock, RecentTx, TransactionHorizonRecord, TransactionSemanticRecord,
+    ProtocolEraRecord, RecentBlock, RecentTx, ScriptId, ScriptRegistryRecord,
+    TransactionHorizonRecord, TransactionSemanticRecord,
 };
 
 /// Bounded canonical evidence supplied to an enrichment source when it
@@ -24,6 +25,11 @@ pub struct CanonicalContext {
     pub recent_blocks: Vec<RecentBlock>,
     pub recent_transactions: Vec<RecentTx>,
     pub replay_active: bool,
+    /// Which scripts the canonical Cell set is currently holding, from the
+    /// projection's own census. A source uses it to name what is actually on
+    /// this galaxy rather than to enumerate what exists on the chain; empty
+    /// before the first census, which means "nothing to name yet".
+    pub observed_scripts: Vec<ScriptId>,
 }
 
 /// Source-agnostic validation seam between indexed discovery and structural
@@ -144,6 +150,17 @@ pub trait EnrichmentSource: Send + Sync + 'static {
         &self,
         _context: &CanonicalContext,
     ) -> anyhow::Result<Option<NetworkAtlasRecord>> {
+        Ok(None)
+    }
+
+    /// Name the scripts `context.observed_scripts` reports, so the Cell
+    /// panel can call a family by its name instead of by its code hash.
+    /// Sources without a script index leave this unsupported; the dashboard
+    /// then falls back to the handful of families cknerv pins itself.
+    async fn enrich_script_registry(
+        &self,
+        _context: &CanonicalContext,
+    ) -> anyhow::Result<Option<ScriptRegistryRecord>> {
         Ok(None)
     }
 

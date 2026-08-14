@@ -340,6 +340,29 @@ pub(crate) struct DaoInfo {
     pub estimated_apc: Option<String>,
 }
 
+/// One family from ckbadger's script catalogue. The catalogue carries names
+/// and descriptions but no code hashes, so it cannot resolve a script on its
+/// own — it is joined to `scripts/lookup` results by `name`, which is unique
+/// across the catalogue.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ScriptFamilyResponse {
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub script_kind: Option<String>,
+    #[serde(default)]
+    pub website: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ScriptCatalogueResponse {
+    #[serde(default)]
+    pub data: Vec<ScriptFamilyResponse>,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct LookupScriptsRequest<'a> {

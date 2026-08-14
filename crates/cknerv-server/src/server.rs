@@ -25,7 +25,9 @@ use std::time::Duration;
 use axum::Router;
 use tokio::sync::{mpsc, watch};
 
-use cknerv_core::{CompositionDemandSink, EnrichmentEvent, Mutation, Projection};
+use cknerv_core::{
+    CompositionDemandSink, EnrichmentEvent, Mutation, ObservedScriptsSink, Projection,
+};
 
 use crate::adapter::Adapter;
 use crate::enrichment::EnrichmentSource;
@@ -83,6 +85,7 @@ pub struct ServerBuilder {
     enrichment_projections: Vec<ProjectionInstaller>,
     enrichment_source: Option<Arc<dyn EnrichmentSource>>,
     composition_demand: Option<Arc<CompositionDemandSink>>,
+    observed_scripts: Option<Arc<ObservedScriptsSink>>,
     workdir: Option<PathBuf>,
     restore_persisted: bool,
 }
@@ -95,6 +98,7 @@ impl ServerBuilder {
             enrichment_projections: Vec::new(),
             enrichment_source: None,
             composition_demand: None,
+            observed_scripts: None,
             workdir: None,
             restore_persisted: true,
         }
@@ -147,6 +151,14 @@ impl ServerBuilder {
         self
     }
 
+    /// The other half of `CellGalaxy::with_observed_scripts_sink`: without
+    /// both calls the enrichment side is handed an empty observed set and
+    /// names nothing.
+    pub fn observed_scripts_sink(mut self, sink: Arc<ObservedScriptsSink>) -> Self {
+        self.observed_scripts = Some(sink);
+        self
+    }
+
     pub fn workdir(mut self, p: PathBuf) -> Self {
         self.workdir = Some(p);
         self
@@ -175,6 +187,9 @@ impl ServerBuilder {
         let mut state = ServerState::new();
         if let Some(sink) = self.composition_demand {
             state.set_composition_demand_sink(sink);
+        }
+        if let Some(sink) = self.observed_scripts {
+            state.set_observed_scripts_sink(sink);
         }
         let state = Arc::new(state);
         {

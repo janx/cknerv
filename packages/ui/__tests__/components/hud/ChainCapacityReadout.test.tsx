@@ -66,6 +66,60 @@ describe('ChainCapacityReadout', () => {
     expect(container.querySelector('[data-cell-capacity-mode="retained"]')).not.toBeNull();
   });
 
+  it('bars the real script families once the backend counts by identity', () => {
+    const hash = (byte: string) => `0x${byte.repeat(32)}`;
+    const counted: CellsStats = {
+      ...stats,
+      scripts: {
+        locks: [
+          { script: { code_hash: hash('9b'), hash_type: 'type' }, count: 3_000 },
+          { script: { code_hash: hash('d0'), hash_type: 'type' }, count: 1_500 },
+        ],
+        locks_tail_cells: 0,
+        locks_tail_scripts: 0,
+        types: [{ script: { code_hash: hash('50'), hash_type: 'data1' }, count: 400 }],
+        types_tail_cells: 0,
+        types_tail_scripts: 0,
+        types_absent: 4_100,
+        unidentified: 0,
+      },
+    };
+    const { container } = render(
+      <ChainCapacityReadout
+        stats={counted}
+        scriptRegistry={{
+          source: 'ckbadger',
+          as_of: { block: 100, hash: '0xblock100' },
+          updated_at_ms: 1,
+          entries: [
+            { code_hash: hash('9b'), hash_type: 'type', name: 'Default Lock', deprecated: false },
+            { code_hash: hash('50'), hash_type: 'data1', name: 'xUDT', deprecated: false },
+          ],
+          unresolved: 1,
+        }}
+      />,
+    );
+    const text = container.textContent ?? '';
+
+    expect(text).toContain('Default Lock 67%');
+    expect(text).toContain('xUDT 9%');
+    // The one family nothing named keeps its identity instead of joining a
+    // bucket with everything else cknerv cannot place.
+    expect(text).toContain('0xd0d0…0d0 33%');
+    // And the four-family fallback vocabulary is gone, not shown alongside.
+    expect(text).not.toContain('multisig');
+    expect(text).not.toContain('sUDT');
+  });
+
+  it('keeps the four-family bars while the backend has counted nothing', () => {
+    // A backend predating the census, or a galaxy restored from state written
+    // before script identities existed: an empty census is not a distribution.
+    const { container } = render(<ChainCapacityReadout stats={stats} />);
+    const text = container.textContent ?? '';
+    expect(text).toContain('default 64%');
+    expect(text).toContain('multisig 22%');
+  });
+
   it('upgrades to one whole-chain-to-Galaxy hierarchy without losing base data', () => {
     const { container } = render(
       <ChainCapacityReadout stats={stats} source={source} record={record} />,

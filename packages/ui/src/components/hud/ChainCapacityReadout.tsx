@@ -1,8 +1,14 @@
 import type {
   AssetEcosystemRecord,
   EnrichmentSourceStatus,
+  ScriptRegistryRecord,
 } from '@cknerv/types';
 import type { CellsStats } from '../../derives/cellsStats.derive';
+import {
+  assetFamilyBuckets,
+  hasScriptCensus,
+  lockFamilyBuckets,
+} from '../../derives/scriptFamilies.derive';
 import { ASSET_COLORS, LOCK_COLORS } from './cellFormat';
 import AssetEcosystemReadout from './AssetEcosystemReadout';
 import { HUD_COLORS, HUD_FONTS } from './hudTheme';
@@ -46,7 +52,15 @@ function TaxonomyBar({ title, buckets }: { title: string; buckets: Bucket[] }) {
   );
 }
 
-function GalaxyWindow({ stats }: { stats: CellsStats }) {
+function GalaxyWindow({ stats, scriptRegistry }: {
+  stats: CellsStats;
+  scriptRegistry?: ScriptRegistryRecord | null;
+}) {
+  // The backend counts the retained set by script identity; those bars are
+  // the real distribution. The four-family bars below them are what cknerv
+  // can classify on its own, and they are the fallback for a backend that
+  // has not counted yet — never a second opinion shown alongside.
+  const census = hasScriptCensus(stats.scripts) ? stats.scripts : null;
   return (
     <ScopeStage
       id="galaxy-window"
@@ -58,21 +72,25 @@ function GalaxyWindow({ stats }: { stats: CellsStats }) {
     >
       <div aria-label="Retained Cell capacity" data-retained-capacity-context>
         <StatRow label="Window capacity">{formatStateBytes(stats.capacityShannons)} state</StatRow>
-        <TaxonomyBar title="WINDOW ASSETS" buckets={[
-          { key: 'native', label: 'CKB', color: ASSET_COLORS.native, count: stats.byAsset.native },
-          { key: 'sudt', label: 'sUDT', color: ASSET_COLORS.sudt, count: stats.byAsset.sudt },
-          { key: 'xudt', label: 'xUDT', color: ASSET_COLORS.xudt, count: stats.byAsset.xudt },
-          { key: 'dao', label: 'DAO', color: ASSET_COLORS.dao, count: stats.byAsset.dao },
-          { key: 'spore', label: 'NFT', color: ASSET_COLORS.spore, count: stats.byAsset.spore },
-          { key: 'other', label: '?', color: ASSET_COLORS.other, count: stats.byAsset.other },
-        ]} />
-        <TaxonomyBar title="WINDOW LOCKS" buckets={[
-          { key: 'sighash', label: 'default', color: LOCK_COLORS.sighash, count: stats.byLock.sighash },
-          { key: 'multisig', label: 'multisig', color: LOCK_COLORS.multisig, count: stats.byLock.multisig },
-          { key: 'acp', label: 'ACP', color: LOCK_COLORS.acp, count: stats.byLock.acp },
-          { key: 'omnilock', label: 'omni', color: LOCK_COLORS.omnilock, count: stats.byLock.omnilock },
-          { key: 'other', label: '?', color: LOCK_COLORS.other, count: stats.byLock.other },
-        ]} />
+        <TaxonomyBar title="WINDOW ASSETS" buckets={census
+          ? assetFamilyBuckets(census, scriptRegistry)
+          : [
+            { key: 'native', label: 'CKB', color: ASSET_COLORS.native, count: stats.byAsset.native },
+            { key: 'sudt', label: 'sUDT', color: ASSET_COLORS.sudt, count: stats.byAsset.sudt },
+            { key: 'xudt', label: 'xUDT', color: ASSET_COLORS.xudt, count: stats.byAsset.xudt },
+            { key: 'dao', label: 'DAO', color: ASSET_COLORS.dao, count: stats.byAsset.dao },
+            { key: 'spore', label: 'NFT', color: ASSET_COLORS.spore, count: stats.byAsset.spore },
+            { key: 'other', label: '?', color: ASSET_COLORS.other, count: stats.byAsset.other },
+          ]} />
+        <TaxonomyBar title="WINDOW LOCKS" buckets={census
+          ? lockFamilyBuckets(census, scriptRegistry)
+          : [
+            { key: 'sighash', label: 'default', color: LOCK_COLORS.sighash, count: stats.byLock.sighash },
+            { key: 'multisig', label: 'multisig', color: LOCK_COLORS.multisig, count: stats.byLock.multisig },
+            { key: 'acp', label: 'ACP', color: LOCK_COLORS.acp, count: stats.byLock.acp },
+            { key: 'omnilock', label: 'omni', color: LOCK_COLORS.omnilock, count: stats.byLock.omnilock },
+            { key: 'other', label: '?', color: LOCK_COLORS.other, count: stats.byLock.other },
+          ]} />
       </div>
     </ScopeStage>
   );
@@ -80,12 +98,13 @@ function GalaxyWindow({ stats }: { stats: CellsStats }) {
 
 /** One chain-level capacity slot: direct-node Galaxy data in the base view,
  * upgraded to whole-chain → Galaxy scope when enrichment is usable. */
-export default function ChainCapacityReadout({ stats, source, record }: {
+export default function ChainCapacityReadout({ stats, source, record, scriptRegistry }: {
   stats: CellsStats;
   source?: EnrichmentSourceStatus;
   record?: AssetEcosystemRecord | null;
+  scriptRegistry?: ScriptRegistryRecord | null;
 }) {
-  const galaxyWindow = <GalaxyWindow stats={stats} />;
+  const galaxyWindow = <GalaxyWindow stats={stats} scriptRegistry={scriptRegistry} />;
   return (
     <AssetEcosystemReadout
       source={source}

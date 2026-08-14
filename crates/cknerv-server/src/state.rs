@@ -24,6 +24,7 @@ use tokio::sync::{broadcast, mpsc, watch};
 
 use cknerv_core::{
     Chain, ChainNode, CompositionDemand, CompositionDemandSink, EnrichmentEvent,
+    ObservedScriptsSink,
     EnrichmentSourceState, MempoolStats, Mutation, Peer, RecentBlock, RecentTx, ReplayPhase,
     RevisionedMutation, Ring,
 };
@@ -97,6 +98,10 @@ pub struct ServerState {
     /// host wired the same sink into the projection — a CKB-only
     /// deployment simply reads zeros forever.
     composition_demand: Arc<CompositionDemandSink>,
+    /// Which scripts the cell galaxy is holding, published by the same
+    /// projection so an optional index can name them. Same wiring rule as
+    /// the demand sink: empty forever unless the host installed one.
+    observed_scripts: Arc<ObservedScriptsSink>,
     /// Coordination lock making (state, revision) snapshot-atomic. The
     /// reducer takes the write side around its full apply sequence
     /// (mutate + revision bump + broadcast); `snapshot()` takes the
@@ -120,6 +125,7 @@ impl ServerState {
             replay_active: AtomicBool::new(false),
             projections: RwLock::new(Registry::new()),
             composition_demand: Arc::new(CompositionDemandSink::new()),
+            observed_scripts: Arc::new(ObservedScriptsSink::new()),
             coord: RwLock::new(()),
         }
     }
@@ -128,6 +134,12 @@ impl ServerState {
     /// enrichment supervisor and the projection share one slot.
     pub fn set_composition_demand_sink(&mut self, sink: Arc<CompositionDemandSink>) {
         self.composition_demand = sink;
+    }
+
+    /// Install the sink the cell-galaxy projection publishes its observed
+    /// script identities to.
+    pub fn set_observed_scripts_sink(&mut self, sink: Arc<ObservedScriptsSink>) {
+        self.observed_scripts = sink;
     }
 
     /// What the display plane is short of right now, per class.
@@ -181,6 +193,7 @@ impl ServerState {
             recent_blocks: store.chain.recent_blocks.clone(),
             recent_transactions: store.chain.recent_tx_hashes.clone(),
             replay_active: self.replay_active.load(Ordering::Relaxed),
+            observed_scripts: self.observed_scripts.read(),
         }
     }
 
@@ -522,6 +535,7 @@ fn event_anchor_is_current(event: &EnrichmentEvent, recent_blocks: &[RecentBlock
             Some(&transaction_horizon.as_of)
         }
         EnrichmentEvent::NetworkAtlasReplace(network_atlas) => Some(&network_atlas.as_of),
+        EnrichmentEvent::ScriptRegistryReplace(script_registry) => Some(&script_registry.as_of),
         EnrichmentEvent::GalaxyCompositionReplace(composition) => Some(&composition.as_of),
         EnrichmentEvent::GalaxyCompositionTopUp(top_up) => Some(&top_up.as_of),
         EnrichmentEvent::SourceStatus(_)

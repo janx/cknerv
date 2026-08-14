@@ -2,6 +2,7 @@ import type { CSSProperties } from 'react';
 import type {
   ActivityFeedRecord,
   AssetEcosystemRecord,
+  ScriptRegistryRecord,
   ChainEntry,
   EnrichmentSourceStatus,
   ProtocolEraRecord,
@@ -18,11 +19,12 @@ import { formatEpochReadout } from './epochReadout';
 
 const fmt = (n: number) => n.toLocaleString('en-US');
 
-export default function BlockchainReadout({ chain, cellsStats, enrichmentSource, assetEcosystem, protocolEra, activityFeed, transactionHorizon, compactActivity = false, style }: {
+export default function BlockchainReadout({ chain, cellsStats, enrichmentSource, assetEcosystem, scriptRegistry, protocolEra, activityFeed, transactionHorizon, compactActivity = false, style }: {
   chain: ChainEntry;
   cellsStats: CellsStats;
   enrichmentSource?: EnrichmentSourceStatus;
   assetEcosystem?: AssetEcosystemRecord | null;
+  scriptRegistry?: ScriptRegistryRecord | null;
   protocolEra?: ProtocolEraRecord | null;
   activityFeed?: ActivityFeedRecord | null;
   transactionHorizon?: TransactionHorizonRecord | null;
@@ -49,6 +51,7 @@ export default function BlockchainReadout({ chain, cellsStats, enrichmentSource,
         stats={cellsStats}
         source={enrichmentSource}
         record={assetEcosystem}
+        scriptRegistry={scriptRegistry}
       />
       <TransactionHorizonReadout
         source={enrichmentSource}

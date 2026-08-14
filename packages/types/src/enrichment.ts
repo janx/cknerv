@@ -276,6 +276,35 @@ export interface NetworkAtlasBucket {
 }
 
 /** Bounded latest-node sample plus the source's latest crawl summary. */
+/** A name for one script identity, from an index that tracks far more script
+ *  families than cknerv pins itself. The other half of the cells projection's
+ *  script census: that side counts identities and refuses to name them, this
+ *  side names them and counts nothing. They are joined on `code_hash` +
+ *  `hash_type`, so neither has to trust the other's scope. */
+export interface ScriptNameRecord {
+  code_hash: string;
+  hash_type: string;
+  /** The family name as the index spells it — "Default Lock", "JoyID". */
+  name: string;
+  description?: string;
+  /** `'lock'` / `'type'` when the index classifies the family's role. */
+  kind?: string;
+  website?: string;
+  deprecated: boolean;
+}
+
+/** Names for the scripts the canonical set is currently holding — sized by
+ *  what cknerv observed, not by what the index knows. */
+export interface ScriptRegistryRecord {
+  source: string;
+  as_of: ChainAnchor;
+  updated_at_ms: number;
+  entries: ScriptNameRecord[];
+  /** Observed identities the index had no name for. Counted, not listed: the
+   *  panel already holds those code hashes from the census. */
+  unresolved: number;
+}
+
 export interface NetworkAtlasRecord {
   source: string;
   as_of: ChainAnchor;
@@ -307,6 +336,7 @@ export interface SemanticsSnapshot {
   activity_feed?: ActivityFeedRecord;
   transaction_horizon?: TransactionHorizonRecord;
   network_atlas?: NetworkAtlasRecord;
+  script_registry?: ScriptRegistryRecord;
 }
 
 export type SemanticsDelta =
@@ -324,6 +354,7 @@ export type SemanticsDelta =
   | { type: 'transaction_horizon_replace'; transaction_horizon: TransactionHorizonRecord }
   | { type: 'network_atlas_replace'; network_atlas: NetworkAtlasRecord }
   | { type: 'network_atlas_clear' }
+  | { type: 'script_registry_replace'; script_registry: ScriptRegistryRecord }
   | { type: 'prune'; from_block: number }
   | { type: 'clear' };
 

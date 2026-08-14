@@ -28,6 +28,11 @@ const ENRICHMENT_ACTIVITY_REFRESH: Duration = Duration::from_secs(15);
 const ENRICHMENT_TRANSACTION_HORIZON_REFRESH: Duration = Duration::from_secs(60);
 const ENRICHMENT_FORK_WATCH_REFRESH: Duration = Duration::from_secs(15);
 const ENRICHMENT_NETWORK_ATLAS_REFRESH: Duration = Duration::from_secs(60);
+/// Script names change when someone deploys a new script family, which is a
+/// scale of hours. Five minutes is already far faster than the fact moves;
+/// the reason to repeat at all is that the census keeps discovering
+/// identities this galaxy had not seen yet.
+const ENRICHMENT_SCRIPT_REGISTRY_REFRESH: Duration = Duration::from_secs(300);
 /// The composition has NO cadence by default (design D7). It runs once
 /// to staff the stage and then holds; drift is corrected by the top-up,
 /// which costs churn rather than a whole re-derivation every period.
@@ -64,6 +69,7 @@ struct RefreshCadence {
     transaction_horizon: Duration,
     fork_watch: Duration,
     network_atlas: Duration,
+    script_registry: Duration,
     galaxy_composition: Option<Duration>,
     galaxy_composition_retry: Duration,
     galaxy_top_up: Duration,
@@ -82,6 +88,7 @@ impl Default for RefreshCadence {
             transaction_horizon: ENRICHMENT_TRANSACTION_HORIZON_REFRESH,
             fork_watch: ENRICHMENT_FORK_WATCH_REFRESH,
             network_atlas: ENRICHMENT_NETWORK_ATLAS_REFRESH,
+            script_registry: ENRICHMENT_SCRIPT_REGISTRY_REFRESH,
             galaxy_composition: ENRICHMENT_GALAXY_COMPOSITION_REFRESH,
             galaxy_composition_retry: ENRICHMENT_GALAXY_COMPOSITION_RETRY,
             galaxy_top_up: ENRICHMENT_GALAXY_TOP_UP_REFRESH,
@@ -99,11 +106,12 @@ enum RefreshKind {
     TransactionHorizon,
     ForkWatch,
     NetworkAtlas,
+    ScriptRegistry,
     GalaxyComposition,
     GalaxyTopUp,
 }
 
-const REFRESH_KINDS: [RefreshKind; 9] = [
+const REFRESH_KINDS: [RefreshKind; 10] = [
     RefreshKind::AssetEcosystem,
     RefreshKind::DaoState,
     RefreshKind::ProtocolEra,
@@ -111,6 +119,7 @@ const REFRESH_KINDS: [RefreshKind; 9] = [
     RefreshKind::TransactionHorizon,
     RefreshKind::ForkWatch,
     RefreshKind::NetworkAtlas,
+    RefreshKind::ScriptRegistry,
     RefreshKind::GalaxyComposition,
     RefreshKind::GalaxyTopUp,
 ];
@@ -125,6 +134,7 @@ impl RefreshKind {
             Self::TransactionHorizon => "transaction_horizon",
             Self::ForkWatch => "fork_watch",
             Self::NetworkAtlas => "network_atlas",
+            Self::ScriptRegistry => "script_registry",
             // The top-up is the same source feature as the composition:
             // a source that cannot compose cannot supply either.
             Self::GalaxyComposition | Self::GalaxyTopUp => "galaxy_composition",
@@ -144,6 +154,7 @@ impl RefreshKind {
             Self::TransactionHorizon => Some(cadence.transaction_horizon),
             Self::ForkWatch => Some(cadence.fork_watch),
             Self::NetworkAtlas => Some(cadence.network_atlas),
+            Self::ScriptRegistry => Some(cadence.script_registry),
             Self::GalaxyComposition => cadence.galaxy_composition,
             Self::GalaxyTopUp => Some(cadence.galaxy_top_up),
         }
@@ -215,6 +226,9 @@ impl RefreshKind {
                 .enrich_network_atlas(context)
                 .await
                 .map(|record| record.map(EnrichmentEvent::NetworkAtlasReplace)),
+            Self::ScriptRegistry => source.enrich_script_registry(context).await.map(|record| {
+                record.map(|registry| EnrichmentEvent::ScriptRegistryReplace(Box::new(registry)))
+            }),
             Self::GalaxyComposition => source
                 .enrich_galaxy_composition(context)
                 .await
@@ -791,6 +805,7 @@ mod tests {
             transaction_horizon: Duration::from_secs(60),
             fork_watch: Duration::from_secs(60),
             network_atlas: Duration::from_secs(60),
+            script_registry: Duration::from_secs(300),
             galaxy_composition: None,
             galaxy_composition_retry: Duration::from_secs(60),
             galaxy_top_up: Duration::from_millis(10),
@@ -869,6 +884,7 @@ mod tests {
             transaction_horizon: Duration::from_secs(60),
             fork_watch: Duration::from_secs(60),
             network_atlas: Duration::from_secs(60),
+            script_registry: Duration::from_secs(300),
             galaxy_composition: periodic,
             galaxy_composition_retry: Duration::from_millis(30),
             galaxy_top_up: Duration::from_secs(60),
@@ -1214,6 +1230,7 @@ mod tests {
             transaction_horizon: Duration::from_secs(60),
             fork_watch: Duration::from_secs(60),
             network_atlas: Duration::from_secs(60),
+            script_registry: Duration::from_secs(300),
             galaxy_composition: Some(Duration::from_secs(60)),
             galaxy_composition_retry: Duration::from_secs(60),
             galaxy_top_up: Duration::from_secs(60),
@@ -1250,6 +1267,7 @@ mod tests {
             transaction_horizon: Duration::from_secs(1),
             fork_watch: Duration::from_secs(1),
             network_atlas: Duration::from_secs(1),
+            script_registry: Duration::from_secs(300),
             galaxy_composition: Some(Duration::from_secs(1)),
             galaxy_composition_retry: Duration::from_secs(1),
             galaxy_top_up: Duration::from_secs(1),

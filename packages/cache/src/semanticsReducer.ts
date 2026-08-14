@@ -7,6 +7,7 @@ import type {
   EnrichmentSourceStatus,
   ForkWatchRecord,
   NetworkAtlasRecord,
+  ScriptRegistryRecord,
   OutPoint,
   ProtocolEraRecord,
   RevisionedSemanticsDelta,
@@ -29,6 +30,10 @@ export interface SemanticsCache {
   activityFeed: ActivityFeedRecord | null;
   transactionHorizon: TransactionHorizonRecord | null;
   networkAtlas: NetworkAtlasRecord | null;
+  /** Names for the script identities the cells projection's census reports.
+   *  Null without a source that can name them; the panel then falls back to
+   *  the handful of families cknerv pins itself. */
+  scriptRegistry: ScriptRegistryRecord | null;
 }
 
 export function outPointKey(outPoint: OutPoint): string {
@@ -53,6 +58,7 @@ export function emptySemanticsCache(): SemanticsCache {
     activityFeed: null,
     transactionHorizon: null,
     networkAtlas: null,
+    scriptRegistry: null,
   };
 }
 
@@ -75,6 +81,7 @@ export function fromSemanticsSnapshot(
     activityFeed: snapshot.activity_feed ?? null,
     transactionHorizon: snapshot.transaction_horizon ?? null,
     networkAtlas: snapshot.network_atlas ?? null,
+    scriptRegistry: snapshot.script_registry ?? null,
   };
 }
 
@@ -221,6 +228,8 @@ function reduceDelta(prev: SemanticsCache, delta: SemanticsDelta): SemanticsCach
       return { ...prev, transactionHorizon: delta.transaction_horizon };
     case 'network_atlas_replace':
       return { ...prev, networkAtlas: delta.network_atlas };
+    case 'script_registry_replace':
+      return { ...prev, scriptRegistry: delta.script_registry };
     case 'network_atlas_clear':
       return { ...prev, networkAtlas: null };
     case 'prune': {

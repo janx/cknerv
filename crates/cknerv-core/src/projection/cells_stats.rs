@@ -156,6 +156,43 @@ impl CellViewStats {
     }
 }
 
+/// The script identities the retained set currently holds, published where
+/// the enrichment side can read them.
+///
+/// Same shape as the composition demand sink and for the same reason: the
+/// optional index needs one fact out of the Cell projection — which scripts
+/// to ask about — and a shared cell is a much smaller seam than a handle on
+/// the projection itself. Nothing flows the other way; a name never enters
+/// the Cell projection.
+#[derive(Default)]
+pub struct ObservedScriptsSink {
+    scripts: std::sync::Mutex<Vec<ScriptId>>,
+}
+
+impl ObservedScriptsSink {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn publish(&self, census: &ScriptCensus) {
+        let scripts = census
+            .locks
+            .iter()
+            .chain(census.types.iter())
+            .map(|entry| entry.script)
+            .collect();
+        if let Ok(mut held) = self.scripts.lock() {
+            *held = scripts;
+        }
+    }
+
+    /// Empty before the first census — a source reading this must treat that
+    /// as "nothing to name yet", not as "nothing is out there".
+    pub fn read(&self) -> Vec<ScriptId> {
+        self.scripts.lock().map(|held| held.clone()).unwrap_or_default()
+    }
+}
+
 /// Running tallies for the script census. Kept beside [`CellViewStats`]
 /// rather than inside it because a census is a map while everything else
 /// there is a counter, and the wire wants the map already ranked and cut.

@@ -15,8 +15,9 @@ use cknerv_core::{
     GalaxyCompositionRecord, GalaxyCompositionTopUp, NetworkAtlasBucket, NetworkAtlasRecord,
     OutPoint, ProtocolEra, ProtocolEraRecord, SemanticAsset, SemanticAttribute,
     SemanticCellContent, SemanticContentDecode, SemanticContentGuess, SemanticContentSegment,
-    SemanticFacet, SemanticScript, TransactionHorizonRecord, TransactionParticipantSemantic,
-    TransactionSemanticRecord,
+    HashType, ScriptNameRecord, ScriptRegistryRecord, SemanticFacet, SemanticScript,
+    TransactionHorizonRecord, TransactionParticipantSemantic, TransactionSemanticRecord,
+    MAX_SCRIPT_REGISTRY_ENTRIES,
 };
 use cknerv_server::{CanonicalContext, EnrichmentSource, GalaxyCompositionHydrator};
 
@@ -25,7 +26,8 @@ use crate::dto::{
     CommonKnowledgeSizeBreakdown, DaoInfo, DaoStatisticsResponse, HardforkEventResponse,
     HardforkTimelineResponse, LatestActivityResponse, LookupScriptsRequest,
     NetworkCrawlerSummaryResponse, NetworkNodesPageResponse, NetworkStats, RecentReorgResponse,
-    ReorgEventResponse, ScriptLookupInfo, ScriptLookupResponse, ScriptResponse, TokenResponse,
+    ReorgEventResponse, ScriptCatalogueResponse, ScriptFamilyResponse, ScriptLookupInfo,
+    ScriptLookupResponse, ScriptResponse, TokenResponse,
     TransactionDetailResponse, TransactionLifecycleResponse, TransactionStatsPoint,
     TransactionStatsResponse,
 };
@@ -45,6 +47,7 @@ const CAPABILITIES: &[&str] = &[
     "transaction_horizon",
     "fork_watch",
     "network_atlas",
+    "script_registry",
     "transaction_detail",
     "transaction_lifecycle",
 ];
@@ -61,6 +64,24 @@ const MAX_FORK_WATCH_WINDOW_SECONDS: u32 = 31 * 24 * 60 * 60;
 const MAX_PROTOCOL_ERAS: usize = 16;
 const MAX_PROTOCOL_LABEL_CHARS: usize = 64;
 const NETWORK_ATLAS_LIMIT: usize = 64;
+/// One page holds ckbadger's whole script catalogue (66 families as measured);
+/// the limit is here so a grown catalogue arrives truncated rather than paged.
+const SCRIPT_CATALOGUE_LIMIT: usize = 200;
+/// `scripts/lookup` wants a transaction for context. The census has no
+/// transaction — it is a set of identities — so this asks with none and lets
+/// the response's own `resolutionState` say whether that mattered.
+const UNANCHORED_LOOKUP_TX: &str = "0x0000000000000000000000000000000000000000000000000000000000000000";
+
+/// CKB's own spelling for a hash type, which is what the wire carries.
+fn hash_type_wire(hash_type: HashType) -> String {
+    match hash_type {
+        HashType::Data => "data",
+        HashType::Type => "type",
+        HashType::Data1 => "data1",
+        HashType::Data2 => "data2",
+    }
+    .to_string()
+}
 const MAX_NETWORK_LABEL_CHARS: usize = 96;
 const MAX_PEER_ID_HEX_CHARS: usize = 256;
 const MAX_CELL_CONTENT_PREVIEW_BYTES: usize = 4 * 1024;
@@ -290,6 +311,82 @@ impl CkbadgerEnrichmentSource {
                 HashMap::new()
             }
         }
+    }
+
+
+    /// Resolve code hashes to family names. One request: the endpoint takes a
+    /// batch, and the whole observed set is tens of hashes.
+    ///
+    /// `txHash` disambiguates a code hash that several deployed scripts share,
+    /// which only happens for data-hash scripts. The census is a set of
+    /// identities with no transaction attached, so this asks without that
+    /// context and reads `resolutionState` to find out when it mattered — an
+    /// unresolved entry is dropped rather than guessed at.
+    async fn lookup_script_names(
+        &self,
+        code_hashes: &[String],
+    ) -> anyhow::Result<HashMap<String, ScriptLookupInfo>> {
+        if code_hashes.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let url = self.endpoint("scripts/lookup")?;
+        let request = LookupScriptsRequest {
+            code_hashes: code_hashes.iter().map(String::as_str).collect(),
+            tx_hash: UNANCHORED_LOOKUP_TX,
+        };
+        let response = self
+            .client
+            .post(url)
+            .json(&request)
+            .send()
+            .await
+            .context("fetch ckbadger script lookup")?;
+        if response.status() == StatusCode::NOT_FOUND {
+            return Ok(HashMap::new());
+        }
+        if !response.status().is_success() {
+            return Err(anyhow!(
+                "ckbadger script lookup returned HTTP {}",
+                response.status()
+            ));
+        }
+        let looked_up: ScriptLookupResponse = response
+            .json()
+            .await
+            .context("decode ckbadger script lookup")?;
+        Ok(looked_up
+            .into_iter()
+            .filter(|(_, info)| info.resolution_state == "resolved" && !info.name.is_empty())
+            .collect())
+    }
+
+    /// The script-family catalogue, keyed by name. Bounded and fixed-shape:
+    /// one page holds every family the index tracks.
+    async fn script_catalogue(&self) -> anyhow::Result<HashMap<String, ScriptFamilyResponse>> {
+        let mut url = self.endpoint("scripts")?;
+        url.query_pairs_mut()
+            .append_pair("limit", &SCRIPT_CATALOGUE_LIMIT.to_string());
+        let response = self
+            .client
+            .get(url)
+            .send()
+            .await
+            .context("fetch ckbadger script catalogue")?;
+        if !response.status().is_success() {
+            return Err(anyhow!(
+                "ckbadger script catalogue returned HTTP {}",
+                response.status()
+            ));
+        }
+        let catalogue: ScriptCatalogueResponse = response
+            .json()
+            .await
+            .context("decode ckbadger script catalogue")?;
+        Ok(catalogue
+            .data
+            .into_iter()
+            .map(|family| (family.name.clone(), family))
+            .collect())
     }
 
     async fn token_asset(&self, cell: &CellDetailResponse) -> Option<SemanticAsset> {
@@ -1041,6 +1138,78 @@ impl EnrichmentSource for CkbadgerEnrichmentSource {
         let record = map_network_atlas(summary, nodes, anchor.clone())?;
         self.revalidate_anchor(&anchor, "network atlas").await?;
         Ok(Some(record))
+    }
+
+
+    async fn enrich_script_registry(
+        &self,
+        context: &CanonicalContext,
+    ) -> anyhow::Result<Option<ScriptRegistryRecord>> {
+        // Nothing on stage yet: the Cell projection has not published a
+        // census, so there is nothing to name and no request worth making.
+        if context.observed_scripts.is_empty() {
+            return Ok(None);
+        }
+        let anchor = self.current_anchor(context)?;
+
+        // Dedup by code hash. The census reports (code_hash, hash_type)
+        // pairs and lookup keys on the hash alone, so two hash types over
+        // one deployed script are one question.
+        let mut hashes: Vec<String> = Vec::new();
+        for script in &context.observed_scripts {
+            let hex = script.code_hash_hex();
+            if !hashes.contains(&hex) {
+                hashes.push(hex);
+            }
+        }
+        hashes.truncate(MAX_SCRIPT_REGISTRY_ENTRIES);
+
+        let lookups = self.lookup_script_names(&hashes).await?;
+        // The catalogue is what carries descriptions and websites; a
+        // failure there costs those fields and nothing else, so it is not
+        // allowed to fail the record.
+        let catalogue = self.script_catalogue().await.unwrap_or_default();
+
+        let mut entries = Vec::with_capacity(lookups.len());
+        for script in &context.observed_scripts {
+            let hex = script.code_hash_hex();
+            let Some(info) = lookups.get(&hex) else {
+                continue;
+            };
+            let hash_type = hash_type_wire(script.hash_type);
+            if entries.iter().any(|entry: &ScriptNameRecord| {
+                entry.code_hash == hex && entry.hash_type == hash_type
+            }) {
+                continue;
+            }
+            let family = catalogue.get(&info.name);
+            entries.push(ScriptNameRecord {
+                code_hash: hex,
+                hash_type,
+                name: info.name.clone(),
+                description: family.and_then(|f| f.description.clone()),
+                kind: info
+                    .script_kind
+                    .clone()
+                    .or_else(|| family.and_then(|f| f.script_kind.clone())),
+                website: family.and_then(|f| f.website.clone()),
+                deprecated: info.deprecated,
+            });
+        }
+        let unresolved = context
+            .observed_scripts
+            .len()
+            .saturating_sub(entries.len())
+            .min(u32::MAX as usize) as u32;
+
+        self.revalidate_anchor(&anchor, "script registry").await?;
+        Ok(Some(ScriptRegistryRecord {
+            source: "ckbadger".to_string(),
+            as_of: anchor,
+            updated_at_ms: now_ms(),
+            entries,
+            unresolved,
+        }))
     }
 
     async fn enrich_galaxy_composition(
@@ -2680,7 +2849,7 @@ mod tests {
     use super::*;
     use axum::routing::{get, post};
     use axum::{Json, Router};
-    use cknerv_core::RecentBlock;
+    use cknerv_core::{RecentBlock, ScriptId};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
 
@@ -3395,6 +3564,7 @@ mod tests {
             }],
             recent_transactions: Vec::new(),
             replay_active: false,
+            observed_scripts: Vec::new(),
         }
     }
 
@@ -3717,6 +3887,158 @@ mod tests {
             Some("-20000000000")
         );
 
+        server.abort();
+    }
+
+
+    /// Anchor-valid stub carrying a script catalogue and a lookup endpoint.
+    /// `lookup_requests` counts calls so a test can prove the adapter asked
+    /// nothing when it had nothing to ask about.
+    async fn spawn_script_registry_api() -> (Url, tokio::task::JoinHandle<()>, Arc<AtomicUsize>) {
+        let lookup_requests = Arc::new(AtomicUsize::new(0));
+        let counted = lookup_requests.clone();
+        let app = Router::new()
+            .route(
+                "/api/v1/statistics/network",
+                get(|| async {
+                    Json(serde_json::json!({
+                        "syncStatus": { "isSyncing": false, "syncedBlock": 100 }
+                    }))
+                }),
+            )
+            .route(
+                "/api/v1/blocks/:number",
+                get(|| async {
+                    Json(serde_json::json!({ "number": 100, "hash": "0xblock100" }))
+                }),
+            )
+            .route(
+                "/api/v1/scripts",
+                get(|| async {
+                    Json(serde_json::json!({
+                        "data": [
+                            {
+                                "familyId": "default-lock",
+                                "name": "Default Lock",
+                                "description": "SECP256K1/blake160 single-signature lock.",
+                                "scriptKind": "lock",
+                                "website": null
+                            },
+                            {
+                                "familyId": "joyid",
+                                "name": "JoyID",
+                                "description": "Passkey lock.",
+                                "scriptKind": "lock",
+                                "website": "https://joy.id"
+                            }
+                        ],
+                        "total": 2
+                    }))
+                }),
+            )
+            .route(
+                "/api/v1/scripts/lookup",
+                axum::routing::post(move || {
+                    let requests = counted.clone();
+                    async move {
+                        requests.fetch_add(1, Ordering::Relaxed);
+                        Json(serde_json::json!({
+                            "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": {
+                                "name": "JoyID",
+                                "deprecated": false,
+                                "scriptKind": "lock",
+                                "decoderType": null,
+                                "resolutionState": "resolved"
+                            },
+                            "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": {
+                                "name": "Ambiguous",
+                                "deprecated": false,
+                                "scriptKind": "lock",
+                                "decoderType": null,
+                                "resolutionState": "ambiguous"
+                            }
+                        }))
+                    }
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let handle = tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        (
+            Url::parse(&format!("http://{address}/api/v1")).unwrap(),
+            handle,
+            lookup_requests,
+        )
+    }
+
+    #[tokio::test]
+    async fn script_registry_names_what_the_census_observed() {
+        let (api_base, server, lookup_requests) = spawn_script_registry_api().await;
+        let source = CkbadgerEnrichmentSource::new(api_base).unwrap();
+        assert_eq!(
+            source.probe(&context()).await.status,
+            EnrichmentSourceState::Ready
+        );
+
+        let mut ctx = context();
+        ctx.observed_scripts = vec![
+            ScriptId {
+                code_hash: [0xaa; 32],
+                hash_type: HashType::Type,
+            },
+            // Resolved as ambiguous by the index: dropped, not guessed at.
+            ScriptId {
+                code_hash: [0xbb; 32],
+                hash_type: HashType::Type,
+            },
+            // The index has never heard of this one.
+            ScriptId {
+                code_hash: [0xcc; 32],
+                hash_type: HashType::Data1,
+            },
+        ];
+
+        let registry = source
+            .enrich_script_registry(&ctx)
+            .await
+            .unwrap()
+            .expect("registry record");
+
+        assert_eq!(registry.entries.len(), 1);
+        let entry = &registry.entries[0];
+        assert_eq!(entry.name, "JoyID");
+        assert_eq!(entry.hash_type, "type");
+        assert_eq!(entry.code_hash, format!("0x{}", "aa".repeat(32)));
+        // The description comes from the catalogue, joined on the name the
+        // lookup returned — the lookup itself carries no description.
+        assert_eq!(entry.description.as_deref(), Some("Passkey lock."));
+        assert_eq!(entry.website.as_deref(), Some("https://joy.id"));
+        assert!(!entry.deprecated);
+        // Two observed identities produced no name, and the record says so
+        // rather than presenting one name as the whole answer.
+        assert_eq!(registry.unresolved, 2);
+        assert_eq!(lookup_requests.load(Ordering::Relaxed), 1);
+
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn script_registry_asks_nothing_before_the_first_census() {
+        let (api_base, server, lookup_requests) = spawn_script_registry_api().await;
+        let source = CkbadgerEnrichmentSource::new(api_base).unwrap();
+        assert_eq!(
+            source.probe(&context()).await.status,
+            EnrichmentSourceState::Ready
+        );
+
+        // An empty observed set means "nothing to name yet", never "ask the
+        // index what exists".
+        let registry = source.enrich_script_registry(&context()).await.unwrap();
+
+        assert!(registry.is_none());
+        assert_eq!(lookup_requests.load(Ordering::Relaxed), 0);
         server.abort();
     }
 

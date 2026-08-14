@@ -3,6 +3,7 @@ import type { CSSProperties, ReactNode } from 'react';
 import type {
   ActivityFeedRecord,
   AssetEcosystemRecord,
+  ScriptRegistryRecord,
   ChainEntry,
   Peer,
   ChainNode,
@@ -85,7 +86,7 @@ function isHudPanelId(id: string): id is HudPanelId {
   return (HUD_PANEL_IDS as readonly string[]).includes(id);
 }
 
-function HudOverlay({ chain, peers, localNode, cellsStats, cellCount, cellCapacity, enrichmentSource, assetEcosystem, protocolEra, daoState, activityFeed, transactionHorizon, networkAtlas, cellInspectionActive = false, selectedNode, selectedPeer, onClearSelection, onClearNet, backfill, streamHealth, build, topBarActions, colonyCount }: {
+function HudOverlay({ chain, peers, localNode, cellsStats, cellCount, cellCapacity, enrichmentSource, assetEcosystem, protocolEra, daoState, activityFeed, transactionHorizon, networkAtlas, scriptRegistry, cellInspectionActive = false, selectedNode, selectedPeer, onClearSelection, onClearNet, backfill, streamHealth, build, topBarActions, colonyCount }: {
   chain: ChainEntry; peers: Peer[]; localNode: ChainNode | undefined; cellsStats: CellsStats;
   /** Records available to CellGalaxy before the top-bar display cap. */
   cellCount?: number;
@@ -93,6 +94,7 @@ function HudOverlay({ chain, peers, localNode, cellsStats, cellCount, cellCapaci
   cellCapacity?: number;
   enrichmentSource?: EnrichmentSourceStatus;
   assetEcosystem?: AssetEcosystemRecord | null;
+  scriptRegistry?: ScriptRegistryRecord | null;
   protocolEra?: ProtocolEraRecord | null;
   daoState?: DaoStateRecord | null;
   activityFeed?: ActivityFeedRecord | null;
@@ -328,6 +330,7 @@ function HudOverlay({ chain, peers, localNode, cellsStats, cellCount, cellCapaci
                     cellsStats={cellsStats}
                     enrichmentSource={enrichmentSource}
                     assetEcosystem={assetEcosystem}
+                    scriptRegistry={scriptRegistry}
                     protocolEra={protocolEra}
                     activityFeed={activityFeed}
                     transactionHorizon={transactionHorizon}

@@ -456,6 +456,57 @@ pub struct DaoStateRecord {
     pub depositors_change_24h: Option<i32>,
 }
 
+/// Upper bound on registry entries admitted from a source. The catalogue it
+/// is built from has 66 script families and the census it answers is cut at
+/// 24 per role, so this is generous; it exists because a wire contract with
+/// no bound is a wire contract a source can flood.
+pub const MAX_SCRIPT_REGISTRY_ENTRIES: usize = 256;
+
+/// A name for one script identity, from an index that tracks far more script
+/// families than cknerv pins itself.
+///
+/// This is the other half of the Cell projection's script census: that side
+/// counts identities and refuses to name them, this side names them and
+/// counts nothing. They meet in the browser, joined on `code_hash` +
+/// `hash_type`, which is why neither has to trust the other's scope.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ScriptNameRecord {
+    pub code_hash: String,
+    pub hash_type: String,
+    /// The family name as the index spells it — "Default Lock", "JoyID".
+    pub name: String,
+    /// The index's own one-line description, when it published one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// `"lock"` / `"type"` when the index classifies the family's role.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub website: Option<String>,
+    #[serde(default)]
+    pub deprecated: bool,
+}
+
+/// Names for the scripts the canonical set is currently holding.
+///
+/// Bounded by what cknerv observed rather than by what the index knows: the
+/// question being answered is "what is on my galaxy", not "what exists on
+/// CKB", so an index with a thousand families still produces a record sized
+/// by the census.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ScriptRegistryRecord {
+    pub source: String,
+    pub as_of: ChainAnchor,
+    pub updated_at_ms: u64,
+    #[serde(default)]
+    pub entries: Vec<ScriptNameRecord>,
+    /// Observed identities the index had no name for. Counted, not listed:
+    /// the panel already holds those code hashes from the census, and this
+    /// only has to say that asking produced nothing.
+    #[serde(default)]
+    pub unresolved: u32,
+}
+
 /// One normalized CKB edition activation from an optional protocol index.
 /// The short display name is source-owned context; activation coordinates
 /// remain exact chain positions.
@@ -626,6 +677,7 @@ pub enum EnrichmentEvent {
     TransactionHorizonReplace(TransactionHorizonRecord),
     NetworkAtlasReplace(NetworkAtlasRecord),
     NetworkAtlasClear,
+    ScriptRegistryReplace(Box<ScriptRegistryRecord>),
     GalaxyCompositionReplace(GalaxyCompositionRecord),
     /// Additive supply for the curated composition, in answer to the
     /// display plane's published shortfall.
@@ -654,6 +706,8 @@ pub struct SemanticsSnapshot {
     pub transaction_horizon: Option<TransactionHorizonRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub network_atlas: Option<NetworkAtlasRecord>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub script_registry: Option<ScriptRegistryRecord>,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq)]
@@ -699,6 +753,9 @@ pub enum SemanticsDelta {
         network_atlas: NetworkAtlasRecord,
     },
     NetworkAtlasClear,
+    ScriptRegistryReplace {
+        script_registry: Box<ScriptRegistryRecord>,
+    },
     Prune {
         from_block: u64,
     },
@@ -724,6 +781,7 @@ pub struct SemanticsProjection {
     activity_feed: Option<ActivityFeedRecord>,
     transaction_horizon: Option<TransactionHorizonRecord>,
     network_atlas: Option<NetworkAtlasRecord>,
+    script_registry: Option<ScriptRegistryRecord>,
     next_sequence: u64,
     cell_cap: usize,
     transaction_cap: usize,
@@ -747,6 +805,7 @@ impl SemanticsProjection {
             activity_feed: None,
             transaction_horizon: None,
             network_atlas: None,
+            script_registry: None,
             next_sequence: 0,
             cell_cap: 512,
             transaction_cap: 2048,
@@ -809,6 +868,7 @@ impl SemanticsProjection {
         self.activity_feed = None;
         self.transaction_horizon = None;
         self.network_atlas = None;
+        self.script_registry = None;
     }
 
     fn invalidate_source_anchor(&mut self, message: &str) -> Option<SemanticsDelta> {
@@ -868,6 +928,7 @@ impl Projection for SemanticsProjection {
             activity_feed: self.activity_feed.clone(),
             transaction_horizon: self.transaction_horizon.clone(),
             network_atlas: self.network_atlas.clone(),
+            script_registry: self.script_registry.clone(),
         }
     }
 
@@ -934,6 +995,17 @@ impl Projection for SemanticsProjection {
                     .is_some_and(|atlas| atlas.as_of.block >= *from_block)
                 {
                     self.network_atlas = None;
+                }
+                // A script's name does not depend on the tip, but the record
+                // proving it came from a compatible index does. Dropped on
+                // the same rule as every other anchored record, and the next
+                // refresh re-proves it.
+                if self
+                    .script_registry
+                    .as_ref()
+                    .is_some_and(|registry| registry.as_of.block >= *from_block)
+                {
+                    self.script_registry = None;
                 }
                 let mut deltas = vec![SemanticsDelta::Prune {
                     from_block: *from_block,
@@ -1055,6 +1127,12 @@ impl EnrichmentProjection for SemanticsProjection {
             EnrichmentEvent::NetworkAtlasClear => {
                 self.network_atlas = None;
                 vec![SemanticsDelta::NetworkAtlasClear]
+            }
+            EnrichmentEvent::ScriptRegistryReplace(script_registry) => {
+                self.script_registry = Some(*script_registry.clone());
+                vec![SemanticsDelta::ScriptRegistryReplace {
+                    script_registry: script_registry.clone(),
+                }]
             }
             EnrichmentEvent::GalaxyCompositionReplace(_)
             | EnrichmentEvent::GalaxyCompositionTopUp(_) => {

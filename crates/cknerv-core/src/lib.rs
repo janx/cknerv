@@ -32,8 +32,9 @@ pub use enrichment::{
     GalaxyCompositionTarget, GalaxyCompositionTopUp, NetworkAtlasBucket, NetworkAtlasRecord,
     ProtocolEra, ProtocolEraRecord, SemanticAsset, SemanticAttribute, SemanticCellContent,
     SemanticContentDecode, SemanticContentGuess, SemanticContentSegment, SemanticFacet,
-    SemanticScript, SemanticsDelta, SemanticsProjection, SemanticsSnapshot,
-    TransactionHorizonRecord, TransactionParticipantSemantic, TransactionSemanticRecord,
+    ScriptNameRecord, ScriptRegistryRecord, SemanticScript, SemanticsDelta, SemanticsProjection,
+    SemanticsSnapshot, TransactionHorizonRecord, TransactionParticipantSemantic,
+    TransactionSemanticRecord, MAX_SCRIPT_REGISTRY_ENTRIES,
 };
 pub use entity::{
     Chain, ChainNode, EpochInfo, MempoolStats, Peer, PeerDirection, RecentBlock, RecentTx,
@@ -46,6 +47,7 @@ pub use projection::cells::{
     CellLinkRecord, DisplayBudget, DisplayMode, DisplayProvenance, DisplaySection,
     DEFAULT_REORG_WINDOW_BLOCKS,
 };
+pub use projection::cells_stats::{ObservedScriptsSink, ScriptCensus, ScriptCount};
 pub use projection::composition_policy::{CompositionDemand, CompositionDemandSink};
 pub use projection::Projection;
 pub use ring::Ring;

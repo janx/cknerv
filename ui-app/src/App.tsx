@@ -1093,6 +1093,9 @@ export default function App({
         assetEcosystem={enrichmentConfig.enabled
           ? semanticsCache.assetEcosystem
           : undefined}
+        scriptRegistry={enrichmentConfig.enabled
+          ? semanticsCache.scriptRegistry
+          : undefined}
         daoState={enrichmentConfig.enabled
           ? semanticsCache.daoState
           : undefined}

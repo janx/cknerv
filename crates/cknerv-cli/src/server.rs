@@ -15,7 +15,8 @@ use anyhow::Result;
 use cknerv_adapter_ckb::{CkbDirectAdapter, CkbGalaxyCompositionHydrator};
 use cknerv_adapter_ckbadger::CkbadgerEnrichmentSource;
 use cknerv_core::{
-    CellGalaxy, CompositionDemandSink, SemanticsProjection, DEFAULT_REORG_WINDOW_BLOCKS,
+    CellGalaxy, CompositionDemandSink, ObservedScriptsSink, SemanticsProjection,
+    DEFAULT_REORG_WINDOW_BLOCKS,
 };
 use cknerv_server::{EnrichmentSource, ServerBuilder};
 
@@ -122,14 +123,20 @@ pub async fn run(workdir: PathBuf, cfg: ResolvedConfig) -> Result<()> {
     // is short of, and the enrichment supervisor is the only thing in a
     // position to go find it.
     let composition_demand = Arc::new(CompositionDemandSink::new());
+    // Same arrangement for script identity: the Cell projection publishes
+    // which scripts it is holding, and the enrichment supervisor is the only
+    // thing that can go find out what they are called.
+    let observed_scripts = Arc::new(ObservedScriptsSink::new());
     let mut builder = ServerBuilder::new()
         .add_adapter(adapter)
         .add_projection(
             CellGalaxy::with_config(galaxy_config)
-                .with_composition_demand_sink(composition_demand.clone()),
+                .with_composition_demand_sink(composition_demand.clone())
+                .with_observed_scripts_sink(observed_scripts.clone()),
         )
         .add_enrichment_projection(SemanticsProjection::new(configured_semantics_source))
         .composition_demand_sink(composition_demand)
+        .observed_scripts_sink(observed_scripts)
         .workdir(state_dir.clone())
         .restore_persisted(restore_persisted);
     if let Some(source) = ckbadger_source {

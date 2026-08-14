@@ -28,7 +28,8 @@ use crate::helix::helix_seed_for;
 use crate::mutation::{Mutation, ReplayPhase};
 use crate::outpoint::{is_cellbase_input, OutPoint, TxOutputInfo};
 use crate::projection::cells_stats::{
-    aggregate_cell_view_stats, aggregate_script_census, CellViewStats, ScriptCensus,
+    aggregate_cell_view_stats, aggregate_script_census, CellViewStats, ObservedScriptsSink,
+    ScriptCensus,
 };
 use crate::projection::composition_policy::CompositionDemandSink;
 use crate::projection::display_plane::DisplayPlane;
@@ -412,6 +413,9 @@ pub struct CellGalaxy {
     /// distribution ships nothing. Derived state: a restart recomputes it
     /// from the restored cells at the first live block.
     last_script_census: ScriptCensus,
+    /// Where the observed script identities are published for the optional
+    /// index to name. Absent unless the server installed one.
+    observed_scripts: Option<Arc<ObservedScriptsSink>>,
     /// Bounded block hash journal for detecting canonical replacement at a
     /// height. Its horizon is `config.reorg_window_blocks`.
     block_hashes: std::collections::BTreeMap<u64, String>,
@@ -540,6 +544,26 @@ impl CellGalaxy {
     /// Publish the display plane's composition shortfall to `sink`, so a
     /// supplier outside the projection can close it. Without this the
     /// plane never computes or publishes demand.
+    /// Install the seam the optional index reads to learn which scripts are
+    /// worth asking about. Nothing about naming enters this projection.
+    pub fn with_observed_scripts_sink(mut self, sink: Arc<ObservedScriptsSink>) -> Self {
+        self.observed_scripts = Some(sink);
+        self
+    }
+
+    /// Aggregate the retained set, publishing the observed identities on the
+    /// way past. Snapshots are also where a restored galaxy first announces
+    /// what it is holding: a boot that spends minutes in replay emits no
+    /// census delta, and the index should not have to wait out the replay to
+    /// learn there is anything to name.
+    fn view_stats(&self) -> CellViewStats {
+        let stats = aggregate_cell_view_stats(&self.cells);
+        if let Some(sink) = self.observed_scripts.as_ref() {
+            sink.publish(&stats.scripts);
+        }
+        stats
+    }
+
     pub fn with_composition_demand_sink(mut self, sink: Arc<CompositionDemandSink>) -> Self {
         self.display.set_demand_sink(sink);
         self
@@ -552,6 +576,7 @@ impl CellGalaxy {
             next_id: 0,
             outpoint_index: std::collections::HashMap::new(),
             last_script_census: ScriptCensus::default(),
+            observed_scripts: None,
             block_hashes: std::collections::BTreeMap::new(),
             block_births: std::collections::BTreeMap::new(),
             block_deaths: std::collections::BTreeMap::new(),
@@ -1105,6 +1130,9 @@ impl CellGalaxy {
         if self.backfill.is_none() {
             let census = aggregate_script_census(&self.cells);
             if census != self.last_script_census {
+                if let Some(sink) = self.observed_scripts.as_ref() {
+                    sink.publish(&census);
+                }
                 self.last_script_census = census.clone();
                 deltas.push(CellDelta::ScriptCensus { census });
             }
@@ -1445,7 +1473,7 @@ impl Projection for CellGalaxy {
             crate::projection::cells_columnar::CellsColumnarTail {
                 recent_links: &self.recent_links,
                 backfill: self.backfill,
-                stats: aggregate_cell_view_stats(&self.cells),
+                stats: self.view_stats(),
             },
         ))
     }
@@ -1468,7 +1496,7 @@ impl Projection for CellGalaxy {
             recent_links: self.recent_links.clone(),
             total_births: self.total_births,
             total_deaths: self.total_deaths,
-            stats: aggregate_cell_view_stats(&self.cells),
+            stats: self.view_stats(),
             backfill: self.backfill,
             display: Some(self.display.section()),
         }
