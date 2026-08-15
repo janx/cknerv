@@ -18,6 +18,14 @@ import {
 
 export const DEFAULT_TOPOLOGY_WORKER_MIN_CELLS = 512;
 
+/** Watchdog for the single in-flight request. A worker killed silently (the
+ * browser reclaiming memory) answers nothing, and the coalesced-send gate
+ * turns that one lost response into a frozen topology for the rest of the
+ * session — every later build waits in the queued slot forever. Generous by
+ * design: even a 50K full pack on a slow machine is seconds, never half a
+ * minute, so this only ever fires on a worker that is gone. */
+export const TOPOLOGY_WORKER_REQUEST_TIMEOUT_MS = 30_000;
+
 /** Dev-observable counters for paths that used to fail silently. A sync
  * fallback quietly re-runs the FULL topology build on the main thread — worth
  * seeing in a profile session, not worth a hard failure. */
@@ -26,6 +34,8 @@ export const neighborGraphBuilderStats = {
   workerFallbacks: 0,
   /** Builds below the worker threshold (expected, small fields). */
   belowThresholdBuilds: 0,
+  /** In-flight requests the watchdog had to give up on (worker gone). */
+  workerTimeouts: 0,
 };
 
 let workerFallbackWarned = false;
@@ -98,6 +108,11 @@ export interface NeighborGraphBuilder {
     options?: NeighborGraphBuildOptions,
   ): Promise<NeighborGraphBuildResult | null>;
   cancel(): void;
+  /** End the Worker and its retained session while the builder stays usable —
+   * the next build lazily spawns a fresh one. Unmount uses this: `dispose` is
+   * terminal, and React Strict Mode replays setup→cleanup→setup against the
+   * same builder instance. */
+  releaseWorker(): void;
   dispose(): void;
 }
 
@@ -180,11 +195,31 @@ export function createNeighborGraphBuilder(
   /** Generation of the last worker response actually APPLIED on this side.
    * Incremental hints are trusted only when the next response chains from
    * it; a superseded/dropped response breaks the chain and downgrades one
-   * build to the always-correct probing path. */
+   * build to the always-correct probing path. Zero means "no chain": the
+   * next request is a full pack, which re-bases the session wholesale. */
   let lastAppliedGeneration = 0;
+  /** Mirror of the session's own passive-selection memory (it keeps the
+   * previous selection as the continuity preference). While it holds one,
+   * `preferredEdges` is dead weight on the wire — the session never reads
+   * the field. */
+  let sessionHoldsPassiveEdges = false;
+  let watchdog: ReturnType<typeof setTimeout> | null = null;
+
+  const clearWatchdog = () => {
+    if (watchdog === null) return;
+    clearTimeout(watchdog);
+    watchdog = null;
+  };
 
   const terminateWorker = () => {
     inFlightRequestId = null;
+    clearWatchdog();
+    // The generation chain and the continuity memory belong to the SESSION:
+    // a fresh worker starts at generation 0 with no retained cells, so every
+    // delta against the old baseline is meaningless (the session would
+    // answer `stale` and cost a needless round trip).
+    lastAppliedGeneration = 0;
+    sessionHoldsPassiveEdges = false;
     if (!worker) return;
     worker.onmessage = null;
     worker.onerror = null;
@@ -204,6 +239,11 @@ export function createNeighborGraphBuilder(
       active.resolve(null);
       active = null;
     }
+  };
+
+  const releaseWorker = () => {
+    cancel();
+    terminateWorker();
   };
 
   /** Worker-path failure: resolve the active build through the synchronous
@@ -237,6 +277,18 @@ export function createNeighborGraphBuilder(
     }
     worker!.postMessage(outgoing, transfer);
     inFlightRequestId = outgoing.requestId;
+    // Armed on every send (including the stale-resend, which re-enters the
+    // worker under the same requestId) and cleared by the matching response
+    // or by termination, so exactly one timer can be pending.
+    clearWatchdog();
+    watchdog = setTimeout(() => {
+      watchdog = null;
+      neighborGraphBuilderStats.workerTimeouts += 1;
+      failWorker(new Error(
+        `neighbor graph worker did not answer request ${outgoing.requestId} `
+        + `within ${TOPOLOGY_WORKER_REQUEST_TIMEOUT_MS}ms`,
+      ));
+    }, TOPOLOGY_WORKER_REQUEST_TIMEOUT_MS);
   };
 
   const flushPendingSend = () => {
@@ -252,11 +304,21 @@ export function createNeighborGraphBuilder(
     const response = event.data;
     if (response.requestId === inFlightRequestId) {
       inFlightRequestId = null;
+      clearWatchdog();
+    }
+    if (response.kind === 'built') {
+      // Mirrors the session's own `lastPassiveEdges` assignment, which
+      // happens whether or not this build was superseded.
+      sessionHoldsPassiveEdges = response.passiveGraph !== null;
     }
     const current = active;
     if (!current || response.requestId !== current.requestId) {
       // A superseded build's response: its only remaining job was to free
-      // the worker for the newest waiting request.
+      // the worker for the newest waiting request. A failure among them
+      // still breaks the chain — the session may have thrown halfway
+      // through applying a delta, leaving a retained baseline no later
+      // delta may be trusted against.
+      if (response.kind === 'failed') lastAppliedGeneration = 0;
       flushPendingSend();
       return;
     }
@@ -326,6 +388,13 @@ export function createNeighborGraphBuilder(
       const fallback = () => buildSynchronously(cells, options);
       if (!canUseWorker) {
         neighborGraphBuilderStats.belowThresholdBuilds += 1;
+        // This build lands on the main thread, but the caller already
+        // consumed its journal window for it — a window the surviving worker
+        // session never sees. Keeping the chain would let the NEXT delta
+        // patch a baseline that skipped it (cells removed here linger as
+        // ghost nodes until the next unrelated chain break), so the chain
+        // restarts with a full pack.
+        lastAppliedGeneration = 0;
         return Promise.resolve().then(fallback);
       }
 
@@ -351,9 +420,17 @@ export function createNeighborGraphBuilder(
       // request packs its own. Sharing one pack across the delta request and
       // the stale-resend below would post a detached buffer, and the throw
       // lands in the silent fallback (a full synchronous rebuild).
-      const packEdges = () => (options.includePassive
-        ? packPreferredEdges(options.preferredEdges ?? [])
-        : null);
+      //
+      // Continuity edges ride only when the session has none of its own: it
+      // prefers its previous passive selection and ignores the field
+      // otherwise, so packing 8K edges per build bought nothing. Evaluated at
+      // SEND time, which is also when the mirrored flag is exact (the single
+      // in-flight gate means no response can land between the two).
+      const packEdges = () => (
+        options.includePassive && !sessionHoldsPassiveEdges
+          ? packPreferredEdges(options.preferredEdges ?? [])
+          : null
+      );
       const baseRequest = {
         kind: 'build' as const,
         requestId,
@@ -423,10 +500,10 @@ export function createNeighborGraphBuilder(
       });
     },
     cancel,
+    releaseWorker,
     dispose() {
       disposed = true;
-      cancel();
-      terminateWorker();
+      releaseWorker();
     },
   };
 }

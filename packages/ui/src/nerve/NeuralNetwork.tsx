@@ -60,6 +60,7 @@ import {
 import { emptyNeighborGraph, type NeighborGraph } from '../geometry/neighborGraph';
 import { createNeighborGraphBuilder } from '../geometry/neighborGraphBuilder';
 import {
+  cellRenderClampActive,
   cellRenderMap,
   createCellRenderSetState,
   resolveStagedCell,
@@ -427,9 +428,11 @@ export default function NeuralNetwork({
 
   useEffect(() => () => {
     displayBuildGenerationRef.current += 1;
-    // `cancel` releases Workers while remaining reusable for React Strict
-    // Mode's development-only setup→cleanup→setup effect replay.
-    displayGraphBuilder.cancel();
+    // `releaseWorker` ends the Worker thread and its retained session while
+    // leaving the builder usable, which React Strict Mode's development-only
+    // setup→cleanup→setup effect replay needs (`dispose` is terminal — every
+    // later build would resolve null).
+    displayGraphBuilder.releaseWorker();
     displayRequestedCellsRef.current = null;
     displayRequestedTopologyVersionRef.current = -1;
   }, [displayGraphBuilder]);
@@ -524,6 +527,10 @@ export default function NeuralNetwork({
       // the staged list always materialises its own map (identity frozen
       // per request for the completion-time guards below).
       const displayPlaneActive = cellsCache.displayBudget !== null;
+      // The manual display-limit clamp truncates the staged list, so the
+      // journal below describes churn this build cannot express (see the
+      // cellsJournal branch).
+      const clampActive = cellRenderClampActive(cellsCache, cellDisplayLimit);
       const displayCells =
         !displayPlaneActive && visibleCells.length === cellsCache.cells.size
           ? cellsCache.cells
@@ -577,13 +584,16 @@ export default function NeuralNetwork({
           trunkShare: nerveTrunkShare,
           twigShare: nerveTwigShare,
         },
-        // Under a display plane the journal is ALWAYS a valid delta feed —
-        // the server display journal describes the staged membership churn
+        // Under a display plane the journal is a valid delta feed — the
+        // server display journal describes the staged membership churn
         // exactly, so a full pack happens only on bootstrap/reset/chain
-        // breaks. The canonical fallback keeps its old regime: delta at
-        // full coverage, explicit invalidation for a truncated prefix
-        // (whose churn the cache journal does not describe).
-        cellsJournal: displayPlaneActive || displayCells === cellsCache.cells
+        // breaks. The two TRUNCATED-PREFIX regimes are the exception, and
+        // both invalidate: the manual clamp under a plane, and partial
+        // canonical coverage without one. Their windows are prefixes of a
+        // membership the journal describes in full, so a delta would patch
+        // a base the clamp never reached.
+        cellsJournal: (displayPlaneActive && !clampActive)
+          || displayCells === cellsCache.cells
           ? consumeTopologyJournal(displayFeedRef.current.journal)
           : invalidateTopologyJournal(displayFeedRef.current.journal),
         preferredEdges: passiveGraphRef.current.edges,

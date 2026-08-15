@@ -87,6 +87,23 @@ function normalizeCellDisplayBudget(visibleCount: number): number {
     : 0;
 }
 
+/** True while the presentation clamp (the manual display-limit knob) actually
+ * bites: the rendered list is a truncated PREFIX of the staged membership.
+ * Membership churn cannot be expressed as patches against such a window, so
+ * every journal-shaped consumer of the list has to fall back to a full
+ * resolve — the render set to its rebuild slice, and the topology journal
+ * (whose delta feed describes the FULL membership) to a full pack. AUTO never
+ * enters this regime: the server keeps membership within its own budget. */
+export function cellRenderClampActive(
+  cache: Pick<CellRenderCache, 'displayBudget' | 'displayMembers'>,
+  visibleCount: number,
+): boolean {
+  if (cache.displayBudget === null) return false;
+  const displayBudget = normalizeCellDisplayBudget(visibleCount);
+  return Number.isFinite(displayBudget)
+    && displayBudget < cache.displayMembers.size;
+}
+
 function sameCellTopology(before: Cell, after: Cell): boolean {
   return before.id === after.id
     && (before.death_at_ms === null) === (after.death_at_ms === null)
@@ -270,13 +287,10 @@ export function syncCellRenderSet(
     return syncFallbackPrefix(state, cache, displayBudget, structuralInputsMatch);
   }
 
-  // The presentation clamp (manual display-limit knob) renders the first N
-  // of the staged list. While it actually bites, membership churn cannot be
-  // expressed as slot patches against a truncated window — resolve through
-  // the rebuild slice instead. AUTO never enters this regime: the server
-  // keeps membership within its own budget.
-  const clampActive = Number.isFinite(displayBudget)
-    && displayBudget < cache.displayMembers.size;
+  // While the presentation clamp bites, this path's slot patches cannot
+  // express membership churn against the truncated window — resolve through
+  // the rebuild slice instead (see `cellRenderClampActive`).
+  const clampActive = cellRenderClampActive(cache, visibleCount);
   const displayChanges = cache.displayChanges;
   const cellChanges = cache.cellChanges;
   const canonicalChainIntact = state.cellsToken === cache.cellsToken

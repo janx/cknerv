@@ -8,6 +8,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Cell, CellDelta, CellGalaxySnapshot } from '@cknerv/types';
 import {
+  cellRenderClampActive,
   cellRenderMap,
   cellRenderOverlay,
   createCellRenderSetState,
@@ -342,6 +343,25 @@ describe('syncCellRenderSet — display plane', () => {
       { revision: 5, delta: displayDelta({ enter_ids: [9] }) },
     ]);
     expect(syncCellRenderSet(state, grown, 12_000).mode).toBe('incremental');
+  });
+
+  /** The clamp is not the render set's business alone: the topology journal
+   *  is fed from the FULL staged membership, so while the clamp bites, its
+   *  deltas would patch a worker baseline the truncated window never reached
+   *  (NeuralNetwork invalidates the journal on exactly this predicate). */
+  it('names the clamp regime for every consumer of the truncated list', () => {
+    const cache = fromCellsSnapshot(
+      1,
+      snapshotWithDisplay([cell(1), cell(2), cell(3)], [1, 2, 3]),
+    );
+    expect(cellRenderClampActive(cache, 2)).toBe(true);
+    // At or above the staged membership the list is complete, clamp or not.
+    expect(cellRenderClampActive(cache, 3)).toBe(false);
+    expect(cellRenderClampActive(cache, Number.POSITIVE_INFINITY)).toBe(false);
+    // No display plane: the canonical-prefix regime has its own coverage
+    // check, and `displayMembers` is not its membership.
+    expect(cellRenderClampActive(fallbackCacheWithCells([0, 1, 2]), 1))
+      .toBe(false);
   });
 });
 

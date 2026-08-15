@@ -21,6 +21,10 @@ describe('NeuralNetwork drop instrumentation wiring', () => {
     expect(NETWORK_SOURCE).toContain('displayTopologyVersionRef.current');
     expect(NETWORK_SOURCE).toContain('createNeighborGraphBuilder');
     expect(NETWORK_SOURCE).toContain('displayGraphBuilder.cancel()');
+    // Unmount ends the Worker thread but never the builder: Strict Mode
+    // replays setup→cleanup→setup against the same instance, and `dispose`
+    // is terminal.
+    expect(NETWORK_SOURCE).toContain('displayGraphBuilder.releaseWorker()');
     expect(NETWORK_SOURCE).not.toContain('displayGraphBuilder.dispose()');
     expect(NETWORK_SOURCE).not.toContain('buildNeighborGraph(cells, opts)');
     expect(NETWORK_SOURCE).not.toContain('diffAndSnapshotCells');
@@ -69,13 +73,18 @@ describe('NeuralNetwork drop instrumentation wiring', () => {
     expect(NETWORK_SOURCE.match(/markCellFlashDirty\(/g)).toHaveLength(2);
   });
 
-  it('feeds the display graph from the server display journal — never invalidating on the display path', () => {
-    // The display-plane build request always chains worker deltas; the
-    // explicit journal invalidation survives ONLY for the no-display-plane
-    // fallback's truncated canonical prefix.
+  it('feeds the display graph from the server display journal — invalidating only for a truncated prefix', () => {
+    // The display-plane build request chains worker deltas; the explicit
+    // journal invalidation survives for the two truncated-prefix regimes —
+    // the manual clamp under a plane, and the no-display-plane fallback's
+    // partial canonical prefix — whose churn the journal describes against a
+    // membership wider than the packed window.
     expect(NETWORK_SOURCE).toContain('feedDisplayGraphJournal(displayFeedRef.current, cellsCache)');
+    expect(NETWORK_SOURCE).toContain(
+      'cellRenderClampActive(cellsCache, cellDisplayLimit)',
+    );
     expect(NETWORK_SOURCE).toMatch(
-      /displayPlaneActive \|\| displayCells === cellsCache\.cells\s*\?\s*consumeTopologyJournal\(displayFeedRef\.current\.journal\)\s*:\s*invalidateTopologyJournal\(displayFeedRef\.current\.journal\)/,
+      /\(displayPlaneActive && !clampActive\)\s*\|\|\s*displayCells === cellsCache\.cells\s*\?\s*consumeTopologyJournal\(displayFeedRef\.current\.journal\)\s*:\s*invalidateTopologyJournal\(displayFeedRef\.current\.journal\)/,
     );
     // Zero composition policy remains: no source knowledge, no activity
     // derivation, no client-side membership resolution.

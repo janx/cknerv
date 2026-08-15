@@ -1,10 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { Cell } from '@cknerv/types';
 import {
   createNeighborGraphBuilder,
   neighborGraphBuilderStats,
+  TOPOLOGY_WORKER_REQUEST_TIMEOUT_MS,
 } from '../../src/geometry/neighborGraphBuilder';
 import {
+  createNeighborGraphWorkerSession,
   executeNeighborGraphWorkerRequest,
   type NeighborGraphWorkerRequest,
   type NeighborGraphWorkerResponse,
@@ -12,26 +14,40 @@ import {
 import {
   consumeTopologyJournal,
   createTopologyJournal,
+  type TopologyJournal,
 } from '../../src/geometry/topologyJournal';
+
+/** One cell of the shared lattice: index decides the position, so a birth
+ *  lands where the k-NN actually links it. */
+function cellAt(id: number, index: number): Cell {
+  return {
+    id,
+    born_at_ms: 0,
+    death_at_ms: null,
+    birth_block: 1,
+    tag: null,
+    pos_seed: [index * 2, 0, index % 2],
+    out_point: { tx_hash: `0x${id}`, index: 0 },
+    capacity: 1,
+    data_hex: '0x',
+    content_hash: `0x${id}`,
+  };
+}
 
 function cells(offset = 0): Map<number, Cell> {
   const entries: Array<[number, Cell]> = [];
   for (let index = 0; index < 6; index += 1) {
     const id = offset + index + 1;
-    entries.push([id, {
-      id,
-      born_at_ms: 0,
-      death_at_ms: null,
-      birth_block: 1,
-      tag: null,
-      pos_seed: [index * 2, 0, index % 2],
-      out_point: { tx_hash: `0x${id}`, index: 0 },
-      capacity: 1,
-      data_hex: '0x',
-      content_hash: `0x${id}`,
-    }]);
+    entries.push([id, cellAt(id, index)]);
   }
   return new Map(entries);
+}
+
+/** A journal already chaining, as the feed leaves it after one consume. */
+function chainedJournal(): TopologyJournal {
+  const journal = createTopologyJournal();
+  journal.valid = true;
+  return journal;
 }
 
 class FakeWorker {
@@ -74,6 +90,44 @@ class TransferringFakeWorker extends FakeWorker {
     transfer: Transferable[] = [],
   ): void {
     this.request = structuredClone(message, { transfer });
+  }
+
+  replyStale(): void {
+    if (!this.request) throw new Error('missing Worker request');
+    this.onmessage?.({
+      data: { kind: 'stale', requestId: this.request.requestId },
+    } as MessageEvent<NeighborGraphWorkerResponse>);
+  }
+}
+
+/** The fake the chain-integrity tests need: a REAL stateful session behind
+ *  real transfer semantics. `executeNeighborGraphWorkerRequest` answers every
+ *  message from scratch, so it can never disagree with the builder's
+ *  generation bookkeeping — which is precisely what these tests are about. */
+class SessionFakeWorker extends FakeWorker {
+  posted: NeighborGraphWorkerRequest[] = [];
+  private readonly session = createNeighborGraphWorkerSession();
+
+  override postMessage(
+    message: NeighborGraphWorkerRequest,
+    transfer: Transferable[] = [],
+  ): void {
+    this.posted.push(message);
+    this.request = structuredClone(message, { transfer });
+  }
+
+  override complete(): void {
+    if (!this.request) throw new Error('missing Worker request');
+    this.onmessage?.({
+      data: this.session.execute(this.request),
+    } as MessageEvent<NeighborGraphWorkerResponse>);
+  }
+
+  replyFailed(message = 'worker threw'): void {
+    if (!this.request) throw new Error('missing Worker request');
+    this.onmessage?.({
+      data: { kind: 'failed', requestId: this.request.requestId, message },
+    } as MessageEvent<NeighborGraphWorkerResponse>);
   }
 
   replyStale(): void {
@@ -292,5 +346,251 @@ describe('createNeighborGraphBuilder (coalesced sends)', () => {
     workers[1].complete();
     expect((await third)?.graph.adjacency.size).toBe(6);
     builder.dispose();
+  });
+});
+
+// The worker session's retained cell map is patched by deltas that name only
+// a base GENERATION. Every path that applies a build the session did not
+// produce — or that leaves the session's own state in doubt — has to break
+// that chain, or the next delta patches a baseline nobody ever saw.
+describe('createNeighborGraphBuilder (worker session chain integrity)', () => {
+  const topologyOptions = { topology: { k: 2 } };
+
+  /** The sync fallback below the worker threshold builds on the MAIN thread
+   *  while the caller's journal window is consumed and discarded. Leaving the
+   *  chain intact let the next delta patch a baseline that skipped that
+   *  window: cells removed during the sync build survived as ghost nodes in
+   *  the authoritative graph until an unrelated chain break. */
+  it('breaks the chain when a build falls below the worker threshold', async () => {
+    const worker = new SessionFakeWorker();
+    const builder = createNeighborGraphBuilder({
+      minWorkerCells: 6,
+      workerFactory: () => worker as unknown as Worker,
+    });
+    const journal = chainedJournal();
+
+    // Generation 1: the session's retained baseline is cells 1..6.
+    const first = builder.build(cells(), topologyOptions);
+    worker.complete();
+    expect((await first)?.graph.adjacency.has(6)).toBe(true);
+
+    // Cell 6 leaves. Five staged cells is below the threshold, so this build
+    // never reaches the worker — but its journal window is gone.
+    const staged = cells();
+    staged.delete(6);
+    journal.removedIds.add(6);
+    const shrunk = await builder.build(staged, {
+      ...topologyOptions,
+      cellsJournal: consumeTopologyJournal(journal),
+    });
+    expect(shrunk?.graph.adjacency.has(6)).toBe(false);
+    expect(worker.posted).toHaveLength(1);
+
+    // A birth pushes the staged set back over the threshold.
+    staged.set(7, cellAt(7, 6));
+    journal.upserts.set(7, staged.get(7)!);
+    const grown = builder.build(staged, {
+      ...topologyOptions,
+      cellsJournal: consumeTopologyJournal(journal),
+    });
+    // A delta here would chain from generation 1 and re-admit cell 6.
+    expect(worker.posted).toHaveLength(2);
+    expect(worker.posted[1].cellsDelta).toBeNull();
+    expect(worker.posted[1].cells).not.toBeNull();
+    worker.complete();
+    const result = await grown;
+    expect(result!.graph.adjacency.has(6)).toBe(false);
+    expect([...result!.graph.adjacency.keys()].sort((a, b) => a - b))
+      .toEqual([1, 2, 3, 4, 5, 7]);
+    builder.dispose();
+  });
+
+  /** A `failed` for a superseded request is not the newest build's problem,
+   *  but the session may have thrown halfway through applying that delta
+   *  (removals in, upserts not) — the retained baseline is suspect even
+   *  though its generation never advanced. */
+  it('keeps the session but breaks the chain when a superseded request fails', async () => {
+    const worker = new SessionFakeWorker();
+    const builder = createNeighborGraphBuilder({
+      minWorkerCells: 0,
+      workerFactory: () => worker as unknown as Worker,
+    });
+    const journal = chainedJournal();
+
+    const first = builder.build(cells(), topologyOptions);
+    worker.complete();
+    expect(await first).not.toBeNull();
+
+    const second = builder.build(cells(), {
+      ...topologyOptions,
+      cellsJournal: consumeTopologyJournal(journal),
+    });
+    const third = builder.build(cells(), {
+      ...topologyOptions,
+      cellsJournal: consumeTopologyJournal(journal),
+    });
+    expect(worker.posted).toHaveLength(2);
+    expect(worker.posted[1].cellsDelta).not.toBeNull();
+
+    worker.replyFailed('invalid packed topology delta buffer');
+    expect(await second).toBeNull();
+
+    // The worker lives on — one failed request is not a dead thread — and
+    // the queued build follows it with a full pack, not a delta.
+    expect(worker.terminated).toBe(false);
+    expect(worker.posted).toHaveLength(3);
+    expect(worker.posted[2].cellsDelta).toBeNull();
+    worker.complete();
+    expect((await third)?.graph.adjacency.size).toBe(6);
+    builder.dispose();
+  });
+
+  /** `stale` for a superseded request carries no result at all; its only job
+   *  is freeing the worker. Without the flush the queued build would wait
+   *  forever behind an in-flight slot nobody will ever clear. */
+  it('flushes the queued send when a superseded request comes back stale', async () => {
+    const worker = new SessionFakeWorker();
+    const builder = createNeighborGraphBuilder({
+      minWorkerCells: 0,
+      workerFactory: () => worker as unknown as Worker,
+    });
+    const journal = chainedJournal();
+
+    const first = builder.build(cells(), topologyOptions);
+    worker.complete();
+    expect(await first).not.toBeNull();
+
+    const second = builder.build(cells(), {
+      ...topologyOptions,
+      cellsJournal: consumeTopologyJournal(journal),
+    });
+    const third = builder.build(cells(20), topologyOptions);
+    worker.replyStale();
+
+    expect(await second).toBeNull();
+    expect(worker.posted).toHaveLength(3);
+    worker.complete();
+    expect([...(await third)!.graph.adjacency.keys()])
+      .toEqual([21, 22, 23, 24, 25, 26]);
+    builder.dispose();
+  });
+
+  /** A worker killed silently answers nothing, and the single in-flight slot
+   *  is the gate for every later send — without the watchdog the topology
+   *  freezes for the rest of the session. */
+  it('falls back synchronously when the worker never answers', async () => {
+    vi.useFakeTimers();
+    try {
+      const timeoutsBefore = neighborGraphBuilderStats.workerTimeouts;
+      const workers: CountingFakeWorker[] = [];
+      const builder = createNeighborGraphBuilder({
+        minWorkerCells: 0,
+        workerFactory: () => {
+          const worker = new CountingFakeWorker();
+          workers.push(worker);
+          return worker as unknown as Worker;
+        },
+      });
+
+      const first = builder.build(cells(), topologyOptions);
+      const second = builder.build(cells(10), topologyOptions);
+      expect(await first).toBeNull();
+      expect(workers[0].posted).toHaveLength(1);
+
+      vi.advanceTimersByTime(TOPOLOGY_WORKER_REQUEST_TIMEOUT_MS - 1);
+      expect(workers[0].terminated).toBe(false);
+      vi.advanceTimersByTime(1);
+
+      // The newest build completes off the dead worker, and the queued slot
+      // died with it.
+      expect((await second)?.graph.adjacency.size).toBe(6);
+      expect(workers[0].terminated).toBe(true);
+      expect(workers[0].posted).toHaveLength(1);
+      expect(neighborGraphBuilderStats.workerTimeouts).toBe(timeoutsBefore + 1);
+
+      // A later build is served by a fresh worker, and the watchdog it arms
+      // is cleared by the answer.
+      const third = builder.build(cells(20), topologyOptions);
+      expect(workers).toHaveLength(2);
+      workers[1].complete();
+      expect((await third)?.graph.adjacency.size).toBe(6);
+      vi.advanceTimersByTime(TOPOLOGY_WORKER_REQUEST_TIMEOUT_MS * 2);
+      expect(workers[1].terminated).toBe(false);
+      expect(neighborGraphBuilderStats.workerTimeouts).toBe(timeoutsBefore + 1);
+      builder.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  /** `releaseWorker` is the unmount path: the Worker thread and its session
+   *  end, the builder does not. Strict Mode replays setup→cleanup→setup
+   *  against the same instance, so a terminal dispose there would leave the
+   *  remounted galaxy with no topology at all. */
+  it('releases the worker on unmount while staying usable', async () => {
+    const workers: SessionFakeWorker[] = [];
+    const builder = createNeighborGraphBuilder({
+      minWorkerCells: 0,
+      workerFactory: () => {
+        const worker = new SessionFakeWorker();
+        workers.push(worker);
+        return worker as unknown as Worker;
+      },
+    });
+
+    const first = builder.build(cells(), topologyOptions);
+    workers[0].complete();
+    expect(await first).not.toBeNull();
+
+    builder.releaseWorker();
+    expect(workers[0].terminated).toBe(true);
+
+    const journal = chainedJournal();
+    journal.upserts.set(7, cellAt(7, 6));
+    const second = builder.build(cells(), {
+      ...topologyOptions,
+      cellsJournal: consumeTopologyJournal(journal),
+    });
+    // Fresh worker, fresh session: the request must be a full pack, since
+    // the dead session's generations mean nothing to it.
+    expect(workers).toHaveLength(2);
+    expect(workers[1].posted[0].cellsDelta).toBeNull();
+    workers[1].complete();
+    expect((await second)?.graph.adjacency.size).toBe(6);
+    builder.dispose();
+  });
+
+  /** The session prefers its own previous passive selection and reads
+   *  `preferredEdges` only while it has none, so re-packing the fabric's
+   *  edges into every build was pure wire cost. */
+  it('sends continuity edges only while the session has no selection of its own', async () => {
+    const worker = new SessionFakeWorker();
+    const builder = createNeighborGraphBuilder({
+      minWorkerCells: 0,
+      workerFactory: () => worker as unknown as Worker,
+    });
+    const passiveOptions = {
+      ...topologyOptions,
+      includePassive: true,
+      passiveEdgeBudget: 3,
+      preferredEdges: [{ from: 1, to: 2, d: 2 }],
+    };
+
+    const first = builder.build(cells(), passiveOptions);
+    expect(worker.posted[0].preferredEdges).not.toBeNull();
+    worker.complete();
+    expect(await first).not.toBeNull();
+
+    const second = builder.build(cells(), passiveOptions);
+    expect(worker.posted[1].preferredEdges).toBeNull();
+    worker.complete();
+    expect(await second).not.toBeNull();
+
+    // A fresh session has no selection to prefer, so the edges ride again.
+    builder.releaseWorker();
+    const third = builder.build(cells(), passiveOptions);
+    expect(worker.posted[2].preferredEdges).not.toBeNull();
+    builder.dispose();
+    expect(await third).toBeNull();
   });
 });
