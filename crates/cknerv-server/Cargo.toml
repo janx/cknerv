@@ -11,7 +11,10 @@ anyhow.workspace = true
 async-trait.workspace = true
 axum.workspace = true
 serde.workspace = true
-serde_json.workspace = true
+# `raw_value` is what lets the delta rings hold already-serialized text and
+# embed it verbatim in a frame — one serialization per delta instead of one
+# per connected client. Feature only, so the workspace version pin stands.
+serde_json = { workspace = true, features = ["raw_value"] }
 tokio.workspace = true
 tracing.workspace = true
 

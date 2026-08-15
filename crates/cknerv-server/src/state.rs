@@ -17,8 +17,9 @@
 //!     sync lock across an `.await`.
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, OnceLock, RwLock};
 
+use serde_json::value::RawValue;
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::{broadcast, mpsc, watch};
 
@@ -32,10 +33,53 @@ use cknerv_core::{
 use crate::enrichment::CanonicalContext;
 use crate::projection_registry::Registry;
 
+/// One structural mutation as both readers of it want it: the typed form
+/// the projections reduce, and the wire text every entity-stream client
+/// sends.
+///
+/// The text is built on FIRST send and shared from then on. A mutation
+/// nobody is watching is never serialized at all; a mutation ten clients
+/// are watching is serialized once, not ten times, and a reconnect
+/// replaying it out of the ring reuses those same bytes years-of-uptime
+/// later. Derefs to the [`RevisionedMutation`] so `revision` / `mutation`
+/// read exactly as before.
+#[derive(Debug)]
+pub struct SharedMutationEntry {
+    revisioned: RevisionedMutation,
+    wire: OnceLock<Box<RawValue>>,
+}
+
+impl SharedMutationEntry {
+    fn new(revisioned: RevisionedMutation) -> Self {
+        Self {
+            revisioned,
+            wire: OnceLock::new(),
+        }
+    }
+
+    /// The mutation's wire text — what `mutations: [...]` carries in an
+    /// entity delta frame. Callers embed the borrow; nobody re-renders.
+    pub fn serialized(&self) -> &RawValue {
+        self.wire.get_or_init(|| {
+            serde_json::value::to_raw_value(&self.revisioned).unwrap_or_else(|_| {
+                RawValue::from_string("null".to_string()).expect("null is JSON")
+            })
+        })
+    }
+}
+
+impl std::ops::Deref for SharedMutationEntry {
+    type Target = RevisionedMutation;
+
+    fn deref(&self) -> &Self::Target {
+        &self.revisioned
+    }
+}
+
 /// Reference-counted structural mutation. The ring holds up to 50k of them
 /// and every connecting client snapshots it, so entries are shared rather
 /// than deep-copied — same reason the projection deltas are.
-pub type SharedMutation = Arc<RevisionedMutation>;
+pub type SharedMutation = Arc<SharedMutationEntry>;
 
 /// Capacity of the structural mutation ring. Sized to cover dozens of
 /// minutes of real activity so a reconnecting client at a stale revision
@@ -247,10 +291,10 @@ impl ServerState {
             apply_entity_mutation(&mut store, &m);
         }
         let revision = self.revision.fetch_add(1, Ordering::Relaxed) + 1;
-        let rev: SharedMutation = Arc::new(RevisionedMutation {
+        let rev: SharedMutation = Arc::new(SharedMutationEntry::new(RevisionedMutation {
             revision,
             mutation: m,
-        });
+        }));
         if let Mutation::BackfillProgress { active, .. } = &rev.mutation {
             if *active {
                 self.mutation_ring.clear();

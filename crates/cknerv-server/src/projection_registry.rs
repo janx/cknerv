@@ -23,6 +23,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
 use axum::body::Bytes;
+use serde_json::value::RawValue;
 use serde_json::Value;
 use tokio::sync::broadcast;
 
@@ -47,12 +48,30 @@ const PROJECTION_DELTA_RING_CAP: usize = 50_000;
 /// a connecting client that deep-copied the backlog would stall the
 /// server for as long as the copy took — measured at 87–750ms even when
 /// it had nothing to replay. Broadcast delivery has the same shape: one
-/// entry, N subscribers, N copies of the same `Value` tree.
+/// entry, N subscribers.
+///
+/// `value` is the delta's FINISHED wire text, not a tree: it is produced
+/// once by [`delta_to_wire`] at apply and every frame — live fan-out and
+/// reconnect replay alike — embeds those same bytes verbatim. Holding a
+/// `Value` here instead cost a tree 4–8× the size of its own text in the
+/// ring, plus one full re-render per delta per connected client.
 #[derive(Clone, Debug)]
 pub struct DeltaEntry {
     pub seq: u64,
     pub rev: u64,
-    pub value: Value,
+    pub value: Box<RawValue>,
+}
+
+/// The ONE place a projection delta turns into bytes. Everything
+/// downstream copies; nothing re-renders.
+///
+/// A delta that cannot serialize is dropped to `null` rather than
+/// panicking the reducer — same forgiveness the `to_value` call it
+/// replaced had, and the client's reducer already ignores what it cannot
+/// read.
+fn delta_to_wire<T: serde::Serialize>(delta: &T) -> Box<RawValue> {
+    serde_json::value::to_raw_value(delta)
+        .unwrap_or_else(|_| RawValue::from_string("null".to_string()).expect("null is JSON"))
 }
 
 /// Reference-counted delta. Cloning is a pointer bump, which is what makes
@@ -346,7 +365,10 @@ impl<P: Projection> ApplyMutation for ProjectionRunner<P> {
         self.revision.store(rm.revision, Ordering::Relaxed);
         self.snapshots.lock().unwrap().clear();
         for d in deltas {
-            let value = serde_json::to_value(&d).unwrap_or(Value::Null);
+            // Serialized HERE, inside the same lock scope the revision
+            // store and the cache clear share, so a snapshot taken after
+            // this point already contains what the delta describes.
+            let value = delta_to_wire(&d);
             let seq = self.delta_seq.fetch_add(1, Ordering::Relaxed) + 1;
             let entry: SharedDelta = Arc::new(DeltaEntry {
                 seq,
@@ -398,7 +420,7 @@ impl<P: EnrichmentProjection> EnrichmentProjectionRunner<P> {
             // delta gets a revision. A reconnect can never resume midway
             // through a multi-delta event and accidentally skip its tail.
             let revision = self.revision.fetch_add(1, Ordering::Relaxed) + 1;
-            let value = serde_json::to_value(&delta).unwrap_or(Value::Null);
+            let value = delta_to_wire(&delta);
             let seq = self.delta_seq.fetch_add(1, Ordering::Relaxed) + 1;
             let entry: SharedDelta = Arc::new(DeltaEntry {
                 seq,
@@ -574,6 +596,11 @@ mod tests {
         EnrichmentSourceStatus, GalaxyCompositionRecord, Mutation, OutPoint, SemanticsProjection,
         TxOutputInfo,
     };
+
+    /// Ring entries hold finished wire text; assertions want a tree.
+    fn delta_json(entry: &DeltaEntry) -> Value {
+        serde_json::from_str(entry.value.get()).expect("a ring delta is JSON")
+    }
 
     fn output(capacity: u64) -> TxOutputInfo {
         TxOutputInfo {
@@ -941,7 +968,7 @@ mod tests {
         let ring = runtime.delta_ring_snapshot();
         assert_eq!(ring.len(), 1);
         assert_eq!(ring[0].rev, 4);
-        assert_eq!(ring[0].value["type"], "backfill");
+        assert_eq!(delta_json(&ring[0])["type"], "backfill");
     }
 
     #[test]
@@ -1014,8 +1041,8 @@ mod tests {
             .filter(|entry| entry.rev == 5)
             .collect();
         assert_eq!(
-            reorg.first().map(|entry| &entry.value),
-            Some(&serde_json::json!({
+            reorg.first().map(|entry| delta_json(entry)),
+            Some(serde_json::json!({
                 "type": "link_prune",
                 "from_block": 2
             }))
@@ -1023,7 +1050,7 @@ mod tests {
         assert!(
             reorg.iter().skip(1).any(|entry| {
                 matches!(
-                    entry.value.get("type").and_then(Value::as_str),
+                    delta_json(entry)["type"].as_str(),
                     Some("gc" | "birth" | "stats")
                 )
             }),
@@ -1072,9 +1099,9 @@ mod tests {
         assert_eq!(snapshot["source"]["status"], "syncing");
         let ring = runtime.delta_ring_snapshot();
         assert_eq!(ring[1].rev, 2);
-        assert_eq!(ring[1].value["type"], "prune");
+        assert_eq!(delta_json(&ring[1])["type"], "prune");
         assert_eq!(ring[2].rev, 3);
-        assert_eq!(ring[2].value["type"], "source_status");
+        assert_eq!(delta_json(&ring[2])["type"], "source_status");
     }
 
     /// Composition refreshes are display-plane input: they reach the cells

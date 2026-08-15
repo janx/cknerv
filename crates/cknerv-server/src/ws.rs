@@ -29,14 +29,13 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::extract::ws::{Message, WebSocket};
+use serde_json::value::RawValue;
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::watch;
 use tokio::time::{self, Instant, MissedTickBehavior};
 
-use cknerv_core::RevisionedMutation;
-
 use crate::projection_registry::{DeltaEntry, ProjectionRuntime, SnapshotEnvelope};
-use crate::state::ServerState;
+use crate::state::{ServerState, SharedMutationEntry};
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 
@@ -116,14 +115,20 @@ fn decide_action(
     }
 }
 
-/// Borrowing frame bodies for the projection delta stream: `json!` would
-/// deep-copy every ring delta's `Value` before serializing (once per
-/// entry per reconnect, and once per delta per subscriber on the live
-/// path); serializing through these copies nothing.
+/// Borrowing frame bodies for the delta streams. The payloads they carry
+/// were serialized once, upstream — a projection delta when the reducer
+/// emitted it, a mutation on its first send — so building a frame is
+/// concatenation: no tree walk, no copy of the payload, however many
+/// clients are attached and however deep a reconnect replays.
+///
+/// The only thing serialized per frame is the envelope around them, which
+/// is where the field order below comes from. Do not swap these back for
+/// `json!`: that macro takes `to_value` of everything handed to it, which
+/// re-parses a `RawValue` into the very tree this path exists to avoid.
 #[derive(serde::Serialize)]
 struct ProjectionReplayEntry<'a> {
     revision: u64,
-    delta: &'a serde_json::Value,
+    delta: &'a RawValue,
 }
 
 #[derive(serde::Serialize)]
@@ -131,6 +136,13 @@ struct ProjectionDeltaFrame<'a> {
     kind: &'static str,
     revision: u64,
     deltas: Vec<ProjectionReplayEntry<'a>>,
+}
+
+#[derive(serde::Serialize)]
+struct EntityDeltaFrame<'a> {
+    kind: &'static str,
+    revision: u64,
+    mutations: Vec<&'a RawValue>,
 }
 
 pub async fn handle_chain_stream(
@@ -179,21 +191,22 @@ pub async fn handle_chain_stream(
             }
         }
         StreamAction::ReplayDelta => {
-            let mutations: Vec<&RevisionedMutation> = ring_snapshot
+            let pending: Vec<&SharedMutationEntry> = ring_snapshot
                 .iter()
                 .map(|r| r.as_ref())
                 .filter(|r| r.revision > since)
                 .collect();
-            if let Some(last) = mutations.last() {
+            if let Some(last) = pending.last() {
                 last_sent_revision = last.revision;
             }
-            if !mutations.is_empty() {
-                let frame = serde_json::json!({
-                    "kind": "delta",
-                    "revision": last_sent_revision,
-                    "mutations": mutations,
-                });
-                if socket.send(Message::Text(frame.to_string())).await.is_err() {
+            if !pending.is_empty() {
+                let frame = EntityDeltaFrame {
+                    kind: "delta",
+                    revision: last_sent_revision,
+                    mutations: pending.iter().map(|r| r.serialized()).collect(),
+                };
+                let text = serde_json::to_string(&frame).expect("replay frame is JSON");
+                if socket.send(Message::Text(text)).await.is_err() {
                     return;
                 }
             }
@@ -219,12 +232,13 @@ pub async fn handle_chain_stream(
                         continue;
                     }
                     last_sent_revision = rev.revision;
-                    let frame = serde_json::json!({
-                        "kind": "delta",
-                        "revision": rev.revision,
-                        "mutations": [rev.as_ref()],
-                    });
-                    if socket.send(Message::Text(frame.to_string())).await.is_err() {
+                    let frame = EntityDeltaFrame {
+                        kind: "delta",
+                        revision: rev.revision,
+                        mutations: vec![rev.serialized()],
+                    };
+                    let text = serde_json::to_string(&frame).expect("delta frame is JSON");
+                    if socket.send(Message::Text(text)).await.is_err() {
                         break;
                     }
                 }
@@ -398,7 +412,8 @@ pub async fn handle_projection_stream(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cknerv_core::{Mutation, Peer, PeerDirection};
+    use cknerv_core::{Mutation, Peer, PeerDirection, RevisionedMutation};
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::Arc;
 
     #[test]
@@ -493,12 +508,13 @@ mod tests {
     #[test]
     fn projection_delta_frame_borrows_without_reshaping_the_wire() {
         let value = serde_json::json!({ "type": "pulse", "at_ms": 1 });
+        let raw = serde_json::value::to_raw_value(&value).expect("raw delta");
         let frame = ProjectionDeltaFrame {
             kind: "delta",
             revision: 7,
             deltas: vec![ProjectionReplayEntry {
                 revision: 7,
-                delta: &value,
+                delta: &raw,
             }],
         };
         let parsed: serde_json::Value =
@@ -512,5 +528,181 @@ mod tests {
                 "deltas": [{ "revision": 7, "delta": value }],
             })
         );
+    }
+
+    /// A delta that counts every request to serialize it, and whose field
+    /// order (`z` before `a`) survives only while nothing round-trips it
+    /// through a `serde_json::Value` — a map would re-sort the two.
+    #[derive(Clone)]
+    struct WitnessDelta {
+        serializations: Arc<AtomicU64>,
+    }
+
+    impl serde::Serialize for WitnessDelta {
+        fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+            use serde::ser::SerializeStruct;
+            self.serializations.fetch_add(1, Ordering::Relaxed);
+            let mut delta = serializer.serialize_struct("WitnessDelta", 2)?;
+            delta.serialize_field("z", &1u64)?;
+            delta.serialize_field("a", &2u64)?;
+            delta.end()
+        }
+    }
+
+    struct WitnessProjection {
+        serializations: Arc<AtomicU64>,
+    }
+
+    impl cknerv_core::Projection for WitnessProjection {
+        type Snapshot = u64;
+        type Delta = WitnessDelta;
+
+        fn name(&self) -> &'static str {
+            "witness"
+        }
+
+        fn snapshot(&self) -> u64 {
+            0
+        }
+
+        fn apply_mutation(&mut self, _m: &Mutation) -> Vec<WitnessDelta> {
+            vec![WitnessDelta {
+                serializations: self.serializations.clone(),
+            }]
+        }
+    }
+
+    /// The cost of a delta must not scale with the audience. Three live
+    /// clients plus a reconnect replaying the ring all send the SAME
+    /// bytes, produced once when the reducer emitted the delta.
+    ///
+    /// Two independent pins, because either one alone can be satisfied by
+    /// a design that still re-renders: the counter proves the typed delta
+    /// is visited exactly once no matter how many frames go out, and the
+    /// verbatim byte comparison proves what the frames carry is that one
+    /// visit's output rather than a re-serialized tree (which would come
+    /// back with `a` before `z`, and could not be read off the entry as
+    /// text at all).
+    #[test]
+    fn one_projection_delta_is_serialized_once_for_every_client() {
+        let serializations = Arc::new(AtomicU64::new(0));
+        let mut registry = crate::projection_registry::Registry::new();
+        registry.register(WitnessProjection {
+            serializations: serializations.clone(),
+        });
+        let runtime = registry.lookup("witness").expect("witness runtime");
+        let writer = registry
+            .writers()
+            .into_iter()
+            .next()
+            .expect("witness writer");
+        let mut clients: Vec<_> = (0..3).map(|_| runtime.subscribe()).collect();
+
+        writer.apply(&RevisionedMutation {
+            revision: 1,
+            mutation: Mutation::ChainReorganized { from_block: 1 },
+        });
+
+        assert_eq!(
+            serializations.load(Ordering::Relaxed),
+            1,
+            "the reducer serializes the delta once, before anyone asks for it"
+        );
+        let ring = runtime.delta_ring_snapshot();
+        let stored = ring[0].value.get().to_string();
+        assert_eq!(
+            stored, r#"{"z":1,"a":2}"#,
+            "the ring holds the projection's own bytes, not a re-sorted tree"
+        );
+
+        for client in &mut clients {
+            let entry = client.try_recv().expect("every client gets the delta");
+            let frame = ProjectionDeltaFrame {
+                kind: "delta",
+                revision: entry.rev,
+                deltas: vec![ProjectionReplayEntry {
+                    revision: entry.rev,
+                    delta: &entry.value,
+                }],
+            };
+            assert_eq!(
+                serde_json::to_string(&frame).expect("frame is JSON"),
+                format!(
+                    r#"{{"kind":"delta","revision":1,"deltas":[{{"revision":1,"delta":{stored}}}]}}"#
+                )
+            );
+        }
+
+        let replay = ProjectionDeltaFrame {
+            kind: "delta",
+            revision: 1,
+            deltas: ring
+                .iter()
+                .map(|d| ProjectionReplayEntry {
+                    revision: d.rev,
+                    delta: &d.value,
+                })
+                .collect(),
+        };
+        serde_json::to_string(&replay).expect("replay frame is JSON");
+        assert_eq!(
+            serializations.load(Ordering::Relaxed),
+            1,
+            "three live frames and a ring replay still cost one serialization"
+        );
+    }
+
+    /// Same rule on the entity stream, where the text is built lazily on
+    /// first send: everyone who wants the mutation — the second live
+    /// client, a reconnect replaying the ring — borrows the one buffer,
+    /// which is what `ptr::eq` on the returned text is asserting.
+    #[test]
+    fn one_entity_mutation_is_serialized_once_for_every_client() {
+        let state = crate::state::ServerState::new();
+        let mut first = state.subscribe_mutations();
+        let mut second = state.subscribe_mutations();
+        state.apply_mutation(Mutation::BlockMined {
+            number: 7,
+            hash: "0xblock7".into(),
+            tx_count: 1,
+            size: 42,
+            at: 1_000,
+        });
+
+        let live = first.try_recv().expect("first client gets the mutation");
+        let echoed = second.try_recv().expect("second client gets the mutation");
+        let replayed = state
+            .mutation_ring_snapshot()
+            .pop()
+            .expect("the ring keeps it for reconnects");
+
+        let text = live.serialized();
+        assert!(
+            std::ptr::eq(text, live.serialized()),
+            "the text is memoized, not rebuilt per call"
+        );
+        assert!(
+            std::ptr::eq(text, echoed.serialized()) && std::ptr::eq(text, replayed.serialized()),
+            "a second client and a ring replay must borrow the first send's bytes"
+        );
+
+        let frame = EntityDeltaFrame {
+            kind: "delta",
+            revision: live.revision,
+            mutations: vec![text],
+        };
+        let rendered = serde_json::to_string(&frame).expect("frame is JSON");
+        assert_eq!(
+            rendered,
+            format!(
+                r#"{{"kind":"delta","revision":1,"mutations":[{}]}}"#,
+                text.get()
+            ),
+            "the mutation goes out verbatim inside the envelope"
+        );
+        let parsed: serde_json::Value = serde_json::from_str(&rendered).expect("frame parses");
+        assert_eq!(parsed["mutations"][0]["revision"], 1);
+        assert_eq!(parsed["mutations"][0]["mutation"]["type"], "block_mined");
+        assert_eq!(parsed["mutations"][0]["mutation"]["hash"], "0xblock7");
     }
 }
