@@ -77,7 +77,12 @@ export const deliverySchema = {
   ingestDur: { value: 1.2, min: 0.1, max: 1.5, step: 0.05, label: 'contact dur' },
   glyphBloom: { value: 1.6, min: 0.5, max: 5, step: 0.1, label: 'glyph core' },
   glyphCompress: { value: 0.45, min: 0, max: 0.9, step: 0.05, label: 'glyph compress' },
-  coreSize: { value: 2.2, min: 0.5, max: 8, step: 0.1, label: 'contact core' },
+  // The sear at the landing is on the CARRIER's scale — it consumes the glyph
+  // — so it is not divided by CONTACT_WAVE_SCALE. It was trimmed 2.2 → 1.4
+  // when the ring halved (2026-08-15) so the flash no longer outweighs the
+  // front it releases: it still opens wider than the travelling core it
+  // replaces, by ×1.09 of its width instead of the old ×1.72.
+  coreSize: { value: 1.4, min: 0.5, max: 8, step: 0.1, label: 'contact core' },
   trailWidth: { value: 0.55, min: 0.1, max: 3, step: 0.05, label: 'streak width' },
   trailLenBase: { value: 1.0, min: 0, max: 4, step: 0.1, label: 'streak len base' },
   trailLenGain: { value: 1.6, min: 0, max: 6, step: 0.1, label: 'streak len gain' },

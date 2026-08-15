@@ -98,9 +98,22 @@ const GATHER_SWELL = 0.55;
 const LOB_CORE_ONSET = 0.55;
 /** The core barely shrinks while the rim does, which is what sells compression. */
 const LOB_CORE_COMPRESS = 0.20;
-/** Widest radius of the drawn-inward ring, in glyph sizes. Tied to the glyph,
- *  not to the front, so it is NOT on the front's divided scale. */
-const INHALE_REACH = 3.2;
+/** Widest radius of the drawn-inward ring, in glyph sizes ON the front's
+ *  scale. The breath is drawn where the block lands, flat in the tissue, so it
+ *  belongs to the CONTACT event and not to the carrier that arrives: when the
+ *  released ring shrinks, the breath before it has to shrink with it or the
+ *  prelude ends up as large as the event it introduces. (It did: at
+ *  CONTACT_WAVE_SCALE 8 the undivided hero breath spanned 3.7 world units —
+ *  and glowed out to 5.0 — against a front that now reaches 5.7.) The
+ *  numerator is the 3.2 glyph sizes it was tuned at, times the scale it was
+ *  tuned on. */
+const INHALE_REACH = 12.8 / CONTACT_WAVE_SCALE;
+/** That ring's crest, in front-crest widths. It is the one soft edge in the
+ *  release — wide enough to read as a halo being pulled in, still thin enough
+ *  (~10% of its own widest radius for a hero; the radius cap owns the smaller
+ *  peer rings) that the collapse reads as a ring and not a plate. Stated as a
+ *  multiple of the front's crest, so it holds that character at any scale. */
+const INHALE_CREST_WIDTHS = 2.8;
 
 const TISSUE_ROSE = new THREE.Color().setRGB(...CELL_GALAXY_PALETTE.tissueRose);
 const CARRIER_COLOR = new THREE.Color();
@@ -697,12 +710,12 @@ export default function BlockDeliveryLayer({
             waveCount,
             _position,
             inhaleRadius,
-            // The knob still steers this crest, but ×CONTACT_WAVE_SCALE undoes
-            // the front's division first: like INHALE_REACH above, the drawn
-            // breath is on the GLYPH's scale, and shrinking the front's width
-            // must not quietly starve a ring whose radius never moved.
+            // The same knob steers this crest, counted in the front's own
+            // widths: a world width held fixed while the radius shrank would
+            // fatten the breath into a filled plate, which is exactly how a
+            // collapsing ring stops reading as a ring.
             contactCrestHalfWidth(
-              LIVE.delivery.waveWidth * CONTACT_WAVE_SCALE * 0.7 * punch,
+              LIVE.delivery.waveWidth * INHALE_CREST_WIDTHS * punch,
               inhaleRadius,
             ),
             CONTACT_WAVE_WAKE_AHEAD,
