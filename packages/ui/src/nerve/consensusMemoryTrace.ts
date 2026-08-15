@@ -754,12 +754,19 @@ export function consensusMemoryRouteHopCellFocus(
   return consensusMemoryTraceFocusStrength(focus, nowSec);
 }
 
-/** Exact retained route from one real source into a particular target Cell. */
+/** Exact retained route from one real source into a particular target Cell.
+ *  Index loop rather than `find`: this runs once per routed source per
+ *  frame-level response, where the predicate closure is itself the
+ *  allocation being hunted. */
 export function consensusMemoryTraceRouteForTarget(
   source: ConsensusMemoryTraceFocusSource,
   targetCellId: number,
 ): ConsensusMemoryTraceRoute | null {
-  return source.routes.find((route) => route.targetId === targetCellId) ?? null;
+  const routes = source.routes;
+  for (let index = 0; index < routes.length; index += 1) {
+    if (routes[index].targetId === targetCellId) return routes[index];
+  }
+  return null;
 }
 
 /**
@@ -837,11 +844,46 @@ export function consensusMemoryTraceSourceStrength(
 const clampUnit = (value: number): number => Math.max(0, Math.min(1, value));
 
 /**
- * Translate one route focus into the Cell body's own visual state. Sources
- * expose a restrained departure read; the retained target progressively
- * resolves its real agreement constellation as witnesses arrive.
+ * Caller-owned storage for `consensusMemoryCellResponseInto`. Structurally a
+ * `ConsensusMemoryCellResponse` with mutable evidence rows, so a filled
+ * scratch IS the response — no projection step, no shape drift between the
+ * allocating and the into form.
  */
-export function consensusMemoryCellResponse(
+export interface ConsensusMemoryCellResponseScratch {
+  role: 'source' | 'target';
+  strength: number;
+  phase: number;
+  convergence: number;
+  /** `undefined` for sources, matching the allocating form exactly. */
+  evidence: ConsensusMemoryEvidenceResponse[] | undefined;
+  evidenceFocusSourceId: number | null;
+}
+
+export function makeConsensusMemoryCellResponseScratch():
+ConsensusMemoryCellResponseScratch {
+  return {
+    role: 'target',
+    strength: 0,
+    phase: 0,
+    convergence: 0,
+    evidence: undefined,
+    evidenceFocusSourceId: null,
+  };
+}
+
+/**
+ * Translate one route focus into the Cell body's own visual state, writing
+ * into caller-owned scratch. Sources expose a restrained departure read; the
+ * retained target progressively resolves its real agreement constellation as
+ * witnesses arrive.
+ *
+ * A recall focus can be held or parked indefinitely, so every frame-rate
+ * caller runs this; the allocating form below is the API for everyone else.
+ * Follows the `bezierAtInto` convention: `out` first, result written in
+ * place, and the same object handed back so call sites read normally.
+ */
+export function consensusMemoryCellResponseInto(
+  out: ConsensusMemoryCellResponseScratch,
   focus: ConsensusMemoryTraceFocus | null,
   cellId: number,
   nowSec: number,
@@ -851,46 +893,150 @@ export function consensusMemoryCellResponse(
   if (focus.targetIds.includes(cellId)) {
     const elapsed = Math.max(0, nowSec - focus.startedAtSec);
     const rawPhase = elapsed * MEMORY_TRACE_CELL_READ_CYCLES_PER_S;
-    const phase = rawPhase - Math.floor(rawPhase);
-    const evidence = focus.sources.flatMap((source) => {
+    const rows = out.evidence ?? (out.evidence = []);
+    let routed = 0;
+    let convergenceTotal = 0;
+    for (const source of focus.sources) {
       const route = consensusMemoryTraceRouteForTarget(source, cellId);
-      return route ? [{ source, route }] : [];
-    }).map(({ source, route }, index) => ({
-      sourceId: source.id,
-      ordinal: index + 1,
-      contentHash: source.contentHash,
-      convergence: smoothUnit(
+      if (!route) continue;
+      const convergence = smoothUnit(
         (nowSec - route.arrivesAtSec) * 1000
           / MEMORY_TRACE_CELL_CONVERGENCE_MS,
-      ),
-    }));
-    const convergence = evidence.length === 0
-      ? 0
-      : evidence.reduce((total, source) => total + source.convergence, 0)
-        / evidence.length;
-    return {
-      role: 'target',
-      strength: focusStrength,
-      phase,
-      convergence,
-      evidence,
-      evidenceFocusSourceId: focus.evidenceFocusSourceId,
-    };
+      );
+      const row = rows[routed] ?? (rows[routed] = {
+        sourceId: source.id,
+        ordinal: routed + 1,
+        contentHash: source.contentHash,
+        convergence,
+      });
+      row.sourceId = source.id;
+      row.ordinal = routed + 1;
+      row.contentHash = source.contentHash;
+      row.convergence = convergence;
+      convergenceTotal += convergence;
+      routed += 1;
+    }
+    rows.length = routed;
+    out.role = 'target';
+    out.strength = focusStrength;
+    out.phase = rawPhase - Math.floor(rawPhase);
+    out.convergence = routed === 0 ? 0 : convergenceTotal / routed;
+    out.evidenceFocusSourceId = focus.evidenceFocusSourceId;
+    return out;
   }
 
-  const source = focus.sources.find((candidate) => candidate.id === cellId);
+  const sources = focus.sources;
+  let source: ConsensusMemoryTraceFocusSource | null = null;
+  for (let index = 0; index < sources.length; index += 1) {
+    if (sources[index].id === cellId) {
+      source = sources[index];
+      break;
+    }
+  }
   if (!source) return null;
   const travelSeconds = Math.max(0.001, source.arrivesAtSec - source.startsAtSec);
   const phase = clampUnit((nowSec - source.startsAtSec) / travelSeconds);
-  return {
-    role: 'source',
-    strength: focusStrength
-      * consensusMemoryTraceSourceStrength(source, nowSec)
-      * consensusMemoryEvidenceFocusScale(source.id, focus.evidenceFocusSourceId),
-    phase,
-    convergence: phase,
+  out.role = 'source';
+  out.strength = focusStrength
+    * consensusMemoryTraceSourceStrength(source, nowSec)
+    * consensusMemoryEvidenceFocusScale(source.id, focus.evidenceFocusSourceId);
+  out.phase = phase;
+  out.convergence = phase;
+  // A source carries no agreement constellation; publishing `undefined`
+  // keeps the two forms interchangeable even on a reused scratch.
+  out.evidence = undefined;
+  out.evidenceFocusSourceId = focus.evidenceFocusSourceId;
+  return out;
+}
+
+/** Allocating form of `consensusMemoryCellResponseInto`: fresh scratch per
+ *  call, so the result is owned by the caller. */
+export function consensusMemoryCellResponse(
+  focus: ConsensusMemoryTraceFocus | null,
+  cellId: number,
+  nowSec: number,
+): ConsensusMemoryCellResponse | null {
+  return consensusMemoryCellResponseInto(
+    makeConsensusMemoryCellResponseScratch(),
+    focus,
+    cellId,
+    nowSec,
+  );
+}
+
+/**
+ * One response per (focus, Cell) per clock stamp, shared by every layer that
+ * asks in the same frame — the galaxy nuclei, the route hop chip, the
+ * endpoint markers and the pulse loop routinely all want the same target.
+ * Keyed on focus IDENTITY plus the mutable `evidenceFocusSourceId` (an effect
+ * rewrites it in place on the live focus) plus the clock, which are exactly
+ * the derive's inputs, so a hit can never be stale.
+ *
+ * Entries are shared read-only views: read them inside the frame callback
+ * that asked, never retain or mutate them. Nothing interleaves within one
+ * `useFrame` callback, so a borrowed response is stable for as long as any
+ * caller needs it.
+ */
+const frameCellResponses = new Map<number, ConsensusMemoryCellResponseEntry>();
+let frameCellResponseFocus: ConsensusMemoryTraceFocus | null = null;
+/** Endpoints of one recall are a handful; anything past this is the residue
+ *  of recalls long gone, and the pool is dropped at the next focus change. */
+const FRAME_CELL_RESPONSE_POOL_CAP = 64;
+
+interface ConsensusMemoryCellResponseEntry {
+  scratch: ConsensusMemoryCellResponseScratch;
+  result: ConsensusMemoryCellResponse | null;
+  focus: ConsensusMemoryTraceFocus;
+  evidenceFocusSourceId: number | null;
+  nowSec: number;
+}
+
+export function consensusMemoryCellResponseForFrame(
+  focus: ConsensusMemoryTraceFocus | null,
+  cellId: number,
+  nowSec: number,
+): ConsensusMemoryCellResponse | null {
+  if (!focus) return null;
+  if (frameCellResponseFocus !== focus) {
+    frameCellResponseFocus = focus;
+    if (frameCellResponses.size > FRAME_CELL_RESPONSE_POOL_CAP) {
+      frameCellResponses.clear();
+    }
+  }
+  const cached = frameCellResponses.get(cellId);
+  if (
+    cached
+    && cached.focus === focus
+    && cached.evidenceFocusSourceId === focus.evidenceFocusSourceId
+    && cached.nowSec === nowSec
+  ) return cached.result;
+  // Storage is per Cell, not per focus: a departing record and its
+  // replacement both light the same endpoints for a second, and dropping the
+  // pool on every alternation would allocate exactly what this avoids.
+  const entry = cached ?? {
+    scratch: makeConsensusMemoryCellResponseScratch(),
+    result: null,
+    focus,
     evidenceFocusSourceId: focus.evidenceFocusSourceId,
+    nowSec,
   };
+  entry.focus = focus;
+  entry.evidenceFocusSourceId = focus.evidenceFocusSourceId;
+  entry.nowSec = nowSec;
+  entry.result = consensusMemoryCellResponseInto(
+    entry.scratch,
+    focus,
+    cellId,
+    nowSec,
+  );
+  if (!cached) frameCellResponses.set(cellId, entry);
+  return entry.result;
+}
+
+/** Test seam: drop the shared per-frame responses. */
+export function resetConsensusMemoryCellResponseFrameCache(): void {
+  frameCellResponses.clear();
+  frameCellResponseFocus = null;
 }
 
 /**
@@ -899,7 +1045,52 @@ export function consensusMemoryCellResponse(
  * "converging" spans the real per-source agreement transition; "locked" is
  * emitted only once every routed source has fully resolved.
  */
-export function consensusMemoryTraceReadout(
+export interface ConsensusMemoryTraceReadoutScratch {
+  key: string;
+  targetCellId: number;
+  sourceKind: Exclude<ConsensusMemoryTraceSource, 'none'>;
+  stage: ConsensusMemoryTraceStage;
+  sourceCount: number;
+  arrivedSourceCount: number;
+  resolvedSourceCount: number;
+  consumedInputs: ConsensusMemoryConsumedInput[];
+  evidence: ConsensusMemoryTraceEvidenceRow[];
+}
+
+/** Mutable twin of `ConsensusMemoryTraceEvidence`; same fields, same order. */
+interface ConsensusMemoryTraceEvidenceRow {
+  sourceId: number;
+  ordinal: number;
+  contentHash: string;
+  state: ConsensusMemoryEvidenceState;
+  sourceOutPoint: OutPoint;
+  sourceBirthBlock: number;
+  route: readonly number[];
+  hopCount: number;
+  routeDurationMs: number;
+}
+
+export function makeConsensusMemoryTraceReadoutScratch():
+ConsensusMemoryTraceReadoutScratch {
+  return {
+    key: '',
+    targetCellId: 0,
+    sourceKind: 'input',
+    stage: 'reading',
+    sourceCount: 0,
+    arrivedSourceCount: 0,
+    resolvedSourceCount: 0,
+    consumedInputs: [],
+    evidence: [],
+  };
+}
+
+/** Into-form of `consensusMemoryTraceReadout`, for the frame-rate publisher
+ *  that re-derives the readout every frame only to discover it is unchanged.
+ *  Rows and their outpoints are reused in place; `route` and `consumedInputs`
+ *  are borrowed from the focus, exactly as the allocating form borrows them. */
+export function consensusMemoryTraceReadoutInto(
+  out: ConsensusMemoryTraceReadoutScratch,
   focus: ConsensusMemoryTraceFocus | null,
   targetCellId: number,
   nowSec: number,
@@ -913,50 +1104,186 @@ export function consensusMemoryTraceReadout(
   ) return null;
 
   const resolutionSec = MEMORY_TRACE_CELL_CONVERGENCE_MS / 1000;
-  const routedSources = focus.sources.flatMap((source) => {
+  const rows = out.evidence;
+  let routed = 0;
+  let arrivedSourceCount = 0;
+  let resolvedSourceCount = 0;
+  for (const source of focus.sources) {
     const route = consensusMemoryTraceRouteForTarget(source, targetCellId);
-    return route ? [{ source, route }] : [];
-  });
-  const evidence = routedSources.map(({ source, route }, index) => ({
-    sourceId: source.id,
-    ordinal: index + 1,
-    contentHash: source.contentHash,
-    state: nowSec >= route.arrivesAtSec + resolutionSec
-      ? 'resolved' as const
-      : nowSec >= route.arrivesAtSec
-        ? 'arrived' as const
-        : 'routing' as const,
-    sourceOutPoint: { ...source.outPoint },
-    sourceBirthBlock: source.birthBlock,
-    route: route.path,
-    hopCount: route.hopCount,
-    routeDurationMs: route.hopCount * route.hopMs,
-  }));
-  const arrivedSourceCount = evidence.filter(
-    (source) => source.state !== 'routing',
-  ).length;
-  const resolvedSourceCount = evidence.filter(
-    (source) => source.state === 'resolved',
-  ).length;
-  const locked = routedSources.length > 0
-    && resolvedSourceCount === routedSources.length;
-  const stage: ConsensusMemoryTraceStage = locked
+    if (!route) continue;
+    const state: ConsensusMemoryEvidenceState =
+      nowSec >= route.arrivesAtSec + resolutionSec
+        ? 'resolved'
+        : nowSec >= route.arrivesAtSec
+          ? 'arrived'
+          : 'routing';
+    const row = rows[routed] ?? (rows[routed] = {
+      sourceId: source.id,
+      ordinal: routed + 1,
+      contentHash: source.contentHash,
+      state,
+      sourceOutPoint: { ...source.outPoint },
+      sourceBirthBlock: source.birthBlock,
+      route: route.path,
+      hopCount: route.hopCount,
+      routeDurationMs: route.hopCount * route.hopMs,
+    });
+    row.sourceId = source.id;
+    row.ordinal = routed + 1;
+    row.contentHash = source.contentHash;
+    row.state = state;
+    row.sourceOutPoint.tx_hash = source.outPoint.tx_hash;
+    row.sourceOutPoint.index = source.outPoint.index;
+    row.sourceBirthBlock = source.birthBlock;
+    row.route = route.path;
+    row.hopCount = route.hopCount;
+    row.routeDurationMs = route.hopCount * route.hopMs;
+    if (state !== 'routing') arrivedSourceCount += 1;
+    if (state === 'resolved') resolvedSourceCount += 1;
+    routed += 1;
+  }
+  rows.length = routed;
+
+  out.key = focus.key;
+  out.targetCellId = targetCellId;
+  out.sourceKind = focus.sourceKind;
+  out.stage = routed > 0 && resolvedSourceCount === routed
     ? 'locked'
     : arrivedSourceCount > 0
       ? 'converging'
       : 'reading';
+  out.sourceCount = routed;
+  out.arrivedSourceCount = arrivedSourceCount;
+  out.resolvedSourceCount = resolvedSourceCount;
+  out.consumedInputs = focus.consumedInputs;
+  return out;
+}
 
-  return {
-    key: focus.key,
+/** Allocating form of `consensusMemoryTraceReadoutInto`: fresh scratch per
+ *  call, so the result can be handed to React state. */
+export function consensusMemoryTraceReadout(
+  focus: ConsensusMemoryTraceFocus | null,
+  targetCellId: number,
+  nowSec: number,
+): ConsensusMemoryTraceReadout | null {
+  return consensusMemoryTraceReadoutInto(
+    makeConsensusMemoryTraceReadoutScratch(),
+    focus,
     targetCellId,
-    sourceKind: focus.sourceKind,
-    stage,
-    sourceCount: routedSources.length,
-    arrivedSourceCount,
-    resolvedSourceCount,
-    consumedInputs: focus.consumedInputs,
-    evidence,
+    nowSec,
+  );
+}
+
+/**
+ * Owned copy of a readout that may be borrowed frame scratch. `route` and
+ * `consumedInputs` stay shared: both forms of the derive borrow those from
+ * the focus, which owns them for the whole recall.
+ */
+export function cloneConsensusMemoryTraceReadout(
+  readout: ConsensusMemoryTraceReadout,
+): ConsensusMemoryTraceReadout {
+  return {
+    key: readout.key,
+    targetCellId: readout.targetCellId,
+    sourceKind: readout.sourceKind,
+    stage: readout.stage,
+    sourceCount: readout.sourceCount,
+    arrivedSourceCount: readout.arrivedSourceCount,
+    resolvedSourceCount: readout.resolvedSourceCount,
+    consumedInputs: readout.consumedInputs,
+    evidence: readout.evidence.map((row) => ({
+      sourceId: row.sourceId,
+      ordinal: row.ordinal,
+      contentHash: row.contentHash,
+      state: row.state,
+      sourceOutPoint: { ...row.sourceOutPoint },
+      sourceBirthBlock: row.sourceBirthBlock,
+      route: row.route,
+      hopCount: row.hopCount,
+      routeDurationMs: row.routeDurationMs,
+    })),
   };
+}
+
+/**
+ * Field-wise record of the last published readout. The frame-rate publisher
+ * used to build a joined signature string every frame just to compare it;
+ * these are the same fields, kept as values so an unchanged readout costs no
+ * allocation at all.
+ */
+export interface ConsensusMemoryTraceReadoutSignature {
+  present: boolean;
+  key: string;
+  targetCellId: number;
+  stage: ConsensusMemoryTraceStage;
+  sourceCount: number;
+  arrivedSourceCount: number;
+  resolvedSourceCount: number;
+  /** Flattened `sourceId, state` pairs of the evidence ledger. */
+  evidence: Array<number | ConsensusMemoryEvidenceState>;
+}
+
+export function makeConsensusMemoryTraceReadoutSignature():
+ConsensusMemoryTraceReadoutSignature {
+  return {
+    present: false,
+    key: '',
+    targetCellId: 0,
+    stage: 'reading',
+    sourceCount: 0,
+    arrivedSourceCount: 0,
+    resolvedSourceCount: 0,
+    evidence: [],
+  };
+}
+
+/** True when `readout` differs from what the signature last recorded, which
+ *  it then adopts. Pure bookkeeping — the caller decides what to publish. */
+export function consensusMemoryTraceReadoutChanged(
+  signature: ConsensusMemoryTraceReadoutSignature,
+  readout: ConsensusMemoryTraceReadout | null,
+): boolean {
+  if (!readout) {
+    if (!signature.present) return false;
+    signature.present = false;
+    signature.evidence.length = 0;
+    return true;
+  }
+  const evidence = readout.evidence;
+  const recorded = signature.evidence;
+  let changed = !signature.present
+    || signature.key !== readout.key
+    || signature.targetCellId !== readout.targetCellId
+    || signature.stage !== readout.stage
+    || signature.sourceCount !== readout.sourceCount
+    || signature.arrivedSourceCount !== readout.arrivedSourceCount
+    || signature.resolvedSourceCount !== readout.resolvedSourceCount
+    || recorded.length !== evidence.length * 2;
+  if (!changed) {
+    for (let index = 0; index < evidence.length; index += 1) {
+      if (
+        recorded[index * 2] !== evidence[index].sourceId
+        || recorded[index * 2 + 1] !== evidence[index].state
+      ) {
+        changed = true;
+        break;
+      }
+    }
+  }
+  if (!changed) return false;
+  signature.present = true;
+  signature.key = readout.key;
+  signature.targetCellId = readout.targetCellId;
+  signature.stage = readout.stage;
+  signature.sourceCount = readout.sourceCount;
+  signature.arrivedSourceCount = readout.arrivedSourceCount;
+  signature.resolvedSourceCount = readout.resolvedSourceCount;
+  recorded.length = evidence.length * 2;
+  for (let index = 0; index < evidence.length; index += 1) {
+    recorded[index * 2] = evidence[index].sourceId;
+    recorded[index * 2 + 1] = evidence[index].state;
+  }
+  return true;
 }
 
 /** Transfer focal energy from completed evidence paths into the retained Cell. */

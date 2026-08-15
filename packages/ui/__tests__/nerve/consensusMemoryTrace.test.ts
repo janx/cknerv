@@ -29,8 +29,17 @@ import {
   consensusMemoryRouteHopFocusEqual,
   classifyConsensusMemoryRouteHopTransition,
   consensusMemoryRouteHandoffScale,
+  cloneConsensusMemoryTraceReadout,
+  consensusMemoryCellResponseForFrame,
+  consensusMemoryCellResponseInto,
   consensusMemoryTraceRequestKey,
   consensusMemoryTraceReadout,
+  consensusMemoryTraceReadoutChanged,
+  consensusMemoryTraceReadoutInto,
+  makeConsensusMemoryCellResponseScratch,
+  makeConsensusMemoryTraceReadoutScratch,
+  makeConsensusMemoryTraceReadoutSignature,
+  resetConsensusMemoryCellResponseFrameCache,
   consensusMemoryTraceFocusStrength,
   consensusMemoryTraceResonance,
   consensusMemoryTraceSourceStrength,
@@ -953,5 +962,138 @@ describe('lineage witness fallback', () => {
       sparse,
     ).witnessIds).toEqual([101]);
     expect(sparseReads).toBe(sparse.size);
+  });
+});
+
+describe('frame-rate recall derives', () => {
+  const recallFocus = () => {
+    const cells = new Map([1, 2, 3, 4, 5].map((id) => [id, cell(id)]));
+    const plan = planConsensusMemoryTrace(
+      link(),
+      cells,
+      graph([[1, 3], [2, 4], [3, 5], [4, 5]]),
+    );
+    return deriveConsensusMemoryTraceFocus(plan, 10, '7:5:1')!;
+  };
+
+  it('into-form cell responses match the allocating form on a reused scratch', () => {
+    const focus = recallFocus();
+    const scratch = makeConsensusMemoryCellResponseScratch();
+    const arrival = Math.max(...focus.sources.map((source) => source.arrivesAtSec));
+    const stamps = [10.001, 10.4, arrival, arrival + 0.3];
+    // Same scratch across every case: a leftover evidence row or a stale
+    // role would show up as a mismatch against the fresh-object form.
+    for (const nowSec of stamps) {
+      for (const cellId of [focus.sources[0].id, focus.sources[1].id, 5, 999]) {
+        const into = consensusMemoryCellResponseInto(scratch, focus, cellId, nowSec);
+        expect(into).toEqual(consensusMemoryCellResponse(focus, cellId, nowSec));
+        if (into) expect(into).toBe(scratch);
+      }
+    }
+    const target = consensusMemoryCellResponseInto(scratch, focus, 5, arrival);
+    expect(target?.role).toBe('target');
+    expect(target?.evidence).toHaveLength(2);
+    // A focus with fewer routed sources must not inherit the wider ledger.
+    const narrowPlan = planConsensusMemoryTrace(
+      link({ from_ids: [1] }),
+      new Map([1, 3, 5].map((id) => [id, cell(id)])),
+      graph([[1, 3], [3, 5]]),
+    );
+    const narrow = deriveConsensusMemoryTraceFocus(narrowPlan, 10, '7:5:2')!;
+    expect(consensusMemoryCellResponseInto(scratch, narrow, 5, 10.4))
+      .toEqual(consensusMemoryCellResponse(narrow, 5, 10.4));
+    expect(scratch.evidence).toHaveLength(1);
+    // A source read after a target read must not inherit the target's shape.
+    const source = consensusMemoryCellResponseInto(
+      scratch,
+      focus,
+      focus.sources[0].id,
+      arrival,
+    );
+    expect(source?.role).toBe('source');
+    expect(source?.evidence).toBeUndefined();
+  });
+
+  it('into-form readouts match the allocating form on a reused scratch', () => {
+    const focus = recallFocus();
+    const scratch = makeConsensusMemoryTraceReadoutScratch();
+    const arrival = Math.min(...focus.sources.map((source) => source.arrivesAtSec));
+    for (const nowSec of [10.001, arrival, arrival + 0.4, focus.endsAtSec - 0.01]) {
+      const into = consensusMemoryTraceReadoutInto(scratch, focus, 5, nowSec);
+      expect(into).toEqual(consensusMemoryTraceReadout(focus, 5, nowSec));
+      if (into) expect(into).toBe(scratch);
+    }
+    // Rejections leave the scratch alone rather than publishing a half state.
+    expect(consensusMemoryTraceReadoutInto(scratch, focus, 999, arrival)).toBeNull();
+    expect(consensusMemoryTraceReadoutInto(scratch, focus, 5, focus.endsAtSec))
+      .toBeNull();
+    // Evidence rows are reused, not rebuilt.
+    const first = consensusMemoryTraceReadoutInto(scratch, focus, 5, arrival)!;
+    const firstRow = first.evidence[0];
+    const again = consensusMemoryTraceReadoutInto(scratch, focus, 5, arrival + 0.2)!;
+    expect(again.evidence[0]).toBe(firstRow);
+
+    // What leaves for React state owns everything the next frame rewrites.
+    const owned = cloneConsensusMemoryTraceReadout(again);
+    expect(owned).toEqual(again);
+    expect(owned.evidence).not.toBe(again.evidence);
+    expect(owned.evidence[0]).not.toBe(again.evidence[0]);
+    expect(owned.evidence[0].sourceOutPoint).not.toBe(
+      again.evidence[0].sourceOutPoint,
+    );
+    consensusMemoryTraceReadoutInto(scratch, focus, 5, focus.endsAtSec - 0.01);
+    expect(owned).toEqual(consensusMemoryTraceReadout(focus, 5, arrival + 0.2));
+  });
+
+  it('publishes a readout only when its stage or ledger actually moves', () => {
+    const focus = recallFocus();
+    const scratch = makeConsensusMemoryTraceReadoutScratch();
+    const signature = makeConsensusMemoryTraceReadoutSignature();
+    const at = (nowSec: number) =>
+      consensusMemoryTraceReadoutInto(scratch, focus, 5, nowSec);
+
+    expect(consensusMemoryTraceReadoutChanged(signature, null)).toBe(false);
+    expect(consensusMemoryTraceReadoutChanged(signature, at(10.001))).toBe(true);
+    expect(consensusMemoryTraceReadoutChanged(signature, at(10.002))).toBe(false);
+    const arrival = Math.min(...focus.sources.map((source) => source.arrivesAtSec));
+    expect(consensusMemoryTraceReadoutChanged(signature, at(arrival))).toBe(true);
+    expect(consensusMemoryTraceReadoutChanged(signature, at(arrival + 0.001)))
+      .toBe(false);
+    expect(consensusMemoryTraceReadoutChanged(signature, null)).toBe(true);
+    expect(consensusMemoryTraceReadoutChanged(signature, null)).toBe(false);
+  });
+
+  it('shares one response per Cell per clock stamp, and re-derives when inputs move', () => {
+    resetConsensusMemoryCellResponseFrameCache();
+    const focus = recallFocus();
+    const first = consensusMemoryCellResponseForFrame(focus, 5, 10.4)!;
+    expect(consensusMemoryCellResponseForFrame(focus, 5, 10.4)).toBe(first);
+    expect(first).toEqual(consensusMemoryCellResponse(focus, 5, 10.4));
+    // Different Cells never share storage, so a borrowed view stays valid for
+    // the whole frame no matter who else asked.
+    const source = consensusMemoryCellResponseForFrame(
+      focus,
+      focus.sources[0].id,
+      10.4,
+    )!;
+    expect(source).not.toBe(first);
+    expect(consensusMemoryCellResponseForFrame(focus, 5, 10.4)).toBe(first);
+    // The clock and the (mutable) evidence isolation are both derive inputs.
+    expect(consensusMemoryCellResponseForFrame(focus, 5, 10.5))
+      .toEqual(consensusMemoryCellResponse(focus, 5, 10.5));
+    focus.evidenceFocusSourceId = focus.sources[0].id;
+    expect(consensusMemoryCellResponseForFrame(focus, focus.sources[1].id, 10.4))
+      .toEqual(consensusMemoryCellResponse(focus, focus.sources[1].id, 10.4));
+    expect(consensusMemoryCellResponseForFrame(null, 5, 10.4)).toBeNull();
+
+    // A departing record and its replacement overlap for about a second and
+    // light the same endpoints: alternating between them must reuse storage
+    // rather than reallocate it, and must never answer for the wrong one.
+    const departing = recallFocus();
+    const alternate = consensusMemoryCellResponseForFrame(departing, 5, 10.4)!;
+    expect(alternate).toBe(first);
+    expect(alternate).toEqual(consensusMemoryCellResponse(departing, 5, 10.4));
+    expect(consensusMemoryCellResponseForFrame(focus, 5, 10.4))
+      .toEqual(consensusMemoryCellResponse(focus, 5, 10.4));
   });
 });

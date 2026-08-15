@@ -40,7 +40,7 @@ import { QUALITY_PRESETS, useQualityRuntime } from '../tweaks/qualityPresets';
 import { useSimClock } from '../tweaks/SimClockScope';
 import { useConsensusMemoryFocusRef } from '../hooks/consensusMemoryFocusContext';
 import {
-  consensusMemoryCellResponse,
+  consensusMemoryCellResponseForFrame,
   consensusMemoryRouteHopCellFocus,
   type ConsensusMemoryCellResponse,
 } from '../nerve/consensusMemoryTrace';
@@ -220,6 +220,9 @@ export default function CellNucleus({
     recall: ConsensusMemoryCellResponse | null;
     dist: number;
   }[]>([]);
+  const recallResponses = useRef<Map<number, ConsensusMemoryCellResponse>>(
+    new Map(),
+  );
   const focusByCell = useRef<Map<number, number>>(new Map());
   const visibleIndexByCell = useRef<Map<number, number>>(new Map());
   const detailSlots = useRef<number[]>([]);
@@ -293,18 +296,26 @@ export default function CellNucleus({
     lastRecallKey.current = recallKey;
     let recallByCell = EMPTY_RECALL_BY_CELL;
     if (recallFocus) {
-      const responses = new Map<number, ConsensusMemoryCellResponse>();
-      const endpointIds = new Set([
-        ...recallFocus.sources.map((source) => source.id),
-        ...recallFocus.targetIds,
-      ]);
-      for (const cellId of endpointIds) {
-        const response = consensusMemoryCellResponse(
+      // Rebuilt in place every frame: a held recall would otherwise leave a
+      // fresh Map, a fresh Set and two spread arrays behind on each one. The
+      // Map itself de-duplicates a Cell that is both a source and a target.
+      const responses = recallResponses.current;
+      responses.clear();
+      for (const source of recallFocus.sources) {
+        const response = consensusMemoryCellResponseForFrame(
           recallFocus,
-          cellId,
+          source.id,
           simClock.elapsedSec,
         );
-        if (response) responses.set(cellId, response);
+        if (response) responses.set(source.id, response);
+      }
+      for (const targetId of recallFocus.targetIds) {
+        const response = consensusMemoryCellResponseForFrame(
+          recallFocus,
+          targetId,
+          simClock.elapsedSec,
+        );
+        if (response) responses.set(targetId, response);
       }
       recallByCell = responses;
     }

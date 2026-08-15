@@ -92,11 +92,17 @@ import type { Vec3 } from '../types';
 import {
   CONSENSUS_PULSE_POLICY,
   consensusMemoryCellResponse,
+  consensusMemoryCellResponseForFrame,
   consensusMemoryRouteHopAdjacentSegments,
   consensusMemoryPulseActivityScale,
   consensusMemoryRouteHandoffScale,
   consensusMemoryTraceRouteForTarget,
   consensusMemoryTraceReadout,
+  consensusMemoryTraceReadoutChanged,
+  consensusMemoryTraceReadoutInto,
+  cloneConsensusMemoryTraceReadout,
+  makeConsensusMemoryTraceReadoutScratch,
+  makeConsensusMemoryTraceReadoutSignature,
   consensusMemoryTraceRequestKey,
   consensusMemoryTraceResonance,
   consensusMemoryTraceEntryScale,
@@ -890,7 +896,14 @@ export default function NeuralNetwork({
   const sourceHandoffRef = useRef<ConsensusMemorySourceHandoff | null>(null);
   const sourceHandoffTimeRef = useRef(0);
   const sourceHandoffFrameRef = useRef<number | null>(null);
-  const traceReadoutSignatureRef = useRef('none');
+  const traceReadoutSignatureRef = useRef(
+    makeConsensusMemoryTraceReadoutSignature(),
+  );
+  // Frame-rate readout storage. The published copy is always an owned
+  // allocation; this one exists only to answer "did anything change".
+  const traceReadoutScratchRef = useRef(
+    makeConsensusMemoryTraceReadoutScratch(),
+  );
   const traceTargetSnapshotRef = useRef<ConsensusMemoryTargetResponse>({
     targetCellId: -1,
     response: {
@@ -1016,24 +1029,22 @@ export default function NeuralNetwork({
     });
     traceTargetResponseRef.current = snapshot;
   }, [traceTargetResponseRef]);
+  /** `borrowed` marks frame scratch: it is copied before it can reach React
+   *  state, since the next frame overwrites it in place. */
   const publishTraceReadout = useCallback((
     readout: ConsensusMemoryTraceReadout | null,
+    borrowed = false,
   ) => {
     if (!onTraceReadoutChange) return;
-    const signature = readout
-      ? [
-        readout.key,
-        readout.targetCellId,
-        readout.stage,
-        readout.arrivedSourceCount,
-        readout.resolvedSourceCount,
-        readout.sourceCount,
-        ...readout.evidence.map((source) => `${source.sourceId}:${source.state}`),
-      ].join(':')
-      : 'none';
-    if (traceReadoutSignatureRef.current === signature) return;
-    traceReadoutSignatureRef.current = signature;
-    onTraceReadoutChange(readout);
+    if (!consensusMemoryTraceReadoutChanged(
+      traceReadoutSignatureRef.current,
+      readout,
+    )) return;
+    onTraceReadoutChange(
+      readout && borrowed
+        ? cloneConsensusMemoryTraceReadout(readout)
+        : readout,
+    );
   }, [onTraceReadoutChange]);
   const invalidateMemoryTrace = useCallback((
     request: ConsensusMemoryTraceRequest | null,
@@ -1463,7 +1474,7 @@ export default function NeuralNetwork({
       ?? currentFocus?.targetIds[0];
     let currentTargetResponse: ConsensusMemoryCellResponse | null = null;
     if (currentFocus && readoutTargetId !== undefined) {
-      const response = consensusMemoryCellResponse(
+      const response = consensusMemoryCellResponseForFrame(
         currentFocus,
         readoutTargetId,
         now,
@@ -1471,11 +1482,15 @@ export default function NeuralNetwork({
       currentTargetResponse = response?.role === 'target' ? response : null;
       if (currentRequest) {
         publishTraceTargetResponse(readoutTargetId, currentTargetResponse);
-        publishTraceReadout(consensusMemoryTraceReadout(
-          currentFocus,
-          readoutTargetId,
-          now,
-        ));
+        publishTraceReadout(
+          consensusMemoryTraceReadoutInto(
+            traceReadoutScratchRef.current,
+            currentFocus,
+            readoutTargetId,
+            now,
+          ),
+          true,
+        );
       }
     }
     const focusStrength = consensusMemoryTraceFocusStrength(
@@ -1605,7 +1620,7 @@ export default function NeuralNetwork({
             const targetResponse = pulseMatchesFocus && term === readoutTargetId
               ? currentTargetResponse
               : pulseMatchesFocus
-                ? consensusMemoryCellResponse(currentFocus, term, now)
+                ? consensusMemoryCellResponseForFrame(currentFocus, term, now)
                 : null;
             const handoffScale = pulse.release?.routeHandoffScale
               ?? consensusMemoryRouteHandoffScale(

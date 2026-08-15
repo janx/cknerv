@@ -55,12 +55,22 @@ import {
   type ConsensusRouteHopAddressResidueFrame,
 } from './consensusRouteHopAddressResidue';
 import {
+  frameDatasetBind,
+  frameDatasetDelete,
+  frameDatasetWrite,
+  frameDatasetWriteNumber,
+  frameDatasetWriteVector,
+  frameStyleWriteNumber,
+  makeFrameDatasetLedger,
+} from './frameDatasetLedger';
+import {
   consensusMemoryTraceFocusStrength,
-  consensusMemoryCellResponse,
+  consensusMemoryCellResponseForFrame,
   classifyConsensusMemoryRouteHopTransition,
   deriveConsensusMemoryRouteHopSpatialFocus,
   deriveConsensusMemoryRouteHopTangent,
   shouldAnimateConsensusMemoryRouteHopTargetLatch,
+  type ConsensusMemoryCellResponse,
   type ConsensusMemoryRouteHopFocus,
   type ConsensusMemoryRouteHopRole,
   type ConsensusMemoryRouteHopSpatialFocus,
@@ -281,6 +291,23 @@ function applyGlyphWaypoint(
   waypoint: GlyphWaypoint,
 ): void {
   applyGlyphBlend(material, waypoint, waypoint, 1);
+}
+
+/** Convergence of one routed source inside a shared frame response. Index
+ *  loop rather than `find`: this runs once per agreement tick per frame, and
+ *  the predicate closure is exactly the allocation being removed. */
+function agreementConvergence(
+  response: ConsensusMemoryCellResponse | null,
+  sourceId: number,
+): number {
+  const evidence = response?.evidence;
+  if (!evidence) return 0;
+  for (let index = 0; index < evidence.length; index += 1) {
+    if (evidence[index].sourceId === sourceId) {
+      return evidence[index].convergence;
+    }
+  }
+  return 0;
 }
 
 function motionAgreementPlan(motion: GlyphMotion): ConsensusRouteHopAgreementPlan {
@@ -872,6 +899,19 @@ export default function ConsensusRouteHopMarker({
   const chipRef = useRef<HTMLDivElement>(null);
   const motionRef = useRef<GlyphMotion | null>(null);
   const sourceHandoffAuditRef = useRef<SourceHandoffAudit | null>(null);
+  // Per-frame telemetry storage: the chip republishes its state every frame,
+  // and a held recall would otherwise turn that into steady garbage.
+  const agreementStrengthsRef = useRef<number[]>([]);
+  const agreementFocusScalesRef = useRef<number[]>([]);
+  const tickSourceIdsRef = useRef<number[]>([]);
+  const tickArrivalsRef = useRef<number[]>([]);
+  const handoffObservedRangeRef = useRef<number[]>([0, 0]);
+  const chipLedgerRef = useRef(makeFrameDatasetLedger());
+  // The opacity pass runs in its own frame hook, so it keeps its own ledger.
+  const chipOpacityLedgerRef = useRef(makeFrameDatasetLedger());
+  // A commit rewrites the chip attributes from the markup, which is not
+  // always what the frame loop last published. Every commit voids the ledger.
+  const commitEpochRef = useRef(0);
   const [inspectedAgreementSourceId, setInspectedAgreementSourceId] =
     useState<number | null>(null);
   const routeFromNdc = useMemo(() => new THREE.Vector3(), []);
@@ -1036,6 +1076,8 @@ export default function ConsensusRouteHopMarker({
     pulseClockRef,
   ]);
 
+  useEffect(() => { commitEpochRef.current += 1; });
+
   useEffect(() => () => {
     geometry.dispose();
     material.dispose();
@@ -1163,14 +1205,16 @@ export default function ConsensusRouteHopMarker({
       ? consensusMemorySourceHandoffProgress(sourceHandoff, sourceHandoffNowSec)
       : 1;
     const agreementResponse = activeAgreementPlan.visibleSourceCount > 0
-      ? consensusMemoryCellResponse(
+      ? consensusMemoryCellResponseForFrame(
         focus,
         activeAgreementPlan.targetCellId,
         nowSec,
       )
       : null;
-    const agreementStrengths: number[] = [];
-    const agreementFocusScales: number[] = [];
+    const agreementStrengths = agreementStrengthsRef.current;
+    const agreementFocusScales = agreementFocusScalesRef.current;
+    agreementStrengths.length = 0;
+    agreementFocusScales.length = 0;
     for (
       let index = 0;
       index < CONSENSUS_ROUTE_HOP_AGREEMENT_CAP;
@@ -1178,9 +1222,7 @@ export default function ConsensusRouteHopMarker({
     ) {
       const tick = activeAgreementPlan.ticks[index] ?? null;
       const tickStrength = tick
-        ? agreementResponse?.evidence?.find(
-          (evidence) => evidence.sourceId === tick.sourceId,
-        )?.convergence ?? 0
+        ? agreementConvergence(agreementResponse, tick.sourceId)
         : 0;
       const agreementFocusScale = tick && handoffControlsAgreement
         ? consensusMemorySourceHandoffEvidenceScale(
@@ -1235,101 +1277,297 @@ export default function ConsensusRouteHopMarker({
     }
 
     if (chipRef.current) {
+      // Every value below used to be republished each frame, which a held
+      // recall turned into ~25 pointless attribute writes per frame. The
+      // ledger keeps the last published value and writes only real changes:
+      // state values immediately, scalar progress on a 1e-2 quantum plus an
+      // exact write once it settles, joined series component-wise at full
+      // precision. Nothing in the repo reads these — they are the live
+      // session's window into the chip — so the contract is only that a
+      // reader sees the same figures, not that they are rewritten.
+      const chip = chipRef.current;
+      const ledger = chipLedgerRef.current;
+      const data = chip.dataset;
+      // React remounts this chip on every pulse key, and any commit rewrites
+      // the markup's own attributes over ours: both void the ledger.
+      frameDatasetBind(ledger, chip, commitEpochRef.current);
       const segment = motion.segment;
-      chipRef.current.dataset.memoryRouteHopMotion = segment
-        ? 'moving'
-        : 'settled';
-      chipRef.current.dataset.memoryRouteHopMotionProgress = segment
-        ? Math.min(1, segment.elapsedSeconds / segment.durationSeconds).toFixed(3)
-        : '1.000';
-      chipRef.current.dataset.memoryRouteHopPulse = pulseFrame.state;
-      chipRef.current.dataset.memoryRouteHopPulseKey = pulseClock?.key ?? 'none';
-      chipRef.current.dataset.memoryRouteHopPulseProgress =
-        pulseFrame.progress.toFixed(3);
-      chipRef.current.dataset.memoryRouteHopPulseStrength =
-        pulseFrame.strength.toFixed(3);
-      chipRef.current.dataset.memoryRouteHopAddress = addressFrame.state;
-      chipRef.current.dataset.memoryRouteHopAddressReveal =
-        addressFrame.reveal.toFixed(3);
-      chipRef.current.dataset.memoryRouteHopAddressStrength =
-        addressFrame.strength.toFixed(3);
-      chipRef.current.dataset.memoryRouteHopAngle = tangent
-        ? material.uniforms.uRouteAngle.value.toFixed(3)
-        : 'none';
-      chipRef.current.dataset.memoryRouteHopLatch = motion.latch
-        ? 'closing'
-        : motion.latchedCellId === motion.destination.spatial.cell.id
-          ? 'sealed'
-          : 'idle';
-      chipRef.current.dataset.memoryRouteHopLatchProgress = motion.latch
-        ? Math.min(
+      frameDatasetWrite(
+        ledger,
+        data,
+        'memoryRouteHopMotion',
+        segment ? 'moving' : 'settled',
+      );
+      frameDatasetWriteNumber(
+        ledger,
+        data,
+        'memoryRouteHopMotionProgress',
+        segment
+          ? Math.min(1, segment.elapsedSeconds / segment.durationSeconds)
+          : 1,
+        3,
+        0.01,
+      );
+      frameDatasetWrite(ledger, data, 'memoryRouteHopPulse', pulseFrame.state);
+      frameDatasetWrite(
+        ledger,
+        data,
+        'memoryRouteHopPulseKey',
+        pulseClock?.key ?? 'none',
+      );
+      frameDatasetWriteNumber(
+        ledger,
+        data,
+        'memoryRouteHopPulseProgress',
+        pulseFrame.progress,
+        3,
+        0.01,
+      );
+      frameDatasetWriteNumber(
+        ledger,
+        data,
+        'memoryRouteHopPulseStrength',
+        pulseFrame.strength,
+        3,
+        0.01,
+      );
+      frameDatasetWrite(ledger, data, 'memoryRouteHopAddress', addressFrame.state);
+      frameDatasetWriteNumber(
+        ledger,
+        data,
+        'memoryRouteHopAddressReveal',
+        addressFrame.reveal,
+        3,
+        0.01,
+      );
+      frameDatasetWriteNumber(
+        ledger,
+        data,
+        'memoryRouteHopAddressStrength',
+        addressFrame.strength,
+        3,
+        0.01,
+      );
+      if (tangent) {
+        frameDatasetWriteNumber(
+          ledger,
+          data,
+          'memoryRouteHopAngle',
+          material.uniforms.uRouteAngle.value,
+          3,
+          0.01,
+        );
+      } else {
+        frameDatasetWrite(ledger, data, 'memoryRouteHopAngle', 'none');
+      }
+      const sealed = motion.latchedCellId === motion.destination.spatial.cell.id;
+      frameDatasetWrite(
+        ledger,
+        data,
+        'memoryRouteHopLatch',
+        motion.latch ? 'closing' : sealed ? 'sealed' : 'idle',
+      );
+      frameDatasetWriteNumber(
+        ledger,
+        data,
+        'memoryRouteHopLatchProgress',
+        motion.latch
+          ? Math.min(
             1,
             motion.latch.elapsedSeconds / motion.latch.durationSeconds,
-          ).toFixed(3)
-        : motion.latchedCellId === motion.destination.spatial.cell.id
-          ? '1.000'
-          : '0.000';
-      chipRef.current.dataset.memoryRouteHopAgreementCount = String(
+          )
+          : sealed ? 1 : 0,
+        3,
+        0.01,
+      );
+      frameDatasetWriteNumber(
+        ledger,
+        data,
+        'memoryRouteHopAgreementCount',
         activeAgreementPlan.visibleSourceCount,
+        0,
+        1,
       );
-      chipRef.current.dataset.memoryRouteHopAgreementTotal = String(
+      frameDatasetWriteNumber(
+        ledger,
+        data,
+        'memoryRouteHopAgreementTotal',
         activeAgreementPlan.routedSourceCount,
+        0,
+        1,
       );
-      chipRef.current.dataset.memoryRouteHopAgreementHidden = String(
+      frameDatasetWriteNumber(
+        ledger,
+        data,
+        'memoryRouteHopAgreementHidden',
         activeAgreementPlan.hiddenSourceCount,
+        0,
+        1,
       );
-      chipRef.current.dataset.memoryRouteHopAgreementSources =
-        activeAgreementPlan.ticks.map(({ sourceId }) => sourceId).join(',');
-      chipRef.current.dataset.memoryRouteHopAgreementArrivals =
-        activeAgreementPlan.ticks
-          .map(({ arrivalProgress }) => arrivalProgress.toFixed(3))
-          .join(',');
-      chipRef.current.dataset.memoryRouteHopAgreementStrengths =
-        agreementStrengths.map((value) => value.toFixed(3)).join(',');
-      chipRef.current.dataset.memoryRouteHopAgreementFocus =
-        agreementEmphasis.sourceId === null
-          ? 'none'
-          : String(agreementEmphasis.sourceId);
-      chipRef.current.dataset.memoryRouteHopAgreementFocusScales =
-        agreementFocusScales.map((value) => value.toFixed(3)).join(',');
-      chipRef.current.dataset.memoryRouteHopSourceHandoff =
-        sourceHandoffActive ? 'active' : 'settled';
-      chipRef.current.dataset.memoryRouteHopSourceHandoffProgress =
-        handoffProgress.toFixed(3);
+      const ticks = activeAgreementPlan.ticks;
+      const tickSourceIds = tickSourceIdsRef.current;
+      const tickArrivals = tickArrivalsRef.current;
+      tickSourceIds.length = ticks.length;
+      tickArrivals.length = ticks.length;
+      for (let index = 0; index < ticks.length; index += 1) {
+        tickSourceIds[index] = ticks[index].sourceId;
+        tickArrivals[index] = ticks[index].arrivalProgress;
+      }
+      frameDatasetWriteVector(
+        ledger,
+        data,
+        'memoryRouteHopAgreementSources',
+        tickSourceIds,
+        0,
+        1,
+      );
+      frameDatasetWriteVector(
+        ledger,
+        data,
+        'memoryRouteHopAgreementArrivals',
+        tickArrivals,
+        3,
+        0.001,
+      );
+      frameDatasetWriteVector(
+        ledger,
+        data,
+        'memoryRouteHopAgreementStrengths',
+        agreementStrengths,
+        3,
+        0.001,
+      );
+      if (agreementEmphasis.sourceId === null) {
+        frameDatasetWrite(ledger, data, 'memoryRouteHopAgreementFocus', 'none');
+      } else {
+        frameDatasetWriteNumber(
+          ledger,
+          data,
+          'memoryRouteHopAgreementFocus',
+          agreementEmphasis.sourceId,
+          0,
+          1,
+        );
+      }
+      frameDatasetWriteVector(
+        ledger,
+        data,
+        'memoryRouteHopAgreementFocusScales',
+        agreementFocusScales,
+        3,
+        0.001,
+      );
+      frameDatasetWrite(
+        ledger,
+        data,
+        'memoryRouteHopSourceHandoff',
+        sourceHandoffActive ? 'active' : 'settled',
+      );
+      frameDatasetWriteNumber(
+        ledger,
+        data,
+        'memoryRouteHopSourceHandoffProgress',
+        handoffProgress,
+        3,
+        0.01,
+      );
       const retainedSourceHandoffAudit = sourceHandoffAuditRef.current;
       const sourceHandoffAudit = retainedSourceHandoffAudit?.traceKey
         === motion.destination.spatial.focus.traceKey
         ? retainedSourceHandoffAudit
         : null;
       if (sourceHandoffActive) {
-        chipRef.current.dataset.memoryRouteHopSourceHandoffFrom = String(
+        frameDatasetWriteNumber(
+          ledger,
+          data,
+          'memoryRouteHopSourceHandoffFrom',
           sourceHandoff.from.sourceId,
+          0,
+          1,
         );
-        chipRef.current.dataset.memoryRouteHopSourceHandoffTo = String(
+        frameDatasetWriteNumber(
+          ledger,
+          data,
+          'memoryRouteHopSourceHandoffTo',
           sourceHandoff.to.sourceId,
+          0,
+          1,
         );
       } else if (sourceHandoffAudit) {
-        chipRef.current.dataset.memoryRouteHopSourceHandoffFrom = String(
+        frameDatasetWriteNumber(
+          ledger,
+          data,
+          'memoryRouteHopSourceHandoffFrom',
           sourceHandoffAudit.fromSourceId,
+          0,
+          1,
         );
-        chipRef.current.dataset.memoryRouteHopSourceHandoffTo = String(
+        frameDatasetWriteNumber(
+          ledger,
+          data,
+          'memoryRouteHopSourceHandoffTo',
           sourceHandoffAudit.toSourceId,
+          0,
+          1,
         );
       } else {
-        delete chipRef.current.dataset.memoryRouteHopSourceHandoffFrom;
-        delete chipRef.current.dataset.memoryRouteHopSourceHandoffTo;
+        frameDatasetDelete(ledger, data, 'memoryRouteHopSourceHandoffFrom');
+        frameDatasetDelete(ledger, data, 'memoryRouteHopSourceHandoffTo');
       }
-      chipRef.current.dataset.memoryRouteHopSourceHandoffObservedFrames = String(
+      frameDatasetWriteNumber(
+        ledger,
+        data,
+        'memoryRouteHopSourceHandoffObservedFrames',
         sourceHandoffAudit?.frames ?? 0,
+        0,
+        1,
       );
-      chipRef.current.dataset.memoryRouteHopSourceHandoffObservedRange =
-        sourceHandoffAudit
-          ? `${sourceHandoffAudit.minProgress.toFixed(3)},${sourceHandoffAudit.maxProgress.toFixed(3)}`
-          : 'none';
-      chipRef.current.dataset.memoryRouteHopSourceHandoffMidProgress =
-        sourceHandoffAudit?.midProgress.toFixed(3) ?? 'none';
-      chipRef.current.dataset.memoryRouteHopSourceHandoffMidAgreementScales =
-        sourceHandoffAudit?.midAgreementScales ?? 'none';
+      if (sourceHandoffAudit) {
+        const observedRange = handoffObservedRangeRef.current;
+        observedRange[0] = sourceHandoffAudit.minProgress;
+        observedRange[1] = sourceHandoffAudit.maxProgress;
+        frameDatasetWriteVector(
+          ledger,
+          data,
+          'memoryRouteHopSourceHandoffObservedRange',
+          observedRange,
+          3,
+          0.001,
+        );
+        frameDatasetWriteNumber(
+          ledger,
+          data,
+          'memoryRouteHopSourceHandoffMidProgress',
+          sourceHandoffAudit.midProgress,
+          3,
+          0.001,
+        );
+        frameDatasetWrite(
+          ledger,
+          data,
+          'memoryRouteHopSourceHandoffMidAgreementScales',
+          sourceHandoffAudit.midAgreementScales,
+        );
+      } else {
+        frameDatasetWrite(
+          ledger,
+          data,
+          'memoryRouteHopSourceHandoffObservedRange',
+          'none',
+        );
+        frameDatasetWrite(
+          ledger,
+          data,
+          'memoryRouteHopSourceHandoffMidProgress',
+          'none',
+        );
+        frameDatasetWrite(
+          ledger,
+          data,
+          'memoryRouteHopSourceHandoffMidAgreementScales',
+          'none',
+        );
+      }
     }
   });
 
@@ -1342,7 +1580,18 @@ export default function ConsensusRouteHopMarker({
     material.uniforms.uTime.value = reducedMotion ? 0 : simClock.elapsedSec;
     material.uniforms.uViewportHeight.value = state.size.height;
     material.uniforms.uPixelRatio.value = state.viewport.dpr ?? 1;
-    if (chipRef.current) chipRef.current.style.opacity = strength.toFixed(3);
+    if (chipRef.current) {
+      const ledger = chipOpacityLedgerRef.current;
+      frameDatasetBind(ledger, chipRef.current, commitEpochRef.current);
+      frameStyleWriteNumber(
+        ledger,
+        chipRef.current.style,
+        'opacity',
+        strength,
+        3,
+        0.001,
+      );
+    }
   });
 
   if (!spatial || !presentation) return null;

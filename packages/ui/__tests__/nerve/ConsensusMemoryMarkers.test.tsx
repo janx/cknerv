@@ -22,9 +22,33 @@ const simFrameMock = vi.hoisted(() => ({
   callback: null as null | (() => void),
 }));
 
+const layoutCalls = vi.hoisted(() => ({ solves: 0, placements: 0 }));
+
 vi.mock('@react-three/drei', () => ({
   Html: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }));
+
+// Counting pass-through over the real solver, to pin which cadence runs it.
+vi.mock('../../src/nerve/consensusMemoryLayout', async (importOriginal) => {
+  const actual = await importOriginal<
+    typeof import('../../src/nerve/consensusMemoryLayout')
+  >();
+  return {
+    ...actual,
+    layoutConsensusMemorySourceLabels: (
+      ...args: Parameters<typeof actual.layoutConsensusMemorySourceLabels>
+    ) => {
+      layoutCalls.solves += 1;
+      return actual.layoutConsensusMemorySourceLabels(...args);
+    },
+    placeConsensusMemoryLabel: (
+      ...args: Parameters<typeof actual.placeConsensusMemoryLabel>
+    ) => {
+      layoutCalls.placements += 1;
+      return actual.placeConsensusMemoryLabel(...args);
+    },
+  };
+});
 
 vi.mock('../../src/tweaks/useSimFrame', () => ({
   useSimFrame: (callback: () => void) => {
@@ -144,6 +168,43 @@ describe('ConsensusMemoryMarkers', () => {
     act(() => simFrameMock.callback?.());
     expect(rectSpy.mock.calls.length).toBe(rectBaseline);
     expect(querySpy.mock.calls.length).toBe(queryBaseline);
+  });
+
+  it('solves label placement on the measure cadence and reuses it in between', () => {
+    const cache = emptyCellsCache();
+    cache.cells.set(8, cell(8, 'a'));
+    cache.cells.set(5, cell(5, 'b'));
+    const nowSpy = vi.spyOn(performance, 'now').mockReturnValue(40_000);
+
+    const { container } = render(
+      <CellGalaxyProvider value={cache}>
+        <ConsensusMemoryMarkers focus={focus()} />
+      </CellGalaxyProvider>,
+    );
+    layoutCalls.solves = 0;
+    layoutCalls.placements = 0;
+
+    act(() => simFrameMock.callback?.());
+    expect(layoutCalls.solves).toBe(1);
+    expect(layoutCalls.placements).toBe(2);
+    const source = container.querySelector<HTMLElement>(
+      '[data-memory-endpoint="source"]',
+    )!;
+    const side = source.dataset.memoryLabelSide;
+    expect(side).toBeDefined();
+
+    // Nothing the solver reads can move inside the window, so the frame loop
+    // reuses the placement rather than re-deriving it.
+    act(() => simFrameMock.callback?.());
+    act(() => simFrameMock.callback?.());
+    expect(layoutCalls.solves).toBe(1);
+    expect(layoutCalls.placements).toBe(2);
+    expect(source.dataset.memoryLabelSide).toBe(side);
+
+    nowSpy.mockReturnValue(40_250);
+    act(() => simFrameMock.callback?.());
+    expect(layoutCalls.solves).toBe(2);
+    expect(layoutCalls.placements).toBe(4);
   });
 
   it('remeasures immediately when the marker set changes inside the window', () => {

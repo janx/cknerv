@@ -1,11 +1,11 @@
-import { useMemo, useRef, type RefObject } from 'react';
+import { useEffect, useMemo, useRef, type RefObject } from 'react';
 import { Html } from '@react-three/drei';
 import type { Cell } from '@cknerv/types';
 import { useCellGalaxy } from '../hooks/cellGalaxyContext';
 import { useSimClock } from '../tweaks/SimClockScope';
 import { useSimFrame } from '../tweaks/useSimFrame';
 import {
-  consensusMemoryCellResponse,
+  consensusMemoryCellResponseForFrame,
   consensusMemoryTraceRouteForTarget,
   consensusMemoryTraceFocusStrength,
   consensusMemoryTraceSourceStrength,
@@ -32,6 +32,16 @@ import {
   CONSENSUS_MEMORY_NEAR_PRESENTATION,
   type ConsensusMemoryDistancePresentation,
 } from './consensusMemoryDistancePresentation';
+import {
+  frameDatasetBind,
+  frameDatasetDelete,
+  frameDatasetWrite,
+  frameDatasetWriteNumber,
+  frameLedgerMarkNumber,
+  frameStyleWriteNumber,
+  makeFrameDatasetLedger,
+  type FrameDatasetLedger,
+} from './frameDatasetLedger';
 
 type ConsensusMemoryEndpointRole = 'source' | 'target';
 
@@ -122,6 +132,111 @@ interface MarkerScreenMeasurement {
   height: number;
 }
 
+/** Everything the per-frame writes need from one solved label placement. */
+interface MarkerLabelPlacement {
+  shift: number;
+  side: 'left' | 'right';
+}
+
+/**
+ * Place every endpoint label against the measured geometry, writing the
+ * result into `out` (index-parallel with `markers`; `null` where the marker
+ * has no measurement yet). Sources are laid out first so the record label
+ * yields to them, and each accepted placement becomes an obstacle for the
+ * ones after it.
+ *
+ * Extracted from the frame loop and driven by the measure cadence: it reads
+ * nothing that changes between measures.
+ */
+function solveMarkerLabelPlacements(
+  out: Array<MarkerLabelPlacement | null>,
+  markers: readonly MarkerRecord[],
+  measurements: ReadonlyArray<MarkerScreenMeasurement | null>,
+  obstacles: readonly ConsensusMemoryScreenRect[],
+  viewportWidth: number,
+  viewportHeight: number,
+): void {
+  out.length = markers.length;
+  for (let index = 0; index < markers.length; index += 1) out[index] = null;
+  const targetIndex = markers.findIndex((marker) => marker.role === 'target');
+  const targetMeasurement = targetIndex >= 0 ? measurements[targetIndex] : null;
+  const targetX = targetMeasurement?.x ?? null;
+  const targetY = targetMeasurement?.y ?? null;
+  const sourceBaseShifts = new Map<number, number>();
+  const sourceAnchors = markers.flatMap((marker, index) => {
+    const measurement = measurements[index];
+    if (!marker.source || !measurement) return [];
+    const preferredSide: 'left' | 'right' = targetX !== null
+      && measurement.x > targetX
+      ? 'right'
+      : 'left';
+    const baseShift = targetY === null
+      ? 0
+      : measurement.y <= targetY
+        ? -MEMORY_SOURCE_LABEL_RADIAL_SHIFT_PX
+        : MEMORY_SOURCE_LABEL_RADIAL_SHIFT_PX;
+    sourceBaseShifts.set(marker.source.id, baseShift);
+    const side = chooseConsensusMemoryLabelSide({
+      x: measurement.x,
+      y: measurement.y + baseShift,
+      width: measurement.width,
+      height: measurement.height,
+      preferredSide,
+      viewportWidth,
+      obstacles,
+      horizontalOffsetPx: MEMORY_SOURCE_COPY_OFFSET_PX,
+    });
+    return [{
+      id: marker.source.id,
+      x: side === 'left'
+        ? measurement.x - MEMORY_SOURCE_COPY_OFFSET_PX
+        : measurement.x + MEMORY_SOURCE_COPY_OFFSET_PX,
+      y: measurement.y + baseShift,
+      width: measurement.width,
+      side,
+    }];
+  });
+  const sourceShifts = layoutConsensusMemorySourceLabels(sourceAnchors);
+  const desiredShifts = markers.map((marker) => marker.source
+    ? (sourceBaseShifts.get(marker.source.id) ?? 0)
+      + (sourceShifts.get(marker.source.id) ?? 0)
+    : 42);
+  const placementObstacles = [...obstacles];
+  const placementOrder = markers
+    .map((marker, index) => ({
+      index,
+      source: Boolean(marker.source),
+      desiredY: (measurements[index]?.y ?? 0) + desiredShifts[index],
+    }))
+    .sort((a, b) => Number(b.source) - Number(a.source)
+      || a.desiredY - b.desiredY
+      || a.index - b.index);
+  for (const { index } of placementOrder) {
+    const marker = markers[index];
+    const measurement = measurements[index];
+    if (!measurement) continue;
+    const preferredSide: 'left' | 'right' = marker.source
+      ? (targetX !== null && measurement.x > targetX ? 'right' : 'left')
+      : (measurement.x > viewportWidth / 2 ? 'left' : 'right');
+    const placement = placeConsensusMemoryLabel({
+      x: measurement.x,
+      y: measurement.y,
+      width: measurement.width,
+      height: measurement.height,
+      preferredSide,
+      viewportWidth,
+      viewportHeight,
+      desiredShiftPx: desiredShifts[index],
+      obstacles: placementObstacles,
+      horizontalOffsetPx: marker.source
+        ? MEMORY_SOURCE_COPY_OFFSET_PX
+        : MEMORY_TARGET_COPY_OFFSET_PX,
+    });
+    out[index] = { shift: placement.shift, side: placement.side };
+    placementObstacles.push(placement.rect);
+  }
+}
+
 export type ConsensusMemoryRecordTransition =
   | 'native'
   | 'departing'
@@ -157,6 +272,15 @@ export default function ConsensusMemoryMarkers({
   const hudMeasureRef = useRef({ atMs: Number.NEGATIVE_INFINITY, width: -1, height: -1 });
   const markerMeasurementsRef = useRef<Array<MarkerScreenMeasurement | null>>([]);
   const measuredMarkersRef = useRef<MarkerRecord[] | null>(null);
+  /** Solver output, held between measures — see the solve block below. */
+  const placementsRef = useRef<Array<MarkerLabelPlacement | null>>([]);
+  /** One write-on-change ledger per marker slot. */
+  const markerLedgersRef = useRef<FrameDatasetLedger[]>([]);
+  // A commit rewrites the endpoint attributes from the markup, which is not
+  // always what the frame loop last published (the markup knows nothing about
+  // a running source handoff). Every commit therefore voids the ledgers.
+  const commitEpochRef = useRef(0);
+  useEffect(() => { commitEpochRef.current += 1; });
   const markers = useMemo<MarkerRecord[]>(() => {
     if (!focus) return [];
     const result: MarkerRecord[] = [];
@@ -200,13 +324,32 @@ export default function ConsensusMemoryMarkers({
     const distancePresentation = distancePresentationRef?.current
       ?? CONSENSUS_MEMORY_NEAR_PRESENTATION;
     const labelLod = distancePresentation.labelLod;
+    const ledgers = markerLedgersRef.current;
     markers.forEach((_, index) => {
       const node = markerRefs.current[index];
-      if (node) {
-        node.dataset.memoryDistanceLod = labelLod;
-        node.dataset.memoryCameraDistance =
-          distancePresentation.cameraDistance.toFixed(1);
-      }
+      if (!node) return;
+      const ledger = ledgers[index] ?? (ledgers[index] = makeFrameDatasetLedger());
+      // A remounted marker — or any commit — carries the markup's own
+      // attributes again, so the ledger forgets what it published.
+      frameDatasetBind(ledger, node, commitEpochRef.current);
+      const lodChanged = frameDatasetWrite(
+        ledger,
+        node.dataset,
+        'memoryDistanceLod',
+        labelLod,
+      );
+      frameDatasetWriteNumber(
+        ledger,
+        node.dataset,
+        'memoryCameraDistance',
+        distancePresentation.cameraDistance,
+        1,
+        0.1,
+      );
+      // The three copy layers are a pure function of the LOD, and a rebind
+      // reports as a change, so this covers a fresh element too. Display
+      // must settle BEFORE the measure block below reads any rect.
+      if (!lodChanged) return;
       const metadata = metadataRefs.current[index];
       if (metadata) metadata.style.display = labelLod === 'signal' ? 'none' : '';
       const sourceContent = sourceContentRefs.current[index];
@@ -222,6 +365,7 @@ export default function ConsensusMemoryMarkers({
     const viewportHeight = typeof window === 'undefined' ? 0 : window.innerHeight;
     const layoutNowMs = typeof performance === 'undefined' ? 0 : performance.now();
     const hudMeasure = hudMeasureRef.current;
+    let measured = false;
     if (
       typeof document !== 'undefined'
       // No markers → nobody consumes the rects, so skip the forced-layout reads
@@ -271,91 +415,32 @@ export default function ConsensusMemoryMarkers({
         width: viewportWidth,
         height: viewportHeight,
       };
+      measured = true;
     }
-    const obstacles = hudRectsRef.current;
-    const measurements = markerMeasurementsRef.current;
-    const targetIndex = markers.findIndex((marker) => marker.role === 'target');
-    const targetMeasurement = targetIndex >= 0 ? measurements[targetIndex] : null;
-    const targetX = targetMeasurement?.x ?? null;
-    const targetY = targetMeasurement?.y ?? null;
-    const sourceBaseShifts = new Map<number, number>();
-    const sourceAnchors = markers.flatMap((marker, index) => {
-      const measurement = measurements[index];
-      if (!marker.source || !measurement) return [];
-      const preferredSide: 'left' | 'right' = targetX !== null
-        && measurement.x > targetX
-        ? 'right'
-        : 'left';
-      const baseShift = targetY === null
-        ? 0
-        : measurement.y <= targetY
-          ? -MEMORY_SOURCE_LABEL_RADIAL_SHIFT_PX
-          : MEMORY_SOURCE_LABEL_RADIAL_SHIFT_PX;
-      sourceBaseShifts.set(marker.source.id, baseShift);
-      const side = chooseConsensusMemoryLabelSide({
-        x: measurement.x,
-        y: measurement.y + baseShift,
-        width: measurement.width,
-        height: measurement.height,
-        preferredSide,
-        viewportWidth,
-        obstacles,
-        horizontalOffsetPx: MEMORY_SOURCE_COPY_OFFSET_PX,
-      });
-      return [{
-        id: marker.source.id,
-        x: side === 'left'
-          ? measurement.x - MEMORY_SOURCE_COPY_OFFSET_PX
-          : measurement.x + MEMORY_SOURCE_COPY_OFFSET_PX,
-        y: measurement.y + baseShift,
-        width: measurement.width,
-        side,
-      }];
-    });
-    const sourceShifts = layoutConsensusMemorySourceLabels(sourceAnchors);
-    const desiredShifts = markers.map((marker) => marker.source
-      ? (sourceBaseShifts.get(marker.source.id) ?? 0)
-        + (sourceShifts.get(marker.source.id) ?? 0)
-      : 42);
-    const placements = new Map<number, ReturnType<typeof placeConsensusMemoryLabel>>();
-    const placementObstacles = [...obstacles];
-    const placementOrder = markers
-      .map((marker, index) => ({
-        index,
-        source: Boolean(marker.source),
-        desiredY: (measurements[index]?.y ?? 0) + desiredShifts[index],
-      }))
-      .sort((a, b) => Number(b.source) - Number(a.source)
-        || a.desiredY - b.desiredY
-        || a.index - b.index);
-    for (const { index } of placementOrder) {
-      const marker = markers[index];
-      const measurement = measurements[index];
-      if (!measurement) continue;
-      const preferredSide: 'left' | 'right' = marker.source
-        ? (targetX !== null && measurement.x > targetX ? 'right' : 'left')
-        : (measurement.x > viewportWidth / 2 ? 'left' : 'right');
-      const placement = placeConsensusMemoryLabel({
-        x: measurement.x,
-        y: measurement.y,
-        width: measurement.width,
-        height: measurement.height,
-        preferredSide,
+    // Every input the label solver reads — endpoint rects, hud obstacles,
+    // viewport, marker set — is refreshed only in the block above, so its
+    // output cannot move between measures. Solving per frame re-derived the
+    // same answer at frame rate (two Maps, four arrays and a placement object
+    // per marker each time); it now runs on the same ≤4Hz cadence and the
+    // frame loop reads the cached placements.
+    const placements = placementsRef.current;
+    if (measured) {
+      solveMarkerLabelPlacements(
+        placements,
+        markers,
+        markerMeasurementsRef.current,
+        hudRectsRef.current,
         viewportWidth,
         viewportHeight,
-        desiredShiftPx: desiredShifts[index],
-        obstacles: placementObstacles,
-        horizontalOffsetPx: marker.source
-          ? MEMORY_SOURCE_COPY_OFFSET_PX
-          : MEMORY_TARGET_COPY_OFFSET_PX,
-      });
-      placements.set(index, placement);
-      placementObstacles.push(placement.rect);
+      );
     }
-
     markers.forEach((marker, index) => {
       const node = markerRefs.current[index];
       if (!node) return;
+      const ledger = ledgers[index] ?? (ledgers[index] = makeFrameDatasetLedger());
+      // Bound already by the LOD pass above; this only reports whether that
+      // pass found a fresh element or commit, which has to be written in full.
+      const rebound = frameDatasetBind(ledger, node, commitEpochRef.current);
       const sourceOpacity = marker.source
         ? consensusMemoryTraceSourceStrength(marker.source, nowSec)
         : 1;
@@ -374,54 +459,127 @@ export default function ConsensusMemoryMarkers({
             ? 'arriving'
             : null
         : null;
-      node.style.opacity = (
-        focusOpacity * sourceOpacity * evidenceScale
-      ).toFixed(3);
-      node.dataset.memoryRecordTransition = resolvedRecordTransition;
-      node.dataset.memoryRecordBridge = (
-        resolvedRecordTransition === 'departing'
-        || resolvedRecordTransition === 'arriving'
-      ) ? 'independent' : 'none';
-      node.dataset.memoryEvidenceFocus = marker.source
-        ? handoffRole
-          ?? (evidenceFocusSourceId === null
-            ? 'idle'
-            : marker.source.id === evidenceFocusSourceId
-              ? 'active'
-              : 'passive')
-        : evidenceFocusSourceId === null ? 'idle' : 'context';
-      node.dataset.memorySourceHandoff = handoffRole ?? 'idle';
-      node.dataset.memorySourceHandoffProgress = handoffProgress.toFixed(3);
+      frameStyleWriteNumber(
+        ledger,
+        node.style,
+        'opacity',
+        focusOpacity * sourceOpacity * evidenceScale,
+        3,
+        0.001,
+      );
+      frameDatasetWrite(
+        ledger,
+        node.dataset,
+        'memoryRecordTransition',
+        resolvedRecordTransition,
+      );
+      frameDatasetWrite(
+        ledger,
+        node.dataset,
+        'memoryRecordBridge',
+        (
+          resolvedRecordTransition === 'departing'
+          || resolvedRecordTransition === 'arriving'
+        ) ? 'independent' : 'none',
+      );
+      frameDatasetWrite(
+        ledger,
+        node.dataset,
+        'memoryEvidenceFocus',
+        marker.source
+          ? handoffRole
+            ?? (evidenceFocusSourceId === null
+              ? 'idle'
+              : marker.source.id === evidenceFocusSourceId
+                ? 'active'
+                : 'passive')
+          : evidenceFocusSourceId === null ? 'idle' : 'context',
+      );
+      frameDatasetWrite(
+        ledger,
+        node.dataset,
+        'memorySourceHandoff',
+        handoffRole ?? 'idle',
+      );
+      frameDatasetWriteNumber(
+        ledger,
+        node.dataset,
+        'memorySourceHandoffProgress',
+        handoffProgress,
+        3,
+        0.01,
+      );
       if (handoffActive) {
-        node.dataset.memorySourceHandoffFrom = String(sourceHandoff.from.sourceId);
-        node.dataset.memorySourceHandoffTo = String(sourceHandoff.to.sourceId);
+        frameDatasetWriteNumber(
+          ledger,
+          node.dataset,
+          'memorySourceHandoffFrom',
+          sourceHandoff.from.sourceId,
+          0,
+          1,
+        );
+        frameDatasetWriteNumber(
+          ledger,
+          node.dataset,
+          'memorySourceHandoffTo',
+          sourceHandoff.to.sourceId,
+          0,
+          1,
+        );
       } else {
-        delete node.dataset.memorySourceHandoffFrom;
-        delete node.dataset.memorySourceHandoffTo;
+        frameDatasetDelete(ledger, node.dataset, 'memorySourceHandoffFrom');
+        frameDatasetDelete(ledger, node.dataset, 'memorySourceHandoffTo');
       }
-      const cellResponse = consensusMemoryCellResponse(focus, marker.cell.id, nowSec);
-      node.dataset.memoryCellPhase = (cellResponse?.phase ?? 0).toFixed(3);
-      node.dataset.memoryCellConvergence = (cellResponse?.convergence ?? 0).toFixed(3);
-      const measurement = measurements[index];
-      if (!measurement) return;
-      const placement = placements.get(index);
+      const cellResponse = consensusMemoryCellResponseForFrame(
+        focus,
+        marker.cell.id,
+        nowSec,
+      );
+      frameDatasetWriteNumber(
+        ledger,
+        node.dataset,
+        'memoryCellPhase',
+        cellResponse?.phase ?? 0,
+        3,
+        0.01,
+      );
+      frameDatasetWriteNumber(
+        ledger,
+        node.dataset,
+        'memoryCellConvergence',
+        cellResponse?.convergence ?? 0,
+        3,
+        0.01,
+      );
+      const placement = placements[index];
       if (!placement) return;
       const { shift, side } = placement;
+      // Emphasis follows the focus, not the layout, so it stays per-frame —
+      // guarded on the flag so the drop-shadow string is built only when it
+      // actually flips.
+      const emphasized = Boolean(marker.source) && (
+        evidenceFocusSourceId === marker.source?.id || handoffRole !== null
+      );
+      if (frameLedgerMarkNumber(ledger, 'emphasis', emphasized ? 1 : 0)) {
+        const emphasisColor = marker.source
+          ? consensusMemoryEvidenceCssColor(marker.sourceIndex)
+          : '#8FF7FF';
+        node.style.filter = emphasized
+          ? `drop-shadow(0 0 11px ${emphasisColor}aa)`
+          : `drop-shadow(0 0 7px ${emphasisColor}66)`;
+      }
+      // Everything below is a pure function of the solved placement, which
+      // only moves on a measure tick.
+      if (!measured && !rebound) return;
+      const color = marker.source
+        ? consensusMemoryEvidenceCssColor(marker.sourceIndex)
+        : '#8FF7FF';
       node.dataset.memoryLabelSide = side;
       node.dataset.memoryLabelShift = shift.toFixed(1);
       node.style.flexDirection = side === 'left' ? 'row-reverse' : 'row';
       node.style.transform = side === 'left'
         ? 'translate(calc(-100% + 17px), -50%)'
         : 'translate(-17px, -50%)';
-
-      const color = marker.source
-        ? consensusMemoryEvidenceCssColor(marker.sourceIndex)
-        : '#8FF7FF';
-      node.style.filter = marker.source && (
-        evidenceFocusSourceId === marker.source.id || handoffRole !== null
-      )
-        ? `drop-shadow(0 0 11px ${color}aa)`
-        : `drop-shadow(0 0 7px ${color}66)`;
       const copy = copyRefs.current[index];
       if (copy) {
         copy.style.padding = side === 'left' ? '3px 7px 3px 0' : '3px 0 3px 7px';
