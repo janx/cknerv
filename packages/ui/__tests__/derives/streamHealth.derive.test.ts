@@ -64,6 +64,19 @@ describe('deriveStreamHealthSummary', () => {
     expect(formatStreamChannels(summary.affectedChannels)).toBe('SEMANTICS');
   });
 
+  it('times the frozen channel, not a live one whose stamp stopped advancing', () => {
+    // A live tracker publishes lifecycle changes only, so `chain`/`cells` still
+    // carry the stamp from the instant they went live — here, session start.
+    // The banner must report how long SEMANTICS has been silent.
+    const summary = deriveStreamHealthSummary({
+      chain: health('live', 1_000),
+      cells: health('live', 1_200),
+      semantics: health('stale', 9_000, 2),
+    }, 10_000);
+
+    expect(summary.lastMessageAgeMs).toBe(1_000);
+  });
+
   it('behaves identically with the optional channel absent or undefined', () => {
     const twoChannels = deriveStreamHealthSummary({
       chain: health('live', 9_000),

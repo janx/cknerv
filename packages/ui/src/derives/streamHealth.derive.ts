@@ -48,15 +48,17 @@ export function deriveStreamHealthSummary(
     ),
     'live',
   );
-  const affectedChannels = phase === 'live'
-    ? []
-    : entries
-      .filter(([, health]) => health.phase !== 'live')
-      .map(([name]) => name);
-  const measured = entries
+  const interrupted = entries.filter(([, health]) => health.phase !== 'live');
+  const affectedChannels = interrupted.map(([name]) => name);
+  // Only an interrupted channel's silence is measurable: a live tracker
+  // publishes lifecycle changes only, so its stamp is frozen at the instant it
+  // went live and would drag the aggregate arbitrarily far back. With every
+  // channel live nothing renders the age, so the aggregate stands.
+  const measurable = interrupted.length > 0 ? interrupted : entries;
+  const measured = measurable
     .map(([, health]) => health.lastMessageAtMs)
     .filter((at): at is number => at !== null);
-  const lastMessageAgeMs = measured.length === entries.length
+  const lastMessageAgeMs = measured.length === measurable.length
     ? Math.max(0, nowMs - Math.min(...measured))
     : null;
   return {

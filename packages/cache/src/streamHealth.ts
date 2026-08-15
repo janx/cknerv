@@ -43,11 +43,6 @@ export interface StreamHealthTracker {
   stop: () => void;
 }
 
-/** Throttle for data/heartbeat freshness publishes (lifecycle transitions
- *  always publish immediately). HUD staleness reads at 1 Hz, so a finer
- *  cadence is invisible. */
-const MESSAGE_PUBLISH_MIN_INTERVAL_MS = 1000;
-
 /** Owns only lifecycle timing; the caller still owns the WebSocket itself. */
 export function createStreamHealthTracker(
   opts: StreamHealthOptions,
@@ -66,13 +61,18 @@ export function createStreamHealthTracker(
     reason: 'initial',
   };
 
-  let lastPublishAtMs = -Infinity;
-
   const publish = (next: StreamHealth) => {
     health = next;
-    lastPublishAtMs = now();
     opts.onHealth?.({ ...next });
   };
+
+  /** Phase, attempt and reason are the whole rendered surface of a health
+   *  object; `lastMessageAtMs` is deliberately excluded so a freshness-only
+   *  frame is not a lifecycle event. */
+  const lifecycleChanged = (next: StreamHealth) =>
+    next.phase !== health.phase
+    || next.attempt !== health.attempt
+    || next.reason !== health.reason;
 
   const clearStaleTimer = () => {
     if (staleTimer === null) return;
@@ -128,11 +128,15 @@ export function createStreamHealthTracker(
           : health.lastMessageAtMs === null && health.attempt <= 1
             ? 'connecting'
             : 'retrying';
-      publish({
+      // A socket usually opens into the phase `startAttempt` just announced
+      // (ordinary connect, retry, reopen while stale). Republishing the same
+      // triple would re-render every consumer for nothing.
+      const next: StreamHealth = {
         ...health,
         phase,
         reason: resyncing ? 'lagged' : health.reason,
-      });
+      };
+      if (lifecycleChanged(next)) publish(next);
       armStaleTimer();
     },
     message: (resyncing = false) => {
@@ -146,21 +150,14 @@ export function createStreamHealthTracker(
         lastMessageAtMs: receivedAtMs,
         reason: resyncing ? 'lagged' : null,
       };
-      // A live stream receives many frames per second; each publish lands in
-      // React state and re-renders every health consumer. When only the
-      // freshness stamp advanced, track it internally (the stale watchdog
-      // reads `health` directly) and publish at most once per second.
-      const lifecycleChanged = next.phase !== health.phase
-        || next.attempt !== health.attempt
-        || next.reason !== health.reason;
-      if (
-        lifecycleChanged
-        || receivedAtMs - lastPublishAtMs >= MESSAGE_PUBLISH_MIN_INTERVAL_MS
-      ) {
-        publish(next);
-      } else {
-        health = next;
-      }
+      // A live stream receives many frames per second and every publish lands
+      // in React state, re-rendering the whole consumer tree. While live the
+      // freshness stamp has no rendered output at all, so it stays internal:
+      // the stale watchdog reads `health` directly, and the next lifecycle
+      // publish carries the stamp as it stood then — which is exactly the
+      // "last frame" instant an age readout wants.
+      if (lifecycleChanged(next)) publish(next);
+      else health = next;
       armStaleTimer();
     },
     resyncing: () => {

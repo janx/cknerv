@@ -28,18 +28,18 @@ describe('createStreamHealthTracker', () => {
     now = 1_075;
     tracker.message();
 
+    // `opened` lands in the phase `startAttempt` already announced, so it adds
+    // no publish of its own.
     expect(states.map((state) => state.phase)).toEqual([
       'connecting',
       'connecting',
-      'connecting',
       'live',
-      'retrying',
       'retrying',
       'retrying',
       'live',
     ]);
-    expect(states[3].lastMessageAtMs).toBe(1_050);
-    expect(states[4].reason).toBe('closed');
+    expect(states[2].lastMessageAtMs).toBe(1_050);
+    expect(states[3].reason).toBe('closed');
     expect(states.at(-1)?.attempt).toBe(0);
   });
 
@@ -94,8 +94,7 @@ describe('createStreamHealthTracker', () => {
     tracker.opened(true);
     tracker.message();
 
-    expect(states.slice(-5).map((state) => state.phase)).toEqual([
-      'resyncing',
+    expect(states.slice(-4).map((state) => state.phase)).toEqual([
       'resyncing',
       'resyncing',
       'resyncing',
@@ -105,8 +104,8 @@ describe('createStreamHealthTracker', () => {
   });
 });
 
-describe('freshness publish throttling', () => {
-  it('publishes same-phase freshness at most once per second, transitions immediately', () => {
+describe('freshness stays off the publish channel', () => {
+  it('publishes nothing for a frame that only advances the stamp', () => {
     const states: StreamHealth[] = [];
     let now = 1_000;
     const tracker = createStreamHealthTracker({
@@ -116,23 +115,86 @@ describe('freshness publish throttling', () => {
 
     tracker.startAttempt();
     tracker.opened();
-    tracker.message(); // connecting → live: publishes
-    const livePublishes = () => states.filter((s) => s.phase === 'live');
-    expect(livePublishes()).toHaveLength(1);
+    tracker.message(); // connecting → live: a lifecycle change, publishes
+    const publishCount = states.length;
+    expect(states.at(-1)).toMatchObject({ phase: 'live', lastMessageAtMs: 1_000 });
 
-    now = 1_200;
-    tracker.message(); // same-phase freshness within 1s: suppressed
-    now = 1_400;
-    tracker.message(); // still suppressed
-    expect(livePublishes()).toHaveLength(1);
+    for (let i = 1; i <= 20; i += 1) {
+      now = 1_000 + i * 250;
+      tracker.message();
+    }
+    expect(states).toHaveLength(publishCount);
 
-    now = 2_100;
-    tracker.message(); // ≥1s since last publish: freshness republished
-    expect(livePublishes()).toHaveLength(2);
-    expect(livePublishes().at(-1)?.lastMessageAtMs).toBe(2_100);
+    now = 7_000;
+    tracker.closed(); // a real transition publishes, carrying the newest stamp
+    expect(states.at(-1)).toMatchObject({
+      phase: 'retrying',
+      reason: 'closed',
+      lastMessageAtMs: 6_000,
+    });
+  });
 
-    now = 2_150;
-    tracker.closed(); // lifecycle transition publishes immediately
-    expect(states.at(-1)?.phase).toBe('retrying');
+  it('publishes each lifecycle transition exactly once', () => {
+    const states: StreamHealth[] = [];
+    let now = 5_000;
+    const tracker = createStreamHealthTracker({
+      now: () => now,
+      onHealth: (health) => states.push(health),
+    }, () => {});
+
+    tracker.startAttempt();
+    tracker.opened();
+    states.length = 0; // the connect preamble is covered above
+    tracker.message(); // → live
+    now = 5_100;
+    tracker.message();
+    now = 5_200;
+    tracker.message();
+    tracker.resyncing(); // live → resyncing
+    now = 5_300;
+    tracker.message(true); // still resyncing: no transition
+    now = 5_400;
+    tracker.message(); // resyncing → live
+
+    expect(states.map((state) => state.phase)).toEqual([
+      'live',
+      'resyncing',
+      'live',
+    ]);
+  });
+
+  it('measures the stale watchdog from frames that were never published', () => {
+    vi.useFakeTimers();
+    const states: StreamHealth[] = [];
+    const onStale = vi.fn();
+    let now = 1_000;
+    const tracker = createStreamHealthTracker({
+      staleAfterMs: 1_000,
+      now: () => now,
+      onHealth: (health) => states.push(health),
+    }, onStale);
+
+    tracker.startAttempt();
+    tracker.opened();
+    tracker.message();
+
+    // Four suppressed frames spanning well past staleAfterMs: silence is
+    // measured from the internal stamp, not from the last publish.
+    for (let i = 1; i <= 4; i += 1) {
+      now = 1_000 + i * 400;
+      vi.advanceTimersByTime(400);
+      tracker.message();
+    }
+    expect(states.filter((state) => state.phase === 'live')).toHaveLength(1);
+    expect(onStale).not.toHaveBeenCalled();
+
+    now = 3_600;
+    vi.advanceTimersByTime(1_000);
+    expect(onStale).toHaveBeenCalledTimes(1);
+    expect(states.at(-1)).toMatchObject({
+      phase: 'stale',
+      reason: 'heartbeat_timeout',
+      lastMessageAtMs: 2_600,
+    });
   });
 });
