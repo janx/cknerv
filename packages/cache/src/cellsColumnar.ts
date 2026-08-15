@@ -1,8 +1,10 @@
 // Decoder for the columnar cell-galaxy snapshot — TS mirror of
 // `cknerv-core::projection::cells_columnar` (see that file for the layout
 // spec). One little-endian buffer: a 72-byte header, per-field columns
-// grouped by element width (f64, f32, u32, u8), an ASCII string region, and
-// a tail holding the tag dictionary and display provenance.
+// grouped by element width (f64, f32, u32, u16, u8), an ASCII string region,
+// and a tail holding the tag dictionary, the script dictionary and the
+// display provenance — in that order, each variable-length, all three read
+// with one cursor.
 //
 // Numeric decoding is ZERO-COPY: every column is a typed-array view over the
 // fetched ArrayBuffer, and the header orders groups widest-first so each view
@@ -19,13 +21,24 @@ import type {
   CellGalaxySnapshot,
   CellLinkRecord,
   CellViewStats,
+  HashType,
   LockKind,
+  ScriptId,
 } from '@cknerv/types';
 
-export const CELLS_COLUMNAR_VERSION = 2;
+export const CELLS_COLUMNAR_VERSION = 3;
 export const CELLS_COLUMNAR_HEADER_BYTES = 72;
+/** Byte offset of the u64 revision the SERVER patches into the header after
+ *  the projection encoded it (`projection_registry.rs`). Mirrored here so a
+ *  header reshuffle has to move both sides at once — a stale offset would
+ *  hand every reconnect a `?since=` cursor from the middle of another
+ *  field. */
+export const CELLS_COLUMNAR_REVISION_OFFSET = 8;
 /** tag_index value meaning "no tag". */
 export const CELLS_COLUMNAR_NO_TAG = 0xff;
+/** Script-ref value meaning "this cell carries no such script"; every other
+ *  ref is `dictionary index + 1`. */
+export const CELLS_COLUMNAR_NO_SCRIPT = 0;
 
 /** `display_mode` byte: absent / canonical / composed. */
 export const CELLS_COLUMNAR_DISPLAY_ABSENT = 0;
@@ -49,6 +62,14 @@ export const COLUMNAR_ASSET_KINDS: readonly AssetKind[] = [
   'dao',
   'spore',
   'other',
+];
+/** Same contract for the script dictionary's `hash_type` byte — MUST match
+ *  the Rust `hash_type_code` mapping. */
+export const COLUMNAR_HASH_TYPES: readonly HashType[] = [
+  'data',
+  'type',
+  'data1',
+  'data2',
 ];
 
 /** Zero-copy columnar view over one snapshot buffer. Row `i` of every column
@@ -83,8 +104,18 @@ export interface CellsColumnarView {
   tagIndex: Uint8Array;
   /** 1 = cell data beyond "0x". */
   dataFlag: Uint8Array;
+  /** Refs into `scripts`, offset by one; CELLS_COLUMNAR_NO_SCRIPT = the cell
+   *  carries no lock identity, which is what the JSON path spells as an
+   *  absent `lock_script` key. */
+  lockScriptRef: Uint16Array;
+  /** Same for `type_script`; absent on a plain cell. */
+  typeScriptRef: Uint16Array;
   /** Tag dictionary, first-seen order. */
   tags: readonly string[];
+  /** Script dictionary, first-seen order. Mainnet runs ~29 distinct pairs
+   *  across the whole galaxy, so rows share these objects rather than each
+   *  materializing its own — every consumer treats a `Cell` as immutable. */
+  scripts: readonly ScriptId[];
   /** Row `i`'s `out_point.tx_hash`. */
   txHash(row: number): string;
   contentHash(row: number): string;
@@ -137,7 +168,7 @@ export function decodeCellsColumnar(buffer: ArrayBuffer): CellsColumnarView {
   if (version !== CELLS_COLUMNAR_VERSION) {
     fail(`unsupported version ${version}`);
   }
-  const revision = Number(header.getBigUint64(8, true));
+  const revision = Number(header.getBigUint64(CELLS_COLUMNAR_REVISION_OFFSET, true));
   const lastPulseAtMs = Number(header.getBigUint64(16, true));
   const totalBirths = Number(header.getBigUint64(24, true));
   const totalDeaths = Number(header.getBigUint64(32, true));
@@ -155,7 +186,8 @@ export function decodeCellsColumnar(buffer: ArrayBuffer): CellsColumnarView {
   const f32Base = membersBase + 8 * memberCount;
   const u32Base = f32Base + 3 * 4 * n;
   const offsetsBase = u32Base + 2 * 4 * n;
-  const u8Base = offsetsBase + 3 * (n + 1) * 4;
+  const u16Base = offsetsBase + 3 * (n + 1) * 4;
+  const u8Base = u16Base + 2 * 2 * n;
   const stringsBase = u8Base + 4 * n;
   if (tailOffset < stringsBase || tailOffset > buffer.byteLength) {
     fail(`tail offset ${tailOffset} outside [${stringsBase}, ${buffer.byteLength}]`);
@@ -185,20 +217,32 @@ export function decodeCellsColumnar(buffer: ArrayBuffer): CellsColumnarView {
     cursor += length;
     return value;
   };
+  const tail = new DataView(buffer);
   const tags: string[] = [];
   const tagCount = bytes[cursor];
   cursor += 1;
   for (let i = 0; i < tagCount; i += 1) tags.push(shortString());
 
-  let display: CellsColumnarDisplay | null = null;
-  if (displayMode !== CELLS_COLUMNAR_DISPLAY_ABSENT) {
-    const tail = new DataView(buffer);
-    const updatedAtMs = Number(tail.getBigUint64(cursor, true));
-    const asOfBlock = Number(tail.getBigUint64(cursor + 8, true));
-    cursor += 16;
-    const source = shortString();
-    const asOfHash = shortString();
-    display = {
+  const scripts: ScriptId[] = [];
+  const scriptCount = tail.getUint16(cursor, true);
+  cursor += 2;
+  for (let i = 0; i < scriptCount; i += 1) {
+    const hashType = COLUMNAR_HASH_TYPES[bytes[cursor]] ?? 'data';
+    cursor += 1;
+    scripts.push({ code_hash: shortString(), hash_type: hashType });
+  }
+
+  // The provenance block is written whether or not there IS a display plane
+  // (an absent one writes zeros and two empty strings), because the sections
+  // length below is found by walking this tail rather than by an offset.
+  // Consuming it conditionally reads that length out of the middle of it.
+  const updatedAtMs = Number(tail.getBigUint64(cursor, true));
+  const asOfBlock = Number(tail.getBigUint64(cursor + 8, true));
+  cursor += 16;
+  const source = shortString();
+  const asOfHash = shortString();
+  const display: CellsColumnarDisplay | null =
+    displayMode === CELLS_COLUMNAR_DISPLAY_ABSENT ? null : {
       mode: displayMode === CELLS_COLUMNAR_DISPLAY_COMPOSED ? 'composed' : 'canonical',
       budgetCells,
       budgetNerveEdges,
@@ -210,9 +254,8 @@ export function decodeCellsColumnar(buffer: ArrayBuffer): CellsColumnarView {
       asOfBlock: asOfHash === '' ? null : asOfBlock,
       updatedAtMs,
     };
-  }
 
-  const sectionsLength = new DataView(buffer).getUint32(cursor, true);
+  const sectionsLength = tail.getUint32(cursor, true);
   cursor += 4;
   if (cursor + sectionsLength > buffer.byteLength) fail('tail sections truncated');
   const sections = JSON.parse(
@@ -244,7 +287,10 @@ export function decodeCellsColumnar(buffer: ArrayBuffer): CellsColumnarView {
     assetKind: new Uint8Array(buffer, u8Base + n, n),
     tagIndex: new Uint8Array(buffer, u8Base + 2 * n, n),
     dataFlag: new Uint8Array(buffer, u8Base + 3 * n, n),
+    lockScriptRef: new Uint16Array(buffer, u16Base, n),
+    typeScriptRef: new Uint16Array(buffer, u16Base + 2 * n, n),
     tags,
+    scripts,
     txHash: (row) => sliceAt(0, row),
     contentHash: (row) => sliceAt(1, row),
     dataHex: (row) => sliceAt(2, row),
@@ -261,6 +307,11 @@ export function decodeCellsColumnar(buffer: ArrayBuffer): CellsColumnarView {
 export function columnarCellAt(view: CellsColumnarView, i: number): Cell {
   const death = view.deathAtMs[i];
   const tagCode = view.tagIndex[i];
+  // A ref past the dictionary can only come from a buffer that is already
+  // wrong; read it as absent rather than as a key holding undefined, the
+  // same way the enum columns fall back to 'other'.
+  const lockScript = view.scripts[view.lockScriptRef[i] - 1];
+  const typeScript = view.scripts[view.typeScriptRef[i] - 1];
   return {
     id: view.id[i],
     born_at_ms: view.bornAtMs[i],
@@ -274,6 +325,12 @@ export function columnarCellAt(view: CellsColumnarView, i: number): Cell {
     content_hash: view.contentHash(i),
     lock_kind: COLUMNAR_LOCK_KINDS[view.lockKind[i]] ?? 'other',
     asset_kind: COLUMNAR_ASSET_KINDS[view.assetKind[i]] ?? 'other',
+    // Absent stays ABSENT rather than becoming an undefined-valued key: the
+    // JSON twin omits these entirely, and `cellContentEquals` compares them,
+    // so a key that exists on one path and not the other would false-negative
+    // identity for every scripted cell on every lagged resync.
+    ...(lockScript === undefined ? {} : { lock_script: lockScript }),
+    ...(typeScript === undefined ? {} : { type_script: typeScript }),
   };
 }
 

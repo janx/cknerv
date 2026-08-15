@@ -10,11 +10,12 @@
 // composition ids). Ids live exclusively in Float64Array columns and f64
 // hash keys — never 32-bit-pack a cell id.
 
-import type { AssetKind, Cell, LockKind } from '@cknerv/types';
+import type { AssetKind, Cell, LockKind, ScriptId } from '@cknerv/types';
 import type { CellGalaxyCache } from './cellsReducer';
 import {
   COLUMNAR_ASSET_KINDS,
   COLUMNAR_LOCK_KINDS,
+  CELLS_COLUMNAR_NO_SCRIPT,
   CELLS_COLUMNAR_NO_TAG,
   type CellsColumnarView,
 } from './cellsColumnar';
@@ -60,9 +61,16 @@ export interface CellField {
   txHash: string[];
   contentHash: string[];
   dataHex: string[];
+  /** Script identity, slot-indexed; `undefined` is the JSON path's absent
+   *  key. Dictionary-backed on the wire, so these hold a handful of shared
+   *  objects rather than one per row — never mutate one in place. */
+  lockScript: (ScriptId | undefined)[];
+  typeScript: (ScriptId | undefined)[];
   /** False after a columnar (numeric-only) hydration: string columns hold
-   *  placeholders until the JSON path or a detail fetch fills them. The
-   *  production sync path (from the Map cache) always leaves this true. */
+   *  placeholders until the JSON path or a detail fetch fills them. Script
+   *  identity is NOT in that bucket — it rides a dictionary, so the columnar
+   *  hydrator fills it like the tags. The production sync path (from the Map
+   *  cache) always leaves this true. */
   stringsHydrated: boolean;
   /** `cellsToken` of the cache generation this field last mirrored, or null
    *  before the first sync. */
@@ -113,6 +121,8 @@ export function createCellField(initialCapacity = 1024): CellField {
     txHash: new Array(capacity).fill(''),
     contentHash: new Array(capacity).fill(''),
     dataHex: new Array(capacity).fill(''),
+    lockScript: new Array(capacity).fill(undefined),
+    typeScript: new Array(capacity).fill(undefined),
     stringsHydrated: true,
     syncToken: null,
     freeSlots: [],
@@ -251,11 +261,15 @@ function growColumns(field: CellField, minCapacity: number): void {
   field.txHash.length = capacity;
   field.contentHash.length = capacity;
   field.dataHex.length = capacity;
+  field.lockScript.length = capacity;
+  field.typeScript.length = capacity;
   for (let i = field.capacity; i < capacity; i += 1) {
     field.tag[i] = null;
     field.txHash[i] = '';
     field.contentHash[i] = '';
     field.dataHex[i] = '';
+    field.lockScript[i] = undefined;
+    field.typeScript[i] = undefined;
   }
   field.capacity = capacity;
 }
@@ -302,6 +316,8 @@ function writeCellColumns(field: CellField, slot: number, cell: Cell): void {
   field.txHash[slot] = cell.out_point.tx_hash;
   field.contentHash[slot] = cell.content_hash;
   field.dataHex[slot] = cell.data_hex;
+  field.lockScript[slot] = cell.lock_script;
+  field.typeScript[slot] = cell.type_script;
 }
 
 /** Insert or overwrite `cell`; returns its slot. */
@@ -329,6 +345,8 @@ export function cellFieldRemove(field: CellField, id: number): boolean {
   field.txHash[slot] = '';
   field.contentHash[slot] = '';
   field.dataHex[slot] = '';
+  field.lockScript[slot] = undefined;
+  field.typeScript[slot] = undefined;
   field.generation[slot] += 1;
   field.freeSlots.push(slot);
   field.size -= 1;
@@ -344,6 +362,8 @@ export function clearCellField(field: CellField): void {
       field.txHash[slot] = '';
       field.contentHash[slot] = '';
       field.dataHex[slot] = '';
+      field.lockScript[slot] = undefined;
+      field.typeScript[slot] = undefined;
     }
     field.id[slot] = Number.NaN;
   }
@@ -362,6 +382,8 @@ export function clearCellField(field: CellField): void {
  *  boundaries only — never call per row per frame. */
 export function materializeCellAt(field: CellField, slot: number): Cell {
   const death = field.deathAtMs[slot];
+  const lockScript = field.lockScript[slot];
+  const typeScript = field.typeScript[slot];
   return {
     id: field.id[slot],
     born_at_ms: field.bornAtMs[slot],
@@ -378,6 +400,9 @@ export function materializeCellAt(field: CellField, slot: number): Cell {
     content_hash: field.contentHash[slot],
     lock_kind: COLUMNAR_LOCK_KINDS[field.lockKind[slot]] ?? 'other',
     asset_kind: COLUMNAR_ASSET_KINDS[field.assetKind[slot]] ?? 'other',
+    // Absent stays absent, as on the wire and in `columnarCellAt`.
+    ...(lockScript === undefined ? {} : { lock_script: lockScript }),
+    ...(typeScript === undefined ? {} : { type_script: typeScript }),
   };
 }
 
@@ -429,10 +454,11 @@ export function syncCellFieldFromCache(
 }
 
 /**
- * Hydrate from a columnar snapshot buffer — numeric columns and tags only;
- * string columns get placeholders and `stringsHydrated` drops to false until
- * the JSON path or a detail fetch fills them. Tested capability for the P3
- * boot path; the production sync path today is `syncCellFieldFromCache`.
+ * Hydrate from a columnar snapshot buffer — numeric columns, tags and script
+ * identity (all three dictionary- or column-backed); the per-row string
+ * columns get placeholders and `stringsHydrated` drops to false until the
+ * JSON path or a detail fetch fills them. Tested capability for the P3 boot
+ * path; the production sync path today is `syncCellFieldFromCache`.
  */
 export function hydrateCellFieldFromColumnar(
   field: CellField,
@@ -460,6 +486,12 @@ export function hydrateCellFieldFromColumnar(
     const tagCode = view.tagIndex[i];
     field.tag[slot] =
       tagCode === CELLS_COLUMNAR_NO_TAG ? null : view.tags[tagCode] ?? null;
+    const lockRef = view.lockScriptRef[i];
+    const typeRef = view.typeScriptRef[i];
+    field.lockScript[slot] =
+      lockRef === CELLS_COLUMNAR_NO_SCRIPT ? undefined : view.scripts[lockRef - 1];
+    field.typeScript[slot] =
+      typeRef === CELLS_COLUMNAR_NO_SCRIPT ? undefined : view.scripts[typeRef - 1];
     hashInsert(field, view.id[i], slot);
     field.size += 1;
   }
@@ -468,9 +500,9 @@ export function hydrateCellFieldFromColumnar(
   field.syncToken = null;
 }
 
-/** Typed-array bytes retained by the field (string side columns excluded —
- *  JS string storage isn't measurable from here). Telemetry for the 1.5M
- *  memory-budget rehearsal. */
+/** Typed-array bytes retained by the field (the string and script side
+ *  columns excluded — JS string and object storage isn't measurable from
+ *  here). Telemetry for the 1.5M memory-budget rehearsal. */
 export function cellFieldColumnBytes(field: CellField): number {
   return (
     field.id.byteLength

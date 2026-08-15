@@ -45,9 +45,12 @@ export {
   decodeCellsColumnar,
   columnarCellAt,
   CELLS_COLUMNAR_VERSION,
+  CELLS_COLUMNAR_NO_SCRIPT,
   CELLS_COLUMNAR_NO_TAG,
+  CELLS_COLUMNAR_REVISION_OFFSET,
   COLUMNAR_LOCK_KINDS,
   COLUMNAR_ASSET_KINDS,
+  COLUMNAR_HASH_TYPES,
   type CellsColumnarView,
 } from './cellsColumnar';
 

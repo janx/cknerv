@@ -1,10 +1,11 @@
 //! Columnar (binary) form of the cell-galaxy snapshot — P2 of the render
-//! rescale plan. One contiguous little-endian buffer: a fixed 48-byte header,
-//! then per-field columns grouped by element width (f64, f32, u32, u8) so
-//! every column is naturally aligned for zero-copy typed-array views on the
-//! client, then a tiny tag dictionary at the tail.
+//! rescale plan. One contiguous little-endian buffer: a fixed header of
+//! [`CELLS_COLUMNAR_HEADER_BYTES`], then per-field columns grouped by element
+//! width (f64, f32, u32, u16, u8) so every column is naturally aligned for
+//! zero-copy typed-array views on the client, then the dictionaries at the
+//! tail.
 //!
-//! v2 carries everything the JSON snapshot's `cells` + `display` sections
+//! v3 carries everything the JSON snapshot's `cells` + `display` sections
 //! do. Rows are the canonical cells followed by the staged resident
 //! payloads — one column set, split at `n_cells` — plus the staged member
 //! ids, the budgets and the provenance.
@@ -16,27 +17,47 @@
 //! while decoding one blob and slicing it by offset costs 4.7ms. The wire
 //! is not the scarce resource here — the client's main thread is.
 //!
+//! Script identity (`lock_script` / `type_script`) is the one field pair that
+//! is NOT per-row text: mainnet runs ~29 distinct `(code_hash, hash_type)`
+//! pairs across the whole galaxy, so the pairs ride once in a tail dictionary
+//! and each row carries two `u16` refs into it (4 bytes a row against 134 for
+//! two inline hex hashes). A cell without the field spells that as ref 0,
+//! which is what the JSON path's `skip_serializing_if` spells as an absent
+//! key.
+//!
 //! Precision note: `born_at_ms`, `death_at_ms`, and `capacity` are u64 in
 //! Rust but ship as f64 columns. This is wire-EQUIVALENT to the existing
 //! JSON path — `JSON.parse` already lands those fields in f64 — so the
 //! columnar form introduces no new loss.
 //!
-//! The 8 bytes at [8..16] are a revision slot the SERVER patches in (the
-//! registry owns revisions; the projection does not know its own).
+//! The 8 bytes at [`CELLS_COLUMNAR_REVISION_OFFSET`] are a revision slot the
+//! SERVER patches in (the registry owns revisions; the projection does not
+//! know its own). Both sides of the boundary read that constant, never the
+//! number — a header reshuffle has to move them together.
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::projection::cells::{BackfillState, Cell, CellLinkRecord, DisplayBudget, DisplayMode};
 use crate::projection::cells_stats::CellViewStats;
 use crate::projection::display_plane::ColumnarDisplayView;
-use crate::taxonomy::{AssetKind, LockKind};
+use crate::taxonomy::{AssetKind, HashType, LockKind, ScriptId};
 
 pub const CELLS_COLUMNAR_MAGIC: [u8; 4] = *b"CKNB";
-pub const CELLS_COLUMNAR_VERSION: u16 = 2;
+pub const CELLS_COLUMNAR_VERSION: u16 = 3;
 pub const CELLS_COLUMNAR_HEADER_BYTES: usize = 72;
 pub const CELLS_COLUMNAR_REVISION_OFFSET: usize = 8;
 /// tag_index value meaning "no tag".
 pub const CELLS_COLUMNAR_NO_TAG: u8 = 0xFF;
+/// Script-ref value meaning "this cell carries no such script"; every other
+/// ref is `dictionary index + 1`. Zero rather than a sentinel max so a
+/// zeroed column reads as absent, which is what pre-identity rows are.
+pub const CELLS_COLUMNAR_NO_SCRIPT: u16 = 0;
+/// Refs are u16, so the dictionary tops out one short of the sentinel space.
+/// Unreachable in practice — the dictionary holds at most two entries per
+/// staged row and the stage is budgeted at 12k — but the encoder degrades
+/// instead of panicking, because it runs inside the reducer's write lock.
+const SCRIPT_DICTIONARY_LIMIT: usize = u16::MAX as usize - 1;
 
 fn lock_kind_code(kind: LockKind) -> u8 {
     match kind {
@@ -56,6 +77,46 @@ fn asset_kind_code(kind: AssetKind) -> u8 {
         AssetKind::Dao => 3,
         AssetKind::Spore => 4,
         AssetKind::Other => 5,
+    }
+}
+
+fn hash_type_code(hash_type: HashType) -> u8 {
+    match hash_type {
+        HashType::Data => 0,
+        HashType::Type => 1,
+        HashType::Data1 => 2,
+        HashType::Data2 => 3,
+    }
+}
+
+/// Distinct `(code_hash, hash_type)` pairs in first-seen row order, with the
+/// refs the rows carry. First-seen order (not sorted) keeps the encode one
+/// pass, and the client only ever indexes it.
+#[derive(Default)]
+struct ScriptDictionary {
+    entries: Vec<ScriptId>,
+    index: HashMap<ScriptId, u16>,
+}
+
+impl ScriptDictionary {
+    /// Ref for `script`, interning it on first sight. Absence is the caller's
+    /// call — the JSON path spells it two different ways (an unset lock id, a
+    /// `None` type script) and both arrive here as `None`.
+    fn intern(&mut self, script: Option<ScriptId>) -> u16 {
+        let Some(script) = script else {
+            return CELLS_COLUMNAR_NO_SCRIPT;
+        };
+        if let Some(&found) = self.index.get(&script) {
+            return found;
+        }
+        if self.entries.len() >= SCRIPT_DICTIONARY_LIMIT {
+            report_script_dictionary_overflow();
+            return CELLS_COLUMNAR_NO_SCRIPT;
+        }
+        self.entries.push(script);
+        let reference = self.entries.len() as u16;
+        self.index.insert(script, reference);
+        reference
     }
 }
 
@@ -202,6 +263,24 @@ fn report_non_ascii_column(value: &str) {
     }
 }
 
+static SCRIPT_OVERFLOW_WARNED: AtomicBool = AtomicBool::new(false);
+
+/// Same discipline as the non-ASCII path: a full dictionary means the stage
+/// budget grew past what a u16 ref can address, which is a layout decision to
+/// revisit, not a reason to poison the reducer's lock. The rows past the limit
+/// report their script as absent — the census in the tail still counts them.
+fn report_script_dictionary_overflow() {
+    debug_assert!(false, "columnar script dictionary overflowed u16 refs");
+    if !SCRIPT_OVERFLOW_WARNED.swap(true, Ordering::Relaxed) {
+        tracing::warn!(
+            target: "cknerv-core",
+            limit = SCRIPT_DICTIONARY_LIMIT,
+            "columnar script dictionary is full; later rows ship without \
+             script identity"
+        );
+    }
+}
+
 /// Encode the galaxy as one columnar buffer.
 ///
 /// Rows are `cells` followed by `display.residents`, one column set split
@@ -225,10 +304,14 @@ pub fn encode_cells_columnar(
     let n = n_cells + residents.len();
     let rows = || cells.iter().chain(residents.iter().copied());
 
-    // Tag dictionary: distinct tags in first-seen order (low cardinality),
-    // resolved in one pass so the column write below is a plain lookup.
+    // Tag and script dictionaries: distinct values in first-seen order (low
+    // cardinality both), resolved in one pass so the column writes below are
+    // plain lookups.
     let mut tags: Vec<&str> = Vec::new();
     let mut tag_indices: Vec<u8> = Vec::with_capacity(n);
+    let mut scripts = ScriptDictionary::default();
+    let mut lock_refs: Vec<u16> = Vec::with_capacity(n);
+    let mut type_refs: Vec<u16> = Vec::with_capacity(n);
     let mut strings = StringTables::with_capacity(n);
     for cell in rows() {
         let index = match cell.tag.as_deref() {
@@ -246,11 +329,16 @@ pub fn encode_cells_columnar(
             },
         };
         tag_indices.push(index);
+        // An unset lock id is the JSON path's absent key, so it must not
+        // reach the dictionary; a `Some` type script does even when unset,
+        // because that is what the JSON path emits.
+        lock_refs.push(scripts.intern((!cell.lock_script.is_unset()).then_some(cell.lock_script)));
+        type_refs.push(scripts.intern(cell.type_script));
         strings.push(cell);
     }
     let strings = strings.finish();
 
-    let fixed = n * (4 * 8 + 3 * 4 + 2 * 4 + 4) + members.len() * 8 + 3 * (n + 1) * 4;
+    let fixed = n * (4 * 8 + 3 * 4 + 2 * 4 + 2 * 2 + 4) + members.len() * 8 + 3 * (n + 1) * 4;
     let mut buf =
         Vec::with_capacity(CELLS_COLUMNAR_HEADER_BYTES + fixed + strings.region_len() + 128);
 
@@ -332,6 +420,11 @@ pub fn encode_cells_columnar(
             buf.extend_from_slice(&offset.to_le_bytes());
         }
     }
+    // —— u16 columns —— (script dictionary refs; the u32 group above ends
+    // 4-byte aligned, so these views land aligned on the client too)
+    for reference in lock_refs.iter().chain(type_refs.iter()) {
+        buf.extend_from_slice(&reference.to_le_bytes());
+    }
     // —— u8 columns ——
     for cell in rows() {
         buf.push(lock_kind_code(cell.lock_kind));
@@ -349,12 +442,20 @@ pub fn encode_cells_columnar(
     buf.extend_from_slice(&strings.content_hash);
     buf.extend_from_slice(&strings.data_hex);
 
-    // —— tail: tag dictionary + provenance ——
+    // —— tail: tag dictionary + script dictionary + provenance ——
+    // Read strictly in this order: the sections are variable-length, so the
+    // client walks them with one cursor and every one of them must be
+    // written unconditionally.
     let tail_offset = buf.len() as u32;
     buf[64..68].copy_from_slice(&tail_offset.to_le_bytes());
     buf.push(tags.len() as u8);
     for tag in tags {
         push_short_string(&mut buf, tag);
+    }
+    buf.extend_from_slice(&(scripts.entries.len() as u16).to_le_bytes());
+    for script in &scripts.entries {
+        buf.push(hash_type_code(script.hash_type));
+        push_short_string(&mut buf, &script.code_hash_hex());
     }
     match provenance {
         Some(provenance) => {
@@ -372,6 +473,9 @@ pub fn encode_cells_columnar(
                 provenance.as_of.as_ref().map_or("", |at| at.hash.as_str()),
             );
         }
+        // An absent display plane still writes the 18-byte placeholder: the
+        // sections length that follows is found by walking the tail, not by
+        // an offset, so a section that appears only sometimes would slide it.
         None => {
             buf.extend_from_slice(&0u64.to_le_bytes());
             buf.extend_from_slice(&0u64.to_le_bytes());
@@ -405,6 +509,50 @@ fn push_short_string(buf: &mut Vec<u8>, value: &str) {
     buf.extend_from_slice(bytes);
 }
 
+/// Path of a fixture shared with the TS side.
+#[cfg(test)]
+fn shared_fixture_path(name: &str) -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures")
+        .join(name)
+}
+
+/// Compare `encoded` against the committed fixture, or rewrite it when
+/// `CKNERV_REGEN_FIXTURES` is set. Both sides of the language boundary read
+/// these very bytes, so a layout change landing on only one of them fails on
+/// both. `pub(crate)` because the JSON/BIN pair is written from the `cells`
+/// tests, which own the galaxy helpers, while the layout fixtures are written
+/// from here.
+#[cfg(test)]
+pub(crate) fn assert_matches_fixture(name: &str, encoded: &[u8]) {
+    let path = shared_fixture_path(name);
+    if std::env::var("CKNERV_REGEN_FIXTURES").is_ok() {
+        std::fs::write(&path, encoded).expect("write fixture");
+    }
+    let fixture = std::fs::read(&path).expect("read fixture");
+    assert_eq!(
+        encoded, fixture,
+        "wire form drifted from {name}; regenerate it and update the TS \
+         decoder in the same change"
+    );
+}
+
+/// The text twin, so a mismatch prints readable JSON instead of two byte
+/// arrays.
+#[cfg(test)]
+pub(crate) fn assert_matches_text_fixture(name: &str, encoded: &str) {
+    let path = shared_fixture_path(name);
+    if std::env::var("CKNERV_REGEN_FIXTURES").is_ok() {
+        std::fs::write(&path, encoded).expect("write fixture");
+    }
+    let fixture = std::fs::read_to_string(&path).expect("read fixture");
+    assert_eq!(
+        encoded, fixture,
+        "wire form drifted from {name}; regenerate it and update the TS \
+         decoder in the same change"
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -412,6 +560,23 @@ mod tests {
     use crate::outpoint::{OutPoint, DATA_HEX_TRUNCATION_MARKER};
     use crate::projection::cells::Cell;
     use crate::projection::display_plane::ColumnarDisplayView;
+
+    /// The two script identities the fixture rows share. Two rows guarded by
+    /// the same lock must resolve to ONE dictionary entry — that dedup is the
+    /// whole reason the pairs are not inline — and the type script differs in
+    /// `hash_type` so the code table is exercised beyond its zero.
+    const FIXTURE_LOCK_CODE_HASH: &str =
+        "0x9bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce8";
+    const FIXTURE_TYPE_CODE_HASH: &str =
+        "0x50bd8d6680b8b9cf98b73f3c08faf8b2a21914311954118ad6609be6e78a1b95";
+
+    fn fixture_lock_script() -> ScriptId {
+        ScriptId::parse(FIXTURE_LOCK_CODE_HASH, "type").expect("well-formed lock code hash")
+    }
+
+    fn fixture_type_script() -> ScriptId {
+        ScriptId::parse(FIXTURE_TYPE_CODE_HASH, "data1").expect("well-formed type code hash")
+    }
 
     fn cell(id: u64, tag: Option<&str>) -> Cell {
         Cell {
@@ -449,8 +614,14 @@ mod tests {
             } else {
                 AssetKind::Dao
             },
-            lock_script: Default::default(),
-            type_script: None,
+            // Three script shapes on the same `id % 3` key as the data
+            // above: lock-only, lock+type, and a cell carrying neither.
+            lock_script: if id.is_multiple_of(3) {
+                Default::default()
+            } else {
+                fixture_lock_script()
+            },
+            type_script: (id % 3 == 2).then(fixture_type_script),
         }
     }
 
@@ -479,6 +650,7 @@ mod tests {
         members: usize,
         pos: usize,
         tx_offsets: usize,
+        script_refs: usize,
         lock: usize,
         strings: usize,
     }
@@ -489,13 +661,15 @@ mod tests {
         let pos = members + 8 * m;
         let u32s = pos + 3 * 4 * n;
         let tx_offsets = u32s + 2 * 4 * n;
-        let lock = tx_offsets + 3 * (n + 1) * 4;
+        let script_refs = tx_offsets + 3 * (n + 1) * 4;
+        let lock = script_refs + 2 * 2 * n;
         Offsets {
             id,
             death: id + 2 * 8 * n,
             members,
             pos,
             tx_offsets,
+            script_refs,
             lock,
             strings: lock + 4 * n,
         }
@@ -503,6 +677,28 @@ mod tests {
 
     fn u32_at(buf: &[u8], at: usize) -> u32 {
         u32::from_le_bytes(buf[at..at + 4].try_into().unwrap())
+    }
+
+    fn u16_at(buf: &[u8], at: usize) -> u16 {
+        u16::from_le_bytes(buf[at..at + 2].try_into().unwrap())
+    }
+
+    /// Walk the tail to the provenance block the way the client has to: both
+    /// dictionaries in front of it are variable-length, so there is no offset
+    /// to jump to.
+    fn provenance_at(buf: &[u8]) -> usize {
+        let mut cursor = u32_at(buf, 64) as usize;
+        let tags = buf[cursor] as usize;
+        cursor += 1;
+        for _ in 0..tags {
+            cursor += 1 + buf[cursor] as usize;
+        }
+        let scripts = u16_at(buf, cursor) as usize;
+        cursor += 2;
+        for _ in 0..scripts {
+            cursor += 2 + buf[cursor + 1] as usize; // hash-type code + string
+        }
+        cursor
     }
 
     #[test]
@@ -516,6 +712,15 @@ mod tests {
         let buf = encode_cells_columnar(&rows, header(), None, empty_tail());
         assert_eq!(&buf[0..4], b"CKNB");
         assert_eq!(u16::from_le_bytes([buf[4], buf[5]]), CELLS_COLUMNAR_VERSION);
+        // The revision slot the SERVER patches. The projection leaves it
+        // zero; the registry writes eight bytes at exactly this offset, so a
+        // header reshuffle that moved the field without moving the constant
+        // would overwrite whatever landed here instead.
+        let revision_slot = CELLS_COLUMNAR_REVISION_OFFSET;
+        assert_eq!(
+            u64::from_le_bytes(buf[revision_slot..revision_slot + 8].try_into().unwrap()),
+            0
+        );
         assert_eq!(u64::from_le_bytes(buf[16..24].try_into().unwrap()), 777);
         assert_eq!(u64::from_le_bytes(buf[24..32].try_into().unwrap()), 30);
         assert_eq!(u64::from_le_bytes(buf[32..40].try_into().unwrap()), 11);
@@ -549,6 +754,42 @@ mod tests {
         let data_col = tag_col + n;
         assert_eq!(buf[data_col], 1);
         assert_eq!(buf[data_col + 2], 0);
+    }
+
+    /// Script identity is dictionary-encoded: two rows under the same lock
+    /// resolve to ONE entry, an absent script is ref 0, and the refs are two
+    /// u16 columns rather than two hex hashes a row.
+    #[test]
+    fn script_identity_rides_a_dictionary_and_two_u16_refs() {
+        let rows = [cell(1, None), cell(2, None), cell(3, None)];
+        let buf = encode_cells_columnar(&rows, header(), None, empty_tail());
+        let n = rows.len();
+        let at = offsets(n, 0);
+
+        let lock_ref = |row: usize| u16_at(&buf, at.script_refs + row * 2);
+        let type_ref = |row: usize| u16_at(&buf, at.script_refs + (n + row) * 2);
+        // id 1 lock-only, id 2 lock+type sharing that same lock, id 3 neither.
+        assert_eq!([lock_ref(0), lock_ref(1), lock_ref(2)], [1, 1, 0]);
+        assert_eq!([type_ref(0), type_ref(1), type_ref(2)], [0, 2, 0]);
+
+        let mut cursor = u32_at(&buf, 64) as usize;
+        cursor += 1; // empty tag dictionary
+        assert_eq!(u16_at(&buf, cursor), 2, "one entry per distinct script");
+        cursor += 2;
+        assert_eq!(buf[cursor], 1, "lock hash_type = type");
+        let length = buf[cursor + 1] as usize;
+        assert_eq!(
+            std::str::from_utf8(&buf[cursor + 2..cursor + 2 + length]).unwrap(),
+            FIXTURE_LOCK_CODE_HASH
+        );
+        cursor += 2 + length;
+        assert_eq!(buf[cursor], 2, "type hash_type = data1");
+        let length = buf[cursor + 1] as usize;
+        assert_eq!(
+            std::str::from_utf8(&buf[cursor + 2..cursor + 2 + length]).unwrap(),
+            FIXTURE_TYPE_CODE_HASH
+        );
+        assert_eq!(cursor + 2 + length, provenance_at(&buf));
     }
 
     /// Strings are field-major with absolute offsets and an N+1 sentinel,
@@ -662,8 +903,7 @@ mod tests {
         };
         assert_eq!([member(0), member(1)], [1.0, 9.0]);
 
-        let mut tail = u32_at(&buf, 64) as usize;
-        tail += 1 + buf[tail] as usize; // empty tag dictionary
+        let tail = provenance_at(&buf);
         assert_eq!(
             u64::from_le_bytes(buf[tail..tail + 8].try_into().unwrap()),
             1_234
@@ -686,11 +926,10 @@ mod tests {
     }
 
     /// The cross-language gate. Rust writes this buffer, the TS decoder
-    /// reads the very same bytes (`packages/cache/__tests__`), so a layout
-    /// change that only lands on one side fails on both. Regenerate with
-    /// `CKNERV_REGEN_FIXTURES=1 cargo test -p cknerv-core columnar_v2`.
+    /// reads the very same bytes (`packages/cache/__tests__`). Regenerate with
+    /// `CKNERV_REGEN_FIXTURES=1 cargo test -p cknerv-core columnar_v3`.
     #[test]
-    fn columnar_v2_matches_the_shared_fixture() {
+    fn columnar_v3_matches_the_shared_fixture() {
         use crate::enrichment::ChainAnchor;
         use crate::projection::cells::{DisplayBudget, DisplayMode, DisplayProvenance};
 
@@ -715,20 +954,18 @@ mod tests {
             residents: vec![&resident],
         };
         let encoded = encode_cells_columnar(&rows, header(), Some(&view), empty_tail());
+        assert_matches_fixture("cells_columnar_v3.bin", &encoded);
+    }
 
-        let path = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../tests/fixtures/cells_columnar_v2.bin"
-        );
-        if std::env::var("CKNERV_REGEN_FIXTURES").is_ok() {
-            std::fs::write(path, &encoded).expect("write fixture");
-        }
-        let fixture = std::fs::read(path).expect("read fixture");
-        assert_eq!(
-            encoded, fixture,
-            "columnar layout drifted from the shared fixture; regenerate it \
-             and update the TS decoder in the same change"
-        );
+    /// The display-absent shape, as its own fixture. The provenance
+    /// placeholder is written either way, so a decoder that consumes it only
+    /// when a plane is present reads the sections length out of the middle of
+    /// it — which is exactly the desync this fixture exists to catch.
+    #[test]
+    fn columnar_v3_display_absent_matches_the_shared_fixture() {
+        let rows = [cell(1, Some("wallet")), cell(2, None), cell(3, Some("dex"))];
+        let encoded = encode_cells_columnar(&rows, header(), None, empty_tail());
+        assert_matches_fixture("cells_columnar_v3_absent.bin", &encoded);
     }
 
     #[test]
@@ -737,5 +974,6 @@ mod tests {
         let tail = u32_at(&buf, 64) as usize;
         assert_eq!(tail, CELLS_COLUMNAR_HEADER_BYTES + 3 * 4);
         assert_eq!(buf[tail], 0, "empty tag dictionary");
+        assert_eq!(u16_at(&buf, tail + 1), 0, "empty script dictionary");
     }
 }

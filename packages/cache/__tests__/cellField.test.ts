@@ -20,7 +20,11 @@ import {
   syncCellFieldFromCache,
   type CellField,
 } from '../src/cellField';
-import { CELLS_COLUMNAR_NO_TAG, type CellsColumnarView } from '../src/cellsColumnar';
+import {
+  CELLS_COLUMNAR_NO_SCRIPT,
+  CELLS_COLUMNAR_NO_TAG,
+  type CellsColumnarView,
+} from '../src/cellsColumnar';
 
 function cell(id: number, overrides: Partial<Cell> = {}): Cell {
   return {
@@ -66,17 +70,27 @@ describe('cellField store', () => {
       asset_kind: 'dao',
       death_at_ms: 123_456,
       pos_seed: [0.5, -2.25, 3.125],
+      lock_script: { code_hash: `0x${'ab'.repeat(32)}`, hash_type: 'type' },
+      type_script: { code_hash: `0x${'cd'.repeat(32)}`, hash_type: 'data1' },
     });
     const slot = cellFieldUpsert(field, a);
     expect(cellFieldSlotOf(field, bigId)).toBe(slot);
     expect(field.flags[slot] & CELL_FIELD_HAS_DATA).toBe(CELL_FIELD_HAS_DATA);
     expect(materializeCellAt(field, slot)).toEqual(a);
 
-    // Upsert overwrites in place — same slot, new values.
-    const a2 = { ...a, tag: null, death_at_ms: null, data_hex: '0x' };
+    // Upsert overwrites in place — same slot, new values. A cell that LOST
+    // its type script must not keep the old one in the side column.
+    const a2 = {
+      ...a,
+      tag: null,
+      death_at_ms: null,
+      data_hex: '0x',
+      type_script: undefined,
+    };
     expect(cellFieldUpsert(field, a2)).toBe(slot);
     expect(field.size).toBe(1);
     expect(materializeCellAt(field, slot)).toEqual(a2);
+    expect('type_script' in materializeCellAt(field, slot)).toBe(false);
   });
 
   it('normalizes absent optional enums to other', () => {
@@ -286,9 +300,13 @@ describe('hydrateCellFieldFromColumnar', () => {
       assetKind: new Uint8Array([0, 3]),
       tagIndex: new Uint8Array([0, CELLS_COLUMNAR_NO_TAG]),
       dataFlag: new Uint8Array([1, 0]),
+      lockScriptRef: new Uint16Array([1, CELLS_COLUMNAR_NO_SCRIPT]),
+      typeScriptRef: new Uint16Array([CELLS_COLUMNAR_NO_SCRIPT, CELLS_COLUMNAR_NO_SCRIPT]),
       tags: ['wallet'],
-      // v2 carries the strings too; this hydrator deliberately skips them
-      // (it fills the numeric field and leaves `stringsHydrated` false).
+      scripts: [{ code_hash: `0x${'ab'.repeat(32)}`, hash_type: 'type' }],
+      // v3 carries the per-row strings too; this hydrator deliberately skips
+      // them (it fills the numeric field and leaves `stringsHydrated` false).
+      // Script identity is not in that bucket — it rides a dictionary.
       txHash: (row: number) => `0xtx${row}`,
       contentHash: (row: number) => `0xhash${row}`,
       dataHex: (row: number) => (row === 0 ? '0xdeadbeef' : '0x'),
@@ -308,13 +326,24 @@ describe('hydrateCellFieldFromColumnar', () => {
     expect(field.tag[slot]).toBe('wallet');
     expect(field.flags[slot]).toBe(CELL_FIELD_HAS_DATA);
     expect(Number.isNaN(field.deathAtMs[slot])).toBe(true);
+    expect(field.lockScript[slot]).toEqual({
+      code_hash: `0x${'ab'.repeat(32)}`,
+      hash_type: 'type',
+    });
+    expect(field.typeScript[slot]).toBeUndefined();
     const slot2 = cellFieldSlotOf(field, 8);
     expect(field.deathAtMs[slot2]).toBe(900);
     expect(field.tag[slot2]).toBeNull();
+    expect(field.lockScript[slot2]).toBeUndefined();
+    // Materialization restores the absent-key shape the JSON path has, not a
+    // key holding undefined — `cellContentEquals` compares these.
+    expect('lock_script' in materializeCellAt(field, slot2)).toBe(false);
+    expect(materializeCellAt(field, slot).lock_script).toBe(field.lockScript[slot]);
 
     // A later full clear restores the JSON-path contract.
     clearCellField(field);
     expect(field.size).toBe(0);
     expect(field.stringsHydrated).toBe(true);
+    expect(field.lockScript[slot]).toBeUndefined();
   });
 });

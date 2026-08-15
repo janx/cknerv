@@ -391,7 +391,7 @@ describe('binary resync frames', () => {
    *  one. */
   function fixture(): ArrayBuffer {
     const bytes = readFileSync(
-      fileURLToPath(new URL('../../../tests/fixtures/cells_columnar_v2.bin', import.meta.url)),
+      fileURLToPath(new URL('../../../tests/fixtures/cells_columnar_v3.bin', import.meta.url)),
     );
     return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
   }
@@ -413,6 +413,14 @@ describe('binary resync frames', () => {
     expect(cache.displayResidents.size).toBe(1);
     expect(cache.displayBudget).toEqual({ cells: 12_000, nerveEdges: 8_000 });
     expect(cache.cells.get(1)?.out_point.tx_hash).toBe(`0x${(1).toString(16).padStart(64, '0')}`);
+    // Script identity reaches the cache through the real frame path too. It
+    // did not in v2, which made every lagged resync report each scripted cell
+    // as content-changed and drop its retained object identity.
+    expect(cache.cells.get(1)?.lock_script).toEqual({
+      code_hash: '0x9bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce8',
+      hash_type: 'type',
+    });
+    expect(cache.cells.get(3)?.lock_script).toBeUndefined();
     handle.disconnect();
   });
 

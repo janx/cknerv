@@ -4594,6 +4594,89 @@ mod tests {
         );
     }
 
+    /// One galaxy, both wire forms, committed side by side. The Rust test
+    /// below only pins that these bytes are what this binary produces; the
+    /// gate that matters is on the TS side, where the binary form is decoded
+    /// through the real decode path and field-diffed against the JSON one.
+    /// An encoder-vs-encoder test (the one below this) cannot see a column
+    /// the decoder never reads — that is how the missing script columns
+    /// survived a green suite.
+    ///
+    /// Regenerate both with
+    /// `CKNERV_REGEN_FIXTURES=1 cargo test -p cknerv-core columnar_v3`.
+    #[test]
+    fn columnar_v3_pair_describes_one_galaxy_in_both_wire_forms() {
+        use crate::outpoint::DATA_HEX_TRUNCATION_MARKER;
+        use crate::projection::cells_columnar::{
+            assert_matches_fixture, assert_matches_text_fixture,
+        };
+
+        let lock = crate::ScriptId::parse(
+            "0x9bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce8",
+            "type",
+        )
+        .expect("well-formed lock code hash");
+        let type_script = crate::ScriptId::parse(
+            "0x50bd8d6680b8b9cf98b73f3c08faf8b2a21914311954118ad6609be6e78a1b95",
+            "data1",
+        )
+        .expect("well-formed type code hash");
+
+        let mut g = make_galaxy();
+        // Lock-only, lock+type sharing that lock, and a cell with no script
+        // identity at all — the three shapes the ref column has to spell.
+        let mut lock_only = out(61_00000000, "0x");
+        lock_only.lock_kind = LockKind::Sighash;
+        lock_only.lock_script = lock;
+        // Upstream-truncated data, so the marker rides the string blob here
+        // too and a non-ASCII one would take the whole gate down.
+        let mut lock_and_type = out(
+            120_00000000,
+            &format!("0xdeadbeef{DATA_HEX_TRUNCATION_MARKER}"),
+        );
+        lock_and_type.lock_kind = LockKind::Sighash;
+        lock_and_type.asset_kind = AssetKind::Xudt;
+        lock_and_type.lock_script = lock;
+        lock_and_type.type_script = Some(type_script);
+        let unidentified = out(90_00000000, "0xbeef");
+        g.apply_mutation(&landed(
+            "0xtx1",
+            7,
+            1_000,
+            vec![],
+            vec![lock_only, lock_and_type, unidentified],
+        ));
+        g.apply_mutation(&Mutation::CellTagged {
+            out_point: op("0xtx1", 0),
+            tag: "wallet".into(),
+            at: 1_100,
+        });
+        // A death, so the binary form's NaN and the JSON form's null have to
+        // agree about the same cell.
+        g.apply_mutation(&landed(
+            "0xtx2",
+            8,
+            2_000,
+            vec![op("0xtx1", 2)],
+            vec![out(80_00000000, "0x")],
+        ));
+        // Residents ride behind the canonical rows; script them too, or the
+        // gate would only prove the columns work for the first block.
+        let mut record = reservoir_record(8, (900, 901, 902));
+        record.dao[0].lock_script = lock;
+        record.typed[0].lock_script = lock;
+        record.typed[0].type_script = Some(type_script);
+        g.apply_mutation(&Mutation::GalaxyReservoirReplaced { record });
+        g.apply_mutation(&mined(8, "0xblock8", 2_100));
+
+        let json = serde_json::to_string_pretty(&g.snapshot()).expect("serialize snapshot");
+        assert_matches_text_fixture("cells_columnar_v3_pair.json", &json);
+        assert_matches_fixture(
+            "cells_columnar_v3_pair.bin",
+            &g.snapshot_bin().expect("columnar snapshot"),
+        );
+    }
+
     /// The columnar path must not go through `CellGalaxySnapshot` — that is
     /// the whole point of taking rows by reference — but it must still emit
     /// exactly what that path would have. Row-for-row equality against a
