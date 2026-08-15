@@ -14,6 +14,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::{AssetKind, LockKind, ScriptId};
 
+/// Suffix a producer appends to a bounded `data_hex` prefix when the source
+/// data was longer. ASCII by requirement, not by taste: the columnar
+/// snapshot ships these strings in one blob whose byte offsets the client
+/// reads as char offsets, so a multi-byte marker shifts every later slice.
+/// Non-hex so it can never be mistaken for a data byte.
+pub const DATA_HEX_TRUNCATION_MARKER: char = '~';
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct OutPoint {
     pub tx_hash: String,
@@ -25,8 +32,8 @@ pub struct TxOutputInfo {
     pub capacity: u64,
     /// Hex-encoded output data, capped at 1024 source bytes (= 2050
     /// characters including the `0x` prefix). When the source data
-    /// exceeds the cap the suffix `…` is appended so consumers can
-    /// detect truncation.
+    /// exceeds the cap [`DATA_HEX_TRUNCATION_MARKER`] is appended so
+    /// consumers can detect truncation.
     pub data_hex: String,
     /// CKB-canonical BLAKE2b-256 of `CellOutput.as_slice() ++ raw_data_bytes`
     /// using the `ckb-default-hash` personalization. Stable across reloads

@@ -10,7 +10,7 @@
 //!
 //! ```json
 //! {
-//!   "schema_version": 3,
+//!   "schema_version": 4,
 //!   "entities":   { "revision": N, "chain": {...}, "chain_nodes": [...] },
 //!   "projections": { "<projection-name>": <save-blob>, ... }
 //!   // NOTE: live `peers` are ephemeral and intentionally NOT persisted.
@@ -32,7 +32,11 @@ use cknerv_core::RecentBlock;
 
 /// Bumped when the on-disk shape changes incompatibly. Older files are
 /// ignored on load.
-pub const SCHEMA_VERSION: u32 = 3;
+///
+/// 4: `data_hex` truncation switched to a single ASCII marker. A v3 save
+/// still holds the multi-byte one, which the columnar encoder can only
+/// ship sanitized — discarding the save is cheaper and honest.
+pub const SCHEMA_VERSION: u32 = 4;
 
 /// Filename inside `<workdir>/`. Atomic write goes to `<name>.tmp` and
 /// renames over it. Per spec §6.

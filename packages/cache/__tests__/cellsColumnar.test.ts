@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { DATA_HEX_TRUNCATION_MARKER } from '@cknerv/types';
 import {
   CELLS_COLUMNAR_HEADER_BYTES,
   CELLS_COLUMNAR_NO_TAG,
@@ -33,7 +34,9 @@ function expectedCell(id: number, tag: string | null) {
     tag,
     out_point: { tx_hash: `0x${id.toString(16).padStart(64, '0')}`, index: id },
     capacity: 6_100_000_000 + id,
-    data_hex: id % 3 === 0 ? '0x' : '0xdeadbeef',
+    data_hex: id % 3 === 0
+      ? '0x'
+      : id % 3 === 1 ? `0xdeadbeef${DATA_HEX_TRUNCATION_MARKER}` : '0xdeadbeef',
     content_hash: `0x${(id * 7).toString(16).padStart(64, '0')}`,
     lock_kind: id % 2 === 0 ? 'sighash' : 'omnilock',
     asset_kind: id % 2 === 0 ? 'native' : 'dao',
@@ -67,6 +70,17 @@ describe('decodeCellsColumnar', () => {
     expect(view.tags).toEqual(['wallet', 'dex']);
     expect(view.tagIndex[1]).toBe(CELLS_COLUMNAR_NO_TAG);
     expect(Array.from(view.dataFlag)).toEqual([1, 1, 0, 0]);  // id 3 and id 9 are both "0x"
+  });
+
+  /** Row 0 is upstream-truncated. The marker is one ASCII byte precisely so
+   *  that it costs one char here — a multi-byte one would slide every later
+   *  value in the shared region out from under its offset. */
+  it('slices a truncated data_hex without shifting the values after it', () => {
+    const view = decodeCellsColumnar(fixture());
+    expect(view.dataHex(0)).toBe(`0xdeadbeef${DATA_HEX_TRUNCATION_MARKER}`);
+    expect(view.dataHex(1)).toBe('0xdeadbeef');
+    expect(view.dataHex(2)).toBe('0x');
+    expect(view.dataHex(3)).toBe('0x');
   });
 
   it('carries the display plane: members, budgets and provenance', () => {

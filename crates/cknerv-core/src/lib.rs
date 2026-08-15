@@ -41,7 +41,9 @@ pub use entity::{
 };
 pub use helix::{helix_seed_f64, helix_seed_for};
 pub use mutation::{Mutation, ReplayPhase, RevisionedMutation};
-pub use outpoint::{is_cellbase_input, CellOutput, OutPoint, TxOutputInfo};
+pub use outpoint::{
+    is_cellbase_input, CellOutput, OutPoint, TxOutputInfo, DATA_HEX_TRUNCATION_MARKER,
+};
 pub use projection::cells::{
     Cell, CellDelta, CellGalaxy, CellGalaxyPersisted, CellGalaxySnapshot, CellLinkEndpointAnchor,
     CellLinkRecord, DisplayBudget, DisplayMode, DisplayProvenance, DisplaySection,

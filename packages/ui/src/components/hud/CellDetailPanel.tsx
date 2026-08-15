@@ -6,6 +6,7 @@ import {
   useMemo,
   useState,
 } from 'react';
+import { DATA_HEX_TRUNCATION_MARKER } from '@cknerv/types';
 import type {
   Cell,
   CellLink,
@@ -159,7 +160,7 @@ const nowPerf = () => (typeof performance !== 'undefined' ? performance.now() : 
 function formatCellData(dataHex: string): string {
   const size = formatDataSize(dataHex);
   if (size === '0 B') return 'Empty';
-  return dataHex.endsWith('…') ? `${size} observed` : size;
+  return dataHex.endsWith(DATA_HEX_TRUNCATION_MARKER) ? `${size} observed` : size;
 }
 
 type CellScanFactProps = RowDecode & {

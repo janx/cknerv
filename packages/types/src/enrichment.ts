@@ -94,7 +94,8 @@ export interface SemanticContentGuess {
 
 /**
  * Display-safe evidence for the Cell's actual output data. `data_hex` is a
- * bounded prefix and may end in `…`; all sizes/ranges refer to the full data.
+ * bounded prefix and may end in `DATA_HEX_TRUNCATION_MARKER`, same convention
+ * as the canonical Cell; all sizes/ranges refer to the full data.
  */
 export interface SemanticCellContent {
   total_bytes: number;

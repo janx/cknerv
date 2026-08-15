@@ -14,8 +14,8 @@ export interface TxOutputInfo {
   capacity: number;
   /** Hex-encoded output data, capped at 1024 source bytes (= 2050
    *  characters including the `0x` prefix). When the source data
-   *  exceeds the cap the suffix `…` is appended so consumers can
-   *  detect truncation. */
+   *  exceeds the cap `DATA_HEX_TRUNCATION_MARKER` is appended so consumers
+   *  can detect truncation. */
   data_hex: string;
   /** CKB-canonical BLAKE2b-256 of `CellOutput.as_slice() ++ raw_data_bytes`
    *  using the `ckb-default-hash` personalization. Stable across reloads

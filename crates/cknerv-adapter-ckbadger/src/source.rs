@@ -17,7 +17,7 @@ use cknerv_core::{
     SemanticCellContent, SemanticContentDecode, SemanticContentGuess, SemanticContentSegment,
     HashType, ScriptNameRecord, ScriptRegistryRecord, SemanticFacet, SemanticScript,
     TransactionHorizonRecord, TransactionParticipantSemantic, TransactionSemanticRecord,
-    MAX_SCRIPT_REGISTRY_ENTRIES,
+    DATA_HEX_TRUNCATION_MARKER, MAX_SCRIPT_REGISTRY_ENTRIES,
 };
 use cknerv_server::{CanonicalContext, EnrichmentSource, GalaxyCompositionHydrator};
 
@@ -2782,7 +2782,13 @@ fn map_cell_data_preview(
     }
     let preview_chars = body.len().min(MAX_CELL_CONTENT_PREVIEW_BYTES * 2);
     let complete = preview_chars == body.len();
-    let suffix = if complete { "" } else { "…" };
+    // Same marker as the canonical Cell's `data_hex` — one convention, one
+    // client-side strip, and ASCII so neither can break the columnar blob.
+    let suffix = if complete {
+        String::new()
+    } else {
+        DATA_HEX_TRUNCATION_MARKER.to_string()
+    };
     Ok((
         Some(format!("0x{}{suffix}", &body[..preview_chars])),
         complete,
@@ -4202,10 +4208,11 @@ mod tests {
         assert_eq!(content.total_bytes, u64::try_from(total).unwrap());
         assert!(!content.data_complete);
         let preview = content.data_hex.as_deref().unwrap();
-        assert!(preview.ends_with('…'));
+        assert!(preview.ends_with(DATA_HEX_TRUNCATION_MARKER));
+        assert!(preview.is_ascii(), "the marker must not widen the preview");
         assert_eq!(
             preview.len(),
-            2 + MAX_CELL_CONTENT_PREVIEW_BYTES * 2 + '…'.len_utf8()
+            2 + MAX_CELL_CONTENT_PREVIEW_BYTES * 2 + DATA_HEX_TRUNCATION_MARKER.len_utf8()
         );
         let segment = &content.deterministic.as_ref().unwrap().segments[0];
         assert_eq!((segment.start_byte, segment.end_byte), (0, 2));

@@ -1,3 +1,4 @@
+import { DATA_HEX_TRUNCATION_MARKER } from '@cknerv/types';
 import type {
   SemanticCellContent,
   SemanticContentSegment,
@@ -32,7 +33,7 @@ export function decodeCellDataHex(dataHex?: string): DecodedCellDataHex {
       ascii: '',
     };
   }
-  const truncated = dataHex.endsWith('…');
+  const truncated = dataHex.endsWith(DATA_HEX_TRUNCATION_MARKER);
   const observed = truncated ? dataHex.slice(0, -1) : dataHex;
   const body = observed.startsWith('0x') ? observed.slice(2) : '';
   const valid = observed.startsWith('0x')

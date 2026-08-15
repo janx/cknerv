@@ -8,6 +8,7 @@ description = "Chain-generic types and projections for cknerv: Mutation enum, Pr
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true

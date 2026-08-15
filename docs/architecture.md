@@ -975,11 +975,11 @@ constraints, optimization order, and acceptance criteria.
 ### 12.1 File Format
 
 The server stores one JSON file at
-`<workdir>/data/cknerv-state.json`, currently with `schema_version = 3`:
+`<workdir>/data/cknerv-state.json`, currently with `schema_version = 4`:
 
 ```json
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "entities": {
     "revision": 0,
     "chain": {},

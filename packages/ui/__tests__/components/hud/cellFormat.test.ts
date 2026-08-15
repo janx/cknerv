@@ -44,7 +44,7 @@ describe('cellFormat — new helpers', () => {
   it('formatDataSize reports byte count, ellipsis-aware', () => {
     expect(formatDataSize('0x')).toBe('0 B');
     expect(formatDataSize('0xdeadbeef')).toBe('4 B');
-    expect(formatDataSize('0xdeadbeef…')).toBe('4 B+'); // upstream-truncated
+    expect(formatDataSize('0xdeadbeef~')).toBe('4 B+'); // upstream-truncated
   });
   it('formatLockKind / formatAssetKind label families the way the index does', () => {
     // The built-in table spells its families exactly as the script index

@@ -9,7 +9,7 @@ use anyhow::{anyhow, Result};
 use ckb_types::{packed, prelude::*};
 use serde_json::Value;
 
-use cknerv_core::{Mutation, OutPoint, TxOutputInfo};
+use cknerv_core::{Mutation, OutPoint, TxOutputInfo, DATA_HEX_TRUNCATION_MARKER};
 
 use crate::content_hash::compute_content_hash;
 use crate::rpc::RpcClient;
@@ -269,15 +269,17 @@ fn parse_hex_u32(v: &Value, field: &str) -> Result<u32> {
 }
 
 /// Same `truncate_hex` policy as simulator's chain_poll. Caps the
-/// hex-encoded data at `byte_cap` source bytes; appends a `…` (UTF-8
-/// ellipsis) when truncation occurs so consumers can detect it.
+/// hex-encoded data at `byte_cap` source bytes; appends
+/// [`DATA_HEX_TRUNCATION_MARKER`] when truncation occurs so consumers can
+/// detect it. The marker rides the columnar snapshot's ASCII string blob,
+/// so it must stay single-byte.
 fn truncate_hex(s: &str, byte_cap: usize) -> String {
     let body = s.strip_prefix("0x").unwrap_or(s);
     let char_cap = byte_cap * 2;
     if body.len() <= char_cap {
         s.to_string()
     } else {
-        format!("0x{}…", &body[..char_cap])
+        format!("0x{}{DATA_HEX_TRUNCATION_MARKER}", &body[..char_cap])
     }
 }
 
@@ -410,9 +412,13 @@ mod tests {
         assert_eq!(truncate_hex("0xdeadbeef", 1024), "0xdeadbeef");
     }
 
+    /// The marker is ASCII on purpose — the columnar encoder's offset table
+    /// only survives single-byte characters.
     #[test]
     fn truncate_hex_caps_long_input() {
-        assert_eq!(truncate_hex("0xaabbccddeeff0011", 4), "0xaabbccdd…");
+        let truncated = truncate_hex("0xaabbccddeeff0011", 4);
+        assert_eq!(truncated, "0xaabbccdd~");
+        assert!(truncated.is_ascii());
     }
 
     #[test]

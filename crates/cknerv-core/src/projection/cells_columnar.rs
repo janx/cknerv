@@ -24,6 +24,8 @@
 //! The 8 bytes at [8..16] are a revision slot the SERVER patches in (the
 //! registry owns revisions; the projection does not know its own).
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use crate::projection::cells::{BackfillState, Cell, CellLinkRecord, DisplayBudget, DisplayMode};
 use crate::projection::cells_stats::CellViewStats;
 use crate::projection::display_plane::ColumnarDisplayView;
@@ -117,8 +119,8 @@ impl StringTables {
 
     /// Offsets are BYTE offsets used by the client as CHAR offsets after
     /// one `TextDecoder` pass. That holds only while every value is ASCII,
-    /// which these three are (hex text) — asserted rather than assumed,
-    /// because one non-ASCII byte would silently shift every later slice.
+    /// which these three are: hex text plus
+    /// [`crate::DATA_HEX_TRUNCATION_MARKER`], single-byte for this reason.
     fn push(&mut self, cell: &Cell) {
         for (blob, offsets, value) in [
             (
@@ -137,12 +139,10 @@ impl StringTables {
                 cell.data_hex.as_str(),
             ),
         ] {
-            assert!(
-                value.is_ascii(),
-                "columnar string offsets are byte offsets used as char offsets"
-            );
             offsets.push(blob.len() as u32);
-            blob.extend_from_slice(value.as_bytes());
+            if !push_ascii_lossy(blob, value) {
+                report_non_ascii_column(value);
+            }
         }
     }
 
@@ -166,6 +166,39 @@ impl StringTables {
 
     fn region_len(&self) -> usize {
         self.tx_hash.len() + self.content_hash.len() + self.data_hex.len()
+    }
+}
+
+/// One warning per process: a non-ASCII value means a producer changed, not
+/// that this snapshot is special, and every connected client re-encodes.
+static NON_ASCII_WARNED: AtomicBool = AtomicBool::new(false);
+
+/// Append `value`, replacing each non-ASCII BYTE with `?`. Returns whether
+/// the value was already clean. Replacing per byte rather than per char is
+/// what keeps the blob byte-length-identical, so the value reads wrong but
+/// every later slice still reads right.
+fn push_ascii_lossy(blob: &mut Vec<u8>, value: &str) -> bool {
+    if value.is_ascii() {
+        blob.extend_from_slice(value.as_bytes());
+        return true;
+    }
+    blob.extend(value.bytes().map(|b| if b.is_ascii() { b } else { b'?' }));
+    false
+}
+
+/// A non-ASCII column value is a producer bug — loud where it can still be
+/// fixed, survivable where it cannot. This runs inside the reducer's write
+/// lock on the path every binary snapshot takes, so a release build warns
+/// and ships sanitized bytes instead of poisoning the lock for the process.
+fn report_non_ascii_column(value: &str) {
+    debug_assert!(false, "columnar string column is not ASCII: {value:?}");
+    if !NON_ASCII_WARNED.swap(true, Ordering::Relaxed) {
+        tracing::warn!(
+            target: "cknerv-core",
+            value = %value.escape_debug(),
+            "columnar string column carried non-ASCII; sanitized it byte-wise \
+             so the snapshot stays decodable"
+        );
     }
 }
 
@@ -376,7 +409,7 @@ fn push_short_string(buf: &mut Vec<u8>, value: &str) {
 mod tests {
     use super::*;
     use crate::helix::helix_seed_for;
-    use crate::outpoint::OutPoint;
+    use crate::outpoint::{OutPoint, DATA_HEX_TRUNCATION_MARKER};
     use crate::projection::cells::Cell;
     use crate::projection::display_plane::ColumnarDisplayView;
 
@@ -397,10 +430,13 @@ mod tests {
                 index: id as u32,
             },
             capacity: 61_00000000 + id,
-            data_hex: if id.is_multiple_of(3) {
-                "0x".into()
-            } else {
-                "0xdeadbeef".into()
+            // Three data shapes, one of them upstream-truncated: the marker
+            // rides the string blob, so the fixture must carry a row that
+            // has one.
+            data_hex: match id % 3 {
+                0 => "0x".into(),
+                1 => format!("0xdeadbeef{DATA_HEX_TRUNCATION_MARKER}"),
+                _ => "0xdeadbeef".into(),
             },
             content_hash: format!("0x{:064x}", id * 7),
             lock_kind: if id.is_multiple_of(2) {
@@ -527,6 +563,10 @@ mod tests {
         // Offsets are REGION-relative: the client decodes the region once
         // and slices it, so it never has to know where in the buffer it sat.
         let region = std::str::from_utf8(&buf[at.strings..u32_at(&buf, 64) as usize]).unwrap();
+        assert!(
+            region.is_ascii(),
+            "the client reads these byte offsets as char offsets"
+        );
 
         for (field, want) in [
             (
@@ -545,6 +585,26 @@ mod tests {
                 assert_eq!(&region[from as usize..to as usize], expected);
             }
         }
+    }
+
+    /// The release-path guarantee behind the offset table: a value that is
+    /// not ASCII degrades to `?` bytes instead of aborting the encode, and it
+    /// degrades BYTE-wise so nothing after it in the shared blob shifts.
+    /// Drives the writer directly because `StringTables::push` layers a debug
+    /// assert on top — the producer bug must still be loud where it is fixable.
+    #[test]
+    fn a_non_ascii_column_value_is_sanitized_not_fatal() {
+        let mut blob = Vec::new();
+        assert!(push_ascii_lossy(&mut blob, "0xdead"));
+        let start = blob.len();
+        assert!(!push_ascii_lossy(&mut blob, "0xbeef…"));
+        let end = blob.len();
+        assert!(push_ascii_lossy(&mut blob, "0xcafe"));
+
+        assert_eq!(&blob[start..end], b"0xbeef???");
+        assert_eq!(end - start, "0xbeef…".len(), "offsets must not shift");
+        assert_eq!(std::str::from_utf8(&blob[end..]).unwrap(), "0xcafe");
+        assert!(blob.is_ascii());
     }
 
     /// Residents ride as rows after the canonical ones, members as their own

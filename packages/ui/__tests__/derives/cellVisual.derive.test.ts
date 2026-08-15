@@ -58,8 +58,8 @@ describe('cellVisual derive', () => {
   });
 
   it('treats a truncated data string as its observed prefix only', () => {
-    expect(observedDataBytes('0xdeadbeef…')).toBe(4);
+    expect(observedDataBytes('0xdeadbeef~')).toBe(4);
     expect(payloadDensity('0x')).toBe(0);
-    expect(payloadDensity(`0x${'aa'.repeat(1024)}…`)).toBe(1);
+    expect(payloadDensity(`0x${'aa'.repeat(1024)}~`)).toBe(1);
   });
 });

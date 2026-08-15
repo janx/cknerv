@@ -8,6 +8,14 @@
 import type { ChainAnchor } from './enrichment';
 import type { OutPoint } from './outpoint';
 
+/** Suffix a producer appends to a bounded `data_hex` prefix when the source
+ *  data was longer — the twin of Rust's `DATA_HEX_TRUNCATION_MARKER`. Single
+ *  ASCII byte on purpose: the columnar snapshot's string blob is sliced by
+ *  byte offsets read as char offsets, so a multi-byte marker would shift
+ *  every later value. Both `Cell.data_hex` and the enrichment
+ *  `SemanticCellContent.data_hex` carry it. */
+export const DATA_HEX_TRUNCATION_MARKER = '~';
+
 /** Free-form tag string assigned by an external emitter. Known values
  *  in the simulator: "wallet" | "dex" | "cf" | "ckbloom". cknerv-core's
  *  cell-galaxy projection treats this opaquely; palette mapping lives
@@ -62,7 +70,7 @@ export interface Cell {
   pos_seed: [number, number, number];
   out_point: OutPoint;
   capacity: number;       // shannons; UI converts to CKB
-  data_hex: string;       // may end with "…" if upstream truncated
+  data_hex: string;       // may end with DATA_HEX_TRUNCATION_MARKER
   /** CKB-canonical BLAKE2b-256 of CellOutput + data. Stable, 66-char
    *  0x-prefixed hex. Seeds the per-cell CellLifeAvatar. */
   content_hash: string;

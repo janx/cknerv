@@ -33,7 +33,7 @@ describe('selectInitialLabCell', () => {
   });
 
   it('selects the richest observed payload for content stress tests', () => {
-    const cells = [cell(1, '0x00', 'native'), cell(2, '0x001122…'), cell(3, '0x0011')];
+    const cells = [cell(1, '0x00', 'native'), cell(2, '0x001122~'), cell(3, '0x0011')];
     expect(observedLabDataBytes(cells[1])).toBe(3);
     expect(selectInitialLabCell(snapshot(cells), '?sample=content')?.id).toBe(2);
   });

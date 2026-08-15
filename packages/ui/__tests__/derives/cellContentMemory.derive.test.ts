@@ -46,7 +46,7 @@ describe('Cell content memory derivation', () => {
   });
 
   it('uses indexed bytes only when that explicit evidence is present', () => {
-    const model = deriveCellContentMemory('0xdeadbeef…', indexed);
+    const model = deriveCellContentMemory('0xdeadbeef~', indexed);
 
     expect(model.origin).toBe('indexed');
     expect(model.bytes).toEqual([0x48, 0x65, 0x6c, 0x6c, 0x6f, 0]);
@@ -55,7 +55,7 @@ describe('Cell content memory derivation', () => {
   });
 
   it('keeps the direct-node prefix visible when analysis has no raw bytes', () => {
-    const model = deriveCellContentMemory('0xdeadbeef…', {
+    const model = deriveCellContentMemory('0xdeadbeef~', {
       ...indexed,
       total_bytes: 99,
       data_hex: undefined,

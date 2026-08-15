@@ -1,3 +1,4 @@
+import { DATA_HEX_TRUNCATION_MARKER } from '@cknerv/types';
 import type { AssetKind, Cell, CellTag, LockKind } from '@cknerv/types';
 
 export type CellVisualAccent = readonly [number, number, number];
@@ -62,10 +63,12 @@ const clamp01 = (v: number): number => Math.max(0, Math.min(1, v));
 
 /** Number of bytes visibly present in the wire payload. */
 export function observedDataBytes(dataHex: string): number {
-  const withoutEllipsis = dataHex.endsWith('…') ? dataHex.slice(0, -1) : dataHex;
-  const body = withoutEllipsis.startsWith('0x')
-    ? withoutEllipsis.slice(2)
-    : withoutEllipsis;
+  const withoutMarker = dataHex.endsWith(DATA_HEX_TRUNCATION_MARKER)
+    ? dataHex.slice(0, -1)
+    : dataHex;
+  const body = withoutMarker.startsWith('0x')
+    ? withoutMarker.slice(2)
+    : withoutMarker;
   return Math.floor(body.length / 2);
 }
 

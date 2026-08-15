@@ -187,8 +187,9 @@ pub struct SemanticContentGuess {
 
 /// Display-safe content evidence for one canonical Cell. `data_hex` is an
 /// optional bounded prefix and follows the canonical Cell convention of a
-/// trailing `…` when truncated. `total_bytes` and interpretation ranges always
-/// describe the complete payload.
+/// trailing [`crate::DATA_HEX_TRUNCATION_MARKER`] when truncated.
+/// `total_bytes` and interpretation ranges always describe the complete
+/// payload.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SemanticCellContent {
     pub total_bytes: u64,

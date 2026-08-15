@@ -1,3 +1,4 @@
+import { DATA_HEX_TRUNCATION_MARKER } from '@cknerv/types';
 import type { Cell } from '@cknerv/types';
 import { HUD_COLORS } from './hudTheme';
 
@@ -45,10 +46,12 @@ export function formatAge(bornAtMs: number, nowMs: number): string {
   return `${sec}s`;
 }
 
-/** Byte count of a `0x` hex string. A trailing `…` (upstream truncation)
- *  yields an `N B+` marker so the user knows it was clipped. */
+/** Byte count of a `0x` hex string. A trailing DATA_HEX_TRUNCATION_MARKER
+ *  (upstream truncation) yields an `N B+` marker so the user knows it was
+ *  clipped. The `…` this function's display siblings append is a separate,
+ *  UI-side elision. */
 export function formatDataSize(hex: string): string {
-  const truncated = hex.endsWith('…');
+  const truncated = hex.endsWith(DATA_HEX_TRUNCATION_MARKER);
   const body = (truncated ? hex.slice(0, -1) : hex).replace(/^0x/, '');
   const bytes = Math.floor(body.length / 2);
   return `${bytes} B${truncated ? '+' : ''}`;
