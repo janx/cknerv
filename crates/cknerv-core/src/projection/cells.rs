@@ -409,6 +409,24 @@ pub struct CellGalaxy {
     /// input-spend; rebuilt lazily by `gc()` when entries fall out.
     /// Also used by `apply_cell_tagged` to resolve the cell to tag.
     outpoint_index: std::collections::HashMap<OutPoint, u64>,
+    /// Maps a cell id to its slot in `cells`. Purely derived (never
+    /// persisted, never on the wire): it replaces the linear `find(|c|
+    /// c.id == id)` scans that used to run once per spent input inside
+    /// the reducer's global write lock — a 1000-input block against a
+    /// 50k reservoir stalled the whole server for hundreds of ms, and
+    /// boot hydration replayed every spend, making the whole replay
+    /// quadratic.
+    ///
+    /// `cells` stays a `Vec` because its ORDER is observable: the
+    /// columnar snapshot's row order, the JSON snapshot's cell order and
+    /// the display plane's insertion-order priorities all read it. So
+    /// this index mirrors positions rather than owning the cells, and
+    /// every site that compacts or reorders the vec has to put it back in
+    /// step — `gc_cells` (retain), `rollback_from` (mid-vec remove),
+    /// `reset_for_rebuild` (clear) and `restore_from` (wholesale
+    /// replace). Test builds assert the mirror after every mutation; see
+    /// [`Self::assert_cell_index_consistent`].
+    id_to_slot: std::collections::HashMap<u64, usize>,
     /// Last census put on the wire, so a block that did not move the
     /// distribution ships nothing. Derived state: a restart recomputes it
     /// from the restored cells at the first live block.
@@ -575,6 +593,7 @@ impl CellGalaxy {
             cells: Vec::new(),
             next_id: 0,
             outpoint_index: std::collections::HashMap::new(),
+            id_to_slot: std::collections::HashMap::new(),
             last_script_census: ScriptCensus::default(),
             observed_scripts: None,
             block_hashes: std::collections::BTreeMap::new(),
@@ -591,6 +610,87 @@ impl CellGalaxy {
             hydrated_cell_target: 0,
             hydration_floor: None,
             display: DisplayPlane::new(),
+        }
+    }
+
+    // ── canonical container primitives ───────────────────────────────
+    // Every write to `cells` goes through one of these so `id_to_slot`
+    // cannot drift. Nothing here touches iteration order.
+
+    /// Resolve a cell id to its slot. O(1) replacement for the
+    /// `iter().position(|c| c.id == id)` / `iter_mut().find(...)` scans.
+    ///
+    /// The slot is re-verified against the container before it is handed
+    /// out: one integer compare turns any index drift into the same
+    /// "not found" the scans produced, instead of mutating a bystander
+    /// cell. `debug_assert` makes the drift itself loud in dev builds.
+    fn slot_of(&self, id: u64) -> Option<usize> {
+        let slot = *self.id_to_slot.get(&id)?;
+        let holds_it = self.cells.get(slot).is_some_and(|cell| cell.id == id);
+        debug_assert!(
+            holds_it,
+            "id_to_slot[{id}] = {slot} does not hold that cell"
+        );
+        holds_it.then_some(slot)
+    }
+
+    /// Append a cell, keeping the index in step. `or_insert` mirrors the
+    /// first-match semantics of the scans this replaces; ids are unique
+    /// in the container by construction (a revived identity replaces its
+    /// slot in place — see `rollback_from` — rather than duplicating),
+    /// so the entry is always vacant on the live path.
+    fn push_cell(&mut self, cell: Cell) {
+        let slot = self.cells.len();
+        self.id_to_slot.entry(cell.id).or_insert(slot);
+        self.cells.push(cell);
+    }
+
+    /// Remove the cell at `slot`, keeping the index in step. The tail
+    /// repair walks exactly the suffix `Vec::remove` already memmoves, so
+    /// it stays inside that removal's own cost class. Only `rollback_from`
+    /// removes from the middle, and the births it parks are the newest
+    /// cells — i.e. the shortest possible suffix.
+    fn remove_cell_at(&mut self, slot: usize) -> Cell {
+        let cell = self.cells.remove(slot);
+        self.id_to_slot.remove(&cell.id);
+        for (offset, later) in self.cells[slot..].iter().enumerate() {
+            self.id_to_slot.insert(later.id, slot + offset);
+        }
+        cell
+    }
+
+    /// Rebuild the index from scratch. For the retain-style compactions,
+    /// where incremental repair would cost more than the pass itself:
+    /// O(N) once per block that actually retired something, the same
+    /// class as the retain.
+    fn reindex_cells(&mut self) {
+        self.id_to_slot.clear();
+        self.id_to_slot.reserve(self.cells.len());
+        for (slot, cell) in self.cells.iter().enumerate() {
+            self.id_to_slot.entry(cell.id).or_insert(slot);
+        }
+    }
+
+    /// Test-only structural invariant: the index mirrors the container
+    /// exactly — same cardinality (which also pins id uniqueness) and
+    /// every cell indexed at the slot that actually holds it. Asserted
+    /// after every mutation in test builds so a new compaction site that
+    /// forgets to reindex fails loudly instead of silently killing the
+    /// wrong cell.
+    #[cfg(test)]
+    fn assert_cell_index_consistent(&self) {
+        assert_eq!(
+            self.id_to_slot.len(),
+            self.cells.len(),
+            "id_to_slot cardinality drifted from cells"
+        );
+        for (slot, cell) in self.cells.iter().enumerate() {
+            assert_eq!(
+                self.id_to_slot.get(&cell.id).copied(),
+                Some(slot),
+                "cell {} lives at slot {slot} but is not indexed there",
+                cell.id
+            );
         }
     }
 
@@ -655,6 +755,9 @@ impl CellGalaxy {
     /// Hydrate from a previously persisted state. Replaces every field.
     pub fn restore_from(&mut self, p: CellGalaxyPersisted) {
         self.cells = p.cells;
+        // Wholesale container replacement — the id index is derived, so it
+        // is rebuilt here rather than persisted alongside.
+        self.reindex_cells();
         self.next_id = p.next_id;
         self.outpoint_index = p.outpoint_index.into_iter().collect();
         self.block_hashes = p.block_hashes.into_iter().collect();
@@ -818,6 +921,7 @@ impl CellGalaxy {
         ids.extend(self.reorg_limbo.drain().map(|(_, cell)| cell.id));
         self.limbo_backstop_height = None;
         self.cells.clear();
+        self.id_to_slot.clear();
         self.outpoint_index.clear();
         self.block_hashes.clear();
         self.block_births.clear();
@@ -859,6 +963,12 @@ impl CellGalaxy {
             }
             keep
         });
+        if !removed_ids.is_empty() {
+            // The retain compacted the container: every slot from the
+            // first removal onward shifted. Rebuild once — a quiet block
+            // (nothing retired) pays nothing.
+            self.reindex_cells();
+        }
         for op in removed_outpoints {
             if let Some(id) = self.outpoint_index.get(&op) {
                 if removed_ids.contains(id) {
@@ -958,8 +1068,25 @@ impl CellGalaxy {
         for height in heights.into_iter().rev() {
             if let Some(births) = self.block_births.remove(&height) {
                 for outpoint in births {
-                    self.outpoint_index.remove(&outpoint);
-                    if let Some(pos) = self.cells.iter().position(|c| c.out_point == outpoint) {
+                    // `outpoint_index` is the fast path but is NOT
+                    // authoritative for retention: the death pass and
+                    // `enforce_cap` drop an outpoint the moment the cell
+                    // stops being spendable, while the cell itself stays
+                    // in the container for its death-animation tail. A
+                    // birth being rolled back may already be in that
+                    // state, so an index miss falls back to the scan
+                    // rather than skipping the park. (An outpoint is
+                    // created once on any real chain, so the container
+                    // holds at most one cell per outpoint and the two
+                    // paths resolve the same slot.)
+                    let indexed_slot = self
+                        .outpoint_index
+                        .remove(&outpoint)
+                        .and_then(|id| self.slot_of(id))
+                        .filter(|slot| self.cells[*slot].out_point == outpoint);
+                    let found = indexed_slot
+                        .or_else(|| self.cells.iter().position(|c| c.out_point == outpoint));
+                    if let Some(pos) = found {
                         // Park the identity instead of emitting a GC. The
                         // replacement chain usually re-includes the same tx
                         // (same outpoint ⇒ same content — the tx hash covers
@@ -968,7 +1095,7 @@ impl CellGalaxy {
                         // Survivors are matched by outpoint in
                         // `handle_tx_landed`; the rest get this deferred GC
                         // at `settle_reorg_limbo` time.
-                        let cell = self.cells.remove(pos);
+                        let cell = self.remove_cell_at(pos);
                         // Parking is a SILENT removal on the canonical
                         // delta stream (no Gc — the client keeps the cell
                         // alive in place awaiting revival), but the plane
@@ -1001,10 +1128,13 @@ impl CellGalaxy {
                     // snapshot froze it at the original birth's helix, so recompute
                     // so a resurrected cell matches the current helix too.
                     cell.pos_seed = helix_seed_for(id);
-                    if let Some(pos) = self.cells.iter().position(|c| c.id == id) {
+                    // In-place at the same slot when the corpse is still
+                    // retained (keeps ids unique in the container and the
+                    // index untouched); otherwise a fresh append.
+                    if let Some(pos) = self.slot_of(id) {
                         self.cells[pos] = cell.clone();
                     } else {
-                        self.cells.push(cell.clone());
+                        self.push_cell(cell.clone());
                     }
                     self.outpoint_index.insert(cell.out_point.clone(), id);
                     // Resurrections re-enter the map; note_birth is
@@ -1153,6 +1283,8 @@ impl CellGalaxy {
             deltas.push(CellDelta::Gc { ids: gc_removed });
         }
 
+        #[cfg(test)]
+        self.assert_cell_index_consistent();
         deltas
     }
 
@@ -1183,15 +1315,19 @@ impl CellGalaxy {
                 self.display.note_input_unresolved(inp);
                 continue;
             };
+            // O(1) through `id_to_slot`. This ran as a full container scan
+            // per spent input under the reducer's global write lock: a
+            // busy block against a full reservoir stalled every reader for
+            // hundreds of ms, and boot hydration replays every spend.
             let mut death_snapshot = None;
-            for cell in self.cells.iter_mut() {
-                if cell.id == id && cell.death_at_ms.is_none() {
+            if let Some(slot) = self.slot_of(id) {
+                let cell = &mut self.cells[slot];
+                if cell.death_at_ms.is_none() {
                     death_snapshot = Some(cell.clone());
                     cell.death_at_ms = Some(at_ms);
                     deltas.push(CellDelta::Death { id, at_ms });
                     self.total_deaths += 1;
                     dead_ids.push(id);
-                    break;
                 }
             }
             if let Some(cell) = death_snapshot {
@@ -1286,7 +1422,7 @@ impl CellGalaxy {
                 .push(cell.out_point.clone());
             endpoint_anchors.push(CellLinkEndpointAnchor::from(&cell));
             self.display.note_birth(&cell);
-            self.cells.push(cell);
+            self.push_cell(cell);
             birthed_ids.push(id);
         }
 
@@ -1388,6 +1524,8 @@ impl CellGalaxy {
         }
 
         self.prune_reorg_journal();
+        #[cfg(test)]
+        self.assert_cell_index_consistent();
         deltas
     }
 
@@ -1418,10 +1556,12 @@ impl CellGalaxy {
                 .insert(out_point.clone(), tag.to_string());
             return Vec::new();
         };
-        let Some(cell) = self.cells.iter_mut().find(|c| c.id == id) else {
+        // O(1) through `id_to_slot`, same reason as the death pass.
+        let Some(slot) = self.slot_of(id) else {
             // Stale index entry — moot.
             return Vec::new();
         };
+        let cell = &mut self.cells[slot];
         if cell.tag.as_deref() == Some(tag) {
             return Vec::new();
         }
@@ -1614,6 +1754,11 @@ impl Projection for CellGalaxy {
         if let Some(display_delta) = self.display.flush(mutation_at_ms(m)) {
             deltas.push(display_delta);
         }
+        // Every container-touching path funnels through here (the direct
+        // `handle_*` entry points tests use assert for themselves), so any
+        // compaction that forgets to reindex fails on the next mutation.
+        #[cfg(test)]
+        self.assert_cell_index_consistent();
         deltas
     }
 
@@ -3019,6 +3164,132 @@ mod tests {
             .iter()
             .any(|d| matches!(d, CellDelta::Birth { cell } if cell.id == fresh_id)));
         assert_eq!(restored.total_births, 2);
+    }
+
+    #[test]
+    fn id_index_tracks_the_container_through_gc_rollback_and_revival() {
+        // Every compaction site in one sequence: retain (`gc_cells`),
+        // mid-vec remove (reorg park), append-after-gc (resurrection) and
+        // wholesale replace (`restore_from`). The structural mirror is
+        // asserted after each mutation by the test hook; what this test
+        // adds is that the O(1) death and tag lookups still land on the
+        // cell the old linear scans landed on once slots have shifted.
+        let mut g = make_galaxy();
+        g.handle_block_mined(1, "0xb1", 1, 1_000);
+        g.handle_tx_landed(
+            "0xgen",
+            1,
+            1_000,
+            &[],
+            &[
+                out(100, "0xa"),
+                out(200, "0xb"),
+                out(300, "0xc"),
+                out(400, "0xd"),
+            ],
+        );
+        let gen_ids: Vec<u64> = (0..4).map(|i| g.outpoint_index[&op("0xgen", i)]).collect();
+
+        // Deaths mark in place: no compaction, every slot stays put.
+        g.handle_block_mined(2, "0xb2", 1, 2_000);
+        g.handle_tx_landed(
+            "0xspend",
+            2,
+            2_000,
+            &[op("0xgen", 0), op("0xgen", 1)],
+            &[out(500, "0xe"), out(600, "0xf")],
+        );
+        let spend_ids: Vec<u64> = (0..2)
+            .map(|i| g.outpoint_index[&op("0xspend", i)])
+            .collect();
+        assert_eq!(g.cells.len(), 6, "corpses stay for the death tail");
+
+        // Retain compaction: both corpses fall past the tail, so every
+        // surviving slot shifts down by two.
+        g.handle_block_mined(3, "0xb3", 0, 4_000);
+        assert_eq!(
+            g.cells.iter().map(|c| c.id).collect::<Vec<_>>(),
+            vec![gen_ids[2], gen_ids[3], spend_ids[0], spend_ids[1]]
+        );
+        // A stale index would tag a shifted bystander here.
+        g.apply_mutation(&Mutation::CellTagged {
+            out_point: op("0xspend", 1),
+            tag: "dex".to_string(),
+            at: 4_100,
+        });
+        assert_eq!(
+            g.cells
+                .iter()
+                .filter(|c| c.tag.is_some())
+                .map(|c| c.id)
+                .collect::<Vec<_>>(),
+            vec![spend_ids[1]]
+        );
+
+        // Replacement at height 2: parks both spend births (mid-vec
+        // removes, tail repair) and resurrects the two gc'd corpses —
+        // appends, since their old slots are long gone.
+        g.handle_block_mined(2, "0xb2prime", 1, 5_000);
+        assert_eq!(g.reorg_limbo.len(), 2);
+        assert_eq!(
+            g.cells.iter().map(|c| c.id).collect::<Vec<_>>(),
+            vec![gen_ids[2], gen_ids[3], gen_ids[1], gen_ids[0]],
+            "deaths are undone newest-first and land after the survivors"
+        );
+
+        // The replacement suffix re-lands the same tx: the parked ids
+        // revive and the re-spends must find the resurrected cells at
+        // their NEW slots.
+        let replay = g.handle_tx_landed(
+            "0xspend",
+            2,
+            5_100,
+            &[op("0xgen", 0), op("0xgen", 1)],
+            &[out(500, "0xe"), out(600, "0xf")],
+        );
+        assert_eq!(
+            replay
+                .iter()
+                .filter_map(|d| match d {
+                    CellDelta::Death { id, .. } => Some(*id),
+                    _ => None,
+                })
+                .collect::<Vec<_>>(),
+            vec![gen_ids[0], gen_ids[1]],
+            "the O(1) death lookup follows the resurrected cells' new slots"
+        );
+        assert_eq!(
+            replay
+                .iter()
+                .filter_map(|d| match d {
+                    CellDelta::Birth { cell } => Some(cell.id),
+                    _ => None,
+                })
+                .collect::<Vec<_>>(),
+            spend_ids,
+            "parked identities revive rather than allocating fresh ids"
+        );
+
+        // Wholesale replace: the index is derived, never persisted.
+        let mut restored = CellGalaxy::new();
+        restored.restore_from(g.to_persisted());
+        restored.assert_cell_index_consistent();
+        assert_eq!(
+            restored.cells.iter().map(|c| c.id).collect::<Vec<_>>(),
+            g.cells.iter().map(|c| c.id).collect::<Vec<_>>(),
+            "restore preserves container order, so the rebuilt index mirrors it"
+        );
+        let tagged = restored.apply_mutation(&Mutation::CellTagged {
+            out_point: op("0xgen", 2),
+            tag: "cf".to_string(),
+            at: 6_000,
+        });
+        assert!(
+            tagged
+                .iter()
+                .any(|d| matches!(d, CellDelta::Tag { id, .. } if *id == gen_ids[2])),
+            "the rebuilt index resolves tags through the restored container; got {tagged:?}"
+        );
     }
 
     #[test]
