@@ -279,6 +279,16 @@ function reduceDelta(prev: SemanticsCache, delta: SemanticsDelta): SemanticsCach
         && prev.networkAtlas.as_of.block >= delta.from_block
           ? null
           : prev.networkAtlas;
+      // A script's name does not depend on the tip, but the record proving it
+      // came from a compatible index does. Dropped on the same rule as every
+      // other anchored record, and the next refresh re-proves it — the exact
+      // rule the server's prune arm applies (`enrichment.rs`
+      // `Mutation::ChainReorganized`).
+      const scriptRegistry =
+        prev.scriptRegistry
+        && prev.scriptRegistry.as_of.block >= delta.from_block
+          ? null
+          : prev.scriptRegistry;
       return {
         ...prev,
         cells,
@@ -291,9 +301,14 @@ function reduceDelta(prev: SemanticsCache, delta: SemanticsDelta): SemanticsCach
         activityFeed,
         transactionHorizon,
         networkAtlas,
+        scriptRegistry,
       };
     }
     case 'clear':
+      // Mirrors the server's `clear_records()`: every record slot empties,
+      // script names included — a rebuilt source may be pointed at another
+      // network, and a retained registry would name the new census's
+      // identities from the old one.
       return {
         ...prev,
         cells: new Map(),
@@ -306,7 +321,19 @@ function reduceDelta(prev: SemanticsCache, delta: SemanticsDelta): SemanticsCach
         activityFeed: null,
         transactionHorizon: null,
         networkAtlas: null,
+        scriptRegistry: null,
       };
+    default: {
+      // A delta variant this build does not know (server ahead of the
+      // embedded client, or a projection-only arm absent from the TS union)
+      // must be a no-op — falling off the end returned `undefined` and the
+      // revisioned batch path then spread it into a cache with no maps at
+      // all. The `never` binding keeps a variant ADDED to the TS union a
+      // compile error here rather than a silent drop.
+      const _exhaustive: never = delta;
+      void _exhaustive;
+      return prev;
+    }
   }
 }
 

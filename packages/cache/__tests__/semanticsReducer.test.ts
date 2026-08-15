@@ -11,6 +11,7 @@ import type {
   EnrichmentSourceStatus,
   NetworkAtlasRecord,
   ProtocolEraRecord,
+  ScriptRegistryRecord,
   SemanticsDelta,
   TransactionHorizonRecord,
   TransactionSemanticRecord,
@@ -204,6 +205,21 @@ function networkAtlas(block: number): NetworkAtlasRecord {
   };
 }
 
+function scriptRegistry(block: number): ScriptRegistryRecord {
+  return {
+    source: 'ckbadger',
+    as_of: { block, hash: `0xblock${block}` },
+    updated_at_ms: block,
+    entries: [{
+      code_hash: `0x${'9b'.repeat(32)}`,
+      hash_type: 'type',
+      name: 'Default Lock',
+      deprecated: false,
+    }],
+    unresolved: 3,
+  };
+}
+
 describe('semantics reducer', () => {
   it('keeps its own revision and upserts selected Cell context', () => {
     const record = cell(10, '0xcell');
@@ -337,6 +353,54 @@ describe('semantics reducer', () => {
       delta: { type: 'prune', from_block: 10 },
     }]);
     expect(next.networkAtlas).toBeNull();
+  });
+
+  it('prune drops the script registry only when the reorg reaches its anchor', () => {
+    const record = scriptRegistry(10);
+    const seeded = applyRevisionedSemanticsDeltas(emptySemanticsCache(), [{
+      revision: 1,
+      delta: { type: 'script_registry_replace', script_registry: record },
+    }]);
+    expect(seeded.scriptRegistry).toBe(record);
+
+    // Server parity (`enrichment.rs`, `Mutation::ChainReorganized`): a name
+    // does not depend on the tip, but the record proving it came from a
+    // compatible index does — so the anchor decides, exactly as it does for
+    // every other record. Above the anchor the registry survives…
+    expect(
+      applySemanticsDelta(seeded, { type: 'prune', from_block: 15 })
+        .scriptRegistry,
+    ).toBe(record);
+    // …at or below it, it drops and the next refresh re-proves it.
+    expect(
+      applySemanticsDelta(seeded, { type: 'prune', from_block: 10 })
+        .scriptRegistry,
+    ).toBeNull();
+    expect(
+      applySemanticsDelta(seeded, { type: 'prune', from_block: 9 })
+        .scriptRegistry,
+    ).toBeNull();
+  });
+
+  it('clear drops the script registry along with every other record', () => {
+    const seeded = applyRevisionedSemanticsDeltas(emptySemanticsCache(), [
+      { revision: 1, delta: { type: 'source_status', source: ready } },
+      {
+        revision: 2,
+        delta: {
+          type: 'script_registry_replace',
+          script_registry: scriptRegistry(10),
+        },
+      },
+    ]);
+    expect(seeded.scriptRegistry).not.toBeNull();
+
+    // Server parity (`clear_records()`): ChainRebuild / an incompatible
+    // source may repoint at another network, and retained names would label
+    // the next census's identities from the old chain.
+    const next = applySemanticsDelta(seeded, { type: 'clear' });
+    expect(next.scriptRegistry).toBeNull();
+    expect(next.source.status).toBe('ready');
   });
 
   it('clears only network atlas when the crawler is disabled', () => {
@@ -675,5 +739,58 @@ describe('deepEqualsIgnoringAnchors', () => {
     expect(deepEqualsIgnoringAnchors({ n: 1, opt: undefined }, { n: 1 })).toBe(true);
     expect(deepEqualsIgnoringAnchors({ n: 1 }, { n: 1, opt: undefined })).toBe(true);
     expect(deepEqualsIgnoringAnchors({ n: 1, opt: 0 }, { n: 1 })).toBe(false);
+  });
+});
+
+describe('unknown wire variants', () => {
+  // A server ahead of this build can put a delta type on the wire that no
+  // case here matches. Every reducer in this package owes the same contract:
+  // a silent no-op, never a throw and never an undefined cache. Without a
+  // default arm this reducer returned `undefined`, and the batch path below
+  // then published `{ ...undefined, revision }` — a cache with no maps,
+  // destroying the semantics pipeline for the rest of the session.
+  const future = {
+    type: 'from_the_future',
+    payload: 7,
+  } as unknown as SemanticsDelta;
+
+  function seed(): SemanticsCache {
+    return applyRevisionedSemanticsDeltas(emptySemanticsCache(), [
+      { revision: 1, delta: { type: 'source_status', source: ready } },
+      { revision: 2, delta: { type: 'cell_upsert', cell: cell(10, '0xcell') } },
+      { revision: 3, delta: { type: 'census_replace', census: census(10) } },
+    ]);
+  }
+
+  it('applySemanticsDelta returns the previous cache untouched', () => {
+    const seeded = seed();
+    expect(applySemanticsDelta(seeded, future)).toBe(seeded);
+  });
+
+  it('a batch of only unknown arms advances nothing but the revision', () => {
+    const seeded = seed();
+    expect(applyRevisionedSemanticsDeltas(seeded, [
+      { revision: seeded.revision, delta: future },
+    ])).toBe(seeded);
+
+    const bumped = applyRevisionedSemanticsDeltas(seeded, [
+      { revision: 9, delta: future },
+    ]);
+    expect(bumped.revision).toBe(9);
+    expect(bumped.cells).toBe(seeded.cells);
+    expect(bumped.transactions).toBe(seeded.transactions);
+    expect(bumped.census).toBe(seeded.census);
+    expect(bumped.source).toBe(seeded.source);
+  });
+
+  it('known arms after an unknown one in the same batch still land', () => {
+    const record = cell(11, '0xafter');
+    const next = applyRevisionedSemanticsDeltas(seed(), [
+      { revision: 4, delta: future },
+      { revision: 5, delta: { type: 'cell_upsert', cell: record } },
+    ]);
+    expect(next.revision).toBe(5);
+    expect(next.cells.get(outPointKey(record.out_point))).toBe(record);
+    expect(next.cells.size).toBe(2);
   });
 });

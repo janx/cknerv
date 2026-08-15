@@ -354,6 +354,39 @@ describe('applyRevisionedChainMutations', () => {
   });
 });
 
+describe('unknown wire variants', () => {
+  // A server ahead of this build (or a projection-only mutation deliberately
+  // absent from the TS union) can put a mutation type on the wire that no
+  // case here matches. Every reducer in this package owes the same contract:
+  // a silent no-op, never a throw and never an undefined cache.
+  const future = {
+    type: 'from_the_future',
+    payload: 7,
+  } as unknown as Mutation;
+
+  it('applyChainMutation returns the previous entry untouched', () => {
+    const seeded = applyChainMutation(emptyChainCache(), {
+      type: 'block_mined',
+      number: 5,
+      hash: '0xb',
+      tx_count: 0,
+      at: 1,
+    });
+    expect(applyChainMutation(seeded, future)).toBe(seeded);
+  });
+
+  it('known mutations after an unknown one in the same batch still land', () => {
+    const before = emptyChainCache();
+    expect(applyRevisionedChainMutations(before, [rm(1, future)])).toBe(before);
+
+    const after = applyRevisionedChainMutations(before, [
+      rm(1, future),
+      rm(2, { type: 'block_mined', number: 5, hash: '0xb', tx_count: 0, at: 1 }),
+    ]);
+    expect(after.tip).toBe(5);
+  });
+});
+
 describe('cross-language wire-shape parity', () => {
   it('snapshot_chain.json hydrates and exposes documented invariants', () => {
     const snap = fixture<ChainEntry>('snapshot_chain.json');

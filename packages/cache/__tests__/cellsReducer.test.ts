@@ -689,6 +689,49 @@ describe('applyRevisionedCellDeltas', () => {
   });
 });
 
+describe('unknown wire variants', () => {
+  // A server ahead of this build (or a projection-only arm deliberately
+  // absent from the TS union) can put a delta type on the wire that no case
+  // here matches. Every reducer in this package owes the same contract: a
+  // silent no-op, never a throw and never an undefined cache.
+  const future = {
+    type: 'from_the_future',
+    payload: 7,
+  } as unknown as CellDelta;
+  const rd = (revision: number, delta: CellDelta): RevisionedCellDelta =>
+    ({ revision, delta });
+
+  it('applyCellDelta returns the previous cache untouched', () => {
+    const seeded = applyCellDelta(emptyCellsCache(), {
+      type: 'birth',
+      cell: cell(1),
+    });
+    expect(applyCellDelta(seeded, future)).toBe(seeded);
+  });
+
+  it('a batch of only unknown arms advances nothing but the revision', () => {
+    const seeded = applyCellDelta(emptyCellsCache(), {
+      type: 'birth',
+      cell: cell(1),
+    });
+    expect(applyRevisionedCellDeltas(seeded, [rd(0, future)])).toBe(seeded);
+
+    const bumped = applyRevisionedCellDeltas(seeded, [rd(4, future)]);
+    expect(bumped.revision).toBe(4);
+    expect(bumped.cells).toBe(seeded.cells);
+    expect(bumped.cellsToken).toBe(seeded.cellsToken);
+  });
+
+  it('known arms after an unknown one in the same batch still land', () => {
+    const after = applyRevisionedCellDeltas(emptyCellsCache(), [
+      rd(1, future),
+      rd(2, { type: 'birth', cell: cell(1) }),
+    ]);
+    expect(after.revision).toBe(2);
+    expect(after.cells.get(1)?.id).toBe(1);
+  });
+});
+
 describe('fromCellsSnapshot', () => {
   it('hydrates cells, recent_links, and counters', () => {
     const snap: CellGalaxySnapshot = {
