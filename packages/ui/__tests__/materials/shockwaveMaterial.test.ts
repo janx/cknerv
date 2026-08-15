@@ -17,7 +17,7 @@ describe('protocol shockwave slots', () => {
     // The peer-plane sampler draws through it — not a private re-derivation.
     expect(SHOCKWAVE_SIGNAL_GLSL).toContain('waveCrestWake(');
     expect(SHOCKWAVE_SIGNAL_GLSL).not.toMatch(/pow\(\(dist - ringR\)/);
-    // One wake length for the shockwave and the quarter-scale contact front.
+    // One wake length for the shockwave and the scale-divided contact front.
     expect(WAVE_WAKE_LENGTH).toBe(3.2);
   });
 

@@ -68,16 +68,17 @@ import {
 // are one shape, not two languages meeting at the membrane.
 //
 // EVERY worker gets its own front, all at ONE shared speed: the peer-plane
-// brightness wave's SHOCKWAVE_SPEED at quarter scale. Speed and reach divide
-// by CONTACT_WAVE_SCALE TOGETHER — that is the invariant, not raw speed
+// brightness wave's SHOCKWAVE_SPEED divided by CONTACT_WAVE_SCALE. Speed and
+// reach divide by it TOGETHER — that is the invariant, not raw speed
 // equality: it keeps a front's lifetime equal to the peer wave's structure,
 // so the two planes read as one event at two scales. (Restore the raw speed
-// without ×4 reach and every front extinguishes in a quarter of its window —
-// a blink.) Identical speed and shape make ~81 latency-staggered commits
-// read as one interference field converging on the galaxy core rather than
-// as 81 independent events; hero emphasis is scale and reach, never a
-// different form. Overlap is kept off the white rail by thin crests, a 1/r
-// falloff, the rim's three gaps, and extinction where the tissue ends.
+// without restoring the reach with it and every front extinguishes in a
+// fraction of its window — a blink.) Identical speed and shape make ~81
+// latency-staggered commits read as one interference field converging on the
+// galaxy core rather than as 81 independent events; hero emphasis is scale
+// and reach, never a different form. Overlap is kept off the white rail by
+// thin crests, a 1/r falloff, the rim's three gaps, and extinction where the
+// tissue ends.
 //
 // Every real measured node keeps its own timing and transform, but the renderer
 // submits the whole event as four semantic batches: sparse low-poly glyph rims,
@@ -98,7 +99,7 @@ const LOB_CORE_ONSET = 0.55;
 /** The core barely shrinks while the rim does, which is what sells compression. */
 const LOB_CORE_COMPRESS = 0.20;
 /** Widest radius of the drawn-inward ring, in glyph sizes. Tied to the glyph,
- *  not to the front, so it is NOT on the front's quarter scale. */
+ *  not to the front, so it is NOT on the front's divided scale. */
 const INHALE_REACH = 3.2;
 
 const TISSUE_ROSE = new THREE.Color().setRGB(...CELL_GALAXY_PALETTE.tissueRose);
@@ -697,8 +698,8 @@ export default function BlockDeliveryLayer({
             _position,
             inhaleRadius,
             // The knob still steers this crest, but ×CONTACT_WAVE_SCALE undoes
-            // the front's quarter first: like INHALE_REACH above, the drawn
-            // breath is on the GLYPH's scale, and quartering the front's width
+            // the front's division first: like INHALE_REACH above, the drawn
+            // breath is on the GLYPH's scale, and shrinking the front's width
             // must not quietly starve a ring whose radius never moved.
             contactCrestHalfWidth(
               LIVE.delivery.waveWidth * CONTACT_WAVE_SCALE * 0.7 * punch,

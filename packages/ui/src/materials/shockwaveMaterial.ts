@@ -70,7 +70,7 @@ export const WAVE_WAKE_LENGTH = 3.2;
  * The ONE crest+wake waveform of a block event, at any scale: a gaussian
  * band `offset` half-widths from the crest, plus an exponential wake gated to
  * the side the wave came from (`signedBehind` > 0). The peer-plane shockwave
- * and the quarter-scale Cell-field front both draw THIS profile — the tests
+ * and the scale-divided Cell-field front both draw THIS profile — the tests
  * pin them as one shape at two sizes, and the shape math living twice is how
  * they had already drifted (wake 3.4 vs 3.2) within a single feature.
  */

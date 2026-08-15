@@ -27,7 +27,7 @@ import {
  * `SHOCKWAVE_SPEED / CONTACT_WAVE_SCALE`): ~81 workers commit the same block
  * at latency-staggered times. Identical speed and shape make their fronts ONE
  * interference field instead of 81 independent fireworks — and because speed
- * and reach carry the SAME quarter scale, a front's lifetime still matches
+ * and reach carry the SAME division, a front's lifetime still matches
  * the peer-plane wave's structure, so the two planes read as two sections of
  * one event at two sizes.
  *
@@ -58,7 +58,7 @@ const CONTACT_WAVE_SEGMENTS = 96;
 export const CONTACT_WAVE_WAKE_BEHIND = 1;
 export const CONTACT_WAVE_WAKE_AHEAD = -1;
 
-// The front's quarter-scale relationship to the peer-plane wave
+// The front's scale relationship to the peer-plane wave
 // (CONTACT_WAVE_SCALE) lives in ui/topologyConstants.ts beside
 // SHOCKWAVE_SPEED — the two numbers together are the two-plane contract.
 
@@ -68,8 +68,8 @@ export const CONTACT_WAVE_WAKE_AHEAD = -1;
  *  it: extinction begins just inside the nominal rim and completes a little
  *  past it, where the ~4.5% halo outliers thin into nothing. They describe the
  *  field, not taste, so they are module constants instead of tuning knobs.
- *  (The old circular 44→62 band was calibrated for the pre-quarter reach-34
- *  fronts, which needed dimming from mid-tissue outward; a quarter-scale ring
+ *  (The old circular 44→62 band was calibrated for the pre-division reach-34
+ *  fronts, which needed dimming from mid-tissue outward; a scale-divided ring
  *  released ON the tissue must stay readable out to the rim.) */
 const CONTACT_WAVE_RIM_FADE_START_NORM = 0.94;
 const CONTACT_WAVE_RIM_FADE_END_NORM = 1.12;

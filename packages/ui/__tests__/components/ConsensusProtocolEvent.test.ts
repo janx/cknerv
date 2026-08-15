@@ -78,8 +78,9 @@ describe('A protocol event relay', () => {
 
     // One shape at one speed is the whole reason ~81 staggered commits read as
     // one interference field instead of 81 independent events. The Cell-field
-    // front is the peer-plane wave at quarter scale — same shape, same timing,
-    // a quarter of the reach — so the two planes stay one synchronised event.
+    // front is the peer-plane wave divided by CONTACT_WAVE_SCALE — same shape,
+    // same timing, a fraction of the reach — so the two planes stay one
+    // synchronised event.
     expect(deliverySchema.waveSpeed.value).toBe(SHOCKWAVE_SPEED / CONTACT_WAVE_SCALE);
     // closeTo, not toBe: these only survive exact === today because the scale
     // is a power of two — the relationship, not the bit pattern, is the pin.
@@ -123,8 +124,8 @@ describe('A protocol event relay', () => {
     // The crest is pinned to a fixed UV radius and the instance scale does the
     // rest — a baked ring texture smears the moment a front grows.
     expect(wave).toContain('(radius - ${CONTACT_WAVE_CREST_UV.toFixed(2)}) / halfWidth');
-    // The crest+wake waveform is the peer-plane shockwave's own GLSL at
-    // quarter scale: one profile, two planes, no second copy to drift.
+    // The crest+wake waveform is the peer-plane shockwave's own GLSL at the
+    // front's scale: one profile, two planes, no second copy to drift.
     expect(wave).toContain('waveCrestWake(');
     expect(wave).toContain("from './shockwaveMaterial'");
     // The front blends against built-in sprite materials inside one release

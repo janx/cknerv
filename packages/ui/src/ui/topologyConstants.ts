@@ -60,16 +60,26 @@ console.assert(
 export const SHOCKWAVE_SPEED = 36;
 
 /**
- * The Cell-field contact front is a QUARTER-scale version of that peer-plane
- * wave: same shape, same pacing, a quarter of the reach. Every spatial
- * constant of the front — speed, reach, start radius, crest width, falloff
- * reference — is divided by this, so the two planes still run one
+ * The Cell-field contact front is a SCALED-DOWN version of that peer-plane
+ * wave: same shape, same pacing, its reach divided by this number. Every
+ * spatial constant of the front — speed, reach, start radius, crest width,
+ * falloff reference — is divided by it, so the two planes still run one
  * synchronised event and the released ring stays a local ripple in the tissue
- * rather than a galaxy-wide sweep. Change it and the whole front rescales
- * without changing its pacing. Lives beside SHOCKWAVE_SPEED because the two
- * numbers together ARE the two-plane relationship.
+ * rather than a galaxy-wide sweep.
+ *
+ * Change it and the whole front rescales without changing its pacing: speed
+ * and reach move together, so a front's lifetime — and with it the beat of
+ * the release — is untouched, and the 1/r falloff is scale-invariant by
+ * construction (reference and radius divide by the same number), so the
+ * smaller ring is the same picture at a smaller size rather than a dimmer
+ * one. Lives beside SHOCKWAVE_SPEED because the two numbers together ARE the
+ * two-plane relationship.
+ *
+ * 4 → 8 on 2026-08-15: the expanding ring reached too far across the tissue,
+ * so its maximum radius was halved — hero 11.4 → 5.7 world units after the
+ * window clamp (contactFrontReachCeiling), peer 8.5 → 4.25.
  */
-export const CONTACT_WAVE_SCALE = 4;
+export const CONTACT_WAVE_SCALE = 8;
 
 /** Eviction ceiling for the per-block cell-highlight write loop.
  *  A pathological block touching > MAX_BLOCK_HIGHLIGHTS distinct cells

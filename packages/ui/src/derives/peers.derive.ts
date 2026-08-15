@@ -90,10 +90,10 @@ export interface DeliveryLandingField {
 }
 
 /** Landings may not sit past this normalized ellipse radius. 1.0 is the
- *  nominal tissue rim: the released front is a small local ripple (a quarter
- *  of the peer-plane wave), so a landing out past the rim would release its
- *  whole ring over empty space and the worker's commit would never be seen
- *  touching tissue. Workers ring the galaxy WIDER than the tissue on x
+ *  nominal tissue rim: the released front is a small local ripple (the
+ *  peer-plane wave divided by CONTACT_WAVE_SCALE), so a landing out past the
+ *  rim would release its whole ring over empty space and the worker's commit
+ *  would never be seen touching tissue. Workers ring the galaxy WIDER than the tissue on x
  *  (chain ellipse 1.25 vs tissue 60), so far-rim landings are common, not a
  *  degenerate case. */
 export const DELIVERY_LANDING_MAX_NORM = 1.0;
@@ -285,15 +285,16 @@ export function contactRelease(t: number): ContactRelease {
 // front that silently extinguishes early or never completes.
 
 /** Front radius at the instant of release. Also anchors the 1/r falloff away
- *  from its singularity. Both are on the front's quarter scale. */
+ *  from its singularity. Both are on the front's divided scale. */
 export const CONTACT_FRONT_START_RADIUS = 2.4 / CONTACT_WAVE_SCALE;
 export const CONTACT_FRONT_FALLOFF_REFERENCE = 24 / CONTACT_WAVE_SCALE;
 /** Crest widening RATE — fraction of the width per second of travel — so a
  *  front never reads as a rigid decal. Deliberately NOT divided by
- *  CONTACT_WAVE_SCALE: it multiplies a width that is already quarter-scaled,
+ *  CONTACT_WAVE_SCALE: it multiplies a width that is already scale-divided,
  *  so the widening rescales with the ring by construction. (Dividing it too
- *  left the crest ×1.13 over its whole life instead of the tuned ×1.54 —
- *  proportionally four times stiffer than the peer-plane wave it mirrors.) */
+ *  flattened the crest toward a fixed width over its whole life instead of the
+ *  tuned ×1.54 — proportionally stiffer than the peer-plane wave it mirrors,
+ *  by exactly the scale.) */
 export const CONTACT_FRONT_WIDTH_GROW_RATE = 0.45;
 /** Fraction of a front's reach where its extinction begins. */
 export const CONTACT_FRONT_REACH_KNEE = 0.72;

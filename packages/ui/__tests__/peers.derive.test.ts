@@ -286,25 +286,25 @@ describe('peers.derive', () => {
   });
 
   describe('contactFrontState', () => {
-    // Shipped defaults: speed 9 (= SHOCKWAVE_SPEED / CONTACT_WAVE_SCALE),
+    // Shipped defaults: speed 4.5 (= SHOCKWAVE_SPEED / CONTACT_WAVE_SCALE),
     // window 1.2 s — the numbers the completion contract must hold at.
-    const live = { speed: 9, width: 0.14, falloffPower: 0.5, windowS: 1.2 };
+    const live = { speed: 4.5, width: 0.07, falloffPower: 0.5, windowS: 1.2 };
 
     it('expands linearly from the start radius at the shared field speed', () => {
-      expect(contactFrontState(0, 8.5, live).crestRadius)
+      expect(contactFrontState(0, 4.25, live).crestRadius)
         .toBeCloseTo(CONTACT_FRONT_START_RADIUS, 12);
-      expect(contactFrontState(1, 8.5, live).crestRadius)
-        .toBeCloseTo(CONTACT_FRONT_START_RADIUS + 9, 12);
+      expect(contactFrontState(1, 4.25, live).crestRadius)
+        .toBeCloseTo(CONTACT_FRONT_START_RADIUS + 4.5, 12);
       let prev = -Infinity;
       for (let i = 0; i <= 24; i += 1) {
-        const r = contactFrontState((i / 24) * 1.2, 8.5, live).crestRadius;
+        const r = contactFrontState((i / 24) * 1.2, 4.25, live).crestRadius;
         expect(r).toBeGreaterThan(prev);
         prev = r;
       }
     });
 
     it('reach is extinction, not a stop: full strength to the knee, zero at reach, radius never clamped', () => {
-      const reach = 8.5;
+      const reach = 4.25;
       const kneeAge =
         (reach * CONTACT_FRONT_REACH_KNEE - CONTACT_FRONT_START_RADIUS) / live.speed;
       const extinctionAge = (reach - CONTACT_FRONT_START_RADIUS) / live.speed;
@@ -323,16 +323,16 @@ describe('peers.derive', () => {
     });
 
     it('clamps reach to what the window can complete — no front outlives its own extinction', () => {
-      // The shipped hero reach (13) exceeds the shipped ceiling
-      // (0.6 + 9×1.2 = 11.4): without the clamp, the time envelope killed the
+      // The shipped hero reach (6.5) exceeds the shipped ceiling
+      // (0.3 + 4.5×1.2 = 5.7): without the clamp, the time envelope killed the
       // hero front mid-knee (reachFade still ≈0.41 at the window's end) and
       // every knob value past the ceiling was a silent dead zone.
-      expect(contactFrontReachCeiling(live.speed, live.windowS)).toBeCloseTo(11.4, 9);
-      expect(contactFrontState(live.windowS, 13, live).reachFade).toBeLessThan(1e-9);
+      expect(contactFrontReachCeiling(live.speed, live.windowS)).toBeCloseTo(5.7, 9);
+      expect(contactFrontState(live.windowS, 6.5, live).reachFade).toBeLessThan(1e-9);
       expect(contactFrontState(live.windowS, 30, live).reachFade).toBeLessThan(1e-9);
       // A completable reach is untouched by the clamp.
-      expect(contactFrontState(0.5, 8.5, live).reachFade)
-        .toBe(contactFrontState(0.5, 8.5, { ...live, windowS: 99 }).reachFade);
+      expect(contactFrontState(0.5, 4.25, live).reachFade)
+        .toBe(contactFrontState(0.5, 4.25, { ...live, windowS: 99 }).reachFade);
     });
 
     it('ships completable: every default reach extinguishes inside the default window', () => {
@@ -351,26 +351,26 @@ describe('peers.derive', () => {
       }
     });
 
-    it('widens the crest as a RATE on the already-quarter-scaled width, under the radius cap', () => {
+    it('widens the crest as a RATE on the already-scale-divided width, under the radius cap', () => {
       // Young front: the cap owns the width (a release that is mostly crest
       // reads as a soft doughnut, not a thin ring leaving).
-      expect(contactFrontState(0, 8.5, live).crestHalfWidth).toBeCloseTo(
+      expect(contactFrontState(0, 4.25, live).crestHalfWidth).toBeCloseTo(
         CONTACT_FRONT_START_RADIUS * CONTACT_FRONT_WIDTH_RADIUS_CAP,
         12,
       );
       // Mature front: ×(1 + 0.45·t) — the same ×1.54-over-a-window widening
-      // the peer-plane wave carries. A scale-divided "rate" flattened this to
-      // ×1.13, the rigid-decal failure the constant exists to prevent.
-      expect(contactFrontState(1.2, 8.5, live).crestHalfWidth)
-        .toBeCloseTo(0.14 * (1 + 0.45 * 1.2), 12);
+      // the peer-plane wave carries. A scale-divided "rate" flattened this
+      // toward ×1, the rigid-decal failure the constant exists to prevent.
+      expect(contactFrontState(1.2, 4.25, live).crestHalfWidth)
+        .toBeCloseTo(0.07 * (1 + 0.45 * 1.2), 12);
       expect(CONTACT_FRONT_WIDTH_GROW_RATE).toBe(0.45);
     });
 
     it('dims as 1/r from the falloff reference', () => {
-      expect(contactFrontState(0, 8.5, { ...live, falloffPower: 0 }).falloff).toBe(1);
+      expect(contactFrontState(0, 4.25, { ...live, falloffPower: 0 }).falloff).toBe(1);
       let prev = Infinity;
       for (let i = 0; i <= 10; i += 1) {
-        const f = contactFrontState((i / 10) * 1.2, 8.5, live).falloff;
+        const f = contactFrontState((i / 10) * 1.2, 4.25, live).falloff;
         expect(f).toBeLessThan(prev);
         expect(f).toBeGreaterThan(0);
         prev = f;
@@ -532,7 +532,7 @@ describe('peers.derive', () => {
 
     it('pulls an over-rim landing radially onto the tissue, keeping the origin honest', () => {
       // Chain ellipse ×1.25 puts workers out to |x|≈70 against a 60-half-x
-      // tissue: a quarter-scale front released at x=70 would live entirely
+      // tissue: a scale-divided front released at x=70 would live entirely
       // off the field. The landing comes back to the rim; `from` never moves.
       const pos = new Map<string, [number, number, number]>([['far', [70, 22, 0]]]);
       const d = planDeliveries([], 0, pos, { far: 0.2 }, 38, FIELD);
