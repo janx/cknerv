@@ -236,6 +236,7 @@ fall back to the SPA.
 
 | Method | Path | Shape |
 |---|---|---|
+| `GET` | `/api/health` | `{ build_version, uptime_s, degraded, revision, tip, tip_age_ms, reducer_alive, adapters, projections, quarantined_projections, enrichment }` |
 | `GET` | `/api/entities/chain/snapshot` | `{ revision, chain, chain_nodes }` |
 | `WS` | `/api/entities/chain/stream?since=<rev>` | snapshot, delta, lagged, or heartbeat frames |
 | `GET` | `/api/projections/cells/snapshot` | `{ revision, snapshot }` where `snapshot.cells` is the staged set, not the whole retained galaxy |

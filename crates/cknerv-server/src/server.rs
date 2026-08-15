@@ -17,6 +17,9 @@
 //!   5. Arm a one-shot boot-replay persistence checkpoint.
 //!   6. Spawn each adapter; each one drops a `Sender` clone into the
 //!      shared mpsc; the reducer multiplexes them.
+//!   7. Spawn the supervisor over all of the above, so a task that dies
+//!      outside shutdown says so on `/api/health` instead of leaving a
+//!      server that heartbeats state it can no longer advance.
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -31,6 +34,7 @@ use cknerv_core::{
 
 use crate::adapter::Adapter;
 use crate::enrichment::EnrichmentSource;
+use crate::health::TaskRole;
 use crate::projection_registry::Registry;
 use crate::state::ServerState;
 
@@ -49,6 +53,10 @@ type ProjectionInstaller = Box<dyn FnOnce(&mut Registry) + Send>;
 /// `BoxFuture`-style wiring; the runner takes ownership of the adapter
 /// so the `tokio::spawn`ed task isn't tied to the builder's lifetime.
 trait AdapterRunner: Send + 'static {
+    /// The adapter's own name, needed before it is consumed by `spawn` so
+    /// the supervisor can say which one died.
+    fn name(&self) -> &'static str;
+
     fn spawn(
         self: Box<Self>,
         out: mpsc::Sender<Mutation>,
@@ -59,6 +67,10 @@ trait AdapterRunner: Send + 'static {
 struct AdapterBox<A: Adapter>(A);
 
 impl<A: Adapter> AdapterRunner for AdapterBox<A> {
+    fn name(&self) -> &'static str {
+        Adapter::name(&self.0)
+    }
+
     fn spawn(
         self: Box<Self>,
         out: mpsc::Sender<Mutation>,
@@ -88,6 +100,7 @@ pub struct ServerBuilder {
     observed_scripts: Option<Arc<ObservedScriptsSink>>,
     workdir: Option<PathBuf>,
     restore_persisted: bool,
+    build_version: Option<String>,
 }
 
 impl ServerBuilder {
@@ -101,6 +114,7 @@ impl ServerBuilder {
             observed_scripts: None,
             workdir: None,
             restore_persisted: true,
+            build_version: None,
         }
     }
 
@@ -164,6 +178,15 @@ impl ServerBuilder {
         self
     }
 
+    /// Which build is running, for `/api/health`. Only the host binary is
+    /// compiled with the commit stamp, so it hands the same string here
+    /// that it serves in the SPA's runtime config; omitting the call leaves
+    /// the field null.
+    pub fn build_version(mut self, version: impl Into<String>) -> Self {
+        self.build_version = Some(version.into());
+        self
+    }
+
     /// Control whether an existing persisted snapshot is hydrated before
     /// adapters start. Callers can disable restoration when lightweight
     /// metadata shows that a derived reservoir no longer satisfies the
@@ -192,6 +215,9 @@ impl ServerBuilder {
             state.set_observed_scripts_sink(sink);
         }
         let state = Arc::new(state);
+        if let Some(version) = self.build_version.as_deref() {
+            state.set_build_version(version);
+        }
         {
             let mut registry = state.projections.write().unwrap();
             for install in self.projections {
@@ -293,12 +319,47 @@ impl ServerBuilder {
         //    clone, `mutation_rx.recv()` returns `None` and the reducer
         //    exits naturally even if no one called shutdown.
         let mut adapter_handles = Vec::new();
+        let mut watched = vec![(
+            state.health().watch(TaskRole::Reducer, "reducer"),
+            reducer_handle.abort_handle(),
+        )];
+        // The enrichment pair is watched only when a source is configured.
+        // Without one nothing can ever send, so its reducer exits the
+        // moment `build` drops the local sender — by design, and reporting
+        // that as a death would leave every CKB-only deployment permanently
+        // "degraded" over a pipeline it never asked for.
+        if let Some(handle) = enrichment_source_handle.as_ref() {
+            watched.push((
+                state
+                    .health()
+                    .watch(TaskRole::EnrichmentReducer, "enrichment-reducer"),
+                enrichment_reducer_handle.abort_handle(),
+            ));
+            watched.push((
+                state
+                    .health()
+                    .watch(TaskRole::EnrichmentSource, "enrichment-source"),
+                handle.abort_handle(),
+            ));
+        }
         for adapter in self.adapters {
+            let name = adapter.name();
             let tx = mutation_tx.clone();
             let sd = shutdown_rx.clone();
-            adapter_handles.push(adapter.spawn(tx, sd));
+            let handle = adapter.spawn(tx, sd);
+            watched.push((
+                state.health().watch(TaskRole::Adapter, name),
+                handle.abort_handle(),
+            ));
+            adapter_handles.push(handle);
         }
         drop(mutation_tx);
+
+        // 7. Supervise them. Nothing above notices its own death: the
+        //    handles are awaited only in `shutdown()`, so without this a
+        //    dead adapter (or a reducer whose senders all dropped) leaves a
+        //    server heartbeating state that can no longer advance.
+        let supervisor_handle = crate::health::spawn_supervisor(watched, shutdown_rx.clone());
 
         let router = crate::routes::build_router(state.clone(), shutdown_rx, enrichment_source);
         let handle = ServerHandle {
@@ -311,6 +372,7 @@ impl ServerBuilder {
             enrichment_reducer_handle,
             enrichment_source_handle,
             checkpoint_handle,
+            supervisor_handle,
         };
 
         Ok((router, handle))
@@ -337,6 +399,7 @@ pub struct ServerHandle {
     enrichment_reducer_handle: tokio::task::JoinHandle<()>,
     enrichment_source_handle: Option<tokio::task::JoinHandle<()>>,
     checkpoint_handle: Option<tokio::task::JoinHandle<()>>,
+    supervisor_handle: tokio::task::JoinHandle<()>,
 }
 
 impl ServerHandle {
@@ -364,6 +427,19 @@ impl ServerHandle {
     /// watch channel — repeated calls have no further effect.
     pub async fn shutdown(self) {
         let _ = self.shutdown_tx.send(true);
+        // The supervisor goes first: everything below is about to exit on
+        // purpose, and it must not be awake to call that a death.
+        let abort = self.supervisor_handle.abort_handle();
+        if tokio::time::timeout(Duration::from_secs(2), self.supervisor_handle)
+            .await
+            .is_err()
+        {
+            tracing::warn!(
+                target: "cknerv-server",
+                "task supervisor did not exit within 2s; aborting"
+            );
+            abort.abort();
+        }
         if let Some(handle) = self.enrichment_source_handle {
             let abort = handle.abort_handle();
             if tokio::time::timeout(Duration::from_secs(2), handle)

@@ -38,6 +38,7 @@ pub fn build_router(
     enrichment_source: Option<Arc<dyn EnrichmentSource>>,
 ) -> Router {
     Router::new()
+        .route("/api/health", get(health))
         .route("/api/entities/chain/snapshot", get(entities_chain_snapshot))
         .route("/api/entities/chain/stream", get(entities_chain_stream))
         .route("/api/projections/:name/snapshot", get(projection_snapshot))
@@ -59,6 +60,13 @@ pub fn build_router(
             shutdown_rx,
             enrichment_source,
         })
+}
+
+/// Liveness, in the shape an operator or a monitor reads it. Deliberately
+/// answerable while the server is broken: no projection lock, no snapshot,
+/// nothing here can panic on a lock some other failure poisoned.
+async fn health(State(s): State<RouterState>) -> impl IntoResponse {
+    Json(crate::health::report(&s.state))
 }
 
 async fn entities_chain_snapshot(State(s): State<RouterState>) -> Json<serde_json::Value> {

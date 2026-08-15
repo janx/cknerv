@@ -138,7 +138,10 @@ pub async fn run(workdir: PathBuf, cfg: ResolvedConfig) -> Result<()> {
         .composition_demand_sink(composition_demand)
         .observed_scripts_sink(observed_scripts)
         .workdir(state_dir.clone())
-        .restore_persisted(restore_persisted);
+        .restore_persisted(restore_persisted)
+        // Same stamp the SPA gets in its runtime config, so a bug report
+        // and `/api/health` name the same commit.
+        .build_version(BUILD_VERSION);
     if let Some(source) = ckbadger_source {
         builder = builder.enrichment_source(source);
     }

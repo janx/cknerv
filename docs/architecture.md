@@ -490,10 +490,20 @@ the same values the same way, but the seed now at least starts exact.
 5. Start the optional enrichment supervisor.
 6. Arm the boot-completion checkpoint watcher.
 7. Start adapters last.
+8. Start the task supervisor over everything spawned above.
 
 The first adapter mutation therefore cannot race persisted-state loading, and
 the browser never observes an empty state that later jumps backward into a
 restored snapshot.
+
+Nothing spawned here notices its own death — the join handles are awaited only
+by `shutdown()`. The supervisor closes that gap: a task ending outside shutdown
+(including the reducer, whose loop ends "cleanly" once every adapter has
+dropped its sender) is logged as an error and reported by `/api/health` as
+degraded. It is never answered with a process exit: what remains is stale, not
+wrong, and a visualization that says what is broken beats one that vanishes.
+The one place that does exit is `spawn_projection_runtime` on `Lagged`, where
+derived state has genuinely desynced.
 
 ### 7.2 Atomicity and Lock Order
 
@@ -518,6 +528,19 @@ state slices:
 This is stronger than making each container independently thread-safe: every
 published revision must represent a complete reducer commit, not a mixture of
 two times.
+
+Because the projection fan-out runs inside the coordination write guard, each
+projection apply is wrapped in `catch_unwind`. An escaping panic would poison
+that guard and make every later route — snapshot, stream, persistence — panic
+on a process that stays up and keeps heartbeating. Contained instead, the
+projection that panicked is quarantined: never applied again, frozen at its
+last state, served from the snapshot cache the failed apply never got to
+clear, excluded from persistence so half-applied state cannot outlive the
+process, and named on `/api/health`. Its own locks are poisoned by then, so
+the runner reads through poisoning rather than re-panicking — sound precisely
+because quarantine guarantees nothing will write behind them again. Entity
+apply stays deliberately uncontained: that one is canonical state, and
+half-applying it is not something to keep serving.
 
 ### 7.3 Channels, Rings, and Backpressure
 
@@ -566,6 +589,7 @@ binary header.
 
 | Method and path | Response | Notes |
 |---|---|---|
+| `GET /api/health` | JSON | Uptime, tip freshness, task liveness, quarantined projections |
 | `GET /api/entities/chain/snapshot` | JSON | `{revision, chain, chain_nodes, peers}` |
 | `GET /api/entities/chain/stream?since=N` | WebSocket | Entity snapshot/delta/replay/heartbeat |
 | `GET /api/projections/:name/snapshot` | JSON | `{revision, snapshot}`; built-ins include `cells` and `semantics` |
@@ -1294,6 +1318,7 @@ coverage, visual composition, and GPU cost respectively.
 | HTTP and WebSocket | `crates/cknerv-server/src/routes.rs`, `crates/cknerv-server/src/ws.rs` |
 | Persistence | `crates/cknerv-server/src/persistence.rs` |
 | Enrichment scheduler | `crates/cknerv-server/src/enrichment_supervisor.rs` |
+| Task supervision and health | `crates/cknerv-server/src/health.rs` |
 | CLI runtime and config | `crates/cknerv-cli/src/server.rs`, `crates/cknerv-cli/src/config.rs` |
 | TypeScript wire types | `packages/types/src/` |
 | Browser reducers and streams | `packages/cache/src/` |

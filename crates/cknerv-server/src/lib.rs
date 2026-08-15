@@ -15,6 +15,8 @@
 //! bus through a `SimulatorAdapter`.
 //!
 //! Routes hosted (matching what `@cknerv/cache` consumes in PR B5):
+//!   * `GET /api/health` — uptime, tip freshness, task liveness, and any
+//!     projection a contained panic has quarantined.
 //!   * `GET /api/entities/chain/snapshot` — full Chain entity snapshot.
 //!   * `GET /api/entities/chain/stream`   — WS stream of `RevisionedMutation`s,
 //!     resumable via `?since=<revision>`.
@@ -29,6 +31,7 @@
 pub mod adapter;
 pub mod enrichment;
 mod enrichment_supervisor;
+mod health;
 pub mod persistence;
 pub mod projection_registry;
 pub mod routes;

@@ -20,7 +20,7 @@
 //! so we never hold a sync lock across an `.await`.
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, LockResult, Mutex, OnceLock, PoisonError, RwLock};
 
 use axum::body::Bytes;
 use serde_json::value::RawValue;
@@ -77,6 +77,47 @@ fn delta_to_wire<T: serde::Serialize>(delta: &T) -> Box<RawValue> {
 /// Reference-counted delta. Cloning is a pointer bump, which is what makes
 /// ring replay and broadcast fan-out cheap.
 pub type SharedDelta = Arc<DeltaEntry>;
+
+/// Take a lock guard even when the lock is poisoned.
+///
+/// std poisons a lock whose holder panicked and makes every later caller
+/// panic in turn. That default protects an invariant nobody here still
+/// has: by the time this is reached the panic is already contained
+/// (`ServerState::apply_mutation` catches it at the projection fan-out)
+/// and the projection is quarantined in the same breath, so NOTHING will
+/// ever write behind this lock again. What it guards is frozen, not
+/// racing — possibly frozen half-way through the mutation that killed it,
+/// which is why reads are served cache-first (a panicking apply never
+/// reaches the cache clear, so the cache still holds the last good
+/// revision).
+///
+/// The alternative is a server that answers no request of any kind,
+/// including the ones describing the failure, until someone restarts it.
+pub(crate) fn past_poison<G>(lock: LockResult<G>) -> G {
+    lock.unwrap_or_else(PoisonError::into_inner)
+}
+
+/// A projection frozen by a contained panic.
+///
+/// One-way by design. A projection that panicked has no defined recovery:
+/// replaying the mutation it choked on would only panic again, and
+/// skipping just that one would leave derived state quietly disagreeing
+/// with the chain. So it stops here — the projection keeps serving the
+/// last state it reached, every other projection carries on, and
+/// `/api/health` names it.
+#[derive(Default)]
+struct Quarantine(OnceLock<Arc<str>>);
+
+impl Quarantine {
+    fn reason(&self) -> Option<Arc<str>> {
+        self.0.get().cloned()
+    }
+
+    /// First reason wins — anything after it is noise from the same wound.
+    fn raise(&self, reason: Arc<str>) {
+        let _ = self.0.set(reason);
+    }
+}
 
 /// Which envelope a caller needs around the serialized snapshot body. Both
 /// shapes carry the revision so the client can resume from
@@ -221,16 +262,34 @@ pub trait ProjectionRuntime: Send + Sync {
     /// Restore from a previously saved value. Errors are returned to the
     /// caller, who may then drop the saved value and continue empty.
     fn load_state(&self, v: Value) -> Result<(), String>;
+    /// The revision this projection last processed, read without touching
+    /// the projection lock — `/api/health` asks while the reducer is
+    /// mid-apply and must never wait on it.
+    fn revision(&self) -> u64;
+    /// Why this projection stopped applying, or `None` while it is
+    /// healthy. Set once, by a contained panic.
+    fn quarantine_reason(&self) -> Option<Arc<str>>;
+}
+
+/// The panic-containment surface both write-side handles share. The
+/// containment itself lives at the reducer's fan-out
+/// (`ServerState::apply_mutation`) — the runner only records the verdict.
+pub trait Quarantinable: Send + Sync {
+    fn projection_name(&self) -> &'static str;
+    /// Why this projection stopped applying, or `None` while it is healthy.
+    fn quarantine_reason(&self) -> Option<Arc<str>>;
+    /// Freeze the projection after a contained panic. Idempotent.
+    fn quarantine(&self, reason: Arc<str>);
 }
 
 /// Write-side handle the reducer uses to fan a mutation into each
 /// projection.
-pub trait ApplyMutation: Send + Sync {
+pub trait ApplyMutation: Quarantinable {
     fn apply(&self, rm: &RevisionedMutation);
 }
 
 /// Write-side handle for the optional, non-canonical enrichment stream.
-pub trait ApplyEnrichment: Send + Sync {
+pub trait ApplyEnrichment: Quarantinable {
     fn apply_enrichment(&self, event: &EnrichmentEvent);
 }
 
@@ -248,6 +307,7 @@ pub struct ProjectionRunner<P: Projection> {
     tx: broadcast::Sender<SharedDelta>,
     ring: Ring<SharedDelta>,
     snapshots: Mutex<SnapshotCache>,
+    quarantine: Quarantine,
 }
 
 impl<P: Projection> ProjectionRunner<P> {
@@ -262,23 +322,26 @@ impl<P: Projection> ProjectionRunner<P> {
             tx,
             ring: Ring::with_capacity(PROJECTION_DELTA_RING_CAP),
             snapshots: Mutex::new(SnapshotCache::default()),
+            quarantine: Quarantine::default(),
         }
     }
 
     /// Serve `envelope` from the cache when it is current. Checked before
     /// the projection lock is taken, so a hit costs one atomic load and one
     /// uncontended mutex.
+    ///
+    /// This is also the whole read story for a quarantined projection: an
+    /// apply that panicked never reached the revision store or the cache
+    /// clear below it, so both still describe the last state that applied
+    /// cleanly, and every later caller is served those same bytes.
     fn cached(&self, envelope: Option<SnapshotEnvelope>) -> Option<(u64, Bytes)> {
         let revision = self.revision.load(Ordering::Relaxed);
-        let hit = self.snapshots.lock().unwrap().get(envelope, revision)?;
+        let hit = past_poison(self.snapshots.lock()).get(envelope, revision)?;
         Some((revision, hit))
     }
 
     fn remember(&self, envelope: Option<SnapshotEnvelope>, revision: u64, bytes: &Bytes) {
-        self.snapshots
-            .lock()
-            .unwrap()
-            .put(envelope, revision, bytes.clone());
+        past_poison(self.snapshots.lock()).put(envelope, revision, bytes.clone());
     }
 }
 
@@ -298,7 +361,7 @@ impl<P: Projection> ProjectionRuntime for ProjectionRunner<P> {
         // projection. Revision and state are still read together, so the
         // pair a client resumes from stays consistent.
         let (revision, snap) = {
-            let p = self.inner.read().unwrap();
+            let p = past_poison(self.inner.read());
             (self.revision.load(Ordering::Relaxed), p.snapshot())
         };
         let bytes = Bytes::from(serialize_envelope(envelope, revision, &snap).into_bytes());
@@ -313,7 +376,7 @@ impl<P: Projection> ProjectionRuntime for ProjectionRunner<P> {
         // Read the revision under the SAME projection read-lock as the
         // snapshot so the patched header cannot drift from the rows.
         let (revision, mut bytes) = {
-            let p = self.inner.read().unwrap();
+            let p = past_poison(self.inner.read());
             (self.revision.load(Ordering::Relaxed), p.snapshot_bin()?)
         };
         bytes[cknerv_core::projection::cells_columnar::CELLS_COLUMNAR_REVISION_OFFSET
@@ -333,11 +396,41 @@ impl<P: Projection> ProjectionRuntime for ProjectionRunner<P> {
     }
 
     fn save_state(&self) -> Value {
-        self.inner.read().unwrap().save()
+        // A frozen projection is half-way through the mutation that killed
+        // it. Writing that to disk would carry the damage across restarts,
+        // and the restored copy would meet the same code path again.
+        // `load_all` skips nulls, so persisting nothing means the next boot
+        // starts this projection empty and rebuilds it from the chain.
+        if self.quarantine.reason().is_some() {
+            return Value::Null;
+        }
+        past_poison(self.inner.read()).save()
     }
 
     fn load_state(&self, v: Value) -> Result<(), String> {
-        self.inner.write().unwrap().load(v)
+        past_poison(self.inner.write()).load(v)
+    }
+
+    fn revision(&self) -> u64 {
+        self.revision.load(Ordering::Relaxed)
+    }
+
+    fn quarantine_reason(&self) -> Option<Arc<str>> {
+        self.quarantine.reason()
+    }
+}
+
+impl<P: Projection> Quarantinable for ProjectionRunner<P> {
+    fn projection_name(&self) -> &'static str {
+        self.name
+    }
+
+    fn quarantine_reason(&self) -> Option<Arc<str>> {
+        self.quarantine.reason()
+    }
+
+    fn quarantine(&self, reason: Arc<str>) {
+        self.quarantine.raise(reason);
     }
 }
 
@@ -354,7 +447,7 @@ impl<P: Projection> ApplyMutation for ProjectionRunner<P> {
         // is released before broadcasting so a slow subscriber can't
         // wedge the reducer task. (Same discipline as simulator.)
         let deltas = {
-            let mut p = self.inner.write().unwrap();
+            let mut p = past_poison(self.inner.write());
             p.apply_mutation(&rm.mutation)
         };
         // Always advance our revision to match the EntityStore's. Even
@@ -363,7 +456,7 @@ impl<P: Projection> ApplyMutation for ProjectionRunner<P> {
         // snapshots die with the revision they described — holding one no
         // client can be served is pure resident memory.
         self.revision.store(rm.revision, Ordering::Relaxed);
-        self.snapshots.lock().unwrap().clear();
+        past_poison(self.snapshots.lock()).clear();
         for d in deltas {
             // Serialized HERE, inside the same lock scope the revision
             // store and the cache clear share, so a snapshot taken after
@@ -394,6 +487,7 @@ pub struct EnrichmentProjectionRunner<P: EnrichmentProjection> {
     delta_seq: AtomicU64,
     tx: broadcast::Sender<SharedDelta>,
     ring: Ring<SharedDelta>,
+    quarantine: Quarantine,
 }
 
 impl<P: EnrichmentProjection> EnrichmentProjectionRunner<P> {
@@ -408,6 +502,7 @@ impl<P: EnrichmentProjection> EnrichmentProjectionRunner<P> {
             delta_seq: AtomicU64::new(0),
             tx,
             ring: Ring::with_capacity(PROJECTION_DELTA_RING_CAP),
+            quarantine: Quarantine::default(),
         }
     }
 
@@ -446,8 +541,8 @@ impl<P: EnrichmentProjection> ProjectionRuntime for EnrichmentProjectionRunner<P
         // would cost a lock on the event path to save nothing worth
         // saving.
         let (revision, snapshot) = {
-            let _coord = self.event_coord.lock().unwrap();
-            let snapshot = self.inner.read().unwrap().snapshot();
+            let _coord = past_poison(self.event_coord.lock());
+            let snapshot = past_poison(self.inner.read()).snapshot();
             (self.revision.load(Ordering::Relaxed), snapshot)
         };
         (
@@ -465,28 +560,55 @@ impl<P: EnrichmentProjection> ProjectionRuntime for EnrichmentProjectionRunner<P
     }
 
     fn save_state(&self) -> Value {
-        let _coord = self.event_coord.lock().unwrap();
-        self.inner.read().unwrap().save()
+        // Same rule as the canonical runner: a frozen projection's
+        // half-applied state must not outlive the process that broke it.
+        if self.quarantine.reason().is_some() {
+            return Value::Null;
+        }
+        let _coord = past_poison(self.event_coord.lock());
+        past_poison(self.inner.read()).save()
     }
 
     fn load_state(&self, value: Value) -> Result<(), String> {
-        let _coord = self.event_coord.lock().unwrap();
-        self.inner.write().unwrap().load(value)
+        let _coord = past_poison(self.event_coord.lock());
+        past_poison(self.inner.write()).load(value)
+    }
+
+    fn revision(&self) -> u64 {
+        self.revision.load(Ordering::Relaxed)
+    }
+
+    fn quarantine_reason(&self) -> Option<Arc<str>> {
+        self.quarantine.reason()
+    }
+}
+
+impl<P: EnrichmentProjection> Quarantinable for EnrichmentProjectionRunner<P> {
+    fn projection_name(&self) -> &'static str {
+        self.name
+    }
+
+    fn quarantine_reason(&self) -> Option<Arc<str>> {
+        self.quarantine.reason()
+    }
+
+    fn quarantine(&self, reason: Arc<str>) {
+        self.quarantine.raise(reason);
     }
 }
 
 impl<P: EnrichmentProjection> ApplyMutation for EnrichmentProjectionRunner<P> {
     fn apply(&self, rm: &RevisionedMutation) {
-        let _coord = self.event_coord.lock().unwrap();
-        let deltas = self.inner.write().unwrap().apply_mutation(&rm.mutation);
+        let _coord = past_poison(self.event_coord.lock());
+        let deltas = past_poison(self.inner.write()).apply_mutation(&rm.mutation);
         self.publish(deltas);
     }
 }
 
 impl<P: EnrichmentProjection> ApplyEnrichment for EnrichmentProjectionRunner<P> {
     fn apply_enrichment(&self, event: &EnrichmentEvent) {
-        let _coord = self.event_coord.lock().unwrap();
-        let deltas = self.inner.write().unwrap().apply_enrichment(event);
+        let _coord = past_poison(self.event_coord.lock());
+        let deltas = past_poison(self.inner.write()).apply_enrichment(event);
         self.publish(deltas);
     }
 }
@@ -529,6 +651,13 @@ impl Registry {
             .iter()
             .find(|r| r.name() == name)
             .cloned()
+    }
+
+    /// Every read-side handle, in registration order. `/api/health` walks
+    /// them for revisions and quarantine flags — neither of which takes the
+    /// projection lock, so the walk cannot wait on the reducer.
+    pub fn runtimes(&self) -> &[Arc<dyn ProjectionRuntime>] {
+        &self.read_runtimes
     }
 
     pub fn writers(&self) -> Vec<Arc<dyn ApplyMutation>> {

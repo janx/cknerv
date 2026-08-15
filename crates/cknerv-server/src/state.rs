@@ -16,6 +16,7 @@
 //!     released before the per-projection broadcast send. We never hold a
 //!     sync lock across an `.await`.
 
+use std::panic::AssertUnwindSafe;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock, RwLock};
 
@@ -31,7 +32,8 @@ use cknerv_core::{
 };
 
 use crate::enrichment::CanonicalContext;
-use crate::projection_registry::Registry;
+use crate::health::ServerHealth;
+use crate::projection_registry::{past_poison, Quarantinable, Registry};
 
 /// One structural mutation as both readers of it want it: the typed form
 /// the projections reduce, and the wire text every entity-stream client
@@ -152,6 +154,9 @@ pub struct ServerState {
     /// read side so it observes a state matching the revision it
     /// returns.
     pub(crate) coord: RwLock<()>,
+    /// Uptime, build stamp, and the liveness the supervisor maintains —
+    /// everything `/api/health` reports that is not derived state.
+    health: ServerHealth,
 }
 
 impl ServerState {
@@ -171,7 +176,40 @@ impl ServerState {
             composition_demand: Arc::new(CompositionDemandSink::new()),
             observed_scripts: Arc::new(ObservedScriptsSink::new()),
             coord: RwLock::new(()),
+            health: ServerHealth::new(),
         }
+    }
+
+    pub(crate) fn health(&self) -> &ServerHealth {
+        &self.health
+    }
+
+    /// Whether a bounded historical replay is in flight. The projection
+    /// pipeline reads it through the mutation stream; `/api/health` reads
+    /// it here, because a server that looks frozen is usually just
+    /// backfilling.
+    pub fn replay_active(&self) -> bool {
+        self.replay_active.load(Ordering::Relaxed)
+    }
+
+    /// The cheap vitals `/api/health` needs — revision, tip, and the tip
+    /// block's own timestamp — taken together so they agree.
+    ///
+    /// Poison-recovering on purpose: this is the one reader whose entire
+    /// job is to describe a server something else has already broken, so it
+    /// must not be the next casualty. The read side of an `RwLock` is never
+    /// what poisons it, and nothing here mutates.
+    pub(crate) fn health_vitals(&self) -> (u64, u64, Option<u64>) {
+        let _coord = past_poison(self.coord.read());
+        let revision = self.revision.load(Ordering::Relaxed);
+        let store = past_poison(self.entity_store.read());
+        (revision, store.chain.tip, store.chain.last_block_ts_ms)
+    }
+
+    /// Record which build is running, for `/api/health`. The host supplies
+    /// it — only the host binary carries the commit stamp.
+    pub fn set_build_version(&self, version: &str) {
+        self.health.set_build_version(version);
     }
 
     /// Install the sink the cell-galaxy projection publishes to, so the
@@ -317,10 +355,12 @@ impl ServerState {
         //    internal lock; the registry's read lock is released before
         //    the projection broadcasts (the broadcast itself is sync
         //    inside tokio's lock-free MPMC, so no `.await` involved).
+        //    Each apply is contained: this loop runs INSIDE the coord
+        //    write guard, and an escaping panic would poison it.
         {
             let registry = self.projections.read().unwrap();
             for writer in registry.writers() {
-                writer.apply(&rev);
+                contained(writer.as_ref(), "a mutation", || writer.apply(&rev));
             }
         }
 
@@ -386,9 +426,15 @@ impl ServerState {
         };
         drop(store);
 
+        if let EnrichmentEvent::SourceStatus(status) = &event {
+            self.health.record_enrichment_status(status);
+        }
+
         let registry = self.projections.read().unwrap();
         for writer in registry.enrichment_writers() {
-            writer.apply_enrichment(&event);
+            contained(writer.as_ref(), "an enrichment event", || {
+                writer.apply_enrichment(&event)
+            });
         }
         true
     }
@@ -494,8 +540,25 @@ impl ServerState {
                     maybe = mutation_rx.recv() => match maybe {
                         Some(m) => { self.apply_mutation(m); }
                         // All adapters dropped their sender — nothing
-                        // more will arrive. Exit cleanly.
-                        None => break,
+                        // more will arrive. The loop has nothing left to
+                        // do, but outside shutdown this is a death, not a
+                        // clean exit: the server keeps answering with
+                        // state that can no longer advance. Say so here,
+                        // and let the supervisor flip health for it.
+                        None => {
+                            // …unless shutdown is already in flight, where
+                            // adapters dropping their senders is exactly
+                            // what is supposed to happen.
+                            if !*shutdown.borrow() {
+                                tracing::error!(
+                                    target: "cknerv-server",
+                                    "every adapter dropped its sender — the reducer has \
+                                     nothing left to drain and derived state is frozen \
+                                     from here"
+                                );
+                            }
+                            break;
+                        }
                     }
                 }
             }
@@ -546,7 +609,7 @@ impl ServerState {
                             registry.writers()
                         };
                         for w in &writers {
-                            w.apply(&rm);
+                            contained(w.as_ref(), "a mutation", || w.apply(&rm));
                         }
                     }
                     Err(RecvError::Closed) => break,
@@ -563,6 +626,53 @@ impl ServerState {
             }
         })
     }
+}
+
+/// Apply one projection with its panic contained, and skip it entirely
+/// once it has used that up.
+///
+/// The canonical fan-out runs inside the coord WRITE guard. An escaping
+/// panic poisons that guard, and from then on every route that reads it —
+/// snapshot, stream, persistence — panics too, on a process that stays up
+/// and keeps heartbeating. One bad expect in one projection would take the
+/// whole server with it while leaving it looking alive. So the unwind stops
+/// one frame short of the guard.
+///
+/// What survives is deliberately narrow. The projection that panicked is
+/// quarantined: never applied again, frozen at the last state it reached,
+/// named on `/api/health`. Every other projection is applied as if nothing
+/// happened, because nothing did happen to them — they are independent
+/// reducers over the same mutation. Entity-store apply stays fail-loud and
+/// uncontained: that one IS the canonical state, and half-applying it is
+/// not a thing to keep serving.
+fn contained<W>(projection: &W, stream: &str, apply: impl FnOnce())
+where
+    W: Quarantinable + ?Sized,
+{
+    if projection.quarantine_reason().is_some() {
+        return;
+    }
+    let Err(payload) = std::panic::catch_unwind(AssertUnwindSafe(apply)) else {
+        return;
+    };
+    let reason = panic_text(payload.as_ref());
+    tracing::error!(
+        target: "cknerv-server",
+        "projection `{}` panicked applying {stream} — quarantined at its last good \
+         state; every other projection and every route keeps serving. reason: {reason}",
+        projection.projection_name(),
+    );
+    projection.quarantine(Arc::from(reason));
+}
+
+/// The panic message, for the log line and the health report. `panic!` and
+/// `expect` leave a `String`; `panic!("literal")` leaves a `&str`.
+fn panic_text(payload: &(dyn std::any::Any + Send)) -> &str {
+    payload
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+        .unwrap_or("panicked with a payload that is not a message")
 }
 
 fn event_anchor_is_current(event: &EnrichmentEvent, recent_blocks: &[RecentBlock]) -> bool {
@@ -845,7 +955,165 @@ fn apply_chain_mutation(chain: &mut Chain, m: &Mutation) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::projection_registry::ProjectionRuntimeTestExt;
+    use crate::projection_registry::{ProjectionRuntimeTestExt, SnapshotEnvelope};
+
+    /// The block this projection cannot survive.
+    const LANDMINE_BLOCK: u64 = 66;
+    /// What it writes into itself on the way down, so a test can tell the
+    /// half-applied state apart from the last good one.
+    const HALF_APPLIED: u64 = 999;
+
+    /// A projection that panics mid-apply, after dirtying itself.
+    ///
+    /// `applies` counts every mutation it was handed — quarantine is then
+    /// provable by the count standing still, not just by a flag saying so.
+    struct LandmineProjection {
+        applies: Arc<AtomicU64>,
+        state: u64,
+    }
+
+    impl cknerv_core::Projection for LandmineProjection {
+        type Snapshot = u64;
+        type Delta = u64;
+
+        fn name(&self) -> &'static str {
+            "landmine"
+        }
+
+        fn snapshot(&self) -> u64 {
+            self.state
+        }
+
+        fn save(&self) -> serde_json::Value {
+            serde_json::json!({ "state": self.state })
+        }
+
+        fn apply_mutation(&mut self, m: &Mutation) -> Vec<u64> {
+            self.applies.fetch_add(1, Ordering::Relaxed);
+            if matches!(
+                m,
+                Mutation::BlockMined {
+                    number: LANDMINE_BLOCK,
+                    ..
+                }
+            ) {
+                self.state = HALF_APPLIED;
+                panic!("deliberate test panic inside a projection apply");
+            }
+            self.state += 1;
+            Vec::new()
+        }
+    }
+
+    fn block(number: u64) -> Mutation {
+        Mutation::BlockMined {
+            number,
+            hash: format!("0xblock{number}"),
+            tx_count: 0,
+            size: 0,
+            at: number * 1_000,
+        }
+    }
+
+    /// A panic inside one projection's apply used to poison the coord write
+    /// lock, and from there every route on the server — snapshot, stream,
+    /// persistence — for as long as the process stayed up. It is contained
+    /// now: the projection that panicked is frozen and named, everything
+    /// else carries on.
+    ///
+    /// (The deliberate panic prints a backtrace to stderr. That is the
+    /// panic hook doing its job, not this test failing.)
+    #[test]
+    fn a_panicking_projection_is_quarantined_and_takes_nothing_with_it() {
+        let state = ServerState::new();
+        let applies = Arc::new(AtomicU64::new(0));
+        {
+            let mut projections = state.projections.write().unwrap();
+            projections.register(cknerv_core::CellGalaxy::default());
+            projections.register(LandmineProjection {
+                applies: applies.clone(),
+                state: 0,
+            });
+        }
+        let landmine = state
+            .projections
+            .read()
+            .unwrap()
+            .lookup("landmine")
+            .expect("landmine runtime");
+        let cells = state
+            .projections
+            .read()
+            .unwrap()
+            .lookup("cells")
+            .expect("cells runtime");
+
+        // One clean block, and a snapshot taken at it: that is the last
+        // good state, and the cache is now holding its bytes.
+        state.apply_mutation(block(1));
+        let (good_revision, good_bytes) = landmine.snapshot_envelope(SnapshotEnvelope::Bare);
+        assert_eq!(good_revision, 1);
+
+        // The landmine block. `apply_mutation` must RETURN.
+        assert_eq!(state.apply_mutation(block(LANDMINE_BLOCK)), 2);
+
+        // The coord lock survived, so the whole read surface still answers.
+        assert_eq!(state.snapshot()["chain"]["tip"], LANDMINE_BLOCK);
+        assert_eq!(state.save_entities()["revision"], 2);
+        assert_eq!(state.canonical_context().tip, LANDMINE_BLOCK);
+        // …and the healthy projection was applied as if nothing happened.
+        assert_eq!(cells.revision(), 2);
+
+        // The landmine is frozen where it was, serving its last cached
+        // snapshot at the revision that produced it.
+        let reason = landmine.quarantine_reason().expect("quarantined");
+        assert!(reason.contains("deliberate test panic"), "reason: {reason}");
+        assert_eq!(landmine.revision(), 1);
+        assert_eq!(
+            landmine.snapshot_envelope(SnapshotEnvelope::Bare),
+            (good_revision, good_bytes)
+        );
+        // An envelope the cache does not hold has to go through the
+        // projection's own lock — the one the panic poisoned. It answers
+        // (with the frozen, half-applied state) instead of panicking, which
+        // is the whole point of recovering the guard.
+        let (frame_revision, frame) = landmine.snapshot_envelope(SnapshotEnvelope::Frame);
+        assert_eq!(frame_revision, 1);
+        assert!(
+            String::from_utf8_lossy(&frame).contains(&format!("\"snapshot\":{HALF_APPLIED}")),
+            "frame: {}",
+            String::from_utf8_lossy(&frame)
+        );
+        // Half-applied state must not outlive the process that broke it.
+        assert!(landmine.save_state().is_null());
+
+        // It is never handed another mutation; the healthy one keeps going.
+        let applies_at_quarantine = applies.load(Ordering::Relaxed);
+        state.apply_mutation(block(3));
+        assert_eq!(applies.load(Ordering::Relaxed), applies_at_quarantine);
+        assert_eq!(cells.revision(), 3);
+        assert_eq!(landmine.revision(), 1);
+
+        // And health says exactly this.
+        let report =
+            serde_json::to_value(crate::health::report(&state)).expect("health report is JSON");
+        assert_eq!(report["degraded"], true);
+        assert_eq!(
+            report["quarantined_projections"],
+            serde_json::json!(["landmine"])
+        );
+        assert_eq!(report["revision"], 3);
+        let quarantined = report["projections"]
+            .as_array()
+            .expect("projections array")
+            .iter()
+            .find(|projection| projection["name"] == "landmine")
+            .expect("landmine is reported");
+        assert_eq!(quarantined["revision"], 1);
+        assert!(quarantined["quarantine_reason"]
+            .as_str()
+            .is_some_and(|reason| reason.contains("deliberate test panic")));
+    }
 
     /// The entities stream snapshots this ring on every connect, exactly
     /// like the projection stream does with its deltas — so it has to share
@@ -1429,6 +1697,78 @@ mod tests {
             ))
         );
         assert_eq!(state.snapshot()["revision"], 2);
+    }
+
+    /// The same landmine on the optional stream. Its runner has no
+    /// snapshot cache to fall back on, so its read path IS the recovered
+    /// guard.
+    struct LandmineSemantics {
+        applies: Arc<AtomicU64>,
+        state: u64,
+    }
+
+    impl cknerv_core::Projection for LandmineSemantics {
+        type Snapshot = u64;
+        type Delta = u64;
+
+        fn name(&self) -> &'static str {
+            "landmine-semantics"
+        }
+
+        fn snapshot(&self) -> u64 {
+            self.state
+        }
+
+        fn apply_mutation(&mut self, _m: &Mutation) -> Vec<u64> {
+            Vec::new()
+        }
+    }
+
+    impl cknerv_core::EnrichmentProjection for LandmineSemantics {
+        fn apply_enrichment(&mut self, _event: &EnrichmentEvent) -> Vec<u64> {
+            self.applies.fetch_add(1, Ordering::Relaxed);
+            self.state = HALF_APPLIED;
+            panic!("deliberate test panic inside an enrichment apply");
+        }
+    }
+
+    /// The optional stream gets the same containment. Its own coordinator
+    /// mutex is what the panic poisons here, and the projection has to keep
+    /// answering through it — there is no cache on this runner to hide
+    /// behind.
+    #[test]
+    fn a_panicking_enrichment_projection_is_quarantined_the_same_way() {
+        let state = ServerState::new();
+        let applies = Arc::new(AtomicU64::new(0));
+        {
+            let mut projections = state.projections.write().unwrap();
+            projections.register_enrichment(LandmineSemantics {
+                applies: applies.clone(),
+                state: 0,
+            });
+        }
+        let landmine = state
+            .projections
+            .read()
+            .unwrap()
+            .lookup("landmine-semantics")
+            .expect("landmine runtime");
+
+        let status = cknerv_core::EnrichmentSourceStatus::connecting("test", Vec::new());
+        assert!(state.apply_enrichment(EnrichmentEvent::SourceStatus(status.clone())));
+        assert!(landmine.quarantine_reason().is_some());
+
+        // The snapshot route still answers, through the coordinator mutex
+        // the panic poisoned.
+        let (_, body) = landmine.snapshot_envelope(SnapshotEnvelope::Bare);
+        assert!(String::from_utf8_lossy(&body).contains(&format!("\"snapshot\":{HALF_APPLIED}")));
+
+        // Nothing reaches it again, on either stream, and the canonical
+        // side is untouched by any of it.
+        assert!(state.apply_enrichment(EnrichmentEvent::SourceStatus(status)));
+        assert_eq!(applies.load(Ordering::Relaxed), 1);
+        assert_eq!(state.apply_mutation(block(1)), 1);
+        assert_eq!(state.snapshot()["chain"]["tip"], 1);
     }
 
     fn hydrated_reservoir_cell(id: u64, kind: cknerv_core::AssetKind) -> cknerv_core::Cell {

@@ -168,6 +168,50 @@ impl Adapter for CompletedBootReplayAdapter {
     }
 }
 
+/// An adapter that returns the instant it is spawned — a source that died
+/// on its first RPC call, or was never able to start one.
+struct StillbornAdapter;
+
+#[async_trait]
+impl Adapter for StillbornAdapter {
+    fn name(&self) -> &'static str {
+        "stillborn"
+    }
+
+    async fn run(
+        &self,
+        _out: mpsc::Sender<Mutation>,
+        _shutdown: watch::Receiver<bool>,
+    ) -> anyhow::Result<()> {
+        Ok(())
+    }
+}
+
+/// Poll `/api/health` until `settled` accepts it, or give up. The
+/// supervisor samples on its own cadence, so the flip is near-immediate but
+/// not synchronous with the death.
+async fn health_until(
+    addr: std::net::SocketAddr,
+    settled: impl Fn(&serde_json::Value) -> bool,
+) -> serde_json::Value {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let body: serde_json::Value = reqwest::get(format!("http://{addr}/api/health"))
+                .await
+                .expect("GET /api/health succeeds")
+                .json()
+                .await
+                .expect("health body is JSON");
+            if settled(&body) {
+                return body;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .expect("health never reached the expected state")
+}
+
 fn tmpdir() -> std::path::PathBuf {
     let mut path = std::env::temp_dir();
     let nonce = std::time::SystemTime::now()
@@ -177,6 +221,135 @@ fn tmpdir() -> std::path::PathBuf {
     path.push(format!("cknerv-server-checkpoint-{nonce}"));
     std::fs::create_dir_all(&path).unwrap();
     path
+}
+
+/// The shape a monitor reads. Served by a healthy server with an adapter
+/// still running, so every liveness field is a real `true`.
+#[tokio::test]
+async fn health_route_reports_liveness_and_freshness() {
+    let (router, handle) = ServerBuilder::new()
+        .add_projection(CellGalaxy::new())
+        .add_adapter(CompletedBootReplayAdapter)
+        .build_version("deadbee@2026-08-15")
+        .build()
+        .expect("build");
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server_task = tokio::spawn(async move {
+        let _ = axum::serve(listener, router).await;
+    });
+
+    // Settle on the adapter's block so the freshness fields have something
+    // to describe.
+    let body = health_until(addr, |body| body["tip"] == 7).await;
+
+    assert_eq!(body["build_version"], "deadbee@2026-08-15");
+    assert_eq!(body["degraded"], false);
+    assert_eq!(body["reducer_alive"], true);
+    assert_eq!(body["replay_active"], false);
+    assert!(body["uptime_s"].is_u64(), "body: {body}");
+    assert!(body["revision"].as_u64().is_some_and(|r| r > 0), "{body}");
+    assert!(body["tip_age_ms"].is_u64(), "body: {body}");
+    assert!(body["mutation_ring_len"].is_u64(), "body: {body}");
+    assert_eq!(
+        body["adapters"],
+        serde_json::json!([{ "name": "completed-boot-replay", "alive": true, "exited_at_ms": null }])
+    );
+    assert_eq!(
+        body["projections"],
+        serde_json::json!([{
+            "name": "cells",
+            "revision": body["revision"],
+            "quarantined": false,
+            "quarantine_reason": null,
+        }])
+    );
+    assert_eq!(body["quarantined_projections"], serde_json::json!([]));
+    // No enrichment source is configured, and the report says that rather
+    // than inventing a health for it.
+    assert_eq!(
+        body["enrichment"],
+        serde_json::json!({
+            "reducer_alive": null,
+            "supervisor_alive": null,
+            "source": null,
+            "status": null,
+            "lag_blocks": null,
+            "last_success_at_ms": null,
+        })
+    );
+
+    handle.shutdown().await;
+    server_task.abort();
+}
+
+/// With a source configured, health carries what the last probe found —
+/// captured off the event pipeline as it passes, so answering costs nothing
+/// and never serializes the semantics projection to find out.
+#[tokio::test]
+async fn health_carries_the_configured_enrichment_source() {
+    let (router, handle) = ServerBuilder::new()
+        .add_adapter(CompletedBootReplayAdapter)
+        .add_enrichment_projection(SemanticsProjection::default())
+        .enrichment_source(TransactionFixtureSource)
+        .build()
+        .expect("build");
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server_task = tokio::spawn(async move {
+        let _ = axum::serve(listener, router).await;
+    });
+
+    let body = health_until(addr, |body| body["enrichment"]["source"] == "fixture").await;
+    assert_eq!(body["enrichment"]["reducer_alive"], true);
+    assert_eq!(body["enrichment"]["supervisor_alive"], true);
+    // Whichever state the first probe reached, it is a real one.
+    assert!(body["enrichment"]["status"].is_string(), "body: {body}");
+    assert_eq!(body["degraded"], false);
+
+    handle.shutdown().await;
+    server_task.abort();
+}
+
+/// An adapter that exits takes the reducer with it — every sender is gone,
+/// so `mutation_rx` closes and the reducer's loop ends "cleanly". Nothing
+/// used to notice: the process kept serving frozen state with live
+/// heartbeats. Now the supervisor does, and says so.
+#[tokio::test]
+async fn health_reports_a_dead_adapter_and_the_reducer_it_starved() {
+    let (router, handle) = ServerBuilder::new()
+        .add_projection(CellGalaxy::new())
+        .add_adapter(StillbornAdapter)
+        .build()
+        .expect("build");
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server_task = tokio::spawn(async move {
+        let _ = axum::serve(listener, router).await;
+    });
+
+    let body = health_until(addr, |body| body["degraded"] == true).await;
+    assert_eq!(body["adapters"][0]["name"], "stillborn");
+    assert_eq!(body["adapters"][0]["alive"], false);
+    assert!(
+        body["adapters"][0]["exited_at_ms"]
+            .as_u64()
+            .is_some_and(|at| at > 0),
+        "a death is stamped: {body}"
+    );
+    assert_eq!(body["reducer_alive"], false);
+
+    // …and the server it describes is still answering everything else.
+    let snapshot = reqwest::get(format!("http://{addr}/api/entities/chain/snapshot"))
+        .await
+        .expect("GET succeeds");
+    assert_eq!(snapshot.status(), 200);
+
+    handle.shutdown().await;
+    server_task.abort();
 }
 
 #[tokio::test]
