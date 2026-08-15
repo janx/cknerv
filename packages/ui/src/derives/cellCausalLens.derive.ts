@@ -39,6 +39,12 @@ export interface CellCausalLens {
   block: number;
   /** Present only when the exact creating link remains in the causal ring. */
   linkSeq: number | null;
+  /**
+   * The retained origin record itself. Published so callers that need the raw
+   * link — recall planning reads its parents and endpoint anchors — reuse this
+   * lookup instead of scanning the causal ring a second time.
+   */
+  originLink: CellLink | null;
   observedAtMs: number | null;
   /** Unknown when the exact link has left the retained history window. */
   inputCount: number | null;
@@ -123,6 +129,7 @@ export function deriveCellCausalLens(
       txHash: selectedCell.out_point.tx_hash,
       block: selectedCell.birth_block,
       linkSeq: null,
+      originLink: null,
       observedAtMs: null,
       inputCount: null,
       outputCount: null,
@@ -176,6 +183,7 @@ export function deriveCellCausalLens(
     txHash: origin.tx_hash,
     block: origin.block,
     linkSeq: origin.seq,
+    originLink: origin,
     observedAtMs: origin.at_ms,
     inputCount: inputs.length,
     outputCount: outputs.length,

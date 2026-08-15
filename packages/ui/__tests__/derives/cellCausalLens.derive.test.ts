@@ -171,6 +171,20 @@ describe('deriveCellCausalLens', () => {
     expect(lens.outputCount).toBe(1);
   });
 
+  it('publishes the retained origin record so callers need not rescan the ring', () => {
+    const origin = link({ seq: 11 });
+    const lens = deriveCellCausalLens(
+      selected,
+      [link({ to_ids: [99] }), origin],
+      records(cell(7), cell(8), selected, cell(43)),
+    );
+
+    expect(lens.originLink).toBe(origin);
+    expect(lens.linkSeq).toBe(origin.seq);
+    expect(deriveCellCausalLens(selected, [], records(selected)).originLink)
+      .toBeNull();
+  });
+
   it('deduplicates malformed repeated endpoint ids without changing order', () => {
     const lens = deriveCellCausalLens(
       selected,

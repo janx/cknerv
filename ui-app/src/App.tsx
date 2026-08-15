@@ -34,7 +34,6 @@ import {
   deriveConsensusMemoryRouteHopFocus,
   colonyFlood,
   deriveConsensusMemoryTraceEndpoints,
-  findCellOriginLink,
   inferredTopology,
   CellGalaxy,
   CellGalaxyProvider,
@@ -837,12 +836,9 @@ export default function App({
       onForward: navigateCausalForward,
     }
     : null;
-  const selectedOriginLink = useMemo(
-    () => selectedCell
-      ? findCellOriginLink(selectedCell, cellsCache.recentLinks)
-      : null,
-    [selectedCell, cellsCache.recentLinks],
-  );
+  // The causal lens already scanned the link ring for this exact record; a
+  // second scan per links batch would only risk disagreeing with it.
+  const selectedOriginLink = selectedCausalLens?.originLink ?? null;
   const selectedOriginTrace = useMemo(
     () => selectedOriginLink
       ? deriveConsensusMemoryTraceEndpoints(selectedOriginLink, cellsCache.cells)

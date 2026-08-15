@@ -860,3 +860,98 @@ describe('consumed inputs survive a witness-carried recall', () => {
     expect(readout!.evidence.map((e) => e.sourceId)).toEqual([4]);
   });
 });
+
+describe('lineage witness fallback', () => {
+  const sibling = (id: number, parent: string, dead = false): Cell => ({
+    ...cell(id),
+    death_at_ms: dead ? 100 : null,
+    out_point: { tx_hash: parent, index: id },
+  });
+
+  /** Counts how many retained cells the fallback loop actually inspects. */
+  const counted = (record: Cell, onRead: () => void): Cell => {
+    const probed: Cell = { ...record };
+    Object.defineProperty(probed, 'death_at_ms', {
+      get: () => {
+        onRead();
+        return record.death_at_ms;
+      },
+    });
+    return probed;
+  };
+
+  /** Counts per-cell `Array#includes` scans of the output list. */
+  const scannedIds = (ids: number[]) => {
+    let scans = 0;
+    const toIds = [...ids];
+    Object.defineProperty(toIds, 'includes', {
+      value: (value: number) => {
+        scans += 1;
+        return ids.includes(value);
+      },
+    });
+    return { toIds, scans: () => scans };
+  };
+
+  it('charges a witness slot only to the cells it accepts, in reading order', () => {
+    const parent = '0xparent';
+    // Insertion order is the reading order, and deliberately not id order.
+    const cells = new Map<number, Cell>([
+      [7, sibling(7, parent)],
+      [8, sibling(8, parent, true)],
+      [11, sibling(11, parent)],
+      [9, sibling(9, parent)],
+      [10, sibling(10, parent)],
+    ]);
+    const endpoints = deriveConsensusMemoryTraceEndpoints(
+      link({ from_ids: [1, 2], to_ids: [7, 20], parents: [parent] }),
+      cells,
+    );
+
+    expect(endpoints.sourceKind).toBe('witness');
+    // 7 is an output of this very link and 8 is in its death tail: both are
+    // skipped WITHOUT consuming one of the parent's two slots.
+    expect(endpoints.witnessIds).toEqual([11, 9]);
+    expect(endpoints.sourceIds).toEqual([11, 9]);
+  });
+
+  it('resolves witnesses without a per-cell output scan, and stops at the cap', () => {
+    const parents = ['0xpa', '0xpb'];
+    const filler = Array.from(
+      { length: 200 },
+      (_, index) => sibling(500 + index, `0xother${index}`),
+    );
+    const outputs = scannedIds(Array.from({ length: 24 }, (_, i) => 900 + i));
+    const mapOf = (eligible: Cell[], onRead: () => void) => new Map<number, Cell>(
+      [...eligible, ...filler].map((record) => [
+        record.id,
+        counted(record, onRead),
+      ]),
+    );
+
+    let reads = 0;
+    const capped = mapOf([
+      sibling(101, parents[0]),
+      sibling(102, parents[0]),
+      sibling(103, parents[1]),
+      sibling(104, parents[1]),
+    ], () => { reads += 1; });
+    const endpoints = deriveConsensusMemoryTraceEndpoints(
+      link({ from_ids: [1, 2], to_ids: outputs.toIds, parents }),
+      capped,
+    );
+
+    expect(endpoints.witnessIds).toEqual([101, 102, 103, 104]);
+    expect(outputs.scans()).toBe(0);
+    expect(reads).toBe(4);
+
+    // A parent that cannot fill its slots still costs exactly one pass.
+    let sparseReads = 0;
+    const sparse = mapOf([sibling(101, parents[0])], () => { sparseReads += 1; });
+    expect(deriveConsensusMemoryTraceEndpoints(
+      link({ from_ids: [1, 2], to_ids: outputs.toIds, parents }),
+      sparse,
+    ).witnessIds).toEqual([101]);
+    expect(sparseReads).toBe(sparse.size);
+  });
+});

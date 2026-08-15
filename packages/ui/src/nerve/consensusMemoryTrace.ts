@@ -1071,14 +1071,25 @@ export function deriveConsensusMemoryTraceEndpoints(
   const witnessCap = Math.max(0, Math.floor(maxWitnessesPerParent));
 
   if (retainedInputIds.length === 0 && parentSet.size > 0 && witnessCap > 0) {
+    // Historical links take this branch, and an open inspector re-derives them
+    // against the whole retained map (12-50K) on every block. The four guards
+    // are pure filters over independent conditions, so their order decides
+    // cost only, never which cells are chosen or in what order: run the field
+    // read first, then the parent lookup that rejects nearly everything, and
+    // keep output membership last as a hashed lookup rather than a scan.
+    const outputIds = new Set(link.to_ids);
+    const witnessLimit = parentSet.size * witnessCap;
     for (const [id, cell] of cells) {
-      if (cell.death_at_ms !== null || link.to_ids.includes(id)) continue;
+      if (cell.death_at_ms !== null) continue;
       const parent = cell.out_point.tx_hash;
       if (!parentSet.has(parent)) continue;
       const used = perParent.get(parent) ?? 0;
       if (used >= witnessCap) continue;
+      if (outputIds.has(id)) continue;
       witnessIds.push(id);
       perParent.set(parent, used + 1);
+      // Every parent is capped; nothing further down the map can be accepted.
+      if (witnessIds.length >= witnessLimit) break;
     }
   }
 
