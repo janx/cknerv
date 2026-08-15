@@ -63,6 +63,15 @@ import {
   type EdgeRender,
 } from './fabricEdgeRender';
 import {
+  drainFabricReapQueue,
+  evictDeadFabricEdges,
+  fabricEdgeStateCeiling,
+  startHiddenFabricReaper,
+  FOREGROUND_CATCH_UP_BATCH,
+  type FabricReapQueue,
+  type FabricReapTargets,
+} from './fabricHiddenReap';
+import {
   reinforceUsage,
   decayUsage,
   warmRouteBrightnessGain,
@@ -1340,49 +1349,86 @@ export default function NeuralFabric({
       lifeDirtySlots.push(slot);
     };
     /** Two FIFO expiry queues (fixed windows per kind ⇒ each queue stays
-     * time-ordered as kills arrive monotonically). Drained lazily each emit;
+     * time-ordered as kills arrive monotonically). Drained lazily each emit —
+     * and on wall time while the tab is hidden, where there is no emit;
      * entries are re-validated against the CURRENT state so a revival between
      * queueing and expiry is never reaped. */
-    const reapQueues = {
-      death: { entries: [] as { key: string; endSec: number }[], head: 0 },
-      gc: { entries: [] as { key: string; endSec: number }[], head: 0 },
+    const reapQueues: Record<DeathKind, FabricReapQueue> = {
+      death: { entries: [], head: 0 },
+      gc: { entries: [], head: 0 },
     };
     const queueReap = (key: string, st: EdgeState): void => {
       const endSec = fabricLifecycleEndSec(st.dyingAt, st.deathKind);
       if (!Number.isFinite(endSec) || st.deathKind === null) return;
       reapQueues[st.deathKind].entries.push({ key, endSec });
     };
-    const drainReapQueue = (
-      queue: { entries: { key: string; endSec: number }[]; head: number },
-      now: number,
-    ): void => {
-      const states = edgeStatesRef.current;
-      while (
-        queue.head < queue.entries.length
-        && queue.entries[queue.head].endSec <= now
-      ) {
-        const { key } = queue.entries[queue.head];
-        queue.head += 1;
-        const st = states.get(key);
-        if (
-          !st
-          || st.dyingAt === null
-          || fabricLifecycleEndSec(st.dyingAt, st.deathKind) > now
-        ) continue; // revived or already gone — the stale entry just drops
-        const slot = slotByKeyRef.current.get(key);
-        if (slot !== undefined) {
-          slotByKeyRef.current.delete(key);
-          freeSlotsRef.current.push(slot);
-        }
-        states.delete(key);
-        warmRouteKeysRef.current.delete(key);
+    /** Everything one reap removes an edge from. The containers are refs
+     * created once per component and never reassigned, so capturing them
+     * here stays valid for the life of this handle set. */
+    const reapTargets: FabricReapTargets<EdgeState> = {
+      states: edgeStatesRef.current,
+      slots: slotByKeyRef.current,
+      freeSlots: freeSlotsRef.current,
+      warmKeys: warmRouteKeysRef.current,
+      onReap: () => {
         renderOrderTombstonesRef.current += 1;
         fabricStats.observeReapInPlace();
+      },
+    };
+
+    // ——— Reaping without a frame behind it ———
+    // Ingest is effect-fed and keeps running while the tab is hidden, but
+    // every reap below rides the frame loop, and a hidden tab has neither
+    // frames nor a moving sim clock. These three pieces bound that stretch:
+    // a hard ceiling on retained states, a wall-clock drain the reaper's
+    // interval fires, and a bounded per-frame catch-up on return. All of
+    // them are inert while the tab is visible — the frame loop keeps the map
+    // orders of magnitude under the ceiling and `catchUpUntilSec` stays null.
+    const edgeStateCeiling = fabricEdgeStateCeiling(fabricSlotCapacity);
+    /** Sim-second the foreground catch-up is still draining toward, or null
+     *  when there is no backlog (always null if the tab never hid). */
+    let catchUpUntilSec: number | null = null;
+    /** One reap pass at an explicit sim-second. `frameless` marks the passes
+     *  that run with no frame behind them: the slot records they leave
+     *  pending can never upload (emitFabric is frame-driven), so dropping
+     *  them silently would leave the GPU holding a reaped edge's record —
+     *  they collapse into the compacting full walk the first visible frame
+     *  runs instead. */
+    const reapFabricBacklog = (now: number, frameless: boolean): void => {
+      drainFabricReapQueue(reapQueues.death, reapTargets, now);
+      drainFabricReapQueue(reapQueues.gc, reapTargets, now);
+      evictDeadFabricEdges(reapTargets, now, edgeStateCeiling);
+      if (renderOrderTombstonesRef.current > 0) {
+        const reapStates = edgeStatesRef.current;
+        renderOrderRef.current = renderOrderRef.current.filter(
+          (key) => reapStates.has(key),
+        );
+        renderOrderTombstonesRef.current = 0;
       }
-      if (queue.head > 256 && queue.head * 2 > queue.entries.length) {
-        queue.entries = queue.entries.slice(queue.head);
-        queue.head = 0;
+      if (frameless && lifeDirtySlots.length > 0) {
+        lifeDirtySlots.length = 0;
+        passivePositionsDirtyRef.current = true;
+        emitDirtyRef.current = true;
       }
+    };
+    const hiddenReaper = startHiddenFabricReaper({
+      wallNowMs: () => performance.now(),
+      simNowSec: () => simClock.elapsedSec,
+      reap: (bridgedSimSec) => reapFabricBacklog(bridgedSimSec, true),
+      resume: (bridgedSimSec) => { catchUpUntilSec = bridgedSimSec; },
+    });
+    /** Hard ceiling on retained lifecycle states, checked from every ingest
+     *  handle: with the frame loop suspended the lazy reap cannot be the only
+     *  bound. Past the ceiling the oldest FULLY-DEAD states go immediately —
+     *  no animation debt while nobody is watching — and a living edge is
+     *  never evicted. Steady state pays one integer compare. */
+    const enforceEdgeStateCeiling = (): void => {
+      if (edgeStatesRef.current.size <= edgeStateCeiling) return;
+      const framelessNow = hiddenReaper.framelessSimNow();
+      reapFabricBacklog(
+        framelessNow ?? simClock.elapsedSec,
+        framelessNow !== null,
+      );
     };
     /** Persistent slot allocation: recycle a hole from an in-place reap, else
      * grow the high-water mark. Newly claimed regions hold invisible content
@@ -1701,6 +1747,7 @@ export default function NeuralFabric({
           renderOrderTombstonesRef.current = 0;
           passivePositionsDirtyRef.current = true;
         }
+        enforceEdgeStateCeiling();
       },
       growEdges(edges, cells, bornAtByKey, dirByKey) {
         // `now` is read from the shared sim clock so callers don't have
@@ -1775,6 +1822,7 @@ export default function NeuralFabric({
         // New tendrils ride their persistent slots through the incremental
         // path; only slot-space exhaustion needs a compacting full walk.
         if (growOverflowed) passivePositionsDirtyRef.current = true;
+        enforceEdgeStateCeiling();
       },
       killEdges(keys, dyingAt, kind, deadEndByKey) {
         const states = edgeStatesRef.current;
@@ -1808,6 +1856,7 @@ export default function NeuralFabric({
         // walk; the retract/fade rides the incremental path until reap frees
         // the slot in place.
         emitDirtyRef.current = true;
+        enforceEdgeStateCeiling();
       },
       reinforce(fromCellId, toCellId) {
         const key = fabricEdgeKey(fromCellId, toCellId);
@@ -1829,10 +1878,38 @@ export default function NeuralFabric({
         // the CPU otherwise skips.
         syncFabricLifecycleUniforms(fabric.material, now);
         fabricStats.liveEdges = edgeStatesRef.current.size;
+        // Foreground catch-up. A frozen clock stamps every kill taken while
+        // the tab was hidden with the SAME dyingAt, so the resuming sim clock
+        // would retire the whole pile in one frame one death window from now.
+        // Retire it against the wall-clock second the tab came back instead,
+        // a bounded batch per queue per frame, until both queues run dry
+        // inside their budget (or the sim clock catches up on its own).
+        if (catchUpUntilSec !== null) {
+          if (catchUpUntilSec <= now) {
+            catchUpUntilSec = null;
+          } else {
+            const deathDrained = drainFabricReapQueue(
+              reapQueues.death,
+              reapTargets,
+              catchUpUntilSec,
+              FOREGROUND_CATCH_UP_BATCH,
+            );
+            const gcDrained = drainFabricReapQueue(
+              reapQueues.gc,
+              reapTargets,
+              catchUpUntilSec,
+              FOREGROUND_CATCH_UP_BATCH,
+            );
+            if (
+              deathDrained < FOREGROUND_CATCH_UP_BATCH
+              && gcDrained < FOREGROUND_CATCH_UP_BATCH
+            ) catchUpUntilSec = null;
+          }
+        }
         // Lazy reap: expired lifecycles are already invisible analytically;
         // this only reclaims bookkeeping + slots, O(expired) per call.
-        drainReapQueue(reapQueues.death, now);
-        drainReapQueue(reapQueues.gc, now);
+        drainFabricReapQueue(reapQueues.death, reapTargets, now);
+        drainFabricReapQueue(reapQueues.gc, reapTargets, now);
         if (renderOrderTombstonesRef.current > RENDER_ORDER_TOMBSTONE_MAX) {
           const reapStates = edgeStatesRef.current;
           renderOrderRef.current = renderOrderRef.current.filter(
@@ -2070,6 +2147,20 @@ export default function NeuralFabric({
             );
           }
           fabric.count = usedSlotCountRef.current * FABRIC_SLOT_SEGMENTS;
+          // A selection change can land in the SAME frame as births/deaths —
+          // the topology build issues both — and this branch clears the dirty
+          // gate on the way out. Without flushing here those static records
+          // stayed written in RAM but never uploaded, so a killed edge kept
+          // rendering alive until some unrelated event happened to flush it.
+          // The inspection ranges these add are a subset of the full prefix
+          // the commit below re-adds.
+          if (lifeDirtySlots.length > 0) {
+            commitFabricLifecycleSlotRanges(
+              fabric,
+              mergeFabricSlotRanges(lifeDirtySlots),
+            );
+            lifeDirtySlots.length = 0;
+          }
           fabricStats.observeUpload(fabricUploadBytes(fabric.count, {
             positions: false,
             colors: false,
@@ -2280,6 +2371,7 @@ export default function NeuralFabric({
       },
     };
     onReady(handles);
+    return () => hiddenReaper.stop();
   }, [
     fabric,
     warmRoutes,

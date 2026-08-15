@@ -279,6 +279,56 @@ describe('NeuralFabric living-mesh handles', () => {
   });
 });
 
+describe('NeuralFabric reaping without a frame', () => {
+  it('keeps ONE reap implementation, in the pure module', () => {
+    expect(SRC).not.toMatch(/const drainReapQueue = /);
+    expect(SRC).toContain("from './fabricHiddenReap'");
+    expect(SRC).toContain('drainFabricReapQueue(reapQueues.death, reapTargets, now)');
+    expect(SRC).toContain('drainFabricReapQueue(reapQueues.gc, reapTargets, now)');
+  });
+
+  it('bounds every ingest handle with the retained-state ceiling', () => {
+    // Ingest is effect-fed (WS → setState) and keeps running with the frame
+    // loop suspended, so setFabric / growEdges / killEdges each check it.
+    const ceilingCalls = SRC.match(/^\s*enforceEdgeStateCeiling\(\);$/gm) ?? [];
+    expect(ceilingCalls.length).toBe(3);
+    expect(SRC).toContain('fabricEdgeStateCeiling(fabricSlotCapacity)');
+  });
+
+  it('advances frameless eligibility on the wall clock and tears down', () => {
+    expect(SRC).toContain('startHiddenFabricReaper(');
+    expect(SRC).toContain('wallNowMs: () => performance.now()');
+    expect(SRC).toContain('return () => hiddenReaper.stop();');
+  });
+
+  it('collapses frameless slot writes into the full walk, never drops them', () => {
+    // Records written with no frame behind them can never upload; dropping
+    // them silently would leave the GPU holding a reaped edge's record.
+    const backlog = SRC.slice(
+      SRC.indexOf('const reapFabricBacklog = ('),
+      SRC.indexOf('const hiddenReaper = '),
+    );
+    expect(backlog).toContain('if (frameless && lifeDirtySlots.length > 0)');
+    expect(backlog).toContain('passivePositionsDirtyRef.current = true');
+    expect(backlog).toContain('emitDirtyRef.current = true');
+  });
+
+  it('spreads a returning backlog over frames, ahead of the sim-second drain', () => {
+    const emitBody = SRC.slice(SRC.indexOf('emitFabric(now) {'));
+    const catchUpAt = emitBody.indexOf('if (catchUpUntilSec !== null)');
+    const steadyDrainAt = emitBody.indexOf(
+      'drainFabricReapQueue(reapQueues.death, reapTargets, now)',
+    );
+    expect(catchUpAt).toBeGreaterThan(-1);
+    expect(steadyDrainAt).toBeGreaterThan(catchUpAt);
+    const catchUp = emitBody.slice(catchUpAt, steadyDrainAt);
+    expect(catchUp).toContain('FOREGROUND_CATCH_UP_BATCH');
+    // Both queues dry inside their budget ⇒ the catch-up releases and the
+    // steady-state path is byte-identical again.
+    expect(catchUp).toContain('catchUpUntilSec = null');
+  });
+});
+
 describe('NeuralFabric oversized-diff cohort staggering', () => {
   it('staggers via the pure planner as a DELAYED-INSERTION queue', () => {
     expect(SRC).toContain('planFabricCohorts(');
@@ -324,6 +374,19 @@ describe('NeuralFabric oversized-diff cohort staggering', () => {
     const pump = emitBody.slice(0, dirtyGateAt);
     expect(pump).toContain('st.dyingAt = now');
     expect(pump).toContain('if (!st || st.dyingAt !== null) continue');
+  });
+
+  it('never lets a same-frame selection change swallow pending records', () => {
+    // The inspection-only return clears the dirty gate, so a birth/death
+    // written in the same frame (the topology build issues both) would have
+    // stayed in RAM, unuploaded, until an unrelated event flushed it.
+    const inspectionBranch = SRC.slice(
+      SRC.indexOf('// Selection changed over a settled fabric'),
+      SRC.indexOf('fabricStats.observeInspectionOnlyFrame()'),
+    );
+    expect(inspectionBranch).toContain('commitFabricLifecycleSlotRanges(');
+    expect(inspectionBranch).toContain('mergeFabricSlotRanges(lifeDirtySlots)');
+    expect(inspectionBranch).toContain('lifeDirtySlots.length = 0;');
   });
 
   it('meters passive-fabric uploads through fabricUploadBytes', () => {
