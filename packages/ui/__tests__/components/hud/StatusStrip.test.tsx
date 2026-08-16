@@ -160,12 +160,6 @@ describe('StatusStrip', () => {
           status: 'connecting',
           capabilities: [],
         }}
-        stream={{
-          phase: 'connecting',
-          affectedChannels: ['cells'],
-          lastMessageAgeMs: 3_000,
-          attempt: 1,
-        }}
         compact
         mobile
       />,
@@ -181,46 +175,6 @@ describe('StatusStrip', () => {
     expect(performance.querySelector('[data-render-quality-control]')).not.toBeNull();
     expect(context.style.overflowX).toBe('auto');
     expect(context.textContent).toContain('CKBADGERCONNECTING');
-    expect(context.textContent).toContain('DATACONNECTING');
-  });
-
-  it('shows transport freshness independently from the chain alert level', () => {
-    const { container } = render(
-      <StatusStrip
-        level="nominal"
-        uptimeMs={0}
-        stream={{
-          phase: 'stale',
-          affectedChannels: ['cells'],
-          lastMessageAgeMs: 17_000,
-          attempt: 2,
-        }}
-      />,
-    );
-    const chip = container.querySelector('[data-stream-chip]') as HTMLElement;
-    expect(chip.dataset.streamPhase).toBe('stale');
-    expect(chip.getAttribute('aria-label')).toBe('Data stale, 17s');
-    expect(chip.textContent).toContain('DATASTALE');
-    expect(chip.textContent).toContain('17s');
-    expect(container.textContent).toContain('NOMINAL');
-  });
-
-  it('removes the redundant DATA LIVE chip while keeping live transport implicit', () => {
-    const { container } = render(
-      <StatusStrip
-        level="nominal"
-        uptimeMs={0}
-        stream={{
-          phase: 'live',
-          affectedChannels: [],
-          lastMessageAgeMs: 2_000,
-          attempt: 0,
-        }}
-      />,
-    );
-
-    expect(container.querySelector('[data-stream-chip]')).toBeNull();
-    expect(container.textContent).not.toContain('DATA LIVE');
   });
 
   it('shows optional indexed-context freshness without changing chain status', () => {

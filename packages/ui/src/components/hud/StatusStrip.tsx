@@ -3,8 +3,6 @@ import type { CSSProperties, ReactNode } from 'react';
 import type { EnrichmentSourceStatus } from '@cknerv/types';
 import { useControls } from 'leva';
 import type { AlertLevel } from '../../derives/alertLevel';
-import type { StreamHealthSummary } from '../../derives/streamHealth.derive';
-import { formatStreamAge } from '../../derives/streamHealth.derive';
 import {
   QUALITY_MODE_CONTROL,
   setQualityMode,
@@ -276,14 +274,6 @@ function PanelVisibilityControl({ panels, onChange, compact = false, menuOffset 
     </div>
   );
 }
-
-const STREAM_COLOR: Record<StreamHealthSummary['phase'], string> = {
-  connecting: HUD_COLORS.cyanWire,
-  live: HUD_COLORS.nominal,
-  retrying: HUD_COLORS.warning,
-  resyncing: HUD_COLORS.rebuild,
-  stale: HUD_COLORS.danger,
-};
 
 const ENRICHMENT_COLOR: Record<EnrichmentSourceStatus['status'], string> = {
   disabled: HUD_COLORS.dim,
@@ -775,7 +765,6 @@ export default function StatusStrip({
   level,
   uptimeMs,
   build,
-  stream,
   cellCount,
   cellCapacity,
   enrichmentSource,
@@ -788,7 +777,6 @@ export default function StatusStrip({
   level: AlertLevel;
   uptimeMs: number;
   build?: BuildInfo;
-  stream?: StreamHealthSummary | null;
   /** Records currently available to the visual layer, before its draw cap. */
   cellCount?: number;
   /** Resolved server projection cap used by AUTO and capacity disclosure. */
@@ -808,11 +796,8 @@ export default function StatusStrip({
   const layout = mobile ? 'mobile' : compact ? 'compact' : 'wide';
   const dense = layout !== 'wide';
   const color = LEVEL_COLOR[level];
-  const streamColor = stream && stream.phase !== 'live'
-    ? STREAM_COLOR[stream.phase]
-    : null;
   const mobileHasContext = layout === 'mobile'
-    && Boolean(enrichmentSource || actions || streamColor);
+    && Boolean(enrichmentSource || actions);
   const barHeight = mobileHasContext
     ? STATUS_STRIP_HEIGHTS.mobileContext
     : STATUS_STRIP_HEIGHTS[layout];
@@ -884,28 +869,6 @@ export default function StatusStrip({
       {actions}
     </div>
   ) : null;
-  const streamChip = stream && streamColor ? (
-    <span
-      data-stream-chip
-      data-stream-phase={stream.phase}
-      aria-label={`Data ${stream.phase}, ${formatStreamAge(stream.lastMessageAgeMs)}`}
-      style={{
-        ...NAV_MODULE_STYLE,
-        gap: dense ? 4 : 6,
-        height: 24,
-        padding: dense ? '0 7px' : '0 9px',
-        borderLeftColor: rgba(streamColor, 0.25),
-        fontFamily: HUD_FONTS.mono,
-        fontSize: 8.5,
-        letterSpacing: 0.75,
-      }}
-    >
-      <span style={{ width: 4, height: 4, borderRadius: '50%', background: streamColor, boxShadow: `0 0 6px ${streamColor}` }} />
-      <span style={{ color: HUD_COLORS.dim }}>DATA</span>
-      <span style={{ color: streamColor, textShadow: `0 0 6px ${rgba(streamColor, 0.34)}` }}>{stream.phase.toUpperCase()}</span>
-      {!dense ? <span style={{ color: HUD_COLORS.dim }}>{formatStreamAge(stream.lastMessageAgeMs)}</span> : null}
-    </span>
-  ) : null;
   const statusIndicator = (
     <span
       data-status-indicator
@@ -930,7 +893,6 @@ export default function StatusStrip({
     <>
       {enrichmentSource ? <EnrichmentChip source={enrichmentSource} compact={dense} /> : null}
       {actionsSlot}
-      {streamChip}
     </>
   );
 

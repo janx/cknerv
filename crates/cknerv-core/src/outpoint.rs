@@ -62,19 +62,6 @@ pub struct TxOutputInfo {
     pub type_script: Option<ScriptId>,
 }
 
-/// Minimal output shape used by adapters that haven't computed a
-/// `content_hash` yet. Kept here so cknerv-core's wire types are complete;
-/// the cells projection consumes the richer `TxOutputInfo`.
-///
-/// Lives alongside `TxOutputInfo` for callers (e.g. mainnet RPC adapters)
-/// that may want to ship the raw output before content-hash computation
-/// is wired up. Today the cells projection only consumes `TxOutputInfo`.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub struct CellOutput {
-    pub capacity: u64,
-    pub data_hex: String,
-}
-
 /// Cellbase tx's only "input" — never a real outpoint we can consume,
 /// so the projection skips death-lookup for it.
 pub const CELLBASE_TX_HASH: &str =
