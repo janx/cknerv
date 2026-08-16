@@ -22,6 +22,10 @@ use crate::config::ResolvedGalaxyConfig;
 
 #[derive(RustEmbed)]
 #[folder = "../../ui-app/dist/"]
+// Vite is configured with `sourcemap: false`, so this excludes nothing today.
+// It stays as a standing guarantee: flipping sourcemaps on for a local debug
+// session must never quietly add megabytes of `.map` to the shipped binary.
+#[exclude = "*.map"]
 struct Assets;
 
 pub const BUILD_VERSION: &str = env!("CKNERV_BUILD_VERSION");
@@ -83,6 +87,24 @@ pub fn runtime_config_response(
         .into_response()
 }
 
+/// Cache policy for an embedded path, already stripped of its leading `/`.
+///
+/// Everything Vite emits under `assets/` carries a content hash in its
+/// filename, so the URL changes whenever the bytes do — the response can be
+/// frozen for a year and a redeploy can never be served a stale one.
+/// `index.html` is the opposite: its name is fixed and its body names those
+/// hashed URLs, so a cached copy pins the browser to a bundle the new binary
+/// no longer embeds. It must revalidate on every load, as must the SPA
+/// fallback, which is the same document under another path. Any other name in
+/// `dist/` is unhashed by definition and gets the same conservative default.
+fn cache_control_for(path: &str) -> &'static str {
+    if path.starts_with("assets/") {
+        "public, max-age=31536000, immutable"
+    } else {
+        "no-cache"
+    }
+}
+
 pub async fn serve_spa(uri: Uri) -> Response {
     let raw_path = uri.path().trim_start_matches('/');
     // SPA fallback — extension-less paths serve index.html so client-side
@@ -97,6 +119,7 @@ pub async fn serve_spa(uri: Uri) -> Response {
             let mime = mime_guess::from_path(path).first_or_octet_stream();
             Response::builder()
                 .header(header::CONTENT_TYPE, mime.as_ref())
+                .header(header::CACHE_CONTROL, cache_control_for(path))
                 .body(Body::from(content.data.into_owned()))
                 .expect("response build")
         }
@@ -106,8 +129,22 @@ pub async fn serve_spa(uri: Uri) -> Response {
 
 #[cfg(test)]
 mod tests {
-    use super::{runtime_config_body, runtime_config_response};
-    use axum::http::header;
+    use super::{
+        cache_control_for, runtime_config_body, runtime_config_response, serve_spa, Assets,
+    };
+    use axum::http::{header, StatusCode, Uri};
+    use axum::response::Response;
+
+    const IMMUTABLE: &str = "public, max-age=31536000, immutable";
+
+    fn header_str<'a>(response: &'a Response, name: header::HeaderName) -> &'a str {
+        response
+            .headers()
+            .get(name)
+            .expect("header present")
+            .to_str()
+            .expect("header is valid ascii")
+    }
 
     #[test]
     fn runtime_config_body_assigns_build_version() {
@@ -162,5 +199,60 @@ mod tests {
                 .unwrap(),
             "no-cache"
         );
+    }
+
+    #[test]
+    fn only_hashed_asset_paths_earn_the_immutable_year() {
+        assert_eq!(cache_control_for("assets/index-zfBVfAzR.js"), IMMUTABLE);
+        assert_eq!(
+            cache_control_for("assets/Saira-latin-C4OLzBX3.woff2"),
+            IMMUTABLE
+        );
+        assert_eq!(cache_control_for("index.html"), "no-cache");
+        // Unhashed names at the dist root — a favicon, a manifest, anything a
+        // future Vite config drops in `publicDir` — must not inherit the year.
+        assert_eq!(cache_control_for("favicon.ico"), "no-cache");
+        assert_eq!(cache_control_for("manifest.webmanifest"), "no-cache");
+    }
+
+    #[test]
+    fn the_embedded_bundle_carries_no_sourcemaps() {
+        let maps: Vec<_> = Assets::iter().filter(|p| p.ends_with(".map")).collect();
+        assert!(
+            maps.is_empty(),
+            "sourcemaps leaked into the binary: {maps:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn spa_fallback_serves_a_revalidating_index_html() {
+        // Extension-less path — a client-side route, not a file.
+        let response = serve_spa(Uri::from_static("/cell/0x1234")).await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(header_str(&response, header::CACHE_CONTROL), "no-cache");
+        assert!(header_str(&response, header::CONTENT_TYPE).starts_with("text/html"));
+    }
+
+    #[tokio::test]
+    async fn a_hashed_asset_is_served_immutable() {
+        let hashed = Assets::iter()
+            .find(|path| path.starts_with("assets/"))
+            .expect("ui-app/dist must embed at least one hashed asset");
+        let uri: Uri = format!("/{hashed}")
+            .parse()
+            .expect("asset path is a valid uri");
+
+        let response = serve_spa(uri).await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(header_str(&response, header::CACHE_CONTROL), IMMUTABLE);
+    }
+
+    #[tokio::test]
+    async fn a_missing_asset_still_404s() {
+        let response = serve_spa(Uri::from_static("/assets/never-emitted-DEADBEEF.js")).await;
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 }

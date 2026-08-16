@@ -45,22 +45,40 @@ fn emit_build_version(manifest_dir: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Every input the pnpm build reads has to be a rerun trigger, because the
+/// bundle `RustEmbed` freezes into the binary is whatever `dist/` happened to
+/// hold when the derive expanded. `ui-app` consumes `@cknerv/{ui,cache,types}`
+/// straight from their sources through the pnpm workspace link, so an edit
+/// under `packages/*/src` changes the bundle without touching anything cargo
+/// was watching: the crate stays "fresh", pnpm never runs, and the binary
+/// re-embeds the previous `dist/` with nothing in the build log to say so. A
+/// deleted font keeps shipping; a fixed component keeps its bug.
+///
+/// `rerun-if-changed` on a directory watches it recursively, which is how the
+/// existing `ui-app/src` hint already works.
 fn emit_ui_rerun_hints(workspace_root: &Path) {
     let ui_app = workspace_root.join("ui-app");
+    let packages = workspace_root.join("packages");
 
-    println!("cargo:rerun-if-changed={}", ui_app.join("src").display());
-    println!(
-        "cargo:rerun-if-changed={}",
-        ui_app.join("package.json").display()
-    );
-    println!(
-        "cargo:rerun-if-changed={}",
-        ui_app.join("vite.config.ts").display()
-    );
-    println!(
-        "cargo:rerun-if-changed={}",
-        ui_app.join("index.html").display()
-    );
+    let watched = [
+        ui_app.join("src"),
+        ui_app.join("package.json"),
+        ui_app.join("vite.config.ts"),
+        ui_app.join("index.html"),
+        packages.join("ui").join("src"),
+        packages.join("ui").join("package.json"),
+        packages.join("cache").join("src"),
+        packages.join("cache").join("package.json"),
+        packages.join("types").join("src"),
+        packages.join("types").join("package.json"),
+        // A re-resolved dependency graph changes the bundle without a single
+        // source file moving.
+        workspace_root.join("pnpm-lock.yaml"),
+    ];
+
+    for path in watched {
+        println!("cargo:rerun-if-changed={}", path.display());
+    }
 }
 
 fn emit_git_rerun_hints(manifest_dir: &Path) -> anyhow::Result<()> {
@@ -96,7 +114,30 @@ fn resolve_git_path(manifest_dir: &Path, git_path: &str) -> PathBuf {
     }
 }
 
+/// `CKNERV_SKIP_UI_BUILD=1` is an opt-OUT for `cargo check` / clippy /
+/// rust-analyzer cycles, where the full pnpm build is pure latency — the wider
+/// rerun hints above mean any TS edit now triggers it. Unset (the release path)
+/// behaves exactly as before: pnpm runs on every rerun.
+///
+/// Two guards keep the shortcut from becoming the stale-embed bug it sits next
+/// to: it refuses to skip unless a `dist/` is already on disk to embed, and it
+/// says so on stderr every time it fires, so a binary built this way is never
+/// quiet about it.
 fn build_ui(workspace_root: &Path) -> anyhow::Result<()> {
+    println!("cargo:rerun-if-env-changed=CKNERV_SKIP_UI_BUILD");
+
+    let dist_index = workspace_root
+        .join("ui-app")
+        .join("dist")
+        .join("index.html");
+    if env::var("CKNERV_SKIP_UI_BUILD").as_deref() == Ok("1") && dist_index.is_file() {
+        println!(
+            "cargo:warning=CKNERV_SKIP_UI_BUILD=1 — embedding the existing ui-app/dist \
+             without rebuilding it; unset it before producing a release binary"
+        );
+        return Ok(());
+    }
+
     let status = Command::new("pnpm")
         .args(["-F", "cknerv-ui-app", "build"])
         .current_dir(workspace_root)

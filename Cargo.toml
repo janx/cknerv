@@ -32,3 +32,15 @@ tokio = { version = "1", features = ["full"] }
 tokio-tungstenite = { version = "0.23", default-features = false, features = ["connect"] }
 tracing = "0.1"
 url = "2"
+
+# Release ships one self-contained binary — the embedded dashboard bundle plus
+# the adapter, projection, and server crates linked together — so cross-crate
+# inlining and dead-code elimination have the whole program to work on. Measured
+# on a cold 239-crate release build of `-p cknerv-cli`: 16.9s / 14_229_720 B
+# stock, 35.1s / 14_081_736 B with thin LTO, 42.1s / 11_489_448 B with both.
+# `codegen-units = 1` costing 7s for 2.5 MiB is not a trade worth declining; a
+# release build is not the edit loop. Anyone who does feel it should reach for
+# `CKNERV_SKIP_UI_BUILD=1` on a debug build instead of loosening this.
+[profile.release]
+lto = "thin"
+codegen-units = 1

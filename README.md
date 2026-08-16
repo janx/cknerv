@@ -92,7 +92,19 @@ pnpm -F cknerv-ui-app dev
 
 The Vite dev server uses port `5181` and proxies `/api` plus WebSocket traffic
 to `http://localhost:7001`. Release builds embed `ui-app/dist` into the
-`cknerv` binary via `crates/cknerv-cli/build.rs`.
+`cknerv` binary via `crates/cknerv-cli/build.rs`, which reruns the pnpm build
+whenever `ui-app/`, `packages/{ui,cache,types}/src`, or `pnpm-lock.yaml`
+changes — otherwise a TS-only edit would leave a stale bundle inside the
+binary.
+
+For `cargo check` / clippy / rust-analyzer cycles, where that pnpm build is
+pure latency, `CKNERV_SKIP_UI_BUILD=1` reuses whatever `ui-app/dist` is already
+on disk (it refuses to skip if there is none, and prints a cargo warning each
+time it fires). Never set it when producing a release binary.
+
+```bash
+CKNERV_SKIP_UI_BUILD=1 cargo clippy --workspace --all-targets
+```
 
 The normative Canvas visual, quality, performance, and acceptance contract is
 documented in [`docs/canvas-rendering.md`](docs/canvas-rendering.md).

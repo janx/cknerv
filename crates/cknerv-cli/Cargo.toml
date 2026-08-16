@@ -18,7 +18,9 @@ anyhow.workspace = true
 axum.workspace = true
 clap = { version = "4", features = ["derive"] }
 mime_guess = "2"
-rust-embed = "8"
+# `include-exclude` is what makes the `#[exclude]` attribute on `Assets`
+# compile; it costs globset + bstr at build time and nothing at runtime.
+rust-embed = { version = "8", features = ["include-exclude"] }
 serde = { workspace = true }
 serde_json.workspace = true
 toml = "0.8"
