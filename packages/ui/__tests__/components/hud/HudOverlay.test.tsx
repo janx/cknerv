@@ -95,8 +95,10 @@ describe('HudOverlay', () => {
     expect(leftRail.style.bottom).toBe('14px');
     expect(chainCluster.style.flexDirection).toBe('row');
     expect(chainCluster.style.flex).toBe('1 1 auto');
+    expect(chainCluster.style.pointerEvents).toBe('none');
     expect(chainScroll.style.flex).toBe('0 0 auto');
     expect(chainScroll.style.overflowY).toBe('auto');
+    expect(chainScroll.style.pointerEvents).toBe('auto');
     expect(pulse.style.marginTop).toBe('auto');
     expect((pulse.firstElementChild as HTMLElement).style.width)
       .toMatch(/340px.*58px/);
@@ -183,6 +185,9 @@ describe('HudOverlay', () => {
     expect(cluster.style.flexDirection).toBe('row');
     expect(cluster.children[0]).toBe(chainPanel);
     expect(cluster.children[1]).toBe(daoPanel);
+    expect(cluster.style.pointerEvents).toBe('none');
+    expect(chainPanel.style.pointerEvents).toBe('auto');
+    expect(daoPanel.style.pointerEvents).toBe('auto');
     expect(chainPanel.textContent).not.toContain('NERVOS DAO');
     expect(daoPanel.textContent).toContain('NERVOS DAO');
     expect(daoPanel.textContent).toContain('DAO·05');

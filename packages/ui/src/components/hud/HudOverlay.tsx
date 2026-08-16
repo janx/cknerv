@@ -65,7 +65,11 @@ const DAO_PANEL_WIDTH_PX = 300;
 // auto margin as a true bottom-left anchor. The two regions share one bounded
 // flex column, so an unusually tall CKB/DAO readout can never overlap ECG·04.
 const LEFT_HUD_STYLE: CSSProperties = { position: 'absolute', left: 14, bottom: 14, display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'flex-start', minHeight: 0 };
-const CHAIN_CLUSTER_STYLE: CSSProperties = { display: 'flex', flex: '1 1 auto', flexDirection: 'row', gap: LEFT_PANEL_GAP_PX, alignItems: 'flex-start', minHeight: 0, maxWidth: '100%', overflowX: 'auto', overflowY: 'hidden', overscrollBehavior: 'contain', scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,152,48,.35) transparent', pointerEvents: 'auto' };
+// The cluster stretches to reserve the vertical space above PULSE. It must
+// stay click-through: otherwise its transparent tail intercepts CellGalaxy
+// pointer events far below the actual CKB / DAO panels. The concrete scroll
+// panes opt back into pointer input individually.
+const CHAIN_CLUSTER_STYLE: CSSProperties = { display: 'flex', flex: '1 1 auto', flexDirection: 'row', gap: LEFT_PANEL_GAP_PX, alignItems: 'flex-start', minHeight: 0, maxWidth: '100%', overflowX: 'auto', overflowY: 'hidden', overscrollBehavior: 'contain', scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,152,48,.35) transparent', pointerEvents: 'none' };
 // Narrow: the selected network detail owns the immediately visible rail area;
 // its mesh follows below.
 const MESH_ZONE_COL: CSSProperties = { display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'flex-end' };
@@ -323,6 +327,7 @@ function HudOverlay({ chain, peers, localNode, cellsStats, cellCount, cellCapaci
                     overscrollBehavior: 'contain',
                     scrollbarWidth: 'thin',
                     scrollbarColor: 'rgba(255,152,48,.35) transparent',
+                    pointerEvents: 'auto',
                   }}
                 >
                   <BlockchainReadout
@@ -352,6 +357,7 @@ function HudOverlay({ chain, peers, localNode, cellsStats, cellCount, cellCapaci
                     overscrollBehavior: 'contain',
                     scrollbarWidth: 'thin',
                     scrollbarColor: 'rgba(255,152,48,.35) transparent',
+                    pointerEvents: 'auto',
                   }}
                 >
                   <DaoStatePanel
