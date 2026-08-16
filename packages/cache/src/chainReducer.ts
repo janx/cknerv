@@ -8,6 +8,13 @@
 
 import type { ChainEntry, Mutation, RevisionedMutation } from '@cknerv/types';
 
+/** How many recent blocks the three cadence rings keep. Twin of
+ *  `RECENT_INTERVAL_CAP` in `crates/cknerv-core/src/entity.rs`, which trims
+ *  the same rings server-side: the snapshot arrives already cut to this
+ *  window and every block after it is cut here, so a drift between the two
+ *  would silently change the cadence strip's window mid-session. */
+export const RECENT_INTERVAL_CAP = 60;
+
 /** Construct a fresh, empty chain-entity cache. */
 export function emptyChainCache(): ChainEntry {
   return {
@@ -200,19 +207,19 @@ function applyToChain(
       if (prevTs !== null && m.at >= prevTs) {
         ownRing(chain, 'recent_block_intervals_ms', owned);
         chain.recent_block_intervals_ms.push(m.at - prevTs);
-        while (chain.recent_block_intervals_ms.length > 60) {
+        while (chain.recent_block_intervals_ms.length > RECENT_INTERVAL_CAP) {
           chain.recent_block_intervals_ms.shift();
         }
       }
       chain.last_block_ts_ms = m.at;
       ownRing(chain, 'recent_block_tx_counts', owned);
       chain.recent_block_tx_counts.push(m.tx_count);
-      while (chain.recent_block_tx_counts.length > 60) {
+      while (chain.recent_block_tx_counts.length > RECENT_INTERVAL_CAP) {
         chain.recent_block_tx_counts.shift();
       }
       ownRing(chain, 'recent_block_sizes', owned);
       chain.recent_block_sizes.push(m.size ?? 0);
-      while (chain.recent_block_sizes.length > 60) {
+      while (chain.recent_block_sizes.length > RECENT_INTERVAL_CAP) {
         chain.recent_block_sizes.shift();
       }
       ownRing(chain, 'recent_blocks', owned);

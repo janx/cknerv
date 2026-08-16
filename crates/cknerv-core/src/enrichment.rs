@@ -1158,6 +1158,20 @@ impl EnrichmentProjection for SemanticsProjection {
 mod tests {
     use super::*;
 
+    /// What this projection can ever ship is the reason the browser cache
+    /// can set its own retention at 4× and call it pure defense
+    /// (`MAX_RETAINED_CELLS` / `MAX_RETAINED_TRANSACTIONS` in
+    /// `packages/cache/src/semanticsReducer.ts`, whose comment cites these
+    /// two fields and whose test asserts the 4× relationship). Raising a cap
+    /// here without raising the client's turns that defense into eviction on
+    /// a healthy stream.
+    #[test]
+    fn default_caps_are_what_the_client_sizes_its_defense_against() {
+        let projection = SemanticsProjection::default();
+        assert_eq!(projection.cell_cap, 512);
+        assert_eq!(projection.transaction_cap, 2_048);
+    }
+
     fn cell(block: u64, suffix: &str) -> CellSemanticRecord {
         CellSemanticRecord {
             out_point: OutPoint {

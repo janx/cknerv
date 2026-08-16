@@ -24,6 +24,12 @@ describe('Cell display budget', () => {
   it('resolves the fixed AUTO budget regardless of quality', () => {
     // Explicit product decision (2026-08-11): Galaxy membership is FIXED —
     // render quality adjusts presentation only, never composition.
+    //
+    // Twin of `DISPLAY_CELL_BUDGET` in
+    // `crates/cknerv-core/src/projection/display_plane.rs`, which the
+    // snapshot carries and which this constant only stands in for until the
+    // first snapshot arrives. The Rust side asserts the same number in
+    // `display_budgets_match_their_client_mirrors`.
     expect(AUTO_CELL_DISPLAY_BUDGET).toBe(12_000);
     expect(automaticCellDisplayLimit()).toBe(12_000);
 

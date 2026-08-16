@@ -3,6 +3,7 @@ import type { Cell } from '@cknerv/types';
 import { buildNeighborGraph } from '../../src/geometry/neighborGraph';
 import {
   buildPassiveNeighborGraph,
+  NERVE_SCREEN_BUDGET,
   PASSIVE_EDGE_CEILING,
   PASSIVE_EDGES_PER_CELL,
   passiveEdgeBudget,
@@ -25,6 +26,17 @@ function cell(id: number): Cell {
     content_hash: `0x${'00'.repeat(32)}`,
   };
 }
+
+describe('nerve screen budget', () => {
+  it('matches the budget the server carries in the snapshot', () => {
+    // Twin of `DISPLAY_NERVE_EDGE_BUDGET` in
+    // `crates/cknerv-core/src/projection/display_plane.rs` (asserted there by
+    // `display_budgets_match_their_client_mirrors`). The plane stages cells
+    // only; this number is the fibre half of the same product budget, and the
+    // two travel together in `snapshot.display.budget`.
+    expect(NERVE_SCREEN_BUDGET).toBe(8_000);
+  });
+});
 
 describe('buildPassiveNeighborGraph', () => {
   const cells = new Map(

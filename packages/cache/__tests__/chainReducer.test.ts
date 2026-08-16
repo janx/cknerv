@@ -18,6 +18,7 @@ import {
   applyChainMutation,
   applyRevisionedChainMutations,
   emptyChainCache,
+  RECENT_INTERVAL_CAP,
 } from '../src/chainReducer';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -394,6 +395,29 @@ describe('cross-language wire-shape parity', () => {
     expect(snap.tip).toBe(100);
     expect(snap.recent_blocks[snap.recent_blocks.length - 1].number).toBe(100);
     expect(snap.total_blocks).toBeGreaterThanOrEqual(snap.recent_blocks.length);
+  });
+
+  it('the cadence rings are cut at the same window the server cuts them', () => {
+    // Twin of `RECENT_INTERVAL_CAP` in `crates/cknerv-core/src/entity.rs`
+    // (asserted there by `recent_interval_cap_matches_its_client_mirror`).
+    // The snapshot arrives already trimmed to this window and live blocks are
+    // trimmed here, so a one-sided retune changes the cadence strip's window
+    // partway through a session.
+    expect(RECENT_INTERVAL_CAP).toBe(60);
+    let chain = emptyChainCache();
+    for (let n = 1; n <= RECENT_INTERVAL_CAP + 5; n += 1) {
+      chain = applyChainMutation(chain, {
+        type: 'block_mined',
+        number: n,
+        hash: `0xb${n}`,
+        tx_count: 1,
+        size: 512,
+        at: n * 1000,
+      });
+    }
+    expect(chain.recent_block_intervals_ms).toHaveLength(RECENT_INTERVAL_CAP);
+    expect(chain.recent_block_tx_counts).toHaveLength(RECENT_INTERVAL_CAP);
+    expect(chain.recent_block_sizes).toHaveLength(RECENT_INTERVAL_CAP);
   });
 
   it('all mutation_samples.json variants pipe through applyChainMutation without throwing', () => {

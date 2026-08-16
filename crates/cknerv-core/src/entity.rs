@@ -168,6 +168,16 @@ pub struct Chain {
 mod tests {
     use super::*;
 
+    /// The client trims the same three rings itself as block mutations
+    /// arrive (`RECENT_INTERVAL_CAP` in `packages/cache/src/chainReducer.ts`,
+    /// which carries the mirror-image assert). A cap that drifts apart makes
+    /// the cadence strip read one window on a snapshot and another after a
+    /// minute of live blocks.
+    #[test]
+    fn recent_interval_cap_matches_its_client_mirror() {
+        assert_eq!(RECENT_INTERVAL_CAP, 60);
+    }
+
     #[test]
     fn peer_round_trips_snake_case_direction() {
         let p = Peer {

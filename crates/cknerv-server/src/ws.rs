@@ -52,6 +52,40 @@ fn heartbeat_frame(revision: u64) -> serde_json::Value {
     })
 }
 
+/// The entity stream's full-snapshot body, lifted out of the handler so the
+/// shared `ws_frames.json` fixture pins the frame that actually goes out
+/// rather than a restatement of it.
+fn entity_snapshot_frame(snap: &serde_json::Value) -> (u64, serde_json::Value) {
+    let revision = snap.get("revision").and_then(|v| v.as_u64()).unwrap_or(0);
+    let frame = serde_json::json!({
+        "kind": "snapshot",
+        "revision": revision,
+        "entities": {
+            "chain": snap.get("chain").cloned().unwrap_or(serde_json::Value::Null),
+            "chain_nodes": snap.get("chain_nodes").cloned()
+                .unwrap_or(serde_json::Value::Array(vec![])),
+            "peers": snap.get("peers").cloned()
+                .unwrap_or(serde_json::Value::Array(vec![])),
+        },
+    });
+    (revision, frame)
+}
+
+/// The entity stream carries `revision` on its lag marker so a client can
+/// resume from the last frame it did receive; the projection stream's marker
+/// below deliberately does not (its cursor is the per-delta seq).
+fn entity_lagged_frame(skipped: u64, revision: u64) -> serde_json::Value {
+    serde_json::json!({
+        "kind": "lagged",
+        "skipped": skipped,
+        "revision": revision,
+    })
+}
+
+fn projection_lagged_frame(skipped: u64) -> serde_json::Value {
+    serde_json::json!({ "kind": "lagged", "skipped": skipped })
+}
+
 /// Block until `rx` observes `true`. Used by long-lived WS handlers in
 /// `select!` to break out of their main recv loop on shutdown signal.
 pub async fn wait_for_shutdown(rx: &mut watch::Receiver<bool>) {
@@ -172,19 +206,7 @@ pub async fn handle_chain_stream(
 
     match action {
         StreamAction::FullSnapshot => {
-            let snap = state.snapshot();
-            let revision = snap.get("revision").and_then(|v| v.as_u64()).unwrap_or(0);
-            let frame = serde_json::json!({
-                "kind": "snapshot",
-                "revision": revision,
-                "entities": {
-                    "chain": snap.get("chain").cloned().unwrap_or(serde_json::Value::Null),
-                    "chain_nodes": snap.get("chain_nodes").cloned()
-                        .unwrap_or(serde_json::Value::Array(vec![])),
-                    "peers": snap.get("peers").cloned()
-                        .unwrap_or(serde_json::Value::Array(vec![])),
-                },
-            });
+            let (revision, frame) = entity_snapshot_frame(&state.snapshot());
             last_sent_revision = revision;
             if socket.send(Message::Text(frame.to_string())).await.is_err() {
                 return;
@@ -243,11 +265,7 @@ pub async fn handle_chain_stream(
                     }
                 }
                 Err(RecvError::Lagged(n)) => {
-                    let frame = serde_json::json!({
-                        "kind": "lagged",
-                        "skipped": n,
-                        "revision": last_sent_revision,
-                    });
+                    let frame = entity_lagged_frame(n, last_sent_revision);
                     if socket.send(Message::Text(frame.to_string())).await.is_err() {
                         break;
                     }
@@ -398,7 +416,7 @@ pub async fn handle_projection_stream(
                     }
                 }
                 Err(RecvError::Lagged(n)) => {
-                    let frame = serde_json::json!({ "kind": "lagged", "skipped": n });
+                    let frame = projection_lagged_frame(n);
                     if socket.send(Message::Text(frame.to_string())).await.is_err() {
                         break;
                     }
@@ -412,9 +430,129 @@ pub async fn handle_projection_stream(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cknerv_core::{Mutation, Peer, PeerDirection, RevisionedMutation};
+    use cknerv_core::{CellDelta, Mutation, Peer, PeerDirection, RevisionedMutation};
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::Arc;
+
+    /// A projection standing in for the production ones, so the envelope the
+    /// fixture pins comes out of the real registry path. Only the ENVELOPE is
+    /// this fixture's subject — the payloads inside it are pinned by
+    /// `cell_delta_samples.json` and the snapshot fixtures.
+    struct FrameFixtureProjection;
+
+    impl cknerv_core::Projection for FrameFixtureProjection {
+        type Snapshot = serde_json::Value;
+        type Delta = CellDelta;
+
+        fn name(&self) -> &'static str {
+            "frames"
+        }
+
+        fn snapshot(&self) -> serde_json::Value {
+            serde_json::json!({ "cells": [], "last_pulse_at_ms": 1_700_000_006_000u64 })
+        }
+
+        fn apply_mutation(&mut self, _m: &Mutation) -> Vec<CellDelta> {
+            vec![CellDelta::Pulse {
+                at_ms: 1_700_000_006_000,
+            }]
+        }
+    }
+
+    /// Every frame envelope both streams can send, written from the real
+    /// frame types so a reshaped envelope lands in the file and the TS
+    /// connectors' twin (`streamConnectors.test.ts`) fails on it.
+    ///
+    /// Regenerate with
+    /// `CKNERV_REGEN_FIXTURES=1 cargo test -p cknerv-server ws_frame_envelopes`.
+    #[test]
+    fn ws_frame_envelopes_are_authored_by_the_senders() {
+        let state = crate::state::ServerState::new();
+        state.apply_mutation(Mutation::BlockMined {
+            number: 100,
+            hash: "0xblock100".into(),
+            tx_count: 2,
+            size: 1_024,
+            at: 1_700_000_000_000,
+        });
+        let mutation = state
+            .mutation_ring_snapshot()
+            .pop()
+            .expect("the ring kept the mutation");
+        let (_, entity_snapshot) = entity_snapshot_frame(&state.snapshot());
+        let entity_delta = EntityDeltaFrame {
+            kind: "delta",
+            revision: mutation.revision,
+            mutations: vec![mutation.serialized()],
+        };
+
+        let mut registry = crate::projection_registry::Registry::new();
+        registry.register(FrameFixtureProjection);
+        let runtime = registry.lookup("frames").expect("frames runtime");
+        let writer = registry
+            .writers()
+            .into_iter()
+            .next()
+            .expect("frames writer");
+        writer.apply(&RevisionedMutation {
+            revision: 1,
+            mutation: Mutation::ChainReorganized { from_block: 1 },
+        });
+        let (_, projection_snapshot) = runtime.snapshot_envelope(SnapshotEnvelope::Frame);
+        let ring = runtime.delta_ring_snapshot();
+        let projection_delta = ProjectionDeltaFrame {
+            kind: "delta",
+            revision: ring[0].rev,
+            deltas: ring
+                .iter()
+                .map(|d| ProjectionReplayEntry {
+                    revision: d.rev,
+                    delta: &d.value,
+                })
+                .collect(),
+        };
+
+        let frames = serde_json::json!({
+            "entity": {
+                "snapshot": entity_snapshot,
+                "delta": serde_json::to_value(&entity_delta).expect("entity delta frame"),
+                "lagged": entity_lagged_frame(12, mutation.revision),
+                "heartbeat": heartbeat_frame(mutation.revision),
+            },
+            "projection": {
+                "snapshot": serde_json::from_slice::<serde_json::Value>(&projection_snapshot)
+                    .expect("projection snapshot frame is JSON"),
+                "delta": serde_json::to_value(&projection_delta)
+                    .expect("projection delta frame"),
+                "lagged": projection_lagged_frame(34),
+                "heartbeat": heartbeat_frame(ring[0].rev),
+            },
+        });
+
+        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/ws_frames.json");
+        let mut encoded = serde_json::to_string_pretty(&frames).expect("serialize frames");
+        encoded.push('\n');
+        if std::env::var("CKNERV_REGEN_FIXTURES").is_ok() {
+            std::fs::write(&path, &encoded).expect("write ws_frames.json");
+        }
+        let committed = std::fs::read_to_string(&path).expect("read ws_frames.json");
+        assert_eq!(
+            encoded, committed,
+            "ws_frames.json drifted from the frames these handlers send; regenerate \
+             with CKNERV_REGEN_FIXTURES=1 cargo test -p cknerv-server ws_frame_envelopes \
+             and run the TS connectors test in the same change"
+        );
+    }
+
+    /// The client arms its stale watchdog at `STREAM_STALE_AFTER_MS`
+    /// (`ui-app/src/App.tsx`), which must clear at least three heartbeats —
+    /// one lost frame on a healthy link cannot be allowed to read as death.
+    /// The twin assert lives in `ui-app/__tests__/runtime-config.test.ts`.
+    #[test]
+    fn heartbeat_leaves_the_client_watchdog_three_beats_of_slack() {
+        assert_eq!(HEARTBEAT_INTERVAL.as_secs(), 5);
+    }
 
     #[test]
     fn snapshot_frame_includes_peers() {
@@ -430,19 +568,7 @@ mod tests {
                 connected_ms: 1000,
             }],
         });
-        // Reproduce the FullSnapshot frame body the handler builds.
-        let snap = state.snapshot();
-        let frame = serde_json::json!({
-            "kind": "snapshot",
-            "revision": snap.get("revision").and_then(|v| v.as_u64()).unwrap_or(0),
-            "entities": {
-                "chain": snap.get("chain").cloned().unwrap_or(serde_json::Value::Null),
-                "chain_nodes": snap.get("chain_nodes").cloned()
-                    .unwrap_or(serde_json::Value::Array(vec![])),
-                "peers": snap.get("peers").cloned()
-                    .unwrap_or(serde_json::Value::Array(vec![])),
-            },
-        });
+        let (_, frame) = entity_snapshot_frame(&state.snapshot());
         assert_eq!(frame["entities"]["peers"][0]["node_id"], "QmA");
     }
 

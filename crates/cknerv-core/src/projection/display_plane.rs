@@ -1200,6 +1200,19 @@ mod tests {
     use crate::enrichment::ChainAnchor;
     use crate::projection::composition_policy::CompositionDemand;
 
+    /// Both budgets are the product's, not the server's, and the browser
+    /// keeps its own copy for the boot path that runs before a snapshot has
+    /// arrived: `AUTO_CELL_DISPLAY_BUDGET` in
+    /// `packages/ui/src/tweaks/cellDisplay.ts` and `NERVE_SCREEN_BUDGET` in
+    /// `packages/ui/src/geometry/passiveNeighborGraph.ts`. Each of those has
+    /// the mirror-image assert naming this test, so a retune that lands on
+    /// one side fails on the other.
+    #[test]
+    fn display_budgets_match_their_client_mirrors() {
+        assert_eq!(DISPLAY_CELL_BUDGET, 12_000);
+        assert_eq!(DISPLAY_NERVE_EDGE_BUDGET, 8_000);
+    }
+
     fn small_plane(cells: u32, quota: usize) -> DisplayPlane {
         DisplayPlane::with_limits(
             DisplayBudget {

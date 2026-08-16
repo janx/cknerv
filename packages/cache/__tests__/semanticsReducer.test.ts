@@ -869,6 +869,16 @@ describe('client retention caps', () => {
     return outPointKey({ tx_hash: `0xcell${index}`, index: 0 });
   }
 
+  it('sits at 4x what the server can ever ship', () => {
+    // The server's own bounds are `cell_cap: 512` / `transaction_cap: 2048`
+    // on `SemanticsProjection` (`crates/cknerv-core/src/enrichment.rs`,
+    // asserted there by `default_caps_are_what_the_client_sizes_its_defense_against`).
+    // The 4x margin is what makes these caps pure defense: reaching one means
+    // a server bug or a host that is not cknerv, never a healthy stream.
+    expect(MAX_RETAINED_CELLS).toBe(4 * 512);
+    expect(MAX_RETAINED_TRANSACTIONS).toBe(4 * 2_048);
+  });
+
   it('caps cells inside one oversized batch, dropping the oldest inserted', () => {
     const overflow = 8;
     const next = applyRevisionedSemanticsDeltas(

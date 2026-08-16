@@ -73,6 +73,50 @@ describe('wire-shape parity (TS twin of cknerv-core)', () => {
     expect(typeof sample.epoch).toBe('object');
   });
 
+  it('cell_delta_samples.json carries every CellDelta variant', () => {
+    const samples = fixture<Record<string, CellDelta>>('cell_delta_samples.json');
+    const variants = new Set(Object.values(samples).map((d) => d.type));
+    // The Rust twin (`cknerv-core/tests/wire_shape.rs`) writes this file from
+    // a total match over `CellDelta`, so a variant reaching the wire without
+    // a sample fails there; this set is the browser-side half of that pin.
+    expect(variants).toEqual(
+      new Set([
+        'birth',
+        'death',
+        'tag',
+        'gc',
+        'pulse',
+        'stats',
+        'script_census',
+        'backfill',
+        'link_prune',
+        'link',
+        'display',
+      ]),
+    );
+    // Script identity travels on the delta path, not only in snapshots —
+    // the half that silently lost it while only the snapshot was fixtured.
+    const birth = samples.birth as Extract<CellDelta, { type: 'birth' }>;
+    expect(birth.cell.lock_script?.hash_type).toBe('type');
+    expect(birth.cell.type_script?.hash_type).toBe('data1');
+    // A ranked census with a non-empty tail: a panel that reads only the head
+    // must still be able to say how much it is not showing.
+    const census = samples.script_census as Extract<
+      CellDelta,
+      { type: 'script_census' }
+    >;
+    expect(census.census.locks[0].script).toEqual(birth.cell.lock_script);
+    expect(census.census.locks_tail_scripts).toBe(1);
+    expect(census.census.unidentified).toBe(1);
+    // Durable causal geometry: the anchors, not the live cells, are what a
+    // client routes on once the inputs have left its retained window.
+    const link = samples.link as Extract<CellDelta, { type: 'link' }>;
+    expect(link.endpoint_anchors.map((a) => a.id)).toEqual([
+      ...link.from_ids,
+      ...link.to_ids,
+    ]);
+  });
+
   it('cell_delta_samples.json covers reorg evidence, replay cause and display membership', () => {
     const samples = fixture<Record<string, CellDelta>>('cell_delta_samples.json');
     expect(samples.link_prune).toEqual({
@@ -247,6 +291,45 @@ describe('wire-shape parity (TS twin of cknerv-core)', () => {
     expect(sample.deltas.transaction_horizon_replace.type).toBe('transaction_horizon_replace');
     expect(sample.deltas.network_atlas_replace.type).toBe('network_atlas_replace');
     expect(sample.deltas.network_atlas_clear.type).toBe('network_atlas_clear');
+    // Script names are the other half of the cell census's identity join:
+    // that side counts `(code_hash, hash_type)` and refuses to name it, this
+    // side names it and counts nothing. `unresolved` says how many observed
+    // identities the index found a code cell for but no name.
+    expect(sample.snapshot.script_registry?.entries[0]).toMatchObject({
+      code_hash: sample.snapshot.cells[0].lock_script?.code_hash,
+      hash_type: sample.snapshot.cells[0].lock_script?.hash_type,
+      name: 'Default Lock',
+      kind: 'lock',
+    });
+    expect(sample.snapshot.script_registry?.unresolved).toBe(8);
+    expect(sample.deltas.script_registry_replace.type).toBe(
+      'script_registry_replace',
+    );
+    expect(sample.deltas.census_replace.type).toBe('census_replace');
+    expect(sample.deltas.transaction_upsert.type).toBe('transaction_upsert');
+    // Same total-match pin as the cell deltas: the Rust writer enumerates
+    // `SemanticsDelta` exhaustively, and this is the browser-side half.
+    expect(new Set(Object.values(sample.deltas).map((d) => d.type))).toEqual(
+      new Set([
+        'source_status',
+        'cell_upsert',
+        'cell_remove',
+        'transaction_upsert',
+        'transaction_remove',
+        'census_replace',
+        'asset_ecosystem_replace',
+        'dao_state_replace',
+        'protocol_era_replace',
+        'fork_watch_replace',
+        'activity_feed_replace',
+        'transaction_horizon_replace',
+        'network_atlas_replace',
+        'network_atlas_clear',
+        'script_registry_replace',
+        'prune',
+        'clear',
+      ]),
+    );
     // The galaxy composition record is display-plane input, not semantics:
     // it reaches the browser only as the cells projection's display section
     // and `display` deltas (see the cells fixtures above).

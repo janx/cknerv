@@ -3,7 +3,22 @@
     "source": {
       "source": "ckbadger",
       "status": "ready",
-      "capabilities": ["cell_detail", "script_identity", "data_analysis", "asset_identity", "asset_ecosystem", "dao_state", "protocol_era", "activity_feed", "transaction_horizon", "fork_watch", "network_atlas", "transaction_detail", "transaction_lifecycle", "galaxy_composition"],
+      "capabilities": [
+        "cell_detail",
+        "script_identity",
+        "data_analysis",
+        "asset_identity",
+        "asset_ecosystem",
+        "dao_state",
+        "protocol_era",
+        "activity_feed",
+        "transaction_horizon",
+        "fork_watch",
+        "network_atlas",
+        "transaction_detail",
+        "transaction_lifecycle",
+        "galaxy_composition"
+      ],
       "indexed_tip": 100,
       "lag_blocks": 1,
       "validated_anchor": {
@@ -265,8 +280,16 @@
       "updated_at_ms": 1700000000010,
       "current_hour": 12,
       "current_day": 345,
-      "hourly_counts": [7, 9, 12],
-      "daily_counts": [300, 321, 345]
+      "hourly_counts": [
+        7,
+        9,
+        12
+      ],
+      "daily_counts": [
+        300,
+        321,
+        345
+      ]
     },
     "network_atlas": {
       "source": "ckbadger",
@@ -306,22 +329,108 @@
           "count": 1
         }
       ]
+    },
+    "script_registry": {
+      "source": "ckbadger",
+      "as_of": {
+        "block": 100,
+        "hash": "0xblock100"
+      },
+      "updated_at_ms": 1700000000004,
+      "entries": [
+        {
+          "code_hash": "0xlockcode",
+          "hash_type": "type",
+          "name": "Default Lock",
+          "description": "Secp256k1 blake160 single signature",
+          "kind": "lock",
+          "deprecated": false
+        },
+        {
+          "code_hash": "0xdaocode",
+          "hash_type": "type",
+          "name": "Nervos DAO",
+          "kind": "type",
+          "website": "https://nervos.org",
+          "deprecated": false
+        }
+      ],
+      "unresolved": 8
     }
   },
   "deltas": {
-    "source_status": {
-      "type": "source_status",
-      "source": {
+    "activity_feed_replace": {
+      "type": "activity_feed_replace",
+      "activity_feed": {
         "source": "ckbadger",
-        "status": "ready",
-        "capabilities": ["cell_detail", "script_identity", "data_analysis", "asset_identity", "asset_ecosystem", "dao_state", "protocol_era", "activity_feed", "transaction_horizon", "fork_watch", "network_atlas", "transaction_detail", "transaction_lifecycle", "galaxy_composition"],
-        "indexed_tip": 100,
-        "lag_blocks": 1,
-        "validated_anchor": {
+        "as_of": {
           "block": 100,
           "hash": "0xblock100"
         },
-        "last_success_at_ms": 1700000000000
+        "updated_at_ms": 1700000000005,
+        "activities": [
+          {
+            "tx_hash": "0x4444444444444444444444444444444444444444444444444444444444444444",
+            "block": 100,
+            "timestamp_ms": 1700000000000,
+            "category": "dao",
+            "label": "dao · deposit",
+            "participant_count": 1
+          },
+          {
+            "tx_hash": "0x5555555555555555555555555555555555555555555555555555555555555555",
+            "block": 99,
+            "timestamp_ms": 1699999999000,
+            "category": "token",
+            "participant_count": 2
+          }
+        ]
+      }
+    },
+    "asset_ecosystem_replace": {
+      "type": "asset_ecosystem_replace",
+      "asset_ecosystem": {
+        "source": "ckbadger",
+        "as_of": {
+          "block": 100,
+          "hash": "0xblock100"
+        },
+        "updated_at_ms": 1700000000004,
+        "total_live_capacity_shannons": "100000000000000",
+        "total_knowledge_bytes": 12345,
+        "capacity_breakdown": [
+          {
+            "category": "dao",
+            "capacity_shannons": "25000000000000",
+            "share_bps": 2500
+          },
+          {
+            "category": "tokens",
+            "capacity_shannons": "1000050000000",
+            "share_bps": 100
+          },
+          {
+            "category": "other",
+            "capacity_shannons": "73999950000000",
+            "share_bps": 7400
+          }
+        ],
+        "top_assets": [
+          {
+            "type_script_hash": "0x2222222222222222222222222222222222222222222222222222222222222222",
+            "name": "Nervos Test Token",
+            "symbol": "NTT",
+            "holders_count": 42,
+            "total_capacity_shannons": "123450000000"
+          }
+        ]
+      }
+    },
+    "cell_remove": {
+      "type": "cell_remove",
+      "out_point": {
+        "tx_hash": "0xcelltx",
+        "index": 1
       }
     },
     "cell_upsert": {
@@ -415,55 +524,22 @@
         ]
       }
     },
-    "cell_remove": {
-      "type": "cell_remove",
-      "out_point": {
-        "tx_hash": "0xcelltx",
-        "index": 1
-      }
-    },
-    "transaction_remove": {
-      "type": "transaction_remove",
-      "tx_hash": "0xtx100"
-    },
-    "asset_ecosystem_replace": {
-      "type": "asset_ecosystem_replace",
-      "asset_ecosystem": {
+    "census_replace": {
+      "type": "census_replace",
+      "census": {
         "source": "ckbadger",
         "as_of": {
           "block": 100,
           "hash": "0xblock100"
         },
-        "updated_at_ms": 1700000000004,
-        "total_live_capacity_shannons": "100000000000000",
-        "total_knowledge_bytes": 12345,
-        "capacity_breakdown": [
-          {
-            "category": "dao",
-            "capacity_shannons": "25000000000000",
-            "share_bps": 2500
-          },
-          {
-            "category": "tokens",
-            "capacity_shannons": "1000050000000",
-            "share_bps": 100
-          },
-          {
-            "category": "other",
-            "capacity_shannons": "73999950000000",
-            "share_bps": 7400
-          }
-        ],
-        "top_assets": [
-          {
-            "type_script_hash": "0x2222222222222222222222222222222222222222222222222222222222222222",
-            "name": "Nervos Test Token",
-            "symbol": "NTT",
-            "holders_count": 42,
-            "total_capacity_shannons": "123450000000"
-          }
-        ]
+        "updated_at_ms": 1700000000003,
+        "live_cells": 123456,
+        "total_cells": 234567,
+        "dead_cells": 111111
       }
+    },
+    "clear": {
+      "type": "clear"
     },
     "dao_state_replace": {
       "type": "dao_state_replace",
@@ -483,26 +559,6 @@
         "estimated_apc_bps": 201,
         "deposit_change_24h_shannons": "141530599353229",
         "depositors_change_24h": 5
-      }
-    },
-    "protocol_era_replace": {
-      "type": "protocol_era_replace",
-      "protocol_era": {
-        "source": "ckbadger",
-        "as_of": {
-          "block": 100,
-          "hash": "0xblock100"
-        },
-        "updated_at_ms": 1700000000009,
-        "network": "mainnet",
-        "indexed_tip_block": 100,
-        "indexed_tip_epoch": 12293,
-        "current": {
-          "name": "Meepo",
-          "edition_year": 2024,
-          "activation_epoch": 12293,
-          "activation_block": 99
-        }
       }
     },
     "fork_watch_replace": {
@@ -534,48 +590,8 @@
         }
       }
     },
-    "activity_feed_replace": {
-      "type": "activity_feed_replace",
-      "activity_feed": {
-        "source": "ckbadger",
-        "as_of": {
-          "block": 100,
-          "hash": "0xblock100"
-        },
-        "updated_at_ms": 1700000000005,
-        "activities": [
-          {
-            "tx_hash": "0x4444444444444444444444444444444444444444444444444444444444444444",
-            "block": 100,
-            "timestamp_ms": 1700000000000,
-            "category": "dao",
-            "label": "dao · deposit",
-            "participant_count": 1
-          },
-          {
-            "tx_hash": "0x5555555555555555555555555555555555555555555555555555555555555555",
-            "block": 99,
-            "timestamp_ms": 1699999999000,
-            "category": "token",
-            "participant_count": 2
-          }
-        ]
-      }
-    },
-    "transaction_horizon_replace": {
-      "type": "transaction_horizon_replace",
-      "transaction_horizon": {
-        "source": "ckbadger",
-        "as_of": {
-          "block": 100,
-          "hash": "0xblock100"
-        },
-        "updated_at_ms": 1700000000010,
-        "current_hour": 12,
-        "current_day": 345,
-        "hourly_counts": [7, 9, 12],
-        "daily_counts": [300, 321, 345]
-      }
+    "network_atlas_clear": {
+      "type": "network_atlas_clear"
     },
     "network_atlas_replace": {
       "type": "network_atlas_replace",
@@ -619,15 +635,139 @@
         ]
       }
     },
-    "network_atlas_clear": {
-      "type": "network_atlas_clear"
+    "protocol_era_replace": {
+      "type": "protocol_era_replace",
+      "protocol_era": {
+        "source": "ckbadger",
+        "as_of": {
+          "block": 100,
+          "hash": "0xblock100"
+        },
+        "updated_at_ms": 1700000000009,
+        "network": "mainnet",
+        "indexed_tip_block": 100,
+        "indexed_tip_epoch": 12293,
+        "current": {
+          "name": "Meepo",
+          "edition_year": 2024,
+          "activation_epoch": 12293,
+          "activation_block": 99
+        }
+      }
     },
     "prune": {
       "type": "prune",
       "from_block": 100
     },
-    "clear": {
-      "type": "clear"
+    "script_registry_replace": {
+      "type": "script_registry_replace",
+      "script_registry": {
+        "source": "ckbadger",
+        "as_of": {
+          "block": 100,
+          "hash": "0xblock100"
+        },
+        "updated_at_ms": 1700000000004,
+        "entries": [
+          {
+            "code_hash": "0xlockcode",
+            "hash_type": "type",
+            "name": "Default Lock",
+            "description": "Secp256k1 blake160 single signature",
+            "kind": "lock",
+            "deprecated": false
+          },
+          {
+            "code_hash": "0xdaocode",
+            "hash_type": "type",
+            "name": "Nervos DAO",
+            "kind": "type",
+            "website": "https://nervos.org",
+            "deprecated": false
+          }
+        ],
+        "unresolved": 8
+      }
+    },
+    "source_status": {
+      "type": "source_status",
+      "source": {
+        "source": "ckbadger",
+        "status": "ready",
+        "capabilities": [
+          "cell_detail",
+          "script_identity",
+          "data_analysis",
+          "asset_identity",
+          "asset_ecosystem",
+          "dao_state",
+          "protocol_era",
+          "activity_feed",
+          "transaction_horizon",
+          "fork_watch",
+          "network_atlas",
+          "transaction_detail",
+          "transaction_lifecycle",
+          "galaxy_composition"
+        ],
+        "indexed_tip": 100,
+        "lag_blocks": 1,
+        "validated_anchor": {
+          "block": 100,
+          "hash": "0xblock100"
+        },
+        "last_success_at_ms": 1700000000000
+      }
+    },
+    "transaction_horizon_replace": {
+      "type": "transaction_horizon_replace",
+      "transaction_horizon": {
+        "source": "ckbadger",
+        "as_of": {
+          "block": 100,
+          "hash": "0xblock100"
+        },
+        "updated_at_ms": 1700000000010,
+        "current_hour": 12,
+        "current_day": 345,
+        "hourly_counts": [
+          7,
+          9,
+          12
+        ],
+        "daily_counts": [
+          300,
+          321,
+          345
+        ]
+      }
+    },
+    "transaction_remove": {
+      "type": "transaction_remove",
+      "tx_hash": "0xtx100"
+    },
+    "transaction_upsert": {
+      "type": "transaction_upsert",
+      "transaction": {
+        "tx_hash": "0xtx100",
+        "block": 100,
+        "source": "ckbadger",
+        "as_of": {
+          "block": 100,
+          "hash": "0xblock100"
+        },
+        "updated_at_ms": 1700000000002,
+        "actions": [
+          {
+            "namespace": "ckb",
+            "kind": "transfer",
+            "attributes": []
+          }
+        ],
+        "participants": [],
+        "fee": "1000",
+        "cycles": 12345
+      }
     }
   }
 }

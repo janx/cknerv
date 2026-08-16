@@ -9,23 +9,53 @@
 //! variant or a new entity field requires a corresponding fixture update
 //! here; otherwise this test makes the omission loud.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use cknerv_core::{
-    AssetKind, Cell, CellDelta, CellGalaxySnapshot, Chain, ChainAnchor, DisplayMode,
-    DisplayProvenance, LockKind, Mutation, OutPoint, ReplayPhase, SemanticsDelta,
+    AssetKind, Cell, CellDelta, CellGalaxySnapshot, CellLinkEndpointAnchor, Chain, ChainAnchor,
+    DisplayMode, DisplayProvenance, LockKind, Mutation, OutPoint, ReplayPhase, ScriptCensus,
+    ScriptCount, ScriptId, ScriptNameRecord, ScriptRegistryRecord, SemanticsDelta,
     SemanticsSnapshot,
 };
 
-fn fixture(name: &str) -> serde_json::Value {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+fn fixture_path(name: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .join("..")
         .join("tests")
         .join("fixtures")
-        .join(name);
+        .join(name)
+}
+
+fn fixture(name: &str) -> serde_json::Value {
+    let path = fixture_path(name);
     let f = std::fs::File::open(&path).unwrap_or_else(|e| panic!("open {name}: {e}"));
     serde_json::from_reader(f).unwrap_or_else(|e| panic!("parse {name}: {e}"))
+}
+
+/// Fixtures the TS twin reads are WRITTEN by this crate rather than kept by
+/// hand: the committed bytes are this serializer's output, so a renamed field
+/// or a reshaped variant lands in the file and the browser side fails on the
+/// next run instead of drifting quietly behind a hand-edited sample.
+///
+/// Regenerate with
+/// `CKNERV_REGEN_FIXTURES=1 cargo test -p cknerv-core --test wire_shape`,
+/// then run the TS twins (`pnpm --filter @cknerv/{types,cache} test`) in the
+/// same change.
+fn assert_authored_fixture<T: serde::Serialize>(name: &str, value: &T) {
+    let path = fixture_path(name);
+    let mut encoded = serde_json::to_string_pretty(value).expect("serialize fixture");
+    encoded.push('\n');
+    if std::env::var("CKNERV_REGEN_FIXTURES").is_ok() {
+        std::fs::write(&path, &encoded).unwrap_or_else(|e| panic!("write {name}: {e}"));
+    }
+    let committed = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {name}: {e}"));
+    assert_eq!(
+        encoded, committed,
+        "{name} no longer matches what this crate serializes; regenerate with \
+         CKNERV_REGEN_FIXTURES=1 cargo test -p cknerv-core --test wire_shape"
+    );
 }
 
 /// Canonical form: recursively sort object keys so we compare value
@@ -68,75 +98,253 @@ fn mutation_samples_round_trip() {
     }
 }
 
-#[test]
-fn cell_delta_samples_match_serialized_shape() {
-    let samples = fixture("cell_delta_samples.json");
-    let sample = &samples["link_prune"];
-    let delta = CellDelta::LinkPrune { from_block: 42 };
-    let serialized = serde_json::to_value(delta).expect("serialize CellDelta::LinkPrune");
-    assert_eq!(canonicalize(sample), canonicalize(&serialized));
+/// Which variant a sample is. Total by construction: a new `CellDelta`
+/// stops compiling here until it is named, and the coverage assertion in
+/// [`cell_delta_samples_cover_every_variant`] then demands a sample for it.
+fn cell_delta_variant(delta: &CellDelta) -> &'static str {
+    match delta {
+        CellDelta::Birth { .. } => "birth",
+        CellDelta::Death { .. } => "death",
+        CellDelta::Tag { .. } => "tag",
+        CellDelta::Gc { .. } => "gc",
+        CellDelta::Pulse { .. } => "pulse",
+        CellDelta::Stats { .. } => "stats",
+        CellDelta::ScriptCensus { .. } => "script_census",
+        CellDelta::Backfill { .. } => "backfill",
+        CellDelta::LinkPrune { .. } => "link_prune",
+        CellDelta::Link { .. } => "link",
+        CellDelta::Display { .. } => "display",
+    }
+}
 
-    let sample = &samples["backfill_rebuild"];
-    let delta = CellDelta::Backfill {
-        done: 3,
-        total: 10,
-        active: true,
-        phase: ReplayPhase::Rebuild,
-    };
-    let serialized = serde_json::to_value(delta).expect("serialize CellDelta::Backfill");
-    assert_eq!(canonicalize(sample), canonicalize(&serialized));
+/// A scripted cell: the delta path carries script identity too, and it is
+/// the path that lost it for a whole release when only the snapshot half
+/// was fixtured.
+fn sample_cell(id: u64) -> Cell {
+    Cell {
+        id,
+        born_at_ms: 1_700_000_000_000,
+        death_at_ms: None,
+        birth_block: 100,
+        tag: Some("dex".to_string()),
+        pos_seed: [1.5, -0.25, 3.75],
+        out_point: OutPoint {
+            tx_hash: "0xabc".to_string(),
+            index: 0,
+        },
+        capacity: 14_200_000_000,
+        data_hex: "0x5c00000000000000".to_string(),
+        content_hash: "0x1111111111111111111111111111111111111111111111111111111111111111"
+            .to_string(),
+        lock_kind: LockKind::Sighash,
+        asset_kind: AssetKind::Xudt,
+        lock_script: sample_lock_script(),
+        type_script: Some(sample_type_script()),
+    }
+}
 
-    // Display-plane patch, composed mode: a canonical enter by id, a
-    // resident enter with full payload (composition-range id, 2^52 + 5),
-    // an exit, and full provenance.
-    let sample = &samples["display_composed"];
-    let delta = CellDelta::Display {
-        enter_ids: vec![1],
-        enter_cells: vec![Cell {
-            id: 4503599627370501,
-            born_at_ms: 0,
-            death_at_ms: None,
-            birth_block: 12,
-            tag: None,
-            pos_seed: [2.5, -1.25, 0.75],
-            out_point: OutPoint {
-                tx_hash: "0xdef".to_string(),
-                index: 3,
+fn sample_lock_script() -> ScriptId {
+    ScriptId::parse(
+        "0x9bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce8",
+        "type",
+    )
+    .expect("well-formed lock code hash")
+}
+
+fn sample_type_script() -> ScriptId {
+    ScriptId::parse(
+        "0x50bd8d6680b8b9cf98b73f3c08faf8b2a21914311954118ad6609be6e78a1b95",
+        "data1",
+    )
+    .expect("well-formed type code hash")
+}
+
+/// One realistic sample per `CellDelta` variant, keyed by fixture name.
+/// `display` appears twice because its two shapes — a composed patch with
+/// resident payloads and the everyday id-only swap whose `provenance: None`
+/// must vanish from the wire — are separately load-bearing.
+fn cell_delta_samples() -> BTreeMap<&'static str, CellDelta> {
+    let mut samples: BTreeMap<&'static str, CellDelta> = BTreeMap::new();
+    samples.insert(
+        "birth",
+        CellDelta::Birth {
+            cell: sample_cell(7),
+        },
+    );
+    samples.insert(
+        "death",
+        CellDelta::Death {
+            id: 7,
+            at_ms: 1_700_000_005_000,
+        },
+    );
+    samples.insert(
+        "tag",
+        CellDelta::Tag {
+            id: 7,
+            tag: "wallet".to_string(),
+        },
+    );
+    samples.insert("gc", CellDelta::Gc { ids: vec![7, 8] });
+    samples.insert(
+        "pulse",
+        CellDelta::Pulse {
+            at_ms: 1_700_000_006_000,
+        },
+    );
+    samples.insert(
+        "stats",
+        CellDelta::Stats {
+            total_births: 128,
+            total_deaths: 96,
+        },
+    );
+    // Ranked head plus tail counters: a panel reading only the head must be
+    // able to say "and N more" instead of presenting the cut as the whole
+    // distribution.
+    samples.insert(
+        "script_census",
+        CellDelta::ScriptCensus {
+            census: ScriptCensus {
+                locks: vec![ScriptCount {
+                    script: sample_lock_script(),
+                    count: 2,
+                }],
+                locks_tail_cells: 3,
+                locks_tail_scripts: 1,
+                types: vec![ScriptCount {
+                    script: sample_type_script(),
+                    count: 1,
+                }],
+                types_tail_cells: 0,
+                types_tail_scripts: 0,
+                types_absent: 4,
+                unidentified: 1,
             },
-            capacity: 5000,
-            data_hex: "0x".to_string(),
-            content_hash: "0x2222222222222222222222222222222222222222222222222222222222222222"
-                .to_string(),
-            lock_kind: LockKind::Acp,
-            asset_kind: AssetKind::Xudt,
-            lock_script: Default::default(),
-            type_script: None,
-        }],
-        exit_ids: vec![2],
-        provenance: Some(DisplayProvenance {
-            mode: DisplayMode::Composed,
-            source: Some("ckbadger".to_string()),
-            as_of: Some(ChainAnchor {
-                block: 12,
-                hash: "0xfeed".to_string(),
+        },
+    );
+    samples.insert(
+        "backfill_rebuild",
+        CellDelta::Backfill {
+            done: 3,
+            total: 10,
+            active: true,
+            phase: ReplayPhase::Rebuild,
+        },
+    );
+    samples.insert("link_prune", CellDelta::LinkPrune { from_block: 42 });
+    // Causal edge with durable endpoint geometry: `endpoint_anchors` is
+    // what the client routes on once the input cells have left its window.
+    samples.insert(
+        "link",
+        CellDelta::Link {
+            tx_hash: "0xtx100".to_string(),
+            block: 100,
+            from_ids: vec![5],
+            to_ids: vec![7],
+            endpoint_anchors: vec![
+                CellLinkEndpointAnchor {
+                    id: 5,
+                    pos_seed: [-2.0, 0.5, 1.25],
+                    content_hash:
+                        "0x3333333333333333333333333333333333333333333333333333333333333333"
+                            .to_string(),
+                },
+                CellLinkEndpointAnchor {
+                    id: 7,
+                    pos_seed: [1.5, -0.25, 3.75],
+                    content_hash:
+                        "0x1111111111111111111111111111111111111111111111111111111111111111"
+                            .to_string(),
+                },
+            ],
+            parents: vec!["0xtx99".to_string()],
+            tag: Some("dex".to_string()),
+            at_ms: 1_700_000_004_000,
+        },
+    );
+    // Display-plane patch, composed mode: a canonical enter by id, a
+    // resident enter with full payload (composition-range id, 2^52 + 5), an
+    // exit, and full provenance.
+    samples.insert(
+        "display_composed",
+        CellDelta::Display {
+            enter_ids: vec![1],
+            enter_cells: vec![Cell {
+                id: 4503599627370501,
+                born_at_ms: 0,
+                death_at_ms: None,
+                birth_block: 12,
+                tag: None,
+                pos_seed: [2.5, -1.25, 0.75],
+                out_point: OutPoint {
+                    tx_hash: "0xdef".to_string(),
+                    index: 3,
+                },
+                capacity: 5000,
+                data_hex: "0x".to_string(),
+                content_hash: "0x2222222222222222222222222222222222222222222222222222222222222222"
+                    .to_string(),
+                lock_kind: LockKind::Acp,
+                asset_kind: AssetKind::Xudt,
+                lock_script: Default::default(),
+                type_script: None,
+            }],
+            exit_ids: vec![2],
+            provenance: Some(DisplayProvenance {
+                mode: DisplayMode::Composed,
+                source: Some("ckbadger".to_string()),
+                as_of: Some(ChainAnchor {
+                    block: 12,
+                    hash: "0xfeed".to_string(),
+                }),
+                updated_at_ms: 2000,
             }),
-            updated_at_ms: 2000,
-        }),
-    };
-    let serialized = serde_json::to_value(delta).expect("serialize CellDelta::Display");
-    assert_eq!(canonicalize(sample), canonicalize(&serialized));
+        },
+    );
+    samples.insert(
+        "display_minimal",
+        CellDelta::Display {
+            enter_ids: vec![2],
+            enter_cells: vec![],
+            exit_ids: vec![1],
+            provenance: None,
+        },
+    );
+    samples
+}
 
-    // Everyday activity-swap shape: id-only churn, no resident payloads,
-    // and `provenance: None` must vanish from the wire entirely.
-    let sample = &samples["display_minimal"];
-    let delta = CellDelta::Display {
-        enter_ids: vec![2],
-        enter_cells: vec![],
-        exit_ids: vec![1],
-        provenance: None,
-    };
-    let serialized = serde_json::to_value(delta).expect("serialize minimal CellDelta::Display");
-    assert_eq!(canonicalize(sample), canonicalize(&serialized));
+#[test]
+fn cell_delta_samples_are_authored_by_the_serializer() {
+    assert_authored_fixture("cell_delta_samples.json", &cell_delta_samples());
+}
+
+#[test]
+fn cell_delta_samples_cover_every_variant() {
+    let covered: std::collections::BTreeSet<&str> = cell_delta_samples()
+        .values()
+        .map(cell_delta_variant)
+        .collect();
+    assert_eq!(
+        covered,
+        [
+            "backfill",
+            "birth",
+            "death",
+            "display",
+            "gc",
+            "link",
+            "link_prune",
+            "pulse",
+            "script_census",
+            "stats",
+            "tag",
+        ]
+        .into_iter()
+        .collect::<std::collections::BTreeSet<&str>>(),
+        "every CellDelta variant needs a sample in cell_delta_samples.json — \
+         the client reducer test drives the file arm by arm"
+    );
 }
 
 #[test]
@@ -177,99 +385,226 @@ fn cell_samples_round_trip() {
     }
 }
 
-#[test]
-fn enrichment_samples_match_wire_shape() {
-    let samples = fixture("enrichment_samples.json");
-    let snapshot_value = samples["snapshot"].clone();
-    let snapshot: SemanticsSnapshot = serde_json::from_value(snapshot_value.clone())
-        .unwrap_or_else(|e| panic!("deserialize SemanticsSnapshot: {e}"));
-    let serialized = serde_json::to_value(&snapshot).expect("serialize SemanticsSnapshot");
-    assert_eq!(canonicalize(&snapshot_value), canonicalize(&serialized));
+/// Total by construction, same contract as [`cell_delta_variant`].
+fn semantics_delta_variant(delta: &SemanticsDelta) -> &'static str {
+    match delta {
+        SemanticsDelta::SourceStatus { .. } => "source_status",
+        SemanticsDelta::CellUpsert { .. } => "cell_upsert",
+        SemanticsDelta::CellRemove { .. } => "cell_remove",
+        SemanticsDelta::TransactionUpsert { .. } => "transaction_upsert",
+        SemanticsDelta::TransactionRemove { .. } => "transaction_remove",
+        SemanticsDelta::CensusReplace { .. } => "census_replace",
+        SemanticsDelta::AssetEcosystemReplace { .. } => "asset_ecosystem_replace",
+        SemanticsDelta::DaoStateReplace { .. } => "dao_state_replace",
+        SemanticsDelta::ProtocolEraReplace { .. } => "protocol_era_replace",
+        SemanticsDelta::ForkWatchReplace { .. } => "fork_watch_replace",
+        SemanticsDelta::ActivityFeedReplace { .. } => "activity_feed_replace",
+        SemanticsDelta::TransactionHorizonReplace { .. } => "transaction_horizon_replace",
+        SemanticsDelta::NetworkAtlasReplace { .. } => "network_atlas_replace",
+        SemanticsDelta::NetworkAtlasClear => "network_atlas_clear",
+        SemanticsDelta::ScriptRegistryReplace { .. } => "script_registry_replace",
+        SemanticsDelta::Prune { .. } => "prune",
+        SemanticsDelta::Clear => "clear",
+    }
+}
 
-    let source_status = SemanticsDelta::SourceStatus {
-        source: snapshot.source.clone(),
-    };
-    assert_eq!(
-        canonicalize(&samples["deltas"]["source_status"]),
-        canonicalize(&serde_json::to_value(source_status).unwrap())
+/// Names for the identities the snapshot's own cells carry, so the fixture
+/// exercises the join the browser actually performs: the cell census holds
+/// `(code_hash, hash_type)` and refuses to name it, this half names it and
+/// counts nothing. `unresolved` is not decoration — a live index answers
+/// "found the code cell" for identities it still has no name for.
+fn enrichment_script_registry() -> ScriptRegistryRecord {
+    ScriptRegistryRecord {
+        source: "ckbadger".to_string(),
+        as_of: ChainAnchor {
+            block: 100,
+            hash: "0xblock100".to_string(),
+        },
+        updated_at_ms: 1_700_000_000_004,
+        entries: vec![
+            ScriptNameRecord {
+                code_hash: "0xlockcode".to_string(),
+                hash_type: "type".to_string(),
+                name: "Default Lock".to_string(),
+                description: Some("Secp256k1 blake160 single signature".to_string()),
+                kind: Some("lock".to_string()),
+                website: None,
+                deprecated: false,
+            },
+            ScriptNameRecord {
+                code_hash: "0xdaocode".to_string(),
+                hash_type: "type".to_string(),
+                name: "Nervos DAO".to_string(),
+                description: None,
+                kind: Some("type".to_string()),
+                website: Some("https://nervos.org".to_string()),
+                deprecated: false,
+            },
+        ],
+        unresolved: 8,
+    }
+}
+
+/// The file's two halves as one serializable value, so the whole thing —
+/// snapshot and every delta variant — is written by the serializer.
+///
+/// The snapshot's *content* is the committed file's own, read back through
+/// `SemanticsSnapshot`: it is a page of realistic ckbadger records that no
+/// one should have to restate as Rust literals, and round-tripping it means
+/// the committed bytes are still this crate's output. Its *shape* therefore
+/// tracks the struct — a renamed field regenerates, a removed one vanishes.
+#[derive(serde::Serialize)]
+struct EnrichmentSamples {
+    snapshot: SemanticsSnapshot,
+    deltas: BTreeMap<&'static str, SemanticsDelta>,
+}
+
+fn enrichment_samples() -> EnrichmentSamples {
+    let committed = fixture("enrichment_samples.json");
+    let mut snapshot: SemanticsSnapshot = serde_json::from_value(committed["snapshot"].clone())
+        .unwrap_or_else(|e| panic!("deserialize SemanticsSnapshot: {e}"));
+    snapshot.script_registry = Some(enrichment_script_registry());
+
+    let mut deltas: BTreeMap<&'static str, SemanticsDelta> = BTreeMap::new();
+    deltas.insert(
+        "source_status",
+        SemanticsDelta::SourceStatus {
+            source: snapshot.source.clone(),
+        },
     );
-    let cell_upsert = SemanticsDelta::CellUpsert {
-        cell: Box::new(snapshot.cells[0].clone()),
-    };
-    assert_eq!(
-        canonicalize(&samples["deltas"]["cell_upsert"]),
-        canonicalize(&serde_json::to_value(cell_upsert).unwrap())
+    deltas.insert(
+        "cell_upsert",
+        SemanticsDelta::CellUpsert {
+            cell: Box::new(snapshot.cells[0].clone()),
+        },
     );
-    let prune = SemanticsDelta::Prune { from_block: 100 };
-    assert_eq!(
-        canonicalize(&samples["deltas"]["prune"]),
-        canonicalize(&serde_json::to_value(prune).unwrap())
+    deltas.insert(
+        "cell_remove",
+        SemanticsDelta::CellRemove {
+            out_point: snapshot.cells[0].out_point.clone(),
+        },
     );
-    let cell_remove = SemanticsDelta::CellRemove {
-        out_point: snapshot.cells[0].out_point.clone(),
-    };
-    assert_eq!(
-        canonicalize(&samples["deltas"]["cell_remove"]),
-        canonicalize(&serde_json::to_value(cell_remove).unwrap())
+    deltas.insert(
+        "transaction_upsert",
+        SemanticsDelta::TransactionUpsert {
+            transaction: Box::new(snapshot.transactions[0].clone()),
+        },
     );
-    let transaction_remove = SemanticsDelta::TransactionRemove {
-        tx_hash: snapshot.transactions[0].tx_hash.clone(),
-    };
-    assert_eq!(
-        canonicalize(&samples["deltas"]["transaction_remove"]),
-        canonicalize(&serde_json::to_value(transaction_remove).unwrap())
+    deltas.insert(
+        "transaction_remove",
+        SemanticsDelta::TransactionRemove {
+            tx_hash: snapshot.transactions[0].tx_hash.clone(),
+        },
     );
-    let asset_ecosystem = SemanticsDelta::AssetEcosystemReplace {
-        asset_ecosystem: snapshot.asset_ecosystem.clone().unwrap(),
-    };
-    assert_eq!(
-        canonicalize(&samples["deltas"]["asset_ecosystem_replace"]),
-        canonicalize(&serde_json::to_value(asset_ecosystem).unwrap())
+    deltas.insert(
+        "census_replace",
+        SemanticsDelta::CensusReplace {
+            census: snapshot.census.clone().expect("fixture census"),
+        },
     );
-    let dao_state = SemanticsDelta::DaoStateReplace {
-        dao_state: snapshot.dao_state.clone().unwrap(),
-    };
-    assert_eq!(
-        canonicalize(&samples["deltas"]["dao_state_replace"]),
-        canonicalize(&serde_json::to_value(dao_state).unwrap())
+    deltas.insert(
+        "asset_ecosystem_replace",
+        SemanticsDelta::AssetEcosystemReplace {
+            asset_ecosystem: snapshot
+                .asset_ecosystem
+                .clone()
+                .expect("fixture asset ecosystem"),
+        },
     );
-    let protocol_era = SemanticsDelta::ProtocolEraReplace {
-        protocol_era: snapshot.protocol_era.clone().unwrap(),
-    };
-    assert_eq!(
-        canonicalize(&samples["deltas"]["protocol_era_replace"]),
-        canonicalize(&serde_json::to_value(protocol_era).unwrap())
+    deltas.insert(
+        "dao_state_replace",
+        SemanticsDelta::DaoStateReplace {
+            dao_state: snapshot.dao_state.clone().expect("fixture dao state"),
+        },
     );
-    let fork_watch = SemanticsDelta::ForkWatchReplace {
-        fork_watch: snapshot.fork_watch.clone().unwrap(),
-    };
-    assert_eq!(
-        canonicalize(&samples["deltas"]["fork_watch_replace"]),
-        canonicalize(&serde_json::to_value(fork_watch).unwrap())
+    deltas.insert(
+        "protocol_era_replace",
+        SemanticsDelta::ProtocolEraReplace {
+            protocol_era: snapshot.protocol_era.clone().expect("fixture protocol era"),
+        },
     );
-    let activity_feed = SemanticsDelta::ActivityFeedReplace {
-        activity_feed: snapshot.activity_feed.clone().unwrap(),
-    };
-    assert_eq!(
-        canonicalize(&samples["deltas"]["activity_feed_replace"]),
-        canonicalize(&serde_json::to_value(activity_feed).unwrap())
+    deltas.insert(
+        "fork_watch_replace",
+        SemanticsDelta::ForkWatchReplace {
+            fork_watch: snapshot.fork_watch.clone().expect("fixture fork watch"),
+        },
     );
-    let transaction_horizon = SemanticsDelta::TransactionHorizonReplace {
-        transaction_horizon: snapshot.transaction_horizon.clone().unwrap(),
-    };
-    assert_eq!(
-        canonicalize(&samples["deltas"]["transaction_horizon_replace"]),
-        canonicalize(&serde_json::to_value(transaction_horizon).unwrap())
+    deltas.insert(
+        "activity_feed_replace",
+        SemanticsDelta::ActivityFeedReplace {
+            activity_feed: snapshot
+                .activity_feed
+                .clone()
+                .expect("fixture activity feed"),
+        },
     );
-    let network_atlas = SemanticsDelta::NetworkAtlasReplace {
-        network_atlas: snapshot.network_atlas.clone().unwrap(),
-    };
-    assert_eq!(
-        canonicalize(&samples["deltas"]["network_atlas_replace"]),
-        canonicalize(&serde_json::to_value(network_atlas).unwrap())
+    deltas.insert(
+        "transaction_horizon_replace",
+        SemanticsDelta::TransactionHorizonReplace {
+            transaction_horizon: snapshot
+                .transaction_horizon
+                .clone()
+                .expect("fixture transaction horizon"),
+        },
     );
+    deltas.insert(
+        "network_atlas_replace",
+        SemanticsDelta::NetworkAtlasReplace {
+            network_atlas: snapshot
+                .network_atlas
+                .clone()
+                .expect("fixture network atlas"),
+        },
+    );
+    deltas.insert("network_atlas_clear", SemanticsDelta::NetworkAtlasClear);
+    deltas.insert(
+        "script_registry_replace",
+        SemanticsDelta::ScriptRegistryReplace {
+            script_registry: Box::new(enrichment_script_registry()),
+        },
+    );
+    deltas.insert("prune", SemanticsDelta::Prune { from_block: 100 });
+    deltas.insert("clear", SemanticsDelta::Clear);
+
+    EnrichmentSamples { snapshot, deltas }
+}
+
+#[test]
+fn enrichment_samples_are_authored_by_the_serializer() {
+    assert_authored_fixture("enrichment_samples.json", &enrichment_samples());
+}
+
+#[test]
+fn enrichment_samples_cover_every_delta_variant() {
+    let covered: std::collections::BTreeSet<&str> = enrichment_samples()
+        .deltas
+        .values()
+        .map(semantics_delta_variant)
+        .collect();
     assert_eq!(
-        canonicalize(&samples["deltas"]["network_atlas_clear"]),
-        canonicalize(&serde_json::to_value(SemanticsDelta::NetworkAtlasClear).unwrap())
+        covered,
+        [
+            "activity_feed_replace",
+            "asset_ecosystem_replace",
+            "cell_remove",
+            "cell_upsert",
+            "census_replace",
+            "clear",
+            "dao_state_replace",
+            "fork_watch_replace",
+            "network_atlas_clear",
+            "network_atlas_replace",
+            "protocol_era_replace",
+            "prune",
+            "script_registry_replace",
+            "source_status",
+            "transaction_horizon_replace",
+            "transaction_remove",
+            "transaction_upsert",
+        ]
+        .into_iter()
+        .collect::<std::collections::BTreeSet<&str>>(),
+        "every SemanticsDelta variant needs a sample in enrichment_samples.json — \
+         the client reducer test drives the file arm by arm"
     );
 }

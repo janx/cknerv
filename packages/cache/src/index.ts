@@ -69,6 +69,7 @@ export {
   emptyChainCache,
   applyChainMutation,
   applyRevisionedChainMutations,
+  RECENT_INTERVAL_CAP,
 } from './chainReducer';
 
 export {

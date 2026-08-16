@@ -1,0 +1,108 @@
+{
+  "entity": {
+    "delta": {
+      "kind": "delta",
+      "mutations": [
+        {
+          "mutation": {
+            "at": 1700000000000,
+            "hash": "0xblock100",
+            "number": 100,
+            "size": 1024,
+            "tx_count": 2,
+            "type": "block_mined"
+          },
+          "revision": 1
+        }
+      ],
+      "revision": 1
+    },
+    "heartbeat": {
+      "kind": "heartbeat",
+      "revision": 1
+    },
+    "lagged": {
+      "kind": "lagged",
+      "revision": 1,
+      "skipped": 12
+    },
+    "snapshot": {
+      "entities": {
+        "chain": {
+          "best_known_block": 0,
+          "chain_name": "",
+          "difficulty": "",
+          "epoch": {
+            "index": 0,
+            "length": 0,
+            "number": 0
+          },
+          "ibd": false,
+          "last_block_ts_ms": 1700000000000,
+          "median_time_ms": 0,
+          "mempool": {
+            "min_fee_rate": 0,
+            "orphan": 0,
+            "pending": 0,
+            "proposed": 0,
+            "total_tx_cycles": 0,
+            "total_tx_size": 0
+          },
+          "recent_block_intervals_ms": [],
+          "recent_block_sizes": [
+            1024
+          ],
+          "recent_block_tx_counts": [
+            2
+          ],
+          "recent_blocks": [
+            {
+              "hash": "0xblock100",
+              "number": 100
+            }
+          ],
+          "recent_tx_hashes": [],
+          "reorgs": 0,
+          "tip": 100,
+          "total_blocks": 1,
+          "total_txs": 0
+        },
+        "chain_nodes": [],
+        "peers": []
+      },
+      "kind": "snapshot",
+      "revision": 1
+    }
+  },
+  "projection": {
+    "delta": {
+      "deltas": [
+        {
+          "delta": {
+            "at_ms": 1700000006000,
+            "type": "pulse"
+          },
+          "revision": 1
+        }
+      ],
+      "kind": "delta",
+      "revision": 1
+    },
+    "heartbeat": {
+      "kind": "heartbeat",
+      "revision": 1
+    },
+    "lagged": {
+      "kind": "lagged",
+      "skipped": 34
+    },
+    "snapshot": {
+      "kind": "snapshot",
+      "revision": 1,
+      "snapshot": {
+        "cells": [],
+        "last_pulse_at_ms": 1700000006000
+      }
+    }
+  }
+}

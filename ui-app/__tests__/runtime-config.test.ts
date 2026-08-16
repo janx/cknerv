@@ -2,6 +2,8 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
+import { INSTANCE_CAPACITY } from '@cknerv/ui';
+
 import {
   DEFAULT_BUILD_VERSION,
   DEFAULT_GALAXY_CONFIG,
@@ -12,6 +14,30 @@ import {
   buildCommitHref,
   CKNERV_REPOSITORY_URL,
 } from '../src/runtime-config';
+
+describe('constants pinned to a twin elsewhere', () => {
+  it('the bundled reservoir default is exactly what the renderer can hold', () => {
+    // `cellCap` is the fallback when the server ships no runtime config, and
+    // the renderer allocates its instance buffers at `INSTANCE_CAPACITY`
+    // (`packages/ui/src/geometry/cellPositions.ts`). A default above it would
+    // hand the galaxy more cells than there are slots; below it would waste
+    // allocated GPU memory nothing can ever fill.
+    expect(DEFAULT_GALAXY_CONFIG.cellCap).toBe(INSTANCE_CAPACITY);
+  });
+
+  it('the stream watchdog outlives three server heartbeats', () => {
+    // `HEARTBEAT_INTERVAL` is 5s (`crates/cknerv-server/src/ws.rs`, asserted
+    // there by `heartbeat_leaves_the_client_watchdog_three_beats_of_slack`).
+    // Read from the source rather than imported because App.tsx is the whole
+    // scene graph; the literal is what ships either way.
+    const source = readFileSync(resolve(process.cwd(), 'src/App.tsx'), 'utf8');
+    const declared = /const STREAM_STALE_AFTER_MS = ([\d_]+);/.exec(source)?.[1];
+    expect(declared, 'STREAM_STALE_AFTER_MS moved out of App.tsx').toBeDefined();
+    const staleAfterMs = Number((declared as string).replace(/_/g, ''));
+    // One dropped heartbeat on a healthy link must not read as a dead stream.
+    expect(staleAfterMs).toBeGreaterThanOrEqual(3 * 5_000);
+  });
+});
 
 describe('resolveBuildVersion', () => {
   it('returns a configured nonblank build version', () => {

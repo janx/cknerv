@@ -575,3 +575,124 @@ describe('binary resync frames', () => {
     warn.mockRestore();
   });
 });
+
+describe('server frame envelopes', () => {
+  /** Every envelope the two handlers can send, written by the Rust senders
+   *  themselves (`crates/cknerv-server/src/ws.rs`, test
+   *  `ws_frame_envelopes_are_authored_by_the_senders`). Reading them through
+   *  the real connectors is the two-sided gate: a reshaped envelope fails
+   *  here rather than in a browser. */
+  const frames = JSON.parse(
+    readFileSync(
+      fileURLToPath(new URL('../../../tests/fixtures/ws_frames.json', import.meta.url)),
+      'utf8',
+    ),
+  ) as {
+    entity: Record<'snapshot' | 'delta' | 'lagged' | 'heartbeat', unknown>;
+    projection: Record<'snapshot' | 'delta' | 'lagged' | 'heartbeat', unknown>;
+  };
+
+  /** Verbatim: the connector parses the committed bytes, not a re-encoding
+   *  of a structure this test built. */
+  function send(socket: MockWebSocket, frame: unknown): void {
+    socket.rawMessage(JSON.stringify(frame));
+  }
+
+  function withFrameFlush(): { flush: () => void } {
+    const scheduled: { callback?: FrameRequestCallback } = {};
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      scheduled.callback = callback;
+      return 21;
+    });
+    vi.stubGlobal('cancelAnimationFrame', vi.fn());
+    return {
+      flush: () => {
+        const callback = scheduled.callback;
+        scheduled.callback = undefined;
+        if (!callback) throw new Error('no delta flush was scheduled');
+        callback(16);
+      },
+    };
+  }
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('the entity stream accepts every one of its four kinds', () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('WebSocket', MockWebSocket);
+    const { flush } = withFrameFlush();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const states: { revision: number; chain: { tip: number } }[] = [];
+    const health: StreamHealth[] = [];
+    const handle = connectEntityStream(
+      'ws://localhost/api/entities/chain/stream',
+      emptyChainEntityCache(),
+      (next) => states.push(next),
+      { onHealth: (next) => health.push(next) },
+    );
+    const socket = MockWebSocket.instances[0];
+    socket.open();
+
+    send(socket, frames.entity.snapshot);
+    expect(states.at(-1)?.chain.tip).toBe(100);
+    expect(states.at(-1)?.revision).toBe(1);
+
+    send(socket, frames.entity.heartbeat);
+    expect(health.at(-1)?.phase).toBe('live');
+
+    send(socket, frames.entity.delta);
+    flush();
+    expect(states.at(-1)?.chain.tip).toBe(100);
+
+    send(socket, frames.entity.lagged);
+    expect(health.at(-1)?.phase).toBe('resyncing');
+    vi.advanceTimersByTime(2100);
+    // A lag marker resnaps from zero — the entity cursor cannot be trusted
+    // across a gap the ring could not cover.
+    expect(MockWebSocket.instances[1].url).toContain('since=0');
+
+    // Not one of these was unreadable.
+    expect(warn).not.toHaveBeenCalled();
+    handle.disconnect();
+    warn.mockRestore();
+  });
+
+  it('the projection stream accepts every one of its four kinds', () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('WebSocket', MockWebSocket);
+    const { flush } = withFrameFlush();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const states: CellGalaxyCache[] = [];
+    const health: StreamHealth[] = [];
+    const handle = connectCellsStream(
+      'ws://localhost/api/projections/cells/stream',
+      emptyCellsCache(),
+      (next) => states.push(next),
+      { onHealth: (next) => health.push(next) },
+    );
+    const socket = MockWebSocket.instances[0];
+    socket.open();
+
+    send(socket, frames.projection.snapshot);
+    expect(states.at(-1)?.revision).toBe(1);
+    expect(states.at(-1)?.lastPulseAtMs).toBe(1_700_000_006_000);
+
+    send(socket, frames.projection.heartbeat);
+    expect(health.at(-1)?.phase).toBe('live');
+
+    send(socket, frames.projection.delta);
+    flush();
+    expect(states.at(-1)?.lastPulseAtMs).toBe(1_700_000_006_000);
+
+    send(socket, frames.projection.lagged);
+    expect(health.at(-1)?.phase).toBe('resyncing');
+    vi.advanceTimersByTime(2100);
+    expect(MockWebSocket.instances[1].url).toContain('since=0');
+
+    expect(warn).not.toHaveBeenCalled();
+    handle.disconnect();
+    warn.mockRestore();
+  });
+});

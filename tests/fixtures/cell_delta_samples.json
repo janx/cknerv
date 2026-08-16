@@ -1,8 +1,4 @@
 {
-  "link_prune": {
-    "type": "link_prune",
-    "from_block": 42
-  },
   "backfill_rebuild": {
     "type": "backfill",
     "done": 3,
@@ -10,9 +6,48 @@
     "active": true,
     "phase": "rebuild"
   },
+  "birth": {
+    "type": "birth",
+    "cell": {
+      "id": 7,
+      "born_at_ms": 1700000000000,
+      "death_at_ms": null,
+      "birth_block": 100,
+      "tag": "dex",
+      "pos_seed": [
+        1.5,
+        -0.25,
+        3.75
+      ],
+      "out_point": {
+        "tx_hash": "0xabc",
+        "index": 0
+      },
+      "capacity": 14200000000,
+      "data_hex": "0x5c00000000000000",
+      "content_hash": "0x1111111111111111111111111111111111111111111111111111111111111111",
+      "lock_kind": "sighash",
+      "asset_kind": "xudt",
+      "lock_script": {
+        "code_hash": "0x9bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce8",
+        "hash_type": "type"
+      },
+      "type_script": {
+        "code_hash": "0x50bd8d6680b8b9cf98b73f3c08faf8b2a21914311954118ad6609be6e78a1b95",
+        "hash_type": "data1"
+      }
+    }
+  },
+  "death": {
+    "type": "death",
+    "id": 7,
+    "at_ms": 1700000005000
+  },
   "display_composed": {
     "type": "display",
-    "enter_ids": [1],
+    "enter_ids": [
+      1
+    ],
     "enter_cells": [
       {
         "id": 4503599627370501,
@@ -20,8 +55,15 @@
         "death_at_ms": null,
         "birth_block": 12,
         "tag": null,
-        "pos_seed": [2.5, -1.25, 0.75],
-        "out_point": { "tx_hash": "0xdef", "index": 3 },
+        "pos_seed": [
+          2.5,
+          -1.25,
+          0.75
+        ],
+        "out_point": {
+          "tx_hash": "0xdef",
+          "index": 3
+        },
         "capacity": 5000,
         "data_hex": "0x",
         "content_hash": "0x2222222222222222222222222222222222222222222222222222222222222222",
@@ -29,18 +71,117 @@
         "asset_kind": "xudt"
       }
     ],
-    "exit_ids": [2],
+    "exit_ids": [
+      2
+    ],
     "provenance": {
       "mode": "composed",
       "source": "ckbadger",
-      "as_of": { "block": 12, "hash": "0xfeed" },
+      "as_of": {
+        "block": 12,
+        "hash": "0xfeed"
+      },
       "updated_at_ms": 2000
     }
   },
   "display_minimal": {
     "type": "display",
-    "enter_ids": [2],
+    "enter_ids": [
+      2
+    ],
     "enter_cells": [],
-    "exit_ids": [1]
+    "exit_ids": [
+      1
+    ]
+  },
+  "gc": {
+    "type": "gc",
+    "ids": [
+      7,
+      8
+    ]
+  },
+  "link": {
+    "type": "link",
+    "tx_hash": "0xtx100",
+    "block": 100,
+    "from_ids": [
+      5
+    ],
+    "to_ids": [
+      7
+    ],
+    "endpoint_anchors": [
+      {
+        "id": 5,
+        "pos_seed": [
+          -2.0,
+          0.5,
+          1.25
+        ],
+        "content_hash": "0x3333333333333333333333333333333333333333333333333333333333333333"
+      },
+      {
+        "id": 7,
+        "pos_seed": [
+          1.5,
+          -0.25,
+          3.75
+        ],
+        "content_hash": "0x1111111111111111111111111111111111111111111111111111111111111111"
+      }
+    ],
+    "parents": [
+      "0xtx99"
+    ],
+    "tag": "dex",
+    "at_ms": 1700000004000
+  },
+  "link_prune": {
+    "type": "link_prune",
+    "from_block": 42
+  },
+  "pulse": {
+    "type": "pulse",
+    "at_ms": 1700000006000
+  },
+  "script_census": {
+    "type": "script_census",
+    "census": {
+      "locks": [
+        {
+          "script": {
+            "code_hash": "0x9bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce8",
+            "hash_type": "type"
+          },
+          "count": 2
+        }
+      ],
+      "locks_tail_cells": 3,
+      "locks_tail_scripts": 1,
+      "types": [
+        {
+          "script": {
+            "code_hash": "0x50bd8d6680b8b9cf98b73f3c08faf8b2a21914311954118ad6609be6e78a1b95",
+            "hash_type": "data1"
+          },
+          "count": 1
+        }
+      ],
+      "types_tail_cells": 0,
+      "types_tail_scripts": 0,
+      "types_absent": 4,
+      "unidentified": 1
+    }
+  },
+  "stats": {
+    "type": "stats",
+    "total_births": 128,
+    "total_deaths": 96
+  },
+  "tag": {
+    "type": "tag",
+    "id": 7,
+    "tag": "wallet"
   }
 }
