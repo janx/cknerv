@@ -3,6 +3,8 @@ import chakra500Url from '../../fonts/ChakraPetch-500-latin.woff2';
 import chakra700Url from '../../fonts/ChakraPetch-700-latin.woff2';
 import shareTechUrl from '../../fonts/ShareTechMono-latin.woff2';
 import huiwenUrl from '../../fonts/HuiwenMincho-subset.woff2';
+import jbmUrl from '../../fonts/JetBrainsMono-400-subset.woff2';
+import orbitronUrl from '../../fonts/Orbitron-500-subset.woff2';
 import { PEER_NETWORK_HEX } from '../../visualPalette';
 
 export const HUD_COLORS = {
@@ -61,12 +63,26 @@ export function rgba(hex: string, alpha: number): string {
 // Self-hosted, subset webfonts — no third-party CDN at runtime. Latin faces are
 // Google's latin-range woff2. Huiwen-mincho (public domain) carries the 22 HUD
 // glyphs 共识记忆细胞状态脉搏警告节点对端播种网络全道.
+//
+// The two `* Local` families back the in-scene labels (cell-galaxy label,
+// consensus-memory markers, route-hop callouts) that name them directly in
+// inline `fontFamily` stacks. Both are hand-subset to ASCII printable plus the
+// symbols those labels render (· × – — • → ↗ ≈ ≤ ✓ ◇) with all optional layout
+// features dropped — JetBrains Mono's programming ligatures must never fire on
+// a hex id. Regenerate with:
+//   pyftsubset <face>.ttf --layout-features="" --no-hinting --desubroutinize \
+//     --flavor=woff2 --unicodes=U+0020-007E,U+00B7,U+00D7,U+2013,U+2014,\
+//     U+2022,U+2192,U+2197,U+2248,U+2264,U+2713,U+25C7
+// Orbitron ships Medium only and the galaxy label asks for 400/500, so the one
+// face declares the whole span rather than letting the browser synthesize.
 const FONT_FACES = [
   `@font-face{font-family:'Saira';font-weight:100 900;font-display:swap;src:url("${sairaUrl}") format("woff2")}`,
   `@font-face{font-family:'Chakra Petch';font-weight:500;font-display:swap;src:url("${chakra500Url}") format("woff2")}`,
   `@font-face{font-family:'Chakra Petch';font-weight:700;font-display:swap;src:url("${chakra700Url}") format("woff2")}`,
   `@font-face{font-family:'Share Tech Mono';font-weight:400;font-display:swap;src:url("${shareTechUrl}") format("woff2")}`,
   `@font-face{font-family:'Huiwen-mincho';font-display:swap;src:url("${huiwenUrl}") format("woff2")}`,
+  `@font-face{font-family:'JetBrains Mono Local';font-weight:400;font-display:swap;src:url("${jbmUrl}") format("woff2")}`,
+  `@font-face{font-family:'Orbitron Local';font-weight:400 500;font-display:swap;src:url("${orbitronUrl}") format("woff2")}`,
 ];
 
 export const HUD_THEME_STYLE_ID = 'cknerv-hud-theme';

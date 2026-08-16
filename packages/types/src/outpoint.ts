@@ -29,22 +29,3 @@ export interface TxOutputInfo {
    *  it (mirrors Rust `#[serde(default)]`). */
   asset_kind?: AssetKind;
 }
-
-/** Minimal output shape used by adapters that haven't computed a
- *  `content_hash` yet. The cells projection consumes the richer
- *  `TxOutputInfo`; this shape is provided for parity with the Rust
- *  side. */
-export interface CellOutput {
-  capacity: number;
-  data_hex: string;
-}
-
-/** Cellbase tx's only "input" — never a real outpoint we can consume,
- *  so the projection skips death-lookup for it. */
-export const CELLBASE_TX_HASH =
-  '0x0000000000000000000000000000000000000000000000000000000000000000';
-export const CELLBASE_INDEX = 0xffff_ffff;
-
-export function isCellbaseInput(op: OutPoint): boolean {
-  return op.tx_hash === CELLBASE_TX_HASH && op.index === CELLBASE_INDEX;
-}

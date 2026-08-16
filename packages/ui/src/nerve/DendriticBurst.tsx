@@ -57,9 +57,6 @@ export interface ConsensusWriteSealProps {
   consumedCellIdsRef?: React.RefObject<Set<number>>;
 }
 
-/** Legacy public type kept while consumers move to ConsensusWriteSeal. */
-export type DendriticBurstProps = ConsensusWriteSealProps;
-
 export default function ConsensusWriteSeal({
   arrivalRef,
   consumedCellIdsRef,

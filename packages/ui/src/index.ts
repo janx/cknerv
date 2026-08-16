@@ -12,7 +12,6 @@ export * from './layout';
 // ── Shared primitive types (Vec3, GraphNode, AnimationHint) ─────────
 export type {
   AnimationHint,
-  GraphEdge,
   GraphNode,
   Vec3,
 } from './types';
@@ -24,7 +23,6 @@ export * from './tweaks/useSimFrame';
 export * from './tweaks/qualityPresets';
 export * from './tweaks/adaptiveQuality';
 export * from './tweaks/cellDisplay';
-export * from './tweaks/cameraPresets';
 export { default as AdaptiveQualityController } from './tweaks/AdaptiveQualityController';
 export { default as SimClockTicker } from './tweaks/SimClockTicker';
 export { default as TweakSync } from './tweaks/TweakSync';
@@ -33,16 +31,12 @@ export type { LiveTweaks } from './tweaks/liveTweaks';
 export { RENDER_STATS_TOGGLE } from './tweaks/renderStatsStore';
 export { default as RenderStatsSampler } from './tweaks/RenderStatsSampler';
 
-// ── UI chrome (fonts, HUD layout, topology constants) ───────────────
-export * from './ui/fonts';
-export * from './ui/hudLayout';
+// ── UI chrome (topology constants) ──────────────────────────────────
 export * from './ui/topologyConstants';
 
 // ── Materials (THREE.ShaderMaterials + GLSL chunks) ─────────────────
 export * from './materials/cellEnvelope.glsl';
 export * from './materials/cellHybridMaterial';
-export * from './materials/cellOrganismMaterial';
-export * from './materials/cellShellMaterial';
 export * from './materials/shockwaveMaterial';
 export * from './materials/peerNodeMaterial';
 export * from './materials/consensusMemoryKnotMaterial';
@@ -53,16 +47,13 @@ export * from './geometry/cellCausalLens';
 export * from './geometry/edgeBezier';
 export * from './geometry/neighborGraph';
 export * from './geometry/pathRouter';
-export * from './geometry/truncatedOctahedron';
 
 // ── Derive helpers (pure data shapers consumed by HUDs) ─────────────
-export * from './derives/cellShell.derive';
 export * from './derives/cellVisual.derive';
 export * from './derives/cellInteraction.derive';
 export * from './derives/cellSemantics.derive';
 export * from './derives/assetEcosystem.derive';
 export * from './derives/daoState.derive';
-export * from './derives/forkWatch.derive';
 export * from './derives/activityFeed.derive';
 export * from './derives/transactionHorizon.derive';
 export * from './derives/networkAtlas.derive';
@@ -79,7 +70,6 @@ export * from './derives/consensusMemoryEvidence.derive';
 export * from './derives/consensusRouteHopAgreement.derive';
 export * from './derives/consensusRouteCamera.derive';
 export * from './derives/cellsStats.derive';
-export * from './derives/eventStreamLines';
 export * from './derives/peers.derive';
 export * from './derives/ecgCondition';
 export * from './derives/fleetTelemetry';
@@ -99,7 +89,6 @@ export {
 } from './hooks/cellGalaxyContext';
 
 // ── Components ─────────────────────────────────────────────────────
-export { default as BackfillHud } from './components/BackfillHud';
 export { default as BlockDeliveryLayer } from './components/BlockDeliveryLayer';
 export {
   default as CellCausalLensLayer,
@@ -116,12 +105,12 @@ export {
   writeFlashSlots,
   writeCellInspectionTargets,
   BLOCK_HIGHLIGHT_DELAY_S,
+  type CellBufferTargets,
 } from './components/CellGalaxy';
 export {
   default as CanonicalRewriteEcho,
   makeCanonicalRewriteEchoMaterial,
 } from './components/CanonicalRewriteEcho';
-export type { BlockEventTrigger, CellBufferTargets } from './components/CellGalaxy';
 export {
   markCellFlashDirty,
   mergeCellFlashRanges,
@@ -153,13 +142,6 @@ export {
   type CellInspectorPlacement,
   type CellInspectorPlacementSide,
 } from './components/CellInspectionOverlay';
-export { default as CellShell } from './components/CellShell';
-export { default as CellOrganism } from './components/CellOrganism';
-export {
-  default as CellsHud,
-  formatCommonKnowledgeBytes,
-} from './components/CellsHud';
-export { default as CkbNetworkHud } from './components/CkbNetworkHud';
 export { default as HudOverlay } from './components/hud/HudOverlay';
 export {
   default as CellDetailPanel,
@@ -190,25 +172,11 @@ export {
 } from './components/hud/CellCoreArtwork';
 export { default as RenderStatsPanel } from './components/hud/RenderStatsPanel';
 export {
-  default as EdgeEnvelopeLayer,
-  buildTrajectories,
-  colorForOriginIdx,
-} from './components/EdgeEnvelopeLayer';
-export type { EdgeEnvelope, Trajectory } from './components/EdgeEnvelopeLayer';
-export { default as EventStreamHud } from './components/EventStreamHud';
-export type {
-  RenderedLine,
-  EventStreamHudProps,
-} from './components/EventStreamHud';
-export {
-  default as GlowNode,
   makeHaloMaterial,
   phaseFor,
   rateFor,
 } from './components/GlowNode';
-export type { Palette, Shape } from './components/GlowNode';
-export { default as CrystalGlow } from './components/CrystalGlow';
-export { default as NetworkHud } from './components/NetworkHud';
+export type { Palette } from './components/GlowNode';
 export { default as ColonyEdges } from './components/ColonyEdges';
 export { default as ColonyNodes } from './components/ColonyNodes';
 export { default as ColonyCourierLayer } from './components/ColonyCourierLayer';
@@ -230,17 +198,13 @@ export {
   type CellInspectionField,
 } from './nerve/cellInspectionField';
 export { consensusMemoryTraceIdentityKey } from './nerve/consensusMemoryTraceContinuity';
-export { default as DendriticBurst } from './nerve/DendriticBurst';
 export { default as ConsensusWriteSeal } from './nerve/DendriticBurst';
 export {
   default as ConsensusRouteCamera,
   type ConsensusRouteCameraControls,
   type ConsensusRouteCameraProps,
 } from './nerve/ConsensusRouteCamera';
-export type {
-  ConsensusWriteSealProps,
-  DendriticBurstProps,
-} from './nerve/DendriticBurst';
+export type { ConsensusWriteSealProps } from './nerve/DendriticBurst';
 export {
   planPulses,
   MAX_PULSES_PER_LINK,

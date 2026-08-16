@@ -137,8 +137,8 @@ export function makePeerCloudMaterial(
 
 /**
  * Camera-facing halo for one measured peer. It uses the same radial primitive
- * as GlowNode at rest, but samples the shared block wave in world XZ so the
- * measured core and inferred scaffold form one continuous front.
+ * as the shared halo material at rest, but samples the shared block wave in
+ * world XZ so the measured core and inferred scaffold form one continuous front.
  */
 export function makePeerHaloMaterial(
   color: THREE.ColorRepresentation,

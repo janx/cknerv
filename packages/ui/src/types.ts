@@ -50,17 +50,6 @@ export type AnimationHint =
   | { type: 'flash_green' }
   | { type: 'flash_red' };
 
-/**
- * Minimal graph-edge shape (kept here for parity with `GraphNode`;
- * primitive consumers may extend this when they need a richer edge
- * description).
- */
-export interface GraphEdge {
-  source: string;
-  target: string;
-  kind: string;
-}
-
 export type NodeKind = 'local' | 'measured' | 'inferred';
 export type EdgeKind = 'measured' | 'inferred';
 

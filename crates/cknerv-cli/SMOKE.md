@@ -234,12 +234,12 @@ Pass criteria:
 Open `http://localhost:7001` (or whatever `--port` you used):
 
 - [ ] Topology renders within ~5s of opening
-- [ ] CkbNetworkHud shows tip > 0, epoch, mempool stats
-- [ ] CellsHud shows a cell count
+- [ ] The chain panel shows tip > 0, epoch, mempool stats
+- [ ] The CELL MESH panel shows a cell count
 - [ ] Cells appear in the galaxy as the chain advances
 - [ ] Clicking a cell selects it (selection ring appears)
 - [ ] No errors in browser DevTools console
-- [ ] Tip advances steadily (watch CkbNetworkHud's tip readout)
+- [ ] Tip advances steadily (watch the chain panel's tip readout)
 - [ ] After ~30 min: chain entity tip matches `curl get_tip_block_number`
 - [ ] No transport warning banner remains after both streams connect
 - [ ] On an idle chain, transport remains nominal for more than 15 seconds

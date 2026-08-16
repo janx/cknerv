@@ -1,10 +1,7 @@
 import type { Vec3 } from './types';
 
-// Layer stack runs apps (bottom) → ckbloom → chain → cells (top). The
-// cells galaxy is the canopy of the scene; user-facing satellites live
-// at the floor.
-export const SATELLITE_Y = -26;
-export const CKBLOOM_Y = 0;
+// Layer stack runs chain → cells (top): the cells galaxy is the canopy of
+// the scene and the chain mesh stays visible underneath it.
 export const CHAIN_Y = 22;
 /** Cell-tissue anchor plane immediately *above* the chain layer. Its points
  *  fold on y around this origin; the chain mesh remains visibly underneath. */

@@ -7,7 +7,7 @@
 //   • straight easeOutCubic fling (fast off the launch, coasts to rest);
 //   • a velocity-aligned protocol trace (length ∝ analytic speed) billboarded
 //     around the flight axis, with a compact bloom as the sampled packet HEAD
-//     (the old CrystalGlow cube is GONE — the mote is pure glow now);
+//     (no solid body rides along — the mote is pure glow);
 //   • driven each frame off an age-clock (age = simClock.elapsedSec − pulse.at)
 //     that this layer stamps ITSELF on each blockPulseAtMs increase.
 //

@@ -118,15 +118,6 @@ import CellNucleus from './CellNucleus';
 // brightness shockwave is owned and rendered by the P2P colony.
 // ---------------------------------------------------------------------------
 
-export interface BlockEventTrigger {
-  /** `simClock.elapsedSec` when the trigger fired (sim-time-relative). */
-  firedAt: number;
-  /** World-space anchor of the originating CKB node. */
-  origin: [number, number, number];
-  /** Stable A carrier identity for this observed block. */
-  color: [number, number, number];
-}
-
 import {
   BEAM_GROW_DUR_S,
   BLOCK_COMMIT_DELAY_S,

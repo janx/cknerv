@@ -1,8 +1,8 @@
 // Leva knobs panel — hidden by default, toggled with the backtick (`)
 // key. Mirrors ckb-rcg's TweaksPanel.
 //
-// Why this component must exist: @cknerv/ui primitives (CellShell,
-// CellGalaxy, useSimFrame, …) call leva's `useControls`. If no <Leva>
+// Why this component must exist: @cknerv/ui primitives (CellGalaxy,
+// useSimFrame, …) call leva's `useControls`. If no <Leva>
 // is rendered, leva auto-injects its own default panel — always visible,
 // no toggle. Rendering our own <Leva> suppresses that auto-panel and lets
 // us drive `hidden` ourselves. Honors `?dev=1` for parity with ckb-rcg.

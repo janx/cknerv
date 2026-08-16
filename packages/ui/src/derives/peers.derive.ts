@@ -51,11 +51,6 @@ export function peerCrystalBrightness(sync: number): number {
   return 0.45 + sync * 0.5;
 }
 
-/** Relay-hop margin (s): in the generic relay model, how long the local node
- *  trails the block's entry peer (so local is never first). Referenced by
- *  CellGalaxy's wave-timing comments. */
-export const BLOCK_RELAY_HOP_S = 0.7;
-
 /** Cubic ease-out: fast launch, decelerate to rest. The "thrown" courier velocity —
  *  the block is flung off the sender and coasts to a stop at the receiver. */
 export function easeOutCubic(t: number): number {

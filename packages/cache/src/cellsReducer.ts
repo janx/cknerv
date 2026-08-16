@@ -218,7 +218,7 @@ export interface CellGalaxyCache {
   totalBirths: number;
   totalDeaths: number;
   /** Historical replay progress, or null during ordinary live polling. Drives the
-   *  BackfillHud and (server-side) block-pulse suppression. Tx links still
+   *  BackfillBar and (server-side) block-pulse suppression. Tx links still
    *  stream during backfill so nerves refill with cells. */
   backfill: ActiveReplayProgress | null;
   /** Aggregate statistics over the retained Cell map, maintained

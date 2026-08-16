@@ -510,7 +510,7 @@ export default function App({
     chainNodes.find((n) => n.id === 'ckb:local') ?? chainNodes[0];
 
   // Shared per-cell flash buffers, owned here so the NeuralNetwork overlay
-  // can write cell→cell pulse arrivals into the same Float32Array CellShell
+  // can write cell→cell pulse arrivals into the same Float32Array CellGalaxy
   // reads. burstArrivalRef carries terminal arrivals to ConsensusWriteSeal.
   const cellFlashRef = useRef<Map<number, number>>(new Map());
   const flashDirtyRef = useRef<boolean>(false);

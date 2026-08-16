@@ -16,7 +16,16 @@ export default defineConfig({
       'leva',
     ],
   },
-  build: { outDir: 'dist', emptyOutDir: true, sourcemap: false },
+  build: {
+    outDir: 'dist',
+    emptyOutDir: true,
+    sourcemap: false,
+    // Fonts always emit as their own asset. Left to the 4KB default a small
+    // subset lands base64 inside the entry chunk, which costs a third more
+    // bytes than the file and drags the face through the JS cache key on
+    // every unrelated UI change.
+    assetsInlineLimit: (filePath) => (filePath.endsWith('.woff2') ? false : undefined),
+  },
   server: {
     port: 5181, // dev mode — different from simulator's 5180
     proxy: {

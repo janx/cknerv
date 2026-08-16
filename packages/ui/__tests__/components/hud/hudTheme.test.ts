@@ -28,6 +28,12 @@ describe('hudTheme', () => {
     expect(css).toContain('@font-face');
     expect(css).toContain("font-family:'Huiwen-mincho'");
     expect(css).not.toContain("font-family:'Cknerv-dao-serif'");
+    // The in-scene labels name these two families in inline fontFamily stacks
+    // (CellGalaxy, ConsensusMemoryMarkers, ConsensusRouteHopMarker,
+    // hud/ConsensusMemory). Unregistered they fall silently through to
+    // ui-monospace on any machine without the face installed locally.
+    expect(css).toContain("font-family:'JetBrains Mono Local';font-weight:400");
+    expect(css).toContain("font-family:'Orbitron Local';font-weight:400 500");
     expect(css).toContain('--hud-orange:#FF9830');
     expect(css).toContain('@keyframes cknerv-cell-detail-anchor-enter');
     expect(css).toContain('@keyframes cknerv-cell-specimen-sweep');
