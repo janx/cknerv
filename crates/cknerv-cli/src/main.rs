@@ -1,6 +1,6 @@
-//! `cknerv` — standalone CLI: subcommands `run` / `init` / `prune` under a
+//! `cknerv` — standalone CLI: subcommands `run` / `init` / `purge` under a
 //! global `-C/--workdir`. Bare `cknerv` ⇒ `run`. See [`cli`] for flags,
-//! [`config`] for cknerv.toml, [`commands`] for init/prune, [`server`] for run.
+//! [`config`] for cknerv.toml, [`commands`] for init/purge, [`server`] for run.
 
 mod assets;
 #[cfg(test)]
@@ -36,6 +36,6 @@ async fn main() -> anyhow::Result<()> {
             server::run(workdir, resolved).await
         }
         Command::Init => commands::cmd_init(&workdir),
-        Command::Prune(args) => commands::cmd_prune(&workdir, args.confirm),
+        Command::Purge(args) => commands::cmd_purge(&workdir, args.confirm),
     }
 }

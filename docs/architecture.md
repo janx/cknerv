@@ -1054,7 +1054,7 @@ rebuild. A saved height alone is not trusted as proof of the old main chain.
 
 A missing file is a normal empty boot. Parse failure or schema mismatch logs a
 warning, discards the bad file, and rebuilds. An incompatible persistence-shape
-change must bump `SCHEMA_VERSION` and state whether `cknerv prune --confirm` is
+change must bump `SCHEMA_VERSION` and state whether `cknerv purge --confirm` is
 required.
 
 ## 13. CLI, Configuration, and Delivery
@@ -1064,7 +1064,7 @@ required.
 - `cknerv init` idempotently creates `cknerv.toml` and `data/`.
 - `cknerv run`, or bare `cknerv`, loads configuration and starts the adapter,
   server, and SPA.
-- `cknerv prune --confirm` deletes and recreates the derived-data directory
+- `cknerv purge --confirm` deletes and recreates the derived-data directory
   without changing the CKB node.
 - `-C <dir>` selects the work directory.
 
@@ -1149,7 +1149,7 @@ The following must change together:
 | Aggregate view statistics and script census | `cells_stats.rs` | `packages/types/src/cell.ts`, `packages/cache/src/cellsStats.ts` |
 | Config shape and defaults | CLI config and TOML template | `ui-app/src/runtime-config.ts` and README |
 | API route and frame shape | `cknerv-server` routes/WS | `packages/cache` connectors |
-| Persistence shape | Server/core persisted structs | `SCHEMA_VERSION`, prune docs, and tests |
+| Persistence shape | Server/core persisted structs | `SCHEMA_VERSION`, purge docs, and tests |
 | Project principles | `AGENTS.md` | `README.md` |
 
 The standard sequence for a new mutation or projection shape is: define the
@@ -1297,7 +1297,7 @@ coverage, visual composition, and GPU cost respectively.
 - The server binds locally and has no public-deployment authentication or
   multi-tenant design. A changed deployment boundary requires a separate
   security design.
-- Current schema policy favors prune and rebuild over long-lived migration
+- Current schema policy favors purge and rebuild over long-lived migration
   layers for stale v0.1 state.
 
 ## 20. Implementation Map

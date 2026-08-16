@@ -60,7 +60,7 @@ Useful run options:
 ./target/release/cknerv run --rpc http://localhost:8114 --port 7001
 ./target/release/cknerv run --no-open
 ./target/release/cknerv run --backfill-blocks 5000
-./target/release/cknerv prune -C myviz --confirm
+./target/release/cknerv purge -C myviz --confirm
 ```
 
 `-C/--workdir <PATH>` selects the work directory. It contains:
@@ -238,7 +238,7 @@ its architecture, trust boundary, capabilities, and limits are documented in
 ```
 
 The state file is derived data. If it is stale, corrupt, or no longer matches
-the current schema, delete it with `cknerv prune --confirm` and let cknerv
+the current schema, delete it with `cknerv purge --confirm` and let cknerv
 rehydrate from the live node.
 
 ## HTTP / WS API
@@ -392,7 +392,7 @@ The manual controller keeps its full range but cannot display records the
 server did not retain. A checkpoint recorded against a smaller historical
 hydration target is invalidated automatically, so the next launch rebuilds
 the full reservoir once. Legacy fixed-window checkpoints are treated the
-same way. No manual prune is needed.
+same way. No manual purge is needed.
 
 The top bar keeps a `PANELS` menu immediately after the build version. It
 independently controls `CKB·01`, `ECG·04`, `CELL MESH`, and `PEER MESH`, plus
@@ -431,16 +431,16 @@ that replay completes. A valid restored tip skips historical hydration, and the
 normal forward poll processes the complete downtime gap.
 
 Persistence is best-effort: unreadable, corrupt, or schema-mismatched state is
-discarded and the server starts empty. `cknerv prune --confirm` deletes derived
+discarded and the server starts empty. `cknerv purge --confirm` deletes derived
 `data/` state while preserving `cknerv.toml`.
 
 Persistence schema v3 adds durable Cell-link endpoint anchors. Existing
-schema-v2 state is incompatible; run `cknerv prune --confirm` before the first
+schema-v2 state is incompatible; run `cknerv purge --confirm` before the first
 v3 launch, then let cknerv rebuild the derived state from the configured node.
 
 Optional semantics are intentionally not persisted. They are bounded in memory
 and rehydrated from the configured source, so changing optional enrichment does
-not change the persistence schema or require `cknerv prune`.
+not change the persistence schema or require `cknerv purge`.
 
 ## Build and Test
 

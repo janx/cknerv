@@ -1,5 +1,5 @@
 //! `clap`-derived CLI for the `cknerv` binary: a global `-C/--workdir`
-//! plus `run` / `init` / `prune` subcommands. Bare `cknerv` ⇒ `run`.
+//! plus `run` / `init` / `purge` subcommands. Bare `cknerv` ⇒ `run`.
 
 use std::path::PathBuf;
 
@@ -28,7 +28,7 @@ pub enum Command {
     /// Scaffold the work directory (cknerv.toml + data/).
     Init,
     /// Delete derived data (data/), keep cknerv.toml.
-    Prune(PruneArgs),
+    Purge(PurgeArgs),
 }
 
 #[derive(clap::Args, Debug, Default)]
@@ -54,7 +54,7 @@ pub struct RunArgs {
 }
 
 #[derive(clap::Args, Debug)]
-pub struct PruneArgs {
+pub struct PurgeArgs {
     /// Confirm the destructive delete of data/.
     #[arg(long)]
     pub confirm: bool,
@@ -106,17 +106,22 @@ mod tests {
     }
 
     #[test]
-    fn prune_confirm_flag() {
-        let no = Cli::parse_from(["cknerv", "prune"]);
+    fn purge_confirm_flag() {
+        let no = Cli::parse_from(["cknerv", "purge"]);
         assert!(matches!(
             no.command,
-            Some(Command::Prune(PruneArgs { confirm: false }))
+            Some(Command::Purge(PurgeArgs { confirm: false }))
         ));
-        let yes = Cli::parse_from(["cknerv", "prune", "--confirm"]);
+        let yes = Cli::parse_from(["cknerv", "purge", "--confirm"]);
         assert!(matches!(
             yes.command,
-            Some(Command::Prune(PruneArgs { confirm: true }))
+            Some(Command::Purge(PurgeArgs { confirm: true }))
         ));
+    }
+
+    #[test]
+    fn prune_is_not_a_subcommand() {
+        assert!(Cli::try_parse_from(["cknerv", "prune"]).is_err());
     }
 
     #[test]

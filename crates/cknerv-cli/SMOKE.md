@@ -312,7 +312,7 @@ With a local ckbadger service configured:
 - [ ] Removing `[ckbadger]` restores the original HUD with no source chip or
       indexed-context/ecosystem/fork-watch/DAO/activity/transaction-horizon/
       network-atlas section
-      and requires no prune
+      and requires no purge
 
 ## Canonical correction checklist (disposable devnet or mock only)
 
@@ -353,7 +353,7 @@ For a correction deeper than the retained canonical-anchor window:
   Abrupt termination, including SIGKILL, is not a persistence boundary.
 - Corrupt or schema-mismatched state is discarded and rebuilt from the
   configured node. For an intentional incompatible schema change, run
-  `cknerv prune --confirm` as documented in the repository README.
+  `cknerv purge --confirm` as documented in the repository README.
 
 ## Observed run (2026-05-27)
 

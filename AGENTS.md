@@ -47,7 +47,7 @@ For any non-trivial task summary or PR description, use this shape:
 ## Result
 
 - Behavior or documentation change summary
-- State/prune required: yes/no
+- State/purge required: yes/no
 - What to do next
 ```
 
@@ -85,10 +85,10 @@ For any non-trivial task summary or PR description, use this shape:
 ## Development Status
 
 This is an active v0.1 project, not a production service. Derived state can be
-pruned and rebuilt from the configured CKB node. Prefer simple, correct schema
+purged and rebuilt from the configured CKB node. Prefer simple, correct schema
 and projection design over compatibility layers for stale local state. If a
 state shape changes incompatibly, bump the persistence schema, document whether
-`cknerv prune --confirm` is needed, and test bad-file/schema-mismatch behavior.
+`cknerv purge --confirm` is needed, and test bad-file/schema-mismatch behavior.
 
 ## Commands
 

@@ -532,7 +532,7 @@ names, not counts: the bars still show the true distribution, spelled in hashes.
 Optional semantics are bounded in memory and intentionally not persisted. They
 are rehydrated from the configured source, so enabling, disabling, or changing
 ckbadger does not alter the persistence schema and does not require
-`cknerv prune`. Display membership is likewise never persisted: a restart
+`cknerv purge`. Display membership is likewise never persisted: a restart
 re-derives it from the restored canonical Cells and upgrades to composed
 staffing once the first refresh lands.
 

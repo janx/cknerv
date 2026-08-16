@@ -1,4 +1,4 @@
-//! `init` and `prune` subcommand implementations. Pure filesystem ops
+//! `init` and `purge` subcommand implementations. Pure filesystem ops
 //! over a resolved work directory.
 
 use std::path::Path;
@@ -29,7 +29,7 @@ pub fn cmd_init(workdir: &Path) -> Result<()> {
 
 /// Delete derived data (`data/`), keep `cknerv.toml`. Requires the workdir
 /// to be initialized and `--confirm`.
-pub fn cmd_prune(workdir: &Path, confirm: bool) -> Result<()> {
+pub fn cmd_purge(workdir: &Path, confirm: bool) -> Result<()> {
     let config_path = workdir.join("cknerv.toml");
     if !config_path.exists() {
         bail!(
@@ -38,16 +38,16 @@ pub fn cmd_prune(workdir: &Path, confirm: bool) -> Result<()> {
         );
     }
     if !confirm {
-        bail!("prune requires --confirm to proceed");
+        bail!("purge requires --confirm to proceed");
     }
     let data_dir = workdir.join("data");
     if data_dir.exists() {
         std::fs::remove_dir_all(&data_dir)
             .map_err(|e| anyhow::anyhow!("failed to remove {}: {e}", data_dir.display()))?;
         std::fs::create_dir_all(&data_dir)?;
-        println!("Pruned derived data: {}/", data_dir.display());
+        println!("Purged derived data: {}/", data_dir.display());
     } else {
-        println!("Nothing to prune.");
+        println!("Nothing to purge.");
     }
     println!("Preserved: {}", config_path.display());
     Ok(())
@@ -90,27 +90,27 @@ mod tests {
     }
 
     #[test]
-    fn prune_bails_when_uninitialized() {
+    fn purge_bails_when_uninitialized() {
         let dir = tmpdir();
-        assert!(cmd_prune(&dir, true).is_err());
+        assert!(cmd_purge(&dir, true).is_err());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
-    fn prune_requires_confirm() {
+    fn purge_requires_confirm() {
         let dir = tmpdir();
         cmd_init(&dir).unwrap();
-        assert!(cmd_prune(&dir, false).is_err());
+        assert!(cmd_purge(&dir, false).is_err());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
-    fn prune_deletes_data_keeps_config() {
+    fn purge_deletes_data_keeps_config() {
         let dir = tmpdir();
         cmd_init(&dir).unwrap();
         let state = dir.join("data").join("cknerv-state.json");
         std::fs::write(&state, "{}").unwrap();
-        cmd_prune(&dir, true).unwrap();
+        cmd_purge(&dir, true).unwrap();
         assert!(!state.exists(), "data file removed");
         assert!(dir.join("data").is_dir(), "data dir recreated");
         assert!(dir.join("cknerv.toml").exists(), "config preserved");
