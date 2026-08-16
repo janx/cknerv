@@ -95,6 +95,8 @@ export {
   applySemanticsDelta,
   applyRevisionedSemanticsDeltas,
   outPointKey,
+  MAX_RETAINED_CELLS,
+  MAX_RETAINED_TRANSACTIONS,
   type SemanticsCache,
 } from './semanticsReducer';
 

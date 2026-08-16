@@ -35,11 +35,20 @@ class MockWebSocket {
     this.onmessage?.({ data: JSON.stringify(payload) } as MessageEvent);
   }
 
+  /** Verbatim text frame — the only way to model a server that emitted a
+   *  truncated or non-object payload. */
+  rawMessage(text: string): void {
+    this.onmessage?.({ data: text } as MessageEvent);
+  }
+
   binaryMessage(buffer: ArrayBuffer): void {
     this.onmessage?.({ data: buffer } as MessageEvent);
   }
 
+  closeCalls = 0;
+
   close(): void {
+    this.closeCalls += 1;
     this.onclose?.({} as CloseEvent);
   }
 }
@@ -382,6 +391,132 @@ describe('close-handshake deadlock hardening', () => {
     vi.advanceTimersByTime(2_100);
     expect(SilentCloseWebSocket.instances.length).toBeGreaterThanOrEqual(2);
     handle.disconnect();
+  });
+});
+
+describe('unusable text frames', () => {
+  /** A text frame that will not parse used to be swallowed in silence: the
+   *  cache then sat behind the server's revision for the rest of the
+   *  session, because nothing but a `lagged` frame re-syncs it and the
+   *  server has no reason to send one. Both streams now drop the socket the
+   *  way the binary path does, and the reconnect asks again from the last
+   *  revision that actually applied. */
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('a projection stream drops the socket and resyncs from the applied revision', () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('WebSocket', MockWebSocket);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const states: CellGalaxyCache[] = [];
+    const handle = connectCellsStream(
+      'ws://localhost/api/projections/cells/stream',
+      emptyCellsCache(),
+      (next) => states.push(next),
+    );
+    const first = MockWebSocket.instances[0];
+    first.open();
+    first.message({
+      kind: 'delta',
+      revision: 1,
+      deltas: [{ revision: 1, delta: { type: 'birth', cell: cell(1) } }],
+    });
+    first.rawMessage('{"kind":"delta","revision":2,"deltas":[');
+
+    expect(warn).toHaveBeenCalled();
+    expect(first.closeCalls).toBeGreaterThan(0);
+    // Frames that arrived before the unusable one still commit.
+    expect(states.at(-1)?.cells.size).toBe(1);
+
+    vi.advanceTimersByTime(2100);
+    expect(MockWebSocket.instances).toHaveLength(2);
+    expect(MockWebSocket.instances[1].url).toContain('since=1');
+
+    const second = MockWebSocket.instances[1];
+    second.open();
+    second.message({
+      kind: 'snapshot',
+      revision: 7,
+      snapshot: { cells: [cell(1), cell(2)], last_pulse_at_ms: 0 },
+    });
+    expect(states.at(-1)?.revision).toBe(7);
+    expect(states.at(-1)?.cells.size).toBe(2);
+
+    handle.disconnect();
+    warn.mockRestore();
+  });
+
+  it('an entity stream drops the socket and resyncs from the applied revision', () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('WebSocket', MockWebSocket);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const changes = vi.fn();
+    const handle = connectEntityStream(
+      'ws://localhost/api/entities/chain/stream',
+      emptyChainEntityCache(),
+      changes,
+    );
+    const first = MockWebSocket.instances[0];
+    first.open();
+    first.message({
+      kind: 'delta',
+      revision: 4,
+      mutations: [{
+        revision: 4,
+        mutation: { type: 'block_mined', number: 9, hash: '0xb9', tx_count: 0, at: 1000 },
+      }],
+    });
+    first.rawMessage('{"kind":"heartbeat"');
+
+    expect(warn).toHaveBeenCalled();
+    expect(first.closeCalls).toBeGreaterThan(0);
+    expect(changes.mock.calls.at(-1)?.[0].chain.tip).toBe(9);
+
+    vi.advanceTimersByTime(2100);
+    expect(MockWebSocket.instances).toHaveLength(2);
+    expect(MockWebSocket.instances[1].url).toContain('since=4');
+
+    const second = MockWebSocket.instances[1];
+    second.open();
+    second.message({
+      kind: 'snapshot',
+      revision: 11,
+      entities: { chain: { tip: 11, blocks: [], transactions: [] }, chain_nodes: [], peers: [] },
+    });
+    expect(changes.mock.calls.at(-1)?.[0].revision).toBe(11);
+
+    handle.disconnect();
+    warn.mockRestore();
+  });
+
+  it('a text frame that parses to a non-object is unusable too', () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('WebSocket', MockWebSocket);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const handle = connectCellsStream(
+      'ws://localhost/api/projections/cells/stream',
+      emptyCellsCache(),
+      () => {},
+    );
+    const first = MockWebSocket.instances[0];
+    first.open();
+    // Valid JSON, no frame in it. An OBJECT with an unknown `kind` stays a
+    // forward-compatible no-op — that case must NOT drop the socket.
+    first.rawMessage('"lagged"');
+    expect(first.closeCalls).toBeGreaterThan(0);
+    vi.advanceTimersByTime(2100);
+    expect(MockWebSocket.instances).toHaveLength(2);
+
+    MockWebSocket.instances[1].open();
+    MockWebSocket.instances[1].message({ kind: 'from_the_future', revision: 3 });
+    expect(MockWebSocket.instances[1].closeCalls).toBe(0);
+    vi.advanceTimersByTime(2100);
+    expect(MockWebSocket.instances).toHaveLength(2);
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    handle.disconnect();
+    warn.mockRestore();
   });
 });
 

@@ -222,13 +222,29 @@ export function connectProjectionStream<Cache, Snapshot, Delta>(
         onChange(cache);
         return;
       }
-      let frame: Frame;
-      try {
-        frame = typeof msg.data === 'string' ? JSON.parse(msg.data) : (null as never);
-      } catch {
+      // Same rule as the binary path: a frame we cannot read is worse than
+      // no frame. Swallowing it left the cache one delta behind the server
+      // forever — nothing else resyncs until a `lagged` that may never come.
+      // An object whose `kind` this build does not know is NOT unusable:
+      // unknown kinds stay a forward-compatible no-op below.
+      let parsed: unknown = null;
+      let unusable: unknown = 'frame was not text';
+      if (typeof msg.data === 'string') {
+        try {
+          parsed = JSON.parse(msg.data);
+          unusable = parsed !== null && typeof parsed === 'object'
+            ? null
+            : 'frame was not a JSON object';
+        } catch (error) {
+          unusable = error;
+        }
+      }
+      if (unusable !== null) {
+        console.warn('text frame unusable; resyncing', unusable);
+        ws.close();
         return;
       }
-      if (!frame || typeof frame !== 'object') return;
+      const frame = parsed as Frame;
       if (frame.kind === 'heartbeat') {
         health.message(needsResync);
       } else if (frame.kind === 'snapshot') {

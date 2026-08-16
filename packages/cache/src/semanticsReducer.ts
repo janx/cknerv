@@ -156,54 +156,142 @@ export function deepEqualsIgnoringAnchors(a: unknown, b: unknown): boolean {
   return true;
 }
 
-function reduceDelta(prev: SemanticsCache, delta: SemanticsDelta): SemanticsCache {
+// ── Retention caps (client-side defense only) ───────────────────────────
+//
+// The server already bounds what it can ever ship: `SemanticsProjection`
+// (`crates/cknerv-core/src/enrichment.rs:811-812`) holds `cell_cap: 512` /
+// `transaction_cap: 2048` and evicts past them oldest-first by insert
+// sequence (`enforce_cell_cap` / `enforce_transaction_cap`). The only route
+// past those numbers is a server bug or a host that is not cknerv, so the
+// caps below are pure defense at 4× the server figures: high enough that a
+// healthy stream never reaches them, low enough that an endless run of
+// unmatched upserts degrades by dropping the oldest instead of growing the
+// tab's heap without bound.
+//
+// A snapshot that arrives already over a cap is left alone — its records
+// were resident the moment the frame parsed — and the first delta batch that
+// writes the map brings it back under.
+export const MAX_RETAINED_CELLS = 2_048;
+export const MAX_RETAINED_TRANSACTIONS = 8_192;
+
+/** One batch's copy-on-write scratch. `value` starts as the caller's cache
+ *  and becomes a shallow copy the first time an arm writes; each Map is
+ *  copied at most once per batch however many deltas touch it. No-op arms
+ *  write nothing, so a batch of only no-op deltas leaves `owned` false and
+ *  the caller gets `prev` back — the identity the refresh-dedup contract
+ *  above depends on. */
+interface SemanticsDraft {
+  value: SemanticsCache;
+  owned: boolean;
+  cellsOwned: boolean;
+  transactionsOwned: boolean;
+}
+
+function createDraft(prev: SemanticsCache): SemanticsDraft {
+  return { value: prev, owned: false, cellsOwned: false, transactionsOwned: false };
+}
+
+function writable(draft: SemanticsDraft): SemanticsCache {
+  if (!draft.owned) {
+    draft.value = { ...draft.value };
+    draft.owned = true;
+  }
+  return draft.value;
+}
+
+function writableCells(draft: SemanticsDraft): Map<string, CellSemanticRecord> {
+  const value = writable(draft);
+  if (!draft.cellsOwned) {
+    value.cells = new Map(value.cells);
+    draft.cellsOwned = true;
+  }
+  return value.cells;
+}
+
+function writableTransactions(
+  draft: SemanticsDraft,
+): Map<string, TransactionSemanticRecord> {
+  const value = writable(draft);
+  if (!draft.transactionsOwned) {
+    value.transactions = new Map(value.transactions);
+    draft.transactionsOwned = true;
+  }
+  return value.transactions;
+}
+
+/** Drop oldest-inserted keys until the map fits. Map iteration is insertion
+ *  order and `set` on an existing key does not reorder it, so this evicts in
+ *  the same order the server's sequence-keyed sweep would. Only ever called
+ *  on a Map this batch owns. */
+function evictOldest<V>(map: Map<string, V>, cap: number): void {
+  const keys = map.keys();
+  while (map.size > cap) {
+    const oldest = keys.next();
+    if (oldest.done === true) return;
+    map.delete(oldest.value);
+  }
+}
+
+/** Applied once per batch, and only to a Map this batch wrote: an untouched
+ *  Map cannot have grown, so checking it would be the one thing able to turn
+ *  a no-op batch into a fresh cache identity. */
+function enforceRetentionCaps(draft: SemanticsDraft): void {
+  if (draft.cellsOwned && draft.value.cells.size > MAX_RETAINED_CELLS) {
+    evictOldest(draft.value.cells, MAX_RETAINED_CELLS);
+  }
+  if (
+    draft.transactionsOwned
+    && draft.value.transactions.size > MAX_RETAINED_TRANSACTIONS
+  ) {
+    evictOldest(draft.value.transactions, MAX_RETAINED_TRANSACTIONS);
+  }
+}
+
+function reduceDelta(draft: SemanticsDraft, delta: SemanticsDelta): void {
   switch (delta.type) {
     case 'source_status':
       // `EnrichmentSourceStatus` carries no anchor keys, so this guard is a
       // plain deep equality: `last_success_at_ms` and the tip/lag fields are
       // liveness content, and any change still replaces. Only a literal
       // re-broadcast of an identical status is dropped.
-      return deepEqualsIgnoringAnchors(prev.source, delta.source)
-        ? prev
-        : { ...prev, source: delta.source };
+      if (deepEqualsIgnoringAnchors(draft.value.source, delta.source)) return;
+      writable(draft).source = delta.source;
+      return;
     case 'cell_upsert': {
       const key = outPointKey(delta.cell.out_point);
-      const existing = prev.cells.get(key);
+      const existing = draft.value.cells.get(key);
       // Refresh re-delivery of already-retained content: keep the record
       // and the Map identity outright (no defensive copy).
       if (
         existing !== undefined
         && deepEqualsIgnoringAnchors(existing, delta.cell)
       ) {
-        return prev;
+        return;
       }
-      const cells = new Map(prev.cells);
-      cells.set(key, delta.cell);
-      return { ...prev, cells };
+      writableCells(draft).set(key, delta.cell);
+      return;
     }
     case 'cell_remove': {
-      if (!prev.cells.has(outPointKey(delta.out_point))) return prev;
-      const cells = new Map(prev.cells);
-      cells.delete(outPointKey(delta.out_point));
-      return { ...prev, cells };
+      const key = outPointKey(delta.out_point);
+      if (!draft.value.cells.has(key)) return;
+      writableCells(draft).delete(key);
+      return;
     }
     case 'transaction_upsert': {
-      const existing = prev.transactions.get(delta.transaction.tx_hash);
+      const existing = draft.value.transactions.get(delta.transaction.tx_hash);
       if (
         existing !== undefined
         && deepEqualsIgnoringAnchors(existing, delta.transaction)
       ) {
-        return prev;
+        return;
       }
-      const transactions = new Map(prev.transactions);
-      transactions.set(delta.transaction.tx_hash, delta.transaction);
-      return { ...prev, transactions };
+      writableTransactions(draft).set(delta.transaction.tx_hash, delta.transaction);
+      return;
     }
     case 'transaction_remove': {
-      if (!prev.transactions.has(delta.tx_hash)) return prev;
-      const transactions = new Map(prev.transactions);
-      transactions.delete(delta.tx_hash);
-      return { ...prev, transactions };
+      if (!draft.value.transactions.has(delta.tx_hash)) return;
+      writableTransactions(draft).delete(delta.tx_hash);
+      return;
     }
     // `census_replace` is the one *_replace arm with a dedup guard: no HUD
     // derive reads its `updated_at_ms`, so keeping the record identity on a
@@ -211,118 +299,114 @@ function reduceDelta(prev: SemanticsCache, delta: SemanticsDelta): SemanticsCach
     // replacements — see the DELIBERATELY UNGUARDED note above. A cleared
     // (null) slot never dedups: content arriving after prune/clear lands.
     case 'census_replace':
-      return deepEqualsIgnoringAnchors(prev.census, delta.census)
-        ? prev
-        : { ...prev, census: delta.census };
+      if (deepEqualsIgnoringAnchors(draft.value.census, delta.census)) return;
+      writable(draft).census = delta.census;
+      return;
     case 'asset_ecosystem_replace':
-      return { ...prev, assetEcosystem: delta.asset_ecosystem };
+      writable(draft).assetEcosystem = delta.asset_ecosystem;
+      return;
     case 'dao_state_replace':
-      return { ...prev, daoState: delta.dao_state };
+      writable(draft).daoState = delta.dao_state;
+      return;
     case 'protocol_era_replace':
-      return { ...prev, protocolEra: delta.protocol_era };
+      writable(draft).protocolEra = delta.protocol_era;
+      return;
     case 'fork_watch_replace':
-      return { ...prev, forkWatch: delta.fork_watch };
+      writable(draft).forkWatch = delta.fork_watch;
+      return;
     case 'activity_feed_replace':
-      return { ...prev, activityFeed: delta.activity_feed };
+      writable(draft).activityFeed = delta.activity_feed;
+      return;
     case 'transaction_horizon_replace':
-      return { ...prev, transactionHorizon: delta.transaction_horizon };
+      writable(draft).transactionHorizon = delta.transaction_horizon;
+      return;
     case 'network_atlas_replace':
-      return { ...prev, networkAtlas: delta.network_atlas };
+      writable(draft).networkAtlas = delta.network_atlas;
+      return;
     case 'script_registry_replace':
-      return { ...prev, scriptRegistry: delta.script_registry };
+      writable(draft).scriptRegistry = delta.script_registry;
+      return;
     case 'network_atlas_clear':
-      return { ...prev, networkAtlas: null };
+      writable(draft).networkAtlas = null;
+      return;
     case 'prune': {
-      const cells = new Map(
-        [...prev.cells].filter(([, cell]) => cell.as_of.block < delta.from_block),
+      const value = writable(draft);
+      value.cells = new Map(
+        [...value.cells].filter(([, cell]) => cell.as_of.block < delta.from_block),
       );
-      const transactions = new Map(
-        [...prev.transactions].filter(
+      draft.cellsOwned = true;
+      value.transactions = new Map(
+        [...value.transactions].filter(
           ([, transaction]) =>
             transaction.block < delta.from_block
             && transaction.as_of.block < delta.from_block,
         ),
       );
-      const census =
-        prev.census && prev.census.as_of.block >= delta.from_block
-          ? null
-          : prev.census;
-      const assetEcosystem =
-        prev.assetEcosystem
-        && prev.assetEcosystem.as_of.block >= delta.from_block
-          ? null
-          : prev.assetEcosystem;
-      const daoState =
-        prev.daoState && prev.daoState.as_of.block >= delta.from_block
-          ? null
-          : prev.daoState;
-      const protocolEra =
-        prev.protocolEra && prev.protocolEra.as_of.block >= delta.from_block
-          ? null
-          : prev.protocolEra;
-      const forkWatch =
-        prev.forkWatch && prev.forkWatch.as_of.block >= delta.from_block
-          ? null
-          : prev.forkWatch;
-      const activityFeed =
-        prev.activityFeed
-        && prev.activityFeed.as_of.block >= delta.from_block
-          ? null
-          : prev.activityFeed;
-      const transactionHorizon =
-        prev.transactionHorizon
-        && prev.transactionHorizon.as_of.block >= delta.from_block
-          ? null
-          : prev.transactionHorizon;
-      const networkAtlas =
-        prev.networkAtlas
-        && prev.networkAtlas.as_of.block >= delta.from_block
-          ? null
-          : prev.networkAtlas;
+      draft.transactionsOwned = true;
+      if (value.census && value.census.as_of.block >= delta.from_block) {
+        value.census = null;
+      }
+      if (
+        value.assetEcosystem
+        && value.assetEcosystem.as_of.block >= delta.from_block
+      ) {
+        value.assetEcosystem = null;
+      }
+      if (value.daoState && value.daoState.as_of.block >= delta.from_block) {
+        value.daoState = null;
+      }
+      if (value.protocolEra && value.protocolEra.as_of.block >= delta.from_block) {
+        value.protocolEra = null;
+      }
+      if (value.forkWatch && value.forkWatch.as_of.block >= delta.from_block) {
+        value.forkWatch = null;
+      }
+      if (value.activityFeed && value.activityFeed.as_of.block >= delta.from_block) {
+        value.activityFeed = null;
+      }
+      if (
+        value.transactionHorizon
+        && value.transactionHorizon.as_of.block >= delta.from_block
+      ) {
+        value.transactionHorizon = null;
+      }
+      if (value.networkAtlas && value.networkAtlas.as_of.block >= delta.from_block) {
+        value.networkAtlas = null;
+      }
       // A script's name does not depend on the tip, but the record proving it
       // came from a compatible index does. Dropped on the same rule as every
       // other anchored record, and the next refresh re-proves it — the exact
       // rule the server's prune arm applies (`enrichment.rs`
       // `Mutation::ChainReorganized`).
-      const scriptRegistry =
-        prev.scriptRegistry
-        && prev.scriptRegistry.as_of.block >= delta.from_block
-          ? null
-          : prev.scriptRegistry;
-      return {
-        ...prev,
-        cells,
-        transactions,
-        census,
-        assetEcosystem,
-        daoState,
-        protocolEra,
-        forkWatch,
-        activityFeed,
-        transactionHorizon,
-        networkAtlas,
-        scriptRegistry,
-      };
+      if (
+        value.scriptRegistry
+        && value.scriptRegistry.as_of.block >= delta.from_block
+      ) {
+        value.scriptRegistry = null;
+      }
+      return;
     }
-    case 'clear':
+    case 'clear': {
       // Mirrors the server's `clear_records()`: every record slot empties,
       // script names included — a rebuilt source may be pointed at another
       // network, and a retained registry would name the new census's
       // identities from the old one.
-      return {
-        ...prev,
-        cells: new Map(),
-        transactions: new Map(),
-        census: null,
-        assetEcosystem: null,
-        daoState: null,
-        protocolEra: null,
-        forkWatch: null,
-        activityFeed: null,
-        transactionHorizon: null,
-        networkAtlas: null,
-        scriptRegistry: null,
-      };
+      const value = writable(draft);
+      value.cells = new Map();
+      draft.cellsOwned = true;
+      value.transactions = new Map();
+      draft.transactionsOwned = true;
+      value.census = null;
+      value.assetEcosystem = null;
+      value.daoState = null;
+      value.protocolEra = null;
+      value.forkWatch = null;
+      value.activityFeed = null;
+      value.transactionHorizon = null;
+      value.networkAtlas = null;
+      value.scriptRegistry = null;
+      return;
+    }
     default: {
       // A delta variant this build does not know (server ahead of the
       // embedded client, or a projection-only arm absent from the TS union)
@@ -332,7 +416,6 @@ function reduceDelta(prev: SemanticsCache, delta: SemanticsDelta): SemanticsCach
       // compile error here rather than a silent drop.
       const _exhaustive: never = delta;
       void _exhaustive;
-      return prev;
     }
   }
 }
@@ -341,20 +424,26 @@ export function applySemanticsDelta(
   prev: SemanticsCache,
   delta: SemanticsDelta,
 ): SemanticsCache {
-  return reduceDelta(prev, delta);
+  const draft = createDraft(prev);
+  reduceDelta(draft, delta);
+  enforceRetentionCaps(draft);
+  return draft.value;
 }
 
 export function applyRevisionedSemanticsDeltas(
   prev: SemanticsCache,
   deltas: RevisionedSemanticsDelta[],
 ): SemanticsCache {
-  let next = prev;
+  const draft = createDraft(prev);
   let revision = prev.revision;
   for (const entry of deltas) {
-    next = reduceDelta(next, entry.delta);
+    reduceDelta(draft, entry.delta);
     revision = Math.max(revision, entry.revision);
   }
-  return next === prev && revision === prev.revision
-    ? prev
-    : { ...next, revision };
+  enforceRetentionCaps(draft);
+  // A revision-only advance still publishes a fresh cache (the stream's
+  // `?since=` cursor lives in it); a batch that changed nothing at all,
+  // revision included, hands back `prev` untouched.
+  if (revision !== draft.value.revision) writable(draft).revision = revision;
+  return draft.value;
 }

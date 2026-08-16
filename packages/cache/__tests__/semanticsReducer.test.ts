@@ -11,6 +11,7 @@ import type {
   EnrichmentSourceStatus,
   NetworkAtlasRecord,
   ProtocolEraRecord,
+  RevisionedSemanticsDelta,
   ScriptRegistryRecord,
   SemanticsDelta,
   TransactionHorizonRecord,
@@ -22,6 +23,8 @@ import {
   deepEqualsIgnoringAnchors,
   emptySemanticsCache,
   outPointKey,
+  MAX_RETAINED_CELLS,
+  MAX_RETAINED_TRANSACTIONS,
   type SemanticsCache,
 } from '../src/semanticsReducer';
 
@@ -709,6 +712,247 @@ describe('periodic refresh dedup', () => {
       applySemanticsDelta(clearedAll, { type: 'census_replace', census: again })
         .census,
     ).toBe(again);
+  });
+});
+
+/** Count the Map allocations one call makes. `new Map(...)` in the reducer
+ *  resolves the global at call time, so a counting stand-in installed for the
+ *  duration of the call observes exactly the copies that call made — the
+ *  direct pin for "one copy per Map per batch", which is otherwise
+ *  unobservable (intermediate copies are discarded inside the batch). */
+function countMapCopies<T>(run: () => T): { value: T; copies: number } {
+  const NativeMap = globalThis.Map;
+  let copies = 0;
+  const CountingMap = function CountingMap(
+    entries?: Iterable<readonly [unknown, unknown]> | null,
+  ) {
+    copies += 1;
+    return new NativeMap(entries);
+  } as unknown as MapConstructor;
+  globalThis.Map = CountingMap;
+  try {
+    const value = run();
+    return { value, copies };
+  } finally {
+    globalThis.Map = NativeMap;
+  }
+}
+
+function cellUpsert(revision: number, txHash: string): RevisionedSemanticsDelta {
+  return { revision, delta: { type: 'cell_upsert', cell: cell(10, txHash) } };
+}
+
+function transactionUpsert(
+  revision: number,
+  txHash: string,
+): RevisionedSemanticsDelta {
+  return {
+    revision,
+    delta: { type: 'transaction_upsert', transaction: transaction(10, txHash) },
+  };
+}
+
+describe('batch copy-on-write', () => {
+  it('copies the cells Map once for the whole batch, not once per delta', () => {
+    const seeded = applySemanticsDelta(emptySemanticsCache(), {
+      type: 'cell_upsert',
+      cell: cell(10, '0xseed'),
+    });
+    const { value: next, copies } = countMapCopies(() =>
+      applyRevisionedSemanticsDeltas(seeded, [
+        cellUpsert(1, '0xa'),
+        cellUpsert(2, '0xb'),
+        cellUpsert(3, '0xc'),
+      ]));
+
+    expect(copies).toBe(1);
+    expect(next.cells.size).toBe(4);
+    expect(next.revision).toBe(3);
+    // The caller's cache is left exactly as it was.
+    expect(seeded.cells.size).toBe(1);
+    expect(next.cells).not.toBe(seeded.cells);
+    for (const txHash of ['0xa', '0xb', '0xc']) {
+      expect(next.cells.get(outPointKey({ tx_hash: txHash, index: 0 }))).toBeDefined();
+    }
+  });
+
+  it('copies each touched Map once and leaves untouched ones alone', () => {
+    const seeded = applyRevisionedSemanticsDeltas(emptySemanticsCache(), [
+      cellUpsert(1, '0xseed'),
+    ]);
+    const { value: next, copies } = countMapCopies(() =>
+      applyRevisionedSemanticsDeltas(seeded, [
+        cellUpsert(2, '0xa'),
+        transactionUpsert(3, '0xt1'),
+        cellUpsert(4, '0xb'),
+        transactionUpsert(5, '0xt2'),
+        { revision: 6, delta: { type: 'census_replace', census: census(10) } },
+      ]));
+
+    expect(copies).toBe(2);
+    expect(next.cells.size).toBe(3);
+    expect(next.transactions.size).toBe(2);
+    expect(next.census).not.toBeNull();
+    expect(seeded.transactions.size).toBe(0);
+  });
+
+  it('a batch of only no-op deltas hands back the previous cache', () => {
+    const seeded = applyRevisionedSemanticsDeltas(emptySemanticsCache(), [
+      { revision: 1, delta: { type: 'source_status', source: ready } },
+      cellUpsert(2, '0xcell'),
+      transactionUpsert(3, '0xtx'),
+      { revision: 4, delta: { type: 'census_replace', census: census(10) } },
+    ]);
+
+    const { value: next, copies } = countMapCopies(() =>
+      applyRevisionedSemanticsDeltas(seeded, [
+        // Every arm here is content-identical or targets an absent key: the
+        // draft must never take a copy, so the caller sees `prev` itself.
+        { revision: 4, delta: { type: 'source_status', source: structuredClone(ready) } },
+        {
+          revision: 4,
+          delta: { type: 'cell_upsert', cell: reanchored(cell(10, '0xcell'), 20) },
+        },
+        {
+          revision: 4,
+          delta: {
+            type: 'transaction_upsert',
+            transaction: reanchored(transaction(10, '0xtx'), 20),
+          },
+        },
+        {
+          revision: 4,
+          delta: { type: 'census_replace', census: reanchored(census(10), 20) },
+        },
+        {
+          revision: 4,
+          delta: { type: 'cell_remove', out_point: { tx_hash: '0xabsent', index: 0 } },
+        },
+        { revision: 4, delta: { type: 'transaction_remove', tx_hash: '0xabsent' } },
+      ]));
+
+    expect(copies).toBe(0);
+    expect(next).toBe(seeded);
+  });
+
+  it('a no-op batch that advances the revision keeps every record identity', () => {
+    const seeded = applyRevisionedSemanticsDeltas(emptySemanticsCache(), [
+      cellUpsert(1, '0xcell'),
+      { revision: 2, delta: { type: 'census_replace', census: census(10) } },
+    ]);
+    const next = applyRevisionedSemanticsDeltas(seeded, [{
+      revision: 9,
+      delta: { type: 'cell_upsert', cell: reanchored(cell(10, '0xcell'), 20) },
+    }]);
+
+    expect(next).not.toBe(seeded);
+    expect(next.revision).toBe(9);
+    expect(next.cells).toBe(seeded.cells);
+    expect(next.transactions).toBe(seeded.transactions);
+    expect(next.census).toBe(seeded.census);
+  });
+});
+
+describe('client retention caps', () => {
+  /** Pure defense against a server that ignores its own bounds
+   *  (`enrichment.rs` caps at 512 cells / 2048 transactions): the client
+   *  degrades by evicting the oldest insertion, never by growing forever. */
+  function cellDeltas(from: number, count: number): RevisionedSemanticsDelta[] {
+    const deltas: RevisionedSemanticsDelta[] = [];
+    for (let i = from; i < from + count; i += 1) {
+      deltas.push(cellUpsert(i + 1, `0xcell${i}`));
+    }
+    return deltas;
+  }
+
+  function cellKey(index: number): string {
+    return outPointKey({ tx_hash: `0xcell${index}`, index: 0 });
+  }
+
+  it('caps cells inside one oversized batch, dropping the oldest inserted', () => {
+    const overflow = 8;
+    const next = applyRevisionedSemanticsDeltas(
+      emptySemanticsCache(),
+      cellDeltas(0, MAX_RETAINED_CELLS + overflow),
+    );
+
+    expect(next.cells.size).toBe(MAX_RETAINED_CELLS);
+    for (let i = 0; i < overflow; i += 1) {
+      expect(next.cells.has(cellKey(i))).toBe(false);
+    }
+    expect(next.cells.has(cellKey(overflow))).toBe(true);
+    expect(next.cells.has(cellKey(MAX_RETAINED_CELLS + overflow - 1))).toBe(true);
+  });
+
+  it('holds the cap across batches', () => {
+    const filled = applyRevisionedSemanticsDeltas(
+      emptySemanticsCache(),
+      cellDeltas(0, MAX_RETAINED_CELLS),
+    );
+    expect(filled.cells.size).toBe(MAX_RETAINED_CELLS);
+    expect(filled.cells.has(cellKey(0))).toBe(true);
+
+    const next = applyRevisionedSemanticsDeltas(
+      filled,
+      cellDeltas(MAX_RETAINED_CELLS, 4),
+    );
+    expect(next.cells.size).toBe(MAX_RETAINED_CELLS);
+    for (let i = 0; i < 4; i += 1) expect(next.cells.has(cellKey(i))).toBe(false);
+    expect(next.cells.has(cellKey(4))).toBe(true);
+    expect(next.cells.has(cellKey(MAX_RETAINED_CELLS + 3))).toBe(true);
+    // The batch that evicted did not touch the caller's cache.
+    expect(filled.cells.size).toBe(MAX_RETAINED_CELLS);
+    expect(filled.cells.has(cellKey(0))).toBe(true);
+  });
+
+  it('the single-delta path enforces the same cap', () => {
+    const filled = applyRevisionedSemanticsDeltas(
+      emptySemanticsCache(),
+      cellDeltas(0, MAX_RETAINED_CELLS),
+    );
+    const next = applySemanticsDelta(filled, {
+      type: 'cell_upsert',
+      cell: cell(10, '0xnewest'),
+    });
+
+    expect(next.cells.size).toBe(MAX_RETAINED_CELLS);
+    expect(next.cells.has(cellKey(0))).toBe(false);
+    expect(next.cells.has(outPointKey({ tx_hash: '0xnewest', index: 0 }))).toBe(true);
+  });
+
+  it('re-upserting a retained key evicts nothing (no growth, no reorder)', () => {
+    const filled = applyRevisionedSemanticsDeltas(
+      emptySemanticsCache(),
+      cellDeltas(0, MAX_RETAINED_CELLS),
+    );
+    const moved = applySemanticsDelta(filled, {
+      type: 'cell_upsert',
+      cell: { ...cell(10, '0xcell0'), observed_at_block: 20 },
+    });
+
+    expect(moved.cells.size).toBe(MAX_RETAINED_CELLS);
+    expect(moved.cells.get(cellKey(0))?.observed_at_block).toBe(20);
+    expect(moved.cells.has(cellKey(1))).toBe(true);
+  });
+
+  it('caps transactions on their own, larger bound', () => {
+    const overflow = 3;
+    const deltas: RevisionedSemanticsDelta[] = [];
+    for (let i = 0; i < MAX_RETAINED_TRANSACTIONS + overflow; i += 1) {
+      deltas.push(transactionUpsert(i + 1, `0xtx${i}`));
+    }
+    const next = applyRevisionedSemanticsDeltas(emptySemanticsCache(), deltas);
+
+    expect(next.transactions.size).toBe(MAX_RETAINED_TRANSACTIONS);
+    for (let i = 0; i < overflow; i += 1) {
+      expect(next.transactions.has(`0xtx${i}`)).toBe(false);
+    }
+    expect(next.transactions.has(`0xtx${overflow}`)).toBe(true);
+    expect(
+      next.transactions.has(`0xtx${MAX_RETAINED_TRANSACTIONS + overflow - 1}`),
+    ).toBe(true);
+    // Cells were never touched, so their cap never even looked.
+    expect(next.cells.size).toBe(0);
   });
 });
 

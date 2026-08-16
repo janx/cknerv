@@ -279,13 +279,30 @@ export function connectEntityStream(
     ws.onopen = () => health.opened(needsResync);
 
     ws.onmessage = (msg: MessageEvent) => {
-      let frame: EntitiesFrame;
-      try {
-        frame = typeof msg.data === 'string' ? JSON.parse(msg.data) : (null as never);
-      } catch {
+      // A frame we cannot read is worse than no frame (same rule the
+      // projection stream's binary path applies): swallowing it left the
+      // cache one mutation behind the server forever, with nothing to
+      // resync it until a `lagged` that may never come. An object whose
+      // `kind` this build does not know is NOT unusable — unknown kinds
+      // stay a forward-compatible no-op below.
+      let parsed: unknown = null;
+      let unusable: unknown = 'frame was not text';
+      if (typeof msg.data === 'string') {
+        try {
+          parsed = JSON.parse(msg.data);
+          unusable = parsed !== null && typeof parsed === 'object'
+            ? null
+            : 'frame was not a JSON object';
+        } catch (error) {
+          unusable = error;
+        }
+      }
+      if (unusable !== null) {
+        console.warn('text frame unusable; resyncing', unusable);
+        ws.close();
         return;
       }
-      if (!frame || typeof frame !== 'object') return;
+      const frame = parsed as EntitiesFrame;
       if (frame.kind === 'heartbeat') {
         health.message(needsResync);
       } else if (frame.kind === 'snapshot') {
