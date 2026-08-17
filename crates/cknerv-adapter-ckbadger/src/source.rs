@@ -12,12 +12,12 @@ use cknerv_core::{
     AssetEcosystemRecord, CellSemanticRecord, ChainAnchor, CommonKnowledgeBreakdown,
     CompositionDemand, DaoStateRecord, EnrichmentSourceState, EnrichmentSourceStatus,
     ForkWatchDeepFork, ForkWatchEventKind, ForkWatchRecord, ForkWatchReorg,
-    GalaxyCompositionRecord, GalaxyCompositionTopUp, NetworkAtlasBucket, NetworkAtlasRecord,
-    OutPoint, ProtocolEra, ProtocolEraRecord, SemanticAsset, SemanticAttribute,
-    SemanticCellContent, SemanticContentDecode, SemanticContentGuess, SemanticContentSegment,
-    HashType, ScriptNameRecord, ScriptRegistryRecord, SemanticFacet, SemanticScript,
-    TransactionHorizonRecord, TransactionParticipantSemantic, TransactionSemanticRecord,
-    DATA_HEX_TRUNCATION_MARKER, MAX_SCRIPT_REGISTRY_ENTRIES,
+    GalaxyCompositionRecord, GalaxyCompositionTopUp, HashType, NetworkAtlasBucket,
+    NetworkAtlasRecord, OutPoint, ProtocolEra, ProtocolEraRecord, ScriptNameRecord,
+    ScriptRegistryRecord, SemanticAsset, SemanticAttribute, SemanticCellContent,
+    SemanticContentDecode, SemanticContentGuess, SemanticContentSegment, SemanticFacet,
+    SemanticScript, TransactionHorizonRecord, TransactionParticipantSemantic,
+    TransactionSemanticRecord, DATA_HEX_TRUNCATION_MARKER, MAX_SCRIPT_REGISTRY_ENTRIES,
 };
 use cknerv_server::{CanonicalContext, EnrichmentSource, GalaxyCompositionHydrator};
 
@@ -27,9 +27,8 @@ use crate::dto::{
     HardforkTimelineResponse, LatestActivityResponse, LookupScriptsRequest,
     NetworkCrawlerSummaryResponse, NetworkNodesPageResponse, NetworkStats, RecentReorgResponse,
     ReorgEventResponse, ScriptCatalogueResponse, ScriptFamilyResponse, ScriptLookupInfo,
-    ScriptLookupResponse, ScriptResponse, TokenResponse,
-    TransactionDetailResponse, TransactionLifecycleResponse, TransactionStatsPoint,
-    TransactionStatsResponse,
+    ScriptLookupResponse, ScriptResponse, TokenResponse, TransactionDetailResponse,
+    TransactionLifecycleResponse, TransactionStatsPoint, TransactionStatsResponse,
 };
 use crate::galaxy_composition::{
     discover as discover_galaxy_composition, top_up as top_up_galaxy_composition, CandidateTail,
@@ -70,7 +69,8 @@ const SCRIPT_CATALOGUE_LIMIT: usize = 200;
 /// `scripts/lookup` wants a transaction for context. The census has no
 /// transaction — it is a set of identities — so this asks with none and lets
 /// the response's own `resolutionState` say whether that mattered.
-const UNANCHORED_LOOKUP_TX: &str = "0x0000000000000000000000000000000000000000000000000000000000000000";
+const UNANCHORED_LOOKUP_TX: &str =
+    "0x0000000000000000000000000000000000000000000000000000000000000000";
 
 /// ckbadger answers `resolutionState: "resolved"` once it has located the
 /// code cell, and names it `"Unknown"` when it has no family for it — so
@@ -325,7 +325,6 @@ impl CkbadgerEnrichmentSource {
         }
     }
 
-
     /// Resolve code hashes to family names. One request: the endpoint takes a
     /// batch, and the whole observed set is tens of hashes.
     ///
@@ -368,7 +367,9 @@ impl CkbadgerEnrichmentSource {
             .context("decode ckbadger script lookup")?;
         Ok(looked_up
             .into_iter()
-            .filter(|(_, info)| info.resolution_state == "resolved" && is_real_script_name(&info.name))
+            .filter(|(_, info)| {
+                info.resolution_state == "resolved" && is_real_script_name(&info.name)
+            })
             .collect())
     }
 
@@ -1151,7 +1152,6 @@ impl EnrichmentSource for CkbadgerEnrichmentSource {
         self.revalidate_anchor(&anchor, "network atlas").await?;
         Ok(Some(record))
     }
-
 
     async fn enrich_script_registry(
         &self,
@@ -3908,7 +3908,6 @@ mod tests {
         server.abort();
     }
 
-
     /// Anchor-valid stub carrying a script catalogue and a lookup endpoint.
     /// `lookup_requests` counts calls so a test can prove the adapter asked
     /// nothing when it had nothing to ask about.
@@ -3926,9 +3925,7 @@ mod tests {
             )
             .route(
                 "/api/v1/blocks/:number",
-                get(|| async {
-                    Json(serde_json::json!({ "number": 100, "hash": "0xblock100" }))
-                }),
+                get(|| async { Json(serde_json::json!({ "number": 100, "hash": "0xblock100" })) }),
             )
             .route(
                 "/api/v1/scripts",

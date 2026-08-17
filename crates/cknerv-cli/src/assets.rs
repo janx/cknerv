@@ -137,7 +137,7 @@ mod tests {
 
     const IMMUTABLE: &str = "public, max-age=31536000, immutable";
 
-    fn header_str<'a>(response: &'a Response, name: header::HeaderName) -> &'a str {
+    fn header_str(response: &Response, name: header::HeaderName) -> &str {
         response
             .headers()
             .get(name)

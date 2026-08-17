@@ -393,7 +393,10 @@ mod tests {
             let mut resolved = ResolvedGalaxyConfig::for_profile(profile);
             assert_eq!(resolved.profile, profile);
             resolved.profile = GalaxyProfile::Auto;
-            assert_eq!(resolved, auto, "{profile:?} diverged from the shared galaxy values");
+            assert_eq!(
+                resolved, auto,
+                "{profile:?} diverged from the shared galaxy values"
+            );
         }
     }
 
@@ -406,8 +409,7 @@ mod tests {
         // retune that lands on only one side fails one of the two tests.
         // Regenerate with `CKNERV_REGEN_FIXTURES=1 cargo test -p cknerv-cli`.
         let auto = ResolvedGalaxyConfig::for_profile(GalaxyProfile::Auto);
-        let mut encoded =
-            serde_json::to_string_pretty(&auto).expect("serialize galaxy config");
+        let mut encoded = serde_json::to_string_pretty(&auto).expect("serialize galaxy config");
         encoded.push('\n');
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
