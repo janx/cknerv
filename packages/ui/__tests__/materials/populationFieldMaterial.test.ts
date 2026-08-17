@@ -63,6 +63,16 @@ describe('makePopulationDensityMaterial', () => {
     expect(material.fragmentShader).toContain('hash21(gl_FragCoord.xy)');
   });
 
+  it('guards the slab divisor against an exactly axis-aligned ray', () => {
+    const material = makePopulationDensityMaterial();
+
+    // GLSL sign() is 0 at zero, so `sign(rd) * max(abs(rd), eps)` leaves the
+    // zero it was meant to remove. An edge-on camera produces exactly that
+    // ray, and the result is a division by zero in the intersection.
+    expect(material.fragmentShader).not.toContain('sign(rd)');
+    expect(material.fragmentShader).toContain('step(vec3(0.0), rd) * 2.0 - 1.0');
+  });
+
   it('starts with no optical depth, so absence is the default state', () => {
     const material = makePopulationDensityMaterial();
     expect(material.uniforms.uOpticalDepth.value).toBe(0);

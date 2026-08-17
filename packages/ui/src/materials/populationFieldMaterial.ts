@@ -113,7 +113,12 @@ const SLAB_GLSL = /* glsl */ `
   // Analytic slab entry/exit. The direction is guarded away from exact zero
   // because GLSL does not promise IEEE infinities through min/max.
   bool slabRange(vec3 ro, vec3 rd, vec3 half3, out float tEnter, out float tExit) {
-    vec3 safeRd = sign(rd) * max(abs(rd), vec3(1e-6));
+    // GLSL sign() returns 0 for an exactly axis-aligned component, which
+    // would put a zero straight back into the divisor this guard exists to
+    // remove — and an edge-on camera really can produce one. step() maps to
+    // +1/-1 and never to zero.
+    vec3 unit = step(vec3(0.0), rd) * 2.0 - 1.0;
+    vec3 safeRd = unit * max(abs(rd), vec3(1e-6));
     vec3 inv = 1.0 / safeRd;
     vec3 a = (-half3 - ro) * inv;
     vec3 b = ( half3 - ro) * inv;
