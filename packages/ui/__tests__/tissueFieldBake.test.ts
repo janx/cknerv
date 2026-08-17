@@ -4,6 +4,7 @@ import {
   FIELD_HALF_X,
   FIELD_HALF_Z,
   helixSeedF64,
+  TISSUE_ENVELOPE_EDGE,
   tissueSampleAt,
 } from '../src/helix';
 import {
@@ -64,6 +65,56 @@ describe('tissueSampleAt', () => {
         );
         expect(sample.thickness).toBeLessThanOrEqual(TISSUE_BAKE_THICKNESS_MAX);
       }
+    }
+  });
+
+  it('reproduces the sampler exactly at the default edge', () => {
+    // The default has to BE the law, not resemble it: `helixSeedF64` thresholds
+    // against this number, and a sampler that disagreed with it by a rounding
+    // step would describe a distribution the Cells are not drawn from.
+    for (const [x, z] of [[0, 0], [12.5, -7.25], [-40, 33], [55, 50], [-58, -8]]) {
+      const sample = tissueSampleAt(x, z);
+      expect(sample.density).toBe(sample.resolvedCoverage);
+      expect(tissueSampleAt(x, z, TISSUE_ENVELOPE_EDGE)).toEqual(sample);
+    }
+  });
+
+  it('reopens the envelope outward, and only outward', () => {
+    // The halo is the same field CONTINUED, so pushing the edge out may only
+    // ever ADD tissue. If a wider edge could remove any, the layer outside the
+    // rim would be a different organism rather than this one carrying on.
+    let grew = 0;
+    for (let iz = 0; iz <= 30; iz += 1) {
+      for (let ix = 0; ix <= 30; ix += 1) {
+        const x = (ix / 30) * 4 * FIELD_HALF_X - 2 * FIELD_HALF_X;
+        const z = (iz / 30) * 4 * FIELD_HALF_Z - 2 * FIELD_HALF_Z;
+        const wide = tissueSampleAt(x, z, 2.2);
+        const tight = tissueSampleAt(x, z);
+
+        expect(wide.density).toBeGreaterThanOrEqual(wide.resolvedCoverage);
+        // The resolved share is a fact about where cknerv places Cells; the
+        // edge a caller asks for cannot move it.
+        expect(wide.resolvedCoverage).toBe(tight.density);
+        // Fold and thickness are the same noise at the same point — the halo
+        // continues the core's geometry instead of restating it.
+        expect(wide.foldY).toBe(tight.foldY);
+        expect(wide.thickness).toBe(tight.thickness);
+        if (wide.density > tight.density) grew += 1;
+      }
+    }
+    // And it must actually reach past the rim, or the halo has nothing to draw.
+    expect(grew).toBeGreaterThan(100);
+  });
+
+  it('still closes, at whatever edge it was given', () => {
+    // An envelope that never shut would make the population unbounded, which
+    // is a claim about geography rather than about a count.
+    for (const [x, z] of [
+      [FIELD_HALF_X * 2.6, FIELD_HALF_Z * 2.6],
+      [FIELD_HALF_X * 3, 0],
+      [0, -FIELD_HALF_Z * 3],
+    ]) {
+      expect(tissueSampleAt(x, z, 2.2).density).toBe(0);
     }
   });
 

@@ -42,6 +42,17 @@ function idSeed(id: number | bigint, salt: number): number {
  * band, not a wall — but the band is anchored here.) */
 export const FIELD_HALF_X = 60;
 export const FIELD_HALF_Z = 54;
+/** Outer edge of the envelope `helixSeedF64` rejection-samples inside, in
+ *  units of the ellipse above.
+ *
+ *  This is a SAMPLING bound — it keeps the drawn set compact — and not a fact
+ *  about the population. Nothing on chain thins out at 1.04; cknerv simply
+ *  stops placing Cells there. A consumer that is stating the population rather
+ *  than drawing it may therefore push this edge outward, which is the one
+ *  degree of freedom {@link tissueSampleAt} exposes. {@link FIELD_HALF_X} and
+ *  {@link FIELD_HALF_Z} carry no such freedom: they are where the addressable
+ *  Cells end, and every layer that respects the rim reads them. */
+export const TISSUE_ENVELOPE_EDGE = 1.04;
 const SAMPLE_ATTEMPTS = 10;
 const HALO_FRACTION = 0.045;
 
@@ -92,6 +103,14 @@ interface TissueField {
   ridge: number;
   qx: number;
   qz: number;
+  /** The un-enveloped tissue term, before the boundary closes it off. Carried
+   *  out so a consumer can re-close it at a different edge without a second
+   *  evaluation of the twelve noise octaves that produced it. */
+  body: number;
+  /** `radial + boundaryWarp` — exactly the value the envelope's smoothstep
+   *  reads, so re-closing the envelope uses the same warped boundary and not
+   *  a smooth ellipse. */
+  radialWarped: number;
 }
 
 /**
@@ -123,7 +142,8 @@ function tissueField(x: number, z: number): TissueField {
   const radial = Math.sqrt(nx * nx + nz * nz);
   const boundaryWarp = valueNoise2(x, z, 42, 0xa341316c) * 0.13
     + valueNoise2(x, z, 21, 0xc8013ea4) * 0.055;
-  const envelope = 1 - smoothstep(0.61, 1.04, radial + boundaryWarp);
+  const radialWarped = radial + boundaryWarp;
+  const envelope = 1 - smoothstep(0.61, TISSUE_ENVELOPE_EDGE, radialWarped);
   const core = Math.max(0, 1 - radial / 0.52);
   const broad2 = broad * broad;
   const body = 0.015
@@ -134,7 +154,7 @@ function tissueField(x: number, z: number): TissueField {
     + core * 0.10
     - cavity * 0.68;
 
-  return { density: clamp01(envelope * body), ridge, qx, qz };
+  return { density: clamp01(envelope * body), ridge, qx, qz, body, radialWarped };
 }
 
 /**
@@ -226,12 +246,19 @@ export function helixSeedF64(id: number | bigint): [number, number, number] {
  * This is a distribution, never a location: it carries no id, no time, and no
  * universe seed, so it says where an unresolved Cell would be, never where a
  * particular one is. It deliberately omits the {@link HALO_FRACTION}
- * outliers, which scale `x, z` outward past the ellipse — a consumer of this
- * law stops inside the drawn rim rather than extending it.
+ * outliers, which scatter individual drawn Cells outward past the ellipse:
+ * that is a per-Cell jitter, and this law states a population.
  */
 export interface TissueSample {
-  /** Areal density in `[0, 1]` — the same value the sampler thresholds. */
+  /** Areal density in `[0, 1]` under the requested envelope edge. At the
+   *  default edge this is exactly what the sampler thresholds. */
   density: number;
+  /** Areal density in `[0, 1]` under {@link TISSUE_ENVELOPE_EDGE} — the part
+   *  of the tissue cknerv actually places Cells in, whatever edge the caller
+   *  asked for. A consumer drawing the population OUTSIDE the resolved rim
+   *  reads this to know where the addressable Cells already are, and to stay
+   *  off them. */
+  resolvedCoverage: number;
   /** Centre of the local vertical fold, in galaxy-local y. */
   foldY: number;
   /** Gaussian half-thickness of the tissue at this point. */
@@ -239,15 +266,42 @@ export interface TissueSample {
 }
 
 /** Evaluate the shared positional law at one `(x, z)`. See
- *  {@link TissueSample}. Pure, static, and identical across universes. */
-export function tissueSampleAt(x: number, z: number): TissueSample {
+ *  {@link TissueSample}. Pure, static, and identical across universes.
+ *
+ *  `outerEdge` reopens the sampling envelope of §4.2 — the SAME noise, closed
+ *  further out, never a scaled copy of it. A copy at `k×` produces features
+ *  that do not line up with the ones already on screen, and lands as
+ *  arbitrary lobes stuck onto the galaxy rather than as the organism carrying
+ *  on. Every other term — warp, body, fold, thickness — is evaluated at the
+ *  true `(x, z)` and is therefore continuous across the resolved rim.
+ *
+ *  @param outerEdge envelope edge in units of the {@link FIELD_HALF_X} /
+ *                   {@link FIELD_HALF_Z} ellipse. Defaults to
+ *                   {@link TISSUE_ENVELOPE_EDGE}, which reproduces the
+ *                   sampler exactly. */
+export function tissueSampleAt(
+  x: number,
+  z: number,
+  outerEdge: number = TISSUE_ENVELOPE_EDGE,
+): TissueSample {
   const field = tissueField(x, z);
   const verticalMass = 0.5
     + 0.5 * valueNoise2(field.qx, field.qz, 23, 0x13198a2e);
   const thickness = 2.1 + verticalMass * 3.4 + field.ridge * 1.8;
   const foldY = valueNoise2(field.qx, field.qz, 31, 0x03707344) * 4.6
     + valueNoise2(field.qx, field.qz, 13, 0xa4093822) * 1.7;
-  return { density: field.density, foldY, thickness };
+  // At the default edge this is the same expression, in the same order, on
+  // the same two numbers the field already produced — so `density` is
+  // `field.density` to the bit, and no caller has to special-case it.
+  const density = clamp01(
+    (1 - smoothstep(0.61, outerEdge, field.radialWarped)) * field.body,
+  );
+  return {
+    density,
+    resolvedCoverage: field.density,
+    foldY,
+    thickness,
+  };
 }
 
 /** f32 wire-boundary version of {@link helixSeedF64}. */
