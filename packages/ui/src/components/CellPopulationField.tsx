@@ -2,10 +2,11 @@ import { useEffect, useMemo, useRef } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 
-import { FIELD_HALF_X, FIELD_HALF_Z } from '../helix';
 import {
   advanceTissueFieldBake,
   createTissueFieldBake,
+  TISSUE_BAKE_HALF_X,
+  TISSUE_BAKE_HALF_Z,
   type TissueFieldBakeState,
 } from '../geometry/tissueFieldBake';
 import {
@@ -59,14 +60,25 @@ export interface CellPopulationFieldProps {
   reducedMotion?: boolean;
 }
 
-/** Local-frame slab half-extents. `helix` is the sole authority on the
- *  footprint: the medium is bounded by the same envelope and deliberately
- *  omits the halo outliers, so it under-claims at the rim rather than
- *  extending it. */
+/** Local-frame slab half-extents — the HALO's volume, not the Cells'.
+ *
+ *  x and z come from the bake, because the march reads the texture by a plain
+ *  linear remap of position and the two have to describe the same rectangle or
+ *  every sample lands somewhere else in the law. They are
+ *  `POPULATION_FIELD_OUTER_EDGE` times `FIELD_HALF_X/Z`, which are themselves
+ *  untouched: the addressable Cells end exactly where they always did, and the
+ *  layers that respect that rim — delivery landings, the contact front's
+ *  extinction band — are not affected by anything here.
+ *
+ *  y did not grow with them. The fold and the thickness are the same noise at
+ *  the same point, so the medium's vertical extent is unchanged in absolute
+ *  terms — which over a footprint 2.2 times wider is a disk around a bulge,
+ *  for free, out of the law rather than out of a second vertical profile
+ *  invented for the halo. */
 const SLAB_HALF = new THREE.Vector3(
-  FIELD_HALF_X,
+  TISSUE_BAKE_HALF_X,
   POPULATION_FIELD_SLAB_HALF_Y,
-  FIELD_HALF_Z,
+  TISSUE_BAKE_HALF_Z,
 );
 
 /** The medium is an aggregate. It is not a Cell, it has no id, and it must
@@ -79,9 +91,15 @@ const SCRATCH_NDC = new THREE.Vector3();
 const SCRATCH_CLEAR = new THREE.Color();
 
 /**
- * The unresolved population, drawn as a swarm of sub-pixel specks inside the
- * same tissue envelope the Cells occupy — the same light as the Cells,
- * separated from them by resolution alone.
+ * The unresolved population, drawn as a swarm of sub-pixel specks in a halo
+ * AROUND the addressable Cells — the same light as the Cells, the same law,
+ * separated from them by resolution and by radius alone.
+ *
+ * The two kinds do not share screen space. Every overlay attempt cost the
+ * Cells their sharpness at any strength that made it visible, so the medium's
+ * envelope was reopened outward instead and its own march subtracts whatever
+ * the Cells have already individuated. Over the addressable stage this layer
+ * contributes exactly zero — not "nearly", and not by restraint.
  *
  * Mounts inside the rotating Cell group, BELOW the Cell bodies. It reads a
  * pure model and a baked positional law; it never reads an enrichment source,

@@ -8,17 +8,23 @@ import {
   POPULATION_FIELD_CONTINUUM_FRACTION,
   POPULATION_FIELD_EMISSION_PEAK,
   POPULATION_FIELD_MAX_BLOOMS,
+  POPULATION_FIELD_RESOLVED_KNEE,
   POPULATION_FIELD_SLAB_HALF_Y,
   POPULATION_FIELD_SPECK_FLOOR,
   POPULATION_FIELD_SPECK_GAIN,
   POPULATION_FIELD_SPECK_PX,
   populationSwarmEmission,
+  populationUnresolvedDepth,
 } from '../../src/materials/populationFieldMaterial';
 import {
+  POPULATION_FIELD_OUTER_EDGE,
   TISSUE_BAKE_FOLD_Y_RANGE,
+  TISSUE_BAKE_HALF_X,
+  TISSUE_BAKE_HALF_Z,
   TISSUE_BAKE_THICKNESS_MAX,
   TISSUE_BAKE_THICKNESS_MIN,
 } from '../../src/geometry/tissueFieldBake';
+import { FIELD_HALF_X, FIELD_HALF_Z } from '../../src/helix';
 import { DEATH_DURATION_MS } from '../../src/geometry/cellPositions';
 import { CELL_GALAXY_PALETTE } from '../../src/visualPalette';
 
@@ -55,13 +61,28 @@ describe('makePopulationDensityMaterial', () => {
     // All three parts have to be in the shader, or the medium stops being the
     // same law the Cells are placed by.
     expect(material.fragmentShader).toContain('exp(-0.5 * dy * dy)');
-    expect(material.fragmentShader).toContain('1.0 - exp(-tau');
+    expect(material.fragmentShader)
+      .toContain('1.0 - exp(-unresolved * uOpticalDepth)');
     // The Gaussian's normalization is the part that is easy to drop and hard
     // to see: without it a column integrates to density * thickness, so the
     // medium overstates itself by up to 3.5x exactly where the tissue is
     // thickest — which is also where its own ridge term makes it densest.
     expect(material.fragmentShader)
-      .toContain('(density / safeThickness) * exp(-0.5 * dy * dy)');
+      .toContain('exp(-0.5 * dy * dy) / safeThickness * stepLen');
+    expect(material.fragmentShader).toContain('tau += density * weight;');
+  });
+
+  it('accumulates both depths through one set of samples', () => {
+    const material = makePopulationDensityMaterial();
+
+    // Two separate marches would put their steps in different places under the
+    // dither, and the disagreement would show up as noise along exactly the
+    // boundary this quantity exists to draw. One weight, two accumulations.
+    expect(material.fragmentShader).toContain('tauResolved += resolved * weight;');
+    expect(material.fragmentShader).toContain('float resolved = law.a;');
+    // One fetch carries all four channels; a second sample of the same texture
+    // would be pure cost.
+    expect(material.fragmentShader).toContain('vec4 law = texture2D(uField, uv);');
   });
 
   it('stays within the eight-step march budget', () => {
@@ -88,6 +109,83 @@ describe('makePopulationDensityMaterial', () => {
     const material = makePopulationDensityMaterial();
     expect(material.uniforms.uOpticalDepth.value).toBe(0);
     expect(material.uniforms.uField.value).toBeNull();
+  });
+});
+
+describe('rule 9a: the halo cannot reach the addressable Cells', () => {
+  it('is exactly zero at and above the knee, not merely low', () => {
+    // The invariant the whole relocation rests on. Three overlays were judged
+    // live and every one that was visible at all cost the Cells their
+    // sharpness, so the guarantee cannot be "faint" — it has to be a zero, and
+    // it has to be structural rather than a value someone chose carefully.
+    for (const tau of [0.001, 0.05, 0.4, 1, 3, 12, 400]) {
+      for (const share of [
+        POPULATION_FIELD_RESOLVED_KNEE,
+        POPULATION_FIELD_RESOLVED_KNEE + 1e-6,
+        0.5,
+        0.9,
+        1,
+      ]) {
+        expect(populationUnresolvedDepth(tau, tau * share)).toBe(0);
+      }
+    }
+  });
+
+  it('no gain, density, or brightness can put light back over the Cells', () => {
+    // §6.1 test 1: the resolved core is pixel-identical to a build with the
+    // layer off. The zero happens BEFORE the exponential, so the whole chain
+    // downstream — optical depth, the swarm mask, the continuum, the emission
+    // peak — multiplies a zero, at every draw of the stochastic mask and at
+    // every scale anyone might later reach for.
+    for (const tau of [0.02, 0.3, 2, 40]) {
+      for (const share of [POPULATION_FIELD_RESOLVED_KNEE, 0.4, 1]) {
+        const unresolved = populationUnresolvedDepth(tau, tau * share);
+        for (const opticalDepth of [0.01, 0.58 * 0.84, 5, 1000]) {
+          const litFraction = 1 - Math.exp(-unresolved * opticalDepth);
+          expect(litFraction).toBe(0);
+          for (const pick of [0, 0.25, 0.5, 0.75, 0.999]) {
+            for (const spread of [0, 0.5, 1]) {
+              expect(populationSwarmEmission(litFraction, pick, spread)).toBe(0);
+            }
+          }
+        }
+      }
+    }
+  });
+
+  it('still states the population wherever it has one to state', () => {
+    // A suppression that swallowed the layer would pass every test above and
+    // ship nothing. Below the knee the halo must survive, and it must grow as
+    // the individuated share falls.
+    const tau = 1.4;
+    let previous = -1;
+    for (const share of [POPULATION_FIELD_RESOLVED_KNEE * 0.75, 0.05, 0.01, 0]) {
+      const unresolved = populationUnresolvedDepth(tau, tau * share);
+      expect(unresolved).toBeGreaterThan(previous);
+      previous = unresolved;
+    }
+    // With nothing individuated under the ray, nothing is taken away.
+    expect(populationUnresolvedDepth(tau, 0)).toBe(tau);
+  });
+
+  it('subtracts population, before the exponential and not after', () => {
+    const shader = makePopulationDensityMaterial().fragmentShader;
+
+    // Order is the test. Scaling the LIGHT after saturation leaves a dark ring
+    // between the Cells and the population around them, because 1 - exp(-tau)
+    // is concave; subtracting the depth first lets the halo reach the body it
+    // is supposed to continue. It is also the only form in which "exactly
+    // zero" survives an arbitrary optical depth.
+    expect(shader)
+      .toContain('float unresolved = max(tau - tauResolved / max(uResolvedKnee');
+    expect(shader.indexOf('float unresolved ='))
+      .toBeLessThan(shader.indexOf('1.0 - exp(-unresolved'));
+    expect(makePopulationDensityMaterial().uniforms.uResolvedKnee.value)
+      .toBe(POPULATION_FIELD_RESOLVED_KNEE);
+    // A knee at or above 1 would under-subtract into "small but nonzero",
+    // which is the state three overlays already failed in.
+    expect(POPULATION_FIELD_RESOLVED_KNEE).toBeGreaterThan(0);
+    expect(POPULATION_FIELD_RESOLVED_KNEE).toBeLessThan(1);
   });
 });
 
@@ -305,6 +403,34 @@ describe('makePopulationCompositeMaterial', () => {
 });
 
 describe('the medium against its neighbours', () => {
+  it('grows outward from a rim that does not move', () => {
+    // The rejected alternative was shrinking the Cell field to make room. That
+    // would rescale FIELD_HALF_X/Z, which delivery landings and the contact
+    // front's extinction band derive from, and every constant tuned against
+    // the old scale with them.
+    expect(FIELD_HALF_X).toBe(60);
+    expect(FIELD_HALF_Z).toBe(54);
+    expect(POPULATION_FIELD_OUTER_EDGE).toBeGreaterThan(1);
+    expect(TISSUE_BAKE_HALF_X).toBeGreaterThan(FIELD_HALF_X);
+    expect(TISSUE_BAKE_HALF_Z).toBeGreaterThan(FIELD_HALF_Z);
+    // Same factor on both axes: the halo is this ellipse continued, not a
+    // differently-proportioned object placed around it.
+    expect(TISSUE_BAKE_HALF_X / FIELD_HALF_X)
+      .toBeCloseTo(TISSUE_BAKE_HALF_Z / FIELD_HALF_Z, 12);
+  });
+
+  it('keeps the halo flatter than the core, out of the law', () => {
+    // §6.1 test 4 wants a bulge with a disk around it. The fold and the
+    // thickness are the same noise at the same point, so the medium's vertical
+    // extent is unchanged in absolute terms — which over a footprint 2.2x
+    // wider IS flatter, by exactly that factor, with no second vertical
+    // profile invented for the outer region.
+    const coreAspect = POPULATION_FIELD_SLAB_HALF_Y / FIELD_HALF_X;
+    const haloAspect = POPULATION_FIELD_SLAB_HALF_Y / TISSUE_BAKE_HALF_X;
+    expect(haloAspect).toBeLessThan(coreAspect);
+    expect(coreAspect / haloAspect).toBeCloseTo(POPULATION_FIELD_OUTER_EDGE, 12);
+  });
+
   it('is bounded by the analytic extent of the fold, not by taste', () => {
     // foldY cannot leave its range and thickness cannot exceed its maximum,
     // so three sigma above the highest fold is where the volume stops

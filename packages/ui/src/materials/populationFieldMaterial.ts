@@ -1,4 +1,20 @@
-// The unresolved population, as a swarm.
+// The unresolved population, as a swarm — AROUND the addressable Cells, never
+// over them.
+//
+// The layer was judged live three times as an overlay. Faint: invisible.
+// Bright: white fog. An emissive swarm: still overlaid. Every version that was
+// visible at all cost the Cells their sharpness, which is structural rather
+// than a tuning failure — a layer sharing screen space with the thing it
+// contextualizes always taxes it. So the two kinds stopped sharing screen
+// space. Radius carries SCOPE: the addressable Cells are the bright central
+// bulge, the unresolved population is the larger body around them, and the
+// boundary between them IS the render budget made visible. Detailed inside,
+// schematic outside — the surveyed-map convention, and no reader takes the
+// unsurveyed land to be different land.
+//
+// Radius is NOT a property of a Cell. Nothing here says the unresolved Cells
+// are peripheral on chain. The core is where the budget went; the halo is the
+// remainder.
 //
 // Two passes, and the split is forced by what the two halves are made of.
 //
@@ -6,9 +22,10 @@
 //     law through the tissue slab and writes one number per texel: what
 //     FRACTION of this pixel's screen cell the unresolved population lights
 //     up. That term is low-frequency by construction — it is a warped
-//     multi-octave field over a 60x54 ellipse, with no detail below several
-//     world units — so quarter resolution is lossless for it and a quarter of
-//     the marching cost.
+//     multi-octave field over an ellipse 2.2 times the resolved rim, with no
+//     detail below several world units — so quarter resolution is lossless for
+//     it and a quarter of the marching cost. The march also subtracts the
+//     already-individuated share, which is what makes the middle exactly zero.
 //
 //  2. COMPOSITE — full resolution. Turns that fraction into the thing itself:
 //     a stochastic population of screen-space specks, two DEVICE pixels wide,
@@ -50,6 +67,63 @@ import {
 } from '../geometry/tissueFieldBake';
 
 /**
+ * The resolved share at which the halo is fully suppressed — rule 9a.
+ *
+ * The march accumulates two optical depths through one set of samples: `tau`
+ * for the whole body and `tauResolved` for the part already drawn as
+ * addressable Cells. The halo then states the DIFFERENCE,
+ * `max(0, tau - tauResolved / KNEE)`, so a pixel whose population is more than
+ * this share individuated contributes exactly zero. Not low — zero, and zero
+ * before the exponential, so no gain, no swarm density, and no future
+ * brightness knob can put a photon back over the Cells. That is the whole
+ * reason the layer moved outside the rim, and it has to be arithmetic rather
+ * than restraint.
+ *
+ * Derived, not copied. Against 12,000 real `helixSeedF64` positions projected
+ * from the production camera, with the resolved share measured as
+ * `tauResolved / tau` per quarter-resolution texel:
+ *
+ * | knee | Cells inside the exactly-zero region | densest lit patch |
+ * |-----:|-------------------------------------:|------------------:|
+ * | 0.05 |                               98.5 % |     19 % of peak |
+ * | 0.12 |                               96.8 % |     25 % of peak |
+ * | 0.30 |                               90.4 % |     44 % of peak |
+ *
+ * 0.12 is the largest value at which the densest patch of Cells receiving ANY
+ * halo light still sits at a quarter of peak Cell surface density — the thin
+ * rim, never a crowd. Below it the protection barely improves (the last
+ * ~0.9 % is the `HALO_FRACTION` outliers, which the law deliberately scatters
+ * past the ellipse and no knee can recover) while the halo is pushed further
+ * off the body it is supposed to continue.
+ */
+export const POPULATION_FIELD_RESOLVED_KNEE = 0.12;
+
+/**
+ * Unresolved optical depth: the population under a ray, minus the part of it
+ * already drawn. The shader evaluates exactly this expression.
+ *
+ * The subtraction is on OPTICAL DEPTH and not on emission, and the difference
+ * is visible. `1 - exp(-tau)` is concave, so scaling the light after
+ * saturation makes the halo creep up slowly from the boundary and leaves a
+ * dark seam between the Cells and the population around them; subtracting the
+ * population first lets the halo reach the body it belongs to. It is also the
+ * honest form: what the resolved Cells remove from the halo is not brightness,
+ * it is the Cells themselves.
+ *
+ * At `KNEE = 1` this would be the exact difference of the two envelopes. The
+ * knee over-subtracts, which is what turns "small" into "zero".
+ *
+ * @param tau         optical depth of the whole body along the ray
+ * @param tauResolved optical depth of the individuated share of it
+ */
+export function populationUnresolvedDepth(
+  tau: number,
+  tauResolved: number,
+): number {
+  return Math.max(0, tau - tauResolved / POPULATION_FIELD_RESOLVED_KNEE);
+}
+
+/**
  * Half-height of the marched slab.
  *
  * The volume is `density(x, z) * exp(-½((y - foldY) / thickness)²)`, so it has
@@ -58,6 +132,23 @@ import {
  * the highest fold is 6.3 + 3 × 7.3 ≈ 28. Past that the medium is contributing
  * less than a thousandth of its peak and the march is spending steps on
  * nothing.
+ *
+ * **This did not grow with the halo, and that is deliberate.** The fold and
+ * the thickness are the same noise at the same `(x, z)` — only the boundary
+ * moved — so the analytic bound above is unchanged in absolute terms. Which
+ * means the halo is the same thickness as the core over a footprint 2.2 times
+ * wider, and therefore relatively FLATTER by exactly that factor: a bulge with
+ * a disk around it, straight out of the geometry, with no second vertical law
+ * invented for the outer region. Giving the halo a profile of its own would be
+ * asserting a population geography that the law does not contain.
+ *
+ * It is also what keeps the march honest. The marched span is
+ * `min` over the three axes, and from any elevated camera the y band is what
+ * binds it — the production camera's central ray crosses 140 units of slab
+ * whether the footprint is the core's or the halo's. Measured against a
+ * 256-step reference, the eight-step march's relative error in the dense band
+ * is 13.5 % over the core domain and 13.2 % over the halo domain: widening the
+ * footprint costs the integration nothing.
  */
 export const POPULATION_FIELD_SLAB_HALF_Y = 28;
 
@@ -75,22 +166,26 @@ export const POPULATION_FIELD_SLAB_HALF_Y = 28;
  * unchanged, because both readings are answering "how much of the swarm is
  * lit".
  *
- * The acceptance test this is calibrated against (§6.1 test 1): **inside the
- * envelope, the space between Cells must not be empty.** Black between Cells
- * reads as "nothing there", and no amount of correctness in the density term
- * can make an invisible layer state anything.
+ * The acceptance test this is calibrated against (§6.1 test 4): **the core
+ * must read as the bulge of one body, not as a galaxy with a fringe.** The
+ * halo has to surround and continue the Cells, sharing their corridors and
+ * cavities; a layer too faint to do that contributes nothing at all, however
+ * exact its density term.
  *
  * The first calibration failed it. At 0.21 and the measured mainnet gain of
  * 0.58, ordinary mid-field tissue (areal density ≈ 0.23) reached a lit
  * fraction of 0.16 and the layer averaged 0.12 — one speck in eight, which
- * beside a bright Cell field in the same envelope is indistinguishable from
- * absence.
+ * beside a bright Cell field is indistinguishable from absence.
  *
  * At 0.84 the same mid-field lights about half its cells and the densest
- * tissue about nine in ten, so the space between Cells is a crowd rather than
- * a void, and the cavities and corridors the field has always contained
- * become legible as gaps in that crowd. Re-derived against the swarm and kept:
- * this is also the value the accepted reference render was made at.
+ * tissue about nine in ten, so the population around the Cells is a crowd
+ * rather than a void, and the cavities and corridors the field has always
+ * contained become legible as gaps in that crowd. Re-derived against the swarm
+ * and kept: this is also the value the accepted reference render was made at.
+ *
+ * Raising it can no longer cost the Cells anything — the density term is
+ * exactly zero over them before this number is ever applied — so this is a
+ * free live-tuning lever in a way it was not while the layer was an overlay.
  *
  * This is the live-tuning lever for the population's presence. Nothing else
  * here should be reached for first — `gain` is calibration and the density
@@ -290,6 +385,7 @@ export interface PopulationDensityUniforms {
   uLocalCamera: { value: THREE.Vector3 };
   uSteps: { value: number };
   uOpticalDepth: { value: number };
+  uResolvedKnee: { value: number };
   uFoldRange: { value: number };
   uThicknessMin: { value: number };
   uThicknessSpan: { value: number };
@@ -299,6 +395,10 @@ export interface PopulationDensityUniforms {
  * Pass 1. Renders the slab's bounding box (never a fullscreen quad — the
  * medium occupies a bounded volume and paying for the rest of the screen
  * would be paying for nothing) and writes the lit fraction to R.
+ *
+ * The slab is the HALO's volume now, so this pass covers a footprint 2.2 times
+ * the resolved rim — and writes exactly zero across the middle of it, where
+ * the addressable Cells are. The two regions tile the space; they never stack.
  */
 export function makePopulationDensityMaterial(): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
@@ -308,6 +408,7 @@ export function makePopulationDensityMaterial(): THREE.ShaderMaterial {
       uLocalCamera: { value: new THREE.Vector3() },
       uSteps: { value: 8 },
       uOpticalDepth: { value: 0 },
+      uResolvedKnee: { value: POPULATION_FIELD_RESOLVED_KNEE },
       uFoldRange: { value: TISSUE_BAKE_FOLD_Y_RANGE },
       uThicknessMin: { value: TISSUE_BAKE_THICKNESS_MIN },
       uThicknessSpan: {
@@ -335,6 +436,7 @@ export function makePopulationDensityMaterial(): THREE.ShaderMaterial {
       uniform vec3  uLocalCamera;
       uniform float uSteps;
       uniform float uOpticalDepth;
+      uniform float uResolvedKnee;
       uniform float uFoldRange;
       uniform float uThicknessMin;
       uniform float uThicknessSpan;
@@ -357,14 +459,17 @@ export function makePopulationDensityMaterial(): THREE.ShaderMaterial {
         float offset = hash21(gl_FragCoord.xy) * stepLen;
 
         float tau = 0.0;
+        float tauResolved = 0.0;
         for (int i = 0; i < 16; i++) {
           if (float(i) >= steps) break;
           float t = tEnter + offset + float(i) * stepLen;
           vec3 p = ro + rd * t;
-          // One fetch carries the whole law: density, fold centre, thickness.
+          // One fetch carries the whole law: the body's density, its fold
+          // centre, its thickness, and the share of it already individuated.
           vec2 uv = p.xz / (2.0 * uHalf.xz) + 0.5;
-          vec3 law = texture2D(uField, uv).rgb;
+          vec4 law = texture2D(uField, uv);
           float density = law.r;
+          float resolved = law.a;
           float foldY = law.g * (2.0 * uFoldRange) - uFoldRange;
           float thickness = law.b * uThicknessSpan + uThicknessMin;
           float safeThickness = max(thickness, 1e-3);
@@ -378,14 +483,38 @@ export function makePopulationDensityMaterial(): THREE.ShaderMaterial {
           // the same ridge term as the density, so without this the medium
           // overstates its densest regions by up to 3.5x — and the shape it
           // showed would no longer be the law the Cells are placed by.
-          tau += (density / safeThickness) * exp(-0.5 * dy * dy) * stepLen;
+          float weight = exp(-0.5 * dy * dy) / safeThickness * stepLen;
+          tau += density * weight;
+          // The SAME sample, the same weight. Two marches would disagree
+          // wherever the dither put their steps in different places, and the
+          // disagreement would show up as noise exactly along the boundary
+          // this quantity exists to draw.
+          tauResolved += resolved * weight;
         }
+
+        // Rule 9a, as arithmetic. The halo states the population MINUS the
+        // part of it already on screen as addressable Cells: a subtraction of
+        // optical depths, done before the exponential, so a pixel whose
+        // population is more than uResolvedKnee individuated ends at exactly
+        // zero and no gain, swarm density, or later brightness knob can put a
+        // photon back over the Cells. Three overlays failed by taxing the
+        // Cells' sharpness; this is the guarantee that replaces them.
+        //
+        // Subtracting depth rather than emission is also what closes the seam.
+        // 1 - exp(-tau) is concave, so scaling the LIGHT after saturation lets
+        // the halo creep up slowly and leaves a dark ring around the body it
+        // is supposed to continue.
+        //
+        // No epsilon: the resolved term is the same body under a tighter
+        // envelope, so it can never exceed the density term, and where there
+        // is no tissue both are zero together.
+        float unresolved = max(tau - tauResolved / max(uResolvedKnee, 1e-4), 0.0);
 
         // The population reaches the screen through the same law it
         // accumulates by. This number is not an opacity — the composite reads
         // it as the FRACTION of screen cells the unresolved population lights
         // up, and nothing downstream ever treats it as an alpha.
-        float litFraction = 1.0 - exp(-tau * uOpticalDepth);
+        float litFraction = 1.0 - exp(-unresolved * uOpticalDepth);
         gl_FragColor = vec4(litFraction, 0.0, 0.0, 1.0);
       }
     `,
@@ -514,6 +643,16 @@ export function makePopulationCompositeMaterial(): THREE.ShaderMaterial {
         // adding a glow of their own: a transition is a crowd thickening
         // where a Cell arrived or left, which keeps it inside the swarm's
         // language instead of laying a second substance over it.
+        //
+        // ⚠️ Moving the medium outside the resolved rim took most of these
+        // with it. A bloom is gated on the medium existing under the pixel,
+        // and the medium is now exactly zero wherever staged Cells are dense —
+        // which is where stage entries and exits happen. Only transitions out
+        // at the rim still have anything to bloom into. The §8 boundary is
+        // therefore unfinished under the new arrangement, not merely quieter,
+        // and it needs a decision of its own: either the transition mark stops
+        // being made OF the medium, or the two kinds get a shared band to meet
+        // in. Left exactly as it was rather than silently redesigned here.
         float bloom = 0.0;
         for (int i = 0; i < ${POPULATION_FIELD_MAX_BLOOMS}; i++) {
           if (i >= uBloomCount) break;

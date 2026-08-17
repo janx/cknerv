@@ -11,8 +11,11 @@ import {
   advanceTissueFieldBake,
   bakeTissueField,
   createTissueFieldBake,
+  POPULATION_FIELD_OUTER_EDGE,
   TISSUE_BAKE_CHANNELS,
   TISSUE_BAKE_FOLD_Y_RANGE,
+  TISSUE_BAKE_HALF_X,
+  TISSUE_BAKE_HALF_Z,
   TISSUE_BAKE_THICKNESS_MAX,
   TISSUE_BAKE_THICKNESS_MIN,
   tissueBakeAxisAt,
@@ -200,9 +203,9 @@ describe('tissueFieldBake', () => {
     const thicknessSpan = TISSUE_BAKE_THICKNESS_MAX - TISSUE_BAKE_THICKNESS_MIN;
 
     for (const [ix, iz] of [[0, 0], [12, 7], [23, 23], [5, 19]]) {
-      const x = tissueBakeAxisAt(ix, resolution, FIELD_HALF_X);
-      const z = tissueBakeAxisAt(iz, resolution, FIELD_HALF_Z);
-      const expected = tissueSampleAt(x, z);
+      const x = tissueBakeAxisAt(ix, resolution, TISSUE_BAKE_HALF_X);
+      const z = tissueBakeAxisAt(iz, resolution, TISSUE_BAKE_HALF_Z);
+      const expected = tissueSampleAt(x, z, POPULATION_FIELD_OUTER_EDGE);
       const offset = (iz * resolution + ix) * TISSUE_BAKE_CHANNELS;
 
       const density = fromHalfFloat(state.data[offset]);
@@ -210,39 +213,93 @@ describe('tissueFieldBake', () => {
         - TISSUE_BAKE_FOLD_Y_RANGE;
       const thickness = fromHalfFloat(state.data[offset + 2]) * thicknessSpan
         + TISSUE_BAKE_THICKNESS_MIN;
+      const resolved = fromHalfFloat(state.data[offset + 3]);
 
       expect(density).toBeCloseTo(expected.density, 3);
       expect(foldY).toBeCloseTo(expected.foldY, 2);
       expect(thickness).toBeCloseTo(expected.thickness, 2);
-      expect(fromHalfFloat(state.data[offset + 3])).toBe(1);
+      // A is no longer a constant filler. It carries the share of this texel's
+      // body that cknerv has already drawn as addressable Cells, and the march
+      // subtracts it — so a bake that put anything else here would put the
+      // halo back on top of the Cells.
+      expect(resolved).toBeCloseTo(expected.resolvedCoverage, 3);
+      expect(resolved).toBeLessThanOrEqual(density + 1e-3);
     }
+  });
+
+  it('reaches past the resolved rim, and carries the rim inside itself', () => {
+    // The two facts the relocation rests on, read straight off the texture:
+    // the bake covers the HALO, and it still knows where the addressable Cells
+    // stop. Without the first there is no layer; without the second it would
+    // have nothing to subtract and would be an overlay again.
+    const resolution = 64;
+    const state = bakeTissueField(resolution);
+    let pastRim = 0;
+    let resolvedTexels = 0;
+
+    for (let iz = 0; iz < resolution; iz += 1) {
+      const z = tissueBakeAxisAt(iz, resolution, TISSUE_BAKE_HALF_Z);
+      for (let ix = 0; ix < resolution; ix += 1) {
+        const x = tissueBakeAxisAt(ix, resolution, TISSUE_BAKE_HALF_X);
+        const offset = (iz * resolution + ix) * TISSUE_BAKE_CHANNELS;
+        const density = fromHalfFloat(state.data[offset]);
+        const resolved = fromHalfFloat(state.data[offset + 3]);
+
+        // Rule 12 in the texture itself: a body that never closed would put
+        // population on the whole screen.
+        expect(resolved).toBeLessThanOrEqual(density + 1e-3);
+        const radial = Math.hypot(x / FIELD_HALF_X, z / FIELD_HALF_Z);
+        if (radial > 1.3) {
+          if (density > 0.05) pastRim += 1;
+          // Nothing cknerv drew is out here, so nothing may be subtracted.
+          expect(resolved).toBe(0);
+        }
+        if (resolved > 0.05) resolvedTexels += 1;
+      }
+    }
+
+    expect(pastRim).toBeGreaterThan(200);
+    expect(resolvedTexels).toBeGreaterThan(100);
   });
 
   it('maps texel centres onto the uv the sampling shader will use', () => {
     const resolution = 16;
     for (const index of [0, 1, 8, 15]) {
-      const x = tissueBakeAxisAt(index, resolution, FIELD_HALF_X);
+      const x = tissueBakeAxisAt(index, resolution, TISSUE_BAKE_HALF_X);
       // The shader's lookup is a plain linear remap of world position; the
       // centre of texel `index` must land exactly on that texel's uv centre,
       // or every sample is a half-texel off the law it claims to evaluate.
-      const uv = x / (2 * FIELD_HALF_X) + 0.5;
+      // The half-extent here is the SLAB's, which is the halo's — the march
+      // divides by its own uHalf, so the two have to be the same rectangle.
+      const uv = x / (2 * TISSUE_BAKE_HALF_X) + 0.5;
       expect(uv * resolution).toBeCloseTo(index + 0.5, 10);
     }
   });
 
-  it('covers the footprint helix declares, and no more', () => {
+  it('covers the halo footprint, grown outward from an unmoved rim', () => {
+    // FIELD_HALF_X/Z keep their exact values and their exact meaning: where the
+    // addressable Cells end, and what delivery landings and the contact front's
+    // extinction band derive from. The bake grows OUTWARD from them. Shrinking
+    // the Cell field to make room would have dragged in every constant tuned
+    // against the old scale, which is a bug class this tree has paid for once.
+    expect(TISSUE_BAKE_HALF_X).toBe(FIELD_HALF_X * POPULATION_FIELD_OUTER_EDGE);
+    expect(TISSUE_BAKE_HALF_Z).toBe(FIELD_HALF_Z * POPULATION_FIELD_OUTER_EDGE);
+    expect(POPULATION_FIELD_OUTER_EDGE).toBeGreaterThan(1);
+    expect(FIELD_HALF_X).toBe(60);
+    expect(FIELD_HALF_Z).toBe(54);
+
     const resolution = 8;
-    expect(tissueBakeAxisAt(0, resolution, FIELD_HALF_X)).toBeGreaterThan(
-      -FIELD_HALF_X,
+    expect(tissueBakeAxisAt(0, resolution, TISSUE_BAKE_HALF_X)).toBeGreaterThan(
+      -TISSUE_BAKE_HALF_X,
     );
     expect(
-      tissueBakeAxisAt(resolution - 1, resolution, FIELD_HALF_X),
-    ).toBeLessThan(FIELD_HALF_X);
-    expect(tissueBakeAxisAt(0, resolution, FIELD_HALF_Z)).toBeGreaterThan(
-      -FIELD_HALF_Z,
+      tissueBakeAxisAt(resolution - 1, resolution, TISSUE_BAKE_HALF_X),
+    ).toBeLessThan(TISSUE_BAKE_HALF_X);
+    expect(tissueBakeAxisAt(0, resolution, TISSUE_BAKE_HALF_Z)).toBeGreaterThan(
+      -TISSUE_BAKE_HALF_Z,
     );
     expect(
-      tissueBakeAxisAt(resolution - 1, resolution, FIELD_HALF_Z),
-    ).toBeLessThan(FIELD_HALF_Z);
+      tissueBakeAxisAt(resolution - 1, resolution, TISSUE_BAKE_HALF_Z),
+    ).toBeLessThan(TISSUE_BAKE_HALF_Z);
   });
 });
