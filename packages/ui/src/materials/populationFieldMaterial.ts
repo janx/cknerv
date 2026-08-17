@@ -67,36 +67,123 @@ import {
 } from '../geometry/tissueFieldBake';
 
 /**
- * The resolved share at which the halo is fully suppressed — rule 9a.
+ * The resolved share at and above which the halo is fully suppressed —
+ * rule 9a's upper threshold.
  *
  * The march accumulates two optical depths through one set of samples: `tau`
  * for the whole body and `tauResolved` for the part already drawn as
- * addressable Cells. The halo then states the DIFFERENCE,
- * `max(0, tau - tauResolved / KNEE)`, so a pixel whose population is more than
- * this share individuated contributes exactly zero. Not low — zero, and zero
- * before the exponential, so no gain, no swarm density, and no future
- * brightness knob can put a photon back over the Cells. That is the whole
- * reason the layer moved outside the rim, and it has to be arithmetic rather
- * than restraint.
+ * addressable Cells. The halo then states the difference as a fraction of the
+ * population rather than of the light: `share = tauResolved / tau`, and
+ * `tau * (1 - smoothstep(LOW, HIGH, share))`. At and above this threshold that
+ * is exactly zero — not low, and zero BEFORE the exponential, so no gain, no
+ * swarm density, and no future brightness knob can put a photon back over the
+ * Cells. That is the whole reason the layer moved outside the rim, and it has
+ * to be arithmetic rather than restraint.
+ *
+ * **This threshold is the old linear knee, and it is derived the same way.**
+ * A constant knee could not do the other half of the job: `tauResolved / 0.12`
+ * amplifies the resolved share 8.3x, so the halo only switched on once
+ * resolved density had fallen essentially to zero — past the last Cell — while
+ * the Cells had been thinning since ~0.7 of the rim. That left a band where
+ * NEITHER population was drawn, which is what read as a hard boundary.
+ * Splitting the one constant in two lets the protection and the crossfade be
+ * placed independently: this one says where the halo may begin, and
+ * {@link POPULATION_FIELD_SHARE_LOW} says where it reaches full strength.
  *
  * Derived, not copied. Against 12,000 real `helixSeedF64` positions projected
- * from the production camera, with the resolved share measured as
- * `tauResolved / tau` per quarter-resolution texel:
+ * from the production camera, with the share measured per quarter-resolution
+ * texel and the halo's own emission modelled from
+ * {@link populationSwarmEmission}:
  *
- * | knee | Cells inside the exactly-zero region | densest lit patch |
- * |-----:|-------------------------------------:|------------------:|
- * | 0.05 |                               98.5 % |     19 % of peak |
- * | 0.12 |                               96.8 % |     25 % of peak |
- * | 0.30 |                               90.4 % |     44 % of peak |
+ * | HIGH | Cells in the zero region | max lit fraction inside r <= 0.70 |
+ * |-----:|-------------------------:|----------------------------------:|
+ * | 0.12 (the old knee) |         96.8 % |                           0.000 |
+ * | 0.26 |                   91.8 % |                             0.000 |
+ * | **0.28** |               **91.1 %** |                     **0.000** |
+ * | 0.30 |                   90.4 % |                             0.020 |
+ * | 0.34 |                   88.5 % |                             0.109 |
+ * | 0.38 |                   87.0 % |                             0.198 |
  *
- * 0.12 is the largest value at which the densest patch of Cells receiving ANY
- * halo light still sits at a quarter of peak Cell surface density — the thin
- * rim, never a crowd. Below it the protection barely improves (the last
- * ~0.9 % is the `HALO_FRACTION` outliers, which the law deliberately scatters
- * past the ellipse and no knee can recover) while the halo is pushed further
- * off the body it is supposed to continue.
+ * 0.28 is the largest value at which the halo is still exactly zero everywhere
+ * inside `r <= 0.70` of the resolved ellipse — the Cell body's dense bulge,
+ * **including its own cavities**. That last clause is the whole measurement:
+ * the tissue is full of voids, and a ray that crosses one carries almost no
+ * resolved depth, so past this threshold the halo starts lighting up the holes
+ * INSIDE the core. A texel-density statistic cannot see that — the densest
+ * still-lit patch sits at 7 of 16 Cells per texel anywhere from 0.28 to 0.38 —
+ * and light in the core's cavities is precisely the "any layer sharing screen
+ * space with the addressable Cells" failure that three overlays already died
+ * of.
+ *
+ * Nothing is given up for that margin: the seam metric of §6.1 test 5 (the
+ * deepest trough of total luminance on a walk outward, against the shallower
+ * of the two shoulders) is 0.743 here and 0.744 at 0.30 — it has already
+ * reached its plateau. The shipped linear knee scores 0.607.
+ *
+ * **What is protected is the DENSE core, not every Cell.** The exactly-zero
+ * region is deliberately smaller than it was: 5.7 % of Cells leave it, all of
+ * them in the thinning rim, and the interleaving that produces is the only way
+ * the two regions can meet at all.
  */
-export const POPULATION_FIELD_RESOLVED_KNEE = 0.12;
+export const POPULATION_FIELD_SHARE_HIGH = 0.28;
+
+/**
+ * The resolved share at and below which the halo runs at full strength —
+ * rule 9a's lower threshold, and the far end of the crossfade.
+ *
+ * The measured share is not a local property of the fold plane: an elevated
+ * camera's ray keeps picking up resolved tissue well past its own footprint,
+ * so the share is still 0.11 at 1.06 of the ellipse and 0.026 at 1.14. This
+ * threshold therefore lands the crossfade's outer end at about 1.09 of the
+ * rim, making it 0.19 of the ellipse wide — comparable to the 0.25 over which
+ * the Cells themselves visibly thin, which is the point: the two ramps have to
+ * overlap or there is a band with nothing in it.
+ *
+ * It is a weak lever and was measured as one. Across 0.00 to 0.16 the seam
+ * metric moves from 0.733 to 0.743 — inside the noise — because everything it
+ * governs happens where the Cells are already gone. What it does change is how
+ * many Cells sit on a fully-lit halo: 3.3 % at 0.00, 4.6 % at 0.08, 5.9 % at
+ * 0.16. Low enough to keep that small, high enough that the halo actually
+ * reaches full strength inside its own envelope rather than approaching it
+ * asymptotically.
+ */
+export const POPULATION_FIELD_SHARE_LOW = 0.08;
+
+/**
+ * How much coarser the swarm's grain is at the inner edge of the crossfade,
+ * as a fraction of its normal screen scale — §5.2.
+ *
+ * Density alone cannot close the seam, because the discontinuity the eye sees
+ * there is one of KIND, not of amount: on one side large bright Cell sprites,
+ * on the other two-pixel dots, with the switch happening over a few pixels.
+ * Ramping the speck scale with the suppression puts the coarsest grain exactly
+ * where the halo meets the thinning Cells — just barely unresolvable, which is
+ * the honest state for matter at the edge of what the instrument can separate —
+ * and refines it outward, so apparent grain size varies continuously across
+ * the boundary instead of switching.
+ *
+ * The population statement survives it. `amount` is the fraction of screen
+ * CELLS that are lit, so scaling the cell up scales the lit AREA by exactly
+ * the same factor as the unlit area: bigger specks, proportionally fewer of
+ * them, same fraction of the screen lit and therefore the same count stated.
+ */
+export const POPULATION_FIELD_SEAM_COARSENING = 0.55;
+
+/** The share of the population under a ray that is already individuated, and
+ *  the suppression it earns. The shader evaluates exactly this curve through
+ *  GLSL's own `smoothstep`, which is the same cubic.
+ *
+ *  Driving it from the RATIO rather than from an absolute coverage is what
+ *  makes it stable: both depths ride the same dithered samples, so the dither
+ *  noise cancels in the quotient. */
+export function populationResolvedSuppression(share: number): number {
+  const t = Math.max(0, Math.min(
+    1,
+    (share - POPULATION_FIELD_SHARE_LOW)
+      / (POPULATION_FIELD_SHARE_HIGH - POPULATION_FIELD_SHARE_LOW),
+  ));
+  return t * t * (3 - 2 * t);
+}
 
 /**
  * Unresolved optical depth: the population under a ray, minus the part of it
@@ -110,8 +197,10 @@ export const POPULATION_FIELD_RESOLVED_KNEE = 0.12;
  * honest form: what the resolved Cells remove from the halo is not brightness,
  * it is the Cells themselves.
  *
- * At `KNEE = 1` this would be the exact difference of the two envelopes. The
- * knee over-subtracts, which is what turns "small" into "zero".
+ * Above {@link POPULATION_FIELD_SHARE_HIGH} the suppression is exactly 1 and
+ * this is exactly zero, at any optical depth. Below
+ * {@link POPULATION_FIELD_SHARE_LOW} it is exactly `tau`. In between it is a
+ * crossfade, and that band is the only place the two populations can meet.
  *
  * @param tau         optical depth of the whole body along the ray
  * @param tauResolved optical depth of the individuated share of it
@@ -120,7 +209,12 @@ export function populationUnresolvedDepth(
   tau: number,
   tauResolved: number,
 ): number {
-  return Math.max(0, tau - tauResolved / POPULATION_FIELD_RESOLVED_KNEE);
+  // The guard is for an empty ray, where both depths are zero together and the
+  // quotient would be 0/0. It is far below any depth that survives the
+  // composite's own floor, so it can never distort a share that matters:
+  // a `tau` under 1e-9 produces a lit fraction under 1e-9 as well.
+  const share = tauResolved / Math.max(tau, 1e-9);
+  return tau * (1 - populationResolvedSuppression(share));
 }
 
 /**
@@ -385,7 +479,8 @@ export interface PopulationDensityUniforms {
   uLocalCamera: { value: THREE.Vector3 };
   uSteps: { value: number };
   uOpticalDepth: { value: number };
-  uResolvedKnee: { value: number };
+  uShareLow: { value: number };
+  uShareHigh: { value: number };
   uFoldRange: { value: number };
   uThicknessMin: { value: number };
   uThicknessSpan: { value: number };
@@ -408,7 +503,8 @@ export function makePopulationDensityMaterial(): THREE.ShaderMaterial {
       uLocalCamera: { value: new THREE.Vector3() },
       uSteps: { value: 8 },
       uOpticalDepth: { value: 0 },
-      uResolvedKnee: { value: POPULATION_FIELD_RESOLVED_KNEE },
+      uShareLow: { value: POPULATION_FIELD_SHARE_LOW },
+      uShareHigh: { value: POPULATION_FIELD_SHARE_HIGH },
       uFoldRange: { value: TISSUE_BAKE_FOLD_Y_RANGE },
       uThicknessMin: { value: TISSUE_BAKE_THICKNESS_MIN },
       uThicknessSpan: {
@@ -436,7 +532,8 @@ export function makePopulationDensityMaterial(): THREE.ShaderMaterial {
       uniform vec3  uLocalCamera;
       uniform float uSteps;
       uniform float uOpticalDepth;
-      uniform float uResolvedKnee;
+      uniform float uShareLow;
+      uniform float uShareHigh;
       uniform float uFoldRange;
       uniform float uThicknessMin;
       uniform float uThicknessSpan;
@@ -495,27 +592,43 @@ export function makePopulationDensityMaterial(): THREE.ShaderMaterial {
         // Rule 9a, as arithmetic. The halo states the population MINUS the
         // part of it already on screen as addressable Cells: a subtraction of
         // optical depths, done before the exponential, so a pixel whose
-        // population is more than uResolvedKnee individuated ends at exactly
-        // zero and no gain, swarm density, or later brightness knob can put a
-        // photon back over the Cells. Three overlays failed by taxing the
-        // Cells' sharpness; this is the guarantee that replaces them.
+        // population is more than uShareHigh individuated ends at exactly zero
+        // and no gain, swarm density, or later brightness knob can put a photon
+        // back over the Cells. Three overlays failed by taxing the Cells'
+        // sharpness; this is the guarantee that replaces them.
         //
         // Subtracting depth rather than emission is also what closes the seam.
         // 1 - exp(-tau) is concave, so scaling the LIGHT after saturation lets
         // the halo creep up slowly and leaves a dark ring around the body it
         // is supposed to continue.
         //
-        // No epsilon: the resolved term is the same body under a tighter
-        // envelope, so it can never exceed the density term, and where there
-        // is no tissue both are zero together.
-        float unresolved = max(tau - tauResolved / max(uResolvedKnee, 1e-4), 0.0);
+        // Two thresholds rather than one knee. A constant knee amplifies the
+        // resolved share, so it can only ever switch the halo on PAST the last
+        // Cell, while the Cells have been thinning since 0.7 of the rim — the
+        // band between the two is where neither population is drawn, and that
+        // band is the boundary a viewer sees. The crossfade has to land inside
+        // the thinning band, which takes a start and an end.
+        //
+        // The share is the RATIO, so the dither noise both depths ride cancels
+        // in the quotient. The guard is for an empty ray, where they are zero
+        // together; the resolved term is the same body under a tighter
+        // envelope, so it can never exceed the density term.
+        float share = tauResolved / max(tau, 1e-9);
+        float supp = smoothstep(uShareLow, uShareHigh, share);
+        float unresolved = tau * (1.0 - supp);
 
         // The population reaches the screen through the same law it
         // accumulates by. This number is not an opacity — the composite reads
         // it as the FRACTION of screen cells the unresolved population lights
         // up, and nothing downstream ever treats it as an alpha.
         float litFraction = 1.0 - exp(-unresolved * uOpticalDepth);
-        gl_FragColor = vec4(litFraction, 0.0, 0.0, 1.0);
+        // G carries the suppression itself, because the composite needs to
+        // know not just how much population is here but how close it is to the
+        // Cells: the swarm's grain is coarsest where the two meet (§5.2), and
+        // that ramp cannot be recovered from the lit fraction alone — faint
+        // tissue at the far edge and suppressed tissue at the seam produce the
+        // same number in R and want opposite grain.
+        gl_FragColor = vec4(litFraction, supp, 0.0, 1.0);
       }
     `,
   });
@@ -526,6 +639,7 @@ export interface PopulationCompositeUniforms {
   uResolution: { value: THREE.Vector2 };
   uTint: { value: THREE.Color };
   uSpeckPx: { value: number };
+  uCoarsening: { value: number };
   uContinuum: { value: number };
   uSpeckGain: { value: number };
   uSpeckFloor: { value: number };
@@ -570,6 +684,7 @@ export function makePopulationCompositeMaterial(): THREE.ShaderMaterial {
       uResolution: { value: new THREE.Vector2(1, 1) },
       uTint: { value: swarmTint() },
       uSpeckPx: { value: POPULATION_FIELD_SPECK_PX },
+      uCoarsening: { value: POPULATION_FIELD_SEAM_COARSENING },
       uContinuum: { value: POPULATION_FIELD_CONTINUUM_FRACTION },
       uSpeckGain: { value: POPULATION_FIELD_SPECK_GAIN },
       uSpeckFloor: { value: POPULATION_FIELD_SPECK_FLOOR },
@@ -616,6 +731,7 @@ export function makePopulationCompositeMaterial(): THREE.ShaderMaterial {
       uniform vec2  uResolution;
       uniform vec3  uTint;
       uniform float uSpeckPx;
+      uniform float uCoarsening;
       uniform float uContinuum;
       uniform float uSpeckGain;
       uniform float uSpeckFloor;
@@ -628,7 +744,12 @@ export function makePopulationCompositeMaterial(): THREE.ShaderMaterial {
 
       void main() {
         vec2 screenUv = gl_FragCoord.xy / uResolution;
-        float field = texture2D(uDensity, screenUv).r;
+        // R is how much unresolved population is under this pixel; G is how
+        // much of the population under it the Cells have already taken. The
+        // first sets how many specks are lit, the second how coarse they are.
+        vec2 density = texture2D(uDensity, screenUv).rg;
+        float field = density.r;
+        float suppression = density.g;
 
         // Nothing unresolved under this pixel, so nothing to say about it.
         // This sits BEFORE the blooms deliberately: the bloom term has a
@@ -674,7 +795,17 @@ export function makePopulationCompositeMaterial(): THREE.ShaderMaterial {
         // "amount" of them are lit — the field sets HOW MANY specks are lit,
         // never how bright a wash is. The cell index comes from gl_FragCoord,
         // so the scale is fixed to the display and no camera move resolves it.
-        vec2 cell = floor(gl_FragCoord.xy / max(uSpeckPx, 1.0));
+        // §5.2, the resolution gradient. Coarsest where the halo meets the
+        // thinning Cells — its grain just barely unresolvable, which is the
+        // honest state for matter at the edge of what the instrument can
+        // separate — and refining outward. Apparent grain size then varies
+        // continuously across the boundary instead of switching from large
+        // sprites to two-pixel dots, and the switch of KIND is what the eye
+        // was reading as an edge. The count is unaffected: the lit fraction
+        // is a fraction of screen CELLS, so a larger cell lights a
+        // proportionally larger area and states the same population.
+        float coarse = 1.0 + uCoarsening * clamp(suppression, 0.0, 1.0);
+        vec2 cell = floor(gl_FragCoord.xy / max(uSpeckPx * coarse, 1.0));
 
         // Per-cell phase. Every speck reseeds at the same RATE, but this
         // offset spreads the instants uniformly across the period, so the

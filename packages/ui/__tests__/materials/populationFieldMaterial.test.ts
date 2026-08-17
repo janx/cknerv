@@ -8,11 +8,14 @@ import {
   POPULATION_FIELD_CONTINUUM_FRACTION,
   POPULATION_FIELD_EMISSION_PEAK,
   POPULATION_FIELD_MAX_BLOOMS,
-  POPULATION_FIELD_RESOLVED_KNEE,
+  POPULATION_FIELD_SEAM_COARSENING,
+  POPULATION_FIELD_SHARE_HIGH,
+  POPULATION_FIELD_SHARE_LOW,
   POPULATION_FIELD_SLAB_HALF_Y,
   POPULATION_FIELD_SPECK_FLOOR,
   POPULATION_FIELD_SPECK_GAIN,
   POPULATION_FIELD_SPECK_PX,
+  populationResolvedSuppression,
   populationSwarmEmission,
   populationUnresolvedDepth,
 } from '../../src/materials/populationFieldMaterial';
@@ -113,15 +116,15 @@ describe('makePopulationDensityMaterial', () => {
 });
 
 describe('rule 9a: the halo cannot reach the addressable Cells', () => {
-  it('is exactly zero at and above the knee, not merely low', () => {
+  it('is exactly zero at and above the upper threshold, not merely low', () => {
     // The invariant the whole relocation rests on. Three overlays were judged
     // live and every one that was visible at all cost the Cells their
     // sharpness, so the guarantee cannot be "faint" — it has to be a zero, and
     // it has to be structural rather than a value someone chose carefully.
     for (const tau of [0.001, 0.05, 0.4, 1, 3, 12, 400]) {
       for (const share of [
-        POPULATION_FIELD_RESOLVED_KNEE,
-        POPULATION_FIELD_RESOLVED_KNEE + 1e-6,
+        POPULATION_FIELD_SHARE_HIGH,
+        POPULATION_FIELD_SHARE_HIGH + 1e-6,
         0.5,
         0.9,
         1,
@@ -138,7 +141,7 @@ describe('rule 9a: the halo cannot reach the addressable Cells', () => {
     // peak — multiplies a zero, at every draw of the stochastic mask and at
     // every scale anyone might later reach for.
     for (const tau of [0.02, 0.3, 2, 40]) {
-      for (const share of [POPULATION_FIELD_RESOLVED_KNEE, 0.4, 1]) {
+      for (const share of [POPULATION_FIELD_SHARE_HIGH, 0.4, 1]) {
         const unresolved = populationUnresolvedDepth(tau, tau * share);
         for (const opticalDepth of [0.01, 0.58 * 0.84, 5, 1000]) {
           const litFraction = 1 - Math.exp(-unresolved * opticalDepth);
@@ -153,19 +156,46 @@ describe('rule 9a: the halo cannot reach the addressable Cells', () => {
     }
   });
 
-  it('still states the population wherever it has one to state', () => {
-    // A suppression that swallowed the layer would pass every test above and
-    // ship nothing. Below the knee the halo must survive, and it must grow as
-    // the individuated share falls.
+  it('crossfades between the two thresholds instead of switching', () => {
+    // §6.1 test 5, and the reason there are two constants rather than one.
+    // A single knee can only place the halo's onset; it cannot also say how
+    // wide the transition is, so it put the whole crossfade PAST the last
+    // Cell and left a band where neither population was drawn.
+    expect(POPULATION_FIELD_SHARE_LOW).toBeGreaterThan(0);
+    expect(POPULATION_FIELD_SHARE_LOW).toBeLessThan(POPULATION_FIELD_SHARE_HIGH);
+    expect(POPULATION_FIELD_SHARE_HIGH).toBeLessThan(1);
+
     const tau = 1.4;
-    let previous = -1;
-    for (const share of [POPULATION_FIELD_RESOLVED_KNEE * 0.75, 0.05, 0.01, 0]) {
+    const inside = [0.26, 0.22, 0.18, 0.14, 0.1];
+    let previous = 0;
+    for (const share of inside) {
       const unresolved = populationUnresolvedDepth(tau, tau * share);
+      // Strictly rising as the individuated share falls — the crossfade is a
+      // ramp, and every one of these shares sits between the thresholds.
       expect(unresolved).toBeGreaterThan(previous);
+      expect(unresolved).toBeLessThan(tau);
       previous = unresolved;
     }
-    // With nothing individuated under the ray, nothing is taken away.
+    // And it is smooth at both ends: a smoothstep has zero slope there, so
+    // neither threshold shows up as a crease in the picture.
+    expect(populationResolvedSuppression(POPULATION_FIELD_SHARE_LOW)).toBe(0);
+    expect(populationResolvedSuppression(POPULATION_FIELD_SHARE_HIGH)).toBe(1);
+    const mid = (POPULATION_FIELD_SHARE_LOW + POPULATION_FIELD_SHARE_HIGH) / 2;
+    expect(populationResolvedSuppression(mid)).toBeCloseTo(0.5, 12);
+  });
+
+  it('states the whole population wherever nothing is individuated', () => {
+    // A suppression that swallowed the layer would pass every test above and
+    // ship nothing. At and below the lower threshold the halo is at FULL
+    // strength — not asymptotically approaching it — so the outer body is
+    // never quietly dimmed by a share too small to see.
+    const tau = 1.4;
+    for (const share of [POPULATION_FIELD_SHARE_LOW, 0.05, 0.01, 0]) {
+      expect(populationUnresolvedDepth(tau, tau * share)).toBe(tau);
+    }
     expect(populationUnresolvedDepth(tau, 0)).toBe(tau);
+    // An empty ray is not a divide by zero, and states nothing.
+    expect(populationUnresolvedDepth(0, 0)).toBe(0);
   });
 
   it('subtracts population, before the exponential and not after', () => {
@@ -176,16 +206,27 @@ describe('rule 9a: the halo cannot reach the addressable Cells', () => {
     // is concave; subtracting the depth first lets the halo reach the body it
     // is supposed to continue. It is also the only form in which "exactly
     // zero" survives an arbitrary optical depth.
-    expect(shader)
-      .toContain('float unresolved = max(tau - tauResolved / max(uResolvedKnee');
+    expect(shader).toContain('float share = tauResolved / max(tau, 1e-9);');
+    expect(shader).toContain('float supp = smoothstep(uShareLow, uShareHigh, share);');
+    expect(shader).toContain('float unresolved = tau * (1.0 - supp);');
     expect(shader.indexOf('float unresolved ='))
       .toBeLessThan(shader.indexOf('1.0 - exp(-unresolved'));
-    expect(makePopulationDensityMaterial().uniforms.uResolvedKnee.value)
-      .toBe(POPULATION_FIELD_RESOLVED_KNEE);
-    // A knee at or above 1 would under-subtract into "small but nonzero",
-    // which is the state three overlays already failed in.
-    expect(POPULATION_FIELD_RESOLVED_KNEE).toBeGreaterThan(0);
-    expect(POPULATION_FIELD_RESOLVED_KNEE).toBeLessThan(1);
+    const uniforms = makePopulationDensityMaterial().uniforms;
+    expect(uniforms.uShareLow.value).toBe(POPULATION_FIELD_SHARE_LOW);
+    expect(uniforms.uShareHigh.value).toBe(POPULATION_FIELD_SHARE_HIGH);
+    // Driven by the RATIO, never by an absolute coverage: both depths ride the
+    // same dithered samples, so the dither noise cancels in the quotient.
+    expect(shader).not.toContain('tauResolved /(');
+    expect(shader).toContain('tauResolved / max(tau');
+  });
+
+  it('publishes the suppression so the composite can ramp its grain', () => {
+    const shader = makePopulationDensityMaterial().fragmentShader;
+
+    // Faint tissue at the far edge and suppressed tissue at the seam produce
+    // the same lit fraction in R and want opposite grain, so the crossfade
+    // position cannot be recovered downstream — it has to be carried.
+    expect(shader).toContain('gl_FragColor = vec4(litFraction, supp, 0.0, 1.0);');
   });
 });
 
@@ -284,6 +325,29 @@ describe('makePopulationCompositeMaterial', () => {
     expect(material.fragmentShader)
       .toContain('gl_FragCoord.xy / uResolution');
     expect(material.fragmentShader).toContain('texture2D(uDensity, screenUv)');
+  });
+
+  it('coarsens the grain where the halo meets the thinning Cells', () => {
+    const material = makePopulationCompositeMaterial();
+    const shader = material.fragmentShader;
+
+    // §5.2. Density alone cannot close the seam: the discontinuity there is
+    // one of KIND — large bright sprites on one side, two-pixel dots on the
+    // other — so the grain has to vary continuously across it. The ramp is
+    // driven by the suppression the density pass publishes in G, not by the
+    // lit fraction, because faint far tissue and suppressed seam tissue read
+    // the same in R and want opposite grain.
+    expect(shader).toContain('float suppression = density.g;');
+    expect(shader)
+      .toContain('float coarse = 1.0 + uCoarsening * clamp(suppression, 0.0, 1.0);');
+    expect(material.uniforms.uCoarsening.value)
+      .toBe(POPULATION_FIELD_SEAM_COARSENING);
+    // Coarser at the seam, never finer: a grain that refined INTO the boundary
+    // would sharpen exactly the edge this exists to dissolve.
+    expect(POPULATION_FIELD_SEAM_COARSENING).toBeGreaterThan(0);
+    // And bounded — at the far side of the ramp the swarm must still be the
+    // same population, not a second, chunkier one.
+    expect(POPULATION_FIELD_SEAM_COARSENING).toBeLessThan(1);
   });
 
   it('carries a bounded bloom pool that costs nothing while empty', () => {
