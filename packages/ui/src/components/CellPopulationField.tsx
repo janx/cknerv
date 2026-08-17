@@ -18,10 +18,10 @@ import {
   makePopulationCompositeMaterial,
   makePopulationDensityMaterial,
   POPULATION_FIELD_BLOOM_MS,
-  POPULATION_FIELD_EXTINCTION,
-  POPULATION_FIELD_GRAIN_RATE,
   POPULATION_FIELD_MAX_BLOOMS,
   POPULATION_FIELD_SLAB_HALF_Y,
+  POPULATION_FIELD_SPECK_RESEED_HZ,
+  POPULATION_FIELD_SWARM_DENSITY,
 } from '../materials/populationFieldMaterial';
 import { QUALITY_PRESETS, useQualityRuntime } from '../tweaks/qualityPresets';
 import { useSimClock } from '../tweaks/SimClockScope';
@@ -53,8 +53,9 @@ export interface CellPopulationFieldProps {
   /** Ring-allocated membership blooms, written by the Cell layer as the
    *  display plane's membership changes. */
   bloomPool?: PopulationBloomPool | null;
-  /** Freeze the grain and the bloom phase at a deterministic point. Extent,
-   *  amount, and every count are unaffected. */
+  /** Freeze the swarm and the bloom phase at a deterministic point. Extent,
+   *  amount, and every count are unaffected — a frozen mask lights the same
+   *  fraction of screen cells as a moving one. */
   reducedMotion?: boolean;
 }
 
@@ -78,8 +79,9 @@ const SCRATCH_NDC = new THREE.Vector3();
 const SCRATCH_CLEAR = new THREE.Color();
 
 /**
- * The unresolved population, drawn as one continuous medium inside the same
- * tissue envelope the Cells occupy.
+ * The unresolved population, drawn as a swarm of sub-pixel specks inside the
+ * same tissue envelope the Cells occupy — the same light as the Cells,
+ * separated from them by resolution alone.
  *
  * Mounts inside the rotating Cell group, BELOW the Cell bodies. It reads a
  * pure model and a baked positional law; it never reads an enrichment source,
@@ -260,7 +262,8 @@ export default function CellPopulationField({
 
     densityMaterial.uniforms.uHalf.value = SLAB_HALF;
     densityMaterial.uniforms.uLocalCamera.value = localCamera;
-    densityMaterial.uniforms.uOpticalDepth.value = gain * POPULATION_FIELD_EXTINCTION;
+    densityMaterial.uniforms.uOpticalDepth.value = gain
+      * POPULATION_FIELD_SWARM_DENSITY;
 
     const previousTarget = gl.getRenderTarget();
     const previousAutoClear = gl.autoClear;
@@ -280,19 +283,30 @@ export default function CellPopulationField({
     gl.setClearColor(SCRATCH_CLEAR, previousClearAlpha);
     gl.autoClear = previousAutoClear;
 
-    // 4. Composite uniforms: the grain is applied at native pixel scale, so
-    //    it needs the DEVICE resolution, not the CSS one.
+    // 4. Composite uniforms: the swarm is drawn at native pixel scale, so it
+    //    needs the DEVICE resolution, not the CSS one.
     const uniforms = compositeMaterial.uniforms;
     uniforms.uDensity.value = densityTarget.texture;
     uniforms.uResolution.value.set(deviceWidth, deviceHeight);
-    // Reduced motion freezes the grain at a deterministic phase. Extent,
-    // amount, and every count stay exactly where they were.
-    // Wrapped: the phase feeds an integer hash, and an unbounded counter
-    // walks out of the range a highp float can separate after a couple of
-    // weeks of uptime — at which point the grain quietly stops reseeding.
-    uniforms.uGrainPhase.value = reducedMotion
+    // Reduced motion freezes the swarm at a deterministic phase. Extent,
+    // amount, and every count stay exactly where they were — a frozen mask
+    // still lights the same FRACTION of screen cells, so the population it
+    // states does not move either.
+    //
+    // Passed CONTINUOUS, not floored. The shader adds a per-cell offset and
+    // floors it there, which is what spreads the reseed instants across the
+    // period instead of re-rolling the whole field on one frame; flooring
+    // here would put every speck back in lockstep and the layer would read as
+    // TV static.
+    //
+    // Wrapped: the phase feeds an integer hash, and an unbounded counter walks
+    // out of the range a highp float can separate after a couple of weeks of
+    // uptime — at which point the swarm quietly stops reseeding. The wrap
+    // itself re-rolls the mask once every six minutes, which is invisible in a
+    // field that re-rolls every speck eleven times a second anyway.
+    uniforms.uSwarmPhase.value = reducedMotion
       ? 0
-      : Math.floor(simClock.elapsedSec * POPULATION_FIELD_GRAIN_RATE) % 4096;
+      : (simClock.elapsedSec * POPULATION_FIELD_SPECK_RESEED_HZ) % 4096;
 
     // 5. Membership blooms, projected on the CPU. Sixty-four projections is
     //    nothing; sixty-four world-space ray tests per pixel would not be.
