@@ -35,8 +35,10 @@ export interface TissueFieldBakeState {
    *  footprint, so one texel is wider in x than in z — which is correct:
    *  it keeps the sampling uv a plain linear remap of (x, z). */
   resolution: number;
-  /** RGBA half-float texel data, row-major from -FIELD_HALF_Z upward. */
-  data: Uint16Array;
+  /** RGBA half-float texel data, row-major from -FIELD_HALF_Z upward.
+   *  The buffer type is pinned so the array can be handed straight to a
+   *  `THREE.DataTexture` without a defensive megabyte-scale copy. */
+  data: Uint16Array<ArrayBuffer>;
   /** Rows already written. `resolution` means finished. */
   rows: number;
   done: boolean;
