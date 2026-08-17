@@ -25,16 +25,16 @@ pub mod taxonomy;
 
 pub use enrichment::{
     ActivityFeedItem, ActivityFeedRecord, AssetEcosystemCategory, AssetEcosystemLeader,
-    AssetEcosystemRecord, CellSemanticRecord, ChainAnchor, ChainCensus, CommonKnowledgeBreakdown,
-    DaoStateRecord, EnrichmentEvent, EnrichmentProjection, EnrichmentSourceState,
-    EnrichmentSourceStatus, ForkWatchDeepFork, ForkWatchEventKind, ForkWatchRecord, ForkWatchReorg,
-    GalaxyCellCandidate, GalaxyCompositionCandidates, GalaxyCompositionRecord,
-    GalaxyCompositionTarget, GalaxyCompositionTopUp, NetworkAtlasBucket, NetworkAtlasRecord,
-    ProtocolEra, ProtocolEraRecord, SemanticAsset, SemanticAttribute, SemanticCellContent,
-    SemanticContentDecode, SemanticContentGuess, SemanticContentSegment, SemanticFacet,
-    ScriptNameRecord, ScriptRegistryRecord, SemanticScript, SemanticsDelta, SemanticsProjection,
-    SemanticsSnapshot, TransactionHorizonRecord, TransactionParticipantSemantic,
-    TransactionSemanticRecord, MAX_SCRIPT_REGISTRY_ENTRIES,
+    AssetEcosystemRecord, CellSemanticRecord, ChainAnchor, ChainCensus, ChainCensusClasses,
+    CommonKnowledgeBreakdown, DaoStateRecord, EnrichmentEvent, EnrichmentProjection,
+    EnrichmentSourceState, EnrichmentSourceStatus, ForkWatchDeepFork, ForkWatchEventKind,
+    ForkWatchRecord, ForkWatchReorg, GalaxyCellCandidate, GalaxyCompositionCandidates,
+    GalaxyCompositionRecord, GalaxyCompositionTarget, GalaxyCompositionTopUp, NetworkAtlasBucket,
+    NetworkAtlasRecord, ProtocolEra, ProtocolEraRecord, ScriptNameRecord, ScriptRegistryRecord,
+    SemanticAsset, SemanticAttribute, SemanticCellContent, SemanticContentDecode,
+    SemanticContentGuess, SemanticContentSegment, SemanticFacet, SemanticScript, SemanticsDelta,
+    SemanticsProjection, SemanticsSnapshot, TransactionHorizonRecord,
+    TransactionParticipantSemantic, TransactionSemanticRecord, MAX_SCRIPT_REGISTRY_ENTRIES,
 };
 pub use entity::{
     Chain, ChainNode, EpochInfo, MempoolStats, Peer, PeerDirection, RecentBlock, RecentTx,

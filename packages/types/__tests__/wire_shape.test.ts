@@ -314,6 +314,17 @@ describe('wire-shape parity (TS twin of cknerv-core)', () => {
       'script_registry_replace',
     );
     expect(sample.deltas.census_replace.type).toBe('census_replace');
+    // The three class counters are a PARTITION of `live_cells`, not three
+    // independent tallies: a fixture whose bins stop adding up would let a
+    // composition disclosure state a chain mix that is not the chain's.
+    const census = sample.snapshot.census;
+    const classes = census?.classes;
+    expect(classes).toBeDefined();
+    expect(
+      (classes?.dao ?? 0) + (classes?.typed_non_dao ?? 0) + (classes?.plain ?? 0),
+    ).toBe(census?.live_cells);
+    // `data_bearing` is orthogonal to that partition — it overlaps every bin.
+    expect(census?.data_bearing).toBe(22_222);
     expect(sample.deltas.transaction_upsert.type).toBe('transaction_upsert');
     // Same total-match pin as the cell deltas: the Rust writer enumerates
     // `SemanticsDelta` exhaustively, and this is the browser-side half.

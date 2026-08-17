@@ -142,6 +142,19 @@ export interface TransactionSemanticRecord {
   cycles?: number;
 }
 
+/** Disjoint decomposition of a {@link ChainCensus}'s live count, in the same
+ *  three bins the CellGalaxy composition target staffs the stage with. The
+ *  three counters partition `live_cells` exactly; a source that cannot prove
+ *  that partition sends no classes at all rather than an approximate one. */
+export interface ChainCensusClasses {
+  /** Nervos DAO cells. */
+  dao: number;
+  /** Cells carrying a type script that is not the DAO. */
+  typed_non_dao: number;
+  /** Cells with no type script. */
+  plain: number;
+}
+
 export interface ChainCensus {
   source: string;
   as_of: ChainAnchor;
@@ -149,6 +162,12 @@ export interface ChainCensus {
   live_cells: number;
   total_cells?: number;
   dead_cells?: number;
+  /** Present only when the source proved the partition sums to `live_cells`.
+   *  Absent is a legal state: the count stands alone. */
+  classes?: ChainCensusClasses;
+  /** Whole-chain twin of `CellViewStats.data_bearing` — orthogonal to
+   *  `classes`, so it is never part of that partition. */
+  data_bearing?: number;
 }
 
 export interface AssetEcosystemCategory {

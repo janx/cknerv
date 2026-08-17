@@ -148,7 +148,13 @@
       "updated_at_ms": 1700000000003,
       "live_cells": 123456,
       "total_cells": 234567,
-      "dead_cells": 111111
+      "dead_cells": 111111,
+      "classes": {
+        "dao": 1234,
+        "typed_non_dao": 40000,
+        "plain": 82222
+      },
+      "data_bearing": 22222
     },
     "asset_ecosystem": {
       "source": "ckbadger",
@@ -535,7 +541,13 @@
         "updated_at_ms": 1700000000003,
         "live_cells": 123456,
         "total_cells": 234567,
-        "dead_cells": 111111
+        "dead_cells": 111111,
+        "classes": {
+          "dao": 1234,
+          "typed_non_dao": 40000,
+          "plain": 82222
+        },
+        "data_bearing": 22222
       }
     },
     "clear": {

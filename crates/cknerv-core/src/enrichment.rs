@@ -262,6 +262,29 @@ pub struct TransactionSemanticRecord {
     pub cycles: Option<u64>,
 }
 
+/// Disjoint decomposition of a [`ChainCensus`]'s live count, in the same
+/// three bins the CellGalaxy composition target staffs the stage with. The
+/// three counters partition `live_cells` exactly; a source that cannot prove
+/// that partition must send no classes at all rather than an approximate one.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ChainCensusClasses {
+    /// Nervos DAO cells.
+    pub dao: u64,
+    /// Cells carrying a type script that is not the DAO.
+    pub typed_non_dao: u64,
+    /// Cells with no type script.
+    pub plain: u64,
+}
+
+impl ChainCensusClasses {
+    /// Checked sum of the three disjoint bins. `None` on overflow.
+    pub fn total(&self) -> Option<u64> {
+        self.dao
+            .checked_add(self.typed_non_dao)
+            .and_then(|sum| sum.checked_add(self.plain))
+    }
+}
+
 /// Exact indexed global counts, kept distinct from cknerv's bounded retained
 /// Cell reservoir.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -274,6 +297,14 @@ pub struct ChainCensus {
     pub total_cells: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dead_cells: Option<u64>,
+    /// Present only when the source proves the partition sums to
+    /// `live_cells`. Absent is a legal state: the count stands alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub classes: Option<ChainCensusClasses>,
+    /// Whole-chain twin of `CellViewStats::data_bearing` — orthogonal to
+    /// `classes`, so it is never part of that partition.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data_bearing: Option<u64>,
 }
 
 /// Fixed CellGalaxy composition contract. The record remains enrichment-only:
@@ -1215,6 +1246,26 @@ mod tests {
         }
     }
 
+    fn census(block: u64) -> ChainCensus {
+        ChainCensus {
+            source: "ckbadger".into(),
+            as_of: ChainAnchor {
+                block,
+                hash: format!("0xblock{block}"),
+            },
+            updated_at_ms: block,
+            live_cells: 1_471_222,
+            total_cells: None,
+            dead_cells: None,
+            classes: Some(ChainCensusClasses {
+                dao: 22_676,
+                typed_non_dao: 475_891,
+                plain: 972_655,
+            }),
+            data_bearing: Some(266_346),
+        }
+    }
+
     fn activity_feed(block: u64) -> ActivityFeedRecord {
         ActivityFeedRecord {
             source: "ckbadger".into(),
@@ -1481,9 +1532,11 @@ mod tests {
             transaction_horizon(10),
         ));
         projection.apply_enrichment(&EnrichmentEvent::NetworkAtlasReplace(network_atlas(10)));
+        projection.apply_enrichment(&EnrichmentEvent::CensusReplace(census(10)));
 
         projection.apply_mutation(&Mutation::ChainReorganized { from_block: 10 });
 
+        assert!(projection.snapshot().census.is_none());
         assert!(projection.snapshot().asset_ecosystem.is_none());
         assert!(projection.snapshot().dao_state.is_none());
         assert!(projection.snapshot().protocol_era.is_none());
@@ -1504,6 +1557,44 @@ mod tests {
         assert!(projection.snapshot().network_atlas.is_none());
         assert!(projection.snapshot().asset_ecosystem.is_some());
         assert!(matches!(deltas[0], SemanticsDelta::NetworkAtlasClear));
+    }
+
+    #[test]
+    fn a_census_survives_a_reorg_that_predates_its_anchor() {
+        let mut projection = SemanticsProjection::new(Some(("ckbadger", vec![])));
+        projection.apply_enrichment(&EnrichmentEvent::CensusReplace(census(10)));
+
+        projection.apply_mutation(&Mutation::ChainReorganized { from_block: 11 });
+
+        assert_eq!(projection.snapshot().census, Some(census(10)));
+    }
+
+    #[test]
+    fn a_re_anchored_census_replaces_the_held_record() {
+        let mut projection = SemanticsProjection::new(Some(("ckbadger", vec![])));
+        projection.apply_enrichment(&EnrichmentEvent::CensusReplace(census(10)));
+
+        let deltas = projection.apply_enrichment(&EnrichmentEvent::CensusReplace(census(20)));
+
+        assert_eq!(projection.snapshot().census, Some(census(20)));
+        assert!(matches!(deltas[0], SemanticsDelta::CensusReplace { .. }));
+    }
+
+    #[test]
+    fn census_classes_sum_through_a_checked_total() {
+        assert_eq!(
+            census(10).classes.expect("classes").total(),
+            Some(census(10).live_cells)
+        );
+        assert_eq!(
+            ChainCensusClasses {
+                dao: u64::MAX,
+                typed_non_dao: 1,
+                plain: 0,
+            }
+            .total(),
+            None
+        );
     }
 
     #[test]
