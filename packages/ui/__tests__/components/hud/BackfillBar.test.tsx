@@ -15,7 +15,6 @@ describe('BackfillBar', () => {
     );
     const t = container.textContent ?? '';
     expect(t).toContain('SEEDING CONSENSUS CELLS');
-    expect(t).toContain('播种');
     expect(t).toContain('7 / 10');
     expect(container.querySelector('[data-replay-phase="boot"]')).not.toBeNull();
     const fill = container.querySelector('[data-fill]') as HTMLElement;

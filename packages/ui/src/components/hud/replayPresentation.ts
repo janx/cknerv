@@ -4,7 +4,7 @@ import { HUD_COLORS } from './hudTheme';
 export interface ReplayPresentation {
   tag: string;
   title: string;
-  subtitle: string;
+  subtitle?: string;
   color: string;
   waiting: string;
 }
@@ -17,7 +17,6 @@ export function replayPresentation(phase: ReplayPhase): ReplayPresentation {
       return {
         tag: 'BOOT',
         title: 'SEEDING CONSENSUS CELLS',
-        subtitle: '播种',
         color: HUD_COLORS.orange,
         waiting: 'WAITING FOR INITIAL CANON',
       };

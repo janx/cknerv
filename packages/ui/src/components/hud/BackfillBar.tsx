@@ -41,7 +41,9 @@ export default function BackfillBar({ backfill, style }: {
         <span style={{ marginLeft: 'auto', padding: '1px 4px', border: `1px solid ${rgba(visual.color, 0.36)}`, fontFamily: HUD_FONTS.mono, fontSize: 8, letterSpacing: 1, color: visual.color }}>{visual.tag}</span>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', marginBottom: 5 }}>
-        <span style={{ fontFamily: phase === 'boot' ? HUD_FONTS.cjk : HUD_FONTS.mono, fontSize: 8, letterSpacing: phase === 'boot' ? 0 : 1, color: rgba(visual.color, 0.78) }}>{visual.subtitle}</span>
+        {visual.subtitle && (
+          <span style={{ fontFamily: HUD_FONTS.mono, fontSize: 8, letterSpacing: 1, color: rgba(visual.color, 0.78) }}>{visual.subtitle}</span>
+        )}
         <span style={{ marginLeft: 'auto', fontFamily: HUD_FONTS.mono, fontSize: 9, letterSpacing: waiting ? 0.7 : 0, color: waiting ? visual.color : HUD_COLORS.dim }}>
           {waiting ? visual.waiting : `${fmt(done)} / ${fmt(total)} blocks`}
         </span>
