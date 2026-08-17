@@ -1,5 +1,10 @@
-import * as THREE from 'three';
-import type { CellVisualDescriptor } from './cellVisual.derive';
+import type { Cell } from '@cknerv/types';
+import {
+  deriveCellMorphologyGenome,
+  deriveCellMorphologyTopology,
+  type CellMorphologyTopology,
+  type MorphologyPoint3,
+} from './cellMorphology.derive';
 import { CELL_GALAXY_PALETTE } from '../visualPalette';
 
 export const CONSENSUS_BRAID_TAU = Math.PI * 2;
@@ -15,13 +20,6 @@ export const CONSENSUS_BRAID_FIELDS = [
 
 export type ConsensusBraidField = (typeof CONSENSUS_BRAID_FIELDS)[number];
 
-/** Only immutable structure-bearing Cell fields participate in A topology.
- * Runtime accents and lifecycle metadata must not rebuild its GPU resources. */
-export type ConsensusBraidVisual = Pick<
-  CellVisualDescriptor,
-  'assetClass' | 'lockClass' | 'mass' | 'payload' | 'seeds'
->;
-
 export const CONSENSUS_BRAID_PALETTE = {
   deepCyan: [0.035, 0.28, 0.62],
   gold: [0.86, 0.61, 0.25],
@@ -32,61 +30,13 @@ export const CONSENSUS_BRAID_PALETTE = {
   retire: [0.94, 0.12, 0.46],
 } as const;
 
-export interface ConsensusBraidSpec {
-  a: number;
-  b: number;
-  c: number;
-  phase: number;
-  offset: number;
-}
-
-export type ConsensusBraidPoint3 = readonly [number, number, number];
-
-/** One independently sampled agreement between neighboring contributors. */
-export interface ConsensusBraidAgreement {
-  pair: number;
-  ordinal: number;
-  indexA: number;
-  indexB: number;
-  distanceSq: number;
-  pointA: ConsensusBraidPoint3;
-  pointB: ConsensusBraidPoint3;
-  midpoint: ConsensusBraidPoint3;
-}
-
 /** Complete semantic identity of A, shared by portrait and production LOD. */
-export interface ConsensusBraidTopology {
-  specs: ConsensusBraidSpec[];
-  agreements: ConsensusBraidAgreement[];
-  presenceScale: number;
-  birthPhase: number;
-}
-
-const AGREEMENT_SAMPLE_COUNT = 72;
-const AGREEMENT_MIN_SEPARATION = 8;
-
-export function consensusBraidFrequencies(
-  assetClass: number,
-): readonly [number, number, number] {
-  const asset = Math.round(assetClass);
-  if (asset === 1) return [2, 3, 5];
-  if (asset === 2) return [3, 4, 7];
-  if (asset === 3) return [1, 3, 5];
-  if (asset === 4) return [3, 5, 6];
-  if (asset === 5) return [2, 5, 7];
-  return [2, 3, 4];
-}
-
-export function consensusBraidStrandCount(lockClass: number): number {
-  return 3 + Math.min(2, Math.round(lockClass / 2));
-}
+export type ConsensusBraidTopology = CellMorphologyTopology;
 
 /** Intended agreement-node count used by the full A portrait. */
-export function consensusBraidAgreementTarget(
-  visual: ConsensusBraidVisual,
-): number {
-  const contributorPairs = Math.max(0, consensusBraidStrandCount(visual.lockClass) - 1);
-  return contributorPairs * (1 + Math.round(visual.payload * 2));
+export function consensusBraidAgreementTarget(cell: Cell): number {
+  const genome = deriveCellMorphologyGenome(cell);
+  return Math.min(genome.data.slots.length, genome.lock.braidWord.length);
 }
 
 /** Shared sequential agreement envelope for production LOD and portrait A. */
@@ -233,130 +183,35 @@ export function consensusBraidLayerOpacity(
   return normal;
 }
 
-/** Canonical A mapping shared by the portrait and the galaxy LOD. */
-export function consensusBraidSpecs(
-  visual: ConsensusBraidVisual,
-): ConsensusBraidSpec[] {
-  const [a, b, c] = consensusBraidFrequencies(visual.assetClass);
-  const count = consensusBraidStrandCount(visual.lockClass);
-  return Array.from({ length: count }, (_, strand) => ({
-    a,
-    b,
-    c,
-    phase: visual.seeds[strand % 4] * CONSENSUS_BRAID_TAU,
-    offset: (strand - (count - 1) * 0.5) * 0.23,
-  }));
-}
-
-export function consensusBraidPoint(
-  spec: ConsensusBraidSpec,
-  t: number,
-  target = new THREE.Vector3(),
-): THREE.Vector3 {
-  return target.set(
-    Math.sin(spec.a * t + spec.phase + spec.offset) * 0.48,
-    Math.sin(spec.b * t + spec.phase * 0.61 - spec.offset * 0.72) * 0.37,
-    Math.sin(spec.c * t - spec.phase * 0.43 + spec.offset * 0.5) * 0.29,
-  );
-}
-
-function pointTuple(point: THREE.Vector3): ConsensusBraidPoint3 {
-  return [point.x, point.y, point.z];
-}
-
-function circularSampleDistance(left: number, right: number): number {
-  const direct = Math.abs(left - right);
-  return Math.min(direct, AGREEMENT_SAMPLE_COUNT - direct);
+/** Sample a canonical closed path without adding renderer-specific topology. */
+export function consensusBraidPathPoint(
+  points: readonly MorphologyPoint3[],
+  parameter: number,
+): MorphologyPoint3 {
+  const segmentCount = Math.max(0, points.length - 1);
+  if (segmentCount === 0) return points[0] ?? [0, 0, 0];
+  const wrapped = ((parameter % 1) + 1) % 1;
+  const scaled = wrapped * segmentCount;
+  const index = Math.floor(scaled) % segmentCount;
+  const amount = scaled - Math.floor(scaled);
+  const from = points[index];
+  const to = points[index + 1];
+  return [
+    from[0] + (to[0] - from[0]) * amount,
+    from[1] + (to[1] - from[1]) * amount,
+    from[2] + (to[2] - from[2]) * amount,
+  ];
 }
 
 /**
- * Resolve the canonical A topology once. Renderer-specific curve resolution,
- * ribbon width and glow may differ, but the contributor paths, agreement
- * constellation, capacity scale and ledger phase never do.
+ * Resolve the canonical V2 identity once. Renderers may resample these paths,
+ * but crossings, data marks, agreement order, capacity presence and ledger
+ * phase all come from this single pure result.
  */
 export function deriveConsensusBraidTopology(
-  visual: ConsensusBraidVisual,
-  birthBlock: number,
+  cell: Cell,
 ): ConsensusBraidTopology {
-  const specs = consensusBraidSpecs(visual);
-  const samples = specs.map((spec) => Array.from(
-    { length: AGREEMENT_SAMPLE_COUNT },
-    (_, index) => consensusBraidPoint(
-      spec,
-      index / AGREEMENT_SAMPLE_COUNT * CONSENSUS_BRAID_TAU,
-      new THREE.Vector3(),
-    ),
-  ));
-  const agreements: ConsensusBraidAgreement[] = [];
-  const agreementsPerPair = 1 + Math.round(visual.payload * 2);
-
-  for (let pair = 0; pair < specs.length - 1; pair += 1) {
-    const chosen: Array<{
-      distanceSq: number;
-      indexA: number;
-      indexB: number;
-    }> = [];
-    // Greedily rescan the tiny fixed sample grid for each ordinal. This is
-    // equivalent to sorting every candidate then filtering, without allocating
-    // and sorting ~5k objects per contributor pair on a near-LOD admission.
-    for (let ordinal = 0; ordinal < agreementsPerPair; ordinal += 1) {
-      let best: (typeof chosen)[number] | null = null;
-      for (let indexA = 0; indexA < AGREEMENT_SAMPLE_COUNT; indexA += 1) {
-        if (chosen.some((existing) => (
-          circularSampleDistance(existing.indexA, indexA)
-            < AGREEMENT_MIN_SEPARATION
-        ))) continue;
-        const pointA = samples[pair][indexA];
-        for (let indexB = 0; indexB < AGREEMENT_SAMPLE_COUNT; indexB += 1) {
-          if (chosen.some((existing) => (
-            circularSampleDistance(existing.indexB, indexB)
-              < AGREEMENT_MIN_SEPARATION
-          ))) continue;
-          const distanceSq = pointA.distanceToSquared(samples[pair + 1][indexB]);
-          if (
-            best === null
-            || distanceSq < best.distanceSq
-            || (
-              distanceSq === best.distanceSq
-              && (indexA < best.indexA
-                || (indexA === best.indexA && indexB < best.indexB))
-            )
-          ) {
-            best = { distanceSq, indexA, indexB };
-          }
-        }
-      }
-      if (best === null) break;
-      chosen.push(best);
-    }
-
-    for (let ordinal = 0; ordinal < chosen.length; ordinal += 1) {
-      const chosenAgreement = chosen[ordinal];
-      const pointA = samples[pair][chosenAgreement.indexA];
-      const pointB = samples[pair + 1][chosenAgreement.indexB];
-      agreements.push({
-        pair,
-        ordinal,
-        indexA: chosenAgreement.indexA,
-        indexB: chosenAgreement.indexB,
-        distanceSq: chosenAgreement.distanceSq,
-        pointA: pointTuple(pointA),
-        pointB: pointTuple(pointB),
-        midpoint: [
-          (pointA.x + pointB.x) * 0.5,
-          (pointA.y + pointB.y) * 0.5,
-          (pointA.z + pointB.z) * 0.5,
-        ],
-      });
-    }
-  }
-
-  return {
-    specs,
-    agreements,
-    presenceScale: consensusBraidPresenceScale(visual.mass),
-    birthPhase: consensusBraidBirthPhase(birthBlock),
-  };
+  return deriveCellMorphologyTopology(cell);
 }
 
 export function consensusBraidContributorColor(

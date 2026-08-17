@@ -36,7 +36,11 @@ const CELL: Cell = {
   },
   capacity: 100,
   data_hex: '0x',
+  data_bytes: 0,
   content_hash: `0x${'fedcba9876543210'.repeat(4)}`,
+  lock_shape_seed: [1, 2],
+  type_shape_seed: null,
+  data_shape_seed: [3, 4],
 };
 
 const round = (value: number): number => Number(value.toFixed(4));

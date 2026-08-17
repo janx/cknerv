@@ -189,7 +189,10 @@ impl ObservedScriptsSink {
     /// Empty before the first census — a source reading this must treat that
     /// as "nothing to name yet", not as "nothing is out there".
     pub fn read(&self) -> Vec<ScriptId> {
-        self.scripts.lock().map(|held| held.clone()).unwrap_or_default()
+        self.scripts
+            .lock()
+            .map(|held| held.clone())
+            .unwrap_or_default()
     }
 }
 
@@ -249,7 +252,11 @@ fn rank_and_cut(tally: HashMap<ScriptId, u64>) -> (Vec<ScriptCount>, u64, u64) {
             .then_with(|| a.script.code_hash.cmp(&b.script.code_hash))
     });
     let tail_scripts = ranked.len().saturating_sub(CENSUS_CAP);
-    let tail_cells: u64 = ranked.iter().skip(CENSUS_CAP).map(|entry| entry.count).sum();
+    let tail_cells: u64 = ranked
+        .iter()
+        .skip(CENSUS_CAP)
+        .map(|entry| entry.count)
+        .sum();
     ranked.truncate(CENSUS_CAP);
     (ranked, tail_cells, tail_scripts as u64)
 }
@@ -306,7 +313,11 @@ mod tests {
             },
             capacity: 100,
             data_hex: "0x".to_string(),
+            data_bytes: 0,
             content_hash: format!("0x{id}"),
+            lock_shape_seed: [id as u32, 1],
+            type_shape_seed: None,
+            data_shape_seed: [id as u32, 2],
             lock_kind: LockKind::Other,
             asset_kind: AssetKind::Other,
             lock_script: Default::default(),

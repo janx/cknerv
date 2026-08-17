@@ -26,7 +26,7 @@ import type {
   ScriptId,
 } from '@cknerv/types';
 
-export const CELLS_COLUMNAR_VERSION = 3;
+export const CELLS_COLUMNAR_VERSION = 4;
 export const CELLS_COLUMNAR_HEADER_BYTES = 72;
 /** Byte offset of the u64 revision the SERVER patches into the header after
  *  the projection encoded it (`projection_registry.rs`). Mirrored here so a
@@ -96,6 +96,13 @@ export interface CellsColumnarView {
   posZ: Float32Array;
   birthBlock: Uint32Array;
   outPointIndex: Uint32Array;
+  dataBytes: Uint32Array;
+  lockShapeSeed0: Uint32Array;
+  lockShapeSeed1: Uint32Array;
+  typeShapeSeed0: Uint32Array;
+  typeShapeSeed1: Uint32Array;
+  dataShapeSeed0: Uint32Array;
+  dataShapeSeed1: Uint32Array;
   /** Codes into COLUMNAR_LOCK_KINDS. */
   lockKind: Uint8Array;
   /** Codes into COLUMNAR_ASSET_KINDS. */
@@ -185,7 +192,7 @@ export function decodeCellsColumnar(buffer: ArrayBuffer): CellsColumnarView {
   const membersBase = f64Base + 4 * 8 * n;
   const f32Base = membersBase + 8 * memberCount;
   const u32Base = f32Base + 3 * 4 * n;
-  const offsetsBase = u32Base + 2 * 4 * n;
+  const offsetsBase = u32Base + 9 * 4 * n;
   const u16Base = offsetsBase + 3 * (n + 1) * 4;
   const u8Base = u16Base + 2 * 2 * n;
   const stringsBase = u8Base + 4 * n;
@@ -283,6 +290,13 @@ export function decodeCellsColumnar(buffer: ArrayBuffer): CellsColumnarView {
     posZ: new Float32Array(buffer, f32Base + 8 * n, n),
     birthBlock: new Uint32Array(buffer, u32Base, n),
     outPointIndex: new Uint32Array(buffer, u32Base + 4 * n, n),
+    dataBytes: new Uint32Array(buffer, u32Base + 8 * n, n),
+    lockShapeSeed0: new Uint32Array(buffer, u32Base + 12 * n, n),
+    lockShapeSeed1: new Uint32Array(buffer, u32Base + 16 * n, n),
+    typeShapeSeed0: new Uint32Array(buffer, u32Base + 20 * n, n),
+    typeShapeSeed1: new Uint32Array(buffer, u32Base + 24 * n, n),
+    dataShapeSeed0: new Uint32Array(buffer, u32Base + 28 * n, n),
+    dataShapeSeed1: new Uint32Array(buffer, u32Base + 32 * n, n),
     lockKind: new Uint8Array(buffer, u8Base, n),
     assetKind: new Uint8Array(buffer, u8Base + n, n),
     tagIndex: new Uint8Array(buffer, u8Base + 2 * n, n),
@@ -322,7 +336,13 @@ export function columnarCellAt(view: CellsColumnarView, i: number): Cell {
     out_point: { tx_hash: view.txHash(i), index: view.outPointIndex[i] },
     capacity: view.capacity[i],
     data_hex: view.dataHex(i),
+    data_bytes: view.dataBytes[i],
     content_hash: view.contentHash(i),
+    lock_shape_seed: [view.lockShapeSeed0[i], view.lockShapeSeed1[i]],
+    type_shape_seed: typeScript === undefined
+      ? null
+      : [view.typeShapeSeed0[i], view.typeShapeSeed1[i]],
+    data_shape_seed: [view.dataShapeSeed0[i], view.dataShapeSeed1[i]],
     lock_kind: COLUMNAR_LOCK_KINDS[view.lockKind[i]] ?? 'other',
     asset_kind: COLUMNAR_ASSET_KINDS[view.assetKind[i]] ?? 'other',
     // Absent stays ABSENT rather than becoming an undefined-valued key: the

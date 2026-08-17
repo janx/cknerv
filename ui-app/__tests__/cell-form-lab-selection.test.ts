@@ -16,7 +16,11 @@ function cell(id: number, dataHex: string, assetKind: AssetKind = 'other'): Cell
     out_point: { tx_hash: `0x${'11'.repeat(32)}`, index: id },
     capacity: 61e8,
     data_hex: dataHex,
+    data_bytes: Math.max(0, (dataHex.replace(/~$/, '').length - 2) / 2),
     content_hash: `0x${id.toString(16).padStart(64, '0')}`,
+    lock_shape_seed: [1, 2],
+    type_shape_seed: assetKind === 'native' ? null : [3, 4],
+    data_shape_seed: [5, 6],
     lock_kind: 'sighash',
     asset_kind: assetKind,
   };

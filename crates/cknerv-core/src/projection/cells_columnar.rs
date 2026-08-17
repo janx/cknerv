@@ -5,7 +5,7 @@
 //! zero-copy typed-array views on the client, then the dictionaries at the
 //! tail.
 //!
-//! v3 carries everything the JSON snapshot's `cells` + `display` sections
+//! v4 carries everything the JSON snapshot's `cells` + `display` sections
 //! do. Rows are the canonical cells followed by the staged resident
 //! payloads — one column set, split at `n_cells` — plus the staged member
 //! ids, the budgets and the provenance.
@@ -44,7 +44,7 @@ use crate::projection::display_plane::ColumnarDisplayView;
 use crate::taxonomy::{AssetKind, HashType, LockKind, ScriptId};
 
 pub const CELLS_COLUMNAR_MAGIC: [u8; 4] = *b"CKNB";
-pub const CELLS_COLUMNAR_VERSION: u16 = 3;
+pub const CELLS_COLUMNAR_VERSION: u16 = 4;
 pub const CELLS_COLUMNAR_HEADER_BYTES: usize = 72;
 pub const CELLS_COLUMNAR_REVISION_OFFSET: usize = 8;
 /// tag_index value meaning "no tag".
@@ -338,7 +338,7 @@ pub fn encode_cells_columnar(
     }
     let strings = strings.finish();
 
-    let fixed = n * (4 * 8 + 3 * 4 + 2 * 4 + 2 * 2 + 4) + members.len() * 8 + 3 * (n + 1) * 4;
+    let fixed = n * (4 * 8 + 3 * 4 + 9 * 4 + 2 * 2 + 4) + members.len() * 8 + 3 * (n + 1) * 4;
     let mut buf =
         Vec::with_capacity(CELLS_COLUMNAR_HEADER_BYTES + fixed + strings.region_len() + 128);
 
@@ -411,6 +411,31 @@ pub fn encode_cells_columnar(
     for cell in rows() {
         buf.extend_from_slice(&cell.out_point.index.to_le_bytes());
     }
+    for cell in rows() {
+        buf.extend_from_slice(&cell.data_bytes.to_le_bytes());
+    }
+    for word in 0..2 {
+        for cell in rows() {
+            buf.extend_from_slice(&cell.lock_shape_seed[word].to_le_bytes());
+        }
+    }
+    // The type-script ref below is the absence authority. Zero words keep the
+    // numeric columns dense for a plain cell without inventing a type seed.
+    for word in 0..2 {
+        for cell in rows() {
+            buf.extend_from_slice(
+                &cell
+                    .type_shape_seed
+                    .map_or(0, |seed| seed[word])
+                    .to_le_bytes(),
+            );
+        }
+    }
+    for word in 0..2 {
+        for cell in rows() {
+            buf.extend_from_slice(&cell.data_shape_seed[word].to_le_bytes());
+        }
+    }
     for offsets in [
         &strings.tx_hash_offsets,
         &strings.content_hash_offsets,
@@ -434,7 +459,7 @@ pub fn encode_cells_columnar(
     }
     buf.extend_from_slice(&tag_indices);
     for cell in rows() {
-        buf.push(u8::from(cell.data_hex.len() > 2));
+        buf.push(u8::from(cell.data_bytes > 0));
     }
 
     // —— string region (field-major: tx hashes, content hashes, data) ——
@@ -603,7 +628,11 @@ mod tests {
                 1 => format!("0xdeadbeef{DATA_HEX_TRUNCATION_MARKER}"),
                 _ => "0xdeadbeef".into(),
             },
+            data_bytes: if id.is_multiple_of(3) { 0 } else { 4 },
             content_hash: format!("0x{:064x}", id * 7),
+            lock_shape_seed: [id as u32 * 11, id as u32 * 13],
+            type_shape_seed: (id % 3 == 2).then_some([id as u32 * 17, id as u32 * 19]),
+            data_shape_seed: [id as u32 * 23, id as u32 * 29],
             lock_kind: if id.is_multiple_of(2) {
                 LockKind::Sighash
             } else {
@@ -649,6 +678,10 @@ mod tests {
         death: usize,
         members: usize,
         pos: usize,
+        data_bytes: usize,
+        lock_seed: usize,
+        type_seed: usize,
+        data_seed: usize,
         tx_offsets: usize,
         script_refs: usize,
         lock: usize,
@@ -660,7 +693,11 @@ mod tests {
         let members = id + 4 * 8 * n;
         let pos = members + 8 * m;
         let u32s = pos + 3 * 4 * n;
-        let tx_offsets = u32s + 2 * 4 * n;
+        let data_bytes = u32s + 2 * 4 * n;
+        let lock_seed = data_bytes + 4 * n;
+        let type_seed = lock_seed + 2 * 4 * n;
+        let data_seed = type_seed + 2 * 4 * n;
+        let tx_offsets = u32s + 9 * 4 * n;
         let script_refs = tx_offsets + 3 * (n + 1) * 4;
         let lock = script_refs + 2 * 2 * n;
         Offsets {
@@ -668,6 +705,10 @@ mod tests {
             death: id + 2 * 8 * n,
             members,
             pos,
+            data_bytes,
+            lock_seed,
+            type_seed,
+            data_seed,
             tx_offsets,
             script_refs,
             lock,
@@ -739,6 +780,23 @@ mod tests {
         assert_eq!(death0, 2_001.0); // id 1 is odd → dead at 2000+1
         let death1 = f64::from_le_bytes(buf[at.death + 8..at.death + 16].try_into().unwrap());
         assert!(death1.is_nan()); // id 2 alive
+
+        // v4 component-shape columns. Tuple words are separate SoA columns;
+        // absent type seeds are zero-filled, with the script ref below still
+        // authoritative for absence.
+        assert_eq!(
+            (0..n)
+                .map(|row| u32_at(&buf, at.data_bytes + row * 4))
+                .collect::<Vec<_>>(),
+            [4, 4, 0, 4]
+        );
+        assert_eq!(u32_at(&buf, at.lock_seed), 11);
+        assert_eq!(u32_at(&buf, at.lock_seed + n * 4), 13);
+        assert_eq!(u32_at(&buf, at.type_seed), 0);
+        assert_eq!(u32_at(&buf, at.type_seed + 4), 34);
+        assert_eq!(u32_at(&buf, at.type_seed + n * 4 + 4), 38);
+        assert_eq!(u32_at(&buf, at.data_seed), 23);
+        assert_eq!(u32_at(&buf, at.data_seed + n * 4), 29);
 
         // tag dictionary: first-seen order [wallet, dex]; indices 0,FF,1,0.
         let tail = u32_at(&buf, 64) as usize;
@@ -927,9 +985,9 @@ mod tests {
 
     /// The cross-language gate. Rust writes this buffer, the TS decoder
     /// reads the very same bytes (`packages/cache/__tests__`). Regenerate with
-    /// `CKNERV_REGEN_FIXTURES=1 cargo test -p cknerv-core columnar_v3`.
+    /// `CKNERV_REGEN_FIXTURES=1 cargo test -p cknerv-core columnar_v4`.
     #[test]
-    fn columnar_v3_matches_the_shared_fixture() {
+    fn columnar_v4_matches_the_shared_fixture() {
         use crate::enrichment::ChainAnchor;
         use crate::projection::cells::{DisplayBudget, DisplayMode, DisplayProvenance};
 
@@ -954,7 +1012,7 @@ mod tests {
             residents: vec![&resident],
         };
         let encoded = encode_cells_columnar(&rows, header(), Some(&view), empty_tail());
-        assert_matches_fixture("cells_columnar_v3.bin", &encoded);
+        assert_matches_fixture("cells_columnar_v4.bin", &encoded);
     }
 
     /// The display-absent shape, as its own fixture. The provenance
@@ -962,10 +1020,10 @@ mod tests {
     /// when a plane is present reads the sections length out of the middle of
     /// it — which is exactly the desync this fixture exists to catch.
     #[test]
-    fn columnar_v3_display_absent_matches_the_shared_fixture() {
+    fn columnar_v4_display_absent_matches_the_shared_fixture() {
         let rows = [cell(1, Some("wallet")), cell(2, None), cell(3, Some("dex"))];
         let encoded = encode_cells_columnar(&rows, header(), None, empty_tail());
-        assert_matches_fixture("cells_columnar_v3_absent.bin", &encoded);
+        assert_matches_fixture("cells_columnar_v4_absent.bin", &encoded);
     }
 
     #[test]

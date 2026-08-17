@@ -9,7 +9,7 @@
 import { memo, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
-import type { Cell } from '@cknerv/types';
+import type { Cell, CellSemanticRecord } from '@cknerv/types';
 import type { ConsensusBraidField } from '../../derives/consensusBraid.derive';
 import { deriveCellContentAddressEncoding } from '../../derives/cellContentAddress.derive';
 import {
@@ -49,6 +49,7 @@ function CellNucleusPortrait({
   traceReadout = null,
   traceResponseRef,
   traceEvidenceFocusSourceId = null,
+  semanticRecord = null,
   identityProofBinding = null,
   onIdentityProofRead,
   onInteractionChange,
@@ -63,6 +64,7 @@ function CellNucleusPortrait({
   traceReadout?: ConsensusMemoryTraceReadout | null;
   traceResponseRef?: ConsensusMemoryCellResponseRef;
   traceEvidenceFocusSourceId?: number | null;
+  semanticRecord?: CellSemanticRecord | null;
   identityProofBinding?: CellIdentityProofBinding | null;
   onIdentityProofRead?: (kind: CellIdentityProofKind) => void;
   /** Close-mid-drag reset; live orbit events come from the inset renderer
@@ -105,6 +107,7 @@ function CellNucleusPortrait({
       traceReadout={traceReadout}
       traceResponseRef={traceResponseRef}
       traceEvidenceFocusSourceId={traceEvidenceFocusSourceId}
+      semanticRecord={semanticRecord}
       identityProofBinding={selectedBinding}
       onIdentityProofRead={onIdentityProofRead}
     />
@@ -167,6 +170,7 @@ function CellNucleusPortrait({
     <div
       ref={hostRef}
       data-memory-portrait-state={traceReadout?.stage ?? 'idle'}
+      data-cell-semantic-morphology={semanticRecord ? 'validated' : 'absent'}
       data-memory-evidence-focus-source={traceEvidenceFocusSourceId ?? undefined}
       data-memory-portrait-address="resolved"
       data-memory-portrait-address-fingerprint={addressEncoding.fingerprint}

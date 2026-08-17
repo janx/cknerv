@@ -50,6 +50,8 @@ export * from './geometry/pathRouter';
 
 // ── Derive helpers (pure data shapers consumed by HUDs) ─────────────
 export * from './derives/cellVisual.derive';
+export * from './derives/cellMorphology.derive';
+export * from './derives/cellSemanticMorphology.derive';
 export * from './derives/cellInteraction.derive';
 export * from './derives/cellSemantics.derive';
 export * from './derives/assetEcosystem.derive';
@@ -164,6 +166,11 @@ export type {
   CellCausalNavigationReadout,
 } from './components/hud/CellCausalLensReadout';
 export { default as CellNucleusPortrait } from './components/hud/CellNucleusPortrait';
+export {
+  default as CellMorphologyLabArtwork,
+  type CellMorphologyLabCamera,
+  type CellMorphologyLabMode,
+} from './components/hud/CellMorphologyLabArtwork';
 export { default as CellPortraitInset } from './components/hud/CellPortraitInset';
 export {
   default as CellCoreArtwork,

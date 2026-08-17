@@ -5,7 +5,7 @@
 //! so cknerv-adapter-ckb and simulator emit byte-identical Mutations for
 //! the same on-chain block (cells, hashes, capacities, content hashes).
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use ckb_types::{packed, prelude::*};
 use serde_json::Value;
 
@@ -13,6 +13,7 @@ use cknerv_core::{Mutation, OutPoint, TxOutputInfo, DATA_HEX_TRUNCATION_MARKER};
 
 use crate::content_hash::compute_content_hash;
 use crate::rpc::RpcClient;
+use crate::shape_seed::{data_shape_seed, script_shape_seed};
 
 /// One fully-translated canonical block plus the header linkage needed by
 /// the live poller to reject a mixed-fork fetch.
@@ -235,6 +236,11 @@ pub(crate) fn parse_output_info(
     let asset_kind = crate::script_taxonomy::classify_asset(type_.as_ref());
     let lock_script = crate::script_taxonomy::script_id(&lock);
     let type_script = type_.as_ref().map(crate::script_taxonomy::script_id);
+    let lock_shape_seed = script_shape_seed(&lock);
+    let type_shape_seed = type_.as_ref().map(script_shape_seed);
+    let data_shape_seed = data_shape_seed(&raw_data_bytes);
+    let data_bytes =
+        u32::try_from(raw_data_bytes.len()).context("Cell output data length exceeds u32")?;
     let cell_output = packed::CellOutput::new_builder()
         .capacity(capacity)
         .lock(lock)
@@ -244,7 +250,11 @@ pub(crate) fn parse_output_info(
     Ok(TxOutputInfo {
         capacity,
         data_hex: truncate_hex(raw_data_str, DATA_HEX_CAP_BYTES),
+        data_bytes,
         content_hash: compute_content_hash(&cell_output, &raw_data_bytes),
+        lock_shape_seed,
+        type_shape_seed,
+        data_shape_seed,
         lock_kind,
         asset_kind,
         lock_script,
@@ -301,6 +311,21 @@ fn now_ms() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn output_json(capacity: u64, lock_args: &[u8], type_args: Option<&[u8]>) -> Value {
+        let script = |code_byte: u8, args: &[u8]| {
+            serde_json::json!({
+                "code_hash": format!("0x{}", hex::encode([code_byte; 32])),
+                "hash_type": "type",
+                "args": format!("0x{}", hex::encode(args)),
+            })
+        };
+        serde_json::json!({
+            "capacity": format!("0x{capacity:x}"),
+            "lock": script(0x11, lock_args),
+            "type": type_args.map(|args| script(0x22, args)),
+        })
+    }
 
     fn cellbase_block_json(number: u64, hash: &str) -> Value {
         // Minimal block with a single cellbase tx (one phantom input + one output).
@@ -382,6 +407,68 @@ mod tests {
             }
             other => panic!("expected TxLanded second, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn output_component_seeds_change_only_with_their_source_bytes() {
+        let base = parse_output_info(
+            &output_json(1_000, &[1, 2], Some(&[3, 4])),
+            "0xaabb",
+            "base",
+        )
+        .unwrap();
+        assert_eq!(base.data_bytes, 2);
+        assert_ne!(base.lock_shape_seed, [0, 0]);
+        assert_ne!(base.type_shape_seed, Some([0, 0]));
+        assert_ne!(base.data_shape_seed, [0, 0]);
+
+        let lock_changed = parse_output_info(
+            &output_json(1_000, &[1, 9], Some(&[3, 4])),
+            "0xaabb",
+            "lock changed",
+        )
+        .unwrap();
+        assert_ne!(lock_changed.lock_shape_seed, base.lock_shape_seed);
+        assert_eq!(lock_changed.type_shape_seed, base.type_shape_seed);
+        assert_eq!(lock_changed.data_shape_seed, base.data_shape_seed);
+
+        let type_changed = parse_output_info(
+            &output_json(1_000, &[1, 2], Some(&[3, 9])),
+            "0xaabb",
+            "type changed",
+        )
+        .unwrap();
+        assert_eq!(type_changed.lock_shape_seed, base.lock_shape_seed);
+        assert_ne!(type_changed.type_shape_seed, base.type_shape_seed);
+        assert_eq!(type_changed.data_shape_seed, base.data_shape_seed);
+
+        let data_changed = parse_output_info(
+            &output_json(1_000, &[1, 2], Some(&[3, 4])),
+            "0xaabc",
+            "data changed",
+        )
+        .unwrap();
+        assert_eq!(data_changed.data_bytes, base.data_bytes);
+        assert_eq!(data_changed.lock_shape_seed, base.lock_shape_seed);
+        assert_eq!(data_changed.type_shape_seed, base.type_shape_seed);
+        assert_ne!(data_changed.data_shape_seed, base.data_shape_seed);
+
+        let capacity_changed = parse_output_info(
+            &output_json(2_000, &[1, 2], Some(&[3, 4])),
+            "0xaabb",
+            "capacity changed",
+        )
+        .unwrap();
+        assert_ne!(capacity_changed.content_hash, base.content_hash);
+        assert_eq!(capacity_changed.lock_shape_seed, base.lock_shape_seed);
+        assert_eq!(capacity_changed.type_shape_seed, base.type_shape_seed);
+        assert_eq!(capacity_changed.data_shape_seed, base.data_shape_seed);
+
+        let no_type =
+            parse_output_info(&output_json(1_000, &[1, 2], None), "0x", "plain cell").unwrap();
+        assert_eq!(no_type.type_shape_seed, None);
+        assert_eq!(no_type.data_bytes, 0);
+        assert_eq!(no_type.data_shape_seed, [0x44f4_c697, 0x44d5_f8c5]);
     }
 
     #[test]

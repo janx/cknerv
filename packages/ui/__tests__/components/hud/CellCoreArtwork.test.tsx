@@ -74,7 +74,11 @@ const CELL = {
   out_point: { tx_hash: `0x${'11'.repeat(32)}`, index: 0 },
   capacity: 61e8,
   data_hex: '0x',
+  data_bytes: 0,
   content_hash: `0x${'22'.repeat(32)}`,
+  lock_shape_seed: [1, 2],
+  type_shape_seed: null,
+  data_shape_seed: [3, 4],
   lock_kind: 'sighash',
   asset_kind: 'native',
 } satisfies Cell;

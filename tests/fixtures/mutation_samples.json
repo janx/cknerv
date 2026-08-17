@@ -27,7 +27,11 @@
       {
         "capacity": 100,
         "data_hex": "0x",
+        "data_bytes": 0,
         "content_hash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "lock_shape_seed": [2614616175, 1053772768],
+        "type_shape_seed": null,
+        "data_shape_seed": [1156892311, 1154873541],
         "lock_kind": "sighash",
         "asset_kind": "native"
       }

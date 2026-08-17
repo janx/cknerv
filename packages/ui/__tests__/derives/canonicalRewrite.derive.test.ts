@@ -17,7 +17,11 @@ function cell(id: number, overrides: Partial<Cell> = {}): Cell {
     out_point: { tx_hash: `0x${'ab'.repeat(32)}`, index: id },
     capacity: 100,
     data_hex: '0x',
+    data_bytes: 0,
     content_hash: `0x${String(id).padStart(64, '0')}`,
+    lock_shape_seed: [1, 2],
+    type_shape_seed: null,
+    data_shape_seed: [3, 4],
     ...overrides,
   };
 }

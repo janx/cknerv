@@ -67,7 +67,11 @@ function cell(id: number, hashDigit: string): Cell {
     out_point: { tx_hash: `0x${id}`, index: 0 },
     capacity: 0,
     data_hex: '0x',
+    data_bytes: 0,
     content_hash: `0x${hashDigit.repeat(64)}`,
+    lock_shape_seed: [1, 2],
+    type_shape_seed: null,
+    data_shape_seed: [3, 4],
   };
 }
 

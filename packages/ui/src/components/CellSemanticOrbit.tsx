@@ -12,6 +12,7 @@ import {
   cellSemanticVisualState,
   deriveCellSemanticComposition,
 } from '../derives/cellSemantics.derive';
+import { cellSemanticRecordMorphologyMismatch } from '../derives/cellSemanticMorphology.derive';
 
 const COMPOSITION_INNER_RADIUS = 2.08;
 const COMPOSITION_OUTER_RADIUS = 2.24;
@@ -33,7 +34,11 @@ export default function CellSemanticOrbit({ cell, record, source }: {
     [record],
   );
   const visualState = cellSemanticVisualState(source, record);
-  if (!visualState || (!composition && !record.asset)) return null;
+  if (
+    !visualState
+    || cellSemanticRecordMorphologyMismatch(cell, record)
+    || (!composition && !record.asset)
+  ) return null;
 
   const stale = visualState === 'stale';
   const compositionOpacity = stale ? 0.3 : 0.68;

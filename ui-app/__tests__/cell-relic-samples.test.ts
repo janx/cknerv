@@ -23,7 +23,11 @@ function cell(
     out_point: { tx_hash: `0x${'11'.repeat(32)}`, index: id },
     capacity: options.capacity ?? 61e8,
     data_hex: options.data ?? '0x',
+    data_bytes: Math.max(0, ((options.data ?? '0x').length - 2) / 2),
     content_hash: `0x${prefix}${'0'.repeat(56)}`,
+    lock_shape_seed: [1, 2],
+    type_shape_seed: options.asset === 'native' || options.asset === undefined ? null : [3, 4],
+    data_shape_seed: [5, 6],
     lock_kind: options.lock ?? 'sighash',
     asset_kind: options.asset ?? 'native',
   };

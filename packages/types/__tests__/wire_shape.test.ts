@@ -147,8 +147,12 @@ describe('wire-shape parity (TS twin of cknerv-core)', () => {
           out_point: { tx_hash: '0xdef', index: 3 },
           capacity: 5000,
           data_hex: '0x',
+          data_bytes: 0,
           content_hash:
             '0x2222222222222222222222222222222222222222222222222222222222222222',
+          lock_shape_seed: [572662306, 858993459],
+          type_shape_seed: null,
+          data_shape_seed: [1145324612, 1431655765],
           lock_kind: 'acp',
           asset_kind: 'xudt',
         },
@@ -178,6 +182,10 @@ describe('wire-shape parity (TS twin of cknerv-core)', () => {
     for (const cell of samples) {
       expect(typeof cell.id).toBe('number');
       expect(typeof cell.content_hash).toBe('string');
+      expect(Number.isInteger(cell.data_bytes)).toBe(true);
+      expect(cell.lock_shape_seed).toHaveLength(2);
+      expect(cell.type_shape_seed === null || cell.type_shape_seed.length === 2).toBe(true);
+      expect(cell.data_shape_seed).toHaveLength(2);
       expect(typeof cell.birth_block).toBe('number');
       expect(typeof cell.out_point.tx_hash).toBe('string');
       expect(typeof cell.out_point.index).toBe('number');

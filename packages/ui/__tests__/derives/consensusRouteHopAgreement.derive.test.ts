@@ -23,7 +23,11 @@ function target(id = 9): Cell {
     out_point: { tx_hash: '0xtarget', index: 0 },
     capacity: 0,
     data_hex: '0x',
+    data_bytes: 0,
     content_hash: '0xshared-record',
+    lock_shape_seed: [1, 2],
+    type_shape_seed: null,
+    data_shape_seed: [3, 4],
   };
 }
 

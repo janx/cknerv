@@ -306,7 +306,17 @@ export function cellContentEquals(a: Cell, b: Cell): boolean {
     && a.out_point.index === b.out_point.index
     && a.capacity === b.capacity
     && a.data_hex === b.data_hex
+    && a.data_bytes === b.data_bytes
     && a.content_hash === b.content_hash
+    && a.lock_shape_seed[0] === b.lock_shape_seed[0]
+    && a.lock_shape_seed[1] === b.lock_shape_seed[1]
+    && ((a.type_shape_seed === null && b.type_shape_seed === null)
+      || (a.type_shape_seed !== null
+        && b.type_shape_seed !== null
+        && a.type_shape_seed[0] === b.type_shape_seed[0]
+        && a.type_shape_seed[1] === b.type_shape_seed[1]))
+    && a.data_shape_seed[0] === b.data_shape_seed[0]
+    && a.data_shape_seed[1] === b.data_shape_seed[1]
     && a.lock_kind === b.lock_kind
     && a.asset_kind === b.asset_kind
     && scriptIdEquals(a.lock_script, b.lock_script)
@@ -337,7 +347,11 @@ const comparedCellFields = {
   out_point: true,
   capacity: true,
   data_hex: true,
+  data_bytes: true,
   content_hash: true,
+  lock_shape_seed: true,
+  type_shape_seed: true,
+  data_shape_seed: true,
   lock_kind: true,
   asset_kind: true,
   lock_script: true,

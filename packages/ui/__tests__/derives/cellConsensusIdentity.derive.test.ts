@@ -12,7 +12,11 @@ const cell: Cell = {
   out_point: { tx_hash: `0x${'ab'.repeat(32)}`, index: 3 },
   capacity: 6_100_000_000,
   data_hex: '0x1234',
+  data_bytes: 2,
   content_hash: `0x${'cd'.repeat(32)}`,
+  lock_shape_seed: [1, 2],
+  type_shape_seed: null,
+  data_shape_seed: [3, 4],
 };
 
 const link = (over: Partial<CellLink> = {}): CellLink => ({

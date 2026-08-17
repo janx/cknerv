@@ -21,7 +21,11 @@ const CELL: Cell = {
   },
   capacity: 100,
   data_hex: '0x',
+  data_bytes: 0,
   content_hash: CONTENT_HASH,
+  lock_shape_seed: [1, 2],
+  type_shape_seed: null,
+  data_shape_seed: [3, 4],
 };
 
 describe('Cell identity proof label', () => {

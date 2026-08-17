@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { Cell } from '@cknerv/types';
-import { deriveCellVisual } from '../../src/derives/cellVisual.derive';
 import {
   consensusBraidAgreementTarget,
   deriveConsensusBraidTopology,
 } from '../../src/derives/consensusBraid.derive';
+import { CELL_MORPHOLOGY_MAX_SEGMENTS } from '../../src/derives/cellMorphology.derive';
 import {
   deriveGalaxyConsensusBraid,
   writeGalaxyConsensusBraidBuffers,
@@ -24,7 +24,11 @@ const CELL: Cell = {
   out_point: { tx_hash: `0x${'cd'.repeat(32)}`, index: 0 },
   capacity: 8_000e8,
   data_hex: `0x${'ab'.repeat(96)}`,
+  data_bytes: 96,
   content_hash: `0x${'22'.repeat(32)}`,
+  lock_shape_seed: [1, 2],
+  type_shape_seed: null,
+  data_shape_seed: [3, 4],
   lock_kind: 'multisig',
   asset_kind: 'dao',
 };
@@ -50,18 +54,20 @@ describe('galaxy consensus braid LOD', () => {
     const right = deriveGalaxyConsensusBraid(CELL);
 
     expect(left).toEqual(right);
-    expect(left.segments.length).toBeGreaterThan(4 * 64 * 6);
+    expect(left.segments.length).toBeGreaterThan(5 * 60 * 6);
+    expect(left.segments.length / 6).toBeLessThanOrEqual(
+      CELL_MORPHOLOGY_MAX_SEGMENTS,
+    );
     expect(left.colors).toHaveLength(left.segments.length);
     expect(left.detailWeights).toHaveLength(left.segments.length / 6);
     expect(left.detailWeights.some((weight) => weight > 0.5)).toBe(true);
     expect(left.knots).toHaveLength(
-      consensusBraidAgreementTarget(deriveCellVisual(CELL)),
+      consensusBraidAgreementTarget(CELL),
     );
   });
 
   it('uses the portrait topology agreement order and capacity scale exactly', () => {
-    const visual = deriveCellVisual(CELL);
-    const topology = deriveConsensusBraidTopology(visual, CELL.birth_block);
+    const topology = deriveConsensusBraidTopology(CELL);
     const braid = deriveGalaxyConsensusBraid(CELL);
 
     expect(braid.presenceScale).toBe(topology.presenceScale);
@@ -205,8 +211,20 @@ describe('galaxy consensus braid LOD', () => {
     );
 
     expect(Math.max(...reading.lineCol)).toBeGreaterThan(Math.max(...baseline.lineCol));
-    expect(resolved.lineCol.reduce((sum, channel) => sum + channel, 0))
-      .toBeGreaterThan(reading.lineCol.reduce((sum, channel) => sum + channel, 0));
+    const detailedColorSum = (values: Float32Array) => braid.detailWeights.reduce(
+      (sum, weight, segment) => {
+        if (weight <= 0.7) return sum;
+        const offset = segment * 6;
+        return sum + values.slice(offset, offset + 6).reduce(
+          (segmentSum, channel) => segmentSum + channel,
+          0,
+        );
+      },
+      0,
+    );
+    expect(detailedColorSum(resolved.lineCol)).toBeGreaterThan(
+      detailedColorSum(reading.lineCol),
+    );
     expect(Math.max(...resolved.nodeAlpha)).toBeGreaterThanOrEqual(
       Math.max(...reading.nodeAlpha),
     );

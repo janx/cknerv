@@ -35,7 +35,11 @@ function mkCell(
     out_point: { tx_hash: txHash, index: 0 },
     capacity: 0,
     data_hex: '0x',
+    data_bytes: 0,
     content_hash: '0x' + '00'.repeat(32),
+    lock_shape_seed: [1, 2],
+    type_shape_seed: null,
+    data_shape_seed: [3, 4],
   };
 }
 function mkLink(over: Partial<CellLink> = {}): CellLink {

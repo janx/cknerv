@@ -22,6 +22,11 @@ export const DATA_HEX_TRUNCATION_MARKER = '~';
  *  at the SPA. */
 export type CellTag = string;
 
+/** Two-word deterministic fingerprint used by renderer-owned morphology.
+ *  The words are opaque: adapters derive them from complete component bytes,
+ *  while UI code expands them into bounded visual variation. */
+export type ShapeSeed = [number, number];
+
 /** Lock-script family classification. Mirrors the Rust
  *  `#[serde(rename_all = "snake_case")]` `LockKind` enum. */
 export type LockKind = 'sighash' | 'multisig' | 'acp' | 'omnilock' | 'other';
@@ -71,9 +76,17 @@ export interface Cell {
   out_point: OutPoint;
   capacity: number;       // shannons; UI converts to CKB
   data_hex: string;       // may end with DATA_HEX_TRUNCATION_MARKER
+  /** Full output-data length before `data_hex` was display-truncated. */
+  data_bytes: number;
   /** CKB-canonical BLAKE2b-256 of CellOutput + data. Stable, 66-char
    *  0x-prefixed hex. Seeds the per-cell CellLifeAvatar. */
   content_hash: string;
+  /** Independent immutable component fingerprints. The renderer uses these
+   *  to give lock, type and data separate morphological responsibilities. */
+  lock_shape_seed: ShapeSeed;
+  /** Explicitly null for a plain cell without a type script. */
+  type_shape_seed: ShapeSeed | null;
+  data_shape_seed: ShapeSeed;
   /** Lock-script family. Optional: old persisted state may lack it
    *  (mirrors Rust `#[serde(default)]`). */
   lock_kind?: LockKind;

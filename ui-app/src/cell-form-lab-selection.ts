@@ -1,11 +1,7 @@
-import { DATA_HEX_TRUNCATION_MARKER } from '@cknerv/types';
 import type { Cell, CellGalaxySnapshot } from '@cknerv/types';
 
 export function observedLabDataBytes(cell: Cell): number {
-  const value = cell.data_hex.endsWith(DATA_HEX_TRUNCATION_MARKER)
-    ? cell.data_hex.slice(0, -1)
-    : cell.data_hex;
-  return Math.floor((value.startsWith('0x') ? value.length - 2 : value.length) / 2);
+  return cell.data_bytes;
 }
 
 /** Resolve a stable real Cell for direct-linked visual comparisons. */

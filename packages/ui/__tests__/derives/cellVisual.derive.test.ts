@@ -19,7 +19,11 @@ const CELL: Cell = {
   out_point: { tx_hash: `0x${'ab'.repeat(32)}`, index: 0 },
   capacity: 61e8,
   data_hex: '0xdeadbeef',
+  data_bytes: 4,
   content_hash: '0x12345678abcdef0101020304ffffffff00000000000000000000000000000000',
+  lock_shape_seed: [1, 2],
+  type_shape_seed: null,
+  data_shape_seed: [3, 4],
   lock_kind: 'multisig',
   asset_kind: 'dao',
 };

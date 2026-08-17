@@ -434,9 +434,10 @@ Persistence is best-effort: unreadable, corrupt, or schema-mismatched state is
 discarded and the server starts empty. `cknerv purge --confirm` deletes derived
 `data/` state while preserving `cknerv.toml`.
 
-Persistence schema v3 adds durable Cell-link endpoint anchors. Existing
-schema-v2 state is incompatible; run `cknerv purge --confirm` before the first
-v3 launch, then let cknerv rebuild the derived state from the configured node.
+Persistence schema v5 adds canonical per-component Cell morphology seeds and
+the complete output-data byte length. Existing schema-v4 state is incompatible;
+run `cknerv purge --confirm` before the first v5 launch, then let cknerv rebuild
+the derived state from the configured node.
 
 Optional semantics are intentionally not persisted. They are bounded in memory
 and rehydrated from the configured source, so changing optional enrichment does

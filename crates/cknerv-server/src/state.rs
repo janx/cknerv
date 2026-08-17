@@ -26,9 +26,8 @@ use tokio::sync::{broadcast, mpsc, watch};
 
 use cknerv_core::{
     Chain, ChainNode, CompositionDemand, CompositionDemandSink, EnrichmentEvent,
-    ObservedScriptsSink,
-    EnrichmentSourceState, MempoolStats, Mutation, Peer, RecentBlock, RecentTx, ReplayPhase,
-    RevisionedMutation, Ring,
+    EnrichmentSourceState, MempoolStats, Mutation, ObservedScriptsSink, Peer, RecentBlock,
+    RecentTx, ReplayPhase, RevisionedMutation, Ring,
 };
 
 use crate::enrichment::CanonicalContext;
@@ -1785,7 +1784,11 @@ mod tests {
             },
             capacity: 61_00000000,
             data_hex: "0x".into(),
+            data_bytes: 0,
             content_hash: format!("0x{id:064x}"),
+            lock_shape_seed: [id as u32, 1],
+            type_shape_seed: None,
+            data_shape_seed: [id as u32, 2],
             lock_kind: Default::default(),
             asset_kind: kind,
             lock_script: Default::default(),

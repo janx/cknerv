@@ -15,6 +15,7 @@ import type {
 import {
   applyCellDelta,
   applyRevisionedCellDeltas,
+  cellContentEquals,
   DEFAULT_LINK_RING_CAPACITY,
   emptyCellsCache,
   fromCellsSnapshot,
@@ -39,7 +40,11 @@ function cell(id: number, overrides: Partial<Cell> = {}): Cell {
     out_point: { tx_hash: '0xabc', index: id },
     capacity: 100,
     data_hex: '0x',
+    data_bytes: 0,
     content_hash: '0x' + '00'.repeat(32),
+    lock_shape_seed: [1, 2],
+    type_shape_seed: null,
+    data_shape_seed: [3, 4],
     ...overrides,
   };
 }
@@ -327,6 +332,7 @@ describe('applyCellDelta', () => {
         pos_seed: [4, 5, 6],
         content_hash: `0x${'22'.repeat(32)}`,
         data_hex: `0x${'ff'.repeat(256)}`,
+        data_bytes: 256,
       }),
     });
 
@@ -569,6 +575,23 @@ describe('canonical suffix-rewrite replay identity reuse', () => {
     const replayed = applyCellDelta(populated, { type: 'birth', cell: cell(1) });
     expect(replayed).toBe(populated);
     expect(replayed.cells.get(1)).toBe(populated.cells.get(1));
+  });
+
+  it('treats every component morphology input as Cell content', () => {
+    const base = cell(1);
+    expect(cellContentEquals(base, {
+      ...base,
+      lock_shape_seed: [...base.lock_shape_seed],
+      data_shape_seed: [...base.data_shape_seed],
+    })).toBe(true);
+
+    const changed: Cell[] = [
+      { ...base, data_bytes: 1 },
+      { ...base, lock_shape_seed: [9, base.lock_shape_seed[1]] },
+      { ...base, type_shape_seed: [5, 6] },
+      { ...base, data_shape_seed: [base.data_shape_seed[0], 9] },
+    ];
+    for (const record of changed) expect(cellContentEquals(base, record)).toBe(false);
   });
 
   it('keeps identity and journal silence for unchanged cells across a suffix-rewrite replay', () => {

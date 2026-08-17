@@ -374,7 +374,11 @@ mod tests {
         TxOutputInfo {
             capacity: 1,
             data_hex: "0x".to_string(),
+            data_bytes: 0,
             content_hash: format!("0x{}", "00".repeat(32)),
+            lock_shape_seed: [1, 2],
+            type_shape_seed: None,
+            data_shape_seed: [3, 4],
             lock_kind: Default::default(),
             asset_kind: Default::default(),
             lock_script: Default::default(),

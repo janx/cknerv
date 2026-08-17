@@ -37,7 +37,11 @@ function cell(id: number, overrides: Partial<Cell> = {}): Cell {
     out_point: { tx_hash: `0xtx${id}`, index: id % 7 },
     capacity: 6_100_000_000 + id,
     data_hex: '0x',
+    data_bytes: 0,
     content_hash: '0x' + '00'.repeat(32),
+    lock_shape_seed: [1, 2],
+    type_shape_seed: null,
+    data_shape_seed: [3, 4],
     ...overrides,
   };
 }
@@ -66,12 +70,14 @@ describe('cellField store', () => {
     const a = cell(bigId, {
       tag: 'wallet',
       data_hex: '0xdeadbeef',
+      data_bytes: 4,
       lock_kind: 'omnilock',
       asset_kind: 'dao',
       death_at_ms: 123_456,
       pos_seed: [0.5, -2.25, 3.125],
       lock_script: { code_hash: `0x${'ab'.repeat(32)}`, hash_type: 'type' },
       type_script: { code_hash: `0x${'cd'.repeat(32)}`, hash_type: 'data1' },
+      type_shape_seed: [5, 6],
     });
     const slot = cellFieldUpsert(field, a);
     expect(cellFieldSlotOf(field, bigId)).toBe(slot);
@@ -85,7 +91,9 @@ describe('cellField store', () => {
       tag: null,
       death_at_ms: null,
       data_hex: '0x',
+      data_bytes: 0,
       type_script: undefined,
+      type_shape_seed: null,
     };
     expect(cellFieldUpsert(field, a2)).toBe(slot);
     expect(field.size).toBe(1);
@@ -222,8 +230,9 @@ describe('syncCellFieldFromCache', () => {
       rand() < 0.3
         ? 4_503_599_627_370_000 + Math.floor(rand() * 500)
         : 1 + Math.floor(rand() * 500);
-    const randomCell = (id: number): Cell =>
-      cell(id, {
+    const randomCell = (id: number): Cell => {
+      const hasData = rand() < 0.3;
+      return cell(id, {
         born_at_ms: Math.floor(rand() * 1e12),
         pos_seed: [
           Math.fround(rand() * 10 - 5),
@@ -231,10 +240,12 @@ describe('syncCellFieldFromCache', () => {
           Math.fround(rand() * 10 - 5),
         ],
         tag: rand() < 0.2 ? 'wallet' : null,
-        data_hex: rand() < 0.3 ? '0xdeadbeef' : '0x',
+        data_hex: hasData ? '0xdeadbeef' : '0x',
+        data_bytes: hasData ? 4 : 0,
         lock_kind: rand() < 0.5 ? 'sighash' : undefined,
         asset_kind: rand() < 0.5 ? 'dao' : undefined,
       });
+    };
 
     const field = createCellField(16);
     let cache = emptyCellsCache();
@@ -296,6 +307,13 @@ describe('hydrateCellFieldFromColumnar', () => {
       posZ: new Float32Array([3, -3]),
       birthBlock: new Uint32Array([5, 6]),
       outPointIndex: new Uint32Array([0, 3]),
+      dataBytes: new Uint32Array([4, 0]),
+      lockShapeSeed0: new Uint32Array([11, 12]),
+      lockShapeSeed1: new Uint32Array([21, 22]),
+      typeShapeSeed0: new Uint32Array([0, 0]),
+      typeShapeSeed1: new Uint32Array([0, 0]),
+      dataShapeSeed0: new Uint32Array([31, 32]),
+      dataShapeSeed1: new Uint32Array([41, 42]),
       lockKind: new Uint8Array([0, 3]),
       assetKind: new Uint8Array([0, 3]),
       tagIndex: new Uint8Array([0, CELLS_COLUMNAR_NO_TAG]),
@@ -304,7 +322,7 @@ describe('hydrateCellFieldFromColumnar', () => {
       typeScriptRef: new Uint16Array([CELLS_COLUMNAR_NO_SCRIPT, CELLS_COLUMNAR_NO_SCRIPT]),
       tags: ['wallet'],
       scripts: [{ code_hash: `0x${'ab'.repeat(32)}`, hash_type: 'type' }],
-      // v3 carries the per-row strings too; this hydrator deliberately skips
+      // v4 carries the per-row strings too; this hydrator deliberately skips
       // them (it fills the numeric field and leaves `stringsHydrated` false).
       // Script identity is not in that bucket — it rides a dictionary.
       txHash: (row: number) => `0xtx${row}`,
@@ -325,6 +343,10 @@ describe('hydrateCellFieldFromColumnar', () => {
     expect(slot).toBeGreaterThanOrEqual(0);
     expect(field.tag[slot]).toBe('wallet');
     expect(field.flags[slot]).toBe(CELL_FIELD_HAS_DATA);
+    expect(field.dataBytes[slot]).toBe(4);
+    expect([field.lockShapeSeed0[slot], field.lockShapeSeed1[slot]]).toEqual([11, 21]);
+    expect(materializeCellAt(field, slot).type_shape_seed).toBeNull();
+    expect(materializeCellAt(field, slot).data_shape_seed).toEqual([31, 41]);
     expect(Number.isNaN(field.deathAtMs[slot])).toBe(true);
     expect(field.lockScript[slot]).toEqual({
       code_hash: `0x${'ab'.repeat(32)}`,

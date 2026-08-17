@@ -44,6 +44,7 @@ import type {
 import { PROBE_STEP_S, probeScan } from './probeScan';
 import { deriveCellVisual } from '../../derives/cellVisual.derive';
 import { deriveCellConsensusIdentity } from '../../derives/cellConsensusIdentity.derive';
+import { validateCellSemanticRecordForMorphology } from '../../derives/cellSemanticMorphology.derive';
 import {
   deriveCellCausalLens,
   type CellCausalLens,
@@ -290,6 +291,25 @@ export default function CellDetailPanel({
 }: CellDetailPanelProps) {
   const reduced = useReducedMotion();
   const live = cell.death_at_ms === null;
+  const semanticValidation = useMemo(
+    () => validateCellSemanticRecordForMorphology({
+      cell,
+      record: semanticRecord,
+      source: semanticSource,
+      phase: semanticPhase,
+    }),
+    [cell, semanticPhase, semanticRecord, semanticSource],
+  );
+  const semanticProofUnavailable = semanticValidation.status === 'inactive'
+    && semanticValidation.message !== null;
+  const semanticIdentityMismatch = semanticValidation.status === 'mismatch';
+  const presentedSemanticPhase = semanticIdentityMismatch
+    ? 'error'
+    : semanticProofUnavailable ? 'waiting' : semanticPhase;
+  const presentedSemanticRecord = semanticIdentityMismatch || semanticProofUnavailable
+    ? null
+    : semanticRecord;
+  const presentedSemanticMessage = semanticValidation.message ?? semanticMessage;
   const enhancedDetail = Boolean(semanticSource && semanticPhase);
   // Composition backfill emits born_at_ms 0 for records born before the
   // retained window — an epoch-relative age would read as decades.
@@ -344,7 +364,10 @@ export default function CellDetailPanel({
     [causalLens, cell, inspectedCellById, recentLinks],
   );
   const order = CONSENSUS_BRAID_FIELDS;
-  const agreementTarget = consensusBraidAgreementTarget(visual);
+  const agreementTarget = useMemo(
+    () => consensusBraidAgreementTarget(cell),
+    [cell],
+  );
 
   useEffect(() => {
     onInspectionFieldChange?.(selectedField);
@@ -379,13 +402,27 @@ export default function CellDetailPanel({
     capacity: { label: 'CAPACITY', value: formatCkb(cell.capacity) },
     asset: {
       label: 'ASSET',
-      value: formatScriptIdentity(formatAssetKind(cell.asset_kind), semanticRecord?.type_script),
-      color: scriptIdentityColor(cell.asset_kind, ASSET_COLORS, semanticRecord?.type_script),
+      value: formatScriptIdentity(
+        formatAssetKind(cell.asset_kind),
+        presentedSemanticRecord?.type_script,
+      ),
+      color: scriptIdentityColor(
+        cell.asset_kind,
+        ASSET_COLORS,
+        presentedSemanticRecord?.type_script,
+      ),
     },
     lock: {
       label: 'LOCK',
-      value: formatScriptIdentity(formatLockKind(cell.lock_kind), semanticRecord?.lock_script),
-      color: scriptIdentityColor(cell.lock_kind, LOCK_COLORS, semanticRecord?.lock_script),
+      value: formatScriptIdentity(
+        formatLockKind(cell.lock_kind),
+        presentedSemanticRecord?.lock_script,
+      ),
+      color: scriptIdentityColor(
+        cell.lock_kind,
+        LOCK_COLORS,
+        presentedSemanticRecord?.lock_script,
+      ),
     },
     data: {
       label: 'DATA',
@@ -578,6 +615,7 @@ export default function CellDetailPanel({
           traceReadout={traceReadout}
           traceResponseRef={traceResponseRef}
           traceEvidenceFocusSourceId={traceEvidenceFocusSourceId}
+          semanticRecord={semanticValidation.record}
           identityProofBinding={selectedIdentityProofBinding}
           onIdentityProofRead={onIdentityProofRead
             ? handlePortraitIdentityProofRead
@@ -669,10 +707,10 @@ export default function CellDetailPanel({
         {semanticSource && semanticPhase ? (
           <CellSemanticsReadout
             source={semanticSource}
-            phase={semanticPhase}
-            record={semanticRecord}
+            phase={presentedSemanticPhase ?? semanticPhase}
+            record={presentedSemanticRecord}
             birthBlock={cell.birth_block}
-            message={semanticMessage}
+            message={presentedSemanticMessage}
             transactionPhase={semanticTransactionPhase}
             transactionRecord={semanticTransactionRecord}
             transactionMessage={semanticTransactionMessage}
@@ -723,9 +761,9 @@ export default function CellDetailPanel({
               identity={identity}
               dataHex={cell.data_hex}
               semanticSource={semanticSource}
-              semanticPhase={semanticPhase}
-              semanticRecord={semanticRecord}
-              semanticMessage={semanticMessage}
+              semanticPhase={presentedSemanticPhase}
+              semanticRecord={presentedSemanticRecord}
+              semanticMessage={presentedSemanticMessage}
               causalLens={resolvedCausalLens}
               causalNavigation={causalNavigation}
               reveal={scan.classified ? 1 : scan.pct / 100}

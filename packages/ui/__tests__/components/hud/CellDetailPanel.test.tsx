@@ -1,6 +1,11 @@
 import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
-import type { Cell, CellLink } from '@cknerv/types';
+import type {
+  Cell,
+  CellLink,
+  CellSemanticRecord,
+  EnrichmentSourceStatus,
+} from '@cknerv/types';
 import type { ConsensusMemoryTraceReadout } from '../../../src/nerve/consensusMemoryTrace';
 import type {
   CellIdentityBindingPhase,
@@ -8,16 +13,21 @@ import type {
 } from '../../../src/derives/cellIdentityProof.derive';
 import { PROBE_STEP_S } from '../../../src/components/hud/probeScan';
 
-const { portraitRender } = vi.hoisted(() => ({ portraitRender: vi.fn() }));
+const { portraitRender, portraitSemanticRecord } = vi.hoisted(() => ({
+  portraitRender: vi.fn(),
+  portraitSemanticRecord: vi.fn(),
+}));
 
 vi.mock('../../../src/components/hud/CellNucleusPortrait', async () => {
   const { memo } = await import('react');
   return {
-    default: memo(({ focusField, onIdentityProofRead }: {
+    default: memo(({ focusField, onIdentityProofRead, semanticRecord }: {
       focusField?: string | null;
       onIdentityProofRead?: (kind: 'content') => void;
+      semanticRecord?: CellSemanticRecord | null;
     }) => {
       portraitRender();
+      portraitSemanticRecord(semanticRecord ?? null);
       return (
         <div data-testid="cell-nucleus-portrait" data-focus-field={focusField ?? ''}>
           <button
@@ -40,7 +50,9 @@ const base: Cell = {
   tag: 'wallet', pos_seed: [0, 0, 0],
   out_point: { tx_hash: '0x' + 'ab'.repeat(32), index: 2 },
   capacity: 12300000000, data_hex: '0xdeadbeefcafe1234567890',
+  data_bytes: 11,
   content_hash: '0x' + '11'.repeat(32), lock_kind: 'omnilock', asset_kind: 'xudt',
+  lock_shape_seed: [1, 2], type_shape_seed: null, data_shape_seed: [3, 4],
 };
 
 function identityBinding(
@@ -100,6 +112,7 @@ function traceReadout(
 describe('CellDetailPanel', () => {
   beforeEach(() => {
     portraitRender.mockClear();
+    portraitSemanticRecord.mockClear();
     vi.useFakeTimers();
     vi.setSystemTime(new Date(3 * 3600_000 + 12 * 60_000));
   });
@@ -221,6 +234,7 @@ describe('CellDetailPanel', () => {
       asset_kind: 'native' as const,
       lock_kind: 'sighash' as const,
       data_hex: '0x',
+      data_bytes: 0,
     };
     const { container } = render(
       <CellDetailPanel cell={native} onClose={() => {}} />,
@@ -290,6 +304,71 @@ describe('CellDetailPanel', () => {
     expect(text).not.toContain('UNLISTED');
   });
 
+  it('threads only anchor- and seed-validated semantics into portrait geometry', () => {
+    const anchor = { block: base.birth_block, hash: `0x${'ee'.repeat(32)}` };
+    const source: EnrichmentSourceStatus = {
+      source: 'ckbadger',
+      status: 'ready',
+      capabilities: ['cell_detail'],
+      validated_anchor: anchor,
+    };
+    const record: CellSemanticRecord = {
+      out_point: base.out_point,
+      source: 'ckbadger',
+      as_of: anchor,
+      observed_at_block: base.birth_block,
+      updated_at_ms: 1,
+      lock_script: {
+        script_hash: `0x0000000100000002${'00'.repeat(24)}`,
+        code_hash: `0x${'77'.repeat(32)}`,
+        hash_type: 'type',
+        args: '0x',
+        name: 'Verified lock',
+      },
+      facets: [],
+    };
+    const { container, rerender } = render(
+      <CellDetailPanel
+        cell={base}
+        semanticSource={source}
+        semanticPhase="ready"
+        semanticRecord={record}
+        onClose={() => {}}
+      />,
+    );
+    expect(portraitSemanticRecord).toHaveBeenLastCalledWith(record);
+
+    rerender(
+      <CellDetailPanel
+        cell={base}
+        semanticSource={{ ...source, status: 'stale' }}
+        semanticPhase="ready"
+        semanticRecord={record}
+        onClose={() => {}}
+      />,
+    );
+    expect(portraitSemanticRecord).toHaveBeenLastCalledWith(null);
+
+    const mismatched = {
+      ...record,
+      lock_script: {
+        ...record.lock_script!,
+        script_hash: `0xaaaaaaaa00000002${'00'.repeat(24)}`,
+      },
+    };
+    rerender(
+      <CellDetailPanel
+        cell={base}
+        semanticSource={source}
+        semanticPhase="ready"
+        semanticRecord={mismatched}
+        onClose={() => {}}
+      />,
+    );
+    expect(portraitSemanticRecord).toHaveBeenLastCalledWith(null);
+    expect(container.querySelector('[data-cell-semantics-phase="error"]')).not.toBeNull();
+  });
+
   it('keeps every retained direct byte inspectable through bounded windows', () => {
     const longData = Array.from(
       { length: 40 },
@@ -297,7 +376,7 @@ describe('CellDetailPanel', () => {
     ).join('');
     const { container } = render(
       <CellDetailPanel
-        cell={{ ...base, data_hex: `0x${longData}` }}
+        cell={{ ...base, data_hex: `0x${longData}`, data_bytes: longData.length / 2 }}
         onClose={() => {}}
       />,
     );

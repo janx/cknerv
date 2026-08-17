@@ -14,6 +14,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::{AssetKind, LockKind, ScriptId};
 
+/// Compact, source-derived fingerprint used only to seed deterministic
+/// presentation. Core transports the words without interpreting them.
+pub type ShapeSeed = [u32; 2];
+
 /// Suffix a producer appends to a bounded `data_hex` prefix when the source
 /// data was longer. ASCII by requirement, not by taste: the columnar
 /// snapshot ships these strings in one blob whose byte offsets the client
@@ -35,11 +39,22 @@ pub struct TxOutputInfo {
     /// exceeds the cap [`DATA_HEX_TRUNCATION_MARKER`] is appended so
     /// consumers can detect truncation.
     pub data_hex: String,
+    /// Full output-data length before [`data_hex`](Self::data_hex) truncation.
+    #[serde(default)]
+    pub data_bytes: u32,
     /// CKB-canonical BLAKE2b-256 of `CellOutput.as_slice() ++ raw_data_bytes`
     /// using the `ckb-default-hash` personalization. Stable across reloads
     /// and identical to what the chain itself computes for this cell.
     /// 66 chars including the `0x` prefix.
     pub content_hash: String,
+    /// Fingerprints of the full lock script, optional full type script, and
+    /// full raw data. Adapters derive them; core keeps them chain-generic.
+    #[serde(default)]
+    pub lock_shape_seed: ShapeSeed,
+    #[serde(default)]
+    pub type_shape_seed: Option<ShapeSeed>,
+    #[serde(default)]
+    pub data_shape_seed: ShapeSeed,
     /// How this cell is guarded — derived from the lock script's
     /// well-known `code_hash` at parse time. `#[serde(default)]` keeps
     /// pre-taxonomy persisted snapshots loadable (→ `LockKind::Other`).

@@ -32,7 +32,11 @@ function cell(
     out_point: { tx_hash: `0x${id}`, index: 0 },
     capacity: 1,
     data_hex: `0x${'ff'.repeat(256)}`,
+    data_bytes: 256,
     content_hash: `0x${id}`,
+    lock_shape_seed: [1, 2],
+    type_shape_seed: null,
+    data_shape_seed: [3, 4],
   };
 }
 

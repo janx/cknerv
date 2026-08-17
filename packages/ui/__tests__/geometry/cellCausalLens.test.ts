@@ -20,7 +20,11 @@ function cell(id: number, pos: [number, number, number]): Cell {
     out_point: { tx_hash: hash('ab'), index: id },
     capacity: 6_100_000_000,
     data_hex: '0x',
+    data_bytes: 0,
     content_hash: hash('cd'),
+    lock_shape_seed: [1, 2],
+    type_shape_seed: null,
+    data_shape_seed: [3, 4],
   };
 }
 

@@ -25,7 +25,20 @@
       },
       "capacity": 14200000000,
       "data_hex": "0x5c00000000000000",
+      "data_bytes": 8,
       "content_hash": "0x1111111111111111111111111111111111111111111111111111111111111111",
+      "lock_shape_seed": [
+        2614616175,
+        1053772768
+      ],
+      "type_shape_seed": [
+        1354599782,
+        2159589839
+      ],
+      "data_shape_seed": [
+        1543503872,
+        0
+      ],
       "lock_kind": "sighash",
       "asset_kind": "xudt",
       "lock_script": {
@@ -66,7 +79,17 @@
         },
         "capacity": 5000,
         "data_hex": "0x",
+        "data_bytes": 0,
         "content_hash": "0x2222222222222222222222222222222222222222222222222222222222222222",
+        "lock_shape_seed": [
+          572662306,
+          858993459
+        ],
+        "type_shape_seed": null,
+        "data_shape_seed": [
+          1145324612,
+          1431655765
+        ],
         "lock_kind": "acp",
         "asset_kind": "xudt"
       }

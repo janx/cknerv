@@ -1,28 +1,35 @@
 import { describe, expect, it } from 'vitest';
-import * as THREE from 'three';
-import type { CellVisualDescriptor } from '../../src/derives/cellVisual.derive';
+import type { Cell } from '@cknerv/types';
+import { deriveCellMorphologyTopology } from '../../src/derives/cellMorphology.derive';
 import {
   CONSENSUS_BRAID_FIELDS,
-  consensusBraidAgreementTarget,
   consensusBraidAgreementResolution,
+  consensusBraidAgreementTarget,
   consensusBraidBirthPhase,
-  consensusBraidLayerOpacity,
   consensusBraidContributorColor,
+  consensusBraidLayerOpacity,
+  consensusBraidPathPoint,
   consensusBraidPresenceScale,
-  consensusBraidFrequencies,
-  consensusBraidPoint,
-  consensusBraidSpecs,
-  consensusBraidStrandCount,
   deriveConsensusBraidTopology,
 } from '../../src/derives/consensusBraid.derive';
 
-const VISUAL: CellVisualDescriptor = {
-  assetClass: 0,
-  lockClass: 0,
-  mass: 1,
-  payload: 0.5,
-  seeds: [0.1, 0.2, 0.3, 0.4],
-  accent: [1, 0.68, 0.35],
+const CELL: Cell = {
+  id: 17,
+  born_at_ms: 0,
+  death_at_ms: null,
+  birth_block: 12_345,
+  tag: null,
+  pos_seed: [0, 0, 0],
+  out_point: { tx_hash: `0x${'cd'.repeat(32)}`, index: 0 },
+  capacity: 8_000e8,
+  data_hex: `0x${'ab'.repeat(256)}`,
+  data_bytes: 256,
+  content_hash: `0x${'22'.repeat(32)}`,
+  lock_shape_seed: [0x3141_5926, 0x5358_9793],
+  type_shape_seed: [0x1234_5678, 0x9abc_def0],
+  data_shape_seed: [0x2384_6264, 0x3383_2795],
+  lock_kind: 'multisig',
+  asset_kind: 'dao',
 };
 
 describe('canonical consensus braid mapping', () => {
@@ -37,47 +44,25 @@ describe('canonical consensus braid mapping', () => {
     ]);
   });
 
-  it('maps asset classes to stable frequency families', () => {
-    expect(Array.from({ length: 6 }, (_, asset) => consensusBraidFrequencies(asset))).toEqual([
-      [2, 3, 4],
-      [2, 3, 5],
-      [3, 4, 7],
-      [1, 3, 5],
-      [3, 5, 6],
-      [2, 5, 7],
-    ]);
+  it('makes Morphology V2 the single portrait and galaxy topology authority', () => {
+    const shared = deriveConsensusBraidTopology(CELL);
+    expect(shared).toEqual(deriveCellMorphologyTopology(CELL));
+    expect(shared.agreements).toHaveLength(consensusBraidAgreementTarget(CELL));
+    expect(shared.strands).toHaveLength(shared.genome.lock.strandCount);
+    expect(shared.carrier.at(-1)).toEqual(shared.carrier[0]);
   });
 
-  it('maps lock classes to a bounded contributor count', () => {
-    expect(Array.from({ length: 5 }, (_, lock) => consensusBraidStrandCount(lock))).toEqual([
-      3,
-      4,
-      4,
-      5,
-      5,
-    ]);
-  });
-
-  it('produces identical portrait and LOD-ready specs for the same descriptor', () => {
-    const left = consensusBraidSpecs(VISUAL);
-    const right = consensusBraidSpecs(VISUAL);
-    expect(left).toEqual(right);
-    expect(left).toHaveLength(3);
-    expect(left[0]).toMatchObject({ a: 2, b: 3, c: 4 });
-
-    const pointA = consensusBraidPoint(left[0], 1.25, new THREE.Vector3());
-    const pointB = consensusBraidPoint(right[0], 1.25, new THREE.Vector3());
-    expect(pointA.toArray()).toEqual(pointB.toArray());
-  });
-
-  it('derives the agreement-node target from contributors and payload', () => {
-    expect(consensusBraidAgreementTarget({ ...VISUAL, payload: 0 })).toBe(2);
-    expect(consensusBraidAgreementTarget(VISUAL)).toBe(4);
-    expect(consensusBraidAgreementTarget({
-      ...VISUAL,
-      lockClass: 4,
-      payload: 1,
-    })).toBe(12);
+  it('samples canonical closed paths deterministically without changing topology', () => {
+    const topology = deriveConsensusBraidTopology(CELL);
+    const path = topology.strands[0].points;
+    expect(consensusBraidPathPoint(path, 0)).toEqual(path[0]);
+    expect(consensusBraidPathPoint(path, 1)).toEqual(path[0]);
+    expect(consensusBraidPathPoint(path, -0.25)).toEqual(
+      consensusBraidPathPoint(path, 0.75),
+    );
+    expect(consensusBraidPathPoint(path, 0.123)).toEqual(
+      consensusBraidPathPoint(path, 0.123),
+    );
   });
 
   it('resolves canonical agreement knots sequentially from shared convergence', () => {
@@ -92,29 +77,25 @@ describe('canonical consensus braid mapping', () => {
     expect(consensusBraidAgreementResolution(0, 0, 1)).toBe(0);
   });
 
-  it('resolves one stable full-density agreement constellation', () => {
-    const dense = {
-      ...VISUAL,
-      lockClass: 4,
-      payload: 1,
-      seeds: [0.93, 0.17, 0.61, 0.38] as const,
+  it('derives one stable full-density agreement order from lock crossings', () => {
+    const dense: Cell = {
+      ...CELL,
+      lock_kind: 'omnilock',
+      data_bytes: 0xffff_ffff,
+      data_shape_seed: [0x93, 0x17],
     };
-    const left = deriveConsensusBraidTopology(dense, 12_345);
-    const right = deriveConsensusBraidTopology(dense, 12_345);
+    const left = deriveConsensusBraidTopology(dense);
+    const right = deriveConsensusBraidTopology(dense);
 
     expect(left).toEqual(right);
-    expect(left.agreements).toHaveLength(consensusBraidAgreementTarget(dense));
     expect(left.agreements).toHaveLength(12);
-    expect(Array.from({ length: 4 }, (_, pair) => (
-      left.agreements.filter((agreement) => agreement.pair === pair).length
-    ))).toEqual([3, 3, 3, 3]);
-    expect(left.agreements.map((agreement) => agreement.ordinal)).toEqual([
-      0, 1, 2,
-      0, 1, 2,
-      0, 1, 2,
-      0, 1, 2,
-    ]);
-    expect(left.birthPhase).toBe(consensusBraidBirthPhase(12_345));
+    expect(left.agreements).toHaveLength(consensusBraidAgreementTarget(dense));
+    expect(left.agreements.map((agreement) => agreement.parameter)).toEqual(
+      [...left.agreements]
+        .sort((a, b) => a.parameter - b.parameter || a.pair - b.pair || a.ordinal - b.ordinal)
+        .map((agreement) => agreement.parameter),
+    );
+    expect(left.birthPhase).toBe(consensusBraidBirthPhase(dense.birth_block));
   });
 
   it('maps capacity mass to one monotonic bounded presence scale', () => {

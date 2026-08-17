@@ -48,6 +48,13 @@ export interface CellField {
   posZ: Float32Array;
   birthBlock: Uint32Array;
   outPointIndex: Uint32Array;
+  dataBytes: Uint32Array;
+  lockShapeSeed0: Uint32Array;
+  lockShapeSeed1: Uint32Array;
+  typeShapeSeed0: Uint32Array;
+  typeShapeSeed1: Uint32Array;
+  dataShapeSeed0: Uint32Array;
+  dataShapeSeed1: Uint32Array;
   lockKind: Uint8Array;
   assetKind: Uint8Array;
   flags: Uint8Array;
@@ -113,6 +120,13 @@ export function createCellField(initialCapacity = 1024): CellField {
     posZ: new Float32Array(capacity),
     birthBlock: new Uint32Array(capacity),
     outPointIndex: new Uint32Array(capacity),
+    dataBytes: new Uint32Array(capacity),
+    lockShapeSeed0: new Uint32Array(capacity),
+    lockShapeSeed1: new Uint32Array(capacity),
+    typeShapeSeed0: new Uint32Array(capacity),
+    typeShapeSeed1: new Uint32Array(capacity),
+    dataShapeSeed0: new Uint32Array(capacity),
+    dataShapeSeed1: new Uint32Array(capacity),
     lockKind: new Uint8Array(capacity),
     assetKind: new Uint8Array(capacity),
     flags: new Uint8Array(capacity),
@@ -253,6 +267,13 @@ function growColumns(field: CellField, minCapacity: number): void {
   field.posZ = growTyped(field.posZ, (n) => new Float32Array(n));
   field.birthBlock = growTyped(field.birthBlock, (n) => new Uint32Array(n));
   field.outPointIndex = growTyped(field.outPointIndex, (n) => new Uint32Array(n));
+  field.dataBytes = growTyped(field.dataBytes, (n) => new Uint32Array(n));
+  field.lockShapeSeed0 = growTyped(field.lockShapeSeed0, (n) => new Uint32Array(n));
+  field.lockShapeSeed1 = growTyped(field.lockShapeSeed1, (n) => new Uint32Array(n));
+  field.typeShapeSeed0 = growTyped(field.typeShapeSeed0, (n) => new Uint32Array(n));
+  field.typeShapeSeed1 = growTyped(field.typeShapeSeed1, (n) => new Uint32Array(n));
+  field.dataShapeSeed0 = growTyped(field.dataShapeSeed0, (n) => new Uint32Array(n));
+  field.dataShapeSeed1 = growTyped(field.dataShapeSeed1, (n) => new Uint32Array(n));
   field.lockKind = growTyped(field.lockKind, (n) => new Uint8Array(n));
   field.assetKind = growTyped(field.assetKind, (n) => new Uint8Array(n));
   field.flags = growTyped(field.flags, (n) => new Uint8Array(n));
@@ -309,9 +330,16 @@ function writeCellColumns(field: CellField, slot: number, cell: Cell): void {
   field.posZ[slot] = cell.pos_seed[2];
   field.birthBlock[slot] = cell.birth_block;
   field.outPointIndex[slot] = cell.out_point.index;
+  field.dataBytes[slot] = cell.data_bytes;
+  field.lockShapeSeed0[slot] = cell.lock_shape_seed[0];
+  field.lockShapeSeed1[slot] = cell.lock_shape_seed[1];
+  field.typeShapeSeed0[slot] = cell.type_shape_seed?.[0] ?? 0;
+  field.typeShapeSeed1[slot] = cell.type_shape_seed?.[1] ?? 0;
+  field.dataShapeSeed0[slot] = cell.data_shape_seed[0];
+  field.dataShapeSeed1[slot] = cell.data_shape_seed[1];
   field.lockKind[slot] = LOCK_KIND_CODES[cell.lock_kind ?? 'other'];
   field.assetKind[slot] = ASSET_KIND_CODES[cell.asset_kind ?? 'other'];
-  field.flags[slot] = cell.data_hex.length > 2 ? CELL_FIELD_HAS_DATA : 0;
+  field.flags[slot] = cell.data_bytes > 0 ? CELL_FIELD_HAS_DATA : 0;
   field.tag[slot] = cell.tag;
   field.txHash[slot] = cell.out_point.tx_hash;
   field.contentHash[slot] = cell.content_hash;
@@ -397,7 +425,13 @@ export function materializeCellAt(field: CellField, slot: number): Cell {
     },
     capacity: field.capacityShannons[slot],
     data_hex: field.dataHex[slot],
+    data_bytes: field.dataBytes[slot],
     content_hash: field.contentHash[slot],
+    lock_shape_seed: [field.lockShapeSeed0[slot], field.lockShapeSeed1[slot]],
+    type_shape_seed: typeScript === undefined
+      ? null
+      : [field.typeShapeSeed0[slot], field.typeShapeSeed1[slot]],
+    data_shape_seed: [field.dataShapeSeed0[slot], field.dataShapeSeed1[slot]],
     lock_kind: COLUMNAR_LOCK_KINDS[field.lockKind[slot]] ?? 'other',
     asset_kind: COLUMNAR_ASSET_KINDS[field.assetKind[slot]] ?? 'other',
     // Absent stays absent, as on the wire and in `columnarCellAt`.
@@ -480,6 +514,13 @@ export function hydrateCellFieldFromColumnar(
     field.posZ[slot] = view.posZ[i];
     field.birthBlock[slot] = view.birthBlock[i];
     field.outPointIndex[slot] = view.outPointIndex[i];
+    field.dataBytes[slot] = view.dataBytes[i];
+    field.lockShapeSeed0[slot] = view.lockShapeSeed0[i];
+    field.lockShapeSeed1[slot] = view.lockShapeSeed1[i];
+    field.typeShapeSeed0[slot] = view.typeShapeSeed0[i];
+    field.typeShapeSeed1[slot] = view.typeShapeSeed1[i];
+    field.dataShapeSeed0[slot] = view.dataShapeSeed0[i];
+    field.dataShapeSeed1[slot] = view.dataShapeSeed1[i];
     field.lockKind[slot] = view.lockKind[i];
     field.assetKind[slot] = view.assetKind[i];
     field.flags[slot] = view.dataFlag[i] === 1 ? CELL_FIELD_HAS_DATA : 0;
@@ -514,6 +555,13 @@ export function cellFieldColumnBytes(field: CellField): number {
     + field.posZ.byteLength
     + field.birthBlock.byteLength
     + field.outPointIndex.byteLength
+    + field.dataBytes.byteLength
+    + field.lockShapeSeed0.byteLength
+    + field.lockShapeSeed1.byteLength
+    + field.typeShapeSeed0.byteLength
+    + field.typeShapeSeed1.byteLength
+    + field.dataShapeSeed0.byteLength
+    + field.dataShapeSeed1.byteLength
     + field.lockKind.byteLength
     + field.assetKind.byteLength
     + field.flags.byteLength

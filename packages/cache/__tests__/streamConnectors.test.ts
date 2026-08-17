@@ -69,7 +69,11 @@ function cell(id: number): Cell {
     out_point: { tx_hash: `0x${id}`, index: 0 },
     capacity: 100,
     data_hex: '0x',
+    data_bytes: 0,
     content_hash: `0x${'00'.repeat(32)}`,
+    lock_shape_seed: [1, 2],
+    type_shape_seed: null,
+    data_shape_seed: [3, 4],
   };
 }
 
@@ -526,7 +530,7 @@ describe('binary resync frames', () => {
    *  one. */
   function fixture(): ArrayBuffer {
     const bytes = readFileSync(
-      fileURLToPath(new URL('../../../tests/fixtures/cells_columnar_v3.bin', import.meta.url)),
+      fileURLToPath(new URL('../../../tests/fixtures/cells_columnar_v4.bin', import.meta.url)),
     );
     return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
   }

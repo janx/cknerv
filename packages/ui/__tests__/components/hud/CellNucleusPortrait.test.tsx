@@ -33,6 +33,10 @@ const CORE_SOURCE = readFileSync(
   resolve(process.cwd(), 'src/components/hud/CellCoreArtwork.tsx'),
   'utf8',
 );
+const SEMANTIC_OVERLAY_SOURCE = readFileSync(
+  resolve(process.cwd(), 'src/components/hud/CellSemanticMorphologyOverlay.tsx'),
+  'utf8',
+);
 const ADDRESS_SOURCE = readFileSync(
   resolve(process.cwd(), 'src/components/hud/CellContentAddressHalo.tsx'),
   'utf8',
@@ -97,10 +101,22 @@ describe('CellNucleusPortrait production language', () => {
     expect(MEMORY_SOURCE).not.toContain('READ_HEAD_TRAIL');
     expect(MEMORY_SOURCE).toContain('streamFlowGlow.computeLineDistances()');
     expect(MEMORY_SOURCE).toContain(
-      'const structureVisual = useMemo<ConsensusBraidVisual>',
+      'const topology = useMemo(() => deriveConsensusBraidTopology(cell), [',
     );
-    expect(MEMORY_SOURCE).toContain('[cell.birth_block, structureVisual]');
-    expect(MEMORY_SOURCE).not.toContain('[cell.birth_block, visual]');
+    expect(MEMORY_SOURCE).toContain('const curves = topology.strands.map(');
+    expect(MEMORY_SOURCE).toContain('for (const mark of topology.dataMarks)');
+    expect(MEMORY_SOURCE).toContain('}, [topology]);');
+    expect(MEMORY_SOURCE).not.toContain('ConsensusBraidVisual');
+    expect(MEMORY_SOURCE).not.toContain('consensusBraidPoint');
+    expect(SOURCE).toContain('semanticRecord={semanticRecord}');
+    expect(CORE_SOURCE).toContain('semanticRecord={semanticRecord}');
+    expect(MEMORY_SOURCE).toContain(
+      'deriveCellSemanticMorphologyOverlay(cell, semanticRecord)',
+    );
+    expect(MEMORY_SOURCE).toContain('<CellSemanticMorphologyOverlay');
+    expect(SEMANTIC_OVERLAY_SOURCE).toContain('topology: CellMorphologyTopology');
+    expect(SEMANTIC_OVERLAY_SOURCE).toContain('built.lineGeometry.dispose()');
+    expect(SEMANTIC_OVERLAY_SOURCE).not.toContain('deriveConsensusBraidTopology');
     expect(MEMORY_SOURCE).toContain('streamFlowGlowMaterial.dashOffset');
     expect(MEMORY_SOURCE).toContain('streamFlowCoreMaterial.dashOffset');
     expect(MEMORY_SOURCE).toContain('streamTraceGlowMaterial.dashOffset');

@@ -1,0 +1,412 @@
+{
+  "cells": [
+    {
+      "id": 0,
+      "born_at_ms": 1000,
+      "death_at_ms": null,
+      "birth_block": 7,
+      "tag": "wallet",
+      "pos_seed": [
+        19.188806533813477,
+        8.229480743408203,
+        33.032718658447266
+      ],
+      "out_point": {
+        "tx_hash": "0xtx1",
+        "index": 0
+      },
+      "capacity": 6100000000,
+      "data_hex": "0x",
+      "data_bytes": 0,
+      "content_hash": "0x000000000000000000000000000000000000000000000000000000016b969d02",
+      "lock_shape_seed": [
+        1805032704,
+        1
+      ],
+      "type_shape_seed": null,
+      "data_shape_seed": [
+        2,
+        2
+      ],
+      "lock_kind": "sighash",
+      "asset_kind": "other",
+      "lock_script": {
+        "code_hash": "0x9bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce8",
+        "hash_type": "type"
+      }
+    },
+    {
+      "id": 1,
+      "born_at_ms": 1000,
+      "death_at_ms": null,
+      "birth_block": 7,
+      "tag": null,
+      "pos_seed": [
+        3.297882318496704,
+        8.10061264038086,
+        20.489866256713867
+      ],
+      "out_point": {
+        "tx_hash": "0xtx1",
+        "index": 1
+      },
+      "capacity": 12000000000,
+      "data_hex": "0xdeadbeef~",
+      "data_bytes": 4,
+      "content_hash": "0x00000000000000000000000000000000000000000000000000000002cb41780b",
+      "lock_shape_seed": [
+        3410065408,
+        1
+      ],
+      "type_shape_seed": [
+        1354599782,
+        2159589839
+      ],
+      "data_shape_seed": [
+        11,
+        2
+      ],
+      "lock_kind": "sighash",
+      "asset_kind": "xudt",
+      "lock_script": {
+        "code_hash": "0x9bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce8",
+        "hash_type": "type"
+      },
+      "type_script": {
+        "code_hash": "0x50bd8d6680b8b9cf98b73f3c08faf8b2a21914311954118ad6609be6e78a1b95",
+        "hash_type": "data1"
+      }
+    },
+    {
+      "id": 2,
+      "born_at_ms": 1000,
+      "death_at_ms": 2000,
+      "birth_block": 7,
+      "tag": null,
+      "pos_seed": [
+        3.7966766357421875,
+        1.7670406103134155,
+        19.361539840698242
+      ],
+      "out_point": {
+        "tx_hash": "0xtx1",
+        "index": 2
+      },
+      "capacity": 9000000000,
+      "data_hex": "0xbeef",
+      "data_bytes": 2,
+      "content_hash": "0x0000000000000000000000000000000000000000000000000000000218711a06",
+      "lock_shape_seed": [
+        410065408,
+        1
+      ],
+      "type_shape_seed": null,
+      "data_shape_seed": [
+        6,
+        2
+      ],
+      "lock_kind": "other",
+      "asset_kind": "other"
+    },
+    {
+      "id": 3,
+      "born_at_ms": 2000,
+      "death_at_ms": null,
+      "birth_block": 8,
+      "tag": null,
+      "pos_seed": [
+        -1.7693411111831665,
+        0.7402845621109009,
+        -34.50374221801758
+      ],
+      "out_point": {
+        "tx_hash": "0xtx2",
+        "index": 0
+      },
+      "capacity": 8000000000,
+      "data_hex": "0x",
+      "data_bytes": 0,
+      "content_hash": "0x00000000000000000000000000000000000000000000000000000001dcd65002",
+      "lock_shape_seed": [
+        3705032704,
+        1
+      ],
+      "type_shape_seed": null,
+      "data_shape_seed": [
+        2,
+        2
+      ],
+      "lock_kind": "other",
+      "asset_kind": "other"
+    }
+  ],
+  "last_pulse_at_ms": 2100,
+  "recent_links": [
+    {
+      "tx_hash": "0xtx1",
+      "block": 7,
+      "from_ids": [],
+      "to_ids": [
+        0,
+        1,
+        2
+      ],
+      "endpoint_anchors": [
+        {
+          "id": 0,
+          "pos_seed": [
+            19.188806533813477,
+            8.229480743408203,
+            33.032718658447266
+          ],
+          "content_hash": "0x000000000000000000000000000000000000000000000000000000016b969d02"
+        },
+        {
+          "id": 1,
+          "pos_seed": [
+            3.297882318496704,
+            8.10061264038086,
+            20.489866256713867
+          ],
+          "content_hash": "0x00000000000000000000000000000000000000000000000000000002cb41780b"
+        },
+        {
+          "id": 2,
+          "pos_seed": [
+            3.7966766357421875,
+            1.7670406103134155,
+            19.361539840698242
+          ],
+          "content_hash": "0x0000000000000000000000000000000000000000000000000000000218711a06"
+        }
+      ],
+      "parents": [],
+      "tag": null,
+      "at_ms": 1000
+    },
+    {
+      "tx_hash": "0xtx2",
+      "block": 8,
+      "from_ids": [
+        2
+      ],
+      "to_ids": [
+        3
+      ],
+      "endpoint_anchors": [
+        {
+          "id": 2,
+          "pos_seed": [
+            3.7966766357421875,
+            1.7670406103134155,
+            19.361539840698242
+          ],
+          "content_hash": "0x0000000000000000000000000000000000000000000000000000000218711a06"
+        },
+        {
+          "id": 3,
+          "pos_seed": [
+            -1.7693411111831665,
+            0.7402845621109009,
+            -34.50374221801758
+          ],
+          "content_hash": "0x00000000000000000000000000000000000000000000000000000001dcd65002"
+        }
+      ],
+      "parents": [
+        "0xtx1"
+      ],
+      "tag": null,
+      "at_ms": 2000
+    }
+  ],
+  "total_births": 4,
+  "total_deaths": 1,
+  "stats": {
+    "in_view": 3,
+    "data_bearing": 1,
+    "capacity_shannons": 26100000000,
+    "by_kind": {
+      "wallet": 1,
+      "dex": 0,
+      "cf": 0,
+      "ckbloom": 0,
+      "generic": 2
+    },
+    "by_lock": {
+      "sighash": 2,
+      "multisig": 0,
+      "acp": 0,
+      "omnilock": 0,
+      "other": 1
+    },
+    "by_asset": {
+      "native": 0,
+      "sudt": 0,
+      "xudt": 1,
+      "dao": 0,
+      "spore": 0,
+      "other": 2
+    },
+    "scripts": {
+      "locks": [
+        {
+          "script": {
+            "code_hash": "0x9bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce8",
+            "hash_type": "type"
+          },
+          "count": 2
+        }
+      ],
+      "locks_tail_cells": 0,
+      "locks_tail_scripts": 0,
+      "types": [
+        {
+          "script": {
+            "code_hash": "0x50bd8d6680b8b9cf98b73f3c08faf8b2a21914311954118ad6609be6e78a1b95",
+            "hash_type": "data1"
+          },
+          "count": 1
+        }
+      ],
+      "types_tail_cells": 0,
+      "types_tail_scripts": 0,
+      "types_absent": 2,
+      "unidentified": 1
+    }
+  },
+  "display": {
+    "budget": {
+      "cells": 12000,
+      "nerve_edges": 8000
+    },
+    "members": [
+      0,
+      1,
+      2,
+      3,
+      900,
+      901,
+      902
+    ],
+    "residents": [
+      {
+        "id": 900,
+        "born_at_ms": 0,
+        "death_at_ms": null,
+        "birth_block": 0,
+        "tag": null,
+        "pos_seed": [
+          -37.36515808105469,
+          5.351700305938721,
+          1.1969668865203857
+        ],
+        "out_point": {
+          "tx_hash": "0xr900",
+          "index": 0
+        },
+        "capacity": 6100000000,
+        "data_hex": "0x",
+        "data_bytes": 0,
+        "content_hash": "0x0000000000000000000000000000000000000000000000000000000000000384",
+        "lock_shape_seed": [
+          900,
+          1
+        ],
+        "type_shape_seed": null,
+        "data_shape_seed": [
+          900,
+          2
+        ],
+        "lock_kind": "other",
+        "asset_kind": "dao",
+        "lock_script": {
+          "code_hash": "0x9bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce8",
+          "hash_type": "type"
+        }
+      },
+      {
+        "id": 901,
+        "born_at_ms": 0,
+        "death_at_ms": null,
+        "birth_block": 0,
+        "tag": null,
+        "pos_seed": [
+          -29.044960021972656,
+          2.171205759048462,
+          -4.7862701416015625
+        ],
+        "out_point": {
+          "tx_hash": "0xr901",
+          "index": 0
+        },
+        "capacity": 6100000000,
+        "data_hex": "0x",
+        "data_bytes": 0,
+        "content_hash": "0x0000000000000000000000000000000000000000000000000000000000000385",
+        "lock_shape_seed": [
+          901,
+          1
+        ],
+        "type_shape_seed": [
+          1354599782,
+          2159589839
+        ],
+        "data_shape_seed": [
+          901,
+          2
+        ],
+        "lock_kind": "other",
+        "asset_kind": "xudt",
+        "lock_script": {
+          "code_hash": "0x9bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce8",
+          "hash_type": "type"
+        },
+        "type_script": {
+          "code_hash": "0x50bd8d6680b8b9cf98b73f3c08faf8b2a21914311954118ad6609be6e78a1b95",
+          "hash_type": "data1"
+        }
+      },
+      {
+        "id": 902,
+        "born_at_ms": 0,
+        "death_at_ms": null,
+        "birth_block": 0,
+        "tag": null,
+        "pos_seed": [
+          -43.294090270996094,
+          0.9939867258071899,
+          -8.343488693237305
+        ],
+        "out_point": {
+          "tx_hash": "0xr902",
+          "index": 0
+        },
+        "capacity": 6100000000,
+        "data_hex": "0x",
+        "data_bytes": 0,
+        "content_hash": "0x0000000000000000000000000000000000000000000000000000000000000386",
+        "lock_shape_seed": [
+          902,
+          1
+        ],
+        "type_shape_seed": null,
+        "data_shape_seed": [
+          902,
+          2
+        ],
+        "lock_kind": "other",
+        "asset_kind": "native"
+      }
+    ],
+    "provenance": {
+      "mode": "composed",
+      "source": "ckbadger",
+      "as_of": {
+        "block": 8,
+        "hash": "0xanchor8"
+      },
+      "updated_at_ms": 8000
+    }
+  }
+}

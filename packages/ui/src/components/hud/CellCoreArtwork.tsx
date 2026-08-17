@@ -1,5 +1,5 @@
 import { lazy, Suspense, useMemo } from 'react';
-import type { Cell } from '@cknerv/types';
+import type { Cell, CellSemanticRecord } from '@cknerv/types';
 import type { ConsensusBraidField } from '../../derives/consensusBraid.derive';
 import { deriveCellContentAddressEncoding } from '../../derives/cellContentAddress.derive';
 import type {
@@ -40,6 +40,7 @@ export default function CellCoreArtwork({
   traceReadout = null,
   traceResponseRef,
   traceEvidenceFocusSourceId = null,
+  semanticRecord = null,
   identityProofBinding = null,
   onIdentityProofRead,
 }: {
@@ -50,6 +51,7 @@ export default function CellCoreArtwork({
   traceReadout?: ConsensusMemoryTraceReadout | null;
   traceResponseRef?: ConsensusMemoryCellResponseRef;
   traceEvidenceFocusSourceId?: number | null;
+  semanticRecord?: CellSemanticRecord | null;
   identityProofBinding?: CellIdentityProofBinding | null;
   onIdentityProofRead?: (kind: CellIdentityProofKind) => void;
 }) {
@@ -74,6 +76,7 @@ export default function CellCoreArtwork({
       traceReadout={traceReadout}
       traceResponseRef={traceResponseRef}
       traceEvidenceFocusSourceId={traceEvidenceFocusSourceId}
+      semanticRecord={semanticRecord}
     />
   );
   return (

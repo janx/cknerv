@@ -10,7 +10,7 @@
 //!
 //! ```json
 //! {
-//!   "schema_version": 4,
+//!   "schema_version": 5,
 //!   "entities":   { "revision": N, "chain": {...}, "chain_nodes": [...] },
 //!   "projections": { "<projection-name>": <save-blob>, ... }
 //!   // NOTE: live `peers` are ephemeral and intentionally NOT persisted.
@@ -33,10 +33,14 @@ use cknerv_core::RecentBlock;
 /// Bumped when the on-disk shape changes incompatibly. Older files are
 /// ignored on load.
 ///
+/// 5: Cells carry canonical per-component morphology seeds and the complete
+/// output-data byte length. Schema-4 rows only deserialize to compatibility
+/// defaults, which are not valid production morphology inputs.
+///
 /// 4: `data_hex` truncation switched to a single ASCII marker. A v3 save
 /// still holds the multi-byte one, which the columnar encoder can only
 /// ship sanitized — discarding the save is cheaper and honest.
-pub const SCHEMA_VERSION: u32 = 4;
+pub const SCHEMA_VERSION: u32 = 5;
 
 /// Filename inside `<workdir>/`. Atomic write goes to `<name>.tmp` and
 /// renames over it. Per spec §6.
@@ -338,13 +342,13 @@ mod tests {
     }
 
     #[test]
-    fn load_with_schema_v2_discards_file() {
+    fn load_with_schema_v4_discards_file() {
         let workdir = tmpdir();
         let path = persisted_path(&workdir);
         std::fs::write(
             &path,
             serde_json::to_vec(&serde_json::json!({
-                "schema_version": 2,
+                "schema_version": 4,
                 "entities": {},
                 "projections": {},
             }))
@@ -355,6 +359,85 @@ mod tests {
         let outcome = load(s, &workdir);
         assert!(!outcome.restored);
         assert!(!path.exists(), "file should have been deleted");
+        let _ = std::fs::remove_dir_all(&workdir);
+    }
+
+    #[test]
+    fn load_with_newer_schema_discards_file() {
+        let workdir = tmpdir();
+        let path = persisted_path(&workdir);
+        std::fs::write(
+            &path,
+            serde_json::to_vec(&serde_json::json!({
+                "schema_version": SCHEMA_VERSION + 1,
+                "entities": {},
+                "projections": {},
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let outcome = load(Arc::new(ServerState::new()), &workdir);
+        assert!(!outcome.restored);
+        assert!(!path.exists(), "newer state must not be partially loaded");
+        let _ = std::fs::remove_dir_all(&workdir);
+    }
+
+    #[test]
+    fn schema_v5_save_load_preserves_cell_morphology_inputs() {
+        use cknerv_core::{AssetKind, LockKind, ScriptId, TxOutputInfo};
+
+        let workdir = tmpdir();
+        let source = Arc::new(ServerState::new());
+        source
+            .projections
+            .write()
+            .unwrap()
+            .register(cknerv_core::CellGalaxy::new());
+        let script = ScriptId::parse(&format!("0x{}", "11".repeat(32)), "type").unwrap();
+        source.apply_mutation(Mutation::TxLanded {
+            tx_hash: "0xmorphology".into(),
+            block: 7,
+            at: 1_000,
+            inputs: Vec::new(),
+            outputs: vec![TxOutputInfo {
+                capacity: 61_00000000,
+                data_hex: "0xaabb~".into(),
+                data_bytes: 2_048,
+                content_hash: format!("0x{}", "22".repeat(32)),
+                lock_shape_seed: [0x0102_0304, 0x0506_0708],
+                type_shape_seed: Some([0x1112_1314, 0x1516_1718]),
+                data_shape_seed: [0x2122_2324, 0x2526_2728],
+                lock_kind: LockKind::Sighash,
+                asset_kind: AssetKind::Xudt,
+                lock_script: script,
+                type_script: Some(script),
+            }],
+        });
+        save(&source, &workdir).expect("save schema-v5 state");
+
+        let restored = Arc::new(ServerState::new());
+        restored
+            .projections
+            .write()
+            .unwrap()
+            .register(cknerv_core::CellGalaxy::new());
+        assert!(load(restored.clone(), &workdir).restored);
+        let projections = restored.projections.read().unwrap().save_all();
+        let cell = &projections["cells"]["cells"][0];
+        assert_eq!(cell["data_bytes"], 2_048);
+        assert_eq!(
+            cell["lock_shape_seed"],
+            serde_json::json!([0x0102_0304_u32, 0x0506_0708_u32])
+        );
+        assert_eq!(
+            cell["type_shape_seed"],
+            serde_json::json!([0x1112_1314_u32, 0x1516_1718_u32])
+        );
+        assert_eq!(
+            cell["data_shape_seed"],
+            serde_json::json!([0x2122_2324_u32, 0x2526_2728_u32])
+        );
+
         let _ = std::fs::remove_dir_all(&workdir);
     }
 

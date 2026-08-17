@@ -7,8 +7,9 @@ function mkCell(id: number, x: number, y: number, z: number): Cell {
     id, born_at_ms: 0, death_at_ms: null, birth_block: 1,
     tag: null, pos_seed: [x, y, z],
     out_point: { tx_hash: '0x', index: 0 },
-    capacity: 0, data_hex: '',
+    capacity: 0, data_hex: '', data_bytes: 0,
     content_hash: '0x' + '00'.repeat(32),
+    lock_shape_seed: [1, 2], type_shape_seed: null, data_shape_seed: [3, 4],
   };
 }
 
@@ -291,7 +292,8 @@ describe('buildNeighborGraph', () => {
 function liveCell(id: number, x: number, z: number, death: number | null = null): Cell {
   return { id, born_at_ms: 0, death_at_ms: death, birth_block: 1, tag: null,
     pos_seed: [x, 0, z], out_point: { tx_hash: '0x', index: 0 }, capacity: 0,
-    data_hex: '0x', content_hash: '0x' + '00'.repeat(32) };
+    data_hex: '0x', data_bytes: 0, content_hash: '0x' + '00'.repeat(32),
+    lock_shape_seed: [1, 2], type_shape_seed: null, data_shape_seed: [3, 4] };
 }
 
 describe('buildNeighborGraph dead-cell exclusion', () => {

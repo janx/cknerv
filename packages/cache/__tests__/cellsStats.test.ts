@@ -25,7 +25,11 @@ function cell(id: number, overrides: Partial<Cell> = {}): Cell {
     out_point: { tx_hash: `0xtx${id}`, index: 0 },
     capacity: 100 + id,
     data_hex: '0x',
+    data_bytes: 0,
     content_hash: '0x' + '00'.repeat(32),
+    lock_shape_seed: [1, 2],
+    type_shape_seed: null,
+    data_shape_seed: [3, 4],
     ...overrides,
   };
 }
@@ -47,7 +51,7 @@ describe('incremental cells stats', () => {
     let cache = emptyCellsCache();
     expectStatsInvariant(cache);
 
-    cache = step(cache, { type: 'birth', cell: cell(1, { tag: 'wallet', data_hex: '0xdeadbeef' }) });
+    cache = step(cache, { type: 'birth', cell: cell(1, { tag: 'wallet', data_hex: '0xdeadbeef', data_bytes: 4 }) });
     cache = step(cache, { type: 'birth', cell: cell(2, { lock_kind: 'multisig', asset_kind: 'dao', capacity: 5000 }) });
     cache = step(cache, { type: 'birth', cell: cell(3, { tag: 'dex' }) });
     expect(cache.stats.inView).toBe(3);
@@ -136,7 +140,7 @@ describe('incremental cells stats', () => {
       cells: [
         cell(1, { tag: 'wallet', capacity: 700 }),
         cell(2, { death_at_ms: 4000 }),
-        cell(3, { asset_kind: 'spore', data_hex: '0x01' }),
+        cell(3, { asset_kind: 'spore', data_hex: '0x01', data_bytes: 1 }),
       ],
       last_pulse_at_ms: 0,
       total_births: 30,

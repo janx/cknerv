@@ -87,7 +87,11 @@ impl CkbGalaxyCompositionHydrator {
                     out_point: candidate.out_point.clone(),
                     capacity: output.capacity,
                     data_hex: output.data_hex,
+                    data_bytes: output.data_bytes,
                     content_hash: output.content_hash,
+                    lock_shape_seed: output.lock_shape_seed,
+                    type_shape_seed: output.type_shape_seed,
+                    data_shape_seed: output.data_shape_seed,
                     lock_kind: output.lock_kind,
                     asset_kind: output.asset_kind,
                     // Node-derived like every other field here: the hydrator
@@ -372,6 +376,12 @@ mod tests {
             .dao
             .iter()
             .all(|cell| cell.out_point.tx_hash.starts_with("0xab")));
+        assert!(top_up.dao.iter().all(|cell| {
+            cell.data_bytes == 0
+                && cell.lock_shape_seed != [0, 0]
+                && cell.type_shape_seed.is_some_and(|seed| seed != [0, 0])
+                && cell.data_shape_seed == [0x44f4_c697, 0x44d5_f8c5]
+        }));
         node.abort();
     }
 

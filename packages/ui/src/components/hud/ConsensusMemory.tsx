@@ -11,8 +11,9 @@ import * as THREE from 'three';
 import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js';
 import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js';
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
-import type { Cell } from '@cknerv/types';
+import type { Cell, CellSemanticRecord } from '@cknerv/types';
 import { deriveCellVisual } from '../../derives/cellVisual.derive';
+import { deriveCellSemanticMorphologyOverlay } from '../../derives/cellSemanticMorphology.derive';
 import {
   consensusMemoryPortraitLayerOpacity,
   consensusMemoryPortraitResponse,
@@ -33,11 +34,8 @@ import {
   consensusBraidAgreementResolution,
   consensusBraidContributorColor,
   consensusBraidLayerOpacity,
-  consensusBraidPoint,
   deriveConsensusBraidTopology,
   type ConsensusBraidField,
-  type ConsensusBraidSpec,
-  type ConsensusBraidVisual,
 } from '../../derives/consensusBraid.derive';
 import {
   consensusMemoryEvidenceFocusScale,
@@ -49,6 +47,7 @@ import {
   makeConsensusMemoryKnotMaterial,
 } from '../../materials/consensusMemoryKnotMaterial';
 import { CELL_PORTRAIT_LABEL_PORTAL } from './cellPortraitInsetChannel';
+import CellSemanticMorphologyOverlay from './CellSemanticMorphologyOverlay';
 
 const TAU = CONSENSUS_BRAID_TAU;
 const MAX_PACKETS = 14;
@@ -186,6 +185,7 @@ export default function ConsensusMemory({
   traceReadout = null,
   traceResponseRef,
   traceEvidenceFocusSourceId = null,
+  semanticRecord = null,
 }: {
   cell: Cell;
   reducedMotion: boolean;
@@ -193,6 +193,7 @@ export default function ConsensusMemory({
   traceReadout?: ConsensusMemoryTraceReadout | null;
   traceResponseRef?: ConsensusMemoryCellResponseRef;
   traceEvidenceFocusSourceId?: number | null;
+  semanticRecord?: CellSemanticRecord | null;
 }) {
   const { width: viewportWidth, height: viewportHeight } = useThree(
     (state) => state.size,
@@ -207,34 +208,32 @@ export default function ConsensusMemory({
   const recallConvergenceRef = useRef(0);
   const recallPhaseRef = useRef(0);
   const visual = useMemo(() => deriveCellVisual(cell), [cell]);
-  const structureVisual = useMemo<ConsensusBraidVisual>(() => ({
-    assetClass: visual.assetClass,
-    lockClass: visual.lockClass,
-    mass: visual.mass,
-    payload: visual.payload,
-    seeds: [
-      visual.seeds[0],
-      visual.seeds[1],
-      visual.seeds[2],
-      visual.seeds[3],
-    ],
-  }), [
-    visual.assetClass,
-    visual.lockClass,
-    visual.mass,
-    visual.payload,
-    visual.seeds[0],
-    visual.seeds[1],
-    visual.seeds[2],
-    visual.seeds[3],
+  const topology = useMemo(() => deriveConsensusBraidTopology(cell), [
+    cell.asset_kind,
+    cell.birth_block,
+    cell.capacity,
+    cell.content_hash,
+    cell.data_bytes,
+    cell.data_shape_seed[0],
+    cell.data_shape_seed[1],
+    cell.lock_kind,
+    cell.lock_shape_seed[0],
+    cell.lock_shape_seed[1],
+    cell.type_shape_seed?.[0],
+    cell.type_shape_seed?.[1],
   ]);
+  const semanticOverlay = useMemo(
+    () => deriveCellSemanticMorphologyOverlay(cell, semanticRecord),
+    [cell, semanticRecord],
+  );
   const built = useMemo(() => {
-    const topology = deriveConsensusBraidTopology(
-      structureVisual,
-      cell.birth_block,
-    );
-    const specs = topology.specs;
-    const count = specs.length;
+    const count = topology.strands.length;
+    const curves = topology.strands.map((strand) => new THREE.CatmullRomCurve3(
+      strand.points.slice(0, -1).map((point) => new THREE.Vector3(...point)),
+      true,
+      'centripetal',
+      0.35,
+    ));
     const ribbonPositions: number[] = [];
     const ribbonColors: number[] = [];
     const streamPositions: number[] = [];
@@ -265,17 +264,18 @@ export default function ConsensusMemory({
     const mid0 = new THREE.Vector3();
     const mid1 = new THREE.Vector3();
     const steps = 208;
-    const width = 0.012 + structureVisual.payload * 0.01;
+    const width = topology.genome.data.ribbonWidth;
 
     const frame = (
-      spec: ConsensusBraidSpec,
+      curve: THREE.CatmullRomCurve3,
       t: number,
       left: THREE.Vector3,
       right: THREE.Vector3,
     ) => {
-      consensusBraidPoint(spec, t, centre);
-      consensusBraidPoint(spec, t - 0.002, before);
-      consensusBraidPoint(spec, t + 0.002, after);
+      const wrapped = ((t % 1) + 1) % 1;
+      curve.getPointAt(wrapped, centre);
+      curve.getPointAt(((t - 0.002) % 1 + 1) % 1, before);
+      curve.getPointAt(((t + 0.002) % 1 + 1) % 1, after);
       tangent.subVectors(after, before).normalize();
       normal.crossVectors(tangent, reference);
       if (normal.lengthSq() < 0.01) normal.crossVectors(tangent, fallback);
@@ -285,12 +285,12 @@ export default function ConsensusMemory({
     };
 
     for (let strand = 0; strand < count; strand += 1) {
-      const spec = specs[strand];
+      const curve = curves[strand];
       for (let segment = 0; segment < steps; segment += 1) {
-        const t0 = (segment / steps) * TAU;
-        const t1 = ((segment + 1) / steps) * TAU;
-        frame(spec, t0, left0, right0);
-        frame(spec, t1, left1, right1);
+        const t0 = segment / steps;
+        const t1 = (segment + 1) / steps;
+        frame(curve, t0, left0, right0);
+        frame(curve, t1, left1, right1);
         mid0.addVectors(left0, right0).multiplyScalar(0.5);
         mid1.addVectors(left1, right1).multiplyScalar(0.5);
         ribbonPositions.push(
@@ -299,7 +299,9 @@ export default function ConsensusMemory({
         );
         for (let vertex = 0; vertex < 6; vertex += 1) {
           const convergence = 1 - Math.min(1, centre.length() / 0.55);
-          const spectral = 0.5 + 0.5 * Math.sin(t0 * 1.4 + strand * 1.7 + vertex * 0.1);
+          const spectral = 0.5 + 0.5 * Math.sin(
+            t0 * TAU * 1.4 + strand * 1.7 + vertex * 0.1,
+          );
           const contributor = consensusBraidContributorColor(strand, spectral);
           color.setRGB(contributor[0], contributor[1], contributor[2]);
           if (convergence > 0.68) {
@@ -313,15 +315,22 @@ export default function ConsensusMemory({
         else color.copy(cyan).lerp(violet, 0.42);
         streamColors.push(color.r, color.g, color.b, color.r, color.g, color.b);
 
-        const stitchPeriod = Math.max(
-          8,
-          18 - Math.round(structureVisual.payload * 8),
-        );
-        if ((segment + strand * 3) % stitchPeriod === 0) {
-          stitchPositions.push(...left0.toArray(), ...right0.toArray());
-          color.copy(gold).lerp(paleGold, segment % 2 ? 0.22 : 0.65);
-          stitchColors.push(color.r, color.g, color.b, color.r, color.g, color.b);
-        }
+      }
+    }
+
+    for (const mark of topology.dataMarks) {
+      color.copy(gold).lerp(
+        paleGold,
+        mark.kind === 'crossbar' ? 0.32 : mark.kind === 'single_knot' ? 0.58 : 0.82,
+      );
+      stitchPositions.push(...mark.point, ...mark.midpoint, ...mark.midpoint, ...mark.peerPoint);
+      stitchColors.push(
+        color.r, color.g, color.b, color.r, color.g, color.b,
+        color.r, color.g, color.b, color.r, color.g, color.b,
+      );
+      if (mark.kind === 'double_knot') {
+        stitchPositions.push(...mark.point, ...mark.peerPoint);
+        stitchColors.push(color.r, color.g, color.b, color.r, color.g, color.b);
       }
     }
 
@@ -468,7 +477,10 @@ export default function ConsensusMemory({
       toneMapped: false,
     });
     return {
-      specs,
+      curves,
+      strandCount: count,
+      dataDensity: topology.genome.data.density,
+      dataPacketCount: topology.genome.data.packetCount,
       agreementMidpoints: topology.agreements.map((agreement) => (
         [...agreement.midpoint] as [number, number, number]
       )),
@@ -508,7 +520,7 @@ export default function ConsensusMemory({
       packetGeometry,
       packetMaterial,
     };
-  }, [cell.birth_block, structureVisual]);
+  }, [topology]);
 
   // LineMaterial resolution changes only with the portrait viewport. Writing
   // all ten uniforms every animation frame added redundant CPU work.
@@ -529,11 +541,11 @@ export default function ConsensusMemory({
     }
   }, [built, viewportHeight, viewportWidth]);
 
-  // Every live Cell has at least one ledger packet even when data_hex is empty;
-  // additional packets encode observed payload density.
+  // Every live Cell has at least one ledger packet even when data is empty;
+  // additional packets encode the canonical byte-length tier.
   const packetCount = Math.min(
     MAX_PACKETS,
-    Math.max(1, Math.round(visual.payload * MAX_PACKETS)),
+    Math.max(1, built.dataPacketCount),
   );
   const presence = built.presenceScale;
   const birthPhase = built.birthPhase;
@@ -629,7 +641,7 @@ export default function ConsensusMemory({
       ).toFixed(3);
     });
     const target = consensusMemoryPortraitLayerOpacity(
-      consensusBraidLayerOpacity(focusField, built.specs.length),
+      consensusBraidLayerOpacity(focusField, built.strandCount),
       recallStrength,
       recallConvergence,
     );
@@ -801,9 +813,8 @@ export default function ConsensusMemory({
     );
 
     if (rootRef.current) {
-      rootRef.current.rotation.y = (visual.seeds[2] - 0.5) * 0.34
-        + Math.sin(time * 0.12) * 0.12;
-      rootRef.current.rotation.x = (visual.seeds[0] - 0.5) * 0.24;
+      rootRef.current.rotation.y = reducedMotion ? 0 : Math.sin(time * 0.12) * 0.12;
+      rootRef.current.rotation.x = reducedMotion ? 0 : Math.sin(time * 0.09) * 0.035;
       const statePulse = focusField === 'state'
         && recallStrength < 0.01
         && life === 1
@@ -813,18 +824,16 @@ export default function ConsensusMemory({
       rootRef.current.scale.setScalar(presence * statePulse);
     }
     const mesh = packetsRef.current;
-    if (!mesh || packetCount === 0 || built.specs.length === 0) return;
+    if (!mesh || packetCount === 0 || built.curves.length === 0) return;
     for (let i = 0; i < packetCount; i += 1) {
-      const spec = built.specs[i % built.specs.length];
+      const curve = built.curves[i % built.curves.length];
       const t = (
-        birthPhase
-        + i / packetCount * TAU
-        + time * (0.065 + visual.payload * 0.03)
-      ) % TAU;
-      consensusBraidPoint(spec, t, PACKET_POSITION);
-      consensusBraidPoint(spec, t + 0.003, PACKET_TANGENT)
-        .sub(PACKET_POSITION)
-        .normalize();
+        birthPhase / TAU
+        + i / packetCount
+        + time * (0.065 + built.dataDensity * 0.03)
+      ) % 1;
+      curve.getPointAt(t, PACKET_POSITION);
+      curve.getTangentAt(t, PACKET_TANGENT).normalize();
       PACKET_QUATERNION.setFromUnitVectors(X_AXIS, PACKET_TANGENT);
       PACKET_SCALE.setScalar((i + Math.floor(time * 2)) % 4 === 0 ? 1.2 : 0.7);
       PACKET_MATRIX.compose(PACKET_POSITION, PACKET_QUATERNION, PACKET_SCALE);
@@ -891,6 +900,13 @@ export default function ConsensusMemory({
         frustumCulled={false}
         renderOrder={8}
       />
+      {semanticOverlay ? (
+        <CellSemanticMorphologyOverlay
+          topology={topology}
+          overlay={semanticOverlay}
+          focusField={focusField}
+        />
+      ) : null}
       {focusedEvidenceBinding ? (
         <group
           ref={focusedKnotRef}

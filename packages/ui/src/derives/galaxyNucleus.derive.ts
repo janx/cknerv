@@ -1,14 +1,16 @@
-import * as THREE from 'three';
 import type { Cell } from '@cknerv/types';
 import { deriveCellVisual } from './cellVisual.derive';
 import {
   CONSENSUS_BRAID_PALETTE,
-  CONSENSUS_BRAID_TAU,
   consensusBraidContributorColor,
   consensusBraidAgreementResolution,
+  consensusBraidPathPoint,
   deriveConsensusBraidTopology,
-  consensusBraidPoint,
 } from './consensusBraid.derive';
+import {
+  CELL_MORPHOLOGY_MAX_SEGMENTS,
+  type MorphologyPoint3,
+} from './cellMorphology.derive';
 import {
   consensusMemoryEvidenceBindings,
   type ConsensusMemoryEvidenceIdentity,
@@ -71,6 +73,8 @@ const lerp = (from: number, to: number, amount: number): number => (
   from + (to - from) * amount
 );
 
+const GALAXY_BRAID_PATH_SEGMENTS = 60;
+
 function smoothstep(edge0: number, edge1: number, value: number): number {
   const t = Math.max(0, Math.min(1, (value - edge0) / (edge1 - edge0)));
   return t * t * (3 - 2 * t);
@@ -84,78 +88,94 @@ function circularUnitDistance(left: number, right: number): number {
 /** Build once per immutable Cell; frame updates only copy into fixed buffers. */
 export function deriveGalaxyConsensusBraid(cell: Cell): GalaxyConsensusBraid {
   const visual = deriveCellVisual(cell);
-  const topology = deriveConsensusBraidTopology(visual, cell.birth_block);
-  const specs = topology.specs;
+  const topology = deriveConsensusBraidTopology(cell);
   const segments: number[] = [];
   const colors: number[] = [];
   const detailWeights: number[] = [];
   const knots: GalaxyConsensusKnot[] = [];
-  const point = new THREE.Vector3();
-  const next = new THREE.Vector3();
-  const previous = new THREE.Vector3();
-  const tangent = new THREE.Vector3();
-  const normal = new THREE.Vector3();
-  const left = new THREE.Vector3();
-  const right = new THREE.Vector3();
-  const reference = new THREE.Vector3(0, 0, 1);
-  const fallback = new THREE.Vector3(0, 1, 0);
-  const steps = 64;
 
   const addSegment = (
-    from: THREE.Vector3,
-    to: THREE.Vector3,
+    from: MorphologyPoint3,
+    to: MorphologyPoint3,
     color: readonly [number, number, number],
     detailWeight: number,
   ) => {
-    segments.push(from.x, from.y, from.z, to.x, to.y, to.z);
+    segments.push(...from, ...to);
     colors.push(...color, ...color);
     detailWeights.push(detailWeight);
   };
 
-  for (let strand = 0; strand < specs.length; strand += 1) {
-    const spec = specs[strand];
-    for (let segment = 0; segment < steps; segment += 1) {
-      const t0 = segment / steps * CONSENSUS_BRAID_TAU;
-      const t1 = (segment + 1) / steps * CONSENSUS_BRAID_TAU;
-      consensusBraidPoint(spec, t0, point);
-      consensusBraidPoint(spec, t1, next);
-      const spectral = 0.5 + 0.5 * Math.sin(t0 * 1.4 + strand * 1.7);
+  const markSegmentCount = topology.dataMarks.reduce(
+    (count, mark) => count + (mark.kind === 'double_knot' ? 3 : 2),
+    0,
+  );
+  const auxiliarySegmentCount = topology.crossings.length
+    + markSegmentCount
+    + topology.agreements.length;
+  const pathCount = topology.strands.length + 1;
+  const pathSegments = Math.max(1, Math.min(
+    GALAXY_BRAID_PATH_SEGMENTS,
+    Math.floor((CELL_MORPHOLOGY_MAX_SEGMENTS - auxiliarySegmentCount) / pathCount),
+  ));
+
+  const addPath = (
+    points: readonly MorphologyPoint3[],
+    strand: number,
+    detailWeight: number,
+  ) => {
+    for (let segment = 0; segment < pathSegments; segment += 1) {
+      const t0 = segment / pathSegments;
+      const t1 = (segment + 1) / pathSegments;
+      const point = consensusBraidPathPoint(points, t0);
+      const next = consensusBraidPathPoint(points, t1);
+      const spectral = 0.5 + 0.5 * Math.sin(t0 * Math.PI * 2 * 1.4 + strand * 1.7);
       const contributor = consensusBraidContributorColor(strand, spectral);
       const color: readonly [number, number, number] = [
         lerp(contributor[0], visual.accent[0], 0.025),
         lerp(contributor[1], visual.accent[1], 0.025),
         lerp(contributor[2], visual.accent[2], 0.025),
       ];
-      addSegment(point, next, color, 0);
+      addSegment(point, next, color, detailWeight);
+    }
+  };
 
-      const stitchPeriod = Math.max(8, 16 - Math.round(visual.payload * 6));
-      if ((segment + strand * 3) % stitchPeriod !== 0) continue;
-      consensusBraidPoint(spec, t0 - 0.006, previous);
-      consensusBraidPoint(spec, t0 + 0.006, next);
-      tangent.subVectors(next, previous).normalize();
-      normal.crossVectors(tangent, reference);
-      if (normal.lengthSq() < 0.01) normal.crossVectors(tangent, fallback);
-      normal.normalize().multiplyScalar(0.02 + visual.payload * 0.008);
-      consensusBraidPoint(spec, t0, point);
-      left.copy(point).add(normal);
-      right.copy(point).sub(normal);
-      addSegment(left, right, CONSENSUS_BRAID_PALETTE.paleGold, 0.72);
+  // The macro type carrier and lock strands remain legible at mid LOD.
+  addPath(topology.carrier, 0, 0);
+  for (const strand of topology.strands) {
+    addPath(strand.points, strand.index, strand.index === 0 ? 0 : 0.08);
+  }
+
+  // Lock crossings and data code are resolved by the existing near-LOD fade.
+  for (const crossing of topology.crossings) {
+    addSegment(
+      crossing.pointA,
+      crossing.pointB,
+      consensusBraidContributorColor(crossing.pair, 0.82),
+      0.76,
+    );
+  }
+  for (const mark of topology.dataMarks) {
+    addSegment(mark.point, mark.midpoint, CONSENSUS_BRAID_PALETTE.paleGold, 0.82);
+    addSegment(mark.midpoint, mark.peerPoint, CONSENSUS_BRAID_PALETTE.paleGold, 0.82);
+    if (mark.kind === 'double_knot') {
+      addSegment(mark.point, mark.peerPoint, CONSENSUS_BRAID_PALETTE.gold, 0.86);
     }
   }
 
-  // Production uses the exact same agreement constellation as the portrait;
-  // only its contributor curves are sampled more coarsely for batching.
+  // Production uses the exact same agreement constellation as the portrait.
   for (const agreement of topology.agreements) {
-    point.fromArray(agreement.pointA);
-    next.fromArray(agreement.pointB);
-    addSegment(point, next, CONSENSUS_BRAID_PALETTE.pale, 0.9);
+    addSegment(agreement.pointA, agreement.pointB, CONSENSUS_BRAID_PALETTE.pale, 0.9);
     knots.push({
       x: agreement.midpoint[0],
       y: agreement.midpoint[1],
       z: agreement.midpoint[2],
-      size: 0.045 + visual.payload * 0.018,
+      size: 0.045 + topology.genome.data.density * 0.018,
       alpha: 0.9,
     });
+  }
+
+  if (detailWeights.length > CELL_MORPHOLOGY_MAX_SEGMENTS) {
+    throw new Error('Cell Morphology V2 exceeded the production segment budget');
   }
 
   return {

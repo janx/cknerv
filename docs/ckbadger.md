@@ -345,6 +345,18 @@ details: the selected outpoint still resolves lazily through the existing Cell
 detail endpoint. A stale source dims the orbit, while an invalid or missing
 anchor suppresses it.
 
+The PSIONIC BRAID portrait uses the same record only as a detachable
+explanation layer. Resolved script family/name labels, exact deterministic
+half-open data ranges, byte-boundary ticks, and occupied CAP/LOCK/TYPE/DATA arcs
+sit above the canonical Cell morphology; heuristic guesses never create
+geometry. Before either semantic visual is admitted, each indexed
+`script_hash` is converted to the same two big-endian shape-seed words used by
+the direct CKB adapter and compared with the selected Cell's canonical lock/type
+seed. A mismatch suppresses the semantic visual and appears through the
+inspector's semantic error state. Losing, staling, or replacing the source only
+withdraws or dims these optional layers: carrier points, crossings, data-knot
+mask, scale, motion, and the galaxy near-LOD cache remain unchanged.
+
 The transaction route adds the selected Cell's origin transaction, participant
 capacity deltas, and proposal/commit lifecycle when the source provides them.
 

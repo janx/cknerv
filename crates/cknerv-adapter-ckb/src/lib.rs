@@ -24,6 +24,7 @@ mod network;
 pub mod poll;
 pub mod rpc;
 mod script_taxonomy;
+pub mod shape_seed;
 
 pub use adapter::CkbDirectAdapter;
 pub use galaxy_composition::CkbGalaxyCompositionHydrator;

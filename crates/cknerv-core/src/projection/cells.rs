@@ -26,7 +26,7 @@ use serde::{Deserialize, Serialize};
 use crate::enrichment::ChainAnchor;
 use crate::helix::helix_seed_for;
 use crate::mutation::{Mutation, ReplayPhase};
-use crate::outpoint::{is_cellbase_input, OutPoint, TxOutputInfo};
+use crate::outpoint::{is_cellbase_input, OutPoint, ShapeSeed, TxOutputInfo};
 use crate::projection::cells_stats::{
     aggregate_cell_view_stats, aggregate_script_census, CellViewStats, ObservedScriptsSink,
     ScriptCensus,
@@ -103,10 +103,21 @@ pub struct Cell {
     pub out_point: OutPoint,
     pub capacity: u64,
     pub data_hex: String,
+    /// Full output-data length before the display-safe prefix was truncated.
+    #[serde(default)]
+    pub data_bytes: u32,
     /// CKB-canonical BLAKE2b-256 of the serialized CellOutput + raw data.
     /// Stable identifier for the cell's on-chain content; backs the
     /// per-cell `CellLifeAvatar` seed. 66 chars (0x-prefixed).
     pub content_hash: String,
+    /// Independent immutable component fingerprints. They seed renderer-owned
+    /// morphology without asking core to interpret scripts or data.
+    #[serde(default)]
+    pub lock_shape_seed: ShapeSeed,
+    #[serde(default)]
+    pub type_shape_seed: Option<ShapeSeed>,
+    #[serde(default)]
+    pub data_shape_seed: ShapeSeed,
     /// How this cell is guarded (lock-script category). Copied from the
     /// birthing `TxOutputInfo`; `#[serde(default)]` keeps pre-taxonomy
     /// persisted snapshots loadable (→ `LockKind::Other`).
@@ -1407,7 +1418,11 @@ impl CellGalaxy {
                 out_point: outpoint.clone(),
                 capacity: out.capacity,
                 data_hex: out.data_hex.clone(),
+                data_bytes: out.data_bytes,
                 content_hash: out.content_hash.clone(),
+                lock_shape_seed: out.lock_shape_seed,
+                type_shape_seed: out.type_shape_seed,
+                data_shape_seed: out.data_shape_seed,
                 lock_kind: out.lock_kind,
                 asset_kind: out.asset_kind,
                 lock_script: out.lock_script,
@@ -1796,10 +1811,14 @@ mod tests {
         TxOutputInfo {
             capacity: cap,
             data_hex: data.to_string(),
+            data_bytes: data.strip_prefix("0x").unwrap_or(data).len() as u32 / 2,
             // Deterministic synthetic hash per-output for tests. Real chain
             // path computes BLAKE2b in chain_poll; tests only need the
             // field to be present and distinguishable.
             content_hash: format!("0x{:064x}", (cap as u128) ^ data.len() as u128),
+            lock_shape_seed: [cap as u32, 1],
+            type_shape_seed: None,
+            data_shape_seed: [data.len() as u32, 2],
             lock_kind: LockKind::Other,
             asset_kind: AssetKind::Other,
             lock_script: Default::default(),
@@ -2278,7 +2297,7 @@ mod tests {
     }
 
     #[test]
-    fn content_hash_is_propagated_to_birthed_cells() {
+    fn content_and_component_shape_inputs_are_propagated_to_birthed_cells() {
         let mut g = make_galaxy();
         let outputs = vec![out(100, "0xdeadbeef"), out(200, "0xcafebabe")];
         let deltas = g.handle_tx_landed("0xtx2", 2, 2_000, &[], &outputs);
@@ -2293,6 +2312,12 @@ mod tests {
         assert_eq!(births[0].content_hash, outputs[0].content_hash);
         assert_eq!(births[1].content_hash, outputs[1].content_hash);
         assert_ne!(births[0].content_hash, births[1].content_hash);
+        for (birth, output) in births.iter().zip(&outputs) {
+            assert_eq!(birth.data_bytes, output.data_bytes);
+            assert_eq!(birth.lock_shape_seed, output.lock_shape_seed);
+            assert_eq!(birth.type_shape_seed, output.type_shape_seed);
+            assert_eq!(birth.data_shape_seed, output.data_shape_seed);
+        }
     }
 
     #[test]
@@ -3563,7 +3588,11 @@ mod tests {
             out_point: op("0xa", 0),
             capacity: 100,
             data_hex: "0x".to_string(),
+            data_bytes: 0,
             content_hash: format!("0x{:064x}", 0),
+            lock_shape_seed: [1, 2],
+            type_shape_seed: None,
+            data_shape_seed: [3, 4],
             lock_kind: LockKind::Other,
             asset_kind: AssetKind::Other,
             lock_script: Default::default(),
@@ -4184,7 +4213,11 @@ mod tests {
             out_point: op(&format!("0xr{id}"), 0),
             capacity: 61_00000000,
             data_hex: "0x".into(),
+            data_bytes: 0,
             content_hash: format!("0x{id:064x}"),
+            lock_shape_seed: [id as u32, 1],
+            type_shape_seed: None,
+            data_shape_seed: [id as u32, 2],
             lock_kind: Default::default(),
             asset_kind: kind,
             lock_script: Default::default(),
@@ -4874,9 +4907,9 @@ mod tests {
     /// survived a green suite.
     ///
     /// Regenerate both with
-    /// `CKNERV_REGEN_FIXTURES=1 cargo test -p cknerv-core columnar_v3`.
+    /// `CKNERV_REGEN_FIXTURES=1 cargo test -p cknerv-core columnar_v4`.
     #[test]
-    fn columnar_v3_pair_describes_one_galaxy_in_both_wire_forms() {
+    fn columnar_v4_pair_describes_one_galaxy_in_both_wire_forms() {
         use crate::outpoint::DATA_HEX_TRUNCATION_MARKER;
         use crate::projection::cells_columnar::{
             assert_matches_fixture, assert_matches_text_fixture,
@@ -4909,6 +4942,7 @@ mod tests {
         lock_and_type.asset_kind = AssetKind::Xudt;
         lock_and_type.lock_script = lock;
         lock_and_type.type_script = Some(type_script);
+        lock_and_type.type_shape_seed = Some([0x50bd_8d66, 0x80b8_b9cf]);
         let unidentified = out(90_00000000, "0xbeef");
         g.apply_mutation(&landed(
             "0xtx1",
@@ -4937,13 +4971,14 @@ mod tests {
         record.dao[0].lock_script = lock;
         record.typed[0].lock_script = lock;
         record.typed[0].type_script = Some(type_script);
+        record.typed[0].type_shape_seed = Some([0x50bd_8d66, 0x80b8_b9cf]);
         g.apply_mutation(&Mutation::GalaxyReservoirReplaced { record });
         g.apply_mutation(&mined(8, "0xblock8", 2_100));
 
         let json = serde_json::to_string_pretty(&g.snapshot()).expect("serialize snapshot");
-        assert_matches_text_fixture("cells_columnar_v3_pair.json", &json);
+        assert_matches_text_fixture("cells_columnar_v4_pair.json", &json);
         assert_matches_fixture(
-            "cells_columnar_v3_pair.bin",
+            "cells_columnar_v4_pair.bin",
             &g.snapshot_bin().expect("columnar snapshot"),
         );
     }

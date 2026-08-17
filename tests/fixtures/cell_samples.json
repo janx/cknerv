@@ -9,7 +9,11 @@
     "out_point": { "tx_hash": "0xabc", "index": 0 },
     "capacity": 100,
     "data_hex": "0x",
+    "data_bytes": 0,
     "content_hash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+    "lock_shape_seed": [2614616175, 1053772768],
+    "type_shape_seed": null,
+    "data_shape_seed": [1156892311, 1154873541],
     "lock_kind": "sighash",
     "asset_kind": "native"
   },
@@ -23,7 +27,11 @@
     "out_point": { "tx_hash": "0xabc", "index": 1 },
     "capacity": 200,
     "data_hex": "0xdeadbeef",
+    "data_bytes": 4,
     "content_hash": "0x1111111111111111111111111111111111111111111111111111111111111111",
+    "lock_shape_seed": [2614616175, 1053772768],
+    "type_shape_seed": null,
+    "data_shape_seed": [3735928559, 1],
     "lock_kind": "sighash",
     "asset_kind": "sudt"
   },
@@ -37,7 +45,11 @@
     "out_point": { "tx_hash": "0xdef", "index": 0 },
     "capacity": 300,
     "data_hex": "0xcafebabe",
+    "data_bytes": 4,
     "content_hash": "0x2222222222222222222222222222222222222222222222222222222222222222",
+    "lock_shape_seed": [572662306, 858993459],
+    "type_shape_seed": null,
+    "data_shape_seed": [3405691582, 2],
     "lock_kind": "multisig",
     "asset_kind": "other"
   }
