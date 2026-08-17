@@ -72,6 +72,7 @@ export * from './derives/consensusMemoryEvidence.derive';
 export * from './derives/consensusRouteHopAgreement.derive';
 export * from './derives/consensusRouteCamera.derive';
 export * from './derives/cellsStats.derive';
+export * from './derives/cellPopulationField.derive';
 export * from './derives/peers.derive';
 export * from './derives/ecgCondition';
 export * from './derives/fleetTelemetry';
