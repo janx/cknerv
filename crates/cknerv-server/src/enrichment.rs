@@ -8,7 +8,7 @@
 use async_trait::async_trait;
 
 use cknerv_core::{
-    ActivityFeedRecord, AssetEcosystemRecord, CellSemanticRecord, CompositionDemand,
+    ActivityFeedRecord, AssetEcosystemRecord, CellSemanticRecord, ChainCensus, CompositionDemand,
     DaoStateRecord, EnrichmentSourceStatus, ForkWatchRecord, GalaxyCompositionCandidates,
     GalaxyCompositionRecord, GalaxyCompositionTopUp, NetworkAtlasRecord, OutPoint,
     ProtocolEraRecord, RecentBlock, RecentTx, ScriptId, ScriptRegistryRecord,
@@ -150,6 +150,21 @@ pub trait EnrichmentSource: Send + Sync + 'static {
         &self,
         _context: &CanonicalContext,
     ) -> anyhow::Result<Option<NetworkAtlasRecord>> {
+        Ok(None)
+    }
+
+    /// Refresh the exact whole-chain live-Cell census. Sources must answer
+    /// from a maintained aggregate in constant work — a source that would have
+    /// to scan or paginate live cells to answer leaves this unsupported, and
+    /// the dashboard then states only the retained window it can prove.
+    ///
+    /// `Ok(None)` means "no record right now" and must never be a zero: a
+    /// count of zero is a claim about the chain, and an initializing or
+    /// corrupt aggregate is not making one.
+    async fn enrich_chain_census(
+        &self,
+        _context: &CanonicalContext,
+    ) -> anyhow::Result<Option<ChainCensus>> {
         Ok(None)
     }
 

@@ -9,9 +9,9 @@ use url::Url;
 
 use cknerv_core::{
     ActivityFeedItem, ActivityFeedRecord, AssetEcosystemCategory, AssetEcosystemLeader,
-    AssetEcosystemRecord, CellSemanticRecord, ChainAnchor, CommonKnowledgeBreakdown,
-    CompositionDemand, DaoStateRecord, EnrichmentSourceState, EnrichmentSourceStatus,
-    ForkWatchDeepFork, ForkWatchEventKind, ForkWatchRecord, ForkWatchReorg,
+    AssetEcosystemRecord, CellSemanticRecord, ChainAnchor, ChainCensus, ChainCensusClasses,
+    CommonKnowledgeBreakdown, CompositionDemand, DaoStateRecord, EnrichmentSourceState,
+    EnrichmentSourceStatus, ForkWatchDeepFork, ForkWatchEventKind, ForkWatchRecord, ForkWatchReorg,
     GalaxyCompositionRecord, GalaxyCompositionTopUp, HashType, NetworkAtlasBucket,
     NetworkAtlasRecord, OutPoint, ProtocolEra, ProtocolEraRecord, ScriptNameRecord,
     ScriptRegistryRecord, SemanticAsset, SemanticAttribute, SemanticCellContent,
@@ -24,11 +24,12 @@ use cknerv_server::{CanonicalContext, EnrichmentSource, GalaxyCompositionHydrato
 use crate::dto::{
     AssetEcosystemResponse, BlockResponse, CellDataAnalysis, CellDetailResponse,
     CommonKnowledgeSizeBreakdown, DaoInfo, DaoStatisticsResponse, HardforkEventResponse,
-    HardforkTimelineResponse, LatestActivityResponse, LookupScriptsRequest,
-    NetworkCrawlerSummaryResponse, NetworkNodesPageResponse, NetworkStats, RecentReorgResponse,
-    ReorgEventResponse, ScriptCatalogueResponse, ScriptFamilyResponse, ScriptLookupInfo,
-    ScriptLookupResponse, ScriptResponse, TokenResponse, TransactionDetailResponse,
-    TransactionLifecycleResponse, TransactionStatsPoint, TransactionStatsResponse,
+    HardforkTimelineResponse, LatestActivityResponse, LiveCellSummaryResponse,
+    LookupScriptsRequest, NetworkCrawlerSummaryResponse, NetworkNodesPageResponse, NetworkStats,
+    RecentReorgResponse, ReorgEventResponse, ScriptCatalogueResponse, ScriptFamilyResponse,
+    ScriptLookupInfo, ScriptLookupResponse, ScriptResponse, TokenResponse,
+    TransactionDetailResponse, TransactionLifecycleResponse, TransactionStatsPoint,
+    TransactionStatsResponse,
 };
 use crate::galaxy_composition::{
     discover as discover_galaxy_composition, top_up as top_up_galaxy_composition, CandidateTail,
@@ -46,6 +47,7 @@ const CAPABILITIES: &[&str] = &[
     "transaction_horizon",
     "fork_watch",
     "network_atlas",
+    "chain_census",
     "script_registry",
     "transaction_detail",
     "transaction_lifecycle",
@@ -916,6 +918,49 @@ impl EnrichmentSource for CkbadgerEnrichmentSource {
         Ok(record)
     }
 
+    async fn enrich_chain_census(
+        &self,
+        context: &CanonicalContext,
+    ) -> anyhow::Result<Option<ChainCensus>> {
+        // A validated anchor still gates the capability (the supervisor will
+        // not dispatch without one), but this record is NOT anchored at it:
+        // the counts are exact at the summary's own tip, so that is the block
+        // the dashboard has to print beside them. `map_chain_census` proves
+        // that tip against the local node's canonical evidence, which is a
+        // stronger fence than re-reading the index — a source-side reorg
+        // during the fetch yields a hash our own chain does not hold.
+        self.current_anchor(context)?;
+        let url = self.endpoint("cells/live-summary")?;
+        let response = self
+            .client
+            .get(url)
+            .send()
+            .await
+            .context("fetch ckbadger live cell summary")?;
+        // `503 initializing` (bulk sync, or a reorg withdrew the record) and
+        // `500` (corrupt record) both mean the source is deliberately
+        // declining to state a number. Withhold; never synthesize a zero.
+        if matches!(
+            response.status(),
+            StatusCode::NOT_FOUND
+                | StatusCode::SERVICE_UNAVAILABLE
+                | StatusCode::INTERNAL_SERVER_ERROR
+        ) {
+            return Ok(None);
+        }
+        if !response.status().is_success() {
+            return Err(anyhow!(
+                "ckbadger live cell summary returned HTTP {}",
+                response.status()
+            ));
+        }
+        let summary: LiveCellSummaryResponse = response
+            .json()
+            .await
+            .context("decode ckbadger live cell summary")?;
+        map_chain_census(summary, context)
+    }
+
     async fn enrich_protocol_era(
         &self,
         context: &CanonicalContext,
@@ -1676,6 +1721,94 @@ fn deep_fork_canonical_anchor(
             block: block.number,
             hash: block.hash.clone(),
         }))
+}
+
+/// Normalize one live-cell summary into a [`ChainCensus`], or withhold it.
+///
+/// Three things have to hold before this states a whole-chain number:
+///
+/// 1. every counter is inside the JSON safe-integer range the browser will
+///    read it back as;
+/// 2. the summary's tip block AND hash appear in the local node's retained
+///    canonical evidence — an unverifiable or replaced tip is not a slightly
+///    stale count, it is a count about a chain this dashboard is not on;
+/// 3. the three class counters, when present, sum to `live_cells` exactly.
+///    A partition that does not add up cannot be disclosed as a chain mix,
+///    so the classes are rejected rather than shown approximate.
+fn map_chain_census(
+    summary: LiveCellSummaryResponse,
+    context: &CanonicalContext,
+) -> anyhow::Result<Option<ChainCensus>> {
+    let tip_block = nonnegative(summary.tip.block, "live summary tip.block")?;
+    wire_safe_u64(tip_block, "live summary tip.block")?;
+    if !is_hash32(&summary.tip.hash) {
+        return Err(anyhow!("ckbadger returned invalid live summary tip.hash"));
+    }
+    let live_cells = nonnegative(summary.live_cells, "live summary liveCells")?;
+    wire_safe_u64(live_cells, "live summary liveCells")?;
+
+    // The index can be ahead of, behind, or off this chain. Only a block the
+    // local node itself still vouches for admits the counts.
+    let Some(anchor) = context
+        .recent_blocks
+        .iter()
+        .find(|block| block.number == tip_block && block.hash == summary.tip.hash)
+        .map(|block| ChainAnchor {
+            block: block.number,
+            hash: block.hash.clone(),
+        })
+    else {
+        return Ok(None);
+    };
+
+    let classes = summary
+        .classes
+        .map(|classes| -> anyhow::Result<ChainCensusClasses> {
+            let dao = nonnegative(classes.dao, "live summary classes.dao")?;
+            let typed_non_dao =
+                nonnegative(classes.typed_non_dao, "live summary classes.typedNonDao")?;
+            let plain = nonnegative(classes.plain, "live summary classes.plain")?;
+            for (value, field) in [
+                (dao, "live summary classes.dao"),
+                (typed_non_dao, "live summary classes.typedNonDao"),
+                (plain, "live summary classes.plain"),
+            ] {
+                wire_safe_u64(value, field)?;
+            }
+            let classes = ChainCensusClasses {
+                dao,
+                typed_non_dao,
+                plain,
+            };
+            if classes.total() != Some(live_cells) {
+                return Err(anyhow!(
+                    "ckbadger live summary classes do not partition liveCells"
+                ));
+            }
+            Ok(classes)
+        })
+        .transpose()?;
+
+    let data_bearing = summary
+        .data_bearing
+        .map(|value| {
+            let value = nonnegative(value, "live summary dataBearing")?;
+            wire_safe_u64(value, "live summary dataBearing")
+        })
+        .transpose()?;
+
+    Ok(Some(ChainCensus {
+        source: "ckbadger".to_string(),
+        as_of: anchor,
+        updated_at_ms: now_ms(),
+        live_cells,
+        // ckbadger publishes neither counter; `ChainCensus` already declares
+        // both optional, so they stay unstated rather than guessed.
+        total_cells: None,
+        dead_cells: None,
+        classes,
+        data_bearing,
+    }))
 }
 
 fn map_dao_state(
@@ -3676,6 +3809,203 @@ mod tests {
 
         source.clear_anchor_if(&newer);
         assert!(source.validated_anchor.read().unwrap().is_none());
+    }
+
+    /// The census anchors on the chain's OWN hash format, so its fixtures use
+    /// real 32-byte hashes rather than the short labels the other mock
+    /// routes get away with.
+    fn census_hash(block: u64) -> String {
+        format!("0x{:064x}", block)
+    }
+
+    fn census_context(block: u64) -> CanonicalContext {
+        CanonicalContext {
+            tip: block,
+            epoch_number: 12_300,
+            chain_name: "ckb".to_string(),
+            recent_blocks: vec![RecentBlock {
+                number: block,
+                hash: census_hash(block),
+            }],
+            recent_transactions: Vec::new(),
+            replay_active: false,
+            observed_scripts: Vec::new(),
+        }
+    }
+
+    fn live_summary(block: u64, live: i64, classes: Option<(i64, i64, i64)>) -> serde_json::Value {
+        let mut body = serde_json::json!({
+            "tip": { "block": block, "hash": census_hash(block) },
+            "liveCells": live,
+            "dataBearing": 266_346,
+        });
+        if let Some((dao, typed_non_dao, plain)) = classes {
+            body["classes"] = serde_json::json!({
+                "dao": dao,
+                "typedNonDao": typed_non_dao,
+                "plain": plain,
+            });
+        }
+        body
+    }
+
+    fn decode_live_summary(body: serde_json::Value) -> LiveCellSummaryResponse {
+        serde_json::from_value(body).expect("decode live summary fixture")
+    }
+
+    async fn spawn_live_summary_api(
+        status: StatusCode,
+        body: serde_json::Value,
+    ) -> (Url, tokio::task::JoinHandle<()>, Arc<AtomicUsize>) {
+        let summary_requests = Arc::new(AtomicUsize::new(0));
+        let counted = summary_requests.clone();
+        let app = Router::new()
+            .route(
+                "/api/v1/statistics/network",
+                get(|| async {
+                    Json(serde_json::json!({
+                        "syncStatus": { "isSyncing": false, "syncedBlock": 100 }
+                    }))
+                }),
+            )
+            .route(
+                "/api/v1/blocks/:number",
+                get(|| async {
+                    Json(serde_json::json!({
+                        "number": 100,
+                        "hash": census_hash(100),
+                    }))
+                }),
+            )
+            .route(
+                "/api/v1/cells/live-summary",
+                get(move || {
+                    let requests = counted.clone();
+                    let body = body.clone();
+                    async move {
+                        requests.fetch_add(1, Ordering::Relaxed);
+                        (status, Json(body))
+                    }
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let handle = tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        let base = Url::parse(&format!("http://{address}/api/v1")).unwrap();
+        (base, handle, summary_requests)
+    }
+
+    #[tokio::test]
+    async fn a_census_is_anchored_at_the_block_its_counts_are_exact_at() {
+        let (api_base, server, _) = spawn_live_summary_api(
+            StatusCode::OK,
+            live_summary(100, 1_471_222, Some((22_676, 475_891, 972_655))),
+        )
+        .await;
+        let source = CkbadgerEnrichmentSource::new(api_base).unwrap();
+        let context = census_context(100);
+        source.probe(&context).await;
+
+        let census = source
+            .enrich_chain_census(&context)
+            .await
+            .expect("census")
+            .expect("record");
+
+        assert_eq!(census.as_of.block, 100);
+        assert_eq!(census.as_of.hash, census_hash(100));
+        assert_eq!(census.live_cells, 1_471_222);
+        assert_eq!(
+            census.classes.as_ref().and_then(ChainCensusClasses::total),
+            Some(1_471_222)
+        );
+        assert_eq!(census.data_bearing, Some(266_346));
+        assert_eq!(census.total_cells, None);
+        assert_eq!(census.dead_cells, None);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn an_initializing_census_yields_no_record_rather_than_a_zero() {
+        for status in [
+            StatusCode::SERVICE_UNAVAILABLE,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            StatusCode::NOT_FOUND,
+        ] {
+            let (api_base, server, requests) =
+                spawn_live_summary_api(status, serde_json::json!({ "error": "initializing" }))
+                    .await;
+            let source = CkbadgerEnrichmentSource::new(api_base).unwrap();
+            let context = census_context(100);
+            source.probe(&context).await;
+
+            let census = source.enrich_chain_census(&context).await.expect("census");
+
+            assert!(census.is_none(), "{status} must withhold, not synthesize");
+            assert_eq!(requests.load(Ordering::Relaxed), 1);
+            server.abort();
+        }
+    }
+
+    #[test]
+    fn a_census_tip_the_local_node_cannot_vouch_for_is_not_admitted() {
+        let context = census_context(100);
+
+        // Same height, different chain: the hash decides.
+        let mut forked = live_summary(100, 1_471_222, None);
+        forked["tip"]["hash"] = serde_json::json!(format!("0x{}", "ab".repeat(32)));
+        assert!(map_chain_census(decode_live_summary(forked), &context)
+            .expect("no error")
+            .is_none());
+
+        // Ahead of the retained canonical window: withheld until evidence
+        // reaches it, never anchored at a block we have not seen.
+        assert!(map_chain_census(
+            decode_live_summary(live_summary(101, 1_471_222, None)),
+            &context
+        )
+        .expect("no error")
+        .is_none());
+    }
+
+    #[test]
+    fn census_classes_that_do_not_partition_the_count_are_rejected() {
+        let context = census_context(100);
+        let body = live_summary(100, 1_471_222, Some((22_676, 475_891, 972_654)));
+
+        let error = map_chain_census(decode_live_summary(body), &context)
+            .expect_err("a mismatched partition must reject the record");
+
+        assert!(error.to_string().contains("partition"), "{error}");
+    }
+
+    #[test]
+    fn census_counters_outside_the_browser_safe_range_are_rejected() {
+        let context = census_context(100);
+        let mut negative = live_summary(100, 1_471_222, None);
+        negative["liveCells"] = serde_json::json!(-1);
+        assert!(map_chain_census(decode_live_summary(negative), &context).is_err());
+
+        let mut unsafe_count = live_summary(100, 1_471_222, None);
+        unsafe_count["liveCells"] = serde_json::json!(MAX_WIRE_SAFE_U64 as i64 + 1);
+        assert!(map_chain_census(decode_live_summary(unsafe_count), &context).is_err());
+    }
+
+    #[test]
+    fn a_census_without_classes_still_states_its_count() {
+        let context = census_context(100);
+
+        let census = map_chain_census(
+            decode_live_summary(live_summary(100, 1_471_222, None)),
+            &context,
+        )
+        .expect("no error")
+        .expect("record");
+
+        assert_eq!(census.live_cells, 1_471_222);
+        assert!(census.classes.is_none());
     }
 
     #[test]

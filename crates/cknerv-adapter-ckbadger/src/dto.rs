@@ -99,6 +99,40 @@ pub(crate) struct AssetEcosystemCategory {
     pub percentage: String,
 }
 
+/// ckbadger's whole-chain live-Cell summary. The source maintains this as a
+/// fixed-size record updated incrementally from birth/spend, so the response
+/// is constant work and never a scan; it has no synthesized default, which is
+/// why an unavailable aggregate is an HTTP status rather than a zero here.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct LiveCellSummaryResponse {
+    pub tip: LiveCellSummaryTip,
+    pub live_cells: i64,
+    #[serde(default)]
+    pub classes: Option<LiveCellSummaryClasses>,
+    #[serde(default)]
+    pub data_bearing: Option<i64>,
+}
+
+/// The block the counts are exact at. cknerv proves this pair against its own
+/// canonical evidence before admitting anything the record says.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct LiveCellSummaryTip {
+    pub block: i64,
+    pub hash: String,
+}
+
+/// Mutually exclusive decomposition of `liveCells`. Optional as a whole: a
+/// response without it still carries a usable count.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct LiveCellSummaryClasses {
+    pub dao: i64,
+    pub typed_non_dao: i64,
+    pub plain: i64,
+}
+
 /// Fixed-shape subset of ckbadger's global DAO statistics response. Fields
 /// that cknerv does not publish are intentionally ignored by serde.
 #[derive(Debug, Deserialize)]

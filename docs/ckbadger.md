@@ -501,6 +501,39 @@ The standalone base detail returns when the crawler is unconfigured, empty,
 disabled, or canonically unusable. Staleness dims only the network-wide stage
 after three missed minute refreshes.
 
+### Chain Census
+
+With `chain_census`, cknerv refreshes ckbadger's `cells/live-summary` singleton
+once every 30 seconds. The source maintains that record incrementally from
+birth and spend across live sync, bulk build, and reorg, so the response is a
+fixed-size read in constant work and never a scan of live cells.
+
+The record's anchor is **not** the compatibility anchor the probe validated: a
+census states an exact count at one specific block, so the block it is anchored
+at has to be the one the counts are true at. cknerv therefore proves the
+summary's own `tip.block`/`tip.hash` pair against the local node's retained
+canonical evidence and admits the counts only when that exact pair is one this
+chain still holds. A tip ahead of the retained window, or a same-height block
+with a different hash, yields no record rather than an approximate one — the
+count would otherwise describe a chain this dashboard is not on.
+
+The source has no synthesized default: it answers `503` while the aggregate is
+initializing (bulk sync, or a reorg withdrew the record) and `500` on a corrupt
+one. Both mean cknerv publishes no census, never a zero. A zero is a claim
+about the chain, and a source declining to answer is not making one.
+
+`classes` — `dao`, `typedNonDao`, `plain` — are mutually exclusive and must sum
+to `liveCells` exactly. cknerv re-checks that partition at the adapter boundary
+rather than trusting it, and rejects the whole record when it does not hold: an
+approximate partition cannot be disclosed as a chain composition. A response
+without classes still yields a usable count. `dataBearing` is orthogonal to
+that partition and is the whole-chain twin of the retained window's own
+data-bearing count.
+
+Enabling this capability requires a from-genesis ckbadger re-sync; an instance
+that predates the aggregate answers `503` indefinitely, which cknerv treats as
+the ordinary "no record" state.
+
 ### Script Registry
 
 With `script_registry`, cknerv asks the index what the script identities its own
@@ -559,11 +592,10 @@ staffing once the first refresh lands.
   dashboard.
 - Transaction participants expose exact capacity deltas only when every
   attributed input and output includes capacity.
-- Selected-transaction protocol activities and an exact global Cell census are
-  not populated because ckbadger does not expose an efficient per-transaction
-  activity lookup or one bounded current-census response. cknerv avoids N+1
-  background scraping and does not relabel latest samples or historical chart
-  points as current chain truth.
+- Selected-transaction protocol activities are not populated because ckbadger
+  does not expose an efficient per-transaction activity lookup. cknerv avoids
+  N+1 background scraping and does not relabel latest samples or historical
+  chart points as current chain truth.
 - The script-utilization chart is not polled because its response is cumulative
   and unbounded rather than a fixed-size current view.
 - The 24-hour activity summary is not polled because its `scriptCounts` map has

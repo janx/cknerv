@@ -706,6 +706,7 @@ per capability. Default cadences are:
 | Transaction horizon | 60 s |
 | Fork watch | 15 s |
 | Network atlas | 60 s |
+| Chain census | 30 s |
 | Script registry | 5 min |
 | Initial galaxy composition | Run once and hold after success; retry failures after 30 s |
 | Composition top-up | Start at 5 s; back off after repeated empty rounds to roughly 5 min |

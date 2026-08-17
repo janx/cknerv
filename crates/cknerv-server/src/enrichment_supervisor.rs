@@ -28,6 +28,11 @@ const ENRICHMENT_ACTIVITY_REFRESH: Duration = Duration::from_secs(15);
 const ENRICHMENT_TRANSACTION_HORIZON_REFRESH: Duration = Duration::from_secs(60);
 const ENRICHMENT_FORK_WATCH_REFRESH: Duration = Duration::from_secs(15);
 const ENRICHMENT_NETWORK_ATLAS_REFRESH: Duration = Duration::from_secs(60);
+/// The whole-chain Cell census. Its source answers from a fixed-size record
+/// in constant work, and its subject — the live-cell count — moves with every
+/// block, so the cadence is set by how stale a printed `AS OF` height may get
+/// rather than by the cost of asking.
+const ENRICHMENT_CHAIN_CENSUS_REFRESH: Duration = Duration::from_secs(30);
 /// Script names change when someone deploys a new script family, which is a
 /// scale of hours. Five minutes is already far faster than the fact moves;
 /// the reason to repeat at all is that the census keeps discovering
@@ -69,6 +74,7 @@ struct RefreshCadence {
     transaction_horizon: Duration,
     fork_watch: Duration,
     network_atlas: Duration,
+    chain_census: Duration,
     script_registry: Duration,
     galaxy_composition: Option<Duration>,
     galaxy_composition_retry: Duration,
@@ -88,6 +94,7 @@ impl Default for RefreshCadence {
             transaction_horizon: ENRICHMENT_TRANSACTION_HORIZON_REFRESH,
             fork_watch: ENRICHMENT_FORK_WATCH_REFRESH,
             network_atlas: ENRICHMENT_NETWORK_ATLAS_REFRESH,
+            chain_census: ENRICHMENT_CHAIN_CENSUS_REFRESH,
             script_registry: ENRICHMENT_SCRIPT_REGISTRY_REFRESH,
             galaxy_composition: ENRICHMENT_GALAXY_COMPOSITION_REFRESH,
             galaxy_composition_retry: ENRICHMENT_GALAXY_COMPOSITION_RETRY,
@@ -106,12 +113,13 @@ enum RefreshKind {
     TransactionHorizon,
     ForkWatch,
     NetworkAtlas,
+    ChainCensus,
     ScriptRegistry,
     GalaxyComposition,
     GalaxyTopUp,
 }
 
-const REFRESH_KINDS: [RefreshKind; 10] = [
+const REFRESH_KINDS: [RefreshKind; 11] = [
     RefreshKind::AssetEcosystem,
     RefreshKind::DaoState,
     RefreshKind::ProtocolEra,
@@ -119,6 +127,7 @@ const REFRESH_KINDS: [RefreshKind; 10] = [
     RefreshKind::TransactionHorizon,
     RefreshKind::ForkWatch,
     RefreshKind::NetworkAtlas,
+    RefreshKind::ChainCensus,
     RefreshKind::ScriptRegistry,
     RefreshKind::GalaxyComposition,
     RefreshKind::GalaxyTopUp,
@@ -134,6 +143,7 @@ impl RefreshKind {
             Self::TransactionHorizon => "transaction_horizon",
             Self::ForkWatch => "fork_watch",
             Self::NetworkAtlas => "network_atlas",
+            Self::ChainCensus => "chain_census",
             Self::ScriptRegistry => "script_registry",
             // The top-up is the same source feature as the composition:
             // a source that cannot compose cannot supply either.
@@ -154,6 +164,7 @@ impl RefreshKind {
             Self::TransactionHorizon => Some(cadence.transaction_horizon),
             Self::ForkWatch => Some(cadence.fork_watch),
             Self::NetworkAtlas => Some(cadence.network_atlas),
+            Self::ChainCensus => Some(cadence.chain_census),
             Self::ScriptRegistry => Some(cadence.script_registry),
             Self::GalaxyComposition => cadence.galaxy_composition,
             Self::GalaxyTopUp => Some(cadence.galaxy_top_up),
@@ -226,6 +237,10 @@ impl RefreshKind {
                 .enrich_network_atlas(context)
                 .await
                 .map(|record| record.map(EnrichmentEvent::NetworkAtlasReplace)),
+            Self::ChainCensus => source
+                .enrich_chain_census(context)
+                .await
+                .map(|record| record.map(EnrichmentEvent::CensusReplace)),
             Self::ScriptRegistry => source.enrich_script_registry(context).await.map(|record| {
                 record.map(|registry| EnrichmentEvent::ScriptRegistryReplace(Box::new(registry)))
             }),
@@ -584,8 +599,8 @@ mod tests {
 
     use async_trait::async_trait;
     use cknerv_core::{
-        ActivityFeedItem, ActivityFeedRecord, AssetEcosystemRecord, ChainAnchor, DaoStateRecord,
-        Mutation, ReplayPhase,
+        ActivityFeedItem, ActivityFeedRecord, AssetEcosystemRecord, ChainAnchor, ChainCensus,
+        ChainCensusClasses, DaoStateRecord, Mutation, ReplayPhase,
     };
 
     use super::*;
@@ -598,6 +613,74 @@ mod tests {
     struct DaoFixtureSource {
         dao_calls: Arc<AtomicUsize>,
         withhold_first: bool,
+    }
+
+    /// Advertises `chain_census` and answers with a record anchored at the
+    /// canonical block it was handed, so the test can prove the supervisor
+    /// dispatches the kind AND that the census reaches the event channel.
+    struct CensusFixtureSource {
+        census_calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl EnrichmentSource for CensusFixtureSource {
+        fn name(&self) -> &'static str {
+            "census-fixture"
+        }
+
+        fn capabilities(&self) -> Vec<String> {
+            vec!["chain_census".to_string()]
+        }
+
+        async fn probe(&self, context: &CanonicalContext) -> EnrichmentSourceStatus {
+            let anchor = context.recent_blocks.last().map(|block| ChainAnchor {
+                block: block.number,
+                hash: block.hash.clone(),
+            });
+            EnrichmentSourceStatus {
+                source: self.name().to_string(),
+                status: EnrichmentSourceState::Ready,
+                capabilities: self.capabilities(),
+                indexed_tip: Some(context.tip),
+                lag_blocks: Some(0),
+                validated_anchor: anchor,
+                last_success_at_ms: Some(1),
+                message: None,
+            }
+        }
+
+        async fn enrich_cell(
+            &self,
+            _out_point: &cknerv_core::OutPoint,
+            _context: &CanonicalContext,
+        ) -> anyhow::Result<Option<cknerv_core::CellSemanticRecord>> {
+            Ok(None)
+        }
+
+        async fn enrich_chain_census(
+            &self,
+            context: &CanonicalContext,
+        ) -> anyhow::Result<Option<ChainCensus>> {
+            self.census_calls.fetch_add(1, Ordering::Relaxed);
+            let block = context.recent_blocks.last().expect("canonical block");
+            Ok(Some(ChainCensus {
+                source: self.name().to_string(),
+                as_of: ChainAnchor {
+                    block: block.number,
+                    hash: block.hash.clone(),
+                },
+                updated_at_ms: 1,
+                live_cells: 1_471_222,
+                total_cells: None,
+                dead_cells: None,
+                classes: Some(ChainCensusClasses {
+                    dao: 22_676,
+                    typed_non_dao: 475_891,
+                    plain: 972_655,
+                }),
+                data_bearing: Some(266_346),
+            }))
+        }
     }
 
     #[async_trait]
@@ -805,6 +888,7 @@ mod tests {
             transaction_horizon: Duration::from_secs(60),
             fork_watch: Duration::from_secs(60),
             network_atlas: Duration::from_secs(60),
+            chain_census: Duration::from_secs(60),
             script_registry: Duration::from_secs(300),
             galaxy_composition: None,
             galaxy_composition_retry: Duration::from_secs(60),
@@ -884,6 +968,7 @@ mod tests {
             transaction_horizon: Duration::from_secs(60),
             fork_watch: Duration::from_secs(60),
             network_atlas: Duration::from_secs(60),
+            chain_census: Duration::from_secs(60),
             script_registry: Duration::from_secs(300),
             galaxy_composition: periodic,
             galaxy_composition_retry: Duration::from_millis(30),
@@ -1230,6 +1315,7 @@ mod tests {
             transaction_horizon: Duration::from_secs(60),
             fork_watch: Duration::from_secs(60),
             network_atlas: Duration::from_secs(60),
+            chain_census: Duration::from_secs(60),
             script_registry: Duration::from_secs(300),
             galaxy_composition: Some(Duration::from_secs(60)),
             galaxy_composition_retry: Duration::from_secs(60),
@@ -1267,6 +1353,7 @@ mod tests {
             transaction_horizon: Duration::from_secs(1),
             fork_watch: Duration::from_secs(1),
             network_atlas: Duration::from_secs(1),
+            chain_census: Duration::from_secs(1),
             script_registry: Duration::from_secs(300),
             galaxy_composition: Some(Duration::from_secs(1)),
             galaxy_composition_retry: Duration::from_secs(1),
@@ -1304,6 +1391,55 @@ mod tests {
             .await
             .expect("supervisor stops")
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn an_advertised_census_capability_is_refreshed_on_its_own_cadence() {
+        let state = Arc::new(ServerState::new());
+        state.apply_mutation(Mutation::BlockMined {
+            number: 7,
+            hash: "0xblock7".to_string(),
+            tx_count: 1,
+            size: 1,
+            at: 1,
+        });
+
+        let census_calls = Arc::new(AtomicUsize::new(0));
+        let source: Arc<dyn EnrichmentSource> = Arc::new(CensusFixtureSource {
+            census_calls: census_calls.clone(),
+        });
+        let (out, mut events) = mpsc::channel(16);
+        let (shutdown, shutdown_rx) = watch::channel(false);
+        let cadence = RefreshCadence {
+            probe: Duration::from_millis(20),
+            chain_census: Duration::from_millis(20),
+            ..top_up_cadence()
+        };
+        let handle = tokio::spawn(run(source, state, out, shutdown_rx, cadence));
+
+        let census = tokio::time::timeout(Duration::from_millis(300), async {
+            loop {
+                if let Some(EnrichmentEvent::CensusReplace(census)) = events.recv().await {
+                    break census;
+                }
+            }
+        })
+        .await
+        .expect("an advertised census capability must reach the event channel");
+
+        assert_eq!(census.live_cells, 1_471_222);
+        assert_eq!(census.as_of.block, 7);
+        assert_eq!(
+            census.classes.as_ref().and_then(ChainCensusClasses::total),
+            Some(census.live_cells)
+        );
+
+        shutdown.send(true).unwrap();
+        tokio::time::timeout(Duration::from_secs(1), handle)
+            .await
+            .expect("supervisor stops")
+            .unwrap();
+        assert!(census_calls.load(Ordering::Relaxed) >= 1);
     }
 
     #[tokio::test]
