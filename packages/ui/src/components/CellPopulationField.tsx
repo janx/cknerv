@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, type MutableRefObject } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 
@@ -75,6 +75,7 @@ function neverRaycast(): void {}
 
 const SCRATCH_SIZE = new THREE.Vector2();
 const SCRATCH_NDC = new THREE.Vector3();
+const SCRATCH_CLEAR = new THREE.Color();
 
 /**
  * The unresolved population, drawn as one continuous medium inside the same
@@ -232,6 +233,12 @@ export default function CellPopulationField({
       densityTarget.setSize(targetWidth, targetHeight);
     }
 
+    // React runs child effects before parent ones, so this callback is
+    // registered ahead of the Cell layer's — the group's rotation is still
+    // last frame's when it is read here. Deliberate: both passes sample by
+    // SCREEN position, so a one-frame-old medium is self-consistent, and the
+    // galaxy turns far too slowly for the lag to be visible on a formless
+    // field. Do not "fix" it by reaching into the Cell layer's frame order.
     composite.updateWorldMatrix(true, false);
     densityMesh.matrixWorld.copy(composite.matrixWorld);
     inverseWorld.copy(composite.matrixWorld).invert();
@@ -243,12 +250,20 @@ export default function CellPopulationField({
 
     const previousTarget = gl.getRenderTarget();
     const previousAutoClear = gl.autoClear;
+    const previousClearAlpha = gl.getClearAlpha();
+    gl.getClearColor(SCRATCH_CLEAR);
+    // Cleared explicitly to zero rather than to whatever the renderer's clear
+    // colour happens to be. R IS the coverage: a non-black ambient clear
+    // would put unresolved matter over the entire screen, and nothing else in
+    // the scene would look wrong enough to point at this.
+    gl.setClearColor(0x000000, 0);
     gl.setRenderTarget(densityTarget);
     gl.autoClear = true;
     // gl.info is untouched here — RenderStatsSampler owns that accounting and
     // this pass accumulates into its window like any other multi-pass frame.
     gl.render(densityScene, state.camera);
     gl.setRenderTarget(previousTarget);
+    gl.setClearColor(SCRATCH_CLEAR, previousClearAlpha);
     gl.autoClear = previousAutoClear;
 
     // 4. Composite uniforms: the grain is applied at native pixel scale, so
