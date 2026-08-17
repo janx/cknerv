@@ -123,7 +123,13 @@ describe('the two passes', () => {
 describe('degradation', () => {
   it('renders nothing at all until the bake lands', () => {
     // Absence is a legal state; a half-baked field is not.
-    expect(FIELD_SOURCE).toContain('textureRef.current !== null && gain > 0');
+    // BOTH bakes, not just the law's: the fibre lands with it and the swarm
+    // reads it every frame, so a field drawn before it arrived would be a
+    // different layer for one frame — and a sampler bound to null is a black
+    // texture, which would gate every speck off along a strand.
+    expect(FIELD_SOURCE).toContain('textureRef.current !== null');
+    expect(FIELD_SOURCE).toContain('&& fibreTextureRef.current !== null');
+    expect(FIELD_SOURCE).toContain('&& gain > 0;');
     expect(FIELD_SOURCE).toContain('composite.visible = active');
   });
 

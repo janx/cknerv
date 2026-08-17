@@ -80,7 +80,7 @@ function latticeValue(ix: number, iz: number, salt: number): number {
 
 /** Smooth deterministic 2D value noise in [-1, 1]. No transcendental branch
  * decisions: Rust and JS therefore choose the same rejection-sampling path. */
-function valueNoise2(x: number, z: number, scale: number, salt: number): number {
+export function valueNoise2(x: number, z: number, scale: number, salt: number): number {
   const gx = x / scale;
   const gz = z / scale;
   const ix = Math.floor(gx);
@@ -263,6 +263,13 @@ export interface TissueSample {
   foldY: number;
   /** Gaussian half-thickness of the tissue at this point. */
   thickness: number;
+  /** The domain-WARPED coordinates every octave of the law is evaluated on.
+   *  Carried out so a presentation layer can add an octave of its own that
+   *  follows the organism's flow instead of a grid, without re-deriving the
+   *  four warp evaluations that produced them. They are a coordinate, not a
+   *  position: no id, no time, no universe seed. */
+  qx: number;
+  qz: number;
 }
 
 /** Evaluate the shared positional law at one `(x, z)`. See
@@ -301,6 +308,8 @@ export function tissueSampleAt(
     resolvedCoverage: field.density,
     foldY,
     thickness,
+    qx: field.qx,
+    qz: field.qz,
   };
 }
 

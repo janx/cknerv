@@ -11,7 +11,15 @@ import {
   advanceTissueFieldBake,
   bakeTissueField,
   createTissueFieldBake,
+  POPULATION_FIBRE_MIX_A,
+  POPULATION_FIBRE_MIX_B,
+  POPULATION_FIBRE_SCALE_A,
+  POPULATION_FIBRE_SCALE_B,
+  POPULATION_FIBRE_WARP_B,
   POPULATION_FIELD_OUTER_EDGE,
+  populationFibre,
+  populationFibreBases,
+  TISSUE_FIBRE_CHANNELS,
   TISSUE_BAKE_CHANNELS,
   TISSUE_BAKE_FOLD_Y_RANGE,
   TISSUE_BAKE_HALF_X,
@@ -301,5 +309,131 @@ describe('tissueFieldBake', () => {
     expect(
       tissueBakeAxisAt(resolution - 1, resolution, TISSUE_BAKE_HALF_Z),
     ).toBeLessThan(TISSUE_BAKE_HALF_Z);
+  });
+});
+
+describe('the halo fibre', () => {
+  it('stays inside the range the bake and the shader both assume', () => {
+    // Both bases are `1 - |noise|` with noise in [-1, 1], so they are in
+    // [0, 1] — which is what lets the composite raise them to the seventh and
+    // ninth without the result running away, and what lets them be stored in
+    // a half float with no normalization of their own.
+    for (let iz = 0; iz <= 30; iz += 1) {
+      for (let ix = 0; ix <= 30; ix += 1) {
+        const qx = (ix / 30) * 4 * FIELD_HALF_X - 2 * FIELD_HALF_X;
+        const qz = (iz / 30) * 4 * FIELD_HALF_Z - 2 * FIELD_HALF_Z;
+        const [a, b] = populationFibreBases(qx, qz);
+        expect(a).toBeGreaterThanOrEqual(0);
+        expect(a).toBeLessThanOrEqual(1);
+        expect(b).toBeGreaterThanOrEqual(0);
+        expect(b).toBeLessThanOrEqual(1);
+        const fibre = populationFibre(a, b);
+        expect(fibre).toBeGreaterThanOrEqual(0);
+        expect(fibre).toBeLessThanOrEqual(POPULATION_FIBRE_MIX_A + POPULATION_FIBRE_MIX_B);
+      }
+    }
+  });
+
+  it('follows the organism\'s flow, not a grid', () => {
+    // §5.1. The octaves are read on the WARPED coordinates, so the strands
+    // run along the same corridors the Cells are placed in. Evaluated on the
+    // raw position instead they would be a pattern laid over the galaxy —
+    // correct-looking noise that agrees with nothing.
+    let differed = 0;
+    for (let iz = 0; iz <= 20; iz += 1) {
+      for (let ix = 0; ix <= 20; ix += 1) {
+        const x = (ix / 20) * 2 * FIELD_HALF_X - FIELD_HALF_X;
+        const z = (iz / 20) * 2 * FIELD_HALF_Z - FIELD_HALF_Z;
+        const sample = tissueSampleAt(x, z, POPULATION_FIELD_OUTER_EDGE);
+        // The warp really does move the point, and the bake really does use
+        // the moved one.
+        const warped = populationFibre(...populationFibreBases(sample.qx, sample.qz));
+        const unwarped = populationFibre(...populationFibreBases(x, z));
+        if (Math.abs(warped - unwarped) > 1e-6) differed += 1;
+      }
+    }
+    expect(differed).toBeGreaterThan(400);
+  });
+
+  it('is fine enough to read as dendritic, not as marbling', () => {
+    // ⚠️ Scale is the whole game here, and it is the one thing about this
+    // layer that cannot be fixed later by a gain. The density's own ridge
+    // octave sits at 11 world units and projects as MARBLING; the same
+    // construction at 3-5 units reads as dendritic. Both were prototyped, and
+    // the difference is not subtle.
+    expect(POPULATION_FIBRE_SCALE_A).toBeLessThan(11 / 1.8);
+    // The second octave carries a coordinate scaling, so its true world scale
+    // is the quotient — the finest structure the layer has.
+    const scaleB = POPULATION_FIBRE_SCALE_B / POPULATION_FIBRE_WARP_B;
+    expect(scaleB).toBeLessThan(POPULATION_FIBRE_SCALE_A);
+    expect(scaleB).toBeGreaterThan(1);
+
+    // And measured rather than asserted from the constants: along a line
+    // through the tissue the fibre has to turn over much faster than the
+    // density it rides on, or it is just more of the same shape.
+    const step = 2;
+    let fibreRough = 0;
+    let densityRough = 0;
+    let fibreMean = 0;
+    let densityMean = 0;
+    let n = 0;
+    let previous: { fibre: number; density: number } | null = null;
+    for (let x = -FIELD_HALF_X; x <= FIELD_HALF_X; x += step) {
+      const sample = tissueSampleAt(x, 8, POPULATION_FIELD_OUTER_EDGE);
+      const current = {
+        fibre: populationFibre(...populationFibreBases(sample.qx, sample.qz)),
+        density: sample.density,
+      };
+      if (previous) {
+        fibreRough += Math.abs(current.fibre - previous.fibre);
+        densityRough += Math.abs(current.density - previous.density);
+        n += 1;
+      }
+      fibreMean += current.fibre;
+      densityMean += current.density;
+      previous = current;
+    }
+    const samples = Math.floor((2 * FIELD_HALF_X) / step) + 1;
+    // Normalized by each field's own level, so this compares STRUCTURE and
+    // not amplitude.
+    const fibreTurnover = (fibreRough / n) / (fibreMean / samples);
+    const densityTurnover = (densityRough / n) / (densityMean / samples);
+    expect(fibreTurnover).toBeGreaterThan(densityTurnover * 3);
+  });
+
+  it('bakes its bases off the same evaluation as the law', () => {
+    // One pass, one warp. Re-deriving `qx, qz` for the fibre would be four
+    // more noise evaluations per texel AND a second chance for the two to
+    // drift apart, and the strands agreeing with the corridors is the entire
+    // reason they read as the organism's own grain.
+    const state = bakeTissueField(24);
+    expect(state.fibre).toHaveLength(24 * 24 * TISSUE_FIBRE_CHANNELS);
+
+    for (const [ix, iz] of [[0, 0], [7, 3], [12, 12], [23, 23]]) {
+      const x = tissueBakeAxisAt(ix, 24, TISSUE_BAKE_HALF_X);
+      const z = tissueBakeAxisAt(iz, 24, TISSUE_BAKE_HALF_Z);
+      const sample = tissueSampleAt(x, z, POPULATION_FIELD_OUTER_EDGE);
+      const [a, b] = populationFibreBases(sample.qx, sample.qz);
+      const offset = (iz * 24 + ix) * TISSUE_FIBRE_CHANNELS;
+      expect(fromHalfFloat(state.fibre[offset])).toBeCloseTo(a, 3);
+      expect(fromHalfFloat(state.fibre[offset + 1])).toBeCloseTo(b, 3);
+    }
+  });
+
+  it('fills the fibre with the same incremental budget as the law', () => {
+    // The fibre cannot lag the law by a row: they are uploaded together the
+    // frame the bake finishes, and a partly filled fibre would draw strands
+    // that stop in a straight line across the galaxy.
+    const state = createTissueFieldBake(16);
+    advanceTissueFieldBake(state, 5);
+    expect(state.rows).toBe(5);
+    const filled = state.fibre.slice(0, 5 * 16 * TISSUE_FIBRE_CHANNELS);
+    expect(filled.some((value) => value !== 0)).toBe(true);
+    const untouched = state.fibre.slice(5 * 16 * TISSUE_FIBRE_CHANNELS);
+    expect(untouched.every((value) => value === 0)).toBe(true);
+
+    advanceTissueFieldBake(state, 16);
+    expect(state.done).toBe(true);
+    expect(state.fibre.some((value) => value !== 0)).toBe(true);
   });
 });

@@ -38,10 +38,12 @@ const POPULATION_FIELD_QUALITY = {
   low: { bake: 256, steps: 4, densityDivisor: 6 },
 } as const;
 
-/** Bake rows per frame. Measured at ~0.14 ms per row, so eight rows is about
- *  a millisecond — invisible against a frame, and a 512² bake lands in
- *  roughly a second. There is no field until it does, which is the correct
- *  state: a half-baked field would be a half-true one. */
+/** Bake rows per frame. Measured at ~0.14 ms per row — the fibre's two extra
+ *  octaves add 17% to that and no rows — so eight rows is about a millisecond,
+ *  invisible against a frame, and a 512² bake lands in roughly a second. There
+ *  is no field until it does, which is the correct state: a half-baked field
+ *  would be a half-true one, and a fibre lagging the law by even one row would
+ *  draw strands that stop in a straight line across the galaxy. */
 const BAKE_ROWS_PER_FRAME = 8;
 
 const BLOOM_DURATION_SEC = POPULATION_FIELD_BLOOM_MS / 1000;
@@ -166,6 +168,7 @@ export default function CellPopulationField({
   const compositeRef = useRef<THREE.Mesh>(null);
   const bakeRef = useRef<TissueFieldBakeState | null>(null);
   const textureRef = useRef<THREE.DataTexture | null>(null);
+  const fibreTextureRef = useRef<THREE.DataTexture | null>(null);
   const inverseWorld = useMemo(() => new THREE.Matrix4(), []);
   const localCamera = useMemo(() => new THREE.Vector3(), []);
 
@@ -195,6 +198,8 @@ export default function CellPopulationField({
     densityTarget.dispose();
     textureRef.current?.dispose();
     textureRef.current = null;
+    fibreTextureRef.current?.dispose();
+    fibreTextureRef.current = null;
   }, [geometry, densityMaterial, compositeMaterial, densityTarget]);
 
   // Dev counter, following the `__pulseStats()` precedent. Reports the bloom
@@ -241,12 +246,41 @@ export default function CellPopulationField({
         textureRef.current?.dispose();
         textureRef.current = texture;
         densityMaterial.uniforms.uField.value = texture;
+
+        // The fibre's ridge bases, off the same grid. A second texture rather
+        // than more channels because the law's four are all load-bearing, and
+        // RG rather than RGBA because two is what a pair of bases needs — half
+        // a megabyte at 512, against the law's own two.
+        const fibreTexture = new THREE.DataTexture(
+          bake.fibre,
+          bake.resolution,
+          bake.resolution,
+          THREE.RGFormat,
+          THREE.HalfFloatType,
+        );
+        fibreTexture.minFilter = THREE.LinearFilter;
+        fibreTexture.magFilter = THREE.LinearFilter;
+        fibreTexture.wrapS = THREE.ClampToEdgeWrapping;
+        fibreTexture.wrapT = THREE.ClampToEdgeWrapping;
+        fibreTexture.needsUpdate = true;
+        fibreTextureRef.current?.dispose();
+        fibreTextureRef.current = fibreTexture;
+        compositeMaterial.uniforms.uFibre.value = fibreTexture;
+        // One texel in WORLD units — the spacing the composite takes its
+        // gradient at, so the direction tracks the finest structure the bake
+        // actually holds rather than a constant somebody guessed.
+        compositeMaterial.uniforms.uBakeTexel.value.set(
+          (2 * TISSUE_BAKE_HALF_X) / bake.resolution,
+          (2 * TISSUE_BAKE_HALF_Z) / bake.resolution,
+        );
       }
     }
 
     // 2. Absence is a legal state: no bake yet, or nothing unresolved to
     //    state. Either way the field draws nothing at all.
-    const active = textureRef.current !== null && gain > 0;
+    const active = textureRef.current !== null
+      && fibreTextureRef.current !== null
+      && gain > 0;
     composite.visible = active;
     if (!active) return;
 
@@ -306,6 +340,12 @@ export default function CellPopulationField({
     const uniforms = compositeMaterial.uniforms;
     uniforms.uDensity.value = densityTarget.texture;
     uniforms.uResolution.value.set(deviceWidth, deviceHeight);
+    // The composite casts its own ray too — not to march, but to find where
+    // each pixel crosses the fold plane, which is where the fibre lives. Same
+    // volume, same local camera, so the two passes cannot disagree about
+    // where a pixel is looking.
+    uniforms.uHalf.value = SLAB_HALF;
+    uniforms.uLocalCamera.value = localCamera;
     // Reduced motion freezes the swarm at a deterministic phase. Extent,
     // amount, and every count stay exactly where they were — a frozen mask
     // still lights the same FRACTION of screen cells, so the population it

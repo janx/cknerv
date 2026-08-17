@@ -61,6 +61,8 @@ import * as THREE from 'three';
 
 import { CELL_GALAXY_PALETTE } from '../visualPalette';
 import {
+  POPULATION_FIBRE_MIX_A,
+  POPULATION_FIBRE_MIX_B,
   TISSUE_BAKE_FOLD_Y_RANGE,
   TISSUE_BAKE_THICKNESS_MAX,
   TISSUE_BAKE_THICKNESS_MIN,
@@ -332,6 +334,50 @@ export const POPULATION_FIELD_SPECK_RESEED_HZ = 11;
  */
 export const POPULATION_FIELD_CONTINUUM_FRACTION = 0.22;
 
+/**
+ * How hard the fibre gathers the specks — §5.1.
+ *
+ * Three numbers, one job: the swarm has to read as tissue rather than as
+ * spray, and the only honest way to do that is to change WHICH specks are lit,
+ * never how bright any of them is. Brightening along the strands would make
+ * the layer a wash with a pattern on it, which is the rejected alternative
+ * ("noise on fog is still fog").
+ *
+ *     bundled   = min(1, fibre * SATURATE)
+ *     clustered = litFraction * (FLOOR + SPAN * bundled)
+ *
+ * `SATURATE` is what keeps the modulation bounded: the fibre's own peak is
+ * ~0.99 and its density-weighted mean only 0.16, so without the inner
+ * saturation a mean-preserving span would have to be about 6x and the strands
+ * would clip to a hard-edged stencil. `FLOOR` is what the voids keep — a fifth
+ * of their specks, so a gap between bundles is sparse rather than empty, which
+ * is what a resolution limit actually looks like.
+ *
+ * `SPAN` is DERIVED and not chosen. Clustering must not change the population
+ * the layer states, so the expected number of lit specks has to survive it,
+ * clamping included: measured over the production camera's own frame with the
+ * shipped bake, `0.22 + 2.3 * bundled` lights 99.2 % of the specks the
+ * unclustered swarm would have. The reference prototype's `0.22 + 1.9` came
+ * out at 88.2 %, which would have quietly under-claimed the population by an
+ * eighth.
+ */
+export const POPULATION_FIELD_FIBRE_SATURATE = 2.6;
+export const POPULATION_FIELD_FIBRE_FLOOR = 0.22;
+export const POPULATION_FIELD_FIBRE_SPAN = 2.3;
+
+/**
+ * How much longer a screen cell is along the local fibre than across it.
+ *
+ * Anisotropy is what makes a texture read as fibrous instead of as noise —
+ * clustering alone gives corridors of round dots, which is a crowd walking in
+ * a corridor rather than a fibre. The elongation is AREA-PRESERVING (the long
+ * axis multiplied by the square root, the short axis divided by it), so a
+ * screen cell still covers the same number of device pixels and the population
+ * per unit screen area is untouched. Only the shape of the grain changes,
+ * which is exactly what rule 10 leaves free.
+ */
+export const POPULATION_FIELD_SPECK_ELONGATION = 2.7;
+
 /** Emission of one lit speck, before its brightness spread. */
 export const POPULATION_FIELD_SPECK_GAIN = 0.9;
 
@@ -391,19 +437,27 @@ export const POPULATION_FIELD_BLOOM_MS = 1400;
  * @param litFraction share of screen cells the population lights, in [0, 1]
  * @param pick        the cell's mask draw, in [0, 1)
  * @param spread      the cell's brightness draw, in [0, 1)
+ * @param clustered   the same fraction after the fibre has gathered it;
+ *                    defaults to no clustering at all
  */
 export function populationSwarmEmission(
   litFraction: number,
   pick: number,
   spread: number,
+  clustered: number = litFraction,
 ): number {
   const lit = Math.min(Math.max(litFraction, 0), 1);
+  const gathered = Math.min(Math.max(clustered, 0), 1);
   const continuum = lit * POPULATION_FIELD_CONTINUUM_FRACTION;
   // The mask threshold IS the population statement: a cell is lit exactly when
   // its uniform draw falls under the local fraction, so the COUNT of lit
   // specks per unit screen area carries the number. Speck brightness carries
   // nothing, which is why the spread below is narrow and centred.
-  if (pick >= lit) return continuum;
+  //
+  // The fibre moves that threshold and nothing else. Everything below reads
+  // the UNCLUSTERED population, so a bundle holds more specks without any of
+  // them being brighter — grain direction, not a glow along a strand.
+  if (pick >= gathered) return continuum;
   const brightness = POPULATION_FIELD_SPECK_FLOOR
     + (1 - POPULATION_FIELD_SPECK_FLOOR) * spread;
   // The second `lit` is not a second population claim, it is the rim: at the
@@ -412,6 +466,27 @@ export function populationSwarmEmission(
   // one thing a user could actually count, which rule 10 forbids. Fading them
   // as they thin out lets the population end instead of fraying into stars.
   return continuum + brightness * lit * POPULATION_FIELD_SPECK_GAIN;
+}
+
+/**
+ * How the fibre gathers the swarm: the share of screen cells lit inside a
+ * bundle, given the population under the pixel and the local fibre strength.
+ *
+ * The modulation is on the MASK THRESHOLD and nowhere else. Speck brightness,
+ * the continuum, and the rim fade all keep reading the unclustered population,
+ * so the fibre moves specks around without adding a single photon of its own.
+ *
+ * @param fibre       the local fibre strength, in [0, 1]
+ * @param litFraction the population's own lit fraction under this pixel
+ */
+export function populationFibreClustering(
+  fibre: number,
+  litFraction: number,
+): number {
+  const bundled = Math.min(Math.max(fibre * POPULATION_FIELD_FIBRE_SATURATE, 0), 1);
+  const gathered = litFraction
+    * (POPULATION_FIELD_FIBRE_FLOOR + POPULATION_FIELD_FIBRE_SPAN * bundled);
+  return Math.min(Math.max(gathered, 0), 1);
 }
 
 /**
@@ -636,9 +711,24 @@ export function makePopulationDensityMaterial(): THREE.ShaderMaterial {
 
 export interface PopulationCompositeUniforms {
   uDensity: { value: THREE.Texture | null };
+  /** The baked ridge bases. Absent until the bake lands, like the law's. */
+  uFibre: { value: THREE.Texture | null };
+  /** Half-extents of the baked domain, so the fibre lookup remaps position
+   *  exactly the way the density march does. */
+  uHalf: { value: THREE.Vector3 };
+  /** Camera in the galaxy's rotating frame — the composite needs its own ray
+   *  to find where each pixel crosses the fold plane. */
+  uLocalCamera: { value: THREE.Vector3 };
+  /** One bake texel in world units. The gradient is taken at this spacing, so
+   *  it tracks the finest structure the bake actually holds. */
+  uBakeTexel: { value: THREE.Vector2 };
   uResolution: { value: THREE.Vector2 };
   uTint: { value: THREE.Color };
   uSpeckPx: { value: number };
+  uSpeckAspect: { value: number };
+  uFibreFloor: { value: number };
+  uFibreSpan: { value: number };
+  uFibreSaturate: { value: number };
   uCoarsening: { value: number };
   uContinuum: { value: number };
   uSpeckGain: { value: number };
@@ -681,9 +771,19 @@ export function makePopulationCompositeMaterial(): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
     uniforms: {
       uDensity: { value: null },
+      uFibre: { value: null },
+      uHalf: { value: new THREE.Vector3(1, 1, 1) },
+      uLocalCamera: { value: new THREE.Vector3() },
+      uBakeTexel: { value: new THREE.Vector2(1, 1) },
       uResolution: { value: new THREE.Vector2(1, 1) },
       uTint: { value: swarmTint() },
       uSpeckPx: { value: POPULATION_FIELD_SPECK_PX },
+      uSpeckAspect: {
+        value: Math.sqrt(POPULATION_FIELD_SPECK_ELONGATION),
+      },
+      uFibreFloor: { value: POPULATION_FIELD_FIBRE_FLOOR },
+      uFibreSpan: { value: POPULATION_FIELD_FIBRE_SPAN },
+      uFibreSaturate: { value: POPULATION_FIELD_FIBRE_SATURATE },
       uCoarsening: { value: POPULATION_FIELD_SEAM_COARSENING },
       uContinuum: { value: POPULATION_FIELD_CONTINUUM_FRACTION },
       uSpeckGain: { value: POPULATION_FIELD_SPECK_GAIN },
@@ -721,16 +821,30 @@ export function makePopulationCompositeMaterial(): THREE.ShaderMaterial {
     // same light" is a pixel-level claim, and this is where it is kept.
     toneMapped: false,
     vertexShader: /* glsl */ `
+      varying vec3 vLocal;
       void main() {
+        vLocal = position;
         gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
       }
     `,
     fragmentShader: /* glsl */ `
       precision highp float;
+      // Both matrices are program-wide uniforms three already sets for every
+      // object it draws; the fragment prefix simply does not declare them.
+      uniform mat4  modelViewMatrix;
+      uniform mat4  projectionMatrix;
       uniform sampler2D uDensity;
+      uniform sampler2D uFibre;
+      uniform vec3  uHalf;
+      uniform vec3  uLocalCamera;
+      uniform vec2  uBakeTexel;
       uniform vec2  uResolution;
       uniform vec3  uTint;
       uniform float uSpeckPx;
+      uniform float uSpeckAspect;
+      uniform float uFibreFloor;
+      uniform float uFibreSpan;
+      uniform float uFibreSaturate;
       uniform float uCoarsening;
       uniform float uContinuum;
       uniform float uSpeckGain;
@@ -740,7 +854,27 @@ export function makePopulationCompositeMaterial(): THREE.ShaderMaterial {
       uniform int   uBloomCount;
       uniform vec4  uBlooms[${POPULATION_FIELD_MAX_BLOOMS}];
 
+      varying vec3 vLocal;
+
       ${SLAB_GLSL}
+
+      // The halo's fibre, from the baked ridge bases.
+      //
+      // The powers live here rather than in the bake, and that is the whole
+      // reason one fetch is enough: 1 - |noise| has features at its octave's
+      // own scale, which the bake oversamples, while the same field raised to
+      // the ninth has features a texel wide and would be averaged into mush.
+      // Sharp filaments at screen resolution, for the cost of a lookup.
+      float fibreAt(vec2 p) {
+        vec2 uv = p / (2.0 * uHalf.xz) + 0.5;
+        vec2 base = texture2D(uFibre, uv).rg;
+        float a2 = base.r * base.r;
+        float a = a2 * a2 * a2 * base.r;
+        float b2 = base.g * base.g;
+        float b4 = b2 * b2;
+        float b = b4 * b4 * base.g;
+        return a * ${POPULATION_FIBRE_MIX_A} + b * ${POPULATION_FIBRE_MIX_B};
+      }
 
       void main() {
         vec2 screenUv = gl_FragCoord.xy / uResolution;
@@ -791,8 +925,73 @@ export function makePopulationCompositeMaterial(): THREE.ShaderMaterial {
 
         float amount = clamp(field + bloom * 0.35 * max(field, 0.12), 0.0, 1.0);
 
+        // --- the fold plane, which is where the fibre lives ----------------
+        //
+        // The fibre is a property of the tissue's own plane, not of the
+        // volume: the halo is a disk, and filaments in it lie in it. So the
+        // ray is intersected with y = 0 once and the field is read there,
+        // rather than being carried through the march. The fold wanders by at
+        // most +-6.3 over a footprint 264 wide, and the fibre is a grain
+        // rather than a registered feature, so the plane is the fold closely
+        // enough. Clamped into the slab because a grazing ray's intersection
+        // runs off to infinity and would sample the bake's clamped edge
+        // forever.
+        vec3 ro = uLocalCamera;
+        vec3 rd = normalize(vLocal - ro);
+        float tEnter, tExit;
+        slabRange(ro, rd, uHalf, tEnter, tExit);
+        float rdy = rd.y >= 0.0 ? max(rd.y, 1e-4) : min(rd.y, -1e-4);
+        float tFold = clamp(-ro.y / rdy, tEnter, tExit);
+        vec3 foldPoint = ro + rd * tFold;
+        vec2 fold = foldPoint.xz;
+
+        // Grain DIRECTION, not links. Filaments run ALONG a ridge, which is
+        // across its gradient — there are no nodes out here and nothing
+        // terminates anywhere, so what the halo carries is the direction the
+        // unresolved fabric runs in, never a segment between two points.
+        //
+        // Central differences on the same texture one texel apart: adjacent
+        // texels are cache hits, which is why the direction is computed here
+        // instead of being baked into channels of its own that would have to
+        // be kept in sync with the bases.
+        float gx = fibreAt(fold + vec2(uBakeTexel.x, 0.0))
+          - fibreAt(fold - vec2(uBakeTexel.x, 0.0));
+        float gz = fibreAt(fold + vec2(0.0, uBakeTexel.y))
+          - fibreAt(fold - vec2(0.0, uBakeTexel.y));
+        // In WORLD units. The bake's texels are wider in x than in z, so a
+        // gradient left in texel units would tilt every direction in the
+        // picture by a constant angle.
+        vec2 grad = vec2(gx / uBakeTexel.x, gz / uBakeTexel.y);
+        vec2 along = vec2(-grad.y, grad.x);
+        float alongLen = length(along);
+        vec2 dir = alongLen > 1e-6 ? along / alongLen : vec2(1.0, 0.0);
+
+        // Into screen space through the same projection the Cells use, as two
+        // projected points rather than a rotation of the camera basis, so the
+        // perspective foreshortening is exact and the strands stay glued to
+        // the plane at the edges of the frame instead of swinging off it.
+        vec4 viewNear = modelViewMatrix * vec4(foldPoint, 1.0);
+        vec4 viewFar = viewNear
+          + modelViewMatrix * vec4(dir.x * 2.0, 0.0, dir.y * 2.0, 0.0);
+        vec4 clipNear = projectionMatrix * viewNear;
+        vec4 clipFar = projectionMatrix * viewFar;
+        vec2 ndcStep = clipFar.xy / max(clipFar.w, 1e-4)
+          - clipNear.xy / max(clipNear.w, 1e-4);
+        vec2 screenStep = ndcStep * uResolution;
+        float screenLen = length(screenStep);
+        vec2 axis = screenLen > 1e-6 ? screenStep / screenLen : vec2(1.0, 0.0);
+
+        // The fibre CLUSTERS the specks and does nothing else. It modulates
+        // the mask threshold, so a bundle holds more of them and a void
+        // holds fewer; every brightness term below still reads the
+        // unclustered population, because a strand that glowed would be a
+        // wash with a pattern on it rather than a population with a grain.
+        float bundled = clamp(fibreAt(fold) * uFibreSaturate, 0.0, 1.0);
+        float clustered = clamp(
+          amount * (uFibreFloor + uFibreSpan * bundled), 0.0, 1.0);
+
         // The swarm. Screen cells of uSpeckPx DEVICE pixels, of which exactly
-        // "amount" of them are lit — the field sets HOW MANY specks are lit,
+        // the local fraction are lit — the field sets HOW MANY specks are lit,
         // never how bright a wash is. The cell index comes from gl_FragCoord,
         // so the scale is fixed to the display and no camera move resolves it.
         // §5.2, the resolution gradient. Coarsest where the halo meets the
@@ -805,7 +1004,20 @@ export function makePopulationCompositeMaterial(): THREE.ShaderMaterial {
         // is a fraction of screen CELLS, so a larger cell lights a
         // proportionally larger area and states the same population.
         float coarse = 1.0 + uCoarsening * clamp(suppression, 0.0, 1.0);
-        vec2 cell = floor(gl_FragCoord.xy / max(uSpeckPx * coarse, 1.0));
+        // Elongated ALONG the local fibre, area-preserving: the long axis is
+        // multiplied by the aspect and the short axis divided by it, so a
+        // screen cell still covers uSpeckPx squared device pixels and the
+        // population per unit area is untouched. Only the shape of the grain
+        // changes — and anisotropy is what makes a texture read as fibrous
+        // instead of as noise. The floor is a divisor guard and is far below
+        // any extent this can produce.
+        vec2 extent = max(
+          vec2(uSpeckPx * coarse * uSpeckAspect, uSpeckPx * coarse / uSpeckAspect),
+          vec2(0.25));
+        vec2 rotated = vec2(
+          dot(gl_FragCoord.xy, axis),
+          dot(gl_FragCoord.xy, vec2(-axis.y, axis.x)));
+        vec2 cell = floor(rotated / extent);
 
         // Per-cell phase. Every speck reseeds at the same RATE, but this
         // offset spreads the instants uniformly across the period, so the
@@ -820,11 +1032,18 @@ export function makePopulationCompositeMaterial(): THREE.ShaderMaterial {
         float pick = hash21(cell + epoch * 17.13);
         float spread = hash21(cell * 0.7 + epoch * 5.71 + 3.3);
 
-        // step(pick, amount) is 1 exactly when the cell's draw falls under the
-        // local fraction. Every term from here is positive: unresolved light
-        // never subtracts, and a speck dipping below the continuum would paint
-        // a dark point — dirt, not scintillation.
-        float lit = step(pick, amount)
+        // step(pick, clustered) is 1 exactly when the cell's draw falls under
+        // the local fraction. Every term from here is positive: unresolved
+        // light never subtracts, and a speck dipping below the continuum would
+        // paint a dark point — dirt, not scintillation.
+        //
+        // The two terms after it read the unclustered amount, and that is the
+        // line §5.1 draws: the continuum is the population's own floor, and
+        // the second factor is the rim fade that keeps thinning tissue
+        // from fraying into countable stars. Both are statements about how
+        // much population is here. Only the threshold is allowed to know
+        // about the fibre.
+        float lit = step(pick, clustered)
           * (uSpeckFloor + (1.0 - uSpeckFloor) * spread);
         float emission = amount * uContinuum + lit * amount * uSpeckGain;
 

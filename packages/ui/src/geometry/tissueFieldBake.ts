@@ -1,4 +1,5 @@
-// Bake of the shared positional law (`helix.tissueSampleAt`) into one texture.
+// Bake of the shared positional law (`helix.tissueSampleAt`) into a texture,
+// plus the halo fibre's two ridge bases into a second one.
 //
 // The law is a pure function of (x, z) with no time, no id, and no universe
 // seed, so it is bakeable once and valid forever — identical across
@@ -19,12 +20,18 @@
 // ~0.23. The texel COUNT and therefore the bake cost are unchanged, and the
 // field's finest octave has a scale of 11 world units, so 512² still
 // oversamples it by roughly twenty to one.
+//
+// The fibre rides along in the same pass and costs 17% more per row (measured
+// at both resolutions), because the expensive part of it — the domain warp
+// that produces `qx, qz` — is work the law has already done. Two more octaves
+// per texel, not a second bake, and the per-frame row budget does not move.
 
 import {
   FIELD_HALF_X,
   FIELD_HALF_Z,
   TISSUE_ENVELOPE_EDGE,
   tissueSampleAt,
+  valueNoise2,
 } from '../helix';
 
 /**
@@ -77,6 +84,73 @@ export const TISSUE_BAKE_THICKNESS_MAX = 7.3;
  *  makes the subtraction meaningful rather than two fields disagreeing. */
 export const TISSUE_BAKE_CHANNELS = 4;
 
+/**
+ * The halo's fibre, as two ridged octaves on the law's WARPED coordinates.
+ *
+ * The Galaxy's neural character comes from the k-NN filaments, not from the
+ * points, so a halo of uniform spray reads as dust however exactly its density
+ * is computed. The unification that makes fibre out there honest: the fabric's
+ * 8K edge budget is a resolution limit exactly like the 12K Cell budget, so
+ * the halo is unresolved CONNECTIONS as much as unresolved Cells — and at that
+ * resolution you see bundles, never individual links. What is drawn is grain
+ * DIRECTION, not links: no nodes, no endpoints, and rule 4 intact.
+ *
+ * Evaluated on `qx, qz` rather than on `x, z` so the strands follow the
+ * organism's own flow instead of a grid. Scale decides this completely: the
+ * `ridge` octave the density already uses sits at 11 world units and projects
+ * as marbling, while the same construction at 3-5 units reads as dendritic.
+ * Both were prototyped.
+ */
+export const POPULATION_FIBRE_SCALE_A = 5.5;
+export const POPULATION_FIBRE_SCALE_B = 3.1;
+/** The second octave is read on coordinates scaled by this and offset, which
+ *  both decorrelates it from the first and puts its true world scale at
+ *  `POPULATION_FIBRE_SCALE_B / 1.7` — about 1.8 units, the finest structure
+ *  in the layer. */
+export const POPULATION_FIBRE_WARP_B = 1.7;
+/** Powers the bases are raised to. High, so the ridges stay thin: these are
+ *  bundles seen from far enough away that individual links never separate. */
+export const POPULATION_FIBRE_POWER_A = 7;
+export const POPULATION_FIBRE_POWER_B = 9;
+export const POPULATION_FIBRE_MIX_A = 0.62;
+export const POPULATION_FIBRE_MIX_B = 0.38;
+const FIBRE_SALT_A = 0x51fa7c11;
+const FIBRE_SALT_B = 0x2c9e77b3;
+
+/** RG: the two ridge BASES, both in [0, 1]. */
+export const TISSUE_FIBRE_CHANNELS = 2;
+
+/**
+ * The two ridge bases at one warped coordinate.
+ *
+ * The BASES are baked and the powers are applied per pixel, which is the whole
+ * reason a 512-texel bake is enough: `1 - |noise|` has features at its own
+ * octave's scale — 5.5 and ~1.8 world units — and the bake oversamples both,
+ * while the same field raised to the ninth has features a texel wide and would
+ * be averaged into mush. Measured against exact evaluation at 0.5-unit
+ * sampling over the halo, a 512² bake of the bases reconstructs the fibre at
+ * a correlation of 0.959 (0.887 at 256²); baking the powered ridges instead
+ * loses the thin structure that makes them read as filaments at all.
+ */
+export function populationFibreBases(qx: number, qz: number): [number, number] {
+  return [
+    1 - Math.abs(valueNoise2(qx, qz, POPULATION_FIBRE_SCALE_A, FIBRE_SALT_A)),
+    1 - Math.abs(valueNoise2(
+      qx * POPULATION_FIBRE_WARP_B + 31,
+      qz * POPULATION_FIBRE_WARP_B - 17,
+      POPULATION_FIBRE_SCALE_B,
+      FIBRE_SALT_B,
+    )),
+  ];
+}
+
+/** The fibre itself — the expression the composite evaluates per pixel, kept
+ *  here so a test can drive it without a WebGL context. */
+export function populationFibre(baseA: number, baseB: number): number {
+  return baseA ** POPULATION_FIBRE_POWER_A * POPULATION_FIBRE_MIX_A
+    + baseB ** POPULATION_FIBRE_POWER_B * POPULATION_FIBRE_MIX_B;
+}
+
 export interface TissueFieldBakeState {
   /** Texels per side. The grid is square in TEXELS over a non-square
    *  footprint, so one texel is wider in x than in z — which is correct:
@@ -86,6 +160,12 @@ export interface TissueFieldBakeState {
    *  The buffer type is pinned so the array can be handed straight to a
    *  `THREE.DataTexture` without a defensive megabyte-scale copy. */
   data: Uint16Array<ArrayBuffer>;
+  /** RG half-float ridge bases for the fibre, on the same grid and filled in
+   *  the same pass — the warp that produced `qx, qz` is the expensive part and
+   *  the law has already paid for it, so the fibre costs two more octaves per
+   *  texel and not a second bake. A second texture rather than more channels
+   *  because the law's four are all load-bearing. */
+  fibre: Uint16Array<ArrayBuffer>;
   /** Rows already written. `resolution` means finished. */
   rows: number;
   done: boolean;
@@ -137,6 +217,7 @@ export function createTissueFieldBake(resolution: number): TissueFieldBakeState 
   return {
     resolution: side,
     data: new Uint16Array(side * side * TISSUE_BAKE_CHANNELS),
+    fibre: new Uint16Array(side * side * TISSUE_FIBRE_CHANNELS),
     rows: 0,
     done: false,
   };
@@ -166,7 +247,7 @@ export function advanceTissueFieldBake(
   rowBudget: number,
 ): TissueFieldBakeState {
   if (state.done) return state;
-  const { resolution, data } = state;
+  const { resolution, data, fibre } = state;
   const foldSpan = 2 * TISSUE_BAKE_FOLD_Y_RANGE;
   const thicknessSpan = TISSUE_BAKE_THICKNESS_MAX - TISSUE_BAKE_THICKNESS_MIN;
   const last = Math.min(resolution, state.rows + Math.max(1, Math.floor(rowBudget)));
@@ -174,6 +255,7 @@ export function advanceTissueFieldBake(
   for (let iz = state.rows; iz < last; iz += 1) {
     const z = tissueBakeAxisAt(iz, resolution, TISSUE_BAKE_HALF_Z);
     let offset = iz * resolution * TISSUE_BAKE_CHANNELS;
+    let fibreOffset = iz * resolution * TISSUE_FIBRE_CHANNELS;
     for (let ix = 0; ix < resolution; ix += 1) {
       const x = tissueBakeAxisAt(ix, resolution, TISSUE_BAKE_HALF_X);
       // One evaluation, both envelopes. Sampling the halo and the resolved
@@ -190,6 +272,15 @@ export function advanceTissueFieldBake(
       );
       data[offset + 3] = toHalfFloat(sample.resolvedCoverage);
       offset += TISSUE_BAKE_CHANNELS;
+      // The same evaluation's warped coordinates. Reading them from the law
+      // rather than re-deriving them is what keeps the fibre ON the organism's
+      // flow: a second warp would be a second field, and strands that do not
+      // follow the corridors the Cells are placed along read as a pattern laid
+      // over the galaxy instead of as its own grain.
+      const [baseA, baseB] = populationFibreBases(sample.qx, sample.qz);
+      fibre[fibreOffset] = toHalfFloat(baseA);
+      fibre[fibreOffset + 1] = toHalfFloat(baseB);
+      fibreOffset += TISSUE_FIBRE_CHANNELS;
     }
   }
 

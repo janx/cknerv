@@ -7,6 +7,9 @@ import {
   POPULATION_FIELD_BLOOM_MS,
   POPULATION_FIELD_CONTINUUM_FRACTION,
   POPULATION_FIELD_EMISSION_PEAK,
+  POPULATION_FIELD_FIBRE_FLOOR,
+  POPULATION_FIELD_FIBRE_SATURATE,
+  POPULATION_FIELD_FIBRE_SPAN,
   POPULATION_FIELD_MAX_BLOOMS,
   POPULATION_FIELD_SEAM_COARSENING,
   POPULATION_FIELD_SHARE_HIGH,
@@ -14,20 +17,24 @@ import {
   POPULATION_FIELD_SLAB_HALF_Y,
   POPULATION_FIELD_SPECK_FLOOR,
   POPULATION_FIELD_SPECK_GAIN,
+  POPULATION_FIELD_SPECK_ELONGATION,
   POPULATION_FIELD_SPECK_PX,
+  populationFibreClustering,
   populationResolvedSuppression,
   populationSwarmEmission,
   populationUnresolvedDepth,
 } from '../../src/materials/populationFieldMaterial';
 import {
   POPULATION_FIELD_OUTER_EDGE,
+  populationFibre,
+  populationFibreBases,
   TISSUE_BAKE_FOLD_Y_RANGE,
   TISSUE_BAKE_HALF_X,
   TISSUE_BAKE_HALF_Z,
   TISSUE_BAKE_THICKNESS_MAX,
   TISSUE_BAKE_THICKNESS_MIN,
 } from '../../src/geometry/tissueFieldBake';
-import { FIELD_HALF_X, FIELD_HALF_Z } from '../../src/helix';
+import { FIELD_HALF_X, FIELD_HALF_Z, tissueSampleAt } from '../../src/helix';
 import { DEATH_DURATION_MS } from '../../src/geometry/cellPositions';
 import { CELL_GALAXY_PALETTE } from '../../src/visualPalette';
 
@@ -278,9 +285,13 @@ describe('makePopulationCompositeMaterial', () => {
     // The speck cell index comes from gl_FragCoord, so its frequency is fixed
     // to the display: flying closer spreads the population without ever
     // making one of its members larger or countable. World-space grain is the
-    // rejected alternative precisely because it does resolve.
+    // rejected alternative precisely because it does resolve. The fibre
+    // rotates that grid and stretches it, both in DEVICE pixels — the shape of
+    // a cell follows the world, its size never does.
+    expect(material.fragmentShader).toContain('dot(gl_FragCoord.xy, axis)');
+    expect(material.fragmentShader).toContain('vec2 cell = floor(rotated / extent);');
     expect(material.fragmentShader)
-      .toContain('floor(gl_FragCoord.xy / max(uSpeckPx');
+      .toContain('vec2(uSpeckPx * coarse * uSpeckAspect, uSpeckPx * coarse / uSpeckAspect)');
     expect(material.uniforms.uSpeckPx.value).toBe(POPULATION_FIELD_SPECK_PX);
     expect(POPULATION_FIELD_SPECK_PX).toBeGreaterThanOrEqual(1.5);
     expect(POPULATION_FIELD_SPECK_PX).toBeLessThanOrEqual(2.5);
@@ -306,7 +317,7 @@ describe('makePopulationCompositeMaterial', () => {
     // The mask threshold against the local fraction is the entire population
     // statement. A luminance modulation of a continuous term is the rejected
     // alternative — noise on fog is still fog.
-    expect(material.fragmentShader).toContain('step(pick, amount)');
+    expect(material.fragmentShader).toContain('step(pick, clustered)');
     expect(material.uniforms.uContinuum.value)
       .toBe(POPULATION_FIELD_CONTINUUM_FRACTION);
     expect(material.uniforms.uSpeckGain.value)
@@ -509,5 +520,144 @@ describe('the medium against its neighbours', () => {
     // on chain, so its mark is markedly slower — if the eye's death count
     // stops matching the HUD's, this layer has failed.
     expect(POPULATION_FIELD_BLOOM_MS).toBeGreaterThan(DEATH_DURATION_MS * 2);
+  });
+});
+
+describe('§5.1: the halo carries the unresolved FABRIC too', () => {
+  it('clusters the specks without inventing or destroying a population', () => {
+    // The fibre may gather the swarm; it may not change how much of it there
+    // is. Measured against the real field over the halo domain, weighted by
+    // the density that decides how much swarm each place holds.
+    const halfX = FIELD_HALF_X * POPULATION_FIELD_OUTER_EDGE;
+    const halfZ = FIELD_HALF_Z * POPULATION_FIELD_OUTER_EDGE;
+    const fibres: number[] = [];
+    const weights: number[] = [];
+    const steps = 90;
+    for (let i = 0; i <= steps; i += 1) {
+      for (let j = 0; j <= steps; j += 1) {
+        const x = (i / steps) * 2 * halfX - halfX;
+        const z = (j / steps) * 2 * halfZ - halfZ;
+        const sample = tissueSampleAt(x, z, POPULATION_FIELD_OUTER_EDGE);
+        if (sample.density <= 0.02) continue;
+        fibres.push(populationFibre(...populationFibreBases(sample.qx, sample.qz)));
+        weights.push(sample.density);
+      }
+    }
+    expect(fibres.length).toBeGreaterThan(2000);
+    const total = weights.reduce((sum, weight) => sum + weight, 0);
+    const meanAt = (amount: number) => fibres.reduce(
+      (sum, fibre, index) => sum + populationFibreClustering(fibre, amount) * weights[index],
+      0,
+    ) / total;
+
+    // Below saturation the modulation is linear, so this ratio is the
+    // modulation's own mean: measured at 1.15, i.e. the strands take slightly
+    // more than the voids give up. `SPAN` is set so that the FRAME integral —
+    // the thing a viewer actually sees, over the real distribution of
+    // amounts at the production camera — comes out at 0.99 of the unclustered
+    // swarm; the reference prototype's narrower span measured 0.88, which
+    // would have quietly under-claimed the population by an eighth.
+    expect(meanAt(0.2) / 0.2).toBeGreaterThan(0.9);
+    expect(meanAt(0.2) / 0.2).toBeLessThan(1.3);
+    // Where the swarm is already nearly fully lit there is nowhere to gather
+    // TO, so clustering can only give some back. It may never claim more than
+    // every cell.
+    expect(meanAt(1)).toBeLessThan(1);
+    expect(meanAt(1)).toBeGreaterThan(0.6);
+  });
+
+  it('leaves a void sparse rather than empty', () => {
+    // A resolution limit does not produce vacuum between bundles. It produces
+    // fewer of the same specks, which is what the floor is: a fifth of them
+    // survive where the fibre says nothing at all.
+    expect(POPULATION_FIELD_FIBRE_FLOOR).toBeGreaterThan(0);
+    expect(populationFibreClustering(0, 0.5))
+      .toBeCloseTo(0.5 * POPULATION_FIELD_FIBRE_FLOOR, 12);
+    // And it is monotone: more fibre gathers more, never less.
+    let previous = -1;
+    for (const fibre of [0, 0.05, 0.1, 0.2, 0.35, 0.6, 1]) {
+      const gathered = populationFibreClustering(fibre, 0.3);
+      expect(gathered).toBeGreaterThanOrEqual(previous);
+      previous = gathered;
+    }
+    // Saturating the fibre before the modulation is what keeps the strands
+    // from clipping into a hard-edged stencil: past this the curve is flat.
+    expect(populationFibreClustering(1 / POPULATION_FIELD_FIBRE_SATURATE, 0.3))
+      .toBeCloseTo(populationFibreClustering(1, 0.3), 12);
+    expect(POPULATION_FIELD_FIBRE_SPAN).toBeGreaterThan(0);
+  });
+
+  it('modulates which specks are lit and never how bright they are', () => {
+    // §5.1's line, and the difference between a population with a grain and a
+    // wash with a pattern on it. The clustered fraction reaches the mask
+    // threshold and nothing else: a speck inside a bundle is exactly as bright
+    // as one outside it.
+    const litFraction = 0.4;
+    for (const spread of [0, 0.5, 1]) {
+      const inBundle = populationSwarmEmission(litFraction, 0.05, spread, 0.9);
+      const inVoid = populationSwarmEmission(litFraction, 0.05, spread, 0.1);
+      expect(inBundle).toBe(inVoid);
+    }
+    // What DOES change is whether a given draw is lit at all.
+    expect(populationSwarmEmission(litFraction, 0.5, 1, 0.9))
+      .toBeGreaterThan(populationSwarmEmission(litFraction, 0.5, 1, 0.1));
+    // And the continuum underneath belongs to the population, not to the
+    // fibre, so a void keeps the floor its density earns.
+    expect(populationSwarmEmission(litFraction, 0.99, 1, 0))
+      .toBeCloseTo(litFraction * POPULATION_FIELD_CONTINUUM_FRACTION, 12);
+    // Zero population is still zero, whatever the fibre says.
+    expect(populationSwarmEmission(0, 0, 1, 1)).toBe(0);
+  });
+
+  it('elongates the grain without changing how much of it there is', () => {
+    const material = makePopulationCompositeMaterial();
+    const aspect = material.uniforms.uSpeckAspect.value as number;
+
+    // Area-preserving by construction: long axis times the aspect, short axis
+    // divided by it. Anisotropy is what makes a texture read as fibrous
+    // instead of as noise, and it is the one property of the grain rule 10
+    // leaves free — the SIZE of a screen cell is what may never follow the
+    // world.
+    expect(aspect * aspect).toBeCloseTo(POPULATION_FIELD_SPECK_ELONGATION, 12);
+    const along = POPULATION_FIELD_SPECK_PX * aspect;
+    const across = POPULATION_FIELD_SPECK_PX / aspect;
+    expect(along * across)
+      .toBeCloseTo(POPULATION_FIELD_SPECK_PX * POPULATION_FIELD_SPECK_PX, 12);
+    expect(along / across).toBeCloseTo(POPULATION_FIELD_SPECK_ELONGATION, 12);
+    // Fibrous, not merely oval, and not so long that a speck becomes a dash
+    // anyone could trace.
+    expect(POPULATION_FIELD_SPECK_ELONGATION).toBeGreaterThan(2);
+    expect(POPULATION_FIELD_SPECK_ELONGATION).toBeLessThan(4);
+  });
+
+  it('draws grain direction, and never a link between two points', () => {
+    const shader = makePopulationCompositeMaterial().fragmentShader;
+
+    // Rule 4 is what makes fibre out here honest at all: there are no nodes in
+    // the halo, so nothing may terminate anywhere. The direction is taken
+    // ACROSS the local gradient — a field, evaluated per pixel, with no
+    // endpoints to have and no segment to draw between them.
+    expect(shader).toContain('vec2 along = vec2(-grad.y, grad.x);');
+    expect(shader).toContain('vec2 grad = vec2(gx / uBakeTexel.x, gz / uBakeTexel.y);');
+    // The fibre reaches the mask threshold and stops there.
+    expect(shader).toContain('float clustered = clamp(');
+    expect(shader).toContain('float emission = amount * uContinuum + lit * amount * uSpeckGain;');
+  });
+
+  it('reads the fibre once, on the fold plane, not through the march', () => {
+    // It is a property of the tissue's own plane — the halo is a disk and
+    // filaments in it lie in it — so one ray-plane intersection per pixel is
+    // the whole cost, rather than a fetch per march step through a volume
+    // that has no fibre in it.
+    const composite = makePopulationCompositeMaterial().fragmentShader;
+    expect(composite).toContain('float tFold = clamp(-ro.y / rdy, tEnter, tExit);');
+    // Clamped into the slab: a grazing ray's fold intersection runs off to
+    // infinity, and an edge-on camera really does produce one.
+    expect(composite).toContain('vec3 foldPoint = ro + rd * tFold;');
+
+    // And the density march never touches it. Two textures, one pass each.
+    const density = makePopulationDensityMaterial().fragmentShader;
+    expect(density).not.toContain('uFibre');
+    expect(density).not.toContain('fibreAt');
   });
 });
