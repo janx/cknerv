@@ -19,6 +19,7 @@ import { fleetConsensus, pingStats, versionSpread } from '../../derives/fleetTel
 import { ecgCondition, expectedBlockMs, windowMeanMs, ECG_WINDOW, type EcgCondition } from '../../derives/ecgCondition';
 import { alertLevel } from '../../derives/alertLevel';
 import type { CellsStats } from '../../derives/cellsStats.derive';
+import type { CellPopulationFieldModel } from '../../derives/cellPopulationField.derive';
 import { injectHudTheme } from './hudTheme';
 import StatusStrip, {
   STATUS_STRIP_HEIGHTS,
@@ -90,8 +91,12 @@ function isHudPanelId(id: string): id is HudPanelId {
   return (HUD_PANEL_IDS as readonly string[]).includes(id);
 }
 
-function HudOverlay({ chain, peers, localNode, cellsStats, cellCount, cellCapacity, enrichmentSource, assetEcosystem, protocolEra, daoState, activityFeed, transactionHorizon, networkAtlas, scriptRegistry, cellInspectionActive = false, selectedNode, selectedPeer, onClearSelection, onClearNet, backfill, streamHealth, build, topBarActions, colonyCount }: {
+function HudOverlay({ chain, peers, localNode, cellsStats, cellPopulation, cellCount, cellCapacity, enrichmentSource, assetEcosystem, protocolEra, daoState, activityFeed, transactionHorizon, networkAtlas, scriptRegistry, cellInspectionActive = false, selectedNode, selectedPeer, onClearSelection, onClearNet, backfill, streamHealth, build, topBarActions, colonyCount }: {
   chain: ChainEntry; peers: Peer[]; localNode: ChainNode | undefined; cellsStats: CellsStats;
+  /** How much of the Cell set this dashboard has individualized, and at what
+   *  scope. Omitted by a consumer that derives none; the panel is then absent
+   *  rather than guessing. */
+  cellPopulation?: CellPopulationFieldModel | null;
   /** Records available to CellGalaxy before the top-bar display cap. */
   cellCount?: number;
   /** Resolved server live-Cell cap exposed to the top-bar controller. */
@@ -333,6 +338,7 @@ function HudOverlay({ chain, peers, localNode, cellsStats, cellCount, cellCapaci
                   <BlockchainReadout
                     chain={chain}
                     cellsStats={cellsStats}
+                    cellPopulation={cellPopulation}
                     enrichmentSource={enrichmentSource}
                     assetEcosystem={assetEcosystem}
                     scriptRegistry={scriptRegistry}

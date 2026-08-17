@@ -46,6 +46,10 @@ import {
   ConsensusRouteCamera,
   ConsensusWriteSeal,
   HudOverlay,
+  deriveCellPopulationField,
+  resolveCellDisplayLimit,
+  useCellDisplayRuntime,
+  useReducedMotion,
   NetworkColony,
   NeuralNetwork,
   QUALITY_PRESETS,
@@ -181,6 +185,10 @@ function initialStreamHealth(): StreamHealth {
     reason: 'initial',
   };
 }
+
+/** Stable empty overlay list: a fresh array each render would re-run the
+ *  population derive on every App render for no reason. */
+const EMPTY_OVERLAY_IDS: number[] = [];
 
 export default function App({
   initialChain,
@@ -598,6 +606,42 @@ export default function App({
   const showableCellCount = cellsCache.displayBudget !== null
     ? cellsCache.displayMembers.size
     : cellsCache.cells.size;
+
+  // How much of CKB's live Cell set this dashboard has individualized, and at
+  // what scope. Derived on cache / clamp / census identity changes only —
+  // never per frame — and memoized by identity because HudOverlay is memoized
+  // and CellGalaxy reads the gain inside its frame loop.
+  const selectedCellOverlayIds = useMemo(() => {
+    if (!selectedCellId?.startsWith(CELL_SELECTION_PREFIX)) return EMPTY_OVERLAY_IDS;
+    const id = Number(selectedCellId.slice(CELL_SELECTION_PREFIX.length));
+    return Number.isFinite(id) ? [id] : EMPTY_OVERLAY_IDS;
+  }, [selectedCellId]);
+  const cellDisplayRuntime = useCellDisplayRuntime();
+  const cellDisplayLimit = resolveCellDisplayLimit(
+    cellDisplayRuntime,
+    galaxyConfig.cellCap,
+    cellsCache.displayBudget?.cells,
+  );
+  const reducedMotion = useReducedMotion();
+  const cellPopulation = useMemo(() => deriveCellPopulationField({
+    cache: cellsCache,
+    displayLimit: cellDisplayLimit,
+    // Only a validated record widens the scope. With enrichment disabled the
+    // field under-claims to the retained window instead of disappearing.
+    census: enrichmentConfig.enabled ? semanticsCache.census : null,
+    chainTip: chain.tip,
+    // The client inspection overlay is rendered but never staged. The
+    // selected Cell is the part of it this component can prove; the rest of
+    // the inspection field lives behind a Canvas ref.
+    overlayCellIds: selectedCellOverlayIds,
+  }), [
+    cellsCache,
+    cellDisplayLimit,
+    enrichmentConfig.enabled,
+    semanticsCache.census,
+    chain.tip,
+    selectedCellOverlayIds,
+  ]);
 
   // Resolve the two selections. Cell = the galaxy axis; node/peer share the
   // network axis (selectedNetId holds a node id or a `peer:` id, never a cell).
@@ -1104,6 +1148,7 @@ export default function App({
         peers={peers}
         localNode={localNode}
         cellsStats={cellsStats}
+        cellPopulation={cellPopulation}
         cellCount={showableCellCount}
         cellCapacity={galaxyConfig.cellCap}
         enrichmentSource={enrichmentConfig.enabled ? semanticsCache.source : undefined}
@@ -1205,6 +1250,8 @@ export default function App({
             ckbNodeIds={ckbNodeIds}
             universeSeed={universeSeed}
             cellCapacity={galaxyConfig.cellCap}
+            populationGain={cellPopulation.gain}
+            reducedMotion={reducedMotion}
             localReceiveDelayS={cf.localReceiveDelayS}
             selectedId={selectedNetId}
             selectedCellId={selectedCellId}

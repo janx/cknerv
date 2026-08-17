@@ -24,7 +24,12 @@ describe('CellsPanel', () => {
     expect(t).toContain('CELL MESH');
     expect(t).toContain('共识细胞网络');
     expect(t).toContain('+0.5');      // net /blk
-    expect(t).toContain('19,204');    // live
+    expect(t).toContain('19,204');    // observed live
+    // `stats.live` counts the backend's observation window, not the chain.
+    // Beside a medium standing for millions of unresolved Cells, an
+    // unqualified "Live cells" is not imprecise — it is contradictory.
+    expect(t).toContain('Observed live');
+    expect(t).not.toContain('Live cells');
     expect(t).toContain('28,431');    // total observed
     expect(t).toContain('9,227');     // dead
     expect(t).not.toContain('GALAXY WINDOW');

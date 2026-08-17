@@ -40,8 +40,14 @@ export default function CellsPanel({ stats, churn, reducedMotion = false, style 
       <FlowRow label="▲ BORN" color={HUD_COLORS.nominal} width={bornW} value={churn.bornPerBlock} />
       <div style={{ height: 5 }} />
       <FlowRow label="▼ DIED" color={HUD_COLORS.danger} width={spentW} value={churn.spentPerBlock} />
+      {/* `stats.live` is births minus deaths in the BACKEND'S OBSERVATION
+          WINDOW — never a live-chain total. That was merely imprecise while
+          nothing else on screen implied a chain-wide number; with a medium
+          standing for millions of unresolved Cells beside it, an unqualified
+          "Live cells" becomes actively contradictory. The whole-chain count
+          lives in CELL POPULATION, under its own validated anchor. */}
       <div style={{ marginTop: 11 }}>
-        <StatRow label="Live cells"><span style={{ fontFamily: HUD_FONTS.display, fontWeight: 700, fontSize: 14, color: '#fff' }}>{fmt(stats.live)}</span></StatRow>
+        <StatRow label="Observed live"><span style={{ fontFamily: HUD_FONTS.display, fontWeight: 700, fontSize: 14, color: '#fff' }}>{fmt(stats.live)}</span></StatRow>
         <StatRow label="Total observed">{fmt(stats.born)}</StatRow>
         <StatRow label="Dead" valueColor={HUD_COLORS.danger}>{fmt(stats.dead)}</StatRow>
       </div>
