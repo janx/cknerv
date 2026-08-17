@@ -552,54 +552,40 @@ const refreshArms: RefreshArm[] = [
 ];
 
 describe('periodic refresh dedup', () => {
-  // Only census dedups among the *_replace arms. The other seven feed HUD
-  // staleness derives that read `nowMs - record.updated_at_ms` as a
-  // liveness clock, so an anchor-only re-emit MUST adopt the fresh record —
-  // freezing it would misreport a healthy poll with plateaued content as
-  // STALE and erase the per-capability outage signal.
-  const dedupedArms = new Set(['census_replace']);
+  // NO *_replace arm dedups. Seven feed HUD staleness derives that read
+  // `nowMs - record.updated_at_ms` as a liveness clock; the eighth, census,
+  // has a panel that PRINTS its anchor beside a whole-chain count. For all
+  // of them an anchor-only re-emit MUST adopt the fresh record — freezing it
+  // would misreport a healthy poll with plateaued content as STALE, or keep
+  // printing an old block height under a count just re-proved at a newer one.
   for (const arm of refreshArms) {
-    if (dedupedArms.has(arm.name)) {
-      it(`${arm.name}: anchor-only re-emit keeps the cache; content change replaces`, () => {
-        const seeded = applySemanticsDelta(emptySemanticsCache(), arm.make(10));
-        expect(arm.read(seeded)?.as_of.block).toBe(10);
+    it(`${arm.name}: anchor-only re-emit still adopts the fresh record`, () => {
+      const seeded = applySemanticsDelta(emptySemanticsCache(), arm.make(10));
+      expect(arm.read(seeded)?.as_of.block).toBe(10);
 
-        const next = applySemanticsDelta(seeded, arm.make(20));
-        expect(next).toBe(seeded);
-        // The frozen anchor stays semantically valid: this exact content
-        // was already anchored at block 10.
-        expect(arm.read(next)?.as_of.block).toBe(10);
+      const next = applySemanticsDelta(seeded, arm.make(20));
+      expect(next).not.toBe(seeded);
+      expect(arm.read(next)?.as_of.block).toBe(20);
 
-        const changed = applySemanticsDelta(seeded, arm.makeChanged(30));
-        expect(changed).not.toBe(seeded);
-        expect(arm.read(changed)?.as_of.block).toBe(30);
-      });
-    } else {
-      it(`${arm.name}: anchor-only re-emit still adopts the fresh record (staleness clock)`, () => {
-        const seeded = applySemanticsDelta(emptySemanticsCache(), arm.make(10));
-        expect(arm.read(seeded)?.as_of.block).toBe(10);
-
-        const next = applySemanticsDelta(seeded, arm.make(20));
-        expect(next).not.toBe(seeded);
-        expect(arm.read(next)?.as_of.block).toBe(20);
-
-        const changed = applySemanticsDelta(next, arm.makeChanged(30));
-        expect(arm.read(changed)?.as_of.block).toBe(30);
-      });
-    }
+      const changed = applySemanticsDelta(next, arm.makeChanged(30));
+      expect(arm.read(changed)?.as_of.block).toBe(30);
+    });
   }
 
-  it('advances only the revision through the revisioned stream path', () => {
+  it('carries a re-anchored census through the revisioned stream path', () => {
     const seeded = applySemanticsDelta(emptySemanticsCache(), {
       type: 'census_replace',
       census: census(10),
     });
+    const refreshed = reanchored(census(10), 20);
     const bumped = applyRevisionedSemanticsDeltas(seeded, [{
       revision: 7,
-      delta: { type: 'census_replace', census: reanchored(census(10), 20) },
+      delta: { type: 'census_replace', census: refreshed },
     }]);
     expect(bumped.revision).toBe(7);
-    expect(bumped.census).toBe(seeded.census);
+    // Identical counts, newer proof: the record the panel reads its
+    // `AS OF #<block>` from has to be the one just validated.
+    expect(bumped.census).toBe(refreshed);
   });
 
   it('cell_upsert with retained content skips the Map copy', () => {
@@ -672,23 +658,32 @@ describe('periodic refresh dedup', () => {
     expect(alive.source).toBe(heartbeat);
   });
 
-  it('prune applies to the frozen anchor exactly as if never re-emitted', () => {
+  it('prune applies to the census anchor the last re-emit carried', () => {
     const seeded = applySemanticsDelta(emptySemanticsCache(), {
       type: 'census_replace',
       census: census(10),
     });
-    const deduped = applySemanticsDelta(seeded, {
+    const refreshed = applySemanticsDelta(seeded, {
       type: 'census_replace',
       census: reanchored(census(10), 20),
     });
-    expect(deduped).toBe(seeded);
+    expect(refreshed.census?.as_of.block).toBe(20);
 
-    // The retained anchor is block 10: a reorg above it keeps the record…
-    const kept = applySemanticsDelta(deduped, { type: 'prune', from_block: 15 });
-    expect(kept.census).toBe(seeded.census);
-    // …and a reorg at/below it clears, same as before the re-emit.
-    const cleared = applySemanticsDelta(deduped, { type: 'prune', from_block: 10 });
-    expect(cleared.census).toBeNull();
+    // The record is invalidated by any reorg at or below the anchor it
+    // claims. That anchor is now 20, so only a boundary above it keeps it…
+    const kept = applySemanticsDelta(refreshed, { type: 'prune', from_block: 21 });
+    expect(kept.census).toBe(refreshed.census);
+    // …and one at the fresh anchor clears it.
+    expect(
+      applySemanticsDelta(refreshed, { type: 'prune', from_block: 20 }).census,
+    ).toBeNull();
+    // A reorg at 15 clears it too, and that is the point: the record claims
+    // block 20, so it is exactly as invalid as anything else anchored there.
+    // Under the old frozen-anchor dedup it would have survived here on a
+    // stale block-10 claim it had already stopped making.
+    expect(
+      applySemanticsDelta(refreshed, { type: 'prune', from_block: 15 }).census,
+    ).toBeNull();
   });
 
   it('replace lands again after prune and clear, even with identical content', () => {
@@ -820,10 +815,8 @@ describe('batch copy-on-write', () => {
             transaction: reanchored(transaction(10, '0xtx'), 20),
           },
         },
-        {
-          revision: 4,
-          delta: { type: 'census_replace', census: reanchored(census(10), 20) },
-        },
+        // No `census_replace` here: that arm is a plain replacement now, so
+        // a re-anchored census is a real write, not a no-op.
         {
           revision: 4,
           delta: { type: 'cell_remove', out_point: { tx_hash: '0xabsent', index: 0 } },

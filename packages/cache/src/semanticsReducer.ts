@@ -95,21 +95,23 @@ export function fromSemanticsSnapshot(
 // incoming content is unchanged, freezing the previous
 // `as_of`/`updated_at_ms`.
 //
-// DELIBERATELY UNGUARDED: the seven records whose HUD derives read
-// `nowMs - record.updated_at_ms` as a staleness signal (assetEcosystem,
-// activityFeed, networkAtlas, daoState, forkWatch, protocolEra,
-// transactionHorizon — see packages/ui/src/derives/*). For those, a frozen
-// anchor would misreport "healthy poll, unchanged content" as STALE on any
-// content plateau (fork watch sits unchanged for hours), and it would erase
-// the one user-visible signal of a per-capability refresh outage. Their
-// panel re-renders are cheap; dedup there buys identity nobody keys on.
-// Guard one of them only after its derive stops treating `updated_at_ms`
-// as a liveness clock.
+// DELIBERATELY UNGUARDED: the eight records whose HUD derives read the
+// anchor itself (assetEcosystem, activityFeed, networkAtlas, daoState,
+// forkWatch, protocolEra, transactionHorizon — `nowMs -
+// record.updated_at_ms` as a staleness signal — and census, whose panel
+// PRINTS `AS OF #<block>` beside a whole-chain count). For the seven, a
+// frozen anchor would misreport "healthy poll, unchanged content" as STALE
+// on any content plateau (fork watch sits unchanged for hours), and it
+// would erase the one user-visible signal of a per-capability refresh
+// outage. For the census, a frozen anchor would keep printing an old block
+// height under a count the source just re-proved at a newer one — the
+// dashboard would understate its own freshness in the one place it makes
+// an explicit claim about it. Guard one of them only after its derive
+// stops reading the anchor.
 //
-// Cost trade-off: every record here is tiny — census is a handful of
-// scalars, cell/transaction records are single rows — so one generic
-// recursive comparison per refresh is negligible and stays correct as
-// record shapes evolve.
+// Cost trade-off: the records still guarded are tiny — cell/transaction
+// records are single rows — so one generic recursive comparison per
+// refresh is negligible and stays correct as record shapes evolve.
 
 /** Freshness-anchor keys skipped at every depth of the comparison.
  *  Verified against `packages/types/src/enrichment.ts`: all record
@@ -293,13 +295,12 @@ function reduceDelta(draft: SemanticsDraft, delta: SemanticsDelta): void {
       writableTransactions(draft).delete(delta.tx_hash);
       return;
     }
-    // `census_replace` is the one *_replace arm with a dedup guard: no HUD
-    // derive reads its `updated_at_ms`, so keeping the record identity on a
-    // content-identical re-emit is free. The seven arms below it stay plain
-    // replacements — see the DELIBERATELY UNGUARDED note above. A cleared
-    // (null) slot never dedups: content arriving after prune/clear lands.
+    // Every *_replace arm is a plain replacement — see the DELIBERATELY
+    // UNGUARDED note above. `census_replace` was the one exception until the
+    // population field started printing the census anchor: a re-proved count
+    // at a newer block is NEW information even when the count is identical,
+    // because what the record certifies is "this many, as of here".
     case 'census_replace':
-      if (deepEqualsIgnoringAnchors(draft.value.census, delta.census)) return;
       writable(draft).census = delta.census;
       return;
     case 'asset_ecosystem_replace':
