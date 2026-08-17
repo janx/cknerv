@@ -51,16 +51,32 @@ export const POPULATION_FIELD_SLAB_HALF_Y = 28;
  * With the Gaussian normalized, a VERTICAL column integrates back to the areal
  * density times √(2π) ≈ 2.51, and the production camera sits about 24° above
  * the Cell plane, so a real ray travels roughly 2.44 times that — call it 6.1
- * per unit of areal density. At the measured mainnet gain of 0.58 that puts
- * the densest tissue (areal density ≈ 0.8) near alpha 0.45 and the ordinary
- * mid-field (≈ 0.25) near 0.17: clearly a population, still unmistakably
- * behind the Cells rather than instead of them.
+ * per unit of areal density.
+ *
+ * The acceptance test this is calibrated against: **inside the envelope, the
+ * space between Cells must stop being black.** That is the whole perceptual
+ * claim. Black between Cells reads as "nothing there"; luminous matter reads
+ * as a population, and no amount of correctness in the density term can make
+ * an invisible layer state anything.
+ *
+ * The first calibration failed it. At 0.21 and the measured mainnet gain of
+ * 0.58, ordinary mid-field tissue (areal density ≈ 0.23) landed at alpha 0.16
+ * and the whole layer averaged 0.12 — about rgb(13,10,10) over the scene's
+ * near-black, which is below the perceptual floor beside a bright additive
+ * Cell field occupying the same envelope. Rendering the medium in isolation
+ * showed a smudge, and in situ it was indistinguishable from absence.
+ *
+ * At 0.84 the same mid-field lands near alpha 0.49 and the densest tissue near
+ * 0.92, so the background between Cells is warm matter rather than void, and
+ * the cavities and corridors the field has always contained become legible.
+ * The Cells stay in front: the medium renders beneath them and never brightens
+ * a Cell body.
  *
  * This is the live-tuning lever for the medium's presence. Nothing else here
  * should be reached for first — `gain` is calibration and the density term is
  * the chain's own law, but this number is taste.
  */
-export const POPULATION_FIELD_EXTINCTION = 0.21;
+export const POPULATION_FIELD_EXTINCTION = 0.84;
 
 /** Screen-space grain period, in DEVICE pixels. Below 1 the grain aliases
  *  into the pixel grid; above ~2.5 it starts reading as texture rather than
@@ -105,7 +121,12 @@ function mediumTint(): THREE.Color {
   const [r, g, b] = CELL_GALAXY_PALETTE.tissueRose;
   const luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
   const saturation = 0.25;
-  const level = 0.65;
+  // Level, not saturation, is what nearly lost this layer: 0.65 of a
+  // desaturated rose is a dark grey, and a dark grey at alpha 0.12 is
+  // rgb(13,10,10). The tint has to be able to CARRY the alpha it is given.
+  // Saturation stays where it was — the medium borrows the organism's body
+  // colour and must never wear an identity hue.
+  const level = 1.0;
   return new THREE.Color(
     (luma + (r - luma) * saturation) * level,
     (luma + (g - luma) * saturation) * level,
