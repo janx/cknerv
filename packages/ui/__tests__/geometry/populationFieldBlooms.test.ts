@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  COALESCED_MEMBERSHIP_CHANGE,
   createPopulationBloomPool,
+  membershipBatchIsCut,
   populationBloomLife,
   populationBloomStats,
   spawnMembershipBlooms,
@@ -135,10 +135,7 @@ describe('spawnMembershipBlooms', () => {
 
   it('reads a wholesale resettle as a cut, by its size alone', () => {
     const pool = createPopulationBloomPool(8);
-    const many = Array.from(
-      { length: COALESCED_MEMBERSHIP_CHANGE + 1 },
-      (_, i) => i + 1,
-    );
+    const many = Array.from({ length: pool.capacity + 1 }, (_, i) => i + 1);
 
     const landed = spawnMembershipBlooms(pool, {
       ...base,
@@ -152,11 +149,8 @@ describe('spawnMembershipBlooms', () => {
   });
 
   it('still marks a batch exactly at the churn boundary', () => {
-    const pool = createPopulationBloomPool(COALESCED_MEMBERSHIP_CHANGE);
-    const many = Array.from(
-      { length: COALESCED_MEMBERSHIP_CHANGE },
-      (_, i) => i + 1,
-    );
+    const pool = createPopulationBloomPool(8);
+    const many = Array.from({ length: pool.capacity }, (_, i) => i + 1);
 
     const landed = spawnMembershipBlooms(pool, {
       ...base,
@@ -165,8 +159,54 @@ describe('spawnMembershipBlooms', () => {
       changeCount: many.length,
     });
 
-    expect(landed).toBe(COALESCED_MEMBERSHIP_CHANGE);
+    expect(landed).toBe(pool.capacity);
     expect(pool.suppressed).toBe(0);
+  });
+
+  it('never lets a batch wrap the ring and eat its own dissolves', () => {
+    // Exits are written before entries. A threshold above the ring size would
+    // let the entries of one batch overwrite the exits of that same batch, and
+    // the boundary would read as one-way condensation — Cells arriving out of
+    // the medium and never returning to it.
+    const pool = createPopulationBloomPool(8);
+    const exits = [1, 2, 3, 4, 5];
+    const entries = [6, 7, 8, 9, 10];
+
+    spawnMembershipBlooms(pool, {
+      ...base,
+      entered: entries,
+      exited: exits,
+      changeCount: exits.length + entries.length,
+    });
+
+    expect(pool.clamped).toBe(0);
+    const kinds = Array.from(pool.kind.slice(0, pool.capacity));
+    expect(kinds.filter((kind) => kind === -1)).toHaveLength(0);
+    // 10 changes into an 8-slot ring is a cut, so nothing lands at all —
+    // rather than 5 condenses and 3 surviving dissolves.
+    expect(pool.spawned).toBe(0);
+  });
+
+  it('marks both directions evenly for a batch the ring can hold', () => {
+    const pool = createPopulationBloomPool(8);
+
+    spawnMembershipBlooms(pool, {
+      ...base,
+      entered: [10, 11, 12],
+      exited: [1, 2, 3],
+      changeCount: 6,
+    });
+
+    const kinds = Array.from(pool.kind.slice(0, 6));
+    expect(kinds.filter((kind) => kind === -1)).toHaveLength(3);
+    expect(kinds.filter((kind) => kind === 1)).toHaveLength(3);
+    expect(pool.clamped).toBe(0);
+  });
+
+  it('exposes the cut rule directly', () => {
+    const pool = createPopulationBloomPool(8);
+    expect(membershipBatchIsCut(pool, 8)).toBe(false);
+    expect(membershipBatchIsCut(pool, 9)).toBe(true);
   });
 
   it('counts nothing as suppressed when nothing changed', () => {

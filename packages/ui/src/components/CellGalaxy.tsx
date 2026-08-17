@@ -1128,6 +1128,12 @@ export default function CellGalaxy({
   const populationBloomsRef = useRef(
     createPopulationBloomPool(POPULATION_FIELD_MAX_BLOOMS),
   );
+  /** Display journal already turned into blooms. The render set re-syncs for
+   * reasons that are not membership changes at all — a presentation clamp
+   * moving is one — and on those frames `displayChanges` still describes the
+   * PREVIOUS batch. Keyed on the journal itself, a clamp drag cannot replay
+   * the same entries once per slider value. */
+  const bloomedDisplayTokenRef = useRef<object | null>(null);
   /** D4 overlay pool state: the selected cell and inspection-field members
    * that sit off-stage render as overlay entries appended after the staged
    * list — client-transient, never entering the shared display membership
@@ -1447,7 +1453,8 @@ export default function CellGalaxy({
     // still holds the previous membership: an exit's position is only
     // knowable from the list it is about to leave. `displayChanges` describes
     // exactly this transition, so the two are read together or not at all.
-    if (renderNeedsSync && populationGain > 0) {
+    const displayJournalIsNew = bloomedDisplayTokenRef.current !== cellsCache.displayToken;
+    if (renderNeedsSync && displayJournalIsNew && populationGain > 0) {
       const displayChanges = cellsCache.displayChanges;
       const previousCells = renderSet.cells;
       const previousIndex = renderSet.indexById;
@@ -1476,6 +1483,7 @@ export default function CellGalaxy({
         durationSec: POPULATION_FIELD_BLOOM_MS / 1000,
       });
     }
+    if (renderNeedsSync) bloomedDisplayTokenRef.current = cellsCache.displayToken;
     const renderUpdate = renderNeedsSync
       ? syncCellRenderSet(renderSet, cellsCache, cellDisplayLimit)
       : null;

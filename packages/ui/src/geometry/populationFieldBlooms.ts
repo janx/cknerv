@@ -42,12 +42,21 @@ export interface PopulationBloomPool {
   suppressed: number;
 }
 
-/** How many membership changes in one batch stop being churn and start being
- *  a cut. Backfill replay and a curated refresh move a large fraction of the
- *  stage at once; ordinary block churn moves a handful. Deciding on the
- *  OBSERVABLE rather than on which upstream event is suspected keeps the rule
- *  honest when a new coalescing path appears. */
-export const COALESCED_MEMBERSHIP_CHANGE = 256;
+/** A batch bigger than the ring is a cut, by this layer's own budget.
+ *
+ *  Tying the threshold to the pool's capacity is not tidiness — a fixed
+ *  larger threshold silently corrupts the marks it admits. Exits are written
+ *  before entries, so a batch of 100 changes into a 64-slot ring wraps and
+ *  overwrites the earliest exits with the later entries: 50 dissolves and 50
+ *  condenses go in, 14 dissolves and 50 condenses come out, and the boundary
+ *  reads as one-way condensation. A batch that cannot fit is one no viewer
+ *  could have followed anyway, so it is suppressed whole. */
+export function membershipBatchIsCut(
+  pool: PopulationBloomPool,
+  changeCount: number,
+): boolean {
+  return changeCount > pool.capacity;
+}
 
 export function createPopulationBloomPool(capacity: number): PopulationBloomPool {
   const size = Math.max(1, Math.floor(capacity));
@@ -134,7 +143,7 @@ export function spawnMembershipBlooms(
   pool: PopulationBloomPool,
   batch: MembershipBloomBatch,
 ): number {
-  if (batch.coalesced || batch.changeCount > COALESCED_MEMBERSHIP_CHANGE) {
+  if (batch.coalesced || membershipBatchIsCut(pool, batch.changeCount)) {
     if (batch.changeCount > 0) pool.suppressed += batch.changeCount;
     return 0;
   }
