@@ -149,13 +149,24 @@ export default function CellPopulationField({
   const inverseWorld = useMemo(() => new THREE.Matrix4(), []);
   const localCamera = useMemo(() => new THREE.Vector3(), []);
 
-  // A quality change re-bakes at the new resolution; the previous texture is
-  // released only once its replacement lands, so the field never blinks out
-  // for a preset transition.
+  // March steps are a per-frame uniform, not a reason to re-bake.
   useEffect(() => {
-    bakeRef.current = createTissueFieldBake(preset.bake);
     densityMaterial.uniforms.uSteps.value = preset.steps;
-  }, [preset.bake, preset.steps, densityMaterial]);
+  }, [preset.steps, densityMaterial]);
+
+  // Re-bake only when the RESOLUTION actually changes, and only when the
+  // current bake is not already at it. `med` and `low` share a 256 bake and
+  // differ only in march steps, so without this guard an adaptive med<->low
+  // flip discards a finished bake and re-runs 65,536 field evaluations for a
+  // byte-identical result — spending ~1 ms a frame for a second precisely
+  // when the frame budget is already blown, which is what triggered the
+  // downgrade. The previous texture stays bound until its replacement lands,
+  // so a preset transition never blinks the field out.
+  useEffect(() => {
+    const bake = bakeRef.current;
+    if (bake && bake.resolution === preset.bake) return;
+    bakeRef.current = createTissueFieldBake(preset.bake);
+  }, [preset.bake]);
 
   useEffect(() => () => {
     geometry.dispose();
@@ -220,10 +231,13 @@ export default function CellPopulationField({
     if (!active) return;
 
     // 3. Density march, offscreen at a fraction of native.
-    gl.getSize(SCRATCH_SIZE);
+    // The DRAWING BUFFER, not size x dpr: three floors that product, so a
+    // fractional CSS size or a 1.5x ratio makes the two disagree by a pixel
+    // and skews every screen-space lookup in the composite.
+    gl.getDrawingBufferSize(SCRATCH_SIZE);
     const pixelRatio = gl.getPixelRatio();
-    const deviceWidth = Math.max(1, Math.round(SCRATCH_SIZE.x * pixelRatio));
-    const deviceHeight = Math.max(1, Math.round(SCRATCH_SIZE.y * pixelRatio));
+    const deviceWidth = Math.max(1, SCRATCH_SIZE.x);
+    const deviceHeight = Math.max(1, SCRATCH_SIZE.y);
     const targetWidth = Math.max(1, Math.floor(deviceWidth / preset.densityDivisor));
     const targetHeight = Math.max(1, Math.floor(deviceHeight / preset.densityDivisor));
     if (
@@ -273,9 +287,12 @@ export default function CellPopulationField({
     uniforms.uResolution.value.set(deviceWidth, deviceHeight);
     // Reduced motion freezes the grain at a deterministic phase. Extent,
     // amount, and every count stay exactly where they were.
+    // Wrapped: the phase feeds an integer hash, and an unbounded counter
+    // walks out of the range a highp float can separate after a couple of
+    // weeks of uptime — at which point the grain quietly stops reseeding.
     uniforms.uGrainPhase.value = reducedMotion
       ? 0
-      : Math.floor(simClock.elapsedSec * POPULATION_FIELD_GRAIN_RATE);
+      : Math.floor(simClock.elapsedSec * POPULATION_FIELD_GRAIN_RATE) % 4096;
 
     // 5. Membership blooms, projected on the CPU. Sixty-four projections is
     //    nothing; sixty-four world-space ray tests per pixel would not be.
@@ -294,12 +311,19 @@ export default function CellPopulationField({
           bloomPool.positions[base + 2],
         );
         SCRATCH_NDC.applyMatrix4(composite.matrixWorld).project(state.camera);
+        // Behind the camera, or off the sides. An off-screen bloom would
+        // otherwise hold one of the 64 slots against a bloom that is visible.
         if (SCRATCH_NDC.z > 1) continue;
+        if (Math.abs(SCRATCH_NDC.x) > 1.4 || Math.abs(SCRATCH_NDC.y) > 1.4) continue;
+        // One phase drives the whole bloom. Freezing the fade envelope while
+        // the radius kept growing left it expanding at near-full strength and
+        // then popping out when the pool retired it — more motion, not less.
+        const phase = reducedMotion ? 0.5 : life;
         // A dissolve is broader and softer than a condense: leaving is a
         // spreading-out, arriving is a gathering-in.
         const kind = bloomPool.kind[slot];
-        const radius = (kind < 0 ? 34 : 24) * pixelRatio * (0.55 + life * 0.75);
-        slots[count].set(SCRATCH_NDC.x, SCRATCH_NDC.y, reducedMotion ? 0.5 : life, radius);
+        const radius = (kind < 0 ? 34 : 24) * pixelRatio * (0.55 + phase * 0.75);
+        slots[count].set(SCRATCH_NDC.x, SCRATCH_NDC.y, phase, radius);
         count += 1;
       }
     }

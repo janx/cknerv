@@ -143,7 +143,20 @@ describe('degradation', () => {
 
   it('freezes animation under reduced motion without moving an amount', () => {
     expect(FIELD_SOURCE).toContain('reducedMotion\n      ? 0');
-    expect(FIELD_SOURCE).toContain('reducedMotion ? 0.5 : life');
+    // ONE phase drives the whole bloom. Freezing the fade while the radius
+    // kept growing produced more motion than the un-reduced path, not less.
+    expect(FIELD_SOURCE).toContain('const phase = reducedMotion ? 0.5 : life;');
+    expect(FIELD_SOURCE).toContain('0.55 + phase * 0.75');
+    expect(FIELD_CODE).not.toContain('0.55 + life * 0.75');
+  });
+
+  it('re-bakes on a resolution change and on nothing else', () => {
+    // med and low share a 256 bake. Re-baking for a march-step change would
+    // spend a second of frame budget for a byte-identical texture, at exactly
+    // the moment the adaptive controller downgraded because frames were slow.
+    expect(FIELD_CODE)
+      .toContain('if (bake && bake.resolution === preset.bake) return;');
+    expect(FIELD_CODE).toContain('}, [preset.bake]);');
   });
 });
 

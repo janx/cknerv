@@ -635,7 +635,25 @@ export default function App({
     // the inspection field lives behind a Canvas ref.
     overlayCellIds: selectedCellOverlayIds,
   }), [
-    cellsCache,
+    // Keyed on the INPUTS, not on the cache object. The projection stream
+    // flushes on requestAnimationFrame and hands back a fresh cache for any
+    // batch that advances the revision — pulses, links, backfill progress —
+    // none of which can change this answer. Keying on the object would walk
+    // 12,000 staged members per animation frame (measured ~0.9 ms) and would
+    // hand memo(HudOverlay) a new prop every time, breaking a bail-out that
+    // used to hold for cells-only frames.
+    //
+    // These six ARE the complete surface: `CellPopulationCache` picks exactly
+    // `cells`, `displayMembers`, `displayResidents`, `displayBudget`,
+    // `displayProvenance`, `stats` and `statsScope`, and the first three are
+    // covered by the two tokens the reducer turns over with them. Widen this
+    // list if that Pick ever widens.
+    cellsCache.cellsToken,
+    cellsCache.displayToken,
+    cellsCache.displayBudget,
+    cellsCache.displayProvenance,
+    cellsCache.stats,
+    cellsCache.statsScope,
     cellDisplayLimit,
     enrichmentConfig.enabled,
     semanticsCache.census,

@@ -1733,8 +1733,13 @@ fn deep_fork_canonical_anchor(
 ///    canonical evidence — an unverifiable or replaced tip is not a slightly
 ///    stale count, it is a count about a chain this dashboard is not on;
 /// 3. the three class counters, when present, sum to `live_cells` exactly.
-///    A partition that does not add up cannot be disclosed as a chain mix,
-///    so the classes are rejected rather than shown approximate.
+///
+/// A partition that does not add up rejects the WHOLE record, not just the
+/// classes. Two counters maintained by the same incremental pipeline
+/// disagreeing is evidence about that pipeline, not about one field of it:
+/// if the bins have drifted there is no reason left to trust the total they
+/// are supposed to decompose. The error surfaces as a refresh failure so it
+/// is logged rather than silently degrading to a countless dashboard.
 fn map_chain_census(
     summary: LiveCellSummaryResponse,
     context: &CanonicalContext,
