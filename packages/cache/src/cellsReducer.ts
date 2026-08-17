@@ -177,6 +177,10 @@ function linkRingCapacity(opts?: CellsReducerOptions): number {
   return Math.max(0, opts?.linkRingCapacity ?? DEFAULT_LINK_RING_CAPACITY);
 }
 
+/** Provenance of `CellGalaxyCache.stats`. See the field for what each one
+ *  permits a consumer to claim. */
+export type CellStatsScope = 'full_retained' | 'received_rows';
+
 export interface CellGalaxyCache {
   revision: number;
   /** Map keyed by cell.id for O(1) lookup. Iteration order matches insertion
@@ -226,6 +230,19 @@ export interface CellGalaxyCache {
    *  identity-stable across batches that change nothing it reports. Always
    *  equals `aggregateCellsStats(cells, totalBirths, totalDeaths)`. */
   stats: CellsStats;
+  /** Where `stats` came from, which decides what it is allowed to CLAIM.
+   *
+   *  `full_retained` means the server aggregated its own complete retained
+   *  set and shipped the result. `received_rows` means no such segment
+   *  arrived and the numbers are a scan of whatever rows this cache happens
+   *  to hold — which, since snapshots ship the stage rather than the galaxy,
+   *  is a fraction of the retained window.
+   *
+   *  Nothing may present the second as the first. A panel stating a
+   *  population, or a field sized by the ratio between a stage and its
+   *  scope, has to know whether its denominator covers the window or only
+   *  the rows that turned up. */
+  statsScope: CellStatsScope;
   // ── display plane ("who is on stage") — server-authored membership.
   // Presentation policy, never canonical truth: it feeds no counters and is
   // excluded from persistence. Absent section (old server) ⇒ null budget /
@@ -276,6 +293,8 @@ export function emptyCellsCache(): CellGalaxyCache {
     totalDeaths: 0,
     backfill: null,
     stats: emptyCellsStats(),
+    // An empty cache has aggregated nothing, so it claims nothing.
+    statsScope: 'received_rows',
     displayMembers: new Set(),
     displayResidents: new Map(),
     displayBudget: null,
@@ -440,6 +459,11 @@ export function fromCellsSnapshot(
         snap.total_births ?? 0,
         snap.total_deaths ?? 0,
       ),
+    // Which of those two branches ran is the provenance, and it has to
+    // survive hydration: once the numbers are in the cache they look
+    // identical, and a fallback scan relabeled as a complete retained window
+    // is a claim nobody made.
+    statsScope: snap.stats ? 'full_retained' : 'received_rows',
     displayMembers,
     displayResidents,
     displayBudget: display

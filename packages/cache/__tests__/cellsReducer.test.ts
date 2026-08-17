@@ -938,6 +938,52 @@ describe('cross-language wire-shape parity', () => {
     );
   });
 
+  // Once hydrated, the two branches above produce numbers that look
+  // identical. Only the provenance distinguishes "the server counted its
+  // whole retained set" from "we scanned the rows that turned up", and a
+  // consumer sizing a population against the second must not present it as
+  // the first.
+  it('remembers whether the aggregate covered the retained window', () => {
+    const snap = fixture<CellGalaxySnapshot>('snapshot_cells.json');
+    expect(fromCellsSnapshot(0, snap).statsScope).toBe('full_retained');
+
+    const { stats: _dropped, ...legacy } = snap;
+    expect(fromCellsSnapshot(0, legacy as CellGalaxySnapshot).statsScope)
+      .toBe('received_rows');
+
+    // An empty cache has aggregated nothing; it must not start out claiming
+    // a complete window it has never seen.
+    expect(emptyCellsCache().statsScope).toBe('received_rows');
+  });
+
+  it('a narrowed row scope does not upgrade or downgrade the provenance', () => {
+    const snap = fixture<CellGalaxySnapshot>('snapshot_cells.json');
+    const staged: CellGalaxySnapshot = { ...snap, cells: snap.cells.slice(0, 1) };
+
+    // The segment describes the server's retained set whatever the rows do,
+    // so shipping one row keeps the claim intact…
+    expect(fromCellsSnapshot(0, staged).statsScope).toBe('full_retained');
+
+    // …and shipping every row without a segment still cannot earn it.
+    const { stats: _dropped, ...legacy } = snap;
+    expect(fromCellsSnapshot(0, legacy as CellGalaxySnapshot).statsScope)
+      .toBe('received_rows');
+  });
+
+  it('deltas never quietly upgrade a fallback scope to a full window', () => {
+    const snap = fixture<CellGalaxySnapshot>('snapshot_cells.json');
+    const { stats: _dropped, ...legacy } = snap;
+    const seeded = fromCellsSnapshot(0, legacy as CellGalaxySnapshot);
+
+    const advanced = applyRevisionedCellDeltas(seeded, [{
+      revision: seeded.revision + 1,
+      delta: { type: 'stats', total_births: 9, total_deaths: 2 },
+    }]);
+
+    expect(advanced.stats.born).toBe(9);
+    expect(advanced.statsScope).toBe('received_rows');
+  });
+
   // The whole point of the segment: it describes the server's retained set, so
   // it must not move when the snapshot's row scope narrows to the stage.
   it('keeps the seeded aggregate when the snapshot carries fewer rows', () => {

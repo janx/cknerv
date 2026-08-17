@@ -21,6 +21,7 @@ export {
   type CellChangeSet,
   type CellGalaxyCache,
   type CellsReducerOptions,
+  type CellStatsScope,
   type DisplayBudgetView,
   type DisplayChangeSet,
 } from './cellsReducer';
