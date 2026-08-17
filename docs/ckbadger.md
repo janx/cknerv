@@ -347,8 +347,10 @@ anchor suppresses it.
 
 The PSIONIC BRAID portrait uses the same record only as a detachable
 explanation layer. Resolved script family/name labels, exact deterministic
-half-open data ranges, byte-boundary ticks, and occupied CAP/LOCK/TYPE/DATA arcs
-sit above the canonical Cell morphology; heuristic guesses never create
+half-open data ranges, and byte-boundary ticks sit above the canonical Cell
+morphology. The occupied CAP/LOCK/TYPE/DATA breakdown is hidden in the default
+portrait and appears as separated arcs only while CAPACITY or DATA is focused,
+so it cannot be mistaken for part of the braid; heuristic guesses never create
 geometry. Before either semantic visual is admitted, each indexed
 `script_hash` is converted to the same two big-endian shape-seed words used by
 the direct CKB adapter and compared with the selected Cell's canonical lock/type

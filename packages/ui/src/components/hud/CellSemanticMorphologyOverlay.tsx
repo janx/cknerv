@@ -10,6 +10,10 @@ import { consensusBraidPathPoint } from '../../derives/consensusBraid.derive';
 import type { CellMorphologyTopology, MorphologyPoint3 } from '../../derives/cellMorphology.derive';
 import type { CellSemanticMorphologyOverlay } from '../../derives/cellSemanticMorphology.derive';
 import { CELL_PORTRAIT_LABEL_PORTAL } from './cellPortraitInsetChannel';
+import {
+  cellSemanticKnowledgeArcWindow,
+  cellSemanticKnowledgeRingVisible,
+} from './cellSemanticMorphologyOverlay.presentation';
 
 const DATA_COLORS = ['#67e8f9', '#fbbf24', '#c084fc', '#fb7185'] as const;
 const KNOWLEDGE_COLORS = {
@@ -47,10 +51,13 @@ function buildOverlayGeometry(
   overlay: CellSemanticMorphologyOverlay,
 ): {
   lineGeometry: THREE.BufferGeometry;
+  knowledgeGeometry: THREE.BufferGeometry;
   pointGeometry: THREE.BufferGeometry;
 } {
   const linePositions: number[] = [];
   const lineColors: number[] = [];
+  const knowledgePositions: number[] = [];
+  const knowledgeColors: number[] = [];
   const pointPositions: number[] = [];
   const pointColors: number[] = [];
   const boundaryKeys = new Set<string>();
@@ -89,16 +96,17 @@ function buildOverlayGeometry(
   // Occupied-byte explanation lives on its own planar arc: it can disappear
   // with enrichment without altering any canonical carrier or strand point.
   for (const segment of overlay.knowledgeSegments) {
-    if (segment.bytes <= 0 || segment.end <= segment.start) continue;
+    const window = cellSemanticKnowledgeArcWindow(segment);
+    if (!window) continue;
     const color = new THREE.Color(KNOWLEDGE_COLORS[segment.role]);
-    const span = segment.end - segment.start;
+    const span = window.end - window.start;
     const steps = Math.max(1, Math.ceil(span * 32));
     for (let index = 0; index < steps; index += 1) {
-      const a0 = (segment.start + span * index / steps) * Math.PI * 2;
-      const a1 = (segment.start + span * (index + 1) / steps) * Math.PI * 2;
+      const a0 = (window.start + span * index / steps) * Math.PI * 2;
+      const a1 = (window.start + span * (index + 1) / steps) * Math.PI * 2;
       pushSegment(
-        linePositions,
-        lineColors,
+        knowledgePositions,
+        knowledgeColors,
         [Math.cos(a0) * 0.9, Math.sin(a0) * 0.9, -0.62],
         [Math.cos(a1) * 0.9, Math.sin(a1) * 0.9, -0.62],
         color,
@@ -126,6 +134,16 @@ function buildOverlayGeometry(
     new THREE.Float32BufferAttribute(lineColors, 3),
   );
   lineGeometry.computeBoundingSphere();
+  const knowledgeGeometry = new THREE.BufferGeometry();
+  knowledgeGeometry.setAttribute(
+    'position',
+    new THREE.Float32BufferAttribute(knowledgePositions, 3),
+  );
+  knowledgeGeometry.setAttribute(
+    'color',
+    new THREE.Float32BufferAttribute(knowledgeColors, 3),
+  );
+  knowledgeGeometry.computeBoundingSphere();
   const pointGeometry = new THREE.BufferGeometry();
   pointGeometry.setAttribute(
     'position',
@@ -136,7 +154,7 @@ function buildOverlayGeometry(
     new THREE.Float32BufferAttribute(pointColors, 3),
   );
   pointGeometry.computeBoundingSphere();
-  return { lineGeometry, pointGeometry };
+  return { lineGeometry, knowledgeGeometry, pointGeometry };
 }
 
 /** Optional selected-portrait annotation layer. The base topology is read-only
@@ -156,11 +174,14 @@ export default function CellSemanticMorphologyOverlay({
   );
   useEffect(() => () => {
     built.lineGeometry.dispose();
+    built.knowledgeGeometry.dispose();
     built.pointGeometry.dispose();
   }, [built]);
   const lineCount = built.lineGeometry.getAttribute('position').count;
+  const knowledgeCount = built.knowledgeGeometry.getAttribute('position').count;
   const pointCount = built.pointGeometry.getAttribute('position').count;
   const opacity = focusField === 'data' || focusField === 'capacity' ? 0.96 : 0.58;
+  const showKnowledgeRing = cellSemanticKnowledgeRingVisible(focusField);
   const labels = [
     ...overlay.scriptLabels.map((label) => ({
       key: `script/${label.role}`,
@@ -186,6 +207,23 @@ export default function CellSemanticMorphologyOverlay({
             vertexColors
             transparent
             opacity={opacity}
+            blending={THREE.AdditiveBlending}
+            depthTest={false}
+            depthWrite={false}
+            toneMapped={false}
+          />
+        </lineSegments>
+      ) : null}
+      {showKnowledgeRing && knowledgeCount > 0 ? (
+        <lineSegments
+          name="semantic-occupied-byte-ring"
+          geometry={built.knowledgeGeometry}
+          frustumCulled={false}
+        >
+          <lineBasicMaterial
+            vertexColors
+            transparent
+            opacity={focusField === 'capacity' ? 0.9 : 0.72}
             blending={THREE.AdditiveBlending}
             depthTest={false}
             depthWrite={false}
