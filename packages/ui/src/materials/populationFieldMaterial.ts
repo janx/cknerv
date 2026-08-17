@@ -106,9 +106,10 @@ function mediumTint(): THREE.Color {
   );
 }
 
-/** Shared ray/slab intersection and the baked-law decode, in the slab's local
- *  frame. Both passes need the first; only the density pass needs the second,
- *  but keeping one text keeps the two from drifting apart. */
+/** Helpers both fragment programs are compiled with. The composite needs only
+ *  the hash; the density pass needs both. They share one text so the hash the
+ *  march dithers with and the hash the grain is built from cannot drift into
+ *  two different noises. */
 const SLAB_GLSL = /* glsl */ `
   // Analytic slab entry/exit. The direction is guarded away from exact zero
   // because GLSL does not promise IEEE infinities through min/max.
