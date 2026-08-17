@@ -201,6 +201,48 @@ export function helixSeedF64(id: number | bigint): [number, number, number] {
   return [x, y, z];
 }
 
+/** One point of the shared positional law, read directly instead of sampled.
+ *
+ * `helixSeedF64` rejection-samples `(x, z)` from {@link tissueField} and then
+ * folds `y` around a local fold with a local Gaussian thickness. The three
+ * numbers below are exactly the parameters of that fold — the same
+ * expressions, in the same order, from the same noise fields — so a consumer
+ * can evaluate the distribution a Cell WOULD be drawn from without drawing
+ * one. The volume density is then
+ *
+ * ```text
+ * rho(x, y, z) = density * exp(-0.5 * ((y - foldY) / thickness) ** 2)
+ * ```
+ *
+ * which is the analytic form of what the rejection sampler produces.
+ *
+ * This is a distribution, never a location: it carries no id, no time, and no
+ * universe seed, so it says where an unresolved Cell would be, never where a
+ * particular one is. It deliberately omits the {@link HALO_FRACTION}
+ * outliers, which scale `x, z` outward past the ellipse — a consumer of this
+ * law stops inside the drawn rim rather than extending it.
+ */
+export interface TissueSample {
+  /** Areal density in `[0, 1]` — the same value the sampler thresholds. */
+  density: number;
+  /** Centre of the local vertical fold, in galaxy-local y. */
+  foldY: number;
+  /** Gaussian half-thickness of the tissue at this point. */
+  thickness: number;
+}
+
+/** Evaluate the shared positional law at one `(x, z)`. See
+ *  {@link TissueSample}. Pure, static, and identical across universes. */
+export function tissueSampleAt(x: number, z: number): TissueSample {
+  const field = tissueField(x, z);
+  const verticalMass = 0.5
+    + 0.5 * valueNoise2(field.qx, field.qz, 23, 0x13198a2e);
+  const thickness = 2.1 + verticalMass * 3.4 + field.ridge * 1.8;
+  const foldY = valueNoise2(field.qx, field.qz, 31, 0x03707344) * 4.6
+    + valueNoise2(field.qx, field.qz, 13, 0xa4093822) * 1.7;
+  return { density: field.density, foldY, thickness };
+}
+
 /** f32 wire-boundary version of {@link helixSeedF64}. */
 export function helixSeed(id: number | bigint): [number, number, number] {
   const [x, y, z] = helixSeedF64(id);
