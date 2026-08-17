@@ -13,6 +13,10 @@ import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeome
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 import type { Cell, CellSemanticRecord } from '@cknerv/types';
 import { deriveCellVisual } from '../../derives/cellVisual.derive';
+import {
+  deriveMorphologyFrames,
+  type MorphologyPoint3,
+} from '../../derives/cellMorphology.derive';
 import { deriveCellSemanticMorphologyOverlay } from '../../derives/cellSemanticMorphology.derive';
 import {
   consensusMemoryPortraitLayerOpacity,
@@ -251,12 +255,7 @@ export default function ConsensusMemory({
     const pale = new THREE.Color(...CONSENSUS_BRAID_PALETTE.pale);
     const color = new THREE.Color();
     const centre = new THREE.Vector3();
-    const before = new THREE.Vector3();
-    const after = new THREE.Vector3();
-    const tangent = new THREE.Vector3();
     const normal = new THREE.Vector3();
-    const reference = new THREE.Vector3(0, 0, 1);
-    const fallback = new THREE.Vector3(0, 1, 0);
     const left0 = new THREE.Vector3();
     const right0 = new THREE.Vector3();
     const left1 = new THREE.Vector3();
@@ -265,32 +264,42 @@ export default function ConsensusMemory({
     const mid1 = new THREE.Vector3();
     const steps = 208;
     const width = topology.genome.data.ribbonWidth;
+    const ribbonSamples = curves.map((curve) => {
+      const points: MorphologyPoint3[] = Array.from(
+        { length: steps },
+        (_, index) => {
+          const point = curve.getPointAt(index / steps);
+          return [point.x, point.y, point.z];
+        },
+      );
+      points.push([...points[0]] as [number, number, number]);
+      return {
+        points,
+        frames: deriveMorphologyFrames(points),
+      };
+    });
 
     const frame = (
-      curve: THREE.CatmullRomCurve3,
-      t: number,
+      strand: number,
+      step: number,
       left: THREE.Vector3,
       right: THREE.Vector3,
     ) => {
-      const wrapped = ((t % 1) + 1) % 1;
-      curve.getPointAt(wrapped, centre);
-      curve.getPointAt(((t - 0.002) % 1 + 1) % 1, before);
-      curve.getPointAt(((t + 0.002) % 1 + 1) % 1, after);
-      tangent.subVectors(after, before).normalize();
-      normal.crossVectors(tangent, reference);
-      if (normal.lengthSq() < 0.01) normal.crossVectors(tangent, fallback);
-      normal.normalize().multiplyScalar(width);
+      const sample = ribbonSamples[strand];
+      const point = sample.points[step];
+      const transported = sample.frames[step].normal;
+      centre.set(point[0], point[1], point[2]);
+      normal.set(transported[0], transported[1], transported[2])
+        .multiplyScalar(width);
       left.copy(centre).add(normal);
       right.copy(centre).sub(normal);
     };
 
     for (let strand = 0; strand < count; strand += 1) {
-      const curve = curves[strand];
       for (let segment = 0; segment < steps; segment += 1) {
         const t0 = segment / steps;
-        const t1 = (segment + 1) / steps;
-        frame(curve, t0, left0, right0);
-        frame(curve, t1, left1, right1);
+        frame(strand, segment, left0, right0);
+        frame(strand, segment + 1, left1, right1);
         mid0.addVectors(left0, right0).multiplyScalar(0.5);
         mid1.addVectors(left1, right1).multiplyScalar(0.5);
         ribbonPositions.push(

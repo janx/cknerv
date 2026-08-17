@@ -378,7 +378,10 @@ function deriveLockMorphology(family: LockKind, seed: ShapeSeed): LockMorphology
     handedness,
     braidWord,
     radius: profile.radius * (0.92 + random() * 0.16),
-    closure: profile.closure + (random() > 0.82 ? 1 : 0),
+    // Closure count is a lock-family rhythm. Letting a seed add a full turn
+    // occasionally made otherwise related cells jump into a much busier
+    // silhouette and obscured that family resemblance.
+    closure: profile.closure,
     crossingSpacing: 0.72 + random() * 0.2,
     radialEmphasis: profile.radialEmphasis * (0.9 + random() * 0.2),
   };
@@ -659,12 +662,17 @@ function braidPerturbation(
   if (strand !== pair && strand !== pair + 1) return { angle: 0, radius: 0 };
   const side = strand === pair ? 1 : -1;
   const sign = Math.sign(generator) || 1;
-  const envelope = Math.sin(Math.PI * local);
+  // One broad C1 pulse reads as a deliberate crossing gesture. The former
+  // sin(2t) angular reversal and cos(2t) radial reversal packed several bends
+  // into every braid-word cell, making the strands look nervous rather than
+  // woven. sin² starts and ends with zero value and zero slope, so adjacent
+  // generators join without a visible kink while sign still carries the
+  // canonical over/under direction.
+  const pulse = Math.sin(Math.PI * local) ** 2;
   return {
-    angle: side * sign * Math.sin(CELL_MORPHOLOGY_TAU * local)
-      * envelope * (Math.PI / lock.strandCount) * lock.crossingSpacing,
-    radius: side * Math.cos(CELL_MORPHOLOGY_TAU * local)
-      * envelope * lock.radialEmphasis,
+    angle: side * sign * pulse
+      * (Math.PI / lock.strandCount) * lock.crossingSpacing * 0.68,
+    radius: side * sign * pulse * lock.radialEmphasis * 0.38,
   };
 }
 

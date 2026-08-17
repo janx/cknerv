@@ -60,6 +60,31 @@ function bitCount(value: number): number {
   return count;
 }
 
+function turningAngles(points: readonly (readonly number[])[]): number[] {
+  const unique = points.slice(0, -1);
+  return unique.map((point, index) => {
+    const previous = unique[(index - 1 + unique.length) % unique.length];
+    const next = unique[(index + 1) % unique.length];
+    const incoming = [
+      point[0] - previous[0],
+      point[1] - previous[1],
+      point[2] - previous[2],
+    ];
+    const outgoing = [
+      next[0] - point[0],
+      next[1] - point[1],
+      next[2] - point[2],
+    ];
+    const denominator = Math.hypot(...incoming) * Math.hypot(...outgoing);
+    if (denominator <= 1e-9) return 0;
+    const cosine = incoming.reduce(
+      (sum, component, axis) => sum + component * outgoing[axis],
+      0,
+    ) / denominator;
+    return Math.acos(Math.max(-1, Math.min(1, cosine)));
+  });
+}
+
 describe('Cell Morphology V2 grammar', () => {
   it('is deterministic, finite, closed, and inside production caps', () => {
     const left = deriveCellMorphologyTopology(cell());
@@ -145,6 +170,31 @@ describe('Cell Morphology V2 grammar', () => {
         expect(word[index + 1]).toBe(word[index]);
       }
     }
+  });
+
+  it('keeps lock crossings flowing without local tangent reversals', () => {
+    const families: LockKind[] = ['sighash', 'multisig', 'acp', 'omnilock', 'other'];
+    const angles = families.flatMap((family) => {
+      const topology = deriveCellMorphologyTopology(cell({
+        asset_kind: 'native',
+        type_shape_seed: null,
+        lock_kind: family,
+      }));
+      return topology.strands.flatMap((strand) => turningAngles(strand.points));
+    }).sort((left, right) => left - right);
+    const percentile95 = angles[Math.floor((angles.length - 1) * 0.95)];
+    expect(percentile95).toBeLessThan(0.62);
+    expect(angles.at(-1)).toBeLessThan(1.25);
+
+    const closures = [
+      [1, 2] as ShapeSeed,
+      [3, 4] as ShapeSeed,
+      [5, 6] as ShapeSeed,
+    ].map((seed) => deriveCellMorphologyGenome(cell({
+      lock_kind: 'omnilock',
+      lock_shape_seed: seed,
+    })).lock.closure);
+    expect(new Set(closures).size).toBe(1);
   });
 
   it('separates curated same-length data and leaves empty data clean', () => {
