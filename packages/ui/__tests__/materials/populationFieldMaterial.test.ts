@@ -46,11 +46,17 @@ describe('makePopulationDensityMaterial', () => {
   it('evaluates the analytic volume the Cell sampler implies', () => {
     const material = makePopulationDensityMaterial();
 
-    // rho = density * exp(-0.5 * ((y - foldY) / thickness)^2), then
-    // alpha = 1 - exp(-tau). Both halves have to be in the shader, or the
-    // medium stops being the same law the Cells are placed by.
+    // rho = density * N(y; foldY, thickness), then alpha = 1 - exp(-tau).
+    // All three parts have to be in the shader, or the medium stops being the
+    // same law the Cells are placed by.
     expect(material.fragmentShader).toContain('exp(-0.5 * dy * dy)');
     expect(material.fragmentShader).toContain('1.0 - exp(-tau');
+    // The Gaussian's normalization is the part that is easy to drop and hard
+    // to see: without it a column integrates to density * thickness, so the
+    // medium overstates itself by up to 3.5x exactly where the tissue is
+    // thickest — which is also where its own ridge term makes it densest.
+    expect(material.fragmentShader)
+      .toContain('(density / safeThickness) * exp(-0.5 * dy * dy)');
   });
 
   it('stays within the eight-step march budget', () => {

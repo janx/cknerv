@@ -211,10 +211,17 @@ export function helixSeedF64(id: number | bigint): [number, number, number] {
  * one. The volume density is then
  *
  * ```text
- * rho(x, y, z) = density * exp(-0.5 * ((y - foldY) / thickness) ** 2)
+ * rho(x, y, z) = density * N(y; foldY, thickness)
+ *              = density * exp(-0.5 * ((y - foldY) / thickness) ** 2)
+ *                        / (thickness * sqrt(2 * PI))
  * ```
  *
- * which is the analytic form of what the rejection sampler produces.
+ * which is the analytic form of what the rejection sampler produces: `y` is
+ * drawn as `foldY + gauss() * thickness`, so it is normally distributed about
+ * the fold, and a vertical column of that volume integrates back to `density`
+ * itself. The `1 / thickness` is load-bearing — without it a column would
+ * integrate to `density * thickness` and the field would claim more matter
+ * wherever the tissue happens to be thick.
  *
  * This is a distribution, never a location: it carries no id, no time, and no
  * universe seed, so it says where an unresolved Cell would be, never where a

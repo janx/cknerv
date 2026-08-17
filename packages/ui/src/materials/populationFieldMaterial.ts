@@ -48,12 +48,19 @@ export const POPULATION_FIELD_SLAB_HALF_Y = 28;
  * Extinction per unit of integrated density, before `gain`.
  *
  * Optical depth is `gain * EXTINCTION * ∫ρ dl`, and alpha is `1 - exp(-τ)`.
- * Through the thick ridges of the field a vertical ray integrates roughly 1.5
- * density-units, so at the mainnet gain of 0.58 this lands the densest part of
- * the medium near alpha 0.35 — clearly a population, still unmistakably behind
- * the Cells rather than instead of them.
+ * With the Gaussian normalized, a VERTICAL column integrates back to the areal
+ * density times √(2π) ≈ 2.51, and the production camera sits about 24° above
+ * the Cell plane, so a real ray travels roughly 2.44 times that — call it 6.1
+ * per unit of areal density. At the measured mainnet gain of 0.58 that puts
+ * the densest tissue (areal density ≈ 0.8) near alpha 0.45 and the ordinary
+ * mid-field (≈ 0.25) near 0.17: clearly a population, still unmistakably
+ * behind the Cells rather than instead of them.
+ *
+ * This is the live-tuning lever for the medium's presence. Nothing else here
+ * should be reached for first — `gain` is calibration and the density term is
+ * the chain's own law, but this number is taste.
  */
-export const POPULATION_FIELD_EXTINCTION = 0.55;
+export const POPULATION_FIELD_EXTINCTION = 0.21;
 
 /** Screen-space grain period, in DEVICE pixels. Below 1 the grain aliases
  *  into the pixel grid; above ~2.5 it starts reading as texture rather than
@@ -225,8 +232,18 @@ export function makePopulationDensityMaterial(): THREE.ShaderMaterial {
           float density = law.r;
           float foldY = law.g * (2.0 * uFoldRange) - uFoldRange;
           float thickness = law.b * uThicknessSpan + uThicknessMin;
-          float dy = (p.y - foldY) / max(thickness, 1e-3);
-          tau += density * exp(-0.5 * dy * dy) * stepLen;
+          float safeThickness = max(thickness, 1e-3);
+          float dy = (p.y - foldY) / safeThickness;
+          // The 1 / thickness is the Gaussian's NORMALIZATION, and dropping it
+          // is not a scale error that a constant absorbs: it makes a column's
+          // integrated density proportional to how thick the tissue is there.
+          // helixSeedF64 draws y ~ N(foldY, thickness), so a column has to
+          // integrate back to the areal density it was sampled from, whatever
+          // the local thickness. Thickness spans 2.1 to 7.3 and is driven by
+          // the same ridge term as the density, so without this the medium
+          // overstates its densest regions by up to 3.5x — and the shape it
+          // showed would no longer be the law the Cells are placed by.
+          tau += (density / safeThickness) * exp(-0.5 * dy * dy) * stepLen;
         }
 
         // Alpha reaches the screen through the same law it accumulates by.
