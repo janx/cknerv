@@ -55,7 +55,7 @@ export const POPULATION_FIELD_POINT_SIZE = 0.72;
 export const POPULATION_FIELD_SIGMA = 0.16;
 
 /**
- * The layer's brightness ceiling, multiplied by the amount curve's `gain`.
+ * The layer's brightness ceiling, reached only at an amount curve of 1.
  *
  * The blend below is a bounded accumulation whose fixed point is the emitted
  * alpha itself, so this number IS the brightness a fully saturated patch of
@@ -64,10 +64,10 @@ export const POPULATION_FIELD_SIGMA = 0.16;
  * density, on any profile. "Peak under a Cell core" is therefore a property of
  * the blend rather than a value someone dialled in.
  *
- * With the measured amount curve this puts mainnet chain scope (gain 0.58) at
- * a ceiling of 0.55 and testnet (0.89) at 0.85, which is the profile
- * difference the amount curve exists to carry; retained scope (0.17) lands at
- * 0.16 — faint, and honestly under-claiming, exactly as designed.
+ * See {@link populationEmissionForGain} for what the measured profiles reach:
+ * 0.39 at retained scope, 0.72 at mainnet chain scope, 0.90 at testnet. The
+ * ceiling itself needs a ratio past 4,000 unresolved per resolved Cell, which
+ * no profile we run comes near.
  *
  * This is the one level knob. If the layer needs to be brighter or dimmer
  * after a live look, it is the number to move.
@@ -90,6 +90,32 @@ export const POPULATION_FIELD_MIN_POINT_PX = 1.4;
  *  individually. Desaturating toward grey is what makes a layer read as fog
  *  and is equally forbidden. */
 export const POPULATION_FIELD_COLOR = CELL_GALAXY_PALETTE.tissueRose;
+
+/**
+ * The emitted alpha for one amount-curve `gain`.
+ *
+ * The amount curve says `gain` scales how much of the swarm is LIT, and the
+ * blend below squares the emitted alpha for an isolated point — a point
+ * contributes `colour * a * a` and only a saturated patch converges to `a`
+ * itself. Feeding `gain` straight into `a` therefore made rendered light go as
+ * roughly the SQUARE of the amount, which collapses the low end: measured at
+ * the production camera, retained scope (gain 0.17) lit 485 of the field's
+ * 7,900 cells and landed at a mean luminance of 0.006 — indistinguishable
+ * from absence, which the design names as its default failure.
+ *
+ * The square root undoes the blend's square, so light tracks the amount curve
+ * instead of its square. The same measurement then gives 5,343 cells and
+ * 0.017 for retained, 0.046 for mainnet chain scope, and 0.065 for testnet —
+ * a visible field at every provable scope, with the profile difference the
+ * curve exists to carry still intact.
+ *
+ * The ceiling is unmoved: `gain` is bounded by 1, so this is bounded by
+ * {@link POPULATION_FIELD_EMISSION}.
+ */
+export function populationEmissionForGain(gain: number): number {
+  if (!Number.isFinite(gain) || gain <= 0) return 0;
+  return Math.sqrt(Math.min(1, gain)) * POPULATION_FIELD_EMISSION;
+}
 
 /** Sprite footprint in drawing-buffer pixels, before the minimum is applied.
  *  The Cells' own law, on the Cells' own constant, so the halo and the bodies
@@ -121,8 +147,8 @@ export interface PopulationPointUniforms {
   uPixelRatio: { value: number };
   uSize: { value: number };
   uMinPointPx: { value: number };
-  /** `gain * POPULATION_FIELD_EMISSION`. Zero means the stage covers its
-   *  scope and there is nothing unresolved to state. */
+  /** {@link populationEmissionForGain} of the amount curve. Zero means the
+   *  stage covers its scope and there is nothing unresolved to state. */
   uEmission: { value: number };
   uColor: { value: THREE.Color };
 }

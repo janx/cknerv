@@ -5,6 +5,7 @@ import { makeCellHybridMaterial } from '../../src/materials/cellHybridMaterial';
 import {
   makePopulationPointMaterial,
   populationPointEnergy,
+  populationEmissionForGain,
   populationPointFootprint,
   POPULATION_FIELD_COLOR,
   POPULATION_FIELD_EMISSION,
@@ -129,5 +130,36 @@ describe('the sprite footprint', () => {
     expect(populationPointEnergy(0.7, 1.4)).toBeCloseTo(0.25, 6);
     // Never above one: a sprite the minimum did not touch is unmodified.
     expect(populationPointEnergy(8, 1.4)).toBe(1);
+  });
+});
+
+describe('the amount curve reaches the picture undistorted', () => {
+  it('is silent when the stage covers its scope', () => {
+    expect(populationEmissionForGain(0)).toBe(0);
+    expect(populationEmissionForGain(-1)).toBe(0);
+    expect(populationEmissionForGain(Number.NaN)).toBe(0);
+  });
+
+  it('undoes the blend square so light tracks the amount, not its square', () => {
+    // An isolated point contributes `colour * a * a`; only a saturated patch
+    // converges to `a`. Feeding gain straight into `a` made rendered light go
+    // as the square of the amount, and at retained scope (gain 0.17) that lit
+    // 485 of the field's 7,900 cells — indistinguishable from absence, which
+    // is this layer's named default failure.
+    const retained = populationEmissionForGain(0.17);
+    const mainnet = populationEmissionForGain(0.58);
+    expect((retained * retained) / (mainnet * mainnet)).toBeCloseTo(0.17 / 0.58, 6);
+  });
+
+  it('never passes its ceiling, whatever the amount', () => {
+    expect(populationEmissionForGain(1)).toBeCloseTo(POPULATION_FIELD_EMISSION, 6);
+    expect(populationEmissionForGain(50)).toBeCloseTo(POPULATION_FIELD_EMISSION, 6);
+  });
+
+  it('keeps the two profiles apart', () => {
+    // Mainnet R is 123 and testnet 1,574; the curve exists to make those two
+    // read differently, and a mapping that flattened them would erase it.
+    expect(populationEmissionForGain(0.89))
+      .toBeGreaterThan(populationEmissionForGain(0.58) * 1.15);
   });
 });

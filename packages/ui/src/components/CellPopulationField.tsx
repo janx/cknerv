@@ -14,7 +14,7 @@ import type {
 } from '../geometry/populationField.worker';
 import {
   makePopulationPointMaterial,
-  POPULATION_FIELD_EMISSION,
+  populationEmissionForGain,
 } from '../materials/populationFieldMaterial';
 import {
   pointSpriteDeviceViewportHeight,
@@ -151,8 +151,7 @@ export default function CellPopulationField({
       state.size.height,
       pixelRatio,
     );
-    material.uniforms.uEmission.value = Math.max(0, gain)
-      * POPULATION_FIELD_EMISSION;
+    material.uniforms.uEmission.value = populationEmissionForGain(gain);
   });
 
   if (!geometry || !wanted) return null;
