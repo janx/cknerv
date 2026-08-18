@@ -214,6 +214,66 @@ export const POPULATION_FIELD_SIGHTLINE_HIGH = 1.0;
 export const POPULATION_FIELD_SIGHTLINE_LOW = 0.12;
 
 /**
+ * How far the halo is lifted inside the transition band — §5.2's brightness
+ * bridge.
+ *
+ * The shapes interlock now, and the boundary is no longer geometric. What was
+ * left separating the two regions is VALUE, which is what the eye segments on
+ * first. Measured on the production camera with the shipped bake, mainnet's
+ * gain of 0.58 and the real Cell sprite's own light: walking outward, total
+ * areal luminance runs 0.113 through the bulge, falls to **0.076 at r ≈ 0.82**
+ * — a 28% trough against its own shoulders — then rises to 0.128 in the halo.
+ * That trough is the band where the Cells have thinned and the halo has not
+ * yet arrived (§6.1 test 5), and a dark band between two lit regions is a line
+ * drawn between them however well the shapes interdigitate.
+ *
+ * The form is `(1 - supp) * (1 + BRIDGE * supp)`, which has a closed form
+ * worth stating because both halves of it are load-bearing:
+ *
+ *     peak factor = (BRIDGE + 1)^2 / (4 * BRIDGE)   at   supp = (BRIDGE - 1) / (2 * BRIDGE)
+ *
+ * so the lift is 1.125x at supp = 0.25 — inside the band, never at its edges —
+ * and the factor returns to exactly 1 at supp = 0 and exactly 0 at supp = 1.
+ * **Rule 9a is untouched by construction**: at full suppression this multiplies
+ * a zero, at every gain and every optical depth.
+ *
+ * **Why 2.** The bridge buys the seam and pays for it on the rim Cells, and
+ * both sides are measurable. Three columns, all on the production camera:
+ * the trough against its own shoulders, the halo's share of the local Cell
+ * luminance where the two touch (r 0.72–0.92), and — the one that binds — how
+ * many of 2,000 drawn Cells end up carrying more than 0.30 of halo light.
+ *
+ * | BRIDGE | trough | halo/Cell at the touch | Cells > 0.30 | p99 Cell |
+ * |-------:|-------:|-----------------------:|-------------:|---------:|
+ * | 0 (accepted build) | 27.7% | 0.38x | 40 | 0.385 |
+ * | 1 | 21.6% | 0.49x | 60 | 0.425 |
+ * | 1.5 | 20.1% | 0.54x | 67 | 0.434 |
+ * | **2** | **18.7%** | **0.58x** | **75** | **0.466** |
+ * | 2.5 | 17.4% | 0.63x | 86 | 0.503 |
+ * | 3.5 | 15.3% | 0.71x | — | — |
+ *
+ * The band the bridge lifts is exactly where the thinning rim Cells are, so
+ * lifting it costs some of them contrast. **The bound is the elliptical
+ * suppression that was judged live and accepted: its 99th-percentile Cell sat
+ * at 0.4925, and 2 is the largest gain that keeps the worst-affected Cells
+ * under it.** At 2.5 they pass it. That is the constraint, not taste — and it
+ * is asserted in §6.1 test 1 rather than written down here.
+ *
+ * Four Cells in five still carry exactly nothing, unchanged.
+ *
+ * What it buys: the trough closes from 27.7% to 18.7%, and in the band where
+ * the two touch the halo goes from **0.38x to 0.58x** the local Cell layer's
+ * own areal luminance — approaching it, as §5.2 asks, and still under it. The
+ * brightest speck the band can produce lands at luma 0.477 against a Cell
+ * core's 1.284, so §11's separation is nowhere near being tested.
+ *
+ * The prototype's 2.6 was derived from a mock with a flat-dot core, which has
+ * no rim Cells to lose contrast; this is derived against `cellHybridMaterial`'s
+ * own emission, and the difference between 2.6 and 2 is that cost.
+ */
+export const POPULATION_FIELD_SEAM_BRIDGE = 2;
+
+/**
  * How much coarser the swarm's grain is at the inner edge of the crossfade,
  * as a fraction of its normal screen scale — §5.2.
  *
@@ -270,8 +330,24 @@ export function populationResolvedSuppression(
 }
 
 /**
+ * §5.2's brightness bridge, as a factor on the crossfade — the shader
+ * evaluates exactly this.
+ *
+ * Peaks at `(BRIDGE - 1) / (2 * BRIDGE)`, reaching `(BRIDGE + 1)^2 / (4 *
+ * BRIDGE)`; exactly 1 where nothing is suppressed and exactly 0 where
+ * everything is.
+ *
+ * @param suppression how much of the halo the drawn Cells have taken, in [0, 1]
+ */
+export function populationSeamBridge(suppression: number): number {
+  const supp = Math.max(0, Math.min(1, suppression));
+  return (1 - supp) * (1 + POPULATION_FIELD_SEAM_BRIDGE * supp);
+}
+
+/**
  * Unresolved optical depth: the population under a ray, minus the part of it
- * already drawn. The shader evaluates exactly this expression.
+ * already drawn, lifted across the band where the two meet. The shader
+ * evaluates exactly this expression.
  *
  * The subtraction is on OPTICAL DEPTH and not on emission, and the difference
  * is visible. `1 - exp(-tau)` is concave, so scaling the light after
@@ -284,7 +360,11 @@ export function populationResolvedSuppression(
  * Past either upper threshold the suppression is exactly 1 and this is exactly
  * zero, at any optical depth. Below both lower thresholds it is exactly `tau`.
  * In between it is a crossfade, and that band is the only place the two
- * populations can meet.
+ * populations can meet — so the band is also where §5.2's bridge lifts it, to
+ * a bounded 1.125x of `tau` at the middle of the ramp. That overshoot is the
+ * one place the crossfade states more population than the unsuppressed field
+ * does, and it is the price of closing the trough the crossfade otherwise
+ * leaves; the HUD's counts and the layer's `gain` are untouched by it.
  *
  * @param tau       optical depth of the whole body along the ray
  * @param coverage  resolved coverage where the ray crosses the fold plane
@@ -295,7 +375,9 @@ export function populationUnresolvedDepth(
   coverage: number,
   sightline: number,
 ): number {
-  return tau * (1 - populationResolvedSuppression(coverage, sightline));
+  return tau * populationSeamBridge(
+    populationResolvedSuppression(coverage, sightline),
+  );
 }
 
 /**
@@ -760,6 +842,7 @@ export interface PopulationDensityUniforms {
   uCoreHigh: { value: number };
   uSightLow: { value: number };
   uSightHigh: { value: number };
+  uBridge: { value: number };
   uFoldRange: { value: number };
   uThicknessMin: { value: number };
   uThicknessSpan: { value: number };
@@ -786,6 +869,7 @@ export function makePopulationDensityMaterial(): THREE.ShaderMaterial {
       uCoreHigh: { value: POPULATION_FIELD_CORE_HIGH },
       uSightLow: { value: POPULATION_FIELD_SIGHTLINE_LOW },
       uSightHigh: { value: POPULATION_FIELD_SIGHTLINE_HIGH },
+      uBridge: { value: POPULATION_FIELD_SEAM_BRIDGE },
       uFoldRange: { value: TISSUE_BAKE_FOLD_Y_RANGE },
       uThicknessMin: { value: TISSUE_BAKE_THICKNESS_MIN },
       uThicknessSpan: {
@@ -817,6 +901,7 @@ export function makePopulationDensityMaterial(): THREE.ShaderMaterial {
       uniform float uCoreHigh;
       uniform float uSightLow;
       uniform float uSightHigh;
+      uniform float uBridge;
       uniform float uFoldRange;
       uniform float uThicknessMin;
       uniform float uThicknessSpan;
@@ -919,6 +1004,21 @@ export function makePopulationDensityMaterial(): THREE.ShaderMaterial {
           smoothstep(uCoreLow, uCoreHigh, foldCoverage),
           smoothstep(uSightLow, uSightHigh, tauResolved));
         float unresolved = tau * (1.0 - supp);
+        // §5.2's brightness bridge. The crossfade alone leaves a measured 28%
+        // luminance trough at r ~ 0.8, where the Cells have thinned and the
+        // halo has not yet arrived, and a trough between two lit regions is a
+        // line drawn between them. This lifts the halo INSIDE the band and
+        // settles it outward.
+        //
+        // It multiplies the depth and not the light, for rule 9a's own reason:
+        // scaling after the exponential is what leaves a dark seam. Because it
+        // lives inside the exponential it cannot raise the layer's ceiling at
+        // all — the lit fraction is still below one at any gain — so §11's
+        // bound on peak speck brightness is untouched by construction.
+        //
+        // The zero survives: at full suppression this multiplies a term that
+        // is already exactly zero.
+        unresolved *= 1.0 + uBridge * supp;
 
         // The population reaches the screen through the same law it
         // accumulates by. This number is not an opacity — the composite reads

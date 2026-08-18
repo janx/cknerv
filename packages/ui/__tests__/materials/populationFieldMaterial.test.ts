@@ -18,7 +18,9 @@ import {
   POPULATION_FIELD_NODE_GAIN,
   POPULATION_FIELD_NODE_JUNCTION,
   POPULATION_FIELD_NODE_SHARE,
+  POPULATION_FIELD_SEAM_BRIDGE,
   POPULATION_FIELD_SEAM_COARSENING,
+  populationSeamBridge,
   POPULATION_FIELD_SIGHTLINE_HIGH,
   POPULATION_FIELD_SIGHTLINE_LOW,
   POPULATION_FIELD_SLAB_HALF_Y,
@@ -170,6 +172,9 @@ interface RayHalo {
   lit: number;
   /** Suppression from the elliptical share, on the same ray. */
   litElliptical: number;
+  /** The same crossfade WITHOUT §5.2's bridge — the build accepted on
+   *  b9d19bf, and the bar the bridge's cost is measured against. */
+  litUnbridged: number;
   /** Warped radius of the point of the organism this ray looks at. */
   foldRadius: number;
 }
@@ -237,10 +242,13 @@ function marchHalo(px: number, py: number): RayHalo | null {
 
   const depth = POPULATION_FIELD_SWARM_DENSITY * HALO_GAIN;
   const unresolved = populationUnresolvedDepth(tau, coverage, tauResolved);
+  const unbridged = tau
+    * (1 - populationResolvedSuppression(coverage, tauResolved));
   const elliptical = tau * (1 - ellipticalSuppression(tau, tauResolved));
   return {
     lit: 1 - Math.exp(-unresolved * depth),
     litElliptical: 1 - Math.exp(-elliptical * depth),
+    litUnbridged: 1 - Math.exp(-unbridged * depth),
     foldRadius: Math.hypot(foldX / FIELD_HALF_X, foldZ / FIELD_HALF_Z),
   };
 }
@@ -341,19 +349,60 @@ describe('rule 9a: the halo cannot reach the addressable Cells', () => {
     expect(covered).toBe(0);
     expect(sighted).toBe(0);
     expect(populationUnresolvedDepth(tau, 1, 3)).toBe(0);
-    // And each is monotone on its own axis: more evidence of Cells, less halo.
-    let previous = tau + 1;
+    // And each SUPPRESSES monotonically on its own axis: more evidence of
+    // Cells, more suppression, on both measures independently. The depth
+    // itself is no longer monotone in either — §5.2's bridge lifts the middle
+    // of the band on purpose — so the monotone thing to test is the measure,
+    // and the bridge's own shape is tested below.
+    let previous = -1;
     for (const coverage of [0, 0.04, 0.07, 0.1, 0.13, 0.15]) {
-      const depth = populationUnresolvedDepth(tau, coverage, 0);
-      expect(depth).toBeLessThanOrEqual(previous);
-      previous = depth;
+      const supp = populationResolvedSuppression(coverage, 0);
+      expect(supp).toBeGreaterThanOrEqual(previous);
+      previous = supp;
     }
-    previous = tau + 1;
+    previous = -1;
     for (const sightline of [0, 0.2, 0.4, 0.6, 0.8, 1]) {
-      const depth = populationUnresolvedDepth(tau, 0, sightline);
-      expect(depth).toBeLessThanOrEqual(previous);
-      previous = depth;
+      const supp = populationResolvedSuppression(0, sightline);
+      expect(supp).toBeGreaterThanOrEqual(previous);
+      previous = supp;
     }
+  });
+
+  it('§5.2: bridges the value step without ever reaching over the Cells', () => {
+    // The bridge multiplies a term that is ALREADY ZERO wherever the Cells
+    // are, so the guarantee the whole relocation rests on cannot be spent by
+    // it. This is the assertion that says so directly, at every gain anyone
+    // might reach for.
+    for (const tau of [0.001, 0.4, 3, 400]) {
+      expect(populationUnresolvedDepth(tau, 1, 0)).toBe(0);
+      expect(populationUnresolvedDepth(tau, 0, 3)).toBe(0);
+    }
+    expect(populationSeamBridge(1)).toBe(0);
+    // Unsuppressed halo keeps exactly its own level: the bridge is a lift
+    // INSIDE the band, not a brightness knob on the layer.
+    expect(populationSeamBridge(0)).toBe(1);
+
+    // The peak is interior, and both its height and its place are closed
+    // forms rather than measurements — which is what makes the constant
+    // derivable rather than dialled.
+    const b = POPULATION_FIELD_SEAM_BRIDGE;
+    const peakAt = (b - 1) / (2 * b);
+    const peak = (b + 1) ** 2 / (4 * b);
+    expect(peakAt).toBeGreaterThan(0);
+    expect(peakAt).toBeLessThan(1);
+    expect(populationSeamBridge(peakAt)).toBeCloseTo(peak, 12);
+    for (const supp of [0, 0.1, 0.2, 0.4, 0.6, 0.8, 1]) {
+      expect(populationSeamBridge(supp)).toBeLessThanOrEqual(peak + 1e-12);
+    }
+    // Rises to the peak, then settles — the shape §5.2 asks for.
+    expect(populationSeamBridge(peakAt / 2)).toBeGreaterThan(1);
+    expect(populationSeamBridge((1 + peakAt) / 2))
+      .toBeLessThan(populationSeamBridge(peakAt));
+
+    // Bounded. An unbounded lift would eventually make the halo brighter than
+    // the body it continues, which is §6.1 test 4's failure.
+    expect(peak).toBeLessThan(1.5);
+    expect(b).toBeGreaterThan(1);
   });
 
   it('crossfades between the thresholds instead of switching', () => {
@@ -369,14 +418,23 @@ describe('rule 9a: the halo cannot reach the addressable Cells', () => {
       .toBeLessThan(POPULATION_FIELD_SIGHTLINE_HIGH);
 
     const tau = 1.4;
-    let previous = 0;
+    let previous = 1.1;
+    const ceiling = tau * (POPULATION_FIELD_SEAM_BRIDGE + 1) ** 2
+      / (4 * POPULATION_FIELD_SEAM_BRIDGE);
     for (const coverage of [0.13, 0.11, 0.09, 0.07, 0.05]) {
-      const unresolved = populationUnresolvedDepth(tau, coverage, 0);
-      // Strictly rising as the coverage falls — the crossfade is a ramp, and
-      // every one of these sits between the thresholds.
-      expect(unresolved).toBeGreaterThan(previous);
-      expect(unresolved).toBeLessThan(tau);
-      previous = unresolved;
+      // The crossfade is a RAMP and not a switch: strictly falling with the
+      // coverage, and every one of these sits between the thresholds. The
+      // ramp is tested on the suppression itself rather than on the depth,
+      // because §5.2's bridge deliberately makes the depth rise and then
+      // settle across the same band.
+      const supp = populationResolvedSuppression(coverage, 0);
+      expect(supp).toBeLessThan(previous);
+      expect(supp).toBeGreaterThan(0);
+      previous = supp;
+      // And the depth it produces never leaves the bridge's own closed-form
+      // ceiling, wherever in the band it is read.
+      expect(populationUnresolvedDepth(tau, coverage, 0))
+        .toBeLessThanOrEqual(ceiling);
     }
     // And it is smooth at both ends: a smoothstep has zero slope there, so
     // neither threshold shows up as a crease in the picture.
@@ -417,6 +475,14 @@ describe('rule 9a: the halo cannot reach the addressable Cells', () => {
     expect(shader).toContain('float unresolved = tau * (1.0 - supp);');
     expect(shader.indexOf('float unresolved ='))
       .toBeLessThan(shader.indexOf('1.0 - exp(-unresolved'));
+    // §5.2's bridge sits on the same side of the exponential, and for the same
+    // reason: a lift applied to the light after saturation would leave exactly
+    // the seam this exists to close.
+    expect(shader).toContain('unresolved *= 1.0 + uBridge * supp;');
+    expect(shader.indexOf('unresolved *= 1.0 + uBridge'))
+      .toBeLessThan(shader.indexOf('1.0 - exp(-unresolved'));
+    expect(makePopulationDensityMaterial().uniforms.uBridge.value)
+      .toBe(POPULATION_FIELD_SEAM_BRIDGE);
   });
 
   it('reads the fold plane as well as the ray, and never their ratio', () => {
@@ -484,14 +550,17 @@ describe('rule 9a: the halo cannot reach the addressable Cells', () => {
 
     const mine: number[] = [];
     const ellipse: number[] = [];
+    const unbridged: number[] = [];
     for (const { px, py } of pixels) {
       const halo = marchHalo(px, py);
       if (!halo) continue;
       mine.push(expectedHalo(halo.lit));
       ellipse.push(expectedHalo(halo.litElliptical));
+      unbridged.push(expectedHalo(halo.litUnbridged));
     }
     mine.sort((a, b) => a - b);
     ellipse.sort((a, b) => a - b);
+    unbridged.sort((a, b) => a - b);
     const at = (values: number[], p: number) =>
       values[Math.floor(values.length * p)];
     const over = (values: number[], t: number) =>
@@ -507,10 +576,25 @@ describe('rule 9a: the halo cannot reach the addressable Cells', () => {
     // the Cells the ellipse left sitting in the fully lit halo. What it gives
     // back is a faint dusting on a few more rim Cells — around a percent of
     // them, at a tenth of that level — which is the interdigitation itself.
+    // The crossfade alone is still strictly better than the ellipse at every
+    // level — it takes light off the Cells the ellipse left sitting in the
+    // fully lit halo, and gives back a faint dusting on a few more rim Cells.
     for (const level of [0.10, 0.20, 0.30]) {
-      expect(over(mine, level)).toBeLessThanOrEqual(over(ellipse, level));
+      expect(over(unbridged, level)).toBeLessThanOrEqual(over(ellipse, level));
     }
-    expect(at(mine, 0.95)).toBeLessThanOrEqual(at(ellipse, 0.95));
+
+    // §5.2's bridge spends part of that margin, and this is where it spends
+    // it: the band it lifts is exactly where the thinning rim Cells are, so
+    // some of them do take halo light they did not take before. Measured on
+    // 2,000 drawn Cells: 40 -> 75 above 0.30, and the 95th percentile Cell
+    // goes 0.11 -> 0.25. That is a real cost and it is the reason the gain is
+    // 2 and not the prototype's 2.6.
+    expect(over(mine, 0.30)).toBeLessThanOrEqual(over(unbridged, 0.30) * 2);
+
+    // The BOUND that sets the gain: the worst-affected Cells stay no worse
+    // than they were under the elliptical suppression, which was judged live
+    // and accepted. Past a gain of about 2 this is the assertion that breaks
+    // first, which is what makes it the constraint rather than taste.
     expect(at(mine, 0.99)).toBeLessThanOrEqual(at(ellipse, 0.99));
     // Not a vacuous comparison: the ellipse really does light Cells.
     expect(over(ellipse, 0.20)).toBeGreaterThan(20);
