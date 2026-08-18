@@ -445,6 +445,84 @@ export const POPULATION_FIELD_FIBRE_FLOOR = 0.22;
 export const POPULATION_FIELD_FIBRE_SPAN = 2.3;
 
 /**
+ * How often a lit speck belongs to the brighter sub-population — §5.1's points
+ * ON the filaments.
+ *
+ * The fibre alone renders the *connections*. The population is Cells, and the
+ * core's language is bright points on filaments, so the halo has to be points
+ * on filaments too or it stays a different material however well the strands
+ * are drawn.
+ *
+ * `chance = FLOOR + JUNCTION * fibre²`. Squaring is what puts the points at
+ * the junctions: the fibre is `0.62·a + 0.38·b` over the two ridged octaves,
+ * so its square carries a `2·0.62·0.38·ab` cross term that peaks only where
+ * BOTH octaves do. Measured over the halo domain weighted by the population
+ * under it, that lands the share at **6.2 % of lit specks**, rising to 15.3 %
+ * on the strongest junctions — sparse, which is the point.
+ *
+ * This is a MASK THRESHOLD and that is why it may read the fibre at all.
+ * §5.1's line holds: only the thresholds see the fibre, and speck brightness,
+ * the continuum and the rim fade all keep reading the unclustered population.
+ * The node's own brightness below is a constant, so a strand still gathers and
+ * marks specks without a single photon of its own.
+ */
+export const POPULATION_FIELD_NODE_CHANCE = 0.055;
+export const POPULATION_FIELD_NODE_JUNCTION = 0.10;
+
+/** The measured population-weighted mean of the chance above, over the halo
+ *  domain. Only {@link POPULATION_FIELD_NODE_BALANCE} reads it, and only to
+ *  keep the sub-population from changing how much light the layer emits.
+ *  The acceptance test re-measures it against the real field on every run, so
+ *  moving either chance constant without re-deriving this fails there rather
+ *  than silently changing the layer's brightness. */
+export const POPULATION_FIELD_NODE_SHARE = 0.0614;
+
+/**
+ * How much brighter a node speck is than an ordinary one.
+ *
+ * **The ceiling here is the red channel, not taste.** The tint is `tissueRose`
+ * (1.0, 0.40, 0.44) and {@link POPULATION_FIELD_EMISSION_PEAK} is 0.85, so the
+ * largest emission that reaches the framebuffer without clamping red is
+ * 1 / 0.85 = 1.176 — and the swarm's brightest speck already sat at 1.12, 95 %
+ * of the way there. Anything brighter clamps red while green and blue keep
+ * climbing, which drags the speck toward white; and white is precisely what
+ * makes a point in the halo look like a resolved Cell core. The prototype's
+ * 1.5–2.6x was measured against an 8-bit mock where exactly that clamping was
+ * doing the work.
+ *
+ * So the multiplier is derived from where whitening starts to matter. At the
+ * brightest a speck can be, mean-balanced:
+ *
+ * | gain | displayed rgb | luma | / Cell core | saturation | / core |
+ * |-----:|---------------|-----:|------------:|-----------:|-------:|
+ * | 1.3 | (1.00,0.47,0.51) | 0.582 |   0.706 |      0.535 |  2.02x |
+ * | **1.5** | **(1.00,0.52,0.57)** | **0.626** | **0.759** | **0.480** | **1.81x** |
+ * | 1.6 | (1.00,0.55,0.60) | 0.647 |   0.785 |      0.453 |  1.71x |
+ * | 1.8 | (1.00,0.60,0.66) | 0.689 |   0.836 |      0.400 |  1.51x |
+ * | 2.0 | (1.00,0.65,0.72) | 0.730 |   0.885 |      0.349 |  1.32x |
+ *
+ * 1.5 is the largest gain at which a node stays more than **1.8x as saturated**
+ * as a Cell core — unmistakably the body rose rather than a near-white core —
+ * and it keeps a 1.32x margin on luminance underneath that. Red is unclamped
+ * across the whole halo except its densest quarter (`amount` above 0.77), so
+ * the whitening the table shows is a worst case rather than the usual state.
+ */
+export const POPULATION_FIELD_NODE_GAIN = 1.5;
+
+/**
+ * What every speck's brightness is scaled by so the sub-population is a
+ * REDISTRIBUTION rather than more light.
+ *
+ * Derived, not chosen: `1 / (1 + share · (gain − 1))` is exactly the factor
+ * that holds `E[brightness]` where it was, so the layer emits the same total
+ * light and states the same population, and nobody has to re-judge a
+ * brightness that was already accepted. Ordinary specks give up 3 %; the nodes
+ * take it back concentrated into a sixteenth of them.
+ */
+export const POPULATION_FIELD_NODE_BALANCE = 1
+  / (1 + POPULATION_FIELD_NODE_SHARE * (POPULATION_FIELD_NODE_GAIN - 1));
+
+/**
  * How much longer a screen cell is along the local fibre than across it.
  *
  * Anisotropy is what makes a texture read as fibrous instead of as noise —
@@ -518,12 +596,17 @@ export const POPULATION_FIELD_BLOOM_MS = 1400;
  * @param spread      the cell's brightness draw, in [0, 1)
  * @param clustered   the same fraction after the fibre has gathered it;
  *                    defaults to no clustering at all
+ * @param nodeDraw    the cell's second, independent mask draw, in [0, 1)
+ * @param nodeChance  {@link populationNodeChance} for the local fibre;
+ *                    defaults to no sub-population at all
  */
 export function populationSwarmEmission(
   litFraction: number,
   pick: number,
   spread: number,
   clustered: number = litFraction,
+  nodeDraw: number = 1,
+  nodeChance: number = 0,
 ): number {
   const lit = Math.min(Math.max(litFraction, 0), 1);
   const gathered = Math.min(Math.max(clustered, 0), 1);
@@ -537,8 +620,15 @@ export function populationSwarmEmission(
   // the UNCLUSTERED population, so a bundle holds more specks without any of
   // them being brighter — grain direction, not a glow along a strand.
   if (pick >= gathered) return continuum;
-  const brightness = POPULATION_FIELD_SPECK_FLOOR
-    + (1 - POPULATION_FIELD_SPECK_FLOOR) * spread;
+  // §5.1's points ON the filaments. A SECOND mask threshold, independent of
+  // the first, so it moves no speck in or out of the population — it only
+  // decides which of the already-lit ones are the brighter kind. The chance
+  // reads the fibre because it is a threshold; the gain is a constant, so a
+  // strand still never glows.
+  const node = nodeDraw < nodeChance ? POPULATION_FIELD_NODE_GAIN : 1;
+  const brightness = (POPULATION_FIELD_SPECK_FLOOR
+    + (1 - POPULATION_FIELD_SPECK_FLOOR) * spread)
+    * POPULATION_FIELD_NODE_BALANCE * node;
   // The second `lit` is not a second population claim, it is the rim: at the
   // envelope's edge the fraction is a few percent, and specks that stayed at
   // full brightness there would be a scatter of isolated bright points — the
@@ -558,6 +648,24 @@ export function populationSwarmEmission(
  * @param fibre       the local fibre strength, in [0, 1]
  * @param litFraction the population's own lit fraction under this pixel
  */
+/**
+ * How likely a lit speck is to belong to the brighter sub-population, given
+ * the local fibre — §5.1's points on the filaments.
+ *
+ * The square is what puts them at the junctions rather than along every
+ * strand: `fibre` is `0.62·a + 0.38·b` over two ridged octaves, so `fibre²`
+ * carries a cross term that peaks only where both octaves do. The floor is
+ * what keeps the sub-population from being a map of the fibre — a few of them
+ * land off the strands entirely, which is what a resolution limit looks like.
+ *
+ * @param fibre the local fibre strength, in [0, 1]
+ */
+export function populationNodeChance(fibre: number): number {
+  const strength = Math.min(Math.max(fibre, 0), 1);
+  return POPULATION_FIELD_NODE_CHANCE
+    + POPULATION_FIELD_NODE_JUNCTION * strength * strength;
+}
+
 export function populationFibreClustering(
   fibre: number,
   litFraction: number,
@@ -849,6 +957,10 @@ export interface PopulationCompositeUniforms {
   uFibreFloor: { value: number };
   uFibreSpan: { value: number };
   uFibreSaturate: { value: number };
+  uNodeChance: { value: number };
+  uNodeJunction: { value: number };
+  uNodeGain: { value: number };
+  uNodeBalance: { value: number };
   uCoarsening: { value: number };
   uContinuum: { value: number };
   uSpeckGain: { value: number };
@@ -904,6 +1016,10 @@ export function makePopulationCompositeMaterial(): THREE.ShaderMaterial {
       uFibreFloor: { value: POPULATION_FIELD_FIBRE_FLOOR },
       uFibreSpan: { value: POPULATION_FIELD_FIBRE_SPAN },
       uFibreSaturate: { value: POPULATION_FIELD_FIBRE_SATURATE },
+      uNodeChance: { value: POPULATION_FIELD_NODE_CHANCE },
+      uNodeJunction: { value: POPULATION_FIELD_NODE_JUNCTION },
+      uNodeGain: { value: POPULATION_FIELD_NODE_GAIN },
+      uNodeBalance: { value: POPULATION_FIELD_NODE_BALANCE },
       uCoarsening: { value: POPULATION_FIELD_SEAM_COARSENING },
       uContinuum: { value: POPULATION_FIELD_CONTINUUM_FRACTION },
       uSpeckGain: { value: POPULATION_FIELD_SPECK_GAIN },
@@ -965,6 +1081,10 @@ export function makePopulationCompositeMaterial(): THREE.ShaderMaterial {
       uniform float uFibreFloor;
       uniform float uFibreSpan;
       uniform float uFibreSaturate;
+      uniform float uNodeChance;
+      uniform float uNodeJunction;
+      uniform float uNodeGain;
+      uniform float uNodeBalance;
       uniform float uCoarsening;
       uniform float uContinuum;
       uniform float uSpeckGain;
@@ -1107,7 +1227,8 @@ export function makePopulationCompositeMaterial(): THREE.ShaderMaterial {
         // holds fewer; every brightness term below still reads the
         // unclustered population, because a strand that glowed would be a
         // wash with a pattern on it rather than a population with a grain.
-        float bundled = clamp(fibreAt(fold) * uFibreSaturate, 0.0, 1.0);
+        float fibre = fibreAt(fold);
+        float bundled = clamp(fibre * uFibreSaturate, 0.0, 1.0);
         float clustered = clamp(
           amount * (uFibreFloor + uFibreSpan * bundled), 0.0, 1.0);
 
@@ -1152,6 +1273,9 @@ export function makePopulationCompositeMaterial(): THREE.ShaderMaterial {
         float epoch = floor(uSwarmPhase + jitter);
         float pick = hash21(cell + epoch * 17.13);
         float spread = hash21(cell * 0.7 + epoch * 5.71 + 3.3);
+        // A THIRD draw on the same cell and the same epoch, so a node reseeds
+        // with the speck it belongs to rather than blinking on its own clock.
+        float nodeDraw = hash21(cell * 1.7 + epoch * 9.31 + 4.7);
 
         // step(pick, clustered) is 1 exactly when the cell's draw falls under
         // the local fraction. Every term from here is positive: unresolved
@@ -1164,8 +1288,28 @@ export function makePopulationCompositeMaterial(): THREE.ShaderMaterial {
         // from fraying into countable stars. Both are statements about how
         // much population is here. Only the threshold is allowed to know
         // about the fibre.
+        //
+        // §5.1's points ON the filaments. The fibre alone renders the
+        // CONNECTIONS, and the population is Cells — the core's language is
+        // bright points on filaments, so the halo has to be points on
+        // filaments too or it stays a different material however well the
+        // strands are drawn. A second, independent threshold on the same cell:
+        // it moves no speck into or out of the population, it only says which
+        // of the already-lit ones are the brighter kind. Squaring the fibre is
+        // what puts them at the JUNCTIONS — the square of a two-octave mix
+        // carries a cross term that peaks only where both octaves do — and the
+        // floor keeps a few of them off the strands entirely, which is what a
+        // resolution limit looks like. Sub-pixel, reseeding, uncountable:
+        // rule 10 is untouched.
+        //
+        // uNodeBalance is the price. It is derived so E[brightness] does not
+        // move, which makes the sub-population a REDISTRIBUTION rather than
+        // more light — the layer emits the same total and states the same
+        // population, and the brightness already judged live does not change.
+        float nodeChance = uNodeChance + uNodeJunction * fibre * fibre;
+        float node = 1.0 + step(nodeDraw, nodeChance) * (uNodeGain - 1.0);
         float lit = step(pick, clustered)
-          * (uSpeckFloor + (1.0 - uSpeckFloor) * spread);
+          * (uSpeckFloor + (1.0 - uSpeckFloor) * spread) * uNodeBalance * node;
         float emission = amount * uContinuum + lit * amount * uSpeckGain;
 
         gl_FragColor = vec4(uTint * emission * uPeak, emission * uPeak);

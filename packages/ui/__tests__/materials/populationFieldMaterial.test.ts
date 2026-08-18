@@ -6,14 +6,19 @@ import {
   makePopulationDensityMaterial,
   POPULATION_FIELD_BLOOM_MS,
   POPULATION_FIELD_CONTINUUM_FRACTION,
+  POPULATION_FIELD_CORE_HIGH,
+  POPULATION_FIELD_CORE_LOW,
   POPULATION_FIELD_EMISSION_PEAK,
   POPULATION_FIELD_FIBRE_FLOOR,
   POPULATION_FIELD_FIBRE_SATURATE,
   POPULATION_FIELD_FIBRE_SPAN,
   POPULATION_FIELD_MAX_BLOOMS,
+  POPULATION_FIELD_NODE_BALANCE,
+  POPULATION_FIELD_NODE_CHANCE,
+  POPULATION_FIELD_NODE_GAIN,
+  POPULATION_FIELD_NODE_JUNCTION,
+  POPULATION_FIELD_NODE_SHARE,
   POPULATION_FIELD_SEAM_COARSENING,
-  POPULATION_FIELD_CORE_HIGH,
-  POPULATION_FIELD_CORE_LOW,
   POPULATION_FIELD_SIGHTLINE_HIGH,
   POPULATION_FIELD_SIGHTLINE_LOW,
   POPULATION_FIELD_SLAB_HALF_Y,
@@ -23,6 +28,7 @@ import {
   POPULATION_FIELD_SPECK_PX,
   POPULATION_FIELD_SWARM_DENSITY,
   populationFibreClustering,
+  populationNodeChance,
   populationResolvedSuppression,
   populationSwarmEmission,
   populationUnresolvedDepth,
@@ -245,8 +251,12 @@ function marchHalo(px: number, py: number): RayHalo | null {
  *  so this IS the worst channel's contrast factor. Checked against the real
  *  function below rather than trusted. */
 function expectedHalo(lit: number): number {
-  const mean = POPULATION_FIELD_SPECK_FLOOR
-    + (1 - POPULATION_FIELD_SPECK_FLOOR) * 0.5;
+  // No node sub-population here: this measures the halo landing on a Cell, and
+  // a node is a sixteenth of the specks. The balance factor still applies,
+  // because it scales every speck whether or not one fires.
+  const mean = (POPULATION_FIELD_SPECK_FLOOR
+    + (1 - POPULATION_FIELD_SPECK_FLOOR) * 0.5)
+    * POPULATION_FIELD_NODE_BALANCE;
   return (lit * POPULATION_FIELD_CONTINUUM_FRACTION
     + lit * mean * lit * POPULATION_FIELD_SPECK_GAIN)
     * POPULATION_FIELD_EMISSION_PEAK;
@@ -764,7 +774,10 @@ describe('makePopulationCompositeMaterial', () => {
 
     expect(speckLuma).toBeLessThan(coreLuma);
     // And by a clear margin, not by a rounding error — a patch of swarm must
-    // not be mistakable for a Cell even where the two touch.
+    // not be mistakable for a Cell even where the two touch. This is the
+    // ORDINARY population's bound; §5.1's node sub-population takes the
+    // headroom above it and carries a bound of its own, measured on the
+    // clamped colour because that is where its red runs out.
     expect(speckLuma).toBeLessThan(coreLuma * 0.65);
   });
 });
@@ -934,6 +947,183 @@ describe('§5.1: the halo carries the unresolved FABRIC too', () => {
     // The fibre reaches the mask threshold and stops there.
     expect(shader).toContain('float clustered = clamp(');
     expect(shader).toContain('float emission = amount * uContinuum + lit * amount * uSpeckGain;');
+  });
+
+  it('strings a sparse sub-population along the strands, at the junctions', () => {
+    // §5.1. The fibre alone renders the CONNECTIONS; the population is Cells,
+    // and the core's language is bright points ON filaments. Without them the
+    // halo stays a different material however well the strands are drawn.
+    const halfX = FIELD_HALF_X * POPULATION_FIELD_OUTER_EDGE;
+    const halfZ = FIELD_HALF_Z * POPULATION_FIELD_OUTER_EDGE;
+    const chances: number[] = [];
+    const weights: number[] = [];
+    const steps = 90;
+    for (let i = 0; i <= steps; i += 1) {
+      for (let j = 0; j <= steps; j += 1) {
+        const x = (i / steps) * 2 * halfX - halfX;
+        const z = (j / steps) * 2 * halfZ - halfZ;
+        const sample = tissueSampleAt(x, z, POPULATION_FIELD_OUTER_EDGE);
+        if (sample.density <= 0.01) continue;
+        const fibre = populationFibre(...populationFibreBases(sample.qx, sample.qz));
+        chances.push(populationNodeChance(fibre));
+        weights.push(sample.density);
+      }
+    }
+    expect(chances.length).toBeGreaterThan(2000);
+    const total = weights.reduce((sum, weight) => sum + weight, 0);
+    const share = chances.reduce(
+      (sum, chance, index) => sum + chance * weights[index], 0,
+    ) / total;
+
+    // Sparse — a sixteenth of the lit specks, not a second swarm. And the
+    // declared share has to BE the measured one, because the balance factor
+    // is derived from it: moving a chance constant without re-measuring would
+    // quietly change how much light the layer emits.
+    expect(share).toBeCloseTo(POPULATION_FIELD_NODE_SHARE, 3);
+    expect(share).toBeGreaterThan(0.03);
+    expect(share).toBeLessThan(0.10);
+
+    // Densest where the two octaves co-peak. Squaring the mix is what does it:
+    // the square carries a cross term that peaks only where both do.
+    expect(populationNodeChance(0)).toBe(POPULATION_FIELD_NODE_CHANCE);
+    expect(populationNodeChance(1))
+      .toBeCloseTo(POPULATION_FIELD_NODE_CHANCE + POPULATION_FIELD_NODE_JUNCTION, 12);
+    expect(populationNodeChance(1) / populationNodeChance(0)).toBeGreaterThan(2);
+    // A junction is worth far more than twice an ordinary strand, which a
+    // linear term could not say: half the fibre is a quarter of the excess.
+    const half = populationNodeChance(0.5) - POPULATION_FIELD_NODE_CHANCE;
+    const full = populationNodeChance(1) - POPULATION_FIELD_NODE_CHANCE;
+    expect(half / full).toBeCloseTo(0.25, 12);
+    // And a few land off the strands entirely — a resolution limit does not
+    // produce a clean map of where the fibre is.
+    expect(POPULATION_FIELD_NODE_CHANCE).toBeGreaterThan(0);
+  });
+
+  it('redistributes the light instead of adding any', () => {
+    // The layer's brightness was judged live and accepted, so the
+    // sub-population may not change how much light there is — only where it
+    // sits. The balance factor is derived for exactly that.
+    //
+    // The reference is written out rather than taken from the same function,
+    // because what has to be preserved is the emission the layer had BEFORE
+    // the sub-population existed and no current call can produce it. Both are
+    // averaged over the SAME grids, so the grids' own discretization cancels
+    // in the ratio instead of being mistaken for drift.
+    const litFraction = 0.6;
+    const chance = POPULATION_FIELD_NODE_SHARE;
+    const draws = 100;
+    const legacy = (pick: number, spread: number) => {
+      if (pick >= litFraction) return litFraction * POPULATION_FIELD_CONTINUUM_FRACTION;
+      const brightness = POPULATION_FIELD_SPECK_FLOOR
+        + (1 - POPULATION_FIELD_SPECK_FLOOR) * spread;
+      return litFraction * POPULATION_FIELD_CONTINUUM_FRACTION
+        + brightness * litFraction * POPULATION_FIELD_SPECK_GAIN;
+    };
+    let measured = 0;
+    let before = 0;
+    for (let i = 0; i < draws; i += 1) {
+      const pick = (i + 0.5) / draws;
+      for (let j = 0; j < draws; j += 1) {
+        const spread = (j + 0.5) / draws;
+        for (let k = 0; k < draws; k += 1) {
+          measured += populationSwarmEmission(
+            litFraction, pick, spread, litFraction, (k + 0.5) / draws, chance,
+          );
+          before += legacy(pick, spread);
+        }
+      }
+    }
+
+    // A fifth of a percent, which is the node draw's own grid and not the law.
+    expect(measured / before).toBeGreaterThan(0.998);
+    expect(measured / before).toBeLessThan(1.002);
+    // And the redistribution is real: at the same total, a node speck is
+    // POPULATION_FIELD_NODE_GAIN times an ordinary one.
+    const ordinary = populationSwarmEmission(litFraction, 0, 1, litFraction, 1, 0);
+    const node = populationSwarmEmission(litFraction, 0, 1, litFraction, 0, 1);
+    const continuum = litFraction * POPULATION_FIELD_CONTINUUM_FRACTION;
+    expect((node - continuum) / (ordinary - continuum))
+      .toBeCloseTo(POPULATION_FIELD_NODE_GAIN, 12);
+  });
+
+  it('moves no speck into or out of the population', () => {
+    // The node draw is a SECOND threshold and it is independent of the first.
+    // A cell the mask did not light stays unlit whatever the node says, so the
+    // count of lit specks per unit screen area — the entire population
+    // statement — is untouched.
+    const litFraction = 0.4;
+    for (const nodeDraw of [0, 0.01, 0.5, 0.99]) {
+      for (const chance of [0, 0.055, 0.155, 1]) {
+        expect(populationSwarmEmission(litFraction, 0.9, 0.5, 0.3, nodeDraw, chance))
+          .toBeCloseTo(litFraction * POPULATION_FIELD_CONTINUUM_FRACTION, 12);
+      }
+    }
+    // Zero population is still zero, node or not.
+    expect(populationSwarmEmission(0, 0, 1, 1, 0, 1)).toBe(0);
+    // And a node is strictly brighter than the same speck without one, which
+    // is the whole point of it.
+    const plain = populationSwarmEmission(litFraction, 0.1, 0.5, 0.9, 1, 0);
+    const node = populationSwarmEmission(litFraction, 0.1, 0.5, 0.9, 0, 0.5);
+    expect(node).toBeGreaterThan(plain);
+    expect(POPULATION_FIELD_NODE_GAIN).toBeGreaterThan(1);
+  });
+
+  it('keeps a node saturated rose, never a near-white Cell core', () => {
+    const material = makePopulationCompositeMaterial();
+    const tint = material.uniforms.uTint.value as THREE.Color;
+    const luma = (c: number[]) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+    const sat = (c: number[]) => Math.max(...c) - Math.min(...c);
+
+    // The ceiling here is the RED CHANNEL, not taste: the tint's red is 1.0
+    // and the peak is 0.85, so past an emission of 1.176 red clamps while
+    // green and blue keep climbing — and the speck drifts toward white, which
+    // is exactly what makes a point in the halo look like a resolved Cell.
+    // So the bound is measured on the colour that actually reaches the
+    // framebuffer, clamped, rather than on an arithmetic one that never does.
+    const peak = populationSwarmEmission(1, 0, 1, 1, 0, 1)
+      * POPULATION_FIELD_EMISSION_PEAK;
+    const shown = [tint.r, tint.g, tint.b].map((c) => Math.min(1, c * peak));
+
+    const [wr, wg, wb] = CELL_GALAXY_PALETTE.warmWhite;
+    const [br, bg, bb] = CELL_GALAXY_PALETTE.tissueRose;
+    const mix = (a: number, b2: number) => a + (b2 - a) * 0.72;
+    const core = [mix(br, wr), mix(bg, wg), mix(bb, wb)];
+
+    // Below a Cell core in level...
+    expect(luma(shown)).toBeLessThan(luma(core) * 0.80);
+    // ...and above it in saturation, by a margin, so the two are separated by
+    // HUE and not only by brightness. That is what survives the case where a
+    // node sits in the densest tissue and its red has clamped.
+    expect(sat(shown)).toBeGreaterThan(sat(core) * 1.8);
+  });
+
+  it('wires the sub-population as a threshold, with a constant gain', () => {
+    const shader = makePopulationCompositeMaterial().fragmentShader;
+    const uniforms = makePopulationCompositeMaterial().uniforms;
+
+    // §5.1's line: only the thresholds may see the fibre. The chance does,
+    // because it is one; the gain is a constant, so a strand gathers and marks
+    // specks without a single photon of its own.
+    expect(shader)
+      .toContain('float nodeChance = uNodeChance + uNodeJunction * fibre * fibre;');
+    expect(shader)
+      .toContain('float node = 1.0 + step(nodeDraw, nodeChance) * (uNodeGain - 1.0);');
+    // Reseeds with the speck it belongs to, on the same cell and epoch, rather
+    // than blinking on a clock of its own.
+    expect(shader).toContain('float nodeDraw = hash21(cell * 1.7 + epoch * 9.31 + 4.7);');
+    // Independent of the mask draw, or it would be gathering specks rather
+    // than marking them.
+    expect(shader).not.toContain('hash21(cell + epoch * 17.13) * nodeChance');
+    expect(uniforms.uNodeChance.value).toBe(POPULATION_FIELD_NODE_CHANCE);
+    expect(uniforms.uNodeJunction.value).toBe(POPULATION_FIELD_NODE_JUNCTION);
+    expect(uniforms.uNodeGain.value).toBe(POPULATION_FIELD_NODE_GAIN);
+    expect(uniforms.uNodeBalance.value).toBe(POPULATION_FIELD_NODE_BALANCE);
+    // Derived from the measured share, never typed in beside it.
+    expect(POPULATION_FIELD_NODE_BALANCE).toBeCloseTo(
+      1 / (1 + POPULATION_FIELD_NODE_SHARE * (POPULATION_FIELD_NODE_GAIN - 1)),
+      12,
+    );
+    expect(POPULATION_FIELD_NODE_BALANCE).toBeLessThan(1);
   });
 
   it('reads the fibre once, on the fold plane, not through the march', () => {
