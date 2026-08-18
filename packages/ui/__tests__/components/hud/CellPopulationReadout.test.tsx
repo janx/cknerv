@@ -182,12 +182,15 @@ describe('composition disclosure', () => {
 });
 
 describe('the legend', () => {
-  it('explains the medium before anyone can try to click it', () => {
+  it('explains the field before anyone can try to click it', () => {
     const text = textOf('chain-scope-mainnet');
 
-    expect(text).toContain('Sharp bodies');
+    // Size and brightness are the whole distinction now: the halo is the
+    // Cells' own material and resolves into points at close range, so a
+    // legend promising a blur would be describing a layer that is gone.
+    expect(text).toContain('Bright bodies');
     expect(text).toContain('INTERACTIVE CELLS');
-    expect(text).toContain('Ambient field');
+    expect(text).toContain('Faint swarm');
     expect(text).toContain('AGGREGATED / NON-ADDRESSABLE');
   });
 });

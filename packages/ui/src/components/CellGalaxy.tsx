@@ -184,10 +184,10 @@ interface CellGalaxyProps {
    * suspend the O(N) screen-space picker after a real drag begins while still
    * allowing the pointer-down and click raycasts that preserve R3F semantics. */
   pickingSuspendedRef?: React.RefObject<boolean>;
-  /** Compressed optical depth for the unresolved-population medium, from
-   *  `deriveCellPopulationField`. Zero (the default) renders no medium at
-   *  all, which is the correct state whenever the stage covers its scope or
-   *  the caller has not derived a population. */
+  /** Compressed amount for the unresolved population, from
+   *  `deriveCellPopulationField`. Zero (the default) places and draws nothing
+   *  at all, which is the correct state whenever the stage covers its scope
+   *  or the caller has not derived a population. */
   populationGain?: number;
   /** Seconds after the block pulse at which the LOCAL node applies the block —
    *  i.e. when it hears the block from the network (caller-supplied delay). The
@@ -1840,10 +1840,11 @@ export default function CellGalaxy({
           lives in world space (below) so it can span chain → cells
           planes. */}
       <group ref={groupRef} position={[0, CELLS_Y, 0]}>
-        {/* The unresolved population. One continuous, non-addressable medium
-            inside the same tissue envelope, drawn BENEATH the Cell bodies so
-            the crisp records it gives context to always sit in front of it.
-            It carries no ids, registers no pointer handlers, and never
+        {/* The unresolved population, as real points in this rotating frame —
+            the same positional law and the same material as the Cell bodies,
+            smaller and dimmer, drawn BENEATH them. Inside the group is the
+            whole point: it turns with the Cells, with their parallax, as one
+            body. It carries no ids, registers no pointer handlers, and never
             answers a raycast. */}
         <CellPopulationField gain={populationGain} />
         <points

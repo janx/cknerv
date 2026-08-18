@@ -165,8 +165,15 @@ export function populationCompositionMixes(
   ];
 }
 
-/** Scope has to be explained BEFORE a reader tries to click the medium. */
+/** Scope has to be explained BEFORE a reader tries to click the field.
+ *
+ *  Named for the two channels the picture actually uses. The unresolved
+ *  population is drawn from the same material as the Cells and does resolve
+ *  into individual points on a fly-in — "sharp versus ambient" stopped being
+ *  true when it stopped being a blur — so the legend names what still
+ *  separates them, which is size and brightness. With resolvability no longer
+ *  carrying the not-addressable message, this row carries more of it. */
 export const POPULATION_LEGEND: ReadonlyArray<{ term: string; meaning: string }> = [
-  { term: 'Sharp bodies', meaning: 'INTERACTIVE CELLS' },
-  { term: 'Ambient field', meaning: 'AGGREGATED / NON-ADDRESSABLE' },
+  { term: 'Bright bodies', meaning: 'INTERACTIVE CELLS' },
+  { term: 'Faint swarm', meaning: 'AGGREGATED / NON-ADDRESSABLE' },
 ];
