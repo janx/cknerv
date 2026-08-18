@@ -69,87 +69,149 @@ import {
 } from '../geometry/tissueFieldBake';
 
 /**
- * The resolved share at and above which the halo is fully suppressed —
- * rule 9a's upper threshold.
+ * The resolved coverage AT THE FOLD PLANE at and above which the halo is
+ * fully suppressed — rule 9a's upper threshold.
  *
- * The march accumulates two optical depths through one set of samples: `tau`
- * for the whole body and `tauResolved` for the part already drawn as
- * addressable Cells. The halo then states the difference as a fraction of the
- * population rather than of the light: `share = tauResolved / tau`, and
- * `tau * (1 - smoothstep(LOW, HIGH, share))`. At and above this threshold that
- * is exactly zero — not low, and zero BEFORE the exponential, so no gain, no
- * swarm density, and no future brightness knob can put a photon back over the
- * Cells. That is the whole reason the layer moved outside the rim, and it has
- * to be arithmetic rather than restraint.
+ * ## What this replaced, and why the boundary was an ellipse
  *
- * **This threshold is the old linear knee, and it is derived the same way.**
- * A constant knee could not do the other half of the job: `tauResolved / 0.12`
- * amplifies the resolved share 8.3x, so the halo only switched on once
- * resolved density had fallen essentially to zero — past the last Cell — while
- * the Cells had been thinning since ~0.7 of the rim. That left a band where
- * NEITHER population was drawn, which is what read as a hard boundary.
- * Splitting the one constant in two lets the protection and the crossfade be
- * placed independently: this one says where the halo may begin, and
- * {@link POPULATION_FIELD_SHARE_LOW} says where it reaches full strength.
+ * The suppression used to read the *share* of the population under a ray that
+ * was already individuated: `tauResolved / tau`, both accumulated through the
+ * same march. That quantity can never carry structure, and the reason is
+ * algebra rather than tuning. `resolved` and `density` are the SAME `body`
+ * term under two envelopes, so their quotient is
+ * `envelope(1.04) / envelope(2.2)` and the body — every corridor, every
+ * cavity, every ridge — cancels exactly. What is left is
+ * `smoothstep(0.61, 1.04, radial + boundaryWarp)` over
+ * `smoothstep(0.61, 2.2, ...)`: a function of the warped radius and nothing
+ * else, with only ±0.185 of warp across a 0.43-wide band. Every threshold on
+ * it draws an ellipse, which is exactly what the addressable region looked
+ * like — a regular oval moat between the Cells and the population around them.
  *
- * Derived, not copied. Against 12,000 real `helixSeedF64` positions projected
- * from the production camera, with the share measured per quarter-resolution
- * texel and the halo's own emission modelled from
- * {@link populationSwarmEmission}:
+ * The fold-plane sample carries all of that structure back, because it is the
+ * body itself rather than a ratio of two envelopes over it. It is also LOCAL:
+ * it answers "are there Cells at this place in the organism", where the ray
+ * integral answers "are there Cells anywhere along this line of sight". The
+ * moat was the second question's answer, and closing it needs the first.
  *
- * | HIGH | Cells in the zero region | max lit fraction inside r <= 0.70 |
- * |-----:|-------------------------:|----------------------------------:|
- * | 0.12 (the old knee) |         96.8 % |                           0.000 |
- * | 0.26 |                   91.8 % |                             0.000 |
- * | **0.28** |               **91.1 %** |                     **0.000** |
- * | 0.30 |                   90.4 % |                             0.020 |
- * | 0.34 |                   88.5 % |                             0.109 |
- * | 0.38 |                   87.0 % |                             0.198 |
+ * ## Derivation
  *
- * 0.28 is the largest value at which the halo is still exactly zero everywhere
- * inside `r <= 0.70` of the resolved ellipse — the Cell body's dense bulge,
- * **including its own cavities**. That last clause is the whole measurement:
- * the tissue is full of voids, and a ray that crosses one carries almost no
- * resolved depth, so past this threshold the halo starts lighting up the holes
- * INSIDE the core. A texel-density statistic cannot see that — the densest
- * still-lit patch sits at 7 of 16 Cells per texel anywhere from 0.28 to 0.38 —
- * and light in the core's cavities is precisely the "any layer sharing screen
- * space with the addressable Cells" failure that three overlays already died
- * of.
+ * Measured against 12,000 real `helixSeedF64` positions projected from the
+ * production camera (`[110, 108, 110]`, fov 50, 1280x720; the galaxy-local
+ * camera is at y = 108 − `CELLS_Y`), density marched at quarter resolution
+ * with an undithered offset so the boundary metric reads structure rather than
+ * sampling noise.
  *
- * Nothing is given up for that margin: the seam metric of §6.1 test 5 (the
- * deepest trough of total luminance on a walk outward, against the shallower
- * of the two shoulders) is 0.743 here and 0.744 at 0.30 — it has already
- * reached its plateau. The shipped linear knee scores 0.607.
+ * The instrument is the length of the halo's own boundary — the share of
+ * quarter-res texels inside `r <= 1.6` that touch both a lit and an unlit
+ * neighbour. A curve is short; fingers are long. It rises to a plateau and
+ * comes back down:
  *
- * **What is protected is the DENSE core, not every Cell.** The exactly-zero
- * region is deliberately smaller than it was: 5.7 % of Cells leave it, all of
- * them in the thinning rim, and the interleaving that produces is the only way
- * the two regions can meet at all.
+ * | HIGH | boundary | halo inside the rim | Cells with light on them |
+ * |-----:|---------:|--------------------:|-------------------------:|
+ * | 0.10 |    4.7 % |                32 % |                     17 % |
+ * | 0.13 |    4.8 % |                37 % |                     19 % |
+ * | **0.15** | **4.9 %** |          **40 %** |                 **21 %** |
+ * | 0.20 |    4.9 % |                46 % |                     25 % |
+ * | 0.26 |    4.7 % |                52 % |                     30 % |
+ * | 0.42 (the prototype) | 5.1 % |     68 % |                     47 % |
+ *
+ * 0.15 is the low end of the plateau, and the low end is the right end: every
+ * step further into it buys no more boundary and costs more Cells. The
+ * shipped share-driven build scores 2.9 % on the same instrument, so this is a
+ * boundary 69 % longer, drawn by the tissue instead of by a radius.
+ *
+ * ## This threshold alone would cost the Cells, and does not have to
+ *
+ * A fold-plane sample cannot see WHERE in the slab a Cell sits — the Cells are
+ * spread over a Gaussian 2.1 to 7.3 units thick, and the ray through one meets
+ * the plane a median of 8.2 world units away from it (p90 20.3, p99 36.9,
+ * against `FIELD_HALF_X` = 60). So on its own it lights 21 % of drawn Cells
+ * where the shipped build lights 7 %. {@link POPULATION_FIELD_SIGHTLINE_HIGH}
+ * is what puts the vertical information back, and it costs nothing visible:
+ * see its own note for the measurement.
  */
-export const POPULATION_FIELD_SHARE_HIGH = 0.28;
+export const POPULATION_FIELD_CORE_HIGH = 0.15;
 
 /**
- * The resolved share at and below which the halo runs at full strength —
+ * The fold-plane coverage at and below which the halo runs at full strength —
  * rule 9a's lower threshold, and the far end of the crossfade.
  *
- * The measured share is not a local property of the fold plane: an elevated
- * camera's ray keeps picking up resolved tissue well past its own footprint,
- * so the share is still 0.11 at 1.06 of the ellipse and 0.026 at 1.14. This
- * threshold therefore lands the crossfade's outer end at about 1.09 of the
- * rim, making it 0.19 of the ellipse wide — comparable to the 0.25 over which
- * the Cells themselves visibly thin, which is the point: the two ramps have to
- * overlap or there is a band with nothing in it.
+ * A weak lever, and measured as one: swept from 0.000 to 0.090 with
+ * {@link POPULATION_FIELD_CORE_HIGH} fixed, the boundary length never leaves
+ * 4.8–4.9 %, the halo's reach never leaves 39–42 %, and the share of Cells
+ * carrying light moves from 20 % to 24 %. Everything it governs happens where
+ * the resolved tissue has already thinned to a few percent of its peak.
  *
- * It is a weak lever and was measured as one. Across 0.00 to 0.16 the seam
- * metric moves from 0.733 to 0.743 — inside the noise — because everything it
- * governs happens where the Cells are already gone. What it does change is how
- * many Cells sit on a fully-lit halo: 3.3 % at 0.00, 4.6 % at 0.08, 5.9 % at
- * 0.16. Low enough to keep that small, high enough that the halo actually
- * reaches full strength inside its own envelope rather than approaching it
- * asymptotically.
+ * It has to be strictly positive all the same. At exactly zero the halo only
+ * reaches full strength where the coverage is *exactly* zero, and the bake is
+ * half-float and linearly filtered, so true zeros are rare anywhere inside the
+ * envelope — the outer body would approach full strength asymptotically
+ * instead of arriving at it. 0.02 is 2 % of peak coverage: below it there is
+ * no addressable Cell to defend, and the halo is simply all of the population.
  */
-export const POPULATION_FIELD_SHARE_LOW = 0.08;
+export const POPULATION_FIELD_CORE_LOW = 0.02;
+
+/**
+ * The resolved optical depth ALONG THE RAY at and above which the halo is
+ * fully suppressed — the second half of rule 9a's suppression.
+ *
+ * `tauResolved` unnormalized, not divided by `tau`. That division was the bug
+ * (see {@link POPULATION_FIELD_CORE_HIGH}); the accumulation itself was never
+ * the problem, and it answers the one question the fold plane cannot: is there
+ * addressable tissue anywhere along this line of sight, at any height. The two
+ * suppressions are combined with `max`, so the halo survives only where BOTH
+ * say there is nothing to obscure — the plane says "no Cells at this place in
+ * the organism", the sightline says "no Cells in front of or behind this
+ * pixel".
+ *
+ * This is the term that makes the interdigitation free. Measured the same way,
+ * with the fold thresholds fixed at 0.02 / 0.15:
+ *
+ * | sightline HIGH | Cells with light | worst within 3 px (p90) | boundary | reach |
+ * |---------------:|-----------------:|------------------------:|---------:|------:|
+ * | (none — fold only) |         21 % |                   0.526 |    4.9 % |  40 % |
+ * | 2.80 |                       16 % |                   0.372 |    4.8 % |  38 % |
+ * | 1.40 |                       10 % |                   0.141 |    4.6 % |  34 % |
+ * | **1.00** |               **7 %** |               **0.058** | **4.6 %** | **29 %** |
+ * | 0.80 |                        6 % |                   0.030 |    4.4 % |  26 % |
+ * | 0.40 |                        3 % |                   0.000 |    3.6 % |  16 % |
+ * | *the shipped share build* |  *7 %* |                 *0.030* |  *2.9 %* | *19 %* |
+ *
+ * 1.00 is where the per-Cell cost meets the shipped build — 7 % of drawn
+ * Cells carry any halo light, against the same 7 % today — while the boundary
+ * is 59 % longer and the halo reaches half again as far into the tissue.
+ * Below it the boundary starts collapsing back toward a curve; above it the
+ * Cells start paying.
+ *
+ * The exchange is better than break-even, and the acceptance test asserts the
+ * good half of it. Marched analytically per Cell rather than through the
+ * quarter-resolution texture, four Cells in five carry exactly nothing under
+ * either law, and in the TAIL — where a Cell actually loses contrast — the new
+ * pair is strictly ahead: 71 Cells in 2,000 above a tenth of full halo against
+ * the ellipse's 92, p95 0.116 against 0.158, p99 0.393 against 0.503. What it
+ * gives back is a faint dusting on about 1 % more rim Cells at a tenth of that
+ * level, which is the interdigitation itself. The Cells that carry any light
+ * are still the rim ones (median radius 0.85, against 0.86 today).
+ *
+ * Setting this below {@link POPULATION_FIELD_CORE_LOW}'s effective range —
+ * anything at or under about 0.05 — reverts the layer to a sightline-only
+ * suppression and brings the moat back. Raising it past ~5 turns the term off
+ * and leaves the fold plane alone with the 21 % cost above.
+ */
+export const POPULATION_FIELD_SIGHTLINE_HIGH = 1.0;
+
+/**
+ * The resolved optical depth along the ray at and below which the sightline
+ * term suppresses nothing.
+ *
+ * Paired with {@link POPULATION_FIELD_SIGHTLINE_HIGH} and swept with it: the
+ * two move together because the crossfade has to stay wide enough that its
+ * onset is not itself a visible contour. 0.12 puts the ramp's start where a
+ * ray has picked up about a tenth of the resolved depth a central one carries,
+ * which is past the last Cell in that direction and inside the band where the
+ * fold-plane term is already opening.
+ */
+export const POPULATION_FIELD_SIGHTLINE_LOW = 0.12;
 
 /**
  * How much coarser the swarm's grain is at the inner edge of the crossfade,
@@ -171,20 +233,40 @@ export const POPULATION_FIELD_SHARE_LOW = 0.08;
  */
 export const POPULATION_FIELD_SEAM_COARSENING = 0.55;
 
-/** The share of the population under a ray that is already individuated, and
- *  the suppression it earns. The shader evaluates exactly this curve through
- *  GLSL's own `smoothstep`, which is the same cubic.
- *
- *  Driving it from the RATIO rather than from an absolute coverage is what
- *  makes it stable: both depths ride the same dithered samples, so the dither
- *  noise cancels in the quotient. */
-export function populationResolvedSuppression(share: number): number {
-  const t = Math.max(0, Math.min(
-    1,
-    (share - POPULATION_FIELD_SHARE_LOW)
-      / (POPULATION_FIELD_SHARE_HIGH - POPULATION_FIELD_SHARE_LOW),
-  ));
+function smoothstep(edge0: number, edge1: number, value: number): number {
+  const t = Math.max(0, Math.min(1, (value - edge0) / (edge1 - edge0)));
   return t * t * (3 - 2 * t);
+}
+
+/**
+ * How much of the halo the already-individuated Cells take, from the two
+ * things that can be known about where they are. The shader evaluates exactly
+ * this expression through GLSL's own `smoothstep`, which is the same cubic.
+ *
+ * **Two terms, because a Cell has a place and a direction.** The fold-plane
+ * coverage says whether there are addressable Cells at this point of the
+ * organism — it carries every corridor and cavity, which is what makes the
+ * boundary fingers instead of an ellipse. The sightline depth says whether
+ * there are addressable Cells anywhere along this ray — it carries the
+ * vertical spread, which a single plane sample is blind to. `max` means the
+ * halo survives only where both say there is nothing to obscure, so neither
+ * term can ever ADD light over Cells; each can only take more away.
+ *
+ * @param coverage  resolved coverage where the ray crosses the fold plane
+ * @param sightline resolved optical depth accumulated along the whole ray
+ */
+export function populationResolvedSuppression(
+  coverage: number,
+  sightline: number,
+): number {
+  return Math.max(
+    smoothstep(POPULATION_FIELD_CORE_LOW, POPULATION_FIELD_CORE_HIGH, coverage),
+    smoothstep(
+      POPULATION_FIELD_SIGHTLINE_LOW,
+      POPULATION_FIELD_SIGHTLINE_HIGH,
+      sightline,
+    ),
+  );
 }
 
 /**
@@ -199,24 +281,21 @@ export function populationResolvedSuppression(share: number): number {
  * honest form: what the resolved Cells remove from the halo is not brightness,
  * it is the Cells themselves.
  *
- * Above {@link POPULATION_FIELD_SHARE_HIGH} the suppression is exactly 1 and
- * this is exactly zero, at any optical depth. Below
- * {@link POPULATION_FIELD_SHARE_LOW} it is exactly `tau`. In between it is a
- * crossfade, and that band is the only place the two populations can meet.
+ * Past either upper threshold the suppression is exactly 1 and this is exactly
+ * zero, at any optical depth. Below both lower thresholds it is exactly `tau`.
+ * In between it is a crossfade, and that band is the only place the two
+ * populations can meet.
  *
- * @param tau         optical depth of the whole body along the ray
- * @param tauResolved optical depth of the individuated share of it
+ * @param tau       optical depth of the whole body along the ray
+ * @param coverage  resolved coverage where the ray crosses the fold plane
+ * @param sightline resolved optical depth accumulated along the whole ray
  */
 export function populationUnresolvedDepth(
   tau: number,
-  tauResolved: number,
+  coverage: number,
+  sightline: number,
 ): number {
-  // The guard is for an empty ray, where both depths are zero together and the
-  // quotient would be 0/0. It is far below any depth that survives the
-  // composite's own floor, so it can never distort a share that matters:
-  // a `tau` under 1e-9 produces a lit fraction under 1e-9 as well.
-  const share = tauResolved / Math.max(tau, 1e-9);
-  return tau * (1 - populationResolvedSuppression(share));
+  return tau * (1 - populationResolvedSuppression(coverage, sightline));
 }
 
 /**
@@ -534,6 +613,21 @@ const SLAB_GLSL = /* glsl */ `
     return tExit > tEnter;
   }
 
+  // Where the ray crosses the tissue's own plane — the point of the organism
+  // this pixel is looking at. Both passes need it and for the same reason:
+  // the halo is a disk, so what lies in it, lies IN it. The density pass reads
+  // the resolved coverage there (the local half of rule 9a) and the composite
+  // reads the fibre there.
+  //
+  // Clamped into the slab because a grazing ray's intersection runs off to
+  // infinity and would sample the bake's clamped edge forever, and an edge-on
+  // camera really does produce one.
+  vec3 foldPlanePoint(vec3 ro, vec3 rd, float tEnter, float tExit) {
+    float rdy = rd.y >= 0.0 ? max(rd.y, 1e-4) : min(rd.y, -1e-4);
+    float tFold = clamp(-ro.y / rdy, tEnter, tExit);
+    return ro + rd * tFold;
+  }
+
   // Deterministic per-pixel hash. Two jobs. In the march it dithers the
   // starting offset, because eight steps through a smooth field band visibly
   // and dithering trades those bands for noise. In the composite it IS the
@@ -554,8 +648,10 @@ export interface PopulationDensityUniforms {
   uLocalCamera: { value: THREE.Vector3 };
   uSteps: { value: number };
   uOpticalDepth: { value: number };
-  uShareLow: { value: number };
-  uShareHigh: { value: number };
+  uCoreLow: { value: number };
+  uCoreHigh: { value: number };
+  uSightLow: { value: number };
+  uSightHigh: { value: number };
   uFoldRange: { value: number };
   uThicknessMin: { value: number };
   uThicknessSpan: { value: number };
@@ -578,8 +674,10 @@ export function makePopulationDensityMaterial(): THREE.ShaderMaterial {
       uLocalCamera: { value: new THREE.Vector3() },
       uSteps: { value: 8 },
       uOpticalDepth: { value: 0 },
-      uShareLow: { value: POPULATION_FIELD_SHARE_LOW },
-      uShareHigh: { value: POPULATION_FIELD_SHARE_HIGH },
+      uCoreLow: { value: POPULATION_FIELD_CORE_LOW },
+      uCoreHigh: { value: POPULATION_FIELD_CORE_HIGH },
+      uSightLow: { value: POPULATION_FIELD_SIGHTLINE_LOW },
+      uSightHigh: { value: POPULATION_FIELD_SIGHTLINE_HIGH },
       uFoldRange: { value: TISSUE_BAKE_FOLD_Y_RANGE },
       uThicknessMin: { value: TISSUE_BAKE_THICKNESS_MIN },
       uThicknessSpan: {
@@ -607,8 +705,10 @@ export function makePopulationDensityMaterial(): THREE.ShaderMaterial {
       uniform vec3  uLocalCamera;
       uniform float uSteps;
       uniform float uOpticalDepth;
-      uniform float uShareLow;
-      uniform float uShareHigh;
+      uniform float uCoreLow;
+      uniform float uCoreHigh;
+      uniform float uSightLow;
+      uniform float uSightHigh;
       uniform float uFoldRange;
       uniform float uThicknessMin;
       uniform float uThicknessSpan;
@@ -664,32 +764,52 @@ export function makePopulationDensityMaterial(): THREE.ShaderMaterial {
           tauResolved += resolved * weight;
         }
 
+        // The point of the ORGANISM this pixel is looking at, and the resolved
+        // coverage there. One fetch, no dither: this is a place, not an
+        // integral, so it carries every corridor and cavity the tissue has.
+        vec3 foldPoint = foldPlanePoint(ro, rd, tEnter, tExit);
+        vec2 foldUv = foldPoint.xz / (2.0 * uHalf.xz) + 0.5;
+        float foldCoverage = texture2D(uField, foldUv).a;
+
         // Rule 9a, as arithmetic. The halo states the population MINUS the
         // part of it already on screen as addressable Cells: a subtraction of
-        // optical depths, done before the exponential, so a pixel whose
-        // population is more than uShareHigh individuated ends at exactly zero
-        // and no gain, swarm density, or later brightness knob can put a photon
-        // back over the Cells. Three overlays failed by taxing the Cells'
-        // sharpness; this is the guarantee that replaces them.
+        // optical depths, done before the exponential, so a pixel whose Cells
+        // are dense enough on either measure ends at exactly zero and no gain,
+        // swarm density, or later brightness knob can put a photon back over
+        // them. Three overlays failed by taxing the Cells' sharpness; this is
+        // the guarantee that replaces them.
         //
         // Subtracting depth rather than emission is also what closes the seam.
         // 1 - exp(-tau) is concave, so scaling the LIGHT after saturation lets
         // the halo creep up slowly and leaves a dark ring around the body it
         // is supposed to continue.
         //
-        // Two thresholds rather than one knee. A constant knee amplifies the
-        // resolved share, so it can only ever switch the halo on PAST the last
-        // Cell, while the Cells have been thinning since 0.7 of the rim — the
-        // band between the two is where neither population is drawn, and that
-        // band is the boundary a viewer sees. The crossfade has to land inside
-        // the thinning band, which takes a start and an end.
+        // TWO MEASURES, because a Cell has a place and a direction, and the
+        // suppression has to know both.
         //
-        // The share is the RATIO, so the dither noise both depths ride cancels
-        // in the quotient. The guard is for an empty ray, where they are zero
-        // together; the resolved term is the same body under a tighter
-        // envelope, so it can never exceed the density term.
-        float share = tauResolved / max(tau, 1e-9);
-        float supp = smoothstep(uShareLow, uShareHigh, share);
+        // The fold-plane coverage is the LOCAL one — are there addressable
+        // Cells at this point of the organism. It is what the ratio
+        // tauResolved / tau could never be: that quotient is the same body
+        // term under two envelopes, so the body cancels exactly and what
+        // remains is a function of the warped radius alone. Every threshold on
+        // it drew an ellipse, which is what the addressable region looked like
+        // — a regular oval moat around the Cells. The plane sample is the body
+        // itself, so the boundary it draws is as irregular as the tissue.
+        //
+        // The sightline depth is the DIRECTIONAL one — are there addressable
+        // Cells anywhere along this ray, at any height. The Cells occupy a
+        // slab 2.1 to 7.3 units thick and the ray through one meets the plane
+        // a median 8.2 world units away from it, so a plane sample alone is
+        // blind to most of them: on its own it puts halo light on 21% of drawn
+        // Cells where this pair puts it on 7%, the same 7% the elliptical
+        // build reached.
+        //
+        // The stronger of the two wins, so the halo survives only where BOTH
+        // say there is nothing to obscure. Neither term can add light over
+        // Cells; each can only take more away.
+        float supp = max(
+          smoothstep(uCoreLow, uCoreHigh, foldCoverage),
+          smoothstep(uSightLow, uSightHigh, tauResolved));
         float unresolved = tau * (1.0 - supp);
 
         // The population reaches the screen through the same law it
@@ -933,16 +1053,17 @@ export function makePopulationCompositeMaterial(): THREE.ShaderMaterial {
         // rather than being carried through the march. The fold wanders by at
         // most +-6.3 over a footprint 264 wide, and the fibre is a grain
         // rather than a registered feature, so the plane is the fold closely
-        // enough. Clamped into the slab because a grazing ray's intersection
-        // runs off to infinity and would sample the bake's clamped edge
-        // forever.
+        // enough.
+        //
+        // The same crossing the density pass takes for rule 9a's local half,
+        // through the same shared helper — the two passes have to be looking
+        // at the same point of the organism or the grain would be drawn
+        // somewhere other than where the population was decided.
         vec3 ro = uLocalCamera;
         vec3 rd = normalize(vLocal - ro);
         float tEnter, tExit;
         slabRange(ro, rd, uHalf, tEnter, tExit);
-        float rdy = rd.y >= 0.0 ? max(rd.y, 1e-4) : min(rd.y, -1e-4);
-        float tFold = clamp(-ro.y / rdy, tEnter, tExit);
-        vec3 foldPoint = ro + rd * tFold;
+        vec3 foldPoint = foldPlanePoint(ro, rd, tEnter, tExit);
         vec2 fold = foldPoint.xz;
 
         // Grain DIRECTION, not links. Filaments run ALONG a ridge, which is

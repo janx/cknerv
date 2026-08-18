@@ -12,13 +12,16 @@ import {
   POPULATION_FIELD_FIBRE_SPAN,
   POPULATION_FIELD_MAX_BLOOMS,
   POPULATION_FIELD_SEAM_COARSENING,
-  POPULATION_FIELD_SHARE_HIGH,
-  POPULATION_FIELD_SHARE_LOW,
+  POPULATION_FIELD_CORE_HIGH,
+  POPULATION_FIELD_CORE_LOW,
+  POPULATION_FIELD_SIGHTLINE_HIGH,
+  POPULATION_FIELD_SIGHTLINE_LOW,
   POPULATION_FIELD_SLAB_HALF_Y,
   POPULATION_FIELD_SPECK_FLOOR,
   POPULATION_FIELD_SPECK_GAIN,
   POPULATION_FIELD_SPECK_ELONGATION,
   POPULATION_FIELD_SPECK_PX,
+  POPULATION_FIELD_SWARM_DENSITY,
   populationFibreClustering,
   populationResolvedSuppression,
   populationSwarmEmission,
@@ -34,7 +37,13 @@ import {
   TISSUE_BAKE_THICKNESS_MAX,
   TISSUE_BAKE_THICKNESS_MIN,
 } from '../../src/geometry/tissueFieldBake';
-import { FIELD_HALF_X, FIELD_HALF_Z, tissueSampleAt } from '../../src/helix';
+import {
+  FIELD_HALF_X,
+  FIELD_HALF_Z,
+  helixSeedF64,
+  tissueSampleAt,
+} from '../../src/helix';
+import { CELLS_Y } from '../../src/layout';
 import { DEATH_DURATION_MS } from '../../src/geometry/cellPositions';
 import { CELL_GALAXY_PALETTE } from '../../src/visualPalette';
 
@@ -122,34 +131,182 @@ describe('makePopulationDensityMaterial', () => {
   });
 });
 
+/**
+ * The halo, sampled where the addressable Cells actually are.
+ *
+ * §6.1 test 1 is a PER-CELL test, not a per-radius one. A radius test passes a
+ * build that floods the tissue's cavities and fails one that correctly lets
+ * the halo into them, so it measures the wrong thing now: what is defended is
+ * Cells, not a circle.
+ *
+ * The production camera, in the galaxy's rotating frame — the same frame the
+ * march runs in, so the camera sits at y = 108 - CELLS_Y.
+ */
+const HALO_CAMERA: [number, number, number] = [110, 108 - CELLS_Y, 110];
+const HALO_FOV = (50 * Math.PI) / 180;
+const HALO_VIEW = { width: 1280, height: 720 };
+/** Mainnet's measured `gain` at chain scope (§6, R = 122.6). */
+const HALO_GAIN = 0.58;
+
+/** The suppression the ELLIPTICAL build used: the individuated SHARE of the
+ *  population under the ray. `resolved` and `density` are the same body under
+ *  two envelopes, so the body cancels and this is a function of the warped
+ *  radius alone — which is why it could only ever draw an oval. Kept here as
+ *  the bar the replacement has to clear. */
+function ellipticalSuppression(tau: number, tauResolved: number): number {
+  const share = tauResolved / Math.max(tau, 1e-9);
+  const t = Math.max(0, Math.min(1, (share - 0.08) / (0.28 - 0.08)));
+  return t * t * (3 - 2 * t);
+}
+
+interface RayHalo {
+  /** Suppression from the shipped pair of measures. */
+  lit: number;
+  /** Suppression from the elliptical share, on the same ray. */
+  litElliptical: number;
+  /** Warped radius of the point of the organism this ray looks at. */
+  foldRadius: number;
+}
+
+/** March one ray of the density pass and return both laws' lit fractions.
+ *  Analytic rather than baked — the bake is an approximation of exactly this,
+ *  and the law is what is under test. Undithered, so the result is a property
+ *  of the field and not of a sampling phase. */
+function marchHalo(px: number, py: number): RayHalo | null {
+  const halfX = FIELD_HALF_X * POPULATION_FIELD_OUTER_EDGE;
+  const halfZ = FIELD_HALF_Z * POPULATION_FIELD_OUTER_EDGE;
+  const origin = new THREE.Vector3(...HALO_CAMERA);
+  const forward = origin.clone().multiplyScalar(-1).normalize();
+  const right = new THREE.Vector3(-forward.z, 0, forward.x).normalize();
+  const up = right.clone().cross(forward);
+  const tanHalf = Math.tan(HALO_FOV / 2);
+  const aspect = HALO_VIEW.width / HALO_VIEW.height;
+  const sx = ((px / HALO_VIEW.width) * 2 - 1) * tanHalf * aspect;
+  const sy = (1 - (py / HALO_VIEW.height) * 2) * tanHalf;
+  const dir = forward.clone()
+    .addScaledVector(right, sx)
+    .addScaledVector(up, sy)
+    .normalize();
+
+  const half = [halfX, POPULATION_FIELD_SLAB_HALF_Y, halfZ];
+  const ro = [origin.x, origin.y, origin.z];
+  const rd = [dir.x, dir.y, dir.z];
+  let tEnter = -Infinity;
+  let tExit = Infinity;
+  for (let axis = 0; axis < 3; axis += 1) {
+    const unit = rd[axis] >= 0 ? 1 : -1;
+    const inv = 1 / (unit * Math.max(Math.abs(rd[axis]), 1e-6));
+    let lo = (-half[axis] - ro[axis]) * inv;
+    let hi = (half[axis] - ro[axis]) * inv;
+    if (lo > hi) { const swap = lo; lo = hi; hi = swap; }
+    tEnter = Math.max(tEnter, lo);
+    tExit = Math.min(tExit, hi);
+  }
+  tEnter = Math.max(tEnter, 0);
+  if (tExit <= tEnter) return null;
+
+  const steps = 8;
+  const stepLen = (tExit - tEnter) / steps;
+  let tau = 0;
+  let tauResolved = 0;
+  for (let i = 0; i < steps; i += 1) {
+    const t = tEnter + (i + 0.5) * stepLen;
+    const x = ro[0] + rd[0] * t;
+    const y = ro[1] + rd[1] * t;
+    const z = ro[2] + rd[2] * t;
+    const sample = tissueSampleAt(x, z, POPULATION_FIELD_OUTER_EDGE);
+    const thickness = Math.max(sample.thickness, 1e-3);
+    const dy = (y - sample.foldY) / thickness;
+    const weight = (Math.exp(-0.5 * dy * dy) / thickness) * stepLen;
+    tau += sample.density * weight;
+    tauResolved += sample.resolvedCoverage * weight;
+  }
+
+  const rdy = rd[1] >= 0 ? Math.max(rd[1], 1e-4) : Math.min(rd[1], -1e-4);
+  const tFold = Math.min(Math.max(-ro[1] / rdy, tEnter), tExit);
+  const foldX = ro[0] + rd[0] * tFold;
+  const foldZ = ro[2] + rd[2] * tFold;
+  const coverage = tissueSampleAt(foldX, foldZ, POPULATION_FIELD_OUTER_EDGE)
+    .resolvedCoverage;
+
+  const depth = POPULATION_FIELD_SWARM_DENSITY * HALO_GAIN;
+  const unresolved = populationUnresolvedDepth(tau, coverage, tauResolved);
+  const elliptical = tau * (1 - ellipticalSuppression(tau, tauResolved));
+  return {
+    lit: 1 - Math.exp(-unresolved * depth),
+    litElliptical: 1 - Math.exp(-elliptical * depth),
+    foldRadius: Math.hypot(foldX / FIELD_HALF_X, foldZ / FIELD_HALF_Z),
+  };
+}
+
+/** What a lit fraction is worth as light on the pixel behind a Cell: the
+ *  expectation of {@link populationSwarmEmission} over the mask draw and the
+ *  brightness spread, times the emission peak. The tint's red channel is 1.0,
+ *  so this IS the worst channel's contrast factor. Checked against the real
+ *  function below rather than trusted. */
+function expectedHalo(lit: number): number {
+  const mean = POPULATION_FIELD_SPECK_FLOOR
+    + (1 - POPULATION_FIELD_SPECK_FLOOR) * 0.5;
+  return (lit * POPULATION_FIELD_CONTINUUM_FRACTION
+    + lit * mean * lit * POPULATION_FIELD_SPECK_GAIN)
+    * POPULATION_FIELD_EMISSION_PEAK;
+}
+
+/** Every sixth drawn Cell, projected to its screen pixel. */
+function drawnCellPixels(): { px: number; py: number }[] {
+  const origin = new THREE.Vector3(...HALO_CAMERA);
+  const forward = origin.clone().multiplyScalar(-1).normalize();
+  const right = new THREE.Vector3(-forward.z, 0, forward.x).normalize();
+  const up = right.clone().cross(forward);
+  const tanHalf = Math.tan(HALO_FOV / 2);
+  const aspect = HALO_VIEW.width / HALO_VIEW.height;
+  const pixels: { px: number; py: number }[] = [];
+  for (let id = 1; id <= 12_000; id += 6) {
+    const [x, y, z] = helixSeedF64(id);
+    const rel = new THREE.Vector3(x, y, z).sub(origin);
+    const depth = rel.dot(forward);
+    if (depth <= 1) continue;
+    const px = ((rel.dot(right) / (depth * tanHalf * aspect)) + 1) / 2
+      * HALO_VIEW.width;
+    const py = (1 - rel.dot(up) / (depth * tanHalf)) / 2 * HALO_VIEW.height;
+    if (px < 0 || py < 0 || px >= HALO_VIEW.width || py >= HALO_VIEW.height) continue;
+    pixels.push({ px, py });
+  }
+  return pixels;
+}
+
 describe('rule 9a: the halo cannot reach the addressable Cells', () => {
-  it('is exactly zero at and above the upper threshold, not merely low', () => {
+  it('is exactly zero at and above either upper threshold, not merely low', () => {
     // The invariant the whole relocation rests on. Three overlays were judged
     // live and every one that was visible at all cost the Cells their
     // sharpness, so the guarantee cannot be "faint" — it has to be a zero, and
     // it has to be structural rather than a value someone chose carefully.
+    //
+    // Either measure alone is enough to produce it: dense tissue at this point
+    // of the organism, or enough addressable tissue anywhere along the ray.
     for (const tau of [0.001, 0.05, 0.4, 1, 3, 12, 400]) {
-      for (const share of [
-        POPULATION_FIELD_SHARE_HIGH,
-        POPULATION_FIELD_SHARE_HIGH + 1e-6,
-        0.5,
-        0.9,
-        1,
-      ]) {
-        expect(populationUnresolvedDepth(tau, tau * share)).toBe(0);
+      for (const coverage of [POPULATION_FIELD_CORE_HIGH, 0.5, 0.9, 1]) {
+        expect(populationUnresolvedDepth(tau, coverage, 0)).toBe(0);
+      }
+      for (const sightline of [POPULATION_FIELD_SIGHTLINE_HIGH, 2, 9]) {
+        expect(populationUnresolvedDepth(tau, 0, sightline)).toBe(0);
       }
     }
   });
 
   it('no gain, density, or brightness can put light back over the Cells', () => {
-    // §6.1 test 1: the resolved core is pixel-identical to a build with the
-    // layer off. The zero happens BEFORE the exponential, so the whole chain
-    // downstream — optical depth, the swarm mask, the continuum, the emission
-    // peak — multiplies a zero, at every draw of the stochastic mask and at
-    // every scale anyone might later reach for.
+    // The zero happens BEFORE the exponential, so the whole chain downstream —
+    // optical depth, the swarm mask, the continuum, the emission peak —
+    // multiplies a zero, at every draw of the stochastic mask and at every
+    // scale anyone might later reach for.
     for (const tau of [0.02, 0.3, 2, 40]) {
-      for (const share of [POPULATION_FIELD_SHARE_HIGH, 0.4, 1]) {
-        const unresolved = populationUnresolvedDepth(tau, tau * share);
+      for (const [coverage, sightline] of [
+        [POPULATION_FIELD_CORE_HIGH, 0],
+        [0.4, 0],
+        [0, POPULATION_FIELD_SIGHTLINE_HIGH],
+        [1, 4],
+      ]) {
+        const unresolved = populationUnresolvedDepth(tau, coverage, sightline);
         for (const opticalDepth of [0.01, 0.58 * 0.84, 5, 1000]) {
           const litFraction = 1 - Math.exp(-unresolved * opticalDepth);
           expect(litFraction).toBe(0);
@@ -163,46 +320,80 @@ describe('rule 9a: the halo cannot reach the addressable Cells', () => {
     }
   });
 
-  it('crossfades between the two thresholds instead of switching', () => {
-    // §6.1 test 5, and the reason there are two constants rather than one.
+  it('takes the stronger of the two measures, never their average', () => {
+    // A Cell has a place and a direction. Averaging would let a ray full of
+    // Cells through wherever the plane under it happened to be empty, which is
+    // most of the seam: `max` is what makes each measure a veto rather than a
+    // vote.
+    const tau = 1.4;
+    const covered = populationUnresolvedDepth(tau, 1, 0);
+    const sighted = populationUnresolvedDepth(tau, 0, 3);
+    expect(covered).toBe(0);
+    expect(sighted).toBe(0);
+    expect(populationUnresolvedDepth(tau, 1, 3)).toBe(0);
+    // And each is monotone on its own axis: more evidence of Cells, less halo.
+    let previous = tau + 1;
+    for (const coverage of [0, 0.04, 0.07, 0.1, 0.13, 0.15]) {
+      const depth = populationUnresolvedDepth(tau, coverage, 0);
+      expect(depth).toBeLessThanOrEqual(previous);
+      previous = depth;
+    }
+    previous = tau + 1;
+    for (const sightline of [0, 0.2, 0.4, 0.6, 0.8, 1]) {
+      const depth = populationUnresolvedDepth(tau, 0, sightline);
+      expect(depth).toBeLessThanOrEqual(previous);
+      previous = depth;
+    }
+  });
+
+  it('crossfades between the thresholds instead of switching', () => {
+    // §6.1 test 5, and the reason each measure is a pair rather than a knee.
     // A single knee can only place the halo's onset; it cannot also say how
     // wide the transition is, so it put the whole crossfade PAST the last
     // Cell and left a band where neither population was drawn.
-    expect(POPULATION_FIELD_SHARE_LOW).toBeGreaterThan(0);
-    expect(POPULATION_FIELD_SHARE_LOW).toBeLessThan(POPULATION_FIELD_SHARE_HIGH);
-    expect(POPULATION_FIELD_SHARE_HIGH).toBeLessThan(1);
+    expect(POPULATION_FIELD_CORE_LOW).toBeGreaterThan(0);
+    expect(POPULATION_FIELD_CORE_LOW).toBeLessThan(POPULATION_FIELD_CORE_HIGH);
+    expect(POPULATION_FIELD_CORE_HIGH).toBeLessThan(1);
+    expect(POPULATION_FIELD_SIGHTLINE_LOW).toBeGreaterThan(0);
+    expect(POPULATION_FIELD_SIGHTLINE_LOW)
+      .toBeLessThan(POPULATION_FIELD_SIGHTLINE_HIGH);
 
     const tau = 1.4;
-    const inside = [0.26, 0.22, 0.18, 0.14, 0.1];
     let previous = 0;
-    for (const share of inside) {
-      const unresolved = populationUnresolvedDepth(tau, tau * share);
-      // Strictly rising as the individuated share falls — the crossfade is a
-      // ramp, and every one of these shares sits between the thresholds.
+    for (const coverage of [0.13, 0.11, 0.09, 0.07, 0.05]) {
+      const unresolved = populationUnresolvedDepth(tau, coverage, 0);
+      // Strictly rising as the coverage falls — the crossfade is a ramp, and
+      // every one of these sits between the thresholds.
       expect(unresolved).toBeGreaterThan(previous);
       expect(unresolved).toBeLessThan(tau);
       previous = unresolved;
     }
     // And it is smooth at both ends: a smoothstep has zero slope there, so
     // neither threshold shows up as a crease in the picture.
-    expect(populationResolvedSuppression(POPULATION_FIELD_SHARE_LOW)).toBe(0);
-    expect(populationResolvedSuppression(POPULATION_FIELD_SHARE_HIGH)).toBe(1);
-    const mid = (POPULATION_FIELD_SHARE_LOW + POPULATION_FIELD_SHARE_HIGH) / 2;
-    expect(populationResolvedSuppression(mid)).toBeCloseTo(0.5, 12);
+    expect(populationResolvedSuppression(POPULATION_FIELD_CORE_LOW, 0)).toBe(0);
+    expect(populationResolvedSuppression(POPULATION_FIELD_CORE_HIGH, 0)).toBe(1);
+    expect(populationResolvedSuppression(0, POPULATION_FIELD_SIGHTLINE_LOW))
+      .toBe(0);
+    expect(populationResolvedSuppression(0, POPULATION_FIELD_SIGHTLINE_HIGH))
+      .toBe(1);
+    const mid = (POPULATION_FIELD_CORE_LOW + POPULATION_FIELD_CORE_HIGH) / 2;
+    expect(populationResolvedSuppression(mid, 0)).toBeCloseTo(0.5, 12);
   });
 
   it('states the whole population wherever nothing is individuated', () => {
     // A suppression that swallowed the layer would pass every test above and
-    // ship nothing. At and below the lower threshold the halo is at FULL
+    // ship nothing. At and below both lower thresholds the halo is at FULL
     // strength — not asymptotically approaching it — so the outer body is
-    // never quietly dimmed by a share too small to see.
+    // never quietly dimmed by a trace of coverage too small to see.
     const tau = 1.4;
-    for (const share of [POPULATION_FIELD_SHARE_LOW, 0.05, 0.01, 0]) {
-      expect(populationUnresolvedDepth(tau, tau * share)).toBe(tau);
+    for (const coverage of [POPULATION_FIELD_CORE_LOW, 0.01, 0]) {
+      for (const sightline of [POPULATION_FIELD_SIGHTLINE_LOW, 0.05, 0]) {
+        expect(populationUnresolvedDepth(tau, coverage, sightline)).toBe(tau);
+      }
     }
-    expect(populationUnresolvedDepth(tau, 0)).toBe(tau);
-    // An empty ray is not a divide by zero, and states nothing.
-    expect(populationUnresolvedDepth(0, 0)).toBe(0);
+    // An empty ray states nothing, and is not a divide by zero any more —
+    // there is no quotient left to guard.
+    expect(populationUnresolvedDepth(0, 0, 0)).toBe(0);
   });
 
   it('subtracts population, before the exponential and not after', () => {
@@ -213,18 +404,33 @@ describe('rule 9a: the halo cannot reach the addressable Cells', () => {
     // is concave; subtracting the depth first lets the halo reach the body it
     // is supposed to continue. It is also the only form in which "exactly
     // zero" survives an arbitrary optical depth.
-    expect(shader).toContain('float share = tauResolved / max(tau, 1e-9);');
-    expect(shader).toContain('float supp = smoothstep(uShareLow, uShareHigh, share);');
     expect(shader).toContain('float unresolved = tau * (1.0 - supp);');
     expect(shader.indexOf('float unresolved ='))
       .toBeLessThan(shader.indexOf('1.0 - exp(-unresolved'));
+  });
+
+  it('reads the fold plane as well as the ray, and never their ratio', () => {
+    const shader = makePopulationDensityMaterial().fragmentShader;
+
+    // The ratio is the bug. `resolved` and `density` are one body under two
+    // envelopes, so `tauResolved / tau` cancels the body exactly and leaves a
+    // function of the warped radius — an ellipse, however it is thresholded.
+    expect(shader).not.toContain('tauResolved / max(tau');
+    expect(shader).not.toContain('float share');
+    // The local measure, taken at the point of the organism the pixel looks
+    // at, through the helper the composite shares.
+    expect(shader).toContain('vec3 foldPoint = foldPlanePoint(ro, rd, tEnter, tExit);');
+    expect(shader).toContain('float foldCoverage = texture2D(uField, foldUv).a;');
+    // Both measures, and the stronger wins.
+    expect(shader).toContain('float supp = max(');
+    expect(shader).toContain('smoothstep(uCoreLow, uCoreHigh, foldCoverage)');
+    expect(shader).toContain('smoothstep(uSightLow, uSightHigh, tauResolved)');
+
     const uniforms = makePopulationDensityMaterial().uniforms;
-    expect(uniforms.uShareLow.value).toBe(POPULATION_FIELD_SHARE_LOW);
-    expect(uniforms.uShareHigh.value).toBe(POPULATION_FIELD_SHARE_HIGH);
-    // Driven by the RATIO, never by an absolute coverage: both depths ride the
-    // same dithered samples, so the dither noise cancels in the quotient.
-    expect(shader).not.toContain('tauResolved /(');
-    expect(shader).toContain('tauResolved / max(tau');
+    expect(uniforms.uCoreLow.value).toBe(POPULATION_FIELD_CORE_LOW);
+    expect(uniforms.uCoreHigh.value).toBe(POPULATION_FIELD_CORE_HIGH);
+    expect(uniforms.uSightLow.value).toBe(POPULATION_FIELD_SIGHTLINE_LOW);
+    expect(uniforms.uSightHigh.value).toBe(POPULATION_FIELD_SIGHTLINE_HIGH);
   });
 
   it('publishes the suppression so the composite can ramp its grain', () => {
@@ -234,6 +440,92 @@ describe('rule 9a: the halo cannot reach the addressable Cells', () => {
     // the same lit fraction in R and want opposite grain, so the crossfade
     // position cannot be recovered downstream — it has to be carried.
     expect(shader).toContain('gl_FragColor = vec4(litFraction, supp, 0.0, 1.0);');
+  });
+
+  it('§6.1 test 1: leaves the Cells that were worst off strictly better', () => {
+    // PER CELL, not per radius. The old instrument asked whether the halo was
+    // zero inside r <= 0.70; it passes a build that floods the tissue's
+    // cavities and fails one that correctly lets the halo into them. A cavity
+    // holds no Cells and halo light in one obscures nothing.
+    //
+    // Both layers composite by bounded screen, so a Cell sits at `c + h(1-c)`
+    // over a surround at `h`: an excursion of `c(1-h)` against `c` with the
+    // layer off. The halo's luminance at a Cell's pixel IS that Cell's local
+    // contrast reduction, whichever order the two are drawn in.
+    //
+    // The bar is the build this replaces — the elliptical suppression was
+    // judged live and accepted, so it is the thing to be no worse than.
+    // The expectation helper is not allowed to drift from the shader's own
+    // colour math, so it is checked against it rather than trusted.
+    for (const lit of [0.15, 0.5, 0.9]) {
+      let total = 0;
+      const draws = 160;
+      for (let i = 0; i < draws; i += 1) {
+        for (let j = 0; j < draws; j += 1) {
+          total += populationSwarmEmission(lit, (i + 0.5) / draws, (j + 0.5) / draws);
+        }
+      }
+      const measured = (total / (draws * draws)) * POPULATION_FIELD_EMISSION_PEAK;
+      expect(measured).toBeCloseTo(expectedHalo(lit), 3);
+    }
+
+    const pixels = drawnCellPixels();
+    expect(pixels.length).toBeGreaterThan(1800);
+
+    const mine: number[] = [];
+    const ellipse: number[] = [];
+    for (const { px, py } of pixels) {
+      const halo = marchHalo(px, py);
+      if (!halo) continue;
+      mine.push(expectedHalo(halo.lit));
+      ellipse.push(expectedHalo(halo.litElliptical));
+    }
+    mine.sort((a, b) => a - b);
+    ellipse.sort((a, b) => a - b);
+    const at = (values: number[], p: number) =>
+      values[Math.floor(values.length * p)];
+    const over = (values: number[], t: number) =>
+      values.filter((v) => v > t).length;
+
+    // Four Cells in five carry exactly nothing, and that is not a tuned bound:
+    // it is the `max` of two suppressions saturating over the body.
+    expect(at(mine, 0.8)).toBe(0);
+    expect(at(ellipse, 0.8)).toBe(0);
+
+    // The TAIL is what matters, because that is where a Cell actually loses
+    // contrast, and the new law is strictly better there: it takes light off
+    // the Cells the ellipse left sitting in the fully lit halo. What it gives
+    // back is a faint dusting on a few more rim Cells — around a percent of
+    // them, at a tenth of that level — which is the interdigitation itself.
+    for (const level of [0.10, 0.20, 0.30]) {
+      expect(over(mine, level)).toBeLessThanOrEqual(over(ellipse, level));
+    }
+    expect(at(mine, 0.95)).toBeLessThanOrEqual(at(ellipse, 0.95));
+    expect(at(mine, 0.99)).toBeLessThanOrEqual(at(ellipse, 0.99));
+    // Not a vacuous comparison: the ellipse really does light Cells.
+    expect(over(ellipse, 0.20)).toBeGreaterThan(20);
+  });
+
+  it('§6.1 test 1: reaches further into the tissue than the ellipse did', () => {
+    // The other half, and the reason for the change. Without this the test
+    // above is satisfied by suppressing everything.
+    let area = 0;
+    let lit = 0;
+    let litElliptical = 0;
+    for (let py = 6; py < HALO_VIEW.height; py += 12) {
+      for (let px = 6; px < HALO_VIEW.width; px += 12) {
+        const halo = marchHalo(px, py);
+        if (!halo || halo.foldRadius > 1) continue;
+        area += 1;
+        if (halo.lit > 0.05) lit += 1;
+        if (halo.litElliptical > 0.05) litElliptical += 1;
+      }
+    }
+    expect(area).toBeGreaterThan(600);
+    // Inside the resolved rim — the cavities, corridors and thinning tissue
+    // the ellipse could never enter, because its input had no body term left
+    // in it to enter by. Measured at 1.54x.
+    expect(lit).toBeGreaterThan(litElliptical * 1.4);
   });
 });
 
@@ -650,10 +942,15 @@ describe('§5.1: the halo carries the unresolved FABRIC too', () => {
     // the whole cost, rather than a fetch per march step through a volume
     // that has no fibre in it.
     const composite = makePopulationCompositeMaterial().fragmentShader;
-    expect(composite).toContain('float tFold = clamp(-ro.y / rdy, tEnter, tExit);');
-    // Clamped into the slab: a grazing ray's fold intersection runs off to
-    // infinity, and an edge-on camera really does produce one.
-    expect(composite).toContain('vec3 foldPoint = ro + rd * tFold;');
+    expect(composite)
+      .toContain('vec3 foldPoint = foldPlanePoint(ro, rd, tEnter, tExit);');
+    // Through the SAME helper the density pass takes rule 9a's local measure
+    // with, so the grain is drawn at the point of the organism where the
+    // population under it was decided. Clamped into the slab: a grazing ray's
+    // fold intersection runs off to infinity, and an edge-on camera really
+    // does produce one.
+    expect(composite)
+      .toContain('float tFold = clamp(-ro.y / rdy, tEnter, tExit);');
 
     // And the density march never touches it. Two textures, one pass each.
     const density = makePopulationDensityMaterial().fragmentShader;
