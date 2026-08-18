@@ -274,24 +274,52 @@ export const POPULATION_FIELD_SIGHTLINE_LOW = 0.12;
 export const POPULATION_FIELD_SEAM_BRIDGE = 2;
 
 /**
- * How much coarser the swarm's grain is at the inner edge of the crossfade,
- * as a fraction of its normal screen scale — §5.2.
+ * How far the swarm's grain scale swings across the crossfade — §5.2.
  *
  * Density alone cannot close the seam, because the discontinuity the eye sees
  * there is one of KIND, not of amount: on one side large bright Cell sprites,
  * on the other two-pixel dots, with the switch happening over a few pixels.
- * Ramping the speck scale with the suppression puts the coarsest grain exactly
- * where the halo meets the thinning Cells — just barely unresolvable, which is
- * the honest state for matter at the edge of what the instrument can separate —
- * and refines it outward, so apparent grain size varies continuously across
- * the boundary instead of switching.
+ * So the grain scale is ramped, and apparent grain size varies continuously
+ * across the boundary instead of switching.
+ *
+ * ⚠️ **The direction was backwards and this reverses it.** The first build
+ * made the grain COARSEST at the seam, reasoning that the halo's texture
+ * should be just-barely-unresolvable where it meets the Cells. That maximises
+ * the textural mismatch exactly where the two have to read as one material:
+ * the core is ~8,000 fabric filaments about one pixel wide, so what the halo
+ * has to match WHERE THEY TOUCH is fine, not coarse. Coarsening outward is
+ * also the better story — detail degrades with distance from the surveyed
+ * region.
+ *
+ * The ramp is `1 + COARSENING * (0.5 - supp)`, centred on 1, so the mean grain
+ * is exactly what it always was and only its gradient reverses.
+ *
+ * **The span is derived, not chosen.** §5 permits a screen cell of 1.5 to 2.5
+ * device pixels measured as the cell's area. With
+ * {@link POPULATION_FIELD_SPECK_PX} at 2 the ramp's ends are `2 * (1 ± span/2)`,
+ * so a span of 0.5 lands them at exactly 1.5 and 2.5 — the widest swing §5
+ * allows, and the whole of it. (The prototype's 1.45 - 0.55·supp put the outer
+ * end at 2.9 px; the shipped 1 + 0.55·supp put the seam end at 3.1 px. Both
+ * are outside the window, in opposite directions.)
  *
  * The population statement survives it. `amount` is the fraction of screen
  * CELLS that are lit, so scaling the cell up scales the lit AREA by exactly
  * the same factor as the unlit area: bigger specks, proportionally fewer of
  * them, same fraction of the screen lit and therefore the same count stated.
  */
-export const POPULATION_FIELD_SEAM_COARSENING = 0.55;
+export const POPULATION_FIELD_SEAM_COARSENING = 0.5;
+
+/**
+ * The grain scale at a given suppression — the shader evaluates exactly this.
+ *
+ * Finest where the halo meets the Cells, coarsening outward, centred on 1.
+ *
+ * @param suppression how much of the halo the drawn Cells have taken, in [0, 1]
+ */
+export function populationSeamGrain(suppression: number): number {
+  const supp = Math.max(0, Math.min(1, suppression));
+  return 1 + POPULATION_FIELD_SEAM_COARSENING * (0.5 - supp);
+}
 
 function smoothstep(edge0: number, edge1: number, value: number): number {
   const t = Math.max(0, Math.min(1, (value - edge0) / (edge1 - edge0)));
@@ -455,12 +483,13 @@ export const POPULATION_FIELD_SWARM_DENSITY = 0.84;
  * that is what makes flying closer spread the population out without ever
  * resolving one of its members.
  *
- * §5 allows 1.5–2.5; two is the only INTEGER in that window and the reason
- * matters. `floor(gl_FragCoord.xy / size)` at a fractional size produces
- * screen cells that alternate between one and two pixels wide on a beat — at
- * 1.7 the pattern repeats every ten cells, and that beat is a low-frequency
- * structure laid over a layer whose entire job is to have none. At two, every
- * cell is exactly 2×2 device pixels and the grid is silent.
+ * §5 allows 1.5–2.5, and two is the only INTEGER in that window. That is why
+ * it is the value here, but it buys less than the first draft claimed: the
+ * cell is scaled by {@link populationSeamGrain} before it is used, so the
+ * extent is fractional everywhere except the exact middle of the crossfade,
+ * and the integer is a CENTRE rather than a guarantee. What the centre does
+ * buy is that the ramp's two ends land on §5's two bounds exactly, which is
+ * what makes the seam coarsening span derived rather than chosen.
  */
 export const POPULATION_FIELD_SPECK_PX = 2;
 
@@ -1336,16 +1365,16 @@ export function makePopulationCompositeMaterial(): THREE.ShaderMaterial {
         // the local fraction are lit — the field sets HOW MANY specks are lit,
         // never how bright a wash is. The cell index comes from gl_FragCoord,
         // so the scale is fixed to the display and no camera move resolves it.
-        // §5.2, the resolution gradient. Coarsest where the halo meets the
-        // thinning Cells — its grain just barely unresolvable, which is the
-        // honest state for matter at the edge of what the instrument can
-        // separate — and refining outward. Apparent grain size then varies
-        // continuously across the boundary instead of switching from large
-        // sprites to two-pixel dots, and the switch of KIND is what the eye
-        // was reading as an edge. The count is unaffected: the lit fraction
-        // is a fraction of screen CELLS, so a larger cell lights a
-        // proportionally larger area and states the same population.
-        float coarse = 1.0 + uCoarsening * clamp(suppression, 0.0, 1.0);
+        // §5.2, the resolution gradient. FINEST where the halo meets the
+        // thinning Cells and coarsening outward: the core is filaments about
+        // one pixel wide, so what the halo has to match where the two touch
+        // is fine. Apparent grain size then varies continuously across the
+        // boundary instead of switching from large sprites to dots, and the
+        // switch of KIND is what the eye was reading as an edge. The count is
+        // unaffected: the lit fraction is a fraction of screen CELLS, so a
+        // larger cell lights a proportionally larger area and states the same
+        // population.
+        float coarse = 1.0 + uCoarsening * (0.5 - clamp(suppression, 0.0, 1.0));
         // Elongated ALONG the local fibre, area-preserving: the long axis is
         // multiplied by the aspect and the short axis divided by it, so a
         // screen cell still covers uSpeckPx squared device pixels and the

@@ -21,6 +21,7 @@ import {
   POPULATION_FIELD_SEAM_BRIDGE,
   POPULATION_FIELD_SEAM_COARSENING,
   populationSeamBridge,
+  populationSeamGrain,
   POPULATION_FIELD_SIGHTLINE_HIGH,
   POPULATION_FIELD_SIGHTLINE_LOW,
   POPULATION_FIELD_SLAB_HALF_Y,
@@ -724,27 +725,41 @@ describe('makePopulationCompositeMaterial', () => {
     expect(material.fragmentShader).toContain('texture2D(uDensity, screenUv)');
   });
 
-  it('coarsens the grain where the halo meets the thinning Cells', () => {
+  it('refines the grain where the halo meets the thinning Cells', () => {
     const material = makePopulationCompositeMaterial();
     const shader = material.fragmentShader;
 
     // §5.2. Density alone cannot close the seam: the discontinuity there is
-    // one of KIND — large bright sprites on one side, two-pixel dots on the
-    // other — so the grain has to vary continuously across it. The ramp is
-    // driven by the suppression the density pass publishes in G, not by the
-    // lit fraction, because faint far tissue and suppressed seam tissue read
-    // the same in R and want opposite grain.
+    // one of KIND — large bright sprites on one side, dots on the other — so
+    // the grain has to vary continuously across it. The ramp is driven by the
+    // suppression the density pass publishes in G, not by the lit fraction,
+    // because faint far tissue and suppressed seam tissue read the same in R
+    // and want opposite grain.
     expect(shader).toContain('float suppression = density.g;');
-    expect(shader)
-      .toContain('float coarse = 1.0 + uCoarsening * clamp(suppression, 0.0, 1.0);');
+    expect(shader).toContain(
+      'float coarse = 1.0 + uCoarsening * (0.5 - clamp(suppression, 0.0, 1.0));',
+    );
     expect(material.uniforms.uCoarsening.value)
       .toBe(POPULATION_FIELD_SEAM_COARSENING);
-    // Coarser at the seam, never finer: a grain that refined INTO the boundary
-    // would sharpen exactly the edge this exists to dissolve.
-    expect(POPULATION_FIELD_SEAM_COARSENING).toBeGreaterThan(0);
-    // And bounded — at the far side of the ramp the swarm must still be the
-    // same population, not a second, chunkier one.
-    expect(POPULATION_FIELD_SEAM_COARSENING).toBeLessThan(1);
+
+    // FINEST at the seam, coarsening outward — the reverse of the first
+    // build. The core is filaments about one pixel wide, so a grain that got
+    // coarser INTO the boundary maximised the textural mismatch exactly where
+    // the two have to read as one material.
+    expect(populationSeamGrain(1)).toBeLessThan(populationSeamGrain(0));
+    // Centred on 1, so the mean grain is unchanged and only its gradient
+    // reverses: nothing about the layer's overall scale was re-judged here.
+    expect(populationSeamGrain(0.5)).toBeCloseTo(1, 12);
+
+    // The span is exactly §5's permitted screen-cell window, 1.5 to 2.5
+    // device pixels measured as the cell's area — the whole of it, and no
+    // more. Derived from SPECK_PX rather than chosen beside it.
+    expect(POPULATION_FIELD_SPECK_PX * populationSeamGrain(1))
+      .toBeCloseTo(1.5, 12);
+    expect(POPULATION_FIELD_SPECK_PX * populationSeamGrain(0))
+      .toBeCloseTo(2.5, 12);
+    // And it never inverts into a negative scale at either end.
+    expect(populationSeamGrain(1)).toBeGreaterThan(0);
   });
 
   it('carries a bounded bloom pool that costs nothing while empty', () => {
