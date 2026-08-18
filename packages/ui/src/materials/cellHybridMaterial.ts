@@ -29,7 +29,10 @@ import { CELL_GALAXY_PALETTE } from '../visualPalette';
  */
 
 // Tunable feel constants — collected here so reviewers find them in one place.
-const HYBRID_BASE_PX_PER_WU = 2.0; // sprite world→screen multiplier — ~2× halo outer-glow size; cell body (gl_PointCoord ≤ 0.5) renders at roughly halo-equivalent screen weight
+/** Sprite world→screen multiplier. Exported because the population halo is
+ *  the same material family and has to shrink with distance at exactly the
+ *  same rate — a second copy of this number is a seam waiting to open. */
+export const HYBRID_BASE_PX_PER_WU = 2.0; // sprite world→screen multiplier — ~2× halo outer-glow size; cell body (gl_PointCoord ≤ 0.5) renders at roughly halo-equivalent screen weight
 /** Direct inspection neighbours gain enough sprite room for their split
  * interface arcs. CellPicker imports the same value so the affordance never
  * extends beyond its hit area. */

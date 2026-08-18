@@ -115,8 +115,7 @@ export {
   makeCanonicalRewriteEchoMaterial,
 } from './components/CanonicalRewriteEcho';
 export { default as CellPopulationField } from './components/CellPopulationField';
-export * from './geometry/tissueFieldBake';
-export * from './geometry/populationFieldBlooms';
+export * from './geometry/populationFieldPlacement';
 export * from './materials/populationFieldMaterial';
 export {
   markCellFlashDirty,

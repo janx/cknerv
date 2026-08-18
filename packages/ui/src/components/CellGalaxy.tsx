@@ -100,14 +100,6 @@ import {
 } from './cellFlash';
 import { markPopulatedBufferUpdate } from '../geometry/populatedBufferAttribute';
 import CellPopulationField from './CellPopulationField';
-import {
-  createPopulationBloomPool,
-  spawnMembershipBlooms,
-} from '../geometry/populationFieldBlooms';
-import {
-  POPULATION_FIELD_BLOOM_MS,
-  POPULATION_FIELD_MAX_BLOOMS,
-} from '../materials/populationFieldMaterial';
 
 /** Cyan palette for the structural chain anchor (CKB icosahedron).
  *  The chain anchor reads as "structural backbone / chain truth" and
@@ -197,9 +189,6 @@ interface CellGalaxyProps {
    *  all, which is the correct state whenever the stage covers its scope or
    *  the caller has not derived a population. */
   populationGain?: number;
-  /** Freeze presentation-only animation at a deterministic phase. Affects
-   *  the medium's grain and bloom phase; no extent, amount, or count moves. */
-  reducedMotion?: boolean;
   /** Seconds after the block pulse at which the LOCAL node applies the block —
    *  i.e. when it hears the block from the network (caller-supplied delay). The
    *  whole ledger reaction is delayed by this, so the canonical ripple never
@@ -1079,7 +1068,6 @@ export default function CellGalaxy({
   inspectionFieldRef,
   pickingSuspendedRef,
   populationGain = 0,
-  reducedMotion = false,
   localReceiveDelayS = 0,
 }: CellGalaxyProps) {
   const simClock = useSimClock();
@@ -1122,18 +1110,6 @@ export default function CellGalaxy({
    * Ordinary churn patches indexed slots; only reset/skipped-journal/clamp
    * transitions rebuild. */
   const cellRenderSetRef = useRef(createCellRenderSetState());
-  /** Ring-allocated blooms marking where a Cell condensed out of the medium
-   * or dissolved back into it. Allocated once; the spawn path never touches
-   * the heap. */
-  const populationBloomsRef = useRef(
-    createPopulationBloomPool(POPULATION_FIELD_MAX_BLOOMS),
-  );
-  /** Display journal already turned into blooms. The render set re-syncs for
-   * reasons that are not membership changes at all — a presentation clamp
-   * moving is one — and on those frames `displayChanges` still describes the
-   * PREVIOUS batch. Keyed on the journal itself, a clamp drag cannot replay
-   * the same entries once per slider value. */
-  const bloomedDisplayTokenRef = useRef<object | null>(null);
   /** D4 overlay pool state: the selected cell and inspection-field members
    * that sit off-stage render as overlay entries appended after the staged
    * list — client-transient, never entering the shared display membership
@@ -1449,41 +1425,6 @@ export default function CellGalaxy({
       || renderSet.displayToken !== cellsCache.displayToken
       || renderSet.displayBudget !== cellDisplayLimit
       || renderSet.displayPlaneActive !== (cellsCache.displayBudget !== null);
-    // Membership blooms are collected BEFORE the sync, while the render set
-    // still holds the previous membership: an exit's position is only
-    // knowable from the list it is about to leave. `displayChanges` describes
-    // exactly this transition, so the two are read together or not at all.
-    const displayJournalIsNew = bloomedDisplayTokenRef.current !== cellsCache.displayToken;
-    if (renderNeedsSync && displayJournalIsNew && populationGain > 0) {
-      const displayChanges = cellsCache.displayChanges;
-      const previousCells = renderSet.cells;
-      const previousIndex = renderSet.indexById;
-      spawnMembershipBlooms(populationBloomsRef.current, {
-        entered: displayChanges.entered,
-        exited: displayChanges.exited,
-        changeCount: displayChanges.entered.length + displayChanges.exited.length,
-        // A backfill envelope resettles the plane in one step. That is a cut,
-        // not churn, and marking every seat of it would state transitions no
-        // viewer could have followed.
-        coalesced: displayChanges.reset || cellsCache.backfill !== null,
-        resolveEntry: (id) => {
-          const cell = cellsCache.cells.get(id)
-            ?? cellsCache.displayResidents.get(id);
-          // A Cell arriving already dead keeps the death event it owns.
-          return cell && cell.death_at_ms === null ? cell.pos_seed : null;
-        },
-        resolveExit: (id) => {
-          const slot = previousIndex.get(id);
-          if (slot === undefined) return null;
-          const cell = previousCells[slot];
-          // A death that is ALSO an exit plays the death, never both.
-          return cell && cell.death_at_ms === null ? cell.pos_seed : null;
-        },
-        nowSec: now,
-        durationSec: POPULATION_FIELD_BLOOM_MS / 1000,
-      });
-    }
-    if (renderNeedsSync) bloomedDisplayTokenRef.current = cellsCache.displayToken;
     const renderUpdate = renderNeedsSync
       ? syncCellRenderSet(renderSet, cellsCache, cellDisplayLimit)
       : null;
@@ -1904,11 +1845,7 @@ export default function CellGalaxy({
             the crisp records it gives context to always sit in front of it.
             It carries no ids, registers no pointer handlers, and never
             answers a raycast. */}
-        <CellPopulationField
-          gain={populationGain}
-          bloomPool={populationBloomsRef.current}
-          reducedMotion={reducedMotion}
-        />
+        <CellPopulationField gain={populationGain} />
         <points
           geometry={cellGeometry}
           material={hybridMaterial}

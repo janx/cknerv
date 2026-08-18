@@ -2,14 +2,15 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-const FIELD_SOURCE = readFileSync(
-  resolve(process.cwd(), 'src/components/CellPopulationField.tsx'),
-  'utf8',
-);
-const GALAXY_SOURCE = readFileSync(
-  resolve(process.cwd(), 'src/components/CellGalaxy.tsx'),
-  'utf8',
-);
+function read(path: string): string {
+  return readFileSync(resolve(process.cwd(), path), 'utf8');
+}
+
+const FIELD_SOURCE = read('src/components/CellPopulationField.tsx');
+const GALAXY_SOURCE = read('src/components/CellGalaxy.tsx');
+const PLACEMENT_SOURCE = read('src/geometry/populationFieldPlacement.ts');
+const MATERIAL_SOURCE = read('src/materials/populationFieldMaterial.ts');
+const WORKER_SOURCE = read('src/geometry/populationField.worker.ts');
 
 /** Prose is not code. These rules are about what the module DOES, and a
  *  comment naming the system it deliberately stays out of must not read as a
@@ -21,21 +22,31 @@ function withoutComments(source: string): string {
 }
 
 const FIELD_CODE = withoutComments(FIELD_SOURCE);
+const PLACEMENT_CODE = withoutComments(PLACEMENT_SOURCE);
+const MATERIAL_CODE = withoutComments(MATERIAL_SOURCE);
+/** Every module the halo is made of. The geometry moved out of the component
+ *  when the layer became points, so the rules below have to follow it. */
+const LAYER_CODE = [FIELD_CODE, PLACEMENT_CODE, MATERIAL_CODE,
+  withoutComments(WORKER_SOURCE)].join('\n');
 
-describe('the medium is not an object', () => {
+describe('the halo is not an object', () => {
   it('answers no raycast', () => {
-    // `ScreenSpaceHitIndex` plus `CellPicker` are the sole Cell hit surface. A
-    // stray mesh with a real raycast would also regress the click-through
-    // work the HUD gaps depend on.
+    // Structurally it is already unreachable — no pointer handler, so it never
+    // joins the interaction list, and it is a sibling of the pick object
+    // rather than a descendant. The override is the defensive layer, and a
+    // point cloud earns it twice over: unlike a bare Object3D, points ship a
+    // real default raycast against a one-unit sphere per vertex.
     expect(FIELD_SOURCE).toContain('function neverRaycast(): void {}');
     expect(FIELD_SOURCE).toContain('raycast={neverRaycast}');
-    expect(FIELD_SOURCE).toContain('mesh.raycast = neverRaycast');
   });
 
   it('registers no pointer handler of any kind', () => {
-    expect(FIELD_CODE).not.toMatch(/onPointer[A-Z]/);
-    expect(FIELD_CODE).not.toMatch(/onClick/);
-    expect(FIELD_CODE).not.toMatch(/onDoubleClick/);
+    expect(LAYER_CODE).not.toMatch(/onPointer[A-Z]/);
+    expect(LAYER_CODE).not.toMatch(/onClick/);
+    expect(LAYER_CODE).not.toMatch(/onDoubleClick/);
+    // Affordance is now the WHOLE of the not-addressable message, since the
+    // points do resolve on a fly-in. No cursor change either.
+    expect(LAYER_CODE).not.toContain('cursor');
   });
 
   it('never reaches a Cell-identity system', () => {
@@ -49,8 +60,9 @@ describe('the medium is not an object', () => {
       'out_point',
       'content_hash',
       'selectedCellId',
+      'helixSeedF64',
     ]) {
-      expect(FIELD_CODE).not.toContain(forbidden);
+      expect(LAYER_CODE).not.toContain(forbidden);
     }
   });
 
@@ -61,7 +73,7 @@ describe('the medium is not an object', () => {
   });
 });
 
-describe('the medium responds to no chain event', () => {
+describe('the halo responds to no chain event', () => {
   it('has no block, birth, death or transaction channel', () => {
     // A block affects specific Cells. Brightening an aggregate would claim
     // that unknown Cells participated in it.
@@ -74,95 +86,143 @@ describe('the medium responds to no chain event', () => {
       'BIRTH_DURATION',
       'linkPrune',
     ]) {
-      expect(FIELD_CODE).not.toContain(forbidden);
+      expect(LAYER_CODE).not.toContain(forbidden);
     }
   });
 });
 
-describe('the two passes', () => {
-  it('renders density offscreen and restores the previous target', () => {
-    expect(FIELD_SOURCE).toContain('gl.setRenderTarget(densityTarget)');
-    // Leaving the renderer pointed at an offscreen target would take the
-    // whole dashboard with it.
-    expect(FIELD_SOURCE).toContain('gl.setRenderTarget(previousTarget)');
-    expect(FIELD_SOURCE).toContain('gl.autoClear = previousAutoClear');
+describe('one static buffer and one draw', () => {
+  it('keeps the two-pass pipeline out of the tree', () => {
+    // The density march, the suppression shader, the line-integral grain, the
+    // speck mask, the baked field, the quarter-res target and the composite
+    // are all gone. A screen-space construction was tried four times and
+    // failed four times for the same two structural reasons; a fifth is not
+    // an experiment, it is a repeat.
+    for (const gone of [
+      'setRenderTarget',
+      'WebGLRenderTarget',
+      'uSteps',
+      'uDensity',
+      'densityScene',
+      'compositeMaterial',
+      'tissueFieldBake',
+      'uFibre',
+      'uSwarmPhase',
+      'uBlooms',
+      'HalfFloatType',
+    ]) {
+      expect(LAYER_CODE).not.toContain(gone);
+    }
   });
 
   it('leaves gl.info alone', () => {
-    // RenderStatsSampler owns that accounting; this pass accumulates into its
-    // window like any other multi-pass frame.
-    expect(FIELD_CODE).not.toContain('gl.info');
-    expect(FIELD_CODE).not.toContain('autoReset');
+    // RenderStatsSampler owns that accounting.
+    expect(LAYER_CODE).not.toContain('gl.info');
+    expect(LAYER_CODE).not.toContain('autoReset');
   });
 
-  it('tracks the camera rather than the simulated clock', () => {
-    // The march must keep up with a camera that moves while time is paused,
-    // so the pass is raw useFrame; only the grain phase reads sim time.
-    expect(FIELD_SOURCE).toContain('useFrame((state)');
-    expect(FIELD_CODE).not.toContain('useSimFrame');
-    expect(FIELD_SOURCE).toContain('simClock.elapsedSec');
+  it('does no per-frame work proportional to anything', () => {
+    // Three uniform writes. No loop of any kind inside the frame callback:
+    // the geometry is static and the layer's only frame cost is its draw.
+    const frame = FIELD_CODE.slice(
+      FIELD_CODE.indexOf('useFrame((state)'),
+      FIELD_CODE.indexOf('if (!geometry'),
+    );
+    expect(frame.length).toBeGreaterThan(0);
+    expect(frame).not.toMatch(/\bfor\b|\bwhile\b|\.forEach\(|\.map\(/);
   });
 
-  it('keeps the density pass under a quarter of native resolution', () => {
-    const divisors = [...FIELD_SOURCE.matchAll(/densityDivisor: (\d+)/g)]
-      .map((match) => Number(match[1]));
-
-    expect(divisors.length).toBeGreaterThan(0);
-    for (const divisor of divisors) expect(divisor).toBeGreaterThanOrEqual(4);
-  });
-
-  it('spends its march budget on the volume, not on the screen', () => {
-    const steps = [...FIELD_SOURCE.matchAll(/steps: (\d+)/g)]
-      .map((match) => Number(match[1]));
-
-    expect(steps.length).toBe(3);
-    for (const count of steps) expect(count).toBeLessThanOrEqual(8);
+  it('places off the main thread', () => {
+    // A second of CPU is a long task, and it would arrive while the page is
+    // still assembling itself. Spreading it across frames would trade that
+    // for ten seconds of absence instead.
+    expect(FIELD_SOURCE).toContain("new URL('../geometry/populationField.worker.ts'");
+    expect(FIELD_CODE).toContain('worker.terminate()');
+    // And the main-thread module never runs the pass itself: the placement
+    // entry point is reached only from inside the worker.
+    expect(FIELD_CODE).not.toContain('placePopulationField');
+    expect(FIELD_CODE).not.toContain('advancePopulationPlacement');
   });
 });
 
 describe('degradation', () => {
-  it('renders nothing at all until the bake lands', () => {
-    // Absence is a legal state; a half-baked field is not.
-    // BOTH bakes, not just the law's: the fibre lands with it and the swarm
-    // reads it every frame, so a field drawn before it arrived would be a
-    // different layer for one frame — and a sampler bound to null is a black
-    // texture, which would gate every speck off along a strand.
-    expect(FIELD_SOURCE).toContain('textureRef.current !== null');
-    expect(FIELD_SOURCE).toContain('&& fibreTextureRef.current !== null');
-    expect(FIELD_SOURCE).toContain('&& gain > 0;');
-    expect(FIELD_SOURCE).toContain('composite.visible = active');
+  it('renders nothing at all until the buffer lands', () => {
+    // Absence is a legal state for this layer, and it is the whole of the
+    // "not ready" behaviour — there is no partial field to show.
+    expect(FIELD_SOURCE).toContain('if (!geometry || !wanted) return null;');
   });
 
-  it('spreads the bake against a per-frame budget', () => {
-    expect(FIELD_SOURCE).toContain('BAKE_ROWS_PER_FRAME');
-    expect(FIELD_SOURCE).toContain('advanceTissueFieldBake(bake, BAKE_ROWS_PER_FRAME)');
+  it('places nothing when the stage covers its scope', () => {
+    // Gain zero is the correct degenerate case, and it must not spend a
+    // worker, a second of CPU, and three megabytes to state nothing.
+    expect(FIELD_SOURCE).toContain('const wanted = gain > 0;');
+    expect(FIELD_SOURCE).toContain('if (!wanted || startedRef.current) return undefined;');
   });
 
-  it('lets quality trim presentation without removing the field', () => {
-    // High, med and low differ in bake resolution, march steps and pass
-    // resolution — and in nothing else. None of them is absence.
-    for (const preset of ['high:', 'med:', 'low:']) {
-      expect(FIELD_SOURCE).toContain(preset);
+  it('survives an environment with no worker', () => {
+    expect(FIELD_SOURCE).toContain("if (typeof Worker === 'undefined') return undefined;");
+  });
+
+  it('lets quality trim cost without changing what is stated', () => {
+    // The count is a population statement, so it does not scale with a
+    // preset. What already scales for free is the DPR cascade: the sprite is
+    // sized in drawing-buffer pixels, so high/med/low pay 4x/2.25x/1x for the
+    // same field at the same apparent brightness and the same point count.
+    expect(FIELD_CODE).not.toMatch(/high:|med:|low:/);
+    expect(FIELD_CODE).not.toContain('QUALITY_PRESETS');
+    expect(FIELD_CODE).toContain('uPixelRatio');
+  });
+});
+
+describe('the halo is smaller and dimmer than a Cell, and differs in nothing else', () => {
+  /** Read a numeric constant out of a module rather than restating it, so
+   *  this stays a guard on the RELATIONSHIP and not a second copy of the
+   *  numbers it compares. */
+  function constant(source: string, name: string): number {
+    const match = source.match(
+      new RegExp(`${name}\\s*=\\s*(-?[0-9]+(?:\\.[0-9]+)?)`),
+    );
+    expect(match, `${name} not found`).not.toBeNull();
+    return Number(match![1]);
+  }
+
+  it('is smaller than the smallest Cell sprite on the stage', () => {
+    // Cell sprite = base * morphology, morphology = 0.58 + 0.72 * u^2 (+ a
+    // rare plain-Cell bonus), so the floor is the generic base at u = 0.
+    const generic = constant(GALAXY_SOURCE, 'GENERIC_CELL_POINT_SIZE');
+    const morphologyFloor = 0.58;
+    const smallestCell = generic * morphologyFloor;
+    const halo = constant(MATERIAL_SOURCE, 'POPULATION_FIELD_POINT_SIZE');
+
+    expect(halo).toBeLessThan(smallestCell);
+    // And well under a typical one — a tagged Cell at mean morphology.
+    const tagged = constant(GALAXY_SOURCE, 'TAGGED_CELL_POINT_SIZE');
+    expect(halo).toBeLessThan(tagged * (0.58 + 0.72 / 3) * 0.5);
+  });
+
+  it("cannot reach a Cell core's brightness at any density", () => {
+    // The blend is a bounded accumulation whose fixed point is the emitted
+    // alpha, so the emission constant IS the ceiling a saturated patch
+    // converges to. Cell bodies emit up to ~1.18 and converge to white.
+    const emission = constant(MATERIAL_SOURCE, 'POPULATION_FIELD_EMISSION');
+    expect(emission).toBeGreaterThan(0);
+    expect(emission).toBeLessThan(1);
+  });
+
+  it('has no white-hot core, no wash, and no ring', () => {
+    // The three things that would make a halo point read as a small Cell.
+    expect(MATERIAL_CODE).not.toContain('warmWhite');
+    expect(MATERIAL_CODE).not.toContain('wash');
+    expect(MATERIAL_CODE).not.toContain('Ring');
+    // One Gaussian, and only one.
+    expect((MATERIAL_SOURCE.match(/exp\(/g) ?? [])).toHaveLength(1);
+  });
+
+  it('emits the body hue and no identity hue', () => {
+    expect(MATERIAL_CODE).toContain('CELL_GALAXY_PALETTE.tissueRose');
+    for (const forbidden of ['asset', 'lock', 'tag', 'memoryViolet']) {
+      expect(MATERIAL_CODE).not.toContain(forbidden);
     }
-    expect(FIELD_CODE).not.toMatch(/quality === 'low'[^\n]*return null/);
-  });
-
-  it('freezes animation under reduced motion without moving an amount', () => {
-    expect(FIELD_SOURCE).toContain('reducedMotion\n      ? 0');
-    // ONE phase drives the whole bloom. Freezing the fade while the radius
-    // kept growing produced more motion than the un-reduced path, not less.
-    expect(FIELD_SOURCE).toContain('const phase = reducedMotion ? 0.5 : life;');
-    expect(FIELD_SOURCE).toContain('0.55 + phase * 0.75');
-    expect(FIELD_CODE).not.toContain('0.55 + life * 0.75');
-  });
-
-  it('re-bakes on a resolution change and on nothing else', () => {
-    // med and low share a 256 bake. Re-baking for a march-step change would
-    // spend a second of frame budget for a byte-identical texture, at exactly
-    // the moment the adaptive controller downgraded because frames were slow.
-    expect(FIELD_CODE)
-      .toContain('if (bake && bake.resolution === preset.bake) return;');
-    expect(FIELD_CODE).toContain('}, [preset.bake]);');
   });
 });
 
@@ -174,35 +234,28 @@ describe('where CellGalaxy mounts it', () => {
 
     expect(group).toBeGreaterThan(-1);
     expect(field).toBeGreaterThan(group);
-    // Draw order is the layer contract: chain mesh, then the medium, then the
-    // crisp records the medium gives context to.
+    // Inside the rotating group is the whole point: the halo turns with the
+    // Cells, with the same parallax, as one body. The failure this design
+    // fixes is a layer that shimmers in place while the galaxy turns, and it
+    // is invisible in every still.
     expect(field).toBeLessThan(bodies);
   });
 
-  it('collects membership blooms before the render set forgets the exits', () => {
-    const collect = GALAXY_SOURCE.indexOf('spawnMembershipBlooms(');
-    const sync = GALAXY_SOURCE.indexOf('syncCellRenderSet(renderSet');
-
-    // An exit's position is only knowable from the list it is about to leave.
-    expect(collect).toBeGreaterThan(-1);
-    expect(sync).toBeGreaterThan(-1);
-    expect(collect).toBeLessThan(sync);
+  it('hands it an amount and nothing else', () => {
+    expect(GALAXY_SOURCE).toContain('<CellPopulationField gain={populationGain} />');
   });
 
-  it('never marks a death as a dissolve', () => {
-    // Both resolvers refuse a record that is already dead: death owns its own
-    // event, and playing both would double-count it to the eye.
-    const resolvers = GALAXY_SOURCE.match(/cell\.death_at_ms === null \? cell\.pos_seed : null/g);
-    expect(resolvers).toHaveLength(2);
-  });
-
-  it('suppresses blooms across a coalesced resettle', () => {
-    expect(GALAXY_SOURCE)
-      .toContain('displayChanges.reset || cellsCache.backfill !== null');
-  });
-
-  it('allocates its bloom ring once, outside the frame loop', () => {
-    expect(GALAXY_SOURCE)
-      .toContain('useRef(\n    createPopulationBloomPool(POPULATION_FIELD_MAX_BLOOMS),\n  )');
+  it('has no membership bloom left to feed', () => {
+    // The blooms were drawn by the composite pass, and under this design a
+    // field-local bloom lands exactly where the complement has removed every
+    // point. It cannot be seen, so it is not decoration to leave behind.
+    for (const gone of [
+      'populationFieldBlooms',
+      'spawnMembershipBlooms',
+      'createPopulationBloomPool',
+      'bloomedDisplayTokenRef',
+    ]) {
+      expect(GALAXY_SOURCE).not.toContain(gone);
+    }
   });
 });

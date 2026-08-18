@@ -49,7 +49,6 @@ import {
   deriveCellPopulationField,
   resolveCellDisplayLimit,
   useCellDisplayRuntime,
-  useReducedMotion,
   NetworkColony,
   NeuralNetwork,
   QUALITY_PRESETS,
@@ -622,7 +621,6 @@ export default function App({
     galaxyConfig.cellCap,
     cellsCache.displayBudget?.cells,
   );
-  const reducedMotion = useReducedMotion();
   const cellPopulation = useMemo(() => deriveCellPopulationField({
     cache: cellsCache,
     displayLimit: cellDisplayLimit,
@@ -1269,7 +1267,6 @@ export default function App({
             universeSeed={universeSeed}
             cellCapacity={galaxyConfig.cellCap}
             populationGain={cellPopulation.gain}
-            reducedMotion={reducedMotion}
             localReceiveDelayS={cf.localReceiveDelayS}
             selectedId={selectedNetId}
             selectedCellId={selectedCellId}
