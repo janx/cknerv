@@ -27,7 +27,11 @@ import {
   POPULATION_FIELD_SLAB_HALF_Y,
   POPULATION_FIELD_SPECK_FLOOR,
   POPULATION_FIELD_SPECK_GAIN,
-  POPULATION_FIELD_SPECK_ELONGATION,
+  POPULATION_FIELD_LIC_CONTRAST,
+  POPULATION_FIELD_LIC_SHOULDER,
+  POPULATION_FIELD_LIC_STEP,
+  POPULATION_FIELD_LIC_TAPS,
+  populationLicPick,
   POPULATION_FIELD_SPECK_PX,
   POPULATION_FIELD_SWARM_DENSITY,
   populationFibreClustering,
@@ -259,6 +263,21 @@ function marchHalo(px: number, py: number): RayHalo | null {
  *  brightness spread, times the emission peak. The tint's red channel is 1.0,
  *  so this IS the worst channel's contrast factor. Checked against the real
  *  function below rather than trusted. */
+/** The composite's own per-pixel hash, transcribed from SLAB_GLSL. The
+ *  smeared mask draw is a function of it, so its uniformity is what the
+ *  population statement rests on and it cannot be approximated here. */
+function hash21(px: number, py: number): number {
+  const fract = (v: number) => v - Math.floor(v);
+  let qx = fract(px * 0.1031);
+  let qy = fract(py * 0.1031);
+  let qz = fract(px * 0.1031);
+  const dp = qx * (qy + 33.33) + qy * (qz + 33.33) + qz * (qx + 33.33);
+  qx += dp;
+  qy += dp;
+  qz += dp;
+  return fract((qx + qy) * qz);
+}
+
 function expectedHalo(lit: number): number {
   // No node sub-population here: this measures the halo landing on a Cell, and
   // a node is a sixteenth of the specks. The balance factor still applies,
@@ -669,16 +688,23 @@ describe('makePopulationCompositeMaterial', () => {
   it('locks the swarm to the screen, never to the world', () => {
     const material = makePopulationCompositeMaterial();
 
-    // The speck cell index comes from gl_FragCoord, so its frequency is fixed
-    // to the display: flying closer spreads the population without ever
+    // Both lattices are indexed from gl_FragCoord, so their frequency is
+    // fixed to the display: flying closer spreads the population without ever
     // making one of its members larger or countable. World-space grain is the
-    // rejected alternative precisely because it does resolve. The fibre
-    // rotates that grid and stretches it, both in DEVICE pixels — the shape of
-    // a cell follows the world, its size never does.
-    expect(material.fragmentShader).toContain('dot(gl_FragCoord.xy, axis)');
-    expect(material.fragmentShader).toContain('vec2 cell = floor(rotated / extent);');
+    // rejected alternative precisely because it does resolve.
     expect(material.fragmentShader)
-      .toContain('vec2(uSpeckPx * coarse * uSpeckAspect, uSpeckPx * coarse / uSpeckAspect)');
+      .toContain('vec2 cell = floor(gl_FragCoord.xy / extent);');
+    expect(material.fragmentShader)
+      .toContain('vec2 extent = max(vec2(uSpeckPx * coarse), vec2(0.25));');
+    // And the smear that carries the grain's direction is offsets FROM the
+    // pixel, never a rotation of the pixel's absolute coordinate. That
+    // distinction is the whole correction: an absolute coordinate of
+    // magnitude ~1400 rotated by a per-pixel direction moves by tens of
+    // pixels between neighbours, which is how the old grid ended up as
+    // one-pixel noise with no cell structure in it at all.
+    expect(material.fragmentShader)
+      .toContain('gl_FragCoord.xy + axis * (float(k) * licPx)');
+    expect(material.fragmentShader).not.toContain('dot(gl_FragCoord.xy, axis)');
     expect(material.uniforms.uSpeckPx.value).toBe(POPULATION_FIELD_SPECK_PX);
     expect(POPULATION_FIELD_SPECK_PX).toBeGreaterThanOrEqual(1.5);
     expect(POPULATION_FIELD_SPECK_PX).toBeLessThanOrEqual(2.5);
@@ -1013,25 +1039,96 @@ describe('§5.1: the halo carries the unresolved FABRIC too', () => {
     expect(populationSwarmEmission(0, 0, 1, 1)).toBe(0);
   });
 
-  it('elongates the grain without changing how much of it there is', () => {
+  it('§5.1.1: smears the mask along the flow instead of elongating a cell', () => {
     const material = makePopulationCompositeMaterial();
-    const aspect = material.uniforms.uSpeckAspect.value as number;
+    const shader = material.fragmentShader;
 
-    // Area-preserving by construction: long axis times the aspect, short axis
-    // divided by it. Anisotropy is what makes a texture read as fibrous
-    // instead of as noise, and it is the one property of the grain rule 10
-    // leaves free — the SIZE of a screen cell is what may never follow the
-    // world.
-    expect(aspect * aspect).toBeCloseTo(POPULATION_FIELD_SPECK_ELONGATION, 12);
-    const along = POPULATION_FIELD_SPECK_PX * aspect;
-    const across = POPULATION_FIELD_SPECK_PX / aspect;
-    expect(along * across)
-      .toBeCloseTo(POPULATION_FIELD_SPECK_PX * POPULATION_FIELD_SPECK_PX, 12);
-    expect(along / across).toBeCloseTo(POPULATION_FIELD_SPECK_ELONGATION, 12);
-    // Fibrous, not merely oval, and not so long that a speck becomes a dash
-    // anyone could trace.
-    expect(POPULATION_FIELD_SPECK_ELONGATION).toBeGreaterThan(2);
-    expect(POPULATION_FIELD_SPECK_ELONGATION).toBeLessThan(4);
+    // Anisotropy is what makes a texture read as fibrous instead of as noise,
+    // and the elongated screen cell this replaces did not produce any — its
+    // lit runs measured 1.62 px along the flow against 1.68 px across. The
+    // smear does, from the same field and the same hash.
+    expect(shader).toContain('float licPx = uLicStep * coarse;');
+    expect(shader).toContain(
+      `for (int k = -${POPULATION_FIELD_LIC_TAPS}; k <= ${POPULATION_FIELD_LIC_TAPS}; k++) {`,
+    );
+    expect(material.uniforms.uLicStep.value).toBe(POPULATION_FIELD_LIC_STEP);
+
+    // The lattice and the step are the same number, so taps land in adjacent
+    // cells and the smear is continuous along the flow rather than a comb of
+    // correlations at multiples of the step.
+    expect(shader).toContain('/ licPx);');
+
+    // Riding the seam ramp puts the lattice at exactly one device pixel where
+    // the halo meets the Cells' own one-pixel filaments, and opens it outward.
+    // Derived from the ramp rather than typed in beside it.
+    expect(POPULATION_FIELD_LIC_STEP * populationSeamGrain(1)).toBeCloseTo(1, 12);
+    expect(POPULATION_FIELD_LIC_STEP * populationSeamGrain(0))
+      .toBeGreaterThan(1.5);
+
+    // Bounded both ways: one tap is no smear at all, and past about five the
+    // far taps sample a direction that has already turned, so they cost hash
+    // evaluations and give back less anisotropy, not more.
+    expect(POPULATION_FIELD_LIC_TAPS).toBeGreaterThanOrEqual(3);
+    expect(POPULATION_FIELD_LIC_TAPS).toBeLessThanOrEqual(9);
+    // §5.1.1's budget is about nineteen hash evaluations per pixel. Each tap
+    // needs two — one for its reseed phase, one for its value — so the budget
+    // is what sets the tap count.
+    expect((2 * POPULATION_FIELD_LIC_TAPS + 1) * 2).toBeLessThanOrEqual(24);
+    // Not one extra texture fetch: the whole construction is ALU.
+    const fetches = shader.match(/texture2D\(/g) ?? [];
+    expect(fetches).toHaveLength(3);
+  });
+
+  it('§5.1.1: the smeared draw still states the population it is given', () => {
+    // The mask threshold is the entire population statement, so the draw has
+    // to be UNIFORM: step(pick, clustered) must light exactly that share of
+    // the screen. A triangular-weighted mean of eleven uniforms is a bell, not
+    // a uniform, and the prototype's linear stretch left it one — measured, it
+    // lit 8.4 % of cells where the field said 2 %.
+    //
+    // Re-measured here against the same hash the shader uses, so a change to
+    // the tap count or the weights that forgets to re-fit the remap fails
+    // rather than quietly restating the population.
+    const taps = POPULATION_FIELD_LIC_TAPS;
+    const draws: number[] = [];
+    for (const degrees of [0, 15, 30, 45, 60, 75, 90]) {
+      const ux = Math.cos((degrees * Math.PI) / 180);
+      const uy = Math.sin((degrees * Math.PI) / 180);
+      for (let i = 0; i < 12000; i += 1) {
+        const fx = 100 + (i % 1009) * 1.31;
+        const fy = 100 + ((i * 7) % 1013) * 1.17;
+        let acc = 0;
+        for (let k = -taps; k <= taps; k += 1) {
+          const w = 1 - Math.abs(k) / (taps + 1);
+          acc += hash21(
+            Math.floor(fx + ux * k),
+            Math.floor(fy + uy * k),
+          ) * w;
+        }
+        draws.push(populationLicPick(acc / (taps + 1)));
+      }
+    }
+    expect(draws.length).toBeGreaterThan(20000);
+    for (const level of [0.02, 0.05, 0.1, 0.2, 0.35, 0.5, 0.7, 0.9]) {
+      const share = draws.filter((v) => v < level).length / draws.length;
+      // Within 4 % relative at every level. The fit itself measures 0.7 %
+      // over a properly spread sweep; the slack here is this sample's own
+      // regular walk beating against the hash lattice, not room for the remap
+      // to drift — and it is still two orders of magnitude inside the 320 %
+      // the linear stretch would show.
+      expect(Math.abs(share - level) / level).toBeLessThan(0.04);
+    }
+    // Monotone, so a denser field can never light fewer specks.
+    let previous = -1;
+    for (let raw = 0.2; raw <= 0.8; raw += 0.02) {
+      const pick = populationLicPick(raw);
+      expect(pick).toBeGreaterThan(previous);
+      previous = pick;
+    }
+    // Bounded, and centred: the middle of the smear is the middle of the draw.
+    expect(populationLicPick(0.5)).toBeCloseTo(0.5, 12);
+    expect(populationLicPick(0)).toBeGreaterThan(0);
+    expect(populationLicPick(1)).toBeLessThan(1);
   });
 
   it('draws grain direction, and never a link between two points', () => {
@@ -1043,6 +1140,15 @@ describe('§5.1: the halo carries the unresolved FABRIC too', () => {
     // endpoints to have and no segment to draw between them.
     expect(shader).toContain('vec2 along = vec2(-grad.y, grad.x);');
     expect(shader).toContain('vec2 grad = vec2(gx / uBakeTexel.x, gz / uBakeTexel.y);');
+    // And it is taken on the ridge BASE, not on the powered fibre. The powers
+    // are what make the field peaky, and a peaky field's gradient direction is
+    // noise — measured, the powered field's projected direction turns a median
+    // 0.141 rad between adjacent pixels against 0.047 for the base, and the
+    // smear can only stay coherent while the direction does.
+    expect(shader).toContain('float fibreBaseAt(vec2 p) {');
+    expect(shader).toContain('float gx = fibreBaseAt(fold + vec2(uBakeTexel.x, 0.0))');
+    // The powered fibre is still what CLUSTERS, on the fold plane, once.
+    expect(shader).toContain('float fibre = fibreAt(fold);');
     // The fibre reaches the mask threshold and stops there.
     expect(shader).toContain('float clustered = clamp(');
     expect(shader).toContain('float emission = amount * uContinuum + lit * amount * uSpeckGain;');

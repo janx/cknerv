@@ -511,6 +511,47 @@ export const POPULATION_FIELD_SPECK_PX = 2;
  */
 export const POPULATION_FIELD_SPECK_RESEED_HZ = 11;
 
+/*
+ * ⚠️ **Does the smear swim?** — §5.1.1's open risk, measured.
+ *
+ * The direction field turns with the galaxy while the hash is locked to the
+ * screen, so the streaks could in principle drift across the picture: the same
+ * class of artefact as the screen door, and the one thing a still frame cannot
+ * answer. The test is a cross-correlation of the mask between two frames a
+ * rotation apart, over screen shifts — a pattern that SWIMS peaks at the shift
+ * it drifted by, a pattern locked to the screen peaks at zero, and one locked
+ * to the world peaks where the tissue went.
+ *
+ * Measured against the shipped mask, at the galaxy's own 0.0025 rad/s and at a
+ * brisk user orbit, with the reseed phase frozen so nothing else can move:
+ *
+ * | interval | tissue moves | smear: peak | at shift | old mask: peak |
+ * |---|---:|---:|---|---:|
+ * | one frame | 0.02 px | 0.994 | (0, 0) | 0.654 |
+ * | one second | 0.92 px | 0.808 | (0, 0) | 0.043 |
+ * | four seconds | 3.66 px | 0.603 | (0, 0) | 0.001 |
+ * | one second, orbiting | 125 px | 0.356 | **(0, 0)** | 0.010 |
+ *
+ * **It does not swim.** The peak never leaves zero shift, at any rotation
+ * rate — the lattice is fixed to the screen and the taps are offsets from the
+ * fragment, so a turning direction can only decorrelate the smear in place,
+ * never carry it. Nothing here needs to be locked to the field, and rule 10's
+ * never-resolves guarantee is untouched.
+ *
+ * The risk is the opposite one, and it is what the reseed above is for: with
+ * the phase live the correlation is 0.007 after a second, so the pattern is
+ * wholly renewed several times a second and cannot be perceived as standing
+ * still. What survives from frame to frame is 0.80 against the old mask's
+ * 0.53 — the smear scintillates more gently, because eleven taps re-roll
+ * gradually where one draw blinked.
+ *
+ * ⭐ The same measurement says the old mask was never frozen under REDUCED
+ * MOTION either: at 0.043 after one second of the galaxy's own rotation, it
+ * was re-rolling completely from the turning direction alone, with the phase
+ * pinned to zero. §12 asks reduced motion to freeze the grain, and the smear
+ * is the first build that actually does.
+ */
+
 /**
  * The faint continuum under the swarm, as a fraction of full emission.
  *
@@ -634,17 +675,88 @@ export const POPULATION_FIELD_NODE_BALANCE = 1
   / (1 + POPULATION_FIELD_NODE_SHARE * (POPULATION_FIELD_NODE_GAIN - 1));
 
 /**
- * How much longer a screen cell is along the local fibre than across it.
+ * How many hash taps the mask draw is smeared over, each way — §5.1.1.
  *
- * Anisotropy is what makes a texture read as fibrous instead of as noise —
- * clustering alone gives corridors of round dots, which is a crowd walking in
- * a corridor rather than a fibre. The elongation is AREA-PRESERVING (the long
- * axis multiplied by the square root, the short axis divided by it), so a
- * screen cell still covers the same number of device pixels and the population
- * per unit screen area is untouched. Only the shape of the grain changes,
- * which is exactly what rule 10 leaves free.
+ * Anisotropy is what makes a texture read as fibrous instead of as noise, and
+ * the elongated screen cell this replaces did not deliver any: measured on the
+ * production camera, its lit runs were 1.62 px along the flow against 1.68 px
+ * across — an aspect of 0.96, a circle. The line-integral convolution below
+ * measures **1.63**, from the same field and the same hash.
+ *
+ * **Five, and fewer is better here, which is not obvious.** More taps make a
+ * longer smear, but the smear can only stay coherent while the direction does,
+ * and the direction turns a median 0.047 rad per pixel. Past about five steps
+ * the far taps are sampling a direction that has already turned, so they add
+ * noise rather than length. Measured aspect, direction from the ridge base:
+ *
+ * | taps each way | cells | hash evals | aspect |
+ * |--------------:|------:|-----------:|-------:|
+ * | 5 | 11 | **22** | **1.63** |
+ * | 7 | 15 | 30 | 1.56 |
+ * | 9 | 19 | 38 | 1.52 |
+ * | 12 | 25 | 50 | 1.48 |
+ *
+ * The cheapest option is also the best one, and it lands on §5.1.1's own
+ * budget of about nineteen hash evaluations per pixel — the spec assumed one
+ * hash per tap, but each tap needs a second for its reseed phase, so the
+ * budget buys five steps rather than nine.
  */
-export const POPULATION_FIELD_SPECK_ELONGATION = 2.7;
+export const POPULATION_FIELD_LIC_TAPS = 5;
+
+/**
+ * How far apart the smear's taps are, in device pixels, before the seam ramp.
+ *
+ * **Derived from the ramp, not chosen.** The lattice and the step are the same
+ * number — taps then land in adjacent cells, which is what makes the smear
+ * continuous along the flow rather than a comb of correlations at multiples of
+ * the step — and both ride {@link populationSeamGrain}. This is set so that at
+ * full suppression, where the halo meets the Cells' own one-pixel filaments,
+ * the lattice is exactly one device pixel; at the far edge it opens to 1.67 px.
+ * Fine where the two materials must match, coarse where nothing is beside it.
+ *
+ * The draw's spread is invariant to this scale (measured 0.1004 / 0.1007 /
+ * 0.1002 at 1.00 / 1.33 / 1.67 px), so one contrast fit covers the whole ramp.
+ */
+export const POPULATION_FIELD_LIC_STEP = 1 / populationSeamGrain(1);
+
+/**
+ * The two coefficients that put the smeared draw back on a flat [0, 1).
+ *
+ * A triangular-weighted mean of eleven uniforms is a bell with a spread of
+ * about 0.10, not a uniform — and `step(pick, clustered)` on a bell states the
+ * wrong population. The remap is that sum's own CDF, which is Gaussian to
+ * within a whisker, evaluated as `0.5 * (1 + tanh(C * z * (1 + S * z^2)))`:
+ * the standard tanh form of `erf`, with both coefficients FITTED to the
+ * measured distribution rather than taken from the textbook approximation.
+ *
+ * What that buys, as the share of screen cells actually lit against the share
+ * the field asked for, over 660,000 draws at eleven flow angles:
+ *
+ * | remap | worst relative error |
+ * |---|---:|
+ * | the prototype's linear `(raw - 0.5) * 4.4 + 0.5` | **320 %** (lights 8.4 % where the field says 2 %) |
+ * | textbook `erf` at the measured spread | 4.0 % |
+ * | **fitted, below** | **0.7 %** |
+ *
+ * The linear stretch is not a near miss: it clips both tails onto 0 and 1, so
+ * it over-claims the faint outer population fourfold — which is the one thing
+ * this layer may not do.
+ */
+export const POPULATION_FIELD_LIC_CONTRAST = 7.64;
+export const POPULATION_FIELD_LIC_SHOULDER = 5.5;
+
+/**
+ * The mask draw, from the smeared value — the shader evaluates exactly this.
+ *
+ * @param raw the triangular-weighted mean of the taps, centred on 0.5
+ */
+export function populationLicPick(raw: number): number {
+  const z = raw - 0.5;
+  const u = POPULATION_FIELD_LIC_CONTRAST * z
+    * (1 + POPULATION_FIELD_LIC_SHOULDER * z * z);
+  const e = Math.exp(2 * u);
+  return e / (e + 1);
+}
 
 /** Emission of one lit speck, before its brightness spread. */
 export const POPULATION_FIELD_SPECK_GAIN = 0.9;
@@ -1082,7 +1194,9 @@ export interface PopulationCompositeUniforms {
   uResolution: { value: THREE.Vector2 };
   uTint: { value: THREE.Color };
   uSpeckPx: { value: number };
-  uSpeckAspect: { value: number };
+  uLicStep: { value: number };
+  uLicContrast: { value: number };
+  uLicShoulder: { value: number };
   uFibreFloor: { value: number };
   uFibreSpan: { value: number };
   uFibreSaturate: { value: number };
@@ -1139,9 +1253,9 @@ export function makePopulationCompositeMaterial(): THREE.ShaderMaterial {
       uResolution: { value: new THREE.Vector2(1, 1) },
       uTint: { value: swarmTint() },
       uSpeckPx: { value: POPULATION_FIELD_SPECK_PX },
-      uSpeckAspect: {
-        value: Math.sqrt(POPULATION_FIELD_SPECK_ELONGATION),
-      },
+      uLicStep: { value: POPULATION_FIELD_LIC_STEP },
+      uLicContrast: { value: POPULATION_FIELD_LIC_CONTRAST },
+      uLicShoulder: { value: POPULATION_FIELD_LIC_SHOULDER },
       uFibreFloor: { value: POPULATION_FIELD_FIBRE_FLOOR },
       uFibreSpan: { value: POPULATION_FIELD_FIBRE_SPAN },
       uFibreSaturate: { value: POPULATION_FIELD_FIBRE_SATURATE },
@@ -1206,7 +1320,9 @@ export function makePopulationCompositeMaterial(): THREE.ShaderMaterial {
       uniform vec2  uResolution;
       uniform vec3  uTint;
       uniform float uSpeckPx;
-      uniform float uSpeckAspect;
+      uniform float uLicStep;
+      uniform float uLicContrast;
+      uniform float uLicShoulder;
       uniform float uFibreFloor;
       uniform float uFibreSpan;
       uniform float uFibreSaturate;
@@ -1243,6 +1359,19 @@ export function makePopulationCompositeMaterial(): THREE.ShaderMaterial {
         float b4 = b2 * b2;
         float b = b4 * b4 * base.g;
         return a * ${POPULATION_FIBRE_MIX_A} + b * ${POPULATION_FIBRE_MIX_B};
+      }
+
+      // The DIRECTION reads the ridge base, unpowered. The powers are exactly
+      // what makes the fibre peaky, and a peaky field's gradient direction is
+      // noise: measured on the production camera, the powered field's
+      // projected direction turns a median 0.141 rad between ADJACENT pixels
+      // against 0.047 for the base. That matters because the smear below can
+      // only stay coherent while the direction does — switching the four
+      // difference taps to the base takes the grain's anisotropy from 1.30 to
+      // 1.52 with nothing else changed, and it is CHEAPER, because these taps
+      // no longer pay for the powers.
+      float fibreBaseAt(vec2 p) {
+        return texture2D(uFibre, p / (2.0 * uHalf.xz) + 0.5).r;
       }
 
       void main() {
@@ -1324,10 +1453,10 @@ export function makePopulationCompositeMaterial(): THREE.ShaderMaterial {
         // texels are cache hits, which is why the direction is computed here
         // instead of being baked into channels of its own that would have to
         // be kept in sync with the bases.
-        float gx = fibreAt(fold + vec2(uBakeTexel.x, 0.0))
-          - fibreAt(fold - vec2(uBakeTexel.x, 0.0));
-        float gz = fibreAt(fold + vec2(0.0, uBakeTexel.y))
-          - fibreAt(fold - vec2(0.0, uBakeTexel.y));
+        float gx = fibreBaseAt(fold + vec2(uBakeTexel.x, 0.0))
+          - fibreBaseAt(fold - vec2(uBakeTexel.x, 0.0));
+        float gz = fibreBaseAt(fold + vec2(0.0, uBakeTexel.y))
+          - fibreBaseAt(fold - vec2(0.0, uBakeTexel.y));
         // In WORLD units. The bake's texels are wider in x than in z, so a
         // gradient left in texel units would tilt every direction in the
         // picture by a constant angle.
@@ -1375,20 +1504,22 @@ export function makePopulationCompositeMaterial(): THREE.ShaderMaterial {
         // larger cell lights a proportionally larger area and states the same
         // population.
         float coarse = 1.0 + uCoarsening * (0.5 - clamp(suppression, 0.0, 1.0));
-        // Elongated ALONG the local fibre, area-preserving: the long axis is
-        // multiplied by the aspect and the short axis divided by it, so a
-        // screen cell still covers uSpeckPx squared device pixels and the
-        // population per unit area is untouched. Only the shape of the grain
-        // changes — and anisotropy is what makes a texture read as fibrous
-        // instead of as noise. The floor is a divisor guard and is far below
-        // any extent this can produce.
-        vec2 extent = max(
-          vec2(uSpeckPx * coarse * uSpeckAspect, uSpeckPx * coarse / uSpeckAspect),
-          vec2(0.25));
-        vec2 rotated = vec2(
-          dot(gl_FragCoord.xy, axis),
-          dot(gl_FragCoord.xy, vec2(-axis.y, axis.x)));
-        vec2 cell = floor(rotated / extent);
+        // The cell is AXIS-ALIGNED, and that is a correction. It used to be
+        // indexed by the PROJECTION of the absolute fragment coordinate onto
+        // the local direction — a screen coordinate of magnitude ~1400 turned
+        // by a per-pixel direction — so a direction that moved by even a
+        // thousandth of a radian between neighbours moved that index by more
+        // than a whole cell. Measured on
+        // the production camera the direction turns a median 0.047 rad
+        // between ADJACENT pixels, which moved that index a median 26 px
+        // against a cell 1.2 px across: neighbouring pixels landed in
+        // unrelated cells, and the mask was one-pixel noise with no cell
+        // structure and no elongation in it at all (run lengths 1.62 along
+        // the flow against 1.68 across — an aspect of 0.96, which is a
+        // circle). The anisotropy the elongation was there to provide now
+        // comes from the smear below, where it is measurable.
+        vec2 extent = max(vec2(uSpeckPx * coarse), vec2(0.25));
+        vec2 cell = floor(gl_FragCoord.xy / extent);
 
         // Per-cell phase. Every speck reseeds at the same RATE, but this
         // offset spreads the instants uniformly across the period, so the
@@ -1400,11 +1531,58 @@ export function makePopulationCompositeMaterial(): THREE.ShaderMaterial {
         // every count — exactly where it was.
         float jitter = hash21(cell * 1.37 + 11.7);
         float epoch = floor(uSwarmPhase + jitter);
-        float pick = hash21(cell + epoch * 17.13);
         float spread = hash21(cell * 0.7 + epoch * 5.71 + 3.3);
-        // A THIRD draw on the same cell and the same epoch, so a node reseeds
-        // with the speck it belongs to rather than blinking on its own clock.
+        // A SECOND draw on the same cell and the same epoch, so a node
+        // reseeds with the speck it belongs to rather than blinking on its
+        // own clock.
         float nodeDraw = hash21(cell * 1.7 + epoch * 9.31 + 4.7);
+
+        // §5.1.1. THE MASK DRAW, by line-integral convolution.
+        //
+        // The core is filaments about one pixel wide. One hash per screen
+        // cell can only ever produce one-pixel NOISE, and no amount of
+        // brightness matching fuses noise with hair. A finer noise octave
+        // does not help either: an 0.8-unit octave is 1.55 texels on the
+        // 512² bake, below Nyquist, so it aliases rather than sub-branches.
+        //
+        // The answer is not a finer noise, it is smearing a fine hash ALONG a
+        // coarse direction. Structure then emerges at the HASH's frequency —
+        // one pixel — while the direction field stays exactly as coarse as
+        // the bake can afford. Pure ALU, and not one extra texture fetch.
+        //
+        // The lattice rides the same seam ramp as the speck cell, so it is
+        // exactly one device pixel where the halo meets the Cells' own
+        // one-pixel filaments and 1.67 px at the far edge. The step equals
+        // the lattice: taps then land in adjacent cells, which is what makes
+        // the smear continuous along the flow instead of a comb.
+        float licPx = uLicStep * coarse;
+        float acc = 0.0;
+        for (int k = -${POPULATION_FIELD_LIC_TAPS}; k <= ${POPULATION_FIELD_LIC_TAPS}; k++) {
+          float w = 1.0 - abs(float(k)) / ${(POPULATION_FIELD_LIC_TAPS + 1).toFixed(1)};
+          vec2 licCell = floor(
+            (gl_FragCoord.xy + axis * (float(k) * licPx)) / licPx);
+          float licJitter = hash21(licCell * 1.37 + 11.7);
+          float licEpoch = floor(uSwarmPhase + licJitter);
+          acc += hash21(licCell + licEpoch * 17.13) * w;
+        }
+        // The triangular weights sum to exactly TAPS + 1.
+        float licRaw = acc / ${(POPULATION_FIELD_LIC_TAPS + 1).toFixed(1)};
+
+        // A mean of many uniforms is not uniform, and the mask threshold is
+        // the layer's entire population statement — step(pick, clustered) has
+        // to light exactly that fraction of the screen or the count disagrees
+        // with the field. So the draw is put back on [0, 1) flat through the
+        // sum's own CDF, which is Gaussian to within a whisker. The
+        // prototype's linear stretch is what this replaces: measured, it lit
+        // 8.4 % of cells where the field said 2 %, over-claiming the faint
+        // outer population fourfold. This tracks it to 0.7 % at every level.
+        //
+        // 0.5 * (1 + tanh(u)) with the tanh written as one exp, because GLSL
+        // ES 1.00 has no tanh.
+        float licZ = licRaw - 0.5;
+        float licU = uLicContrast * licZ * (1.0 + uLicShoulder * licZ * licZ);
+        float licE = exp(2.0 * licU);
+        float pick = licE / (licE + 1.0);
 
         // step(pick, clustered) is 1 exactly when the cell's draw falls under
         // the local fraction. Every term from here is positive: unresolved
