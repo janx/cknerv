@@ -655,9 +655,20 @@ export const POPULATION_FIELD_NODE_SHARE = 0.0614;
  *
  * 1.5 is the largest gain at which a node stays more than **1.8x as saturated**
  * as a Cell core — unmistakably the body rose rather than a near-white core —
- * and it keeps a 1.32x margin on luminance underneath that. Red is unclamped
- * across the whole halo except its densest quarter (`amount` above 0.77), so
- * the whitening the table shows is a worst case rather than the usual state.
+ * and it keeps a 1.32x margin on luminance underneath that.
+ *
+ * **Re-checked after §5.2's bridge, which raises emission.** The threshold
+ * itself cannot move: a node clamps red past `amount` 0.769, which is a closed
+ * form in the constants above, and the bridge lives inside the exponential
+ * where `amount` is already bounded by one. What moves is how much of the
+ * picture reaches it — measured over the halo, **1.6 % of lit pixels before
+ * the bridge and 2.1 % after** (8.9 % to 12.2 % inside the seam band itself).
+ * The band's brightest node lands at rgb (1.00, 0.50, 0.55), saturation 0.496,
+ * still clear of the 1.8x bound the test holds at 0.477. The gain stands.
+ *
+ * ⚠️ An earlier draft of this note said red was unclamped "except its densest
+ * quarter". That reads as a quarter of the layer and it is not: the share of
+ * lit halo pixels past the cap was 1.6 %, and is 2.1 % now.
  */
 export const POPULATION_FIELD_NODE_GAIN = 1.5;
 
