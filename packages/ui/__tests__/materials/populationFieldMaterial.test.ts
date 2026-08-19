@@ -159,9 +159,15 @@ describe('smaller and dimmer, and nothing else', () => {
       expect(tintLine).not.toContain('vWeight');
       expect(tintLine).not.toContain('mix(');
     }
-    // And the fibres no longer bind the taper at all: with one colour and a
-    // flat alpha there is nothing left along a segment for it to drive.
-    expect(makePopulationFibreMaterial().vertexShader).not.toContain('aWeight');
+    // The fibres DO bind the taper — it is what fades the layer's boundary
+    // instead of letting the strokes stop dead — but it reaches alpha only.
+    // The tint stays the one emitted colour in both draws, which is the whole
+    // of this regression: it was the taper on the TINT that stacked pale
+    // sprites into grey-white, never the taper itself.
+    const fibreVertex = makePopulationFibreMaterial().vertexShader;
+    expect(fibreVertex).toContain('aWeight');
+    expect(makePopulationFibreMaterial().fragmentShader)
+      .toContain('float a = uEmission * vSizeRatio * vSizeRatio;');
   });
 
   it('never lets a halo point reach the smallest addressable Cell', () => {

@@ -4,6 +4,10 @@ import { resolve } from 'node:path';
 import * as THREE from 'three';
 
 import { neverRaycast } from '../../src/components/CellPopulationField';
+import {
+  populationFibreTaper,
+  populationPointSizeForWeight,
+} from '../../src/materials/populationFieldMaterial';
 
 function read(path: string): string {
   return readFileSync(resolve(process.cwd(), path), 'utf8');
@@ -165,18 +169,39 @@ describe('two static buffers and two draws', () => {
   });
 
   it('gives the fibres no endpoint treatment', () => {
-    // "No endpoint emphasis of any kind." The fragment shader is flat along
-    // the whole segment: NO varying at all, so nothing can vary along it.
-    // A segment briefly carried its endpoints' taper, back when the taper drove
-    // the tint; with one emitted colour and a flat alpha it drives nothing
-    // here, and the strongest form of the rule is available again.
+    // "No endpoint emphasis of any kind."
+    //
+    // ⚠️ This used to be asserted as "the fibre shader has NO varying at all",
+    // which is a proxy and not the rule. It cost the layer its outer boundary:
+    // a stroke has no width to shrink, so with a flat alpha the fibres drew at
+    // full brightness out to the last segment and stopped dead, which is what
+    // live review read as a clipped edge. What the rule actually forbids is a
+    // stroke fading while its beads do not — a bead with a faint connector is
+    // exactly a node with edges radiating from it.
+    //
+    // So the invariant is a RATIO, and it is asserted as one: the fibre's
+    // alpha law and the point's flux law are the same curve, so the two dim
+    // together everywhere and no weight makes the bead stand out against its
+    // own stroke. Everything that varies ALONG a segment is still forbidden.
     const fibre = MATERIAL_SOURCE.slice(
       MATERIAL_SOURCE.indexOf('makePopulationFibreMaterial'),
     );
     expect(fibre).toContain('gl_FragColor = vec4(tint * a, a);');
     expect(fibre).not.toContain('gl_PointCoord');
-    expect(fibre.match(/varying\s+\w+\s+(\w+);/g) ?? []).toEqual([]);
-    expect(fibre).not.toContain('attribute');
+    for (let w = 0; w <= 1.0001; w += 0.05) {
+      const bead = (populationPointSizeForWeight(w)
+        / populationPointSizeForWeight(1)) ** 2;
+      expect(populationFibreTaper(w)).toBeCloseTo(bead, 12);
+    }
+    // A real taper on both, not a pair of constants that trivially agree.
+    expect(populationFibreTaper(0)).toBeLessThan(0.5);
+    expect(populationFibreTaper(1)).toBe(1);
+    // The only varying is that taper, and it is a property of the tissue at
+    // each END — not of position along the segment.
+    expect(fibre.match(/varying\s+\w+\s+(\w+);/g) ?? [])
+      .toEqual(['varying float vSizeRatio;', 'varying float vSizeRatio;']);
+    expect(fibre.match(/attribute\s+\w+\s+(\w+);/g) ?? [])
+      .toEqual(['attribute float aWeight;']);
     // Nothing that could brighten an end: no distance-along-segment term, no
     // per-vertex position in the fragment stage.
     for (const emphasis of ['vPosition', 'vDistance', 'length(', 'smoothstep(']) {

@@ -315,6 +315,70 @@ export function populationPointEnergy(
  */
 export const POPULATION_FIBRE_ALPHA = 0.7;
 
+/**
+ * The fibre's share of the tissue taper, and why a stroke needs one at all.
+ *
+ * ⚠️⚠️ The fibres shipped with **no varyings of any kind** — one flat alpha
+ * everywhere, on the reasoning that the tint is one colour and there was
+ * nothing left along a segment to vary. That reasoning covered the taper's
+ * COLOUR job and missed its other one. The points fade into the open fringe
+ * because their footprint shrinks: flux goes as `size^2`, so the fringe pays
+ * `(0.50/0.76)^2` = 0.433. A one-pixel line has no width to shrink, so the
+ * strokes drew at full alpha right out to the last segment and then stopped.
+ *
+ * Two live-review complaints came out of that single fact, measured at the
+ * production camera on the real placement, points and fibres separated:
+ *
+ *  - **"the edge looks clipped, too regular"** — the layer's outer boundary is
+ *    drawn almost entirely by strokes (in the band outside the resolved rim
+ *    the fibres carry lightness 0.218 against the points' 0.148), and they end
+ *    at full brightness. A trimmed mat, not a fringe.
+ *  - **"the outer field still reads grey-white"** — bounded-screen
+ *    accumulation converges to the emitted alpha in every channel, so chroma
+ *    survives only while few marks overlap. Chroma retention (rendered chroma
+ *    against the SAME tint at the SAME lightness, so lightness is divided out)
+ *    peaks at three deposits and collapses after: 0.993, 0.910, **0.824**,
+ *    0.755, 0.615 at six, 0.498 at eight. The average covered pixel takes
+ *    5.85 fibre deposits in the mixed band and 4.27 outside the rim, so the
+ *    layer sits on the far side of that peak — retention 0.657 in the mixed
+ *    band and 0.772 outside, against **0.850 for the Cells in the same
+ *    frame**. The points, measured alone, do not do this: their retention is
+ *    flat across every band (0.148 C/L to 0.152, whatever the radius).
+ *    Crossings are a fibre property and the points cannot produce one.
+ *
+ * So the fibre takes the SAME taper the point rides, in the only currency it
+ * has. The scale is not free either: alpha is set to the point's own
+ * FOOTPRINT-AREA falloff, `(size(w) / sizeMax)^2`, so the ratio of stroke to
+ * bead is invariant along the whole taper. That is what "no endpoint emphasis
+ * of any kind" actually requires — not a large constant, but a constant RATIO.
+ * Tapering the alpha linearly in the weight instead would dim the stroke to
+ * zero while the point still drew, which is a bead with a faint connector:
+ * exactly the failure the flat alpha was defending against.
+ *
+ * Measured against the flat build: retention 0.700 -> 0.756 before the rim,
+ * 0.657 -> 0.722 in the mixed band, 0.772 -> 0.857 outside it, for -11% of the
+ * layer's light inside the rim and -24% outside it. The light it gives up is
+ * the light that was making the boundary a cut — and it gives it up where the
+ * cut was: binned into radial shells from the resolved rim outward, the
+ * dimming deepens monotonically, 15% at the rim to 32% at the last lit shell.
+ * That is a fringe rather than a hem.
+ *
+ * ⚠️ It does NOT fix the interior, and no per-segment alpha can: in dense
+ * tissue the taper is 1 by construction. Retention there is bought only by
+ * fewer crossings or a smaller per-deposit alpha, and the flat sweep prices
+ * that separately — alpha 0.5 buys 0.737 in the mixed band for 13% of the
+ * layer's light, 0.4 buys 0.779 for 19%. Left alone: this is the knob live
+ * review should be given, not one to spend pre-emptively.
+ *
+ * ⭐ The general shape of the bug: a layer gained a second primitive, and the
+ * taper that had been solved for the first one was never re-derived for it.
+ */
+export function populationFibreTaper(weight: number): number {
+  const ratio = populationPointSizeForWeight(weight)
+    / POPULATION_FIELD_POINT_SIZE_MAX;
+  return ratio * ratio;
+}
+
 /** The fibre's emitted alpha for one amount-curve `gain`. The same curve the
  *  points ride, so the two never drift apart as scope changes. */
 export function populationFibreEmissionForGain(gain: number): number {
@@ -473,6 +537,10 @@ export function makePopulationFibreMaterial(): THREE.ShaderMaterial {
     uniforms: {
       uEmission: { value: 0 },
       uColor: { value: new THREE.Color(...POPULATION_FIELD_COLOR) },
+      // The point material's own two, read here so the stroke's taper can
+      // never drift from the bead's — see `populationFibreTaper`.
+      uSizeMin: { value: POPULATION_FIELD_POINT_SIZE_MIN },
+      uSizeMax: { value: POPULATION_FIELD_POINT_SIZE_MAX },
     },
     transparent: true,
     depthWrite: false,
@@ -488,11 +556,23 @@ export function makePopulationFibreMaterial(): THREE.ShaderMaterial {
     blendDstAlpha: THREE.OneMinusSrcAlphaFactor,
     toneMapped: false,
     vertexShader: /* glsl */ `
-      // Position and nothing else. The fibres are an index buffer over the
-      // points' own vertices, so they inherit the placement exactly; what they
-      // no longer inherit is the taper, because there is nothing left for it
-      // to drive here — the tint is one colour and the alpha is flat.
+      // The fibres are an index buffer over the points' own vertices, so they
+      // inherit the placement exactly — and now the taper with it, off the
+      // same attribute the points read. A stroke has no width to shrink, so
+      // the taper reaches it as alpha.
+      attribute float aWeight;
+
+      uniform float uSizeMin;
+      uniform float uSizeMax;
+
+      // The size RATIO, not its square. Squaring in the fragment makes the
+      // interpolated value exactly the taper of the interpolated weight,
+      // because mix() is linear -- interpolating the square would not be.
+      varying float vSizeRatio;
+
       void main() {
+        float weight = clamp(aWeight, 0.0, 1.0);
+        vSizeRatio = mix(uSizeMin, uSizeMax, weight) / uSizeMax;
         gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
       }
     `,
@@ -502,13 +582,18 @@ export function makePopulationFibreMaterial(): THREE.ShaderMaterial {
       uniform vec3 uColor;
       uniform float uEmission;
 
+      varying float vSizeRatio;
+
       void main() {
-        // Flat along its whole length, with no varyings at all: no endpoint
-        // falloff, no brightening at a vertex, nothing that could vary. A halo
-        // point must never look like a node with edges radiating from it — the
-        // filament is the figure, and where two of them cross, accumulation is
-        // what makes the crossing brighter.
-        float a = uEmission;
+        // The point's own footprint-area falloff -- the square of the size
+        // ratio -- so stroke and bead dim together and their RATIO never
+        // moves along the taper. No endpoint falloff and no brightening at a
+        // vertex: the taper is a property of the tissue, and both ends of a
+        // segment sit in tissue. A halo point must never look like a node
+        // with edges radiating from it — the filament is the figure, and
+        // where two of them cross, accumulation is what makes the crossing
+        // brighter.
+        float a = uEmission * vSizeRatio * vSizeRatio;
         vec3 tint = uColor;
         // Premultiplied, matching the Cell bodies, and written raw for the
         // same reason — a colorspace-converted twin would be a second
