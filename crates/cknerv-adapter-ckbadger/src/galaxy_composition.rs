@@ -40,24 +40,82 @@ pub(crate) async fn discover(
     let target = GalaxyCompositionTarget::for_total(target_total);
     let mut seen = HashSet::with_capacity(target.total().saturating_mul(2));
 
-    let mut dao = discover_dao(client, api_base, overfetch(target.dao), &mut seen).await?;
-    let mut typed = discover_typed(client, api_base, overfetch(target.typed), &mut seen).await?;
-    let mut plain = discover_plain(client, api_base, overfetch(target.plain), &mut seen).await?;
+    let mut dao = discover_dao(client, api_base, overfetch(target.dao), &mut seen).await;
+    let mut typed = discover_typed(client, api_base, overfetch(target.typed), &mut seen).await;
+    let mut plain = discover_plain(client, api_base, overfetch(target.plain), &mut seen).await;
     // The index can advance while the validated compatibility anchor remains
     // fixed. Never attach a Cell born beyond the block that proves this record.
-    dao.retain(|candidate| candidate.birth_block <= anchor.block);
-    typed.retain(|candidate| candidate.birth_block <= anchor.block);
-    plain.retain(|candidate| candidate.birth_block <= anchor.block);
+    for walk in [&mut dao, &mut typed, &mut plain] {
+        walk.candidates
+            .retain(|candidate| candidate.birth_block <= anchor.block);
+    }
+
+    let stopped = [("dao", &dao), ("typed", &typed), ("plain", &plain)];
+    for (class, walk) in stopped {
+        if let Some(error) = walk.stopped_by.as_ref() {
+            tracing::warn!(
+                target: "cknerv-adapter-ckbadger",
+                class,
+                collected = walk.candidates.len(),
+                "the index stopped a CellGalaxy composition class short: {error:#}"
+            );
+        }
+    }
+    // A class that fails is dropped, not fatal: a short class is already
+    // the case the composition policy handles, by filling that shortage
+    // from matching canonical retained Cells. Voiding the whole
+    // composition because one index walk failed costs the stage the two
+    // classes that answered perfectly well.
+    //
+    // What must NOT be published is a composition that curates nobody.
+    // That would flip the display plane to composed and mark the
+    // capability landed, so a stage holding no curated Cell at all would
+    // hold that way — the plane only re-arms the composition when it
+    // degrades. An empty walk that failed therefore stays an error, and
+    // the supervisor retries it.
+    if dao.candidates.is_empty() && typed.candidates.is_empty() && plain.candidates.is_empty() {
+        if let Some(error) = dao
+            .stopped_by
+            .take()
+            .or_else(|| typed.stopped_by.take())
+            .or_else(|| plain.stopped_by.take())
+        {
+            return Err(error);
+        }
+    }
 
     Ok(GalaxyCompositionCandidates {
         source: "ckbadger".to_string(),
         as_of: anchor,
         updated_at_ms,
         target,
-        dao,
-        typed,
-        plain,
+        dao: dao.candidates,
+        typed: typed.candidates,
+        plain: plain.candidates,
     })
+}
+
+/// What one class's bounded walk produced, and what stopped it.
+///
+/// A walk keeps whatever it had already collected when it failed. The
+/// composition is a bounded sample rather than a complete set, so cells
+/// already in hand are worth exactly as much as they would have been had
+/// the next page succeeded; discarding them buys nothing.
+#[derive(Default)]
+struct ClassWalk {
+    candidates: Vec<GalaxyCellCandidate>,
+    stopped_by: Option<anyhow::Error>,
+}
+
+impl ClassWalk {
+    /// A class that never got past its own head request: no groups to
+    /// walk, so nothing was collected.
+    fn stopped(error: anyhow::Error) -> Self {
+        Self {
+            candidates: Vec::new(),
+            stopped_by: Some(error),
+        }
+    }
 }
 
 /// How far a single top-up call may page before giving up its turn. Not
@@ -118,19 +176,43 @@ pub(crate) async fn top_up(
     updated_at_ms: u64,
 ) -> anyhow::Result<GalaxyCompositionCandidates> {
     let mut dao = if want_dao > 0 {
-        top_up_dao(client, api_base, tail, want_dao).await?
+        top_up_dao(client, api_base, tail, want_dao).await
     } else {
-        Vec::new()
+        ClassWalk::default()
     };
     let mut typed = if want_typed > 0 {
-        top_up_typed(client, api_base, tail, want_typed).await?
+        top_up_typed(client, api_base, tail, want_typed).await
     } else {
-        Vec::new()
+        ClassWalk::default()
     };
     // Same rule as discovery: never attach a Cell born beyond the block
     // that proves this record.
-    dao.retain(|candidate| candidate.birth_block <= anchor.block);
-    typed.retain(|candidate| candidate.birth_block <= anchor.block);
+    for walk in [&mut dao, &mut typed] {
+        walk.candidates
+            .retain(|candidate| candidate.birth_block <= anchor.block);
+    }
+
+    for (class, walk) in [("dao", &dao), ("typed", &typed)] {
+        if let Some(error) = walk.stopped_by.as_ref() {
+            tracing::warn!(
+                target: "cknerv-adapter-ckbadger",
+                class,
+                collected = walk.candidates.len(),
+                "the index stopped a CellGalaxy top-up class short: {error:#}"
+            );
+        }
+    }
+    // Same rule as discovery, and one extra reason to keep what a failed
+    // walk collected: the tail marks a candidate emitted as it takes it,
+    // so dropping the class would claim depth for cells nobody was ever
+    // handed. A turn that collected nothing and failed is reported, so
+    // the supervisor logs why the shortfall is not closing.
+    if dao.candidates.is_empty() && typed.candidates.is_empty() {
+        if let Some(error) = dao.stopped_by.take().or_else(|| typed.stopped_by.take()) {
+            return Err(error);
+        }
+    }
+
     Ok(GalaxyCompositionCandidates {
         source: "ckbadger".to_string(),
         as_of: anchor,
@@ -140,8 +222,8 @@ pub(crate) async fn top_up(
             typed: want_typed,
             plain: 0,
         },
-        dao,
-        typed,
+        dao: dao.candidates,
+        typed: typed.candidates,
         plain: Vec::new(),
     })
 }
@@ -151,8 +233,24 @@ async fn top_up_dao(
     api_base: &Url,
     tail: &mut CandidateTail,
     want: usize,
-) -> anyhow::Result<Vec<GalaxyCellCandidate>> {
+) -> ClassWalk {
     let mut found = Vec::with_capacity(want);
+    let stopped_by = walk_dao_tail(client, api_base, tail, want, &mut found)
+        .await
+        .err();
+    ClassWalk {
+        candidates: found,
+        stopped_by,
+    }
+}
+
+async fn walk_dao_tail(
+    client: &reqwest::Client,
+    api_base: &Url,
+    tail: &mut CandidateTail,
+    want: usize,
+    found: &mut Vec<GalaxyCellCandidate>,
+) -> anyhow::Result<()> {
     for _ in 0..MAX_PAGES_PER_TOP_UP {
         if found.len() >= want {
             break;
@@ -206,7 +304,7 @@ async fn top_up_dao(
             break;
         }
     }
-    Ok(found)
+    Ok(())
 }
 
 async fn top_up_typed(
@@ -214,7 +312,24 @@ async fn top_up_typed(
     api_base: &Url,
     tail: &mut CandidateTail,
     want: usize,
-) -> anyhow::Result<Vec<GalaxyCellCandidate>> {
+) -> ClassWalk {
+    let mut found = Vec::with_capacity(want);
+    let stopped_by = walk_typed_tail(client, api_base, tail, want, &mut found)
+        .await
+        .err();
+    ClassWalk {
+        candidates: found,
+        stopped_by,
+    }
+}
+
+async fn walk_typed_tail(
+    client: &reqwest::Client,
+    api_base: &Url,
+    tail: &mut CandidateTail,
+    want: usize,
+    found: &mut Vec<GalaxyCellCandidate>,
+) -> anyhow::Result<()> {
     if tail.typed_groups.is_empty() {
         let mut url = endpoint(api_base, "assets")?;
         url.query_pairs_mut()
@@ -237,10 +352,9 @@ async fn top_up_typed(
         tail.typed_next = 0;
     }
     if tail.typed_groups.is_empty() {
-        return Ok(Vec::new());
+        return Ok(());
     }
 
-    let mut found = Vec::with_capacity(want);
     let mut requests = 0;
     // Round-robin: one page per group per turn, so the shortfall is
     // spread across assets instead of drained from the largest one. Most
@@ -302,7 +416,7 @@ async fn top_up_typed(
             group.exhausted = true;
         }
     }
-    Ok(found)
+    Ok(())
 }
 
 fn overfetch(target: usize) -> usize {
@@ -316,8 +430,37 @@ async fn discover_dao(
     api_base: &Url,
     desired: usize,
     seen: &mut HashSet<OutPoint>,
-) -> anyhow::Result<Vec<GalaxyCellCandidate>> {
+) -> ClassWalk {
     let mut candidates = Vec::with_capacity(desired);
+    let stopped_by = walk_dao(client, api_base, desired, seen, &mut candidates)
+        .await
+        .err();
+
+    candidates.sort_by(|left, right| {
+        right
+            .capacity
+            .cmp(&left.capacity)
+            .then_with(|| right.birth_block.cmp(&left.birth_block))
+            .then_with(|| left.out_point.tx_hash.cmp(&right.out_point.tx_hash))
+            .then_with(|| left.out_point.index.cmp(&right.out_point.index))
+    });
+    candidates.truncate(desired);
+    ClassWalk {
+        candidates,
+        stopped_by,
+    }
+}
+
+/// The DAO walk itself. Kept `Result`-shaped so a page failure stops the
+/// walk exactly where it happened, leaving the caller holding every
+/// candidate collected up to that point.
+async fn walk_dao(
+    client: &reqwest::Client,
+    api_base: &Url,
+    desired: usize,
+    seen: &mut HashSet<OutPoint>,
+    candidates: &mut Vec<GalaxyCellCandidate>,
+) -> anyhow::Result<()> {
     let mut cursor = None;
 
     while candidates.len() < desired {
@@ -355,27 +498,13 @@ async fn discover_dao(
         cursor = Some(next_cursor(page.next_cursor, "DAO deposits")?);
     }
 
-    candidates.sort_by(|left, right| {
-        right
-            .capacity
-            .cmp(&left.capacity)
-            .then_with(|| right.birth_block.cmp(&left.birth_block))
-            .then_with(|| left.out_point.tx_hash.cmp(&right.out_point.tx_hash))
-            .then_with(|| left.out_point.index.cmp(&right.out_point.index))
-    });
-    candidates.truncate(desired);
-    Ok(candidates)
+    Ok(())
 }
 
-async fn discover_typed(
-    client: &reqwest::Client,
-    api_base: &Url,
-    desired: usize,
-    seen: &mut HashSet<OutPoint>,
-) -> anyhow::Result<Vec<GalaxyCellCandidate>> {
-    if desired == 0 {
-        return Ok(Vec::new());
-    }
+/// The typed class's head: the leading assets by owned capacity, which
+/// define the groups the walk then pages through. Without it there are no
+/// groups to walk, so a failure here is a class that collected nothing.
+async fn top_asset_hashes(client: &reqwest::Client, api_base: &Url) -> anyhow::Result<Vec<String>> {
     let mut url = endpoint(api_base, "assets")?;
     url.query_pairs_mut()
         .append_pair("limit", &ASSET_GROUP_LIMIT.to_string())
@@ -383,14 +512,29 @@ async fn discover_typed(
         .append_pair("sort_direction", "desc");
     let assets: CursorPage<GalaxyAssetResponse> = fetch_json(client, url, "top assets").await?;
     validate_page_size(assets.data.len(), ASSET_GROUP_LIMIT, "top assets")?;
-    let asset_hashes: Vec<_> = assets
+    Ok(assets
         .data
         .into_iter()
         .map(|asset| asset.id)
         .filter(|hash| is_hash32(hash))
-        .collect();
+        .collect())
+}
 
-    let mut groups: Vec<_> = stream::iter(asset_hashes.into_iter().enumerate().map(
+async fn discover_typed(
+    client: &reqwest::Client,
+    api_base: &Url,
+    desired: usize,
+    seen: &mut HashSet<OutPoint>,
+) -> ClassWalk {
+    if desired == 0 {
+        return ClassWalk::default();
+    }
+    let asset_hashes = match top_asset_hashes(client, api_base).await {
+        Ok(hashes) => hashes,
+        Err(error) => return ClassWalk::stopped(error),
+    };
+
+    let results: Vec<_> = stream::iter(asset_hashes.into_iter().enumerate().map(
         |(rank, type_script_hash)| async move {
             let cells = fetch_live_group(
                 client,
@@ -406,16 +550,42 @@ async fn discover_typed(
     ))
     .buffer_unordered(GROUP_FETCH_CONCURRENCY)
     .collect::<Vec<_>>()
-    .await
-    .into_iter()
-    .collect::<anyhow::Result<Vec<_>>>()?;
+    .await;
+    let (mut groups, stopped_by) = partition_groups(results);
     groups.sort_by_key(|(rank, _)| *rank);
 
-    Ok(interleave_groups(
-        groups.into_iter().map(|(_, group)| group).collect(),
-        desired,
-        seen,
-    ))
+    ClassWalk {
+        candidates: interleave_groups(
+            groups.into_iter().map(|(_, group)| group).collect(),
+            desired,
+            seen,
+        ),
+        stopped_by,
+    }
+}
+
+/// Keep the groups that answered and remember the first failure. One
+/// unreadable asset or address is a thinner sample of the class, not a
+/// reason to abandon every group that was read.
+fn partition_groups(
+    results: Vec<anyhow::Result<(usize, Vec<GalaxyCellCandidate>)>>,
+) -> (
+    Vec<(usize, Vec<GalaxyCellCandidate>)>,
+    Option<anyhow::Error>,
+) {
+    let mut groups = Vec::with_capacity(results.len());
+    let mut stopped_by: Option<anyhow::Error> = None;
+    for result in results {
+        match result {
+            Ok(group) => groups.push(group),
+            Err(error) => {
+                if stopped_by.is_none() {
+                    stopped_by = Some(error);
+                }
+            }
+        }
+    }
+    (groups, stopped_by)
 }
 
 async fn discover_plain(
@@ -423,10 +593,51 @@ async fn discover_plain(
     api_base: &Url,
     desired: usize,
     seen: &mut HashSet<OutPoint>,
-) -> anyhow::Result<Vec<GalaxyCellCandidate>> {
+) -> ClassWalk {
     if desired == 0 {
-        return Ok(Vec::new());
+        return ClassWalk::default();
     }
+    let address_hashes = match plain_address_hashes(client, api_base).await {
+        Ok(hashes) => hashes,
+        Err(error) => return ClassWalk::stopped(error),
+    };
+
+    let results: Vec<_> = stream::iter(address_hashes.into_iter().enumerate().map(
+        |(rank, lock_script_hash)| async move {
+            let cells = fetch_live_group(
+                client,
+                api_base,
+                "lock_script_hash",
+                &lock_script_hash,
+                LiveClass::Plain(&lock_script_hash),
+                PLAIN_CELL_PAGES_PER_GROUP,
+            )
+            .await?;
+            Ok::<_, anyhow::Error>((rank, cells))
+        },
+    ))
+    .buffer_unordered(GROUP_FETCH_CONCURRENCY)
+    .collect::<Vec<_>>()
+    .await;
+    let (mut groups, stopped_by) = partition_groups(results);
+    groups.sort_by_key(|(rank, _)| *rank);
+
+    ClassWalk {
+        candidates: interleave_groups(
+            groups.into_iter().map(|(_, group)| group).collect(),
+            desired,
+            seen,
+        ),
+        stopped_by,
+    }
+}
+
+/// The plain class's head: the addresses whose live Cells the walk pages
+/// through, drawn from both the largest holders and the recently active.
+async fn plain_address_hashes(
+    client: &reqwest::Client,
+    api_base: &Url,
+) -> anyhow::Result<Vec<String>> {
     let mut top_url = endpoint(api_base, "addresses/top")?;
     top_url
         .query_pairs_mut()
@@ -452,33 +663,7 @@ async fn discover_plain(
             address_hashes.push(address.lock_script_hash);
         }
     }
-
-    let mut groups: Vec<_> = stream::iter(address_hashes.into_iter().enumerate().map(
-        |(rank, lock_script_hash)| async move {
-            let cells = fetch_live_group(
-                client,
-                api_base,
-                "lock_script_hash",
-                &lock_script_hash,
-                LiveClass::Plain(&lock_script_hash),
-                PLAIN_CELL_PAGES_PER_GROUP,
-            )
-            .await?;
-            Ok::<_, anyhow::Error>((rank, cells))
-        },
-    ))
-    .buffer_unordered(GROUP_FETCH_CONCURRENCY)
-    .collect::<Vec<_>>()
-    .await
-    .into_iter()
-    .collect::<anyhow::Result<Vec<_>>>()?;
-    groups.sort_by_key(|(rank, _)| *rank);
-
-    Ok(interleave_groups(
-        groups.into_iter().map(|(_, group)| group).collect(),
-        desired,
-        seen,
-    ))
+    Ok(address_hashes)
 }
 
 #[derive(Clone, Copy)]
@@ -1003,5 +1188,195 @@ mod tests {
         assert_eq!(overfetch(0), 0);
         assert_eq!(overfetch(1_800), 2_250);
         assert_eq!(overfetch(2_400), 3_000);
+    }
+
+    // ── one class failing ─────────────────────────────────────────
+
+    /// A full-composition mock. `dao_ok_pages` deposit pages answer, and
+    /// every page past that returns HTTP 500 — the shape a stale
+    /// secondary index takes when the server refuses to serve the row
+    /// rather than skipping it. `serve_assets` switches the typed
+    /// class's head request off the same way.
+    async fn spawn_composition_index(
+        dao_ok_pages: usize,
+        serve_assets: bool,
+    ) -> (Url, tokio::task::JoinHandle<()>) {
+        fn live_page(tag: &str, lock: String, typed: Option<String>) -> serde_json::Value {
+            let data: Vec<_> = (0..PAGE_LIMIT)
+                .map(|i| {
+                    serde_json::json!({
+                        "txHash": format!("0x{tag}{i:062x}"),
+                        "outputIndex": 0,
+                        "capacity": "200000000000",
+                        "createdAtBlock": 10,
+                        "typeScriptHash": typed,
+                        "lockScriptHash": lock,
+                    })
+                })
+                .collect();
+            serde_json::json!({ "data": data, "hasMore": false, "nextCursor": None::<String> })
+        }
+
+        let app = Router::new()
+            .route(
+                "/api/v1/dao/deposits",
+                get(
+                    move |Query(q): Query<BTreeMap<String, String>>| async move {
+                        let page: usize = q.get("cursor").and_then(|c| c.parse().ok()).unwrap_or(0);
+                        if page >= dao_ok_pages {
+                            return (
+                                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                                Json(serde_json::json!({
+                                    "error": "internal_error",
+                                    "message": "dao_by_status_block stale status",
+                                })),
+                            );
+                        }
+                        let data: Vec<_> = (0..PAGE_LIMIT)
+                            .map(|i| {
+                                serde_json::json!({
+                                    "txHash": format!("0xda{:02x}{i:060x}", page),
+                                    "outputIndex": 0,
+                                    "capacity": "100000000000",
+                                    "depositBlockNumber": 10,
+                                    "status": "deposited",
+                                })
+                            })
+                            .collect();
+                        (
+                            axum::http::StatusCode::OK,
+                            Json(serde_json::json!({
+                                "data": data,
+                                "hasMore": true,
+                                "nextCursor": Some((page + 1).to_string()),
+                            })),
+                        )
+                    },
+                ),
+            )
+            .route(
+                "/api/v1/assets",
+                get(move || async move {
+                    if !serve_assets {
+                        return (
+                            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                            Json(serde_json::json!({ "error": "internal_error" })),
+                        );
+                    }
+                    (
+                        axum::http::StatusCode::OK,
+                        Json(serde_json::json!({
+                            "data": [
+                                { "id": format!("0x{:064x}", 0xaa) },
+                                { "id": format!("0x{:064x}", 0xbb) },
+                            ],
+                            "hasMore": false,
+                            "nextCursor": None::<String>,
+                        })),
+                    )
+                }),
+            )
+            .route(
+                "/api/v1/addresses/top",
+                get(|| async {
+                    Json(serde_json::json!([
+                        { "lockScriptHash": format!("0x{:064x}", 0xc1) },
+                        { "lockScriptHash": format!("0x{:064x}", 0xc2) },
+                    ]))
+                }),
+            )
+            .route(
+                "/api/v1/addresses/active",
+                get(|| async {
+                    Json(serde_json::json!([
+                        { "lockScriptHash": format!("0x{:064x}", 0xc3) },
+                        { "lockScriptHash": format!("0x{:064x}", 0xc4) },
+                    ]))
+                }),
+            )
+            .route(
+                "/api/v1/cells/live",
+                get(|Query(q): Query<BTreeMap<String, String>>| async move {
+                    if let Some(hash) = q.get("type_script_hash") {
+                        let tag = hash[hash.len() - 2..].to_string();
+                        return Json(live_page(
+                            &tag,
+                            format!("0x{:064x}", 0xcc),
+                            Some(hash.clone()),
+                        ));
+                    }
+                    let lock = q.get("lock_script_hash").cloned().unwrap_or_default();
+                    let tag = lock[lock.len() - 2..].to_string();
+                    Json(live_page(&tag, lock, None))
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let handle = tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        (
+            Url::parse(&format!("http://{address}/api/v1/")).unwrap(),
+            handle,
+        )
+    }
+
+    /// The live regression this guards: ckbadger's DAO index held a stale
+    /// secondary-index row and returned HTTP 500 partway through the
+    /// deposit walk. DAO is discovered first, so its `?` voided a whole
+    /// composition whose typed and plain classes were answering
+    /// perfectly — and the display plane, never receiving a reservoir,
+    /// staffed the stage in canonical insertion order, which on mainnet
+    /// is over 99% plain CKB. A class that fails is a short class, which
+    /// the composition policy already staffs from canonical Cells.
+    #[tokio::test]
+    async fn a_failing_class_does_not_void_the_whole_composition() {
+        let (api, server) = spawn_composition_index(1, true).await;
+        let client = reqwest::Client::new();
+
+        let got = discover(&client, &api, anchor(), 1_000, 7)
+            .await
+            .expect("one broken class is not a broken composition");
+
+        assert_eq!(
+            got.dao.len(),
+            PAGE_LIMIT,
+            "the page that answered before the failure is kept"
+        );
+        assert!(!got.typed.is_empty(), "typed answered and must be staged");
+        assert!(!got.plain.is_empty(), "plain answered and must be staged");
+        server.abort();
+    }
+
+    /// The other half of the rule. A composition that curates nobody must
+    /// NOT be published: it would flip the display plane to composed and
+    /// mark the capability landed, so a stage holding no curated Cell at
+    /// all would hold that way — the plane only re-arms the composition
+    /// when it degrades. Failing keeps the supervisor retrying.
+    #[tokio::test]
+    async fn a_composition_that_curates_nobody_is_an_error() {
+        // No DAO page answers, the typed head fails, and every address
+        // group resolves to cells born past the anchor.
+        let (api, server) = spawn_composition_index(0, false).await;
+        let client = reqwest::Client::new();
+
+        let error = discover(
+            &client,
+            &api,
+            ChainAnchor {
+                block: 0,
+                hash: "0x0".into(),
+            },
+            1_000,
+            7,
+        )
+        .await
+        .expect_err("nothing curated is not a publishable composition");
+
+        assert!(
+            error.to_string().contains("DAO deposits"),
+            "the first failure is reported, got: {error}"
+        );
+        server.abort();
     }
 }
