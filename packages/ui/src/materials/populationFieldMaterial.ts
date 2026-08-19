@@ -535,10 +535,14 @@ export function makePopulationPointMaterial(): THREE.ShaderMaterial {
  * The Cells' own fabric is a k-NN proximity mesh over positions — a geometric
  * property of the embedding, not a claim that two Cells transacted — so edges
  * among placed halo points carry exactly the truth status the core's edges do.
- * What stays forbidden is an edge with ONE END on an addressable Cell, which
- * would assert a relationship between a named Cell and an anonymous one. Every
- * index in this geometry addresses a point the same pass placed, and no
+ * Every index in this geometry addresses a point the same pass placed, and no
  * segment bridges a point the complement rejected.
+ *
+ * ⚠️ That is a statement about THIS material, and it stays true. It is not
+ * the old blanket ban on a stroke with one end on an addressable Cell: the
+ * 2026-08-19 register ruling allows such a stroke as the mixed band's
+ * secondary nerve, drawn fabric-side by `nerve/CellBridgeNerves.tsx` under
+ * five invariants. `populationFieldPlacement.ts`'s header is the authority.
  */
 export function makePopulationFibreMaterial(): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({

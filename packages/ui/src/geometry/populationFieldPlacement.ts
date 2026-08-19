@@ -53,10 +53,54 @@
 // The Cells' own fabric is a k-NN proximity mesh over positions — a geometric
 // property of the embedding, not a claim that two Cells transacted. Edges
 // among placed halo points therefore carry exactly the truth status the core's
-// edges do. What stays forbidden is an edge with ONE END on an addressable
-// Cell: that would assert a relationship between a named Cell and an anonymous
-// one, which nothing in the pipeline can support. Every index this module
-// emits addresses a point this module placed.
+// edges do. Every index THIS module emits addresses a point this module
+// placed: the walk has no other vertex to name, and that is a property of the
+// construction rather than a rule anyone has to keep.
+//
+// ### The scene speaks two registers (user ruling, 2026-08-19)
+//
+// This paragraph used to end with a ban: "what stays forbidden is an edge with
+// ONE END on an addressable Cell". That ban is SUPERSEDED, and the reasoning
+// that replaced it is worth having here, because it is what makes the halo's
+// own honesty statable at all.
+//
+// The core is ACTUAL language: one mark IS one Cell, one stroke IS one
+// proximity relation between two named Cells, one pulse IS one observed
+// transaction path. This layer is SYMBOLIC language: one point stands for
+// roughly fourteen Cells cknerv could not individuate, one fibre for
+// unresolved connections in aggregate. Read that way, a stroke with one end on
+// a Cell and one end in this field asserts nothing about two individuals. It
+// says "this real Cell adjoins, and is continuous with, the unresolved mass" —
+// aggregate-true, carrying exactly the truth status this whole layer carries,
+// and precisely the 连续过渡 the mixed band exists to express. It is the
+// transition band's SECONDARY NERVE (次级神经), and it is drawn by
+// `geometry/bridgeEdges.ts` + `nerve/CellBridgeNerves.tsx`.
+//
+// What keeps a mixed stroke honest is HOW it is drawn, not whether. The ban
+// was one blunt way of enforcing five things; these are the five, and they are
+// the invariants that replaced it:
+//
+//   1. **Symbolic idiom at the symbolic end.** Matte, thin, fading into the
+//      mass, singling out no individual. The actual end may carry a knot and
+//      the fabric's width class; the far end may carry neither.
+//   2. **No endpoint emphasis, ever, at a symbolic end.** A bridge's far end
+//      is monotone-fading (`bridgeTaper`), takes no retirement flash, and does
+//      not even terminate ON a placed point — it ends part-way along a fibre,
+//      so no drawn vertex of this field is ever a stroke's endpoint. A halo
+//      point must never look like a node with edges radiating from it.
+//   3. **No actual-register SYSTEM traverses a mixed stroke.** Routing
+//      (`pathRouter` — a pulse must never route into this field), pulse
+//      planning, reinforcement, the inspection field, recall traces, and
+//      picking all stop at the Cells. Bridges are render-only.
+//   4. **Bridges live on the FABRIC side and follow their host's lifecycle.**
+//      A bridge grows when its host Cell becomes a host and retracts when it
+//      stops being one — actual-register motion about an actual event at the
+//      actual end, never ambient shimmer. This field itself stays STATIC.
+//   5. **This buffer stays static and prefix-trimmable.** Bridges only READ
+//      these positions. The one-shot pass, the two draws, and the
+//      `populationSegmentsForPointPrefix` invariant are untouched by them —
+//      and a bridge may only anchor inside the lowest preset's prefix, so no
+//      quality step can trim a stroke's far end out from under it.
 
 import {
   FIELD_HALF_X,

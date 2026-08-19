@@ -537,8 +537,8 @@ For each link, the planner:
 6. emits at most six pulses per link and 128 planned pulses per batch.
 
 Timing is deterministic per transaction/source/destination: base traversal is
-73 ms per hop, scaled into `0.7..1.4` of that value, with up to 300 ms of start
-jitter. The default active population is 256 pulses before the quality particle
+33 ms per hop (`HOP_MS_BASE`), scaled into `0.7..1.4` of that value, with up to
+300 ms of start jitter. The default active population is 256 pulses before the quality particle
 multiplier, backed by a 1,024-entry spike pool. Saturation drops bounded visual
 work; it never manufactures a cheaper route.
 
