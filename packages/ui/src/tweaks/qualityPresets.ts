@@ -4,7 +4,14 @@ export type QualityPreset = 'high' | 'med' | 'low';
 export type QualityMode = 'auto' | QualityPreset;
 
 export interface QualityCascade {
-  /** Runtime DPR ceiling. Unlike WebGL antialias, this changes without remounting Canvas. */
+  /** Runtime DPR ceiling. Unlike WebGL antialias, this changes without remounting Canvas.
+   *
+   * ⚠️ This is a CEILING, not a scale: `resolveCanvasDpr` takes
+   * `min(devicePixelRatio, maxDpr)`. On a display at scale 1.0 the device
+   * ratio is already 1, so every preset resolves to 1 and this knob does
+   * NOTHING — including on a 4K monitor, which is the case that needs it
+   * most. There the drawing buffer is 3840x2160 at every tier and the whole
+   * cascade rests on the content knobs below. */
   maxDpr: number;
   starsCount: number;
   particleCapMul: number;
@@ -31,7 +38,47 @@ export interface QualityCascade {
    * prefix is the same field at a lower sample density — never a partial one.
    * It is drawn dimmer for the same reason `starsCount` is: it is a coarser
    * sample, and the population's amount is printed by the HUD, not by the
-   * light. */
+   * light.
+   *
+   * ⚠️ The GPU-timer figures above were taken while galaxy composition was
+   * BROKEN — provenance `canonical`, zero residents — so the stage was a
+   * static prefix and nothing churned. Re-measured on the reference 4K
+   * monitor (3840x2160 buffer, `devicePixelRatio` 1, so `maxDpr` is inert)
+   * with composition live (provenance `composed`, 12,000 members, ~5.5K
+   * residents staging and the topology worker rebuilding against them), as
+   * wall-clock frame interval — the quantity the controller actually acts on
+   * — in a PAIRED A/B that toggles the tier in place on one page load,
+   * 45-second windows, four cycles:
+   *
+   *   cycle       0      1      2      3
+   *   high mean  22.99  34.00  33.08  17.83   p50  16.7  33.3  33.3  16.7
+   *   med  mean  25.14  23.90  20.30  17.11   p50  16.7  16.7  16.7  16.7
+   *
+   * The means are noisy — a developer desktop shares this integrated GPU —
+   * but the p50 is not, and it is the whole story: those are vsync
+   * intervals. `high` at 4K sits ON the 16.67 ms deadline, so when it misses,
+   * vsync halves it to 33.3 ms and 30 fps; it missed in two windows of four.
+   * `med` made the deadline in all four. Main-thread JS per frame overlaps
+   * between the two (4.3-9.6 ms against 3.5-10.0 ms), so what the prefix buys
+   * is GPU time, not script time.
+   *
+   * So on a 4K display `AUTO` reading `med` is not a ratchet and not a
+   * regression: it is the controller buying the vsync deadline with the only
+   * lever that still moves at `devicePixelRatio` 1. Watched from a cold load
+   * for nine minutes at that geometry it stepped down six times and climbed
+   * back every time — each recovery at the floor the constants set
+   * (`UP_HOLD_MS` 15 s + `ADAPTIVE_SWITCH_COOLDOWN_MS` 6 s = 21 s), touching
+   * `low` once — and finished the window at `high`. It holds `high` 47% of
+   * the time, `med` 45%, `low` 8%, so which letter a screenshot catches is
+   * close to a coin flip.
+   *
+   * ⚠️ It oscillates because `high` sits ON the deadline rather than past it,
+   * and the controller decides by measuring the tier it is currently IN: at
+   * `med` it comfortably reads under `UP_FRAME_MS`, which says nothing about
+   * what `high` would cost. Any hardware where `high` exceeds
+   * `DOWN_FRAME_MS.high` while `med` stays under `UP_FRAME_MS.med` will limit
+   * cycle by construction. Damping that is a product call, not a bug in the
+   * evidence — the halo visibly doubles and halves across the transition. */
   populationCapMul: number;
   /** Semantic memory marks retain one CSS-space footprint at every preset.
    * Lower sample density gets a slightly broader, dimmer filter rather than
