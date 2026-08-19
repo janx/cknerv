@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 
 import { makeCellHybridMaterial } from '../../src/materials/cellHybridMaterial';
+import { consensusCellColor } from '../../src/derives/consensusFlow.derive';
+import { CELL_GALAXY_PALETTE } from '../../src/visualPalette';
 import {
   makePopulationFibreMaterial,
   makePopulationPointMaterial,
@@ -9,9 +11,7 @@ import {
   populationEmissionForGain,
   populationPointFootprint,
   populationPointSizeForWeight,
-  populationTintForWeight,
-  POPULATION_FIELD_COLOR_DIM,
-  POPULATION_FIELD_COLOR_LIT,
+  POPULATION_FIELD_COLOR,
   POPULATION_FIELD_EMISSION,
   POPULATION_FIELD_MIN_POINT_PX,
   POPULATION_FIELD_POINT_SIZE_MAX,
@@ -87,6 +87,8 @@ describe('smaller and dimmer, and nothing else', () => {
   it('starts dark and is lit only by the amount curve', () => {
     const material = makePopulationPointMaterial();
     expect(material.uniforms.uEmission.value).toBe(0);
+    expect(material.uniforms.uColor.value.toArray())
+      .toEqual([...POPULATION_FIELD_COLOR]);
     expect(material.uniforms.uSizeMin.value).toBe(POPULATION_FIELD_POINT_SIZE_MIN);
     expect(material.uniforms.uSizeMax.value).toBe(POPULATION_FIELD_POINT_SIZE_MAX);
   });
@@ -103,31 +105,63 @@ describe('smaller and dimmer, and nothing else', () => {
     );
   });
 
-  it('carries the body hue at full saturation, at BOTH ends of the ramp', () => {
-    // Identity hue is banned: we know nothing about these Cells individually.
-    // Desaturating toward grey is what makes a layer read as fog, and the ramp
-    // is where that could creep in — a pale lit end is legitimate only while
-    // the dim end still carries the body's chroma.
-    for (const tint of [POPULATION_FIELD_COLOR_DIM, POPULATION_FIELD_COLOR_LIT]) {
-      const [r, g, b] = tint;
-      expect(r).toBe(1);
-      expect(Math.max(r, g, b) - Math.min(r, g, b)).toBeGreaterThan(0.35);
-    }
-    // The dim end is the MORE saturated one. Bounded-screen accumulation
-    // converges toward the emitted alpha in every channel, so overlap eats
-    // chroma; without this the layer's faint half renders as brick.
-    const chroma = (t: readonly [number, number, number]) => t[0] - (t[1] + t[2]) / 2;
-    expect(chroma(POPULATION_FIELD_COLOR_DIM))
-      .toBeGreaterThan(chroma(POPULATION_FIELD_COLOR_LIT) * 1.5);
+  it('emits what an addressable Cell emits, and nothing it was told about', () => {
+    // The layer emits ONE colour and it is the Cells' own body colour: an
+    // untagged Cell's `aColor` is this exact triple, and mainnet has almost no
+    // tagged ones. A tagged Cell's accent is an identity claim this layer
+    // cannot make, so the accent path is what must never appear here.
+    expect([...POPULATION_FIELD_COLOR])
+      .toEqual([...consensusCellColor({ accent: [0, 0, 0] } as never, false)]);
+    expect([...POPULATION_FIELD_COLOR]).toEqual([...CELL_GALAXY_PALETTE.tissueRose]);
   });
 
-  it('holds one hue across the ramp, and varies only its chroma', () => {
-    // A hue that MOVED along the ramp would be exactly the second colour the
-    // ramp exists to remove. Both endpoints are red-dominant with blue over
-    // green by a similar margin; only the distance from white differs.
-    const lean = (t: readonly [number, number, number]) => t[2] - t[1];
-    expect(lean(POPULATION_FIELD_COLOR_DIM)).toBeGreaterThan(0);
-    expect(lean(POPULATION_FIELD_COLOR_LIT)).toBeGreaterThanOrEqual(0);
+  it('carries the body hue at full saturation, and never approaches warmWhite', () => {
+    // Identity hue is banned and so is fog: desaturating toward grey is what
+    // makes a layer read as atmosphere rather than as matter. And the Cells'
+    // own drift toward `warmWhite` at their peak is THEIR core signature —
+    // the halo is forbidden it, which is why one saturated body colour and no
+    // ramp toward pale is the correct shape for this constant.
+    const [r, g, b] = POPULATION_FIELD_COLOR;
+    expect(r).toBe(1);
+    expect(Math.max(r, g, b) - Math.min(r, g, b)).toBeGreaterThan(0.35);
+    // Distance from `warmWhite`, on the axis that matters: the halo's emitted
+    // colour is far more saturated than the Cells' hot mix, at every channel.
+    const chroma = (t: readonly [number, number, number]) => t[0] - (t[1] + t[2]) / 2;
+    expect(chroma(POPULATION_FIELD_COLOR))
+      .toBeGreaterThan(chroma(CELL_GALAXY_PALETTE.warmWhite) * 5);
+  });
+
+  it('leans blue over green, which is what keeps the outer field off brick', () => {
+    // Brick is rose drifting toward ember (OKLCH hue 45) or warm white (71).
+    // Bounded-screen accumulation moves each channel toward the emitted alpha
+    // at a rate set by that channel, so `b` > `g` means blue converges faster
+    // and the rendered hue drifts MAGENTA-ward as overlap grows — away from
+    // ember, never toward it. Measured on the real placement at 1080p, hue
+    // runs 14.07 in the mixed band out to 16.59 at the fringe against an
+    // emitted 19.29, and chroma RISES outward as the layer thins.
+    expect(POPULATION_FIELD_COLOR[2]).toBeGreaterThan(POPULATION_FIELD_COLOR[1]);
+  });
+
+  it('never varies the tint with the taper, in either draw', () => {
+    // This is the regression. One attribute drove size, brightness AND tint,
+    // so the palest colour landed exactly where points are largest and where
+    // placed density peaks — and accumulation stacked pale sprites into
+    // grey-white. Measured, the pale end desaturated after 7 overlapping
+    // sprites against the saturated end's 20, and it was assigned precisely
+    // where overlap is greatest. Density is the only thing allowed to vary
+    // this layer's colour, exactly as it is for the Cells.
+    for (const src of [
+      makePopulationPointMaterial().fragmentShader,
+      makePopulationFibreMaterial().fragmentShader,
+    ]) {
+      const tintLine = src.split('\n').find((l) => l.includes('vec3 tint = '));
+      expect(tintLine).toBeDefined();
+      expect(tintLine).not.toContain('vWeight');
+      expect(tintLine).not.toContain('mix(');
+    }
+    // And the fibres no longer bind the taper at all: with one colour and a
+    // flat alpha there is nothing left along a segment for it to drive.
+    expect(makePopulationFibreMaterial().vertexShader).not.toContain('aWeight');
   });
 
   it('never lets a halo point reach the smallest addressable Cell', () => {
@@ -150,12 +184,6 @@ describe('smaller and dimmer, and nothing else', () => {
     expect(fn(1)).toBeGreaterThan(fn(0.5));
     expect(fn(-1)).toBe(fn(0));
     expect(fn(2)).toBe(fn(1));
-    const dim = populationTintForWeight(0);
-    const lit = populationTintForWeight(1);
-    expect([...dim]).toEqual([...POPULATION_FIELD_COLOR_DIM]);
-    expect([...lit]).toEqual([...POPULATION_FIELD_COLOR_LIT]);
-    expect(populationTintForWeight(0.5)[1])
-      .toBeCloseTo((dim[1] + lit[1]) / 2, 6);
   });
 
   it('spends the tissue taper on size and nothing on brightness', () => {

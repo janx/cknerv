@@ -690,10 +690,10 @@ export interface PopulationPlacementState {
    *  segment bridges a point the complement rejected. */
   segments: Uint32Array<ArrayBuffer>;
   /** The taper weight of each placed point, `capacity` long and valid for the
-   *  first `count` entries. Size, brightness and tint all ride it, and the
-   *  fibres interpolate it between their endpoints, so a filament tapers with
-   *  the tissue it runs through instead of being flat along its length.
-   *  Transferred with the positions; pinned for the same reason. */
+   *  first `count` entries. SIZE alone rides it: brightness is flat at the
+   *  emission ceiling and the tint is one colour, so what varies across the
+   *  layer on screen is how many points land on a pixel, exactly as it is for
+   *  the Cells. Transferred with the positions; pinned for the same reason. */
   weights: Float32Array<ArrayBuffer>;
   capacity: number;
   /** Points written so far. */

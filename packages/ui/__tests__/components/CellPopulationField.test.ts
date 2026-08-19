@@ -166,18 +166,17 @@ describe('two static buffers and two draws', () => {
 
   it('gives the fibres no endpoint treatment', () => {
     // "No endpoint emphasis of any kind." The fragment shader is flat along
-    // the whole segment: no varying, so nothing can vary along it.
+    // the whole segment: NO varying at all, so nothing can vary along it.
+    // A segment briefly carried its endpoints' taper, back when the taper drove
+    // the tint; with one emitted colour and a flat alpha it drives nothing
+    // here, and the strongest form of the rule is available again.
     const fibre = MATERIAL_SOURCE.slice(
       MATERIAL_SOURCE.indexOf('makePopulationFibreMaterial'),
     );
     expect(fibre).toContain('gl_FragColor = vec4(tint * a, a);');
     expect(fibre).not.toContain('gl_PointCoord');
-    // A fibre now carries its endpoints' TAPER — the tissue changing under the
-    // filament — and that is the only thing allowed to vary along it. One
-    // varying, and it is the same weight the points read.
-    const varyings = fibre.match(/varying\s+\w+\s+(\w+);/g) ?? [];
-    expect([...new Set(varyings)]).toEqual(['varying float vWeight;']);
-    expect(varyings).toHaveLength(2);      // declared once per shader stage
+    expect(fibre.match(/varying\s+\w+\s+(\w+);/g) ?? []).toEqual([]);
+    expect(fibre).not.toContain('attribute');
     // Nothing that could brighten an end: no distance-along-segment term, no
     // per-vertex position in the fragment stage.
     for (const emphasis of ['vPosition', 'vDistance', 'length(', 'smoothstep(']) {
@@ -338,11 +337,18 @@ describe('the halo is smaller and dimmer than a Cell, and differs in nothing els
     expect((MATERIAL_SOURCE.match(/exp\(/g) ?? [])).toHaveLength(1);
   });
 
-  it('emits the body hue and no identity hue', () => {
-    // A ramp now, not one constant — but both ends are red-dominant body hue,
-    // and no identity palette appears anywhere in the layer.
-    expect(MATERIAL_CODE).toContain('POPULATION_FIELD_COLOR_DIM');
-    expect(MATERIAL_CODE).toContain('POPULATION_FIELD_COLOR_LIT');
+  it('emits the body hue and no identity hue, as ONE colour', () => {
+    // One constant, and it is the palette's own body colour — the same triple
+    // an untagged Cell emits. It was a two-endpoint ramp keyed on the taper
+    // weight, which put the palest colour exactly where placed density peaks
+    // and where sprites overlap most; bounded-screen accumulation then stacked
+    // those pale sprites into grey-white across the mixed band. Density is the
+    // only thing allowed to vary this layer's colour, which is how the Cells
+    // get their own pale cores.
+    expect(MATERIAL_CODE).toContain('POPULATION_FIELD_COLOR');
+    expect(MATERIAL_CODE).toContain('CELL_GALAXY_PALETTE.tissueRose');
+    expect(MATERIAL_CODE).not.toContain('COLOR_DIM');
+    expect(MATERIAL_CODE).not.toContain('COLOR_LIT');
     for (const forbidden of ['asset', 'lock', 'tag', 'memoryViolet']) {
       expect(MATERIAL_CODE).not.toContain(forbidden);
     }
