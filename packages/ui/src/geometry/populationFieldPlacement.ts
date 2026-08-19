@@ -301,9 +301,8 @@ export const POPULATION_STREAMLINE_STEP = 1.25;
  * ## The trade, and why coherence could not decide it alone
  *
  * The drawn runs used to reach 86 world units against the Cells' own fabric,
- * whose 8,000 DRAWN edges measure p50 5.75, p90 8.50, max 27.7. A curve an
- * order of magnitude longer than every stroke beside it reads as swept HAIR
- * rather than as tangled TISSUE, however well it is placed.
+ * and a curve an order of magnitude longer than every stroke beside it reads
+ * as swept HAIR rather than as tangled TISSUE, however well it is placed.
  *
  * ⚠️ Orientation coherence REWARDS long coherent runs, so it cannot arbitrate
  * a change that shortens them — it can only go down and call that worse. It
@@ -313,31 +312,70 @@ export const POPULATION_STREAMLINE_STEP = 1.25;
  * whole neighbourhood", moves in lockstep with the narrow one — the ratio held
  * at 0.77–0.79 across every variant swept. Filament length is not what makes
  * neighbouring filaments parallel; the flow field is, and it is unchanged.
+ * Re-measured across a fresh twelve-variant sweep, coherence spans 0.473–0.498
+ * — it barely moves at all, and it still cannot decide this.
  *
  * What does discriminate is the run-length distribution read against the
- * fabric's own, which is the comparison the eye is making:
+ * fabric's own, which is the comparison the eye is making.
  *
- * | | shipped | here | the fabric |
+ * | | shipped | here | the fabric (as it then was) |
  * |---|---:|---:|---:|
  * | run p50 | 6.25 | 8.75 | 5.75 |
  * | run p90 | 40.0 | 23.75 | 8.50 |
  * | run max | **86.25** | **31.25** | 27.66 |
- * | p90 / fabric p90 | 4.71x | 2.80x | 1x |
  * | max / fabric max | 3.12x | **1.13x** | 1x |
  * | filaments | 6,562 | **10,464** | — |
- * | points in strokes of 8+ | 0.853 | 0.816 | — |
  * | fork points | 2.30% | 2.66% | — |
  * | orientation coherence | 0.326 | **0.319** | — |
  *
- * The longest run the layer draws is now within 13% of the longest edge the
- * fabric draws, for 2.1% of coherence — and the layer gains a third more
- * junctions on the way, which is the thing tissue has and hair does not. The
- * spread survives at p90/p50 = 2.7 against 6.4, so there is still a hierarchy
- * to read; pushing further flattened it toward the felt failure and dropped
- * the stroke share under its floor.
+ * ## Re-derived 2026-08-19, because the fabric changed under it — and these
+ * ## constants are STAYING, which took measuring to establish
  *
- * Cost: the same 105,000 points now need 59% more seeds, so the pass spends
- * 1.73 field evaluations per placed point against 1.48.
+ * The fabric's k-NN search was corrected: it had been answering from a
+ * truncated, direction-biased slice of each neighbourhood, and its edges were
+ * ~2.6x longer than the true nearest neighbours. The reference this constant
+ * was calibrated against moved with it:
+ *
+ * | fabric, 8,000 drawn edges | before | after |
+ * |---|---:|---:|---:|
+ * | p50 | 5.70 | **2.19** |
+ * | p90 | 8.47 | **4.05** |
+ * | max | 26.17 | **26.98** |
+ *
+ * ⚠️ **The max did not move, and that is not luck.** The fabric's longest
+ * drawn edges are lifeline and component-stitch edges — the sparse exceptions
+ * added so every Cell stays reachable — and those are not k-NN edges at all.
+ * So the anchor this calibration actually named, "within 13% of the longest
+ * edge the fabric draws", survived untouched at **1.16x**. What degraded is
+ * the typical-stroke reading it was standing in for: run p50 went from 1.5x
+ * the fabric's p50 to **4.0x**, and run p90 from 2.80x to **5.86x**.
+ *
+ * ⚠️⚠️ **Neither lever can follow, and both are pinned by something that has
+ * nothing to do with the fabric.**
+ *
+ *  - **Fewer steps** fragments the fibre graph. The share of points carried by
+ *    components of 8+ — "draws strokes, not dust", and a hard guard at 0.80 —
+ *    sits at **0.826** here, with 3% of headroom. Every shortened variant
+ *    swept falls through it: 5/26/1.6 gives 0.811 for almost no gain (p90
+ *    5.86x -> 5.56x), 3/26/3.2 gives 0.678, 3/14/1.6 gives 0.53. Shortening a
+ *    filament does not just shorten the drawn curve, it breaks the curve into
+ *    dust, and dust is the failure this layer was rebuilt to escape.
+ *  - **A shorter step** would shorten runs in world units while leaving the
+ *    topology — and therefore the stroke share — exactly intact, which is the
+ *    lever that ought to work. It is spoken for: {@link
+ *    POPULATION_STREAMLINE_STEP} is set against the SPRITE, not the field, and
+ *    halving it merges consecutive points into a solid worm at three times the
+ *    cost. The dotted-line reading is load-bearing.
+ *
+ * Coherence, re-measured across a twelve-variant sweep, spans 0.473–0.498
+ * against 0.497 here — it barely moves at all, and it still cannot arbitrate
+ * this. What arbitrates it is the dust floor, and the floor says stay.
+ *
+ * So the layer now draws runs at 4x the fabric's typical stroke where it drew
+ * them at 1.5x, and that is a real, recorded regression against a look that
+ * was accepted — not a thing this constant can fix. Closing it wants the
+ * sprite footprint and the step re-solved together, at which point the point
+ * count and the coverage budget come with them.
  */
 export const POPULATION_STREAMLINE_MIN_STEPS = 6;
 export const POPULATION_STREAMLINE_MAX_STEPS = 26;
