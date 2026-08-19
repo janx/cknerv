@@ -1,11 +1,11 @@
 // The halo's placement pass, off the main thread.
 //
-// Placing 260K points is roughly a second of CPU: five million candidates
-// against a twelve-octave field, of which one in twenty survives. That is a
-// long task by any definition, and it would arrive at exactly the moment the
-// page is still assembling itself. Spreading it across frames instead would
-// mean either a second of jank or ten seconds of absence, so it runs here and
-// the buffer is transferred when it is finished.
+// Walking 105K points of filament is roughly 150 ms of CPU — 1.5 evaluations
+// of a twelve-octave field per placed point, against the twenty an independent
+// draw needed. That is still a long task by any definition, and it would
+// arrive at exactly the moment the page is still assembling itself. Spreading
+// it across frames instead would mean either jank or seconds of absence, so it
+// runs here and both buffers are transferred when it is finished.
 //
 // The pass reads nothing. It has no input beyond a point count and a seed,
 // because the positional law is a pure function of position with no time, no
@@ -28,8 +28,15 @@ export interface PopulationFieldWorkerResponse {
   kind: 'placed';
   /** World positions, `3 * count` valid entries. Transferred, not copied. */
   positions: Float32Array<ArrayBuffer>;
+  /** Filament segments as index pairs into `positions`, `2 * segmentCount`
+   *  valid entries. Every index addresses a point in the same buffer — the
+   *  fibres reach no addressable Cell — and no pair bridges a point the
+   *  complement rejected. */
+  segments: Uint32Array<ArrayBuffer>;
   count: number;
-  tries: number;
+  segmentCount: number;
+  streamlines: number;
+  work: number;
 }
 
 interface WorkerScope {
@@ -53,10 +60,13 @@ workerScope.onmessage = (event) => {
     {
       kind: 'placed',
       positions: state.positions,
+      segments: state.segments,
       count: state.count,
-      tries: state.tries,
+      segmentCount: state.segmentCount,
+      streamlines: state.streamlines,
+      work: state.work,
     },
-    [state.positions.buffer],
+    [state.positions.buffer, state.segments.buffer],
   );
 };
 

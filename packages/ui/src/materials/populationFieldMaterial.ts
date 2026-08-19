@@ -140,6 +140,42 @@ export function populationPointEnergy(
   return Math.min(1, shrink * shrink);
 }
 
+/**
+ * The halo fibre's alpha, as a share of the point emission.
+ *
+ * The fibres are not extra light so much as REDISTRIBUTED light, and the
+ * measurement that set this is the only one that matters: at the production
+ * camera, adding them raises the halo's orientation coherence — the
+ * structure-tensor measure that separates a drawn thread from isotropic noise
+ * — from 0.183 to 0.333, against a Poisson floor of 0.184. The shipped
+ * independent-point build sat AT that floor: its points, however carefully
+ * weighted onto the fibre corridors, carried no more orientation than a random
+ * spray, which is exactly the "reads as spray, not tissue" the layer failed on.
+ * Placing the points on filaments and NOT drawing the fibres measures 0.196 —
+ * still the floor. The strokes are the whole of the effect.
+ *
+ * The cost is +6.7% total light and no change in covered area (27.4% of the
+ * frame against the previous build's 27.3%), because the point count came down
+ * from 260,000 to 105,000 to pay for it.
+ *
+ * Under a Cell's core by construction, since it is a fraction of a point
+ * emission that is itself bounded by {@link POPULATION_FIELD_EMISSION}. If the
+ * live look wants more or less thread this is the knob: 0.60 gives coherence
+ * 0.292 at −7% light, 0.80 gives 0.369 at +21%.
+ *
+ * It is deliberately NOT small relative to a point. "No endpoint emphasis of
+ * any kind" is a requirement, and a faint connector between bright beads is
+ * precisely a node with edges radiating from it. At this ratio the stroke is
+ * the figure and the points are grain along it.
+ */
+export const POPULATION_FIBRE_ALPHA = 0.7;
+
+/** The fibre's emitted alpha for one amount-curve `gain`. The same curve the
+ *  points ride, so the two never drift apart as scope changes. */
+export function populationFibreEmissionForGain(gain: number): number {
+  return populationEmissionForGain(gain) * POPULATION_FIBRE_ALPHA;
+}
+
 export interface PopulationPointUniforms {
   /** Drawing-buffer height, not CSS height — WebGL point size is measured in
    *  drawing-buffer pixels. */
@@ -234,4 +270,74 @@ export function makePopulationPointMaterial(): THREE.ShaderMaterial {
     `,
   });
   return material;
+}
+
+/**
+ * The halo's fibres — the segments the placement walk emits between
+ * consecutive points on one filament.
+ *
+ * Drawn in the Cells' fabric's language, one sample lower: the same bounded
+ * screen accumulation, the same body hue, no tone mapping — but a plain
+ * one-pixel GL line where the fabric draws a 2.5-pixel screen-space capsule,
+ * and no endpoint treatment of any kind. The filament is the figure; its
+ * vertices are not.
+ *
+ * Plain {@link THREE.LineSegments} rather than the fabric's `LineSegments2`,
+ * and the reason is budget, not taste. A fat line is an instanced quad plus a
+ * capsule SDF in the fragment shader — twelve triangles and a full shader per
+ * segment — which at this layer's 124,000 segments would be 1.5M triangles a
+ * frame against the fabric's 32,000 instances. A GL line is two vertices and a
+ * one-pixel span: 0.51 of a 1080p screen in fill for the whole layer.
+ *
+ * ## What these are allowed to claim
+ *
+ * The Cells' own fabric is a k-NN proximity mesh over positions — a geometric
+ * property of the embedding, not a claim that two Cells transacted — so edges
+ * among placed halo points carry exactly the truth status the core's edges do.
+ * What stays forbidden is an edge with ONE END on an addressable Cell, which
+ * would assert a relationship between a named Cell and an anonymous one. Every
+ * index in this geometry addresses a point the same pass placed, and no
+ * segment bridges a point the complement rejected.
+ */
+export function makePopulationFibreMaterial(): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    uniforms: {
+      uEmission: { value: 0 },
+      uColor: { value: new THREE.Color(...POPULATION_FIELD_COLOR) },
+    },
+    transparent: true,
+    depthWrite: false,
+    // Byte-for-byte the Cell bodies' and the fabric's blend. The layer EMITS
+    // and never covers, so a pixel with no unresolved population receives
+    // exactly zero and empty space stays true black.
+    blending: THREE.CustomBlending,
+    blendEquation: THREE.AddEquation,
+    blendSrc: THREE.SrcAlphaFactor,
+    blendDst: THREE.OneMinusSrcColorFactor,
+    blendEquationAlpha: THREE.AddEquation,
+    blendSrcAlpha: THREE.OneFactor,
+    blendDstAlpha: THREE.OneMinusSrcAlphaFactor,
+    toneMapped: false,
+    vertexShader: /* glsl */ `
+      void main() {
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      precision highp float;
+
+      uniform vec3 uColor;
+      uniform float uEmission;
+
+      void main() {
+        // Flat along the whole segment: no taper, no endpoint falloff, no
+        // brightening at a vertex. A halo point must never look like a node
+        // with edges radiating from it.
+        // Premultiplied, matching the Cell bodies, and written raw for the
+        // same reason — a colorspace-converted twin would be a second
+        // material, which is the seam this design exists to remove.
+        gl_FragColor = vec4(uColor * uEmission, uEmission);
+      }
+    `,
+  });
 }

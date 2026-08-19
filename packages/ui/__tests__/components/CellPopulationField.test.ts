@@ -30,14 +30,35 @@ const LAYER_CODE = [FIELD_CODE, PLACEMENT_CODE, MATERIAL_CODE,
   withoutComments(WORKER_SOURCE)].join('\n');
 
 describe('the halo is not an object', () => {
-  it('answers no raycast', () => {
+  it('answers no raycast, on either of its objects', () => {
     // Structurally it is already unreachable — no pointer handler, so it never
     // joins the interaction list, and it is a sibling of the pick object
-    // rather than a descendant. The override is the defensive layer, and a
-    // point cloud earns it twice over: unlike a bare Object3D, points ship a
-    // real default raycast against a one-unit sphere per vertex.
+    // rather than a descendant. The override is the defensive layer, and BOTH
+    // objects earn it: unlike a bare Object3D, `THREE.Points` ships a real
+    // default raycast against a one-unit sphere per vertex, and
+    // `THREE.LineSegments` ships one against `params.Line.threshold`.
     expect(FIELD_SOURCE).toContain('function neverRaycast(): void {}');
-    expect(FIELD_SOURCE).toContain('raycast={neverRaycast}');
+    // Once per drawn object, and there are exactly two.
+    const overrides = FIELD_SOURCE.match(/raycast=\{neverRaycast\}/g) ?? [];
+    expect(overrides).toHaveLength(2);
+    const drawn = FIELD_SOURCE.match(/<(points|lineSegments)\b/g) ?? [];
+    expect(drawn.sort()).toEqual(['<lineSegments', '<points']);
+  });
+
+  it('never lets a fibre reach an addressable Cell', () => {
+    // Rule 4, as amended 2026-08-18: halo-to-halo only. An edge with one end
+    // on a named Cell would assert a relationship nothing in the pipeline can
+    // support. The guarantee is structural rather than checked — the fibres
+    // are an INDEX buffer over the halo's own position attribute, so there is
+    // no other vertex in that geometry for an index to name.
+    expect(FIELD_CODE).toContain('fibres.setAttribute(\'position\', position)');
+    expect(FIELD_CODE).toContain('points.setAttribute(\'position\', position)');
+    expect(FIELD_CODE).toContain('fibres.setIndex(');
+    // And the indices come from the WALK — consecutive points on one
+    // filament — so there is no neighbour search to accidentally reach across
+    // populations, and nothing to search over if there were.
+    expect(PLACEMENT_CODE).toContain('segments[pair] = walk.previous;');
+    expect(PLACEMENT_CODE).not.toMatch(/kNearest|knn|nearestNeighbou?r/i);
   });
 
   it('registers no pointer handler of any kind', () => {
@@ -91,7 +112,30 @@ describe('the halo responds to no chain event', () => {
   });
 });
 
-describe('one static buffer and one draw', () => {
+describe('two static buffers and two draws', () => {
+  it('draws the fibres under their own points', () => {
+    // One sample lower, and it has to be BELOW: the strokes are the figure,
+    // and a point drawn under its own filament would read as a node the
+    // fibres radiate from — the one thing the drawing rule forbids.
+    const fibres = FIELD_SOURCE.indexOf('<lineSegments');
+    const points = FIELD_SOURCE.indexOf('<points');
+    expect(fibres).toBeGreaterThan(0);
+    expect(fibres).toBeLessThan(points);
+    expect(FIELD_SOURCE).toContain('renderOrder={-2}');
+    expect(FIELD_SOURCE).toContain('renderOrder={-1}');
+  });
+
+  it('gives the fibres no endpoint treatment', () => {
+    // "No endpoint emphasis of any kind." The fragment shader is flat along
+    // the whole segment: no varying, so nothing can vary along it.
+    const fibre = MATERIAL_SOURCE.slice(
+      MATERIAL_SOURCE.indexOf('makePopulationFibreMaterial'),
+    );
+    expect(fibre).toContain('gl_FragColor = vec4(uColor * uEmission, uEmission);');
+    expect(fibre).not.toContain('varying');
+    expect(fibre).not.toContain('gl_PointCoord');
+  });
+
   it('keeps the two-pass pipeline out of the tree', () => {
     // The density march, the suppression shader, the line-integral grain, the
     // speck mask, the baked field, the quarter-res target and the composite
@@ -122,11 +166,12 @@ describe('one static buffer and one draw', () => {
   });
 
   it('does no per-frame work proportional to anything', () => {
-    // Three uniform writes. No loop of any kind inside the frame callback:
-    // the geometry is static and the layer's only frame cost is its draw.
+    // Four uniform writes. No loop of any kind inside the frame callback:
+    // the geometry is static and the layer's only frame cost is its two
+    // draws.
     const frame = FIELD_CODE.slice(
       FIELD_CODE.indexOf('useFrame((state)'),
-      FIELD_CODE.indexOf('if (!geometry'),
+      FIELD_CODE.indexOf('if (!placed'),
     );
     expect(frame.length).toBeGreaterThan(0);
     expect(frame).not.toMatch(/\bfor\b|\bwhile\b|\.forEach\(|\.map\(/);
@@ -149,7 +194,7 @@ describe('degradation', () => {
   it('renders nothing at all until the buffer lands', () => {
     // Absence is a legal state for this layer, and it is the whole of the
     // "not ready" behaviour — there is no partial field to show.
-    expect(FIELD_SOURCE).toContain('if (!geometry || !wanted) return null;');
+    expect(FIELD_SOURCE).toContain('if (!placed || !wanted) return null;');
   });
 
   it('places nothing when the stage covers its scope', () => {

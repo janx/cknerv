@@ -1,12 +1,12 @@
-// Placement of the unresolved population as real points in the Cells' own
+// Placement of the unresolved population as real filaments in the Cells' own
 // world.
 //
 // This module holds the whole of the halo's geometry. It is one CPU pass that
-// rejection-samples the shared positional law — the SAME law, and the same
-// rejection sampling, that `helixSeedF64` uses to place an addressable Cell —
-// under an envelope re-closed further out. Nothing here is rasterized, marched,
-// or evaluated per pixel: the output is a plain `Float32Array` of world
-// positions, uploaded once and never touched again.
+// walks the shared positional law — the SAME law `helixSeedF64` uses to place
+// an addressable Cell — under an envelope re-closed further out. Nothing here
+// is rasterized, marched, or evaluated per pixel: the output is a plain
+// `Float32Array` of world positions plus a `Uint32Array` of segment indices,
+// uploaded once and never touched again.
 //
 // It replaces a two-pass screen-space pipeline (a baked field texture, a
 // density march at quarter resolution, a suppression shader, a line-integral
@@ -31,6 +31,32 @@
 // The second false constraint was budgetary. `AUTO_CELL_DISPLAY_BUDGET` is the
 // ADDRESSABLE budget — payload, picking, fabric edges, hover state, a `Cell`
 // object each. A non-addressable point is twelve bytes.
+//
+// ## Why STREAMLINES and not points
+//
+// The first world-space build placed points independently, weighting them onto
+// the fibre corridors and hoping threads would emerge from the density
+// contrast. They did not, and the reason is countable: at the halo's ~2.5
+// points per pixel, the Poisson noise of an independent draw is comparable to
+// every density modulation the weighting can produce, so what the eye gets is
+// a clumpy spray. A density modulation cannot look like a drawn thread.
+//
+// The core's neural quality does not come from its points either. It comes
+// from roughly eight thousand DRAWN FABRIC SEGMENTS. So the halo is built the
+// same way: a seed is picked from the tissue, a walk follows the ridged fibre
+// field's crest, and every step drops a point and a segment back to the last
+// one. Threads then exist by construction instead of being hoped for, and the
+// fibre buffer falls out of the walk with no k-NN search.
+//
+// ## What the fibres are allowed to claim
+//
+// The Cells' own fabric is a k-NN proximity mesh over positions — a geometric
+// property of the embedding, not a claim that two Cells transacted. Edges
+// among placed halo points therefore carry exactly the truth status the core's
+// edges do. What stays forbidden is an edge with ONE END on an addressable
+// Cell: that would assert a relationship between a named Cell and an anonymous
+// one, which nothing in the pipeline can support. Every index this module
+// emits addresses a point this module placed.
 
 import {
   FIELD_HALF_X,
@@ -60,23 +86,30 @@ export const POPULATION_FIELD_OUTER_EDGE = 2.2;
 /**
  * How many points the halo carries.
  *
- * Measured at fixed total light, more points buy exactly one thing: less
- * grain. Local luminance deviation over a nine-pixel neighbourhood falls as
- * 1/sqrt(N) — 1.10 at 65K, 0.75 at 260K, 0.50 at 900K — while structure at the
- * corridor scale does not improve at all (filament contrast 0.54 → 0.48 → 0.46
- * across the same sweep, i.e. it slightly WORSENS as the extra points fill the
- * low-density tail). Past this count the layer trends back toward the smooth
- * wash the whole design exists to escape.
+ * Halved from the 260,000 the independent-draw build used, and the reason is
+ * the change of construction rather than a change of taste. A spray spends its
+ * points filling area, so more of them bought less grain (local luminance
+ * deviation falls as 1/sqrt(N)) and nothing else — structure at the corridor
+ * scale did not improve at all across a 65K→900K sweep, and slightly worsened
+ * as the extra points filled the low-density tail.
+ *
+ * A filament spends its points along a CURVE, and measured at matched light
+ * the count no longer moves the structure AT ALL — orientation coherence is
+ * flat within noise from 65,000 to 260,000, because the structure now comes
+ * from the drawn fibres rather than from density contrast between points. What
+ * the count moves is coverage and light, so it became a budget for the fibres
+ * to spend: 105,000 points plus their fibres cover the same area as 260,000
+ * bare points did — 27.4% of the frame against 27.3% — for 6.7% more light,
+ * while orientation coherence goes from 0.183 to 0.333.
  *
  * It is also a population statement. Against a 12,000-Cell stage and ~1.46M
- * unresolved mainnet Cells, 260K is roughly one point per five and a half
- * Cells cknerv could not individuate — a ratio the picture can carry.
+ * unresolved mainnet Cells, this is roughly one point per fourteen Cells
+ * cknerv could not individuate.
  *
- * Cost: 3.1 MB uploaded once, one draw call, and a fill footprint of roughly
- * 1.7 screens at any resolution (the sprite scales with the viewport, so
- * coverage is resolution-invariant).
+ * Cost: 1.3 MB of positions plus 0.8 MB of indices, uploaded once, two draw
+ * calls — LESS memory than the 3.1 MB the previous build uploaded.
  */
-export const POPULATION_FIELD_POINTS = 260_000;
+export const POPULATION_FIELD_POINTS = 105_000;
 
 /**
  * The complement — where the addressable Cells already occupy this tissue.
@@ -92,29 +125,66 @@ export const POPULATION_FIELD_POINTS = 260_000;
  * two rounds: it made the halo's ingress through the tissue's cavities look
  * like a violation to be capped, when a cavity contains no Cells and halo
  * light in one obscures nothing. The thing worth defending is Cells, not a
- * circle. Measured on the shipped placement, 31% of points land inside the
- * resolved rim — that interdigitation is the design working, not leaking.
+ * circle. Measured on the shipped placement, about a third of points land
+ * inside the resolved rim — that interdigitation is the design working, not
+ * leaking.
+ *
+ * A rejected point also BREAKS the filament (§5.1): the walk carries on
+ * through the dense tissue, but no segment bridges the gap, or the drawn fibre
+ * would cross exactly the ground the complement just cleared. A filament that
+ * re-emerges on the far side of a Cell clump is the interdigitation reading
+ * made literal.
  */
 export const POPULATION_FIELD_COMPLEMENT_KNEE = 0.3;
 
 /**
  * The halo's fibre, as two ridged octaves on the law's WARPED coordinates.
  *
- * The Galaxy's neural character comes from the k-NN filaments, not from the
- * points, so a halo of uniform spray reads as dust however exactly its density
- * is computed. What makes fibre out there honest: the fabric's edge budget is
- * a resolution limit exactly like the Cell budget, so the halo is unresolved
- * CONNECTIONS as much as unresolved Cells — and at that resolution you see
- * bundles, never individual links. What is drawn is where the population
- * GATHERS, not a link: no nodes, no endpoints, nothing terminates.
+ * It is no longer a weight on an independent draw. It is the walk's DIRECTION
+ * field, and ONLY that: at each step the heading turns toward the perpendicular
+ * of this function's gradient, so a filament runs along one of its flow lines
+ * rather than across them, and neighbouring filaments — reading the same
+ * smooth field — align into bundles. Measured, tangents of points within three
+ * world units on DIFFERENT filaments agree at 0.705 against 0.637 for random
+ * headings.
+ *
+ * Two ways of also making it a DENSITY weight were built and measured, and
+ * neither is here:
+ *
+ *  - **Biasing the seed** toward high fibre. It cannot work, for a reason that
+ *    is obvious once measured: a filament is fifteen points long, so the seed
+ *    is 7% of them and the walk carries the rest wherever the flow goes. Mean
+ *    fibre over placed points held at 1.10x the density-and-complement-weighted
+ *    null at every slope from 0 to 6, and coverage, light and coherence were
+ *    flat to within noise. It was an extra field evaluation per seed for
+ *    nothing.
+ *  - **A crest-climbing term**, adding the raw gradient to the heading. That
+ *    does raise mean fibre (1.06x to 1.92x), and it is worse: the walk
+ *    oscillates ACROSS the ridge instead of running along it — turn per step
+ *    goes from 8 degrees to 53 — and it lowers both orientation coherence and
+ *    the inter-filament alignment it was meant to improve.
+ *
+ * The reason both fail is one property of the construction, worth stating
+ * plainly because it is invisible in a picture:
+ *
+ * > A curve integrated perpendicular to a gradient follows a CONTOUR, not a
+ * > ridge. It preserves the value it started at.
+ *
+ * So this field decides which WAY the population runs, and the tissue density
+ * decides WHERE it is. The contour is not a defect to correct; it is a flow
+ * line, and flow lines are what the eye reads as tissue.
+ *
+ * What makes fibre out there honest: the fabric's edge budget is a resolution
+ * limit exactly like the Cell budget, so the halo is unresolved CONNECTIONS as
+ * much as unresolved Cells.
  *
  * Evaluated on `qx, qz` rather than on `x, z` so the strands follow the
  * organism's own flow instead of a grid. Scale decides this completely: the
  * `ridge` octave the density already uses sits at 11 world units and projects
  * as marbling, while the same construction at 3–5 units reads as dendritic.
  *
- * This is now WORLD-SPACE structure. It turns with the galaxy, as the fabric's
- * own filaments do, which is the entire reason the layer was rebuilt.
+ * This is WORLD-SPACE structure. It turns with the galaxy, as the fabric's own
+ * filaments do, which is the entire reason the layer was rebuilt.
  */
 export const POPULATION_FIBRE_SCALE_A = 5.5;
 export const POPULATION_FIBRE_SCALE_B = 3.1;
@@ -125,7 +195,7 @@ export const POPULATION_FIBRE_SCALE_B = 3.1;
 export const POPULATION_FIBRE_WARP_B = 1.7;
 /** Powers the ridge bases are raised to. High, so the ridges stay thin: these
  *  are bundles seen from far enough away that individual links never separate.
- *  Raised per POINT now rather than per texel, so nothing averages the thin
+ *  Raised per SAMPLE now rather than per texel, so nothing averages the thin
  *  structure away — the failure a baked field had to work around. */
 export const POPULATION_FIBRE_POWER_A = 7;
 export const POPULATION_FIBRE_POWER_B = 9;
@@ -134,34 +204,194 @@ export const POPULATION_FIBRE_MIX_B = 0.38;
 const FIBRE_SALT_A = 0x51fa7c11;
 const FIBRE_SALT_B = 0x2c9e77b3;
 
-/** Acceptance floor and slope for the fibre rejection: a candidate survives
- *  with probability `FLOOR + SLOPE * fibre`. The floor keeps the voids from
- *  being surgically empty — a population has stragglers — and the slope is
- *  steep enough that the corridors gather most of the points. */
-export const POPULATION_FIBRE_ACCEPT_FLOOR = 0.04;
-export const POPULATION_FIBRE_ACCEPT_SLOPE = 3.4;
+/**
+ * Finite-difference arm for the crest gradient, in warped units.
+ *
+ * Deliberately coarse against the finest octave's ~1.8-unit scale: a tight arm
+ * differentiates the noise's own wiggle and the walk chases it into circles,
+ * while this one sees the ridge and not the texture on it. Measured, the walk
+ * holds a mean fibre value well above the tissue's — it is tracking crests,
+ * not wandering.
+ */
+export const POPULATION_FIBRE_GRADIENT_ARM = 0.55;
+
+
+/**
+ * World units per integration step.
+ *
+ * Set against the sprite footprint, not against the field. At the production
+ * camera one world unit is about 6.1 device pixels and the sprite draws near
+ * 4, so a step of 1.25 leaves consecutive points roughly two sprite-widths
+ * apart: a dotted line, which is exactly why the segments are drawn. Much
+ * shorter and the points merge into a solid worm that costs three times as
+ * much for no more structure; much longer and the polyline visibly facets
+ * against filament curvature radii of a few units.
+ */
+export const POPULATION_STREAMLINE_STEP = 1.25;
+
+/**
+ * Length spread, in steps.
+ *
+ * Drawn as `MIN + (MAX - MIN) * u^EXPONENT`, which is heavy toward the short
+ * end: with the exponent below, the median filament is 15 steps and the
+ * longest few reach 70. Real dendritic tissue has a wide spread of lengths;
+ * a uniform draw between two bounds is what made an earlier pass read as felt
+ * — every filament the same size, no hierarchy, no reading order.
+ */
+export const POPULATION_STREAMLINE_MIN_STEPS = 5;
+export const POPULATION_STREAMLINE_MAX_STEPS = 70;
+export const POPULATION_STREAMLINE_LENGTH_EXPONENT = 2.4;
+
+/**
+ * How much of the previous heading survives one step, before the field's own
+ * direction is mixed in.
+ *
+ * This is the knob that decides whether the halo has CORRIDORS, and finding
+ * that out took a measurement no picture would have given. Orientation
+ * coherence — the metric that separates a drawn thread from noise — is flat
+ * within noise across the whole range, 0.32 to 0.34, so it cannot arbitrate
+ * here at all. What moves is the alignment of NEIGHBOURING filaments: tangents
+ * of points within three world units on different filaments agree at
+ *
+ *   0.709 at full field-following, 0.706 here, 0.662 at 0.80,
+ *   and 0.645 with the field switched off entirely — against 0.637 for random
+ *   headings.
+ *
+ * So at 0.80 the field had almost stopped mattering and the layer was a set of
+ * independent persistent random walks: still curves, still drawn, still tissue
+ * by the coherence measure, but with no reason for two of them to run
+ * together. Parallel bundles are what a corridor IS.
+ *
+ * The cost of holding onto them is curvature: 18.8 degrees of turn per step
+ * here, a radius of 3.8 world units, against 8.4 degrees at 0.80. Some
+ * persistence is still worth having — it lets a filament leave the flow line
+ * it was born on, which is where the long arcs come from — but the bundling is
+ * worth more, and the reference prototype ran at effectively zero persistence
+ * and was judged acceptable in character.
+ */
+export const POPULATION_STREAMLINE_STIFFNESS = 0.55;
+
+/**
+ * Per-step heading noise, in radians, at full strength.
+ *
+ * Scaled per filament by its own draw, so some run nearly true and others
+ * meander. The variation is the point: a constant wander gives every filament
+ * the same nervous quality, which is another uniformity to read through.
+ */
+export const POPULATION_STREAMLINE_WANDER = 0.22;
+
+/**
+ * Share of filaments that start on an existing filament instead of on fresh
+ * tissue.
+ *
+ * This is where the branch points come from. A field of unconnected curves
+ * reads as combed fibre; tissue bifurcates. The child inherits its parent's
+ * vertical offset so the two actually meet in three dimensions rather than
+ * crossing at different heights, and the first segment is emitted from the
+ * PARENT's own point index, so the fork is drawn and not merely implied.
+ */
+export const POPULATION_STREAMLINE_BRANCH_SHARE = 0.42;
+
+/** Fork half-angle range, in radians. Wide enough to read as a branch at the
+ *  filament scale and narrow enough that the child still belongs to the
+ *  parent's corridor. */
+export const POPULATION_STREAMLINE_FORK_MIN = 0.42;
+export const POPULATION_STREAMLINE_FORK_MAX = 1.15;
+
+/**
+ * How many times a filament may be branched from, counting its own descent.
+ *
+ * Without a cap the fork rule percolates: a child is as eligible a parent as
+ * its parent was, so one component swallowed 24% of every point placed while
+ * the median component stayed at two. That is not a wide spread of lengths, it
+ * is one tangle and a lot of dust. The Cells' own fabric caps generations for
+ * the same reason (`MAX_PASSIVE_EDGE_GENERATIONS`). Two keeps the fork visible
+ * — a trunk, a branch, a twig — and stops the network closing on itself.
+ */
+export const POPULATION_STREAMLINE_MAX_GENERATION = 2;
+
+/** How many walk states are held as branch candidates. A ring, overwritten in
+ *  place: the pass allocates once and never grows. Large enough that children
+ *  are drawn from across the whole field rather than from the last few
+ *  filaments walked. */
+const BRANCH_RESERVOIR = 4096;
+/** Chance that a given emitted point is recorded as a branch candidate. Low,
+ *  so the reservoir turns over slowly and stays spatially mixed — a filament
+ *  of average length offers about one place to fork from. */
+const BRANCH_RECORD_CHANCE = 0.05;
+
+/** A slot is CONSUMED when it is forked from.
+ *
+ *  Without this the fork rule percolates in breadth even with the generation
+ *  cap on depth: early in the pass the reservoir holds two or three entries,
+ *  every fork lands on them, and the first filaments walked end up with
+ *  hundreds of children each. Measured on a 20,000-point pass, one component
+ *  held 36% of every point placed while the same constants at 130,000 held
+ *  2.6% — a structure that changes shape with the buffer size is not a
+ *  structure. One record, one child, and a component is a small dendritic unit
+ *  at any count. */
+const BRANCH_CONSUMED = -1;
+
+/** Density below which a walk stops. The envelope has closed and there is no
+ *  population left to state; carrying on would draw a filament trailing off
+ *  into vacuum.
+ *
+ *  Low, because a walk is not a candidate: an independent draw at this density
+ *  almost never lands, but a filament that has already reached here is real
+ *  and its last few points are the halo's outer silhouette. At 0.02 the
+ *  outermost fifth of the envelope carried a twentieth of the points it should
+ *  and the halo ended on a visible edge; this recovers it for no extra work. */
+export const POPULATION_STREAMLINE_DENSITY_FLOOR = 0.01;
 
 /**
  * How much thinner than the Cells' own slab the halo is.
  *
- * Not decoration. Points at different heights along one corridor project to
- * different screen positions, so a full-thickness slab smears the filaments
- * away in projection. Derivation: a vertical spread of sigma projects onto the
- * ground plane as `sigma / tan(elevation)`. At the production camera
- * ([110, 108, 110], elevation 34.8 degrees, tan 0.695) keeping that smear under
- * half the dominant fibre scale of 5.5 units needs sigma <= 1.91, against a
- * mean Cell thickness of 4.1 — a factor of 0.47. The camera has no polar limit
- * and can be orbited lower, and at 24 degrees the same bound gives 0.30.
+ * RE-DERIVED for filaments, and it did not move. The reasoning changed
+ * completely; the number did not, which is worth writing down because the
+ * obvious expectation was the opposite.
  *
- * Measured, at the production camera: filament contrast rises monotonically as
- * the slab thins — 0.292 at full thickness, 0.480 here, 0.630 at a razor disk.
- * So 0.30 recovers 56% of what a zero-thickness disk would gain, which is the
- * "recovers much of what it loses" this trade was chosen for.
+ * The old bound came from projection smear on INDEPENDENT points: points at
+ * different heights along one corridor project to different screen positions,
+ * a vertical spread of sigma smears the ground plane by
+ * `sigma / tan(elevation)`, and holding that under half the dominant fibre
+ * scale needed sigma <= 1.91 against a mean Cell thickness of 4.1. **That
+ * argument is void.** A filament's offset is drawn once, so the whole curve
+ * translates on screen together, and a translated curve is still a curve.
+ *
+ * Two things replaced it, from opposite directions, and they agree:
+ *
+ *  1. Measured, orientation coherence at the production camera falls
+ *     MONOTONICALLY as the slab thickens — 0.364 at 0.30, 0.332 at 0.45, 0.301
+ *     at 0.62, 0.242 at full thickness — and the same holds at a low orbit.
+ *     Not because a filament smears, but because independent filaments overlap
+ *     in projection: a thicker slab puts more of them along one sight line and
+ *     their crossings are isotropic.
+ *  2. The fold is untouched at an RMS of 2.02, and the halo is a warped ribbon
+ *     only while the fold carries more of the vertical extent than the
+ *     flattened spread does. That inverts at about 0.48 — so the reference
+ *     prototype's 0.62 is not admissible at all, whatever it looks like from
+ *     overhead, because it turns the layer into a plane and an edge-on camera
+ *     into a line.
+ *
+ * There is a third reason to leave it alone, and it is methodological: this
+ * value was in the build the user judged and accepted. Changing the thickness
+ * and adding the fibres in one step would confound the next judgement.
  *
  * It is also the disk to the Cells' bulge, which is the shape the
  * bulge-and-disk reading wanted anyway.
  */
 export const POPULATION_FIELD_FLATTEN = 0.3;
+
+/**
+ * Per-point share of the vertical offset, against the per-filament share.
+ *
+ * Composed as `g * sqrt(1 - J^2) + jitter * J` so the MARGINAL distribution at
+ * every point is exactly the Gaussian slab the Cells are folded into —
+ * unchanged, provably, not approximately — while consecutive points on one
+ * filament stay correlated at 0.984. Without the jitter a filament is a
+ * perfect ribbon and reads as extruded; with it the strand has grain.
+ */
+export const POPULATION_STREAMLINE_JITTER = 0.18;
 
 /** Deterministic stream seed. Presentation only: the halo carries no id, no
  *  time, and no universe seed, so this salt says nothing about any Cell — it
@@ -183,11 +413,11 @@ const BOUNDARY_WARP_MAX = 0.185;
 /** Where the law's envelope starts closing. Mirrors `tissueField`. */
 const ENVELOPE_INNER = 0.61;
 
-/** Tries per requested point before the pass gives up and reports what it
- *  has. Measured acceptance is 5.13%, i.e. ~19.5 tries per point, so this is
+/** Field evaluations per requested point before the pass gives up and reports
+ *  what it has. Measured cost is 1.5 evaluations per placed point, so this is
  *  twenty times the expected work — it exists so a mis-tuned constant degrades
  *  into a thinner field instead of an infinite loop. */
-const TRY_CEILING_PER_POINT = 400;
+const WORK_CEILING_PER_POINT = 30;
 
 function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value));
@@ -213,6 +443,38 @@ export function populationFibreAt(qx: number, qz: number): number {
     + baseB ** POPULATION_FIBRE_POWER_B * POPULATION_FIBRE_MIX_B;
 }
 
+/**
+ * Unit direction along the fibre's crest at one warped coordinate — the
+ * perpendicular to the gradient, which is the direction in which the fibre
+ * changes least.
+ *
+ * The gradient is taken in the WARPED frame and the step is then made in world
+ * coordinates, which is an approximation: the warp's Jacobian is not the
+ * identity. Measured, it costs nothing that matters — a walk built this way
+ * still holds a mean fibre value far above the tissue's, so it is tracking
+ * ridges — and the exact version needs four more twelve-octave evaluations per
+ * step, tripling the pass for a correction smaller than the per-step wander
+ * deliberately added on top.
+ *
+ * Returns `false` where the fibre is locally flat and there is no crest to
+ * follow; the caller keeps its heading.
+ */
+function crestDirection(
+  qx: number,
+  qz: number,
+  out: { x: number; z: number },
+): boolean {
+  const h = POPULATION_FIBRE_GRADIENT_ARM;
+  const gx = populationFibreAt(qx + h, qz) - populationFibreAt(qx - h, qz);
+  const gz = populationFibreAt(qx, qz + h) - populationFibreAt(qx, qz - h);
+  const length = Math.sqrt(gx * gx + gz * gz);
+  if (length < 1e-9) return false;
+  // Perpendicular to the gradient: along the ridge, not across it.
+  out.x = -gz / length;
+  out.z = gx / length;
+  return true;
+}
+
 /** Probability that a candidate survives the complement. Zero at and above
  *  twice the knee — structurally, not by tuning. */
 export function populationComplementAcceptance(resolvedCoverage: number): number {
@@ -235,8 +497,8 @@ export const POPULATION_FIELD_COVERAGE_CEILING =
  * bounds it from above. Drawing the uniform BEFORE the field and rejecting
  * against this bound is exact — it changes which candidates are examined, not
  * the distribution of the ones kept — and it skips the twelve-octave
- * evaluation for 46% of tries, the ones out in the thin halo and the corners
- * of the sampling box where almost nothing is ever accepted.
+ * evaluation for the seeds out in the thin halo and the corners of the
+ * sampling box, where almost nothing is ever accepted.
  */
 export function populationPlacementMajorant(radial: number): number {
   const envelopeUpper = 1 - smoothstep(
@@ -252,16 +514,59 @@ export interface PopulationPlacementState {
    *  points. The buffer type is pinned so it can be transferred out of a
    *  worker without a defensive copy. */
   positions: Float32Array<ArrayBuffer>;
+  /** Segment endpoints as pairs of indices into {@link positions}, valid for
+   *  the first `2 * segmentCount` entries. Every index addresses a point this
+   *  pass placed — no segment reaches an addressable Cell (§3 rule 4), and no
+   *  segment bridges a point the complement rejected. */
+  segments: Uint32Array<ArrayBuffer>;
   capacity: number;
-  /** Points written so far. Every prefix is an unbiased sample of the same
-   *  distribution, so a partial buffer is thinner, never wrong. */
+  /** Points written so far. */
   count: number;
-  tries: number;
-  /** Set when the buffer is full, or when the try ceiling is reached. */
+  segmentCount: number;
+  /** Filaments started, including branches. */
+  streamlines: number;
+  /** Field evaluations spent — seed attempts plus walk steps. The unit of
+   *  work, and what the budget below is denominated in. */
+  work: number;
+  /** Set when the buffer is full, or when the work ceiling is reached. */
   done: boolean;
   /** mulberry32 state, carried across calls so the stream is one sequence
    *  however the budget is divided. */
   rng: number;
+  /** The filament currently being walked, carried across calls so a budgeted
+   *  caller can stop mid-strand and resume without perturbing the sequence. */
+  walk: WalkState;
+  /** Branch candidates: a ring of walk states recorded from filaments already
+   *  placed. Allocated once, overwritten in place. */
+  branchX: Float64Array;
+  branchZ: Float64Array;
+  branchDirX: Float64Array;
+  branchDirZ: Float64Array;
+  branchOffset: Float64Array;
+  branchPoint: Int32Array;
+  branchGeneration: Int32Array;
+  branchWritten: number;
+}
+
+interface WalkState {
+  /** Steps left on the current filament; zero means "seed a new one". */
+  stepsLeft: number;
+  x: number;
+  z: number;
+  dirX: number;
+  dirZ: number;
+  /** The filament's own standard-normal vertical offset, in units of the
+   *  local flattened thickness. Drawn ONCE per filament — this is what keeps
+   *  the strand a coherent curve in three dimensions instead of a smear
+   *  across the slab. */
+  offset: number;
+  /** Per-filament wander scale, in [0, 1] of {@link POPULATION_STREAMLINE_WANDER}. */
+  wander: number;
+  /** How many forks deep this filament is. Fresh tissue is 0. */
+  generation: number;
+  /** Index of the last point emitted on this filament, or -1 when the
+   *  complement broke it. A break must not be bridged. */
+  previous: number;
 }
 
 export function createPopulationPlacement(
@@ -271,33 +576,58 @@ export function createPopulationPlacement(
   const size = Math.max(0, Math.floor(capacity));
   return {
     positions: new Float32Array(size * 3),
+    // Every emitted point adds at most one segment — to its predecessor on
+    // the same filament, or to the parent it forked from — so the point
+    // capacity bounds the segment capacity exactly.
+    segments: new Uint32Array(size * 2),
     capacity: size,
     count: 0,
-    tries: 0,
+    segmentCount: 0,
+    streamlines: 0,
+    work: 0,
     done: size === 0,
     rng: seed >>> 0,
+    walk: {
+      stepsLeft: 0,
+      x: 0,
+      z: 0,
+      dirX: 1,
+      dirZ: 0,
+      offset: 0,
+      wander: 0,
+      generation: 0,
+      previous: -1,
+    },
+    branchX: new Float64Array(BRANCH_RESERVOIR),
+    branchZ: new Float64Array(BRANCH_RESERVOIR),
+    branchDirX: new Float64Array(BRANCH_RESERVOIR),
+    branchDirZ: new Float64Array(BRANCH_RESERVOIR),
+    branchOffset: new Float64Array(BRANCH_RESERVOIR),
+    branchPoint: new Int32Array(BRANCH_RESERVOIR),
+    branchGeneration: new Int32Array(BRANCH_RESERVOIR),
+    branchWritten: 0,
   };
 }
 
 /**
- * Draw up to `tryBudget` more candidates.
+ * Walk up to `workBudget` more field evaluations.
  *
- * Budgeted in TRIES rather than in points because a try is the unit of work:
- * the caller is spending a time budget, and the yield per try is a property of
- * the field, not of the caller. Returns the same (mutated) state so one
- * reference can be held across calls.
+ * Budgeted in field evaluations rather than in points because that is the unit
+ * of work: the caller is spending a time budget, and the yield per evaluation
+ * is a property of the field, not of the caller. Returns the same (mutated)
+ * state so one reference can be held across calls.
  */
 export function advancePopulationPlacement(
   state: PopulationPlacementState,
-  tryBudget: number,
+  workBudget: number,
 ): PopulationPlacementState {
   if (state.done) return state;
 
-  const { positions, capacity } = state;
+  const { positions, segments, capacity, walk } = state;
   const halfX = FIELD_HALF_X * POPULATION_FIELD_OUTER_EDGE;
   const halfZ = FIELD_HALF_Z * POPULATION_FIELD_OUTER_EDGE;
-  const ceiling = capacity * TRY_CEILING_PER_POINT;
-  const budget = Math.max(1, Math.floor(tryBudget));
+  const ceiling = capacity * WORK_CEILING_PER_POINT;
+  const budget = Math.max(1, Math.floor(workBudget));
 
   // mulberry32, inlined. The stream is hot enough that a closure per call
   // shows up, and its state has to survive the return either way.
@@ -309,80 +639,216 @@ export function advancePopulationPlacement(
     t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
     return ((t ^ (t >>> 14)) >>> 0) / 0x1_0000_0000;
   };
+  // Box–Muller, one value per call. The discarded half would have to live on
+  // the state to be reused, and correlating two draws that way is not worth a
+  // field with this much noise in it already.
+  const gaussian = (): number => Math.sqrt(-2 * Math.log(Math.max(next(), 1e-12)))
+    * Math.cos(2 * Math.PI * next());
+
+  const crest = { x: 0, z: 0 };
+  const jitterShare = POPULATION_STREAMLINE_JITTER;
+  const filamentShare = Math.sqrt(1 - jitterShare * jitterShare);
 
   let count = state.count;
-  let tries = state.tries;
-  const limit = tries + budget;
+  let segmentCount = state.segmentCount;
+  let streamlines = state.streamlines;
+  let work = state.work;
+  let branchWritten = state.branchWritten;
+  const limit = work + budget;
 
-  while (count < capacity && tries < limit && tries < ceiling) {
-    tries += 1;
+  while (count < capacity && work < limit && work < ceiling) {
+    // ---- Seed a new filament ------------------------------------------
+    if (walk.stepsLeft <= 0) {
+      work += 1;
 
-    // 1. Uniform over the halo's bounding box.
-    const x = (next() * 2 - 1) * halfX;
-    const z = (next() * 2 - 1) * halfZ;
-    // Drawn here so the majorant below can reject against it without having
-    // evaluated the field. Same uniform, same comparison, one order earlier.
-    const u = next();
+      const reservoir = Math.min(branchWritten, BRANCH_RESERVOIR);
+      let forking = reservoir > 0
+        && next() < POPULATION_STREAMLINE_BRANCH_SHARE;
+      let slot = 0;
+      let parent = BRANCH_CONSUMED;
+      if (forking) {
+        slot = Math.min(reservoir - 1, Math.floor(next() * reservoir));
+        parent = state.branchPoint[slot];
+        // A spent slot is not a reason to spend a whole iteration: fall
+        // through to fresh tissue instead of looping, or the pass does twice
+        // the work once the reservoir is mostly consumed.
+        if (parent === BRANCH_CONSUMED) forking = false;
+      }
 
-    // 2. Radius-only majorant. No noise, no allocation, and it disposes of
-    //    the box corners for free — they are outside the envelope entirely.
-    const nx = x / FIELD_HALF_X;
-    const nz = z / FIELD_HALF_Z;
-    const radial = Math.sqrt(nx * nx + nz * nz);
-    if (u >= populationPlacementMajorant(radial)) continue;
+      if (forking) {
+        // A child filament, forked FROM a point on its parent. It inherits
+        // the parent's vertical offset so the two meet in three dimensions
+        // rather than crossing at different heights, and its first segment
+        // reaches back to the parent's own point — the fork is drawn, not
+        // implied.
+        state.branchPoint[slot] = BRANCH_CONSUMED;
+        walk.x = state.branchX[slot];
+        walk.z = state.branchZ[slot];
+        walk.offset = state.branchOffset[slot];
+        walk.previous = parent;
+        walk.generation = state.branchGeneration[slot] + 1;
+        const fork = POPULATION_STREAMLINE_FORK_MIN
+          + next() * (POPULATION_STREAMLINE_FORK_MAX
+            - POPULATION_STREAMLINE_FORK_MIN);
+        const angle = next() < 0.5 ? fork : -fork;
+        const cos = Math.cos(angle);
+        const sin = Math.sin(angle);
+        const px = state.branchDirX[slot];
+        const pz = state.branchDirZ[slot];
+        walk.dirX = px * cos - pz * sin;
+        walk.dirZ = px * sin + pz * cos;
+        // One step out along the fork before the first child point. Starting
+        // ON the parent would put two points at one (x, z) and draw the first
+        // segment as a vertical tick — an endpoint emphasis, which is the one
+        // thing the fibres must never produce.
+        walk.x += walk.dirX * POPULATION_STREAMLINE_STEP;
+        walk.z += walk.dirZ * POPULATION_STREAMLINE_STEP;
+      } else {
+        // Fresh tissue. Rejection-sample the seed against the same density
+        // the Cells are sampled against, under the pushed-out envelope.
+        const x = (next() * 2 - 1) * halfX;
+        const z = (next() * 2 - 1) * halfZ;
+        const u = next();
+        const nx = x / FIELD_HALF_X;
+        const nz = z / FIELD_HALF_Z;
+        const radial = Math.sqrt(nx * nx + nz * nz);
+        if (u >= populationPlacementMajorant(radial)) continue;
+        if (u >= tissueSampleAt(x, z, POPULATION_FIELD_OUTER_EDGE).density) {
+          continue;
+        }
+        walk.x = x;
+        walk.z = z;
+        walk.offset = gaussian();
+        walk.previous = -1;
+        walk.generation = 0;
+        // No crest yet, so the first step takes the field's own direction —
+        // with a coin flip, or every filament through one ridge would set off
+        // the same way and the field would comb rather than branch.
+        walk.dirX = 0;
+        walk.dirZ = 0;
+      }
 
-    // 3. The law itself, once, for every remaining term.
-    const sample = tissueSampleAt(x, z, POPULATION_FIELD_OUTER_EDGE);
-
-    // 4. Rejection-sample against the tissue density, exactly as
-    //    `helixSeedF64` samples against the original envelope.
-    if (u >= sample.density) continue;
-
-    // 5. The complement. Drop the point where the addressable Cells already
-    //    occupy this tissue — the whole of what a per-pixel suppression
-    //    pipeline used to approximate, evaluated where the point actually is.
-    if (next() >= populationComplementAcceptance(sample.resolvedCoverage)) {
+      const span = POPULATION_STREAMLINE_MAX_STEPS
+        - POPULATION_STREAMLINE_MIN_STEPS;
+      walk.stepsLeft = POPULATION_STREAMLINE_MIN_STEPS + Math.floor(
+        span * next() ** POPULATION_STREAMLINE_LENGTH_EXPONENT,
+      );
+      walk.wander = next();
+      streamlines += 1;
       continue;
     }
 
-    // 6. The fibre. Accept with probability rising along the ridged
-    //    corridors, so the population gathers into filaments and leaves
-    //    voids instead of dusting the envelope evenly.
-    const fibre = populationFibreAt(sample.qx, sample.qz);
-    if (
-      next() > POPULATION_FIBRE_ACCEPT_FLOOR
-        + POPULATION_FIBRE_ACCEPT_SLOPE * fibre
-    ) continue;
+    // ---- One step of the current filament ------------------------------
+    walk.stepsLeft -= 1;
+    work += 1;
 
-    // 7. Height from the same fold and thickness the Cells are folded
-    //    around, with only the Gaussian SPREAD flattened. The fold itself
-    //    keeps its full amplitude: it is the organism's own mid-surface, it
-    //    is what the Cells' bulge is folded around too, and it is what keeps
-    //    an edge-on camera looking at a warped ribbon instead of a line. It
-    //    carries 1.96 of the halo's 2.31 RMS vertical extent — flattening it
-    //    as well would throw away more volume than the spread ever had.
-    const gaussU1 = Math.max(next(), 1e-12);
-    const gaussU2 = next();
-    const gauss = Math.sqrt(-2 * Math.log(gaussU1))
-      * Math.cos(2 * Math.PI * gaussU2);
-    const y = sample.foldY
-      + gauss * sample.thickness * POPULATION_FIELD_FLATTEN;
+    const sample = tissueSampleAt(walk.x, walk.z, POPULATION_FIELD_OUTER_EDGE);
+    if (sample.density < POPULATION_STREAMLINE_DENSITY_FLOOR) {
+      // Out of tissue. Stop rather than trail a filament into vacuum.
+      walk.stepsLeft = 0;
+      continue;
+    }
 
-    const base = count * 3;
-    positions[base] = x;
-    positions[base + 1] = y;
-    positions[base + 2] = z;
-    count += 1;
+    // Heading: the crest, softened by the heading already held and perturbed
+    // by this filament's own wander. Pure crest-following is a pure function
+    // of position, so every filament through a region traces one curve.
+    if (crestDirection(sample.qx, sample.qz, crest)) {
+      let cx = crest.x;
+      let cz = crest.z;
+      if (walk.dirX * cx + walk.dirZ * cz < 0) {
+        // The crest is an axis, not an arrow. Take the branch that carries on.
+        cx = -cx;
+        cz = -cz;
+      }
+      if (walk.dirX === 0 && walk.dirZ === 0) {
+        // First step of a fresh filament: no heading to preserve, so pick a
+        // sense at random.
+        const sense = next() < 0.5 ? 1 : -1;
+        walk.dirX = cx * sense;
+        walk.dirZ = cz * sense;
+      } else {
+        const stiff = POPULATION_STREAMLINE_STIFFNESS;
+        walk.dirX = walk.dirX * stiff + cx * (1 - stiff);
+        walk.dirZ = walk.dirZ * stiff + cz * (1 - stiff);
+      }
+    } else if (walk.dirX === 0 && walk.dirZ === 0) {
+      // Flat fibre and no heading yet — take any direction rather than stall.
+      const angle = next() * Math.PI * 2;
+      walk.dirX = Math.cos(angle);
+      walk.dirZ = Math.sin(angle);
+    }
+
+    const spin = (next() * 2 - 1) * POPULATION_STREAMLINE_WANDER * walk.wander;
+    const cos = Math.cos(spin);
+    const sin = Math.sin(spin);
+    const turnedX = walk.dirX * cos - walk.dirZ * sin;
+    const turnedZ = walk.dirX * sin + walk.dirZ * cos;
+    const norm = Math.sqrt(turnedX * turnedX + turnedZ * turnedZ) || 1;
+    walk.dirX = turnedX / norm;
+    walk.dirZ = turnedZ / norm;
+
+    // The complement. Drop the point where the addressable Cells already
+    // occupy this tissue — the whole of what a per-pixel suppression pipeline
+    // used to approximate, evaluated where the point actually is. The walk
+    // carries on regardless; only the drawing stops, and the filament breaks
+    // so that no segment crosses the ground just cleared.
+    if (next() < populationComplementAcceptance(sample.resolvedCoverage)) {
+      // Height from the same fold and thickness the Cells are folded around,
+      // with only the Gaussian SPREAD flattened. The fold itself keeps its
+      // full amplitude: it is the organism's own mid-surface, and it is what
+      // keeps an edge-on camera looking at a warped ribbon instead of a line.
+      const offset = walk.offset * filamentShare + gaussian() * jitterShare;
+      const y = sample.foldY
+        + offset * sample.thickness * POPULATION_FIELD_FLATTEN;
+
+      const index = count;
+      const base = index * 3;
+      positions[base] = walk.x;
+      positions[base + 1] = y;
+      positions[base + 2] = walk.z;
+      count += 1;
+
+      if (walk.previous >= 0) {
+        const pair = segmentCount * 2;
+        segments[pair] = walk.previous;
+        segments[pair + 1] = index;
+        segmentCount += 1;
+      }
+      walk.previous = index;
+
+      if (
+        walk.generation < POPULATION_STREAMLINE_MAX_GENERATION
+        && next() < BRANCH_RECORD_CHANCE
+      ) {
+        const slot = branchWritten % BRANCH_RESERVOIR;
+        state.branchX[slot] = walk.x;
+        state.branchZ[slot] = walk.z;
+        state.branchDirX[slot] = walk.dirX;
+        state.branchDirZ[slot] = walk.dirZ;
+        state.branchOffset[slot] = walk.offset;
+        state.branchPoint[slot] = index;
+        state.branchGeneration[slot] = walk.generation;
+        branchWritten += 1;
+      }
+    } else {
+      walk.previous = -1;
+    }
+
+    walk.x += walk.dirX * POPULATION_STREAMLINE_STEP;
+    walk.z += walk.dirZ * POPULATION_STREAMLINE_STEP;
   }
 
   state.rng = rng;
   state.count = count;
-  state.tries = tries;
-  state.done = count >= capacity || tries >= ceiling;
+  state.segmentCount = segmentCount;
+  state.streamlines = streamlines;
+  state.work = work;
+  state.branchWritten = branchWritten;
+  state.done = count >= capacity || work >= ceiling;
   return state;
 }
 
-/** Run a placement pass to completion. Roughly a second of CPU for the
+/** Run a placement pass to completion. A fraction of a second of CPU for the
  *  shipped count, which is why the renderer runs it in a worker and draws
  *  nothing until it lands — absence is a legal state for this layer. */
 export function placePopulationField(
@@ -392,6 +858,6 @@ export function placePopulationField(
   const state = createPopulationPlacement(capacity, seed);
   return advancePopulationPlacement(
     state,
-    state.capacity * TRY_CEILING_PER_POINT,
+    state.capacity * WORK_CEILING_PER_POINT,
   );
 }
