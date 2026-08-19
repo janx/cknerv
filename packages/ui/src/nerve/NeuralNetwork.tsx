@@ -627,6 +627,11 @@ export default function NeuralNetwork({
         setDisplayGraphVersion((version) => version + 1);
         passiveGraphRef.current = passiveGraph;
         fabricStats.passiveSelectionEdges = passiveGraph.edges.length;
+        // The fabric's WIDTH tier is a property of the whole drawn selection,
+        // and the delta branch below never hands the layer that selection —
+        // so it is published here, on every completed build, beside the gauge
+        // that measures the same thing.
+        fabricHandlesRef.current?.setTrunkTier(passiveGraph);
         // Already set at request time; re-asserted here because the guards
         // above are what prove THIS response is the live one.
         displayCellsRef.current = displayCells;

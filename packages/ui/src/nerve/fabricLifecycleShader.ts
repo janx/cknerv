@@ -29,6 +29,10 @@ import {
   TAPER_MIN,
   TWIG_MIN,
 } from './fabricLuminance';
+import {
+  FABRIC_TRUNK_PASS_MESH,
+  FABRIC_TRUNK_THRESHOLD_DISABLED,
+} from './fabricTrunkClass';
 import { GOLD_MIX_TRUNK_GAIN } from '../derives/consensusFlow.derive';
 import { CONSENSUS_BRAID_PALETTE } from '../derives/consensusBraid.derive';
 import { LIVE } from '../tweaks/liveTweaks';
@@ -65,12 +69,13 @@ const replaceShaderChunk = (
  * interpolation. */
 const LIFECYCLE_DECLARATIONS = `
 		// Six attributes total — vertex attribute locations are a hard GPU
-		// budget shared with the line/inspection pipeline. Curve endpoints
-		// carry the static segment span in .w; endpoint colors carry the
-		// CPU-baked recall-aperture scale in .w (1 outside a recall).
+		// budget shared with the line/inspection pipeline. The curve's first
+		// two .w lanes carry the static segment span and the third the width
+		// tier; endpoint colors carry the CPU-baked recall-aperture scale in
+		// .w (1 outside a recall).
 		attribute vec4 fabricCurveFrom;   // xyz + spanStart
 		attribute vec4 fabricCurveCtrl;   // xyz + spanEnd
-		attribute vec4 fabricCurveTo;     // xyz + reserved
+		attribute vec4 fabricCurveTo;     // xyz + trunkness (width tier)
 		attribute vec4 fabricColorFrom;   // rgb + apertureStart
 		attribute vec4 fabricColorTo;     // rgb + apertureEnd
 		// x: bornAtSec, y: dyingAtSec (${glf(FABRIC_LIFECYCLE_ALIVE_SENTINEL)} = alive),
@@ -79,6 +84,12 @@ const LIFECYCLE_DECLARATIONS = `
 		uniform float fabricSimTimeSec;
 		uniform float fabricEnergyLive;
 		uniform float fabricCenterDimLive;
+		// Width tier (中央神经). Both passive passes run THIS shader over ONE
+		// bake and differ only in these two scalars plus their linewidth, so
+		// they cannot disagree about an edge's lifecycle, inspection weight or
+		// recall aperture — and cannot both draw it.
+		uniform float fabricTrunkThreshold;
+		uniform float fabricTrunkPass;
 
 		bool fabricLifeComputed = false;
 		bool fabricLifeHidden = false;
@@ -191,6 +202,20 @@ const LIFECYCLE_DECLARATIONS = `
 			if ( fabricLifeComputed ) return;
 			fabricLifeComputed = true;
 			vFabricFlash = 0.0;
+			// The width partition, before any other work: an edge belongs to
+			// exactly ONE pass, so the other pass drops it here having paid
+			// one lane fetch and one compare. Twin of fabricTrunkPassDraws —
+			// same comparison, same sentinels. Drawing an edge in BOTH passes
+			// would roughly double its light and turn a width figure into a
+			// brightness one, which is the de-glare ceiling this must not
+			// touch.
+			float fabricEdgePass = ( fabricCurveTo.w >= fabricTrunkThreshold )
+				? 1.0
+				: 0.0;
+			if ( fabricEdgePass != fabricTrunkPass ) {
+				fabricLifeHidden = true;
+				return;
+			}
 			vec2 interval;
 			float alphaMul;
 			float flash;
@@ -296,13 +321,24 @@ const CAMERA_SPACE_LIFECYCLE = `
  * endpoint colors are evaluated from static lifecycle records + sim time.
  * `instanceStart/End` and `instanceColorStart/End` become dead inputs on this
  * layer (the geometry keeps supplying them so shared plumbing is untouched).
+ *
+ * `trunkPass` picks which half of the width partition this material draws.
+ * Two materials over ONE geometry is the whole implementation of the trunk
+ * tier: same records, same bake, same animation, one extra draw call.
  */
 export function enableFabricLifecycleMaterial(
   material: LineMaterial,
+  trunkPass: number = FABRIC_TRUNK_PASS_MESH,
 ): LineMaterial {
   material.uniforms.fabricSimTimeSec = { value: 0 };
   material.uniforms.fabricEnergyLive = { value: LIVE.cell.fabricAlpha };
   material.uniforms.fabricCenterDimLive = { value: LIVE.cell.centerDim };
+  material.uniforms.fabricTrunkPass = { value: trunkPass };
+  // Rest disabled: until a selection resolves a tier, the mesh pass draws
+  // every edge and the wide pass draws none — exactly the pre-tier picture.
+  material.uniforms.fabricTrunkThreshold = {
+    value: FABRIC_TRUNK_THRESHOLD_DISABLED,
+  };
   // The stock per-segment attributes become dead inputs here, and vertex
   // attribute LOCATIONS are a hard GPU budget (16 on common hardware) that
   // this stack would otherwise exceed — strip their declarations so no
@@ -368,6 +404,18 @@ export function enableFabricLifecycleMaterial(
   );
   material.needsUpdate = true;
   return material;
+}
+
+/** Publish a resolved width tier. Event-driven — one uniform write per
+ * completed passive selection, and BOTH passes must receive the same value or
+ * an edge would be drawn twice or not at all. */
+export function setFabricTrunkThreshold(
+  material: LineMaterial,
+  threshold: number,
+): void {
+  material.uniforms.fabricTrunkThreshold.value = Number.isFinite(threshold)
+    ? threshold
+    : FABRIC_TRUNK_THRESHOLD_DISABLED;
 }
 
 /** Per-frame uniform sync — the entire CPU cost of fabric animation. */

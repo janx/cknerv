@@ -13,6 +13,7 @@ import {
   type EdgeState,
 } from '../../src/nerve/NeuralFabric';
 import { fabricEdgeRenderState } from '../../src/nerve/fabricEdgeRender';
+import { FABRIC_TRUNK_NO_ARBOR } from '../../src/nerve/fabricTrunkClass';
 
 type WriterLayer = Parameters<typeof writeFabricEdgeSegments>[0];
 type Aperture = Parameters<typeof writeFabricEdgeSegments>[7];
@@ -48,6 +49,7 @@ function edge(overrides: Partial<EdgeState>): EdgeState {
     deathKind: null,
     deadEnd: null,
     growDir: 1,
+    trunkness: FABRIC_TRUNK_NO_ARBOR,
     brightnessMul: 0.8,
     fromR: 0.8, fromG: 0.2, fromB: 0.3,
     toR: 0.7, toG: 0.3, toB: 0.2,

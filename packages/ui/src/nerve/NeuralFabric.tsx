@@ -43,6 +43,7 @@ import {
 import { planFabricCohorts, type FabricCohortSlice } from './fabricCohorts';
 import {
   enableFabricLifecycleMaterial,
+  setFabricTrunkThreshold,
   syncFabricLifecycleUniforms,
 } from './fabricLifecycleShader';
 import {
@@ -83,6 +84,12 @@ import {
   fabricTaper as taper,
 } from './fabricLuminance';
 import {
+  FABRIC_TRUNK_PASS_TRUNK,
+  fabricEdgeTrunkness,
+  fabricTrunkLineWidth,
+  fabricTrunkTier,
+} from './fabricTrunkClass';
+import {
   fabricStats,
   fabricUploadBytes,
   type FabricFullWalkReason,
@@ -116,6 +123,7 @@ import {
   cellDetailFabricEnergyGain,
   cellDetailFabricWidthScale,
 } from '../derives/sceneView.derive';
+import { neverRaycast } from '../components/CellPopulationField';
 
 // Dense-mesh baseline energy (the `cell.fabricAlpha` tweak, default 0.15).
 // Passive fibres use bounded screen accumulation plus spatial compression;
@@ -198,6 +206,14 @@ export interface NeuralFabricHandles {
   flushActive(): void;
   /** Commit the raw-clock lock response without touching sim-clock traffic. */
   flushRouteHopPulse(): void;
+  /** Re-derive the WIDTH tier (中央神经) from a completed passive selection.
+   *  Its own entry point because the tier is a property of the whole DRAWN
+   *  selection and the delta path — the one ordinary per-block churn takes —
+   *  never hands this layer that selection; `setFabric` calls it internally so
+   *  the boot and remount paths need no extra call. Publishes ONE threshold to
+   *  both passive passes: they must agree, or an edge is drawn twice or not at
+   *  all. */
+  setTrunkTier(graph: NeighborGraph): void;
   /** Diff a new neighbour graph into the persistent edge map. New
    *  edges enter growing phase (bornAt=now); missing edges enter
    *  dying phase (dyingAt=now); stable edges are untouched. Does
@@ -319,6 +335,13 @@ export interface EdgeState {
    *  so the network has a fixed hierarchy of bright "trunks" and dim
    *  "branches" rather than uniform mesh. */
   brightnessMul: number;
+  /** Raw arbor weight (or the no-arbor sentinel), for the WIDTH tier. Frozen
+   *  at admission exactly as `brightnessMul` is, so an edge changes class only
+   *  when the tier threshold moves — which happens at a rebuild boundary, the
+   *  same discontinuity rebuilds already produce. `brightnessMul` cannot serve
+   *  here: the measured 12.5% threshold maps to 0.416, below the 0.44 ceiling
+   *  of the cross-link band. See `fabricTrunkClass`. */
+  trunkness: number;
   /** A route transitions between two contributor colours along its length. */
   fromR: number; fromG: number; fromB: number;
   toR: number; toG: number; toB: number;
@@ -732,6 +755,73 @@ function writeFabricEdgeInspectionSegments(
   }
 }
 
+/** One fat-line material, patched in the only order the three shader patches
+ * tolerate: inspection first (it anchors on stock chunks), then the capsule
+ * (it rewrites those chunks), then — at the caller — the lifecycle (it anchors
+ * on the capsule's). Split out of `makeFatLineLayer` so a second pass over an
+ * EXISTING geometry can be built from the same recipe rather than a copy of
+ * it. */
+function makeFatLineMaterial(
+  widthPx: number,
+  accumulation: 'screen' | 'additive',
+  useScreenCapsule: boolean,
+  inspectionTransition: boolean,
+): LineMaterial {
+  const material = new LineMaterial({
+    vertexColors: true,
+    linewidth: widthPx,
+    transparent: true,
+    depthWrite: false,
+    blending: accumulation === 'screen'
+      ? THREE.CustomBlending
+      : THREE.AdditiveBlending,
+    worldUnits: false,
+    toneMapped: false,
+  });
+  if (inspectionTransition) {
+    enableLineInspectionTransitionMaterial(material);
+  }
+  if (useScreenCapsule) {
+    optimizeScreenSpaceCapsuleMaterial(material);
+  }
+  if (accumulation === 'screen') {
+    // Passive structure must approach the display ceiling asymptotically when
+    // thousands of fibres overlap. Activity keeps ordinary additive blending
+    // in its separate layer, so protocol writes retain headroom and urgency.
+    material.blendEquation = THREE.AddEquation;
+    material.blendSrc = THREE.SrcAlphaFactor;
+    material.blendDst = THREE.OneMinusSrcColorFactor;
+    material.blendEquationAlpha = THREE.AddEquation;
+    material.blendSrcAlpha = THREE.OneFactor;
+    material.blendDstAlpha = THREE.OneMinusSrcAlphaFactor;
+  }
+  return material;
+}
+
+/** The mesh plus the capsule shader's viewport bridge. */
+function makeFatLineMesh(
+  geometry: LineSegmentsGeometry,
+  material: LineMaterial,
+  useScreenCapsule: boolean,
+): LineSegments2 {
+  const mesh = new LineSegments2(geometry, material);
+  if (useScreenCapsule) {
+    const viewport = new THREE.Vector4();
+    const updateLineResolution = mesh.onBeforeRender.bind(mesh);
+    mesh.onBeforeRender = (renderer) => {
+      updateLineResolution(renderer);
+      renderer.getViewport(viewport);
+      syncScreenSpaceCapsuleViewport(
+        material,
+        renderer.getPixelRatio(),
+        viewport.x,
+        viewport.y,
+      );
+    };
+  }
+  return mesh;
+}
+
 /** Exported for the lifecycle-layer construction tests. */
 export function makeFatLineLayer(
   maxSegments: number,
@@ -790,23 +880,12 @@ export function makeFatLineLayer(
   }
   geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0, 0), 120);
   geometry.instanceCount = 0;
-  const material = new LineMaterial({
-    vertexColors: true,
-    linewidth: widthPx,
-    transparent: true,
-    depthWrite: false,
-    blending: accumulation === 'screen'
-      ? THREE.CustomBlending
-      : THREE.AdditiveBlending,
-    worldUnits: false,
-    toneMapped: false,
-  });
-  if (inspectionTransition) {
-    enableLineInspectionTransitionMaterial(material);
-  }
-  if (useScreenCapsule) {
-    optimizeScreenSpaceCapsuleMaterial(material);
-  }
+  const material = makeFatLineMaterial(
+    widthPx,
+    accumulation,
+    useScreenCapsule,
+    inspectionTransition,
+  );
   let lifecycleBuffers: FabricLifecycleBuffers | undefined;
   if (lifecycle) {
     if (!useScreenCapsule) {
@@ -837,32 +916,7 @@ export function makeFatLineLayer(
     enableFabricLifecycleMaterial(material);
     lifecycleBuffers = { arrays, curveBuf, colorBuf, scalarBuf };
   }
-  if (accumulation === 'screen') {
-    // Passive structure must approach the display ceiling asymptotically when
-    // thousands of fibres overlap. Activity keeps ordinary additive blending
-    // in its separate layer, so protocol writes retain headroom and urgency.
-    material.blendEquation = THREE.AddEquation;
-    material.blendSrc = THREE.SrcAlphaFactor;
-    material.blendDst = THREE.OneMinusSrcColorFactor;
-    material.blendEquationAlpha = THREE.AddEquation;
-    material.blendSrcAlpha = THREE.OneFactor;
-    material.blendDstAlpha = THREE.OneMinusSrcAlphaFactor;
-  }
-  const mesh = new LineSegments2(geometry, material);
-  if (useScreenCapsule) {
-    const viewport = new THREE.Vector4();
-    const updateLineResolution = mesh.onBeforeRender.bind(mesh);
-    mesh.onBeforeRender = (renderer) => {
-      updateLineResolution(renderer);
-      renderer.getViewport(viewport);
-      syncScreenSpaceCapsuleViewport(
-        material,
-        renderer.getPixelRatio(),
-        viewport.x,
-        viewport.y,
-      );
-    };
-  }
+  const mesh = makeFatLineMesh(geometry, material, useScreenCapsule);
   return {
     positions,
     colors,
@@ -878,6 +932,46 @@ export function makeFatLineLayer(
     count: 0,
     lifecycle: lifecycleBuffers,
   };
+}
+
+/** The wide half of the passive fabric's width partition — 中央神经. Owns no
+ * buffers: the geometry, and everything in it, belongs to the layer it rides. */
+export interface FabricTrunkPass {
+  material: LineMaterial;
+  mesh: LineSegments2;
+}
+
+/**
+ * Build the wide pass over an EXISTING lifecycle layer.
+ *
+ * A second material and mesh over the passive layer's OWN geometry. Nothing is
+ * copied: the two passes read the same interleaved buffers, the same lifecycle
+ * records, the same inspection snapshots and the same recall-aperture lanes,
+ * and differ only in `linewidth` and their `fabricTrunkPass` uniform. That is
+ * the point — parity with the mesh pass is structural rather than maintained,
+ * and the subset needs no bake, no slot space and no allocation of its own.
+ *
+ * The price is one extra draw call and one extra vertex pass over the
+ * populated prefix, where the non-matching half exits on one lane fetch and
+ * one compare (the gate is the first statement of `computeFabricLifecycle`)
+ * and contributes no fragments. Total rasterized fragments are unchanged apart
+ * from the promoted edges' own extra width, which is the figure.
+ */
+export function makeFabricTrunkPass(
+  source: FatLineLayer,
+  widthPx: number,
+): FabricTrunkPass {
+  if (!source.lifecycle) {
+    throw new Error('the trunk pass requires a GPU-parametric lifecycle layer');
+  }
+  const material = makeFatLineMaterial(widthPx, 'screen', true, true);
+  enableFabricLifecycleMaterial(material, FABRIC_TRUNK_PASS_TRUNK);
+  const mesh = makeFatLineMesh(source.geometry, material, true);
+  // The twin shares its geometry, so LineSegments2's real raycast would
+  // report every edge a SECOND time — including the ones this pass does not
+  // draw, since hiding happens in the vertex stage. Render-only, structurally.
+  mesh.raycast = neverRaycast;
+  return { material, mesh };
 }
 
 function pushSegment(
@@ -1151,6 +1245,21 @@ export default function NeuralFabric({
     ),
     [allocationEdges],
   );
+  // 中央神经 — the wide rung, over the passive layer's own geometry. Not a
+  // sixth allocation: `makeFabricTrunkPass` binds a second material and mesh
+  // to `fabric`'s buffers, so the subset costs one draw call and zero bytes.
+  const trunk = useMemo(
+    () => makeFabricTrunkPass(
+      fabric,
+      fabricTrunkLineWidth(LIVE.cell.fabricWidth, 1),
+    ),
+    [fabric],
+  );
+  // The reinforcement overlay stays at the MESH rung on purpose: it carries
+  // observed traffic, not hierarchy, and the two are separate readings. On a
+  // promoted edge it draws as a warm core inside the wider resting stroke —
+  // traffic ON a trunk — which is the right picture and costs no third
+  // material.
   const warmRoutes = useMemo(
     () => makeFatLineLayer(
       warmSegmentAllocation(allocationEdges),
@@ -1190,11 +1299,22 @@ export default function NeuralFabric({
     last.focus = focus;
     last.width = width;
     const energyGain = cellDetailFabricEnergyGain(focus);
+    const widthScale = cellDetailFabricWidthScale(focus);
     fabric.material.color.setRGB(energyGain, energyGain, energyGain);
     warmRoutes.material.color.setRGB(energyGain, energyGain, energyGain);
-    fabric.material.linewidth = width * cellDetailFabricWidthScale(focus);
-    warmRoutes.material.linewidth = width * cellDetailFabricWidthScale(focus);
-  }, [cellDetailViewFocusRef, fabric.material, warmRoutes.material]);
+    trunk.material.color.setRGB(energyGain, energyGain, energyGain);
+    fabric.material.linewidth = width * widthScale;
+    warmRoutes.material.linewidth = width * widthScale;
+    // Same camera curve, same energy gain — the wide rung differs from the
+    // mesh rung in width alone, and stops widening where it would reach the
+    // pulse (3.4 px, which takes no focus scale at all).
+    trunk.material.linewidth = fabricTrunkLineWidth(width, widthScale);
+  }, [
+    cellDetailViewFocusRef,
+    fabric.material,
+    warmRoutes.material,
+    trunk.material,
+  ]);
 
   // Camera navigation is input, not simulation. Keep the passive Cell fabric's
   // close-view weight responsive even when the chain animation clock is paused.
@@ -1267,6 +1387,7 @@ export default function NeuralFabric({
 
   useEffect(() => {
     fabric.material.resolution.set(size.width, size.height);
+    trunk.material.resolution.set(size.width, size.height);
     warmRoutes.material.resolution.set(size.width, size.height);
     active.material.resolution.set(size.width, size.height);
     memory.material.resolution.set(size.width, size.height);
@@ -1274,6 +1395,7 @@ export default function NeuralFabric({
   }, [
     size,
     fabric.material,
+    trunk.material,
     warmRoutes.material,
     active.material,
     memory.material,
@@ -1283,6 +1405,8 @@ export default function NeuralFabric({
   useEffect(() => () => {
     fabric.geometry.dispose();
     fabric.material.dispose();
+    // Geometry belongs to `fabric` and is disposed exactly once, above.
+    trunk.material.dispose();
     warmRoutes.geometry.dispose();
     warmRoutes.material.dispose();
     active.geometry.dispose();
@@ -1291,7 +1415,7 @@ export default function NeuralFabric({
     memory.material.dispose();
     routeHopPulse.geometry.dispose();
     routeHopPulse.material.dispose();
-  }, [fabric, warmRoutes, active, memory, routeHopPulse]);
+  }, [fabric, trunk, warmRoutes, active, memory, routeHopPulse]);
 
   useEffect(() => {
     // Reused 3-element scratch buffers — the hot-loop fabric/active
@@ -1328,6 +1452,7 @@ export default function NeuralFabric({
         deadEnd: st.deadEnd,
         growDir: st.growDir,
         brightnessMul: st.brightnessMul,
+        trunkness: st.trunkness,
       });
       // Inspection snapshots bake at the STATIC span (flash = 0; the shader
       // owns interval and lift) — a recycled slot may hold stale values.
@@ -1441,6 +1566,20 @@ export default function NeuralFabric({
       return slot;
     };
 
+    /** Resolve and publish the width tier for a completed passive selection.
+     * O(arbor edges) plus one typed-array sort, on the rebuild path only —
+     * never per frame; the shader re-reads the uniform, it does not re-run
+     * the selection. Both materials take the SAME threshold: that identity is
+     * the partition, and with it each edge's summed light across the two
+     * passes is exactly 1.0× of what it draws today. */
+    const applyTrunkTier = (graph: NeighborGraph): void => {
+      const tier = fabricTrunkTier(graph.edges);
+      fabricStats.trunkTierEdges = tier.edges;
+      fabricStats.trunkTierThreshold = tier.threshold;
+      setFabricTrunkThreshold(fabric.material, tier.threshold);
+      setFabricTrunkThreshold(trunk.material, tier.threshold);
+    };
+
     /** Shared state-insertion body for a NEW fabric edge — the exact
      * historical setFabric pass-1 block: claim a slot, arm the animating
      * set, snapshot endpoints/control/colours, register the state. The
@@ -1480,6 +1619,7 @@ export default function NeuralFabric({
         deadEnd: null,
         growDir: 1,
         brightnessMul: arborBrightness(e.w, seed),
+        trunkness: fabricEdgeTrunkness(e.w),
         fromR: routeColors.from[0], fromG: routeColors.from[1], fromB: routeColors.from[2],
         toR: routeColors.to[0], toG: routeColors.to[1], toB: routeColors.to[2],
         usage: 0,
@@ -1491,6 +1631,9 @@ export default function NeuralFabric({
     };
 
     const handles: NeuralFabricHandles = {
+      setTrunkTier(graph) {
+        applyTrunkTier(graph);
+      },
       setInspectionField(field) {
         const transition = inspectionFieldRef.current;
         if (transition.to === field) return;
@@ -1498,6 +1641,7 @@ export default function NeuralFabric({
         transition.to = field;
         transition.progress = 0;
         fabric.material.uniforms.inspectionTransitionProgress.value = 0;
+        trunk.material.uniforms.inspectionTransitionProgress.value = 0;
         warmRoutes.material.uniforms.inspectionTransitionProgress.value = 0;
         inspectionOnlyDirtyRef.current = true;
         emitDirtyRef.current = true;
@@ -1541,6 +1685,10 @@ export default function NeuralFabric({
           * safeScale;
       },
       setFabric(graph, cells, now) {
+        // The tier belongs to the selection, not to the diff: it lands even
+        // when nothing below moved an edge (a re-mount rehydration, or an
+        // identical selection whose arbor weights were re-derived).
+        applyTrunkTier(graph);
         const states = edgeStatesRef.current;
         // Boot guard for the stagger below: a first population from an
         // empty set applies in one pass instead of staggered cohorts.
@@ -1791,6 +1939,7 @@ export default function NeuralFabric({
             deadEnd: null,
             growDir: dirByKey.get(key) ?? 1,
             brightnessMul: arborBrightness(e.w, seed),
+            trunkness: fabricEdgeTrunkness(e.w),
             fromR: routeColors.from[0], fromG: routeColors.from[1], fromB: routeColors.from[2],
             toR: routeColors.to[0], toG: routeColors.to[1], toB: routeColors.to[2],
             usage: 0,
@@ -1870,6 +2019,9 @@ export default function NeuralFabric({
         // its complete per-frame cost, and they must advance even on frames
         // the CPU otherwise skips.
         syncFabricLifecycleUniforms(fabric.material, now);
+        // The wide pass animates from the same three scalars; six uniform
+        // writes a frame is the whole CPU cost of the second draw.
+        syncFabricLifecycleUniforms(trunk.material, now);
         fabricStats.liveEdges = edgeStatesRef.current.size;
         // Foreground catch-up. A frozen clock stamps every kill taken while
         // the tab was hidden with the SAME dyingAt, so the resuming sim clock
@@ -1999,6 +2151,8 @@ export default function NeuralFabric({
               + dt / INSPECTION_FIELD_TRANSITION_SECONDS,
           );
           fabric.material.uniforms.inspectionTransitionProgress.value =
+            inspectionField.progress;
+          trunk.material.uniforms.inspectionTransitionProgress.value =
             inspectionField.progress;
           warmRoutes.material.uniforms.inspectionTransitionProgress.value =
             inspectionField.progress;
@@ -2236,6 +2390,7 @@ export default function NeuralFabric({
               deadEnd: st.deadEnd,
               growDir: st.growDir,
               brightnessMul: st.brightnessMul,
+              trunkness: st.trunkness,
             },
           );
           fabric.count = slotIndex * FABRIC_SLOT_SEGMENTS;
@@ -2367,6 +2522,7 @@ export default function NeuralFabric({
     return () => hiddenReaper.stop();
   }, [
     fabric,
+    trunk,
     warmRoutes,
     active,
     memory,
@@ -2379,6 +2535,10 @@ export default function NeuralFabric({
   return (
     <>
       <primitive object={fabric.mesh} />
+      {/* 中央神经: the same records, drawn wide, over the top decile of the
+          arbor. Immediately after the mesh pass because the two are one
+          picture split by width — never a second copy of the same edge. */}
+      <primitive object={trunk.mesh} />
       <primitive object={warmRoutes.mesh} />
       <primitive object={active.mesh} />
       <primitive object={memory.mesh} />

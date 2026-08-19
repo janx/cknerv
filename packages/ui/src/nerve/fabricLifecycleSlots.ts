@@ -9,7 +9,9 @@
 // six attributes total — because vertex attribute locations are a hard GPU
 // resource (16 on common hardware) already shared with the line/inspection
 // pipeline: curve endpoints carry the segment span in .w, endpoint colors
-// carry the recall-aperture scale in .w. Pure module — unit-tested directly.
+// carry the recall-aperture scale in .w, and the curve's third .w — the only
+// component this layout ever had spare — carries the width tier. Pure module
+// — unit-tested directly.
 
 import { FABRIC_SAMPLES_PER_EDGE } from './fabricCapacity';
 import {
@@ -19,7 +21,7 @@ import {
 } from './fabricEdgeRender';
 import { FABRIC_LIFECYCLE_ALIVE_SENTINEL } from './fabricLifecycleShader';
 
-/** [fx,fy,fz,spanStart, cx,cy,cz,spanEnd, tx,ty,tz,reserved] */
+/** [fx,fy,fz,spanStart, cx,cy,cz,spanEnd, tx,ty,tz,trunkness] */
 export const FABRIC_LIFE_CURVE_STRIDE = 12;
 /** [fromR,fromG,fromB,apertureStart, toR,toG,toB,apertureEnd] */
 export const FABRIC_LIFE_COLOR_STRIDE = 8;
@@ -29,6 +31,12 @@ export const FABRIC_LIFE_SCALAR_STRIDE = 4;
 /** Float offsets of the two aperture lanes inside one color-stride record. */
 export const FABRIC_LIFE_APERTURE_START_OFFSET = 3;
 export const FABRIC_LIFE_APERTURE_END_OFFSET = 7;
+
+/** Float offset of the width-tier lane inside one curve-stride record — the
+ *  last free component in the whole layout, and the reason the trunk class
+ *  costs no attribute location (they are a hard GPU budget this stack already
+ *  spends carefully). See `fabricTrunkClass` for what the value means. */
+export const FABRIC_LIFE_TRUNKNESS_OFFSET = 11;
 
 export interface FabricLifecycleArrays {
   curve: Float32Array;
@@ -80,6 +88,10 @@ export interface FabricLifecycleRecord {
   deadEnd: 'from' | 'to' | null;
   growDir: 1 | -1;
   brightnessMul: number;
+  /** Arbor weight, or `FABRIC_TRUNK_NO_ARBOR`. The vertex stage compares it
+   *  against the tier threshold to decide WHICH of the two passive passes
+   *  rasterizes this edge — see `fabricTrunkClass`. */
+  trunkness: number;
 }
 
 /** Write one edge's full static record into its slot (all
@@ -114,7 +126,7 @@ export function writeFabricLifecycleSlot(
     arrays.curve[curveOffset + 8] = record.toX;
     arrays.curve[curveOffset + 9] = record.toY;
     arrays.curve[curveOffset + 10] = record.toZ;
-    arrays.curve[curveOffset + 11] = 0;
+    arrays.curve[curveOffset + FABRIC_LIFE_TRUNKNESS_OFFSET] = record.trunkness;
     const colorOffset = instance * FABRIC_LIFE_COLOR_STRIDE;
     arrays.color[colorOffset] = record.fromR;
     arrays.color[colorOffset + 1] = record.fromG;

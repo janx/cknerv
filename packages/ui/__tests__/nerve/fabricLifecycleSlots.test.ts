@@ -13,6 +13,7 @@ import {
 } from '../../src/nerve/fabricLifecycleSlots';
 import { FABRIC_LIFECYCLE_ALIVE_SENTINEL } from '../../src/nerve/fabricLifecycleShader';
 import { FABRIC_SAMPLES_PER_EDGE } from '../../src/nerve/fabricCapacity';
+import { FABRIC_TRUNK_NO_ARBOR } from '../../src/nerve/fabricTrunkClass';
 import {
   fabricEdgeRenderState,
   type EdgeLifecycle,
@@ -31,6 +32,7 @@ function record(overrides: Partial<FabricLifecycleRecord> = {}): FabricLifecycle
     deadEnd: null,
     growDir: 1,
     brightnessMul: 0.8,
+    trunkness: FABRIC_TRUNK_NO_ARBOR,
     ...overrides,
   };
 }

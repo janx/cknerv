@@ -92,6 +92,11 @@ export interface FabricStatsSnapshot {
   allocationEdges: number;
   passiveSelectionEdges: number;
   liveEdges: number;
+  /** Width tier (中央神经): edges the last resolved threshold promotes to the
+   * wide pass, and the threshold itself. Against `passiveSelectionEdges` this
+   * is the promoted SHARE — the number the tier is tuned by. */
+  trunkTierEdges: number;
+  trunkTierThreshold: number;
   /** Passive-fabric bytes handed to bufferSubData (Σ across every commit —
    *  incremental slot ranges and full-walk/inspection prefix uploads). */
   uploadedBytes: number;
@@ -137,6 +142,11 @@ interface FabricStatsState {
   allocationEdges: number;
   passiveSelectionEdges: number;
   liveEdges: number;
+  /** Width tier (中央神经): edges the last resolved threshold promotes to the
+   * wide pass, and the threshold itself. Against `passiveSelectionEdges` this
+   * is the promoted SHARE — the number the tier is tuned by. */
+  trunkTierEdges: number;
+  trunkTierThreshold: number;
   uploadedBytes: number;
   uploadedBytesLast: number;
   uploadedBytesMax: number;
@@ -177,6 +187,8 @@ export const fabricStats: FabricStatsState = {
   allocationEdges: 0,
   passiveSelectionEdges: 0,
   liveEdges: 0,
+  trunkTierEdges: 0,
+  trunkTierThreshold: 0,
   uploadedBytes: 0,
   uploadedBytesLast: 0,
   uploadedBytesMax: 0,
@@ -236,6 +248,8 @@ export const fabricStats: FabricStatsState = {
       usedSlotsLast: this.usedSlotsLast,
       allocationEdges: this.allocationEdges,
       passiveSelectionEdges: this.passiveSelectionEdges,
+      trunkTierEdges: this.trunkTierEdges,
+      trunkTierThreshold: this.trunkTierThreshold,
       liveEdges: this.liveEdges,
       uploadedBytes: this.uploadedBytes,
       uploadedBytesLast: this.uploadedBytesLast,
