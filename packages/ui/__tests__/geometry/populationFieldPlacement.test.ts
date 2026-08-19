@@ -17,6 +17,13 @@ import {
   POPULATION_FIELD_OUTER_EDGE,
   POPULATION_FIELD_POINTS,
   POPULATION_FIELD_SEED,
+  POPULATION_JOIN_CHANCE_MIXED,
+  POPULATION_JOIN_CHANCE_OPEN,
+  POPULATION_JOIN_PER_FILAMENT,
+  POPULATION_JOIN_REACH,
+  POPULATION_JOIN_REACH_MIN,
+  POPULATION_JOIN_SPAN,
+  populationJoinChance,
   POPULATION_STREAMLINE_JITTER,
   POPULATION_STREAMLINE_BRANCH_SHARE,
   POPULATION_STREAMLINE_BRANCH_SHARE_OPEN,
@@ -68,6 +75,36 @@ function pointAt(index: number): { x: number; y: number; z: number } {
     y: placed.positions[index * 3 + 1],
     z: placed.positions[index * 3 + 2],
   };
+}
+
+/** A segment's length in the GROUND PLANE — the one number that tells the
+ *  walk's three moves apart in the buffer, with nothing recorded alongside
+ *  them. A walk step and a fork's first segment are both exactly one
+ *  integration step; a join's reach window starts above one step, which is
+ *  why its floor is where it is. */
+function inPlaneSpan(segment: number): number {
+  const a = placed.segments[segment * 2];
+  const b = placed.segments[segment * 2 + 1];
+  const dx = placed.positions[a * 3] - placed.positions[b * 3];
+  const dz = placed.positions[a * 3 + 2] - placed.positions[b * 3 + 2];
+  return Math.sqrt(dx * dx + dz * dz);
+}
+
+function isJoin(segment: number): boolean {
+  return inPlaneSpan(segment) > POPULATION_STREAMLINE_STEP + 1e-4;
+}
+
+/** Degree over the WALK's own moves only — steps and forks, not joins. The
+ *  fork ladder is a claim about branching and has to stay measurable now that
+ *  a second kind of junction shares the buffer. */
+function walkDegrees(): Int32Array {
+  const degree = new Int32Array(placed.count);
+  for (let i = 0; i < placed.segmentCount; i += 1) {
+    if (isJoin(i)) continue;
+    degree[placed.segments[i * 2]] += 1;
+    degree[placed.segments[i * 2 + 1]] += 1;
+  }
+  return degree;
 }
 
 /** Rendered light of one Gaussian sprite: peak alpha over its footprint, so
@@ -435,23 +472,68 @@ describe('the fibres connect halo points and nothing else', () => {
 
   it('never bridges a gap the complement cleared', () => {
     // The strongest form this can take, and it makes the claim structural
-    // rather than statistical: every segment spans exactly ONE integration
-    // step in the ground plane. A point the complement rejected costs the walk
-    // a step, so a bridge across one would have to span at least two — and
-    // with the measured turn rate a two-step displacement is never shorter
-    // than 1.78 steps. A fibre therefore cannot cross tissue the complement
-    // just cleared, at any tuning of the knee.
-    let worst = 0;
+    // rather than statistical: every segment the WALK writes spans exactly ONE
+    // integration step in the ground plane. A point the complement rejected
+    // costs the walk a step, so a bridge across one would have to span at
+    // least two — and with the measured turn rate a two-step displacement is
+    // never shorter than 1.78 steps. A fibre therefore cannot cross tissue the
+    // complement just cleared, at any tuning of the knee.
+    //
+    // ⚠️ A JOIN is the one segment that is not a step, so it gets the same
+    // question asked directly rather than by construction: both of its ends
+    // are points the complement accepted, and the ground between them is at
+    // most 1.875 wu wide. Measured, the worst `resolvedCoverage` at a join's
+    // midpoint is 0.458 here and 0.559 on the shipped 105,000 (p50 0.126, p90
+    // 0.304) — under the ceiling, which is the invariant stated as a property
+    // of the buffer rather than of the pixels.
+    //
+    // The taxonomy is asserted as well as used: the segments longer than one
+    // step are EXACTLY the joins the pass counted, so a reader of this buffer
+    // can tell the three moves apart with no side channel.
+    let worstStep = 0;
+    let shortestStep = Infinity;
+    let joins = 0;
+    let worstJoinPlane = 0;
+    let shortestJoinPlane = Infinity;
+    let worstJoinDrawn = 0;
+    let worstJoinCoverage = 0;
     for (let i = 0; i < placed.segmentCount; i += 1) {
+      const span = inPlaneSpan(i);
+      if (!isJoin(i)) {
+        if (span > worstStep) worstStep = span;
+        if (span < shortestStep) shortestStep = span;
+        continue;
+      }
+      joins += 1;
       const a = placed.segments[i * 2];
       const b = placed.segments[i * 2 + 1];
-      const dx = placed.positions[a * 3] - placed.positions[b * 3];
-      const dz = placed.positions[a * 3 + 2] - placed.positions[b * 3 + 2];
-      const span = Math.sqrt(dx * dx + dz * dz);
-      if (span > worst) worst = span;
+      const dy = placed.positions[a * 3 + 1] - placed.positions[b * 3 + 1];
+      const drawn = Math.sqrt(span * span + dy * dy);
+      if (span > worstJoinPlane) worstJoinPlane = span;
+      if (span < shortestJoinPlane) shortestJoinPlane = span;
+      if (drawn > worstJoinDrawn) worstJoinDrawn = drawn;
+      const coverage = tissueSampleAt(
+        (placed.positions[a * 3] + placed.positions[b * 3]) / 2,
+        (placed.positions[a * 3 + 2] + placed.positions[b * 3 + 2]) / 2,
+        POPULATION_FIELD_OUTER_EDGE,
+      ).resolvedCoverage;
+      if (coverage > worstJoinCoverage) worstJoinCoverage = coverage;
     }
-    expect(worst).toBeLessThanOrEqual(POPULATION_STREAMLINE_STEP + 1e-4);
-    expect(worst).toBeGreaterThan(POPULATION_STREAMLINE_STEP - 1e-4);
+    expect(worstStep).toBeLessThanOrEqual(POPULATION_STREAMLINE_STEP + 1e-4);
+    expect(shortestStep).toBeGreaterThan(POPULATION_STREAMLINE_STEP - 1e-4);
+
+    expect(joins).toBe(placed.joins);
+    expect(joins).toBeGreaterThan(0);
+    expect(shortestJoinPlane).toBeGreaterThan(
+      POPULATION_JOIN_REACH_MIN * POPULATION_STREAMLINE_STEP - 1e-4,
+    );
+    expect(worstJoinPlane).toBeLessThanOrEqual(
+      POPULATION_JOIN_REACH * POPULATION_STREAMLINE_STEP + 1e-4,
+    );
+    expect(worstJoinDrawn).toBeLessThanOrEqual(
+      POPULATION_JOIN_SPAN * POPULATION_STREAMLINE_STEP + 1e-4,
+    );
+    expect(worstJoinCoverage).toBeLessThan(POPULATION_FIELD_COVERAGE_CEILING);
   });
 
   it('never closes a segment onto itself', () => {
@@ -497,10 +579,22 @@ describe('the fibres connect halo points and nothing else', () => {
     // EIGHT points and POPULATION_STREAMLINE_MIN_STEPS is 6, so a law that
     // pushes fringe filaments onto MIN makes dust by construction (the length
     // ramp on its own lands at 0.772). It bought it with the fork SUPPLY — see
-    // populationBranchRecordChance. This number
-    // is also, exactly, the segment budget: the drawn graph is a forest, so
-    // `components = points - segments`, and a floor on component size is a
-    // ceiling on component count.
+    // populationBranchRecordChance.
+    //
+    // ⚠️⚠️ **The identity this used to end on is gone, and it is worth being
+    // precise about which half survived.** It read "the drawn graph is a
+    // forest, so `components = points - segments`, and a floor on component
+    // size is a ceiling on component count". A join closes onto a strand
+    // already placed, so the general form is now
+    //
+    //   components = points - segments + cycles
+    //
+    // measured at 27 closed cycles in this file's 242 joins and 99 in the
+    // shipped 1,670. The floor-is-a-ceiling reading still holds — a join can
+    // only merge components or close one — and the guard now measures
+    // **0.844** on the shipped placement and 0.840 here, four points of
+    // headroom where there were one or two, because the joins spend themselves
+    // exactly where the complement fragments the layer.
     const size = componentSizes();
     let inStrokes = 0;
     for (let i = 0; i < placed.count; i += 1) {
@@ -530,6 +624,13 @@ describe('the fibres connect halo points and nothing else', () => {
     // ratio 9.5. The ramps shorten the FRINGE, where coverage is zero and the
     // complement never fires, so they leave this comparison where it was —
     // which is the check that they shortened the right band.
+    //
+    // ⚠️ The joins narrow it again, and in the direction that says they
+    // landed where they were aimed: 332 singletons at 0.269 against 0.0349
+    // inside components of 16 or more, ratio 7.7 (9.7 with the rate at zero).
+    // Both terms moved for the same reason — a join attaches a fragment in the
+    // transition band to a stroke, so the survivors are the loneliest specks
+    // and the big components now reach further into the Cells.
     //
     // ⚠️⚠️ It cannot be tightened back. Strokes reaching into the transition
     // band IS the mixed register the halo is being asked to speak.
@@ -588,10 +689,18 @@ describe('the fibres connect halo points and nothing else', () => {
     // A run is a maximal chain of consecutive segments — what is actually
     // drawn as one unbroken curve, which is not the same as one filament: the
     // complement breaks a filament wherever it crosses resolved tissue.
+    //
+    // ⚠️ Joins are SKIPPED rather than counted. A join is a cross-link, not a
+    // step of any walk, and leaving it in the chain would split the curve it
+    // lands on in two — the run p50 of the pre-rim band reads 3.75 instead of
+    // 5.00 that way, which is an artefact of the instrument and not a stroke
+    // that got shorter. Skipping keeps this measurement the same one the
+    // length ramps were tuned against.
     const runs: number[] = [];
     let run = 0;
     let previousEnd = -2;
     for (let i = 0; i < placed.segmentCount; i += 1) {
+      if (isJoin(i)) continue;
       const a = placed.segments[i * 2];
       if (a === previousEnd) run += 1;
       else {
@@ -649,10 +758,13 @@ describe('the fibres connect halo points and nothing else', () => {
     // shortened: per band it goes 2.08 -> 2.68 / 3.42 -> 3.98 / 2.99 -> 5.43 /
     // 3.08 -> 4.72 across pre-rim / mixed / outer / fringe. Terminal tissue
     // arborises; where a run cannot be long it has to be bushy instead.
-    const degree = new Int32Array(placed.count);
-    for (let i = 0; i < placed.segmentCount * 2; i += 1) {
-      degree[placed.segments[i]] += 1;
-    }
+    //
+    // ⚠️ Counted on the WALK's own moves, which is not the same as counting
+    // junctions any more: a join raises a point's degree without branching
+    // anything. Fork points hold at 4.06% here (3.94% with the join rate at
+    // zero) while junctions of every kind run 5.55% — the plexus is measured
+    // by its own test below, and this one stays a statement about branching.
+    const degree = walkDegrees();
     let forks = 0;
     for (let i = 0; i < placed.count; i += 1) if (degree[i] > 2) forks += 1;
     expect(forks).toBeGreaterThan(placed.count * 0.005);
@@ -679,7 +791,10 @@ const LADDER_BANDS: ReadonlyArray<readonly [string, number, number]> = [
 /** Drawn runs in world units, per band. A run is binned by the MEAN radius of
  *  its points and not by where it starts: a 26-step filament crosses a third
  *  of the field's half-width, so "where this stroke is" is not the same
- *  question as "where it was seeded". */
+ *  question as "where it was seeded".
+ *
+ *  Joins are skipped, for the reason given where the layer-wide version of
+ *  this measurement is taken: a cross-link is not a step of any walk. */
 function runsByBand(): number[][] {
   const perBand: number[][] = LADDER_BANDS.map(() => []);
   let run = 0;
@@ -695,6 +810,7 @@ function runsByBand(): number[][] {
     perBand[band].push(run * POPULATION_STREAMLINE_STEP);
   };
   for (let i = 0; i < placed.segmentCount; i += 1) {
+    if (isJoin(i)) continue;
     const a = placed.segments[i * 2];
     const b = placed.segments[i * 2 + 1];
     if (a === previousEnd) {
@@ -828,10 +944,14 @@ describe('the tissue decides how far a filament runs, and how often it forks', (
     // 2.08 / 3.42 / 2.99 / 3.08 before the ramps to 2.68 / 3.98 / 5.43 / 4.72
     // after. The outer and fringe bands roughly doubled; the pre-rim, whose
     // runs the complement was already cutting, barely moved.
-    const degree = new Int32Array(placed.count);
-    for (let i = 0; i < placed.segmentCount * 2; i += 1) {
-      degree[placed.segments[i]] += 1;
-    }
+    //
+    // ⚠️ Re-measured on the WALK's own degree once joins shared the buffer:
+    // 2.78 / 4.14 / 5.41 / 4.48 here and 2.66 / 4.25 / 5.48 / 5.16 on the
+    // shipped 105,000. Counting every junction instead would read 5.77 / 5.28 /
+    // 5.92 / 4.69 and would say the OPPOSITE about branching, because the join
+    // rate is keyed on the complement and the fork rate on the tissue — two
+    // different ladders that happen to share a degree count.
+    const degree = walkDegrees();
     const forks = new Array(LADDER_BANDS.length).fill(0);
     const points = new Array(LADDER_BANDS.length).fill(0);
     for (let i = 0; i < placed.count; i += 1) {
@@ -846,6 +966,270 @@ describe('the tissue decides how far a filament runs, and how often it forks', (
     const rate = (band: number) => forks[band] / points[band];
     expect(rate(2)).toBeGreaterThan(rate(0) * 1.5);
     expect(rate(3)).toBeGreaterThan(rate(0) * 1.5);
+  });
+});
+
+/** The complement's own coordinate: how much of the ground under a point is
+ *  still unresolved. The bands the register transition is actually named by —
+ *  see the note in `populationJoinChance` for why they are not the elliptical
+ *  ones. */
+function keepAt(index: number): number {
+  const { x, z } = pointAt(index);
+  return populationComplementAcceptance(
+    tissueSampleAt(x, z, POPULATION_FIELD_OUTER_EDGE).resolvedCoverage,
+  );
+}
+
+const KEEP_BANDS: ReadonlyArray<readonly [string, number, number]> = [
+  ['cell ground', -1, 0.15],
+  ['transition', 0.15, 0.85],
+  ['rim-adjacent', 0.85, 0.999],
+  ['open', 0.999, 2],
+];
+
+function keepBandOf(index: number): number {
+  const keep = keepAt(index);
+  for (let b = 0; b < KEEP_BANDS.length; b += 1) {
+    if (keep >= KEEP_BANDS[b][1] && keep < KEEP_BANDS[b][2]) return b;
+  }
+  return KEEP_BANDS.length - 1;
+}
+
+describe('a walk closes onto strands it passes, so the layer stops being a forest', () => {
+  it('rates the closure on the complement\'s own keep, and on nothing else', () => {
+    // Zero where the addressable Cells own the ground — they are already
+    // telling that story and this layer places almost nothing there — a floor
+    // that survives across the whole open fringe, and a peak in between.
+    expect(populationJoinChance(POPULATION_FIELD_COVERAGE_CEILING)).toBe(0);
+    expect(populationJoinChance(0)).toBeCloseTo(POPULATION_JOIN_CHANCE_OPEN, 12);
+    expect(POPULATION_JOIN_CHANCE_OPEN).toBeGreaterThan(0);
+    expect(POPULATION_JOIN_CHANCE_MIXED)
+      .toBeGreaterThan(POPULATION_JOIN_CHANCE_OPEN);
+
+    // The peak is INSIDE the transition, not at its edges. Measured 5.4% at
+    // keep 0.67, which is `resolvedCoverage` 0.20 — inside the 0.09–0.51 band
+    // the correlated complement is derived against.
+    let peak = 0;
+    let peakAt = 0;
+    for (let i = 0; i <= 600; i += 1) {
+      const coverage = POPULATION_FIELD_COVERAGE_CEILING * i / 600;
+      const rate = populationJoinChance(coverage);
+      if (rate > peak) {
+        peak = rate;
+        peakAt = coverage;
+      }
+    }
+    expect(peakAt).toBeGreaterThan(0.09);
+    expect(peakAt).toBeLessThan(0.51);
+    expect(peak).toBeGreaterThan(populationJoinChance(0) * 4);
+  });
+
+  it('closes where the two registers actually mix', () => {
+    // ⭐ THE ladder this phase is gated on, read in the coordinate the rate
+    // rides. Joins per 100 points, by how much of the ground is still
+    // unresolved: **1.14 / 5.92 / 2.83 / 0.58** here and 1.17 / 7.57 / 3.69 /
+    // 0.80 on the shipped 105,000, across cell ground / transition /
+    // rim-adjacent / open.
+    //
+    // ⚠️ Deliberately NOT the elliptical bands. Measured, the annulus the
+    // ladder instrument calls "mixed" (0.95–1.15) carries a keep of 1.000 at
+    // the median — the Cells' coverage is spent well inside it — so the
+    // register transition lives in the band the instrument calls pre-rim, and
+    // a rate keyed on coverage cannot peak anywhere else. See
+    // `populationJoinChance`.
+    const points = new Array(KEEP_BANDS.length).fill(0);
+    const joinEnds = new Array(KEEP_BANDS.length).fill(0);
+    const junctions = new Array(KEEP_BANDS.length).fill(0);
+    const joinIncident = new Int32Array(placed.count);
+    for (let i = 0; i < placed.segmentCount; i += 1) {
+      if (!isJoin(i)) continue;
+      joinIncident[placed.segments[i * 2]] += 1;
+      joinIncident[placed.segments[i * 2 + 1]] += 1;
+    }
+    const degree = new Int32Array(placed.count);
+    for (let i = 0; i < placed.segmentCount * 2; i += 1) {
+      degree[placed.segments[i]] += 1;
+    }
+    for (let i = 0; i < placed.count; i += 1) {
+      const band = keepBandOf(i);
+      points[band] += 1;
+      if (joinIncident[i] > 0) joinEnds[band] += 1;
+      if (degree[i] > 2) junctions[band] += 1;
+    }
+    const rate = (band: number) => joinEnds[band] / points[band];
+    expect(points[1]).toBeGreaterThan(placed.count * 0.15);
+    expect(rate(1)).toBeGreaterThan(rate(2) * 1.5);
+    expect(rate(2)).toBeGreaterThan(rate(3) * 2);
+    expect(rate(3)).toBeGreaterThan(0);
+
+    // And what it does to the junction ladder as a whole. Before the joins
+    // that ladder climbed monotonically OUTWARD in this coordinate — 1.59 in
+    // the transition against 5.03 in the open, a ratio of 0.32 — because the
+    // fork supply is keyed on tissue density and mints more of it in thin
+    // ground. The transition has caught up: 5.46 against 5.36 here (1.02x)
+    // and 6.95 against 5.73 on the shipped placement (1.21x), where the peak
+    // is outright. Asserted as the catch-up, because at 20,000 points the
+    // rim-adjacent band's 6.35 is within the sample's own spread of both.
+    const density = (band: number) => junctions[band] / points[band];
+    expect(density(1)).toBeGreaterThan(density(3) * 0.9);
+  });
+
+  it('merges components and closes cells, and the identity says which', () => {
+    // ⚠️⚠️ The forest identity is DEAD and this is its replacement. Every
+    // segment the walk or a fork writes reaches a point placed for the first
+    // time, so neither can close a circuit and `components = points -
+    // segments` held exactly at every tuning. A join reaches a point already
+    // placed, so it either MERGES two components or CLOSES a cycle inside one,
+    // and the general form is
+    //
+    //   components = points - segments + cycles
+    //
+    // which is asserted here rather than assumed, because three separate
+    // arguments in the module still lean on the forest half of it.
+    //
+    // Measured here: 242 joins, 215 merges, 27 closed cells. On the shipped
+    // 105,000: 1,670 joins, 1,571 merges, 99 closed cells. A plexus at this
+    // budget is mostly a merging move; the closed cells are 6% of it.
+    const parent = new Int32Array(placed.count);
+    for (let i = 0; i < placed.count; i += 1) parent[i] = i;
+    const find = (start: number): number => {
+      let a = start;
+      while (parent[a] !== a) { parent[a] = parent[parent[a]]; a = parent[a]; }
+      return a;
+    };
+    let cycles = 0;
+    let merges = 0;
+    for (let i = 0; i < placed.segmentCount; i += 1) {
+      const a = find(placed.segments[i * 2]);
+      const b = find(placed.segments[i * 2 + 1]);
+      if (a === b) cycles += 1;
+      else {
+        parent[a] = b;
+        if (isJoin(i)) merges += 1;
+      }
+    }
+    const roots = new Set<number>();
+    for (let i = 0; i < placed.count; i += 1) roots.add(find(i));
+
+    expect(cycles).toBeGreaterThan(0);
+    expect(merges + cycles).toBe(placed.joins);
+    expect(roots.size).toBe(placed.count - placed.segmentCount + cycles);
+    // A join is overwhelmingly a merge, which is what makes it a plexus rather
+    // than a decoration on strands that were already connected.
+    expect(merges).toBeGreaterThan(placed.joins * 0.7);
+  });
+
+  it('leaves the layer measurably more connected than a forest of it', () => {
+    // The "basically connected" number, and the honest version of it. The
+    // largest component is a percolation statistic and swings with the draw
+    // (0.4%–2.2% across grid depths on the shipped placement, because the
+    // layer sits just under its threshold), so what is asserted is the share
+    // of points carried by components of 64 or more — the same question with a
+    // stable answer.
+    //
+    // Measured, with the join rate at zero against as shipped: **0.061 ->
+    // 0.190** here and 0.090 -> 0.265 on the shipped 105,000. Components of
+    // 128 or more went 0.000 -> 0.085 and 0.001 -> 0.138. The largest
+    // component itself went 108 -> 266 points here, 129 -> 1,722 there.
+    const size = componentSizes();
+    let carried = 0;
+    let largest = 0;
+    for (let i = 0; i < placed.count; i += 1) {
+      if (size.of[i] >= 64) carried += 1;
+    }
+    for (const n of size.sizes) if (n > largest) largest = n;
+    expect(carried / placed.count).toBeGreaterThan(0.12);
+    // And it is still nothing like one tangle: the generation cap and the
+    // per-filament join cap between them keep the biggest piece small.
+    expect(largest / placed.count).toBeLessThan(0.2);
+  });
+
+  it('never lets a junction become a hub', () => {
+    // "A halo point must never look like a node with edges radiating from it."
+    // The degree ceiling is STRUCTURAL, not statistical: two walk steps, at
+    // most one fork child (a point is offered to the branch reservoir once),
+    // at most one join reaching out (one attempt per emitted point) and at
+    // most one reaching in (the grid entry is consumed on use). Five, and it
+    // is reached by two points in 105,000 — the histogram runs
+    // 1,818 / 19,832 / 76,812 / 6,392 / 144 / 2 over degrees 0 to 5.
+    const degree = new Int32Array(placed.count);
+    const joinIncident = new Int32Array(placed.count);
+    const seen = new Set<string>();
+    for (let i = 0; i < placed.segmentCount; i += 1) {
+      const a = placed.segments[i * 2];
+      const b = placed.segments[i * 2 + 1];
+      degree[a] += 1;
+      degree[b] += 1;
+      if (isJoin(i)) {
+        joinIncident[a] += 1;
+        joinIncident[b] += 1;
+        // A join always reaches BACKWARD, which is the whole of the prefix
+        // contract: the newest point is the second endpoint.
+        expect(a).toBeLessThan(b);
+      }
+      const key = a < b ? `${a},${b}` : `${b},${a}`;
+      expect(seen.has(key)).toBe(false);
+      seen.add(key);
+    }
+    let worst = 0;
+    let worstJoins = 0;
+    for (let i = 0; i < placed.count; i += 1) {
+      if (degree[i] > worst) worst = degree[i];
+      if (joinIncident[i] > worstJoins) worstJoins = joinIncident[i];
+    }
+    expect(worst).toBeLessThanOrEqual(5);
+    expect(worstJoins).toBeLessThanOrEqual(2);
+  });
+
+  it('leaves every junction matte, which is the one absolute', () => {
+    // ⭐ The rule with no exceptions: the join code path writes SEGMENTS and
+    // nothing else. No endpoint emphasis of any kind at either end — not a
+    // brighter weight, not a larger sprite, not a rescued taper.
+    //
+    // Asserted structurally rather than by inspection: every stored weight in
+    // this buffer is the tissue's own answer times one of exactly four rungs
+    // (see 'fades a strand's last points'), and that leaves no room for a
+    // join-specific write anywhere. Here it is checked on the join ENDPOINTS
+    // specifically, where such a write would live, and the distribution is
+    // checked too — 99 / 73 / 58 of this file's 484 join ends sit on the
+    // three FADE rungs (599 / 507 / 422 of 3,340 on the shipped placement), so
+    // a join that lands on a strand's tip still ends as a tip.
+    const rungs = new Map<number, number>();
+    for (let i = 0; i < placed.segmentCount; i += 1) {
+      if (!isJoin(i)) continue;
+      for (const end of [placed.segments[i * 2], placed.segments[i * 2 + 1]]) {
+        const { x, z } = pointAt(end);
+        const sample = tissueSampleAt(x, z, POPULATION_FIELD_OUTER_EDGE);
+        const ratio = placed.weights[end]
+          / populationPointWeight(sample.density, sample.resolvedCoverage);
+        let rung = -1;
+        for (const value of [1, ...POPULATION_END_TAPER]) {
+          if (Math.abs(ratio - value) < 1e-3) rung = value;
+        }
+        expect(rung).toBeGreaterThan(0);
+        rungs.set(rung, (rungs.get(rung) ?? 0) + 1);
+      }
+    }
+    for (const rung of POPULATION_END_TAPER) {
+      expect(rungs.get(rung) ?? 0).toBeGreaterThan(0);
+    }
+  });
+
+  it('cannot overrun a buffer sized at one segment per point', () => {
+    // The joins are the only thing here that can spend more segments than
+    // points, and the bound is arithmetic rather than a hope. A filament is at
+    // most POPULATION_STREAMLINE_MAX_STEPS points long, so at least one point
+    // in every 26 starts a strand and reaches back to nothing; the joins are
+    // spent from that slack and the pass stops offering them at
+    // `capacity / MAX_STEPS`. At 105,000 points the ceiling is 4,038 and the
+    // rate lands at 1,670 — it guards, it does not bind.
+    expect(placed.joins)
+      .toBeLessThan(placed.capacity / POPULATION_STREAMLINE_MAX_STEPS);
+    expect(placed.segmentCount).toBeLessThanOrEqual(placed.capacity);
+    expect(placed.segments.length).toBeGreaterThanOrEqual(
+      placed.segmentCount * 2,
+    );
+    expect(POPULATION_JOIN_PER_FILAMENT).toBeGreaterThanOrEqual(1);
   });
 });
 
@@ -1142,6 +1526,12 @@ describe('the placement pass is exact and resumable', () => {
     expect(chunked.segmentCount).toBe(whole.segmentCount);
     expect(chunked.streamlines).toBe(whole.streamlines);
     expect(chunked.work).toBe(whole.work);
+    // ⭐ And the joins, which is the assertion that pins the newest state to
+    // the walk: a filament's join budget and the candidate grid both have to
+    // survive a call boundary, and a join drawn on one side of one would move
+    // every segment after it.
+    expect(chunked.joins).toBe(whole.joins);
+    expect(whole.joins).toBeGreaterThan(0);
     expect(Array.from(chunked.positions)).toEqual(Array.from(whole.positions));
     expect(Array.from(chunked.segments)).toEqual(Array.from(whole.segments));
     // ⭐ The weights too, and they are the reason this assertion earns its
@@ -1505,6 +1895,13 @@ describe('the complement is correlated along a filament, and nowhere else', () =
     // keyed on `density` and this band is named by `resolvedCoverage`). The
     // floor sits well under both, because what is being asserted is that the
     // i.i.d. figure is far behind — not that a particular number came back.
+    //
+    // ⭐ The joins take it further, and this is the band they were aimed at:
+    // **0.648** on the shipped placement and **0.623** here, against 0.540 /
+    // 0.522 with the join rate at zero. The correlated complement could not
+    // reach this on its own — what remains after it is filaments that stop at
+    // a clump and filaments that start past it, and a join is the only move
+    // that can attach those two to each other.
     const size = componentSizes();
     let inBand = 0;
     let carried = 0;

@@ -278,8 +278,27 @@ describe('bridge selection', () => {
     // chosen share improved 10.6% -> 8.7%, because the ramps break the outer
     // bands' long components into more, smaller ones and the ranking therefore
     // finds a non-dust anchor near more hosts. The ratio goes 1.83x -> 2.23x.
+    //
+    // ⚠️⚠️ The halo's anastomosis joins then moved the BASELINE, and the
+    // margin here is measured against it — so a change that makes the layer
+    // better makes this assertion harder. Joins merge prefix components, so
+    // the prefix's own dust share fell 19.5% -> 16.0% while the chosen share
+    // sat at 12.1%, and the ratio fell 2.10x -> 1.33x with nothing about the
+    // ranking having got worse.
+    //
+    // ⚠️ It is worse than that: this instrument is NOISY across placement
+    // seeds, and the shipped seed happened to be its best draw. Measured over
+    // five seeds on this test's own recipe, chosen dust runs 0.083 / 0.138 /
+    // 0.139 / 0.143 / 0.131 without joins (ratios 2.36 / 1.44 / 1.38 / 1.38 /
+    // 1.51) and 0.132 / 0.105 / 0.121 / 0.104 / 0.093 with them (1.22 / 1.66 /
+    // 1.23 / 1.64 / 1.74). The joins IMPROVE the chosen share on average —
+    // 0.127 -> 0.111 — and improve the baseline more, which is the whole of
+    // why the ratio fell. So the ratio bound is set at the worst of those ten
+    // draws with a little room, and an ABSOLUTE bound is added beside it,
+    // because that is the one a better layer cannot make harder to pass.
     expect(baselineDust).toBeGreaterThan(0.15);
-    expect(chosenDust).toBeLessThan(baselineDust * 0.75);
+    expect(chosenDust).toBeLessThan(baselineDust * 0.85);
+    expect(chosenDust).toBeLessThan(0.15);
   });
 
   it('lands on a fibre rather than on a placed vertex', () => {

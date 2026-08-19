@@ -131,13 +131,29 @@ export const BRIDGE_HOST_COVERAGE_CEILING =
  *
  * ⭐ Re-measured after the halo's tissue-keyed length and fork ramps, which
  * shorten the outer bands' filaments and fork them harder: the prefix's median
- * component is **still exactly 21** (its mean fell 27.7 -> 27.2). The ramps
+ * component was **still exactly 21** (its mean fell 27.7 -> 27.2). The ramps
  * redistribute the tail rather than the middle, so this tier did not have to
  * move — and it was checked rather than assumed, because a stale tier boundary
  * would silently re-rank every anchor in the field.
+ *
+ * ⭐⭐ Re-measured again after the halo's ANASTOMOSIS joins, and this time it
+ * moved: **21 -> 28**, because a join merges two components and the prefix
+ * carries about 400 of them. The prefix's median went 22 -> 28 and its mean
+ * 27.4 -> 63.6 — the mean runs away because the merged pieces percolate, which
+ * is exactly why the MEDIAN is the tier boundary and not the mean. Measured
+ * across five seeds the new median is 26–29.
+ *
+ * ⚠️ The move is behaviourally almost nothing, and that is worth recording so
+ * the next re-derivation does not go looking for an effect: at 12,000 staged
+ * Cells the chosen-anchor dust share reads 0.1206 at 21 and 0.1194 at 28
+ * (0.1187 at 34 and at 40). Half the prefix is above the median by
+ * construction, so the tier keeps ranking with the same discrimination
+ * wherever the median goes; what a stale value would cost is the STATEMENT —
+ * this constant claims to be a measured median, and one that is not is a lie
+ * in a comment.
  */
 export const BRIDGE_DUST_COMPONENT = 8;
-export const BRIDGE_STRAND_COMPONENT = 21;
+export const BRIDGE_STRAND_COMPONENT = 28;
 
 /**
  * Minimum spacing between two anchors of the SAME host, in world units.

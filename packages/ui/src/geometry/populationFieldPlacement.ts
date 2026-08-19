@@ -724,10 +724,23 @@ export const POPULATION_STREAMLINE_STEP = 1.25;
  * {@link POPULATION_COMPLEMENT_CORRELATION_STEPS} spent — 94,762 down to the
  * standing 87,964 — while holding the "strokes, not dust" guard at 0.80. Those
  * two requirements are the same quantity read twice, and they contradict each
- * other. The drawn graph is a FOREST: every segment joins a new point to one
- * already placed, and nothing ever closes a cycle, so
+ * other. The walk and the fork are both TREE moves: every segment either of
+ * them writes joins a new point to one already placed, and neither ever closes
+ * a cycle, so over that subgraph
  *
  * > **components = points − segments**, exactly, at every tuning.
+ *
+ * ⚠️ **That identity is no longer true of the whole drawn graph, and this
+ * argument is written about the graph as it then was.**
+ * {@link POPULATION_JOIN_CHANCE_MIXED} added a third move — a join, which
+ * closes onto a strand already placed — and the general form is
+ * `components = points − segments + cycles`, measured at 99 closed cycles in
+ * 1,670 joins. Nothing below has to be re-derived: the walk and the fork are
+ * still the only moves that can create a component, joins can only merge or
+ * close, and so the exchange rate this section is about — one fork, one
+ * segment, one component fewer — is exactly what it was. What the joins change
+ * is the LEVEL: the layer now draws 96,609 segments at 8,490 components, and
+ * the design's 87,964 is further out of reach than ever, for the same reason.
  *
  * 94,762 segments IS 10,238 components. 87,964 would be **17,036** — a 66%
  * rise, at a fixed 105,000 points, so a mean component of 6.2 points against a
@@ -994,11 +1007,15 @@ const BRANCH_RECORD_CHANCE = 0.05;
  *  share runs **0.772 at 0.05, 0.811 at 0.12, 0.838 at 0.16** — the floor is
  *  bought here and nowhere else.
  *
- *  ⚠️ It is not free in segments, and the exchange rate is exact: the drawn
- *  graph is a FOREST, so `components = points - segments`. Every fork is a
- *  filament that did NOT start a component, so every fork is one more segment.
- *  0.12 is where the dust floor clears with a point of margin and the segment
- *  count comes out at or under where it started. */
+ *  ⚠️ It is not free in segments, and the exchange rate is exact: a fork is a
+ *  TREE move, so every fork is a filament that did NOT start a component and
+ *  is therefore one more segment. (That used to be stated as an identity over
+ *  the whole graph — `components = points - segments` — which held while the
+ *  graph was a forest and does not now that
+ *  {@link POPULATION_JOIN_CHANCE_MIXED} closes cycles in it. The exchange rate
+ *  for a FORK is unchanged; see that constant for the general form.) 0.12 is
+ *  where the dust floor clears with a point of margin and the segment count
+ *  comes out at or under where it started. */
 const BRANCH_RECORD_CHANCE_OPEN = 0.12;
 
 /** How likely a point on this tissue is to be recorded as a place to fork
@@ -1267,11 +1284,15 @@ export const POPULATION_FIELD_COVERAGE_CEILING =
  * stroke again is a segment that was not being drawn.
  *
  * ⚠️ **That price is not refundable, and the reason is stated once, in
- * {@link POPULATION_STREAMLINE_MIN_STEPS}: the drawn graph is a forest, so
- * `components = points - segments`.** The 6,712 segments this constant costs
- * ARE the 6,712 fragments it healed. A later phase asked for them back while
- * holding the stroke share at 0.80 and the two turned out to be the same
- * number; the layer now sits at 94,848 with a stroke share of 0.811.
+ * {@link POPULATION_STREAMLINE_MIN_STEPS}: a walk step and a fork are tree
+ * moves, so over that subgraph `components = points - segments`.** The 6,712
+ * segments this constant costs ARE the 6,712 fragments it healed. A later
+ * phase asked for them back while holding the stroke share at 0.80 and the two
+ * turned out to be the same number. The layer sits at 96,609 segments and a
+ * stroke share of 0.844 — the last of which is
+ * {@link POPULATION_JOIN_CHANCE_MIXED}, whose joins are the only segments here
+ * that are NOT accounted for by that identity, and which lift the band this
+ * constant is about from 0.55 to 0.65.
  *
  * The draws are
  * primitive-bound (halving primitives gives 0.43–0.45x the time), so that is
@@ -1394,6 +1415,225 @@ export function populationComplementAccepts(
 }
 
 /**
+ * ANASTOMOSIS — how often a walk CLOSES onto a strand it is passing.
+ *
+ * A fork is a tree move: it adds a curve and never a circuit. Until this
+ * constant the layer drew nothing else, and the consequence was exact rather
+ * than approximate — the drawn graph was a FOREST, so `components = points -
+ * segments`, and 105,000 points at 94,890 segments IS **10,110 separate
+ * pieces**. Ten thousand pieces is not what "one basically connected network"
+ * reads as, and the missing move is the one a network's signature actually
+ * needs beside bifurcation: CLOSED CELLS.
+ *
+ * So a stepping walk may close onto a nearby point ANOTHER filament already
+ * placed: one segment, from that point to the one just emitted. Newest index
+ * second, exactly as a fork writes it, so the segment buffer stays monotone in
+ * its larger endpoint and {@link populationSegmentsForPointPrefix} is still a
+ * binary search — the plexus costs the quality cascade nothing.
+ *
+ * ## The rate rides the COMPLEMENT's own keep, and that is not a radius
+ *
+ * `keep = 1 - coverage / (2 * KNEE)` is this layer's own statement of how much
+ * of the ground under a point is still unresolved. The rate is
+ *
+ * > `keep * (OPEN + (MIXED - OPEN) * 4 * keep * (1 - keep))`
+ *
+ * — a parabola in `keep`, which is zero where either population is absent and
+ * one where they half-occupy the ground together, on a floor that survives out
+ * in the open, all multiplied by `keep` so that ground the Cells own draws
+ * nothing at all. It peaks at **5.4% per accepted point at keep 0.67**
+ * (coverage 0.20), sits at 0.4% across the whole open fringe, and is under
+ * 0.8% below keep 0.15 — where, by the complement's own construction, there is
+ * almost nothing placed to join anyway.
+ *
+ * ⚠️ **MEASURED, and it is the finding that matters most here: the band the
+ * ladder instrument calls "mixed" (elliptical radius 0.95–1.15) is NOT where
+ * the two registers mix.** Over the shipped placement the `keep` at placed
+ * points runs, by radius band:
+ *
+ * | band | keep p10 | p50 | share under 0.95 |
+ * |---|---:|---:|---:|
+ * | pre-rim < 0.95   | 0.358 | **0.737** | 92.9% |
+ * | mixed 0.95–1.15  | 0.918 | 1.000 | 17.4% |
+ * | outer 1.15–1.375 | 1.000 | 1.000 | 0.0% |
+ * | fringe >= 1.375  | 1.000 | 1.000 | 0.0% |
+ *
+ * The addressable Cells' coverage is spent well before radius 0.95, so the
+ * transition this phase exists to knit — the one
+ * {@link POPULATION_COMPLEMENT_CORRELATION_STEPS} measured as "keep 0.15–0.85,
+ * a quarter of the layer" — lives INSIDE the band the instrument calls
+ * pre-rim. A coverage-keyed rate therefore peaks there, and any rate that
+ * peaked in the 0.95–1.15 annulus instead would have to be keyed on radius,
+ * which is the one key this file does not take. Read in the complement's own
+ * coordinate the ladder is unambiguous (105,000 points):
+ *
+ * | ground | points | junctions/100 before | after | join ends/100 |
+ * |---|---:|---:|---:|---:|
+ * | Cell ground   keep < 0.15  |    597 | 0.30 | 0.50 | 1.17 |
+ * | transition    0.15–0.85    | 26,796 | 2.06 | **6.95** | 7.57 |
+ * | rim-adjacent  0.85–0.999   | 21,729 | 4.05 | 6.76 | 3.69 |
+ * | open          keep ~ 1     | 55,878 | 5.03 | 5.73 | 0.80 |
+ *
+ * Junction density used to climb monotonically OUTWARD (that is the fork
+ * ramp: {@link populationBranchRecordChance} mints more slots in thin tissue).
+ * It now peaks in the transition, which is the whole request. By radius the
+ * same numbers read 2.60 -> **6.88** / 4.24 -> 5.87 / 5.30 -> 6.02 / 5.23 ->
+ * 5.58 across pre-rim / mixed / outer / fringe — the peak is in the band that
+ * CONTAINS the transition, not in the one named after it.
+ *
+ * ## What it bought
+ *
+ * The "before" column is THIS code with the two rates at zero, not the phase
+ * before it: a join costs one draw from the shared stream at every accepted
+ * point, so the placement is a different realisation either way, and 94,848
+ * segments became 94,890 without a single join being drawn. Reading the two
+ * arms against each other is what isolates the joins from the shift.
+ *
+ * | | before | after |
+ * |---|---:|---:|
+ * | segments | 94,890 | **96,609** (+1.8%) |
+ * | components | 10,110 | **8,490** |
+ * | largest component | 129 pts (0.12%) | **1,722 pts (1.64%)** |
+ * | dust floor (points on components >= 8) | 0.8099 | **0.8443** |
+ * | stroke share in the transition band | 0.5395 | **0.6482** |
+ * | fork points / 100 | 4.05 | 4.11 |
+ *
+ * The stroke share is the one to read twice: the correlated complement lifted
+ * that band from 0.203 to about 0.55 and could go no further, because what
+ * remains is filaments that stop at a clump and filaments that start past it.
+ * A join is the only move that can attach those to each other, and it buys
+ * another 10.9 points of the band.
+ *
+ * ## The rate, chosen against the segment line
+ *
+ * | (open, mixed) | joins | segments | components | largest | dust |
+ * |---|---:|---:|---:|---:|---:|
+ * | off             |     0 | 94,890 | 10,110 | 0.12% | 0.8099 |
+ * | 0.002 / 0.045   |   836 | 95,738 |  9,295 | 0.39% | 0.8299 |
+ * | **0.004 / 0.09**| **1,670** | **96,609** | **8,490** | **1.64%** | **0.8443** |
+ * | 0.005 / 0.11    | 2,002 | 96,992 |  8,130 | 1.99% | 0.8535 |
+ *
+ * The budget line is ~97,000 drawn segments — priced in GPU primitives, since
+ * both halo draws are primitive-bound and near-linear in count (halving them
+ * gives 0.43–0.45x the time), so 1,719 more segments is about +0.04 ms of the
+ * fibres' 1.97 ms at 4K against an adaptive-controller step of 2.64 ms. The
+ * 0.005 row reaches 96,992 and leaves nothing; this row clears it by 391.
+ *
+ * ⚠️ **What the cap produces is a LOCAL plexus, and percolation is measurably
+ * just past the line.** 1,571 of these joins merge two components and 99 close
+ * a cycle inside one. Pushed further, on the same code:
+ *
+ * | joins | segments | largest component |
+ * |---:|---:|---:|
+ * | 1,670 | 96,609 | 1.6% |
+ * | 3,283 | 98,107 | **14.9%** |
+ * | 4,038 | 99,051 | **33.0%** |
+ *
+ * So "the band fuses into one component" is a SEGMENT PURCHASE of about 2,400
+ * more than the budget allows, not a tuning of this constant — and past 4,038
+ * the structural join ceiling binds and raising the rate makes the largest
+ * component SMALLER (33.0% -> 26.7% at eight times this rate), because the
+ * ceiling is then spent early in the buffer instead of across the field.
+ */
+export const POPULATION_JOIN_CHANCE_OPEN = 0.004;
+export const POPULATION_JOIN_CHANCE_MIXED = 0.09;
+
+/** The chance an accepted point closes onto a strand, at one resolved
+ *  coverage. Zero where the Cells own the ground, a floor in the open fringe,
+ *  a peak where the two populations share it. */
+export function populationJoinChance(resolvedCoverage: number): number {
+  const keep = populationComplementAcceptance(resolvedCoverage);
+  const mixed = 4 * keep * (1 - keep);
+  return keep * (POPULATION_JOIN_CHANCE_OPEN
+    + (POPULATION_JOIN_CHANCE_MIXED - POPULATION_JOIN_CHANCE_OPEN) * mixed);
+}
+
+/**
+ * The reach window a join may close over, in walk steps.
+ *
+ * Both ends of it are load-bearing, and the FLOOR is the one that is not
+ * obvious. A candidate nearer than a step would draw a tick sitting on top of
+ * a point — which is a bead with a stub, and "no endpoint emphasis of any
+ * kind" forbids exactly that shape. It also makes the taxonomy exact: a walk
+ * step and a fork's first segment are both exactly one
+ * {@link POPULATION_STREAMLINE_STEP} in the ground plane, so ANY segment
+ * longer than one step is a join and the buffer can be read without being
+ * told. The ceiling keeps the stroke at the layer's own scale — 1.875 world
+ * units against a drawn run whose median is 7.50 — so a join is tissue closing
+ * on itself and never a spoke thrown across the field.
+ */
+export const POPULATION_JOIN_REACH_MIN = 1.1;
+export const POPULATION_JOIN_REACH = 1.5;
+
+/**
+ * Ceiling on the DRAWN length of a join, in walk steps.
+ *
+ * The reach above is measured in the ground plane; this one is measured in
+ * three dimensions, and it exists because a join is the one segment here whose
+ * two ends did not agree on a height. A fork inherits its parent's offset
+ * precisely so the two meet in 3D rather than crossing at different heights,
+ * and a join cannot inherit anything — so the agreement has to be a CONDITION
+ * instead. Measured over pairs inside the reach window, the vertical gap runs
+ * p50 1.27 and p99 5.15 world units: without this cap a join would sometimes
+ * be a 5-unit strut across the slab, longer than the fabric's own p90 stroke.
+ * At two steps the drawn joins run p50 1.61, p90 1.94, max 2.49.
+ */
+export const POPULATION_JOIN_SPAN = 2;
+
+/**
+ * How many joins one filament may close.
+ *
+ * A plexus, not a felt. With the rate above this is nearly never the binding
+ * constraint — the layer closes 1,670 joins across 14,419 filaments — but it
+ * is what stops a single long filament in the transition band from stitching
+ * itself to everything it passes, which is the shape a felt has.
+ */
+export const POPULATION_JOIN_PER_FILAMENT = 2;
+
+const JOIN_REACH_MIN_SQ =
+  (POPULATION_JOIN_REACH_MIN * POPULATION_STREAMLINE_STEP) ** 2;
+const JOIN_REACH_SQ = (POPULATION_JOIN_REACH * POPULATION_STREAMLINE_STEP) ** 2;
+const JOIN_SPAN_SQ = (POPULATION_JOIN_SPAN * POPULATION_STREAMLINE_STEP) ** 2;
+
+/** The candidate grid: one cell exactly the reach, so a 3x3 scan around the
+ *  current point covers the whole window and nothing further. 121 x 109 cells
+ *  over the seeding box. */
+const JOIN_GRID_CELL = POPULATION_JOIN_REACH * POPULATION_STREAMLINE_STEP;
+/**
+ * How many points one cell remembers, newest first, overwritten in place.
+ *
+ * Every emitted point is filed — there is no separate candidate lottery — so
+ * the depth is what decides whether a cell still holds a point of ANOTHER
+ * filament when a walk comes through it. A cell sees about 10.2 points over
+ * the whole pass and a strand crossing one leaves two or three consecutively,
+ * so a shallow ring holds one strand and answers nothing. Measured at 105,000
+ * points, joins landed and the layer's largest component:
+ *
+ * | depth | joins | largest | memory |
+ * |---:|---:|---:|---:|
+ * | 2  | 1,309 | 0.38% | 109 KB |
+ * | 3  | 1,573 | 0.48% | 164 KB |
+ * | 4  | 1,562 | 0.55% | 219 KB |
+ * | 6  | **1,670** | **1.64%** | **322 KB** |
+ * | 10 | 1,742 | 2.21% | 528 KB |
+ *
+ * Six takes 96% of the joins ten finds, for 61% of the memory, and the rate
+ * curve is what sets the count from there. (The largest-component column is
+ * noisy across this sweep on purpose-built grounds: the layer sits just under
+ * its percolation threshold, so which pairs merge decides how big the biggest
+ * piece gets.)
+ */
+const JOIN_GRID_DEPTH = 6;
+const JOIN_GRID_HALF_X =
+  FIELD_HALF_X * (POPULATION_FIELD_OUTER_EDGE + BOUNDARY_WARP_MAX);
+const JOIN_GRID_HALF_Z =
+  FIELD_HALF_Z * (POPULATION_FIELD_OUTER_EDGE + BOUNDARY_WARP_MAX);
+const JOIN_GRID_COLS = Math.ceil(2 * JOIN_GRID_HALF_X / JOIN_GRID_CELL);
+const JOIN_GRID_ROWS = Math.ceil(2 * JOIN_GRID_HALF_Z / JOIN_GRID_CELL);
+/** An entry holding no point — and what a CONSUMED one is set back to. */
+const JOIN_GRID_EMPTY = -1;
+
+/**
  * Upper bound on the acceptance probability at one radius, from the radius
  * alone — no noise evaluated.
  *
@@ -1424,6 +1664,11 @@ export interface PopulationPlacementState {
    *  pass placed — no segment reaches an addressable Cell (§3 rule 4), and no
    *  segment bridges a point the complement rejected. */
   segments: Uint32Array<ArrayBuffer>;
+  /** Joins closed by {@link populationJoinChance} — segments that reached a
+   *  strand instead of the walk's own previous point. Counted because they are
+   *  the one thing here that can spend more segments than points, and because
+   *  they are what makes this graph stop being a forest. */
+  joins: number;
   /** The taper weight of each placed point, `capacity` long and valid for the
    *  first `count` entries. SIZE alone rides it: brightness is flat at the
    *  emission ceiling and the tint is one colour, so what varies across the
@@ -1469,6 +1714,15 @@ export interface PopulationPlacementState {
    *  the slot, so a fork costs no field evaluation either. */
   branchDensity: Float64Array;
   branchWritten: number;
+  /** Join candidates: every emitted point, filed by ground-plane cell,
+   *  {@link JOIN_GRID_DEPTH} deep and overwritten in place. Holds point
+   *  indices, so the position and the height come from the buffer that is
+   *  actually drawn. A join CONSUMES its entry — that is this pass's second
+   *  anti-percolation move, and it is what stops several strands closing onto
+   *  one point and building the lit hub the symbolic register forbids. */
+  joinGrid: Int32Array;
+  /** Per-cell write cursor for that ring. */
+  joinCursor: Uint8Array;
 }
 
 interface WalkState {
@@ -1487,6 +1741,14 @@ interface WalkState {
   wander: number;
   /** How many forks deep this filament is. Fresh tissue is 0. */
   generation: number;
+  /** Index of the FIRST point this filament emitted, or -1 before it has
+   *  emitted one. A filament's accepted points are contiguous in the buffer —
+   *  only one walk is ever running — so "emitted before this" is exactly
+   *  "belongs to another filament", and a join needs no id to test it. */
+  firstPoint: number;
+  /** Joins this filament has already closed. Capped at
+   *  {@link POPULATION_JOIN_PER_FILAMENT}: a plexus, not a felt. */
+  joins: number;
   /** The tissue density this filament was BORN on — the seed's own sample for
    *  fresh tissue, the parent point's for a fork. Read once, at the seed, and
    *  then only through {@link populationTissueReach}: it sets how far this
@@ -1518,11 +1780,17 @@ export function createPopulationPlacement(
   const size = Math.max(0, Math.floor(capacity));
   return {
     positions: new Float32Array(size * 3),
-    // Every emitted point adds at most one segment — to its predecessor on
-    // the same filament, or to the parent it forked from — so the point
-    // capacity bounds the segment capacity exactly.
+    // A point adds at most TWO segments: the one that reaches it — from its
+    // predecessor on the same filament, or from the parent it forked from —
+    // and at most one join closing onto a strand it passed. The buffer is
+    // still one segment per point, and it is still exact, because a filament
+    // is at most POPULATION_STREAMLINE_MAX_STEPS points long: at least one
+    // point in every 26 starts a strand and reaches back to nothing, and that
+    // slack is precisely what the joins are spent from. See the join ceiling
+    // in `advancePopulationPlacement`.
     segments: new Uint32Array(size * 2),
     weights: new Float32Array(size),
+    joins: 0,
     capacity: size,
     count: 0,
     segmentCount: 0,
@@ -1539,6 +1807,8 @@ export function createPopulationPlacement(
       offset: 0,
       wander: 0,
       generation: 0,
+      firstPoint: -1,
+      joins: 0,
       seedDensity: 0,
       previous: -1,
       complement: 0,
@@ -1555,6 +1825,12 @@ export function createPopulationPlacement(
     branchGeneration: new Int32Array(BRANCH_RESERVOIR),
     branchDensity: new Float64Array(BRANCH_RESERVOIR),
     branchWritten: 0,
+    // Spatial, not per-point: the grid covers the seeding box at one cell per
+    // reach whatever the capacity is, so a small pass pays the same 0.26 MB a
+    // full one does. It is worker-local — never transferred, never uploaded.
+    joinGrid: new Int32Array(JOIN_GRID_COLS * JOIN_GRID_ROWS * JOIN_GRID_DEPTH)
+      .fill(JOIN_GRID_EMPTY),
+    joinCursor: new Uint8Array(JOIN_GRID_COLS * JOIN_GRID_ROWS),
   };
 }
 
@@ -1607,6 +1883,78 @@ export function advancePopulationPlacement(
   const jitterShare = POPULATION_STREAMLINE_JITTER;
   const filamentShare = Math.sqrt(1 - jitterShare * jitterShare);
 
+  // ---- The join candidate grid ----------------------------------------
+  //
+  // Every emitted point is filed by ground-plane cell, JOIN_GRID_DEPTH deep,
+  // overwritten in place: no allocation inside the loop, and the cost per step
+  // is two multiplies and a store. The cell is exactly the reach, so the 3x3
+  // scan below sees every point that could possibly qualify and no more.
+  const joinGrid = state.joinGrid;
+  const joinCursor = state.joinCursor;
+  // The structural ceiling that keeps a one-segment-per-point buffer exact.
+  // A filament is at most MAX_STEPS points, so at least `count / MAX_STEPS`
+  // points start a strand and emit no segment of their own; the joins are
+  // spent out of that slack and can never overrun it. At 105,000 points this
+  // is 4,038 and the rate lands at less than half of it, so it does not bind —
+  // it is the guard, not the budget.
+  const joinCeiling = Math.floor(capacity / POPULATION_STREAMLINE_MAX_STEPS);
+
+  const rememberPoint = (index: number, x: number, z: number): void => {
+    const gx = Math.floor((x + JOIN_GRID_HALF_X) / JOIN_GRID_CELL);
+    const gz = Math.floor((z + JOIN_GRID_HALF_Z) / JOIN_GRID_CELL);
+    if (gx < 0 || gz < 0 || gx >= JOIN_GRID_COLS || gz >= JOIN_GRID_ROWS) return;
+    const cell = gz * JOIN_GRID_COLS + gx;
+    const slot = joinCursor[cell];
+    joinGrid[cell * JOIN_GRID_DEPTH + slot] = index;
+    joinCursor[cell] = slot + 1 < JOIN_GRID_DEPTH ? slot + 1 : 0;
+  };
+
+  // The nearest point of ANOTHER filament inside the reach window, or -1. The
+  // entry is CONSUMED on the way out, so no second strand can close onto the
+  // same point and build a hub out of it.
+  const closeOntoStrand = (
+    x: number,
+    y: number,
+    z: number,
+    before: number,
+  ): number => {
+    const gx0 = Math.floor((x + JOIN_GRID_HALF_X) / JOIN_GRID_CELL);
+    const gz0 = Math.floor((z + JOIN_GRID_HALF_Z) / JOIN_GRID_CELL);
+    let best = -1;
+    let bestEntry = -1;
+    let bestSpan = JOIN_SPAN_SQ;
+    for (let dz = -1; dz <= 1; dz += 1) {
+      const gz = gz0 + dz;
+      if (gz < 0 || gz >= JOIN_GRID_ROWS) continue;
+      for (let dx = -1; dx <= 1; dx += 1) {
+        const gx = gx0 + dx;
+        if (gx < 0 || gx >= JOIN_GRID_COLS) continue;
+        const base = (gz * JOIN_GRID_COLS + gx) * JOIN_GRID_DEPTH;
+        for (let k = 0; k < JOIN_GRID_DEPTH; k += 1) {
+          const candidate = joinGrid[base + k];
+          // Empty, consumed, or this filament's own: its points are contiguous
+          // in the buffer, so one comparison decides it.
+          if (candidate < 0 || candidate >= before) continue;
+          const cx = positions[candidate * 3] - x;
+          const cz = positions[candidate * 3 + 2] - z;
+          const plane = cx * cx + cz * cz;
+          // Closer than the window's floor and the stroke is a tick on top of
+          // a point, which is endpoint emphasis by another name; further and it
+          // is a spoke thrown across the tissue.
+          if (plane <= JOIN_REACH_MIN_SQ || plane > JOIN_REACH_SQ) continue;
+          const cy = positions[candidate * 3 + 1] - y;
+          const span = plane + cy * cy;
+          if (span >= bestSpan) continue;
+          bestSpan = span;
+          best = candidate;
+          bestEntry = base + k;
+        }
+      }
+    }
+    if (bestEntry >= 0) joinGrid[bestEntry] = JOIN_GRID_EMPTY;
+    return best;
+  };
+
   // A strand is over: fade the last points it emitted so it ends as a tip
   // rather than at whatever weight the tissue handed its last one. Retroactive,
   // and free — the whole pass finishes before either buffer is transferred, so
@@ -1628,6 +1976,7 @@ export function advancePopulationPlacement(
   let count = state.count;
   let segmentCount = state.segmentCount;
   let streamlines = state.streamlines;
+  let joins = state.joins;
   let work = state.work;
   let branchWritten = state.branchWritten;
   const limit = work + budget;
@@ -1737,6 +2086,10 @@ export function advancePopulationPlacement(
       walk.tip0 = -1;
       walk.tip1 = -1;
       walk.tip2 = -1;
+      // A fresh filament, and the two things a join asks about it: it has
+      // emitted nothing yet, and it has closed nothing yet.
+      walk.firstPoint = -1;
+      walk.joins = 0;
       streamlines += 1;
       continue;
     }
@@ -1839,9 +2192,34 @@ export function advancePopulationPlacement(
         segmentCount += 1;
       }
       walk.previous = index;
+      if (walk.firstPoint < 0) walk.firstPoint = index;
       walk.tip2 = walk.tip1;
       walk.tip1 = walk.tip0;
       walk.tip0 = index;
+
+      // Anastomosis. A stepping walk may CLOSE onto a strand it is passing —
+      // one segment from the stored point to THIS one, which is the newest
+      // index in the buffer, so the prefix contract holds by construction
+      // exactly as it does for a fork. The rate rides the complement's own
+      // keep; the reach keeps the stroke at the layer's own scale; the cap
+      // keeps it a plexus. Nothing here writes a weight: a junction is matte,
+      // and that is the whole of the rule.
+      rememberPoint(index, walk.x, walk.z);
+      if (
+        walk.joins < POPULATION_JOIN_PER_FILAMENT
+        && joins < joinCeiling
+        && next() < populationJoinChance(sample.resolvedCoverage)
+      ) {
+        const target = closeOntoStrand(walk.x, y, walk.z, walk.firstPoint);
+        if (target >= 0) {
+          const pair = segmentCount * 2;
+          segments[pair] = target;
+          segments[pair + 1] = index;
+          segmentCount += 1;
+          joins += 1;
+          walk.joins += 1;
+        }
+      }
 
       if (
         walk.generation < POPULATION_STREAMLINE_MAX_GENERATION
@@ -1876,6 +2254,7 @@ export function advancePopulationPlacement(
   state.count = count;
   state.segmentCount = segmentCount;
   state.streamlines = streamlines;
+  state.joins = joins;
   state.work = work;
   state.branchWritten = branchWritten;
   state.done = count >= capacity || work >= ceiling;
