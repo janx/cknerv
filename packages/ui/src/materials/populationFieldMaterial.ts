@@ -151,8 +151,8 @@ export function populationPointEnergy(
  * independent-point build sat AT that floor: its points, however carefully
  * weighted onto the fibre corridors, carried no more orientation than a random
  * spray, which is exactly the "reads as spray, not tissue" the layer failed on.
- * Placing the points on filaments and NOT drawing the fibres measures 0.196 —
- * still the floor. The strokes are the whole of the effect.
+ * Placing the points on filaments and NOT drawing the fibres measures 0.184 —
+ * the floor exactly. The strokes are the whole of the effect.
  *
  * The cost is +6.7% total light and no change in covered area (27.4% of the
  * frame against the previous build's 27.3%), because the point count came down

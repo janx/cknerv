@@ -66,10 +66,11 @@ function neverRaycast(): void {}
  * The layer is two draws over ONE buffer of positions: the points, and the
  * fibres that connect consecutive points on a filament. The fibres are what
  * make it read as tissue rather than as spray. Measured at the production
- * camera, the points alone carry an orientation coherence of 0.196 against a
- * Poisson floor of 0.194 — a density modulation cannot look like a drawn
- * thread, and at ~2.5 points per pixel the noise of an independent draw eats
- * every modulation there is. With the fibres the same field measures 0.333.
+ * camera the points alone measure an orientation coherence of 0.184, which is
+ * the Poisson floor to three decimals, and so does the 260,000-point spray
+ * this replaced — a density modulation cannot look like a drawn thread, and at
+ * ~2.5 points per pixel the noise of an independent draw eats every modulation
+ * there is. With the fibres the same field measures 0.333.
  *
  * It replaces a screen-space construction that could not be made to read as
  * part of this scene, for two structural reasons that no amount of tuning
