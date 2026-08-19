@@ -80,8 +80,66 @@ import {
  * The envelope is a SAMPLING bound — it keeps the drawn set compact — and not
  * a fact about the population, which is exactly why moving it for the
  * unresolved layer is legitimate and moving the rim is not.
+ *
+ * ## Why 1.6, and why it is not larger
+ *
+ * Live review: "the cells galaxy should be somewhat smaller than the peer
+ * network". At 2.2 it was not. Measured at the production camera over the real
+ * placement and the real colony, worst of four galaxy rotations, the halo's
+ * projected convex hull covered **2.08x** the colony's, with 58% of its points
+ * outside the colony's own hull. The peer mesh is the transport around the
+ * organism and has to read as enclosing it; a display convention had outgrown
+ * the measured object beside it.
+ *
+ * ## Why 1.6, and why it is not smaller
+ *
+ * The budget is conserved, so pulling the edge in concentrates the same
+ * 105,000 points into less area. That is the honest answer to the second half
+ * of the same review — "the centre could be brighter, more brilliant" — and it
+ * comes from density rather than from a brightness knob. But it is bounded
+ * from below by three separate measurements that all turn over between 1.5 and
+ * 1.7, and none of them is the containment one:
+ *
+ * | edge | hull vs colony | points inside the resolved rim | pre-rim C/L | peak rendered L |
+ * |-----:|---------------:|-------------------------------:|------------:|----------------:|
+ * | 2.2  | 2.075          | 0.274                          | 0.1473      | 0.3659          |
+ * | 1.7  | 0.905          | 0.455                          | 0.1264      | 0.4248          |
+ * | 1.6  | **0.756**      | **0.490**                      | **0.1223**  | **0.4258**      |
+ * | 1.5  | 0.650          | 0.553                          | 0.1165      | 0.4376          |
+ * | 1.3  | 0.468          | 0.724                          | 0.1061      | 0.4521          |
+ *
+ *  1. **The halo has to stay a halo.** Its exclusive ground is the ring
+ *     between the resolved rim (1.04) and this edge; the envelope's inner
+ *     shoulder is fixed at 0.61 in `helix.ts` and does not follow. So closing
+ *     the edge does not slide the layer inward as a whole — it moves its mass
+ *     ONTO the Cells. The share of placed points inside the resolved rim
+ *     crosses one half at edge **1.585**. Below that the layer is more infill
+ *     than halo, which is a different picture from the one that was specified.
+ *  2. **The complement is what shreds it.** Acceptance is probabilistic, so on
+ *     ground the Cells half-occupy it drops every other point and the filament
+ *     becomes beads. That is correct per point and ruinous per stroke: the
+ *     share of points carried by fibre components of 8 or more runs 0.816 at
+ *     2.2, 0.701 here, and 0.526 at 1.3.
+ *  3. **Concentration eats chroma**, because bounded-screen accumulation
+ *     converges to the emitted alpha in every channel. Rendered C/L in the
+ *     pre-rim band falls 0.1473 -> 0.1223 here, and at 1.3 reaches **0.1061 —
+ *     below the 0.1095 of the two-endpoint ramp that live review rejected as
+ *     grey-white**. The colour work of `cab0d7b` survives at 1.6 and is spent
+ *     by 1.3.
+ *
+ * 1.6 is the smallest edge that clears all three, and it is the containment
+ * answer as well: 0.756 of the colony's projected area, 0.87 of it linearly.
+ *
+ * ⚠️ The brightness this buys saturates long before the damage does. Peak
+ * rendered lightness is +16.4% here and only +23.6% at 1.3, because the extra
+ * points land on ground the complement rejects — so the last third of the
+ * reduction buys 7% more light for 25% less stroke.
+ *
+ * ⚠️ `COLONY_RADIUS = 92` is NOT the colony's extent: `COLONY_ELLIPSE_X/Z`
+ * carry it to 115 x 78. Compare against the projected hull, never against
+ * that constant.
  */
-export const POPULATION_FIELD_OUTER_EDGE = 2.2;
+export const POPULATION_FIELD_OUTER_EDGE = 1.6;
 
 /**
  * How many points the halo carries.

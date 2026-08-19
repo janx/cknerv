@@ -29,6 +29,11 @@ import {
 } from '../../src/helix';
 import { cellPointSize } from '../../src/components/CellGalaxy';
 import {
+  COLONY_ELLIPSE_X,
+  COLONY_ELLIPSE_Z,
+  COLONY_RADIUS,
+} from '../../src/derives/networkTopology.derive';
+import {
   populationPointSizeForWeight,
   POPULATION_FIELD_SIGMA,
 } from '../../src/materials/populationFieldMaterial';
@@ -57,21 +62,33 @@ function spriteFlux(size: number, sigma: number, peak: number): number {
   return peak * s * s;
 }
 
+/** Bin width of the radial grid, in absolute elliptical radius.
+ *
+ *  ⚠️ FIXED, and never `POPULATION_FIELD_OUTER_EDGE / bins`. It used to be the
+ *  latter, and that made every reading below a function of the constant they
+ *  are the acceptance test FOR: changing the edge reshuffled the grid, so two
+ *  edges could not be compared and a regression could hide inside a rebinning.
+ *  An instrument cannot evaluate its own subject. */
+const PROFILE_BIN = 0.05;
+/** Out past any edge this layer will take, so the grid never truncates. */
+const PROFILE_BINS = 52;
+
 /** The radial luminance profile, in perceptual lightness, binned by elliptical
- *  radius. This is the measurement §5.2's brightness rule is derived from, and
- *  it is here so the derivation stays checkable rather than remembered. */
-function radialProfile(bins: number): {
-  cells: number[]; halo: number[]; lightness: number[];
+ *  radius on a FIXED grid. This is the measurement §5.2's brightness rule is
+ *  derived from, and it is here so the derivation stays checkable rather than
+ *  remembered. */
+function radialProfile(): {
+  cells: number[]; halo: number[]; lightness: number[]; haloDensity: number[];
 } {
   const CELL_SIGMA = 0.10;   // cellHybridMaterial's Gaussian width
   const CELL_PEAK = 1.18;    // what a Cell body emits at its core
   const EMISSION = 0.72;     // populationEmissionForGain at mainnet chain scope
-  const cells = new Array(bins).fill(0);
-  const halo = new Array(bins).fill(0);
+  const cells = new Array(PROFILE_BINS).fill(0);
+  const halo = new Array(PROFILE_BINS).fill(0);
   const binOf = (x: number, z: number) => {
     const r = Math.hypot(x / FIELD_HALF_X, z / FIELD_HALF_Z);
-    const b = Math.floor((r / POPULATION_FIELD_OUTER_EDGE) * bins);
-    return b >= 0 && b < bins ? b : -1;
+    const b = Math.floor(r / PROFILE_BIN);
+    return b >= 0 && b < PROFILE_BINS ? b : -1;
   };
   for (let i = 0; i < 12_000; i += 1) {
     const id = i * 7 + 1000003;
@@ -88,19 +105,27 @@ function radialProfile(bins: number): {
       EMISSION,
     ) * (POPULATION_FIELD_POINTS / SAMPLE_POINTS);
   }
-  const lightness = cells.map((c, b) => {
-    const r1 = (b / bins) * POPULATION_FIELD_OUTER_EDGE;
-    const r2 = ((b + 1) / bins) * POPULATION_FIELD_OUTER_EDGE;
-    const area = Math.PI * FIELD_HALF_X * FIELD_HALF_Z * (r2 * r2 - r1 * r1);
-    return Math.cbrt((c + halo[b]) / area);   // OKLab-style perceptual
-  });
-  return { cells, halo, lightness };
+  const shellArea = (b: number) => {
+    const r1 = b * PROFILE_BIN;
+    const r2 = (b + 1) * PROFILE_BIN;
+    return Math.PI * FIELD_HALF_X * FIELD_HALF_Z * (r2 * r2 - r1 * r1);
+  };
+  const lightness = cells.map((c, b) =>
+    Math.cbrt((c + halo[b]) / shellArea(b)));   // OKLab-style perceptual
+  const haloDensity = halo.map((h, b) => h / shellArea(b));
+  return { cells, halo, lightness, haloDensity };
 }
 
 describe('the radial luminance profile the brightness rule is solved from', () => {
-  const BINS = 44;
-  const profile = radialProfile(BINS);
-  const at = (r: number) => Math.min(BINS - 1, Math.floor((r / POPULATION_FIELD_OUTER_EDGE) * BINS));
+  const profile = radialProfile();
+  const at = (r: number) => Math.min(PROFILE_BINS - 1, Math.floor(r / PROFILE_BIN));
+  /** Last bin the halo actually reaches, so "the outer field" is named by the
+   *  placement rather than by a radius pinned to one era's edge. */
+  const outermost = (() => {
+    let last = at(TISSUE_ENVELOPE_EDGE) + 2;
+    for (let b = last; b < PROFILE_BINS; b += 1) if (profile.halo[b] > 0) last = b;
+    return last;
+  })();
 
   it('has no step where the addressable Cells stop', () => {
     // §5.2 said the Cells "stop dead at radius 1.04" and that a brightness
@@ -108,10 +133,17 @@ describe('the radial luminance profile the brightness rule is solved from', () =
     // profile crosses the rim flatter than it moves anywhere in the outer
     // field. The rule that used to taper brightness outward was answering a
     // feature that is not in the frame.
+    //
+    // The margin narrows as the edge closes, because the outer field then has
+    // less room to fall through, and this is the number that says how much:
+    // the rim step against the typical outer step runs 0.16 at edge 2.2 and
+    // 0.39 at 1.6 (0.0134 against 0.0346 on the shipped 105,000-point
+    // placement). Still no knee — but the outer boundary is 2.1x harder, and
+    // that is the price the containment answer was bought with.
     const rim = at(TISSUE_ENVELOPE_EDGE);
     const acrossRim = Math.abs(profile.lightness[rim + 1] - profile.lightness[rim]);
     const outerSteps: number[] = [];
-    for (let b = at(1.3); b < at(1.9); b += 1) {
+    for (let b = rim + 2; b < outermost; b += 1) {
       outerSteps.push(Math.abs(profile.lightness[b + 1] - profile.lightness[b]));
     }
     const typicalOuter = outerSteps.reduce((s, v) => s + v, 0) / outerSteps.length;
@@ -129,25 +161,71 @@ describe('the radial luminance profile the brightness rule is solved from', () =
     };
     // Thresholds are loose because this file samples 20,000 points against
     // the shipped 105,000; the shipped placement hands over earlier still
-    // (half by radius 0.72, a tenth by 0.93, 1.3% at the rim).
+    // (0.70 at radius 0.60, 0.07 at 0.95, 1.9% at the rim).
     expect(share(0.60)).toBeGreaterThan(0.5);
     expect(share(0.95)).toBeLessThan(0.20);
     expect(share(TISSUE_ENVELOPE_EDGE)).toBeLessThan(0.06);
   });
 
-  it('brightens across the mixed band as the Cells thin', () => {
+  it('brightens across the band where the Cells hand over', () => {
     // §5.2's requirement, and it is met by the halo's own density rather than
     // by a per-point brightness rule — which is why brightness could be freed
-    // to be flat. Rendered halo luminance per unit area, over the band.
-    const density = (r: number) => {
+    // to be flat.
+    //
+    // ⚠️ The band is named by the HANDOVER, not by the resolved rim. It used
+    // to assert that the halo was still climbing at 1.04, which was true at
+    // edge 2.2 by where the peak happened to sit and is not a requirement:
+    // measured on the shipped placement the Cells' share of light is 0.70 at
+    // radius 0.60 and 0.07 by 0.95, so the handover is over well before the
+    // rim, and at edge 1.6 the halo's density peaks at 0.95 with the Cells
+    // already gone. What §5.2 asks is that the halo rise THROUGH the thinning
+    // and only then fall away, and that is what is asserted.
+    const density = (r: number) => profile.haloDensity[at(r)];
+    const cellShare = (r: number) => {
       const b = at(r);
-      const r1 = (b / BINS) * POPULATION_FIELD_OUTER_EDGE;
-      const r2 = ((b + 1) / BINS) * POPULATION_FIELD_OUTER_EDGE;
-      return profile.halo[b] / (Math.PI * FIELD_HALF_X * FIELD_HALF_Z * (r2 * r2 - r1 * r1));
+      return profile.cells[b] / (profile.cells[b] + profile.halo[b]);
     };
+    expect(cellShare(0.70)).toBeGreaterThan(cellShare(0.95));
     expect(density(0.80)).toBeGreaterThan(density(0.70));
     expect(density(0.95)).toBeGreaterThan(density(0.80));
-    expect(density(TISSUE_ENVELOPE_EDGE)).toBeGreaterThan(density(0.95));
+    // And past the handover it falls, rather than ending on a cliff: the last
+    // shell carrying halo light is dimmer than the peak, monotonically.
+    expect(density(0.95)).toBeGreaterThan(profile.haloDensity[outermost]);
+  });
+});
+
+describe('the galaxy sits inside the network that delivers to it', () => {
+  it('sweeps a smaller footprint than the colony', () => {
+    // Live review, 2026-08-19: "the cells galaxy should be somewhat smaller
+    // than the peer network". This is asserted as a PROPERTY and never as an
+    // edge value, because the failure it guards is exactly an edge constant
+    // drifting out past the network while every other test stays green.
+    //
+    // ⚠️ `COLONY_RADIUS` alone is NOT the colony's extent — `COLONY_ELLIPSE_X`
+    // and `COLONY_ELLIPSE_Z` carry it to 115 x 78 world units. Comparing the
+    // halo's 132 against a bare 92 is what the first pass at this did, and it
+    // is wrong on both sides of the comparison.
+    //
+    // The galaxy group turns on Y, so its silhouette over a full rotation is a
+    // DISC of its own outer radius, whatever shape it holds at any instant.
+    // The colony does not turn. So the honest comparison is that disc against
+    // the colony's ellipse, by area.
+    const radii: number[] = [];
+    for (let i = 0; i < placed.count; i += 1) {
+      radii.push(Math.hypot(placed.positions[i * 3], placed.positions[i * 3 + 2]));
+    }
+    radii.sort((a, b) => a - b);
+    // The 99th percentile, not the maximum: a rotating body's silhouette is
+    // what the eye reads as its edge, and the last hundredth of a filamentary
+    // layer is a scatter of specks that never draws one.
+    const swept = radii[Math.floor(0.99 * radii.length)];
+    const colonyFootprint = COLONY_RADIUS * COLONY_ELLIPSE_X
+      * COLONY_RADIUS * COLONY_ELLIPSE_Z;
+    // Measured on the shipped 105,000-point placement: 0.846 at edge 1.6,
+    // against 1.55 at the 2.2 live review rejected. Projecting both clouds
+    // through the production camera and comparing convex hulls agrees —
+    // 0.756 there, worst of four galaxy rotations.
+    expect((swept * swept) / colonyFootprint).toBeLessThan(0.90);
   });
 });
 
@@ -362,14 +440,32 @@ describe('the fibres connect halo points and nothing else', () => {
 
   it('draws strokes, not dust', () => {
     // The count of components is the wrong statistic and it misled a whole
-    // round: a third of components are one or two points, but they hold under
-    // 4% of the light. Weight by POINTS, which is what the eye sees.
+    // round: a third of components are one or two points, but they hold a
+    // small share of the light. Weight by POINTS, which is what the eye sees.
+    //
+    // ⚠️ THIS FLOOR RIDES `POPULATION_FIELD_OUTER_EDGE`, and it was 0.80 while
+    // that edge was 2.2. The mechanism is the complement, and it is worth
+    // stating because it is not obvious: acceptance is PROBABILISTIC, so on
+    // ground the Cells half-occupy it drops every other candidate and a
+    // filament becomes beads. Correct per point, ruinous per stroke. Closing
+    // the edge does not slide the layer inward as a whole — the envelope's
+    // inner shoulder is fixed at 0.61 in `helix.ts` — it moves the layer's
+    // mass ONTO the Cells, so the share of points inside the resolved rim
+    // goes 0.27 -> 0.49 and this share follows it down:
+    //
+    //   edge  2.2    1.7    1.6    1.5    1.3
+    //   share 0.816  0.726  0.701  0.662  0.526     (105,000 points)
+    //
+    // So 0.65 is this edge's floor, not a weakened version of the old one.
+    // The light the specks carry is the check that the number still means
+    // what it meant: components of one or two points hold 15.5% of the
+    // layer's flux here, against 6.8% at edge 2.2.
     const size = componentSizes();
     let inStrokes = 0;
     for (let i = 0; i < placed.count; i += 1) {
       if (size.of[i] >= 8) inStrokes += 1;
     }
-    expect(inStrokes / placed.count).toBeGreaterThan(0.8);
+    expect(inStrokes / placed.count).toBeGreaterThan(0.65);
   });
 
   it('frays into the Cells rather than everywhere', () => {
@@ -564,7 +660,14 @@ describe('the halo follows the law it says it follows', () => {
     }
     uniformDensity /= grid * grid;
 
-    expect(placedDensity).toBeGreaterThan(uniformDensity * 1.8);
+    // ⚠️ The multiple RIDES `POPULATION_FIELD_OUTER_EDGE`, because the null
+    // is a uniform draw over the halo's own sampling box and that box shrinks
+    // with the edge. What a rejection sampler on `density` can reach at all is
+    // `E[d^2]/E[d]^2` over the box — 3.03 at edge 2.2 and 2.72 at 1.6, since
+    // tightening the box removes exactly the empty corners the sampler was
+    // rejecting. Measured: 2.23 of a possible 3.03 at 2.2, and 1.71 of 2.72
+    // here. The law is unchanged; the headroom it had is smaller.
+    expect(placedDensity).toBeGreaterThan(uniformDensity * 1.6);
   });
 
   it('runs its filaments in bundles, not in a plate of noodles', () => {
@@ -928,18 +1031,27 @@ describe('the cascade trim keeps the layer a set of strokes', () => {
     // shredding the layer: a prefix keeps whole filaments, and a branch only
     // ever reaches BACK, so thinning cannot orphan a point that a later
     // segment would have connected. Measured on the shipped 105,000-point
-    // placement the share runs 0.816 / 0.822 / 0.824 at 1 / 0.5 / 0.25 — it
-    // rises slightly, because the early filaments are the well-connected ones.
+    // placement the share runs 0.701 / 0.701 / 0.690 at 1 / 0.5 / 0.25.
+    //
+    // The subject here is the TRIM, not the edge: what this test owns is that
+    // taking a prefix costs nothing, and that claim is scale-free. The
+    // absolute level belongs to `POPULATION_FIELD_OUTER_EDGE` and is asserted
+    // once, with its derivation, in 'draws strokes, not dust'.
     const placed = placePopulationField(20_000, POPULATION_FIELD_SEED);
-    for (const mul of [1, 0.5, 0.25]) {
+    const shares = [1, 0.5, 0.25].map((mul) => {
       const points = Math.round(placed.count * mul);
       const segments = populationSegmentsForPointPrefix(
         placed.segments,
         placed.segmentCount,
         points,
       );
-      expect(strokeShare(placed.segments, segments, points))
-        .toBeGreaterThan(0.8);
+      return strokeShare(placed.segments, segments, points);
+    });
+    for (const share of shares) {
+      // Never materially below the undrawn full buffer — a prefix may not
+      // turn strokes into dust.
+      expect(share).toBeGreaterThan(shares[0] - 0.03);
+      expect(share).toBeGreaterThan(0.65);
     }
   });
 });
