@@ -178,6 +178,12 @@ import {
  *     | i.i.d.     | 0.816 | 0.697 | 0.701 | 0.662 | 0.526 |
  *     | correlated | 0.870 | 0.832 | **0.809** | 0.791 | 0.717 |
  *
+ *     That column is an edge sweep under one length law and is read that way.
+ *     The 1.6 figure has since moved to **0.811** under the tissue-keyed
+ *     length and fork ramps ({@link POPULATION_STREAMLINE_REACH_DENSITY}); the
+ *     shape of the row — monotone inward, spent by 1.3 — is a property of the
+ *     complement and the edge, not of the length law, so the bound stands.
+ *
  *     ⚠️ It still falls monotonically inward and 1.3 still costs a tenth of
  *     the layer's stroke against 1.6, so this remains a real reason not to
  *     close the edge further — it is simply no longer the tightest of the
@@ -449,9 +455,15 @@ export function populationPointWeight(
  * Three points, not more: at {@link POPULATION_STREAMLINE_STEP} that is 3.75
  * world units of fade against a median drawn run of 7.50, and a fourth would
  * be fading more of the layer than it leaves. Measured on the shipped
- * 105,000-point placement, the three rungs already take **13.1% / 11.1% /
- * 9.8%** of every point placed, so a third of the layer is inside a fade and
- * two thirds are not.
+ * 105,000-point placement, the three rungs take **14.6% / 12.5% / 11.2%** of
+ * every point placed, so 38% of the layer is inside a fade and 62% is not.
+ *
+ * ⚠️ Those were 13.1% / 11.1% / 9.8% before the density-keyed length and fork
+ * ramps ({@link POPULATION_STREAMLINE_REACH_DENSITY}), and the rise is the
+ * ramps and not this array: shorter filaments and more forks mean 15.9% more
+ * strands, and every strand has exactly one of these ends. A fade is a fixed
+ * three points however long the strand is, so the share of the layer inside
+ * one rises with the strand count by construction.
  *
  * ## What it costs, and where the light goes
  *
@@ -669,10 +681,195 @@ export const POPULATION_STREAMLINE_STEP = 1.25;
  * was accepted — not a thing this constant can fix. Closing it wants the
  * sprite footprint and the step re-solved together, at which point the point
  * count and the coverage budget come with them.
+ *
+ * ## Re-derived 2026-08-19 again, and this time the ceiling MOVED — because
+ * ## it stopped being a constant
+ *
+ * All three numbers below are exactly what they were. What changed is that the
+ * SPAN between them is now a function of the tissue the filament was born on
+ * ({@link populationStreamlineSpan}), so "the longest run this layer draws" is
+ * a property of the ground rather than of a constant. The paragraphs above
+ * asked for one lever that could shorten the fringe without shortening the
+ * corridors; the tissue is that lever, and it was already being sampled.
+ *
+ * Measured on the shipped 105,000-point placement, drawn runs in world units,
+ * binned by the mean elliptical radius of each run:
+ *
+ * | band | p50 | p90 | p95 | max | forks/100 pts |
+ * |---|---:|---:|---:|---:|---:|
+ * | pre-rim < 0.95   | 5.00 -> 5.00  | 13.75 -> **12.50** | 17.50 -> 16.25 | 31.25 -> 31.25 | 1.93 -> 2.45 |
+ * | mixed 0.95–1.15  | 11.25 -> 10.00 | 25.00 -> **20.00** | 27.50 -> 23.75 | 31.25 -> 31.25 | 3.21 -> 4.19 |
+ * | outer 1.15–1.375 | 13.75 -> 10.00 | 26.25 -> **18.75** | 28.75 -> 22.50 | 31.25 -> 31.25 | 3.31 -> 5.24 |
+ * | fringe >= 1.375  | 10.00 -> 7.50  | 22.50 -> **12.50** | 25.00 -> 15.00 | 31.25 -> 28.75 | 2.81 -> 5.11 |
+ *
+ * Layer-wide, p50 holds at 7.50 (it is pinned by the dotted-line coupling in
+ * {@link POPULATION_STREAMLINE_STEP} and was never the target), p90 falls
+ * 21.25 -> **17.50** and p99 30.00 -> 27.50. Against the fabric that is p90
+ * 5.25x -> **4.32x** and p50 3.42x, unchanged. The spread p90/p50 goes 2.83 ->
+ * 2.33 — narrower, still nothing like the uniform draw that read as felt.
+ *
+ * ⚠️ **The maxima do not move in the two inner bands, and that is the
+ * construction and not a miss.** The key is read ONCE, where the filament is
+ * seeded. A corridor filament draws its full 26 steps and then walks 32 world
+ * units — a third of the field's half-width — so it can be born in the mixed
+ * band and have its mean radius land in the outer one. Only the fringe's own
+ * maximum falls, because only a fringe-BORN filament is short. Capping the
+ * outer band's longest runs would need the length re-read as the walk travels,
+ * which clips filaments at a density contour and puts back exactly the edge
+ * {@link POPULATION_STREAMLINE_DENSITY_FLOOR} was lowered to remove.
+ *
+ * ## The dust floor is the segment budget. They are one number.
+ *
+ * The design asked this phase to hand back the segments
+ * {@link POPULATION_COMPLEMENT_CORRELATION_STEPS} spent — 94,762 down to the
+ * standing 87,964 — while holding the "strokes, not dust" guard at 0.80. Those
+ * two requirements are the same quantity read twice, and they contradict each
+ * other. The drawn graph is a FOREST: every segment joins a new point to one
+ * already placed, and nothing ever closes a cycle, so
+ *
+ * > **components = points − segments**, exactly, at every tuning.
+ *
+ * 94,762 segments IS 10,238 components. 87,964 would be **17,036** — a 66%
+ * rise, at a fixed 105,000 points, so a mean component of 6.2 points against a
+ * guard that wants 8. It is not a coincidence that the layer last had that
+ * many components under the i.i.d. complement, where the stroke share measured
+ * **0.701**. Giving the segments back means giving the strand-survival fix
+ * back; there is no third option, and the guard is the one the user's eye
+ * ruled on.
+ *
+ * Swept anyway — some 300 parameterisations at 105,000 points — the best
+ * segment count reachable at each floor:
+ *
+ * | constraint | best segments | what it costs |
+ * |---|---:|---|
+ * | stroke share >= 0.811 (as shipped) | **94,848** | nothing |
+ * | >= 0.803, these two constants unchanged | 94,477 | the guard's whole margin |
+ * | >= 0.803, MIN free (7/26) | 94,122 | the margin, and the floor moves |
+ * | >= 0.800, MIN/MAX free (8/14) | 91,458 | the length spread, the corridors, the ladder |
+ * | 87,964 (the design's number) | unreachable at any tuning | the complement fix |
+ *
+ * The exchange inside this phase is the same identity read once more, and it
+ * is worth having as three rows because it is the whole of the tuning:
+ *
+ * | | segments | stroke share |
+ * |---|---:|---:|
+ * | before | 94,762 | 0.809 |
+ * | + tissue-keyed length only | **93,440** | **0.772** (through the floor) |
+ * | + tissue-keyed fork supply | 94,848 | 0.811 |
+ *
+ * The length ramp frees 1,322 segments and 3.7 points of stroke share; the
+ * fork supply buys the share back and spends 1,408 segments doing it, because
+ * a fork is a filament that did not start a component. There is no ordering of
+ * those two that keeps both.
+ *
+ * So this phase lands at **94,848 segments, +0.09%** — the ladder above for
+ * free, and the recovery recorded as impossible rather than approximated.
+ *
+ * ⚠️ The earlier sweep's finding survives intact and was re-confirmed: a
+ * global shortening falls straight through the floor. What it could not see is
+ * WHY, and the why is arithmetic — the guard's unit is EIGHT points and
+ * {@link POPULATION_STREAMLINE_MIN_STEPS} is 6. Out in the fringe the
+ * complement accepts nearly everything, so a filament's step count is its
+ * component's point count; any law that pushes filaments onto MIN puts them
+ * under the guard by construction, whatever the ceiling does. That is what
+ * {@link POPULATION_STREAMLINE_REACH_FLOOR} and the raised fork supply in
+ * {@link populationBranchRecordChance} are for, and between them the layer
+ * shortens its fringe by 44% at p90 while the stroke share goes 0.809 ->
+ * **0.811**.
+ *
+ * Worker CPU, min-of-9 at 105,000 points on one machine: **+0.3%**, which is
+ * well inside the run-to-run spread. The pass runs 15.9% more filaments
+ * (12,586 -> 14,581) for 1.3% more field evaluations (2.205 -> 2.235 per
+ * placed point): a filament costs one seed attempt and its steps, and the
+ * steps are the point budget, which did not move.
  */
 export const POPULATION_STREAMLINE_MIN_STEPS = 6;
 export const POPULATION_STREAMLINE_MAX_STEPS = 26;
 export const POPULATION_STREAMLINE_LENGTH_EXPONENT = 1.6;
+
+/**
+ * How much tissue a filament needs under it to draw its full length — the
+ * single key the length, the fork rate and the fork SUPPLY all ride.
+ *
+ * `reach = min(1, density / this)`. One over the halo's own density, read
+ * where the filament STARTS: at the seed for fresh tissue, at the parent point
+ * for a fork (the reservoir carries it, see {@link PopulationPlacementState}).
+ * Nothing new is evaluated for it — both are samples the walk already made.
+ *
+ * ## Why the START and not the whole walk
+ *
+ * A walk that re-read the tissue every step would shorten as it left the
+ * corridor, which is a different construction: it would clip filaments at the
+ * density contour and put a soft edge back exactly where
+ * {@link POPULATION_STREAMLINE_DENSITY_FLOOR} was lowered to remove one. Read
+ * once, the key says what tissue a filament was BORN in, and a filament born
+ * in a corridor keeps its arc wherever it ends up. The cost is visible in the
+ * measurements below and is stated rather than hidden: the outer band's
+ * longest runs do not move, because they are corridor filaments that walked
+ * out, and a start-keyed law cannot reach them.
+ *
+ * ## Why 0.40
+ *
+ * Measured over the shipped placement, `density` at the point each filament
+ * was seeded from runs p50 **0.413** for fresh tissue and **0.260** for fork
+ * parents, and the placed points' own filaments carry a seed density of p50
+ * 0.414 / 0.332 / 0.216 / 0.122 across the pre-rim / mixed / outer / fringe
+ * bands. 0.40 is the value that leaves the two inner bands at or near full
+ * reach and takes the outer and fringe to reach 0.54 and 0.31 — spans of 0.58
+ * and 0.36 once {@link POPULATION_STREAMLINE_REACH_FLOOR} is in. That is the
+ * ladder the tier design asks for, keyed to the tissue's own numbers rather
+ * than to a radius.
+ *
+ * ⚠️ It is NOT {@link POPULATION_TAPER_DENSITY_FULL}. That constant answers
+ * "as dense as the layer ever DRAWS" and saturates at 0.6, above the density
+ * three quarters of all seeds sit at; used here it would shorten the corridors
+ * too, which is the naive global shortening the sweep in
+ * {@link POPULATION_STREAMLINE_MIN_STEPS} already showed falls through the
+ * dust floor.
+ */
+export const POPULATION_STREAMLINE_REACH_DENSITY = 0.4;
+
+/**
+ * The share of the length span the emptiest tissue still draws.
+ *
+ * Not zero, and the floor is the dust guard's arithmetic rather than caution.
+ * The guard counts points on fibre components of EIGHT or more, and
+ * {@link POPULATION_STREAMLINE_MIN_STEPS} is 6 — below it. Out in the fringe
+ * the complement accepts nearly everything, so a filament's step count IS its
+ * component's point count, and a law that collapses the span onto MIN puts
+ * every fringe filament under the guard by construction. Measured with the
+ * fork supply left where it was, a span floor of 0 takes the layer-wide share
+ * from 0.809 to **0.763**, which is the "dust" failure in its purest form —
+ * not a filament that got shorter but a stroke that stopped being one.
+ *
+ * 0.08 leaves the emptiest ground drawing 6-7 steps, and the fringe's own
+ * median seed density (0.122, measured) drawing 6-13 — so a typical fringe
+ * filament is still a stroke on its own, and the ones that fall short are what
+ * the raised fork supply in {@link populationBranchRecordChance} catches.
+ */
+export const POPULATION_STREAMLINE_REACH_FLOOR = 0.08;
+
+/**
+ * The tissue's reach at one density, in `[0, 1]`. Zero is the open fringe;
+ * one is corridor ground.
+ */
+export function populationTissueReach(density: number): number {
+  return clamp01(density / POPULATION_STREAMLINE_REACH_DENSITY);
+}
+
+/**
+ * The length span, in steps, a filament born on this tissue draws from.
+ *
+ * `MIN + span * u^EXPONENT` keeps its skewed shape exactly — what moves is
+ * where the tail ends. Corridor ground draws the full 20 steps of span the
+ * layer always drew; the open fringe draws 1.6 of them.
+ */
+export function populationStreamlineSpan(density: number): number {
+  return (POPULATION_STREAMLINE_MAX_STEPS - POPULATION_STREAMLINE_MIN_STEPS)
+    * (POPULATION_STREAMLINE_REACH_FLOOR
+      + (1 - POPULATION_STREAMLINE_REACH_FLOOR)
+        * populationTissueReach(density));
+}
 
 /**
  * How much of the previous heading survives one step, before the field's own
@@ -714,15 +911,48 @@ export const POPULATION_STREAMLINE_WANDER = 0.22;
 
 /**
  * Share of filaments that start on an existing filament instead of on fresh
- * tissue.
+ * tissue, on CORRIDOR ground.
  *
  * This is where the branch points come from. A field of unconnected curves
  * reads as combed fibre; tissue bifurcates. The child inherits its parent's
  * vertical offset so the two actually meet in three dimensions rather than
  * crossing at different heights, and the first segment is emitted from the
  * PARENT's own point index, so the fork is drawn and not merely implied.
+ *
+ * Unchanged at 0.42, and now the DENSE end of a ramp: see
+ * {@link POPULATION_STREAMLINE_BRANCH_SHARE_OPEN}.
  */
 export const POPULATION_STREAMLINE_BRANCH_SHARE = 0.42;
+
+/**
+ * The same share on open ground, where the filaments are short.
+ *
+ * Terminal tissue arborizes: where a run cannot be long it should be BUSHY,
+ * or shortening it just thins the layer. So the fork rate rides
+ * {@link populationTissueReach} inversely — 0.85 in the open fringe against
+ * 0.42 in the corridors, keyed on the density at the PARENT point, which the
+ * reservoir already carries for the child's own length.
+ *
+ * ⚠️ **This constant alone cannot move the fork rate, and finding that out is
+ * what put {@link populationBranchRecordChance} here.** A fork needs a live
+ * reservoir slot, and slots are minted per emitted point at
+ * `BRANCH_RECORD_CHANCE`. Measured on the shipped 105,000-point placement,
+ * 4,643 slots are minted (0.05 of the points at generation < 2, less the ring
+ * overwrites) and **4,061 are consumed — 87% of the entire supply**. Driving
+ * this share from 0.42 to 1.0 with nothing else changed moves
+ * the fork count 4,061 -> 4,352, +7%, and the layer's fork-point share not at
+ * all (2.75% -> 2.77%). The seed-time share decides WHICH slots become
+ * children once there are slots to choose between; it is not the rate.
+ */
+export const POPULATION_STREAMLINE_BRANCH_SHARE_OPEN = 0.85;
+
+/** The fork share at one tissue density — the reach key, read inversely. */
+export function populationBranchShare(density: number): number {
+  return POPULATION_STREAMLINE_BRANCH_SHARE_OPEN
+    + (POPULATION_STREAMLINE_BRANCH_SHARE
+      - POPULATION_STREAMLINE_BRANCH_SHARE_OPEN)
+      * populationTissueReach(density);
+}
 
 /** Fork half-angle range, in radians. Wide enough to read as a branch at the
  *  filament scale and narrow enough that the child still belongs to the
@@ -747,10 +977,37 @@ export const POPULATION_STREAMLINE_MAX_GENERATION = 2;
  *  are drawn from across the whole field rather than from the last few
  *  filaments walked. */
 const BRANCH_RESERVOIR = 4096;
-/** Chance that a given emitted point is recorded as a branch candidate. Low,
- *  so the reservoir turns over slowly and stays spatially mixed — a filament
- *  of average length offers about one place to fork from. */
+/** Chance that a point emitted on CORRIDOR ground is recorded as a branch
+ *  candidate. Unchanged at 0.05: low, so the reservoir turns over slowly and
+ *  stays spatially mixed — a filament of average length offers about one place
+ *  to fork from. */
 const BRANCH_RECORD_CHANCE = 0.05;
+/** And on open ground, where the same rate would starve the forks.
+ *
+ *  This is the other half of the fork PROBABILITY, and the half that actually
+ *  carries it — see {@link POPULATION_STREAMLINE_BRANCH_SHARE_OPEN} for the
+ *  measurement that says so. Raising it where the tissue is thin is what pays
+ *  for the shortened runs out there: a filament that draws six steps in the
+ *  open fringe is under the dust guard on its own, and a fork attaches it to
+ *  its parent's component instead of leaving it as a speck. Measured, with
+ *  {@link POPULATION_STREAMLINE_REACH_FLOOR} at 0.08 the layer-wide stroke
+ *  share runs **0.772 at 0.05, 0.811 at 0.12, 0.838 at 0.16** — the floor is
+ *  bought here and nowhere else.
+ *
+ *  ⚠️ It is not free in segments, and the exchange rate is exact: the drawn
+ *  graph is a FOREST, so `components = points - segments`. Every fork is a
+ *  filament that did NOT start a component, so every fork is one more segment.
+ *  0.12 is where the dust floor clears with a point of margin and the segment
+ *  count comes out at or under where it started. */
+const BRANCH_RECORD_CHANCE_OPEN = 0.12;
+
+/** How likely a point on this tissue is to be recorded as a place to fork
+ *  from. The reach key again, read inversely: thin ground offers more. */
+export function populationBranchRecordChance(density: number): number {
+  return BRANCH_RECORD_CHANCE_OPEN
+    + (BRANCH_RECORD_CHANCE - BRANCH_RECORD_CHANCE_OPEN)
+      * populationTissueReach(density);
+}
 
 /** A slot is CONSUMED when it is forked from.
  *
@@ -1007,7 +1264,16 @@ export const POPULATION_FIELD_COVERAGE_CEILING =
  *
  * Segments, and that is the honest price of the fix rather than an overrun:
  * **88,050 -> 94,762, +7.6%**, because every bead that becomes part of a
- * stroke again is a segment that was not being drawn. The draws are
+ * stroke again is a segment that was not being drawn.
+ *
+ * ⚠️ **That price is not refundable, and the reason is stated once, in
+ * {@link POPULATION_STREAMLINE_MIN_STEPS}: the drawn graph is a forest, so
+ * `components = points - segments`.** The 6,712 segments this constant costs
+ * ARE the 6,712 fragments it healed. A later phase asked for them back while
+ * holding the stroke share at 0.80 and the two turned out to be the same
+ * number; the layer now sits at 94,848 with a stroke share of 0.811.
+ *
+ * The draws are
  * primitive-bound (halving primitives gives 0.43–0.45x the time), so that is
  * about +0.15 ms of the fibres' 1.97 ms at 4K — a twentieth of the adaptive
  * controller's own high-to-med step, and the layer's point budget and both
@@ -1197,6 +1463,11 @@ export interface PopulationPlacementState {
   branchOffset: Float64Array;
   branchPoint: Int32Array;
   branchGeneration: Int32Array;
+  /** The tissue density at each recorded point. The child's own reach key —
+   *  it decides the child's length and the chance the slot is forked from at
+   *  all — captured from the sample the walk had already made when it recorded
+   *  the slot, so a fork costs no field evaluation either. */
+  branchDensity: Float64Array;
   branchWritten: number;
 }
 
@@ -1216,6 +1487,12 @@ interface WalkState {
   wander: number;
   /** How many forks deep this filament is. Fresh tissue is 0. */
   generation: number;
+  /** The tissue density this filament was BORN on — the seed's own sample for
+   *  fresh tissue, the parent point's for a fork. Read once, at the seed, and
+   *  then only through {@link populationTissueReach}: it sets how far this
+   *  filament may run, and it is why a corridor filament keeps its arc after
+   *  it has walked out into thin ground. */
+  seedDensity: number;
   /** Index of the last point emitted on this filament, or -1 when the
    *  complement broke it. A break must not be bridged. */
   previous: number;
@@ -1262,6 +1539,7 @@ export function createPopulationPlacement(
       offset: 0,
       wander: 0,
       generation: 0,
+      seedDensity: 0,
       previous: -1,
       complement: 0,
       tip0: -1,
@@ -1275,6 +1553,7 @@ export function createPopulationPlacement(
     branchOffset: new Float64Array(BRANCH_RESERVOIR),
     branchPoint: new Int32Array(BRANCH_RESERVOIR),
     branchGeneration: new Int32Array(BRANCH_RESERVOIR),
+    branchDensity: new Float64Array(BRANCH_RESERVOIR),
     branchWritten: 0,
   };
 }
@@ -1358,9 +1637,11 @@ export function advancePopulationPlacement(
     if (walk.stepsLeft <= 0) {
       work += 1;
 
+      // The slot is drawn BEFORE the fork is decided, which is the reverse of
+      // the order this used to run in. The share is keyed on the ground the
+      // parent point stands on, and there is no key until a slot is in hand.
       const reservoir = Math.min(branchWritten, BRANCH_RESERVOIR);
-      let forking = reservoir > 0
-        && next() < POPULATION_STREAMLINE_BRANCH_SHARE;
+      let forking = reservoir > 0;
       let slot = 0;
       let parent = BRANCH_CONSUMED;
       if (forking) {
@@ -1370,6 +1651,10 @@ export function advancePopulationPlacement(
         // through to fresh tissue instead of looping, or the pass does twice
         // the work once the reservoir is mostly consumed.
         if (parent === BRANCH_CONSUMED) forking = false;
+        else {
+          forking = next()
+            < populationBranchShare(state.branchDensity[slot]);
+        }
       }
 
       if (forking) {
@@ -1384,6 +1669,7 @@ export function advancePopulationPlacement(
         walk.offset = state.branchOffset[slot];
         walk.previous = parent;
         walk.generation = state.branchGeneration[slot] + 1;
+        walk.seedDensity = state.branchDensity[slot];
         const fork = POPULATION_STREAMLINE_FORK_MIN
           + next() * (POPULATION_STREAMLINE_FORK_MAX
             - POPULATION_STREAMLINE_FORK_MIN);
@@ -1410,9 +1696,13 @@ export function advancePopulationPlacement(
         const nz = z / FIELD_HALF_Z;
         const radial = Math.sqrt(nx * nx + nz * nz);
         if (u >= populationPlacementMajorant(radial)) continue;
-        if (u >= tissueSampleAt(x, z, POPULATION_FIELD_OUTER_EDGE).density) {
-          continue;
-        }
+        // The rejection test's own sample is the filament's reach key. It was
+        // being computed and thrown away; keeping it costs one store.
+        const seedDensity = tissueSampleAt(
+          x, z, POPULATION_FIELD_OUTER_EDGE,
+        ).density;
+        if (u >= seedDensity) continue;
+        walk.seedDensity = seedDensity;
         walk.x = x;
         walk.z = z;
         walk.offset = gaussian();
@@ -1425,8 +1715,7 @@ export function advancePopulationPlacement(
         walk.dirZ = 0;
       }
 
-      const span = POPULATION_STREAMLINE_MAX_STEPS
-        - POPULATION_STREAMLINE_MIN_STEPS;
+      const span = populationStreamlineSpan(walk.seedDensity);
       walk.stepsLeft = POPULATION_STREAMLINE_MIN_STEPS + Math.floor(
         span * next() ** POPULATION_STREAMLINE_LENGTH_EXPONENT,
       );
@@ -1556,7 +1845,7 @@ export function advancePopulationPlacement(
 
       if (
         walk.generation < POPULATION_STREAMLINE_MAX_GENERATION
-        && next() < BRANCH_RECORD_CHANCE
+        && next() < populationBranchRecordChance(sample.density)
       ) {
         const slot = branchWritten % BRANCH_RESERVOIR;
         state.branchX[slot] = walk.x;
@@ -1566,6 +1855,7 @@ export function advancePopulationPlacement(
         state.branchOffset[slot] = walk.offset;
         state.branchPoint[slot] = index;
         state.branchGeneration[slot] = walk.generation;
+        state.branchDensity[slot] = sample.density;
         branchWritten += 1;
       }
     } else {

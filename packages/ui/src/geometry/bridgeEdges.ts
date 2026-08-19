@@ -128,6 +128,13 @@ export const BRIDGE_HOST_COVERAGE_CEILING =
  * The dust floor matches the halo's own (`components ≥ 8`, the guard the
  * placement's run-length work is bounded by); the strand tier is the measured
  * median component size of the prefix.
+ *
+ * ⭐ Re-measured after the halo's tissue-keyed length and fork ramps, which
+ * shorten the outer bands' filaments and fork them harder: the prefix's median
+ * component is **still exactly 21** (its mean fell 27.7 -> 27.2). The ramps
+ * redistribute the tail rather than the middle, so this tier did not have to
+ * move — and it was checked rather than assumed, because a stale tier boundary
+ * would silently re-rank every anchor in the field.
  */
 export const BRIDGE_DUST_COMPONENT = 8;
 export const BRIDGE_STRAND_COMPONENT = 21;
@@ -177,6 +184,14 @@ export const BRIDGE_ANCHOR_SEPARATION = BRIDGE_ANCHOR_REACH * 0.5;
  * it, 11.3% and 7. The convergence is a doctrinal ceiling and the dust share
  * is a preference — the preference gives way, and 11.3% is still 1.7x better
  * than the prefix's own 19.3% baseline.
+ *
+ * ⚠️ Re-measured after the halo's tissue-keyed length and fork ramps, one
+ * recipe throughout (12,000 staged Cells, all degree 0): without the minimum
+ * 5.8% -> **4.4%** on dust at a worst convergence of 9 -> 7; with it, 10.8% ->
+ * **9.4%** at 6 -> 6, against a prefix baseline of 19.3% -> 19.4%. Every arm
+ * improved and the trade the constant makes is unchanged in shape. The gain is
+ * the halo's, not this module's: shorter, bushier outer filaments give the
+ * ranking more distinct non-dust components to choose between near each host.
  */
 export const BRIDGE_ANCHOR_POOL = 32;
 export const BRIDGE_ANCHOR_POOL_MIN = 8;

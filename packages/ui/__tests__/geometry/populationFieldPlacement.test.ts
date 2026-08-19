@@ -18,12 +18,22 @@ import {
   POPULATION_FIELD_POINTS,
   POPULATION_FIELD_SEED,
   POPULATION_STREAMLINE_JITTER,
+  POPULATION_STREAMLINE_BRANCH_SHARE,
+  POPULATION_STREAMLINE_BRANCH_SHARE_OPEN,
   POPULATION_STREAMLINE_MAX_GENERATION,
+  POPULATION_STREAMLINE_MAX_STEPS,
+  POPULATION_STREAMLINE_MIN_STEPS,
+  POPULATION_STREAMLINE_REACH_DENSITY,
+  POPULATION_STREAMLINE_REACH_FLOOR,
   POPULATION_STREAMLINE_STEP,
   POPULATION_TAPER_COVERAGE_LIFT,
   POPULATION_TAPER_DENSITY_FULL,
+  populationBranchRecordChance,
+  populationBranchShare,
   populationPointWeight,
   populationSegmentsForPointPrefix,
+  populationStreamlineSpan,
+  populationTissueReach,
 } from '../../src/geometry/populationFieldPlacement';
 import {
   FIELD_HALF_X,
@@ -477,11 +487,20 @@ describe('the fibres connect halo points and nothing else', () => {
     //   correlated   0.870  0.832  0.809  0.791  0.717
     //
     // So the floor is the original 0.80 again, and it is a real gate rather
-    // than a record: measured 0.809 on the shipped placement and 0.814 on this
-    // file's 20,000, which is between one and two points of headroom. It is
-    // the number the run-length work has to be arbitrated against — shortening
-    // a filament does not just shorten the drawn curve, it breaks the curve
-    // into dust.
+    // than a record: measured **0.811** on the shipped placement and 0.813 on
+    // this file's 20,000, which is between one and two points of headroom.
+    //
+    // ⚠️ Those two were 0.809 / 0.814 before the tissue-keyed length and fork
+    // ramps, and holding them THROUGH a 44% cut to the fringe's p90 run is
+    // what that phase had to buy. It did not buy it with the length law: a
+    // span floor of zero takes this to 0.763, because the guard's unit is
+    // EIGHT points and POPULATION_STREAMLINE_MIN_STEPS is 6, so a law that
+    // pushes fringe filaments onto MIN makes dust by construction (the length
+    // ramp on its own lands at 0.772). It bought it with the fork SUPPLY — see
+    // populationBranchRecordChance. This number
+    // is also, exactly, the segment budget: the drawn graph is a forest, so
+    // `components = points - segments`, and a floor on component size is a
+    // ceiling on component count.
     const size = componentSizes();
     let inStrokes = 0;
     for (let i = 0; i < placed.count; i += 1) {
@@ -505,6 +524,12 @@ describe('the fibres connect halo points and nothing else', () => {
     // ground instead of beading across it. The ratio of the two is 33.3 ->
     // 9.0, and the claim it guards is unchanged: what breaks up still breaks
     // up in the Cells and not in open halo.
+    //
+    // Re-measured after the tissue-keyed ramps, on this file's 20,000: 352
+    // singletons at 0.270 against 0.0284 inside components of 16 or more,
+    // ratio 9.5. The ramps shorten the FRINGE, where coverage is zero and the
+    // complement never fires, so they leave this comparison where it was —
+    // which is the check that they shortened the right band.
     //
     // ⚠️⚠️ It cannot be tightened back. Strokes reaching into the transition
     // band IS the mixed register the halo is being asked to speak.
@@ -589,29 +614,41 @@ describe('the fibres connect halo points and nothing else', () => {
     // under the k-NN correction while its max did not, so these ratios went
     // 1.5x -> 4.0x and 2.80x -> 5.86x without the halo changing at all.
     //
-    // ⚠️ Re-derived twice since. At edge 1.6 the drawn runs are shorter than
-    // that era's — p50 6.25 wu, p90 18.75, so 2.85x and 4.63x — and then
+    // ⚠️ Re-derived three times since. At edge 1.6 the drawn runs are shorter
+    // than that era's — p50 6.25 wu, p90 18.75, so 2.85x and 4.63x — and then
     // correlating the complement lengthened them again to 7.50 / 21.25 wu,
     // **3.42x and 5.25x**. That direction is not incidental: the breaks the
     // i.i.d. draw scattered through the mixed band were CUTTING runs, so
     // healing the strand-shredding bug spends part of its gain on exactly the
-    // length regression recorded here. The max is unmoved at 31.25 (1.16x) —
-    // it is bounded by the step cap, not by the complement.
-    // Neither lever can follow — fewer steps breaks the "strokes, not dust"
-    // floor above, and the step length is set against the sprite footprint.
-    // See POPULATION_STREAMLINE_MIN_STEPS for the swept numbers. These bounds
-    // exist to catch the runs growing FURTHER, not to claim the gap is shut.
+    // length regression recorded here.
+    //
+    // Then the length span became a function of the tissue each filament was
+    // born on (POPULATION_STREAMLINE_REACH_DENSITY), and the p90 came back:
+    // 21.25 -> **17.50 wu, 5.25x -> 4.32x**, with p50 pinned at 7.50 (3.42x)
+    // because the dotted-line reading owns it. The bound below is TIGHTENED to
+    // match rather than left where it was. The max is unmoved at 31.25 (1.16x)
+    // and cannot follow: the key is read at the SEED, so a corridor filament
+    // keeps its full 26 steps wherever it walks. What did move is the fringe's
+    // own maximum, 31.25 -> 28.75, and its p90, 22.50 -> 12.50 — the ladder is
+    // per band and is asserted as such below.
     expect(at(0.5)).toBeLessThan(FABRIC_EDGE_P50 * 4.4);
-    expect(at(0.9)).toBeLessThan(FABRIC_EDGE_P90 * 6.2);
+    expect(at(0.9)).toBeLessThan(FABRIC_EDGE_P90 * 5.0);
 
     // And the spread SURVIVES. A uniform draw between two bounds is what made
     // an earlier pass read as felt — every filament the same size, no
     // hierarchy, no reading order — so shortening the tail must not flatten
-    // the distribution onto one length.
+    // the distribution onto one length. Measured 2.83 before the tissue-keyed
+    // span and **2.33** after: narrower, because that is what shortening a
+    // tail does, and nowhere near the uniform draw.
     expect(at(0.9) / at(0.5)).toBeGreaterThan(2);
   });
 
   it('forks, so the tissue branches instead of combing', () => {
+    // Measured 2.83% of placed points before the tissue-keyed fork ramps and
+    // **3.98%** after, on this file's 20,000 — and the rise is where the runs
+    // shortened: per band it goes 2.08 -> 2.68 / 3.42 -> 3.98 / 2.99 -> 5.43 /
+    // 3.08 -> 4.72 across pre-rim / mixed / outer / fringe. Terminal tissue
+    // arborises; where a run cannot be long it has to be bushy instead.
     const degree = new Int32Array(placed.count);
     for (let i = 0; i < placed.segmentCount * 2; i += 1) {
       degree[placed.segments[i]] += 1;
@@ -619,6 +656,196 @@ describe('the fibres connect halo points and nothing else', () => {
     let forks = 0;
     for (let i = 0; i < placed.count; i += 1) if (degree[i] > 2) forks += 1;
     expect(forks).toBeGreaterThan(placed.count * 0.005);
+  });
+});
+
+/** Elliptical radius of a placed point, on the law's own axes. */
+function radiusOf(index: number): number {
+  const { x, z } = pointAt(index);
+  return Math.hypot(x / FIELD_HALF_X, z / FIELD_HALF_Z);
+}
+
+/** The four bands the tier design names, by elliptical radius: the resolved
+ *  interior, the mixed band the 次级神经 live in, and the outer field split in
+ *  two. Fixed boundaries, never derived from `POPULATION_FIELD_OUTER_EDGE` —
+ *  an instrument may not be a function of the thing it measures. */
+const LADDER_BANDS: ReadonlyArray<readonly [string, number, number]> = [
+  ['pre-rim', 0, 0.95],
+  ['mixed', 0.95, 1.15],
+  ['outer', 1.15, 1.375],
+  ['fringe', 1.375, Infinity],
+];
+
+/** Drawn runs in world units, per band. A run is binned by the MEAN radius of
+ *  its points and not by where it starts: a 26-step filament crosses a third
+ *  of the field's half-width, so "where this stroke is" is not the same
+ *  question as "where it was seeded". */
+function runsByBand(): number[][] {
+  const perBand: number[][] = LADDER_BANDS.map(() => []);
+  let run = 0;
+  let radiusSum = 0;
+  let previousEnd = -2;
+  const flush = () => {
+    if (run <= 0) return;
+    const mean = radiusSum / (run + 1);
+    let band = LADDER_BANDS.length - 1;
+    for (let b = 0; b < LADDER_BANDS.length; b += 1) {
+      if (mean >= LADDER_BANDS[b][1] && mean < LADDER_BANDS[b][2]) band = b;
+    }
+    perBand[band].push(run * POPULATION_STREAMLINE_STEP);
+  };
+  for (let i = 0; i < placed.segmentCount; i += 1) {
+    const a = placed.segments[i * 2];
+    const b = placed.segments[i * 2 + 1];
+    if (a === previousEnd) {
+      run += 1;
+      radiusSum += radiusOf(b);
+    } else {
+      flush();
+      run = 1;
+      radiusSum = radiusOf(a) + radiusOf(b);
+    }
+    previousEnd = b;
+  }
+  flush();
+  for (const band of perBand) band.sort((x, y) => x - y);
+  return perBand;
+}
+
+describe('the tissue decides how far a filament runs, and how often it forks', () => {
+  const quantile = (sorted: number[], q: number) =>
+    sorted[Math.floor(q * (sorted.length - 1))];
+
+  it('reads one key, and reads it as a ramp on the halo\'s own density', () => {
+    // ONE key for three laws — length, fork share, fork supply — so the layer
+    // cannot be tuned into disagreeing with itself about where its terminal
+    // tissue is.
+    expect(populationTissueReach(0)).toBe(0);
+    expect(populationTissueReach(POPULATION_STREAMLINE_REACH_DENSITY)).toBe(1);
+    expect(populationTissueReach(9)).toBe(1);
+    expect(populationTissueReach(0.2))
+      .toBeGreaterThan(populationTissueReach(0.1));
+    // And it saturates BELOW the taper's own "as dense as the layer ever
+    // draws". They are different questions: the taper asks how much light a
+    // mark carries, this asks how much tissue a filament has to run through.
+    // Keyed at 0.6 the corridors would shorten too, which is the naive global
+    // shortening the dust floor already rejected.
+    expect(POPULATION_STREAMLINE_REACH_DENSITY)
+      .toBeLessThan(POPULATION_TAPER_DENSITY_FULL);
+  });
+
+  it('scales the span and never the floor, so the draw keeps its shape', () => {
+    const span = POPULATION_STREAMLINE_MAX_STEPS
+      - POPULATION_STREAMLINE_MIN_STEPS;
+    expect(populationStreamlineSpan(POPULATION_STREAMLINE_REACH_DENSITY))
+      .toBeCloseTo(span, 12);
+    expect(populationStreamlineSpan(0))
+      .toBeCloseTo(span * POPULATION_STREAMLINE_REACH_FLOOR, 12);
+    expect(populationStreamlineSpan(0.2))
+      .toBeLessThan(populationStreamlineSpan(0.35));
+
+    // ⭐ THE structural guard, and the arithmetic is the whole reason the
+    // floor is not zero. "Draws strokes, not dust" counts components of EIGHT
+    // points, and MIN_STEPS is 6 — below it. Out in the fringe the complement
+    // accepts nearly everything, so a filament's step count IS its component's
+    // point count. A span that collapsed to zero would put every fringe
+    // filament under the guard however the ceiling was tuned: measured, a span
+    // floor of 0 takes the layer-wide stroke share from 0.809 to 0.763.
+    expect(POPULATION_STREAMLINE_REACH_FLOOR).toBeGreaterThan(0);
+    expect(POPULATION_STREAMLINE_MIN_STEPS).toBeLessThan(8);
+  });
+
+  it('forks more exactly where it runs less, on both halves of the probability', () => {
+    // The seed-time share, keyed inversely.
+    expect(populationBranchShare(0))
+      .toBeCloseTo(POPULATION_STREAMLINE_BRANCH_SHARE_OPEN, 12);
+    expect(populationBranchShare(POPULATION_STREAMLINE_REACH_DENSITY))
+      .toBeCloseTo(POPULATION_STREAMLINE_BRANCH_SHARE, 12);
+    expect(POPULATION_STREAMLINE_BRANCH_SHARE_OPEN)
+      .toBeGreaterThan(POPULATION_STREAMLINE_BRANCH_SHARE);
+
+    // ⚠️ And the supply, which is the half that actually carries the rate.
+    // A fork needs a live reservoir slot; slots are minted per emitted point.
+    // Measured on the shipped placement, 4,643 slots are minted and 4,061
+    // consumed — 87% of the whole supply — so driving the share above from
+    // 0.42 to 1.0 with nothing else changed moves the fork count 4,061 ->
+    // 4,352 and the layer's fork-point share not at all. Both halves have to
+    // ride the key or "forks rise where runs shorten" is a comment.
+    expect(populationBranchRecordChance(0))
+      .toBeGreaterThan(populationBranchRecordChance(
+        POPULATION_STREAMLINE_REACH_DENSITY,
+      ));
+    expect(populationBranchRecordChance(9))
+      .toBe(populationBranchRecordChance(
+        POPULATION_STREAMLINE_REACH_DENSITY,
+      ));
+  });
+
+  it('runs its ladder downhill outward, which it did not used to', () => {
+    // ⭐ THE gate this phase exists for. G2: "the fringe reads as combed hair,
+    // not a terminal network" — and G3 recorded the length rung as INVERTED,
+    // the longest strokes in the frame sitting furthest out. Measured before
+    // the tissue-keyed span, p90 of the drawn runs ran 13.75 / 25.00 / **26.25**
+    // / 22.50 wu across pre-rim / mixed / outer / fringe: the outer band was
+    // the longest thing in the picture. After: 12.50 / 20.00 / 18.75 / 12.50.
+    //
+    // Asserted as an ORDERING and not as values, because the values are a
+    // sample-size statistic and the ordering is the anatomy: trunks inside,
+    // fine short endings outside.
+    const runs = runsByBand();
+    const [, mixed, outer, fringe] = runs;
+    expect(mixed.length).toBeGreaterThan(100);
+    expect(outer.length).toBeGreaterThan(100);
+    expect(fringe.length).toBeGreaterThan(50);
+
+    const p90 = (band: number[]) => quantile(band, 0.9);
+    expect(p90(mixed)).toBeGreaterThanOrEqual(p90(outer));
+    expect(p90(outer)).toBeGreaterThan(p90(fringe));
+    // And the fringe is not merely last, it is markedly shorter — the "twiggy"
+    // half of the requirement. Measured 12.50 against the mixed band's 20.00.
+    expect(p90(fringe)).toBeLessThan(p90(mixed) * 0.7);
+    // p95 rather than the maximum, deliberately: the maximum is an extreme of
+    // a few thousand runs and moves with the sample, while the ladder is a
+    // distributional claim. Measured 22.50 / 22.50 / 13.75 here and 23.75 /
+    // 22.50 / 15.00 on the shipped 105,000.
+    const p95 = (band: number[]) => quantile(band, 0.95);
+    expect(p95(fringe)).toBeLessThan(p95(mixed) * 0.75);
+
+    // ⚠️ The two inner MAXIMA do not move and are not asserted. The key is
+    // read once, at the seed, so a corridor filament draws its full span and
+    // then walks 32 world units — it can be born in the mixed band and have
+    // its mean radius land in the outer one. Only a fringe-BORN filament is
+    // short, so only the fringe's own maximum falls (31.25 -> 28.75 on the
+    // shipped placement). Capping the rest would mean re-reading the tissue
+    // mid-walk, which clips filaments at a density contour and puts back the
+    // hard outer edge POPULATION_STREAMLINE_DENSITY_FLOOR was lowered to
+    // remove.
+  });
+
+  it('puts its extra branch points in the bands whose runs it cut', () => {
+    // The other half of the same claim, measured on the drawn graph rather
+    // than on the constants: fork points per 100 placed points, by band, went
+    // 2.08 / 3.42 / 2.99 / 3.08 before the ramps to 2.68 / 3.98 / 5.43 / 4.72
+    // after. The outer and fringe bands roughly doubled; the pre-rim, whose
+    // runs the complement was already cutting, barely moved.
+    const degree = new Int32Array(placed.count);
+    for (let i = 0; i < placed.segmentCount * 2; i += 1) {
+      degree[placed.segments[i]] += 1;
+    }
+    const forks = new Array(LADDER_BANDS.length).fill(0);
+    const points = new Array(LADDER_BANDS.length).fill(0);
+    for (let i = 0; i < placed.count; i += 1) {
+      const radius = radiusOf(i);
+      let band = LADDER_BANDS.length - 1;
+      for (let b = 0; b < LADDER_BANDS.length; b += 1) {
+        if (radius >= LADDER_BANDS[b][1] && radius < LADDER_BANDS[b][2]) band = b;
+      }
+      points[band] += 1;
+      if (degree[i] > 2) forks[band] += 1;
+    }
+    const rate = (band: number) => forks[band] / points[band];
+    expect(rate(2)).toBeGreaterThan(rate(0) * 1.5);
+    expect(rate(3)).toBeGreaterThan(rate(0) * 1.5);
   });
 });
 
@@ -1082,8 +1309,8 @@ describe('the cascade trim keeps the layer a set of strokes', () => {
     // shredding the layer: a prefix keeps whole filaments, and a branch only
     // ever reaches BACK, so thinning cannot orphan a point that a later
     // segment would have connected. Measured on the shipped 105,000-point
-    // placement the share runs 0.809 / 0.812 / 0.807 at 1 / 0.5 / 0.25, and
-    // 0.814 / 0.816 / 0.817 on this file's 20,000.
+    // placement the share runs 0.811 / 0.809 / 0.806 at 1 / 0.5 / 0.25, and
+    // 0.813 / 0.813 / 0.810 on this file's 20,000.
     //
     // The subject here is the TRIM, not the edge: what this test owns is that
     // taking a prefix costs nothing, and that claim is scale-free. The
@@ -1272,10 +1499,12 @@ describe('the complement is correlated along a filament, and nowhere else', () =
     // drew beads: the share of ITS points carried by fibre components of eight
     // or more was 0.203, against 0.697 for the layer as a whole.
     //
-    // Measured correlated: 0.542 on the shipped 105,000-point placement, and
-    // 0.560 on this file's 20,000 sample. The floor sits well under both,
-    // because what is being asserted is that the i.i.d. figure is far behind
-    // — not that a particular number came back.
+    // Measured correlated: 0.550 on the shipped 105,000-point placement, and
+    // 0.550 on this file's 20,000 sample (0.542 / 0.560 before the
+    // tissue-keyed ramps, which barely touch this band — the shortening is
+    // keyed on `density` and this band is named by `resolvedCoverage`). The
+    // floor sits well under both, because what is being asserted is that the
+    // i.i.d. figure is far behind — not that a particular number came back.
     const size = componentSizes();
     let inBand = 0;
     let carried = 0;
@@ -1328,8 +1557,10 @@ describe('every strand ends as a fading tip', () => {
       seen.set(rung, (seen.get(rung) ?? 0) + 1);
     }
     // And all four are actually used. Measured on the shipped placement the
-    // three fade rungs take 13.1% / 11.1% / 9.8% of the buffer, so a third of
-    // the layer sits inside a fade and two thirds do not.
+    // three fade rungs take **14.6% / 12.5% / 11.2%** of the buffer, so 38% of
+    // the layer sits inside a fade and 62% does not. (13.1% / 11.1% / 9.8%
+    // before the tissue-keyed ramps: a fade is three points however long the
+    // strand is, so 15.9% more strands is 15.9% more fade.)
     for (const rung of POPULATION_END_TAPER) {
       expect(seen.get(rung) ?? 0).toBeGreaterThan(placed.count * 0.05);
     }
