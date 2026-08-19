@@ -111,6 +111,10 @@ interface TissueField {
    *  reads, so re-closing the envelope uses the same warped boundary and not
    *  a smooth ellipse. */
   radialWarped: number;
+  /** The boundary warp on its own. Carried out so a consumer re-closing the
+   *  envelope over a WIDER span can re-scale the tear to that span without
+   *  re-deriving the two noise octaves — see {@link boundaryWarpGain}. */
+  boundaryWarp: number;
 }
 
 /**
@@ -154,7 +158,9 @@ function tissueField(x: number, z: number): TissueField {
     + core * 0.10
     - cavity * 0.68;
 
-  return { density: clamp01(envelope * body), ridge, qx, qz, body, radialWarped };
+  return {
+    density: clamp01(envelope * body), ridge, qx, qz, body, radialWarped, boundaryWarp,
+  };
 }
 
 /**
@@ -272,6 +278,63 @@ export interface TissueSample {
   qz: number;
 }
 
+/** Bound on `|boundaryWarp|` at the DEFAULT edge: `valueNoise2` returns
+ *  [-1, 1] and the warp is `n * 0.13 + n * 0.055`. Analytic, not empirical —
+ *  a consumer using it as a rejection majorant is biased the moment it is
+ *  wrong. Mirrors the two coefficients in `tissueField`. */
+const BOUNDARY_WARP_BASE = 0.185;
+
+/**
+ * How much to scale the boundary warp when the envelope is re-closed at
+ * `outerEdge`, so the boundary stays as irregular RELATIVE TO ITS OWN RADIUS
+ * as the Cell rim's is.
+ *
+ * The warp displaces the boundary contour by its own amplitude, in units of
+ * the `FIELD_HALF_X/Z` ellipse — a fixed absolute wobble wherever the boundary
+ * is put. What the eye reads as an irregular OUTLINE is that wobble against
+ * the size of the outline: `0.185 / 1.04 = 0.178` at the Cell rim, and only
+ * `0.185 / 1.6 = 0.116` when the same warp is re-closed at 1.6. So the halo's
+ * silhouette is two thirds as wavy as the Cells' and reads as a clean
+ * elliptical cut. Holding the RATIO fixed makes the gain simply
+ * `outerEdge / TISSUE_ENVELOPE_EDGE`.
+ *
+ * ⭐ The general rule this encodes: **a warp amplitude calibrated against one
+ * boundary does not transfer to a boundary at a different radius.** Any
+ * constant in the same units as the thing it perturbs has to be re-derived
+ * when that thing is rescaled.
+ *
+ * ⚠️ There is a second, tempting derivation, and it was MEASURED and rejected:
+ * scaling the warp to the smoothstep's SPAN instead (`0.185 / 0.43 = 0.43` at
+ * the Cell edge, so gain 2.30 at 1.6). That one is about how hard or soft the
+ * fade looks, not how regular the outline is, and it costs what this design
+ * cannot spend — the halo's swept footprint against the colony goes 0.845 →
+ * 0.896 against a 0.90 ceiling, using 93% of the containment headroom, where
+ * this derivation uses 16% for 0.854. A torn edge reaches further in places
+ * than a smooth one at the same nominal radius, so raggedness and containment
+ * are the same axis and the outline is the half worth buying.
+ *
+ * Exactly `1` at {@link TISSUE_ENVELOPE_EDGE}, which is why `tissueSampleAt`
+ * at the default edge is still bit-identical to the sampler and the parity
+ * fixture never moves. It never goes below 1: a consumer closing the envelope
+ * EARLIER is cropping the drawn set, not restating the boundary, and shrinking
+ * the tear with it would smooth a rim the Cells are still standing on.
+ */
+export function boundaryWarpGain(
+  outerEdge: number = TISSUE_ENVELOPE_EDGE,
+): number {
+  return Math.max(1, outerEdge / TISSUE_ENVELOPE_EDGE);
+}
+
+/** Bound on `|boundaryWarp * boundaryWarpGain(outerEdge)|` — the full tear the
+ *  envelope at `outerEdge` can carry, and therefore how far past `outerEdge`
+ *  the closed envelope still has support. The authority for any rejection
+ *  majorant, and for any sampling box, taken against that envelope. */
+export function boundaryWarpBound(
+  outerEdge: number = TISSUE_ENVELOPE_EDGE,
+): number {
+  return BOUNDARY_WARP_BASE * boundaryWarpGain(outerEdge);
+}
+
 /** Evaluate the shared positional law at one `(x, z)`. See
  *  {@link TissueSample}. Pure, static, and identical across universes.
  *
@@ -300,8 +363,13 @@ export function tissueSampleAt(
   // At the default edge this is the same expression, in the same order, on
   // the same two numbers the field already produced — so `density` is
   // `field.density` to the bit, and no caller has to special-case it.
+  // The tear is re-scaled to the span this edge smears it across — the gain is
+  // exactly 1 at the default edge, so this line is the sampler's own value to
+  // the bit whenever the caller did not push the envelope out.
+  const warped = field.radialWarped
+    + field.boundaryWarp * (boundaryWarpGain(outerEdge) - 1);
   const density = clamp01(
-    (1 - smoothstep(0.61, outerEdge, field.radialWarped)) * field.body,
+    (1 - smoothstep(0.61, outerEdge, warped)) * field.body,
   );
   return {
     density,

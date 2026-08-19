@@ -62,6 +62,7 @@ import {
   FIELD_HALF_X,
   FIELD_HALF_Z,
   TISSUE_ENVELOPE_EDGE,
+  boundaryWarpBound,
   tissueSampleAt,
   valueNoise2,
 } from '../helix';
@@ -129,6 +130,12 @@ import {
  *
  * 1.6 is the smallest edge that clears all three, and it is the containment
  * answer as well: 0.756 of the colony's projected area, 0.87 of it linearly.
+ *
+ * ⚠️ That column is an edge-to-edge comparison on one rig and is read that
+ * way. The absolute containment figure moved afterwards, when the boundary
+ * warp began following its own radius: the swept-disc ratio the test actually
+ * gates went 0.845 → 0.862 against a 0.90 ceiling. Raggedness is spent out of
+ * containment, so the two are one axis and only one of them can be maximised.
  *
  * ⚠️ The brightness this buys saturates long before the damage does. Peak
  * rendered lightness is +16.4% here and only +23.6% at 1.3, because the extra
@@ -635,9 +642,12 @@ export const POPULATION_FIELD_SEED = 0x00c0ffee;
  * empirical: a majorant that is ever wrong silently biases the distribution.
  */
 const BODY_MAX = 1.545;
-/** Bound on `boundaryWarp`, which is `valueNoise2(...) * 0.13
- *  + valueNoise2(...) * 0.055` and `valueNoise2` returns [-1, 1]. */
-const BOUNDARY_WARP_MAX = 0.185;
+/** Bound on the boundary warp the envelope at this edge carries — the law's
+ *  own number, NOT a restatement of it. It grows with the edge: the warp is
+ *  re-scaled to the span the envelope smears it across, so a majorant taken
+ *  against the base amplitude would be too tight here and would silently thin
+ *  the outer fringe by rejecting candidates it never evaluated. */
+const BOUNDARY_WARP_MAX = boundaryWarpBound(POPULATION_FIELD_OUTER_EDGE);
 /** Where the law's envelope starts closing. Mirrors `tissueField`. */
 const ENVELOPE_INNER = 0.61;
 
@@ -859,8 +869,15 @@ export function advancePopulationPlacement(
   if (state.done) return state;
 
   const { positions, segments, weights, capacity, walk } = state;
-  const halfX = FIELD_HALF_X * POPULATION_FIELD_OUTER_EDGE;
-  const halfZ = FIELD_HALF_Z * POPULATION_FIELD_OUTER_EDGE;
+  // The box has to cover the envelope's SUPPORT, not its nominal edge: the
+  // boundary warp carries density out to `edge + warpBound`, and a box drawn
+  // at the edge itself crops that overshoot along a straight line — a crop
+  // the eye reads as a clean cut precisely because it is one. Cheap to widen:
+  // the seeds it adds are rejected by `populationPlacementMajorant` from the
+  // radius alone, before any noise is evaluated.
+  const seedEdge = POPULATION_FIELD_OUTER_EDGE + BOUNDARY_WARP_MAX;
+  const halfX = FIELD_HALF_X * seedEdge;
+  const halfZ = FIELD_HALF_Z * seedEdge;
   const ceiling = capacity * WORK_CEILING_PER_POINT;
   const budget = Math.max(1, Math.floor(workBudget));
 

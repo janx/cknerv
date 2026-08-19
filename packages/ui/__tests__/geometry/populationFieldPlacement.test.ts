@@ -221,10 +221,15 @@ describe('the galaxy sits inside the network that delivers to it', () => {
     const swept = radii[Math.floor(0.99 * radii.length)];
     const colonyFootprint = COLONY_RADIUS * COLONY_ELLIPSE_X
       * COLONY_RADIUS * COLONY_ELLIPSE_Z;
-    // Measured on the shipped 105,000-point placement: 0.846 at edge 1.6,
-    // against 1.55 at the 2.2 live review rejected. Projecting both clouds
-    // through the production camera and comparing convex hulls agrees —
-    // 0.756 there, worst of four galaxy rotations.
+    // Measured on the shipped 105,000-point placement: 0.862 at edge 1.6,
+    // against 1.55 at the 2.2 live review rejected.
+    //
+    // ⚠️ 0.845 of that is the edge; the boundary warp following its own radius
+    // (`boundaryWarpGain`) and the seeding box widening to cover it carry the
+    // rest. A torn edge reaches further in places than a smooth one at the
+    // same nominal radius, so raggedness spends containment — which is why
+    // the warp is scaled to the radius and not to the envelope's span, a
+    // derivation that measured 0.896 here and left nothing.
     expect((swept * swept) / colonyFootprint).toBeLessThan(0.90);
   });
 });
