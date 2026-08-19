@@ -105,7 +105,7 @@ export default function CellPopulationField({
   const startedRef = useRef(false);
 
   // Placement, off the main thread. Walking 105K points of filament against a
-  // twelve-octave field is ~150 ms of CPU — a long task arriving at exactly
+  // twelve-octave field is ~116 ms of CPU — a long task arriving at exactly
   // the moment the page is still assembling itself — and spreading it across
   // frames would trade that for seconds of absence. Absence is a legal state
   // for this layer, so the field simply is not there until the buffers land,
@@ -194,6 +194,14 @@ export default function CellPopulationField({
       requested: POPULATION_FIELD_POINTS,
       emission: material.uniforms.uEmission.value,
       fibreEmission: fibreMaterial.uniforms.uEmission.value,
+      // The taper, so a live look can tell which build is on screen without
+      // reading a shader. It reports what the layer was given; it never
+      // affects a number the HUD prints.
+      taper: {
+        sizeMin: material.uniforms.uSizeMin.value,
+        sizeMax: material.uniforms.uSizeMax.value,
+        floor: material.uniforms.uTaperFloor.value,
+      },
     });
     return () => { delete global.__populationFieldStats; };
   }, [material, fibreMaterial]);

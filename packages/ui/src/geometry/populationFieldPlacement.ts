@@ -106,8 +106,9 @@ export const POPULATION_FIELD_OUTER_EDGE = 2.2;
  * unresolved mainnet Cells, this is roughly one point per fourteen Cells
  * cknerv could not individuate.
  *
- * Cost: 1.3 MB of positions plus 0.8 MB of indices, uploaded once, two draw
- * calls — LESS memory than the 3.1 MB the previous build uploaded.
+ * Cost: 1.26 MB of positions, 0.84 MB of indices and 0.42 MB of taper weights,
+ * uploaded once, two draw calls — still LESS memory than the 3.1 MB the
+ * previous build uploaded, and the pass itself is 116 ms of worker CPU.
  */
 export const POPULATION_FIELD_POINTS = 105_000;
 
