@@ -137,6 +137,15 @@ import {
  * gates went 0.845 → 0.862 against a 0.90 ceiling. Raggedness is spent out of
  * containment, so the two are one axis and only one of them can be maximised.
  *
+ * ⚠️⚠️ **1.7 was on the table and is not any more, for that reason.** It was
+ * offered as the gentler-boundary fallback on a hull of 0.905, measured before
+ * the warp followed its radius. Re-measured with it, 1.7 sweeps **0.943**
+ * against the 0.90 ceiling — it fails containment outright, which is the one
+ * thing pulling the edge in was for. What it buys is marginal beside that:
+ * chroma retention +0.011 before the rim and +0.007 outside it, fibre runs of
+ * eight or more 0.697 → 0.735, at +12% frame coverage. The ladder now has one
+ * rung, and the boundary's own character is where the gentleness came from.
+ *
  * ⚠️ The brightness this buys saturates long before the damage does. Peak
  * rendered lightness is +16.4% here and only +23.6% at 1.3, because the extra
  * points land on ground the complement rejects — so the last third of the

@@ -370,6 +370,14 @@ export const POPULATION_FIBRE_ALPHA = 0.7;
  * layer's light, 0.4 buys 0.779 for 19%. Left alone: this is the knob live
  * review should be given, not one to spend pre-emptively.
  *
+ * ⭐ The two knobs compose, and the pairing worth knowing about is **0.8 with
+ * this taper**: retention 0.729 / 0.691 / 0.838 — better than the flat build
+ * in every band — while the layer's light comes back to −6% inside the rim
+ * instead of −11%, and the fringe still fades 20%. That is the answer if live
+ * review reports the layer as dimmer rather than as rosier. Raising a flat
+ * alpha alone is what must not be done: it buys light by spending exactly the
+ * chroma this change recovered.
+ *
  * ⭐ The general shape of the bug: a layer gained a second primitive, and the
  * taper that had been solved for the first one was never re-derived for it.
  */
