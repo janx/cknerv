@@ -18,6 +18,7 @@ import {
   POPULATION_TAPER_COVERAGE_LIFT,
   POPULATION_TAPER_DENSITY_FULL,
   populationPointWeight,
+  populationSegmentsForPointPrefix,
 } from '../../src/geometry/populationFieldPlacement';
 import {
   FIELD_HALF_X,
@@ -828,5 +829,117 @@ describe('the complement is a ramp, not a step', () => {
     );
     expect(mid).toBeGreaterThan(0.4);
     expect(mid).toBeLessThan(0.6);
+  });
+});
+
+describe('populationSegmentsForPointPrefix', () => {
+  it('keeps every segment whose both endpoints are inside the prefix', () => {
+    // Two filaments: points 0..3 and 4..6, each segment reaching its newest
+    // point, which is how the walk emits them.
+    const segments = [0, 1, 1, 2, 2, 3, 4, 5, 5, 6];
+    const count = 5;
+    for (let prefix = 0; prefix <= 7; prefix += 1) {
+      const kept = populationSegmentsForPointPrefix(segments, count, prefix);
+      for (let i = 0; i < kept; i += 1) {
+        expect(Math.max(segments[i * 2], segments[i * 2 + 1]))
+          .toBeLessThan(prefix);
+      }
+      if (kept < count) {
+        expect(Math.max(segments[kept * 2], segments[kept * 2 + 1]))
+          .toBeGreaterThanOrEqual(prefix);
+      }
+    }
+  });
+
+  it('is empty at prefix zero and complete at the full count', () => {
+    const segments = [0, 1, 1, 2, 2, 3];
+    expect(populationSegmentsForPointPrefix(segments, 3, 0)).toBe(0);
+    expect(populationSegmentsForPointPrefix(segments, 3, 4)).toBe(3);
+    expect(populationSegmentsForPointPrefix(segments, 0, 10)).toBe(0);
+  });
+
+  it('never lets a real placement dangle a segment past the drawn points', () => {
+    // The invariant the draw-range trim rests on, against the real walk: a
+    // branch reaches back to an earlier point, so the guarantee is about the
+    // LARGER index, and it has to hold on the shipped buffer, not a fixture.
+    const placed = placePopulationField(4_000, POPULATION_FIELD_SEED);
+    for (const share of [0, 0.25, 0.5, 0.75, 1]) {
+      const prefix = Math.round(placed.count * share);
+      const kept = populationSegmentsForPointPrefix(
+        placed.segments,
+        placed.segmentCount,
+        prefix,
+      );
+      for (let i = 0; i < kept; i += 1) {
+        expect(placed.segments[i * 2]).toBeLessThan(prefix);
+        expect(placed.segments[i * 2 + 1]).toBeLessThan(prefix);
+      }
+    }
+  });
+
+  it('thins monotonically with the prefix', () => {
+    const placed = placePopulationField(4_000, POPULATION_FIELD_SEED);
+    let previous = -1;
+    for (const share of [0, 0.25, 0.5, 0.75, 1]) {
+      const kept = populationSegmentsForPointPrefix(
+        placed.segments,
+        placed.segmentCount,
+        Math.round(placed.count * share),
+      );
+      expect(kept).toBeGreaterThanOrEqual(previous);
+      previous = kept;
+    }
+    expect(previous).toBe(placed.segmentCount);
+  });
+});
+
+describe('the cascade trim keeps the layer a set of strokes', () => {
+  /** Share of drawn points carried by fibre components of 8 or more — the
+   *  "draws strokes, not dust" guard, whose hard floor is 0.80. */
+  function strokeShare(
+    segments: ArrayLike<number>,
+    segmentCount: number,
+    points: number,
+  ): number {
+    const parent = new Int32Array(points);
+    for (let i = 0; i < points; i += 1) parent[i] = i;
+    const find = (start: number): number => {
+      let a = start;
+      while (parent[a] !== a) { parent[a] = parent[parent[a]]; a = parent[a]; }
+      return a;
+    };
+    for (let i = 0; i < segmentCount; i += 1) {
+      const a = find(segments[i * 2]);
+      const b = find(segments[i * 2 + 1]);
+      if (a !== b) parent[a] = b;
+    }
+    const size = new Map<number, number>();
+    for (let i = 0; i < points; i += 1) {
+      const root = find(i);
+      size.set(root, (size.get(root) ?? 0) + 1);
+    }
+    let carried = 0;
+    for (const [, n] of size) if (n >= 8) carried += n;
+    return carried / points;
+  }
+
+  it('holds the dust floor at every share the cascade can ask for', () => {
+    // This is what makes the preset trim legitimate rather than a way of
+    // shredding the layer: a prefix keeps whole filaments, and a branch only
+    // ever reaches BACK, so thinning cannot orphan a point that a later
+    // segment would have connected. Measured on the shipped 105,000-point
+    // placement the share runs 0.816 / 0.822 / 0.824 at 1 / 0.5 / 0.25 — it
+    // rises slightly, because the early filaments are the well-connected ones.
+    const placed = placePopulationField(20_000, POPULATION_FIELD_SEED);
+    for (const mul of [1, 0.5, 0.25]) {
+      const points = Math.round(placed.count * mul);
+      const segments = populationSegmentsForPointPrefix(
+        placed.segments,
+        placed.segmentCount,
+        points,
+      );
+      expect(strokeShare(placed.segments, segments, points))
+        .toBeGreaterThan(0.8);
+    }
   });
 });

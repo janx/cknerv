@@ -113,6 +113,37 @@ export const POPULATION_FIELD_OUTER_EDGE = 2.2;
 export const POPULATION_FIELD_POINTS = 105_000;
 
 /**
+ * The segment count that belongs to the first `pointPrefix` placed points.
+ *
+ * The walk emits a point and then the segment that reaches it, and a branch
+ * reaches back to a point it already emitted, so the larger index of a segment
+ * is the newest point at the moment it was written and is therefore monotone
+ * non-decreasing across the buffer. That makes the answer a binary search
+ * rather than a scan, and it makes a prefix of the segment buffer exactly the
+ * fibres of a prefix of the point buffer — no segment can dangle past the
+ * points that are drawn.
+ *
+ * Pure. `segments` holds index pairs, `2 * segmentCount` valid entries.
+ */
+export function populationSegmentsForPointPrefix(
+  segments: ArrayLike<number>,
+  segmentCount: number,
+  pointPrefix: number,
+): number {
+  if (pointPrefix <= 0 || segmentCount <= 0) return 0;
+  let low = 0;
+  let high = segmentCount;
+  while (low < high) {
+    const mid = (low + high) >>> 1;
+    const a = segments[mid * 2];
+    const b = segments[mid * 2 + 1];
+    if ((a > b ? a : b) < pointPrefix) low = mid + 1;
+    else high = mid;
+  }
+  return low;
+}
+
+/**
  * The complement — where the addressable Cells already occupy this tissue.
  *
  * A candidate is kept with probability `1 - resolvedCoverage / (2 * KNEE)`,

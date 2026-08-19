@@ -16,6 +16,7 @@ describe('QUALITY_PRESETS', () => {
       dischargeArms: 3,
       activeSamplesPerHop: 12,
       nucleusNearCap: 12,
+      populationCapMul: 1,
       memorySignal: {
         coreMinPx: 24,
         compactLinePx: 0.55,
@@ -100,5 +101,32 @@ describe('quality runtime ownership', () => {
     unsubscribe();
     // Restore module state for tests that mount production components later.
     setAdaptiveQuality('high');
+  });
+});
+
+describe('the halo participates in the cascade', () => {
+  // The defect this closes: the halo's two draws measured 4.77 ms of GPU per
+  // frame at 3840x2160 against 0.60 ms for the whole rest of the scene, and
+  // no preset field reached it — high and low measured 5.38 and 5.36 ms. A
+  // controller that can dim the picture but not speed it up steps down twice
+  // and never climbs back, which is exactly what a live machine reported.
+  it('draws the whole placement at high, so the reference picture is unchanged', () => {
+    expect(QUALITY_PRESETS.high.populationCapMul).toBe(1);
+  });
+
+  it('buys real frames on the way down, monotonically', () => {
+    expect(QUALITY_PRESETS.med.populationCapMul)
+      .toBeLessThan(QUALITY_PRESETS.high.populationCapMul);
+    expect(QUALITY_PRESETS.low.populationCapMul)
+      .toBeLessThan(QUALITY_PRESETS.med.populationCapMul);
+    // Cost is linear in primitive count, so the share IS the saving. Anything
+    // above this leaves the step-down too small to escape a dip.
+    expect(QUALITY_PRESETS.low.populationCapMul).toBeLessThanOrEqual(0.25);
+  });
+
+  it('keeps the layer present at every preset — a population, never absent', () => {
+    for (const preset of ['high', 'med', 'low'] as const) {
+      expect(QUALITY_PRESETS[preset].populationCapMul).toBeGreaterThan(0);
+    }
   });
 });

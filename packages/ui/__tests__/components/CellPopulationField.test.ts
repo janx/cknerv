@@ -258,13 +258,33 @@ describe('degradation', () => {
   });
 
   it('lets quality trim cost without changing what is stated', () => {
-    // The count is a population statement, so it does not scale with a
-    // preset. What already scales for free is the DPR cascade: the sprite is
-    // sized in drawing-buffer pixels, so high/med/low pay 4x/2.25x/1x for the
-    // same field at the same apparent brightness and the same point count.
-    expect(FIELD_CODE).not.toMatch(/high:|med:|low:/);
-    expect(FIELD_CODE).not.toContain('QUALITY_PRESETS');
+    // ⚠️ This test used to assert the OPPOSITE — that the layer must not read
+    // a preset at all, because "the DPR cascade already scales it for free:
+    // high/med/low pay 4x/2.25x/1x for the same field". Both halves of that
+    // are measurably wrong, which is why the halo was the one layer no preset
+    // could reach while costing 89% of the frame's GPU time.
+    //
+    // Measured 2026-08-19 with `EXT_disjoint_timer_query_webgl2` at 3840x2160:
+    //   - `resolveCanvasDpr(devicePixelRatio, maxDpr)` is `min(dpr, maxDpr)`,
+    //     so on a DPR-1 display the DPR cascade is a no-op at every preset.
+    //     High and low measured 5.38 ms and 5.36 ms — the whole cascade bought
+    //     0.4%.
+    //   - The draws are primitive-rate bound, not fill bound: 4.6x the sprite
+    //     area costs 12% more, while halving the COUNT halves the time. So a
+    //     smaller drawing buffer would not have scaled this layer even where
+    //     the DPR cascade does bite.
+    //
+    // What must not change with a preset is what the layer STATES: the counts
+    // and the scope are printed by the HUD from the derive, never from here,
+    // and the amount curve is a function of `gain` alone. A coarser sample of
+    // the same field is the same statement at a lower sampling density —
+    // exactly what `starsCount` is, and the reason `high` stays at 1.
+    expect(FIELD_CODE).toContain('QUALITY_PRESETS[quality].populationCapMul');
     expect(FIELD_CODE).toContain('uPixelRatio');
+    // The preset reaches the DRAW RANGE and nothing else: it may not touch the
+    // amount curve, the emission, or anything the HUD prints.
+    expect(FIELD_CODE).not.toMatch(/populationCapMul[^\n]*(Emission|gain)/);
+    expect(FIELD_CODE).toContain('setDrawRange');
   });
 });
 

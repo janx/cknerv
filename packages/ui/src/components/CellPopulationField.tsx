@@ -5,7 +5,9 @@ import * as THREE from 'three';
 import {
   POPULATION_FIELD_POINTS,
   POPULATION_FIELD_SEED,
+  populationSegmentsForPointPrefix,
 } from '../geometry/populationFieldPlacement';
+import { QUALITY_PRESETS, useQualityRuntime } from '../tweaks/qualityPresets';
 // Type-only, so the worker module's body never lands in the main bundle —
 // it is reached exclusively through `new URL(...)` below.
 import type {
@@ -103,6 +105,10 @@ export default function CellPopulationField({
   const [placed, setPlaced] = useState<PlacedGeometry | null>(null);
   const placementRef = useRef<PlacementCounts | null>(null);
   const startedRef = useRef(false);
+  const { effective: quality } = useQualityRuntime();
+  const pointsGeometryRef = useRef<THREE.BufferGeometry | null>(null);
+  const fibresGeometryRef = useRef<THREE.BufferGeometry | null>(null);
+  const populationCapMul = QUALITY_PRESETS[quality].populationCapMul;
 
   // Placement, off the main thread. Walking 105K points of filament against a
   // twelve-octave field is ~116 ms of CPU — a long task arriving at exactly
@@ -174,6 +180,33 @@ export default function CellPopulationField({
     };
   }, [wanted]);
 
+  // The preset's share of the placement, applied as a draw range rather than a
+  // re-placement: the buffers are already resident and a prefix is a complete
+  // thinner field, so a preset change costs two integer writes and no worker
+  // pass. This is the only lever the cascade has on this layer, and before it
+  // existed the cascade had none — see `populationCapMul` for the measurement.
+  useEffect(() => {
+    if (placed === null) return;
+    const counts = placementRef.current;
+    if (!counts) return;
+    const points = Math.max(0, Math.min(
+      counts.count,
+      Math.round(counts.count * populationCapMul),
+    ));
+    const index = placed.fibres.getIndex();
+    const segments = index
+      ? populationSegmentsForPointPrefix(
+        index.array as unknown as ArrayLike<number>,
+        counts.segmentCount,
+        points,
+      )
+      : 0;
+    placed.points.setDrawRange(0, points);
+    placed.fibres.setDrawRange(0, segments * 2);
+    pointsGeometryRef.current = placed.points;
+    fibresGeometryRef.current = placed.fibres;
+  }, [placed, populationCapMul]);
+
   useEffect(() => () => { material.dispose(); }, [material]);
   useEffect(() => () => { fibreMaterial.dispose(); }, [fibreMaterial]);
   // Both geometries share one position attribute, so they are disposed
@@ -192,6 +225,12 @@ export default function CellPopulationField({
     global.__populationFieldStats = () => ({
       placement: placementRef.current,
       requested: POPULATION_FIELD_POINTS,
+      // What the preset actually draws, so a live look can tell the cascade
+      // reached this layer without reading a buffer.
+      drawn: {
+        points: pointsGeometryRef.current?.drawRange.count ?? 0,
+        segments: (fibresGeometryRef.current?.drawRange.count ?? 0) / 2,
+      },
       emission: material.uniforms.uEmission.value,
       fibreEmission: fibreMaterial.uniforms.uEmission.value,
       // The taper, so a live look can tell which build is on screen without
@@ -200,7 +239,7 @@ export default function CellPopulationField({
       taper: {
         sizeMin: material.uniforms.uSizeMin.value,
         sizeMax: material.uniforms.uSizeMax.value,
-        floor: material.uniforms.uTaperFloor.value,
+        minPointPx: material.uniforms.uMinPointPx.value,
       },
     });
     return () => { delete global.__populationFieldStats; };
