@@ -300,6 +300,55 @@ describe('the fibres connect halo points and nothing else', () => {
     expect(largest / placed.count).toBeLessThan(0.2);
   });
 
+  it('draws runs at the fabric\'s own scale, not an order above it', () => {
+    // The tangle half of a trade orientation coherence cannot make on its own:
+    // coherence REWARDS long coherent runs, so shortening them can only lower
+    // it, and a wide-window coherence turned out to move in lockstep with the
+    // narrow one (ratio 0.77–0.79 across every variant swept) because filament
+    // length is not what makes neighbouring filaments parallel — the flow
+    // field is.
+    //
+    // The comparison the eye actually makes is against the Cells' own fabric.
+    // MEASURED over the 8,000 edges it draws for a 12,000-Cell stage, at the
+    // app's `neighborK` 5 / `maxEdgeLength` 42: p50 5.75, p90 8.50, max 27.66
+    // world units. A halo run an order of magnitude longer than every stroke
+    // beside it reads as swept hair rather than as tangled tissue.
+    const FABRIC_EDGE_P90 = 8.496;
+    const FABRIC_EDGE_MAX = 27.655;
+
+    // A run is a maximal chain of consecutive segments — what is actually
+    // drawn as one unbroken curve, which is not the same as one filament: the
+    // complement breaks a filament wherever it crosses resolved tissue.
+    const runs: number[] = [];
+    let run = 0;
+    let previousEnd = -2;
+    for (let i = 0; i < placed.segmentCount; i += 1) {
+      const a = placed.segments[i * 2];
+      if (a === previousEnd) run += 1;
+      else {
+        if (run > 0) runs.push(run);
+        run = 1;
+      }
+      previousEnd = placed.segments[i * 2 + 1];
+    }
+    if (run > 0) runs.push(run);
+    const world = runs
+      .map((steps) => steps * POPULATION_STREAMLINE_STEP)
+      .sort((a, b) => a - b);
+    const at = (p: number) => world[Math.floor(p * (world.length - 1))];
+
+    // The longest curve the halo draws stays inside the longest edge the
+    // fabric draws, within a margin. It used to be 3.1x it.
+    expect(world[world.length - 1]).toBeLessThan(FABRIC_EDGE_MAX * 1.5);
+    expect(at(0.9)).toBeLessThan(FABRIC_EDGE_P90 * 3.2);
+
+    // And the spread SURVIVES. A uniform draw between two bounds is what made
+    // an earlier pass read as felt — every filament the same size, no
+    // hierarchy, no reading order — so shortening the tail must not flatten
+    // the distribution onto one length.
+    expect(at(0.9) / at(0.5)).toBeGreaterThan(2);
+  });
+
   it('forks, so the tissue branches instead of combing', () => {
     const degree = new Int32Array(placed.count);
     for (let i = 0; i < placed.segmentCount * 2; i += 1) {

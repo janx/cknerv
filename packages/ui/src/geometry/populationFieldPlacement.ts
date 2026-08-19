@@ -292,15 +292,55 @@ export const POPULATION_STREAMLINE_STEP = 1.25;
 /**
  * Length spread, in steps.
  *
- * Drawn as `MIN + (MAX - MIN) * u^EXPONENT`, which is heavy toward the short
- * end: with the exponent below, the median filament is 15 steps and the
- * longest few reach 70. Real dendritic tissue has a wide spread of lengths;
- * a uniform draw between two bounds is what made an earlier pass read as felt
- * — every filament the same size, no hierarchy, no reading order.
+ * Drawn as `MIN + (MAX - MIN) * u^EXPONENT`. Real dendritic tissue has a wide
+ * spread of lengths, and a uniform draw between two bounds is what made an
+ * earlier pass read as felt — every filament the same size, no hierarchy, no
+ * reading order. So the draw stays skewed; what changed is where it stops.
+ *
+ * ## The trade, and why coherence could not decide it alone
+ *
+ * The drawn runs used to reach 86 world units against the Cells' own fabric,
+ * whose 8,000 DRAWN edges measure p50 5.75, p90 8.50, max 27.7. A curve an
+ * order of magnitude longer than every stroke beside it reads as swept HAIR
+ * rather than as tangled TISSUE, however well it is placed.
+ *
+ * ⚠️ Orientation coherence REWARDS long coherent runs, so it cannot arbitrate
+ * a change that shortens them — it can only go down and call that worse. It
+ * was paired with a tangle measure here, and one candidate instrument was
+ * tried and DISCARDED first, which is worth writing down: coherence at a wide
+ * (16 px) window, meant to catch "all the strokes run the same way over a
+ * whole neighbourhood", moves in lockstep with the narrow one — the ratio held
+ * at 0.77–0.79 across every variant swept. Filament length is not what makes
+ * neighbouring filaments parallel; the flow field is, and it is unchanged.
+ *
+ * What does discriminate is the run-length distribution read against the
+ * fabric's own, which is the comparison the eye is making:
+ *
+ * | | shipped | here | the fabric |
+ * |---|---:|---:|---:|
+ * | run p50 | 6.25 | 8.75 | 5.75 |
+ * | run p90 | 40.0 | 23.75 | 8.50 |
+ * | run max | **86.25** | **31.25** | 27.66 |
+ * | p90 / fabric p90 | 4.71x | 2.80x | 1x |
+ * | max / fabric max | 3.12x | **1.13x** | 1x |
+ * | filaments | 6,562 | **10,464** | — |
+ * | points in strokes of 8+ | 0.853 | 0.816 | — |
+ * | fork points | 2.30% | 2.66% | — |
+ * | orientation coherence | 0.326 | **0.319** | — |
+ *
+ * The longest run the layer draws is now within 13% of the longest edge the
+ * fabric draws, for 2.1% of coherence — and the layer gains a third more
+ * junctions on the way, which is the thing tissue has and hair does not. The
+ * spread survives at p90/p50 = 2.7 against 6.4, so there is still a hierarchy
+ * to read; pushing further flattened it toward the felt failure and dropped
+ * the stroke share under its floor.
+ *
+ * Cost: the same 105,000 points now need 59% more seeds, so the pass spends
+ * 1.73 field evaluations per placed point against 1.48.
  */
-export const POPULATION_STREAMLINE_MIN_STEPS = 5;
-export const POPULATION_STREAMLINE_MAX_STEPS = 70;
-export const POPULATION_STREAMLINE_LENGTH_EXPONENT = 2.4;
+export const POPULATION_STREAMLINE_MIN_STEPS = 6;
+export const POPULATION_STREAMLINE_MAX_STEPS = 26;
+export const POPULATION_STREAMLINE_LENGTH_EXPONENT = 1.6;
 
 /**
  * How much of the previous heading survives one step, before the field's own
