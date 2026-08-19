@@ -9,10 +9,30 @@ import type { NeighborGraph } from './neighborGraph';
 
 /** Maximum hops a pulse will travel. Has to be high enough that
  *  paths spanning distant tissue lobes can complete; short hop caps
- *  trap successful pulses inside one local cluster. 40 covers ~75% of
- *  random source/target pairs in a 1500-cell field; pulses past
- *  that get dropped, which is rarer than the previous limit. */
-export const DEFAULT_MAX_HOPS = 40;
+ *  trap successful pulses inside one local cluster.
+ *
+ *  This is a REACH budget spent in a currency the router cannot see:
+ *  BFS weights every edge as one hop regardless of its length, so the
+ *  world distance a budget buys is set entirely by how long the fabric's
+ *  edges are. The fabric's k-NN search used to answer from a truncated,
+ *  direction-biased slice of each neighbourhood, which made its edges
+ *  ~2.9x longer than the true nearest neighbours; 40 hops was calibrated
+ *  against those. With the search corrected the same 40 hops reach a
+ *  third as far, and pulses that used to arrive now die in flight.
+ *
+ *  Measured on the corrected graph over random source/target pairs, at
+ *  the 12,000-Cell stage and the 50,000-Cell reservoir:
+ *
+ *    maxHops    40      60      80
+ *    12,000   96.4%  100.0%  100.0%
+ *    50,000   70.0%   99.3%  100.0%
+ *
+ *  80 is the first value that completes every pair at both populations,
+ *  and it matches the measured hop inflation (median 11 -> 23 hops at
+ *  12,000, 15 -> 28 at 50,000) rather than merely covering it. A failed
+ *  route costs the same BFS either way — the frontier empties on the
+ *  graph, not on the cap. */
+export const DEFAULT_MAX_HOPS = 80;
 
 /**
  * Shortest hop-count path from `source` to `target` through the
@@ -92,13 +112,18 @@ export function shortestPathsToTargets(
 // survives the frame loop's per-hop edge gate.
 
 /** Hop ceiling for rescue routes. Deliberately below DEFAULT_MAX_HOPS: a
- *  rescue pulse is one deliberate inbound flow, not a cascade — ~24 hops
- *  ≈ 1.8 s at HOP_MS_BASE. */
-export const RESCUE_MAX_HOPS = 24;
+ *  rescue pulse is one deliberate inbound flow, not a cascade — ~48 hops
+ *  ≈ 1.6 s at HOP_MS_BASE. Held at 0.6 of DEFAULT_MAX_HOPS across the
+ *  fabric's rescale, so the rescue keeps reaching the same distance into
+ *  the tissue that it was tuned to reach. */
+export const RESCUE_MAX_HOPS = 48;
 
 /** Prefer origins at least this many hops out when any exist, so the
- *  travel reads as an arrival rather than a twitch beside the newborn. */
-export const RESCUE_MIN_HOPS = 3;
+ *  travel reads as an arrival rather than a twitch beside the newborn.
+ *  Distance is the point, so this rides the fabric's scale too: 3 hops
+ *  spanned ~16 world units on the old long-edged graph and would span
+ *  ~6 on the corrected one. */
+export const RESCUE_MIN_HOPS = 6;
 
 /** Minimal position shape the rescue scores need. Both `Cell` and
  *  `NeighborGraphCell` satisfy it structurally. */

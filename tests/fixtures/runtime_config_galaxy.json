@@ -5,7 +5,7 @@
   "topology": {
     "neighborK": 5,
     "maxEdgeLength": 42.0,
-    "maxHops": 40
+    "maxHops": 80
   },
   "pulses": {
     "linkRingCapacity": 512,

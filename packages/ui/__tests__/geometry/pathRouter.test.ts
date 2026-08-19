@@ -4,6 +4,7 @@ import {
   anchorProximityScore,
   nearestGraphNode,
   rescueOrigin,
+  RESCUE_MIN_HOPS,
   rimEntryScore,
   shortestPath,
   shortestPathsToTargets,
@@ -183,10 +184,19 @@ describe('rescueOrigin', () => {
   });
 
   it('prefers nodes at least minHops out even over a higher-scoring near node', () => {
-    //   1 — 2 — 3 — 4   (4 is 3 hops out)
-    //   1 — 9           (9 is 1 hop out, higher raw score)
-    const g = mkGraph([[1, 2], [2, 3], [3, 4], [1, 9]]);
-    expect(rescueOrigin(g, 1, byId)).toEqual([4, 3, 2, 1]);
+    //   1 — 2 — … — deep   (deep sits exactly RESCUE_MIN_HOPS out)
+    //   1 — 9              (9 is 1 hop out, higher raw score)
+    // The chain is built FROM the constant rather than to a fixed length:
+    // spelling it out pins the test to whatever the fabric's edge scale
+    // happened to be when it was written, and RESCUE_MIN_HOPS rides that
+    // scale — it buys a world distance, and the router pays in hops.
+    const chain: [number, number][] = [];
+    for (let i = 1; i <= RESCUE_MIN_HOPS; i += 1) chain.push([i, i + 1]);
+    const deep = RESCUE_MIN_HOPS + 1;
+    const g = mkGraph([...chain, [1, 9]]);
+    const expected = [];
+    for (let i = deep; i >= 1; i -= 1) expected.push(i);
+    expect(rescueOrigin(g, 1, byId)).toEqual(expected);
   });
 
   it('falls back to the best near node when nothing reaches minHops', () => {

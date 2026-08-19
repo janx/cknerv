@@ -13,8 +13,16 @@ import type { PulseStatsSink, RescueKind } from './pulseStats';
 /** Base time the spike spends traversing one hop (cell-to-cell) in
  *  ms. Each individual pulse picks its own hop time around this base
  *  via a deterministic [0.7, 1.4] scale, so a cascade's pulses don't
- *  all march in lockstep. */
-export const HOP_MS_BASE = 73;
+ *  all march in lockstep.
+ *
+ *  What the eye reads is the spike's speed across the disc, and that is
+ *  this number divided by the length of one fabric edge — so it is a
+ *  constant tuned against the fabric's scale, not an independent one.
+ *  Correcting the k-NN search shortened the median edge 5.47 -> 1.89
+ *  world units and lengthened the median route 11 -> 23 hops, which at
+ *  73 ms/hop dropped the median pulse from 55.1 to 24.6 world units per
+ *  second: the same journey, crawling. 33 ms restores 55.0. */
+export const HOP_MS_BASE = 33;
 /** Maximum extra delay (ms) injected before a pulse fires. Each
  *  pulse picks a random offset in [0, this) so siblings of one
  *  cascade don't all start simultaneously. */

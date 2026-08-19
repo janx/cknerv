@@ -10,9 +10,14 @@ export const MAX_MEMORY_TRACE_PULSES = 8;
 export const MEMORY_TRACE_START_STAGGER_MS = 220;
 /** Bound how long a short route may wait for the slowest converging route. */
 export const MEMORY_TRACE_ALIGNMENT_CAP_MS = 720;
-/** Deliberate recall cadence: slower than live traffic so history is legible. */
-export const MEMORY_TRACE_HOP_MS_MIN = 220;
-export const MEMORY_TRACE_HOP_MS_SPAN = 90;
+/** Deliberate recall cadence: slower than live traffic so history is legible.
+ *  Per-hop like HOP_MS_BASE, so it carries the same dependence on how long a
+ *  fabric edge is and takes the same 0.452 rescale when the k-NN search was
+ *  corrected — otherwise a recall that ran 2.4 s would now run 5.1 s, which
+ *  is past legible and into stalled. The ratio to live traffic (3.0x) is what
+ *  makes recall read as deliberate, and that ratio is preserved exactly. */
+export const MEMORY_TRACE_HOP_MS_MIN = 99;
+export const MEMORY_TRACE_HOP_MS_SPAN = 41;
 /** A recalled route settles at full energy, then leaves no persistent mark. */
 export const MEMORY_TRACE_SETTLE_MS = 420;
 export const MEMORY_TRACE_FADE_MS = 1_600;

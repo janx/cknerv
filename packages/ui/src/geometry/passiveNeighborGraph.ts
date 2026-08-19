@@ -191,10 +191,17 @@ export function buildPassiveNeighborGraph(
 
   // Cross-links are ranked by stable hash, with a mild short-edge preference
   // so they read as local membranes rather than cables across tissue voids.
+  // The penalty saturates at 3.6x the graph's median edge — the length at
+  // which an edge stops being local — which is where /100 put it while the
+  // truncated k-NN search made that median 5.47. On the corrected fabric the
+  // median is 1.89, and /100 would have quietly shrunk this from a 0.055
+  // nudge against a [0,1] hash to a 0.019 one: a tie-break that no longer
+  // breaks anything. The cables it exists to deprioritize are still there —
+  // lifeline and component-stitch edges still run to 27 world units.
   const extras = [...crosslinks]
     .sort((a, b) =>
-      (edgeHash(b) - Math.min(b.d / 100, 0.2))
-      - (edgeHash(a) - Math.min(a.d / 100, 0.2))
+      (edgeHash(b) - Math.min(b.d / 34, 0.2))
+      - (edgeHash(a) - Math.min(a.d / 34, 0.2))
       || canonicalEdgeOrder(a, b));
 
   const availableByKey = new Map(graph.edges.map((edge) => [edgeKey(edge), edge]));

@@ -148,7 +148,15 @@ impl ResolvedGalaxyConfig {
             topology: ResolvedGalaxyTopologyConfig {
                 neighbor_k: 5,
                 max_edge_length: 42.0,
-                max_hops: 40,
+                // Reach, in hops, for a router that weighs every edge the
+                // same. The fabric's k-NN search was corrected to return the
+                // true nearest neighbours, which shortened its median edge
+                // ~2.9x, so 40 hops now buy a third of the world distance
+                // they were tuned for. Measured over random source/target
+                // pairs on the corrected graph, 80 is the first budget that
+                // still completes every pair at 12,000 AND 50,000 Cells
+                // (40 -> 96.4%/70.0%, 60 -> 100%/99.3%).
+                max_hops: 80,
             },
             pulses: ResolvedGalaxyPulsesConfig {
                 // Sized for the block guarantee: the ring must hold a whole
@@ -290,7 +298,7 @@ recent_links_cap = 2048
 # Spatial neighbour graph density and pulse route reach.
 neighbor_k = 5
 max_edge_length = 42.0
-max_hops = 40
+max_hops = 80
 
 [galaxy.pulses]
 # Frontend pulse retention and visual fan-out limits. link_ring_capacity
