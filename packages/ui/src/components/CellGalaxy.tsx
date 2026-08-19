@@ -1840,12 +1840,14 @@ export default function CellGalaxy({
           lives in world space (below) so it can span chain → cells
           planes. */}
       <group ref={groupRef} position={[0, CELLS_Y, 0]}>
-        {/* The unresolved population, as real points in this rotating frame —
-            the same positional law and the same material as the Cell bodies,
-            smaller and dimmer, drawn BENEATH them. Inside the group is the
-            whole point: it turns with the Cells, with their parallax, as one
-            body. It carries no ids, registers no pointer handlers, and never
-            answers a raycast. */}
+        {/* The unresolved population, as real filaments in this rotating
+            frame — the same positional law and the same material family as the
+            Cell bodies, smaller and dimmer, drawn BENEATH them. Inside the
+            group is the whole point: it turns with the Cells, with their
+            parallax, as one body. Two draws, both siblings of the pick object
+            rather than descendants of it: it carries no ids, registers no
+            pointer handlers, and neither its points nor its fibres ever answer
+            a raycast. */}
         <CellPopulationField gain={populationGain} />
         <points
           geometry={cellGeometry}
