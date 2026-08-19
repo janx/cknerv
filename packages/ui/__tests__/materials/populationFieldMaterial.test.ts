@@ -9,7 +9,9 @@ import {
   populationPointFootprint,
   populationPointSizeForWeight,
   populationTaperForWeight,
-  POPULATION_FIELD_COLOR,
+  populationTintForWeight,
+  POPULATION_FIELD_COLOR_DIM,
+  POPULATION_FIELD_COLOR_LIT,
   POPULATION_FIELD_EMISSION,
   POPULATION_FIELD_MIN_POINT_PX,
   POPULATION_FIELD_POINT_SIZE_MAX,
@@ -17,7 +19,6 @@ import {
   POPULATION_FIELD_SIGMA,
   POPULATION_FIELD_TAPER_FLOOR,
 } from '../../src/materials/populationFieldMaterial';
-import { CELL_GALAXY_PALETTE } from '../../src/visualPalette';
 
 describe('the halo is the Cells material family, not a second material', () => {
   const halo = makePopulationPointMaterial();
@@ -54,7 +55,7 @@ describe('the halo is the Cells material family, not a second material', () => {
     // subject — and it has already destroyed this scene once.
     expect(halo.blending).not.toBe(THREE.NormalBlending);
     expect(halo.blendDst).toBe(THREE.OneMinusSrcColorFactor);
-    expect(halo.fragmentShader).toContain('gl_FragColor = vec4(uColor * a, a);');
+    expect(halo.fragmentShader).toContain('gl_FragColor = vec4(tint * a, a);');
   });
 
   it('writes raw, as the Cells do', () => {
@@ -103,12 +104,31 @@ describe('smaller and dimmer, and nothing else', () => {
     );
   });
 
-  it('carries the body hue at full saturation', () => {
+  it('carries the body hue at full saturation, at BOTH ends of the ramp', () => {
     // Identity hue is banned: we know nothing about these Cells individually.
-    // Desaturating toward grey is what makes a layer read as fog.
-    expect(POPULATION_FIELD_COLOR).toBe(CELL_GALAXY_PALETTE.tissueRose);
-    const [r, g, b] = POPULATION_FIELD_COLOR;
-    expect(Math.max(r, g, b) - Math.min(r, g, b)).toBeGreaterThan(0.4);
+    // Desaturating toward grey is what makes a layer read as fog, and the ramp
+    // is where that could creep in — a pale lit end is legitimate only while
+    // the dim end still carries the body's chroma.
+    for (const tint of [POPULATION_FIELD_COLOR_DIM, POPULATION_FIELD_COLOR_LIT]) {
+      const [r, g, b] = tint;
+      expect(r).toBe(1);
+      expect(Math.max(r, g, b) - Math.min(r, g, b)).toBeGreaterThan(0.35);
+    }
+    // The dim end is the MORE saturated one. Bounded-screen accumulation
+    // converges toward the emitted alpha in every channel, so overlap eats
+    // chroma; without this the layer's faint half renders as brick.
+    const chroma = (t: readonly [number, number, number]) => t[0] - (t[1] + t[2]) / 2;
+    expect(chroma(POPULATION_FIELD_COLOR_DIM))
+      .toBeGreaterThan(chroma(POPULATION_FIELD_COLOR_LIT) * 1.5);
+  });
+
+  it('holds one hue across the ramp, and varies only its chroma', () => {
+    // A hue that MOVED along the ramp would be exactly the second colour the
+    // ramp exists to remove. Both endpoints are red-dominant with blue over
+    // green by a similar margin; only the distance from white differs.
+    const lean = (t: readonly [number, number, number]) => t[2] - t[1];
+    expect(lean(POPULATION_FIELD_COLOR_DIM)).toBeGreaterThan(0);
+    expect(lean(POPULATION_FIELD_COLOR_LIT)).toBeGreaterThanOrEqual(0);
   });
 
   it('never lets a halo point reach the smallest addressable Cell', () => {
@@ -134,6 +154,12 @@ describe('smaller and dimmer, and nothing else', () => {
     }
     expect(populationTaperForWeight(1)).toBe(1);
     expect(populationTaperForWeight(0)).toBe(POPULATION_FIELD_TAPER_FLOOR);
+    const dim = populationTintForWeight(0);
+    const lit = populationTintForWeight(1);
+    expect([...dim]).toEqual([...POPULATION_FIELD_COLOR_DIM]);
+    expect([...lit]).toEqual([...POPULATION_FIELD_COLOR_LIT]);
+    expect(populationTintForWeight(0.5)[1])
+      .toBeCloseTo((dim[1] + lit[1]) / 2, 6);
   });
 
   it('keeps the PEAK taper gentler than the flux taper', () => {

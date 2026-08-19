@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 
 import { HYBRID_BASE_PX_PER_WU } from './cellHybridMaterial';
-import { CELL_GALAXY_PALETTE } from '../visualPalette';
+import type { SceneColor } from '../visualPalette';
 
 /**
  * The unresolved population, drawn as points in the Cells' own world.
@@ -135,11 +135,66 @@ export const POPULATION_FIELD_EMISSION = 0.95;
  */
 export const POPULATION_FIELD_MIN_POINT_PX = 1.4;
 
-/** Body hue, at full saturation, from the Cells' own palette. Identity hue —
- *  asset, lock, tag — is forbidden here: we know nothing about these Cells
- *  individually. Desaturating toward grey is what makes a layer read as fog
- *  and is equally forbidden. */
-export const POPULATION_FIELD_COLOR = CELL_GALAXY_PALETTE.tissueRose;
+/**
+ * Body hue, at full saturation — as a RAMP between two endpoints, and both
+ * were derived from the Cells' own RENDERED pixels rather than from the
+ * palette constant.
+ *
+ * One tint at the two ends of its luminance range looks like two colours, and
+ * that is what the layer had: the palette's `tissueRose` emitted everywhere,
+ * against Cells whose own material runs from that same rose at a sprite's
+ * skirt up to a pale warm core at its centre. So the Cells vary and the halo
+ * did not, which reads as a change of substance rather than a change of
+ * density.
+ *
+ * The mechanism the derivation turns on is measurable and was not obvious:
+ * **bounded-screen accumulation EATS CHROMA.** Its fixed point is the emitted
+ * alpha in every channel, so overlapping marks converge toward neutral. On the
+ * shipped layer an emitted `C/L` of 0.264 renders as 0.187 — a 29% loss — and
+ * that is why a rose scaled down reads as brick rather than as rose.
+ *
+ * Two anchors, each solved against what the halo actually RENDERS:
+ *
+ *  - **DIM** — where the halo is thin and no Cell is nearby, rule 11 governs
+ *    alone: the layer carries the organism's body hue at full saturation. The
+ *    target is therefore the palette's own body chroma as a *rendered* fact,
+ *    `C/L` 0.264, which the accumulation makes cost an emitted 0.347.
+ *  - **LIT** — where the halo is dense it sits beside and among the Cells, so
+ *    it must be chromatically indistinguishable from them. The target is what
+ *    an addressable Cell renders, measured light-weighted at 0.105 where Cells
+ *    are dense and 0.120 where they are sparse; that costs an emitted 0.161.
+ *
+ * Both endpoints hold the family's own hue, 20 degrees in OKLCH — `tissueRose`
+ * is 19.3 and the Cell body colour 20.9. The ramp deliberately does NOT follow
+ * the Cells' rendered hue as it drifts to 26–31 degrees at their bright end:
+ * that drift comes from `warmWhite`, which is the white-hot core signature the
+ * halo is forbidden. One hue, two chroma levels — a hue that MOVED along the
+ * ramp would be the second colour this ramp exists to remove.
+ *
+ * Measured on the layer, the ramp inverts the descent it was built to fix.
+ * Rendered `C/L` across the halo's own lightness range ran 0.126 (dim) to
+ * 0.156 (bright) — chroma RISING with light, the opposite of the Cells' own
+ * material — and now runs 0.143 down to 0.127, which is the Cells' direction.
+ *
+ * Identity hue — asset, lock, tag — stays forbidden: we know nothing about
+ * these Cells individually. Desaturating toward grey is what makes a layer
+ * read as fog, and is what the DIM endpoint exists to prevent.
+ */
+export const POPULATION_FIELD_COLOR_DIM: SceneColor = [1.0, 0.23, 0.33];
+export const POPULATION_FIELD_COLOR_LIT: SceneColor = [1.0, 0.59, 0.59];
+
+/** The tint one taper weight emits. */
+export function populationTintForWeight(weight: number): SceneColor {
+  const w = Math.max(0, Math.min(1, weight));
+  return [
+    POPULATION_FIELD_COLOR_DIM[0]
+      + (POPULATION_FIELD_COLOR_LIT[0] - POPULATION_FIELD_COLOR_DIM[0]) * w,
+    POPULATION_FIELD_COLOR_DIM[1]
+      + (POPULATION_FIELD_COLOR_LIT[1] - POPULATION_FIELD_COLOR_DIM[1]) * w,
+    POPULATION_FIELD_COLOR_DIM[2]
+      + (POPULATION_FIELD_COLOR_LIT[2] - POPULATION_FIELD_COLOR_DIM[2]) * w,
+  ];
+}
 
 /**
  * The emitted alpha for one amount-curve `gain`.
@@ -239,7 +294,9 @@ export interface PopulationPointUniforms {
   /** {@link populationEmissionForGain} of the amount curve. Zero means the
    *  stage covers its scope and there is nothing unresolved to state. */
   uEmission: { value: number };
-  uColor: { value: THREE.Color };
+  /** The two ends of the body-hue ramp. Never an identity palette. */
+  uColorDim: { value: THREE.Color };
+  uColorLit: { value: THREE.Color };
 }
 
 export function makePopulationPointMaterial(): THREE.ShaderMaterial {
@@ -252,7 +309,8 @@ export function makePopulationPointMaterial(): THREE.ShaderMaterial {
       uMinPointPx: { value: POPULATION_FIELD_MIN_POINT_PX },
       uTaperFloor: { value: POPULATION_FIELD_TAPER_FLOOR },
       uEmission: { value: 0 },
-      uColor: { value: new THREE.Color(...POPULATION_FIELD_COLOR) },
+      uColorDim: { value: new THREE.Color(...POPULATION_FIELD_COLOR_DIM) },
+      uColorLit: { value: new THREE.Color(...POPULATION_FIELD_COLOR_LIT) },
     },
     transparent: true,
     depthWrite: false,
@@ -307,7 +365,8 @@ export function makePopulationPointMaterial(): THREE.ShaderMaterial {
     fragmentShader: /* glsl */ `
       precision highp float;
 
-      uniform vec3 uColor;
+      uniform vec3 uColorDim;
+      uniform vec3 uColorLit;
       uniform float uEmission;
       uniform float uTaperFloor;
 
@@ -328,11 +387,19 @@ export function makePopulationPointMaterial(): THREE.ShaderMaterial {
         );
         float a = peak * uEmission * vEnergy
           * mix(uTaperFloor, 1.0, vWeight);
+        // The ramp is a chroma level, never a hue: both ends hold the family's
+        // own hue and only their saturation differs, because a hue that moved
+        // along the ramp would be exactly the second colour it exists to
+        // remove. The dim end is the more saturated one — the blend below
+        // converges toward the emitted alpha in every channel, so overlap eats
+        // chroma, and rose scaled down without that compensation reads as
+        // brick rather than as rose.
+        vec3 tint = mix(uColorDim, uColorLit, vWeight);
         // Premultiplied, matching the Cell bodies: the blend multiplies rgb
         // by src alpha again, which is what bounds the accumulation.
         // No colorspace conversion here for the same reason — the Cells write
         // raw and a converted twin would be a second material.
-        gl_FragColor = vec4(uColor * a, a);
+        gl_FragColor = vec4(tint * a, a);
       }
     `,
   });
@@ -371,7 +438,8 @@ export function makePopulationFibreMaterial(): THREE.ShaderMaterial {
     uniforms: {
       uEmission: { value: 0 },
       uTaperFloor: { value: POPULATION_FIELD_TAPER_FLOOR },
-      uColor: { value: new THREE.Color(...POPULATION_FIELD_COLOR) },
+      uColorDim: { value: new THREE.Color(...POPULATION_FIELD_COLOR_DIM) },
+      uColorLit: { value: new THREE.Color(...POPULATION_FIELD_COLOR_LIT) },
     },
     transparent: true,
     depthWrite: false,
@@ -402,7 +470,8 @@ export function makePopulationFibreMaterial(): THREE.ShaderMaterial {
     fragmentShader: /* glsl */ `
       precision highp float;
 
-      uniform vec3 uColor;
+      uniform vec3 uColorDim;
+      uniform vec3 uColorLit;
       uniform float uEmission;
       uniform float uTaperFloor;
 
@@ -415,10 +484,11 @@ export function makePopulationFibreMaterial(): THREE.ShaderMaterial {
         // here is the tissue changing under the filament, not the filament
         // announcing where it is pinned.
         float a = uEmission * mix(uTaperFloor, 1.0, vWeight);
+        vec3 tint = mix(uColorDim, uColorLit, vWeight);
         // Premultiplied, matching the Cell bodies, and written raw for the
         // same reason — a colorspace-converted twin would be a second
         // material, which is the seam this design exists to remove.
-        gl_FragColor = vec4(uColor * a, a);
+        gl_FragColor = vec4(tint * a, a);
       }
     `,
   });

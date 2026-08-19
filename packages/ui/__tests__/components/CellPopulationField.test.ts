@@ -170,7 +170,7 @@ describe('two static buffers and two draws', () => {
     const fibre = MATERIAL_SOURCE.slice(
       MATERIAL_SOURCE.indexOf('makePopulationFibreMaterial'),
     );
-    expect(fibre).toContain('gl_FragColor = vec4(uColor * a, a);');
+    expect(fibre).toContain('gl_FragColor = vec4(tint * a, a);');
     expect(fibre).not.toContain('gl_PointCoord');
     // A fibre now carries its endpoints' TAPER — the tissue changing under the
     // filament — and that is the only thing allowed to vary along it. One
@@ -319,7 +319,10 @@ describe('the halo is smaller and dimmer than a Cell, and differs in nothing els
   });
 
   it('emits the body hue and no identity hue', () => {
-    expect(MATERIAL_CODE).toContain('CELL_GALAXY_PALETTE.tissueRose');
+    // A ramp now, not one constant — but both ends are red-dominant body hue,
+    // and no identity palette appears anywhere in the layer.
+    expect(MATERIAL_CODE).toContain('POPULATION_FIELD_COLOR_DIM');
+    expect(MATERIAL_CODE).toContain('POPULATION_FIELD_COLOR_LIT');
     for (const forbidden of ['asset', 'lock', 'tag', 'memoryViolet']) {
       expect(MATERIAL_CODE).not.toContain(forbidden);
     }
