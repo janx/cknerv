@@ -25,9 +25,25 @@ export const DEFAULT_K = 4;
  *  later as sparse exceptions so every cell remains reachable. */
 const MAX_EDGE_LENGTH = 25;
 
-/** Side length (world units) of one cell in the spatial-hash grid
- *  used to accelerate the k-NN search. */
-const BUCKET_SIZE = 6;
+/** Target occupancy of one spatial-hash bucket, in cells.
+ *
+ *  The bucket side is derived from this and the field's measured density
+ *  rather than fixed, because a fixed side makes the search cost scale
+ *  with the FIELD's density instead of with `k`: at a 6-unit side the
+ *  12,000-cell galaxy puts a median of 623 cells in the 3x3 neighbourhood
+ *  a k=5 query has to look at, and the 50,000-cell reservoir puts ~2,600
+ *  there. Sizing the bucket so a 3x3 neighbourhood holds ~9x this many
+ *  keeps the scan proportional to k at every population.
+ *
+ *  It is a COST knob only. The search below expands its ring until the
+ *  k-th distance is provably inside the scanned region, so the graph it
+ *  returns is the same graph for any bucket side — which is asserted
+ *  directly in the tests. */
+const BUCKET_TARGET_OCCUPANCY = 4;
+
+/** Upper bound on bucket-grid coordinates, from {@link bucketKeyNum}'s
+ *  packing. The derived side is floored so the field cannot exceed it. */
+const BUCKET_COORD_LIMIT = 8000;
 
 /** Edge between two cell ids. Canonical order: from < to. */
 export interface NeighborEdge {
@@ -150,21 +166,68 @@ export function buildNeighborGraph(
     cellArr.map((c) => [c.id, c]),
   );
 
-  // Pre-allocated parallel scratch buffers for top-k. Avoids the
-  // per-iteration object alloc that the previous implementation hit
-  // ~N²/k times. Ids must be Float64: galaxy-composition Cells carry
-  // 2^52-range ids that an Int32Array would wrap into phantom nodes.
-  const SCRATCH_CAP = Math.max(64, k * 16);
-  const scratchId = new Float64Array(SCRATCH_CAP);
-  const scratchDSq = new Float32Array(SCRATCH_CAP);
+  // Bounded top-k, held in two parallel buffers kept sorted ascending by
+  // (dSq, id). k is small (3-7 in every caller), so an insertion into a
+  // k-slot array beats a heap and allocates nothing per candidate. Ids
+  // must be Float64: galaxy-composition Cells carry 2^52-range ids that
+  // an Int32Array would wrap into phantom nodes.
+  //
+  // This REPLACES a fixed 80-slot candidate scratch that the bucket scan
+  // filled and then hard-stopped on. That scratch was not a budget, it
+  // was a truncation: it took whatever the dx/dz raster reached first,
+  // always starting at the same corner, so in the dense core the "k
+  // nearest" were the k nearest OF THE SAME RELATIVE DIRECTION, cell
+  // after cell. Measured on the 12,000-cell galaxy at k=5, it agreed
+  // with the true k nearest 14.0% of the time and left the field with a
+  // mean neighbour direction of 0.464 (0 is unbiased) — a fabric that
+  // repeated one motif everywhere it was dense and only became honest
+  // where the field thinned enough to fit inside 80.
+  const topId = new Float64Array(k);
+  const topDSq = new Float64Array(k);
+  let topN = 0;
 
-  // 2D spatial-hash bucketing cells by xz coords. k-NN scans only the
-  // 9-bucket neighbourhood per cell. Numeric key avoids per-cell and
-  // per-bucket-scan string allocations.
+  // 2D spatial-hash bucketing cells by xz coords. The side is derived
+  // from the field's own extent and count so the scan cost tracks k
+  // rather than the population; see BUCKET_TARGET_OCCUPANCY.
+  let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+  for (const c of cellArr) {
+    const x = c.pos_seed[0];
+    const z = c.pos_seed[2];
+    if (x < minX) minX = x;
+    if (x > maxX) maxX = x;
+    if (z < minZ) minZ = z;
+    if (z > maxZ) maxZ = z;
+  }
+  const spanX = maxX - minX;
+  const spanZ = maxZ - minZ;
+  const extent = Math.max(spanX, spanZ);
+  const area = Math.max(spanX, 1e-6) * Math.max(spanZ, 1e-6);
+  // Two density readings, and the side takes whichever is coarser.
+  //
+  // The areal one is the honest estimate for a field that fills a patch.
+  // It is NOT enough on its own: a collinear or near-collinear field has
+  // an area near zero and would get a side near zero with it, so the ring
+  // walk below has to cross thousands of empty buckets to reach a
+  // neighbour that is right there. The linear reading is what that field
+  // actually costs — spacing along its one occupied dimension — and
+  // taking the max means a degenerate field is bucketed by its real
+  // spacing while a filled one still gets the areal side.
+  const arealSide = Math.sqrt((BUCKET_TARGET_OCCUPANCY * area) / n);
+  const linearSide = (BUCKET_TARGET_OCCUPANCY * extent) / n;
+  const bucketSize = Math.max(
+    arealSide,
+    linearSide,
+    extent / BUCKET_COORD_LIMIT,
+    1e-6,
+  );
+  // Past this ring every bucket is off the field, so nothing can widen
+  // the search further even when maxEdgeLength would allow it.
+  const maxRing = Math.ceil(extent / bucketSize) + 1;
+
   const buckets = new Map<number, NeighborGraphCell[]>();
   for (const c of cellArr) {
-    const bx = Math.floor(c.pos_seed[0] / BUCKET_SIZE);
-    const bz = Math.floor(c.pos_seed[2] / BUCKET_SIZE);
+    const bx = Math.floor(c.pos_seed[0] / bucketSize);
+    const bz = Math.floor(c.pos_seed[2] / bucketSize);
     const key = bucketKeyNum(bx, bz);
     let arr = buckets.get(key);
     if (!arr) { arr = []; buckets.set(key, arr); }
@@ -201,69 +264,87 @@ export function buildNeighborGraph(
     return true;
   }
 
+  /** Offer one candidate to the running top-k. Ordered by (dSq, id): the
+   *  id tie-break makes the result independent of Map iteration order,
+   *  so the worker and the main thread build the same graph from the
+   *  same cells however they happened to accumulate them. */
+  function consider(id: number, dSq: number): void {
+    if (
+      topN === k &&
+      (dSq > topDSq[k - 1] || (dSq === topDSq[k - 1] && id > topId[k - 1]))
+    ) {
+      return;
+    }
+    let slot = topN < k ? topN : k - 1;
+    while (
+      slot > 0 &&
+      (topDSq[slot - 1] > dSq ||
+        (topDSq[slot - 1] === dSq && topId[slot - 1] > id))
+    ) {
+      topDSq[slot] = topDSq[slot - 1];
+      topId[slot] = topId[slot - 1];
+      slot -= 1;
+    }
+    topDSq[slot] = dSq;
+    topId[slot] = id;
+    if (topN < k) topN += 1;
+  }
+
   for (let i = 0; i < cellArr.length; i++) {
     const a = cellArr[i];
-    const bx = Math.floor(a.pos_seed[0] / BUCKET_SIZE);
-    const bz = Math.floor(a.pos_seed[2] / BUCKET_SIZE);
+    const bx = Math.floor(a.pos_seed[0] / bucketSize);
+    const bz = Math.floor(a.pos_seed[2] / bucketSize);
+    topN = 0;
 
-    // Collect candidates from bucket + neighbours, expanding radius
-    // if we don't see enough yet.
-    let candidateCount = 0;
-    let radius = 1;
-    while (candidateCount < k + 1 && radius <= 16) {
-      candidateCount = 0;
-      for (let dx = -radius; dx <= radius; dx++) {
-        for (let dz = -radius; dz <= radius; dz++) {
-          const arr = buckets.get(bucketKeyNum(bx + dx, bz + dz));
-          if (!arr) continue;
-          for (const c of arr) {
-            if (c.id === a.id) continue;
-            if (candidateCount >= SCRATCH_CAP) {
-              candidateCount = SCRATCH_CAP;
-              break;
-            }
-            scratchId[candidateCount] = c.id;
-            scratchDSq[candidateCount] = distSq(a, c);
-            candidateCount += 1;
-          }
+    const scanBucket = (gx: number, gz: number): void => {
+      const arr = buckets.get(bucketKeyNum(gx, gz));
+      if (!arr) return;
+      for (let m = 0; m < arr.length; m++) {
+        const c = arr[m];
+        if (c.id === a.id) continue;
+        consider(c.id, distSq(a, c));
+      }
+    };
+
+    // Widen a ring at a time until the k-th neighbour found so far is
+    // provably nearer than anything still unscanned. Rings 0..r cover
+    // every bucket within r*bucketSize of the query in xz, so a point
+    // outside them is farther than that in xz and therefore farther in
+    // full 3D too — which makes the stop below EXACT rather than a
+    // heuristic, and makes the bucket side a pure cost knob.
+    for (let ring = 0; ring <= maxRing; ring++) {
+      if (ring === 0) {
+        scanBucket(bx, bz);
+      } else {
+        // Perimeter only — the interior was scanned by earlier rings.
+        for (let dx = -ring; dx <= ring; dx++) {
+          scanBucket(bx + dx, bz - ring);
+          scanBucket(bx + dx, bz + ring);
+        }
+        for (let dz = -ring + 1; dz <= ring - 1; dz++) {
+          scanBucket(bx - ring, bz + dz);
+          scanBucket(bx + ring, bz + dz);
         }
       }
-      if (candidateCount >= k + 1) break;
-      radius += 1;
+      const covered = ring * bucketSize;
+      if (topN === k && topDSq[k - 1] <= covered * covered) break;
+      // Nothing beyond this ring can survive the length cap anyway.
+      if (covered >= maxEdgeLength) break;
     }
-    if (candidateCount === 0) {
+
+    if (topN === 0) {
       // Isolated cell still needs an entry so consumers can reason
       // about "this cell exists but has no neighbours."
       adjOf(a.id);
       continue;
     }
 
-    // Partial selection sort: pull the k smallest dSq's to the front.
-    // For k=3 and ~30 candidates this is faster than a full sort.
-    const take = Math.min(k, candidateCount);
-    for (let m = 0; m < take; m++) {
-      let bestIdx = m;
-      let bestDSq = scratchDSq[m];
-      for (let j = m + 1; j < candidateCount; j++) {
-        if (scratchDSq[j] < bestDSq) {
-          bestDSq = scratchDSq[j];
-          bestIdx = j;
-        }
-      }
-      if (bestIdx !== m) {
-        const tmpId = scratchId[m];
-        const tmpD = scratchDSq[m];
-        scratchId[m] = scratchId[bestIdx];
-        scratchDSq[m] = scratchDSq[bestIdx];
-        scratchId[bestIdx] = tmpId;
-        scratchDSq[bestIdx] = tmpD;
-      }
-      const otherId = scratchId[m];
+    for (let m = 0; m < topN; m++) {
       // Drop edges longer than the cap — these are halo outliers
       // that would render as long curves through the empty rim.
-      const d = Math.sqrt(scratchDSq[m]);
+      const d = Math.sqrt(topDSq[m]);
       if (d > maxEdgeLength) continue;
-      addEdge(a.id, otherId, d);
+      addEdge(a.id, topId[m], d);
     }
   }
 

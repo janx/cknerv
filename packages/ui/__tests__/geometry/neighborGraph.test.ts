@@ -289,6 +289,134 @@ describe('buildNeighborGraph', () => {
   });
 });
 
+/** Deterministic PRNG so the dense-field fixtures below are reproducible. */
+function mulberry32(seed: number): () => number {
+  let a = seed;
+  return () => {
+    a |= 0; a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** A field at the live stage's own density — 12,000 Cells over the 60x54
+ *  tissue ellipse is 1.18 per square unit, and this puts the same 1.18 into a
+ *  disc a quarter the area so the brute-force reference below stays cheap.
+ *
+ *  Density is the whole point of the fixture. Truncation is invisible in a
+ *  sparse field: the neighbourhood fits whatever budget an implementation
+ *  keeps and the answer comes out right anyway. These fixtures put ~380 cells
+ *  inside the region one k-NN query must consider, so an implementation that
+ *  answers from a bounded prefix of that neighbourhood is answering from a
+ *  fraction of it and these tests see it. */
+function denseDisc(count: number, seed = 20260819): Map<number, Cell> {
+  const rand = mulberry32(seed);
+  const cells = new Map<number, Cell>();
+  for (let i = 0; i < count; i += 1) {
+    const r = Math.sqrt(rand());
+    const theta = rand() * Math.PI * 2;
+    cells.set(i + 1, mkCell(i + 1, Math.cos(theta) * r * 30, (rand() - 0.5) * 0.6, Math.sin(theta) * r * 27));
+  }
+  return cells;
+}
+
+function trueNearest(cells: Map<number, Cell>, id: number, k: number): number[] {
+  const self = cells.get(id)!;
+  return [...cells.values()]
+    .filter((c) => c.id !== id)
+    .map((c) => {
+      const dx = self.pos_seed[0] - c.pos_seed[0];
+      const dy = self.pos_seed[1] - c.pos_seed[1];
+      const dz = self.pos_seed[2] - c.pos_seed[2];
+      return { id: c.id, dSq: dx * dx + dy * dy + dz * dz };
+    })
+    .sort((a, b) => a.dSq - b.dSq || a.id - b.id)
+    .slice(0, k)
+    .map((c) => c.id);
+}
+
+describe('buildNeighborGraph is the k NEAREST, at field density', () => {
+  const K = 5;
+
+  it("returns each cell's true k nearest where the neighbourhood overflows any fixed budget", () => {
+    // The property, stated as the property: these k are the k nearest.
+    // Asserting a particular neighbour ORDER instead would have passed
+    // against a graph that answered from a raster-ordered prefix of the
+    // neighbourhood — which is what shipped, agreeing with the true k
+    // nearest 14% of the time on the live 12,000-cell stage.
+    const cells = denseDisc(3_000);
+    const graph = buildNeighborGraph(cells, { k: K, maxEdgeLength: 42 });
+    for (const id of [...cells.keys()].filter((_, i) => i % 37 === 0)) {
+      const adjacency = graph.adjacency.get(id)!;
+      for (const nearest of trueNearest(cells, id, K)) {
+        expect(adjacency.has(nearest)).toBe(true);
+      }
+    }
+  });
+
+  it('draws its neighbours from every direction, not one', () => {
+    // The user-visible signature of a directionally-truncated search: every
+    // dense cell reaches for the same relative direction, so the fabric
+    // repeats one motif across the whole core and only looks organic at the
+    // rim where the neighbourhood is small enough to fit. Averaged over the
+    // field, an unbiased graph's neighbour directions cancel; the shipped
+    // raster scan left 0.464 of a unit vector standing.
+    const cells = denseDisc(3_000);
+    const graph = buildNeighborGraph(cells, { k: K, maxEdgeLength: 42 });
+    let sumX = 0;
+    let sumZ = 0;
+    let counted = 0;
+    for (const [id, neighbours] of graph.adjacency) {
+      const self = cells.get(id)!;
+      let ux = 0;
+      let uz = 0;
+      for (const nb of neighbours) {
+        const other = cells.get(nb)!;
+        const dx = other.pos_seed[0] - self.pos_seed[0];
+        const dz = other.pos_seed[2] - self.pos_seed[2];
+        const len = Math.hypot(dx, dz) || 1;
+        ux += dx / len;
+        uz += dz / len;
+      }
+      if (neighbours.size < 2) continue;
+      sumX += ux / neighbours.size;
+      sumZ += uz / neighbours.size;
+      counted += 1;
+    }
+    expect(Math.hypot(sumX / counted, sumZ / counted)).toBeLessThan(0.05);
+  });
+
+  it('grows no hub: a symmetric k-NN graph bounds every degree', () => {
+    // A cell can only be picked by the bounded number of cells it is
+    // genuinely nearest to, so degree stays near k. Under the raster scan
+    // one cell in the live field reached degree 133 at k=5 — the cells that
+    // the scan happened to see first became artificial hubs, and a hub is a
+    // routing shortcut that the tissue does not actually have.
+    const cells = denseDisc(3_000);
+    const graph = buildNeighborGraph(cells, { k: K, maxEdgeLength: 42 });
+    for (const neighbours of graph.adjacency.values()) {
+      expect(neighbours.size).toBeLessThanOrEqual(6 * K);
+    }
+  });
+
+  it('is independent of the bucket grid: same cells shifted off-grid, same edges', () => {
+    // The search widens its ring until the k-th neighbour is provably inside
+    // the scanned region, so the spatial hash is a cost structure and never
+    // an answer. Translating the whole field moves every cell across bucket
+    // boundaries without changing a single distance between them.
+    const cells = denseDisc(1_500);
+    const shifted = new Map<number, Cell>();
+    for (const [id, c] of cells) {
+      shifted.set(id, mkCell(id, c.pos_seed[0] + 3.7, c.pos_seed[1], c.pos_seed[2] - 2.3));
+    }
+    const keys = (m: Map<number, Cell>) =>
+      new Set(buildNeighborGraph(m, { k: K, maxEdgeLength: 42 }).edges
+        .map((e) => `${e.from}:${e.to}`));
+    expect(keys(shifted)).toEqual(keys(cells));
+  });
+});
+
 function liveCell(id: number, x: number, z: number, death: number | null = null): Cell {
   return { id, born_at_ms: 0, death_at_ms: death, birth_block: 1, tag: null,
     pos_seed: [x, 0, z], out_point: { tx_hash: '0x', index: 0 }, capacity: 0,
