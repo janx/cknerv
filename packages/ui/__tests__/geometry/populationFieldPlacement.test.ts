@@ -3,10 +3,15 @@ import { describe, expect, it } from 'vitest';
 import {
   advancePopulationPlacement,
   createPopulationPlacement,
+  inverseStandardNormal,
   placePopulationField,
   populationComplementAcceptance,
+  populationComplementAccepts,
+  populationComplementVariate,
   populationFibreAt,
   populationPlacementMajorant,
+  POPULATION_COMPLEMENT_CORRELATION_STEPS,
+  POPULATION_END_TAPER,
   POPULATION_FIELD_COVERAGE_CEILING,
   POPULATION_FIELD_FLATTEN,
   POPULATION_FIELD_OUTER_EDGE,
@@ -34,7 +39,9 @@ import {
   COLONY_RADIUS,
 } from '../../src/derives/networkTopology.derive';
 import {
+  populationFibreTaper,
   populationPointSizeForWeight,
+  POPULATION_FIELD_POINT_SIZE_MAX,
   POPULATION_FIELD_SIGMA,
 } from '../../src/materials/populationFieldMaterial';
 
@@ -448,37 +455,59 @@ describe('the fibres connect halo points and nothing else', () => {
     // round: a third of components are one or two points, but they hold a
     // small share of the light. Weight by POINTS, which is what the eye sees.
     //
-    // ⚠️ THIS FLOOR RIDES `POPULATION_FIELD_OUTER_EDGE`, and it was 0.80 while
-    // that edge was 2.2. The mechanism is the complement, and it is worth
-    // stating because it is not obvious: acceptance is PROBABILISTIC, so on
-    // ground the Cells half-occupy it drops every other candidate and a
-    // filament becomes beads. Correct per point, ruinous per stroke. Closing
-    // the edge does not slide the layer inward as a whole — the envelope's
-    // inner shoulder is fixed at 0.61 in `helix.ts` — it moves the layer's
-    // mass ONTO the Cells, so the share of points inside the resolved rim
-    // goes 0.27 -> 0.49 and this share follows it down:
+    // ⚠️ THIS FLOOR WAS WEAKENED TO 0.65 AND IS BACK AT 0.80. Both moves were
+    // the complement, and the sequence is worth keeping because the first one
+    // read as a property of the edge when it was really a property of the
+    // draw.
     //
-    //   edge  2.2    1.7    1.6    1.5    1.3
-    //   share 0.816  0.726  0.701  0.662  0.526     (105,000 points)
+    // Closing `POPULATION_FIELD_OUTER_EDGE` to 1.6 does not slide the layer
+    // inward as a whole — the envelope's inner shoulder is fixed at 0.61 in
+    // `helix.ts` — it moves the layer's mass ONTO the Cells, so the share of
+    // points inside the resolved rim went 0.27 -> 0.49. Acceptance was
+    // independent per candidate, so on ground the Cells half-occupy it dropped
+    // every other one and broke the filament at each: correct per point,
+    // ruinous per stroke. This share followed the mass in, and 0.65 was
+    // recorded as "this edge's floor".
     //
-    // So 0.65 is this edge's floor, not a weakened version of the old one.
-    // The light the specks carry is the check that the number still means
-    // what it meant: components of one or two points hold 15.5% of the
-    // layer's flux here, against 6.8% at edge 2.2.
+    // `POPULATION_COMPLEMENT_CORRELATION_STEPS` then fixed the JOINT law while
+    // leaving the marginal exactly alone, and the whole column came back up:
+    //
+    //   edge         2.2    1.7    1.6    1.5    1.3
+    //   i.i.d.       0.816  0.697  0.701  0.662  0.526   (105,000 points)
+    //   correlated   0.870  0.832  0.809  0.791  0.717
+    //
+    // So the floor is the original 0.80 again, and it is a real gate rather
+    // than a record: measured 0.809 on the shipped placement and 0.814 on this
+    // file's 20,000, which is between one and two points of headroom. It is
+    // the number the run-length work has to be arbitrated against — shortening
+    // a filament does not just shorten the drawn curve, it breaks the curve
+    // into dust.
     const size = componentSizes();
     let inStrokes = 0;
     for (let i = 0; i < placed.count; i += 1) {
       if (size.of[i] >= 8) inStrokes += 1;
     }
-    expect(inStrokes / placed.count).toBeGreaterThan(0.65);
+    expect(inStrokes / placed.count).toBeGreaterThan(0.80);
   });
 
   it('frays into the Cells rather than everywhere', () => {
     // Where the fragmentation happens is the whole question. A filament that
     // breaks up as it enters the resolved tissue is the interdigitation this
     // design exists to produce; one that breaks up in open halo would be a
-    // defect. Measured, singleton points sit at a resolved coverage of ~0.29
-    // against ~0.01 for points inside long strokes.
+    // defect.
+    //
+    // ⚠️ The margin here NARROWED by design when the complement's decisions
+    // were correlated, and the two numbers that moved say exactly what the
+    // change did. Singletons: 1,156 points at a mean coverage of 0.315,
+    // against 374 at 0.261 — most of the dust is simply gone. Points inside
+    // components of 16 or more: mean coverage 0.0095 -> 0.0289, because a
+    // strand that draws one accept now carries THROUGH the half-occupied
+    // ground instead of beading across it. The ratio of the two is 33.3 ->
+    // 9.0, and the claim it guards is unchanged: what breaks up still breaks
+    // up in the Cells and not in open halo.
+    //
+    // ⚠️⚠️ It cannot be tightened back. Strokes reaching into the transition
+    // band IS the mixed register the halo is being asked to speak.
     const size = componentSizes();
     let loneCoverage = 0;
     let lone = 0;
@@ -559,6 +588,15 @@ describe('the fibres connect halo points and nothing else', () => {
     // and they are recorded rather than met: the fabric's p50 and p90 halved
     // under the k-NN correction while its max did not, so these ratios went
     // 1.5x -> 4.0x and 2.80x -> 5.86x without the halo changing at all.
+    //
+    // ⚠️ Re-derived twice since. At edge 1.6 the drawn runs are shorter than
+    // that era's — p50 6.25 wu, p90 18.75, so 2.85x and 4.63x — and then
+    // correlating the complement lengthened them again to 7.50 / 21.25 wu,
+    // **3.42x and 5.25x**. That direction is not incidental: the breaks the
+    // i.i.d. draw scattered through the mixed band were CUTTING runs, so
+    // healing the strand-shredding bug spends part of its gain on exactly the
+    // length regression recorded here. The max is unmoved at 31.25 (1.16x) —
+    // it is bounded by the step cap, not by the complement.
     // Neither lever can follow — fewer steps breaks the "strokes, not dust"
     // floor above, and the step length is set against the sprite footprint.
     // See POPULATION_STREAMLINE_MIN_STEPS for the swept numbers. These bounds
@@ -879,6 +917,14 @@ describe('the placement pass is exact and resumable', () => {
     expect(chunked.work).toBe(whole.work);
     expect(Array.from(chunked.positions)).toEqual(Array.from(whole.positions));
     expect(Array.from(chunked.segments)).toEqual(Array.from(whole.segments));
+    // ⭐ The weights too, and they are the reason this assertion earns its
+    // keep now rather than restating the two above. The end taper writes them
+    // RETROACTIVELY — a strand's last three points are faded once the strand
+    // is known to be over — so the ring of indices it holds has to live on the
+    // walk state and survive a call boundary. Chunking is the only thing that
+    // exercises that, and a ring held in a local would pass every other test
+    // in this file.
+    expect(Array.from(chunked.weights)).toEqual(Array.from(whole.weights));
   });
 
   it('returns the same field on every reload', () => {
@@ -1036,7 +1082,8 @@ describe('the cascade trim keeps the layer a set of strokes', () => {
     // shredding the layer: a prefix keeps whole filaments, and a branch only
     // ever reaches BACK, so thinning cannot orphan a point that a later
     // segment would have connected. Measured on the shipped 105,000-point
-    // placement the share runs 0.701 / 0.701 / 0.690 at 1 / 0.5 / 0.25.
+    // placement the share runs 0.809 / 0.812 / 0.807 at 1 / 0.5 / 0.25, and
+    // 0.814 / 0.816 / 0.817 on this file's 20,000.
     //
     // The subject here is the TRIM, not the edge: what this test owns is that
     // taking a prefix costs nothing, and that claim is scale-free. The
@@ -1057,6 +1104,286 @@ describe('the cascade trim keeps the layer a set of strokes', () => {
       // turn strokes into dust.
       expect(share).toBeGreaterThan(shares[0] - 0.03);
       expect(share).toBeGreaterThan(0.65);
+    }
+  });
+});
+
+describe('the inverse normal the correlated complement thresholds on', () => {
+  it('lands on known quantiles', () => {
+    // Reference values to 20 significant figures, from a 50-digit `erfc`.
+    // Acklam's own bound is a relative error under 1.15e-9 and nothing here
+    // refines it, because the caller does not want a quantile — it wants a
+    // COMPARISON, and the only error that means anything is the one this
+    // makes in the acceptance PROBABILITY. Swept against the same reference
+    // over the whole double-precision range of `p`, that is 2.7e-10.
+    const known: Array<[number, number]> = [
+      [0.5, 0],
+      [0.16, -0.99445788320975316774],
+      [0.84, 0.99445788320975316774],
+      [0.025, -1.9599639845400542355],
+      [0.975, 1.9599639845400542355],
+      [0.99, 2.3263478740408411009],
+      [0.001, -3.0902323061678135415],
+      [1e-6, -4.7534243088228989482],
+      // Both region boundaries, where a piecewise rational approximation is at
+      // its worst and where a transcription error in one branch would show up
+      // as a step. The complement's `keep` walks straight across them.
+      [0.02425, -1.9729610513118848503],
+      [0.97575, 1.9729610513118848503],
+    ];
+    let worst = 0;
+    for (const [p, want] of known) {
+      worst = Math.max(worst, Math.abs(inverseStandardNormal(p) - want));
+    }
+    // Measured 5.0e-9 over this table, and 8.8e-9 swept at 1e-3 in the
+    // quantile over |x| <= 6. Two decades of margin here, and still four
+    // decades tighter than any error that could bend an acceptance rate.
+    expect(worst).toBeLessThan(1e-7);
+  });
+
+  it('answers both endpoints, and never with a NaN', () => {
+    // `keep` reaches 0 and 1 EXACTLY — zero on ground at twice the knee, one
+    // across the whole open fringe — so the infinities are the two answers the
+    // layer's own invariants are made of, and a NaN at either would silently
+    // turn "never draw here" into "always".
+    expect(inverseStandardNormal(0)).toBe(-Infinity);
+    expect(inverseStandardNormal(1)).toBe(Infinity);
+    expect(Number.isNaN(inverseStandardNormal(-0.1))).toBe(true);
+    expect(Number.isNaN(inverseStandardNormal(1.1))).toBe(true);
+    expect(Number.isNaN(inverseStandardNormal(Number.NaN))).toBe(true);
+  });
+
+  it('increases across both region boundaries', () => {
+    // A rational approximation stitched from three branches can be smooth in
+    // each and step at a seam. The step here would be of the order of the
+    // approximation error, so this is checked on a grid coarse enough that the
+    // true rise dwarfs it — and it spans 0.02425 and 0.97575 deliberately.
+    let previous = -Infinity;
+    for (let p = 0.001; p < 1; p += 0.001) {
+      const value = inverseStandardNormal(p);
+      expect(value).toBeGreaterThan(previous);
+      previous = value;
+    }
+  });
+});
+
+describe('the complement is correlated along a filament, and nowhere else', () => {
+  /** mulberry32 through Box-Muller — the module's own pair, so the decision is
+   *  driven here by the stream it is driven by in the walk. */
+  function normals(seed: number): () => number {
+    let state = seed >>> 0;
+    const next = (): number => {
+      state = (state + 0x6d2b79f5) >>> 0;
+      let t = state;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 0x1_0000_0000;
+    };
+    return () => Math.sqrt(-2 * Math.log(Math.max(next(), 1e-12)))
+      * Math.cos(2 * Math.PI * next());
+  }
+
+  it('accepts at exactly the ramp\'s probability, in every coverage bin', () => {
+    // ⭐ THE test for this construction, because the correlation is only free
+    // while the marginal is untouched: the halo's density statement — "kept
+    // with probability 1 - coverage / (2 * KNEE)" — is what the whole layer's
+    // honesty rests on, and correlating the draws would be a way to move it
+    // without anything else noticing.
+    //
+    // N per bin is 200,000, and the tolerance is derived rather than picked.
+    // The binomial standard error at the worst bin (keep 0.5) is
+    // sqrt(0.25/200000) = 1.1e-3, and the AR(1) inflates it: measured across
+    // 40 independent chains, the spread is 3.0-3.5x the binomial one at every
+    // bin, an effective sample of about N/11. So the worst-case standard error
+    // is 3.9e-3 and 0.02 is five of them. Measured worst deviation across
+    // these 21 bins: 5.9e-3 at keep 0.30, or 1.5 sigma.
+    const N = 200_000;
+    let worst = 0;
+    for (let bin = 0; bin <= 20; bin += 1) {
+      const coverage = POPULATION_FIELD_COVERAGE_CEILING * bin / 20;
+      const keep = populationComplementAcceptance(coverage);
+      const gaussian = normals(0x5eed + bin * 104_729);
+      let variate = gaussian();
+      let accepted = 0;
+      for (let i = 0; i < N; i += 1) {
+        variate = populationComplementVariate(variate, gaussian());
+        if (populationComplementAccepts(variate, keep)) accepted += 1;
+      }
+      worst = Math.max(worst, Math.abs(accepted / N - keep));
+    }
+    expect(worst).toBeLessThan(0.02);
+  });
+
+  it('holds both ends of the ramp structurally, at any variate', () => {
+    // The two the approximation is never asked about. `invPhi(0)` is -Infinity
+    // and `invPhi(1)` is +Infinity, and the second is also the hot path: the
+    // open fringe carries no resolved Cells at all, so most of the layer takes
+    // this branch.
+    for (const variate of [-40, -8, -1, 0, 1, 8, 40]) {
+      expect(populationComplementAccepts(variate, 0)).toBe(false);
+      expect(populationComplementAccepts(variate, 1)).toBe(true);
+      expect(populationComplementAccepts(
+        variate,
+        populationComplementAcceptance(POPULATION_FIELD_COVERAGE_CEILING),
+      )).toBe(false);
+      expect(populationComplementAccepts(
+        variate,
+        populationComplementAcceptance(0),
+      )).toBe(true);
+    }
+  });
+
+  it('agrees with itself over a run, which is the whole point', () => {
+    // The JOINT law, checked against its own closed form rather than against a
+    // remembered number. For two standard normals correlated at rho and a
+    // common threshold at the median, P(both below) is
+    // 1/4 + arcsin(rho) / (2 pi), so P(accept | accept) at keep 0.5 is
+    // 1/2 + arcsin(rho) / pi. An i.i.d. draw gives 0.5, which is exactly the
+    // "every other point" that turned strands into beads.
+    const rho = Math.exp(-1 / POPULATION_COMPLEMENT_CORRELATION_STEPS);
+    const expected = 0.5 + Math.asin(rho) / Math.PI;
+    expect(expected).toBeGreaterThan(0.8);
+
+    const gaussian = normals(0xc0ffee);
+    let variate = gaussian();
+    let previous = populationComplementAccepts(variate, 0.5);
+    let after = 0;
+    let following = 0;
+    for (let i = 0; i < 200_000; i += 1) {
+      variate = populationComplementVariate(variate, gaussian());
+      const current = populationComplementAccepts(variate, 0.5);
+      if (previous) {
+        after += 1;
+        if (current) following += 1;
+      }
+      previous = current;
+    }
+    // Measured 0.8337 against the closed form's 0.8339, over four million
+    // steps; 0.01 is loose enough for the 200,000 this test can afford.
+    expect(following / after).toBeCloseTo(expected, 2);
+  });
+
+  it('carries strands through the band where the Cells half-occupy the tissue', () => {
+    // ⭐ The reason the change exists, measured where the damage was. The
+    // complement's keep-probability runs 0.15-0.85 over `resolvedCoverage`
+    // 0.09-0.51, which is the transition between the addressable Cells and the
+    // halo — a quarter of every point placed. An i.i.d. draw dropped every
+    // other candidate there and broke the filament at each one, so the band
+    // drew beads: the share of ITS points carried by fibre components of eight
+    // or more was 0.203, against 0.697 for the layer as a whole.
+    //
+    // Measured correlated: 0.542 on the shipped 105,000-point placement, and
+    // 0.560 on this file's 20,000 sample. The floor sits well under both,
+    // because what is being asserted is that the i.i.d. figure is far behind
+    // — not that a particular number came back.
+    const size = componentSizes();
+    let inBand = 0;
+    let carried = 0;
+    for (let i = 0; i < placed.count; i += 1) {
+      const { x, z } = pointAt(i);
+      const coverage = tissueSampleAt(x, z, POPULATION_FIELD_OUTER_EDGE)
+        .resolvedCoverage;
+      if (coverage < 0.09 || coverage > 0.51) continue;
+      inBand += 1;
+      if (size.of[i] >= 8) carried += 1;
+    }
+    expect(inBand).toBeGreaterThan(placed.count * 0.15);
+    expect(carried / inBand).toBeGreaterThan(0.45);
+  });
+});
+
+describe('every strand ends as a fading tip', () => {
+  /** The weight the tissue alone would have written at each placed point. The
+   *  end taper is the ONLY thing that may separate the two, so the ratio is
+   *  the whole instrument. */
+  function taperRatios(): Float64Array {
+    const ratios = new Float64Array(placed.count);
+    for (let i = 0; i < placed.count; i += 1) {
+      const { x, z } = pointAt(i);
+      const sample = tissueSampleAt(x, z, POPULATION_FIELD_OUTER_EDGE);
+      ratios[i] = placed.weights[i]
+        / populationPointWeight(sample.density, sample.resolvedCoverage);
+    }
+    return ratios;
+  }
+
+  it('fades a strand\'s last points and leaves every other one alone', () => {
+    // Structural rather than statistical: every stored weight is the tissue's
+    // own answer times one of exactly four numbers.
+    //
+    // ⚠️ The tolerance is not float noise on the multiply — it is the position
+    // round trip. `positions` is a Float32Array and the walk sampled the field
+    // in doubles, so recomputing the weight from what was stored moves it by
+    // up to 2.2e-5 where the field is steep (measured, over 105,000 points).
+    // 1e-3 covers that with 45x to spare and is still 60x tighter than the
+    // gap between two rungs.
+    const ratios = taperRatios();
+    const seen = new Map<number, number>();
+    for (let i = 0; i < placed.count; i += 1) {
+      let rung = -1;
+      for (const value of [1, ...POPULATION_END_TAPER]) {
+        if (Math.abs(ratios[i] - value) < 1e-3) rung = value;
+      }
+      expect(rung).toBeGreaterThan(0);
+      seen.set(rung, (seen.get(rung) ?? 0) + 1);
+    }
+    // And all four are actually used. Measured on the shipped placement the
+    // three fade rungs take 13.1% / 11.1% / 9.8% of the buffer, so a third of
+    // the layer sits inside a fade and two thirds do not.
+    for (const rung of POPULATION_END_TAPER) {
+      expect(seen.get(rung) ?? 0).toBeGreaterThan(placed.count * 0.05);
+    }
+    expect(seen.get(1) ?? 0).toBeGreaterThan(placed.count * 0.5);
+  });
+
+  it('never fades one point twice', () => {
+    // The failure mode this is here for: a complement break severs a strand
+    // and the filament's own steps run out a moment later, so two ends arrive
+    // at the same three points. A doubled fade would land on 0.0625, 0.125,
+    // 0.1875, 0.375, 0.5625 — every one of them at least 0.06 from a legal
+    // rung, which the assertion above already excludes. Stated separately
+    // because it is the invariant, not a corollary.
+    const ratios = taperRatios();
+    for (const bad of [0.0625, 0.125, 0.1875, 0.375, 0.5625]) {
+      for (let i = 0; i < placed.count; i += 1) {
+        expect(Math.abs(ratios[i] - bad)).toBeGreaterThan(0.01);
+      }
+    }
+  });
+
+  it('leaves the tip lit', () => {
+    // A zero-weight tip is not an invisible point — `populationPointSizeForWeight`
+    // floors at POPULATION_FIELD_POINT_SIZE_MIN, so it would still draw a bead,
+    // on a stroke faded to 0.433. That is a bead with a faint connector, which
+    // is precisely what "no endpoint emphasis of any kind" forbids. The ramp
+    // stops at a quarter for that reason and not out of caution.
+    expect(POPULATION_END_TAPER[0]).toBeGreaterThan(0);
+    let smallest = Infinity;
+    for (let i = 0; i < placed.count; i += 1) {
+      smallest = Math.min(smallest, placed.weights[i]);
+    }
+    expect(smallest).toBeGreaterThan(0);
+    // The ramp rises to the strand's own weight, and does so monotonically.
+    for (let i = 1; i < POPULATION_END_TAPER.length; i += 1) {
+      expect(POPULATION_END_TAPER[i]).toBeGreaterThan(POPULATION_END_TAPER[i - 1]);
+    }
+    expect(POPULATION_END_TAPER[POPULATION_END_TAPER.length - 1])
+      .toBeLessThan(1);
+  });
+
+  it('keeps the stroke-to-bead ratio invariant, which is what the rule asks', () => {
+    // "No endpoint emphasis of any kind" is a constant RATIO and not a small
+    // constant — see `populationFibreTaper`. The fade is applied to the weight
+    // BOTH primitives read, so the stroke's alpha and the bead's footprint
+    // move together and their ratio does not move at all. This is the guard on
+    // the thing a future fibre-only end treatment would break.
+    for (const rung of [1, ...POPULATION_END_TAPER]) {
+      const weight = 0.8 * rung;
+      const size = populationPointSizeForWeight(weight);
+      expect(populationFibreTaper(weight)).toBeCloseTo(
+        (size / POPULATION_FIELD_POINT_SIZE_MAX) ** 2,
+        12,
+      );
     }
   });
 });

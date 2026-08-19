@@ -272,11 +272,16 @@ export default function CellPopulationField({
   return (
     <>
       {/* The filaments, one sample under their own points: a one-pixel line
-          against the fabric's 2.5-pixel capsule, flat along its whole length,
-          with no taper and no brightening at a vertex. The stroke is the
-          figure — a halo point must never look like a node with edges
-          radiating from it. Every index addresses a point in the same buffer,
-          so no fibre reaches an addressable Cell. */}
+          against the fabric's 2.5-pixel capsule. It takes the SAME tissue
+          taper the points ride, in the only currency a line has — alpha, at
+          the point's own footprint falloff — so stroke and bead dim together
+          and their ratio never moves along it. That constant ratio is what
+          "no endpoint emphasis of any kind" actually asks for: there is no
+          falloff toward a vertex and no brightening at one, and a strand's
+          last points fade only because the weight they SHARE with their beads
+          was faded. The stroke is the figure — a halo point must never look
+          like a node with edges radiating from it. Every index addresses a
+          point in the same buffer, so no fibre reaches an addressable Cell. */}
       <lineSegments
         geometry={placed.fibres}
         material={fibreMaterial}

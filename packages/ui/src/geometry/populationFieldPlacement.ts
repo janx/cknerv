@@ -120,11 +120,28 @@ import {
  *     ONTO the Cells. The share of placed points inside the resolved rim
  *     crosses one half at edge **1.585**. Below that the layer is more infill
  *     than halo, which is a different picture from the one that was specified.
- *  2. **The complement is what shreds it.** Acceptance is probabilistic, so on
- *     ground the Cells half-occupy it drops every other point and the filament
- *     becomes beads. That is correct per point and ruinous per stroke: the
- *     share of points carried by fibre components of 8 or more runs 0.816 at
- *     2.2, 0.701 here, and 0.526 at 1.3.
+ *  2. **The complement is what shreds it — and this bound has since been
+ *     RELAXED, though not removed.** Acceptance is probabilistic, so on ground
+ *     the Cells half-occupy it used to drop every other point and the filament
+ *     became beads: the share of points carried by fibre components of 8 or
+ *     more ran 0.816 at 2.2, 0.701 here, and 0.526 at 1.3. That was the
+ *     JOINT law of the draw and not the marginal, and
+ *     {@link POPULATION_COMPLEMENT_CORRELATION_STEPS} fixed it. Re-measured
+ *     with the correlated complement, same points, same seed:
+ *
+ *     | edge | 2.2 | 1.7 | 1.6 | 1.5 | 1.3 |
+ *     |---|---:|---:|---:|---:|---:|
+ *     | i.i.d.     | 0.816 | 0.697 | 0.701 | 0.662 | 0.526 |
+ *     | correlated | 0.870 | 0.832 | **0.809** | 0.791 | 0.717 |
+ *
+ *     ⚠️ It still falls monotonically inward and 1.3 still costs a tenth of
+ *     the layer's stroke against 1.6, so this remains a real reason not to
+ *     close the edge further — it is simply no longer the tightest of the
+ *     three. **The edge does not move on the strength of it**, because bounds
+ *     1 and 3 are untouched: the correlated complement is marginal-preserving,
+ *     so the share of points inside the resolved rim (0.490, crossing one half
+ *     at 1.585) and the placed density that the chroma column is a function of
+ *     are both exactly where they were.
  *  3. **Concentration eats chroma**, because bounded-screen accumulation
  *     converges to the emitted alpha in every channel. Rendered C/L in the
  *     pre-rim band falls 0.1473 -> 0.1223 here, and at 1.3 reaches **0.1061 —
@@ -147,8 +164,10 @@ import {
  * against the 0.90 ceiling — it fails containment outright, which is the one
  * thing pulling the edge in was for. What it buys is marginal beside that:
  * chroma retention +0.011 before the rim and +0.007 outside it, fibre runs of
- * eight or more 0.697 → 0.735, at +12% frame coverage. The ladder now has one
- * rung, and the boundary's own character is where the gentleness came from.
+ * eight or more 0.697 → 0.735 (0.809 → 0.832 once the complement was
+ * correlated — the same small gain), at +12% frame coverage. The ladder now
+ * has one rung, and the boundary's own character is where the gentleness came
+ * from.
  *
  * ## What it cost the GPU: nothing, and the reason generalises
  *
@@ -276,6 +295,11 @@ export function populationSegmentsForPointPrefix(
  * would cross exactly the ground the complement just cleared. A filament that
  * re-emerges on the far side of a Cell clump is the interdigitation reading
  * made literal.
+ *
+ * WHICH candidates are dropped is a separate question from how many, and the
+ * two were once answered by the same draw; see
+ * {@link POPULATION_COMPLEMENT_CORRELATION_STEPS}. The probability above is
+ * unchanged by that, exactly.
  */
 export const POPULATION_FIELD_COMPLEMENT_KNEE = 0.3;
 
@@ -338,6 +362,70 @@ export function populationPointWeight(
       * (resolvedCoverage / POPULATION_FIELD_COVERAGE_CEILING),
   );
 }
+
+/**
+ * How a STRAND ends — the ramp its last points' weights are scaled by, tip
+ * first.
+ *
+ * A strand is one unbroken drawn curve, which is not the same thing as a
+ * filament: the complement breaks a filament wherever it crosses resolved
+ * tissue, so one walk can leave several strands behind. Every one of them used
+ * to stop at whatever weight the tissue handed its last point, and the
+ * complaint that came back from live review was about precisely that — "the
+ * edge looks clipped, too regular". The layer's outer boundary is drawn almost
+ * entirely by strokes (lightness 0.218 against the points' 0.148 outside the
+ * rim), and a stroke that ends at full strength is a hem.
+ *
+ * `1c44c79` answered the LAYER-wide half of it: the fibre took the same tissue
+ * taper the point rides, so the open fringe draws dimmer than the dense
+ * interior. What it could not answer is the per-strand half — inside one band
+ * every strand still ended as abruptly as it began. This is that half, and it
+ * is retroactive rather than predictive: the walk does not know a strand is
+ * over until it is, and the whole pass finishes before either buffer is
+ * transferred, so writing a weight a second time costs one store.
+ *
+ * ## Why these three numbers
+ *
+ * Equal increments, so the ramp has a corner at neither end: 0.25, 0.50, 0.75
+ * and then the strand's own weight, four steps of a quarter. A geometric or
+ * steeper ramp puts the whole fade into the last point, which reads as one
+ * dim speck rather than as a tip.
+ *
+ * The tip is a QUARTER and never zero, and the floor is not squeamishness.
+ * `populationPointSizeForWeight` maps weight 0 to
+ * `POPULATION_FIELD_POINT_SIZE_MIN`, not to nothing, so a zero-weight point
+ * still draws — it would be a full-sized-enough bead on a stroke faded to
+ * `(0.50/0.76)^2 = 0.433`, which is a bead with a faint connector: exactly the
+ * shape "no endpoint emphasis of any kind" forbids. Scaling the shared weight
+ * is what keeps that from happening at all, because the stroke's alpha rides
+ * `(size(w)/sizeMax)^2` of the SAME number — the ratio of stroke to bead is
+ * invariant along this ramp for the same reason it is invariant along the
+ * tissue taper, and no fibre-only end treatment may ever be added on top.
+ *
+ * Three points, not more: at {@link POPULATION_STREAMLINE_STEP} that is 3.75
+ * world units of fade against a median drawn run of 7.50, and a fourth would
+ * be fading more of the layer than it leaves. Measured on the shipped
+ * 105,000-point placement, the three rungs already take **13.1% / 11.1% /
+ * 9.8%** of every point placed, so a third of the layer is inside a fade and
+ * two thirds are not.
+ *
+ * ## What it costs, and where the light goes
+ *
+ * Point flux (`size^2` summed over the buffer) falls to **0.918x**. Fibre
+ * flux, over the same change, RISES to **1.033x** — the correlated complement
+ * ships with this and hands the strokes 7.6% more segments than the fades take
+ * back. So the layer as a whole does not dim; what happens is that light moves
+ * off the ENDS and onto the middles, which is the entire request.
+ *
+ * ⚠️ The fade is bounded by the size floor and cannot be deepened by this
+ * ramp alone. A quarter-weight tip in the dense interior still draws at
+ * `(0.5 + 0.26*0.25)/0.76 = 0.743` of the maximum sprite, so `0.553` of the
+ * flux; in the open fringe, where the weight is already low, the tip barely
+ * moves at all. If live review wants the tips to go further, the knob is
+ * `POPULATION_FIELD_POINT_SIZE_MIN` and not this array — and that knob
+ * is spoken for by the layer's own minimum-visible-sprite argument.
+ */
+export const POPULATION_END_TAPER: readonly number[] = [0.25, 0.5, 0.75];
 
 /**
  * The halo's fibre, as two ridged octaves on the law's WARPED coordinates.
@@ -491,16 +579,36 @@ export const POPULATION_STREAMLINE_STEP = 1.25;
  * the typical-stroke reading it was standing in for: run p50 went from 1.5x
  * the fabric's p50 to **4.0x**, and run p90 from 2.80x to **5.86x**.
  *
+ * ⚠️ Those two ratios are the edge-2.2 distribution against the corrected
+ * fabric. At 1.6 the drawn runs are shorter — p50 6.25 wu, p90 18.75 — so the
+ * ratios were really 2.85x and 4.63x, and then
+ * {@link POPULATION_COMPLEMENT_CORRELATION_STEPS} lengthened them again to
+ * **7.50 / 21.25 wu, 3.42x and 5.25x**. That direction is not an accident and
+ * it is worth naming: the breaks the i.i.d. complement was scattering through
+ * the mixed band were CUTTING runs, so healing the strand-shredding bug spends
+ * some of its gain on exactly the length regression this constant records.
+ * The max is unmoved at 31.25 (1.16x) — it is bounded by
+ * {@link POPULATION_STREAMLINE_MAX_STEPS} and not by the complement — and the
+ * spread p90/p50 holds at 2.83.
+ *
  * ⚠️⚠️ **Neither lever can follow, and both are pinned by something that has
  * nothing to do with the fabric.**
  *
  *  - **Fewer steps** fragments the fibre graph. The share of points carried by
  *    components of 8+ — "draws strokes, not dust", and a hard guard at 0.80 —
- *    sits at **0.826** here, with 3% of headroom. Every shortened variant
+ *    sat at **0.826** here, with 3% of headroom. Every shortened variant
  *    swept falls through it: 5/26/1.6 gives 0.811 for almost no gain (p90
  *    5.86x -> 5.56x), 3/26/3.2 gives 0.678, 3/14/1.6 gives 0.53. Shortening a
  *    filament does not just shorten the drawn curve, it breaks the curve into
  *    dust, and dust is the failure this layer was rebuilt to escape.
+ *
+ *    ⚠️ That whole sweep predates two changes and cannot arbitrate again
+ *    until it is re-run: the edge closed to 1.6, which took the share to
+ *    0.701 and put it under the guard, and
+ *    {@link POPULATION_COMPLEMENT_CORRELATION_STEPS} then took it back to
+ *    **0.809**. The headroom is real again — 1.1% of it — and the direction
+ *    of the finding is unchanged, but the specific variant numbers above were
+ *    measured against an i.i.d. complement that no longer exists.
  *  - **A shorter step** would shorten runs in world units while leaving the
  *    topology — and therefore the stroke share — exactly intact, which is the
  *    lever that ought to work. It is spoken for: {@link
@@ -772,6 +880,210 @@ export const POPULATION_FIELD_COVERAGE_CEILING =
   2 * POPULATION_FIELD_COMPLEMENT_KNEE;
 
 /**
+ * How far the complement's decisions agree along one filament, in walk steps.
+ *
+ * ## The bug this fixes is a JOINT law, not a marginal one
+ *
+ * The acceptance probability at every point is exactly
+ * {@link populationComplementAcceptance} and this constant does not move it by
+ * one part in a billion. What it changes is which candidates are dropped
+ * TOGETHER, and that was the whole of the damage: an independent draw is
+ * correct per point and ruinous per stroke. On ground the Cells half-occupy it
+ * keeps every other candidate, and since a rejection breaks the strand, a
+ * filament crossing that ground comes out as beads rather than as one stroke
+ * that stops once.
+ *
+ * Measured on the shipped 105,000-point placement, over the band where `keep`
+ * runs 0.15–0.85 — `resolvedCoverage` 0.09–0.51, 27,062 points, a quarter of
+ * the layer — the share carried by fibre components of eight or more was
+ * **0.203**, against 0.697 for the layer as a whole. That band IS the
+ * transition between the addressable Cells and the halo, the one thing the
+ * mixed register exists to express, and it was the one place the layer drew
+ * dust.
+ *
+ * ## The construction, and why it is free
+ *
+ * The decision rides a latent AR(1) variate carried on the walk instead of
+ * being drawn fresh:
+ *
+ * > `z <- rho * z + sqrt(1 - rho^2) * g`, accept where `z < invPhi(keep)`.
+ *
+ * A Gaussian copula, and the proof that it costs nothing is the same one
+ * {@link POPULATION_STREAMLINE_JITTER} already turns on: `g` is standard
+ * normal and `z` is standard normal, so `rho * z + sqrt(1 - rho^2) * g` is
+ * standard normal again — the marginal is preserved by the recursion, exactly,
+ * not approximately. Therefore `P(z < invPhi(keep)) = keep` at every single
+ * point, not on average over the layer. The density statement the complement
+ * makes is untouched; only the correlation between neighbouring decisions
+ * moves. The one wrinkle is {@link inverseStandardNormal}'s own approximation
+ * error, which perturbs that probability by at most 2.7e-10.
+ *
+ * A fresh variate is drawn at every filament seed, forked children included —
+ * see the seeding block for why inheriting the parent's would be wrong.
+ *
+ * Both halves of that were measured rather than asserted. Driven through this
+ * module's own decision at 200,000 candidates per bin, the empirical accept
+ * rate matches `keep` to a worst deviation of **5.9e-3 over 21 bins**, against
+ * a standard error the correlation inflates to 3.9e-3 — 1.5 sigma, no bias.
+ * End to end on the real placement, the statistic the whole claim is about —
+ * the mean `resolvedCoverage` the placed points sit at, which IS the density
+ * statement — reads 0.06840 +/- 0.00092 across six seeds before and 0.06887
+ * +/- 0.00054 after: a difference of means of 0.68%, half of one seed's own
+ * spread. The share of points landing inside the resolved rim, 0.490, is
+ * likewise unmoved.
+ *
+ * ## Why seven steps
+ *
+ * For an AR(1) the correlation at lag `k` is `rho^k`, so a length `l` where it
+ * has fallen to `1/e` gives `rho = exp(-1/l)`. Swept at 105,000 points:
+ *
+ * | l | rho | keep 0.15–0.85 band | layer-wide | segments |
+ * |--:|----:|--------------------:|-----------:|---------:|
+ * | i.i.d. | — | 0.203 | 0.697 | 88,050 |
+ * | 4  | 0.7788 | 0.473 | 0.784 | 93,551 |
+ * | 5  | 0.8187 | 0.514 | 0.800 | 94,179 |
+ * | 6  | 0.8465 | 0.540 | 0.805 | 94,504 |
+ * | 7  | 0.8669 | **0.542** | **0.809** | 94,762 |
+ * | 8  | 0.8825 | 0.562 | 0.815 | 95,082 |
+ * | 10 | 0.9048 | 0.584 | 0.819 | 95,203 |
+ * | 12 | 0.9200 | 0.590 | 0.826 | 95,528 |
+ * | 20 | 0.9512 | 0.628 | 0.841 | 96,235 |
+ *
+ * The curve is still climbing at 20, and the reason to stop well inside it is
+ * what the correlation is FOR. A run of agreeing decisions as long as a whole
+ * filament stops expressing the tissue at all: the complement would keep or
+ * drop entire strands rather than the parts of them that cross Cells, and
+ * interdigitation — a filament re-emerging on the far side of a clump — is the
+ * reading this layer's complement exists to produce. Seven steps is 8.75 world
+ * units against a drawn run whose median is 7.50, so a typical strand gets ONE
+ * decision about the ground it is crossing and a long one still gets several.
+ * It takes 80% of the gain the runaway end of the sweep offers.
+ *
+ * ## What it costs
+ *
+ * Segments, and that is the honest price of the fix rather than an overrun:
+ * **88,050 -> 94,762, +7.6%**, because every bead that becomes part of a
+ * stroke again is a segment that was not being drawn. The draws are
+ * primitive-bound (halving primitives gives 0.43–0.45x the time), so that is
+ * about +0.15 ms of the fibres' 1.97 ms at 4K — a twentieth of the adaptive
+ * controller's own high-to-med step, and the layer's point budget and both
+ * draw calls are untouched. Worker CPU, min-of-9 at 105,000 points: 142.3 ->
+ * 151.2 ms, +6.2%, once, before the layer is on screen.
+ *
+ * ⚠️ Point light falls 8.2% and fibre light RISES 3.3%, but neither is this
+ * constant's doing — both belong to {@link POPULATION_END_TAPER}, which ships
+ * alongside it, and the fibre gain is the extra segments outweighing the
+ * fades. Do not read either number as a cost of the correlation.
+ */
+export const POPULATION_COMPLEMENT_CORRELATION_STEPS = 7;
+const COMPLEMENT_RHO = Math.exp(-1 / POPULATION_COMPLEMENT_CORRELATION_STEPS);
+const COMPLEMENT_INNOVATION = Math.sqrt(1 - COMPLEMENT_RHO * COMPLEMENT_RHO);
+
+/** Acklam's rational approximation to the standard normal's inverse CDF, in
+ *  its three regions. */
+const ACKLAM_LOW = 0.02425;
+const ACKLAM_A = [
+  -3.969683028665376e+1, 2.209460984245205e+2, -2.759285104469687e+2,
+  1.383577518672690e+2, -3.066479806614716e+1, 2.506628277459239e+0,
+];
+const ACKLAM_B = [
+  -5.447609879822406e+1, 1.615858368580409e+2, -1.556989798598866e+2,
+  6.680131188771972e+1, -1.328068155288572e+1,
+];
+const ACKLAM_C = [
+  -7.784894002430293e-3, -3.223964580411365e-1, -2.400758277161838e+0,
+  -2.549732539343734e+0, 4.374664141464968e+0, 2.938163982698783e+0,
+];
+const ACKLAM_D = [
+  7.784695709041462e-3, 3.224671290700398e-1, 2.445134137142996e+0,
+  3.754408661907416e+0,
+];
+
+/**
+ * The standard normal's inverse CDF — the threshold the correlated complement
+ * compares its latent variate against.
+ *
+ * Peter Acklam's rational approximation: a central branch on `p - 0.5` and two
+ * tail branches on `sqrt(-2 ln p)`, published relative error below 1.15e-9. No
+ * refinement step, and none is wanted — what this feeds is a comparison, so
+ * the only error that means anything is the one it makes in the ACCEPTANCE
+ * PROBABILITY, and that is bounded by `|Phi(invPhi(p)) - p|`. Measured against
+ * a 50-digit reference over the whole double-precision range of `p`, in steps
+ * of 1e-3 in the quantile: **2.7e-10**, worst at `p ~= 0.85`. In the quantile
+ * itself the worst absolute error over `|x| <= 6` is 8.8e-9.
+ *
+ * ⚠️ Past `|x| = 6` the sweep's error climbs to 0.08 at `|x| = 8.3`, and that
+ * is the DOUBLE and not the approximation: at `p > 1 - 1e-16` the `1 - p` the
+ * upper branch takes has already lost every significant digit it had. It costs
+ * nothing here — the caller's `keep` reaches 0 and 1 exactly, on ground at
+ * twice the knee and across the open fringe, and both are handled before this
+ * is ever called.
+ *
+ * Returns +/-Infinity at the endpoints, which is the mathematically right
+ * answer and never a NaN; the caller still short-circuits both, because a
+ * comparison against an infinity is a branch it can skip entirely.
+ */
+export function inverseStandardNormal(p: number): number {
+  if (!(p > 0)) return p === 0 ? -Infinity : NaN;
+  if (p >= 1) return p === 1 ? Infinity : NaN;
+  if (p < ACKLAM_LOW) {
+    const q = Math.sqrt(-2 * Math.log(p));
+    return (((((ACKLAM_C[0] * q + ACKLAM_C[1]) * q + ACKLAM_C[2]) * q
+      + ACKLAM_C[3]) * q + ACKLAM_C[4]) * q + ACKLAM_C[5])
+      / ((((ACKLAM_D[0] * q + ACKLAM_D[1]) * q + ACKLAM_D[2]) * q
+        + ACKLAM_D[3]) * q + 1);
+  }
+  if (p > 1 - ACKLAM_LOW) {
+    const q = Math.sqrt(-2 * Math.log(1 - p));
+    return -(((((ACKLAM_C[0] * q + ACKLAM_C[1]) * q + ACKLAM_C[2]) * q
+      + ACKLAM_C[3]) * q + ACKLAM_C[4]) * q + ACKLAM_C[5])
+      / ((((ACKLAM_D[0] * q + ACKLAM_D[1]) * q + ACKLAM_D[2]) * q
+        + ACKLAM_D[3]) * q + 1);
+  }
+  const q = p - 0.5;
+  const r = q * q;
+  return (((((ACKLAM_A[0] * r + ACKLAM_A[1]) * r + ACKLAM_A[2]) * r
+    + ACKLAM_A[3]) * r + ACKLAM_A[4]) * r + ACKLAM_A[5]) * q
+    / (((((ACKLAM_B[0] * r + ACKLAM_B[1]) * r + ACKLAM_B[2]) * r
+      + ACKLAM_B[3]) * r + ACKLAM_B[4]) * r + 1);
+}
+
+/**
+ * One step of the complement's latent chain, given the previous value and a
+ * fresh standard normal.
+ *
+ * `rho * z + sqrt(1 - rho^2) * g`: the whole of the construction, and the
+ * reason it is stated as a function rather than written inline is that the
+ * marginal it preserves is the only thing making the correlation free, so the
+ * claim has to be checkable against the code the walk actually runs.
+ */
+export function populationComplementVariate(
+  previous: number,
+  gaussian: number,
+): number {
+  return previous * COMPLEMENT_RHO + gaussian * COMPLEMENT_INNOVATION;
+}
+
+/**
+ * Whether a candidate carrying `variate` survives a complement of `keep`.
+ *
+ * Both ends are decided here and not by {@link inverseStandardNormal}, because
+ * `keep` reaches both exactly: one across the whole open fringe, which is also
+ * the hot path, and zero on ground at twice the knee, where nothing may ever
+ * be drawn. `invPhi` answers +/-Infinity there, so this is a short-circuit and
+ * not a special case — but a NaN would be one, and that is what a threshold
+ * arithmetic on an infinity could produce.
+ */
+export function populationComplementAccepts(
+  variate: number,
+  keep: number,
+): boolean {
+  if (keep >= 1) return true;
+  if (keep <= 0) return false;
+  return variate < inverseStandardNormal(keep);
+}
+
+/**
  * Upper bound on the acceptance probability at one radius, from the radius
  * alone — no noise evaluated.
  *
@@ -806,7 +1118,14 @@ export interface PopulationPlacementState {
    *  first `count` entries. SIZE alone rides it: brightness is flat at the
    *  emission ceiling and the tint is one colour, so what varies across the
    *  layer on screen is how many points land on a pixel, exactly as it is for
-   *  the Cells. Transferred with the positions; pinned for the same reason. */
+   *  the Cells. Transferred with the positions; pinned for the same reason.
+   *
+   *  ⚠️ Written TWICE for the last points of every strand: once from the
+   *  tissue at emission, then scaled again by {@link POPULATION_END_TAPER}
+   *  once the strand is known to have ended. So an entry is not final until
+   *  its strand is over, which costs nothing here — the pass finishes before
+   *  either buffer leaves the worker — but would matter to any caller that
+   *  read this mid-pass. */
   weights: Float32Array<ArrayBuffer>;
   capacity: number;
   /** Points written so far. */
@@ -856,6 +1175,19 @@ interface WalkState {
   /** Index of the last point emitted on this filament, or -1 when the
    *  complement broke it. A break must not be bridged. */
   previous: number;
+  /** The complement's latent variate — marginally standard normal at every
+   *  step by construction, carried so that consecutive decisions agree over a
+   *  run instead of being drawn fresh. See
+   *  {@link POPULATION_COMPLEMENT_CORRELATION_STEPS}. Redrawn at every seed. */
+  complement: number;
+  /** The last three points emitted on the STRAND in hand, newest first, or -1
+   *  for an unused slot. A strand's end fades these — see
+   *  {@link POPULATION_END_TAPER} — and emptying the ring as it does is what
+   *  stops a complement break followed closely by the filament's own end from
+   *  fading one point twice. */
+  tip0: number;
+  tip1: number;
+  tip2: number;
 }
 
 export function createPopulationPlacement(
@@ -887,6 +1219,10 @@ export function createPopulationPlacement(
       wander: 0,
       generation: 0,
       previous: -1,
+      complement: 0,
+      tip0: -1,
+      tip1: -1,
+      tip2: -1,
     },
     branchX: new Float64Array(BRANCH_RESERVOIR),
     branchZ: new Float64Array(BRANCH_RESERVOIR),
@@ -947,6 +1283,24 @@ export function advancePopulationPlacement(
   const crest = { x: 0, z: 0 };
   const jitterShare = POPULATION_STREAMLINE_JITTER;
   const filamentShare = Math.sqrt(1 - jitterShare * jitterShare);
+
+  // A strand is over: fade the last points it emitted so it ends as a tip
+  // rather than at whatever weight the tissue handed its last one. Retroactive,
+  // and free — the whole pass finishes before either buffer is transferred, so
+  // a second write to a weight is a store into memory nothing has read.
+  //
+  // Every way a strand can end comes through here: the steps running out, the
+  // density floor, a complement break severing it mid-filament, and the pass
+  // itself finishing. Emptying the ring is what keeps two of those arriving in
+  // quick succession from fading one point twice.
+  const endStrand = (): void => {
+    if (walk.tip0 >= 0) weights[walk.tip0] *= POPULATION_END_TAPER[0];
+    if (walk.tip1 >= 0) weights[walk.tip1] *= POPULATION_END_TAPER[1];
+    if (walk.tip2 >= 0) weights[walk.tip2] *= POPULATION_END_TAPER[2];
+    walk.tip0 = -1;
+    walk.tip1 = -1;
+    walk.tip2 = -1;
+  };
 
   let count = state.count;
   let segmentCount = state.segmentCount;
@@ -1033,6 +1387,23 @@ export function advancePopulationPlacement(
         span * next() ** POPULATION_STREAMLINE_LENGTH_EXPONENT,
       );
       walk.wander = next();
+      // A fresh variate for every filament, forked children INCLUDED. The
+      // tempting alternative is to let a child inherit its parent's: the child
+      // starts one step from a point on the parent, in the same tissue, and
+      // inheriting would make the fork itself far likelier to be drawn. It is
+      // wrong for one reason and the reason is the whole value of this
+      // construction — the parent's variate at a recorded point is conditioned
+      // on the parent having been ACCEPTED there, so it is a truncated normal
+      // and not a standard one. Carrying it into the child would bias the
+      // child's first steps toward acceptance, and the marginal that makes the
+      // correlation free would stop being exact.
+      walk.complement = gaussian();
+      // The tip ring belongs to one strand. The end that emptied it has
+      // already run; clearing here means a missed end loses a fade rather than
+      // applying one twice.
+      walk.tip0 = -1;
+      walk.tip1 = -1;
+      walk.tip2 = -1;
       streamlines += 1;
       continue;
     }
@@ -1043,7 +1414,10 @@ export function advancePopulationPlacement(
 
     const sample = tissueSampleAt(walk.x, walk.z, POPULATION_FIELD_OUTER_EDGE);
     if (sample.density < POPULATION_STREAMLINE_DENSITY_FLOOR) {
-      // Out of tissue. Stop rather than trail a filament into vacuum.
+      // Out of tissue. Stop rather than trail a filament into vacuum — and
+      // fade out, because this is the halo's outer silhouette and a stroke
+      // that simply stopped there is what read as a trimmed mat.
+      endStrand();
       walk.stepsLeft = 0;
       continue;
     }
@@ -1091,7 +1465,20 @@ export function advancePopulationPlacement(
     // used to approximate, evaluated where the point actually is. The walk
     // carries on regardless; only the drawing stops, and the filament breaks
     // so that no segment crosses the ground just cleared.
-    if (next() < populationComplementAcceptance(sample.resolvedCoverage)) {
+    //
+    // The decision rides a latent variate the walk carries rather than a fresh
+    // draw, so consecutive decisions agree over about
+    // POPULATION_COMPLEMENT_CORRELATION_STEPS steps — a strand crossing
+    // half-occupied ground survives whole or breaks once, instead of beading.
+    // Advanced on every step, accepted or not, so the correlation is a
+    // property of the WALK and not of what it happened to emit.
+    walk.complement = populationComplementVariate(walk.complement, gaussian());
+    if (
+      populationComplementAccepts(
+        walk.complement,
+        populationComplementAcceptance(sample.resolvedCoverage),
+      )
+    ) {
       // Height from the same fold and thickness the Cells are folded around,
       // with only the Gaussian SPREAD flattened. The fold itself keeps its
       // full amplitude: it is the organism's own mid-surface, and it is what
@@ -1119,6 +1506,9 @@ export function advancePopulationPlacement(
         segmentCount += 1;
       }
       walk.previous = index;
+      walk.tip2 = walk.tip1;
+      walk.tip1 = walk.tip0;
+      walk.tip0 = index;
 
       if (
         walk.generation < POPULATION_STREAMLINE_MAX_GENERATION
@@ -1135,8 +1525,14 @@ export function advancePopulationPlacement(
         branchWritten += 1;
       }
     } else {
+      // The break severs the strand, so this is one of its ends.
+      endStrand();
       walk.previous = -1;
     }
+
+    // And the filament's own end. A rejection on the last step reaches this
+    // with an emptied ring, so the two cannot fade one point twice.
+    if (walk.stepsLeft <= 0) endStrand();
 
     walk.x += walk.dirX * POPULATION_STREAMLINE_STEP;
     walk.z += walk.dirZ * POPULATION_STREAMLINE_STEP;
@@ -1149,6 +1545,13 @@ export function advancePopulationPlacement(
   state.work = work;
   state.branchWritten = branchWritten;
   state.done = count >= capacity || work >= ceiling;
+  // The pass is over, so the strand in hand ends here too. It ends because the
+  // buffer filled rather than because the tissue ran out, but it is still the
+  // last thing drawn on that curve and nothing downstream can tell the
+  // difference. A caller that merely spent THIS call's budget is not done and
+  // its strand carries on — which is why this reads `state.done` and not the
+  // loop's exit.
+  if (state.done) endStrand();
   return state;
 }
 
