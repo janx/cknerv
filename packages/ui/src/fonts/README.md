@@ -1,15 +1,22 @@
 # HUD font subsets
 
-`HuiwenMincho-subset.woff2` is a 22-glyph subset of 汇文明朝体
+`HuiwenMincho-subset.woff2` is a 17-glyph subset of 汇文明朝体
 (`Huiwen-mincho`) for the Chinese text used by the HUD:
 
 ```text
-共识记忆细胞状态脉搏警告节点对端播种网络全道
+共识基神经脉搏节点场对端状态警告道
 ```
+
+That list is exactly the glyphs rendered in `HUD_FONTS.cjk` today — the `cjk`
+props of `PanelHeader` plus `WarningBar`'s 警告 and `StatusStrip`'s 状态. Any new
+Chinese in a panel falls back to a system serif until the subset is regenerated,
+so re-subset in the same commit as the rename.
 
 The source font comes from the Chinese Webfont Project package
 [`@chinese-fonts/hwmct`](https://github.com/KonghaYao/chinese-free-web-font-storage/tree/branch/packages/hwmct).
-Its embedded copyright record is `Public Domain`.
+Its embedded copyright record is `Public Domain`. The npm tarball ships only
+per-range woff2 shards; the full TTF lives in the repo at
+`packages/hwmct/fonts/汇文明朝体.ttf` (24.4MB) on the `branch` branch.
 
 Source file SHA-256:
 `1ea5d0450c0d034c3e4077f2b533d74fbd1bf1f14d938477389338e64d3d8d9c`.
@@ -18,14 +25,14 @@ Regenerate with FontTools 4.63 or later:
 
 ```bash
 pyftsubset /path/to/汇文明朝体.ttf \
-  --text='共识记忆细胞状态脉搏警告节点对端播种网络全道' \
+  --text='共识基神经脉搏节点场对端状态警告道' \
   --no-ignore-missing-unicodes \
   --flavor=woff2 \
   --output-file=HuiwenMincho-subset.woff2
 ```
 
 The expected SHA-256 for the checked-in subset is
-`f9429f53caafbc37a03c01d136ba4a8d5fa45d209ee70ef49a99d6800e74c883`.
+`61cbbd1a0a56ab1494d24f7c1b0579ddbbd67831b88b4c6948defaab8296fc87`.
 
 ## `JetBrains Mono Local` / `Orbitron Local`
 

@@ -117,7 +117,7 @@ describe('BlockchainReadout', () => {
     expect(container.textContent).not.toContain('Tps');
     expect(container.textContent).toContain('312 · 64');
     expect(container.textContent).toContain('COMMON KNOWLEDGE BASE');
-    expect(container.textContent).toContain('共识记忆');
+    expect(container.textContent).toContain('共识基');
     expect(container.textContent).toContain('GALAXY WINDOW');
     expect(container.textContent).toContain('1.21 GB');
     expect(container.textContent).not.toContain('Interval');

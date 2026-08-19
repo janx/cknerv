@@ -39,7 +39,7 @@ export default function BlockchainReadout({ chain, cellsStats, cellPopulation, e
   const epoch = formatEpochReadout(chain.epoch);
   return (
     <HudPanel style={{ width: 340, ...style }}>
-      <PanelHeader en="COMMON KNOWLEDGE BASE" cjk="共识记忆" idx="CKB·01" />
+      <PanelHeader en="COMMON KNOWLEDGE BASE" cjk="共识基" idx="CKB·01" />
       <StatRow label="Tip"><span style={{ fontFamily: HUD_FONTS.display, fontWeight: 600, fontSize: 13, color: '#fff' }}>#{fmt(chain.tip)}</span></StatRow>
       <StatRow label="Epoch">
         <span data-epoch-number>{epoch.number}</span>

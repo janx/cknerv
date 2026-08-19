@@ -61,8 +61,9 @@ export function rgba(hex: string, alpha: number): string {
 }
 
 // Self-hosted, subset webfonts — no third-party CDN at runtime. Latin faces are
-// Google's latin-range woff2. Huiwen-mincho (public domain) carries the 22 HUD
-// glyphs 共识记忆细胞状态脉搏警告节点对端播种网络全道.
+// Google's latin-range woff2. Huiwen-mincho (public domain) carries the 17 HUD
+// glyphs 共识基神经脉搏节点场对端状态警告道 — exactly what the panels render, so
+// any new Chinese needs a re-subset (see fonts/README.md) or it falls back.
 //
 // The two `* Local` families back the in-scene labels (cell-galaxy label,
 // consensus-memory markers, route-hop callouts) that name them directly in
