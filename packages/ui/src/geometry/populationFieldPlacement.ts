@@ -94,8 +94,12 @@ import {
  *
  * ## Why 1.6, and why it is not smaller
  *
- * The budget is conserved, so pulling the edge in concentrates the same
- * 105,000 points into less area. That is the honest answer to the second half
+ * The POINT budget is conserved, so pulling the edge in concentrates the same
+ * 105,000 points into less area. (⚠️ The segment budget is not: measured live,
+ * 93,912 segments at 2.2 against 87,964 here, over 20% more streamlines. The
+ * walk seeds more filaments and finishes them sooner in denser tissue. Any
+ * argument that reads "the budget is conserved" and then reasons about the
+ * fibres is reasoning about a number that moved.) That is the honest answer to the second half
  * of the same review — "the centre could be brighter, more brilliant" — and it
  * comes from density rather than from a brightness knob. But it is bounded
  * from below by three separate measurements that all turn over between 1.5 and
@@ -145,6 +149,38 @@ import {
  * chroma retention +0.011 before the rim and +0.007 outside it, fibre runs of
  * eight or more 0.697 → 0.735, at +12% frame coverage. The ladder now has one
  * rung, and the boundary's own character is where the gentleness came from.
+ *
+ * ## What it cost the GPU: nothing, and the reason generalises
+ *
+ * The live worry was that concentration trades area for overdraw, and every
+ * halo fragment is a blend. Measured with `EXT_disjoint_timer_query_webgl2` at
+ * 3840x2160 on the `high` tier with composition live, six runs per arm
+ * alternated, both arms built and verified distinct down to the worker chunk's
+ * hash:
+ *
+ * | arm | points | fibres | sum |
+ * |-----|-------:|-------:|----:|
+ * | 2.2 | 2.800 ms | 2.023 ms | 4.823 ms |
+ * | 1.6 | 2.759 ms | 1.970 ms | **4.729 ms (-2.0%)** |
+ *
+ * ⭐ **Both draws are PRIMITIVE-bound, not fill-bound**, and that is the whole
+ * explanation. Halving the primitives at the `med` tier gives 0.449x the
+ * points time and 0.429x the fibres time — very nearly linear in count. Total
+ * fragments are `N x sprite area`, and both of those are invariant to WHERE
+ * the points sit, so redistributing a fixed budget over 54% of the area cannot
+ * cost anything. The -2.0% is not concentration paying off either: it is the
+ * 6.3% fewer segments above. Per segment the 1.6 arm is 4% dearer.
+ *
+ * ⚠️ Run-to-run noise (2.7-4.3% within an arm) is LARGER than the effect, and
+ * at the frame level it is invisible — both arms sit on the same 16.7 ms
+ * vsync p50. It took alternating six runs an arm to make the sign trustworthy.
+ *
+ * ⚠️⚠️ So this constant is not where the frame budget lives. The adaptive
+ * controller's `high` to `med` step moves **2.64 ms** of GPU in this one
+ * layer; this constant moves **0.094 ms**. The limit cycle at 4K is a **28x
+ * larger lever than the edge**, it is pre-existing, and any perceived cost
+ * change after this edge moved is far more likely to be how often the cascade
+ * is switching than the edge itself.
  *
  * ⚠️ The brightness this buys saturates long before the damage does. Peak
  * rendered lightness is +16.4% here and only +23.6% at 1.3, because the extra
