@@ -883,7 +883,9 @@ export function advancePopulationPlacement(
   // at the edge itself crops that overshoot along a straight line — a crop
   // the eye reads as a clean cut precisely because it is one. Cheap to widen:
   // the seeds it adds are rejected by `populationPlacementMajorant` from the
-  // radius alone, before any noise is evaluated.
+  // radius alone, before any noise is evaluated. Measured min-of-9, that is
+  // 2.028 → 2.204 field evaluations per placed point and +12.6% on the pass —
+  // once, in a worker, before the layer is on screen at all.
   const seedEdge = POPULATION_FIELD_OUTER_EDGE + BOUNDARY_WARP_MAX;
   const halfX = FIELD_HALF_X * seedEdge;
   const halfZ = FIELD_HALF_Z * seedEdge;
