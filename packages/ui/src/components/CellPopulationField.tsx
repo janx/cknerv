@@ -7,6 +7,11 @@ import {
   POPULATION_FIELD_SEED,
   populationSegmentsForPointPrefix,
 } from '../geometry/populationFieldPlacement';
+import {
+  getPopulationPlacement,
+  setPopulationPlacement,
+  type PopulationPlacementSnapshot,
+} from '../geometry/populationPlacementStore';
 import { QUALITY_PRESETS, useQualityRuntime } from '../tweaks/qualityPresets';
 // Type-only, so the worker module's body never lands in the main bundle —
 // it is reached exclusively through `new URL(...)` below.
@@ -122,8 +127,56 @@ export default function CellPopulationField({
   const wanted = gain > 0;
   useEffect(() => {
     if (!wanted || startedRef.current) return undefined;
-    if (typeof Worker === 'undefined') return undefined;
     startedRef.current = true;
+
+    // ONE position attribute, shared by both draws. The fibres are an index
+    // buffer over exactly the points that are drawn, which is both the
+    // cheapest way to carry them — 8 bytes a segment against 24 — and the
+    // structural guarantee that no fibre can reach anything but a halo
+    // point: there is no other vertex for an index to name.
+    const adopt = (placement: PopulationPlacementSnapshot): void => {
+      const position = new THREE.BufferAttribute(placement.positions, 3);
+      // The taper, baked at placement from the tissue each point sits in.
+      // BOTH draws bind it, off one attribute: the points spend it on size,
+      // the fibres on alpha, and the two laws are the same curve so the ratio
+      // of stroke to bead never moves along the taper.
+      const weight = new THREE.BufferAttribute(placement.weights, 1);
+      const points = new THREE.BufferGeometry();
+      points.setAttribute('position', position);
+      points.setAttribute('aWeight', weight);
+      // The buffer is sized for the requested count; a pass that hit its work
+      // ceiling reports fewer. Every prefix is a filament the walk finished,
+      // so a short buffer is a thinner field, never a wrong one.
+      points.setDrawRange(0, placement.count);
+
+      const fibres = new THREE.BufferGeometry();
+      fibres.setAttribute('position', position);
+      // The SAME attribute object as the points bind — shared, not copied, so
+      // the taper costs the fibres no upload and no memory at all.
+      fibres.setAttribute('aWeight', weight);
+      fibres.setIndex(new THREE.BufferAttribute(placement.segments, 1));
+      fibres.setDrawRange(0, placement.segmentCount * 2);
+
+      placementRef.current = {
+        count: placement.count,
+        segmentCount: placement.segmentCount,
+        streamlines: placement.streamlines,
+        work: placement.work,
+      };
+      setPlaced({ points, fibres });
+    };
+
+    // A placement already on the store is THE placement — the pass is pure in
+    // (count, seed), so re-running it could only produce the same buffers at
+    // the cost of a second long task, and a remount would draw nothing until
+    // it finished. Absence-until-landed stays true of the FIRST mount, which
+    // is the one the state exists for.
+    const published = getPopulationPlacement();
+    if (published) {
+      adopt(published);
+      return undefined;
+    }
+    if (typeof Worker === 'undefined') return undefined;
 
     const worker = new Worker(
       new URL('../geometry/populationField.worker.ts', import.meta.url),
@@ -134,40 +187,20 @@ export default function CellPopulationField({
       const response = event.data;
       worker.terminate();
       if (cancelled || response?.kind !== 'placed') return;
-      // ONE position attribute, shared by both draws. The fibres are an index
-      // buffer over exactly the points that are drawn, which is both the
-      // cheapest way to carry them — 8 bytes a segment against 24 — and the
-      // structural guarantee that no fibre can reach anything but a halo
-      // point: there is no other vertex for an index to name.
-      const position = new THREE.BufferAttribute(response.positions, 3);
-      // The taper, baked at placement from the tissue each point sits in.
-      // BOTH draws bind it, off one attribute: the points spend it on size,
-      // the fibres on alpha, and the two laws are the same curve so the ratio
-      // of stroke to bead never moves along the taper.
-      const weight = new THREE.BufferAttribute(response.weights, 1);
-      const points = new THREE.BufferGeometry();
-      points.setAttribute('position', position);
-      points.setAttribute('aWeight', weight);
-      // The buffer is sized for the requested count; a pass that hit its work
-      // ceiling reports fewer. Every prefix is a filament the walk finished,
-      // so a short buffer is a thinner field, never a wrong one.
-      points.setDrawRange(0, response.count);
-
-      const fibres = new THREE.BufferGeometry();
-      fibres.setAttribute('position', position);
-      // The SAME attribute object as the points bind — shared, not copied, so
-      // the taper costs the fibres no upload and no memory at all.
-      fibres.setAttribute('aWeight', weight);
-      fibres.setIndex(new THREE.BufferAttribute(response.segments, 1));
-      fibres.setDrawRange(0, response.segmentCount * 2);
-
-      placementRef.current = {
+      const placement: PopulationPlacementSnapshot = {
+        positions: response.positions,
+        segments: response.segments,
+        weights: response.weights,
         count: response.count,
         segmentCount: response.segmentCount,
         streamlines: response.streamlines,
         work: response.work,
       };
-      setPlaced({ points, fibres });
+      // Published BEFORE this layer builds its geometries, so the bridge
+      // layer and this one can never be looking at different buffers even for
+      // one frame.
+      setPopulationPlacement(placement);
+      adopt(placement);
     };
     const request: PopulationFieldWorkerRequest = {
       kind: 'place',
