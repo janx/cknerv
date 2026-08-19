@@ -80,6 +80,7 @@ import {
   planMeshUpdate,
   shouldDeferBirthsToBulkRebuild,
 } from './livingMeshDriver';
+import CellBridgeNerves from './CellBridgeNerves';
 import NeuralFabric, { type NeuralFabricHandles } from './NeuralFabric';
 import {
   bezierAtInto,
@@ -1911,6 +1912,18 @@ export default function NeuralNetwork({
         key={fabricAllocation}
         allocationEdges={fabricAllocation}
         onReady={onFabricReady}
+        cellDetailViewFocusRef={cellDetailViewFocusRef}
+      />
+      {/* 次级神经: strokes from fabric-sparse staged Cells into the
+          unresolved-population halo. Fed from the same completed build the
+          fabric is — hosts are chosen by DRAWN fabric degree, so the two have
+          to agree on which build that is — and render-only past that point:
+          no route, no pulse, no reinforcement, no inspection, no recall, no
+          pick ever traverses one. */}
+      <CellBridgeNerves
+        cellsRef={displayCellsRef}
+        passiveGraphRef={passiveGraphRef}
+        version={displayGraphVersion}
         cellDetailViewFocusRef={cellDetailViewFocusRef}
       />
       <primitive object={spikePool.mesh} />

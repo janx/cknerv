@@ -77,6 +77,7 @@ import {
   warmRouteBrightnessGain,
 } from './fabricReinforce';
 import {
+  arborBrightness,
   passiveFabricEnergyScale,
   TWIG_MIN,
   fabricTaper as taper,
@@ -252,7 +253,10 @@ export interface NeuralFabricProps {
   allocationEdges?: number;
 }
 
-interface FatLineLayer {
+/** Exported so sibling layers in the fabric family (the bridge class) can
+ * build on `makeFatLineLayer` / `commitLayer` instead of standing up a second
+ * line-rendering system. */
+export interface FatLineLayer {
   positions: Float32Array;
   colors: Float32Array;
   inspectionFrom?: Float32Array;
@@ -309,9 +313,10 @@ export interface EdgeState {
    *  `to`→`from`. Lets the driver root a new tendril at the surviving
    *  cell rather than always at the lower id. */
   growDir: 1 | -1;
-  /** Per-edge brightness multiplier in [0.18, 1.0], derived from the
-   *  edge's deterministic seed. Stable across the edge's lifetime so
-   *  the network has a fixed hierarchy of bright "trunks" and dim
+  /** Per-edge brightness multiplier in [TWIG_MIN, 1.0] — today [0.34, 1.0],
+   *  see `arborBrightness`. Derived from the edge's arbor weight, or from its
+   *  deterministic seed where it has none. Stable across the edge's lifetime
+   *  so the network has a fixed hierarchy of bright "trunks" and dim
    *  "branches" rather than uniform mesh. */
   brightnessMul: number;
   /** A route transitions between two contributor colours along its length. */
@@ -425,20 +430,8 @@ function recallApertureScaleAt(
 
 // TAPER_MIN / taper / TWIG_MIN moved to fabricLuminance so the GLSL
 // lifecycle port shares one definition with this CPU reference.
-
-/** Per-edge brightness multiplier ∈ [TWIG_MIN, 1.0], the fabric's trunk/branch
- *  hierarchy. Forest edges scale by their arbor weight `w` (normalized subtree
- *  size), so REAL trunks (carrying many descendants) are bright and REAL twigs
- *  dim — grown venation rather than a uniform web. Non-forest cross-links and
- *  not-yet-weighted incremental edges (`w === undefined`) get a dim textured
- *  band off the deterministic edge seed, reading as faint tissue without faking
- *  trunks. Stable per edge across its lifetime. */
-function arborBrightness(w: number | undefined, seed: number): number {
-  if (w !== undefined) {
-    return TWIG_MIN + (1 - TWIG_MIN) * Math.pow(w, 1.2);
-  }
-  return TWIG_MIN + 0.10 * (((seed >>> 16) & 0xff) / 0xff);
-}
+// arborBrightness followed them: the bridge class reads the same non-forest
+// band, and a brightness band restated in two files is a band that drifts.
 
 /** Park every remaining segment of a fixed slot: zero colours, endpoints far
  * outside the frustum, neutral inspection weights. Exported for the packed vs
@@ -952,7 +945,7 @@ function pushSegmentGradient(
   layer.count += 1;
 }
 
-function commitLayer(
+export function commitLayer(
   layer: FatLineLayer,
   updatePositions = true,
   updateColors = true,

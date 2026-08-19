@@ -23,12 +23,65 @@ export const TAPER_MIN = 0.44;
  *  normalization. Moved here from NeuralFabric with TAPER_MIN. */
 export const TWIG_MIN = 0.34;
 
+/** Per-edge brightness multiplier ∈ [TWIG_MIN, 1.0], the fabric's trunk/branch
+ *  hierarchy. Forest edges scale by their arbor weight `w` (normalized subtree
+ *  size), so REAL trunks (carrying many descendants) are bright and REAL twigs
+ *  dim — grown venation rather than a uniform web. Non-forest cross-links and
+ *  not-yet-weighted incremental edges (`w === undefined`) get a dim textured
+ *  band off the deterministic edge seed, reading as faint tissue without faking
+ *  trunks. Stable per edge across its lifetime.
+ *
+ *  Lives here rather than in NeuralFabric because the bridge class reads it
+ *  too: a bridge has no arbor, so it takes exactly the `w === undefined`
+ *  band — faint tissue, no faked trunk — and that band must be ONE law. */
+export function arborBrightness(w: number | undefined, seed: number): number {
+  if (w !== undefined) {
+    return TWIG_MIN + (1 - TWIG_MIN) * Math.pow(w, 1.2);
+  }
+  return TWIG_MIN + 0.10 * (((seed >>> 16) & 0xff) / 0xff);
+}
+
 /** Per-vertex brightness multiplier along a fabric edge at t ∈ [0, 1].
  *  Parabolic in (2t − 1)² so it's exactly TAPER_MIN at the midpoint and 1.0
  *  at either endpoint, with smooth rise on both sides. */
 export function fabricTaper(t: number): number {
   const k = 2 * t - 1;
   return TAPER_MIN + (1 - TAPER_MIN) * k * k;
+}
+
+/**
+ * Per-vertex brightness along a BRIDGE — the mixed-register stroke that runs
+ * from a real Cell (t = 0) into the unresolved-population halo (t = 1).
+ *
+ * A new curve for this class, because {@link fabricTaper} is exactly wrong
+ * here: it is bright at BOTH endpoints, and a bridge's far endpoint is a
+ * symbolic one. "A halo point must never look like a node with edges
+ * radiating from it" — so the far end must not brighten at all, at any
+ * vertex, ever.
+ *
+ * The shape is the fabric's own parabola with its rising half removed:
+ * `fabricTaper` falls as `(1 − 2t)²` from 1.0 at the Cell to TAPER_MIN at
+ * midpoint and then climbs back; this is the same parabola stretched across
+ * the whole stroke, so the two classes are visibly the same family and the
+ * bridge is legibly the fabric's curve, cut. Monotone non-increasing on
+ * [0, 1] by construction — the knot is at the actual end and nowhere else.
+ *
+ * `farEnd` is the energy the stroke arrives with, as a fraction of the knot.
+ * The caller sets it from the anchor's own placement taper weight so the
+ * stroke lands at the LOCAL fibre brightness rather than at a constant.
+ *
+ * ⚠️ Read "fades to halo-fibre energy" as relative, not absolute. Measured,
+ * the two layers' per-stroke contributions are not comparable: the halo fibre
+ * emits ~0.29–0.66 alpha of `tissueRose` on its own, while a fabric twig at
+ * the rim contributes ~0.02 — the fabric's light comes from thousands of
+ * overlapping routes, the halo's from each stroke. Matching the halo's
+ * ABSOLUTE per-stroke energy would mean brightening five-fold toward the
+ * symbolic end, which is the one thing this curve exists to forbid.
+ */
+export function bridgeTaper(t: number, farEnd: number): number {
+  const end = Math.max(0, Math.min(1, farEnd));
+  const u = 1 - Math.max(0, Math.min(1, t));
+  return end + (1 - end) * u * u;
 }
 
 const clamp01 = (value: number): number => Math.max(0, Math.min(1, value));
