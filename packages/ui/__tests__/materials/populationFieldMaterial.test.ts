@@ -3,12 +3,12 @@ import * as THREE from 'three';
 
 import { makeCellHybridMaterial } from '../../src/materials/cellHybridMaterial';
 import {
+  makePopulationFibreMaterial,
   makePopulationPointMaterial,
   populationPointEnergy,
   populationEmissionForGain,
   populationPointFootprint,
   populationPointSizeForWeight,
-  populationTaperForWeight,
   populationTintForWeight,
   POPULATION_FIELD_COLOR_DIM,
   POPULATION_FIELD_COLOR_LIT,
@@ -17,7 +17,6 @@ import {
   POPULATION_FIELD_POINT_SIZE_MAX,
   POPULATION_FIELD_POINT_SIZE_MIN,
   POPULATION_FIELD_SIGMA,
-  POPULATION_FIELD_TAPER_FLOOR,
 } from '../../src/materials/populationFieldMaterial';
 
 describe('the halo is the Cells material family, not a second material', () => {
@@ -146,14 +145,11 @@ describe('smaller and dimmer, and nothing else', () => {
   });
 
   it('tapers monotonically, and clamps outside the unit range', () => {
-    for (const fn of [populationPointSizeForWeight, populationTaperForWeight]) {
-      expect(fn(0.5)).toBeGreaterThan(fn(0));
-      expect(fn(1)).toBeGreaterThan(fn(0.5));
-      expect(fn(-1)).toBe(fn(0));
-      expect(fn(2)).toBe(fn(1));
-    }
-    expect(populationTaperForWeight(1)).toBe(1);
-    expect(populationTaperForWeight(0)).toBe(POPULATION_FIELD_TAPER_FLOOR);
+    const fn = populationPointSizeForWeight;
+    expect(fn(0.5)).toBeGreaterThan(fn(0));
+    expect(fn(1)).toBeGreaterThan(fn(0.5));
+    expect(fn(-1)).toBe(fn(0));
+    expect(fn(2)).toBe(fn(1));
     const dim = populationTintForWeight(0);
     const lit = populationTintForWeight(1);
     expect([...dim]).toEqual([...POPULATION_FIELD_COLOR_DIM]);
@@ -162,14 +158,28 @@ describe('smaller and dimmer, and nothing else', () => {
       .toBeCloseTo((dim[1] + lit[1]) / 2, 6);
   });
 
-  it('keeps the PEAK taper gentler than the flux taper', () => {
-    // Size and brightness ride one weight and compound. A large peak ratio
-    // would make the outer halo read as a separate dim layer; the flux ratio
-    // is what carries the taper, and it comes from the footprint.
-    const flux = (populationPointSizeForWeight(0) / populationPointSizeForWeight(1)) ** 2
-      * populationTaperForWeight(0);
-    expect(populationTaperForWeight(0)).toBeGreaterThan(0.7);
-    expect(flux).toBeLessThan(0.5);
+  it('spends the tissue taper on size and nothing on brightness', () => {
+    // The two used to ride the same weight and compound, and the second one
+    // bought nothing: measured over the real placement, binned by elliptical
+    // radius, the brightness half of the taper cost the field beyond the
+    // resolved rim 11.4% of its light and moved the radial luminance profile's
+    // worst change in slope by less than 0.001. Size alone still carries a
+    // real taper — flux goes as its square — so the bimodality that the taper
+    // was introduced to close stays closed.
+    const fluxTaper =
+      (populationPointSizeForWeight(0) / populationPointSizeForWeight(1)) ** 2;
+    expect(fluxTaper).toBeLessThan(0.5);
+    expect(fluxTaper).toBeGreaterThan(0.35);
+    // No alpha term may depend on the weight — in either draw.
+    for (const src of [
+      makePopulationPointMaterial().fragmentShader,
+      makePopulationFibreMaterial().fragmentShader,
+    ]) {
+      const alphaLine = src.split('\n').find((l) => l.includes('float a = '));
+      expect(alphaLine).toBeDefined();
+      expect(alphaLine).not.toContain('vWeight');
+      expect(src).not.toContain('uTaperFloor');
+    }
   });
 });
 

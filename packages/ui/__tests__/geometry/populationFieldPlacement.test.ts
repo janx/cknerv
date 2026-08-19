@@ -22,9 +22,15 @@ import {
 import {
   FIELD_HALF_X,
   FIELD_HALF_Z,
+  helixSeedF64,
   TISSUE_ENVELOPE_EDGE,
   tissueSampleAt,
 } from '../../src/helix';
+import { cellPointSize } from '../../src/components/CellGalaxy';
+import {
+  populationPointSizeForWeight,
+  POPULATION_FIELD_SIGMA,
+} from '../../src/materials/populationFieldMaterial';
 
 /** Enough points for every statistic below to be stable, small enough that
  *  the whole file stays well inside a normal test budget. The shipped count is
@@ -40,6 +46,109 @@ function pointAt(index: number): { x: number; y: number; z: number } {
     z: placed.positions[index * 3 + 2],
   };
 }
+
+/** Rendered light of one Gaussian sprite: peak alpha over its footprint, so
+ *  `peak * (sigma * size)^2`. The house model — the same one that set the
+ *  size range — extended with each layer's own Gaussian width, which is what
+ *  a comparison ACROSS the two layers needs. */
+function spriteFlux(size: number, sigma: number, peak: number): number {
+  const s = sigma * size;
+  return peak * s * s;
+}
+
+/** The radial luminance profile, in perceptual lightness, binned by elliptical
+ *  radius. This is the measurement §5.2's brightness rule is derived from, and
+ *  it is here so the derivation stays checkable rather than remembered. */
+function radialProfile(bins: number): {
+  cells: number[]; halo: number[]; lightness: number[];
+} {
+  const CELL_SIGMA = 0.10;   // cellHybridMaterial's Gaussian width
+  const CELL_PEAK = 1.18;    // what a Cell body emits at its core
+  const EMISSION = 0.72;     // populationEmissionForGain at mainnet chain scope
+  const cells = new Array(bins).fill(0);
+  const halo = new Array(bins).fill(0);
+  const binOf = (x: number, z: number) => {
+    const r = Math.hypot(x / FIELD_HALF_X, z / FIELD_HALF_Z);
+    const b = Math.floor((r / POPULATION_FIELD_OUTER_EDGE) * bins);
+    return b >= 0 && b < bins ? b : -1;
+  };
+  for (let i = 0; i < 12_000; i += 1) {
+    const id = i * 7 + 1000003;
+    const p = helixSeedF64(id);
+    const b = binOf(p[0], p[2]);
+    if (b >= 0) cells[b] += spriteFlux(cellPointSize({ id, tag: null }), CELL_SIGMA, CELL_PEAK);
+  }
+  for (let i = 0; i < placed.count; i += 1) {
+    const b = binOf(placed.positions[i * 3], placed.positions[i * 3 + 2]);
+    if (b < 0) continue;
+    halo[b] += spriteFlux(
+      populationPointSizeForWeight(placed.weights[i]),
+      POPULATION_FIELD_SIGMA,
+      EMISSION,
+    ) * (POPULATION_FIELD_POINTS / SAMPLE_POINTS);
+  }
+  const lightness = cells.map((c, b) => {
+    const r1 = (b / bins) * POPULATION_FIELD_OUTER_EDGE;
+    const r2 = ((b + 1) / bins) * POPULATION_FIELD_OUTER_EDGE;
+    const area = Math.PI * FIELD_HALF_X * FIELD_HALF_Z * (r2 * r2 - r1 * r1);
+    return Math.cbrt((c + halo[b]) / area);   // OKLab-style perceptual
+  });
+  return { cells, halo, lightness };
+}
+
+describe('the radial luminance profile the brightness rule is solved from', () => {
+  const BINS = 44;
+  const profile = radialProfile(BINS);
+  const at = (r: number) => Math.min(BINS - 1, Math.floor((r / POPULATION_FIELD_OUTER_EDGE) * BINS));
+
+  it('has no step where the addressable Cells stop', () => {
+    // §5.2 said the Cells "stop dead at radius 1.04" and that a brightness
+    // taper deepens that step. Measured, there is no step to deepen: the
+    // profile crosses the rim flatter than it moves anywhere in the outer
+    // field. The rule that used to taper brightness outward was answering a
+    // feature that is not in the frame.
+    const rim = at(TISSUE_ENVELOPE_EDGE);
+    const acrossRim = Math.abs(profile.lightness[rim + 1] - profile.lightness[rim]);
+    const outerSteps: number[] = [];
+    for (let b = at(1.3); b < at(1.9); b += 1) {
+      outerSteps.push(Math.abs(profile.lightness[b + 1] - profile.lightness[b]));
+    }
+    const typicalOuter = outerSteps.reduce((s, v) => s + v, 0) / outerSteps.length;
+    expect(acrossRim).toBeLessThan(typicalOuter);
+  });
+
+  it('has the halo already carrying the light before the Cells run out', () => {
+    // The other half of the same correction: the Cells are not the dominant
+    // source at the rim, so their ending cannot be what the eye reads there.
+    // Their share is already under a tenth well inside it, and the handover
+    // happens over the mixed band rather than at a boundary.
+    const share = (r: number) => {
+      const b = at(r);
+      return profile.cells[b] / (profile.cells[b] + profile.halo[b]);
+    };
+    // Thresholds are loose because this file samples 20,000 points against
+    // the shipped 105,000; the shipped placement hands over earlier still
+    // (half by radius 0.72, a tenth by 0.93, 1.3% at the rim).
+    expect(share(0.60)).toBeGreaterThan(0.5);
+    expect(share(0.95)).toBeLessThan(0.20);
+    expect(share(TISSUE_ENVELOPE_EDGE)).toBeLessThan(0.06);
+  });
+
+  it('brightens across the mixed band as the Cells thin', () => {
+    // §5.2's requirement, and it is met by the halo's own density rather than
+    // by a per-point brightness rule — which is why brightness could be freed
+    // to be flat. Rendered halo luminance per unit area, over the band.
+    const density = (r: number) => {
+      const b = at(r);
+      const r1 = (b / BINS) * POPULATION_FIELD_OUTER_EDGE;
+      const r2 = ((b + 1) / BINS) * POPULATION_FIELD_OUTER_EDGE;
+      return profile.halo[b] / (Math.PI * FIELD_HALF_X * FIELD_HALF_Z * (r2 * r2 - r1 * r1));
+    };
+    expect(density(0.80)).toBeGreaterThan(density(0.70));
+    expect(density(0.95)).toBeGreaterThan(density(0.80));
+    expect(density(TISSUE_ENVELOPE_EDGE)).toBeGreaterThan(density(0.95));
+  });
+});
 
 describe('the halo is placed where the Cells are not', () => {
   it('fills its buffer', () => {

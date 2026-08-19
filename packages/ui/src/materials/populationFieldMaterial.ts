@@ -59,38 +59,66 @@ import type { SceneColor } from '../visualPalette';
  *
  * The floor is set by light rather than by taste. Rendered flux goes as
  * `size^2 * alpha`, so at 1080p this range plus {@link
- * POPULATION_FIELD_TAPER_FLOOR} lands the layer at 75.6% of the flat build's
- * total light WITHOUT moving {@link POPULATION_FIELD_EMISSION} — and the loss
- * is where it should be: −40% in the outer fringe against −15% in the core and
- * the mixed band, which is the answer to the outer field carrying 76% of the
- * layer's light over the fewest Cells.
+ * this range lands the layer at 81% of the flat build's total light WITHOUT
+ * moving {@link POPULATION_FIELD_EMISSION}, and the loss is where it should
+ * be: the open fringe pays `(0.50/0.76)^2` = 0.433 against the dense tissue's
+ * 1.0, which is the answer to the outer field carrying 76% of the layer's
+ * light over the fewest Cells. Size is now the WHOLE of that taper — the
+ * brightness half of it was measured to cost the outer field 11.4% of its
+ * light for no gain in the radial profile, and is gone.
  */
 export const POPULATION_FIELD_POINT_SIZE_MIN = 0.5;
 export const POPULATION_FIELD_POINT_SIZE_MAX = 0.76;
 
 /**
- * The taper's brightness floor, as a share of a fully weighted point's alpha.
+ * Brightness is NOT a per-point rule, and this is the measurement that says so.
  *
- * Size and brightness ride the same weight, and they compound: a point at
- * weight 0 draws at `(0.50/0.76)^2 * 0.80` = 0.35 of the flux of one at weight
- * 1, while its PEAK is only 0.80 as bright. That split is deliberate. A large
- * peak ratio would make the outer halo read as a separate dim layer; the flux
- * ratio is what actually carries the taper, and it is a property of the
- * footprint rather than of the level.
+ * It used to be one: alpha rode the same tissue weight as size, floored at
+ * 0.8. Two falloffs on the same key, compounding — and the design's reasoning
+ * for removing it was that the Cells stop dead at the resolved rim, so a
+ * brightness taper deepens that step exactly where the halo should be taking
+ * over. Measured, on the real placement and the real stage, at 1080p flux
+ * (`size^2 * alpha`, each layer at its own Gaussian width), binned by
+ * elliptical radius over 44 shells:
+ *
+ * ⚠️ **There is no step at the rim.** Perceptual lightness across it runs
+ * 0.3560 -> 0.3557 -> 0.3500. The premise is measurably wrong, and so is the
+ * reason given for it: by the time the Cells stop they carry **1.3%** of the
+ * light there. Their share falls below half at radius 0.72 and below a tenth
+ * by 0.93 — the halo has already taken over, smoothly, well inside the rim.
+ *
+ * What the profile actually has is a **corner**, at radius ~1.13: perceptual
+ * lightness is flat to within 0.008 from radius 0.2 all the way out (dP per
+ * shell between -0.001 and +0.008), and then falls at a steady -0.013. A
+ * uniformly bright interior meeting a steady ramp is precisely "the middle is
+ * very bright and the edge suddenly darkens", and the corner sits where the
+ * halo's OWN placed density stops rising — the complement stops rejecting
+ * points at the rim — not where the Cells end.
+ *
+ * ⚠️⚠️ **Brightness cannot fix that corner, and the trade curve is the proof.**
+ * Solving a target profile and deriving the weight from it — the whole span of
+ * shoulder-rounding curves, at every falloff and exponent — moves the worst
+ * change in slope from 0.0107 to at best 0.0070 while giving up light, and the
+ * solutions that scored better than that were cancelling per-shell sampling
+ * noise with a wiggly weight rather than smoothing anything visible. The
+ * authority simply is not there: this taper's whole range was [0.8, 1.0], and
+ * the profile's shape is set by the placement's density and by size.
+ *
+ * So the solve's honest answer is a constant, and the layer takes it: alpha is
+ * flat at the emission ceiling, and the tissue taper is carried by SIZE alone
+ * — which still tapers flux by `(0.50/0.76)^2` = 0.433 from the dense tissue
+ * to the open fringe, so the taper that closed the bimodality is entirely
+ * intact. What changes is that the outer field stops paying for it twice:
+ * **+11.4% light beyond the rim**, +7.0% overall.
+ *
+ * The corner is still there. It is a placement-density feature and it wants a
+ * placement answer; see the report for what that would cost.
  */
-export const POPULATION_FIELD_TAPER_FLOOR = 0.8;
-
 /** Sprite size in world units for one taper weight. */
 export function populationPointSizeForWeight(weight: number): number {
   const w = Math.max(0, Math.min(1, weight));
   return POPULATION_FIELD_POINT_SIZE_MIN
     + (POPULATION_FIELD_POINT_SIZE_MAX - POPULATION_FIELD_POINT_SIZE_MIN) * w;
-}
-
-/** Alpha multiplier for one taper weight. */
-export function populationTaperForWeight(weight: number): number {
-  const w = Math.max(0, Math.min(1, weight));
-  return POPULATION_FIELD_TAPER_FLOOR + (1 - POPULATION_FIELD_TAPER_FLOOR) * w;
 }
 
 /**
@@ -290,7 +318,6 @@ export interface PopulationPointUniforms {
   uSizeMax: { value: number };
   uMinPointPx: { value: number };
   /** Alpha at taper weight 0, as a share of the weight-1 alpha. */
-  uTaperFloor: { value: number };
   /** {@link populationEmissionForGain} of the amount curve. Zero means the
    *  stage covers its scope and there is nothing unresolved to state. */
   uEmission: { value: number };
@@ -307,7 +334,6 @@ export function makePopulationPointMaterial(): THREE.ShaderMaterial {
       uSizeMin: { value: POPULATION_FIELD_POINT_SIZE_MIN },
       uSizeMax: { value: POPULATION_FIELD_POINT_SIZE_MAX },
       uMinPointPx: { value: POPULATION_FIELD_MIN_POINT_PX },
-      uTaperFloor: { value: POPULATION_FIELD_TAPER_FLOOR },
       uEmission: { value: 0 },
       uColorDim: { value: new THREE.Color(...POPULATION_FIELD_COLOR_DIM) },
       uColorLit: { value: new THREE.Color(...POPULATION_FIELD_COLOR_LIT) },
@@ -368,7 +394,6 @@ export function makePopulationPointMaterial(): THREE.ShaderMaterial {
       uniform vec3 uColorDim;
       uniform vec3 uColorLit;
       uniform float uEmission;
-      uniform float uTaperFloor;
 
       varying float vEnergy;
       varying float vWeight;
@@ -385,8 +410,10 @@ export function makePopulationPointMaterial(): THREE.ShaderMaterial {
           -radiusSquared
           / ${(POPULATION_FIELD_SIGMA * POPULATION_FIELD_SIGMA).toFixed(6)}
         );
-        float a = peak * uEmission * vEnergy
-          * mix(uTaperFloor, 1.0, vWeight);
+        // Flat in the weight: the tissue taper is size's job alone (see
+        // POPULATION_FIELD_POINT_SIZE_MIN), and a second taper on the same
+        // key only cost the outer field light it could not spare.
+        float a = peak * uEmission * vEnergy;
         // The ramp is a chroma level, never a hue: both ends hold the family's
         // own hue and only their saturation differs, because a hue that moved
         // along the ramp would be exactly the second colour it exists to
@@ -437,7 +464,6 @@ export function makePopulationFibreMaterial(): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
     uniforms: {
       uEmission: { value: 0 },
-      uTaperFloor: { value: POPULATION_FIELD_TAPER_FLOOR },
       uColorDim: { value: new THREE.Color(...POPULATION_FIELD_COLOR_DIM) },
       uColorLit: { value: new THREE.Color(...POPULATION_FIELD_COLOR_LIT) },
     },
@@ -473,7 +499,6 @@ export function makePopulationFibreMaterial(): THREE.ShaderMaterial {
       uniform vec3 uColorDim;
       uniform vec3 uColorLit;
       uniform float uEmission;
-      uniform float uTaperFloor;
 
       varying float vWeight;
 
@@ -483,7 +508,7 @@ export function makePopulationFibreMaterial(): THREE.ShaderMaterial {
         // never look like a node with edges radiating from it — the variation
         // here is the tissue changing under the filament, not the filament
         // announcing where it is pinned.
-        float a = uEmission * mix(uTaperFloor, 1.0, vWeight);
+        float a = uEmission;
         vec3 tint = mix(uColorDim, uColorLit, vWeight);
         // Premultiplied, matching the Cell bodies, and written raw for the
         // same reason — a colorspace-converted twin would be a second
