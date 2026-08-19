@@ -181,9 +181,9 @@ export const nerveSchema = {
 } satisfies FolderSchema;
 
 export const FOLDER_LABELS = {
-  galaxy: 'Galaxy 共识记忆',
-  delivery: 'Consensus carrier 共识载体',
-  peer: 'Peer mesh 对端',
-  cell: 'Cell structure 数据结构',
-  nerve: 'Nerve fabric 神经',
+  galaxy: 'Galaxy',
+  delivery: 'Consensus carrier',
+  peer: 'Peer mesh',
+  cell: 'Cell structure',
+  nerve: 'Nerve fabric',
 } as const;

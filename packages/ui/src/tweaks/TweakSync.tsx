@@ -2,7 +2,7 @@
 // <Canvas> (same reconciler slot as SimClockTicker). It re-renders only when a
 // knob is dragged; it does not use useFrame and adds no per-frame cost. Reads
 // the same folder labels as the panel; leva merges any same-named folders
-// (e.g. shellScale lives under 'Galaxy 共识记忆' too).
+// (e.g. shellScale lives under 'Galaxy' too).
 import { useEffect } from 'react';
 import { useControls } from 'leva';
 import { galaxySchema, deliverySchema, peerSchema, cellSchema, nerveSchema, FOLDER_LABELS } from './tweakSchema';
