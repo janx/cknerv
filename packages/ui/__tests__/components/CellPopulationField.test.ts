@@ -344,6 +344,32 @@ describe('where CellGalaxy mounts it', () => {
     expect(field).toBeLessThan(bodies);
   });
 
+  it('is a SIBLING of the pick object, never a descendant of one', () => {
+    // Load-bearing, and more so now that size no longer separates the two
+    // populations: hover carries the whole not-addressable message. r3f builds
+    // its interaction list only from objects that carry a handler, but it
+    // raycasts each of them RECURSIVELY, and bubbling walks parents looking
+    // for one — so a halo nested under a handler-bearing object would have
+    // only `neverRaycast` between it and the event system.
+    const group = GALAXY_SOURCE.indexOf('<group ref={groupRef}');
+    const field = GALAXY_SOURCE.indexOf('<CellPopulationField', group);
+    const picker = GALAXY_SOURCE.indexOf('<CellPicker', group);
+    expect(picker).toBeGreaterThan(field);
+
+    // Same nesting depth as the pick object, which is what "sibling" means in
+    // a tree written as JSX. Both are direct children of the rotating group.
+    const indentOf = (at: number) => {
+      const line = GALAXY_SOURCE.lastIndexOf('\n', at);
+      return at - line - 1;
+    };
+    expect(indentOf(field)).toBe(indentOf(picker));
+
+    // And nothing between the group and the halo opens a handler-bearing
+    // element, so no ancestor of the halo can be on the interaction list.
+    const between = GALAXY_SOURCE.slice(group, field);
+    expect(between).not.toMatch(/on(Pointer|Click|DoubleClick|ContextMenu|Wheel)[A-Za-z]*=/);
+  });
+
   it('hands it an amount and nothing else', () => {
     expect(GALAXY_SOURCE).toContain('<CellPopulationField gain={populationGain} />');
   });
