@@ -16,8 +16,11 @@ import { CELL_GALAXY_PALETTE } from '../visualPalette';
  *
  * The halo is separated from an addressable Cell by SIZE and BRIGHTNESS alone:
  *
- *   - clearly smaller — {@link POPULATION_FIELD_POINT_SIZE} sits below the
- *     smallest Cell sprite in the stage and at about a third of the mean;
+ *   - clearly smaller — the whole of
+ *     {@link POPULATION_FIELD_POINT_SIZE_MIN}..{@link POPULATION_FIELD_POINT_SIZE_MAX}
+ *     sits below the smallest Cell sprite in the stage, and it is a RANGE
+ *     rather than one value, so the two populations share a size axis instead
+ *     of occupying a spike and a continuum on it;
  *   - no white-hot core — a Cell mixes toward `warmWhite` at its peak, and
  *     this does not, so the two never converge in hue at their centres;
  *   - no outer halo wash and no interaction ring;
@@ -32,16 +35,63 @@ import { CELL_GALAXY_PALETTE } from '../visualPalette';
  */
 
 /**
- * Sprite size in world units, in the Cells' own scale.
+ * Sprite size in world units, in the Cells' own scale — a RANGE, ridden by the
+ * placement pass's taper weight.
  *
- * Cell sprites run 0.783 (a plain Cell at minimum morphology) to 3.58, with a
- * stage mean near 1.93. This sits below the whole range: no halo point is ever
- * as large as the smallest addressable Cell, and it is 0.37x the typical one.
- * Uniform, with no per-point jitter — the density law and the Gaussian overlap
- * already give the field its texture, and a jitter wide enough to see would
- * put the largest halo points back inside the Cell range.
+ * The ceiling is the invariant and it has not moved: no halo point is ever as
+ * large as the smallest addressable Cell. Measured on the real stage,
+ * `cellPointSize` runs 0.783 (an untagged Cell at minimum morphology) through
+ * a median of 1.033 to 2.40, and 3.58 once tagged Cells are on stage; 0.76 is
+ * under all of it.
+ *
+ * What moved is that the halo is no longer FLAT. A single value is what made
+ * the mixed band read as two classes: every halo point in it drew at exactly
+ * 0.72 — 0.92x the smallest Cell and 0.70x the median one, so not even
+ * especially small — while the Cells beside them varied over a factor of three.
+ * The eye reads a manufactured uniform carpet next to a varied population, and
+ * no amount of extra structure elsewhere fixes a delta spike on the size axis.
+ *
+ * Measured, in the 0.75–1.04 band, over 19 log-spaced size bins between 0.42
+ * and 2.45: the flat build occupies **11** of them, this range occupies
+ * **15**, and the halo now puts 18.8% of its points in the same bin as the
+ * smallest 9.2% of Cells. The ladder runs big Cells → small Cells → large halo
+ * points → small halo points with nothing missing between.
+ *
+ * The floor is set by light rather than by taste. Rendered flux goes as
+ * `size^2 * alpha`, so at 1080p this range plus {@link
+ * POPULATION_FIELD_TAPER_FLOOR} lands the layer at 75.6% of the flat build's
+ * total light WITHOUT moving {@link POPULATION_FIELD_EMISSION} — and the loss
+ * is where it should be: −40% in the outer fringe against −15% in the core and
+ * the mixed band, which is the answer to the outer field carrying 76% of the
+ * layer's light over the fewest Cells.
  */
-export const POPULATION_FIELD_POINT_SIZE = 0.72;
+export const POPULATION_FIELD_POINT_SIZE_MIN = 0.5;
+export const POPULATION_FIELD_POINT_SIZE_MAX = 0.76;
+
+/**
+ * The taper's brightness floor, as a share of a fully weighted point's alpha.
+ *
+ * Size and brightness ride the same weight, and they compound: a point at
+ * weight 0 draws at `(0.50/0.76)^2 * 0.80` = 0.35 of the flux of one at weight
+ * 1, while its PEAK is only 0.80 as bright. That split is deliberate. A large
+ * peak ratio would make the outer halo read as a separate dim layer; the flux
+ * ratio is what actually carries the taper, and it is a property of the
+ * footprint rather than of the level.
+ */
+export const POPULATION_FIELD_TAPER_FLOOR = 0.8;
+
+/** Sprite size in world units for one taper weight. */
+export function populationPointSizeForWeight(weight: number): number {
+  const w = Math.max(0, Math.min(1, weight));
+  return POPULATION_FIELD_POINT_SIZE_MIN
+    + (POPULATION_FIELD_POINT_SIZE_MAX - POPULATION_FIELD_POINT_SIZE_MIN) * w;
+}
+
+/** Alpha multiplier for one taper weight. */
+export function populationTaperForWeight(weight: number): number {
+  const w = Math.max(0, Math.min(1, weight));
+  return POPULATION_FIELD_TAPER_FLOOR + (1 - POPULATION_FIELD_TAPER_FLOOR) * w;
+}
 
 /**
  * Gaussian width as a fraction of the sprite, against a Cell's 0.10.
@@ -181,8 +231,11 @@ export interface PopulationPointUniforms {
    *  drawing-buffer pixels. */
   uViewportHeight: { value: number };
   uPixelRatio: { value: number };
-  uSize: { value: number };
+  uSizeMin: { value: number };
+  uSizeMax: { value: number };
   uMinPointPx: { value: number };
+  /** Alpha at taper weight 0, as a share of the weight-1 alpha. */
+  uTaperFloor: { value: number };
   /** {@link populationEmissionForGain} of the amount curve. Zero means the
    *  stage covers its scope and there is nothing unresolved to state. */
   uEmission: { value: number };
@@ -194,8 +247,10 @@ export function makePopulationPointMaterial(): THREE.ShaderMaterial {
     uniforms: {
       uViewportHeight: { value: 800 },
       uPixelRatio: { value: 1 },
-      uSize: { value: POPULATION_FIELD_POINT_SIZE },
+      uSizeMin: { value: POPULATION_FIELD_POINT_SIZE_MIN },
+      uSizeMax: { value: POPULATION_FIELD_POINT_SIZE_MAX },
       uMinPointPx: { value: POPULATION_FIELD_MIN_POINT_PX },
+      uTaperFloor: { value: POPULATION_FIELD_TAPER_FLOOR },
       uEmission: { value: 0 },
       uColor: { value: new THREE.Color(...POPULATION_FIELD_COLOR) },
     },
@@ -217,18 +272,27 @@ export function makePopulationPointMaterial(): THREE.ShaderMaterial {
     blendDstAlpha: THREE.OneMinusSrcAlphaFactor,
     toneMapped: false,
     vertexShader: /* glsl */ `
+      // Baked at placement from the tissue the point sits in: high beside the
+      // Cells and in dense halo, low in the thin outer fringe. Size,
+      // brightness and tint all ride it, so the halo is a gradient of one
+      // population rather than a uniform carpet next to a varied one.
+      attribute float aWeight;
+
       uniform float uViewportHeight;
       uniform float uPixelRatio;
-      uniform float uSize;
+      uniform float uSizeMin;
+      uniform float uSizeMax;
       uniform float uMinPointPx;
 
       varying float vEnergy;
+      varying float vWeight;
 
       void main() {
         vec4 viewPos = modelViewMatrix * vec4(position, 1.0);
         gl_Position = projectionMatrix * viewPos;
 
-        float wanted = uSize
+        vWeight = clamp(aWeight, 0.0, 1.0);
+        float wanted = mix(uSizeMin, uSizeMax, vWeight)
           * ${HYBRID_BASE_PX_PER_WU.toFixed(1)}
           * (uViewportHeight * 0.5 / max(-viewPos.z, 0.001));
         float minimum = uMinPointPx * max(uPixelRatio, 0.001);
@@ -245,8 +309,10 @@ export function makePopulationPointMaterial(): THREE.ShaderMaterial {
 
       uniform vec3 uColor;
       uniform float uEmission;
+      uniform float uTaperFloor;
 
       varying float vEnergy;
+      varying float vWeight;
 
       void main() {
         vec2 uv = gl_PointCoord - 0.5;
@@ -260,7 +326,8 @@ export function makePopulationPointMaterial(): THREE.ShaderMaterial {
           -radiusSquared
           / ${(POPULATION_FIELD_SIGMA * POPULATION_FIELD_SIGMA).toFixed(6)}
         );
-        float a = peak * uEmission * vEnergy;
+        float a = peak * uEmission * vEnergy
+          * mix(uTaperFloor, 1.0, vWeight);
         // Premultiplied, matching the Cell bodies: the blend multiplies rgb
         // by src alpha again, which is what bounds the accumulation.
         // No colorspace conversion here for the same reason — the Cells write
@@ -303,6 +370,7 @@ export function makePopulationFibreMaterial(): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
     uniforms: {
       uEmission: { value: 0 },
+      uTaperFloor: { value: POPULATION_FIELD_TAPER_FLOOR },
       uColor: { value: new THREE.Color(...POPULATION_FIELD_COLOR) },
     },
     transparent: true,
@@ -319,7 +387,15 @@ export function makePopulationFibreMaterial(): THREE.ShaderMaterial {
     blendDstAlpha: THREE.OneMinusSrcAlphaFactor,
     toneMapped: false,
     vertexShader: /* glsl */ `
+      // The SAME attribute the points read, on the same buffer — the fibres
+      // are an index buffer over the points' own vertices, so a segment
+      // interpolates the taper between its two endpoints for free.
+      attribute float aWeight;
+
+      varying float vWeight;
+
       void main() {
+        vWeight = clamp(aWeight, 0.0, 1.0);
         gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
       }
     `,
@@ -328,15 +404,21 @@ export function makePopulationFibreMaterial(): THREE.ShaderMaterial {
 
       uniform vec3 uColor;
       uniform float uEmission;
+      uniform float uTaperFloor;
+
+      varying float vWeight;
 
       void main() {
-        // Flat along the whole segment: no taper, no endpoint falloff, no
-        // brightening at a vertex. A halo point must never look like a node
-        // with edges radiating from it.
+        // Carries its endpoints' taper and NOTHING else along its length: no
+        // endpoint falloff, no brightening at a vertex. A halo point must
+        // never look like a node with edges radiating from it — the variation
+        // here is the tissue changing under the filament, not the filament
+        // announcing where it is pinned.
+        float a = uEmission * mix(uTaperFloor, 1.0, vWeight);
         // Premultiplied, matching the Cell bodies, and written raw for the
         // same reason — a colorspace-converted twin would be a second
         // material, which is the seam this design exists to remove.
-        gl_FragColor = vec4(uColor * uEmission, uEmission);
+        gl_FragColor = vec4(uColor * a, a);
       }
     `,
   });

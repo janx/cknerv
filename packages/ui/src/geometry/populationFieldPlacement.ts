@@ -138,6 +138,66 @@ export const POPULATION_FIELD_POINTS = 105_000;
 export const POPULATION_FIELD_COMPLEMENT_KNEE = 0.3;
 
 /**
+ * The taper, and the two measurements that chose its key.
+ *
+ * Size and brightness ride a per-point weight baked here, from the tissue the
+ * point actually sits in. A FLAT size is what made the mixed band read as a
+ * collision of two classes rather than as a gradient of one population:
+ * measured on the shipped build, every one of the 21,262 halo points in the
+ * 0.75–1.04 band drew at exactly 0.72 world units while the 2,485 addressable
+ * Cells beside them ran 0.783–2.40, so the size axis held one delta spike and
+ * then a separate continuum. The ceiling — no halo point is ever as large as
+ * the smallest Cell — is right and stays, but a ceiling nothing ever
+ * approaches is what guarantees the gap.
+ *
+ * ⚠️ The design said to key this on `resolvedCoverage` alone, on the grounds
+ * that radius is smooth and elliptical. MEASURED, that is backwards, and the
+ * measurement is the reason this constant exists:
+ *
+ * | key                | variance explained by radius alone | at the taper |
+ * |--------------------|-----------------------------------:|--------------|
+ * | `resolvedCoverage` | **77.9%**                          | 81% of points sit below 0.05 |
+ * | `density` (outer)  | **50.2%**                          | p10 0.068, p50 0.280, p90 0.538 |
+ *
+ * `resolvedCoverage` is the MORE radial of the two, because its envelope
+ * closes hard at the resolved rim and 74% of the halo lives outside it — so a
+ * coverage-only taper is exactly zero for three quarters of the layer and
+ * re-flattens it at the bottom of the range instead of the top.
+ *
+ * So the two terms carry the two halves of the requirement, and each is
+ * structure-driven:
+ *
+ *  - **`density`** — the halo's own tissue under its own envelope — gives the
+ *    layer grain everywhere and falls away in the thin outer fringe. It is
+ *    the honest statement: the more unresolved population is here, the more
+ *    light this mark carries.
+ *  - **`resolvedCoverage`** — lifts the points that sit beside the Cells, which
+ *    is the specific job the design named, and it is what puts halo points
+ *    into the same size decade as the smallest Cells.
+ */
+export const POPULATION_TAPER_DENSITY_FULL = 0.6;
+export const POPULATION_TAPER_COVERAGE_LIFT = 0.5;
+
+/**
+ * The per-point taper weight, in `[0, 1]`. Zero is the open outer fringe; one
+ * is tissue as dense as the layer ever draws, or ground the addressable Cells
+ * are already standing on.
+ *
+ * Both inputs come from the SAME `tissueSampleAt` call the walk already makes,
+ * so the taper costs no field evaluation at all.
+ */
+export function populationPointWeight(
+  density: number,
+  resolvedCoverage: number,
+): number {
+  return clamp01(
+    density / POPULATION_TAPER_DENSITY_FULL
+    + POPULATION_TAPER_COVERAGE_LIFT
+      * (resolvedCoverage / POPULATION_FIELD_COVERAGE_CEILING),
+  );
+}
+
+/**
  * The halo's fibre, as two ridged octaves on the law's WARPED coordinates.
  *
  * It is no longer a weight on an independent draw. It is the walk's DIRECTION
@@ -519,6 +579,12 @@ export interface PopulationPlacementState {
    *  pass placed — no segment reaches an addressable Cell (§3 rule 4), and no
    *  segment bridges a point the complement rejected. */
   segments: Uint32Array<ArrayBuffer>;
+  /** The taper weight of each placed point, `capacity` long and valid for the
+   *  first `count` entries. Size, brightness and tint all ride it, and the
+   *  fibres interpolate it between their endpoints, so a filament tapers with
+   *  the tissue it runs through instead of being flat along its length.
+   *  Transferred with the positions; pinned for the same reason. */
+  weights: Float32Array<ArrayBuffer>;
   capacity: number;
   /** Points written so far. */
   count: number;
@@ -580,6 +646,7 @@ export function createPopulationPlacement(
     // the same filament, or to the parent it forked from — so the point
     // capacity bounds the segment capacity exactly.
     segments: new Uint32Array(size * 2),
+    weights: new Float32Array(size),
     capacity: size,
     count: 0,
     segmentCount: 0,
@@ -623,7 +690,7 @@ export function advancePopulationPlacement(
 ): PopulationPlacementState {
   if (state.done) return state;
 
-  const { positions, segments, capacity, walk } = state;
+  const { positions, segments, weights, capacity, walk } = state;
   const halfX = FIELD_HALF_X * POPULATION_FIELD_OUTER_EDGE;
   const halfZ = FIELD_HALF_Z * POPULATION_FIELD_OUTER_EDGE;
   const ceiling = capacity * WORK_CEILING_PER_POINT;
@@ -806,6 +873,11 @@ export function advancePopulationPlacement(
       positions[base] = walk.x;
       positions[base + 1] = y;
       positions[base + 2] = walk.z;
+      // Both terms come from the sample already in hand, so the taper is free.
+      weights[index] = populationPointWeight(
+        sample.density,
+        sample.resolvedCoverage,
+      );
       count += 1;
 
       if (walk.previous >= 0) {

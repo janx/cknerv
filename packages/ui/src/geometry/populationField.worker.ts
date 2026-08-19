@@ -33,6 +33,9 @@ export interface PopulationFieldWorkerResponse {
    *  fibres reach no addressable Cell — and no pair bridges a point the
    *  complement rejected. */
   segments: Uint32Array<ArrayBuffer>;
+  /** The taper weight of each point, `count` valid entries. Size, brightness
+   *  and tint ride it; the fibres interpolate it between their endpoints. */
+  weights: Float32Array<ArrayBuffer>;
   count: number;
   segmentCount: number;
   streamlines: number;
@@ -61,12 +64,13 @@ workerScope.onmessage = (event) => {
       kind: 'placed',
       positions: state.positions,
       segments: state.segments,
+      weights: state.weights,
       count: state.count,
       segmentCount: state.segmentCount,
       streamlines: state.streamlines,
       work: state.work,
     },
-    [state.positions.buffer, state.segments.buffer],
+    [state.positions.buffer, state.segments.buffer, state.weights.buffer],
   );
 };
 

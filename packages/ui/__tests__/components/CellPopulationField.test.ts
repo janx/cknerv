@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import * as THREE from 'three';
+
+import { neverRaycast } from '../../src/components/CellPopulationField';
 
 function read(path: string): string {
   return readFileSync(resolve(process.cwd(), path), 'utf8');
@@ -37,12 +40,48 @@ describe('the halo is not an object', () => {
     // objects earn it: unlike a bare Object3D, `THREE.Points` ships a real
     // default raycast against a one-unit sphere per vertex, and
     // `THREE.LineSegments` ships one against `params.Line.threshold`.
-    expect(FIELD_SOURCE).toContain('function neverRaycast(): void {}');
-    // Once per drawn object, and there are exactly two.
+    expect(FIELD_SOURCE).toMatch(/export function neverRaycast\(\): false \{/);
+    // FALSE, not undefined. `Raycaster.intersect` stops descending only on an
+    // explicit `false`, so `void` would cover these objects and nothing ever
+    // nested under them.
+    expect(neverRaycast()).toBe(false);
+    // Once per drawn object, and EVERY drawn object — counting only `<points`
+    // and `<lineSegments` would let a `<mesh>` or a `<sprite>` ship with
+    // three.js's own raycast, and both of those hit by default.
+    const drawn = FIELD_SOURCE.match(/^\s{6}<([a-z][A-Za-z]*)\b/gm) ?? [];
     const overrides = FIELD_SOURCE.match(/raycast=\{neverRaycast\}/g) ?? [];
-    expect(overrides).toHaveLength(2);
-    const drawn = FIELD_SOURCE.match(/<(points|lineSegments)\b/g) ?? [];
-    expect(drawn.sort()).toEqual(['<lineSegments', '<points']);
+    expect(drawn.map((tag) => tag.trim()).sort())
+      .toEqual(['<lineSegments', '<points']);
+    expect(overrides).toHaveLength(drawn.length);
+  });
+
+  it('answers no raycast when a real Raycaster asks', () => {
+    // Every other guard in this file is a grep. This one runs the thing:
+    // three's raycaster, on the real object types, at a ray that provably
+    // does hit them without the override. Nothing else in the suite ever
+    // instantiates the layer — `CellGalaxy` mounts it at gain 0, where it
+    // returns null before either object exists.
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(
+      new Float32Array([0, 0, 0, 1, 0, 0, 2, 0, 0]), 3,
+    ));
+    geometry.setIndex(new THREE.BufferAttribute(
+      new Uint32Array([0, 1, 1, 2]), 1,
+    ));
+    const raycaster = new THREE.Raycaster();
+    raycaster.set(new THREE.Vector3(0, 0, 10), new THREE.Vector3(0, 0, -1));
+
+    for (const object of [
+      new THREE.Points(geometry),
+      new THREE.LineSegments(geometry),
+    ]) {
+      // Teeth: the default raycast DOES hit this ray, so a dropped override
+      // is a real regression and not a theoretical one.
+      expect(raycaster.intersectObject(object, true).length)
+        .toBeGreaterThan(0);
+      object.raycast = neverRaycast;
+      expect(raycaster.intersectObject(object, true)).toEqual([]);
+    }
   });
 
   it('never lets a fibre reach an addressable Cell', () => {
@@ -131,9 +170,19 @@ describe('two static buffers and two draws', () => {
     const fibre = MATERIAL_SOURCE.slice(
       MATERIAL_SOURCE.indexOf('makePopulationFibreMaterial'),
     );
-    expect(fibre).toContain('gl_FragColor = vec4(uColor * uEmission, uEmission);');
-    expect(fibre).not.toContain('varying');
+    expect(fibre).toContain('gl_FragColor = vec4(uColor * a, a);');
     expect(fibre).not.toContain('gl_PointCoord');
+    // A fibre now carries its endpoints' TAPER — the tissue changing under the
+    // filament — and that is the only thing allowed to vary along it. One
+    // varying, and it is the same weight the points read.
+    const varyings = fibre.match(/varying\s+\w+\s+(\w+);/g) ?? [];
+    expect([...new Set(varyings)]).toEqual(['varying float vWeight;']);
+    expect(varyings).toHaveLength(2);      // declared once per shader stage
+    // Nothing that could brighten an end: no distance-along-segment term, no
+    // per-vertex position in the fragment stage.
+    for (const emphasis of ['vPosition', 'vDistance', 'length(', 'smoothstep(']) {
+      expect(fibre).not.toContain(emphasis);
+    }
   });
 
   it('keeps the two-pass pipeline out of the tree', () => {
@@ -237,12 +286,18 @@ describe('the halo is smaller and dimmer than a Cell, and differs in nothing els
     const generic = constant(GALAXY_SOURCE, 'GENERIC_CELL_POINT_SIZE');
     const morphologyFloor = 0.58;
     const smallestCell = generic * morphologyFloor;
-    const halo = constant(MATERIAL_SOURCE, 'POPULATION_FIELD_POINT_SIZE');
+    const ceiling = constant(MATERIAL_SOURCE, 'POPULATION_FIELD_POINT_SIZE_MAX');
+    const floor = constant(MATERIAL_SOURCE, 'POPULATION_FIELD_POINT_SIZE_MIN');
 
-    expect(halo).toBeLessThan(smallestCell);
+    expect(ceiling).toBeLessThan(smallestCell);
+    expect(floor).toBeLessThan(ceiling);
     // And well under a typical one — a tagged Cell at mean morphology.
     const tagged = constant(GALAXY_SOURCE, 'TAGGED_CELL_POINT_SIZE');
-    expect(halo).toBeLessThan(tagged * (0.58 + 0.72 / 3) * 0.5);
+    expect(ceiling).toBeLessThan(tagged * (0.58 + 0.72 / 3) * 0.5);
+    // The ceiling has to be APPROACHED or it guarantees the gap it was meant
+    // to prevent: a flat size next to a varied one reads as two classes, which
+    // is what a single value produced for three rounds.
+    expect(ceiling / smallestCell).toBeGreaterThan(0.9);
   });
 
   it("cannot reach a Cell core's brightness at any density", () => {

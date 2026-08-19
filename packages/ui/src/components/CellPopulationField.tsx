@@ -56,7 +56,14 @@ export interface CellPopulationFieldProps {
  *  one-world-unit sphere per vertex and `THREE.LineSegments` ships one against
  *  `Raycaster.params.Line.threshold`, which are far looser surfaces than any
  *  mesh would offer if either ever moved in the tree. */
-function neverRaycast(): void {}
+export function neverRaycast(): false {
+  // FALSE, not undefined. `Raycaster.intersect` stops descending only on an
+  // explicit `false`; returning nothing leaves `propagate` true, so the
+  // override would cover this object and not anything ever nested under it.
+  // Both objects are leaves today and the distinction is inert — which is
+  // exactly why it has to be written down rather than relied on.
+  return false;
+}
 
 /**
  * The unresolved population, drawn as real filaments in the same world the
@@ -127,8 +134,14 @@ export default function CellPopulationField({
       // structural guarantee that no fibre can reach anything but a halo
       // point: there is no other vertex for an index to name.
       const position = new THREE.BufferAttribute(response.positions, 3);
+      // The taper, baked at placement from the tissue each point sits in.
+      // Shared by both draws for the same reason the positions are: a fibre is
+      // an index buffer over these vertices, so it interpolates its endpoints'
+      // taper along its length at no cost and cannot drift from them.
+      const weight = new THREE.BufferAttribute(response.weights, 1);
       const points = new THREE.BufferGeometry();
       points.setAttribute('position', position);
+      points.setAttribute('aWeight', weight);
       // The buffer is sized for the requested count; a pass that hit its work
       // ceiling reports fewer. Every prefix is a filament the walk finished,
       // so a short buffer is a thinner field, never a wrong one.
@@ -136,6 +149,7 @@ export default function CellPopulationField({
 
       const fibres = new THREE.BufferGeometry();
       fibres.setAttribute('position', position);
+      fibres.setAttribute('aWeight', weight);
       fibres.setIndex(new THREE.BufferAttribute(response.segments, 1));
       fibres.setDrawRange(0, response.segmentCount * 2);
 

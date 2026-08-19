@@ -15,6 +15,9 @@ import {
   POPULATION_STREAMLINE_JITTER,
   POPULATION_STREAMLINE_MAX_GENERATION,
   POPULATION_STREAMLINE_STEP,
+  POPULATION_TAPER_COVERAGE_LIFT,
+  POPULATION_TAPER_DENSITY_FULL,
+  populationPointWeight,
 } from '../../src/geometry/populationFieldPlacement';
 import {
   FIELD_HALF_X,
@@ -84,6 +87,112 @@ describe('the halo is placed where the Cells are not', () => {
       const sample = tissueSampleAt(x, z, POPULATION_FIELD_OUTER_EDGE);
       expect(sample.density).toBeGreaterThan(0);
     }
+  });
+});
+
+describe('the taper is baked with the point', () => {
+  it('writes a weight for every placed point, and only for those', () => {
+    expect(placed.weights.length).toBe(SAMPLE_POINTS);
+    for (let i = 0; i < placed.count; i += 1) {
+      expect(placed.weights[i]).toBeGreaterThanOrEqual(0);
+      expect(placed.weights[i]).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it('is not flat — which is the whole reason it exists', () => {
+    // A single size next to a varied one reads as two classes however small
+    // it is. Measured on the shipped 105,000-point buffer, this spreads the
+    // halo across 15 of the 19 log-spaced size bins between 0.42 and 2.45 in
+    // the mixed band, against 11 for a flat value.
+    let low = 0;
+    let high = 0;
+    for (let i = 0; i < placed.count; i += 1) {
+      if (placed.weights[i] < 0.2) low += 1;
+      if (placed.weights[i] > 0.8) high += 1;
+    }
+    expect(low / placed.count).toBeGreaterThan(0.05);
+    expect(high / placed.count).toBeGreaterThan(0.05);
+  });
+
+  it('rises beside the Cells and falls in the open fringe', () => {
+    // The requirement, stated as the two things it has to do at once.
+    let beside = 0;
+    let besideN = 0;
+    let fringe = 0;
+    let fringeN = 0;
+    for (let i = 0; i < placed.count; i += 1) {
+      const { x, z } = pointAt(i);
+      const sample = tissueSampleAt(x, z, POPULATION_FIELD_OUTER_EDGE);
+      if (sample.resolvedCoverage > 0.2) {
+        beside += placed.weights[i];
+        besideN += 1;
+      } else if (sample.density < 0.1) {
+        fringe += placed.weights[i];
+        fringeN += 1;
+      }
+    }
+    expect(besideN).toBeGreaterThan(0);
+    expect(fringeN).toBeGreaterThan(0);
+    expect(beside / besideN).toBeGreaterThan(fringe / fringeN * 3);
+  });
+
+  it('carries structure a radius could not', () => {
+    // ⚠️ The design named `resolvedCoverage` as the key on the grounds that
+    // radius is smooth and elliptical. MEASURED, coverage is the MORE radial
+    // of the two candidates — its envelope closes hard at the resolved rim, so
+    // it is exactly zero for the three quarters of the halo that live outside
+    // it — and a coverage-only taper re-flattens the layer at the bottom of
+    // its range instead of the top. The density term is what carries the
+    // irregular structure; this test is the guard on that finding.
+    const BINS = 40;
+    const sum = new Float64Array(BINS);
+    const seen = new Float64Array(BINS);
+    let mean = 0;
+    const radius = new Float64Array(placed.count);
+    for (let i = 0; i < placed.count; i += 1) {
+      const { x, z } = pointAt(i);
+      const nx = x / FIELD_HALF_X;
+      const nz = z / FIELD_HALF_Z;
+      radius[i] = Math.sqrt(nx * nx + nz * nz);
+      const bin = Math.min(
+        BINS - 1,
+        Math.floor(radius[i] / POPULATION_FIELD_OUTER_EDGE * BINS),
+      );
+      sum[bin] += placed.weights[i];
+      seen[bin] += 1;
+      mean += placed.weights[i];
+    }
+    mean /= placed.count;
+    let total = 0;
+    let residual = 0;
+    for (let i = 0; i < placed.count; i += 1) {
+      const bin = Math.min(
+        BINS - 1,
+        Math.floor(radius[i] / POPULATION_FIELD_OUTER_EDGE * BINS),
+      );
+      const predicted = sum[bin] / seen[bin];
+      total += (placed.weights[i] - mean) ** 2;
+      residual += (placed.weights[i] - predicted) ** 2;
+    }
+    // Nearly half the taper's variance is invisible to any function of radius.
+    expect(residual / total).toBeGreaterThan(0.4);
+  });
+
+  it('is a pure function of the sample already in hand', () => {
+    // Both terms come from one `tissueSampleAt`, so the taper costs no field
+    // evaluation at all — the walk was going to make that call anyway.
+    expect(populationPointWeight(0, 0)).toBe(0);
+    expect(populationPointWeight(POPULATION_TAPER_DENSITY_FULL, 0)).toBe(1);
+    expect(populationPointWeight(9, 9)).toBe(1);
+    expect(populationPointWeight(0.3, 0)).toBeCloseTo(
+      0.3 / POPULATION_TAPER_DENSITY_FULL,
+      12,
+    );
+    // The coverage term LIFTS; it never stands alone.
+    expect(POPULATION_TAPER_COVERAGE_LIFT).toBeGreaterThan(0);
+    expect(POPULATION_TAPER_COVERAGE_LIFT).toBeLessThan(1);
+    expect(populationPointWeight(0.2, 0.3))
+      .toBeGreaterThan(populationPointWeight(0.2, 0));
   });
 });
 

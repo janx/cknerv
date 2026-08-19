@@ -7,11 +7,15 @@ import {
   populationPointEnergy,
   populationEmissionForGain,
   populationPointFootprint,
+  populationPointSizeForWeight,
+  populationTaperForWeight,
   POPULATION_FIELD_COLOR,
   POPULATION_FIELD_EMISSION,
   POPULATION_FIELD_MIN_POINT_PX,
-  POPULATION_FIELD_POINT_SIZE,
+  POPULATION_FIELD_POINT_SIZE_MAX,
+  POPULATION_FIELD_POINT_SIZE_MIN,
   POPULATION_FIELD_SIGMA,
+  POPULATION_FIELD_TAPER_FLOOR,
 } from '../../src/materials/populationFieldMaterial';
 import { CELL_GALAXY_PALETTE } from '../../src/visualPalette';
 
@@ -83,7 +87,8 @@ describe('smaller and dimmer, and nothing else', () => {
   it('starts dark and is lit only by the amount curve', () => {
     const material = makePopulationPointMaterial();
     expect(material.uniforms.uEmission.value).toBe(0);
-    expect(material.uniforms.uSize.value).toBe(POPULATION_FIELD_POINT_SIZE);
+    expect(material.uniforms.uSizeMin.value).toBe(POPULATION_FIELD_POINT_SIZE_MIN);
+    expect(material.uniforms.uSizeMax.value).toBe(POPULATION_FIELD_POINT_SIZE_MAX);
   });
 
   it('spends its light over the sprite instead of into a core', () => {
@@ -105,19 +110,54 @@ describe('smaller and dimmer, and nothing else', () => {
     const [r, g, b] = POPULATION_FIELD_COLOR;
     expect(Math.max(r, g, b) - Math.min(r, g, b)).toBeGreaterThan(0.4);
   });
+
+  it('never lets a halo point reach the smallest addressable Cell', () => {
+    // `cellPointSize` bottoms out at 1.35 * 0.58 = 0.783 for an untagged Cell
+    // at minimum morphology. The ceiling is the invariant; the range under it
+    // is what stops the two populations reading as two classes.
+    const SMALLEST_CELL = 1.35 * 0.58;
+    expect(POPULATION_FIELD_POINT_SIZE_MAX).toBeLessThan(SMALLEST_CELL);
+    expect(populationPointSizeForWeight(1)).toBe(POPULATION_FIELD_POINT_SIZE_MAX);
+    expect(populationPointSizeForWeight(0)).toBe(POPULATION_FIELD_POINT_SIZE_MIN);
+    // And it is a real spread, not a ceiling with nothing under it — a value
+    // nothing ever approaches is what guaranteed the gap in the first place.
+    expect(POPULATION_FIELD_POINT_SIZE_MAX / POPULATION_FIELD_POINT_SIZE_MIN)
+      .toBeGreaterThan(1.4);
+  });
+
+  it('tapers monotonically, and clamps outside the unit range', () => {
+    for (const fn of [populationPointSizeForWeight, populationTaperForWeight]) {
+      expect(fn(0.5)).toBeGreaterThan(fn(0));
+      expect(fn(1)).toBeGreaterThan(fn(0.5));
+      expect(fn(-1)).toBe(fn(0));
+      expect(fn(2)).toBe(fn(1));
+    }
+    expect(populationTaperForWeight(1)).toBe(1);
+    expect(populationTaperForWeight(0)).toBe(POPULATION_FIELD_TAPER_FLOOR);
+  });
+
+  it('keeps the PEAK taper gentler than the flux taper', () => {
+    // Size and brightness ride one weight and compound. A large peak ratio
+    // would make the outer halo read as a separate dim layer; the flux ratio
+    // is what carries the taper, and it comes from the footprint.
+    const flux = (populationPointSizeForWeight(0) / populationPointSizeForWeight(1)) ** 2
+      * populationTaperForWeight(0);
+    expect(populationTaperForWeight(0)).toBeGreaterThan(0.7);
+    expect(flux).toBeLessThan(0.5);
+  });
 });
 
 describe('the sprite footprint', () => {
   it('follows the inverse-distance law', () => {
-    const near = populationPointFootprint(POPULATION_FIELD_POINT_SIZE, 1600, 100);
-    const far = populationPointFootprint(POPULATION_FIELD_POINT_SIZE, 1600, 200);
+    const near = populationPointFootprint(POPULATION_FIELD_POINT_SIZE_MAX, 1600, 100);
+    const far = populationPointFootprint(POPULATION_FIELD_POINT_SIZE_MAX, 1600, 200);
     expect(near / far).toBeCloseTo(2, 6);
   });
 
   it('is a few device pixels at the production camera', () => {
     // Camera [110, 108, 110] looking at the origin is ~189 world units out;
     // a 1080p canvas at DPR 2 is 2160 drawing-buffer pixels tall.
-    const px = populationPointFootprint(POPULATION_FIELD_POINT_SIZE, 2160, 189);
+    const px = populationPointFootprint(POPULATION_FIELD_POINT_SIZE_MIN, 2160, 189);
     expect(px).toBeGreaterThan(POPULATION_FIELD_MIN_POINT_PX);
     expect(px).toBeLessThan(16);
   });
