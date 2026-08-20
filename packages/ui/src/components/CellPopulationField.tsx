@@ -86,8 +86,8 @@ export interface PopulationBackboneInstances {
  * names arbitrary pairs — a fork's first segment reaches back to the parent
  * point it branched from, and a join reaches back to a strand the walk passed
  * — so the promoted subset has to be written out. Only the SUBSET is: at the
- * shipped budget that is 0.384 MB against the 1.26 MB a duplicate of the whole
- * position buffer would cost, 30% of it.
+ * shipped budget that is 0.48 MB against the 1.26 MB a duplicate of the whole
+ * position buffer would cost, 38% of it.
  *
  * What the second buffer carries is the size RATIO, not the taper. The shader
  * squares the interpolated value, because mix() is linear and interpolating an
@@ -134,7 +134,7 @@ export function populationBackboneInstanceData(
  * The taper rides `instanceColorStart/End` as ONE component rather than three.
  * GL fills a `vec3` attribute's missing components with `(0, 1)` and the
  * fragment reads only `.r`, so it costs two floats a segment instead of six —
- * 0.128 MB rather than 0.384 MB at the shipped budget.
+ * 0.16 MB rather than 0.48 MB at the shipped budget.
  */
 function makeBackboneLayer(
   placement: PopulationPlacementSnapshot,
@@ -543,7 +543,8 @@ export default function CellPopulationField({
         renderOrder={-2}
       />
       {/* The strands that carry the read, at the ladder's last screen-space
-          rung — 1.8 CSS pixels against the bridge's 2.4, and DPR-aware where
+          rung — 1.8 CSS pixels, which is also where the bridge's own taper
+          lands when it merges into one of these strands, and DPR-aware where
           the hairline above is not. A `gl.LINES` stroke is one DEVICE pixel,
           so it was the only element in the frame that thinned as the
           framebuffer grew; at 4K it had a quarter of the areal weight the

@@ -63,8 +63,8 @@ export const FABRIC_TRUNK_PASS_TRUNK = 1;
 
 /**
  * The wide rung against the passive 2.5 px: **4.4 px** at the overview camera,
- * where the whole width ladder (pulse 4.6, mesh 2.5, bridge 2.4, halo
- * backbone 1.8, halo hairline 1 device px) is composed and judged.
+ * where the whole width ladder (pulse 4.6, mesh 2.5, bridge 2.4 → 1.8 tapered,
+ * halo backbone 1.8, halo hairline 1 device px) is composed and judged.
  *
  * ⭐ **1.28 → 1.76 on 2026-08-20, by live review.** The verdict was that the
  * three nerve classes do not read as different enough from each other and that

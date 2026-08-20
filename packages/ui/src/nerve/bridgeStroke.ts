@@ -8,8 +8,16 @@
 //
 // The stroke is the fabric's primitive and the fabric's curve — a quadratic
 // Bezier at `FABRIC_SAMPLES_PER_EDGE` samples, screen-space capsules, bounded
-// screen accumulation — carrying three deliberate departures, all of them the
+// screen accumulation — carrying four deliberate departures, all of them the
 // register boundary showing up as drawing rules:
+//
+//   * **The WIDTH varies along the stroke**, which nothing else in this scene
+//     does. 2.4 CSS px at the Cell, 1.8 at the symbolic end — the halo
+//     backbone's own rung, so the merge has no width step in it. See
+//     {@link BRIDGE_TIP_WIDTH_RATIO} for why a class would want this and why
+//     a wider RUNG was not available to it, and
+//     `enableTaperedCapsuleWidthMaterial` for the two attributes that carry
+//     it.
 //
 //   * **The taper is {@link bridgeTaper}, not `fabricTaper`.** The fabric is
 //     bright at both endpoints because both endpoints are Cells. A bridge's
@@ -77,13 +85,95 @@ import {
  * this stroke has to LAND — a bridge merges into a halo strand, so its far end
  * arriving at the strand's own width is the point, not a coincidence.
  *
- * ⚠️ So 2.4 sits deliberately close to the mesh — 0.1 CSS px under it — and
- * that is as far as a width ladder can take this class. What separates it from
- * the fabric is not its width; it is where it starts, where it ends, and the
- * hue ramp between them. It stays under the mesh at every camera, since both
- * ride the same `cellDetailFabricWidthScale`.
+ * ⚠️ So this is the KNOT's width — the widest point of a stroke that is not
+ * one width at all. 2.4 sits deliberately close to the mesh, 0.1 CSS px under
+ * it, because a ladder is not what separates this class: {@link
+ * BRIDGE_TIP_WIDTH_RATIO} is. It stays under the mesh at every camera, since
+ * both ride the same `cellDetailFabricWidthScale`.
  */
 export const BRIDGE_WIDTH_RATIO = 0.96;
+
+/**
+ * The SYMBOLIC end's width, as a ratio of the fabric's: 1.8 CSS px, which is
+ * `POPULATION_BACKBONE_WIDTH_PX` exactly.
+ *
+ * ## The bridge is the scene's only stroke that changes width along its length
+ *
+ * Every other screen-space stroke in this frame is one width from end to end,
+ * because `LineMaterial` states width in a uniform and because for every other
+ * class that is correct — a fabric edge is an edge for its whole length, a
+ * pulse is a pulse. This class is the exception by construction: it starts on
+ * a real staged Cell and ends part-way along a fibre of the unresolved-
+ * population halo, and the two ends are not the same KIND of thing. That is
+ * the entire reason the class exists. It already says so in energy
+ * ({@link bridgeTaper}) and in hue ({@link bridgeSymbolicDim}); this is it
+ * saying so in the one channel a viewer reads without having to find a second
+ * stroke to compare against.
+ *
+ * ⭐ **And it is the answer to a problem the width ladder could not solve.**
+ * The 2026-08-20 verdict was that the three nerve classes do not read as
+ * different enough from each other. For the other two the answer was a wider
+ * step — the trunk went 3.2 → 4.4, the halo backbone 1.6 → 1.8. There is no
+ * such move available here: the rung above is the fabric mesh at 2.5, fixed,
+ * and the rung below is where this stroke has to LAND. A bridge merges into a
+ * halo strand, so arriving at the strand's own width is the point of it, and a
+ * width step at the merge would be exactly the junction emphasis the halo's
+ * whole design forbids. Between 2.5 and 1.8 there is no rung to take. So the
+ * class stops competing for one: a stroke that VARIES is not a rung, it is a
+ * different kind of mark, and there is nothing else like it in the frame.
+ *
+ * ## What it costs, which is deliberately almost nothing
+ *
+ * The taper is the signature, not a brightness raise. Measured over the 1,600
+ * selected bridges at the production camera (86,903 px of screen length, mean
+ * 54.3 px a stroke): flat 2.0 covered 173,807 device px², the 2.4 → 1.8 taper
+ * covers 182,497, **+5.0%**. Weighted by the energy each part of the stroke
+ * actually carries — `bridgeTaper` falls from the knot, so the wide half is
+ * also the bright half — the light-weighted mean width is 2.18 px against 2.0,
+ * +8.9%. Both are recorded rather than rounded away: this class is a little
+ * heavier than it was, and that is the cost of the knot being legible.
+ *
+ * ⚠️ The far end is pinned to the backbone's rung rather than solved for a
+ * light-neutral mean, and that is a choice. Solving for neutrality would put
+ * the knot at 2.12 and leave a 1.18x range along the stroke — too subtle to be
+ * a signature, which would be paying the whole implementation cost for nothing.
+ * The merge width is the load-bearing number; the mean follows it.
+ */
+export const BRIDGE_TIP_WIDTH_RATIO = 0.72;
+
+/**
+ * The taper as the shader takes it: a factor on the material's own width.
+ *
+ * `LineMaterial.linewidth` carries the KNOT ({@link BRIDGE_WIDTH_RATIO} of the
+ * live `cell.fabricWidth`, times the camera focus scale), so the per-instance
+ * lane only has to say how much of it each endpoint keeps. Expressed as the
+ * ratio of the two ratios rather than as 0.75 written out, so the taper follows
+ * both ends if either constant moves.
+ */
+export const BRIDGE_TIP_WIDTH_SCALE =
+  BRIDGE_TIP_WIDTH_RATIO / BRIDGE_WIDTH_RATIO;
+
+/**
+ * Width factor at Bezier parameter `t`, from 1 at the knot to
+ * {@link BRIDGE_TIP_WIDTH_SCALE} at the symbolic end.
+ *
+ * Linear, where {@link bridgeTaper} is parabolic — on purpose. The energy curve
+ * is the fabric's own parabola with its rising half removed, so it is steep
+ * near the knot and flat at the far end; a width that copied it would put the
+ * whole width change in the first quarter of the stroke and read as a blob with
+ * a hairline off it. A linear width against a parabolic energy is what makes
+ * the two channels legible as two things.
+ *
+ * ⚠️ A function of the CURVE parameter, never of the drawn fragment. A
+ * retracting bridge is a tapered object being withdrawn into its Cell, so its
+ * visible far end gets WIDER as it shortens; a growing one is a short fat stub
+ * that extends and thins. Keying on the drawn extent instead would re-taper the
+ * remaining stub each frame, which is an animation nobody asked for.
+ */
+export function bridgeWidthScale(t: number): number {
+  const u = t < 0 ? 0 : t > 1 ? 1 : t;
+  return 1 + (BRIDGE_TIP_WIDTH_SCALE - 1) * u;
+}
 
 /**
  * The far end's energy, as a fraction of the knot, before the anchor's own
@@ -102,10 +192,11 @@ export const BRIDGE_WIDTH_RATIO = 0.96;
  * classes gained `POPULATION_STROKE_TAPER_FLOOR`, which lifts a thin-tissue
  * stroke to 0.75 where this reads 0.43 — a visibility floor for marks the
  * fringe was losing under the eye's threshold. This class is not in that
- * regime: it is 2.4 CSS px in the MIXED band, the widest rung below the mesh,
- * and it is the one stroke here that must arrive at the halo looking like it
- * is thinning INTO it. Flooring the far end would flatten exactly the ramp
- * this constant exists to draw.
+ * regime: it is 2.4 CSS px at the knot in the MIXED band, the widest rung
+ * below the mesh, and it is the one stroke here that must arrive at the halo
+ * looking like it is thinning INTO it — in width now as well as in level, see
+ * {@link BRIDGE_TIP_WIDTH_RATIO}. Flooring the far end would flatten exactly
+ * the ramp this constant exists to draw.
  */
 export const BRIDGE_FAR_END_ENERGY = TWIG_MIN;
 
@@ -257,11 +348,18 @@ export function bridgeRenderState(
  * The caller draws living strokes before retracting ones, so an overflow can
  * only clip an afterimage — the fabric's own rule.
  *
+ * `widths` is the per-endpoint width lane ({@link bridgeWidthScale}), stride 2
+ * against the stride-6 position and colour arrays. It is the only one of the
+ * three that is optional: the layer allocates it only when it was built for a
+ * tapered class, and a caller that does not pass it draws the material's flat
+ * width, which is what every other consumer of `makeFatLineLayer` wants.
+ *
  * `sample` is a caller-owned 3-float scratch (see `bezierAtInto`).
  */
 export function writeBridgeStroke(
   positions: Float32Array,
   colors: Float32Array,
+  widths: Float32Array | undefined,
   atSegment: number,
   maxSegments: number,
   st: BridgeStrokeState,
@@ -296,6 +394,10 @@ export function writeBridgeStroke(
   let prevR = (st.fromR + (st.toR - st.fromR) * tStart) * prevEnergy;
   let prevG = (st.fromG + (st.toG - st.fromG) * tStart) * prevEnergy;
   let prevB = (st.fromB + (st.toB - st.fromB) * tStart) * prevEnergy;
+  // Off the CURVE parameter, exactly as the colour and the energy above are,
+  // so the three channels agree about where along the stroke a vertex is even
+  // while it is growing or retracting.
+  let prevWidth = bridgeWidthScale(tStart);
 
   let written = 0;
   for (let index = 1; index <= FABRIC_SAMPLES_PER_EDGE; index += 1) {
@@ -316,6 +418,7 @@ export function writeBridgeStroke(
     const endR = (st.fromR + (st.toR - st.fromR) * t) * endEnergy;
     const endG = (st.fromG + (st.toG - st.fromG) * t) * endEnergy;
     const endB = (st.fromB + (st.toB - st.fromB) * t) * endEnergy;
+    const endWidth = bridgeWidthScale(t);
 
     const offset = (atSegment + written) * 6;
     positions[offset + 0] = prevX;
@@ -330,6 +433,11 @@ export function writeBridgeStroke(
     colors[offset + 3] = endR;
     colors[offset + 4] = endG;
     colors[offset + 5] = endB;
+    if (widths !== undefined) {
+      const widthOffset = (atSegment + written) * 2;
+      widths[widthOffset] = prevWidth;
+      widths[widthOffset + 1] = endWidth;
+    }
     written += 1;
 
     prevX = sample[0];
@@ -338,6 +446,7 @@ export function writeBridgeStroke(
     prevR = endR;
     prevG = endG;
     prevB = endB;
+    prevWidth = endWidth;
     if (t >= tEnd) break;
   }
   return written;

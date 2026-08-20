@@ -369,6 +369,129 @@ export function optimizeScreenSpaceCapsuleMaterial(
   return material;
 }
 
+const CAPSULE_WIDTH_VERTEX_ANCHOR = '\t\tuniform vec2 capsuleViewportOrigin;';
+const CAPSULE_WIDTH_VERTEX_PARS = `
+		attribute float instanceWidthStart;
+		attribute float instanceWidthEnd;
+		varying float vCapsuleWidthStart;
+		varying float vCapsuleWidthEnd;`;
+const CAPSULE_WIDTH_ASSIGN_ANCHOR =
+  '\t\t\tvCapsuleEndInvW = 1.0 / clipEnd.w;';
+const CAPSULE_WIDTH_ASSIGN = `
+			vCapsuleWidthStart = instanceWidthStart;
+			vCapsuleWidthEnd = instanceWidthEnd;`;
+const CAPSULE_WIDTH_EXPANSION_ANCHOR = 'offset *= linewidth;';
+const CAPSULE_WIDTH_EXPANSION =
+  'offset *= linewidth * max( instanceWidthStart, instanceWidthEnd );';
+const CAPSULE_WIDTH_FRAGMENT_ANCHOR = '\t\tuniform float capsulePixelRatio;';
+const CAPSULE_WIDTH_FRAGMENT_PARS = `
+		varying float vCapsuleWidthStart;
+		varying float vCapsuleWidthEnd;`;
+const CAPSULE_WIDTH_RADIUS_ANCHOR = `				float capsuleRadius = max(
+					linewidth * capsulePixelRatio * 0.5,
+					1e-6
+				);`;
+const CAPSULE_WIDTH_RADIUS = `				float capsuleRadius = max(
+					linewidth
+						* mix( vCapsuleWidthStart, vCapsuleWidthEnd, capsuleT )
+						* capsulePixelRatio * 0.5,
+					1e-6
+				);`;
+
+/**
+ * Let each instance carry its own width, as a factor on the material's.
+ *
+ * ## Why a stroke would want this at all
+ *
+ * Every screen-space stroke in this scene is ONE width from end to end, because
+ * `LineMaterial` states width in a uniform. That is the right shape for a class
+ * whose whole length means the same thing — a fabric edge is an edge, a pulse is
+ * a pulse. It is the wrong shape for the bridge: that class runs from a real
+ * staged Cell into the unresolved-population halo, and the two ends are not the
+ * same KIND of thing, which is the entire reason the class exists. It already
+ * says so in energy (`bridgeTaper`) and in hue (`bridgeSymbolicDim`); this is
+ * what lets it say so in width as well, which is the one channel a viewer reads
+ * without having to compare two strokes side by side.
+ *
+ * ⭐ And it is the answer to a problem a ladder cannot solve. The bridge sits
+ * between the fabric mesh (2.5 CSS px, fixed by the fabric) and the halo
+ * backbone (1.8, which is where a bridge has to LAND, since it merges into a
+ * strand). There is no room between those two for a rung that reads as its own
+ * class. A stroke that VARIES is not a rung — it is a different kind of mark,
+ * and it is the only one in the frame.
+ *
+ * ## What it costs, which is two floats an instance and no new pass
+ *
+ * Applied AFTER {@link optimizeScreenSpaceCapsuleMaterial}, whose patches this
+ * one anchors on. Three replacements, each on a string the capsule patch or the
+ * stock shader is known to produce, so a Three upgrade fails loudly here rather
+ * than silently drawing one width again:
+ *
+ *  - the vertex stage expands the enclosing quad by `max(start, end)` rather
+ *    than by the uniform. The quad is a bounding shape, not the silhouette, so
+ *    the WIDER end is the correct expansion: it contains the whole tapered
+ *    capsule at every taper, including a reversed one, and the extra fragments
+ *    it admits at the thin end are discarded by the test below at the price of
+ *    an interpolation.
+ *  - the fragment stage takes its radius from `mix(start, end, capsuleT)`,
+ *    where `capsuleT` is the screen-space parameter the cap test already
+ *    computed. So the drawn shape is a swept disk of LINEARLY VARYING radius —
+ *    a round cone — and both caps are still exact circles at their own end's
+ *    width. There is no endpoint emphasis in either direction: a cap is a
+ *    silhouette, not a brightening.
+ *  - the two attributes ride their own interleaved buffer at stride 2, the
+ *    same shape the inspection lanes use. Two floats a segment, and the layer
+ *    that does not ask for them allocates nothing and compiles the stock
+ *    shader.
+ *
+ * ⚠️ The radius is taken at the CLOSEST point on the segment rather than by
+ * solving for the true tangent of a round cone. Those differ by `dr/dl` of the
+ * radius, which for the bridge is 0.6 px over ~54 px of screen length — under a
+ * hundredth of a pixel. Solving it exactly would cost a square root per
+ * fragment to move a boundary no display can resolve.
+ */
+export function enableTaperedCapsuleWidthMaterial(
+  material: LineMaterial,
+): LineMaterial {
+  if (material.uniforms.capsulePixelRatio === undefined) {
+    throw new Error(
+      'per-instance capsule width requires the screen-space capsule patch',
+    );
+  }
+  material.vertexShader = replaceShaderChunk(
+    material.vertexShader,
+    CAPSULE_WIDTH_VERTEX_ANCHOR,
+    `${CAPSULE_WIDTH_VERTEX_ANCHOR}${CAPSULE_WIDTH_VERTEX_PARS}`,
+    'tapered-width vertex declarations',
+  );
+  material.vertexShader = replaceShaderChunk(
+    material.vertexShader,
+    CAPSULE_WIDTH_ASSIGN_ANCHOR,
+    `${CAPSULE_WIDTH_ASSIGN_ANCHOR}${CAPSULE_WIDTH_ASSIGN}`,
+    'tapered-width vertex assignment',
+  );
+  material.vertexShader = replaceShaderChunk(
+    material.vertexShader,
+    CAPSULE_WIDTH_EXPANSION_ANCHOR,
+    CAPSULE_WIDTH_EXPANSION,
+    'tapered-width quad expansion',
+  );
+  material.fragmentShader = replaceShaderChunk(
+    material.fragmentShader,
+    CAPSULE_WIDTH_FRAGMENT_ANCHOR,
+    `${CAPSULE_WIDTH_FRAGMENT_ANCHOR}${CAPSULE_WIDTH_FRAGMENT_PARS}`,
+    'tapered-width fragment declarations',
+  );
+  material.fragmentShader = replaceShaderChunk(
+    material.fragmentShader,
+    CAPSULE_WIDTH_RADIUS_ANCHOR,
+    CAPSULE_WIDTH_RADIUS,
+    'tapered-width capsule radius',
+  );
+  material.needsUpdate = true;
+  return material;
+}
+
 /** Keep CSS-pixel LineMaterial inputs aligned with physical gl_FragCoord. */
 export function syncScreenSpaceCapsuleViewport(
   material: LineMaterial,

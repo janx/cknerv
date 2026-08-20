@@ -1155,8 +1155,8 @@ export function makePopulationFibreMaterial(): THREE.ShaderMaterial {
  *
  * ## Where this rung sits on the ladder
  *
- * The ladder reads 4.6 pulse / 4.4 trunk / 2.5 mesh / **2.4 bridge** / 1.8
- * halo backbone / 1 device px residual grain, and a rung has to be
+ * The ladder reads 4.6 pulse / 4.4 trunk / 2.5 mesh / **2.4 → 1.8 bridge** /
+ * 1.8 halo backbone / 1 device px residual grain, and a rung has to be
  * distinguishable from the rung above it.
  *
  * ⭐ **1.6 → 1.8 on 2026-08-20, and this time the whole ladder moved with
@@ -1176,8 +1176,9 @@ export function makePopulationFibreMaterial(): THREE.ShaderMaterial {
  * ⚠️ 1.8 is deliberately the SAME number the bridge's far end lands on. That
  * is not a collision, it is the merge: a 次级 stroke ends part-way along a
  * 末梢 strand, and arriving at the strand's own width is what makes the join
- * read as a continuation rather than as a step. See `BRIDGE_WIDTH_RATIO` for
- * the other half of it.
+ * read as a continuation rather than as a step. That is also why the bridge
+ * TAPERS rather than taking a rung of its own — see `BRIDGE_TIP_WIDTH_RATIO`,
+ * which reads this constant's value from the other side of the join.
  *
  * ## Why 1.8, and why the steps below it are 1.6 and 1.4
  *

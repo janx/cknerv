@@ -12,6 +12,7 @@ import {
   resetPopulationPlacement,
   setPopulationPlacement,
 } from '../../src/geometry/populationPlacementStore';
+import { commitLayer, makeFatLineLayer } from '../../src/nerve/NeuralFabric';
 
 const read = (path: string): string =>
   readFileSync(resolve(process.cwd(), path), 'utf8');
@@ -97,6 +98,62 @@ describe('the bridge layer stays inside its own budget', () => {
     const dying = LAYER.indexOf('if (stroke.dyingAt === null) continue;');
     expect(living).toBeGreaterThan(-1);
     expect(dying).toBeGreaterThan(living);
+  });
+});
+
+describe('the bridge layer is the only tapered-width stroke in the scene', () => {
+  it('builds its layer with the per-instance width lane', () => {
+    // The taper is the class signature (see `BRIDGE_TIP_WIDTH_RATIO`), so it
+    // has to be asked for at build time — the buffer and the shader patch both
+    // ride the same flag, and a layer that does not ask for them allocates
+    // nothing and compiles the stock capsule.
+    const layer = makeFatLineLayer(8, 2.4, 'screen', true, false, false, true);
+    expect(layer.widths).toBeDefined();
+    expect(layer.widths).toHaveLength(8 * 2);
+    expect(layer.widthBuf).toBeDefined();
+    expect(layer.geometry.getAttribute('instanceWidthStart')).toBeDefined();
+    expect(layer.geometry.getAttribute('instanceWidthEnd')).toBeDefined();
+    expect(layer.material.vertexShader)
+      .toContain('attribute float instanceWidthStart;');
+    // ⚠️ The sentinel is 1, not 0: an instance the emit never reaches draws
+    // the material's own width rather than vanishing.
+    expect([...layer.widths!]).toEqual(new Array(16).fill(1));
+    layer.geometry.dispose();
+    layer.material.dispose();
+  });
+
+  it('costs every other layer nothing at all', () => {
+    const plain = makeFatLineLayer(8, 2.5, 'screen', true);
+    expect(plain.widths).toBeUndefined();
+    expect(plain.widthBuf).toBeUndefined();
+    expect(plain.geometry.getAttribute('instanceWidthStart')).toBeUndefined();
+    expect(plain.material.vertexShader).toContain('offset *= linewidth;');
+    plain.geometry.dispose();
+    plain.material.dispose();
+    // And the lane is meaningless without the screen capsule it patches, so
+    // asking for it on an additive layer is refused rather than ignored.
+    expect(() => makeFatLineLayer(8, 2.5, 'additive', false, false, false, true))
+      .toThrow(/screen-capsule/);
+  });
+
+  it('uploads the width lane on the same gate the positions ride', () => {
+    // A tapered stroke's width is a function of where it is along its own
+    // curve, so widths and positions are dirty together and never separately.
+    const layer = makeFatLineLayer(8, 2.4, 'screen', true, false, false, true);
+    layer.count = 3;
+    const before = layer.widthBuf!.version;
+    commitLayer(layer);
+    // Stride 2 against the positions' 6: three segments are six floats.
+    expect(layer.widthBuf!.updateRanges).toEqual([{ start: 0, count: 6 }]);
+    expect(layer.widthBuf!.version).toBeGreaterThan(before);
+    // A colours-and-inspection-only commit leaves it alone, exactly as it
+    // leaves the positions alone.
+    const uploaded = layer.widthBuf!.version;
+    commitLayer(layer, false, true, true);
+    expect(layer.widthBuf!.updateRanges).toEqual([]);
+    expect(layer.widthBuf!.version).toBe(uploaded);
+    layer.geometry.dispose();
+    layer.material.dispose();
   });
 });
 

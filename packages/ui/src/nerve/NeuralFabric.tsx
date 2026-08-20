@@ -97,6 +97,7 @@ import {
 import {
   enableLineInspectionTransitionMaterial,
   makeScreenSpaceCapsuleGeometry,
+  enableTaperedCapsuleWidthMaterial,
   optimizeScreenSpaceCapsuleMaterial,
   syncScreenSpaceCapsuleViewport,
 } from '../geometry/screenSpaceCapsuleLine';
@@ -283,10 +284,17 @@ export interface FatLineLayer {
   colors: Float32Array;
   inspectionFrom?: Float32Array;
   inspectionTo?: Float32Array;
+  /** Per-endpoint width FACTOR on the material's own `linewidth`, present only
+   *  on a layer built with `taperedWidth`. Two floats a segment, initialised to
+   *  1 so an instance nobody writes draws at exactly the uniform width. See
+   *  `enableTaperedCapsuleWidthMaterial` for why one class in this scene needs
+   *  a stroke that is not one width from end to end. */
+  widths?: Float32Array;
   posBuf: THREE.InstancedInterleavedBuffer;
   colBuf: THREE.InstancedInterleavedBuffer;
   inspectionFromBuf?: THREE.InstancedInterleavedBuffer;
   inspectionToBuf?: THREE.InstancedInterleavedBuffer;
+  widthBuf?: THREE.InstancedInterleavedBuffer;
   geometry: LineSegmentsGeometry;
   material: LineMaterial;
   mesh: LineSegments2;
@@ -772,6 +780,7 @@ function makeFatLineMaterial(
   accumulation: 'screen' | 'additive',
   useScreenCapsule: boolean,
   inspectionTransition: boolean,
+  taperedWidth = false,
 ): LineMaterial {
   const material = new LineMaterial({
     vertexColors: true,
@@ -789,6 +798,11 @@ function makeFatLineMaterial(
   }
   if (useScreenCapsule) {
     optimizeScreenSpaceCapsuleMaterial(material);
+  }
+  if (taperedWidth) {
+    // After the capsule patch, whose output this one anchors on: `linewidth`
+    // becomes the KNOT width and every instance scales it.
+    enableTaperedCapsuleWidthMaterial(material);
   }
   if (accumulation === 'screen') {
     // Passive structure must approach the display ceiling asymptotically when
@@ -836,6 +850,7 @@ export function makeFatLineLayer(
   optimizePassiveGeometry = false,
   inspectionTransition = false,
   lifecycle = false,
+  taperedWidth = false,
 ): FatLineLayer {
   const positions = new Float32Array(maxSegments * 6);
   const colors = new Float32Array(maxSegments * 6);
@@ -843,6 +858,12 @@ export function makeFatLineLayer(
     ? new Float32Array(maxSegments * 2).fill(1)
     : undefined;
   const inspectionTo = inspectionTransition
+    ? new Float32Array(maxSegments * 2).fill(1)
+    : undefined;
+  // 1, not 0: an instance the emit never reaches draws the material's own
+  // width rather than vanishing, which is the same failure discipline the
+  // inspection lanes use.
+  const widths = taperedWidth
     ? new Float32Array(maxSegments * 2).fill(1)
     : undefined;
   const posBuf = new THREE.InstancedInterleavedBuffer(positions, 6, 1);
@@ -853,12 +874,19 @@ export function makeFatLineLayer(
   const inspectionToBuf = inspectionTo
     ? new THREE.InstancedInterleavedBuffer(inspectionTo, 2, 1)
     : undefined;
+  const widthBuf = widths
+    ? new THREE.InstancedInterleavedBuffer(widths, 2, 1)
+    : undefined;
   posBuf.setUsage(THREE.DynamicDrawUsage);
   colBuf.setUsage(THREE.DynamicDrawUsage);
   inspectionFromBuf?.setUsage(THREE.DynamicDrawUsage);
   inspectionToBuf?.setUsage(THREE.DynamicDrawUsage);
+  widthBuf?.setUsage(THREE.DynamicDrawUsage);
   const useScreenCapsule = accumulation === 'screen'
     && optimizePassiveGeometry;
+  if (taperedWidth && !useScreenCapsule) {
+    throw new Error('per-instance width requires the screen-capsule layer');
+  }
   const geometry = useScreenCapsule
     ? makeScreenSpaceCapsuleGeometry()
     : new LineSegmentsGeometry();
@@ -884,6 +912,16 @@ export function makeFatLineLayer(
       new THREE.InterleavedBufferAttribute(inspectionToBuf, 1, 1),
     );
   }
+  if (widthBuf) {
+    geometry.setAttribute(
+      'instanceWidthStart',
+      new THREE.InterleavedBufferAttribute(widthBuf, 1, 0),
+    );
+    geometry.setAttribute(
+      'instanceWidthEnd',
+      new THREE.InterleavedBufferAttribute(widthBuf, 1, 1),
+    );
+  }
   geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0, 0), 120);
   geometry.instanceCount = 0;
   const material = makeFatLineMaterial(
@@ -891,6 +929,7 @@ export function makeFatLineLayer(
     accumulation,
     useScreenCapsule,
     inspectionTransition,
+    taperedWidth,
   );
   let lifecycleBuffers: FabricLifecycleBuffers | undefined;
   if (lifecycle) {
@@ -928,10 +967,12 @@ export function makeFatLineLayer(
     colors,
     inspectionFrom,
     inspectionTo,
+    widths,
     posBuf,
     colBuf,
     inspectionFromBuf,
     inspectionToBuf,
+    widthBuf,
     geometry,
     material,
     mesh,
@@ -1056,6 +1097,7 @@ export function commitLayer(
   layer.colBuf.clearUpdateRanges();
   layer.inspectionFromBuf?.clearUpdateRanges();
   layer.inspectionToBuf?.clearUpdateRanges();
+  layer.widthBuf?.clearUpdateRanges();
   if (usedFloats > 0) {
     // Three uploads the complete backing array when no range is supplied.
     // Upload only each layer's populated prefix. The passive layer reserves
@@ -1079,6 +1121,13 @@ export function commitLayer(
       layer.inspectionFromBuf.needsUpdate = true;
       layer.inspectionToBuf.addUpdateRange(0, usedInspectionFloats);
       layer.inspectionToBuf.needsUpdate = true;
+    }
+    // The width lane rides the POSITION gate, not the inspection one: a
+    // tapered stroke's width is a function of where it is along its own curve,
+    // so the two are dirty together and never separately.
+    if (updatePositions && layer.widthBuf) {
+      layer.widthBuf.addUpdateRange(0, usedInspectionFloats);
+      layer.widthBuf.needsUpdate = true;
     }
   }
   layer.geometry.instanceCount = layer.count;

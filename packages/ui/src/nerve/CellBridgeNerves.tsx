@@ -24,6 +24,14 @@
 // `fabricLuminance` supplies both the brightness band and the de-glare. One
 // extra draw call; no new line-rendering system.
 //
+// ⭐ The one part this class needed that did not exist is per-instance WIDTH
+// (`enableTaperedCapsuleWidthMaterial`), and it was built the same way: two
+// more attributes and three more shader patches on the SAME capsule material,
+// behind a flag every other layer leaves off. A bridge is the only stroke in
+// the frame that is not one width from end to end — see
+// `BRIDGE_TIP_WIDTH_RATIO` — and that is a property of the register boundary
+// too: the two ends are not the same kind of thing.
+//
 // The layer mounts wherever NeuralNetwork mounts, which is inside CellGalaxy's
 // rotating group — the same frame the halo is placed in and the Cells are
 // drawn in, so no position in this file is ever transformed.
@@ -101,9 +109,18 @@ export default function CellBridgeNerves({
       BRIDGE_MAX_SEGMENTS,
       LIVE.cell.fabricWidth * BRIDGE_WIDTH_RATIO,
       'screen',
-      // The passive fabric's two-triangle screen capsule, at the ladder's mid
-      // width. Not `worldUnits`: a bridge is a screen-space stroke like every
-      // other nerve in the frame.
+      // The passive fabric's two-triangle screen capsule. Not `worldUnits`: a
+      // bridge is a screen-space stroke like every other nerve in the frame.
+      true,
+      // No inspection transition and no GPU lifecycle — a bridge cannot enter
+      // the inspection field and its lifecycle is driven on the CPU here.
+      false,
+      false,
+      // ⭐ The one thing this class does that no other stroke in the scene
+      // does: `linewidth` becomes the KNOT width and each sub-segment scales
+      // it, so the stroke thins from the Cell to the halo. See
+      // `BRIDGE_TIP_WIDTH_RATIO` for why the class needed a mark rather than
+      // a rung.
       true,
     );
     // Render-only, and structurally so: no pointer handler is ever attached,
@@ -237,6 +254,7 @@ export default function CellBridgeNerves({
     const strokes = strokesRef.current;
     const positions = layer.positions;
     const colors = layer.colors;
+    const widths = layer.widths;
     const sample = sampleRef.current;
     const baseEnergy = LIVE.cell.fabricAlpha;
     const centerDim = LIVE.cell.centerDim;
@@ -250,7 +268,7 @@ export default function CellBridgeNerves({
       const render = bridgeRenderState(stroke, now);
       if (render.animating) animating = true;
       count += writeBridgeStroke(
-        positions, colors, count, BRIDGE_MAX_SEGMENTS,
+        positions, colors, widths, count, BRIDGE_MAX_SEGMENTS,
         stroke, render, baseEnergy, centerDim, sample,
       );
     }
@@ -263,7 +281,7 @@ export default function CellBridgeNerves({
       }
       animating = true;
       count += writeBridgeStroke(
-        positions, colors, count, BRIDGE_MAX_SEGMENTS,
+        positions, colors, widths, count, BRIDGE_MAX_SEGMENTS,
         stroke, render, baseEnergy, centerDim, sample,
       );
     }

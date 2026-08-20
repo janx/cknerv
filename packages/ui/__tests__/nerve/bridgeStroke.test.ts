@@ -8,13 +8,18 @@ import {
 } from '../../src/nerve/fabricEdgeRender';
 import {
   BRIDGE_FAR_END_ENERGY,
+  BRIDGE_TIP_WIDTH_RATIO,
+  BRIDGE_TIP_WIDTH_SCALE,
+  BRIDGE_WIDTH_RATIO,
   bridgeRenderState,
   bridgeSymbolicDim,
+  bridgeWidthScale,
   makeBridgeStrokeState,
   writeBridgeStroke,
 } from '../../src/nerve/bridgeStroke';
 import { bridgeTaper, TWIG_MIN } from '../../src/nerve/fabricLuminance';
 import {
+  POPULATION_BACKBONE_WIDTH_PX,
   POPULATION_STROKE_COLOR,
   populationFibreTaper,
 } from '../../src/materials/populationFieldMaterial';
@@ -31,18 +36,27 @@ const bridge = (over: Partial<BridgeEdge> = {}): BridgeEdge => ({
   ...over,
 });
 
-/** The layer's own emit: living strokes into a fresh pair of arrays. */
+/** The layer's own emit: living strokes into a fresh set of arrays. */
 function draw(
   state = makeBridgeStrokeState(bridge(), 0),
   nowSec = 60,
   maxSegments = FABRIC_SAMPLES_PER_EDGE,
   centerDim = 0.3,
-): { positions: Float32Array; colors: Float32Array; written: number } {
+): {
+  positions: Float32Array;
+  colors: Float32Array;
+  widths: Float32Array;
+  written: number;
+} {
   const positions = new Float32Array(maxSegments * 6);
   const colors = new Float32Array(maxSegments * 6);
+  // Stride 2 against the stride-6 pair, and pre-filled with the sentinel the
+  // layer allocates so an unwritten instance is visible as unwritten.
+  const widths = new Float32Array(maxSegments * 2).fill(1);
   const written = writeBridgeStroke(
     positions,
     colors,
+    widths,
     0,
     maxSegments,
     state,
@@ -51,7 +65,7 @@ function draw(
     centerDim,
     new Float32Array(3),
   );
-  return { positions, colors, written };
+  return { positions, colors, widths, written };
 }
 
 const luma = (r: number, g: number, b: number): number =>
@@ -78,6 +92,152 @@ describe('bridgeTaper', () => {
     // fabricTaper's falling half is TAPER_MIN + (1 - TAPER_MIN)(1 - 2t)^2 on
     // [0, 0.5]; this is the same curve with 2t replaced by t.
     expect(bridgeTaper(0.5, 0.44)).toBeCloseTo(0.44 + 0.56 * 0.25, 12);
+  });
+});
+
+describe('the width taper — the class signature a ladder could not give it', () => {
+  const FABRIC_PX = 2.5;
+
+  it('runs from the mesh rung down to the halo strand it merges into', () => {
+    // ⚠️ Re-derived 2026-08-20 by live review, not by drift. The verdict was
+    // that the three nerve classes do not read as different ENOUGH, and for
+    // this one a wider rung was not available: above it sits the fabric mesh
+    // at 2.5, fixed, and below it sits the width this stroke has to LAND at.
+    expect(FABRIC_PX * BRIDGE_WIDTH_RATIO).toBeCloseTo(2.4, 10);
+    expect(FABRIC_PX * BRIDGE_TIP_WIDTH_RATIO).toBeCloseTo(1.8, 10);
+    // ⭐ The far end IS the halo backbone's rung, to the digit. A bridge ends
+    // part-way along a promoted halo strand, so a width step at the merge
+    // would be exactly the junction emphasis that layer's design forbids.
+    expect(FABRIC_PX * BRIDGE_TIP_WIDTH_RATIO)
+      .toBeCloseTo(POPULATION_BACKBONE_WIDTH_PX, 10);
+    // And the knot stays under the mesh at every camera, since both ride the
+    // same focus scale and the ratio is what is stored.
+    expect(BRIDGE_WIDTH_RATIO).toBeLessThan(1);
+    expect(BRIDGE_TIP_WIDTH_RATIO).toBeLessThan(BRIDGE_WIDTH_RATIO);
+  });
+
+  it('is a factor on the material width, so the live knob still moves it', () => {
+    // `LineMaterial.linewidth` carries the knot; the instance lane says how
+    // much of it each endpoint keeps. Stated as the ratio of the two ratios,
+    // so moving either end moves the taper rather than desynchronising it.
+    expect(BRIDGE_TIP_WIDTH_SCALE).toBeCloseTo(0.75, 10);
+    expect(bridgeWidthScale(0)).toBe(1);
+    expect(bridgeWidthScale(1)).toBeCloseTo(BRIDGE_TIP_WIDTH_SCALE, 12);
+    for (const knob of [0.5, 2.5, 8]) {
+      const knot = knob * BRIDGE_WIDTH_RATIO;
+      expect(knot * bridgeWidthScale(1))
+        .toBeCloseTo(knob * BRIDGE_TIP_WIDTH_RATIO, 10);
+    }
+  });
+
+  it('falls monotonically and linearly, where the energy falls parabolically', () => {
+    // Linear width against a parabolic energy is what makes the two channels
+    // legible as two things: `bridgeTaper` puts most of its fall in the first
+    // quarter, and a width that copied it would read as a blob with a
+    // hairline off it.
+    let previous = Infinity;
+    for (let step = 0; step <= 20; step += 1) {
+      const t = step / 20;
+      const width = bridgeWidthScale(t);
+      expect(width).toBeLessThanOrEqual(previous + 1e-12);
+      expect(width).toBeGreaterThanOrEqual(BRIDGE_TIP_WIDTH_SCALE - 1e-12);
+      previous = width;
+    }
+    // Linear: the midpoint is the mean of the ends, which the parabolic
+    // energy is emphatically not.
+    expect(bridgeWidthScale(0.5))
+      .toBeCloseTo((1 + BRIDGE_TIP_WIDTH_SCALE) / 2, 12);
+    const energyMid = bridgeTaper(0.5, 0.24);
+    expect(energyMid).toBeLessThan((bridgeTaper(0, 0.24) + bridgeTaper(1, 0.24)) / 2);
+    // Clamped outside [0, 1] rather than extrapolated — a retract writes
+    // parameters inside the range, but nothing may widen past the knot.
+    expect(bridgeWidthScale(-1)).toBe(1);
+    expect(bridgeWidthScale(2)).toBeCloseTo(BRIDGE_TIP_WIDTH_SCALE, 12);
+  });
+
+  it('writes one width per endpoint, chained exactly as the colours are', () => {
+    const { widths, written } = draw();
+    expect(written).toBe(FABRIC_SAMPLES_PER_EDGE);
+    // Endpoint-shared: each sub-segment starts where the previous ended, in
+    // width as in position and colour. A discontinuity here would be a visible
+    // step partway along a stroke.
+    for (let seg = 1; seg < written; seg += 1) {
+      expect(widths[seg * 2]).toBeCloseTo(widths[(seg - 1) * 2 + 1], 12);
+    }
+    expect(widths[0]).toBeCloseTo(bridgeWidthScale(0), 12);
+    expect(widths[(written - 1) * 2 + 1])
+      .toBeCloseTo(bridgeWidthScale(1), 12);
+    // And it agrees with the curve parameter at every sample, which is what
+    // keeps it in step with the energy and the hue.
+    for (let seg = 0; seg < written; seg += 1) {
+      const t = (seg + 1) / FABRIC_SAMPLES_PER_EDGE;
+      expect(widths[seg * 2 + 1]).toBeCloseTo(bridgeWidthScale(t), 12);
+    }
+  });
+
+  it('keys on the curve, not on the drawn extent, so a retract stays tapered', () => {
+    // ⚠️ A retracting bridge is a tapered object being withdrawn into its
+    // Cell, so its visible far end gets WIDER as it shortens. Keying on the
+    // drawn extent instead would re-taper the stub every frame.
+    const state = makeBridgeStrokeState(bridge(), 0);
+    state.dyingAt = 60;
+    const half = draw(state, 60 + DEATH_RETRACT_MS / 2000);
+    expect(half.written).toBeGreaterThan(0);
+    const lastEnd = half.widths[(half.written - 1) * 2 + 1];
+    expect(lastEnd).toBeGreaterThan(bridgeWidthScale(1));
+    expect(lastEnd).toBeLessThan(1);
+    // The knot is still the knot: the end that stays on the Cell never moves.
+    expect(half.widths[0]).toBeCloseTo(bridgeWidthScale(0), 12);
+    // A growing stroke is the same law from the other side: a short fat stub
+    // that extends and thins.
+    const young = draw(makeBridgeStrokeState(bridge(), 0), GROWTH_MS / 2000);
+    expect(young.widths[0]).toBeCloseTo(bridgeWidthScale(0), 12);
+    expect(young.widths[(young.written - 1) * 2 + 1])
+      .toBeGreaterThan(bridgeWidthScale(1));
+  });
+
+  it('is a signature and not a brightness raise', () => {
+    // The geometric mean footprint against the flat 2.0 CSS px this class drew
+    // before: 2.1 px, +5.0%. Measured over the real selection at the
+    // production camera the same pair is 173,807 -> 182,497 device px².
+    const meanWidth = FABRIC_PX * BRIDGE_WIDTH_RATIO
+      * (bridgeWidthScale(0) + bridgeWidthScale(1)) / 2;
+    expect(meanWidth).toBeCloseTo(2.1, 10);
+    expect(meanWidth / 2.0).toBeCloseTo(1.05, 10);
+    // And the light-weighted mean, which is the honest number because the wide
+    // half is also the bright half: 2.18 px, +8.9%. Integrated over the same
+    // curve the emit uses, at the middle of the measured `farEnd` range.
+    const FAR = 0.24;
+    const STEPS = 4_000;
+    let lit = 0;
+    let energy = 0;
+    for (let i = 0; i < STEPS; i += 1) {
+      const t = (i + 0.5) / STEPS;
+      const e = bridgeTaper(t, FAR);
+      lit += bridgeWidthScale(t) * e;
+      energy += e;
+    }
+    const lightWeighted = FABRIC_PX * BRIDGE_WIDTH_RATIO * (lit / energy);
+    expect(lightWeighted).toBeCloseTo(2.18, 2);
+    expect(lightWeighted / 2.0).toBeLessThan(1.10);
+    // ⚠️ Pinning the far end to the backbone's rung instead of solving for a
+    // light-neutral mean is a CHOICE, and this is what it costs. With the tip
+    // fixed at 1.8, a light-weighted mean of exactly 2.0 wants a knot of 2.12
+    // — a 1.18x range along the stroke, too subtle to be the signature the
+    // whole implementation is for. The merge width is the load-bearing
+    // number; the mean follows it.
+    let tWeighted = 0;
+    for (let i = 0; i < STEPS; i += 1) {
+      const t = (i + 0.5) / STEPS;
+      tWeighted += t * bridgeTaper(t, FAR);
+    }
+    const centroid = tWeighted / energy;
+    const tip = FABRIC_PX * BRIDGE_TIP_WIDTH_RATIO;
+    // meanLight(K) = K - (K - tip) * centroid, solved for meanLight = 2.0.
+    const neutralKnot = (2.0 - tip * centroid) / (1 - centroid);
+    expect(neutralKnot).toBeCloseTo(2.12, 2);
+    expect(neutralKnot / tip).toBeLessThan(1.2);
+    expect(FABRIC_PX * BRIDGE_WIDTH_RATIO / tip).toBeGreaterThan(1.3);
   });
 });
 
