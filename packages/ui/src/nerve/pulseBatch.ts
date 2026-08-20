@@ -8,8 +8,11 @@
 import type { Cell, CellLink } from '@cknerv/types';
 import type { NeighborGraph } from '../geometry/neighborGraph';
 import {
+  buildOriginEntryIndex,
+  type OriginEntryIndex,
+} from '../geometry/originEntry';
+import {
   anchorProximityScore,
-  nearestGraphNode,
   rescueOrigin,
   rimEntryScore,
 } from '../geometry/pathRouter';
@@ -34,9 +37,9 @@ import type { PulseStatsSink, RescueCounter, RescueKind } from './pulseStats';
 export const MAX_PULSES_PER_BATCH = 128;
 
 /** Rescue candidate links retained per dark block. The retry loop tries
- * them in seq order until one routes; each failed attempt pays a nearest-
- * node scan + BFS, so an unroutable block must cost a bounded amount, not
- * ring-capacity × BFS. */
+ * them in seq order until one routes; each failed attempt pays a BFS (plus
+ * one entry-index query when the destination has to be substituted), so an
+ * unroutable block must cost a bounded amount, not ring-capacity × BFS. */
 export const MAX_RESCUE_ATTEMPTS = 8;
 
 /** The stats surface `planLinkBatch` needs (superset of `PulseStatsSink`:
@@ -66,6 +69,7 @@ function planRescuePulse(
   cells: ReadonlyMap<number, Cell>,
   graph: NeighborGraph,
   stats: PulseBatchStats,
+  entryIndex: () => OriginEntryIndex,
 ): Pulse | null {
   // Degree-0 nodes are real in the live graph (death pruning can strand a
   // neighbourless key) — an isolated dst would dead-end the rescue while a
@@ -83,7 +87,7 @@ function planRescuePulse(
       link.to_ids.includes(a.id),
     );
     if (!outAnchor) return null;
-    dst = nearestGraphNode(cells, graph, outAnchor.pos_seed);
+    dst = entryIndex().nearest(outAnchor.pos_seed);
     if (dst === null) return null;
     substituted = true;
   }
@@ -165,6 +169,13 @@ export function planLinkBatch(
       ...opts,
       sourceIndex: collectLinkSourceIndex(toFire, cells),
     };
+    // One entry index for the whole batch, built on first use: the linear
+    // nearest-node scan it replaces is O(stage) per call, and the only
+    // caller today (a rescue whose outputs all missed the graph) is rare
+    // enough that most batches must not pay the build at all.
+    let originIndex: OriginEntryIndex | null = null;
+    const entryIndex = () =>
+      (originIndex ??= buildOriginEntryIndex(cells, graph));
     // Normal pulses admitted under MAX_PULSES_PER_BATCH. Tracked apart from
     // planned.length so rescues are budget-NEUTRAL, not merely exempt — a
     // mid-batch rescue must not steal the next block's last budget slot.
@@ -186,7 +197,7 @@ export function planLinkBatch(
       if (curBlock <= lastGuaranteedBlock) return; // lit in an earlier slice
       if (curCandidates.length === 0) return; // cellbase-only: stays silent
       for (const link of curCandidates) {
-        const rescued = planRescuePulse(link, cells, graph, stats);
+        const rescued = planRescuePulse(link, cells, graph, stats, entryIndex);
         if (rescued) {
           planned.push(rescued);
           stats.observeLink(curBlock, true);
@@ -205,7 +216,7 @@ export function planLinkBatch(
       }
       // Rescue candidates are only needed while the block is still dark;
       // the attempt cap bounds the retry loop's worst case (each failed
-      // attempt pays a nearest-node scan + BFS).
+      // attempt pays a BFS).
       if (
         !curLit
         && link.parents.length > 0
