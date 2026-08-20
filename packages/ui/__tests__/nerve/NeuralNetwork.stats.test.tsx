@@ -60,6 +60,16 @@ describe('NeuralNetwork drop instrumentation wiring', () => {
     expect(NETWORK_SOURCE).not.toContain('const cells = cellsCache.cells');
   });
 
+  // The fabric keys an edge `lo|hi` and the geometry layer `${from}:${to}`,
+  // and an unknown key is SKIPPED, not rejected — so a raw graph-vocabulary
+  // key here reads as a working delta while nothing decays. The translation
+  // has one home; this keeps the literal from growing back beside it.
+  it('addresses the fabric through the edge-key translation, never raw', () => {
+    expect(NETWORK_SOURCE).toContain('planSelectionDeltaUpdate(delta, deltaNow)');
+    expect(NETWORK_SOURCE).toContain('selectionStrayEdgeKeys(');
+    expect(NETWORK_SOURCE).not.toMatch(/\$\{edge\.from\}:\$\{edge\.to\}/);
+  });
+
   it('maintains that graph eagerly between worker builds', () => {
     expect(NETWORK_SOURCE).toContain('planDisplayMeshDiff(');
     // The licence for replaying a diff in place, and the ceiling past which

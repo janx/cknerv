@@ -12,6 +12,8 @@ import {
   deadEndFor,
   planDisplayMeshDiff,
   planMeshUpdate,
+  planSelectionDeltaUpdate,
+  selectionStrayEdgeKeys,
   shouldDeferBirthsToBulkRebuild,
 } from '../../src/nerve/livingMeshDriver';
 
@@ -223,5 +225,70 @@ describe('planDisplayMeshDiff (display journal → lifecycle diff)', () => {
     expect(update.deathEndByKey.get('1|5')).toBe('from');
     expect(update.evictKeys).toEqual([]);
     expect(graph.adjacency.has(1)).toBe(false);
+  });
+});
+
+// The worker's selection delta and the periodic prune are the ONLY places the
+// geometry layer's edge vocabulary (`${from}:${to}`) reaches the fabric, whose
+// map is keyed `lo|hi`. The fabric skips an unknown key in silence, so a
+// mistranslation is invisible at the seam and fatal downstream: removals never
+// decay, and a prune comparing the two vocabularies finds every live edge
+// stray. These pin the translation itself.
+describe('worker selection delta → fabric instructions', () => {
+  /** What the geometry/worker side writes for the same edge. */
+  const graphKey = (from: number, to: number): string => `${from}:${to}`;
+
+  it('names removals in the vocabulary the fabric edge map is keyed by', () => {
+    const update = planSelectionDeltaUpdate(
+      { added: [], removed: [{ from: 4, to: 9, d: 1 }, { from: 2, to: 3, d: 1 }] },
+      12,
+    );
+    expect(update.killKeys).toEqual([fabricEdgeKey(4, 9), fabricEdgeKey(2, 3)]);
+    for (const key of update.killKeys) {
+      expect(key).not.toBe(graphKey(4, 9));
+      expect(key).not.toBe(graphKey(2, 3));
+    }
+  });
+
+  it('canonicalises a removal the worker reports high-id first', () => {
+    const update = planSelectionDeltaUpdate(
+      { added: [], removed: [{ from: 9, to: 4, d: 1 }] },
+      12,
+    );
+    expect(update.killKeys).toEqual([fabricEdgeKey(4, 9)]);
+  });
+
+  it('roots every added edge with birth hints under the same key', () => {
+    const update = planSelectionDeltaUpdate(
+      { added: [{ from: 7, to: 3, d: 1 }], removed: [] },
+      12.5,
+    );
+    expect([...update.bornAtByKey.keys()]).toEqual([fabricEdgeKey(3, 7)]);
+    expect(update.bornAtByKey.get(fabricEdgeKey(3, 7))).toBeCloseTo(12.5, 6);
+    expect(update.dirByKey.get(fabricEdgeKey(3, 7))).toBe(1);
+  });
+
+  it('finds no stray when every live edge is still in the selection', () => {
+    const selection = [
+      { from: 1, to: 2 },
+      { from: 2, to: 3 },
+    ];
+    const live = [fabricEdgeKey(1, 2), fabricEdgeKey(2, 3)];
+    expect(selectionStrayEdgeKeys(selection, live)).toEqual([]);
+  });
+
+  it('prunes exactly the live edges the selection dropped', () => {
+    const selection = [{ from: 1, to: 2 }];
+    const live = [fabricEdgeKey(1, 2), fabricEdgeKey(2, 3), fabricEdgeKey(5, 9)];
+    expect(selectionStrayEdgeKeys(selection, live)).toEqual([
+      fabricEdgeKey(2, 3),
+      fabricEdgeKey(5, 9),
+    ]);
+  });
+
+  it('matches a selection edge whatever order the worker reports it in', () => {
+    expect(
+      selectionStrayEdgeKeys([{ from: 9, to: 5 }], [fabricEdgeKey(5, 9)]),
+    ).toEqual([]);
   });
 });

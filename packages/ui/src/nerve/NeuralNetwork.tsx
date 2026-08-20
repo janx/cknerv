@@ -92,6 +92,8 @@ import { pulseStats } from './pulseStats';
 import {
   planDisplayMeshDiff,
   planMeshUpdate,
+  planSelectionDeltaUpdate,
+  selectionStrayEdgeKeys,
   shouldDeferBirthsToBulkRebuild,
 } from './livingMeshDriver';
 import CellBridgeNerves from './CellBridgeNerves';
@@ -710,22 +712,21 @@ export default function NeuralNetwork({
           && delta !== null
         ) {
           fabricDeltaStreakRef.current += 1;
-          if (delta.removed.length > 0) {
-            handles.killEdges(
-              delta.removed.map((edge) => `${edge.from}:${edge.to}`),
-              simClock.elapsedSec,
-              'gc',
-            );
+          // The worker speaks the graph's edge vocabulary and the fabric its
+          // own; `planSelectionDeltaUpdate` is the single translation, because
+          // an untranslated key is skipped in silence rather than rejected.
+          const deltaNow = simClock.elapsedSec;
+          const instructions = planSelectionDeltaUpdate(delta, deltaNow);
+          if (instructions.killKeys.length > 0) {
+            handles.killEdges(instructions.killKeys, deltaNow, 'gc');
           }
           if (delta.added.length > 0) {
-            const bornAtByKey = new Map<string, number>();
-            const dirByKey = new Map<string, 1 | -1>();
-            for (const edge of delta.added) {
-              const key = `${edge.from}:${edge.to}`;
-              bornAtByKey.set(key, simClock.elapsedSec);
-              dirByKey.set(key, 1);
-            }
-            handles.growEdges(delta.added, displayCells, bornAtByKey, dirByKey);
+            handles.growEdges(
+              delta.added,
+              displayCells,
+              instructions.bornAtByKey,
+              instructions.dirByKey,
+            );
           }
           // Periodic reconcile: while deltas chain, drift can only be EXTRA
           // fabric edges (eager living-mesh growth the selection never
@@ -734,13 +735,10 @@ export default function NeuralNetwork({
           // admission storm every 16th block at the High tier).
           if (fabricDeltaStreakRef.current >= 16) {
             fabricDeltaStreakRef.current = 0;
-            const selectionKeys = new Set<string>();
-            for (const edge of passiveGraph.edges) {
-              selectionKeys.add(`${edge.from}:${edge.to}`);
-            }
-            const extras = handles
-              .collectLiveEdgeKeys()
-              .filter((key) => !selectionKeys.has(key));
+            const extras = selectionStrayEdgeKeys(
+              passiveGraph.edges,
+              handles.collectLiveEdgeKeys(),
+            );
             if (extras.length > 0) {
               handles.killEdges(extras, simClock.elapsedSec, 'gc');
             }

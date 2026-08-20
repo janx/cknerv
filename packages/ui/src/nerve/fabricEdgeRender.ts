@@ -28,7 +28,13 @@ export interface EdgeRender {
 /** Tendril grow-in window (length + easeOutCubic alpha). Mirrors the
  *  previous inline GROWTH_MS. */
 export const GROWTH_MS = 1200;
-/** Quiet gc/reconciliation fade (alpha down, length stays = atrophy). */
+/** Quiet gc/reconciliation fade (alpha down, length stays = atrophy). This is
+ *  also the window a fibre gets when its endpoint cell merely LEAVES THE
+ *  STAGE, so it must stay LONGER than the dot's own `EXIT_FADE_MS` (900,
+ *  `geometry/cellPositions`): the two run concurrently on one departure, and
+ *  the withering order that reads as one gesture is dot first, fibres after —
+ *  a fibre that outlived its dot is a retreating tendril, a dot left holding
+ *  cut fibres is a glitch. Move this and check that relation. */
 export const DECAY_MS = 1500;
 /** Real-death retract window (dead end recedes toward the survivor). */
 export const DEATH_RETRACT_MS = 900;

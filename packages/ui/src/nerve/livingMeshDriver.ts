@@ -1,8 +1,9 @@
 // Pure logic for the living-mesh driver. The driver EFFECT lives in
 // NeuralNetwork.tsx (Canvas-bound); everything testable lives here:
-// ripple stagger, dead-end resolution, and the full
+// ripple stagger, dead-end resolution, the full
 // per-diff orchestration (planMeshUpdate) that mutates the graph and builds
-// the fabric instruction maps.
+// the fabric instruction maps, and the worker-selection-delta translation that
+// addresses the fabric in the only edge vocabulary it answers to.
 
 import type { Cell } from '@cknerv/types';
 import type { NeighborGraph, NeighborEdge } from '../geometry/neighborGraph';
@@ -110,6 +111,68 @@ export function staggerBornAt(nowSec: number, index: number, _count: number, ste
 export function deadEndFor(edgeKey: string, deadCellId: number): 'from' | 'to' {
   const lo = Number(edgeKey.slice(0, edgeKey.indexOf('|')));
   return deadCellId === lo ? 'from' : 'to';
+}
+
+/** One completed worker build's passive-selection delta against the previous
+ *  applied build, in the geometry layer's own edge vocabulary. */
+export interface SelectionDelta {
+  readonly added: readonly NeighborEdge[];
+  readonly removed: readonly NeighborEdge[];
+}
+
+/** Fabric instructions for one selection delta: keys to kill, and the birth
+ *  hints for the edges being grown. */
+export interface SelectionDeltaUpdate {
+  killKeys: string[];
+  bornAtByKey: Map<string, number>;
+  dirByKey: Map<string, 1 | -1>;
+}
+
+/**
+ * Translate a worker selection delta into fabric instructions.
+ *
+ * ⚠️ The two layers key an edge DIFFERENTLY: the geometry/worker side writes
+ * `${from}:${to}` (`neighborGraph.edgeKey`), while the fabric's edge map is
+ * keyed by `fabricEdgeKey` (`lo|hi`). A key in the wrong vocabulary matches
+ * nothing, and every fabric handle skips an unknown key in silence — so a
+ * removed edge handed over in graph vocabulary never enters its decay at all.
+ * Every crossing of that boundary goes through here, so the translation is
+ * written once and tested once.
+ */
+export function planSelectionDeltaUpdate(
+  delta: SelectionDelta,
+  nowSec: number,
+): SelectionDeltaUpdate {
+  const killKeys: string[] = [];
+  for (const edge of delta.removed) {
+    killKeys.push(fabricEdgeKey(edge.from, edge.to));
+  }
+  const bornAtByKey = new Map<string, number>();
+  const dirByKey = new Map<string, 1 | -1>();
+  for (const edge of delta.added) {
+    const key = fabricEdgeKey(edge.from, edge.to);
+    bornAtByKey.set(key, nowSec);
+    dirByKey.set(key, 1);
+  }
+  return { killKeys, bornAtByKey, dirByKey };
+}
+
+/**
+ * Live fabric keys the authoritative selection no longer contains — the
+ * periodic reconcile's prune set. The vocabulary hazard above is worse here
+ * and silent in the other direction: compared against graph-vocabulary keys
+ * NOTHING matches, so every live edge reads as a stray and the prune gc's the
+ * entire fabric.
+ */
+export function selectionStrayEdgeKeys(
+  selectionEdges: readonly { from: number; to: number }[],
+  liveKeys: readonly string[],
+): string[] {
+  const selection = new Set<string>();
+  for (const edge of selectionEdges) {
+    selection.add(fabricEdgeKey(edge.from, edge.to));
+  }
+  return liveKeys.filter((key) => !selection.has(key));
 }
 
 export interface MeshUpdate {
