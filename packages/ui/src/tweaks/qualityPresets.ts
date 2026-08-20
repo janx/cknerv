@@ -82,13 +82,15 @@ export interface QualityCascade {
    * the time, `med` 45%, `low` 8%, so which letter a screenshot catches is
    * close to a coin flip.
    *
-   * ⚠️ It oscillates because `high` sits ON the deadline rather than past it,
+   * ⚠️ It oscillated because `high` sits ON the deadline rather than past it,
    * and the controller decides by measuring the tier it is currently IN: at
-   * `med` it comfortably reads under `UP_FRAME_MS`, which says nothing about
-   * what `high` would cost. Any hardware where `high` exceeds
-   * `DOWN_FRAME_MS.high` while `med` stays under `UP_FRAME_MS.med` will limit
-   * cycle by construction. Damping that is a product call, not a bug in the
-   * evidence — the halo visibly doubles and halves across the transition. */
+   * `med` it comfortably read under the old `UP_FRAME_MS`, which says nothing
+   * about what `high` would cost. Any hardware where `high` exceeds
+   * `DOWN_FRAME_MS.high` while `med` stays under that threshold limit-cycles
+   * by construction — the halo visibly doubles and halves across every
+   * transition. That is what retired the climb back: the tier is now
+   * calibrated once at open and then locked (`QUALITY_LOCK_STABLE_MS`), so a
+   * page that dips to `med` at this geometry holds `med` until reload. */
   populationCapMul: number;
   /** Semantic memory marks retain one CSS-space footprint at every preset.
    * Lower sample density gets a slightly broader, dimmer filter rather than
@@ -148,6 +150,13 @@ export interface QualityRuntimeSnapshot {
   mode: QualityMode;
   effective: QualityPreset;
   source: 'startup' | 'adaptive' | 'manual';
+  /** Automatic calibration has finished: the tier holds until the page is
+   * reloaded. Manual modes are never locked — the user owns the setting. */
+  locked: boolean;
+  /** Automatic tier switches since page open, monotone across mode changes.
+   * A probe reads it twice and compares — after the lock the two readings
+   * must be equal, whatever load arrives in between. */
+  switches: number;
 }
 
 const listeners = new Set<() => void>();
@@ -155,6 +164,8 @@ let runtimeSnapshot: QualityRuntimeSnapshot = {
   mode: 'auto',
   effective: 'high',
   source: 'startup',
+  locked: false,
+  switches: 0,
 };
 
 function publish(next: QualityRuntimeSnapshot): void {
@@ -162,25 +173,47 @@ function publish(next: QualityRuntimeSnapshot): void {
     next.mode === runtimeSnapshot.mode
     && next.effective === runtimeSnapshot.effective
     && next.source === runtimeSnapshot.source
+    && next.locked === runtimeSnapshot.locked
+    && next.switches === runtimeSnapshot.switches
   ) return;
   runtimeSnapshot = next;
   for (const listener of listeners) listener();
 }
 
 /** Synchronize the manual/auto intent. Manual mode applies immediately; auto
- * retains the current fidelity until the sampled state machine has evidence. */
+ * retains the current fidelity until the sampled state machine has evidence.
+ * Either direction clears the lock: choosing a mode is a deliberate act, and
+ * returning to auto re-runs calibration the way a reopened page would. */
 export function setQualityMode(mode: QualityMode): void {
   publish({
+    ...runtimeSnapshot,
     mode,
     effective: mode === 'auto' ? runtimeSnapshot.effective : mode,
     source: mode === 'auto' ? 'adaptive' : 'manual',
+    locked: false,
   });
 }
 
-/** Publish a state-machine transition only while auto still owns the setting. */
+/** Publish a state-machine transition only while auto still owns the setting.
+ * The store is transport, not policy — the lock lives in the state machine,
+ * which stops calling this once calibration ends. */
 export function setAdaptiveQuality(effective: QualityPreset): void {
   if (runtimeSnapshot.mode !== 'auto') return;
-  publish({ mode: 'auto', effective, source: 'adaptive' });
+  publish({
+    ...runtimeSnapshot,
+    mode: 'auto',
+    effective,
+    source: 'adaptive',
+    switches: effective === runtimeSnapshot.effective
+      ? runtimeSnapshot.switches
+      : runtimeSnapshot.switches + 1,
+  });
+}
+
+/** Publish the end (or restart) of automatic calibration. */
+export function setAdaptiveQualityLocked(locked: boolean): void {
+  if (runtimeSnapshot.mode !== 'auto') return;
+  publish({ ...runtimeSnapshot, locked });
 }
 
 export function getQualityRuntimeSnapshot(): QualityRuntimeSnapshot {

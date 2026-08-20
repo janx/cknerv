@@ -364,8 +364,13 @@ function CellDisplayControl({
     ? HUD_COLORS.cyanWire
     : HUD_COLORS.orange;
   const modeLabel = display.mode === 'auto' ? 'AUTO' : 'MAN';
+  // The lock is the honest half of the reading: after calibration this tier
+  // is not a current sample but the page's settled answer.
+  const qualityLabel = `${quality.effective.toUpperCase()}${
+    quality.locked ? ' (locked)' : ''
+  }`;
   const detail = display.mode === 'auto'
-    ? `${visible.toLocaleString()} shown · ${available.toLocaleString()} available · adaptive ${quality.effective.toUpperCase()} cap ${limit.toLocaleString()} · server retains ${serverCapacity.toLocaleString()}`
+    ? `${visible.toLocaleString()} shown · ${available.toLocaleString()} available · adaptive ${qualityLabel} cap ${limit.toLocaleString()} · server retains ${serverCapacity.toLocaleString()}`
     : `${visible.toLocaleString()} shown · ${available.toLocaleString()} available · manual cap ${limit.toLocaleString()}${
       serverCapacity < limit
         ? ` · server currently retains ${serverCapacity.toLocaleString()}`
@@ -429,7 +434,7 @@ function CellDisplayControl({
         aria-label="Automatic cell count"
         aria-pressed={display.mode === 'auto'}
         title={display.mode === 'auto'
-          ? `Automatic cap active · ${quality.effective.toUpperCase()} = ${limit.toLocaleString()}`
+          ? `Automatic cap active · ${qualityLabel} = ${limit.toLocaleString()}`
           : 'Manual cap active · click to return to AUTO'}
         onClick={(event) => {
           event.stopPropagation();

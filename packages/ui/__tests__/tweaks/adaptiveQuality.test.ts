@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   ADAPTIVE_SAMPLE_WINDOW_MS,
   ADAPTIVE_SWITCH_COOLDOWN_MS,
+  QUALITY_CALIBRATION_MAX_MS,
+  QUALITY_LOCK_STABLE_MS,
   advanceAdaptiveQuality,
   createAdaptiveQualityState,
   type AdaptiveQualityState,
@@ -19,10 +21,33 @@ function sample(
   return next;
 }
 
+/** Sample until the tier locks, reporting the tiers it passed through. */
+function calibrate(
+  state: AdaptiveQualityState,
+  frameMs: number,
+  maxSamples = 200,
+): { state: AdaptiveQualityState; tiers: string[]; samples: number } {
+  let next = state;
+  const tiers = [state.quality as string];
+  for (let index = 1; index <= maxSamples; index += 1) {
+    next = advanceAdaptiveQuality(next, frameMs, ADAPTIVE_SAMPLE_WINDOW_MS);
+    if (next.quality !== tiers[tiers.length - 1]) tiers.push(next.quality);
+    if (next.locked) return { state: next, tiers, samples: index };
+  }
+  throw new Error('calibration never locked');
+}
+
 describe('adaptive quality hysteresis', () => {
   it('ignores startup compilation and a short event spike', () => {
     let state = createAdaptiveQualityState('high');
     state = sample(state, 42, 6); // consumes the four-second warmup
+
+    // Warmup is not calibration: no evidence, no stability, no clock.
+    expect(state.slowEvidenceMs).toBe(0);
+    expect(state.stableMs).toBe(0);
+    expect(state.calibrationMs).toBe(0);
+    expect(state.locked).toBe(false);
+
     state = sample(state, 42, 5); // 3.75 s pressure: below the 5 s hold
 
     expect(state.quality).toBe('high');
@@ -44,12 +69,17 @@ describe('adaptive quality hysteresis', () => {
     expect(state.cooldownRemainingMs).toBe(ADAPTIVE_SWITCH_COOLDOWN_MS);
   });
 
-  it('upgrades much more slowly and never skips a level', () => {
-    const lowToMed = sample(createAdaptiveQualityState('low', 0), 12, 16);
-    const medToHigh = sample(createAdaptiveQualityState('med', 0), 12, 20);
+  it('never upgrades, in any phase of calibration', () => {
+    // Frame times that used to buy a tier back: 12 ms is under every old
+    // upshift threshold, and these runs are long enough to have cleared the
+    // old 12-15 s holds twice over.
+    const fromLow = sample(createAdaptiveQualityState('low', 0), 12, 40);
+    const fromMed = sample(createAdaptiveQualityState('med', 0), 12, 40);
+    const warmedLow = sample(createAdaptiveQualityState('low'), 12, 40);
 
-    expect(lowToMed.quality).toBe('med');
-    expect(medToHigh.quality).toBe('high');
+    expect(fromLow.quality).toBe('low');
+    expect(fromMed.quality).toBe('med');
+    expect(warmedLow.quality).toBe('low');
   });
 
   it('does not accumulate evidence while switch cooldown is active', () => {
@@ -57,7 +87,7 @@ describe('adaptive quality hysteresis', () => {
     state = sample(state, 12, 7);
 
     expect(state.quality).toBe('med');
-    expect(state.fastEvidenceMs).toBe(0);
+    expect(state.slowEvidenceMs).toBe(0);
     expect(state.cooldownRemainingMs).toBeGreaterThan(0);
   });
 
@@ -65,5 +95,65 @@ describe('adaptive quality hysteresis', () => {
     const state = createAdaptiveQualityState();
     expect(advanceAdaptiveQuality(state, Number.NaN, 750)).toBe(state);
     expect(advanceAdaptiveQuality(state, 16, 0)).toBe(state);
+  });
+});
+
+describe('quality is measured once at the door', () => {
+  it('locks the tier once it has held for the stable window after warmup', () => {
+    const warmupSamples = Math.ceil(4_000 / ADAPTIVE_SAMPLE_WINDOW_MS);
+    const stableSamples = Math.ceil(
+      QUALITY_LOCK_STABLE_MS / ADAPTIVE_SAMPLE_WINDOW_MS,
+    );
+    const short = sample(
+      createAdaptiveQualityState('high'), 16, warmupSamples + stableSamples - 1,
+    );
+    const locked = advanceAdaptiveQuality(short, 16, ADAPTIVE_SAMPLE_WINDOW_MS);
+
+    expect(short.locked).toBe(false);
+    expect(locked.locked).toBe(true);
+    expect(locked.quality).toBe('high');
+    expect(locked.stableMs).toBeGreaterThanOrEqual(QUALITY_LOCK_STABLE_MS);
+    expect(locked.calibrationMs).toBeLessThan(QUALITY_CALIBRATION_MAX_MS);
+  });
+
+  it('re-arms the stability window at each downshift, so low stays reachable', () => {
+    // 44 ms is slow at high and at med, so a machine that cannot carry either
+    // must be able to take both steps before the cap ends calibration.
+    const { state, tiers } = calibrate(createAdaptiveQualityState('high'), 44);
+
+    expect(tiers).toEqual(['high', 'med', 'low']);
+    expect(state.locked).toBe(true);
+    expect(state.calibrationMs).toBeGreaterThanOrEqual(QUALITY_CALIBRATION_MAX_MS);
+    // The cap ended it, not the stability window — two switches and their
+    // cooldowns cost more calibration than one stable window is long.
+    expect(state.stableMs).toBeLessThan(QUALITY_LOCK_STABLE_MS);
+  });
+
+  it('locks at the hard cap even when evidence never completes a hold', () => {
+    // Alternating evidence never survives the 2x deadband decay, so no hold
+    // completes and no switch re-arms stability: the cap is the only end.
+    let state: AdaptiveQualityState = {
+      ...createAdaptiveQualityState('high', 0),
+      calibrationMs: QUALITY_CALIBRATION_MAX_MS - 4 * ADAPTIVE_SAMPLE_WINDOW_MS,
+    };
+    for (let index = 0; index < 4; index += 1) {
+      state = advanceAdaptiveQuality(
+        state, index % 2 === 0 ? 40 : 10, ADAPTIVE_SAMPLE_WINDOW_MS,
+      );
+      expect(state.quality).toBe('high');
+    }
+
+    expect(state.slowEvidenceMs).toBeLessThan(5_000);
+    expect(state.stableMs).toBeLessThan(QUALITY_LOCK_STABLE_MS);
+    expect(state.locked).toBe(true);
+  });
+
+  it('answers every later sample with the same state, however slow', () => {
+    const { state } = calibrate(createAdaptiveQualityState('high'), 16);
+
+    expect(state.quality).toBe('high');
+    expect(advanceAdaptiveQuality(state, 120, ADAPTIVE_SAMPLE_WINDOW_MS))
+      .toBe(state);
+    expect(sample(state, 250, 200)).toBe(state);
   });
 });

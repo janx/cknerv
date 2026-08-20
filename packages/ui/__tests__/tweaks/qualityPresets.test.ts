@@ -3,6 +3,7 @@ import {
   QUALITY_PRESETS,
   getQualityRuntimeSnapshot,
   setAdaptiveQuality,
+  setAdaptiveQualityLocked,
   setQualityMode,
   subscribeQualityRuntime,
 } from '../../src/tweaks/qualityPresets';
@@ -100,6 +101,35 @@ describe('quality runtime ownership', () => {
 
     unsubscribe();
     // Restore module state for tests that mount production components later.
+    setAdaptiveQuality('high');
+  });
+
+  it('publishes the calibration lock and counts only real tier switches', () => {
+    setQualityMode('auto');
+    setAdaptiveQuality('high');
+    const before = getQualityRuntimeSnapshot().switches;
+
+    setAdaptiveQuality('med');
+    expect(getQualityRuntimeSnapshot().switches).toBe(before + 1);
+    setAdaptiveQuality('med'); // republishing the same tier is not a switch
+    expect(getQualityRuntimeSnapshot().switches).toBe(before + 1);
+
+    setAdaptiveQualityLocked(true);
+    expect(getQualityRuntimeSnapshot()).toMatchObject({
+      mode: 'auto', effective: 'med', locked: true, switches: before + 1,
+    });
+
+    // Choosing a mode by hand is the one thing that clears the lock, and it
+    // is not an automatic switch.
+    setQualityMode('low');
+    expect(getQualityRuntimeSnapshot().locked).toBe(false);
+    setAdaptiveQualityLocked(true);
+    expect(getQualityRuntimeSnapshot().locked).toBe(false);
+    setQualityMode('auto');
+    expect(getQualityRuntimeSnapshot()).toMatchObject({
+      mode: 'auto', locked: false, switches: before + 1,
+    });
+
     setAdaptiveQuality('high');
   });
 });

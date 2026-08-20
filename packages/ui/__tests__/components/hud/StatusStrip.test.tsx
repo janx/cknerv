@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 import {
   getQualityRuntimeSnapshot,
   setAdaptiveQuality,
+  setAdaptiveQualityLocked,
   setQualityMode,
 } from '../../../src/tweaks/qualityPresets';
 import {
@@ -271,6 +272,26 @@ describe('StatusStrip', () => {
     expect(getCellDisplayRuntimeSnapshot().mode).toBe('auto');
     expect(automatic.getAttribute('aria-pressed')).toBe('true');
     expect(automatic.textContent).toContain('AUTO');
+  });
+
+  it('says when the automatic tier has stopped being a live reading', () => {
+    const { rerender } = render(
+      <StatusStrip level="nominal" uptimeMs={0} cellCount={5_000} />,
+    );
+    const control = screen.getByRole('group', { name: 'Cell display count' });
+    const automatic = within(control).getByRole(
+      'button',
+      { name: 'Automatic cell count' },
+    );
+
+    expect(control.getAttribute('title')).toContain('adaptive HIGH cap');
+    expect(automatic.getAttribute('title')).toContain('active · HIGH =');
+
+    setAdaptiveQualityLocked(true);
+    rerender(<StatusStrip level="nominal" uptimeMs={0} cellCount={5_000} />);
+
+    expect(control.getAttribute('title')).toContain('adaptive HIGH (locked) cap');
+    expect(automatic.getAttribute('title')).toContain('active · HIGH (locked) =');
   });
 
   it('keeps a 50K manual range while AUTO respects a smaller server cap', () => {
