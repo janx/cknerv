@@ -111,10 +111,19 @@ describe('wire-shape parity (TS twin of cknerv-core)', () => {
     // Durable causal geometry: the anchors, not the live cells, are what a
     // client routes on once the inputs have left its retained window.
     const link = samples.link as Extract<CellDelta, { type: 'link' }>;
-    expect(link.endpoint_anchors.map((a) => a.id)).toEqual([
-      ...link.from_ids,
-      ...link.to_ids,
-    ]);
+    expect(
+      link.endpoint_anchors.filter((a) => a.resolved).map((a) => a.id),
+    ).toEqual([...link.from_ids, ...link.to_ids]);
+    // …and the identity-only kind, which the server emits for a spend it
+    // never retained: an exact address, no content, and deliberately not a
+    // resolved death. Its id carries the composition prefix (2^52), which is
+    // what keeps `!to_ids.includes(id)` a sound input test on the client.
+    const derived = link.endpoint_anchors.filter((a) => !a.resolved);
+    expect(derived).toHaveLength(1);
+    expect(derived[0].content_hash).toBe('');
+    expect(derived[0].id).toBeGreaterThanOrEqual(2 ** 52);
+    expect(link.from_ids).not.toContain(derived[0].id);
+    expect(link.to_ids).not.toContain(derived[0].id);
   });
 
   it('cell_delta_samples.json covers reorg evidence, replay cause and display membership', () => {
@@ -204,14 +213,25 @@ describe('wire-shape parity (TS twin of cknerv-core)', () => {
       expect(Array.isArray(sample.recent_links)).toBe(true);
       for (const link of sample.recent_links) {
         expect(Array.isArray(link.endpoint_anchors)).toBe(true);
-        expect(link.endpoint_anchors.map((anchor) => anchor.id)).toEqual(
-          [...link.from_ids, ...link.to_ids],
-        );
+        expect(
+          link.endpoint_anchors
+            .filter((anchor) => anchor.resolved)
+            .map((anchor) => anchor.id),
+        ).toEqual([...link.from_ids, ...link.to_ids]);
         for (const anchor of link.endpoint_anchors) {
           expect(anchor.pos_seed).toHaveLength(3);
           expect(typeof anchor.content_hash).toBe('string');
+          expect(typeof anchor.resolved).toBe('boolean');
         }
       }
+      // The snapshot half carries the identity-only kind too — a spend the
+      // server never retained, anchored by its outpoint alone.
+      const derived = sample.recent_links.flatMap((link) =>
+        link.endpoint_anchors.filter((anchor) => !anchor.resolved),
+      );
+      expect(derived).toHaveLength(1);
+      expect(derived[0].content_hash).toBe('');
+      expect(derived[0].id).toBeGreaterThanOrEqual(2 ** 52);
     }
     // Display plane: members mix canonical ids with resident ids; only
     // out-of-retained-set members carry a resident payload.

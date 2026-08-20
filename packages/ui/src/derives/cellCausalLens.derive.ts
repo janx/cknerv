@@ -67,11 +67,14 @@ function uniqueIds(ids: readonly number[]): number[] {
   return unique;
 }
 
+/** The client-side twin of the server's `From<&Cell>`: a cell we still hold
+ *  is resolved evidence by construction. */
 function anchorFromCell(cell: Cell): CellLinkEndpointAnchor {
   return {
     id: cell.id,
     pos_seed: [...cell.pos_seed],
     content_hash: cell.content_hash,
+    resolved: true,
   };
 }
 

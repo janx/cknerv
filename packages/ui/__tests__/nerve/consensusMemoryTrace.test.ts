@@ -775,6 +775,7 @@ describe('deriveConsensusMemoryConsumedInputs', () => {
     id,
     pos_seed: [id, id * 2, id * 3] as [number, number, number],
     content_hash: hash,
+    resolved: true,
   });
 
   it('names what the transaction spent with nothing left in the cell map', () => {
@@ -824,6 +825,7 @@ describe('consumed inputs survive a witness-carried recall', () => {
     id,
     pos_seed: [id, 0, 0] as [number, number, number],
     content_hash: `0xaa${String(id).padStart(62, '0')}`,
+    resolved: true,
   });
 
   // The defect this fixes: for all but the freshest records the spent inputs

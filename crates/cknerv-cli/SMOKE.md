@@ -136,9 +136,11 @@ five seconds without a data frame. A heartbeat confirms browser transport
 freshness; it does not imply that the CKB node tip advanced.
 
 When `recent_links` is non-empty, each link must include
-`endpoint_anchors: [{id, pos_seed, content_hash}, ...]` in
-`from_ids`-then-`to_ids` order. The anchors remain available after the bounded
-full Cell records age out.
+`endpoint_anchors: [{id, pos_seed, content_hash, resolved}, ...]` in
+inputs-then-outputs order. The anchors remain available after the bounded full
+Cell records age out. A `resolved: false` anchor was derived from a consumed
+outpoint the projection never held, so it names an address but carries no
+content and does not appear in `from_ids`.
 
 ## Programmatic smoke (no browser)
 

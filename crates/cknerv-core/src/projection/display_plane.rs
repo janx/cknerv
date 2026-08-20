@@ -702,15 +702,20 @@ impl DisplayPlane {
     /// shown is a different sample; showing a cell that has been spent is
     /// a lie — the two errors are not symmetric, and the next top-up
     /// fills the slot anyway.
-    pub(crate) fn note_input_unresolved(&mut self, out_point: &OutPoint) {
-        let Some(rid) = self.stage.take_resident_for_outpoint(out_point) else {
-            return; // the overwhelmingly common case: not ours
-        };
+    ///
+    /// Returns the retired resident's id when the outpoint was ours. That
+    /// id was probed against the admitted set at composition time, so it
+    /// may diverge from the outpoint's own derivation — the caller anchors
+    /// the consumed input on this one, which is where the cell actually
+    /// rendered.
+    pub(crate) fn note_input_unresolved(&mut self, out_point: &OutPoint) -> Option<u64> {
+        let rid = self.stage.take_resident_for_outpoint(out_point)?; // usually not ours
         if self.stage.is_staged_resident(rid) {
             self.stage.unstage(rid);
         }
         self.stage.discard_resident(rid);
         self.policy.note_resident_retired(&self.stage, rid, None);
+        Some(rid)
     }
 
     /// The resolved endpoint ids of a landed tx, in `from` then `to`

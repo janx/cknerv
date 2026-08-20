@@ -300,6 +300,12 @@ describe('decode(BIN) ≡ JSON', () => {
     expect(all.some((c) => c.tag !== null)).toBe(true);
     expect(all.some((c) => c.data_hex.endsWith(DATA_HEX_TRUNCATION_MARKER))).toBe(true);
     expect(fromJson.display?.residents.length).toBeGreaterThan(0);
+    // `recent_links` ride the tail as raw JSON, so both anchor kinds have to
+    // be in the fixture or the tail's half of the diff proves nothing about
+    // the field that tells them apart.
+    const anchors = (fromJson.recent_links ?? []).flatMap((l) => l.endpoint_anchors);
+    expect(anchors.some((a) => a.resolved)).toBe(true);
+    expect(anchors.some((a) => !a.resolved)).toBe(true);
   });
 
   it('agrees field by field on every canonical cell', () => {

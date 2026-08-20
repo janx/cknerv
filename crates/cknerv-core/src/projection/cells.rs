@@ -163,6 +163,20 @@ pub struct CellLinkEndpointAnchor {
     #[serde(serialize_with = "serialize_pos_seed")]
     pub pos_seed: [f32; 3],
     pub content_hash: String,
+    /// False when the anchor was derived from the outpoint alone because the
+    /// bounded projection never held that cell: the id and its position are
+    /// exact, the content is unknown (`content_hash` is empty) and the id is
+    /// absent from `from_ids`. Consumed-evidence surfaces must exclude these.
+    /// Records persisted before derived anchors existed were all retained-map
+    /// clones, so the serde default is the truth for every one of them.
+    #[serde(default = "anchor_resolved_default")]
+    pub resolved: bool,
+}
+
+/// Old persisted anchors predate identity-only derivation and were all
+/// clones of a retained `Cell`.
+fn anchor_resolved_default() -> bool {
+    true
 }
 
 impl From<&Cell> for CellLinkEndpointAnchor {
@@ -174,6 +188,7 @@ impl From<&Cell> for CellLinkEndpointAnchor {
             // legacy Cell cannot freeze a causal anchor in an obsolete shape.
             pos_seed: helix_seed_for(cell.id),
             content_hash: cell.content_hash.clone(),
+            resolved: true,
         }
     }
 }
@@ -1323,7 +1338,24 @@ impl CellGalaxy {
                 // that a staged display resident (an outpoint the map
                 // deliberately does not hold) just died, so the plane
                 // gets a look before we move on.
-                self.display.note_input_unresolved(inp);
+                let rid = self.display.note_input_unresolved(inp);
+                // The cell is gone but its address is not: the disk is the
+                // universal address space of cell identities, so a spend we
+                // never retained still names an exact place to depart from.
+                // A retired resident's probed id wins over the derivation —
+                // that is where it rendered. Identity only: no content, and
+                // deliberately absent from `from_ids` / `dead_ids` (which
+                // mean resolved deaths) and from `note_activity` (a derived
+                // id is not a stageable cell).
+                let anchor_id = rid.unwrap_or_else(|| {
+                    crate::identity::composition_id_for_outpoint(&inp.tx_hash, inp.index)
+                });
+                endpoint_anchors.push(CellLinkEndpointAnchor {
+                    id: anchor_id,
+                    pos_seed: helix_seed_for(anchor_id),
+                    content_hash: String::new(),
+                    resolved: false,
+                });
                 continue;
             };
             // O(1) through `id_to_slot`. This ran as a full container scan
@@ -1490,6 +1522,22 @@ impl CellGalaxy {
             self.display.note_activity(
                 block,
                 dead_ids.iter().copied().chain(birthed_ids.iter().copied()),
+            );
+            // The client tells an input anchor from an output anchor by
+            // `!to_ids.contains(id)`, which only holds because the three id
+            // families never overlap: outputs are projection-sequential
+            // (`next_id`, < 2^52), derived and resident ids carry the
+            // composition prefix (>= 2^52), and a resolved input id is never
+            // re-born in the same tx (a tx cannot spend its own output;
+            // reorg revival keys on the outpoint). Assert the partition here
+            // so a future id allocator cannot break the rule silently.
+            debug_assert!(
+                endpoint_anchors.iter().all(|anchor| {
+                    dead_ids.contains(&anchor.id)
+                        || birthed_ids.contains(&anchor.id)
+                        || anchor.id >= crate::identity::COMPOSITION_ID_PREFIX
+                }),
+                "an endpoint anchor escaped the id families the client discriminates on"
             );
             // `link_tag` is `Some(tag)` iff at least one output had a
             // pre-birth tag stash (the sync-pair case). All outputs in
@@ -2389,6 +2437,10 @@ mod tests {
         assert_eq!(link.4[0].content_hash, out(100, "0x").content_hash);
         assert_eq!(link.4[3].pos_seed, helix_seed_for(3));
         assert_eq!(link.4[3].content_hash, out(150, "0x").content_hash);
+        assert!(
+            link.4.iter().all(|anchor| anchor.resolved),
+            "every endpoint here came from a retained cell"
+        );
         assert_eq!(link.5, vec!["0xa".to_string()]); // parent tx hash
         assert!(link.6.is_none());
         assert_eq!(link.7, 2_000);
@@ -2412,6 +2464,129 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![0, 1, 2, 3],
         );
+    }
+
+    /// Every anchor written before derived ones existed was a clone of a
+    /// retained `Cell`, so the missing key means resolved — no schema bump,
+    /// and a restored workdir keeps telling the truth about its history.
+    #[test]
+    fn an_anchor_persisted_without_the_field_loads_as_resolved() {
+        let legacy = serde_json::json!({
+            "id": 7,
+            "pos_seed": [1.0, 2.0, 3.0],
+            "content_hash": "0xabc",
+        });
+        let anchor: CellLinkEndpointAnchor =
+            serde_json::from_value(legacy).expect("legacy anchor deserializes");
+        assert!(anchor.resolved);
+    }
+
+    /// The link's anchors, in death-pass-then-birth-pass order.
+    fn link_anchors(deltas: &[CellDelta]) -> Vec<CellLinkEndpointAnchor> {
+        deltas
+            .iter()
+            .find_map(|d| match d {
+                CellDelta::Link {
+                    endpoint_anchors, ..
+                } => Some(endpoint_anchors.clone()),
+                _ => None,
+            })
+            .expect("expected a Link delta")
+    }
+
+    /// The mainnet-common spend: an input this bounded projection never
+    /// held. It still names an exact address on the disk, so the link
+    /// carries an identity-only anchor for it — while `from_ids` (resolved
+    /// deaths) stays empty.
+    #[test]
+    fn an_unresolved_input_is_anchored_by_its_outpoint() {
+        let mut g = make_galaxy();
+        let cold = op("0xcold", 3);
+        let deltas = g.handle_tx_landed(
+            "0xb",
+            2,
+            2_000,
+            std::slice::from_ref(&cold),
+            &[out(150, "0x")],
+        );
+        let anchors = link_anchors(&deltas);
+
+        let derived = crate::identity::composition_id_for_outpoint(&cold.tx_hash, cold.index);
+        assert_eq!(
+            anchors.iter().map(|a| a.id).collect::<Vec<_>>(),
+            vec![derived, 0],
+            "the input anchor precedes the output one"
+        );
+        assert!(!anchors[0].resolved);
+        assert_eq!(anchors[0].pos_seed, helix_seed_for(derived));
+        assert!(
+            anchors[0].content_hash.is_empty(),
+            "a derived anchor proves identity, never content"
+        );
+        assert!(anchors[1].resolved, "the birthed output is a real cell");
+
+        // Decision 5: derived ids are not deaths and not cells.
+        let from_ids = deltas
+            .iter()
+            .find_map(|d| match d {
+                CellDelta::Link { from_ids, .. } => Some(from_ids.clone()),
+                _ => None,
+            })
+            .expect("expected a Link delta");
+        assert!(from_ids.is_empty(), "nothing canonical died here");
+        assert_eq!(g.total_deaths, 0);
+        assert!(g.cells.iter().all(|cell| cell.id != derived));
+
+        // …and the display plane's activity hook never sees one: a derived
+        // id is not a stageable cell, so it must not reach the stage even
+        // once the pending activity drains at flush.
+        g.apply_mutation(&mined(2, "0xblock2", 2_100));
+        let members = g.snapshot().display.expect("display section").members;
+        assert!(!members.contains(&derived));
+    }
+
+    /// Probe divergence: a staged resident's id was allocated against the
+    /// admitted set, so it can differ from the outpoint's own derivation.
+    /// The anchor takes the resident's id — that is where the cell actually
+    /// rendered — and the retirement is unchanged.
+    #[test]
+    fn a_spent_resident_is_anchored_where_it_rendered() {
+        // Real residents are allocated by probing the admitted set, so their
+        // ids always carry the composition prefix; the test ids follow suit
+        // or the id-family assertion in the link constructor is meaningless.
+        let rid = crate::identity::COMPOSITION_ID_PREFIX + 900;
+        let mut g = make_galaxy();
+        g.apply_mutation(&landed("0xa", 1, 1_000, vec![], vec![out(1, "0x")]));
+        g.apply_mutation(&reservoir(1, (rid, rid + 1, rid + 2)));
+        g.apply_mutation(&mined(1, "0xblock1", 1_100));
+        let staged = g.snapshot().display.expect("display section");
+        assert!(staged.members.contains(&rid), "the dao resident is on stage");
+
+        // `reservoir_record` gives a resident the outpoint `0xr<id>:0`,
+        // which the canonical index deliberately does not hold.
+        let spent = op(&format!("0xr{rid}"), 0);
+        let deltas = g.handle_tx_landed(
+            "0xb",
+            2,
+            2_000,
+            std::slice::from_ref(&spent),
+            &[out(150, "0x")],
+        );
+        let anchors = link_anchors(&deltas);
+        assert_eq!(anchors[0].id, rid);
+        assert!(!anchors[0].resolved);
+        assert_eq!(anchors[0].pos_seed, helix_seed_for(rid));
+        assert_ne!(
+            anchors[0].id,
+            crate::identity::composition_id_for_outpoint(&spent.tx_hash, spent.index),
+            "the resident's own id wins over the derivation"
+        );
+
+        // Retirement is exactly what it was before the anchor existed.
+        g.apply_mutation(&mined(2, "0xblock2", 2_100));
+        let after = g.snapshot().display.expect("display section");
+        assert!(!after.members.contains(&rid));
+        assert!(after.residents.iter().all(|cell| cell.id != rid));
     }
 
     #[test]
@@ -2449,10 +2624,14 @@ mod tests {
             })
             .unwrap();
         assert!(link.0.is_empty(), "cellbase has no consumed inputs");
+        // Only the reward output. The cellbase sentinel is not a spend, so
+        // it earns no identity anchor either — this is the one honest
+        // no-origin case.
         assert_eq!(
             link.1.iter().map(|anchor| anchor.id).collect::<Vec<_>>(),
             vec![0],
         );
+        assert!(link.1[0].resolved);
         assert!(link.2.is_empty(), "cellbase has no parent txs");
         assert_eq!(g.recent_links.len(), 1);
     }
@@ -4957,12 +5136,15 @@ mod tests {
             at: 1_100,
         });
         // A death, so the binary form's NaN and the JSON form's null have to
-        // agree about the same cell.
+        // agree about the same cell. The second input was never retained, so
+        // the same tx also carries an identity-only anchor — the tail's
+        // `recent_links` must spell `resolved` on both kinds or the browser
+        // reads a derived anchor as consumed evidence.
         g.apply_mutation(&landed(
             "0xtx2",
             8,
             2_000,
-            vec![op("0xtx1", 2)],
+            vec![op("0xtx1", 2), op("0xcold", 1)],
             vec![out(80_00000000, "0x")],
         ));
         // Residents ride behind the canonical rows; script them too, or the

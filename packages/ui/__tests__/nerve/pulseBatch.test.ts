@@ -206,7 +206,9 @@ describe('planLinkBatch — block-guarantee rescue', () => {
     ]);
     return { cells, graph: mkGraph([[2, 3], [3, 4], [4, 5]]) };
   }
-  const outAnchor = { id: 2, pos_seed: [10, 0, 0] as [number, number, number], content_hash: CH };
+  const outAnchor = {
+    id: 2, pos_seed: [10, 0, 0] as [number, number, number], content_hash: CH, resolved: true,
+  };
 
   it('rescues a dark non-empty block with a rim-entry pulse', () => {
     const { cells, graph } = rimFixture();
@@ -251,7 +253,7 @@ describe('planLinkBatch — block-guarantee rescue', () => {
       [mkLink({
         seq: 1, block: 7, parents: ['0xcold'], from_ids: [77], to_ids: [2],
         endpoint_anchors: [
-          { id: 77, pos_seed: [0, 0, 40], content_hash: CH }, // consumed coin
+          { id: 77, pos_seed: [0, 0, 40], content_hash: CH, resolved: true }, // consumed coin
           outAnchor,
         ],
       })],
@@ -357,7 +359,7 @@ describe('planLinkBatch — block-guarantee rescue', () => {
     // …then block 8 arrives dark in the same batch.
     links.push(mkLink({
       seq: 131, block: 8, tx_hash: '0xcoldtx', parents: ['0xcold'], to_ids: [2],
-      endpoint_anchors: [{ id: 2, pos_seed: [0, 0, 0], content_hash: CH }],
+      endpoint_anchors: [{ id: 2, pos_seed: [0, 0, 0], content_hash: CH, resolved: true }],
     }));
     const { planned } = planLinkBatch(
       links, 0, false, cells, graph, OPTS, pulseStats, 0,
@@ -385,7 +387,7 @@ describe('planLinkBatch — block-guarantee rescue', () => {
       // Block 7: one dark cold link → one rescue at its boundary.
       mkLink({
         seq: 1, block: 7, tx_hash: '0xcold7', parents: ['0xcold'], to_ids: [5],
-        endpoint_anchors: [{ id: 5, pos_seed: [40, 0, 0], content_hash: CH }],
+        endpoint_anchors: [{ id: 5, pos_seed: [40, 0, 0], content_hash: CH, resolved: true }],
       }),
     ];
     // Block 8: exactly MAX_PULSES_PER_BATCH routable links — all must fire.
@@ -409,7 +411,7 @@ describe('planLinkBatch — block-guarantee rescue', () => {
     const { planned } = planLinkBatch(
       [mkLink({
         seq: 1, block: 7, parents: ['0xcold'], to_ids: [99],
-        endpoint_anchors: [{ id: 99, pos_seed: [9, 0, 0], content_hash: CH }],
+        endpoint_anchors: [{ id: 99, pos_seed: [9, 0, 0], content_hash: CH, resolved: true }],
       })],
       0,
       false,

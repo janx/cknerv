@@ -291,9 +291,12 @@ cannot look disconnected and a frozen dashboard cannot look nominal.
 
 Each entry in `snapshot.recent_links` keeps `from_ids` / `to_ids` for causal
 ordering plus compact `endpoint_anchors` containing each endpoint's `id`,
-`pos_seed`, and `content_hash`. These immutable anchors preserve the observed
-transaction's spatial and content evidence after a bounded full Cell record is
-garbage-collected; they do not preserve the complete Cell payload.
+`pos_seed`, `content_hash`, and `resolved`. These immutable anchors preserve
+the observed transaction's spatial and content evidence after a bounded full
+Cell record is garbage-collected; they do not preserve the complete Cell
+payload. An input the projection never retained still gets an anchor, derived
+from its outpoint alone: `resolved: false`, an exact id and position, an empty
+`content_hash`, and no entry in `from_ids`.
 
 The CKB adapter validates its last canonical block hash on every poll. On a
 same-height replacement, tip regression, or changed ancestor beneath an

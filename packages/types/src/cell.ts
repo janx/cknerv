@@ -109,6 +109,13 @@ export interface CellLinkEndpointAnchor {
   id: number;
   pos_seed: [number, number, number];
   content_hash: string;
+  /** False when the server derived this anchor from the outpoint alone
+   *  because the cell was never retained: the id and position are exact,
+   *  the content is unknown (`content_hash` is empty) and the id is absent
+   *  from `from_ids`. Such an anchor names a place, so it may originate a
+   *  pulse — but it proves no content, so it is not consumed evidence.
+   *  Always present on the wire (the server fills it for legacy records). */
+  resolved: boolean;
 }
 
 /** Wire shape of one entry in the snapshot's `recent_links` history.

@@ -239,6 +239,9 @@ fn cell_delta_samples() -> BTreeMap<&'static str, CellDelta> {
     samples.insert("link_prune", CellDelta::LinkPrune { from_block: 42 });
     // Causal edge with durable endpoint geometry: `endpoint_anchors` is
     // what the client routes on once the input cells have left its window.
+    // The middle anchor is the identity-only kind — a spend of a cell this
+    // projection never retained, so it names a place without proving
+    // content and stays out of `from_ids`.
     samples.insert(
         "link",
         CellDelta::Link {
@@ -253,6 +256,13 @@ fn cell_delta_samples() -> BTreeMap<&'static str, CellDelta> {
                     content_hash:
                         "0x3333333333333333333333333333333333333333333333333333333333333333"
                             .to_string(),
+                    resolved: true,
+                },
+                CellLinkEndpointAnchor {
+                    id: cknerv_core::COMPOSITION_ID_PREFIX + 9,
+                    pos_seed: [-4.5, 0.25, -6.0],
+                    content_hash: String::new(),
+                    resolved: false,
                 },
                 CellLinkEndpointAnchor {
                     id: 7,
@@ -260,6 +270,7 @@ fn cell_delta_samples() -> BTreeMap<&'static str, CellDelta> {
                     content_hash:
                         "0x1111111111111111111111111111111111111111111111111111111111111111"
                             .to_string(),
+                    resolved: true,
                 },
             ],
             parents: vec!["0xtx99".to_string()],

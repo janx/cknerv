@@ -33,6 +33,7 @@ const anchor = (record: Cell) => ({
   id: record.id,
   pos_seed: record.pos_seed,
   content_hash: record.content_hash,
+  resolved: true,
 });
 const causalLink: CellLink = {
   seq: 4,

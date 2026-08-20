@@ -35,6 +35,7 @@ const anchor = (record: Cell) => ({
   id: record.id,
   pos_seed: record.pos_seed,
   content_hash: record.content_hash,
+  resolved: true,
 });
 
 function link(over: Partial<CellLink> = {}): CellLink {
