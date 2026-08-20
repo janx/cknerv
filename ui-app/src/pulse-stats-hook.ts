@@ -6,8 +6,12 @@
 //   window.__pulseStatsReset()   → zero the pulse counters for a clean observation
 //   window.__fabricStats()       → { diffCalls, recentDiffs, frames, fullWalkReasons, animating* }
 //   window.__fabricStatsReset()  → zero the fabric-churn counters
+//   window.__qualityStats()      → { mode, effective, source, locked, switches }
+//                                  — read `switches` twice around a load spike:
+//                                    after `locked` the two must be equal.
 // Read-only; safe to leave attached. The library itself stays window-free.
 import {
+  getQualityRuntimeSnapshot,
   snapshotPulseStats,
   resetPulseStats,
   snapshotFabricStats,
@@ -20,6 +24,7 @@ declare global {
     __pulseStatsReset?: typeof resetPulseStats;
     __fabricStats?: typeof snapshotFabricStats;
     __fabricStatsReset?: typeof resetFabricStats;
+    __qualityStats?: typeof getQualityRuntimeSnapshot;
   }
 }
 
@@ -29,4 +34,5 @@ export function installPulseStatsHook(): void {
   window.__pulseStatsReset = resetPulseStats;
   window.__fabricStats = snapshotFabricStats;
   window.__fabricStatsReset = resetFabricStats;
+  window.__qualityStats = getQualityRuntimeSnapshot;
 }

@@ -14,5 +14,12 @@ describe('installPulseStatsHook', () => {
     // recall onto the staged graph, so its availability has to be observable.
     expect(snap).toHaveProperty('recallOutcomes');
     expect(snap).toHaveProperty('recalledRatePct');
+    // The quality verdict rides the same surface: the lock is only
+    // verifiable if a probe can read `locked`/`switches` from the page.
+    expect(typeof window.__qualityStats).toBe('function');
+    const quality = window.__qualityStats!();
+    expect(quality).toHaveProperty('effective');
+    expect(quality).toHaveProperty('locked');
+    expect(typeof quality.switches).toBe('number');
   });
 });
