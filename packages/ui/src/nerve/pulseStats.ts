@@ -6,16 +6,35 @@
 // the library stays free of `window` / env coupling.
 
 /** Per-link terminal outcome. `fired` is the success bucket; the rest are the
- *  reasons one link produced zero pulses. `backfill` = suppressed during
- *  catch-up (never reached path planning). */
+ *  reasons one link produced zero pulses. `no-origin` = the link named no
+ *  consumed input to depart from (cellbase, or a record persisted before
+ *  inputs were anchored). `backfill` = suppressed during catch-up (never
+ *  reached path planning). */
 export type DropReason =
   | 'fired'
   | 'no-outputs'
-  | 'no-parents'
-  | 'no-source'
+  | 'no-origin'
   | 'all-paths-failed'
   | 'batch-budget'
   | 'backfill';
+
+/** Counters the retired sibling-proxy origin left behind. Nothing bumps them
+ *  any more — a pulse departs from the consumed cell's own anchor, so there
+ *  is no parent bucket to miss and no surviving relative to look for. They
+ *  stay in the exposed snapshot reading 0 so a baseline captured before the
+ *  rewrite still diffs field by field against one captured after. */
+export type RetiredDropReason = 'no-parents' | 'no-source';
+
+/** Every key the exposed `linkReasons` block carries — live reasons plus the
+ *  retired ones. Only a {@link DropReason} can be bumped. */
+export type LinkReasonCounter = DropReason | RetiredDropReason;
+
+/** Origin honesty of a planned pulse, one bump per pulse: `origin-retained`
+ *  left a cell the server still held (the anchor carries its content),
+ *  `origin-derived` left an address the server derived from the outpoint
+ *  alone. The split is the direct measure of how far outside the retained
+ *  window the chain's spends reach. */
+export type OriginKind = 'origin-retained' | 'origin-derived';
 
 /** Why one source→dst routing attempt produced no path (explains
  *  `all-paths-failed`). `endpoint-missing` = an endpoint absent from the
@@ -51,11 +70,15 @@ export type RecallOutcome =
 export interface PulseStatsSink {
   bump(reason: DropReason, n?: number): void;
   bumpPath(reason: PathFail, n?: number): void;
+  bumpOrigin(kind: OriginKind, n?: number): void;
 }
 
 export interface PulseStatsSnapshot {
-  linkReasons: Record<DropReason, number>;
+  linkReasons: Record<LinkReasonCounter, number>;
   pathFails: Record<PathFail, number>;
+  /** Origin honesty of the pulses actually planned (main path + anchored
+   *  rescues). A rim rescue names no cell and bumps neither. */
+  origins: Record<OriginKind, number>;
   /** User-driven historical recalls, by terminal outcome. */
   recallOutcomes: Record<RecallOutcome, number>;
   /** Block-guarantee rescue outcomes (the origin honesty mix). */
@@ -81,16 +104,21 @@ export interface PulseStatsSnapshot {
   recalledRatePct: number;
 }
 
-function zeroReasons(): Record<DropReason, number> {
+function zeroReasons(): Record<LinkReasonCounter, number> {
   return {
     fired: 0,
     'no-outputs': 0,
-    'no-parents': 0,
-    'no-source': 0,
+    'no-origin': 0,
     'batch-budget': 0,
     'all-paths-failed': 0,
     backfill: 0,
+    // Retired, kept at 0 for baseline continuity — see RetiredDropReason.
+    'no-parents': 0,
+    'no-source': 0,
   };
+}
+function zeroOrigins(): Record<OriginKind, number> {
+  return { 'origin-retained': 0, 'origin-derived': 0 };
 }
 function zeroPathFails(): Record<PathFail, number> {
   return { 'endpoint-missing': 0, 'no-path': 0 };
@@ -103,8 +131,9 @@ function zeroRecallOutcomes(): Record<RecallOutcome, number> {
 }
 
 interface PulseStatsState extends PulseStatsSink {
-  linkReasons: Record<DropReason, number>;
+  linkReasons: Record<LinkReasonCounter, number>;
   pathFails: Record<PathFail, number>;
+  origins: Record<OriginKind, number>;
   recallOutcomes: Record<RecallOutcome, number>;
   rescues: Record<RescueCounter, number>;
   ringEvicted: number;
@@ -127,6 +156,7 @@ interface PulseStatsState extends PulseStatsSink {
 export const pulseStats: PulseStatsState = {
   linkReasons: zeroReasons(),
   pathFails: zeroPathFails(),
+  origins: zeroOrigins(),
   recallOutcomes: zeroRecallOutcomes(),
   rescues: zeroRescues(),
   ringEvicted: 0,
@@ -141,6 +171,9 @@ export const pulseStats: PulseStatsState = {
   },
   bumpPath(reason, n = 1) {
     this.pathFails[reason] += n;
+  },
+  bumpOrigin(kind, n = 1) {
+    this.origins[kind] += n;
   },
   bumpRecall(outcome, n = 1) {
     this.recallOutcomes[outcome] += n;
@@ -176,6 +209,7 @@ export const pulseStats: PulseStatsState = {
     const terminal =
       this.linkReasons.fired +
       this.linkReasons['no-outputs'] +
+      this.linkReasons['no-origin'] +
       this.linkReasons['no-parents'] +
       this.linkReasons['no-source'] +
       this.linkReasons['all-paths-failed'] +
@@ -188,6 +222,7 @@ export const pulseStats: PulseStatsState = {
     return {
       linkReasons: { ...this.linkReasons },
       pathFails: { ...this.pathFails },
+      origins: { ...this.origins },
       recallOutcomes: { ...this.recallOutcomes },
       rescues: { ...this.rescues },
       ringEvicted: this.ringEvicted,
@@ -209,6 +244,7 @@ export const pulseStats: PulseStatsState = {
   reset() {
     this.linkReasons = zeroReasons();
     this.pathFails = zeroPathFails();
+    this.origins = zeroOrigins();
     this.recallOutcomes = zeroRecallOutcomes();
     this.rescues = zeroRescues();
     this.ringEvicted = 0;

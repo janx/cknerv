@@ -51,6 +51,12 @@ const snapshot = (cells: Cell[]): CellGalaxySnapshot => ({
     block: 9,
     from_ids: [1],
     to_ids: [4],
+    // Wire shape: the death pass anchors the consumed input, the birth pass
+    // the newborn. Planning departs from the input anchor's address.
+    endpoint_anchors: [
+      { id: 1, pos_seed: [1, 0, -1], content_hash: cellTxHash(1), resolved: true },
+      { id: 4, pos_seed: [4, 0, -4], content_hash: cellTxHash(4), resolved: true },
+    ],
     parents: [cellTxHash(3)],
     tag: 'data',
     at_ms: 90,

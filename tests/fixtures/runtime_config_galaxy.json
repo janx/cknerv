@@ -10,7 +10,7 @@
   "pulses": {
     "linkRingCapacity": 512,
     "maxPulsesPerLink": 6,
-    "maxSourcesPerParent": 2,
+    "maxOriginsPerLink": 2,
     "maxActivePulses": 256
   }
 }

@@ -837,7 +837,7 @@ export default function ProtocolEventLab({ snapshot }: { snapshot: CellGalaxySna
                     pulses={{
                       maxActivePulses: 36,
                       maxPulsesPerLink: memoryTraceReview ? 1 : 3,
-                      maxSourcesPerParent: 2,
+                      maxOriginsPerLink: 2,
                     }}
                     traceRequest={memoryTraceRequest}
                     traceMaxPulses={memoryTraceReview

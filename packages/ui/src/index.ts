@@ -222,8 +222,9 @@ export type { ConsensusWriteSealProps } from './nerve/DendriticBurst';
 export {
   planPulses,
   MAX_PULSES_PER_LINK,
-  MAX_SOURCES_PER_PARENT,
+  MAX_ORIGINS_PER_LINK,
   type Pulse,
+  type PulseOrigin,
   type PulsePlanningOptions,
 } from './nerve/pulseRunner';
 export {

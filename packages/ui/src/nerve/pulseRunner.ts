@@ -1,11 +1,18 @@
-// Pulse cascade scheduling. For each `link` delta (one new tx),
-// figure out which alive cells should "fire" as sources, find paths
-// through the spatial neighbour graph to the new tx's outputs, and
-// emit `Pulse` records that the renderer walks hop-by-hop.
+// Pulse cascade scheduling. For each `link` delta (one new tx), the packets
+// depart from the cells the tx CONSUMED — each dying cell's own address — and
+// arrive at the newborn outputs. An origin is carried BY VALUE (a world
+// position, not an id): the consumed cell may hold no adjacency any more and
+// may have left every client map, so an id would be a promise the stage
+// cannot keep. `path` therefore stays live staged cells only, and the
+// renderer walks it hop-by-hop over fibres the viewer can actually see.
 
-import type { Cell, CellLink } from '@cknerv/types';
+import type { Cell, CellLink, CellLinkEndpointAnchor } from '@cknerv/types';
 import { fnv1a } from '../geometry/edgeBezier';
 import type { NeighborGraph } from '../geometry/neighborGraph';
+import {
+  buildOriginEntryIndex,
+  type OriginEntryIndex,
+} from '../geometry/originEntry';
 import { shortestPathsToTargets, DEFAULT_MAX_HOPS } from '../geometry/pathRouter';
 import { consensusPacketColor } from '../derives/consensusFlow.derive';
 import type { PulseStatsSink, RescueKind } from './pulseStats';
@@ -29,22 +36,39 @@ export const HOP_MS_BASE = 33;
 export const PULSE_START_JITTER_MS = 300;
 
 /** Maximum pulses we will queue per CellLink. A tx with 4 inputs and
- *  4 outputs would otherwise emit (#alive parent siblings) × 4 × 4
- *  paths; capping keeps the visual noise manageable for batch txs. */
+ *  4 outputs would otherwise emit (#origins) × 4 paths; capping keeps
+ *  the visual noise manageable for batch txs. */
 export const MAX_PULSES_PER_LINK = 6;
 
-/** Per-parent cap on how many surviving sibling cells we treat as
- *  pulse sources. Multiple tributaries converging on the new tx is
- *  the goal but we don't need to fire from every alive sibling. */
-export const MAX_SOURCES_PER_PARENT = 2;
+/** Per-link cap on how many consumed inputs originate a pulse. Several
+ *  tributaries converging on the new tx is the goal, but a 30-input
+ *  consolidation must not fire 30 cascades. 2 holds the pulse density the
+ *  retired sibling proxy produced at the same value. */
+export const MAX_ORIGINS_PER_LINK = 2;
+
+/** The cell a packet left, carried BY VALUE. A position cannot be
+ *  extinguished by gc or lose a stage race the way an id can, and the
+ *  consumed cell is by definition the one that is leaving. */
+export interface PulseOrigin {
+  /** World address of the consumed cell (`helix_seed_for(id)`). */
+  pos: [number, number, number];
+  /** Identity of the consumed cell: animation seed and stats key, never a
+   *  path node. */
+  anchorId: number;
+  /** False when the server derived the anchor from the outpoint alone —
+   *  the address is exact, the content unknown. */
+  resolved: boolean;
+}
 
 export interface Pulse {
   /** Local evidence identity of the CellLink that produced this pulse. */
   linkSeq: number;
   /** Canonical block height of that link, used for immediate reorg pruning. */
   linkBlock: number;
-  /** Cells in path order (length ≥ 2). path[0] = source (an alive
-   *  sibling of a consumed input), path[last] = a new output cell. */
+  /** Live staged cells in path order. path[0] = the node the packet enters
+   *  the fabric at, path[last] = a new output cell. Length ≥ 2, or ≥ 1 when
+   *  `origin` is present: `origin.pos → path[0]` is itself a renderable hop,
+   *  so an entry node that IS the destination still carries a packet. */
   path: number[];
   /** Wall-clock-ish ms when the pulse fired (caller's clock). */
   bornAtMs: number;
@@ -57,6 +81,10 @@ export interface Pulse {
    *  [0.7×, 1.4×] scale around HOP_MS_BASE so each pulse travels
    *  at its own pace. */
   hopMs: number;
+  /** The dying cell this packet departed. Absent only where the link names
+   *  no consumed input at all (cellbase, records persisted before inputs
+   *  were anchored) — those enter from the tissue rim on the rescue path. */
+  origin?: PulseOrigin;
   /** Set on block-guarantee rescue pulses (≤1 per block): the origin
    *  honesty this pulse fell back to. Absent on normal cascade pulses.
    *  Overflow eviction sheds rescue pulses last. */
@@ -66,67 +94,27 @@ export interface Pulse {
 export interface PulsePlanningOptions {
   maxHops?: number;
   maxPulsesPerLink?: number;
-  maxSourcesPerParent?: number;
-  /** Shared per-batch source index (see `collectLinkSourceIndex`). When
-   *  present, planPulses selects sources from it instead of walking the whole
-   *  Cell map — same result, one O(cells) scan per batch instead of per link. */
-  sourceIndex?: LinkSourceIndex;
-}
-
-export interface LinkSourceIndex {
-  /** parent tx hash → candidate source Cell ids, in Cell-map scan order.
-   *  Buckets are UNCAPPED: per-parent caps and self-loop exclusion stay
-   *  per-link, because a later link may exclude an earlier candidate as one
-   *  of its own outputs. */
-  byTx: Map<string, number[]>;
-  /** Cell id → relative scan position, restoring the cross-parent
-   *  interleaving the original full-map walk produced. */
-  scanSeq: Map<number, number>;
-}
-
-/**
- * One shared O(cells) prescan for a whole link batch. Replaces the full-map
- * walk planPulses used to run per link (the dominant per-block main-thread
- * cost on busy chains) with a single pass that buckets candidate sources by
- * parent tx hash. Selection through the index is byte-identical to the
- * original scan; an equivalence test locks the two paths together. Pure.
- */
-export function collectLinkSourceIndex(
-  links: readonly CellLink[],
-  cells: ReadonlyMap<number, Cell>,
-): LinkSourceIndex {
-  const wanted = new Set<string>();
-  for (const link of links) {
-    if (link.to_ids.length === 0) continue;
-    for (const parentTx of link.parents) wanted.add(parentTx);
-  }
-  const byTx = new Map<string, number[]>();
-  const scanSeq = new Map<number, number>();
-  if (wanted.size === 0) return { byTx, scanSeq };
-  for (const [id, cell] of cells) {
-    const tx = cell.out_point.tx_hash;
-    if (!wanted.has(tx)) continue;
-    let bucket = byTx.get(tx);
-    if (!bucket) {
-      bucket = [];
-      byTx.set(tx, bucket);
-    }
-    bucket.push(id);
-    scanSeq.set(id, scanSeq.size);
-  }
-  return { byTx, scanSeq };
+  maxOriginsPerLink?: number;
+  /** Shared per-batch entry index, passed as a THUNK so the stage-wide grid
+   *  is built on first use: most blocks carry only a cellbase link, which
+   *  names no origin and must not pay for a grid nobody queries. Absent →
+   *  planPulses memoizes one of its own for this call. */
+  entryIndex?: () => OriginEntryIndex;
 }
 
 /** Derive pulse start delay + hop duration from a deterministic seed
- *  (so replays produce the same animation). The hashed string mixes
- *  tx_hash + source/target ids so siblings differ. Exported for the
- *  rescue pass, which stamps its one pulse per block the same way. */
+ *  (so replays produce the same animation). `originKey` is the pulse's
+ *  ORIGIN IDENTITY — the consumed cell's anchor id on the main path, the
+ *  routed source node where no anchor exists (rim rescue). Deliberately NOT
+ *  the fabric entry node: entry follows stage churn, and the same spend must
+ *  not re-time itself between two clients. Exported for the rescue pass,
+ *  which stamps its one pulse per block the same way. */
 export function pulseTiming(
   link: CellLink,
-  src: number,
+  originKey: number,
   dst: number,
 ): { startDelayMs: number; hopMs: number } {
-  const seed = fnv1a(`${link.tx_hash}\x00${src}\x00${dst}`);
+  const seed = fnv1a(`${link.tx_hash}\x00${originKey}\x00${dst}`);
   const u1 = (seed & 0xffff) / 0x10000;          // [0, 1)
   const u2 = ((seed >>> 16) & 0xffff) / 0x10000; // [0, 1)
   return {
@@ -138,13 +126,18 @@ export function pulseTiming(
 /**
  * Plan all pulses for one new CellLink. Pure: returns a fresh array.
  *
- * For each parent tx hash referenced by the link, find UP TO
- * MAX_SOURCES_PER_PARENT alive cells whose `out_point.tx_hash` matches,
- * and route a path from each of those source cells to each of the
- * link's `to_ids`. Pulses with no graph path (or path > maxHops) are
- * silently dropped — they wouldn't read visually anyway.
+ * Origins are the link's INPUT anchors — an anchor is input-side iff its id
+ * is NOT one of this tx's newborns. Sound across id families: outputs always
+ * carry projection-sequential ids below 2^52 while derived and retired-
+ * resident ids are at or above it, and a tx cannot spend its own output.
+ * Anchors are taken in wire order (the server's death pass, deterministic)
+ * up to `MAX_ORIGINS_PER_LINK`.
  *
- * Total emitted pulses are capped at `MAX_PULSES_PER_LINK`.
+ * Each origin enters the fabric at the live node the entry index picks for
+ * its address, and one BFS from there routes to every `to_ids` at once.
+ * Pulses with no graph path (or path > maxHops) are silently dropped — they
+ * wouldn't read visually anyway. Total emitted pulses are capped at
+ * `MAX_PULSES_PER_LINK`.
  */
 export function planPulses(
   link: CellLink,
@@ -162,77 +155,74 @@ export function planPulses(
     typeof optionsOrMaxHops === 'number'
       ? MAX_PULSES_PER_LINK
       : optionsOrMaxHops.maxPulsesPerLink ?? MAX_PULSES_PER_LINK;
-  const maxSourcesPerParent =
+  const maxOriginsPerLink =
     typeof optionsOrMaxHops === 'number'
-      ? MAX_SOURCES_PER_PARENT
-      : optionsOrMaxHops.maxSourcesPerParent ?? MAX_SOURCES_PER_PARENT;
-  const sourceIndex =
+      ? MAX_ORIGINS_PER_LINK
+      : optionsOrMaxHops.maxOriginsPerLink ?? MAX_ORIGINS_PER_LINK;
+  const sharedEntryIndex =
     typeof optionsOrMaxHops === 'number'
       ? undefined
-      : optionsOrMaxHops.sourceIndex;
+      : optionsOrMaxHops.entryIndex;
   if (link.to_ids.length === 0) {
     stats?.bump('no-outputs');
     return [];
   }
 
-  const color = consensusPacketColor(link.tx_hash, link.tag);
-
-  // Collect candidate source cells: alive cells whose birth tx_hash
-  // is one of the link's parent_tx_hashes. Selection semantics (Cell-map scan
-  // order, per-parent cap AFTER self-loop exclusion) are identical on both
-  // paths; the index path just skips the full-map walk.
-  const sources: number[] = [];
-  if (link.parents.length > 0 && sourceIndex) {
-    const picked: Array<{ id: number; seq: number }> = [];
-    const parentSet = new Set(link.parents);
-    for (const parentTx of parentSet) {
-      const bucket = sourceIndex.byTx.get(parentTx);
-      if (!bucket) continue;
-      let used = 0;
-      for (const id of bucket) {
-        if (used >= maxSourcesPerParent) break;
-        if (link.to_ids.includes(id)) continue; // don't pulse from self-loops
-        picked.push({ id, seq: sourceIndex.scanSeq.get(id) ?? 0 });
-        used += 1;
-      }
-    }
-    picked.sort((a, b) => a.seq - b.seq);
-    for (const pick of picked) sources.push(pick.id);
-  } else if (link.parents.length > 0) {
-    const parentSet = new Set(link.parents);
-    const perParent = new Map<string, number>();
-    for (const [id, cell] of cells) {
-      if (link.to_ids.includes(id)) continue; // don't pulse from self-loops
-      const tx = cell.out_point.tx_hash;
-      if (!parentSet.has(tx)) continue;
-      const used = perParent.get(tx) ?? 0;
-      if (used >= maxSourcesPerParent) continue;
-      sources.push(id);
-      perParent.set(tx, used + 1);
-    }
+  const origins: CellLinkEndpointAnchor[] = [];
+  for (const anchor of link.endpoint_anchors) {
+    if (origins.length >= maxOriginsPerLink) break;
+    if (link.to_ids.includes(anchor.id)) continue; // output-side anchor
+    origins.push(anchor);
   }
-  if (sources.length === 0) {
-    stats?.bump(link.parents.length === 0 ? 'no-parents' : 'no-source');
+  if (origins.length === 0) {
+    // Nothing consumed to depart from: a cellbase, or a record persisted
+    // before inputs were anchored. The block guarantee decides separately
+    // whether the block still lights.
+    stats?.bump('no-origin');
     return [];
   }
 
+  const color = consensusPacketColor(link.tx_hash, link.tag);
+  let ownIndex: OriginEntryIndex | null = null;
+  const entryIndex =
+    sharedEntryIndex ?? (() => (ownIndex ??= buildOriginEntryIndex(cells, graph)));
+
   const pulses: Pulse[] = [];
-  outer: for (const src of sources) {
+  outer: for (const anchor of origins) {
     if (pulses.length >= maxPulsesPerLink) break;
-    // One BFS per source covers every output of this tx; per-target results
-    // are byte-identical to routing each (src, dst) pair separately.
-    const pathsByDst = shortestPathsToTargets(graph, src, link.to_ids, maxHops);
+    // `entryFor` leaves along the anchor's OWN surviving adjacency when it
+    // still has one (a corpse the graph has not pruned yet), so the packet
+    // departs down a real — retracting — edge; otherwise the grid answers.
+    // It never returns the anchor itself: path[0] must be a live cell.
+    const entry = entryIndex().entryFor(anchor.id, anchor.pos_seed);
+    // One BFS per origin covers every output of this tx; per-target results
+    // are byte-identical to routing each (entry, dst) pair separately.
+    const pathsByDst =
+      entry === null
+        ? null
+        : shortestPathsToTargets(graph, entry, link.to_ids, maxHops);
+    // One ghost per origin, shared by its destinations — nothing mutates it.
+    const origin: PulseOrigin = {
+      pos: [anchor.pos_seed[0], anchor.pos_seed[1], anchor.pos_seed[2]],
+      anchorId: anchor.id,
+      resolved: anchor.resolved,
+    };
     for (const dst of link.to_ids) {
       if (pulses.length >= maxPulsesPerLink) break outer;
-      if (src === dst) continue;
-      const missing =
-        !graph.adjacency.has(src) || !graph.adjacency.has(dst);
-      const path = pathsByDst.get(dst) ?? null;
-      if (!path || path.length < 2) {
+      // Cannot happen — T2's id families are disjoint — but a tx that spent
+      // its own newborn would otherwise pulse a cell into itself.
+      if (anchor.id === dst) continue;
+      // A stage holding no eligible node at all fails the same way an
+      // absent destination does: there is nothing to route between.
+      const missing = entry === null || !graph.adjacency.has(dst);
+      const path = pathsByDst?.get(dst) ?? null;
+      // Length 1 = the entry node IS the destination; the ghost hop
+      // origin → dst carries that packet on its own.
+      if (!path || path.length < 1) {
         stats?.bumpPath(missing ? 'endpoint-missing' : 'no-path');
         continue;
       }
-      const { startDelayMs, hopMs } = pulseTiming(link, src, dst);
+      const { startDelayMs, hopMs } = pulseTiming(link, anchor.id, dst);
       pulses.push({
         linkSeq: link.seq,
         linkBlock: link.block,
@@ -241,7 +231,9 @@ export function planPulses(
         color,
         startDelayMs,
         hopMs,
+        origin,
       });
+      stats?.bumpOrigin(origin.resolved ? 'origin-retained' : 'origin-derived');
     }
   }
   stats?.bump(pulses.length > 0 ? 'fired' : 'all-paths-failed');

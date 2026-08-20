@@ -19,10 +19,10 @@ import {
 import { consensusPacketColor } from '../derives/consensusFlow.derive';
 import { advanceLinkCursor } from './linkCursor';
 import {
-  collectLinkSourceIndex,
   planPulses,
   pulseTiming,
   type Pulse,
+  type PulseOrigin,
   type PulsePlanningOptions,
 } from './pulseRunner';
 import type { PulseStatsSink, RescueCounter, RescueKind } from './pulseStats';
@@ -43,9 +43,9 @@ export const MAX_PULSES_PER_BATCH = 128;
 export const MAX_RESCUE_ATTEMPTS = 8;
 
 /** The stats surface `planLinkBatch` needs (superset of `PulseStatsSink`:
- *  `planPulses` writes drop reasons via the sink, we roll each link's
- *  outcome up per block via `observeLink`, and the rescue pass records its
- *  origin honesty via `bumpRescue`). */
+ *  `planPulses` writes drop reasons and origin kinds via the sink, we roll
+ *  each link's outcome up per block via `observeLink`, and the rescue pass
+ *  records which rung of the honesty ladder it used via `bumpRescue`). */
 export interface PulseBatchStats extends PulseStatsSink {
   observeLink(block: number, lit: boolean): void;
   bumpRescue(kind: RescueCounter, n?: number): void;
@@ -58,10 +58,11 @@ export interface PulseBatchStats extends PulseStatsSink {
  * back to the in-graph cell nearest the newborn's anchored position — the
  * pulse then lands beside the truth instead of nowhere). The origin walks
  * the honesty ladder: input anchors present → the node nearest the consumed
- * coin's true position (`anchored`); none → rim entry along the
- * destination's outward radial (`rim` — value declared to arrive from
- * outside the retained window). Selection is dst-rooted, so the path is
- * real edges end-to-end. Pure; returns null only when nothing is routable
+ * coin's true position, carrying the same by-value ghost the main path would
+ * have (`anchored`); none → rim entry along the destination's outward radial
+ * (`rim` — value declared to arrive from outside the retained window, and the
+ * one pulse kind that names no origin). Selection is dst-rooted, so the path
+ * is real edges end-to-end. Pure; returns null only when nothing is routable
  * around the destination at all.
  */
 function planRescuePulse(
@@ -91,8 +92,11 @@ function planRescuePulse(
     if (dst === null) return null;
     substituted = true;
   }
-  const inputAnchor = link.endpoint_anchors.find((a) =>
-    link.from_ids.includes(a.id),
+  // Same membership rule the main path uses: an anchor is input-side iff its
+  // id is not one of this tx's newborns. It admits the identity-only anchors
+  // of inputs that were never retained, which `from_ids` deliberately omits.
+  const inputAnchor = link.endpoint_anchors.find(
+    (a) => !link.to_ids.includes(a.id),
   );
   const rescue: RescueKind = inputAnchor ? 'anchored' : 'rim';
   const score = inputAnchor
@@ -107,7 +111,30 @@ function planRescuePulse(
   if (!path || path.length < 2) return null;
   if (substituted) stats.bumpRescue('dst-substituted');
   stats.bumpRescue(rescue);
-  const { startDelayMs, hopMs } = pulseTiming(link, path[0], dst);
+  // An anchored rescue names the very cell the main path would have departed,
+  // so it carries the same by-value ghost — and `rescueOrigin` maximized
+  // proximity to that address, so the ghost hop is short by construction.
+  const origin: PulseOrigin | undefined = inputAnchor
+    ? {
+      pos: [
+        inputAnchor.pos_seed[0],
+        inputAnchor.pos_seed[1],
+        inputAnchor.pos_seed[2],
+      ],
+      anchorId: inputAnchor.id,
+      resolved: inputAnchor.resolved,
+    }
+    : undefined;
+  if (origin) {
+    stats.bumpOrigin(origin.resolved ? 'origin-retained' : 'origin-derived');
+  }
+  // A rim rescue names no consumed cell, so its animation falls back to the
+  // routed source node — the seeding every pulse used before origins existed.
+  const { startDelayMs, hopMs } = pulseTiming(
+    link,
+    origin?.anchorId ?? path[0],
+    dst,
+  );
   return {
     linkSeq: link.seq,
     linkBlock: link.block,
@@ -116,6 +143,7 @@ function planRescuePulse(
     color: consensusPacketColor(link.tx_hash, link.tag),
     startDelayMs,
     hopMs,
+    ...(origin ? { origin } : {}),
     rescue,
   };
 }
@@ -162,20 +190,15 @@ export function planLinkBatch(
   const planned: Pulse[] = [];
   let guaranteed = lastGuaranteedBlock;
   if (toFire.length > 0) {
-    // One shared Cell-map prescan for the whole batch replaces the full-map
-    // walk planPulses used to run per link. Built only for links that will
-    // actually fire (backfill-suppressed links never pay it).
-    const batchOpts: PulsePlanningOptions = {
-      ...opts,
-      sourceIndex: collectLinkSourceIndex(toFire, cells),
-    };
-    // One entry index for the whole batch, built on first use: the linear
-    // nearest-node scan it replaces is O(stage) per call, and the only
-    // caller today (a rescue whose outputs all missed the graph) is rare
-    // enough that most batches must not pay the build at all.
+    // One entry index for the whole batch, built on first use. Origin
+    // planning and the rescue's destination substitution share this single
+    // memo: the grid is stage-wide, while most blocks carry only a cellbase
+    // link, which names no origin — so a batch that never queries it must
+    // not pay the build (backfill-suppressed links never pay it either).
     let originIndex: OriginEntryIndex | null = null;
     const entryIndex = () =>
       (originIndex ??= buildOriginEntryIndex(cells, graph));
+    const batchOpts: PulsePlanningOptions = { ...opts, entryIndex };
     // Normal pulses admitted under MAX_PULSES_PER_BATCH. Tracked apart from
     // planned.length so rescues are budget-NEUTRAL, not merely exempt — a
     // mid-batch rescue must not steal the next block's last budget slot.

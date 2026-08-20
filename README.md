@@ -366,7 +366,7 @@ max_hops = 40
 [galaxy.pulses]
 link_ring_capacity = 128
 max_pulses_per_link = 6
-max_sources_per_parent = 2
+max_origins_per_link = 2
 max_active_pulses = 256
 ```
 

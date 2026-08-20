@@ -82,7 +82,7 @@ describe('resolveGalaxyConfig', () => {
         pulses: {
           linkRingCapacity: 64,
           maxPulsesPerLink: 4,
-          maxSourcesPerParent: 2,
+          maxOriginsPerLink: 2,
           maxActivePulses: 128,
         },
       },

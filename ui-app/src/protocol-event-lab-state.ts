@@ -189,10 +189,12 @@ export function protocolEventLabSnapshot(
     else cellsByBirthTx.set(txHash, [cell]);
   }
 
-  // Production pulse planning does not route from the consumed inputs: those
-  // Cells are correctly absent from a live snapshot. It routes from surviving
-  // siblings born by each parent transaction into the observed outputs. Anchor
-  // the review field around exactly those real, currently routable Cells.
+  // Production pulse planning departs from each consumed input's own address
+  // and enters the fabric at the nearest live Cell. A bounded review field
+  // therefore has to hold the observed outputs plus real Cells around the
+  // spend — the parent's surviving siblings are exactly those, and keeping
+  // them is what makes the entry node land beside the coin rather than
+  // wherever the fill happened to stop.
   const selectedIds = new Set<number>();
   const observedLinks: NonNullable<CellGalaxySnapshot['recent_links']> = [];
   const recentLinks = snapshot.recent_links ?? [];
@@ -225,7 +227,7 @@ export function protocolEventLabSnapshot(
     { ...link, seq: index + 1 },
     cellMap,
     reviewGraph,
-    { maxHops: 24, maxPulsesPerLink: 3, maxSourcesPerParent: 2 },
+    { maxHops: 24, maxPulsesPerLink: 3, maxOriginsPerLink: 2 },
   ).length > 0).slice(-8);
   return {
     ...snapshot,

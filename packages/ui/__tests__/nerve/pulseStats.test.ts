@@ -7,15 +7,31 @@ import {
 
 beforeEach(() => resetPulseStats());
 
-describe('pulseStats.bump / bumpPath', () => {
-  it('counts per-link reasons and path fails', () => {
+describe('pulseStats.bump / bumpPath / bumpOrigin', () => {
+  it('counts per-link reasons, path fails and origin honesty', () => {
     pulseStats.bump('fired');
-    pulseStats.bump('no-source', 3);
+    pulseStats.bump('no-origin', 3);
     pulseStats.bumpPath('endpoint-missing');
+    pulseStats.bumpOrigin('origin-derived', 2);
     const s = snapshotPulseStats();
     expect(s.linkReasons.fired).toBe(1);
-    expect(s.linkReasons['no-source']).toBe(3);
+    expect(s.linkReasons['no-origin']).toBe(3);
     expect(s.pathFails['endpoint-missing']).toBe(1);
+    expect(s.origins).toEqual({ 'origin-retained': 0, 'origin-derived': 2 });
+  });
+
+  /** T0's live baseline was captured against the sibling-proxy taxonomy. The
+   *  exposed shape must stay a superset of it or the A/B comparison silently
+   *  loses fields instead of showing them at zero. */
+  it('keeps the retired sibling-proxy counters in the exposed shape, reading 0', () => {
+    pulseStats.bump('fired');
+    const s = snapshotPulseStats();
+    expect(s.linkReasons['no-parents']).toBe(0);
+    expect(s.linkReasons['no-source']).toBe(0);
+    expect(Object.keys(s.linkReasons).sort()).toEqual([
+      'all-paths-failed', 'backfill', 'batch-budget', 'fired',
+      'no-origin', 'no-outputs', 'no-parents', 'no-source',
+    ]);
   });
 });
 
@@ -48,7 +64,7 @@ describe('pulseStats block rollup', () => {
 describe('pulseStats.firedRatePct', () => {
   it('is fired over planPulses terminal outcomes and excludes backfill', () => {
     pulseStats.bump('fired', 3);
-    pulseStats.bump('no-source', 1);
+    pulseStats.bump('no-origin', 1);
     pulseStats.bump('backfill', 10); // excluded from the denominator
     expect(snapshotPulseStats().firedRatePct).toBeCloseTo(75, 6); // 3 / (3+1)
   });
@@ -57,11 +73,13 @@ describe('pulseStats.firedRatePct', () => {
 describe('resetPulseStats', () => {
   it('zeros every counter and the rollup state', () => {
     pulseStats.bump('fired');
+    pulseStats.bumpOrigin('origin-retained');
     pulseStats.observeLink(1, true);
     pulseStats.observeBlockTick();
     resetPulseStats();
     const s = snapshotPulseStats();
     expect(s.linkReasons.fired).toBe(0);
+    expect(s.origins['origin-retained']).toBe(0);
     expect(s.blocksTotal).toBe(0);
     expect(s.blocksWithLinks).toBe(0);
     expect(s.blocksLit).toBe(0);

@@ -5,8 +5,8 @@ import {
 import {
   DEFAULT_MAX_HOPS,
   MAX_ACTIVE_PULSES,
+  MAX_ORIGINS_PER_LINK,
   MAX_PULSES_PER_LINK,
-  MAX_SOURCES_PER_PARENT,
 } from '@cknerv/ui';
 
 export type GalaxyProfile = 'auto' | 'devnet' | 'testnet' | 'mainnet' | 'custom';
@@ -23,7 +23,7 @@ export interface GalaxyRuntimeConfig {
   pulses: {
     linkRingCapacity: number;
     maxPulsesPerLink: number;
-    maxSourcesPerParent: number;
+    maxOriginsPerLink: number;
     maxActivePulses: number;
   };
 }
@@ -80,7 +80,7 @@ export const DEFAULT_GALAXY_CONFIG: GalaxyRuntimeConfig = {
     // whole-block-dark eviction the 512 sizing closed.
     linkRingCapacity: DEFAULT_LINK_RING_CAPACITY,
     maxPulsesPerLink: MAX_PULSES_PER_LINK,
-    maxSourcesPerParent: MAX_SOURCES_PER_PARENT,
+    maxOriginsPerLink: MAX_ORIGINS_PER_LINK,
     maxActivePulses: MAX_ACTIVE_PULSES,
   },
 };
@@ -168,9 +168,9 @@ export function resolveGalaxyConfig(
         galaxy.pulses?.maxPulsesPerLink,
         DEFAULT_GALAXY_CONFIG.pulses.maxPulsesPerLink,
       ),
-      maxSourcesPerParent: numberOrDefault(
-        galaxy.pulses?.maxSourcesPerParent,
-        DEFAULT_GALAXY_CONFIG.pulses.maxSourcesPerParent,
+      maxOriginsPerLink: numberOrDefault(
+        galaxy.pulses?.maxOriginsPerLink,
+        DEFAULT_GALAXY_CONFIG.pulses.maxOriginsPerLink,
       ),
       maxActivePulses: numberOrDefault(
         galaxy.pulses?.maxActivePulses,

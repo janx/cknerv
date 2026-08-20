@@ -68,7 +68,7 @@ pub struct GalaxyTopologySection {
 pub struct GalaxyPulsesSection {
     pub link_ring_capacity: Option<usize>,
     pub max_pulses_per_link: Option<usize>,
-    pub max_sources_per_parent: Option<usize>,
+    pub max_origins_per_link: Option<usize>,
     pub max_active_pulses: Option<usize>,
 }
 
@@ -102,7 +102,7 @@ pub struct ResolvedGalaxyTopologyConfig {
 pub struct ResolvedGalaxyPulsesConfig {
     pub link_ring_capacity: usize,
     pub max_pulses_per_link: usize,
-    pub max_sources_per_parent: usize,
+    pub max_origins_per_link: usize,
     pub max_active_pulses: usize,
 }
 
@@ -163,7 +163,7 @@ impl ResolvedGalaxyConfig {
                 // busy block's links until the plan effect consumes them.
                 link_ring_capacity: 512,
                 max_pulses_per_link: 6,
-                max_sources_per_parent: 2,
+                max_origins_per_link: 2,
                 max_active_pulses: 256,
             },
         }
@@ -251,8 +251,8 @@ pub fn resolve(
     if let Some(v) = file.galaxy.pulses.max_pulses_per_link {
         galaxy.pulses.max_pulses_per_link = v;
     }
-    if let Some(v) = file.galaxy.pulses.max_sources_per_parent {
-        galaxy.pulses.max_sources_per_parent = v;
+    if let Some(v) = file.galaxy.pulses.max_origins_per_link {
+        galaxy.pulses.max_origins_per_link = v;
     }
     if let Some(v) = file.galaxy.pulses.max_active_pulses {
         galaxy.pulses.max_active_pulses = v;
@@ -305,7 +305,7 @@ max_hops = 80
 # below the SPA default (512) re-opens silent whole-block-dark eviction.
 link_ring_capacity = 512
 max_pulses_per_link = 6
-max_sources_per_parent = 2
+max_origins_per_link = 2
 max_active_pulses = 256
 "#;
 
@@ -440,7 +440,7 @@ mod tests {
         let file: FileConfig = toml::from_str(
             "[galaxy]\nprofile = \"mainnet\"\ncell_cap = 3333\nrecent_links_cap = 444\n\
              [galaxy.topology]\nneighbor_k = 6\nmax_edge_length = 31.5\nmax_hops = 44\n\
-             [galaxy.pulses]\nlink_ring_capacity = 88\nmax_pulses_per_link = 9\nmax_sources_per_parent = 3\nmax_active_pulses = 111\n",
+             [galaxy.pulses]\nlink_ring_capacity = 88\nmax_pulses_per_link = 9\nmax_origins_per_link = 3\nmax_active_pulses = 111\n",
         )
         .unwrap();
         let r = resolve(None, None, false, None, &file).unwrap();
@@ -456,7 +456,7 @@ mod tests {
         assert_eq!(r.galaxy.topology.max_hops, 44);
         assert_eq!(r.galaxy.pulses.link_ring_capacity, 88);
         assert_eq!(r.galaxy.pulses.max_pulses_per_link, 9);
-        assert_eq!(r.galaxy.pulses.max_sources_per_parent, 3);
+        assert_eq!(r.galaxy.pulses.max_origins_per_link, 3);
         assert_eq!(r.galaxy.pulses.max_active_pulses, 111);
     }
 

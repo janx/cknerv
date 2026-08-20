@@ -1,8 +1,8 @@
 // Dev affordance: surface @cknerv/ui's dev counters on `window` so they can
 // be read live in devtools:
-//   window.__pulseStats()        → { linkReasons, pathFails, recallOutcomes,
-//                                    rescues, ringEvicted, blocks*,
-//                                    firedRatePct, recalledRatePct }
+//   window.__pulseStats()        → { linkReasons, pathFails, origins,
+//                                    recallOutcomes, rescues, ringEvicted,
+//                                    blocks*, firedRatePct, recalledRatePct }
 //   window.__pulseStatsReset()   → zero the pulse counters for a clean observation
 //   window.__fabricStats()       → { diffCalls, recentDiffs, frames, fullWalkReasons, animating* }
 //   window.__fabricStatsReset()  → zero the fabric-churn counters

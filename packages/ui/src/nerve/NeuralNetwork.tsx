@@ -5,9 +5,10 @@
 //      CellGalaxy display subset, then derive a sparse passive graph from it.
 //      Everything downstream reads that single graph: a pulse can only exist
 //      where the viewer can see the fibre it rides.
-//   2. Each new CellLink delta → planPulses derives source cells from
-//      parent tx siblings + finds shortest paths to the new outputs
-//      through the neighbour graph. Each pulse is queued.
+//   2. Each new CellLink delta → planPulses departs one packet from each
+//      cell the tx consumed (the input anchors' own addresses) and finds
+//      shortest paths to the new outputs through the neighbour graph.
+//      Each pulse is queued.
 //   3. Per frame, every active pulse advances by elapsed/HOP_MS hops,
 //      lights up the current hop's edge in the active fabric layer,
 //      drives the packet-head glyph, flashes the cells it crosses,
@@ -836,7 +837,7 @@ export default function NeuralNetwork({
       {
         maxHops: topology?.maxHops,
         maxPulsesPerLink: pulses?.maxPulsesPerLink,
-        maxSourcesPerParent: pulses?.maxSourcesPerParent,
+        maxOriginsPerLink: pulses?.maxOriginsPerLink,
       },
       pulseStats,
       lastGuaranteedBlockRef.current,
@@ -866,7 +867,7 @@ export default function NeuralNetwork({
     cellsCache.backfill,
     topology?.maxHops,
     pulses?.maxPulsesPerLink,
-    pulses?.maxSourcesPerParent,
+    pulses?.maxOriginsPerLink,
     pulses?.maxActivePulses,
     livePulseDelayS,
     particleCapMul,
@@ -1598,7 +1599,11 @@ export default function NeuralNetwork({
       const rawElapsedMs = (now - pulse.startSec) * 1000;
       const elapsedMs = rawElapsedMs - pulse.startDelayMs;
       const totalHops = pulse.path.length - 1; // edges, not nodes
-      if (totalHops <= 0) continue;
+      // A ghost-origin pulse routes to its own entry node (path.length === 1)
+      // and carries no graph edge: it is already at its destination once its
+      // delay elapses, and must never index path[-1]. T6 renders its one
+      // real segment, origin.pos → path[0].
+      if (totalHops < 0) continue;
       // Pulse hasn't started yet (still in its jitter delay).
       if (elapsedMs < 0) {
         // A packet that was never visible should not depart after its recall

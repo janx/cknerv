@@ -301,7 +301,7 @@ export default function CellFormLab({ snapshot }: { snapshot: CellGalaxySnapshot
                     flashDirtyIdsRef={flashDirtyIdsRef}
                     burstArrivalRef={burstArrivalRef}
                     topology={{ neighborK: 3, maxEdgeLength: 28, maxHops: 24 }}
-                    pulses={{ maxActivePulses: 32, maxPulsesPerLink: 2, maxSourcesPerParent: 1 }}
+                    pulses={{ maxActivePulses: 32, maxPulsesPerLink: 2, maxOriginsPerLink: 1 }}
                   />
                   <ConsensusWriteSeal arrivalRef={burstArrivalRef} />
                 </>
