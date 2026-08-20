@@ -36,7 +36,13 @@ use crate::projection::display_plane::DisplayPlane;
 use crate::projection::Projection;
 use crate::{AssetKind, LockKind, ScriptId};
 
-// ── visual / behavior constants — mirror cellGalaxy.ts ───────────────
+// ── visual / behavior constants ──────────────────────────────────────
+// These are calibrated against the client's cell layer
+// (`packages/ui/src/geometry/cellPositions.ts`), but only the cap mirrors
+// it one-for-one (`INSTANCE_CAPACITY`). The corpse hold below deliberately
+// does NOT equal any single client number: it must strictly DOMINATE the
+// client's entire death rite, which is a sum of two client constants plus
+// an offset the server never sees.
 pub const CELL_CAP: usize = 50_000;
 pub const DEFAULT_RECENT_LINKS_CAP: usize = 2048;
 /// Canonical block journals retained for exact reorg rollback. This stays
@@ -46,7 +52,24 @@ pub const DEFAULT_RECENT_LINKS_CAP: usize = 2048;
 /// chain-generic default when its canonical evidence policy differs.
 pub const DEFAULT_REORG_WINDOW_BLOCKS: usize = 48;
 const PULSE_THROTTLE_MS: u64 = 800;
-const DEATH_DURATION_MS: u64 = 600;
+/// How long a dead cell is retained past its death timestamp, i.e. how long
+/// the browser is guaranteed to still have the corpse it is mourning.
+///
+/// The client's rite does not begin at the death timestamp: withering starts
+/// `BLOCK_HIGHLIGHT_DELAY_S` later (2350 ms, `packages/ui/src/ui/
+/// topologyConstants.ts`) and then runs for `DEATH_DURATION_MS` (1800 ms,
+/// `packages/ui/src/geometry/cellPositions.ts`), so the corpse is on screen
+/// until death + 4150 ms. This hold is that sum plus 350 ms of margin and
+/// must keep dominating it: GC is also the moment the display plane exits
+/// the member, so a hold shorter than the rite makes the corpse vanish
+/// mid-wither — routinely, not rarely, because `gc_cells` runs on every
+/// mined block and fast cadence (testnet, backfill bursts) puts many blocks
+/// inside one rite. Whichever client constant moves next, move this one too.
+///
+/// Bounded cost: the retained set carries at most `deaths_per_second × 4.5 s`
+/// corpses, so even a chain retiring a thousand cells a second spends 4500 of
+/// the 50 000-cell reservoir on them.
+const CORPSE_HOLD_MS: u64 = 4_500;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CellGalaxyConfig {
@@ -971,11 +994,13 @@ impl CellGalaxy {
         deltas
     }
 
-    /// Drop dead cells past the death-animation tail. Returns the ids of Cells
+    /// Drop dead cells whose corpse hold has expired. Returns the ids of Cells
     /// removed from the retained set so consumers can discard their local
-    /// records.
+    /// records. This is the sole consumer of [`CORPSE_HOLD_MS`], and it serves
+    /// the live and the replay/backfill paths alike — one tail, no per-mode
+    /// variant.
     fn gc_cells(&mut self, now_ms: u64) -> Vec<u64> {
-        let tail = DEATH_DURATION_MS;
+        let tail = CORPSE_HOLD_MS;
         let mut removed_ids = Vec::new();
         let mut removed_outpoints: Vec<OutPoint> = Vec::new();
         self.cells.retain(|c| {
@@ -1098,7 +1123,7 @@ impl CellGalaxy {
                     // authoritative for retention: the death pass and
                     // `enforce_cap` drop an outpoint the moment the cell
                     // stops being spendable, while the cell itself stays
-                    // in the container for its death-animation tail. A
+                    // in the container for its corpse hold. A
                     // birth being rolled back may already be in that
                     // state, so an index miss falls back to the scan
                     // rather than skipping the park. (An outpoint is
@@ -1294,9 +1319,10 @@ impl CellGalaxy {
             }
         }
 
-        // GC dead cells past the death-animation tail. This is the moment
-        // a staged corpse's display window closes: the plane exits it and
-        // backfills the resting vacancy at flush time.
+        // GC dead cells past [`CORPSE_HOLD_MS`]. This is the moment a staged
+        // corpse's display window closes: the plane exits it and backfills
+        // the resting vacancy at flush time — which is why the hold has to
+        // outlast the client's whole death rite, not just its fade.
         let gc_removed = if self.backfill.is_some() {
             self.gc_cells(at_ms)
         } else {
@@ -2158,12 +2184,14 @@ mod tests {
             inputs: vec![op("0xobsolete", 0)],
             outputs: vec![],
         });
+        // Past the corpse hold — replay shares the live tail exactly, so the
+        // sweep must have run here even inside the backfill envelope.
         g.apply_mutation(&Mutation::BlockMined {
             number: 3,
             hash: "0xb3".into(),
             tx_count: 0,
             size: 0,
-            at: 3_000,
+            at: 2_000 + CORPSE_HOLD_MS + 1,
         });
 
         assert!(g.cells.is_empty(), "Cell-tail GC still runs during replay");
@@ -2387,6 +2415,42 @@ mod tests {
         assert!(g.outpoint_index.contains_key(&op("0xb", 0)));
     }
 
+    /// The client's death rite ends at death + 4150 ms (2350 ms of delivery
+    /// choreography, then an 1800 ms withering). The corpse hold has to
+    /// outlast it with margin to spare, on the live path and on the replay
+    /// path alike — the two share `gc_cells`, there is no per-mode tail.
+    #[test]
+    fn a_corpse_outlives_the_client_rite_before_it_is_reaped() {
+        let mut g = make_galaxy();
+        g.handle_tx_landed("0xa", 1, 1_000, &[], &[out(100, "0x")]);
+        g.handle_tx_landed("0xb", 2, 2_000, &[op("0xa", 0)], &[]);
+        let death_at = g
+            .cells
+            .iter()
+            .find(|c| c.id == 0)
+            .and_then(|c| c.death_at_ms)
+            .expect("the consumed cell is dead");
+        assert_eq!(death_at, 2_000);
+
+        // Still 100 ms shy of the hold, i.e. 250 ms after the last frame the
+        // client draws for this corpse.
+        g.gc(death_at + CORPSE_HOLD_MS - 100);
+        assert!(
+            g.cells.iter().any(|c| c.id == 0),
+            "the corpse must survive its own withering"
+        );
+        assert!(
+            !g.outpoint_index.contains_key(&op("0xa", 0)),
+            "held for the visual only — the outpoint stopped being spendable at death"
+        );
+
+        // 100 ms past the hold: reaped, and its id is reported so clients
+        // drop their local record.
+        let removed = g.gc(death_at + CORPSE_HOLD_MS + 100);
+        assert_eq!(removed, vec![0]);
+        assert!(g.cells.iter().all(|c| c.id != 0));
+    }
+
     #[test]
     fn tx_landed_emits_link_with_ids_and_durable_endpoint_anchors() {
         let mut g = make_galaxy();
@@ -2451,9 +2515,9 @@ mod tests {
         assert_eq!(last.parents, vec!["0xa".to_string()]);
         assert_eq!(last.endpoint_anchors, link.4);
 
-        // Full input Cells disappear after the death-animation tail, while
+        // Full input Cells disappear once the corpse hold expires, while
         // the authoritative transaction evidence remains available.
-        g.gc(2_601);
+        g.gc(2_000 + CORPSE_HOLD_MS + 1);
         assert!(g.cells.iter().all(|cell| cell.id >= 2));
         let retained = g.recent_links.last().unwrap();
         assert_eq!(
@@ -3406,11 +3470,11 @@ mod tests {
         let spend_ids: Vec<u64> = (0..2)
             .map(|i| g.outpoint_index[&op("0xspend", i)])
             .collect();
-        assert_eq!(g.cells.len(), 6, "corpses stay for the death tail");
+        assert_eq!(g.cells.len(), 6, "corpses stay for the corpse hold");
 
-        // Retain compaction: both corpses fall past the tail, so every
+        // Retain compaction: both corpses fall past the hold, so every
         // surviving slot shifts down by two.
-        g.handle_block_mined(3, "0xb3", 0, 4_000);
+        g.handle_block_mined(3, "0xb3", 0, 2_000 + CORPSE_HOLD_MS + 1);
         assert_eq!(
             g.cells.iter().map(|c| c.id).collect::<Vec<_>>(),
             vec![gen_ids[2], gen_ids[3], spend_ids[0], spend_ids[1]]
@@ -3419,7 +3483,7 @@ mod tests {
         g.apply_mutation(&Mutation::CellTagged {
             out_point: op("0xspend", 1),
             tag: "dex".to_string(),
-            at: 4_100,
+            at: 2_000 + CORPSE_HOLD_MS + 101,
         });
         assert_eq!(
             g.cells
@@ -3433,7 +3497,7 @@ mod tests {
         // Replacement at height 2: parks both spend births (mid-vec
         // removes, tail repair) and resurrects the two gc'd corpses —
         // appends, since their old slots are long gone.
-        g.handle_block_mined(2, "0xb2prime", 1, 5_000);
+        g.handle_block_mined(2, "0xb2prime", 1, 2_000 + CORPSE_HOLD_MS + 1_001);
         assert_eq!(g.reorg_limbo.len(), 2);
         assert_eq!(
             g.cells.iter().map(|c| c.id).collect::<Vec<_>>(),
@@ -3447,7 +3511,7 @@ mod tests {
         let replay = g.handle_tx_landed(
             "0xspend",
             2,
-            5_100,
+            2_000 + CORPSE_HOLD_MS + 1_101,
             &[op("0xgen", 0), op("0xgen", 1)],
             &[out(500, "0xe"), out(600, "0xf")],
         );
@@ -3486,7 +3550,7 @@ mod tests {
         let tagged = restored.apply_mutation(&Mutation::CellTagged {
             out_point: op("0xgen", 2),
             tag: "cf".to_string(),
-            at: 6_000,
+            at: 2_000 + CORPSE_HOLD_MS + 2_000,
         });
         assert!(
             tagged
@@ -4139,18 +4203,39 @@ mod tests {
 
         // Pure spend (no outputs → no Link → no endpoint entries): the
         // death alone changes nothing on stage.
-        g.apply_mutation(&mined(2, "0xb2", 2_000));
-        let deltas = g.apply_mutation(&landed("0xspend", 2, 2_000, vec![op("0xbulk", 0)], vec![]));
+        let death_a = 2_000;
+        g.apply_mutation(&mined(2, "0xb2", death_a));
+        let deltas = g.apply_mutation(&landed(
+            "0xspend",
+            2,
+            death_a,
+            vec![op("0xbulk", 0)],
+            vec![],
+        ));
         assert!(
             display_delta(&deltas).is_none(),
             "corpse keeps its seat — no membership change, no delta"
         );
         assert!(g.display.member_ids_sorted().contains(&0));
 
-        // GC past the death tail: 0 exits; the cursor's next candidate
+        // Mid-rite: the client has not even STARTED withering this corpse
+        // (that begins at death + 2350 ms) and blocks keep arriving. The
+        // member must still be staged, or the browser loses the cell it is
+        // about to mourn — the exact failure the old 600 ms tail produced.
+        let mid_rite = death_a + 700;
+        assert!(mid_rite < death_a + CORPSE_HOLD_MS);
+        let deltas = g.apply_mutation(&mined(3, "0xb3", mid_rite));
+        assert!(
+            display_delta(&deltas).is_none(),
+            "the corpse hold spans the whole client rite — no exit yet"
+        );
+        assert!(g.display.member_ids_sorted().contains(&0));
+        assert!(g.cells.iter().any(|c| c.id == 0), "corpse still retained");
+
+        // GC past the corpse hold: 0 exits; the cursor's next candidate
         // (over_id) is already staged as activity → promoted in place,
         // so the only wire change is the exit.
-        let deltas = g.apply_mutation(&mined(3, "0xb3", 2_700));
+        let deltas = g.apply_mutation(&mined(4, "0xb4", death_a + CORPSE_HOLD_MS + 1));
         let (enter, exit, _) = display_delta(&deltas).expect("gc exit");
         assert!(enter.is_empty());
         assert_eq!(exit, &vec![0]);
@@ -4159,16 +4244,31 @@ mod tests {
         assert!(!g.display.is_activity_member(over_id));
 
         // Understudies exhausted: the next GC leaves the stage underfull…
-        g.apply_mutation(&mined(4, "0xb4", 3_000));
-        g.apply_mutation(&landed("0xspend2", 4, 3_000, vec![op("0xbulk", 1)], vec![]));
-        let deltas = g.apply_mutation(&mined(5, "0xb5", 3_700));
+        // Eviction order is unchanged by the longer hold — a dead member
+        // still leaves at ITS gc, in death order, just later.
+        let death_b = death_a + CORPSE_HOLD_MS + 300;
+        g.apply_mutation(&mined(5, "0xb5", death_b));
+        g.apply_mutation(&landed(
+            "0xspend2",
+            5,
+            death_b,
+            vec![op("0xbulk", 1)],
+            vec![],
+        ));
+        let deltas = g.apply_mutation(&mined(6, "0xb6", death_b + CORPSE_HOLD_MS + 1));
         let (enter, exit, _) = display_delta(&deltas).expect("second gc exit");
         assert!(enter.is_empty(), "no backfill candidates left");
         assert_eq!(exit, &vec![1]);
 
         // …and the next birth refills the vacancy as RESTING.
         let fresh_id = over_id + 1;
-        let deltas = g.apply_mutation(&landed("0xfresh", 5, 3_800, vec![], vec![out(9, "0x")]));
+        let deltas = g.apply_mutation(&landed(
+            "0xfresh",
+            6,
+            death_b + CORPSE_HOLD_MS + 100,
+            vec![],
+            vec![out(9, "0x")],
+        ));
         let (enter, exit, _) = display_delta(&deltas).expect("vacancy refill");
         assert_eq!(enter, &vec![fresh_id]);
         assert!(exit.is_empty());

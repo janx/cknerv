@@ -22,8 +22,8 @@ export const BIRTH_DURATION_MS = 1200;
  * withering starts at `death + BLOCK_HIGHLIGHT_DELAY_S` and runs this long,
  * so the server's dead-cell retention tail
  * (`crates/cknerv-core/src/projection/cells.rs`) must dominate their SUM —
- * a corpse gc'd before the rite ends vanishes mid-wither. It does not today;
- * raising that tail is its own change. */
+ * a corpse gc'd before the rite ends vanishes mid-wither. `CORPSE_HOLD_MS`
+ * there covers it (4500 ms); move it whenever either number here moves. */
 export const DEATH_DURATION_MS = 1800;
 
 // Stage enter/exit are VIEW events — the camera resolving a record that
