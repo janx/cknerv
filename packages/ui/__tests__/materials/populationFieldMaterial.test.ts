@@ -21,9 +21,12 @@ import {
   POPULATION_FIELD_SIGMA,
   POPULATION_BACKBONE_WIDTH_PX,
   POPULATION_FIBRE_ALPHA,
+  POPULATION_STROKE_TAPER_FLOOR,
   populationFibreEmissionForGain,
   populationFibreSizeRatio,
   populationFibreTaper,
+  populationStrokeSizeRatio,
+  populationStrokeTaper,
 } from '../../src/materials/populationFieldMaterial';
 
 /** Rec. 709 luma and the linear chroma proxy this layer's constants were swept
@@ -337,6 +340,13 @@ describe('smaller and dimmer, and nothing else', () => {
     expect(fluxTaper).toBeLessThan(0.5);
     expect(fluxTaper).toBeGreaterThan(0.35);
     // No alpha term may depend on the weight — in either draw.
+    //
+    // `uTaperFloor` was the name of the removed BRIGHTNESS floor on the point
+    // sprite, and this guard is the point class's: it keeps a second taper on
+    // the same key from coming back. It is not the stroke class's floor, which
+    // is a bound on the size RATIO the strokes already ride, lives in the
+    // vertex stage as a baked constant, and is asserted below in
+    // 'the stroke class carries a level floor the beads do not'.
     for (const src of [
       makePopulationPointMaterial().fragmentShader,
       makePopulationFibreMaterial().fragmentShader,
@@ -345,6 +355,192 @@ describe('smaller and dimmer, and nothing else', () => {
       expect(alphaLine).toBeDefined();
       expect(alphaLine).not.toContain('vWeight');
       expect(src).not.toContain('uTaperFloor');
+    }
+    // And the point sprite must not reach the stroke floor by any other name.
+    expect(makePopulationPointMaterial().fragmentShader)
+      .not.toContain(String(Math.sqrt(POPULATION_STROKE_TAPER_FLOOR)));
+    expect(makePopulationPointMaterial().vertexShader)
+      .not.toContain(String(Math.sqrt(POPULATION_STROKE_TAPER_FLOOR)));
+  });
+});
+
+describe('the stroke class carries a level floor the beads do not', () => {
+  /** The emission the live build reports at mainnet chain scope, headless-probed
+   *  off `92ed58c` on the 4K panel the verdicts come from. Every rendered
+   *  number below is stated at it, so they are comparable with the verdict. */
+  const STROKE_EMISSION = 0.5065;
+  /** Band medians from the placement, and the deposits a covered pixel in each
+   *  actually takes at 3840x2160 — re-measured by rasterizing all 96,609
+   *  segments at the production camera, because the 5.85/4.27/1 in the
+   *  material's older tables were counted at 1080p. */
+  const FRINGE_TAPER = 0.446;
+  const MIXED_TAPER = 0.652;
+  const MIXED_DEPOSITS = 2;
+
+  it('is one number, reached by both stroke draws and by neither bead path', () => {
+    // The whole risk in a two-class partition is that the two halves drift.
+    // The hairline bounds its ratio in a vertex stage; the capsule has no
+    // vertex stage of its own and bounds it in `populationBackboneInstanceData`
+    // — two places, so the number has to come from one.
+    const floorRatio = Math.sqrt(POPULATION_STROKE_TAPER_FLOOR);
+    const fibre = makePopulationFibreMaterial();
+    // The hairline's GLSL literal is GENERATED from the constant, so moving
+    // the constant moves the shader and this assertion together.
+    expect(fibre.vertexShader).toContain(String(floorRatio));
+    expect(fibre.vertexShader).toContain('max(');
+    // The capsule's half is the exported helper, and it agrees exactly.
+    for (let w = 0; w <= 1.0001; w += 0.01) {
+      expect(populationStrokeSizeRatio(w))
+        .toBe(Math.max(populationFibreSizeRatio(w), floorRatio));
+      expect(populationStrokeTaper(w))
+        .toBeGreaterThanOrEqual(POPULATION_STROKE_TAPER_FLOOR - 1e-12);
+    }
+    // Both stroke fragment stages still square the interpolated RATIO, which
+    // is what makes `max(r, sqrt(F))^2` the same thing as `max(r^2, F)`.
+    expect(fibre.fragmentShader)
+      .toContain('float a = uEmission * vSizeRatio * vSizeRatio;');
+    expect(makePopulationBackboneMaterial().fragmentShader).toContain(
+      'float haloAlpha = uEmission * diffuseColor.r * diffuseColor.r * alpha;',
+    );
+  });
+
+  it('leaves the beads on the unfloored taper, value for value', () => {
+    // The floor is a STROKE lever. The point sprite's size law, and the taper
+    // helper it shares with the placement, must be untouched — a floor that
+    // leaked into the bead would raise the sprite size and undo the whole
+    // bimodality argument `POPULATION_FIELD_POINT_SIZE_MIN` rests on.
+    for (let w = 0; w <= 1.0001; w += 0.01) {
+      expect(populationFibreTaper(w))
+        .toBe(populationFibreSizeRatio(w) * populationFibreSizeRatio(w));
+      expect(populationPointSizeForWeight(w)).toBeCloseTo(
+        POPULATION_FIELD_POINT_SIZE_MIN
+        + (POPULATION_FIELD_POINT_SIZE_MAX - POPULATION_FIELD_POINT_SIZE_MIN) * w,
+        12,
+      );
+      expect(populationPointSizeForWeight(w))
+        .toBeLessThanOrEqual(POPULATION_FIELD_POINT_SIZE_MAX);
+    }
+    expect(populationFibreTaper(0))
+      .toBeCloseTo((POPULATION_FIELD_POINT_SIZE_MIN
+        / POPULATION_FIELD_POINT_SIZE_MAX) ** 2, 12);
+    // The point material reads the size uniforms and nothing else.
+    const point = makePopulationPointMaterial();
+    expect(point.uniforms.uSizeMin.value).toBe(POPULATION_FIELD_POINT_SIZE_MIN);
+    expect(point.uniforms.uSizeMax.value).toBe(POPULATION_FIELD_POINT_SIZE_MAX);
+    expect(point.vertexShader)
+      .toContain('float wanted = mix(uSizeMin, uSizeMax, weight)');
+  });
+
+  it('lifts the fringe deposit over the threshold it was sitting under', () => {
+    // The verdict, as arithmetic. An isolated deposit renders `tint * a * a`,
+    // so at the fringe band's median taper the stroke was landing at
+    //   0.3261 * (0.5065 * 0.446)^2 = 0.0166
+    // — a deep red at 0.017 on black, where photopic sensitivity is already
+    // ~0.4x its peak. The floor is the only lever left that reaches it: alpha
+    // was reverted to protect chroma, width has already gone 1 -> 1.4 -> 1.6
+    // device px, and the hue is what the round before this one spent.
+    const deposit = (taper: number) => {
+      const a = STROKE_EMISSION * taper;
+      return luma709(POPULATION_STROKE_COLOR) * a * a;
+    };
+    const before = deposit(FRINGE_TAPER);
+    const after = deposit(POPULATION_STROKE_TAPER_FLOOR);
+    expect(before).toBeCloseTo(0.0166, 4);
+    expect(after).toBeCloseTo(0.0471, 4);
+    // The two calibration targets the sweep was run against.
+    expect(after / before).toBeGreaterThan(2.5);
+    expect(after).toBeGreaterThanOrEqual(0.04);
+    expect(after).toBeLessThanOrEqual(0.05);
+    // 0.70 misses the multiplier and 0.80 leaves the window — this is why the
+    // rung is where it is, and both neighbours stay in the test as the reason.
+    expect(deposit(0.70) / before).toBeLessThan(2.5);
+    expect(deposit(0.80)).toBeGreaterThan(0.05);
+    // The bead beside it is unmoved, and still ahead: it concentrates a larger
+    // emission and a lighter tint into a clamped Gaussian, so this closes the
+    // gap rather than reversing it. Nothing here can make a stroke outshine
+    // the bead it runs through.
+    const beadPeak = luma709(POPULATION_FIELD_COLOR)
+      * (STROKE_EMISSION / POPULATION_FIBRE_ALPHA) ** 2;
+    expect(beadPeak / after).toBeGreaterThan(1);
+    expect(beadPeak / after).toBeLessThan(beadPeak / before);
+  });
+
+  it('moves the just-accepted mixed band as little as a floor can', () => {
+    // The colour verdict was pronounced on this band, so it is the one the
+    // level round has to pay for. Measured by rasterizing the real placement
+    // at the production camera: +27.6% mean luma over the band's covered
+    // pixels, and -1.4% of its chroma-per-luma. The proxy below reproduces
+    // both at the band median and the band's measured deposit count, and the
+    // bounds are what this change commits to.
+    const at = (taper: number) =>
+      accumulate(POPULATION_STROKE_COLOR, STROKE_EMISSION * taper, MIXED_DEPOSITS);
+    const before = at(MIXED_TAPER);
+    const after = at(POPULATION_STROKE_TAPER_FLOOR);
+    expect(luma709(after) / luma709(before)).toBeLessThan(1.35);
+    expect((chroma709(after) / luma709(after))
+      / (chroma709(before) / luma709(before))).toBeGreaterThan(0.97);
+
+    // ⭐ Why the chroma barely moves, and why that is a measurement rather
+    // than luck: this panel accumulates ~2 deposits on the average covered
+    // pixel, not the six the retention tables were written against at 1080p.
+    // Two deposits is still the squared part of the blend, where chroma is
+    // preserved. At six the same lift would cost 9%, which is the anti-ramp
+    // lesson, and it is the deposit count that keeps this round clear of it.
+    const six = (taper: number) =>
+      accumulate(POPULATION_STROKE_COLOR, STROKE_EMISSION * taper, 6);
+    expect((chroma709(six(POPULATION_STROKE_TAPER_FLOOR))
+      / luma709(six(POPULATION_STROKE_TAPER_FLOOR)))
+      / (chroma709(six(MIXED_TAPER)) / luma709(six(MIXED_TAPER))))
+      .toBeLessThan(0.95);
+
+    // And not one channel RATIO moves: the emitted colour is untouched in
+    // both stroke draws, so this is a level round and nothing else.
+    expect([...POPULATION_STROKE_COLOR]).toEqual([
+      1,
+      CELL_GALAXY_PALETTE.veinCrimson[1] / CELL_GALAXY_PALETTE.veinCrimson[0],
+      CELL_GALAXY_PALETTE.veinCrimson[2] / CELL_GALAXY_PALETTE.veinCrimson[0],
+    ]);
+    expect(makePopulationBackboneMaterial().uniforms.uColor.value.getHex())
+      .toBe(makePopulationFibreMaterial().uniforms.uColor.value.getHex());
+  });
+
+  it('still fades a strand ending, where an ending can be seen', () => {
+    // `POPULATION_END_TAPER` fades the last three points by scaling the SHARED
+    // weight, and this floor binds the size-ratio term that weight reaches the
+    // stroke through — so one of the two dominates and which one is a fact
+    // about the tissue, not a preference.
+    //
+    // Measured by differencing two full placements: the fade keeps 0.90 of its
+    // depth in the interior and the pre-rim band, where 66.7% and 43.6% of all
+    // points sit inside one, and goes flat in the outer field, where it
+    // already measured 0.955 and 0.978 — steps of 4.5% and 2.2%, bounded by
+    // the SIZE floor long before this one existed.
+    const END = [0.25, 0.5, 0.75];
+    const depth = (w: number, k: number, t: (x: number) => number) =>
+      t(w * k) / t(w);
+    // Interior: the weight term dominates and the ending survives. At the
+    // densest tissue the unfloored ramp is 0.836 / 0.687 / 0.553 and the
+    // floored one is 0.836 / 0.750 / 0.750 — a fade that still steps twice,
+    // with its last two rungs resting on the floor together. Monotone, never
+    // rising: a strand may not brighten toward its own end.
+    expect(depth(1, END[0], populationStrokeTaper)).toBeLessThan(0.8);
+    expect(depth(1, END[0], populationStrokeTaper)).toBeGreaterThan(0.7);
+    expect(depth(1, END[2], populationStrokeTaper))
+      .toBeGreaterThan(depth(1, END[1], populationStrokeTaper));
+    expect(depth(1, END[1], populationStrokeTaper))
+      .toBeGreaterThanOrEqual(depth(1, END[0], populationStrokeTaper));
+    expect(depth(1, END[2], populationStrokeTaper)).toBeLessThan(1);
+    // Fringe: the floor dominates and the ending is flat — because it already
+    // was. Unfloored, the deepest rung out there is a 2.2% step.
+    const FRINGE_W = 0.029;
+    expect(depth(FRINGE_W, END[0], populationFibreTaper)).toBeGreaterThan(0.97);
+    expect(depth(FRINGE_W, END[0], populationStrokeTaper)).toBe(1);
+    // The ban this preserves: the fade lives in the shared weight, so no draw
+    // may add an end treatment of its own. Neither stroke stage carries one.
+    const fibre = makePopulationFibreMaterial();
+    for (const emphasis of ['vDistance', 'vPosition', 'smoothstep(']) {
+      expect(fibre.vertexShader).not.toContain(emphasis);
+      expect(fibre.fragmentShader).not.toContain(emphasis);
     }
   });
 });

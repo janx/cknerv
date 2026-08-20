@@ -606,6 +606,12 @@ export const POPULATION_FIBRE_ALPHA = 0.7;
  *
  * ⭐ The general shape of the bug: a layer gained a second primitive, and the
  * taper that had been solved for the first one was never re-derived for it.
+ *
+ * ⭐⭐ **This is now the BEAD's law alone.** The stroke classes ride
+ * {@link POPULATION_STROKE_TAPER_FLOOR} of it, and the constant-ratio rule
+ * this doc argues for is deliberately broken in the sparse direction — see
+ * that constant for the derivation and for why the failure mode the rule
+ * guarded against cannot be produced by flooring the stroke side.
  */
 export function populationFibreTaper(weight: number): number {
   const ratio = populationFibreSizeRatio(weight);
@@ -626,6 +632,192 @@ export function populationFibreTaper(weight: number): number {
 export function populationFibreSizeRatio(weight: number): number {
   return populationPointSizeForWeight(weight)
     / POPULATION_FIELD_POINT_SIZE_MAX;
+}
+
+/**
+ * The lower bound on the taper a STROKE may be charged — bead untouched.
+ *
+ * ## The verdict, and the one thing left in it
+ *
+ * Live review of `92ed58c` at 4K, `devicePixelRatio` 1: the colour is right
+ * and *the fringe band still reads as scattered dots with no connections*.
+ * Every previous round answered this in a different currency — alpha
+ * (`a^2`, reverted), width ({@link POPULATION_BACKBONE_WIDTH_PX}, 1 -> 1.4 ->
+ * 1.6 device px), hue ({@link POPULATION_STROKE_COLOR}) — and the strokes are
+ * demonstrably drawn: a headless probe against the running build counted
+ * 15,988 promoted segments over 531 strands at 1.6 px with the emission live.
+ * The problem was never presence. It is LEVEL, and this is the only round that
+ * says so in the only unit that was still holding it down.
+ *
+ * The arithmetic of the complaint, at the emission the live build reports
+ * (`backboneEmission` 0.5065, mainnet chain scope):
+ *
+ *   `L = luma(stroke tint) * (emission * taper)^2`
+ *     = 0.3261 * (0.5065 * 0.446)^2 = **0.0166**
+ *
+ * A deep red at 0.017 on black, at 620 nm-ish where photopic sensitivity is
+ * already ~0.4x its peak, is under the eye's threshold. And the taper it pays
+ * is not a taper at all out there — {@link populationFibreTaper}'s own table
+ * records the fringe sitting ON the size floor, p10 0.437 against the hard
+ * minimum `(0.50/0.76)^2` = 0.4328. The stroke class is charged the layer's
+ * deepest possible discount in the band that needs the most.
+ *
+ * ## Why a floor rather than a curve, and why it is not taste
+ *
+ * The alternative was a compensation curve — emitted level riding the inverse
+ * of the expected deposit count, so it rises as the tissue thins. ⚠️ **That
+ * premise was measured and it is false on this panel.** Rasterizing all 96,609
+ * segments at the production camera ([110,108,110], fov 50) into the 3840x2160
+ * buffer the verdicts come from and running the layer's own blend per pixel,
+ * deposits on the average COVERED pixel are:
+ *
+ * | band | covered px | deposits/px |
+ * |---|---:|---:|
+ * | pre-rim 0.70–0.95 | 166,292 | 1.84 |
+ * | mixed 0.95–1.15 | 216,394 | 1.98 |
+ * | outer 1.15–1.40 | 228,354 | 1.61 |
+ * | outer 1.40–1.55 | 49,755 | 1.43 |
+ * | fringe 1.55–1.70 | 3,057 | 1.42 |
+ *
+ * ⚠️⚠️ **The whole layer is in the isolated-deposit regime at 4K, not just
+ * the fringe.** The 5.85 / 4.27 / 1 counts the tables above quote were
+ * measured at 1080p, where a 1-device-px stroke covers a quarter of the pixels
+ * for the same geometry; at four times the pixel count the crossings per
+ * covered pixel fall with them. So there is no regime DIFFERENCE across the
+ * field for an inverse-deposit compensation to compensate: the whole available
+ * lift is 1.98/1.42 = 1.39x, which reaches taper 0.62 in the fringe — short of
+ * the target — while doing nothing for the two outer bands.
+ *
+ * ⭐ And among level maps that reach a given fringe level, a floor is the one
+ * that disturbs the rest of the field LEAST, which is provable rather than
+ * preferred. `max(t, F)` is the identity above `F`. Any monotone map hitting
+ * the same fringe value must lift the middle too: a gamma `t^k` reaching 0.75
+ * at the fringe needs `k` = 0.344 and drags the mixed band's median to 0.863,
+ * against the floor's 0.750. A linear remap of `[0.4328, 1]` onto `[0.75, 1]`
+ * puts it at 0.847. The floor wins both, and it wins them by construction.
+ *
+ * ## The sweep
+ *
+ * Fringe isolated deposit (band p50 taper 0.446), and the mixed band measured
+ * by rasterizing the real placement and running the blend per pixel — `dL` and
+ * `dC/L` are the mean over the band's covered pixels against `92ed58c`:
+ *
+ * | floor | fringe taper | fringe L | x today | mixed dL | mixed dC/L | layer alpha |
+ * |---|---:|---:|---:|---:|---:|---:|
+ * | none | 0.446 | 0.0166 | 1.00x | — | — | 1.000x |
+ * | 0.60 | 0.600 | 0.0301 | 1.81x | +5.0% | −0.1% | 1.058x |
+ * | 0.70 | 0.700 | 0.0410 | 2.46x | +17.9% | −0.8% | 1.152x |
+ * | **0.75** | 0.750 | **0.0471** | **2.83x** | **+27.6%** | **−1.4%** | **1.210x** |
+ * | 0.80 | 0.800 | 0.0535 | 3.22x | +39.1% | −2.2% | 1.274x |
+ *
+ * 0.60 does not clear the threshold argument at all. 0.70 lands the fringe at
+ * 0.0410 and 2.46x — the bottom edge of the window and a miss on the
+ * multiplier, and this verdict has already been answered three times and
+ * returned three times. 0.80 overshoots the window and charges the mixed band
+ * 39% for it. **0.75 is the only rung inside 0.04–0.05 on both counts.**
+ *
+ * ⭐ The chromaticity is untouched and the RENDERED chroma very nearly is:
+ * C/L in the mixed band moves 1.976 -> 1.948, −1.4%, because at ~2 deposits
+ * the blend is still on the squared part of its curve where chroma is
+ * preserved. That is what makes a LEVEL round safe here at all — the anti-ramp
+ * lesson (chroma collapse under accumulation, `cab0d7b`) bites at six deposits
+ * and this panel does not have six. Not one channel ratio moves: both stroke
+ * materials emit {@link POPULATION_STROKE_COLOR} unchanged.
+ *
+ * ⚠️ **This round DOES add light, and every round before it did not.** The
+ * layer's mean stroke taper goes 0.6396 -> 0.7740 (1.210x alpha, 1.403x
+ * rendered flux at one deposit). Against `539cd41` — the build before the hue
+ * change, which the last round measured the class at 0.484x of — the stroke
+ * class now emits **0.679x** its luminous flux. Deeper and dimmer than the
+ * build that failed, and no longer under the threshold.
+ *
+ * ## The doctrine this breaks, stated in full
+ *
+ * {@link populationFibreTaper} argues for a constant stroke:bead RATIO: "not a
+ * large constant, but a constant RATIO", because a stroke that tapers to
+ * nothing while its bead still draws is a node with edges radiating from it,
+ * which the layer forbids. {@link POPULATION_END_TAPER} states the same rule
+ * from the placement side, and forbids any fibre-only end treatment on top of
+ * it.
+ *
+ * ⭐⭐ **That rule is broken here, in the sparse direction only, and the
+ * failure mode it names cannot be produced by breaking it that way.** The rule
+ * exists to stop `bead > stroke`. Flooring the STROKE side can only ever move
+ * the ratio the other way: `strokeTaper(w) / beadTaper(w)` is 1 above the
+ * floor and rises monotonically to 1.733 as `w` falls to zero. Strokes now run
+ * relatively BRIGHTER than their beads where the tissue is thin — which is not
+ * a weakening of the law but a restoration of the one it was derived from, the
+ * placement's own: *the stroke is the figure and the points are grain along
+ * it* ({@link POPULATION_FIBRE_ALPHA}). The fringe had inverted that law, and
+ * the ratio rule is exactly what let it: charging beads and strokes the same
+ * discount in a regime where the bead concentrates its light into a clamped
+ * ~2 px Gaussian and the stroke spreads it along a 1–1.6 px line hands the
+ * bead the visible mark and the stroke nothing.
+ *
+ * ## The end taper, measured rather than assumed
+ *
+ * {@link POPULATION_END_TAPER} fades a strand's last three points by scaling
+ * the SHARED weight, and this floor binds the size-RATIO term the weight
+ * reaches the stroke through — so the question is which of the two dominates.
+ * Differencing two full placements (the real one against one with the array
+ * neutralised) names every faded point in the layer and its own unfaded
+ * weight. Fade depth is the tip's taper over its unfaded taper; 1.000 is a
+ * fade that no longer exists:
+ *
+ * | band | tips | share of points | depth now | at 0.75 |
+ * |---|---:|---:|---:|---:|
+ * | interior < 0.70 | 6,752 | 66.7% | 0.748 | **0.896** |
+ * | pre-rim 0.70–0.95 | 11,028 | 43.6% | 0.745 | **0.898** |
+ * | mixed 0.95–1.15 | 9,706 | 28.7% | 0.814 | 0.965 |
+ * | outer 1.15–1.40 | 9,376 | 32.0% | 0.895 | 0.998 |
+ * | outer 1.40–1.55 | 2,995 | 50.5% | 0.955 | 1.000 |
+ * | fringe 1.55–1.70 | 405 | 74.9% | 0.978 | 1.000 |
+ *
+ * ⭐ **The weight term dominates exactly where the fade was ever visible, and
+ * the floor dominates only where it was not.** A tip keeps its fade while its
+ * own strand body sits above the floor — `w` > 0.608 — which is the interior
+ * and the pre-rim band, where two thirds and four tenths of all points are
+ * inside a fade and where the fade survives at 0.90 depth against 0.75. In the
+ * outer field the fade dies, and it was already dead: 0.955 and 0.978 are
+ * 4.5% and 2.2% steps, and {@link POPULATION_END_TAPER} predicted this in
+ * words before it was measured — *in the open fringe, where the weight is
+ * already low, the tip barely moves at all*, because the SIZE floor bounded it
+ * long before this one did. Endings still fade. They fade where an ending is
+ * something you can see.
+ *
+ * ⚠️ The alternative the sweep considered and rejected — flooring BEFORE the
+ * end-taper multiplication, so a tip fades from the floor rather than to it —
+ * is not available without a fibre-only end treatment, and
+ * {@link POPULATION_END_TAPER} forbids one in as many words. The fade is baked
+ * into the shared weight at placement precisely so no draw can treat an end on
+ * its own, and recovering the base weight from the faded one is not possible
+ * downstream of that.
+ */
+export const POPULATION_STROKE_TAPER_FLOOR = 0.75;
+
+/** The floor in the unit the shaders interpolate in. Both stroke classes read
+ *  it from here — the hairline's vertex stage bakes this exact literal, the
+ *  capsule's instance data calls the function below — so there is one number
+ *  and no drift is expressible. */
+const STROKE_TAPER_FLOOR_RATIO = Math.sqrt(POPULATION_STROKE_TAPER_FLOOR);
+
+/**
+ * The size ratio a STROKE draws at: {@link populationFibreSizeRatio}, floored.
+ *
+ * Applied to the ratio rather than to its square because that is the unit
+ * every stroke in this layer interpolates in, and `max(r, sqrt(F))^2` is
+ * `max(r^2, F)` exactly — the floor commutes with the square, so flooring
+ * here is flooring the taper and there is no second law to keep in step.
+ */
+export function populationStrokeSizeRatio(weight: number): number {
+  return Math.max(populationFibreSizeRatio(weight), STROKE_TAPER_FLOOR_RATIO);
+}
+
+/** {@link populationFibreTaper} for a stroke — the bead's law with
+ *  {@link POPULATION_STROKE_TAPER_FLOOR} under it. */
+export function populationStrokeTaper(weight: number): number {
+  const ratio = populationStrokeSizeRatio(weight);
+  return ratio * ratio;
 }
 
 /** The fibre's emitted alpha for one amount-curve `gain`. The same curve the
@@ -794,8 +986,10 @@ export function makePopulationFibreMaterial(): THREE.ShaderMaterial {
       // backbone half of this partition reads the same constant, so the two
       // widths are one colour as well as one light.
       uColor: { value: new THREE.Color(...POPULATION_STROKE_COLOR) },
-      // The point material's own two, read here so the stroke's taper can
-      // never drift from the bead's — see `populationFibreTaper`.
+      // The point material's own two, read here so the stroke's taper is the
+      // bead's curve and not a second one — see `populationFibreTaper`. What
+      // it no longer is, below `POPULATION_STROKE_TAPER_FLOOR`, is the bead's
+      // VALUE: the vertex stage bounds it, and only from below.
       uSizeMin: { value: POPULATION_FIELD_POINT_SIZE_MIN },
       uSizeMax: { value: POPULATION_FIELD_POINT_SIZE_MAX },
     },
@@ -829,7 +1023,15 @@ export function makePopulationFibreMaterial(): THREE.ShaderMaterial {
 
       void main() {
         float weight = clamp(aWeight, 0.0, 1.0);
-        vSizeRatio = mix(uSizeMin, uSizeMax, weight) / uSizeMax;
+        // POPULATION_STROKE_TAPER_FLOOR, in the unit this varying carries:
+        // the floor commutes with the square, so bounding the ratio by
+        // sqrt(F) is bounding the taper by F. The BEAD does not read this --
+        // the stroke:bead ratio is deliberately no longer constant below the
+        // floor, and only in the direction that makes the stroke the figure.
+        vSizeRatio = max(
+          mix(uSizeMin, uSizeMax, weight) / uSizeMax,
+          ${STROKE_TAPER_FLOOR_RATIO}
+        );
         gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
       }
     `,
@@ -843,13 +1045,15 @@ export function makePopulationFibreMaterial(): THREE.ShaderMaterial {
 
       void main() {
         // The point's own footprint-area falloff -- the square of the size
-        // ratio -- so stroke and bead dim together and their RATIO never
-        // moves along the taper. No endpoint falloff and no brightening at a
+        // ratio -- so stroke and bead dim together down to
+        // POPULATION_STROKE_TAPER_FLOOR, below which the stroke stops dimming
+        // and the bead carries on. That break is one-directional by
+        // construction: it can only make the stroke brighter relative to its
+        // beads, never fainter, so "a node with edges radiating from it" is
+        // still unreachable. No endpoint falloff and no brightening at a
         // vertex: the taper is a property of the tissue, and both ends of a
-        // segment sit in tissue. A halo point must never look like a node
-        // with edges radiating from it — the filament is the figure, and
-        // where two of them cross, accumulation is what makes the crossing
-        // brighter.
+        // segment sit in tissue. The filament is the figure, and where two of
+        // them cross, accumulation is what makes the crossing brighter.
         float a = uEmission * vSizeRatio * vSizeRatio;
         // The vein hue at the layer's red ceiling: same red as the bead
         // beside it, a fifth of its green. Bounded accumulation converges
@@ -957,9 +1161,19 @@ const BACKBONE_OUTPUT = `
 			// carries the perspective-correct interpolation of the endpoint SIZE
 			// RATIO that the capsule patch already computes; squaring it here —
 			// rather than interpolating an already-squared value — is what makes
-			// the result exactly \`populationFibreTaper\` of the interpolated
+			// the result exactly \`populationStrokeTaper\` of the interpolated
 			// weight, because mix() is linear. \`alpha\` is the stock cap test's
 			// coverage, which is 1 inside a solid capsule.
+			//
+			// The floor arrives already applied, in the buffer: this class
+			// computes its ratio on the CPU (\`populationBackboneInstanceData\`)
+			// where the hairline computes it in a vertex stage, so each half
+			// bounds it where it makes it, off the one
+			// \`POPULATION_STROKE_TAPER_FLOOR\`. There is no per-fragment clamp
+			// here for the same reason there is none there — the floor is a
+			// property of the tissue weight at an endpoint, not of position
+			// along a segment, and clamping after the interpolation would be a
+			// varying that changes shape mid-stroke.
 			float haloAlpha = uEmission * diffuseColor.r * diffuseColor.r * alpha;
 			// Written raw and NOT colour-managed, for the reason the point and
 			// fibre materials are: a converted twin of this stroke would be a
@@ -998,8 +1212,19 @@ const BACKBONE_COLORSPACE_ANCHOR = '#include <colorspace_fragment>';
  * fade exactly as the hairlines do — wider, never brighter. And the per-deposit
  * alpha is not merely bounded by the hairline's, it IS the hairline's: this
  * material introduces no emission constant, it reads
- * {@link populationFibreEmissionForGain}. Chroma retention is a function of
- * per-deposit alpha, so it cannot move; width is the visibility channel.
+ * {@link populationFibreEmissionForGain}, and it reads the same
+ * {@link POPULATION_STROKE_TAPER_FLOOR} through
+ * {@link populationStrokeSizeRatio}.
+ *
+ * ⚠️ That last sentence used to end *chroma retention is a function of
+ * per-deposit alpha, so it cannot move; width is the visibility channel*.
+ * Width was the visibility channel for as long as level was the one thing the
+ * layer would not spend, and 2026-08-20's third verdict is what ended that:
+ * width had already gone 1 -> 1.4 -> 1.6 device px and the fringe still read
+ * as dots. Level moves now, both halves of the partition together, and the
+ * chroma it costs was measured rather than assumed — 1.4% of the mixed band's
+ * C/L, because this panel accumulates ~2 deposits per covered pixel and not
+ * the six the retention tables were written against.
  */
 export function makePopulationBackboneMaterial(): LineMaterial {
   const material = new LineMaterial({

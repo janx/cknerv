@@ -23,7 +23,9 @@ import {
 } from '../../src/components/CellPopulationField';
 import {
   populationFibreTaper,
+  populationStrokeTaper,
   POPULATION_BACKBONE_WIDTH_PX,
+  POPULATION_STROKE_TAPER_FLOOR,
 } from '../../src/materials/populationFieldMaterial';
 import { SCREEN_CAPSULE_TRIANGLES_PER_SEGMENT } from '../../src/geometry/screenSpaceCapsuleLine';
 import { QUALITY_PRESETS } from '../../src/tweaks/qualityPresets';
@@ -359,7 +361,7 @@ describe('both index sets stay prefix-trimmable', () => {
 });
 
 describe('the capsule carries the hairline own taper', () => {
-  it('ends every capsule at populationFibreTaper of the shared weight', () => {
+  it('ends every capsule at populationStrokeTaper of the shared weight', () => {
     const snapshot = {
       positions: PLACEMENT.positions,
       segments: PLACEMENT.segments,
@@ -384,8 +386,15 @@ describe('the capsule carries the hairline own taper', () => {
     // what the buffer holds, and it must equal the hairlines' taper of the
     // same shared weight — same fade at a strand's tip, same fade in the
     // fringe. Wider, never brighter.
+    //
+    // ⭐ The law is `populationStrokeTaper` and no longer
+    // `populationFibreTaper`: this class has no vertex stage of its own, so
+    // POPULATION_STROKE_TAPER_FLOOR reaches it here, in the buffer, where the
+    // hairline takes it in `max()` in GLSL. Asserting it against the SHARED
+    // helper is what makes the two halves one law rather than two.
     let worstTaper = 0;
     let worstPosition = 0;
+    let floored = 0;
     for (let s = 0; s < PARTITION.backboneCount; s += 1) {
       const a = PARTITION.backbone[s * 2];
       const b = PARTITION.backbone[s * 2 + 1];
@@ -393,9 +402,23 @@ describe('the capsule carries the hairline own taper', () => {
       const end = instances.taper[s * 2 + 1];
       worstTaper = Math.max(
         worstTaper,
-        Math.abs(start * start - populationFibreTaper(PLACEMENT.weights[a])),
-        Math.abs(end * end - populationFibreTaper(PLACEMENT.weights[b])),
+        Math.abs(start * start - populationStrokeTaper(PLACEMENT.weights[a])),
+        Math.abs(end * end - populationStrokeTaper(PLACEMENT.weights[b])),
       );
+      // ...and never under it, at either end, on any segment. The tolerance
+      // is float32's and not slack: this buffer IS a Float32Array, so
+      // `sqrt(0.75)` reaches the shader as 0.86602539 and squares to
+      // 0.74999997. That is the number the GPU works with.
+      expect(start * start).toBeGreaterThanOrEqual(
+        POPULATION_STROKE_TAPER_FLOOR - 1e-6,
+      );
+      expect(end * end).toBeGreaterThanOrEqual(
+        POPULATION_STROKE_TAPER_FLOOR - 1e-6,
+      );
+      if (populationFibreTaper(PLACEMENT.weights[a])
+        < POPULATION_STROKE_TAPER_FLOOR) {
+        floored += 1;
+      }
       // Positions come from the SHARED buffer, unchanged — the capsule is the
       // same stroke the hairline was, at a different width.
       for (let k = 0; k < 3; k += 1) {
@@ -410,6 +433,10 @@ describe('the capsule carries the hairline own taper', () => {
     }
     expect(worstTaper).toBeLessThan(1e-6);
     expect(worstPosition).toBe(0);
+    // The floor is doing work on this placement rather than sitting under it:
+    // most promoted endpoints are thin-tissue, which is where the strands the
+    // fringe verdict is about live.
+    expect(floored).toBeGreaterThan(PARTITION.backboneCount * 0.5);
   });
 
   it('sits on the width ladder below the bridge', () => {

@@ -87,6 +87,16 @@ export const BRIDGE_WIDTH_RATIO = 0.8;
  * (measured range 0.43–1.0 over the placement), so a stroke landing on a thin
  * part of the halo ends thinner than one landing on a thick part — the
  * halo's own taper law, reaching across the register boundary.
+ *
+ * ⚠️ It is the BEAD's half of that law, on purpose, and the divergence is
+ * deliberate rather than missed. On 2026-08-20 the halo's own two stroke
+ * classes gained `POPULATION_STROKE_TAPER_FLOOR`, which lifts a thin-tissue
+ * stroke to 0.75 where this reads 0.43 — a visibility floor for marks the
+ * fringe was losing under the eye's threshold. This class is not in that
+ * regime: it is 2.0 CSS px in the MIXED band, the widest rung below the mesh,
+ * and it is the one stroke here that must arrive at the halo looking like it
+ * is thinning INTO it. Flooring the far end would flatten exactly the ramp
+ * this constant exists to draw.
  */
 export const BRIDGE_FAR_END_ENERGY = TWIG_MIN;
 

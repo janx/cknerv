@@ -458,6 +458,24 @@ export function populationPointWeight(
  * invariant along this ramp for the same reason it is invariant along the
  * tissue taper, and no fibre-only end treatment may ever be added on top.
  *
+ * ⭐ **The invariant-ratio half of that stopped being true on 2026-08-20 and
+ * the ban did not.** `POPULATION_STROKE_TAPER_FLOOR` bounds the stroke classes
+ * at 0.75 of the taper, so below that weight the stroke stops dimming and the
+ * bead carries on — the ratio rises rather than holding. That is the safe
+ * direction and the only one available to a floor on the stroke side: it can
+ * make a connector brighter than its beads, never fainter, so the shape this
+ * paragraph forbids stays unreachable. The ban on a fibre-only end treatment
+ * is what survives intact, and it is load-bearing again — flooring BEFORE this
+ * ramp, so that a tip fades from the floor rather than to it, was considered
+ * for exactly that round and is not available, because the fade lives in the
+ * shared weight and no draw downstream can recover the base weight from it.
+ * Measured consequence, by differencing two full placements: the fade keeps
+ * 0.90 of its depth where a strand body sits above the floor (the interior and
+ * the pre-rim band, two thirds and four tenths of all points) and goes to
+ * 1.000 in the outer field, where it already measured 0.955 and 0.978 — which
+ * is the paragraph below saying *in the open fringe the tip barely moves at
+ * all*, arriving as a number.
+ *
  * Three points, not more: at {@link POPULATION_STREAMLINE_STEP} that is 3.75
  * world units of fade against a median drawn run of 7.50, and a fourth would
  * be fading more of the layer than it leaves. Measured on the shipped

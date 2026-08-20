@@ -10,6 +10,8 @@ import { makeScreenSpaceCapsuleGeometry } from '../../src/geometry/screenSpaceCa
 import {
   populationFibreTaper,
   populationPointSizeForWeight,
+  populationStrokeTaper,
+  POPULATION_STROKE_TAPER_FLOOR,
 } from '../../src/materials/populationFieldMaterial';
 
 function read(path: string): string {
@@ -216,19 +218,44 @@ describe('two static buffers and three draws', () => {
     // alpha law and the point's flux law are the same curve, so the two dim
     // together everywhere and no weight makes the bead stand out against its
     // own stroke. Everything that varies ALONG a segment is still forbidden.
+    //
+    // ⭐ 2026-08-20: the ratio is no longer CONSTANT, and the rule survives
+    // that intact because it was never a rule about constancy. It forbids
+    // `bead > stroke`. `POPULATION_STROKE_TAPER_FLOOR` bounds the stroke side
+    // and only the stroke side, so the ratio can move in one direction only —
+    // up, as the tissue thins, to 1.733 at weight zero. The shape this test
+    // exists to catch is still unreachable, and it is now asserted as the
+    // INEQUALITY it always was rather than as the equality that happened to
+    // imply it.
     const fibre = MATERIAL_SOURCE.slice(
       MATERIAL_SOURCE.indexOf('makePopulationFibreMaterial'),
     );
     expect(fibre).toContain('gl_FragColor = vec4(tint * a, a);');
     expect(fibre).not.toContain('gl_PointCoord');
+    let ratio = 0;
     for (let w = 0; w <= 1.0001; w += 0.05) {
       const bead = (populationPointSizeForWeight(w)
         / populationPointSizeForWeight(1)) ** 2;
+      // The bead's own law is untouched — this is still the same curve.
       expect(populationFibreTaper(w)).toBeCloseTo(bead, 12);
+      // A stroke never draws under its bead's share, at any weight...
+      expect(populationStrokeTaper(w)).toBeGreaterThanOrEqual(bead - 1e-12);
+      // ...and the gap only ever widens as the tissue thins, so a bead can
+      // never pull ahead of the stroke it sits on.
+      const here = populationStrokeTaper(w) / bead;
+      if (w > 0) expect(here).toBeLessThanOrEqual(ratio + 1e-12);
+      ratio = here;
     }
     // A real taper on both, not a pair of constants that trivially agree.
     expect(populationFibreTaper(0)).toBeLessThan(0.5);
     expect(populationFibreTaper(1)).toBe(1);
+    // The stroke keeps a real taper too — the floor bounds it, it does not
+    // flatten it. Dense tissue still draws a third brighter than the floor.
+    expect(populationStrokeTaper(0))
+      .toBeCloseTo(POPULATION_STROKE_TAPER_FLOOR, 12);
+    expect(populationStrokeTaper(1)).toBe(1);
+    expect(populationStrokeTaper(1) / populationStrokeTaper(0))
+      .toBeGreaterThan(1.3);
     // The only varying is that taper, and it is a property of the tissue at
     // each END — not of position along the segment.
     expect(fibre.match(/varying\s+\w+\s+(\w+);/g) ?? [])

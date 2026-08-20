@@ -32,7 +32,7 @@ import {
   makePopulationPointMaterial,
   populationEmissionForGain,
   populationFibreEmissionForGain,
-  populationFibreSizeRatio,
+  populationStrokeSizeRatio,
 } from '../materials/populationFieldMaterial';
 import {
   pointSpriteDeviceViewportHeight,
@@ -92,12 +92,20 @@ export interface PopulationBackboneInstances {
  * What the second buffer carries is the size RATIO, not the taper. The shader
  * squares the interpolated value, because mix() is linear and interpolating an
  * already-squared taper would dim the middle of every segment — the fibre
- * shader has always done it this way, and `populationFibreSizeRatio` is that
+ * shader has always done it this way, and `populationStrokeSizeRatio` is that
  * number named so this class cannot drift from it.
+ *
+ * ⭐ That helper is also where `POPULATION_STROKE_TAPER_FLOOR` reaches this
+ * half of the partition. The hairline bounds its ratio in a vertex stage; this
+ * class has no vertex stage of its own to bound it in — the capsule patch
+ * reads the ratio straight out of `instanceColorStart/End` — so the bound is
+ * applied here, at the one place this class computes the number. One floor,
+ * two draws, and the bead's own `populationFibreSizeRatio` untouched beside
+ * them.
  *
  * Pure, and exported for the test that checks the second half of that
  * sentence: the taper at each end of a capsule must equal
- * `populationFibreTaper` of the weight the hairlines share.
+ * `populationStrokeTaper` of the weight the hairlines share.
  */
 export function populationBackboneInstanceData(
   placement: PopulationPlacementSnapshot,
@@ -114,8 +122,8 @@ export function populationBackboneInstanceData(
     endpoints[s * 6 + 3] = placement.positions[b * 3];
     endpoints[s * 6 + 4] = placement.positions[b * 3 + 1];
     endpoints[s * 6 + 5] = placement.positions[b * 3 + 2];
-    taper[s * 2] = populationFibreSizeRatio(placement.weights[a]);
-    taper[s * 2 + 1] = populationFibreSizeRatio(placement.weights[b]);
+    taper[s * 2] = populationStrokeSizeRatio(placement.weights[a]);
+    taper[s * 2 + 1] = populationStrokeSizeRatio(placement.weights[b]);
   }
   return { endpoints, taper };
 }
