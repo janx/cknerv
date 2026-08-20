@@ -528,17 +528,38 @@ silhouette is not acceptable.
 Only `pulseLinks` newer than the local cursor are eligible for live animation.
 For each link, the planner:
 
-1. indexes staged Cells by the parent transaction hashes referenced by the
-   link; only sources present in the living display graph can produce a route;
-2. chooses at most two surviving sibling sources per parent;
+1. takes the link's input-side endpoint anchors — every anchor whose id is not
+   one of this transaction's newborns — in the server's wire order, at most two
+   per link;
+2. carries each origin BY VALUE, as the consumed cell's own world address, and
+   asks the per-batch entry index which live staged node that address enters
+   the fabric at (the anchor's own surviving adjacency answers first, when the
+   graph still holds a corpse it has not pruned);
 3. uses the link's real `to_ids` as destinations;
-4. performs one breadth-first search per source over the staged display graph;
+4. performs one breadth-first search per origin over the staged display graph;
 5. rejects missing, disconnected, or longer-than-40-hop paths; and
 6. emits at most six pulses per link and 128 planned pulses per batch.
 
-Timing is deterministic per transaction/source/destination: base traversal is
-33 ms per hop (`HOP_MS_BASE`), scaled into `0.7..1.4` of that value, with up to
-300 ms of start jitter. The default active population is 256 pulses before the quality particle
+Timing is deterministic per transaction/consumed anchor/destination — the entry
+node is deliberately excluded, since it follows stage churn and the same spend
+must not re-time itself between two clients. Base traversal is 33 ms per hop
+(`HOP_MS_BASE`), scaled into `0.7..1.4` of that value, with up to 300 ms of
+start jitter.
+
+A packet's first leg is a ghost: it leaves the consumed cell's address, which
+no fabric edge reaches and no display map holds, and lands on the entry node.
+Its duration is one hop time scaled by the leg's length in median fabric edges
+(1.89 world units), clamped to one-to-four hops so a far derived origin
+launches rather than crawls; every later hop boundary shifts by it, including
+the terminal arrival the write seal is stamped from. Both of the ghost's ends
+are values, which is what makes it the one leg the live graph cannot
+extinguish — the real hops keep the fibre check unchanged. A route whose entry
+node IS its destination therefore still carries a packet, on the ghost alone.
+
+Departure is phase-locked to the origin's own fade: the base delay is the
+corpse-fade onset minus the jitter's midpoint, so the median packet leaves the
+instant the cell it consumed begins to dim, and the jitter band straddles that
+moment instead of trailing it. The default active population is 256 pulses before the quality particle
 multiplier, backed by a 1,024-entry spike pool. Saturation drops bounded visual
 work; it never manufactures a cheaper route.
 
@@ -559,9 +580,9 @@ claim about actual unobserved peers.
 | `0.3..1.7 s` | Local receive point, clamped into the flood's hero band |
 | `local receive - 0.4 s` | Gather: the worker holds still while its glyph tightens and brightens, when lead time exists |
 | `local receive` | The glyph rises toward the Cell field, contracting and heating as it goes |
-| `local receive + 1.0 s` | Contact: the glyph is released as a front; live Cell-to-Cell pulses may start |
+| `local receive + 1.0 s` | Contact: the glyph is released as a front |
 | `local receive + 2.2 s` | Contact window closes and the Cell ledger acknowledgement completes |
-| `local receive + 2.35 s` | Exact touched-Cell highlight uses the additional 150 ms readability offset |
+| `local receive + 2.35 s` | One acknowledgement instant, after an additional 150 ms readability offset: the exact touched-Cell highlight, each newborn's arrival, each corpse's fade — and the median live packet's departure from the corpse it consumed |
 
 The handoff is one idea in three beats: compression, then release. The glyph a
 worker lifts and the front it releases into the field are the same interrupted
@@ -639,9 +660,12 @@ a question about the current graph, answered as before, with the
 surviving-sibling route kept honestly labelled as a lineage witness. The panel
 names the spent inputs no route departs from above the ledger of what carried
 the transaction, and says nothing when the routed evidence already is the
-inputs. Routing from the anchors' own positions is deliberately not done: a
-pulse addresses Cells by id and the renderer resolves geometry from the
-display map, so a spent input is not a place a pulse can start.
+inputs. A live pulse does depart from the anchor's own position: the origin is a world
+address carried by value rather than an id, and the per-batch entry index says
+which live staged node that address enters the fabric at, so every path node
+remains a live staged cell. Recall is unchanged — it routes between retained
+Cells by id, and an identity-only anchor still names a place a packet may leave
+from, never evidence of what was spent.
 
 ### 9.4 Reorg ordering
 

@@ -34,18 +34,14 @@ export const BLOCK_COMMIT_DELAY_S = BEAM_GROW_DUR_S + BEAM_STRIKE_DUR_S;
  * BLOCK_COMMIT_DELAY_S. */
 export const SHOCKWAVE_FIRE_DELAY_S = BLOCK_COMMIT_DELAY_S;
 
-/**
- * Delay from the raw peer-network block pulse until the local protocol carrier
- * reaches the Cell field. Live Cell-to-Cell nerve traffic must not start before
- * this boundary: the local node first receives the block, then the carrier
- * crosses into the field.
- */
-export function cellFieldContactDelayS(localReceiveDelayS: number): number {
-  const receiveDelayS = Number.isFinite(localReceiveDelayS)
-    ? Math.max(0, localReceiveDelayS)
-    : 0;
-  return receiveDelayS + BEAM_GROW_DUR_S;
-}
+/** Cell birth/death visual timing offset (s) — applied to each cell's
+ *  born/death scene timestamp so the shader starts the birth scale-up (or the
+ *  death fade-out) at the end of the delivery/commit choreography, plus 150 ms
+ *  of readability. Every ledger-visible acknowledgement of a block lands here:
+ *  the touched-Cell highlight, the newborn's arrival, and the corpse's fade.
+ *  Lives with the timeline it is derived from rather than with the one
+ *  component that first needed it — the pulse layer phase-locks to it too. */
+export const BLOCK_HIGHLIGHT_DELAY_S = BLOCK_COMMIT_DELAY_S + 0.15;
 
 // Single calculation path: the Cell commit delay is derived, not free.
 // If anyone retunes one of the beam phases they must keep the identity

@@ -107,7 +107,6 @@ export {
   writeCellBuffers,
   writeFlashSlots,
   writeCellInspectionTargets,
-  BLOCK_HIGHLIGHT_DELAY_S,
   type CellBufferTargets,
 } from './components/CellGalaxy';
 export {
@@ -227,6 +226,7 @@ export {
   type PulseOrigin,
   type PulsePlanningOptions,
 } from './nerve/pulseRunner';
+export { livePulseDepartureDelayS } from './nerve/pulseBatch';
 export {
   planConsensusMemoryTrace,
   canRecallConsensusMemory,

@@ -183,6 +183,12 @@ export interface ActiveHop {
   frontT: number;
   /** Optional travel direction without swapping the route-order Bezier. */
   direction?: 1 | -1;
+  /** By-value endpoint overrides, used where an end has no live Cell to
+   *  resolve: the ghost leg a metabolic packet departs on starts at the
+   *  address of the cell that died. Supplying one is what makes that leg
+   *  unextinguishable — the display map cannot take a value away. */
+  fromPos?: Vec3;
+  toPos?: Vec3;
   /** Overall brightness multiplier for this hop. Older trail hops
    *  get smaller values so the cascade reads as a fading wake. */
   brightness: number;
@@ -2503,14 +2509,18 @@ export default function NeuralFabric({
         // not continue doing Cell lookups and Bezier sampling for data that
         // pushSegment would discard.
         if (layer.count >= layerCapacity) return;
-        const a = cells.get(hop.fromCellId);
-        const c = cells.get(hop.toCellId);
+        // An end supplied by value wins over the display map: a metabolic
+        // packet's ghost leg leaves a cell that has already died, an address
+        // no id can resolve. The ids still seed the curve, so a ghost keeps
+        // one bow for its whole flight.
+        const a = hop.fromPos ?? cells.get(hop.fromCellId)?.pos_seed;
+        const c = hop.toPos ?? cells.get(hop.toCellId)?.pos_seed;
         if (!a || !c) return;
         const seed = fabricEdgeSeed(hop.fromCellId, hop.toCellId);
         bezierControlInto(
           ctrl,
-          a.pos_seed[0], a.pos_seed[1], a.pos_seed[2],
-          c.pos_seed[0], c.pos_seed[1], c.pos_seed[2],
+          a[0], a[1], a[2],
+          c[0], c[1], c[2],
           seed,
         );
         // Walk the hop's Bezier in N+1 sample points; for each pair
@@ -2522,18 +2532,18 @@ export default function NeuralFabric({
         const samplesPerHop = hop.mode === 'lock'
           ? ROUTE_HOP_PULSE_SAMPLES_PER_HOP
           : activeSamplesPerHop;
-        let prevX = direction === 1 ? a.pos_seed[0] : c.pos_seed[0];
-        let prevY = direction === 1 ? a.pos_seed[1] : c.pos_seed[1];
-        let prevZ = direction === 1 ? a.pos_seed[2] : c.pos_seed[2];
+        let prevX = direction === 1 ? a[0] : c[0];
+        let prevY = direction === 1 ? a[1] : c[1];
+        let prevZ = direction === 1 ? a[2] : c[2];
         for (let i = 1; i <= samplesPerHop; i++) {
           if (layer.count >= layerCapacity) break;
           const travelT = i / samplesPerHop;
           const curveT = direction === 1 ? travelT : 1 - travelT;
           bezierAtInto(
             sample,
-            a.pos_seed[0], a.pos_seed[1], a.pos_seed[2],
+            a[0], a[1], a[2],
             ctrl[0], ctrl[1], ctrl[2],
-            c.pos_seed[0], c.pos_seed[1], c.pos_seed[2],
+            c[0], c[1], c[2],
             curveT,
           );
           // Midpoint in travel space, independent of Bezier sampling direction.

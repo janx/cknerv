@@ -8,14 +8,19 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { fromCellsSnapshot } from '@cknerv/cache';
 import type { Cell, CellLink } from '@cknerv/types';
 import type { NeighborGraph } from '../../src/geometry/neighborGraph';
-import type { PulsePlanningOptions } from '../../src/nerve/pulseRunner';
+import {
+  PULSE_START_JITTER_MS,
+  type PulsePlanningOptions,
+} from '../../src/nerve/pulseRunner';
 import {
   evictPulseOverflow,
+  livePulseDepartureDelayS,
   planLinkBatch,
   prunePulsesFromBlock,
   scheduleLivePulseStartSec,
   tickBlockIfAdvanced,
 } from '../../src/nerve/pulseBatch';
+import { BLOCK_HIGHLIGHT_DELAY_S } from '../../src/ui/topologyConstants';
 import { pulseStats, resetPulseStats, snapshotPulseStats } from '../../src/nerve/pulseStats';
 
 beforeEach(() => resetPulseStats());
@@ -578,6 +583,33 @@ describe('evictPulseOverflow', () => {
     const pool = [mkPulse(1, 'rim'), mkPulse(2, 'rim'), mkPulse(3), mkPulse(4, 'anchored')];
     const kept = evictPulseOverflow(pool, 2);
     expect(kept.map((p) => p.linkSeq)).toEqual([2, 4]);
+  });
+});
+
+describe('livePulseDepartureDelayS', () => {
+  const MEDIAN_JITTER_S = PULSE_START_JITTER_MS / 2000;
+
+  it('puts the median departure on the corpse fade onset', () => {
+    // The fade starts BLOCK_HIGHLIGHT_DELAY_S after the block reaches the
+    // local field; a packet then waits its own jitter. Half the band leaves
+    // before the dimming, half after — not the whole band after it.
+    const receiveDelayS = 0.6;
+    const base = livePulseDepartureDelayS(receiveDelayS);
+    expect(base + MEDIAN_JITTER_S).toBeCloseTo(
+      receiveDelayS + BLOCK_HIGHLIGHT_DELAY_S,
+      9,
+    );
+    expect(base).toBeLessThan(receiveDelayS + BLOCK_HIGHLIGHT_DELAY_S);
+    expect(base + PULSE_START_JITTER_MS / 1000).toBeGreaterThan(
+      receiveDelayS + BLOCK_HIGHLIGHT_DELAY_S,
+    );
+  });
+
+  it('does not let an invalid receive delay move the phase', () => {
+    const bare = BLOCK_HIGHLIGHT_DELAY_S - MEDIAN_JITTER_S;
+    expect(livePulseDepartureDelayS(0)).toBeCloseTo(bare, 9);
+    expect(livePulseDepartureDelayS(-1)).toBeCloseTo(bare, 9);
+    expect(livePulseDepartureDelayS(Number.NaN)).toBeCloseTo(bare, 9);
   });
 });
 

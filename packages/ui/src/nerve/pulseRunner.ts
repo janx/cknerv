@@ -30,6 +30,11 @@ import type { PulseStatsSink, RescueKind } from './pulseStats';
  *  73 ms/hop dropped the median pulse from 55.1 to 24.6 world units per
  *  second: the same journey, crawling. 33 ms restores 55.0. */
 export const HOP_MS_BASE = 33;
+/** The fabric scale `HOP_MS_BASE` is pinned to, in world units, published so
+ *  a leg that rides no fabric edge — the ghost hop from a dead cell's address
+ *  to its entry node — can still be timed in the fabric's own stride instead
+ *  of a second, independently-drifting speed. */
+export const MEDIAN_FABRIC_EDGE_LEN = 1.89;
 /** Maximum extra delay (ms) injected before a pulse fires. Each
  *  pulse picks a random offset in [0, this) so siblings of one
  *  cascade don't all start simultaneously. */

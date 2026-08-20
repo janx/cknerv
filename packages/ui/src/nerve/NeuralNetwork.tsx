@@ -67,7 +67,20 @@ import {
   resolveStagedCell,
   syncCellRenderSet,
 } from '../geometry/cellRenderSet';
-import { type Pulse, type PulsePlanningOptions } from './pulseRunner';
+import {
+  type Pulse,
+  type PulseOrigin,
+  type PulsePlanningOptions,
+} from './pulseRunner';
+import {
+  ghostLegDurationMs,
+  makePulseLegHead,
+  PULSE_LEG_GHOST,
+  pulseLegArrivalMs,
+  pulseLegExtinguishes,
+  pulseLegHeadInto,
+  pulseTerminalArrivalMs,
+} from './pulseSchedule';
 import {
   evictPulseOverflow,
   planLinkBatch,
@@ -284,6 +297,46 @@ interface ActivePulse extends Pulse {
   /** ② Highest hop index already reinforced, so each edge a pulse crosses
    *  bumps its vein's usage exactly once (the head hop only advances). */
   lastReinforcedHop?: number;
+  /** Leading `origin.pos → path[0]` leg, resolved once at admission. Absent
+   *  on pulses with no origin (memory traces, rim rescues), which then keep
+   *  the pre-ghost schedule byte for byte. */
+  ghost?: ActivePulseGhost;
+}
+
+/** The ghost leg a metabolic packet departs on. BOTH ends are values: the
+ *  origin cell is already dead, and re-reading `path[0]` from a stage that
+ *  may have dropped it would let the one leg with no recovery vanish
+ *  mid-flight. `path[0]`'s address never moves, so caching it changes
+ *  nothing but the failure mode. */
+interface ActivePulseGhost {
+  /** Duration (ms), the fabric's own stride scaled by the leg's length. */
+  ms: number;
+  /** The cell this packet left. Held here rather than read back off the
+   *  pulse so that "a ghost has an origin" is a fact of the type. */
+  origin: PulseOrigin;
+  /** `path[0]`'s world address at admission. */
+  to: Vec3;
+}
+
+/** Resolve a planned pulse's ghost leg against the map its route was planned
+ *  on. Absent when the pulse names no origin; absent too if `path[0]` is not
+ *  in that map, in which case the packet flies the pre-ghost schedule rather
+ *  than one built on a guessed address. */
+function resolvePulseGhost(
+  pulse: Pulse,
+  cells: ReadonlyMap<number, Cell>,
+): ActivePulseGhost | undefined {
+  const origin = pulse.origin;
+  if (!origin) return undefined;
+  const entry = cells.get(pulse.path[0])?.pos_seed;
+  if (!entry) return undefined;
+  const to: Vec3 = [entry[0], entry[1], entry[2]];
+  const ghostLen = Math.hypot(
+    to[0] - origin.pos[0],
+    to[1] - origin.pos[1],
+    to[2] - origin.pos[2],
+  );
+  return { ms: ghostLegDurationMs(pulse.hopMs, ghostLen), origin, to };
 }
 
 export default function NeuralNetwork({
@@ -850,8 +903,17 @@ export default function NeuralNetwork({
       simClock.elapsedSec,
       livePulseDelayS,
     );
+    // The only site that admits origin-bearing pulses, so the only site that
+    // has to resolve a ghost. `displayCellsRef` is the map the routes were
+    // planned against, so `path[0]` is present here by construction.
+    const admittedCells = displayCellsRef.current;
     for (const p of planned) {
-      pulsesRef.current.push({ ...p, startSec, mode: 'live' });
+      pulsesRef.current.push({
+        ...p,
+        startSec,
+        mode: 'live',
+        ghost: resolvePulseGhost(p, admittedCells),
+      });
     }
     // Soft cap — drop oldest if we're way over, shedding rescue pulses
     // last (each is some block's only light).
@@ -1339,6 +1401,9 @@ export default function NeuralNetwork({
   const spikePool = useMemo(() => new SpikePool(SPIKE_POOL_CAPACITY), []);
   const spikeControl = useMemo(() => new Float32Array(3), []);
   const spikePosition = useMemo(() => new Float32Array(3), []);
+  // One scratch head for the whole walk: it touches every active pulse each
+  // frame, and a per-pulse result object would allocate at frame rate.
+  const legHead = useMemo(() => makePulseLegHead(), []);
   useEffect(() => () => spikePool.dispose(), [spikePool]);
 
   // NeuralFabric hands us imperative draw handles via onReady.
@@ -1599,10 +1664,9 @@ export default function NeuralNetwork({
       const rawElapsedMs = (now - pulse.startSec) * 1000;
       const elapsedMs = rawElapsedMs - pulse.startDelayMs;
       const totalHops = pulse.path.length - 1; // edges, not nodes
-      // A ghost-origin pulse routes to its own entry node (path.length === 1)
-      // and carries no graph edge: it is already at its destination once its
-      // delay elapses, and must never index path[-1]. T6 renders its one
-      // real segment, origin.pos → path[0].
+      // An empty path is not renderable at all; a one-node path is, because a
+      // ghost carries it (the entry node IS the destination). Never index
+      // path[-1] either way.
       if (totalHops < 0) continue;
       // Pulse hasn't started yet (still in its jitter delay).
       if (elapsedMs < 0) {
@@ -1613,15 +1677,29 @@ export default function NeuralNetwork({
         continue;
       }
       const hopMs = pulse.hopMs;
-      const hopFloat = elapsedMs / hopMs;
-      const headHop = Math.floor(hopFloat);
-      const subT = hopFloat - headHop;
+      // The ghost is part of the journey, not an overlay: every hop boundary
+      // and the terminal arrival shift by its duration.
+      const ghost = pulse.ghost;
+      const ghostMs = ghost?.ms ?? 0;
+      const head = pulseLegHeadInto(
+        legHead,
+        totalHops,
+        hopMs,
+        ghostMs,
+        elapsedMs,
+      );
+      const headHop = head.leg;
+      const subT = head.subT;
 
       // Has the pulse arrived at the terminal cell?
-      if (headHop >= totalHops) {
+      if (head.arrived) {
         const term = pulse.path[totalHops];
         const arriveAt =
-          pulse.startSec + (pulse.startDelayMs + totalHops * hopMs) / 1000;
+          pulse.startSec
+          + (
+            pulse.startDelayMs
+            + pulseTerminalArrivalMs(totalHops, hopMs, ghostMs)
+          ) / 1000;
         if (pulse.mode === 'memory') {
           const resonance = consensusMemoryTraceResonance(
             (now - arriveAt) * 1000,
@@ -1690,12 +1768,15 @@ export default function NeuralNetwork({
       // pulse is currently flying along a fibre that no longer
       // exists (edge dropped on rebuild, endpoint cell GC'd), the
       // pulse extinguishes — we do NOT push it back into stillActive
-      // and we render nothing for this frame.
+      // and we render nothing for this frame. The ghost leg is exempt: it
+      // rides no fibre, so no fibre can be taken from it.
       const headFromId = pulse.path[headHop];
       const headToId = pulse.path[headHop + 1];
-      if (!cells.has(headFromId) || !cells.has(headToId)) continue;
-      const headAdj = adjacency.get(headFromId);
-      if (!headAdj || !headAdj.has(headToId)) continue;
+      if (pulseLegExtinguishes(headHop)) {
+        if (!cells.has(headFromId) || !cells.has(headToId)) continue;
+        const headAdj = adjacency.get(headFromId);
+        if (!headAdj || !headAdj.has(headToId)) continue;
+      }
 
       stillActive.push(pulse);
 
@@ -1712,9 +1793,33 @@ export default function NeuralNetwork({
       // older hops are fully traversed (frontT = 1) but dimmer with
       // distance from the lead.
       if (handles) {
-        for (let h = 0; h <= headHop && h < totalHops; h++) {
+        // The wake starts one leg earlier when a ghost carried the departure,
+        // so the tail still reaches back to the dying cell's own address.
+        const firstLeg = ghost ? PULSE_LEG_GHOST : 0;
+        for (let h = firstLeg; h <= headHop && h < totalHops; h++) {
           const ageHops = headHop - h;
           if (ageHops > TRAIL_HOPS) continue;
+          const isHead = ageHops === 0;
+          const frontT = isHead ? subT : 1.0;
+          const brightness = isHead
+            ? HOP_HEAD_BRIGHT
+            : HOP_TAIL_BRIGHT * Math.exp(-ageHops * HOP_TAIL_DECAY);
+          if (ghost && h === PULSE_LEG_GHOST) {
+            handles.pushActiveHop(
+              {
+                fromCellId: ghost.origin.anchorId,
+                toCellId: pulse.path[0],
+                fromPos: ghost.origin.pos,
+                toPos: ghost.to,
+                mode: pulse.mode,
+                frontT,
+                brightness: brightness * routeActivityScale,
+                color: pulse.color,
+              },
+              cells,
+            );
+            continue;
+          }
           const hFromId = pulse.path[h];
           const hToId = pulse.path[h + 1];
           // Trail hops are individually gated — a wake segment over
@@ -1726,11 +1831,6 @@ export default function NeuralNetwork({
             const hAdj = adjacency.get(hFromId);
             if (!hAdj || !hAdj.has(hToId)) continue;
           }
-          const isHead = ageHops === 0;
-          const frontT = isHead ? subT : 1.0;
-          const brightness = isHead
-            ? HOP_HEAD_BRIGHT
-            : HOP_TAIL_BRIGHT * Math.exp(-ageHops * HOP_TAIL_DECAY);
           handles.pushActiveHop(
             {
               fromCellId: hFromId,
@@ -1748,21 +1848,30 @@ export default function NeuralNetwork({
       // Small accent sprite at the wavefront position on the head
       // hop's Bezier (NOT the chord). Sub-segment lighting does most
       // of the work; this just adds a sharp focal point at the lead.
-      const fromCell = cells.get(pulse.path[headHop]);
-      const toCell = cells.get(pulse.path[headHop + 1]);
-      if (fromCell && toCell) {
-        const seed = fabricEdgeSeed(pulse.path[headHop], pulse.path[headHop + 1]);
+      const onGhost = ghost !== undefined && headHop === PULSE_LEG_GHOST;
+      const fromPos = onGhost
+        ? ghost.origin.pos
+        : cells.get(headFromId)?.pos_seed;
+      const toPos = onGhost ? ghost.to : cells.get(headToId)?.pos_seed;
+      if (fromPos && toPos) {
+        // path[headHop + 1] is path[0] on the ghost leg, and the origin's
+        // anchor id stands in for the absent path[-1]: one stable seed per
+        // packet, so its bow does not change shape as it flies.
+        const seed = fabricEdgeSeed(
+          onGhost ? ghost.origin.anchorId : headFromId,
+          pulse.path[headHop + 1],
+        );
         bezierControlInto(
           spikeControl,
-          fromCell.pos_seed[0], fromCell.pos_seed[1], fromCell.pos_seed[2],
-          toCell.pos_seed[0], toCell.pos_seed[1], toCell.pos_seed[2],
+          fromPos[0], fromPos[1], fromPos[2],
+          toPos[0], toPos[1], toPos[2],
           seed,
         );
         bezierAtInto(
           spikePosition,
-          fromCell.pos_seed[0], fromCell.pos_seed[1], fromCell.pos_seed[2],
+          fromPos[0], fromPos[1], fromPos[2],
           spikeControl[0], spikeControl[1], spikeControl[2],
-          toCell.pos_seed[0], toCell.pos_seed[1], toCell.pos_seed[2],
+          toPos[0], toPos[1], toPos[2],
           subT,
         );
         spikePool.pushValues(
@@ -1783,9 +1892,14 @@ export default function NeuralNetwork({
       // Cell flash on the cell we *arrive at* during this hop. Schedule
       // exactly when subT crosses 1 (= when we land on the next cell).
       if (policy.flashCells && cellFlashRef?.current) {
+        // path[0] is an arrival like any other once a ghost precedes it.
         const arrivingCellId = pulse.path[headHop + 1];
         const arriveAt =
-          pulse.startSec + (pulse.startDelayMs + (headHop + 1) * hopMs) / 1000;
+          pulse.startSec
+          + (
+            pulse.startDelayMs
+            + pulseLegArrivalMs(hopMs, ghostMs, headHop)
+          ) / 1000;
         const prev = cellFlashRef.current.get(arrivingCellId) ?? -1e9;
         if (arriveAt > prev) {
           cellFlashRef.current.set(arrivingCellId, arriveAt);

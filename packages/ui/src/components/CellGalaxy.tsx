@@ -121,17 +121,12 @@ import CellNucleus from './CellNucleus';
 
 import {
   BEAM_GROW_DUR_S,
-  BLOCK_COMMIT_DELAY_S,
+  BLOCK_HIGHLIGHT_DELAY_S,
   LOCAL_IGNITION_RADIUS,
   LOCAL_IGNITION_SPEED,
   MAX_BLOCK_HIGHLIGHTS,
   MAX_LOCAL_IGNITIONS,
 } from '../ui/topologyConstants';
-
-// Cell birth/death visual timing offset (s) — applied to each cell's
-// born/death scene timestamp so the shader starts the birth scale-up
-// (or the death fade-out) at the end of the delivery/commit choreography.
-export const BLOCK_HIGHLIGHT_DELAY_S = BLOCK_COMMIT_DELAY_S + 0.15;
 
 interface CellGalaxyProps {
   ckbNodeIds: string[];

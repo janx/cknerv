@@ -21,10 +21,12 @@ import { advanceLinkCursor } from './linkCursor';
 import {
   planPulses,
   pulseTiming,
+  PULSE_START_JITTER_MS,
   type Pulse,
   type PulseOrigin,
   type PulsePlanningOptions,
 } from './pulseRunner';
+import { BLOCK_HIGHLIGHT_DELAY_S } from '../ui/topologyConstants';
 import type { PulseStatsSink, RescueCounter, RescueKind } from './pulseStats';
 
 /** Per-batch planning ceiling. The active-pulse render pool clamps at 128,
@@ -265,6 +267,29 @@ export function planLinkBatch(
     flushBlock();
   }
   return { planned, nextSeq, lastGuaranteedBlock: guaranteed };
+}
+
+/**
+ * Delay from the raw peer-network block pulse until this block's packets
+ * leave the cells it consumed. A packet departs the address of a cell that
+ * is dying, so the departure is phase-locked to that corpse's fade: the fade
+ * starts at `BLOCK_HIGHLIGHT_DELAY_S` after the block reaches the local
+ * field, and each pulse then adds its own jitter in [0, PULSE_START_JITTER_MS).
+ * Subtracting the jitter's midpoint puts the MEDIAN departure exactly on the
+ * fade onset, with the band straddling it, rather than every packet leaving
+ * after the dimming has begun.
+ *
+ * It used to be `BEAM_GROW_DUR_S` — carrier contact, 1.35 s before the fade —
+ * which had the corpse at full brightness while its packet was already tens
+ * of hops away, and landed arrivals on outputs not yet born.
+ */
+export function livePulseDepartureDelayS(localReceiveDelayS: number): number {
+  const receiveDelayS = Number.isFinite(localReceiveDelayS)
+    ? Math.max(0, localReceiveDelayS)
+    : 0;
+  return receiveDelayS
+    + BLOCK_HIGHLIGHT_DELAY_S
+    - PULSE_START_JITTER_MS / 2000;
 }
 
 /**

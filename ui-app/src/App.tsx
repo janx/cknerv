@@ -24,7 +24,6 @@ import {
   CELLS_Y,
   CELL_SELECTION_PREFIX,
   cellDetailViewFocus,
-  cellFieldContactDelayS,
   chainNodeWorldPosition,
   canRecallConsensusMemory,
   cellIdentityProofBindingComplete,
@@ -35,6 +34,7 @@ import {
   colonyFlood,
   deriveConsensusMemoryTraceEndpoints,
   inferredTopology,
+  livePulseDepartureDelayS,
   CellGalaxy,
   CellGalaxyProvider,
   CellCausalLensLayer,
@@ -592,7 +592,7 @@ export default function App({
     () => colonyFlood(topology, cellsCache.lastPulseAtMs),
     [topology, cellsCache.lastPulseAtMs],
   );
-  const livePulseDelayS = cellFieldContactDelayS(cf.localReceiveDelayS);
+  const livePulseDelayS = livePulseDepartureDelayS(cf.localReceiveDelayS);
 
   // Maintained incrementally by the cells reducer (O(touched) per batch,
   // identity-stable when unchanged) — never re-aggregated here.

@@ -3,7 +3,7 @@ import {
   BEAM_GROW_DUR_S,
   BEAM_STRIKE_DUR_S,
   BLOCK_COMMIT_DELAY_S,
-  cellFieldContactDelayS,
+  BLOCK_HIGHLIGHT_DELAY_S,
   SHOCKWAVE_FIRE_DELAY_S,
   SHOCKWAVE_SPEED,
   MAX_BLOCK_HIGHLIGHTS,
@@ -23,13 +23,9 @@ describe('topologyConstants', () => {
     expect(BEAM_STRIKE_DUR_S).toBeGreaterThan(0);
   });
 
-  it('starts live Cell traffic only after local receive and field contact', () => {
-    expect(cellFieldContactDelayS(0.6)).toBeCloseTo(
-      0.6 + BEAM_GROW_DUR_S,
-      9,
-    );
-    expect(cellFieldContactDelayS(-1)).toBe(BEAM_GROW_DUR_S);
-    expect(cellFieldContactDelayS(Number.NaN)).toBe(BEAM_GROW_DUR_S);
+  it('offsets every ledger-visible acknowledgement past the commit', () => {
+    expect(BLOCK_HIGHLIGHT_DELAY_S).toBeCloseTo(BLOCK_COMMIT_DELAY_S + 0.15, 9);
+    expect(BLOCK_HIGHLIGHT_DELAY_S).toBeGreaterThan(BLOCK_COMMIT_DELAY_S);
   });
 
   it('SHOCKWAVE_SPEED and MAX_BLOCK_HIGHLIGHTS remain at their documented values', () => {

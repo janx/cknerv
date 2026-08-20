@@ -9,7 +9,6 @@ import {
   CELLS_Y,
   CellGalaxy,
   CellGalaxyProvider,
-  cellFieldContactDelayS,
   ConsensusWriteSeal,
   NetworkColony,
   NeuralNetwork,
@@ -24,6 +23,7 @@ import {
   colonyFlood,
   consensusBlockColor,
   inferredTopology,
+  livePulseDepartureDelayS,
   useQualityRuntime,
   type MutableSimClock,
 } from '@cknerv/ui';
@@ -504,7 +504,7 @@ export default function ProtocolEventLab({ snapshot }: { snapshot: CellGalaxySna
     ...flood,
     localReceiveDelayS: REVIEW_LOCAL_DELAY_S,
   }), [flood]);
-  const livePulseDelayS = cellFieldContactDelayS(
+  const livePulseDelayS = livePulseDepartureDelayS(
     reviewFlood.localReceiveDelayS,
   );
   const localWorld = useMemo(
