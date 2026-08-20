@@ -6,8 +6,9 @@ use serde_json::Value;
 use url::Url;
 
 use cknerv_core::{
-    helix_seed_for, AssetKind, Cell, GalaxyCellCandidate, GalaxyCompositionCandidates,
-    GalaxyCompositionRecord, GalaxyCompositionTopUp, OutPoint, TxOutputInfo,
+    composition_id_for_outpoint, helix_seed_for, AssetKind, Cell, GalaxyCellCandidate,
+    GalaxyCompositionCandidates, GalaxyCompositionRecord, GalaxyCompositionTopUp, OutPoint,
+    TxOutputInfo, COMPOSITION_ID_MASK, COMPOSITION_ID_PREFIX,
 };
 use cknerv_server::GalaxyCompositionHydrator;
 
@@ -15,8 +16,6 @@ use crate::block_fetch::parse_output_info;
 use crate::rpc::RpcClient;
 
 const LIVE_CELL_BATCH_SIZE: usize = 64;
-const COMPOSITION_ID_PREFIX: u64 = 1_u64 << 52;
-const COMPOSITION_ID_MASK: u64 = (1_u64 << 51) - 1;
 
 pub struct CkbGalaxyCompositionHydrator {
     rpc: RpcClient,
@@ -236,17 +235,11 @@ fn parse_live_cell_output(result: &Value, out_point: &OutPoint) -> Result<Option
     parse_output_info(output, data, &format!("live Cell {:?}", out_point)).map(Some)
 }
 
+/// Linear probing over the reservoir's admitted set; the unprobed id is the
+/// outpoint's own, so a bucket that admits an outpoint first places it where
+/// every other producer would.
 fn allocate_composition_id(out_point: &OutPoint, admitted: &mut HashSet<u64>) -> u64 {
-    let mut hash = 0xcbf29ce484222325_u64;
-    for byte in out_point.tx_hash.as_bytes() {
-        hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(0x100000001b3);
-    }
-    for byte in out_point.index.to_le_bytes() {
-        hash ^= u64::from(byte);
-        hash = hash.wrapping_mul(0x100000001b3);
-    }
-    let mut id = COMPOSITION_ID_PREFIX | (hash & COMPOSITION_ID_MASK);
+    let mut id = composition_id_for_outpoint(&out_point.tx_hash, out_point.index);
     while !admitted.insert(id) {
         id = COMPOSITION_ID_PREFIX | (id.wrapping_add(1) & COMPOSITION_ID_MASK);
     }

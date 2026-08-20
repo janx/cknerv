@@ -9,6 +9,7 @@
 //! Module layout:
 //! - [`mutation`] — wire-level [`Mutation`] enum and [`RevisionedMutation`].
 //! - [`entity`] — chain-state singletons (`Chain`, `MempoolStats`, …).
+//! - [`identity`] — outpoint-derived cell ids (`composition_id_for_outpoint`).
 //! - [`outpoint`] — chain outpoint + tx-output payload types.
 //! - [`projection`] — `Projection` trait + the `CellGalaxy` projection.
 //! - [`ring`] — bounded ring buffer used by the server's event replay.
@@ -16,6 +17,7 @@
 pub mod enrichment;
 pub mod entity;
 pub mod helix;
+pub mod identity;
 pub mod mutation;
 pub mod outpoint;
 pub mod projection;
@@ -40,6 +42,7 @@ pub use entity::{
     Chain, ChainNode, EpochInfo, MempoolStats, Peer, PeerDirection, RecentBlock, RecentTx,
 };
 pub use helix::{helix_seed_f64, helix_seed_for};
+pub use identity::{composition_id_for_outpoint, COMPOSITION_ID_MASK, COMPOSITION_ID_PREFIX};
 pub use mutation::{Mutation, ReplayPhase, RevisionedMutation};
 pub use outpoint::{
     is_cellbase_input, OutPoint, ShapeSeed, TxOutputInfo, DATA_HEX_TRUNCATION_MARKER,
