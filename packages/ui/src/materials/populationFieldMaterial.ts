@@ -304,16 +304,45 @@ export function populationPointEnergy(
  * from 260,000 to 105,000 to pay for it.
  *
  * Under a Cell's core by construction, since it is a fraction of a point
- * emission that is itself bounded by {@link POPULATION_FIELD_EMISSION}. If the
- * live look wants more or less thread this is the knob: 0.60 gives coherence
- * 0.292 at −7% light, 0.80 gives 0.369 at +21%.
+ * emission that is itself bounded by {@link POPULATION_FIELD_EMISSION}. This
+ * is the knob the live look moves. The sweep that priced it, measured against
+ * the 0.70 build and kept here for future movement: 0.60 gives coherence 0.292
+ * at −7% light, and 0.80 — where it now sits — 0.369 at +21%.
+ *
+ * ⭐ **SPENT 0.70 → 0.80 on 2026-08-20**, on the verdict
+ * {@link populationFibreTaper} reserved it for. Live review, mainnet chain
+ * scope at quality high: *the outermost halo band reads as dots with no
+ * visible nerves.* Both primitives are there and only one crosses the eye's
+ * threshold, for a reason that is entirely in the arithmetic:
+ *
+ *  - The fringe is **single-deposit land**. The bounded-screen blend below
+ *    converges to `a` only where marks pile up; one ISOLATED deposit lays down
+ *    `a * a`. The mixed band gets 4–6 deposits on the average covered pixel
+ *    and rides the convergent part of that curve — the outermost band has
+ *    almost no crossings and stays on the squared part.
+ *  - The bead beside it concentrates the SAME `a` into a ~2 px Gaussian with a
+ *    1.4 px minimum clamp ({@link POPULATION_FIELD_MIN_POINT_PX}), roughly
+ *    5–8x the stroke's per-pixel intensity. So the points clear the threshold
+ *    out there and the hairlines do not. The strand segments render; they
+ *    render sub-threshold.
+ *
+ * Raising this is the one lever that reaches that regime, because in the
+ * squared part rendered light goes as `a^2`: `0.8^2 / 0.7^2` = **+30.6%** on
+ * an isolated deposit, against +14.3% on a saturated patch. It buys the most
+ * exactly where the complaint is. The taper stays untouched — one lever at a
+ * time, and the taper is what made the boundary a fringe rather than a hem.
+ *
+ * ⚠️ The fringe pays the taper on top of this, and on the CURRENT placement it
+ * pays nearly all of it — see {@link populationFibreTaper}, where the
+ * post-P3/P4 numbers are recorded.
  *
  * It is deliberately NOT small relative to a point. "No endpoint emphasis of
  * any kind" is a requirement, and a faint connector between bright beads is
  * precisely a node with edges radiating from it. At this ratio the stroke is
- * the figure and the points are grain along it.
+ * the figure and the points are grain along it — and raising it moves the
+ * stroke further toward the figure, never the other way.
  */
-export const POPULATION_FIBRE_ALPHA = 0.7;
+export const POPULATION_FIBRE_ALPHA = 0.8;
 
 /**
  * The fibre's share of the tissue taper, and why a stroke needs one at all.
@@ -370,13 +399,49 @@ export const POPULATION_FIBRE_ALPHA = 0.7;
  * layer's light, 0.4 buys 0.779 for 19%. Left alone: this is the knob live
  * review should be given, not one to spend pre-emptively.
  *
- * ⭐ The two knobs compose, and the pairing worth knowing about is **0.8 with
- * this taper**: retention 0.729 / 0.691 / 0.838 — better than the flat build
- * in every band — while the layer's light comes back to −6% inside the rim
- * instead of −11%, and the fringe still fades 20%. That is the answer if live
- * review reports the layer as dimmer rather than as rosier. Raising a flat
- * alpha alone is what must not be done: it buys light by spending exactly the
- * chroma this change recovered.
+ * ⭐ The two knobs compose, and the pairing was **0.8 with this taper**:
+ * retention 0.729 / 0.691 / 0.838 — better than the flat build in every band —
+ * while the layer's light comes back to −6% inside the rim instead of −11%,
+ * and the fringe still fades 20%. It was carried as the answer if live review
+ * reported the layer as dimmer rather than as rosier. **On 2026-08-20 it did**
+ * (the outermost band read as beads with no thread), and
+ * {@link POPULATION_FIBRE_ALPHA} is now 0.8. Raising a flat alpha alone is
+ * still what must not be done: it buys light by spending exactly the chroma
+ * this taper recovered — which is why the pairing, and not the flat raise, is
+ * what was spent.
+ *
+ * ⚠️ **Those retention and light figures are PLACEMENT-ERA.** They were
+ * GPU-measured — OKLCh over rendered pixels at the production camera — on the
+ * placement as it stood then, and the placement has since gained tissue-keyed
+ * strand lengths, forks and joins (P3/P4). Deposit counts per pixel are a
+ * placement property, and retention is a function of them, so all three
+ * numbers are stale by an unknown amount. Nothing in the tree can re-derive
+ * them: `docs/superpowers/measure/` holds placement-geometry instruments only
+ * (contours, radial extent), and the material's own tests carry a linear
+ * chroma proxy, not an OKLCh one. Both halves need pixels off a GPU. **The
+ * live look is the arbiter now, not this table.**
+ *
+ * ⭐ The placement half of it IS cheap to redo headlessly, and was, on the
+ * post-P3/P4 placement (105,000 points, 96,609 segments, 14,419 filaments,
+ * 1,670 joins), binning segment midpoints by elliptical radius and evaluating
+ * this taper — median, with p10/p90:
+ *
+ * | band | segments | taper p10/p50/p90 |
+ * |---|---:|---|
+ * | pre-rim 0.70–0.95 | 22,497 | 0.547 / **0.719** / 0.970 |
+ * | mixed 0.95–1.15 | 32,308 | 0.523 / **0.652** / 0.845 |
+ * | outer 1.15–1.40 | 28,208 | 0.465 / **0.535** / 0.666 |
+ * | outer 1.40–1.55 | 5,527 | 0.442 / **0.467** / 0.560 |
+ * | fringe 1.55–1.70 | 447 | 0.437 / **0.446** / 0.482 |
+ *
+ * Two things fall out that the old tables cannot tell you. **The 1.80–2.20
+ * "fringe" band those tables measure no longer exists** — the outer edge came
+ * in to `POPULATION_FIELD_OUTER_EDGE` (1.6), so the last lit shell is
+ * now 1.55–1.70 and holds 447 segments. And **that shell sits essentially on
+ * the taper's FLOOR**: `(sizeMin/sizeMax)^2` = `(0.50/0.76)^2` = 0.4328, and
+ * its p10 measures 0.437. The stroke out there was already paying the deepest
+ * discount the taper can charge, which is why it was the band that fell under
+ * the threshold first and why it is the band the alpha raise most helps.
  *
  * ⭐ The general shape of the bug: a layer gained a second primitive, and the
  * taper that had been solved for the first one was never re-derived for it.
