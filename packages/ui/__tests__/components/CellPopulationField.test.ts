@@ -2,8 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import * as THREE from 'three';
+import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
+import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js';
 
 import { neverRaycast } from '../../src/components/CellPopulationField';
+import { makeScreenSpaceCapsuleGeometry } from '../../src/geometry/screenSpaceCapsuleLine';
 import {
   populationFibreTaper,
   populationPointSizeForWeight,
@@ -18,6 +21,7 @@ const GALAXY_SOURCE = read('src/components/CellGalaxy.tsx');
 const PLACEMENT_SOURCE = read('src/geometry/populationFieldPlacement.ts');
 const MATERIAL_SOURCE = read('src/materials/populationFieldMaterial.ts');
 const WORKER_SOURCE = read('src/geometry/populationField.worker.ts');
+const BACKBONE_SOURCE = read('src/geometry/populationBackbone.ts');
 
 /** Prose is not code. These rules are about what the module DOES, and a
  *  comment naming the system it deliberately stays out of must not read as a
@@ -34,7 +38,7 @@ const MATERIAL_CODE = withoutComments(MATERIAL_SOURCE);
 /** Every module the halo is made of. The geometry moved out of the component
  *  when the layer became points, so the rules below have to follow it. */
 const LAYER_CODE = [FIELD_CODE, PLACEMENT_CODE, MATERIAL_CODE,
-  withoutComments(WORKER_SOURCE)].join('\n');
+  withoutComments(WORKER_SOURCE), withoutComments(BACKBONE_SOURCE)].join('\n');
 
 describe('the halo is not an object', () => {
   it('answers no raycast, on either of its objects', () => {
@@ -54,9 +58,18 @@ describe('the halo is not an object', () => {
     // three.js's own raycast, and both of those hit by default.
     const drawn = FIELD_SOURCE.match(/^\s{6}<([a-z][A-Za-z]*)\b/gm) ?? [];
     const overrides = FIELD_SOURCE.match(/raycast=\{neverRaycast\}/g) ?? [];
+    // The backbone capsule is a `<primitive>`, because `LineSegments2` is not
+    // a declarative element — so it cannot take the JSX prop and it takes the
+    // assignment instead. It needs the override MORE than the two above, not
+    // less: `LineSegments2` ships a real raycast against a screen-space
+    // threshold. The rule is unchanged and the count still has to balance —
+    // every drawn object, one override each, whichever way it is written.
+    const imperative = FIELD_SOURCE.match(/\.raycast = neverRaycast;/g) ?? [];
+    const primitives = drawn.filter((tag) => tag.trim() === '<primitive');
     expect(drawn.map((tag) => tag.trim()).sort())
-      .toEqual(['<lineSegments', '<points']);
-    expect(overrides).toHaveLength(drawn.length);
+      .toEqual(['<lineSegments', '<points', '<primitive']);
+    expect(overrides).toHaveLength(drawn.length - primitives.length);
+    expect(imperative).toHaveLength(primitives.length);
   });
 
   it('answers no raycast when a real Raycaster asks', () => {
@@ -74,10 +87,27 @@ describe('the halo is not an object', () => {
     ));
     const raycaster = new THREE.Raycaster();
     raycaster.set(new THREE.Vector3(0, 0, 10), new THREE.Vector3(0, 0, -1));
+    // `LineSegments2.raycast` measures a screen-space width, so it reads the
+    // raycaster's camera and the material's resolution. Supplying both is what
+    // gives the third case its teeth — without them it throws instead of
+    // missing, and a throw is not a miss.
+    const camera = new THREE.PerspectiveCamera(50, 4 / 3, 0.1, 100);
+    camera.position.set(0, 0, 10);
+    camera.lookAt(0, 0, 0);
+    camera.updateMatrixWorld();
+    raycaster.camera = camera;
 
+    const capsule = makeScreenSpaceCapsuleGeometry();
+    capsule.setPositions([0, 0, 0, 1, 0, 0]);
+    const capsuleMaterial = new LineMaterial({ linewidth: 40 });
+    capsuleMaterial.resolution.set(800, 600);
     for (const object of [
       new THREE.Points(geometry),
       new THREE.LineSegments(geometry),
+      // The backbone's own class, not a stand-in — and the one that needs the
+      // override most: `LineSegments2` raycasts against a screen-space
+      // half-width, which is a far looser surface than a mesh would offer.
+      new LineSegments2(capsule, capsuleMaterial),
     ]) {
       // Teeth: the default raycast DOES hit this ray, so a dropped override
       // is a real regression and not a theoretical one.
@@ -155,17 +185,20 @@ describe('the halo responds to no chain event', () => {
   });
 });
 
-describe('two static buffers and two draws', () => {
+describe('two static buffers and three draws', () => {
   it('draws the fibres under their own points', () => {
     // One sample lower, and it has to be BELOW: the strokes are the figure,
     // and a point drawn under its own filament would read as a node the
-    // fibres radiate from — the one thing the drawing rule forbids.
+    // fibres radiate from — the one thing the drawing rule forbids. Both
+    // stroke passes sit in the same family below the points: the capsules are
+    // the same strokes at a different width, not a different layer.
     const fibres = FIELD_SOURCE.indexOf('<lineSegments');
     const points = FIELD_SOURCE.indexOf('<points');
     expect(fibres).toBeGreaterThan(0);
     expect(fibres).toBeLessThan(points);
     expect(FIELD_SOURCE).toContain('renderOrder={-2}');
     expect(FIELD_SOURCE).toContain('renderOrder={-1}');
+    expect(FIELD_CODE).toContain('mesh.renderOrder = -2;');
   });
 
   it('gives the fibres no endpoint treatment', () => {

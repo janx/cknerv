@@ -107,6 +107,11 @@ describe('shared halo placement', () => {
     const placement = {
       positions: new Float32Array([1, 2, 3]),
       segments: new Uint32Array([0, 0]),
+      backboneSegments: new Uint32Array(0),
+      backboneSegmentCount: 0,
+      residualSegments: new Uint32Array([0, 0]),
+      residualSegmentCount: 1,
+      backboneComponents: 0,
       weights: new Float32Array([0.5]),
       count: 1,
       segmentCount: 1,

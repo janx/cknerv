@@ -97,7 +97,7 @@
 //      stops being one — actual-register motion about an actual event at the
 //      actual end, never ambient shimmer. This field itself stays STATIC.
 //   5. **This buffer stays static and prefix-trimmable.** Bridges only READ
-//      these positions. The one-shot pass, the two draws, and the
+//      these positions. The one-shot pass, the draws, and the
 //      `populationSegmentsForPointPrefix` invariant are untouched by them —
 //      and a bridge may only anchor inside the lowest preset's prefix, so no
 //      quality step can trim a stroke's far end out from under it.
@@ -286,8 +286,14 @@ export const POPULATION_FIELD_OUTER_EDGE = 1.6;
  * cknerv could not individuate.
  *
  * Cost: 1.26 MB of positions, 0.84 MB of indices and 0.42 MB of taper weights,
- * uploaded once, two draw calls — still LESS memory than the 3.1 MB the
- * previous build uploaded, and the pass itself is 116 ms of worker CPU.
+ * uploaded once — still LESS memory than the 3.1 MB the previous build
+ * uploaded, and the pass itself is 116 ms of worker CPU.
+ *
+ * ⚠️ It is THREE draw calls now, not two: the fibres are partitioned into a
+ * one-device-pixel line pass and a capsule pass over the strands promoted to
+ * the halo's width class, which costs a second copy of the index buffer plus
+ * the promoted subset expanded to instance data (0.77 + 0.51 MB at the shipped
+ * budget). See `populationBackbone.ts`.
  */
 export const POPULATION_FIELD_POINTS = 105_000;
 

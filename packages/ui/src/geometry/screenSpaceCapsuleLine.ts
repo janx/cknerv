@@ -14,7 +14,10 @@ import { Vector2 } from 'three';
 export const SCREEN_CAPSULE_INDEX = [0, 6, 1, 6, 7, 1] as const;
 export const SCREEN_CAPSULE_TRIANGLES_PER_SEGMENT = 2;
 
-const replaceShaderChunk = (
+/** Exported so a sibling capsule material can patch the same stock shader
+ *  under the same discipline: a Three upgrade that moves a chunk fails loudly
+ *  here instead of silently changing the visual language. */
+export const replaceShaderChunk = (
   source: string,
   expected: string,
   replacement: string,

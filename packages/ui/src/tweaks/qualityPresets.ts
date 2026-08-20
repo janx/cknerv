@@ -33,7 +33,17 @@ export interface QualityCascade {
    *
    * Cost is linear in primitive count and near-flat in sprite area (halving
    * the count halves the time; 4.6x the area costs 12%), so the count is the
-   * only lever and a prefix is the whole of it. The placement emits complete
+   * only lever and a prefix is the whole of it.
+   *
+   * ⚠️ The halo is THREE draws now, not the two timed above: the fibres were
+   * partitioned into a one-device-pixel line pass and a capsule pass over
+   * 16,000 promoted segments (`populationBackbone.ts`). The prefix reaches all
+   * three — the promoted index buffer is trimmed by the same
+   * `populationSegmentsForPointPrefix` rule — and because it is a partition
+   * the line pass gives up exactly what the capsule pass takes, so the added
+   * primitives are 32,000 triangles against the point pass's ~210,000
+   * triangle-equivalents. Priced in primitives rather than re-timed: the layer
+   * is primitive-bound, which is the finding above. The placement emits complete
    * filaments seeded by rejection sampling against the density law, so a
    * prefix is the same field at a lower sample density — never a partial one.
    * It is drawn dimmer for the same reason `starsCount` is: it is a coarser

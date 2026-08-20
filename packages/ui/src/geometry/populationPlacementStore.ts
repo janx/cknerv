@@ -27,8 +27,21 @@ export interface PopulationPlacementSnapshot {
    *  consumer: the placement writes these once, in the worker, and the layers
    *  that share them assume they never move again. */
   positions: Float32Array;
-  /** Filament segments as index pairs into `positions`. */
+  /** Filament segments as index pairs into `positions` — the whole fibre
+   *  graph, and the UNION of the two buffers below. The bridge layer derives
+   *  filament components from it, and a component is a property of the graph
+   *  rather than of either half of a draw split, so this stays whole. */
   segments: Uint32Array;
+  /** The strands promoted to the capsule width class, and everything else.
+   *  A PARTITION of `segments` in the same order, so each half inherits its
+   *  monotone max-endpoint and each stays `populationSegmentsForPointPrefix`-
+   *  trimmable on its own. See `populationBackbone.ts`. */
+  backboneSegments: Uint32Array;
+  backboneSegmentCount: number;
+  residualSegments: Uint32Array;
+  residualSegmentCount: number;
+  /** Strands promoted — components, not segments. */
+  backboneComponents: number;
   /** Per-point taper weight. */
   weights: Float32Array;
   count: number;

@@ -1,6 +1,11 @@
 import * as THREE from 'three';
+import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 
 import { HYBRID_BASE_PX_PER_WU } from './cellHybridMaterial';
+import {
+  optimizeScreenSpaceCapsuleMaterial,
+  replaceShaderChunk,
+} from '../geometry/screenSpaceCapsuleLine';
 import { CELL_GALAXY_PALETTE, type SceneColor } from '../visualPalette';
 
 /**
@@ -447,9 +452,24 @@ export const POPULATION_FIBRE_ALPHA = 0.8;
  * taper that had been solved for the first one was never re-derived for it.
  */
 export function populationFibreTaper(weight: number): number {
-  const ratio = populationPointSizeForWeight(weight)
-    / POPULATION_FIELD_POINT_SIZE_MAX;
+  const ratio = populationFibreSizeRatio(weight);
   return ratio * ratio;
+}
+
+/**
+ * The taper's square ROOT — the point's size as a fraction of the largest.
+ *
+ * Split out because both stroke classes have to carry the taper across a
+ * segment, and the interpolation only commutes with the square one way round.
+ * `mix()` is linear, so interpolating the RATIO and squaring per fragment
+ * gives exactly {@link populationFibreTaper} of the interpolated weight;
+ * interpolating the square would give something else, dimmer in the middle of
+ * every segment. The fibre shader has always done it this way — this is the
+ * same number, named, so the capsule class cannot drift from it.
+ */
+export function populationFibreSizeRatio(weight: number): number {
+  return populationPointSizeForWeight(weight)
+    / POPULATION_FIELD_POINT_SIZE_MAX;
 }
 
 /** The fibre's emitted alpha for one amount-curve `gain`. The same curve the
@@ -679,4 +699,174 @@ export function makePopulationFibreMaterial(): THREE.ShaderMaterial {
       }
     `,
   });
+}
+
+/**
+ * The backbone stroke's width, in CSS pixels.
+ *
+ * ## Why a width class exists in this layer at all
+ *
+ * ⚠️⚠️ **`gl.LINES` rasterizes at exactly ONE DEVICE PIXEL, and this layer's
+ * fibre was the only stroke in the scene with no DPR compensation.** The point
+ * sprite has `uPixelRatio`; the fabric, the pulses and the bridges are
+ * screen-space capsules stated in CSS pixels and expanded against
+ * `resolution`. Every other stroke in the frame therefore holds its apparent
+ * width as pixels get smaller, and this one does not.
+ *
+ * The arithmetic, spelled out because the whole bug is a constant whose UNIT
+ * stopped meaning what it meant. Take a strand that draws 100 px long and 1 px
+ * wide on the 1080p display {@link POPULATION_FIBRE_ALPHA} was calibrated on.
+ * On a 3840x2160 panel of the same size the pixel pitch halves, so the same
+ * strand draws 200 px long and still 1 px wide — the same physical LENGTH, and
+ * **half the physical width and half the physical area**. Nothing else in the
+ * frame does that: a 2.5 px capsule is 2.5 px at either resolution. And this
+ * holds whichever way the extra pixels arrive — at `devicePixelRatio` 2 the
+ * hairline is half a CSS pixel, at DPR 1 on a 4K panel it is a physically
+ * smaller pixel.
+ *
+ * That is the whole of the 2026-08-20 live verdict — *the outermost band still
+ * shows beads with no visible nerves* — and it is why the alpha raise that
+ * shipped the day before did not reach it. A headless probe against the
+ * running build found all 96,609 segments drawn and the raise live. Outside
+ * the rim the field is in the isolated-deposit regime, where the blend below
+ * lays down `a * a` instead of converging to `a`, and **alpha cannot buy
+ * width**: raising it lifts every deposit's intensity and leaves the mark the
+ * same size, while the bead beside it stays 5–8x more intense per pixel
+ * because it concentrates its light into a clamped Gaussian.
+ *
+ * ## Why 1.4, and why it is not larger
+ *
+ * The ladder reads 3.4 pulse / 3.2 trunk / 2.5 mesh / **1.7 bridge** / 1.4
+ * halo backbone / 1 device px residual grain, and a rung has to be
+ * distinguishable from the rung above it. The bridge is 1.7 CSS px
+ * (`BRIDGE_WIDTH_RATIO` 0.68 on the fabric's 2.5). 1.4 leaves 0.3 CSS px,
+ * which is a resolvable step even at DPR 1; 1.5 would leave 0.2 px for 7% more
+ * stroke, and a rung nobody can see is not a rung.
+ *
+ * ## Why 1.4, and why it is not smaller
+ *
+ * ⚠️ **State the gain in DEVICE pixels or repeat the bug.** The reference 4K
+ * monitor reports `devicePixelRatio` 1 with a 3840x2160 buffer (measured, see
+ * `qualityPresets.ts`), so on the machine the verdict came from this is
+ * **1.4 device px against the hairline's 1 — a factor of 1.4, not of 2.8.**
+ * At DPR 2 the same constant is 2.8 device px against the same 1, a factor of
+ * 2.8. The class is DPR-aware precisely so the FIRST number is a floor rather
+ * than a coincidence.
+ *
+ * ⭐ And width is not the whole of what the primitive change buys, which is
+ * why 1.4 is enough to test the verdict with. A `gl.LINES` primitive lights
+ * one pixel per major-axis step under the diamond-exit rule, so a diagonal
+ * strand is a chain of corner-touching pixels — a dotted line, which is
+ * exactly the read being complained about — and a segment that projects to
+ * barely a pixel can be dropped entirely. A capsule is a swept disk: it covers
+ * a contiguous region, and it never falls under its own width.
+ *
+ * ⭐ The number that says this is not a brightness raise in disguise: with
+ * 16.6% of segments promoted, the layer's MEAN stroke width goes to
+ * `0.166 x 1.4 + 0.834 x 1.0` = **1.07 device px at DPR 1** (1.30 at DPR 2).
+ * The halo as a whole gains under 7% of stroke area, and all of it is
+ * concentrated into the strands that had to carry the read.
+ */
+export const POPULATION_BACKBONE_WIDTH_PX = 1.4;
+
+const BACKBONE_UNIFORM_ANCHOR = 'uniform float opacity;';
+const BACKBONE_UNIFORMS = `uniform float opacity;
+		uniform float uEmission;
+		uniform vec3 uColor;`;
+const BACKBONE_OUTPUT_ANCHOR =
+  '\t\t\tgl_FragColor = vec4( diffuseColor.rgb, alpha );';
+const BACKBONE_OUTPUT = `
+			// The HAIRLINE's emission law, to the letter, so the two halves of
+			// the partition are the same light at two widths. \`diffuseColor.r\`
+			// carries the perspective-correct interpolation of the endpoint SIZE
+			// RATIO that the capsule patch already computes; squaring it here —
+			// rather than interpolating an already-squared value — is what makes
+			// the result exactly \`populationFibreTaper\` of the interpolated
+			// weight, because mix() is linear. \`alpha\` is the stock cap test's
+			// coverage, which is 1 inside a solid capsule.
+			float haloAlpha = uEmission * diffuseColor.r * diffuseColor.r * alpha;
+			// Written raw and NOT colour-managed, for the reason the point and
+			// fibre materials are: a converted twin of this stroke would be a
+			// second material, and the seam between two materials is the thing
+			// this whole layer exists to have removed. The stock encode step
+			// after this line is dropped for the same reason — leaving it in
+			// would put this pass in sRGB while the hairline it partitions with
+			// stays linear, and the backbone would read as brighter rather than
+			// as wider. See \`makePopulationBackboneMaterial\`.
+			gl_FragColor = vec4( uColor * haloAlpha, haloAlpha );`;
+const BACKBONE_COLORSPACE_ANCHOR = '#include <colorspace_fragment>';
+
+/**
+ * The promoted strands, as screen-space capsules.
+ *
+ * Not a new line-rendering system: this is the passive fabric's own
+ * two-triangle capsule (`optimizeScreenSpaceCapsuleMaterial`), reached the way
+ * `CellBridgeNerves` reaches it — reuse at the level of the PARTS. What it does
+ * not take from the fabric is the fabric's OUTPUT. A `LineMaterial` writes
+ * `vec4( diffuseColor.rgb, opacity )` and then colour-manages it; this layer
+ * emits `vec4( tint * a, a )` raw into a blend that multiplies by the source
+ * alpha a second time, which is where the halo's documented `a * a` isolated
+ * deposit comes from. Two patches replace that tail, and a third carries the
+ * two uniforms the tail needs.
+ *
+ * ⭐ The endpoint taper rides the attribute slot `instanceColorStart/End`,
+ * bound as ONE component rather than three. GL fills the missing components of
+ * a `vec3` attribute with `(0, 1)` and the fragment reads only `.r`, so the
+ * taper costs two floats a segment instead of six — 0.128 MB against 0.384 MB
+ * at the shipped budget. The alternative was a full vertex-colour buffer
+ * carrying the same scalar three times.
+ *
+ * There is no endpoint emphasis of any kind here. Round caps are the capsule's
+ * silhouette, not a brightening: the stroke's energy is a function of the
+ * tissue weight at each end and of nothing else, so a strand's last segments
+ * fade exactly as the hairlines do — wider, never brighter. And the per-deposit
+ * alpha is not merely bounded by the hairline's, it IS the hairline's: this
+ * material introduces no emission constant, it reads
+ * {@link populationFibreEmissionForGain}. Chroma retention is a function of
+ * per-deposit alpha, so it cannot move; width is the visibility channel.
+ */
+export function makePopulationBackboneMaterial(): LineMaterial {
+  const material = new LineMaterial({
+    vertexColors: true,
+    linewidth: POPULATION_BACKBONE_WIDTH_PX,
+    transparent: true,
+    depthWrite: false,
+    worldUnits: false,
+    toneMapped: false,
+  });
+  // Byte-for-byte the fibre's blend, which is byte-for-byte the Cell bodies'.
+  // The layer EMITS and never covers, so a pixel with no unresolved population
+  // receives exactly zero and empty space stays true black.
+  material.blending = THREE.CustomBlending;
+  material.blendEquation = THREE.AddEquation;
+  material.blendSrc = THREE.SrcAlphaFactor;
+  material.blendDst = THREE.OneMinusSrcColorFactor;
+  material.blendEquationAlpha = THREE.AddEquation;
+  material.blendSrcAlpha = THREE.OneFactor;
+  material.blendDstAlpha = THREE.OneMinusSrcAlphaFactor;
+  optimizeScreenSpaceCapsuleMaterial(material);
+  material.uniforms.uEmission = { value: 0 };
+  material.uniforms.uColor = {
+    value: new THREE.Color(...POPULATION_FIELD_COLOR),
+  };
+  material.fragmentShader = replaceShaderChunk(
+    material.fragmentShader,
+    BACKBONE_UNIFORM_ANCHOR,
+    BACKBONE_UNIFORMS,
+    'halo backbone uniform declarations',
+  );
+  material.fragmentShader = replaceShaderChunk(
+    material.fragmentShader,
+    BACKBONE_OUTPUT_ANCHOR,
+    BACKBONE_OUTPUT,
+    'halo backbone fragment output',
+  );
+  material.fragmentShader = replaceShaderChunk(
+    material.fragmentShader,
+    BACKBONE_COLORSPACE_ANCHOR,
+    '',
+    'halo backbone colour management',
+  );
+  material.needsUpdate = true;
+  return material;
 }

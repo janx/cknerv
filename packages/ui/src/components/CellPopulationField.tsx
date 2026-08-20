@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
+import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js';
+import type { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js';
+import type { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 
 import {
   POPULATION_FIELD_POINTS,
@@ -20,10 +23,16 @@ import type {
   PopulationFieldWorkerResponse,
 } from '../geometry/populationField.worker';
 import {
+  makeScreenSpaceCapsuleGeometry,
+  syncScreenSpaceCapsuleViewport,
+} from '../geometry/screenSpaceCapsuleLine';
+import {
+  makePopulationBackboneMaterial,
   makePopulationFibreMaterial,
   makePopulationPointMaterial,
   populationEmissionForGain,
   populationFibreEmissionForGain,
+  populationFibreSizeRatio,
 } from '../materials/populationFieldMaterial';
 import {
   pointSpriteDeviceViewportHeight,
@@ -33,15 +42,151 @@ import {
 interface PlacedGeometry {
   /** The population itself. */
   points: THREE.BufferGeometry;
-  /** The filaments, as an index buffer over the SAME position attribute. */
+  /** The residual filaments, as an index buffer over the SAME position
+   *  attribute — everything the backbone selection did not promote. */
   fibres: THREE.BufferGeometry;
+  /** The promoted strands, as screen-space capsules. */
+  backbone: BackboneLayer;
+}
+
+/** The third draw: one instanced capsule mesh over the promoted segments. */
+interface BackboneLayer {
+  geometry: LineSegmentsGeometry;
+  mesh: LineSegments2;
+  /** Promoted segments in the buffer, before any preset trims it. */
+  count: number;
 }
 
 interface PlacementCounts {
   count: number;
   segmentCount: number;
+  backboneSegmentCount: number;
+  residualSegmentCount: number;
+  backboneComponents: number;
   streamlines: number;
   work: number;
+}
+
+/** Instance data for the capsule pass: two endpoints and two taper ratios per
+ *  promoted segment. */
+export interface PopulationBackboneInstances {
+  /** `6 * backboneSegmentCount` — start xyz then end xyz. */
+  endpoints: Float32Array;
+  /** `2 * backboneSegmentCount` — the SIZE RATIO at each endpoint. */
+  taper: Float32Array;
+}
+
+/**
+ * Expand the promoted segments into instance data for the capsule pass.
+ *
+ * ⚠️ This is the one place the layer copies a position, and it is unavoidable
+ * rather than sloppy: `LineSegmentsGeometry` reads `instanceStart`/
+ * `instanceEnd` as two interleaved VIEWS of one buffer at a fixed stride, so
+ * it can only ever name CONSECUTIVE vertex pairs. The halo's segment buffer
+ * names arbitrary pairs — a fork's first segment reaches back to the parent
+ * point it branched from, and a join reaches back to a strand the walk passed
+ * — so the promoted subset has to be written out. Only the SUBSET is: at the
+ * shipped budget that is 0.384 MB against the 1.26 MB a duplicate of the whole
+ * position buffer would cost, 30% of it.
+ *
+ * What the second buffer carries is the size RATIO, not the taper. The shader
+ * squares the interpolated value, because mix() is linear and interpolating an
+ * already-squared taper would dim the middle of every segment — the fibre
+ * shader has always done it this way, and `populationFibreSizeRatio` is that
+ * number named so this class cannot drift from it.
+ *
+ * Pure, and exported for the test that checks the second half of that
+ * sentence: the taper at each end of a capsule must equal
+ * `populationFibreTaper` of the weight the hairlines share.
+ */
+export function populationBackboneInstanceData(
+  placement: PopulationPlacementSnapshot,
+): PopulationBackboneInstances {
+  const count = placement.backboneSegmentCount;
+  const endpoints = new Float32Array(count * 6);
+  const taper = new Float32Array(count * 2);
+  for (let s = 0; s < count; s += 1) {
+    const a = placement.backboneSegments[s * 2];
+    const b = placement.backboneSegments[s * 2 + 1];
+    endpoints[s * 6] = placement.positions[a * 3];
+    endpoints[s * 6 + 1] = placement.positions[a * 3 + 1];
+    endpoints[s * 6 + 2] = placement.positions[a * 3 + 2];
+    endpoints[s * 6 + 3] = placement.positions[b * 3];
+    endpoints[s * 6 + 4] = placement.positions[b * 3 + 1];
+    endpoints[s * 6 + 5] = placement.positions[b * 3 + 2];
+    taper[s * 2] = populationFibreSizeRatio(placement.weights[a]);
+    taper[s * 2 + 1] = populationFibreSizeRatio(placement.weights[b]);
+  }
+  return { endpoints, taper };
+}
+
+/**
+ * The third draw, built once from a finished placement.
+ *
+ * The taper rides `instanceColorStart/End` as ONE component rather than three.
+ * GL fills a `vec3` attribute's missing components with `(0, 1)` and the
+ * fragment reads only `.r`, so it costs two floats a segment instead of six —
+ * 0.128 MB rather than 0.384 MB at the shipped budget.
+ */
+function makeBackboneLayer(
+  placement: PopulationPlacementSnapshot,
+  material: LineMaterial,
+): BackboneLayer {
+  const count = placement.backboneSegmentCount;
+  const { endpoints, taper } = populationBackboneInstanceData(placement);
+  // Static, unlike the fabric's: this geometry is written once and a preset
+  // change moves `instanceCount` and nothing else.
+  const endpointBuf = new THREE.InstancedInterleavedBuffer(endpoints, 6, 1);
+  const taperBuf = new THREE.InstancedInterleavedBuffer(taper, 2, 1);
+  const geometry = makeScreenSpaceCapsuleGeometry();
+  geometry.setAttribute(
+    'instanceStart',
+    new THREE.InterleavedBufferAttribute(endpointBuf, 3, 0),
+  );
+  geometry.setAttribute(
+    'instanceEnd',
+    new THREE.InterleavedBufferAttribute(endpointBuf, 3, 3),
+  );
+  geometry.setAttribute(
+    'instanceColorStart',
+    new THREE.InterleavedBufferAttribute(taperBuf, 1, 0),
+  );
+  geometry.setAttribute(
+    'instanceColorEnd',
+    new THREE.InterleavedBufferAttribute(taperBuf, 1, 1),
+  );
+  // Never culled and never picked, so this is only ever a placeholder that
+  // stops Three computing bounds over the instance buffer.
+  geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0, 0), 200);
+  geometry.instanceCount = count;
+
+  const mesh = new LineSegments2(geometry, material);
+  // The cloud spans the halo envelope and the camera can sit inside it —
+  // the same reason the points skip the frustum test.
+  mesh.frustumCulled = false;
+  mesh.raycast = neverRaycast;
+  // The halo's own family, under the Cell bodies and under this layer's own
+  // points. The partition means the capsules and the hairlines never deposit
+  // the same stroke, so their order relative to each other is immaterial.
+  mesh.renderOrder = -2;
+  // `LineSegments2.onBeforeRender` is the authority on `resolution` — it
+  // writes the CSS-pixel viewport immediately before every draw, which is
+  // what makes `linewidth` a CSS-pixel quantity and therefore DPR-aware. The
+  // capsule shader needs the device-pixel origin as well, and that is this
+  // wrapper's only job.
+  const viewport = new THREE.Vector4();
+  const updateLineResolution = mesh.onBeforeRender.bind(mesh);
+  mesh.onBeforeRender = (renderer) => {
+    updateLineResolution(renderer);
+    renderer.getViewport(viewport);
+    syncScreenSpaceCapsuleViewport(
+      material,
+      renderer.getPixelRatio(),
+      viewport.x,
+      viewport.y,
+    );
+  };
+  return { geometry, mesh, count };
 }
 
 export interface CellPopulationFieldProps {
@@ -77,14 +222,18 @@ export function neverRaycast(): false {
  * Cells live in — the same law, the same material family, the same rotating
  * frame.
  *
- * The layer is two draws over ONE buffer of positions: the points, and the
- * fibres that connect consecutive points on a filament. The fibres are what
- * make it read as tissue rather than as spray. Measured at the production
- * camera the points alone measure an orientation coherence of 0.184, which is
- * the Poisson floor to three decimals, and so does the 260,000-point spray
- * this replaced — a density modulation cannot look like a drawn thread, and at
- * ~2.5 points per pixel the noise of an independent draw eats every modulation
- * there is. With the fibres the same field measures 0.333.
+ * The layer is three draws over ONE buffer of positions: the points, and the
+ * fibres that connect consecutive points on a filament — the fibres split
+ * between a one-device-pixel line pass and a DPR-aware capsule pass over the
+ * promoted strands, which is a PARTITION and not an overlay (see
+ * `geometry/populationBackbone.ts` for the width class and why it exists).
+ * The fibres are what make it read as tissue rather than as spray. Measured at
+ * the production camera the points alone measure an orientation coherence of
+ * 0.184, which is the Poisson floor to three decimals, and so does the
+ * 260,000-point spray this replaced — a density modulation cannot look like a
+ * drawn thread, and at ~2.5 points per pixel the noise of an independent draw
+ * eats every modulation there is. With the fibres the same field measures
+ * 0.333.
  *
  * It replaces a screen-space construction that could not be made to read as
  * part of this scene, for two structural reasons that no amount of tuning
@@ -107,12 +256,18 @@ export default function CellPopulationField({
 }: CellPopulationFieldProps) {
   const material = useMemo(() => makePopulationPointMaterial(), []);
   const fibreMaterial = useMemo(() => makePopulationFibreMaterial(), []);
+  const backboneMaterial = useMemo(() => makePopulationBackboneMaterial(), []);
   const [placed, setPlaced] = useState<PlacedGeometry | null>(null);
   const placementRef = useRef<PlacementCounts | null>(null);
   const startedRef = useRef(false);
   const { effective: quality } = useQualityRuntime();
   const pointsGeometryRef = useRef<THREE.BufferGeometry | null>(null);
   const fibresGeometryRef = useRef<THREE.BufferGeometry | null>(null);
+  const backboneLayerRef = useRef<BackboneLayer | null>(null);
+  // The promoted index buffer itself, kept because the trim reads it and the
+  // capsule geometry does not carry it — the instance data was expanded from
+  // it and the pairs are not recoverable from the expansion.
+  const backboneIndexRef = useRef<Uint32Array>(new Uint32Array(0));
   const populationCapMul = QUALITY_PRESETS[quality].populationCapMul;
 
   // Placement, off the main thread. Walking 105K points of filament against a
@@ -129,17 +284,21 @@ export default function CellPopulationField({
     if (!wanted || startedRef.current) return undefined;
     startedRef.current = true;
 
-    // ONE position attribute, shared by both draws. The fibres are an index
+    // ONE position attribute, shared by the point and line draws. The fibres
+    // are an index
     // buffer over exactly the points that are drawn, which is both the
     // cheapest way to carry them — 8 bytes a segment against 24 — and the
     // structural guarantee that no fibre can reach anything but a halo
     // point: there is no other vertex for an index to name.
     const adopt = (placement: PopulationPlacementSnapshot): void => {
+      backboneIndexRef.current = placement.backboneSegments;
       const position = new THREE.BufferAttribute(placement.positions, 3);
       // The taper, baked at placement from the tissue each point sits in.
-      // BOTH draws bind it, off one attribute: the points spend it on size,
-      // the fibres on alpha, and the two laws are the same curve so the ratio
-      // of stroke to bead never moves along the taper.
+      // Both of these draws bind it off ONE attribute: the points spend it on
+      // size, the fibres on alpha, and the two laws are the same curve so the
+      // ratio of stroke to bead never moves along the taper. The capsule pass
+      // reads the same weights through its own instance buffer, off the same
+      // helper, for the same reason.
       const weight = new THREE.BufferAttribute(placement.weights, 1);
       const points = new THREE.BufferGeometry();
       points.setAttribute('position', position);
@@ -154,16 +313,28 @@ export default function CellPopulationField({
       // The SAME attribute object as the points bind — shared, not copied, so
       // the taper costs the fibres no upload and no memory at all.
       fibres.setAttribute('aWeight', weight);
-      fibres.setIndex(new THREE.BufferAttribute(placement.segments, 1));
-      fibres.setDrawRange(0, placement.segmentCount * 2);
+      // The RESIDUAL half of the partition, not the whole segment buffer: a
+      // promoted strand leaves this index entirely. Overlaying instead would
+      // deposit the same stroke twice into a bounded accumulation, and the
+      // backbone would read as brighter rather than as wider — which is the
+      // one thing this class must not do.
+      fibres.setIndex(new THREE.BufferAttribute(placement.residualSegments, 1));
+      fibres.setDrawRange(0, placement.residualSegmentCount * 2);
 
       placementRef.current = {
         count: placement.count,
         segmentCount: placement.segmentCount,
+        backboneSegmentCount: placement.backboneSegmentCount,
+        residualSegmentCount: placement.residualSegmentCount,
+        backboneComponents: placement.backboneComponents,
         streamlines: placement.streamlines,
         work: placement.work,
       };
-      setPlaced({ points, fibres });
+      setPlaced({
+        points,
+        fibres,
+        backbone: makeBackboneLayer(placement, backboneMaterial),
+      });
     };
 
     // A placement already on the store is THE placement — the pass is pure in
@@ -190,6 +361,11 @@ export default function CellPopulationField({
       const placement: PopulationPlacementSnapshot = {
         positions: response.positions,
         segments: response.segments,
+        backboneSegments: response.backboneSegments,
+        backboneSegmentCount: response.backboneSegmentCount,
+        residualSegments: response.residualSegments,
+        residualSegmentCount: response.residualSegmentCount,
+        backboneComponents: response.backboneComponents,
         weights: response.weights,
         count: response.count,
         segmentCount: response.segmentCount,
@@ -213,11 +389,11 @@ export default function CellPopulationField({
       cancelled = true;
       worker.terminate();
     };
-  }, [wanted]);
+  }, [wanted, backboneMaterial]);
 
   // The preset's share of the placement, applied as a draw range rather than a
   // re-placement: the buffers are already resident and a prefix is a complete
-  // thinner field, so a preset change costs two integer writes and no worker
+  // thinner field, so a preset change costs three integer writes and no worker
   // pass. This is the only lever the cascade has on this layer, and before it
   // existed the cascade had none — see `populationCapMul` for the measurement.
   useEffect(() => {
@@ -229,27 +405,49 @@ export default function CellPopulationField({
       Math.round(counts.count * populationCapMul),
     ));
     const index = placed.fibres.getIndex();
+    // BOTH halves of the partition trim on the same rule and against the same
+    // point prefix. Each is a subsequence of a buffer that is monotone
+    // non-decreasing in its larger endpoint, and a subsequence of a monotone
+    // sequence is monotone, so the binary search is still exact on each — and
+    // a segment it keeps has BOTH endpoints under the prefix, so no preset can
+    // leave a promoted strand hanging off a point that is not drawn.
     const segments = index
       ? populationSegmentsForPointPrefix(
         index.array as unknown as ArrayLike<number>,
-        counts.segmentCount,
+        counts.residualSegmentCount,
         points,
       )
       : 0;
+    const backbone = populationSegmentsForPointPrefix(
+      backboneIndexRef.current,
+      counts.backboneSegmentCount,
+      points,
+    );
     placed.points.setDrawRange(0, points);
     placed.fibres.setDrawRange(0, segments * 2);
+    // One integer, exactly like the two draw ranges beside it: the instance
+    // buffer was written in the segment buffer's own order, so a prefix of it
+    // is precisely the trimmed set.
+    placed.backbone.geometry.instanceCount = backbone;
     pointsGeometryRef.current = placed.points;
     fibresGeometryRef.current = placed.fibres;
+    backboneLayerRef.current = placed.backbone;
   }, [placed, populationCapMul]);
 
   useEffect(() => () => { material.dispose(); }, [material]);
   useEffect(() => () => { fibreMaterial.dispose(); }, [fibreMaterial]);
-  // Both geometries share one position attribute, so they are disposed
-  // together and in one synchronous cleanup — no frame can land between the
-  // two calls, and the second `dispose` finds the shared buffer already gone.
+  useEffect(() => () => { backboneMaterial.dispose(); }, [backboneMaterial]);
+  // The points and the fibres share one position attribute, so they are
+  // disposed together and in one synchronous cleanup — no frame can land
+  // between the calls, and the second `dispose` finds the shared buffer
+  // already gone.
   useEffect(() => () => {
     placed?.points.dispose();
     placed?.fibres.dispose();
+    // The capsule pass owns its own instance buffers — it is the one part of
+    // this layer that does not share the placement's — so it is disposed here
+    // rather than freed with them.
+    placed?.backbone.geometry.dispose();
   }, [placed]);
 
   // Dev counter, following the `__pulseStats()` precedent. It reports what the
@@ -265,9 +463,16 @@ export default function CellPopulationField({
       drawn: {
         points: pointsGeometryRef.current?.drawRange.count ?? 0,
         segments: (fibresGeometryRef.current?.drawRange.count ?? 0) / 2,
+        // The capsule pass, reported beside the hairlines it was taken out
+        // of, so a live look can read the partition without a buffer.
+        backbone: backboneLayerRef.current?.geometry.instanceCount ?? 0,
       },
       emission: material.uniforms.uEmission.value,
       fibreEmission: fibreMaterial.uniforms.uEmission.value,
+      // Equal to `fibreEmission` by construction, and printed so a live look
+      // can see that it is: the backbone is wider, never brighter.
+      backboneEmission: backboneMaterial.uniforms.uEmission.value,
+      backboneWidthPx: backboneMaterial.linewidth,
       // The taper, so a live look can tell which build is on screen without
       // reading a shader. It reports what the layer was given; it never
       // affects a number the HUD prints.
@@ -278,11 +483,11 @@ export default function CellPopulationField({
       },
     });
     return () => { delete global.__populationFieldStats; };
-  }, [material, fibreMaterial]);
+  }, [material, fibreMaterial, backboneMaterial]);
 
-  // Four uniform writes. There is no march, no offscreen target, no
+  // Five uniform writes. There is no march, no offscreen target, no
   // composite, and no per-frame work proportional to anything — the geometry
-  // is static and the layer's only frame cost is its two draws.
+  // is static and the layer's only frame cost is its three draws.
   //
   // Raw useFrame rather than the sim clock: nothing here is animated, and the
   // sprite footprint has to track a viewport or DPR change even while time is
@@ -297,7 +502,11 @@ export default function CellPopulationField({
     material.uniforms.uEmission.value = populationEmissionForGain(gain);
     // The fibres ride the same amount curve, so scope changes never pull the
     // strokes and the grain on them apart.
-    fibreMaterial.uniforms.uEmission.value = populationFibreEmissionForGain(gain);
+    const fibreEmission = populationFibreEmissionForGain(gain);
+    fibreMaterial.uniforms.uEmission.value = fibreEmission;
+    // The SAME value, not a scaled one. The two classes are one partition of
+    // one set of strokes, and the only thing that separates them is width.
+    backboneMaterial.uniforms.uEmission.value = fibreEmission;
   });
 
   if (!placed || !wanted) return null;
@@ -322,6 +531,18 @@ export default function CellPopulationField({
         raycast={neverRaycast}
         renderOrder={-2}
       />
+      {/* The strands that carry the read, at the ladder's last screen-space
+          rung — 1.4 CSS pixels against the bridge's 1.7, and DPR-aware where
+          the hairline above is not. A `gl.LINES` stroke is one DEVICE pixel,
+          so it was the only element in the frame that thinned as the
+          framebuffer grew; at 4K it had a quarter of the areal weight the
+          layer's alpha was calibrated with, which is why the outermost band
+          read as beads with no nerves and why no alpha raise reached it.
+          Whole strands are promoted and never scattered segments — a dashed
+          promotion is that same bead failure in a new costume — and they LEAVE
+          the index above rather than sitting over it. Same emission, same
+          tissue taper, same blend: wider, never brighter. */}
+      <primitive object={placed.backbone.mesh} />
       <points
         geometry={placed.points}
         material={material}

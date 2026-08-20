@@ -5,6 +5,7 @@ import { makeCellHybridMaterial } from '../../src/materials/cellHybridMaterial';
 import { consensusCellColor } from '../../src/derives/consensusFlow.derive';
 import { CELL_GALAXY_PALETTE } from '../../src/visualPalette';
 import {
+  makePopulationBackboneMaterial,
   makePopulationFibreMaterial,
   makePopulationPointMaterial,
   populationPointEnergy,
@@ -17,6 +18,10 @@ import {
   POPULATION_FIELD_POINT_SIZE_MAX,
   POPULATION_FIELD_POINT_SIZE_MIN,
   POPULATION_FIELD_SIGMA,
+  POPULATION_BACKBONE_WIDTH_PX,
+  populationFibreEmissionForGain,
+  populationFibreSizeRatio,
+  populationFibreTaper,
 } from '../../src/materials/populationFieldMaterial';
 
 describe('the halo is the Cells material family, not a second material', () => {
@@ -271,5 +276,119 @@ describe('the amount curve reaches the picture undistorted', () => {
     // read differently, and a mapping that flattened them would erase it.
     expect(populationEmissionForGain(0.89))
       .toBeGreaterThan(populationEmissionForGain(0.58) * 1.15);
+  });
+});
+
+describe('the backbone is the hairline at a different width', () => {
+  const backbone = makePopulationBackboneMaterial();
+  const fibre = makePopulationFibreMaterial();
+
+  it('blends exactly as the hairline it was taken out of', () => {
+    // The partition draws one set of strokes in two passes. If the two passes
+    // did not agree here, the promoted half would be a different LIGHT rather
+    // than a different width — and "wider, never brighter" is the whole
+    // contract of the class.
+    for (const key of [
+      'blending',
+      'blendEquation',
+      'blendSrc',
+      'blendDst',
+      'blendEquationAlpha',
+      'blendSrcAlpha',
+      'blendDstAlpha',
+      'transparent',
+      'depthWrite',
+      'toneMapped',
+    ] as const) {
+      expect(backbone[key], key).toBe(fibre[key]);
+    }
+    expect(backbone.blending).toBe(THREE.CustomBlending);
+    expect(backbone.blendDst).toBe(THREE.OneMinusSrcColorFactor);
+  });
+
+  it('emits the hairline own premultiplied law', () => {
+    // `vec4(tint * a, a)` into a SrcAlpha/OneMinusSrcColor blend is what makes
+    // an isolated deposit contribute `tint * a * a`. A stock LineMaterial
+    // writes `vec4(diffuseColor.rgb, opacity)` instead, which is linear in the
+    // encoded energy — the promoted strands would have jumped a whole
+    // brightness class on the same alpha.
+    expect(backbone.fragmentShader)
+      .toContain('gl_FragColor = vec4( uColor * haloAlpha, haloAlpha );');
+    expect(backbone.fragmentShader)
+      .not.toContain('gl_FragColor = vec4( diffuseColor.rgb, alpha );');
+    expect(fibre.fragmentShader)
+      .toContain('gl_FragColor = vec4(tint * a, a);');
+  });
+
+  it('writes raw, as every other draw in this layer does', () => {
+    // ⚠️ The one patch that is easy to forget and impossible to see in a
+    // still: a stock LineMaterial colour-manages its output. Leaving that in
+    // would encode this pass to sRGB while the hairline it partitions with
+    // stays linear — 0.25 would render as 0.53, and the backbone would read
+    // as brighter rather than as wider.
+    expect(backbone.fragmentShader).not.toContain('colorspace_fragment');
+    expect(fibre.fragmentShader).not.toContain('colorspace_fragment');
+    // And premultiplication stays MANUAL: the stock include would multiply a
+    // second time.
+    expect(backbone.premultipliedAlpha).toBe(false);
+  });
+
+  it('squares the interpolated ratio, never the interpolated square', () => {
+    // mix() is linear, so the taper of an interpolated weight is the square of
+    // the interpolated RATIO. Both classes do it the same way round, off the
+    // same helper, and the geometry hands the shader the ratio.
+    expect(backbone.fragmentShader).toContain(
+      'float haloAlpha = uEmission * diffuseColor.r * diffuseColor.r * alpha;',
+    );
+    expect(fibre.fragmentShader)
+      .toContain('float a = uEmission * vSizeRatio * vSizeRatio;');
+    for (const weight of [0, 0.25, 0.5, 0.75, 1]) {
+      const ratio = populationFibreSizeRatio(weight);
+      expect(ratio * ratio).toBeCloseTo(populationFibreTaper(weight), 12);
+    }
+  });
+
+  it('carries no emission constant of its own', () => {
+    // Per-deposit alpha is not merely bounded by the hairline's, it IS the
+    // hairline's — chroma retention is a function of per-deposit alpha, so a
+    // width class that also raised alpha would spend the chroma the taper was
+    // installed to recover.
+    expect(backbone.uniforms.uEmission.value).toBe(0);
+    expect(fibre.uniforms.uEmission.value).toBe(0);
+    expect(backbone.uniforms.uColor.value.getHex())
+      .toBe(fibre.uniforms.uColor.value.getHex());
+    expect(new THREE.Color(...POPULATION_FIELD_COLOR).getHex())
+      .toBe(backbone.uniforms.uColor.value.getHex());
+    // The amount curve both passes ride is one function, so scope changes can
+    // never pull the two halves of the partition apart.
+    expect(populationFibreEmissionForGain(0.4))
+      .toBe(populationFibreEmissionForGain(0.4));
+  });
+
+  it('states its width in CSS pixels, which is what makes it DPR-aware', () => {
+    // ⚠️⚠️ The mechanism the whole class exists for: `gl.LINES` rasterizes at
+    // one DEVICE pixel and has no pixel-ratio input anywhere, so the hairline
+    // thins as the framebuffer grows. A screen-space capsule states its width
+    // against `resolution`, which `LineSegments2.onBeforeRender` writes in CSS
+    // pixels immediately before every draw.
+    expect(backbone.linewidth).toBe(POPULATION_BACKBONE_WIDTH_PX);
+    expect(backbone.worldUnits).toBe(false);
+    expect(backbone.uniforms.resolution).toBeDefined();
+    expect(backbone.uniforms.capsulePixelRatio).toBeDefined();
+    // The two-triangle capsule, not the stock six.
+    expect(backbone.fragmentShader).toContain('vCapsuleStartPx');
+  });
+
+  it('has no endpoint emphasis of any kind', () => {
+    // Round caps are the capsule's silhouette. What is forbidden is a
+    // brightening at a vertex: the stroke's energy is a function of the tissue
+    // weight at each end and of nothing else, so a strand's last segments fade
+    // exactly as the hairlines do.
+    const output = backbone.fragmentShader
+      .split('\n')
+      .find((line) => line.includes('float haloAlpha'));
+    expect(output).toBeDefined();
+    expect(output).not.toContain('capsuleT');
+    expect(output).not.toContain('vUv');
   });
 });
