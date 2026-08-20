@@ -492,13 +492,57 @@ export function populationPointEnergy(
  * toward white — see {@link POPULATION_STROKE_COLOR}, which is the half of the
  * fix that costs no light at all.
  *
+ * ⭐ **SPENT AGAIN, 0.70 → 0.80 on 2026-08-20, and the whole trail is kept
+ * because the four moves are one argument and not a loop.** The fourth live
+ * verdict is milder than the three before it and asks for something different:
+ * the terminal nerves are *visible now, but hard to see CLEARLY*. Not absent —
+ * under-resolved. Two of the three answers to that are geometry and land
+ * beside this one ({@link POPULATION_BACKBONE_WIDTH_PX} 1.6 → 1.8,
+ * `POPULATION_BACKBONE_BUDGET` 16,000 → 20,000); the third is level, and this
+ * is the only constant that moves it for the whole class at once.
+ *
+ * ⚠️ **The number is the one the stopgap used. The reason is not.** In August's
+ * second round 0.80 was a `tissueRose` alpha, spent to buy WIDTH it cannot buy,
+ * in a tint whose high G and B are what a bounded accumulation converges toward
+ * white — it produced the pale mesh the verdict then complained about. Every
+ * one of those conditions has since been removed: the strokes emit
+ * {@link POPULATION_STROKE_COLOR}, whose G and B are 0.125 and 0.333 of its
+ * red, so the same alpha deposits toward deep red instead of toward white;
+ * width has its own DPR-aware class; and the sparse end has
+ * {@link POPULATION_STROKE_TAPER_FLOOR}. What is being bought is no longer a
+ * substitute for any of them.
+ *
+ * And the cost is now MEASURED rather than feared. Rasterizing the real
+ * placement at the production camera into the 3840x2160 buffer the verdicts
+ * come from, at the geometry this round ships (1.8 px over a 20,000-segment
+ * backbone), mean over each band's covered pixels:
+ *
+ * | alpha | fringe isolated deposit L | mixed dL | mixed C/L | vs 497c54d |
+ * |---:|---:|---:|---:|---:|
+ * | 0.70 (497c54d) | 0.0471 | — | 1.948 | — |
+ * | 0.70 (this geometry) | 0.0471 | +1.2% | 1.926 | −1.1% |
+ * | 0.75 | 0.0540 | +14.4% | 1.900 | −2.5% |
+ * | **0.80** | **0.0615** | +28.3% | **1.874** | **−3.8%** |
+ * | 0.85 | 0.0694 | +42.7% | 1.849 | −5.1% |
+ *
+ * The bar was the highest rung holding the just-accepted mixed band's
+ * chroma-per-luma within about 5% of what the colour verdict was pronounced
+ * on. 0.85 leaves it; 0.80 is the last rung inside, and it is also the first
+ * that carries the fringe's isolated deposit to the 0.06 the read wants —
+ * 0.75 reaches 0.054 and stops short. ⭐ The reason the chroma survives a
+ * +28% level lift at all is the P9 measurement: this panel puts ~2 deposits on
+ * the average covered pixel, not the six the retention tables were written
+ * against at 1080p, and two deposits is still the squared part of the blend.
+ * At six the same lift costs 9%. **The old fear was correct for the old
+ * instrument's regime and this display is not in it.**
+ *
  * It is deliberately NOT small relative to a point. "No endpoint emphasis of
  * any kind" is a requirement, and a faint connector between bright beads is
  * precisely a node with edges radiating from it. At this ratio the stroke is
  * the figure and the points are grain along it — and raising it moves the
  * stroke further toward the figure, never the other way.
  */
-export const POPULATION_FIBRE_ALPHA = 0.7;
+export const POPULATION_FIBRE_ALPHA = 0.8;
 
 /**
  * The fibre's share of the tissue taper, and why a stroke needs one at all.
@@ -648,6 +692,13 @@ export function populationFibreSizeRatio(weight: number): number {
  * 15,988 promoted segments over 531 strands at 1.6 px with the emission live.
  * The problem was never presence. It is LEVEL, and this is the only round that
  * says so in the only unit that was still holding it down.
+ *
+ * ⚠️ The width history above ends at 1.6 because that is where it stood when
+ * this constant was derived; it is 1.8 over a 20,000-segment backbone now, and
+ * the alpha is 0.80 again. Neither moves this floor — it is stated as a taper,
+ * so it rides whatever level and width the class is drawn at — but the fringe
+ * DEPOSIT numbers quoted below are at the 0.70 alpha of the day and read 1.31x
+ * higher today. The `populationFieldMaterial` tests carry the current pair.
  *
  * The arithmetic of the complaint, at the emission the live build reports
  * (`backboneEmission` 0.5065, mainnet chain scope):
@@ -1102,31 +1153,52 @@ export function makePopulationFibreMaterial(): THREE.ShaderMaterial {
  * same size, while the bead beside it stays 5–8x more intense per pixel
  * because it concentrates its light into a clamped Gaussian.
  *
- * ## Why 1.6, and why it is not larger
+ * ## Where this rung sits on the ladder
  *
- * The ladder reads 3.4 pulse / 3.2 trunk / 2.5 mesh / **2.0 bridge** / 1.6
+ * The ladder reads 4.6 pulse / 4.4 trunk / 2.5 mesh / **2.4 bridge** / 1.8
  * halo backbone / 1 device px residual grain, and a rung has to be
- * distinguishable from the rung above it. The bridge is 2.0 CSS px
- * (`BRIDGE_WIDTH_RATIO` 0.8 on the fabric's 2.5). 1.6 leaves 0.4 CSS px, a
- * wider step than the 0.3 the previous pair had, so the rung above stays
- * legible while both move.
+ * distinguishable from the rung above it.
  *
- * ## Why 1.6 and no longer 1.4
+ * ⭐ **1.6 → 1.8 on 2026-08-20, and this time the whole ladder moved with
+ * it.** The verdict that opened the round was that the three nerve classes are
+ * not different ENOUGH from one another — 中央 fabric, 次级 bridges, 末梢 halo
+ * strokes — and the diagnosis was arithmetic rather than aesthetic: the rungs
+ * had been set one pair at a time, each against its immediate neighbour, and
+ * the result was a ladder of ~1.25x adjacent steps. A 1.25x width difference
+ * is below at-a-glance discriminability for two strokes that are not adjacent
+ * on screen, which is the whole of what "hard to tell apart" means here. So
+ * the steps were re-cut as a set: the trunk took the big move (3.2 → 4.4,
+ * 1.76x the mesh), the bridge became the only stroke in the scene whose width
+ * VARIES along its length, and this class took the step that keeps it clear of
+ * the bridge's thin end while pulling further off the hairline it partitions
+ * with.
+ *
+ * ⚠️ 1.8 is deliberately the SAME number the bridge's far end lands on. That
+ * is not a collision, it is the merge: a 次级 stroke ends part-way along a
+ * 末梢 strand, and arriving at the strand's own width is what makes the join
+ * read as a continuation rather than as a step. See `BRIDGE_WIDTH_RATIO` for
+ * the other half of it.
+ *
+ * ## Why 1.8, and why the steps below it are 1.6 and 1.4
  *
  * ⚠️ **State the gain in DEVICE pixels or repeat the bug.** The reference 4K
  * monitor reports `devicePixelRatio` 1 with a 3840x2160 buffer (measured, see
  * `qualityPresets.ts`), so on the machine the verdicts come from this is
- * **1.6 device px against the hairline's 1 — a factor of 1.6, not of 3.2.**
- * At DPR 2 the same constant is 3.2 device px against the same 1. The class is
+ * **1.8 device px against the hairline's 1 — a factor of 1.8, not of 3.6.**
+ * At DPR 2 the same constant is 3.6 device px against the same 1. The class is
  * DPR-aware precisely so the FIRST number is a floor rather than a
  * coincidence, and 1.4 was the smallest number that could TEST the verdict.
  * Live review on `539cd41` returned it unfixed — *the terminal and secondary
  * nerves still do not read at the operating camera* — which answers the
  * question that constant was posed to ask: on this panel, 1.4x over the
- * hairline is not enough. So the rung takes one more step, and the read is
- * bought mostly elsewhere: {@link POPULATION_STROKE_COLOR} moves the whole
- * stroke class out of the beads' hue, because a wider mark in the SAME pink
- * was always going to be more pink rather than a nerve.
+ * hairline is not enough. 1.6 was the next step, and the read was bought
+ * mostly elsewhere: {@link POPULATION_STROKE_COLOR} moved the whole stroke
+ * class out of the beads' hue, because a wider mark in the SAME pink was
+ * always going to be more pink rather than a nerve. That is the round the
+ * fourth verdict finally graded as *visible, but hard to see clearly* — so
+ * the rung takes its last step, alongside a wider net (the budget) and a
+ * higher level ({@link POPULATION_FIBRE_ALPHA}), because "not clear enough"
+ * is answered by all three and by no one of them.
  *
  * ⭐ And width is not the whole of what the primitive change buys, which is
  * why 1.4 was enough to test the verdict with. A `gl.LINES` primitive lights
@@ -1136,18 +1208,17 @@ export function makePopulationFibreMaterial(): THREE.ShaderMaterial {
  * barely a pixel can be dropped entirely. A capsule is a swept disk: it covers
  * a contiguous region, and it never falls under its own width.
  *
- * ⭐ The number that says this is not a brightness raise in disguise: with
- * 16.6% of segments promoted, the layer's MEAN stroke width goes to
- * `0.166 x 1.6 + 0.834 x 1.0` = **1.10 device px at DPR 1** (1.37 at DPR 2),
- * against 1.07 at the previous rung — 3.1% more stroke area, all of it in the
- * strands that had to carry the read. Every other factor points down: the
- * alpha revert is `(0.70/0.80)^2` = 0.766 per deposit and the hue is 0.615 of
- * `tissueRose`'s luma, for 0.471 of the per-deposit light. Band-weighted over
- * the recorded segment counts, the stroke class emits **0.484x** the luminous
- * flux `539cd41` did — and **1.046x** its chroma. Wider, deeper, dimmer: this
- * round adds light nowhere.
+ * ⭐ The GEOMETRY half of this round, stated on its own so it is not confused
+ * with the level half. With 20.7% of segments promoted at the wider budget,
+ * the layer's MEAN stroke width goes to `0.207 x 1.8 + 0.793 x 1.0` =
+ * **1.166 device px at DPR 1** (1.54 at DPR 2), against 1.10 at the previous
+ * rung and budget — **6.0% more stroke area**, all of it in the strands that
+ * had to carry the read. Rasterized at the production camera the same pair
+ * measures +1.2% mean luma on the mixed band, which is what a geometry move
+ * costs when the class it widens is already the figure. The level this round
+ * adds is {@link POPULATION_FIBRE_ALPHA}'s and is accounted there.
  */
-export const POPULATION_BACKBONE_WIDTH_PX = 1.6;
+export const POPULATION_BACKBONE_WIDTH_PX = 1.8;
 
 const BACKBONE_UNIFORM_ANCHOR = 'uniform float opacity;';
 const BACKBONE_UNIFORMS = `uniform float opacity;
@@ -1225,6 +1296,14 @@ const BACKBONE_COLORSPACE_ANCHOR = '#include <colorspace_fragment>';
  * chroma it costs was measured rather than assumed — 1.4% of the mixed band's
  * C/L, because this panel accumulates ~2 deposits per covered pixel and not
  * the six the retention tables were written against.
+ *
+ * ⚠️ The fourth verdict then moved the currency ITSELF: per-deposit alpha,
+ * the quantity the retired sentence named as immovable, is 0.80 again
+ * ({@link POPULATION_FIBRE_ALPHA}). Same measurement, same reason — at two
+ * deposits a level lift is cheap in chroma, and it was priced at −3.8% of the
+ * mixed band's C/L before it was spent. The rule that survives all four
+ * rounds is not "never move level"; it is **never move a channel without
+ * measuring what it costs in the regime the display is actually in**.
  */
 export function makePopulationBackboneMaterial(): LineMaterial {
   const material = new LineMaterial({

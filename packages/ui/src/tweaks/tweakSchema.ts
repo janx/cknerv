@@ -151,7 +151,14 @@ export const cellSchema = {
   activeColorG: { value: 1.0, min: 0, max: 1, step: 0.01, label: 'packet gain G' },
   activeColorB: { value: 1.0, min: 0, max: 1, step: 0.01, label: 'packet gain B' },
   fabricWidth: { value: 2.5, min: 0.5, max: 8, step: 0.1, label: 'fabric width px' },
-  activeWidth: { value: 3.4, min: 0.5, max: 8, step: 0.1, label: 'active width px' },
+  // The TOP of the width ladder, and the only rung that is a hard ordering
+  // guarantee rather than a look: a protocol write must never be narrower than
+  // the resting tissue it crosses. 3.4 → 4.6 on 2026-08-20, moved because the
+  // trunk rung under it did (`FABRIC_TRUNK_WIDTH_RATIO` 1.28 → 1.76, capped at
+  // 4.5 CSS px) — the same one-tenth-of-a-pixel margin, re-cut at the new
+  // scale. The route-hop lock rides ×1.3 of this and the memory route ×1–1.42,
+  // so both scale with it automatically.
+  activeWidth: { value: 4.6, min: 0.5, max: 8, step: 0.1, label: 'active width px' },
   // ② How strongly and how long observed packet traffic reinforces shared routes.
   reinforceAmount: { value: REINFORCE_AMOUNT, min: 0, max: 1, step: 0.02, label: 'reinforce amount' },
   reinforceGain: { value: USAGE_GAIN, min: 0, max: 5, step: 0.1, label: 'reinforce gain' },

@@ -216,19 +216,24 @@ describe('every band keeps a skeleton', () => {
     // rather than drift: the budget and the band weights were chosen against
     // exactly this row.
     //
+    // ⚠️ Re-pinned 2026-08-20 from the 16,000 row to the 20,000 one. The
+    // placement did NOT move — the sweep below re-derives every row of the
+    // recorded table unchanged — the BUDGET did, on the verdict that the
+    // terminal nerves are visible but not clear.
+    //
     // | band | segments | promoted | share |
     // |---|---:|---:|---:|
-    // | pre-rim < 0.95   | 30,120 | 2,673 |  8.9% |
-    // | mixed 0.95–1.15  | 32,308 | 4,956 | 15.3% |
-    // | outer 1.15–1.40  | 28,208 | 6,617 | 23.5% |
-    // | outer 1.40–1.55  |  5,526 | 1,581 | 28.6% |
-    // | fringe >= 1.55   |    447 |   161 | 36.0% |
-    const recorded = [0.089, 0.153, 0.235, 0.286, 0.360];
+    // | pre-rim < 0.95   | 30,120 | 3,343 | 11.1% |
+    // | mixed 0.95–1.15  | 32,308 | 6,203 | 19.2% |
+    // | outer 1.15–1.40  | 28,208 | 8,265 | 29.3% |
+    // | outer 1.40–1.55  |  5,526 | 1,984 | 35.9% |
+    // | fringe >= 1.55   |    447 |   195 | 43.6% |
+    const recorded = [0.111, 0.192, 0.293, 0.359, 0.436];
     for (let band = 0; band < POPULATION_BACKBONE_BAND_COUNT; band += 1) {
       expect(SHARES[band].share).toBeCloseTo(recorded[band], 2);
     }
     expect(PARTITION.backboneCount / PLACEMENT.segmentCount)
-      .toBeCloseTo(0.166, 2);
+      .toBeCloseTo(0.207, 2);
   });
 
   it('bins each segment exactly once', () => {
@@ -247,11 +252,13 @@ describe('every band keeps a skeleton', () => {
     // | 12,000 |  6.8% | 11.3% | 17.7% | 20.7% | 28.0% |
     // | 16,000 |  8.9% | 15.3% | 23.5% | 28.6% | 36.0% |
     // | 20,000 | 11.1% | 19.2% | 29.3% | 35.9% | 43.6% |
+    // | 24,000 | 13.1% | 23.4% | 35.0% | 40.8% | 45.9% |
     const sweep: Record<number, number[]> = {
       8_000: [0.045, 0.076, 0.120, 0.127, 0.219],
       12_000: [0.068, 0.113, 0.177, 0.207, 0.280],
       16_000: [0.089, 0.153, 0.235, 0.286, 0.360],
       20_000: [0.111, 0.192, 0.293, 0.359, 0.436],
+      24_000: [0.131, 0.234, 0.350, 0.408, 0.459],
     };
     for (const [budget, expected] of Object.entries(sweep)) {
       const partition = selectPopulationBackbone(INPUT, Number(budget));
@@ -263,15 +270,39 @@ describe('every band keeps a skeleton', () => {
         expect(shares[band].share).toBeCloseTo(expected[band], 2);
       }
     }
-    // 16,000 is the SMALLEST of these at which the two outermost shells hold
-    // a skeleton rather than a sample. That is the claim the choice rests on,
-    // so it is the claim under test.
+    // 16,000 was the SMALLEST of these at which the two outermost shells hold
+    // a skeleton rather than a sample, and that claim still holds — it is what
+    // rules 12,000 out.
     const smaller = populationBackboneBandShares(
       INPUT,
       selectPopulationBackbone(INPUT, 12_000),
     );
     expect(smaller[3].share).toBeLessThan(0.25);
     expect(smaller[4].share).toBeLessThan(0.30);
+
+    // ⭐ 20,000 answers a LATER question — not "does every shell have a
+    // skeleton" but "does it read as connected tissue" — so the bar it is
+    // pinned to is different: both outer shells past a third of their
+    // segments, which 16,000 misses on one of the two.
+    const shipped = populationBackboneBandShares(INPUT, PARTITION);
+    expect(shipped[3].share).toBeGreaterThan(0.33);
+    expect(shipped[4].share).toBeGreaterThan(0.40);
+    const previous = populationBackboneBandShares(
+      INPUT,
+      selectPopulationBackbone(INPUT, 16_000),
+    );
+    expect(previous[3].share).toBeLessThan(0.33);
+    // And 24,000 is rejected on the same table: the fringe's own curve is
+    // flattening (+7.6 points from 16K to 20K, +2.3 from 20K to 24K) while
+    // the crossing-rich inner bands keep taking the whole cost.
+    const larger = populationBackboneBandShares(
+      INPUT,
+      selectPopulationBackbone(INPUT, 24_000),
+    );
+    expect(larger[4].share - shipped[4].share)
+      .toBeLessThan((shipped[4].share - previous[4].share) / 3);
+    expect(larger[0].share - shipped[0].share)
+      .toBeGreaterThan((shipped[0].share - previous[0].share) * 0.8);
   });
 });
 
@@ -440,30 +471,30 @@ describe('the capsule carries the hairline own taper', () => {
   });
 
   it('sits on the width ladder below the bridge', () => {
-    // 3.4 pulse / 3.2 trunk / 2.5 mesh / 2.0 bridge / 1.6 halo backbone / 1
+    // 4.6 pulse / 4.4 trunk / 2.5 mesh / 2.4 bridge / 1.8 halo backbone / 1
     // device px residual grain. The bridge is the mixed register's headline
     // and this rung stays under it.
     //
-    // ⭐ The two bottom rungs moved on 2026-08-20 (1.7 -> 2.0 and 1.4 -> 1.6),
-    // by live review at 4K rather than by drift: at the old pair the terminal
-    // and secondary nerves still did not read at the operating camera. These
-    // asserts are re-derived at the new ladder, not relaxed — the step between
-    // the two rungs GREW, from 0.3 CSS px to 0.4.
+    // ⭐ Re-derived 2026-08-20, for the third time in a day and for the third
+    // reason. 1.4 was the smallest step that could TEST the first verdict;
+    // 1.6 answered it together with the hue change; 1.8 answers a milder and
+    // later one — *visible now, but hard to see clearly* — as one third of a
+    // move that also widened the budget and raised the level. These asserts
+    // are re-derived at the new ladder, never relaxed.
     const bridgePx = 2.5 * BRIDGE_WIDTH_RATIO;
-    expect(bridgePx).toBeCloseTo(2.0, 10);
-    expect(POPULATION_BACKBONE_WIDTH_PX).toBe(1.6);
+    expect(bridgePx).toBeCloseTo(2.4, 10);
+    expect(POPULATION_BACKBONE_WIDTH_PX).toBe(1.8);
     expect(POPULATION_BACKBONE_WIDTH_PX).toBeLessThan(bridgePx);
-    expect(bridgePx - POPULATION_BACKBONE_WIDTH_PX).toBeCloseTo(0.4, 10);
+    expect(bridgePx - POPULATION_BACKBONE_WIDTH_PX).toBeCloseTo(0.6, 10);
     // And above the residual hairline it partitions with, which is one DEVICE
     // pixel — half a CSS pixel at DPR 2, which is the whole mechanism.
     expect(POPULATION_BACKBONE_WIDTH_PX).toBeGreaterThan(1);
     // The mean stroke width the partition actually draws, in device px at
-    // DPR 1, against the 1.07 the previous rung gave: the class buys 3% more
-    // stroke area, and the round's light comes DOWN regardless because the
-    // alpha and the hue both fell.
+    // DPR 1, against the 1.10 the previous rung and budget gave: the class
+    // buys 6% more stroke area, all of it in the strands carrying the read.
     const promoted = PARTITION.backboneCount / PLACEMENT.segmentCount;
     expect(promoted * POPULATION_BACKBONE_WIDTH_PX + (1 - promoted) * 1)
-      .toBeCloseTo(1.10, 2);
+      .toBeCloseTo(1.166, 2);
   });
 });
 
@@ -474,8 +505,8 @@ describe('the price is recorded in primitives and bytes', () => {
       * SCREEN_CAPSULE_TRIANGLES_PER_SEGMENT;
     // A point sprite is one primitive the driver expands to a screen quad.
     const pointTriangles = POPULATION_FIELD_POINTS * 2;
-    expect(capsuleTriangles).toBeCloseTo(32_000, -3);
-    expect(capsuleTriangles / pointTriangles).toBeLessThan(0.16);
+    expect(capsuleTriangles).toBeCloseTo(40_000, -3);
+    expect(capsuleTriangles / pointTriangles).toBeLessThan(0.20);
     // Partition, not overlay: the fibre pass gives up exactly what the
     // capsule pass takes.
     expect(PARTITION.residualCount)
@@ -487,11 +518,14 @@ describe('the price is recorded in primitives and bytes', () => {
     const sharedPositions = PLACEMENT.count * 3 * BYTES;
     const capsulePositions = PARTITION.backboneCount * 6 * BYTES;
     const capsuleTaper = PARTITION.backboneCount * 2 * BYTES;
-    // 0.384 MB against the 1.26 MB a duplicate of the whole position buffer
-    // would cost. `LineSegmentsGeometry` can only name consecutive vertex
-    // pairs, and the halo's segments are not consecutive, so SOMETHING has to
-    // be written out — the requirement is that it is only the subset.
-    expect(capsulePositions / sharedPositions).toBeLessThan(0.35);
+    // 0.48 MB against the 1.26 MB a duplicate of the whole position buffer
+    // would cost (0.384 MB at the 16,000 budget this was first pinned at).
+    // `LineSegmentsGeometry` can only name consecutive vertex pairs, and the
+    // halo's segments are not consecutive, so SOMETHING has to be written out
+    // — the requirement is that it is only the subset, and the bound is a
+    // share of the whole rather than a byte count so a budget move re-derives
+    // it instead of silently passing.
+    expect(capsulePositions / sharedPositions).toBeLessThan(0.40);
     // The taper rides a one-component slot of the vec3 colour attribute, so
     // it costs a third of what a full vertex-colour buffer would.
     expect(capsuleTaper).toBe(capsulePositions / 3);

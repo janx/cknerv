@@ -58,23 +58,32 @@ import {
 /**
  * Screen width of a bridge, as a RATIO of the fabric's.
  *
- * The ladder now reads 3.4 px (pulse) / 3.2 (trunk) / 2.5 (mesh) / **2.0
- * (bridge)** / 1.6 (halo backbone) / 1 device px (halo hairline), and
- * `2.0 / 2.5 = 0.8`. Stored as the ratio rather than as 2.0 because
- * `cell.fabricWidth` is a live knob: a fixed 2.0 stops being the mid rung the
+ * The ladder now reads 4.6 px (pulse) / 4.4 (trunk) / 2.5 (mesh) / **2.4
+ * (bridge)** / 1.8 (halo backbone) / 1 device px (halo hairline), and
+ * `2.4 / 2.5 = 0.96`. Stored as the ratio rather than as 2.4 because
+ * `cell.fabricWidth` is a live knob: a fixed 2.4 stops being the mid rung the
  * moment the mesh moves, and a constant that was calibrated against another
  * constant has to follow it.
  *
- * ⭐ **1.7 → 2.0 on 2026-08-20, by live review rather than by drift.** The
- * verdict at 4K was that the secondary nerves do not read at the operating
- * camera — in its honest form, that it was not clear whether this class was
- * rendering at all — and this class is the mixed band's headline stroke. It gains width here and hue at its symbolic
- * end (see {@link bridgeSymbolicDim}), and it keeps the step above the halo's
- * promoted strands: 2.0 against 1.6 is 0.4 CSS px, a wider rung than the 0.3
- * the pair had before. It stays under the mesh at every camera, since both
+ * ⭐ **1.7 → 2.0 → 2.4 CSS px across 2026-08-20, both steps by live review
+ * rather than by drift.** The first verdict was that the secondary nerves do
+ * not read at the operating camera — in its honest form, that it was not clear
+ * whether this class was rendering at all — and this class is the mixed band's
+ * headline stroke. It gained width here and hue at its symbolic end (see
+ * {@link bridgeSymbolicDim}). The second verdict is milder and different: the
+ * class reads now, and what it does not do is read as ITS OWN class. That is a
+ * problem width alone cannot fix, because the rung above it (the mesh, 2.5) is
+ * fixed by the fabric and the rung below it (the halo backbone, 1.8) is where
+ * this stroke has to LAND — a bridge merges into a halo strand, so its far end
+ * arriving at the strand's own width is the point, not a coincidence.
+ *
+ * ⚠️ So 2.4 sits deliberately close to the mesh — 0.1 CSS px under it — and
+ * that is as far as a width ladder can take this class. What separates it from
+ * the fabric is not its width; it is where it starts, where it ends, and the
+ * hue ramp between them. It stays under the mesh at every camera, since both
  * ride the same `cellDetailFabricWidthScale`.
  */
-export const BRIDGE_WIDTH_RATIO = 0.8;
+export const BRIDGE_WIDTH_RATIO = 0.96;
 
 /**
  * The far end's energy, as a fraction of the knot, before the anchor's own
@@ -93,7 +102,7 @@ export const BRIDGE_WIDTH_RATIO = 0.8;
  * classes gained `POPULATION_STROKE_TAPER_FLOOR`, which lifts a thin-tissue
  * stroke to 0.75 where this reads 0.43 — a visibility floor for marks the
  * fringe was losing under the eye's threshold. This class is not in that
- * regime: it is 2.0 CSS px in the MIXED band, the widest rung below the mesh,
+ * regime: it is 2.4 CSS px in the MIXED band, the widest rung below the mesh,
  * and it is the one stroke here that must arrive at the halo looking like it
  * is thinning INTO it. Flooring the far end would flatten exactly the ramp
  * this constant exists to draw.

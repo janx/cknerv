@@ -41,9 +41,11 @@
 // 1.4 device px, still reported the terminal strands as not reading — because
 // the promoted stroke was the SAME `tissueRose` the beads emit, so a wider
 // mark was a wider pink one and no nerve percept was available at any width.
-// The rung is now 1.6 px and the whole stroke class emits the vein hue
+// The rung is 1.8 px now and the whole stroke class emits the vein hue
 // (`POPULATION_STROKE_COLOR`); this file's selection is unchanged by either,
 // which is the point of it reading positions and indices and nothing else.
+// The BUDGET is this file's own answer to the same verdict, and it moved on
+// 2026-08-20 as well — see `POPULATION_BACKBONE_BUDGET`.
 //
 // ## The selection law
 //
@@ -94,7 +96,7 @@ import { FIELD_HALF_X, FIELD_HALF_Z } from '../helix';
 /**
  * Total promoted segments.
  *
- * Swept over 8K/12K/16K/20K against the shipped placement (105,000 points,
+ * Swept over 8K/12K/16K/20K/24K against the shipped placement (105,000 points,
  * 96,609 segments, 14,419 filaments, 1,670 joins), reading the promoted share
  * of each elliptical band and, beside it, how many of the 24 angular sectors
  * of each band received any backbone at all — a share can be met by one thick
@@ -106,30 +108,55 @@ import { FIELD_HALF_X, FIELD_HALF_Z } from '../helix';
  * |  8,000 |  4.5% |  7.6% | 12.0% | 12.7% | 21.9% | 229 | 23/24 24/24 24/24 17/21 6/7 |
  * | 12,000 |  6.8% | 11.3% | 17.7% | 20.7% | 28.0% | 370 | 23/24 24/24 24/24 18/21 7/7 |
  * | 16,000 |  8.9% | 15.3% | 23.5% | 28.6% | 36.0% | 531 | 23/24 24/24 24/24 19/21 7/7 |
- * | 20,000 | 11.1% | 19.2% | 29.3% | 35.9% | 43.6% | 720 | 24/24 24/24 24/24 20/21 7/7 |
+ * | **20,000** | **11.1%** | **19.2%** | **29.3%** | **35.9%** | **43.6%** | **720** | **24/24 24/24 24/24 20/21 7/7** |
+ * | 24,000 | 13.1% | 23.4% | 35.0% | 40.8% | 45.9% | 932 | 24/24 24/24 24/24 20/21 7/7 |
  *
- * 16,000 is the smallest budget at which every band gets a skeleton rather
+ * 16,000 was the smallest budget at which every band gets a skeleton rather
  * than a sample. At 12,000 the two outermost shells fall to roughly one strand
  * in five and the 1.40–1.55 shell loses three of its twenty-one occupied
  * sectors — a hole in the second-outermost shell is exactly the ground the
- * complaint is about. 20,000 buys another six points out there and pays for
- * them in the crossing-rich inner bands, where a wider stroke makes wider
- * crossings and retention is a function of deposits per pixel.
+ * complaint is about.
+ *
+ * ⭐ **16,000 → 20,000 on 2026-08-20, and the whole table above was
+ * re-measured on the current placement first.** It did not drift: P8's joins
+ * and P9's taper floor moved no row of it, because the selection reads
+ * positions and indices and neither of those changed. What moved is the
+ * standard the budget is held to. 16,000 answered "does every band have a
+ * skeleton"; the fourth live verdict is *the terminal nerves are visible now,
+ * but hard to see clearly*, which is a different question — not whether a
+ * strand exists in a shell but whether the shell reads as connected tissue.
+ * 20,000 is where the two outermost shells stop being a skeleton and become a
+ * mesh: the fringe goes 36.0% → 43.6% of its segments promoted, the 1.40–1.55
+ * shell 28.6% → 35.9% and picks up its twentieth occupied sector, and the
+ * pre-rim band finally covers all 24. 24,000 is measured and rejected: it buys
+ * the fringe 2.3 more points (43.6% → 45.9%, the curve is flattening out
+ * there) and charges the crossing-rich inner bands another quarter of their
+ * segments for it, which is a wider stroke making wider crossings in the one
+ * place accumulation already carries the read.
  *
  * ## The GPU price, in primitives
  *
  * The halo is primitive-bound — halving its primitives measured 0.43–0.45x of
  * its draw time — so primitives price this honestly without a timer. A
  * screen-space capsule is TWO triangles per segment
- * ({@link SCREEN_CAPSULE_TRIANGLES_PER_SEGMENT}), so 16,000 promoted segments
- * are **32,000 triangles**. The point pass rasterizes 105,000 point
+ * ({@link SCREEN_CAPSULE_TRIANGLES_PER_SEGMENT}), so the 19,990 segments this
+ * budget actually promotes (the whole-run rule spends UNDER the ceiling, never
+ * over) are **39,980 triangles**. The point pass rasterizes 105,000 point
  * primitives, each of which the driver expands to a screen quad — about
- * **210,000 triangle-equivalents** — so the whole new pass is **15.2%** of the
- * point draw. And because this is a partition rather than an overlay, the
- * fibre pass gives up the same 16,000 line primitives it gained: 96,609 lines
- * become 80,621.
+ * **210,000 triangle-equivalents** — so the whole capsule pass is **19.0%** of
+ * the point draw, against 15.2% at the previous budget. And because this is a
+ * partition rather than an overlay, the fibre pass gives up the same 19,990
+ * line primitives it gained: 96,609 lines become 76,619.
+ *
+ * In FILL rather than in primitives — the other half of the price, and the
+ * one a wider rung moves — the promoted strands measure 260,892 px of screen
+ * length at the production camera against 207,021 px at 16,000, so at 1.8 CSS
+ * px they cover 469,606 device px² where the previous pair covered 331,234.
+ * The residual hairline gives up 53,871 px² of that. Net, the halo's whole
+ * stroke class goes 1,364,150 → 1,448,652 device px², **+6.2%**, against a
+ * point pass that covers 4,785,305 px² of sprite at the same camera.
  */
-export const POPULATION_BACKBONE_BUDGET = 16_000;
+export const POPULATION_BACKBONE_BUDGET = 20_000;
 
 /**
  * Elliptical-radius edges of the bands the quota is rationed across.
@@ -199,6 +226,9 @@ export const POPULATION_BACKBONE_BAND_WEIGHTS: readonly number[] = [
  * across them. Capping candidates at 40 — the component-size p90, rounded —
  * buys **531** distinct strands for the same budget, at a mean run of 30
  * segments, and lifts sector coverage from 20/22/22/18/6 to 23/24/24/19/7.
+ * (Both numbers are at the 16,000 budget this was derived on; at the 20,000
+ * the layer ships today the same ceiling buys 720 strands at a mean run of
+ * 27.8, and the sweep table above is what re-derives it.)
  *
  * | ceiling | strands | mean run | pre-rim | mixed | 1.15–1.40 | 1.40–1.55 | fringe |
  * |---:|---:|---:|---:|---:|---:|---:|---:|

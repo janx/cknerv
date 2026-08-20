@@ -61,18 +61,68 @@ export const FABRIC_TRUNK_SHARE = 0.125;
 export const FABRIC_TRUNK_PASS_MESH = 0;
 export const FABRIC_TRUNK_PASS_TRUNK = 1;
 
-/** The wide rung against the passive 2.5 px: 3.2 px at the overview camera,
- *  where the whole width ladder (pulse 3.4, mesh 2.5, bridge 2.0, halo
- *  backbone 1.6, halo hairline 1 device px) is composed and judged. */
-export const FABRIC_TRUNK_WIDTH_RATIO = 1.28;
+/**
+ * The wide rung against the passive 2.5 px: **4.4 px** at the overview camera,
+ * where the whole width ladder (pulse 4.6, mesh 2.5, bridge 2.4, halo
+ * backbone 1.8, halo hairline 1 device px) is composed and judged.
+ *
+ * ⭐ **1.28 → 1.76 on 2026-08-20, by live review.** The verdict was that the
+ * three nerve classes do not read as different enough from each other and that
+ * *the central nerves may be thicker*; the diagnosis was that the ladder had
+ * been cut one pair at a time and had settled into ~1.25x adjacent steps,
+ * which is below at-a-glance discriminability for two strokes that are not
+ * side by side. This rung took the largest single move because it is the one
+ * with the most room: the centre's OTHER two channels are already spent (the
+ * de-glare ramp floors the core at `centerDim² = 0.09` and trunkness reclaims
+ * no further than 0.40), which is the argument this whole module was built on.
+ *
+ * ## Why 1.76 and not 1.60 or 1.92
+ *
+ * Swept {4.0, 4.4, 4.8} against the ONE ordering rule that is not a matter of
+ * taste — the rung has to stay discriminable at EVERY camera, not only at the
+ * overview the ladder is composed at. The mesh takes `cellDetailFabricWidthScale`
+ * and this class takes it too until {@link FABRIC_TRUNK_WIDTH_CEILING_PX}
+ * bites, after which the mesh keeps growing and the ratio falls. So the number
+ * that decides is the ratio at the CLOSEST camera, where the mesh is 3.05 px:
+ *
+ * | overview | ceiling | trunk : mesh, overview | trunk : mesh, closest | pulse |
+ * |---:|---:|---:|---:|---:|
+ * | 4.0 | 4.1 | 1.60 | **1.34** | 4.2 |
+ * | **4.4** | **4.5** | **1.76** | **1.48** | **4.6** |
+ * | 4.8 | 4.9 | 1.92 | 1.61 | 5.0 |
+ *
+ * 4.0 collapses to 1.34 at the near camera — a seventh above the 1.25 the
+ * verdict called indistinguishable, which is not a fix. 4.4 is the smallest of
+ * the three that holds above 1.4 through the whole camera range. 4.8 holds
+ * more, and pays for it at the top of the ladder: the pulse has to clear the
+ * ceiling, so it would go to 5.0 and drag the route-hop lock to 6.5 px — a
+ * transient additive stroke at 2.6x the mesh, for 0.13 more of a ratio that is
+ * already past the bar.
+ *
+ * The fill it costs, at the production camera on the AUTO composition (12,000
+ * Cells → 8,000 drawn edges, 1,014 of them promoted, mean 34.5 px of screen
+ * length each): 111,869 → 153,820 device px², against a halo point pass that
+ * covers 4,785,305 px² of sprite in the same frame. **2.3% → 3.2% of it.** The
+ * light rises with the area, because the tier is a partition and the promoted
+ * edges' per-pixel energy is untouched: the fabric class as a whole emits
+ * about 8.5% more, all of it in 12.7% of its edges.
+ */
+export const FABRIC_TRUNK_WIDTH_RATIO = 1.76;
 
-/** Hard ceiling for the wide class, in CSS px. Live pulses draw at 3.4 px and
- *  the route-hop lock at 4.42 px, and NEITHER takes the close-camera focus
+/** Hard ceiling for the wide class, in CSS px. Live pulses draw at 4.6 px and
+ *  the route-hop lock at 5.98 px, and NEITHER takes the close-camera focus
  *  scale — so a trunk rung that kept scaling would overtake the pulse the
- *  moment the camera came in (2.5 × 1.28 × 1.22 = 3.904 px). The ratio
- *  therefore holds until it would collide and then stops: 3.2 px at the
- *  overview, 3.3 px at the closest camera, always strictly under the pulse. */
-export const FABRIC_TRUNK_WIDTH_CEILING_PX = 3.3;
+ *  moment the camera came in (2.5 × 1.76 × 1.22 = 5.368 px). The ratio
+ *  therefore holds until it would collide and then stops: 4.4 px at the
+ *  overview, 4.5 px at the closest camera, always strictly under the pulse.
+ *
+ *  ⚠️ 3.3 → 4.5 on 2026-08-20, moved WITH the rung and with the pulse rather
+ *  than after them: this constant is a function of `LIVE.cell.activeWidth`'s
+ *  default, and the margin discipline is the one it shipped with — the ceiling
+ *  sits one tenth of a CSS pixel under the pulse, so `wide < activeWidth` is
+ *  strict at every camera by construction and not by luck. Move the pulse and
+ *  this has to move; `fabricTrunkClass.test.ts` samples 41 cameras to say so. */
+export const FABRIC_TRUNK_WIDTH_CEILING_PX = 4.5;
 
 /**
  * Line width for the wide pass, in CSS px.

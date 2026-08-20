@@ -209,7 +209,12 @@ describe('smaller and dimmer, and nothing else', () => {
     // (5.85 on the average covered pixel there, placement-era).
     const a = (alpha: number) => 0.72 * alpha * 0.652;
     const shipped = accumulate(POPULATION_FIELD_COLOR, a(0.8), 6);
-    const reverted = accumulate(POPULATION_FIELD_COLOR, a(POPULATION_FIBRE_ALPHA), 6);
+    // ⚠️ 0.70 is written out rather than read from the constant. It was the
+    // live value when this test was written and it is not any more (the alpha
+    // came back to 0.80 on the fourth verdict), but the counterfactual it
+    // stands for — *what if the pale build had only been dimmed?* — is why the
+    // hue exists and has to stay measurable.
+    const reverted = accumulate(POPULATION_FIELD_COLOR, a(0.70), 6);
     const now = accumulate(POPULATION_STROKE_COLOR, a(POPULATION_FIBRE_ALPHA), 6);
 
     // ⚠️ The alpha revert ALONE does not answer the pale verdict, and this is
@@ -219,18 +224,24 @@ describe('smaller and dimmer, and nothing else', () => {
     expect(chroma709(reverted) / luma709(reverted))
       .toBeLessThan((chroma709(shipped) / luma709(shipped)) * 1.2);
 
-    // At the same alpha, the hue change costs the RED channel nothing — both
-    // classes emit r = 1, so red converges at the same rate to the same place
-    // — and takes G and B out. That is the wash leaving without the light
-    // going with it: .2985 .0731 .1648, C/L 1.407.
-    expect(now[0]).toBeCloseTo(reverted[0], 12);
-    expect(now[1]).toBeLessThan(reverted[1] * 0.4);
-    expect(now[2]).toBeLessThan(reverted[2] * 0.85);
+    // ⭐ And with the alpha back at 0.80 the comparison finally isolates the
+    // hue exactly — same alpha, same deposit count, one tint against the
+    // other. The hue change costs the RED channel nothing (both classes emit
+    // r = 1, so red converges at the same rate to the same place) and takes G
+    // and B out: .3533 .0941 .2072 at C/L 1.287 against .3533 .2341 .2485 at
+    // 0.430. Green is 40% of what it was, and the band's chroma-per-luma
+    // triples.
+    expect(now[0]).toBeCloseTo(shipped[0], 12);
+    expect(now[1]).toBeLessThan(shipped[1] * 0.45);
+    expect(now[2]).toBeLessThan(shipped[2] * 0.85);
     expect(chroma709(now) / luma709(now))
-      .toBeGreaterThan((chroma709(shipped) / luma709(shipped)) * 3);
-    // Both moves together take the band down in luma, which is the round's
-    // hard constraint: nothing here may add light.
-    expect(luma709(now)).toBeLessThan(luma709(shipped) * 0.6);
+      .toBeGreaterThan((chroma709(shipped) / luma709(shipped)) * 2.9);
+    // And the hue is a DIMMING as well as a deepening — 0.604 of the pale
+    // build's luma at the alpha that build ran at. That is what makes the
+    // alpha affordable again: the class the fourth verdict raised is still
+    // well under the one that was called pale.
+    expect(luma709(now)).toBeLessThan(luma709(shipped) * 0.65);
+    expect(luma709(now) / luma709(shipped)).toBeCloseTo(0.604, 3);
   });
 
   it('keeps the fringe deposit chromatic while giving up its luma', () => {
@@ -245,21 +256,25 @@ describe('smaller and dimmer, and nothing else', () => {
     };
     const shipped = fringe(POPULATION_FIELD_COLOR, 0.8);
     const now = fringe(POPULATION_STROKE_COLOR, POPULATION_FIBRE_ALPHA);
-    // Chroma per deposit is preserved (+1.6%) at 47% of the luma...
-    expect(chroma709(now) / chroma709(shipped)).toBeGreaterThan(1);
-    expect(chroma709(now) / chroma709(shipped)).toBeLessThan(1.05);
-    expect(luma709(now) / luma709(shipped)).toBeCloseTo(0.471, 2);
-    // ...so multiplied by the widths, a promoted fringe strand carries MORE
-    // chromatic flux than the shipped one did (1.6 x 0.0389 against
-    // 1.4 x 0.0383, +16%) while its luminous flux falls by nearly half.
+    // ⚠️ Re-derived 2026-08-20 with the alpha back at 0.80, which is what both
+    // sides now run at — so this reads as a pure tint comparison and the
+    // recorded figures moved by exactly the `(0.8/0.7)^2` the alpha carries.
+    // Chroma per deposit RISES by a third at 61% of the luma...
+    expect(chroma709(now) / chroma709(shipped)).toBeGreaterThan(1.25);
+    expect(chroma709(now) / chroma709(shipped)).toBeLessThan(1.40);
+    expect(luma709(now) / luma709(shipped)).toBeCloseTo(0.615, 2);
+    // ...so multiplied by the widths, a promoted fringe strand carries far
+    // more chromatic flux than the pale build's did (1.8 x 0.0508 against
+    // 1.4 x 0.0382, +71%) while its luminous flux is still down a fifth.
     expect(POPULATION_BACKBONE_WIDTH_PX * chroma709(now) / (1.4 * chroma709(shipped)))
-      .toBeCloseTo(1.163, 2);
+      .toBeCloseTo(1.709, 2);
     expect(POPULATION_BACKBONE_WIDTH_PX * luma709(now) / (1.4 * luma709(shipped)))
-      .toBeCloseTo(0.538, 2);
+      .toBeCloseTo(0.790, 2);
     // Scaling the same palette colour instead loses the chroma too, which is
-    // why the sweep rejected raw `veinCrimson` and raw `veinRose`.
+    // why the sweep rejected raw `veinCrimson` and raw `veinRose`: at the same
+    // alpha it keeps under half the chroma the red-ceiling version does.
     const scaled = fringe(CELL_GALAXY_PALETTE.veinCrimson, POPULATION_FIBRE_ALPHA);
-    expect(chroma709(scaled)).toBeLessThan(chroma709(shipped) * 0.6);
+    expect(chroma709(scaled)).toBeLessThan(chroma709(now) * 0.5);
   });
 
   it('leans blue over green, which is what keeps the outer field off brick', () => {
@@ -365,10 +380,14 @@ describe('smaller and dimmer, and nothing else', () => {
 });
 
 describe('the stroke class carries a level floor the beads do not', () => {
-  /** The emission the live build reports at mainnet chain scope, headless-probed
-   *  off `92ed58c` on the 4K panel the verdicts come from. Every rendered
-   *  number below is stated at it, so they are comparable with the verdict. */
-  const STROKE_EMISSION = 0.5065;
+  /** The amount curve the live build reports at mainnet chain scope,
+   *  headless-probed off `92ed58c` on the 4K panel the verdicts come from:
+   *  0.5065 of stroke emission at the 0.70 alpha of that day, so the curve
+   *  itself is `0.5065 / 0.70`. Stated this way rather than as a literal so
+   *  that {@link POPULATION_FIBRE_ALPHA} moving moves every rendered number
+   *  below with it — which it did on 2026-08-20, 0.70 → 0.80. */
+  const GAIN_EMISSION = 0.5065 / 0.70;
+  const STROKE_EMISSION = GAIN_EMISSION * POPULATION_FIBRE_ALPHA;
   /** Band medians from the placement, and the deposits a covered pixel in each
    *  actually takes at 3840x2160 — re-measured by rasterizing all 96,609
    *  segments at the production camera, because the 5.85/4.27/1 in the
@@ -436,25 +455,36 @@ describe('the stroke class carries a level floor the beads do not', () => {
     // so at the fringe band's median taper the stroke was landing at
     //   0.3261 * (0.5065 * 0.446)^2 = 0.0166
     // — a deep red at 0.017 on black, where photopic sensitivity is already
-    // ~0.4x its peak. The floor is the only lever left that reaches it: alpha
-    // was reverted to protect chroma, width has already gone 1 -> 1.4 -> 1.6
-    // device px, and the hue is what the round before this one spent.
+    // ~0.4x its peak. The floor was the only lever left that reached it at the
+    // time: alpha had been reverted to protect chroma, width had gone
+    // 1 -> 1.4 -> 1.6 device px, and the hue was the round before it.
+    //
+    // ⚠️ Re-derived 2026-08-20 at the alpha the class ships now. The FLOOR is
+    // unchanged and so is its multiplier — the emission cancels out of a ratio
+    // of two tapers — but the LEVELS all rise by (0.80/0.70)^2 = 1.306, which
+    // is the point of the alpha round and is what carries the fringe deposit
+    // to the 0.06 the fourth verdict wants.
     const deposit = (taper: number) => {
       const a = STROKE_EMISSION * taper;
       return luma709(POPULATION_STROKE_COLOR) * a * a;
     };
     const before = deposit(FRINGE_TAPER);
     const after = deposit(POPULATION_STROKE_TAPER_FLOOR);
-    expect(before).toBeCloseTo(0.0166, 4);
-    expect(after).toBeCloseTo(0.0471, 4);
-    // The two calibration targets the sweep was run against.
+    expect(before).toBeCloseTo(0.0217, 4);
+    expect(after).toBeCloseTo(0.0615, 4);
+    // The multiplier the floor was chosen for, unchanged by the alpha because
+    // it is a ratio: `(0.75 / 0.446)^2`.
     expect(after / before).toBeGreaterThan(2.5);
-    expect(after).toBeGreaterThanOrEqual(0.04);
-    expect(after).toBeLessThanOrEqual(0.05);
-    // 0.70 misses the multiplier and 0.80 leaves the window — this is why the
-    // rung is where it is, and both neighbours stay in the test as the reason.
+    // ⭐ The level target, re-pinned. The window was [0.04, 0.05] when this
+    // was written and the alpha was 0.70; the fourth verdict — *visible now,
+    // but hard to see clearly* — moved it to "at least 0.06", and 0.80 is the
+    // rung that reaches it while holding the mixed band's chroma (see below).
+    expect(after).toBeGreaterThanOrEqual(0.06);
+    expect(after).toBeLessThanOrEqual(0.065);
+    // The floor's own neighbours stay in the test as the reason it is 0.75:
+    // 0.70 misses the multiplier, 0.80 overshoots the level window.
     expect(deposit(0.70) / before).toBeLessThan(2.5);
-    expect(deposit(0.80)).toBeGreaterThan(0.05);
+    expect(deposit(0.80)).toBeGreaterThan(0.065);
     // The bead beside it is unmoved, and still ahead: it concentrates a larger
     // emission and a lighter tint into a clamped Gaussian, so this closes the
     // gap rather than reversing it. Nothing here can make a stroke outshine
@@ -465,6 +495,67 @@ describe('the stroke class carries a level floor the beads do not', () => {
     expect(beadPeak / after).toBeLessThan(beadPeak / before);
   });
 
+  it('picks the level rung the mixed band can still pay for', () => {
+    // ⚠️ The audit trail this constant carries is 0.70 -> 0.80 -> 0.70 -> 0.80
+    // and the fourth move is NOT the second one repeated. The second was a
+    // `tissueRose` alpha spent to buy WIDTH it cannot buy, in a tint whose
+    // high G and B are what a bounded accumulation converges toward white; it
+    // produced the pale mesh the next verdict complained about. Every one of
+    // those conditions was removed before this round: the strokes emit
+    // `POPULATION_STROKE_COLOR`, width has its own DPR-aware class, and the
+    // sparse end has `POPULATION_STROKE_TAPER_FLOOR`. So the assertion is not
+    // on the number — it is on the two quantities that make the number safe.
+    expect(POPULATION_FIBRE_ALPHA).toBe(0.8);
+
+    // (1) The fringe's isolated deposit clears the read target. Rendered
+    // light goes as `a^2` out there, which is why this is the lever that
+    // reaches the band the verdict is about: +30.6% for a 14.3% alpha step.
+    const fringe = (alpha: number) => {
+      const a = GAIN_EMISSION * alpha * POPULATION_STROKE_TAPER_FLOOR;
+      return luma709(POPULATION_STROKE_COLOR) * a * a;
+    };
+    expect(fringe(0.70)).toBeCloseTo(0.0471, 4);
+    expect(fringe(0.75)).toBeCloseTo(0.0540, 4);
+    expect(fringe(POPULATION_FIBRE_ALPHA)).toBeCloseTo(0.0615, 4);
+    expect(fringe(POPULATION_FIBRE_ALPHA)).toBeGreaterThanOrEqual(0.06);
+    // 0.75 is measured and rejected: it stops short of the target.
+    expect(fringe(0.75)).toBeLessThan(0.06);
+
+    // (2) And the just-accepted mixed band keeps its chroma. Rasterizing the
+    // real placement at the production camera measured C/L 1.948 -> 1.874,
+    // -3.8%, with 0.85 at -5.1% and outside the bound; the proxy below
+    // reproduces the SHAPE of that at the band's measured deposit count.
+    const mixed = (alpha: number) => accumulate(
+      POPULATION_STROKE_COLOR,
+      GAIN_EMISSION * alpha * MIXED_TAPER,
+      MIXED_DEPOSITS,
+    );
+    const cl = (t: readonly [number, number, number]) => chroma709(t) / luma709(t);
+    const beforeAlpha = mixed(0.70);
+    const afterAlpha = mixed(POPULATION_FIBRE_ALPHA);
+    expect(cl(afterAlpha) / cl(beforeAlpha)).toBeGreaterThan(0.95);
+    expect(cl(afterAlpha)).toBeGreaterThan(1.35);
+    // ⭐ The reason it survives at all, and the reason the old fear was right
+    // for its own instrument: at the six deposits the retention tables were
+    // written against at 1080p, the same lift costs several times as much.
+    const six = (alpha: number) => accumulate(
+      POPULATION_STROKE_COLOR, GAIN_EMISSION * alpha * MIXED_TAPER, 6,
+    );
+    expect(1 - cl(six(POPULATION_FIBRE_ALPHA)) / cl(six(0.70)))
+      .toBeGreaterThan((1 - cl(afterAlpha) / cl(beforeAlpha)) * 2);
+
+    // And it is a LEVEL move: not one channel ratio of either class changes.
+    expect([...POPULATION_STROKE_COLOR]).toEqual([
+      1,
+      CELL_GALAXY_PALETTE.veinCrimson[1] / CELL_GALAXY_PALETTE.veinCrimson[0],
+      CELL_GALAXY_PALETTE.veinCrimson[2] / CELL_GALAXY_PALETTE.veinCrimson[0],
+    ]);
+    // The beads ride `populationEmissionForGain` and never this constant, so
+    // the layer's OTHER class is untouched by the whole round.
+    expect(populationFibreEmissionForGain(0.5))
+      .toBeCloseTo(populationEmissionForGain(0.5) * POPULATION_FIBRE_ALPHA, 12);
+  });
+
   it('moves the just-accepted mixed band as little as a floor can', () => {
     // The colour verdict was pronounced on this band, so it is the one the
     // level round has to pay for. Measured by rasterizing the real placement
@@ -472,6 +563,12 @@ describe('the stroke class carries a level floor the beads do not', () => {
     // pixels, and -1.4% of its chroma-per-luma. The proxy below reproduces
     // both at the band median and the band's measured deposit count, and the
     // bounds are what this change commits to.
+    //
+    // ⚠️ The proxy reads +29.2% / -2.2% since the alpha went back to 0.80: a
+    // higher per-deposit alpha sits further up the blend's curve, so the same
+    // taper step buys slightly more luma and costs slightly more chroma. The
+    // rasterized figures above are the 0.70 measurement and are left as the
+    // record of what the FLOOR alone was priced at. The bounds hold at both.
     const at = (taper: number) =>
       accumulate(POPULATION_STROKE_COLOR, STROKE_EMISSION * taper, MIXED_DEPOSITS);
     const before = at(MIXED_TAPER);
@@ -703,11 +800,13 @@ describe('the backbone is the hairline at a different width', () => {
     // against `resolution`, which `LineSegments2.onBeforeRender` writes in CSS
     // pixels immediately before every draw.
     expect(backbone.linewidth).toBe(POPULATION_BACKBONE_WIDTH_PX);
-    // 1.4 -> 1.6 on 2026-08-20: 1.4 was the smallest step that could TEST the
-    // verdict, live review returned it unfixed, so the rung takes one more —
-    // and the read is bought mostly in hue, not here. A recorded decision
-    // re-decided by live review, which is what this constant is for.
-    expect(POPULATION_BACKBONE_WIDTH_PX).toBe(1.6);
+    // 1.4 -> 1.6 -> 1.8 on 2026-08-20, three live verdicts in a day: 1.4 was
+    // the smallest step that could TEST the first, 1.6 answered it together
+    // with the hue change, and 1.8 answers the third — *visible now, but hard
+    // to see clearly* — as the geometry third of a move that also widened the
+    // budget and raised the level. Recorded decisions re-decided by live
+    // review, which is what this constant is for.
+    expect(POPULATION_BACKBONE_WIDTH_PX).toBe(1.8);
     expect(backbone.worldUnits).toBe(false);
     expect(backbone.uniforms.resolution).toBeDefined();
     expect(backbone.uniforms.capsulePixelRatio).toBeDefined();

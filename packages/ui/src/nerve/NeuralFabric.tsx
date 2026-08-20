@@ -152,11 +152,17 @@ const MAX_ROUTE_HOP_PULSE_SEGMENTS = ROUTE_HOP_PULSE_SAMPLES_PER_HOP * 2;
 const ROUTE_HOP_PULSE_WIDTH_SCALE = 1.3;
 
 // Line widths in px (now the `cell.fabricWidth` / `cell.activeWidth`
-// tweaks, defaults 2.5 / 3.4): visibly substantial crisp lines that read
+// tweaks, defaults 2.5 / 4.6): visibly substantial crisp lines that read
 // against post-bloom cells, the fabric staying clearly thinner than the
 // active wavefront. Read live — `LIVE.cell.fabricWidth/activeWidth` seed
 // the layers at build time (useMemo below). Historical recall scales only its
 // own material from the same active-width baseline.
+//
+// ⚠️ The mesh rung is 2.5 and the WIDE half of the same selection is 4.4
+// (`fabricTrunkLineWidth`), so "the fabric" is two widths and the active
+// wavefront has to clear the larger one. That is why the active default is
+// 4.6 rather than the 3.4 it carried before 2026-08-20 — see
+// `FABRIC_TRUNK_WIDTH_CEILING_PX`, which is derived from this number.
 
 // Fabric edge lifecycle timings (GROWTH_MS growth window, DECAY_MS quiet
 // gc fade, DEATH_RETRACT_MS/DEATH_FLASH_MS real-death retract+flash) now

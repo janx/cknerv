@@ -42,11 +42,15 @@ import {
 } from '../../src/geometry/screenSpaceCapsuleLine';
 import { makeFabricTrunkPass, makeFatLineLayer } from '../../src/nerve/NeuralFabric';
 import { cellDetailFabricWidthScale } from '../../src/derives/sceneView.derive';
+import { cellSchema } from '../../src/tweaks/tweakSchema';
 import { neverRaycast } from '../../src/components/CellPopulationField';
 
-/** Default width knobs (tweakSchema): the rungs the ladder is composed on. */
-const FABRIC_WIDTH_PX = 2.5;
-const ACTIVE_WIDTH_PX = 3.4;
+/** Default width knobs (tweakSchema): the rungs the ladder is composed on.
+ *  ⚠️ Re-pinned 2026-08-20 — the active rung went 3.4 → 4.6 because the trunk
+ *  rung under it went 3.2 → 4.4. Read from the schema rather than restated, so
+ *  a knob edit cannot leave the ordering asserts checking a stale number. */
+const FABRIC_WIDTH_PX = cellSchema.fabricWidth.value;
+const ACTIVE_WIDTH_PX = cellSchema.activeWidth.value;
 
 function arborEdge(from: number, to: number, w: number): NeighborEdge {
   return { from, to, d: 1, w };
@@ -279,26 +283,34 @@ describe('fabric trunk tier — the light policy is a partition', () => {
 
 describe('fabric trunk tier — width ordering', () => {
   it('stays strictly under the pulse at every camera, worst case included', () => {
+    // ⚠️ Re-derived 2026-08-20 at the new ladder, not relaxed. Every number
+    // below moved because a live verdict re-decided the rung it pins: the
+    // trunk 3.2 → 4.4, its ceiling 3.3 → 4.5, the pulse 3.4 → 4.6. The SHAPE
+    // of the assertion is the part that is permanent — the ceiling exists so
+    // that `wide < activeWidth` is true at every camera by construction.
     const overview = cellDetailFabricWidthScale(0);
     const closest = cellDetailFabricWidthScale(1);
     expect(overview).toBe(1);
     expect(closest).toBeCloseTo(1.22, 10);
 
-    // Overview: 2.5 × 1.28 = 3.2 px — the design's rung.
-    expect(fabricTrunkLineWidth(FABRIC_WIDTH_PX, overview)).toBeCloseTo(3.2, 10);
+    // Overview: 2.5 × 1.76 = 4.4 px — the design's rung.
+    expect(fabricTrunkLineWidth(FABRIC_WIDTH_PX, overview)).toBeCloseTo(4.4, 10);
     // Worst case, closest camera: the uncapped product would be
-    // 2.5 × 1.28 × 1.22 = 3.904 px, which overtakes the 3.4 px pulse. The
-    // ceiling holds it at 3.3.
+    // 2.5 × 1.76 × 1.22 = 5.368 px, which overtakes the 4.6 px pulse. The
+    // ceiling holds it at 4.5, one tenth of a pixel under — the same absolute
+    // margin the 3.3 / 3.4 pair carried.
     expect(FABRIC_WIDTH_PX * FABRIC_TRUNK_WIDTH_RATIO * closest)
-      .toBeCloseTo(3.904, 10);
+      .toBeCloseTo(5.368, 10);
     const worst = fabricTrunkLineWidth(FABRIC_WIDTH_PX, closest);
     expect(worst).toBeCloseTo(FABRIC_TRUNK_WIDTH_CEILING_PX, 10);
-    expect(worst).toBeLessThanOrEqual(3.3);
+    expect(worst).toBeLessThanOrEqual(4.5);
     expect(worst).toBeLessThan(ACTIVE_WIDTH_PX);
+    expect(ACTIVE_WIDTH_PX - FABRIC_TRUNK_WIDTH_CEILING_PX).toBeCloseTo(0.1, 10);
 
     // Monotone across the whole camera range, always above the mesh rung
     // (which takes the SAME focus factor) and always under the pulse.
     let previous = 0;
+    let worstRatio = Infinity;
     for (let step = 0; step <= 40; step += 1) {
       const scale = cellDetailFabricWidthScale(step / 40);
       const mesh = FABRIC_WIDTH_PX * scale;
@@ -308,7 +320,18 @@ describe('fabric trunk tier — width ordering', () => {
       expect(wide).toBeLessThan(ACTIVE_WIDTH_PX);
       expect(wide).toBeGreaterThanOrEqual(previous);
       previous = wide;
+      worstRatio = Math.min(worstRatio, wide / mesh);
     }
+    // ⭐ The number the {4.0, 4.4, 4.8} sweep was decided on, and the reason
+    // the rung is not 4.0. The trunk stops growing at the ceiling while the
+    // mesh keeps taking the focus scale, so the pair is at its LEAST
+    // distinguishable at the closest camera — 4.5 against 3.05. The verdict
+    // called ~1.25x indistinguishable; 4.0 would land at 1.34 here, which is
+    // not a fix, and 4.4 is the smallest of the three that holds above 1.4
+    // through the whole camera range.
+    expect(worstRatio).toBeCloseTo(4.5 / 3.05, 6);
+    expect(worstRatio).toBeGreaterThan(1.4);
+    expect(4.1 / 3.05).toBeLessThan(1.4);
   });
 
   it('keeps the ladder monotone when the width knob is dragged off-scale', () => {
@@ -436,13 +459,13 @@ describe('fabric trunk tier — the two passes', () => {
 
   it('the wide pass is one draw call over the mesh pass own buffers', () => {
     const fabric = makeFatLineLayer(32, 2.5, 'screen', true, true, true);
-    const wide = makeFabricTrunkPass(fabric, 3.2);
+    const wide = makeFabricTrunkPass(fabric, 4.4);
     // No second allocation: same geometry object, therefore the same
     // interleaved buffers, the same instanceCount, and the same inspection
     // and recall-aperture lanes the mesh pass reads.
     expect(wide.mesh.geometry).toBe(fabric.geometry);
     expect(wide.material).not.toBe(fabric.material);
-    expect(wide.material.linewidth).toBe(3.2);
+    expect(wide.material.linewidth).toBe(4.4);
     expect(wide.material.uniforms.fabricTrunkPass.value)
       .toBe(FABRIC_TRUNK_PASS_TRUNK);
     expect(fabric.material.uniforms.fabricTrunkPass.value)
@@ -456,6 +479,6 @@ describe('fabric trunk tier — the two passes', () => {
 
   it('refuses to ride a layer that has no lifecycle records to share', () => {
     const plain = makeFatLineLayer(32, 2.5, 'screen', true, true, false);
-    expect(() => makeFabricTrunkPass(plain, 3.2)).toThrow(/lifecycle/);
+    expect(() => makeFabricTrunkPass(plain, 4.4)).toThrow(/lifecycle/);
   });
 });

@@ -543,7 +543,7 @@ export default function CellPopulationField({
         renderOrder={-2}
       />
       {/* The strands that carry the read, at the ladder's last screen-space
-          rung — 1.6 CSS pixels against the bridge's 2.0, and DPR-aware where
+          rung — 1.8 CSS pixels against the bridge's 2.4, and DPR-aware where
           the hairline above is not. A `gl.LINES` stroke is one DEVICE pixel,
           so it was the only element in the frame that thinned as the
           framebuffer grew; at 4K it had a quarter of the areal weight the
