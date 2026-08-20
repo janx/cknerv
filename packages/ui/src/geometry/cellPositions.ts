@@ -9,13 +9,29 @@
  * server projection uses the same live-cell cap; a short death tail can remain
  * in the browser cache without overflowing because draw ranges clamp here. */
 export const INSTANCE_CAPACITY = 50_000;
-export const BIRTH_DURATION_MS = 500;
-export const DEATH_DURATION_MS = 600;
+// Chain birth/death belong to the RECORD, and both are processes: a cell is
+// built, and a cell decays. Their curves (`birthEase` / `deathEase` in
+// materials/cellEnvelope.glsl.ts) fill these windows; the windows only decide
+// how long the eye is given to read them. The old half-second windows read as
+// two pops beside the fabric's own 1200/1500 ms growth and decay, which is why
+// fibres kept outliving the dots they hang from.
+
+/** Chain BIRTH: slow emergence, an overshoot past resting size, a settle. */
+export const BIRTH_DURATION_MS = 1200;
+/** Chain DEATH: the body cools and gutters at size, then crumbles. The
+ * withering starts at `death + BLOCK_HIGHLIGHT_DELAY_S` and runs this long,
+ * so the server's dead-cell retention tail
+ * (`crates/cknerv-core/src/projection/cells.rs`) must dominate their SUM —
+ * a corpse gc'd before the rite ends vanishes mid-wither. It does not today;
+ * raising that tail is its own change. */
+export const DEATH_DURATION_MS = 1800;
 
 // Stage enter/exit are VIEW events — the camera resolving a record that
 // already existed, or letting an alive one go — so they read as quieter and
 // flatter than the record's own birth/death and must never be mistaken for
-// them. Both windows are deliberately longer than the chain gestures above.
+// them: no overshoot, no colour change, and a span that now sits INSIDE both
+// chain windows, so a view change can never claim the weight of a record
+// being created or consumed.
 
 /** Stage ENTER fade: alpha 0→1 with a small scale lift, no overshoot. */
 export const ENTER_FADE_MS = 900;

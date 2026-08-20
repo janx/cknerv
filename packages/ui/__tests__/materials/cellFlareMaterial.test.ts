@@ -3,6 +3,8 @@ import * as THREE from 'three';
 import { makeCellFlareMaterial } from '../../src/materials/cellFlareMaterial';
 import { makeCellHybridMaterial } from '../../src/materials/cellHybridMaterial';
 import {
+  BIRTH_DURATION_MS,
+  DEATH_DURATION_MS,
   ENTER_FADE_MS,
   EXIT_FADE_MS,
 } from '../../src/geometry/cellPositions';
@@ -16,8 +18,8 @@ describe('makeCellFlareMaterial', () => {
     expect(m.blending).toBe(THREE.AdditiveBlending);
     expect(m.toneMapped).toBe(false);
     expect(m.uniforms.uTime).toBeDefined();
-    expect(m.uniforms.uBirthDurS).toBeDefined();
-    expect(m.uniforms.uDeathDurS).toBeDefined();
+    expect(m.uniforms.uBirthDurS.value).toBe(BIRTH_DURATION_MS / 1000);
+    expect(m.uniforms.uDeathDurS.value).toBe(DEATH_DURATION_MS / 1000);
     expect(m.uniforms.uViewportHeight).toBeDefined();
     expect(m.uniforms.uDischargeArms).toBeDefined();
   });
@@ -83,6 +85,24 @@ describe('makeCellFlareMaterial', () => {
       );
       expect(material.vertexShader).toContain('vStageAlpha = stage.y;');
       expect(material.fragmentShader).toContain('varying float vStageAlpha;');
+    }
+  });
+
+  it('runs the chain gestures on the body\'s durations and curves', () => {
+    const flare = makeCellFlareMaterial();
+    const hybrid = makeCellHybridMaterial();
+
+    // A write is drawn ON its cell. Two birth windows would leave a seal
+    // hanging over a body that has already settled, and two death windows
+    // would outlive the corpse that made it.
+    for (const material of [flare, hybrid]) {
+      expect(material.uniforms.uBirthDurS.value).toBe(BIRTH_DURATION_MS / 1000);
+      expect(material.uniforms.uDeathDurS.value).toBe(DEATH_DURATION_MS / 1000);
+      // One shared snippet: neither layer owns a private growth or wither.
+      expect(material.vertexShader).toContain('float birthEase(float r) {');
+      expect(material.vertexShader).toContain('float deathEase(float r) {');
+      expect(material.vertexShader).toContain('float bEase = birthEase(birthRamp);');
+      expect(material.vertexShader).toContain('float dEase = deathEase(deathRamp);');
     }
   });
 

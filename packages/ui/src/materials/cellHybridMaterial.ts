@@ -4,7 +4,12 @@ import {
   BIRTH_DEATH_GLSL,
   STAGE_ENVELOPE_GLSL,
 } from './cellEnvelope.glsl';
-import { ENTER_FADE_MS, EXIT_FADE_MS } from '../geometry/cellPositions';
+import {
+  BIRTH_DURATION_MS,
+  DEATH_DURATION_MS,
+  ENTER_FADE_MS,
+  EXIT_FADE_MS,
+} from '../geometry/cellPositions';
 import { CONSENSUS_BRAID_PALETTE } from '../derives/consensusBraid.derive';
 import {
   CONSENSUS_MEMORY_CORE_READ_FLOOR,
@@ -43,12 +48,27 @@ export const HYBRID_BASE_PX_PER_WU = 2.0; // sprite world→screen multiplier �
  * extends beyond its hit area. */
 export const CELL_INSPECTION_NAVIGATION_SIZE_SCALE = 1.18;
 
+/** How far a newborn's body is pulled toward the white core it already mixes
+ *  toward at its peak. Spends itself over the birth ramp, so a settled cell
+ *  is byte-identical to one that was never born on this screen. */
+export const BIRTH_BLOOM = 0.55;
+/** Ramp fraction the withering has finished cooling by, and how much of the
+ *  cooled target stays ember rather than ash. Chroma leaves first: an
+ *  identity colour on a corpse is a lie the body no longer supports. */
+export const WITHER_COOL_END = 0.62;
+export const WITHER_EMBER_TINT = 0.6;
+/** Guttering: two incommensurate rates so the flutter never reads as a
+ *  metronome, and a depth shallow enough that the corpse never blinks out
+ *  before `deathEase` takes its size. */
+export const WITHER_GUTTER_RATE = 11.0;
+export const WITHER_GUTTER_DEPTH = 0.55;
+
 export function makeCellHybridMaterial(): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
     uniforms: {
       uTime:            { value: 0 },
-      uBirthDurS:       { value: 0.5 },
-      uDeathDurS:       { value: 0.6 },
+      uBirthDurS:       { value: BIRTH_DURATION_MS / 1000 },
+      uDeathDurS:       { value: DEATH_DURATION_MS / 1000 },
       // Stage windows read their constant directly: the dot and the flare
       // must resolve over the identical span, and a second literal here is a
       // seam waiting to open.
@@ -105,6 +125,7 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
       uniform float uCenterDim;
       uniform float uInspectionBlend;
 
+      varying float vBirthRamp;
       varying float vDeathRamp;
       varying float vStageAlpha;
       varying float vSeed;
@@ -149,6 +170,7 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
         );
         float scale = bEase * (1.0 - dEase) * stage.x;
 
+        vBirthRamp = birthRamp;
         vDeathRamp = deathRamp;
         vStageAlpha = stage.y;
         vSeed      = aMemorySeed * 91.73
@@ -219,6 +241,7 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
       uniform float uMemoryLinePx;
       uniform float uMemorySignalEnergy;
 
+      varying float vBirthRamp;
       varying float vDeathRamp;
       varying float vStageAlpha;
       varying float vSeed;
@@ -276,6 +299,13 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
 
         vec3  col = base.rgb;
         float a   = base.a * (1.0 - vDeathRamp);
+
+        // A newborn is still hot. Reuse the exact white core the cloud peak
+        // already mixes toward — one mix, gated by what is LEFT of the birth
+        // ramp — so the body cools as it grows and a settled cell pays
+        // nothing. Stage entrants arrive with the ramp spent: only a real
+        // chain birth blooms.
+        col = mix(col, vHotColor, ${BIRTH_BLOOM.toFixed(2)} * (1.0 - vBirthRamp));
 
         // A direct spatial neighbour is an interface into the next bounded
         // topology field. Three open, hash-oriented arcs express that role
@@ -467,9 +497,33 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
         // A real on-chain Cell consumption is not agreement: transition the
         // fading body toward the retirement signal before it disappears. GC
         // never reaches this shader path, so quiet renderer eviction stays mute.
-        vec3 retireColor = vec3(${CONSENSUS_BRAID_PALETTE.retire.join(', ')});
-        float retireMix = smoothstep(0.0, 0.48, vDeathRamp);
-        col = mix(col, retireColor, retireMix);
+        // Withering is a COOLING before it is a collapse: chroma drains toward
+        // the galaxy's own ember, the body gutters on a per-cell phase, and
+        // only then does deathEase take the size. A living cell resolves
+        // every term here to identity, so the branch costs the resting field
+        // nothing and skips it for the whole field.
+        if (vDeathRamp > 0.0) {
+          vec3 emberColor = vec3(${CELL_GALAXY_PALETTE.ember.join(', ')});
+          vec3 ash = vec3(dot(col, vec3(0.299, 0.587, 0.114))); // Rec.601 luma
+          float cooling = smoothstep(0.0, ${WITHER_COOL_END.toFixed(2)}, vDeathRamp);
+          col = mix(
+            col,
+            mix(ash, emberColor, ${WITHER_EMBER_TINT.toFixed(2)}),
+            cooling
+          );
+
+          // Each corpse gutters on its own phase; a block's worth of deaths
+          // flickering in unison would read as one strobe, not many embers.
+          float gutterPhase = hash11(vSeed + 5.3) * 6.2831853;
+          float gutter = 0.5 - 0.5
+            * sin(uTime * ${WITHER_GUTTER_RATE.toFixed(1)} + gutterPhase)
+            * sin(uTime * ${(WITHER_GUTTER_RATE * 1.7).toFixed(2)} + gutterPhase * 2.1);
+          a *= 1.0 - ${WITHER_GUTTER_DEPTH.toFixed(2)} * vDeathRamp * gutter;
+
+          vec3 retireColor = vec3(${CONSENSUS_BRAID_PALETTE.retire.join(', ')});
+          float retireMix = smoothstep(0.0, 0.48, vDeathRamp);
+          col = mix(col, retireColor, retireMix);
+        }
         // Stage resolution is a property of the view, so it dims the WHOLE
         // cell — event signals included. A cell being let go never keeps a
         // bright selection ring on its way out.

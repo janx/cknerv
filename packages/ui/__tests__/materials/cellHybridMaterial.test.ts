@@ -1,10 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import {
+  BIRTH_BLOOM,
   CELL_INSPECTION_NAVIGATION_SIZE_SCALE,
   makeCellHybridMaterial,
+  WITHER_COOL_END,
+  WITHER_EMBER_TINT,
+  WITHER_GUTTER_DEPTH,
+  WITHER_GUTTER_RATE,
 } from '../../src/materials/cellHybridMaterial';
 import {
+  BIRTH_DURATION_MS,
+  DEATH_DURATION_MS,
   ENTER_FADE_MS,
   EXIT_FADE_MS,
 } from '../../src/geometry/cellPositions';
@@ -12,6 +19,7 @@ import {
   STAGE_ENTER_SCALE_FROM,
   STAGE_EXIT_SCALE_TO,
 } from '../../src/materials/cellEnvelope.glsl';
+import { CELL_GALAXY_PALETTE } from '../../src/visualPalette';
 
 describe('makeCellHybridMaterial', () => {
   it('uses bounded accumulation for resting Cells and exposes its uniforms', () => {
@@ -30,8 +38,10 @@ describe('makeCellHybridMaterial', () => {
 
     // Plumbing uniforms
     expect(m.uniforms.uTime).toBeDefined();
-    expect(m.uniforms.uBirthDurS).toBeDefined();
-    expect(m.uniforms.uDeathDurS).toBeDefined();
+    // Defaults, not just presence: a literal here outlives every sweep of
+    // the constant it was copied from.
+    expect(m.uniforms.uBirthDurS.value).toBe(BIRTH_DURATION_MS / 1000);
+    expect(m.uniforms.uDeathDurS.value).toBe(DEATH_DURATION_MS / 1000);
     expect(m.uniforms.uViewportHeight).toBeDefined();
     expect(m.uniforms.uPixelRatio.value).toBe(1);
     expect(m.uniforms.uMemoryMinPointPx.value).toBe(24);
@@ -211,6 +221,59 @@ describe('makeCellHybridMaterial', () => {
     expect(m.fragmentShader.indexOf('retireMix')).toBeGreaterThan(
       m.fragmentShader.indexOf('focusSignal'),
     );
+  });
+
+  it('blooms a newborn warm and spends the bloom over its growth', () => {
+    const m = makeCellHybridMaterial();
+
+    expect(m.vertexShader).toContain('varying float vBirthRamp;');
+    expect(m.fragmentShader).toContain('varying float vBirthRamp;');
+    expect(m.vertexShader).toContain('vBirthRamp = birthRamp;');
+    // The white core the resting cloud already mixes toward — no second
+    // palette, and exactly one mix.
+    expect(m.fragmentShader).toContain(
+      `col = mix(col, vHotColor, ${BIRTH_BLOOM.toFixed(2)} * (1.0 - vBirthRamp));`,
+    );
+    // On the resting body, before any event accent can be tinted by it.
+    expect(m.fragmentShader.indexOf('vHotColor, ' + BIRTH_BLOOM.toFixed(2)))
+      .toBeLessThan(m.fragmentShader.indexOf('navigationSignal'));
+  });
+
+  it('withers a corpse by cooling and guttering it, not by deflating it', () => {
+    const m = makeCellHybridMaterial();
+
+    // Living cells resolve every term to identity, so the whole rite sits
+    // behind one branch the resting field never takes.
+    expect(m.fragmentShader).toContain('if (vDeathRamp > 0.0) {');
+    // Chroma drains toward the galaxy's OWN ember, never a new palette.
+    expect(m.fragmentShader).toContain(
+      `vec3 emberColor = vec3(${CELL_GALAXY_PALETTE.ember.join(', ')});`,
+    );
+    expect(m.fragmentShader).toContain('vec3 ash = vec3(dot(col,');
+    expect(m.fragmentShader).toContain(
+      `float cooling = smoothstep(0.0, ${WITHER_COOL_END.toFixed(2)}, vDeathRamp);`,
+    );
+    expect(m.fragmentShader).toContain(
+      `mix(ash, emberColor, ${WITHER_EMBER_TINT.toFixed(2)}),`,
+    );
+    // Per-cell phase: a block's worth of deaths must not strobe in unison.
+    expect(m.fragmentShader).toContain('float gutterPhase = hash11(vSeed');
+    expect(m.fragmentShader).toContain(
+      `sin(uTime * ${WITHER_GUTTER_RATE.toFixed(1)} + gutterPhase)`,
+    );
+    expect(m.fragmentShader).toContain(
+      `sin(uTime * ${(WITHER_GUTTER_RATE * 1.7).toFixed(2)} + gutterPhase * 2.1)`,
+    );
+    // Amplitude grows with the ramp and only ever removes light.
+    expect(m.fragmentShader).toContain(
+      `a *= 1.0 - ${WITHER_GUTTER_DEPTH.toFixed(2)} * vDeathRamp * gutter;`,
+    );
+    expect(WITHER_GUTTER_DEPTH).toBeLessThan(1);
+    // Cooling and guttering both precede the retirement signal.
+    expect(m.fragmentShader.indexOf('float cooling ='))
+      .toBeLessThan(m.fragmentShader.indexOf('float retireMix ='));
+    expect(m.fragmentShader.indexOf('float gutterPhase ='))
+      .toBeLessThan(m.fragmentShader.indexOf('float retireMix ='));
   });
 
   it('keeps the broad network shockwave out of the anchored Cell core', () => {

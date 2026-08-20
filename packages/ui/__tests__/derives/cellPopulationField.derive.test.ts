@@ -283,8 +283,8 @@ describe('deriveCellPopulationField', () => {
       displayLimit: 12_000,
     });
 
-    // Two of the three are alive; the dead one keeps its 600 ms tail on
-    // screen but contributes to no population number.
+    // Two of the three are alive; the dead one is still drawn for its
+    // withering tail but contributes to no population number.
     expect(model.renderedLive).toBe(2);
     expect(model.stagedLive).toBe(2);
   });

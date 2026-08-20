@@ -6,7 +6,12 @@ import {
   HASH11_GLSL,
   STAGE_ENVELOPE_GLSL,
 } from './cellEnvelope.glsl';
-import { ENTER_FADE_MS, EXIT_FADE_MS } from '../geometry/cellPositions';
+import {
+  BIRTH_DURATION_MS,
+  DEATH_DURATION_MS,
+  ENTER_FADE_MS,
+  EXIT_FADE_MS,
+} from '../geometry/cellPositions';
 import { CELL_GALAXY_PALETTE } from '../visualPalette';
 
 /** Default contributor-rail count (overridden per-frame by the quality preset). */
@@ -29,10 +34,11 @@ export function makeCellFlareMaterial(): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
     uniforms: {
       uTime:           { value: 0 },
-      uBirthDurS:      { value: 0.5 },
-      uDeathDurS:      { value: 0.6 },
-      // Same constants the resting body reads: the write flare belongs to
-      // the cell it overlays, so both resolve over one identical span.
+      // Every window reads its constant, never a literal: the write flare
+      // belongs to the cell it overlays, so both layers resolve over one
+      // identical span and a stale default here cannot fake agreement.
+      uBirthDurS:      { value: BIRTH_DURATION_MS / 1000 },
+      uDeathDurS:      { value: DEATH_DURATION_MS / 1000 },
       uEnterDurS:      { value: ENTER_FADE_MS / 1000 },
       uExitDurS:       { value: EXIT_FADE_MS / 1000 },
       uViewportHeight: { value: 800 },
