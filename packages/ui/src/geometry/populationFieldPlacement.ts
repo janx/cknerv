@@ -1679,7 +1679,9 @@ export interface PopulationPlacementState {
    *  first `count` entries. SIZE alone rides it: brightness is flat at the
    *  emission ceiling and the tint is one colour, so what varies across the
    *  layer on screen is how many points land on a pixel, exactly as it is for
-   *  the Cells. Transferred with the positions; pinned for the same reason.
+   *  the Cells. (One colour per CLASS: the beads' `POPULATION_FIELD_COLOR` and
+   *  the strokes' `POPULATION_STROKE_COLOR`, each flat over its own class and
+   *  neither a function of this weight.) Transferred with the positions; pinned for the same reason.
    *
    *  ⚠️ Written TWICE for the last points of every strand: once from the
    *  tissue at emission, then scaled again by {@link POPULATION_END_TAPER}

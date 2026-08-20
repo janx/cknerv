@@ -169,7 +169,8 @@ export const POPULATION_FIELD_EMISSION = 0.95;
 export const POPULATION_FIELD_MIN_POINT_PX = 1.4;
 
 /**
- * Body hue, at full saturation — ONE emitted colour, and the palette's own.
+ * The BEADS' body hue, at full saturation — one emitted colour per class, and
+ * the palette's own.
  *
  * This is `tissueRose` because that is literally what an addressable Cell
  * emits: `consensusCellColor` hands every untagged Cell exactly this triple,
@@ -238,8 +239,143 @@ export const POPULATION_FIELD_MIN_POINT_PX = 1.4;
  * claim this layer cannot make. The Cells' own live warmth bias is not carried
  * either; it is a tunable knob on their material, and a copy of its default
  * baked in here would be a seam waiting for someone to move it.
+ *
+ * ⚠️ **Since 2026-08-20 this is the BEAD class's colour and not the whole
+ * layer's**: the strokes emit {@link POPULATION_STROKE_COLOR}. Everything
+ * above survives that split, because neither thing this rule killed is what
+ * the split does. It killed a SPATIAL two-endpoint ramp keyed on the taper
+ * weight — the grey-white mixed band — and it forbids identity hue; a stroke
+ * class beside a bead class is neither a ramp nor a claim about any individual
+ * Cell, and the reasoning for both bans is untouched. What the split adopts is
+ * the core fabric's own grammar, vessels through tissue, in which THIS
+ * constant is the tissue: the beads still emit exactly what an addressable
+ * Cell emits, which is the whole of what this doc asserts. One colour per
+ * class, and no ramp inside either.
  */
 export const POPULATION_FIELD_COLOR: SceneColor = CELL_GALAXY_PALETTE.tissueRose;
+
+/** A palette hue at this layer's own red ceiling — same chromaticity, red
+ *  pinned to the 1.0 the halo already emits. `veinCrimson` (0.48, 0.06, 0.16)
+ *  comes back as (1, 0.125, 0.3333). See {@link POPULATION_STROKE_COLOR} for
+ *  why the level is SET here rather than luma-matched as `bridgeSymbolicDim`
+ *  sets its own: at this family's chromaticity a luma match to `tissueRose`
+ *  wants r = 1.49, and the layer may not emit past 1. */
+function atRedCeiling(color: SceneColor): SceneColor {
+  return [1, color[1] / color[0], color[2] / color[0]];
+}
+
+/**
+ * The STROKES' hue — the hairlines and the backbone, one colour for both, and
+ * deliberately not the beads'.
+ *
+ * ## The verdict, which was two complaints with one cause
+ *
+ * Live review at 4K, `devicePixelRatio` 1, on `539cd41`: *the terminal and
+ * secondary nerves still do not read at the operating camera* — with the width
+ * class already promoting them to 1.4 device px — and *the whole cell mesh has
+ * gone pale, it has lost the deep crimson*.
+ *
+ * They are the same fact. Strokes and beads emitted the SAME `tissueRose`, so
+ * every pixel of added width was pink laid over pink and there was no NERVE
+ * percept to gain: the percept this scene has already established for a nerve
+ * is the core fabric's — dark vein vessels threading luminous rose tissue — and
+ * it is a HUE contrast, not a brightness one. Meanwhile the spends that chased
+ * the missing read ({@link POPULATION_FIBRE_ALPHA} 0.70 → 0.80 for +31% per
+ * deposit, over +10% more segments, some at 1.4x width) all went into a colour
+ * whose G and B are high, and high G/B is exactly what a bounded accumulation
+ * converges toward white. The wash IS the failed visibility spend, so the fix
+ * gives the light back and buys the read with hue instead.
+ *
+ * ## Why THIS colour
+ *
+ * Swept on the CPU proxies this file's tests already use — Rec. 709 luma, and
+ * chroma as `r - (g + b) / 2`. "Fringe C/L" is one isolated deposit against
+ * black in the outermost band (taper p50 0.446, emission 0.72 at mainnet chain
+ * scope, alpha 0.70), which is the regime the visibility complaint lives in:
+ *
+ * | candidate | emitted | luma | vs rose | C | C/L | fringe C | fringe L |
+ * |---|---|---:|---:|---:|---:|---:|---:|
+ * | `tissueRose` (control) | 1.000, 0.400, 0.440 | 0.5304 | 1.000 | 0.580 | 1.093 | 0.0293 | 0.0268 |
+ * | `veinRose`, raw | 0.720, 0.120, 0.240 | 0.2562 | 0.483 | 0.540 | 2.108 | 0.0273 | 0.0129 |
+ * | `veinRose` at r=1 | 1.000, 0.167, 0.333 | 0.3559 | 0.671 | 0.750 | 2.108 | 0.0379 | 0.0180 |
+ * | fabric's drawn vein at r=1 | 1.000, 0.135, 0.333 | 0.3332 | 0.628 | 0.766 | 2.299 | 0.0387 | 0.0168 |
+ * | **`veinCrimson` at r=1 — this** | 1.000, 0.125, 0.333 | 0.3261 | 0.615 | 0.771 | 2.364 | 0.0389 | 0.0165 |
+ * | `veinCrimson`, raw | 0.480, 0.060, 0.160 | 0.1565 | 0.295 | 0.370 | 2.364 | 0.0187 | 0.0079 |
+ *
+ * The shipped stroke, for the same deposit at alpha 0.80, renders C 0.0383 and
+ * L 0.0350.
+ *
+ * ⭐ **The red ceiling is what makes a deep hue affordable, and the sweep is
+ * where that stops being an opinion.** Scaling a palette colour down moves
+ * luma and chroma together — `veinCrimson` raw keeps 23% of the fringe deposit
+ * L and only 49% of its C, so a fringe stroke drawn in it gives up the
+ * chromatic signal as well as the achromatic one, and a too-dark stroke
+ * against black undoes the width win. Lifting the same chromaticity to r = 1
+ * gives up the achromatic half ALONE: at the fringe this emits **C 0.0389
+ * against the shipped 0.0383 (+1.6%)** at **47% of the luma**, which is the
+ * whole trade stated in one row. Multiply by the widths and the acceptance
+ * arithmetic comes out the right way: a promoted fringe strand carries
+ * `1.6 x 0.0389` = 0.0622 of chromatic flux against `1.4 x 0.0383` = 0.0536
+ * shipped, **+16%**, while its luma flux falls 46%. The mark gets wider and
+ * more coloured, and dimmer. That is the round's whole thesis in three
+ * numbers.
+ *
+ * Among the r = 1 candidates the fringe deposit is identical in RED by
+ * construction, so the pick is simply the deepest: `veinCrimson`'s own
+ * chromaticity, C/L 2.364 against the beads' 1.093. It is also the palette's,
+ * which keeps "one colour per class, and the palette's own" literally true —
+ * and it lands a hair under the vein the core fabric actually draws
+ * (`consensusRouteColors` runs g/r 0.130–0.139 against this 0.125, with b/r
+ * exactly 1/3 in both), which is the grammar being adopted.
+ *
+ * ## What accumulation does to it — the second complaint's own measurement
+ *
+ * The blend's fixed point is the emitted alpha in every channel, but the RATE
+ * per deposit is `1 - tint * a`, so a channel the tint leaves near zero barely
+ * moves. Rendered result of N stroke deposits at the recorded per-pixel
+ * deposit counts (5.85 in the mixed band, 4.27 outside the rim, ~1 in the
+ * isolated-deposit fringe) — shipped, then the alpha revert ALONE, then both
+ * moves, so the two are separable:
+ *
+ * | band (N) | shipped, rose at 0.80 | alpha revert only | this |
+ * |---|---|---|---|
+ * | mixed 0.95–1.15 (5.85) | .3513 .2304 .2447 · L .2571 · C/L 0.442 | .2963 .1843 .1966 · L .2090 · C/L 0.506 | .2963 .0715 .1618 · L .1258 · **C/L 1.428** |
+ * | outer 1.15–1.40 (4.27) | .2434 .1321 .1424 · L .1565 · C/L 0.678 | .1985 .1038 .1121 · L .1245 · C/L 0.727 | .1985 .0367 .0891 · L .0749 · **C/L 1.811** |
+ * | outer 1.40–1.55 (4.27) | .1978 .1033 .1117 · L .1240 · C/L 0.728 | .1600 .0809 .0876 · L .0982 · C/L 0.771 | .1600 .0282 .0692 · L .0592 · **C/L 1.882** |
+ * | fringe >= 1.55 (1) | .0660 .0264 .0290 · L .0350 · C/L 1.093 | .0505 .0202 .0222 · L .0268 · C/L 1.093 | .0505 .0063 .0168 · L .0165 · **C/L 2.364** |
+ *
+ * ⚠️ **The middle column is why the alpha revert is not the fix.** Giving the
+ * light back moves every channel by the same factor, so the mixed band comes
+ * down a fifth and stays exactly as grey-rose as it was — C/L 0.442 to 0.506
+ * against an emitted 1.093. The channel RATIO is a property of the tint, and
+ * only a tint can move it.
+ *
+ * ⭐ The hue change then costs the mixed band's RED nothing — 0.2963 in both
+ * of the last two columns, because both classes emit r = 1 and red converges
+ * at the same rate — and takes G and B out: −61% and −18% against the
+ * reverted control, −69% and −34% against the shipped build. The band stops
+ * accumulating toward white and accumulates toward deep red instead, which is
+ * the entire content of *it has lost the deep crimson*, and it hands light
+ * back rather than spending any.
+ *
+ * ⚠️ Those deposit counts are placement-era, as
+ * {@link populationFibreTaper} records — a proxy for the shape of the effect
+ * and not a rendered measurement. The live look is still the arbiter.
+ *
+ * ## What this is not
+ *
+ * Not a ramp: one flat colour for the whole stroke class, exactly as
+ * {@link POPULATION_FIELD_COLOR} is for the whole bead class. The desaturation
+ * trap that killed the halo's own two-endpoint ramp (`cab0d7b`) needed a
+ * colour that VARIED across the field; a second class does not vary anything.
+ * Not an identity hue: it says nothing about any individual, it is the same
+ * vessel colour on every stroke in the layer. And `b` > `g` holds here as it
+ * does for the beads (0.333 against 0.125), so blue still converges faster
+ * than green and the rendered hue drifts magenta-ward under overlap — never
+ * toward brick.
+ */
+export const POPULATION_STROKE_COLOR: SceneColor =
+  atRedCeiling(CELL_GALAXY_PALETTE.veinCrimson);
 
 /**
  * The emitted alpha for one amount-curve `gain`.
@@ -341,13 +477,28 @@ export function populationPointEnergy(
  * pays nearly all of it — see {@link populationFibreTaper}, where the
  * post-P3/P4 numbers are recorded.
  *
+ * ⭐ **RETURNED 0.80 → 0.70 on 2026-08-20, hours later, and both halves of
+ * the trail are kept because they are one story.** The raise was a stopgap for
+ * a WIDTH problem. The fringe reads by MARK SIZE, `gl.LINES` carried no DPR
+ * compensation, and `a^2` was the only lever that reached the isolated-deposit
+ * regime while that was true. It is no longer true:
+ * {@link POPULATION_BACKBONE_WIDTH_PX} now owns width, in a unit that survives
+ * a change of display. So the stopgap is paying for nothing — and it was never
+ * free. Per-deposit alpha is exactly the currency chroma retention is a
+ * function of, and the second half of the same live verdict was *the whole
+ * cell mesh has gone pale, it has lost the deep crimson*. This constant is one
+ * of the two spends that produced that wash. The other was spending it in
+ * `tissueRose`, whose high G and B are what a bounded accumulation converges
+ * toward white — see {@link POPULATION_STROKE_COLOR}, which is the half of the
+ * fix that costs no light at all.
+ *
  * It is deliberately NOT small relative to a point. "No endpoint emphasis of
  * any kind" is a requirement, and a faint connector between bright beads is
  * precisely a node with edges radiating from it. At this ratio the stroke is
  * the figure and the points are grain along it — and raising it moves the
  * stroke further toward the figure, never the other way.
  */
-export const POPULATION_FIBRE_ALPHA = 0.8;
+export const POPULATION_FIBRE_ALPHA = 0.7;
 
 /**
  * The fibre's share of the tissue taper, and why a stroke needs one at all.
@@ -409,11 +560,16 @@ export const POPULATION_FIBRE_ALPHA = 0.8;
  * while the layer's light comes back to −6% inside the rim instead of −11%,
  * and the fringe still fades 20%. It was carried as the answer if live review
  * reported the layer as dimmer rather than as rosier. **On 2026-08-20 it did**
- * (the outermost band read as beads with no thread), and
- * {@link POPULATION_FIBRE_ALPHA} is now 0.8. Raising a flat alpha alone is
- * still what must not be done: it buys light by spending exactly the chroma
- * this taper recovered — which is why the pairing, and not the flat raise, is
- * what was spent.
+ * (the outermost band read as beads with no thread), the pairing was spent —
+ * and the SAME DAY the next look reported the layer as pale, which is the
+ * warning attached to it coming true within hours. It buys light by spending
+ * exactly the chroma this taper recovered, and the read it was bought for
+ * never arrived, because the fringe's problem was the size of the mark and not
+ * its intensity. {@link POPULATION_FIBRE_ALPHA} is back at 0.7, the width it
+ * was standing in for now belongs to
+ * {@link POPULATION_BACKBONE_WIDTH_PX}, and the read is bought in hue instead
+ * ({@link POPULATION_STROKE_COLOR}) — which costs no per-deposit alpha at all,
+ * so this taper's recovery is left intact.
  *
  * ⚠️ **Those retention and light figures are PLACEMENT-ERA.** They were
  * GPU-measured — OKLCh over rendered pixels at the production camera — on the
@@ -603,10 +759,11 @@ export function makePopulationPointMaterial(): THREE.ShaderMaterial {
  * consecutive points on one filament.
  *
  * Drawn in the Cells' fabric's language, one sample lower: the same bounded
- * screen accumulation, the same body hue, no tone mapping — but a plain
- * one-pixel GL line where the fabric draws a 2.5-pixel screen-space capsule,
- * and no endpoint treatment of any kind. The filament is the figure; its
- * vertices are not.
+ * screen accumulation, the same VEIN hue the core's nerves carry
+ * ({@link POPULATION_STROKE_COLOR}), no tone mapping — but a plain one-pixel
+ * GL line where the fabric draws a 2.5-pixel screen-space capsule, and no
+ * endpoint treatment of any kind. The filament is the figure; its vertices are
+ * not.
  *
  * Plain {@link THREE.LineSegments} rather than the fabric's `LineSegments2`,
  * and the reason is budget, not taste. A fat line is an instanced quad plus a
@@ -633,7 +790,10 @@ export function makePopulationFibreMaterial(): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
     uniforms: {
       uEmission: { value: 0 },
-      uColor: { value: new THREE.Color(...POPULATION_FIELD_COLOR) },
+      // The STROKE hue, not the bead's — see `POPULATION_STROKE_COLOR`. The
+      // backbone half of this partition reads the same constant, so the two
+      // widths are one colour as well as one light.
+      uColor: { value: new THREE.Color(...POPULATION_STROKE_COLOR) },
       // The point material's own two, read here so the stroke's taper can
       // never drift from the bead's — see `populationFibreTaper`.
       uSizeMin: { value: POPULATION_FIELD_POINT_SIZE_MIN },
@@ -691,6 +851,10 @@ export function makePopulationFibreMaterial(): THREE.ShaderMaterial {
         // where two of them cross, accumulation is what makes the crossing
         // brighter.
         float a = uEmission * vSizeRatio * vSizeRatio;
+        // The vein hue at the layer's red ceiling: same red as the bead
+        // beside it, a fifth of its green. Bounded accumulation converges
+        // each channel at a rate set by that channel's tint, so a stroke
+        // stacks toward deep red where a rose one stacked toward white.
         vec3 tint = uColor;
         // Premultiplied, matching the Cell bodies, and written raw for the
         // same reason — a colorspace-converted twin would be a second
@@ -734,27 +898,34 @@ export function makePopulationFibreMaterial(): THREE.ShaderMaterial {
  * same size, while the bead beside it stays 5–8x more intense per pixel
  * because it concentrates its light into a clamped Gaussian.
  *
- * ## Why 1.4, and why it is not larger
+ * ## Why 1.6, and why it is not larger
  *
- * The ladder reads 3.4 pulse / 3.2 trunk / 2.5 mesh / **1.7 bridge** / 1.4
+ * The ladder reads 3.4 pulse / 3.2 trunk / 2.5 mesh / **2.0 bridge** / 1.6
  * halo backbone / 1 device px residual grain, and a rung has to be
- * distinguishable from the rung above it. The bridge is 1.7 CSS px
- * (`BRIDGE_WIDTH_RATIO` 0.68 on the fabric's 2.5). 1.4 leaves 0.3 CSS px,
- * which is a resolvable step even at DPR 1; 1.5 would leave 0.2 px for 7% more
- * stroke, and a rung nobody can see is not a rung.
+ * distinguishable from the rung above it. The bridge is 2.0 CSS px
+ * (`BRIDGE_WIDTH_RATIO` 0.8 on the fabric's 2.5). 1.6 leaves 0.4 CSS px, a
+ * wider step than the 0.3 the previous pair had, so the rung above stays
+ * legible while both move.
  *
- * ## Why 1.4, and why it is not smaller
+ * ## Why 1.6 and no longer 1.4
  *
  * ⚠️ **State the gain in DEVICE pixels or repeat the bug.** The reference 4K
  * monitor reports `devicePixelRatio` 1 with a 3840x2160 buffer (measured, see
- * `qualityPresets.ts`), so on the machine the verdict came from this is
- * **1.4 device px against the hairline's 1 — a factor of 1.4, not of 2.8.**
- * At DPR 2 the same constant is 2.8 device px against the same 1, a factor of
- * 2.8. The class is DPR-aware precisely so the FIRST number is a floor rather
- * than a coincidence.
+ * `qualityPresets.ts`), so on the machine the verdicts come from this is
+ * **1.6 device px against the hairline's 1 — a factor of 1.6, not of 3.2.**
+ * At DPR 2 the same constant is 3.2 device px against the same 1. The class is
+ * DPR-aware precisely so the FIRST number is a floor rather than a
+ * coincidence, and 1.4 was the smallest number that could TEST the verdict.
+ * Live review on `539cd41` returned it unfixed — *the terminal and secondary
+ * nerves still do not read at the operating camera* — which answers the
+ * question that constant was posed to ask: on this panel, 1.4x over the
+ * hairline is not enough. So the rung takes one more step, and the read is
+ * bought mostly elsewhere: {@link POPULATION_STROKE_COLOR} moves the whole
+ * stroke class out of the beads' hue, because a wider mark in the SAME pink
+ * was always going to be more pink rather than a nerve.
  *
  * ⭐ And width is not the whole of what the primitive change buys, which is
- * why 1.4 is enough to test the verdict with. A `gl.LINES` primitive lights
+ * why 1.4 was enough to test the verdict with. A `gl.LINES` primitive lights
  * one pixel per major-axis step under the diamond-exit rule, so a diagonal
  * strand is a chain of corner-touching pixels — a dotted line, which is
  * exactly the read being complained about — and a segment that projects to
@@ -763,11 +934,16 @@ export function makePopulationFibreMaterial(): THREE.ShaderMaterial {
  *
  * ⭐ The number that says this is not a brightness raise in disguise: with
  * 16.6% of segments promoted, the layer's MEAN stroke width goes to
- * `0.166 x 1.4 + 0.834 x 1.0` = **1.07 device px at DPR 1** (1.30 at DPR 2).
- * The halo as a whole gains under 7% of stroke area, and all of it is
- * concentrated into the strands that had to carry the read.
+ * `0.166 x 1.6 + 0.834 x 1.0` = **1.10 device px at DPR 1** (1.37 at DPR 2),
+ * against 1.07 at the previous rung — 3.1% more stroke area, all of it in the
+ * strands that had to carry the read. Every other factor points down: the
+ * alpha revert is `(0.70/0.80)^2` = 0.766 per deposit and the hue is 0.615 of
+ * `tissueRose`'s luma, for 0.471 of the per-deposit light. Band-weighted over
+ * the recorded segment counts, the stroke class emits **0.484x** the luminous
+ * flux `539cd41` did — and **1.046x** its chroma. Wider, deeper, dimmer: this
+ * round adds light nowhere.
  */
-export const POPULATION_BACKBONE_WIDTH_PX = 1.4;
+export const POPULATION_BACKBONE_WIDTH_PX = 1.6;
 
 const BACKBONE_UNIFORM_ANCHOR = 'uniform float opacity;';
 const BACKBONE_UNIFORMS = `uniform float opacity;
@@ -846,8 +1022,10 @@ export function makePopulationBackboneMaterial(): LineMaterial {
   material.blendDstAlpha = THREE.OneMinusSrcAlphaFactor;
   optimizeScreenSpaceCapsuleMaterial(material);
   material.uniforms.uEmission = { value: 0 };
+  // The hairline's colour as well as its light: both halves of the partition
+  // are one stroke class, and a class has one hue.
   material.uniforms.uColor = {
-    value: new THREE.Color(...POPULATION_FIELD_COLOR),
+    value: new THREE.Color(...POPULATION_STROKE_COLOR),
   };
   material.fragmentShader = replaceShaderChunk(
     material.fragmentShader,

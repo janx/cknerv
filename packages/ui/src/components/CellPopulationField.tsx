@@ -523,7 +523,10 @@ export default function CellPopulationField({
           last points fade only because the weight they SHARE with their beads
           was faded. The stroke is the figure — a halo point must never look
           like a node with edges radiating from it. Every index addresses a
-          point in the same buffer, so no fibre reaches an addressable Cell. */}
+          point in the same buffer, so no fibre reaches an addressable Cell.
+          Its hue is the STROKE class's, not the beads' — the core fabric's own
+          vessel colour, so a filament reads as a nerve rather than as more of
+          the tissue it runs through. */}
       <lineSegments
         geometry={placed.fibres}
         material={fibreMaterial}
@@ -532,7 +535,7 @@ export default function CellPopulationField({
         renderOrder={-2}
       />
       {/* The strands that carry the read, at the ladder's last screen-space
-          rung — 1.4 CSS pixels against the bridge's 1.7, and DPR-aware where
+          rung — 1.6 CSS pixels against the bridge's 2.0, and DPR-aware where
           the hairline above is not. A `gl.LINES` stroke is one DEVICE pixel,
           so it was the only element in the frame that thinned as the
           framebuffer grew; at 4K it had a quarter of the areal weight the
@@ -541,7 +544,7 @@ export default function CellPopulationField({
           Whole strands are promoted and never scattered segments — a dashed
           promotion is that same bead failure in a new costume — and they LEAVE
           the index above rather than sitting over it. Same emission, same
-          tissue taper, same blend: wider, never brighter. */}
+          tissue taper, same hue, same blend: wider, never brighter. */}
       <primitive object={placed.backbone.mesh} />
       <points
         geometry={placed.points}

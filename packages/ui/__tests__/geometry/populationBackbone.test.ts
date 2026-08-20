@@ -413,15 +413,30 @@ describe('the capsule carries the hairline own taper', () => {
   });
 
   it('sits on the width ladder below the bridge', () => {
-    // 3.4 pulse / 3.2 trunk / 2.5 mesh / 1.7 bridge / 1.4 halo backbone / 1
+    // 3.4 pulse / 3.2 trunk / 2.5 mesh / 2.0 bridge / 1.6 halo backbone / 1
     // device px residual grain. The bridge is the mixed register's headline
     // and this rung stays under it.
+    //
+    // ⭐ The two bottom rungs moved on 2026-08-20 (1.7 -> 2.0 and 1.4 -> 1.6),
+    // by live review at 4K rather than by drift: at the old pair the terminal
+    // and secondary nerves still did not read at the operating camera. These
+    // asserts are re-derived at the new ladder, not relaxed — the step between
+    // the two rungs GREW, from 0.3 CSS px to 0.4.
     const bridgePx = 2.5 * BRIDGE_WIDTH_RATIO;
+    expect(bridgePx).toBeCloseTo(2.0, 10);
+    expect(POPULATION_BACKBONE_WIDTH_PX).toBe(1.6);
     expect(POPULATION_BACKBONE_WIDTH_PX).toBeLessThan(bridgePx);
-    expect(bridgePx - POPULATION_BACKBONE_WIDTH_PX).toBeGreaterThanOrEqual(0.25);
+    expect(bridgePx - POPULATION_BACKBONE_WIDTH_PX).toBeCloseTo(0.4, 10);
     // And above the residual hairline it partitions with, which is one DEVICE
     // pixel — half a CSS pixel at DPR 2, which is the whole mechanism.
     expect(POPULATION_BACKBONE_WIDTH_PX).toBeGreaterThan(1);
+    // The mean stroke width the partition actually draws, in device px at
+    // DPR 1, against the 1.07 the previous rung gave: the class buys 3% more
+    // stroke area, and the round's light comes DOWN regardless because the
+    // alpha and the hue both fell.
+    const promoted = PARTITION.backboneCount / PLACEMENT.segmentCount;
+    expect(promoted * POPULATION_BACKBONE_WIDTH_PX + (1 - promoted) * 1)
+      .toBeCloseTo(1.10, 2);
   });
 });
 

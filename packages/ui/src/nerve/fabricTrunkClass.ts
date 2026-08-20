@@ -62,8 +62,8 @@ export const FABRIC_TRUNK_PASS_MESH = 0;
 export const FABRIC_TRUNK_PASS_TRUNK = 1;
 
 /** The wide rung against the passive 2.5 px: 3.2 px at the overview camera,
- *  where the whole width ladder (pulse 3.4, mesh 2.5, bridge ~1.7, halo 1) is
- *  composed and judged. */
+ *  where the whole width ladder (pulse 3.4, mesh 2.5, bridge 2.0, halo
+ *  backbone 1.6, halo hairline 1 device px) is composed and judged. */
 export const FABRIC_TRUNK_WIDTH_RATIO = 1.28;
 
 /** Hard ceiling for the wide class, in CSS px. Live pulses draw at 3.4 px and

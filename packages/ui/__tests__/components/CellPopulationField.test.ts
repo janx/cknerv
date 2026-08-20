@@ -395,21 +395,30 @@ describe('the halo is smaller and dimmer than a Cell, and differs in nothing els
     expect((MATERIAL_SOURCE.match(/exp\(/g) ?? [])).toHaveLength(1);
   });
 
-  it('emits the body hue and no identity hue, as ONE colour', () => {
-    // One constant, and it is the palette's own body colour — the same triple
-    // an untagged Cell emits. It was a two-endpoint ramp keyed on the taper
-    // weight, which put the palest colour exactly where placed density peaks
-    // and where sprites overlap most; bounded-screen accumulation then stacked
-    // those pale sprites into grey-white across the mixed band. Density is the
-    // only thing allowed to vary this layer's colour, which is how the Cells
-    // get their own pale cores.
+  it('emits the body hue and no identity hue, ONE colour per class', () => {
+    // Two constants — the beads' `POPULATION_FIELD_COLOR` (the palette's body
+    // colour, the same triple an untagged Cell emits) and the strokes'
+    // `POPULATION_STROKE_COLOR` (the palette's vein colour, at this layer's
+    // red ceiling) — each FLAT over its own class. What the rule forbids is
+    // unchanged by the split: the colour that was killed here was a
+    // two-endpoint RAMP keyed on the taper weight, which put the palest
+    // colour exactly where placed density peaks and where sprites overlap
+    // most, and bounded-screen accumulation then stacked those pale sprites
+    // into grey-white across the mixed band. Density is still the only thing
+    // allowed to vary this layer's colour.
     expect(MATERIAL_CODE).toContain('POPULATION_FIELD_COLOR');
     expect(MATERIAL_CODE).toContain('CELL_GALAXY_PALETTE.tissueRose');
+    expect(MATERIAL_CODE).toContain('POPULATION_STROKE_COLOR');
+    expect(MATERIAL_CODE).toContain('CELL_GALAXY_PALETTE.veinCrimson');
     expect(MATERIAL_CODE).not.toContain('COLOR_DIM');
     expect(MATERIAL_CODE).not.toContain('COLOR_LIT');
     for (const forbidden of ['asset', 'lock', 'tag', 'memoryViolet']) {
       expect(MATERIAL_CODE).not.toContain(forbidden);
     }
+    // And a class is a class: the two stroke passes read the same constant,
+    // so the promotion boundary is a width step and never a colour step.
+    const strokeUniforms = MATERIAL_CODE.match(/POPULATION_STROKE_COLOR/g) ?? [];
+    expect(strokeUniforms.length).toBeGreaterThanOrEqual(3);
   });
 });
 

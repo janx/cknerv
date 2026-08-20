@@ -14,7 +14,10 @@ import {
   writeBridgeStroke,
 } from '../../src/nerve/bridgeStroke';
 import { bridgeTaper, TWIG_MIN } from '../../src/nerve/fabricLuminance';
-import { populationFibreTaper } from '../../src/materials/populationFieldMaterial';
+import {
+  POPULATION_STROKE_COLOR,
+  populationFibreTaper,
+} from '../../src/materials/populationFieldMaterial';
 import { CELL_GALAXY_PALETTE } from '../../src/visualPalette';
 
 const bridge = (over: Partial<BridgeEdge> = {}): BridgeEdge => ({
@@ -94,17 +97,54 @@ describe('bridge stroke state', () => {
     expect(light.farEnd).toBeLessThanOrEqual(TWIG_MIN);
   });
 
-  it('dims the symbolic colour to the stroke own vein luma', () => {
+  it('lands the symbolic end on the halo STROKE colour, at the vein luma', () => {
     const state = makeBridgeStrokeState(bridge(), 0);
     expect(luma(state.toR, state.toG, state.toB)).toBeCloseTo(
       luma(state.fromR, state.fromG, state.fromB),
       10,
     );
-    // Raw tissueRose is three and a half times brighter than the vein — that
-    // gap is exactly what would out-run the taper.
-    expect(bridgeSymbolicDim(CELL_GALAXY_PALETTE.tissueRose)).toBeCloseTo(1, 10);
-    expect(bridgeSymbolicDim([state.fromR, state.fromG, state.fromB]))
-      .toBeLessThan(0.4);
+    // ⭐ The far end merges into a STRAND, so it lands on what a strand emits.
+    // Since 2026-08-20 that is `POPULATION_STROKE_COLOR` and not `tissueRose`,
+    // which is now the halo's BEAD colour: a stroke ending in the bead hue
+    // would arrive speaking the wrong class's language.
+    const dim = bridgeSymbolicDim([state.fromR, state.fromG, state.fromB]);
+    expect(state.toR).toBeCloseTo(POPULATION_STROKE_COLOR[0] * dim, 12);
+    expect(state.toG).toBeCloseTo(POPULATION_STROKE_COLOR[1] * dim, 12);
+    expect(state.toB).toBeCloseTo(POPULATION_STROKE_COLOR[2] * dim, 12);
+    expect(bridgeSymbolicDim(POPULATION_STROKE_COLOR)).toBeCloseTo(1, 10);
+    // The gap the dim closes, re-derived at the new endpoint: the halo's
+    // stroke hue is 2.0x the vein's luma where `tissueRose` was 3.3x, so the
+    // factor is pinned rather than bounded — 0.489 at the middle of the hash
+    // range, against the 0.285-0.316 the old endpoint asked for.
+    const veinLuma = luma(state.fromR, state.fromG, state.fromB);
+    expect(dim).toBeCloseTo(veinLuma / luma(...POPULATION_STROKE_COLOR), 12);
+    expect(dim).toBeCloseTo(0.489, 2);
+    expect(bridgeSymbolicDim(CELL_GALAXY_PALETTE.tissueRose)).toBeCloseTo(1.627, 3);
+  });
+
+  it('never brightens on the way in, at any anchor weight or vein', () => {
+    // The recorded trap: ramping RAW from the vein to the old `tissueRose`
+    // endpoint put a rising factor on the stroke that `bridgeTaper` had to
+    // fight, and lost — with the far end at TWIG_MIN the product read 16%
+    // above the knot. Re-derived here for the endpoint the class now uses,
+    // over the whole hash range of veins and the whole range of anchor
+    // weights, sampled far finer than the four sub-segments actually drawn.
+    for (const anchorWeight of [0, 0.3, 0.6, 1]) {
+      const state = makeBridgeStrokeState(bridge({ anchorWeight }), 0);
+      const from = [state.fromR, state.fromG, state.fromB] as const;
+      const to = [state.toR, state.toG, state.toB] as const;
+      let previous = Infinity;
+      for (let step = 0; step <= 400; step += 1) {
+        const t = step / 400;
+        const value = luma(
+          from[0] + (to[0] - from[0]) * t,
+          from[1] + (to[1] - from[1]) * t,
+          from[2] + (to[2] - from[2]) * t,
+        ) * bridgeTaper(t, state.farEnd);
+        expect(value).toBeLessThanOrEqual(previous + 1e-12);
+        previous = value;
+      }
+    }
   });
 
   it('takes the fabric non-forest band, never a trunk', () => {

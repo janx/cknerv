@@ -13,16 +13,42 @@ import {
   populationPointFootprint,
   populationPointSizeForWeight,
   POPULATION_FIELD_COLOR,
+  POPULATION_STROKE_COLOR,
   POPULATION_FIELD_EMISSION,
   POPULATION_FIELD_MIN_POINT_PX,
   POPULATION_FIELD_POINT_SIZE_MAX,
   POPULATION_FIELD_POINT_SIZE_MIN,
   POPULATION_FIELD_SIGMA,
   POPULATION_BACKBONE_WIDTH_PX,
+  POPULATION_FIBRE_ALPHA,
   populationFibreEmissionForGain,
   populationFibreSizeRatio,
   populationFibreTaper,
 } from '../../src/materials/populationFieldMaterial';
+
+/** Rec. 709 luma and the linear chroma proxy this layer's constants were swept
+ *  on. Not OKLCh — the rendered measurements need pixels off a GPU, and these
+ *  are what a unit test can honestly re-derive. */
+const luma709 = (t: readonly [number, number, number]): number =>
+  0.2126 * t[0] + 0.7152 * t[1] + 0.0722 * t[2];
+const chroma709 = (t: readonly [number, number, number]): number =>
+  t[0] - (t[1] + t[2]) / 2;
+
+/** The layer's blend, run on the CPU: `dst = tint*a*a + dst*(1 - tint*a)`,
+ *  premultiplied source into SrcAlpha / OneMinusSrcColor. Its fixed point is
+ *  `a` in every channel; its RATE is `1 - tint*a` per channel, which is the
+ *  whole of why a tint's own chroma decides whether overlap goes white. */
+function accumulate(
+  tint: readonly [number, number, number],
+  a: number,
+  deposits: number,
+): [number, number, number] {
+  const dst: [number, number, number] = [0, 0, 0];
+  for (let i = 0; i < deposits; i += 1) {
+    for (let c = 0; c < 3; c += 1) dst[c] = tint[c] * a * a + dst[c] * (1 - tint[c] * a);
+  }
+  return dst;
+}
 
 describe('the halo is the Cells material family, not a second material', () => {
   const halo = makePopulationPointMaterial();
@@ -111,7 +137,7 @@ describe('smaller and dimmer, and nothing else', () => {
   });
 
   it('emits what an addressable Cell emits, and nothing it was told about', () => {
-    // The layer emits ONE colour and it is the Cells' own body colour: an
+    // The BEADS emit ONE colour and it is the Cells' own body colour: an
     // untagged Cell's `aColor` is this exact triple, and mainnet has almost no
     // tagged ones. A tagged Cell's accent is an identity claim this layer
     // cannot make, so the accent path is what must never appear here.
@@ -136,6 +162,103 @@ describe('smaller and dimmer, and nothing else', () => {
       .toBeGreaterThan(chroma(CELL_GALAXY_PALETTE.warmWhite) * 5);
   });
 
+  it('gives the strokes the vein hue and the beads the body hue', () => {
+    // The two live verdicts of 2026-08-20 — terminal nerves still not reading
+    // at 1.4 px, and the whole mesh gone pale — were one bug: strokes and
+    // beads emitted the SAME colour, so added width was pink over pink and
+    // there was no nerve percept to gain at any width, while every spend made
+    // to buy one went into the channels a bounded accumulation converges
+    // toward white. The scene's own nerve grammar is the core fabric's: dark
+    // vein vessels through luminous rose tissue, a HUE contrast.
+    expect([...POPULATION_STROKE_COLOR])
+      .not.toEqual([...POPULATION_FIELD_COLOR]);
+    // The vein family's chromaticity, at this layer's own red ceiling —
+    // `veinCrimson` (0.48, 0.06, 0.16) has g/r 0.125 and b/r exactly 1/3.
+    const vein = CELL_GALAXY_PALETTE.veinCrimson;
+    expect(POPULATION_STROKE_COLOR[0]).toBe(1);
+    expect(POPULATION_STROKE_COLOR[1]).toBeCloseTo(vein[1] / vein[0], 12);
+    expect(POPULATION_STROKE_COLOR[2]).toBeCloseTo(vein[2] / vein[0], 12);
+    // Same red as the bead beside it, so the two classes are one family
+    // separated in G and B alone: this is the wash taken out, not a second
+    // material introduced.
+    expect(POPULATION_STROKE_COLOR[0]).toBe(POPULATION_FIELD_COLOR[0]);
+    expect(POPULATION_STROKE_COLOR[1]).toBeLessThan(POPULATION_FIELD_COLOR[1] / 3);
+    expect(POPULATION_STROKE_COLOR[2]).toBeLessThan(POPULATION_FIELD_COLOR[2]);
+    // Chroma per luminance, on the same CPU proxies the sweep was run with:
+    // 2.364 against the beads' 1.093, which is the whole of the split.
+    const strokeCL = chroma709(POPULATION_STROKE_COLOR) / luma709(POPULATION_STROKE_COLOR);
+    const beadCL = chroma709(POPULATION_FIELD_COLOR) / luma709(POPULATION_FIELD_COLOR);
+    expect(strokeCL).toBeCloseTo(2.364, 3);
+    expect(beadCL).toBeCloseTo(1.093, 3);
+    expect(strokeCL).toBeGreaterThan(beadCL * 2);
+    // And it is DARKER, which is the trade: 0.615 of the beads' luma, so a
+    // round that widened the strokes still took light out of the layer.
+    expect(luma709(POPULATION_STROKE_COLOR) / luma709(POPULATION_FIELD_COLOR))
+      .toBeCloseTo(0.615, 3);
+  });
+
+  it('deposits toward deep red where the shipped stroke deposited toward white', () => {
+    // The blend's fixed point is the emitted alpha in EVERY channel, but the
+    // rate per deposit is `1 - tint * a` — so a channel the tint leaves near
+    // zero barely moves, and the wash is a property of the tint rather than of
+    // the accumulation. Mixed band: taper p50 0.652, emission 0.72 at mainnet
+    // chain scope, and the deposit counts `populationFibreTaper` records
+    // (5.85 on the average covered pixel there, placement-era).
+    const a = (alpha: number) => 0.72 * alpha * 0.652;
+    const shipped = accumulate(POPULATION_FIELD_COLOR, a(0.8), 6);
+    const reverted = accumulate(POPULATION_FIELD_COLOR, a(POPULATION_FIBRE_ALPHA), 6);
+    const now = accumulate(POPULATION_STROKE_COLOR, a(POPULATION_FIBRE_ALPHA), 6);
+
+    // ⚠️ The alpha revert ALONE does not answer the pale verdict, and this is
+    // the number that says so: .3533 .2341 .2485 at C/L 0.430 becomes
+    // .2985 .1875 .1999 at C/L 0.494. Dimmer by a fifth, and still grey-rose,
+    // because the ratio between the channels is a property of the TINT.
+    expect(chroma709(reverted) / luma709(reverted))
+      .toBeLessThan((chroma709(shipped) / luma709(shipped)) * 1.2);
+
+    // At the same alpha, the hue change costs the RED channel nothing — both
+    // classes emit r = 1, so red converges at the same rate to the same place
+    // — and takes G and B out. That is the wash leaving without the light
+    // going with it: .2985 .0731 .1648, C/L 1.407.
+    expect(now[0]).toBeCloseTo(reverted[0], 12);
+    expect(now[1]).toBeLessThan(reverted[1] * 0.4);
+    expect(now[2]).toBeLessThan(reverted[2] * 0.85);
+    expect(chroma709(now) / luma709(now))
+      .toBeGreaterThan((chroma709(shipped) / luma709(shipped)) * 3);
+    // Both moves together take the band down in luma, which is the round's
+    // hard constraint: nothing here may add light.
+    expect(luma709(now)).toBeLessThan(luma709(shipped) * 0.6);
+  });
+
+  it('keeps the fringe deposit chromatic while giving up its luma', () => {
+    // The acceptance arithmetic for the deepening, in the band the visibility
+    // verdict lives in: one isolated deposit against black at the fringe taper
+    // p50 0.446. A deep hue reached by SCALING a palette colour gives up
+    // chroma along with luma and undoes the width win; reached at the red
+    // ceiling it gives up the achromatic half alone.
+    const fringe = (tint: readonly [number, number, number], alpha: number) => {
+      const a = 0.72 * alpha * 0.446;
+      return [tint[0] * a * a, tint[1] * a * a, tint[2] * a * a] as const;
+    };
+    const shipped = fringe(POPULATION_FIELD_COLOR, 0.8);
+    const now = fringe(POPULATION_STROKE_COLOR, POPULATION_FIBRE_ALPHA);
+    // Chroma per deposit is preserved (+1.6%) at 47% of the luma...
+    expect(chroma709(now) / chroma709(shipped)).toBeGreaterThan(1);
+    expect(chroma709(now) / chroma709(shipped)).toBeLessThan(1.05);
+    expect(luma709(now) / luma709(shipped)).toBeCloseTo(0.471, 2);
+    // ...so multiplied by the widths, a promoted fringe strand carries MORE
+    // chromatic flux than the shipped one did (1.6 x 0.0389 against
+    // 1.4 x 0.0383, +16%) while its luminous flux falls by nearly half.
+    expect(POPULATION_BACKBONE_WIDTH_PX * chroma709(now) / (1.4 * chroma709(shipped)))
+      .toBeCloseTo(1.163, 2);
+    expect(POPULATION_BACKBONE_WIDTH_PX * luma709(now) / (1.4 * luma709(shipped)))
+      .toBeCloseTo(0.538, 2);
+    // Scaling the same palette colour instead loses the chroma too, which is
+    // why the sweep rejected raw `veinCrimson` and raw `veinRose`.
+    const scaled = fringe(CELL_GALAXY_PALETTE.veinCrimson, POPULATION_FIBRE_ALPHA);
+    expect(chroma709(scaled)).toBeLessThan(chroma709(shipped) * 0.6);
+  });
+
   it('leans blue over green, which is what keeps the outer field off brick', () => {
     // Brick is rose drifting toward ember (OKLCH hue 45) or warm white (71).
     // Bounded-screen accumulation moves each channel toward the emitted alpha
@@ -145,6 +268,10 @@ describe('smaller and dimmer, and nothing else', () => {
     // runs 14.07 in the mixed band out to 16.59 at the fringe against an
     // emitted 19.29, and chroma RISES outward as the layer thins.
     expect(POPULATION_FIELD_COLOR[2]).toBeGreaterThan(POPULATION_FIELD_COLOR[1]);
+    // The rule belongs to the layer, not to one constant: the strokes carry it
+    // too (0.333 against 0.125), so nothing here drifts toward brick as
+    // overlap grows.
+    expect(POPULATION_STROKE_COLOR[2]).toBeGreaterThan(POPULATION_STROKE_COLOR[1]);
   });
 
   it('never varies the tint with the taper, in either draw', () => {
@@ -355,10 +482,18 @@ describe('the backbone is the hairline at a different width', () => {
     // installed to recover.
     expect(backbone.uniforms.uEmission.value).toBe(0);
     expect(fibre.uniforms.uEmission.value).toBe(0);
+    // One hue for the whole stroke class, both widths of it — a partition is
+    // one set of strokes drawn in two passes, and a colour step at the
+    // promotion boundary would be a seam down the middle of every strand.
     expect(backbone.uniforms.uColor.value.getHex())
       .toBe(fibre.uniforms.uColor.value.getHex());
-    expect(new THREE.Color(...POPULATION_FIELD_COLOR).getHex())
+    expect(new THREE.Color(...POPULATION_STROKE_COLOR).getHex())
       .toBe(backbone.uniforms.uColor.value.getHex());
+    // And it is NOT the beads' colour: that is the 2026-08-20 split.
+    expect(new THREE.Color(...POPULATION_FIELD_COLOR).getHex())
+      .not.toBe(backbone.uniforms.uColor.value.getHex());
+    expect(makePopulationPointMaterial().uniforms.uColor.value.getHex())
+      .toBe(new THREE.Color(...POPULATION_FIELD_COLOR).getHex());
     // The amount curve both passes ride is one function, so scope changes can
     // never pull the two halves of the partition apart.
     expect(populationFibreEmissionForGain(0.4))
@@ -372,6 +507,11 @@ describe('the backbone is the hairline at a different width', () => {
     // against `resolution`, which `LineSegments2.onBeforeRender` writes in CSS
     // pixels immediately before every draw.
     expect(backbone.linewidth).toBe(POPULATION_BACKBONE_WIDTH_PX);
+    // 1.4 -> 1.6 on 2026-08-20: 1.4 was the smallest step that could TEST the
+    // verdict, live review returned it unfixed, so the rung takes one more —
+    // and the read is bought mostly in hue, not here. A recorded decision
+    // re-decided by live review, which is what this constant is for.
+    expect(POPULATION_BACKBONE_WIDTH_PX).toBe(1.6);
     expect(backbone.worldUnits).toBe(false);
     expect(backbone.uniforms.resolution).toBeDefined();
     expect(backbone.uniforms.capsulePixelRatio).toBeDefined();

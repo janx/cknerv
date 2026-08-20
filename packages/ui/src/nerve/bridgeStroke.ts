@@ -20,20 +20,28 @@
 //     death flash there would light the unresolved mass for an event that
 //     happened to one named Cell. The retract GEOMETRY is the fabric's; the
 //     flash is not.
-//   * **Colour runs vein → `tissueRose`, at MATCHED luma.** The near end is
-//     the resting Cell vein family; the far end is the halo's one emitted
-//     colour, so the stroke arrives already speaking the halo's hue. Allowed
-//     here and banned inside the halo field itself because these are sparse
-//     strokes, not an accumulating field: the desaturation trap that killed
-//     the halo's own ramp (cab0d7b) needs thousands of overlapping ramps to
-//     bite. ⚠️ The luma match is not decoration — see
-//     {@link BRIDGE_SYMBOLIC_DIM}.
+//   * **Colour runs vein → the halo's STROKE hue, at MATCHED luma.** The near
+//     end is the resting Cell vein family; the far end is what the halo's own
+//     filaments emit, so the stroke arrives already speaking the hue of the
+//     thing it merges into. Since 2026-08-20 that is
+//     `POPULATION_STROKE_COLOR` — the vein family at the halo's red ceiling —
+//     rather than `tissueRose`, which is now the halo's BEAD colour: a bridge
+//     merges into a STRAND, not into a bead chain, and its far end has to land
+//     where it lands. The two ends are consequently near-identical in hue and
+//     the ramp is almost a pure taper, which is the register boundary reading
+//     as a change of LEVEL alone. Allowed here and banned inside the halo
+//     field itself because these are sparse strokes, not an accumulating
+//     field: the desaturation trap that killed the halo's own ramp (cab0d7b)
+//     needs thousands of overlapping ramps to bite. ⚠️ The luma match is not
+//     decoration — see {@link bridgeSymbolicDim}.
 
 import type { BridgeEdge } from '../geometry/bridgeEdges';
 import { bezierAtInto, bezierControlInto, fnv1a } from '../geometry/edgeBezier';
 import { consensusRouteColors } from '../derives/consensusFlow.derive';
-import { CELL_GALAXY_PALETTE } from '../visualPalette';
-import { populationFibreTaper } from '../materials/populationFieldMaterial';
+import {
+  POPULATION_STROKE_COLOR,
+  populationFibreTaper,
+} from '../materials/populationFieldMaterial';
 import { FABRIC_SAMPLES_PER_EDGE } from './fabricCapacity';
 import {
   fabricEdgeRenderState,
@@ -50,13 +58,23 @@ import {
 /**
  * Screen width of a bridge, as a RATIO of the fabric's.
  *
- * The ladder the design asks for is 3.4 px (pulse) / 2.5 (mesh) / ~1.7
- * (bridge) / 1 (halo terminal), and `1.7 / 2.5 = 0.68`. Stored as the ratio
- * rather than as 1.7 because `cell.fabricWidth` is a live knob: a fixed
- * 1.7 stops being the mid rung the moment the mesh moves, and a constant that
- * was calibrated against another constant has to follow it.
+ * The ladder now reads 3.4 px (pulse) / 3.2 (trunk) / 2.5 (mesh) / **2.0
+ * (bridge)** / 1.6 (halo backbone) / 1 device px (halo hairline), and
+ * `2.0 / 2.5 = 0.8`. Stored as the ratio rather than as 2.0 because
+ * `cell.fabricWidth` is a live knob: a fixed 2.0 stops being the mid rung the
+ * moment the mesh moves, and a constant that was calibrated against another
+ * constant has to follow it.
+ *
+ * ⭐ **1.7 → 2.0 on 2026-08-20, by live review rather than by drift.** The
+ * verdict at 4K was that the secondary nerves do not read at the operating
+ * camera — in its honest form, that it was not clear whether this class was
+ * rendering at all — and this class is the mixed band's headline stroke. It gains width here and hue at its symbolic
+ * end (see {@link bridgeSymbolicDim}), and it keeps the step above the halo's
+ * promoted strands: 2.0 against 1.6 is 0.4 CSS px, a wider rung than the 0.3
+ * the pair had before. It stays under the mesh at every camera, since both
+ * ride the same `cellDetailFabricWidthScale`.
  */
-export const BRIDGE_WIDTH_RATIO = 0.68;
+export const BRIDGE_WIDTH_RATIO = 0.8;
 
 /**
  * The far end's energy, as a fraction of the knot, before the anchor's own
@@ -79,16 +97,33 @@ function luma(color: readonly [number, number, number]): number {
 }
 
 /**
- * How far `tissueRose` is dimmed before it becomes the stroke's far-end
- * colour: exactly enough to match the luma of that stroke's own vein colour.
+ * How far the halo's stroke colour is dimmed before it becomes this stroke's
+ * far-end colour: exactly enough to match the luma of the stroke's own vein.
  *
- * ⚠️ This is load-bearing, and the arithmetic says so. `tissueRose`
- * (1.0, 0.40, 0.44) has luma 0.531; the vein family sits near 0.151 — three
- * and a half times darker. Ramping raw between them puts a rising factor on
- * the stroke that the taper has to fight, and it LOSES: with the far end at
- * TWIG_MIN the product peaks 16% ABOVE the knot at t = 0.25. The stroke would
- * brighten on its way into the halo, which is the one thing this class may
- * not do.
+ * ⚠️ The trap it was installed against, kept because it is what the technique
+ * is FOR. Against the old endpoint — `tissueRose` (1.0, 0.40, 0.44), luma
+ * 0.531, against a vein family near 0.151, three and a half times darker —
+ * ramping raw puts a rising factor on the stroke that the taper has to fight,
+ * and it loses: with the far end at TWIG_MIN the product reads 16% ABOVE the
+ * knot at t = 0.25 (re-derived: 15.7% for the darkest vein the hash draws,
+ * 19% at the last vertex). The stroke would brighten on its way into the halo,
+ * which is the one thing this class may not do.
+ *
+ * ⭐ **Re-derived for the new endpoint on 2026-08-20.**
+ * `POPULATION_STROKE_COLOR` is (1, 0.125, 0.333) at luma 0.3261, so the gap to
+ * the vein is 1.94–2.16x rather than 3.16–3.51x, and the factor lands at
+ * **0.464–0.515** (0.489 at the middle of the hash range) where it used to be
+ * 0.285–0.316. That is a real change of behaviour and worth stating: the raw
+ * ramp to THIS endpoint no longer peaks at all — its worst product is 0.917 of
+ * the knot at t = 0.25 and 0.733 at the last vertex — so the match is no
+ * longer the only thing standing between this class and a brightening far end.
+ * It is kept because a margin is not a construction: `farEnd` moves with the
+ * anchor's own halo weight, and the whole point of the technique is that
+ * {@link bridgeTaper} is the SOLE energy axis rather than the winner of a
+ * fight. The match also now leaves the ramp nearly colour-constant — vein
+ * (0.479, 0.065, 0.160) to far end (0.489, 0.061, 0.163) — because both
+ * registers finally speak the same vessel hue; where the old endpoint sent
+ * green UP by 86% along a falling stroke, this sends it down by 5%.
  *
  * Matching the luma makes the ramp carry HUE only, and leaves
  * {@link bridgeTaper} as the sole energy axis — so "monotone, no brightening
@@ -98,8 +133,8 @@ function luma(color: readonly [number, number, number]): number {
 export function bridgeSymbolicDim(
   vein: readonly [number, number, number],
 ): number {
-  const roseLuma = luma(CELL_GALAXY_PALETTE.tissueRose);
-  return roseLuma > 0 ? luma(vein) / roseLuma : 0;
+  const strokeLuma = luma(POPULATION_STROKE_COLOR);
+  return strokeLuma > 0 ? luma(vein) / strokeLuma : 0;
 }
 
 /** One bridge, as the layer keeps it across frames. Endpoints and control
@@ -113,7 +148,7 @@ export interface BridgeStrokeState {
   toX: number; toY: number; toZ: number;
   /** Actual end: the resting Cell vein family. */
   fromR: number; fromG: number; fromB: number;
-  /** Symbolic end: the halo's one emitted colour. */
+  /** Symbolic end: the halo's stroke colour, at the vein's luma. */
   toR: number; toG: number; toB: number;
   /** Where {@link bridgeTaper} bottoms out for this stroke. */
   farEnd: number;
@@ -140,7 +175,9 @@ export function makeBridgeStrokeState(
     seed,
   );
   const vein = consensusRouteColors(seed).from;
-  const rose = CELL_GALAXY_PALETTE.tissueRose;
+  // The halo's STROKE hue, which is what this end merges into — the beads'
+  // `tissueRose` would land a strand's tip on the wrong class's colour.
+  const halo = POPULATION_STROKE_COLOR;
   const dim = bridgeSymbolicDim(vein);
   return {
     cellId: bridge.cellId,
@@ -149,7 +186,7 @@ export function makeBridgeStrokeState(
     ctrlX: ctrl[0], ctrlY: ctrl[1], ctrlZ: ctrl[2],
     toX: bridge.toX, toY: bridge.toY, toZ: bridge.toZ,
     fromR: vein[0], fromG: vein[1], fromB: vein[2],
-    toR: rose[0] * dim, toG: rose[1] * dim, toB: rose[2] * dim,
+    toR: halo[0] * dim, toG: halo[1] * dim, toB: halo[2] * dim,
     farEnd: BRIDGE_FAR_END_ENERGY
       * populationFibreTaper(bridge.anchorWeight),
     brightnessMul: arborBrightness(undefined, seed),

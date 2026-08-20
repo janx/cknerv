@@ -31,10 +31,19 @@
 //
 // So the fix is the design's reserved fifth width rung: promote a SUBSET of
 // the strands to the same DPR-aware capsule class every other nerve in the
-// frame already uses, at the same per-deposit alpha and the same taper. Wider,
-// not brighter — width is the visibility channel, and per-deposit alpha is
-// what chroma retention is a function of, so raising the second to buy the
-// first spends the chroma the taper was installed to recover.
+// frame already uses, at the same per-deposit alpha, the same hue and the same
+// taper. Wider, not brighter — width is the visibility channel, and
+// per-deposit alpha is what chroma retention is a function of, so raising the
+// second to buy the first spends the chroma the taper was installed to
+// recover.
+//
+// ⚠️ Width alone did not settle it. Live review on `539cd41`, at the promoted
+// 1.4 device px, still reported the terminal strands as not reading — because
+// the promoted stroke was the SAME `tissueRose` the beads emit, so a wider
+// mark was a wider pink one and no nerve percept was available at any width.
+// The rung is now 1.6 px and the whole stroke class emits the vein hue
+// (`POPULATION_STROKE_COLOR`); this file's selection is unchanged by either,
+// which is the point of it reading positions and indices and nothing else.
 //
 // ## The selection law
 //
@@ -173,7 +182,7 @@ export const POPULATION_BACKBONE_BAND_WEIGHTS: readonly number[] = [
  * **The floor** is the halo's own dust floor — the guard the placement's
  * run-length work is bounded by is `components >= 8` — read in the one unit
  * that matters here: below it a component is a fragment, and a fragment drawn
- * at 1.4 px is a dash. Measured, it barely moves anything (the fringe share
+ * at the backbone width is a dash. Measured, it barely moves anything (the fringe share
  * reads 40.0% / 38.0% / 36.0% / 36.5% at floors 4 / 6 / 8 / 12), which is
  * itself worth recording so nobody goes looking for an effect: the ranking is
  * size-descending, so the floor only bites where a band's quota outruns its
