@@ -1,5 +1,10 @@
 import * as THREE from 'three';
-import { HASH11_GLSL, BIRTH_DEATH_GLSL } from './cellEnvelope.glsl';
+import {
+  HASH11_GLSL,
+  BIRTH_DEATH_GLSL,
+  STAGE_ENVELOPE_GLSL,
+} from './cellEnvelope.glsl';
+import { ENTER_FADE_MS, EXIT_FADE_MS } from '../geometry/cellPositions';
 import { CONSENSUS_BRAID_PALETTE } from '../derives/consensusBraid.derive';
 import {
   CONSENSUS_MEMORY_CORE_READ_FLOOR,
@@ -44,6 +49,11 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
       uTime:            { value: 0 },
       uBirthDurS:       { value: 0.5 },
       uDeathDurS:       { value: 0.6 },
+      // Stage windows read their constant directly: the dot and the flare
+      // must resolve over the identical span, and a second literal here is a
+      // seam waiting to open.
+      uEnterDurS:       { value: ENTER_FADE_MS / 1000 },
+      uExitDurS:        { value: EXIT_FADE_MS / 1000 },
       uViewportHeight:  { value: 800 },
       uPixelRatio:      { value: 1 },
       uMemoryMinPointPx: { value: 24 },
@@ -70,6 +80,8 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
       attribute vec3  aColor;
       attribute float aBornAt;
       attribute float aDeathAt;
+      attribute float aEnterAt; // stage resolution in; -1e9 = always on
+      attribute float aExitAt;  // stage release out; +1e9 = not exiting
       attribute float aSize;
       attribute vec4  aMemoryIdentity; // normalized asset / lock / payload / mass
       attribute float aMemorySeed; // stable content-hash word; never draw-order based
@@ -84,6 +96,8 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
       uniform float uTime;
       uniform float uBirthDurS;
       uniform float uDeathDurS;
+      uniform float uEnterDurS;
+      uniform float uExitDurS;
       uniform float uViewportHeight;
       uniform float uPixelRatio;
       uniform float uMemoryMinPointPx;
@@ -92,6 +106,7 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
       uniform float uInspectionBlend;
 
       varying float vDeathRamp;
+      varying float vStageAlpha;
       varying float vSeed;
       varying vec4  vMemoryIdentity;
       varying float vDetail;
@@ -109,6 +124,7 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
       varying vec3  vCloudParams;
 
       ${BIRTH_DEATH_GLSL}
+      ${STAGE_ENVELOPE_GLSL}
       ${HASH11_GLSL}
 
       void main() {
@@ -127,9 +143,14 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
         float deathRamp = clamp((uTime - aDeathAt) / uDeathDurS, 0.0, 1.0);
         float bEase = birthEase(birthRamp);
         float dEase = deathEase(deathRamp);
-        float scale = bEase * (1.0 - dEase);
+        vec2 stage = stageEnvelope(
+          stageEase(stageRamp(uTime, aEnterAt, uEnterDurS)),
+          stageEase(stageRamp(uTime, aExitAt, uExitDurS))
+        );
+        float scale = bEase * (1.0 - dEase) * stage.x;
 
         vDeathRamp = deathRamp;
+        vStageAlpha = stage.y;
         vSeed      = aMemorySeed * 91.73
           + dot(position, vec3(0.071, 0.113, 0.173));
 
@@ -199,6 +220,7 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
       uniform float uMemorySignalEnergy;
 
       varying float vDeathRamp;
+      varying float vStageAlpha;
       varying float vSeed;
       varying vec4  vMemoryIdentity;
       varying float vDetail;
@@ -448,6 +470,10 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
         vec3 retireColor = vec3(${CONSENSUS_BRAID_PALETTE.retire.join(', ')});
         float retireMix = smoothstep(0.0, 0.48, vDeathRamp);
         col = mix(col, retireColor, retireMix);
+        // Stage resolution is a property of the view, so it dims the WHOLE
+        // cell — event signals included. A cell being let go never keeps a
+        // bright selection ring on its way out.
+        a *= vStageAlpha;
         if (a < 0.005) discard;
         gl_FragColor = vec4(col * a, a);
       }

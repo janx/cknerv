@@ -12,6 +12,11 @@
 // or screen accumulation, and the semantic list (selection prefixes, graph
 // consumers) lives elsewhere — this mapping is exclusively about which GPU
 // instance a cell occupies.
+//
+// A departure frees its slot the moment the caller stops listing the cell —
+// which is why the drawn list carries an exit-hold segment past the staged
+// membership (`cellLifecycleStamps`): a cell leaves this module's list when
+// its fade ENDS, not when the stage let it go.
 
 import type { Cell } from '@cknerv/types';
 

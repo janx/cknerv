@@ -17,15 +17,31 @@ import { makeHaloMaterial, phaseFor } from './GlowNode';
 import {
   BIRTH_DURATION_MS,
   DEATH_DURATION_MS,
+  ENTER_FADE_MS,
+  EXIT_FADE_MS,
+  EXIT_HOLD_MAX,
   INSTANCE_CAPACITY,
 } from '../geometry/cellPositions';
 import {
   cellRenderOverlay,
   createCellRenderSetState,
   diffCellRenderSlots,
+  resolveStagedCell,
   syncCellRenderSet,
   type CellRenderRange,
 } from '../geometry/cellRenderSet';
+import {
+  cellLifecycleSceneTimes,
+  createCellLifecycleStampState,
+  ENTER_STAMP_SENTINEL,
+  EXIT_STAMP_SENTINEL,
+  pruneCellEnterStamps,
+  reapCellExitHolds,
+  refreshCellExitHolds,
+  syncCellLifecycleStamps,
+  takeCellExitHoldCells,
+  type CellLifecycleRecord,
+} from '../geometry/cellLifecycleStamps';
 import {
   createCellSlotState,
   syncCellSlots,
@@ -94,6 +110,7 @@ import {
   collectCellFlashCandidates,
   markCellFlashDirty,
   mergeCellFlashRanges,
+  rangesFromSortedSlots,
   writeActiveCellFlashIndicesFromCandidates,
   writeDirtyCellFlashSlots,
   type CellFlashDirtyIdsRef,
@@ -230,6 +247,8 @@ export function writeFlashSlots(
 export type CellBufferRange = CellRenderRange;
 
 const EMPTY_CELL_BUFFER_RANGES: CellBufferRange[] = [];
+const EMPTY_OVERLAY_ENTRIES: Cell[] = [];
+const EMPTY_CELL_ID_LIST: number[] = [];
 
 export interface CellBufferDiff {
   ranges: CellBufferRange[];
@@ -290,10 +309,23 @@ export interface CellBufferTargets {
   colorArr: Float32Array;
   bornArr:  Float32Array;
   deathArr: Float32Array;
+  enterArr: Float32Array;
+  exitArr:  Float32Array;
   flashArr: Float32Array;
   sizeArr:  Float32Array;
   memoryIdentityArr: Float32Array;
   memorySeedArr: Float32Array;
+}
+
+/** Client-clock lifecycle stamps keyed by cell id. Every one of them is
+ * ABSENT for the resting case, and the sentinel written in its place is what
+ * makes the corresponding shader ramp inert. */
+export interface CellBufferStamps {
+  /** Receipt-time birth for canonical rewrite arrivals, which carry
+   * historical chain timestamps they must not be drawn at. */
+  bornAt?: ReadonlyMap<number, number>;
+  enterAt?: ReadonlyMap<number, number>;
+  exitAt?: ReadonlyMap<number, number>;
 }
 
 export interface CellBufferPresentation {
@@ -329,7 +361,7 @@ export function writeCellBuffers(
   toSceneSeconds: (ms: number) => number,
   flashMap: Map<number, number>,
   targets: CellBufferTargets,
-  bornAtOverrides?: ReadonlyMap<number, number>,
+  stamps?: CellBufferStamps,
   ranges?: readonly CellBufferRange[],
   presentationCache?: WeakMap<Cell, CellBufferPresentation>,
 ): void {
@@ -338,11 +370,11 @@ export function writeCellBuffers(
     const end = Math.min(count, cells.length, range.start + range.count);
     for (let i = Math.max(0, range.start); i < end; i += 1) {
       const c = cells[i];
-      const bornAtS = bornAtOverrides?.get(c.id)
-        ?? toSceneSeconds(c.born_at_ms) + BLOCK_HIGHLIGHT_DELAY_S;
-      const deathAtS = c.death_at_ms === null
-        ? 1e9
-        : toSceneSeconds(c.death_at_ms) + BLOCK_HIGHLIGHT_DELAY_S;
+      const { bornAtS, deathAtS } = cellLifecycleSceneTimes(
+        c,
+        toSceneSeconds,
+        stamps?.bornAt?.get(c.id),
+      );
       const flashAtS = flashMap.get(c.id) ?? -1e9;
 
       const presentation = cellBufferPresentation(c, presentationCache);
@@ -354,6 +386,13 @@ export function writeCellBuffers(
       targets.colorArr[i * 3 + 2] = presentation.color[2];
       targets.bornArr[i]          = bornAtS;
       targets.deathArr[i]         = deathAtS;
+      // Stage stamps travel with the cell, not with the slot: swap-from-tail
+      // moves a cell mid-fade, and a freed slot's next occupant must not
+      // inherit the departure it was written for.
+      targets.enterArr[i]         = stamps?.enterAt?.get(c.id)
+        ?? ENTER_STAMP_SENTINEL;
+      targets.exitArr[i]          = stamps?.exitAt?.get(c.id)
+        ?? EXIT_STAMP_SENTINEL;
       targets.flashArr[i]         = flashAtS;
       targets.sizeArr[i]          = presentation.size;
       targets.memoryIdentityArr.set(presentation.memoryIdentity, i * 4);
@@ -385,6 +424,32 @@ function markCellBufferUpdateRanges(
     );
   }
   attribute.needsUpdate = true;
+}
+
+/** Write the stage-exit stamps of exactly the ids whose stamp changed, and
+ * return their coalesced upload ranges. These cells KEEP their slot for the
+ * fade, so the membership sync reports no dirty slot for them — a departure
+ * (and a cancelled departure) is invisible to every other upload path. */
+export function writeCellExitStampSlots(
+  changedIds: readonly number[],
+  slotOf: ReadonlyMap<number, number>,
+  visibleCount: number,
+  exitAt: ReadonlyMap<number, number>,
+  exitArr: Float32Array,
+): CellBufferRange[] {
+  const count = Math.min(
+    exitArr.length,
+    Number.isFinite(visibleCount) ? Math.max(0, Math.floor(visibleCount)) : 0,
+  );
+  const slots: number[] = [];
+  for (const id of changedIds) {
+    const slot = slotOf.get(id);
+    if (slot === undefined || slot < 0 || slot >= count) continue;
+    exitArr[slot] = exitAt.get(id) ?? EXIT_STAMP_SENTINEL;
+    slots.push(slot);
+  }
+  slots.sort((a, b) => a - b);
+  return rangesFromSortedSlots(slots);
 }
 
 // ---------------------------------------------------------------------------
@@ -1112,9 +1177,23 @@ export default function CellGalaxy({
   const overlayStateRef = useRef<{
     selectedCellId: number | null;
     field: CellInspectionField | null;
+    entries: Cell[];
+    /** Ids of `entries`, resolved only while the pool is non-empty — every
+     * other segment has to ask whether the overlay already draws an id. */
+    ids: Set<number> | null;
     combined: Cell[];
-  }>({ selectedCellId: null, field: null, combined: [] });
-  /** Stable GPU slot assignment over the staged + overlay membership. */
+  }>({
+    selectedCellId: null,
+    field: null,
+    entries: EMPTY_OVERLAY_ENTRIES,
+    ids: null,
+    combined: [],
+  });
+  /** Stage enter/exit stamps plus the deferred-free queue that keeps a
+   * departing cell drawable for the length of its fade. */
+  const cellLifecycleRef = useRef(createCellLifecycleStampState());
+  /** Stable GPU slot assignment over the staged + overlay + exit-hold
+   * membership. */
   const cellSlotStateRef = useRef(createCellSlotState());
   /** Unchanged immutable Cell objects retain their expensive hash/taxonomy
    * presentation even when GC moves them to a different visible slot. */
@@ -1186,6 +1265,21 @@ export default function CellGalaxy({
     const arr = new Float32Array(INSTANCE_CAPACITY);
     arr.fill(1e9);
     return new THREE.BufferAttribute(arr, 1);
+  }, []);
+  // Stage stamps: sparse per-churn scalar writes, exactly the aFlashAt access
+  // pattern. Their sentinels are the resting value, so an untouched slot is
+  // always "fully resolved, not exiting".
+  const cellEnterAtAttr = useMemo(() => {
+    const arr = new Float32Array(INSTANCE_CAPACITY);
+    arr.fill(ENTER_STAMP_SENTINEL);
+    return new THREE.BufferAttribute(arr, 1)
+      .setUsage(THREE.DynamicDrawUsage);
+  }, []);
+  const cellExitAtAttr = useMemo(() => {
+    const arr = new Float32Array(INSTANCE_CAPACITY);
+    arr.fill(EXIT_STAMP_SENTINEL);
+    return new THREE.BufferAttribute(arr, 1)
+      .setUsage(THREE.DynamicDrawUsage);
   }, []);
   const cellFlashAtAttr = useMemo(() => {
     const arr = new Float32Array(INSTANCE_CAPACITY);
@@ -1276,6 +1370,8 @@ export default function CellGalaxy({
     g.setAttribute('aColor', cellColorAttr);
     g.setAttribute('aBornAt', cellBornAtAttr);
     g.setAttribute('aDeathAt', cellDeathAtAttr);
+    g.setAttribute('aEnterAt', cellEnterAtAttr);
+    g.setAttribute('aExitAt', cellExitAtAttr);
     g.setAttribute('aFlashAt', cellFlashAtAttr);
     g.setAttribute('aSize', cellSizeAttr);
     g.setAttribute('aMemoryIdentity', cellMemoryIdentityAttr);
@@ -1298,6 +1394,8 @@ export default function CellGalaxy({
     cellColorAttr,
     cellBornAtAttr,
     cellDeathAtAttr,
+    cellEnterAtAttr,
+    cellExitAtAttr,
     cellFlashAtAttr,
     cellSizeAttr,
     cellMemoryIdentityAttr,
@@ -1319,6 +1417,8 @@ export default function CellGalaxy({
     g.setAttribute('position', cellPosAttr);
     g.setAttribute('aBornAt', cellBornAtAttr);
     g.setAttribute('aDeathAt', cellDeathAtAttr);
+    g.setAttribute('aEnterAt', cellEnterAtAttr);
+    g.setAttribute('aExitAt', cellExitAtAttr);
     g.setAttribute('aFlashAt', cellFlashAtAttr);
     g.setAttribute('aSize', cellSizeAttr);
     g.setIndex(cellFlareIndexAttr);
@@ -1329,6 +1429,8 @@ export default function CellGalaxy({
     cellPosAttr,
     cellBornAtAttr,
     cellDeathAtAttr,
+    cellEnterAtAttr,
+    cellExitAtAttr,
     cellFlashAtAttr,
     cellSizeAttr,
     cellFlareIndexAttr,
@@ -1340,8 +1442,12 @@ export default function CellGalaxy({
   useEffect(() => {
     hybridMaterial.uniforms.uBirthDurS.value = BIRTH_DURATION_MS / 1000;
     hybridMaterial.uniforms.uDeathDurS.value = DEATH_DURATION_MS / 1000;
+    hybridMaterial.uniforms.uEnterDurS.value = ENTER_FADE_MS / 1000;
+    hybridMaterial.uniforms.uExitDurS.value = EXIT_FADE_MS / 1000;
     flareMaterial.uniforms.uBirthDurS.value = BIRTH_DURATION_MS / 1000;
     flareMaterial.uniforms.uDeathDurS.value = DEATH_DURATION_MS / 1000;
+    flareMaterial.uniforms.uEnterDurS.value = ENTER_FADE_MS / 1000;
+    flareMaterial.uniforms.uExitDurS.value = EXIT_FADE_MS / 1000;
   }, [hybridMaterial, flareMaterial]);
 
   useEffect(() => {
@@ -1431,7 +1537,6 @@ export default function CellGalaxy({
       || overlayState.selectedCellId !== selectedCellIdRef.current
       || overlayState.field !== inspectionField;
     if (overlayNeedsSync) {
-      const staged = renderSet.cells;
       const overlay = cellRenderOverlay(
         cellsCache,
         renderSet.indexById,
@@ -1444,17 +1549,79 @@ export default function CellGalaxy({
       // bounded by the display budget, so the reserved overlay pool fits.
       // Clamp defensively so a manual full-capacity clamp can never push
       // the combined list past the allocation.
-      const capacityLeft = INSTANCE_CAPACITY - staged.length;
-      const bounded = overlay.length > capacityLeft
+      const capacityLeft = INSTANCE_CAPACITY - renderSet.cells.length;
+      overlayState.entries = overlay.length > capacityLeft
         ? overlay.slice(0, Math.max(0, capacityLeft))
         : overlay;
-      overlayState.combined = bounded.length === 0
+      overlayState.ids = overlayState.entries.length === 0
+        ? null
+        : new Set(overlayState.entries.map((cell) => cell.id));
+    }
+    // Stage lifecycle: a departure keeps its slot until its fade ends, so the
+    // drawn list is staged + overlay + exit holds. Reaping is one comparison
+    // against the time-ordered head, cheap enough to run every frame.
+    const lifecycle = cellLifecycleRef.current;
+    const holdsReaped = reapCellExitHolds(lifecycle, now);
+    const overlayIds = overlayState.ids;
+    let exitStampIds: readonly number[] = EMPTY_CELL_ID_LIST;
+    // A selection can land on a cell that is still fading out, with no
+    // journal patch behind it — so this runs on any overlay movement, not
+    // only on membership churn: the hold has to end before the overlay draws
+    // the same cell a second time.
+    if (overlayNeedsSync) {
+      const slotState = cellSlotStateRef.current;
+      const stampSync = syncCellLifecycleStamps(lifecycle, {
+        entered: renderUpdate?.entered ?? EMPTY_CELL_ID_LIST,
+        exited: renderUpdate?.exited ?? EMPTY_CELL_ID_LIST,
+        nowS: now,
+        // A departing record is usually already gone from the cache — that
+        // gc is what exited it — so the slot mirror is the honest fallback:
+        // it holds exactly what the screen last drew.
+        resolve: (id): CellLifecycleRecord | null => {
+          const slot = slotState.slotOf.get(id);
+          const cell = resolveStagedCell(cellsCache, id)
+            ?? (slot === undefined ? undefined : slotState.cells[slot]);
+          if (!cell) return null;
+          return {
+            cell,
+            times: cellLifecycleSceneTimes(
+              cell,
+              toSceneSeconds,
+              rewriteBirthAtRef.current.get(id),
+            ),
+          };
+        },
+        drawnElsewhere: overlayIds === null
+          ? null
+          : (id) => overlayIds.has(id),
+      });
+      exitStampIds = stampSync.exitStampIds;
+      pruneCellEnterStamps(lifecycle, now, ENTER_FADE_MS / 1000);
+    }
+    if (cellsMapChanged) {
+      // A death landing mid-fade has to reach the buffers: the withering
+      // clock is written from the record, so the held record must keep up.
+      refreshCellExitHolds(
+        lifecycle,
+        (id) => resolveStagedCell(cellsCache, id) ?? null,
+      );
+    }
+    const membershipNeedsSync = overlayNeedsSync || holdsReaped > 0;
+    if (membershipNeedsSync) {
+      const staged = renderSet.cells;
+      const overlayEntries = overlayState.entries;
+      const holdCells = takeCellExitHoldCells(
+        lifecycle,
+        INSTANCE_CAPACITY - staged.length - overlayEntries.length,
+      );
+      overlayState.combined = overlayEntries.length === 0
+        && holdCells.length === 0
         ? staged
-        : staged.concat(bounded);
+        : staged.concat(overlayEntries, holdCells);
     }
     // Stable-slot indirection: each cell keeps its GPU slot while visible
-    // (staged or overlay), so uploads collapse to O(churn).
-    const slotSync = overlayNeedsSync
+    // (staged, overlay, or fading out), so uploads collapse to O(churn).
+    const slotSync = membershipNeedsSync
       ? syncCellSlots(cellSlotStateRef.current, overlayState.combined)
       : null;
     const cellsList = slotSync?.cells ?? cellSlotStateRef.current.published;
@@ -1465,6 +1632,26 @@ export default function CellGalaxy({
     cellsListRef.current = cellsList;
     drawCountRef.current = count;
     const flashMap = cellFlashRef.current;
+    // Exit stamps land on slots whose occupant did not change, so this is the
+    // one upload the membership ranges above cannot express. Merge both
+    // sources and mark the attribute exactly once — a second mark would
+    // clear the first.
+    const exitStampRanges = exitStampIds.length === 0
+      ? EMPTY_CELL_BUFFER_RANGES
+      : writeCellExitStampSlots(
+        exitStampIds,
+        cellSlotStateRef.current.slotOf,
+        count,
+        lifecycle.exitAt,
+        cellExitAtAttr.array as Float32Array,
+      );
+    markCellBufferUpdateRanges(
+      cellExitAtAttr,
+      exitStampRanges.length === 0
+        ? cellBufferRanges
+        : mergeCellFlashRanges(cellBufferRanges, exitStampRanges, count),
+      count,
+    );
 
     if (cellBufferRanges.length > 0 || drawCountChanged) {
       writeCellBuffers(
@@ -1477,12 +1664,18 @@ export default function CellGalaxy({
           colorArr: cellColorAttr.array as Float32Array,
           bornArr:  cellBornAtAttr.array as Float32Array,
           deathArr: cellDeathAtAttr.array as Float32Array,
+          enterArr: cellEnterAtAttr.array as Float32Array,
+          exitArr:  cellExitAtAttr.array as Float32Array,
           flashArr: cellFlashAtAttr.array as Float32Array,
           sizeArr:  cellSizeAttr.array as Float32Array,
           memoryIdentityArr: cellMemoryIdentityAttr.array as Float32Array,
           memorySeedArr: cellMemorySeedAttr.array as Float32Array,
         },
-        rewriteBirthAtRef.current,
+        {
+          bornAt: rewriteBirthAtRef.current,
+          enterAt: lifecycle.enterAt,
+          exitAt: lifecycle.exitAt,
+        },
         cellBufferRanges,
         cellBufferPresentationCacheRef.current,
       );
@@ -1492,6 +1685,7 @@ export default function CellGalaxy({
       markCellBufferUpdateRanges(cellColorAttr, cellBufferRanges, count);
       markCellBufferUpdateRanges(cellBornAtAttr, cellBufferRanges, count);
       markCellBufferUpdateRanges(cellDeathAtAttr, cellBufferRanges, count);
+      markCellBufferUpdateRanges(cellEnterAtAttr, cellBufferRanges, count);
       markCellBufferUpdateRanges(cellSizeAttr, cellBufferRanges, count);
       markCellBufferUpdateRanges(
         cellMemoryIdentityAttr,

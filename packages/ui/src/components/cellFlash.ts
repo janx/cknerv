@@ -16,7 +16,11 @@ export function markCellFlashDirty(
   if (dirtyRef) dirtyRef.current = true;
 }
 
-function rangesFromSortedSlots(sortedSlots: readonly number[]): CellRenderRange[] {
+/** Coalesce an ascending slot list into upload-friendly runs. Shared by every
+ * sparse per-slot write path, which is why it is exported. */
+export function rangesFromSortedSlots(
+  sortedSlots: readonly number[],
+): CellRenderRange[] {
   if (sortedSlots.length === 0) return [];
   const ranges: CellRenderRange[] = [];
   let start = sortedSlots[0];

@@ -46,6 +46,13 @@ export interface CellRenderSetUpdate {
   cells: Cell[];
   ranges: CellRenderRange[];
   membershipChanged: boolean;
+  /** NET stage arrivals/departures of this sync, in journal order. An id
+   * the same patch removes and re-adds appears in NEITHER: it never left the
+   * stage, so nothing downstream should animate it as if it had. Consumers
+   * of the lifecycle (enter/exit gestures) key on these; a pure reorder
+   * leaves both empty. */
+  entered: readonly number[];
+  exited: readonly number[];
   topologyChanged: boolean;
   topologyVersion: number;
   mode: 'unchanged' | 'incremental' | 'rebuild';
@@ -65,6 +72,7 @@ export type CellRenderCache = Pick<
 >;
 
 const EMPTY_RENDER_RANGES: CellRenderRange[] = [];
+const EMPTY_RENDER_MEMBERS: number[] = [];
 
 export function createCellRenderSetState(): CellRenderSetState {
   return {
@@ -232,8 +240,26 @@ function rebuildCellRenderSet(
     previous.length !== resolved.length || diff.ranges.length > 0
   ) ? resolved : previous;
 
+  // A rebuild loses the journal, so the membership diff is recovered from the
+  // two index maps — the same O(previous + next) a rebuild already pays.
+  let entered: readonly number[] = EMPTY_RENDER_MEMBERS;
+  let exited: readonly number[] = EMPTY_RENDER_MEMBERS;
   state.cells = cells;
-  if (diff.membershipChanged) state.indexById = cellRenderIndex(cells);
+  if (diff.membershipChanged) {
+    const previousIndex = state.indexById;
+    const nextIndex = cellRenderIndex(cells);
+    const arrived: number[] = [];
+    const departed: number[] = [];
+    for (const cell of cells) {
+      if (!previousIndex.has(cell.id)) arrived.push(cell.id);
+    }
+    for (const id of previousIndex.keys()) {
+      if (!nextIndex.has(id)) departed.push(id);
+    }
+    entered = arrived;
+    exited = departed;
+    state.indexById = nextIndex;
+  }
   state.cellsToken = cache.cellsToken;
   state.displayToken = cache.displayToken;
   state.displayPlaneActive = displayPlaneActive;
@@ -244,6 +270,8 @@ function rebuildCellRenderSet(
     cells,
     ranges: diff.ranges,
     membershipChanged: diff.membershipChanged,
+    entered,
+    exited,
     topologyChanged,
     topologyVersion: state.topologyVersion,
     mode: 'rebuild',
@@ -277,6 +305,8 @@ export function syncCellRenderSet(
       cells: state.cells,
       ranges: EMPTY_RENDER_RANGES,
       membershipChanged: false,
+      entered: EMPTY_RENDER_MEMBERS,
+      exited: EMPTY_RENDER_MEMBERS,
       topologyChanged: false,
       topologyVersion: state.topologyVersion,
       mode: 'unchanged',
@@ -310,6 +340,10 @@ export function syncCellRenderSet(
   }
 
   const dirtySlots = new Set<number>();
+  // Insertion-ordered so the published departure list keeps journal order
+  // while a re-entry in the same patch can still cancel its own exit.
+  const exited = new Set<number>();
+  const entered: number[] = [];
   let cells = state.cells;
   let indexById = state.indexById;
   let cellsOwned = false;
@@ -337,6 +371,7 @@ export function syncCellRenderSet(
   for (const id of displayChanges.exited) {
     const slot = indexById.get(id);
     if (slot === undefined) continue;
+    exited.add(id);
     const list = writableCells();
     const index = writableIndex();
     index.delete(id);
@@ -380,6 +415,9 @@ export function syncCellRenderSet(
     writableCells().push(cell);
     writableIndex().set(id, slot);
     dirtySlots.add(slot);
+    // Removed and re-added inside one patch: the stage never lost it, so it
+    // is neither an arrival nor a departure.
+    if (!exited.delete(id)) entered.push(id);
     membershipChanged = true;
     topologyChanged = true;
   }
@@ -394,6 +432,8 @@ export function syncCellRenderSet(
     cells,
     ranges: cellRenderRanges(dirtySlots),
     membershipChanged,
+    entered,
+    exited: exited.size === 0 ? EMPTY_RENDER_MEMBERS : [...exited],
     topologyChanged,
     topologyVersion: state.topologyVersion,
     mode: 'incremental',
@@ -423,6 +463,7 @@ function syncFallbackPrefix(
 
   const targetCount = Math.min(cache.cells.size, displayBudget);
   const dirtySlots = new Set<number>();
+  const entered: number[] = [];
   let cells = state.cells;
   let indexById = state.indexById;
   let cellsOwned = false;
@@ -469,6 +510,7 @@ function syncFallbackPrefix(
       writableCells().push(cell);
       writableIndex().set(id, slot);
       dirtySlots.add(slot);
+      entered.push(id);
       membershipChanged = true;
       topologyChanged = true;
     }
@@ -490,6 +532,10 @@ function syncFallbackPrefix(
     cells,
     ranges: cellRenderRanges(dirtySlots),
     membershipChanged,
+    entered,
+    // The canonical prefix only ever grows: a departure from it is a GC or
+    // an order change, and both resolve through one rebuild.
+    exited: EMPTY_RENDER_MEMBERS,
     topologyChanged,
     topologyVersion: state.topologyVersion,
     mode: 'incremental',

@@ -4,7 +4,9 @@ import {
   CELL_FLASH_DURATION_S,
   FLASH_ENV_GLSL,
   HASH11_GLSL,
+  STAGE_ENVELOPE_GLSL,
 } from './cellEnvelope.glsl';
+import { ENTER_FADE_MS, EXIT_FADE_MS } from '../geometry/cellPositions';
 import { CELL_GALAXY_PALETTE } from '../visualPalette';
 
 /** Default contributor-rail count (overridden per-frame by the quality preset). */
@@ -29,6 +31,10 @@ export function makeCellFlareMaterial(): THREE.ShaderMaterial {
       uTime:           { value: 0 },
       uBirthDurS:      { value: 0.5 },
       uDeathDurS:      { value: 0.6 },
+      // Same constants the resting body reads: the write flare belongs to
+      // the cell it overlays, so both resolve over one identical span.
+      uEnterDurS:      { value: ENTER_FADE_MS / 1000 },
+      uExitDurS:       { value: EXIT_FADE_MS / 1000 },
       uViewportHeight: { value: 800 },
       // Compatibility name: this now controls contributor rails, not sparks.
       uDischargeArms:  { value: PROTOCOL_RAILS_DEFAULT },
@@ -40,30 +46,41 @@ export function makeCellFlareMaterial(): THREE.ShaderMaterial {
     vertexShader: /* glsl */ `
       attribute float aBornAt;
       attribute float aDeathAt;
+      attribute float aEnterAt; // stage resolution in; -1e9 = always on
+      attribute float aExitAt;  // stage release out; +1e9 = not exiting
       attribute float aFlashAt;
       attribute float aSize;
 
       uniform float uTime;
       uniform float uBirthDurS;
       uniform float uDeathDurS;
+      uniform float uEnterDurS;
+      uniform float uExitDurS;
       uniform float uViewportHeight; // drawing-buffer height (CSS height × DPR)
 
       varying float vBirthRamp;
       varying float vDeathRamp;
+      varying float vStageAlpha;
       varying float vFlashAge;
       varying float vSeed;
 
       ${BIRTH_DEATH_GLSL}
+      ${STAGE_ENVELOPE_GLSL}
 
       void main() {
         float birthRamp = clamp((uTime - aBornAt) / uBirthDurS, 0.0, 1.0);
         float deathRamp = clamp((uTime - aDeathAt) / uDeathDurS, 0.0, 1.0);
         float bEase = birthEase(birthRamp);
         float dEase = deathEase(deathRamp);
-        float scale = bEase * (1.0 - dEase);
+        vec2 stage = stageEnvelope(
+          stageEase(stageRamp(uTime, aEnterAt, uEnterDurS)),
+          stageEase(stageRamp(uTime, aExitAt, uExitDurS))
+        );
+        float scale = bEase * (1.0 - dEase) * stage.x;
 
         vBirthRamp = birthRamp;
         vDeathRamp = deathRamp;
+        vStageAlpha = stage.y;
         vFlashAge  = uTime - aFlashAt;
         vSeed      = float(gl_VertexID) * 0.61803 + aBornAt * 0.137;
 
@@ -74,6 +91,7 @@ export function makeCellFlareMaterial(): THREE.ShaderMaterial {
           vFlashAge < 0.0
           || vFlashAge >= ${CELL_FLASH_DURATION_S.toFixed(1)}
           || scale <= 0.0
+          || vStageAlpha <= 0.0
         ) {
           gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
           gl_PointSize = 1.0;
@@ -95,6 +113,7 @@ export function makeCellFlareMaterial(): THREE.ShaderMaterial {
 
       varying float vBirthRamp;
       varying float vDeathRamp;
+      varying float vStageAlpha;
       varying float vFlashAge;
       varying float vSeed;
 
@@ -194,7 +213,9 @@ export function makeCellFlareMaterial(): THREE.ShaderMaterial {
         writeSignal *= clamp(vBirthRamp, 0.0, 1.0);
         writeSignal *= liveGate;
 
-        float a = writeSignal.a * (1.0 - vDeathRamp);
+        // A write on a cell the stage is still resolving (or already
+        // releasing) is dimmed with its body, never brighter than it.
+        float a = writeSignal.a * (1.0 - vDeathRamp) * vStageAlpha;
         if (a < 0.005) discard;
         gl_FragColor = vec4(writeSignal.rgb * a, a);
       }

@@ -15,9 +15,14 @@ import {
   type CellBufferPresentation,
   writeFlashSlots,
   writeCellBuffers,
+  writeCellExitStampSlots,
   writeCellInspectionNavigationRoles,
   writeCellInspectionTargets,
 } from '../../src/components/CellGalaxy';
+import {
+  ENTER_STAMP_SENTINEL,
+  EXIT_STAMP_SENTINEL,
+} from '../../src/geometry/cellLifecycleStamps';
 import { deriveCellInspectionField } from '../../src/nerve/cellInspectionField';
 import type { NeighborGraph } from '../../src/geometry/neighborGraph';
 import { CellGalaxyProvider } from '../../src/hooks/cellGalaxyContext';
@@ -598,6 +603,8 @@ describe('writeCellBuffers', () => {
       colorArr: new Float32Array(9).fill(-99),
       bornArr: new Float32Array(3).fill(-99),
       deathArr: new Float32Array(3).fill(-99),
+      enterArr: new Float32Array(3).fill(-99),
+      exitArr: new Float32Array(3).fill(-99),
       flashArr: new Float32Array(3).fill(-99),
       sizeArr: new Float32Array(3).fill(-99),
       memoryIdentityArr: new Float32Array(12).fill(-99),
@@ -621,6 +628,9 @@ describe('writeCellBuffers', () => {
     expect(t.bornArr[0]).toBe(-99);
     expect(t.bornArr[1]).not.toBe(-99);
     expect(t.bornArr[2]).toBe(-99);
+    // Stage stamps ride the same ranges as every other per-cell attribute.
+    expect([...t.enterArr]).toEqual([-99, ENTER_STAMP_SENTINEL, -99]);
+    expect([...t.exitArr]).toEqual([-99, EXIT_STAMP_SENTINEL, -99]);
     expect(t.memoryIdentityArr[4]).not.toBe(-99);
     expect(t.memoryIdentityArr[8]).toBe(-99);
     expect(presentationCache.has(cells[0])).toBe(false);
@@ -655,6 +665,8 @@ describe('writeCellBuffers', () => {
       colorArr: new Float32Array(6),
       bornArr:  new Float32Array(2),
       deathArr: new Float32Array(2).fill(1e9),
+      enterArr: new Float32Array(2),
+      exitArr:  new Float32Array(2),
       flashArr: new Float32Array(2).fill(-1e9),
       sizeArr:  new Float32Array(2),
       memoryIdentityArr: new Float32Array(8),
@@ -701,6 +713,8 @@ describe('writeCellBuffers', () => {
       colorArr: new Float32Array(6),
       bornArr: new Float32Array(2),
       deathArr: new Float32Array(2).fill(1e9),
+      enterArr: new Float32Array(2),
+      exitArr: new Float32Array(2),
       flashArr: new Float32Array(2).fill(-1e9),
       sizeArr: new Float32Array(2),
       memoryIdentityArr: new Float32Array(8),
@@ -713,11 +727,49 @@ describe('writeCellBuffers', () => {
       (ms: number) => ms / 1000,
       new Map(),
       t,
-      new Map([[2, 42]]),
+      { bornAt: new Map([[2, 42]]) },
     );
 
     expect(t.bornArr[1]).toBe(42);
     expect(t.bornArr[0]).not.toBe(42);
+  });
+
+  it('writes stage stamps per cell id, sentinels for everyone else', () => {
+    const cells = [mkCell(1), mkCell(2), mkCell(3)];
+    const t = {
+      posArr: new Float32Array(9),
+      colorArr: new Float32Array(9),
+      bornArr: new Float32Array(3),
+      deathArr: new Float32Array(3).fill(1e9),
+      enterArr: new Float32Array(3),
+      exitArr: new Float32Array(3),
+      flashArr: new Float32Array(3).fill(-1e9),
+      sizeArr: new Float32Array(3),
+      memoryIdentityArr: new Float32Array(12),
+      memorySeedArr: new Float32Array(3),
+    };
+
+    writeCellBuffers(
+      cells,
+      3,
+      (ms: number) => ms / 1000,
+      new Map(),
+      t,
+      { enterAt: new Map([[1, 5]]), exitAt: new Map([[3, 9]]) },
+    );
+
+    // Stamps follow the CELL, so a swap-from-tail move carries them along
+    // and a freed slot's next occupant inherits neither.
+    expect([...t.enterArr]).toEqual([
+      5,
+      ENTER_STAMP_SENTINEL,
+      ENTER_STAMP_SENTINEL,
+    ]);
+    expect([...t.exitArr]).toEqual([
+      EXIT_STAMP_SENTINEL,
+      EXIT_STAMP_SENTINEL,
+      9,
+    ]);
   });
 });
 
@@ -729,6 +781,8 @@ describe('CellGalaxy useSimFrame buffer behavior', () => {
       colorArr: new Float32Array(3),
       bornArr:  new Float32Array(1),
       deathArr: new Float32Array(1).fill(1e9),
+      enterArr: new Float32Array(1),
+      exitArr:  new Float32Array(1),
       flashArr: new Float32Array(1).fill(-1e9),
       sizeArr:  new Float32Array(1),
       memoryIdentityArr: new Float32Array(4),
@@ -758,6 +812,85 @@ describe('CellGalaxy useSimFrame buffer behavior', () => {
     expect(source).not.toContain(
       'markPopulatedBufferUpdate(cellInspectionAttr, count)',
     );
+  });
+
+  it('draws staged + overlay + exit holds, and reaps every frame', () => {
+    const source = readFileSync(CELL_GALAXY_SOURCE, 'utf8');
+
+    // The drawn list gains a third segment; the slot layer keeps it dense.
+    expect(source).toContain('const holdsReaped = reapCellExitHolds(');
+    expect(source).toContain('const holdCells = takeCellExitHoldCells(');
+    expect(source).toContain(
+      'staged.concat(overlayEntries, holdCells)',
+    );
+    // Reaping is frame-driven, membership work is not: a hold expiring is
+    // the one thing that re-syncs the slots without a journal patch.
+    expect(source).toContain(
+      'const membershipNeedsSync = overlayNeedsSync || holdsReaped > 0;',
+    );
+    // The hold segment can never outgrow the allocation it is written into.
+    expect(source).toContain(
+      'INSTANCE_CAPACITY - staged.length - overlayEntries.length',
+    );
+    // Stamping reads the membership diff the render set now publishes, and
+    // runs on overlay movement too — a selection can land on a fading cell.
+    expect(source).toContain('entered: renderUpdate?.entered');
+    expect(source).toContain('exited: renderUpdate?.exited');
+    expect(source).toContain('if (overlayNeedsSync) {\n      const slotState');
+    // aExitAt is marked exactly once, from both range sources.
+    expect(source.match(/markCellBufferUpdateRanges\(\n?\s*cellExitAtAttr/g))
+      .toHaveLength(1);
+    expect(source).toContain(
+      'mergeCellFlashRanges(cellBufferRanges, exitStampRanges, count)',
+    );
+  });
+});
+
+describe('writeCellExitStampSlots', () => {
+  it('writes only changed stamps and coalesces their upload ranges', () => {
+    const exitArr = new Float32Array(6).fill(EXIT_STAMP_SENTINEL);
+    const slotOf = new Map([[10, 1], [11, 2], [12, 4], [13, 5]]);
+    const exitAt = new Map([[10, 7.5], [11, 7.5]]);
+
+    const ranges = writeCellExitStampSlots(
+      [10, 11, 12],
+      slotOf,
+      6,
+      exitAt,
+      exitArr,
+    );
+
+    expect(ranges).toEqual([
+      { start: 1, count: 2 },
+      { start: 4, count: 1 },
+    ]);
+    expect([...exitArr]).toEqual([
+      EXIT_STAMP_SENTINEL,
+      7.5,
+      7.5,
+      EXIT_STAMP_SENTINEL,
+      // A cancelled departure returns to the sentinel, which is the whole
+      // reason this path exists: its slot occupant never changed.
+      EXIT_STAMP_SENTINEL,
+      EXIT_STAMP_SENTINEL,
+    ]);
+  });
+
+  it('skips ids with no slot and slots past the draw range', () => {
+    const exitArr = new Float32Array(3).fill(EXIT_STAMP_SENTINEL);
+    const ranges = writeCellExitStampSlots(
+      [10, 11],
+      new Map([[10, 5]]),
+      3,
+      new Map([[10, 1], [11, 2]]),
+      exitArr,
+    );
+    expect(ranges).toEqual([]);
+    expect([...exitArr]).toEqual([
+      EXIT_STAMP_SENTINEL,
+      EXIT_STAMP_SENTINEL,
+      EXIT_STAMP_SENTINEL,
+    ]);
   });
 });
 

@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import { makeCellFlareMaterial } from '../../src/materials/cellFlareMaterial';
+import { makeCellHybridMaterial } from '../../src/materials/cellHybridMaterial';
+import {
+  ENTER_FADE_MS,
+  EXIT_FADE_MS,
+} from '../../src/geometry/cellPositions';
 
 describe('makeCellFlareMaterial', () => {
   it('returns an additive ShaderMaterial with the flash uniforms', () => {
@@ -46,6 +51,49 @@ describe('makeCellFlareMaterial', () => {
     );
     expect(m.vertexShader.indexOf('vFlashAge >= 0.5')).toBeLessThan(
       m.vertexShader.indexOf('viewMatrix * modelMatrix'),
+    );
+  });
+
+  it('resolves its cell in and out on the same clock as the body', () => {
+    const flare = makeCellFlareMaterial();
+    const hybrid = makeCellHybridMaterial();
+
+    // The flare draws OVER the body it belongs to: two spans would show up
+    // as a write outliving the cell that made it.
+    expect(flare.uniforms.uEnterDurS.value).toBe(ENTER_FADE_MS / 1000);
+    expect(flare.uniforms.uExitDurS.value).toBe(EXIT_FADE_MS / 1000);
+    expect(flare.uniforms.uEnterDurS.value)
+      .toBe(hybrid.uniforms.uEnterDurS.value);
+    expect(flare.uniforms.uExitDurS.value)
+      .toBe(hybrid.uniforms.uExitDurS.value);
+
+    for (const material of [flare, hybrid]) {
+      expect(material.vertexShader).toContain('attribute float aEnterAt;');
+      expect(material.vertexShader).toContain('attribute float aExitAt;');
+      // One shared envelope, so neither layer can drift into its own curve.
+      expect(material.vertexShader).toContain('vec2 stage = stageEnvelope(');
+      expect(material.vertexShader).toContain(
+        'stageEase(stageRamp(uTime, aEnterAt, uEnterDurS))',
+      );
+      expect(material.vertexShader).toContain(
+        'stageEase(stageRamp(uTime, aExitAt, uExitDurS))',
+      );
+      expect(material.vertexShader).toContain(
+        'float scale = bEase * (1.0 - dEase) * stage.x;',
+      );
+      expect(material.vertexShader).toContain('vStageAlpha = stage.y;');
+      expect(material.fragmentShader).toContain('varying float vStageAlpha;');
+    }
+  });
+
+  it('clips a write whose cell is fully released before projection', () => {
+    const m = makeCellFlareMaterial();
+    expect(m.vertexShader).toContain('vStageAlpha <= 0.0');
+    expect(m.vertexShader.indexOf('vStageAlpha <= 0.0')).toBeLessThan(
+      m.vertexShader.indexOf('viewMatrix * modelMatrix'),
+    );
+    expect(m.fragmentShader).toContain(
+      'writeSignal.a * (1.0 - vDeathRamp) * vStageAlpha',
     );
   });
 

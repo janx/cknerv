@@ -4,6 +4,14 @@ import {
   CELL_INSPECTION_NAVIGATION_SIZE_SCALE,
   makeCellHybridMaterial,
 } from '../../src/materials/cellHybridMaterial';
+import {
+  ENTER_FADE_MS,
+  EXIT_FADE_MS,
+} from '../../src/geometry/cellPositions';
+import {
+  STAGE_ENTER_SCALE_FROM,
+  STAGE_EXIT_SCALE_TO,
+} from '../../src/materials/cellEnvelope.glsl';
 
 describe('makeCellHybridMaterial', () => {
   it('uses bounded accumulation for resting Cells and exposes its uniforms', () => {
@@ -32,6 +40,8 @@ describe('makeCellHybridMaterial', () => {
     expect(m.uniforms.uInspectionBlend.value).toBe(1);
     expect(m.uniforms.uWarmth.value).toBe(0.12);
     expect(m.uniforms.uCenterDim.value).toBe(0.3);
+    expect(m.uniforms.uEnterDurS.value).toBe(ENTER_FADE_MS / 1000);
+    expect(m.uniforms.uExitDurS.value).toBe(EXIT_FADE_MS / 1000);
 
     // Discharge moved to cellFlareMaterial — the cell body no longer flares.
     expect(m.uniforms.uDischargeArms).toBeUndefined();
@@ -40,6 +50,31 @@ describe('makeCellHybridMaterial', () => {
     expect(m.uniforms.uShockwaveAt).toBeUndefined();
     expect(m.uniforms.uShockwaveOriginXZ).toBeUndefined();
     expect(m.uniforms.uShockwaveColor).toBeUndefined();
+  });
+
+  it('composes stage resolution with the record\'s own birth and death', () => {
+    const m = makeCellHybridMaterial();
+
+    // Four gestures, one product: the view resolving a cell never replaces
+    // the record being born or dying, it multiplies with it.
+    expect(m.vertexShader).toContain(
+      'float scale = bEase * (1.0 - dEase) * stage.x;',
+    );
+    expect(m.vertexShader).toContain(
+      `mix(${STAGE_ENTER_SCALE_FROM.toFixed(2)}, 1.0, enterEased)`,
+    );
+    expect(m.vertexShader).toContain(
+      `mix(1.0, ${STAGE_EXIT_SCALE_TO.toFixed(2)}, exitEased)`,
+    );
+    expect(m.vertexShader).toContain('enterEased * (1.0 - exitEased)');
+    // The alpha factor is the ENTIRE fragment-side cost, applied last so it
+    // dims the event signals with the body.
+    expect(m.fragmentShader).toContain('a *= vStageAlpha;');
+    expect(m.fragmentShader.indexOf('a *= vStageAlpha;')).toBeLessThan(
+      m.fragmentShader.indexOf('if (a < 0.005) discard;'),
+    );
+    expect(m.fragmentShader.indexOf('col = mix(col, retireColor, retireMix);'))
+      .toBeLessThan(m.fragmentShader.indexOf('a *= vStageAlpha;'));
   });
 
   it('keeps cloud + hash11 but no discharge (moved to the flare layer)', () => {

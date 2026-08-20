@@ -369,6 +369,146 @@ describe('syncCellRenderSet — display plane', () => {
   });
 });
 
+describe('syncCellRenderSet — membership diff', () => {
+  it('reports the ids that arrived and departed on an incremental patch', () => {
+    const before = fromCellsSnapshot(
+      1,
+      snapshotWithDisplay([cell(1), cell(2), cell(3)], [1, 2, 3]),
+    );
+    const state = createCellRenderSetState();
+    const bootstrap = syncCellRenderSet(state, before, 12_000);
+    // The bootstrap rebuild is one big arrival — everything the stage
+    // resolves at open counts as entering it.
+    expect([...bootstrap.entered]).toEqual([1, 2, 3]);
+    expect([...bootstrap.exited]).toEqual([]);
+
+    const after = applyRevisionedCellDeltas(before, [
+      { revision: 2, delta: { type: 'birth', cell: cell(9) } },
+      { revision: 2, delta: displayDelta({ enter_ids: [9], exit_ids: [2] }) },
+    ]);
+    const update = syncCellRenderSet(state, after, 12_000);
+
+    expect(update.mode).toBe('incremental');
+    expect([...update.entered]).toEqual([9]);
+    expect([...update.exited]).toEqual([2]);
+  });
+
+  it('nets out an id one batch removes and re-adds', () => {
+    const before = fromCellsSnapshot(
+      1,
+      snapshotWithDisplay([cell(1), cell(2)], [1, 2]),
+    );
+    const state = createCellRenderSetState();
+    syncCellRenderSet(state, before, 12_000);
+
+    const after = applyRevisionedCellDeltas(before, [
+      { revision: 2, delta: displayDelta({ exit_ids: [2] }) },
+      { revision: 2, delta: displayDelta({ enter_ids: [2] }) },
+    ]);
+    const update = syncCellRenderSet(state, after, 12_000);
+
+    // The stage never lost it, so nothing downstream may animate it away.
+    expect([...update.entered]).toEqual([]);
+    expect([...update.exited]).toEqual([]);
+    expect(update.cells.map(({ id }) => id)).toEqual([1, 2]);
+  });
+
+  it('an id claimed on both sides of one journal is neither', () => {
+    // One delta past the snapshot, so the journal chain (not a reset) is
+    // what the sync below is actually reading.
+    const before = applyCellDelta(
+      fromCellsSnapshot(1, snapshotWithDisplay([cell(1), cell(2)], [1, 2])),
+      { type: 'birth', cell: cell(3) },
+    );
+    const state = createCellRenderSetState();
+    syncCellRenderSet(state, before, 12_000);
+
+    // The cache nets its own batches, so this shape only reaches the render
+    // set from a journal it did not author — the diff must survive it.
+    const update = syncCellRenderSet(
+      state,
+      {
+        ...before,
+        displayToken: {},
+        displayChanges: {
+          baseToken: before.displayToken,
+          reset: false,
+          entered: [2],
+          exited: [2],
+          updated: [],
+        },
+      },
+      12_000,
+    );
+
+    expect(update.mode).toBe('incremental');
+    expect([...update.entered]).toEqual([]);
+    expect([...update.exited]).toEqual([]);
+    expect(update.cells.map(({ id }) => id).sort()).toEqual([1, 2]);
+  });
+
+  it('recovers the diff from the index maps when the journal is lost', () => {
+    const start = fromCellsSnapshot(
+      1,
+      snapshotWithDisplay([cell(1), cell(2), cell(3)], [1, 2]),
+    );
+    const state = createCellRenderSetState();
+    syncCellRenderSet(state, start, 12_000);
+
+    const skipped = applyCellDelta(start, displayDelta({ exit_ids: [1] }));
+    const latest = applyCellDelta(skipped, displayDelta({ enter_ids: [3] }));
+    const update = syncCellRenderSet(state, latest, 12_000);
+
+    expect(update.mode).toBe('rebuild');
+    expect([...update.entered]).toEqual([3]);
+    expect([...update.exited]).toEqual([1]);
+  });
+
+  it('a reorder alone is neither an arrival nor a departure', () => {
+    const first = fromCellsSnapshot(
+      1,
+      snapshotWithDisplay([cell(1), cell(2)], [1, 2]),
+    );
+    const state = createCellRenderSetState();
+    syncCellRenderSet(state, first, 12_000);
+
+    // A snapshot reset re-stages the same membership in the other order.
+    const reordered = fromCellsSnapshot(
+      2,
+      snapshotWithDisplay([cell(1), cell(2)], [2, 1]),
+    );
+    const update = syncCellRenderSet(state, reordered, 12_000);
+
+    expect(update.mode).toBe('rebuild');
+    expect(update.membershipChanged).toBe(true);
+    expect([...update.entered]).toEqual([]);
+    expect([...update.exited]).toEqual([]);
+  });
+
+  it('an unchanged sync reports no membership movement at all', () => {
+    const cache = fromCellsSnapshot(1, snapshotWithDisplay([cell(1)], [1]));
+    const state = createCellRenderSetState();
+    syncCellRenderSet(state, cache, 12_000);
+    const update = syncCellRenderSet(state, cache, 12_000);
+    expect(update.mode).toBe('unchanged');
+    expect([...update.entered]).toEqual([]);
+    expect([...update.exited]).toEqual([]);
+  });
+
+  it('the canonical-prefix fallback reports its appended births', () => {
+    const state = createCellRenderSetState();
+    const before = fallbackCacheWithCells([1, 2]);
+    expect([...syncCellRenderSet(state, before, 12_000).entered])
+      .toEqual([1, 2]);
+
+    const after = applyCellDelta(before, { type: 'birth', cell: cell(7) });
+    const update = syncCellRenderSet(state, after, 12_000);
+    expect(update.mode).toBe('incremental');
+    expect([...update.entered]).toEqual([7]);
+    expect([...update.exited]).toEqual([]);
+  });
+});
+
 describe('syncCellRenderSet — no-display-plane fallback (canonical prefix)', () => {
   it('renders the bounded canonical insertion-order prefix', () => {
     const state = createCellRenderSetState();
