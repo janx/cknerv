@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { Cell, CellLink } from '@cknerv/types';
+import type { Cell, CellLink, CellLinkEndpointAnchor } from '@cknerv/types';
 import { deriveCellCausalLens } from '../../src/derives/cellCausalLens.derive';
 
 const hash = (pair: string): string => `0x${pair.repeat(32)}`;
@@ -31,11 +31,16 @@ const selected = cell(42, {
   out_point: { tx_hash: hash('ab'), index: 1 },
 });
 
-const anchor = (record: Cell) => ({
+const anchor = (
+  record: Cell,
+  resolved = true,
+): CellLinkEndpointAnchor => ({
   id: record.id,
   pos_seed: record.pos_seed,
-  content_hash: record.content_hash,
-  resolved: true,
+  // The server's identity-only anchor derives the place from the outpoint and
+  // knows no content, so its hash is empty.
+  content_hash: resolved ? record.content_hash : '',
+  resolved,
 });
 
 function link(over: Partial<CellLink> = {}): CellLink {
@@ -202,5 +207,80 @@ describe('deriveCellCausalLens', () => {
 
     expect(lens.inputs.map((item) => item.id)).toEqual([7, 8]);
     expect(lens.outputs.map((item) => item.id)).toEqual([42, 43]);
+  });
+
+  it('reads the same neighbourhood when identity-only anchors ride the record', () => {
+    const held = records(cell(41), selected, cell(43));
+    const plain = deriveCellCausalLens(selected, [link()], held);
+    // The derived twin of input 7 leads the array: a reader that took the
+    // first anchor per id would hand back an empty content hash.
+    const mixed = deriveCellCausalLens(
+      selected,
+      [link({
+        endpoint_anchors: [
+          anchor(cell(7), false),
+          anchor(cell(7)),
+          anchor(cell(8)),
+          anchor(cell(9), false),
+          anchor(cell(41)),
+          anchor(selected),
+          anchor(cell(43)),
+        ],
+      })],
+      held,
+    );
+
+    expect({ ...mixed, originLink: null })
+      .toEqual({ ...plain, originLink: null });
+    expect(mixed.status).toBe('exact');
+    expect(mixed.inputs.map((item) => item.anchor?.content_hash))
+      .toEqual([cell(7).content_hash, cell(8).content_hash]);
+  });
+
+  // The exclusion is the reader's, not the writer's to grant: today no derived
+  // id reaches `from_ids`, and the lens must not start trusting that.
+  it('refuses an identity-only anchor even when the record lists it as an input', () => {
+    const lens = deriveCellCausalLens(
+      selected,
+      [link({
+        from_ids: [7, 9],
+        endpoint_anchors: [
+          anchor(cell(7)),
+          anchor(cell(9), false),
+          anchor(cell(41)),
+          anchor(selected),
+          anchor(cell(43)),
+        ],
+      })],
+      records(cell(41), selected, cell(43)),
+    );
+
+    expect(lens.inputs.map((item) => item.id)).toEqual([7, 9]);
+    expect(lens.inputs[0].anchor?.content_hash).toBe(cell(7).content_hash);
+    expect(lens.inputs[1].anchor).toBeNull();
+    expect(lens.missingInputIds).toEqual([9]);
+    expect(lens.status).toBe('partial');
+  });
+
+  it('keeps anchors from records written before the resolved field existed', () => {
+    const legacy = { ...anchor(cell(7)) } as Partial<CellLinkEndpointAnchor>;
+    delete legacy.resolved;
+    const lens = deriveCellCausalLens(
+      selected,
+      [link({
+        from_ids: [7],
+        endpoint_anchors: [
+          legacy as CellLinkEndpointAnchor,
+          anchor(cell(41)),
+          anchor(selected),
+          anchor(cell(43)),
+        ],
+      })],
+      records(cell(41), selected, cell(43)),
+    );
+
+    expect(lens.missingInputIds).toEqual([]);
+    expect(lens.inputs[0].anchor?.content_hash).toBe(cell(7).content_hash);
+    expect(lens.status).toBe('exact');
   });
 });

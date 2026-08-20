@@ -83,6 +83,10 @@ function anchorsById(
 ): ReadonlyMap<number, CellLinkEndpointAnchor> {
   const byId = new Map<number, CellLinkEndpointAnchor>();
   for (const anchor of anchors) {
+    // An identity-only anchor names a place, not a content: it may originate a
+    // pulse but it is no evidence of what was consumed. `!== false` keeps the
+    // guard inert for records written before the field existed.
+    if (anchor.resolved === false) continue;
     if (!byId.has(anchor.id)) byId.set(anchor.id, anchor);
   }
   return byId;

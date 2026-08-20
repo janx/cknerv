@@ -1361,7 +1361,16 @@ export function deriveConsensusMemoryConsumedInputs(
 ): ConsensusMemoryConsumedInput[] {
   const anchors = link.endpoint_anchors;
   if (!anchors || anchors.length === 0) return [];
-  const anchorById = new Map(anchors.map((anchor) => [anchor.id, anchor]));
+  // Identity-only anchors (`resolved === false`) were derived from the outpoint
+  // alone for inputs the retained window never held: exact id and position,
+  // empty `content_hash`. They prove a place, never a content, so they cannot
+  // enter this surface. `!== false` keeps the guard inert for records written
+  // before the field existed.
+  const anchorById = new Map(
+    anchors
+      .filter((anchor) => anchor.resolved !== false)
+      .map((anchor) => [anchor.id, anchor]),
+  );
   const seen = new Set<number>();
   const consumed: ConsensusMemoryConsumedInput[] = [];
   for (const id of link.from_ids) {

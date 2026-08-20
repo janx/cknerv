@@ -626,18 +626,22 @@ sibling sets. Missing retained positions remain missing; it never fabricates a
 complete family around incomplete evidence.
 
 Recall answers two separate questions and must keep them separate. *What the
-transaction consumed* comes from the link's own `endpoint_anchors`, which
-captured every endpoint's identity at the moment the transaction landed and
-therefore cannot be taken away by a Cell ageing out of view — measured on
+transaction consumed* comes from the link's own resolved `endpoint_anchors`,
+which captured every endpoint's identity at the moment the transaction landed
+and therefore cannot be taken away by a Cell ageing out of view — measured on
 mainnet, only about 0.3% of retained links still resolve even one input through
-the Cell map. *Where a pulse can depart from* remains a question about the
-current graph, answered as before, with the surviving-sibling route kept
-honestly labelled as a lineage witness. The panel names the spent inputs no
-route departs from above the ledger of what carried the transaction, and says
-nothing when the routed evidence already is the inputs. Routing from the
-anchors' own positions is deliberately not done: a pulse addresses Cells by id
-and the renderer resolves geometry from the display map, so a spent input is
-not a place a pulse can start.
+the Cell map. An anchor marked `resolved: false` is identity-only: the server
+derived it from the outpoint alone for an input the retained window never held,
+so it carries an exact id and position but an empty `content_hash`. It names a
+place a pulse may depart from, never evidence of what was spent, and the
+consumed-evidence surfaces exclude it. *Where a pulse can depart from* remains
+a question about the current graph, answered as before, with the
+surviving-sibling route kept honestly labelled as a lineage witness. The panel
+names the spent inputs no route departs from above the ledger of what carried
+the transaction, and says nothing when the routed evidence already is the
+inputs. Routing from the anchors' own positions is deliberately not done: a
+pulse addresses Cells by id and the renderer resolves geometry from the
+display map, so a spent input is not a place a pulse can start.
 
 ### 9.4 Reorg ordering
 

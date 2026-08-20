@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { Cell, CellLink } from '@cknerv/types';
+import type { Cell, CellLink, CellLinkEndpointAnchor } from '@cknerv/types';
 import type { NeighborGraph } from '../../src/geometry/neighborGraph';
 import {
   CONSENSUS_PULSE_POLICY,
@@ -771,12 +771,20 @@ describe('planConsensusMemoryTrace', () => {
 });
 
 describe('deriveConsensusMemoryConsumedInputs', () => {
-  const anchor = (id: number, hash = `0xaa${String(id).padStart(62, '0')}`) => ({
+  const anchor = (
+    id: number,
+    hash = `0xaa${String(id).padStart(62, '0')}`,
+    resolved = true,
+  ): CellLinkEndpointAnchor => ({
     id,
     pos_seed: [id, id * 2, id * 3] as [number, number, number],
     content_hash: hash,
-    resolved: true,
+    resolved,
   });
+
+  /** The server's identity-only anchor: derived from the outpoint alone, so
+   *  the place is exact and the content is unknown. */
+  const derived = (id: number): CellLinkEndpointAnchor => anchor(id, '', false);
 
   it('names what the transaction spent with nothing left in the cell map', () => {
     const consumed = deriveConsensusMemoryConsumedInputs(
@@ -818,14 +826,57 @@ describe('deriveConsensusMemoryConsumedInputs', () => {
     );
     expect(partial.map((input) => input.id)).toEqual([2]);
   });
+
+  it('reads the same evidence whether or not identity-only anchors ride along', () => {
+    const withDerived = deriveConsensusMemoryConsumedInputs(
+      link({
+        endpoint_anchors: [
+          anchor(1), derived(9), anchor(2), derived(2), anchor(5),
+        ],
+      }),
+      new Map(),
+    );
+    const without = deriveConsensusMemoryConsumedInputs(
+      link({ endpoint_anchors: [anchor(1), anchor(2), anchor(5)] }),
+      new Map(),
+    );
+    expect(withDerived).toEqual(without);
+    expect(withDerived.map((input) => input.id)).toEqual([1, 2]);
+    expect(withDerived.map((input) => input.contentHash))
+      .toEqual([anchor(1).content_hash, anchor(2).content_hash]);
+  });
+
+  // The exclusion is the reader's, not the writer's to grant: today no derived
+  // id reaches `from_ids`, and this surface must not start trusting that.
+  it('refuses an identity-only anchor even when the record lists it as an input', () => {
+    const consumed = deriveConsensusMemoryConsumedInputs(
+      link({ from_ids: [1, 9], endpoint_anchors: [anchor(1), derived(9)] }),
+      new Map(),
+    );
+    expect(consumed.map((input) => input.id)).toEqual([1]);
+  });
+
+  it('keeps anchors from records written before the resolved field existed', () => {
+    const legacy = { ...anchor(1) } as Partial<CellLinkEndpointAnchor>;
+    delete legacy.resolved;
+    const consumed = deriveConsensusMemoryConsumedInputs(
+      link({
+        from_ids: [1],
+        endpoint_anchors: [legacy as CellLinkEndpointAnchor],
+      }),
+      new Map(),
+    );
+    expect(consumed.map((input) => input.id)).toEqual([1]);
+    expect(consumed[0].contentHash).toBe(anchor(1).content_hash);
+  });
 });
 
 describe('consumed inputs survive a witness-carried recall', () => {
-  const anchor = (id: number) => ({
+  const anchor = (id: number, resolved = true): CellLinkEndpointAnchor => ({
     id,
     pos_seed: [id, 0, 0] as [number, number, number],
-    content_hash: `0xaa${String(id).padStart(62, '0')}`,
-    resolved: true,
+    content_hash: resolved ? `0xaa${String(id).padStart(62, '0')}` : '',
+    resolved,
   });
 
   // The defect this fixes: for all but the freshest records the spent inputs
@@ -851,6 +902,38 @@ describe('consumed inputs survive a witness-carried recall', () => {
     // ...and the record still says exactly what was spent.
     expect(plan.consumedInputs.map((input) => input.id)).toEqual([1, 2]);
     expect(plan.consumedInputs.every((input) => input.retained)).toBe(false);
+  });
+
+  // The identity-only rung of the origin ladder rides the same record as the
+  // resolved anchors; the recalled trace must not notice it at all.
+  it('plans the identical trace when identity-only anchors ride the record', () => {
+    const base = {
+      from_ids: [1, 2],
+      to_ids: [5],
+      parents: ['0xparent'],
+    };
+    const witness = { ...cell(4), out_point: { tx_hash: '0xparent', index: 0 } };
+    const cells = new Map([[4, witness], [5, cell(5)]]);
+    const edges = graph([[4, 5]]);
+
+    const plain = planConsensusMemoryTrace(
+      link({ ...base, endpoint_anchors: [anchor(1), anchor(2), anchor(5)] }),
+      cells,
+      edges,
+    );
+    const mixed = planConsensusMemoryTrace(
+      link({
+        ...base,
+        endpoint_anchors: [
+          anchor(1), anchor(7, false), anchor(2), anchor(9, false), anchor(5),
+        ],
+      }),
+      cells,
+      edges,
+    );
+
+    expect(mixed).toEqual(plain);
+    expect(mixed.consumedInputs.map((input) => input.id)).toEqual([1, 2]);
   });
 
   it('carries them through the focus and the readout the HUD reads', () => {
