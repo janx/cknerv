@@ -123,10 +123,13 @@ describe('makeCellHybridMaterial', () => {
   it('applies topology inspection only to the resting Cell body', () => {
     const m = makeCellHybridMaterial();
 
-    expect(m.vertexShader).toContain('attribute float aInspectionFrom');
-    expect(m.vertexShader).toContain('attribute float aInspectionTo');
+    expect(m.vertexShader).toContain('attribute vec2  aInspection;');
     expect(m.vertexShader).toContain('uniform float uInspectionBlend');
     expect(m.vertexShader).toContain('vInspection = mix(');
+    // Both endpoints ride one packed attribute: .x is where the body is
+    // fading from, .y where it is fading to.
+    expect(m.vertexShader).toContain('aInspection.x');
+    expect(m.vertexShader).toContain('aInspection.y');
     expect(m.fragmentShader).toContain(
       'base.a *= vCenterDim * vInspection',
     );

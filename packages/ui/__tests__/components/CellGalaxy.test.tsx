@@ -480,26 +480,27 @@ describe('writeCellInspectionTargets', () => {
       ],
     };
     const field = deriveCellInspectionField(graph, 1);
-    const targets = new Float32Array(4);
+    // Packed pair per slot; only the `.y` (next) endpoint is written here.
+    const targets = new Float32Array(8);
 
     writeCellInspectionTargets(cells, cells.length, field, targets);
 
-    expect(targets[0]).toBeCloseTo(0.72);
-    expect(targets[1]).toBe(1);
-    expect(targets[2]).toBeCloseTo(0.46);
-    expect(targets[3]).toBeCloseTo(0.9);
+    expect(targets[1]).toBeCloseTo(0.72);
+    expect(targets[3]).toBe(1);
+    expect(targets[5]).toBeCloseTo(0.46);
+    expect(targets[7]).toBeCloseTo(0.9);
   });
 
   it('restores every visible Cell to full energy without inspection', () => {
-    const targets = new Float32Array(3).fill(0);
+    const targets = new Float32Array(6).fill(0);
 
     writeCellInspectionTargets([mkCell(1), mkCell(2)], 2, null, targets);
 
-    expect([...targets]).toEqual([1, 1, 0]);
+    expect([...targets]).toEqual([0, 1, 0, 1, 0, 0]);
   });
 
   it('patches only changed membership ranges during a block update', () => {
-    const targets = new Float32Array([0.25, 0.25, 0.25]);
+    const targets = new Float32Array(6).fill(0.25);
 
     writeCellInspectionTargets(
       [mkCell(1), mkCell(2), mkCell(3)],
@@ -509,7 +510,8 @@ describe('writeCellInspectionTargets', () => {
       [{ start: 1, count: 1 }],
     );
 
-    expect([...targets]).toEqual([0.25, 1, 0.25]);
+    // Ranges are SLOT ranges: slot 1 is components 2 and 3.
+    expect([...targets]).toEqual([0.25, 0.25, 0.25, 1, 0.25, 0.25]);
   });
 });
 
@@ -601,10 +603,8 @@ describe('writeCellBuffers', () => {
     const t = {
       posArr: new Float32Array(9).fill(-99),
       colorArr: new Float32Array(9).fill(-99),
-      bornArr: new Float32Array(3).fill(-99),
-      deathArr: new Float32Array(3).fill(-99),
-      enterArr: new Float32Array(3).fill(-99),
-      exitArr: new Float32Array(3).fill(-99),
+      recordAtArr: new Float32Array(6).fill(-99),
+      stageAtArr: new Float32Array(6).fill(-99),
       flashArr: new Float32Array(3).fill(-99),
       sizeArr: new Float32Array(3).fill(-99),
       memoryIdentityArr: new Float32Array(12).fill(-99),
@@ -625,12 +625,19 @@ describe('writeCellBuffers', () => {
     expect(t.posArr[0]).toBe(-99);
     expect(t.posArr[3]).toBe(cells[1].pos_seed[0]);
     expect(t.posArr[6]).toBe(-99);
-    expect(t.bornArr[0]).toBe(-99);
-    expect(t.bornArr[1]).not.toBe(-99);
-    expect(t.bornArr[2]).toBe(-99);
-    // Stage stamps ride the same ranges as every other per-cell attribute.
-    expect([...t.enterArr]).toEqual([-99, ENTER_STAMP_SENTINEL, -99]);
-    expect([...t.exitArr]).toEqual([-99, EXIT_STAMP_SENTINEL, -99]);
+    expect(t.recordAtArr[0]).toBe(-99);
+    expect(t.recordAtArr[2]).not.toBe(-99);
+    expect(t.recordAtArr[4]).toBe(-99);
+    // Stage stamps ride the same ranges as every other per-cell attribute,
+    // two components at a time.
+    expect([...t.stageAtArr]).toEqual([
+      -99,
+      -99,
+      ENTER_STAMP_SENTINEL,
+      EXIT_STAMP_SENTINEL,
+      -99,
+      -99,
+    ]);
     expect(t.memoryIdentityArr[4]).not.toBe(-99);
     expect(t.memoryIdentityArr[8]).toBe(-99);
     expect(presentationCache.has(cells[0])).toBe(false);
@@ -663,10 +670,8 @@ describe('writeCellBuffers', () => {
     const t = {
       posArr:   new Float32Array(6),
       colorArr: new Float32Array(6),
-      bornArr:  new Float32Array(2),
-      deathArr: new Float32Array(2).fill(1e9),
-      enterArr: new Float32Array(2),
-      exitArr:  new Float32Array(2),
+      recordAtArr: new Float32Array(4),
+      stageAtArr:  new Float32Array(4),
       flashArr: new Float32Array(2).fill(-1e9),
       sizeArr:  new Float32Array(2),
       memoryIdentityArr: new Float32Array(8),
@@ -695,6 +700,11 @@ describe('writeCellBuffers', () => {
     expect(t.sizeArr[1]).toBeGreaterThan(t.sizeArr[0]);
     // Flash slot 1 (cell id=2) has 7.5 from flashMap.
     expect(t.flashArr[1]).toBe(7.5);
+    // Packed record clock: birth in .x, the still-alive sentinel in .y. The
+    // two cells were born a second apart and carry the same commit delay.
+    expect(t.recordAtArr[2] - t.recordAtArr[0]).toBeCloseTo(1, 5);
+    expect(t.recordAtArr[1]).toBe(1e9);
+    expect(t.recordAtArr[3]).toBe(1e9);
     // Far retained cores preserve the same bounded A field mapping.
     expect([...t.memoryIdentityArr.slice(0, 3)]).toEqual([0, 0, 0]);
     expect(t.memoryIdentityArr[3]).toBeGreaterThan(0);
@@ -711,10 +721,8 @@ describe('writeCellBuffers', () => {
     const t = {
       posArr: new Float32Array(6),
       colorArr: new Float32Array(6),
-      bornArr: new Float32Array(2),
-      deathArr: new Float32Array(2).fill(1e9),
-      enterArr: new Float32Array(2),
-      exitArr: new Float32Array(2),
+      recordAtArr: new Float32Array(4),
+      stageAtArr: new Float32Array(4),
       flashArr: new Float32Array(2).fill(-1e9),
       sizeArr: new Float32Array(2),
       memoryIdentityArr: new Float32Array(8),
@@ -730,8 +738,8 @@ describe('writeCellBuffers', () => {
       { bornAt: new Map([[2, 42]]) },
     );
 
-    expect(t.bornArr[1]).toBe(42);
-    expect(t.bornArr[0]).not.toBe(42);
+    expect(t.recordAtArr[2]).toBe(42);
+    expect(t.recordAtArr[0]).not.toBe(42);
   });
 
   it('writes stage stamps per cell id, sentinels for everyone else', () => {
@@ -739,10 +747,8 @@ describe('writeCellBuffers', () => {
     const t = {
       posArr: new Float32Array(9),
       colorArr: new Float32Array(9),
-      bornArr: new Float32Array(3),
-      deathArr: new Float32Array(3).fill(1e9),
-      enterArr: new Float32Array(3),
-      exitArr: new Float32Array(3),
+      recordAtArr: new Float32Array(6),
+      stageAtArr: new Float32Array(6),
       flashArr: new Float32Array(3).fill(-1e9),
       sizeArr: new Float32Array(3),
       memoryIdentityArr: new Float32Array(12),
@@ -760,14 +766,12 @@ describe('writeCellBuffers', () => {
 
     // Stamps follow the CELL, so a swap-from-tail move carries them along
     // and a freed slot's next occupant inherits neither.
-    expect([...t.enterArr]).toEqual([
+    expect([...t.stageAtArr]).toEqual([
       5,
-      ENTER_STAMP_SENTINEL,
-      ENTER_STAMP_SENTINEL,
-    ]);
-    expect([...t.exitArr]).toEqual([
       EXIT_STAMP_SENTINEL,
+      ENTER_STAMP_SENTINEL,
       EXIT_STAMP_SENTINEL,
+      ENTER_STAMP_SENTINEL,
       9,
     ]);
   });
@@ -779,10 +783,8 @@ describe('CellGalaxy useSimFrame buffer behavior', () => {
     const t = {
       posArr:   new Float32Array(3),
       colorArr: new Float32Array(3),
-      bornArr:  new Float32Array(1),
-      deathArr: new Float32Array(1).fill(1e9),
-      enterArr: new Float32Array(1),
-      exitArr:  new Float32Array(1),
+      recordAtArr: new Float32Array(2),
+      stageAtArr:  new Float32Array(2),
       flashArr: new Float32Array(1).fill(-1e9),
       sizeArr:  new Float32Array(1),
       memoryIdentityArr: new Float32Array(4),
@@ -806,8 +808,7 @@ describe('CellGalaxy useSimFrame buffer behavior', () => {
     );
     expect(source).toContain('cellBufferRanges,');
     expect(source).toContain('markCellBufferUpdateRanges(');
-    expect(source).toContain('cellInspectionFromAttr');
-    expect(source).toContain('cellInspectionToAttr');
+    expect(source).toContain('cellInspectionAttr');
     expect(source).toContain('uInspectionBlend.value');
     expect(source).not.toContain(
       'markPopulatedBufferUpdate(cellInspectionAttr, count)',
@@ -837,8 +838,10 @@ describe('CellGalaxy useSimFrame buffer behavior', () => {
     expect(source).toContain('entered: renderUpdate?.entered');
     expect(source).toContain('exited: renderUpdate?.exited');
     expect(source).toContain('if (overlayNeedsSync) {\n      const slotState');
-    // aExitAt is marked exactly once, from both range sources.
-    expect(source.match(/markCellBufferUpdateRanges\(\n?\s*cellExitAtAttr/g))
+    // The packed stage clock is marked exactly once, from both range
+    // sources — enter and exit share one attribute, so a second mark would
+    // clear the first.
+    expect(source.match(/markCellBufferUpdateRanges\(\n?\s*cellStageAtAttr/g))
       .toHaveLength(1);
     expect(source).toContain(
       'mergeCellFlashRanges(cellBufferRanges, exitStampRanges, count)',
@@ -848,7 +851,13 @@ describe('CellGalaxy useSimFrame buffer behavior', () => {
 
 describe('writeCellExitStampSlots', () => {
   it('writes only changed stamps and coalesces their upload ranges', () => {
-    const exitArr = new Float32Array(6).fill(EXIT_STAMP_SENTINEL);
+    // Packed stage clock: 2 components per slot, exit in `.y`. The enter
+    // halves stay untouched — this path only moves departures.
+    const stageAtArr = new Float32Array(12);
+    for (let i = 0; i < 12; i += 2) {
+      stageAtArr[i] = ENTER_STAMP_SENTINEL;
+      stageAtArr[i + 1] = EXIT_STAMP_SENTINEL;
+    }
     const slotOf = new Map([[10, 1], [11, 2], [12, 4], [13, 5]]);
     const exitAt = new Map([[10, 7.5], [11, 7.5]]);
 
@@ -857,36 +866,46 @@ describe('writeCellExitStampSlots', () => {
       slotOf,
       6,
       exitAt,
-      exitArr,
+      stageAtArr,
     );
 
+    // Ranges stay in slot units; the upload marker scales them by itemSize.
     expect(ranges).toEqual([
       { start: 1, count: 2 },
       { start: 4, count: 1 },
     ]);
-    expect([...exitArr]).toEqual([
+    expect([...stageAtArr]).toEqual([
+      ENTER_STAMP_SENTINEL,
       EXIT_STAMP_SENTINEL,
+      ENTER_STAMP_SENTINEL,
       7.5,
+      ENTER_STAMP_SENTINEL,
       7.5,
+      ENTER_STAMP_SENTINEL,
       EXIT_STAMP_SENTINEL,
       // A cancelled departure returns to the sentinel, which is the whole
       // reason this path exists: its slot occupant never changed.
+      ENTER_STAMP_SENTINEL,
       EXIT_STAMP_SENTINEL,
+      ENTER_STAMP_SENTINEL,
       EXIT_STAMP_SENTINEL,
     ]);
   });
 
   it('skips ids with no slot and slots past the draw range', () => {
-    const exitArr = new Float32Array(3).fill(EXIT_STAMP_SENTINEL);
+    const stageAtArr = new Float32Array(6).fill(EXIT_STAMP_SENTINEL);
     const ranges = writeCellExitStampSlots(
       [10, 11],
       new Map([[10, 5]]),
       3,
       new Map([[10, 1], [11, 2]]),
-      exitArr,
+      stageAtArr,
     );
     expect(ranges).toEqual([]);
-    expect([...exitArr]).toEqual([
+    expect([...stageAtArr]).toEqual([
+      EXIT_STAMP_SENTINEL,
+      EXIT_STAMP_SENTINEL,
+      EXIT_STAMP_SENTINEL,
       EXIT_STAMP_SENTINEL,
       EXIT_STAMP_SENTINEL,
       EXIT_STAMP_SENTINEL,

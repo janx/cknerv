@@ -70,15 +70,14 @@ describe('makeCellFlareMaterial', () => {
       .toBe(hybrid.uniforms.uExitDurS.value);
 
     for (const material of [flare, hybrid]) {
-      expect(material.vertexShader).toContain('attribute float aEnterAt;');
-      expect(material.vertexShader).toContain('attribute float aExitAt;');
+      expect(material.vertexShader).toContain('attribute vec2  aStageAt;');
       // One shared envelope, so neither layer can drift into its own curve.
       expect(material.vertexShader).toContain('vec2 stage = stageEnvelope(');
       expect(material.vertexShader).toContain(
-        'stageEase(stageRamp(uTime, aEnterAt, uEnterDurS))',
+        'stageEase(stageRamp(uTime, aStageAt.x, uEnterDurS))',
       );
       expect(material.vertexShader).toContain(
-        'stageEase(stageRamp(uTime, aExitAt, uExitDurS))',
+        'stageEase(stageRamp(uTime, aStageAt.y, uExitDurS))',
       );
       expect(material.vertexShader).toContain(
         'float scale = bEase * (1.0 - dEase) * stage.x;',

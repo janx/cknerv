@@ -98,10 +98,14 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
     toneMapped: false,
     vertexShader: /* glsl */ `
       attribute vec3  aColor;
-      attribute float aBornAt;
-      attribute float aDeathAt;
-      attribute float aEnterAt; // stage resolution in; -1e9 = always on
-      attribute float aExitAt;  // stage release out; +1e9 = not exiting
+      // Paired clocks ride one vec2 each. ESSL 3.00 spends a vertex slot on
+      // every DECLARED attribute — unused ones are not eliminated — and
+      // three.js injects position/normal/uv into every ShaderMaterial, so a
+      // 16-slot driver leaves this material 13 of its own. Both halves of a
+      // pair are written by one path, so packing costs nothing but the
+      // swizzle. See __tests__/materials/vertexAttributeBudget.test.ts.
+      attribute vec2  aRecordAt; // record clock: x = birth, y = death (+1e9 = alive)
+      attribute vec2  aStageAt;  // stage clock: x = resolution in (-1e9 = always on), y = release out (+1e9 = not exiting)
       attribute float aSize;
       attribute vec4  aMemoryIdentity; // normalized asset / lock / payload / mass
       attribute float aMemorySeed; // stable content-hash word; never draw-order based
@@ -109,8 +113,7 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
       attribute float aFocus;   // eased interaction: 0 resting, ~0.46 hover, 1 selected
       attribute float aRecall;  // signed historical read: source < 0, retained target > 0
       attribute float aRecallState; // source travel / target witness resolution
-      attribute float aInspectionFrom; // previous real-adjacency energy
-      attribute float aInspectionTo; // next real-adjacency energy
+      attribute vec2  aInspection; // real-adjacency energy: x = previous, y = next
       attribute float aInspectionRole; // 1 = direct, navigable renderer-neighbour
 
       uniform float uTime;
@@ -155,18 +158,18 @@ export function makeCellHybridMaterial(): THREE.ShaderMaterial {
         vRecall = aRecall;
         vRecallState = aRecallState;
         vInspection = mix(
-          aInspectionFrom,
-          aInspectionTo,
+          aInspection.x,
+          aInspection.y,
           clamp(uInspectionBlend, 0.0, 1.0)
         );
         vInspectionRole = aInspectionRole;
-        float birthRamp = clamp((uTime - aBornAt) / uBirthDurS, 0.0, 1.0);
-        float deathRamp = clamp((uTime - aDeathAt) / uDeathDurS, 0.0, 1.0);
+        float birthRamp = clamp((uTime - aRecordAt.x) / uBirthDurS, 0.0, 1.0);
+        float deathRamp = clamp((uTime - aRecordAt.y) / uDeathDurS, 0.0, 1.0);
         float bEase = birthEase(birthRamp);
         float dEase = deathEase(deathRamp);
         vec2 stage = stageEnvelope(
-          stageEase(stageRamp(uTime, aEnterAt, uEnterDurS)),
-          stageEase(stageRamp(uTime, aExitAt, uExitDurS))
+          stageEase(stageRamp(uTime, aStageAt.x, uEnterDurS)),
+          stageEase(stageRamp(uTime, aStageAt.y, uExitDurS))
         );
         float scale = bEase * (1.0 - dEase) * stage.x;
 

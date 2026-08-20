@@ -154,9 +154,9 @@ export interface CellLifecycleSyncInput {
 }
 
 export interface CellLifecycleSyncResult {
-  /** Ids whose `aExitAt` changed while KEEPING their slot. A membership sync
-   * cannot see these — the slot's occupant did not change — so the caller
-   * uploads them explicitly. */
+  /** Ids whose exit stamp (`aStageAt.y`) changed while KEEPING their slot. A
+   * membership sync cannot see these — the slot's occupant did not change —
+   * so the caller uploads them explicitly. */
   exitStampIds: number[];
   /** Entrants that got a fade (the rest were already born or already drawn). */
   entered: number;

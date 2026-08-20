@@ -50,10 +50,11 @@ export function makeCellFlareMaterial(): THREE.ShaderMaterial {
     blending: THREE.AdditiveBlending,
     toneMapped: false,
     vertexShader: /* glsl */ `
-      attribute float aBornAt;
-      attribute float aDeathAt;
-      attribute float aEnterAt; // stage resolution in; -1e9 = always on
-      attribute float aExitAt;  // stage release out; +1e9 = not exiting
+      // Same packed clocks as the body layer, off the same shared buffers:
+      // x is where the gesture starts, y where it ends. See the attribute
+      // budget note in cellHybridMaterial.
+      attribute vec2  aRecordAt; // record clock: x = birth, y = death (+1e9 = alive)
+      attribute vec2  aStageAt;  // stage clock: x = resolution in, y = release out
       attribute float aFlashAt;
       attribute float aSize;
 
@@ -74,13 +75,13 @@ export function makeCellFlareMaterial(): THREE.ShaderMaterial {
       ${STAGE_ENVELOPE_GLSL}
 
       void main() {
-        float birthRamp = clamp((uTime - aBornAt) / uBirthDurS, 0.0, 1.0);
-        float deathRamp = clamp((uTime - aDeathAt) / uDeathDurS, 0.0, 1.0);
+        float birthRamp = clamp((uTime - aRecordAt.x) / uBirthDurS, 0.0, 1.0);
+        float deathRamp = clamp((uTime - aRecordAt.y) / uDeathDurS, 0.0, 1.0);
         float bEase = birthEase(birthRamp);
         float dEase = deathEase(deathRamp);
         vec2 stage = stageEnvelope(
-          stageEase(stageRamp(uTime, aEnterAt, uEnterDurS)),
-          stageEase(stageRamp(uTime, aExitAt, uExitDurS))
+          stageEase(stageRamp(uTime, aStageAt.x, uEnterDurS)),
+          stageEase(stageRamp(uTime, aStageAt.y, uExitDurS))
         );
         float scale = bEase * (1.0 - dEase) * stage.x;
 
@@ -88,7 +89,7 @@ export function makeCellFlareMaterial(): THREE.ShaderMaterial {
         vDeathRamp = deathRamp;
         vStageAlpha = stage.y;
         vFlashAge  = uTime - aFlashAt;
-        vSeed      = float(gl_VertexID) * 0.61803 + aBornAt * 0.137;
+        vSeed      = float(gl_VertexID) * 0.61803 + aRecordAt.x * 0.137;
 
         // The flare geometry shares all Cell slots with the resting body, but
         // only a sparse subset has a live write. Clip inactive vertices before

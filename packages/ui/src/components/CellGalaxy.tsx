@@ -266,20 +266,22 @@ export function diffCellBufferSlots(
   return diffCellRenderSlots(previous, next);
 }
 
-/** Write one static graph-distance transition endpoint for visible Cells. The
- * shader cross-fades two such attributes through a single material uniform. */
+/** Write the NEXT static graph-distance endpoint of every visible Cell into
+ * the packed `aInspection` pair (`.y`). The shader cross-fades `.x`→`.y`
+ * through a single material uniform, so the previous endpoint is never
+ * touched here. */
 export function writeCellInspectionTargets(
   cells: Cell[],
   count: number,
   field: CellInspectionField | null,
-  targetArr: Float32Array,
+  inspectionArr: Float32Array,
   ranges?: readonly CellBufferRange[],
 ): void {
   const activeRanges = ranges ?? [{ start: 0, count }];
   for (const range of activeRanges) {
     const end = Math.min(count, range.start + range.count);
     for (let i = Math.max(0, range.start); i < end; i += 1) {
-      targetArr[i] = cellInspectionFieldScale(field, cells[i].id);
+      inspectionArr[i * 2 + 1] = cellInspectionFieldScale(field, cells[i].id);
     }
   }
 }
@@ -307,10 +309,10 @@ export interface CellBufferTargets {
   /** Shared per-cell attribute arrays consumed by the hybrid Points layer. */
   posArr:   Float32Array;
   colorArr: Float32Array;
-  bornArr:  Float32Array;
-  deathArr: Float32Array;
-  enterArr: Float32Array;
-  exitArr:  Float32Array;
+  /** Packed record clock, 2 per slot: birth then death. */
+  recordAtArr: Float32Array;
+  /** Packed stage clock, 2 per slot: resolution in then release out. */
+  stageAtArr: Float32Array;
   flashArr: Float32Array;
   sizeArr:  Float32Array;
   memoryIdentityArr: Float32Array;
@@ -384,14 +386,14 @@ export function writeCellBuffers(
       targets.colorArr[i * 3 + 0] = presentation.color[0];
       targets.colorArr[i * 3 + 1] = presentation.color[1];
       targets.colorArr[i * 3 + 2] = presentation.color[2];
-      targets.bornArr[i]          = bornAtS;
-      targets.deathArr[i]         = deathAtS;
+      targets.recordAtArr[i * 2 + 0] = bornAtS;
+      targets.recordAtArr[i * 2 + 1] = deathAtS;
       // Stage stamps travel with the cell, not with the slot: swap-from-tail
       // moves a cell mid-fade, and a freed slot's next occupant must not
       // inherit the departure it was written for.
-      targets.enterArr[i]         = stamps?.enterAt?.get(c.id)
+      targets.stageAtArr[i * 2 + 0] = stamps?.enterAt?.get(c.id)
         ?? ENTER_STAMP_SENTINEL;
-      targets.exitArr[i]          = stamps?.exitAt?.get(c.id)
+      targets.stageAtArr[i * 2 + 1] = stamps?.exitAt?.get(c.id)
         ?? EXIT_STAMP_SENTINEL;
       targets.flashArr[i]         = flashAtS;
       targets.sizeArr[i]          = presentation.size;
@@ -435,17 +437,19 @@ export function writeCellExitStampSlots(
   slotOf: ReadonlyMap<number, number>,
   visibleCount: number,
   exitAt: ReadonlyMap<number, number>,
-  exitArr: Float32Array,
+  stageAtArr: Float32Array,
 ): CellBufferRange[] {
+  // Ranges stay in SLOT units — the caller merges them with the membership
+  // ranges, and the upload marker scales both by the attribute's itemSize.
   const count = Math.min(
-    exitArr.length,
+    Math.floor(stageAtArr.length / 2),
     Number.isFinite(visibleCount) ? Math.max(0, Math.floor(visibleCount)) : 0,
   );
   const slots: number[] = [];
   for (const id of changedIds) {
     const slot = slotOf.get(id);
     if (slot === undefined || slot < 0 || slot >= count) continue;
-    exitArr[slot] = exitAt.get(id) ?? EXIT_STAMP_SENTINEL;
+    stageAtArr[slot * 2 + 1] = exitAt.get(id) ?? EXIT_STAMP_SENTINEL;
     slots.push(slot);
   }
   slots.sort((a, b) => a - b);
@@ -1257,28 +1261,28 @@ export default function CellGalaxy({
     () => new THREE.BufferAttribute(new Float32Array(INSTANCE_CAPACITY * 3), 3),
     [],
   );
-  const cellBornAtAttr = useMemo(
-    () => new THREE.BufferAttribute(new Float32Array(INSTANCE_CAPACITY), 1),
-    [],
-  );
-  const cellDeathAtAttr = useMemo(() => {
-    const arr = new Float32Array(INSTANCE_CAPACITY);
-    arr.fill(1e9);
-    return new THREE.BufferAttribute(arr, 1);
+  // Both clocks are packed pairs: the shader declares one vec2 per pair
+  // because ESSL 3.00 charges a vertex slot for every DECLARED attribute and
+  // the body material has only 13 to spend (see the budget test in
+  // __tests__/materials/vertexAttributeBudget.test.ts). Component 0 is where
+  // the gesture starts, component 1 where it ends — the same order the
+  // shader swizzles.
+  const cellRecordAtAttr = useMemo(() => {
+    const arr = new Float32Array(INSTANCE_CAPACITY * 2);
+    // x = birth (0), y = death. Only the death half has a sentinel.
+    for (let i = 1; i < arr.length; i += 2) arr[i] = 1e9;
+    return new THREE.BufferAttribute(arr, 2);
   }, []);
-  // Stage stamps: sparse per-churn scalar writes, exactly the aFlashAt access
+  // Stage stamps: sparse per-churn writes, exactly the aFlashAt access
   // pattern. Their sentinels are the resting value, so an untouched slot is
   // always "fully resolved, not exiting".
-  const cellEnterAtAttr = useMemo(() => {
-    const arr = new Float32Array(INSTANCE_CAPACITY);
-    arr.fill(ENTER_STAMP_SENTINEL);
-    return new THREE.BufferAttribute(arr, 1)
-      .setUsage(THREE.DynamicDrawUsage);
-  }, []);
-  const cellExitAtAttr = useMemo(() => {
-    const arr = new Float32Array(INSTANCE_CAPACITY);
-    arr.fill(EXIT_STAMP_SENTINEL);
-    return new THREE.BufferAttribute(arr, 1)
+  const cellStageAtAttr = useMemo(() => {
+    const arr = new Float32Array(INSTANCE_CAPACITY * 2);
+    for (let i = 0; i < arr.length; i += 2) {
+      arr[i] = ENTER_STAMP_SENTINEL;
+      arr[i + 1] = EXIT_STAMP_SENTINEL;
+    }
+    return new THREE.BufferAttribute(arr, 2)
       .setUsage(THREE.DynamicDrawUsage);
   }, []);
   const cellFlashAtAttr = useMemo(() => {
@@ -1338,16 +1342,10 @@ export default function CellGalaxy({
   // Static transition endpoints per body point. Selection changes upload each
   // endpoint once; the shader advances one scalar instead of rewriting the
   // complete visible Cell buffer on every easing frame.
-  const cellInspectionFromAttr = useMemo(() => {
-    const arr = new Float32Array(INSTANCE_CAPACITY);
+  const cellInspectionAttr = useMemo(() => {
+    const arr = new Float32Array(INSTANCE_CAPACITY * 2);
     arr.fill(1);
-    return new THREE.BufferAttribute(arr, 1)
-      .setUsage(THREE.DynamicDrawUsage);
-  }, []);
-  const cellInspectionToAttr = useMemo(() => {
-    const arr = new Float32Array(INSTANCE_CAPACITY);
-    arr.fill(1);
-    return new THREE.BufferAttribute(arr, 1)
+    return new THREE.BufferAttribute(arr, 2)
       .setUsage(THREE.DynamicDrawUsage);
   }, []);
   // Atomic direct-neighbour navigation role. Unlike the body energy, this does
@@ -1368,10 +1366,8 @@ export default function CellGalaxy({
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', cellPosAttr);
     g.setAttribute('aColor', cellColorAttr);
-    g.setAttribute('aBornAt', cellBornAtAttr);
-    g.setAttribute('aDeathAt', cellDeathAtAttr);
-    g.setAttribute('aEnterAt', cellEnterAtAttr);
-    g.setAttribute('aExitAt', cellExitAtAttr);
+    g.setAttribute('aRecordAt', cellRecordAtAttr);
+    g.setAttribute('aStageAt', cellStageAtAttr);
     g.setAttribute('aFlashAt', cellFlashAtAttr);
     g.setAttribute('aSize', cellSizeAttr);
     g.setAttribute('aMemoryIdentity', cellMemoryIdentityAttr);
@@ -1380,8 +1376,7 @@ export default function CellGalaxy({
     g.setAttribute('aFocus', cellFocusAttr);
     g.setAttribute('aRecall', cellRecallAttr);
     g.setAttribute('aRecallState', cellRecallStateAttr);
-    g.setAttribute('aInspectionFrom', cellInspectionFromAttr);
-    g.setAttribute('aInspectionTo', cellInspectionToAttr);
+    g.setAttribute('aInspection', cellInspectionAttr);
     g.setAttribute('aInspectionRole', cellInspectionRoleAttr);
     g.setDrawRange(0, 0);
     // Permissive sphere for the bounded tissue plus its rare halo drift.
@@ -1392,10 +1387,8 @@ export default function CellGalaxy({
   }, [
     cellPosAttr,
     cellColorAttr,
-    cellBornAtAttr,
-    cellDeathAtAttr,
-    cellEnterAtAttr,
-    cellExitAtAttr,
+    cellRecordAtAttr,
+    cellStageAtAttr,
     cellFlashAtAttr,
     cellSizeAttr,
     cellMemoryIdentityAttr,
@@ -1404,8 +1397,7 @@ export default function CellGalaxy({
     cellFocusAttr,
     cellRecallAttr,
     cellRecallStateAttr,
-    cellInspectionFromAttr,
-    cellInspectionToAttr,
+    cellInspectionAttr,
     cellInspectionRoleAttr,
   ]);
 
@@ -1415,10 +1407,8 @@ export default function CellGalaxy({
     // flare-specific, so active writes do not duplicate position/lifecycle
     // buffers or change the resting body draw.
     g.setAttribute('position', cellPosAttr);
-    g.setAttribute('aBornAt', cellBornAtAttr);
-    g.setAttribute('aDeathAt', cellDeathAtAttr);
-    g.setAttribute('aEnterAt', cellEnterAtAttr);
-    g.setAttribute('aExitAt', cellExitAtAttr);
+    g.setAttribute('aRecordAt', cellRecordAtAttr);
+    g.setAttribute('aStageAt', cellStageAtAttr);
     g.setAttribute('aFlashAt', cellFlashAtAttr);
     g.setAttribute('aSize', cellSizeAttr);
     g.setIndex(cellFlareIndexAttr);
@@ -1427,10 +1417,8 @@ export default function CellGalaxy({
     return g;
   }, [
     cellPosAttr,
-    cellBornAtAttr,
-    cellDeathAtAttr,
-    cellEnterAtAttr,
-    cellExitAtAttr,
+    cellRecordAtAttr,
+    cellStageAtAttr,
     cellFlashAtAttr,
     cellSizeAttr,
     cellFlareIndexAttr,
@@ -1472,7 +1460,7 @@ export default function CellGalaxy({
     // Derive the wall→scene-seconds basis live each frame instead of
     // anchoring on mount. Canvas remounts preserve simClock.elapsedSec,
     // so a mount-time Date.now() anchor would
-    // desync the shader's uTime from aBornAt/aDeathAt and cause new
+    // desync the shader's uTime from the aRecordAt clock and cause new
     // events to render as if they had already happened.
     const sceneStartWallMs = Date.now() - now * 1000;
     const toSceneSeconds = (ms: number) => (ms - sceneStartWallMs) / 1000;
@@ -1635,7 +1623,8 @@ export default function CellGalaxy({
     // Exit stamps land on slots whose occupant did not change, so this is the
     // one upload the membership ranges above cannot express. Merge both
     // sources and mark the attribute exactly once — a second mark would
-    // clear the first.
+    // clear the first. Enter rides the same packed attribute, so this is the
+    // ONLY place the stage clock is marked.
     const exitStampRanges = exitStampIds.length === 0
       ? EMPTY_CELL_BUFFER_RANGES
       : writeCellExitStampSlots(
@@ -1643,10 +1632,10 @@ export default function CellGalaxy({
         cellSlotStateRef.current.slotOf,
         count,
         lifecycle.exitAt,
-        cellExitAtAttr.array as Float32Array,
+        cellStageAtAttr.array as Float32Array,
       );
     markCellBufferUpdateRanges(
-      cellExitAtAttr,
+      cellStageAtAttr,
       exitStampRanges.length === 0
         ? cellBufferRanges
         : mergeCellFlashRanges(cellBufferRanges, exitStampRanges, count),
@@ -1662,10 +1651,8 @@ export default function CellGalaxy({
         {
           posArr:   cellPosAttr.array as Float32Array,
           colorArr: cellColorAttr.array as Float32Array,
-          bornArr:  cellBornAtAttr.array as Float32Array,
-          deathArr: cellDeathAtAttr.array as Float32Array,
-          enterArr: cellEnterAtAttr.array as Float32Array,
-          exitArr:  cellExitAtAttr.array as Float32Array,
+          recordAtArr: cellRecordAtAttr.array as Float32Array,
+          stageAtArr:  cellStageAtAttr.array as Float32Array,
           flashArr: cellFlashAtAttr.array as Float32Array,
           sizeArr:  cellSizeAttr.array as Float32Array,
           memoryIdentityArr: cellMemoryIdentityAttr.array as Float32Array,
@@ -1683,9 +1670,7 @@ export default function CellGalaxy({
       cellGeometry.setDrawRange(0, count);
       markCellBufferUpdateRanges(cellPosAttr, cellBufferRanges, count);
       markCellBufferUpdateRanges(cellColorAttr, cellBufferRanges, count);
-      markCellBufferUpdateRanges(cellBornAtAttr, cellBufferRanges, count);
-      markCellBufferUpdateRanges(cellDeathAtAttr, cellBufferRanges, count);
-      markCellBufferUpdateRanges(cellEnterAtAttr, cellBufferRanges, count);
+      markCellBufferUpdateRanges(cellRecordAtAttr, cellBufferRanges, count);
       markCellBufferUpdateRanges(cellSizeAttr, cellBufferRanges, count);
       markCellBufferUpdateRanges(
         cellMemoryIdentityAttr,
@@ -1734,15 +1719,16 @@ export default function CellGalaxy({
         ? cellBufferRanges
         : [];
     if (inspectionRanges.length > 0) {
-      const inspectionFrom = cellInspectionFromAttr.array as Float32Array;
-      const inspectionTo = cellInspectionToAttr.array as Float32Array;
+      // One packed pair per slot: .x is the endpoint the body is fading
+      // FROM, .y the one it is fading TO.
+      const inspection = cellInspectionAttr.array as Float32Array;
       if (inspectionFieldChanged) {
         // Preserve the exact on-screen value if a second selection arrives
         // before the previous transition has settled.
         const currentBlend = hybridMaterial.uniforms.uInspectionBlend.value;
         for (let i = 0; i < count; i += 1) {
-          inspectionFrom[i] += (
-            inspectionTo[i] - inspectionFrom[i]
+          inspection[i * 2] += (
+            inspection[i * 2 + 1] - inspection[i * 2]
           ) * currentBlend;
         }
       }
@@ -1750,7 +1736,7 @@ export default function CellGalaxy({
         cellsList,
         count,
         inspectionField,
-        inspectionTo,
+        inspection,
         inspectionRanges,
       );
       if (!inspectionFieldChanged) {
@@ -1759,7 +1745,7 @@ export default function CellGalaxy({
         for (const range of inspectionRanges) {
           const end = Math.min(count, range.start + range.count);
           for (let i = Math.max(0, range.start); i < end; i += 1) {
-            inspectionFrom[i] = inspectionTo[i];
+            inspection[i * 2] = inspection[i * 2 + 1];
           }
         }
       }
@@ -1776,12 +1762,7 @@ export default function CellGalaxy({
         count,
       );
       markCellBufferUpdateRanges(
-        cellInspectionFromAttr,
-        inspectionRanges,
-        count,
-      );
-      markCellBufferUpdateRanges(
-        cellInspectionToAttr,
+        cellInspectionAttr,
         inspectionRanges,
         count,
       );

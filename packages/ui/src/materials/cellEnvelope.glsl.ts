@@ -78,8 +78,10 @@ export const STAGE_EXIT_SCALE_TO = 0.75;
 // rather than replacing it:
 //   scale = enterScale × birthEase × (1 − deathEase) × exitScale
 //   alpha = enterEase × (1 − exitEase)
-// Sentinel stamps (aEnterAt −1e9, aExitAt +1e9) drive their ramp to the inert
-// end with no branch, exactly as aDeathAt = 1e9 already does for withering.
+// Sentinel stamps (aStageAt.x −1e9, aStageAt.y +1e9) drive their ramp to the
+// inert end with no branch, exactly as aRecordAt.y = 1e9 already does for
+// withering. Both callers pass the swizzles in, so this module never has to
+// know how the clocks are packed into attributes.
 export const STAGE_ENVELOPE_GLSL = /* glsl */ `
   float stageRamp(float t, float at, float durS) {
     return clamp((t - at) / durS, 0.0, 1.0);
