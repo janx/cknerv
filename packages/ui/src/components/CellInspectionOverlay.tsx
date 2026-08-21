@@ -32,8 +32,8 @@ import {
   type SceneInspectorPlacementSide,
 } from './sceneInspection';
 
-const DEFAULT_PANEL_WIDTH_PX = 800;
-const DEFAULT_PANEL_HEIGHT_PX = 600;
+const DEFAULT_PANEL_WIDTH_PX = 808;
+const DEFAULT_PANEL_HEIGHT_PX = 580;
 
 export type CellInspectorPlacementSide = SceneInspectorPlacementSide;
 export type CellInspectorPlacement = SceneInspectorPlacement;

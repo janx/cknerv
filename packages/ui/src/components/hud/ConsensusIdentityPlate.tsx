@@ -37,7 +37,7 @@ import {
   consensusMemoryRouteHopPulseKey,
 } from '../../nerve/consensusRouteHopPulse';
 import { formatBlockRef, formatOutpoint } from './cellFormat';
-import { SpatialPlateHeader } from './primitives';
+import { moduleTag, SpatialPlateHeader } from './primitives';
 import CellCausalLensReadout, {
   type CellCausalNavigationReadout,
 } from './CellCausalLensReadout';
@@ -1476,6 +1476,7 @@ export default function ConsensusIdentityPlate({
   compact = false,
   spatial = false,
   contentWide = false,
+  module,
 }: {
   identity: CellConsensusIdentity;
   dataHex: string;
@@ -1513,6 +1514,9 @@ export default function ConsensusIdentityPlate({
   spatial?: boolean;
   /** Places raw bytes beside indexed analysis on wide layouts. */
   contentWide?: boolean;
+  /** Module stamp in the host card's own numbering (`SCAN·03` on the Cell
+   *  card) — appended after the status cluster in either dialect. */
+  module?: string;
 }) {
   const observed = identity.observedWrite;
   const selectedIdentityProofBinding = identityProofBinding;
@@ -1584,9 +1588,12 @@ export default function ConsensusIdentityPlate({
         accent={VIOLET}
         marginBottom={0}
         status={(
-          <span style={{ whiteSpace: 'nowrap', fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.label, letterSpacing: 0.8, color: memoryStatusColor, textShadow: `0 0 6px ${memoryStatusColor}66` }}>
-            {memoryLocked ? 'LOCKED' : `READING ${Math.round(memoryProgress * 100)}%`}
-            {' · '}{identity.lifecycle === 'live' ? 'LIVE RECORD' : 'SPENT RECORD'}
+          <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 6 }}>
+            <span style={{ whiteSpace: 'nowrap', fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.label, letterSpacing: 0.8, color: memoryStatusColor, textShadow: `0 0 6px ${memoryStatusColor}66` }}>
+              {memoryLocked ? 'LOCKED' : `READING ${Math.round(memoryProgress * 100)}%`}
+              {' · '}{identity.lifecycle === 'live' ? 'LIVE RECORD' : 'SPENT RECORD'}
+            </span>
+            {module ? moduleTag(module) : null}
           </span>
         )}
       />

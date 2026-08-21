@@ -157,6 +157,13 @@ describe('CellDetailPanel', () => {
       ?.textContent).toBe('CAPACITY123 CKB');
     expect(t).toContain('CONSENSUS MEMORY');
     expect(t).not.toContain('共识记忆');
+    // The plates count off in the peer probe's grammar — SCAN·04 only joins
+    // once the memory trace arms, and the old lone header stamp is gone.
+    expect(t).toContain('SCAN·01');
+    expect(t).toContain('SCAN·02');
+    expect(t).toContain('SCAN·03');
+    expect(t).not.toContain('SCAN·04');
+    expect(t).not.toContain('SCAN·06');
     expect(t).not.toContain('CELL CONTENT');
     expect(t).not.toContain('细胞内容');
     expect(t).toContain('DIRECT NODE · RAW');
@@ -170,6 +177,10 @@ describe('CellDetailPanel', () => {
       .toBe('portrait');
     expect((container.firstElementChild as HTMLElement).style.gridTemplateColumns)
       .toBe('minmax(0, 1fr) 260px');
+    // Peer-card rhythm: one 8px gap everywhere, so the card reads as a
+    // single flush rectangle instead of a staircase.
+    expect((container.firstElementChild as HTMLElement).style.columnGap).toBe('8px');
+    expect((container.firstElementChild as HTMLElement).style.rowGap).toBe('8px');
     expect(container.querySelector('[data-testid="cell-nucleus-portrait"]')).not.toBeNull();
     expect(container.querySelector('[data-cell-specimen-scan-light]')).not.toBeNull();
     const specimenScan = container.querySelector(
@@ -226,6 +237,12 @@ describe('CellDetailPanel', () => {
     const bottomWidgets = container.querySelector('[data-cell-detail-bottom-widgets="true"]') as HTMLElement;
     expect(bottomWidgets.style.gridArea).toBe('bottom');
     expect(bottomWidgets.style.paddingTop).toBe('');
+    // Every bottom plate spans the card — one column, 8px rhythm, no
+    // side-by-side split and no per-plate width juggling.
+    expect(bottomWidgets.style.gridTemplateColumns).toBe('minmax(0, 1fr)');
+    expect(bottomWidgets.style.rowGap).toBe('8px');
+    expect((container.querySelector('[data-cell-detail-module="lineage"]') as HTMLElement)
+      .style.gridColumn).toBe('');
   });
 
   it('turns base taxonomy into useful Cell facts without visual parameters', () => {
@@ -381,14 +398,15 @@ describe('CellDetailPanel', () => {
       />,
     );
 
-    expect(container.querySelectorAll('[data-cell-content-byte]')).toHaveLength(28);
+    // The full-width memory plate reads with the wide 32-byte window.
+    expect(container.querySelectorAll('[data-cell-content-byte]')).toHaveLength(32);
     expect(container.querySelector('[data-cell-content-byte="0"]')?.textContent)
       .toBe('00');
     expect(container.textContent).toContain('W 1/2');
     fireEvent.click(container.querySelector('[aria-label="next raw byte window"]')!);
-    expect(container.querySelectorAll('[data-cell-content-byte]')).toHaveLength(12);
-    expect(container.querySelector('[data-cell-content-byte="28"]')?.textContent)
-      .toBe('1C');
+    expect(container.querySelectorAll('[data-cell-content-byte]')).toHaveLength(8);
+    expect(container.querySelector('[data-cell-content-byte="32"]')?.textContent)
+      .toBe('20');
     expect(container.textContent).toContain('W 2/2');
   });
 
@@ -404,7 +422,7 @@ describe('CellDetailPanel', () => {
     expect(container.querySelector('[data-cell-detail-module="context"]')).toBeNull();
   });
 
-  it('uses the bounded stacked constellation for a narrow enhanced placement', () => {
+  it('keeps the one flush block for a vertical fan, portrait column leading', () => {
     const { container } = render(
       <CellDetailPanel
         cell={base}
@@ -428,9 +446,17 @@ describe('CellDetailPanel', () => {
     ) as HTMLElement;
 
     expect(root.style.height).toBe('');
-    expect(root.style.gridTemplateColumns).toBe('190px minmax(0, 1fr)');
+    // An above/below fan gets the same block as the side fans — full-size
+    // portrait column, mirrored so the specimen sits nearest the Cell.
+    expect(root.getAttribute('data-cell-detail-layout')).toBe('vertical');
+    expect(root.style.gridTemplateColumns).toBe('280px minmax(0, 1fr)');
+    expect(root.style.columnGap).toBe('8px');
     expect(scanWindow.style.gridArea).toBe('anatomy');
     expect(scanWindow.style.height).toBe('');
+    // The six facts keep the unified three-across grid in every fan.
+    expect((container.querySelector('[data-cell-detail-field="capacity"]')!
+      .parentElement as HTMLElement).style.gridTemplateColumns)
+      .toBe('repeat(3, minmax(0, 1fr))');
     expect(memory.style.top).toBe('');
     expect(memory.style.width).toBe('auto');
     expect(memory.style.height).toBe('');
@@ -679,7 +705,8 @@ describe('CellDetailPanel', () => {
     fireEvent.click(container.querySelector('[aria-label="next decoded segment"]')!);
     expect(contentMemory?.textContent).toContain('EXTENSION PAYLOAD');
     expect(contentMemory?.textContent).toContain('[28..40)');
-    expect(contentMemory?.textContent).toContain('W 2/2');
+    // The wide 32-byte window already holds the segment start.
+    expect(contentMemory?.textContent).toContain('W 1/2');
     expect(contentMemory?.querySelector('[data-cell-content-byte="28"]')?.textContent)
       .toBe('00');
     expect(container.querySelector('[data-cell-detail-module="context"]')).toBeNull();
@@ -1076,6 +1103,7 @@ describe('CellDetailPanel', () => {
     expect(trace?.getAttribute('data-trace-state')).toBe('active');
     expect(trace?.getAttribute('data-trace-stage')).toBe('reading');
     expect(container.querySelector('[data-cell-detail-module="trace"]')).not.toBeNull();
+    expect(container.textContent).toContain('SCAN·04');
     expect(container.querySelector('[data-cell-detail-module="context"]')).toBeNull();
     expect(container.querySelector('[data-memory-read-state="reading"]')).not.toBeNull();
     expect(container.querySelectorAll('[data-memory-evidence]')).toHaveLength(2);
@@ -1083,6 +1111,59 @@ describe('CellDetailPanel', () => {
     expect(container.textContent).toContain('1111111·1111');
     // Nothing to disclose when the routed evidence already IS the inputs.
     expect(container.querySelector('[data-memory-consumed-inputs]')).toBeNull();
+  });
+
+  it('appends the armed memory trace below the lineage plate without reshuffling it', () => {
+    vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener: () => {}, removeEventListener: () => {} }));
+    const origin: CellLink = {
+      seq: 18,
+      tx_hash: base.out_point.tx_hash,
+      block: base.birth_block,
+      from_ids: [1, 2],
+      to_ids: [base.id],
+      endpoint_anchors: [],
+      parents: [],
+      tag: base.tag,
+      at_ms: 12_000,
+    };
+    const props = {
+      cell: base,
+      recentLinks: [origin],
+      traceSource: 'input' as const,
+      identityProofBinding: identityBinding('recalling'),
+      onClose: () => {},
+    };
+    const { container, rerender } = render(<CellDetailPanel {...props} />);
+    const bottomWidgets = () => container.querySelector(
+      '[data-cell-detail-bottom-widgets="true"]',
+    ) as HTMLElement;
+    const lineage = () => container.querySelector(
+      '[data-cell-detail-module="lineage"]',
+    ) as HTMLElement;
+    const restingLineageStyle = lineage().style.cssText;
+    expect(container.querySelector('[data-cell-detail-module="trace"]')).toBeNull();
+    expect(container.textContent).not.toContain('SCAN·04');
+
+    rerender(
+      <CellDetailPanel
+        {...props}
+        tracedWriteSeq={origin.seq}
+        traceReadout={traceReadout()}
+      />,
+    );
+
+    const trace = container.querySelector(
+      '[data-cell-detail-module="trace"]',
+    ) as HTMLElement;
+    expect(trace).not.toBeNull();
+    expect(container.textContent).toContain('SCAN·04');
+    // Arming appends a full-width row below the lineage plate — the column
+    // never splits and the lineage plate's geometry does not move.
+    expect(bottomWidgets().style.gridTemplateColumns).toBe('minmax(0, 1fr)');
+    expect(lineage().style.cssText).toBe(restingLineageStyle);
+    expect(lineage().style.gridColumn).toBe('');
+    expect(trace.style.gridColumn).toBe('');
+    expect(trace.previousElementSibling).toBe(lineage());
   });
 
   // The witness-carried case: the ledger lists the carriers, so the inputs the

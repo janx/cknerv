@@ -30,6 +30,7 @@ import type { CellById } from '../../types';
 import { HUD_COLORS, HUD_FONTS, rgba, HUD_TYPE } from './hudTheme';
 import {
   CloseButton,
+  moduleTag,
   SpatialPlateHeader,
   spatialPlate,
 } from './primitives';
@@ -474,12 +475,10 @@ export default function CellDetailPanel({
   };
 
   const verticalLayout = layoutSide === 'above' || layoutSide === 'below';
-  const rootWidth = enhancedDetail ? 800 : 700;
+  // Peer-card rhythm: text column + 8px gap + portrait column, so the card
+  // silhouette is one flush rectangle in every fan direction.
   const portraitWidth = enhancedDetail ? 280 : 260;
-  const secondaryWidth = 360;
-  const lineageWidth = showTracePlate
-    ? enhancedDetail ? 420 : 320
-    : enhancedDetail ? 560 : 480;
+  const rootWidth = portraitWidth + 8 + (enhancedDetail ? 520 : 420);
   const semanticScanStyle = useMemo<CSSProperties>(
     () => ({ marginTop: 7 }),
     [],
@@ -492,33 +491,16 @@ export default function CellDetailPanel({
     pointerEvents: 'auto',
   };
   // One shared grid: a text column and a portrait column under a full-width
-  // header, the bottom shard spanning both. Mirroring for a right-side fan is
-  // column order, not per-satellite coordinate math — the portrait column
-  // always sits on the edge nearest the inspected Cell.
+  // header, every bottom plate spanning both. Mirroring for a right or
+  // vertical fan is column order, not per-satellite coordinate math — the
+  // portrait column always sits on the edge nearest the inspected Cell.
   const portraitFirst = verticalLayout || layoutSide === 'right';
-  const constellationColumns = verticalLayout
-    ? '190px minmax(0, 1fr)'
-    : portraitFirst
-      ? `${portraitWidth}px minmax(0, 1fr)`
-      : `minmax(0, 1fr) ${portraitWidth}px`;
+  const constellationColumns = portraitFirst
+    ? `${portraitWidth}px minmax(0, 1fr)`
+    : `minmax(0, 1fr) ${portraitWidth}px`;
   const constellationAreas = portraitFirst
     ? '"header header" "portrait anatomy" "bottom bottom"'
     : '"header header" "anatomy portrait" "bottom bottom"';
-  const bottomGridColumns = verticalLayout
-    ? showTracePlate
-      ? 'repeat(2, minmax(0, 1fr))'
-      : 'minmax(0, 1fr)'
-    : showTracePlate
-      ? layoutSide === 'right'
-        ? `${secondaryWidth}px 20px ${lineageWidth}px`
-        : `${lineageWidth}px 20px ${secondaryWidth}px`
-      : `${lineageWidth}px`;
-  const lineageGridColumn = !verticalLayout
-    && showTracePlate
-    && layoutSide === 'right'
-    ? 3
-    : 1;
-  const traceGridColumn = verticalLayout || layoutSide !== 'right' ? 2 : 1;
 
   return (
     <div
@@ -531,8 +513,8 @@ export default function CellDetailPanel({
         display: 'grid',
         gridTemplateColumns: constellationColumns,
         gridTemplateAreas: constellationAreas,
-        columnGap: verticalLayout ? 14 : 20,
-        rowGap: 12,
+        columnGap: 8,
+        rowGap: 8,
         alignItems: 'start',
         width: rootWidth,
         maxWidth: 'calc(100vw - 28px)',
@@ -555,7 +537,7 @@ export default function CellDetailPanel({
         style={{
           ...satelliteBase,
           gridArea: 'header',
-          minHeight: verticalLayout ? 56 : 58,
+          minHeight: 58,
           display: 'flex',
           alignItems: 'baseline',
           flexWrap: 'wrap',
@@ -574,8 +556,8 @@ export default function CellDetailPanel({
         <span style={{ marginLeft: 'auto', color: live ? HUD_COLORS.nominal : HUD_COLORS.caution, fontSize: HUD_TYPE.section, letterSpacing: 0.9 }}>
           {live ? '● LIVE' : '◇ SPENT'} · {lifetime}
         </span>
-        <span style={{ position: 'absolute', top: 7, right: 30, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.label, letterSpacing: 1, color: '#5a6470' }}>
-          SCAN·06
+        <span style={{ position: 'absolute', top: 7, right: 30 }}>
+          {moduleTag('SCAN·01')}
         </span>
         <CloseButton onClose={onClose} title="Close · ESC or click outside" />
       </section>
@@ -647,10 +629,9 @@ export default function CellDetailPanel({
         style={{
           ...satelliteBase,
           gridArea: 'anatomy',
-          // Enriched content fills the portrait row; the bare six-fact grid
-          // hugs its content instead of stretching into a half-empty plate.
-          alignSelf: enhancedDetail ? 'stretch' : 'start',
-          minHeight: verticalLayout ? 202 : 200,
+          // Always stretched to the portrait row: a bare six-fact grid that
+          // hugged its content would notch the card's rectangle silhouette.
+          alignSelf: 'stretch',
           overflow: 'hidden',
           padding: '12px 12px 10px 18px',
           ...spatialPlate(HUD_COLORS.cyanWire),
@@ -667,16 +648,19 @@ export default function CellDetailPanel({
           en="CELL IDENTITY"
           accent={HUD_COLORS.cyanWire}
           status={(
-            <span
-              data-cell-identity-scan-status="true"
-              style={{ color: statusColor, fontSize: HUD_TYPE.label, letterSpacing: 0.72, textShadow: `0 0 7px ${rgba(statusColor, 0.42)}` }}
-            >
-              {scan.classified ? 'LOCKED' : `SCANNING ${scan.pct}%`}
-              {' · '}A-LATTICE {scan.reveal}/{order.length}
+            <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 6 }}>
+              <span
+                data-cell-identity-scan-status="true"
+                style={{ color: statusColor, fontSize: HUD_TYPE.label, letterSpacing: 0.72, textShadow: `0 0 7px ${rgba(statusColor, 0.42)}` }}
+              >
+                {scan.classified ? 'LOCKED' : `SCANNING ${scan.pct}%`}
+                {' · '}A-LATTICE {scan.reveal}/{order.length}
+              </span>
+              {moduleTag('SCAN·02')}
             </span>
           )}
         />
-        <div style={{ display: 'grid', gridTemplateColumns: verticalLayout ? 'repeat(2, minmax(0, 1fr))' : 'repeat(3, minmax(0, 1fr))', gap: '4px 10px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '4px 10px' }}>
           {order.map((field, index) => {
             const proofKind = field === 'state'
               ? 'address'
@@ -716,7 +700,6 @@ export default function CellDetailPanel({
             transactionMessage={semanticTransactionMessage}
             spatial
             scanIntegrated
-            scanNarrow={verticalLayout}
             reveal={semanticsReveal}
             style={semanticScanStyle}
           />
@@ -730,12 +713,11 @@ export default function CellDetailPanel({
           gridArea: 'bottom',
           zIndex: 1,
           display: 'grid',
-          gridTemplateColumns: bottomGridColumns,
-          columnGap: verticalLayout && showTracePlate ? '2%' : 0,
+          // Growth is strictly vertical: every bottom plate spans the card,
+          // and an arming trace appends a row instead of splitting the column.
+          gridTemplateColumns: 'minmax(0, 1fr)',
+          rowGap: 8,
           alignItems: 'start',
-          justifyContent: !verticalLayout && !showTracePlate && layoutSide === 'right'
-            ? 'end'
-            : 'start',
           minWidth: 0,
           pointerEvents: 'none',
         }}
@@ -749,7 +731,6 @@ export default function CellDetailPanel({
           style={{
             ...satelliteBase,
             position: 'relative',
-            gridColumn: lineageGridColumn,
             width: 'auto',
             overflow: 'visible',
             padding: '8px 10px 11px 12px',
@@ -789,7 +770,8 @@ export default function CellDetailPanel({
               agreementCount={agreementTarget}
               compact
               spatial
-              contentWide={verticalLayout}
+              contentWide
+              module="SCAN·03"
             />
           </div>
         </section>
@@ -804,7 +786,6 @@ export default function CellDetailPanel({
             style={{
               ...satelliteBase,
               position: 'relative',
-              gridColumn: traceGridColumn,
               width: 'auto',
               overflow: 'visible',
               padding: '8px 10px 10px 12px',
@@ -817,12 +798,18 @@ export default function CellDetailPanel({
               titleColor={HUD_COLORS.memoryInk}
               marginBottom={0}
               status={(
-                <span style={{ color: HUD_COLORS.dim, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.micro, letterSpacing: 0.55 }}>
-                  LIVE EVIDENCE
+                <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 6 }}>
+                  <span style={{ color: HUD_COLORS.dim, fontFamily: HUD_FONTS.mono, fontSize: HUD_TYPE.micro, letterSpacing: 0.55 }}>
+                    LIVE EVIDENCE
+                  </span>
+                  {moduleTag('SCAN·04')}
                 </span>
               )}
             />
-            <div style={{ minWidth: 0 }}>
+            {/* The plate spans the card; the ledger rows keep a readable
+              * measure — micro-type evidence lines stretched to the full
+              * card width read as unbounded spreads. */}
+            <div style={{ minWidth: 0, maxWidth: 560 }}>
               <ConsensusMemoryTracePlate
                 readout={traceReadout}
                 reducedMotion={reduced}

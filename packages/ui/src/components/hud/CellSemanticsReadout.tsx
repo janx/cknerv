@@ -400,12 +400,10 @@ function SpatialContextSummary({
 function ScanContextSummary({
   record,
   birthBlock,
-  narrow,
   reveal = 2,
 }: {
   record: CellSemanticRecord;
   birthBlock?: number | null;
-  narrow: boolean;
   /** Scan gate: 0 = identity still scanning, 1 = context facts, 2 = all. */
   reveal?: number;
 }) {
@@ -444,12 +442,10 @@ function ScanContextSummary({
         data-cell-context-reveal-stage={reveal >= 1 ? 'lit' : 'pending'}
         style={{
           display: 'grid',
-          gridTemplateColumns: narrow
-            ? 'repeat(2,minmax(0,1fr))'
-            : assetIdentity
-              ? 'minmax(0,1.35fr) minmax(0,1.15fr) auto auto'
-              : 'minmax(0,1fr) auto auto',
-          columnGap: narrow ? 7 : 10,
+          gridTemplateColumns: assetIdentity
+            ? 'minmax(0,1.35fr) minmax(0,1.15fr) auto auto'
+            : 'minmax(0,1fr) auto auto',
+          columnGap: 10,
           rowGap: 4,
           minWidth: 0,
           ...stageStyle(1),
@@ -459,8 +455,7 @@ function ScanContextSummary({
           <SpatialContextFact
             label="OWNER"
             value={record.address}
-            displayValue={compact(record.address, narrow ? 11 : 15, narrow ? 6 : 10)}
-            wide={narrow}
+            displayValue={compact(record.address, 15, 10)}
           />
         ) : null}
         {assetIdentity ? (
@@ -468,7 +463,6 @@ function ScanContextSummary({
             label="ASSET"
             value={`${assetIdentity}${assetAmount ? ` · ${assetAmount}` : ''}`}
             color={HUD_COLORS.caution}
-            wide={narrow}
           />
         ) : null}
         {createdDiffers ? (
@@ -488,7 +482,7 @@ function ScanContextSummary({
           data-cell-context-scripts="true"
           style={{
             display: 'grid',
-            gridTemplateColumns: narrow || scriptCount === 1
+            gridTemplateColumns: scriptCount === 1
               ? 'minmax(0,1fr)'
               : 'repeat(2,minmax(0,1fr))',
             gap: 3,
@@ -509,10 +503,10 @@ function ScanContextSummary({
           data-cell-scan-index-footer="true"
           style={{
             display: 'grid',
-            gridTemplateColumns: narrow || footerCount === 1
+            gridTemplateColumns: footerCount === 1
               ? 'minmax(0,1fr)'
               : 'minmax(0,.65fr) minmax(0,1.35fr)',
-            gap: narrow ? 3 : 7,
+            gap: 7,
             marginTop: 4,
             minWidth: 0,
             ...stageStyle(2),
@@ -708,7 +702,6 @@ function CellSemanticsReadout({
   transactionMessage,
   spatial = false,
   scanIntegrated = false,
-  scanNarrow = false,
   style,
 }: {
   source: EnrichmentSourceStatus;
@@ -728,8 +721,6 @@ function CellSemanticsReadout({
   spatial?: boolean;
   /** Reflows the essential context into the Cellular Scan evidence window. */
   scanIntegrated?: boolean;
-  /** Uses the stacked scan layout selected by the viewport placement solver. */
-  scanNarrow?: boolean;
   style?: CSSProperties;
 }) {
   const color = sourceColor(source.status);
@@ -812,7 +803,7 @@ function CellSemanticsReadout({
       ) : null}
       {record ? (
         scanIntegrated
-          ? <ScanContextSummary record={record} birthBlock={birthBlock} narrow={scanNarrow} reveal={reveal} />
+          ? <ScanContextSummary record={record} birthBlock={birthBlock} reveal={reveal} />
           : spatial ? <SpatialContextSummary record={record} birthBlock={birthBlock} /> : <>
           <div
             data-cell-context-facts

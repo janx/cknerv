@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
   cellInspectorPlacement,
+  createCellInspectionHandles,
   selectedCellScanAccent,
   useCellInspectionDismiss,
 } from '../../src/components/CellInspectionOverlay';
@@ -45,6 +46,12 @@ const selected: Cell = {
 };
 
 describe('cellInspectorPlacement', () => {
+  it('places by the squared cell-card box until the card is measured', () => {
+    // 808 = 520px text column + 8px gap + 280px portrait column.
+    expect(createCellInspectionHandles().defaultSize)
+      .toEqual({ width: 808, height: 580 });
+  });
+
   it('opens beside the selected Cell when there is room', () => {
     expect(cellInspectorPlacement({
       anchorX: 300,
