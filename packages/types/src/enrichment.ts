@@ -344,6 +344,55 @@ export interface NetworkAtlasRecord {
   versions: NetworkAtlasBucket[];
 }
 
+/** One crawler-known node, as the scene may stage it.
+ *
+ * Its identity is real and nothing else here is: the id, the address, the
+ * version and the labels are the crawler's own observations, while where this
+ * node ends up standing — and every edge drawn to it — is scene placement
+ * with no claim on the network's shape. */
+export interface RosterNode {
+  /** Base58: the id vocabulary the whole app already shares with the local
+   * node's peer list, with `Peer.node_id`, and with
+   * `/api/enrichment/peers/:node_id` — not the hex the crawler is keyed by. */
+  node_id: string;
+  /** The primary address the crawler holds for this node. */
+  addr: string;
+  version: string;
+  /** A crawler with no geolocation or ASN for a node says `'Unknown'`, and
+   * that answer crosses unchanged: "nobody knows" is a label, not a gap. */
+  country: string;
+  asn: string;
+  reachable: boolean;
+  last_seen_ms: number;
+  /** The crawler's own dial, from the crawler's vantage. Display-only: it
+   * measures a link this dashboard does not have, and is never a distance. */
+  rtt_ms?: number;
+}
+
+/** The bounded sample of crawler-known nodes the scene may stage.
+ *
+ * `NetworkAtlasRecord`'s twin from the other side: the atlas counts the
+ * crawler's whole known set and names nobody, and this names a bounded few
+ * and counts nothing. Every identity in it is real; everything relational
+ * still is not, because a crawler observes nodes rather than the links
+ * between them — so a sighted node's position and edges stay declared
+ * fiction.
+ *
+ * Entries arrive ordered by `node_id`, so the same known set stages as the
+ * same set in the same order round after round. Empty `entries` is a crawler
+ * that finished a round knowing nobody, which is a report and not the same
+ * thing as having no crawler at all (that one arrives as
+ * `network_roster_clear`). */
+export interface NetworkRosterRecord {
+  source: string;
+  as_of: ChainAnchor;
+  updated_at_ms: number;
+  crawl_round: number;
+  /** The crawler knows more nodes than this roster names. */
+  truncated: boolean;
+  entries: RosterNode[];
+}
+
 /** How one node looked the last time an optional network crawler reached it.
  *
  * The only enrichment record that describes a network peer rather than a
@@ -402,6 +451,7 @@ export interface SemanticsSnapshot {
   activity_feed?: ActivityFeedRecord;
   transaction_horizon?: TransactionHorizonRecord;
   network_atlas?: NetworkAtlasRecord;
+  network_roster?: NetworkRosterRecord;
   script_registry?: ScriptRegistryRecord;
 }
 
@@ -420,6 +470,8 @@ export type SemanticsDelta =
   | { type: 'transaction_horizon_replace'; transaction_horizon: TransactionHorizonRecord }
   | { type: 'network_atlas_replace'; network_atlas: NetworkAtlasRecord }
   | { type: 'network_atlas_clear' }
+  | { type: 'network_roster_replace'; network_roster: NetworkRosterRecord }
+  | { type: 'network_roster_clear' }
   | { type: 'script_registry_replace'; script_registry: ScriptRegistryRecord }
   | { type: 'prune'; from_block: number }
   | { type: 'clear' };

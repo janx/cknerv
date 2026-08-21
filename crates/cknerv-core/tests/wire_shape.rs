@@ -14,9 +14,10 @@ use std::path::PathBuf;
 
 use cknerv_core::{
     AssetKind, Cell, CellDelta, CellGalaxySnapshot, CellLinkEndpointAnchor, Chain, ChainAnchor,
-    DisplayMode, DisplayProvenance, LockKind, Mutation, OutPoint, PeerSightingAbsence,
-    PeerSightingLookup, PeerSightingRecord, ReplayPhase, ScriptCensus, ScriptCount, ScriptId,
-    ScriptNameRecord, ScriptRegistryRecord, SemanticsDelta, SemanticsSnapshot,
+    DisplayMode, DisplayProvenance, LockKind, Mutation, NetworkRosterRecord, OutPoint,
+    PeerSightingAbsence, PeerSightingLookup, PeerSightingRecord, ReplayPhase, RosterNode,
+    ScriptCensus, ScriptCount, ScriptId, ScriptNameRecord, ScriptRegistryRecord, SemanticsDelta,
+    SemanticsSnapshot,
 };
 
 fn fixture_path(name: &str) -> PathBuf {
@@ -421,6 +422,8 @@ fn semantics_delta_variant(delta: &SemanticsDelta) -> &'static str {
         SemanticsDelta::TransactionHorizonReplace { .. } => "transaction_horizon_replace",
         SemanticsDelta::NetworkAtlasReplace { .. } => "network_atlas_replace",
         SemanticsDelta::NetworkAtlasClear => "network_atlas_clear",
+        SemanticsDelta::NetworkRosterReplace { .. } => "network_roster_replace",
+        SemanticsDelta::NetworkRosterClear => "network_roster_clear",
         SemanticsDelta::ScriptRegistryReplace { .. } => "script_registry_replace",
         SemanticsDelta::Prune { .. } => "prune",
         SemanticsDelta::Clear => "clear",
@@ -462,6 +465,67 @@ fn enrichment_script_registry() -> ScriptRegistryRecord {
         ],
         unresolved: 8,
     }
+}
+
+/// The bounded sample of crawler-known nodes the scene may stage — the other
+/// half of the crawler's answer, and the honesty line this file exists to
+/// hold. Every identity here is real: the ids are base58, the same vocabulary
+/// the local node's peer list and `/api/enrichment/peers/:node_id` speak, so a
+/// browser can carry one row straight into a lookup. Nothing relational is
+/// real: the roster says who exists, never who links to whom.
+///
+/// Three rows, because three things have to survive the wire — a node the
+/// crawler reached, a node it could not (carried, not filtered: dark matter
+/// is information), and a node it has no geolocation for, whose `"Unknown"`
+/// is a label rather than an absent field. Ordered by `node_id`, which is
+/// what keeps a staged set the same set round after round.
+fn enrichment_network_roster(entries: Vec<RosterNode>, truncated: bool) -> NetworkRosterRecord {
+    NetworkRosterRecord {
+        source: "ckbadger".to_string(),
+        as_of: ChainAnchor {
+            block: 100,
+            hash: "0xblock100".to_string(),
+        },
+        updated_at_ms: 1_700_000_000_011,
+        crawl_round: 7,
+        truncated,
+        entries,
+    }
+}
+
+fn enrichment_roster_nodes() -> Vec<RosterNode> {
+    vec![
+        RosterNode {
+            node_id: "QmQHmapDhRnzHqcAJQ5geABWdMVRaa6qah9gEdBEF7ejyL".to_string(),
+            addr: "/ip4/203.0.113.7/tcp/8115".to_string(),
+            version: "0.209.0 (d166e28 2026-07-29)".to_string(),
+            country: "DE".to_string(),
+            asn: "AS24940 Hetzner Online GmbH".to_string(),
+            reachable: true,
+            last_seen_ms: 1_699_999_940_000,
+            rtt_ms: Some(41),
+        },
+        RosterNode {
+            node_id: "QmZwKtibfGWsRxgwkWSMNU5Z4Vq833nH1Lb7yUgggm5w18".to_string(),
+            addr: "/ip6/2001:db8::4/tcp/8114".to_string(),
+            version: "0.208.1".to_string(),
+            country: "SG".to_string(),
+            asn: "AS1 Example".to_string(),
+            reachable: false,
+            last_seen_ms: 1_699_999_100_000,
+            rtt_ms: None,
+        },
+        RosterNode {
+            node_id: "QmcgXBRjq5zHvGqSgT3MyY4gtGkBWfAP9JgoJxUu936fTs".to_string(),
+            addr: "Unknown".to_string(),
+            version: "Unknown".to_string(),
+            country: "Unknown".to_string(),
+            asn: "Unknown".to_string(),
+            reachable: true,
+            last_seen_ms: 1_699_999_800_000,
+            rtt_ms: Some(214),
+        },
+    ]
 }
 
 /// The crawler's own view of one node the local node is linked to. It is the
@@ -526,6 +590,7 @@ fn enrichment_samples() -> EnrichmentSamples {
     let mut snapshot: SemanticsSnapshot = serde_json::from_value(committed["snapshot"].clone())
         .unwrap_or_else(|e| panic!("deserialize SemanticsSnapshot: {e}"));
     snapshot.script_registry = Some(enrichment_script_registry());
+    snapshot.network_roster = Some(enrichment_network_roster(enrichment_roster_nodes(), true));
 
     let mut deltas: BTreeMap<&'static str, SemanticsDelta> = BTreeMap::new();
     deltas.insert(
@@ -620,6 +685,28 @@ fn enrichment_samples() -> EnrichmentSamples {
     );
     deltas.insert("network_atlas_clear", SemanticsDelta::NetworkAtlasClear);
     deltas.insert(
+        "network_roster_replace",
+        SemanticsDelta::NetworkRosterReplace {
+            network_roster: Box::new(
+                snapshot
+                    .network_roster
+                    .clone()
+                    .expect("fixture network roster"),
+            ),
+        },
+    );
+    // A crawler that finished a round and found nobody. Fixtured beside the
+    // populated arm because the two mean different things and a reader has to
+    // be able to tell them apart: this one is a report, and the clear below
+    // is the absence of a crawler to report anything.
+    deltas.insert(
+        "network_roster_replace_empty",
+        SemanticsDelta::NetworkRosterReplace {
+            network_roster: Box::new(enrichment_network_roster(Vec::new(), false)),
+        },
+    );
+    deltas.insert("network_roster_clear", SemanticsDelta::NetworkRosterClear);
+    deltas.insert(
         "script_registry_replace",
         SemanticsDelta::ScriptRegistryReplace {
             script_registry: Box::new(enrichment_script_registry()),
@@ -696,6 +783,8 @@ fn enrichment_samples_cover_every_delta_variant() {
             "fork_watch_replace",
             "network_atlas_clear",
             "network_atlas_replace",
+            "network_roster_clear",
+            "network_roster_replace",
             "protocol_era_replace",
             "prune",
             "script_registry_replace",

@@ -28,6 +28,12 @@ const ENRICHMENT_ACTIVITY_REFRESH: Duration = Duration::from_secs(15);
 const ENRICHMENT_TRANSACTION_HORIZON_REFRESH: Duration = Duration::from_secs(60);
 const ENRICHMENT_FORK_WATCH_REFRESH: Duration = Duration::from_secs(15);
 const ENRICHMENT_NETWORK_ATLAS_REFRESH: Duration = Duration::from_secs(60);
+/// The roster shares the atlas's clock because it shares the atlas's subject:
+/// a crawl round is the only thing that can change either of them, and this
+/// cadence only decides how soon a finished round is noticed. Repeating it
+/// costs one bounded page and nothing on the wire — the projection publishes
+/// a roster only when its round advances.
+const ENRICHMENT_NETWORK_ROSTER_REFRESH: Duration = Duration::from_secs(60);
 /// The whole-chain Cell census. Its source answers from a fixed-size record
 /// in constant work, and its subject — the live-cell count — moves with every
 /// block, so the cadence is set by how stale a printed `AS OF` height may get
@@ -74,6 +80,7 @@ struct RefreshCadence {
     transaction_horizon: Duration,
     fork_watch: Duration,
     network_atlas: Duration,
+    network_roster: Duration,
     chain_census: Duration,
     script_registry: Duration,
     galaxy_composition: Option<Duration>,
@@ -94,6 +101,7 @@ impl Default for RefreshCadence {
             transaction_horizon: ENRICHMENT_TRANSACTION_HORIZON_REFRESH,
             fork_watch: ENRICHMENT_FORK_WATCH_REFRESH,
             network_atlas: ENRICHMENT_NETWORK_ATLAS_REFRESH,
+            network_roster: ENRICHMENT_NETWORK_ROSTER_REFRESH,
             chain_census: ENRICHMENT_CHAIN_CENSUS_REFRESH,
             script_registry: ENRICHMENT_SCRIPT_REGISTRY_REFRESH,
             galaxy_composition: ENRICHMENT_GALAXY_COMPOSITION_REFRESH,
@@ -113,13 +121,14 @@ enum RefreshKind {
     TransactionHorizon,
     ForkWatch,
     NetworkAtlas,
+    NetworkRoster,
     ChainCensus,
     ScriptRegistry,
     GalaxyComposition,
     GalaxyTopUp,
 }
 
-const REFRESH_KINDS: [RefreshKind; 11] = [
+const REFRESH_KINDS: [RefreshKind; 12] = [
     RefreshKind::AssetEcosystem,
     RefreshKind::DaoState,
     RefreshKind::ProtocolEra,
@@ -127,6 +136,7 @@ const REFRESH_KINDS: [RefreshKind; 11] = [
     RefreshKind::TransactionHorizon,
     RefreshKind::ForkWatch,
     RefreshKind::NetworkAtlas,
+    RefreshKind::NetworkRoster,
     RefreshKind::ChainCensus,
     RefreshKind::ScriptRegistry,
     RefreshKind::GalaxyComposition,
@@ -143,6 +153,7 @@ impl RefreshKind {
             Self::TransactionHorizon => "transaction_horizon",
             Self::ForkWatch => "fork_watch",
             Self::NetworkAtlas => "network_atlas",
+            Self::NetworkRoster => "network_roster",
             Self::ChainCensus => "chain_census",
             Self::ScriptRegistry => "script_registry",
             // The top-up is the same source feature as the composition:
@@ -164,6 +175,7 @@ impl RefreshKind {
             Self::TransactionHorizon => Some(cadence.transaction_horizon),
             Self::ForkWatch => Some(cadence.fork_watch),
             Self::NetworkAtlas => Some(cadence.network_atlas),
+            Self::NetworkRoster => Some(cadence.network_roster),
             Self::ChainCensus => Some(cadence.chain_census),
             Self::ScriptRegistry => Some(cadence.script_registry),
             Self::GalaxyComposition => cadence.galaxy_composition,
@@ -237,6 +249,9 @@ impl RefreshKind {
                 .enrich_network_atlas(context)
                 .await
                 .map(|record| record.map(EnrichmentEvent::NetworkAtlasReplace)),
+            Self::NetworkRoster => source.enrich_network_roster(context).await.map(|record| {
+                record.map(|roster| EnrichmentEvent::NetworkRosterReplace(Box::new(roster)))
+            }),
             Self::ChainCensus => source
                 .enrich_chain_census(context)
                 .await
@@ -447,6 +462,7 @@ async fn run(
     let top_up_limiter = Arc::new(Semaphore::new(1));
     let mut refreshes = JoinSet::new();
     let mut network_atlas_present = false;
+    let mut network_roster_present = false;
 
     'supervisor: loop {
         tokio::select! {
@@ -539,8 +555,10 @@ async fn run(
                                 if out.send(event).await.is_err() {
                                     break 'supervisor;
                                 }
-                                if kind == RefreshKind::NetworkAtlas {
-                                    network_atlas_present = true;
+                                match kind {
+                                    RefreshKind::NetworkAtlas => network_atlas_present = true,
+                                    RefreshKind::NetworkRoster => network_roster_present = true,
+                                    _ => {}
                                 }
                             }
                             Ok(None) if kind == RefreshKind::NetworkAtlas && network_atlas_present => {
@@ -548,6 +566,16 @@ async fn run(
                                     break 'supervisor;
                                 }
                                 network_atlas_present = false;
+                            }
+                            // A source that stops offering a roster has had
+                            // its crawler switched off: the sighted nodes on
+                            // stage are no longer anybody's observation and
+                            // have to leave with it.
+                            Ok(None) if kind == RefreshKind::NetworkRoster && network_roster_present => {
+                                if out.send(EnrichmentEvent::NetworkRosterClear).await.is_err() {
+                                    break 'supervisor;
+                                }
+                                network_roster_present = false;
                             }
                             Ok(None) => {}
                             Err(error) => tracing::warn!(
@@ -888,6 +916,7 @@ mod tests {
             transaction_horizon: Duration::from_secs(60),
             fork_watch: Duration::from_secs(60),
             network_atlas: Duration::from_secs(60),
+            network_roster: Duration::from_secs(60),
             chain_census: Duration::from_secs(60),
             script_registry: Duration::from_secs(300),
             galaxy_composition: None,
@@ -968,6 +997,7 @@ mod tests {
             transaction_horizon: Duration::from_secs(60),
             fork_watch: Duration::from_secs(60),
             network_atlas: Duration::from_secs(60),
+            network_roster: Duration::from_secs(60),
             chain_census: Duration::from_secs(60),
             script_registry: Duration::from_secs(300),
             galaxy_composition: periodic,
@@ -1315,6 +1345,7 @@ mod tests {
             transaction_horizon: Duration::from_secs(60),
             fork_watch: Duration::from_secs(60),
             network_atlas: Duration::from_secs(60),
+            network_roster: Duration::from_secs(60),
             chain_census: Duration::from_secs(60),
             script_registry: Duration::from_secs(300),
             galaxy_composition: Some(Duration::from_secs(60)),
@@ -1353,6 +1384,7 @@ mod tests {
             transaction_horizon: Duration::from_secs(1),
             fork_watch: Duration::from_secs(1),
             network_atlas: Duration::from_secs(1),
+            network_roster: Duration::from_secs(1),
             chain_census: Duration::from_secs(1),
             script_registry: Duration::from_secs(300),
             galaxy_composition: Some(Duration::from_secs(1)),

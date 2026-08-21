@@ -693,6 +693,60 @@ pub struct NetworkAtlasRecord {
     pub versions: Vec<NetworkAtlasBucket>,
 }
 
+/// One crawler-known node, as the scene may stage it.
+///
+/// Its identity is real and nothing else here is: the id, the address, the
+/// version and the labels are the crawler's own observations, while where
+/// this node ends up standing — and every edge drawn to it — is scene
+/// placement with no claim on the network's shape.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RosterNode {
+    /// Base58: the id vocabulary the whole app already shares with the local
+    /// node's peer list and with `/api/enrichment/peers/:node_id`, not the
+    /// hex the crawler is keyed by.
+    pub node_id: String,
+    /// The primary address the crawler holds for this node.
+    pub addr: String,
+    pub version: String,
+    /// A crawler with no geolocation or ASN for a node says `"Unknown"`, and
+    /// that answer crosses unchanged rather than thinning into an absent
+    /// field: "nobody knows" is a label, not a gap.
+    pub country: String,
+    pub asn: String,
+    pub reachable: bool,
+    /// Milliseconds, like every other cknerv wire clock, although the crawler
+    /// counts seconds.
+    pub last_seen_ms: u64,
+    /// The crawler's own dial, from the crawler's vantage. Display-only: it
+    /// measures a link cknerv does not have, and is never a distance.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rtt_ms: Option<u32>,
+}
+
+/// The bounded sample of crawler-known nodes the scene may stage.
+///
+/// The twin of [`NetworkAtlasRecord`] from the other side: the atlas counts
+/// the crawler's whole known set and names nobody, and this names a bounded
+/// few and counts nothing. Every identity in it is real; everything
+/// relational still is not, because a crawler observes nodes rather than the
+/// links between them.
+///
+/// Entries are ordered by `node_id`, so the same known set stages as the same
+/// set in the same order round after round. Empty `entries` is a crawler that
+/// finished a round knowing nobody — which is a report, and not the same
+/// thing as having no crawler at all.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct NetworkRosterRecord {
+    pub source: String,
+    pub as_of: ChainAnchor,
+    pub updated_at_ms: u64,
+    pub crawl_round: u64,
+    /// The crawler knows more nodes than this roster names.
+    pub truncated: bool,
+    #[serde(default)]
+    pub entries: Vec<RosterNode>,
+}
+
 /// How one node looked the last time an optional network crawler reached it.
 ///
 /// This is the only enrichment record that does not describe a chain object:
@@ -788,6 +842,8 @@ pub enum EnrichmentEvent {
     TransactionHorizonReplace(TransactionHorizonRecord),
     NetworkAtlasReplace(NetworkAtlasRecord),
     NetworkAtlasClear,
+    NetworkRosterReplace(Box<NetworkRosterRecord>),
+    NetworkRosterClear,
     ScriptRegistryReplace(Box<ScriptRegistryRecord>),
     GalaxyCompositionReplace(GalaxyCompositionRecord),
     /// Additive supply for the curated composition, in answer to the
@@ -817,6 +873,8 @@ pub struct SemanticsSnapshot {
     pub transaction_horizon: Option<TransactionHorizonRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub network_atlas: Option<NetworkAtlasRecord>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network_roster: Option<NetworkRosterRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub script_registry: Option<ScriptRegistryRecord>,
 }
@@ -864,6 +922,10 @@ pub enum SemanticsDelta {
         network_atlas: NetworkAtlasRecord,
     },
     NetworkAtlasClear,
+    NetworkRosterReplace {
+        network_roster: Box<NetworkRosterRecord>,
+    },
+    NetworkRosterClear,
     ScriptRegistryReplace {
         script_registry: Box<ScriptRegistryRecord>,
     },
@@ -892,6 +954,7 @@ pub struct SemanticsProjection {
     activity_feed: Option<ActivityFeedRecord>,
     transaction_horizon: Option<TransactionHorizonRecord>,
     network_atlas: Option<NetworkAtlasRecord>,
+    network_roster: Option<NetworkRosterRecord>,
     script_registry: Option<ScriptRegistryRecord>,
     next_sequence: u64,
     cell_cap: usize,
@@ -916,6 +979,7 @@ impl SemanticsProjection {
             activity_feed: None,
             transaction_horizon: None,
             network_atlas: None,
+            network_roster: None,
             script_registry: None,
             next_sequence: 0,
             cell_cap: 512,
@@ -979,6 +1043,7 @@ impl SemanticsProjection {
         self.activity_feed = None;
         self.transaction_horizon = None;
         self.network_atlas = None;
+        self.network_roster = None;
         self.script_registry = None;
     }
 
@@ -1039,6 +1104,7 @@ impl Projection for SemanticsProjection {
             activity_feed: self.activity_feed.clone(),
             transaction_horizon: self.transaction_horizon.clone(),
             network_atlas: self.network_atlas.clone(),
+            network_roster: self.network_roster.clone(),
             script_registry: self.script_registry.clone(),
         }
     }
@@ -1106,6 +1172,13 @@ impl Projection for SemanticsProjection {
                     .is_some_and(|atlas| atlas.as_of.block >= *from_block)
                 {
                     self.network_atlas = None;
+                }
+                if self
+                    .network_roster
+                    .as_ref()
+                    .is_some_and(|roster| roster.as_of.block >= *from_block)
+                {
+                    self.network_roster = None;
                 }
                 // A script's name does not depend on the tip, but the record
                 // proving it came from a compatible index does. Dropped on
@@ -1238,6 +1311,35 @@ impl EnrichmentProjection for SemanticsProjection {
             EnrichmentEvent::NetworkAtlasClear => {
                 self.network_atlas = None;
                 vec![SemanticsDelta::NetworkAtlasClear]
+            }
+            EnrichmentEvent::NetworkRosterReplace(network_roster) => {
+                // A crawl round is the only thing that can change a roster,
+                // and a roster is two orders of magnitude larger than the
+                // aggregates beside it: re-publishing the same round on every
+                // refresh would push hundreds of unchanged rows through the
+                // replay ring and evict live deltas to say nothing.
+                //
+                // The gate lives here rather than in the source because this
+                // is the only layer that knows whether its copy still exists.
+                // A roster dropped by a reorg or a rebuild is therefore
+                // published again at the very next refresh, instead of the
+                // stage waiting out a whole crawl round for a set it already
+                // had.
+                if self
+                    .network_roster
+                    .as_ref()
+                    .is_some_and(|held| held.crawl_round == network_roster.crawl_round)
+                {
+                    return Vec::new();
+                }
+                self.network_roster = Some(network_roster.as_ref().clone());
+                vec![SemanticsDelta::NetworkRosterReplace {
+                    network_roster: network_roster.clone(),
+                }]
+            }
+            EnrichmentEvent::NetworkRosterClear => {
+                self.network_roster = None;
+                vec![SemanticsDelta::NetworkRosterClear]
             }
             EnrichmentEvent::ScriptRegistryReplace(script_registry) => {
                 self.script_registry = Some(*script_registry.clone());
@@ -1479,6 +1581,29 @@ mod tests {
         }
     }
 
+    fn network_roster(block: u64, round: u64) -> NetworkRosterRecord {
+        NetworkRosterRecord {
+            source: "ckbadger".into(),
+            as_of: ChainAnchor {
+                block,
+                hash: format!("0xblock{block}"),
+            },
+            updated_at_ms: block,
+            crawl_round: round,
+            truncated: false,
+            entries: vec![RosterNode {
+                node_id: "QmagxSv7GNwKXQE7mi1iDjFHghjUpbqjBgqSot7PmMJqHA".into(),
+                addr: "/ip4/203.0.113.7/tcp/8115".into(),
+                version: "0.209.0".into(),
+                country: "DE".into(),
+                asn: "AS24940 Hetzner Online GmbH".into(),
+                reachable: true,
+                last_seen_ms: 1_699_999_940_000,
+                rtt_ms: Some(41),
+            }],
+        }
+    }
+
     fn galaxy_cell(id: u64, asset_kind: crate::AssetKind) -> Cell {
         Cell {
             id,
@@ -1611,6 +1736,9 @@ mod tests {
             transaction_horizon(10),
         ));
         projection.apply_enrichment(&EnrichmentEvent::NetworkAtlasReplace(network_atlas(10)));
+        projection.apply_enrichment(&EnrichmentEvent::NetworkRosterReplace(Box::new(
+            network_roster(10, 7),
+        )));
         projection.apply_enrichment(&EnrichmentEvent::CensusReplace(census(10)));
 
         projection.apply_mutation(&Mutation::ChainReorganized { from_block: 10 });
@@ -1623,6 +1751,7 @@ mod tests {
         assert!(projection.snapshot().activity_feed.is_none());
         assert!(projection.snapshot().transaction_horizon.is_none());
         assert!(projection.snapshot().network_atlas.is_none());
+        assert!(projection.snapshot().network_roster.is_none());
     }
 
     #[test]
@@ -1636,6 +1765,82 @@ mod tests {
         assert!(projection.snapshot().network_atlas.is_none());
         assert!(projection.snapshot().asset_ecosystem.is_some());
         assert!(matches!(deltas[0], SemanticsDelta::NetworkAtlasClear));
+    }
+
+    #[test]
+    fn crawler_disable_retires_the_sighted_nodes_it_had_named() {
+        let mut projection = SemanticsProjection::new(Some(("ckbadger", vec![])));
+        projection.apply_enrichment(&EnrichmentEvent::AssetEcosystemReplace(ecosystem(10)));
+        projection.apply_enrichment(&EnrichmentEvent::NetworkRosterReplace(Box::new(
+            network_roster(10, 7),
+        )));
+
+        let deltas = projection.apply_enrichment(&EnrichmentEvent::NetworkRosterClear);
+
+        assert!(projection.snapshot().network_roster.is_none());
+        assert!(projection.snapshot().asset_ecosystem.is_some());
+        assert!(matches!(deltas[0], SemanticsDelta::NetworkRosterClear));
+    }
+
+    #[test]
+    fn a_roster_from_a_round_already_held_is_not_news() {
+        let mut projection = SemanticsProjection::new(Some(("ckbadger", vec![])));
+        projection.apply_enrichment(&EnrichmentEvent::NetworkRosterReplace(Box::new(
+            network_roster(10, 7),
+        )));
+
+        // Same round at a newer anchor: nothing about the staged set changed,
+        // and hundreds of unchanged rows must not walk the replay ring to say
+        // so. The held record keeps the anchor it was actually proved at.
+        let deltas = projection.apply_enrichment(&EnrichmentEvent::NetworkRosterReplace(Box::new(
+            network_roster(20, 7),
+        )));
+
+        assert!(deltas.is_empty());
+        assert_eq!(
+            projection.snapshot().network_roster,
+            Some(network_roster(10, 7))
+        );
+
+        let deltas = projection.apply_enrichment(&EnrichmentEvent::NetworkRosterReplace(Box::new(
+            network_roster(20, 8),
+        )));
+
+        assert!(matches!(
+            deltas[0],
+            SemanticsDelta::NetworkRosterReplace { .. }
+        ));
+        assert_eq!(
+            projection.snapshot().network_roster,
+            Some(network_roster(20, 8))
+        );
+    }
+
+    #[test]
+    fn a_roster_a_reorg_dropped_is_published_again_at_the_same_round() {
+        // Why the round gate lives here and not in the source: only this
+        // layer knows whether its copy still exists. A source remembering
+        // which round it last handed out would leave the stage without
+        // sighted nodes until the crawler finished another one.
+        let mut projection = SemanticsProjection::new(Some(("ckbadger", vec![])));
+        projection.apply_enrichment(&EnrichmentEvent::NetworkRosterReplace(Box::new(
+            network_roster(10, 7),
+        )));
+        projection.apply_mutation(&Mutation::ChainReorganized { from_block: 10 });
+        assert!(projection.snapshot().network_roster.is_none());
+
+        let deltas = projection.apply_enrichment(&EnrichmentEvent::NetworkRosterReplace(Box::new(
+            network_roster(11, 7),
+        )));
+
+        assert!(matches!(
+            deltas[0],
+            SemanticsDelta::NetworkRosterReplace { .. }
+        ));
+        assert_eq!(
+            projection.snapshot().network_roster,
+            Some(network_roster(11, 7))
+        );
     }
 
     #[test]

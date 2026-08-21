@@ -63,8 +63,17 @@ pub(crate) struct NetworkNodesPageResponse {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct NetworkNodeSummaryResponse {
     pub peer_id: String,
+    /// The primary address the crawler holds for this node. Read only by the
+    /// roster: the atlas counts this page and deliberately names nothing on
+    /// it. Defaulted because a node whose address book is empty is answered
+    /// with an empty string upstream, and a source that omits the field
+    /// entirely should still be countable.
+    #[serde(default)]
+    pub addr: String,
     pub version: String,
     pub country: String,
+    #[serde(default)]
+    pub asn: String,
     pub reachable: bool,
     pub last_seen: u64,
     pub rtt_ms: Option<u32>,

@@ -688,11 +688,13 @@ fn event_anchor_is_current(event: &EnrichmentEvent, recent_blocks: &[RecentBlock
             Some(&transaction_horizon.as_of)
         }
         EnrichmentEvent::NetworkAtlasReplace(network_atlas) => Some(&network_atlas.as_of),
+        EnrichmentEvent::NetworkRosterReplace(network_roster) => Some(&network_roster.as_of),
         EnrichmentEvent::ScriptRegistryReplace(script_registry) => Some(&script_registry.as_of),
         EnrichmentEvent::GalaxyCompositionReplace(composition) => Some(&composition.as_of),
         EnrichmentEvent::GalaxyCompositionTopUp(top_up) => Some(&top_up.as_of),
         EnrichmentEvent::SourceStatus(_)
         | EnrichmentEvent::NetworkAtlasClear
+        | EnrichmentEvent::NetworkRosterClear
         | EnrichmentEvent::Clear => None,
     };
     anchor.is_none_or(|anchor| {

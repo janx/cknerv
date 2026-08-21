@@ -339,6 +339,39 @@ describe('wire-shape parity (TS twin of cknerv-core)', () => {
     expect(sample.deltas.transaction_horizon_replace.type).toBe('transaction_horizon_replace');
     expect(sample.deltas.network_atlas_replace.type).toBe('network_atlas_replace');
     expect(sample.deltas.network_atlas_clear.type).toBe('network_atlas_clear');
+    // The roster is the atlas's twin: the atlas counts the crawler's known
+    // set and names nobody, this names a bounded few and counts nothing. Its
+    // ids are base58 — the same vocabulary a peer row and
+    // `/api/enrichment/peers/:node_id` speak — so a sighted node can be
+    // carried straight from this list into a dossier lookup.
+    const roster = sample.snapshot.network_roster;
+    expect(roster?.crawl_round).toBe(7);
+    expect(roster?.truncated).toBe(true);
+    expect(roster?.entries.map((node) => node.node_id)).toEqual(
+      [...(roster?.entries.map((node) => node.node_id) ?? [])].sort(),
+    );
+    expect(roster?.entries[0].node_id).toBe(
+      'QmQHmapDhRnzHqcAJQ5geABWdMVRaa6qah9gEdBEF7ejyL',
+    );
+    expect(roster?.entries[0].addr).toBe('/ip4/203.0.113.7/tcp/8115');
+    expect(roster?.entries[0].rtt_ms).toBe(41);
+    // Dark matter is carried, not filtered: a node the crawler could not
+    // reach is still a node it saw, and it has no dial to report.
+    expect(roster?.entries[1].reachable).toBe(false);
+    expect(roster?.entries[1].rtt_ms).toBeUndefined();
+    // An honest label, not an absent field.
+    expect(roster?.entries[2].country).toBe('Unknown');
+    expect(roster?.entries[2].asn).toBe('Unknown');
+    expect(sample.deltas.network_roster_replace.type).toBe('network_roster_replace');
+    expect(sample.deltas.network_roster_clear.type).toBe('network_roster_clear');
+    // A round that found nobody and no crawler at all are different answers
+    // and arrive as different arms: an empty roster still names its round.
+    const emptyRoster = sample.deltas.network_roster_replace_empty;
+    expect(emptyRoster.type).toBe('network_roster_replace');
+    if (emptyRoster.type === 'network_roster_replace') {
+      expect(emptyRoster.network_roster.entries).toEqual([]);
+      expect(emptyRoster.network_roster.crawl_round).toBe(7);
+    }
     // Script names are the other half of the cell census's identity join:
     // that side counts `(code_hash, hash_type)` and refuses to name it, this
     // side names it and counts nothing. `unresolved` says how many observed
@@ -384,6 +417,8 @@ describe('wire-shape parity (TS twin of cknerv-core)', () => {
         'transaction_horizon_replace',
         'network_atlas_replace',
         'network_atlas_clear',
+        'network_roster_replace',
+        'network_roster_clear',
         'script_registry_replace',
         'prune',
         'clear',

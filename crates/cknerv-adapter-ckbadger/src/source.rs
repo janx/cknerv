@@ -13,12 +13,12 @@ use cknerv_core::{
     CommonKnowledgeBreakdown, CompositionDemand, DaoStateRecord, EnrichmentSourceState,
     EnrichmentSourceStatus, ForkWatchDeepFork, ForkWatchEventKind, ForkWatchRecord, ForkWatchReorg,
     GalaxyCompositionRecord, GalaxyCompositionTopUp, HashType, NetworkAtlasBucket,
-    NetworkAtlasRecord, OutPoint, PeerSightingAbsence, PeerSightingLookup, PeerSightingRecord,
-    ProtocolEra, ProtocolEraRecord, ScriptNameRecord, ScriptRegistryRecord, SemanticAsset,
-    SemanticAttribute, SemanticCellContent, SemanticContentDecode, SemanticContentGuess,
-    SemanticContentSegment, SemanticFacet, SemanticScript, TransactionHorizonRecord,
-    TransactionParticipantSemantic, TransactionSemanticRecord, DATA_HEX_TRUNCATION_MARKER,
-    MAX_SCRIPT_REGISTRY_ENTRIES,
+    NetworkAtlasRecord, NetworkRosterRecord, OutPoint, PeerSightingAbsence, PeerSightingLookup,
+    PeerSightingRecord, ProtocolEra, ProtocolEraRecord, RosterNode, ScriptNameRecord,
+    ScriptRegistryRecord, SemanticAsset, SemanticAttribute, SemanticCellContent,
+    SemanticContentDecode, SemanticContentGuess, SemanticContentSegment, SemanticFacet,
+    SemanticScript, TransactionHorizonRecord, TransactionParticipantSemantic,
+    TransactionSemanticRecord, DATA_HEX_TRUNCATION_MARKER, MAX_SCRIPT_REGISTRY_ENTRIES,
 };
 use cknerv_server::{CanonicalContext, EnrichmentSource, GalaxyCompositionHydrator};
 
@@ -27,10 +27,10 @@ use crate::dto::{
     CommonKnowledgeSizeBreakdown, DaoInfo, DaoStatisticsResponse, HardforkEventResponse,
     HardforkTimelineResponse, LatestActivityResponse, LiveCellSummaryResponse,
     LookupScriptsRequest, NetworkCrawlerSummaryResponse, NetworkNodeDetailResponse,
-    NetworkNodesPageResponse, NetworkStats, RecentReorgResponse, ReorgEventResponse,
-    ScriptCatalogueResponse, ScriptFamilyResponse, ScriptLookupInfo, ScriptLookupResponse,
-    ScriptResponse, TokenResponse, TransactionDetailResponse, TransactionLifecycleResponse,
-    TransactionStatsPoint, TransactionStatsResponse,
+    NetworkNodeSummaryResponse, NetworkNodesPageResponse, NetworkStats, RecentReorgResponse,
+    ReorgEventResponse, ScriptCatalogueResponse, ScriptFamilyResponse, ScriptLookupInfo,
+    ScriptLookupResponse, ScriptResponse, TokenResponse, TransactionDetailResponse,
+    TransactionLifecycleResponse, TransactionStatsPoint, TransactionStatsResponse,
 };
 use crate::galaxy_composition::{
     discover as discover_galaxy_composition, top_up as top_up_galaxy_composition, CandidateTail,
@@ -48,6 +48,7 @@ const CAPABILITIES: &[&str] = &[
     "transaction_horizon",
     "fork_watch",
     "network_atlas",
+    "network_roster",
     "peer_sighting",
     "chain_census",
     "script_registry",
@@ -67,6 +68,11 @@ const MAX_FORK_WATCH_WINDOW_SECONDS: u32 = 31 * 24 * 60 * 60;
 const MAX_PROTOCOL_ERAS: usize = 16;
 const MAX_PROTOCOL_LABEL_CHARS: usize = 64;
 const NETWORK_ATLAS_LIMIT: usize = 64;
+/// How many crawler-known nodes one roster may name. The scene stages every
+/// entry it is given, so this is a stage budget before it is a wire budget:
+/// it sits just above the inferred cloud's own population, which is what
+/// keeps replacing scatter with real identities GPU-neutral.
+const ROSTER_CAP: usize = 256;
 /// One page holds ckbadger's whole script catalogue (66 families as measured);
 /// the limit is here so a grown catalogue arrives truncated rather than paged.
 const SCRIPT_CATALOGUE_LIMIT: usize = 200;
@@ -99,6 +105,10 @@ fn hash_type_wire(hash_type: HashType) -> String {
     .to_string()
 }
 const MAX_NETWORK_LABEL_CHARS: usize = 96;
+/// A multiaddr is longer than a label: an ip6 address with a peer-id suffix
+/// already runs past a hundred characters, and truncating one would print an
+/// address that is not the node's.
+const MAX_NETWORK_ADDR_CHARS: usize = 192;
 const MAX_PEER_ID_HEX_CHARS: usize = 256;
 /// A CKB PeerId is a multihash — 34 base58 characters for the identity form,
 /// 46 for the sha256 one. The cap is far above both and exists so a hostile
@@ -251,6 +261,72 @@ impl CkbadgerEnrichmentSource {
             ));
         }
         Ok(anchor)
+    }
+
+    /// One crawler read: the latest round's summary, and one explicitly
+    /// bounded page of the nodes it knows. `None` is a source with no crawler
+    /// data to report — switched off, never run, or still in its first round
+    /// — and each caller turns that into whatever absence its own record
+    /// means.
+    ///
+    /// The atlas and the roster make this call separately, each with its own
+    /// bound, rather than sharing one page. The atlas's numbers are
+    /// statements about a 64-row identity-free sample, so widening that page
+    /// to fit the roster would quietly redefine every one of them; and two
+    /// records built from one fetch would fail together over a fault that
+    /// only belongs to one of them.
+    async fn read_crawler(
+        &self,
+        limit: usize,
+    ) -> anyhow::Result<Option<(NetworkCrawlerSummaryResponse, NetworkNodesPageResponse)>> {
+        let summary_url = self.endpoint("network/summary")?;
+        let response = self
+            .client
+            .get(summary_url)
+            .send()
+            .await
+            .context("fetch ckbadger network summary")?;
+        if response.status() == StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        if !response.status().is_success() {
+            return Err(anyhow!(
+                "ckbadger network summary returned HTTP {}",
+                response.status()
+            ));
+        }
+        let summary: NetworkCrawlerSummaryResponse = response
+            .json()
+            .await
+            .context("decode ckbadger network summary")?;
+        if !summary.enabled || !summary.has_data || summary.last_round.is_none() {
+            return Ok(None);
+        }
+
+        let mut nodes_url = self.endpoint("network/nodes")?;
+        nodes_url
+            .query_pairs_mut()
+            .append_pair("limit", &limit.to_string());
+        let response = self
+            .client
+            .get(nodes_url)
+            .send()
+            .await
+            .context("fetch ckbadger bounded network nodes")?;
+        if response.status() == StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        if !response.status().is_success() {
+            return Err(anyhow!(
+                "ckbadger bounded network nodes returned HTTP {}",
+                response.status()
+            ));
+        }
+        let nodes: NetworkNodesPageResponse = response
+            .json()
+            .await
+            .context("decode ckbadger bounded network nodes")?;
+        Ok(Some((summary, nodes)))
     }
 
     async fn transaction_lifecycle(&self, tx_hash: &str) -> Option<TransactionLifecycleResponse> {
@@ -1155,55 +1231,24 @@ impl EnrichmentSource for CkbadgerEnrichmentSource {
         context: &CanonicalContext,
     ) -> anyhow::Result<Option<NetworkAtlasRecord>> {
         let anchor = self.current_anchor(context)?;
-        let summary_url = self.endpoint("network/summary")?;
-        let response = self
-            .client
-            .get(summary_url)
-            .send()
-            .await
-            .context("fetch ckbadger network summary")?;
-        if response.status() == StatusCode::NOT_FOUND {
+        let Some((summary, nodes)) = self.read_crawler(NETWORK_ATLAS_LIMIT).await? else {
             return Ok(None);
-        }
-        if !response.status().is_success() {
-            return Err(anyhow!(
-                "ckbadger network summary returned HTTP {}",
-                response.status()
-            ));
-        }
-        let summary: NetworkCrawlerSummaryResponse = response
-            .json()
-            .await
-            .context("decode ckbadger network summary")?;
-        if !summary.enabled || !summary.has_data || summary.last_round.is_none() {
-            return Ok(None);
-        }
-
-        let mut nodes_url = self.endpoint("network/nodes")?;
-        nodes_url
-            .query_pairs_mut()
-            .append_pair("limit", &NETWORK_ATLAS_LIMIT.to_string());
-        let response = self
-            .client
-            .get(nodes_url)
-            .send()
-            .await
-            .context("fetch ckbadger bounded network nodes")?;
-        if response.status() == StatusCode::NOT_FOUND {
-            return Ok(None);
-        }
-        if !response.status().is_success() {
-            return Err(anyhow!(
-                "ckbadger bounded network nodes returned HTTP {}",
-                response.status()
-            ));
-        }
-        let nodes: NetworkNodesPageResponse = response
-            .json()
-            .await
-            .context("decode ckbadger bounded network nodes")?;
+        };
         let record = map_network_atlas(summary, nodes, anchor.clone())?;
         self.revalidate_anchor(&anchor, "network atlas").await?;
+        Ok(Some(record))
+    }
+
+    async fn enrich_network_roster(
+        &self,
+        context: &CanonicalContext,
+    ) -> anyhow::Result<Option<NetworkRosterRecord>> {
+        let anchor = self.current_anchor(context)?;
+        let Some((summary, nodes)) = self.read_crawler(ROSTER_CAP).await? else {
+            return Ok(None);
+        };
+        let record = map_network_roster(summary, nodes, anchor.clone())?;
+        self.revalidate_anchor(&anchor, "network roster").await?;
         Ok(Some(record))
     }
 
@@ -2030,6 +2075,76 @@ fn map_network_atlas(
     })
 }
 
+/// The atlas's twin, and the place their two disciplines part.
+///
+/// The atlas is a TALLY: one unreadable row poisons every count it feeds, so
+/// the whole record is refused. A roster is a SAMPLE — a list of nodes the
+/// scene may stage — so a row it cannot read honestly is simply not staged,
+/// and the nodes beside it still are. Nothing about a dropped row is ever
+/// guessed at, and no count here is derived from the rows that survived.
+fn map_network_roster(
+    summary: NetworkCrawlerSummaryResponse,
+    nodes: NetworkNodesPageResponse,
+    anchor: ChainAnchor,
+) -> anyhow::Result<NetworkRosterRecord> {
+    let round = summary
+        .last_round
+        .ok_or_else(|| anyhow!("ckbadger network summary omitted its last round"))?;
+    if !summary.enabled || !summary.has_data {
+        return Err(anyhow!("ckbadger network crawler has no usable data"));
+    }
+    wire_safe_u64(round.round_id, "network roundId")?;
+    if nodes.items.len() > ROSTER_CAP {
+        return Err(anyhow!(
+            "ckbadger network nodes exceeded the requested roster limit"
+        ));
+    }
+    // Upstream orders this page by last-seen, which is the one key that moves
+    // under a crawl: publishing it in that order would reshuffle the whole
+    // roster every round. Membership within the cap is upstream's recency
+    // call, but the order cknerv publishes is its own, and it is the id — a
+    // node's only fact that a crawl cannot change.
+    let mut entries: Vec<RosterNode> = Vec::with_capacity(nodes.items.len());
+    let mut staged = HashSet::new();
+    for node in nodes.items {
+        let Some(entry) = roster_node(node) else {
+            continue;
+        };
+        if !staged.insert(entry.node_id.clone()) {
+            continue;
+        }
+        entries.push(entry);
+    }
+    entries.sort_by(|left, right| left.node_id.cmp(&right.node_id));
+
+    Ok(NetworkRosterRecord {
+        source: "ckbadger".to_string(),
+        as_of: anchor,
+        updated_at_ms: now_ms(),
+        crawl_round: round.round_id,
+        truncated: nodes.next_cursor.is_some(),
+        entries,
+    })
+}
+
+/// One row turned into one stageable node, or `None` when it cannot be read
+/// as one. Every field is bounded here rather than at the record, because the
+/// answer to an unusable field is to leave this node out — never to invent a
+/// value for it, and never to lose the page over it.
+fn roster_node(node: NetworkNodeSummaryResponse) -> Option<RosterNode> {
+    validate_network_peer_id(&node.peer_id).ok()?;
+    Some(RosterNode {
+        node_id: peer_hex_to_id(&node.peer_id)?,
+        addr: bounded_network_text(&node.addr, MAX_NETWORK_ADDR_CHARS, "network node addr").ok()?,
+        version: bounded_network_label(&node.version, "network node version").ok()?,
+        country: bounded_network_label(&node.country, "network node country").ok()?,
+        asn: bounded_network_label(&node.asn, "network node asn").ok()?,
+        reachable: node.reachable,
+        last_seen_ms: sighting_clock_ms(node.last_seen, "network node lastSeen").ok()?,
+        rtt_ms: node.rtt_ms,
+    })
+}
+
 fn network_buckets(counts: BTreeMap<String, u32>) -> Vec<NetworkAtlasBucket> {
     let mut buckets: Vec<_> = counts
         .into_iter()
@@ -2045,11 +2160,18 @@ fn network_buckets(counts: BTreeMap<String, u32>) -> Vec<NetworkAtlasBucket> {
 }
 
 fn bounded_network_label(value: &str, field: &str) -> anyhow::Result<String> {
+    bounded_network_text(value, MAX_NETWORK_LABEL_CHARS, field)
+}
+
+/// Trimmed, length-bounded and control-free — and an empty answer becomes
+/// `"Unknown"`, because a crawler with no geolocation for a node is stating
+/// something rather than leaving a hole for a reader to fill in.
+fn bounded_network_text(value: &str, max_chars: usize, field: &str) -> anyhow::Result<String> {
     let label = value.trim();
     if label.is_empty() {
         return Ok("Unknown".to_string());
     }
-    if label.chars().count() > MAX_NETWORK_LABEL_CHARS || label.chars().any(char::is_control) {
+    if label.chars().count() > max_chars || label.chars().any(char::is_control) {
         return Err(anyhow!("ckbadger returned an invalid {field}"));
     }
     Ok(label.to_string())
@@ -2089,6 +2211,39 @@ fn peer_id_to_hex(node_id: &str) -> Option<String> {
         let _ = write!(hex, "{byte:02x}");
     }
     Some(hex)
+}
+
+/// The same join as [`peer_id_to_hex`], read the other way: the crawler keys
+/// its nodes by the multihash bytes, and everything downstream of here — the
+/// local node's peer list, a selection id, `/api/enrichment/peers/:node_id` —
+/// speaks base58. Converting at the boundary is what keeps ONE id vocabulary
+/// in the app instead of two that have to be reconciled per reader.
+///
+/// Bounded on both sides, so a page of ids allocates only the ids. `None` is
+/// an id that did not survive the trip — including one whose base58 form the
+/// peer lookup could not be keyed by — and the caller drops that row rather
+/// than staging a node under a name nothing else would answer to.
+fn peer_hex_to_id(peer_hex: &str) -> Option<String> {
+    if peer_hex.is_empty()
+        || peer_hex.len() > MAX_PEER_ID_HEX_CHARS
+        || !peer_hex.len().is_multiple_of(2)
+    {
+        return None;
+    }
+    let length = peer_hex.len() / 2;
+    let mut bytes = [0_u8; MAX_PEER_ID_HEX_CHARS / 2];
+    for (index, slot) in bytes[..length].iter_mut().enumerate() {
+        let pair = peer_hex.get(index * 2..index * 2 + 2)?;
+        if !pair.as_bytes().iter().all(u8::is_ascii_hexdigit) {
+            return None;
+        }
+        *slot = u8::from_str_radix(pair, 16).ok()?;
+    }
+    let mut encoded = [0_u8; MAX_PEER_ID_BASE58_CHARS];
+    let written = bs58::encode(&bytes[..length]).onto(&mut encoded[..]).ok()?;
+    std::str::from_utf8(&encoded[..written])
+        .ok()
+        .map(str::to_string)
 }
 
 fn map_peer_sighting(
@@ -3224,7 +3379,13 @@ mod tests {
             .route(
                 "/api/v1/network/nodes",
                 get(|axum::extract::Query(query): axum::extract::Query<HashMap<String, String>>| async move {
-                    assert_eq!(query.get("limit").map(String::as_str), Some("64"));
+                    // Both bounded readers land here, each with its own cap.
+                    // An unbounded page is the failure this asserts against.
+                    let limit = query.get("limit").map(String::as_str);
+                    assert!(
+                        limit == Some("64") || limit == Some("256"),
+                        "network nodes fetched with an unexpected bound: {limit:?}"
+                    );
                     Json(serde_json::json!({
                         "items": [
                             {
@@ -4302,6 +4463,33 @@ mod tests {
         assert_eq!(network_atlas.countries[0].count, 2);
         assert_eq!(network_atlas.versions[0].label, "0.119.0");
 
+        let network_roster = source
+            .enrich_network_roster(&context())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(network_roster.as_of.block, 100);
+        assert_eq!(network_roster.crawl_round, 7);
+        assert!(network_roster.truncated);
+        // The crawler's hex ids arrive as the base58 the rest of the app
+        // keys on, ordered by that id rather than by the page's recency.
+        assert_eq!(
+            network_roster
+                .entries
+                .iter()
+                .map(|entry| entry.node_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["DgUrnn4", "DgUrnn5", "DgUrnn6"]
+        );
+        assert_eq!(network_roster.entries[0].addr, "/ip4/127.0.0.1/tcp/8115");
+        assert_eq!(network_roster.entries[0].asn, "AS1 Example");
+        // Unix seconds upstream, milliseconds on the wire.
+        assert_eq!(network_roster.entries[0].last_seen_ms, 30_000);
+        assert_eq!(network_roster.entries[0].rtt_ms, Some(12));
+        // The dark half of the sample is carried, not filtered out.
+        assert!(!network_roster.entries[1].reachable);
+        assert_eq!(network_roster.entries[1].rtt_ms, None);
+
         let record = source
             .enrich_cell(
                 &OutPoint {
@@ -4583,6 +4771,172 @@ mod tests {
         assert!(atlas.is_none());
         assert_eq!(node_requests.load(Ordering::Relaxed), 0);
         server.abort();
+    }
+
+    #[tokio::test]
+    async fn disabled_crawler_returns_no_roster_without_fetching_nodes() {
+        let (api_base, server, node_requests) = spawn_disabled_crawler_api().await;
+        let source = CkbadgerEnrichmentSource::new(api_base).unwrap();
+        assert_eq!(
+            source.probe(&context()).await.status,
+            EnrichmentSourceState::Ready
+        );
+
+        let roster = source.enrich_network_roster(&context()).await.unwrap();
+
+        // No crawler is an ABSENT roster, which is what retires the sighted
+        // nodes already on stage. An empty one would say the opposite.
+        assert!(roster.is_none());
+        assert_eq!(node_requests.load(Ordering::Relaxed), 0);
+        server.abort();
+    }
+
+    fn crawler_summary(round_id: u64) -> NetworkCrawlerSummaryResponse {
+        NetworkCrawlerSummaryResponse {
+            enabled: true,
+            has_data: true,
+            last_round: Some(crate::dto::NetworkCrawlerRoundResponse {
+                round_id,
+                started: 1_700_000_000,
+                finished: 1_700_000_010,
+                dialed: 4,
+                reachable: 3,
+                unreachable: 1,
+                foreign_dropped: 0,
+                new_nodes: 1,
+                total_known: 9,
+                frontier_drained: true,
+            }),
+        }
+    }
+
+    fn crawler_row(peer_id: &str, last_seen: u64) -> NetworkNodeSummaryResponse {
+        NetworkNodeSummaryResponse {
+            peer_id: peer_id.to_string(),
+            addr: "/ip4/127.0.0.1/tcp/8115".to_string(),
+            version: "0.209.0".to_string(),
+            country: "SG".to_string(),
+            asn: "AS1 Example".to_string(),
+            reachable: true,
+            last_seen,
+            rtt_ms: Some(12),
+        }
+    }
+
+    fn roster_anchor() -> ChainAnchor {
+        ChainAnchor {
+            block: 100,
+            hash: "0xblock100".to_string(),
+        }
+    }
+
+    #[test]
+    fn a_roster_is_ordered_by_id_no_matter_how_the_page_arrived() {
+        // Upstream pages by last-seen, the one key a crawl round moves. A
+        // roster published in that order would reshuffle every round and
+        // teleport every node the scene had placed.
+        let nodes = NetworkNodesPageResponse {
+            items: vec![
+                crawler_row("7065657243", 30),
+                crawler_row("7065657241", 20),
+                crawler_row("7065657242", 10),
+            ],
+            next_cursor: None,
+        };
+
+        let roster = map_network_roster(crawler_summary(7), nodes, roster_anchor()).unwrap();
+
+        assert_eq!(
+            roster
+                .entries
+                .iter()
+                .map(|entry| entry.node_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["DgUrnn4", "DgUrnn5", "DgUrnn6"]
+        );
+        assert!(!roster.truncated);
+    }
+
+    #[test]
+    fn a_roster_drops_the_rows_it_cannot_stage_and_keeps_the_rest() {
+        let mut unnamed = crawler_row("7065657242", 20);
+        unnamed.country = String::new();
+        unnamed.asn = String::new();
+        unnamed.reachable = false;
+        let nodes = NetworkNodesPageResponse {
+            items: vec![
+                crawler_row("7065657241", 40),
+                // Not a peer id at all: skipped, never repaired into one.
+                crawler_row("not-hex", 35),
+                // The crawler's "never seen": no moment to stamp the row with.
+                crawler_row("7065657243", 0),
+                // The same node twice: it may only stand on stage once.
+                crawler_row("7065657241", 30),
+                unnamed,
+            ],
+            next_cursor: Some("7065657242".to_string()),
+        };
+
+        let roster = map_network_roster(crawler_summary(7), nodes, roster_anchor()).unwrap();
+
+        assert_eq!(
+            roster
+                .entries
+                .iter()
+                .map(|entry| entry.node_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["DgUrnn4", "DgUrnn5"]
+        );
+        // A crawler with no geolocation for a node says so; the row carries
+        // the word rather than an absent field.
+        assert_eq!(roster.entries[1].country, "Unknown");
+        assert_eq!(roster.entries[1].asn, "Unknown");
+        assert!(!roster.entries[1].reachable);
+        assert!(roster.truncated);
+    }
+
+    #[test]
+    fn a_round_that_found_nobody_is_an_empty_roster_and_still_a_report() {
+        let nodes = NetworkNodesPageResponse {
+            items: Vec::new(),
+            next_cursor: None,
+        };
+
+        let roster = map_network_roster(crawler_summary(11), nodes, roster_anchor()).unwrap();
+
+        assert_eq!(roster.crawl_round, 11);
+        assert!(roster.entries.is_empty());
+        assert!(!roster.truncated);
+    }
+
+    #[test]
+    fn a_page_larger_than_the_cap_is_refused_rather_than_trimmed() {
+        // Trimming would publish a roster whose membership is decided by an
+        // order this crate did not ask for.
+        let items = (0..=ROSTER_CAP)
+            .map(|index| crawler_row(&format!("1220{index:060x}"), 20))
+            .collect();
+        let nodes = NetworkNodesPageResponse {
+            items,
+            next_cursor: None,
+        };
+
+        let error = map_network_roster(crawler_summary(7), nodes, roster_anchor()).unwrap_err();
+
+        assert!(error.to_string().contains("roster limit"), "{error}");
+    }
+
+    #[test]
+    fn one_node_id_survives_the_round_trip_between_both_vocabularies() {
+        // A real mainnet id, so the pin is the shape the crawler actually
+        // keys by: 0x1220 + a 32-byte sha256 multihash.
+        let peer_hex = "122001287e5131d1a7176be5fdb14c21d717ff9cc9f8d1cf1028b64ea1ec35eb4deb";
+        let node_id = peer_hex_to_id(peer_hex).expect("hex is a peer id");
+
+        assert_eq!(node_id, "QmNRAvtC6L85hwp6vWnqaKonJw3dz1q39B4nXVQErzC4Hx");
+        assert_eq!(peer_id_to_hex(&node_id).as_deref(), Some(peer_hex));
+        assert_eq!(peer_hex_to_id("not-hex"), None);
+        assert_eq!(peer_hex_to_id(""), None);
     }
 
     #[tokio::test]

@@ -125,6 +125,12 @@ should additionally gain `network_atlas`. Its `sample_size` must be at most 64;
 country/version bucket totals must each equal that sample size; and no peer ID
 or address should appear. With the crawler disabled, `network_atlas` stays
 absent while all other configured enrichment capabilities continue normally.
+The same crawler also supplies `network_roster`, the atlas's twin and the only
+streamed record that names peers: at most 256 entries, each carrying a base58
+`node_id` the peer lookup can be keyed by, ordered by that id so one known set
+arrives as the same list round after round. `truncated` says the crawler knows
+more nodes than the roster names. A roster is published only when its
+`crawl_round` advances, and it clears with the crawler.
 The snapshot should also gain `galaxy_composition`. With the default 6,000
 visible budget and sufficient indexed candidates it contains 1,800 `dao`,
 2,400 `typed`, and 1,800 `plain` Cells. Every entry must carry a real outpoint,
@@ -268,12 +274,16 @@ With a local ckbadger service configured:
       24 hourly / 14 daily count buckets and no localized source labels
 - [ ] With ckbadger's crawler enabled, the semantics snapshot gains a
       `network_atlas` whose sample is at most 64 and contains no peer identities
+- [ ] It also gains a `network_roster` of at most 256 entries at the atlas's
+      round, every `node_id` base58 and the list ordered by it; a refresh at the
+      same `crawl_round` publishes no second roster delta
 - [ ] The semantics snapshot gains an anchored `script_registry` naming only the
       identities the cells projection's census reports, with `unresolved`
       counting the rest; `STAGE SAMPLE` then spells its lock/asset bars with
       those names instead of the four pinned families
-- [ ] With the crawler disabled, `network_atlas` remains absent while source
-      health, Cell detail, ecosystem, DAO, and activity enrichment still work
+- [ ] With the crawler disabled, `network_atlas` and `network_roster` both
+      remain absent while source health, Cell detail, ecosystem, DAO, and
+      activity enrichment still work
 - [ ] The semantics snapshot gains an anchored `galaxy_composition`; at the
       default visible budget its DAO:typed:plain lengths are 1800:2400:1800
 - [ ] The resting Cell points and passive fibres use that composition, while a

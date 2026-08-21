@@ -330,6 +330,13 @@ function reduceDelta(draft: SemanticsDraft, delta: SemanticsDelta): void {
     case 'network_atlas_clear':
       writable(draft).networkAtlas = null;
       return;
+    // The roster's cache slot arrives with the sighted tier that reads it.
+    // Its arms are listed here doing nothing so that the `never` binding
+    // below keeps meaning exactly what it claims — a variant nobody has
+    // considered — rather than catching one that simply has no reader yet.
+    case 'network_roster_replace':
+    case 'network_roster_clear':
+      return;
     case 'prune': {
       const value = writable(draft);
       value.cells = new Map(

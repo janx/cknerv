@@ -10,9 +10,9 @@ use async_trait::async_trait;
 use cknerv_core::{
     ActivityFeedRecord, AssetEcosystemRecord, CellSemanticRecord, ChainCensus, CompositionDemand,
     DaoStateRecord, EnrichmentSourceStatus, ForkWatchRecord, GalaxyCompositionCandidates,
-    GalaxyCompositionRecord, GalaxyCompositionTopUp, NetworkAtlasRecord, OutPoint,
-    PeerSightingAbsence, PeerSightingLookup, ProtocolEraRecord, RecentBlock, RecentTx, ScriptId,
-    ScriptRegistryRecord, TransactionHorizonRecord, TransactionSemanticRecord,
+    GalaxyCompositionRecord, GalaxyCompositionTopUp, NetworkAtlasRecord, NetworkRosterRecord,
+    OutPoint, PeerSightingAbsence, PeerSightingLookup, ProtocolEraRecord, RecentBlock, RecentTx,
+    ScriptId, ScriptRegistryRecord, TransactionHorizonRecord, TransactionSemanticRecord,
 };
 
 /// Bounded canonical evidence supplied to an enrichment source when it
@@ -150,6 +150,24 @@ pub trait EnrichmentSource: Send + Sync + 'static {
         &self,
         _context: &CanonicalContext,
     ) -> anyhow::Result<Option<NetworkAtlasRecord>> {
+        Ok(None)
+    }
+
+    /// Name a bounded sample of the nodes a crawler knows, so the scene can
+    /// stage real identities instead of anonymous scatter. The atlas's twin:
+    /// that one counts the whole known set and names nobody, this one names a
+    /// bounded few and counts nothing.
+    ///
+    /// Sources must answer from one explicitly limited page — a source that
+    /// would have to walk its whole node set to answer leaves this
+    /// unsupported. `Ok(None)` means the source has no crawler roster at all,
+    /// which is what retires the sighted nodes already on stage; a crawler
+    /// that finished a round knowing nobody answers with empty `entries`
+    /// instead, because that is a report rather than an absence.
+    async fn enrich_network_roster(
+        &self,
+        _context: &CanonicalContext,
+    ) -> anyhow::Result<Option<NetworkRosterRecord>> {
         Ok(None)
     }
 

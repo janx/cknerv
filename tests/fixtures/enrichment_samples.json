@@ -336,6 +336,47 @@
         }
       ]
     },
+    "network_roster": {
+      "source": "ckbadger",
+      "as_of": {
+        "block": 100,
+        "hash": "0xblock100"
+      },
+      "updated_at_ms": 1700000000011,
+      "crawl_round": 7,
+      "truncated": true,
+      "entries": [
+        {
+          "node_id": "QmQHmapDhRnzHqcAJQ5geABWdMVRaa6qah9gEdBEF7ejyL",
+          "addr": "/ip4/203.0.113.7/tcp/8115",
+          "version": "0.209.0 (d166e28 2026-07-29)",
+          "country": "DE",
+          "asn": "AS24940 Hetzner Online GmbH",
+          "reachable": true,
+          "last_seen_ms": 1699999940000,
+          "rtt_ms": 41
+        },
+        {
+          "node_id": "QmZwKtibfGWsRxgwkWSMNU5Z4Vq833nH1Lb7yUgggm5w18",
+          "addr": "/ip6/2001:db8::4/tcp/8114",
+          "version": "0.208.1",
+          "country": "SG",
+          "asn": "AS1 Example",
+          "reachable": false,
+          "last_seen_ms": 1699999100000
+        },
+        {
+          "node_id": "QmcgXBRjq5zHvGqSgT3MyY4gtGkBWfAP9JgoJxUu936fTs",
+          "addr": "Unknown",
+          "version": "Unknown",
+          "country": "Unknown",
+          "asn": "Unknown",
+          "reachable": true,
+          "last_seen_ms": 1699999800000,
+          "rtt_ms": 214
+        }
+      ]
+    },
     "script_registry": {
       "source": "ckbadger",
       "as_of": {
@@ -645,6 +686,67 @@
             "count": 1
           }
         ]
+      }
+    },
+    "network_roster_clear": {
+      "type": "network_roster_clear"
+    },
+    "network_roster_replace": {
+      "type": "network_roster_replace",
+      "network_roster": {
+        "source": "ckbadger",
+        "as_of": {
+          "block": 100,
+          "hash": "0xblock100"
+        },
+        "updated_at_ms": 1700000000011,
+        "crawl_round": 7,
+        "truncated": true,
+        "entries": [
+          {
+            "node_id": "QmQHmapDhRnzHqcAJQ5geABWdMVRaa6qah9gEdBEF7ejyL",
+            "addr": "/ip4/203.0.113.7/tcp/8115",
+            "version": "0.209.0 (d166e28 2026-07-29)",
+            "country": "DE",
+            "asn": "AS24940 Hetzner Online GmbH",
+            "reachable": true,
+            "last_seen_ms": 1699999940000,
+            "rtt_ms": 41
+          },
+          {
+            "node_id": "QmZwKtibfGWsRxgwkWSMNU5Z4Vq833nH1Lb7yUgggm5w18",
+            "addr": "/ip6/2001:db8::4/tcp/8114",
+            "version": "0.208.1",
+            "country": "SG",
+            "asn": "AS1 Example",
+            "reachable": false,
+            "last_seen_ms": 1699999100000
+          },
+          {
+            "node_id": "QmcgXBRjq5zHvGqSgT3MyY4gtGkBWfAP9JgoJxUu936fTs",
+            "addr": "Unknown",
+            "version": "Unknown",
+            "country": "Unknown",
+            "asn": "Unknown",
+            "reachable": true,
+            "last_seen_ms": 1699999800000,
+            "rtt_ms": 214
+          }
+        ]
+      }
+    },
+    "network_roster_replace_empty": {
+      "type": "network_roster_replace",
+      "network_roster": {
+        "source": "ckbadger",
+        "as_of": {
+          "block": 100,
+          "hash": "0xblock100"
+        },
+        "updated_at_ms": 1700000000011,
+        "crawl_round": 7,
+        "truncated": false,
+        "entries": []
       }
     },
     "protocol_era_replace": {
