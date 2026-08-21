@@ -152,7 +152,6 @@ export {
   type CellInspectionFacet,
 } from './components/hud/CellDetailPanel';
 export {
-  default as CellSemanticsReadout,
   formatSemanticAssetAmount,
   type CellSemanticsPhase,
 } from './components/hud/CellSemanticsReadout';

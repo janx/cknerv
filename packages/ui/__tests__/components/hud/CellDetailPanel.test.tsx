@@ -1,5 +1,6 @@
 import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
+import { DATA_HEX_TRUNCATION_MARKER } from '@cknerv/types';
 import type {
   Cell,
   CellLink,
@@ -136,7 +137,7 @@ describe('CellDetailPanel', () => {
     expect(container.textContent).not.toContain('SINCE #');
   });
 
-  it('renders separate readable satellites with the magnified Cell scan restored', () => {
+  it('renders one CKBYTES ANALYSIS window notched around the specimen square', () => {
     const { container } = render(<CellDetailPanel cell={base} onClose={() => {}} />);
     const t = container.textContent ?? '';
     expect(t).toContain('CELL');
@@ -155,31 +156,36 @@ describe('CellDetailPanel', () => {
     expect(t).not.toContain('knots');      // portrait joins stay visual-only
     expect(container.querySelector('[data-cell-detail-field="capacity"]')
       ?.textContent).toBe('CAPACITY123 CKB');
-    expect(t).toContain('CONSENSUS MEMORY');
-    expect(t).not.toContain('共识记忆');
-    // The plates count off in the peer probe's grammar — SCAN·04 only joins
-    // once the memory trace arms, and the old lone header stamp is gone.
+    // ONE merged window replaces CELL IDENTITY + CONSENSUS MEMORY.
+    expect(t).toContain('CKBYTES ANALYSIS');
+    expect(t).not.toContain('CELL IDENTITY');
+    expect(t).not.toContain('CONSENSUS MEMORY');
+    // Plate count-off: header SCAN·01, analysis SCAN·02; SCAN·03 belongs to
+    // the MEMORY TRACE window and only joins once a recall arms it.
     expect(t).toContain('SCAN·01');
     expect(t).toContain('SCAN·02');
-    expect(t).toContain('SCAN·03');
+    expect(t).not.toContain('SCAN·03');
     expect(t).not.toContain('SCAN·04');
-    expect(t).not.toContain('SCAN·06');
     expect(t).not.toContain('CELL CONTENT');
-    expect(t).not.toContain('细胞内容');
     expect(t).toContain('DIRECT NODE · RAW');
     expect(t).toContain('DEADBEEFCAFE1234567890');
     expect(t).not.toContain('WRITE OBSERVED');
+    expect(t).not.toContain('MEMORY TRACE');   // no observed origin write
     expect((container.firstElementChild as HTMLElement).style.animation)
       .toContain('cknerv-cell-consensus-enter');
     expect(container.querySelector('[data-cell-detail-scan-field="true"]')).not.toBeNull();
-    expect(container.querySelector('[data-cell-portrait-frame]')).not.toBeNull();
-    expect((container.querySelector('[data-cell-portrait-frame]') as HTMLElement).style.gridArea)
-      .toBe('portrait');
+    // The specimen square keeps its own window, overlaid at the analysis
+    // area's top-outer corner — nearest the inspected Cell.
+    const portrait = container.querySelector('[data-cell-portrait-frame]') as HTMLElement;
+    expect(portrait).not.toBeNull();
+    expect(portrait.style.gridArea).toBe('analysis');
+    expect(portrait.style.justifySelf).toBe('end');
+    expect(portrait.style.width).toBe('260px');
+    // One column; the analysis area spans the full card width.
     expect((container.firstElementChild as HTMLElement).style.gridTemplateColumns)
-      .toBe('minmax(0, 1fr) 260px');
-    // Peer-card rhythm: one 8px gap everywhere, so the card reads as a
-    // single flush rectangle instead of a staircase.
-    expect((container.firstElementChild as HTMLElement).style.columnGap).toBe('8px');
+      .toBe('minmax(0, 1fr)');
+    expect((container.firstElementChild as HTMLElement).style.gridTemplateAreas)
+      .toBe('"header" "analysis"');
     expect((container.firstElementChild as HTMLElement).style.rowGap).toBe('8px');
     expect(container.querySelector('[data-testid="cell-nucleus-portrait"]')).not.toBeNull();
     expect(container.querySelector('[data-cell-specimen-scan-light]')).not.toBeNull();
@@ -201,48 +207,103 @@ describe('CellDetailPanel', () => {
     expect(cellularBeam.style.transition).toContain('transform 80ms linear');
     expect(cellularBeam.style.transition).not.toContain('left 80ms linear');
     expect(container.querySelector('[aria-label="Interactive Cell scan"]')).not.toBeNull();
-    expect(container.querySelectorAll('[data-cell-inspection-satellite]')).toHaveLength(4);
-    // The zoom magnifier is gone — sizes are authored on the HUD_TYPE scale.
+    // identity / specimen / analysis — the trace satellite appends later.
+    expect(container.querySelectorAll('[data-cell-inspection-satellite]')).toHaveLength(3);
+    const analysis = container.querySelector(
+      '[data-cell-inspection-satellite="analysis"]',
+    ) as HTMLElement;
+    expect(analysis.getAttribute('data-cell-detail-module')).toBe('ckbytes');
+    expect(analysis.contains(cellularBeam)).toBe(true);
+    // The plate is clipped around the square's (260+8)² notch — it must never
+    // paint behind the transparent specimen viewport (the braid lives there).
+    expect(analysis.style.clipPath).toContain('polygon(0 0');
+    expect(analysis.style.clipPath).toContain('calc(100% - 268px) 268px');
+    expect(analysis.style.gridTemplateAreas).toBe('"register notch" "bytes bytes"');
+    expect(analysis.style.gridTemplateColumns).toBe('minmax(0, 1fr) 268px');
+    // The register row clears the notch even with short clusters.
+    expect(analysis.style.gridTemplateRows).toBe('minmax(256px, auto) auto');
+    // Identity-proof binding attributes live on the merged section now.
+    expect(analysis.getAttribute('data-memory-identity-binding')).toBe('true');
+    expect(analysis.getAttribute('data-memory-identity-phase')).toBe('collecting');
+    expect(analysis.getAttribute('data-memory-identity-count')).toBe('0');
+    expect(analysis.getAttribute('data-memory-identity-complete')).toBe('false');
+    // Retired vocabulary is gone.
+    expect(container.querySelector('[data-cell-detail-module="anatomy"]')).toBeNull();
+    expect(container.querySelector('[data-cell-detail-module="lineage"]')).toBeNull();
+    expect(container.querySelector('[data-cell-scan-shard]')).toBeNull();
+    expect(container.querySelector('[data-consensus-memory]')).toBeNull();
+    expect(container.querySelector('[data-consensus-memory-identity-grid]')).toBeNull();
     expect(container.querySelector('[data-cell-detail-readable-scale]')).toBeNull();
+    expect(container.querySelector('[role="tablist"]')).toBeNull();
     expect(t).toContain('CELL SCAN');
-    expect(t).toContain('CELL IDENTITY');
-    expect(t).not.toContain('细胞身份');
-    expect(t).not.toContain('SCAN LOCKED');
-    expect(t).not.toContain('INDEX LAYER');
     expect(t).toContain('DRAG TO ORBIT');
     expect(t).toContain('A-LATTICE');
-    expect(t).not.toContain('结构扫描');
-    expect(t).not.toContain('流光标本扫描');
-    expect(container.querySelector('[role="tablist"]')).toBeNull();
-    expect(container.querySelector('[data-cell-detail-module="anatomy"]')?.hasAttribute('hidden')).toBe(false);
-    expect(container.querySelector('[data-cell-detail-module="lineage"]')?.hasAttribute('hidden')).toBe(false);
-    expect((container.querySelector('[data-consensus-memory]') as HTMLElement).dataset.consensusMemoryDensity).toBe('spatial');
+    // Bare mode: no byte budget without a validated knowledge breakdown.
+    expect(container.querySelector('[data-cell-byte-budget]')).toBeNull();
+    // The bytes zone still carries the direct content memory.
+    const bytesZone = container.querySelector('[data-cell-analysis-bytes="true"]') as HTMLElement;
+    expect(bytesZone).not.toBeNull();
+    expect(analysis.contains(bytesZone)).toBe(true);
     const memoryContent = container.querySelector(
       '[data-cell-content-memory-mode="direct"]',
     ) as HTMLElement;
     expect(memoryContent).not.toBeNull();
+    expect(bytesZone.contains(memoryContent)).toBe(true);
     expect(memoryContent.getAttribute('aria-label')).toBe('Consensus memory content');
     expect(memoryContent.style.borderLeft).toBe('');
     expect(memoryContent.style.background).toBe('');
-    expect(container.querySelector('[data-consensus-memory-identity-grid]')).toBeNull();
     expect(container.querySelector('[data-cell-content-byte-origin="direct"]')).not.toBeNull();
     expect(container.querySelectorAll('[data-cell-content-byte]')).toHaveLength(11);
     expect((container.firstElementChild as HTMLElement).style.height).toBe('');
-    expect((container.querySelector('[data-cell-detail-module="lineage"]') as HTMLElement)
-      .style.height).toBe('');
-    expect((container.querySelector('[data-cell-scan-shard="lineage"]') as HTMLElement).style.overflow)
-      .toBe('visible');
-    expect(container.querySelector('[data-cell-detail-module="lineage"]')
-      ?.getAttribute('data-cell-detail-size')).toBe('content');
-    const bottomWidgets = container.querySelector('[data-cell-detail-bottom-widgets="true"]') as HTMLElement;
-    expect(bottomWidgets.style.gridArea).toBe('bottom');
-    expect(bottomWidgets.style.paddingTop).toBe('');
-    // Every bottom plate spans the card — one column, 8px rhythm, no
-    // side-by-side split and no per-plate width juggling.
-    expect(bottomWidgets.style.gridTemplateColumns).toBe('minmax(0, 1fr)');
-    expect(bottomWidgets.style.rowGap).toBe('8px');
-    expect((container.querySelector('[data-cell-detail-module="lineage"]') as HTMLElement)
-      .style.gridColumn).toBe('');
+    expect(analysis.style.height).toBe('');
+  });
+
+  it('re-homes the six facts as cluster leads in the register and bytes zones', () => {
+    const { container } = render(<CellDetailPanel cell={base} onClose={() => {}} />);
+    const register = container.querySelector('[data-cell-analysis-register="true"]') as HTMLElement;
+    const bytesZone = container.querySelector('[data-cell-analysis-bytes="true"]') as HTMLElement;
+    expect(register.contains(container.querySelector('[data-cell-detail-field="lock"]'))).toBe(true);
+    expect(register.contains(container.querySelector('[data-cell-detail-field="asset"]'))).toBe(true);
+    expect(register.contains(container.querySelector('[data-cell-detail-field="state"]'))).toBe(true);
+    expect(register.contains(container.querySelector('[data-cell-detail-field="born"]'))).toBe(true);
+    expect(bytesZone.contains(container.querySelector('[data-cell-detail-field="capacity"]'))).toBe(true);
+    expect(bytesZone.contains(container.querySelector('[data-cell-detail-field="data"]'))).toBe(true);
+    // LOCK and ASSET lead their clusters; STATE·COMMIT share a compact row.
+    expect(container.querySelector('[data-cell-cluster="lock"] [data-cell-detail-field="lock"]')).not.toBeNull();
+    expect(container.querySelector('[data-cell-cluster="type"] [data-cell-detail-field="asset"]')).not.toBeNull();
+    const consensusRow = container.querySelector('[data-cell-cluster="consensus"]') as HTMLElement;
+    expect(consensusRow.style.gridTemplateColumns).toBe('repeat(2, minmax(0, 1fr))');
+    expect(consensusRow.querySelector('[data-cell-detail-field="state"]')).not.toBeNull();
+    expect(consensusRow.querySelector('[data-cell-detail-field="born"]')).not.toBeNull();
+  });
+
+  it('lights the facts top-down through the merged layout, capacity no longer first', () => {
+    const performanceNow = vi.spyOn(performance, 'now').mockReturnValue(0);
+    const { container } = render(
+      <CellDetailPanel cell={base} onClose={() => {}} />,
+    );
+    const factState = (field: string) => container.querySelector(
+      `[data-cell-detail-field="${field}"]`,
+    )?.getAttribute('data-cell-detail-field-state');
+
+    // One landmark in: the LOCK lead lights first; CAPACITY (now deep in the
+    // bytes zone) stays dark even though it heads CONSENSUS_BRAID_FIELDS.
+    performanceNow.mockReturnValue(PROBE_STEP_S * 0.6 * 1000);
+    act(() => { vi.advanceTimersByTime(80); });
+    expect(factState('lock')).toBe('resolved');
+    expect(factState('asset')).toBe('scanning');
+    expect(factState('capacity')).toBe('scanning');
+    expect(container.textContent).toContain('A-LATTICE 1/6');
+
+    // Five landmarks in: everything except the DATA fact at the bottom.
+    performanceNow.mockReturnValue(PROBE_STEP_S * 4.6 * 1000);
+    act(() => { vi.advanceTimersByTime(80); });
+    expect(factState('state')).toBe('resolved');
+    expect(factState('born')).toBe('resolved');
+    expect(factState('capacity')).toBe('resolved');
+    expect(factState('data')).toBe('scanning');
+    expect(container.textContent).toContain('A-LATTICE 5/6');
+    performanceNow.mockRestore();
   });
 
   it('turns base taxonomy into useful Cell facts without visual parameters', () => {
@@ -274,8 +335,8 @@ describe('CellDetailPanel', () => {
   it('names a script the index knows and cknerv does not, instead of calling it custom', () => {
     // A JoyID cell: cknerv's own table cannot place either script, so on the
     // base path both rows would read UNLISTED. The index names both, and the
-    // LOCK row must agree with the INDEX LAYER's own LOCK SCRIPT line rather
-    // than telling the viewer two different things about one cell.
+    // LOCK fact must agree with the index's own record rather than telling
+    // the viewer two different things about one cell.
     const unplaceable = { ...base, lock_kind: 'other' as const, asset_kind: 'other' as const };
     const script = (name: string, codeHash: string) => ({
       script_hash: `0x${'cd'.repeat(32)}`,
@@ -319,6 +380,9 @@ describe('CellDetailPanel', () => {
     expect(text).toContain('JoyID');
     expect(text).toContain('.bit Income Cell');
     expect(text).not.toContain('UNLISTED');
+    // The evidence rows never repeat the fact button's headline name.
+    expect(container.querySelector('[data-cell-cluster-evidence="lock"]')
+      ?.textContent).not.toContain('JoyID');
   });
 
   it('threads only anchor- and seed-validated semantics into portrait geometry', () => {
@@ -398,7 +462,7 @@ describe('CellDetailPanel', () => {
       />,
     );
 
-    // The full-width memory plate reads with the wide 32-byte window.
+    // The full-width bytes zone reads with the wide 32-byte window.
     expect(container.querySelectorAll('[data-cell-content-byte]')).toHaveLength(32);
     expect(container.querySelector('[data-cell-content-byte="0"]')?.textContent)
       .toBe('00');
@@ -410,19 +474,20 @@ describe('CellDetailPanel', () => {
     expect(container.textContent).toContain('W 2/2');
   });
 
-  it('keeps scan and lineage in one direct reading field', () => {
+  it('keeps scan and memory in one merged analysis window', () => {
     const { container } = render(
       <CellDetailPanel cell={base} onClose={() => {}} />,
     );
 
     expect(container.querySelector('[role="tab"]')).toBeNull();
     expect(container.querySelector('[data-cellular-scan-state]')).not.toBeNull();
-    expect(container.querySelector('[data-cell-detail-module="anatomy"]')).not.toBeNull();
-    expect(container.querySelector('[data-cell-detail-module="lineage"]')).not.toBeNull();
+    expect(container.querySelector('[data-cell-detail-module="ckbytes"]')).not.toBeNull();
+    expect(container.querySelector('[data-cell-detail-module="anatomy"]')).toBeNull();
+    expect(container.querySelector('[data-cell-detail-module="lineage"]')).toBeNull();
     expect(container.querySelector('[data-cell-detail-module="context"]')).toBeNull();
   });
 
-  it('keeps the one flush block for a vertical fan, portrait column leading', () => {
+  it('mirrors the notch for a vertical fan, specimen column leading', () => {
     const { container } = render(
       <CellDetailPanel
         cell={base}
@@ -438,43 +503,39 @@ describe('CellDetailPanel', () => {
       />,
     );
     const root = container.firstElementChild as HTMLElement;
-    const scanWindow = container.querySelector(
-      '[data-cell-detail-module="anatomy"]',
+    const analysis = container.querySelector(
+      '[data-cell-inspection-satellite="analysis"]',
     ) as HTMLElement;
-    const memory = container.querySelector(
-      '[data-cell-detail-module="lineage"]',
+    const portrait = container.querySelector(
+      '[data-cell-portrait-frame]',
     ) as HTMLElement;
 
     expect(root.style.height).toBe('');
-    // An above/below fan gets the same block as the side fans — full-size
-    // portrait column, mirrored so the specimen sits nearest the Cell.
+    // An above/below fan mirrors the same merged window — the specimen square
+    // moves to the top-left corner, nearest the inspected Cell.
     expect(root.getAttribute('data-cell-detail-layout')).toBe('vertical');
-    expect(root.style.gridTemplateColumns).toBe('280px minmax(0, 1fr)');
-    expect(root.style.columnGap).toBe('8px');
-    expect(scanWindow.style.gridArea).toBe('anatomy');
-    expect(scanWindow.style.height).toBe('');
-    // The six facts keep the unified three-across grid in every fan.
-    expect((container.querySelector('[data-cell-detail-field="capacity"]')!
-      .parentElement as HTMLElement).style.gridTemplateColumns)
-      .toBe('repeat(3, minmax(0, 1fr))');
-    expect(memory.style.top).toBe('');
-    expect(memory.style.width).toBe('auto');
-    expect(memory.style.height).toBe('');
-    expect((container.querySelector('[data-cell-detail-bottom-widgets="true"]') as HTMLElement)
-      .style.paddingTop).toBe('');
-    expect(container.querySelector('[data-cell-semantics-placement="scan"]'))
+    expect(root.style.gridTemplateColumns).toBe('minmax(0, 1fr)');
+    expect(portrait.style.justifySelf).toBe('start');
+    expect(portrait.style.width).toBe('280px');
+    expect(analysis.style.gridTemplateAreas).toBe('"notch register" "bytes bytes"');
+    expect(analysis.style.gridTemplateColumns).toBe('288px minmax(0, 1fr)');
+    expect(analysis.style.clipPath).toContain('polygon(288px 0');
+    expect(analysis.style.clipPath).toContain('288px 288px');
+    expect(analysis.style.height).toBe('');
+    expect(container.querySelector('[data-cell-semantics-phase="loading"]'))
       .not.toBeNull();
     expect(container.querySelector('[data-cell-content-memory-mode="indexed"]'))
       .not.toBeNull();
     expect(container.textContent).toContain('INDEX ANALYSIS · RESOLVING');
     expect(container.textContent).toContain('RESOLVING INDEXED CONTENT ANALYSIS');
+    expect(container.textContent).toContain('RESOLVING SELECTED CELL…');
     expect(container.querySelector('[data-cell-detail-module="context"]'))
       .toBeNull();
     expect(container.querySelector('[data-cell-scan-drag-affordance]')
       ?.textContent).toBe('ORBIT ↔');
   });
 
-  it('adds indexed semantics only when the optional source is present', () => {
+  it('clusters indexed semantics by subject under their fact leads', () => {
     const indexedData = `0x7b2261223a317d${'00'.repeat(33)}`;
     const { container } = render(
       <CellDetailPanel
@@ -615,74 +676,78 @@ describe('CellDetailPanel', () => {
               attributes: [
                 { key: 'inputs', value: '2' },
                 { key: 'outputs', value: '3' },
-                { key: 'fee_rate', value: '1250', unit: 'shannons/kB' },
-                { key: 'size', value: '456', unit: 'bytes' },
-                { key: 'confirmations', value: '24' },
-                { key: 'inputs_capacity', value: '20000000000', unit: 'shannons' },
-                { key: 'outputs_capacity', value: '19999999000', unit: 'shannons' },
-                { key: 'inputs_common_knowledge', value: '122', unit: 'bytes' },
-                { key: 'outputs_common_knowledge', value: '128', unit: 'bytes' },
-              ],
-            },
-            {
-              namespace: 'ckb',
-              kind: 'transaction_lifecycle',
-              state: 'committed',
-              attributes: [
-                { key: 'proposed_block', value: '16204798' },
-                { key: 'committed_block', value: '16204800' },
-                { key: 'commitment_distance', value: '2', unit: 'blocks' },
-                { key: 'window_close', value: '2', unit: 'blocks' },
-                { key: 'window_far', value: '10', unit: 'blocks' },
               ],
             },
           ],
-          participants: [
-            {
-              address: 'ckt1aliceparticipant',
-              capacity_delta: '4999999000',
-              common_knowledge_delta: '6',
-              facets: [],
-            },
-            {
-              address: 'ckt1bobparticipant',
-              capacity_delta: '-20000000000',
-              facets: [],
-            },
-          ],
+          participants: [],
           fee: '1000',
           cycles: 12345,
         }}
       />,
     );
 
-    const readout = container.querySelector('[data-cell-semantics-phase="ready"]');
-    const scanWindow = container.querySelector('[data-cell-detail-module="anatomy"]');
-    const memory = container.querySelector('[data-consensus-memory]') as HTMLElement;
+    const analysis = container.querySelector(
+      '[data-cell-inspection-satellite="analysis"]',
+    ) as HTMLElement;
+    const root = container.firstElementChild as HTMLElement;
+    expect(root.style.width).toBe('808px');
+    expect(container.querySelectorAll('[data-cell-inspection-satellite]')).toHaveLength(3);
+    // Enhanced notch: (280+8)².
+    expect(analysis.style.clipPath).toContain('calc(100% - 288px) 288px');
+    expect(analysis.style.gridTemplateColumns).toBe('minmax(0, 1fr) 288px');
+
+    // LOCK cluster: fact lead + owner + script evidence, name never repeated.
+    const lockCluster = container.querySelector('[data-cell-cluster="lock"]') as HTMLElement;
+    expect(lockCluster.querySelector('[data-cell-detail-field="lock"]')?.textContent)
+      .toContain('Default Lock');
+    const lockEvidence = lockCluster.querySelector('[data-cell-cluster-evidence="lock"]') as HTMLElement;
+    expect(lockEvidence.querySelector('[data-cell-context-fact="owner"]')?.textContent)
+      .toContain('ckt1qyqindexe');
+    const lockScript = lockEvidence.querySelector('[data-cell-context-script="lock"]') as HTMLElement;
+    expect(lockScript.textContent).toContain('CODE·TYPE');
+    expect(lockScript.textContent).toContain('0x1234');
+    expect(lockScript.textContent).toContain('ACTIVE');
+    expect(lockScript.textContent).toContain('IDENTITY');
+    expect(lockEvidence.textContent).not.toContain('Default Lock');
+
+    // TYPE cluster: asset fact + decoded amount + identity + type evidence +
+    // DAO position.
+    const typeCluster = container.querySelector('[data-cell-cluster="type"]') as HTMLElement;
+    expect(typeCluster.querySelector('[data-cell-detail-field="asset"]')?.textContent)
+      .toContain('Legacy DAO Script');
+    const typeEvidence = typeCluster.querySelector('[data-cell-cluster-evidence="type"]') as HTMLElement;
+    expect(typeEvidence.querySelector('[data-cell-context-fact="amount"]')?.textContent)
+      .toContain('123.45 NTT');
+    expect(typeEvidence.querySelector('[data-cell-context-fact="asset"]')?.textContent)
+      .toContain('NTT · Nervos Test Token · xUDT');
+    const typeScript = typeEvidence.querySelector('[data-cell-context-script="type"]') as HTMLElement;
+    expect(typeScript.textContent).toContain('CODE·DATA1');
+    expect(typeScript.textContent).toContain('0xabcd');
+    expect(typeScript.textContent).toContain('DEPRECATED');
+    const dao = typeEvidence.querySelector('[data-cell-context-facet="ckb:dao"]') as HTMLElement;
+    expect(dao.textContent).toContain('DAO POSITION');
+    expect(dao.textContent).toContain('DEPOSIT');
+    expect(dao.textContent).toContain('1.25 CKB');
+    // Only the primary facet joins the cluster.
+    expect(analysis.textContent).not.toContain('DEP GROUP');
+    expect(analysis.textContent).not.toContain('CODE CELL');
+
+    // BYTES zone: capacity fact + byte budget fed by the record's knowledge.
+    const budget = container.querySelector('[data-cell-byte-budget]') as HTMLElement;
+    expect(budget).not.toBeNull();
+    expect(budget.getAttribute('data-byte-budget-total-bytes')).toBe('133');
+    expect(budget.textContent).toContain('133 B');
+    expect(budget.textContent).toContain('OCCUPIED');
+    expect(container.querySelector('[data-byte-budget-capacity="true"]')?.textContent)
+      .toBe('123 CKB');
+    expect(container.querySelector('[data-cell-cluster="capacity"]')
+      ?.contains(budget)).toBe(true);
+    // The old 3px KnowledgeBar is gone — never two byte bars.
+    expect(analysis.textContent).not.toContain('KNOWLEDGE');
+    expect(container.querySelectorAll('[data-byte-budget-composition="true"]')).toHaveLength(1);
+
+    // Content memory unchanged inside the DATA cluster.
     const contentMemory = container.querySelector('[data-cell-content-memory="true"]');
-    expect(readout).not.toBeNull();
-    expect(readout?.getAttribute('data-cell-semantics-density')).toBe('scan');
-    expect(readout?.getAttribute('data-cell-semantics-policy')).toBe('essential');
-    expect(readout?.getAttribute('data-cell-semantics-placement')).toBe('scan');
-    expect(readout?.querySelector('[data-cell-context-presentation="scan"]')).not.toBeNull();
-    expect(scanWindow?.contains(readout)).toBe(true);
-    expect((readout?.querySelector('[data-cell-context-facts]') as HTMLElement).style.gridTemplateColumns).toContain('1.35fr');
-    expect((readout?.querySelector('[data-cell-context-fact="owner"]') as HTMLElement).style.gridColumn).toBe('');
-    expect(readout?.querySelector('[data-cell-context-header="true"]')).toBeNull();
-    expect(readout?.querySelector('[data-cell-context-scripts="true"]')).not.toBeNull();
-    expect((readout?.querySelector('[data-cell-context-scripts="true"]') as HTMLElement).style.gridTemplateColumns).toContain('repeat(2');
-    expect(readout?.querySelector('[data-cell-context-script-evidence]')?.textContent)
-      .toContain('CODE·TYPE');
-    expect(readout?.querySelector('[data-transaction-semantics-summary]')).toBeNull();
-    expect(readout?.querySelector('[data-transaction-participants]')).toBeNull();
-    expect(container.querySelector('[data-cell-portrait-frame]')).not.toBeNull();
-    expect((container.firstElementChild as HTMLElement).style.gridTemplateColumns)
-      .toBe('minmax(0, 1fr) 280px');
-    expect(container.querySelectorAll('[data-cell-inspection-satellite]')).toHaveLength(4);
-    expect(memory.dataset.consensusMemoryDensity).toBe('spatial');
-    expect((container.firstElementChild as HTMLElement).style.height).toBe('');
-    expect((container.querySelector('[data-cell-detail-module="lineage"]') as HTMLElement)
-      .style.height).toBe('');
     expect(contentMemory?.getAttribute('data-cell-content-memory-mode')).toBe('indexed');
     expect(contentMemory?.getAttribute('data-cell-content-byte-origin')).toBe('indexed');
     expect(contentMemory?.getAttribute('data-cell-content-complete')).toBe('true');
@@ -709,38 +774,64 @@ describe('CellDetailPanel', () => {
     expect(contentMemory?.textContent).toContain('W 1/2');
     expect(contentMemory?.querySelector('[data-cell-content-byte="28"]')?.textContent)
       .toBe('00');
-    expect(container.querySelector('[data-cell-detail-module="context"]')).toBeNull();
-    expect(container.querySelector('[data-cell-detail-module="anatomy"]')?.hasAttribute('hidden')).toBe(false);
-    expect((scanWindow as HTMLElement).style.gridArea).toBe('anatomy');
-    expect((scanWindow as HTMLElement).style.height).toBe('');
-    expect(container.querySelector('[data-cell-detail-module="lineage"]')?.hasAttribute('hidden')).toBe(false);
-    expect((container.querySelector('[data-cell-detail-module="lineage"]') as HTMLElement).style.width).toBe('auto');
-    expect((container.firstElementChild as HTMLElement).style.background).toBe('');
-    expect(readout?.textContent).not.toContain('INDEX LAYER');
-    expect(readout?.textContent).not.toContain('CELL CONTEXT');
-    expect(readout?.textContent).not.toContain('INDEXED');
-    expect(readout?.textContent).not.toContain('IDX');
-    expect(readout?.textContent).not.toContain('CKBADGER');
-    expect(readout?.textContent).toContain('Default Lock');
-    expect(readout?.textContent).toContain('ACTIVE');
-    expect(readout?.textContent).toContain('0x1234');
-    expect(readout?.textContent).toContain('Legacy DAO Script');
-    expect(readout?.textContent).toContain('DEPRECATED');
-    expect(readout?.textContent).toContain('0xabcd');
-    expect(readout?.textContent).toContain('NTT · Nervos Test Token · xUDT');
-    expect(readout?.textContent).toContain('123.45 NTT');
-    expect(readout?.textContent).toContain('OCCUPIED133 B');
-    expect(readout?.textContent).toContain('DAO POSITION');
-    expect(readout?.textContent).toContain('DEPOSIT');
-    expect(readout?.textContent).toContain('1.25 CKB');
-    expect(readout?.textContent).not.toContain('DATA · JSON DOCUMENT');
-    expect(readout?.textContent).not.toContain('DEP GROUP');
-    expect(readout?.textContent).not.toContain('CODE CELL');
-    expect(readout?.textContent).not.toContain('ORIGIN TRANSACTION');
+
+    // Provenance footer: the enrichment PROOF anchor chip relocated here;
+    // CREATED stays collapsed while it just restates COMMIT.
+    const proofChip = container.querySelector('[data-cell-provenance-proof="true"]') as HTMLElement;
+    expect(proofChip.textContent).toContain('PROOF');
+    expect(proofChip.textContent).toContain('#16,204,800');
+    expect(proofChip.querySelector('[data-cell-context-fact="created"]')).toBeNull();
+
+    // Compact source strip survives without index-layer vocabulary.
+    const sourceStrip = container.querySelector('[data-cell-semantics-phase="ready"]') as HTMLElement;
+    expect(sourceStrip).not.toBeNull();
+    expect(sourceStrip.getAttribute('data-cell-semantics-source')).toBe('ready');
+    expect(sourceStrip.textContent).toContain('READY');
+    expect(sourceStrip.textContent).toContain('1 BLOCK LAG');
+    expect(analysis.textContent).not.toContain('INDEX LAYER');
+    expect(analysis.textContent).not.toContain('CELL CONTEXT');
+    expect(analysis.textContent).not.toContain('CKBADGER');
+    // Transaction-level semantics stay out of the merged window (they were
+    // suppressed in the scan dialect before the merge too).
+    expect(analysis.textContent).not.toContain('ORIGIN TRANSACTION');
+
     expect(container.textContent).toContain('SINCE #16,204,800');
     expect(Array.from(container.querySelectorAll('span')).filter(
       (span) => span.textContent === 'AGE',
     )).toHaveLength(0);
+  });
+
+  it('admits a truncated data window on the byte budget', () => {
+    vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener: () => {}, removeEventListener: () => {} }));
+    const { container } = render(
+      <CellDetailPanel
+        cell={{ ...base, data_hex: `0xdeadbeef${DATA_HEX_TRUNCATION_MARKER}` }}
+        onClose={() => {}}
+        semanticSource={{
+          source: 'ckbadger',
+          status: 'ready',
+          capabilities: ['cell_detail'],
+        }}
+        semanticPhase="ready"
+        semanticRecord={{
+          out_point: base.out_point,
+          source: 'ckbadger',
+          as_of: { block: base.birth_block, hash: '0xanchor' },
+          observed_at_block: base.birth_block,
+          updated_at_ms: 1,
+          common_knowledge: {
+            total_bytes: 120,
+            capacity_field_bytes: 8,
+            lock_script_bytes: 52,
+            type_script_bytes: 0,
+            data_bytes: 60,
+          },
+          facets: [],
+        }}
+      />,
+    );
+    expect(container.querySelector('[data-byte-budget-segment="data"]')
+      ?.getAttribute('data-byte-budget-segment-observed')).toBe('partial');
   });
 
   it('keeps enrichment on the probe timeline instead of lighting it early', () => {
@@ -771,30 +862,41 @@ describe('CellDetailPanel', () => {
             family: 'lock',
             deprecated: false,
           },
+          common_knowledge: {
+            total_bytes: 60,
+            capacity_field_bytes: 8,
+            lock_script_bytes: 52,
+            type_script_bytes: 0,
+            data_bytes: 0,
+          },
           facets: [],
         }}
         onClose={() => {}}
       />,
     );
 
-    const facts = () => container.querySelector('[data-cell-context-facts]') as HTMLElement;
-    const scripts = () => container.querySelector('[data-cell-context-scripts="true"]') as HTMLElement;
+    const owner = () => container.querySelector('[data-cell-context-fact="owner"]') as HTMLElement;
+    const scripts = () => container.querySelector('[data-cell-context-script="lock"]') as HTMLElement;
+    const budget = () => container.querySelector('[data-cell-byte-budget]') as HTMLElement;
     // While the lattice is still scanning, the deeper enrichment stays dark.
-    expect(facts().dataset.cellContextRevealStage).toBe('pending');
-    expect(facts().style.opacity).toBe('0');
+    expect(owner().style.opacity).toBe('0');
     expect(scripts().style.opacity).toBe('0');
-    // One step after the sixth landmark: context facts light, scripts wait.
+    expect(budget().getAttribute('data-byte-budget-reveal-state')).toBe('scanning');
+    // One step after the sixth landmark: context rows and the byte layout
+    // light (the budget bar is context, step 1); script evidence waits.
     performanceNow.mockReturnValue(PROBE_STEP_S * 6.6 * 1000);
     act(() => { vi.advanceTimersByTime(80); });
-    expect(facts().dataset.cellContextRevealStage).toBe('lit');
-    expect(facts().style.opacity).toBe('1');
+    expect(owner().style.opacity).toBe('1');
     expect(scripts().style.opacity).toBe('0');
+    expect(budget().getAttribute('data-byte-budget-reveal-state')).toBe('resolved');
     // Two steps after: the whole enrichment block is lit.
     performanceNow.mockReturnValue(PROBE_STEP_S * 7.7 * 1000);
     act(() => { vi.advanceTimersByTime(80); });
     expect(scripts().style.opacity).toBe('1');
-    // Unrevealed identity values stay dark mid-scan on a fresh mount.
-    performanceNow.mockReturnValue(0);
+    // The CREATED chip genuinely disagrees with COMMIT here, so it prints.
+    expect(container.querySelector('[data-cell-context-fact="created"]')
+      ?.textContent).toContain('#19,000,000');
+    performanceNow.mockRestore();
   });
 
   it('advances the scan beam without hiding any evidence module', () => {
@@ -803,22 +905,20 @@ describe('CellDetailPanel', () => {
       <CellDetailPanel cell={base} onClose={() => {}} />,
     );
 
-    expect(container.querySelector('[data-cellular-scan-progress]')
-      ?.getAttribute('data-cellular-scan-progress')).toBe('0');
-    const memory = container.querySelector('[data-consensus-memory]') as HTMLElement;
+    const analysis = container.querySelector(
+      '[data-cell-inspection-satellite="analysis"]',
+    ) as HTMLElement;
+    expect(analysis.getAttribute('data-cellular-scan-progress')).toBe('0');
+    expect(analysis.getAttribute('data-cellular-scan-state')).toBe('scanning');
     const content = container.querySelector('[data-cell-content-memory]') as HTMLElement;
-    expect(memory.dataset.consensusMemoryState).toBe('scanning');
-    expect(memory.dataset.consensusMemoryProgress).toBe('0');
     expect(content.dataset.cellContentRevealCount).toBe('0');
     expect(content.style.display).toBe('none');
     performanceNow.mockReturnValue(PROBE_STEP_S * 2.5 * 1000);
     act(() => {
       vi.advanceTimersByTime(80);
     });
-    expect(container.textContent).toContain('CELL IDENTITY');
-    expect(Number(container.querySelector('[data-cellular-scan-progress]')
-      ?.getAttribute('data-cellular-scan-progress'))).toBeGreaterThan(0);
-    expect(container.querySelector('[data-cell-detail-module="lineage"]')).not.toBeNull();
+    expect(container.textContent).toContain('CKBYTES ANALYSIS');
+    expect(Number(analysis.getAttribute('data-cellular-scan-progress'))).toBeGreaterThan(0);
     expect(Number(content.dataset.cellContentRevealCount)).toBeGreaterThan(0);
     expect(Number(content.dataset.cellContentRevealCount)).toBeLessThan(
       Number(content.dataset.cellContentRevealTotal),
@@ -828,12 +928,15 @@ describe('CellDetailPanel', () => {
       .style.display).not.toBe('none');
     expect((container.querySelector('[data-cell-content-reveal-item="ascii"]') as HTMLElement)
       .style.display).toBe('none');
+    // Mid-scan the causal lens is still resolving.
+    expect((container.querySelector('[data-consensus-memory-reveal="causal"]') as HTMLElement)
+      .style.display).toBe('none');
 
     performanceNow.mockReturnValue(PROBE_STEP_S * 6 * 1000);
     act(() => {
       vi.advanceTimersByTime(80);
     });
-    expect(memory.dataset.consensusMemoryState).toBe('locked');
+    expect(analysis.getAttribute('data-cellular-scan-state')).toBe('locked');
     expect(content.dataset.cellContentRevealState).toBe('resolved');
     const settledSpecimenScan = container.querySelector(
       '[data-cell-specimen-scan-light]',
@@ -854,7 +957,7 @@ describe('CellDetailPanel', () => {
     vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener: () => {}, removeEventListener: () => {} }));
     const { container } = render(<CellDetailPanel cell={base} onClose={() => {}} />);
     const t = container.textContent ?? '';
-    expect(t).toContain('CELL IDENTITY');
+    expect(t).toContain('CKBYTES ANALYSIS');
     expect(t).toContain('LOCKED · A-LATTICE 6/6');
     expect(t).not.toContain('1111111111111111 · 1111111111');
     expect(t).toContain('OMNI Lock');                              // decoded rows still present
@@ -900,7 +1003,7 @@ describe('CellDetailPanel', () => {
     expect(onIdentityProofRead).toHaveBeenCalledWith('content', base.id, true);
   });
 
-  it('keeps identity proof controls in Cell Scan instead of repeating them in memory', () => {
+  it('keeps identity proof controls on the facts instead of repeating them in memory rows', () => {
     vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener: () => {}, removeEventListener: () => {} }));
     const onInspectionFieldChange = vi.fn();
     const { container } = render(
@@ -911,9 +1014,8 @@ describe('CellDetailPanel', () => {
       />,
     );
 
-    const memory = container.querySelector('[data-consensus-memory]')!;
-    expect(memory.querySelector('[data-consensus-memory-identity-grid]')).toBeNull();
-    expect(memory.querySelector('[data-memory-identity-proof]')).toBeNull();
+    expect(container.querySelector('[data-consensus-memory-identity-grid]')).toBeNull();
+    expect(container.querySelector('[data-memory-identity-proof]')).toBeNull();
 
     fireEvent.click(container.querySelector('[data-cell-detail-field="data"]')!);
     expect(onInspectionFieldChange).toHaveBeenLastCalledWith('data');
@@ -1103,7 +1205,8 @@ describe('CellDetailPanel', () => {
     expect(trace?.getAttribute('data-trace-state')).toBe('active');
     expect(trace?.getAttribute('data-trace-stage')).toBe('reading');
     expect(container.querySelector('[data-cell-detail-module="trace"]')).not.toBeNull();
-    expect(container.textContent).toContain('SCAN·04');
+    expect(container.textContent).toContain('SCAN·03');
+    expect(container.textContent).not.toContain('SCAN·04');
     expect(container.querySelector('[data-cell-detail-module="context"]')).toBeNull();
     expect(container.querySelector('[data-memory-read-state="reading"]')).not.toBeNull();
     expect(container.querySelectorAll('[data-memory-evidence]')).toHaveLength(2);
@@ -1113,7 +1216,7 @@ describe('CellDetailPanel', () => {
     expect(container.querySelector('[data-memory-consumed-inputs]')).toBeNull();
   });
 
-  it('appends the armed memory trace below the lineage plate without reshuffling it', () => {
+  it('appends the armed memory trace below the analysis plate without reshuffling it', () => {
     vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener: () => {}, removeEventListener: () => {} }));
     const origin: CellLink = {
       seq: 18,
@@ -1134,15 +1237,12 @@ describe('CellDetailPanel', () => {
       onClose: () => {},
     };
     const { container, rerender } = render(<CellDetailPanel {...props} />);
-    const bottomWidgets = () => container.querySelector(
-      '[data-cell-detail-bottom-widgets="true"]',
+    const analysis = () => container.querySelector(
+      '[data-cell-inspection-satellite="analysis"]',
     ) as HTMLElement;
-    const lineage = () => container.querySelector(
-      '[data-cell-detail-module="lineage"]',
-    ) as HTMLElement;
-    const restingLineageStyle = lineage().style.cssText;
+    const restingAnalysisStyle = analysis().style.cssText;
     expect(container.querySelector('[data-cell-detail-module="trace"]')).toBeNull();
-    expect(container.textContent).not.toContain('SCAN·04');
+    expect(container.textContent).not.toContain('SCAN·03');
 
     rerender(
       <CellDetailPanel
@@ -1156,14 +1256,15 @@ describe('CellDetailPanel', () => {
       '[data-cell-detail-module="trace"]',
     ) as HTMLElement;
     expect(trace).not.toBeNull();
-    expect(container.textContent).toContain('SCAN·04');
-    // Arming appends a full-width row below the lineage plate — the column
-    // never splits and the lineage plate's geometry does not move.
-    expect(bottomWidgets().style.gridTemplateColumns).toBe('minmax(0, 1fr)');
-    expect(lineage().style.cssText).toBe(restingLineageStyle);
-    expect(lineage().style.gridColumn).toBe('');
-    expect(trace.style.gridColumn).toBe('');
-    expect(trace.previousElementSibling).toBe(lineage());
+    expect(container.textContent).toContain('SCAN·03');
+    // Arming appends a full-width row below the analysis plate — the column
+    // never splits and the analysis plate's geometry does not move.
+    expect((container.firstElementChild as HTMLElement).style.gridTemplateAreas)
+      .toBe('"header" "analysis" "bottom"');
+    expect(trace.style.gridArea).toBe('bottom');
+    expect(analysis().style.cssText).toBe(restingAnalysisStyle);
+    expect(trace.previousElementSibling).toBe(analysis());
+    expect(container.querySelectorAll('[data-cell-inspection-satellite]')).toHaveLength(4);
   });
 
   // The witness-carried case: the ledger lists the carriers, so the inputs the
