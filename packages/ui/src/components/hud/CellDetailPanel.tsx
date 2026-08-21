@@ -677,7 +677,9 @@ export default function CellDetailPanel({
         <span style={{ marginLeft: 'auto', color: live ? HUD_COLORS.nominal : HUD_COLORS.caution, fontSize: HUD_TYPE.section, letterSpacing: 0.9 }}>
           {live ? '● LIVE' : '◇ SPENT'} · {lifetime}
         </span>
-        <span style={{ position: 'absolute', top: 7, right: 30 }}>
+        {/* In-flow, not corner-stamped: an absolute stamp sat exactly where a
+          * long lifetime readout ends, and the two printed over each other. */}
+        <span style={{ whiteSpace: 'nowrap' }}>
           {moduleTag('SCAN·01')}
         </span>
         <CloseButton onClose={onClose} title="Close · ESC or click outside" />

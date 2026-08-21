@@ -646,6 +646,10 @@ function CkbNodeAnchor({
         position={[0, -2.72, 0]}
         center
         occlude={false}
+        // Bounded stack: drei's default range is in the millions, which put
+        // this label ABOVE the DOM inspection cards (layer z 40). Above the
+        // route/marker labels (6-8), below every floating card.
+        zIndexRange={[10, 0]}
         style={{ pointerEvents: 'none', userSelect: 'none' }}
       >
         <div

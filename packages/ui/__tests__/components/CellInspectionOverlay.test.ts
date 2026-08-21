@@ -47,10 +47,10 @@ const selected: Cell = {
 
 describe('cellInspectorPlacement', () => {
   it('places by the squared cell-card box until the card is measured', () => {
-    // 808 = 520px register + 8px seam + 280px specimen notch; 640 estimates
-    // the CKBYTES ANALYSIS card at open, before enrichment evidence fills in.
+    // 808 = 520px register + 8px seam + 280px specimen notch; 668 is the
+    // live-measured CKBYTES ANALYSIS card at open, enriched, before a trace.
     expect(createCellInspectionHandles().defaultSize)
-      .toEqual({ width: 808, height: 640 });
+      .toEqual({ width: 808, height: 668 });
   });
 
   it('opens beside the selected Cell when there is room', () => {

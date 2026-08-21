@@ -36,7 +36,7 @@ const DEFAULT_PANEL_WIDTH_PX = 808;
 // Estimated CKBYTES ANALYSIS card at open (header + notched analysis plate
 // before enrichment evidence fills in); the ResizeObserver corrects it on the
 // first measured frame.
-const DEFAULT_PANEL_HEIGHT_PX = 640;
+const DEFAULT_PANEL_HEIGHT_PX = 668;
 
 export type CellInspectorPlacementSide = SceneInspectorPlacementSide;
 export type CellInspectorPlacement = SceneInspectorPlacement;
