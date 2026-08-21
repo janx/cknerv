@@ -50,10 +50,7 @@ import ColonyEdges from './ColonyEdges';
 import ColonyCourierLayer from './ColonyCourierLayer';
 import BlockDeliveryLayer, { type BlockDeliveryPulse } from './BlockDeliveryLayer';
 import { consensusBlockColor } from '../derives/consensusFlow.derive';
-import {
-  CELL_INSPECTION_BACKGROUND_ENERGY,
-  dampCellInspectionFieldScale,
-} from '../nerve/cellInspectionField';
+import { dampCellInspectionFieldScale } from '../nerve/cellInspectionField';
 import {
   cellDetailPeerContextEnergy,
   cellDetailPeerLinkContextEnergy,
@@ -75,8 +72,6 @@ interface NetworkColonyProps {
   flashDirtyIdsRef?: CellFlashDirtyIdsRef;
   /** Local node version — drives measured version-mismatch coloring (violet). */
   localVersion: string;
-  /** A Cell inspection subdues only passive P2P context, never block traffic. */
-  cellInspectionActive?: boolean;
   /** Shared camera-distance focus. Optional keeps standalone scenes unchanged. */
   cellDetailViewFocusRef?: { readonly current: number };
   /** Optional overlay rendered inside the colony's group, so consumer layers
@@ -95,7 +90,6 @@ export default function NetworkColony({
   flashDirtyRef,
   flashDirtyIdsRef,
   localVersion,
-  cellInspectionActive = false,
   cellDetailViewFocusRef,
   overlay,
 }: NetworkColonyProps) {
@@ -109,33 +103,21 @@ export default function NetworkColony({
   const nodeContextEnergyRef = useRef(1);
   const linkContextEnergyRef = useRef(1);
   useFrame((_, deltaSeconds) => {
-    // Camera navigation is input, not simulation. In a close Cell view, passive
-    // P2P structure recedes while block surges/couriers retain full event energy.
-    // A peer-only selection keeps its own link context; simultaneous Cell
-    // inspection still gives the Cell field priority while the selected node's
-    // material remains independently legible.
-    const detailFocus = (
-      selectedId === null || cellInspectionActive
-    )
+    // Camera navigation is input, not simulation. When the camera closes on a
+    // Cell, passive P2P structure recedes while block surges/couriers retain
+    // full event energy. A peer selection keeps its own link context at full
+    // energy, so the inspected node's neighbourhood stays legible up close.
+    const detailFocus = selectedId === null
       ? cellDetailViewFocusRef?.current ?? 0
       : 0;
-    const inspectionContext = cellInspectionActive
-      ? CELL_INSPECTION_BACKGROUND_ENERGY
-      : 1;
     nodeContextEnergyRef.current = dampCellInspectionFieldScale(
       nodeContextEnergyRef.current,
-      Math.min(
-        cellDetailPeerContextEnergy(detailFocus),
-        inspectionContext,
-      ),
+      cellDetailPeerContextEnergy(detailFocus),
       deltaSeconds,
     );
     linkContextEnergyRef.current = dampCellInspectionFieldScale(
       linkContextEnergyRef.current,
-      Math.min(
-        cellDetailPeerLinkContextEnergy(detailFocus),
-        inspectionContext,
-      ),
+      cellDetailPeerLinkContextEnergy(detailFocus),
       deltaSeconds,
     );
   });

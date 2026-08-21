@@ -105,7 +105,7 @@ function isHudPanelId(id: string): id is HudPanelId {
   return (HUD_PANEL_IDS as readonly string[]).includes(id);
 }
 
-function HudOverlay({ chain, peers, localNode, cellsStats, cellPopulation, cellCount, cellCapacity, enrichmentSource, assetEcosystem, protocolEra, daoState, activityFeed, transactionHorizon, networkAtlas, scriptRegistry, cellInspectionActive = false, backfill, streamHealth, build, topBarActions, colonyCount }: {
+function HudOverlay({ chain, peers, localNode, cellsStats, cellPopulation, cellCount, cellCapacity, enrichmentSource, assetEcosystem, protocolEra, daoState, activityFeed, transactionHorizon, networkAtlas, scriptRegistry, backfill, streamHealth, build, topBarActions, colonyCount }: {
   chain: ChainEntry; peers: Peer[]; localNode: ChainNode | undefined; cellsStats: CellsStats;
   /** How much of the Cell set this dashboard has individualized, and at what
    *  scope. Omitted by a consumer that derives none; the panel is then absent
@@ -123,8 +123,6 @@ function HudOverlay({ chain, peers, localNode, cellsStats, cellPopulation, cellC
   activityFeed?: ActivityFeedRecord | null;
   transactionHorizon?: TransactionHorizonRecord | null;
   networkAtlas?: NetworkAtlasRecord | null;
-  /** Lets the scene scan become the visual focus without hiding telemetry. */
-  cellInspectionActive?: boolean;
   backfill?: ActiveReplayProgress | null;
   /** Browser transport health for the independent chain and cells streams.
    * Kept separate from node sync/IBD so a frozen dashboard cannot look
@@ -243,14 +241,9 @@ function HudOverlay({ chain, peers, localNode, cellsStats, cellPopulation, cellC
       ? STATUS_STRIP_HEIGHTS.compact
       : STATUS_STRIP_HEIGHTS.wide;
   const contentTop = topBarHeight + (streamInterrupted ? 42 : 12);
-  const ambientHudStyle: CSSProperties = {
-    opacity: cellInspectionActive ? 0.22 : 1,
-    filter: cellInspectionActive ? 'saturate(0.55) brightness(0.72)' : undefined,
-    transition: reduced ? undefined : 'opacity 180ms ease, filter 180ms ease',
-  };
   const railStyle: CSSProperties = narrowRail
-    ? { ...MESH_RAIL_STYLE, ...ambientHudStyle, top: contentTop, maxHeight: `calc(100vh - ${contentTop + 14}px)`, overflowX: 'hidden', overflowY: 'auto', pointerEvents: railScrolls ? 'auto' : 'none', scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,152,48,.35) transparent' }
-    : { ...MESH_RAIL_STYLE, ...ambientHudStyle, top: contentTop };
+    ? { ...MESH_RAIL_STYLE, top: contentTop, maxHeight: `calc(100vh - ${contentTop + 14}px)`, overflowX: 'hidden', overflowY: 'auto', pointerEvents: railScrolls ? 'auto' : 'none', scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,152,48,.35) transparent' }
+    : { ...MESH_RAIL_STYLE, top: contentTop };
 
   // Re-measure rail overflow on mode / selection change and each 1s tick (the
   // latter catches viewport resize within a second). setRailScrolls no-ops when
@@ -324,7 +317,7 @@ function HudOverlay({ chain, peers, localNode, cellsStats, cellPopulation, cellC
       || panelVisibility.pulse ? (
         <div
           data-hud-left-rail
-          style={{ ...LEFT_HUD_STYLE, ...ambientHudStyle, top: contentTop, maxWidth: 'calc(100vw - 28px)' }}
+          style={{ ...LEFT_HUD_STYLE, top: contentTop, maxWidth: 'calc(100vw - 28px)' }}
         >
           {chainPanelVisible || panelVisibility.stage || panelVisibility.render ? (
             <div

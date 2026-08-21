@@ -128,22 +128,21 @@ describe('HudOverlay', () => {
     expect(meshRail.style.bottom).toBe('');
   });
 
-  it('recedes ambient telemetry while a Cell scan owns scene focus', () => {
+  it('keeps every rail at full energy — scene inspection never dims the HUD', () => {
     const { container } = render(
       <HudOverlay
         chain={chain}
         peers={peers}
         localNode={localNode}
         cellsStats={cellsStats}
-        cellInspectionActive
       />,
     );
     const leftRail = container.querySelector('[data-hud-left-rail]') as HTMLElement;
     const meshRail = container.querySelector('.cknerv-mesh-rail') as HTMLElement;
-    expect(leftRail.style.opacity).toBe('0.22');
-    expect(meshRail.style.opacity).toBe('0.22');
-    expect(leftRail.style.filter).toBe('saturate(0.55) brightness(0.72)');
-    expect(meshRail.style.filter).toBe('saturate(0.55) brightness(0.72)');
+    expect(leftRail.style.opacity).toBe('');
+    expect(meshRail.style.opacity).toBe('');
+    expect(leftRail.style.filter).toBe('');
+    expect(meshRail.style.filter).toBe('');
   });
 
   it('controls each main panel independently from the top-bar menu', () => {

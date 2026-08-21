@@ -1421,7 +1421,6 @@ export default function App({
         networkAtlas={enrichmentConfig.enabled
           ? semanticsCache.networkAtlas
           : undefined}
-        cellInspectionActive={selectedCell !== null}
         backfill={cellsCache.backfill}
         streamHealth={hudStreamHealth}
         build={build}
@@ -1594,7 +1593,6 @@ export default function App({
             flashDirtyRef={flashDirtyRef}
             flashDirtyIdsRef={flashDirtyIdsRef}
             localVersion={localNode?.version ?? ''}
-            cellInspectionActive={selectedCell !== null}
             cellDetailViewFocusRef={cellDetailViewFocusRef}
             overlay={(
               <>

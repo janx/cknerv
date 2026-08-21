@@ -10,19 +10,21 @@ function materialSource(file: string): string {
   return readFileSync(resolve(process.cwd(), `src/materials/${file}`), 'utf8');
 }
 
-describe('NetworkColony Cell-inspection context', () => {
+describe('NetworkColony close-view context', () => {
   it('eases separate passive-context values for links and nodes', () => {
     const network = source('NetworkColony.tsx');
 
-    expect(network).toContain('cellInspectionActive?: boolean');
     expect(network).toContain('cellDetailViewFocusRef?:');
     expect(network).toContain('cellDetailPeerContextEnergy(');
     expect(network).toContain('cellDetailPeerLinkContextEnergy(');
     expect(network).toContain('useFrame((_, deltaSeconds) =>');
     expect(network).toContain('dampCellInspectionFieldScale(');
-    expect(network).toContain('CELL_INSPECTION_BACKGROUND_ENERGY');
     expect(network).toContain('contextEnergyRef={linkContextEnergyRef}');
     expect(network).toContain('contextEnergyRef={nodeContextEnergyRef}');
+    // Only camera proximity subdues the colony now — a Cell card being open
+    // is not itself a dimmer.
+    expect(network).not.toContain('cellInspectionActive');
+    expect(network).not.toContain('CELL_INSPECTION_BACKGROUND_ENERGY');
   });
 
   it('subdues ambient P2P fibres but preserves real block surges', () => {
@@ -41,7 +43,7 @@ describe('NetworkColony Cell-inspection context', () => {
     expect(edges).not.toContain('surge * uContextEnergy');
   });
 
-  it('keeps a separately selected peer legible inside Cell inspection', () => {
+  it('keeps a separately selected peer legible inside the close-view fade', () => {
     const nodes = source('ColonyNodes.tsx');
     const material = materialSource('peerNodeMaterial.ts');
 
@@ -64,11 +66,11 @@ describe('NetworkColony Cell-inspection context', () => {
     expect(nodes).toContain('contextEnergyRef={contextEnergyRef}');
   });
 
-  it('keeps peer-only inspection from inheriting the Cell close-view fade', () => {
+  it('keeps a peer selection from inheriting the Cell close-view fade', () => {
     const network = source('NetworkColony.tsx');
 
     expect(network).toContain(
-      'selectedId === null || cellInspectionActive',
+      'const detailFocus = selectedId === null',
     );
   });
 });

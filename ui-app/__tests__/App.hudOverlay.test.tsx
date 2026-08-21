@@ -64,9 +64,6 @@ describe('HudOverlay wiring', () => {
     expect(APP_SOURCE.match(
       /inspectionFieldRef=\{cellInspectionFieldRef\}/g,
     )).toHaveLength(2);
-    expect(APP_SOURCE).toContain(
-      'cellInspectionActive={selectedCell !== null}',
-    );
   });
 
   it('shares one camera-distance focus between Cell fabric and passive peers', () => {
@@ -113,9 +110,8 @@ describe('HudOverlay wiring', () => {
     expect(hudWiring).toBeDefined();
     expect(hudWiring).not.toContain('selectedCell=');
     expect(hudWiring).not.toContain('onClearCell=');
-    expect(hudWiring).toContain(
-      'cellInspectionActive={selectedCell !== null}',
-    );
+    // A Cell selection never reaches the HUD, not even as a dimmer flag.
+    expect(hudWiring).not.toContain('cellInspectionActive');
     // The scene half projects from inside the Galaxy overlay…
     expect(anchorWiring).toBeDefined();
     expect(anchorWiring).toContain('cell={selectedCell}');
