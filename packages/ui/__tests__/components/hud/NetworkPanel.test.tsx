@@ -8,9 +8,7 @@ afterEach(cleanup);
 const props = {
   summary: { peerCount: 47, outbound: 8, inbound: 39, version: '0.201.0', connections: 47, medianPingMs: 84, syncLabel: 'AT TIP', bestKnown: 16204887 },
   consensus: { atTip: 44, behind: 2, ahead: 1, unknown: 0, total: 47, aheadRatio: 0.021, maxAhead: 1 },
-  ping: { medianMs: 84, minMs: 12, maxMs: 210 },
-  vers: { majorityVersion: '0.201.0', majorityCount: 44, otherCount: 3, total: 47 },
-  syncRatio: 0.974,
+  syncRatio: 1,
 };
 
 const enrichmentSource: EnrichmentSourceStatus = {
@@ -40,22 +38,41 @@ const networkAtlas: NetworkAtlasRecord = {
 };
 
 describe('NetworkPanel', () => {
-  it('renders the full fleet telemetry', () => {
+  it('renders the measured fleet aggregate', () => {
     const { container } = render(<NetworkPanel {...props} />);
     const t = container.textContent ?? '';
     expect(t).toContain('PEER MESH');
     expect(t).toContain('节点场');
     expect(t).toContain('47');
-    expect(t).toContain('44 / 47');     // head consensus
-    expect(t).toContain('0.201.0');     // majority version
-    expect(t).toContain('×3 other');    // version spread
-    expect(t).toContain('84ms');        // ping median
-    expect(t).toContain('12');          // ping min
-    expect(container.querySelector('[data-network-detail-mode="local"]')).not.toBeNull();
-    expect(container.querySelectorAll('[data-network-detail-mode]')).toHaveLength(1);
+    expect(t).toContain('44 / 47');       // head consensus
+    expect(t).toContain('44 at-tip');
+    expect(t).toContain('#16,204,887');   // the height the legend is judged from
+    expect(container.querySelectorAll('[data-network-detail-mode]')).toHaveLength(0);
   });
 
-  it('extends complete local diagnostics into the indexed crawler scope', () => {
+  it('never repeats the per-peer telemetry the cards already carry', () => {
+    const expectNoLocalView = (container: HTMLElement) => {
+      const t = container.textContent ?? '';
+      expect(t).not.toContain('LOCAL NODE VIEW');
+      expect(t).not.toContain('Peer RTT');
+      expect(t).not.toContain('Ping');
+      expect(t).not.toContain('Client');
+      expect(t).not.toContain('0.201.0');  // majority client version — PEER/NODE card
+      expect(t).not.toContain('84ms');     // fleet ping median — PEER card
+      expect(container.querySelector('[data-network-local-context]')).toBeNull();
+      expect(container.querySelector('[data-network-detail-mode="local"]')).toBeNull();
+    };
+
+    // Gone in CKB-only mode…
+    expectNoLocalView(render(<NetworkPanel {...props} />).container);
+    cleanup();
+    // …and gone from the enriched scope rail it used to open.
+    expectNoLocalView(render(
+      <NetworkPanel {...props} enrichmentSource={enrichmentSource} networkAtlas={networkAtlas} />,
+    ).container);
+  });
+
+  it('keeps the atlas to network shape, not crawler operations', () => {
     const { getByLabelText, container } = render(
       <NetworkPanel
         {...props}
@@ -69,23 +86,26 @@ describe('NetworkPanel', () => {
     )).toBe('ready');
     const text = container.textContent ?? '';
     expect(text).toContain('NETWORK ATLAS');
-    expect(text).toContain('LATEST 3 NODE SAMPLE · BOUNDED');
-    expect(text).toContain('9 reachable / 12 dialed');
+    expect(text).toContain('ROUND 7 · AS OF #100');
+    expect(text).toContain('Known nodes');
+    expect(text).toContain('Median RTT');
+    expect(text).toContain('18ms');
+    // The sample denominator rides the strip it qualifies.
+    expect(text).toContain('SAMPLE COUNTRIES · 3 NODES · BOUNDED');
     expect(text).toContain('SG 2 · US 1');
-    // Direct-node detail remains available and is explicitly scoped as local.
-    expect(text).toContain('LOCAL NODE VIEW');
-    expect(text).toContain('0.201.0');
-    expect(text).toContain('×3 other');
-    expect(text).toContain('84ms');
-    expect(text).toContain('12–210');
+    expect(text).toContain('SAMPLE CLIENT VERSIONS');
+
+    expect(text).not.toContain('Last crawl');
+    expect(text).not.toContain('Latest sample');
+    expect(text).not.toContain('9 reachable / 12 dialed');
+    expect(text).not.toContain('LATEST 3 NODE SAMPLE');
+    expect(text).not.toContain('FRONTIER');
+    expect(text).not.toContain('NEW');
     expect(text).not.toContain('INDEXED');
     expect(text).not.toContain('CKBADGER');
-    expect(container.querySelector('[data-network-local-context]')).not.toBeNull();
-    expect(container.querySelector('[data-network-detail-mode="local"]')).toBeNull();
-    expect(container.querySelectorAll('[data-network-detail-mode]')).toHaveLength(1);
     expect(Array.from(container.querySelectorAll('[data-scope-stage]')).map(
       (stage) => stage.getAttribute('data-scope-stage'),
-    )).toEqual(['local-node', 'indexed-atlas']);
+    )).toEqual(['indexed-atlas']);
   });
 
   it('speaks measured network truth only — the scene colony is STAGE·07\'s', () => {
@@ -102,16 +122,34 @@ describe('NetworkPanel', () => {
     expect(text).not.toContain('inferred');
   });
 
-  it('keeps direct peer diagnostics without a usable atlas record', () => {
+  it('reports catch-up only while we are short of the best known head', () => {
+    const { container } = render(<NetworkPanel {...props} syncRatio={0.972} />);
+    expect(container.querySelector('[data-network-sync="catching-up"]')).not.toBeNull();
+    expect(container.textContent).toContain('Syncing');
+    expect(container.textContent).toContain('97.2% of #16,204,887');
+  });
+
+  it('hides the catch-up row at the tip', () => {
+    for (const syncRatio of [1, 0.999, 0.99999]) {
+      const { container } = render(<NetworkPanel {...props} syncRatio={syncRatio} />);
+      expect(container.querySelector('[data-network-sync]')).toBeNull();
+      expect(container.textContent).not.toContain('Syncing');
+      expect(container.textContent).not.toContain('Sync ratio');
+      cleanup();
+    }
+  });
+
+  it('adds nothing at all without a usable atlas record', () => {
     const { queryByLabelText, container } = render(
       <NetworkPanel {...props} enrichmentSource={enrichmentSource} />,
     );
     expect(queryByLabelText('Network atlas')).toBeNull();
-    expect(container.querySelector('[data-network-detail-mode="local"]')).not.toBeNull();
-    expect(container.textContent).toContain('0.201.0');
+    expect(container.querySelectorAll('[data-network-detail-mode]')).toHaveLength(0);
+    expect(container.querySelectorAll('[data-scope-stage]')).toHaveLength(0);
+    expect(container.textContent).toContain('Head consensus');
   });
 
-  it('dims stale atlas data without dimming direct-node diagnostics', () => {
+  it('dims a stale atlas stage', () => {
     const { container } = render(
       <NetworkPanel
         {...props}
@@ -120,7 +158,7 @@ describe('NetworkPanel', () => {
       />,
     );
 
-    expect((container.querySelector('[data-scope-stage="local-node"]') as HTMLElement).style.opacity).toBe('');
+    expect(container.textContent).toContain('STALE');
     expect((container.querySelector('[data-scope-stage="indexed-atlas"]') as HTMLElement).style.opacity).toBe('0.68');
   });
 });

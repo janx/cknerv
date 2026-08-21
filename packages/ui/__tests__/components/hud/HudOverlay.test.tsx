@@ -204,6 +204,29 @@ describe('HudOverlay', () => {
       .toContain('~277 nodes · inferred');
   });
 
+  it('leaves per-peer telemetry to the cards and shows catch-up only off-tip', () => {
+    const { container } = render(
+      <HudOverlay chain={chain} peers={peers} localNode={localNode} cellsStats={cellsStats} />,
+    );
+    const mesh = container.querySelector('[data-hud-panel="peers"]') as HTMLElement;
+    expect(mesh.textContent).not.toContain('LOCAL NODE VIEW');
+    expect(mesh.textContent).not.toContain('84ms');   // the one peer's RTT
+    expect(mesh.textContent).not.toContain('0.201.0');
+    expect(mesh.textContent).not.toContain('Syncing'); // tip === best known
+    cleanup();
+
+    const { container: behind } = render(
+      <HudOverlay
+        chain={{ ...chain, tip: chain.best_known_block - 400_000 }}
+        peers={peers}
+        localNode={localNode}
+        cellsStats={cellsStats}
+      />,
+    );
+    expect((behind.querySelector('[data-hud-panel="peers"]') as HTMLElement).textContent)
+      .toContain('97.5% of #16,204,887');
+  });
+
   it('places a validated DAO panel immediately to the right of CKB·01', () => {
     const { container, getByRole } = render(
       <HudOverlay

@@ -498,17 +498,18 @@ The adapter validates the counters and newest-first sample, then reduces it to
 country and version buckets, reachable count, and median RTT. Peer IDs and
 addresses never enter the shared wire contract.
 
-`PEER MESH` always keeps the local CKB node's directly measured peer count,
-head consensus, and sync ratio as primary truth. Its detail slot shows local
-version, ping, and inferred-colony diagnostics in CKB-only mode. A valid atlas
-record turns that slot into a **LOCAL NODE VIEW → NETWORK ATLAS** scope rail.
-All direct-node diagnostics remain visible, while the network-wide stage adds
-known-node, crawl, RTT, country, and client-version context with explicit
-`LATEST N SAMPLE` and `BOUNDED` labels. This is one progressive information flow
-rather than two adjacent network panels, and it creates no scene nodes or edges.
-The standalone base detail returns when the crawler is unconfigured, empty,
-disabled, or canonically unusable. Staleness dims only the network-wide stage
-after three missed minute refreshes.
+`PEER MESH` always keeps the local CKB node's directly measured peer count and
+head consensus as primary truth, plus a catch-up row that appears only while our
+own tip trails the best known head. Per-peer client version and RTT belong to
+the floating PEER and NODE cards, never to this rail. A valid atlas record
+appends one **NETWORK ATLAS** stage carrying known-node count, median RTT, and
+country and client-version strips whose labels state the sample size and
+`BOUNDED` when the crawl sample was capped; crawler run counters stay in
+ckbadger's own operational view. Enrichment is strictly additive: when the
+crawler is unconfigured, empty, disabled, or canonically unusable the stage is
+simply absent and the panel is its measured rows alone. It creates no scene
+nodes or edges, and staleness dims only the atlas stage after three missed
+minute refreshes.
 
 ### Peer Sighting
 

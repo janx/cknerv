@@ -17,27 +17,3 @@ export function fleetConsensus(peers: Peer[], tip: number, tolerance = 1): Fleet
   const total = peers.length;
   return { atTip, behind, ahead, unknown, total, aheadRatio: total ? ahead / total : 0, maxAhead };
 }
-
-export interface PingStats { medianMs: number; minMs: number; maxMs: number; }
-
-export function pingStats(peers: Peer[]): PingStats | null {
-  const xs = peers
-    .map((p) => p.latency_ms)
-    .filter((v): v is number => typeof v === 'number' && Number.isFinite(v))
-    .sort((a, b) => a - b);
-  if (xs.length === 0) return null;
-  const mid = Math.floor(xs.length / 2);
-  const median = xs.length % 2 ? xs[mid] : (xs[mid - 1] + xs[mid]) / 2;
-  return { medianMs: Math.round(median), minMs: xs[0], maxMs: xs[xs.length - 1] };
-}
-
-export interface VersionSpread { majorityVersion: string; majorityCount: number; otherCount: number; total: number; }
-
-export function versionSpread(peers: Peer[]): VersionSpread {
-  const counts = new Map<string, number>();
-  for (const p of peers) if (p.version) counts.set(p.version, (counts.get(p.version) ?? 0) + 1);
-  let majorityVersion = '', majorityCount = 0;
-  for (const [v, c] of counts) if (c > majorityCount) { majorityVersion = v; majorityCount = c; }
-  const total = peers.length;
-  return { majorityVersion, majorityCount, otherCount: total - majorityCount, total };
-}

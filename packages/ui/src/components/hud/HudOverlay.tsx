@@ -15,7 +15,7 @@ import type {
 } from '@cknerv/types';
 import type { ActiveReplayProgress } from '@cknerv/cache';
 import { summarizeNetwork } from '../../derives/peers.derive';
-import { fleetConsensus, pingStats, versionSpread } from '../../derives/fleetTelemetry';
+import { fleetConsensus } from '../../derives/fleetTelemetry';
 import { ecgCondition, expectedBlockMs, windowMeanMs, ECG_WINDOW, type EcgCondition } from '../../derives/ecgCondition';
 import { alertLevel } from '../../derives/alertLevel';
 import type { CellsStats } from '../../derives/cellsStats.derive';
@@ -264,7 +264,7 @@ function HudOverlay({ chain, peers, localNode, cellsStats, cellPopulation, cellC
   const prevReorgs = useRef(chain.reorgs);
   const reorgDepth = Math.max(0, chain.reorgs - prevReorgs.current);
 
-  // These four walk `peers` (with allocations/sorts); the 1 Hz uptime tick
+  // Both walk `peers` (with allocations/sorts); the 1 Hz uptime tick
   // re-renders this component with unchanged data, so key them on their
   // actual inputs instead of recomputing per render.
   const summary = useMemo(
@@ -275,8 +275,6 @@ function HudOverlay({ chain, peers, localNode, cellsStats, cellPopulation, cellC
     () => fleetConsensus(peers, chain.tip),
     [peers, chain.tip],
   );
-  const ping = useMemo(() => pingStats(peers), [peers]);
-  const vers = useMemo(() => versionSpread(peers), [peers]);
   const targetMs = expectedBlockMs(chain.epoch.length);
   // clamp >=0: last_block_ts_ms is fresh receive time but `now` only re-ticks once
   // a second, so right after a block `now - last` is briefly negative (negative hero).
@@ -442,7 +440,7 @@ function HudOverlay({ chain, peers, localNode, cellsStats, cellPopulation, cellC
           ) : null}
           {panelVisibility.peers ? (
             <div data-hud-panel="peers">
-              <NetworkPanel summary={summary} consensus={consensus} ping={ping} vers={vers} syncRatio={syncRatio} enrichmentSource={enrichmentSource} networkAtlas={networkAtlas} style={PANEL_FLOW} />
+              <NetworkPanel summary={summary} consensus={consensus} syncRatio={syncRatio} enrichmentSource={enrichmentSource} networkAtlas={networkAtlas} style={PANEL_FLOW} />
             </div>
           ) : null}
         </div>
