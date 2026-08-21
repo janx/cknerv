@@ -369,17 +369,20 @@ once every 30 seconds after a usable source probe. The semantics stream carries
 exact capacities normalized to shannons, whole-byte knowledge size,
 basis-point category shares, and a bounded list of top indexed assets.
 
-`COMMON KNOWLEDGE BASE` owns one capacity-detail slot beneath its canonical
+`COMMON KNOWLEDGE BASE` owns one capacity section beneath its canonical
 chain rows; `CELL MESH` remains focused on Cell metabolism and lifecycle
-counts. In CKB-only mode the capacity slot shows **GALAXY WINDOW** with retained
-capacity plus the retained asset/lock taxonomy. A valid ckbadger record upgrades
-that slot into one scoped hierarchy: **CHAIN CAPACITY** gives the whole-chain
-overview, then **GALAXY WINDOW** nests every base retained datum beneath it. This
-keeps the enhanced view a semantic superset without presenting two independent
-capacity panels. Indexed totals are never extrapolated from the retained Cell
-reservoir. Only the whole-chain scope dims when the source is stale or its own
-refresh is more than 90 seconds old; direct-node Galaxy data remains at full
-strength. Until the source and anchor are usable, the standalone base view
+counts. The section holds two parallel scope blocks on one rail, each with a
+single vocabulary: **CHAIN CAPACITY** carries everything true of the whole
+chain — indexed capacity, knowledge bytes, the validated live-Cell census,
+category shares, top assets — under one stated anchor, while **STAGE CAPACITY**
+carries everything true of this dashboard's local slice — retained capacity,
+the rendered→retained→observed population funnel, the stage asset/lock
+taxonomy, the stage-versus-chain composition disclosure, and the medium
+legend. In CKB-only mode the chain block is simply absent; the stage block
+never wears the chain's header. Indexed totals are never extrapolated from
+the retained Cell reservoir. Only whole-chain context dims when the source is
+stale or its own refresh is more than 90 seconds old; direct-node stage data
+remains at full strength. Until the source and anchor are usable, the standalone base view
 remains visible. Both capacity scopes share the canonical CKB label/value
 columns; their hierarchy rail sits outside those columns instead of indenting
 the data differently from the rows above and below.
@@ -566,8 +569,8 @@ identities the index had no name for. They are counted rather than listed: the
 panel already holds those code hashes from the cells projection's census, so the
 record only has to say that asking produced nothing.
 
-`GALAXY WINDOW` joins the two planes in the browser on `(code_hash, hash_type)`
-and renders the real families in **WINDOW ASSETS** and **WINDOW LOCKS** in place
+`STAGE CAPACITY` joins the two planes in the browser on `(code_hash, hash_type)`
+and renders the real families in **STAGE ASSETS** and **STAGE LOCKS** in place
 of the four lock and five asset families cknerv pins itself — never beside them.
 Without a census at all, from a backend predating it or a galaxy restored from
 older state, the pinned families remain rather than an empty panel. A family

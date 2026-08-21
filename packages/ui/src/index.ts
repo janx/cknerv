@@ -158,14 +158,13 @@ export {
   formatSemanticAssetAmount,
   type CellSemanticsPhase,
 } from './components/hud/CellSemanticsReadout';
-export { default as AssetEcosystemReadout } from './components/hud/AssetEcosystemReadout';
 export { default as DaoStateReadout } from './components/hud/DaoStateReadout';
 export { default as DaoStatePanel } from './components/hud/DaoStatePanel';
 export { default as ProtocolEraBadge } from './components/hud/ProtocolEraBadge';
 export { default as ActivityFeedReadout } from './components/hud/ActivityFeedReadout';
 export { default as TransactionHorizonReadout } from './components/hud/TransactionHorizonReadout';
 export { default as NetworkAtlasReadout } from './components/hud/NetworkAtlasReadout';
-export { default as CellPopulationReadout } from './components/hud/CellPopulationReadout';
+export { default as StageCapacityReadout } from './components/hud/StageCapacityReadout';
 export { useReducedMotion } from './components/hud/useReducedMotion';
 export * from './components/hud/cellPopulation.presentation';
 export type {

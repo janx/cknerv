@@ -1,130 +1,161 @@
 import type {
   AssetEcosystemRecord,
+  ChainCensus,
   EnrichmentSourceStatus,
-  ScriptRegistryRecord,
 } from '@cknerv/types';
-import type { CellsStats } from '../../derives/cellsStats.derive';
 import {
-  assetFamilyBuckets,
-  hasScriptCensus,
-  lockFamilyBuckets,
-} from '../../derives/scriptFamilies.derive';
-import { ASSET_COLORS, LOCK_COLORS } from './cellFormat';
-import AssetEcosystemReadout from './AssetEcosystemReadout';
-import { HUD_COLORS, HUD_FONTS } from './hudTheme';
+  assetEcosystemVisualState,
+  deriveAssetEcosystemBuckets,
+} from '../../derives/assetEcosystem.derive';
+import { HUD_COLORS, HUD_FONTS, rgba } from './hudTheme';
 import { ScopeStage, StatRow } from './primitives';
+import { chainLiveRow } from './cellPopulation.presentation';
 
-const fmt = (n: number) => n.toLocaleString('en-US');
+const CATEGORY_LABELS: Record<string, string> = {
+  dao: 'DAO',
+  tokens: 'TOKENS',
+  objects: 'OBJECTS',
+  other: 'OTHER',
+};
 
-function formatStateBytes(shannons: number): string {
-  const bytes = shannons / 1e8; // 1 CKByte of capacity = 1 byte of on-chain state
-  if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(2)} GB`;
-  if (bytes >= 1e6) return `${(bytes / 1e6).toFixed(1)} MB`;
-  if (bytes >= 1e3) return `${(bytes / 1e3).toFixed(1)} KB`;
-  return `${Math.round(bytes)} B`;
+function formatCapacity(shannons: string): string {
+  try {
+    const amount = BigInt(shannons);
+    const whole = amount / 100_000_000n;
+    const hundredths = (amount % 100_000_000n) / 1_000_000n;
+    return `${whole.toLocaleString('en-US')}${
+      hundredths === 0n ? '' : `.${hundredths.toString().padStart(2, '0')}`
+    } CKB`;
+  } catch {
+    return `${shannons} sh`;
+  }
 }
 
-type Bucket = { key: string; label: string; color: string; count: number };
-
-/** Mainnet is 99% one lock family, so every other family rounds to zero and a
- *  bar naming 120 real cells would read "JoyID 0%" — present in the legend and
- *  claiming to be absent. A bucket that exists says so. */
-function share(count: number, total: number): string {
-  const pct = (count / total) * 100;
-  return pct < 0.5 ? '<1%' : `${Math.round(pct)}%`;
+function formatBytes(bytes: number): string {
+  if (!Number.isSafeInteger(bytes) || bytes < 0) return `${bytes} B`;
+  if (bytes >= 1_000_000_000) return `${(bytes / 1_000_000_000).toFixed(2)} GB`;
+  if (bytes >= 1_000_000) return `${(bytes / 1_000_000).toFixed(1)} MB`;
+  if (bytes >= 1_000) return `${(bytes / 1_000).toFixed(1)} KB`;
+  return `${bytes} B`;
 }
 
-function TaxonomyBar({ title, buckets }: { title: string; buckets: Bucket[] }) {
-  const total = buckets.reduce((sum, bucket) => sum + bucket.count, 0);
-  if (total <= 0) return null;
-  const nonZero = buckets.filter((bucket) => bucket.count > 0);
-  return (
-    <div style={{ marginTop: 7 }}>
-      <div style={{ fontFamily: HUD_FONTS.tech, fontSize: 7.5, letterSpacing: 1.5, color: '#6b7f8e', textTransform: 'uppercase', marginBottom: 4 }}>
-        {title}
-      </div>
-      <div style={{ display: 'flex', height: 6, border: '1px solid rgba(255,152,48,.2)', background: '#0a0a0a' }}>
-        {buckets.map((bucket) => bucket.count > 0 ? (
-          <span
-            key={bucket.key}
-            style={{ width: `${(bucket.count / total) * 100}%`, background: bucket.color }}
-          />
-        ) : null)}
-      </div>
-      <div style={{ fontFamily: HUD_FONTS.mono, fontSize: 8.5, color: '#9fb0bd', marginTop: 3, lineHeight: 1.5 }}>
-        {nonZero.map((bucket) => `${bucket.label} ${share(bucket.count, total)}`).join(' · ')}
-      </div>
-    </div>
-  );
+function shareLabel(bps: number): string {
+  const percent = bps / 100;
+  return Number.isInteger(percent) ? `${percent}%` : `${percent.toFixed(2).replace(/0$/, '')}%`;
 }
 
-function GalaxyWindow({ stats, scriptRegistry }: {
-  stats: CellsStats;
-  scriptRegistry?: ScriptRegistryRecord | null;
-}) {
-  // The backend counts the retained set by script identity; those bars are
-  // the real distribution. The four-family bars below them are what cknerv
-  // can classify on its own, and they are the fallback for a backend that
-  // has not counted yet — never a second opinion shown alongside.
-  const census = hasScriptCensus(stats.scripts) ? stats.scripts : null;
-  return (
-    <ScopeStage
-      id="galaxy-window"
-      label="GALAXY WINDOW"
-      meta={`${fmt(stats.inView)} RETAINED CELLS`}
-      accent={HUD_COLORS.cyanWire}
-      terminal
-      flush
-    >
-      <div aria-label="Retained Cell capacity" data-retained-capacity-context>
-        <StatRow label="Window capacity">{formatStateBytes(stats.capacityShannons)} state</StatRow>
-        <TaxonomyBar title="WINDOW ASSETS" buckets={census
-          ? assetFamilyBuckets(census, scriptRegistry)
-          : [
-            { key: 'native', label: 'CKB', color: ASSET_COLORS.native, count: stats.byAsset.native },
-            { key: 'sudt', label: 'sUDT', color: ASSET_COLORS.sudt, count: stats.byAsset.sudt },
-            { key: 'xudt', label: 'xUDT', color: ASSET_COLORS.xudt, count: stats.byAsset.xudt },
-            { key: 'dao', label: 'DAO', color: ASSET_COLORS.dao, count: stats.byAsset.dao },
-            { key: 'spore', label: 'NFT', color: ASSET_COLORS.spore, count: stats.byAsset.spore },
-            { key: 'other', label: '?', color: ASSET_COLORS.other, count: stats.byAsset.other },
-          ]} />
-        <TaxonomyBar title="WINDOW LOCKS" buckets={census
-          ? lockFamilyBuckets(census, scriptRegistry)
-          : [
-            { key: 'sighash', label: 'default', color: LOCK_COLORS.sighash, count: stats.byLock.sighash },
-            { key: 'multisig', label: 'multisig', color: LOCK_COLORS.multisig, count: stats.byLock.multisig },
-            { key: 'acp', label: 'ACP', color: LOCK_COLORS.acp, count: stats.byLock.acp },
-            { key: 'omnilock', label: 'omni', color: LOCK_COLORS.omnilock, count: stats.byLock.omnilock },
-            { key: 'other', label: '?', color: LOCK_COLORS.other, count: stats.byLock.other },
-          ]} />
-      </div>
-    </ScopeStage>
-  );
-}
-
-/** One chain-level capacity slot: direct-node Galaxy data in the base view,
- * upgraded to whole-chain → Galaxy scope when enrichment is usable. */
-export default function ChainCapacityReadout({ stats, source, record, scriptRegistry }: {
-  stats: CellsStats;
+/**
+ * Everything true of the whole chain, and nothing true of this dashboard's
+ * local slice — the stage block is the other stage on this rail.
+ *
+ * Two independent measurements meet here: the indexed asset-ecosystem record
+ * and the validated Cell census. Each is exact at its own anchor. The block
+ * header states the record's anchor once for every record row; the census row
+ * carries its own anchor whenever it differs, because a count must never
+ * inherit an anchor that is not its own. Either measurement can be missing;
+ * the block renders when at least one exists, and renders nothing sooner than
+ * a number it cannot prove.
+ */
+export default function ChainCapacityReadout({ source, record, census = null, censusStale = false }: {
   source?: EnrichmentSourceStatus;
   record?: AssetEcosystemRecord | null;
-  scriptRegistry?: ScriptRegistryRecord | null;
+  census?: ChainCensus | null;
+  censusStale?: boolean;
 }) {
-  const galaxyWindow = <GalaxyWindow stats={stats} scriptRegistry={scriptRegistry} />;
+  const visualState = source && record ? assetEcosystemVisualState(source, record) : null;
+  const buckets = visualState ? deriveAssetEcosystemBuckets(record!) : null;
+  const usableRecord = visualState && buckets ? record! : null;
+  if (!usableRecord && !census) return null;
+
+  const stale = visualState === 'stale';
+  const accent = stale ? HUD_COLORS.caution : HUD_COLORS.nominal;
+  const headerAnchor = usableRecord?.as_of ?? census!.as_of;
+  const liveCells = chainLiveRow(census, censusStale, headerAnchor.block);
+
   return (
-    <AssetEcosystemReadout
-      source={source}
-      record={record}
-      fallback={(
-        <section
-          aria-label="Galaxy capacity window"
-          data-cell-capacity-mode="retained"
-          style={{ marginTop: 10, paddingTop: 8, borderTop: '1px solid rgba(255,152,48,.12)' }}
+    <ScopeStage
+      id="chain-capacity"
+      label="CHAIN CAPACITY"
+      meta={`AS OF #${headerAnchor.block.toLocaleString('en-US')}${stale ? ' · STALE' : ''}`}
+      accent={accent}
+      flush
+    >
+      <div aria-label="Chain capacity" data-chain-capacity data-asset-ecosystem-state={visualState ?? undefined}>
+        {usableRecord ? (
+          <div data-indexed-context style={{ opacity: stale ? 0.68 : 1 }}>
+            <StatRow label="Live capacity">{formatCapacity(usableRecord.total_live_capacity_shannons)}</StatRow>
+            <StatRow label="Knowledge">{formatBytes(usableRecord.total_knowledge_bytes)}</StatRow>
+          </div>
+        ) : null}
+        <div
+          data-population-row="Chain live"
+          style={{ display: 'flex', alignItems: 'baseline', gap: 6, height: 17, whiteSpace: 'nowrap', opacity: liveCells.dim ? 0.6 : 1 }}
         >
-          {galaxyWindow}
-        </section>
-      )}
-      retainedContext={galaxyWindow}
-    />
+          <span style={{ fontFamily: HUD_FONTS.tech, fontWeight: 500, fontSize: 8.5, letterSpacing: 1.6, color: HUD_COLORS.dim, textTransform: 'uppercase' }}>
+            Live cells
+          </span>
+          {liveCells.tag ? (
+            <span
+              data-population-scope
+              style={{ fontFamily: HUD_FONTS.tech, fontSize: 7, letterSpacing: 1.1, color: HUD_COLORS.dim, textTransform: 'uppercase', opacity: 0.8 }}
+            >
+              {liveCells.tag}
+            </span>
+          ) : null}
+          <span style={{ marginLeft: 'auto', fontFamily: HUD_FONTS.mono, fontSize: 11, color: HUD_COLORS.ink }}>
+            {liveCells.value}
+          </span>
+        </div>
+        {usableRecord && buckets && buckets.length > 0 ? (
+          <div data-indexed-context style={{ marginTop: 6, opacity: stale ? 0.68 : 1 }}>
+            <div
+              title={buckets.map((bucket) => `${bucket.category} ${shareLabel(bucket.shareBps)}`).join(' · ')}
+              style={{ display: 'flex', height: 6, background: '#0a0a0a', border: `1px solid ${rgba(accent, 0.14)}` }}
+            >
+              {buckets.map((bucket) => bucket.shareBps > 0 ? (
+                <span
+                  key={bucket.category}
+                  data-asset-capacity-category={bucket.category}
+                  style={{
+                    width: `${bucket.shareBps / 100}%`,
+                    background: bucket.color,
+                    boxShadow: `0 0 5px ${rgba(bucket.color, 0.28)}`,
+                  }}
+                />
+              ) : null)}
+            </div>
+            <div style={{ fontFamily: HUD_FONTS.mono, fontSize: 8, color: '#9fb0bd', marginTop: 3, lineHeight: 1.45 }}>
+              {buckets
+                .filter((bucket) => bucket.shareBps > 0)
+                .map((bucket) => `${CATEGORY_LABELS[bucket.category.toLowerCase()] ?? bucket.category.toUpperCase()} ${shareLabel(bucket.shareBps)}`)
+                .join(' · ')}
+            </div>
+          </div>
+        ) : null}
+        {usableRecord && usableRecord.top_assets.length > 0 ? (
+          <div data-indexed-context style={{ marginTop: 6, opacity: stale ? 0.68 : 1 }}>
+            <div style={{ fontFamily: HUD_FONTS.tech, fontSize: 7.5, letterSpacing: 1.2, color: HUD_COLORS.dim, marginBottom: 2 }}>
+              TOP ASSETS
+            </div>
+            {usableRecord.top_assets.slice(0, 3).map((asset) => (
+              <div
+                key={asset.type_script_hash}
+                title={asset.type_script_hash}
+                style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 6, fontFamily: HUD_FONTS.mono, fontSize: 8, padding: '1px 0' }}
+              >
+                <span style={{ color: HUD_COLORS.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {asset.symbol ?? asset.name ?? `${asset.type_script_hash.slice(0, 10)}…`}
+                </span>
+                <span style={{ color: HUD_COLORS.dim }}>
+                  {Number.isSafeInteger(asset.holders_count)
+                    ? `${asset.holders_count.toLocaleString('en-US')} HOLDERS`
+                    : 'HOLDERS ?'}
+                </span>
+              </div>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    </ScopeStage>
   );
 }

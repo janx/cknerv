@@ -32,7 +32,7 @@ describe('CellsPanel', () => {
     expect(t).not.toContain('Live cells');
     expect(t).toContain('28,431');    // total observed
     expect(t).toContain('9,227');     // dead
-    expect(t).not.toContain('GALAXY WINDOW');
+    expect(t).not.toContain('STAGE CAPACITY');
     expect(t).not.toContain('CHAIN CAPACITY');
     expect(t).not.toContain('1.21 GB');
     expect(container.querySelector('[data-cell-capacity-mode]')).toBeNull();
@@ -40,8 +40,8 @@ describe('CellsPanel', () => {
   it('keeps chain capacity and taxonomy out of the mesh panel', () => {
     const { container } = render(<CellsPanel stats={stats} churn={churn} reducedMotion />);
     const t = container.textContent ?? '';
-    expect(t).not.toContain('WINDOW ASSETS');
-    expect(t).not.toContain('WINDOW LOCKS');
+    expect(t).not.toContain('STAGE ASSETS');
+    expect(t).not.toContain('STAGE LOCKS');
     expect(t).not.toContain('sighash');
   });
   it('has no Umbrella octagon (no svg path)', () => {

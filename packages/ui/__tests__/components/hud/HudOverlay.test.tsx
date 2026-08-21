@@ -89,7 +89,7 @@ describe('HudOverlay', () => {
     const pulse = container.querySelector('[data-hud-pulse-anchor]') as HTMLElement;
     const meshRail = container.querySelector('.cknerv-mesh-rail') as HTMLElement;
     expect(leftRail.textContent).toContain('COMMON KNOWLEDGE BASE');
-    expect(leftRail.textContent).toContain('GALAXY WINDOW');
+    expect(leftRail.textContent).toContain('STAGE CAPACITY');
     expect(leftRail.textContent).toContain('PULSE');
     expect(leftRail.style.flexDirection).toBe('column');
     expect(leftRail.style.bottom).toBe('14px');
@@ -102,7 +102,7 @@ describe('HudOverlay', () => {
     expect(pulse.style.marginTop).toBe('auto');
     expect((pulse.firstElementChild as HTMLElement).style.width)
       .toMatch(/340px.*58px/);
-    expect(meshRail.textContent).not.toContain('GALAXY WINDOW');
+    expect(meshRail.textContent).not.toContain('STAGE CAPACITY');
     expect(meshRail.style.top).toBe('48px');
     expect(meshRail.style.bottom).toBe('');
   });

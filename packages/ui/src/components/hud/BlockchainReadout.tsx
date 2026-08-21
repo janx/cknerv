@@ -16,7 +16,7 @@ import ActivityFeedReadout from './ActivityFeedReadout';
 import ProtocolEraBadge from './ProtocolEraBadge';
 import TransactionHorizonReadout from './TransactionHorizonReadout';
 import ChainCapacityReadout from './ChainCapacityReadout';
-import CellPopulationReadout from './CellPopulationReadout';
+import StageCapacityReadout from './StageCapacityReadout';
 import { formatEpochReadout } from './epochReadout';
 
 const fmt = (n: number) => n.toLocaleString('en-US');
@@ -52,13 +52,26 @@ export default function BlockchainReadout({ chain, cellsStats, cellPopulation, e
       </StatRow>
       <StatRow label="Mempool">{chain.mempool.pending} · {chain.mempool.proposed}</StatRow>
       <StatRow label="Reorgs" valueColor={chain.reorgs > 0 ? HUD_COLORS.danger : undefined}>{chain.reorgs}</StatRow>
-      <ChainCapacityReadout
-        stats={cellsStats}
-        source={enrichmentSource}
-        record={assetEcosystem}
-        scriptRegistry={scriptRegistry}
-      />
-      {cellPopulation ? <CellPopulationReadout model={cellPopulation} /> : null}
+      {/* One capacity section, two scoped stages on one rail: the chain's
+          whole state, then this dashboard's local slice. Chain truth and
+          stage truth never share a block — the rail is the only thing
+          joining them, and it says "subset", not "same". */}
+      <section
+        aria-label="Capacity"
+        style={{ marginTop: 10, paddingTop: 8, borderTop: '1px solid rgba(255,152,48,.12)' }}
+      >
+        <ChainCapacityReadout
+          source={enrichmentSource}
+          record={assetEcosystem}
+          census={cellPopulation?.chainCensus ?? null}
+          censusStale={cellPopulation?.censusStale ?? false}
+        />
+        <StageCapacityReadout
+          stats={cellsStats}
+          scriptRegistry={scriptRegistry}
+          model={cellPopulation}
+        />
+      </section>
       <TransactionHorizonReadout
         source={enrichmentSource}
         record={transactionHorizon}

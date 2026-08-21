@@ -154,6 +154,13 @@ export const ASSET_COLORS: Record<string, string> = {
   dao: HUD_COLORS.caution, spore: '#9d7bd8', other: '#33424f',
 };
 
+/** The census's three-class partition, in the chain-capacity bar's category
+ *  hues (DAO, token-like, bare CKB) so the stage-versus-chain mix bars and
+ *  the whole-chain capacity bar read as one color system. */
+export const CLASS_MIX_COLORS = {
+  dao: '#ff9d52', typed: '#78f2b3', plain: '#607789',
+} as const;
+
 /** Palette colour for a script identity. A script the index named is a known
  *  script even when cknerv's own table could not place it, so it drops the
  *  near-black unrecognized-family swatch for plain ink — present, but

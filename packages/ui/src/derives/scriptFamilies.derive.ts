@@ -24,6 +24,10 @@ export interface ScriptFamilyBucket {
   color: string;
   /** False when nothing named this family and the label is its code hash. */
   named: boolean;
+  /** How many script families the segment stands for. 1 for every real
+   *  family; the folded remainder carries its member count so a legend can
+   *  say how much it is summarizing. */
+  families: number;
 }
 
 /** How many families a bar names before the rest collapse into one segment.
@@ -99,6 +103,7 @@ function rank(
       ...identity,
       count: entry.count,
       color: REST_COLOR,
+      families: 1,
     };
     merged.push(bucket);
     if (identity.named) byLabel.set(identity.label, bucket);
@@ -134,6 +139,7 @@ function withRest(
       count: restCells,
       color: REST_COLOR,
       named: false,
+      families: restScripts,
     });
   }
   if (unidentified > 0) {
@@ -143,6 +149,7 @@ function withRest(
       count: unidentified,
       color: UNIDENTIFIED_COLOR,
       named: false,
+      families: 1,
     });
   }
   return out;
@@ -181,6 +188,7 @@ export function assetFamilyBuckets(
       count: census.types_absent,
       color: HUD_COLORS.cyanWire,
       named: true,
+      families: 1,
     }]
     : [];
   return [

@@ -118,8 +118,11 @@ describe('BlockchainReadout', () => {
     expect(container.textContent).toContain('312 · 64');
     expect(container.textContent).toContain('COMMON KNOWLEDGE BASE');
     expect(container.textContent).toContain('共识基');
-    expect(container.textContent).toContain('GALAXY WINDOW');
+    expect(container.textContent).toContain('STAGE CAPACITY');
     expect(container.textContent).toContain('1.21 GB');
+    // Without a proven chain measurement there is no chain block at all —
+    // the stage block never wears the chain's header.
+    expect(container.textContent).not.toContain('CHAIN CAPACITY');
     expect(container.textContent).not.toContain('Interval');
     expect(container.textContent).not.toContain('NERVOS DAO');
     expect(container.textContent).not.toContain('ACTIVITY');
@@ -240,14 +243,14 @@ describe('BlockchainReadout', () => {
     const text = container.textContent ?? '';
     const canonicalAt = text.indexOf('Reorgs');
     const chainCapacityAt = text.indexOf('CHAIN CAPACITY');
-    const galaxyWindowAt = text.indexOf('GALAXY WINDOW');
+    const stageCapacityAt = text.indexOf('STAGE CAPACITY');
     const horizonAt = text.indexOf('TX HORIZON');
     const activityAt = text.indexOf('ACTIVITY');
 
     expect(canonicalAt).toBeGreaterThanOrEqual(0);
     expect(canonicalAt).toBeLessThan(chainCapacityAt);
-    expect(chainCapacityAt).toBeLessThan(galaxyWindowAt);
-    expect(galaxyWindowAt).toBeLessThan(horizonAt);
+    expect(chainCapacityAt).toBeLessThan(stageCapacityAt);
+    expect(stageCapacityAt).toBeLessThan(horizonAt);
     expect(horizonAt).toBeLessThan(activityAt);
     expect(text).not.toContain('NERVOS DAO');
   });

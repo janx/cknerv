@@ -1,27 +1,13 @@
-import { emptyScriptCensus } from '@cknerv/cache';
 import { cleanup, render } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 import type {
   AssetEcosystemRecord,
+  ChainCensus,
   EnrichmentSourceStatus,
 } from '@cknerv/types';
 import ChainCapacityReadout from '../../../src/components/hud/ChainCapacityReadout';
-import type { CellsStats } from '../../../src/derives/cellsStats.derive';
 
 afterEach(cleanup);
-
-const stats: CellsStats = {
-  born: 28_431,
-  live: 19_204,
-  dead: 9_227,
-  byKind: { wallet: 0, dex: 0, cf: 0, ckbloom: 0, generic: 19_204 },
-  capacityShannons: 121_000_000_000_000_000,
-  inView: 4_983,
-  dataBearing: 1_545,
-  byLock: { sighash: 3_200, multisig: 1_100, acp: 450, omnilock: 0, other: 233 },
-  byAsset: { native: 3_500, sudt: 900, xudt: 350, dao: 200, spore: 33, other: 0 },
-  scripts: emptyScriptCensus(),
-};
 
 const source: EnrichmentSourceStatus = {
   source: 'ckbadger',
@@ -51,82 +37,32 @@ const record: AssetEcosystemRecord = {
   }],
 };
 
+function census(overrides: Partial<ChainCensus> = {}): ChainCensus {
+  return {
+    source: 'node',
+    as_of: { block: 100, hash: '0xblock100' },
+    updated_at_ms: 1,
+    live_cells: 1_471_373,
+    ...overrides,
+  };
+}
+
 describe('ChainCapacityReadout', () => {
-  it('shows the direct Galaxy window as the complete base view', () => {
-    const { container } = render(<ChainCapacityReadout stats={stats} />);
-    const text = container.textContent ?? '';
+  it('renders nothing without a proven chain measurement', () => {
+    // No indexed record and no census: the block claims nothing, rather than
+    // wearing local numbers as chain truth. The stage block carries those.
+    const { container } = render(<ChainCapacityReadout />);
+    expect(container.firstChild).toBeNull();
 
-    expect(text).toContain('GALAXY WINDOW');
-    expect(text).toContain('4,983 RETAINED CELLS');
-    expect(text).toContain('1.21 GB');
-    expect(text).toContain('WINDOW ASSETS');
-    expect(text).toContain('WINDOW LOCKS');
-    expect(text).toContain('default');
-    expect(text).not.toContain('CHAIN CAPACITY');
-    expect(container.querySelector('[data-cell-capacity-mode="retained"]')).not.toBeNull();
-  });
-
-  it('bars the real script families once the backend counts by identity', () => {
-    const hash = (byte: string) => `0x${byte.repeat(32)}`;
-    const counted: CellsStats = {
-      ...stats,
-      scripts: {
-        locks: [
-          { script: { code_hash: hash('9b'), hash_type: 'type' }, count: 3_000 },
-          { script: { code_hash: hash('d0'), hash_type: 'type' }, count: 1_500 },
-        ],
-        locks_tail_cells: 0,
-        locks_tail_scripts: 0,
-        types: [{ script: { code_hash: hash('50'), hash_type: 'data1' }, count: 400 }],
-        types_tail_cells: 0,
-        types_tail_scripts: 0,
-        types_absent: 4_100,
-        unidentified: 0,
-      },
-    };
-    const { container } = render(
-      <ChainCapacityReadout
-        stats={counted}
-        scriptRegistry={{
-          source: 'ckbadger',
-          as_of: { block: 100, hash: '0xblock100' },
-          updated_at_ms: 1,
-          entries: [
-            { code_hash: hash('9b'), hash_type: 'type', name: 'Default Lock', deprecated: false },
-            { code_hash: hash('50'), hash_type: 'data1', name: 'xUDT', deprecated: false },
-          ],
-          unresolved: 1,
-        }}
-      />,
+    const unusable = render(
+      <ChainCapacityReadout source={{ ...source, status: 'connecting' }} record={record} />,
     );
-    const text = container.textContent ?? '';
-
-    expect(text).toContain('Default Lock 67%');
-    expect(text).toContain('xUDT 9%');
-    // A family too small to round to a whole percent is still there: mainnet
-    // is 99% one lock, so "0%" beside a real name is the common case and the
-    // one reading most like absence.
-    expect(text).not.toMatch(/ 0%/);
-    // The one family nothing named keeps its identity instead of joining a
-    // bucket with everything else cknerv cannot place.
-    expect(text).toContain('0xd0d0…0d0 33%');
-    // And the four-family fallback vocabulary is gone, not shown alongside.
-    expect(text).not.toContain('multisig');
-    expect(text).not.toContain('sUDT');
+    expect(unusable.container.firstChild).toBeNull();
   });
 
-  it('keeps the four-family bars while the backend has counted nothing', () => {
-    // A backend predating the census, or a galaxy restored from state written
-    // before script identities existed: an empty census is not a distribution.
-    const { container } = render(<ChainCapacityReadout stats={stats} />);
-    const text = container.textContent ?? '';
-    expect(text).toContain('default 64%');
-    expect(text).toContain('multisig 22%');
-  });
-
-  it('upgrades to one whole-chain-to-Galaxy hierarchy without losing base data', () => {
+  it('shows the whole-chain overview under one stated anchor', () => {
     const { container } = render(
-      <ChainCapacityReadout stats={stats} source={source} record={record} />,
+      <ChainCapacityReadout source={source} record={record} census={census()} />,
     );
     const text = container.textContent ?? '';
 
@@ -134,50 +70,99 @@ describe('ChainCapacityReadout', () => {
     expect(text).toContain('AS OF #100');
     expect(text).toContain('57,763,209,638.48 CKB');
     expect(text).toContain('159.9 MB');
+    expect(text).toContain('Live cells');
+    expect(text).toContain('1,471,373');
     expect(text).toContain('OTTER');
     expect(text).toContain('34,386 HOLDERS');
-    expect(text).toContain('GALAXY WINDOW');
-    expect(text).toContain('1.21 GB');
-    expect(text).toContain('WINDOW ASSETS');
-    expect(text).toContain('WINDOW LOCKS');
     expect(text).not.toContain('INDEXED');
     expect(text).not.toContain('CKBADGER');
-    expect(Array.from(container.querySelectorAll('[data-scope-stage]')).map(
-      (stage) => stage.getAttribute('data-scope-stage'),
-    )).toEqual(['indexed-chain', 'galaxy-window']);
-    expect(Array.from(container.querySelectorAll<HTMLElement>('[data-scope-stage]')).map(
-      (stage) => stage.dataset.scopeLayout,
-    )).toEqual(['flush', 'flush']);
-    expect(container.querySelectorAll('[data-scope-header]')).toHaveLength(2);
-    expect(container.querySelectorAll('[data-scope-content]')).toHaveLength(2);
     expect(container.querySelector<HTMLElement>(
       '[data-asset-capacity-category="dao"]',
     )?.style.width).toBe('14.5%');
+    // The chain block holds no local vocabulary — the stage block is the
+    // other stage on this rail, not a nested child of this one.
+    expect(text).not.toContain('STAGE CAPACITY');
+    expect(text).not.toContain('RETAINED');
+    expect(text).not.toContain('Rendered');
   });
 
-  it('keeps the direct Galaxy window when enrichment is unusable', () => {
+  it('anchors the census to the header when the anchors agree', () => {
+    const { container } = render(
+      <ChainCapacityReadout source={source} record={record} census={census()} />,
+    );
+    const row = container.querySelector('[data-population-row="Chain live"]');
+    // One anchor stated once: a second identical tag on the row would read
+    // as a second measurement.
+    expect(row?.querySelector('[data-population-scope]')).toBeNull();
+  });
+
+  it('gives the census its own anchor when it trails the record', () => {
     const { container } = render(
       <ChainCapacityReadout
-        stats={stats}
+        source={source}
+        record={record}
+        census={census({ as_of: { block: 98, hash: '0xblock98' } })}
+      />,
+    );
+    const row = container.querySelector('[data-population-row="Chain live"]');
+    expect(row?.querySelector('[data-population-scope]')?.textContent).toBe('AS OF #98');
+  });
+
+  it('keeps a stale census, labeled and dimmed', () => {
+    const { container } = render(
+      <ChainCapacityReadout source={source} record={record} census={census()} censusStale />,
+    );
+    const row = container.querySelector<HTMLElement>('[data-population-row="Chain live"]');
+    expect(row?.textContent).toContain('1,471,373');
+    expect(row?.textContent).toContain('STALE');
+    expect(row?.style.opacity).toBe('0.6');
+  });
+
+  it('says UNAVAILABLE rather than substituting a number it cannot prove', () => {
+    const { container } = render(
+      <ChainCapacityReadout source={source} record={record} census={null} />,
+    );
+    const text = container.textContent ?? '';
+    expect(text).toContain('UNAVAILABLE');
+    expect(text).toContain('NO VALIDATED CENSUS');
+    // Never a synthesized zero, and never the retained count wearing the
+    // chain's label.
+    expect(text).not.toContain('ALL LIVE CELLS');
+  });
+
+  it('stands on the census alone when the index is unusable', () => {
+    const { container } = render(
+      <ChainCapacityReadout
         source={{ ...source, status: 'connecting' }}
         record={record}
+        census={census()}
       />,
     );
-
-    expect(container.querySelector('[data-cell-capacity-mode="retained"]')).not.toBeNull();
-    expect(container.textContent).not.toContain('CHAIN CAPACITY');
+    const text = container.textContent ?? '';
+    expect(text).toContain('CHAIN CAPACITY');
+    expect(text).toContain('AS OF #100');
+    expect(text).toContain('1,471,373');
+    expect(text).not.toContain('Live capacity');
+    expect(text).not.toContain('Knowledge');
+    expect(text).not.toContain('TOP ASSETS');
   });
 
-  it('dims only stale whole-chain context', () => {
+  it('dims only stale indexed context, never a fresh census beside it', () => {
     const { container } = render(
       <ChainCapacityReadout
-        stats={stats}
         source={{ ...source, status: 'stale' }}
         record={record}
+        census={census()}
       />,
     );
-
-    expect((container.querySelector('[data-scope-stage="indexed-chain"]') as HTMLElement).style.opacity).toBe('0.68');
-    expect((container.querySelector('[data-scope-stage="galaxy-window"]') as HTMLElement).style.opacity).toBe('');
+    expect(container.textContent).toContain('STALE');
+    const indexed = Array.from(
+      container.querySelectorAll<HTMLElement>('[data-indexed-context]'),
+    );
+    expect(indexed.length).toBeGreaterThan(0);
+    for (const section of indexed) expect(section.style.opacity).toBe('0.68');
+    expect(container.querySelector<HTMLElement>(
+      '[data-population-row="Chain live"]',
+    )?.style.opacity).toBe('1');
   });
 });
