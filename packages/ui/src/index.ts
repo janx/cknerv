@@ -231,6 +231,18 @@ export {
   NODE_SELF_ACCENT,
   type NodeSelfCardProps,
 } from './components/hud/NodeSelfCard';
+export {
+  default as SightedInspectionOverlay,
+  SightedInspectionAnchor,
+  createSightedInspectionHandles,
+  type SightedInspectionHandles,
+  type SightedInspectionOverlayProps,
+} from './components/SightedInspectionOverlay';
+export {
+  default as SightedNodeCard,
+  SIGHTED_NODE_ACCENT,
+  type SightedNodeCardProps,
+} from './components/hud/SightedNodeCard';
 
 // ── Consensus flow overlay (Cell→Cell protocol writes) ──────────────
 export { default as NeuralNetwork, MAX_ACTIVE_PULSES } from './nerve/NeuralNetwork';

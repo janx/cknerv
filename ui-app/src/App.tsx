@@ -61,6 +61,9 @@ import {
   QUALITY_PRESETS,
   RenderStatsPanel,
   RenderStatsSampler,
+  SightedInspectionAnchor,
+  SightedInspectionOverlay,
+  createSightedInspectionHandles,
   SimClockTicker,
   setQualityMode,
   TweakSync,
@@ -75,6 +78,7 @@ import {
   type CellInspectionHandles,
   type NodeInspectionHandles,
   type PeerInspectionHandles,
+  type SightedInspectionHandles,
   type CellIdentityProofEvent,
   type CellIdentityProofKind,
   type PeerSightingPhase,
@@ -254,6 +258,15 @@ export default function App({
     nodeInspectionHandlesRef.current = createNodeInspectionHandles();
   }
   const nodeInspectionHandles = nodeInspectionHandlesRef.current;
+  // …and one for the sighted probe. It shares the colony's anchor slot with
+  // the link probe (the selection is single, so only one is ever mounted), but
+  // its card is a hundred pixels shorter — a shared channel would place the
+  // first frame of each by the other's box.
+  const sightedInspectionHandlesRef = useRef<SightedInspectionHandles | null>(null);
+  if (sightedInspectionHandlesRef.current === null) {
+    sightedInspectionHandlesRef.current = createSightedInspectionHandles();
+  }
+  const sightedInspectionHandles = sightedInspectionHandlesRef.current;
   const [orbitInteractionRevision, noteOrbitInteraction] = useReducer(
     (revision: number) => revision + 1,
     0,
@@ -1189,6 +1202,39 @@ export default function App({
     const id = selectedNetId.slice('peer:'.length);
     return topology.nodes.find((n) => n.id === id)?.pos ?? null;
   }, [selectedNetId, topology]);
+  // The crawler's own row for a staged sighted node. The roster is replaced
+  // whole per crawl round, so this always resolves against the round the scene
+  // is currently standing on.
+  const selectedSighted = useMemo(() => {
+    if (!selectedNetId || !selectedNetId.startsWith('sighted:')) return null;
+    const id = selectedNetId.slice('sighted:'.length);
+    return networkRoster?.entries.find((n) => n.node_id === id) ?? null;
+  }, [selectedNetId, networkRoster]);
+  // Where that node was placed. Placement is a pure function of its id, so the
+  // point is stable across rounds — but the kind is checked, not just the id:
+  // the same node reappearing as `measured` is a promotion, not this card's
+  // subject, and the sighted anchor must not follow it there.
+  const selectedSightedAnchor = useMemo(() => {
+    if (!selectedNetId || !selectedNetId.startsWith('sighted:')) return null;
+    const id = selectedNetId.slice('sighted:'.length);
+    const node = topology.nodes.find((n) => n.id === id);
+    return node?.kind === 'sighted' ? node.pos : null;
+  }, [selectedNetId, topology]);
+  // A sighted node can leave the stage two ways, and only one of them is a
+  // disappearance. If the id is now in `peers[]`, the node came ONLINE: the
+  // derive's dedupe (measured wins) pulled it out of the sighted tier and drew
+  // it as a real link instead, so the selection follows it into the richer
+  // live dialect — the user is inspecting the same node, now with telemetry.
+  // Otherwise the crawl round simply stopped naming it, and the selection
+  // clears; nothing was ever linked here, so there is no epilogue to play.
+  useEffect(() => {
+    if (!selectedNetId?.startsWith('sighted:')) return;
+    if (selectedSighted && selectedSightedAnchor) return;
+    const id = selectedNetId.slice('sighted:'.length);
+    setSelectedNetId(
+      peers.some((p) => p.node_id === id) ? `peer:${id}` : null,
+    );
+  }, [selectedNetId, selectedSighted, selectedSightedAnchor, peers]);
 
   // Stable identities: HudOverlay is memoized, so its object/callback props
   // must not be re-created per App render.
@@ -1234,7 +1280,12 @@ export default function App({
   // asked about under the name the network knows it by — never under
   // cknerv's own key for the endpoint. A server that carries no identity for
   // it leaves that key in place, where the plate still says the honest thing.
+  // A sighted node is already keyed that way — the roster carries the same
+  // base58 vocabulary — so it joins the same one lookup rather than standing
+  // up a second machine beside it. The selection axis is single: at most one
+  // of these three is ever a string.
   const inspectedNetNodeId = inspectedPeer?.node_id
+    ?? selectedSighted?.node_id
     ?? selectedNode?.p2p_node_id
     ?? selectedNode?.id
     ?? null;
@@ -1545,13 +1596,26 @@ export default function App({
             localVersion={localNode?.version ?? ''}
             cellInspectionActive={selectedCell !== null}
             cellDetailViewFocusRef={cellDetailViewFocusRef}
-            overlay={inspectedPeer && inspectedPeerAnchor ? (
-              <PeerInspectionAnchor
-                key={inspectedPeer.node_id}
-                position={inspectedPeerAnchor}
-                handles={peerInspectionHandles}
-              />
-            ) : null}
+            overlay={(
+              <>
+                {/* Both probes tether from colony space, and the colony's one
+                    selection means only ever one of them is mounted. */}
+                {inspectedPeer && inspectedPeerAnchor ? (
+                  <PeerInspectionAnchor
+                    key={inspectedPeer.node_id}
+                    position={inspectedPeerAnchor}
+                    handles={peerInspectionHandles}
+                  />
+                ) : null}
+                {selectedSighted && selectedSightedAnchor ? (
+                  <SightedInspectionAnchor
+                    key={selectedSighted.node_id}
+                    position={selectedSightedAnchor}
+                    handles={sightedInspectionHandles}
+                  />
+                ) : null}
+              </>
+            )}
           />
 
           {/* Opening or switching Cell detail is camera-passive. Only explicit
@@ -1643,6 +1707,20 @@ export default function App({
           tip={chain.tip}
           localVersion={localNode?.version ?? ''}
           linkLost={peerInspection.linkLost}
+          sighting={inspectedNetSighting}
+          onClose={clearNetSelection}
+        />
+      ) : null}
+
+      {/* DOM half of the sighted probe — the shortest dialect on the same
+          chassis, for a node we can name and have never spoken to. No
+          retention epilogue: nothing is linked, so nothing can be lost; the
+          selection either follows the node into the live dialect or ends. */}
+      {selectedSighted && selectedSightedAnchor ? (
+        <SightedInspectionOverlay
+          key={selectedSighted.node_id}
+          handles={sightedInspectionHandles}
+          node={selectedSighted}
           sighting={inspectedNetSighting}
           onClose={clearNetSelection}
         />

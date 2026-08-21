@@ -47,8 +47,11 @@ export interface PeerSightingPlateProps extends PeerSightingState {
   /** Wall clock every CRAWLER age is measured from. The cards run one 1 Hz
    *  tick each and lend it here; the plate starts no clock of its own. */
   nowMs: number;
-  /** `self` is the mirror dialect: EXPOSURE leads, under its own caption. */
-  variant?: 'peer' | 'self';
+  /** `self` is the mirror dialect: EXPOSURE leads, under its own caption.
+   *  `sighted` is the crawler-only dialect: its host card holds no live
+   *  telemetry about the subject at all, so the rows that exist to set this
+   *  account against ours stand down rather than compare it with itself. */
+  variant?: 'peer' | 'self' | 'sighted';
   /** The version local RPC reports for this node — the other half of the
    *  identify cross-check. */
   liveVersion?: string;
@@ -245,7 +248,10 @@ export default function PeerSightingPlate({
             : 'NO SUCCESSFUL DIAL ON RECORD'}
         </SightingCaption>
       )}
-      {sighting.rtt_ms != null ? (
+      {/* The sighted card prints the crawler's dial as a RECORD row of its
+          own, straight off the roster and without waiting for this lookup, so
+          the caption would be the same figure twice on one card. */}
+      {sighting.rtt_ms != null && variant !== 'sighted' ? (
         <SightingCaption>
           {`THEIR DIAL ${count(sighting.rtt_ms)} MS`}
           {liveRttMs != null ? ` · OUR PING ${count(liveRttMs)} MS` : ''}
@@ -319,9 +325,14 @@ export default function PeerSightingPlate({
   ) : null;
 
   // The mirror dialect leads with the one question a node cannot ask itself.
+  // The crawler-only dialect drops IDENTIFY entirely: with no live RPC on the
+  // other side, the row could only set the crawler's version against the same
+  // crawler's version — a cross-check with one party, printed twice.
   const rows = variant === 'self'
     ? [exposure, whereabouts, networkAge, identify, crowd]
-    : [whereabouts, exposure, networkAge, identify, crowd];
+    : variant === 'sighted'
+      ? [whereabouts, exposure, networkAge, crowd]
+      : [whereabouts, exposure, networkAge, identify, crowd];
 
   const satelliteBase: CSSProperties = {
     position: 'relative',

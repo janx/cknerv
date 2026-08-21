@@ -200,9 +200,10 @@ export default function StageCapacityPanel({ stats, scriptRegistry, model, colon
    *  mixes, and medium legend then stay absent — the panel never guesses a
    *  scope. */
   model?: CellPopulationFieldModel | null;
-  /** Node count of the colony the scene draws — measured peers, the ghosts
-   *  inferred around them, and our own node. Omitted ⇒ row not shown; the
-   *  panel never infers a population the scene did not build. */
+  /** Node count of the colony the scene draws — measured peers, the nodes a
+   *  crawler named for us, the ghosts inferred around them, and our own node.
+   *  Omitted ⇒ row not shown; the panel never infers a population the scene
+   *  did not build. */
   colonyCount?: number;
   style?: CSSProperties;
 }) {
@@ -233,7 +234,7 @@ export default function StageCapacityPanel({ stats, scriptRegistry, model, colon
             the word carry that — a bare count would read as a census. */}
         {colonyCount != null ? (
           <StatRow label="Colony">
-            <span title="Nodes the scene draws · measured peers, inferred ghosts, and this node">
+            <span title="Nodes the scene draws · measured peers, crawler-sighted nodes, inferred ghosts, and this node">
               ~{formatPopulationCount(colonyCount)} nodes · inferred
             </span>
           </StatRow>

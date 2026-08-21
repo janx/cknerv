@@ -239,6 +239,20 @@ describe('PeerSightingPlate dialects', () => {
     expect(container.textContent).toContain('NO CRAWLER SIGHTING');
   });
 
+  it('drops the rows that compare a crawler-only subject with itself', () => {
+    const { container } = renderPlate({ variant: 'sighted', module: 'SGHT·03' });
+    const rows = Array.from(container.querySelectorAll('[data-sighting-row]'))
+      .map((node) => node.getAttribute('data-sighting-row'));
+    // No live RPC stands on the other side, so IDENTIFY could only set the
+    // crawler's version against the crawler's version.
+    expect(rows).toEqual(['whereabouts', 'exposure', 'network-age', 'crowd']);
+    expect(container.textContent).not.toContain('NO LIVE VERSION TO CHECK AGAINST');
+    // The dial belongs to the host card's own RECORD row in this dialect,
+    // which had it off the roster before this lookup was even sent.
+    expect(container.textContent).not.toContain('THEIR DIAL');
+    expect(container.textContent).toContain('SGHT·03');
+  });
+
   it('speaks its own namespace — neither the cell nor the peer dialect', () => {
     const { container } = renderPlate({ variant: 'self' });
     expect(container.innerHTML).not.toContain('data-cell-');

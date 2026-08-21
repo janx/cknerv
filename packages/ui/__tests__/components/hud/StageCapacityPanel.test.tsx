@@ -414,6 +414,19 @@ describe('the block', () => {
     expect(text).toContain('~277 nodes · inferred');
   });
 
+  it('names every tier the colony count is made of, sighted nodes included', () => {
+    const { container } = render(
+      <StageCapacityPanel stats={stats} model={null} colonyCount={277} />,
+    );
+    const title = Array.from(container.querySelectorAll('[title]'))
+      .map((node) => node.getAttribute('title') ?? '')
+      .find((value) => value.startsWith('Nodes the scene draws'));
+
+    expect(title).toBe(
+      'Nodes the scene draws · measured peers, crawler-sighted nodes, inferred ghosts, and this node',
+    );
+  });
+
   it('prints no colony row for a consumer that stands up no scene', () => {
     const { container } = render(<StageCapacityPanel stats={stats} model={null} />);
     expect(container.textContent).not.toContain('Colony');
