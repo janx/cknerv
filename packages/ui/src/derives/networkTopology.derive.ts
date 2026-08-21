@@ -185,7 +185,7 @@ let scaffoldCache: InferredScaffold | null = null;
  *  from the ids alone, so ids alone decide whether the geometry can be reused
  *  (the crawler's payload rides along separately — see `inferredTopology`). */
 function sightedKey(sighted: readonly NetworkNode[]): string {
-  return sighted.map((n) => n.id).join(' ');
+  return sighted.map((n) => n.id).join('\u0000');
 }
 
 /** Build (or reuse) the linkless scaffold. The construction order — kNN edges,
