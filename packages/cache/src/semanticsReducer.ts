@@ -7,6 +7,7 @@ import type {
   EnrichmentSourceStatus,
   ForkWatchRecord,
   NetworkAtlasRecord,
+  NetworkRosterRecord,
   ScriptRegistryRecord,
   OutPoint,
   ProtocolEraRecord,
@@ -30,6 +31,10 @@ export interface SemanticsCache {
   activityFeed: ActivityFeedRecord | null;
   transactionHorizon: TransactionHorizonRecord | null;
   networkAtlas: NetworkAtlasRecord | null;
+  /** The bounded set of crawler-known nodes the scene may stage. Null means
+   *  no crawler roster at all; a record whose `entries` are empty is a crawl
+   *  round that finished knowing nobody — a report, and a different thing. */
+  networkRoster: NetworkRosterRecord | null;
   /** Names for the script identities the cells projection's census reports.
    *  Null without a source that can name them; the panel then falls back to
    *  the handful of families cknerv pins itself. */
@@ -58,6 +63,7 @@ export function emptySemanticsCache(): SemanticsCache {
     activityFeed: null,
     transactionHorizon: null,
     networkAtlas: null,
+    networkRoster: null,
     scriptRegistry: null,
   };
 }
@@ -81,6 +87,7 @@ export function fromSemanticsSnapshot(
     activityFeed: snapshot.activity_feed ?? null,
     transactionHorizon: snapshot.transaction_horizon ?? null,
     networkAtlas: snapshot.network_atlas ?? null,
+    networkRoster: snapshot.network_roster ?? null,
     scriptRegistry: snapshot.script_registry ?? null,
   };
 }
@@ -324,18 +331,26 @@ function reduceDelta(draft: SemanticsDraft, delta: SemanticsDelta): void {
     case 'network_atlas_replace':
       writable(draft).networkAtlas = delta.network_atlas;
       return;
+    case 'network_roster_replace':
+      // The only dedup a roster gets lives on the server, which withholds a
+      // crawl round it has already published (`enrichment.rs`,
+      // `EnrichmentEvent::NetworkRosterReplace`) because hundreds of
+      // unchanged rows would evict live deltas from the replay ring to say
+      // nothing. Whatever reaches here is therefore news, and the client
+      // offers no second opinion on it.
+      writable(draft).networkRoster = delta.network_roster;
+      return;
     case 'script_registry_replace':
       writable(draft).scriptRegistry = delta.script_registry;
       return;
     case 'network_atlas_clear':
       writable(draft).networkAtlas = null;
       return;
-    // The roster's cache slot arrives with the sighted tier that reads it.
-    // Its arms are listed here doing nothing so that the `never` binding
-    // below keeps meaning exactly what it claims — a variant nobody has
-    // considered — rather than catching one that simply has no reader yet.
-    case 'network_roster_replace':
     case 'network_roster_clear':
+      // The crawler is gone, not empty-handed: a round that finished knowing
+      // nobody arrives as a replace carrying no entries and leaves the slot
+      // standing. Only this arm empties it.
+      writable(draft).networkRoster = null;
       return;
     case 'prune': {
       const value = writable(draft);
@@ -381,6 +396,16 @@ function reduceDelta(draft: SemanticsDraft, delta: SemanticsDelta): void {
       if (value.networkAtlas && value.networkAtlas.as_of.block >= delta.from_block) {
         value.networkAtlas = null;
       }
+      // A crawler's nodes outlive a reorg, but the record's claim to have
+      // been observed under this chain does not — the roster drops on the
+      // atlas's rule, and the server republishes the round it withheld
+      // (its gate reads its own copy, which the same prune just emptied).
+      if (
+        value.networkRoster
+        && value.networkRoster.as_of.block >= delta.from_block
+      ) {
+        value.networkRoster = null;
+      }
       // A script's name does not depend on the tip, but the record proving it
       // came from a compatible index does. Dropped on the same rule as every
       // other anchored record, and the next refresh re-proves it — the exact
@@ -412,6 +437,7 @@ function reduceDelta(draft: SemanticsDraft, delta: SemanticsDelta): void {
       value.activityFeed = null;
       value.transactionHorizon = null;
       value.networkAtlas = null;
+      value.networkRoster = null;
       value.scriptRegistry = null;
       return;
     }

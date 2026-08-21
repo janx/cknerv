@@ -10,6 +10,7 @@ import type {
   ForkWatchRecord,
   EnrichmentSourceStatus,
   NetworkAtlasRecord,
+  NetworkRosterRecord,
   ProtocolEraRecord,
   RevisionedSemanticsDelta,
   ScriptRegistryRecord,
@@ -208,6 +209,26 @@ function networkAtlas(block: number): NetworkAtlasRecord {
   };
 }
 
+function networkRoster(block: number, round: number): NetworkRosterRecord {
+  return {
+    source: 'ckbadger',
+    as_of: { block, hash: `0xblock${block}` },
+    updated_at_ms: block,
+    crawl_round: round,
+    truncated: true,
+    entries: [{
+      node_id: 'QmQHmapDhRnzHqcAJQ5geABWdMVRaa6qah9gEdBEF7ejyL',
+      addr: '/ip4/203.0.113.7/tcp/8115',
+      version: '0.209.0',
+      country: 'DE',
+      asn: 'AS24940 Hetzner Online GmbH',
+      reachable: true,
+      last_seen_ms: 1_699_999_940_000,
+      rtt_ms: 41,
+    }],
+  };
+}
+
 function scriptRegistry(block: number): ScriptRegistryRecord {
   return {
     source: 'ckbadger',
@@ -358,6 +379,39 @@ describe('semantics reducer', () => {
     expect(next.networkAtlas).toBeNull();
   });
 
+  it('replaces and prunes the bounded network roster independently', () => {
+    const record = networkRoster(10, 7);
+    const seeded = applyRevisionedSemanticsDeltas(emptySemanticsCache(), [{
+      revision: 1,
+      delta: { type: 'network_roster_replace', network_roster: record },
+    }]);
+    expect(seeded.networkRoster).toBe(record);
+
+    // The dedup that spares a roster its own re-emit lives on the server,
+    // which withholds a crawl round it already published. The client keeps
+    // none of its own: whatever does arrive lands as the fresh object.
+    const again = networkRoster(20, 7);
+    expect(
+      applySemanticsDelta(seeded, {
+        type: 'network_roster_replace',
+        network_roster: again,
+      }).networkRoster,
+    ).toBe(again);
+
+    // A crawler's nodes outlive a reorg; the record's claim to have been
+    // observed under this chain does not. Above the anchor it stands…
+    expect(
+      applySemanticsDelta(seeded, { type: 'prune', from_block: 15 })
+        .networkRoster,
+    ).toBe(record);
+    // …at or below it, it drops on the atlas's rule.
+    const next = applyRevisionedSemanticsDeltas(seeded, [{
+      revision: 2,
+      delta: { type: 'prune', from_block: 10 },
+    }]);
+    expect(next.networkRoster).toBeNull();
+  });
+
   it('prune drops the script registry only when the reorg reaches its anchor', () => {
     const record = scriptRegistry(10);
     const seeded = applyRevisionedSemanticsDeltas(emptySemanticsCache(), [{
@@ -419,6 +473,33 @@ describe('semantics reducer', () => {
 
     expect(next.networkAtlas).toBeNull();
     expect(next.cells).toBe(seeded.cells);
+  });
+
+  it('an empty roster is a report; only the clear arm empties the slot', () => {
+    const named = networkRoster(10, 7);
+    const seeded = applySemanticsDelta(emptySemanticsCache(), {
+      type: 'network_roster_replace',
+      network_roster: named,
+    });
+    expect(seeded.networkRoster?.entries).toHaveLength(1);
+
+    // A round that finished knowing nobody replaces the named set with an
+    // empty one, and the record stays: "the crawler saw no one" is an answer
+    // the stage can act on, and it is not the same news as having no crawler.
+    const empty: NetworkRosterRecord = { ...networkRoster(20, 8), entries: [] };
+    const reported = applySemanticsDelta(seeded, {
+      type: 'network_roster_replace',
+      network_roster: empty,
+    });
+    expect(reported.networkRoster).toBe(empty);
+    expect(reported.networkRoster?.entries).toEqual([]);
+
+    // Losing the capability is that other news, and only it returns null.
+    const cleared = applySemanticsDelta(reported, {
+      type: 'network_roster_clear',
+    });
+    expect(cleared.networkRoster).toBeNull();
+    expect(cleared.cells).toBe(seeded.cells);
   });
 
   it('clear does not erase source health', () => {

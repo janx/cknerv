@@ -221,6 +221,12 @@ describe('enrichment fixtures drive the real semantics reducer', () => {
     expect(cache.transactions.size).toBe(snapshot.transactions.length);
     expect(cache.census).toEqual(snapshot.census);
     expect(cache.scriptRegistry).toEqual(snapshot.script_registry);
+    expect(cache.networkRoster).toEqual(snapshot.network_roster);
+    // The roster is the one snapshot record whose ORDER is part of the
+    // contract: the server ships it sorted by `node_id` so the same known
+    // set stages as the same set round after round.
+    const rosterIds = cache.networkRoster?.entries.map((node) => node.node_id);
+    expect(rosterIds).toEqual([...(rosterIds ?? [])].sort());
   });
 
   it('upsert arms land their record on an empty cache', () => {
@@ -259,6 +265,7 @@ describe('enrichment fixtures drive the real semantics reducer', () => {
       ['activity_feed_replace', 'activityFeed'],
       ['transaction_horizon_replace', 'transactionHorizon'],
       ['network_atlas_replace', 'networkAtlas'],
+      ['network_roster_replace', 'networkRoster'],
       ['script_registry_replace', 'scriptRegistry'],
     ];
     for (const [name, slot] of landed) {
@@ -275,6 +282,21 @@ describe('enrichment fixtures drive the real semantics reducer', () => {
     expect(
       applySemanticsDelta(emptySemanticsCache(), registry).scriptRegistry,
     ).toEqual(registry.script_registry);
+  });
+
+  it('the empty roster sample lands as a report, not an absence', () => {
+    const empty = deltas.network_roster_replace_empty as Extract<
+      SemanticsDelta,
+      { type: 'network_roster_replace' }
+    >;
+    expect(empty.network_roster.entries).toEqual([]);
+
+    // The snapshot seeded three named nodes; this round knew nobody. The
+    // slot holds that report — falling back to null would say the crawler
+    // is gone, which is what `network_roster_clear` says and this does not.
+    const next = applySemanticsDelta(seeded(), empty);
+    expect(next.networkRoster).toEqual(empty.network_roster);
+    expect(next.networkRoster?.entries).toEqual([]);
   });
 
   it('remove and clear arms retract what the snapshot seeded', () => {
@@ -297,6 +319,9 @@ describe('enrichment fixtures drive the real semantics reducer', () => {
     expect(
       applySemanticsDelta(seeded(), deltas.network_atlas_clear).networkAtlas,
     ).toBeNull();
+    expect(
+      applySemanticsDelta(seeded(), deltas.network_roster_clear).networkRoster,
+    ).toBeNull();
   });
 
   it('prune drops every record anchored at or past the boundary', () => {
@@ -310,6 +335,7 @@ describe('enrichment fixtures drive the real semantics reducer', () => {
     expect(next.transactions.size).toBe(0);
     expect(next.census).toBeNull();
     expect(next.scriptRegistry).toBeNull();
+    expect(next.networkRoster).toBeNull();
   });
 
   it('clear empties every slot the source can refill', () => {
@@ -325,6 +351,7 @@ describe('enrichment fixtures drive the real semantics reducer', () => {
       'activityFeed',
       'transactionHorizon',
       'networkAtlas',
+      'networkRoster',
       'scriptRegistry',
     ] as const) {
       expect(next[slot], `clear left ${slot} standing`).toBeNull();
